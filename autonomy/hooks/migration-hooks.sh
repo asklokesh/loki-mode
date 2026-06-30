@@ -162,7 +162,14 @@ hook_pre_file_edit() {
     [[ -z "$file_path" ]] && return 0
     local snap_base
     snap_base=$(_migration_snapshot_dir)
-    _heal_snapshot_save "$snap_base" "$file_path"
+    # Enforce the pairing contract: if the snapshot cannot be captured, BLOCK the
+    # edit. Proceeding would leave post_file_edit's block_and_rollback path with
+    # no snapshot to restore -- a test failure would then leave the broken edit
+    # in place (silent revert failure). Fail loud/closed here instead.
+    if ! _heal_snapshot_save "$snap_base" "$file_path"; then
+        echo "HOOK_BLOCKED: could not capture a pre-edit snapshot for ${file_path}; refusing to edit without a revert path. Check that ${snap_base}/snapshots is writable."
+        return 1
+    fi
     return 0
 }
 
@@ -418,7 +425,15 @@ print('OK')
     # Capture a pre-edit snapshot so post_healing_modify can revert ONLY the
     # healing edit on test failure (not unrelated uncommitted changes, and not
     # via git checkout which discards everything). Keyed by file path.
-    _heal_snapshot_save "$heal_dir" "$file_path"
+    #
+    # Enforce the pairing contract: if the snapshot cannot be captured, BLOCK the
+    # edit. Proceeding would leave the edit with no revert path -- a later test
+    # failure would then leave the broken edit in place while honestly reporting
+    # "no snapshot" (silent revert failure). Fail loud/closed here instead.
+    if ! _heal_snapshot_save "$heal_dir" "$file_path"; then
+        echo "HOOK_BLOCKED: could not capture a pre-edit snapshot for ${file_path}; refusing to modify it without a revert path. Check that ${heal_dir}/snapshots is writable."
+        return 1
+    fi
 
     return 0
 }
@@ -438,27 +453,63 @@ _heal_snapshot_path() {
 # healing edit will CREATE it), write a sentinel marker instead so the revert
 # path knows to remove the file rather than restore content.
 #
-# Pairing contract: hook_pre_healing_modify (which calls this) MUST run for a
-# file before hook_post_healing_modify reverts it. The snapshot is refreshed on
+# Pairing contract (ENFORCED, fail-closed): hook_pre_healing_modify (which calls
+# this) MUST run for a file before hook_post_healing_modify reverts it, AND that
+# pre call MUST leave behind a revertable snapshot. The snapshot is refreshed on
 # every pre call, so a post without a matching fresh pre could restore a stale
 # blob. On the success path the snapshot is intentionally left in place; the
 # next pre overwrites it.
+#
+# Returns 0 ONLY when a revertable snapshot demonstrably exists on disk after
+# this call: exactly one of {content snapshot, ".absent" marker}. Returns 1 on
+# ANY failure (cannot create the snapshot dir, cp/sentinel write failed, the
+# wrong marker survived, or both/neither markers exist). A 1 return MUST block
+# the edit at the caller -- otherwise the edit proceeds with no revert path and a
+# later test failure leaves the broken edit in place (the silent-revert-failure
+# this guard exists to prevent). NEVER return 0 on a failure path.
 _heal_snapshot_save() {
     local heal_dir="$1"
     local file_path="$2"
+    # Empty file_path: nothing to snapshot. Callers treat empty file_path as a
+    # no-op (return 0 before reaching here in the hooks); not a contract breach.
     [[ -z "$file_path" ]] && return 0
     local snap_dir="$heal_dir/snapshots"
-    mkdir -p "$snap_dir" 2>/dev/null || return 0
+    if ! mkdir -p "$snap_dir" 2>/dev/null || [[ ! -d "$snap_dir" ]]; then
+        return 1
+    fi
     local snap
     snap=$(_heal_snapshot_path "$heal_dir" "$file_path")
     if [[ -f "$file_path" ]]; then
-        cp "$file_path" "$snap" 2>/dev/null || return 0
-        rm -f "$snap.absent" 2>/dev/null || true
+        # Capture content, then drop any stale absent-marker so EXACTLY the
+        # content snapshot survives. Fail closed if either step fails.
+        if ! cp "$file_path" "$snap" 2>/dev/null; then
+            return 1
+        fi
+        if ! rm -f "$snap.absent" 2>/dev/null; then
+            return 1
+        fi
+        # Verify exactly the content snapshot exists and the absent-marker is
+        # gone. A lingering marker is a contract violation (restore checks the
+        # content snapshot first, but the inconsistency must not be tolerated).
+        if [[ ! -f "$snap" || -f "$snap.absent" ]]; then
+            return 1
+        fi
     else
         # File does not exist pre-edit: record an "absent" marker, drop any
-        # stale content snapshot.
-        rm -f "$snap" 2>/dev/null || true
-        : > "$snap.absent" 2>/dev/null || true
+        # stale content snapshot. CRITICAL: if the stale content snapshot is not
+        # removed, restore checks the content snapshot FIRST and would restore
+        # content for a file that should have been REMOVED. Fail closed if the
+        # stale snapshot cannot be cleared or the marker cannot be written.
+        if ! rm -f "$snap" 2>/dev/null; then
+            return 1
+        fi
+        if ! : > "$snap.absent" 2>/dev/null; then
+            return 1
+        fi
+        # Verify exactly the absent-marker exists and no content snapshot does.
+        if [[ ! -f "$snap.absent" || -f "$snap" ]]; then
+            return 1
+        fi
     fi
     return 0
 }

@@ -286,6 +286,128 @@ else
 fi
 rm -rf "$TMP8"
 
+# =============================================================================
+# Snapshot pairing-contract enforcement (wave-5).
+#
+# Contract: a pre-edit snapshot MUST be revertable, and the pre hook MUST
+# fail-closed (BLOCK the edit) if it cannot capture one. The old
+# _heal_snapshot_save returned 0 on EVERY failure path (mkdir/cp/sentinel
+# failure), so a save could silently produce no revertable snapshot while the
+# pre hook still let the edit proceed -- a later test failure then left the
+# broken edit in place with an honest-but-too-late "no snapshot" message
+# (silent revert failure). The fix makes save fail-closed (return 1) and the
+# pre hooks BLOCK on that.
+#
+# Failure is injected DETERMINISTICALLY by making the snapshots PARENT a regular
+# file so `mkdir -p "$heal_dir/snapshots"` cannot create the directory. This
+# avoids chmod-based unwritable-dir tests (root bypasses them; flaky).
+# =============================================================================
+
+# Test 9: _heal_snapshot_save returns NONZERO when the snapshot dir cannot be
+# created (deterministic: snapshots' parent is a regular file). Old code
+# returned 0 here (silent failure); the fix returns 1.
+echo "Test 9: _heal_snapshot_save fails closed (nonzero) when snapshot dir cannot be created"
+TMP9="$(mktemp -d)"
+# heal_dir is itself a regular file -> mkdir -p "$heal_dir/snapshots" fails.
+HEAL9="$TMP9/healing_is_a_file"
+printf 'not a dir\n' > "$HEAL9"
+TARGET9="$TMP9/app.py"
+printf 'content\n' > "$TARGET9"
+if _heal_snapshot_save "$HEAL9" "$TARGET9"; then
+    fail "_heal_snapshot_save should return nonzero when the snapshot dir cannot be created"
+else
+    pass "_heal_snapshot_save returned nonzero (fail-closed) when snapshot dir uncreatable"
+fi
+rm -rf "$TMP9"
+
+# Test 10: hook_pre_healing_modify BLOCKS the edit (returns nonzero +
+# HOOK_BLOCKED) when the snapshot cannot be captured. Without this, the edit
+# would proceed with no revert path. friction-map.json is present and
+# non-matching so we reach the snapshot step; the snapshots dir is forced
+# uncreatable by making it a regular file.
+echo "Test 10: hook_pre_healing_modify BLOCKS when snapshot cannot be captured"
+TMP10="$(mktemp -d)"
+mkdir -p "$TMP10/.loki/healing"
+printf '{"frictions":[{"id":"FX","location":"unrelated.py:1","classification":"business_rule","safe_to_remove":false}]}' > "$TMP10/.loki/healing/friction-map.json"
+# Force the snapshots dir to be uncreatable: pre-create it as a regular file.
+printf 'block\n' > "$TMP10/.loki/healing/snapshots"
+TARGET10="$TMP10/src/app.py"
+mkdir -p "$(dirname "$TARGET10")"
+printf 'pre\n' > "$TARGET10"
+out=$(LOKI_HEAL_MODE=true LOKI_CODEBASE_PATH="$TMP10" hook_pre_healing_modify "$TARGET10" 2>&1)
+rc=$?
+if [[ "$rc" -ne 0 ]] && echo "$out" | grep -q "HOOK_BLOCKED.*pre-edit snapshot"; then
+    pass "pre_healing_modify BLOCKED the edit when the snapshot could not be captured"
+else
+    fail "pre_healing_modify should BLOCK when snapshot cannot be captured" "rc=$rc out=$out"
+fi
+rm -rf "$TMP10"
+
+# Test 11: hook_pre_file_edit (non-healing migration path) BLOCKS when the
+# snapshot cannot be captured. Same deterministic injection via LOKI_MIGRATION_DIR.
+echo "Test 11: hook_pre_file_edit BLOCKS when snapshot cannot be captured"
+TMP11="$(mktemp -d)"
+MIG11="$TMP11/migration"
+mkdir -p "$MIG11"
+# Force snapshots dir uncreatable.
+printf 'block\n' > "$MIG11/snapshots"
+TARGET11="$TMP11/file.py"
+printf 'pre\n' > "$TARGET11"
+out=$(HOOK_POST_FILE_EDIT_ENABLED=true LOKI_MIGRATION_DIR="$MIG11" hook_pre_file_edit "$TARGET11" 2>&1)
+rc=$?
+if [[ "$rc" -ne 0 ]] && echo "$out" | grep -q "HOOK_BLOCKED.*pre-edit snapshot"; then
+    pass "pre_file_edit BLOCKED the edit when the snapshot could not be captured"
+else
+    fail "pre_file_edit should BLOCK when snapshot cannot be captured" "rc=$rc out=$out"
+fi
+rm -rf "$TMP11"
+
+# Test 12: happy path -- _heal_snapshot_save returns 0 AND leaves EXACTLY one
+# marker (content snapshot for an existing file; absent-marker for a missing
+# file). Guards against a regression that returns 0 without a revertable blob.
+echo "Test 12: _heal_snapshot_save success leaves exactly one revertable marker"
+TMP12="$(mktemp -d)"
+HEAL12="$TMP12/.loki/healing"
+mkdir -p "$HEAL12"
+# (a) existing file -> content snapshot present, absent-marker absent
+EXIST12="$TMP12/exists.py"
+printf 'data\n' > "$EXIST12"
+snap12=$(_heal_snapshot_path "$HEAL12" "$EXIST12")
+if _heal_snapshot_save "$HEAL12" "$EXIST12" && [[ -f "$snap12" && ! -f "$snap12.absent" ]]; then
+    pass "existing-file save: returns 0 with exactly the content snapshot"
+else
+    fail "existing-file save should return 0 and leave only the content snapshot" "snap=$snap12 exists=$([[ -f "$snap12" ]] && echo y || echo n) absent=$([[ -f "$snap12.absent" ]] && echo y || echo n)"
+fi
+# (b) missing file -> absent-marker present, content snapshot absent
+MISS12="$TMP12/missing.py"
+snapm12=$(_heal_snapshot_path "$HEAL12" "$MISS12")
+if _heal_snapshot_save "$HEAL12" "$MISS12" && [[ -f "$snapm12.absent" && ! -f "$snapm12" ]]; then
+    pass "missing-file save: returns 0 with exactly the absent-marker"
+else
+    fail "missing-file save should return 0 and leave only the absent-marker" "snap=$snapm12 content=$([[ -f "$snapm12" ]] && echo y || echo n) absent=$([[ -f "$snapm12.absent" ]] && echo y || echo n)"
+fi
+rm -rf "$TMP12"
+
+# Test 13: transition existing -> missing clears the stale content snapshot.
+# A file that existed (content snapshot saved) is then removed and re-saved;
+# the save must drop the content snapshot and write the absent-marker so a
+# later restore REMOVES the added file rather than wrongly restoring content.
+echo "Test 13: re-save after file removed swaps content snapshot for absent-marker"
+TMP13="$(mktemp -d)"
+HEAL13="$TMP13/.loki/healing"
+mkdir -p "$HEAL13"
+T13="$TMP13/x.py"
+printf 'v1\n' > "$T13"
+_heal_snapshot_save "$HEAL13" "$T13" >/dev/null 2>&1
+snap13=$(_heal_snapshot_path "$HEAL13" "$T13")
+rm -f "$T13"   # file now absent
+if _heal_snapshot_save "$HEAL13" "$T13" && [[ -f "$snap13.absent" && ! -f "$snap13" ]]; then
+    pass "stale content snapshot dropped; absent-marker now the sole marker"
+else
+    fail "re-save after removal should leave only the absent-marker" "content=$([[ -f "$snap13" ]] && echo y || echo n) absent=$([[ -f "$snap13.absent" ]] && echo y || echo n)"
+fi
+rm -rf "$TMP13"
+
 echo ""
 echo "============================="
 echo "Results: $PASS/$TOTAL passed, $FAIL failed"

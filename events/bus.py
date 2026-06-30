@@ -130,6 +130,16 @@ class LokiEvent:
         # dedup (_processed_ids + pending-file glob) and re-importing every flat
         # line on each call. Derive a DETERMINISTIC id from the record content
         # so repeated imports of the same line are idempotent.
+        #
+        # Width: the digest source is user-controllable (timestamp + type +
+        # payload). An 8-hex-char (32-bit) truncation collides at the birthday
+        # bound around ~77k distinct events (sqrt(2^32)); a collision makes two
+        # DISTINCT events share an id, so dedup (_processed_ids + pending glob)
+        # silently DROPS the second event. Widen to 16 hex chars (64 bits) so
+        # the collision bound moves to ~4 billion distinct events -- well past
+        # any realistic events.jsonl. This deterministic-derivation path is
+        # Python-only (bus.ts has no jsonl import and mints a random id when one
+        # is absent), so widening here needs no cross-language parity change.
         event_id = data.get('id', '')
         if not event_id:
             digest_src = '%s|%s|%s' % (
@@ -137,7 +147,7 @@ class LokiEvent:
                 raw_type,
                 json.dumps(payload, sort_keys=True),
             )
-            event_id = hashlib.sha1(digest_src.encode('utf-8')).hexdigest()[:8]
+            event_id = hashlib.sha1(digest_src.encode('utf-8')).hexdigest()[:16]
 
         return cls(
             id=event_id,

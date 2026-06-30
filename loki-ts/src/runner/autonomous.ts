@@ -564,12 +564,20 @@ async function runAutonomousCore(
     // v7.5.0: signature corrected -- runQualityGates(ctx) only. The exitCode
     // arg was never consumed by the real implementation; Phase 1 wiring
     // (findings injection, learnings, escalation handoff) hangs off this call.
+    // Default to a non-blocking outcome so a gate runtime error never refuses
+    // completion (bash logs and continues at run.sh:10845-10980).
+    let gateOutcome: GateOutcomeShape = {
+      passed: [],
+      failed: [],
+      blocked: false,
+      escalated: false,
+    };
     try {
       // Module absence was already made fatal at resolution time (gatesModule
       // via requireModule); only gate EXECUTION errors are best-effort -- the
       // bash equivalent at run.sh:10845-10980 logs and continues. Do not crash
       // the loop on a gate runtime error.
-      await gatesModule.runQualityGates(ctx);
+      gateOutcome = await gatesModule.runQualityGates(ctx);
     } catch (err) {
       log(`[runner] runQualityGates threw (non-fatal): ${(err as Error).message}`);
     }
@@ -586,6 +594,33 @@ async function runAutonomousCore(
     if (outcome.exitCode === 0) {
       // Perpetual mode: never stop on success.
       if (ctx.autonomyMode === "perpetual") {
+        ctx.retryCount = 0;
+        continue;
+      }
+
+      // Honor the quality-gate verdict like bash, with bash-parity semantics
+      // (run.sh:16868-16930). The ONLY gate that drives a completion refusal on
+      // the bash route is code_review: a real code_review BLOCK appends
+      // `code_review` to gate-failures.txt (and at GATE_PAUSE_LIMIT writes a
+      // PAUSE) so the build cannot be called complete. Every other gate
+      // (static_analysis, test_coverage, mock_integrity, ...) is advisory here:
+      // it injects findings into the next iteration but never refuses
+      // completion. So we refuse ONLY when:
+      //   gateOutcome.blocked              -- hard-gates path is active
+      //                                       (quality_gates.ts:2519/2529 force
+      //                                       blocked=false on the soft-gates
+      //                                       path, so this implies hardGates)
+      //   AND failed.includes("code_review") -- a genuine code_review BLOCK,
+      //                                       not a bare-project test_coverage
+      //                                       fail that would over-block a clean
+      //                                       run (LOKI_HARD_GATES defaults true
+      //                                       + blocked = failed.length > 0).
+      // A cleared code_review (CLEAR_LIMIT) lands in `passed`, not `failed`
+      // (quality_gates.ts:2583-2587), so it correctly does NOT refuse.
+      if (gateOutcome.blocked && gateOutcome.failed.includes("code_review")) {
+        log(
+          "[runner] code_review BLOCK -- refusing completion this iteration; continuing to next iteration with findings injected",
+        );
         ctx.retryCount = 0;
         continue;
       }

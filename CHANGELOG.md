@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.97.0] - 2026-06-29
+
+### Wave-5 hardening: memory, events, healing, provider parity + FIX A rework
+
+- **Memory** (`memory/storage.py`, `memory/engine.py`): importance calc clamps a
+  non-numeric/negative access_count (was a TypeError on stored strings); shared
+  namespace charset validation so __init__ and with_namespace cannot drift, and
+  with_namespace rejects empty/whitespace/non-string (was silently resolving to
+  root); a corrupt ISO timestamp on one record no longer crashes the whole
+  retrieval batch (tolerant parse keeps the record retrievable).
+- **Memory namespace + RAG** (`memory/retrieval.py`, `memory/rag_injector.py`):
+  unstamped legacy entries are EXCLUDED from a namespaced query by default
+  (closes a silent cross-namespace read leak; opt-in escape hatch retained);
+  memory fields are sanitized before entering the prompt (prompt-injection
+  hardening: control-char strip, newline collapse, markdown-header/code-fence
+  defang, length cap).
+- **Events** (`events/bus.py`, `events/emit.sh`): widened the deterministic
+  dedup id from 32-bit to 64-bit (collisions could silently drop distinct
+  events); event-file write is now temp-file + atomic rename (was non-atomic,
+  could expose truncated JSON to readers); removed dead/malformed sed escape
+  entries (the awk pass already emits valid JSON for control chars).
+- **Healing** (`autonomy/hooks/migration-hooks.sh`): snapshot pairing contract
+  enforced (a revert with no matching snapshot fails loudly instead of silently).
+- **Provider parity** (`autonomy/run.sh`): Claude parallel-worktree invocations
+  now apply the same auto-flags (effort, max-budget, fallback model, mcp-config)
+  as the main invocation.
+- **FIX A rework** (`loki-ts/src/runner/autonomous.ts`): the Bun runner honors
+  the quality-gate verdict with CORRECT bash parity - it refuses completion only
+  on a real code_review BLOCK (gated on hardGates), not on the broad
+  blocked||escalated that over-blocked clean runs in the reverted first attempt.
+  Clean runs still complete (autonomous.test.ts 17/17, not edited to pass).
+
+  The mcp code-index staleness finding was investigated and REFUTED (the path
+  already uses an atomic manifest rename); no change made.
+
 ## [7.96.0] - 2026-06-29
 
 ### Trust moat: council force-review path fails closed

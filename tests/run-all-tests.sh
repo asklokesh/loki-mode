@@ -72,6 +72,9 @@ run_test "MCP Server Tests" "$SCRIPT_DIR/test-mcp-server.sh"
 # Healing Hooks (legacy-system healing safety gates)
 run_test "Healing Hooks Safety Tests" "$SCRIPT_DIR/test-healing-hooks-safety.sh"
 run_test "Healing Snapshot Revert Tests" "$SCRIPT_DIR/test-healing-snapshot-revert.sh"
+
+# Parallel worktree Claude auto-flags (effort/budget/fallback/mcp parity)
+run_test "Worktree Auto-Flags Tests" "$SCRIPT_DIR/test-worktree-auto-flags.sh"
 run_test "Healing Test Gate Tests" "$SCRIPT_DIR/test-healing-test-gate.sh"
 
 # Process Supervisor Tests

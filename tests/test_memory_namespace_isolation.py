@@ -186,11 +186,8 @@ def test_keyword_search_semantic_namespace_isolation(two_namespace_root: Path):
     assert "pat-b-leak" not in ids, f"LEAK: project-b pattern in project-a results: {ids}"
 
 
-def test_legacy_entry_without_namespace_is_included(tmp_path: Path, caplog):
-    """Legacy entries (no _namespace stamp) should be included for backward
-    compat but logged as deprecation warnings."""
-    storage = MemoryStorage(base_path=str(tmp_path), namespace="project-a")
-    # Manually craft a patterns.json with a legacy entry (no _namespace).
+def _write_legacy_patterns(tmp_path: Path) -> None:
+    """Write a patterns.json containing one legacy entry (no _namespace)."""
     legacy_patterns = {
         "version": "1.1.0",
         "patterns": [
@@ -207,6 +204,17 @@ def test_legacy_entry_without_namespace_is_included(tmp_path: Path, caplog):
     (tmp_path / "project-a" / "semantic").mkdir(parents=True, exist_ok=True)
     (tmp_path / "project-a" / "semantic" / "patterns.json").write_text(json.dumps(legacy_patterns))
 
+
+def test_legacy_entry_without_namespace_is_excluded_by_default(tmp_path: Path, caplog):
+    """SECURITY: legacy entries (no _namespace stamp) must be EXCLUDED from a
+    namespaced query by default. An unstamped entry has no provable origin, so
+    including it across namespaces is a silent cross-namespace leak.
+
+    See wave-5 finding: missing namespace stamp on legacy entries allowed one
+    project to read another's memory."""
+    storage = MemoryStorage(base_path=str(tmp_path), namespace="project-a")
+    _write_legacy_patterns(tmp_path)
+
     retrieval = MemoryRetrieval(storage=storage, namespace="project-a")
     # Reset the class-level warn counter so the warning fires for this test.
     MemoryRetrieval._legacy_warned_count = 0
@@ -216,7 +224,74 @@ def test_legacy_entry_without_namespace_is_included(tmp_path: Path, caplog):
         results = retrieval.retrieve_by_keyword(["alpha"], "semantic")
 
     ids = [r.get("id") for r in results]
-    assert "legacy-1" in ids, "legacy entry should be included for backward compat"
+    assert "legacy-1" not in ids, \
+        "unstamped legacy entry must be excluded from a namespaced query (leak defense)"
     assert any("legacy" in rec.message.lower() or "_namespace" in rec.message
                for rec in caplog.records), \
-        f"expected deprecation warning, got: {[r.message for r in caplog.records]}"
+        f"expected an exclusion warning, got: {[r.message for r in caplog.records]}"
+
+
+def test_legacy_entry_included_with_explicit_opt_in(tmp_path: Path, caplog):
+    """The backward-compat behavior is still reachable, but only via an explicit
+    opt-in (include_unstamped_legacy=True) for single-project migrations."""
+    storage = MemoryStorage(base_path=str(tmp_path), namespace="project-a")
+    _write_legacy_patterns(tmp_path)
+
+    retrieval = MemoryRetrieval(
+        storage=storage,
+        namespace="project-a",
+        include_unstamped_legacy=True,
+    )
+    MemoryRetrieval._legacy_warned_count = 0
+
+    import logging
+    with caplog.at_level(logging.WARNING, logger="memory.retrieval"):
+        results = retrieval.retrieve_by_keyword(["alpha"], "semantic")
+
+    ids = [r.get("id") for r in results]
+    assert "legacy-1" in ids, \
+        "with the explicit opt-in, the unstamped legacy entry should be included"
+    assert any("legacy" in rec.message.lower() or "_namespace" in rec.message
+               for rec in caplog.records), \
+        f"expected an opt-in warning, got: {[r.message for r in caplog.records]}"
+
+
+def test_unstamped_entry_filtered_but_stamped_sibling_kept(tmp_path: Path):
+    """Non-vacuous filter proof: with a STAMPED project-a entry and an
+    UNSTAMPED entry co-located in the SAME store the query reads, the filter
+    must drop the unstamped (unprovable-origin) entry while keeping the stamped
+    one. Storage isolates by directory, so this exercises the retrieval-layer
+    defense-in-depth that the fix actually changed (an unstamped entry has no
+    provable owner and could have been copied/migrated from any project)."""
+    mixed = {
+        "version": "1.1.0",
+        "patterns": [
+            {
+                "id": "stamped-a",
+                "pattern": "alpha owned by a",
+                "category": "alpha",
+                "correct_approach": "ok",
+                "confidence": 0.9,
+                "_namespace": "project-a",
+            },
+            {
+                "id": "unstamped-x",
+                "pattern": "alpha unknown origin",
+                "category": "alpha",
+                "correct_approach": "maybe-leaked",
+                "confidence": 0.9,
+                # NOTE: no _namespace key -> unprovable origin
+            },
+        ],
+    }
+    (tmp_path / "project-a" / "semantic").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "project-a" / "semantic" / "patterns.json").write_text(json.dumps(mixed))
+
+    storage_a = MemoryStorage(base_path=str(tmp_path), namespace="project-a")
+    retrieval_a = MemoryRetrieval(storage=storage_a, namespace="project-a")
+    MemoryRetrieval._legacy_warned_count = 0
+    results = retrieval_a.retrieve_by_keyword(["alpha"], "semantic")
+    ids = [r.get("id") for r in results]
+    assert "stamped-a" in ids, "stamped project-a entry must be kept"
+    assert "unstamped-x" not in ids, \
+        "unstamped (unprovable-origin) entry must be filtered from a namespaced query"

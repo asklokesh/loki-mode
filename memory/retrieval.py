@@ -269,6 +269,7 @@ class MemoryRetrieval:
         vector_indices: Optional[Dict[str, VectorIndex]] = None,
         base_path: str = ".loki/memory",
         namespace: Optional[str] = None,
+        include_unstamped_legacy: bool = False,
     ):
         """
         Initialize the memory retrieval system.
@@ -279,12 +280,20 @@ class MemoryRetrieval:
             vector_indices: Optional dict of vector indices (episodic, semantic, skills)
             base_path: Base path for memory storage directory
             namespace: Optional namespace for scoped retrieval
+            include_unstamped_legacy: Opt-in escape hatch. When False (the
+                secure default), legacy entries that lack a "_namespace" stamp
+                are EXCLUDED from a namespaced query. This prevents a silent
+                cross-namespace leak where one project reads another project's
+                unstamped memory. Set True only when migrating a single-project
+                store whose entries predate namespace stamping and you have
+                verified every entry belongs to the active namespace.
         """
         self.storage = storage
         self.embedding_engine = embedding_engine
         self.vector_indices = vector_indices or {}
         self.base_path = Path(base_path)
         self._namespace = namespace
+        self._include_unstamped_legacy = include_unstamped_legacy
         # Track when indices were last built to detect staleness (BUG-MEM-002).
         # When consolidation modifies patterns, indices become stale and should
         # be rebuilt before the next similarity search.
@@ -318,25 +327,45 @@ class MemoryRetrieval:
         Behavior:
         - If self._namespace is None, accept all (backward compat for unscoped retrieval).
         - If result has "_namespace" matching, accept.
-        - If result lacks "_namespace" (legacy entry written before stamping),
-          log a deprecation warning (rate-limited) and ACCEPT for backward compat.
-        - Otherwise, reject.
+        - If result lacks "_namespace" (legacy entry written before stamping):
+          treat it conservatively. An unstamped entry has no provable origin,
+          so under a namespaced query it could belong to ANY namespace and
+          including it is a silent cross-namespace leak (one project reading
+          another's memory). By default (self._include_unstamped_legacy is
+          False) such entries are EXCLUDED, with a rate-limited warning telling
+          operators to re-save the entry to add a stamp. Operators who have
+          verified a single-project store predates stamping can opt back in via
+          include_unstamped_legacy=True.
+        - Otherwise (stamp present but does not match), reject.
         """
         if self._namespace is None:
             return True
         result_ns = result.get("_namespace")
         if result_ns is None:
-            # Legacy entry without namespace stamp; accept for backward compat
-            # but warn so operators can re-save to add stamps.
+            # Legacy entry without namespace stamp. No provable origin -> do not
+            # silently leak it across namespaces. Exclude by default; warn so
+            # operators can re-save to add a stamp (rate-limited to avoid spam).
             if MemoryRetrieval._legacy_warned_count < MemoryRetrieval._LEGACY_WARN_LIMIT:
-                logger.warning(
-                    "Memory entry id=%s lacks '_namespace' stamp (legacy "
-                    "entry). Including in results for backward compatibility. "
-                    "Re-save this entry to enable namespace isolation.",
-                    result.get("id", "<unknown>"),
-                )
+                if self._include_unstamped_legacy:
+                    logger.warning(
+                        "Memory entry id=%s lacks '_namespace' stamp (legacy "
+                        "entry). Including under namespace=%s because "
+                        "include_unstamped_legacy is set. Re-save this entry to "
+                        "stamp it and remove the opt-in.",
+                        result.get("id", "<unknown>"),
+                        self._namespace,
+                    )
+                else:
+                    logger.warning(
+                        "Memory entry id=%s lacks '_namespace' stamp (legacy "
+                        "entry). Excluding from namespace=%s query to prevent a "
+                        "cross-namespace leak. Re-save this entry to stamp it, "
+                        "or pass include_unstamped_legacy=True to opt in.",
+                        result.get("id", "<unknown>"),
+                        self._namespace,
+                    )
                 MemoryRetrieval._legacy_warned_count += 1
-            return True
+            return self._include_unstamped_legacy
         return result_ns == self._namespace
 
     def with_namespace(self, namespace: str) -> "MemoryRetrieval":
@@ -361,6 +390,7 @@ class MemoryRetrieval:
             vector_indices=self.vector_indices,
             base_path=str(self.base_path),
             namespace=namespace,
+            include_unstamped_legacy=self._include_unstamped_legacy,
         )
 
     # -------------------------------------------------------------------------

@@ -119,16 +119,27 @@ fi
 
 # JSON escape helper: handles \, ", and control characters including newlines
 #
-# The sed pass escapes the named short forms (\\ \" \t \r \b \f); the first awk
-# pass collapses embedded newlines to \n. Any OTHER C0 control byte
-# (0x01-0x07, 0x0B, 0x0E-0x1F) is invalid raw inside a JSON string and is
-# escaped as \uXXXX by the final awk pass -- otherwise json.loads / JSON.parse
-# reject the line and consumers (dashboard _read_events, learning aggregator)
-# silently drop it. The named short forms are already two-char ASCII by the
-# time the final pass runs, so they are never re-escaped.
+# The sed pass escapes backslash, double-quote, tab and carriage-return to
+# their named short forms (\\ \" \t \r); the first awk pass collapses embedded
+# newlines to \n. Every REMAINING C0 control byte (0x01-0x08, 0x0B-0x0C,
+# 0x0E-0x1F -- which includes backspace 0x08 and form-feed 0x0C) is invalid raw
+# inside a JSON string and is escaped as \uXXXX by the final awk pass (its map
+# covers all of i=1..31). Without that escaping json.loads / JSON.parse reject
+# the line and consumers (dashboard _read_events, learning aggregator) silently
+# drop it. The named short forms emitted by sed are already two-char ASCII by
+# the time the final pass runs, so they are never re-escaped.
+#
+# NOTE: backspace/form-feed are deliberately NOT escaped in the sed pass.
+# Doing so requires embedding the raw control bytes in the sed pattern, which
+# editors silently strip -- that left the two empty-pattern sed no-ops this
+# helper previously carried. An empty sed regex reuses the LAST applied regex,
+# so those entries were dead AND a latent corruption hazard. The final awk
+# pass already escapes every byte in i=1..31 (backspace and form-feed included)
+# to the six-char uXXXX unicode escape, producing valid JSON, so the
+# named-short-form variants are unnecessary.
 json_escape() {
     printf '%s' "$1" \
-        | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g; s//\\b/g; s//\\f/g' \
+        | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g' \
         | awk '{if(NR>1) printf "\\n"; printf "%s", $0}' \
         | awk 'BEGIN{for(i=1;i<=31;i++)m[sprintf("%c",i)]=sprintf("\\u%04x",i)}
                {s=""; n=length($0);
@@ -163,9 +174,23 @@ EVENT=$(cat <<EOF
 EOF
 )
 
-# Write event file
+# Write event file atomically.
+#
+# A bare `echo "$EVENT" > "$EVENT_FILE"` is NON-atomic: a reader (bus.py
+# get_pending_events / from_dict, dashboard) that globs `*.json` mid-write sees
+# a truncated/partial file and either fails json.loads (event silently dropped)
+# or, worse, reads a half-written record. Write to a sibling temp file in the
+# SAME directory (so rename(2) is an atomic same-filesystem operation) and then
+# rename into place; a `.tmp` suffix keeps the in-progress file out of the
+# `*.json` glob readers use. Clean up the temp on any failure so partials never
+# linger.
 EVENT_FILE="$EVENTS_DIR/${TIMESTAMP//:/-}_$EVENT_ID.json"
-echo "$EVENT" > "$EVENT_FILE"
+EVENT_TMP="$EVENT_FILE.tmp"
+if printf '%s\n' "$EVENT" > "$EVENT_TMP" && mv -f "$EVENT_TMP" "$EVENT_FILE"; then
+    :
+else
+    rm -f "$EVENT_TMP" 2>/dev/null || true
+fi
 
 # Rotate events.jsonl if it exceeds 50MB (keep 1 backup)
 EVENTS_LOG="$LOKI_DIR/events.jsonl"

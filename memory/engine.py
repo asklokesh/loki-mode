@@ -1034,6 +1034,39 @@ class MemoryEngine:
 
         return None
 
+    @staticmethod
+    def _parse_optional_datetime(
+        raw: Any, *, record_id: str = "<unknown>", field: str = "last_accessed"
+    ) -> Optional[datetime]:
+        """Tolerantly parse an optional ISO datetime field off a stored record.
+
+        A corrupt/non-ISO value on ONE record must not raise out of the
+        _dict_to_* converters and crash the whole batch list-comp in
+        get_recent_episodes / find_patterns / list_skills (which would drop EVERY
+        item in the scan, not just the bad one) on the RARV retrieval hot path.
+        An unparseable value falls back to None (treated as never-accessed) so
+        the record is still returned and retrievable.
+
+        Returns a tz-aware datetime (UTC assumed when naive), or None when the
+        value is missing/empty/unparseable.
+        """
+        if not raw:
+            return None
+        if isinstance(raw, datetime):
+            return raw.replace(tzinfo=timezone.utc) if raw.tzinfo is None else raw
+        if isinstance(raw, str):
+            value = raw[:-1] if raw.endswith("Z") else raw
+            try:
+                parsed = datetime.fromisoformat(value)
+            except ValueError:
+                logger.warning(
+                    "Record %s has unparseable %s %r; treating as never-accessed",
+                    record_id, field, raw,
+                )
+                return None
+            return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
+        return None
+
     def _dict_to_episode(self, data: Dict[str, Any]) -> EpisodeTrace:
         """Convert dictionary to EpisodeTrace."""
         # Parse timestamp string to datetime
@@ -1081,20 +1114,13 @@ class MemoryEngine:
             for e in errors_raw
         ]
 
-        # Parse last_accessed datetime
-        last_accessed = None
-        last_accessed_raw = data.get("last_accessed")
-        if last_accessed_raw:
-            if isinstance(last_accessed_raw, str):
-                if last_accessed_raw.endswith("Z"):
-                    last_accessed_raw = last_accessed_raw[:-1]
-                last_accessed = datetime.fromisoformat(last_accessed_raw)
-                if last_accessed.tzinfo is None:
-                    last_accessed = last_accessed.replace(tzinfo=timezone.utc)
-            elif isinstance(last_accessed_raw, datetime):
-                last_accessed = last_accessed_raw
-                if last_accessed.tzinfo is None:
-                    last_accessed = last_accessed.replace(tzinfo=timezone.utc)
+        # Parse last_accessed datetime (tolerant: a corrupt value falls back to
+        # None so a single bad episode never crashes the retrieval batch).
+        last_accessed = self._parse_optional_datetime(
+            data.get("last_accessed"),
+            record_id=data.get("id", "<unknown>"),
+            field="last_accessed",
+        )
 
         return EpisodeTrace(
             id=data.get("id", ""),
@@ -1119,21 +1145,14 @@ class MemoryEngine:
 
     def _dict_to_pattern(self, data: Dict[str, Any]) -> SemanticPattern:
         """Convert dictionary to SemanticPattern."""
-        # Parse last_used string to datetime or None
-        last_used = None
-        last_used_raw = data.get("last_used")
-        if last_used_raw:
-            if isinstance(last_used_raw, str):
-                # Handle ISO format with Z suffix
-                if last_used_raw.endswith("Z"):
-                    last_used_raw = last_used_raw[:-1]
-                last_used = datetime.fromisoformat(last_used_raw)
-                if last_used.tzinfo is None:
-                    last_used = last_used.replace(tzinfo=timezone.utc)
-            elif isinstance(last_used_raw, datetime):
-                last_used = last_used_raw
-                if last_used.tzinfo is None:
-                    last_used = last_used.replace(tzinfo=timezone.utc)
+        # Parse last_used string to datetime or None (tolerant: a corrupt value
+        # on one pattern must not crash the find_patterns retrieval batch; it
+        # shares the same hot path and crash mechanism as last_accessed below).
+        last_used = self._parse_optional_datetime(
+            data.get("last_used"),
+            record_id=data.get("id", "<unknown>"),
+            field="last_used",
+        )
 
         # Convert links dicts to Link objects
         links_raw = data.get("links", [])
@@ -1142,20 +1161,12 @@ class MemoryEngine:
             for link in links_raw
         ]
 
-        # Parse last_accessed datetime
-        last_accessed = None
-        last_accessed_raw = data.get("last_accessed")
-        if last_accessed_raw:
-            if isinstance(last_accessed_raw, str):
-                if last_accessed_raw.endswith("Z"):
-                    last_accessed_raw = last_accessed_raw[:-1]
-                last_accessed = datetime.fromisoformat(last_accessed_raw)
-                if last_accessed.tzinfo is None:
-                    last_accessed = last_accessed.replace(tzinfo=timezone.utc)
-            elif isinstance(last_accessed_raw, datetime):
-                last_accessed = last_accessed_raw
-                if last_accessed.tzinfo is None:
-                    last_accessed = last_accessed.replace(tzinfo=timezone.utc)
+        # Parse last_accessed datetime (tolerant: see _dict_to_episode).
+        last_accessed = self._parse_optional_datetime(
+            data.get("last_accessed"),
+            record_id=data.get("id", "<unknown>"),
+            field="last_accessed",
+        )
 
         return SemanticPattern(
             id=data.get("id", ""),
@@ -1182,20 +1193,12 @@ class MemoryEngine:
             for e in raw_errors
         ]
 
-        # Parse last_accessed datetime
-        last_accessed = None
-        last_accessed_raw = data.get("last_accessed")
-        if last_accessed_raw:
-            if isinstance(last_accessed_raw, str):
-                if last_accessed_raw.endswith("Z"):
-                    last_accessed_raw = last_accessed_raw[:-1]
-                last_accessed = datetime.fromisoformat(last_accessed_raw)
-                if last_accessed.tzinfo is None:
-                    last_accessed = last_accessed.replace(tzinfo=timezone.utc)
-            elif isinstance(last_accessed_raw, datetime):
-                last_accessed = last_accessed_raw
-                if last_accessed.tzinfo is None:
-                    last_accessed = last_accessed.replace(tzinfo=timezone.utc)
+        # Parse last_accessed datetime (tolerant: see _dict_to_episode).
+        last_accessed = self._parse_optional_datetime(
+            data.get("last_accessed"),
+            record_id=data.get("id", "<unknown>"),
+            field="last_accessed",
+        )
 
         return ProceduralSkill(
             id=data.get("id", ""),

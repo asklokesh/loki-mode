@@ -308,6 +308,173 @@ describe("runAutonomous", () => {
     expect(code).toBe(0);
   });
 
+  // ---------------------------------------------------------------------------
+  // FIX A REWORK: the Bun runner honors the quality-gate verdict with bash
+  // parity. A real code_review BLOCK (gated on hardGates) refuses completion;
+  // any OTHER gate failure (e.g. test_coverage on a bare project) is advisory
+  // and MUST NOT over-block a clean run. Source of truth: run.sh:16868-16930
+  // (code_review is the only completion-refusing gate) and quality_gates.ts
+  // (blocked = failed.length>0 on the hard-gates path only).
+  //
+  // These tests drive the REAL quality_gates.ts via per-gate stub env vars
+  // (LOKI_STUB_GATE_<NAME>) and disable the unrelated gates so the outcome is
+  // deterministic. They restore env in a finally so no cross-test leak.
+  // ---------------------------------------------------------------------------
+
+  // Toggle keys for every non-code_review gate, so a single-gate test is
+  // hermetic regardless of what the bare temp dir would otherwise trip.
+  const NON_CODE_REVIEW_GATE_TOGGLES = [
+    "PHASE_STATIC_ANALYSIS",
+    "PHASE_UNIT_TESTS",
+    "LOKI_GATE_MOCK",
+    "LOKI_GATE_MUTATION",
+    "LOKI_GATE_SEMANTIC_TESTS",
+    "LOKI_GATE_INVARIANTS",
+    "LOKI_GATE_DOC_COVERAGE",
+    "LOKI_GATE_MAGIC_DEBATE",
+    "LOKI_GATE_LSP_DIAGNOSTICS",
+  ];
+
+  async function withEnv(
+    vars: Record<string, string>,
+    fn: () => Promise<void>,
+  ): Promise<void> {
+    const prior: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(vars)) {
+      prior[k] = process.env[k];
+      process.env[k] = v;
+    }
+    try {
+      await fn();
+    } finally {
+      for (const [k] of Object.entries(vars)) {
+        if (prior[k] === undefined) delete process.env[k];
+        else process.env[k] = prior[k];
+      }
+    }
+  }
+
+  it("FIX A: a real code_review BLOCK (hardGates) refuses completion even when the council votes STOP", async () => {
+    const provider = new FakeProvider([{ exitCode: 0, capturedOutputPath: "" }]);
+    // Council would vote STOP on iteration 1; the code_review BLOCK must
+    // override that and force another iteration instead of council_approved.
+    const council = new FakeCouncil([true, true]);
+    const fakeStateMod = new FakeStateMod();
+    await withEnv(
+      {
+        LOKI_HARD_GATES: "true",
+        PHASE_CODE_REVIEW: "true",
+        LOKI_STUB_GATE_CODE_REVIEW: "fail",
+        // Disable every other gate so this run is deterministic.
+        ...Object.fromEntries(NON_CODE_REVIEW_GATE_TOGGLES.map((k) => [k, "0"])),
+      },
+      async () => {
+        const code = await runAutonomous(
+          baseOpts({
+            providerOverride: provider,
+            council,
+            stateOverride: fakeStateMod,
+            autonomyMode: "checkpoint",
+            // maxIterations:2 -> iter 1 runs (code_review blocks, completion
+            // refused), iter 2 hits the cap and exits 0 via
+            // max_iterations_reached. Bounded.
+            maxIterations: 2,
+            maxRetries: 5,
+          }),
+        );
+        // Loop terminates via max-iterations, not the council vote.
+        expect(code).toBe(0);
+        // Exactly one provider call: iter 1 ran, then the cap aborted iter 2.
+        expect(provider.calls.length).toBe(1);
+        // The decisive assertion: completion was REFUSED, so the run never
+        // recorded council_approved (nor completion_promise_fulfilled). The only
+        // terminal status is max_iterations_reached.
+        const statuses = fakeStateMod.saveCalls.map((c) => c.status);
+        expect(statuses).not.toContain("council_approved");
+        expect(statuses).not.toContain("completion_promise_fulfilled");
+        expect(statuses).toContain("max_iterations_reached");
+      },
+    );
+  });
+
+  it("FIX A: a non-code_review gate failure does NOT over-block a clean run (council STOP completes)", async () => {
+    const provider = new FakeProvider([{ exitCode: 0, capturedOutputPath: "" }]);
+    const council = new FakeCouncil([true]); // STOP on iteration 1
+    const fakeStateMod = new FakeStateMod();
+    await withEnv(
+      {
+        LOKI_HARD_GATES: "true",
+        // code_review passes; only test_coverage fails. Under the broken broad
+        // `blocked||escalated` logic this would refuse completion (the bug this
+        // rework fixes); under bash-parity semantics it must complete.
+        PHASE_CODE_REVIEW: "true",
+        LOKI_STUB_GATE_CODE_REVIEW: "pass",
+        PHASE_UNIT_TESTS: "true",
+        LOKI_STUB_GATE_TEST_COVERAGE: "fail",
+        // Disable the remaining gates so test_coverage is the sole failure.
+        PHASE_STATIC_ANALYSIS: "0",
+        LOKI_GATE_MOCK: "0",
+        LOKI_GATE_MUTATION: "0",
+        LOKI_GATE_SEMANTIC_TESTS: "0",
+        LOKI_GATE_INVARIANTS: "0",
+        LOKI_GATE_DOC_COVERAGE: "0",
+        LOKI_GATE_MAGIC_DEBATE: "0",
+        LOKI_GATE_LSP_DIAGNOSTICS: "0",
+      },
+      async () => {
+        const code = await runAutonomous(
+          baseOpts({
+            providerOverride: provider,
+            council,
+            stateOverride: fakeStateMod,
+            autonomyMode: "checkpoint",
+            maxIterations: 5,
+            maxRetries: 5,
+          }),
+        );
+        expect(code).toBe(0);
+        // The council STOP was honored after exactly one iteration: a clean run
+        // is NOT over-blocked by the advisory test_coverage failure.
+        expect(provider.calls.length).toBe(1);
+        const statuses = fakeStateMod.saveCalls.map((c) => c.status);
+        expect(statuses).toContain("council_approved");
+      },
+    );
+  });
+
+  it("FIX A non-vacuity: with hard gates OFF, even a code_review fail stays advisory (council STOP completes)", async () => {
+    // Mirrors run.sh:16977-16981 (soft-gates path: code_review is advisory and
+    // never refuses completion). quality_gates.ts forces blocked=false on this
+    // path, so the refusal condition (blocked && includes code_review) is never
+    // met. This pins that hardGates is a true precondition of the refusal.
+    const provider = new FakeProvider([{ exitCode: 0, capturedOutputPath: "" }]);
+    const council = new FakeCouncil([true]);
+    const fakeStateMod = new FakeStateMod();
+    await withEnv(
+      {
+        LOKI_HARD_GATES: "false",
+        PHASE_CODE_REVIEW: "true",
+        LOKI_STUB_GATE_CODE_REVIEW: "fail",
+      },
+      async () => {
+        const code = await runAutonomous(
+          baseOpts({
+            providerOverride: provider,
+            council,
+            stateOverride: fakeStateMod,
+            autonomyMode: "checkpoint",
+            maxIterations: 5,
+            maxRetries: 5,
+          }),
+        );
+        expect(code).toBe(0);
+        expect(provider.calls.length).toBe(1);
+        const statuses = fakeStateMod.saveCalls.map((c) => c.status);
+        expect(statuses).toContain("council_approved");
+      },
+    );
+  });
+
   it("provider success path: invokes FakeProvider with a non-empty prompt", async () => {
     const provider = new FakeProvider([{ exitCode: 0, capturedOutputPath: "" }]);
     const council = new FakeCouncil([true]); // stop after iter 1 so test is bounded

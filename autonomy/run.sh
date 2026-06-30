@@ -3801,6 +3801,82 @@ effective_session_cap() {
     return 0
 }
 
+# Auto-flag parity for parallel worktree Claude sessions (wave-5 fix).
+# The main RARV loop applies adaptive cost/resilience flags to its claude
+# invocation (run.sh:16007-16030 effort/max-budget/fallback) plus an MCP
+# bundle, but the parallel worktree spawn shipped a bare invocation that missed
+# them entirely. This populates the global _LOKI_WT_AUTO_FLAGS array with ONLY
+# the flags that are safe on the plain (non stream-json) worktree invocation:
+#   --effort           adaptive reasoning depth (dev tier)
+#   --max-budget-usd   per-call hard backstop
+#   --fallback-model   resilience to model overload/unavailability
+#   --mcp-config       (+ --strict-mcp-config) the same MCP bundle the Bun
+#                      route emits; a SUPERSET of the bash main loop, which does
+#                      NOT emit --mcp-config (see ledger run.sh:15990-15996).
+#                      Worktree dev streams benefit from the bundled MCP servers.
+# We deliberately do NOT replicate the stream-json-coupled flags
+# (--include-hook-events, --include-partial-messages) nor --output-format /
+# --session-id: this invocation logs free-form text, not parsed stream-json, so
+# those would be invalid or unwanted here. Each flag is gated on CLI support +
+# its opt-out env var, matching the main loop. Extracted from spawn_worktree_session
+# so it is unit-testable (tests/test-worktree-auto-flags.sh).
+_loki_build_worktree_claude_flags() {
+    _LOKI_WT_AUTO_FLAGS=()
+    # Non-claude providers never receive these flags.
+    if [ "${PROVIDER_NAME:-claude}" != "claude" ]; then
+        return 0
+    fi
+    # Dev-tier model param drives the fallback derivation (worktree streams are
+    # development work). Resolve via the provider helper when available.
+    local _loki_wt_primary=""
+    if type provider_get_tier_param >/dev/null 2>&1; then
+        _loki_wt_primary="$(provider_get_tier_param development 2>/dev/null || true)"
+    fi
+    if [ "${LOKI_AUTO_EFFORT:-on}" != "off" ] \
+       && type loki_effort_for_tier >/dev/null 2>&1 \
+       && type loki_claude_flag_supported >/dev/null 2>&1 \
+       && loki_claude_flag_supported "--effort"; then
+        local _loki_wt_effort
+        _loki_wt_effort="$(loki_effort_for_tier development "${DETECTED_COMPLEXITY:-${LOKI_COMPLEXITY:-standard}}")"
+        [ -n "$_loki_wt_effort" ] && _LOKI_WT_AUTO_FLAGS+=("--effort" "$_loki_wt_effort")
+    fi
+    if [ "${LOKI_AUTO_BUDGET:-on}" != "off" ] \
+       && type loki_remaining_budget >/dev/null 2>&1 \
+       && type loki_claude_flag_supported >/dev/null 2>&1 \
+       && loki_claude_flag_supported "--max-budget-usd"; then
+        local _loki_wt_rem
+        _loki_wt_rem="$(loki_remaining_budget)"
+        [ -n "$_loki_wt_rem" ] && _LOKI_WT_AUTO_FLAGS+=("--max-budget-usd" "$_loki_wt_rem")
+    fi
+    if [ "${LOKI_AUTO_FALLBACK:-on}" != "off" ] \
+       && [ -n "$_loki_wt_primary" ] \
+       && type loki_fallback_for_primary >/dev/null 2>&1 \
+       && type loki_claude_flag_supported >/dev/null 2>&1 \
+       && loki_claude_flag_supported "--fallback-model"; then
+        local _loki_wt_fb
+        _loki_wt_fb="$(loki_fallback_for_primary "$_loki_wt_primary")"
+        [ -n "$_loki_wt_fb" ] && _LOKI_WT_AUTO_FLAGS+=("--fallback-model" "$_loki_wt_fb")
+    fi
+    if type loki_mcp_config_argv >/dev/null 2>&1 \
+       && type loki_claude_flag_supported >/dev/null 2>&1 \
+       && loki_claude_flag_supported "--mcp-config"; then
+        local _loki_wt_mcp
+        if _loki_wt_mcp="$(loki_mcp_config_argv)" && [ -n "$_loki_wt_mcp" ]; then
+            _LOKI_WT_AUTO_FLAGS+=("--mcp-config")
+            local _loki_wt_mcp_path
+            for _loki_wt_mcp_path in $_loki_wt_mcp; do
+                _LOKI_WT_AUTO_FLAGS+=("$_loki_wt_mcp_path")
+            done
+            # --strict-mcp-config only alongside a real bundle, never bare.
+            if [ "${LOKI_STRICT_MCP:-1}" != "0" ] \
+               && loki_claude_flag_supported "--strict-mcp-config"; then
+                _LOKI_WT_AUTO_FLAGS+=("--strict-mcp-config")
+            fi
+        fi
+    fi
+    return 0
+}
+
 # Spawn a Claude session in a worktree
 spawn_worktree_session() {
     local stream_name="$1"
@@ -3843,6 +3919,11 @@ spawn_worktree_session() {
 
     log_step "Spawning ${PROVIDER_DISPLAY_NAME:-Claude} session: $stream_name"
 
+    # Build the worktree auto-flag set (effort/max-budget/fallback/mcp-config)
+    # BEFORE the ( subshell so it is inherited (a `bash -c` would not). Populates
+    # the global _LOKI_WT_AUTO_FLAGS array. See _loki_build_worktree_claude_flags.
+    _loki_build_worktree_claude_flags
+
     (
         cd "$worktree_path" || exit 1
         _wt_exit=0
@@ -3858,12 +3939,17 @@ spawn_worktree_session() {
                 if type loki_caveman_activate_env >/dev/null 2>&1; then
                     _loki_wt_cm="$(loki_caveman_activate_env)"
                 fi
+                # Expand the auto-flag array with the bash-3.2 empty-array guard
+                # (${arr[@]+...}) so a bare "${arr[@]}" under set -u does not
+                # abort with "unbound variable" when no flags were collected.
                 if [ -n "$_loki_wt_cm" ]; then
                     CAVEMAN_DEFAULT_MODE="$_loki_wt_cm" claude --dangerously-skip-permissions \
+                        "${_LOKI_WT_AUTO_FLAGS[@]+"${_LOKI_WT_AUTO_FLAGS[@]}"}" \
                         -p "Loki Mode: $task_prompt. Read .loki/CONTINUITY.md for context." \
                         >> "$log_file" 2>&1 || _wt_exit=$?
                 else
                     claude --dangerously-skip-permissions \
+                        "${_LOKI_WT_AUTO_FLAGS[@]+"${_LOKI_WT_AUTO_FLAGS[@]}"}" \
                         -p "Loki Mode: $task_prompt. Read .loki/CONTINUITY.md for context." \
                         >> "$log_file" 2>&1 || _wt_exit=$?
                 fi

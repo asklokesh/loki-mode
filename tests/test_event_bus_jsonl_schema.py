@@ -146,6 +146,65 @@ def test_flat_jsonl_id_is_deterministic():
     assert a.id, "derived id should be non-empty"
 
 
+def test_derived_id_width_is_widened():
+    """Derived id for an idless flat line is 16 hex chars (64-bit), not 8.
+
+    A narrow 8-char (32-bit) truncation of user-controllable digest input
+    collides at the birthday bound around ~77k events; a collision makes two
+    DISTINCT events share an id, so EventBus dedup silently DROPS the second.
+    This pins the widened width so a regression back to [:8] fails here.
+    """
+    line = {'timestamp': '2026-06-17T16:00:00Z', 'type': 'state',
+            'data': {'source': 'runner', 'action': 'a'}}
+    ev = LokiEvent.from_dict(line)
+    assert len(ev.id) == 16, (
+        "derived id width regressed; expected 16 hex chars, got %d (%r)"
+        % (len(ev.id), ev.id)
+    )
+    # All hex (sha1 digest slice).
+    int(ev.id, 16)
+
+
+def test_distinct_flat_records_get_distinct_ids():
+    """Distinct flat records (differing only in payload) get distinct ids.
+
+    Non-vacuous: exercises that the derivation incorporates the payload, so two
+    events that differ only in a payload field do not collide and clobber each
+    other in dedup.
+    """
+    base = {'timestamp': '2026-06-17T16:00:00Z', 'type': 'state'}
+    a = LokiEvent.from_dict(dict(base, data={'source': 'runner', 'action': 'a'}))
+    b = LokiEvent.from_dict(dict(base, data={'source': 'runner', 'action': 'b'}))
+    c = LokiEvent.from_dict(dict(base, data={'source': 'runner', 'action': 'c'}))
+    ids = {a.id, b.id, c.id}
+    assert len(ids) == 3, f"distinct records collided to {ids!r}"
+
+
+def test_distinct_records_do_not_drop_on_import():
+    """Two distinct idless lines both import (neither dropped by id collision)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        loki_dir = Path(tmp) / '.loki'
+        loki_dir.mkdir(parents=True)
+        lines = [
+            {'timestamp': '2026-06-17T16:00:00Z', 'type': 'state',
+             'data': {'source': 'runner', 'action': 'x'}},
+            {'timestamp': '2026-06-17T16:00:00Z', 'type': 'state',
+             'data': {'source': 'runner', 'action': 'y'}},
+        ]
+        (loki_dir / 'events.jsonl').write_text(
+            ''.join(json.dumps(l) + '\n' for l in lines)
+        )
+        bus = EventBus(loki_dir=loki_dir)
+        imported = bus.import_from_jsonl()
+        assert imported == 2, (
+            "a distinct second event was dropped on import; got %d" % imported
+        )
+        pending = list((loki_dir / 'events' / 'pending').glob('*.json'))
+        assert len(pending) == 2, (
+            "expected 2 distinct pending files, got %d" % len(pending)
+        )
+
+
 if __name__ == '__main__':
     import pytest
     raise SystemExit(pytest.main([__file__, '-v']))
