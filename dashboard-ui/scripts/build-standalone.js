@@ -950,6 +950,116 @@ function generateStandaloneHTML(bundleCode) {
 
     /* Overview handled by <loki-overview> shadow DOM */
 
+    /* First-run hero: shown only to a brand-new user (no completed runs,
+       no active session, no current spec). Gated in JS on /api/spec/history
+       being empty so a returning-but-idle user never sees it. Hidden by
+       default; JS adds .first-run-hero--visible after the signal confirms. */
+    .first-run-hero {
+      display: none;
+    }
+    .first-run-hero--visible {
+      display: block;
+      margin-bottom: 28px;
+      background: var(--loki-bg-card);
+      border: 1px solid var(--loki-border);
+      border-radius: 8px;
+      padding: 28px 28px 24px;
+    }
+    .first-run-hero__top {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 6px;
+    }
+    .first-run-hero__icon {
+      width: 40px;
+      height: 40px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 9999px;
+      background: var(--loki-accent-glow);
+      color: var(--loki-accent);
+    }
+    .first-run-hero__icon svg { width: 22px; height: 22px; }
+    .first-run-hero__title {
+      font-family: 'DM Serif Display', Georgia, serif;
+      font-size: 1.5rem;
+      font-weight: 400;
+      color: var(--loki-text-primary);
+      letter-spacing: -0.01em;
+    }
+    .first-run-hero__desc {
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--loki-text-secondary);
+      max-width: 620px;
+      margin: 0 0 18px;
+    }
+    .first-run-hero__cmd-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--loki-text-muted);
+      margin-bottom: 6px;
+    }
+    .first-run-hero__cmd {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--loki-bg-tertiary);
+      border: 1px solid var(--loki-border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      max-width: 420px;
+      margin-bottom: 14px;
+    }
+    .first-run-hero__cmd code {
+      flex: 1;
+      font-family: var(--loki-font-mono, 'JetBrains Mono', monospace);
+      font-size: 13px;
+      color: var(--loki-text-primary);
+      white-space: nowrap;
+      overflow-x: auto;
+    }
+    .first-run-hero__copy {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: var(--loki-accent);
+      color: #ffffff;
+      border: none;
+      border-radius: 5px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .first-run-hero__copy:hover { background: var(--loki-accent-hover); }
+    .first-run-hero__copy:focus-visible {
+      outline: 2px solid var(--loki-accent);
+      outline-offset: 2px;
+    }
+    .first-run-hero__copy svg { width: 13px; height: 13px; }
+    .first-run-hero__secondary {
+      font-size: 13px;
+      color: var(--loki-text-muted);
+      line-height: 1.6;
+    }
+    .first-run-hero__secondary code {
+      font-family: var(--loki-font-mono, 'JetBrains Mono', monospace);
+      font-size: 12px;
+      background: var(--loki-bg-tertiary);
+      color: var(--loki-text-secondary);
+      padding: 1px 6px;
+      border-radius: 3px;
+    }
+
     /* Offline Banner */
     .offline-banner {
       position: fixed;
@@ -1234,6 +1344,35 @@ function generateStandaloneHTML(bundleCode) {
     <main class="main-content" id="main-content">
       <!-- Overview + Tasks (combined) -->
       <div class="section-page active" id="page-overview">
+        <!-- First-run hero: a brand-new user (zero completed runs) lands here
+             with nothing to show. Instead of three stacked passive empty
+             states, give them one branded next action. Hidden by default;
+             initFirstRunHero() reveals it only when /api/spec/history is
+             empty AND no session is active AND no spec is loaded. A returning
+             user who has shipped a run never sees it. -->
+        <section class="first-run-hero" id="first-run-hero" role="region" aria-label="Get started with Loki" hidden>
+          <div class="first-run-hero__top">
+            <span class="first-run-hero__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+            </span>
+            <h2 class="first-run-hero__title">Start your first build</h2>
+          </div>
+          <p class="first-run-hero__desc">
+            Loki turns a spec (a PRD, a GitHub issue, or a one-line idea) into a verified, working product.
+            No build has run in this project yet. Run the guided quickstart in your terminal to kick off your first one, then watch it here live.
+          </p>
+          <div class="first-run-hero__cmd-label">Run in your terminal</div>
+          <div class="first-run-hero__cmd">
+            <code id="first-run-cmd">loki quickstart</code>
+            <button type="button" class="first-run-hero__copy" id="first-run-copy" aria-label="Copy command: loki quickstart" data-copy="loki quickstart">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              <span id="first-run-copy-label">Copy</span>
+            </button>
+          </div>
+          <p class="first-run-hero__secondary">
+            Just looking? Try a zero-key, zero-spend sample receipt: <code>loki tour</code>
+          </p>
+        </section>
         <!-- Active spec: what Loki is building from + history of past specs -->
         <div style="margin-bottom: 28px;">
           <div class="section-page-header">
@@ -2331,8 +2470,83 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Overview cards are now handled by the <loki-overview> component
   // which polls /api/status reactively via the unified API client.
+
+  // First-run hero: reveal only for a genuinely brand-new user. The honest
+  // "has this project ever produced a build?" signal is /api/spec/history,
+  // which is derived from real Evidence Receipts (never faked). We additionally
+  // require no active session and no current spec so the hero never overlaps a
+  // live or just-finished run. A returning-but-idle user (history > 0) never
+  // sees it. Any fetch error -> leave the hero hidden (fail safe, no false
+  // "you've never built" claim).
+  (function initFirstRunHero() {
+    var hero = document.getElementById('first-run-hero');
+    if (!hero) return;
+
+    var copyBtn = document.getElementById('first-run-copy');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', function() {
+        var cmd = copyBtn.getAttribute('data-copy') || 'loki quickstart';
+        var label = document.getElementById('first-run-copy-label');
+        var done = function() {
+          if (!label) return;
+          var prev = label.textContent;
+          label.textContent = 'Copied';
+          setTimeout(function() { label.textContent = prev; }, 1600);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(cmd).then(done).catch(function() {});
+        } else {
+          // Older/insecure-context fallback: select + execCommand.
+          var ta = document.createElement('textarea');
+          ta.value = cmd;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'absolute';
+          ta.style.left = '-9999px';
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand('copy'); done(); } catch (e) { /* ignore */ }
+          document.body.removeChild(ta);
+        }
+      });
+    }
+
+    function showHero(show) {
+      if (show) {
+        hero.hidden = false;
+        hero.classList.add('first-run-hero--visible');
+      } else {
+        hero.classList.remove('first-run-hero--visible');
+        hero.hidden = true;
+      }
+    }
+
+    function evaluate() {
+      Promise.all([
+        fetch(detectedUrl + '/api/spec/history').then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; }),
+        fetch(detectedUrl + '/api/status').then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; }),
+        fetch(detectedUrl + '/api/spec').then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; })
+      ]).then(function(res) {
+        var history = res[0];
+        var status = res[1];
+        var spec = res[2];
+        // Fail safe: if we cannot read the history signal, do not claim
+        // "you've never built" -- keep the hero hidden.
+        if (!history || !Array.isArray(history.history)) { showHero(false); return; }
+        var hasEverBuilt = history.history.length > 0;
+        var st = status && status.status ? String(status.status) : 'offline';
+        var sessionActive = (st === 'running' || st === 'autonomous' || st === 'paused');
+        var hasSpec = !!(spec && spec.type && spec.type !== 'none');
+        showHero(!hasEverBuilt && !sessionActive && !hasSpec);
+      }).catch(function() { showHero(false); });
+    }
+
+    evaluate();
+    // Re-check after a session starts/stops so the hero disappears once the
+    // first build begins and never reappears once a run has shipped.
+    setInterval(evaluate, 15000);
+  })();
 });
-  </script>
+</script>
 </body>
 </html>`;
 }

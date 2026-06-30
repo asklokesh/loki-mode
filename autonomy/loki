@@ -922,6 +922,7 @@ show_help() {
     echo "  loki start --bg ./prd.md      # Start in background"
     echo "  loki start --parallel ./prd.md   # Parallel mode (git worktrees)"
     echo "  loki quick \"add dark mode\"  # Single-task mode (3 iters max)"
+    echo "  loki tour                     # See a real sample result (no provider, no key, no spend)"
     echo "  loki demo                     # Build a sample todo app end to end"
     echo "  loki init -t saas-starter     # Scaffold from template"
     echo "  loki template install <src>   # Install a community PRD template"

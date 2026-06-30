@@ -509,6 +509,29 @@ class HonestyHeadlineTests(unittest.TestCase):
         self.assertEqual(items["tests"]["status"], "not_run")
         self.assertTrue(items["tests"]["reason"])
 
+    def test_diff_only_no_checks_is_not_verified(self):
+        # Regression (wave-9 CRITICAL): a build that produced a real non-empty
+        # diff but ran NO tests, NO build, and passed NO gates must read
+        # NOT VERIFIED -- never "VERIFIED WITH GAPS". A non-empty diff is a
+        # PREREQUISITE for VERIFIED, not a positive fact of passage; code was
+        # written but nothing was shown to pass. Previously diff_nonempty was
+        # counted as a verified fact, letting a checks-free build read amber-green.
+        proj, base = self._git_repo_with_change()
+        loki_dir = os.path.join(proj, ".loki")
+        out_dir = os.path.join(self.tmp, "out-diffonly")
+        os.makedirs(loki_dir)
+        # No test-results.json, no build-results.json, no quality gates: only the
+        # real non-empty diff exists.
+        d = _run_generator(loki_dir, out_dir,
+                           env_extra={"_LOKI_ITER_START_SHA": base})
+        self.assertEqual(d["facts"]["tests"]["status"], "not_run")
+        self.assertTrue((d["facts"]["git"]["diff"] or {}).get("count"),
+                        "fixture must have a non-empty diff to exercise the bug")
+        self.assertEqual(
+            d["honesty"]["headline"], "NOT VERIFIED",
+            "a diff-only build with no passing checks must be NOT VERIFIED, "
+            "not VERIFIED WITH GAPS (the wave-9 fake-green)")
+
     def test_bare_pass_true_without_command_not_verified(self):
         # OLD shape {pass: true} maps tests.status -> verified, but the headline
         # additionally requires a real command + exit_code 0. A bare pass:true

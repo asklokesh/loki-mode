@@ -843,12 +843,17 @@ def _compute_headline(facts, degraded):
     if tests_verified and not degraded and diff_nonempty:
         return "VERIFIED"
     # Any fact verified at all (tests/build verified, or a passed gate)?
+    # A non-empty diff is a PREREQUISITE for VERIFIED (checked above), NOT a
+    # positive fact of passage: code was written, but nothing was shown to pass.
+    # Including diff_nonempty here let a build that ran ZERO tests/gates but
+    # produced code emit "VERIFIED WITH GAPS" - a fake-green at the receipt. Only
+    # a fact that actually ran and passed (tests/build verified, or a passed gate)
+    # may qualify; otherwise the honest headline is NOT VERIFIED.
     any_verified = (
         tests.get("status") == "verified"
         or build.get("status") == "verified"
         or any(g.get("status") == "passed"
                for g in (facts.get("quality_gates") or []))
-        or diff_nonempty
     )
     if any_verified and degraded:
         return "VERIFIED WITH GAPS"

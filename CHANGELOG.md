@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.101.0] - 2026-06-30
+
+### CRITICAL trust fix + adoption empty-state + cleanup
+
+- **Evidence Receipt no longer reads green on a checks-free build**
+  (`autonomy/lib/proof-generator.py`): a build that produced a non-empty diff but
+  ran ZERO tests, ZERO build, and passed ZERO quality gates could emit a
+  "VERIFIED WITH GAPS" headline. A non-empty diff is a PREREQUISITE for VERIFIED,
+  not a positive fact of passage - code was written but nothing was shown to pass.
+  The diff is no longer counted as a verified fact; such a build is now honestly
+  NOT VERIFIED. A genuine pass is unchanged, and a verified-but-degraded build is
+  still VERIFIED WITH GAPS. One headline codepath, so this covers both the bash
+  and Bun routes. Regression test added.
+- **Dashboard first-run empty state** (`dashboard-ui`): a brand-new user with no
+  builds now sees a "Start your first build" hero (with `loki quickstart` and the
+  zero-key `loki tour`) instead of a blank, gated to a genuinely never-built
+  project and fail-safe hidden on any error (never falsely claims you have not
+  built).
+- **Actionable pre-build errors** (`autonomy/run.sh`): a non-writable workspace
+  (disk full / permissions / read-only) now fails fast with a copy-paste remedy;
+  a build that produced no file changes gets an honest next-step instead of a
+  silent no-op. `loki tour` added to help.
+- **Removed dead `bin/postinstall.js`** (no postinstall hook since v7.4.12).
+
+
 ## [7.100.1] - 2026-06-30
 
 ### Zero-friction: surface the no-key path at every first touch

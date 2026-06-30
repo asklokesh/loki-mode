@@ -2023,6 +2023,35 @@ _loki_check_git_present() {
     return 0
 }
 
+# _loki_check_workspace_writable: the build writes state, proofs, and source into
+# the working directory and its .loki/ subtree on every iteration. A read-only
+# volume, a permission-denied directory, or a full disk would otherwise fail
+# silently deep inside the loop (every state write swallows errors with
+# `2>/dev/null || true`), leaving the user with a confusing half-built run. Catch
+# it once, up front, with one actionable message instead. HARD requirement.
+_loki_check_workspace_writable() {
+    local dir="${TARGET_DIR:-$(pwd)}"
+    local probe="${dir}/.loki/.write-probe.$$"
+    # Ensure the .loki subtree can be created and written to.
+    if ! mkdir -p "${dir}/.loki" 2>/dev/null; then
+        if [ ! -w "$dir" ]; then
+            log_error "Cannot create ${dir}/.loki -- the working directory is not writable. Fix permissions (e.g. chmod u+w '${dir}') or run from a directory you own, then retry."
+        else
+            log_error "Cannot create ${dir}/.loki. If the disk is full, free space (df -h '${dir}'); if it is a read-only mount, run from a writable location, then retry."
+        fi
+        return 1
+    fi
+    # Confirm we can actually write a byte (catches full disk / read-only mount
+    # where the directory exists but writes fail).
+    if ! (: > "$probe") 2>/dev/null; then
+        rm -f "$probe" 2>/dev/null || true
+        log_error "Cannot write to ${dir}/.loki -- check free disk space (df -h '${dir}') and that the volume is not read-only, then retry."
+        return 1
+    fi
+    rm -f "$probe" 2>/dev/null || true
+    return 0
+}
+
 # _loki_check_network_reachable: ADVISORY only. A fast (3s) reachability probe to
 # the active provider endpoint that WARNS and continues if it cannot reach it -- a
 # curl failure does not prove the provider CLI cannot connect (3s timeout under
@@ -2068,6 +2097,9 @@ validate_api_keys() {
         return 1
     fi
     if ! _loki_check_git_present; then
+        return 1
+    fi
+    if ! _loki_check_workspace_writable; then
         return 1
     fi
     if ! _loki_check_network_reachable "$provider"; then
@@ -3229,6 +3261,22 @@ except Exception:
         else
             echo "Diff stat: (no changes detected vs run start, or git unavailable)"
         fi
+        # Empty-diff remedy (mirrors emit_completion_summary's on-screen line) so
+        # a --bg or dashboard user reading COMPLETION.txt gets the same honest,
+        # actionable guidance as a foreground user. Never implies success.
+        case "$files_changed" in
+            ''|0)
+                case "$outcome" in
+                    complete|max_iterations)
+                        echo ""
+                        echo "No file changes were produced this run. Likely the spec was too vague"
+                        echo "or already satisfied. Next: re-run with a more concrete spec, e.g."
+                        echo "  loki start \"<one concrete, testable change you want>\""
+                        echo "or inspect what happened: loki why"
+                        ;;
+                esac
+                ;;
+        esac
     } > "$loki_dir/COMPLETION.txt" 2>/dev/null || true
 
     # ---- Durable machine-readable file: .loki/state/completion.json -----------
@@ -3515,6 +3563,24 @@ except Exception:
     fi
     echo -e "${GREEN}|${NC} Branch: ${BOLD}${_branch}${NC}"
     echo -e "${GREEN}|${NC} Files:  ${BOLD}${_files}${NC} changed  ${GREEN}+${_ins}${NC} / ${RED}-${_del}${NC}"
+    # Empty-diff guard (honest, not fake-green): a run that ended without
+    # producing ANY file change is the classic confusing new-user outcome
+    # ("it said done, but nothing happened"). Never imply success on a 0-file
+    # run -- surface it plainly with one actionable next step. Only for the
+    # non-failure outcomes (a "failed"/"stopped" box already explains itself).
+    case "$_files" in
+        ''|0)
+            case "$_outcome" in
+                complete|max_iterations)
+                    echo -e "${GREEN}|${NC}"
+                    echo -e "${GREEN}|${NC} ${YELLOW}No file changes were produced this run.${NC} Likely the spec was too vague"
+                    echo -e "${GREEN}|${NC} or already satisfied. Next: re-run with a more concrete spec, e.g."
+                    echo -e "${GREEN}|${NC}   ${BOLD}loki start \"<one concrete, testable change you want>\"${NC}"
+                    echo -e "${GREEN}|${NC} or inspect what happened: ${BOLD}loki why${NC}"
+                    ;;
+            esac
+            ;;
+    esac
     case "$_atotal" in ''|0) : ;; *)
         echo -e "${GREEN}|${NC} Spec assumptions recorded: ${BOLD}${_atotal}${NC} (${_ahigh} high) ${DIM}see .loki/assumptions/ledger.md${NC}"
         ;;
