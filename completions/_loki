@@ -125,6 +125,7 @@ function _loki_commands {
         'quickstart:Guided first build from your idea'
         'monitor:Monitor Docker Compose services with auto-fix'
         'demo:Interactive 60-second demo'
+        'tour:Offline sample receipt replay (no key, no spend)'
         'init:Interactive PRD builder'
         'stop:Stop execution'
         'pause:Pause execution'

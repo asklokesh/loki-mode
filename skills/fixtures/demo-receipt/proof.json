@@ -1,0 +1,166 @@
+{
+  "schema_version": "1.1",
+  "run_id": "run-sample-demo-replay",
+  "generated_at": "2026-06-27T17:21:37Z",
+  "loki_version": "sample",
+  "started_at": "2026-06-27T16:42:44Z",
+  "wall_clock_sec": 2333,
+  "spec": {
+    "source": "./.loki/generated-prd.md",
+    "brief": "Sample Evidence Receipt bundled with Loki Mode for the offline demo (loki demo --offline / loki tour). Copied from a real build and sanitized: no machine paths, no secrets. The verification facts below (tests, security, cost, diff) are the real recorded results of that build. This file is for replay/display only."
+  },
+  "provider": {
+    "name": "claude",
+    "model": "opus"
+  },
+  "iterations": {
+    "count": 3,
+    "succeeded": 3,
+    "failed": 0
+  },
+  "files_changed": {
+    "count": 8,
+    "insertions": 1413,
+    "deletions": 35,
+    "files": [
+      { "path": "API.md", "insertions": 227, "deletions": 0, "status": "modified" },
+      { "path": "ARCHITECTURE.md", "insertions": 197, "deletions": 0, "status": "modified" },
+      { "path": "CLAUDE.md", "insertions": 94, "deletions": 0, "status": "modified" },
+      { "path": "COMPONENTS.md", "insertions": 206, "deletions": 0, "status": "modified" },
+      { "path": "DECISIONS.md", "insertions": 146, "deletions": 0, "status": "modified" },
+      { "path": "README.md", "insertions": 157, "deletions": 35, "status": "modified" },
+      { "path": "SETUP.md", "insertions": 236, "deletions": 0, "status": "modified" },
+      { "path": "TESTING.md", "insertions": 150, "deletions": 0, "status": "modified" }
+    ]
+  },
+  "diffs": null,
+  "council": {
+    "enabled": true,
+    "final_verdict": "",
+    "threshold": null,
+    "reviewers": [],
+    "findings_link": null
+  },
+  "quality_gates": {
+    "passed": 0,
+    "total": 0,
+    "gates": []
+  },
+  "cost": {
+    "usd": 10.3218,
+    "input_tokens": 18484,
+    "output_tokens": 43491,
+    "cache_read_tokens": 5868340,
+    "cache_creation_tokens": 246851
+  },
+  "deployment": {
+    "deployed_url": null,
+    "public_url": null
+  },
+  "facts": {
+    "git": {
+      "base_sha": "255d91cf3d688a42a6e9a5f0e1c042ecfc29de0c",
+      "head_sha": "a42cb14ae996eb7459c81b7a43c5686f3612072e",
+      "diff": {
+        "count": 8,
+        "insertions": 1413,
+        "deletions": 35,
+        "files": [
+          { "path": "API.md", "insertions": 227, "deletions": 0, "status": "modified" },
+          { "path": "ARCHITECTURE.md", "insertions": 197, "deletions": 0, "status": "modified" },
+          { "path": "CLAUDE.md", "insertions": 94, "deletions": 0, "status": "modified" },
+          { "path": "COMPONENTS.md", "insertions": 206, "deletions": 0, "status": "modified" },
+          { "path": "DECISIONS.md", "insertions": 146, "deletions": 0, "status": "modified" },
+          { "path": "README.md", "insertions": 157, "deletions": 35, "status": "modified" },
+          { "path": "SETUP.md", "insertions": 236, "deletions": 0, "status": "modified" },
+          { "path": "TESTING.md", "insertions": 150, "deletions": 0, "status": "modified" }
+        ]
+      },
+      "diff_sha256": "c2be6fff3e774c387f276277b25fc424f07b667b0f2c73d8804f954f37bd1356"
+    },
+    "build": {
+      "command": "",
+      "exit_code": null,
+      "ran": false,
+      "duration_sec": null,
+      "status": "not_run"
+    },
+    "tests": {
+      "runner": "node-test",
+      "command": "node-test",
+      "exit_code": 0,
+      "passed_count": null,
+      "failed_count": null,
+      "status": "verified",
+      "duration_sec": null
+    },
+    "quality_gates": [],
+    "security": {
+      "ran": true,
+      "total": 2,
+      "active": 2,
+      "waived": 0,
+      "high_active": 0,
+      "status": "findings",
+      "findings": [
+        { "rule": "cors-wildcard-credentials", "severity": "MEDIUM", "waived": false },
+        { "rule": "cors-wildcard-credentials", "severity": "MEDIUM", "waived": false }
+      ]
+    },
+    "cost": {
+      "usd": 10.3218,
+      "input_tokens": 18484,
+      "output_tokens": 43491,
+      "cache_read_tokens": 5868340,
+      "cache_creation_tokens": 246851
+    },
+    "meta": {
+      "run_id": "run-sample-demo-replay",
+      "loki_version": "sample",
+      "provider": "claude",
+      "model": "opus",
+      "started_at": "2026-06-27T16:42:44Z",
+      "generated_at": "2026-06-27T17:21:37Z",
+      "wall_clock_sec": 2333
+    }
+  },
+  "assessments": {
+    "_note": "AI judgment, not deterministic proof",
+    "council": {
+      "enabled": true,
+      "final_verdict": "",
+      "threshold": null,
+      "reviewers": [],
+      "findings_link": null
+    },
+    "completion_claim": {
+      "claimed": true,
+      "evidence_gate_verdict": "pass"
+    }
+  },
+  "honesty": {
+    "headline": "VERIFIED WITH GAPS",
+    "degraded": [
+      {
+        "item": "build",
+        "status": "not_run",
+        "reason": "build not run"
+      }
+    ],
+    "evidence_gate": {
+      "ran": true,
+      "verdict": "pass",
+      "baseline_established": true
+    }
+  },
+  "redaction": {
+    "applied": false,
+    "rules_version": "1.0",
+    "redactions_count": 0
+  },
+  "verification": {
+    "hash": "sample-not-reproducible",
+    "algo": "sha256",
+    "scope": "integrity"
+  }
+}

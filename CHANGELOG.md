@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.100.0] - 2026-06-30
+
+### Zero-friction adoption: offline taste path + shareable receipt badge
+
+- **`loki demo --offline` (and `loki tour`)**: a zero-key, zero-spend, no-network
+  taste path. It replays a bundled real Evidence Receipt and prints its honest
+  headline + facts in under a second, so a newcomer can see what Loki produces
+  WITHOUT installing a provider CLI, logging in, or spending anything. It is
+  clearly framed as a SAMPLE/replay (never presented as a verdict on the user's
+  own code) and never renders a green/verified signal unless the bundled
+  receipt's real headline is VERIFIED (it is VERIFIED WITH GAPS, shown as such).
+- **`loki proof share` receipt badge**: after sharing, prints a copy-paste
+  "Verified by Loki" markdown badge for READMEs/PRs/posts. The badge color and
+  text derive ONLY from the receipt's honest headline: green only for VERIFIED,
+  a distinct badge for VERIFIED WITH GAPS, red for NOT VERIFIED, and no badge at
+  all when there is no verifiable headline (no fake-green, no new network egress).
+- **README leads with `loki quickstart`**: the guided one-command first build is
+  now the headline path; `loki init` + `loki start` remain as the explicit path.
+
+
 ## [7.99.1] - 2026-06-30
 
 ### Memory retrieval: dimension-mismatch degrades to keyword search

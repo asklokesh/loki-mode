@@ -140,11 +140,33 @@ status check in your repository's branch-protection settings.
 
 ```bash
 bun install -g loki-mode                       # install (npm/brew/Docker also work, see below)
+loki quickstart                                # one guided command: your first real build
+```
+
+`loki quickstart` is the recommended way to start. It asks a few quick questions
+(setup check, one-line idea, template pick, plan review), quotes the real
+cost/time estimate before anything is spent, and then runs the build. Pressing
+Enter through every step builds the sample Todo app.
+
+Want a taste with zero key and zero spend first? Run:
+
+```bash
+loki demo --offline                            # replay a real sample Evidence Receipt (no key, no spend)
+```
+
+It replays a real past build's Evidence Receipt so you can see Loki's honest
+verdict (VERIFIED / VERIFIED WITH GAPS / NOT VERIFIED) in seconds, with no
+provider, no API key, no spend, and no network. It is a sample (a replay), not a
+verdict on your own code.
+
+Prefer the explicit, scriptable path? Scaffold a PRD and run the build yourself:
+
+```bash
 loki init my-app --template simple-todo-app    # scaffold a starter PRD
 cd my-app && loki start prd.md                 # autonomous build from the spec
 ```
 
-That is the happy path. One thing to know first: Loki drives a separate coding-agent CLI (Claude Code is the recommended one) and needs it plus a couple of common tools on your PATH. Run `loki doctor` any time and it tells you exactly what is present and what is missing, with a copy-pasteable install command for each gap.
+One thing to know first: Loki drives a separate coding-agent CLI (Claude Code is the recommended one) and needs it plus a couple of common tools on your PATH. Run `loki doctor` any time and it tells you exactly what is present and what is missing, with a copy-pasteable install command for each gap.
 
 ```bash
 loki doctor                                    # check your setup before the first build

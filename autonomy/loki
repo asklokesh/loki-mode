@@ -11380,15 +11380,23 @@ cmd_demo() {
         echo "runs 'loki start' to build it end-to-end. Shows a summary when done"
         echo "and offers to open the result in a browser."
         echo ""
+        echo "With --offline, instead replays a bundled real Evidence Receipt so"
+        echo "you can see what Loki produces with no provider, no API key, no"
+        echo "spend, and no network. This is a sample (a replay of a past build),"
+        echo "not a verdict on your own code."
+        echo ""
         echo "Usage: loki demo [options]"
         echo ""
         echo "Options:"
+        echo "  --offline     Replay a bundled sample receipt (no key, no spend)"
         echo "  --dir PATH    Use a specific directory instead of a temp dir"
         echo "  --keep        Keep the temp directory on exit (default: kept)"
         echo "  --provider P  AI provider to use (default: claude)"
         echo "  --dry-run     Show what would happen without running"
         echo ""
         echo "Examples:"
+        echo "  loki demo --offline              # Replay a sample receipt (no spend)"
+        echo "  loki tour                        # Same as 'loki demo --offline'"
         echo "  loki demo                        # Build todo app in temp dir"
         echo "  loki demo --dir ~/demo-project   # Build in specific directory"
         echo "  loki demo --provider codex       # Use Codex instead of Claude"
@@ -11411,6 +11419,7 @@ cmd_demo() {
     local demo_dir=""
     local provider=""
     local dry_run=false
+    local offline=false
     local start_args=()
     # v7.29.0 (feature #4): demo now shows the FORCED-simple cost estimate
     # before spending and asks for confirmation. --yes / LOKI_ASSUME_YES skip
@@ -11459,6 +11468,10 @@ cmd_demo() {
                 dry_run=true
                 shift
                 ;;
+            --offline|--tour)
+                offline=true
+                shift
+                ;;
             *)
                 echo -e "${RED}Unknown option: $1${NC}"
                 echo "Run 'loki demo --help' for usage."
@@ -11466,6 +11479,60 @@ cmd_demo() {
                 ;;
         esac
     done
+
+    # Offline taste path (feature #2): replay a bundled REAL Evidence Receipt
+    # with NO provider, NO key, NO spend, NO network. This is the zero-friction
+    # path a newcomer can run before installing or authenticating anything, so
+    # it MUST run before (and bypass) the provider_offer_gate below. It never
+    # builds, never calls cmd_start, and returns in well under 10s.
+    #
+    # Fake-green guardrail: the headline shown is the bundled receipt's REAL
+    # honest headline (rendered by the same render_evidence_receipt_md the PR
+    # path uses, which is never green unless genuinely VERIFIED). It is framed
+    # as a SAMPLE/replay -- never presented as a verdict on the user's code.
+    if [ "$offline" = true ]; then
+        local sample_proof="$SKILL_DIR/skills/fixtures/demo-receipt/proof.json"
+        if [ ! -f "$sample_proof" ]; then
+            echo -e "${RED}Error: bundled sample receipt not found.${NC}" >&2
+            echo "Expected at: $sample_proof" >&2
+            return 1
+        fi
+        if ! declare -f render_evidence_receipt_md >/dev/null 2>&1; then
+            echo -e "${RED}Error: receipt renderer unavailable.${NC}" >&2
+            echo "Expected autonomy/lib/proof-pr.sh to be sourced." >&2
+            return 1
+        fi
+
+        echo -e "${BOLD}Loki Mode v$version - Sample Receipt (offline replay)${NC}"
+        echo ""
+        echo -e "${YELLOW}This is a SAMPLE: a replay of a real past build, not a"
+        echo -e "verdict on your code. No provider, no API key, no spend, no"
+        echo -e "network were used to show it.${NC}"
+        echo ""
+        echo -e "${DIM}It is what Loki produces after a build: an Evidence Receipt"
+        echo -e "with an honest headline you can recompute yourself.${NC}"
+        echo ""
+
+        # Print-only renderer; always returns 0. The headline label inside is
+        # the receipt's genuine honesty.headline.
+        render_evidence_receipt_md "$sample_proof" "" ""
+
+        # The receipt prints a "verify it yourself" command. For a real build
+        # that command works against .loki/proofs/. This bundled sample is for
+        # display only (no local proof store entry, hash neutralized), so make
+        # that explicit rather than let a newcomer run a command that fails.
+        echo ""
+        echo -e "${DIM}The 'verify it yourself' command above is what you run against the"
+        echo -e "real builds you create (their proofs live in .loki/proofs/). This"
+        echo -e "bundled sample is for display only.${NC}"
+
+        echo ""
+        echo -e "${DIM}---------------------------------------${NC}"
+        echo -e "${BOLD}That was a sample. Build your own:${NC}"
+        echo -e "  ${CYAN}loki quickstart${NC}                  # one guided command, your first real build"
+        echo -e "  ${CYAN}loki demo${NC}                        # build a bundled sample app for real"
+        return 0
+    fi
 
     # v7.29.0: provider pre-flight gate (skipped for --dry-run, which never
     # spends). On a TTY, offer to install; on non-TTY/CI, print honest manual
@@ -16449,6 +16516,17 @@ main() {
             ;;
         demo)
             cmd_demo "$@"
+            ;;
+        tour)
+            # Zero-key/zero-spend taste path: an alias for 'demo --offline' that
+            # replays a bundled real Evidence Receipt. --help routes straight to
+            # the demo help (which documents --offline / tour); otherwise inject
+            # --offline ahead of any user args.
+            if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+                cmd_demo --help
+            else
+                cmd_demo --offline "$@"
+            fi
             ;;
         quickstart)
             cmd_quickstart "$@"
@@ -31217,6 +31295,59 @@ PYEOF
                     echo ""
                     echo "Ready to post:"
                     echo "  ${hook}"
+                fi
+
+                # Copy-paste "Verified by Loki" markdown badge (word-of-mouth
+                # loop). The badge color + message derive ONLY from the receipt's
+                # honest headline (honesty.headline), which proof-generator
+                # computes deterministically from real facts and which is
+                # impossible to forge from an LLM opinion. We exact-match the
+                # three headline strings:
+                #   VERIFIED            -> brightgreen "verified"
+                #   VERIFIED WITH GAPS  -> orange "verified with gaps"
+                #   NOT VERIFIED        -> red "not verified"
+                # Anything else (missing/null/legacy proof) OMITS the badge: we
+                # never paint a non-VERIFIED receipt green, and we do not force a
+                # fine old-format proof red. We deliberately do NOT fall back to
+                # council.final_verdict here -- that is an LLM verdict and the
+                # exact fake-green path the headline exists to override.
+                # The badge links to the gist we just published (no new egress).
+                # shields.io static/v1 query endpoint avoids structural hyphens.
+                local badge
+                badge=$(LOKI_PROOF_JSON="$pj" LOKI_GIST_URL="$LOKI_LAST_GIST_URL" python3 - <<'PYEOF' 2>/dev/null || true
+import json, os
+from urllib.parse import quote
+try:
+    d = json.load(open(os.environ["LOKI_PROOF_JSON"]))
+except Exception:
+    d = {}
+headline = (d.get("honesty") or {}).get("headline")
+# Exact-match ONLY. council.final_verdict is intentionally NOT consulted: it is
+# an LLM opinion, the precise fake-green source the deterministic headline
+# overrides. Unmapped headline -> no entry -> badge omitted.
+mapping = {
+    "VERIFIED": ("verified", "brightgreen"),
+    "VERIFIED WITH GAPS": ("verified with gaps", "orange"),
+    "NOT VERIFIED": ("not verified", "red"),
+}
+entry = mapping.get(headline)
+url = os.environ.get("LOKI_GIST_URL", "").strip()
+# Omit the badge for any unmapped headline (never green, never forced red),
+# and when we have no link target to point at.
+if entry and url:
+    message, color = entry
+    badge_img = (
+        "https://img.shields.io/static/v1?label=Loki"
+        "&message=" + quote(message)
+        + "&color=" + color
+    )
+    print("[![Loki: {msg}]({img})]({url})".format(msg=message, img=badge_img, url=url))
+PYEOF
+)
+                if [ -n "$badge" ]; then
+                    echo ""
+                    echo "Markdown badge (paste into a README or PR):"
+                    echo "  ${badge}"
                 fi
             fi
             exit 0
