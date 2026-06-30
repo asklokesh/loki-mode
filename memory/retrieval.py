@@ -856,12 +856,24 @@ class MemoryRetrieval:
                         return self.retrieve_by_keyword(
                             query.split(), collection)[:top_k]
 
-        # Generate query embedding
-        query_embedding = self.embedding_engine.embed(query)
-
-        # Search vector index
+        # Generate query embedding and search the vector index. If the embedding
+        # engine has fallen back to a different model/dimension since the index
+        # was built, the query vector dimension will not match the stored index
+        # and VectorSearchIndex.search raises ValueError. That must NOT crash
+        # retrieval or return wrong-dimension neighbors -- degrade to keyword
+        # search (the honest, accurate fallback), same as the staleness path.
         index = self.vector_indices[collection]
-        results = index.search(query_embedding, top_k)
+        try:
+            query_embedding = self.embedding_engine.embed(query)
+            results = index.search(query_embedding, top_k)
+        except ValueError as exc:
+            logger.info(
+                "%s vector search failed (%s); likely an embedding "
+                "dimension change since index build. Falling back to keyword "
+                "search for accuracy.",
+                collection, exc,
+            )
+            return self.retrieve_by_keyword(query.split(), collection)[:top_k]
 
         # Convert to standard format
         items: List[Dict[str, Any]] = []

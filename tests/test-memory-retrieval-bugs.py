@@ -465,6 +465,43 @@ def test_recency_boost_caps_recent_and_decays_continuously():
     )
 
 
+def test_similarity_dimension_mismatch_falls_back_to_keyword():
+    """Fix B: when the vector index raises ValueError on a query-vs-index
+    dimension mismatch (the embedding engine fell back to a different model since
+    the index was built), retrieve_by_similarity must DEGRADE to keyword search
+    -- never crash and never return wrong-dimension neighbors. This regression
+    guards the exact failure mode the prior Fix B attempt left untested."""
+    retriever = MemoryRetrieval(storage=_FakeStorage({}))
+
+    class _MismatchIndex:
+        # Mirrors VectorSearchIndex.search raising on a dimension mismatch.
+        def search(self, query_embedding, top_k):
+            raise ValueError("query dimension 640 != index dimension 384")
+
+    class _Engine:
+        def embed(self, text):
+            return [0.0] * 640
+
+    retriever.embedding_engine = _Engine()
+    retriever.vector_indices = {"semantic": _MismatchIndex()}
+    retriever._indices_built_at = None  # skip the staleness branch; force the search path
+
+    keyword_called = {"hit": False}
+
+    def _fake_keyword(words, collection):
+        keyword_called["hit"] = True
+        return [{"id": "kw1", "_source": collection}]
+
+    retriever.retrieve_by_keyword = _fake_keyword
+
+    # Must not raise; must return the keyword fallback result.
+    out = retriever.retrieve_by_similarity("hello world", "semantic", top_k=3)
+    assert keyword_called["hit"], "dimension mismatch did not degrade to keyword search"
+    assert out == [{"id": "kw1", "_source": "semantic"}], (
+        "expected the keyword fallback result, got %r" % (out,)
+    )
+
+
 def _run_all():
     tests = [
         test_detect_task_type_handles_none_goal,
@@ -479,6 +516,7 @@ def _run_all():
         test_merge_results_keeps_id_less_records_separate,
         test_recency_boost_ignores_future_timestamps,
         test_recency_boost_caps_recent_and_decays_continuously,
+        test_similarity_dimension_mismatch_falls_back_to_keyword,
     ]
     failures = 0
     for fn in tests:

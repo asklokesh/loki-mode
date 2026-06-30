@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.99.1] - 2026-06-30
+
+### Memory retrieval: dimension-mismatch degrades to keyword search
+
+- **Vector search no longer crashes on an embedding dimension change**
+  (`memory/retrieval.py`): when the embedding engine has fallen back to a
+  different model/dimension since a vector index was built, the query vector no
+  longer matches the index and `VectorSearchIndex.search` raises ValueError.
+  `retrieve_by_similarity` now catches that and degrades to keyword search (the
+  same honest fallback the staleness path uses) instead of crashing or returning
+  wrong-dimension neighbors. Regression test added. (Supersedes the reverted
+  embeddings-only signal from the wave-7 batch, which was inert.)
+
+
 ## [7.99.0] - 2026-06-30
 
 ### Memory integrity + checklist/cost trust fixes + dashboard reuse (wave-7 hunt)
