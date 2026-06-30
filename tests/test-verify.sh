@@ -347,6 +347,66 @@ else
     _no "unknown option -> expected non-zero exit with no VERIFIED, got rc=$ERR_RC"
 fi
 
+# -------------------------------------------------------------------------
+# Scenario 9: --hosted CLI-invariance + additive fold + fail-open.
+#
+# The hard gate for the embedded Autonomi Verify engine (Stories 1.4/1.5):
+#   9a. DEFAULT path (no --hosted) writes NO "hosted" key -> byte-invariant.
+#   9b. --hosted, when the engine is usable, FOLDS a "hosted" key but leaves
+#       the deterministic verdict + exit code UNCHANGED (additive only).
+#   9c. --hosted fails OPEN: with the bundle absent, output is identical to the
+#       default path (no "hosted" key, same verdict, exit 0), never a crash and
+#       never a silent pass.
+# -------------------------------------------------------------------------
+VENDOR_BUNDLE="$SCRIPT_DIR/../vendor/autonomi-verify/embed.js"
+
+# 9a: default path emits no hosted key.
+run_verify "$S1" main
+DEF_RC=$RC; DEF_VERDICT=$VERDICT
+if [ -f "$S1/.loki/verify/evidence.json" ] \
+   && ! grep -q '"hosted"' "$S1/.loki/verify/evidence.json"; then
+    _ok "default verify (no --hosted) writes no hosted key (CLI-invariant)"
+else
+    _no "default verify unexpectedly contains a hosted key"
+fi
+
+# 9b: --hosted is additive (only when bun + bundle are present). When either is
+# absent this collapses to the fail-open assertion, which 9c covers; so only
+# assert the fold when the engine can actually run.
+if command -v bun >/dev/null 2>&1 && [ -f "$VENDOR_BUNDLE" ]; then
+    run_verify "$S1" main --hosted
+    if [ "$RC" -eq "$DEF_RC" ] && [ "$VERDICT" = "$DEF_VERDICT" ] \
+       && grep -q '"hosted"' "$S1/.loki/verify/evidence.json"; then
+        _ok "--hosted folds a hosted key; verdict+exit unchanged (additive only)"
+    else
+        _no "--hosted changed verdict/exit ($DEF_VERDICT/$DEF_RC -> $VERDICT/$RC) or did not fold"
+    fi
+    # The hosted engine is handed the resolved merge-base SHA, so for this clean
+    # VERIFIED case the hosted block must AGREE (verified=true, not inconclusive).
+    # This guards the remote-only-base divergence: a bare ref would have made the
+    # embed report inconclusive next to a VERIFIED deterministic verdict.
+    HOSTED_OK="$(python3 -c "import json; h=json.load(open('$S1/.loki/verify/evidence.json')).get('hosted',{}); print('yes' if h.get('verified') is True and h.get('inconclusive') is False else 'no')" 2>/dev/null || echo "err")"
+    if [ "$HOSTED_OK" = "yes" ]; then
+        _ok "--hosted block agrees with deterministic VERIFIED (merge-base passed, not bare ref)"
+    else
+        _no "--hosted block disagrees with deterministic verdict (got $HOSTED_OK)"
+    fi
+else
+    printf '  SKIP: --hosted additive fold (bun or bundle absent)\n'
+fi
+
+# 9c: --hosted fails open when the bundle is unreachable. Run from a PATH with
+# no bun so the engine probe misses regardless of whether bun is installed; the
+# result must equal the default path (no hosted key, same verdict, exit 0).
+( cd "$S1" && PATH="/usr/bin:/bin" bash "$VERIFY_SH" main --hosted ) >/dev/null 2>&1
+FO_RC=$?
+if [ "$FO_RC" -eq "$DEF_RC" ] \
+   && ! grep -q '"hosted"' "$S1/.loki/verify/evidence.json"; then
+    _ok "--hosted fails open when engine unusable (no hosted key, exit unchanged)"
+else
+    _no "--hosted fail-open broken: rc=$FO_RC (want $DEF_RC) or hosted key present"
+fi
+
 echo ""
 echo "=== results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

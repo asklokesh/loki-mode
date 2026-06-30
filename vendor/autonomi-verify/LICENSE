@@ -1,0 +1,39 @@
+AUTONOMI VERIFY - COMMERCIAL LICENSE NOTICE
+
+Copyright (c) 2026 Autonomi. All rights reserved.
+
+This directory contains a pre-built, dependency-free bundle ("the Bundle") of
+the Autonomi Verify engine. The Bundle is proprietary commercial software of
+Autonomi and is provided to you ONLY as an embedded component of Loki Mode.
+
+This Commercial License Notice is SEPARATE FROM and DISTINCT FROM the Business
+Source License 1.1 (BUSL-1.1) that governs the rest of the Loki Mode
+repository. The BUSL-1.1 terms do NOT apply to the Bundle. The Bundle is not
+open source.
+
+PERMITTED USE
+  You may execute the Bundle solely as invoked by Loki Mode for the purpose of
+  verifying your own changes (the `loki verify --hosted` path). No other use is
+  granted.
+
+RESTRICTIONS
+  Except as expressly permitted above, you may NOT:
+    - copy, redistribute, sublicense, sell, or host the Bundle as a service;
+    - reverse engineer, decompile, or disassemble the Bundle, or attempt to
+      derive its source code, except to the limited extent applicable law
+      expressly permits despite this restriction;
+    - remove or alter this notice.
+
+NO SOURCE GRANT
+  The source code of the Autonomi Verify engine is NOT included in this
+  repository and is NOT licensed to you. Only the built Bundle is distributed
+  here.
+
+NO WARRANTY
+  THE BUNDLE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL
+  AUTONOMI BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM,
+  OUT OF, OR IN CONNECTION WITH THE BUNDLE OR ITS USE.
+
+For licensing inquiries beyond the permitted use above, contact Autonomi.

@@ -71,6 +71,7 @@
     ".claude-plugin/marketplace.json",
     "autonomy/",
     "providers/",
+    "vendor/autonomi-verify/",
     "agents/",
     "skills/",
     "references/",

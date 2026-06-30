@@ -1019,6 +1019,14 @@ OPTIONS:
                        Default: critical,high  (one notch looser than the
                        Loki build loop, which also blocks on medium).
     --no-llm           Accepted for forward-compat; LLM is already off in MVP.
+    --hosted           Opt-in. When the embedded Autonomi Verify engine is
+                       usable (bun present + bundle present), fold its verdict
+                       fields into evidence.json under a "hosted" key. Additive
+                       only: the deterministic verdict and exit code are
+                       unchanged. If the engine is absent or unusable, behavior
+                       is exactly as without --hosted (fail-open, never a silent
+                       pass). Without --hosted, output is byte-identical to prior
+                       releases.
     -h, --help         Show this help.
 
 GATES (deterministic, reproducible by construction):
@@ -1109,12 +1117,154 @@ verify_spec_drift_gate() {
 }
 
 # ---------------------------------------------------------------------------
+# Hosted-engine enrichment (--hosted opt-in).
+#
+# Folds the embedded Autonomi Verify engine's verdict fields into the
+# already-emitted evidence.json, under a top-level "hosted" key. This is
+# ADDITIVE only: the deterministic bash verdict (and the process exit code)
+# stays authoritative. The embedded engine is a dependency-free bundle built
+# from the private Autonomi Verify repo, shipped under a commercial license at
+# vendor/autonomi-verify/embed.js, and run via bun -- the SAME bun-gated,
+# optional, fallback-to-current-behavior pattern run.sh uses for loki-ts.
+#
+# Fail-open is total. Every one of these degrades to "leave evidence.json
+# untouched, change nothing": bun absent, bundle absent, engine nonzero exit,
+# empty/unparseable engine output, evidence.json unreadable, or python3 absent.
+# It NEVER promotes or alters the verdict, and NEVER turns an unusable engine
+# into a silent pass -- the deterministic verdict already stands.
+# ---------------------------------------------------------------------------
+verify_hosted_enrich() {
+    local out_dir="$1"
+    local base_ref="${2:-}"
+    local ev_path="$out_dir/evidence.json"
+
+    # Precondition probes -- any miss = silent fail-open (return 0, no change).
+    command -v bun >/dev/null 2>&1 || {
+        _verify_log "hosted: bun not found; keeping deterministic evidence (fail-open)"
+        return 0
+    }
+    local bundle
+    bundle="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/vendor/autonomi-verify/embed.js"
+    [ -f "$bundle" ] || {
+        _verify_log "hosted: embedded engine bundle not found; fail-open"
+        return 0
+    }
+    [ -f "$ev_path" ] || {
+        _verify_log "hosted: evidence.json not present; fail-open"
+        return 0
+    }
+    command -v python3 >/dev/null 2>&1 || {
+        _verify_log "hosted: python3 not found for fold; fail-open"
+        return 0
+    }
+
+    # Run the embedded engine read-only against the working tree. Nonzero exit
+    # (genuine observation failure) or empty stdout = fail-open.
+    #
+    # Hand the engine the ALREADY-RESOLVED merge-base SHA (verify_diff_base()
+    # resolved origin/<ref> -> <ref> -> merge-base for the deterministic path).
+    # The embed's own base resolver is intentionally minimal (bare-ref
+    # rev-parse, no origin/ fallback); feeding it the concrete merge-base SHA
+    # makes its diff = merge_base..HEAD, identical PR semantics to the
+    # deterministic verdict, and avoids a spurious "inconclusive (no_base_sha)"
+    # in remote-only checkouts (CI, detached HEAD) where only origin/<ref>
+    # exists. When the deterministic path could not resolve a base, pass the
+    # raw ref through (best effort) and let the engine report inconclusive,
+    # consistent with the deterministic inconclusive.
+    local engine_base="${VERIFY_MERGE_BASE:-}"
+    [ -z "$engine_base" ] && engine_base="$base_ref"
+    local engine_out engine_rc
+    if [ -n "$engine_base" ]; then
+        engine_out="$(bun "$bundle" --dir . --base "$engine_base" 2>/dev/null)"; engine_rc=$?
+    else
+        engine_out="$(bun "$bundle" --dir . 2>/dev/null)"; engine_rc=$?
+    fi
+    if [ "$engine_rc" -ne 0 ] || [ -z "$engine_out" ]; then
+        _verify_log "hosted: embedded engine unusable (rc=$engine_rc); keeping deterministic verdict (fail-open)"
+        return 0
+    fi
+
+    # Fold the engine payload into evidence.json under "hosted". A parse failure
+    # at any step leaves the file byte-for-byte unchanged.
+    _V_EV="$ev_path" _V_ENGINE="$engine_out" python3 - <<'PYEOF' || {
+import json, os, sys
+
+ev_path = os.environ["_V_EV"]
+raw = os.environ["_V_ENGINE"]
+
+try:
+    engine = json.loads(raw)
+except Exception:
+    sys.exit(1)  # unparseable engine output -> caller fails open, no change
+if not isinstance(engine, dict):
+    sys.exit(1)
+
+try:
+    with open(ev_path) as f:
+        doc = json.load(f)
+except Exception:
+    sys.exit(1)  # evidence.json unreadable/corrupt -> no change
+if not isinstance(doc, dict):
+    sys.exit(1)
+
+# Additive only: attach the engine verdict under "hosted". The deterministic
+# "verdict"/"exit_code" fields are left untouched -- the embedded engine
+# enriches, it does not override.
+doc["hosted"] = {
+    "engine": engine.get("engine", "autonomi-verify"),
+    "engine_version": engine.get("engine_version"),
+    "verified": engine.get("verified"),
+    "inconclusive": engine.get("inconclusive"),
+    "inconclusive_reason": engine.get("inconclusive_reason"),
+    "evidence": engine.get("evidence"),
+    "note": "additive enrichment; deterministic verdict above is authoritative",
+}
+
+# Write atomically: a fold that fails mid-write must not corrupt the document
+# that the deterministic path already produced.
+tmp = ev_path + ".hosted.tmp"
+with open(tmp, "w") as f:
+    json.dump(doc, f, indent=2)
+    f.write("\n")
+os.replace(tmp, ev_path)
+PYEOF
+        _verify_log "hosted: fold failed; deterministic evidence preserved (fail-open)"
+        return 0
+    }
+
+    # Surface a one-line human summary of the hosted enrichment for the banner.
+    # Built from the engine payload via python3 (already a precondition above);
+    # any parse hiccup leaves the summary empty and the banner simply omits the
+    # line -- never a fabricated summary.
+    VERIFY_HOSTED_SUMMARY="$(_V_ENGINE="$engine_out" python3 - <<'PYEOF' 2>/dev/null || true
+import json, os
+try:
+    e = json.loads(os.environ["_V_ENGINE"])
+    ver = e.get("engine_version") or "?"
+    if e.get("inconclusive"):
+        state = "inconclusive (%s)" % (e.get("inconclusive_reason") or "no reason")
+    else:
+        state = "verified" if e.get("verified") else "not verified"
+    print("Hosted:   Autonomi Verify %s -> %s (enrichment in evidence.json:hosted)" % (ver, state))
+except Exception:
+    pass
+PYEOF
+)"
+
+    _verify_log "hosted: folded Autonomi Verify engine fields into $ev_path"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 verify_main() {
     local base_ref=""
     local out_dir=".loki/verify"
     local block_on="critical,high"
+    # Opt-in hosted-engine enrichment (--hosted). Default 0 = exactly today.
+    VERIFY_HOSTED=0
+    VERIFY_HOSTED_SUMMARY=""
 
     # Fail-closed defaults. These globals are read at the end of this function
     # (the VERDICT banner and the function return code). verify_compute_verdict()
@@ -1139,6 +1289,13 @@ verify_main() {
                 block_on="$(printf '%s' "${2:-}" | tr '[:upper:]' '[:lower:]')"; shift 2 ;;
             --no-llm)
                 shift ;;
+            --hosted)
+                # Opt-in: when the embedded Autonomi Verify engine is usable
+                # (bun present + bundle present), enrich evidence.json with the
+                # engine's verdict fields. Additive only; the deterministic
+                # verdict above stays authoritative for the exit code. Unset =
+                # exactly today's behavior. See verify_hosted_enrich().
+                VERIFY_HOSTED=1; shift ;;
             --) shift; break ;;
             -*)
                 _verify_err "unknown option: $1"; verify_help; return $VERIFY_EXIT_ERROR ;;
@@ -1227,9 +1384,22 @@ verify_main() {
         return $VERIFY_EXIT_ERROR
     }
 
+    # Opt-in (--hosted): fold the embedded Autonomi Verify engine's verdict
+    # fields into the just-written evidence.json. Fully additive and fail-open:
+    # any failure (no bun, no bundle, engine error, unparseable output) leaves
+    # evidence.json exactly as emitted above and never changes the verdict or
+    # exit code. Skipped entirely on the default path (VERIFY_HOSTED=0).
+    if [ "${VERIFY_HOSTED:-0}" = "1" ]; then
+        verify_hosted_enrich "$out_dir" "$base_ref" || true
+    fi
+
     printf 'VERDICT: %s\n' "$VERIFY_VERDICT"
     printf 'Evidence: %s/evidence.json\n' "$out_dir"
     printf 'Report:   %s/report.md\n' "$out_dir"
+    # --hosted only: surface the enrichment in human output so the extra signal
+    # is visible without parsing JSON. Printed solely when a fold succeeded;
+    # the default path never sets VERIFY_HOSTED_SUMMARY, so it stays byte-identical.
+    [ -n "${VERIFY_HOSTED_SUMMARY:-}" ] && printf '%s\n' "$VERIFY_HOSTED_SUMMARY"
 
     return "$VERIFY_EXIT"
 }
