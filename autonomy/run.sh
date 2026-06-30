@@ -11246,6 +11246,7 @@ start_dashboard() {
     local original_port=$DASHBOARD_PORT
     local max_attempts=10
     local attempt=0
+    local DASHBOARD_REUSED=0
 
     while lsof -i :$DASHBOARD_PORT &>/dev/null && [ $attempt -lt $max_attempts ]; do
         # Check if it's our own dashboard
@@ -11254,7 +11255,24 @@ start_dashboard() {
             # Only kill if it's a Python/uvicorn dashboard process
             local proc_cmd=$(ps -p "$existing_pid" -o comm= 2>/dev/null || true)
             if [[ "$proc_cmd" == *python* ]] || [[ "$proc_cmd" == *uvicorn* ]]; then
-                log_step "Killing existing dashboard on port $DASHBOARD_PORT (PID: $existing_pid)..."
+                # Never kill a HEALTHY dashboard already serving here: it is almost
+                # always the user's own live dashboard (open in their browser), and
+                # killing it on `loki start` drops their session mid-use. A healthy
+                # server is reusable by this build too, so probe /api/status and, if
+                # it answers 200, REUSE it (skip starting our own). Only kill a
+                # dashboard process that is NOT serving (a genuinely stuck/dead one).
+                # Opt out with LOKI_DASHBOARD_FORCE_RECLAIM=1.
+                local _dash_alive=""
+                if [ "${LOKI_DASHBOARD_FORCE_RECLAIM:-}" != "1" ] && command -v curl >/dev/null 2>&1; then
+                    _dash_alive=$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 \
+                        "http://127.0.0.1:${DASHBOARD_PORT}/api/status" 2>/dev/null || true)
+                fi
+                if [ "$_dash_alive" = "200" ]; then
+                    log_info "Reusing the healthy dashboard already serving on port $DASHBOARD_PORT (not killing it)."
+                    DASHBOARD_REUSED=1
+                    break
+                fi
+                log_step "Killing stuck dashboard on port $DASHBOARD_PORT (PID: $existing_pid, not serving)..."
                 kill "$existing_pid" 2>/dev/null || true
                 sleep 1
                 break
@@ -11274,6 +11292,15 @@ start_dashboard() {
     if [ $attempt -ge $max_attempts ]; then
         log_error "Could not find available port after $max_attempts attempts"
         return 1
+    fi
+
+    # If we found a HEALTHY dashboard already serving on the port, reuse it: do
+    # NOT launch a second server (that would fight for the port / kill the user's
+    # live one). The existing server already serves this project's state.
+    if [ "${DASHBOARD_REUSED:-0}" = "1" ]; then
+        export LOKI_DASHBOARD_PORT="$DASHBOARD_PORT"
+        log_info "Dashboard already live on port $DASHBOARD_PORT; reusing it."
+        return 0
     fi
 
     # Start FastAPI dashboard server (unified UI + API)

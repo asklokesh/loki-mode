@@ -20,12 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   were silently missed in cross-namespace search (now included); vector-index
   staleness was checked only for the `semantic` collection after consolidation
   (now also the `anti_patterns` collection invalidates over its source files).
-- **Dashboard no longer killed by a build** (`autonomy/run.sh`): when a build
-  reclaimed the dashboard port (the defense-in-depth port-reclaim path), it killed
-  the listener on that port, which could drop a user's own live dashboard mid-use
-  (connection refused, websocket failure). It now probes `/api/status` and REUSES
-  a healthy dashboard already serving on the
-  port instead of killing it (opt out: `LOKI_DASHBOARD_FORCE_RECLAIM=1`).
+- **Dashboard no longer killed when a build starts** (`autonomy/run.sh`): on
+  `loki start`, `start_dashboard` acquired the dashboard port by killing any
+  python/uvicorn process already listening there - which dropped a user's own
+  live dashboard mid-use (connection refused, websocket failure). It now probes
+  `/api/status` first and REUSES a healthy dashboard already serving on the port
+  (skips launching a second server) instead of killing it; only a non-serving
+  stuck dashboard is reclaimed (opt out: `LOKI_DASHBOARD_FORCE_RECLAIM=1`). The
+  shutdown/teardown port-reclaim path got the same probe-before-kill guard.
 - **Checklist no-fake-green** (`autonomy/checklist-verify.py`): the tests_pass
   check ran with `--passWithNoTests`, so a zero-match test pattern reported
   SUCCESS - a checklist item that REQUIRES test verification passing with no
