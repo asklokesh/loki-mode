@@ -6240,9 +6240,14 @@ def _compute_cost_snapshot() -> dict:
     budget_used = 0.0
     budget_remaining = None
 
-    # Read efficiency files (one JSON file per iteration/task)
+    # Read efficiency files (one JSON file per iteration/task).
+    # Use the iteration-*.json pattern so this reader sees the same
+    # authoritative file set as _compute_budget_snapshot and
+    # _compute_cost_timeline (both glob iteration-*.json, mirroring
+    # check_budget_limit in run.sh). A bare *.json would also pick up
+    # non-iteration JSON in the dir and make the three cost readers disagree.
     if efficiency_dir.exists():
-        for eff_file in sorted(efficiency_dir.glob("*.json")):
+        for eff_file in sorted(efficiency_dir.glob("iteration-*.json")):
             try:
                 data = json.loads(eff_file.read_text())
                 # A corrupt/truncated efficiency file can parse to a non-object

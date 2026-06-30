@@ -97,8 +97,30 @@ def run_check(check: dict, project_dir: str, timeout: int) -> dict:
                         text=True,
                         timeout=timeout,
                     )
-                    result["passed"] = proc.returncode == 0
-                    result["output"] = (proc.stdout + proc.stderr)[:500]
+                    combined = proc.stdout + proc.stderr
+                    # Trust gate: a tests_pass check REQUIRES that at least one
+                    # test was actually discovered and run. jest is invoked with
+                    # --passWithNoTests, so a zero-match pattern exits 0 ("No
+                    # tests found ...") -- that would be a fake-green (a required
+                    # verification passing with nothing run). pytest exits 5 when
+                    # it collects no tests. Detect either no-test signal and fail
+                    # the check rather than report success on an empty run.
+                    no_tests = (
+                        "No tests found" in combined
+                        or "no tests ran" in combined.lower()
+                        or "no tests to run" in combined.lower()
+                        or proc.returncode == 5  # pytest: no tests collected
+                    )
+                    if no_tests:
+                        result["passed"] = False
+                        result["output"] = (
+                            "No tests discovered for required check "
+                            f"(pattern={pattern!r}); a tests_pass check must run "
+                            "at least one test. Output: "
+                        ) + combined[:400]
+                    else:
+                        result["passed"] = proc.returncode == 0
+                        result["output"] = combined[:500]
                 except subprocess.TimeoutExpired:
                     result["passed"] = None  # timeout = pending
                     result["output"] = f"Timed out after {timeout}s"

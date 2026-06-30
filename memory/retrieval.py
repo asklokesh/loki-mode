@@ -680,8 +680,10 @@ class MemoryRetrieval:
         for ns in namespaces:
             ns_retrieval = self.with_namespace(ns)
 
-            # Simple keyword search in this namespace
-            for collection in ["episodic", "semantic", "skills"]:
+            # Simple keyword search in this namespace.
+            # BUG-MEM-012: 'anti_patterns' was omitted, so anti-pattern
+            # memories were silently missed in cross-namespace search.
+            for collection in ["episodic", "semantic", "skills", "anti_patterns"]:
                 results = ns_retrieval.retrieve_by_keyword(
                     query.split(),
                     collection,
@@ -823,20 +825,36 @@ class MemoryRetrieval:
         if collection not in self.vector_indices:
             return self.retrieve_by_keyword(query.split(), collection)[:top_k]
 
-        # Check if indices need rebuilding after consolidation (BUG-MEM-002).
-        # If patterns.json was modified more recently than we last built
-        # indices, fall back to keyword search for accuracy.
-        if collection == "semantic" and self._indices_built_at is not None:
-            patterns_path = self.base_path / "semantic" / "patterns.json"
-            if patterns_path.exists():
+        # Check if indices need rebuilding after consolidation (BUG-MEM-002,
+        # BUG-MEM-007). Consolidation rewrites semantic/patterns.json (and may
+        # touch semantic/anti-patterns.json), so any index sourced from those
+        # files can go stale. The 'semantic' index reads patterns.json; the
+        # 'anti_patterns' index reads BOTH patterns.json and anti-patterns.json
+        # (consolidated anti-patterns are bridged from patterns.json). If a
+        # source file was modified more recently than we last built indices,
+        # fall back to keyword search for accuracy. (episodic/skills read their
+        # own per-record files and are not rewritten by consolidation, so they
+        # are not checked here.)
+        if self._indices_built_at is not None:
+            stale_sources: List[str] = []
+            if collection == "semantic":
+                stale_sources = ["semantic/patterns.json"]
+            elif collection == "anti_patterns":
+                stale_sources = ["semantic/patterns.json",
+                                 "semantic/anti-patterns.json"]
+            if stale_sources:
                 import os
-                patterns_mtime = os.path.getmtime(patterns_path)
-                if patterns_mtime > self._indices_built_at:
-                    logger.info(
-                        "Semantic index is stale (patterns modified after index build). "
-                        "Falling back to keyword search for accuracy."
-                    )
-                    return self.retrieve_by_keyword(query.split(), collection)[:top_k]
+                for rel in stale_sources:
+                    source_path = self.base_path / rel
+                    if source_path.exists() and \
+                            os.path.getmtime(source_path) > self._indices_built_at:
+                        logger.info(
+                            "%s index is stale (%s modified after index build). "
+                            "Falling back to keyword search for accuracy.",
+                            collection, rel,
+                        )
+                        return self.retrieve_by_keyword(
+                            query.split(), collection)[:top_k]
 
         # Generate query embedding
         query_embedding = self.embedding_engine.embed(query)
@@ -858,6 +876,34 @@ class MemoryRetrieval:
                 items.append(item)
 
         return items
+
+    @staticmethod
+    def _anti_pattern_content_key(record: Dict[str, Any]) -> tuple:
+        """Normalized content key for an anti-pattern across both schemas.
+
+        Consolidation writes anti-patterns into semantic/patterns.json as
+        SemanticPattern objects (fields incorrect_approach|pattern /
+        description / correct_approach), while the legacy
+        semantic/anti-patterns.json uses what_fails / why / prevention. The
+        same anti-pattern can therefore appear in both stores (no migration
+        copies one into the other), which would double-count it on read and in
+        the vector index (BUG-MEM-011). Map both schemas onto the same
+        lowercased/stripped (what_fails, why, prevention) tuple so the two
+        representations of one anti-pattern collide on a single key.
+        """
+        def _norm(*candidates: Any) -> str:
+            for c in candidates:
+                if c:
+                    return str(c).strip().lower()
+            return ""
+
+        what_fails = _norm(record.get("what_fails"),
+                           record.get("incorrect_approach"),
+                           record.get("pattern"))
+        why = _norm(record.get("why"), record.get("description"))
+        prevention = _norm(record.get("prevention"),
+                           record.get("correct_approach"))
+        return (what_fails, why, prevention)
 
     @staticmethod
     def _parse_episode_timestamp(value: Any) -> Optional[datetime]:
@@ -1746,12 +1792,36 @@ class MemoryRetrieval:
         """Keyword search in anti-patterns."""
         results: List[Dict[str, Any]] = []
         anti_data = self.storage.read_json("semantic/anti-patterns.json") or {}
+        patterns_data = self.storage.read_json("semantic/patterns.json") or {}
+
+        # BUG-MEM-011: an anti-pattern can live in BOTH the consolidated
+        # patterns.json (category="anti-pattern") and the legacy
+        # anti-patterns.json, with no migration copying one into the other.
+        # Reading both naively double-counts it. Pre-scan the consolidated
+        # store (which we keep) into a seen-set keyed by id AND normalized
+        # content, then skip any legacy record that collides with either.
+        seen_ids: set = set()
+        seen_content: set = set()
+        for pat in patterns_data.get("patterns", []):
+            if not isinstance(pat, dict):
+                continue
+            if pat.get("category") != "anti-pattern":
+                continue
+            pid = pat.get("id")
+            if pid:
+                seen_ids.add(pid)
+            seen_content.add(self._anti_pattern_content_key(pat))
 
         for anti in anti_data.get("anti_patterns", []):
             # Defensive: mirror the sibling loop below. A corrupt or
             # hand-edited record may be a non-dict or carry null fields;
             # the isinstance guard and (x or "") avoid AttributeError.
             if not isinstance(anti, dict):
+                continue
+            # Dedup: skip a legacy record already represented in patterns.json.
+            aid = anti.get("id")
+            if (aid and aid in seen_ids) or \
+                    self._anti_pattern_content_key(anti) in seen_content:
                 continue
             what_fails = (anti.get("what_fails") or "").lower()
             why = (anti.get("why") or "").lower()
@@ -1774,7 +1844,6 @@ class MemoryRetrieval:
         # description / correct_approach. Without this bridge, consolidated
         # anti-patterns were never retrievable. Map them onto the same
         # what_fails / why / prevention scoring shape.
-        patterns_data = self.storage.read_json("semantic/patterns.json") or {}
         for pat in patterns_data.get("patterns", []):
             if not isinstance(pat, dict):
                 continue
@@ -1888,8 +1957,33 @@ class MemoryRetrieval:
 
         index = self.vector_indices["anti_patterns"]
         anti_data = self.storage.read_json("semantic/anti-patterns.json") or {}
+        patterns_data = self.storage.read_json("semantic/patterns.json") or {}
+
+        # BUG-MEM-011: the same anti-pattern may live in BOTH the consolidated
+        # patterns.json and the legacy anti-patterns.json. Indexing both
+        # double-counts it in the vector index. Pre-scan the consolidated store
+        # (which we keep) into a seen-set keyed by id AND normalized content,
+        # then skip any legacy record that collides with either.
+        seen_ids: set = set()
+        seen_content: set = set()
+        for pat in patterns_data.get("patterns", []):
+            if not isinstance(pat, dict):
+                continue
+            if pat.get("category") != "anti-pattern":
+                continue
+            pid = pat.get("id")
+            if pid:
+                seen_ids.add(pid)
+            seen_content.add(self._anti_pattern_content_key(pat))
 
         for anti in anti_data.get("anti_patterns", []):
+            if not isinstance(anti, dict):
+                continue
+            # Dedup: skip a legacy record already represented in patterns.json.
+            aid = anti.get("id")
+            if (aid and aid in seen_ids) or \
+                    self._anti_pattern_content_key(anti) in seen_content:
+                continue
             # Create text for embedding
             text = f"{anti.get('what_fails', '')} {anti.get('why', '')} {anti.get('prevention', '')}"
 
@@ -1904,7 +1998,6 @@ class MemoryRetrieval:
         # category="anti-pattern" entries in semantic/patterns.json, not the
         # legacy anti-patterns.json above. Bridge those into the vector index
         # too so embedding-based retrieval sees consolidated anti-patterns.
-        patterns_data = self.storage.read_json("semantic/patterns.json") or {}
         for pat in patterns_data.get("patterns", []):
             if not isinstance(pat, dict):
                 continue

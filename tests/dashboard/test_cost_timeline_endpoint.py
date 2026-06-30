@@ -390,5 +390,83 @@ class BudgetBroadcastLoopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(budget_msgs[0]["data"]["percent_used"], 90.0)
 
 
+class CostSnapshotGlobParityTests(unittest.TestCase):
+    """wave-7: _compute_cost_snapshot must read the SAME authoritative file set
+    as _compute_budget_snapshot and _compute_cost_timeline.
+
+    All three cost readers glob iteration-*.json (mirroring check_budget_limit
+    in run.sh). A bare *.json in _compute_cost_snapshot used to also pick up
+    non-iteration JSON in the efficiency dir (e.g. a summary/aggregate file),
+    making the three readers disagree on total spend.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="loki-cost-glob-")
+        self.eff = Path(self.tmp) / "metrics" / "efficiency"
+        self.eff.mkdir(parents=True, exist_ok=True)
+        self._saved_env = os.environ.pop("LOKI_BUDGET_LIMIT", None)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        if self._saved_env is not None:
+            os.environ["LOKI_BUDGET_LIMIT"] = self._saved_env
+        else:
+            os.environ.pop("LOKI_BUDGET_LIMIT", None)
+
+    def _write_eff(self, name, payload):
+        with open(self.eff / name, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+
+    def test_snapshot_ignores_non_iteration_json(self):
+        from dashboard import server as _server
+        # Two real iteration records: total 0.15.
+        self._write_eff("iteration-001.json", {
+            "iteration": 1, "model": "sonnet", "phase": "build",
+            "input_tokens": 1000, "output_tokens": 500, "cost_usd": 0.05})
+        self._write_eff("iteration-002.json", {
+            "iteration": 2, "model": "sonnet", "phase": "review",
+            "input_tokens": 2000, "output_tokens": 800, "cost_usd": 0.10})
+        # A non-iteration JSON file carrying a cost-shaped record. A bare
+        # *.json reader would double-count this; the iteration-*.json reader
+        # must ignore it.
+        self._write_eff("summary.json", {
+            "model": "opus", "phase": "summary",
+            "input_tokens": 9999, "output_tokens": 9999, "cost_usd": 99.0})
+
+        with _ForceLokiDir(self.tmp):
+            snap = _server._compute_cost_snapshot()
+
+        self.assertAlmostEqual(snap["estimated_cost_usd"], 0.15, places=6)
+        self.assertEqual(snap["total_input_tokens"], 3000)
+        self.assertEqual(snap["total_output_tokens"], 1300)
+        # The bogus opus summary must not appear in the by-model breakdown.
+        self.assertNotIn("opus", snap["by_model"])
+
+    def test_three_readers_agree(self):
+        """_compute_cost_snapshot, _compute_budget_snapshot and
+        _compute_cost_timeline must report identical current-run spend even when
+        a stray non-iteration JSON file sits in the efficiency dir."""
+        from dashboard import server as _server
+        self._write_eff("iteration-001.json", {
+            "iteration": 1, "model": "sonnet", "phase": "build",
+            "input_tokens": 1000, "output_tokens": 500, "cost_usd": 0.05})
+        self._write_eff("iteration-002.json", {
+            "iteration": 2, "model": "sonnet", "phase": "review",
+            "input_tokens": 2000, "output_tokens": 800, "cost_usd": 0.10})
+        self._write_eff("aggregate-totals.json", {
+            "model": "opus", "phase": "x",
+            "input_tokens": 5, "output_tokens": 5, "cost_usd": 42.0})
+
+        with _ForceLokiDir(self.tmp):
+            snap = _server._compute_cost_snapshot()
+            budget = _server._compute_budget_snapshot(Path(self.tmp))
+            timeline = _server._compute_cost_timeline()
+
+        self.assertAlmostEqual(snap["estimated_cost_usd"], 0.15, places=6)
+        self.assertAlmostEqual(budget["used"], 0.15, places=6)
+        self.assertAlmostEqual(
+            timeline["current_run"]["total_usd"], 0.15, places=6)
+
+
 if __name__ == "__main__":
     unittest.main()

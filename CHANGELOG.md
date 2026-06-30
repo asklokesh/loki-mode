@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.99.0] - 2026-06-30
+
+### Memory integrity + checklist/cost trust fixes + dashboard reuse (wave-7 hunt)
+
+- **Anti-pattern memory** (`memory/retrieval.py`): anti-patterns were
+  double-counted when present in both patterns.json and the legacy
+  anti-patterns.json (now deduped); `search_all_namespaces` omitted the
+  `anti_patterns` collection entirely, so "do not repeat this mistake" memories
+  were silently missed in cross-namespace search (now included); vector-index
+  staleness was checked only for the `semantic` collection after consolidation
+  (now also the `anti_patterns` collection invalidates over its source files).
+- **Dashboard no longer killed by a build** (`autonomy/run.sh`): when a build
+  reclaimed the dashboard port (the defense-in-depth port-reclaim path), it killed
+  the listener on that port, which could drop a user's own live dashboard mid-use
+  (connection refused, websocket failure). It now probes `/api/status` and REUSES
+  a healthy dashboard already serving on the
+  port instead of killing it (opt out: `LOKI_DASHBOARD_FORCE_RECLAIM=1`).
+- **Checklist no-fake-green** (`autonomy/checklist-verify.py`): the tests_pass
+  check ran with `--passWithNoTests`, so a zero-match test pattern reported
+  SUCCESS - a checklist item that REQUIRES test verification passing with no
+  tests run. It now requires at least one test to be discovered.
+- **Cost aggregation glob** (`dashboard/server.py`): cost totals globbed
+  `*.json` (including non-iteration files); now uses `iteration-*.json`,
+  consistent with the budget-snapshot and cost-timeline readers.
+
+  Found by the wave-7 adversarial hunt.
+
 ## [7.98.0] - 2026-06-30
 
 ### Council trust-config fixes + zero-friction adoption

@@ -947,8 +947,24 @@ PYCHECK
         fi
         # (d) Defense-in-depth: reclaim the dashboard port only in the CLEAR
         # case, so we never kill a shared dashboard another project owns.
+        # BUT never kill a HEALTHY dashboard already serving on the port: that is
+        # almost always the user's own live dashboard (open in their browser), and
+        # killing it mid-use drops their session (ERR_CONNECTION_REFUSED, WS fail).
+        # A healthy server is reusable by every project, so probe /api/status first
+        # and only reclaim the port when nothing is answering (a genuinely stale
+        # listener). Opt out of the probe with LOKI_DASHBOARD_FORCE_RECLAIM=1.
         if command -v lsof >/dev/null 2>&1; then
-            lsof -ti:"${DASHBOARD_PORT:-57374}" -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
+            local _dash_port="${DASHBOARD_PORT:-57374}"
+            local _dash_alive=""
+            if [ "${LOKI_DASHBOARD_FORCE_RECLAIM:-}" != "1" ] && command -v curl >/dev/null 2>&1; then
+                _dash_alive=$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 \
+                    "http://127.0.0.1:${_dash_port}/api/status" 2>/dev/null || true)
+            fi
+            if [ "$_dash_alive" = "200" ]; then
+                log_info "Reusing the healthy dashboard already serving on port ${_dash_port} (not reclaiming)."
+            else
+                lsof -ti:"${_dash_port}" -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
+            fi
         fi
     fi
 }
