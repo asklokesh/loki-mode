@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.100.1] - 2026-06-30
+
+### Zero-friction: surface the no-key path at every first touch
+
+- **npx zero-install entry documented** (`README.md`): `npx loki-mode tour` works
+  today with no global install, no provider CLI, no API key, no spend - the
+  lowest-friction taste of the verified-completion receipt. It is now the leading
+  "Get Started" line (it was previously undocumented).
+- **CLI first-touch screens lead with `loki tour`** (`autonomy/loki`): the no-args
+  landing and the first-run welcome both previously gated all value behind a
+  provider CLI + API key (doctor/quickstart/start); they now offer `loki tour`
+  first - a real sample result with no key and no spend - so a brand-new user
+  sees value before any setup.
+
+
 ## [7.100.0] - 2026-06-30
 
 ### Zero-friction adoption: offline taste path + shareable receipt badge

@@ -138,6 +138,14 @@ status check in your repository's branch-protection settings.
 
 ## Get Started in 30 Seconds
 
+Zero install, zero key, zero spend. See a real Evidence Receipt right now:
+
+```bash
+npx loki-mode tour                             # replay a real sample receipt (no install, no key, no spend)
+```
+
+Ready to build? Install and run the guided first build:
+
 ```bash
 bun install -g loki-mode                       # install (npm/brew/Docker also work, see below)
 loki quickstart                                # one guided command: your first real build
