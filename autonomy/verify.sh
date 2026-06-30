@@ -1236,16 +1236,31 @@ PYEOF
     # Built from the engine payload via python3 (already a precondition above);
     # any parse hiccup leaves the summary empty and the banner simply omits the
     # line -- never a fabricated summary.
-    VERIFY_HOSTED_SUMMARY="$(_V_ENGINE="$engine_out" python3 - <<'PYEOF' 2>/dev/null || true
+    VERIFY_HOSTED_SUMMARY="$(_V_ENGINE="$engine_out" _V_VERDICT="${VERIFY_VERDICT:-}" python3 - <<'PYEOF' 2>/dev/null || true
 import json, os
 try:
     e = json.loads(os.environ["_V_ENGINE"])
     ver = e.get("engine_version") or "?"
+    # The authoritative verdict is the deterministic one (VERIFY_VERDICT); the
+    # hosted engine is a PARTIAL signal (Phase 2 observes diff+tests only, not
+    # secrets/lint/deps). It must NEVER claim "verified" when the authoritative
+    # verdict is not VERIFIED -- a tool named Verify printing "-> verified" next
+    # to a BLOCKED result is a fake-green-shaped surface, and this product never
+    # lies about done. So the banner reports the engine's partial finding,
+    # explicitly subordinated to the authoritative verdict, and never the word
+    # "verified" on its own when the verdict disagrees.
+    verdict = (os.environ.get("_V_VERDICT") or "").strip().upper()
     if e.get("inconclusive"):
-        state = "inconclusive (%s)" % (e.get("inconclusive_reason") or "no reason")
+        finding = "inconclusive (%s)" % (e.get("inconclusive_reason") or "no reason")
+    elif e.get("verified"):
+        finding = "no fabrication found (diff+tests)"
     else:
-        state = "verified" if e.get("verified") else "not verified"
-    print("Hosted:   Autonomi Verify %s -> %s (enrichment in evidence.json:hosted)" % (ver, state))
+        finding = "fabrication evidence found"
+    if verdict and verdict != "VERIFIED":
+        # Authoritative verdict overrides; never imply the build is verified.
+        print("Hosted:   Autonomi Verify %s partial check: %s (authoritative verdict: %s; see evidence.json:hosted)" % (ver, finding, verdict))
+    else:
+        print("Hosted:   Autonomi Verify %s -> %s (enrichment in evidence.json:hosted)" % (ver, finding))
 except Exception:
     pass
 PYEOF
