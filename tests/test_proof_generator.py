@@ -509,6 +509,40 @@ class HonestyHeadlineTests(unittest.TestCase):
         self.assertEqual(items["tests"]["status"], "not_run")
         self.assertTrue(items["tests"]["reason"])
 
+    def test_unknown_gate_status_does_not_read_green(self):
+        # Regression (wave-10 CRITICAL): a quality gate that records an
+        # UNRECOGNIZED status (e.g. "blocked" / a custom token) must NOT escape
+        # the headline pass/fail checks. Previously _norm_gate_status returned it
+        # verbatim, so it matched neither "passed" nor "failed" and silently
+        # vanished -- a gate that did not pass would not count against VERIFIED.
+        # It is now normalized to "inconclusive" -> lands in degraded -> the
+        # headline can never read green on the strength of a checks-free build.
+        proj, base = self._git_repo_with_change()
+        loki_dir = os.path.join(proj, ".loki")
+        out_dir = os.path.join(self.tmp, "out-unknowngate")
+        os.makedirs(os.path.join(loki_dir, "quality"))
+        os.makedirs(os.path.join(loki_dir, "state"))
+        # A gate with an unrecognized status, real tests verified, real diff.
+        self._write_tests(loki_dir, {"status": "verified",
+                                     "command": "npm test", "exit_code": 0})
+        # _collect_quality_gates reads .loki/state/quality-gates.json: a dict of
+        # gate name -> {status} (or a bare value). Use a custom unknown status.
+        with open(os.path.join(loki_dir, "state", "quality-gates.json"),
+                  "w") as f:
+            json.dump({"custom_gate": {"status": "blocked"}}, f)
+        d = _run_generator(loki_dir, out_dir,
+                           env_extra={"_LOKI_ITER_START_SHA": base})
+        gates = {g.get("name") or g.get("gate") or i: g
+                 for i, g in enumerate(d["facts"].get("quality_gates", []))}
+        norm = [g.get("status") for g in d["facts"].get("quality_gates", [])]
+        self.assertIn("inconclusive", norm,
+                      "an unknown gate status must normalize to inconclusive, "
+                      "not pass through verbatim")
+        # The unknown-status gate is a degraded item; headline must not be green.
+        self.assertNotEqual(d["honesty"]["headline"], "VERIFIED",
+                            "an unrecognized gate status must not yield a green "
+                            "VERIFIED headline")
+
     def test_diff_only_no_checks_is_not_verified(self):
         # Regression (wave-9 CRITICAL): a build that produced a real non-empty
         # diff but ran NO tests, NO build, and passed NO gates must read

@@ -61,3 +61,4 @@ vscode-extension/.loki/
 .loki-test-tmp/
 .gstack/
 internal/
+artifacts/competitive-analysis/

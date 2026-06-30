@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.102.0] - 2026-06-30
+
+### Trust: unknown quality-gate status can no longer read green
+
+- **Unrecognized gate status normalized to inconclusive** (`autonomy/lib/proof-generator.py`):
+  `_norm_gate_status` returned an unrecognized gate status verbatim (e.g. a gate
+  emitting "blocked" or a custom token). The Evidence Receipt headline only
+  checks gate status against "passed" and "failed", so such a value matched
+  neither and silently vanished - a gate that did not pass would not count
+  against a VERIFIED headline (a fake-green vector). An unrecognized status now
+  maps to "inconclusive", which lands the gate in honesty.degraded and forces an
+  honest non-green headline. Known statuses are unchanged. Regression test added.
+
+
 ## [7.101.0] - 2026-06-30
 
 ### CRITICAL trust fix + adoption empty-state + cleanup

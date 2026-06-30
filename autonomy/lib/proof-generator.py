@@ -175,8 +175,13 @@ def _norm_gate_status(raw):
 
     A bare bool means the gate ran with a clear outcome. A string is normalized
     so e.g. "skip"/"skipped" -> not_run and "inconclusive" stays inconclusive.
-    Never conflate a missing/not-run gate with passed: an unrecognized truthy
-    string is reported verbatim (lowercased) rather than silently "passed".
+    Never conflate a missing/not-run gate with passed. An UNRECOGNIZED status
+    (e.g. a gate that emits "blocked"/"degraded"/some custom token) must NOT be
+    returned verbatim: such a value matches neither the "passed" nor the "failed"
+    checks in the headline computation, so it would be silently dropped -- a gate
+    that did not pass would not count against VERIFIED (a fake-green vector). Map
+    any unknown status to "inconclusive" so it lands in degraded[] and forces an
+    honest non-green headline rather than vanishing.
     """
     if isinstance(raw, bool):
         return "passed" if raw else "failed"
@@ -189,7 +194,9 @@ def _norm_gate_status(raw):
         return "inconclusive"
     if s in ("not_run", "notrun", "skip", "skipped", "n/a", "na", "", "none"):
         return "not_run"
-    return s
+    # Unrecognized status: cannot be trusted as a pass -> inconclusive, never
+    # returned verbatim (which would silently escape both pass and fail checks).
+    return "inconclusive"
 
 
 def _collect_quality_gates(loki_dir):
