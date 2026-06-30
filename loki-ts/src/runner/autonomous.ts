@@ -625,6 +625,54 @@ async function runAutonomousCore(
         continue;
       }
 
+      // Wave-10 trust parity: two completion-time BLOCK gates the bash route
+      // honors but the Bun route was MISSING. The bash arms live at
+      // run.sh:17482 (semantic_tests) and run.sh:17499 (invariants), each an
+      // OPT-IN completion refusal gated on its own _BLOCK toggle (default OFF;
+      // accepts "true" or "1", the same truthiness convention used by the bash
+      // guard `[ "$X" = "true" ] || [ "$X" = "1" ]` and by quality_gates.ts
+      // readToggles' flag() helper). We read the toggle inline here -- matching
+      // the existing env-read pattern in this file -- rather than importing
+      // readToggles, which is a private helper in another module.
+      //
+      // Mirror the code_review arm's defensive shape EXACTLY so a clean run is
+      // never over-blocked (the FIX-A lesson): refuse ONLY when
+      //   gateOutcome.blocked                          (hard-gates path active)
+      //   AND failed.includes(<gate>)                  (a genuine BLOCK finding)
+      //   AND its _BLOCK toggle is on                  (operator opted in).
+      // In production each gate returns advisory passed:true (-> passed[], not
+      // failed[]) whenever its _BLOCK toggle is off (quality_gates.ts:776-785
+      // for semantic_tests, :960-970 for invariants), so the toggle check is the
+      // parity guard that keeps a surfaced-but-not-blocking finding from
+      // refusing completion.
+      const envBlockFlag = (key: string): boolean => {
+        const v = process.env[key];
+        if (v === undefined || v === "") return false;
+        return v === "true" || v === "1";
+      };
+      if (
+        gateOutcome.blocked &&
+        gateOutcome.failed.includes("semantic_tests") &&
+        envBlockFlag("LOKI_GATE_SEMANTIC_TESTS_BLOCK")
+      ) {
+        log(
+          "[runner] semantic_tests BLOCK (LOKI_GATE_SEMANTIC_TESTS_BLOCK) -- refusing completion this iteration; continuing to next iteration with findings injected",
+        );
+        ctx.retryCount = 0;
+        continue;
+      }
+      if (
+        gateOutcome.blocked &&
+        gateOutcome.failed.includes("invariants") &&
+        envBlockFlag("LOKI_GATE_INVARIANTS_BLOCK")
+      ) {
+        log(
+          "[runner] invariants BLOCK (LOKI_GATE_INVARIANTS_BLOCK) -- refusing completion this iteration; continuing to next iteration with findings injected",
+        );
+        ctx.retryCount = 0;
+        continue;
+      }
+
       // Council vote.
       try {
         if (await council.shouldStop(ctx)) {

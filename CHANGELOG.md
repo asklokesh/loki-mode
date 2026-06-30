@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.103.0] - 2026-06-30
+
+### Bun-runner gate parity + verify.sh hardening
+
+- **Bun runner honors all completion-blocking gates** (`loki-ts/src/runner/autonomous.ts`):
+  it already refused completion on a code_review BLOCK; it now also refuses on a
+  semantic_tests BLOCK and an invariants BLOCK, mirroring the live bash route
+  exactly (same `LOKI_GATE_SEMANTIC_TESTS_BLOCK` / `LOKI_GATE_INVARIANTS_BLOCK`
+  toggles, same conditions). This closes a trust-parity gap ahead of the runner
+  being wired on. It refuses ONLY when the gate genuinely blocked (the gate is in
+  the failed set and its toggle is on), so a clean run still completes - no new
+  user-visible knob, the existing toggles are reused.
+- **verify.sh defensive hardening** (`autonomy/verify.sh`): the base ref now
+  resolves an actually-existing ref (origin/main, then main) instead of
+  hardcoding it in both branches; VERIFY_VERDICT/VERIFY_EXIT are initialized
+  before the error path so an early error can never emit an empty or VERIFIED
+  verdict or exit 0 (fail-closed).
+
+
 ## [7.102.0] - 2026-06-30
 
 ### Trust: unknown quality-gate status can no longer read green

@@ -303,6 +303,50 @@ else
     _no "help missing exit-code divergence note"
 fi
 
+# -------------------------------------------------------------------------
+# Scenario 7: no explicit base arg in a MASTER-only repo -> default-base
+# resolution path. This is the DISCRIMINATING test for the base_ref fix: the old
+# code hard-coded base_ref="main" in both branches, so in a repo whose only base
+# branch is "master" it could not resolve the base (-> inconclusive -> CONCERNS,
+# never VERIFIED). The new resolver probes main then master and finds master, so
+# the verdict is VERIFIED. A "main"-default repo would NOT discriminate (old and
+# new both resolve "main"); using master is what makes this test non-vacuous.
+# -------------------------------------------------------------------------
+S7="$TMP_ROOT/s7-masterbase"
+init_repo "$S7"
+( cd "$S7"
+  # Rename the default branch to master so "main" does not exist.
+  git branch -m master 2>/dev/null || git checkout -q -b master
+  git checkout -q -b feature
+  cat > util.js <<'EOF'
+function mul(a, b) { return a * b; }
+module.exports = { mul };
+EOF
+  git add util.js
+  git commit -qm "add util (master-only, no explicit base)" --no-gpg-sign --no-verify
+)
+run_verify "$S7"   # NOTE: no base arg -> default resolution must find master
+if [ "$RC" -eq 0 ] && [ "$VERDICT" = "VERIFIED" ]; then
+    _ok "no base arg in master-only repo -> resolver finds master -> VERIFIED (exit 0)"
+else
+    _no "no base arg (master-only) -> expected VERIFIED/0 via master resolution, got $VERDICT/$RC"
+fi
+
+# -------------------------------------------------------------------------
+# Scenario 8: error-path contract -- an unknown option must exit non-zero AND
+# must never emit a VERIFIED verdict. Locks the fail-closed initialization of
+# VERIFY_VERDICT/VERIFY_EXIT: an early error return can never surface a stale
+# or empty VERIFIED/0. (The error return happens before evidence.json is
+# written, so we assert on the exit code and stdout, not on an evidence file.)
+# -------------------------------------------------------------------------
+ERR_OUT="$( ( cd "$S1" && bash "$VERIFY_SH" --bogus-option ) 2>&1 )"
+ERR_RC=$?
+if [ "$ERR_RC" -ne 0 ] && ! printf '%s' "$ERR_OUT" | grep -q "VERDICT: VERIFIED"; then
+    _ok "unknown option -> non-zero exit, never VERIFIED (fail-closed)"
+else
+    _no "unknown option -> expected non-zero exit with no VERIFIED, got rc=$ERR_RC"
+fi
+
 echo ""
 echo "=== results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

@@ -1116,6 +1116,18 @@ verify_main() {
     local out_dir=".loki/verify"
     local block_on="critical,high"
 
+    # Fail-closed defaults. These globals are read at the end of this function
+    # (the VERDICT banner and the function return code). verify_compute_verdict()
+    # overwrites both on the normal path, but initializing them up-front
+    # guarantees no path can ever read them uninitialized -- and if anything
+    # short-circuits before the verdict is computed, the honest outcome is a
+    # verifier ERROR (exit 3), never a VERIFIED/0. The "ERROR" string never
+    # reaches verdict consumers: evidence.json (the only thing consumers parse)
+    # is emitted only after the verdict is computed, so a distinct token here is
+    # safe and clearer than reusing one of the real verdicts.
+    VERIFY_VERDICT="ERROR"
+    VERIFY_EXIT=$VERIFY_EXIT_ERROR
+
     while [ $# -gt 0 ]; do
         case "$1" in
             -h|--help) verify_help; return 0 ;;
@@ -1138,13 +1150,24 @@ verify_main() {
         esac
     done
 
-    # Default base.
+    # Default base: resolve a base branch that actually exists rather than
+    # hard-coding one. Prefer the main line (origin/main, then local main),
+    # then the older default branch name (origin/master, then master). Pass a
+    # bare branch NAME to verify_diff_base(), which owns origin/<name> ->
+    # <name> resolution; the names below are probed only to pick which bare
+    # name to hand off. If none resolve, fall back to "main": verify_diff_base()
+    # will then fail to resolve it -> inconclusive -> CONCERNS, which is the
+    # correct fail-closed default (never a silent VERIFIED on an unknown base).
     if [ -z "$base_ref" ]; then
-        if git rev-parse --verify --quiet "origin/main" >/dev/null 2>&1; then
-            base_ref="main"
-        else
-            base_ref="main"
-        fi
+        local _cand
+        for _cand in main master; do
+            if git rev-parse --verify --quiet "origin/$_cand" >/dev/null 2>&1 \
+               || git rev-parse --verify --quiet "$_cand" >/dev/null 2>&1; then
+                base_ref="$_cand"
+                break
+            fi
+        done
+        [ -z "$base_ref" ] && base_ref="main"
     fi
 
     local tree="."

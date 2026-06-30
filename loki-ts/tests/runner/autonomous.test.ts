@@ -475,6 +475,160 @@ describe("runAutonomous", () => {
     );
   });
 
+  // ---------------------------------------------------------------------------
+  // Wave-10 trust parity: the Bun runner must honor the two completion-time
+  // BLOCK gates the bash route has -- semantic_tests (run.sh:17482) and
+  // invariants (run.sh:17499) -- each an OPT-IN refusal gated on its own
+  // _BLOCK toggle (LOKI_GATE_SEMANTIC_TESTS_BLOCK / LOKI_GATE_INVARIANTS_BLOCK,
+  // default OFF, "true"|"1"). These drive the REAL quality_gates.ts via the
+  // per-gate stub (LOKI_STUB_GATE_<NAME>=fail), which lands the gate in
+  // failed[] + blocked=true. The discriminating assertion for the toggle guard:
+  // with the stub failing but the _BLOCK toggle OFF, the run must still COMPLETE
+  // (no over-block). Mirrors the FIX-A test_coverage tests above.
+  // ---------------------------------------------------------------------------
+
+  it("Wave-10: a semantic_tests BLOCK (LOKI_GATE_SEMANTIC_TESTS_BLOCK on) refuses completion even when the council votes STOP", async () => {
+    const provider = new FakeProvider([{ exitCode: 0, capturedOutputPath: "" }]);
+    // Council would vote STOP on iteration 1; the semantic_tests BLOCK must
+    // override that and force another iteration instead of council_approved.
+    const council = new FakeCouncil([true, true]);
+    const fakeStateMod = new FakeStateMod();
+    await withEnv(
+      {
+        LOKI_HARD_GATES: "true",
+        // Opt in to the blocking arm AND keep the gate enabled (surfacing on).
+        LOKI_GATE_SEMANTIC_TESTS: "true",
+        LOKI_GATE_SEMANTIC_TESTS_BLOCK: "true",
+        LOKI_STUB_GATE_SEMANTIC_TESTS: "fail",
+        // code_review passes so this run's only block is semantic_tests.
+        PHASE_CODE_REVIEW: "true",
+        LOKI_STUB_GATE_CODE_REVIEW: "pass",
+        // Disable every other gate so the outcome is deterministic.
+        PHASE_STATIC_ANALYSIS: "0",
+        PHASE_UNIT_TESTS: "0",
+        LOKI_GATE_MOCK: "0",
+        LOKI_GATE_MUTATION: "0",
+        LOKI_GATE_INVARIANTS: "0",
+        LOKI_GATE_DOC_COVERAGE: "0",
+        LOKI_GATE_MAGIC_DEBATE: "0",
+        LOKI_GATE_LSP_DIAGNOSTICS: "0",
+      },
+      async () => {
+        const code = await runAutonomous(
+          baseOpts({
+            providerOverride: provider,
+            council,
+            stateOverride: fakeStateMod,
+            autonomyMode: "checkpoint",
+            // maxIterations:2 -> iter 1 runs (semantic_tests blocks, completion
+            // refused), iter 2 hits the cap and exits 0 via
+            // max_iterations_reached. Bounded.
+            maxIterations: 2,
+            maxRetries: 5,
+          }),
+        );
+        expect(code).toBe(0);
+        expect(provider.calls.length).toBe(1);
+        const statuses = fakeStateMod.saveCalls.map((c) => c.status);
+        // Completion was REFUSED: no council_approved / completion_promise.
+        expect(statuses).not.toContain("council_approved");
+        expect(statuses).not.toContain("completion_promise_fulfilled");
+        expect(statuses).toContain("max_iterations_reached");
+      },
+    );
+  });
+
+  it("Wave-10 toggle guard: a semantic_tests fail with LOKI_GATE_SEMANTIC_TESTS_BLOCK OFF does NOT over-block (council STOP completes)", async () => {
+    // The discriminating test: this distinguishes the toggle-checked design
+    // from a naive `blocked && failed.includes("semantic_tests")`. The stub
+    // forces semantic_tests into failed[]+blocked, but the _BLOCK toggle is OFF,
+    // so the runner must NOT refuse completion -- the council STOP is honored.
+    const provider = new FakeProvider([{ exitCode: 0, capturedOutputPath: "" }]);
+    const council = new FakeCouncil([true]); // STOP on iteration 1
+    const fakeStateMod = new FakeStateMod();
+    await withEnv(
+      {
+        LOKI_HARD_GATES: "true",
+        // Gate enabled (surfacing on) but blocking opt-in is OFF.
+        LOKI_GATE_SEMANTIC_TESTS: "true",
+        LOKI_GATE_SEMANTIC_TESTS_BLOCK: "false",
+        LOKI_STUB_GATE_SEMANTIC_TESTS: "fail",
+        PHASE_CODE_REVIEW: "true",
+        LOKI_STUB_GATE_CODE_REVIEW: "pass",
+        PHASE_STATIC_ANALYSIS: "0",
+        PHASE_UNIT_TESTS: "0",
+        LOKI_GATE_MOCK: "0",
+        LOKI_GATE_MUTATION: "0",
+        LOKI_GATE_INVARIANTS: "0",
+        LOKI_GATE_DOC_COVERAGE: "0",
+        LOKI_GATE_MAGIC_DEBATE: "0",
+        LOKI_GATE_LSP_DIAGNOSTICS: "0",
+      },
+      async () => {
+        const code = await runAutonomous(
+          baseOpts({
+            providerOverride: provider,
+            council,
+            stateOverride: fakeStateMod,
+            autonomyMode: "checkpoint",
+            maxIterations: 5,
+            maxRetries: 5,
+          }),
+        );
+        expect(code).toBe(0);
+        // Council STOP honored after exactly one iteration: the toggle-OFF
+        // semantic_tests failure does NOT over-block.
+        expect(provider.calls.length).toBe(1);
+        const statuses = fakeStateMod.saveCalls.map((c) => c.status);
+        expect(statuses).toContain("council_approved");
+      },
+    );
+  });
+
+  it("Wave-10: an invariants BLOCK (LOKI_GATE_INVARIANTS_BLOCK on) refuses completion even when the council votes STOP", async () => {
+    // Mirror the semantic arm for the second parity gate so a typo in the
+    // invariants arm (wrong env var, wrong gate name) cannot ship green.
+    const provider = new FakeProvider([{ exitCode: 0, capturedOutputPath: "" }]);
+    const council = new FakeCouncil([true, true]);
+    const fakeStateMod = new FakeStateMod();
+    await withEnv(
+      {
+        LOKI_HARD_GATES: "true",
+        LOKI_GATE_INVARIANTS: "true",
+        LOKI_GATE_INVARIANTS_BLOCK: "true",
+        LOKI_STUB_GATE_INVARIANTS: "fail",
+        PHASE_CODE_REVIEW: "true",
+        LOKI_STUB_GATE_CODE_REVIEW: "pass",
+        PHASE_STATIC_ANALYSIS: "0",
+        PHASE_UNIT_TESTS: "0",
+        LOKI_GATE_MOCK: "0",
+        LOKI_GATE_MUTATION: "0",
+        LOKI_GATE_SEMANTIC_TESTS: "0",
+        LOKI_GATE_DOC_COVERAGE: "0",
+        LOKI_GATE_MAGIC_DEBATE: "0",
+        LOKI_GATE_LSP_DIAGNOSTICS: "0",
+      },
+      async () => {
+        const code = await runAutonomous(
+          baseOpts({
+            providerOverride: provider,
+            council,
+            stateOverride: fakeStateMod,
+            autonomyMode: "checkpoint",
+            maxIterations: 2,
+            maxRetries: 5,
+          }),
+        );
+        expect(code).toBe(0);
+        expect(provider.calls.length).toBe(1);
+        const statuses = fakeStateMod.saveCalls.map((c) => c.status);
+        expect(statuses).not.toContain("council_approved");
+        expect(statuses).not.toContain("completion_promise_fulfilled");
+        expect(statuses).toContain("max_iterations_reached");
+      },
+    );
+  });
+
   it("provider success path: invokes FakeProvider with a non-empty prompt", async () => {
     const provider = new FakeProvider([{ exitCode: 0, capturedOutputPath: "" }]);
     const council = new FakeCouncil([true]); // stop after iter 1 so test is bounded
