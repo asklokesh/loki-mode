@@ -2058,6 +2058,25 @@ validate_api_keys() {
         return 1
     fi
 
+    # Zero-friction auth preflight for LOCAL runs (must run BEFORE the early
+    # return below, which exits for non-Docker/K8s envs). When claude is the
+    # provider, the claude CLI is on PATH, there is no ANTHROPIC_API_KEY, and no
+    # OAuth credentials file exists (the user installed claude but never ran
+    # `claude login`), the build would otherwise enter, make a failing call, and
+    # 401 -- the worst first impression -- forcing the user to run `loki why`.
+    # Fail fast with the one-step fix instead. Opt out with LOKI_SKIP_AUTH_PREFLIGHT=1.
+    if [[ "$provider" == "claude" && "${LOKI_SKIP_AUTH_PREFLIGHT:-}" != "1" && -z "${ANTHROPIC_API_KEY:-}" ]] \
+       && command -v claude >/dev/null 2>&1; then
+        local _local_creds="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json"
+        if [[ ! -s "$_local_creds" ]]; then
+            log_error "Claude Code is installed but not logged in -- the build would stall instead of running."
+            log_error "Log in once, then retry:"
+            log_error "    claude login"
+            log_error "(or set ANTHROPIC_API_KEY, or LOKI_SKIP_AUTH_PREFLIGHT=1 to bypass this check)"
+            return 1
+        fi
+    fi
+
     # CLI tools (claude, codex, cline, aider) use their own login sessions.
     # Only require API keys inside Docker/K8s where CLI login isn't available.
     if [[ ! -f "/.dockerenv" ]] && [[ -z "${KUBERNETES_SERVICE_HOST:-}" ]]; then
@@ -2162,6 +2181,9 @@ except Exception:
                 return 1
             fi
         fi
+        # NOTE: the never-logged-in (no credentials file) case is handled earlier,
+        # BEFORE the local early-return, so it covers local runs too (this Docker/
+        # K8s-only block would otherwise be unreachable for that case).
     fi
 
     return 0
@@ -12224,16 +12246,31 @@ check_task_completion_signal() {
         local fb_statement="${fb_content:-All PRD requirements implemented and tests passing}"
         # Build minimal JSON payload
         signal_file="$fallback_file"
-        # Write the synthesized payload back into the signal file so the
-        # rest of this function can read it uniformly.
-        python3 -c "
+        # Synthesize the payload into a TEMP file then atomically move it into
+        # place, so the signal file is never observed truncated/empty/malformed:
+        # a bare `python3 ... > "$fallback_file"` truncates the file BEFORE python
+        # runs, so a python crash (or missing interpreter) mid-write would leave
+        # an empty/partial file that downstream json.loads then silently drops.
+        local _fb_tmp="${fallback_file}.tmp.$$"
+        if python3 -c "
 import json, sys
-print(json.dumps({
+sys.stdout.write(json.dumps({
     'statement': sys.argv[1][:1000],
     'evidence': 'file-based completion via COMPLETION_REQUESTED fallback',
     'confidence': 'medium',
     'source': 'completion_requested_file_fallback'
-}))" "$fb_statement" > "$fallback_file" 2>/dev/null || echo '{}' > "$fallback_file"
+}))" "$fb_statement" > "$_fb_tmp" 2>/dev/null && [ -s "$_fb_tmp" ]; then
+            mv -f "$_fb_tmp" "$fallback_file" 2>/dev/null || rm -f "$_fb_tmp" 2>/dev/null
+        else
+            # python unavailable or produced nothing: write a hand-built minimal
+            # valid JSON (statement embedded with a conservative escape) atomically.
+            rm -f "$_fb_tmp" 2>/dev/null
+            local _fb_esc
+            _fb_esc=$(printf '%s' "$fb_statement" | tr -d '"\\\n\r' | cut -c1-1000)
+            printf '{"statement":"%s","evidence":"file-based completion via COMPLETION_REQUESTED fallback","confidence":"medium","source":"completion_requested_file_fallback"}' "$_fb_esc" > "${fallback_file}.tmp2.$$" 2>/dev/null \
+                && mv -f "${fallback_file}.tmp2.$$" "$fallback_file" 2>/dev/null \
+                || { rm -f "${fallback_file}.tmp2.$$" 2>/dev/null; printf '{"statement":"completion requested","evidence":"fallback","confidence":"low","source":"completion_requested_file_fallback"}' > "$fallback_file" 2>/dev/null; }
+        fi
     fi
 
     if [ ! -f "$signal_file" ]; then

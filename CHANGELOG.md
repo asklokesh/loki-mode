@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.98.0] - 2026-06-30
+
+### Council trust-config fixes + zero-friction adoption
+
+- **COUNCIL_THRESHOLD now honored (tighten-only, bash route)** (`autonomy/completion-council.sh`):
+  the operator's `LOKI_COUNCIL_THRESHOLD` was silently ignored by the vote (a
+  hardcoded 2/3 formula was used), so setting a stricter threshold was a no-op
+  while the logs claimed it was active. The effective threshold is now
+  max(2/3-majority floor, operator threshold), clamped to council size: an
+  operator can TIGHTEN the completion gate but never weaken it below the safety
+  floor. Shared `_council_effective_threshold` helper used at all three vote
+  sites (council_vote, council_aggregate_votes, council_evaluate). This covers
+  the live bash route; the dormant Bun runner council (not yet wired into the
+  completion-decision path) carries the same latent gap and is a tracked
+  follow-up.
+- **COUNCIL_SIZE guarded** (`autonomy/completion-council.sh`): a non-positive or
+  non-numeric `LOKI_COUNCIL_SIZE` made the 2/3 floor 0 and could let an empty
+  council "approve" by default; it now falls back to a sane size (3).
+- **Fallback completion signal always valid JSON** (`autonomy/run.sh`): the
+  COMPLETION_REQUESTED fallback synthesized its payload with a bare redirect that
+  truncated the file before python ran; a python crash mid-write could leave an
+  empty/partial file that downstream json.loads silently dropped. It now writes
+  to a temp file and atomically renames, with a hand-built valid-JSON fallback
+  when python is unavailable.
+- **Zero-friction: catch "Claude installed but not logged in" in preflight**
+  (`autonomy/run.sh`): when claude is the provider, no `ANTHROPIC_API_KEY`, and
+  no credentials file exists (never logged in), the build used to enter, make a
+  failing call, and 401 - forcing the user to run `loki why`. It now fails fast
+  with the same one-step `claude login` fix (opt out: `LOKI_SKIP_AUTH_PREFLIGHT=1`).
+- **Docs: floating Docker tag** (`README.md`): the raw-docker quickstart pinned a
+  stale `:7.58.1`; now uses `:latest` so the copy-paste pulls the current image.
+
+  Found by wave-6 adversarial hunt + a zero-friction adoption analysis.
+
 ## [7.97.0] - 2026-06-29
 
 ### Wave-5 hardening: memory, events, healing, provider parity + FIX A rework

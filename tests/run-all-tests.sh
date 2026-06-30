@@ -75,6 +75,9 @@ run_test "Healing Snapshot Revert Tests" "$SCRIPT_DIR/test-healing-snapshot-reve
 
 # Parallel worktree Claude auto-flags (effort/budget/fallback/mcp parity)
 run_test "Worktree Auto-Flags Tests" "$SCRIPT_DIR/test-worktree-auto-flags.sh"
+
+# Completion-council effective threshold (operator tighten-only floor + size guard)
+run_test "Council Threshold Tests" "$SCRIPT_DIR/test-council-threshold.sh"
 run_test "Healing Test Gate Tests" "$SCRIPT_DIR/test-healing-test-gate.sh"
 
 # Process Supervisor Tests

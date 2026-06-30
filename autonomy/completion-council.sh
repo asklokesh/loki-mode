@@ -44,7 +44,37 @@
 # Council configuration
 COUNCIL_ENABLED=${LOKI_COUNCIL_ENABLED:-true}
 COUNCIL_SIZE=${LOKI_COUNCIL_SIZE:-3}
+# Guard COUNCIL_SIZE: a non-positive/non-numeric size would make the 2/3 floor 0
+# and let an empty council "approve" by default (fake-green). Force a sane floor.
+case "$COUNCIL_SIZE" in
+    ''|*[!0-9]*) COUNCIL_SIZE=3 ;;
+esac
+[ "$COUNCIL_SIZE" -lt 1 ] 2>/dev/null && COUNCIL_SIZE=3
 COUNCIL_THRESHOLD=${LOKI_COUNCIL_THRESHOLD:-2}
+
+# Effective completion threshold: the operator's COUNCIL_THRESHOLD may only ever
+# TIGHTEN the gate, never weaken it below the 2/3-majority safety floor. Before
+# this, the operator's COUNCIL_THRESHOLD was silently ignored by the vote (a
+# hardcoded 2/3 formula was used), so an operator who set a stricter threshold
+# got a no-op while the logs claimed it was active. We honor it as a floor-raise
+# only: effective = max(ceil(2/3*size), operator_threshold), clamped to size.
+_council_effective_threshold() {
+    # Optional $1 = the size to compute against (e.g. the actual number of voters
+    # present in this round); defaults to COUNCIL_SIZE. The 2/3 floor + the
+    # operator clamp are both relative to this size, so the helper works for both
+    # the configured council size and a per-round member count.
+    local _size="${1:-$COUNCIL_SIZE}"
+    case "$_size" in ''|*[!0-9]*) _size="$COUNCIL_SIZE" ;; esac
+    [ "$_size" -lt 1 ] 2>/dev/null && _size=1
+    local _floor=$(( (_size * 2 + 2) / 3 ))
+    local _op="${COUNCIL_THRESHOLD:-0}"
+    case "$_op" in ''|*[!0-9]*) _op=0 ;; esac
+    local _eff="$_floor"
+    [ "$_op" -gt "$_eff" ] 2>/dev/null && _eff="$_op"
+    [ "$_eff" -gt "$_size" ] 2>/dev/null && _eff="$_size"
+    [ "$_eff" -lt 1 ] 2>/dev/null && _eff=1
+    printf '%s' "$_eff"
+}
 COUNCIL_CHECK_INTERVAL=${LOKI_COUNCIL_CHECK_INTERVAL:-5}
 # Guard against invalid interval (must be positive integer)
 if ! [[ "$COUNCIL_CHECK_INTERVAL" =~ ^[1-9][0-9]*$ ]]; then
@@ -608,8 +638,11 @@ council_vote() {
     log_header "COMPLETION COUNCIL - Iteration $ITERATION_COUNT"
     log_info "Convening ${COUNCIL_SIZE}-member council..."
 
-    # Compute threshold using ceiling(2/3) formula, consistent with council_aggregate_votes
-    local effective_threshold=$(( (COUNCIL_SIZE * 2 + 2) / 3 ))
+    # Effective threshold honors the operator's COUNCIL_THRESHOLD as a floor-raise
+    # over the 2/3-majority safety floor (tighten-only); see
+    # _council_effective_threshold.
+    local effective_threshold
+    effective_threshold=$(_council_effective_threshold)
 
     # Gather evidence for council members
     local evidence_file="$vote_dir/evidence.md"
@@ -2604,7 +2637,13 @@ print(json.dumps(out))
 " 2>/dev/null || echo "[]")
 
     # Calculate threshold: 2/3 majority
-    local threshold=$(( (total_members * 2 + 2) / 3 ))  # ceiling of 2/3
+    # Effective threshold honors the operator's COUNCIL_THRESHOLD as a tighten-only
+    # floor-raise over the 2/3 ceiling, computed against the actual member count.
+    # This is the PRIMARY completion-decision path (council_should_stop ->
+    # council_evaluate -> council_aggregate_votes), so it must use the same helper
+    # as council_vote, not a separate hardcoded formula.
+    local threshold
+    threshold=$(_council_effective_threshold "$total_members")
     local verdict="CONTINUE"
     if [ "$complete_count" -ge "$threshold" ]; then
         verdict="COMPLETE"
@@ -2833,7 +2872,8 @@ council_evaluate() {
     fi
 
     # Compute threshold using the same ceiling(2/3) formula as council_vote and council_aggregate_votes
-    local _eval_threshold=$(( (COUNCIL_SIZE * 2 + 2) / 3 ))
+    local _eval_threshold
+    _eval_threshold=$(_council_effective_threshold)
 
     # Step 1: Aggregate votes from all members.
     # Phase C (v7.5.20): try the Claude `--agents <json>` + `--json-schema`
