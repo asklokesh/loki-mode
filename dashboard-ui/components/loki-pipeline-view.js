@@ -63,7 +63,7 @@ export class LokiPipelineView extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
     if (name === 'theme') {
@@ -97,10 +97,16 @@ export class LokiPipelineView extends LokiElement {
   }
 
   async _loadData() {
+    // Capture the api instance so a mid-flight api-url switch can be detected.
+    const api = this._api;
     try {
-      const data = await this._api._get('/api/v2/pipeline/status');
+      const data = await api._get('/api/v2/pipeline/status');
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._stages = data.stages || [];
     } catch {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       // Use demo data if API unavailable
       if (this._stages.length === 0) {
         this._stages = this._getDemoData();

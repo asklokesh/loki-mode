@@ -66,22 +66,33 @@ export class LokiOverview extends LokiElement {
       this._loadAbortController.abort();
       this._loadAbortController = null;
     }
-    if (this._api) {
-      if (this._statusUpdateHandler) this._api.removeEventListener(ApiEvents.STATUS_UPDATE, this._statusUpdateHandler);
-      if (this._connectedHandler) this._api.removeEventListener(ApiEvents.CONNECTED, this._connectedHandler);
-      if (this._disconnectedHandler) this._api.removeEventListener(ApiEvents.DISCONNECTED, this._disconnectedHandler);
-    }
+    this._teardownApiListeners();
   }
 
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
 
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      // Re-fetch the correct per-URL client instead of mutating baseUrl on the
+      // cached singleton (which would corrupt the shared instance for the old
+      // URL and leak the new project's data to other components). Detach our
+      // listeners from the old instance, adopt the new one, re-subscribe, and
+      // open its WebSocket so live push follows the switched project.
+      this._teardownApiListeners();
+      this._setupApi();
+      this._api.connect().catch(() => {});
       this._loadStatus();
     }
     if (name === 'theme') {
       this._applyTheme();
+    }
+  }
+
+  _teardownApiListeners() {
+    if (this._api) {
+      if (this._statusUpdateHandler) this._api.removeEventListener(ApiEvents.STATUS_UPDATE, this._statusUpdateHandler);
+      if (this._connectedHandler) this._api.removeEventListener(ApiEvents.CONNECTED, this._connectedHandler);
+      if (this._disconnectedHandler) this._api.removeEventListener(ApiEvents.DISCONNECTED, this._disconnectedHandler);
     }
   }
 

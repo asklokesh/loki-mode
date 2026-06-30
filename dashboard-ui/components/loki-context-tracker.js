@@ -48,7 +48,7 @@ export class LokiContextTracker extends LokiElement {
     if (oldValue === newValue) return;
 
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadContext();
     }
     if (name === 'theme') {
@@ -62,14 +62,21 @@ export class LokiContextTracker extends LokiElement {
   }
 
   async _loadContext() {
+    // Capture the api instance so a mid-flight api-url switch can be detected.
+    const api = this._api;
     try {
       const apiUrl = this.getAttribute('api-url') || window.location.origin;
       const resp = await fetch(apiUrl + '/api/context');
       if (resp.ok) {
-        this._data = await resp.json();
+        const data = await resp.json();
+        // Drop a stale response if the api-url switched mid-flight.
+        if (api !== this._api) return;
+        this._data = data;
         this._connected = true;
       }
     } catch {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._connected = false;
     }
     this.render();

@@ -414,7 +414,7 @@ export class LokiNotificationCenter extends LokiElement {
         return `
           <div class="notif-row ${acked ? 'acknowledged' : ''}">
             <span class="severity-dot" style="background: ${severityColor};" title="${this._escapeHTML(n.severity)}"></span>
-            <span class="cat-icon" title="${catCfg.label}">${catCfg.icon}</span>
+            <span class="cat-icon" title="${this._escapeHTML(catCfg.label)}">${catCfg.icon}</span>
             <span class="notif-time">${this._formatTime(n.timestamp)}</span>
             <span class="notif-message">${this._escapeHTML(n.message)}</span>
             ${n.iteration != null ? `<span class="notif-iteration">iter ${n.iteration}</span>` : ''}

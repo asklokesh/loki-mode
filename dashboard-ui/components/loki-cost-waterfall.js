@@ -57,7 +57,7 @@ export class LokiCostWaterfall extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
     if (name === 'theme') {
@@ -91,12 +91,18 @@ export class LokiCostWaterfall extends LokiElement {
   }
 
   async _loadData() {
+    // Capture the api instance so a mid-flight api-url switch can be detected.
+    const api = this._api;
     try {
-      const data = await this._api._get('/api/v2/cost/breakdown');
+      const data = await api._get('/api/v2/cost/breakdown');
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._phases = data.phases || [];
       this._budget = data.budget_usd || null;
       this._totalCost = data.total_usd || this._phases.reduce((sum, p) => sum + (p.cost_usd || 0), 0);
     } catch {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       if (this._phases.length === 0) {
         this._phases = this._getDemoData();
         this._budget = 10.00;
@@ -150,7 +156,7 @@ export class LokiCostWaterfall extends LokiElement {
     const phase = this._phases.find(p => p.phase === this._hoveredPhase);
     if (!phase) return;
     const cfg = PHASE_COLORS[phase.phase] || { label: phase.phase };
-    tooltip.innerHTML = `<strong>${cfg.label}</strong>: ${this._formatCost(phase.cost_usd)}`;
+    tooltip.innerHTML = `<strong>${this._escapeHtml(cfg.label)}</strong>: ${this._formatCost(phase.cost_usd)}`;
     tooltip.style.display = 'block';
     const rect = barEl.getBoundingClientRect();
     const containerRect = this.shadowRoot.querySelector('.chart-area').getBoundingClientRect();
@@ -385,7 +391,7 @@ export class LokiCostWaterfall extends LokiElement {
           <div class="waterfall-bar" data-phase="${this._escapeHtml(p.phase)}"
                style="height: ${Math.max(height, 4)}px; background: ${cfg.color}; ${isHovered ? 'opacity: 0.85;' : ''}">
           </div>
-          <span class="bar-label">${cfg.label}</span>
+          <span class="bar-label">${this._escapeHtml(cfg.label)}</span>
         </div>
       `;
     }).join('');
@@ -403,7 +409,7 @@ export class LokiCostWaterfall extends LokiElement {
       const pct = this._totalCost > 0 ? ((p.cost_usd / this._totalCost) * 100).toFixed(0) : 0;
       return `<div class="summary-item">
         <div class="summary-dot" style="background: ${cfg.color};"></div>
-        <span class="summary-label">${cfg.label}</span>
+        <span class="summary-label">${this._escapeHtml(cfg.label)}</span>
         <span class="summary-value">${this._formatCost(p.cost_usd)} (${pct}%)</span>
       </div>`;
     }).join('');

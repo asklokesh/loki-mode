@@ -93,7 +93,7 @@ export class LokiQualityGates extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
     if (name === 'theme') {
@@ -127,9 +127,13 @@ export class LokiQualityGates extends LokiElement {
   }
 
   async _loadData() {
+    // Capture the api instance so a mid-flight api-url switch can be detected.
+    const api = this._api;
     try {
       this._loading = true;
-      const data = await this._api._get('/api/council/gate');
+      const data = await api._get('/api/council/gate');
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       const gates = data?.gates || data || [];
       // Verified-completion evidence gate (v7.19.1): surfaced alongside the
       // quality gates so a blocked completion shows WHY (empty diff / red
@@ -142,6 +146,8 @@ export class LokiQualityGates extends LokiElement {
       this._evidence = evidence;
       this._error = null;
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       if (!this._error) {
         this._error = `Failed to load quality gates: ${err.message}`;
       }
@@ -154,16 +160,22 @@ export class LokiQualityGates extends LokiElement {
 
   async _triggerScan() {
     if (this._scanning) return;
+    // Capture the api instance so a mid-flight api-url switch can be detected.
+    const api = this._api;
     this._scanning = true;
     this.render();
     try {
       // A quality scan is the one-click action that produces gate results from
       // the dashboard. Full-codebase audit can exceed the default client
       // timeout, so allow a generous 300s budget.
-      await this._api._post('/api/quality-scan', {}, { timeout: 300000 });
+      await api._post('/api/quality-scan', {}, { timeout: 300000 });
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._lastDataHash = null; // force re-render with fresh data
       await this._loadData();
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._error = `Quality scan failed: ${err.message}`;
     } finally {
       this._scanning = false;

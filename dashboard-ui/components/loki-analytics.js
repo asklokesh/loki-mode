@@ -90,7 +90,7 @@ export class LokiAnalytics extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
   }
@@ -100,8 +100,8 @@ export class LokiAnalytics extends LokiElement {
     this._api = getApiClient({ baseUrl: apiUrl });
   }
 
-  async _fetchActivity() {
-    const baseUrl = this._api.baseUrl || window.location.origin;
+  async _fetchActivity(api = this._api) {
+    const baseUrl = api.baseUrl || window.location.origin;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
     try {
@@ -117,16 +117,21 @@ export class LokiAnalytics extends LokiElement {
 
   async _loadData() {
     if (!this.isConnected || this._loading) return;
+    // Capture the api instance so a mid-flight api-url switch can be detected.
+    const api = this._api;
     this._loading = true;
 
     try {
       const results = await Promise.allSettled([
-        this._fetchActivity(),
-        this._api.getToolEfficiency(50),
-        this._api.getCost(),
-        this._api.getContext(),
-        this._api.getLearningTrends({ timeRange: this._toolTimeRange }),
+        this._fetchActivity(api),
+        api.getToolEfficiency(50),
+        api.getCost(),
+        api.getContext(),
+        api.getLearningTrends({ timeRange: this._toolTimeRange }),
       ]);
+
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
 
       if (results[0].status === 'fulfilled') this._activity = results[0].value || [];
       if (results[1].status === 'fulfilled') this._tools = results[1].value || [];

@@ -70,6 +70,10 @@ export class LokiLogStream extends LokiElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     this._stopLogPolling();
+    this._teardownApiListeners();
+  }
+
+  _teardownApiListeners() {
     if (this._api && this._logMessageHandler) {
       this._api.removeEventListener(ApiEvents.LOG_MESSAGE, this._logMessageHandler);
     }
@@ -81,7 +85,17 @@ export class LokiLogStream extends LokiElement {
     switch (name) {
       case 'api-url':
         if (this._api) {
-          this._api.baseUrl = newValue;
+          // Adopt the correct per-URL client instead of mutating the cached
+          // singleton's baseUrl (which leaks one project's logs into another).
+          // Detach our LOG_MESSAGE listener from the old instance, swap, and
+          // re-subscribe. Reset the accumulated log buffer so the switched
+          // project starts clean rather than appending to the prior project.
+          this._teardownApiListeners();
+          this._logs = [];
+          this._apiLastCount = 0;
+          this._apiLastSig = null;
+          this._setupApi();
+          this.render();
         }
         break;
       case 'max-lines':

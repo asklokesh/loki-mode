@@ -48,7 +48,7 @@ export class LokiPromptOptimizer extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
     if (name === 'theme') {
@@ -62,10 +62,17 @@ export class LokiPromptOptimizer extends LokiElement {
   }
 
   async _loadData() {
+    // Capture the api instance so a mid-flight api-url switch can be detected.
+    const api = this._api;
     try {
-      this._data = await this._api._get('/api/prompt-versions');
+      const data = await api._get('/api/prompt-versions');
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
+      this._data = data;
       this._error = null;
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._error = err.message;
       this._data = null;
     }
@@ -75,12 +82,18 @@ export class LokiPromptOptimizer extends LokiElement {
 
   async _triggerOptimize() {
     if (this._optimizing) return;
+    // Capture the api instance so a mid-flight api-url switch can be detected.
+    const api = this._api;
     this._optimizing = true;
     this.render();
     try {
-      await this._api._post('/api/prompt-optimize?dry_run=false', {});
+      await api._post('/api/prompt-optimize?dry_run=false', {});
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       await this._loadData();
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._error = err.message;
     }
     this._optimizing = false;

@@ -64,13 +64,28 @@ _learning_collector = None
 
 
 def _get_learning_collector():
-    """Get or create the LearningCollector instance for MCP server."""
+    """Get or create the LearningCollector instance for MCP server.
+
+    Revalidates the cached collector against the current cwd-derived .loki dir
+    (mirrors the StateManager realpath-compare-recreate guard in
+    _get_mcp_state_manager). A multi-project MCP session can change cwd between
+    calls; without this, the cached collector stays bound to a PREVIOUS
+    project's .loki dir and contaminates one project's learnings into another.
+    """
     global _learning_collector
     if not LEARNING_COLLECTOR_AVAILABLE:
         return None
+    from pathlib import Path
+    loki_dir = Path(os.getcwd()) / '.loki'
+    if _learning_collector is not None:
+        existing_dir = getattr(_learning_collector, 'loki_dir', None)
+        if existing_dir and os.path.realpath(str(existing_dir)) != os.path.realpath(str(loki_dir)):
+            # Project directory changed, recreate
+            close = getattr(_learning_collector, 'close', None)
+            if callable(close):
+                close()
+            _learning_collector = None
     if _learning_collector is None:
-        from pathlib import Path
-        loki_dir = Path(os.getcwd()) / '.loki'
         _learning_collector = get_mcp_learning_collector(loki_dir=loki_dir)
     return _learning_collector
 

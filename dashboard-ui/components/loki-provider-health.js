@@ -60,7 +60,7 @@ export class LokiProviderHealth extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
     if (name === 'theme') {
@@ -94,10 +94,14 @@ export class LokiProviderHealth extends LokiElement {
   }
 
   async _loadData() {
+    // Drop a stale response if the api-url switched mid-flight.
+    const api = this._api;
     try {
-      const data = await this._api._get('/api/v2/providers/health');
+      const data = await api._get('/api/v2/providers/health');
+      if (api !== this._api) return;
       this._providers = data.providers || [];
     } catch {
+      if (api !== this._api) return;
       // Use demo data if API unavailable
       if (this._providers.length === 0) {
         this._providers = this._getDemoData();

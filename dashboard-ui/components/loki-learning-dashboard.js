@@ -86,7 +86,7 @@ export class LokiLearningDashboard extends LokiElement {
     switch (name) {
       case 'api-url':
         if (this._api) {
-          this._api.baseUrl = newValue;
+          this._api = getApiClient({ baseUrl: newValue });
           this._loadData();
         }
         break;
@@ -118,6 +118,7 @@ export class LokiLearningDashboard extends LokiElement {
     this._error = null;
     this.render();
 
+    const api = this._api;
     try {
       const params = {
         timeRange: this._timeRange,
@@ -127,15 +128,19 @@ export class LokiLearningDashboard extends LokiElement {
 
       // Load metrics and trends in parallel
       const [metricsRes, trendsRes, signalsRes] = await Promise.all([
-        this._api.getLearningMetrics(params).catch(() => null),
-        this._api.getLearningTrends(params).catch(() => null),
-        this._api.getLearningSignals({ ...params, limit: 50 }).catch(() => []),
+        api.getLearningMetrics(params).catch(() => null),
+        api.getLearningTrends(params).catch(() => null),
+        api.getLearningSignals({ ...params, limit: 50 }).catch(() => []),
       ]);
 
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._metrics = metricsRes;
       this._trends = trendsRes;
       this._signals = signalsRes || [];
     } catch (error) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._error = error.message || 'Failed to load learning data';
     }
 
@@ -198,10 +203,17 @@ export class LokiLearningDashboard extends LokiElement {
   }
 
   _escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    if (text === null || text === undefined) return '';
+    // Quote-safe: the textContent round-trip escapes < > & but NOT quotes, and
+    // this value is interpolated into double-quoted HTML attributes (data-id,
+    // class, aria-label). A raw " would break out of the attribute and inject an
+    // event handler, so we escape quotes explicitly too.
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   _renderFilters() {
@@ -260,7 +272,7 @@ export class LokiLearningDashboard extends LokiElement {
           <div class="signal-breakdown">
             ${Object.entries(signalsByType || {}).map(([type, count]) => `
               <div class="breakdown-item">
-                <span class="breakdown-label">${type.replace('_', ' ')}</span>
+                <span class="breakdown-label">${this._escapeHtml(type.replace('_', ' '))}</span>
                 <span class="breakdown-value">${this._formatNumber(count)}</span>
               </div>
             `).join('')}
@@ -276,7 +288,7 @@ export class LokiLearningDashboard extends LokiElement {
           <div class="signal-breakdown">
             ${Object.entries(signalsBySource || {}).map(([source, count]) => `
               <div class="breakdown-item">
-                <span class="breakdown-label source-badge ${source}">${source}</span>
+                <span class="breakdown-label source-badge ${this._escapeHtml(source)}">${this._escapeHtml(source)}</span>
                 <span class="breakdown-value">${this._formatNumber(count)}</span>
               </div>
             `).join('')}
@@ -349,7 +361,7 @@ export class LokiLearningDashboard extends LokiElement {
       <div class="trend-chart">
         <div class="chart-header">
           <span class="chart-title">Signal Volume Over Time</span>
-          <span class="chart-subtitle">${this._trends.period}</span>
+          <span class="chart-subtitle">${this._escapeHtml(this._trends.period)}</span>
         </div>
         <svg class="chart-svg" viewBox="0 0 ${chartWidth} ${chartHeight}">
           <!-- Grid lines -->
@@ -371,8 +383,8 @@ export class LokiLearningDashboard extends LokiElement {
         </svg>
         <div class="chart-labels">
           ${dataPoints.length > 0 ? `
-            <span class="chart-label-start">${dataPoints[0].label}</span>
-            <span class="chart-label-end">${dataPoints[dataPoints.length - 1].label}</span>
+            <span class="chart-label-start">${this._escapeHtml(dataPoints[0].label)}</span>
+            <span class="chart-label-end">${this._escapeHtml(dataPoints[dataPoints.length - 1].label)}</span>
           ` : ''}
         </div>
       </div>
@@ -396,7 +408,7 @@ export class LokiLearningDashboard extends LokiElement {
           </div>
           <div class="list-items" role="list">
             ${(preferences || []).slice(0, 5).map(p => `
-              <div class="list-item" data-type="preference" data-id="${p.preference_key}" tabindex="0" role="listitem">
+              <div class="list-item" data-type="preference" data-id="${this._escapeHtml(p.preference_key)}" tabindex="0" role="listitem">
                 <div class="item-main">
                   <span class="item-key">${this._escapeHtml(p.preference_key)}</span>
                   <span class="item-value">${this._escapeHtml(String(p.preferred_value))}</span>
@@ -418,7 +430,7 @@ export class LokiLearningDashboard extends LokiElement {
           </div>
           <div class="list-items" role="list">
             ${(error_patterns || []).slice(0, 5).map(e => `
-              <div class="list-item error-item" data-type="error_pattern" data-id="${e.error_type}" tabindex="0" role="listitem">
+              <div class="list-item error-item" data-type="error_pattern" data-id="${this._escapeHtml(e.error_type)}" tabindex="0" role="listitem">
                 <div class="item-main">
                   <span class="item-key">${this._escapeHtml(e.error_type)}</span>
                   <span class="resolution-rate ${e.resolution_rate > 0.5 ? 'good' : 'poor'}">${this._formatPercent(e.resolution_rate)} resolved</span>
@@ -440,7 +452,7 @@ export class LokiLearningDashboard extends LokiElement {
           </div>
           <div class="list-items" role="list">
             ${(success_patterns || []).slice(0, 5).map(s => `
-              <div class="list-item success-item" data-type="success_pattern" data-id="${s.pattern_name}" tabindex="0" role="listitem">
+              <div class="list-item success-item" data-type="success_pattern" data-id="${this._escapeHtml(s.pattern_name)}" tabindex="0" role="listitem">
                 <div class="item-main">
                   <span class="item-key">${this._escapeHtml(s.pattern_name)}</span>
                   <span class="item-duration">${this._formatDuration(s.avg_duration_seconds)}</span>
@@ -462,7 +474,7 @@ export class LokiLearningDashboard extends LokiElement {
           </div>
           <div class="list-items" role="list">
             ${(tool_efficiencies || []).slice(0, 5).map((t, i) => `
-              <div class="list-item tool-item" data-type="tool_efficiency" data-id="${t.tool_name}" tabindex="0" role="listitem">
+              <div class="list-item tool-item" data-type="tool_efficiency" data-id="${this._escapeHtml(t.tool_name)}" tabindex="0" role="listitem">
                 <div class="item-rank">#${i + 1}</div>
                 <div class="item-main">
                   <span class="item-key">${this._escapeHtml(t.tool_name)}</span>
@@ -501,13 +513,13 @@ export class LokiLearningDashboard extends LokiElement {
             const ts = s.timestamp ? new Date(s.timestamp).toLocaleTimeString() : '-';
             return `
             <div class="signal-item">
-              <div class="signal-type ${type}">${type.replace('_', ' ')}</div>
+              <div class="signal-type ${this._escapeHtml(type)}">${this._escapeHtml(type.replace('_', ' '))}</div>
               <div class="signal-content">
                 <span class="signal-action">${this._escapeHtml(action)}</span>
-                <span class="signal-source">${source}</span>
+                <span class="signal-source">${this._escapeHtml(source)}</span>
               </div>
               <div class="signal-meta">
-                <span class="signal-outcome ${outcome}">${outcome}</span>
+                <span class="signal-outcome ${this._escapeHtml(outcome)}">${this._escapeHtml(outcome)}</span>
                 <span class="signal-time">${ts}</span>
               </div>
             </div>`;
@@ -640,7 +652,7 @@ export class LokiLearningDashboard extends LokiElement {
     return `
       <div class="detail-panel">
         <div class="detail-header">
-          <h3>${type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}</h3>
+          <h3>${this._escapeHtml(type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase()))}</h3>
           <button class="close-btn" id="close-detail">&times;</button>
         </div>
         <div class="detail-body">
@@ -648,7 +660,7 @@ export class LokiLearningDashboard extends LokiElement {
           <div class="detail-row">
             <span class="detail-label">Sources</span>
             <div class="source-tags">
-              ${(item.sources || []).map(s => `<span class="source-badge ${s}">${s}</span>`).join('')}
+              ${(item.sources || []).map(s => `<span class="source-badge ${this._escapeHtml(s)}">${this._escapeHtml(s)}</span>`).join('')}
             </div>
           </div>
           <div class="detail-row">
@@ -1295,7 +1307,7 @@ export class LokiLearningDashboard extends LokiElement {
     if (this._loading) {
       content = '<div class="loading">Loading learning metrics...</div>';
     } else if (this._error) {
-      content = `<div class="error-state">Error: ${this._error}</div>`;
+      content = `<div class="error-state">Error: ${this._escapeHtml(this._error)}</div>`;
     } else {
       content = `
         <div class="content-main">

@@ -72,7 +72,7 @@ export class LokiTenantSwitcher extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
     if (name === 'theme') {
@@ -86,12 +86,17 @@ export class LokiTenantSwitcher extends LokiElement {
   }
 
   async _loadData() {
+    const api = this._api;
     try {
       this._loading = true;
-      const data = await this._api._get('/api/v2/tenants');
+      const data = await api._get('/api/v2/tenants');
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._tenants = Array.isArray(data) ? data : (data?.tenants || []);
       this._error = null;
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._error = `Failed to load tenants: ${err.message}`;
     } finally {
       this._loading = false;

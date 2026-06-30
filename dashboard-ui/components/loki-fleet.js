@@ -90,7 +90,7 @@ export class LokiFleet extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
     if (name === 'theme') {
@@ -124,11 +124,14 @@ export class LokiFleet extends LokiElement {
   }
 
   async _loadData() {
+    const api = this._api;
     try {
       const [runsResp, summaryResp] = await Promise.all([
-        this._api._get('/api/fleet/runs'),
-        this._api._get('/api/fleet/summary'),
+        api._get('/api/fleet/runs'),
+        api._get('/api/fleet/summary'),
       ]);
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       const runs = Array.isArray(runsResp) ? runsResp : (runsResp?.runs || []);
       const dataHash = JSON.stringify({ runs, summaryResp });
       if (dataHash === this._lastDataHash) return;
@@ -137,6 +140,8 @@ export class LokiFleet extends LokiElement {
       this._summary = summaryResp || null;
       this._error = null;
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       if (!this._error) {
         this._error = `Failed to load fleet: ${err.message}`;
       }

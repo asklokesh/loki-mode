@@ -56,7 +56,7 @@ export class LokiSpecPanel extends LokiElement {
 
   attributeChangedCallback(name, oldValue, newValue) {
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
     }
   }
 
@@ -66,23 +66,34 @@ export class LokiSpecPanel extends LokiElement {
   }
 
   async _load() {
+    // Drop a stale response if the api-url switched mid-flight.
+    const api = this._api;
     this._loading = true;
     this._error = null;
     this.render();
     try {
-      this._spec = await this._api._get('/api/spec');
+      const spec = await api._get('/api/spec');
+      if (api !== this._api) return;
+      this._spec = spec;
     } catch (e) {
+      if (api !== this._api) return;
       this._error = (e && e.message) ? e.message : 'Failed to load spec';
     } finally {
-      this._loading = false;
-      this.render();
+      // Skip the stale render if the api swapped mid-flight (a return inside
+      // try/catch still runs this finally, so guard it here instead).
+      if (api === this._api) {
+        this._loading = false;
+        this.render();
+      }
     }
     // History loads in the background; its failure must not block the active
     // spec (the prominent surface), so it has its own error channel.
     try {
-      const data = await this._api._get('/api/spec/history');
+      const data = await api._get('/api/spec/history');
+      if (api !== this._api) return;
       this._history = (data && Array.isArray(data.history)) ? data.history : [];
     } catch (e) {
+      if (api !== this._api) return;
       this._historyError = (e && e.message) ? e.message : 'Failed to load history';
       this._history = [];
     }

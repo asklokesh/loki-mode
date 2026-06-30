@@ -348,6 +348,19 @@ hook_pre_healing_modify() {
     [[ "${LOKI_HEAL_MODE:-false}" != "true" ]] && return 0
     [[ -z "$file_path" ]] && return 0
 
+    # Fail CLOSED if the friction map is absent. Without it the friction safety
+    # gate below cannot run, so deleting (or never producing) friction-map.json
+    # would otherwise BYPASS protection and let unclassified institutional
+    # knowledge be destroyed -- and _heal_snapshot_save would still run, masking
+    # the gap. The map is produced by the archaeology phase (the phase gate
+    # blocks archaeology -> stabilize until friction-map.json has >=1 entry), so
+    # any modify in stabilize/isolate/modernize legitimately has one. Block
+    # before any friction check or snapshot proceeds.
+    if [[ ! -f "$heal_dir/friction-map.json" ]]; then
+        echo "HOOK_BLOCKED: friction-map.json missing at ${heal_dir}/friction-map.json. Run the archaeology phase first (loki heal <path> --phase archaeology) to catalog friction before modifying files in healing mode."
+        return 1
+    fi
+
     # Check if file has friction points
     if [[ -f "$heal_dir/friction-map.json" ]]; then
         local blocked

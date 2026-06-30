@@ -61,9 +61,18 @@ run_test "Memory Retrieval Tests" "$SCRIPT_DIR/test-memory-retrieval.sh"
 run_test "Memory Layers Tests" "$SCRIPT_DIR/test-memory-layers.sh"
 run_test "Memory CLI Tests" "$SCRIPT_DIR/test-memory-cli.sh"
 
+# Event Bus Tests
+run_test "Event Bus Tests" "$SCRIPT_DIR/test-event-bus.sh"
+run_test "Event Bus Exact-Id Match (bus.ts)" "$SCRIPT_DIR/test-event-bus-exact-id.sh"
+
 # Hooks and MCP Tests
 run_test "Hooks System Tests" "$SCRIPT_DIR/test-hooks.sh"
 run_test "MCP Server Tests" "$SCRIPT_DIR/test-mcp-server.sh"
+
+# Healing Hooks (legacy-system healing safety gates)
+run_test "Healing Hooks Safety Tests" "$SCRIPT_DIR/test-healing-hooks-safety.sh"
+run_test "Healing Snapshot Revert Tests" "$SCRIPT_DIR/test-healing-snapshot-revert.sh"
+run_test "Healing Test Gate Tests" "$SCRIPT_DIR/test-healing-test-gate.sh"
 
 # Process Supervisor Tests
 run_test "Process Supervisor Tests" "$SCRIPT_DIR/test-process-supervisor.sh"

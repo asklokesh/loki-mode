@@ -83,7 +83,7 @@ export class LokiApiKeys extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
     if (name === 'theme') {
@@ -97,14 +97,19 @@ export class LokiApiKeys extends LokiElement {
   }
 
   async _loadData() {
+    const api = this._api;
     try {
       this._loading = true;
       this.render();
 
-      const data = await this._api._get('/api/v2/api-keys');
+      const data = await api._get('/api/v2/api-keys');
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._keys = Array.isArray(data) ? data : (data?.keys || []);
       this._error = null;
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._error = `Failed to load API keys: ${err.message}`;
     } finally {
       this._loading = false;

@@ -53,7 +53,7 @@ export class LokiAgentLeaderboard extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
     if (name === 'theme') {
@@ -87,8 +87,11 @@ export class LokiAgentLeaderboard extends LokiElement {
   }
 
   async _loadData() {
+    const api = this._api;
     try {
-      const data = await this._api._get('/api/v2/agents/leaderboard');
+      const data = await api._get('/api/v2/agents/leaderboard');
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       const agents = data.agents || [];
       // Track rank changes
       const newRanks = {};
@@ -99,6 +102,8 @@ export class LokiAgentLeaderboard extends LokiElement {
       this._currentRanks = newRanks;
       this._agents = agents;
     } catch {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       if (this._agents.length === 0) {
         this._agents = this._getDemoData();
         this._currentRanks = {};

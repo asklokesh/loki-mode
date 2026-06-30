@@ -103,7 +103,7 @@ export class LokiAppPreview extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
     if (name === 'theme') {
@@ -137,19 +137,25 @@ export class LokiAppPreview extends LokiElement {
   }
 
   async _loadData() {
+    // Capture the api instance so a mid-flight api-url switch can be detected.
+    const api = this._api;
     try {
-      const status = await this._api.getAppRunnerStatus();
+      const status = await api.getAppRunnerStatus();
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       const st = status?.status || 'not_initialized';
       // Only fetch errors when something is wrong, to keep the panel quiet
       // during a healthy run.
       let errors = null;
       if (st === 'crashed' || st === 'failed') {
         try {
-          errors = await this._api.getAppRunnerErrors(50);
+          errors = await api.getAppRunnerErrors(50);
         } catch {
           errors = null;
         }
       }
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       const dataHash = JSON.stringify({
         status: st,
         port: status?.port,
@@ -203,6 +209,8 @@ export class LokiAppPreview extends LokiElement {
       this._error = null;
       this.render();
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       if (!this._error) {
         this._error = `Could not read app status: ${err.message}`;
         this.render();
@@ -302,10 +310,16 @@ export class LokiAppPreview extends LokiElement {
   }
 
   async _handleRestart() {
+    // Capture the api instance so a mid-flight api-url switch can be detected.
+    const api = this._api;
     try {
-      await this._api.restartApp();
+      await api.restartApp();
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._loadData();
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._error = `Restart failed: ${err.message}`;
       this.render();
     }

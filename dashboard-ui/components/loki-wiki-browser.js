@@ -69,7 +69,7 @@ export class LokiWikiBrowser extends LokiElement {
 
   attributeChangedCallback(name, oldValue, newValue) {
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
     }
   }
 
@@ -89,10 +89,16 @@ export class LokiWikiBrowser extends LokiElement {
     this._loading = true;
     this._error = null;
     this.render();
+    const api = this._api;
     this._metaPromise = (async () => {
       try {
-        this._meta = await this._api._get('/api/wiki');
+        const meta = await api._get('/api/wiki');
+        // Drop a stale response if the api-url switched mid-flight.
+        if (api !== this._api) return;
+        this._meta = meta;
       } catch (e) {
+        // Drop a stale response if the api-url switched mid-flight.
+        if (api !== this._api) return;
         this._error = (e && e.message) ? e.message : 'Failed to load wiki';
       } finally {
         this._loading = false;
@@ -115,12 +121,17 @@ export class LokiWikiBrowser extends LokiElement {
       return this._sectionCache[id];
     }
     this._sectionState[id] = 'loading';
+    const api = this._api;
     try {
-      const data = await this._api._get(`/api/wiki/${encodeURIComponent(id)}`);
+      const data = await api._get(`/api/wiki/${encodeURIComponent(id)}`);
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return this._sectionCache[id] || { error: 'stale' };
       this._sectionCache[id] = data;
       this._sectionState[id] = (data && data.error) ? 'error' : 'loaded';
       return data;
     } catch (e) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return this._sectionCache[id] || { error: 'stale' };
       const rec = { error: (e && e.message) || 'load failed' };
       this._sectionCache[id] = rec;
       this._sectionState[id] = 'error';
@@ -281,14 +292,20 @@ export class LokiWikiBrowser extends LokiElement {
     this._askError = null;
     this._answer = null;
     this.render();
+    const api = this._api;
     try {
       // The ask endpoint shells out to claude (and may rebuild the index on a
       // cold repo), so it can take minutes. Use a 200s client timeout, longer
       // than the server's 180s cap, so the server -- not the client -- decides
       // when to give up. The default 10s would abort with "Request timeout".
-      this._answer = await this._api._post('/api/wiki/ask', { question: q },
+      const answer = await api._post('/api/wiki/ask', { question: q },
         { timeout: 200000 });
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
+      this._answer = answer;
     } catch (e) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._askError = (e && e.message) ? e.message : 'Ask failed';
     } finally {
       this._asking = false;

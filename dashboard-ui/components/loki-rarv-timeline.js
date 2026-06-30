@@ -121,7 +121,7 @@ export class LokiRarvTimeline extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
     if (name === 'run-id') {
@@ -165,13 +165,17 @@ export class LokiRarvTimeline extends LokiElement {
       return;
     }
 
+    // Drop a stale response if the api-url switched mid-flight.
+    const api = this._api;
     try {
       this._loading = true;
-      const data = await this._api._get(`/api/v2/runs/${runId}/timeline`);
+      const data = await api._get(`/api/v2/runs/${runId}/timeline`);
+      if (api !== this._api) return;
       this._timeline = data;
       this._cycleHistory = data.history || [];
       this._error = null;
     } catch (err) {
+      if (api !== this._api) return;
       // 404 means run not found -- not a real error, just no data yet
       if (err.message && (err.message.includes('404') || err.message.includes('Not Found'))) {
         this._timeline = null;

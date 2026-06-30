@@ -65,7 +65,7 @@ export class LokiSessionTimeline extends LokiElement {
       } catch { /* ignore invalid JSON */ }
     }
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadTimeline();
     }
     if (name === 'theme') {
@@ -79,12 +79,17 @@ export class LokiSessionTimeline extends LokiElement {
   }
 
   async _loadTimeline() {
+    const api = this._api;
     try {
-      const status = await this._api.getStatus();
+      const status = await api.getStatus();
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       if (status) {
         this._buildPhasesFromStatus(status);
       }
     } catch {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       // Use demo data if API not available
       if (this._phases.length === 0) {
         this._buildDemoPhases();

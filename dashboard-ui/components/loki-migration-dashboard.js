@@ -63,7 +63,7 @@ export class LokiMigrationDashboard extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._fetchMigrations();
     }
     if (name === 'theme') {
@@ -77,17 +77,22 @@ export class LokiMigrationDashboard extends LokiElement {
   }
 
   async _fetchMigrations() {
+    // Drop a stale response if the api-url switched mid-flight.
+    const api = this._api;
     try {
-      const result = await this._api._get('/api/migration/list');
+      const result = await api._get('/api/migration/list');
+      if (api !== this._api) return;
       this._migrations = Array.isArray(result) ? result : (result.migrations || []);
       this._error = null;
       const active = this._migrations.find(m => m.status === 'in_progress' || m.status === 'active');
       if (active) {
         await this._fetchStatus(active.migration_id || active.id);
+        if (api !== this._api) return;
       } else {
         this._migration = null;
       }
     } catch (err) {
+      if (api !== this._api) return;
       this._error = err.message;
       this._migrations = [];
       this._migration = null;
@@ -97,18 +102,26 @@ export class LokiMigrationDashboard extends LokiElement {
   }
 
   async _fetchStatus(id) {
+    // Drop a stale response if the api-url switched mid-flight.
+    const api = this._api;
     try {
-      this._migration = await this._api._get(`/api/migration/${encodeURIComponent(id)}/status`);
+      const migration = await api._get(`/api/migration/${encodeURIComponent(id)}/status`);
+      if (api !== this._api) return;
+      this._migration = migration;
       this._error = null;
     } catch (err) {
+      if (api !== this._api) return;
       this._error = err.message;
     }
   }
 
   async _fetchData() {
+    // Drop a stale response if the api-url switched mid-flight.
+    const api = this._api;
     const id = this._migration && (this._migration.migration_id || this._migration.id);
     if (id) {
       await this._fetchStatus(id);
+      if (api !== this._api) return;
       this.render();
     } else {
       await this._fetchMigrations();

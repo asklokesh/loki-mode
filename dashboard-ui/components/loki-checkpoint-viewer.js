@@ -54,7 +54,7 @@ export class LokiCheckpointViewer extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
     if (name === 'theme') {
@@ -89,10 +89,13 @@ export class LokiCheckpointViewer extends LokiElement {
   }
 
   async _loadData() {
+    // Drop a stale response if the api-url switched mid-flight.
+    const api = this._api;
     try {
       const [checkpointsResult] = await Promise.allSettled([
-        this._api._get('/api/checkpoints?limit=50'),
+        api._get('/api/checkpoints?limit=50'),
       ]);
+      if (api !== this._api) return;
 
       if (checkpointsResult.status === 'fulfilled') {
         this._checkpoints = Array.isArray(checkpointsResult.value)
@@ -102,6 +105,7 @@ export class LokiCheckpointViewer extends LokiElement {
 
       this._error = null;
     } catch (err) {
+      if (api !== this._api) return;
       this._error = err.message;
     }
 

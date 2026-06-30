@@ -9,11 +9,13 @@ joins crashed on None. These tests prove the helpers and the full consolidate()
 run survive None goals and None tools.
 
 C1 (HIGH, lost-update): consolidate() snapshots all patterns once, then performs
-separately-locked merge writes. A concurrent usage bump landing after the
-snapshot was clobbered because merge_with_existing() built the merged record from
-the stale snapshot's usage_count/last_used. The fix re-reads the target pattern
-fresh immediately before each merge. This test forces the merge branch and asserts
-the merged result reflects the freshly-read usage_count, not the snapshot value.
+merge writes. A concurrent usage bump landing after the snapshot was clobbered
+because merge_with_existing() built the merged record from the stale snapshot's
+usage_count/last_used. The fix performs the merge inside
+storage.update_pattern_with_merge -- an atomic read-merge-write under a single
+lock on patterns.json -- so the merge callback always sees the live on-disk
+record. This test forces the merge branch and asserts the merged result reflects
+the fresh in-lock read, not the snapshot value.
 
 Run:
     cd /Users/lokesh/git/loki-mode && python3.12 -m pytest tests/test-consolidation-wave8.py -q
@@ -159,19 +161,28 @@ def test_c2_full_consolidate_with_null_fields(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_c1_merge_rereads_fresh_usage_count(tmp_path):
+def test_c1_merge_reads_fresh_usage_count_atomically(tmp_path):
     """Force the cluster-merge branch and simulate a concurrent usage bump that
-    lands after the step-4 snapshot. The merged pattern must carry the bumped
-    usage_count (read fresh), not the stale snapshot value.
+    lands on disk AFTER the step-4 snapshot but BEFORE the merge runs. The merged
+    pattern must carry the bumped usage_count, because the merge now reads the
+    live on-disk record inside storage.update_pattern_with_merge's single lock.
 
-    Pre-fix: merge_with_existing built from the snapshot copy (usage_count=0),
-    so the merged record clobbered the concurrent bump -> assertion fails.
-    Post-fix: _reload_pattern re-reads the current record (usage_count=42), so
-    the merge preserves it.
+    Pre-fix: merge_with_existing built from the step-4 snapshot copy
+    (usage_count=0), so the merged record clobbered the concurrent bump.
+    Post-fix: the merge callback receives the FRESH on-disk dict (usage_count=42),
+    so the bump is preserved -- an atomic read-merge-write, not a re-read in a
+    separate lock.
+
+    The test models the concurrency deterministically: the existing pattern is
+    saved with usage_count=0 (the value the step-4 snapshot captures), then the
+    on-disk record is bumped to 42 before consolidate() runs the merge. Since
+    update_pattern_with_merge reads the current record at merge time, the merge
+    builds on 42, not 0.
     """
     storage = MemoryStorage(base_path=str(tmp_path))
 
-    # An existing on-disk pattern with usage_count=0 (the snapshot value).
+    # An existing on-disk pattern. The pipeline's step-4 snapshot will capture
+    # this object (usage_count=0).
     existing = SemanticPattern.create(
         pattern="build api endpoints",
         category="implementation",
@@ -195,53 +206,47 @@ def test_c1_merge_rereads_fresh_usage_count(tmp_path):
     pipe._patterns_similar = lambda a, b, threshold=0.8: True
     pipe._pattern_similarity_score = lambda a, b: 1.0
 
-    # Simulate the concurrent usage bump that landed AFTER the step-4 snapshot.
-    # The step-4 snapshot loads each pattern once (usage_count=0 here). A
-    # concurrent engine.increment_pattern_usage() then bumps usage_count to 42 on
-    # disk. We model this with a per-id call counter: the FIRST load of the
-    # existing id (the snapshot) returns the old value (0); every SUBSEQUENT load
-    # (the in-merge re-read introduced by the fix) returns the bumped value (42).
-    #
-    # This is what makes the test discriminating:
-    #   - Pre-fix: merge builds from the stale snapshot copy -> usage_count=0.
-    #   - Post-fix: merge re-reads -> sees the second load -> usage_count=42.
-    real_load = storage.load_pattern
-    load_calls = {"existing": 0}
-
-    def bumped_load(pattern_id):
-        data = real_load(pattern_id)
-        if data and data.get("id") == existing.id:
-            load_calls["existing"] += 1
-            data = dict(data)
-            # First load (snapshot) sees old value; later loads see the bump.
-            data["usage_count"] = 0 if load_calls["existing"] == 1 else 42
-        return data
-
-    # Capture what gets persisted by the merge write.
+    # Model the concurrent bump: it lands on disk AFTER the in-memory step-4
+    # snapshot (which still holds usage_count=0) but BEFORE the merge fires. We
+    # do this by wrapping update_pattern_with_merge so that, the first time it is
+    # invoked for the existing id, it bumps the on-disk record to 42 and THEN
+    # delegates to the real atomic merge. Because the real method reads the
+    # record fresh under its lock, the merge callback sees 42.
+    real_merge = storage.update_pattern_with_merge
     persisted = {}
-    real_update = storage.update_pattern
 
-    def capture_update(pattern):
-        # Capture only the merge write to the existing pattern id (ignore any
-        # step-7 link updates to other ids).
-        if pattern.id == existing.id:
-            persisted["pattern"] = pattern
-        return real_update(pattern)
+    def bumping_merge(pattern_id, merge_fn):
+        if pattern_id == existing.id and "bumped" not in persisted:
+            persisted["bumped"] = True
+            on_disk = storage.load_pattern(pattern_id)
+            on_disk = SemanticPattern.from_dict(on_disk)
+            on_disk.usage_count = 42
+            storage.update_pattern(on_disk)
 
-    storage.load_pattern = bumped_load
-    storage.update_pattern = capture_update
+        def capturing(current):
+            merged = merge_fn(current)
+            if pattern_id == existing.id:
+                persisted["pattern"] = merged
+            return merged
+
+        return real_merge(pattern_id, capturing)
+
+    storage.update_pattern_with_merge = bumping_merge
 
     pipe.consolidate(since_hours=24 * 365)
 
     assert "pattern" in persisted, "merge branch did not fire; test would be vacuous"
     merged = persisted["pattern"]
     assert merged.id == existing.id
-    # The crux: merged usage_count reflects the fresh re-read (42), not the
-    # stale snapshot (0). This is the lost-update guard.
+    # The crux: merged usage_count reflects the fresh on-disk read (42), not the
+    # stale step-4 snapshot (0). This is the atomic lost-update guard.
     assert merged.usage_count == 42, (
-        f"expected merged usage_count=42 from fresh re-read, got {merged.usage_count} "
-        "(merge built from stale snapshot -> C1 lost-update regression)"
+        f"expected merged usage_count=42 from the fresh in-lock read, got "
+        f"{merged.usage_count} (merge built from stale snapshot -> C1 lost-update)"
     )
+    # And the persisted on-disk record carries it too.
+    final = storage.load_pattern(existing.id)
+    assert final["usage_count"] == 42
 
 
 # ---------------------------------------------------------------------------

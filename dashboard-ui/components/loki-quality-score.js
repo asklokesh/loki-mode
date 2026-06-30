@@ -49,7 +49,7 @@ export class LokiQualityScore extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
     if (name === 'theme') {
@@ -63,11 +63,14 @@ export class LokiQualityScore extends LokiElement {
   }
 
   async _loadData() {
+    // Drop a stale response if the api-url switched mid-flight.
+    const api = this._api;
     try {
       const [scoreResult, historyResult] = await Promise.allSettled([
-        this._api._get('/api/quality-score'),
-        this._api._get('/api/quality-score/history'),
+        api._get('/api/quality-score'),
+        api._get('/api/quality-score/history'),
       ]);
+      if (api !== this._api) return;
 
       if (scoreResult.status === 'fulfilled') {
         const data = scoreResult.value;
@@ -106,6 +109,7 @@ export class LokiQualityScore extends LokiElement {
         this._history = Array.isArray(histData) ? histData.slice(-10) : (histData.scores || []).slice(-10);
       }
     } catch (err) {
+      if (api !== this._api) return;
       this._error = err.message;
       this._data = null;
     }

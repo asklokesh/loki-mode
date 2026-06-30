@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.96.0] - 2026-06-29
+
+### Trust moat: council force-review path fails closed
+
+- **Council force-review path now fails CLOSED** (`autonomy/run.sh`): the
+  interval force-review gate chain had the same fail-open hole fixed on the
+  default route in v7.95.0 (a missing gate fn silently skipped), letting a
+  partial council-library load force-approve completion ungated. It now probes
+  the core gate functions first and refuses the force approval if any is missing.
+  Found by the wave-4 adversarial bug-hunt.
 ## [7.95.0] - 2026-06-29
 
 ### Trust moat: completion gates now fail CLOSED

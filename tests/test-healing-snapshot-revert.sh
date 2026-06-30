@@ -72,6 +72,9 @@ set +e
 echo "Test 1: post_healing_modify reverts only the healing edit (keeps unrelated change)"
 TMP1="$(mktemp -d)"
 mkdir -p "$TMP1/.loki/healing"
+# Healing mode now REQUIRES a friction-map.json (fail-closed gate). Provide a
+# valid, non-matching one so the pre hook proceeds to the snapshot path.
+printf '{"frictions":[{"id":"FX","location":"unrelated.py:1","classification":"business_rule","safe_to_remove":false}]}' > "$TMP1/.loki/healing/friction-map.json"
 TARGET1="$TMP1/src/app.py"
 mkdir -p "$(dirname "$TARGET1")"
 # committed baseline (A)
@@ -79,8 +82,7 @@ printf 'line_A\n' > "$TARGET1"
 # unrelated pre-existing uncommitted change (A -> A+B)
 printf 'line_A\nline_B_unrelated\n' > "$TARGET1"
 
-# pre hook snapshots the pre-edit (A+B) state. No friction-map present so it
-# only does the snapshot.
+# pre hook snapshots the pre-edit (A+B) state.
 LOKI_HEAL_MODE=true LOKI_CODEBASE_PATH="$TMP1" hook_pre_healing_modify "$TARGET1" >/dev/null 2>&1
 
 # healing edit (A+B -> A+B+C)
@@ -108,6 +110,7 @@ rm -rf "$TMP1"
 echo "Test 2: revert message reflects snapshot restore (not a blanket 'reverted')"
 TMP2="$(mktemp -d)"
 mkdir -p "$TMP2/.loki/healing"
+printf '{"frictions":[{"id":"FX","location":"unrelated.py:1","classification":"business_rule","safe_to_remove":false}]}' > "$TMP2/.loki/healing/friction-map.json"
 TARGET2="$TMP2/keep.py"
 printf 'pre_existing\n' > "$TARGET2"
 LOKI_HEAL_MODE=true LOKI_CODEBASE_PATH="$TMP2" hook_pre_healing_modify "$TARGET2" >/dev/null 2>&1
@@ -129,6 +132,7 @@ rm -rf "$TMP2"
 echo "Test 3: healing-added (untracked) file is removed, not falsely 'reverted'"
 TMP3="$(mktemp -d)"
 mkdir -p "$TMP3/.loki/healing"
+printf '{"frictions":[{"id":"FX","location":"unrelated.py:1","classification":"business_rule","safe_to_remove":false}]}' > "$TMP3/.loki/healing/friction-map.json"
 NEWFILE="$TMP3/new_module.py"
 # File does NOT exist pre-edit. pre hook records an absent-marker.
 LOKI_HEAL_MODE=true LOKI_CODEBASE_PATH="$TMP3" hook_pre_healing_modify "$NEWFILE" >/dev/null 2>&1
@@ -176,6 +180,7 @@ rm -rf "$TMP4"
 echo "Test 5: passing tests -> ALLOW, healing edit kept"
 TMP5="$(mktemp -d)"
 mkdir -p "$TMP5/.loki/healing"
+printf '{"frictions":[{"id":"FX","location":"unrelated.py:1","classification":"business_rule","safe_to_remove":false}]}' > "$TMP5/.loki/healing/friction-map.json"
 TARGET5="$TMP5/ok.py"
 printf 'base\n' > "$TARGET5"
 LOKI_HEAL_MODE=true LOKI_CODEBASE_PATH="$TMP5" hook_pre_healing_modify "$TARGET5" >/dev/null 2>&1

@@ -57,7 +57,7 @@ export class LokiActivityStream extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
     if (name === 'theme') {
@@ -91,8 +91,11 @@ export class LokiActivityStream extends LokiElement {
   }
 
   async _loadData() {
+    const api = this._api;
     try {
-      const data = await this._api._get('/api/v2/activity');
+      const data = await api._get('/api/v2/activity');
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       const events = data.events || data.activities || [];
       if (events.length > 0) {
         const newItems = events
@@ -116,6 +119,8 @@ export class LokiActivityStream extends LokiElement {
         }
       }
     } catch {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       // Generate demo data on first load if API unavailable
       if (this._items.length === 0) {
         this._items = this._getDemoItems();

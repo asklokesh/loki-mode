@@ -117,7 +117,7 @@ export class LokiRunManager extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
     if (name === 'project-id') {
@@ -154,10 +154,13 @@ export class LokiRunManager extends LokiElement {
   }
 
   async _loadData() {
+    const api = this._api;
     try {
       const projectId = this.projectId;
       const query = projectId != null ? `?project_id=${projectId}` : '';
-      const data = await this._api._get(`/api/v2/runs${query}`);
+      const data = await api._get(`/api/v2/runs${query}`);
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       const runs = data?.runs || data || [];
       const dataHash = JSON.stringify(runs);
       if (dataHash === this._lastDataHash) return;
@@ -165,6 +168,8 @@ export class LokiRunManager extends LokiElement {
       this._runs = Array.isArray(runs) ? runs : [];
       this._error = null;
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       if (!this._error) {
         this._error = `Failed to load runs: ${err.message}`;
       }

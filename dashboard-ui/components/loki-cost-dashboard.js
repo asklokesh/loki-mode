@@ -70,7 +70,7 @@ export class LokiCostDashboard extends LokiElement {
     if (oldValue === newValue) return;
 
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadCost();
     }
     if (name === 'theme') {
@@ -84,8 +84,11 @@ export class LokiCostDashboard extends LokiElement {
   }
 
   async _loadPricing() {
+    // Drop a stale response if the api-url switched mid-flight.
+    const api = this._api;
     try {
-      const pricing = await this._api.getPricing();
+      const pricing = await api.getPricing();
+      if (api !== this._api) return;
       if (pricing && pricing.models) {
         const updated = {};
         for (const [key, m] of Object.entries(pricing.models)) {
@@ -108,10 +111,14 @@ export class LokiCostDashboard extends LokiElement {
   }
 
   async _loadCost() {
+    // Drop a stale response if the api-url switched mid-flight.
+    const api = this._api;
     try {
-      const cost = await this._api.getCost();
+      const cost = await api.getCost();
+      if (api !== this._api) return;
       this._updateFromCost(cost);
     } catch (error) {
+      if (api !== this._api) return;
       this._data.connected = false;
       this.render();
     }
@@ -665,7 +672,7 @@ export class LokiCostDashboard extends LokiElement {
           <div class="pricing-grid">
             ${Object.entries(this._modelPricing).map(([key, m]) => `
             <div class="pricing-item">
-              <div class="pricing-model ${this._getPricingColorClass(key, m)}">${m.label || key}</div>
+              <div class="pricing-model ${this._getPricingColorClass(key, m)}">${this._escapeHTML(m.label || key)}</div>
               <div class="pricing-rates">In: $${Number(m.input ?? 0).toFixed(2)} / Out: $${Number(m.output ?? 0).toFixed(2)}</div>
             </div>`).join('')}
           </div>

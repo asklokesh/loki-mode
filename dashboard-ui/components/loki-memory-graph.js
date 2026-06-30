@@ -79,7 +79,7 @@ export class LokiMemoryGraph extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
     if (name === 'theme') {
@@ -113,11 +113,15 @@ export class LokiMemoryGraph extends LokiElement {
   }
 
   async _loadData() {
+    // Drop a stale response if the api-url switched mid-flight.
+    const api = this._api;
     try {
-      const data = await this._api._get('/api/v2/memory/graph');
+      const data = await api._get('/api/v2/memory/graph');
+      if (api !== this._api) return;
       this._nodes = data.nodes || [];
       this._edges = data.edges || [];
     } catch {
+      if (api !== this._api) return;
       if (this._nodes.length === 0) {
         const demo = this._getDemoData();
         this._nodes = demo.nodes;

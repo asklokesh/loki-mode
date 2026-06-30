@@ -1927,6 +1927,12 @@ document.addEventListener('DOMContentLoaded', function() {
   var detectedUrl = window.location.origin;
   apiUrlInput.value = detectedUrl;
 
+  // Broadcasting api-url via setAttribute is the correct, race-free path: each
+  // component's attributeChangedCallback('api-url') now ADOPTS a fresh per-URL
+  // API client (this._api = getApiClient({ baseUrl })) and reloads, instead of
+  // mutating baseUrl on the cached singleton. Detach/reset of any prior-project
+  // listeners + in-flight responses is handled inside the components, so a plain
+  // setAttribute here cannot leak one project's data into another.
   function updateComponentsApiUrl(apiUrl) {
     var components = [
       'overview',

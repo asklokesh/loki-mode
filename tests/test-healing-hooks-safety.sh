@@ -102,7 +102,14 @@ git -C "$REPO_A" commit -q -m "baseline"
 # unrelated, uncommitted edit (A -> A+B): this is the live work that must survive
 printf 'line_A\nline_B_unrelated\n' > "$TARGET_A"
 
-# pre hook snapshots the current (A+B) state; no friction-map so it only snapshots
+# A friction-map is REQUIRED in healing mode (fail-closed gate, Test D below);
+# provide a valid one with a non-matching friction so the pre hook proceeds to
+# the snapshot path for app.py without blocking on a friction classification.
+cat > "$REPO_A/.loki/healing/friction-map.json" <<'EOF'
+{"frictions":[{"id":"FA","location":"unrelated.py:1","classification":"business_rule","safe_to_remove":false}]}
+EOF
+
+# pre hook snapshots the current (A+B) state
 LOKI_HEAL_MODE=true LOKI_CODEBASE_PATH="$REPO_A" \
     hook_pre_healing_modify "$TARGET_A" >/dev/null 2>&1
 
@@ -242,6 +249,64 @@ if [[ "$rc_c3" -eq 0 ]] && ! echo "$out_c3" | grep -q "HOOK_BLOCKED"; then
 else
     fail "valid non-matching friction-map should ALLOW the edit" \
         "rc=$rc_c3 out=$out_c3"
+fi
+
+# -----------------------------------------------------------------------------
+# Test D (BUG, fail-open bypass): an ABSENT friction-map.json must FAIL CLOSED.
+#
+#   The friction safety gate only ran when friction-map.json EXISTED (the check
+#   was wrapped in `if [[ -f friction-map.json ]]`). With the map absent the
+#   gate was skipped AND _heal_snapshot_save still ran, so an agent (or anyone)
+#   could BYPASS the protection of unclassified institutional knowledge simply
+#   by deleting friction-map.json. The fix requires the map in healing mode and
+#   blocks before any friction check or snapshot when it is missing.
+#
+# NON-VACUITY: against the OLD behavior, a missing friction-map produced rc=0
+#   and no HOOK_BLOCKED (it fell through to the snapshot). These assertions
+#   require rc!=0 + HOOK_BLOCKED, so the old behavior fails them.
+# -----------------------------------------------------------------------------
+echo "Test D: absent friction-map.json fails CLOSED (blocks the healing edit, no bypass)"
+DIR_D="$WORKROOT/dir-d"
+mkdir -p "$DIR_D/.loki/healing"   # healing dir exists, but NO friction-map.json
+TARGET_D="$DIR_D/app.py"
+printf 'orig\n' > "$TARGET_D"
+
+out_d=$(LOKI_HEAL_MODE=true LOKI_CODEBASE_PATH="$DIR_D" \
+    hook_pre_healing_modify "$TARGET_D" 2>&1)
+rc_d=$?
+if [[ "$rc_d" -ne 0 ]] && echo "$out_d" | grep -q "HOOK_BLOCKED"; then
+    pass "absent friction-map.json BLOCKS the healing edit (fail-closed, no bypass)"
+else
+    fail "absent friction-map.json must FAIL CLOSED (rc!=0 + HOOK_BLOCKED)" \
+        "rc=$rc_d out=$out_d"
+fi
+
+# D2: the snapshot must NOT have been created when the gate blocked (proving the
+# block happens BEFORE _heal_snapshot_save, so the gate cannot be bypassed by
+# relying on snapshot side-effects).
+if [[ ! -d "$DIR_D/.loki/healing/snapshots" ]] || \
+   [[ -z "$(ls -A "$DIR_D/.loki/healing/snapshots" 2>/dev/null)" ]]; then
+    pass "no snapshot written when friction-map absent (block precedes snapshot)"
+else
+    fail "snapshot should NOT be written when friction-map is absent" \
+        "snapshots dir is non-empty: $(ls -A "$DIR_D/.loki/healing/snapshots" 2>/dev/null)"
+fi
+
+# D3 (control + non-vacuity): re-running WITH a valid friction-map proceeds
+# (snapshot written, no block), proving the gate is the absence-of-map, not a
+# blanket disable.
+cat > "$DIR_D/.loki/healing/friction-map.json" <<'EOF'
+{"frictions":[{"id":"FD","location":"other.py:5","classification":"business_rule","safe_to_remove":false}]}
+EOF
+out_d3=$(LOKI_HEAL_MODE=true LOKI_CODEBASE_PATH="$DIR_D" \
+    hook_pre_healing_modify "$TARGET_D" 2>&1)
+rc_d3=$?
+if [[ "$rc_d3" -eq 0 ]] && ! echo "$out_d3" | grep -q "HOOK_BLOCKED" && \
+   [[ -n "$(ls -A "$DIR_D/.loki/healing/snapshots" 2>/dev/null)" ]]; then
+    pass "with a valid friction-map present, the edit proceeds and the snapshot is written"
+else
+    fail "valid friction-map present should ALLOW + snapshot" \
+        "rc=$rc_d3 out=$out_d3 snaps=$(ls -A "$DIR_D/.loki/healing/snapshots" 2>/dev/null)"
 fi
 
 echo ""

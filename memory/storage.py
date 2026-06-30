@@ -857,6 +857,75 @@ class MemoryStorage:
 
         return True
 
+    def update_pattern_with_merge(self, pattern_id: str, merge_fn) -> bool:
+        """Atomically merge into an existing pattern under a single lock.
+
+        Closes the consolidation lost-update (BUG-MEM C1): the previous flow read
+        the pattern (load_pattern) and wrote the merged result (update_pattern) in
+        SEPARATE lock acquisitions, so a concurrent increment_pattern_usage() bump
+        landing between the read and the write was lost. Here the read of the
+        current on-disk record, the caller's merge, and the write all happen
+        inside ONE exclusive _file_lock on patterns.json -- the same path
+        increment_pattern_usage() and update_pattern() lock -- so they mutually
+        exclude and no bump is clobbered.
+
+        Args:
+            pattern_id: Id of the existing pattern to merge into.
+            merge_fn: Callable taking the current on-disk pattern dict and
+                returning the merged record (dict, or any object exposing
+                to_dict()/__dict__). It must preserve the id. The dict it
+                receives is a fresh read performed under the lock.
+
+        Returns:
+            True if the pattern was found and the merged record written, False if
+            the pattern id was not present (caller should fall back to a create).
+        """
+        if not pattern_id:
+            return False
+
+        patterns_path = self.base_path / "semantic" / "patterns.json"
+
+        with self._file_lock(patterns_path, exclusive=True):
+            if not patterns_path.exists():
+                return False
+
+            with open(patterns_path, "r", encoding="utf-8") as f:
+                try:
+                    patterns_file = json.load(f)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    return False
+
+            patterns = patterns_file.get("patterns", [])
+            target_idx = None
+            current = None
+            for i, p in enumerate(patterns):
+                if isinstance(p, dict) and p.get("id") == pattern_id:
+                    target_idx = i
+                    current = p
+                    break
+
+            if target_idx is None:
+                return False
+
+            # Caller merges against the fresh, lock-protected current record.
+            merged = merge_fn(current)
+            if hasattr(merged, "to_dict"):
+                merged_data = merged.to_dict()
+            elif hasattr(merged, "__dict__"):
+                merged_data = merged.__dict__.copy()
+            else:
+                merged_data = dict(merged)
+
+            # Never let a merge orphan the record by changing its id.
+            merged_data["id"] = pattern_id
+            merged_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+            patterns_file["patterns"][target_idx] = merged_data
+            patterns_file["last_updated"] = datetime.now(timezone.utc).isoformat()
+
+            self._atomic_write(patterns_path, patterns_file)
+
+        return True
+
     # -------------------------------------------------------------------------
     # Skill Storage
     # -------------------------------------------------------------------------

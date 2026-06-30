@@ -292,7 +292,13 @@ export class EventBus {
 
     if (archive) {
       try {
-        const files = fs.readdirSync(this.pendingDir).filter((f) => f.includes(event.id));
+        // Match the exact id at the filename boundary. Emitted files are named
+        // `${timestamp}_${id}.json`, so a substring match (f.includes(event.id))
+        // would also match a DIFFERENT event whose id contains this id as a
+        // substring, archiving/marking the wrong event file (event loss). The
+        // Python impl already uses the precise `*_${id}.json` glob; mirror it.
+        const suffix = `_${event.id}.json`;
+        const files = fs.readdirSync(this.pendingDir).filter((f) => f.endsWith(suffix));
         for (const file of files) {
           const src = path.join(this.pendingDir, file);
           const dst = path.join(this.archiveDir, file);

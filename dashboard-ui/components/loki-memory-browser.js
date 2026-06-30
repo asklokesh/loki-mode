@@ -73,7 +73,7 @@ export class LokiMemoryBrowser extends LokiElement {
     switch (name) {
       case 'api-url':
         if (this._api) {
-          this._api.baseUrl = newValue;
+          this._api = getApiClient({ baseUrl: newValue });
           this._loadData();
         }
         break;
@@ -92,6 +92,8 @@ export class LokiMemoryBrowser extends LokiElement {
   }
 
   async _loadData() {
+    // Drop a stale response if the api-url switched mid-flight.
+    const api = this._api;
     this._loading = true;
     this._error = null;
     this.render();
@@ -99,17 +101,20 @@ export class LokiMemoryBrowser extends LokiElement {
     try {
       // Load summary and stats in parallel
       const [summary, economics, stats] = await Promise.allSettled([
-        this._api.getMemorySummary(),
-        this._api.getTokenEconomics(),
-        this._api.getMemoryStats(),
+        api.getMemorySummary(),
+        api.getTokenEconomics(),
+        api.getMemoryStats(),
       ]);
+      if (api !== this._api) return;
       this._summary = summary.status === 'fulfilled' ? summary.value : null;
       this._tokenEconomics = economics.status === 'fulfilled' ? economics.value : null;
       this._stats = stats.status === 'fulfilled' ? stats.value : null;
 
       // Load tab-specific data
       await this._loadTabData();
+      if (api !== this._api) return;
     } catch (error) {
+      if (api !== this._api) return;
       this._error = error.message || 'Failed to load memory data';
     }
 
@@ -118,16 +123,27 @@ export class LokiMemoryBrowser extends LokiElement {
   }
 
   async _loadTabData() {
+    // Drop a stale response if the api-url switched mid-flight.
+    const api = this._api;
     switch (this._activeTab) {
-      case 'episodes':
-        this._episodes = await this._api.listEpisodes({ limit: 50 }).catch(() => []);
+      case 'episodes': {
+        const episodes = await api.listEpisodes({ limit: 50 }).catch(() => []);
+        if (api !== this._api) return;
+        this._episodes = episodes;
         break;
-      case 'patterns':
-        this._patterns = await this._api.listPatterns().catch(() => []);
+      }
+      case 'patterns': {
+        const patterns = await api.listPatterns().catch(() => []);
+        if (api !== this._api) return;
+        this._patterns = patterns;
         break;
-      case 'skills':
-        this._skills = await this._api.listSkills().catch(() => []);
+      }
+      case 'skills': {
+        const skills = await api.listSkills().catch(() => []);
+        if (api !== this._api) return;
+        this._skills = skills;
         break;
+      }
     }
   }
 
@@ -140,9 +156,13 @@ export class LokiMemoryBrowser extends LokiElement {
   }
 
   async _selectEpisode(episodeId) {
+    // Drop a stale response if the api-url switched mid-flight.
+    const api = this._api;
     try {
       this._lastFocusedElement = this.shadowRoot.activeElement;
-      this._selectedItem = await this._api.getEpisode(episodeId);
+      const item = await api.getEpisode(episodeId);
+      if (api !== this._api) return;
+      this._selectedItem = item;
       this.dispatchEvent(new CustomEvent('episode-select', { detail: this._selectedItem }));
       this.render();
       this._focusDetailPanel();
@@ -152,9 +172,13 @@ export class LokiMemoryBrowser extends LokiElement {
   }
 
   async _selectPattern(patternId) {
+    // Drop a stale response if the api-url switched mid-flight.
+    const api = this._api;
     try {
       this._lastFocusedElement = this.shadowRoot.activeElement;
-      this._selectedItem = await this._api.getPattern(patternId);
+      const item = await api.getPattern(patternId);
+      if (api !== this._api) return;
+      this._selectedItem = item;
       this.dispatchEvent(new CustomEvent('pattern-select', { detail: this._selectedItem }));
       this.render();
       this._focusDetailPanel();
@@ -164,9 +188,13 @@ export class LokiMemoryBrowser extends LokiElement {
   }
 
   async _selectSkill(skillId) {
+    // Drop a stale response if the api-url switched mid-flight.
+    const api = this._api;
     try {
       this._lastFocusedElement = this.shadowRoot.activeElement;
-      this._selectedItem = await this._api.getSkill(skillId);
+      const item = await api.getSkill(skillId);
+      if (api !== this._api) return;
+      this._selectedItem = item;
       this.dispatchEvent(new CustomEvent('skill-select', { detail: this._selectedItem }));
       this.render();
       this._focusDetailPanel();
@@ -210,14 +238,18 @@ export class LokiMemoryBrowser extends LokiElement {
     const query = this._searchQuery.trim();
     if (!query) return;
 
+    // Drop a stale response if the api-url switched mid-flight.
+    const api = this._api;
     this._searchLoading = true;
     this._searchError = null;
     this.render();
 
     try {
-      const result = await this._api.searchMemory(query, this._searchCollection, 20);
+      const result = await api.searchMemory(query, this._searchCollection, 20);
+      if (api !== this._api) return;
       this._searchResults = result.results || [];
     } catch (error) {
+      if (api !== this._api) return;
       this._searchError = error.message || 'Search failed';
       this._searchResults = [];
     }
@@ -424,15 +456,15 @@ export class LokiMemoryBrowser extends LokiElement {
     return `
       <div class="item-list" role="list" aria-label="Episodes list">
         ${this._episodes.map(ep => `
-          <div class="item-card" data-id="${ep.id}" data-type="episode" tabindex="0" role="listitem" aria-label="Episode ${ep.id}: ${this._escapeHtml(ep.taskId || 'Task')}, outcome ${ep.outcome || 'unknown'}">
+          <div class="item-card" data-id="${this._escapeHtml(ep.id)}" data-type="episode" tabindex="0" role="listitem" aria-label="Episode ${this._escapeHtml(ep.id)}: ${this._escapeHtml(ep.taskId || 'Task')}, outcome ${this._escapeHtml(ep.outcome || 'unknown')}">
             <div class="item-header">
-              <span class="item-id mono">${ep.id}</span>
-              <span class="item-outcome ${ep.outcome?.toLowerCase()}">${ep.outcome || 'unknown'}</span>
+              <span class="item-id mono">${this._escapeHtml(ep.id)}</span>
+              <span class="item-outcome ${this._escapeHtml(ep.outcome?.toLowerCase())}">${this._escapeHtml(ep.outcome || 'unknown')}</span>
             </div>
             <div class="item-title">${this._escapeHtml(ep.taskId || 'Task')}</div>
             <div class="item-meta">
-              <span>${ep.agent || 'unknown agent'}</span>
-              <span>${ep.phase || 'unknown phase'}</span>
+              <span>${this._escapeHtml(ep.agent || 'unknown agent')}</span>
+              <span>${this._escapeHtml(ep.phase || 'unknown phase')}</span>
               <span>${new Date(ep.timestamp).toLocaleString()}</span>
             </div>
           </div>
@@ -449,9 +481,9 @@ export class LokiMemoryBrowser extends LokiElement {
     return `
       <div class="item-list" role="list" aria-label="Patterns list">
         ${this._patterns.map(pat => `
-          <div class="item-card" data-id="${pat.id}" data-type="pattern" tabindex="0" role="listitem" aria-label="Pattern: ${this._escapeHtml(pat.pattern)}, ${(pat.confidence * 100).toFixed(0)} percent confidence">
+          <div class="item-card" data-id="${this._escapeHtml(pat.id)}" data-type="pattern" tabindex="0" role="listitem" aria-label="Pattern: ${this._escapeHtml(pat.pattern)}, ${(pat.confidence * 100).toFixed(0)} percent confidence">
             <div class="item-header">
-              <span class="item-category">${pat.category || 'general'}</span>
+              <span class="item-category">${this._escapeHtml(pat.category || 'general')}</span>
               <span class="confidence-badge">${(pat.confidence * 100).toFixed(0)}%</span>
             </div>
             <div class="item-title">${this._escapeHtml(pat.pattern)}</div>
@@ -472,9 +504,9 @@ export class LokiMemoryBrowser extends LokiElement {
     return `
       <div class="item-list" role="list" aria-label="Skills list">
         ${this._skills.map(skill => `
-          <div class="item-card" data-id="${skill.id}" data-type="skill" tabindex="0" role="listitem" aria-label="Skill: ${this._escapeHtml(skill.name)}">
+          <div class="item-card" data-id="${this._escapeHtml(skill.id)}" data-type="skill" tabindex="0" role="listitem" aria-label="Skill: ${this._escapeHtml(skill.name)}">
             <div class="item-header">
-              <span class="item-id mono">${skill.id}</span>
+              <span class="item-id mono">${this._escapeHtml(skill.id)}</span>
             </div>
             <div class="item-title">${this._escapeHtml(skill.name)}</div>
             <div class="item-description">${this._escapeHtml(skill.description || '')}</div>
@@ -495,25 +527,25 @@ export class LokiMemoryBrowser extends LokiElement {
       return `
         <div class="detail-panel">
           <div class="detail-header">
-            <h3>Episode: ${item.id}</h3>
+            <h3>Episode: ${this._escapeHtml(item.id)}</h3>
             <button class="close-btn" id="close-detail">&times;</button>
           </div>
           <div class="detail-body">
             <div class="detail-row">
               <span class="detail-label">Task</span>
-              <span class="detail-value">${item.taskId || '--'}</span>
+              <span class="detail-value">${this._escapeHtml(item.taskId || '--')}</span>
             </div>
             <div class="detail-row">
               <span class="detail-label">Agent</span>
-              <span class="detail-value">${item.agent || '--'}</span>
+              <span class="detail-value">${this._escapeHtml(item.agent || '--')}</span>
             </div>
             <div class="detail-row">
               <span class="detail-label">Phase</span>
-              <span class="detail-value">${item.phase || '--'}</span>
+              <span class="detail-value">${this._escapeHtml(item.phase || '--')}</span>
             </div>
             <div class="detail-row">
               <span class="detail-label">Outcome</span>
-              <span class="detail-value outcome ${item.outcome?.toLowerCase()}">${item.outcome || '--'}</span>
+              <span class="detail-value outcome ${this._escapeHtml(item.outcome?.toLowerCase())}">${this._escapeHtml(item.outcome || '--')}</span>
             </div>
             <div class="detail-row">
               <span class="detail-label">Duration</span>
@@ -535,8 +567,8 @@ export class LokiMemoryBrowser extends LokiElement {
                 <div class="action-log">
                   ${item.actionLog.map(a => `
                     <div class="action-entry">
-                      <span class="action-time">+${a.t}s</span>
-                      <span class="action-type">${a.action}</span>
+                      <span class="action-time">+${this._escapeHtml(a.t)}s</span>
+                      <span class="action-type">${this._escapeHtml(a.action)}</span>
                       <span class="action-target">${this._escapeHtml(a.target)}</span>
                     </div>
                   `).join('')}
@@ -551,13 +583,13 @@ export class LokiMemoryBrowser extends LokiElement {
       return `
         <div class="detail-panel">
           <div class="detail-header">
-            <h3>Pattern: ${item.id}</h3>
+            <h3>Pattern: ${this._escapeHtml(item.id)}</h3>
             <button class="close-btn" id="close-detail">&times;</button>
           </div>
           <div class="detail-body">
             <div class="detail-row">
               <span class="detail-label">Category</span>
-              <span class="detail-value">${item.category || 'general'}</span>
+              <span class="detail-value">${this._escapeHtml(item.category || 'general')}</span>
             </div>
             <div class="detail-row">
               <span class="detail-label">Confidence</span>
@@ -640,10 +672,17 @@ export class LokiMemoryBrowser extends LokiElement {
   }
 
   _escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    if (text === null || text === undefined) return '';
+    // Quote-safe: the textContent round-trip escapes < > & but NOT quotes, and
+    // this value is interpolated into double-quoted HTML attributes (data-id,
+    // aria-label). A raw " would break out of the attribute and inject an event
+    // handler, so we escape quotes explicitly too.
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   render() {

@@ -101,7 +101,7 @@ export class LokiAuditViewer extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
     if (name === 'limit') {
@@ -118,6 +118,7 @@ export class LokiAuditViewer extends LokiElement {
   }
 
   async _loadData() {
+    const api = this._api;
     try {
       this._loading = true;
       this.render();
@@ -131,10 +132,14 @@ export class LokiAuditViewer extends LokiElement {
       };
 
       const query = buildAuditQuery(queryFilters);
-      const data = await this._api._get(`/api/v2/audit${query}`);
+      const data = await api._get(`/api/v2/audit${query}`);
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._entries = data?.entries || data || [];
       this._error = null;
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._error = `Failed to load audit log: ${err.message}`;
     } finally {
       this._loading = false;
@@ -144,14 +149,19 @@ export class LokiAuditViewer extends LokiElement {
   }
 
   async _verifyIntegrity() {
+    const api = this._api;
     try {
       this._verifying = true;
       this._verifyResult = null;
       this.render();
 
-      const result = await this._api._get('/api/v2/audit/verify');
+      const result = await api._get('/api/v2/audit/verify');
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._verifyResult = result;
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._verifyResult = { valid: false, error: err.message };
     } finally {
       this._verifying = false;

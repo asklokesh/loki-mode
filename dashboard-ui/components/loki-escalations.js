@@ -63,7 +63,7 @@ export class LokiEscalations extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadList();
     }
     if (name === 'theme') {
@@ -77,12 +77,18 @@ export class LokiEscalations extends LokiElement {
   }
 
   async _loadList() {
+    // Capture the api instance so a mid-flight api-url switch can be detected.
+    const api = this._api;
     this._loading = true;
     this._error = null;
     try {
-      const data = await this._api.get('/api/escalations');
+      const data = await api.get('/api/escalations');
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._items = Array.isArray(data && data.escalations) ? data.escalations : [];
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._error = (err && err.message) ? err.message : String(err);
       this._items = [];
     } finally {
@@ -92,16 +98,23 @@ export class LokiEscalations extends LokiElement {
   }
 
   async _openFile(filename) {
+    // Capture the api instance so a mid-flight api-url switch can be detected.
+    const api = this._api;
     this._activeFile = filename;
     this._activeBody = null;
     this._activeBodyError = null;
     this.render();
     try {
-      const url = (this._api.baseUrl || '') + '/api/escalations/' + encodeURIComponent(filename);
+      const url = (api.baseUrl || '') + '/api/escalations/' + encodeURIComponent(filename);
       const resp = await fetch(url, { credentials: 'include' });
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      this._activeBody = await resp.text();
+      const text = await resp.text();
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
+      this._activeBody = text;
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._activeBodyError = (err && err.message) ? err.message : String(err);
     }
     this.render();

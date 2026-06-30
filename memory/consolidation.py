@@ -228,28 +228,34 @@ class ConsolidationPipeline:
                     merged = False
                     for idx, existing in enumerate(existing_patterns):
                         if self._patterns_similar(new_pattern, existing):
-                            # Re-read the target pattern fresh immediately before
-                            # merging (BUG-MEM C1, lost-update). The whole-run
-                            # snapshot at step 4 can be stale by now: a concurrent
-                            # storage.increment_pattern_usage() (atomic read-mutate-
-                            # write under one exclusive lock) may have bumped
-                            # usage_count/last_used AFTER the snapshot. merge_with_existing() builds the
-                            # merged record from best_match.usage_count/last_used,
-                            # so merging from the stale snapshot clobbers that bump.
-                            # Re-reading narrows the window to this single write.
-                            merge_base = self._reload_pattern(existing)
-                            merged_pattern = self.merge_with_existing(new_pattern, [merge_base])
-                            self.storage.update_pattern(merged_pattern)
-                            # Refresh the in-memory copy so a later new pattern in
-                            # this same run that also merges into this existing
-                            # pattern builds on the just-merged state. Without this,
-                            # the second merge reads the stale pre-merge base and its
-                            # update_pattern() overwrites storage, silently dropping
-                            # the first merge's conditions/source_episodes/confidence.
-                            existing_patterns[idx] = merged_pattern
-                            result.patterns_merged += 1
-                            merged = True
-                            break
+                            # Atomic read-merge-write (BUG-MEM C1, lost-update).
+                            # The whole-run snapshot at step 4 can be stale by now:
+                            # a concurrent storage.increment_pattern_usage()
+                            # (atomic read-mutate-write under one exclusive lock)
+                            # may have bumped usage_count/last_used AFTER the
+                            # snapshot, and merge_with_existing() builds the merged
+                            # record from the base's usage_count/last_used. The
+                            # merge now runs INSIDE update_pattern_with_merge's
+                            # single lock on patterns.json (the same path
+                            # increment_pattern_usage locks), so the merge base is
+                            # the live on-disk record and the bump cannot be lost.
+                            merged_holder = {}
+
+                            def _merge(current, _np=new_pattern, _holder=merged_holder):
+                                base = SemanticPattern.from_dict(current)
+                                m = self.merge_with_existing(_np, [base])
+                                _holder["pattern"] = m
+                                return m
+
+                            if self.storage.update_pattern_with_merge(existing.id, _merge):
+                                merged_pattern = merged_holder["pattern"]
+                                # Refresh the in-memory copy so a later new pattern
+                                # in this same run that also merges into this
+                                # existing pattern builds on the just-merged state.
+                                existing_patterns[idx] = merged_pattern
+                                result.patterns_merged += 1
+                                merged = True
+                                break
 
                     if not merged:
                         self.storage.save_pattern(new_pattern)
@@ -277,20 +283,27 @@ class ConsolidationPipeline:
             for idx, existing in enumerate(existing_patterns):
                 if (existing.incorrect_approach and
                     self._patterns_similar(anti_pattern, existing, threshold=0.6)):
-                    # Re-read fresh before merge (same C1 lost-update guard as the
-                    # cluster merge loop above): merge from current on-disk state,
-                    # not the potentially-stale step-4 snapshot.
-                    merge_base = self._reload_pattern(existing)
-                    merged_pattern = self.merge_with_existing(anti_pattern, [merge_base])
-                    self.storage.update_pattern(merged_pattern)
-                    # Refresh in-memory copy (same data-loss guard as the cluster
-                    # merge loop above): a later anti-pattern merging into this same
-                    # existing pattern must build on the just-merged state, not the
-                    # stale pre-merge base.
-                    existing_patterns[idx] = merged_pattern
-                    result.patterns_merged += 1
-                    merged = True
-                    break
+                    # Atomic read-merge-write (same C1 lost-update guard as the
+                    # cluster merge loop above): merge from the live on-disk record
+                    # inside update_pattern_with_merge's single lock so a concurrent
+                    # usage bump cannot be clobbered.
+                    merged_holder = {}
+
+                    def _merge(current, _ap=anti_pattern, _holder=merged_holder):
+                        base = SemanticPattern.from_dict(current)
+                        m = self.merge_with_existing(_ap, [base])
+                        _holder["pattern"] = m
+                        return m
+
+                    if self.storage.update_pattern_with_merge(existing.id, _merge):
+                        merged_pattern = merged_holder["pattern"]
+                        # Refresh in-memory copy: a later anti-pattern merging into
+                        # this same existing pattern must build on the just-merged
+                        # state, not the stale pre-merge base.
+                        existing_patterns[idx] = merged_pattern
+                        result.patterns_merged += 1
+                        merged = True
+                        break
 
             if not merged:
                 self.storage.save_pattern(anti_pattern)
@@ -324,34 +337,12 @@ class ConsolidationPipeline:
         result.duration_seconds = time.time() - start_time
         return result
 
-    def _reload_pattern(self, fallback: SemanticPattern) -> SemanticPattern:
-        """Re-read a pattern fresh from storage immediately before merging.
-
-        Used by the merge branches to avoid the C1 lost-update: the step-4
-        snapshot may be stale (a concurrent usage bump can land after it), and
-        merge_with_existing() copies usage_count/last_used from the base. Reading
-        the current on-disk record makes the merge build on live state.
-
-        Mirrors the snapshot's dict/object handling. If load_pattern returns
-        nothing (e.g. the record vanished), fall back to the in-memory copy so the
-        merge still proceeds rather than crashing.
-
-        Residual limitation (honest): load_pattern and update_pattern are SEPARATE
-        lock acquisitions, so a bump landing between this re-read and the write is
-        still lost. This narrows the race window from the whole run to a single
-        write; it is a mitigation, not cross-process atomicity. A full fix needs a
-        compare-and-set or merge-callback update in storage, which is out of scope
-        for this file (storage.py is frozen this batch).
-        """
-        try:
-            fresh = self.storage.load_pattern(fallback.id)
-        except Exception:
-            return fallback
-        if not fresh:
-            return fallback
-        if isinstance(fresh, dict):
-            return SemanticPattern.from_dict(fresh)
-        return fresh
+    # NOTE: The former _reload_pattern() helper (a partial C1 lost-update
+    # mitigation that re-read the pattern in a SEPARATE lock from the write) was
+    # removed once the merge moved fully inside storage.update_pattern_with_merge,
+    # which performs the read, merge, and write under ONE exclusive lock on
+    # patterns.json. That closes the lost-update race cross-process; no residual
+    # narrow window remains.
 
     # -------------------------------------------------------------------------
     # Clustering Methods

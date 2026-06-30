@@ -45,7 +45,7 @@ export class LokiToolInsights extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
     if (name === 'theme') {
@@ -79,11 +79,14 @@ export class LokiToolInsights extends LokiElement {
   }
 
   async _loadData() {
+    // Drop a stale response if the api-url switched mid-flight.
+    const api = this._api;
     try {
       const [toolsRes, metricsRes] = await Promise.allSettled([
-        this._api.get('/api/tools'),
-        this._api.get('/api/metrics/tools'),
+        api.get('/api/tools'),
+        api.get('/api/metrics/tools'),
       ]);
+      if (api !== this._api) return;
 
       this._data = {
         tools: toolsRes.status === 'fulfilled' ? toolsRes.value : null,
@@ -91,6 +94,7 @@ export class LokiToolInsights extends LokiElement {
       };
       this._render();
     } catch (e) {
+      if (api !== this._api) return;
       this._data = null;
       this._render();
     }
@@ -101,6 +105,17 @@ export class LokiToolInsights extends LokiElement {
     const descLen = (tool.description || '').length;
     const schemaLen = JSON.stringify(tool.input_schema || tool.schema || {}).length;
     return Math.ceil((descLen + schemaLen) / 4);
+  }
+
+  // Escape untrusted strings (tool names, origins, descriptions from the API)
+  // before interpolating into innerHTML to prevent XSS.
+  _escapeHtml(str) {
+    if (str == null) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
   }
 
   _render() {
@@ -153,9 +168,9 @@ export class LokiToolInsights extends LokiElement {
       const bar = '='.repeat(barWidth);
 
       originRows += `
-        <div class="origin-row" data-origin="${origin}">
+        <div class="origin-row" data-origin="${this._escapeHtml(origin)}">
           <div class="origin-header" onclick="this.parentElement.classList.toggle('expanded')">
-            <span class="origin-name">${origin}</span>
+            <span class="origin-name">${this._escapeHtml(origin)}</span>
             <span class="origin-count">${group.tools.length} tools</span>
             <span class="origin-tokens">${(group.tokens ?? 0).toLocaleString()} tokens</span>
             <span class="origin-bar"><span class="bar-fill" style="width:${pct}%"></span></span>
@@ -164,9 +179,9 @@ export class LokiToolInsights extends LokiElement {
           <div class="origin-tools">
             ${group.tools.map(t => `
               <div class="tool-row ${t.estimatedTokens > 2500 ? 'tool-large' : ''}">
-                <span class="tool-name">${t.name}</span>
+                <span class="tool-name">${this._escapeHtml(t.name)}</span>
                 <span class="tool-tokens">${t.estimatedTokens} tokens</span>
-                <span class="tool-desc">${(t.description || '').substring(0, 80)}${(t.description || '').length > 80 ? '...' : ''}</span>
+                <span class="tool-desc">${this._escapeHtml((t.description || '').substring(0, 80))}${(t.description || '').length > 80 ? '...' : ''}</span>
               </div>
             `).join('')}
           </div>
@@ -180,7 +195,7 @@ export class LokiToolInsights extends LokiElement {
       warningHtml = `
         <div class="warnings">
           <h4>Warnings</h4>
-          ${warnings.map(w => `<div class="warning-item">${w}</div>`).join('')}
+          ${warnings.map(w => `<div class="warning-item">${this._escapeHtml(w)}</div>`).join('')}
         </div>
       `;
     }
@@ -198,7 +213,7 @@ export class LokiToolInsights extends LokiElement {
             const success = typeof data === 'object' ? (data.success_rate || data.success || 100) : 100;
             return `
               <div class="metric-row">
-                <span class="metric-name">${name}</span>
+                <span class="metric-name">${this._escapeHtml(name)}</span>
                 <span class="metric-count">${count} calls</span>
                 <span class="metric-success" style="color: ${success >= 90 ? '#3fb950' : success >= 70 ? '#d29922' : '#f85149'}">${success}%</span>
               </div>

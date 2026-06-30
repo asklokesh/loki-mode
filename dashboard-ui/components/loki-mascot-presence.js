@@ -68,6 +68,10 @@ export class LokiMascotPresence extends HTMLElement {
       this._poll.stop();
       this._poll = null;
     }
+    this._teardownApiListeners();
+  }
+
+  _teardownApiListeners() {
     if (this._api) {
       if (this._statusHandler) this._api.removeEventListener(ApiEvents.STATUS_UPDATE, this._statusHandler);
       if (this._discHandler) this._api.removeEventListener(ApiEvents.DISCONNECTED, this._discHandler);
@@ -77,7 +81,10 @@ export class LokiMascotPresence extends HTMLElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      // Adopt the correct per-URL client (no in-place baseUrl mutation, which
+      // leaks across projects). Detach from the old instance, swap, re-subscribe.
+      this._teardownApiListeners();
+      this._setupApi();
       this._loadStatus();
     }
     if (name === 'size') {
@@ -113,10 +120,14 @@ export class LokiMascotPresence extends HTMLElement {
   }
 
   async _loadStatus() {
+    const api = this._api;
     try {
-      const status = await this._api.getStatus();
+      const status = await api.getStatus();
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._updateFromStatus(status);
     } catch {
+      if (api !== this._api) return;
       this._status = 'offline';
       this.render();
     }

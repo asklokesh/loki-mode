@@ -96,7 +96,13 @@ export class LokiTaskBoard extends LokiElement {
 
   disconnectedCallback() {
     super.disconnectedCallback();
-    if (this._api) {
+    this._teardownApiListeners();
+  }
+
+  _teardownApiListeners() {
+    // Detach from the CURRENT instance (must run before swapping this._api so we
+    // remove from the right instance, not the new one).
+    if (this._api && this._onTaskEvent) {
       this._api.removeEventListener(ApiEvents.TASK_CREATED, this._onTaskEvent);
       this._api.removeEventListener(ApiEvents.TASK_UPDATED, this._onTaskEvent);
       this._api.removeEventListener(ApiEvents.TASK_DELETED, this._onTaskEvent);
@@ -107,7 +113,11 @@ export class LokiTaskBoard extends LokiElement {
     if (oldValue === newValue) return;
 
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      // Adopt the correct per-URL client (no in-place baseUrl mutation, which
+      // leaks one project's tasks into another). Detach from the old instance,
+      // swap, re-subscribe.
+      this._teardownApiListeners();
+      this._setupApi();
       this._loadTasks();
     }
     if (name === 'project-id') {
@@ -122,13 +132,6 @@ export class LokiTaskBoard extends LokiElement {
     const apiUrl = this.getAttribute('api-url') || window.location.origin;
     this._api = getApiClient({ baseUrl: apiUrl });
 
-    // Remove old listeners before adding new ones to prevent leaks
-    if (this._onTaskEvent) {
-      this._api.removeEventListener(ApiEvents.TASK_CREATED, this._onTaskEvent);
-      this._api.removeEventListener(ApiEvents.TASK_UPDATED, this._onTaskEvent);
-      this._api.removeEventListener(ApiEvents.TASK_DELETED, this._onTaskEvent);
-    }
-
     this._onTaskEvent = () => this._loadTasks();
     this._api.addEventListener(ApiEvents.TASK_CREATED, this._onTaskEvent);
     this._api.addEventListener(ApiEvents.TASK_UPDATED, this._onTaskEvent);
@@ -136,6 +139,8 @@ export class LokiTaskBoard extends LokiElement {
   }
 
   async _loadTasks() {
+    // Capture the active client; a project/api-url switch swaps this._api.
+    const api = this._api;
     this._loading = true;
     this._error = null;
     this.render();
@@ -143,7 +148,11 @@ export class LokiTaskBoard extends LokiElement {
     try {
       const projectId = this.getAttribute('project-id');
       const filters = projectId ? { projectId: parseInt(projectId) } : {};
-      this._tasks = await this._api.listTasks(filters);
+      const tasks = await api.listTasks(filters);
+      // Drop a stale response if the api-url switched mid-flight (instance swap)
+      // so the old project's tasks never render against the new project.
+      if (api !== this._api) return;
+      this._tasks = tasks;
 
       // Merge with local tasks
       const localTasks = this._state.get('localTasks') || [];
@@ -153,6 +162,7 @@ export class LokiTaskBoard extends LokiElement {
 
       this._state.update({ 'cache.tasks': this._tasks }, false);
     } catch (error) {
+      if (api !== this._api) return;
       this._error = error.message;
       // Fall back to local tasks only
       this._tasks = (this._state.get('localTasks') || []).map(t => ({ ...t, isLocal: true }));

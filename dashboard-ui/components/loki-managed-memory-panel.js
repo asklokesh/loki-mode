@@ -70,7 +70,7 @@ export class LokiManagedMemoryPanel extends LokiElement {
     switch (name) {
       case 'api-url':
         if (this._api) {
-          this._api.baseUrl = newValue;
+          this._api = getApiClient({ baseUrl: newValue });
           this._loadStatus();
         }
         break;
@@ -91,13 +91,20 @@ export class LokiManagedMemoryPanel extends LokiElement {
   }
 
   async _loadStatus() {
+    // Capture the api instance so a mid-flight api-url switch can be detected.
+    const api = this._api;
     this._statusLoading = true;
     this._statusError = null;
     this.render();
 
     try {
-      this._status = await this._api.get('/api/managed/status');
+      const status = await api.get('/api/managed/status');
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
+      this._status = status;
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._statusError = (err && err.message) ? err.message : 'Failed to load managed status';
       this._status = null;
     } finally {
@@ -113,12 +120,16 @@ export class LokiManagedMemoryPanel extends LokiElement {
   }
 
   async _loadEvents(limit = DEFAULT_EVENT_LIMIT) {
+    // Capture the api instance so a mid-flight api-url switch can be detected.
+    const api = this._api;
     this._eventsLoading = true;
     this._eventsError = null;
     this.render();
 
     try {
-      const data = await this._api.get('/api/managed/events?limit=' + encodeURIComponent(limit));
+      const data = await api.get('/api/managed/events?limit=' + encodeURIComponent(limit));
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       // Endpoint shape: {events, count, source}; tolerate plain arrays too.
       if (Array.isArray(data)) {
         this._events = data;
@@ -134,6 +145,8 @@ export class LokiManagedMemoryPanel extends LokiElement {
         this._eventsSource = null;
       }
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._eventsError = (err && err.message) ? err.message : 'Failed to load managed events';
       this._events = [];
       this._eventsCount = 0;
@@ -153,6 +166,8 @@ export class LokiManagedMemoryPanel extends LokiElement {
       return;
     }
 
+    // Capture the api instance so a mid-flight api-url switch can be detected.
+    const api = this._api;
     this._lookupLoading = true;
     this._lookupError = null;
     this._lookupResult = null;
@@ -160,8 +175,13 @@ export class LokiManagedMemoryPanel extends LokiElement {
 
     try {
       const path = '/api/managed/memory_versions/' + encodeURIComponent(id);
-      this._lookupResult = await this._api.get(path);
+      const result = await api.get(path);
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
+      this._lookupResult = result;
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._lookupError = (err && err.message) ? err.message : 'Failed to load memory versions';
       this._lookupResult = null;
     } finally {

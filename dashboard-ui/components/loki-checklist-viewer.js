@@ -57,7 +57,7 @@ export class LokiChecklistViewer extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._loadData();
     }
     if (name === 'theme') {
@@ -91,11 +91,15 @@ export class LokiChecklistViewer extends LokiElement {
   }
 
   async _loadData() {
+    // Capture the api instance so a mid-flight api-url switch can be detected.
+    const api = this._api;
     try {
       const [data, waiverData] = await Promise.all([
-        this._api.getChecklist(),
-        this._api.getChecklistWaivers().catch(() => null),
+        api.getChecklist(),
+        api.getChecklistWaivers().catch(() => null),
       ]);
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       const waiverHash = JSON.stringify(waiverData);
       const dataHash = JSON.stringify(data) + waiverHash;
       if (dataHash === this._lastDataHash) return;
@@ -105,6 +109,8 @@ export class LokiChecklistViewer extends LokiElement {
       this._error = null;
       this.render();
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._error = `Failed to load checklist: ${err.message}`;
       this.render();
     }
@@ -121,22 +127,34 @@ export class LokiChecklistViewer extends LokiElement {
   async _waiveItem(itemId) {
     const reason = window.prompt('Enter reason for waiving this item:');
     if (!reason) return;
+    // Capture the api instance so a mid-flight api-url switch can be detected.
+    const api = this._api;
     try {
-      await this._api.addChecklistWaiver(itemId, reason);
+      await api.addChecklistWaiver(itemId, reason);
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._lastDataHash = null;
       await this._loadData();
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._error = `Failed to add waiver: ${err.message}`;
       this.render();
     }
   }
 
   async _unwaiveItem(itemId) {
+    // Capture the api instance so a mid-flight api-url switch can be detected.
+    const api = this._api;
     try {
-      await this._api.removeChecklistWaiver(itemId);
+      await api.removeChecklistWaiver(itemId);
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._lastDataHash = null;
       await this._loadData();
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._error = `Failed to remove waiver: ${err.message}`;
       this.render();
     }

@@ -71,6 +71,22 @@ class FakeStorage:
             self.patterns[pattern.id] = pattern
         return ok
 
+    def update_pattern_with_merge(self, pattern_id, merge_fn):
+        # Mirror real storage: read the current record fresh, run the caller's
+        # merge under the (here implicit) lock, write the result. Returns False
+        # for a missing id (caller falls back to create); the merge callback
+        # receives the current record as a dict, as the real backend does.
+        if pattern_id not in self.patterns:
+            return False
+        current = self.patterns[pattern_id]
+        current_dict = current.to_dict() if hasattr(current, "to_dict") else dict(current)
+        merged = merge_fn(current_dict)
+        if not hasattr(merged, "id"):
+            merged = SemanticPattern.from_dict(merged)
+        merged.id = pattern_id
+        self.patterns[pattern_id] = merged
+        return True
+
 
 class FakeEpisode:
     def __init__(self, ep_id):

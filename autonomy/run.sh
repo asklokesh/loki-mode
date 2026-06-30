@@ -17773,7 +17773,24 @@ check_human_intervention() {
         if type ensure_completion_test_evidence &>/dev/null; then
             ensure_completion_test_evidence || true
         fi
-        if type council_checklist_gate &>/dev/null && ! council_checklist_gate; then
+        # TRUST MOAT (fail-CLOSED, parity with the default route ~17153): each gate
+        # arm below is `type fn && ! fn`, so a missing gate fn (council library
+        # failed to source) silently skips that gate and the chain can reach
+        # council_vote and force-approve completion UNGATED -- a fake-green. Probe
+        # the core gate fns first; if any is missing, refuse the force-review
+        # approval and fall through to continue iterating. No-op on healthy loads.
+        _frgate_loadable=1
+        for _frgate_fn in council_checklist_gate council_evidence_gate council_heldout_gate council_assumption_ledger_gate; do
+            if ! type "$_frgate_fn" &>/dev/null; then
+                log_error "Council force-review: gate unavailable: ${_frgate_fn} (council library incomplete)."
+                _frgate_loadable=0
+            fi
+        done
+        if [ "$_frgate_loadable" -eq 0 ]; then
+            log_error "Council force-review: required gates missing; refusing force approval (fail-closed)."
+            unset _frgate_loadable _frgate_fn
+        elif type council_checklist_gate &>/dev/null && ! council_checklist_gate; then
+            unset _frgate_loadable _frgate_fn
             log_info "Council force-review: blocked by checklist hard gate"
         elif type council_evidence_gate &>/dev/null && ! _evidence_gate_and_surface; then
             log_info "Council force-review: blocked by evidence hard gate"

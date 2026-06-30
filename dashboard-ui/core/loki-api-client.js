@@ -296,7 +296,13 @@ export class LokiApiClient extends EventTarget {
   }
 
   /**
-   * Set the API base URL
+   * Set the API base URL.
+   *
+   * DEPRECATED for project/api-url switching. Instances are cached per-URL by
+   * getInstance(); mutating baseUrl in place corrupts that cache (the Map key no
+   * longer matches the instance's URL) and leaks one project's data into another
+   * component that still holds the same instance. To switch URLs, fetch the
+   * correct instance via getApiClient({ baseUrl }) and reassign, do not mutate.
    */
   set baseUrl(url) {
     this.config.baseUrl = url;

@@ -45,11 +45,7 @@ export class LokiDashboardHeader extends LokiElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     this._stopPolling();
-    if (this._api) {
-      if (this._statusHandler) this._api.removeEventListener(ApiEvents.STATUS_UPDATE, this._statusHandler);
-      if (this._connHandler) this._api.removeEventListener(ApiEvents.CONNECTED, this._connHandler);
-      if (this._discHandler) this._api.removeEventListener(ApiEvents.DISCONNECTED, this._discHandler);
-    }
+    this._teardownApiListeners();
   }
 
   attributeChangedCallback(name, oldValue, newValue) {
@@ -59,11 +55,23 @@ export class LokiDashboardHeader extends LokiElement {
       this.render();
     }
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      // Adopt the correct per-URL client (do not mutate the cached singleton's
+      // baseUrl, which leaks data across projects). Detach our listeners from
+      // the old instance, swap, and re-subscribe to the new one.
+      this._teardownApiListeners();
+      this._setupApi();
       this._loadStatus();
     }
     if (name === 'theme') {
       this._applyTheme();
+    }
+  }
+
+  _teardownApiListeners() {
+    if (this._api) {
+      if (this._statusHandler) this._api.removeEventListener(ApiEvents.STATUS_UPDATE, this._statusHandler);
+      if (this._connHandler) this._api.removeEventListener(ApiEvents.CONNECTED, this._connHandler);
+      if (this._discHandler) this._api.removeEventListener(ApiEvents.DISCONNECTED, this._discHandler);
     }
   }
 
@@ -81,10 +89,14 @@ export class LokiDashboardHeader extends LokiElement {
   }
 
   async _loadStatus() {
+    const api = this._api;
     try {
-      const status = await this._api.getStatus();
+      const status = await api.getStatus();
+      // Drop a stale response if the api-url switched mid-flight (instance swap).
+      if (api !== this._api) return;
       this._updateFromStatus(status);
     } catch {
+      if (api !== this._api) return;
       this._connected = false;
       this._status = 'offline';
     }

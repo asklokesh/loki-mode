@@ -60,7 +60,7 @@ export class LokiCouncilTranscripts extends LokiElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (oldValue === newValue) return;
     if (name === 'api-url' && this._api) {
-      this._api.baseUrl = newValue;
+      this._api = getApiClient({ baseUrl: newValue });
       this._load();
     }
     if (name === 'theme') {
@@ -78,12 +78,17 @@ export class LokiCouncilTranscripts extends LokiElement {
   async _load() {
     this._loading = true;
     this._error = null;
+    const api = this._api;
     try {
-      const data = await this._api.get('/api/council/transcripts?limit=10');
+      const data = await api.get('/api/council/transcripts?limit=10');
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._transcripts = Array.isArray(data && data.transcripts)
         ? data.transcripts
         : [];
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._error = (err && err.message) ? err.message : String(err);
       this._transcripts = [];
     }
@@ -93,15 +98,19 @@ export class LokiCouncilTranscripts extends LokiElement {
     // A failure here must not blank out the transcripts above, so it is
     // handled independently.
     try {
-      const hooks = await this._api.get(
+      const hooks = await api.get(
         '/api/council/transcripts?limit=20&type_prefix=claude_hook_'
       );
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       // The server returns hook events under the `hook_events` key when
       // type_prefix is set (see get_council_transcripts in server.py).
       this._hookEvents = Array.isArray(hooks && hooks.hook_events)
         ? hooks.hook_events
         : [];
     } catch (err) {
+      // Drop a stale response if the api-url switched mid-flight.
+      if (api !== this._api) return;
       this._hookEvents = [];
     } finally {
       this._loading = false;

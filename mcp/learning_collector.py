@@ -512,6 +512,24 @@ def get_mcp_learning_collector(
         MCPLearningCollector instance
     """
     global _collector
+    # Recreate when the requested loki_dir differs from the cached collector's
+    # directory. The module-level singleton would otherwise return a collector
+    # bound to a PREVIOUS project's .loki dir on cwd change, contaminating one
+    # project's learnings into another in a multi-project session. Compare by
+    # realpath so symlinked/relative paths to the same dir do not churn.
+    if _collector is not None and loki_dir is not None:
+        try:
+            cached = os.path.realpath(str(getattr(_collector, "loki_dir", "")))
+            requested = os.path.realpath(str(loki_dir))
+            if cached != requested:
+                close = getattr(_collector, "close", None)
+                if callable(close):
+                    close()
+                _collector = None
+        except Exception:
+            # On any path-resolution error, fall through and reuse the cache
+            # rather than risk losing the collector.
+            pass
     if _collector is None:
         _collector = MCPLearningCollector(loki_dir=loki_dir)
     return _collector
