@@ -4851,38 +4851,50 @@ def _sanitize_agent_id(agent_id: str) -> str:
 @app.get("/api/memory/summary", dependencies=[Depends(auth.require_scope("read"))])
 async def get_memory_summary():
     """Get memory system summary from .loki/memory/."""
-    # Try SQLite backend first for accurate counts
+    # Try SQLite backend first for accurate counts.
+    # NOTE: _get_memory_storage() returns a SQLiteMemoryStorage object whenever the
+    # module imports, even if no .db file exists yet. On a JSON-backed project that
+    # yields all-zero stats, so we must NOT return here on empty counts -- otherwise
+    # the JSON file fallback below never runs and the dashboard shows 0 episodes/
+    # patterns/skills even though they exist on disk. Only trust SQLite when it
+    # actually reports data; otherwise fall through to the JSON counts.
     storage = _get_memory_storage()
     if storage is not None:
         try:
             stats = storage.get_stats()
-            summary = {
-                "episodic": {"count": stats.get("episode_count", 0), "latestDate": None},
-                "semantic": {"patterns": stats.get("pattern_count", 0), "antiPatterns": 0},
-                "procedural": {"skills": stats.get("skill_count", 0)},
-                "backend": "sqlite",
-            }
-            # Get latest episode date
-            episode_ids = storage.list_episodes(limit=1)
-            if episode_ids:
-                ep = storage.load_episode(episode_ids[0])
-                if ep:
-                    summary["episodic"]["latestDate"] = ep.get("timestamp", "")
-            # Token economics from JSON (not in SQLite)
-            econ_file = _get_loki_dir() / "memory" / "token_economics.json"
-            if econ_file.exists():
-                try:
-                    econ = json.loads(econ_file.read_text())
-                    summary["tokenEconomics"] = {
-                        "discoveryTokens": econ.get("discoveryTokens", 0),
-                        "readTokens": econ.get("readTokens", 0),
-                        "savingsPercent": econ.get("savingsPercent", 0),
-                    }
-                except Exception:
+            total = (
+                stats.get("episode_count", 0)
+                + stats.get("pattern_count", 0)
+                + stats.get("skill_count", 0)
+            )
+            if total > 0:
+                summary = {
+                    "episodic": {"count": stats.get("episode_count", 0), "latestDate": None},
+                    "semantic": {"patterns": stats.get("pattern_count", 0), "antiPatterns": 0},
+                    "procedural": {"skills": stats.get("skill_count", 0)},
+                    "backend": "sqlite",
+                }
+                # Get latest episode date
+                episode_ids = storage.list_episodes(limit=1)
+                if episode_ids:
+                    ep = storage.load_episode(episode_ids[0])
+                    if ep:
+                        summary["episodic"]["latestDate"] = ep.get("timestamp", "")
+                # Token economics from JSON (not in SQLite)
+                econ_file = _get_loki_dir() / "memory" / "token_economics.json"
+                if econ_file.exists():
+                    try:
+                        econ = json.loads(econ_file.read_text())
+                        summary["tokenEconomics"] = {
+                            "discoveryTokens": econ.get("discoveryTokens", 0),
+                            "readTokens": econ.get("readTokens", 0),
+                            "savingsPercent": econ.get("savingsPercent", 0),
+                        }
+                    except Exception:
+                        summary["tokenEconomics"] = {"discoveryTokens": 0, "readTokens": 0, "savingsPercent": 0}
+                else:
                     summary["tokenEconomics"] = {"discoveryTokens": 0, "readTokens": 0, "savingsPercent": 0}
-            else:
-                summary["tokenEconomics"] = {"discoveryTokens": 0, "readTokens": 0, "savingsPercent": 0}
-            return summary
+                return summary
         except Exception:
             pass
 
@@ -4898,7 +4910,11 @@ async def get_memory_summary():
 
     ep_dir = memory_dir / "episodic"
     if ep_dir.exists():
-        episodes = sorted(ep_dir.glob("*.json"))
+        # Episodes are stored under dated subdirectories (episodic/YYYY-MM-DD/*.json),
+        # so a flat glob("*.json") finds nothing. Recurse, and ignore .lock files.
+        episodes = sorted(
+            p for p in ep_dir.rglob("*.json") if not p.name.endswith(".lock")
+        )
         summary["episodic"]["count"] = len(episodes)
         if episodes:
             try:
@@ -4925,7 +4941,9 @@ async def get_memory_summary():
 
     skills_dir = memory_dir / "skills"
     if skills_dir.exists():
-        summary["procedural"]["skills"] = len(list(skills_dir.glob("*.json")))
+        summary["procedural"]["skills"] = len(
+            [p for p in skills_dir.rglob("*.json") if not p.name.endswith(".lock")]
+        )
 
     econ_file = memory_dir / "token_economics.json"
     if econ_file.exists():
