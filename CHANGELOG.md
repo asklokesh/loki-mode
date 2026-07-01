@@ -9,6 +9,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.104.2] - 2026-07-01
+
+### Fix: native/Keychain Claude login no longer misread as "not logged in"
+
+- **`loki start` no longer falsely blocks a genuinely logged-in user.** The auth
+  preflight assumed the Claude Code OAuth login always lives in
+  `~/.claude/.credentials.json`. That is false for the native Claude Code install
+  (2.x on macOS), which stores the login in the macOS Keychain (service
+  "Claude Code-credentials") and writes NO `.credentials.json`. A subscription
+  user who was fully logged in was told "Claude Code is installed but not logged
+  in -- the build would stall" and blocked from every build: the exact opposite
+  of the zero-friction intent.
+
+- **The preflight now asks the CLI's own local auth-status first.** A new
+  `_loki_claude_login_state()` helper (autonomy/run.sh) prefers `claude auth
+  status` (zero-network, ~0.2s, JSON `"loggedIn"`), which is authoritative for
+  BOTH the file-based and the native/Keychain login, then falls back to the
+  credentials file, then to a macOS Keychain existence check (existence only,
+  never reading the secret, so it can never trigger a GUI keychain prompt that
+  would hang a headless build). Critically it applies "inconclusive never
+  false-fails" to auth: it hard-blocks ONLY on positive evidence of no login
+  ("loggedout") or an expired token ("expired"); when the state cannot be proven
+  ("unknown", e.g. an older CLI on a non-macOS box with no file) it fails OPEN
+  and proceeds, so a real login is never blocked on uncertainty. `claude login`
+  guidance and the `LOKI_SKIP_AUTH_PREFLIGHT=1` / `ANTHROPIC_API_KEY` opt-outs
+  are unchanged.
+
+- **A stale expired credentials file never overrides a live Keychain login.**
+  The native install can leave a now-expired `~/.claude/.credentials.json` next
+  to a valid Keychain login (it rotates the Keychain, not the file). The helper
+  therefore checks the Keychain (a positive signal) BEFORE concluding "expired"
+  from the file: a valid file -> logged in; else a Keychain entry -> logged in;
+  only with neither is an expired file treated as genuinely expired. Genuine
+  expiry (expired file, no Keychain) still returns "expired", so the 401-avoiding
+  fast-fail is preserved.
+
+- **`loki doctor` now affirmatively confirms the login, on BOTH the bash and Bun
+  routes.** Both read `claude auth status`, so each shows "Claude CLI is logged in
+  (subscription/OAuth login)" for a Keychain-backed login (previously the bash
+  route fell through to a neutral "ANTHROPIC_API_KEY not set" line and the Bun
+  route wrongly reported "login EXPIRED" for a Keychain login), warns on a genuine
+  logged-out or expired state, and keeps the file-based expiry fallback for older
+  CLIs. The bash<->Bun doctor output stays byte-identical (enforced by the
+  bun-parity matrix).
+
+- Regression coverage: `tests/test-claude-login-state.sh` extracts the real
+  `_loki_claude_login_state()` helper from run.sh and drives every login state
+  with fake `claude` AND `security` binaries on PATH (fully deterministic,
+  independent of the machine's real login). The cases: auth-status logged in
+  (no file); auth-status logged out; valid JSON with no explicit `loggedIn`
+  boolean plus a valid file (must fall through to logged in, never a false hard
+  block); valid file; expired file with no keychain (-> expired); expired file
+  WITH a live keychain (-> logged in: the regression guard that a stale file
+  never overrides a real Keychain login); keychain-only with no file; and the
+  confident-logout path. Proves the exact user-reported scenario (logged in, no
+  `.credentials.json`) no longer blocks.
+
 ## [7.104.1] - 2026-07-01
 
 ### Bun doctor checks Claude login (bash/Bun parity)

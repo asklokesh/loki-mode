@@ -2023,6 +2023,118 @@ _loki_check_git_present() {
     return 0
 }
 
+# _loki_claude_login_state: report the Claude Code login state WITHOUT a network
+# call, printing exactly one of: loggedin | expired | loggedout | unknown.
+#
+# v7.104.2: the previous preflight assumed OAuth credentials always live in
+# ~/.claude/.credentials.json. That is false for the native install (Claude Code
+# 2.x on macOS), which stores the login in the macOS Keychain under the service
+# "Claude Code-credentials" and creates NO .credentials.json. A genuinely logged
+# in subscription user was therefore falsely told "installed but not logged in"
+# and blocked from every build -- the exact opposite of the zero-friction intent.
+#
+# Design: prefer the durable, CLI-owned signal (`claude auth status`, local +
+# fast + non-interactive, JSON with "loggedIn"), because the credential STORE
+# location has now moved twice (file -> keychain) and will move again. Fall back
+# to the file, then the keychain, for older CLIs that lack `auth status`. Crucial
+# rule (inconclusive-never-false-fails applied to auth): only ever return a hard
+# "loggedout" on POSITIVE evidence of no login; when we cannot tell, return
+# "unknown" and let the caller fail OPEN (warn, proceed, let the real call
+# decide) -- never hard-block a paying user on uncertainty.
+_loki_claude_login_state() {
+    # 1) Primary: the CLI's own local auth-status (zero-network, ~0.2s). Newer
+    #    claude CLIs print JSON with a boolean "loggedIn"; parse defensively.
+    if command -v claude >/dev/null 2>&1; then
+        local _status_json
+        _status_json="$(claude auth status 2>/dev/null)"
+        if [[ -n "$_status_json" ]]; then
+            local _parsed
+            _parsed="$(printf '%s' "$_status_json" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    v = d.get('loggedIn')
+    # ONLY the two explicit booleans are trusted. Anything else -- a missing
+    # field, a renamed schema, a JSON error object -- is inconclusive and MUST
+    # fall through to the file/keychain checks, never a hard 'loggedout' (that
+    # would block a genuinely logged-in user with a valid creds file, violating
+    # fail-open). Mirrors the bun doctor's === true / === false / else shape.
+    if v is True:
+        print('loggedin')
+    elif v is False:
+        print('loggedout')
+    # else: print nothing -> fall through
+except Exception:
+    pass  # not JSON (older CLI / different output) -> stay silent, fall through
+" 2>/dev/null)"
+            if [[ "$_parsed" == "loggedin" ]]; then
+                echo "loggedin"; return 0
+            elif [[ "$_parsed" == "loggedout" ]]; then
+                echo "loggedout"; return 0
+            fi
+            # auth status ran but was inconclusive (unparseable, or valid JSON
+            # without an explicit loggedIn boolean) -> do NOT trust it as a
+            # negative; fall through to the credential-store checks below.
+        fi
+    fi
+
+    # 2) Fallback: a VALID (non-expired) OAuth credentials file (older CLIs write
+    #    it here). Compute the expiry once; a valid file is a positive login.
+    #    IMPORTANT: we do NOT conclude "expired" here yet -- a stale expired file
+    #    can sit next to a live macOS-Keychain login (the native install writes
+    #    the file once, then rotates only the Keychain). Concluding "expired" off
+    #    the file before consulting the Keychain would wrongly block a genuinely
+    #    logged-in user -- the exact class of bug this whole change fixes. So the
+    #    Keychain (step 3, a POSITIVE signal) is checked BEFORE we ever return
+    #    "expired" (step 4). Unknown schema -> treat as valid (fail open).
+    local _creds="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json"
+    local _file_state=""   # ""=absent, "valid"=present+fresh, "expired"=present+stale
+    if [[ -s "$_creds" ]]; then
+        _file_state="$(python3 -c "
+import json, sys, time
+try:
+    d = json.load(open(sys.argv[1]))
+    exp = d.get('claudeAiOauth', {}).get('expiresAt')
+    if isinstance(exp, (int, float)) and exp > 0 and (exp / 1000.0) <= (time.time() + 60):
+        print('expired')
+    else:
+        print('valid')
+except Exception:
+    print('valid')  # unreadable/unknown -> fail open (treat as valid)
+" "$_creds" 2>/dev/null || echo valid)"
+    fi
+    if [[ "$_file_state" == "valid" ]]; then
+        echo "loggedin"; return 0
+    fi
+
+    # 3) macOS Keychain (native install stores the login here, often with NO file
+    #    at all, or alongside a now-stale file). A present Keychain entry is a
+    #    POSITIVE login signal and OVERRIDES an expired file. Existence check
+    #    ONLY -- never `-w` (reading the secret can pop a GUI keychain prompt that
+    #    would hang a headless/CI build). Guarded to Darwin.
+    if [[ "$(uname 2>/dev/null)" == "Darwin" ]] && command -v security >/dev/null 2>&1; then
+        if security find-generic-password -s "Claude Code-credentials" >/dev/null 2>&1; then
+            echo "loggedin"; return 0
+        fi
+    fi
+
+    # 4) Only now, with no valid file and no Keychain login, is an expired file a
+    #    real "expired" state (genuine expiry that would 401 mid-build).
+    if [[ "$_file_state" == "expired" ]]; then
+        echo "expired"; return 0
+    fi
+
+    # 5) No positive login evidence at all. On macOS (where the file AND the
+    #    Keychain are the two real stores, both absent) with the CLI present, that
+    #    is confident "logged out". Anywhere else we cannot prove absence of a
+    #    login (no Keychain to consult), so stay "unknown" and let the caller fail
+    #    open.
+    if [[ "$(uname 2>/dev/null)" == "Darwin" ]] && command -v claude >/dev/null 2>&1; then
+        echo "loggedout"; return 0
+    fi
+    echo "unknown"; return 0
+}
+
 # _loki_check_workspace_writable: the build writes state, proofs, and source into
 # the working directory and its .loki/ subtree on every iteration. A read-only
 # volume, a permission-denied directory, or a full disk would otherwise fail
@@ -2108,21 +2220,33 @@ validate_api_keys() {
 
     # Zero-friction auth preflight for LOCAL runs (must run BEFORE the early
     # return below, which exits for non-Docker/K8s envs). When claude is the
-    # provider, the claude CLI is on PATH, there is no ANTHROPIC_API_KEY, and no
-    # OAuth credentials file exists (the user installed claude but never ran
-    # `claude login`), the build would otherwise enter, make a failing call, and
-    # 401 -- the worst first impression -- forcing the user to run `loki why`.
-    # Fail fast with the one-step fix instead. Opt out with LOKI_SKIP_AUTH_PREFLIGHT=1.
-    if [[ "$provider" == "claude" && "${LOKI_SKIP_AUTH_PREFLIGHT:-}" != "1" && -z "${ANTHROPIC_API_KEY:-}" ]] \
-       && command -v claude >/dev/null 2>&1; then
-        local _local_creds="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json"
-        if [[ ! -s "$_local_creds" ]]; then
+    # provider and there is no ANTHROPIC_API_KEY, ask the login-state helper
+    # (auth-status -> file -> keychain, all zero-network) whether the user is
+    # actually logged in. A never-logged-in user would otherwise enter the build,
+    # make a failing call, and 401 -- the worst first impression -- so we fail
+    # fast with the one-step fix. But we ONLY hard-block on a confident
+    # "loggedout"; an "expired" login gets its own message; "unknown" (we cannot
+    # prove the login state, e.g. an older CLI on a non-macOS box with no file)
+    # fails OPEN so a genuinely logged-in user is never blocked. This is the
+    # v7.104.2 fix for the native/Keychain login being misread as logged out.
+    # Opt out entirely with LOKI_SKIP_AUTH_PREFLIGHT=1.
+    if [[ "$provider" == "claude" && "${LOKI_SKIP_AUTH_PREFLIGHT:-}" != "1" && -z "${ANTHROPIC_API_KEY:-}" ]]; then
+        local _login_state
+        _login_state="$(_loki_claude_login_state)"
+        if [[ "$_login_state" == "loggedout" ]]; then
             log_error "Claude Code is installed but not logged in -- the build would stall instead of running."
             log_error "Log in once, then retry:"
             log_error "    claude login"
             log_error "(or set ANTHROPIC_API_KEY, or LOKI_SKIP_AUTH_PREFLIGHT=1 to bypass this check)"
             return 1
+        elif [[ "$_login_state" == "expired" ]]; then
+            log_error "Your Claude Code login has expired -- the build would stall instead of running."
+            log_error "Fix it in one step, then retry:"
+            log_error "    claude login"
+            log_error "(or set ANTHROPIC_API_KEY, or LOKI_SKIP_AUTH_PREFLIGHT=1 to bypass this check)"
+            return 1
         fi
+        # "loggedin" or "unknown" -> proceed (fail open on uncertainty).
     fi
 
     # CLI tools (claude, codex, cline, aider) use their own login sessions.

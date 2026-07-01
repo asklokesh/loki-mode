@@ -9957,12 +9957,27 @@ cmd_doctor() {
         echo -e "  ${GREEN}PASS${NC}  ANTHROPIC_API_KEY is set"
         pass_count=$((pass_count + 1))
     elif command -v claude &>/dev/null; then
-        # Zero-network check: warn if the Claude OAuth login has expired. An
-        # expired token would otherwise pass and then 401 mid-build (the build
-        # stalls at BOOTSTRAP). Mirror run.sh's fail-fast preflight here so a
-        # user catches it with `loki doctor` BEFORE starting a build.
+        # Zero-network login check. v7.104.2: prefer the CLI's own local
+        # auth-status (JSON with "loggedIn"), which is authoritative for BOTH the
+        # file-based and the native/Keychain login. This fixes doctor missing a
+        # genuine Keychain login (native install writes NO ~/.claude/.credentials
+        # .json). Fall back to the expiry stamp in the file for older CLIs.
+        _claude_login="$(claude auth status 2>/dev/null | python3 -c "
+import json, sys
+try:
+    v = json.load(sys.stdin).get('loggedIn')
+    # Only the explicit booleans are trusted; a missing/renamed field is
+    # inconclusive and falls through to the file-expiry check (never a spurious
+    # 'not logged in' warning). Matches the run.sh helper + bun doctor.
+    if v is True:
+        print('yes')
+    elif v is False:
+        print('no')
+except Exception:
+    pass
+" 2>/dev/null)"
         _claude_creds="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json"
-        if [ -s "$_claude_creds" ] && [ "$(python3 -c "
+        _claude_expired="$( [ -s "$_claude_creds" ] && python3 -c "
 import json, sys, time
 try:
     d = json.load(open(sys.argv[1]))
@@ -9970,7 +9985,14 @@ try:
     print('expired' if isinstance(exp,(int,float)) and exp>0 and (exp/1000.0)<=(time.time()+60) else 'ok')
 except Exception:
     print('ok')
-" "$_claude_creds" 2>/dev/null || echo ok)" = "expired" ]; then
+" "$_claude_creds" 2>/dev/null || echo ok )"
+        if [ "$_claude_login" = "yes" ]; then
+            echo -e "  ${GREEN}PASS${NC}  Claude CLI is logged in (subscription/OAuth login)"
+            pass_count=$((pass_count + 1))
+        elif [ "$_claude_login" = "no" ]; then
+            echo -e "  ${YELLOW}WARN${NC}  Claude CLI is NOT logged in -- run 'claude login' before a build (it would otherwise stall)"
+            warn_count=$((warn_count + 1))
+        elif [ "$_claude_expired" = "expired" ]; then
             echo -e "  ${YELLOW}WARN${NC}  Claude login has EXPIRED -- run 'claude login' before a build (it would otherwise stall)"
             warn_count=$((warn_count + 1))
         else

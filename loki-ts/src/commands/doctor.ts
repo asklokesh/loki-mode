@@ -438,6 +438,31 @@ function claudeOauthExpired(): boolean {
   }
 }
 
+// v7.104.2 parity with bash doctor: the durable login signal is `claude auth
+// status` (local, zero-network, ~0.2s, JSON with "loggedIn"), which recognizes
+// BOTH the file-based AND the native/macOS-Keychain login (the native install
+// writes NO ~/.claude/.credentials.json, so the file-only check above misses a
+// genuine Keychain login). Returns "yes" | "no" | "" (unknown: older CLI / no
+// parseable output -> caller falls back to the file-expiry check, never a false
+// warn). Kept byte-faithful with autonomy/loki's inline `claude auth status`
+// parse so the bash and Bun doctor routes render the identical login line.
+function claudeAuthStatusLoggedIn(): "yes" | "no" | "" {
+  try {
+    const r = spawnSync("claude", ["auth", "status"], {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    const out = (r.stdout || "").trim();
+    if (!out) return "";
+    const parsed = JSON.parse(out);
+    if (parsed?.loggedIn === true) return "yes";
+    if (parsed?.loggedIn === false) return "no";
+    return "";
+  } catch {
+    return "";
+  }
+}
+
 function badge(status: Status): string {
   switch (status) {
     case "pass":
@@ -563,14 +588,24 @@ async function runText(): Promise<number> {
     process.stdout.write(`  ${badge("pass")}  ANTHROPIC_API_KEY is set\n`);
     tally.pass++;
   } else if (claudeFound) {
-    // Parity with bash doctor (autonomy/loki): zero-network check that warns when
-    // the Claude OAuth access token has expired. An expired token would otherwise
-    // pass here and then 401 mid-build (the build stalls at BOOTSTRAP). This is a
-    // conservative check by design: it does NOT attempt a refresh (that needs a
-    // network call), so it warns whenever the access token's expiresAt is past,
-    // mirroring run.sh's fail-fast preflight. Any read/parse failure falls through
-    // to the neutral line, so a missing/corrupt creds file never false-warns.
-    if (claudeOauthExpired()) {
+    // Parity with bash doctor (autonomy/loki), v7.104.2: prefer the CLI's own
+    // local auth-status (authoritative for both the file-based and the native/
+    // Keychain login), then fall back to the file-expiry check for older CLIs.
+    // This fixes the Bun route reporting "login EXPIRED" for a Keychain-logged-in
+    // user (native install writes no .credentials.json). Zero-network, no refresh
+    // attempt (that needs the network), mirroring run.sh's fail-fast preflight.
+    const loggedIn = claudeAuthStatusLoggedIn();
+    if (loggedIn === "yes") {
+      process.stdout.write(
+        `  ${badge("pass")}  Claude CLI is logged in (subscription/OAuth login)\n`,
+      );
+      tally.pass++;
+    } else if (loggedIn === "no") {
+      process.stdout.write(
+        `  ${badge("warn")}  Claude CLI is NOT logged in -- run 'claude login' before a build (it would otherwise stall)\n`,
+      );
+      tally.warn++;
+    } else if (claudeOauthExpired()) {
       process.stdout.write(
         `  ${badge("warn")}  Claude login has EXPIRED -- run 'claude login' before a build (it would otherwise stall)\n`,
       );
