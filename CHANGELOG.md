@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.104.5] - 2026-07-01
+
+### Fix: memory panel is correct and self-consistent on JSON-backed projects
+
+Builds on the fix contributed in PR #178 by @iizotov (memory summary reporting 0
+on a JSON-backed project) and closes the two gaps its review surfaced, plus the
+same class of bug in the sibling endpoints.
+
+- **`/api/memory/summary` no longer reports 0 on a JSON-backed project.** The
+  SQLite fast path returned all-zero stats whenever the module imports even with
+  no `.db` file, short-circuiting the JSON fallback. It now only trusts SQLite
+  when it actually reports data, else falls through to the JSON counts (the core
+  PR #178 fix). Episodes and skills are counted by recursing the dated
+  subdirectories (`episodic/YYYY-MM-DD/*.json`, `skills/*/*.json`) instead of a
+  flat glob that found nothing.
+
+- **The summary count and the drill-in lists can no longer disagree.** PR #178
+  fixed only `/api/memory/summary`; `/api/memory/episodes`, `/api/memory/skills`,
+  the single-item lookups, and the JSON stats fallback still used a flat glob, so
+  the panel showed a count of N but the list returned 0. All of them now go
+  through two single-source-of-truth helpers, `_memory_episode_files()` and
+  `_memory_skill_files()`, so the count and the list are always computed the same
+  way. `.lock` files are ignored everywhere.
+
+- **`latestDate` is the newest episode by recorded timestamp, not by filename.**
+  The intra-day filename tiebreak is a hash, not a time, so a filename sort could
+  report the wrong episode (observed hours off). The summary and the episodes
+  list now select the newest by parsed `timestamp`, and an honest `null`/empty is
+  preferred over a confidently-wrong value when no timestamp is readable.
+
+- Verified against a real JSON-backed project (dated episodic subdirs, no `.db`):
+  the summary count equals the episodes-list length and the reported latestDate
+  matches the true maximum timestamp. Regression coverage:
+  `tests/dashboard/test_memory_json_parity.py` (summary/episodes parity,
+  summary/skills parity, timestamp-not-filename latestDate, `.lock` exclusion).
+
 ## [7.104.4] - 2026-07-01
 
 ### Fix: /api/tasks no longer 500s on a malformed dashboard-state.json

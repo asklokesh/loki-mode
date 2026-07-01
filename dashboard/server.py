@@ -5007,41 +5007,79 @@ def _sanitize_agent_id(agent_id: str) -> str:
         )
     return agent_id
 
+
+# --- Memory file enumeration (single source of truth) ------------------------
+# v7.104.5 (PR #178 follow-up): the memory store writes episodes and skills into
+# DATED subdirectories (episodic/YYYY-MM-DD/*.json, skills/*/*.json), so a flat
+# .glob("*.json") finds nothing and every endpoint that used it under-reported.
+# PR #178 fixed only /api/memory/summary; the sibling /api/memory/episodes and
+# the skills listings still used a flat glob, so the count and the drill-in list
+# disagreed (summary said 28, the list returned 0) -- a trust-eroding
+# inconsistency. These two helpers are the ONE way to enumerate memory files, so
+# counts and lists can never diverge again. Both recurse and skip .lock files.
+def _memory_episode_files(ep_dir) -> list:
+    """All episode JSON files under episodic/ (recursing dated subdirs), sorted."""
+    try:
+        return sorted(p for p in ep_dir.rglob("*.json") if not p.name.endswith(".lock"))
+    except Exception:
+        return []
+
+
+def _memory_skill_files(skills_dir) -> list:
+    """All skill JSON files under skills/ (recursing subdirs), sorted."""
+    try:
+        return sorted(p for p in skills_dir.rglob("*.json") if not p.name.endswith(".lock"))
+    except Exception:
+        return []
+
+
 @app.get("/api/memory/summary", dependencies=[Depends(auth.require_scope("read"))])
 async def get_memory_summary():
     """Get memory system summary from .loki/memory/."""
-    # Try SQLite backend first for accurate counts
+    # Try SQLite backend first for accurate counts.
+    # NOTE (PR #178, @iizotov): _get_memory_storage() returns a SQLiteMemoryStorage
+    # object whenever the module imports, even if no .db file exists yet. On a
+    # JSON-backed project that yields all-zero stats, so we must NOT return here on
+    # empty counts -- otherwise the JSON file fallback below never runs and the
+    # dashboard shows 0 episodes/patterns/skills even though they exist on disk.
+    # Only trust SQLite when it actually reports data; else fall through to JSON.
     storage = _get_memory_storage()
     if storage is not None:
         try:
             stats = storage.get_stats()
-            summary = {
-                "episodic": {"count": stats.get("episode_count", 0), "latestDate": None},
-                "semantic": {"patterns": stats.get("pattern_count", 0), "antiPatterns": 0},
-                "procedural": {"skills": stats.get("skill_count", 0)},
-                "backend": "sqlite",
-            }
-            # Get latest episode date
-            episode_ids = storage.list_episodes(limit=1)
-            if episode_ids:
-                ep = storage.load_episode(episode_ids[0])
-                if ep:
-                    summary["episodic"]["latestDate"] = ep.get("timestamp", "")
-            # Token economics from JSON (not in SQLite)
-            econ_file = _get_loki_dir() / "memory" / "token_economics.json"
-            if econ_file.exists():
-                try:
-                    econ = json.loads(econ_file.read_text())
-                    summary["tokenEconomics"] = {
-                        "discoveryTokens": econ.get("discoveryTokens", 0),
-                        "readTokens": econ.get("readTokens", 0),
-                        "savingsPercent": econ.get("savingsPercent", 0),
-                    }
-                except Exception:
+            total = (
+                stats.get("episode_count", 0)
+                + stats.get("pattern_count", 0)
+                + stats.get("skill_count", 0)
+            )
+            if total > 0:
+                summary = {
+                    "episodic": {"count": stats.get("episode_count", 0), "latestDate": None},
+                    "semantic": {"patterns": stats.get("pattern_count", 0), "antiPatterns": 0},
+                    "procedural": {"skills": stats.get("skill_count", 0)},
+                    "backend": "sqlite",
+                }
+                # Get latest episode date
+                episode_ids = storage.list_episodes(limit=1)
+                if episode_ids:
+                    ep = storage.load_episode(episode_ids[0])
+                    if ep:
+                        summary["episodic"]["latestDate"] = ep.get("timestamp", "")
+                # Token economics from JSON (not in SQLite)
+                econ_file = _get_loki_dir() / "memory" / "token_economics.json"
+                if econ_file.exists():
+                    try:
+                        econ = json.loads(econ_file.read_text())
+                        summary["tokenEconomics"] = {
+                            "discoveryTokens": econ.get("discoveryTokens", 0),
+                            "readTokens": econ.get("readTokens", 0),
+                            "savingsPercent": econ.get("savingsPercent", 0),
+                        }
+                    except Exception:
+                        summary["tokenEconomics"] = {"discoveryTokens": 0, "readTokens": 0, "savingsPercent": 0}
+                else:
                     summary["tokenEconomics"] = {"discoveryTokens": 0, "readTokens": 0, "savingsPercent": 0}
-            else:
-                summary["tokenEconomics"] = {"discoveryTokens": 0, "readTokens": 0, "savingsPercent": 0}
-            return summary
+                return summary
         except Exception:
             pass
 
@@ -5057,14 +5095,28 @@ async def get_memory_summary():
 
     ep_dir = memory_dir / "episodic"
     if ep_dir.exists():
-        episodes = sorted(ep_dir.glob("*.json"))
+        # Episodes are stored under dated subdirectories (episodic/YYYY-MM-DD/*.json),
+        # so a flat glob("*.json") finds nothing (PR #178, @iizotov). Recurse and
+        # ignore .lock files. Shared with /api/memory/episodes via _memory_episode_
+        # files() so the summary count and the drill-in list can never disagree.
+        episodes = _memory_episode_files(ep_dir)
         summary["episodic"]["count"] = len(episodes)
         if episodes:
-            try:
-                latest = json.loads(episodes[-1].read_text())
-                summary["episodic"]["latestDate"] = latest.get("timestamp", "")
-            except Exception:
-                pass
+            # latestDate must be the newest by RECORDED TIMESTAMP, not by filename
+            # sort: intra-day filenames carry a hash tiebreak, not a time, so a
+            # filename sort can report the wrong episode (observed ~15h off). Pick
+            # the max parsed timestamp; fall back to the last file only if no
+            # timestamp is readable, so an honest value is preferred over a
+            # confidently-wrong one.
+            latest_ts = ""
+            for _epf in episodes:
+                try:
+                    _ts = json.loads(_epf.read_text()).get("timestamp", "")
+                    if isinstance(_ts, str) and _ts > latest_ts:
+                        latest_ts = _ts
+                except Exception:
+                    continue
+            summary["episodic"]["latestDate"] = latest_ts or None
 
     sem_dir = memory_dir / "semantic"
     patterns_file = sem_dir / "patterns.json"
@@ -5084,7 +5136,7 @@ async def get_memory_summary():
 
     skills_dir = memory_dir / "skills"
     if skills_dir.exists():
-        summary["procedural"]["skills"] = len(list(skills_dir.glob("*.json")))
+        summary["procedural"]["skills"] = len(_memory_skill_files(skills_dir))
 
     econ_file = memory_dir / "token_economics.json"
     if econ_file.exists():
@@ -5122,20 +5174,22 @@ async def list_episodes(limit: int = Query(default=50, ge=1, le=1000)):
             except Exception:
                 pass
 
-        # Fallback to JSON files -- use heapq to avoid sorting all files
-        import heapq
+        # Fallback to JSON files. Enumerate via the shared helper (recurses the
+        # dated subdirs) so this list agrees with /api/memory/summary's count --
+        # the flat glob here was the exact parity gap PR #178's review flagged
+        # (summary said 28, this returned 0). Read each file, then return the
+        # newest `limit` by RECORDED timestamp (not filename, whose intra-day
+        # tiebreak is a hash, not a time).
         ep_dir = _get_loki_dir() / "memory" / "episodic"
-        episodes = []
+        loaded = []
         if ep_dir.exists():
-            all_files = ep_dir.glob("*.json")
-            # nlargest by filename (timestamps sort lexicographically) avoids full sort
-            files = heapq.nlargest(limit, all_files, key=lambda f: f.name)
-            for f in files:
+            for f in _memory_episode_files(ep_dir):
                 try:
-                    episodes.append(json.loads(f.read_text()))
+                    loaded.append(json.loads(f.read_text()))
                 except Exception:
                     pass
-        return episodes
+        loaded.sort(key=lambda e: e.get("timestamp", "") if isinstance(e, dict) else "", reverse=True)
+        return loaded[:limit]
 
     return await asyncio.to_thread(_load_episodes)
 
@@ -5159,7 +5213,7 @@ async def get_episode(episode_id: str):
     if not ep_dir.exists():
         raise HTTPException(status_code=404, detail="Episode not found")
     real_loki = os.path.realpath(str(loki_dir))
-    for f in ep_dir.glob("*.json"):
+    for f in _memory_episode_files(ep_dir):
         resolved = os.path.realpath(f)
         if not resolved.startswith(real_loki + os.sep) and resolved != real_loki:
             raise HTTPException(status_code=403, detail="Access denied")
@@ -5235,7 +5289,7 @@ async def list_skills():
         skills_dir = _get_loki_dir() / "memory" / "skills"
         skills = []
         if skills_dir.exists():
-            for f in sorted(skills_dir.glob("*.json")):
+            for f in _memory_skill_files(skills_dir):
                 try:
                     skills.append(json.loads(f.read_text()))
                 except Exception:
@@ -5253,7 +5307,7 @@ async def get_skill(skill_id: str):
     if not skills_dir.exists():
         raise HTTPException(status_code=404, detail="Skill not found")
     real_loki = os.path.realpath(str(loki_dir))
-    for f in skills_dir.glob("*.json"):
+    for f in _memory_skill_files(skills_dir):
         resolved = os.path.realpath(f)
         if not resolved.startswith(real_loki + os.sep) and resolved != real_loki:
             raise HTTPException(status_code=403, detail="Access denied")
@@ -5699,11 +5753,7 @@ async def get_memory_stats():
         ep_count = 0
         ep_dir = memory_dir / "episodic"
         if ep_dir.exists():
-            for d in ep_dir.iterdir():
-                if d.is_dir():
-                    ep_count += len(list(d.glob("*.json")))
-                elif d.suffix == ".json":
-                    ep_count += 1
+            ep_count = len(_memory_episode_files(ep_dir))
 
         pat_count = 0
         patterns_file = memory_dir / "semantic" / "patterns.json"
@@ -5717,7 +5767,7 @@ async def get_memory_stats():
         skill_count = 0
         skills_dir = memory_dir / "skills"
         if skills_dir.exists():
-            skill_count = len(list(skills_dir.glob("*.json")))
+            skill_count = len(_memory_skill_files(skills_dir))
 
         return {
             "backend": "json",
