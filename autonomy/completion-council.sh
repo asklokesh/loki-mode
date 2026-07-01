@@ -3226,10 +3226,36 @@ council_should_stop() {
         circuit_triggered=true
     fi
 
-    # Only run council at check intervals OR if circuit breaker triggered
+    # Only run council at check intervals OR if circuit breaker triggered OR the
+    # agent has EXPLICITLY claimed completion this iteration (v7.105.0 convergence
+    # fix). Rationale, measured from real build telemetry (docs/SPEED-DIAGNOSIS):
+    # a build could be verifiably done at iteration 1 (reviews non-blocking, tests
+    # green, checklist complete) yet the council was not even allowed to evaluate
+    # until the next 5-iteration boundary -- so the loop ground out "next
+    # improvement" iterations the user never asked for (14 iterations for a job
+    # done in ~1). An explicit completion CLAIM is the strongest possible signal
+    # that it is worth asking the council NOW. This changes only WHEN the council
+    # evaluates, never WHETHER it must approve: MIN_ITERATIONS below, the hard
+    # checklist gate, the evidence gate, the aggregate vote, and the devil's
+    # advocate all still run unchanged. A premature or unearned claim is still
+    # rejected (returns 1, loop continues); it is never a forced green.
+    #
+    # The claim signal is the structured one (loki_complete_task MCP tool ->
+    # .loki/signals/COMPLETION_REQUESTED, or the runner exporting
+    # LOKI_COMPLETION_CLAIMED=1 for this iteration), NOT the fuzzy log-grep the
+    # circuit breaker uses -- so it fires on a real, intentional claim only.
+    local completion_claimed=false
+    if [ "${LOKI_COMPLETION_CLAIMED:-0}" = "1" ] \
+       || [ -f "${TARGET_DIR:-.}/.loki/signals/COMPLETION_REQUESTED" ]; then
+        completion_claimed=true
+    fi
+
     local should_check=false
     if [ "$circuit_triggered" = "true" ]; then
         should_check=true
+    elif [ "$completion_claimed" = "true" ]; then
+        should_check=true
+        log_info "[Council] Completion claimed this iteration -- evaluating now (not deferring to the ${COUNCIL_CHECK_INTERVAL}-iteration interval)"
     elif [ $((ITERATION_COUNT % COUNCIL_CHECK_INTERVAL)) -eq 0 ]; then
         should_check=true
     fi

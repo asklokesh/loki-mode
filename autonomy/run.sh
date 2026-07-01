@@ -17530,7 +17530,30 @@ else:
             if type ensure_completion_test_evidence &>/dev/null; then
                 ensure_completion_test_evidence || true
             fi
-            if type council_should_stop &>/dev/null && council_should_stop; then
+            # v7.105.0 convergence: if the agent EXPLICITLY claimed completion this
+            # iteration (structured loki_complete_task / COMPLETION_REQUESTED
+            # signal), tell the council to evaluate NOW instead of deferring to the
+            # 5-iteration check interval. The council still must approve (MIN_
+            # ITERATIONS + hard checklist + evidence gate + vote + devil's advocate
+            # all unchanged); this only stops an already-verified build from
+            # grinding needless "next improvement" iterations. Scoped to this call.
+            #
+            # CRITICAL (council-review finding): we must PEEK at the claim signal
+            # NON-DESTRUCTIVELY. check_task_completion_signal() CONSUMES the signal
+            # (rm -f on read), and the DEFAULT completion-promise route below
+            # (v6.82.0, the live gate-based acceptance path) also consumes it -- so
+            # calling the consuming detector here would drop the claim before that
+            # route sees it, re-introducing the v7.28 "claim drop" bug. Instead we
+            # only test the signal FILES' existence (the same two paths
+            # check_task_completion_signal reads), leaving consumption to the
+            # existing single owner. The council side likewise peeks
+            # ($TARGET_DIR/.loki/signals/COMPLETION_REQUESTED) without consuming.
+            local _loki_completion_claimed=0
+            if [ -f "${TARGET_DIR:-.}/.loki/signals/TASK_COMPLETION_CLAIMED" ] \
+               || [ -f "${TARGET_DIR:-.}/.loki/signals/COMPLETION_REQUESTED" ]; then
+                _loki_completion_claimed=1
+            fi
+            if type council_should_stop &>/dev/null && LOKI_COMPLETION_CLAIMED="$_loki_completion_claimed" council_should_stop; then
                 # bash-F1: council_should_stop returns 0 from a genuine approval
                 # AND from two force-stop safety valves (stagnation flood /
                 # repeated done-signals). A force-stop is NOT a verified-complete

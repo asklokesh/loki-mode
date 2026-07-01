@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.105.0] - 2026-07-01
+
+### Faster convergence: the completion council evaluates the moment work is claimed done
+
+Measured from real build telemetry (docs/SPEED-DIAGNOSIS-2026-07-01.md): a build could be
+verifiably done at iteration 1 (code reviews non-blocking, tests green, checklist complete)
+yet keep running needless "next improvement" iterations, because the completion council was
+only allowed to evaluate every `COUNCIL_CHECK_INTERVAL` (default 5) iterations. One observed
+build ran 14 iterations for a job finished in ~1, growing from 19 to 26 tests it never needed.
+
+- **An explicit completion claim now triggers an immediate council evaluation** instead of
+  deferring to the 5-iteration interval. When the agent invokes `loki_complete_task` (or the
+  `COMPLETION_REQUESTED` fallback signal), `council_should_stop` evaluates on that iteration.
+  This is a SPEED win that INCREASES trust alignment: the loop stops as soon as work is
+  verified-done, rather than grinding past it.
+
+- **No verification was weakened.** The fix changes only WHEN the council evaluates, never
+  WHETHER it must approve. `COUNCIL_MIN_ITERATIONS` (a claim before the minimum still does not
+  stop), the hard checklist gate, the verified-completion evidence gate, the aggregate vote,
+  and the devil's-advocate re-review all run unchanged. A premature or unearned claim is still
+  rejected and the loop continues -- never a forced green. The normal N-iteration cadence is
+  unchanged when no claim is present.
+
+- The claim signal is the STRUCTURED one (`loki_complete_task` / `.loki/signals/
+  COMPLETION_REQUESTED`), not the fuzzy log-grep the circuit breaker uses, so it fires only on
+  a real, intentional completion claim.
+
+- Regression coverage: `tests/test-council-convergence-on-claim.sh` extracts the real
+  `council_should_stop` and drives the full truth table (claim off-interval evaluates now;
+  no-claim cadence preserved; claim before MIN_ITERATIONS does NOT stop; file-signalled claim
+  path). Proven RED on the pre-fix code, GREEN on the fix.
+
+Honest scope note: this fixes convergence CORRECTNESS (the loop stops at verified-done),
+proven by unit test. End-to-end wall-clock before/after on a fixed spec is tracked separately
+(benchmarks/speed-benchmark.sh) and depends on a surviving long-build run; the fat-iteration
+cost (a couple of disproportionately long iterations) is a distinct, still-open investigation.
+
 ## [7.104.5] - 2026-07-01
 
 ### Fix: memory panel is correct and self-consistent on JSON-backed projects
