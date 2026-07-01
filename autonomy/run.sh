@@ -6520,52 +6520,108 @@ EFF_EOF
     [ ! -f "$completed_file" ] && echo "[]" > "$completed_file"
     [ ! -f "$failed_file" ] && echo "[]" > "$failed_file"
 
-    # Create completed task entry
-    local task_json=$(cat <<EOF
-{
-  "id": "$task_id",
-  "type": "iteration",
-  "title": "Iteration $iteration",
-  "status": "$([ "$exit_code" = "0" ] && echo "completed" || echo "failed")",
-  "completedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "exitCode": $exit_code,
-  "provider": "${PROVIDER_NAME:-claude}"
-}
-EOF
-)
-
-    # Add to appropriate queue
+    # Build the completed iteration record + move it out of in-progress, ATOMICALLY.
+    # v7.104.3 task-list accuracy fix: the old writer emitted a THIN body
+    # {id,type,title:"Iteration N",status,exitCode,provider} with no description
+    # and no logs, and then DELETED the rich in-progress record -- so the done
+    # column showed empty cards. We now LIFT the honest per-iteration parts (logs,
+    # startedAt) from the in-progress record BEFORE removing it, and give the card
+    # an HONEST iteration-scoped title/description derived from values in scope
+    # ($phase/$exit_code/$duration_ms). We deliberately do NOT reuse the borrowed
+    # PRD-story title: because pending stories never leave the queue, the
+    # in-progress title is always pending[0] ("server.js..."), so carrying it onto
+    # N done cards would falsely imply that story was built N times (fake-green).
+    # We also upsert-by-id (no cross-sub-run "iteration-1 x5" accumulation) and
+    # keep completed/failed mutually exclusive per id.
     local target_file="$completed_file"
-    [ "$exit_code" != "0" ] && target_file="$failed_file"
-
+    local other_file="$failed_file"
+    [ "$exit_code" != "0" ] && { target_file="$failed_file"; other_file="$completed_file"; }
+    local _completed_ts; _completed_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    _LOKI_TASK_ID="$task_id" \
+    _LOKI_ITER="$iteration" \
+    _LOKI_PHASE="$phase" \
+    _LOKI_EXIT="$exit_code" \
+    _LOKI_DUR="$duration_ms" \
+    _LOKI_PROVIDER="${PROVIDER_NAME:-claude}" \
+    _LOKI_COMPLETED_TS="$_completed_ts" \
+    _LOKI_TARGET="$target_file" \
+    _LOKI_OTHER="$other_file" \
+    _LOKI_INPROG="$in_progress_file" \
     python3 -c "
-import sys, json
-try:
-    with open('$target_file', 'r') as f:
-        data = json.load(f)
-except:
-    data = []
-data.append($task_json)
-# Keep only last 50 entries
-data = data[-50:]
-with open('$target_file', 'w') as f:
-    json.dump(data, f, indent=2)
-" 2>/dev/null || echo "[$task_json]" > "$target_file"
+import json, os
 
-    # Remove from in-progress
-    if [ -f "$in_progress_file" ]; then
-        python3 -c "
-import sys, json
+tid = os.environ['_LOKI_TASK_ID']
+it = os.environ['_LOKI_ITER']
+phase = os.environ.get('_LOKI_PHASE') or 'unknown'
+exit_code = os.environ.get('_LOKI_EXIT', '1')
+dur = os.environ.get('_LOKI_DUR', '')
+provider = os.environ.get('_LOKI_PROVIDER', 'claude')
+completed_ts = os.environ['_LOKI_COMPLETED_TS']
+target = os.environ['_LOKI_TARGET']
+other = os.environ['_LOKI_OTHER']
+inprog = os.environ['_LOKI_INPROG']
+ok = (exit_code == '0')
+
+def load(p):
+    try:
+        with open(p) as f:
+            d = json.load(f)
+        return d if isinstance(d, list) else (d.get('tasks', []) if isinstance(d, dict) else [])
+    except Exception:
+        return []
+
+# Lift the honest body from the in-progress record before removing it.
+prior = next((t for t in load(inprog) if isinstance(t, dict) and t.get('id') == tid), {})
+logs = prior.get('logs') if isinstance(prior.get('logs'), list) else []
+started = prior.get('startedAt')
+
+dur_s = ''
 try:
-    with open('$in_progress_file', 'r') as f:
-        data = json.load(f)
-    data = [t for t in data if t.get('id') != '$task_id']
-    with open('$in_progress_file', 'w') as f:
-        json.dump(data, f, indent=2)
-except:
-    pass
-" 2>/dev/null || true
-    fi
+    if dur not in ('', None):
+        _ms = int(float(dur))
+        dur_s = f\", {_ms}ms\" if _ms < 1000 else f\", {round(_ms/1000)}s\"
+except Exception:
+    dur_s = ''
+
+if ok:
+    title = f'Iteration {it} complete - {phase}'
+    desc = f'Iteration {it} finished cleanly in the {phase} phase (exit 0{dur_s}).'
+else:
+    title = f'Iteration {it} failed (exit {exit_code})'
+    desc = f'Iteration {it} ended in the {phase} phase with exit code {exit_code}{dur_s}.'
+
+entry = {
+    'id': tid,
+    'type': 'iteration',
+    'title': title,
+    'description': desc,
+    'status': 'completed' if ok else 'failed',
+    'phase': phase,
+    'completedAt': completed_ts,
+    'exitCode': int(exit_code) if str(exit_code).lstrip('-').isdigit() else exit_code,
+    'provider': provider,
+    'logs': logs,
+}
+if started:
+    entry['startedAt'] = started
+
+# Upsert-by-id into target (drop any stale same-id), cap at 50.
+data = [t for t in load(target) if not (isinstance(t, dict) and t.get('id') == tid)]
+data.append(entry)
+data = data[-50:]
+with open(target, 'w') as f:
+    json.dump(data, f, indent=2)
+
+# Mutual exclusion: remove this id from the OTHER terminal file.
+odata = [t for t in load(other) if not (isinstance(t, dict) and t.get('id') == tid)]
+with open(other, 'w') as f:
+    json.dump(odata, f, indent=2)
+
+# Remove from in-progress.
+idata = [t for t in load(inprog) if not (isinstance(t, dict) and t.get('id') == tid)]
+with open(inprog, 'w') as f:
+    json.dump(idata, f, indent=2)
+" 2>/dev/null || echo "[{\"id\":\"$task_id\",\"type\":\"iteration\",\"title\":\"Iteration $iteration\",\"status\":\"$([ "$exit_code" = "0" ] && echo completed || echo failed)\",\"completedAt\":\"$_completed_ts\",\"exitCode\":$exit_code,\"provider\":\"${PROVIDER_NAME:-claude}\"}]" > "$target_file"
 
     # BUG-ST-014: Atomic current-task.json clear via temp file + mv
     local ct_tmp=".loki/queue/current-task.json.tmp.$$"

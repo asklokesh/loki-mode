@@ -1816,10 +1816,30 @@ async def list_tasks(
                     }
                     for _f in ("acceptance_criteria", "notes", "logs", "user_story",
                                "project", "source", "specification", "provider",
-                               "startedAt", "full_content"):
+                               "startedAt", "full_content",
+                               # v7.104.3: iteration terminal fields so the card
+                               # can show real outcome (and the read-time honest
+                               # description synthesis for legacy thin markers can
+                               # see exitCode). exitCode may be 0, which is falsy,
+                               # so it is guarded separately below.
+                               "completedAt", "phase", "exitCode"):
                         _v = task.get(_f)
                         if _v not in (None, "", [], {}):
                             task_entry[_f] = _v
+                    # exitCode == 0 is a real, meaningful value but falsy; the
+                    # loop above drops it via the "not in" filter, so carry it
+                    # explicitly when the source record has the key at all.
+                    if "exitCode" in task and task.get("exitCode") == 0:
+                        task_entry["exitCode"] = 0
+                    # v7.104.3: preserve the record's OWN terminal outcome. Both
+                    # the "completed" and "failed" groups map to the "done"
+                    # column, so `status` alone can no longer tell success from
+                    # failure. The honest-description synthesis and the dedup
+                    # tie-break both need to distinguish them, and NEVER call a
+                    # failed iteration "completed" (fake-green). Derived from the
+                    # source group key, which is authoritative.
+                    if group_key in ("completed", "failed"):
+                        task_entry["_terminal_outcome"] = group_key
                     all_tasks.append(task_entry)
         except (json.JSONDecodeError, KeyError):
             pass
@@ -1846,12 +1866,32 @@ async def list_tasks(
                         items = raw_items
                     else:
                         items = []
+                    # v7.104.3: which terminal outcome (if any) does THIS queue
+                    # file represent? completed.json -> completed; failed/dead-
+                    # letter -> failed. Non-terminal files (pending/in-progress)
+                    # have none.
+                    _qf_terminal = None
+                    if queue_file == "completed.json":
+                        _qf_terminal = "completed"
+                    elif queue_file in ("failed.json", "dead-letter.json"):
+                        _qf_terminal = "failed"
                     if isinstance(items, list):
                         for i, item in enumerate(items):
                             if isinstance(item, dict):
                                 tid = item.get("id", f"q-{q_status}-{i}")
-                                # Skip if already in all_tasks
-                                if any(t["id"] == tid for t in all_tasks):
+                                # Skip if already in all_tasks -- EXCEPT for
+                                # terminal (completed/failed) records. v7.104.3:
+                                # the old unconditional skip dropped a failed
+                                # sibling before it could be tagged with
+                                # _terminal_outcome, so the failed-outranks-
+                                # completed dedup below never saw it and a
+                                # completed card masked a real failure (a
+                                # fake-green from the queue source). Let terminal
+                                # records always enter, tagged; the global dedup
+                                # then resolves the collision honestly. Non-
+                                # terminal records keep the skip (they cannot
+                                # override an existing terminal entry anyway).
+                                if _qf_terminal is None and any(t["id"] == tid for t in all_tasks):
                                     continue
                                 task_entry = {
                                     "id": tid,
@@ -1876,6 +1916,20 @@ async def list_tasks(
                                     task_entry["notes"] = item["notes"]
                                 if isinstance(item.get("logs"), list):
                                     task_entry["logs"] = item["logs"]
+                                # v7.104.3: iteration terminal fields + the
+                                # source-file terminal outcome, so the honest
+                                # description synthesis can distinguish a clean
+                                # exit from a failure and never mislabels a
+                                # failed iteration "completed".
+                                for _qf in ("provider", "startedAt", "completedAt", "phase"):
+                                    if item.get(_qf) not in (None, "", [], {}):
+                                        task_entry[_qf] = item[_qf]
+                                if "exitCode" in item and isinstance(item.get("exitCode"), int):
+                                    task_entry["exitCode"] = item["exitCode"]
+                                if queue_file == "completed.json":
+                                    task_entry["_terminal_outcome"] = "completed"
+                                elif queue_file in ("failed.json", "dead-letter.json"):
+                                    task_entry["_terminal_outcome"] = "failed"
                                 all_tasks.append(task_entry)
                 except (json.JSONDecodeError, KeyError):
                     pass
@@ -1902,6 +1956,95 @@ async def list_tasks(
                     all_tasks.append(parsed)
                 except Exception:
                     pass
+
+    # v7.104.3 task-list accuracy: global dedup-by-id with a terminal-wins rule.
+    # The dashboard-state.json groups (read first, above) can carry the same id in
+    # more than one column when the underlying queue files hold stale entries -
+    # e.g. real anonima data showed iteration-13 in BOTH inProgress and completed,
+    # and completed listing iteration-1 five times (a pre-fix blind-append run).
+    # The run.sh write-side fix (upsert-by-id + terminal mutual-exclusion) stops
+    # NEW collisions, but the dashboard must render correctly against state that
+    # was written before the fix, or during a partial write. We keep, per id, the
+    # single most-authoritative entry.
+    #
+    # Priority is TERMINAL-WINS, deliberately NOT the naive
+    # in_progress > pending > done: the reported symptom is a completed iteration
+    # still showing in in-progress/todo, so letting in_progress outrank done would
+    # perpetuate exactly that bug. A record that reached a terminal state (has a
+    # completedAt, i.e. status == done) is the truth for that id; among non-terminal
+    # states we fall back to in_progress > review > pending. This is safe globally
+    # here because pending PRD-story ids (prd-NNN) and iteration ids (iteration-N)
+    # never share an id, so no task is legitimately both pending and done.
+    #
+    # Within the terminal (done) column, a same-id collision between a completed
+    # and a failed record must resolve to FAILED, never completed: masking a real
+    # failure behind a success is a fake-green the trust model forbids. So the
+    # authority key is a 2-tuple (column-rank, terminal-outcome-rank) where a
+    # failed terminal record outranks a completed one; non-terminal states carry a
+    # neutral 0 in the second slot.
+    _rank = {"done": 3, "in_progress": 2, "review": 1, "pending": 0}
+    _term = {"failed": 1, "completed": 0}
+
+    def _authority(_task):
+        return (_rank.get(_task.get("status"), -1),
+                _term.get(_task.get("_terminal_outcome"), 0))
+
+    _by_id: dict = {}
+    _order: list = []
+    for _t in all_tasks:
+        _id = _t.get("id")
+        if _id is None:
+            _order.append(_t)  # cannot dedup an id-less entry; keep as-is
+            continue
+        _prev = _by_id.get(_id)
+        if _prev is None:
+            _by_id[_id] = _t
+            _order.append(_id)
+        elif _authority(_t) > _authority(_prev):
+            _by_id[_id] = _t  # higher-authority state replaces in place (order kept)
+    all_tasks = [t if not isinstance(t, str) else _by_id[t] for t in _order]
+
+    # v7.104.3 task-list accuracy: HONEST render-time description for legacy
+    # iteration cards. Iterations completed BEFORE the run.sh write-side fix were
+    # persisted as thin markers - they carry real captured fields (status,
+    # exitCode, provider, completedAt) but no description or logs, so they render
+    # as empty "Iteration N" cards with nothing inside (the exact symptom the
+    # dashboard showed). These iterations will never re-run, so the write-side
+    # fix cannot backfill them. We synthesize a one-line description at READ time
+    # from the fields that ARE present - never mutating the stored state (no
+    # fabrication, fully reversible) and never inventing an outcome the record
+    # does not attest. New (post-fix) cards already carry a real description and
+    # are left untouched.
+    for _t in all_tasks:
+        if _t.get("type") == "iteration" and not _t.get("description"):
+            _ec = _t.get("exitCode")
+            _prov = _t.get("provider")
+            # The record's OWN terminal outcome (completed vs failed) is
+            # authoritative. Both map to the "done" column, so status alone can
+            # not tell them apart - a failed iteration must NEVER be described as
+            # "completed" (fake-green). Prefer the exit code when it is a real
+            # integer; otherwise fall back to the terminal outcome; and when even
+            # that is absent, use a neutral verb that asserts no success.
+            _failed = (_t.get("_terminal_outcome") == "failed")
+            _outcome = None
+            if isinstance(_ec, int) and _ec == 0 and not _failed:
+                _outcome = "completed cleanly (exit 0)"
+            elif isinstance(_ec, int) and _ec != 0:
+                _outcome = f"failed (exit {_ec})"
+            elif _failed:
+                # failed record without a usable exit code: honest, no exit claim
+                _outcome = "failed"
+            elif _t.get("_terminal_outcome") == "completed":
+                _outcome = "completed"
+            elif _t.get("status") == "done":
+                # terminal but neither outcome nor exit code is known: neutral
+                # verb that does not assert success or failure
+                _outcome = "finished"
+            if _outcome:
+                _desc = f"Iteration {_outcome}"
+                if _prov:
+                    _desc += f", built by {_prov}"
+                _t["description"] = _desc + "."
 
     # Apply project_id filter if provided
     if project_id is not None:

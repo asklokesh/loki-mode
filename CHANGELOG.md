@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.104.3] - 2026-07-01
+
+### Task list accuracy: honest, stable done column (no empty cards, no duplicates)
+
+- **The dashboard "done" column now shows honest, populated iteration cards.**
+  Previously, when an iteration finished, `track_iteration_complete()` (autonomy/run.sh)
+  wrote a THIN completed marker (`{id, type, title: "Iteration N", status, exitCode,
+  provider}`) with no description and no logs, and then deleted the RICH in-progress
+  record - so completed iterations rendered as empty cards with only "Iteration N"
+  and nothing inside. The completer now LIFTS the honest body (logs, `startedAt`) from
+  the in-progress record before removing it, and writes an honest, iteration-scoped
+  title ("Iteration N complete - <phase>" / "Iteration N failed (exit <code>)") plus a
+  one-line description with the phase and duration. It deliberately does NOT reuse the
+  borrowed PRD-story title from the in-progress record (that title is always the first
+  pending story, so carrying it onto N done cards would have falsely implied that story
+  was built N times - a fake-green the trust model forbids).
+
+- **No more duplicate iteration cards.** The completer replaced a blind
+  `data.append(...)` (which accumulated the same id across sub-runs - real data showed
+  `iteration-1` five times) with an upsert-by-id, and now makes the completed/failed
+  terminal state mutually exclusive per id (an id is removed from the other terminal
+  file and from in-progress on completion).
+
+- **`GET /api/tasks` deduplicates by id with a terminal-wins rule** (dashboard/server.py).
+  The dashboard reads `dashboard-state.json` task groups first; against pre-fix or
+  partially-written state the same id could appear in more than one column (observed:
+  `iteration-13` in in-progress AND completed AND failed at once). The endpoint now
+  keeps exactly one entry per id, preferring the terminal (done) record so a completed
+  iteration no longer lingers in the in-progress/todo columns. Pending PRD-story ids and
+  iteration ids never collide, so no task that is legitimately pending is dropped.
+
+- Regression coverage: `tests/test-iteration-complete-accuracy.sh` (extracts and drives
+  the real run.sh completer block - honest title, lifted logs, upsert, mutual exclusion)
+  and `tests/dashboard/test_tasks_dedup.py` (terminal-wins dedup across columns).
+
 ## [7.104.2] - 2026-07-01
 
 ### Fix: native/Keychain Claude login no longer misread as "not logged in"
