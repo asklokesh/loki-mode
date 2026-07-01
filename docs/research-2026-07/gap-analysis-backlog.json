@@ -1,0 +1,1095 @@
+{
+  "sources_studied": [
+    "github.com/stacklok/toolhive -- ToolHive: open-source \"Enterprise MCP Server Platform\" to run any MCP server securely (container-per-server isolation, curated registry with provenance, secrets vault, OIDC/OAuth gateway, K8s operator + desktop portal). Verified via WebFetch of the repo README. Assessed against loki-mode's real MCP + sandbox source in /Users/lokesh/git/loki-mode.",
+    "stacklok/brood-box (WebFetch of https://github.com/stacklok/brood-box) + Anthropic Managed Agents (anthropic.com/engineering/managed-agents via WebSearch) as the reference-grade hosted approach. Compared against loki-mode local source: autonomy/sandbox.sh, autonomy/docker-run.sh, autonomy/loki (cmd_deploy), docs/TOP-100-BACKLOG.md, docs/FOUNDER-STATUS-AND-DECISIONS-2026-07-01.md, docs/ECOSYSTEM-CURRENCY-PLAN.json.",
+    "Cognition FrontierCode benchmark (launched 2026-06-08). Sources: https://cognition.com/blog/frontier-code ; https://epoch.ai/benchmarks/frontiercode ; https://www.latent.space/p/ainews-frontiercode-benchmarking . FrontierCode grades code MERGEABILITY, not just correctness (\"where others grade like a CI, FrontierCode grades like a tech lead\"). Five verified mechanics: (1) reverse-classical tests -- the agent's tests must FAIL on the original/pre-change codebase and PASS after (proves the agent understood the problem before writing tests); (2) code-scope limits -- three constraint types: files (allow/deny/required-deletions), size (changed-line / net-line-growth / total-files caps), and semantic locality (LLM check that the change stays inside a specific function/section); (3) adaptive-classical grading via 'mutagent' -- LLMs surgically adapt the test env/app code so open-ended solutions with superficially different names/messages can still be deterministically graded; (4) blocker vs non-blocker rubric -- blockers are mergeability hard-stops (correctness, perf, scope), failing ANY blocker = score 0; non-blockers are weighted quality signals (style, types, readability) that contribute to a weighted score but do not block; (5) LLM-as-tech-lead prompt-based criteria for idiomatic/readable/architectural qualities, plus 100% human researcher review per task (81% lower false-positive rate than SWE-Bench Pro). Three nested subsets: Extended (150), Main (100), Diamond (50 hardest). Peak score ~13.5% (Claude Opus 4.8) -- the benchmark is deliberately hard.",
+    "Cognition SWE-1.6 \"Improving Model UX\" (https://cognition.com/blog/swe-1-6) + SWE-1.5 preview post. Four documented model-behavior anti-patterns: (1) overthinking / too many turns on simple tasks, (2) sequential tool calls instead of parallel, (3) terminal-over-own-tools preference, (4) looping / repeated self-verification. Fix: a training-time length penalty that shortens trajectories (keeps solve-rate flat while assistant-turn count stays flat) and implicitly drives more parallel tool use; post-training reduced terminal-reliance. Analyzed against loki's ORCHESTRATION layer (autonomy/run.sh run_autonomous + build_prompt + completion-council.sh), which drives claude -p and controls turn/iteration count, its own agent parallelism, and the injected prompt verbosity.",
+    "Devin autonomous cloud verification (Cognition): source-grounded test-plan-before-testing, annotate-before-act (commit expected behavior before the action to reduce model self-deception), deterministic reusable setup skills (e.g. saved login script), computer-use e2e testing in cloud, verified PR with proof artifacts, guard against JS-runtime cheating. Compared against Loki verification source in /Users/lokesh/git/loki-mode: autonomy/verify.sh, autonomy/lib/proof-verify.py, autonomy/lib/proof-generator.py, autonomy/checklist-verify.py, autonomy/completion-council.sh (held-out gate v7.28.0, acceptance-oracle triangulation), autonomy/prd-checklist.sh, autonomy/grill.sh, autonomy/run.sh (checklist authoring + playwright wiring).",
+    "Anthropic \"The Code Modernization Playbook: Transforming Legacy Systems with AI\" (27pp PDF, /Users/lokesh/Downloads/ebook-code-modernization-playbook-01_update 2 (1).pdf). Fully read (pages 1-27). Prescribes: (a) three pillars of modernization -- architecture transformation (monolith->microservices, circuit breakers/retry/graceful degradation), technology-stack modernization, development-practice evolution (CI/CD, IaC, GitOps); (b) five real-world use-case types with before/after code -- language migration (C->Java preserving business logic), platform modernization (cron shell->serverless), architecture transformation (monolith->microservices w/ event-driven + circuit breakers), integration modernization (FTP->REST w/ backward-compat endpoint); (c) a concrete phased getting-started framework: Weeks1-2 pick low-risk high-visibility target + code archaeology; Weeks3-4 extract business logic, generate translations, build POC with SIDE-BY-SIDE execution showing IDENTICAL outputs; Weeks5-8 full migration with PARALLEL RUN (modernized runs alongside legacy comparing outputs), comprehensive test suites covering edge cases from production data, API wrappers for gradual transition, documentation of every transformation decision, production cutover; Month3+ modernization-factory (parallel teams, shared conversion libraries, accumulated-pattern reuse); (d) a 4-level MATURITY MODEL (Ad hoc -> Planned -> Systematic -> Optimized) with per-level characteristics (living inventories, technical-debt scores, ROI-analysis-driven proactive proposals, continuous background modernization); (e) ROI/business-case framing (14% higher market valuation, 40%-maintenance-time readiness signal, cost-of-inaction quantification) as the executive-buy-in vehicle; (f) tool-selection criteria: deep codebase awareness (trace execution paths across files, identify impacts before they become problems), works-with-all-your-tools, flexible/headless deployment, secure-by-design (audit trails, RBAC), advanced features = memory + function/transform + MCP. Emphasizes AI as thought-partner (explains WHY, teaches concepts, discovers edge cases). Note: this is an Anthropic marketing/positioning ebook, so it is directional (what good looks like) rather than an algorithmic spec.",
+    "Devin (Cognition) async/proactive patterns: Managed Devins (parallel sub-agents in isolated VMs), Scheduled Devins (self-scheduling recurring work with cross-session memory), Auto-Triage (event-driven, prompt-injection-sandboxed), and the productivity ESTIMATOR (LLM estimates human-engineering-hours saved per session; r_log 0.74 on 258 sessions from 126 users; powers a $10M AI Productivity Guarantee). Refs: https://cognition.com/blog/ai-productivity, https://devin.ai/guarantee/, https://cognition.ai/blog/ai-guarantee"
+  ],
+  "themes": [
+    "Accuracy is the moat: the highest-leverage items make loki's core 'tests green' and 'checklist passed' signals actually mean something (test-provenance, source-grounded checklists, annotate-before-act, golden-master equivalence, runtime-boot proof). These are what verified-completion / trust-as-product cashes out to.",
+    "Adoption friction: an honest, calibrated engineering-hours/ROI estimate on the trust rail (proof.json) is the enterprise-sales lever; deterministic per-repo setup recipes reduce the top user need (reliably reaching a runnable state).",
+    "Anti-overthinking is a prompt-orchestration problem, not a training problem: loki can stop telling the model 'never finished' and can lower the no-claim council floor; these complement the in-flight completion-claim convergence fix.",
+    "Hosting (server-side sandbox backend, durable session, multi-tenant isolation, egress firewall) is real but scoped to autonomi-saas and already founder-gated; it does not outrank the accuracy moat despite source 'critical' labels.",
+    "Measurement instruments (FrontierCode-style mergeability benchmark, estimator calibration set) are prerequisites, not vanity: they are the validation_plan for the accuracy and ROI items and must exist before any headline number is claimed.",
+    "Honesty over count: five source candidates are adjacent product categories or unconsumable model-lab techniques and are dropped, not padded; the ROI chain and golden-master chain are merged to their load-bearing primitives."
+  ],
+  "ranked_backlog": [
+    {
+      "rank": 1,
+      "title": "Reverse-classical test-provenance gate (change-mode: issue/verify/healing)",
+      "product": "loki-mode",
+      "axis": "verification",
+      "what": "Before counting an agent's NEW tests as affirmative 'green' evidence in council_evidence_gate, run them against the pre-change base (VERIFY_MERGE_BASE / _LOKI_RUN_START_SHA) and require they FAIL on base and PASS on HEAD. Tests that pass on both base and HEAD are tautological and marked inconclusive, not affirmative. No-op on greenfield (no base) and when LOKI_TEST_PROVENANCE=0. This is the single highest-value accuracy-moat item: it makes loki's strongest verification signal (tests-green) actually mean something and directly attacks the 'test written to pass, proving nothing' failure mode.",
+      "acceptance_criteria": [
+        "Given a change-mode run with a resolvable base, test files added/modified in the diff are identified",
+        "New/changed tests are run against base (checkout or reverse-patch); which FAIL on base is recorded",
+        "In council_evidence_gate (completion-council.sh:1621-1688) a completion claim whose only test evidence is provenance-UNconfirmed (passes on base) is marked inconclusive, never affirmative VERIFIED",
+        "A trust event + .loki record lists each new test with base-fail/head-pass status",
+        "Byte-identical no-op on greenfield and when LOKI_TEST_PROVENANCE=0"
+      ],
+      "validation_plan": "Fixture harness with two change-mode tasks: (A) a genuine fix with a test that fails on base + passes on HEAD, (B) a tautological test that passes on both. Assert: A is counted affirmative, B is downgraded to inconclusive and surfaced as a finding. Prove no-op via byte-diff of build_prompt/gate output on a greenfield run before/after. Cross-validate against the FrontierCode-style mergeability benchmark (rank 12): provenance-confirmed tasks should score higher on the reverse-classical dimension.",
+      "effort": "L",
+      "value": "critical",
+      "source": "Devin verification (annotate/test-provenance) + FrontierCode (reverse-classical tests)"
+    },
+    {
+      "rank": 2,
+      "title": "Ground the acceptance checklist in source reality, not spec prose alone",
+      "product": "loki-mode",
+      "axis": "accuracy",
+      "what": "Extend checklist_oracle_triangulate beyond datastore to triangulate the checklist against the actual codebase: discovered HTTP routes/handlers (does each spec'd endpoint map to a real handler?), CLI commands, exported public API symbols (via the LSP proxy lsp_workspace_symbols / lsp_check_exists), and >=1 high-value domain invariant (passwords hashed not plaintext; money not float). Auto-generate deterministic checks (http_check, lsp_check_exists) instead of relying on the same LLM that wrote the code to author acceptance checks from the same prose. Attacks the single-oracle weakness the code itself flags as deferred (prd-checklist.sh).",
+      "acceptance_criteria": [
+        "For a web project, every endpoint named in the spec maps to a real route/handler in source; unmatched -> High finding (mirrors existing oracle-datastore-conflict shape)",
+        "Spec'd public API symbols verified to exist via the LSP proxy, not LLM-authored grep_codebase checks",
+        "At least one domain-invariant check implemented as a deterministic gate (e.g. password fields hashed)",
+        "Greenfield/absent (nothing wired yet) does NOT fire a finding, matching existing non-conflict guards"
+      ],
+      "validation_plan": "Fixture repos: (A) spec names endpoint /orders that exists -> no finding; (B) spec names /orders but no handler -> High finding; (C) plaintext password store -> invariant finding. Measure false-positive rate on 3 clean real repos (must be zero). Prove accuracy lift on the FrontierCode-style benchmark (rank 12): source-grounded checklists should catch wrong-but-internally-consistent implementations that prose-only checklists pass.",
+      "effort": "L",
+      "value": "critical",
+      "source": "Devin verification (source-grounded test plan) + FrontierCode (adaptive/objective grading)"
+    },
+    {
+      "rank": 3,
+      "title": "Annotate-before-act: pre-committed expected-outcome ledger, diffed against reality at verify time",
+      "product": "loki-mode",
+      "axis": "accuracy",
+      "what": "Before running verification for a change/checklist-item, the runtime writes a tamper-evident ledger of EXPECTED observable outcomes (e.g. 'GET /health -> 200 {status:ok}', 'test X fails before fix, passes after', 'endpoint Y should now exist'). At verify time, actual results are compared to the pre-committed prediction; any expectation silently dropped or contradicted becomes a finding. Reuse the proof-verify canonical-hash + drift pattern so the ledger is tamper-evident and edits-after-the-fact are detectable. Forces a falsifiable prediction, cutting self-serving post-hoc rationalization.",
+      "acceptance_criteria": [
+        ".loki/expectations/<iter>.json written BEFORE the verify/checklist run, each entry {id, statement, check_ref, expected}, canonicalized and hashed like proof-generator",
+        "loki verify (or the completion gate) reads the ledger and emits a finding for any expectation with no matching executed check, or whose actual contradicts expected",
+        "An unevaluable expectation maps to inconclusive->CONCERNS, never VERIFIED (reuse verify.sh Entanglement-2)",
+        "The ledger hash is embedded in evidence.json/proof.json so an edited-after-the-fact expectation is detectable"
+      ],
+      "validation_plan": "Test: seed a ledger with 3 expectations, run verify, assert (1) a met expectation passes, (2) a contradicted one is a finding, (3) a dropped/unexecuted one is a finding, (4) editing the ledger after write breaks the embedded hash. Before/after: same build with ledger disabled vs enabled must surface >=1 contradiction that post-hoc-only grading missed on a deliberately-mismatched fixture.",
+      "effort": "L",
+      "value": "high",
+      "source": "Devin verification (annotate-before-act anti-self-deception)"
+    },
+    {
+      "rank": 4,
+      "title": "Golden-master parallel-run equivalence harness + per-boundary characterization (heal/migrate)",
+      "product": "loki-mode",
+      "axis": "accuracy",
+      "what": "MERGED (harness + boundary-characterization). During archaeology/guardrail, capture outputs at natural system boundaries (CLI stdout/exit, HTTP responses, DB state deltas, file/queue outputs) into .loki/healing/behavioral-baseline/ as golden masters. During modernize/validate, re-run the SAME boundary probes against modernized code and diff. Replace hook_post_healing_modify's current whole-suite pass/fail (migration-hooks.sh:580) with per-boundary comparison so verification is implementation-agnostic and cannot be satisfied by overfit unit tests. Any divergence blocks the phase gate unless documented as intentional. Turns the playbook's 'side-by-side identical outputs' from a prompt suggestion into machine-verified evidence. The behavioral-baseline/ dir is currently mkdir'd (loki:14323) but never populated or compared.",
+      "acceptance_criteria": [
+        "cmd_heal archaeology (and migrate guardrail) writes >=1 golden-master artifact per detected boundary into .loki/healing/behavioral-baseline/",
+        "hook_healing_phase_gate for modernize->validate fails closed unless boundary outputs match baseline OR a documented-intentional-change record exists",
+        "hook_post_healing_modify compares boundary outputs to baseline, not only whole-suite exit code; a change keeping unit tests green but altering a CLI/API boundary is BLOCKED",
+        "diff report enumerates every changed boundary (old vs new) in loki heal --report and structured evidence JSON",
+        "Degrades honestly ('no boundaries detected') rather than false-green"
+      ],
+      "validation_plan": "Fixture: a Python2->Python3 (or C->Java) sample repo. Capture baseline, apply (1) a behavior-preserving refactor -> gate passes; (2) a transform that keeps unit tests green but changes a CLI output -> gate BLOCKS. Assert baseline artifacts exist post-archaeology (grep count > 0, currently 0). Matches references/legacy-healing-patterns.md:156-181 prescribed system-boundary approach.",
+      "effort": "L",
+      "value": "critical",
+      "source": "Code Modernization Playbook (parallel-run/golden-master) -- merges harness + per-boundary characterization"
+    },
+    {
+      "rank": 5,
+      "title": "Runtime/boot smoke gate in loki verify (shipped evidence includes 'it actually runs')",
+      "product": "loki-mode",
+      "axis": "verification",
+      "what": "Promote the build-loop's playwright/http smoke into loki verify as a deterministic runtime gate: detect the start command (or use the persisted setup recipe from rank 9), boot the app with a timeout, hit a health/root path, capture status + a screenshot artifact, tear down, record in evidence.json as reproducible. Closes the biggest trust gap vs Devin (compiles + green-tests != works); the screenshot becomes a proof artifact. Runtime-not-reachable -> inconclusive->CONCERNS, never VERIFIED. Fail-open: without a detectable app, output is byte-identical to today.",
+      "acceptance_criteria": [
+        "verify_gate_runtime added to verify_main gate list, skipped (not failed) only when no start command/setup recipe is detectable",
+        "A successful boot records HTTP status + artifact path in evidence.json with reproducible=true",
+        "Boot failure -> Critical/High finding; boot-not-attempted-but-app-detected -> inconclusive->CONCERNS",
+        "No regression: without a detectable app, output byte-identical to today (mirrors --hosted fail-open pattern)"
+      ],
+      "validation_plan": "Fixture web app: (A) healthy boot -> evidence.json has status 200 + screenshot path + reproducible=true; (B) broken start command -> Critical finding, verdict not VERIFIED; (C) library repo with no app -> gate skipped, evidence.json byte-identical to pre-change baseline (diff must be empty).",
+      "effort": "L",
+      "value": "high",
+      "source": "Devin verification (computer-use e2e proof)"
+    },
+    {
+      "rank": 6,
+      "title": "LLM-calibrated engineering-hours estimator emitted into proof.json per build (+ calibration gate)",
+      "product": "loki-mode",
+      "axis": "adoption-friction",
+      "what": "MERGED (estimator + calibration). Replace the iterations x 15min heuristic (loki:23478) with an LLM estimator that reads the actual work (diff stat, files changed, tests written, task/PRD scope, iteration transcript) and predicts equivalent human-engineering-hours plus a low/high band. Persist as an effort_estimate object in per-build proof.json so it rides the trust/evidence rail. Fall back to the heuristic when no LLM is available, labeled 'heuristic (uncalibrated)' vs 'estimated' so the number is never silently fabricated. Ship a validation harness (ground-truth engineer-hour set) that computes an error metric (r_log or MAE-in-log-space); estimates may only be labeled 'calibrated' once the metric clears a threshold. This is the load-bearing primitive both the dollar ROI surface and any guarantee depend on, and it directly serves the 'accuracy is the moat, no fabrication' rule.",
+      "acceptance_criteria": [
+        "proof.json gains effort_estimate: {hours, low, high, method:'llm'|'heuristic', model, inputs_hash}",
+        "loki metrics TIME SAVED reads per-build estimates when present, falls back to iterations x 15min only when absent, labeling the method",
+        "Estimator input is real work (diff stat + files + tests + scope), NOT iteration count alone; unit test feeds two builds of different scope and asserts different hours",
+        "A validation dataset of builds with engineer-hour ground truth exists in benchmarks/; estimator error metric computed and reported; threshold gates 'calibrated' vs 'uncalibrated' labeling",
+        "No LLM -> heuristic path clearly labeled 'heuristic (uncalibrated)', never presented as validated"
+      ],
+      "validation_plan": "Unit test: two builds of clearly different scope (2-iter schema tweak vs full-stack feature) must yield materially different hours (heuristic gives both 30min; assert estimator does not). Calibration: score LLM estimates against the ground-truth set, report r_log/MAE; assert copy stays 'uncalibrated' until threshold cleared. This IS the validation gate for the entire ROI chain.",
+      "effort": "L",
+      "value": "high",
+      "source": "Devin async/productivity (LLM hours estimator, r_log 0.74) -- merges estimator + calibration"
+    },
+    {
+      "rank": 7,
+      "title": "Persist a deterministic per-repo setup/run recipe (reusable setup skill) consumed by verify",
+      "product": "loki-mode",
+      "axis": "adoption-friction",
+      "what": "On first successful build/boot, save .loki/setup-recipe.json capturing deterministic steps to install, seed, auth, and start the app (commands + env var NAMES + health path). Replay on subsequent verify/e2e runs instead of re-detecting heuristically. This is Devin's 'saved login/setup skill'; it reduces the top adoption need (reliably reaching a runnable state) and enables the runtime gate (rank 5) for repos needing auth/seed. Distinct from cmd_setup_skill (which installs the Loki skill, not a repo recipe). Secrets never persisted (only env var NAMES; reuse proof_redact.py).",
+      "acceptance_criteria": [
+        ".loki/setup-recipe.json written after a verified boot with {install, seed, env_keys(no secret values), start, health_path}",
+        "verify_gate_runtime prefers the recipe over heuristic detection when present",
+        "Secrets never persisted into the recipe (only env var NAMES); reuse proof_redact.py patterns",
+        "Recipe replayed idempotently and its use recorded in evidence.json"
+      ],
+      "validation_plan": "Fixture repo needing seed+auth: first run writes recipe; second run reaches runnable state via recipe (assert no heuristic re-detection ran, e.g. log marker). Assert recipe contains env var NAMES but zero secret VALUES (grep for known secret pattern must return nothing). Measure: time-to-runnable second run < first run.",
+      "effort": "M",
+      "value": "high",
+      "source": "Devin verification (deterministic reusable setup skill)"
+    },
+    {
+      "rank": 8,
+      "title": "Make rarv_instruction mode-aware + add 'stop-when-verified, gates are authority' directive",
+      "product": "loki-mode",
+      "axis": "speed",
+      "what": "MERGED (mode-aware rarv + stop directive). build_prompt currently emits the same 'There is NEVER a finished state - always find the next improvement' rarv_instruction (run.sh:13770) in every mode, including PRD/checkpoint runs just auto-switched to finite scope (a direct self-contradiction). Gate it on AUTONOMY_MODE/PERPETUAL_MODE: for finite runs replace with 'When the PRD requirements are implemented and completion gates pass, claim done via loki_complete_task and STOP; do not add unrequested improvements. Verify once -- the completion gates (tests, checklist, evidence) are the authority on done; do not re-verify redundantly.' Keep never-finished text only for genuine perpetual mode. Delete the unverifiable '2-3x quality improvement' clause (biases toward redundant self-verification). This is the orchestration analog of Cognition's length penalty and the prompt root of the 14-iter convergence bug. COMPLEMENTARY to the in-flight 'council evaluates on completion claim' fix (that changes when the council checks; this stops the prompt telling the model never to stop) -- not a duplicate.",
+      "acceptance_criteria": [
+        "In a PRD run (auto-switched to checkpoint) the emitted build_prompt no longer contains 'There is NEVER a finished' or 'always find the next improvement'",
+        "In a perpetual/no-promise run the never-finished text still appears (behavior preserved)",
+        "The '2-3x quality improvement' clause removed from all modes; finite-mode prompt contains the concise 'stop when verified-done, gates are the authority' directive",
+        "Deterministic completion gates (council_evidence_gate/checklist/heldout/assumption) unchanged and still block on failure",
+        "loki-ts/src/runner/build_prompt.ts parity string updated (parity-locked)"
+      ],
+      "validation_plan": "String assertions on emitted build_prompt for each mode (finite lacks 'NEVER finished', perpetual retains it; '2-3x' absent everywhere). Behavioral: a spec satisfiable in ~1 iteration claims completion within a small bounded iteration count on a benchmark spec, with all completion gates still passing (verification not weakened -- run completion-council tests, assert no coverage regression). Confirm dual-route (bash + Bun) parity.",
+      "effort": "M",
+      "value": "high",
+      "source": "SWE-1.6 Model UX (overthinking / never-stop anti-pattern) -- merges mode-aware rarv + stop directive"
+    },
+    {
+      "rank": 9,
+      "title": "Add a mergeability rubric dimension to run_code_review (weighted, tech-lead framing)",
+      "product": "loki-mode",
+      "axis": "accuracy",
+      "what": "Extend (do not replace) the existing severity mechanism with a 'maintainer-mergeability' reviewer whose rubric covers scope creep, dead/duplicated code, and conformance to the surrounding code's conventions -- and have the aggregator produce a weighted quality SCORE alongside the binary block verdict (FrontierCode-style: 0 on any blocker, else weighted non-blocker sum). Reuse has_blocking (run.sh:10770) for the blocker layer; add the weighted score as a reported quality metric, not a new hard gate initially. Upgrades loki's review from 'CI + architecture' toward 'tech lead' on the axes it currently misses (the specialist pool is security/test/perf/dependency/architecture; none carries a 'would a maintainer merge this' mandate).",
+      "acceptance_criteria": [
+        "A mergeability-focused reviewer added to the pool with a rubric prompt covering scope, dead code, and convention-conformance",
+        "Aggregator emits a numeric quality score (0 if any blocker, else weighted non-blocker sum) in aggregate.json",
+        "Existing Critical/High = block, Medium/Low = non-blocking behavior preserved unchanged",
+        "Score reported/surfaced but not a new hard gate without explicit opt-in flag",
+        "No emojis/em-dashes in prompt text; dual-route (bash + Bun) parity maintained"
+      ],
+      "validation_plan": "Fixture PRs: (A) tight 3-file fix -> high score, no scope blocker; (B) 40-file sprawling diff touching unrelated code -> scope blocker, score 0. Assert existing block behavior unchanged on a known-Critical fixture. Prove the score is discriminating on the FrontierCode-style benchmark (rank 12): mergeable vs unmergeable tasks should separate on the weighted score.",
+      "effort": "M",
+      "value": "high",
+      "source": "FrontierCode (blocker/non-blocker + weighted mergeability rubric)"
+    },
+    {
+      "rank": 10,
+      "title": "Code-scope / locality gate in autonomy/verify.sh (advisory-first)",
+      "product": "loki-mode",
+      "axis": "accuracy",
+      "what": "Turn the already-computed VERIFY_DIFF_FILES/INS/DEL (verify.sh:154-164) into an enforced gate: configurable caps on total files changed and net line growth, plus an optional LLM semantic-locality check that flagged edits stay within the files/functions the task requires. Emit a 'scope' record on violation. Advisory-with-warning by default (record, don't hard-block) to avoid adoption friction; LOKI_SCOPE_ENFORCE=1 makes it blocking. Over-broad diffs are the #1 human merge-rejection reason FrontierCode targets, and loki currently measures the numbers but never uses them as a gate. N/A to greenfield full builds.",
+      "acceptance_criteria": [
+        "verify.sh emits a structured scope record: files_changed, net_lines, verdict (ok|warn|block) with thresholds used",
+        "Thresholds configurable via env (LOKI_SCOPE_MAX_FILES, LOKI_SCOPE_MAX_NET_LINES) with sane defaults",
+        "Advisory by default (surfaces in verify output + SARIF), blocking only under LOKI_SCOPE_ENFORCE=1",
+        "Optional semantic-locality LLM check gated behind its own flag (off by default, zero added latency/cost)",
+        "No behavior change on greenfield loki start"
+      ],
+      "validation_plan": "Fixture change-mode diffs: (A) 3 files within scope -> verdict ok; (B) 40 files -> verdict warn (default) and block under LOKI_SCOPE_ENFORCE=1. Assert greenfield loki start output byte-identical before/after. Assert the scope record appears in evidence.json + SARIF.",
+      "effort": "M",
+      "value": "medium",
+      "source": "FrontierCode (code-scope / locality discipline)"
+    },
+    {
+      "rank": 11,
+      "title": "Wire grill findings into the verification/completion gate",
+      "product": "loki-mode",
+      "axis": "accuracy",
+      "what": "Feed the pre-build Devil's-Advocate grill's surfaced ambiguities/missing-acceptance-criteria into checklist generation and the completion gate: unresolved High grill findings become required checks or block completion until acknowledged (reuse the existing assumption-ledger gate in completion-council.sh). grill.sh currently writes a standalone report never consumed by verify/council. Makes the Devil's-Advocate posture actually harden what gets verified rather than being advisory-only.",
+      "acceptance_criteria": [
+        "grill High findings converted into checklist items or assumption-ledger entries",
+        "Unresolved High grill findings block completion via an existing gate path (not a new bespoke one)",
+        "Opt-out knob preserves current standalone behavior",
+        "No double-firing when grill was not run (gate inert, like the held-out gate NONE branch)"
+      ],
+      "validation_plan": "Fixture spec with a known ambiguity: run grill -> High finding -> assert it becomes a required check and blocks completion until acknowledged. Assert gate is inert (no finding) when grill was not run. Confirm reuse of the assumption-ledger path (no new bespoke gate) via code inspection + existing completion-council test suite passing.",
+      "effort": "M",
+      "value": "medium",
+      "source": "Devin verification (fold spec-interrogation into verification)"
+    },
+    {
+      "rank": 12,
+      "title": "FrontierCode-style scored mergeability benchmark harness for loki change-mode output",
+      "product": "loki-mode",
+      "axis": "accuracy",
+      "what": "Not a runtime feature -- the measurement instrument. Assemble a small suite of change-mode tasks with maintainer rubrics (blocker + weighted non-blocker) and reverse-classical tests, run loki verify / issue-mode against them, and produce a per-task mergeability score. This is what lets loki claim an accuracy/mergeability number and is the validation_plan backbone for ranks 1, 2, 9, 10. Aligns with pending task #49 (reproducible speed+accuracy benchmark) and #51 (council/RARV-C research update, gated on benchmark).",
+      "acceptance_criteria": [
+        "A handful of tasks with base repo + rubric (blocker/non-blocker) + reverse-classical tests",
+        "Harness runs loki change-mode and produces a per-task mergeability score",
+        "Reproducible, documented, wired into the existing benchmarks/ conventions",
+        "Reports a headline mergeability % comparable across loki versions"
+      ],
+      "validation_plan": "Self-validating: run harness on current loki, record baseline mergeability %. Re-run after ranks 1/2/9 land; assert the % moves (this IS the before/after proof for the accuracy items). Reproducibility check: two runs on the same loki version produce the same score within tolerance.",
+      "effort": "L",
+      "value": "high",
+      "source": "FrontierCode (scored benchmark) -- also serves as validation instrument for ranks 1,2,9,10"
+    },
+    {
+      "rank": 13,
+      "title": "Modernization readiness + target-selection triage (loki heal --assess, pre-flight)",
+      "product": "loki-mode",
+      "axis": "adoption-friction",
+      "what": "Add loki heal --assess (or a readiness step auto-run before archaeology) that scans a codebase read-only and outputs: estimated LOC/language mix, technical-debt signals, maintenance-risk indicators, placement on the playbook's 4-level maturity model, and a RANKED list of low-risk high-visibility targets to start with (playbook weeks 1-2). Reduces the top adoption-friction question 'where do I start' to one command, reusing loki's existing complexity-detection machinery. Human-readable + structured JSON for the dashboard.",
+      "acceptance_criteria": [
+        "Single command emits a readiness report with maturity-level placement + ranked candidate targets + rationale",
+        "Ranking prefers isolated/low-blast-radius modules (matches playbook weeks 1-2)",
+        "Runs read-only (no modification), zero required flags",
+        "Output is both human-readable and structured JSON for the dashboard"
+      ],
+      "validation_plan": "Fixture legacy repo with a mix of isolated and highly-coupled modules: assert the ranking places the isolated module above the coupled one, assert zero filesystem modifications (git status clean after run), assert valid JSON output parses.",
+      "effort": "M",
+      "value": "medium",
+      "source": "Code Modernization Playbook (maturity model + where-to-start triage)"
+    },
+    {
+      "rank": 14,
+      "title": "Route loki heal modernize/validate through the RARV-C loop + completion council",
+      "product": "loki-mode",
+      "axis": "verification",
+      "what": "loki heal is single-shot per phase (claude -p, loki:14465-14502), bypassing the RARV-C loop, completion council, and 8 quality gates that make loki start/migrate trustworthy. For behavior-changing phases (stabilize/isolate/modernize/validate), execute via run_autonomous with LOKI_INJECT_FINDINGS/LOKI_OVERRIDE_COUNCIL/LOKI_AUTO_LEARNINGS auto-enabled and the legacy-healing-auditor in the review pool. Archaeology-only can stay single-shot. Gives modernization builds the same iterative verification and override-council trust loki start already provides.",
+      "acceptance_criteria": [
+        "cmd_heal for phases stabilize|isolate|modernize|validate invokes the RARV loop (run.sh path), not a bare claude -p call",
+        "RARV-C closure flags default-on within heal (documented in skills/healing.md, verified by grep of cmd_heal)",
+        "legacy-healing-auditor fires and can BLOCK on behavioral change without characterization update",
+        "A deliberately-broken transform is caught + reverted by the loop, proven on a fixture"
+      ],
+      "validation_plan": "Fixture: run heal modernize with a deliberately-broken transform; assert the RARV loop catches + reverts it (vs current single-shot which would ship it). Grep cmd_heal to confirm run_autonomous path taken for the four phases. Assert legacy-healing-auditor appears in the review pool during heal. Pairs with rank 4 golden-master for the behavioral-change block proof.",
+      "effort": "L",
+      "value": "medium",
+      "source": "Code Modernization Playbook (heal lacks RARV-C trust loop)"
+    },
+    {
+      "rank": 15,
+      "title": "Lower the no-claim council convergence floor so genuinely-finished no-promise runs stop sooner",
+      "product": "loki-mode",
+      "axis": "speed",
+      "what": "For the convergence-detection (NO explicit completion claim) path only, reduce the effective floor: allow council_should_stop to evaluate as early as MIN_ITERATIONS=1 when tests+checklist evidence already indicate done, or check every iteration once evidence is green instead of every 5th (currently CHECK_INTERVAL=5, MIN_ITERATIONS=3). The explicit-claim path already bypasses this (run.sh:17418), so this only helps analysis-mode / no-promise runs -- COMPLEMENTARY to the in-flight 'council evaluates on completion claim' fix (which is the explicit-claim path), not a duplicate. Keep stagnation and evidence gates intact -- changes WHEN the stop check runs, not WHETHER work is verified.",
+      "acceptance_criteria": [
+        "A no-promise run that is genuinely complete can stop before iteration 5 when evidence gates pass",
+        "Stagnation and evidence gates (completion-council.sh) still block premature/unverified stops",
+        "Explicit-claim completion path behavior unchanged",
+        "Gated behind existing LOKI_COUNCIL_CHECK_INTERVAL/MIN_ITERATIONS so operators can restore old behavior"
+      ],
+      "validation_plan": "Fixture no-promise/analysis run that is complete by iteration 2: assert it can stop before iteration 5 with evidence gates green. Negative test: an unverified/stagnating run still does NOT stop early (evidence gate blocks). Assert explicit-claim path timing unchanged via existing completion-council tests.",
+      "effort": "M",
+      "value": "medium",
+      "source": "SWE-1.6 Model UX (convergence floor) -- complements in-flight completion-claim fix"
+    },
+    {
+      "rank": 16,
+      "title": "Instruct the inner dev agent to batch independent tool calls in a single message",
+      "product": "loki-mode",
+      "axis": "speed",
+      "what": "Add a short build_prompt directive (all modes): 'When issuing independent read-only operations (reads, greps, file lookups, LSP checks) that do not depend on each other, issue them in a single message so they run in parallel; do not serialize independent lookups.' The direct, cheap analog of Cognition's parallel-tool-call fix at the exact layer loki controls (the prompt to claude -p). Zero adoption friction (internal prompt string), no verification impact. Parity mirror in loki-ts.",
+      "acceptance_criteria": [
+        "build_prompt emits a parallel/batch tool-call directive in every mode",
+        "Parity mirror added to loki-ts/src/runner/build_prompt.ts",
+        "Directive is <= 2 sentences and adds no new env knob",
+        "A representative run shows the inner agent issuing at least one multi-tool-call message for independent lookups (spot-checked in agent.log / stream-json)"
+      ],
+      "validation_plan": "String assertion: directive present in all build_prompt mode variants and in loki-ts parity string. Behavioral spot-check: on a representative run, grep agent.log/stream-json for at least one message issuing multiple independent tool calls. Confirm no new env knob added.",
+      "effort": "S",
+      "value": "low",
+      "source": "SWE-1.6 Model UX (sequential-vs-parallel tool calls)"
+    },
+    {
+      "rank": 17,
+      "title": "autonomi-saas: hours-saved / ROI receipt overlay consuming loki-mode proof.json effort_estimate",
+      "product": "autonomi-saas",
+      "axis": "adoption-friction",
+      "what": "In autonomi-saas, overlay the per-build effort_estimate from loki's proof.json (rank 6) onto the Evidence Receipt and aggregate into an account-level ROI dashboard ('this month: ~N engineer-hours, ~$M at a configurable blended rate'). Aggregation matches the level where the estimator is honest (Devin's aggregation-honest framing). $ requires an operator-set rate; unset shows hours only, never a fabricated dollar figure. The natural home for a Devin-style productivity guarantee (SaaS carries billing/tenancy); the guarantee is founder-gated and blocked until the estimator is calibrated (rank 6). No cross-tenant leakage (respects the per-build two-read split used for #17).",
+      "acceptance_criteria": [
+        "BFF reads proof.json effort_estimate per build and stores it against the tenant/build",
+        "Account view aggregates hours (+ $ if rate set) across builds, labeled with the aggregation-honest caveat",
+        "Guarantee logic (if pursued) founder-gated and blocked until estimator has a validation number",
+        "No cross-tenant leakage in the aggregate (respects the per-build two-read split for #17)"
+      ],
+      "validation_plan": "Two-tenant fixture: assert tenant A's aggregate excludes tenant B's builds (cross-tenant leak test, reuse #17 harness). Assert $ absent when no rate configured. Assert guarantee copy is blocked/hidden while estimator method='heuristic' or label='uncalibrated'. Depends on rank 6 shipping first.",
+      "effort": "L",
+      "value": "medium",
+      "source": "Devin async/productivity (ROI receipt + guarantee) -- autonomi consumer of rank 6"
+    },
+    {
+      "rank": 18,
+      "title": "Add optional bearer-token auth + explicit loopback bind to loki mcp --transport http",
+      "product": "loki-mode",
+      "axis": "hosting",
+      "what": "The one place loki's surface maps directly onto ToolHive's gateway. mcp/server.py:2639 calls mcp.run(transport='http', port=args.port) with no explicit host and no auth. Pass an explicit host (default 127.0.0.1) and support an optional LOKI_MCP_AUTH_TOKEN that the server requires on every request. Low-cost hardening of an already-shipping command; loopback default unchanged (zero adoption friction, token opt-in). Latent-not-exposed today (FastMCP loopback default) but the explicit bind + opt-in token close it honestly.",
+      "acceptance_criteria": [
+        "loki mcp --transport http binds 127.0.0.1 explicitly (verified via ss/lsof, not 0.0.0.0)",
+        "When LOKI_MCP_AUTH_TOKEN is set, requests without a matching bearer are rejected 401; when unset, behavior is unchanged",
+        "Docs note the token env var; default local stdio path untouched"
+      ],
+      "validation_plan": "Start loki mcp --transport http, verify bind address via lsof/ss is 127.0.0.1 not 0.0.0.0. With LOKI_MCP_AUTH_TOKEN set: request without bearer -> 401, with matching bearer -> 200. With it unset: behavior byte-identical to today. Confirm stdio path unaffected.",
+      "effort": "S",
+      "value": "low",
+      "source": "ToolHive (gateway auth) -- the one directly-consumable hardening"
+    },
+    {
+      "rank": 19,
+      "title": "autonomi-saas: hosted sandbox backend abstraction (gVisor-first) behind a SandboxBackend interface",
+      "product": "autonomi-saas",
+      "axis": "hosting",
+      "what": "FOUNDER-GATED. Define one SandboxBackend interface (create/exec/collect-diff/flush/destroy) and implement gVisor as the first backend for per-build/per-verification isolation, mirroring Managed Agents' disposable untrusted-sandbox. Concrete unblock for founder-gated backlog ranks 14/36/42. Borrow brood-box's diff-then-flush and Managed Agents' decoupling as PATTERNS, not dependencies; libkrun-microVM is a strong second backend to evaluate in the selection spike. Sandbox treated as untrusted: no tenant secrets/signing keys reachable from inside. This is real but scoped to autonomi and already triaged/founder-gated in the repo docs; it does NOT outrank the accuracy moat despite the source 'critical' label.",
+      "acceptance_criteria": [
+        "A SandboxBackend interface exists with create/exec/collect-diff/flush/destroy and at least one working backend (gVisor)",
+        "Each hosted build/verification runs in its own disposable sandbox destroyed on completion",
+        "Sandbox is treated as untrusted: no tenant secrets or signing keys reachable from inside",
+        "Selection spike documents gVisor vs Firecracker vs Kata vs libkrun with a chosen default + rationale (satisfies rank 42)",
+        "Pre-flush diff review gates change persistence; per-domain egress allowlist (default provider API + git host, deny-by-default option); secret paths (.env*, keys) non-overridably excluded from any flushed change set"
+      ],
+      "validation_plan": "Isolation test: attempt to read a mounted tenant secret from inside the sandbox -> must fail. Disposability: assert sandbox is destroyed post-build (no lingering container). Egress: request to a non-allowlisted domain blocked, provider API + git host allowed. Diff-then-flush: an unapproved change is not persisted to the tenant workspace. Founder-gated: do not start until the founder unblocks; kept below the accuracy moat.",
+      "effort": "XL",
+      "value": "medium",
+      "source": "brood-box + Anthropic Managed Agents (hosted sandbox) -- founder-gated autonomi hosting"
+    },
+    {
+      "rank": 20,
+      "title": "autonomi-saas: externalize the session as a durable append-only log decoupled from the sandbox",
+      "product": "autonomi-saas",
+      "axis": "hosting",
+      "what": "FOUNDER-GATED. Move build state off local .loki/ files into a durable session store (the persistence backend at backlog rank 16) so the harness/sandbox can crash or scale horizontally without losing progress -- Managed Agents' session/harness/sandbox decoupling. Enables resume-across-workers and starting reasoning before the sandbox is fully provisioned. NOT applicable to loki-mode local (its .loki/ file state is correct for single-user). Scoped to autonomi, founder-gated; below the accuracy moat.",
+      "acceptance_criteria": [
+        "A PersistenceBackend interface with a first prod store (Postgres or SQLite) exists (satisfies backlog rank 16)",
+        "A hosted build survives a worker/sandbox restart and resumes from the durable session",
+        "The harness reads session state independently of any specific sandbox instance"
+      ],
+      "validation_plan": "Crash-resume test: kill the worker/sandbox mid-build, restart, assert the build resumes from the durable session with no lost progress. Horizontal test: two workers read the same session store without corruption. Assert loki-mode local .loki/ path is untouched (scoped to autonomi only).",
+      "effort": "L",
+      "value": "medium",
+      "source": "Anthropic Managed Agents (durable session decoupling) -- founder-gated autonomi hosting"
+    }
+  ],
+  "not_applicable": [
+    {
+      "item": "ToolHive-style per-MCP-server container isolation / curated registry / secrets vault (source: ToolHive)",
+      "reason": "Presupposes running UNTRUSTED third-party MCP servers. Loki ships only first-party servers and uses --strict-mcp-config (providers/claude.sh:209) to actively EXCLUDE arbitrary third-party servers. Building a registry/containment layer adds adoption friction and code loki does not need for its threat model (it runs code it wrote). Adjacent product category. Source itself marked applicable=false (effort XL)."
+    },
+    {
+      "item": "ToolHive as inspiration for autonomi hosting IF/when it hosts third-party MCP servers (source: ToolHive)",
+      "reason": "Cannot be verified from this tree (autonomi is a separate private repo) and is gated on autonomi actually hosting untrusted third-party MCP servers, which is not a current requirement. Recorded as autonomi-hosting inspiration only, not a loki-mode backlog item. Source marked applicable=false. (Note: the gateway-auth primitive that IS directly consumable is captured as rank 18 for loki's own mcp http command.)"
+    },
+    {
+      "item": "Integrate brood-box or Anthropic Managed Agents as a runtime dependency (source: brood-box / Managed Agents)",
+      "reason": "brood-box is a local-developer agent sandbox CLI (adjacent product category loki's own three-tier sandbox already covers for local use); Managed Agents is a hosted Anthropic PLATFORM loki competes with, not an API loki consumes. The repo already made this triage (docs/ECOSYSTEM-CURRENCY-PLAN.json:77). The correct move is borrowing the architectural PATTERNS (decoupling, disposable untrusted sandbox, diff-then-flush) into autonomi's own founder-gated backend (ranks 19-20), not bolting on either tool. Source marked applicable=false."
+    },
+    {
+      "item": "mutagent-style adaptive test grading (source: FrontierCode)",
+      "reason": "An internal benchmark-authoring tool for a third-party eval grader: LLMs surgically adapt a hidden-canonical-answer test env so open-ended solutions grade deterministically. Loki does not grade external agents' solutions against hidden canonical answers, so there is no consumer inside loki/autonomi. Adjacent product category. Source marked applicable=false (effort XL)."
+    },
+    {
+      "item": "Training-time length penalty (source: SWE-1.6 Model UX)",
+      "reason": "Cognition's headline fix was a length penalty during model POST-TRAINING. Loki is an orchestration layer over a hosted model (claude -p) and cannot retrain or add a training-time penalty. Adjacent (model-lab technique). The consumable analogs are delivered structurally via ranks 8, 15, 16 (stop telling the model never to stop; lower the no-claim floor; batch tool calls). Source marked applicable=false (effort XL)."
+    }
+  ],
+  "per_source_findings": [
+    {
+      "source": "github.com/stacklok/toolhive -- ToolHive: open-source \"Enterprise MCP Server Platform\" to run any MCP server securely (container-per-server isolation, curated registry with provenance, secrets vault, OIDC/OAuth gateway, K8s operator + desktop portal). Verified via WebFetch of the repo README. Assessed against loki-mode's real MCP + sandbox source in /Users/lokesh/git/loki-mode.",
+      "what_it_does_well": [
+        "Container-per-MCP-server isolation: each MCP server runs in its own minimal-permission container (Docker/Podman local, K8s operator for teams) -- containment for code you did not write",
+        "Curated registry/catalog with versioning + provenance verification + role-based grouping and one-click install (a marketplace of vetted third-party servers)",
+        "Secrets management: encrypted credential handling so MCP servers get creds without local plaintext storage",
+        "Gateway with OIDC/OAuth auth, fine-grained per-request access policies, tool filtering, and audit logging in front of the server fleet",
+        "Observability (OpenTelemetry/Prometheus) and semantic tool search that reportedly cuts tool-token usage up to 85%"
+      ],
+      "loki_current_state": "Loki ships and consumes ONLY first-party MCP servers, so ToolHive's core problem (running untrusted third-party servers) does not exist for it today. Verified: repo .mcp.json declares two stdio servers, both `python3 -m mcp.{server,lsp_proxy}` (all first-party code in mcp/server.py 106KB and mcp/lsp_proxy.py 63KB). The build-time bundle is generated by autonomy/lib/mcp-config.sh::loki_mcp_config_path (writes .loki/mcp-config.json: always-on loki-mode server + optional lsp-proxy only when an LSP binary is on PATH). providers/claude.sh:198-210 emits `--strict-mcp-config` ONLY alongside a real `--mcp-config` bundle, which makes the agent load servers exclusively from Loki's bundle plus the operator's own ~/.claude/mcp.json overlay (loki_user_mcp_config_path, mcp-config.sh:132) -- i.e. Loki actively EXCLUDES arbitrary third-party servers rather than hosting them. Sandboxing exists but is OPT-IN Docker mode (autonomy/sandbox.sh + autonomy/seccomp-sandbox.json 468 lines), wired at sandbox.sh:1142-1155 with --security-opt=no-new-privileges, --cap-drop=ALL, seccomp profile, optional --network=none / read-only mount. In DEFAULT local mode the MCP servers are first-party child processes on the host, not containerized. MCP HTTP transport is real and user-invocable: `loki mcp --transport http [--port 8421]` (autonomy/mcp-launch.sh:152-164, cmd_mcp at autonomy/loki:14021) -> mcp/server.py:2639 `mcp.run(transport='http', port=args.port)` -- passes port only, no host and no auth token (FastMCP defaults to 127.0.0.1 loopback; ChromaDB path also sets chroma_client_auth_provider=None at server.py:1700). \"Provenance\" in the codebase (autonomy/lib/proof-generator.py:1002-1003) refers to build-proof anti-spam in the verify layer, NOT MCP server vetting.</loki_current_state>\n<parameter name=\"what_it_does_well\">[\"Container-per-MCP-server isolation for untrusted servers\", \"Curated registry with provenance + versioning + one-click install\", \"Encrypted secrets management for server credentials\", \"OIDC/OAuth gateway with per-request policies and audit logging\"]",
+      "gaps": [
+        {
+          "gap": "MCP HTTP transport binds without any authentication (no bearer/token). `loki mcp --transport http` is a real user command and mcp/server.py:2639 calls mcp.run(transport='http', port=...) with no host and no auth layer.",
+          "severity": "medium",
+          "axis": "hosting",
+          "loki_worse_because": "mcp/server.py:2639 `mcp.run(transport='http', port=args.port)` -- no host arg, no bearer/token; grep for auth/token/bearer in server.py returns nothing on the http path; ChromaDB path sets chroma_client_auth_provider=None (server.py:1700). ToolHive's gateway provides OIDC/OAuth + per-request policies here. Mitigated by FastMCP loopback default, so latent not exposed by default."
+        },
+        {
+          "gap": "No provenance/signing/vetting of the operator's own ~/.claude/mcp.json overlay, which Loki merges into the agent's allowed servers.",
+          "severity": "low",
+          "axis": "verification",
+          "loki_worse_because": "loki_user_mcp_config_path (autonomy/lib/mcp-config.sh:132) passes ~/.claude/mcp.json straight through as a second --mcp-config path with no signing/provenance check. This is the operator's own file (trusted-by-definition), so the gap is minor; ToolHive would apply registry provenance even here."
+        },
+        {
+          "gap": "Default local mode does not sandbox MCP servers; seccomp/cap-drop containment is opt-in Docker only.",
+          "severity": "low",
+          "axis": "hosting",
+          "loki_worse_because": "autonomy/sandbox.sh:1142-1155 wires seccomp+cap-drop only when the Docker sandbox is explicitly chosen; the default `loki start` runs mcp.server as a first-party host child process. Threat model differs from ToolHive: Loki runs code it wrote, so host-level containment is lower value -- genuinely adjacent, not a true gap for the current design."
+        }
+      ],
+      "improvement_candidates": [
+        {
+          "title": "Add optional bearer-token auth + explicit loopback bind to `loki mcp --transport http`",
+          "what": "The one place Loki's surface maps directly onto ToolHive's gateway. When a user runs `loki mcp --transport http`, pass an explicit host (default 127.0.0.1) and support an optional LOKI_MCP_AUTH_TOKEN that the server requires on every request. Low-cost hardening of an already-shipping command; keeps zero adoption friction (token opt-in, loopback default unchanged). Loki-mode genuinely consumes this: it is Loki's own command and server.",
+          "acceptance_criteria": [
+            "`loki mcp --transport http` binds 127.0.0.1 explicitly (verified via ss/lsof, not 0.0.0.0)",
+            "When LOKI_MCP_AUTH_TOKEN is set, requests without a matching bearer are rejected 401; when unset, behavior is unchanged (no new friction)",
+            "Docs note the token env var; default local stdio path is untouched"
+          ],
+          "effort": "S",
+          "applicable": true
+        },
+        {
+          "title": "Per-MCP-server container isolation / registry / secrets vault (ToolHive-style)",
+          "what": "NOT applicable to loki-mode. ToolHive's registry+container-per-server+secrets-vault presupposes running untrusted third-party MCP servers. Loki ships only first-party servers and uses --strict-mcp-config (providers/claude.sh:209) to actively EXCLUDE arbitrary third-party servers. Building a registry/containment layer would add adoption friction and code Loki does not need for its threat model (it runs code it wrote). Adjacent product category, not a loki-mode dependency.",
+          "acceptance_criteria": [
+            "N/A -- deliberately not pursued for loki-mode"
+          ],
+          "effort": "XL",
+          "applicable": false
+        },
+        {
+          "title": "ToolHive as inspiration for autonomi hosting IF/when it hosts third-party MCP servers",
+          "what": "Autonomi is a separate private repo not readable from this tree; its MCP-hosting needs cannot be verified here. IF autonomi ever hosts untrusted/third-party MCP servers server-side (multi-tenant), ToolHive's gateway-auth + container-per-server + secrets-vault + provenance-registry is direct architectural inspiration. Scoped to autonomi-not-loki; do not build into loki-mode. Marked applicable=false because it cannot be verified that autonomi consumes this and it is an adjacent product category from loki-mode's perspective.",
+          "acceptance_criteria": [
+            "N/A for loki-mode; recorded as autonomi-hosting inspiration only, gated on autonomi actually hosting third-party MCP servers"
+          ],
+          "effort": "XL",
+          "applicable": false
+        }
+      ]
+    },
+    {
+      "source": "stacklok/brood-box (WebFetch of https://github.com/stacklok/brood-box) + Anthropic Managed Agents (anthropic.com/engineering/managed-agents via WebSearch) as the reference-grade hosted approach. Compared against loki-mode local source: autonomy/sandbox.sh, autonomy/docker-run.sh, autonomy/loki (cmd_deploy), docs/TOP-100-BACKLOG.md, docs/FOUNDER-STATUS-AND-DECISIONS-2026-07-01.md, docs/ECOSYSTEM-CURRENCY-PLAN.json.",
+      "what_it_does_well": [
+        "Local sandbox is genuinely defense-in-depth: seccomp + cap-drop + no-new-privileges + resource limits + read-only config/council mounts + SSH-agent-forward (autonomy/sandbox.sh:1128-1236)",
+        "Graceful three-tier degradation (microVM -> container -> worktree) with HONEST soft-isolation warnings instead of silent weaker isolation (autonomy/sandbox.sh:382-393)",
+        "LOKI_ALLOWED_PATHS is enforced at the real boundary (which host paths get bind-mounted rw), fail-closed if workspace is outside the allowlist (autonomy/sandbox.sh:1180)",
+        "Secret hygiene: API keys passed as env not mounted files, per-run OAuth cred temp-copy wiped on exit, never written to project (autonomy/docker-run.sh:10-24)",
+        "The hosted-execution gap is already correctly identified, triaged, and founder-gated rather than half-built (docs/TOP-100-BACKLOG.md, FOUNDER-STATUS section 4B)"
+      ],
+      "loki_current_state": "loki-mode is a LOCAL, single-user CLI orchestrator. Sandboxing lives entirely in autonomy/sandbox.sh with a three-tier fallback (detect_sandbox_mode at :327): (1) Docker Desktop Sandbox microVM (hypervisor isolation, private in-VM docker daemon; requires Docker Desktop 4.58+), (2) standard Docker container with seccomp profile (autonomy/seccomp-sandbox.json), cap-drop ALL + no-new-privileges + pids/cpu/memory limits + read-only .loki/council+config mounts + SSH-agent-forward-not-key-mount, (3) git-worktree 'soft isolation' explicitly warned as NO filesystem/network/process isolation (:382-393). autonomy/docker-run.sh is a single-project local host wrapper (per-run temp OAuth cred, wiped on exit; not multi-tenant). loki deploy (autonomy/loki:6517) is HARD-INVARIANT print-only - it never runs a cloud CLI or git push. There is NO hosted/remote execution backend, NO session/harness/sandbox decoupling, and NO gVisor/Firecracker/Kata backend in this public repo. The hosted pieces (createSandbox that throws, verifyCompletion stub, per-verification container sandbox, multi-tenant sandbox backend) live in the PRIVATE autonomi-saas / @autonomi/verify repos and are already enumerated + founder-gated in docs/TOP-100-BACKLOG.md ranks 14/36/42/77 and docs/FOUNDER-STATUS-AND-DECISIONS-2026-07-01.md section 4B. dashboard/tenants.py provides multi-tenant project namespacing (in-memory / no prod persistence backend - rank 16/77). Managed Agents is already explicitly triaged as inspiration-not-dependency in docs/ECOSYSTEM-CURRENCY-PLAN.json:77.",
+      "gaps": [
+        {
+          "gap": "No hosted execution backend at all: for any SaaS that runs agentic builds server-side, loki has nothing to provision an isolated per-build/per-verification execution environment. createSandbox lives in private autonomi-saas and throws (not implemented).",
+          "severity": "critical",
+          "axis": "hosting",
+          "loki_worse_because": "docs/TOP-100-BACKLOG.md:36 rank 14 'Sandbox backend implementation (createSandbox throws; choose gVisor/Firecracker/Kata)' and :58 rank 36 'Hosted metered runner with per-verification container sandbox'; no server-side sandbox provisioner exists in this repo."
+        },
+        {
+          "gap": "No session/harness/sandbox decoupling. loki's RARV loop (autonomy/run.sh) couples the orchestration loop, state, and execution into one bash process on one host. Managed Agents' durable-session-outside-untrusted-sandbox pattern (crash survival, horizontal scale, TTFT win) is absent.",
+          "severity": "high",
+          "axis": "hosting",
+          "loki_worse_because": "State is .loki/ files local to the run host (save_state in run.sh); a hosted multi-worker deployment cannot survive a sandbox crash or scale horizontally without an external durable session log. Rank 77 'Horizontal scaling / distributed ... persistence (in-memory today)'."
+        },
+        {
+          "gap": "Multi-tenant isolation for hosted builds is unbacked. dashboard/tenants.py gives namespacing but no per-tenant hardware/kernel isolation and no prod persistence backend; a hosted runner would co-locate untrusted tenant builds.",
+          "severity": "high",
+          "axis": "hosting",
+          "loki_worse_because": "docs/TOP-100-BACKLOG.md:64 rank 42 'Multi-tenant sandbox backend (gVisor/Firecracker/Kata) selection spike' and :38 rank 16 on-prem persistence backend interface - both founder-gated, unbuilt."
+        },
+        {
+          "gap": "No pre-flush per-file review of agent changes. brood-box stops the VM and shows unified diffs before writing to disk; loki's containerized runs bind-mount the workspace rw and agent writes land live (autonomy/sandbox.sh:1208), so a hosted build cannot gate changes before they persist.",
+          "severity": "medium",
+          "axis": "verification",
+          "loki_worse_because": "start_sandbox mounts $PROJECT_DIR:/workspace:rw (autonomy/sandbox.sh:1208); no diff-then-flush step. loki verifies AFTER via council/gates, not a pre-commit filesystem review boundary."
+        },
+        {
+          "gap": "No network egress firewall for sandboxed builds. brood-box has DNS-aware permissive/standard/locked profiles; loki only offers coarse docker --network bridge|none|host (autonomy/sandbox.sh:53), so a hosted build cannot enforce a domain allowlist while keeping provider API + git access.",
+          "severity": "medium",
+          "axis": "hosting",
+          "loki_worse_because": "LOKI_SANDBOX_NETWORK is bridge/none/host only (autonomy/sandbox.sh:53, :1102-1107); no per-domain egress control exists."
+        }
+      ],
+      "improvement_candidates": [
+        {
+          "title": "Adopt a hosted sandbox backend abstraction (gVisor first) behind a SandboxBackend interface for autonomi-saas",
+          "what": "APPLICABLE to autonomi (hosted). Define one SandboxBackend interface (create/exec/diff/flush/destroy) and implement gVisor as the first backend for per-build/per-verification isolation, mirroring Managed Agents' disposable untrusted-sandbox. This is the concrete unblock for the founder-gated rank-14/36/42 items. Do NOT adopt brood-box wholesale - it is a local-dev CLI (adjacent product category), but its libkrun-microVM approach is a strong second backend option to evaluate against gVisor/Firecracker/Kata for the selection spike.",
+          "acceptance_criteria": [
+            "A SandboxBackend interface exists with create/exec/collect-diff/flush/destroy and at least one working backend (gVisor)",
+            "Each hosted build/verification runs in its own disposable sandbox destroyed on completion",
+            "Sandbox is treated as untrusted: no tenant secrets or signing keys reachable from inside",
+            "Selection spike documents gVisor vs Firecracker vs Kata vs libkrun with a chosen default and rationale (satisfies rank 42)"
+          ],
+          "effort": "XL",
+          "applicable": true
+        },
+        {
+          "title": "Externalize the session as a durable append-only log decoupled from the execution sandbox",
+          "what": "APPLICABLE to autonomi (hosted). Move build state off the local .loki/ files into a durable session store (the persistence backend at rank 16) so the harness/sandbox can crash or scale horizontally without losing progress - directly the Managed Agents session/harness/sandbox decoupling. Enables resume-across-workers and the TTFT-style win of starting reasoning before the sandbox is fully provisioned. NOT applicable to loki-mode local, whose .loki/ file state is correct for single-user.",
+          "acceptance_criteria": [
+            "A PersistenceBackend interface with a first prod store (Postgres or SQLite) exists (satisfies rank 16)",
+            "A hosted build survives a worker/sandbox restart and resumes from the durable session",
+            "The harness reads session state independently of any specific sandbox instance"
+          ],
+          "effort": "L",
+          "applicable": true
+        },
+        {
+          "title": "Add pre-flush diff review + per-domain egress allowlist to the hosted runner",
+          "what": "APPLICABLE to autonomi (hosted); OPTIONAL for loki-mode local. Borrow brood-box's two strongest primitives for a hosted context: (1) collect agent file changes as reviewable diffs and gate their flush to the tenant workspace, giving the verify layer a filesystem checkpoint; (2) a DNS/domain egress allowlist so a sandboxed build can reach provider APIs + git remotes but nothing else. These raise the trust/verification story that is autonomi's stated moat.",
+          "acceptance_criteria": [
+            "Hosted build changes are captured as a diff and only flushed after the gate/verify step passes",
+            "Sandbox egress is restricted to a configurable domain allowlist (default: provider API + git host) with deny-by-default option",
+            "Secret paths (.env*, keys) are non-overridably excluded from any captured/flushed change set"
+          ],
+          "effort": "M",
+          "applicable": true
+        },
+        {
+          "title": "Do NOT integrate brood-box or Anthropic Managed Agents as a dependency",
+          "what": "NOT APPLICABLE as a consumed dependency. brood-box is a local-developer agent sandbox CLI (adjacent product category loki-mode's own three-tier sandbox already covers for local use); Managed Agents is a hosted Anthropic PLATFORM loki competes with, not an API loki consumes. The repo has already made this exact triage (docs/ECOSYSTEM-CURRENCY-PLAN.json:77). Correct move is to borrow the architectural PATTERNS (decoupling, disposable untrusted sandbox, diff-then-flush) into autonomi's own hosted backend, not to bolt on either tool.",
+          "acceptance_criteria": [
+            "No runtime dependency on brood-box or Managed Agents is added",
+            "The patterns are captured as design inputs to the founder-gated sandbox/persistence backend decisions, not as vendor integrations"
+          ],
+          "effort": "S",
+          "applicable": false
+        }
+      ]
+    },
+    {
+      "source": "Cognition FrontierCode benchmark (launched 2026-06-08). Sources: https://cognition.com/blog/frontier-code ; https://epoch.ai/benchmarks/frontiercode ; https://www.latent.space/p/ainews-frontiercode-benchmarking . FrontierCode grades code MERGEABILITY, not just correctness (\"where others grade like a CI, FrontierCode grades like a tech lead\"). Five verified mechanics: (1) reverse-classical tests -- the agent's tests must FAIL on the original/pre-change codebase and PASS after (proves the agent understood the problem before writing tests); (2) code-scope limits -- three constraint types: files (allow/deny/required-deletions), size (changed-line / net-line-growth / total-files caps), and semantic locality (LLM check that the change stays inside a specific function/section); (3) adaptive-classical grading via 'mutagent' -- LLMs surgically adapt the test env/app code so open-ended solutions with superficially different names/messages can still be deterministically graded; (4) blocker vs non-blocker rubric -- blockers are mergeability hard-stops (correctness, perf, scope), failing ANY blocker = score 0; non-blockers are weighted quality signals (style, types, readability) that contribute to a weighted score but do not block; (5) LLM-as-tech-lead prompt-based criteria for idiomatic/readable/architectural qualities, plus 100% human researcher review per task (81% lower false-positive rate than SWE-Bench Pro). Three nested subsets: Extended (150), Main (100), Diamond (50 hardest). Peak score ~13.5% (Claude Opus 4.8) -- the benchmark is deliberately hard.",
+      "what_it_does_well": [
+        "Reverse-classical test provenance: agent-authored tests must fail on the base commit -- directly attacks the 'test written to pass, proving nothing' failure mode that plagues autonomous coding agents",
+        "Blocker/non-blocker split with zero-on-any-blocker scoring: encodes a maintainer's actual merge decision (one hard-stop kills the PR) rather than an averaged pass rate",
+        "Explicit code-scope discipline (file allowlists, line/size caps, semantic locality) -- penalizes the sprawling over-broad diff that agents produce and humans reject",
+        "mutagent adaptive grading: deterministic tests on open-ended solutions, avoiding brittle exact-match while staying objective",
+        "Rubrics are adversarially calibrated (maintainers try to break the rubric with bad solutions) and 100% human-reviewed -- high grading integrity"
+      ],
+      "loki_current_state": "Loki grades correctness + security + architecture, but NOT the three mergeability axes FrontierCode pioneered (scope/locality, test-provenance, project-convention conformance). Verified against source. THREE distinct grading layers: (1) council_evidence_gate (autonomy/completion-council.sh:1531) is pure CI-grade -- it verifies only (a) a nonzero diff exists vs run-start SHA, i.e. anti-fabrication (:1543-1619), and (b) tests are green from .loki/quality/test-results.json (:1621-1688). No judgment about diff size, locality, or test quality. (2) run_code_review (autonomy/run.sh:10313) IS tech-lead-shaped for some axes: it fans out architecture-strategist (SOLID/coupling/patterns/abstraction, :10596-10600) plus keyword-selected specialists, each emitting VERDICT PASS/FAIL + severity-graded findings (Critical/High/Medium/Low, :10678-10687). (3) A blocker/non-blocker mechanism ALREADY EXISTS: run_code_review sets has_blocking=true only on Critical/High and treats Medium/Low as non-blocking (:10770-10777); the completion council has COUNCIL_SEVERITY_THRESHOLD + COUNCIL_ERROR_BUDGET knobs (completion-council.sh:98-99, 684-735) implementing exactly a blocker-vs-budgeted-non-blocker model. WHAT IS ABSENT everywhere: (i) no test-provenance / reverse-classical check -- nothing ever runs the agent's new tests against the pre-change code to confirm they fail (grep for reverse/provenance/must-fail found nothing in run.sh or verify.sh); (ii) no code-scope enforcement -- autonomy/verify.sh (the change-mode PR verifier, cmd_verify at loki:13958) DOES compute merge-base(base,HEAD)..HEAD file/insertion/deletion counts (VERIFY_DIFF_FILES/INS/DEL, verify.sh:110-164) but uses them only as evidence, never as an allow/deny/size/locality GATE; (iii) severity is bug/security-shaped (OWASP, N+1, missing tests), not maintainer-mergeability-shaped (scope creep, style/convention conformance), and there is no weighted quality SCORE (loki is binary block-or-pass, vs FrontierCode's zero-on-blocker-else-weighted-sum).",
+      "gaps": [
+        {
+          "gap": "No test-provenance check: an agent's newly-authored tests are never run against the pre-change code to confirm they FAIL there. A test that passes both before and after proves nothing, yet counts as full 'tests green' evidence in council_evidence_gate.",
+          "severity": "critical",
+          "axis": "verification",
+          "loki_worse_because": "council_evidence_gate (completion-council.sh:1621-1688) reads only pass/fail + runner from test-results.json; grep for 'reverse|provenance|must.?fail' across autonomy/ returns zero matches. The one strong verification loki has (tests-green) can be satisfied by vacuous/tautological tests."
+        },
+        {
+          "gap": "No code-scope / locality gate. verify.sh already MEASURES files/insertions/deletions for the PR diff but never enforces a limit, allowlist, or semantic-locality check. A 40-file sprawling diff that touches unrelated code passes the same as a tight 3-file fix.",
+          "severity": "high",
+          "axis": "accuracy",
+          "loki_worse_because": "verify.sh:154-164 captures VERIFY_DIFF_FILES/INS/DEL then only reports them; no threshold or allow/deny logic exists. run_code_review specialists focus on bug classes, none on diff breadth. Over-broad diffs are the #1 human merge-rejection reason FrontierCode targets."
+        },
+        {
+          "gap": "Severity rubric is bug/security-shaped, not mergeability-shaped, and produces no weighted quality score. Reviewers grade OWASP/N+1/missing-tests but have no criteria for scope creep, dead code, or conformance to the project's existing conventions/idioms.",
+          "severity": "high",
+          "axis": "accuracy",
+          "loki_worse_because": "The specialist pool (run.sh:10490-10521) is security-sentinel/test-coverage/performance/dependency/architecture; none carries a 'would a maintainer merge this' or 'matches existing style' mandate. Output is binary VERDICT (run.sh:10679), no weighted rubric score like FrontierCode's."
+        },
+        {
+          "gap": "No conformance-to-existing-codebase-conventions check. FrontierCode's tech-lead grading heavily weights 'fits the project's existing style'. Loki's greenfield-first design has no notion of a surrounding convention to match, and even in change-mode nothing samples neighboring code for idiom conformance.",
+          "severity": "medium",
+          "axis": "accuracy",
+          "loki_worse_because": "architecture-strategist checks abstract SOLID principles (run.sh:10598-10599), not 'does this match how THIS repo already does it'. Relevant only in change/issue/verify modes; N/A for greenfield."
+        }
+      ],
+      "improvement_candidates": [
+        {
+          "title": "Reverse-classical test-provenance check (change-mode: issue/verify/healing)",
+          "what": "Before counting an agent's NEW tests as 'green' evidence, run them against the pre-change base (VERIFY_MERGE_BASE in verify.sh / _LOKI_RUN_START_SHA elsewhere) and require they FAIL there, then PASS on HEAD. Only provenance-confirmed tests count as affirmative correctness evidence in council_evidence_gate; tautological tests (pass on base) are flagged and excluded. Scope to change-mode where a base commit exists. Greenfield (the flagship spec-to-product path) has no pre-change base, so this is a no-op there -- do NOT force it on greenfield builds. This is the single highest-value accuracy-moat item: it makes loki's core 'tests green' signal actually mean something.",
+          "acceptance_criteria": [
+            "Given a change-mode run with a resolvable base, identify test files added/modified in the diff",
+            "Check out base (or apply reverse patch), run only the new/changed tests, record which FAIL on base",
+            "In council_evidence_gate, a completion claim whose only test evidence is provenance-UNconfirmed (passes on base) is marked inconclusive, not affirmative",
+            "Emit a trust event + .loki record listing each new test and its base-fail/head-pass status",
+            "Byte-identical no-op on greenfield (no base) and when LOKI_TEST_PROVENANCE=0"
+          ],
+          "effort": "L",
+          "applicable": true
+        },
+        {
+          "title": "Code-scope / locality gate in autonomy/verify.sh (change-mode PR verification)",
+          "what": "Turn the already-computed VERIFY_DIFF_FILES/INS/DEL (verify.sh:154-164) into an enforced gate: configurable caps on total files changed, net line growth, and (optionally) an LLM semantic-locality check that flagged edits stay within the files/functions the task requires. Emit a 'scope' blocker on violation. Default thresholds should be advisory-with-warning first (record, don't hard-block) to avoid adoption friction, with LOKI_SCOPE_ENFORCE=1 to make it blocking. Applies to issue-mode / loki verify / healing where there is a defined intended change surface; N/A to greenfield full builds.",
+          "acceptance_criteria": [
+            "verify.sh emits a structured scope record: files_changed, net_lines, verdict (ok|warn|block) with the thresholds used",
+            "Thresholds configurable via env (e.g. LOKI_SCOPE_MAX_FILES, LOKI_SCOPE_MAX_NET_LINES); sane defaults",
+            "Advisory by default (surfaces in verify output + SARIF), blocking only under LOKI_SCOPE_ENFORCE=1",
+            "Optional semantic-locality LLM check gated behind its own flag (opt-in, off by default for zero added latency/cost)",
+            "No behavior change on greenfield loki start (no intended-surface concept)"
+          ],
+          "effort": "M",
+          "applicable": true
+        },
+        {
+          "title": "Add a mergeability rubric dimension to run_code_review (weighted, tech-lead framing)",
+          "what": "Extend the EXISTING severity mechanism (do not replace it) with a 'maintainer-mergeability' reviewer whose rubric covers scope creep, dead/duplicated code, and conformance to the surrounding code's conventions -- and have the aggregator produce a weighted quality SCORE alongside the binary block verdict (FrontierCode-style: 0 on any blocker, else weighted non-blocker sum). Reuse has_blocking (run.sh:10770) for the blocker layer; add the weighted score as a reported quality metric, not a new hard gate initially. This upgrades loki's review from 'CI + architecture' toward 'tech lead' on the axes it currently misses.",
+          "acceptance_criteria": [
+            "A mergeability-focused reviewer is added to the pool with a rubric prompt covering scope, dead code, and convention-conformance",
+            "Aggregator emits a numeric quality score (0 if any blocker, else weighted non-blocker sum) in aggregate.json",
+            "Existing Critical/High = block, Medium/Low = non-blocking behavior is preserved unchanged",
+            "Score is reported/surfaced but does not become a new hard gate without an explicit opt-in flag",
+            "No emojis/em-dashes in prompt text; dual-route (bash + Bun) parity maintained"
+          ],
+          "effort": "M",
+          "applicable": true
+        },
+        {
+          "title": "FrontierCode-style scored benchmark harness for loki's own change-mode output",
+          "what": "Not a runtime feature -- a benchmark: assemble a small suite of change-mode tasks with maintainer rubrics (blocker + weighted non-blocker) and reverse-classical tests, run loki verify / issue-mode against them, and score mergeability. This is the measurement instrument that would let loki claim an accuracy/mergeability number and drive the three items above. Aligns with existing pending task #49 (reproducible speed+accuracy benchmark) and #51 (council/RARV-C research update, gated on benchmark).",
+          "acceptance_criteria": [
+            "A handful of tasks with base repo + rubric (blocker/non-blocker) + reverse-classical tests",
+            "Harness runs loki change-mode and produces a per-task mergeability score",
+            "Reproducible, documented, wired into the existing benchmarks/ directory conventions",
+            "Reports a headline mergeability % comparable across loki versions"
+          ],
+          "effort": "L",
+          "applicable": true
+        },
+        {
+          "title": "mutagent-style adaptive test grading",
+          "what": "FrontierCode's mutagent uses LLMs to surgically adapt the test environment to open-ended solutions so superficially-different implementations still grade deterministically. This is an internal benchmark-authoring tool for Cognition's graders, an adjacent product category (a grading-harness technique for a third-party eval), not something loki-mode/autonomi consumes at build time. Loki does not grade external agents' solutions against hidden canonical answers, so there is no consumer for mutagent inside loki. Mentioned for completeness; do not build.",
+          "acceptance_criteria": [
+            "N/A -- adjacent product category, not applicable to loki/autonomi"
+          ],
+          "effort": "XL",
+          "applicable": false
+        }
+      ]
+    },
+    {
+      "source": "Cognition SWE-1.6 \"Improving Model UX\" (https://cognition.com/blog/swe-1-6) + SWE-1.5 preview post. Four documented model-behavior anti-patterns: (1) overthinking / too many turns on simple tasks, (2) sequential tool calls instead of parallel, (3) terminal-over-own-tools preference, (4) looping / repeated self-verification. Fix: a training-time length penalty that shortens trajectories (keeps solve-rate flat while assistant-turn count stays flat) and implicitly drives more parallel tool use; post-training reduced terminal-reliance. Analyzed against loki's ORCHESTRATION layer (autonomy/run.sh run_autonomous + build_prompt + completion-council.sh), which drives claude -p and controls turn/iteration count, its own agent parallelism, and the injected prompt verbosity.",
+      "what_it_does_well": [
+        "Loki's own review fan-out is already parallel: run_code_review spawns the 3 blind reviewers with `) &` and `wait \"$pid\"` (run.sh ~10440-10711), so the orchestration-level analog of Cognition's parallel-tool-call fix is already present for reviewers.",
+        "Completion has a real early-exit that is NOT throttled by the council interval: check_completion_promise -> check_task_completion_signal is evaluated every iteration (run.sh:17418); a single gate-verified completion claim can stop the run at iteration 1 (evidence/checklist/heldout/assumption gates at 17451-17460). The council MIN_ITERATIONS=3/CHECK_INTERVAL=5 throttle applies only to the no-explicit-claim convergence path.",
+        "LSP-grounding instruction (run.sh:13863) already steers the inner agent toward structured tools over guesswork/terminal for symbol verification, partially covering Cognition's terminal-over-tools concern.",
+        "Verification is gated deterministically and fail-closed (gates armed only when loadable, refuse claim if missing) -- so reducing turns can be done without weakening the trust gates, since stopping is decided by evidence gates, not by iteration count.",
+        "DOC_SCOPE instruction (run.sh:13851) already scales doc generation to complexity (simple projects get minimal docs), an existing anti-overthinking measure worth preserving."
+      ],
+      "loki_current_state": "Each loki iteration is one `claude -p` call (run.sh:16359) wrapped by the run_autonomous while-loop (run.sh:15856). build_prompt (run.sh:13749) concatenates, in EVERY emitted prompt variant (PRD/resume/no-PRD, run.sh:14275-14283), an unconditional `$rarv_instruction` (13770) that literally states: \"This self-verification loop achieves 2-3x quality improvement\" and \"CRITICAL: There is NEVER a 'finished' state - always find the next improvement, optimization, test, or feature.\" It is followed by a mode-dependent `$autonomous_suffix` (13791-13796). A default PRD run auto-switches perpetual->checkpoint (run.sh:15751-15754), so the checkpoint suffix (\"Focus on completing PRD scope, not endless improvements\") is emitted RIGHT AFTER the never-finished rarv_instruction in the same prompt -- a direct self-contradiction. Reviewers run in parallel, but the inner dev agent gets NO instruction to batch its own independent tool calls (grep for parallel/batch tool-call guidance in build_prompt/SKILL/skills returns only orchestration-level fan-out references, none aimed at the inner agent). Council convergence defaults: MIN_ITERATIONS=3, CHECK_INTERVAL=5 (completion-council.sh:78-84).",
+      "gaps": [
+        {
+          "gap": "The unconditional rarv_instruction hard-codes 'There is NEVER a finished state - always find the next improvement' into every prompt, including PRD/checkpoint runs that were just switched to finite scope. This is the exact overthinking/never-stop anti-pattern Cognition penalized, and it directly drives the '14 iterations for a ~1-iteration job' bug by instructing the agent not to claim done.",
+          "severity": "critical",
+          "axis": "speed",
+          "loki_worse_because": "autonomy/run.sh:13770 (rarv_instruction) is a `local` string built unconditionally and always concatenated at run.sh:14275/14277/14281/14283; it contradicts the checkpoint autonomous_suffix (13795) emitted in the same prompt after the perpetual->checkpoint auto-switch (15751-15754)."
+        },
+        {
+          "gap": "The prompt asserts 'This self-verification loop achieves 2-3x quality improvement' and prescribes a per-iteration Reason-Act-Reflect-VERIFY-with-retry cycle. Framing verification as always-more-is-better encourages the excessive/looping self-verification Cognition identified, distinct from the deterministic external gates loki already runs.",
+          "severity": "high",
+          "axis": "speed",
+          "loki_worse_because": "autonomy/run.sh:13770: the rarv_instruction sells self-verification as a quality multiplier with no 'stop when verified' counter-instruction; the real completion gates (17451-17460) already do the authoritative verification, so the in-prompt self-verify loop is redundant turn-burn."
+        },
+        {
+          "gap": "No instruction tells the inner dev agent to issue independent tool calls in a single message (parallel). Loki controls this via build_prompt but does not use it, so the inner agent defaults to sequential reads/greps -- the exact sequential-vs-parallel anti-pattern, at the level loki can actually influence.",
+          "severity": "medium",
+          "axis": "speed",
+          "loki_worse_because": "grep across autonomy/run.sh build_prompt, SKILL.md, skills/*.md finds no batch/parallel-tool-call guidance for the inner agent; all 'parallel' hits are loki's own worktree/reviewer fan-out, not the claude -p agent's per-turn tool batching."
+        },
+        {
+          "gap": "Council convergence stop is throttled to MIN_ITERATIONS=3 and only re-checks every CHECK_INTERVAL=5 iterations. For a task the agent does NOT explicitly claim done (no completion promise / perpetual / analysis mode), this imposes a 3-5 iteration floor before any stop is even possible, independent of whether the work is finished.",
+          "severity": "medium",
+          "axis": "speed",
+          "loki_worse_because": "autonomy/completion-council.sh:78-84 defaults (CHECK_INTERVAL=5, MIN_ITERATIONS=3) and the gate at council_should_stop (~3191-3234) returns 1 when ITERATION_COUNT < MIN_ITERATIONS or ITERATION_COUNT % CHECK_INTERVAL != 0. Note: the explicit-claim path (17418) bypasses this, so the floor only bites the no-claim path."
+        }
+      ],
+      "improvement_candidates": [
+        {
+          "title": "Make rarv_instruction mode-aware: drop 'NEVER finished' + '2-3x quality' framing on finite (checkpoint/PRD) runs",
+          "what": "build_prompt currently emits the same never-finished rarv_instruction in every mode. Gate it on AUTONOMY_MODE/PERPETUAL_MODE (the same signal the autonomous_suffix already uses): for checkpoint/PRD runs, replace 'There is NEVER a finished state - always find the next improvement' with 'When the PRD requirements are implemented and the completion gates pass, claim done via loki_complete_task and STOP; do not add unrequested improvements.' Keep the never-finished text only for genuine perpetual/no-promise mode. Also delete the unverifiable '2-3x quality improvement' sentence, which biases toward redundant self-verification. This is the orchestration analog of Cognition's length penalty: loki cannot retrain the model but it CAN stop telling the model to never stop. Directly targets the 14-iter convergence bug at its prompt root.",
+          "acceptance_criteria": [
+            "In a PRD run (auto-switched to checkpoint), the emitted build_prompt no longer contains 'There is NEVER a finished' and no longer contains 'always find the next improvement'",
+            "In a perpetual/no-promise run the never-finished text still appears (behavior preserved for that mode)",
+            "The '2-3x quality improvement' clause is removed from all modes",
+            "A run whose spec is satisfiable in ~1 iteration claims completion (loki_complete_task) within a small bounded iteration count on a benchmark spec, with all completion gates still passing (verification not weakened)",
+            "loki-ts/src/runner/build_prompt.ts parity string updated to match (parity-locked strings)"
+          ],
+          "effort": "M",
+          "applicable": true
+        },
+        {
+          "title": "Add a 'stop when verified-done; be concise' directive that pairs completion with the existing gates",
+          "what": "Add one prompt line (mode-aware, finite runs) instructing the agent: 'Prefer the fewest turns that satisfy the spec. Do exactly what the PRD requires, verify once, then claim done. The completion gates (tests, checklist, evidence) are the authority on done -- do not re-verify redundantly.' This reframes verification as gate-authoritative (loki already runs deterministic gates at run.sh:17451-17460) rather than an in-prompt quality-multiplier loop, cutting looping/over-verification WITHOUT removing any actual gate. Complements candidate 1.",
+          "acceptance_criteria": [
+            "Finite-mode prompt contains a concise 'stop when verified-done, gates are the authority' directive",
+            "The deterministic completion gates (council_evidence_gate/checklist/heldout/assumption) remain unchanged and still block on failure",
+            "No reduction in gate coverage measurable via the existing completion-council tests",
+            "Perpetual mode prompt unchanged"
+          ],
+          "effort": "S",
+          "applicable": true
+        },
+        {
+          "title": "Instruct the inner agent to batch independent tool calls in a single message",
+          "what": "Add a short build_prompt directive (all modes): 'When issuing independent read-only operations (reads, greps, file lookups, LSP checks) that do not depend on each other, issue them in a single message so they run in parallel; do not serialize independent lookups.' This is the direct, cheap analog of Cognition's parallel-tool-call fix at the exact layer loki controls (the prompt to claude -p). Zero adoption friction (internal prompt string), no verification impact.",
+          "acceptance_criteria": [
+            "build_prompt emits a parallel/batch tool-call directive in every mode",
+            "Parity mirror added to loki-ts/src/runner/build_prompt.ts",
+            "Directive is <= 2 sentences and adds no new env knob",
+            "A representative run shows the inner agent issuing at least one multi-tool-call message for independent lookups (spot-checked in agent.log / stream-json)"
+          ],
+          "effort": "S",
+          "applicable": true
+        },
+        {
+          "title": "Lower the no-claim council convergence floor so genuinely-finished no-promise runs can stop sooner",
+          "what": "For the convergence-detection (no explicit completion claim) path only, reduce the effective floor: allow council_should_stop to evaluate as early as MIN_ITERATIONS=1 when tests+checklist evidence already indicate done, or check every iteration once evidence is green instead of every 5th. The explicit-claim path already bypasses this (run.sh:17418), so this only helps analysis-mode / no-promise runs. Keep stagnation and evidence gates intact -- this changes WHEN the stop check runs, not WHETHER work is verified.",
+          "acceptance_criteria": [
+            "A no-promise run that is genuinely complete can stop before iteration 5 when evidence gates pass",
+            "Stagnation and evidence gates (completion-council.sh) still block premature/unverified stops",
+            "Explicit-claim completion path behavior unchanged",
+            "Gated behind existing LOKI_COUNCIL_CHECK_INTERVAL/MIN_ITERATIONS so operators can restore old behavior"
+          ],
+          "effort": "M",
+          "applicable": true
+        },
+        {
+          "title": "Training-time length penalty (Cognition's actual mechanism)",
+          "what": "Cognition's headline fix was a length penalty introduced during model post-training that shortens trajectories while holding solve-rate flat. Loki is an orchestration layer over a hosted model (claude -p); it cannot retrain or add a training-time length penalty. This is adjacent-product-category (a model-lab technique), not something loki/autonomi consumes. Loki's consumable analogs are the prompt/structural changes in candidates 1-4 (stop telling the model never to stop; batch tool calls; lower the stop floor). Recorded here explicitly so the length-penalty idea is not mistaken for a directly-implementable loki fix.",
+          "acceptance_criteria": [
+            "No implementation in loki (marked not applicable)",
+            "The consumable analog is delivered via candidates 1-2 (structural + prompt early-stop) instead"
+          ],
+          "effort": "XL",
+          "applicable": false
+        }
+      ]
+    },
+    {
+      "source": "Devin autonomous cloud verification (Cognition): source-grounded test-plan-before-testing, annotate-before-act (commit expected behavior before the action to reduce model self-deception), deterministic reusable setup skills (e.g. saved login script), computer-use e2e testing in cloud, verified PR with proof artifacts, guard against JS-runtime cheating. Compared against Loki verification source in /Users/lokesh/git/loki-mode: autonomy/verify.sh, autonomy/lib/proof-verify.py, autonomy/lib/proof-generator.py, autonomy/checklist-verify.py, autonomy/completion-council.sh (held-out gate v7.28.0, acceptance-oracle triangulation), autonomy/prd-checklist.sh, autonomy/grill.sh, autonomy/run.sh (checklist authoring + playwright wiring).",
+      "what_it_does_well": [
+        "Non-forgeable proof-of-run receipts: proof-verify.py re-derives the recorded git diff (base_sha->HEAD numstat + diff_sha256 recomputed from the canonical stat object, not the patch text) and re-checks the integrity hash, so a hand-written proof.json whose recorded facts survive a re-run against the repo is impossible (autonomy/lib/proof-verify.py:314-455). A genuine trust artifact, arguably ahead of a plain PR description.",
+        "Honest inconclusive-never-passes policy enforced structurally: verify.sh Entanglement 2 maps any inconclusive gate / unresolved-diff / empty-diff to CONCERNS and never VERIFIED (verify.sh:768-809); proof-verify treats diff_drift=None (unverifiable) as ok=False (proof-verify.py:443-447). Directly counters false-green.",
+        "Held-out spec-eval gate (v7.28.0) reserves acceptance checks at checklist-generation time, excludes them from the prompt feed the build loop sees, and evaluates them only at the ship gate (completion-council.sh:1305-1428). A real anti-reward-hacking mechanism analogous to Devin's hidden tests.",
+        "Fake-green guard on required test checks: checklist-verify.py tests_pass fails the check if zero tests were discovered (jest --passWithNoTests / pytest exit 5), so a required verification cannot pass with nothing actually run (checklist-verify.py:101-120).",
+        "Diff scoped to PR semantics (merge-base(base,HEAD)..HEAD) with gates running only on changed files, avoiding false-positive fatigue from legacy issues (verify.sh:110-171).",
+        "Deterministic-first, LLM-review-honestly-deferred: verify.sh runs only reproducible gates and records llm_review.status='skipped' with a stated reason rather than faking a review (verify.sh:916-920)."
+      ],
+      "loki_current_state": "\"loki verify (autonomy/verify.sh) runs 5 deterministic gates (build, tests, static syntax, secret scan, dependency audit) plus a spec-drift gate, emits one consolidated evidence.json + report.md, and computes VERIFIED/CONCERNS/BLOCKED where inconclusive never becomes VERIFIED. It has NO runtime/http/e2e/computer-use gate and NO LLM review (both honestly marked deferred). The build loop separately has playwright smoke (autonomy/playwright-verify.sh, wired at run.sh:702-705) and checklist http_check (checklist-verify.py:192), but these live in the iteration loop, NOT in the productized verifier. Proof receipts (proof-generator.py -> proof-verify.py) are re-derivable and tamper/drift-checked. The completion council has a held-out hidden-check gate and a spec-vs-reality acceptance-oracle (datastore-conflict only; domain invariants deferred; prd-checklist.sh). CRITICAL GAP vs Devin: the checklist that IS Loki's test plan is authored by the LLM from the PRD via a prompt (run.sh:14049 'Extract requirements into categories with items...'), NOT grounded in source/AST, and there is NO annotate-before-act step anywhere (grep for predict/expected-before-run found nothing in autonomy/). loki grill (Devil's-Advocate spec interrogation, autonomy/grill.sh) exists but is standalone and NOT wired into verify or the completion gate. setup-skill (autonomy/loki:9473) installs the Loki skill into provider CLIs; it is NOT a per-repo deterministic reusable setup/login skill in Devin's sense.\"",
+      "gaps": [
+        {
+          "gap": "No annotate-before-act: Loki never records the EXPECTED behavior/outcome of a change before running verification, so the model grades its own work with no pre-committed prediction to be held to. Devin's core anti-self-deception move (commit expected behavior, then act, then compare) is absent.",
+          "severity": "high",
+          "axis": "accuracy",
+          "loki_worse_because": "grep for predict|expected.*result|hypothes|record.*expect across autonomy/*.sh, autonomy/lib/*.py, skills/testing.md returned zero annotate-before-act hits; verdicts are computed purely post-hoc (verify.sh:737 verify_compute_verdict, proof-verify.py drift-only)."
+        },
+        {
+          "gap": "Loki's test plan (the checklist) is LLM-authored from PRD prose, not grounded in the actual source/AST/routes. The same model that writes the code effectively writes its own acceptance checks from the same spec, so a wrong-but-internally-consistent implementation can pass. Only the datastore axis is triangulated against code reality.",
+          "severity": "high",
+          "axis": "accuracy",
+          "loki_worse_because": "run.sh:14049 instructs the model to 'Create .loki/checklist/checklist.json from the PRD. Extract requirements into categories with items'; prd-checklist.sh (~line 109) states 'The PRD checklist derives acceptance criteria from the SPEC alone. That is a single oracle'; checklist_oracle_triangulate covers only datastore choice and explicitly DEFERS domain invariants."
+        },
+        {
+          "gap": "The productized verifier (loki verify) never runs the app. No runtime/http/e2e/computer-use gate, so a change that compiles, has green unit tests, and clean static analysis is marked VERIFIED without any evidence it boots or serves. Devin's differentiator is computer-use e2e proof.",
+          "severity": "high",
+          "axis": "verification",
+          "loki_worse_because": "verify_main runs only verify_gate_build/tests/static/secret_scan/dependency_audit (verify.sh:1380-1384); no runtime/http/boot gate in verify.sh (playwright-verify.sh + checklist http_check live in the build loop, not the verifier that produces the shippable evidence.json)."
+        },
+        {
+          "gap": "No explicit guard against test-runtime cheating (tests that stub the function under test, mutated/skipped tests, assertions that always pass) inside the shippable evidence. Mock-integrity and test-mutation detectors exist as build-loop gates but are NOT part of loki verify's evidence document.",
+          "severity": "medium",
+          "axis": "verification",
+          "loki_worse_because": "verify.sh gate list (1380-1384) contains no mock-integrity or test-mutation check; the fake-green guard in checklist-verify.py:101-120 catches only zero-discovered-tests, not tests that run but assert nothing meaningful."
+        },
+        {
+          "gap": "No deterministic, reusable, per-repo setup/environment skill (Devin saves a login/bootstrap script and replays it). Loki re-detects build/test runners heuristically every run and cannot reliably reach the app-running state for repos needing auth/seed/env, hurting both e2e verification and adoption.",
+          "severity": "medium",
+          "axis": "adoption-friction",
+          "loki_worse_because": "cmd_setup_skill (autonomy/loki:9473) only installs the Loki skill into ~/.claude/skills etc.; verify_gate_build/tests (verify.sh:180,243) re-detect runners from scratch with no persisted per-repo setup recipe."
+        },
+        {
+          "gap": "The pre-build Devil's-Advocate grill (surfaces missing acceptance criteria and unstated assumptions) is standalone and not fed into the verification/completion gate, so its findings do not harden what gets checked at ship time.",
+          "severity": "medium",
+          "axis": "accuracy",
+          "loki_worse_because": "grep 'grill' in run.sh/completion-council.sh/verify.sh shows only run.sh:15730 (build-time analyzer mention); grill.sh header states it writes .loki/grill/report.md standalone and only --apply appends to the spec; no verify/council consumption path."
+        },
+        {
+          "gap": "Held-out acceptance checks are stored as plain on-disk JSON (.loki/checklist/held-out.json), so a non-cooperative agent with filesystem access can read the reserved hidden checks, weakening the guarantee to prompt-feed exclusion only (not true isolation like a hosted hidden test set).",
+          "severity": "low",
+          "axis": "verification",
+          "loki_worse_because": "completion-council.sh:1311-1314 explicitly documents 'a non-cooperative agent with filesystem tools can read the reservation directly; the protection is against feeding held-out items to the loop, not isolation.'"
+        }
+      ],
+      "improvement_candidates": [
+        {
+          "title": "Annotate-before-act: pre-commit an expected-outcome ledger, then diff against reality at verify time",
+          "what": "Before running verification for a change/checklist-item, have the runtime write a tamper-evident record of the EXPECTED observable outcome (e.g. 'GET /health -> 200 {status:ok}', 'test X fails before fix, passes after', 'this endpoint should now exist'). At verify time, compare recorded expectations against actual results and surface any expectation that was silently dropped or contradicted as a finding. Highest-leverage accuracy move: forces a falsifiable prediction, cutting self-serving post-hoc rationalization, and makes verification harder to fake (a passing gate with an unmet/edited expectation is itself a finding). Reuse the proof-verify canonical-hash+drift pattern so the ledger is tamper-evident.",
+          "acceptance_criteria": [
+            ".loki/expectations/<iter>.json ledger written BEFORE the verify/checklist run, each entry {id, statement, check_ref, expected}, canonicalized and hashed like proof-generator",
+            "loki verify (or the completion gate) reads the ledger and emits a finding for any expectation with no matching executed check, or whose actual result contradicts expected",
+            "An expectation whose result cannot be evaluated maps to inconclusive->CONCERNS, never VERIFIED (reuse verify.sh Entanglement-2)",
+            "The ledger hash is embedded in evidence.json/proof.json so an edited-after-the-fact expectation is detectable"
+          ],
+          "effort": "L",
+          "applicable": true
+        },
+        {
+          "title": "Ground the acceptance checklist in source reality, not spec prose alone (extend the acceptance-oracle beyond datastore)",
+          "what": "Extend checklist_oracle_triangulate so the checklist is triangulated against the actual codebase on more axes than datastore: discovered HTTP routes/handlers (does each spec'd endpoint map to a real handler?), CLI commands, exported public API symbols (via the existing LSP proxy mcp__loki-mode-lsp-proxy__lsp_workspace_symbols), and high-value domain invariants (auth must hash, money must not be float). Auto-generate deterministic checks (http_check for discovered routes, lsp_check_exists for spec'd symbols) instead of relying on the LLM to author them from prose. Attacks the single-oracle weakness the code itself flags as deferred.",
+          "acceptance_criteria": [
+            "For a web project, every endpoint named in the spec is matched to a real route/handler in source; unmatched -> High finding (mirrors existing oracle-datastore-conflict shape in prd-checklist.sh)",
+            "Spec'd public API symbols are verified to exist via the LSP proxy, not via LLM-authored grep_codebase checks",
+            "At least one domain-invariant check (e.g. password fields hashed, not stored plaintext) implemented as a deterministic gate",
+            "Greenfield/absent (nothing wired yet) does NOT fire a finding, matching existing non-conflict guards"
+          ],
+          "effort": "L",
+          "applicable": true
+        },
+        {
+          "title": "Add a runtime/boot smoke gate to loki verify so shipped evidence includes 'it actually runs'",
+          "what": "Promote the build-loop's playwright/http smoke into loki verify as a deterministic runtime gate: detect the start command (or use a persisted setup skill), boot the app with a timeout, hit a health/root path, capture status + a screenshot artifact, then tear down. Record it in evidence.json as a reproducible gate. Runtime-not-reachable -> inconclusive->CONCERNS (never VERIFIED). Closes the biggest trust gap vs Devin (compiles+green-tests != works) and the screenshot becomes a proof artifact.",
+          "acceptance_criteria": [
+            "verify_gate_runtime added to verify_main gate list, skipped (not failed) only when no start command/setup recipe is detectable",
+            "A successful boot records HTTP status + artifact path in evidence.json with reproducible=true",
+            "Boot failure -> Critical/High finding; boot-not-attempted-but-app-detected -> inconclusive->CONCERNS",
+            "No regression: without a detectable app, output is byte-identical to today (fail-open, mirrors the --hosted pattern in verify.sh)"
+          ],
+          "effort": "L",
+          "applicable": true
+        },
+        {
+          "title": "Persist a deterministic per-repo setup/run recipe (reusable setup skill) and consume it in verify",
+          "what": "On first successful build/boot, save a per-repo .loki/setup-recipe.json capturing the deterministic steps to install, seed, auth, and start the app (commands + env var NAMES + health path). Replay it on subsequent verify/e2e runs instead of re-detecting heuristically. This is Devin's 'saved login/setup skill' concept; it reduces adoption friction (the top need) by reliably reaching a runnable state and enables the runtime gate for repos needing auth/seed. Distinct from cmd_setup_skill (which installs the Loki skill, not a repo recipe).",
+          "acceptance_criteria": [
+            ".loki/setup-recipe.json written after a verified boot with {install, seed, env_keys(no secret values), start, health_path}",
+            "verify_gate_runtime prefers the recipe over heuristic detection when present",
+            "Secrets are never persisted into the recipe (only env var NAMES); reuse proof_redact.py patterns",
+            "Recipe is replayed idempotently and its use recorded in evidence.json"
+          ],
+          "effort": "M",
+          "applicable": true
+        },
+        {
+          "title": "Fold mock-integrity and test-mutation detection into the loki verify evidence document (anti-test-cheating)",
+          "what": "The build loop already has mock-integrity and test-mutation gates (8-gate system); surface them as deterministic findings inside loki verify so the shippable evidence.json attests tests were not stubbed/mutated to pass. Add a lightweight assertion-density / no-op-test heuristic on changed test files (a test file with no assertions or that mocks the exact symbol under test -> finding). Directly guards against test-runtime cheating, which Devin explicitly defends against.",
+          "acceptance_criteria": [
+            "Changed test files with zero assertions, or that mock the exact symbol under test, produce a Medium/High finding in evidence.json",
+            "Detection runs only on PR-diff test files (reuse VERIFY_DIFF_NAMES scoping)",
+            "Existing mock-integrity/test-mutation gate results (if run in-loop) are copied into evidence.json under deterministic_gates",
+            "Clean test changes produce no finding (guarded against false positives on integration tests that legitimately mock externals)"
+          ],
+          "effort": "M",
+          "applicable": true
+        },
+        {
+          "title": "Wire grill findings into the verification/completion gate",
+          "what": "Feed the pre-build grill's surfaced ambiguities/missing-acceptance-criteria into checklist generation and the completion gate: unresolved High grill findings become required checks or block completion until acknowledged (reuse the existing assumption-ledger gate mechanism in completion-council.sh). Makes the Devil's-Advocate posture actually harden what gets verified rather than being an advisory standalone report.",
+          "acceptance_criteria": [
+            "grill High findings converted into checklist items or assumption-ledger entries",
+            "Unresolved High grill findings block completion via an existing gate path (not a new bespoke one)",
+            "Opt-out knob preserves current standalone behavior",
+            "No double-firing when grill was not run (gate inert, like the held-out gate NONE branch)"
+          ],
+          "effort": "M",
+          "applicable": true
+        }
+      ]
+    },
+    {
+      "source": "Anthropic \"The Code Modernization Playbook: Transforming Legacy Systems with AI\" (27pp PDF, /Users/lokesh/Downloads/ebook-code-modernization-playbook-01_update 2 (1).pdf). Fully read (pages 1-27). Prescribes: (a) three pillars of modernization -- architecture transformation (monolith->microservices, circuit breakers/retry/graceful degradation), technology-stack modernization, development-practice evolution (CI/CD, IaC, GitOps); (b) five real-world use-case types with before/after code -- language migration (C->Java preserving business logic), platform modernization (cron shell->serverless), architecture transformation (monolith->microservices w/ event-driven + circuit breakers), integration modernization (FTP->REST w/ backward-compat endpoint); (c) a concrete phased getting-started framework: Weeks1-2 pick low-risk high-visibility target + code archaeology; Weeks3-4 extract business logic, generate translations, build POC with SIDE-BY-SIDE execution showing IDENTICAL outputs; Weeks5-8 full migration with PARALLEL RUN (modernized runs alongside legacy comparing outputs), comprehensive test suites covering edge cases from production data, API wrappers for gradual transition, documentation of every transformation decision, production cutover; Month3+ modernization-factory (parallel teams, shared conversion libraries, accumulated-pattern reuse); (d) a 4-level MATURITY MODEL (Ad hoc -> Planned -> Systematic -> Optimized) with per-level characteristics (living inventories, technical-debt scores, ROI-analysis-driven proactive proposals, continuous background modernization); (e) ROI/business-case framing (14% higher market valuation, 40%-maintenance-time readiness signal, cost-of-inaction quantification) as the executive-buy-in vehicle; (f) tool-selection criteria: deep codebase awareness (trace execution paths across files, identify impacts before they become problems), works-with-all-your-tools, flexible/headless deployment, secure-by-design (audit trails, RBAC), advanced features = memory + function/transform + MCP. Emphasizes AI as thought-partner (explains WHY, teaches concepts, discovers edge cases). Note: this is an Anthropic marketing/positioning ebook, so it is directional (what good looks like) rather than an algorithmic spec.",
+      "what_it_does_well": [
+        "Loki's healing knowledge base is deeper and more rigorously sourced than the playbook: skills/healing.md + references/legacy-healing-patterns.md cite 16 validated sources (Feathers characterization tests, Fowler Strangler Fig, Evans Anti-Corruption Layer, RepoMod-Bench system-boundary testing, AWS Transform decomposition, GitHub 3-agent COBOL pattern) with explicit honesty notes distinguishing implemented vs research-stage",
+        "Loki already implements the playbook's 'code archaeology' and 'friction-as-semantics' concepts with a concrete, enforced schema: friction-map.json classification (business_rule/true_bug/unknown), institutional-knowledge.md extraction, and a shell-level gate (hook_pre_healing_modify, migration-hooks.sh:348) that BLOCKS removal of unclassified friction -- stronger than the playbook which only describes archaeology narratively",
+        "Loki has mechanical phase gates the playbook lacks: hook_healing_phase_gate (migration-hooks.sh:646) requires friction-map has entries + characterization tests pass 100% before archaeology->stabilize transition; hook_post_healing_modify (migration-hooks.sh:566) reverts the edit and logs a failure-mode if characterization tests fail after any healing change",
+        "loki migrate (autonomy/loki:14518, autonomy/migration-agents.sh) already delivers much of the playbook's 'language migration' use case: multi-agent understand/guardrail/migrate/verify phases, Mermaid architecture + data-flow diagram generation (migration-agents.sh:57-63), per-step token-cost + risk estimation, --compliance presets (healthcare/fintech/government), parallel agents, incremental old/new paths, and migration_docs/ output",
+        "Loki maps the playbook's phased timeline nearly 1:1 with its 5 healing phases (archaeology/stabilize/isolate/modernize/validate) and even documents the AWS-Transform agent-role mapping and the GitHub 3-agent extract/test/rewrite pattern in skills/healing.md",
+        "Loki has an honest scale-constraints table (RepoMod-Bench: 91% pass <10K LOC dropping to 15% >50K LOC) that the playbook omits -- Loki is more truthful about where autonomous modernization breaks down"
+      ],
+      "loki_current_state": "loki heal (autonomy/loki:14110) runs a SINGLE-SHOT provider invocation per phase with a static prompt (autonomy/loki:14429-14454) -- it does NOT go through the RARV run_autonomous verification loop that loki start/migrate use. Env vars LOKI_HEAL_MODE/PHASE/STRICT/PRESERVE_FRICTION and CLI flags (--phase, --resume, --status, --report, --friction-map, --archaeology-only, --strict, --compliance, --parallel, --dry-run) all exist and are wired. Phase gates and friction/characterization enforcement are real (autonomy/hooks/migration-hooks.sh, 745 lines). CRITICAL GAP verified: the behavioral-baseline/ directory is created via mkdir (autonomy/loki:14323) but NOTHING in the codebase captures golden-master outputs into it or compares modernized-vs-legacy outputs against it (grep for writes to behavioral-baseline returns zero non-mkdir hits). The playbook's central accuracy mechanism -- parallel run / side-by-side execution proving IDENTICAL outputs (playbook pp.12,24) -- exists only as prompt instructions in the validate phase, not as an enforced deterministic harness. Characterization verification in heal runs the WHOLE test suite via detect_test_command (migration-hooks.sh:580), not per-system-boundary golden masters, despite references/legacy-healing-patterns.md prescribing system-boundary golden-master capture. No ROI/business-case artifact and no maturity-model self-assessment exist anywhere in heal or migrate (grep confirms ROI/maturity only appear in unrelated memory-system.md/agents.md docs). loki heal does not generate architecture/dependency diagrams (that capability lives only in loki migrate). heal and migrate are two separate, partially-overlapping commands with no unified intelligent routing.",
+      "gaps": [
+        {
+          "gap": "No deterministic parallel-run / golden-master output-equivalence harness. The behavioral-baseline/ dir is created but never populated or compared. The playbook's core accuracy claim (weeks 3-4 side-by-side identical outputs; weeks 5-8 parallel run comparing outputs) is Loki's biggest trust differentiator yet is only a prompt instruction in the validate phase, not machine-verified.",
+          "severity": "critical",
+          "axis": "accuracy",
+          "loki_worse_because": "autonomy/loki:14323 mkdir behavioral-baseline but grep for any write/compare to behavioral-baseline across autonomy/ returns zero non-mkdir/non-config hits; validate-phase 'compare with baseline' is only text in heal_prompt (autonomy/loki:14449, 14423)"
+        },
+        {
+          "gap": "loki heal is single-shot per phase, bypassing the RARV-C verification loop, completion council, and 8 quality gates that make loki start/migrate trustworthy. A healing 'modernize' step gets no iterative reason->act->reflect->verify closure, no override-council on a bad transform, no findings injection.",
+          "severity": "high",
+          "axis": "verification",
+          "loki_worse_because": "autonomy/loki:14465-14502 invokes claude/codex/cline/aider once with -p \"$heal_prompt\"; no call to run.sh/run_autonomous; RARV-C flags in skills/healing.md:266 are documented as 'useful' but not auto-enabled by cmd_heal"
+        },
+        {
+          "gap": "Characterization verification runs the entire test suite (detect_test_command) rather than implementation-agnostic system-boundary golden masters, contradicting Loki's own prescribed approach and the playbook's edge-case-from-production-data coverage. This permits test-overfitting the exact failure RepoMod-Bench warns about.",
+          "severity": "high",
+          "axis": "accuracy",
+          "loki_worse_because": "autonomy/hooks/migration-hooks.sh:580 test_cmd=$(detect_test_command ...); eval whole suite; references/legacy-healing-patterns.md:156-181 itself says system-boundary testing (not unit/full-suite) is correct, so implementation lags its own doc"
+        },
+        {
+          "gap": "No ROI / business-case / cost-of-inaction output. The playbook makes ROI the executive buy-in vehicle (chapter 4) and the Optimized maturity level generates 'modernization proposals with ROI analysis'. Loki produces a health-score but never a business-facing before/after cost, risk-reduction, or maintenance-time-saved artifact.",
+          "severity": "medium",
+          "axis": "adoption-friction",
+          "loki_worse_because": "grep ROI|business case across autonomy/skills/references shows hits only in memory-system.md/agents.md (unrelated); cmd_heal --report (autonomy/loki:14283) emits only friction/failure/knowledge/test counts, no ROI"
+        },
+        {
+          "gap": "No modernization-readiness / maturity self-assessment. The playbook's 4-level maturity model (Ad hoc->Planned->Systematic->Optimized) and the 40%-maintenance-time readiness signal are concrete adoption on-ramps that reduce 'where do I start' friction. Loki has no equivalent triage that tells a user whether/where to modernize.",
+          "severity": "medium",
+          "axis": "adoption-friction",
+          "loki_worse_because": "no maturity/readiness scoring exists in cmd_heal or cmd_migrate; grep maturity returns zero engine hits; health_score (skills/healing.md:342) measures in-progress healing, not pre-flight readiness/target selection"
+        },
+        {
+          "gap": "heal and migrate are two overlapping commands with no unified intelligent routing; diagram generation exists only in migrate, RARV+council only in migrate/start, friction-gates only in heal. A user modernizing legacy code must know which command and which flags to pick -- violating Loki's own 'unified intelligent defaults, never fragmented knobs' principle.",
+          "severity": "medium",
+          "axis": "adoption-friction",
+          "loki_worse_because": "cmd_heal (autonomy/loki:14110) and cmd_migrate (autonomy/loki:14518) are separate dispatch entries with divergent capabilities; migration-agents.sh:57-63 generates Mermaid diagrams but cmd_heal never does; no signal-based auto-selection between them"
+        }
+      ],
+      "improvement_candidates": [
+        {
+          "title": "Golden-master parallel-run equivalence harness for heal/migrate (the accuracy moat)",
+          "what": "Add a deterministic capture+compare harness that, during archaeology/guardrail, records outputs at natural system boundaries (CLI stdout/exit, HTTP responses, DB state deltas, file/queue outputs) into .loki/healing/behavioral-baseline/ as golden masters, and during modernize/validate re-runs the SAME boundary probes against the modernized code and diffs them. Any divergence blocks the phase gate unless explicitly documented as intentional. This turns the playbook's 'side-by-side identical outputs' (pp.12,24) from a prompt suggestion into machine-verified evidence, and directly feeds Loki's verified-completion/trust-as-product positioning. loki-mode CONSUMES this: it is the same verified-completion evidence gate applied to modernization builds.",
+          "acceptance_criteria": [
+            "cmd_heal archaeology (and migrate guardrail) writes >=1 golden-master artifact per detected boundary into .loki/healing/behavioral-baseline/",
+            "hook_healing_phase_gate for modernize->validate fails closed unless boundary outputs match baseline OR a documented-intentional-change record exists",
+            "diff report enumerates every changed boundary with old vs new output; emitted in loki heal --report and as structured evidence JSON",
+            "works with zero config on a sample C/COBOL and a Python2 fixture repo; degrades honestly ('no boundaries detected') rather than false-green"
+          ],
+          "effort": "L",
+          "applicable": true
+        },
+        {
+          "title": "Route loki heal modernize/validate through the RARV-C loop + completion council",
+          "what": "When heal reaches stabilize/isolate/modernize/validate (behavior-changing phases), execute via run_autonomous with LOKI_INJECT_FINDINGS/LOKI_OVERRIDE_COUNCIL/LOKI_AUTO_LEARNINGS auto-enabled and the legacy-healing-auditor in the review pool, instead of the current single-shot -p invocation. Archaeology-only can stay single-shot. This gives modernization builds the same iterative verification, override-council, and 8-gate trust that loki start already provides, closing the largest verification gap.",
+          "acceptance_criteria": [
+            "cmd_heal for phases stabilize|isolate|modernize|validate invokes the RARV loop (run.sh path) not a bare claude -p call",
+            "RARV-C closure flags default-on within heal (documented in skills/healing.md, verified by grep of cmd_heal)",
+            "legacy-healing-auditor fires and can BLOCK on behavioral change without characterization update",
+            "a deliberately-broken transform is caught+reverted by the loop, proven on a fixture"
+          ],
+          "effort": "L",
+          "applicable": true
+        },
+        {
+          "title": "System-boundary golden characterization instead of whole-suite pass/fail",
+          "what": "Replace the current 'run detect_test_command whole suite' verification in hook_post_healing_modify with per-boundary characterization comparison against the golden masters from candidate #1, so verification is implementation-agnostic and cannot be satisfied by overfit unit tests. Keeps whole-suite as an additional signal, not the sole gate.",
+          "acceptance_criteria": [
+            "hook_post_healing_modify compares boundary outputs to baseline, not only whole-suite exit code",
+            "a change that keeps unit tests green but alters a CLI/API boundary output is BLOCKED",
+            "matches the approach already prescribed in references/legacy-healing-patterns.md:156-181 (self-consistency)"
+          ],
+          "effort": "M",
+          "applicable": true
+        },
+        {
+          "title": "Modernization readiness + target-selection triage (pre-flight)",
+          "what": "Add loki heal --assess (or a readiness step auto-run before archaeology) that scans a codebase and outputs: estimated LOC/language mix, technical-debt signals, maintenance-risk indicators, a placement on the 4-level maturity model, and a RANKED list of low-risk high-visibility targets to start with (per the playbook weeks 1-2 guidance). Reduces the top adoption-friction question 'where do I start' to one command, and uses Loki's existing complexity-detection machinery.",
+          "acceptance_criteria": [
+            "single command emits a readiness report with maturity-level placement + ranked candidate targets + rationale",
+            "ranking prefers isolated/low-blast-radius modules (matches playbook weeks 1-2)",
+            "runs read-only (no modification), zero required flags",
+            "output is both human-readable and structured JSON for the dashboard"
+          ],
+          "effort": "M",
+          "applicable": true
+        },
+        {
+          "title": "ROI / cost-of-inaction business-case artifact in loki heal --report",
+          "what": "Extend the healing report to emit a business-facing before/after: maintenance-time signal, risk-reduction (security warnings resolved, single-points-of-failure removed), coverage gained, and a conservative cost-of-inaction framing. Explicitly label estimates as estimates (no fabricated dollar figures). This is the playbook's executive-buy-in vehicle and lowers B2B/enterprise adoption friction, but is a REPORTING layer -- keep it honest and clearly derived from measured metrics, not invented.",
+          "acceptance_criteria": [
+            "loki heal --report includes a business-case section derived only from measured metrics (friction resolved, warnings delta, coverage, boundaries verified)",
+            "every quantified claim traces to a measured input; no fabricated market/valuation numbers",
+            "opt-in or clearly-marked-estimate to preserve Loki's no-fabrication rule"
+          ],
+          "effort": "S",
+          "applicable": true
+        },
+        {
+          "title": "Auto-generate C4/dependency + data-flow diagrams during heal archaeology",
+          "what": "Port the Mermaid diagram generation already in loki migrate (migration-agents.sh:57-63) into heal archaeology so every healing run produces architecture + data-flow diagrams that reveal hidden dependencies -- the exact 'Claude created detailed diagrams that revealed hidden dependencies' behavior in the playbook's C->Java sample scenario (p.11). Pure reuse of existing capability; unifies the two commands.",
+          "acceptance_criteria": [
+            "heal archaeology emits architecture.md + data-flows.md with Mermaid into .loki/healing/",
+            "diagrams surface at least dependency edges and critical data flows for a sample legacy repo",
+            "reuses migration-agents.sh generation, not a new parallel implementation"
+          ],
+          "effort": "S",
+          "applicable": true
+        }
+      ]
+    },
+    {
+      "source": "Devin (Cognition) async/proactive patterns: Managed Devins (parallel sub-agents in isolated VMs), Scheduled Devins (self-scheduling recurring work with cross-session memory), Auto-Triage (event-driven, prompt-injection-sandboxed), and the productivity ESTIMATOR (LLM estimates human-engineering-hours saved per session; r_log 0.74 on 258 sessions from 126 users; powers a $10M AI Productivity Guarantee). Refs: https://cognition.com/blog/ai-productivity, https://devin.ai/guarantee/, https://cognition.ai/blog/ai-guarantee",
+      "what_it_does_well": [
+        "Per-task VALUE ESTIMATOR: an LLM estimates equivalent human-engineering-hours for every completed task, calibrated against a real dataset of engineer time estimates (r_log 0.74 on held-out sessions). Turns raw agent activity into a business-legible ROI number.",
+        "Aggregation-honest framing: Cognition explicitly says individual predictions are imperfect but the model is good enough for aggregated totals -- so ROI is reported at the account/team level where the estimator is trustworthy, not oversold per-task.",
+        "$ guarantee built ON TOP of the estimator: if delivered engineering value < what the customer paid, they fund usage credits until it does (up to $10M). The metric becomes a contractual enterprise-sales lever, not just a vanity stat.",
+        "Auto-Triage is event-driven and prompt-injection-sandboxed: untrusted event content (issue/PR bodies) cannot escalate into arbitrary agent actions.",
+        "Scheduled Devins carry cross-session memory so recurring work compounds context instead of cold-starting each run.",
+        "Managed Devins run parallel sub-agents in isolated VMs -- true fan-out isolation, not just cwd separation."
+      ],
+      "loki_current_state": "VERIFIED against source in /Users/lokesh/git/loki-mode. (1) TIME-SAVED metric EXISTS but is a crude fixed heuristic: `time_saved_hours = round(total_iterations * 15 / 60, 2)` (autonomy/loki:23478), rendered by `loki metrics` as 'Estimated: X hours (based on N iterations x 15min each)' (autonomy/loki:23578-23580, comment at :23477 'Each Loki iteration replaces ~15min of manual work'). It is NOT an LLM estimate of human-engineering-hours, is NOT calibrated against real engineer estimates, has no r_log/validation, is project-level session-report only (not per-build), and emits NO dollar ROI figure and NO guarantee. A separate stub exists at autonomy/loki:13879 (`'estimated_hours': '?'`) in the migration-plan writer -- literally a hardcoded question mark. (2) EVENT-DRIVEN: autonomy/trigger-server.py is a real GitHub webhook receiver with HMAC-SHA256 signature validation, a bounded worker queue (webhook-storm safe), child-process reaping, and a flag-injection defense (REPO_FULL_NAME_RE at :48, blocking dash-leading repo names from becoming `loki start` flags -- the same threat class Devin's prompt-injection-sandboxed triage addresses). BUT on `issues.opened` it runs a FULL `loki start <ref> --pr --detach` build (:255) and on `pull_request.synchronize` a full build (:285) -- there is NO lightweight triage/classify/label/route step; it is all-or-nothing build, not triage. (3) SCHEDULED: autonomy/trigger-schedule.py is a cron-like daemon (schedules.json) wired via cmd_trigger (autonomy/loki:14940); Claude Code side has /loop and /schedule skills. No cross-session-memory-carrying recurring agent is described in the schedule entry format. (4) PARALLEL/ISOLATED: git worktrees (skills/parallel-workflows.md) + Docker sandbox (autonomy/sandbox.sh, seccomp/dropped-caps/resource-limits) provide isolation. (5) PROOF: proof.json + advisory 'loki: verified-completion' check-run (autonomy/lib/proof-check.sh) already produce per-build evidence -- a natural carrier for an hours-saved/ROI field.",
+      "gaps": [
+        {
+          "gap": "No LLM-based human-engineering-hours estimate per build. Loki's only hours number is total_iterations x 15min, a fixed constant unrelated to the actual work done -- a 2-iteration schema tweak and a 2-iteration full-stack feature both score 30min. Devin's estimator reads the actual task/diff and predicts equivalent human effort, calibrated against real engineer estimates (r_log 0.74).",
+          "severity": "high",
+          "axis": "adoption-friction",
+          "loki_worse_because": "autonomy/loki:23478 `time_saved_hours = round(total_iterations * 15 / 60, 2)`; comment :23477 states the fixed 15min assumption. No LLM call, no diff/task input, no calibration anywhere in the codebase (grep for calibrat/r_log returns nothing relevant)."
+        },
+        {
+          "gap": "No dollar ROI figure and no per-build ROI. The metric is only in the project-level `loki metrics` session report; there is no per-build 'this build saved ~X engineer-hours (~$Y)' surfaced in proof.json, the dashboard, or PR comments -- exactly the enterprise-sales/adoption lever Devin monetized.",
+          "severity": "high",
+          "axis": "adoption-friction",
+          "loki_worse_because": "The `time_saved` block (autonomy/loki:23533-23537) has only hours/iterations/minutes_per_iteration, no cost, no per-build scope. proof.json (autonomy/lib/proof-check.sh) surfaces an honesty headline but carries no hours/ROI field."
+        },
+        {
+          "gap": "Hours-saved is uncalibrated and unvalidated, so it cannot honestly power a guarantee or even a credible marketing claim. Loki's own binding rule is 'accuracy is the moat, no fabrication' -- shipping `iterations x 15min` as 'time saved' is the kind of unbacked number that rule warns against.",
+          "severity": "medium",
+          "axis": "accuracy",
+          "loki_worse_because": "No held-out validation set, no engineer-estimate ground truth, no error metric anywhere; the 15min constant is asserted in a code comment (autonomy/loki:23477) with no evidence."
+        },
+        {
+          "gap": "Event-driven entrypoint jumps straight to a full build with no triage/classify/route stage. A webhook on every opened issue spawns a full autonomous build (cost + risk), where Devin first triages (is this actionable? label/route/estimate) before committing compute. This is both a cost-control and a false-positive-build gap.",
+          "severity": "medium",
+          "axis": "modularity",
+          "loki_worse_because": "autonomy/trigger-server.py:255 handles issues.opened by running full `loki start <ref> --pr --detach`; there is no intermediate classify/triage action -- the only actions are full builds."
+        },
+        {
+          "gap": "Scheduled recurring runs do not carry forward cross-session memory as a first-class feature. Loki HAS a memory system, but the schedule entry format (trigger-schedule.py:8-16) has no memory-thread/continuity field, so a recurring 'daily-quality-review' cold-starts context each run rather than compounding it like Scheduled Devins.",
+          "severity": "low",
+          "axis": "modularity",
+          "loki_worse_because": "trigger-schedule.py schedule entry schema (name/cron_expr/action/args/enabled/last_run) has no memory-session or continuity key; nothing binds recurring runs to a persistent episodic thread."
+        }
+      ],
+      "improvement_candidates": [
+        {
+          "title": "loki-mode: LLM-calibrated engineering-hours estimator, emitted into proof.json per build",
+          "what": "Replace the `iterations x 15min` heuristic with an LLM estimator that reads the actual completed work (diff stat, files changed, tests written, task/PRD scope, iteration transcript) and predicts equivalent human-engineering-hours, plus a low/high band. Persist it as an `effort_estimate` field in the existing per-build proof.json (autonomy/lib/proof-check.sh) so it rides the trust/evidence rail loki already ships, and fall back to the current heuristic when no LLM is available (labeled 'heuristic' vs 'estimated' so the number is never silently fabricated). Applicable: loki-mode is the engine that produces the diff/proof and already makes provider calls, so it genuinely consumes this. This is the load-bearing primitive both the dollar ROI and any guarantee depend on.",
+          "acceptance_criteria": [
+            "proof.json gains an effort_estimate object: {hours, low, high, method: 'llm'|'heuristic', model, inputs_hash}",
+            "`loki metrics` TIME SAVED block reads the per-build estimates when present and only falls back to iterations x 15min when absent, labeling which method produced the number",
+            "Estimator input is the real work (diff stat + files + tests + task scope), NOT iteration count alone; verified by a unit test feeding two builds of different scope and asserting different hours",
+            "No LLM available -> heuristic path, clearly labeled 'heuristic (uncalibrated)'; never presented as a validated estimate"
+          ],
+          "effort": "M",
+          "applicable": true
+        },
+        {
+          "title": "loki-mode: per-build ROI surface (hours + $) in dashboard, PR comment, and `loki metrics`",
+          "what": "Once the estimator exists, surface 'this build delivered ~X engineer-hours (~$Y at a configurable blended rate)' in three places: the verified-completion PR comment/check-run, the dashboard build view, and `loki metrics`. $ is hours x an operator-set LOKI_ENGINEER_HOURLY_RATE (default off / unset shows hours only, so we never invent a dollar figure). Applicable: this is loki-mode surfacing its own build output; it is the concrete adoption + enterprise-sales lever, and it stays honest by making $ opt-in and always showing the underlying estimator method/band.",
+          "acceptance_criteria": [
+            "Verified-completion PR comment includes the hours band and (only if rate configured) a $ figure",
+            "Dashboard build view shows the same estimate with method label",
+            "$ requires LOKI_ENGINEER_HOURLY_RATE; unset -> hours-only, never a fabricated dollar amount",
+            "Aggregate account/team view sums per-build hours (matches Devin's aggregation-honest framing rather than trusting any single estimate)"
+          ],
+          "effort": "M",
+          "applicable": true
+        },
+        {
+          "title": "loki-mode: add a lightweight TRIAGE action to trigger-server before it spawns a full build",
+          "what": "Insert a classify/triage step in autonomy/trigger-server.py between the (already-hardened) webhook auth and the full `loki start`. On issues.opened, run a cheap model pass over the issue body to decide: actionable-build | needs-info (post a comment) | label-and-route | ignore -- and only escalate to a full build on actionable-build. Keep the existing HMAC + REPO_FULL_NAME_RE flag-injection defenses (they already match Devin's prompt-injection-sandboxed posture) and treat the issue body as untrusted throughout. Applicable: loki-mode owns trigger-server.py and the loki start entrypoint; this directly reduces wasted full builds and false-positive PRs, which is the cost/adoption concern.",
+          "acceptance_criteria": [
+            "issues.opened routes through a triage classifier; only 'actionable-build' verdicts call full `loki start`",
+            "Non-actionable verdicts take a cheap action (comment/label/skip) and are logged via the existing log_event path",
+            "Untrusted issue/PR body text can never alter the triage action set or inject a loki start flag; covered by a test with an adversarial body (dash-leading, injection strings)",
+            "Triage is default-conservative: ambiguous -> needs-info comment, not an auto-build"
+          ],
+          "effort": "M",
+          "applicable": true
+        },
+        {
+          "title": "autonomi-SaaS: hours-saved / ROI receipt and optional productivity guarantee, consuming loki-mode's proof.json effort_estimate",
+          "what": "In autonomi-saas, overlay the per-build effort_estimate from loki's proof.json onto the Evidence Receipt and aggregate it into an account-level ROI dashboard ('this month: ~N engineer-hours, ~$M saved'). Because it is aggregated across builds, it matches the level where the estimator is honest. This is the natural home for a Devin-style guarantee (SaaS carries billing, tenancy, and the commercial relationship); loki-mode should NOT own the guarantee. Applicable: autonomi-saas already overlays stored evidence onto the engine proof (per MEMORY Evidence Receipt work), so it genuinely consumes this field; the guarantee itself is gated on the estimator being calibrated first.",
+          "acceptance_criteria": [
+            "BFF reads proof.json effort_estimate per build and stores it against the tenant/build",
+            "Account view aggregates hours (+ $ if rate set) across builds, labeled with the aggregation-honest caveat",
+            "Guarantee logic (if pursued) is founder-gated and blocked until the estimator has a validation number (do not ship a $ guarantee on an uncalibrated estimate)",
+            "No cross-tenant leakage in the aggregate (respects the per-build two-read split already used for #17)"
+          ],
+          "effort": "L",
+          "applicable": true
+        },
+        {
+          "title": "loki-mode: calibrate the estimator against a ground-truth engineer-estimate set (validation gate)",
+          "what": "Build a small validation harness: collect a set of completed builds with human engineer time estimates (from real usage / benchmark tasks), score the LLM estimator against them, and report an error metric (e.g. r_log or MAE-in-log-space) checked into the benchmark harness. Until this exists, the estimate must always be labeled 'uncalibrated'. Applicable: this is what lets loki/autonomi make ANY honest hours claim and is the precondition for the guarantee; it directly serves the 'accuracy is the moat, no fabrication' binding rule. Ties into existing task #49 (benchmark harness).",
+          "acceptance_criteria": [
+            "A validation dataset of builds with engineer-hour ground truth exists in the benchmark harness",
+            "Estimator error metric is computed and reported; a threshold gates whether estimates may be labeled 'calibrated' vs 'uncalibrated'",
+            "Marketing/UI/guarantee copy may only claim validated hours once the metric clears the threshold",
+            "Harness is reproducible (fits task #49's reproducible-benchmark goal)"
+          ],
+          "effort": "L",
+          "applicable": true
+        }
+      ]
+    }
+  ]
+}
