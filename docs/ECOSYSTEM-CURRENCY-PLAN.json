@@ -1,0 +1,84 @@
+{
+  "title": "Loki + Autonomi Ecosystem-Currency Plan",
+  "generated": "2026-07-01",
+  "scope_principle": "Track ONLY what loki-mode/autonomi CONSUMES from the Claude ecosystem (CLI invocation contract, auth detection, model IDs/pricing, stdout/exit-code parsing). Adjacent Anthropic PRODUCTS (Managed Agents, Claude Tag, loop-engineering primitives, agent identity) are peer/inspiration categories loki competes with, NOT dependencies -- assessed and declined with reason (the CTO triage move). Output is honestly small; no padding to a target count.",
+  "primary_sources_checked": {
+    "claude_cli": "claude --help / --version (installed 2.1.198): core flags loki consumes (-p, --output-format, --model, --dangerously-skip-permissions, --resume, --session-id, --permission-mode, claude auth status) ALL PRESENT and STABLE. No invocation-contract drift.",
+    "model_overview": "platform.claude.com/docs/en/docs/about-claude/models/overview (fetched 2026-07-01): GA models = claude-opus-4-8, claude-sonnet-5, claude-haiku-4-5(-20251001), claude-fable-5. Mythos 5 (claude-mythos-5) invitation-only via Glasswing, not GA.",
+    "codex_cli": "codex-cli 0.141.0 installed"
+  },
+  "stories": [
+    {
+      "id": "EC-1",
+      "title": "External-tool contract adapter + drift test (THE modular win)",
+      "why": "User mandate: 'if things we use change, we quickly adopt and release.' This session's keychain-login fix proves the need. Consolidate the claude/codex/cline/aider invocation + auth + model-ID contract behind one thin registry module with a DRIFT TEST that checks the installed CLI's ACTUAL contract vs loki's assumptions.",
+      "area": "modularization",
+      "value": "high",
+      "effort": "M",
+      "gate": "autonomous",
+      "state": "not-started",
+      "acceptance_criteria": [
+        "A single module (extend providers/models.sh + a new providers/contract.sh) declares, per provider: the invocation flags loki relies on, the auth-status probe, and the model-ID source.",
+        "A drift test (tests/test-provider-contract-drift.sh) runs `claude --help`/`--version` (+ codex equivalents where installed) and FAILS if a flag loki invokes is absent, or a required auth probe is gone -- so a real CLI change is caught in CI, not by a user.",
+        "The test SKIPS gracefully (not fail) when a provider CLI is not installed (env-tolerant), and distinguishes 'flag missing (real drift)' from 'CLI absent (skip)'.",
+        "No behavior change to any existing loki command; drift test is additive.",
+        "Full gate: engine-adjacent, council 3/3 + local-ci; release as MINOR."
+      ]
+    },
+    {
+      "id": "EC-2",
+      "title": "Add Mythos 5 to the model catalog (opt-in, Glasswing-gated)",
+      "why": "claude-mythos-5 shipped (Fable 5 twin, $10/$50). It is invitation-only (Project Glasswing, defensive-cyber). Add as an OPT-IN catalog entry so approved users can select it; do NOT make it a default (most users lack access).",
+      "area": "cli",
+      "value": "low",
+      "effort": "S",
+      "gate": "autonomous",
+      "state": "not-started",
+      "acceptance_criteria": [
+        "providers/model_catalog.json gains a claude-mythos-5 entry with alias 'mythos', pricing $10/$50, note 'invitation-only via Project Glasswing; defensive-cyber; not GA'.",
+        "Mythos is NOT set as any latest_* default (Glasswing-gated); selectable only via explicit LOKI_CLAUDE_MODEL / alias.",
+        "loki provider models claude lists it with the availability note.",
+        "Dashboard model picker (if it enumerates the catalog) shows it flagged 'limited access'."
+      ]
+    },
+    {
+      "id": "EC-3",
+      "title": "Verify haiku pinned-ID + effort/adaptive-thinking currency",
+      "why": "Docs: haiku GA pinned ID is claude-haiku-4-5-20251001; effort defaults to high on Opus 4.8 + Sonnet 5; current models use adaptive (not extended) thinking. Confirm loki's alias resolution + effort/thinking handling match.",
+      "area": "cli",
+      "value": "medium",
+      "effort": "S",
+      "gate": "autonomous",
+      "state": "not-started",
+      "acceptance_criteria": [
+        "Confirm loki's claude-haiku-4-5 alias resolves correctly (alias is documented-valid; no change if so).",
+        "Confirm loki's effort-per-tier handling does not FORCE a non-high effort that contradicts the new high default in a way that surprises users; document the interaction.",
+        "Confirm no loki code assumes extended-thinking on models that only support adaptive-thinking; note any mismatch.",
+        "Output: a short verification note; only code changes if a real mismatch is found (no speculative edits)."
+      ]
+    },
+    {
+      "id": "EC-4",
+      "title": "Refresh doc/link references to platform.claude.com",
+      "why": "docs.anthropic.com now 301-redirects to platform.claude.com. Any loki docs/help/wiki that link to docs.anthropic.com model/pricing pages should point at the live host so users don't hit redirects.",
+      "area": "docs",
+      "value": "low",
+      "effort": "S",
+      "gate": "autonomous",
+      "state": "not-started",
+      "acceptance_criteria": [
+        "grep loki repo for docs.anthropic.com references in user-facing docs/help/wiki; update to platform.claude.com where the target moved.",
+        "Do NOT rewrite blog/news anthropic.com links that did not move; only the docs host.",
+        "Docs-only lightweight gate."
+      ]
+    }
+  ],
+  "assessed_not_applicable": [
+    {"item": "Managed Agents (session/harness/sandbox decoupling, brain/hands)", "reason": "Hosted Anthropic PLATFORM. Loki-mode is a local CLI RARV orchestrator; it does not consume this API. Decoupled-brain/hands is a different product category -- inspiration only, not a currency obligation. A future 'loki on Managed Agents' would be a strategic build, founder-gated, not a staleness fix."},
+    {"item": "Claude Tag / multiplayer agents / agent identity", "reason": "Slack team-collaboration surface + per-channel identity model. Not loki-mode's surface. Loki's own dashboard-steering feature (task #44) is the analogous local capability we ARE building."},
+    {"item": "Loop engineering + /goal /loop /schedule + skills/hooks/rules/subagents", "reason": "Claude Code HARNESS features. Loki-mode is a PEER loop-engine (RARV-C closure loop, completion council). It competes with / is inspired by these; it does not track them as a dependency. (We already use /goal + /loop in THIS session to drive loki dev, which is the correct consumer relationship -- as a Claude Code user, not as loki-the-product.)"},
+    {"item": "Brain / self-improving memory (Perplexity), Dreaming (Managed Agents)", "reason": "Loki-mode already HAS an episodic/semantic memory system (memory/ package, consolidation.py) and cross-project RAG. Their approaches are useful inspiration for a future memory-consolidation enhancement (candidate backlog item), not a currency fix."},
+    {"item": "Enterprise-managed MCP auth (Okta/IdP), Claude apps gateway (Bedrock/GCP/Foundry)", "reason": "Enterprise identity + cloud-marketplace distribution. Relevant to autonomi-verify's enterprise RBAC/SSO story (top-100 rank 15, founder-gated), NOT a loki-mode CLI currency fix. Folded into the founder-gated prep (#48)."}
+  ],
+  "tracking": "This file is the source of truth for EC-* stories. Update state (not-started -> in-progress -> done) as each ships. Companion human-readable summary: docs/ECOSYSTEM-CURRENCY-PLAN.md"
+}
