@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.104.1] - 2026-07-01
+
+### Bun doctor checks Claude login (bash/Bun parity)
+
+- **`loki doctor` (Bun route) now performs the Claude OAuth login check** that the
+  bash route already had. Previously the Bun `doctor` only checked `ANTHROPIC_API_KEY`
+  and never inspected the Claude login state, so on a machine with an expired Claude
+  access token the two routes diverged (bash warned "login EXPIRED", Bun said nothing).
+  The check is a zero-network read of `${CLAUDE_CONFIG_DIR:-~/.claude}/.credentials.json`
+  comparing `claudeAiOauth.expiresAt` against now; it is byte-faithful with the bash
+  output in every login state (expired -> WARN, absent/fresh -> the neutral line), so
+  the two routes agree. Conservative by design (no refresh attempt, which needs a
+  network call), matching run.sh's fail-fast build preflight. Proven parity across
+  expired / absent / fresh credential fixtures.
+
 ## [7.104.0] - 2026-06-30
 
 ### Default execution model is now Claude Sonnet 5

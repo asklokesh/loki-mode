@@ -10,7 +10,7 @@
 // Network probes (ChromaDB, MiroFish) use AbortSignal.timeout(2000) so a slow
 // probe never hangs the CLI. Secret env vars are checked for presence only --
 // the value is never read or echoed.
-import { existsSync, lstatSync, readlinkSync, statfsSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync, statfsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
@@ -417,6 +417,27 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
 
 // ---------- Text mode rendering ----------------------------------------------
 
+// Zero-network check mirroring bash doctor + run.sh preflight: is the Claude
+// OAuth ACCESS token expired? Reads ${CLAUDE_CONFIG_DIR:-~/.claude}/.credentials
+// .json and compares claudeAiOauth.expiresAt (epoch ms) against now + 60s. Any
+// missing file / parse error / absent field returns false (never a false warn),
+// byte-faithful with the bash `python3` inline check. Deliberately does NOT try
+// a refresh (that needs a network call), so it warns whenever the access token
+// is past expiry -- the conservative behavior the bash route already ships.
+function claudeOauthExpired(): boolean {
+  try {
+    const dir = process.env["CLAUDE_CONFIG_DIR"] || `${homedir()}/.claude`;
+    const raw = readFileSync(`${dir}/.credentials.json`, "utf8");
+    if (!raw) return false;
+    const exp = JSON.parse(raw)?.claudeAiOauth?.expiresAt;
+    return (
+      typeof exp === "number" && exp > 0 && exp / 1000 <= Date.now() / 1000 + 60
+    );
+  } catch {
+    return false;
+  }
+}
+
 function badge(status: Status): string {
   switch (status) {
     case "pass":
@@ -542,9 +563,23 @@ async function runText(): Promise<number> {
     process.stdout.write(`  ${badge("pass")}  ANTHROPIC_API_KEY is set\n`);
     tally.pass++;
   } else if (claudeFound) {
-    process.stdout.write(
-      `  ${DIM}  --  ${NC}  ANTHROPIC_API_KEY not set (Claude CLI uses its own login)\n`,
-    );
+    // Parity with bash doctor (autonomy/loki): zero-network check that warns when
+    // the Claude OAuth access token has expired. An expired token would otherwise
+    // pass here and then 401 mid-build (the build stalls at BOOTSTRAP). This is a
+    // conservative check by design: it does NOT attempt a refresh (that needs a
+    // network call), so it warns whenever the access token's expiresAt is past,
+    // mirroring run.sh's fail-fast preflight. Any read/parse failure falls through
+    // to the neutral line, so a missing/corrupt creds file never false-warns.
+    if (claudeOauthExpired()) {
+      process.stdout.write(
+        `  ${badge("warn")}  Claude login has EXPIRED -- run 'claude login' before a build (it would otherwise stall)\n`,
+      );
+      tally.warn++;
+    } else {
+      process.stdout.write(
+        `  ${DIM}  --  ${NC}  ANTHROPIC_API_KEY not set (Claude CLI uses its own login)\n`,
+      );
+    }
   }
   if (env["OPENAI_API_KEY"]) {
     process.stdout.write(`  ${badge("pass")}  OPENAI_API_KEY is set\n`);
