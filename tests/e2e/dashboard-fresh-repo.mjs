@@ -7,13 +7,16 @@
  * the real first-time-user experience and shipped three classes of bug:
  *   - cold-repo 404 flood + AbortError spam (no .loki data exists yet),
  *   - long LLM-backed calls aborting at the client's 10s default,
- *   - iframe pages (trust/cost/proofs) hardcoded dark, clashing with the cream
- *     SPA, and not following the SPA's manual Dark toggle.
- * This harness reproduces the ACTUAL user path: a fresh repo with NO .loki, the
- * full SPA in a real browser, panels visited adjacent, the trust iframe checked
- * for theme consistency in BOTH light and toggled-dark. It asserts the absence
- * of the symptoms (console 404/AbortError on cold load; theme mismatch), which
- * is what static greps + seeded tests could not catch.
+ *   - iframe pages (trust/cost/proofs) whose theme clashed with the cream SPA.
+ * As of v7.90.1 the product is light-only: the manual Dark toggle was removed
+ * and the trust iframe is pinned to ?theme=light (dashboard/static/index.html
+ * line ~15911), so both the SPA and the iframe stay on the same cream
+ * background. This harness reproduces the ACTUAL user path: a fresh repo with
+ * NO .loki, the full SPA in a real browser, panels visited adjacent, the trust
+ * iframe checked for theme consistency (light-only). It asserts the absence of
+ * the symptoms (console 404/AbortError on cold load; theme mismatch) and the
+ * light-only invariant, which is what static greps + seeded tests could not
+ * catch.
  *
  * Usage:  node tests/e2e/dashboard-fresh-repo.mjs
  * Requires: a dashboard server already running on $LOKI_DASH_URL (default
@@ -133,8 +136,10 @@ async function main() {
   record('no /api/ 404s on cold load', http404.length === 0,
     http404.length ? http404.slice(0, 4).join(' | ') : 'clean');
 
-  // 3. Theme consistency: SPA + trust iframe must share a light background on
-  //    default load, and BOTH flip to dark after the SPA Dark toggle.
+  // 3. Theme consistency (light-only since v7.90.1): SPA + trust iframe must
+  //    share a light background on default load, and the iframe must STAY cream
+  //    after SPA interaction (the Dark toggle was removed; the iframe is pinned
+  //    to ?theme=light). This asserts the light-only invariant holds.
   try {
     await page.evaluate(() => {
       const nav = document.querySelector('.nav-link[data-section="trust"]');
@@ -153,19 +158,25 @@ async function main() {
       record('light theme: iframe matches SPA cream', lightOk,
         `spa=${spaBgLight} iframe=${frameBgLight}`);
 
-      // Toggle the SPA to dark and confirm the iframe follows.
+      // Light-only invariant (v7.90.1): there is no Dark toggle to click, and
+      // the iframe is pinned to ?theme=light. Re-visit the trust section to
+      // exercise a repeat interaction, then confirm the iframe --bg is STILL
+      // the cream #FAFAF7 (it never drifts to a dark theme).
       await page.evaluate(() => {
-        const t = document.getElementById('theme-toggle');
-        if (t) t.click();
+        const overview = document.querySelector('.nav-link[data-section="overview"]');
+        if (overview) overview.click();
       });
-      await page.waitForTimeout(1500); // iframe src re-points with ?theme=dark
+      await page.waitForTimeout(400);
+      await page.evaluate(() => {
+        const nav = document.querySelector('.nav-link[data-section="trust"]');
+        if (nav) nav.click();
+      });
+      await page.waitForTimeout(1500);
       const frame2 = page.frames().find((f) => f.url().includes('/trust'));
-      const frameBgDark = frame2 ? await readCssVar(frame2, '--bg') : '';
-      // Dark iframe --bg is #0F0B1A (not the cream). The key assertion: it is
-      // NOT still light, i.e. it followed the toggle.
-      const darkOk = !!frameBgDark && !/fafaf7/i.test(frameBgDark);
-      record('dark toggle: iframe follows SPA', darkOk,
-        `iframe(after toggle)=${frameBgDark}`);
+      const frameBgAfter = frame2 ? await readCssVar(frame2, '--bg') : '';
+      const stayLightOk = /fafaf7/i.test(frameBgAfter);
+      record('light-only: iframe stays cream after interaction', stayLightOk,
+        `iframe(after re-open)=${frameBgAfter}`);
     }
   } catch (e) {
     record('theme consistency check', false, e.message);
