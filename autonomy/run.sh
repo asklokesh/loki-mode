@@ -19023,7 +19023,7 @@ main() {
             _handoff_dir="${TARGET_DIR:-.}"
             _handoff_md="$_handoff_dir/HANDOFF.md"
             _handoff_tmp="$_handoff_dir/.HANDOFF.md.tmp"
-            if python3 "$_own_render" --loki-dir "$LOKI_DIR" --md > "$_handoff_tmp" 2>/dev/null; then
+            if python3 "$_own_render" --loki-dir "${LOKI_DIR:-${TARGET_DIR:-.}/.loki}" --md > "$_handoff_tmp" 2>/dev/null; then
                 mv -f "$_handoff_tmp" "$_handoff_md" 2>/dev/null || rm -f "$_handoff_tmp" 2>/dev/null || true
             else
                 rm -f "$_handoff_tmp" 2>/dev/null || true
