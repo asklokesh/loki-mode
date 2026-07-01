@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.104.4] - 2026-07-01
+
+### Fix: /api/tasks no longer 500s on a malformed dashboard-state.json
+
+- **The task board never blanks out on a bad state file.** `dashboard-state.json`
+  is user/agent-written and can be malformed or partially written. If its
+  `tasks` value was not a dict, or a task group was not a list, or a group item
+  was not a dict, `GET /api/tasks` raised an `AttributeError` (from
+  `task_groups.get` / `task.get`) that the surrounding `(JSONDecodeError,
+  KeyError)` handler did not catch, 500ing the request and blanking the whole
+  board. The state-group reader now coerces defensively: a non-dict `tasks` is
+  treated as empty, a non-list group is skipped, and a non-dict item is skipped,
+  so a bad shape degrades to "skip that part" instead of a crash. The valid
+  tasks still render. (The queue-file reader already had these guards; this
+  closes the one remaining gap, found during the v7.104.3 task-list review.)
+
+- Regression coverage: `tests/dashboard/test_tasks_malformed_state.py` (dict-not-
+  list group, non-dict `tasks`, non-dict item), each proven to 500 on the old
+  code and pass on the fix.
+
 ## [7.104.3] - 2026-07-01
 
 ### Task list accuracy: honest, stable done column (no empty cards, no duplicates)

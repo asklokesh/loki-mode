@@ -1784,6 +1784,15 @@ async def list_tasks(
         try:
             state = json.loads(state_file.read_text())
             task_groups = state.get("tasks", {})
+            # v7.104.4: dashboard-state.json is user/agent-written and can be
+            # malformed or partially written. If "tasks" is not a dict, or a
+            # group is not a list, or an item is not a dict, the old code raised
+            # AttributeError (task_groups.get / task.get) which is NOT caught by
+            # the surrounding (JSONDecodeError, KeyError) handler -> the whole
+            # /api/tasks request 500s and the board goes blank. Coerce defensively
+            # so a bad shape degrades to "skip that part", never a crash.
+            if not isinstance(task_groups, dict):
+                task_groups = {}
 
             status_map = {
                 "pending": "pending",
@@ -1794,9 +1803,16 @@ async def list_tasks(
             }
 
             for group_key, mapped_status in status_map.items():
-                for i, task in enumerate(task_groups.get(group_key, [])):
+                _group = task_groups.get(group_key, [])
+                if not isinstance(_group, list):
+                    continue  # malformed group (e.g. a dict) -> skip, don't crash
+                for i, task in enumerate(_group):
+                    if not isinstance(task, dict):
+                        continue  # malformed entry (string/None) -> skip
                     task_id = task.get("id", f"{group_key}-{i}")
                     payload = task.get("payload", {})
+                    if not isinstance(payload, dict):
+                        payload = {}  # non-dict payload -> ignore, don't crash on payload.get
                     # v7.7.32: read enrichment fields from the TOP LEVEL of the
                     # task object (where run.sh writes them), falling back to
                     # payload only for legacy entries. Previously description was
