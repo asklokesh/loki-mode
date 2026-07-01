@@ -1220,10 +1220,12 @@ export const REVIEWER_UNAVAILABLE_MARKER = "REVIEWER_UNAVAILABLE";
 // autonomy/run.sh). The orchestrator hands a fully self-contained prompt (diff,
 // changed files, checks, strict VERDICT/FINDINGS contract) and expects raw text
 // back, which parseVerdict then parses. Trust guards mirrored from bash:
-//   - NO --model: reviewers run on the account default and are NEVER routed to
-//     Fable. Fable's safety classifiers refuse cybersecurity content and would
-//     end a security-sentinel turn with stop_reason "refusal" (no VERDICT line),
-//     silently breaking the council gate. See the long comment in bash
+//   - By DEFAULT no --model: reviewers run on the account default and are NEVER
+//     routed to Fable. Fable's safety classifiers refuse cybersecurity content
+//     and would end a security-sentinel turn with stop_reason "refusal" (no
+//     VERDICT line), silently breaking the council gate. The ONLY opt-in pin is
+//     LOKI_ADVISOR_MODEL (haiku|sonnet|opus; fable refused) - the founder's
+//     "advisor opus if needed or user opted". See the long comment in bash
 //     _dispatch_reviewer.
 //   - --disallowedTools tree-mutation guard (default ON; opt out
 //     LOKI_REVIEW_TOOL_GUARD=0): a reviewer must not casually mutate the tree.
@@ -1236,6 +1238,12 @@ const REVIEW_GUARD_DENYLIST =
 
 export const claudeReviewer: ReviewerFn = async ({ prompt }) => {
   const argv = ["claude", "--dangerously-skip-permissions"];
+  // OPT-IN advisor pin (LOKI_ADVISOR_MODEL): default no --model (account
+  // default); haiku|sonnet|opus honored; fable refused (see comment above).
+  const advisor = (process.env["LOKI_ADVISOR_MODEL"] ?? "").trim().toLowerCase();
+  if (advisor === "haiku" || advisor === "sonnet" || advisor === "opus") {
+    argv.push("--model", advisor);
+  }
   if (process.env["LOKI_REVIEW_TOOL_GUARD"] !== "0") {
     argv.push("--disallowedTools", REVIEW_GUARD_DENYLIST);
   }

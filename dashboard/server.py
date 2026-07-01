@@ -2549,6 +2549,26 @@ class FocusRequest(BaseModel):
 # 2x Opus cost; the UI shows that. `None`/empty clears the override.
 _SESSION_MODEL_ALLOWLIST = ("haiku", "sonnet", "opus", "fable")
 
+# Start-time execution-model + advisor-model allowlist. Deliberately NARROWER
+# than _SESSION_MODEL_ALLOWLIST: fable is excluded on BOTH the start-time model
+# picker and the advisor knob. Fable is a 2x-Opus advisory-only model and is not
+# available as a Claude API dispatch model (the runner collapses it to opus), so
+# offering it as a start-time execution model or advisor judge would be a cost/
+# behavior surprise. The mid-run POST /api/session/model path keeps fable (that
+# allowlist is unchanged) because it is an explicit live-run control.
+_START_MODEL_ALLOWLIST = ("haiku", "sonnet", "opus")
+
+
+def _normalize_start_model(raw: str | None) -> str:
+    """Normalize a start-time model / advisor alias (haiku|sonnet|opus, no fable).
+
+    Same trim + lowercase + exact-match rule as _normalize_session_model, but on
+    the narrower _START_MODEL_ALLOWLIST. Returns "" for absent/invalid/fable so
+    callers can treat empty as "no selection" (engine uses its own default).
+    """
+    val = (raw or "").strip().lower()
+    return val if val in _START_MODEL_ALLOWLIST else ""
+
 
 class SessionModelRequest(BaseModel):
     """Schema for setting (or clearing) the live run's model override."""
@@ -2667,22 +2687,27 @@ def _provider_model_fast() -> str:
 
 
 def _provider_model_development() -> str:
-    # claude.sh:66 -> LOKI_CLAUDE_MODEL_DEVELOPMENT > LOKI_MODEL_DEVELOPMENT > default.
+    # claude.sh:61 -> LOKI_CLAUDE_MODEL_DEVELOPMENT > LOKI_MODEL_DEVELOPMENT > default.
+    # v7.104.0: CLAUDE_DEFAULT_DEVELOPMENT is now "sonnet" (was opus) on BOTH the
+    # stock and the LOKI_ALLOW_HAIKU path (claude.sh:61,65), so the default is
+    # unconditionally sonnet. Keeping this mirror in sync with the sibling
+    # claude.sh change is what stops GET /api/session/model reporting opus on the
+    # default path while the run actually dispatches sonnet.
     return (
         os.environ.get("LOKI_CLAUDE_MODEL_DEVELOPMENT")
         or os.environ.get("LOKI_MODEL_DEVELOPMENT")
-        or ("sonnet" if _allow_haiku() else "opus")
+        or "sonnet"
     )
 
 
 def _provider_model_planning() -> str:
-    # claude.sh:65 -> LOKI_CLAUDE_MODEL_PLANNING > LOKI_MODEL_PLANNING > opus.
-    # CLAUDE_DEFAULT_PLANNING is always opus (LOKI_ALLOW_HAIKU lowers only the
-    # development and fast defaults, not planning).
+    # claude.sh:60 -> LOKI_CLAUDE_MODEL_PLANNING > LOKI_MODEL_PLANNING > default.
+    # v7.104.0: CLAUDE_DEFAULT_PLANNING is now "sonnet" (was opus) -- Sonnet 5 is
+    # the default execution model. LOKI_ALLOW_HAIKU does not change planning.
     return (
         os.environ.get("LOKI_CLAUDE_MODEL_PLANNING")
         or os.environ.get("LOKI_MODEL_PLANNING")
-        or "opus"
+        or "sonnet"
     )
 
 
@@ -2719,23 +2744,37 @@ def _resolve_session_pin(alias: str) -> str:
     """Resolve a session-pin alias the way the runner's NO-OVERRIDE path does.
 
     The runner does NOT feed a session pin straight to --model. It maps the alias
-    to an abstract TIER (run.sh:12331 -- opus->planning, sonnet->development,
-    haiku->fast, fable->fable) and resolves that tier through
+    to an abstract TIER (run.sh:12331 -- sonnet->development, haiku->fast,
+    fable->fable; opus is special-cased below) and resolves that tier through
     resolve_model_for_tier (claude.sh:353), then applies
-    loki_apply_max_tier_clamp(model, REAL_tier). This DIFFERS from
-    _clamp_to_max_tier (the override-path clamp): a 'sonnet' SESSION pin
-    dispatches OPUS (development tier -> PROVIDER_MODEL_DEVELOPMENT=opus on stock
-    config), whereas a 'sonnet' OVERRIDE file dispatches sonnet (fed straight to
-    --model). Use this for the no-override `default`/`effective` derivation so the
-    dashboard reports the model the run actually dispatches on the default path.
+    loki_apply_max_tier_clamp(model, REAL_tier). v7.104.0: with the Sonnet-5
+    default (PROVIDER_MODEL_DEVELOPMENT=sonnet on stock config), a 'sonnet' SESSION
+    pin now dispatches SONNET via the development tier -- matching a 'sonnet'
+    OVERRIDE file. An 'opus' SESSION pin is special-cased to dispatch opus directly
+    (no tier resolves to opus post-flip), clamped by LOKI_MAX_TIER. Use this for
+    the no-override `default`/`effective` derivation so the dashboard reports the
+    model the run actually dispatches on the default path.
 
     SYNC: byte-faithful with run.sh's session-pin case + claude.sh
     resolve_model_for_tier + loki_apply_max_tier_clamp, and with the estimator's
     _resolve_session_pin in autonomy/loki. Locked by the session-pin parity matrix
     in tests/test-model-override.sh.
     """
+    _alias_norm = (alias or "").strip().lower()
+    # v7.104.0 opus-pin fix: mirror run.sh + estimator. Post the Sonnet-5 default
+    # flip, NO tier resolves to opus, so an opus SESSION pin must dispatch opus
+    # directly (not route through planning->sonnet), clamped by LOKI_MAX_TIER.
+    # sonnet/haiku pins stay on the tier route (ALLOW_HAIKU gate preserved).
+    if _alias_norm == "opus":
+        _mt = (os.environ.get("LOKI_MAX_TIER") or "").strip().lower()
+        if not _mt:
+            return "opus"
+        if _mt == "haiku":
+            return _provider_model_fast()
+        if _mt == "sonnet":
+            return _provider_model_development()
+        return "opus"
     pin_tier = {
-        "opus": "planning",
         "sonnet": "development",
         "haiku": "fast",
         "fable": "fable",
@@ -2746,7 +2785,7 @@ def _resolve_session_pin(alias: str) -> str:
         "planning": "planning",
         "development": "development",
         "fast": "fast",
-    }.get((alias or "").strip().lower(), "development")
+    }.get(_alias_norm, "development")
     if pin_tier == "planning":
         model = _provider_model_planning()
     elif pin_tier == "fast":
@@ -2791,10 +2830,11 @@ async def get_session_model():
         loki_apply_max_tier_clamp(alias, alias). `effective` = _clamp_to_max_tier
         (the override-path clamp). A "sonnet" override dispatches sonnet.
       - NO override (session pin): the runner maps the pin through a tier
-        (opus->planning, sonnet->development, haiku->fast) and resolves the tier
-        through PROVIDER_MODEL_* (then the cost-ceiling clamp). `effective` =
-        _resolve_session_pin. A "sonnet" pin dispatches OPUS (development tier ->
-        PROVIDER_MODEL_DEVELOPMENT=opus on stock config).
+        (sonnet->development, haiku->fast; opus special-cased to opus) and
+        resolves the tier through PROVIDER_MODEL_* (then the cost-ceiling clamp).
+        `effective` = _resolve_session_pin. v7.104.0: a "sonnet" pin dispatches
+        SONNET (development tier -> PROVIDER_MODEL_DEVELOPMENT=sonnet on stock
+        config); an "opus" pin dispatches opus (special-cased, clamped).
 
     Both routes resolve through the SAME provider config the runner uses
     (LOKI_ALLOW_HAIKU plus the LOKI_CLAUDE_MODEL_PLANNING/FAST/DEVELOPMENT and
@@ -3044,6 +3084,24 @@ class StartBuildRequest(BaseModel):
     # The path is path-guarded against ALLOWED_WORKSPACE_ROOTS (see
     # _validate_workspace) -- it is NOT a free-form filesystem write target.
     workspace: Optional[str] = None
+    # Start-time execution model (haiku|sonnet|opus; fable NOT accepted). When a
+    # valid alias is supplied, the run is pinned to EXACTLY that model for every
+    # iteration via the LOKI_CLAUDE_MODEL_{PLANNING,DEVELOPMENT,FAST} env triple
+    # (see start_build). Absent/invalid -> no pin, the engine uses its own
+    # default (Sonnet 5 as of v7.104.0). This is an EXACT-model pin, NOT the
+    # session-pin tier route: it does not remap through tiers, so an "opus" pick
+    # dispatches opus (the tier route would resolve opus->planning->sonnet on the
+    # v7.104.0 stock config and thus lie). The mid-flight .loki/state/model-override
+    # file is NOT usable at start time (run.sh clears it at ITERATION_COUNT==0 as a
+    # deliberate session-scope reset, run.sh:15623), which is why start-time uses
+    # env, not the override file.
+    model: Optional[str] = None
+    # Advisor / reviewer model (opt-in Opus judge). haiku|sonnet|opus; fable NOT
+    # accepted. Exported as LOKI_ADVISOR_MODEL into the run env; run.sh reads it at
+    # the reviewer-dispatch site (run.sh:10199) to pin the code-review judge while
+    # execution stays on the chosen/default execution model. Absent/invalid -> no
+    # advisor pin (reviewers use the account default).
+    advisor_model: Optional[str] = None
 
     def validate_provider(self) -> None:
         """Validate provider is from the supported list.
@@ -3331,11 +3389,38 @@ async def start_build(request: Request, body: StartBuildRequest):
     # engine's own .loki. Setting both LOKI_DIR and LOKI_TARGET_DIR makes the
     # workspace authoritative. When no workspace is given, env=None (inherit) so
     # behavior is byte-identical to before this feature.
+    # Normalize the optional start-time execution model + advisor model here so we
+    # know whether we need a custom env at all. Both are narrowed to
+    # haiku|sonnet|opus (no fable); invalid/absent -> "" -> no pin.
+    start_model = _normalize_start_model(body.model)
+    advisor_model = _normalize_start_model(body.advisor_model)
+
+    # Build a custom env only when we actually need to change something
+    # (workspace pin, start-time model pin, or advisor pin). When nothing is set,
+    # env stays None (inherit) so behavior is byte-identical to before.
     popen_env = None
-    if workspace_dir is not None:
+    if workspace_dir is not None or start_model or advisor_model:
         popen_env = dict(os.environ)
+    if workspace_dir is not None:
         popen_env["LOKI_TARGET_DIR"] = str(workspace_dir)
         popen_env["LOKI_DIR"] = str(loki_dir)
+    if start_model:
+        # EXACT-model pin (not the session-pin tier route): set all three tier
+        # models to the chosen alias so resolve_model_for_tier returns the alias
+        # for every tier and every iteration dispatches exactly the picked model.
+        # This is the honest start-time equivalent of the mid-flight override
+        # file, which run.sh clears at iteration 0. LOKI_SESSION_MODEL is set too
+        # for internal coherence (the run's own tier accounting/logging), but the
+        # env triple is the load-bearing dispatch-honesty mechanism: on the
+        # v7.104.0 stock config the session pin alone would remap opus->planning->
+        # sonnet and haiku->fast->sonnet, dispatching sonnet for both.
+        popen_env["LOKI_CLAUDE_MODEL_PLANNING"] = start_model
+        popen_env["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = start_model
+        popen_env["LOKI_CLAUDE_MODEL_FAST"] = start_model
+        popen_env["LOKI_SESSION_MODEL"] = start_model
+    if advisor_model:
+        # Opt-in Opus (or other) judge for code review; execution model unchanged.
+        popen_env["LOKI_ADVISOR_MODEL"] = advisor_model
     try:
         process = subprocess.Popen(
             args,
@@ -3384,6 +3469,9 @@ async def start_build(request: Request, body: StartBuildRequest):
             "provider": body.provider,
             "spec": str(spec_file),
             "pid": process.pid,
+            # Empty string when no pin was requested (engine uses its default).
+            "model": start_model,
+            "advisor_model": advisor_model,
         },
         ip_address=request.client.host if request.client else None,
     )
@@ -3416,6 +3504,10 @@ async def start_build(request: Request, body: StartBuildRequest):
         # The trust run_id if already minted, else "" (see note above). When "",
         # derive it from the workspace's .loki/state/trust-run-id.
         "run_id": run_id,
+        # The pinned execution + advisor models (empty == engine default). Echoed
+        # so the UI can confirm what the run was actually pinned to.
+        "model": start_model,
+        "advisor_model": advisor_model,
     }
 
 
@@ -6731,10 +6823,25 @@ async def get_trust_trajectory():
 # =============================================================================
 
 _PROVIDER_LABELS = {
-    "opus": "Opus 4.6",
-    "sonnet": "Sonnet 4.5",
+    # v7.104.0: current model IDs (model_catalog.json): opus=claude-opus-4-8,
+    # sonnet=claude-sonnet-5 (the default execution model), haiku=claude-haiku-4-5.
+    "opus": "Opus 4.8",
+    "sonnet": "Sonnet 5",
     "haiku": "Haiku 4.5",
     "gpt-5.3-codex": "GPT-5.3 Codex",
+}
+
+# Display-only pricing notes, keyed by model. These annotate the pricing table in
+# the UI WITHOUT changing any computed cost number. The Sonnet 5 launch carries an
+# intro price ($2/$10 per MTok through Aug 31 2026), but the cost estimator keeps
+# quoting the standard $3/$15 rate: over-estimating the display is the safe
+# direction (a bill can only come in lower than quoted, never higher). This note
+# tells the user why the quote is conservative during the intro window.
+_MODEL_PRICING_NOTES = {
+    "sonnet": (
+        "Intro pricing: $2 / $10 per MTok through Aug 31 2026. "
+        "Estimates use the standard $3 / $15 rate (conservative)."
+    ),
 }
 
 _MODEL_PROVIDERS = {
@@ -6775,12 +6882,18 @@ async def get_pricing():
     pricing_table = _get_model_pricing()
     models = {}
     for model_key, rates in pricing_table.items():
-        models[model_key] = {
+        entry = {
             "input": rates["input"],
             "output": rates["output"],
             "label": _PROVIDER_LABELS.get(model_key, model_key),
             "provider": _MODEL_PROVIDERS.get(model_key, "unknown"),
         }
+        # Display-only note (e.g. Sonnet 5 intro pricing). Present only when a note
+        # exists; the input/output numbers above are unchanged (conservative).
+        note = _MODEL_PRICING_NOTES.get(model_key)
+        if note:
+            entry["note"] = note
+        models[model_key] = entry
 
     return {
         "provider": provider,

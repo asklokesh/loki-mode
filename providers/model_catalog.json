@@ -1,16 +1,16 @@
 {
   "_comment": "Canonical model catalog. Update this single file when a provider ships a new model. Providers/web-app/docs read from here.",
   "schema_version": 1,
-  "updated": "2026-04-18",
+  "updated": "2026-06-30",
   "providers": {
     "claude": {
-      "latest_planning": "claude-opus-4-7",
-      "latest_development": "claude-opus-4-7",
-      "latest_fast": "claude-sonnet-4-6",
+      "latest_planning": "claude-opus-4-8",
+      "latest_development": "claude-sonnet-5",
+      "latest_fast": "claude-sonnet-5",
       "cli_aliases": {
         "fable": "claude-fable-5",
-        "opus": "claude-opus-4-7",
-        "sonnet": "claude-sonnet-4-6",
+        "opus": "claude-opus-4-8",
+        "sonnet": "claude-sonnet-5",
         "haiku": "claude-haiku-4-5"
       },
       "models": [
@@ -23,7 +23,7 @@
           "notes": "Top-tier advisory model. Pricing 2x Opus ($10/$50 per MTok). Doc-supported for architecture/root-cause; opt-in only (cost). Refuses cyber content, so NOT used for security review."
         },
         {
-          "id": "claude-opus-4-7",
+          "id": "claude-opus-4-8",
           "alias": "opus",
           "tier": "planning",
           "context_window": 1000000,
@@ -31,11 +31,12 @@
           "notes": "Adaptive thinking, xhigh effort for agentic coding"
         },
         {
-          "id": "claude-sonnet-4-6",
+          "id": "claude-sonnet-5",
           "alias": "sonnet",
           "tier": "development",
           "context_window": 1000000,
-          "max_output": 64000
+          "max_output": 64000,
+          "notes": "Default execution model as of v7.104.0. Intro price $2/$10 per MTok through 2026-08-31; list price $3/$15 per MTok."
         },
         {
           "id": "claude-haiku-4-5",
@@ -58,22 +59,22 @@
       "notes": "Codex uses a single model with effort level (xhigh/high/low) for tier differentiation"
     },
     "cline": {
-      "latest_planning": "claude-opus-4-7",
-      "latest_development": "claude-opus-4-7",
-      "latest_fast": "claude-sonnet-4-6",
+      "latest_planning": "claude-opus-4-8",
+      "latest_development": "claude-sonnet-5",
+      "latest_fast": "claude-sonnet-5",
       "models": [
-        { "id": "claude-opus-4-7", "tier": "planning" },
-        { "id": "claude-sonnet-4-6", "tier": "development" },
+        { "id": "claude-opus-4-8", "tier": "planning" },
+        { "id": "claude-sonnet-5", "tier": "development" },
         { "id": "gpt-4.1", "tier": "development" }
       ]
     },
     "aider": {
-      "latest_planning": "claude-opus-4-7",
-      "latest_development": "claude-opus-4-7",
-      "latest_fast": "claude-sonnet-4-6",
+      "latest_planning": "claude-opus-4-8",
+      "latest_development": "claude-sonnet-5",
+      "latest_fast": "claude-sonnet-5",
       "models": [
-        { "id": "claude-opus-4-7", "tier": "planning" },
-        { "id": "claude-sonnet-4-6", "tier": "development" },
+        { "id": "claude-opus-4-8", "tier": "planning" },
+        { "id": "claude-sonnet-5", "tier": "development" },
         { "id": "gpt-4.1", "tier": "development" },
         { "id": "ollama_chat/deepseek-coder", "tier": "fast" }
       ]

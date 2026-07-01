@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.104.0] - 2026-06-30
+
+### Default execution model is now Claude Sonnet 5
+
+- **Default execution model changed Opus -> Sonnet 5.** The planning and
+  development tiers now default to `sonnet` (`providers/claude.sh`), which the
+  Claude CLI resolves to the latest Sonnet (Claude Sonnet 5). Builds are cheaper
+  (~40% less per token than Opus) and faster, at near-frontier intelligence. This
+  affects every user's default `loki start`/`loki verify` run. Completion is still
+  council-verified. To restore Opus execution: set
+  `LOKI_CLAUDE_MODEL_DEVELOPMENT=opus` (and `_PLANNING=opus`), or pick Opus from
+  the dashboard. We do NOT claim identical accuracy (no controlled study); the
+  quality gates are unchanged, so if it passes it passes and if it does not Loki
+  tells you why.
+- **Opt-in strong advisor judge (`LOKI_ADVISOR_MODEL`).** The trust-gate code
+  reviewers still run on the account default by default (unchanged behavior). Set
+  `LOKI_ADVISOR_MODEL=opus` (or the dashboard "Advisor" toggle) to pin the
+  reviewers to a stronger, consistent Opus judge. `haiku|sonnet|opus` are honored;
+  `fable` is refused (its safety classifiers can end a review turn with a refusal
+  and break the council gate). Mirrored on both the bash and Bun routes.
+- **Dashboard model selection.** A start-time model selector (Haiku / Sonnet /
+  Opus, default Sonnet 5) and a mid-run switcher (applies at the next iteration)
+  are available in the dashboard. The mid-run hot-switch was already supported by
+  the engine (`.loki/state/model-override`, read each iteration); this exposes it
+  in the UI. An explicit Opus pick dispatches Opus on every iteration.
+- **opus session-pin fix.** With the Sonnet default, a `LOKI_SESSION_MODEL=opus`
+  pin previously routed through the (now-Sonnet) planning tier and silently
+  dispatched Sonnet. It now dispatches Opus on every iteration (still clamped by
+  `LOKI_MAX_TIER`, so an operator cost ceiling still binds). Fixed consistently in
+  the runner, the `loki plan` estimator, and the dashboard, and locked by the
+  session-pin parity matrix.
+- **Model catalog + pricing corrections.** `providers/model_catalog.json` refreshed
+  to current IDs (`claude-opus-4-8`, `claude-sonnet-5`). Corrected the
+  `gpt-5.3-codex` price to the real standard-tier $1.75/$14.00 per MTok (was
+  $1.50/$12.00) in the cost tables. Added a display-only note for the Sonnet 5
+  introductory price ($2/$10 per MTok through 2026-08-31); the estimator quotes the
+  standing $3/$15 list price (over-estimating the display is the safe direction).
+
 ## [7.103.0] - 2026-06-30
 
 ### Bun-runner gate parity + verify.sh hardening

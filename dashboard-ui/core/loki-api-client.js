@@ -1083,6 +1083,16 @@ export class LokiApiClient extends EventTarget {
     } else {
       body.prd_text = prd || '';
     }
+    // Start-time execution model (haiku|sonnet|opus). Omit when falsy so the
+    // engine uses its own default (Sonnet 5); the server also ignores invalid
+    // values. Only send an explicit non-empty selection.
+    if (opts.model) {
+      body.model = opts.model;
+    }
+    // Advisor / reviewer model (opt-in Opus judge). Omit when falsy.
+    if (opts.advisorModel) {
+      body.advisor_model = opts.advisorModel;
+    }
     return this._post('/api/control/start', body);
   }
 

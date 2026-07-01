@@ -121,9 +121,11 @@ function claudeTierToModel(tier: SessionTier): string {
   // enable haiku on either route (v7.41.4 parity fix).
   const allowHaiku = process.env["LOKI_ALLOW_HAIKU"] === "true";
   if (allowHaiku) {
+    // v7.104.0: planning defaults to sonnet (claude.sh:60, unconditional); the
+    // ALLOW_HAIKU block only lowers development (already sonnet) and fast (haiku).
     switch (tier) {
       case "planning":
-        return "opus";
+        return "sonnet";
       case "development":
         return "sonnet";
       case "fast":
@@ -133,15 +135,20 @@ function claudeTierToModel(tier: SessionTier): string {
     }
   }
   // Default: no haiku. Upgrade dev->opus, fast->sonnet (claude.sh:135-141).
+  // v7.104.0: Sonnet 5 is the default execution model. planning + development
+  // default to sonnet (was opus), matching claude.sh CLAUDE_DEFAULT_PLANNING/
+  // DEVELOPMENT and the bash resolver. This route is not yet wired to `loki start`
+  // (the shim falls through to bash), but keeping it in parity avoids a silent
+  // opus dispatch when the Bun runner is wired on.
   switch (tier) {
     case "planning":
-      return "opus";
+      return "sonnet";
     case "development":
-      return "opus";
+      return "sonnet";
     case "fast":
       return "sonnet";
     default:
-      return "opus";
+      return "sonnet";
   }
 }
 

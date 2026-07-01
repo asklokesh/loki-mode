@@ -395,10 +395,22 @@ else
     printf '  SKIP: --hosted additive fold (bun or bundle absent)\n'
 fi
 
-# 9c: --hosted fails open when the bundle is unreachable. Run from a PATH with
-# no bun so the engine probe misses regardless of whether bun is installed; the
-# result must equal the default path (no hosted key, same verdict, exit 0).
-( cd "$S1" && PATH="/usr/bin:/bin" bash "$VERIFY_SH" main --hosted ) >/dev/null 2>&1
+# 9c: --hosted fails open when the embedded engine is unusable. We must NOT
+# restrict PATH to /usr/bin:/bin (that also hides tools the DETERMINISTIC gate
+# needs -- git/python3/node live in /opt/homebrew or /usr/local -- so the default
+# path itself would block, and "2 == 2" would vacuously pass while hiding a real
+# --hosted exit bug). Instead keep the FULL PATH but shadow bun with a fake that
+# exits nonzero: `command -v bun` still finds it, verify_hosted_enrich runs it,
+# engine_rc != 0 triggers the fail-open path -- exactly the "engine unusable"
+# condition, with the deterministic gate fully functional (exit 0 on the clean
+# repo). Reset evidence.json first so the "no hosted key" check reflects THIS run
+# (9b, run earlier on $S1 with a working engine, folds a hosted key we must not
+# mistake for a 9c leak).
+FO_FAKEBIN="$(mktemp -d)"
+printf '#!/bin/sh\nexit 1\n' > "$FO_FAKEBIN/bun"
+chmod +x "$FO_FAKEBIN/bun"
+rm -f "$S1/.loki/verify/evidence.json"
+( cd "$S1" && PATH="$FO_FAKEBIN:$PATH" bash "$VERIFY_SH" main --hosted ) >/dev/null 2>&1
 FO_RC=$?
 if [ "$FO_RC" -eq "$DEF_RC" ] \
    && ! grep -q '"hosted"' "$S1/.loki/verify/evidence.json"; then
@@ -406,6 +418,7 @@ if [ "$FO_RC" -eq "$DEF_RC" ] \
 else
     _no "--hosted fail-open broken: rc=$FO_RC (want $DEF_RC) or hosted key present"
 fi
+rm -rf "$FO_FAKEBIN"
 
 echo ""
 echo "=== results: $PASS passed, $FAIL failed ==="

@@ -309,11 +309,11 @@ describe("claudeProvider invocation", () => {
     const r = await p.invoke(makeCall({ tier: "development", prompt: "build x" }));
     expect(r.exitCode).toBe(0);
     const argv = readArgv(argvLog);
-    // Default (no LOKI_ALLOW_HAIKU): development tier maps to opus
-    // (claude.sh:135-141).
+    // v7.104.0: default (no LOKI_ALLOW_HAIKU) development tier maps to sonnet
+    // (Sonnet 5 is the default execution model; was opus).
     expect(argv).toContain("--dangerously-skip-permissions");
     expect(argv).toContain("--model");
-    expect(argv).toContain("opus");
+    expect(argv).toContain("sonnet");
     expect(argv).toContain("-p");
     expect(argv).toContain("build x");
   });
@@ -362,12 +362,11 @@ describe("claudeProvider invocation", () => {
     const p = claudeProvider();
     await p.invoke(makeCall({ tier: "planning" }));
     const argv = readArgv(argvLog);
-    // claude.sh:176-181: planning capped to development tier under sonnet
-    // ceiling. Default haiku-off mapping: development -> opus.
-    expect(argv).toContain("opus");
-    // The cap re-resolves to development; with haiku off, that is opus too.
-    // Ensure we did not pass through the planning-tier sentinel by also
-    // confirming exit code propagated through the stub.
+    // claude.sh:176-181: planning capped to the development tier under a sonnet
+    // ceiling. v7.104.0: the development default is now sonnet, so the cap
+    // resolves to sonnet (was opus).
+    expect(argv).toContain("sonnet");
+    // Ensure we did not pass through the planning-tier sentinel.
     expect(argv).not.toContain("planning");
   });
 
@@ -418,8 +417,9 @@ describe("claudeProvider invocation", () => {
     const p = claudeProvider();
     await p.invoke(makeCall({ tier: "development" }));
     const argv = readArgv(argvLog);
-    // Default Anthropic-native invocation: tier-mapped opus alias.
-    expect(argv).toContain("opus");
+    // v7.104.0: default Anthropic-native invocation is the tier-mapped sonnet
+    // alias (development tier default is sonnet; was opus).
+    expect(argv).toContain("sonnet");
     expect(argv).not.toContain("anthropic/claude-3.5-sonnet");
     delete process.env["LOKI_MODEL_OVERRIDE"];
   });
@@ -431,7 +431,8 @@ describe("claudeProvider invocation", () => {
     const p = claudeProvider();
     await p.invoke(makeCall({ tier: "development" }));
     const argv = readArgv(argvLog);
-    expect(argv).toContain("opus");
+    // v7.104.0: development tier default is sonnet (was opus).
+    expect(argv).toContain("sonnet");
     delete process.env["ANTHROPIC_BASE_URL"];
   });
 

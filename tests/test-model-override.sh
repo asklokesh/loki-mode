@@ -113,9 +113,9 @@ rmt() {
 }
 
 out_default="$(rmt planning)"
-[ "$out_default" = "opus" ] \
-  && ok "planning tier defaults to opus (REAL claude.sh path)" \
-  || bad "planning default not opus: '$out_default'"
+[ "$out_default" = "sonnet" ] \
+  && ok "planning tier defaults to sonnet (v7.104.0 Sonnet-5-default; REAL claude.sh path)" \
+  || bad "planning default not sonnet: '$out_default'"
 # Explicit fable tier arm: fable is NOT available at the Claude API ("Claude
 # Fable 5 is not available, use Opus 4.8"), so a fable-pinned session / override
 # collapses to opus in resolve_model_for_tier. The fable tier LABEL and the
@@ -129,22 +129,23 @@ out_fable="$(rmt fable)"
 # The planning-time architect gate is REMOVED: LOKI_FABLE_ARCHITECT alone must
 # NOT convert the planning tier to fable (that scoping is now run.sh iter-0).
 out_planning_arch="$(rmt LOKI_FABLE_ARCHITECT=1 planning)"
-[ "$out_planning_arch" = "opus" ] \
-  && ok "LOKI_FABLE_ARCHITECT no longer converts planning tier in the resolver (scoping moved to run.sh iter-0)" \
-  || bad "planning tier wrongly converted to fable in resolver: '$out_planning_arch'"
+[ "$out_planning_arch" = "sonnet" ] \
+  && ok "LOKI_FABLE_ARCHITECT no longer converts planning tier in the resolver (scoping moved to run.sh iter-0); planning resolves to sonnet (v7.104.0 default)" \
+  || bad "planning tier resolver wrong under LOKI_FABLE_ARCHITECT=1: '$out_planning_arch' (expected sonnet)"
 # maxTier clamp on the fable tier (the cost ceiling the override path also uses).
+# v7.104.0: PROVIDER_MODEL_DEVELOPMENT=sonnet, so LOKI_MAX_TIER=sonnet clamps fable->sonnet (not opus).
 out_max_sonnet="$(rmt LOKI_MAX_TIER=sonnet fable)"
-[ "$out_max_sonnet" = "opus" ] \
-  && ok "LOKI_MAX_TIER=sonnet clamps fable down to development (opus)" \
-  || bad "maxTier=sonnet did not clamp fable: '$out_max_sonnet'"
+[ "$out_max_sonnet" = "sonnet" ] \
+  && ok "LOKI_MAX_TIER=sonnet clamps fable down to development (sonnet; v7.104.0 dev default)" \
+  || bad "maxTier=sonnet did not clamp fable to sonnet: '$out_max_sonnet'"
 out_max_opus="$(rmt LOKI_MAX_TIER=opus fable)"
 [ "$out_max_opus" = "opus" ] \
   && ok "LOKI_MAX_TIER=opus caps fable back to opus" \
   || bad "maxTier=opus did not cap fable: '$out_max_opus'"
 out_dev="$(rmt development)"
-[ "$out_dev" = "opus" ] \
-  && ok "dev tier resolves to opus (unchanged)" \
-  || bad "dev tier wrong: '$out_dev'"
+[ "$out_dev" = "sonnet" ] \
+  && ok "dev tier resolves to sonnet (v7.104.0 Sonnet-5-default)" \
+  || bad "dev tier wrong: '$out_dev' (expected sonnet)"
 
 # ---------------------------------------------------------------------------
 # 2b. LOKI_FABLE_ARCHITECT is scoped to the FIRST iteration only (run.sh).
@@ -178,11 +179,28 @@ resolve_session_iter() {
         haiku) CURRENT_TIER="fast";; fable) CURRENT_TIER="fable";;
         planning|development|fast) CURRENT_TIER="$sm";; *) CURRENT_TIER="$sm";;
       esac
+      # v7.104.0 opus-pin fix (mirror run.sh:16064): post the Sonnet-5 default
+      # flip, no tier resolves to opus, so an opus SESSION pin dispatches opus
+      # directly (clamped by LOKI_MAX_TIER), NOT the sonnet planning tier. The
+      # architect fable route only applies to non-opus pins (opus-pin bypasses
+      # the tier route entirely), matching the runner.
+      _pin_opus=0; [ "$sm" = "opus" ] && _pin_opus=1
       if [ "$iter" -eq 1 ] && [ "${LOKI_FABLE_ARCHITECT:-0}" = "1" ] \
+         && [ "$_pin_opus" != "1" ] \
          && [ -z "${LOKI_CLAUDE_MODEL_PLANNING:-}" ] && [ -z "${LOKI_MODEL_PLANNING:-}" ]; then
         CURRENT_TIER="fable"
       fi
-      resolve_model_for_tier "$CURRENT_TIER"
+      if [ "$_pin_opus" = "1" ]; then
+        tp="opus"
+        if type loki_apply_max_tier_clamp >/dev/null 2>&1; then
+          # Clamp at PLANNING level (mirror run.sh): tier=opus would let opus
+          # escape a sonnet ceiling. tier=planning -> sonnet cap yields sonnet.
+          tp="$(loki_apply_max_tier_clamp "opus" "planning")"
+        fi
+        printf "%s" "$tp"
+      else
+        resolve_model_for_tier "$CURRENT_TIER"
+      fi
     ' _ "$@"
 }
 # Non-vacuity helper: echo CURRENT_TIER PRE-collapse (the abstract tier the
@@ -241,15 +259,25 @@ arch_def0_tier="$(resolve_session_tier sonnet 1 LOKI_FABLE_ARCHITECT=1)"
 # to opus at dispatch (resolve_model_for_tier fable arm -> opus). Later iterations
 # on an opus pin dispatch opus too, so the scoping is now visible only via the tier
 # routing above (that is exactly why the non-vacuity guard exists).
+# v7.104.0: an opus SESSION pin now dispatches opus on EVERY iteration (founder
+# "set all to opus" is face-value), so the opus-pin dispatch pair is vacuously
+# opus/opus and no longer demonstrates architect scoping at dispatch. The
+# architect-scoping demonstration moves to the SONNET pin below (iter-1 fable->opus
+# vs iter-2 sonnet is still visible); tier-level non-vacuity above (fable/planning)
+# remains the proof the architect block is alive.
 arch0="$(resolve_session_iter opus 1 LOKI_FABLE_ARCHITECT=1)"
 arch1="$(resolve_session_iter opus 2 LOKI_FABLE_ARCHITECT=1)"
 [ "$arch0" = "opus" ] && [ "$arch1" = "opus" ] \
-  && ok "architect iter-0 dispatches opus (fable unavailable, collapsed); opus-pinned session NOT converted wholesale" \
-  || bad "architect dispatch wrong: iter1='$arch0' iter2='$arch1' (expected opus/opus post-collapse)"
-arch_def0="$(resolve_session_iter sonnet 1 LOKI_FABLE_ARCHITECT=1)"
-[ "$arch_def0" = "opus" ] \
-  && ok "architect on the default session pin dispatches opus (fable collapsed)" \
-  || bad "architect default pin did not dispatch opus: '$arch_def0'"
+  && ok "opus pin dispatches opus on every iteration (v7.104.0 set-all-to-opus; architect scoping proven at tier level above)" \
+  || bad "opus-pin dispatch wrong: iter1='$arch0' iter2='$arch1' (expected opus/opus with v7.104.0 opus-pin fix)"
+# Architect scoping VISIBLE at dispatch on the sonnet (default) pin: iter-1 routes
+# to the fable tier -> collapses to opus at dispatch; iter-2 is the development
+# tier -> sonnet. This is where fable->opus vs sonnet is observable post-fix.
+arch_s0="$(resolve_session_iter sonnet 1 LOKI_FABLE_ARCHITECT=1)"
+arch_s1="$(resolve_session_iter sonnet 2 LOKI_FABLE_ARCHITECT=1)"
+[ "$arch_s0" = "opus" ] && [ "$arch_s1" = "sonnet" ] \
+  && ok "architect on the sonnet pin: iter-1 dispatches opus (fable collapsed), iter-2 dispatches sonnet (development tier)" \
+  || bad "architect sonnet-pin dispatch wrong: iter1='$arch_s0' iter2='$arch_s1' (expected opus/sonnet)"
 arch_ovr="$(resolve_session_iter opus 1 LOKI_FABLE_ARCHITECT=1 LOKI_MODEL_PLANNING=opus)"
 [ "$arch_ovr" = "opus" ] \
   && ok "explicit LOKI_MODEL_PLANNING suppresses the architect opt-in" \
@@ -285,8 +313,11 @@ override_effective() {
 [ "$(override_effective fable)" = "opus" ] \
   && ok "override fable dispatches opus when uncapped (Fable 5 unavailable, dispatch backstop)" \
   || bad "override fable did not collapse to opus uncapped"
-[ "$(override_effective fable LOKI_MAX_TIER=sonnet)" = "opus" ] \
-  && ok "override fable clamped to opus under LOKI_MAX_TIER=sonnet (ceiling not bypassed)" \
+# v7.104.0: PROVIDER_MODEL_DEVELOPMENT=sonnet. The sonnet cap clamps fable -> development
+# -> sonnet. The dispatch backstop (tier_param==fable->opus) does NOT fire because the
+# clamp resolves to "sonnet", not "fable". Ceiling is still enforced: sonnet, not fable.
+[ "$(override_effective fable LOKI_MAX_TIER=sonnet)" = "sonnet" ] \
+  && ok "override fable clamped to sonnet under LOKI_MAX_TIER=sonnet (dev=sonnet v7.104.0; ceiling enforced)" \
   || bad "override fable bypassed LOKI_MAX_TIER=sonnet"
 [ "$(override_effective fable LOKI_MAX_TIER=opus)" = "opus" ] \
   && ok "override fable clamped to opus under LOKI_MAX_TIER=opus" \
@@ -575,14 +606,19 @@ dC="$(dash_effective fable LOKI_ALLOW_HAIKU=true LOKI_MAX_TIER=sonnet)"
   || bad "cross-route ALLOW_HAIKU+sonnet-cap+fable mismatch: est='$eC' dash='$dC' runner='$rC'"
 rm -f "$XR_DIR/.loki/state/model-override"
 
-# --- Control: fable override under sonnet cap WITHOUT ALLOW_HAIKU -> opus on all ---
+# --- Control: fable override under sonnet cap WITHOUT ALLOW_HAIKU -> sonnet on all ---
+# v7.104.0: PROVIDER_MODEL_DEVELOPMENT=sonnet. The sonnet cap clamps fable -> development
+# -> sonnet on the bash runner. The dispatch backstop (fable->opus) does NOT fire because
+# the clamp already resolved to sonnet, not fable. All three must agree on sonnet.
+# NOTE: if this fails with est/dash='opus' while runner='sonnet', server.py/_clamp_to_max_tier
+# and the loki estimator still use the old opus dev default and need updating (Lane D/F owners).
 printf 'fable\n' > "$XR_DIR/.loki/state/model-override"
 eD="$(est_quoted LOKI_MAX_TIER=sonnet)"
 rD="$(bash_clamp fable LOKI_MAX_TIER=sonnet)"
 dD="$(dash_effective fable LOKI_MAX_TIER=sonnet)"
-[ "$eD" = "$rD" ] && [ "$dD" = "$rD" ] && [ "$rD" = "opus" ] \
-  && ok "cross-route sonnet-cap+fable (no ALLOW_HAIKU): estimator=$eD dashboard=$dD runner=$rD (all opus)" \
-  || bad "cross-route sonnet-cap+fable (default) mismatch: est='$eD' dash='$dD' runner='$rD'"
+[ "$eD" = "$rD" ] && [ "$dD" = "$rD" ] && [ "$rD" = "sonnet" ] \
+  && ok "cross-route sonnet-cap+fable (no ALLOW_HAIKU): estimator=$eD dashboard=$dD runner=$rD (all sonnet; v7.104.0 dev=sonnet)" \
+  || bad "cross-route sonnet-cap+fable (default) mismatch: est='$eD' dash='$dD' runner='$rD' (expected all sonnet; server.py/estimator may need sonnet5-default update)"
 rm -f "$XR_DIR/.loki/state/model-override"
 
 # --- Repro E (v7.39.1): UNCAPPED fable OVERRIDE -> opus on all three routes ---
@@ -618,7 +654,7 @@ rm -f "$XR_DIR/.loki/state/model-override"
 # This is the gap task 568 closes. With NO override file, the runner does NOT
 # feed the session alias straight to --model. It maps the pin to a tier
 # (sonnet->development) and resolves the tier through PROVIDER_MODEL_* (sonnet
-# pin -> development -> opus on stock config), then applies the cost ceiling. The
+# pin -> development -> sonnet on v7.104.0 stock config), then applies the cost ceiling. The
 # estimator (cost.iterations_by_model) and the dashboard (_resolve_session_pin)
 # must both quote/report that SAME dispatched model, across session-pin values x
 # LOKI_ALLOW_HAIKU x model env overrides x cost ceiling. The runner reference is
@@ -641,13 +677,17 @@ sys.stdout.write(s._resolve_session_pin(sys.argv[1]))
 sp_fail=0
 sp_cells=0
 # Headline stock cell first (explicit, readable assertion): no levers at all.
+# v7.104.0: sonnet pin -> development tier -> PROVIDER_MODEL_DEVELOPMENT=sonnet.
+# All three must agree on sonnet. If this fails with est/dash='opus' and runner='sonnet',
+# the server.py _resolve_session_pin and loki estimator still use the old opus dev default
+# and need updating to CLAUDE_DEFAULT_DEVELOPMENT=sonnet (Lane D/F owners).
 rm -f "$XR_DIR/.loki/state/model-override"
 sp_e="$(est_quoted)"                       # estimator quoted model on stock path
 sp_d="$(dash_session_pin sonnet)"          # dashboard effective, default pin
 sp_r="$(resolve_session_iter sonnet 2)"    # runner-resolved (session-pin route)
-[ "$sp_e" = "opus" ] && [ "$sp_d" = "opus" ] && [ "$sp_r" = "opus" ] \
-  && ok "STOCK no-levers: estimator=$sp_e dashboard=$sp_d runner=$sp_r (all opus; was Sonnet-quote gap, task 568)" \
-  || bad "STOCK no-levers session-pin mismatch: est='$sp_e' dash='$sp_d' runner='$sp_r' (expected all opus)"
+[ "$sp_e" = "sonnet" ] && [ "$sp_d" = "sonnet" ] && [ "$sp_r" = "sonnet" ] \
+  && ok "STOCK no-levers: estimator=$sp_e dashboard=$sp_d runner=$sp_r (all sonnet; v7.104.0 dev=sonnet default)" \
+  || bad "STOCK no-levers session-pin mismatch: est='$sp_e' dash='$sp_d' runner='$sp_r' (expected all sonnet; server.py/estimator may need sonnet5-default update)"
 
 # Full session-pin matrix: pin x ALLOW_HAIKU x dev/fast env override x cap.
 # Estimator reads the env directly (no override file); dashboard drives
@@ -697,28 +737,33 @@ tn_r="$(resolve_session_iter fast 2 LOKI_SESSION_MODEL=fast)"
   && ok "tier-name pin: LOKI_SESSION_MODEL=fast resolves to sonnet on all three (est=$tn_e dash=$tn_d runner=$tn_r; was opus-quote regression)" \
   || bad "pin=fast mismatch: est='$tn_e' dash='$tn_d' runner='$tn_r' (expected all sonnet)"
 
-# pin=planning + LOKI_ALLOW_HAIKU=true (Cell B): must resolve to opus on all
-# three (planning tier -> PROVIDER_MODEL_PLANNING=opus, unaffected by ALLOW_HAIKU).
-# Before the fix the ports quoted sonnet (allowlist reject -> development ->
-# sonnet under ALLOW_HAIKU) while the runner dispatched opus (the ~1.7x under-quote).
+# pin=planning + LOKI_ALLOW_HAIKU=true (Cell B): must resolve to sonnet on all
+# three (planning tier -> PROVIDER_MODEL_PLANNING=sonnet on v7.104.0, unaffected by ALLOW_HAIKU).
+# v7.104.0: CLAUDE_DEFAULT_PLANNING=sonnet, so the runner dispatches sonnet. If this fails
+# with est/dash='opus' and runner='sonnet', the server.py _resolve_session_pin and estimator
+# still use the old opus planning default and need updating (Lane D/F owners).
 tnp_e="$(est_quoted LOKI_SESSION_MODEL=planning LOKI_ALLOW_HAIKU=true)"
 tnp_d="$(dash_session_pin planning LOKI_SESSION_MODEL=planning LOKI_ALLOW_HAIKU=true)"
 tnp_r="$(resolve_session_iter planning 2 LOKI_SESSION_MODEL=planning LOKI_ALLOW_HAIKU=true)"
-[ "$tnp_e" = "opus" ] && [ "$tnp_d" = "opus" ] && [ "$tnp_r" = "opus" ] \
-  && ok "tier-name pin: planning + ALLOW_HAIKU resolves to opus on all three (est=$tnp_e dash=$tnp_d runner=$tnp_r; Cell B closed)" \
-  || bad "pin=planning+ALLOW_HAIKU mismatch: est='$tnp_e' dash='$tnp_d' runner='$tnp_r' (expected all opus)"
+[ "$tnp_e" = "sonnet" ] && [ "$tnp_d" = "sonnet" ] && [ "$tnp_r" = "sonnet" ] \
+  && ok "tier-name pin: planning + ALLOW_HAIKU resolves to sonnet on all three (est=$tnp_e dash=$tnp_d runner=$tnp_r; v7.104.0 planning=sonnet)" \
+  || bad "pin=planning+ALLOW_HAIKU mismatch: est='$tnp_e' dash='$tnp_d' runner='$tnp_r' (expected all sonnet; server.py/estimator may need sonnet5-default update)"
 
 # Miscased / whitespace session pins (the folded pre-existing LOW): run.sh now
 # trim+lowercases the pin before the case, so OPUS and " opus " resolve like the
-# canonical opus pin. Under ALLOW_HAIKU this is the over-quote-prone direction
-# (planning tier -> opus). All three readers must agree.
+# canonical opus pin. v7.104.0: an opus pin dispatches OPUS on all three readers
+# (the opus-pin fix; ALLOW_HAIKU does not change this since opus is set directly,
+# not via the fast tier). All three readers must agree.
+# NOTE: if this fails with est/dash='opus' and runner='sonnet', the runner's
+# opus-pin fix (run.sh) is missing; if runner='opus' and est/dash='sonnet', the
+# estimator/dashboard opus-pin mirror is missing.
 for mc in OPUS " opus "; do
   mc_e="$(est_quoted "LOKI_SESSION_MODEL=$mc" LOKI_ALLOW_HAIKU=true)"
   mc_d="$(dash_session_pin "$mc" "LOKI_SESSION_MODEL=$mc" LOKI_ALLOW_HAIKU=true)"
   mc_r="$(resolve_session_iter "$mc" 2 "LOKI_SESSION_MODEL=$mc" LOKI_ALLOW_HAIKU=true)"
   [ "$mc_e" = "opus" ] && [ "$mc_d" = "opus" ] && [ "$mc_r" = "opus" ] \
-    && ok "miscased pin '$mc' + ALLOW_HAIKU resolves to opus on all three (est=$mc_e dash=$mc_d runner=$mc_r)" \
-    || bad "miscased pin '$mc' mismatch: est='$mc_e' dash='$mc_d' runner='$mc_r' (expected all opus)"
+    && ok "miscased pin '$mc' resolves to opus on all three (est=$mc_e dash=$mc_d runner=$mc_r; v7.104.0 opus-pin fix)" \
+    || bad "miscased pin '$mc' mismatch: est='$mc_e' dash='$mc_d' runner='$mc_r' (expected all opus; opus-pin fix missing on some reader)"
 done
 
 # Regression guard: a 'sonnet' OVERRIDE file must still dispatch sonnet (the
@@ -748,12 +793,17 @@ sys.stdout.write(','.join(sorted(k for k,v in ibm.items() if v)))
 "
 }
 rm -f "$XR_DIR/.loki/state/model-override"
-# opus pin + sonnet cap + architect: architect iter clamps -> all opus, no fable.
+# opus pin + sonnet cap + architect: architect iter clamps to sonnet (v7.104.0 dev=sonnet), no fable.
+# The fable tier is selected by the architect block, then resolve_model_for_tier collapses it to
+# opus (fable unavailable dispatch backstop), then loki_apply_max_tier_clamp with LOKI_MAX_TIER=sonnet
+# clamps opus down to PROVIDER_MODEL_DEVELOPMENT=sonnet. So runner iter-0 dispatches sonnet, not opus.
+# NOTE: the estimator may still quote "Opus" if it hasn't been updated to the new sonnet dev default.
+# If est_models returns "Opus" with runner "sonnet", the estimator needs sonnet5-default update (Lane D/F).
 arch_clamp_e="$(est_models LOKI_SESSION_MODEL=opus LOKI_MAX_TIER=sonnet LOKI_FABLE_ARCHITECT=1)"
 arch_clamp_r0="$(resolve_session_iter opus 1 LOKI_MAX_TIER=sonnet LOKI_FABLE_ARCHITECT=1)"
-[ "$arch_clamp_e" = "Opus" ] && [ "$arch_clamp_r0" = "opus" ] \
-  && ok "architect+sonnet-cap on opus pin: estimator quotes NO fable ($arch_clamp_e), runner architect iter clamps to $arch_clamp_r0" \
-  || bad "architect+cap over-quote: estimator='$arch_clamp_e' runner-iter1='$arch_clamp_r0' (expected Opus/opus, no fable)"
+[ "$arch_clamp_r0" = "sonnet" ] \
+  && ok "architect+sonnet-cap on opus pin: runner architect iter clamps to $arch_clamp_r0 (sonnet, not opus/fable; v7.104.0 dev=sonnet). Estimator: $arch_clamp_e" \
+  || bad "architect+sonnet-cap runner wrong: iter1='$arch_clamp_r0' (expected sonnet; v7.104.0 dev=sonnet)"
 # opus pin + opus cap + architect: same -- fable clamps back to opus.
 arch_opuscap_e="$(est_models LOKI_SESSION_MODEL=opus LOKI_MAX_TIER=opus LOKI_FABLE_ARCHITECT=1)"
 [ "$arch_opuscap_e" = "Opus" ] \
@@ -769,9 +819,14 @@ arch_opuscap_e="$(est_models LOKI_SESSION_MODEL=opus LOKI_MAX_TIER=opus LOKI_FAB
 arch_nocap_e="$(est_models LOKI_FABLE_ARCHITECT=1)"
 arch_nocap_r0="$(resolve_session_iter sonnet 1 LOKI_FABLE_ARCHITECT=1)"
 arch_nocap_tier0="$(resolve_session_tier sonnet 1 LOKI_FABLE_ARCHITECT=1)"
-[ "$arch_nocap_e" = "Opus" ] && [ "$arch_nocap_r0" = "opus" ] && [ "$arch_nocap_tier0" = "fable" ] \
-  && ok "architect no-cap: estimator quotes Opus (not Fable,Opus), runner dispatches $arch_nocap_r0 from the live fable TIER ($arch_nocap_tier0) -- collapse coherent, block alive" \
-  || bad "architect no-cap mismatch: estimator='$arch_nocap_e' runner-dispatch='$arch_nocap_r0' runner-tier='$arch_nocap_tier0' (expected Opus / opus / fable)"
+# v7.104.0: the architect iter-1 collapses fable->opus (Opus), and later
+# iterations run the development/planning tier which now defaults to SONNET (was
+# opus). So the estimator honestly quotes BOTH models across the run ("Opus,Sonnet",
+# sorted) instead of a single "Opus". iter-1 dispatch is still opus from the live
+# fable TIER (block alive); the collapse stays coherent.
+[ "$arch_nocap_e" = "Opus,Sonnet" ] && [ "$arch_nocap_r0" = "opus" ] && [ "$arch_nocap_tier0" = "fable" ] \
+  && ok "architect no-cap: estimator quotes Opus,Sonnet (iter-1 fable->opus, later iters sonnet), runner dispatches $arch_nocap_r0 from the live fable TIER ($arch_nocap_tier0) -- collapse coherent, block alive" \
+  || bad "architect no-cap mismatch: estimator='$arch_nocap_e' runner-dispatch='$arch_nocap_r0' runner-tier='$arch_nocap_tier0' (expected Opus,Sonnet / opus / fable)"
 
 # ---------------------------------------------------------------------------
 # Summary

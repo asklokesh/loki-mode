@@ -113,10 +113,13 @@ export function getProviderTierParam(tier: RarvTier | string, provider: Provider
   switch (provider) {
     case "claude":
       switch (tier) {
+        // v7.104.0: planning + development default to sonnet (Sonnet 5 is the
+        // default execution model), matching claude.sh CLAUDE_DEFAULT_PLANNING/
+        // DEVELOPMENT and the bash resolver. An explicit PROVIDER_MODEL_* wins.
         case "planning":
-          return process.env["PROVIDER_MODEL_PLANNING"] ?? "opus";
+          return process.env["PROVIDER_MODEL_PLANNING"] ?? "sonnet";
         case "development":
-          return process.env["PROVIDER_MODEL_DEVELOPMENT"] ?? "opus";
+          return process.env["PROVIDER_MODEL_DEVELOPMENT"] ?? "sonnet";
         case "fast":
           return process.env["PROVIDER_MODEL_FAST"] ?? "sonnet";
         case "fable":

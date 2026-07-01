@@ -18,7 +18,9 @@ import { registerPoll } from '../core/loki-poll-registry.js';
 const DEFAULT_PRICING = {
   // Claude (Anthropic)
   opus:   { input: 5.00,   output: 25.00,  label: 'Opus 4.6',       provider: 'claude' },
-  sonnet: { input: 3.00,   output: 15.00,  label: 'Sonnet 4.5',     provider: 'claude' },
+  // Sonnet 5 is the default execution model (v7.104.0). The $3/$15 rate is the
+  // standard rate; the intro-pricing note is surfaced from /api/pricing.
+  sonnet: { input: 3.00,   output: 15.00,  label: 'Sonnet 5',       provider: 'claude' },
   haiku:  { input: 1.00,   output: 5.00,   label: 'Haiku 4.5',      provider: 'claude' },
   // OpenAI Codex
   'gpt-5.3-codex': { input: 1.50, output: 12.00, label: 'GPT-5.3 Codex', provider: 'codex' },
@@ -97,6 +99,8 @@ export class LokiCostDashboard extends LokiElement {
             output: m.output,
             label: m.label || key,
             provider: m.provider || 'unknown',
+            // Display-only annotation (e.g. Sonnet 5 intro pricing). Optional.
+            note: m.note || '',
           };
         }
         this._modelPricing = updated;
@@ -573,6 +577,13 @@ export class LokiCostDashboard extends LokiElement {
           line-height: 1.5;
         }
 
+        .pricing-note {
+          font-size: 10px;
+          color: var(--loki-text-secondary);
+          margin-top: 4px;
+          line-height: 1.4;
+        }
+
         /* Offline state */
         .offline-notice {
           text-align: center;
@@ -674,6 +685,7 @@ export class LokiCostDashboard extends LokiElement {
             <div class="pricing-item">
               <div class="pricing-model ${this._getPricingColorClass(key, m)}">${this._escapeHTML(m.label || key)}</div>
               <div class="pricing-rates">In: $${Number(m.input ?? 0).toFixed(2)} / Out: $${Number(m.output ?? 0).toFixed(2)}</div>
+              ${m.note ? `<div class="pricing-note">${this._escapeHTML(m.note)}</div>` : ''}
             </div>`).join('')}
           </div>
         </div>

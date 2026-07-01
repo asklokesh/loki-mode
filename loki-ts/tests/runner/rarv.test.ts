@@ -91,8 +91,10 @@ describe("rarv.getRarvPhaseName", () => {
 
 describe("rarv.getProviderTierParam -- legacy fallback table", () => {
   it("claude tier mapping", () => {
-    expect(getProviderTierParam("planning", "claude")).toBe("opus");
-    expect(getProviderTierParam("development", "claude")).toBe("opus");
+    // v7.104.0: Sonnet 5 is the default execution model (planning + development
+    // default to sonnet, was opus). fast stays sonnet.
+    expect(getProviderTierParam("planning", "claude")).toBe("sonnet");
+    expect(getProviderTierParam("development", "claude")).toBe("sonnet");
     expect(getProviderTierParam("fast", "claude")).toBe("sonnet");
   });
 

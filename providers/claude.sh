@@ -52,8 +52,13 @@ PROVIDER_MAX_PARALLEL=10
 #   sonnet -> latest Sonnet (e.g. claude-sonnet-4-6)
 #   haiku  -> latest Haiku  (e.g. claude-haiku-4-5)
 # Override per tier with LOKI_CLAUDE_MODEL_PLANNING, _DEVELOPMENT, _FAST.
-CLAUDE_DEFAULT_PLANNING="opus"
-CLAUDE_DEFAULT_DEVELOPMENT="opus"  # Opus for dev (was sonnet)
+# v7.104.0: Sonnet 5 is the default execution model (was opus for planning+dev).
+# Cheaper + faster near-frontier builder; the trust gate is unchanged by default
+# and a strong Opus judge is opt-in via LOKI_ADVISOR_MODEL (see _dispatch_reviewer).
+# To restore Opus execution: LOKI_CLAUDE_MODEL_DEVELOPMENT=opus (and _PLANNING=opus),
+# or the dashboard "set all to opus". Planning-on-Opus is a one-line revert here.
+CLAUDE_DEFAULT_PLANNING="sonnet"
+CLAUDE_DEFAULT_DEVELOPMENT="sonnet"
 CLAUDE_DEFAULT_FAST="sonnet"
 
 if [ "${LOKI_ALLOW_HAIKU:-false}" = "true" ]; then
@@ -379,13 +384,14 @@ loki_apply_max_tier_clamp() {
 # Resolves a capability tier to a concrete model name at runtime.
 # Respects LOKI_MAX_TIER to cap cost via loki_apply_max_tier_clamp. NOTE the
 # ceiling clamps DOWN to the provider's configured tier model, not to the alias
-# named by the cap: with the stock config (CLAUDE_DEFAULT_DEVELOPMENT=opus, see
-# line 56), LOKI_MAX_TIER=sonnet resolves planning/fable DOWN to
-# PROVIDER_MODEL_DEVELOPMENT, which is still opus. To actually pin sonnet as the
-# ceiling, also set LOKI_ALLOW_HAIKU=true (which makes PROVIDER_MODEL_DEVELOPMENT
-# sonnet) or override LOKI_CLAUDE_MODEL_DEVELOPMENT=sonnet. This is intentional
-# and is mirrored byte-for-byte by the dashboard/estimator ports (parity-locked
-# in tests/test-model-override.sh).
+# named by the cap. As of v7.104.0 the stock config is
+# CLAUDE_DEFAULT_DEVELOPMENT=sonnet, so LOKI_MAX_TIER=sonnet resolves
+# planning/fable DOWN to PROVIDER_MODEL_DEVELOPMENT, which is now sonnet - the
+# ceiling genuinely pins sonnet with the stock config (previously it clamped to
+# opus because dev defaulted to opus). To cap harder, LOKI_MAX_TIER=haiku pins
+# everything to PROVIDER_MODEL_FAST. This is intentional and is mirrored
+# byte-for-byte by the dashboard/estimator ports (parity-locked in
+# tests/test-model-override.sh).
 # Capability aliases: "best" -> planning tier, "fast" -> fast tier, "balanced" -> development tier
 resolve_model_for_tier() {
     local tier="$1"

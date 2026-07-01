@@ -78,18 +78,18 @@ class SessionModelEndpointTests(unittest.TestCase):
         return TestClient(app, raise_server_exceptions=False)
 
     def test_get_reports_no_override_by_default(self):
-        # No override, no env: default pin is "sonnet". Task 568: on the
-        # no-override path `effective` resolves through the session-pin TIER route
-        # (sonnet -> development tier -> PROVIDER_MODEL_DEVELOPMENT=opus), the
-        # model the runner dispatches -- NOT the pin alias. Before 568 this
-        # reported "sonnet" while the run dispatched opus.
+        # No override, no env: default pin is "sonnet". On the no-override path
+        # `effective` resolves through the session-pin TIER route (sonnet ->
+        # development tier -> PROVIDER_MODEL_DEVELOPMENT), the model the runner
+        # dispatches. v7.104.0: that development default is now sonnet, so the
+        # quote and dispatch both equal sonnet (they agree exactly).
         with _ForceLokiDir(self.tmp):
             resp = self._client().get("/api/session/model")
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertIsNone(body["override"])
         self.assertEqual(body["default"], "sonnet")
-        self.assertEqual(body["effective"], "opus")
+        self.assertEqual(body["effective"], "sonnet")
         self.assertEqual(body["allowed"], ["haiku", "sonnet", "opus", "fable"])
 
     def test_post_fable_writes_override_file(self):
@@ -163,25 +163,29 @@ class SessionModelEndpointTests(unittest.TestCase):
 
     def test_get_clamps_effective_to_max_tier(self):
         # A fable override under LOKI_MAX_TIER=sonnet must report the CLAMPED
-        # effective model (opus), not fable, so the dashboard never claims a
-        # model the run would clamp down (cost-ceiling agreement).
+        # effective model, not fable, so the dashboard never claims a model the run
+        # would clamp down (cost-ceiling agreement). The sonnet cap downgrades
+        # fable to PROVIDER_MODEL_DEVELOPMENT; v7.104.0 that default is sonnet
+        # (was opus).
         self._override.write_text("fable\n")
         os.environ["LOKI_MAX_TIER"] = "sonnet"
         with _ForceLokiDir(self.tmp):
             resp = self._client().get("/api/session/model")
         body = resp.json()
         self.assertEqual(body["override"], "fable")
-        self.assertEqual(body["effective"], "opus")
+        self.assertEqual(body["effective"], "sonnet")
 
     def test_post_clamps_effective_to_max_tier(self):
         # POST validation response shows the clamped effective model + clamped flag.
+        # fable under a sonnet cap downgrades to PROVIDER_MODEL_DEVELOPMENT;
+        # v7.104.0 that default is sonnet (was opus).
         os.environ["LOKI_MAX_TIER"] = "sonnet"
         with _ForceLokiDir(self.tmp):
             resp = self._client().post("/api/session/model", json={"model": "fable"})
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertEqual(body["model"], "fable")
-        self.assertEqual(body["effective"], "opus")
+        self.assertEqual(body["effective"], "sonnet")
         self.assertTrue(body["clamped"])
         # The override file still records the requested alias; the run clamps it.
         self.assertEqual(self._override.read_text().strip(), "fable")
@@ -301,16 +305,17 @@ class SessionModelEndpointTests(unittest.TestCase):
     # override-path clamp: a 'sonnet' pin dispatches opus, but a 'sonnet'
     # OVERRIDE dispatches sonnet. These lock that distinction.
 
-    def test_get_no_override_sonnet_pin_resolves_opus(self):
+    def test_get_no_override_sonnet_pin_resolves_sonnet(self):
         # Explicit LOKI_SESSION_MODEL=sonnet, no override -> development tier ->
-        # opus (stock). The headline task-568 gap.
+        # PROVIDER_MODEL_DEVELOPMENT. v7.104.0: that default is sonnet, so the
+        # quote and dispatch agree exactly (pre-v7.104 it dispatched opus).
         os.environ["LOKI_SESSION_MODEL"] = "sonnet"
         with _ForceLokiDir(self.tmp):
             resp = self._client().get("/api/session/model")
         body = resp.json()
         self.assertIsNone(body["override"])
         self.assertEqual(body["default"], "sonnet")
-        self.assertEqual(body["effective"], "opus")
+        self.assertEqual(body["effective"], "sonnet")
 
     def test_get_no_override_opus_pin_resolves_opus(self):
         os.environ["LOKI_SESSION_MODEL"] = "opus"
@@ -352,14 +357,15 @@ class SessionModelEndpointTests(unittest.TestCase):
             resp = self._client().get("/api/session/model")
         self.assertEqual(resp.json()["effective"], "sonnet")
 
-    def test_get_no_override_sonnet_pin_sonnet_cap_resolves_opus(self):
+    def test_get_no_override_sonnet_pin_sonnet_cap_resolves_sonnet(self):
         # sonnet pin -> development tier; a sonnet cap does NOT downgrade
-        # development (only planning/fable), so the dispatched model stays opus.
+        # development (only planning/fable). v7.104.0: the development default is
+        # sonnet, so the dispatched model is sonnet (was opus pre-v7.104).
         os.environ["LOKI_SESSION_MODEL"] = "sonnet"
         os.environ["LOKI_MAX_TIER"] = "sonnet"
         with _ForceLokiDir(self.tmp):
             resp = self._client().get("/api/session/model")
-        self.assertEqual(resp.json()["effective"], "opus")
+        self.assertEqual(resp.json()["effective"], "sonnet")
 
     # --- v7.32: documented tier-name session pins (planning|development|fast) --
     # run.sh's session-pin case accepts raw tier names as well as model aliases
@@ -386,31 +392,33 @@ class SessionModelEndpointTests(unittest.TestCase):
             resp = self._client().get("/api/session/model")
         self.assertEqual(resp.json()["effective"], "haiku")
 
-    def test_get_no_override_planning_pin_resolves_opus(self):
-        # planning pin -> planning tier -> PROVIDER_MODEL_PLANNING = opus.
+    def test_get_no_override_planning_pin_resolves_sonnet(self):
+        # planning pin -> planning tier -> PROVIDER_MODEL_PLANNING. v7.104.0: that
+        # default is sonnet (Sonnet 5 is the default execution model; was opus).
         os.environ["LOKI_SESSION_MODEL"] = "planning"
         with _ForceLokiDir(self.tmp):
             resp = self._client().get("/api/session/model")
         body = resp.json()
         self.assertEqual(body["default"], "planning")
-        self.assertEqual(body["effective"], "opus")
+        self.assertEqual(body["effective"], "sonnet")
 
-    def test_get_no_override_planning_pin_allow_haiku_resolves_opus(self):
-        # Cell B: planning tier is opus regardless of ALLOW_HAIKU (only the
-        # development/fast defaults lower). Was a ~1.7x under-quote (sonnet) on
-        # the ports before the fix.
+    def test_get_no_override_planning_pin_allow_haiku_resolves_sonnet(self):
+        # Cell B: v7.104.0 planning tier defaults to sonnet (Sonnet 5 is the
+        # default execution model), regardless of ALLOW_HAIKU (only the fast
+        # default lowers to haiku). Was opus pre-v7.104.
         os.environ["LOKI_SESSION_MODEL"] = "planning"
         os.environ["LOKI_ALLOW_HAIKU"] = "true"
         with _ForceLokiDir(self.tmp):
             resp = self._client().get("/api/session/model")
-        self.assertEqual(resp.json()["effective"], "opus")
+        self.assertEqual(resp.json()["effective"], "sonnet")
 
-    def test_get_no_override_development_pin_resolves_opus(self):
-        # development pin -> development tier -> PROVIDER_MODEL_DEVELOPMENT = opus.
+    def test_get_no_override_development_pin_resolves_sonnet(self):
+        # development pin -> development tier -> PROVIDER_MODEL_DEVELOPMENT.
+        # v7.104.0: that default is now sonnet (was opus).
         os.environ["LOKI_SESSION_MODEL"] = "development"
         with _ForceLokiDir(self.tmp):
             resp = self._client().get("/api/session/model")
-        self.assertEqual(resp.json()["effective"], "opus")
+        self.assertEqual(resp.json()["effective"], "sonnet")
 
     def test_get_no_override_development_pin_allow_haiku_resolves_sonnet(self):
         os.environ["LOKI_SESSION_MODEL"] = "development"

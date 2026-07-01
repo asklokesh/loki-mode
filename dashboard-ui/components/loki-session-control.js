@@ -54,6 +54,11 @@ export class LokiSessionControl extends LokiElement {
     this._startBusy = false;
     this._startNotice = '';
     this._specText = '';
+    // Start-time model selection (applies to the whole run from iteration 1).
+    // '' means "use the engine default" (Sonnet 5). Allowed: haiku|sonnet|opus.
+    this._startModel = '';
+    // Advisor / reviewer judge: '' = account default, 'opus' = opt-in Opus judge.
+    this._advisorModel = '';
     this._api = null;
     this._state = getState();
     this._statusUpdateHandler = null;
@@ -248,6 +253,9 @@ export class LokiSessionControl extends LokiElement {
     try {
       const result = await this._api.startSession(spec, {
         provider: this._status.provider || 'claude',
+        // '' -> engine default (Sonnet 5); the client omits empty values.
+        model: this._startModel || '',
+        advisorModel: this._advisorModel || '',
       });
       if (result && result.error) throw new Error(result.error);
       // Transition the UI to monitoring the new run.
@@ -368,7 +376,7 @@ export class LokiSessionControl extends LokiElement {
     const opts = [
       { value: '', label: `Default (tier: ${this._escapeHtml(this._model.default)})` },
       { value: 'haiku', label: 'Haiku (fastest, cheapest)' },
-      { value: 'sonnet', label: 'Sonnet (balanced)' },
+      { value: 'sonnet', label: 'Sonnet 5 (balanced)' },
       { value: 'opus', label: 'Opus (top coding)' },
       { value: 'fable', label: 'Fable 5 (2x Opus cost: $10/$50 per MTok)' },
     ];
@@ -393,8 +401,34 @@ export class LokiSessionControl extends LokiElement {
   }
 
   _renderStartControl() {
-    // Browser PRD-input: a spec textarea + Start button, shown when no run is
-    // active so a user can kick off a build straight from the dashboard.
+    // Browser PRD-input: a spec textarea + model picker + Start button, shown
+    // when no run is active so a user can kick off a build (and choose the
+    // execution model + optional Opus advisor) straight from the dashboard.
+    // Start-time model options: haiku|sonnet|opus (NO fable at start time -- fable
+    // is an advisory-only 2x-Opus model and is not a Claude API dispatch model).
+    // The default '' pins nothing, so the engine uses Sonnet 5.
+    const startModelOpts = [
+      { value: '', label: 'Sonnet 5 (default)' },
+      { value: 'haiku', label: 'Haiku (fastest, cheapest)' },
+      { value: 'sonnet', label: 'Sonnet 5 (balanced)' },
+      { value: 'opus', label: 'Opus (top coding, priciest)' },
+    ];
+    const startModelHtml = startModelOpts.map((o) => {
+      const sel = o.value === this._startModel ? ' selected' : '';
+      return `<option value="${this._escapeHtml(o.value)}"${sel}>${this._escapeHtml(o.label)}</option>`;
+    }).join('');
+
+    // Advisor judge: account default, or an opt-in Opus reviewer that judges the
+    // code-review gate while execution stays on the chosen model.
+    const advisorOpts = [
+      { value: '', label: 'Account default' },
+      { value: 'opus', label: 'Opus (stronger judge)' },
+    ];
+    const advisorHtml = advisorOpts.map((o) => {
+      const sel = o.value === this._advisorModel ? ' selected' : '';
+      return `<option value="${this._escapeHtml(o.value)}"${sel}>${this._escapeHtml(o.label)}</option>`;
+    }).join('');
+
     return `
       <div class="start-control">
         <label class="start-label" for="spec-input">Start a build from a spec</label>
@@ -405,6 +439,30 @@ export class LokiSessionControl extends LokiElement {
           placeholder="Paste a PRD or type a one-line brief (e.g. 'a CLI todo app in Go with JSON storage')"
           aria-label="Spec or one-line brief"
           ${this._startBusy ? 'disabled' : ''}>${this._escapeHtml(this._specText)}</textarea>
+
+        <div class="start-field">
+          <label for="start-model-select">Model</label>
+          <select
+            class="model-select"
+            id="start-model-select"
+            aria-label="Execution model for this build"
+            ${this._startBusy ? 'disabled' : ''}>
+            ${startModelHtml}
+          </select>
+        </div>
+
+        <div class="start-field">
+          <label for="advisor-select">Advisor</label>
+          <select
+            class="model-select"
+            id="advisor-select"
+            aria-label="Advisor (code-review judge) model"
+            ${this._startBusy ? 'disabled' : ''}>
+            ${advisorHtml}
+          </select>
+        </div>
+        <div class="start-hint" id="advisor-hint">Advisor judges the code-review gate; execution stays on the model above.</div>
+
         <button class="control-btn start" id="start-btn" aria-label="Start build" ${this._startBusy ? 'disabled' : ''}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
           ${this._startBusy ? 'Starting...' : 'Start Build'}
@@ -685,6 +743,26 @@ export class LokiSessionControl extends LokiElement {
           color: var(--loki-text-secondary);
         }
 
+        .start-field {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .start-field label {
+          font-size: 11px;
+          color: var(--loki-text-secondary);
+          white-space: nowrap;
+          /* Fixed label column so the two selects line up. */
+          flex: 0 0 48px;
+        }
+
+        .start-hint {
+          font-size: 10px;
+          color: var(--loki-text-muted);
+          line-height: 1.4;
+        }
+
         .spec-input {
           width: 100%;
           box-sizing: border-box;
@@ -886,6 +964,40 @@ export class LokiSessionControl extends LokiElement {
     const specInput = this.shadowRoot.getElementById('spec-input');
     if (specInput) {
       specInput.addEventListener('input', (e) => this._onSpecInput(e.target.value));
+    }
+
+    // Start-time model + advisor selects. Store the value WITHOUT a re-render so
+    // an in-progress selection (or a background status poll) does not slam the
+    // menu shut; the value is read at Start time. Guard the poll re-render the
+    // same way the mid-run dropdown does.
+    const startModelSelect = this.shadowRoot.getElementById('start-model-select');
+    if (startModelSelect) {
+      startModelSelect.addEventListener('mousedown', () => { this._modelInteracting = true; });
+      startModelSelect.addEventListener('focus', () => { this._modelInteracting = true; });
+      startModelSelect.addEventListener('blur', () => {
+        this._modelInteracting = false;
+        if (this._renderPending) { this._renderPending = false; this.render(); }
+      });
+      startModelSelect.addEventListener('change', (e) => {
+        this._modelInteracting = false;
+        this._renderPending = false;
+        this._startModel = e.target.value;
+      });
+    }
+
+    const advisorSelect = this.shadowRoot.getElementById('advisor-select');
+    if (advisorSelect) {
+      advisorSelect.addEventListener('mousedown', () => { this._modelInteracting = true; });
+      advisorSelect.addEventListener('focus', () => { this._modelInteracting = true; });
+      advisorSelect.addEventListener('blur', () => {
+        this._modelInteracting = false;
+        if (this._renderPending) { this._renderPending = false; this.render(); }
+      });
+      advisorSelect.addEventListener('change', (e) => {
+        this._modelInteracting = false;
+        this._renderPending = false;
+        this._advisorModel = e.target.value;
+      });
     }
   }
 }

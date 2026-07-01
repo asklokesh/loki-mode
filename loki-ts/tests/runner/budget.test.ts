@@ -50,11 +50,12 @@ describe("budget.calculateCostFromRecords -- pricing per provider", () => {
     expect(cost).toBe(6);
   });
 
-  it("computes gpt-5.3-codex pricing (1.5/12 per 1M)", () => {
+  it("computes gpt-5.3-codex pricing (1.75/14 per 1M)", () => {
     const cost = calculateCostFromRecords([
       { model: "gpt-5.3-codex", input_tokens: 1_000_000, output_tokens: 1_000_000 },
     ]);
-    expect(cost).toBe(13.5);
+    // v7.104.0: corrected to the real OpenAI standard-tier price 1.75/14.00.
+    expect(cost).toBe(15.75);
   });
 
   it("falls back to sonnet pricing for unknown models", () => {

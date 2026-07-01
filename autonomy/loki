@@ -15555,24 +15555,26 @@ _fable_architect = (
 # cross-route tests in test-plan-command.sh. If you change resolution here, change
 # it in claude.sh AND dashboard/server.py, and re-run those tests. The 'or' chains
 # mirror bash ':-' empty-string-fallthrough; allow_haiku uses an exact 'true'
-# match to mirror bash [ \"\$x\" = \"true\" ]. PROVIDER_MODEL_DEVELOPMENT is opus
-# by default; PROVIDER_MODEL_FAST is sonnet by default (haiku when ALLOW_HAIKU).
+# match to mirror bash [ \"\$x\" = \"true\" ]. v7.104.0: PROVIDER_MODEL_DEVELOPMENT
+# and PROVIDER_MODEL_PLANNING default to SONNET (was opus); PROVIDER_MODEL_FAST is
+# sonnet by default (haiku when ALLOW_HAIKU).
 _allow_haiku = (os.environ.get('LOKI_ALLOW_HAIKU', 'false') or 'false') == 'true'
 def _provider_model_fast():
     return (os.environ.get('LOKI_CLAUDE_MODEL_FAST')
             or os.environ.get('LOKI_MODEL_FAST')
             or ('haiku' if _allow_haiku else 'sonnet'))
 def _provider_model_development():
+    # v7.104.0: CLAUDE_DEFAULT_DEVELOPMENT=sonnet (was opus). ALLOW_HAIKU no longer
+    # changes dev (already sonnet); it only lowers fast to haiku.
     return (os.environ.get('LOKI_CLAUDE_MODEL_DEVELOPMENT')
             or os.environ.get('LOKI_MODEL_DEVELOPMENT')
-            or ('sonnet' if _allow_haiku else 'opus'))
+            or 'sonnet')
 def _provider_model_planning():
-    # claude.sh:65 -> LOKI_CLAUDE_MODEL_PLANNING > LOKI_MODEL_PLANNING > opus.
-    # CLAUDE_DEFAULT_PLANNING is always opus (LOKI_ALLOW_HAIKU only lowers the
-    # development and fast defaults, not planning).
+    # claude.sh:55 -> LOKI_CLAUDE_MODEL_PLANNING > LOKI_MODEL_PLANNING > sonnet.
+    # v7.104.0: CLAUDE_DEFAULT_PLANNING=sonnet (was opus).
     return (os.environ.get('LOKI_CLAUDE_MODEL_PLANNING')
             or os.environ.get('LOKI_MODEL_PLANNING')
-            or 'opus')
+            or 'sonnet')
 _max_tier = (os.environ.get('LOKI_MAX_TIER', '') or '').strip().lower()
 def _loki_clamp_alias(alias):
     if not _max_tier:
@@ -15593,13 +15595,12 @@ def _loki_clamp_alias(alias):
 # planning, sonnet->development, haiku->fast, fable->fable) and resolves that
 # tier through resolve_model_for_tier (claude.sh:353), which reads
 # PROVIDER_MODEL_PLANNING/DEVELOPMENT/FAST and then applies
-# loki_apply_max_tier_clamp(model, REAL_tier). This DIFFERS from the override-
-# path clamp _loki_clamp_alias above: a 'sonnet' SESSION pin dispatches OPUS
-# (development tier -> PROVIDER_MODEL_DEVELOPMENT=opus on stock config), whereas
-# a 'sonnet' OVERRIDE file dispatches sonnet (alias fed straight to --model).
-# Quoting the alias name on the default session path was the task-568 gap (it
-# understated cost ~1.7x: Sonnet quote vs Opus dispatch). The estimator must
-# quote the model the runner actually dispatches.
+# loki_apply_max_tier_clamp(model, REAL_tier). v7.104.0: with the sonnet default,
+# a 'sonnet' SESSION pin now dispatches sonnet (development tier ->
+# PROVIDER_MODEL_DEVELOPMENT=sonnet), matching a 'sonnet' OVERRIDE file. The
+# estimator must quote the model the runner actually dispatches; on stock config
+# the session-pin path and override path now agree on sonnet for dev/planning
+# tiers (they diverge only when the tier defaults are overridden by env).
 #
 # SYNC: byte-faithful with run.sh's session-pin case + claude.sh
 # resolve_model_for_tier + loki_apply_max_tier_clamp. The same resolver lives in
@@ -15607,11 +15608,24 @@ def _loki_clamp_alias(alias):
 # session-pin parity matrix and the no-cap stock cross-route cases in
 # tests/test-model-override.sh.
 def _resolve_session_pin(alias):
+    # v7.104.0 opus-pin fix: mirror run.sh. Post the Sonnet-5 default flip, NO
+    # tier resolves to opus, so an opus SESSION pin must dispatch opus directly
+    # (not route through planning->sonnet). Clamped by LOKI_MAX_TIER so the
+    # ceiling still binds. sonnet/haiku pins stay on the tier route (preserving
+    # the ALLOW_HAIKU gate for haiku).
+    if alias == 'opus':
+        if not _max_tier:
+            return 'opus'
+        if _max_tier == 'haiku':
+            return _provider_model_fast()
+        # sonnet cap: clamp opus down to the development tier model (sonnet stock).
+        if _max_tier == 'sonnet':
+            return _provider_model_development()
+        return 'opus'  # opus cap (or any higher): opus stands.
     # alias -> abstract tier (run.sh:12331). Unknown -> development (the runner's
     # '*' arm passes CURRENT_TIER through to resolve_model_for_tier, whose '*'
     # default is PROVIDER_MODEL_DEVELOPMENT, i.e. the development tier).
     _pin_tier = {
-        'opus': 'planning',
         'sonnet': 'development',
         'haiku': 'fast',
         'fable': 'fable',
