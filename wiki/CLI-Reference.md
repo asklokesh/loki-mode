@@ -196,12 +196,20 @@ flag also skips the consent prompt (consent already given).
 one-line precedence note is logged.
 
 ```bash
-loki mcp           # launch (offers dependency bootstrap if needed)
+loki mcp                       # launch over stdio (default)
+loki mcp --transport http      # launch over HTTP, bound to 127.0.0.1:8421
 loki mcp --help
 ```
 
+The `http` transport binds `127.0.0.1` (loopback only) explicitly, never
+`0.0.0.0`. It is unauthenticated by default. Set `LOKI_MCP_AUTH_TOKEN` to
+require a bearer token on every HTTP request (`Authorization: Bearer <token>`);
+requests without a matching token are rejected with `401`. The default stdio
+transport is unaffected by this variable.
+
 | Environment variable | Effect |
 |----------------------|--------|
+| `LOKI_MCP_AUTH_TOKEN=<token>` | Optional; `--transport http` only. When set, every HTTP request must send `Authorization: Bearer <token>` or gets `401`. When unset, the HTTP server is loopback-only and unauthenticated (unchanged). No effect on stdio. |
 | `LOKI_MCP_VENV=/abs/path` | Use a custom venv location instead of `.loki/mcp-venv`. |
 | `LOKI_NO_INSTALL_OFFER=1` | Never install; print the manual command and exit 2. Wins over `LOKI_MCP_AUTO_BOOTSTRAP`. |
 | `LOKI_MCP_AUTO_BOOTSTRAP=1` | Written consent for a non-interactive (MCP client) bootstrap. Progress on stderr only; skips the TTY prompt. Accepts `1`/`true`/`yes`/`on` (case-insensitive). |

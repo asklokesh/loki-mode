@@ -160,11 +160,18 @@ into it (with your consent). The exact pip command is printed before it runs.
 It then launches the server using that venv's python.
 
 Options:
-  --transport stdio|http  Transport to use (default: stdio).
+  --transport stdio|http  Transport to use (default: stdio). The http transport
+                          binds 127.0.0.1 (loopback only) explicitly.
   --port N                Port for http transport (default: 8421).
   --help, -h              Show this help and exit.
 
 Environment:
+  LOKI_MCP_AUTH_TOKEN=<tok>   Optional. Only affects --transport http. When set,
+                              every HTTP request must send
+                              'Authorization: Bearer <tok>' or it is rejected
+                              401. When unset, the http server is loopback-only
+                              and unauthenticated (unchanged behavior). Has no
+                              effect on the default stdio transport.
   LOKI_MCP_VENV=/abs/path     Use a custom venv location instead of .loki/mcp-venv.
   LOKI_NO_INSTALL_OFFER=1     Never prompt to install; print the manual command.
                               Wins over LOKI_MCP_AUTO_BOOTSTRAP (explicit no beats

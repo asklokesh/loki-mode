@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.107.0] - 2026-07-01
+
+### Hardening + latent crash fix: loki mcp --transport http (loopback bind + optional bearer auth)
+
+The HTTP transport path for `loki mcp --transport http` was fixed and hardened.
+
+- FIX (latent crash): the previous `mcp.run(transport='http', port=...)` call could never
+  work: FastMCP's run() has no 'http' transport literal (only stdio/sse/streamable-http) and
+  takes no port keyword, so the http branch raised TypeError/ValueError. The command now runs
+  via a supported path (streamable_http_app served by uvicorn), so `loki mcp --transport http`
+  actually starts.
+- HARDENING (explicit loopback bind): the server binds 127.0.0.1 explicitly (never an implicit
+  default, never 0.0.0.0), so a future SDK default change cannot silently widen the bind.
+- HARDENING (optional bearer auth): when LOKI_MCP_AUTH_TOKEN is set, every HTTP request must
+  carry a matching `Authorization: Bearer <token>` or it is rejected 401 (constant-time compare
+  via hmac.compare_digest, with WWW-Authenticate: Bearer). When the env var is unset or empty,
+  NO auth middleware is installed, so the request path is the plain unauthenticated behavior.
+- The default stdio transport path is untouched.
+- Coverage: tests/mcp/test_http_auth.py (6 tests) + tests/test-mcp-http-auth.sh (boots a real
+  server, verifies the 127.0.0.1 bind via lsof and the full no-bearer/wrong-bearer/correct-bearer/
+  token-unset 401/200 matrix, including a real MCP initialize handshake that proves the middleware
+  does not break the Streamable-HTTP lifespan/session manager).
+
 ## [7.106.0] - 2026-07-01
 
 ### Accuracy: reverse-classical test provenance (a green test suite must actually prove the change)
