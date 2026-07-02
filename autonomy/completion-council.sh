@@ -1517,6 +1517,112 @@ HELDOUT_EOF
     return 0
 }
 
+# v7.106.0: reverse-classical test provenance.
+# FrontierCode insight: a NEW test only proves the change if it FAILS on the
+# pre-change base and PASSES on HEAD. A test that passes on BOTH is tautological
+# (or was written to pass) and proves nothing -- it must NOT count as affirmative
+# "tests green" evidence. This helper runs the run's NEW/CHANGED test files
+# against the run-start base in an ISOLATED git worktree (NEVER touching the live
+# tree -- the self-delete/self-mutate hazard) and classifies the provenance.
+#
+# INVARIANT (safety): this only ever DOWNGRADES unearned affirmative -> inconclusive.
+# It NEVER grants affirmative, and NEVER turns inconclusive into a block. Any
+# failure to establish provenance (no base, no git, no test files, scratch
+# materialization error, runner error) returns "unknown" and the caller keeps the
+# existing behavior -- fail OPEN toward the current gate, never a false block.
+#
+# Echoes exactly one token:
+#   tautological-> the FULL suite (incl. the new/changed tests) PASSES on base, so
+#                  the new tests added no failing signal on the old code = they
+#                  prove nothing = downgrade to inconclusive.
+#   unknown     -> cannot determine, so caller no-ops (keeps existing behavior).
+#                  Covers: no base/git/tests, materialization/runner error, AND a
+#                  base-suite FAILURE (rc != 0) -- because a whole-suite failure
+#                  cannot be attributed to the new test specifically, we do NOT
+#                  claim "confirmed provenance" from it (that would be a false
+#                  signal). So there is deliberately NO affirmative-granting token:
+#                  this helper can only ever DOWNGRADE, never confirm.
+# Opt out with LOKI_TEST_PROVENANCE=0 (returns unknown immediately).
+_loki_test_provenance() {
+    [ "${LOKI_TEST_PROVENANCE:-1}" = "0" ] && { echo "unknown"; return 0; }
+    local base_sha="$1" test_cmd="$2"
+    local target="${TARGET_DIR:-.}"
+    [ -n "$base_sha" ] || { echo "unknown"; return 0; }
+    command -v git >/dev/null 2>&1 || { echo "unknown"; return 0; }
+    ( cd "$target" 2>/dev/null && git rev-parse --is-inside-work-tree >/dev/null 2>&1 ) || { echo "unknown"; return 0; }
+    ( cd "$target" 2>/dev/null && git cat-file -e "${base_sha}^{commit}" 2>/dev/null ) || { echo "unknown"; return 0; }
+
+    # Identify NEW/CHANGED test files in the diff vs base (committed + working tree).
+    # Heuristic test-path match across common ecosystems; conservative (only files
+    # that look like tests). If none, provenance is not applicable -> unknown.
+    local test_files
+    test_files=$( cd "$target" 2>/dev/null && {
+        git diff --name-only "$base_sha" -- 2>/dev/null
+        git ls-files --others --exclude-standard 2>/dev/null
+    } | LC_ALL=C sort -u | grep -iE '(^|/)(test|tests|spec|__tests__)/|(\.|_|-)(test|spec)\.[a-z0-9]+$|_test\.[a-z0-9]+$|test_[^/]*\.py$' || true )
+    [ -n "$test_files" ] || { echo "unknown"; return 0; }
+
+    # Materialize base in an ISOLATED worktree; never checkout in the live tree.
+    local scratch; scratch="$(mktemp -d "${TMPDIR:-/tmp}/loki-prov-XXXXXX" 2>/dev/null)" || { echo "unknown"; return 0; }
+    local wt="$scratch/base"
+    if ! ( cd "$target" && git worktree add --detach --quiet "$wt" "$base_sha" 2>/dev/null ); then
+        rm -rf "$scratch" 2>/dev/null; echo "unknown"; return 0
+    fi
+
+    # Inject the current NEW/CHANGED test files into the base worktree so we run
+    # the AGENT'S tests against the OLD code. Copy from the live tree (HEAD/working
+    # version of each test file). Missing source (deleted test) is skipped.
+    local f
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        [ -f "$target/$f" ] || continue
+        mkdir -p "$wt/$(dirname "$f")" 2>/dev/null || true
+        cp -f "$target/$f" "$wt/$f" 2>/dev/null || true
+    done <<< "$test_files"
+
+    # Run the recorded test command in the base worktree, bounded. If the runner
+    # cannot run at all (missing deps on base, command error distinct from a test
+    # failure), we cannot conclude tautological -> unknown (fail open).
+    #
+    # LIVENESS SAFETY: the base run MUST be bounded, else a base suite that hangs
+    # (e.g. waits on a service/dep the new code introduced) would stall the
+    # completion-time evidence gate. If no timeout binary is available (stock
+    # macOS with no coreutils), we do NOT run the base suite unbounded -- we skip
+    # and return unknown (a safe no-op that keeps the existing affirmative-or-
+    # council behavior). This trades a provenance check we cannot run safely for
+    # guaranteed liveness; it can never cause false-green or false-block.
+    local rc timeout_bin=""
+    command -v gtimeout >/dev/null 2>&1 && timeout_bin="gtimeout"
+    [ -z "$timeout_bin" ] && command -v timeout >/dev/null 2>&1 && timeout_bin="timeout"
+    if [ -z "$timeout_bin" ]; then
+        ( cd "$target" && git worktree remove --force "$wt" 2>/dev/null ); rm -rf "$scratch" 2>/dev/null
+        echo "unknown"; return 0
+    fi
+    ( cd "$wt" && eval "$timeout_bin 300 $test_cmd" >/dev/null 2>&1 )
+    rc=$?
+
+    ( cd "$target" && git worktree remove --force "$wt" 2>/dev/null ); rm -rf "$scratch" 2>/dev/null
+
+    # Interpretation (deliberately conservative -- the runner runs the WHOLE test
+    # command, not only the injected tests, so a base failure CANNOT be attributed
+    # to the new test specifically: the base suite may fail for unrelated reasons,
+    # or because the feature's non-test code is absent):
+    #   rc == 0  -> the FULL suite (incl. the injected new tests) passes on the
+    #               OLD code. The new tests therefore added NO failing signal on
+    #               base = tautological. This is the ONLY safe, actionable
+    #               conclusion, and it only ever DOWNGRADES affirmative.
+    #   rc != 0  -> UNKNOWN. We will not claim "confirmed provenance" from a
+    #               whole-suite failure we cannot attribute to the new test (that
+    #               would be a meaningless/false signal). Caller no-ops (keeps the
+    #               existing affirmative-or-council behavior). Timeout (124) is
+    #               likewise unknown.
+    # This keeps the feature strictly a safe downgrade: it can turn an unearned
+    # green into inconclusive, and can never fabricate a "provenance-confirmed"
+    # affirmative.
+    if [ "$rc" = "0" ]; then echo "tautological"; else echo "unknown"; fi
+    return 0
+}
+
 #===============================================================================
 # Council Evidence Hard Gate (v7.19.1) - "verified completion"
 #===============================================================================
@@ -1685,6 +1791,56 @@ else:
             test_inconclusive="true"
             test_inconclusive_reason="no_test_results"
         fi
+    fi
+
+    # --- v7.106.0: reverse-classical test provenance ---------------------------
+    # A green test suite is only affirmative evidence if the run's NEW/CHANGED
+    # tests actually FAIL on the pre-change base (they exercise the change). Tests
+    # that pass on both base and HEAD are tautological and prove nothing. When the
+    # tests are an affirmative candidate (they ran and passed, and are not already
+    # inconclusive), verify provenance against the base in an ISOLATED worktree.
+    # SAFETY: this can only DOWNGRADE affirmative -> inconclusive; "confirmed" and
+    # "unknown" both leave the existing state untouched, and inconclusive is
+    # pass-through (never a block). No-op on greenfield (unknown: no base/tests)
+    # and when LOKI_TEST_PROVENANCE=0.
+    if [ "$test_fails" != "true" ] && [ "$test_inconclusive" != "true" ] \
+       && [ "$test_pass" = "true" ] && [ "$test_runner" != "none" ] \
+       && [ -n "$base_sha" ]; then
+        local _prov_cmd="${LOKI_TEST_COMMAND:-}"
+        # Fall back to a sensible per-runner default when no explicit command was set.
+        # For pytest, prefer python3 (many machines have only python3, not python);
+        # a missing interpreter just makes the base run error -> unknown -> safe no-op.
+        if [ -z "$_prov_cmd" ]; then
+            case "$test_runner" in
+                pytest)
+                    if command -v python3 >/dev/null 2>&1; then _prov_cmd="python3 -m pytest -q"
+                    else _prov_cmd="python -m pytest -q"; fi ;;
+                node-test) _prov_cmd="node --test" ;;
+                *) _prov_cmd="npm test" ;;
+            esac
+        fi
+        local _prov
+        _prov="$(_loki_test_provenance "$base_sha" "$_prov_cmd")"
+        if [ "$_prov" = "tautological" ]; then
+            # The new/changed tests pass on the OLD code too -> they prove nothing
+            # about the change. DOWNGRADE the test signal from affirmative to
+            # inconclusive (pass-through; the diff axis + council still decide, so
+            # a legitimate refactor/greenfield-in-existing-repo with a non-empty
+            # diff still completes -- inconclusive never blocks).
+            test_inconclusive="true"
+            test_inconclusive_reason="test_provenance_unconfirmed"
+            log_info "[Evidence] New/changed tests pass on the run-start base too (tautological); test signal downgraded to inconclusive, not affirmative"
+            mkdir -p "${TARGET_DIR:-.}/.loki/state" 2>/dev/null || true
+            printf '{"status":"tautological","reason":"new/changed tests pass on the run-start base; not affirmative provenance","base_sha":"%s","runner":"%s"}' \
+                "$base_sha" "$test_runner" > "${TARGET_DIR:-.}/.loki/state/test-provenance.json" 2>/dev/null || true
+            if command -v emit_event_json >/dev/null 2>&1; then
+                emit_event_json "test_provenance" "status" "tautological" "runner" "$test_runner" 2>/dev/null || true
+            fi
+        fi
+        # _prov == "unknown" -> no-op: greenfield (no base/tests), or a base-suite
+        # failure we cannot attribute to the new test. We keep the existing
+        # affirmative-or-council behavior; we never fabricate a "confirmed" from an
+        # unattributable base failure.
     fi
 
     # --- v7.28.0: inconclusive-baseline lifecycle -------------------------------

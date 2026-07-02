@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.106.0] - 2026-07-01
+
+### Accuracy: reverse-classical test provenance (a green test suite must actually prove the change)
+
+The strongest completion signal is "tests pass" -- but a test written to pass proves nothing.
+Adopting the FrontierCode insight (grade like a tech lead, not a CI): a NEW test only counts as
+affirmative evidence if it FAILS on the pre-change base and PASSES on HEAD. Tests that pass on
+both are tautological.
+
+- In council_evidence_gate, when a green test suite is an affirmative candidate (it ran and
+  passed) and the run has a resolvable base (_LOKI_RUN_START_SHA), loki now runs the run's
+  NEW/CHANGED test files against the base in an ISOLATED git worktree (never touching the live
+  tree). If the full suite passes on the OLD code too, the new tests added no failing signal =
+  tautological, and the test signal is DOWNGRADED from affirmative to inconclusive.
+- SAFETY (the invariant, verified end-to-end): this can only DOWNGRADE unearned affirmative to
+  inconclusive. It NEVER fabricates a "confirmed" (a base-suite failure is not attributed to the
+  new test -> treated as unknown/no-op, never a false-positive), and inconclusive is pass-through
+  so it NEVER blocks. A legitimate refactor whose regression test passes on base too, with a
+  non-empty diff, still completes (proven by driving the real gate). No-op on greenfield (no base
+  or no test files) and when LOKI_TEST_PROVENANCE=0.
+- LIVENESS: the base run is always bounded (timeout 300s). If no timeout binary is on PATH
+  (stock macOS without coreutils), the base suite is NOT run unbounded -- provenance skips and
+  returns unknown (a safe no-op), so a hanging base suite can never stall the completion-time
+  evidence gate. This can never cause false-green or false-block.
+- SCOPE (honest): the base worktree is a bare checkout with no dependency install, so in practice
+  the check fires for in-repo test runners (e.g. pytest against repo sources); ecosystems that
+  need an install step on base map to unknown -> safe no-op. Coverage grows as the base-materialize
+  step gains optional dep provisioning.
+- Records the provenance verdict to .loki/state/test-provenance.json + a trust event.
+- Adversarial regression coverage: tests/test-test-provenance-gate.sh covers a genuine fix
+  (fails-on-base), a tautological test (downgraded), a broken-import base failure (harmless
+  unknown, not a fabricated confirmed), a refactor that must still complete (real gate pass-
+  through), the no-timeout-binary liveness path (base run skipped), and the greenfield/opt-out
+  no-ops.
+
 ## [7.105.0] - 2026-07-01
 
 ### Faster convergence: the completion council evaluates the moment work is claimed done
