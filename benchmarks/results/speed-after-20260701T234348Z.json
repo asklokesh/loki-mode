@@ -1,0 +1,24 @@
+{
+  "label": "after",
+  "stamp": "20260701T234348Z",
+  "wall_clock_s": 443,
+  "wall_clock_min": 7.4,
+  "build_exit_code": 0,
+  "act_iterations": 1,
+  "iteration_completes": 1,
+  "completion_claims": 1,
+  "session_ended": true,
+  "engine_completed": true,
+  "per_iteration_work_s": [
+    {
+      "iteration": 1,
+      "work_s": 75.0
+    }
+  ],
+  "total_iteration_work_min": 1.2,
+  "max_iteration_work_min": 1.2,
+  "acceptance": {
+    "greet.js_exists": true
+  },
+  "events_total": 16
+}

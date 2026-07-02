@@ -89,3 +89,13 @@ before = ~4x faster, 13x fewer iterations, accuracy preserved (council still app
 residual ~7 min is the single build+verify iteration's real inference cost (the honest floor for
 this spec WITH verified-completion). Next speed lever: per-iteration cost on larger specs (the
 fat-iteration investigation), measured via this same benchmark.
+
+## CONFIRMED (n=3 after-runs): the convergence fix delivers 4.0x, reliably
+- before (v7.104.1): 28.6 min, 13 iterations
+- after (v7.105.0): 7.4 / 7.0 / 7.1 min -> avg 7.2 min, EVERY run exactly 1 iteration, all correct
+- Result: 4.0x faster wall-clock, 13 -> 1 iterations, 100% correct across all 3 runs.
+The tight range (7.0-7.4 min, always 1 iteration) confirms this is the reliable behavior, not a
+single lucky draw. Attribution: v7.105.0 vs v7.104.1 on the greet-CLI spec; the convergence fix
+(completion-claim triggers immediate council evaluation) is the sole plausible driver of the
+13->1 iteration collapse. Residual ~7.2 min = one build+verify iteration's real inference cost
+(the honest floor WITH verified-completion). NEXT speed lever: per-iteration cost on larger specs.

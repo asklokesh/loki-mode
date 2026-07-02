@@ -1,0 +1,72 @@
+{
+  "label": "before",
+  "stamp": "20260701T231328Z",
+  "wall_clock_s": 1715,
+  "wall_clock_min": 28.6,
+  "build_exit_code": 0,
+  "act_iterations": 13,
+  "iteration_completes": 13,
+  "completion_claims": 11,
+  "session_ended": true,
+  "engine_completed": true,
+  "per_iteration_work_s": [
+    {
+      "iteration": 1,
+      "work_s": 74.0
+    },
+    {
+      "iteration": 2,
+      "work_s": 176.0
+    },
+    {
+      "iteration": 3,
+      "work_s": 86.0
+    },
+    {
+      "iteration": 4,
+      "work_s": 89.0
+    },
+    {
+      "iteration": 5,
+      "work_s": 58.0
+    },
+    {
+      "iteration": 6,
+      "work_s": 72.0
+    },
+    {
+      "iteration": 7,
+      "work_s": 104.0
+    },
+    {
+      "iteration": 8,
+      "work_s": 312.0
+    },
+    {
+      "iteration": 9,
+      "work_s": 38.0
+    },
+    {
+      "iteration": 10,
+      "work_s": 52.0
+    },
+    {
+      "iteration": 11,
+      "work_s": 118.0
+    },
+    {
+      "iteration": 12,
+      "work_s": 47.0
+    },
+    {
+      "iteration": 13,
+      "work_s": 50.0
+    }
+  ],
+  "total_iteration_work_min": 21.3,
+  "max_iteration_work_min": 5.2,
+  "acceptance": {
+    "greet.js_exists": true
+  },
+  "events_total": 157
+}
