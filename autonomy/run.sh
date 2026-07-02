@@ -12200,8 +12200,11 @@ parse_claude_reset_time() {
     local current_min=$(date +%M)
     local current_sec=$(date +%S)
 
-    # Calculate seconds until reset
-    local current_secs=$((current_hour * 3600 + current_min * 60 + current_sec))
+    # Calculate seconds until reset. Force base-10 (10#) on the zero-padded
+    # date values: 08/09 are invalid octal, so bare arithmetic aborts ("value
+    # too great for base") during those clock windows and silently discards the
+    # real rate-limit reset wait, falling back to a too-short generic backoff.
+    local current_secs=$((10#$current_hour * 3600 + 10#$current_min * 60 + 10#$current_sec))
     local reset_secs=$((hour * 3600))
 
     local wait_secs=$((reset_secs - current_secs))
@@ -12634,8 +12637,14 @@ except Exception:
     # Return the payload on stdout
     printf '%s\n' "$payload"
 
-    # Consume the signal (next iteration would otherwise re-trigger)
+    # Consume the signal (next iteration would otherwise re-trigger).
+    # Also remove the fallback if it coexists: TASK_COMPLETION_CLAIMED and
+    # COMPLETION_REQUESTED are both valid, non-exclusive completion mechanisms, so
+    # a belt-and-suspenders agent can leave both present. Removing only the active
+    # one orphans the other, which then reads as a phantom claim on a later
+    # iteration and forces every-iteration council evaluation. Consume both.
     rm -f "$signal_file" 2>/dev/null
+    rm -f "$fallback_file" 2>/dev/null
     return 0
 }
 

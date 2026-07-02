@@ -830,14 +830,22 @@ PYEOF
         if grep -qE '"(express|fastify|koa|hapi|@hapi/hapi|next|nuxt|@nestjs/core|@nestjs/platform-express|http-server|connect|restify|polka|@sveltejs/kit|vite)"[[:space:]]*:' "$dir/package.json" 2>/dev/null; then
             _node_http_signal="dep"
         fi
-        # (b) a listen()/createServer()/serve() call in a shallow scan of JS/TS
-        #     sources (bounded: node_modules/.git excluded). Uses grep -q (a
-        #     boolean, no pipe) so this is safe under set -o pipefail (a piped
-        #     `| head` would SIGPIPE grep and, under pipefail, drop the result).
+        # (b) a STRONG server-creation call in a shallow scan of JS/TS sources.
+        #     "Strong" means a module-qualified server constructor (http/https/
+        #     http2/net .createServer, or Bun.serve/Deno.serve) -- NOT a bare
+        #     `.listen(` which is common in tests (`http.createServer().listen(0)`)
+        #     and unrelated code. Test/example/build dirs are excluded so an
+        #     incidental server in a test never marks a CLI as bootable-HTTP.
+        #     Uses grep -q (a boolean, no pipe) so this is safe under
+        #     set -o pipefail (a piped `| head` would SIGPIPE grep and, under
+        #     pipefail, drop the result).
         if [ -z "$_node_http_signal" ]; then
-            if grep -rqE '\.listen\(|createServer\(|http2?\.createServer|Bun\.serve\(|Deno\.serve\(' \
+            if grep -rqE 'https?\.createServer|http2\.createServer|net\.createServer|Bun\.serve\(|Deno\.serve\(' \
                 "$dir" --include='*.js' --include='*.ts' --include='*.mjs' --include='*.cjs' \
-                --exclude-dir=node_modules --exclude-dir=.git 2>/dev/null; then
+                --exclude-dir=node_modules --exclude-dir=.git \
+                --exclude-dir=test --exclude-dir=tests --exclude-dir=__tests__ \
+                --exclude-dir=examples --exclude-dir=example \
+                --exclude-dir=dist --exclude-dir=build --exclude-dir=spec 2>/dev/null; then
                 _node_http_signal="src"
             fi
         fi
@@ -964,12 +972,26 @@ verify_gate_runtime() {
     local deadline=$(( $(date +%s) + boot_timeout ))
     local have_curl="false"
     command -v curl >/dev/null 2>&1 && have_curl="true"
+    # The port we actually probe. Starts at the guessed default; if the boot log
+    # announces a different bound port (e.g. Vite on 5173, which ignores PORT and
+    # the default map cannot know), we re-point the probe THERE. scraped_port is
+    # stashed so teardown can also reclaim it (fixes the different-port leak).
+    local probe_port="$port" scraped_port=""
 
     while [ "$(date +%s)" -lt "$deadline" ]; do
         # If the app process already exited, stop polling (it failed to stay up).
         if ! kill -0 "$app_pid" 2>/dev/null; then
             # Give one last probe in case it forked a daemon and exited.
             :
+        fi
+        # Scrape the actually-bound port from the boot log (progressively filled).
+        # Only re-point when it differs from the current probe target.
+        if [ -z "$scraped_port" ]; then
+            scraped_port="$(_verify_runtime_scrape_port "$boot_log" 2>/dev/null || true)"
+            if [ -n "$scraped_port" ] && [ "$scraped_port" != "$probe_port" ]; then
+                probe_port="$scraped_port"
+                url="http://127.0.0.1:${probe_port}${health_path}"
+            fi
         fi
         if [ "$have_curl" = "true" ]; then
             http_status="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$url" 2>/dev/null || echo "")"
@@ -980,7 +1002,7 @@ verify_gate_runtime() {
         else
             # Portable fallback: raw TCP GET via bash /dev/tcp (best effort).
             local resp=""
-            resp="$(_verify_runtime_raw_probe "$port" "$health_path" 2>/dev/null || true)"
+            resp="$(_verify_runtime_raw_probe "$probe_port" "$health_path" 2>/dev/null || true)"
             if [ -n "$resp" ]; then
                 http_status="$resp"
                 answered="true"
@@ -1007,7 +1029,10 @@ verify_gate_runtime() {
     fi
 
     # Teardown: kill the launcher and any child it spawned. Best effort; bounded.
-    _verify_runtime_teardown "$app_pid" "$port"
+    # Reclaim BOTH the detected port and the actually-bound port (scraped from the
+    # boot log) so a server that daemonized onto a different port than we guessed
+    # does not leak. scraped_port may be empty (no banner) -- teardown handles it.
+    _verify_runtime_teardown "$app_pid" "$port" "$scraped_port"
 
     # Interpret the result.
     if [ "$answered" != "true" ]; then
@@ -1073,6 +1098,37 @@ _verify_runtime_raw_probe() {
     printf '%s' "$line" | grep -oE 'HTTP/[0-9.]+ [0-9]{3}' | grep -oE '[0-9]{3}$' || return 1
 }
 
+# Scrape the actually-bound localhost port from a dev server's boot log. Dev
+# servers (Vite, SvelteKit, Nuxt, Next, CRA, ...) print a "Local:" / "listening
+# on" banner with their real port, which is frequently NOT the guessed default
+# (bare Vite binds 5173 and ignores PORT). We parse ONLY a localhost/127.0.0.1
+# bind announcement so we never lock onto an unrelated outbound URL the app might
+# have logged (which some other live process could answer -> false green). ANSI
+# color codes are stripped first (dev banners are colorized). Echoes the first
+# matched port, or nothing. Bounded: reads only the given log file, no network.
+_verify_runtime_scrape_port() {
+    local log="$1"
+    [ -f "$log" ] || return 1
+    # Strip ANSI escapes first (dev banners are colorized). Then, line by line,
+    # match a localhost/127.0.0.1 bind announcement and extract the PORT that
+    # sits at the end of the match (the number after the final colon / after
+    # "port"), never an IP octet. Emit the first port found.
+    local line p
+    while IFS= read -r line; do
+        # A URL like http://localhost:5173 or http://127.0.0.1:5173/ .
+        p="$(printf '%s' "$line" | grep -oiE 'https?://(localhost|127\.0\.0\.1):[0-9]{2,5}' | grep -oE ':[0-9]{2,5}' | grep -oE '[0-9]{2,5}' | head -1)"
+        # Or a "listening on [127.0.0.1:]5173" / "listening on port 5173" phrase.
+        if [ -z "$p" ]; then
+            p="$(printf '%s' "$line" | grep -oiE 'listening on( port)?[[:space:]:]*([0-9.]+:)?[0-9]{2,5}' | grep -oE '[0-9]{2,5}$' | head -1)"
+        fi
+        if [ -n "$p" ]; then
+            printf '%s' "$p"
+            return 0
+        fi
+    done < <(sed -E $'s/\033\\[[0-9;?]*[A-Za-z]//g' "$log" 2>/dev/null)
+    return 1
+}
+
 # Optional screenshot via the playwright inline smoke script (reused contract:
 # url screenshot results timeout). Bounded by the same timeout wrapper. Returns
 # 0 if the screenshot file was produced, nonzero otherwise. Never fatal.
@@ -1110,30 +1166,56 @@ SMOKE_SCRIPT
 # Teardown: terminate the boot launcher and any process still holding the port.
 # Bounded and best effort; never blocks the gate.
 _verify_runtime_teardown() {
-    local app_pid="$1" port="$2"
+    local app_pid="$1" port="$2" scraped_port="${3:-}"
     if [ -n "$app_pid" ]; then
-        # Kill the process group of the launcher when possible, else the PID.
+        # Best: kill the launcher's whole process GROUP so a server it spawned in
+        # a subshell (e.g. `vite &`) dies too. GUARDED against self-suicide: in a
+        # non-interactive script job control is off, so a background job can share
+        # the verifier's OWN process group; a negative-PID kill there would kill
+        # us (and our parent). Only group-kill when the child's PGID differs from
+        # ours AND equals the child PID (i.e. it is a real group leader).
+        local child_pgid="" self_pgid=""
+        child_pgid="$(ps -o pgid= -p "$app_pid" 2>/dev/null | tr -d ' ' || true)"
+        self_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ' || true)"
+        if [ -n "$child_pgid" ] && [ "$child_pgid" != "$self_pgid" ] \
+           && [ "$child_pgid" = "$app_pid" ]; then
+            kill -- -"$child_pgid" 2>/dev/null || true
+        fi
+        # Always TERM the launcher PID itself.
         kill "$app_pid" 2>/dev/null || true
         # Kill any direct children (the timeout wrapper spawns sh -c "$method").
         if command -v pkill >/dev/null 2>&1; then
             pkill -P "$app_pid" 2>/dev/null || true
         fi
-        # Give it a moment, then hard-kill.
+        # Give it a moment, then hard-kill (PID, and group again when safe).
         local i=0
         while [ "$i" -lt 3 ] && kill -0 "$app_pid" 2>/dev/null; do
             sleep 1; i=$((i + 1))
         done
+        if [ -n "$child_pgid" ] && [ "$child_pgid" != "$self_pgid" ] \
+           && [ "$child_pgid" = "$app_pid" ]; then
+            kill -9 -- -"$child_pgid" 2>/dev/null || true
+        fi
         kill -9 "$app_pid" 2>/dev/null || true
     fi
-    # Reclaim the port from any orphan that outlived the launcher (bounded).
+    # Reclaim BOTH the detected port and the actually-bound (scraped) port from
+    # any orphan that outlived the launcher -- a daemonized server that bound a
+    # different port than we guessed would otherwise leak. Bounded, best effort.
     if command -v lsof >/dev/null 2>&1; then
-        local holders
-        holders="$(lsof -ti tcp:"$port" 2>/dev/null || true)"
-        if [ -n "$holders" ]; then
-            printf '%s\n' "$holders" | while IFS= read -r pid; do
-                [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null || true
-            done
-        fi
+        # Build a unique, non-empty port list (scraped only if it differs).
+        local _ports="$port"
+        [ -n "$scraped_port" ] && [ "$scraped_port" != "$port" ] && _ports="$_ports $scraped_port"
+        local _rp
+        for _rp in $_ports; do
+            [ -z "$_rp" ] && continue
+            local holders
+            holders="$(lsof -ti tcp:"$_rp" 2>/dev/null || true)"
+            if [ -n "$holders" ]; then
+                printf '%s\n' "$holders" | while IFS= read -r pid; do
+                    [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null || true
+                done
+            fi
+        done
     fi
 }
 

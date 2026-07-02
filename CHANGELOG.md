@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.109.0] - 2026-07-01
+
+### Bug-hunt-and-fix wave 1: 5 reproduced bugs fixed (false-RED elimination + rate-limit correctness)
+
+An adversarial bug-hunt across the completion council, verify gates, and RARV loop found
+5 real, reproduced bugs. All were verified with a concrete repro before fixing, and each
+fix ships with a regression test. Measurable adoption/UX impact (these were friction, not
+safety holes - none was a false-VERIFIED / fake-green; the trust core was confirmed sound):
+
+- FIX (HIGH, runtime gate false-RED on CLIs/libraries): the runtime boot gate's HTTP-signal
+  source scan matched a `.listen(`/`createServer(` in a test/example/dist file, so a plain
+  CLI or library that ships a `start` script plus an integration test that spins an ephemeral
+  server was wrongly detected as a bootable HTTP app, booted, timed out, and got a false
+  boot-failure that dropped the verdict from VERIFIED. Now excludes test/tests/__tests__/
+  examples/dist/build/spec and requires a stronger signal. Impact: any project with an
+  integration test no longer false-blocks.
+- FIX (HIGH, runtime gate false-RED on Vite/SvelteKit): detection recognized vite/sveltekit/
+  nuxt but the port default-map sent the probe to 3000 while those dev servers bind 5173 and
+  ignore PORT, so the gate reported a boot failure while the server was actually up. Now the
+  gate scrapes the actually-bound URL/port from the boot log and probes that. Impact: modern
+  frontend projects on non-3000 ports no longer false-block.
+- FIX (MEDIUM, runtime gate port leak): teardown reclaimed only the detected port, so a
+  daemonized server that bound a different port left an orphan holding the port. Now kills the
+  process group and reclaims the actually-bound port. Impact: no leaked servers/ports.
+- FIX (MEDIUM, phantom completion claim): check_task_completion_signal consumed only the
+  active completion-signal file, orphaning the coexisting fallback (COMPLETION_REQUESTED),
+  which then read as a phantom claim on later iterations and forced a full completion-council
+  evaluation every iteration instead of at the interval. Now consumes both. Impact: no phantom
+  claims; council evaluation returns to the intended cadence (cost/time saving).
+- FIX (MEDIUM, rate-limit reset discarded): parse_claude_reset_time computed seconds with bare
+  arithmetic on zero-padded clock values, so 08/09 (invalid octal) crashed the calculation and
+  silently discarded the real Claude rate-limit reset wait during roughly 14% of clock windows,
+  falling back to a too-short generic backoff that retried against a still-limited API. Now
+  forces base-10. Impact: correct reset waits, fewer wasted rate-limited retries.
+
 ## [7.108.0] - 2026-07-01
 
 ### Accuracy: two additive verification gates (runtime boot smoke + annotate-before-act ledger)

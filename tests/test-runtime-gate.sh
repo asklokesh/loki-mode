@@ -500,6 +500,311 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Case G: TEST-DIR EXCLUSION false-RED. A CLI/library whose ONLY
+# createServer/.listen call lives in a test/ dir (a common shape:
+# test/http.test.js spins up http.createServer().listen(0) for a fixture).
+# The OLD detector grepped bare `.listen(`/`createServer(` with only
+# node_modules/.git excluded, so it saw the test fixture and falsely marked the
+# CLI as a bootable HTTP app -> emitted "npm start\t3000" -> false-RED boot
+# failure. The fix excludes test/tests/__tests__/examples/example/dist/build/spec
+# and keys on a STRONG module-qualified server constructor, so a server that only
+# exists in test/ no longer counts. Detect MUST return empty here.
+#
+# This case is the specific regression guard: unlike case E (no server anywhere)
+# and case F (server at repo root), only case G's result FLIPS between the old
+# (detects -> "npm start\t3000") and fixed (empty) detector, so it is the case
+# that actually fails on the unfixed behavior. Verified against the real old
+# function extracted from HEAD: old emitted "npm start\t3000", new emits empty.
+# ---------------------------------------------------------------------------
+REPO_G="$TMP_ROOT/case-g"
+init_repo "$REPO_G"
+mkdir -p "$REPO_G/bin" "$REPO_G/test"
+# The actual program: a CLI that prints and exits -- no server.
+cat > "$REPO_G/bin/cli.js" <<'JS'
+#!/usr/bin/env node
+console.log("hello from cli");
+process.exit(0);
+JS
+cat > "$REPO_G/package.json" <<'JSON'
+{ "name": "mycli", "version": "1.0.0", "scripts": { "start": "node bin/cli.js" } }
+JSON
+# The ONLY createServer/.listen in the repo lives under test/ (a fixture).
+cat > "$REPO_G/test/http.test.js" <<'JS'
+const http = require('http');
+const srv = http.createServer((req, res) => res.end('ok'));
+srv.listen(0, () => { srv.close(); });
+JS
+commit_feature "$REPO_G"
+
+# detect MUST return empty: the test/-only server does not make this a web app.
+DET_G="$(_verify_runtime_detect "$REPO_G" 2>/dev/null || true)"
+if [ -z "$DET_G" ]; then
+    _ok "case G: CLI whose only createServer/.listen is in test/ -> detect empty (no false-RED)"
+else
+    _no "case G: test/-only server wrongly detected as bootable HTTP app (got '$DET_G'; test-dir exclusion regressed)"
+fi
+# End-to-end: no runtime gate row leaks in for this CLI.
+run_verify "$REPO_G"
+STATUS_G="$(gate_status "$REPO_G" runtime)"
+if [ -z "$STATUS_G" ] || [ "$STATUS_G" = "absent" ]; then
+    _ok "case G: no runtime gate row for a CLI with a test/-only server (byte-identity preserved)"
+else
+    _no "case G: runtime gate row '$STATUS_G' on a CLI with only a test/ server (false-RED regression)"
+fi
+
+# Positive control for case G: move the SAME server out of test/ (to server.js at
+# root) and it MUST be detected again -- proving the exclusion is scoped to
+# test/example/dist and does not over-suppress a real co-located server.
+REPO_G2="$TMP_ROOT/case-g2"
+init_repo "$REPO_G2"
+cat > "$REPO_G2/server.js" <<'JS'
+const http = require('http');
+const srv = http.createServer((req, res) => res.end('ok'));
+srv.listen(process.env.PORT || 3000);
+JS
+cat > "$REPO_G2/package.json" <<'JSON'
+{ "name": "myserver", "version": "1.0.0", "scripts": { "start": "node server.js" } }
+JSON
+commit_feature "$REPO_G2"
+DET_G2="$(_verify_runtime_detect "$REPO_G2" 2>/dev/null || true)"
+if [ -n "$DET_G2" ]; then
+    _ok "case G2: same server at repo root (not in test/) IS still detected (exclusion not over-broad)"
+else
+    _no "case G2: root server.js no longer detected after test-dir exclusion (over-suppression!)"
+fi
+
+# ---------------------------------------------------------------------------
+# Case H: NON-DEFAULT bound port scraped from boot.log (the v7.109.0 false-RED
+# fix). Detection maps a vite-signalled npm app to the default port 3000, but the
+# app IGNORES PORT and always binds 5173, printing a Vite-style
+# "Local: http://localhost:5173/" banner. The gate must scrape 5173 from the boot
+# log and re-point the probe THERE (not the guessed 3000) -> pass.
+#
+# Regression property: with the pre-fix detector (probe stays on the guessed
+# default 3000, where nothing listens) this app false-REDs (boot timeout -> High
+# finding -> not VERIFIED). So a green here can only mean the scrape ran.
+#
+# The url assertion is the tight guard: it fails not only on a full revert (probe
+# stuck on 3000 -> timeout -> status != pass) but also on the degenerate "fix"
+# where the default-port map is edited to 5173 (status would pass, but the scrape
+# never ran and the recorded url would carry the guessed default). The app binds
+# 5173 UNCONDITIONALLY (ignores PORT) so the gate's `export PORT=3000` cannot make
+# it bind 3000 -- if it did, this case would green with the fix reverted (a dead
+# guard). Mirrors case D's discipline in reverse (D proves PORT export; H proves
+# boot-log scrape).
+# ---------------------------------------------------------------------------
+if [ "$HAVE_NODE" = "true" ] && [ -n "$TIMEOUT_BIN" ]; then
+    # Hermeticity: reclaim BOTH 3000 (the guessed default -- must find nothing so
+    # a revert is caught) and 5173 (the real bound port -- a stray holder would
+    # green a broken app or block our bind) before booting.
+    if command -v lsof >/dev/null 2>&1; then
+        for _hp in 3000 5173; do
+            _h=0
+            while [ "$_h" -lt 10 ]; do
+                _holders="$(lsof -ti tcp:"$_hp" 2>/dev/null || true)"
+                [ -z "$_holders" ] && break
+                printf '%s\n' "$_holders" | while IFS= read -r p; do
+                    [ -n "$p" ] && kill -9 "$p" 2>/dev/null || true
+                done
+                sleep 1; _h=$((_h + 1))
+            done
+        done
+    fi
+    REPO_H="$TMP_ROOT/case-h"
+    init_repo "$REPO_H"
+    # A vite-like server: IGNORES process.env.PORT, always binds 5173, and prints
+    # the "Local: http://localhost:5173/" banner the scraper keys on.
+    cat > "$REPO_H/server.js" <<'JS'
+const http = require('http');
+// Deliberately ignore process.env.PORT: mimic bare Vite which binds 5173 and
+// ignores PORT. If this honored PORT, the gate's PORT=3000 export would bind
+// 3000 and the case would pass even with the scrape fix reverted (a dead guard).
+const port = 5173;
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/html' });
+  res.end('<html><body>vite-like app on 5173</body></html>');
+}).listen(port, '127.0.0.1', () => {
+  console.log('  VITE ready');
+  console.log('  Local:   http://localhost:5173/');
+});
+JS
+    # vite dep -> HTTP signal (detected); default-port map sends npm -> 3000.
+    cat > "$REPO_H/package.json" <<'JSON'
+{
+  "name": "case-h-vite",
+  "version": "1.0.0",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "vite": "^5.0.0" }
+}
+JSON
+    commit_feature "$REPO_H"
+
+    # Precondition: detection resolves the WRONG default (3000), not 5173. This is
+    # exactly the false-RED shape -- the guessed port is not where the app binds.
+    DET_H="$(_verify_runtime_detect "$REPO_H" 2>/dev/null || true)"
+    PORT_H="$(printf '%s' "$DET_H" | cut -f2)"
+    if [ "$PORT_H" = "3000" ]; then
+        _ok "case H: detection defaults to 3000 (the wrong guess; app really binds 5173)"
+    else
+        _no "case H: detection port was '$PORT_H' (expected the default 3000)"
+    fi
+
+    run_verify "$REPO_H"
+    STATUS_H="$(gate_status "$REPO_H" runtime)"
+    if [ "$STATUS_H" = "pass" ]; then
+        _ok "case H: gate PASSES a server on a non-default port (5173 scraped from boot.log)"
+    else
+        _no "case H: runtime status was '$STATUS_H' (expected pass; boot-log port scrape broken -> false-RED)"
+    fi
+
+    # Tight guard: the recorded runtime.json url must carry the SCRAPED 5173, not
+    # the guessed 3000. Catches a revert (probe stuck on 3000) AND a degenerate
+    # default-map edit (status pass but scrape never ran).
+    URL_H="$(python3 - "$REPO_H/.loki/verify/runtime" <<'PYEOF' 2>/dev/null || true
+import json, os, sys
+d = sys.argv[1]
+try:
+    files = [f for f in os.listdir(d) if f.endswith(".json")]
+except Exception:
+    sys.exit(0)
+for f in files:
+    try:
+        rec = json.load(open(os.path.join(d, f)))
+    except Exception:
+        continue
+    if isinstance(rec, dict) and rec.get("url"):
+        print(rec["url"])
+        break
+PYEOF
+)"
+    case "$URL_H" in
+        *:5173*) _ok "case H: probed url records the scraped port 5173 (url=$URL_H)" ;;
+        *)       _no "case H: probed url did not record 5173 (url='$URL_H'; scrape did not re-point the probe)" ;;
+    esac
+
+    # Reclaim both ports after the case so nothing lingers for other suites.
+    if command -v lsof >/dev/null 2>&1; then
+        for _hp in 3000 5173; do
+            lsof -ti tcp:"$_hp" 2>/dev/null | while IFS= read -r p; do
+                [ -n "$p" ] && kill -9 "$p" 2>/dev/null || true
+            done
+        done
+    fi
+else
+    _skip "case H: needs node + a timeout binary (node=$HAVE_NODE timeout=${TIMEOUT_BIN:-none})"
+fi
+
+# ---------------------------------------------------------------------------
+# Case I: TEARDOWN reclaims the ACTUALLY-BOUND port when a server DAEMONIZES onto
+# a non-detected port (the v7.109.0 port-leak fix). Detection maps a vite-signal
+# npm app to the default 3000, but the launcher only prints a banner then spawns a
+# FULLY DETACHED child (own process group, not a -P child of app_pid) that binds a
+# different port and outlives the launcher, and the launcher exits 0.
+#
+# Regression property: the pre-fix teardown killed app_pid + its direct children
+# and reclaimed ONLY the detected port (3000). The detached daemon is in its own
+# process group (kill-chain misses it) and binds a port that is NOT 3000, so the
+# detected-port-only reclaim misses it -> the daemon LEAKS (orphan holds the port
+# after the gate returns). The fix scrapes the bound port from the boot banner and
+# reclaims it too, so the port is CLEAN. This case is proven RED on
+# `git show HEAD~:autonomy/verify.sh` (daemon still holding the port) and GREEN on
+# the fixed code (port empty).
+#
+# Distinct from case H: H's listener is a child of app_pid and dies via the
+# kill-chain regardless of the port fix; H only proves the SCRAPE re-points the
+# probe. Here the daemon detaches, so ONLY the scraped-port reclaim can catch it
+# -- this case isolates the teardown half of the fix. lsof is load-bearing (it IS
+# the leak check) so this case additionally requires lsof.
+# ---------------------------------------------------------------------------
+DAEMON_PORT=41717   # non-detected bound port, distinct from case H's 3000/5173
+if [ "$HAVE_NODE" = "true" ] && [ -n "$TIMEOUT_BIN" ] && command -v lsof >/dev/null 2>&1; then
+    # Hermeticity: reclaim BOTH the guessed default 3000 and the daemon port so a
+    # stray holder cannot green a broken teardown (or block the daemon's bind).
+    for _ip in 3000 "$DAEMON_PORT"; do
+        _ih=0
+        while [ "$_ih" -lt 10 ]; do
+            _iholders="$(lsof -ti tcp:"$_ip" 2>/dev/null || true)"
+            [ -z "$_iholders" ] && break
+            printf '%s\n' "$_iholders" | while IFS= read -r p; do
+                [ -n "$p" ] && kill -9 "$p" 2>/dev/null || true
+            done
+            sleep 1; _ih=$((_ih + 1))
+        done
+    done
+
+    REPO_I="$TMP_ROOT/case-i"
+    init_repo "$REPO_I"
+    # Launcher: print the banner for DAEMON_PORT (lands in boot.log -> scraper
+    # keys on it), spawn a fully detached child (detached+unref, own process
+    # group) that binds DAEMON_PORT and holds it, then EXIT 0 so the kill-chain
+    # (kill app_pid / pkill -P app_pid) cannot reach the daemon. Only the
+    # scraped-port lsof reclaim in teardown can free the port.
+    cat > "$REPO_I/server.js" <<JS
+const http = require('http');
+const { spawn } = require('child_process');
+const PORT = $DAEMON_PORT;
+if (process.env.LOKI_DAEMON_CHILD === '1') {
+  http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end('<html><body>daemon on $DAEMON_PORT</body></html>');
+  }).listen(PORT, '127.0.0.1');
+  return;
+}
+console.log('  Local:   http://localhost:$DAEMON_PORT/');
+const child = spawn(process.execPath, [__filename], {
+  detached: true,
+  stdio: 'ignore',
+  env: Object.assign({}, process.env, { LOKI_DAEMON_CHILD: '1' }),
+});
+child.unref();
+setTimeout(() => process.exit(0), 1500);
+JS
+    # vite dep -> HTTP signal (detected); default-port map sends npm -> 3000.
+    cat > "$REPO_I/package.json" <<'JSON'
+{
+  "name": "case-i-daemon",
+  "version": "1.0.0",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "vite": "^5.0.0" }
+}
+JSON
+    commit_feature "$REPO_I"
+
+    # Precondition: detection resolves the default 3000 (NOT the daemon port), so
+    # the old detected-port-only reclaim provably targets the wrong port.
+    DET_I="$(_verify_runtime_detect "$REPO_I" 2>/dev/null || true)"
+    PORT_I="$(printf '%s' "$DET_I" | cut -f2)"
+    if [ "$PORT_I" = "3000" ]; then
+        _ok "case I: detection defaults to 3000 (daemon binds $DAEMON_PORT; old reclaim misses it)"
+    else
+        _no "case I: detection port was '$PORT_I' (expected the default 3000)"
+    fi
+
+    # Bound the worst case: the gate boots, probes, and tears down within this.
+    ( cd "$REPO_I" && LOKI_RUNTIME_BOOT_TIMEOUT=15 bash "$VERIFY_SH" ) >/dev/null 2>&1 || true
+
+    # Give any orphan a beat to settle, then check the daemon port. On the fixed
+    # code teardown reclaimed the scraped $DAEMON_PORT -> no holder. On the pre-fix
+    # code the detached daemon still holds it -> non-empty (LEAK).
+    sleep 1
+    LEAK_I="$(lsof -ti tcp:"$DAEMON_PORT" 2>/dev/null || true)"
+    if [ -z "$LEAK_I" ]; then
+        _ok "case I: teardown reclaimed the daemonized non-detected port $DAEMON_PORT (no orphan leaked)"
+    else
+        _no "case I: orphan still holds tcp:$DAEMON_PORT after teardown (pids: $LEAK_I) -- port-leak fix regressed"
+    fi
+
+    # Reclaim both ports after the case so nothing lingers for other suites.
+    for _ip in 3000 "$DAEMON_PORT"; do
+        lsof -ti tcp:"$_ip" 2>/dev/null | while IFS= read -r p; do
+            [ -n "$p" ] && kill -9 "$p" 2>/dev/null || true
+        done
+    done
+else
+    _skip "case I: needs node + a timeout binary + lsof (node=$HAVE_NODE timeout=${TIMEOUT_BIN:-none} lsof=$(command -v lsof >/dev/null 2>&1 && echo yes || echo no))"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
