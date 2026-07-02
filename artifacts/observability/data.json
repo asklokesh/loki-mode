@@ -1,0 +1,757 @@
+{
+  "generated_at": "2026-07-02T00:02:26Z",
+  "current_version": "7.105.0",
+  "github": {
+    "stars": 998,
+    "forks": 193,
+    "open_issues": 2,
+    "created_at": "2025-12-26T16:26:14Z",
+    "status": "ok",
+    "fetched_at": "2026-07-02T00:02:26Z"
+  },
+  "npm": {
+    "total": 23798,
+    "daily": [
+      {
+        "downloads": 534,
+        "day": "2026-05-30"
+      },
+      {
+        "downloads": 315,
+        "day": "2026-05-31"
+      },
+      {
+        "downloads": 60,
+        "day": "2026-06-01"
+      },
+      {
+        "downloads": 130,
+        "day": "2026-06-02"
+      },
+      {
+        "downloads": 1817,
+        "day": "2026-06-03"
+      },
+      {
+        "downloads": 565,
+        "day": "2026-06-04"
+      },
+      {
+        "downloads": 0,
+        "day": "2026-06-05"
+      },
+      {
+        "downloads": 513,
+        "day": "2026-06-06"
+      },
+      {
+        "downloads": 933,
+        "day": "2026-06-07"
+      },
+      {
+        "downloads": 256,
+        "day": "2026-06-08"
+      },
+      {
+        "downloads": 1305,
+        "day": "2026-06-09"
+      },
+      {
+        "downloads": 1543,
+        "day": "2026-06-10"
+      },
+      {
+        "downloads": 665,
+        "day": "2026-06-11"
+      },
+      {
+        "downloads": 320,
+        "day": "2026-06-12"
+      },
+      {
+        "downloads": 239,
+        "day": "2026-06-13"
+      },
+      {
+        "downloads": 2343,
+        "day": "2026-06-14"
+      },
+      {
+        "downloads": 724,
+        "day": "2026-06-15"
+      },
+      {
+        "downloads": 1002,
+        "day": "2026-06-16"
+      },
+      {
+        "downloads": 2598,
+        "day": "2026-06-17"
+      },
+      {
+        "downloads": 1742,
+        "day": "2026-06-18"
+      },
+      {
+        "downloads": 1889,
+        "day": "2026-06-19"
+      },
+      {
+        "downloads": 2391,
+        "day": "2026-06-20"
+      },
+      {
+        "downloads": 300,
+        "day": "2026-06-21"
+      },
+      {
+        "downloads": 142,
+        "day": "2026-06-22"
+      },
+      {
+        "downloads": 437,
+        "day": "2026-06-23"
+      },
+      {
+        "downloads": 43,
+        "day": "2026-06-24"
+      },
+      {
+        "downloads": 93,
+        "day": "2026-06-25"
+      },
+      {
+        "downloads": 418,
+        "day": "2026-06-26"
+      },
+      {
+        "downloads": 373,
+        "day": "2026-06-27"
+      },
+      {
+        "downloads": 108,
+        "day": "2026-06-28"
+      }
+    ],
+    "status": "ok",
+    "fetched_at": "2026-07-02T00:02:26Z"
+  },
+  "docker": {
+    "pulls": 56283,
+    "last_updated": "2026-07-01T23:54:42.33964Z",
+    "status": "ok",
+    "fetched_at": "2026-07-02T00:02:26Z"
+  },
+  "homebrew": {
+    "status": "not_available",
+    "note": "not available (custom tap has no public install API)"
+  },
+  "releases_downloads": [
+    {
+      "tag": "v7.105.0",
+      "date": "2026-07-01",
+      "downloads": 6
+    },
+    {
+      "tag": "v7.104.5",
+      "date": "2026-07-01",
+      "downloads": 6
+    },
+    {
+      "tag": "v7.104.4",
+      "date": "2026-07-01",
+      "downloads": 8
+    },
+    {
+      "tag": "v7.104.3",
+      "date": "2026-07-01",
+      "downloads": 7
+    },
+    {
+      "tag": "v7.104.2",
+      "date": "2026-07-01",
+      "downloads": 7
+    },
+    {
+      "tag": "v7.104.1",
+      "date": "2026-07-01",
+      "downloads": 13
+    },
+    {
+      "tag": "v7.104.0",
+      "date": "2026-07-01",
+      "downloads": 13
+    },
+    {
+      "tag": "v7.103.0",
+      "date": "2026-06-30",
+      "downloads": 13
+    },
+    {
+      "tag": "v7.102.0",
+      "date": "2026-06-30",
+      "downloads": 13
+    },
+    {
+      "tag": "v7.101.0",
+      "date": "2026-06-30",
+      "downloads": 13
+    },
+    {
+      "tag": "v7.100.1",
+      "date": "2026-06-30",
+      "downloads": 8
+    },
+    {
+      "tag": "v7.100.0",
+      "date": "2026-06-30",
+      "downloads": 13
+    },
+    {
+      "tag": "v7.99.1",
+      "date": "2026-06-30",
+      "downloads": 13
+    },
+    {
+      "tag": "v7.99.0",
+      "date": "2026-06-30",
+      "downloads": 13
+    },
+    {
+      "tag": "v7.98.0",
+      "date": "2026-06-30",
+      "downloads": 19
+    },
+    {
+      "tag": "v7.97.0",
+      "date": "2026-06-30",
+      "downloads": 19
+    },
+    {
+      "tag": "v7.96.0",
+      "date": "2026-06-30",
+      "downloads": 13
+    },
+    {
+      "tag": "v7.95.0",
+      "date": "2026-06-29",
+      "downloads": 13
+    },
+    {
+      "tag": "v7.94.0",
+      "date": "2026-06-29",
+      "downloads": 13
+    },
+    {
+      "tag": "v7.93.0",
+      "date": "2026-06-29",
+      "downloads": 13
+    },
+    {
+      "tag": "v7.92.0",
+      "date": "2026-06-29",
+      "downloads": 15
+    },
+    {
+      "tag": "v7.91.1",
+      "date": "2026-06-27",
+      "downloads": 13
+    },
+    {
+      "tag": "v7.91.0",
+      "date": "2026-06-26",
+      "downloads": 20
+    },
+    {
+      "tag": "v7.90.2",
+      "date": "2026-06-20",
+      "downloads": 14
+    },
+    {
+      "tag": "v7.90.1",
+      "date": "2026-06-20",
+      "downloads": 7
+    },
+    {
+      "tag": "v7.90.0",
+      "date": "2026-06-20",
+      "downloads": 7
+    },
+    {
+      "tag": "v7.89.1",
+      "date": "2026-06-20",
+      "downloads": 7
+    },
+    {
+      "tag": "v7.89.0",
+      "date": "2026-06-20",
+      "downloads": 7
+    },
+    {
+      "tag": "v7.88.0",
+      "date": "2026-06-20",
+      "downloads": 2
+    },
+    {
+      "tag": "v7.87.0",
+      "date": "2026-06-20",
+      "downloads": 1
+    }
+  ],
+  "releases_timeline": [
+    {
+      "version": "7.105.0",
+      "date": "2026-07-01",
+      "summary": "Faster convergence: the completion council evaluates the moment work is claimed done"
+    },
+    {
+      "version": "7.104.5",
+      "date": "2026-07-01",
+      "summary": "Fix: memory panel is correct and self-consistent on JSON-backed projects"
+    },
+    {
+      "version": "7.104.4",
+      "date": "2026-07-01",
+      "summary": "Fix: /api/tasks no longer 500s on a malformed dashboard-state.json"
+    },
+    {
+      "version": "7.104.3",
+      "date": "2026-07-01",
+      "summary": "Task list accuracy: honest, stable done column (no empty cards, no duplicates)"
+    },
+    {
+      "version": "7.104.2",
+      "date": "2026-07-01",
+      "summary": "Fix: native/Keychain Claude login no longer misread as \"not logged in\""
+    },
+    {
+      "version": "7.104.1",
+      "date": "2026-07-01",
+      "summary": "Bun doctor checks Claude login (bash/Bun parity)"
+    },
+    {
+      "version": "7.104.0",
+      "date": "2026-06-30",
+      "summary": "Default execution model is now Claude Sonnet 5"
+    },
+    {
+      "version": "7.103.0",
+      "date": "2026-06-30",
+      "summary": "Bun-runner gate parity + verify.sh hardening"
+    },
+    {
+      "version": "7.102.0",
+      "date": "2026-06-30",
+      "summary": "Trust: unknown quality-gate status can no longer read green"
+    },
+    {
+      "version": "7.101.0",
+      "date": "2026-06-30",
+      "summary": "CRITICAL trust fix + adoption empty-state + cleanup"
+    },
+    {
+      "version": "7.100.1",
+      "date": "2026-06-30",
+      "summary": "Zero-friction: surface the no-key path at every first touch"
+    },
+    {
+      "version": "7.100.0",
+      "date": "2026-06-30",
+      "summary": "Zero-friction adoption: offline taste path + shareable receipt badge"
+    },
+    {
+      "version": "7.99.1",
+      "date": "2026-06-30",
+      "summary": "Memory retrieval: dimension-mismatch degrades to keyword search"
+    },
+    {
+      "version": "7.99.0",
+      "date": "2026-06-30",
+      "summary": "Memory integrity + checklist/cost trust fixes + dashboard reuse (wave-7 hunt)"
+    },
+    {
+      "version": "7.98.0",
+      "date": "2026-06-30",
+      "summary": "Council trust-config fixes + zero-friction adoption"
+    },
+    {
+      "version": "7.97.0",
+      "date": "2026-06-29",
+      "summary": "Wave-5 hardening: memory, events, healing, provider parity + FIX A rework"
+    },
+    {
+      "version": "7.96.0",
+      "date": "2026-06-29",
+      "summary": "Trust moat: council force-review path fails closed"
+    },
+    {
+      "version": "7.95.0",
+      "date": "2026-06-29",
+      "summary": "Trust moat: completion gates now fail CLOSED"
+    },
+    {
+      "version": "7.94.0",
+      "date": "2026-06-29",
+      "summary": "Reuse done-recognition: a no-PRD reuse run no longer rebuilds finished work"
+    },
+    {
+      "version": "7.93.0",
+      "date": "2026-06-29",
+      "summary": "Dashboard fixes: sidebar rebalance, honest App Runner status, stable version"
+    },
+    {
+      "version": "7.92.0",
+      "date": "2026-06-27",
+      "summary": "Zero-friction adoption: fail-open preflight, honest failure diagnosis, CLI polish"
+    },
+    {
+      "version": "7.91.1",
+      "date": "2026-06-27",
+      "summary": "Fix: green the CI shell suite (caveman moat-audit false positive)"
+    },
+    {
+      "version": "7.91.0",
+      "date": "2026-06-26",
+      "summary": "Zero-friction adoption: per-build workspace + fail-fast auth + honest phase state"
+    },
+    {
+      "version": "7.90.2",
+      "date": "2026-06-20",
+      "summary": "Cleanup: remove dead keyboard-shortcut and theme-toggle markup"
+    },
+    {
+      "version": "7.90.1",
+      "date": "2026-06-20",
+      "summary": "Dashboard polish: a calmer, more readable live view"
+    },
+    {
+      "version": "7.90.0",
+      "date": "2026-06-20",
+      "summary": "Proven PR: every PR Loki opens carries its own re-verifiable proof"
+    },
+    {
+      "version": "7.89.1",
+      "date": "2026-06-20",
+      "summary": "Plainer language in the live dashboard"
+    },
+    {
+      "version": "7.89.0",
+      "date": "2026-06-20",
+      "summary": "Live dashboard + wiki: a polished experience while you watch a build"
+    },
+    {
+      "version": "7.88.0",
+      "date": "2026-06-20",
+      "summary": "Finish and own: a plain-English handoff for whoever owns the result"
+    },
+    {
+      "version": "7.87.0",
+      "date": "2026-06-20",
+      "summary": "Secure-by-default gate (advisory by default)"
+    },
+    {
+      "version": "7.86.0",
+      "date": "2026-06-20",
+      "summary": "The trust story, made visible (honestly)"
+    },
+    {
+      "version": "7.85.0",
+      "date": "2026-06-20",
+      "summary": "Evidence Receipt: verify it yourself, Loki never lies about done"
+    },
+    {
+      "version": "7.84.0",
+      "date": "2026-06-20",
+      "summary": "Enterprise-grade dashboard overhaul"
+    },
+    {
+      "version": "7.83.1",
+      "date": "2026-06-20",
+      "summary": "Fix: loki ship now reviews the work being shipped"
+    },
+    {
+      "version": "7.83.0",
+      "date": "2026-06-20",
+      "summary": "UX: less friction, more wow"
+    }
+  ],
+  "benchmarks": [
+    {
+      "file": "speed-after-20260701T234348Z.json",
+      "label": "after",
+      "stamp": "20260701T234348Z",
+      "wall_clock_min": 7.4,
+      "act_iterations": 1,
+      "completion_claims": 1,
+      "engine_completed": true,
+      "events_total": 16,
+      "per_iteration_work": [
+        {
+          "iteration": 1,
+          "work_s": 75.0
+        }
+      ]
+    },
+    {
+      "file": "speed-after2-20260701T235146Z.json",
+      "label": "after2",
+      "stamp": "20260701T235146Z",
+      "wall_clock_min": 7.0,
+      "act_iterations": 1,
+      "completion_claims": 1,
+      "engine_completed": true,
+      "events_total": 15,
+      "per_iteration_work": [
+        {
+          "iteration": 1,
+          "work_s": 81.0
+        }
+      ]
+    },
+    {
+      "file": "speed-before-20260701T231328Z.json",
+      "label": "before",
+      "stamp": "20260701T231328Z",
+      "wall_clock_min": 28.6,
+      "act_iterations": 13,
+      "completion_claims": 11,
+      "engine_completed": true,
+      "events_total": 157,
+      "per_iteration_work": [
+        {
+          "iteration": 1,
+          "work_s": 74.0
+        },
+        {
+          "iteration": 2,
+          "work_s": 176.0
+        },
+        {
+          "iteration": 3,
+          "work_s": 86.0
+        },
+        {
+          "iteration": 4,
+          "work_s": 89.0
+        },
+        {
+          "iteration": 5,
+          "work_s": 58.0
+        },
+        {
+          "iteration": 6,
+          "work_s": 72.0
+        },
+        {
+          "iteration": 7,
+          "work_s": 104.0
+        },
+        {
+          "iteration": 8,
+          "work_s": 312.0
+        },
+        {
+          "iteration": 9,
+          "work_s": 38.0
+        },
+        {
+          "iteration": 10,
+          "work_s": 52.0
+        },
+        {
+          "iteration": 11,
+          "work_s": 118.0
+        },
+        {
+          "iteration": 12,
+          "work_s": 47.0
+        },
+        {
+          "iteration": 13,
+          "work_s": 50.0
+        }
+      ]
+    }
+  ],
+  "what_worked": [
+    {
+      "item": "Completion council trust moat (fail-closed gates)",
+      "version": "v7.95.0-v7.96.0",
+      "evidence": "Adversarial bug-hunt + real gate behavior; no fake-green on partial library load"
+    },
+    {
+      "item": "Convergence fix: council evaluates on explicit completion claim",
+      "version": "v7.105.0",
+      "evidence": "test-council-convergence-on-claim.sh RED on pre-fix, GREEN on fix; matches telemetry pathology"
+    },
+    {
+      "item": "Sonnet 5 as default (~40% cheaper vs Opus, near-frontier intelligence)",
+      "version": "v7.104.0",
+      "evidence": "Live builds completing; council still 3/3; released npm/Docker/Homebrew"
+    },
+    {
+      "item": "Auth preflight: keychain login detection (macOS native Claude Code 2.x)",
+      "version": "v7.104.2",
+      "evidence": "8-case test suite + live Docker; reproduced false-block, confirmed fix"
+    },
+    {
+      "item": "Memory panel accuracy (PR #178 + sibling gaps closed)",
+      "version": "v7.104.5",
+      "evidence": "Live vs anonima project; count and drill-in list agree; contributor PR merged"
+    },
+    {
+      "item": "Task board honest done column (no empty cards, no dups)",
+      "version": "v7.104.3",
+      "evidence": "Live vs real anonima, browser screenshots, council 3/3"
+    },
+    {
+      "item": "3-reviewer completion council (2 Opus + 1 Sonnet, unanimous-required)",
+      "version": "v7.43.0+",
+      "evidence": "Implemented at run.sh:10461-10954; catches fake-green before ship"
+    },
+    {
+      "item": "Zero-friction preflight: catch not-logged-in before build stall",
+      "version": "v7.98.0",
+      "evidence": "Fails fast with one-step fix; 401 no longer the discovery mechanism"
+    }
+  ],
+  "didnt_work": [
+    {
+      "id": "embeddings-only-signal",
+      "what": "wave-7 batch included an embeddings-only signal for anti-pattern memory dedupe; reverted as inert",
+      "reason": "Added no actual behavior change; core fix was the dedup logic, not the embedding signal",
+      "outcome": "Superseded and reverted in v7.99.1",
+      "source": "CHANGELOG v7.99.1"
+    },
+    {
+      "id": "prd-reuse-rebuild-always",
+      "what": "PRD-reuse on rerun assumed rebuild-always: a loki start with no PRD over an already-completed project would rebuild the full task queue and re-run the entire RARV loop, redoing finished work",
+      "reason": "Reuse path never asked 'is this spec already satisfied by current code?'",
+      "outcome": "Fixed in v7.94.0 with done-recognition gate; rebuild-always approach retired",
+      "source": "CHANGELOG v7.94.0, docs/SPEED-DIAGNOSIS-2026-07-01.md"
+    },
+    {
+      "id": "never-finished-prompt-all-modes",
+      "what": "RARV instruction 'There is NEVER a finished state - always find the next improvement' was emitted in every mode, including finite PRD/checkpoint runs - a direct self-contradiction and the prompt root of 14-iteration convergence bug",
+      "reason": "Intended for perpetual/no-promise mode only; biased model toward redundant self-verification in finite builds",
+      "outcome": "Mode-aware rarv instruction; finite runs now get stop-when-verified-done directive",
+      "source": "docs/research-2026-07/GAP-ANALYSIS-BACKLOG.md item 8"
+    },
+    {
+      "id": "local-ci-parallelization",
+      "what": "local-ci.sh parallelized for speed; non-hermetic tests began flaking under concurrent execution, making the gate non-deterministic",
+      "reason": "Shared temp state between lanes; ordering dependencies not accounted for",
+      "outcome": "Reverted to serial gate",
+      "source": "MEMORY.md feedback-localci-parallelization-flake"
+    }
+  ],
+  "mistakes": [
+    {
+      "id": "fix-a-overblock",
+      "what": "Bun runner FIX A: first attempt used broad blocked||escalated gate that over-blocked clean runs",
+      "caught_by": "adversarial hunt + test suite (autonomous.test.ts)",
+      "fixed_in": "v7.97.0",
+      "how_fixed": "Rewrote to gate only on real code_review BLOCK (hardGates); clean runs complete again",
+      "source": "CHANGELOG v7.97.0 FIX A rework"
+    },
+    {
+      "id": "completion-gate-fail-open",
+      "what": "Completion gates armed with type-probe that silently skipped if council library failed to source; allowed unverified completion (fake-green)",
+      "caught_by": "cycle-3 adversarial bug-hunt",
+      "fixed_in": "v7.95.0",
+      "how_fixed": "Gate chain now verifies core functions are loadable before running; refuses claim if any missing (fail-closed)",
+      "source": "CHANGELOG v7.95.0"
+    },
+    {
+      "id": "council-force-review-fail-open",
+      "what": "Council force-review path had same fail-open hole: partial library load force-approved completion ungated",
+      "caught_by": "wave-4 adversarial bug-hunt",
+      "fixed_in": "v7.96.0",
+      "how_fixed": "Force-review now probes core gate functions before approving",
+      "source": "CHANGELOG v7.96.0"
+    },
+    {
+      "id": "tasks-500-malformed-json",
+      "what": "server.py /api/tasks raised AttributeError on malformed dashboard-state.json (non-dict tasks or task groups not lists), 500ing and blanking the whole task board",
+      "caught_by": "RED/GREEN test proof (council gate)",
+      "fixed_in": "v7.104.4",
+      "how_fixed": "State-group reader now coerces defensively; non-dict tasks treated as empty",
+      "source": "CHANGELOG v7.104.4"
+    },
+    {
+      "id": "convergence-non-stop",
+      "what": "Completion council only evaluated every 5 iterations; build verifiably done at iteration 1 (19/19 tests green, checklist complete) ran 13 more needless iterations. Pathological case: 14 iterations, ~97 min wall-clock for work done in ~2 min",
+      "caught_by": "Real build telemetry (anonima events.jsonl) + speed diagnosis",
+      "fixed_in": "v7.105.0",
+      "how_fixed": "Explicit completion claim now triggers immediate council evaluation; no-claim cadence unchanged",
+      "source": "CHANGELOG v7.105.0, docs/SPEED-DIAGNOSIS-2026-07-01.md"
+    },
+    {
+      "id": "council-threshold-ignored",
+      "what": "LOKI_COUNCIL_THRESHOLD operator config was silently ignored; hardcoded 2/3 formula used even when operator set stricter threshold",
+      "caught_by": "wave-6 adversarial hunt",
+      "fixed_in": "v7.98.0",
+      "how_fixed": "Effective threshold = max(2/3 floor, operator threshold), shared helper at all three vote sites",
+      "source": "CHANGELOG v7.98.0"
+    },
+    {
+      "id": "ci-shell-test-contract",
+      "what": "v7.81.0 python test registered as command string in run-all-tests.sh but runner exec's via bash; local-ci passed (different contract), CI failed post-push",
+      "caught_by": "CI failure post v7.81.0 push",
+      "fixed_in": "v7.81.1",
+      "how_fixed": "Bash wrapper added; pattern now consistent across both gates",
+      "source": "CHANGELOG v7.81.1"
+    }
+  ],
+  "founder_decisions": [
+    {
+      "id": "A1",
+      "label": "License for @autonomi/verify",
+      "options": "BUSL-1.1 / MIT / Apache / other",
+      "blocks": "All commercial launch of Autonomi Verify",
+      "rank": 5
+    },
+    {
+      "id": "A2",
+      "label": "npm registry + package name for @autonomi/verify",
+      "options": "Publish @autonomi/verify publicly? Confirm bin name (resolve loki-verify collision)",
+      "blocks": "npm-installable SDK; collision fix",
+      "rank": 4
+    },
+    {
+      "id": "A3",
+      "label": "Hosted /verify deploy target + signing-key storage",
+      "options": "Fly / Render / AWS / your infra + secret manager choice",
+      "blocks": "Category-defining signed neutral REST endpoint",
+      "rank": 6
+    },
+    {
+      "id": "A4",
+      "label": "Wire verifyCompletion() pipeline (XL build)",
+      "options": "Start after A1+A2 resolved",
+      "blocks": "Whole SDK/MCP value prop; currently stubbed",
+      "rank": 3
+    },
+    {
+      "id": "B5",
+      "label": "Enterprise deploy shape: hosted-multitenant vs on-prem first",
+      "options": "Sequences RBAC/SSO/API-key/metering + sandbox backend",
+      "blocks": "Enterprise sale capability",
+      "rank": 15
+    },
+    {
+      "id": "C7",
+      "label": "SWE-bench Pro 119 resume (paused at 35/119)",
+      "options": "yes / no (compute spend decision)",
+      "blocks": "Real public benchmark datapoint",
+      "rank": 7
+    },
+    {
+      "id": "D8",
+      "label": "Outreach: MCP registry + Glama claim + awesome-list PRs",
+      "options": "Approve external posts (yes/no)",
+      "blocks": "Discovery surface; posts need your nod per action rules",
+      "rank": 8
+    }
+  ]
+}

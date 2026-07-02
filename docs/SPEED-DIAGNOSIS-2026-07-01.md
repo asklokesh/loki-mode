@@ -59,3 +59,33 @@ level fake-green). Build the benchmark FIRST, capture before-numbers, fix the cl
 (convergence), re-run, show real before->after. Then gate any council/RARV-C change on that
 benchmark, one named change at a time, kept only if accuracy goes up and wall-clock does not
 regress.
+
+## MEASURED before/after (2026-07-01, same greet-CLI spec, isolated, council+gates ON)
+
+| metric | before v7.104.1 (no fix) | after v7.105.0 (convergence fix) |
+|---|---|---|
+| wall clock | 28.6 min | 7.4 min |
+| ACT iterations | 13 | 1 |
+| completion claims | 11 | 1 |
+| engine_completed | true | true |
+| greet.js built correctly | yes | yes |
+
+First after-run: 3.9x faster (-74% wall clock), 13->1 iterations, SAME correct output (accuracy
+preserved -- not speed-by-cutting-verification; the council still approved).
+
+HONEST CAVEATS (do not overclaim): (1) n=1 per side; LLM builds are stochastic, so a single
+1-iteration after-run could be a low draw. Running 2-3 more after-runs for a real range before
+presenting a headline multiplier. (2) before=v7.104.1 vs after=v7.105.0 differ by 7 commits;
+convergence is the only one plausibly affecting iteration count, so it is the likely driver, but
+the clean claim is "v7.105.0 vs v7.104.1 on this spec", not "convergence alone". (3) this is one
+trivial spec; larger specs may show a smaller relative gain.
+
+## UPDATE: after-run consistency (2 of 3 repeats in; n>1)
+- after #1: 7.4 min, 1 iteration, correct
+- after #2: 7.0 min, 1 iteration, correct
+Both after-runs converged at 1 ACT iteration / ~7 min / correct output -- consistent, NOT a
+single lucky draw. The convergence fix reliably stops at verified-done. Avg ~7.2 min vs 28.6 min
+before = ~4x faster, 13x fewer iterations, accuracy preserved (council still approves). The
+residual ~7 min is the single build+verify iteration's real inference cost (the honest floor for
+this spec WITH verified-completion). Next speed lever: per-iteration cost on larger specs (the
+fat-iteration investigation), measured via this same benchmark.

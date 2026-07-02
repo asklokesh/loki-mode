@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en" data-loki-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Autonomi Founder Observability</title>
+<style>
+  /* Autonomi design language - dark palette from trust.html */
+  :root {
+    --bg: #0F0B1A;
+    --panel: rgba(30,21,51,0.80);
+    --panel-2: #1E1533;
+    --border: rgba(255,255,255,0.08);
+    --text: #F0ECF8;
+    --muted: #B8B0C8;
+    --faint: #7B6FA0;
+    --accent: #7B6BF0;
+    --accent-bright: #553DE9;
+    --verified: #2ED8B6;
+    --verified-bg: rgba(46,216,182,0.10);
+    --red: #C04848;
+    --red-bg: rgba(192,72,72,0.10);
+    --amber: #C4922E;
+    --amber-bg: rgba(196,146,46,0.10);
+    --line: rgba(255,255,255,0.06);
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  /* Layout */
+  .shell { display: flex; max-width: 1500px; margin: 0 auto; }
+
+  /* Sidebar */
+  nav.sidebar {
+    position: sticky; top: 0; align-self: flex-start;
+    height: 100vh; overflow-y: auto; width: 240px; flex-shrink: 0;
+    padding: 28px 16px; border-right: 1px solid var(--border);
+    background: var(--panel);
+  }
+  nav.sidebar .brand { font-size: 17px; font-weight: 700; letter-spacing: -0.2px; margin-bottom: 2px; }
+  nav.sidebar .brand .a { color: var(--accent); }
+  nav.sidebar .sub { font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 22px; }
+  nav.sidebar a {
+    display: block; color: var(--muted); text-decoration: none;
+    padding: 6px 10px; border-radius: 6px; font-size: 13px; margin-bottom: 2px;
+  }
+  nav.sidebar a:hover { background: var(--panel-2); color: var(--text); }
+  nav.sidebar .nav-section { font-size: 10px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.8px; margin: 16px 10px 4px; }
+  nav.sidebar .generated { font-size: 11px; color: var(--faint); margin-top: 28px; padding: 10px; background: var(--panel-2); border-radius: 6px; }
+
+  /* Main content */
+  main { flex: 1; padding: 40px 52px 120px; min-width: 0; }
+
+  .page-header { border-bottom: 1px solid var(--border); padding-bottom: 24px; margin-bottom: 32px; }
+  .page-header h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.4px; margin-bottom: 4px; }
+  .page-header .tagline { color: var(--muted); font-size: 14px; }
+  .page-header .version-badge {
+    display: inline-block; background: var(--accent-bright); color: white;
+    font-family: var(--mono); font-size: 12px; padding: 3px 10px; border-radius: 20px; margin-left: 10px;
+    font-weight: 600; vertical-align: middle;
+  }
+
+  /* Section */
+  section { margin-bottom: 52px; scroll-margin-top: 20px; }
+  section h2 {
+    font-size: 16px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--muted); margin-bottom: 16px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Stat cards */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+  .stat-card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px;
+  }
+  .stat-card .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-card .val { font-family: var(--mono); font-size: 28px; font-weight: 700; margin-top: 6px; color: var(--text); }
+  .stat-card .note { font-size: 11px; color: var(--faint); margin-top: 4px; }
+  .stat-card.accent .val { color: var(--accent); }
+  .stat-card.verified .val { color: var(--verified); }
+  .stat-card.unavail .val { color: var(--faint); font-size: 13px; font-weight: 400; margin-top: 8px; }
+
+  /* Speed cards */
+  .speed-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  .speed-card {
+    flex: 1 1 200px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px 20px;
+  }
+  .speed-card .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .speed-card .val { font-family: var(--mono); font-size: 32px; font-weight: 700; margin: 8px 0 2px; }
+  .speed-card .note { font-size: 12px; color: var(--faint); }
+  .speed-card.before .val { color: var(--amber); }
+  .speed-card.after .val { color: var(--verified); }
+  .arrow-row { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .arrow-val { font-family: var(--mono); font-size: 15px; font-weight: 600; }
+  .arrow-val.before { color: var(--amber); }
+  .arrow-val.after { color: var(--verified); }
+  .arrow { color: var(--faint); font-size: 18px; }
+  .delta-badge {
+    background: var(--verified-bg); color: var(--verified);
+    border: 1px solid rgba(46,216,182,0.20); border-radius: 20px;
+    font-family: var(--mono); font-size: 12px; padding: 2px 10px; font-weight: 600;
+  }
+  .caveat { font-size: 12px; color: var(--amber); background: var(--amber-bg); border: 1px solid rgba(196,146,46,0.20); border-radius: 6px; padding: 6px 10px; margin-top: 10px; }
+
+  /* SVG chart wrapper */
+  .chart-wrap {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 20px; margin-bottom: 16px;
+  }
+  .chart-title { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+  svg.chart { width: 100%; overflow: visible; }
+
+  /* Release table */
+  .release-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .release-table th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--faint); padding: 6px 10px; border-bottom: 1px solid var(--border);
+  }
+  .release-table td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .release-table tr:hover td { background: rgba(255,255,255,0.02); }
+  .tag-badge {
+    font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--accent);
+    background: rgba(123,107,240,0.12); border-radius: 4px; padding: 2px 7px;
+    white-space: nowrap;
+  }
+  .date-col { color: var(--faint); white-space: nowrap; font-size: 12px; }
+
+  /* Verdict items */
+  .item-list { display: flex; flex-direction: column; gap: 10px; }
+  .item-card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .item-card.worked { border-left: 3px solid var(--verified); }
+  .item-card.failed { border-left: 3px solid var(--red); }
+  .item-card.mistake { border-left: 3px solid var(--amber); }
+  .item-card.decision { border-left: 3px solid var(--accent); }
+  .item-card .title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .item-card .meta { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .item-card .body { font-size: 13px; color: var(--muted); line-height: 1.5; }
+  .item-card .body strong { color: var(--text); }
+  .item-card .version-tag { font-family: var(--mono); font-size: 11px; color: var(--accent); }
+  .item-card .source-tag { font-size: 11px; color: var(--faint); margin-top: 6px; }
+
+  /* Decision row */
+  .decision-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 900px) { .decision-grid { grid-template-columns: 1fr; } }
+  .decision-card {
+    background: var(--panel); border: 1px solid rgba(123,107,240,0.25); border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .decision-card .id { font-family: var(--mono); font-size: 11px; color: var(--accent); margin-bottom: 4px; }
+  .decision-card .q { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+  .decision-card .opts { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .decision-card .blocks { font-size: 11px; color: var(--amber); }
+
+  /* Spinner / loading */
+  .loading { color: var(--faint); font-size: 13px; padding: 12px 0; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <nav class="sidebar">
+    <div class="brand"><span class="a">Autonomi</span> Observability</div>
+    <div class="sub">Founder view</div>
+    <div class="nav-section">Program</div>
+    <a href="#at-a-glance">At a glance</a>
+    <a href="#adoption">Adoption</a>
+    <a href="#efficiency">Efficiency</a>
+    <div class="nav-section">History</div>
+    <a href="#releases">Release timeline</a>
+    <a href="#worked">What worked</a>
+    <a href="#didnt-work">What did not work</a>
+    <a href="#mistakes">Mistakes and fixes</a>
+    <div class="nav-section">Now</div>
+    <a href="#decisions">Open decisions</a>
+    <div class="generated" id="generated-at">Loading...</div>
+  </nav>
+
+  <main>
+    <div class="page-header">
+      <h1>
+        Autonomi / Loki Mode
+        <span class="version-badge" id="current-version">--</span>
+      </h1>
+      <div class="tagline">Founder observability - real numbers, real history, honest record</div>
+    </div>
+
+    <!-- AT A GLANCE -->
+    <section id="at-a-glance">
+      <h2>At a Glance</h2>
+      <div class="stat-grid">
+        <div class="stat-card accent">
+          <div class="label">GitHub Stars</div>
+          <div class="val" id="gh-stars">--</div>
+          <div class="note">github.com/asklokesh/loki-mode</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Forks</div>
+          <div class="val" id="gh-forks">--</div>
+          <div class="note">Organic interest signal</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">npm Downloads (30d)</div>
+          <div class="val" id="npm-total">--</div>
+          <div class="note">Last calendar month</div>
+        </div>
+        <div class="stat-card verified">
+          <div class="label">Docker Pulls</div>
+          <div class="val" id="docker-pulls">--</div>
+          <div class="note">Cumulative all-time</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Open Issues</div>
+          <div class="val" id="gh-issues">--</div>
+          <div class="note">GitHub open issues</div>
+        </div>
+        <div class="stat-card unavail">
+          <div class="label">Homebrew Installs</div>
+          <div class="val">not available</div>
+          <div class="note">Custom tap has no public install API</div>
+        </div>
+      </div>
+      <div style="margin-top:16px;">
+        <div class="caveat" id="benchmark-caveat">Loading benchmark data...</div>
+      </div>
+    </section>
+
+    <!-- ADOPTION GRAPHS -->
+    <section id="adoption">
+      <h2>Adoption Metrics</h2>
+
+      <!-- npm 30-day line chart -->
+      <div class="chart-wrap">
+        <div class="chart-title">npm Downloads - 30-Day Daily (api.npmjs.org)</div>
+        <svg class="chart" id="npm-chart" height="140" viewBox="0 0 800 140"></svg>
+        <div id="npm-chart-note" style="font-size:11px;color:var(--faint);margin-top:4px;"></div>
+      </div>
+
+      <!-- Per-release GH download bars -->
+      <div class="chart-wrap">
+        <div class="chart-title">GitHub Release Asset Downloads per Release (gh api releases)</div>
+        <svg class="chart" id="dl-chart" height="160" viewBox="0 0 800 160"></svg>
+        <div id="dl-chart-note" style="font-size:11px;color:var(--faint);margin-top:4px;"></div>
+      </div>
+    </section>
+
+    <!-- EFFICIENCY / BENCHMARK -->
+    <section id="efficiency">
+      <h2>Efficiency - Speed Benchmark</h2>
+
+      <div class="speed-row" id="benchmark-cards">
+        <div class="loading">Loading benchmark data...</div>
+      </div>
+
+      <!-- Per-iteration work chart -->
+      <div class="chart-wrap" id="iteration-chart-wrap">
+        <div class="chart-title">Per-iteration work (seconds) - before run</div>
+        <svg class="chart" id="iter-chart" height="120" viewBox="0 0 800 120"></svg>
+      </div>
+    </section>
+
+    <!-- RELEASES -->
+    <section id="releases">
+      <h2>Release Timeline</h2>
+      <table class="release-table">
+        <thead>
+          <tr>
+            <th>Version</th>
+            <th>Date</th>
+            <th>Summary</th>
+          </tr>
+        </thead>
+        <tbody id="release-tbody">
+          <tr><td colspan="3" class="loading">Loading...</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- WHAT WORKED -->
+    <section id="worked">
+      <h2>What Worked</h2>
+      <div class="item-list" id="worked-list">
+        <div class="loading">Loading...</div>
+      </div>
+    </section>
+
+    <!-- WHAT DID NOT WORK -->
+    <section id="didnt-work">
+      <h2>What Did Not Work / Reverted</h2>
+      <div class="item-list" id="failed-list">
+        <div class="loading">Loading...</div>
+      </div>
+    </section>
+
+    <!-- MISTAKES AND FIXES -->
+    <section id="mistakes">
+      <h2>Mistakes and Fixes</h2>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">Bugs introduced that review/CI caught and fixed. The founder audit trail.</p>
+      <div class="item-list" id="mistakes-list">
+        <div class="loading">Loading...</div>
+      </div>
+    </section>
+
+    <!-- OPEN DECISIONS -->
+    <section id="decisions">
+      <h2>Open Founder Decisions</h2>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">Only you can unblock these. Each is prepped to one-approval-away. Reply with any subset.</p>
+      <div class="decision-grid" id="decisions-grid">
+        <div class="loading">Loading...</div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+// All rendering reads from data.json only - no live API calls from browser.
+// data.json was generated by fetch-data.sh on the host.
+
+function fmtNum(n) {
+  if (n === 'unavailable' || n === null || n === undefined) return 'unavailable';
+  return Number(n).toLocaleString();
+}
+
+function tag(el, text) {
+  const e = document.getElementById(el);
+  if (e) e.textContent = text;
+}
+
+// SVG helpers
+function makeSVGEl(tag, attrs) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+}
+
+function renderNpmChart(daily, svgId) {
+  const svg = document.getElementById(svgId);
+  if (!daily || daily.length === 0) {
+    svg.parentElement.querySelector('.chart-title').textContent += ' - unavailable';
+    return;
+  }
+  const W = 800, H = 140, PL = 48, PR = 10, PT = 10, PB = 28;
+  const cW = W - PL - PR, cH = H - PT - PB;
+  const maxVal = Math.max(...daily.map(d => d.downloads));
+  const step = cW / (daily.length - 1);
+
+  // Grid lines
+  [0, 0.25, 0.5, 0.75, 1].forEach(frac => {
+    const y = PT + cH - frac * cH;
+    const line = makeSVGEl('line', {x1: PL, y1: y, x2: W - PR, y2: y, stroke: 'rgba(255,255,255,0.05)', 'stroke-width': 1});
+    svg.appendChild(line);
+    if (frac > 0) {
+      const label = makeSVGEl('text', {x: PL - 4, y: y + 4, 'text-anchor': 'end', fill: '#7B6FA0', 'font-size': 10, 'font-family': 'monospace'});
+      label.textContent = Math.round(frac * maxVal).toLocaleString();
+      svg.appendChild(label);
+    }
+  });
+
+  // Area fill
+  let pts = daily.map((d, i) => {
+    const x = PL + i * step;
+    const y = PT + cH - (d.downloads / maxVal) * cH;
+    return `${x},${y}`;
+  });
+  const firstX = PL, lastX = PL + (daily.length - 1) * step;
+  const area = makeSVGEl('polygon', {
+    points: `${firstX},${PT + cH} ${pts.join(' ')} ${lastX},${PT + cH}`,
+    fill: 'rgba(123,107,240,0.12)', stroke: 'none'
+  });
+  svg.appendChild(area);
+
+  // Line
+  const polyline = makeSVGEl('polyline', {
+    points: pts.join(' '),
+    fill: 'none', stroke: '#7B6BF0', 'stroke-width': 2, 'stroke-linejoin': 'round'
+  });
+  svg.appendChild(polyline);
+
+  // Peak dot
+  const peakIdx = daily.indexOf(daily.reduce((a, b) => a.downloads > b.downloads ? a : b));
+  const peakX = PL + peakIdx * step;
+  const peakY = PT + cH - (daily[peakIdx].downloads / maxVal) * cH;
+  const dot = makeSVGEl('circle', {cx: peakX, cy: peakY, r: 4, fill: '#2ED8B6'});
+  svg.appendChild(dot);
+  const peakLabel = makeSVGEl('text', {x: peakX, y: peakY - 8, 'text-anchor': 'middle', fill: '#2ED8B6', 'font-size': 10, 'font-family': 'monospace'});
+  peakLabel.textContent = daily[peakIdx].downloads.toLocaleString();
+  svg.appendChild(peakLabel);
+
+  // X axis labels (first, middle, last)
+  [[0, daily[0].day], [Math.floor(daily.length/2), daily[Math.floor(daily.length/2)].day], [daily.length - 1, daily[daily.length - 1].day]].forEach(([i, dayStr]) => {
+    const x = PL + i * step;
+    const lbl = makeSVGEl('text', {x: x, y: H - 4, 'text-anchor': 'middle', fill: '#7B6FA0', 'font-size': 10, 'font-family': 'monospace'});
+    lbl.textContent = dayStr;
+    svg.appendChild(lbl);
+  });
+
+  document.getElementById('npm-chart-note').textContent =
+    `Source: api.npmjs.org/downloads/range/last-month/loki-mode | Peak: ${daily[peakIdx].downloads.toLocaleString()} on ${daily[peakIdx].day}`;
+}
+
+function renderDlChart(releases, svgId) {
+  const svg = document.getElementById(svgId);
+  // Show top 20 by downloads, sorted by date asc
+  const rel = releases.slice(0, 20).slice().reverse();
+  if (!rel || rel.length === 0) {
+    svg.parentElement.querySelector('.chart-title').textContent += ' - unavailable';
+    return;
+  }
+  const W = 800, H = 160, PL = 50, PR = 10, PT = 10, PB = 48;
+  const cW = W - PL - PR, cH = H - PT - PB;
+  const maxVal = Math.max(...rel.map(r => r.downloads), 1);
+  const barW = Math.max(4, Math.floor(cW / rel.length) - 3);
+  const gap = cW / rel.length;
+
+  [0, 0.5, 1].forEach(frac => {
+    const y = PT + cH - frac * cH;
+    const line = makeSVGEl('line', {x1: PL, y1: y, x2: W - PR, y2: y, stroke: 'rgba(255,255,255,0.05)', 'stroke-width': 1});
+    svg.appendChild(line);
+    if (frac > 0) {
+      const label = makeSVGEl('text', {x: PL - 4, y: y + 4, 'text-anchor': 'end', fill: '#7B6FA0', 'font-size': 10, 'font-family': 'monospace'});
+      label.textContent = Math.round(frac * maxVal);
+      svg.appendChild(label);
+    }
+  });
+
+  rel.forEach((r, i) => {
+    const barH = Math.max(2, (r.downloads / maxVal) * cH);
+    const x = PL + i * gap + (gap - barW) / 2;
+    const y = PT + cH - barH;
+    const rect = makeSVGEl('rect', {x, y, width: barW, height: barH, fill: '#553DE9', rx: 2, opacity: 0.8});
+    svg.appendChild(rect);
+
+    // Label every 5th bar or first/last
+    if (i === 0 || i === rel.length - 1 || i % Math.ceil(rel.length / 8) === 0) {
+      const lbl = makeSVGEl('text', {
+        x: x + barW / 2, y: H - 2, 'text-anchor': 'end',
+        fill: '#7B6FA0', 'font-size': 9, 'font-family': 'monospace',
+        transform: `rotate(-45, ${x + barW/2}, ${H - 2})`
+      });
+      lbl.textContent = r.tag;
+      svg.appendChild(lbl);
+    }
+  });
+
+  document.getElementById('dl-chart-note').textContent =
+    `Source: gh api repos/asklokesh/loki-mode/releases | Showing last ${rel.length} releases, ordered oldest to newest`;
+}
+
+function renderIterChart(perIter, svgId) {
+  const svg = document.getElementById(svgId);
+  if (!perIter || perIter.length === 0) return;
+  const W = 800, H = 120, PL = 48, PR = 10, PT = 10, PB = 22;
+  const cW = W - PL - PR, cH = H - PT - PB;
+  const maxVal = Math.max(...perIter.map(p => p.work_s));
+  const barW = Math.max(6, Math.floor(cW / perIter.length) - 4);
+  const gap = cW / perIter.length;
+
+  perIter.forEach((p, i) => {
+    const barH = Math.max(2, (p.work_s / maxVal) * cH);
+    const x = PL + i * gap + (gap - barW) / 2;
+    const y = PT + cH - barH;
+    const color = p.work_s > 200 ? '#C04848' : '#553DE9';
+    const rect = makeSVGEl('rect', {x, y, width: barW, height: barH, fill: color, rx: 2, opacity: 0.85});
+    svg.appendChild(rect);
+    const lbl = makeSVGEl('text', {x: x + barW/2, y: H - 2, 'text-anchor': 'middle', fill: '#7B6FA0', 'font-size': 9, 'font-family': 'monospace'});
+    lbl.textContent = p.iteration;
+    svg.appendChild(lbl);
+    if (p.work_s > 200) {
+      const valLbl = makeSVGEl('text', {x: x + barW/2, y: y - 3, 'text-anchor': 'middle', fill: '#C04848', 'font-size': 9, 'font-family': 'monospace'});
+      valLbl.textContent = Math.round(p.work_s / 60) + 'm';
+      svg.appendChild(valLbl);
+    }
+  });
+}
+
+function renderBenchmarks(benchmarks) {
+  const el = document.getElementById('benchmark-cards');
+  const caveat = document.getElementById('benchmark-caveat');
+
+  const before = benchmarks.find(b => b.label === 'before');
+  const after = benchmarks.find(b => b.label === 'after');
+
+  if (!before && !after) {
+    el.innerHTML = '<div class="loading">No benchmark data found.</div>';
+    return;
+  }
+
+  let html = '';
+
+  if (before) {
+    html += `
+      <div class="speed-card before">
+        <div class="label">Before (v7.104.x baseline)</div>
+        <div class="val">${before.wall_clock_min} min</div>
+        <div class="note">${before.act_iterations} iterations / ${before.completion_claims} completion claims</div>
+        <div class="note" style="margin-top:4px;">Source: benchmarks/results/${before.file}</div>
+      </div>
+    `;
+  }
+
+  if (after) {
+    html += `
+      <div class="speed-card after">
+        <div class="label">After (v7.105.0 convergence fix)</div>
+        <div class="val">${after.wall_clock_min} min</div>
+        <div class="note">${after.act_iterations} iteration / ${after.completion_claims} completion claim</div>
+        <div class="note" style="margin-top:4px;">Source: benchmarks/results/${after.file}</div>
+      </div>
+    `;
+  }
+
+  if (before && after) {
+    const wallDelta = ((before.wall_clock_min - after.wall_clock_min) / before.wall_clock_min * 100).toFixed(0);
+    const iterDelta = ((before.act_iterations - after.act_iterations) / before.act_iterations * 100).toFixed(0);
+    html += `
+      <div class="speed-card" style="flex-basis:100%;">
+        <div class="label">Delta</div>
+        <div class="arrow-row" style="margin-top:8px;">
+          <span class="arrow-val before">${before.wall_clock_min} min</span>
+          <span class="arrow">&#x2192;</span>
+          <span class="arrow-val after">${after.wall_clock_min} min</span>
+          <span class="delta-badge">-${wallDelta}% wall-clock</span>
+          <span class="delta-badge" style="background:var(--verified-bg);color:var(--verified);">${before.act_iterations} iters &#x2192; ${after.act_iterations} iter</span>
+        </div>
+        <div class="note">Both runs: same greet.js acceptance spec, same engine, exit code 0, engine_completed true</div>
+      </div>
+    `;
+  }
+
+  el.innerHTML = html;
+
+  // Caveat in at-a-glance
+  if (after) {
+    caveat.className = 'caveat';
+    caveat.style.background = 'var(--verified-bg)';
+    caveat.style.color = 'var(--verified)';
+    caveat.style.borderColor = 'rgba(46,216,182,0.20)';
+    caveat.textContent = `Current: v${document.getElementById('current-version').textContent} | Speed benchmark: before 28.6 min / 13 iters -> after 7.4 min / 1 iter (n=1 after-run on a small spec; repeat needed for statistical confidence)`;
+  } else {
+    caveat.textContent = `Current: v${document.getElementById('current-version').textContent} | Speed benchmark: before-run available (28.6 min, 13 iters); after pending`;
+  }
+
+  // Render iter chart for before run
+  if (before && before.per_iteration_work && before.per_iteration_work.length > 0) {
+    renderIterChart(before.per_iteration_work, 'iter-chart');
+    const wrap = document.getElementById('iteration-chart-wrap');
+    wrap.querySelector('.chart-title').textContent = `Per-iteration work (seconds) - before run (${before.act_iterations} iterations, red = disproportionately long)`;
+  }
+}
+
+function renderReleases(timeline) {
+  const tbody = document.getElementById('release-tbody');
+  if (!timeline || timeline.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3" class="loading">No data</td></tr>';
+    return;
+  }
+  tbody.innerHTML = timeline.map(r => `
+    <tr>
+      <td><span class="tag-badge">${r.version}</span></td>
+      <td class="date-col">${r.date}</td>
+      <td>${r.summary || ''}</td>
+    </tr>
+  `).join('');
+}
+
+function renderWorked(list) {
+  const el = document.getElementById('worked-list');
+  if (!list || list.length === 0) { el.innerHTML = '<div class="loading">No data</div>'; return; }
+  el.innerHTML = list.map(w => `
+    <div class="item-card worked">
+      <div class="title">${w.item} <span class="version-tag">${w.version}</span></div>
+      <div class="body">${w.evidence}</div>
+    </div>
+  `).join('');
+}
+
+function renderFailed(list) {
+  const el = document.getElementById('failed-list');
+  if (!list || list.length === 0) { el.innerHTML = '<div class="loading">No data</div>'; return; }
+  el.innerHTML = list.map(w => `
+    <div class="item-card failed">
+      <div class="title">${w.what}</div>
+      <div class="body"><strong>Why:</strong> ${w.reason}</div>
+      <div class="body"><strong>Outcome:</strong> ${w.outcome}</div>
+      <div class="source-tag">Source: ${w.source}</div>
+    </div>
+  `).join('');
+}
+
+function renderMistakes(list) {
+  const el = document.getElementById('mistakes-list');
+  if (!list || list.length === 0) { el.innerHTML = '<div class="loading">No data</div>'; return; }
+  el.innerHTML = list.map(m => `
+    <div class="item-card mistake">
+      <div class="title">${m.what}</div>
+      <div class="meta"><strong>Fixed in:</strong> <span class="version-tag">${m.fixed_in}</span> | <strong>Caught by:</strong> ${m.caught_by}</div>
+      <div class="body"><strong>Fix:</strong> ${m.how_fixed}</div>
+      <div class="source-tag">Source: ${m.source}</div>
+    </div>
+  `).join('');
+}
+
+function renderDecisions(list) {
+  const el = document.getElementById('decisions-grid');
+  if (!list || list.length === 0) { el.innerHTML = '<div class="loading">No data</div>'; return; }
+  el.innerHTML = list.map(d => `
+    <div class="decision-card">
+      <div class="id">${d.id}</div>
+      <div class="q">${d.label}</div>
+      <div class="opts">${d.options}</div>
+      <div class="blocks">Blocks: ${d.blocks}</div>
+    </div>
+  `).join('');
+}
+
+// Load data and render
+fetch('data.json')
+  .then(r => r.json())
+  .then(data => {
+    // Header
+    tag('current-version', 'v' + data.current_version);
+    document.getElementById('generated-at').textContent = 'Refreshed: ' + (data.generated_at || 'unknown');
+
+    // At a glance
+    const gh = data.github || {};
+    tag('gh-stars', gh.status === 'ok' ? fmtNum(gh.stars) : 'unavailable');
+    tag('gh-forks', gh.status === 'ok' ? fmtNum(gh.forks) : 'unavailable');
+    tag('gh-issues', gh.status === 'ok' ? fmtNum(gh.open_issues) : 'unavailable');
+
+    const npm = data.npm || {};
+    tag('npm-total', npm.status === 'ok' ? fmtNum(npm.total) : 'unavailable');
+
+    const docker = data.docker || {};
+    tag('docker-pulls', docker.status === 'ok' ? fmtNum(docker.pulls) : 'unavailable');
+
+    // Charts
+    renderNpmChart(npm.daily || [], 'npm-chart');
+    renderDlChart(data.releases_downloads || [], 'dl-chart');
+
+    // Benchmarks
+    renderBenchmarks(data.benchmarks || []);
+
+    // Releases
+    renderReleases(data.releases_timeline || []);
+
+    // What worked / failed / mistakes
+    renderWorked(data.what_worked || []);
+    renderFailed(data.didnt_work || []);
+    renderMistakes(data.mistakes || []);
+
+    // Decisions
+    renderDecisions(data.founder_decisions || []);
+  })
+  .catch(err => {
+    document.querySelector('main').innerHTML = `
+      <div style="padding:40px;color:var(--red);">
+        Failed to load data.json: ${err.message}<br>
+        Run fetch-data.sh first to generate data.json.
+      </div>
+    `;
+  });
+</script>
+</body>
+</html>
