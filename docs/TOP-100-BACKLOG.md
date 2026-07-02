@@ -120,3 +120,40 @@ Generated 2026-07-01 by the top100-backlog-enumeration ultracode workflow (7 age
 | 98 | low | S | autonomous | dashboard | Web-app docs: fill video placeholder (coming-soon text) |
 | 99 | low | M | autonomous | cli | C# provider support (roslyn analyzers + dotnet build, deferred) |
 | 100 | low | XL | founder-gated | engine | BMAD-METHOD v6 integration (net-new, needs founder planning) |
+
+## Gate split (what can actually close autonomously) - 2026-07-01
+
+The /goal asks to work through all 100. The honest structural reality: only a
+subset is autonomously completable. The rest need a founder decision or are
+community/CI-infra work that cannot be forced from this session.
+
+- **Autonomous (I can execute end-to-end): ~25 items** (the `gate=autonomous` rows).
+- **Founder-gated (blocked on a decision only the founder can make): ~35 items.**
+  Licensing (#5), hosted deploy target (#6, #23, #36), enterprise RBAC/SSO (#15),
+  sandbox backend choice (#14, #42), spend (#49 SWE-bench, #18 live-model), npm
+  publish + brand (#4, #13, #61), telemetry (#62), GitHub App (#46). Prepped to
+  one-approval-away where possible; CANNOT close without the founder.
+- **Community / CI-infra (~40 items):** flake root-causes, coverage thresholds,
+  platform runners (ARM64/Windows), distribution resilience. Environmental
+  hardening, not single-session feature work.
+
+### Shipped this session (accuracy-moat, from the competitive gap-analysis)
+
+Net-new accuracy work driven from docs/research-2026-07/gap-analysis-backlog.json
+(a companion list), NOT retroactive Top-100 claims:
+
+- v7.105.0 - convergence: council evaluates on completion-claim (4.0x faster, n=3). commit b8a368a0.
+- v7.106.0 - reverse-classical test provenance (tautological tests downgraded). commit 71299faa.
+- v7.107.0 - loki mcp --transport http loopback bind + bearer auth (+ latent crash fix). commit f3aa523c.
+- v7.108.0 - runtime boot smoke gate + annotate-before-act expectation ledger. commit 806fc374.
+
+### Top-100 items with a concrete shipped commit
+
+- #40 (dashboard memory summary on JSON-backed projects) - commit 330de52d.
+- #22 (3 parallel code reviewers) - already present in the engine (council path).
+
+### Next autonomous batch (by value, unblocked, user-visible)
+
+Picked from the `autonomous` rows by value + real-user impact (not primitives that
+ship dormant). Verify each before starting; several may overlap the already-built
+private autonomi-verify TS engine (e.g. #7/#8 - check before rebuilding).
