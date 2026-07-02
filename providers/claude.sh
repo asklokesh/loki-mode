@@ -48,7 +48,7 @@ PROVIDER_MAX_PARALLEL=10
 # The Claude Code CLI resolves aliases (opus/sonnet/haiku) to the latest available
 # model at invocation time, so we pass aliases rather than dated IDs. The canonical
 # mapping lives in providers/model_catalog.json (single source of truth):
-#   opus   -> latest Opus   (e.g. claude-opus-4-7 -- 1M context, adaptive thinking)
+#   opus   -> latest Opus   (e.g. claude-opus-4-8 -- 1M context, adaptive thinking)
 #   sonnet -> latest Sonnet (e.g. claude-sonnet-4-6)
 #   haiku  -> latest Haiku  (e.g. claude-haiku-4-5)
 # Override per tier with LOKI_CLAUDE_MODEL_PLANNING, _DEVELOPMENT, _FAST.

@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.111.0] - 2026-07-02
+
+### Trust-core fixes (bug-hunt wave 3) + honesty relabel of the proof non-forgeability claim
+
+Wave-3 adversarial bug-hunt found two HIGH trust-core bugs and a CRITICAL honesty defect.
+Each fix ships with a RED/GREEN regression test.
+
+- FIX (HIGH, anti-sycophancy backstop was a silent no-op): in completion-council.sh the
+  Devil's-Advocate veto on a unanimous COMPLETE was captured as multi-line stdout (log lines
+  are echoed to stdout), so the exact-string compare `[ "$da_result" = "OVERRIDE_CONTINUE" ]`
+  NEVER matched. A DA that found a real blocking issue was ignored and the council approved
+  anyway. Now compares the LAST line (tail -n1), so the veto forces CONTINUE. Proven: OLD
+  stops despite a real veto, NEW continues (tests/test-da-veto.sh 9/0).
+- FIX (HIGH, Bun-route completion parity): the Bun runner's checkCompletionPromise ignored
+  the .loki/signals/COMPLETION_REQUESTED fallback that the prompt tells the model to use. For
+  degraded providers (Codex/Aider) that lack the MCP completion tool, that fallback is the ONLY
+  completion signal, so completion-by-claim was fully broken on the Bun route for them; all
+  providers wasted iterations. Now honored + consumed (both signals), matching bash.
+- HONESTY (CRITICAL relabel, NOT a forgery fix): the proof rail claimed in shipped code that
+  a green Evidence Receipt is "impossible to forge" / "a forger cannot turn green" /
+  "non-forgeable". That is FALSE on the unsigned local path: a forger who rewrites the facts,
+  flips the headline, and recomputes the hash passes proof-verify.py. All such claims are
+  removed (dashboard/server.py, proof-verify.py, proof-generator.py, autonomy/loki, proof.ts,
+  proof-pr.sh) and replaced with an accurate statement: the integrity hash proves
+  bytes-unedited-since-hashing and the git diff is re-derived, but on the UNSIGNED path the
+  generator is trusted; neutral non-forgeability requires the signed record (founder-gated).
+  DEFENSE-IN-DEPTH added (honestly labeled): proof-verify.py now re-derives the headline from
+  the recorded facts and reports headline_consistent + generator_trusted; an INCONSISTENT
+  forgery (headline says VERIFIED but facts say not_run) is caught and ok=false. A CONSISTENT
+  forger is NOT blocked (documented; needs the signed record). tests/test-proof-forgery-defense.sh 7/0.
+- FIX (MED security): GitHub fine-grained PATs (github_pat_...) leaked into proof.json diffs;
+  the redactor now masks them (tests/test-proof-pat-redaction.py).
+- FIX (LOW): stale claude-opus-4-7 runtime fallbacks -> claude-opus-4-8 (providers/cline.sh,
+  aider.sh); app-runner compose port-range parse now returns the first (published) port, not
+  the last; docker-compose.yml healthcheck start-period -> start_period (was rejected by Compose).
+
 ## [7.110.0] - 2026-07-01
 
 ### Bug-hunt wave 2: dashboard 500-hardening, MCP lsp-proxy HTTP fix, provider flag fixes

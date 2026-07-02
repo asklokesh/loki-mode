@@ -2,13 +2,26 @@
 """Deterministic re-verifier for Loki Mode proof-of-run receipts.
 
 Companion to proof-generator.py. The generator writes proof.json with an
-integrity hash so a skeptic can prove the JSON was not edited. This module
-goes one step further: it re-checks the receipt's recorded FACTS against the
-live repo, so a skeptic can prove the facts are STILL TRUE (the diff the
-receipt claims still matches what is in git), not merely that the JSON bytes
-are unaltered. That re-check is what makes the receipt non-forgeable: you
-cannot hand-write a proof.json whose recorded diff survives a re-run against
-the repo it claims to describe.
+integrity hash so a skeptic can prove the JSON bytes were not edited since
+they were hashed. This module goes further: it re-checks the receipt's
+recorded FACTS against the live repo, so a skeptic can prove the recorded
+diff STILL matches what is in git, not merely that the JSON bytes are
+unaltered. It also re-derives the honesty headline from the recorded facts
+(see headline_consistent below) to catch an INCONSISTENT edit -- a proof
+whose headline was flipped to VERIFIED while the facts still say not_run.
+
+What this does NOT do -- honest scope. On the UNSIGNED path (no valid gpg
+signature) the generator is TRUSTED: the recorded facts are taken at face
+value. A forger who rewrites BOTH the facts AND the headline to a mutually
+consistent lie, then recomputes the integrity hash, still passes every
+check here -- the hash proves only bytes-unedited-since-hashing, and the
+re-derived diff can be made to match a repo the forger controls. Neutral,
+adversarial non-forgeability (the generator is NOT trusted) requires the
+SIGNED record: a detached gpg signature from a key the verifier trusts.
+When gpg_ok is True the generator is not trusted; when gpg_ok is "n/a" it
+is. This module reports that distinction (generator_trusted) rather than
+overclaiming that re-checking the diff makes a receipt non-forgeable. It
+does not.
 
 Three checks (mirrors dashboard/audit.py verify-CLI style):
 
@@ -166,6 +179,61 @@ def _to_int(v, default=0):
 
 
 # ---------------------------------------------------------------------------
+# headline re-derivation (MUST match proof-generator._compute_headline exactly)
+# ---------------------------------------------------------------------------
+
+def _compute_headline(facts, degraded):
+    """Deterministic headline re-derived from the recorded facts.
+
+    MUST match proof-generator.py _compute_headline() byte-for-byte in logic
+    (same DRIFT-GUARD contract as _canonical / _diff_sha256_from_stat above).
+    We mirror rather than import because proof-generator.py has a hyphen in its
+    filename (not a plain import) and this file already mirrors its sibling's
+    hashing helpers with the same "MUST match" discipline. If the generator's
+    rules change, this copy MUST be updated in lockstep.
+
+    Redaction note: proof_redact.py only rewrites secret/path substrings inside
+    string values; it never touches the status enums, integer counts, exit_code,
+    or the shape/length of the degraded list that this function reads, and it
+    leaves bool(command) truthy. So re-deriving from the STORED (post-redaction)
+    facts yields the identical headline the generator computed pre-redaction.
+    """
+    tests = facts.get("tests") or {}
+    build = facts.get("build") or {}
+    git = facts.get("git") or {}
+    diff_nonempty = bool((git.get("diff") or {}).get("count"))
+
+    sec = facts.get("security") or {}
+    sec_high = bool(sec.get("ran") and (sec.get("high_active") or 0) > 0)
+    any_failed = (
+        tests.get("status") == "failed"
+        or build.get("status") == "failed"
+        or any(g.get("status") == "failed"
+               for g in (facts.get("quality_gates") or []))
+        or sec_high
+    )
+    if any_failed:
+        return "NOT VERIFIED"
+
+    tests_verified = (
+        tests.get("status") == "verified"
+        and bool(tests.get("command"))
+        and tests.get("exit_code") == 0
+    )
+    if tests_verified and not degraded and diff_nonempty:
+        return "VERIFIED"
+    any_verified = (
+        tests.get("status") == "verified"
+        or build.get("status") == "verified"
+        or any(g.get("status") == "passed"
+               for g in (facts.get("quality_gates") or []))
+    )
+    if any_verified and degraded:
+        return "VERIFIED WITH GAPS"
+    return "NOT VERIFIED"
+
+
+# ---------------------------------------------------------------------------
 # proof field extraction (schema v1.0 + v1.1 tolerant)
 # ---------------------------------------------------------------------------
 
@@ -234,6 +302,31 @@ def _recorded_degraded(proof):
         if isinstance(deg, list):
             return [str(x) for x in deg]
     return []
+
+
+def _recorded_degraded_raw(proof):
+    """Return honesty.degraded EXACTLY as recorded (for headline re-derivation).
+
+    _recorded_degraded coerces items to str for the report; _compute_headline
+    only cares whether the list is empty, so we pass the raw list to preserve
+    the generator's exact truthiness semantics.
+    """
+    honesty = proof.get("honesty")
+    if isinstance(honesty, dict):
+        deg = honesty.get("degraded")
+        if isinstance(deg, list):
+            return deg
+    return []
+
+
+def _recorded_headline(proof):
+    """Return honesty.headline as recorded (stripped str), or None if absent."""
+    honesty = proof.get("honesty")
+    if isinstance(honesty, dict):
+        h = honesty.get("headline")
+        if isinstance(h, str) and h.strip():
+            return h.strip()
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -316,19 +409,38 @@ def verify(proof_path, repo_dir="."):
 
     Returns a dict:
       {
-        hash_ok:      bool                      tamper check passed
-        diff_drift:   bool | None               True=drift, False=match,
+        hash_ok:            bool                tamper check passed
+        diff_drift:         bool | None         True=drift, False=match,
                                                  None=could not check
-        diff_recheck: {recorded, current}       the two diff stats compared
-        gpg_ok:       True | False | "n/a"      signature verdict
-        degraded:     [str]                     honesty.degraded from the proof
-        reason:       str                       why ok is False (when it is)
-        ok:           bool                      overall verdict
+        diff_recheck:       {recorded, current} the two diff stats compared
+        gpg_ok:             True | False | "n/a"  signature verdict
+        generator_trusted:  bool                see note below
+        headline_consistent: bool | None        see note below
+        degraded:           [str]               honesty.degraded from the proof
+        reason:             str                 why ok is False (when it is)
+        ok:                 bool                overall verdict
       }
 
-    `ok` = hash_ok AND diff_drift is False AND gpg_ok in (True, "n/a").
+    `ok` = hash_ok AND diff_drift is False AND gpg_ok in (True, "n/a")
+           AND headline_consistent is not False.
     Note: diff_drift None (unverifiable) makes ok False, by design -- we never
     report "verified" when the central fact could not be re-checked.
+
+    generator_trusted: True on the UNSIGNED path (gpg_ok != True), False when a
+    valid signature is present (gpg_ok is True). On the unsigned path the facts
+    are taken at face value; neutral non-forgeability is NOT guaranteed. This
+    field exists so the report can state that honestly even when ok is True (at
+    which point `reason` is cleared).
+
+    headline_consistent: defense-in-depth. We re-derive the honesty headline
+    from the RECORDED facts (same logic as proof-generator._compute_headline)
+    and compare it to the stored honesty.headline. False means an INCONSISTENT
+    edit -- e.g. the headline was flipped to VERIFIED while the facts still say
+    not_run. That catches a careless/partial forgery. It does NOT catch a
+    CONSISTENT forger who rewrites both the facts AND the headline to a matching
+    lie and recomputes the integrity hash: on the unsigned path that still
+    passes (generator_trusted stays True). None means we could not re-derive
+    (no recorded headline, or no facts to derive from) -- not a failure.
     """
     proof = _load_proof(proof_path)
 
@@ -337,6 +449,8 @@ def verify(proof_path, repo_dir="."):
         "diff_drift": None,
         "diff_recheck": {"recorded": None, "current": None},
         "gpg_ok": "n/a",
+        "generator_trusted": True,
+        "headline_consistent": None,
         "degraded": _recorded_degraded(proof),
         "reason": "",
         "ok": False,
@@ -365,6 +479,12 @@ def verify(proof_path, repo_dir="."):
     # ----- 3. GPG (compute before returning so the report is complete) -----
     gpg_sig = verification.get("gpg_signature")
     result["gpg_ok"] = _verify_gpg(canonical_bytes, gpg_sig)
+
+    # generator_trusted: only a VALID signature (gpg_ok is True) means the
+    # generator is NOT trusted (neutral non-forgeability). "n/a" or a bad sig
+    # leaves the generator trusted -- the facts are taken at face value and a
+    # consistent forger is NOT caught. Stated so ok=True still discloses it.
+    result["generator_trusted"] = (result["gpg_ok"] is not True)
 
     # ----- 2. DRIFT CHECK --------------------------------------------------
     recorded_stat = _recorded_diff_stat(proof)
@@ -439,11 +559,37 @@ def verify(proof_path, repo_dir="."):
                 if drift and not result["reason"]:
                     result["reason"] = "recorded diff no longer matches the repo (drift detected)"
 
+    # ----- 4. HEADLINE CONSISTENCY (defense-in-depth) ----------------------
+    # Re-derive the headline from the recorded facts and compare to the stored
+    # honesty.headline. A mismatch means the headline was edited to disagree
+    # with the facts it claims to summarize (an INCONSISTENT forgery, e.g.
+    # headline flipped to VERIFIED while facts.tests.status is still not_run).
+    # This catches careless/partial tampering only. It does NOT catch a
+    # CONSISTENT forger who rewrites both the facts and the headline to a
+    # matching lie and recomputes the integrity hash -- on the unsigned path
+    # that still passes (see generator_trusted). Neutral non-forgeability needs
+    # the signed record, not this check.
+    recorded_headline = _recorded_headline(proof)
+    facts = proof.get("facts")
+    if recorded_headline is not None and isinstance(facts, dict):
+        derived = _compute_headline(facts, _recorded_degraded_raw(proof))
+        result["headline_consistent"] = (derived == recorded_headline)
+        if not result["headline_consistent"] and not result["reason"]:
+            result["reason"] = (
+                "honesty.headline (%r) disagrees with the headline re-derived "
+                "from the recorded facts (%r); the headline was edited to "
+                "misrepresent the facts" % (recorded_headline, derived)
+            )
+    else:
+        # No recorded headline, or no facts to re-derive from: cannot check.
+        result["headline_consistent"] = None
+
     # ----- overall verdict -------------------------------------------------
     result["ok"] = bool(
         result["hash_ok"]
         and result["diff_drift"] is False
         and result["gpg_ok"] in (True, "n/a")
+        and result["headline_consistent"] is not False
     )
     if result["ok"]:
         result["reason"] = ""

@@ -58,9 +58,9 @@ _aider_default_from_catalog() {
     if [ -f "${script_dir}/models.sh" ]; then
         # shellcheck source=./models.sh
         source "${script_dir}/models.sh"
-        loki_latest_model aider development 2>/dev/null || echo "claude-opus-4-7"
+        loki_latest_model aider development 2>/dev/null || echo "claude-opus-4-8"
     else
-        echo "claude-opus-4-7"
+        echo "claude-opus-4-8"
     fi
 }
 AIDER_DEFAULT_MODEL="${LOKI_AIDER_MODEL:-${LOKI_MODEL_DEVELOPMENT:-$(_aider_default_from_catalog)}}"

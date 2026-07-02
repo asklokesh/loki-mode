@@ -10980,9 +10980,17 @@ async def proofs_summary():
     """Honest aggregate over the active project's Evidence Receipts.
 
     Counts are computed ONLY from real proof.json files; nothing is invented.
-    The single source of truth for "verified" is the v1.1 deterministic
-    honesty.headline (proof-generator.py::_compute_headline), which a forger
-    cannot turn green without real exit_code:0 evidence. Buckets:
+    Each proof is bucketed on its recorded honesty.headline, computed by the
+    deterministic proof-generator.py::_compute_headline (never an LLM opinion).
+    Honest scope of that guarantee: the integrity hash proves the JSON bytes
+    were not edited since they were hashed, and proof-verify.py re-derives the
+    git diff so a skeptic can confirm the recorded diff still matches the repo.
+    But on the UNSIGNED path the generator is TRUSTED -- a forger who rewrites
+    both the facts and the headline to a mutually consistent lie and recomputes
+    the hash still buckets as verified here. Neutral, adversarial non-forgeability
+    (the generator is not trusted) requires the SIGNED record (a gpg signature
+    proof-verify.py checks). This endpoint reports what the generator recorded;
+    it does not itself re-verify. Buckets:
 
       verified      -> honesty.headline == "VERIFIED"
       with_gaps     -> honesty.headline == "VERIFIED WITH GAPS"

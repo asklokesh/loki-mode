@@ -422,9 +422,12 @@ async function shareProof(argv: readonly string[]): Promise<number> {
 // for the bash `proof verify`. Both routes shell out to the SAME verifier
 // (autonomy/lib/proof-verify.py) so there is one source of truth: it re-hashes
 // the canonical proof (tamper) and re-derives the diff from the recorded base_sha
-// vs live HEAD (drift). This is the "verify it yourself" path that makes the
-// Evidence Receipt non-forgeable -- and it is the command `loki own` tells users
-// to run, so it MUST exist on the default (Bun) route, not only the bash fallback.
+// vs live HEAD (drift). This is the "verify it yourself" path: it re-checks
+// integrity + re-derives the diff, catching an inconsistent edit. It does NOT by
+// itself make the receipt non-forgeable on the unsigned path (a hand-forger can
+// rewrite facts and re-hash); neutral non-forgeability needs the signed record.
+// It is the command `loki own` tells users to run, so it MUST exist on the
+// default (Bun) route, not only the bash fallback.
 // Exit 0 = clean, 1 = tamper/drift, 2 = unusable input.
 async function verifyProof(id: string | undefined): Promise<number> {
   if (!id) {

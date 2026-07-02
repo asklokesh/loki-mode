@@ -3103,7 +3103,14 @@ council_evaluate() {
             # Step 3: Unanimous -- run devil's advocate
             local da_result
             da_result=$(council_devils_advocate_review "$ITERATION_COUNT")
-            if [ "$da_result" = "OVERRIDE_CONTINUE" ]; then
+            # council_devils_advocate_review emits log_warn/log_info lines to
+            # STDOUT (run.sh log_* echo to stdout, not stderr), so da_result is a
+            # multi-line string whose LAST line is the verdict token. Comparing
+            # the whole capture against "OVERRIDE_CONTINUE" never matched, which
+            # silently defeated the anti-sycophancy backstop. Take the last line.
+            local da_verdict
+            da_verdict="$(printf '%s\n' "$da_result" | tail -n1)"
+            if [ "$da_verdict" = "OVERRIDE_CONTINUE" ]; then
                 log_warn "Council evaluate: devil's advocate overrode unanimous COMPLETE"
                 # Write transcript: DA triggered and flipped the outcome (Path B)
                 council_write_transcript "${ITERATION_COUNT:-0}" "REJECTED" "true" "true" "$_eval_threshold"

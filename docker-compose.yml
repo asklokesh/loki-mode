@@ -58,7 +58,7 @@ services:
       test: ["CMD-SHELL", "curl -sf http://localhost:57374/health >/dev/null 2>&1 || loki version >/dev/null 2>&1"]
       interval: 30s
       timeout: 10s
-      start-period: 10s
+      start_period: 10s
       retries: 3
     working_dir: /workspace
     stdin_open: true

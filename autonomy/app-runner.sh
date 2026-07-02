@@ -673,8 +673,11 @@ _detect_port() {
                 fi
                 local port
                 # Handle both simple (HOST:CONTAINER) and IP-bound (IP:HOST:CONTAINER) port formats
-                # Also handle port ranges like "8080-8090:8080-8090" by taking the first port
-                port=$(grep -E '^\s*-\s*"?[0-9]' "$compose_file" 2>/dev/null | head -1 | sed 's/.*- *"*//;s/".*//;' | awk -F: '{print $(NF-1)}' | awk -F- '{print $1}')
+                # Also handle port ranges like "8080-8090:8080-8090" by taking the FIRST port.
+                # The leading strip must be anchored (^...) and must NOT use a greedy `.*-`,
+                # otherwise it consumes the range's internal dash and yields the LAST port
+                # (e.g. "8080-8090:8080-8090" -> 8090 instead of 8080). See wave-3 repro.
+                port=$(grep -E '^\s*-\s*"?[0-9]' "$compose_file" 2>/dev/null | head -1 | sed -E 's/^[[:space:]]*-[[:space:]]*"?//; s/".*$//' | awk -F: '{print $(NF-1)}' | awk -F- '{print $1}')
                 _APP_RUNNER_PORT="${port:-8080}"
             fi
             ;;

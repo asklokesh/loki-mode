@@ -31119,7 +31119,10 @@ PYEOF
             # canonical proof (tamper check) and re-derives the diff from the
             # recorded base_sha vs live HEAD (drift check). Exit 0 = clean, 1 =
             # tamper/drift, 2 = unusable input. This is the "verify it yourself"
-            # path that makes the Evidence Receipt non-forgeable.
+            # path: it re-checks integrity + re-derives the diff from git, so an
+            # inconsistent edit is caught. It does NOT prove non-forgeability on
+            # the unsigned path (a hand-forger can rewrite facts and re-hash);
+            # neutral non-forgeability requires the signed record.
             local id="${1:-}"
             if [ -z "$id" ]; then
                 echo -e "${RED}Missing proof id.${NC} Use 'loki proof list'."

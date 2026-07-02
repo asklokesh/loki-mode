@@ -12,7 +12,7 @@ Patterns implemented (see R1-proof-of-run-PLAN.md REDACTION RULES):
   - Anthropic keys (sk-ant-...) -> [REDACTED:ANTHROPIC_KEY]
   - OpenAI-style keys (sk-...)  -> [REDACTED:OPENAI_KEY]
   - Google API keys (AI...)     -> [REDACTED:GOOGLE_KEY]
-  - GitHub tokens (gh[pousr]_)  -> [REDACTED:GITHUB_TOKEN]
+  - GitHub tokens (gh[pousr]_ and github_pat_) -> [REDACTED:GITHUB_TOKEN]
   - AWS access key ids (AKIA..) -> [REDACTED:AWS_KEY]
   - AWS secret access keys       -> [REDACTED:AWS_SECRET]
   - Slack tokens (xox[baprs]-)  -> [REDACTED:SLACK_TOKEN]
@@ -59,6 +59,11 @@ def reset_context():
 _PATTERNS = [
     # Anthropic keys must precede the generic sk- rule.
     (re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}"), "[REDACTED:ANTHROPIC_KEY]"),
+    # GitHub fine-grained PATs (github_pat_...). Must precede the classic
+    # gh[pousr]_ rule: "github_pat_" does not match gh[pousr]_ (the char after
+    # "gh" is "i"), so the classic rule would leave fine-grained PATs untouched.
+    # The token body is a mix of [A-Za-z0-9_], so allow underscores here.
+    (re.compile(r"github_pat_[A-Za-z0-9_]{20,}"), "[REDACTED:GITHUB_TOKEN]"),
     # GitHub tokens: ghp_, gho_, ghu_, ghs_, ghr_.
     (re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"), "[REDACTED:GITHUB_TOKEN]"),
     # Slack tokens: xoxb-, xoxa-, xoxp-, xoxr-, xoxs-.

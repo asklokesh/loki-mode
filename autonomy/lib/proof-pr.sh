@@ -235,6 +235,20 @@ def main():
         "nothing could be verified. The headline is computed only from "
         "deterministic, re-derivable facts, never from an AI opinion."
     )
+    _line()
+    # Honest scope of "verify it yourself". A reviewer CAN recompute the diff and
+    # the integrity hash, and proof-verify.py re-derives the headline from the
+    # recorded facts to catch an inconsistent edit. But on the unsigned path the
+    # recorded test/build facts are produced by Loki and taken at face value:
+    # a consistent rewrite of facts + headline is not caught here. Neutral,
+    # adversarial non-forgeability (Loki not trusted) needs the signed record.
+    _line(
+        "Scope: you can recompute the diff and the integrity hash yourself, and "
+        "`loki proof verify` re-derives the headline from the recorded facts. On "
+        "an unsigned receipt the recorded test/build facts are produced by Loki "
+        "and taken at face value; a signed receipt is required for verification "
+        "that does not trust Loki."
+    )
     return 0
 
 

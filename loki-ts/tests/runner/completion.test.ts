@@ -72,6 +72,47 @@ describe("checkCompletionPromise", () => {
     expect(existsSync(signalFile)).toBe(false);
   });
 
+  it("returns true when COMPLETION_REQUESTED fallback signal is present, then consumes it", async () => {
+    // Degraded providers (Codex/Aider) lack the loki_complete_task MCP tool,
+    // so COMPLETION_REQUESTED is their ONLY completion signal. Parity with
+    // bash check_task_completion_signal (run.sh:12554 fallback_file).
+    const signalDir = join(lokiDir, "signals");
+    mkdirSync(signalDir, { recursive: true });
+    const fallbackFile = join(signalDir, "COMPLETION_REQUESTED");
+    // Presence alone is sufficient; bash synthesizes a payload even when empty.
+    writeFileSync(fallbackFile, "");
+
+    const ctx = makeCtx();
+    const out = join(tmp, "iter.log");
+    writeFileSync(out, "anything");
+
+    const result = await checkCompletionPromise(ctx, out);
+    expect(result).toBe(true);
+    // Fallback signal must be consumed so the next iteration does not re-fire.
+    expect(existsSync(fallbackFile)).toBe(false);
+  });
+
+  it("consumes BOTH signals when TASK_COMPLETION_CLAIMED and COMPLETION_REQUESTED coexist", async () => {
+    // Belt-and-suspenders agents may write both. Removing only the active one
+    // orphans the other, which reads as a phantom claim next iteration. Parity
+    // with bash v7.109 fix (run.sh:12641-12647 -- consume both).
+    const signalDir = join(lokiDir, "signals");
+    mkdirSync(signalDir, { recursive: true });
+    const claimedFile = join(signalDir, "TASK_COMPLETION_CLAIMED");
+    const fallbackFile = join(signalDir, "COMPLETION_REQUESTED");
+    writeFileSync(claimedFile, '{"statement":"done","confidence":"high"}');
+    writeFileSync(fallbackFile, "");
+
+    const ctx = makeCtx();
+    const out = join(tmp, "iter.log");
+    writeFileSync(out, "anything");
+
+    const result = await checkCompletionPromise(ctx, out);
+    expect(result).toBe(true);
+    expect(existsSync(claimedFile)).toBe(false);
+    expect(existsSync(fallbackFile)).toBe(false);
+  });
+
   it("returns true when legacy match is enabled and promise text appears in captured output", async () => {
     process.env["LOKI_LEGACY_COMPLETION_MATCH"] = "true";
     const ctx = makeCtx({ completionPromise: "ALL_TESTS_GREEN_AND_DEPLOYED" });

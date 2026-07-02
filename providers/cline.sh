@@ -59,9 +59,9 @@ _cline_default_from_catalog() {
     if [ -f "${script_dir}/models.sh" ]; then
         # shellcheck source=./models.sh
         source "${script_dir}/models.sh"
-        loki_latest_model cline development 2>/dev/null || echo "claude-opus-4-7"
+        loki_latest_model cline development 2>/dev/null || echo "claude-opus-4-8"
     else
-        echo "claude-opus-4-7"
+        echo "claude-opus-4-8"
     fi
 }
 CLINE_DEFAULT_MODEL="${LOKI_CLINE_MODEL:-${LOKI_MODEL_DEVELOPMENT:-$(_cline_default_from_catalog)}}"

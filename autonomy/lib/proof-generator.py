@@ -675,8 +675,11 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
 
     # ---- v1.1 evidence model -------------------------------------------------
     # FACTS: deterministic, re-derivable, NON-LLM. A skeptic can recompute every
-    # one of these from the same .loki state. This is what makes a green receipt
-    # impossible to forge: the headline is computed ONLY from these facts.
+    # one of these from the same .loki state. The headline is computed ONLY from
+    # these facts. NOTE: this is NOT tamper-proof against a hand-forger on the
+    # unsigned path -- whoever can write the proof can also rewrite the facts and
+    # recompute the hash. True non-forgeability requires the neutral signed record
+    # (service-held key). See proof-verify.py verify() docstring.
     git_facts = {
         "base_sha": os.environ.get("_LOKI_ITER_START_SHA", "").strip(),
         "head_sha": _git_head_sha(target_dir),
@@ -725,8 +728,11 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
     }
 
     # HONESTY: every fact that is not_run/inconclusive/skipped, surfaced loudly,
-    # plus a deterministic headline a forger cannot turn green without real
-    # exit_code:0 evidence and a non-empty diff.
+    # plus a deterministic headline derived from the recorded facts (real
+    # exit_code:0 evidence and a non-empty diff). On the unsigned path this
+    # deters an inconsistent editor, but does NOT stop a consistent hand-forger
+    # who rewrites the facts and re-hashes; neutral non-forgeability needs the
+    # signed record.
     degraded = _compute_degraded(facts)
     headline = _compute_headline(facts, degraded)
     honesty = {
