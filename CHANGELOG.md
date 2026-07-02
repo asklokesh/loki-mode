@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.108.0] - 2026-07-01
+
+### Accuracy: two additive verification gates (runtime boot smoke + annotate-before-act ledger)
+
+Two independent, fail-open additions to the verification layer. Both are strictly
+additive: on the common path (no app to boot, no expectation ledger present) verify
+output is byte-identical to before, so neither can regress an existing run.
+
+Runtime boot smoke gate (loki verify) -- "it actually runs":
+- A new runtime gate detects an app's start command, boots it bounded by a timeout,
+  probes a health/root path, records the HTTP status + a reproducible runtime.json
+  artifact (and a playwright screenshot when available), and tears the app down.
+- 5xx (server error) or no-answer for a detected app -> High finding -> NOT VERIFIED.
+  A detected app that cannot be booted safely (no timeout binary) -> inconclusive ->
+  CONCERNS (never an unbounded boot / hang; mirrors the v7.106.0 liveness discipline).
+- FALSE-POSITIVE GUARD: a project is only treated as a bootable HTTP app when there is
+  a POSITIVE HTTP signal -- a web-framework/server dependency, or a listen()/
+  createServer()/serve() call in source. A plain CLI or library that ships a
+  conventional "start"/"dev" script (e.g. "start":"node cli.js", "dev":"tsc --watch")
+  is NOT booted and emits no gate row, so it never gets a false-RED block.
+- Opt-out: LOKI_RUNTIME_GATE=0. Boot timeout / health path configurable
+  (LOKI_RUNTIME_BOOT_TIMEOUT, LOKI_RUNTIME_HEALTH_PATH).
+- KNOWN LIMITATION (honest): the probe trusts whatever answers on the resolved port,
+  so on a local machine with a pre-existing server on that port a failed boot could
+  read as green. Clean in CI; a follow-up will confirm the boot PID owns the listener.
+- Coverage: tests/test-runtime-gate.sh (14 cases): boot-pass, boot-fail->BLOCKED,
+  library byte-identity, default-port PORT-export, Node-CLI false-RED discriminator,
+  and real-server-still-detected.
+
+Annotate-before-act expectation ledger (loki verify):
+- A tamper-evident ledger of EXPECTED observable outcomes can be sealed before
+  verification (.loki/expectations/<iter>.json), canonicalized + sha256-hashed the
+  SAME way proof-generator.py hashes proof.json. At verify time each expectation is
+  compared to reality: a contradicted expectation -> High finding (BLOCKED); a
+  dropped/unexecuted one -> Medium finding (CONCERNS); an unevaluable one ->
+  inconclusive -> CONCERNS (never a false VERIFIED). The ledger hash is embedded in
+  evidence.json so an edited-after-the-fact expectation is detectable.
+- SCOPE (honest, PARTIAL): this ships the WRITE library/CLI + the verify-time
+  READ/COMPARE + tamper-hash embedding, with a full test suite. The run-loop wiring
+  that auto-writes predictions before each act, and deriving "observed" from real
+  execution (the strong reality-anchor that would make tamper-evidence adversary-proof
+  rather than casual-edit-proof), are tracked follow-ups. Opt-out:
+  LOKI_EXPECTATION_LEDGER=0. Absent ledger -> byte-identical to before.
+- Coverage: tests/test-expectation-ledger.sh (15 cases): met/contradicted/dropped/
+  unevaluable, tamper detection, canonical parity with proof-generator, absent-ledger
+  byte-identity, and opt-out.
+
 ## [7.107.0] - 2026-07-01
 
 ### Hardening + latent crash fix: loki mcp --transport http (loopback bind + optional bearer auth)

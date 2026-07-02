@@ -724,6 +724,420 @@ print(n)
 }
 
 # ---------------------------------------------------------------------------
+# Gate: runtime boot smoke (NET-NEW).
+#
+# "It actually runs." A shipped change should not only build and pass tests --
+# for an app that serves HTTP, the strongest cheap evidence is that the app
+# BOOTS and answers a request. This gate detects a start command, boots the app
+# with a hard timeout, probes a health/root path, records the HTTP status (and
+# a screenshot artifact when playwright is available), and tears the app down.
+#
+# REUSE (deterministic port of run.sh smoke machinery, source cited):
+#   - start-command detection order: app_runner_init (app-runner.sh:757-912).
+#     Faithfully ported here (compose/Dockerfile EXCLUDED: docker boots are slow,
+#     need a running daemon, and are out of scope for a fast verify gate).
+#   - default-port map: _detect_port (app-runner.sh:641-731).
+#   - optional screenshot: the inline chromium smoke script from
+#     playwright_verify_app (playwright-verify.sh:118-224), same arg contract.
+#   - bounded-run / liveness discipline: _loki_test_provenance
+#     (completion-council.sh:1587-1600) -- if no timeout binary exists we do NOT
+#     boot unbounded; we mark inconclusive and never hang.
+#
+# VERDICT MAPPING (mirrors this module's inconclusive->CONCERNS policy):
+#   no start command / library / CLI  -> NO gate row emitted (byte-identical to
+#                                        pre-gate output; see BYTE-IDENTITY below).
+#   detected + booted + health 2xx/3xx -> pass, reproducible=true, status+artifact.
+#   detected + won't start / health 5xx/no-answer -> High finding -> not VERIFIED.
+#   detected but boot could not be ATTEMPTED (no timeout binary, no HTTP port
+#     mapping) -> inconclusive -> at-least-CONCERNS (never a silent pass).
+#
+# BYTE-IDENTITY (the critical safety property): when no start command is
+# detectable the gate returns WITHOUT calling _verify_add_gate, so evidence.json
+# and report.md are byte-for-byte identical to a tree without this gate. Library
+# repos, pure CLIs, and any repo with no server therefore see zero change. This
+# is why the gate self-suppresses its row instead of emitting a "skipped" row
+# like the other gates: a skipped row would change the bytes.
+#
+# OPT-OUT: LOKI_RUNTIME_GATE=0 disables the gate entirely (consistent with the
+# other opt-out knobs). Default is on. Disabled -> no row -> byte-identical.
+#
+# NO NETWORK beyond localhost; no secrets. The boot inherits the caller's env.
+# ---------------------------------------------------------------------------
+
+# Resolve a bounded-exec wrapper (GNU timeout, then gtimeout). Echoes the binary
+# name, or nothing if neither exists. Mirrors the fallback chain used across the
+# codebase (run.sh:8814, completion-council.sh:1595).
+_verify_runtime_timeout_bin() {
+    if command -v timeout >/dev/null 2>&1; then
+        echo "timeout"
+    elif command -v gtimeout >/dev/null 2>&1; then
+        echo "gtimeout"
+    fi
+}
+
+# Detect the app's start command + HTTP port from the tree. Echoes two
+# TAB-separated fields "method<TAB>port" when a startable HTTP app is found, or
+# nothing when none is detectable. Faithful port of app_runner_init's cascade
+# (app-runner.sh:757) MINUS docker (compose/Dockerfile), which is intentionally
+# out of scope for a fast verify boot. Honors LOKI_APP_COMMAND / LOKI_APP_PORT
+# overrides exactly as the build loop does. When rank 9's setup recipe exists at
+# .loki/setup-recipe.json it is consulted first; its absence is handled (it is
+# not built yet), so this is purely opportunistic.
+_verify_runtime_detect() {
+    local dir="$1"
+    local method="" port=""
+
+    # 0. Operator override (same env vars the app runner honors).
+    if [ -n "${LOKI_APP_COMMAND:-}" ]; then
+        method="$LOKI_APP_COMMAND"
+    fi
+
+    # 0b. Rank 9 setup recipe (opportunistic; NOT yet built -- absence is normal).
+    if [ -z "$method" ] && [ -f "$dir/.loki/setup-recipe.json" ] && command -v python3 >/dev/null 2>&1; then
+        local recipe
+        recipe="$(python3 - "$dir/.loki/setup-recipe.json" <<'PYEOF' 2>/dev/null || true
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        d = json.load(f)
+except Exception:
+    sys.exit(0)
+if not isinstance(d, dict):
+    sys.exit(0)
+cmd = d.get("start") or d.get("start_command") or d.get("run") or ""
+port = d.get("port") or ""
+if isinstance(cmd, str) and cmd.strip():
+    print("%s\t%s" % (cmd.strip(), str(port).strip()))
+PYEOF
+)"
+        if [ -n "$recipe" ]; then
+            method="$(printf '%s' "$recipe" | cut -f1)"
+            port="$(printf '%s' "$recipe" | cut -f2)"
+        fi
+    fi
+
+    # 1. package.json: dev preferred, then start (app-runner.sh:814-828).
+    #    HTTP-SIGNAL REQUIRED (mirrors the Python discipline below): a Node
+    #    "start"/"dev" script is NOT assumed to be an HTTP server. Many legitimate
+    #    CLIs/libraries ship "start":"node cli.js" or "dev":"tsc --watch". We only
+    #    treat the project as bootable-HTTP when there is a POSITIVE HTTP signal:
+    #    an HTTP framework in package.json deps, OR a listen/createServer call in
+    #    the source. Without a signal we leave method empty -> byte-identity path
+    #    (no gate row), so a Node CLI never gets a false-RED boot failure.
+    if [ -z "$method" ] && [ -f "$dir/package.json" ]; then
+        local _node_http_signal=""
+        # (a) HTTP framework or server dep declared in package.json.
+        if grep -qE '"(express|fastify|koa|hapi|@hapi/hapi|next|nuxt|@nestjs/core|@nestjs/platform-express|http-server|connect|restify|polka|@sveltejs/kit|vite)"[[:space:]]*:' "$dir/package.json" 2>/dev/null; then
+            _node_http_signal="dep"
+        fi
+        # (b) a listen()/createServer()/serve() call in a shallow scan of JS/TS
+        #     sources (bounded: node_modules/.git excluded). Uses grep -q (a
+        #     boolean, no pipe) so this is safe under set -o pipefail (a piped
+        #     `| head` would SIGPIPE grep and, under pipefail, drop the result).
+        if [ -z "$_node_http_signal" ]; then
+            if grep -rqE '\.listen\(|createServer\(|http2?\.createServer|Bun\.serve\(|Deno\.serve\(' \
+                "$dir" --include='*.js' --include='*.ts' --include='*.mjs' --include='*.cjs' \
+                --exclude-dir=node_modules --exclude-dir=.git 2>/dev/null; then
+                _node_http_signal="src"
+            fi
+        fi
+        if [ -n "$_node_http_signal" ]; then
+            if grep -q '"dev"[[:space:]]*:' "$dir/package.json" 2>/dev/null; then
+                method="npm run dev"
+            elif grep -q '"start"[[:space:]]*:' "$dir/package.json" 2>/dev/null; then
+                method="npm start"
+            fi
+        fi
+    fi
+
+    # 2. Procfile (12-factor web: process). Grep the web line's command.
+    if [ -z "$method" ] && [ -f "$dir/Procfile" ]; then
+        local proc_cmd
+        proc_cmd="$(grep -E '^web:' "$dir/Procfile" 2>/dev/null | head -1 | sed -E 's/^web:[[:space:]]*//')"
+        if [ -n "$proc_cmd" ]; then
+            method="$proc_cmd"
+        fi
+    fi
+
+    # 3. Makefile run/serve target (app-runner.sh:831-847).
+    if [ -z "$method" ] && [ -f "$dir/Makefile" ]; then
+        if grep -qE '^run:' "$dir/Makefile" 2>/dev/null; then
+            method="make run"
+        elif grep -qE '^serve:' "$dir/Makefile" 2>/dev/null; then
+            method="make serve"
+        fi
+    fi
+
+    # 4. Python web entrypoints (app-runner.sh:849-892). Only treated as a
+    #    startable HTTP app when a web framework import is present -- a bare
+    #    script (CLI) is NOT booted.
+    if [ -z "$method" ] && [ -f "$dir/manage.py" ]; then
+        method="python manage.py runserver"
+    fi
+    if [ -z "$method" ] && [ -f "$dir/app.py" ]; then
+        if grep -qE 'from[[:space:]]+fastapi|import[[:space:]]+FastAPI' "$dir/app.py" 2>/dev/null; then
+            method="uvicorn app:app --host 127.0.0.1 --port 8000"
+        elif grep -qE 'from[[:space:]]+flask|import[[:space:]]+Flask' "$dir/app.py" 2>/dev/null; then
+            method="flask run --host 127.0.0.1 --port 5000"
+        fi
+    fi
+    if [ -z "$method" ] && [ -f "$dir/main.py" ]; then
+        if grep -qE 'from[[:space:]]+fastapi|import[[:space:]]+FastAPI' "$dir/main.py" 2>/dev/null; then
+            method="uvicorn main:app --host 127.0.0.1 --port 8000"
+        fi
+    fi
+
+    # No startable HTTP app detected -> echo nothing (byte-identity path).
+    [ -z "$method" ] && return 0
+
+    # Resolve the port when detection did not already set one. Mirrors the
+    # _detect_port default map (app-runner.sh:641-731). LOKI_APP_PORT wins.
+    if [ -n "${LOKI_APP_PORT:-}" ]; then
+        port="$LOKI_APP_PORT"
+    elif [ -z "$port" ]; then
+        case "$method" in
+            *manage.py*)                 port=8000 ;;
+            *flask*)                     port=5000 ;;
+            *uvicorn*|*fastapi*|*main.py*) port=8000 ;;
+            *npm*|*next*|*node*)         port=3000 ;;
+            *)                           port=8080 ;;
+        esac
+    fi
+
+    printf '%s\t%s\n' "$method" "$port"
+    return 0
+}
+
+verify_gate_runtime() {
+    local tree="$1"
+    # Opt-out (default on). Disabled -> emit no row -> byte-identical.
+    [ "${LOKI_RUNTIME_GATE:-1}" = "0" ] && return 0
+
+    local detected
+    detected="$(_verify_runtime_detect "$tree")"
+    # No startable HTTP app -> byte-identity path: no gate row, no findings.
+    [ -z "$detected" ] && return 0
+
+    local method port
+    method="$(printf '%s' "$detected" | cut -f1)"
+    port="$(printf '%s' "$detected" | cut -f2)"
+
+    # Bounded-boot discipline (liveness): without a timeout binary we do NOT boot
+    # unbounded. Mark inconclusive -> CONCERNS, never hang (mirror
+    # _loki_test_provenance's timeout-absent branch, completion-council.sh:1597).
+    local timeout_bin
+    timeout_bin="$(_verify_runtime_timeout_bin)"
+    if [ -z "$timeout_bin" ]; then
+        _verify_add_gate "runtime" "inconclusive" "boot" \
+            "start command detected ('$method') but no timeout binary (install coreutils); boot not attempted" "true"
+        return 0
+    fi
+
+    local boot_timeout="${LOKI_RUNTIME_BOOT_TIMEOUT:-45}"
+    local health_path="${LOKI_RUNTIME_HEALTH_PATH:-/}"
+    local url="http://127.0.0.1:${port}${health_path}"
+    # Artifacts land under the resolved --out dir (VERIFY_OUT_DIR set by
+    # verify_main); default to .loki/verify when the gate is exercised directly.
+    local out_dir="${VERIFY_OUT_DIR:-.loki/verify}"
+    local artifact_dir="$out_dir/runtime"
+    mkdir -p "$artifact_dir" 2>/dev/null || true
+    local boot_log="$artifact_dir/boot.log"
+
+    # Boot the app in the background, bounded by the timeout wrapper. The whole
+    # process group is killed on teardown. Env is inherited (no secrets injected).
+    # PORT is exported to the resolved port so 12-factor apps (node, many python
+    # frameworks) listen where the probe looks; apps that hardcode a port ignore
+    # it harmlessly. This keeps boot-port and probe-port consistent.
+    local app_pid=""
+    (
+        cd "$tree" || exit 127
+        export PORT="$port"
+        exec "$timeout_bin" "$boot_timeout" sh -c "$method"
+    ) >"$boot_log" 2>&1 &
+    app_pid=$!
+
+    # Poll the health endpoint until it answers or the boot budget elapses.
+    # Prefer curl; fall back to a bash /dev/tcp connect + minimal GET when curl
+    # is absent (status then unknown -> treated as "answered" only on a real
+    # HTTP status line). Never blocks past boot_timeout.
+    local http_status="" answered="false"
+    local deadline=$(( $(date +%s) + boot_timeout ))
+    local have_curl="false"
+    command -v curl >/dev/null 2>&1 && have_curl="true"
+
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+        # If the app process already exited, stop polling (it failed to stay up).
+        if ! kill -0 "$app_pid" 2>/dev/null; then
+            # Give one last probe in case it forked a daemon and exited.
+            :
+        fi
+        if [ "$have_curl" = "true" ]; then
+            http_status="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$url" 2>/dev/null || echo "")"
+            if [ -n "$http_status" ] && [ "$http_status" != "000" ]; then
+                answered="true"
+                break
+            fi
+        else
+            # Portable fallback: raw TCP GET via bash /dev/tcp (best effort).
+            local resp=""
+            resp="$(_verify_runtime_raw_probe "$port" "$health_path" 2>/dev/null || true)"
+            if [ -n "$resp" ]; then
+                http_status="$resp"
+                answered="true"
+                break
+            fi
+        fi
+        # Stop early if the launcher died AND nothing is listening yet.
+        if ! kill -0 "$app_pid" 2>/dev/null; then
+            break
+        fi
+        sleep 1
+    done
+
+    # Optional screenshot artifact (only when playwright + node are available and
+    # the app answered). Reuses the inline chromium smoke script contract from
+    # playwright_verify_app (playwright-verify.sh). Best effort: absence or
+    # failure never changes the gate outcome.
+    local artifact="" artifact_field=""
+    if [ "$answered" = "true" ] && command -v node >/dev/null 2>&1 \
+       && npx playwright --version >/dev/null 2>&1; then
+        artifact="$artifact_dir/boot-$(date -u +%Y%m%dT%H%M%SZ).png"
+        _verify_runtime_screenshot "$url" "$artifact" "$timeout_bin" || artifact=""
+        [ -f "$artifact" ] && artifact_field="$artifact"
+    fi
+
+    # Teardown: kill the launcher and any child it spawned. Best effort; bounded.
+    _verify_runtime_teardown "$app_pid" "$port"
+
+    # Interpret the result.
+    if [ "$answered" != "true" ]; then
+        _verify_add_gate "runtime" "fail" "boot" \
+            "app detected ('$method') but did not answer $url within ${boot_timeout}s (see $boot_log)" "true"
+        _verify_add_finding "High" "runtime" "deterministic:runtime-boot" "" "null" \
+            "Runtime boot smoke failed: '$method' did not serve $url within ${boot_timeout}s. $(tail -2 "$boot_log" 2>/dev/null | tr '\n' ' ')"
+        return 0
+    fi
+
+    # Answered. 5xx is a boot-level failure; 2xx/3xx/4xx means the server is up
+    # and routing (4xx on '/' is common for APIs with no root route -- the server
+    # IS running, so that is a PASS: the gate attests "it runs", not "route X
+    # exists"). Only 5xx (server error) fails.
+    local summary="booted; GET $health_path -> HTTP $http_status"
+    [ -n "$artifact_field" ] && summary="$summary; screenshot $artifact_field"
+    if [ "$http_status" -ge 500 ] 2>/dev/null; then
+        _verify_add_gate "runtime" "fail" "boot" "$summary (server error)" "true"
+        _verify_add_finding "High" "runtime" "deterministic:runtime-boot" "" "null" \
+            "Runtime boot smoke failed: '$method' booted but returned HTTP $http_status on $url (server error)."
+    else
+        _verify_add_gate "runtime" "pass" "boot" "$summary" "true"
+    fi
+
+    # Record a structured runtime artifact alongside the gate row so the boot is
+    # reproducible (command + url + status + artifact are all captured).
+    _VR_DIR="$artifact_dir" _VR_METHOD="$method" _VR_URL="$url" \
+    _VR_STATUS="$http_status" _VR_ART="$artifact_field" _VR_TO="$boot_timeout" \
+    python3 - <<'PYEOF' 2>/dev/null || true
+import json, os
+rec = {
+    "start_command": os.environ.get("_VR_METHOD", ""),
+    "url": os.environ.get("_VR_URL", ""),
+    "http_status": os.environ.get("_VR_STATUS", ""),
+    "screenshot": os.environ.get("_VR_ART") or None,
+    "boot_timeout_s": int(os.environ.get("_VR_TO", "0") or 0),
+    "reproducible": True,
+}
+d = os.environ["_VR_DIR"]
+os.makedirs(d, exist_ok=True)
+with open(os.path.join(d, "runtime.json"), "w") as f:
+    json.dump(rec, f, indent=2)
+    f.write("\n")
+PYEOF
+    return 0
+}
+
+# Raw TCP probe fallback (no curl). Sends a minimal HTTP/1.0 GET via bash
+# /dev/tcp and echoes the numeric status code on success, nothing on failure.
+# Best effort; used only when curl is absent.
+_verify_runtime_raw_probe() {
+    local port="$1" path="$2"
+    # /dev/tcp is a bash builtin; guard against sh-only environments.
+    ( exec 3<>"/dev/tcp/127.0.0.1/${port}" 2>/dev/null ) || return 1
+    local line
+    {
+        exec 3<>"/dev/tcp/127.0.0.1/${port}" || return 1
+        printf 'GET %s HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n' "$path" >&3
+        IFS= read -r line <&3
+        exec 3>&- 3<&-
+    } 2>/dev/null
+    # line looks like: HTTP/1.0 200 OK
+    printf '%s' "$line" | grep -oE 'HTTP/[0-9.]+ [0-9]{3}' | grep -oE '[0-9]{3}$' || return 1
+}
+
+# Optional screenshot via the playwright inline smoke script (reused contract:
+# url screenshot results timeout). Bounded by the same timeout wrapper. Returns
+# 0 if the screenshot file was produced, nonzero otherwise. Never fatal.
+_verify_runtime_screenshot() {
+    local url="$1" out_png="$2" timeout_bin="$3"
+    local tmp_js results_json
+    tmp_js="$(mktemp -t loki-verify-smoke.XXXXXX.js 2>/dev/null)" || return 1
+    results_json="$(mktemp -t loki-verify-smoke.XXXXXX.json 2>/dev/null)" || { rm -f "$tmp_js"; return 1; }
+    cat >"$tmp_js" <<'SMOKE_SCRIPT'
+const { chromium } = require('playwright');
+(async () => {
+  const url = process.argv[2];
+  const screenshotPath = process.argv[3];
+  const pageTimeout = parseInt(process.argv[4] || '15000', 10);
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: pageTimeout });
+    await page.screenshot({ path: screenshotPath, fullPage: false });
+  } catch (err) {
+    process.exit(1);
+  } finally {
+    if (browser) await browser.close();
+  }
+  process.exit(0);
+})();
+SMOKE_SCRIPT
+    "$timeout_bin" 30 node "$tmp_js" "$url" "$out_png" 15000 >/dev/null 2>&1
+    local rc=$?
+    rm -f "$tmp_js" "$results_json"
+    [ "$rc" -eq 0 ] && [ -f "$out_png" ]
+}
+
+# Teardown: terminate the boot launcher and any process still holding the port.
+# Bounded and best effort; never blocks the gate.
+_verify_runtime_teardown() {
+    local app_pid="$1" port="$2"
+    if [ -n "$app_pid" ]; then
+        # Kill the process group of the launcher when possible, else the PID.
+        kill "$app_pid" 2>/dev/null || true
+        # Kill any direct children (the timeout wrapper spawns sh -c "$method").
+        if command -v pkill >/dev/null 2>&1; then
+            pkill -P "$app_pid" 2>/dev/null || true
+        fi
+        # Give it a moment, then hard-kill.
+        local i=0
+        while [ "$i" -lt 3 ] && kill -0 "$app_pid" 2>/dev/null; do
+            sleep 1; i=$((i + 1))
+        done
+        kill -9 "$app_pid" 2>/dev/null || true
+    fi
+    # Reclaim the port from any orphan that outlived the launcher (bounded).
+    if command -v lsof >/dev/null 2>&1; then
+        local holders
+        holders="$(lsof -ti tcp:"$port" 2>/dev/null || true)"
+        if [ -n "$holders" ]; then
+            printf '%s\n' "$holders" | while IFS= read -r pid; do
+                [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null || true
+            done
+        fi
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Verdict computation (Entanglement 2: inconclusive -> CONCERNS, never VERIFIED).
 #
 # Pure function of:
@@ -841,6 +1255,8 @@ verify_emit_evidence() {
     _V_START="$started_at" \
     _V_DONE="$completed_at" \
     _V_BLOCKON="$block_on" \
+    _V_LEDGER_SHA="${_VERIFY_EXPECT_LEDGER_SHA:-}" \
+    _V_LEDGER_HASHOK="${_VERIFY_EXPECT_LEDGER_HASH_OK:-}" \
     python3 - <<'PYEOF'
 import json, os, hashlib
 
@@ -921,6 +1337,18 @@ doc = {
     "findings": findings,
     "suppressed": [],
 }
+
+# Annotate-before-act ledger hash embed (additive; ONLY when a ledger was
+# present this run). Embedding the ledger_sha256 into evidence.json makes an
+# expectation edited after the fact detectable from the evidence document, the
+# same tamper-evidence proof.json carries. When no ledger existed the env var is
+# empty and this key is omitted, so evidence.json stays byte-identical to today.
+_ledger_sha = os.environ.get("_V_LEDGER_SHA") or ""
+if _ledger_sha:
+    doc["expectation_ledger"] = {
+        "ledger_sha256": _ledger_sha,
+        "hash_ok": (os.environ.get("_V_LEDGER_HASHOK") == "true"),
+    }
 
 os.makedirs(out_dir, exist_ok=True)
 ev_path = os.path.join(out_dir, "evidence.json")
@@ -1113,6 +1541,200 @@ verify_spec_drift_gate() {
     else
         _verify_add_gate "spec_drift" "pass" "loki-spec" "spec is in sync with its lock" "true"
     fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Annotate-before-act expectation-ledger gate (autonomy/lib/expectation-ledger.py).
+#
+# When a pre-committed expectation ledger exists at .loki/expectations/<iter>.json
+# (written BEFORE the act/verify), diff its predicted outcomes against the actual
+# observations recorded at .loki/expectations/<iter>.observed.json. Any predicted
+# check that was silently DROPPED (never executed) or CONTRADICTED (actual !=
+# expected) becomes a finding; an UNEVALUABLE prediction -> inconclusive ->
+# CONCERNS (never VERIFIED). A ledger whose recorded hash no longer matches its
+# own entries (edited after the fact) is a tamper finding.
+#
+# ADDITIVE + fail-open. Nothing writes a ledger yet in the common case, so:
+#   - No ledger file present  -> this returns immediately, adds NO gate row and
+#     NO finding, so evidence.json is BYTE-IDENTICAL to today.
+#   - LOKI_EXPECTATION_LEDGER=0 -> disabled entirely (same byte-identical result).
+#   - python3 missing, module missing, or any error -> a single inconclusive
+#     gate row at most, never an abort, never a silent pass.
+#
+# The embedded ledger_sha256 is folded into evidence.json (verify_emit_evidence
+# reads _VERIFY_EXPECT_LEDGER_SHA / _VERIFY_EXPECT_LEDGER_HASH_OK) so an
+# expectation edited after write is detectable from the evidence document too.
+# ---------------------------------------------------------------------------
+verify_expectation_ledger_gate() {
+    local tree="${1:-.}"
+
+    # Opt-out knob, consistent with other verify env knobs. Default ON, but the
+    # gate is a total no-op unless a ledger file actually exists, so default-ON is
+    # byte-identical to today for every run that has no ledger.
+    if [ "${LOKI_EXPECTATION_LEDGER:-1}" = "0" ]; then
+        return 0
+    fi
+
+    local expect_dir="$tree/.loki/expectations"
+    expect_dir="${expect_dir#./}"
+    # No ledger directory at all -> byte-identical no-op (no gate row emitted).
+    [ -d "$expect_dir" ] || return 0
+
+    # Pick the most recent ledger (highest-numbered / newest .json that is not an
+    # .observed.json sidecar). No ledger file -> byte-identical no-op.
+    local ledger_file=""
+    local _f
+    for _f in "$expect_dir"/*.json; do
+        [ -f "$_f" ] || continue
+        case "$_f" in
+            *.observed.json) continue ;;
+        esac
+        if [ -z "$ledger_file" ] || [ "$_f" -nt "$ledger_file" ]; then
+            ledger_file="$_f"
+        fi
+    done
+    [ -n "$ledger_file" ] || return 0
+
+    # Derive the iteration token from the ledger filename (<iter>.json).
+    local iter
+    iter="$(basename "$ledger_file" .json)"
+    local observed_file="$expect_dir/$iter.observed.json"
+    [ -f "$observed_file" ] || observed_file=""
+
+    local mod
+    mod="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/expectation-ledger.py"
+    if [ ! -f "$mod" ]; then
+        _verify_add_gate "expectation_ledger" "inconclusive" "loki-ledger" "ledger present but expectation-ledger module not found" "true"
+        return 0
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        _verify_add_gate "expectation_ledger" "inconclusive" "loki-ledger" "ledger present but python3 not on PATH" "true"
+        return 0
+    fi
+
+    # Compare via the module. It prints TAB-separated finding lines (verify TSV
+    # shape) on stdout for contradicted/dropped/tamper, a GATE:<status>:<summary>
+    # control line for the gate row, and SHA:/HASHOK: control lines for the
+    # evidence embed. Any failure degrades to a single inconclusive gate.
+    local compare_out
+    compare_out="$(
+        _LK_LOKI_DIR="$expect_dir/.." \
+        _LK_ITER="$iter" \
+        _LK_OBSERVED="$observed_file" \
+        _LK_MOD="$mod" \
+        python3 - <<'PYEOF' 2>/dev/null
+import importlib.util, json, os, sys
+
+mod_path = os.environ["_LK_MOD"]
+loki_dir = os.environ["_LK_LOKI_DIR"]
+iteration = os.environ["_LK_ITER"]
+observed_path = os.environ.get("_LK_OBSERVED") or ""
+
+spec = importlib.util.spec_from_file_location("expectation_ledger", mod_path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+
+observed = {}
+if observed_path and os.path.isfile(observed_path):
+    try:
+        with open(observed_path) as f:
+            observed = json.load(f)
+    except Exception:
+        observed = {}
+    if not isinstance(observed, dict):
+        observed = {}
+
+res = mod.compare(loki_dir, iteration, observed)
+
+def emit_finding(sev, source, fpath, msg):
+    # verify TSV: severity \t category \t source \t file \t line \t message
+    line = str(msg).replace("\t", " ").replace("\n", " ")
+    print("\t".join([sev, "expectation_ledger", source, fpath or "", "null", line]))
+
+# Tamper check: a broken ledger hash means an expectation was edited after it
+# was sealed. That is a High finding regardless of the compare outcome.
+if res.get("ledger_hash_ok") is False:
+    emit_finding("High", "deterministic:ledger-tamper",
+                 ".loki/expectations/%s.json" % iteration,
+                 "expectation ledger hash mismatch (ledger edited after it was sealed)")
+
+for row in res.get("results", []):
+    outcome = row.get("outcome")
+    stmt = row.get("statement") or row.get("id")
+    if outcome == "contradicted":
+        emit_finding("High", "deterministic:ledger-contradicted", "",
+                     "predicted outcome contradicted: %s (expected=%r actual=%r)"
+                     % (stmt, row.get("expected"), row.get("actual")))
+    elif outcome == "dropped":
+        # Medium (CONCERNS, not BLOCKED): a predicted-but-unobserved check is a
+        # gap, but until observed-capture is wired into the run loop (follow-up)
+        # every un-observed expectation would land here -- blocking on it would
+        # be a footgun. Record-and-surface, do not hard-block. A contradicted
+        # prediction (actively disproven) stays High above.
+        emit_finding("Medium", "deterministic:ledger-dropped", "",
+                     "predicted check never executed (silently dropped): %s" % stmt)
+
+# Gate control line. An inconclusive prediction, OR a tamper, forces
+# at-least-CONCERNS via an inconclusive gate. Contradicted/dropped already emit
+# findings above (which drive BLOCKED/CONCERNS through the finding severity).
+n_c = res.get("contradicted", 0)
+n_d = res.get("dropped", 0)
+n_i = res.get("inconclusive", 0)
+n_m = res.get("met", 0)
+tamper = res.get("ledger_hash_ok") is False
+
+if tamper:
+    gate_status = "fail"
+    summary = "ledger tampered (hash mismatch); %d met / %d contradicted / %d dropped / %d inconclusive" % (n_m, n_c, n_d, n_i)
+elif n_c or n_d:
+    gate_status = "fail"
+    summary = "%d met / %d contradicted / %d dropped / %d inconclusive" % (n_m, n_c, n_d, n_i)
+elif n_i:
+    # Unevaluable prediction -> inconclusive -> CONCERNS (never VERIFIED).
+    gate_status = "inconclusive"
+    summary = "%d met / %d inconclusive (unevaluable predictions)" % (n_m, n_i)
+else:
+    gate_status = "pass"
+    summary = "all %d predicted outcomes met" % n_m
+
+print("GATE:%s:%s" % (gate_status, summary))
+print("SHA:%s" % (res.get("ledger_sha256") or ""))
+print("HASHOK:%s" % ("true" if res.get("ledger_hash_ok") else "false"))
+PYEOF
+    )"
+
+    if [ -z "$compare_out" ]; then
+        _verify_add_gate "expectation_ledger" "inconclusive" "loki-ledger" "ledger present but comparison could not run" "true"
+        return 0
+    fi
+
+    # Parse the module output: finding TSV lines, then GATE:/SHA:/HASHOK: controls.
+    local gate_status="inconclusive"
+    local gate_summary="ledger comparison produced no gate verdict"
+    local line
+    while IFS= read -r line; do
+        case "$line" in
+            GATE:*)
+                # GATE:<status>:<summary>
+                local rest="${line#GATE:}"
+                gate_status="${rest%%:*}"
+                gate_summary="${rest#*:}"
+                ;;
+            SHA:*)
+                _VERIFY_EXPECT_LEDGER_SHA="${line#SHA:}"
+                ;;
+            HASHOK:*)
+                _VERIFY_EXPECT_LEDGER_HASH_OK="${line#HASHOK:}"
+                ;;
+            *)
+                # A finding TSV line (severity has no leading control prefix).
+                [ -n "$line" ] && printf '%s\n' "$line" >>"$_VERIFY_FINDINGS_FILE"
+                ;;
+        esac
+    done <<<"$compare_out"
+
+    _verify_add_gate "expectation_ledger" "$gate_status" "loki-ledger" "$gate_summary" "true"
     return 0
 }
 
@@ -1356,6 +1978,11 @@ verify_main() {
     local started_at completed_at
     started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+    # Expose the resolved output dir to gates that write artifacts (runtime boot
+    # log / screenshot / runtime.json) so those land alongside evidence.json even
+    # when --out overrides the default.
+    VERIFY_OUT_DIR="$out_dir"
+
     _verify_log "loki verify (deterministic-only MVP) starting; base=$base_ref out=$out_dir"
 
     verify_diff_base "$base_ref"
@@ -1382,6 +2009,10 @@ verify_main() {
         verify_gate_static "$tree"
         verify_gate_secret_scan "$tree"
         verify_gate_dependency_audit "$tree"
+        # Runtime boot smoke (NET-NEW). Self-suppresses (no gate row) when no
+        # startable HTTP app is detectable, so library/CLI repos stay byte-
+        # identical. Opt-out via LOKI_RUNTIME_GATE=0.
+        verify_gate_runtime "$tree"
     fi
 
     # Living-spec integration: when a spec lock exists, fold a SPEC_DRIFT
@@ -1389,6 +2020,11 @@ verify_main() {
     # spec machinery is unavailable -- verify must never fail to complete
     # because the optional spec module is missing.
     verify_spec_drift_gate "$tree"
+
+    # Annotate-before-act ledger: diff pre-committed expected outcomes against
+    # observed results. Total no-op (no gate row, no finding, byte-identical
+    # evidence) when no ledger exists -- the common case today.
+    verify_expectation_ledger_gate "$tree"
 
     verify_compute_verdict "$block_on"
 
