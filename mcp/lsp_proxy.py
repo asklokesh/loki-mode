@@ -1478,6 +1478,95 @@ def write_diagnostics_artifact(root: Optional[str] = None,
             'count_warnings': count_warnings}
 
 
+def _run_http_transport(port: int) -> None:
+    """Run the LSP-proxy MCP server over Streamable HTTP, bound to loopback.
+
+    Mirrors mcp/server.py:_run_http_transport for consistency. FastMCP has no
+    'http' transport literal (it uses 'streamable-http') and run() takes no
+    port= kwarg, so the old mcp.run(transport='http', port=...) call never
+    worked (TypeError). We build the Streamable-HTTP ASGI app ourselves, bind
+    127.0.0.1 explicitly, and run it via uvicorn -- the same supported path.
+
+    Two hardening properties over a bare FastMCP HTTP launch:
+
+      1. Explicit loopback bind. We set host='127.0.0.1' ourselves and run the
+         ASGI app via uvicorn rather than relying on any implicit default, so a
+         reader of `lsof`/`ss` sees 127.0.0.1 unambiguously and a future SDK
+         default change cannot silently widen the bind to 0.0.0.0.
+
+      2. Optional bearer-token auth. When LOKI_MCP_AUTH_TOKEN is set in the
+         environment, a Starlette middleware requires every HTTP request to
+         carry `Authorization: Bearer <token>` (rejecting mismatches with 401).
+         When the env var is unset or empty, NO middleware is installed at all,
+         so the request path is exactly the unauthenticated FastMCP behavior.
+
+    hasattr-guarded against the whole supported mcp 1.x range: if the installed
+    SDK lacks streamable_http_app, we fail with a clear message rather than an
+    AttributeError.
+    """
+    if not hasattr(mcp, "streamable_http_app"):
+        logger.error(
+            "Installed MCP SDK does not support Streamable HTTP transport "
+            "(no FastMCP.streamable_http_app). Upgrade the 'mcp' package "
+            "(pip install -U mcp) or use the default stdio transport."
+        )
+        sys.exit(1)
+
+    host = "127.0.0.1"
+
+    # Pin host/port on the SDK settings too, so any code that reads them (and
+    # the SDK's own transport-security allowed_hosts, which defaults to
+    # 127.0.0.1/localhost) stays consistent with what uvicorn actually binds.
+    try:
+        if hasattr(mcp, "settings"):
+            if hasattr(mcp.settings, "host"):
+                mcp.settings.host = host
+            if hasattr(mcp.settings, "port"):
+                mcp.settings.port = port
+    except Exception as _set_err:  # pragma: no cover - defensive
+        logger.warning("Could not pin MCP host/port settings: %s", _set_err)
+
+    app = mcp.streamable_http_app()
+
+    token = os.environ.get("LOKI_MCP_AUTH_TOKEN", "")
+    if token:
+        # Only import the middleware pieces when auth is actually requested, so
+        # the unauthenticated path has zero new dependencies or behavior.
+        from starlette.middleware.base import BaseHTTPMiddleware
+        from starlette.responses import JSONResponse
+
+        expected_header = "Bearer " + token
+
+        async def _require_bearer(request, call_next):
+            # BaseHTTPMiddleware auto-forwards non-http scopes (lifespan etc.),
+            # so the StreamableHTTPSessionManager lifespan still starts.
+            provided = request.headers.get("authorization", "")
+            # Constant-time compare to avoid leaking the token via timing.
+            import hmac
+            if not hmac.compare_digest(provided, expected_header):
+                return JSONResponse(
+                    {"error": "unauthorized"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            return await call_next(request)
+
+        app.add_middleware(BaseHTTPMiddleware, dispatch=_require_bearer)
+        logger.info(
+            "MCP HTTP auth enabled: bearer token required "
+            "(LOKI_MCP_AUTH_TOKEN is set)."
+        )
+    else:
+        logger.info(
+            "MCP HTTP auth disabled: no LOKI_MCP_AUTH_TOKEN set "
+            "(loopback-only, unauthenticated)."
+        )
+
+    import uvicorn
+    logger.info("MCP Streamable HTTP listening on http://%s:%d/mcp", host, port)
+    uvicorn.run(app, host=host, port=port, log_level="info")
+
+
 def main() -> None:
     import argparse
     parser = argparse.ArgumentParser(
@@ -1536,7 +1625,11 @@ def main() -> None:
     detected = _detect_lsps()
     logger.info("Detected LSPs: %s", sorted(detected.keys()) or 'none')
     if args.transport == 'http':
-        mcp.run(transport='http', port=args.port)
+        # Explicit loopback bind + optional bearer-token auth. FastMCP has no
+        # 'http' transport literal (it uses 'streamable-http') and run() takes
+        # no port= kwarg, so the old mcp.run(transport='http', port=...) call
+        # never worked (TypeError); _run_http_transport is the supported path.
+        _run_http_transport(args.port)
     else:
         mcp.run(transport='stdio')
 

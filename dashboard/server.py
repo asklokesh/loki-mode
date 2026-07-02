@@ -1180,6 +1180,16 @@ async def get_status() -> StatusResponse:
     if state_file.exists():
         try:
             state = _safe_json_read(state_file, {})
+            # dashboard-state.json is agent/user-written and, under atomic-write
+            # races or hand edits, its top level can be a list/string/number
+            # rather than an object. state.get(...) would then raise
+            # AttributeError, which the surrounding (JSONDecodeError, KeyError)
+            # handler does NOT catch -> /api/status 500s and blanks the board.
+            # Coerce to {} so a bad shape degrades to the idle payload. Placed
+            # BEFORE the _has_dashboard_state flag so a truthy non-dict (e.g.
+            # [1,2,3]) cannot flip it on with corrupt data.
+            if not isinstance(state, dict):
+                state = {}
             if state:
                 _has_dashboard_state = True
             phase = state.get("phase", "")
@@ -1188,8 +1198,15 @@ async def get_status() -> StatusResponse:
             mode = state.get("mode", "")
             # Count only agents with alive PIDs (not raw array length)
             agents_list = state.get("agents", [])
+            if not isinstance(agents_list, list):
+                agents_list = []
             running_agents = 0
             for agent in agents_list:
+                # agents entries can be bare strings/None in malformed state;
+                # agent.get(...) would raise AttributeError. Skip non-dicts.
+                if not isinstance(agent, dict):
+                    running_agents += 1  # legacy/opaque entry -> count as running
+                    continue
                 agent_pid = agent.get("pid")
                 if agent_pid:
                     try:
@@ -1202,10 +1219,17 @@ async def get_status() -> StatusResponse:
                     running_agents += 1
 
             tasks = state.get("tasks", {})
-            pending_tasks = len(tasks.get("pending", []))
+            if not isinstance(tasks, dict):
+                tasks = {}
+            _pending = tasks.get("pending", [])
+            pending_tasks = len(_pending) if isinstance(_pending, list) else 0
             in_progress = tasks.get("inProgress", [])
-            if in_progress:
-                current_task = in_progress[0].get("payload", {}).get("action", "")
+            if not isinstance(in_progress, list):
+                in_progress = []
+            if in_progress and isinstance(in_progress[0], dict):
+                _payload = in_progress[0].get("payload", {})
+                if isinstance(_payload, dict):
+                    current_task = _payload.get("action", "")
         except (json.JSONDecodeError, KeyError):
             pass
 
@@ -1783,6 +1807,13 @@ async def list_tasks(
     if state_file.exists():
         try:
             state = json.loads(state_file.read_text())
+            # dashboard-state.json top level can itself be a list/string/number
+            # (agent/user-written, atomic-write race). state.get(...) would then
+            # raise AttributeError BEFORE the task_groups guard below, and the
+            # surrounding (JSONDecodeError, KeyError) handler does not catch it
+            # -> /api/tasks 500s and blanks the board. Coerce state first.
+            if not isinstance(state, dict):
+                state = {}
             task_groups = state.get("tasks", {})
             # v7.104.4: dashboard-state.json is user/agent-written and can be
             # malformed or partially written. If "tasks" is not a dict, or a
@@ -6621,6 +6652,11 @@ def _compute_cost_snapshot() -> dict:
     if budget_file.exists():
         try:
             budget_data = json.loads(budget_file.read_text())
+            # budget.json can be a bare number/list/string; guard before .get()
+            # so the cost-summary endpoint degrades instead of raising an
+            # AttributeError uncaught by (JSONDecodeError, KeyError).
+            if not isinstance(budget_data, dict):
+                budget_data = {}
             budget_limit = budget_data.get("limit")
             if budget_limit is not None:
                 budget_used = estimated_cost
@@ -6664,6 +6700,12 @@ async def get_budget():
     if budget_file.exists():
         try:
             budget_data = json.loads(budget_file.read_text())
+            # budget.json can be a bare number/list/string (agent/user-written
+            # or atomic-write race), so budget_data.get(...) would raise
+            # AttributeError, uncaught by (JSONDecodeError, KeyError) -> 500.
+            # Coerce to {} so the endpoint degrades to no-limit defaults.
+            if not isinstance(budget_data, dict):
+                budget_data = {}
             budget_limit = budget_data.get("limit") or budget_data.get("budget_limit")
             budget_used = budget_data.get("budget_used", 0.0)
             exceeded = budget_data.get("exceeded", False)
@@ -6687,6 +6729,9 @@ async def get_budget():
         if exceeded_at is None:
             try:
                 sig_data = json.loads(signal_file.read_text())
+                # Signal file may parse to a non-dict; guard before .get().
+                if not isinstance(sig_data, dict):
+                    sig_data = {}
                 exceeded_at = sig_data.get("timestamp")
             except (json.JSONDecodeError, KeyError):
                 pass

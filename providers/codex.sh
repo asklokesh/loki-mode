@@ -234,21 +234,29 @@ provider_invoke_with_tier() {
         *)                    model="$PROVIDER_MODEL_DEVELOPMENT" ;;
     esac
 
-    local extra_flags=()
+    # --search is a TOP-LEVEL `codex` flag, not a `codex exec` flag. On codex
+    # 0.141.0 `codex exec ... --search` aborts with "unexpected argument
+    # '--search' found", silently breaking LOKI_CODEX_WEB_SEARCH. It must be
+    # placed before the `exec` subcommand. --output-last-message (-o) IS an
+    # `codex exec` flag and stays after `exec`. Keep the two in separate arrays.
+    local pre_exec_flags=()
     if [ "${LOKI_CODEX_WEB_SEARCH:-false}" = "true" ]; then
-        extra_flags+=(--search)
+        pre_exec_flags+=(--search)
     fi
+    local extra_flags=()
     if [ "${LOKI_CODEX_OUTPUT_LAST:-true}" != "false" ] && [ -n "${LOKI_LOG_FILE:-}" ]; then
         extra_flags+=(--output-last-message "${LOKI_LOG_FILE}.last-message")
     fi
 
     LOKI_CODEX_REASONING_EFFORT="$effort" \
     CODEX_MODEL_REASONING_EFFORT="$effort" \
-    # Guard the extra_flags array expansion: with no web-search / output-last
-    # knobs the array is empty, and a bare "${arr[@]}" under `set -u` aborts with
+    # Guard the array expansions: with no web-search / output-last knobs an
+    # array is empty, and a bare "${arr[@]}" under `set -u` aborts with
     # "unbound variable" on bash 3.2 (stock macOS /bin/bash). ${arr[@]+...}
     # expands to nothing when empty and preserves spaced elements otherwise.
-    codex exec \
+    codex \
+        "${pre_exec_flags[@]+"${pre_exec_flags[@]}"}" \
+        exec \
         --sandbox workspace-write \
         --skip-git-repo-check \
         --model "$model" \

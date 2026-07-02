@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (none)
 
+## [7.110.0] - 2026-07-01
+
+### Bug-hunt wave 2: dashboard 500-hardening, MCP lsp-proxy HTTP fix, provider flag fixes
+
+An adversarial bug-hunt across dashboard, MCP, memory, CLI, and providers found reproduced
+bugs; each fix ships with a regression test that fails on old code and passes on the fix.
+The memory subsystem was audited and found sound (no reproducible bug).
+
+- FIX (HIGH, dashboard resilience): GET /api/status, /api/tasks, and /api/budget returned
+  HTTP 500 (uncaught AttributeError) when their backing JSON files (.loki/dashboard-state.json,
+  .loki/metrics/budget.json) held a non-dict top level (a list/string/number from a partial or
+  external write). One malformed/partial write blanked the whole dashboard. The most-polled
+  endpoint (/api/status) crashed at a .get() on a non-dict. All affected readers now coerce a
+  non-dict/non-list to an empty shape and degrade to a valid 200 payload. NOTE: this completes
+  a class the v7.104.4 /api/tasks fix only partially closed (it guarded the "tasks" value but
+  not a non-dict top-level state); that earlier "never 500s" claim was only partially accurate.
+- FIX (MCP lsp-proxy HTTP transport crash): loki's lsp-proxy `--transport http` called
+  FastMCP.run(transport='http', port=...) which raises TypeError/ValueError (no port kwarg, no
+  'http' literal) - the same latent crash fixed for the main MCP server in v7.107.0, present in
+  the sibling file. Now runs via the supported streamable-http path bound to 127.0.0.1.
+- FIX (MED, provider web search): the codex `--search` flag was placed as an exec-subcommand
+  flag, but codex 0.141.0 exposes it as a top-level flag, so LOKI_CODEX_WEB_SEARCH did not
+  actually enable web search. Corrected the placement (verified against codex --help).
+- FIX (LOW, stale model id): removed a hardcoded `claude-opus-4-7` fallback that does not exist
+  in the model catalog; uses the current opus id.
+
+Tests: tests/test-dashboard-json-guards.sh, tests/test-lsp-proxy-http.sh, tests/test-provider-flags.sh
+(all new, RED/GREEN); existing test-verify (17) and test-provider-loader green.
+
+Deferred (honest): a hardening of the v7.109.0 runtime-gate boot-log port scrape was designed
+this cycle but a council review found the "probe-first" variant introduced a false-green on a
+contended default port (a foreign listener on the guessed port could green a broken app). That
+change was dropped rather than shipped; the v7.109.0 scrape-first behavior remains, and the
+correct scrape-with-strict-bind-anchor redesign is tracked as a follow-up.
+
 ## [7.109.0] - 2026-07-01
 
 ### Bug-hunt-and-fix wave 1: 5 reproduced bugs fixed (false-RED elimination + rate-limit correctness)
