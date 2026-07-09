@@ -78,6 +78,39 @@
         { "id": "gpt-4.1", "tier": "development" },
         { "id": "ollama_chat/deepseek-coder", "tier": "fast" }
       ]
+    },
+    "minimax": {
+      "latest_planning": "MiniMax-M3",
+      "latest_development": "MiniMax-M3",
+      "latest_fast": "MiniMax-M3",
+      "openai_base_url": "https://api.minimax.io/v1",
+      "anthropic_base_url": "https://api.minimax.io/anthropic/v1",
+      "endpoints": [
+        {
+          "region": "global_en",
+          "openai_base_url": "https://api.minimax.io/v1",
+          "anthropic_base_url": "https://api.minimax.io/anthropic/v1",
+          "docs_root": "https://platform.minimax.io/docs"
+        },
+        {
+          "region": "cn_zh",
+          "openai_base_url": "https://api.minimaxi.com/v1",
+          "anthropic_base_url": "https://api.minimaxi.com/anthropic/v1",
+          "docs_root": "https://platform.minimaxi.com/docs"
+        }
+      ],
+      "models": [
+        {
+          "id": "MiniMax-M3",
+          "tier": "development",
+          "context_window": 1000000,
+          "input_price_per_mtok": 0.6,
+          "output_price_per_mtok": 2.4,
+          "cache_input_price_per_mtok": 0.12,
+          "thinking": ["adaptive", "disabled"],
+          "notes": "Anthropic-compatible endpoint requires /anthropic/v1. Docs: https://platform.minimax.io/docs/api-reference/api-overview and https://platform.minimaxi.com/docs/api-reference/api-overview."
+        }
+      ]
     }
   }
 }
