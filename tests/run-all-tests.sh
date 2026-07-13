@@ -353,6 +353,9 @@ run_test "Emit JSON Escape (C0 control chars + UTF-8)" "$SCRIPT_DIR/test-emit-js
 # against CODEX_KNOWN_MODELS. Regression guard for the silent-downgrade bug.
 run_test "Codex Model Trusted (LOKI_CODEX_MODEL verbatim)" "$SCRIPT_DIR/test-codex-model-trusted.sh"
 
+# MiniMax catalog metadata and user-configurable Anthropic/OpenAI adapter paths.
+run_test "MiniMax Model Catalog and Compatible Endpoints" "$SCRIPT_DIR/test-minimax-model-catalog.sh"
+
 # Secure-by-default gate (Loop 4): the secure-scan engine precision (bad/safe
 # matrix for all 5 rules + the named false-positive guards), the run_secure_scan
 # wiring (advisory default never blocks; LOKI_SECURE_GATE=block blocks an
