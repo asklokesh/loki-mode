@@ -842,6 +842,7 @@ run_test "help discoverability (every command reachable)" "$SCRIPT_DIR/test-help
 run_test "assess runtime detection (declared, never guessed)" "$SCRIPT_DIR/test-assess-runtime-detection.sh"
 run_test "provider model scoping (global tier var must not leak)" "$SCRIPT_DIR/test-provider-model-scoping.sh"
 run_test "model catalog is a single source of truth" "$SCRIPT_DIR/test-model-catalog-single-source.sh"
+run_test "MiniMax model catalog and compatible endpoints" "$SCRIPT_DIR/test-minimax-model-catalog.sh"
 run_test "model catalog staleness is advisory and route-consistent" "$SCRIPT_DIR/test-model-catalog-staleness.sh"
 run_test "pre-push pytest is scoped without failing open" "$SCRIPT_DIR/test-pre-push-scoped-pytest.sh"
 run_test "loki help <command> and the daily log cap" "$SCRIPT_DIR/test-help-and-log-cap.sh"

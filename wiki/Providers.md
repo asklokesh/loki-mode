@@ -22,6 +22,48 @@ Loki Mode supports four active AI providers with different capability levels, pl
 
 ---
 
+## MiniMax API compatibility
+
+The `minimax` model catalog entry records API and model metadata. It is not a fifth value for `--provider`; use an existing CLI adapter with the compatible API protocol.
+
+### Anthropic-compatible API
+
+Choose the Base URL for the account region. Keep `/anthropic` as the end of the Base URL; the client appends `/v1/messages` when it sends a request.
+
+| Region | Base URL |
+|--------|----------|
+| Global | `https://api.minimax.io/anthropic` |
+| China | `https://api.minimaxi.com/anthropic` |
+
+```bash
+export ANTHROPIC_BASE_URL="https://api.minimax.io/anthropic"
+export ANTHROPIC_API_KEY="<MINIMAX_API_KEY>"
+export LOKI_MODEL_OVERRIDE="MiniMax-M3"
+loki start ./prd.md --provider claude
+```
+
+Set `ANTHROPIC_BASE_URL` to the China Base URL when required. Change `LOKI_MODEL_OVERRIDE` to `MiniMax-M2.7` to use that model.
+
+### OpenAI-compatible API
+
+Choose the Base URL for the account region. Keep `/v1` as the end of the Base URL; the client appends `/chat/completions` when it sends a request.
+
+| Region | Base URL |
+|--------|----------|
+| Global | `https://api.minimax.io/v1` |
+| China | `https://api.minimaxi.com/v1` |
+
+```bash
+export OPENAI_API_BASE="https://api.minimax.io/v1"
+export OPENAI_API_KEY="<MINIMAX_API_KEY>"
+export LOKI_AIDER_MODEL="openai/MiniMax-M3"
+loki start ./prd.md --provider aider
+```
+
+Set `OPENAI_API_BASE` to the China Base URL when required. Change the model suffix to `MiniMax-M2.7` to use that model.
+
+---
+
 ## Provider precedence (v7.7.2)
 
 When multiple sources specify a provider, Loki picks the first match in this order (highest wins):
