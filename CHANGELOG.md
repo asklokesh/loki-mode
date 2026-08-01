@@ -5,6 +5,50 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.41.0
+
+### Two more packaging checks were deferred, and one of them was broken
+
+v8.40.0 found the dist-freshness gate deferred by the tier that justifies it.
+The obvious follow-up: are the OTHER local-only packaging checks skipped too?
+
+Yes -- `npm pack tarball contents` and the Agent SDK dependency check. Both
+validate the PACKAGED ARTIFACT, which GitHub CI never inspects and no in-repo
+test can see, because everything works fine from a git checkout.
+
+`npm pack tarball contents` is **exactly the check that would have caught
+v8.38.0** -- four quality-gate detectors that never shipped, making first-pass
+completion impossible for every npm user. It was being skipped at push time.
+The SDK check's own comment says it "would have caught the whole-arc council's
+packaging finding". Also skipped.
+
+Both promoted. Measured cost: npm pack 1.6s, SDK check 21ms; the whole fast
+tier runs in 35s.
+
+### The check itself tolerated losing a third of its artifacts
+
+Promoting it exposed a defect in it. The old form was:
+
+```
+... | grep -E "<six patterns>" | wc -l | grep -qE "[6-9]|[1-9][0-9]"
+```
+
+That means "6 or more, or any 2-digit number". With everything present the
+count is **8** (some patterns match twice), so the guard tolerated losing TWO
+required artifacts. Verified: deleting the `autonomy/` entry from `files[]`
+drops `provider-offer.sh` and `quickstart.sh` from the tarball -- the count
+falls to 6 and the check **still passed**.
+
+A count threshold also cannot say WHICH artifact vanished.
+
+Now each of the six is asserted individually, the failure names the missing
+paths, and the listing is vacuity-guarded first (npm writes it to STDERR, so a
+reversed redirect captures build chatter and makes every assertion vacuous --
+the same false-alarm mechanism recorded in v8.39.0).
+
+Verified: the same break now exits 1 with
+`MISSING FROM TARBALL: autonomy/provider-offer.sh autonomy/quickstart.sh`.
+
 ## v8.40.0
 
 ### The dist-freshness check was deferred by the tier it justifies

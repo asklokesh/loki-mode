@@ -147,6 +147,24 @@ declare -a _FAST_KEEP=(
   # hardcoded 8.11.0 for 27 releases, and v8.39.0 shipped a dist still saying
   # 8.38.0. Both are exactly the failure this check was written to stop.
   "dist/loki.js is a fresh build of src"
+  # Same class as dist freshness, and deferred for the same reason nobody
+  # noticed: these validate the PACKAGED ARTIFACT, which GitHub CI never
+  # inspects and which no in-repo test can see, because everything works fine
+  # from a git checkout.
+  #
+  # This is not hypothetical. v8.38.0 found four quality-gate detectors that
+  # had NEVER shipped -- package.json's files[] had no tests/ entry -- so
+  # mutation-integrity fail-closed on every iteration for every npm user,
+  # making first-pass completion impossible no matter how good the output was.
+  # "npm pack tarball contents" is exactly the check that would have caught it,
+  # and it was being skipped at push time.
+  #
+  # The SDK check's own comment already says it "would have caught the
+  # whole-arc council's packaging finding" -- also deferred.
+  #
+  # Measured cost: npm pack 1.6s, SDK dep check 21ms, against a ~60s tier.
+  "npm pack tarball contents"
+  "Agent SDK is a resolvable root dependency"
   # 2. trust core: proof / receipt / evidence-gate / verify / council.
   #    Measured (by name, this Mac): the pytest gates run ~15s as parallel
   #    lanes; the shell suites ~60s serial. Both stay, in full, unchanged.
@@ -1290,7 +1308,35 @@ fi
 # ---------------------------------------------------------------------------
 # 10. Pre-publish 3a: npm pack tarball includes expected files
 # ---------------------------------------------------------------------------
-run_check "npm pack tarball contents" 'npm pack --dry-run 2>&1 | grep -E "loki-ts/dist/loki.js|bin/loki|dashboard/static/index.html|web-app/dist/index.html|autonomy/provider-offer.sh|autonomy/quickstart.sh" | wc -l | grep -qE "[6-9]|[1-9][0-9]"'
+# Asserts each required artifact INDIVIDUALLY. The previous form counted
+# matches across all six patterns and passed on `[6-9]|[1-9][0-9]` -- i.e. "6 or
+# more, or any 2-digit number". With everything present the count is 8 (some
+# patterns match more than once), so it tolerated losing TWO required artifacts:
+# deleting the whole `autonomy/` entry from files[] dropped provider-offer.sh
+# and quickstart.sh from the tarball and the check still passed at 6.
+#
+# A count threshold cannot say WHICH artifact vanished, and a substring search
+# over an empty listing reports nothing missing either -- so the listing is
+# captured once and vacuity-guarded first. npm writes it to STDERR; `2>&1 >file`
+# would capture build chatter instead and make every assertion vacuous.
+run_check "npm pack tarball contents" '
+  _pack="$(npm pack --dry-run 2>&1)"
+  _n=$(printf "%s\n" "$_pack" | grep -c "npm notice" || true)
+  if [ "${_n:-0}" -lt 50 ]; then
+    echo "PACK LISTING TOO SHORT (${_n:-0} entries) -- capture broken, assertions would be vacuous"
+    exit 1
+  fi
+  _missing=""
+  for _f in loki-ts/dist/loki.js bin/loki dashboard/static/index.html \
+            web-app/dist/index.html autonomy/provider-offer.sh \
+            autonomy/quickstart.sh; do
+    case "$_pack" in *"$_f"*) ;; *) _missing="$_missing $_f" ;; esac
+  done
+  if [ -n "$_missing" ]; then
+    echo "MISSING FROM TARBALL:$_missing"
+    exit 1
+  fi
+  echo "all 6 required artifacts present in the tarball ($_n entries)"'
 
 # 10a-v8. The Agent SDK (@anthropic-ai/claude-agent-sdk) is a DYNAMIC import in
 # dist/loki.js (the opt-in LOKI_SDK_LOOP=1 RARV loop) + a per-platform native
