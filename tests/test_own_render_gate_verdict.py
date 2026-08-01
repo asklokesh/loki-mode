@@ -114,5 +114,71 @@ class OwnRenderGateVerdictTests(unittest.TestCase):
         self.assertFalse(self.ready(_proof(disabled_phases=["  Code_Review  "])))
 
 
+class OwnRenderNotReadyExplanationTests(unittest.TestCase):
+    """When the badge is not green, the owner must be told WHY.
+
+    A run blocked ONLY by disabled gates has headline VERIFIED and an EMPTY
+    honesty.degraded list, so the section fell through to "no specific gaps were
+    itemized" -- while the reason was precise and already recorded. It also left
+    a visible contradiction on the page: the verdict line read VERIFIED and the
+    section refused to call it ready. Naming the skipped gates is what makes
+    those two statements consistent.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = _load()
+
+    def _render(self, proof):
+        return "\n".join(self.mod._section_is_it_working(proof, "r1"))
+
+    def test_disabled_gates_are_named_as_the_gap(self):
+        out = self._render({
+            "honesty": {"headline": "VERIFIED", "degraded": []},
+            "facts": {"tests": {"status": "passed"}, "build": {"ran": True}},
+            "quality_gates": {"disabled_phases": ["code_review", "security"]},
+        })
+        self.assertIn("switched OFF", out)
+        self.assertIn("code_review", out)
+        self.assertIn("security", out)
+
+    def test_the_unhelpful_fallback_is_not_used_when_gates_explain_it(self):
+        out = self._render({
+            "honesty": {"headline": "VERIFIED", "degraded": []},
+            "facts": {"tests": {"status": "passed"}, "build": {"ran": True}},
+            "quality_gates": {"disabled_phases": ["code_review"]},
+        })
+        self.assertNotIn(
+            "no specific gaps were itemized", out,
+            "the reason was known and recorded; saying it was not itemized is "
+            "false and leaves the owner with a VERIFIED verdict they cannot "
+            "reconcile with a non-ready badge")
+
+    def test_a_genuinely_unverified_run_keeps_its_own_gaps(self):
+        out = self._render({
+            "honesty": {"headline": "UNVERIFIED",
+                        "degraded": [{"item": "tests", "why": "none ran"}]},
+            "facts": {"tests": {"status": "failed"}, "build": {"ran": True}},
+        })
+        self.assertIn("tests", out)
+        self.assertNotIn("switched OFF", out)
+
+    def test_the_fallback_still_exists_when_nothing_explains_the_gap(self):
+        """Do not delete the honest 'we cannot itemize this' path."""
+        out = self._render({
+            "honesty": {"headline": "PARTIAL", "degraded": []},
+            "facts": {"tests": {"status": "failed"}, "build": {"ran": True}},
+        })
+        self.assertIn("no specific gaps were itemized", out)
+
+    def test_a_ready_run_says_nothing_about_disabled_gates(self):
+        out = self._render({
+            "honesty": {"headline": "VERIFIED", "degraded": []},
+            "facts": {"tests": {"status": "passed"}, "build": {"ran": True}},
+            "quality_gates": {"passed": 3, "total": 3},
+        })
+        self.assertNotIn("switched OFF", out)
+
+
 if __name__ == "__main__":
     unittest.main()

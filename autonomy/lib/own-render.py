@@ -319,6 +319,24 @@ def _section_is_it_working(proof, run_id=None):
     lines.append("This means Loki is NOT telling you it is ready to ship. Here is "
                  "what was not verified:")
     lines.append("")
+    # Gates the operator switched off. This is the FIRST gap listed, because a
+    # run blocked only by disabled gates has headline VERIFIED and an EMPTY
+    # degraded list -- so without this the owner was told "no specific gaps were
+    # itemized" when the reason was precise and already known.
+    #
+    # It also resolves a contradiction the owner could see on the page: the
+    # verdict line reads VERIFIED while the section refuses to call it ready.
+    # Naming the skipped gates is what makes those two statements consistent.
+    _qg = (proof or {}).get("quality_gates") or {}
+    _off = _qg.get("disabled_phases")
+    _off = [str(x).strip() for x in _off] if isinstance(_off, list) else []
+    _trust_off = sorted(n for n in _off
+                        if n.lower() in ("code_review", "security",
+                                         "unit_tests", "e2e_tests"))
+    if _trust_off:
+        lines.append("- These checks were switched OFF for this run, so they "
+                     "never ran: %s" % ", ".join(_trust_off))
+
     if isinstance(degraded, list) and degraded:
         for d in degraded:
             if isinstance(d, dict):
@@ -330,7 +348,7 @@ def _section_is_it_working(proof, run_id=None):
                 lines.append("- %s%s" % (item, tail))
             else:
                 lines.append("- %s" % str(d))
-    else:
+    elif not _trust_off:
         lines.append("- (no specific gaps were itemized, but the verdict above is "
                      "not a clean pass)")
     lines.append("")
@@ -480,6 +498,24 @@ def _section_still_to_do(proof, completion):
     # Anything not verified (degraded items) is also a to-do.
     honesty = (proof or {}).get("honesty") or {}
     degraded = honesty.get("degraded") or []
+    # Gates the operator switched off. This is the FIRST gap listed, because a
+    # run blocked only by disabled gates has headline VERIFIED and an EMPTY
+    # degraded list -- so without this the owner was told "no specific gaps were
+    # itemized" when the reason was precise and already known.
+    #
+    # It also resolves a contradiction the owner could see on the page: the
+    # verdict line reads VERIFIED while the section refuses to call it ready.
+    # Naming the skipped gates is what makes those two statements consistent.
+    _qg = (proof or {}).get("quality_gates") or {}
+    _off = _qg.get("disabled_phases")
+    _off = [str(x).strip() for x in _off] if isinstance(_off, list) else []
+    _trust_off = sorted(n for n in _off
+                        if n.lower() in ("code_review", "security",
+                                         "unit_tests", "e2e_tests"))
+    if _trust_off:
+        lines.append("- These checks were switched OFF for this run, so they "
+                     "never ran: %s" % ", ".join(_trust_off))
+
     if isinstance(degraded, list) and degraded:
         for d in degraded:
             if isinstance(d, dict):

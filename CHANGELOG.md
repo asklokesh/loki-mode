@@ -5,7 +5,27 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.18.0
+## v8.18.1
+
+### The owner was told the badge was not green, but not why
+
+v8.18.0 stopped a run with disabled trust gates from showing a green "ready"
+badge. The section explaining what went wrong lists the recorded gaps, and a run
+blocked only by disabled gates has no recorded gaps at all: its verdict is
+VERIFIED and its degraded list is empty.
+
+So the owner read "no specific gaps were itemized" when the reason was precise
+and already recorded, next to a verdict line saying VERIFIED and a badge refusing
+to call it ready. Three statements on one page that could not be reconciled.
+
+The skipped gates are now named first among the gaps, which makes the three
+statements consistent: verified as far as it went, not ready, and here is exactly
+which checks did not run.
+
+The honest fallback stays for runs where nothing explains the gap, and a run that
+is genuinely unverified for other reasons keeps its own list.
+
+
 
 ### A run with its trust gates switched off showed a green "ready" badge
 
