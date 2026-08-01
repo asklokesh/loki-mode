@@ -5,6 +5,43 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.40.0
+
+### The dist-freshness check was deferred by the tier it justifies
+
+CLAUDE.md names dist freshness the **sharpest** reason the fast tier exists:
+
+> CI never validates that the committed `loki-ts/dist/loki.js` matches src, and
+> when that slipped we shipped THREE releases reporting the wrong version.
+
+The check was in `local-ci.sh` -- and `_FAST_KEEP` did not list it, so the fast
+tier **deferred the very check it is justified by**. Every pre-push run printed
+`SKIP: dist/loki.js is a fresh build of src`.
+
+The cost was not theoretical. It slipped twice more before anyone noticed:
+
+- the committed bundle hardcoded **8.11.0 for 27 releases** (fixed in v8.38.0)
+- **v8.39.0 shipped a dist still reporting 8.38.0** -- caught only because the
+  rebuild left the working tree dirty after an otherwise clean commit
+
+Both are exactly the failure the check was written to stop, both slipped past a
+green pre-push gate, and the second happened while actively fixing the first.
+
+Now in `_FAST_KEEP`. Measured cost: one `bun run build`, ~40ms.
+
+Verified by staling the dist to `8.11.0` and re-running: the fast tier exits 1
+with `DIST STALE`. Restored afterwards.
+
+### The second mechanism: tracked-but-ignored
+
+`loki-ts/dist/` is gitignored while `dist/loki.js` is **tracked**. A plain
+`git add loki-ts/dist/loki.js` is therefore refused with a hint that is easy to
+skim past, and the stale bundle ships silently. It needs `git add -f`.
+
+That is why v8.39.0's dist commit landed empty of its intended change. The gate
+above is the durable fix -- it fails the push rather than relying on anyone
+reading a git hint.
+
 ## v8.39.0
 
 ### Auditing the rest of the packaging, and a false alarm worth recording

@@ -135,6 +135,18 @@ declare -a _FAST_KEEP=(
   "no unescaped \$<digit>"
   "shell completions cover every dispatch command"
   "local-ci tiering"
+  # dist freshness. CLAUDE.md names this the SHARPEST reason the fast tier
+  # exists -- "CI never validates that the committed loki-ts/dist/loki.js
+  # matches src, and when that slipped we shipped THREE releases reporting the
+  # wrong version" -- yet the check itself was deferred, so the fast tier did
+  # not actually enforce the thing it is justified by.
+  #
+  # Measured cost: one `bun run build`, ~40ms.
+  #
+  # It slipped twice more before this was noticed: the committed bundle
+  # hardcoded 8.11.0 for 27 releases, and v8.39.0 shipped a dist still saying
+  # 8.38.0. Both are exactly the failure this check was written to stop.
+  "dist/loki.js is a fresh build of src"
   # 2. trust core: proof / receipt / evidence-gate / verify / council.
   #    Measured (by name, this Mac): the pytest gates run ~15s as parallel
   #    lanes; the shell suites ~60s serial. Both stay, in full, unchanged.
