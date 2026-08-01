@@ -382,6 +382,21 @@ probe_case "a cli alias cannot drift from its tier" \
     '"opus": "claude-opus-5"' '"opus": "claude-opus-4-8"' \
     bash tests/test-model-catalog-current-flagship.sh
 
+# The review-council cap. Shrinking a council must never manufacture an
+# approval, so both halves of the safety rule are pinned: mandatory reviewers
+# are never trimmed, and a cap below the mandatory count is refused.
+probe_case "a capped council never drops a mandatory reviewer" \
+    "autonomy/run.sh" \
+    '        if _r["name"] not in _mandatory_names:' \
+    '        if True:' \
+    bash tests/test-review-council-cap.sh
+
+probe_case "a cap below the mandate is refused" \
+    "autonomy/run.sh" \
+    '    reviewers = _keep if len(_keep) >= len(_mandatory_names) else reviewers' \
+    '    reviewers = _keep' \
+    bash tests/test-review-council-cap.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.

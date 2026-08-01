@@ -52,47 +52,102 @@ Real `stage_complete` events from builds on this machine (n=35):
 **`code_review` is 97% of all measured gate time.** Everything else combined is
 34 seconds.
 
-### The intuition this kills
+### Two intuitions this killed
 
-I was about to propose parallelizing the seven sequential gates at
-`run.sh:22616-22980`. They ARE sequential and they ARE mostly independent. The
-change would have been clean, defensible, and worth **about 20 seconds**.
+**First:** I was about to propose parallelizing the seven sequential gates at
+`run.sh:22616-22980`. They ARE sequential and mostly independent. The change
+would have been clean, defensible, and worth **about 20 seconds**.
 
-It would also have been the wrong work, presented with a plausible story. The
-measurement is what caught it. **No optimization ships in this plan without a
-before-number from this table.**
+**Second, and worse:** I then proposed parallelizing the reviewer council --
+which was **already parallel**. I had grepped the wrong line range, got no
+match, and treated that silence as evidence. A plan whose headline item was a
+no-op.
+
+Both were caught by going back to data instead of trusting the story. The
+standing rule for this document:
+
+> **No optimization ships without a before-number from this table, and no
+> claim about how the code behaves ships without reading the code that does
+> it.**
+
+An absent grep match is not evidence of absence -- it is evidence the grep did
+not match.
 
 ### Where the real time goes
 
-`run_code_review` contains **no `&` and no `wait`** -- reviewers are dispatched
-strictly sequentially. At 3 reviewers averaging ~90-170s each, that is
-~281s median and ~504s worst case, per iteration, on the critical path.
+Code review dominates, and the driver is **council size**, not sequential
+dispatch (see the correction in P0 -- my first reading of this was wrong).
 
-This single fact explains the founder's "21 minutes for a simple GitHub issue"
-better than any other measurement taken today.
+Measured: 3 reviewers finish in 31s; 6-7 reviewers take 177-502s. The council
+is already concurrent, so what grows is the max-of-N tail plus contention on a
+single provider.
+
+This explains the founder's "21 minutes for a simple GitHub issue" better than
+any other measurement taken today: a scoped issue was drawing a 7-member
+council containing two overlapping security reviewers.
 
 ---
 
 ## 3. The plan, ranked by measured seconds returned
 
-### P0 -- Parallelize the reviewer council (saves ~190s/iteration, 67%)
+### P0 -- CORRECTED: the council is ALREADY parallel. The cost is its SIZE.
 
-Reviewers are independent by construction: each gets its own prompt, its own
-focus, its own output file, and votes independently. There is no data
-dependency between them. Sequential dispatch is pure latency.
+**This section originally claimed reviewers ran sequentially and proposed
+parallelizing them. That was wrong, and the correction is recorded here rather
+than quietly edited out.**
 
-- Dispatch all N reviewers concurrently, `wait` for the set, then aggregate.
-- Bound concurrency (`LOKI_REVIEW_CONCURRENCY`, default = reviewer count) so a
-  large council cannot exhaust provider rate limits.
-- **Fail-safe direction:** a reviewer that fails to return must still count as
-  a non-vote exactly as today. Parallelism must not change the verdict, only
-  when it arrives. Guard with the existing council tests plus a new one
-  asserting identical verdicts sequential vs parallel on a fixed fixture.
-- Expected: 281s -> ~95s median (bounded by the slowest single reviewer).
+`run_code_review` forks every reviewer with `) &` (run.sh:14803), collects PIDs,
+and `wait`s on each (run.sh:14880). It has been parallel all along. My first
+grep searched the wrong line range, returned nothing, and I read that silence as
+proof of absence -- the same mistake class this codebase has been punishing all
+session.
 
-**Risk:** rate limiting. Mitigation: concurrency cap + the existing
-`is_rate_limited` backoff (fixed in v8.30.0, which is why that fix mattered
-here).
+**What the data actually says.** Pairing `code_review_start` with
+`code_review_complete` across every recorded review:
+
+| reviewers | seconds | verdict |
+|---:|---:|---|
+| 7 | 502 | 0 pass / 7 fail |
+| 7 | 280 | 1 pass / 6 fail |
+| 6 | 177 | 0 pass / 5 fail |
+| **3** | **31** | 2 pass / 1 fail |
+
+**3 reviewers = 31s. 7 reviewers = 280-502s.** Roughly 2x the council for 9-16x
+the wall clock. Since dispatch is already concurrent, that superlinearity is not
+the count itself -- it is that a larger council pulls in slower reviewers and
+contends for the same provider, so the max-of-N tail dominates.
+
+**And the 7-member council is partly redundant:**
+
+```
+architecture-strategist, maintainer-mergeability,
+security-sentinel, review-security,      <- TWO security reviewers
+performance-oracle, eng-qa, dependency-analyst
+```
+
+`security-sentinel` and `review-security` overlap. `eng-qa` and
+`dependency-analyst` are appended agents, not part of the sized battery.
+
+**The real P0, in priority order:**
+
+1. **Deduplicate overlapping reviewers.** Two security reviewers on one diff is
+   paying the tail cost twice for one signal. Collapse by mandate, not by name.
+2. **Cap the effective council for scoped changes.** The tier map is
+   `{simple: 2, standard: 2, complex: 4}` specialists + 2 mandatory. Appended
+   agents bypass that sizing entirely, which is how 4 becomes 7. Bound the
+   TOTAL, not just the specialist slots.
+3. **Bound the tail, not the mean.** One slow reviewer sets the whole council's
+   latency. A per-reviewer deadline that records a non-vote (never a silent
+   pass) converts a 502s worst case into a bounded one.
+
+Expected: the 6-7 member case moves toward the measured 3-member behaviour
+(31s) for scoped work, while `complex` keeps its deeper battery.
+
+**Fail-safe direction is load-bearing:** a dropped or deadlined reviewer must
+count as a NON-VOTE exactly as today, never as a pass. Shrinking a council must
+never be able to manufacture approval. Guard with a test asserting the verdict
+is identical for the same fixture at any council size, and that a deadlined
+reviewer never contributes a PASS.
 
 ### P1 -- Do not run the full council on iteration 1 of a scoped change
 

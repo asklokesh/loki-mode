@@ -14330,6 +14330,43 @@ reviewers = mandatory + [
         }
         for name in installed_selected
     ]
+# TOTAL council cap (LOKI_REVIEW_MAX_REVIEWERS). The tier map sizes the
+# SPECIALIST slots ({simple:2, standard:2, complex:4}), but installed agents and
+# the dependency-analyst append AFTER that sizing, so nothing bounded the total.
+# Measured consequence, from real code_review_start/complete pairs:
+#
+#     3 reviewers ->  31s        6 reviewers -> 177s
+#     7 reviewers -> 280s        7 reviewers -> 502s
+#
+# Dispatch is already concurrent, so this superlinearity is the max-of-N tail
+# plus contention on one provider -- a scoped issue was drawing a 7-member
+# council (including two overlapping security reviewers) and paying 9-16x the
+# 3-member wall clock for it.
+#
+# TRIMMING ORDER IS A SAFETY PROPERTY. Mandatory reviewers
+# (requirements-verifier, architecture-strategist, maintainer-mergeability) are
+# NEVER dropped: each carries a mandate no keyword-selected specialist has, and
+# shrinking a council must never be able to manufacture an approval. Only the
+# appended tail (installed agents, then keyword specialists beyond the floor) is
+# trimmed, and the cap can never cut below the mandatory set.
+#
+# Default 0 = uncapped, preserving today's behaviour exactly. This is a knob to
+# be turned on deliberately per route, not a silent change to every council.
+try:
+    _cap = int(os.environ.get("LOKI_REVIEW_MAX_REVIEWERS", "0") or "0")
+except ValueError:
+    _cap = 0
+if _cap > 0 and len(reviewers) > _cap:
+    _mandatory_names = {r["name"] for r in mandatory}
+    _keep = [r for r in reviewers if r["name"] in _mandatory_names]
+    for _r in reviewers:
+        if len(_keep) >= _cap:
+            break
+        if _r["name"] not in _mandatory_names:
+            _keep.append(_r)
+    # Never below the mandatory set, even if the cap is set lower than it.
+    reviewers = _keep if len(_keep) >= len(_mandatory_names) else reviewers
+
 if os.environ.get("LOKI_REVIEW_REQUIREMENTS_ONLY") == "1":
     reviewers = [
         reviewer for reviewer in reviewers

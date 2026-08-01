@@ -5,6 +5,71 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.33.0
+
+### The council was never sequential. It was oversized.
+
+Measured from real `code_review_start`/`code_review_complete` pairs:
+
+| reviewers | seconds |
+|---:|---:|
+| 7 | 502 |
+| 7 | 280 |
+| 6 | 177 |
+| **3** | **31** |
+
+Roughly 2x the council for **9-16x the wall clock**. Since reviewers are
+already dispatched concurrently (`run.sh:14803` forks with `) &`), that
+superlinearity is the max-of-N tail plus contention on one provider.
+
+And the 7-member council was partly redundant -- `security-sentinel` AND
+`review-security` reviewing the same diff:
+
+```
+architecture-strategist, maintainer-mergeability,
+security-sentinel, review-security,        <- two security reviewers
+performance-oracle, eng-qa, dependency-analyst
+```
+
+**Root cause:** the tier map sizes only the SPECIALIST slots
+(`{simple:2, standard:2, complex:4}`). Installed agents and `dependency-analyst`
+append AFTER that sizing, so nothing bounded the total -- which is how a
+4-reviewer battery becomes 7 on a scoped issue.
+
+`LOKI_REVIEW_MAX_REVIEWERS` caps the total. **Default 0 = uncapped**, so this
+release changes no existing behaviour; it is a knob to turn on per route.
+
+### Trimming order is a safety property
+
+Shrinking a council must never be able to manufacture an approval. So:
+
+- mandatory reviewers (requirements-verifier, architecture-strategist,
+  maintainer-mergeability) are **never** trimmed -- each carries a mandate no
+  keyword-selected specialist has
+- a cap set **below** the mandatory count is refused, not honoured
+- only the appended tail is trimmed
+
+Both halves are mutation-proven: removing the below-mandate guard, and letting
+the trim loop drop mandatory reviewers, each turn `tests/test-review-council-cap.sh`
+red.
+
+### Correction to the plan committed one release earlier
+
+`docs/SPEED-AND-FIRST-PASS-PLAN.md` originally claimed reviewers ran
+sequentially and made "parallelize the council" its headline P0. **That was
+wrong** -- the council has always been parallel. The grep behind that claim
+searched the wrong line range and returned nothing, and I read the silence as
+evidence.
+
+The plan now records the error rather than hiding the edit, and carries the
+rule that produced this release instead:
+
+> No optimization ships without a before-number, and no claim about how the
+> code behaves ships without reading the code that does it. An absent grep
+> match is not evidence of absence.
+
+Trust-core detector: 47 invariants.
+
 ## v8.32.0
 
 ### Aider's fallback named a Claude model
