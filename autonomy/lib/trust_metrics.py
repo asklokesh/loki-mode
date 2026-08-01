@@ -376,11 +376,17 @@ def _proof_cost(proof):
         usd = None
     tokens = cost.get("total_tokens")
     if tokens is None:
-        # Some proofs carry input/output separately.
-        it = cost.get("input_tokens")
-        ot = cost.get("output_tokens")
-        if it is not None or ot is not None:
-            tokens = _to_int(it, 0) + _to_int(ot, 0)
+        # Some proofs carry the components separately. Sum ALL of them,
+        # including the cache tiers: the proof generator records
+        # cache_read_tokens, and on real traffic they are ~98% of input volume.
+        # Adding only input+output reported 16,436 tokens for a proof whose own
+        # record totals 893,701 -- a 54x undercount feeding cost-per-verified,
+        # which is a published benchmark number.
+        parts = [cost.get(k) for k in
+                 ("input_tokens", "output_tokens",
+                  "cache_read_tokens", "cache_creation_tokens")]
+        if any(v is not None for v in parts):
+            tokens = sum(_to_int(v, 0) for v in parts)
     try:
         tokens = int(tokens) if tokens is not None else None
     except (TypeError, ValueError):

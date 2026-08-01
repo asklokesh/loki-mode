@@ -5,7 +5,27 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.16.1
+## v8.16.2
+
+### A 54x token undercount in a published benchmark number
+
+Trust metrics compute cost-per-verified-task from each proof's cost block. When
+a proof records its token counts as separate components rather than a
+precomputed total, the fallback summed input and output and ignored the cache
+tiers, which the proof generator does record and which are the overwhelming
+majority of real traffic.
+
+A proof whose own record totals 893,701 tokens was reported as 16,436.
+
+This is the fourth site of the same defect, after the bash budget breaker, the
+TypeScript one, and the dashboard cost endpoint. Every one had the data
+available and dropped it.
+
+An explicit total still wins, since that figure is authoritative. A proof with
+no token data reports nothing rather than zero, because zero would read as free
+rather than as unmeasured.
+
+
 
 ### The dashboard's cost endpoint was the third route pricing cache at zero
 
