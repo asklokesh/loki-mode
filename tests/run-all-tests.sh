@@ -716,6 +716,7 @@ run_test "verify --json emits pipeable evidence on stdout" "$SCRIPT_DIR/test-ver
 run_test "documented env vars exist in the source" "$SCRIPT_DIR/test-env-vars-documented.sh"
 run_test "generic tiers (small|medium|high) resolve for every provider" "$SCRIPT_DIR/test-generic-tiers.sh"
 run_test "wall-clock cap (LOKI_MAX_DURATION) fires and is terminal" "$SCRIPT_DIR/test-max-duration.sh"
+run_test "startup preflight blocks a doomed build, stays advisory where optional" "$SCRIPT_DIR/test-preflight-checks.sh"
 run_test "doctor blocker parity (both routes name blockers + offer loki tour)" "$SCRIPT_DIR/test-doctor-blocker-parity.sh"
 run_test "first_run_blocked signal (opt-out silent, enum-clamped)" "$SCRIPT_DIR/test-first-run-blocked-signal.sh"
 run_test "help discoverability (every command reachable)" "$SCRIPT_DIR/test-help-discoverability.sh"

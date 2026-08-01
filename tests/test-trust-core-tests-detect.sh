@@ -232,6 +232,31 @@ probe_case "the in-loop iteration valve stays wired" \
     "autonomy/run.sh" 'if check_max_iterations; then' 'if false; then' \
     bash tests/test-max-duration.sh
 
+# The startup preflight. It decides whether a build may begin at all, and until
+# v8.25.0 nothing tested it -- four checks with no evidence any still fired. Two
+# probes, one per direction, because the two failure modes are opposite: a
+# blocking check that stops blocking lets a doomed build burn a paid call before
+# failing deep inside the loop, and an advisory check that starts blocking locks
+# working users out over an optional toolchain.
+probe_case "a missing git still blocks the build" \
+    "autonomy/run.sh" \
+    'log_error "Git is required (the build initializes a repo). Install: https://git-scm.com/downloads"
+        return 1' \
+    'return 0' \
+    bash tests/test-preflight-checks.sh
+
+probe_case "the workspace check stays wired into the preflight" \
+    "autonomy/run.sh" \
+    'if ! _loki_check_workspace_writable; then' \
+    'if false; then' \
+    bash tests/test-preflight-checks.sh
+
+probe_case "the node check stays advisory, never blocking" \
+    "autonomy/run.sh" \
+    'log_warn "Node.js >= 18 recommended for node-based builds; found ${node_version:-unknown}. Upgrade if your project uses node: https://nodejs.org"' \
+    'return 1' \
+    bash tests/test-preflight-checks.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.

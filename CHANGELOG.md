@@ -5,6 +5,44 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.25.0
+
+### The startup preflight had no tests at all
+
+`validate_api_keys` runs four environment checks before a build begins. Nothing
+tested any of them. Four checks deciding whether a run may start, with no
+evidence any still fired -- the same shape as the three safety valves in
+v8.24.0, which all turned out to be disconnectable while their own tests stayed
+green.
+
+What a silent regression costs here is specific. Without the preflight, a user
+with no git, or a working directory they cannot write to, does not get a
+one-line fix at second zero. They enter the loop, spend a paid provider call,
+and fail deep inside the build with an error about something else. Turning that
+into an instant actionable message is the preflight's entire value.
+
+`tests/test-preflight-checks.sh` (14 assertions) now covers it, and asserts
+BOTH directions, because the two failure modes are opposite:
+
+- git and workspace **block**. A build cannot initialize a repo without git, and
+  cannot record anything if `.loki` is unwritable.
+- node and the network probe are **advisory**. node is optional -- Python, Go
+  and Rust builds never touch it -- and a 3s curl probe failing does not prove
+  the provider CLI cannot connect (proxy, VPN, transient DNS all curl-fail while
+  the real build succeeds).
+
+Inverting either direction is a real defect: a fail-closed network probe locks
+working users out on a transient blip, and a fail-open workspace check lets a
+build run with nowhere to write its receipt.
+
+Three cases added to `tests/test-trust-core-tests-detect.sh` (now 30) pin this
+with real mutations: making the git check fail-open, disconnecting the workspace
+check from its caller, and making the node advisory block all turn the test red.
+
+The wiring assertions pin the call sites by count rather than presence. A
+presence-grep passes while one of four calls is deleted -- the exact gap found
+in eight subsystems in this codebase.
+
 ## v8.24.0
 
 ### The three safety valves could all be disconnected
