@@ -148,7 +148,6 @@ Conditional auditor (not numbered): Backward-compatibility / legacy-healing-audi
 
 ### Metrics System (ToolOrchestra-inspired)
 - **Efficiency**: Task cost tracking (`.loki/metrics/efficiency/`)
-- **Rewards**: Outcome/efficiency/preference signals (`.loki/metrics/rewards/`)
 
 ### v8 Harness Intelligence (v8.0.0)
 
@@ -332,7 +331,7 @@ Prompt: "Review the following claims for factual accuracy.
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v8.12.0 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
+- Current: v8.12.1 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
 - MAJOR bump for architecture changes (v6.0.0 = dual-mode architecture, loki run)
 - MINOR bump for new features (v5.23.0 = Dashboard File-Based API)
 - PATCH bump for fixes (v5.22.1 = session.json phantom state)

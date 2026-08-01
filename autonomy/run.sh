@@ -6045,10 +6045,13 @@ init_loki_dir() {
     mkdir -p .loki/state/checkpoints
     mkdir -p .loki/artifacts/{releases,reports,backups}
     mkdir -p .loki/memory/{ledgers,handoffs,learnings,episodic,semantic,skills}
-    mkdir -p .loki/metrics/{efficiency,rewards}
+    # metrics/rewards was created and emptied every run and NOTHING ever wrote
+    # or read it: the only reference in the whole codebase was the rm -f below.
+    # A directory that exists only to be deleted is not a feature, and
+    # documenting it as one told the agent something false.
+    mkdir -p .loki/metrics/efficiency
     # Clear stale metrics from previous sessions so loki metrics shows current run data (#75)
     rm -f .loki/metrics/efficiency/iteration-*.json 2>/dev/null || true
-    rm -f .loki/metrics/rewards/*.json 2>/dev/null || true
     mkdir -p .loki/rules
     mkdir -p .loki/signals
 

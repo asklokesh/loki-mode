@@ -5,7 +5,21 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.12.0
+## v8.12.1
+
+### A documented feature that was only ever a delete
+
+The memory-system docs listed a rewards store as a shipped capability. The only
+reference to it anywhere in the codebase was the line that emptied it every run:
+nothing wrote it and nothing read it. A directory that exists solely to be
+deleted is not a feature, and documenting it as one told the agent something
+false about its own runtime.
+
+Both the dead code and the false claim are gone. The efficiency records, which
+are genuinely written and now feed the agent its own cost and outcome trend,
+are untouched.
+
+
 
 ### The scoped-change profile was dead on every real issue run
 
