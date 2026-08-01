@@ -5,7 +5,30 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.18.1
+## v8.19.0
+
+### A switched-off gate now appears in the honesty ledger
+
+The ledger exists so a reader sees exactly what was not verified rather than
+inferring it from silence. A gate the operator switched off is exactly that, and
+it was missing.
+
+Measured through the real generator rather than a hand-built proof: a run with
+code review and security disabled listed only "build" as its gap, while two
+correctness checks had not run at all. The receipt was accurate about what it
+mentioned and silent about what mattered most.
+
+The entries are appended after the headline is computed, deliberately. Feeding
+them into the headline would change what "Verified" means, and this project
+already treats that as a decision for the council and founder rather than
+something to infer. The same run produces the same verdict as before; only the
+gap list is now complete.
+
+Phases that do not bear on correctness, such as performance testing and
+competitor research, are not listed. Padding the ledger with entries that do not
+mean the work is less verified is how a ledger gets skimmed.
+
+
 
 ### The owner was told the badge was not green, but not why
 

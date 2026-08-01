@@ -1256,6 +1256,29 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
     # signed record.
     degraded = _compute_degraded(facts)
     headline = _compute_headline(facts, degraded)
+
+    # Trust gates the operator switched off are a gap in the proof of done, and
+    # the honesty ledger exists so "a reader sees exactly what was NOT verified
+    # rather than inferring it from silence". Measured through the real
+    # generator: a run with code review and security disabled listed only
+    # "build" as its gap, while two correctness checks had not run at all.
+    #
+    # Appended AFTER the headline is computed, deliberately. Feeding these into
+    # _compute_headline would change what "Verified" MEANS, and this file
+    # already records that as a trust-semantics decision for the council and
+    # founder rather than an inference (see the FV-2 note on the functional
+    # fact). This is the record half: the gap becomes visible without the
+    # verdict silently moving under anyone.
+    _dis = (quality_gates or {}).get("disabled_phases") if isinstance(quality_gates, dict) else None
+    _dis = [str(x).strip() for x in _dis] if isinstance(_dis, list) else []
+    for _name in sorted(n for n in _dis
+                        if n.lower() in ("code_review", "security",
+                                         "unit_tests", "e2e_tests")):
+        degraded.append({
+            "item": _name,
+            "status": "disabled",
+            "reason": "switched off for this run, so the check never ran",
+        })
     honesty = {
         "headline": headline,
         "degraded": degraded,
