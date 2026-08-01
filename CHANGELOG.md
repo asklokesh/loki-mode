@@ -5,7 +5,30 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.15.1
+## v8.16.0
+
+### A test that catches a surface drifting from its siblings
+
+Four surfaces report on a build: the completion summary, `loki why`, `loki why
+--json`, and the efficiency trend injected into the agent's next prompt. Each was
+improved separately over the preceding releases, and three times a fix landed on
+one surface while a sibling kept the old behaviour, so the feature looked
+complete and was not.
+
+The per-surface tests could not catch that. Every one of them passed while the
+surfaces disagreed with each other, because each verifies its own surface in
+isolation.
+
+This adds the integration counterpart: one run, four surfaces, all four must
+reach the same verdict. Both directions are asserted, since a test that only
+checks the thrashing case would pass against a surface hardcoded to say
+thrashing. A run with no records must leave every surface silent rather than any
+of them inventing a verdict.
+
+Verified against a simulated drift: removing the rework field from one surface
+alone turns this test red, including the assertion that all four agree.
+
+
 
 ### Six control knobs shipped without documentation
 
