@@ -10551,6 +10551,56 @@ for fnd in data.get("findings", []):
 # Gate Failure Tracking (v6.10.0)
 #===============================================================================
 
+# _loki_gate_stuck: has this gate failed for the SAME reason too many times?
+#
+# F0 in docs/FIRST-PASS-COMPLETION-PLAN.md. A gate that keeps failing for a
+# byte-identical reason is not going to pass on the next try, and re-running the
+# model against it burns an iteration to reach the same verdict.
+#
+# MEASURED. FireLater spent 3 iterations against mutation_integrity, which
+# failed in 0-1 SECONDS each time with the identical line:
+#
+#   [HIGH] mutation detector unavailable: .../tests/detect-test-mutations.sh
+#
+# The detector was never packaged (fixed v8.38.0), so the gate could NEVER pass.
+# The run was doomed at iteration 1 and nothing noticed; it just iterated.
+#
+# WHY "SAME REASON" AND NOT "SAME COUNT". A gate failing three times for three
+# DIFFERENT reasons is the loop working -- the agent is fixing things and finding
+# the next problem. That must keep iterating. Only an unchanging reason means no
+# progress is possible.
+#
+# FAIL-SAFE DIRECTION, load-bearing: on any doubt this returns 1 (not stuck) and
+# the run continues exactly as before. A missing reason file, an unreadable one,
+# a first failure, or a changed reason all keep iterating. This can only ever
+# SHORTEN a doomed run; it can never stop a healthy one, and it never declares
+# success -- the caller maps it to a named terminal failure.
+#
+# Threshold is deliberately 3, not 2: a reason can legitimately repeat once
+# while the agent is mid-fix (it edits, the gate re-runs before the edit lands).
+_loki_gate_stuck() {
+    local gate_name="$1" reason_file="$2" count="${3:-0}"
+    local threshold="${LOKI_GATE_STUCK_THRESHOLD:-3}"
+
+    [ "${LOKI_GATE_STUCK_ABORT:-1}" = "0" ] && return 1
+    [ "${count:-0}" -lt "$threshold" ] 2>/dev/null && return 1
+    [ -n "$reason_file" ] && [ -f "$reason_file" ] || return 1
+
+    local cur prev_file prev
+    # First line only: it names the cause. Later lines carry per-file detail
+    # that legitimately churns while the cause is unchanged.
+    cur="$(head -1 "$reason_file" 2>/dev/null)" || return 1
+    [ -n "$cur" ] || return 1
+
+    prev_file="${TARGET_DIR:-.}/.loki/quality/gate-stuck-${gate_name}.last"
+    prev="$(cat "$prev_file" 2>/dev/null || true)"
+    ( mkdir -p "$(dirname "$prev_file")" 2>/dev/null \
+        && printf '%s\n' "$cur" > "$prev_file" 2>/dev/null ) || true
+
+    [ -n "$prev" ] && [ "$prev" = "$cur" ] && return 0
+    return 1
+}
+
 track_gate_failure() {
     local gate_name="$1"
     local gate_file="${TARGET_DIR:-.}/.loki/quality/gate-failure-count.json"
@@ -22818,6 +22868,21 @@ if __name__ == "__main__":
                     mt_count=$(track_gate_failure "mutation_integrity")
                     gate_failures="${gate_failures}mutation_integrity,"
                     log_warn "Mutation integrity gate FAILED ($mt_count consecutive) - HIGH test-fitting detected"
+                    # F0: an unchanging cause means the next iteration reaches
+                    # the same verdict. FireLater burned 3 iterations here on a
+                    # detector that was never packaged, failing in 0-1s each
+                    # time with an identical line. Stop honestly instead.
+                    if _loki_gate_stuck "mutation_integrity" \
+                        "${TARGET_DIR:-.}/.loki/quality/mutation-findings.txt" "$mt_count"; then
+                        log_error "Mutation integrity has failed $mt_count times for the SAME reason:"
+                        log_error "  $(head -1 "${TARGET_DIR:-.}/.loki/quality/mutation-findings.txt" 2>/dev/null)"
+                        log_error "Another iteration would reach the same verdict. Stopping instead of grinding."
+                        emit_event_json "gate_stuck" \
+                            "gate=mutation_integrity" \
+                            "consecutive=$mt_count" 2>/dev/null || true
+                        save_state "${retry:-0}" "gate_stuck_mutation_integrity" 20 2>/dev/null || true
+                        return 20
+                    fi
                 fi
                 emit_stage_complete "mutation_integrity" "$_stg_ok" "$_stg_t0"
             fi

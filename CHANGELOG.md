@@ -5,6 +5,53 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.45.0
+
+### F0: stop grinding against a gate that can never pass
+
+The item that would have saved the founder's FireLater run.
+
+That run spent **3 iterations** against `mutation_integrity`, which failed in
+**0-1 SECONDS** each time with the identical line:
+
+```
+[HIGH] mutation detector unavailable: .../tests/detect-test-mutations.sh
+```
+
+The detector was never packaged (fixed v8.38.0), so the gate could **never**
+pass. The run was doomed at iteration 1 and nothing noticed -- it just kept
+going, burning paid provider calls to re-derive the same verdict.
+
+A gate that fails for a byte-identical reason now stops the run with a named
+terminal status instead of iterating.
+
+### The distinction this turns on
+
+**"Failed 3 times" is not the signal.** A gate failing three times for three
+DIFFERENT reasons is the loop *working* -- the agent fixes one thing and finds
+the next. Only an **unchanging** reason means no progress is possible.
+
+Both directions are tested, and the protective case (changed reason keeps
+iterating) is mutation-pinned: making the check ignore whether the reason
+changed turns the test red.
+
+### Fail-safe direction, deliberately
+
+On any doubt -- missing reason file, unreadable, empty, first sighting, below
+threshold -- the helper returns "not stuck" and the run continues exactly as
+before. It can only ever SHORTEN a doomed run, never stop a healthy one.
+
+And it never reports success: a stuck gate maps to exit **20** (terminal
+failure) with `gate_stuck_mutation_integrity` recorded. A stuck gate that
+exited 0 would report a doomed run as done -- strictly worse than grinding, and
+that is mutation-pinned too.
+
+Threshold is 3, not 2: a reason can legitimately repeat once while the agent is
+mid-fix. `LOKI_GATE_STUCK_THRESHOLD` / `LOKI_GATE_STUCK_ABORT=0` to tune or
+disable.
+
+Trust-core detector: 69 invariants.
+
 ## v8.44.0
 
 ### F2: the feedback loop could stop feeding back, silently

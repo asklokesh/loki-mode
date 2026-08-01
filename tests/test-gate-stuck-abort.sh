@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# A gate that keeps failing for the SAME reason must stop the run, not iterate.
+#
+# F0 in docs/FIRST-PASS-COMPLETION-PLAN.md, and the item that would have saved
+# the founder's FireLater run.
+#
+# MEASURED: FireLater spent 3 iterations against mutation_integrity, which failed
+# in 0-1 SECONDS each time with the identical line:
+#
+#   [HIGH] mutation detector unavailable: .../tests/detect-test-mutations.sh
+#
+# The detector was never packaged (fixed v8.38.0), so the gate could NEVER pass.
+# The run was doomed at iteration 1, and the loop just kept going -- burning
+# paid provider calls to re-derive the same verdict.
+#
+# THE DISTINCTION THIS TURNS ON. "Failed 3 times" is not the signal; a gate
+# failing three times for three DIFFERENT reasons is the loop WORKING -- the
+# agent fixes one thing and finds the next. Only an UNCHANGING reason means no
+# progress is possible. Both directions are asserted, and the "changed reason
+# keeps iterating" case is the one that protects healthy runs.
+#
+# FAIL-SAFE DIRECTION: on any doubt (missing file, unreadable, first sighting,
+# below threshold) the helper returns "not stuck" and the run continues exactly
+# as before. It can only ever SHORTEN a doomed run, never stop a healthy one,
+# and it never declares success -- it maps to a terminal FAILURE exit.
+
+set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUN_SH="$REPO_ROOT/autonomy/run.sh"
+
+PASS=0
+FAIL=0
+ok()  { printf 'PASS: %s\n' "$1"; PASS=$((PASS + 1)); }
+bad() { printf 'FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
+
+echo "TEST: a stuck gate aborts instead of grinding"
+
+SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/loki-stuck-XXXXXX")"
+trap 'rm -rf "$SCRATCH"' EXIT
+
+# Extract the real helper. Self-contained, so a bounded slice is safe.
+HARNESS="$SCRATCH/fn.sh"
+sed -n '/^_loki_gate_stuck()/,/^}/p' "$RUN_SH" > "$HARNESS"
+if ! grep -q '_loki_gate_stuck()' "$HARNESS"; then
+    bad "could not extract _loki_gate_stuck; this test is inert"
+    echo "  Passed: $PASS  Failed: $FAIL"; exit 1
+fi
+ok "extracted the real helper from run.sh"
+
+# probe <count> <reason> [env...] -> "STUCK" | "CONTINUE"
+probe() {
+    local count="$1" reason="$2"; shift 2
+    env "$@" TARGET_DIR="$SCRATCH" bash -c '
+        . "$1"
+        R="$2/.loki/quality/r.txt"
+        mkdir -p "$(dirname "$R")"
+        printf "%s\n" "$3" > "$R"
+        if _loki_gate_stuck testgate "$R" "$4"; then echo STUCK; else echo CONTINUE; fi
+    ' _ "$HARNESS" "$SCRATCH" "$reason" "$count"
+}
+
+reset_state() { rm -f "$SCRATCH/.loki/quality/gate-stuck-testgate.last" 2>/dev/null || true; }
+
+# --- below threshold: always continue ---------------------------------------
+reset_state
+[ "$(probe 1 'SAME')" = "CONTINUE" ] \
+    && ok "count below threshold keeps iterating" \
+    || bad "aborted on a first failure -- would kill healthy runs"
+
+# --- first sighting at threshold: continue (no prior to compare) -------------
+reset_state
+[ "$(probe 3 'SAME')" = "CONTINUE" ] \
+    && ok "the first sighting of a reason keeps iterating" \
+    || bad "aborted without ever having seen the reason before"
+
+# --- identical reason repeats: ABORT ----------------------------------------
+# probe() above already recorded 'SAME'; a second identical call is the real
+# stuck signal.
+[ "$(probe 3 'SAME')" = "STUCK" ] \
+    && ok "an identical repeated reason aborts" \
+    || bad "a gate failing 3x for the SAME reason still iterates -- the FireLater bug"
+
+# --- THE PROTECTIVE CASE: a changed reason keeps iterating ------------------
+# This is what separates "no progress possible" from "the loop is working".
+[ "$(probe 4 'A DIFFERENT CAUSE')" = "CONTINUE" ] \
+    && ok "a CHANGED reason keeps iterating (progress is being made)" \
+    || bad "aborted although the failure reason changed -- kills a working loop"
+
+# --- fail-safe: missing/unreadable inputs never abort ------------------------
+reset_state
+_missing="$(env TARGET_DIR="$SCRATCH" bash -c '
+    . "$1"
+    if _loki_gate_stuck testgate "$2/nope.txt" 9; then echo STUCK; else echo CONTINUE; fi
+' _ "$HARNESS" "$SCRATCH")"
+[ "$_missing" = "CONTINUE" ] \
+    && ok "a missing reason file never aborts" \
+    || bad "aborted on a missing reason file -- fail-safe direction inverted"
+
+reset_state
+: > "$SCRATCH/.loki/quality/empty.txt"
+_empty="$(env TARGET_DIR="$SCRATCH" bash -c '
+    . "$1"
+    if _loki_gate_stuck testgate "$2/.loki/quality/empty.txt" 9; then echo STUCK; else echo CONTINUE; fi
+' _ "$HARNESS" "$SCRATCH")"
+[ "$_empty" = "CONTINUE" ] \
+    && ok "an empty reason file never aborts" \
+    || bad "aborted on an empty reason -- cannot know the cause is unchanged"
+
+# --- the opt-out must win ----------------------------------------------------
+reset_state
+probe 3 'SAME' >/dev/null                       # prime the prior
+[ "$(probe 3 'SAME' LOKI_GATE_STUCK_ABORT=0)" = "CONTINUE" ] \
+    && ok "LOKI_GATE_STUCK_ABORT=0 disables the abort" \
+    || bad "the opt-out does not work"
+
+# --- WIRING ------------------------------------------------------------------
+if grep -q '_loki_gate_stuck "mutation_integrity"' "$RUN_SH"; then
+    ok "WIRING: the mutation gate consults the stuck check"
+else
+    bad "WIRING: nothing calls _loki_gate_stuck -- FireLater would still grind"
+fi
+
+# It must be a TERMINAL FAILURE, never a success. A stuck gate that exits 0
+# would report a doomed run as done -- strictly worse than grinding.
+_call="$(grep -A12 '_loki_gate_stuck "mutation_integrity"' "$RUN_SH")"
+case "$_call" in
+    *"return 20"*) ok "a stuck gate returns the terminal-failure code (20)" ;;
+    *) bad "a stuck gate does not return 20 -- it must never look like success" ;;
+esac
+case "$_call" in
+    *'save_state'*'gate_stuck_mutation_integrity'*)
+        ok "the terminal status names the stuck gate" ;;
+    *) bad "the run stops without recording WHY" ;;
+esac
+
+echo ""
+echo "  Passed:     $PASS"
+echo "  Failed:     $FAIL"
+[ "$FAIL" -eq 0 ] || exit 1

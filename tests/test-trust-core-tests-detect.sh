@@ -523,6 +523,26 @@ probe_case "the degradation is still recorded as an event" \
     '                            false "capability_degraded" \' \
     bash tests/test-findings-injection-degrade.sh
 
+# F0: a gate failing for an UNCHANGING reason aborts instead of iterating. The
+# first two probes guard opposite harms -- aborting a healthy loop (reason
+# changed = progress) and reporting a doomed run as success.
+probe_case "a changed failure reason keeps iterating" \
+    "autonomy/run.sh" \
+    '    [ -n "$prev" ] && [ "$prev" = "$cur" ] && return 0' \
+    '    [ -n "$prev" ] && return 0' \
+    bash tests/test-gate-stuck-abort.sh
+
+probe_case "a stuck gate never reports success" \
+    "autonomy/run.sh" \
+    '                        return 20' '                        return 0' \
+    bash tests/test-gate-stuck-abort.sh
+
+probe_case "the mutation gate still consults the stuck check" \
+    "autonomy/run.sh" \
+    '                    if _loki_gate_stuck "mutation_integrity" \' \
+    '                    if false; then :; elif false; then \' \
+    bash tests/test-gate-stuck-abort.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
