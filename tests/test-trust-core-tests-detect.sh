@@ -439,6 +439,21 @@ probe_case "the first-artifact time is actually rendered" \
     '            :' \
     bash tests/test-first-artifact-signal.sh
 
+# The council cap, probed against run.sh's REAL selector heredoc rather than a
+# re-implementation. The second case is the one that matters: breaking the
+# mandatory-exclusion DUPLICATES a reviewer (cap=3 -> architecture-strategist
+# twice), which a presence-only assertion cannot see -- it survived until the
+# test checked distinctness.
+probe_case "the cap binds on the real selector" \
+    "autonomy/run.sh" \
+    'if _cap > 0 and len(reviewers) > _cap:' 'if False:' \
+    bash tests/test-review-cap-real-selector.sh
+
+probe_case "a capped council contains no duplicate reviewer" \
+    "autonomy/run.sh" \
+    '        if _r["name"] not in _mandatory_names:' '        if True:' \
+    bash tests/test-review-cap-real-selector.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.

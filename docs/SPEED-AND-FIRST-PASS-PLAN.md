@@ -210,6 +210,48 @@ busts the cache every iteration.
 - **Do not add static generated context files.** Measured -3% success, +20%
   cost.
 
+## 4b. Shipped, and VERIFIED ON THE REAL CODE PATH
+
+P0-P2 shipped in v8.33.0, v8.34.0 and v8.35.0. Each is default-OFF, so none
+changes behaviour until switched on.
+
+The claim "the knob works" was verified by extracting run.sh's ACTUAL selector
+heredoc and running it -- not by re-implementing it, which is the mistake that
+let three mutations survive across v8.28.0/v8.34.0/v8.35.0:
+
+```
+cap=0 -> 6 reviewers: architecture-strategist, maintainer-mergeability,
+                      security-sentinel, test-coverage-auditor,
+                      performance-oracle, dependency-analyst
+cap=4 -> 4 reviewers: architecture-strategist, maintainer-mergeability,
+                      security-sentinel, test-coverage-auditor
+cap=3 -> 3 reviewers: architecture-strategist, maintainer-mergeability,
+                      security-sentinel
+```
+
+Two things this proves that a unit test could not:
+
+1. The cap reaches the real selector through the real env, at every level.
+2. **The safety property holds in production code**: `architecture-strategist`
+   and `maintainer-mergeability` -- the mandatory pair -- survive at cap=3,
+   cap=4 and uncapped. Only the appended tail is trimmed. A cap can shrink the
+   council but can never remove a mandate.
+
+For the skip knob, `gate_failures` (declared run.sh:22697) and the skip decision
+(run.sh:22962) were confirmed to sit in the SAME function scope
+(`run_autonomous`, run.sh:20842), so the skip genuinely observes the accumulated
+failures rather than an empty shadow.
+
+**Mapping to measured wall clock.** From the table in section 2: 6 reviewers
+took 177s and 3 took 31s. Capping a complex-tier council from 6 to 3 therefore
+targets the 31s regime for scoped work while `complex` keeps its deeper battery
+when uncapped.
+
+**What is still NOT proven:** an end-to-end scoped-issue run with the knobs on.
+That requires a real paid build, and until it is measured, the numbers above are
+selector behaviour plus historical stage timings -- not a demonstrated
+end-to-end improvement. Do not report it as one.
+
 ## 5. How we know it worked
 
 Every item ships with a before/after from the same `stage_complete` telemetry

@@ -5,6 +5,64 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.36.0
+
+### Verifying the shipped knobs against production code, not a copy of it
+
+v8.33.0-v8.35.0 shipped three speed knobs, all default-OFF. This release
+verifies the council cap works on run.sh's **actual selector** -- extracting the
+real `python3 << 'SPECIALIST_SELECT'` heredoc and running it end to end through
+the same environment the runner sets:
+
+```
+cap=0 -> 6: architecture-strategist, maintainer-mergeability, security-sentinel,
+            test-coverage-auditor, performance-oracle, dependency-analyst
+cap=4 -> 4: architecture-strategist, maintainer-mergeability, security-sentinel,
+            test-coverage-auditor
+cap=3 -> 3: architecture-strategist, maintainer-mergeability, security-sentinel
+```
+
+The safety property holds in production code: the mandatory pair survives at
+every level, and only the appended tail is trimmed.
+
+### The mutation that survived, and the real defect behind it
+
+Breaking the trim loop's mandatory-exclusion did NOT fail the existing test. It
+turned out to produce a genuinely broken council:
+
+```
+cap=3 -> architecture-strategist, maintainer-mergeability, architecture-strategist
+```
+
+Every mandatory reviewer is still **present**, so a presence-only assertion
+stays green -- while a capped slot is wasted on a DUPLICATE and the council pays
+full latency for one fewer perspective.
+
+Presence is not distinctness. The test now asserts both, and the mutation goes
+red.
+
+### Why a second cap test exists
+
+`test-review-council-cap.sh` drives a faithful re-implementation of the trimming
+rule. That is useful and insufficient: three mutations across v8.28.0, v8.34.0
+and v8.35.0 survived because a test exercised its own copy while the original
+was broken. This one runs the source.
+
+> A re-implementation tests the RULE. Only the source tests the CODE.
+
+### Honest status of the speed work
+
+Verified: the knobs reach the real code path and bind correctly; `gate_failures`
+(run.sh:22697) and the skip decision (run.sh:22962) share the same function
+scope, so the skip observes real failures.
+
+**NOT yet verified: an end-to-end scoped-issue run with the knobs enabled.**
+That needs a real paid build. Until it is measured, these are selector
+behaviour plus historical stage timings -- not a demonstrated end-to-end
+improvement, and the plan says so.
+
+Trust-core detector: 57 invariants.
+
 ## v8.35.0
 
 ### A run with no preview told the user nothing until it ended
