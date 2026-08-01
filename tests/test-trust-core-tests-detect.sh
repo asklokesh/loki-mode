@@ -507,6 +507,22 @@ probe_case "doctor actually checks for the detector files" \
     '        if true; then' \
     bash tests/test-doctor-install-integrity.sh
 
+# F2: a feedback loop that stops feeding back must say so. Research puts "the
+# agent did not attempt to recover from an error" at 56% of agent failures; a
+# silently-dead findings injection manufactures exactly that AND misattributes
+# it to the model.
+probe_case "a degraded findings injection still warns" \
+    "autonomy/run.sh" \
+    '                            log_warn "Findings injection unavailable (bun not found): the next iteration will be told it failed but NOT what to fix. Install bun, or set LOKI_INJECT_FINDINGS=0 to silence this."' \
+    '                            :' \
+    bash tests/test-findings-injection-degrade.sh
+
+probe_case "the degradation is still recorded as an event" \
+    "autonomy/run.sh" \
+    '                            emit_event_json "capability_degraded" \' \
+    '                            false "capability_degraded" \' \
+    bash tests/test-findings-injection-degrade.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.

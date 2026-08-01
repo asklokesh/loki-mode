@@ -5,6 +5,52 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.44.0
+
+### F2: the feedback loop could stop feeding back, silently
+
+First item shipped from `docs/FIRST-PASS-COMPLETION-PLAN.md`.
+
+Findings injection is what tells the next iteration **what to fix**. It defaults
+ON -- but the call was gated on `command -v bun`, so on a machine without bun it
+degraded with **no signal at all**. The agent was told only that it failed.
+
+That is the single largest failure shape in the research: *"the agent did not
+attempt to recover from an error"* accounts for **56% of agent failures**
+(SlopCodeBench, arXiv 2603.24755). A silently-dead feedback loop manufactures
+exactly that -- and misattributes it, because the next iteration then looks like
+the model failing when it was never told what went wrong.
+
+Now it warns, names the consequence rather than just the missing binary, and
+records a `capability_degraded` event so the receipt can show it. Opting out
+(`LOKI_INJECT_FINDINGS=0`) stays silent -- a warning for a deliberate choice is
+noise, and noise trains users to ignore the channel carrying the real warning.
+
+### Why this is the first F-item shipped
+
+Our own telemetry, across every recorded run:
+
+| project | iterations | failing gates |
+|---|---:|---|
+| FireLater | 3 | static_analysis 2, mutation_integrity 3, code_review 2 |
+| anonima | 4 | code_review 1 |
+| autonomi-engine-runs | 1 | none |
+| loki-mode | 1 | none |
+
+**Perfect correlation: every multi-iteration run had a failing gate; every
+single-iteration run had none.** Iterations are not the model failing to finish;
+they are gates rejecting work. So the quality of what the agent is told after a
+rejection *is* the first-pass lever.
+
+### One assertion was reading the payload, not the call
+
+The wiring check first matched the literal string `capability_degraded`. A
+mutation replacing `emit_event_json` with `false` left that argument in place,
+so the assertion passed while nothing was emitted. Now matches
+`emit_event_json "capability_degraded"` -- the call, not its payload.
+
+Trust-core detector: 66 invariants.
+
 ## v8.43.0
 
 ### doctor could not see the worst breakage this package has shipped

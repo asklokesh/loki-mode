@@ -23036,8 +23036,30 @@ if __name__ == "__main__":
                     # v7.5.3 Phase 1 hook: persist structured findings +
                     # auto-write learnings (one shell-out per iteration).
                     # Best-effort; never fails the main loop.
-                    if [ "${LOKI_INJECT_FINDINGS:-1}" != "0" ] && command -v bun >/dev/null 2>&1; then
-                        bun "${SCRIPT_DIR}/../loki-ts/dist/loki.js" internal phase1-hooks reflect "$ITERATION_COUNT" 2>/dev/null || true
+                    if [ "${LOKI_INJECT_FINDINGS:-1}" != "0" ]; then
+                        if command -v bun >/dev/null 2>&1; then
+                            bun "${SCRIPT_DIR}/../loki-ts/dist/loki.js" internal phase1-hooks reflect "$ITERATION_COUNT" 2>/dev/null || true
+                        else
+                            # DEGRADED, and said so. Findings injection is what
+                            # tells the next iteration WHAT to fix; without it the
+                            # agent knows only that it failed. Research puts "the
+                            # agent did not attempt to recover from an error" at
+                            # 56% of all agent failures, and a feedback loop that
+                            # silently stops feeding back manufactures exactly that
+                            # shape -- the next iteration then looks like the model
+                            # failing, when it was never told what went wrong.
+                            #
+                            # Defaults ON but was gated on `command -v bun`, so on a
+                            # machine without bun it degraded with no signal at all.
+                            # A missing capability must be visible; a silent one is
+                            # worse than an absent feature because it misattributes
+                            # the failure.
+                            log_warn "Findings injection unavailable (bun not found): the next iteration will be told it failed but NOT what to fix. Install bun, or set LOKI_INJECT_FINDINGS=0 to silence this."
+                            emit_event_json "capability_degraded" \
+                                "capability=inject_findings" \
+                                "reason=bun_not_found" \
+                                "impact=next_iteration_lacks_structured_findings" 2>/dev/null || true
+                        fi
                     fi
                 fi
                 emit_stage_complete "code_review" "$_stg_ok" "$_stg_t0"
