@@ -356,7 +356,16 @@ $d"
 # ---------------------------------------------------------------------------
 # Allowed-asymmetry: gate names that are legitimately bash-only (documented in
 # the header). Keep this list as small as possible and justify every entry.
-GATE_ALLOWED_BASH_ONLY=("LOKI_GATE_TIMEOUT")
+# LOKI_GATE_MAGIC_DEBATE_BLOCKING is bash-only because the two routes implement
+# DIFFERENT gates under the same name, by design:
+#   bash  (autonomy/run.sh)  runs a real multi-persona debate via the provider
+#                            CLI and parses a per-persona severity
+#   bun   (quality_gates.ts) statically checks each spec for Pros/Cons headers;
+#                            it never invokes a debate and has no severity
+# Only the bash route can produce a blocking severity, so only it needs a knob
+# to decide whether that severity stops the run. Adding the var to the bun route
+# would be a dead toggle that reads as a supported feature.
+GATE_ALLOWED_BASH_ONLY=("LOKI_GATE_TIMEOUT" "LOKI_GATE_MAGIC_DEBATE_BLOCKING")
 # Allowed-asymmetry: gate names that are legitimately bun-only.
 #   (none) -- LOKI_GATE_LSP_DIAGNOSTICS and LOKI_GATE_LSP_WRITER are now wired
 #   on BOTH routes: the diagnostics writer is route-neutral Python

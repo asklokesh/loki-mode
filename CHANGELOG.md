@@ -5,6 +5,64 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.26.0
+
+### Gate 12 (Magic Modules debate) has never blocked anything
+
+It was broken in three independent ways, any one of which alone was fatal:
+
+1. The CLI called `run_debate(react_path=..., wc_path=...)`. Those are not
+   parameters of that function -- it takes `component_path` -- so every
+   invocation raised `TypeError` before a debate ever started.
+2. `run_debate` RETURNS a dict and prints nothing. The CLI discarded the
+   return value, so even a successful debate produced no output.
+3. The gate grepped stdout for `"severity": "block"`, a string that only ever
+   existed inside the discarded dict.
+
+The failure was invisible because the gate captured output with `|| true` and
+then looked for a blocking severity. A crash produces no match, and no match
+read as "nothing to block on", so a totally broken gate reported PASS on every
+iteration since v6.77.0 -- contributing a green result to the completion
+decision while judging nothing.
+
+Reproduced end to end before fixing: `TypeError` -> "Debate failed" -> gate
+returns PASS.
+
+### Enforcement is opt-in, because the fix was measured before being trusted
+
+Fixing the plumbing made the blocking path reachable for the first time. That
+path had never run against a real project, so it was measured rather than
+assumed -- and the result is why it ships advisory:
+
+On a deliberately thorough spec (explicit KB budgets, a named device class, a
+zero-JS server component, a stated contrast ratio), **three of four personas
+still returned "block"**. Two independent specs, two blocks. A single "block"
+from any one persona fails the gate, so it approves only when four strict
+reviewers are simultaneously satisfied -- a threshold almost nothing clears.
+
+Turning that on would have replaced a gate that never blocked with one that
+blocks nearly every build: a worse regression than the silent fail-open being
+fixed. The finding is surfaced and recorded; enforcement waits on tuning
+against real projects. Set `LOKI_GATE_MAGIC_DEBATE_BLOCKING=true` to enforce.
+
+### A gate that cannot run no longer reports PASS
+
+"Could not run" splits in two, and the halves need opposite handling:
+
+- **environment** (provider CLI absent, timeout, non-zero exit): degrades with
+  a warning. Blocking here would wedge every machine without provider
+  credentials over an advisory gate.
+- **wiring** (`TypeError`, `ImportError`, bad arguments): blocks loudly. Nobody's
+  build is being judged and nobody is being told -- the exact class that hid
+  here for so long.
+
+Unrecognised failures degrade rather than block, so a new provider error shape
+can never wedge every build.
+
+`tests/test-magic-debate-gate.sh` (20 assertions) and five cases in the
+trust-core detector (now 35) pin all of it, including that enforcement stays
+opt-in: flipping the default to `true` turns the test red.
+
 ## v8.25.0
 
 ### The startup preflight had no tests at all

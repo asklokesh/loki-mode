@@ -30083,13 +30083,27 @@ try:
 except Exception as exc:
     sys.stderr.write(f'[ERROR] magic.core.debate not available: {exc}\n')
     sys.exit(2)
-run_debate(
+import json, os
+# run_debate takes component_path, not react_path/wc_path -- passing those
+# raised TypeError on EVERY invocation, and the caller's '|| true' swallowed it
+# so Gate 12 reported PASS on total failure. Pick whichever generated artifact
+# exists; the debate critiques code against the spec, so with neither present it
+# still runs on the spec alone.
+_react = '.loki/magic/generated/react/${name}.tsx'
+_wc = '.loki/magic/generated/webcomponent/${name}.js'
+_component = _react if os.path.exists(_react) else (_wc if os.path.exists(_wc) else '')
+_result = run_debate(
     name='$name',
     spec_path='$spec_path',
+    component_path=_component,
     rounds=$rounds,
-    react_path='.loki/magic/generated/react/${name}.tsx',
-    wc_path='.loki/magic/generated/webcomponent/${name}.js',
 )
+# The result must reach stdout: the gate greps it for a blocking severity, and
+# a returned-but-never-printed dict is invisible to every caller.
+print(json.dumps(_result, indent=2, default=str))
+if _result.get('error'):
+    sys.stderr.write('[ERROR] debate error: %s\n' % _result['error'])
+    sys.exit(1)
 " || {
         log_error "Debate failed"
         return 1

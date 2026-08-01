@@ -12014,15 +12014,82 @@ run_magic_debate_gate() {
     local latest_name
     latest_name=$(basename "$latest_spec" .md)
 
+    # NOT guarded on "a generated artifact exists". That guard was written and
+    # then removed after measuring: the `magic update` call above GENERATES the
+    # component (verified -- a bare spec directory gains a 2689-byte
+    # generated/react/<name>.tsx), so by this point the artifact is present and
+    # its code does reach the personas. A guard here would be dead code resting
+    # on a false premise.
+    #
+    # The BLOCK observed while fixing this ("CODE TO REVIEW is still empty") came
+    # from debating a deliberately one-line stub spec, which is a legitimate
+    # verdict on genuinely thin input, not a spurious process block.
     log_info "Magic Modules: running debate on '$latest_name'"
-    local debate_out
+    local debate_out debate_rc
     debate_out=$(cd "$TARGET_DIR" && PYTHONPATH="$PROJECT_DIR" LOKI_PROVIDER="${PROVIDER_NAME:-claude}" \
-        timeout 300 "$PROJECT_DIR/autonomy/loki" magic debate "$latest_name" --rounds 2 2>&1 || true)
+        timeout 300 "$PROJECT_DIR/autonomy/loki" magic debate "$latest_name" --rounds 2 2>&1) \
+        && debate_rc=0 || debate_rc=$?
 
-    # Parse debate outcome; block if any persona set severity=block
+    # A debate that could not RUN is not a debate that found nothing. The old
+    # code ended this pipeline in '|| true' and then grepped for a blocking
+    # severity, so a crash produced no match and the gate reported PASS -- which
+    # is how a TypeError in the CLI call left Gate 12 silently fail-open.
+    #
+    # But "could not run" splits in two, and the halves need opposite handling:
+    #
+    #   ENVIRONMENT  the provider CLI is absent, timed out, or exited non-zero.
+    #                Common and not the project's fault. Blocking here would
+    #                stop every run without working provider credentials over an
+    #                advisory gate, so this DEGRADES: warn, record, return 0.
+    #   WIRING       the debate itself is broken (import error, bad arguments).
+    #                Nobody's build is judged and nobody is told, which is the
+    #                defect being fixed. This must be LOUD.
+    #
+    # Fail-safe direction is deliberate: an unrecognised failure degrades rather
+    # than blocks, so a new provider error shape can never wedge every build.
+    if [ "$debate_rc" -ne 0 ]; then
+        case "$debate_out" in
+            *"not available"*|*TypeError*|*SyntaxError*|*ImportError*|*"unexpected keyword"*)
+                log_error "Magic Modules Gate 12 is BROKEN for '$latest_name' (rc=$debate_rc): the debate could not execute, so no component is being judged."
+                printf '%s\n' "$debate_out" | tail -5 >&2
+                return 1
+                ;;
+        esac
+        if [ "$debate_rc" -eq 124 ]; then
+            log_warn "Magic Modules Gate 12: debate timed out after 300s for '$latest_name'; treating as not-judged, not as PASS"
+        else
+            log_warn "Magic Modules Gate 12: debate could not run (rc=$debate_rc, provider/environment) for '$latest_name'; treating as not-judged, not as PASS"
+        fi
+        printf '%s\n' "$debate_out" | tail -3 >&2
+        return 0
+    fi
+
+    # Parse debate outcome; block if any persona set severity=block.
+    #
+    # ADVISORY BY DEFAULT (LOKI_GATE_MAGIC_DEBATE_BLOCKING=true to enforce).
+    # This gate was fail-open from v6.77.0 until the TypeError above was fixed,
+    # so its blocking path had NEVER run against a real project. Measuring it
+    # before enabling it showed why that matters: on a deliberately thorough
+    # spec -- explicit KB budgets, a named device class, zero-JS server
+    # component, stated contrast ratio -- THREE of four personas still returned
+    # "block". Two independent specs, two blocks.
+    #
+    # A single "block" from any one persona ANDs four strict reviewers together,
+    # so the gate approves only when all four are simultaneously satisfied. That
+    # is a threshold almost nothing clears, and flipping it on would turn a gate
+    # that never blocked into one that blocks nearly every build -- a worse
+    # regression than the silent fail-open being fixed here.
+    #
+    # The finding is still surfaced and still recorded; it just does not stop
+    # the run until the threshold is tuned against real projects. Making a
+    # never-exercised gate enforcing is a separate, measured decision.
     if echo "$debate_out" | grep -qi '"severity"[[:space:]]*:[[:space:]]*"block"'; then
-        log_warn "Magic Modules Gate 12: debate returned BLOCK severity for '$latest_name'"
-        return 1
+        if [ "${LOKI_GATE_MAGIC_DEBATE_BLOCKING:-false}" = "true" ]; then
+            log_warn "Magic Modules Gate 12: debate returned BLOCK severity for '$latest_name'"
+            return 1
+        fi
+        log_warn "Magic Modules Gate 12: debate returned BLOCK severity for '$latest_name' (advisory; set LOKI_GATE_MAGIC_DEBATE_BLOCKING=true to enforce)"
+        return 0
     fi
 
     log_info "Magic Modules Gate 12: PASS"

@@ -257,6 +257,40 @@ probe_case "the node check stays advisory, never blocking" \
     'return 1' \
     bash tests/test-preflight-checks.sh
 
+# Gate 12 (magic modules debate). It was broken in three independent ways and
+# reported PASS on every iteration since v6.77.0 while judging nothing. All four
+# probes matter, and the last two guard OPPOSITE over-corrections: a gate that
+# swallows failure passes silently, and a gate that blocks on a missing provider
+# CLI wedges every credential-less machine.
+probe_case "the debate is called with arguments it accepts" \
+    "autonomy/loki" \
+    '    component_path=_component,' '    react_path=_component,' \
+    bash tests/test-magic-debate-gate.sh
+
+probe_case "the debate result reaches stdout" \
+    "autonomy/loki" \
+    'print(json.dumps(_result, indent=2, default=str))' 'pass' \
+    bash tests/test-magic-debate-gate.sh
+
+probe_case "the debate gate does not swallow a failure as PASS" \
+    "autonomy/run.sh" \
+    '        && debate_rc=0 || debate_rc=$?' '        || true; debate_rc=0' \
+    bash tests/test-magic-debate-gate.sh
+
+probe_case "the debate gate's enforcement stays opt-in" \
+    "autonomy/run.sh" \
+    'LOKI_GATE_MAGIC_DEBATE_BLOCKING:-false' \
+    'LOKI_GATE_MAGIC_DEBATE_BLOCKING:-true' \
+    bash tests/test-magic-debate-gate.sh
+
+probe_case "a missing provider degrades the debate gate, never blocks" \
+    "autonomy/run.sh" \
+    'printf '"'"'%s\n'"'"' "$debate_out" | tail -3 >&2
+        return 0' \
+    'printf '"'"'%s\n'"'"' "$debate_out" | tail -3 >&2
+        return 1' \
+    bash tests/test-magic-debate-gate.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
