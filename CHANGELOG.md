@@ -5,7 +5,27 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.16.2
+## v8.16.3
+
+### A terminal failure recorded itself as a success
+
+When a spec is internally contradictory the engine stops without building
+anything, and re-running cannot help. The process exits 20 to say so, and both
+routes classify the status as a deterministic failure. The state file recorded
+zero.
+
+Every consumer of that file reads the recorded code as what happened, so a run
+that was never buildable left a record claiming a clean stop. This is the
+hardest kind of inconsistency to notice, because every other signal was already
+correct: the exit code, the ENT-3 classification, and the TypeScript mapping all
+said failure. Only the persisted field disagreed.
+
+The accompanying test sweeps the whole contract rather than that one status.
+Every terminal treated as a failure must record a non-zero code, and a clean stop
+must still record zero, so a future terminal added with the wrong code fails
+here rather than in someone's pipeline.
+
+
 
 ### A 54x token undercount in a published benchmark number
 

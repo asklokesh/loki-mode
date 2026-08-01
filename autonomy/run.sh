@@ -21164,7 +21164,19 @@ except Exception:
                         _loki_write_last_error 0 "spec_contradiction" \
                             "Spec is internally inconsistent (${_sc_n} unresolved contradiction(s)); resolve the conflicting requirements, then re-run."
                     fi
-                    save_state "$retry" "inconclusive_spec_contradiction" 0
+                    # 20, matching what this arm actually RETURNS a few lines
+                    # below. save_state's third argument is persisted as
+                    # lastExitCode, so recording 0 here left the state file
+                    # claiming success for a run whose process exited 20.
+                    # A consumer reading the record -- `loki why`, the
+                    # dashboard, a CI script -- saw a clean stop for a spec that
+                    # was never buildable.
+                    #
+                    # The TS route already classified this status as a terminal
+                    # failure (ENT3_TERMINAL_FAILURE), and the bash ENT-3 arm
+                    # lists it beside `failed` and `policy_blocked`. Only the
+                    # persisted field disagreed.
+                    save_state "$retry" "inconclusive_spec_contradiction" 20
                     if type emit_completion_summary &>/dev/null; then
                         emit_completion_summary inconclusive_spec_contradiction 2>/dev/null || true
                     fi
