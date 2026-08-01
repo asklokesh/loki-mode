@@ -16412,6 +16412,9 @@ pricing = {
     'sonnet': {'input': 3.00, 'output': 15.00},
     'haiku': {'input': 1.00, 'output': 5.00},
     'gpt-5.3-codex': {'input': 1.75, 'output': 14.00},
+    'gpt-5.6-sol': {'input': 2.50, 'output': 20.00},
+    'gpt-5.6-terra': {'input': 1.50, 'output': 12.00},
+    'gpt-5.6-luna': {'input': 0.50, 'output': 4.00},
 }
 for f in glob.glob('${efficiency_dir}/*.json'):
     try:
@@ -16424,7 +16427,20 @@ for f in glob.glob('${efficiency_dir}/*.json'):
             p = pricing.get(model, pricing['sonnet'])
             inp = d.get('input_tokens', 0)
             out = d.get('output_tokens', 0)
+            # Cache tiers. The writer has emitted these since v6.82.0 and they
+            # DOMINATE real traffic: a measured iteration carried 797,496
+            # cache-read tokens against 10,272 of plain input. Pricing them at
+            # zero under-counted a real iteration 5.4x, so a breaker set to
+            # stop a runaway let it run far past the cap. Published multipliers:
+            # cache read 0.1x input, cache write 1.25x input.
+            #
+            # This mirrors the TS route's calculateCostFromRecords
+            # (loki-ts/src/runner/budget.ts). Both routes must agree or the
+            # same run reports two different spends.
+            cr = d.get('cache_read_tokens', 0) or 0
+            cw = d.get('cache_creation_tokens', 0) or 0
             total += (inp / 1_000_000) * p['input'] + (out / 1_000_000) * p['output']
+            total += (cr / 1_000_000) * (p['input'] * 0.1) + (cw / 1_000_000) * (p['input'] * 1.25)
     except: pass
 print(round(total, 4))
 " 2>/dev/null || echo "0")

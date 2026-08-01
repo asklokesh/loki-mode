@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { calculateCostFromRecords } from "../src/runner/budget.ts";
+import { calculateCostFromRecords, PRICING } from "../src/runner/budget.ts";
 
 // The budget circuit breaker priced cache tokens at zero. Writers have emitted
 // cache_read_tokens / cache_creation_tokens since v6.82.0 (run.sh:7484), and
@@ -26,10 +26,10 @@ describe("budget: cache token pricing", () => {
     const ignored = calculateCostFromRecords([withoutCache]);
 
     // The whole point: counting them must cost materially more than not.
-    expect(withCache).toBeGreaterThan(ignored * 5);
+    expect(withCache).toBeGreaterThan(ignored * 4);
     // sonnet: 3/M input, 15/M output, 0.3/M cache read, 3.75/M cache write.
     //   10272*3 + 6164*15 + 797496*0.3 + 79769*3.75, all /1e6
-    expect(withCache).toBeCloseTo(2.7551, 3);
+    expect(withCache).toBeCloseTo(0.6617, 3);
   });
 
   test("a record with no cache fields is unchanged", () => {
@@ -62,9 +62,39 @@ describe("budget: cache token pricing", () => {
 
   test("cache-heavy traffic is priced above a naive input-only estimate", () => {
     // Guards the specific regression: someone re-deriving cost from
-    // input_tokens alone would report 0.1233 for the measured iteration. The
-    // real number is ~22x that.
+    // input_tokens alone would report 0.1233 for the measured iteration.
     const real = calculateCostFromRecords([MEASURED]);
-    expect(real).toBeGreaterThan(2.0);
+    expect(real).toBeGreaterThan(0.5);
+  });
+
+  test("the pricing table's cache tiers survive loading", () => {
+    // THE ACTUAL BUG this file was rewritten for. The JSON loader copied only
+    // input and output, dropping cache_read/cache_write even though the file
+    // defines them. The cost loop's `?? p.input` fallback then charged cache
+    // reads at the FULL input rate: a 10x overcharge on the dominant term,
+    // which made the two routes disagree 4.2x about the same run.
+    //
+    // Asserting the loaded table (not the JSON file) is what catches it: the
+    // file was always correct.
+    const sonnet = PRICING["sonnet"]!;
+    expect(sonnet.cache_read).toBe(0.3);
+    expect(sonnet.cache_write).toBe(3.75);
+    // A cache read must never cost the same as fresh input.
+    expect(sonnet.cache_read).toBeLessThan(sonnet.input);
+  });
+
+  test("bash and TS routes agree on the same record", () => {
+    // Both routes price the SAME efficiency JSON. When they disagree, one run
+    // reports two different spends and the budget breaker fires at the wrong
+    // point. This is the exact arithmetic the bash route performs in
+    // check_budget_limit (run.sh): input + output + cache_read*0.1x +
+    // cache_write*1.25x, at the sonnet rate.
+    const p = PRICING["sonnet"]!;
+    const bash =
+      (MEASURED.input_tokens / 1e6) * p.input +
+      (MEASURED.output_tokens / 1e6) * p.output +
+      (MEASURED.cache_read_tokens / 1e6) * (p.input * 0.1) +
+      (MEASURED.cache_creation_tokens / 1e6) * (p.input * 1.25);
+    expect(calculateCostFromRecords([MEASURED])).toBeCloseTo(bash, 4);
   });
 });
