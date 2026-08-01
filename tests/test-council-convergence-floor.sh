@@ -370,22 +370,32 @@ else
     bad "WIRING: the council decision is never invoked"
 fi
 
-# The EVIDENCE gate inside council_should_stop. It requires a real diff and
-# green tests before the council may approve, so bypassing it lets the council
-# approve on no evidence at all -- the failure this whole product exists to
-# prevent. Blind before this: the council suites test the gate's own logic and
-# never asserted that council_should_stop still calls it.
-if grep -qF 'if ! council_evidence_gate; then' "$REPO_ROOT/autonomy/completion-council.sh"; then
-    ok "WIRING: council_should_stop consults the evidence gate"
-else
-    bad "WIRING: the evidence gate is bypassed -- the council could approve with no evidence"
-fi
+# The FOUR hard gates inside council_should_stop. Each blocks completion for a
+# different reason -- unmet checklist, failing held-out evals, missing evidence,
+# unresolved assumptions -- and each returns CONTINUE rather than approving.
+#
+# All four were blind: the council suites test each gate's own logic and none
+# asserted that council_should_stop still calls them. Bypassing any one lets a
+# run complete while the thing that gate exists to check was never checked, and
+# the receipt still reads VERIFIED.
+#
+# Asserted as a group because they are a group: a future gate added beside them
+# without a call-site assertion is the same hole again.
+_COUNCIL_SH="$REPO_ROOT/autonomy/completion-council.sh"
+for _gate in council_checklist_gate council_heldout_gate \
+             council_evidence_gate council_assumption_ledger_gate; do
+    if grep -qF "if ! $_gate; then" "$_COUNCIL_SH"; then
+        ok "WIRING: council_should_stop consults $_gate"
+    else
+        bad "WIRING: $_gate is bypassed -- completion would skip that check entirely"
+    fi
 
-if grep -qF 'council_evidence_gate()' "$REPO_ROOT/autonomy/completion-council.sh"; then
-    ok "WIRING: council_evidence_gate is defined under the name its caller uses"
-else
-    bad "WIRING: evidence gate definition and call site have diverged"
-fi
+    if grep -qF "$_gate()" "$_COUNCIL_SH"; then
+        ok "WIRING: $_gate is defined under the name its caller uses"
+    else
+        bad "WIRING: $_gate definition and call site have diverged"
+    fi
+done
 
 # The SUPERVISED branch of the same conditional. It blocks completion when the
 # iteration reported gate failures, so bypassing it makes every supervised run

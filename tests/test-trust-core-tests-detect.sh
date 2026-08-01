@@ -186,11 +186,17 @@ probe_case "the code-review gate stays wired" \
     'if true; then' \
     bash tests/test-code-review-verdict-parse-wave8.sh
 
-probe_case "the council consults the evidence gate" \
-    "autonomy/completion-council.sh" \
-    'if ! council_evidence_gate; then' \
-    'if false; then' \
-    bash tests/test-council-convergence-floor.sh
+# All four hard gates inside council_should_stop. Probing one and assuming the
+# siblings were fine is how three of these stayed blind after the fourth was
+# fixed -- they sit in consecutive lines and every one was disconnectable.
+for _cg in council_checklist_gate council_heldout_gate \
+           council_evidence_gate council_assumption_ledger_gate; do
+    probe_case "the council consults $_cg" \
+        "autonomy/completion-council.sh" \
+        "if ! $_cg; then" \
+        'if false; then' \
+        bash tests/test-council-convergence-floor.sh
+done
 
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the

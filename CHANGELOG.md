@@ -5,7 +5,25 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.23.1
+## v8.23.2
+
+### The other three completion gates had the same hole
+
+Fixing the evidence gate one release ago and stopping there was the wrong
+instinct. It sits in a run of four hard gates that each block completion for a
+different reason: an unmet checklist, failing held-out evaluations, missing
+evidence, and unresolved assumptions. Only one had been checked. All four were
+disconnectable with every test still passing.
+
+Bypassing any one lets a run complete while the thing that gate exists to check
+was never checked, and the receipt still reads verified.
+
+All four connections are now asserted as a group, so a future gate added beside
+them without a call-site assertion is visible rather than silently unguarded.
+
+The detection audit covers twenty-one invariants.
+
+
 
 ### Two more gates could be bypassed with every test still green
 
