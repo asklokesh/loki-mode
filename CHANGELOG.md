@@ -5,7 +5,25 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.13.0
+## v8.13.1
+
+### The token report described about one percent of the run
+
+`loki memory economics` summed input and output tokens only. Cache tokens
+dominate real traffic: a measured iteration carried 797,496 cache-read tokens
+against 10,272 of plain input. On that shape the report called 16,436 the total
+when the run was billed for 893,701.
+
+The cache hit ratio was not reported at all, so a run with a cold cache paying
+the full input rate on every token looked identical to one running almost
+entirely on cache, while costing very different amounts. That ratio is the
+single biggest lever a user has on spend.
+
+Both are now reported. The engine has recorded these fields per iteration since
+v6.82.0; the report was discarding them. Records written before those fields
+existed still total correctly.
+
+
 
 ### The user can now see how much of a run was rework
 

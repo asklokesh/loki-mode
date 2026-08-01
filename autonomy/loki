@@ -21157,6 +21157,13 @@ totals = {
     'iterations': len(files),
     'total_input_tokens': 0,
     'total_output_tokens': 0,
+    # Cache tiers. These DOMINATE real traffic -- a measured iteration carried
+    # 797,496 cache-read tokens against 10,272 of plain input, so a report that
+    # omits them describes 1% of the run and hides the single biggest lever a
+    # user has on cost.
+    'total_cache_read_tokens': 0,
+    'total_cache_creation_tokens': 0,
+    'cache_hit_ratio': 0.0,
     'total_tokens': 0,
     'total_cost_usd': 0.0,
     'total_duration_ms': 0,
@@ -21177,15 +21184,26 @@ for f in files:
     to = int(_num(d.get('output_tokens'), int))
     co = float(_num(d.get('cost_usd'), float))
     du = int(_num(d.get('duration_ms'), int))
+    cr = int(_num(d.get('cache_read_tokens'), int))
+    cw = int(_num(d.get('cache_creation_tokens'), int))
     totals['total_input_tokens'] += ti
     totals['total_output_tokens'] += to
-    totals['total_tokens'] += ti + to
+    totals['total_cache_read_tokens'] += cr
+    totals['total_cache_creation_tokens'] += cw
+    # total_tokens counts EVERY token the run was billed for. Leaving cache out
+    # made the headline number describe a fraction of the run.
+    totals['total_tokens'] += ti + to + cr + cw
     totals['total_cost_usd'] += co
     totals['total_duration_ms'] += du
     m = d.get('model') or 'unknown'
     totals['by_model'][m] = totals['by_model'].get(m, 0) + 1
     p = d.get('phase') or 'unknown'
     totals['by_phase'][p] = totals['by_phase'].get(p, 0) + 1
+# Cache hit ratio against everything read IN: the number that says whether the
+# prompt cache is working. Zero reads renders 0.0 rather than a divide error.
+_read_in = totals['total_input_tokens'] + totals['total_cache_read_tokens']
+if _read_in > 0:
+    totals['cache_hit_ratio'] = round(totals['total_cache_read_tokens'] / _read_in, 4)
 print(json.dumps(totals, indent=2))
 PYEOF
             elif [ -f "$_legacy_file" ]; then
