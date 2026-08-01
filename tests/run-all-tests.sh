@@ -724,6 +724,7 @@ run_test "time-to-first-artifact is recorded and rendered" "$SCRIPT_DIR/test-fir
 run_test "council cap binds on the REAL selector" "$SCRIPT_DIR/test-review-cap-real-selector.sh"
 run_test "gate detectors ship in the npm package" "$SCRIPT_DIR/test-detectors-are-packaged.sh"
 run_test "loki start surfaces a stale install" "$SCRIPT_DIR/test-start-update-hint.sh"
+run_test "doctor detects an incomplete install" "$SCRIPT_DIR/test-doctor-install-integrity.sh"
 run_test "model catalog: no tier points at a superseded flagship" "$SCRIPT_DIR/test-model-catalog-current-flagship.sh"
 run_test "model catalog staleness is advisory in doctor" "$SCRIPT_DIR/test-model-catalog-staleness.sh"
 run_test "doctor blocker parity (both routes name blockers + offer loki tour)" "$SCRIPT_DIR/test-doctor-blocker-parity.sh"

@@ -490,6 +490,23 @@ probe_case "loki start still calls the update hint" \
     '    maybe_print_update_hint || true' '    :' \
     bash tests/test-start-update-hint.sh
 
+# doctor must SEE a broken install. Until v8.43.0 it only checked external
+# commands, so an install with zero gate detectors -- the shape every npm user
+# had before v8.38.0 -- reported healthy while four gates fail-closed on every
+# iteration.
+probe_case "an incomplete install still blocks in doctor" \
+    "autonomy/loki" \
+    '        _doctor_block "Incomplete install: quality-gate detectors are missing. Reinstall: bun install -g loki-mode"
+        fail_count=$((fail_count + 1))' \
+    '        :' \
+    bash tests/test-doctor-install-integrity.sh
+
+probe_case "doctor actually checks for the detector files" \
+    "autonomy/loki" \
+    '        if [ -f "${_LOKI_SCRIPT_DIR}/../tests/${_det}.sh" ]; then' \
+    '        if true; then' \
+    bash tests/test-doctor-install-integrity.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.

@@ -5,6 +5,49 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.43.0
+
+### doctor could not see the worst breakage this package has shipped
+
+The quality gates shell out to detector scripts under `tests/`. Before v8.38.0
+those were never packaged, so **every npm install had zero detectors** and four
+gates fail-closed on every iteration -- correct behaviour, but it means the
+build can never pass and first-pass completion is impossible regardless of
+model output.
+
+`loki doctor` reported a healthy system the entire time. It only ever checked
+for external COMMANDS (git, node, bun) -- never for the files this package is
+supposed to contain. **A broken install and a healthy one were
+indistinguishable from the one command meant to tell them apart.**
+
+`doctor` now has an Install integrity section:
+
+```
+Install integrity:
+  OK    Quality-gate detectors present (4/4)
+```
+
+and on a broken install:
+
+```
+  FAIL  Quality-gate detectors MISSING: detect-test-mutations.sh ...
+        These gates fail-closed, so every iteration will be blocked.
+```
+
+with `Incomplete install: ... Reinstall: bun install -g loki-mode` in the
+blocker list -- the same funnel-fix contract doctor already follows for every
+other hard failure: name it, say what it costs, give the exact command.
+
+### Verified in both directions
+
+Tested against the real CLI on the exact shape 8.8.0 shipped -- a `tests/`
+directory that exists but is empty. A check that cannot fail is decoration, so
+the negative case is the one that matters, and both halves are mutation-pinned:
+removing the blocker registration, and short-circuiting the file check to
+always-present, each turn the test red.
+
+Trust-core detector: 64 invariants.
+
 ## v8.42.0
 
 ### A stale install was invisible on the command people actually run

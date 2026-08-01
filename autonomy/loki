@@ -11626,6 +11626,38 @@ else:
     fi
     echo ""
 
+    # INSTALL INTEGRITY: the quality gates shell out to detector scripts. If the
+    # package shipped without them, four gates fail-CLOSED on every iteration --
+    # correct behaviour (a missing detector must never read as "nothing found"),
+    # but it means the build can never pass and first-pass completion is
+    # impossible no matter how good the output is.
+    #
+    # That shipped: package.json's files[] had no tests/ entry until v8.38.0, so
+    # every npm install had zero detectors. `doctor` reported a healthy system
+    # the whole time, because it only ever checked for external COMMANDS -- not
+    # for the files this package is supposed to contain. A broken install and a
+    # healthy one were indistinguishable from the one command meant to tell them
+    # apart.
+    echo -e "${BOLD}Install integrity:${NC}"
+    local _det_missing="" _det
+    for _det in detect-test-mutations detect-mock-problems \
+                detect-semantic-test-problems detect-invariant-violations; do
+        if [ -f "${_LOKI_SCRIPT_DIR}/../tests/${_det}.sh" ]; then
+            pass_count=$((pass_count + 1))
+        else
+            _det_missing="${_det_missing} ${_det}.sh"
+        fi
+    done
+    if [ -z "$_det_missing" ]; then
+        echo -e "  ${GREEN}OK${NC}    Quality-gate detectors present (4/4)"
+    else
+        echo -e "  ${RED}FAIL${NC}  Quality-gate detectors MISSING:${_det_missing}"
+        echo -e "  ${DIM}      These gates fail-closed, so every iteration will be blocked.${NC}"
+        _doctor_block "Incomplete install: quality-gate detectors are missing. Reinstall: bun install -g loki-mode"
+        fail_count=$((fail_count + 1))
+    fi
+    echo ""
+
     # Summary
     echo -e "${BOLD}Summary:${NC} ${GREEN}$pass_count passed${NC}, ${RED}$fail_count failed${NC}, ${YELLOW}$warn_count warnings${NC}"
     echo ""
