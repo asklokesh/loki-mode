@@ -5,7 +5,28 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.23.3
+## v8.24.0
+
+### The three safety valves could all be disconnected
+
+The spend cap, the iteration cap and the wall-clock cap are the only things that
+stop a run on its own. All three could be disconnected from the loop with every
+test still passing, including the one written specifically for the duration cap.
+
+Without them a build spends and runs until something external kills it.
+
+All three connections are now asserted. The iteration cap needed more than a
+presence check: it has two call sites, one before the loop and one inside it,
+and a test that merely found the name passed while the in-loop check was
+removed. The assertion pins the exact number of call sites, so losing either one
+fails.
+
+Each valve is also required to record its own terminal status, so a run that
+stopped on time is not reported as one that stopped on cost.
+
+The detection audit covers twenty-six invariants.
+
+
 
 ### The vote itself could be skipped
 

@@ -132,5 +132,46 @@ case "$bad_out" in
     *) bad "a non-numeric --max-duration was accepted" ;;
 esac
 
+# === WIRING: the safety valves must stay connected to the loop ===============
+# Everything above tests check_max_duration's own logic. That proves the
+# FUNCTION and says nothing about whether the iteration loop still calls it.
+#
+# All three valves were blind to disconnection, found by mutation probe. They
+# are the only things that stop a run on its own: without them a build spends
+# and runs until something external kills it. Asserted as a group because they
+# are one family, and a fourth valve added without a call-site assertion is this
+# hole again.
+for _valve in check_budget_limit check_max_iterations check_max_duration; do
+    # Count, do not just detect. check_max_iterations is called TWICE -- once
+    # before the loop and once inside it -- and a grep that passes on either one
+    # left the in-loop site disconnectable while reporting green. Pin the exact
+    # count so removing one occurrence fails.
+    _want=1
+    [ "$_valve" = "check_max_iterations" ] && _want=2
+    _got="$(grep -cE "if $_valve; then" "$RUN_SH")"
+    if [ "${_got:-0}" -eq "$_want" ]; then
+        ok "WIRING: the loop consults $_valve at all $_want call site(s)"
+    else
+        bad "WIRING: $_valve has $_got of $_want call sites -- a run may not stop on its own"
+    fi
+
+    if grep -qF "$_valve()" "$RUN_SH"; then
+        ok "WIRING: $_valve is defined under the name the loop calls"
+    else
+        bad "WIRING: $_valve definition and call site have diverged"
+    fi
+done
+
+# Each valve must still record its OWN terminal status, or a run that stopped on
+# time reports as one that stopped on cost, and `loki why` misdiagnoses it.
+for _pair in "budget_exceeded" "max_iterations_reached" "max_duration_reached"; do
+    if grep -qF "\"$_pair\"" "$RUN_SH"; then
+        ok "WIRING: $_pair is still a distinct terminal status"
+    else
+        bad "WIRING: $_pair no longer recorded -- stop reasons would be indistinguishable"
+    fi
+done
+
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

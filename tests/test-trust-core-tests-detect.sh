@@ -214,6 +214,24 @@ probe_case "the council circuit breaker stays wired" \
     'if false; then' \
     bash tests/test-council-convergence-floor.sh
 
+# The three safety valves. They are the only things that stop a run on its own,
+# so a disconnected one means a build spends until something external kills it.
+# check_max_iterations is probed at its IN-LOOP site: it has two call sites, and
+# breaking the pre-loop one alone left the loop still bounded, which reported a
+# misleading MUTATION SURVIVED.
+probe_case "the budget valve stays wired" \
+    "autonomy/run.sh" 'if check_budget_limit; then' 'if false; then' \
+    bash tests/test-max-duration.sh
+
+probe_case "the duration valve stays wired" \
+    "autonomy/run.sh" 'if check_max_duration; then' 'if false; then' \
+    bash tests/test-max-duration.sh
+
+MUTPROBE_AFTER='if check_budget_limit; then' \
+probe_case "the in-loop iteration valve stays wired" \
+    "autonomy/run.sh" 'if check_max_iterations; then' 'if false; then' \
+    bash tests/test-max-duration.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
