@@ -10586,9 +10586,34 @@ _loki_gate_stuck() {
     [ -n "$reason_file" ] && [ -f "$reason_file" ] || return 1
 
     local cur prev_file prev
-    # First line only: it names the cause. Later lines carry per-file detail
-    # that legitimately churns while the cause is unchanged.
-    cur="$(head -1 "$reason_file" 2>/dev/null)" || return 1
+    # Extract a STABLE cause. Two artifact shapes, both real:
+    #   plain text (mutation-findings.txt) -> first line names the cause; later
+    #     lines carry per-file detail that churns while the cause is unchanged.
+    #   JSON (static-analysis.json)        -> the "summary" field names it. The
+    #     whole file can NOT be used: it carries a timestamp that differs every
+    #     run, so a byte compare would never match and the valve would be dead.
+    case "$reason_file" in
+        *.json)
+            # QUOTED heredoc, not `python3 -c "..."`. A double-quoted -c body
+            # spanning multiple lines makes the repo's $<digit> checker treat
+            # every following line as still inside the body -- it flagged the
+            # `local gate_name="$1"` of the NEXT function. A quoted heredoc also
+            # guarantees bash performs no expansion inside the program at all.
+            cur="$(LOKI_RF="$reason_file" python3 <<'LOKI_STUCK_JSON' 2>/dev/null
+import json, os
+try:
+    d = json.load(open(os.environ['LOKI_RF']))
+except Exception:
+    raise SystemExit
+v = d.get('summary') or d.get('reason') or d.get('error')
+print(str(v).strip() if v else '')
+LOKI_STUCK_JSON
+)" || return 1
+            ;;
+        *)
+            cur="$(head -1 "$reason_file" 2>/dev/null)" || return 1
+            ;;
+    esac
     [ -n "$cur" ] || return 1
 
     # RECORD ON EVERY FAILURE, compare only at threshold.
@@ -22772,6 +22797,19 @@ if __name__ == "__main__":
                     sa_count=$(track_gate_failure "static_analysis")
                     gate_failures="${gate_failures}static_analysis,"
                     log_warn "Static analysis FAILED ($sa_count consecutive) - findings injected into next iteration"
+                    # F0, extended past mutation_integrity. Static analysis is
+                    # the second of the three gates that have ever caused an
+                    # extra iteration here, and an unchanging summary means the
+                    # same syntax/lint error survived a whole pass.
+                    if _loki_gate_stuck "static_analysis" \
+                        "${TARGET_DIR:-.}/.loki/quality/static-analysis.json" "$sa_count"; then
+                        log_error "Static analysis has failed $sa_count times for the SAME reason. Another iteration would reach the same verdict. Stopping instead of grinding."
+                        emit_event_json "gate_stuck" \
+                            "gate=static_analysis" \
+                            "consecutive=$sa_count" 2>/dev/null || true
+                        save_state "${retry:-0}" "gate_stuck_static_analysis" 20 2>/dev/null || true
+                        return 20
+                    fi
                 fi
                 emit_stage_complete "static_analysis" "$_stg_ok" "$_stg_t0"
             fi

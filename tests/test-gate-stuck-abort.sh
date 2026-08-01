@@ -109,6 +109,36 @@ else
     bad "aborted at iteration $_fired, expected 3"
 fi
 
+# --- JSON artifacts: compare the CAUSE, not the whole file -------------------
+# static_analysis records its reason in static-analysis.json, which also carries
+# a timestamp that differs on EVERY run. A whole-file compare would therefore
+# never match and the valve would be silently dead on this gate -- passing every
+# test that only exercises the plain-text shape.
+#
+# Verified against the real FireLater static-analysis.json: the extracted cause
+# is the `summary` field ("Syntax error: docker-stop.sh. shellcheck ...").
+_j="$SCRATCH/.loki/quality/sa.json"
+mkjson() { printf '{"timestamp":"%s","summary":"%s","pass":false}\n' "$1" "$2" > "$_j"; }
+jprobe() {
+    env TARGET_DIR="$SCRATCH" bash -c '
+        . "$1"
+        if _loki_gate_stuck sagate "$2" "$3"; then echo STUCK; else echo CONTINUE; fi
+    ' _ "$HARNESS" "$_j" "$1"
+}
+rm -f "$SCRATCH/.loki/quality/gate-stuck-sagate.last" 2>/dev/null || true
+
+mkjson 2026-08-01T01:00:00Z "Syntax error: a.sh."; jprobe 1 >/dev/null
+mkjson 2026-08-01T02:00:00Z "Syntax error: a.sh."; jprobe 2 >/dev/null
+mkjson 2026-08-01T03:00:00Z "Syntax error: a.sh."
+[ "$(jprobe 3)" = "STUCK" ] \
+    && ok "a churning timestamp does not defeat the JSON cause compare" \
+    || bad "the JSON compare is defeated by the timestamp -- the valve is dead on this gate"
+
+mkjson 2026-08-01T04:00:00Z "A DIFFERENT error: b.sh."
+[ "$(jprobe 4)" = "CONTINUE" ] \
+    && ok "a changed JSON cause keeps iterating" \
+    || bad "aborted although the JSON cause changed"
+
 # --- fail-safe: missing/unreadable inputs never abort ------------------------
 reset_state
 _missing="$(env TARGET_DIR="$SCRATCH" bash -c '
@@ -142,6 +172,19 @@ if grep -q '_loki_gate_stuck "mutation_integrity"' "$RUN_SH"; then
 else
     bad "WIRING: nothing calls _loki_gate_stuck -- FireLater would still grind"
 fi
+
+# The check must be wired to EVERY gate that has caused an extra iteration
+# here, not just the first one it was built for. Measured: mutation_integrity
+# (FireLater x3) and static_analysis (FireLater x1) both did. code_review also
+# did (FireLater x2, anonima x1) but persists no single comparable cause, so it
+# is deliberately not wired -- see the plan.
+for _g in mutation_integrity static_analysis; do
+    if grep -q "_loki_gate_stuck \"$_g\"" "$RUN_SH"; then
+        ok "WIRING: $_g consults the stuck check"
+    else
+        bad "WIRING: $_g does not consult the stuck check -- it can still grind"
+    fi
+done
 
 # It must be a TERMINAL FAILURE, never a success. A stuck gate that exits 0
 # would report a doomed run as done -- strictly worse than grinding.

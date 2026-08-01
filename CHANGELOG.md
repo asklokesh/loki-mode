@@ -5,6 +5,63 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.48.0
+
+### F0 covered one of the three gates that actually cause extra iterations
+
+v8.47.0 fixed F0's off-by-one by replaying a preserved artifact. Applying the
+same method to the OTHER preserved runs exposed a scope gap: F0 was wired only
+to `mutation_integrity`.
+
+The preserved `gate-failure-count.json` files say which gates really cost
+iterations:
+
+```
+FireLater   mutation_integrity 3   code_review 2   static_analysis 1
+anonima     code_review 1                          (4 iterations)
+```
+
+So F0 covered **one of three**. `static_analysis` is now wired too.
+
+### The JSON artifact would have made the valve silently dead
+
+`static-analysis.json` records its cause in a `summary` field -- and also
+carries a `timestamp` that differs on **every run**. A whole-file compare would
+therefore never match, and the valve would have been dead on this gate while
+passing every test written against the plain-text shape.
+
+The helper now extracts a stable cause per artifact shape: first line for text,
+`summary` for JSON. Verified against the real FireLater
+`static-analysis.json` -- extracted cause
+`"Syntax error: docker-stop.sh. shellcheck (error severity): docker-stop.sh."`,
+aborting at iteration 3 with the timestamp correctly ignored, and a genuinely
+changed cause still iterating.
+
+### code_review is deliberately NOT wired
+
+It caused extra iterations in both runs (FireLater x2, anonima x1), so it looks
+like the obvious next target. It persists no single comparable cause -- reviews
+land as per-reviewer artifacts under `.loki/quality/reviews/<id>/`, and a
+council's verdict legitimately shifts between iterations even when one finding
+repeats.
+
+Inventing a synthetic key would risk aborting a run that was making progress,
+which is the one direction this valve must never fail in. Recorded as a known
+limitation rather than guessed at.
+
+### The repo's own checker caught my heredoc footgun
+
+The first version used `python3 -c "..."` with a multi-line body. The repo has a
+checker for exactly this (`check-heredoc-dollar-digit.sh`) and it failed the
+push -- flagging `local gate_name="$1"` in the NEXT function, because an
+unterminated double-quoted `-c` body makes everything after it look like it is
+still inside the program.
+
+Now a QUOTED heredoc, which also guarantees bash performs no expansion inside
+the Python at all. The gate caught a real footgun before it shipped.
+
+Trust-core detector: 73 invariants.
+
 ## v8.47.0
 
 ### F0 would have missed the exact run it was built for, by one iteration

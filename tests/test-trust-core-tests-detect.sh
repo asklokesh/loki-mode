@@ -557,6 +557,21 @@ probe_case "the gate list keeps its imperative framing" \
     '5. SATISFY THE GATES THAT WILL JUDGE THIS PASS.' '5. Do your best.' \
     bash tests/test-first-pass-gate-directive.sh
 
+# F0 extended to static_analysis. The JSON artifact carries a timestamp that
+# differs every run, so a whole-file compare would never match and the valve
+# would be silently dead on this gate.
+probe_case "the JSON cause compare ignores the churning timestamp" \
+    "autonomy/run.sh" \
+    '            cur="$(LOKI_RF="$reason_file" python3 -c "' \
+    '            cur="$(cat "$reason_file" 2>/dev/null)"; : "$(LOKI_RF="$reason_file" python3 -c "' \
+    bash tests/test-gate-stuck-abort.sh
+
+probe_case "static_analysis still consults the stuck check" \
+    "autonomy/run.sh" \
+    '                    if _loki_gate_stuck "static_analysis" \' \
+    '                    if false; then :; elif false; then \' \
+    bash tests/test-gate-stuck-abort.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
