@@ -22876,8 +22876,37 @@ if __name__ == "__main__":
                     log_warn "Invariant gate FAILED ($inv_count consecutive) - CRITICAL/HIGH invariant/property violations (advisory; surfaced to next iteration)"
                 fi
             fi
+            # SKIP THE COUNCIL WHEN A DETERMINISTIC GATE ALREADY FAILED
+            # (LOKI_REVIEW_SKIP_ON_GATE_FAIL, default off).
+            #
+            # Measured: the council costs 31s at 3 reviewers and 280-502s at 6-7.
+            # The gates above cost ~6s COMBINED (static_analysis 5s, security_scan
+            # 1s, lsp_diagnostics 1s, test_suite <1s). When one of them has already
+            # failed, the iteration cannot be accepted no matter what the council
+            # says -- gate_failures is non-empty and feeds the same completion
+            # decision -- so the review is spending 280-502s to produce advice on
+            # code that is already going back for another pass.
+            #
+            # WHAT THIS IS NOT. It does not weaken any gate: a skipped review is
+            # recorded as skipped, never as a PASS, and the failing gate still
+            # blocks exactly as before. It cannot turn a rejection into an
+            # approval -- it only declines to spend five minutes describing a
+            # rejection that is already decided.
+            #
+            # DEFAULT OFF. Review findings are also next-iteration STEERING
+            # (LOKI_INJECT_FINDINGS), so skipping trades some guidance for a large
+            # latency win. That trade is a per-route decision, not a silent
+            # global one.
+            local _skip_review=false
+            if [ "${LOKI_REVIEW_SKIP_ON_GATE_FAIL:-false}" = "true" ] \
+               && [ -n "${gate_failures:-}" ]; then
+                _skip_review=true
+            fi
+            if [ "$_skip_review" = "true" ]; then
+                log_warn "Code review SKIPPED: deterministic gates already failed (${gate_failures%,}). The iteration is already going back; not spending a full council on it. Unset LOKI_REVIEW_SKIP_ON_GATE_FAIL to always review."
+                emit_stage_complete "code_review" "skipped" "$(date +%s 2>/dev/null)"
             # Code review gate (upgraded from advisory, with escalation)
-            if [ "$PHASE_CODE_REVIEW" = "true" ] && [ "$ITERATION_COUNT" -gt 0 ]; then
+            elif [ "$PHASE_CODE_REVIEW" = "true" ] && [ "$ITERATION_COUNT" -gt 0 ]; then
                 log_info "Quality gate: code review..."
                 local _stg_t0=$(date +%s 2>/dev/null); local _stg_ok=pass
                 if run_code_review; then

@@ -397,6 +397,29 @@ probe_case "a cap below the mandate is refused" \
     '    reviewers = _keep' \
     bash tests/test-review-council-cap.sh
 
+# Skipping the council on an already-failed gate. The first probe is the
+# catastrophic one: if a skip recorded PASS instead of SKIPPED, every failing
+# build would be approved. The third guards the opposite error -- dropping the
+# gate_failures condition would skip review on GREEN builds, losing it entirely
+# rather than deferring it.
+probe_case "a skipped review is never recorded as a pass" \
+    "autonomy/run.sh" \
+    'emit_stage_complete "code_review" "skipped" "$(date +%s 2>/dev/null)"' \
+    'emit_stage_complete "code_review" "pass" "$(date +%s 2>/dev/null)"' \
+    bash tests/test-review-skip-on-gate-fail.sh
+
+probe_case "a skip actually skips (the elif is load-bearing)" \
+    "autonomy/run.sh" \
+    'elif [ "$PHASE_CODE_REVIEW" = "true" ] && [ "$ITERATION_COUNT" -gt 0 ]; then' \
+    'fi; if [ "$PHASE_CODE_REVIEW" = "true" ] && [ "$ITERATION_COUNT" -gt 0 ]; then' \
+    bash tests/test-review-skip-on-gate-fail.sh
+
+probe_case "review is never skipped on a green build" \
+    "autonomy/run.sh" \
+    '               && [ -n "${gate_failures:-}" ]; then' \
+    '               ; then' \
+    bash tests/test-review-skip-on-gate-fail.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.

@@ -5,6 +5,58 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.34.0
+
+### Spending 280-502s to describe a rejection that was already decided
+
+The deterministic gates run BEFORE code review and cost ~6s combined
+(static_analysis 5s, security_scan 1s, lsp_diagnostics 1s, test_suite <1s).
+The council costs 31s at 3 reviewers and **280-502s at 6-7**.
+
+When one of those cheap gates has already failed, `gate_failures` is non-empty
+and the iteration cannot be accepted no matter what the council says -- the
+same variable feeds the completion decision. So the review was spending up to
+502 seconds producing advice on code that was already going back for another
+pass.
+
+`LOKI_REVIEW_SKIP_ON_GATE_FAIL=true` skips the council in exactly that case.
+
+### What this deliberately is NOT
+
+It does not weaken any gate. A skipped review is recorded as **SKIPPED, never
+as a PASS**, the failing gate still blocks unchanged, and the skip branch
+touches neither `clear_gate_failure` nor `gate_failures`. It cannot turn a
+rejection into an approval -- it only declines to spend five minutes narrating
+one.
+
+**Default OFF.** Review findings are also next-iteration steering
+(`LOKI_INJECT_FINDINGS`), so skipping trades some guidance for a large latency
+win. That is a per-route call, not a silent global one.
+
+Three mutations pin it, covering both directions of error:
+
+- recording a skip as `pass` (**this would approve every failing build**)
+- breaking the `elif` so the skip is a no-op
+- dropping the `gate_failures` condition, which would skip review on GREEN
+  builds -- losing it entirely rather than deferring it
+
+### A re-implementation tests the rule; only the source tests the code
+
+The third mutation initially SURVIVED. The test drove a faithful copy of the
+skip condition, so weakening run.sh's actual condition left every assertion
+green. Fixed by asserting against the source text, not a reproduction of it.
+
+Same lesson as v8.31.0's council finding and v8.28.0's blind extraction tests,
+arriving from a third direction.
+
+### Also corrected: P1 in the speed plan was already half-done
+
+The plan proposed reordering cheap gates before the council. They already run
+first (run.sh:22653, 22714 precede 22883). The actual gap was that nothing
+CONSULTED the result -- which is what this release fixes.
+
+Trust-core detector: 50 invariants.
+
 ## v8.33.0
 
 ### The council was never sequential. It was oversized.
