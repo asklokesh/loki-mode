@@ -138,6 +138,39 @@ else
     ko "the verifier filter the document warns about still exists"
 fi
 
+# --- the OLDER decision doc must carry its staleness note --------------------
+# A month-old decision list with no status header reads as current. Sections of
+# it concern a separate repository and cannot be actioned where it is read,
+# which is the failure mode this whole file exists to prevent -- so the note
+# itself is load-bearing, not decoration.
+OLD_DOC="$REPO_ROOT/docs/FOUNDER-STATUS-AND-DECISIONS-2026-07-01.md"
+if [[ -f "$OLD_DOC" ]]; then
+    if grep -q "partly stale" "$OLD_DOC"; then
+        ok "the older decision list is marked stale"
+    else
+        ko "the older decision list is marked stale" \
+           "it reads as current while parts of it cannot be actioned from this repo"
+    fi
+
+    # Its central claim: the verify package is not here. If someone vendors it
+    # in, the note becomes wrong and must be revisited.
+    _hits="$(find "$REPO_ROOT" -name package.json -not -path "*/node_modules/*" \
+             -exec grep -l "@autonomi/verify" {} \; 2>/dev/null | wc -l | tr -d ' ')"
+    if [[ "$_hits" == "0" ]]; then
+        ok "the staleness note is right: no @autonomi/verify package here"
+    else
+        ko "the staleness note is right: no @autonomi/verify package here" \
+           "found $_hits -- the note now misdirects the reader"
+    fi
+
+    # And it must point at the current one, or a reader stops at the stale page.
+    if grep -q "FOUNDER-DECISIONS-TRUST-SEMANTICS-2026-08-01" "$OLD_DOC"; then
+        ok "the older list points at the current decisions"
+    else
+        ko "the older list points at the current decisions"
+    fi
+fi
+
 echo ""
 echo "  Passed:     $passed"
 echo "  Failed:     $failed"

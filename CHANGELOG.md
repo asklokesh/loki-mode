@@ -5,7 +5,27 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.19.5
+## v8.19.6
+
+### A month-old decision list was reading as current
+
+The founder decision list from 2026-07-01 presents eight decisions awaiting an
+answer. Re-checked against the repository a month later, four of them concern a
+package that does not exist here at all: it lives in a separate repository, so
+those decisions cannot be acted on where they are being read. One more cites a
+benchmark progress figure that cannot be confirmed or refuted from this repo,
+because the results directory is not tracked.
+
+The document now opens with what was re-verified and what was not, item by item,
+and points at the current decision list. Nothing was deleted: the decisions were
+real when written, and a reader deserves to see both the original and what has
+since become unverifiable.
+
+The accuracy test now covers this document too, including the claim that the
+package really is absent. If it is ever vendored in, the note becomes wrong and
+the test says so.
+
+
 
 ### The open question was narrower than it looked
 
