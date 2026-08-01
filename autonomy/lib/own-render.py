@@ -138,9 +138,21 @@ def _is_ready(proof):
     """Deterministic green gate. True ONLY when:
       - honesty.headline == "VERIFIED", AND
       - facts.tests.status in (passed, verified), AND
-      - the build actually ran (facts.build.ran true / status not 'not_run').
+      - the build actually ran (facts.build.ran true / status not 'not_run'), AND
+      - no trust gate was disabled for the run.
 
     Any one missing -> not ready. This is the line that must never overclaim.
+
+    The disabled-gate condition is the newest and the one this page needs most.
+    This renderer exists for a NON-TECHNICAL owner: the reader least equipped to
+    notice that code review and security never ran. Every other surface can show
+    a caveat beside a green badge and trust the reader to weigh it. Here the
+    badge IS the message, so a run with its trust gates switched off must not
+    reach green at all.
+
+    Only gates that bear on correctness count. Turning off performance testing
+    or competitor research does not make a build unverified, and treating it as
+    such would push honest runs to amber and teach owners to ignore the colour.
     """
     if not isinstance(proof, dict):
         return False
@@ -154,7 +166,18 @@ def _is_ready(proof):
     build = facts.get("build") or {}
     build_ran = bool(build.get("ran")) or \
         str(build.get("status") or "").strip().lower() not in ("not_run", "", "none")
-    return build_ran
+    if not build_ran:
+        return False
+
+    # A trust gate switched off means the work was not fully checked, whatever
+    # the headline says. Recorded by the proof generator since v8.17.0.
+    gates = proof.get("quality_gates") or {}
+    disabled = gates.get("disabled_phases")
+    disabled = disabled if isinstance(disabled, list) else []
+    trust_gates = {"code_review", "security", "unit_tests", "e2e_tests"}
+    if any(str(name).strip().lower() in trust_gates for name in disabled):
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------

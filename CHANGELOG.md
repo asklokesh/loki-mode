@@ -5,7 +5,32 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.17.2
+## v8.18.0
+
+### A run with its trust gates switched off showed a green "ready" badge
+
+The plain-English summary restates a run for a non-technical owner. Its green
+verdict checked the headline, the tests and the build, but not whether the trust
+gates had actually run, so a build with code review and security disabled
+reported "ready" to the reader least equipped to notice what was missing.
+
+The function's own documentation already said this is the line that must never
+overclaim. It now also requires that no correctness gate was skipped.
+
+Every other surface can show a caveat beside a green badge and trust the reader
+to weigh it. On this page the badge is the message, so the caveat has to change
+the badge.
+
+Only gates bearing on correctness count: code review, security, unit tests and
+end-to-end. Turning off performance testing or competitor research still allows
+green, because a badge that turns amber for uninteresting reasons teaches owners
+to ignore the colour, which costs more than the overclaim it was meant to
+prevent.
+
+Proofs written before the field existed are unaffected, and a malformed value is
+treated as bad data rather than as evidence of a skipped gate.
+
+
 
 ### The shareable receipt now shows disabled gates too
 
