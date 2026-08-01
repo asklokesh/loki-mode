@@ -248,5 +248,28 @@ case "$D_DET" in
     *) _no "D: go summary lacks the TIMED OUT marker, got '$D_DET'" ;;
 esac
 
+# --- WIRING: the real gates must actually CALL the helper --------------------
+# Everything above extracts _loki_timeout_prefix into a scratch harness and
+# tests it in isolation. That proves the HELPER works and says nothing about
+# whether the gates use it. Renaming the helper in run.sh left this entire file
+# green while every language gate reverted to running unbounded.
+#
+# Found by mutation probe, which reported the test PASSED with the invariant
+# broken. An isolation test cannot catch a disconnected wire; only an assertion
+# on the call site can.
+if grep -qF "_loki_timeout_prefix()" "$RUN_SH"; then
+    _ok "WIRING: the timeout helper is defined under the name the gates call"
+else
+    _no "WIRING: the helper name and its call sites have diverged"
+fi
+
+for _gate in "go test gate" "cargo test gate"; do
+    if grep -F "_loki_timeout_prefix" "$RUN_SH" | grep -qF "$_gate"; then
+        _ok "WIRING: the $_gate invokes the timeout helper"
+    else
+        _no "WIRING: the $_gate does NOT invoke the helper -- it would run unbounded"
+    fi
+done
+
 echo "=== results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

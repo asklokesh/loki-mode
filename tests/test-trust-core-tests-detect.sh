@@ -104,14 +104,39 @@ probe_case "trust metrics count cache tokens" \
     '"cache_read_tokens",)]' \
     python3 -m pytest -q tests/test_trust_metrics_cache_tokens.py
 
+# --- invariants outside the trust core ---------------------------------------
+# Same standard, applied to the things a user notices first.
+
+probe_case "the TS budget prices cache reads" \
+    "loki-ts/src/runner/budget.ts" \
+    '(cRead / 1_000_000) * readRate' \
+    '(cRead / 1_000_000) * 0' \
+    bun test test/budget_cache_pricing.test.ts
+
+probe_case "codex tiers resolve to distinct models" \
+    "providers/codex.sh" \
+    'resolved="$(loki_latest_model codex "$tier" 2>/dev/null)"' \
+    'resolved=""' \
+    bash tests/test-codex-tier-models.sh
+
+# A language gate losing its timeout prefix runs unbounded and can hang a whole
+# run. Targets the CALL SITE, not the helper definition: renaming the definition
+# alone is not a real-world regression, and probing it produced a misleading
+# MUTATION SURVIVED that cost a diagnosis.
+probe_case "the go gate keeps its timeout" \
+    "autonomy/run.sh" \
+    'read -r -a _go_cmd <<< "$(_loki_timeout_prefix "$_go_to" '"'"'go test gate'"'"')"' \
+    '_go_cmd=()' \
+    bash tests/test-go-cargo-gate-timeout.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
-if [[ -z "$(cd "$REPO_ROOT" && git status --porcelain autonomy/ dashboard/ 2>/dev/null)" ]]; then
+if [[ -z "$(cd "$REPO_ROOT" && git status --porcelain autonomy/ dashboard/ providers/ loki-ts/src/ 2>/dev/null)" ]]; then
     ok "every probed file was restored"
 else
     ko "every probed file was restored" \
-       "left modified: $(cd "$REPO_ROOT" && git status --porcelain autonomy/ dashboard/ | head -3 | tr '\n' ' ')"
+       "left modified: $(cd "$REPO_ROOT" && git status --porcelain autonomy/ dashboard/ providers/ loki-ts/src/ | head -3 | tr '\n' ' ')"
 fi
 
 echo ""

@@ -5,7 +5,28 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.21.0
+## v8.21.1
+
+### A gate could lose its timeout and every test would stay green
+
+The language-gate timeout tests extract the helper into a scratch harness and
+verify it there. That proves the helper works and says nothing about whether the
+gates call it. The connection was untested, so a gate reverting to unbounded
+execution, which can hang an entire run, would not have failed anything.
+
+The tests now assert the call sites too, and that assertion catches the real
+regression: removing the timeout from the go gate turns them red.
+
+The detection audit grew from seven invariants to ten, adding the TypeScript
+cost path, codex tier resolution, and the gate timeout wiring. All ten are
+proven to fail when broken.
+
+One note for whoever extends this: probing a function's DEFINITION is not the
+same as probing its use. Renaming a helper leaves its call sites pointing at the
+old name, which no real change would do, and the resulting report reads as a
+blind test. Target the call site.
+
+
 
 ### Proof that the trust-core tests would fail if the trust core broke
 
