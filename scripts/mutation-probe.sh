@@ -43,6 +43,25 @@ fi
 backup="$(mktemp "${TMPDIR:-/tmp}/mutprobe-XXXXXX")"
 cp "$target" "$backup"
 
+# BASELINE. A test that fails for its OWN reasons -- a typo, a bad import, a
+# wrong attribute -- also "fails under mutation", and reports as success here.
+# That is a fourth outcome this tool could not see, and it happened: three
+# probes reported OK against assertions that raised AttributeError
+# unconditionally. Requiring green BEFORE mutating makes the later red mean
+# what it claims. Skip with MUTPROBE_SKIP_BASELINE=1 when the caller has
+# already established green (it doubles the runtime of a slow suite).
+if [ "${MUTPROBE_SKIP_BASELINE:-0}" != "1" ]; then
+    if ! "$@" >/dev/null 2>&1; then
+        echo "mutation-probe: BASELINE FAILED -- the test does not pass on unmodified code." >&2
+        echo "  file: $target" >&2
+        echo "  A test that is already red cannot demonstrate detection: it would" >&2
+        echo "  'fail under mutation' no matter what the mutation did. Fix the test" >&2
+        echo "  first, then re-run." >&2
+        rm -f "$backup"
+        exit 67
+    fi
+fi
+
 # Always restore, including on interrupt: leaving a repo mutated is worse than
 # any failing probe.
 # Idempotent. The error paths below exit WITHOUT disarming the trap, so this

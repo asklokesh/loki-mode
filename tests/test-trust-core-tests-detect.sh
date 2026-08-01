@@ -339,6 +339,30 @@ probe_case "the iteration card still requests its spec summary" \
     '_spec_summary=$(_loki_iteration_spec_summary "$prd")' '_spec_summary=""' \
     bash tests/test-iteration-card-plain.sh
 
+# The dashboard start-model normalizer. Same isolation shape as the shell
+# extraction tests, on the Python side, and blind the same way. It IS the
+# allowlist, so bypassing it is an input-validation hole as well as a
+# correctness one: a user picking the generic tier "high" would get the literal
+# string passed through. Both call sites are probed -- losing only the advisor
+# one leaves the primary path correct, which is the hardest shape to notice.
+probe_case "the start endpoint normalizes the model" \
+    "dashboard/server.py" \
+    '    start_model = _normalize_start_model(body.model)' \
+    '    start_model = body.model or ""' \
+    python3 -m pytest -q tests/dashboard/test_start_model_generic_tiers.py
+
+probe_case "the advisor model is normalized too" \
+    "dashboard/server.py" \
+    '    advisor_model = _normalize_start_model(body.advisor_model)' \
+    '    advisor_model = body.advisor_model or ""' \
+    python3 -m pytest -q tests/dashboard/test_start_model_generic_tiers.py
+
+probe_case "the model allowlist actually gates" \
+    "dashboard/server.py" \
+    '    if val in _START_MODEL_ALLOWLIST or val in _START_MODEL_GENERIC_TIERS:' \
+    '    if True:' \
+    python3 -m pytest -q tests/dashboard/test_start_model_generic_tiers.py
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.

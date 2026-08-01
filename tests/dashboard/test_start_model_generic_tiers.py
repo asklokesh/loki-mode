@@ -90,5 +90,58 @@ class StartModelGenericTierTests(unittest.TestCase):
                          "inert on codex -- the pin would silently do nothing")
 
 
+class StartModelWiringTests(unittest.TestCase):
+    """The normalizer must still be CALLED.
+
+    Every test above execs _normalize_start_model out of server.py and drives it
+    directly. That proves the function classifies aliases correctly and says
+    nothing about whether the start endpoint still asks it. Verified by mutation:
+    replacing the call with `body.model or ""` left every assertion above green.
+
+    Two things break when it is bypassed, and neither is cosmetic:
+
+      - a user picking the generic tier "high" gets the literal string "high"
+        passed through instead of a resolved model
+      - the function IS the allowlist. Bypassing it sends arbitrary
+        caller-supplied text onward, so this is an input-validation boundary,
+        not only a correctness one.
+
+    Both call sites are pinned. A presence-grep passes while one of the two is
+    removed, which would leave the advisor model unvalidated while the primary
+    stayed correct -- the asymmetric shape that is hardest to notice.
+    """
+
+    def setUp(self):
+        # _SERVER is a path STRING here, not a Path -- matching this module's
+        # existing convention.
+        with open(_SERVER, encoding="utf-8") as handle:
+            self.src = handle.read()
+
+    def test_start_model_is_normalized(self):
+        self.assertIn(
+            "start_model = _normalize_start_model(body.model)", self.src,
+            "the start endpoint no longer normalizes the model; a generic tier "
+            "is passed through as a literal and the allowlist is bypassed")
+
+    def test_advisor_model_is_normalized(self):
+        self.assertIn(
+            "advisor_model = _normalize_start_model(body.advisor_model)",
+            self.src,
+            "the advisor model is no longer normalized; unvalidated input "
+            "reaches the engine on that path")
+
+    def test_the_allowlist_is_what_gates(self):
+        """The normalizer must keep consulting both allowlists.
+
+        If the membership test is dropped the function returns whatever it was
+        given, so it still LOOKS wired at every call site while validating
+        nothing.
+        """
+        self.assertIn(
+            "if val in _START_MODEL_ALLOWLIST or val in _START_MODEL_GENERIC_TIERS:",
+            self.src,
+            "the normalizer no longer checks its allowlists; it is a pass-through")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,43 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.29.0
+
+### The same blind spot on the Python side, on an input-validation boundary
+
+The extraction-test sweep (v8.27.0, v8.28.0) covered the shell. The Python
+tests have the same isolation shape -- exec a function out of `server.py` and
+drive it directly -- and had never been checked. Of the two, one was blind:
+
+**`_normalize_start_model`** could be bypassed at its call site with every
+assertion still green. Two consequences, and the second is the serious one:
+
+- a user picking the generic capability tier `high` would get the literal
+  string `"high"` passed through instead of a resolved model
+- **the function IS the allowlist.** Bypassing it forwards arbitrary
+  caller-supplied text to the engine, so this is an input-validation boundary,
+  not only a correctness one
+
+Both call sites are now pinned separately. A presence-grep passes while one of
+the two is removed, and losing only the advisor path leaves the primary path
+correct -- the asymmetric shape that is hardest to notice. The allowlist
+membership test is pinned as well, since dropping it makes the function a
+pass-through that still looks wired everywhere it is called.
+
+### A test that always fails proves nothing either
+
+The first version of these assertions had a bug (`_SERVER` is a path string in
+this module, not a `Path`), so they raised `AttributeError` unconditionally.
+All three mutation probes reported OK -- the tests did "fail" under mutation,
+but they failed identically without it.
+
+`mutation-probe.sh` distinguishes three outcomes, and this is a fourth it
+cannot see: a test that fails for its own reasons is as useless as one that
+always passes, and it reads as success. The fix was verified by confirming a
+GREEN baseline first, then re-running all three probes.
+
+Trust-core detector: 45 invariants.
+
 ## v8.28.0
 
 ### The extraction-test sweep is finished: 6 of 8 were blind

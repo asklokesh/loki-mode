@@ -124,6 +124,40 @@ fi
 # this file, where the command under test is something other than this test.
 # Recorded so the idea is not re-tried from scratch.
 
+# --- rc 67: a test that was ALREADY RED --------------------------------------
+# The fourth outcome, and the one that reads as success. A test failing for its
+# own reasons (typo, bad import, wrong attribute) also "fails under mutation",
+# so the probe reported OK and the invariant looked proven. That happened for
+# real: three probes passed against assertions raising AttributeError
+# unconditionally, because _SERVER was a str and the test called .read_text().
+broken_test="$SCRATCH/broken.sh"
+cat > "$broken_test" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+chmod +x "$broken_test"
+
+bash "$PROBE" "$subject" "CORRECT" "WRONG" "$broken_test" >/dev/null 2>&1
+rc=$?
+if [[ "$rc" -eq 67 ]]; then
+    ok "an already-failing test exits 67, not 0"
+else
+    ko "an already-failing test exits 67, not 0" \
+       "got rc=$rc -- a red test cannot demonstrate detection"
+fi
+
+# The baseline must not corrupt the subject: an early exit still restores.
+[[ "$(cat "$subject")" == "$_orig" ]] \
+    && ok "a baseline failure leaves the file untouched" \
+    || ko "a baseline failure leaves the file untouched" "left: $(cat "$subject")"
+
+# The escape hatch must work, for callers that already know green.
+MUTPROBE_SKIP_BASELINE=1 bash "$PROBE" "$subject" "CORRECT" "WRONG" "$strict_test" >/dev/null 2>&1
+rc=$?
+[[ "$rc" -eq 0 ]] \
+    && ok "MUTPROBE_SKIP_BASELINE=1 skips the baseline run" \
+    || ko "MUTPROBE_SKIP_BASELINE=1 skips the baseline run" "got rc=$rc"
+
 # --- the three outcomes must be DISTINCT -------------------------------------
 # If any two collapsed to the same code, a caller could not tell "the test
 # works" from "the probe proved nothing", which is the whole point.
