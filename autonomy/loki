@@ -4059,6 +4059,7 @@ WHYJSON
     _LOKI_WHY_HEAD_SHA="$_why_head_sha" \
     _LOKI_WHY_LAST_ERROR="$loki_dir/state/LAST_ERROR.json" \
     _LOKI_WHY_UNCERTAINTY="$loki_dir/signals/UNCERTAINTY_ESCALATION" \
+    _LOKI_WHY_EFFICIENCY="$loki_dir/metrics/efficiency" \
     _LOKI_WHY_CONVERGENCE="$loki_dir/council/convergence.log" \
     _LOKI_WHY_GATE="$loki_dir/signals/GATE_ESCALATION.json" \
     _LOKI_WHY_TARGET="${TARGET_DIR:-$(dirname "$loki_dir")}" \
@@ -4127,6 +4128,52 @@ GUIDE = {
 }
 meaning, action = GUIDE.get(status, ("No diagnosis mapping for this status; see the raw fields below.",
                                      "Check loki status and .loki/logs/ for detail."))
+
+# Rework-aware advice for the iteration cap. The static line said "raise
+# LOKI_MAX_ITERATIONS", which is right for a run that was CONVERGING and wrong
+# for one that was THRASHING -- there, a higher cap buys more thrashing at full
+# price. The completion summary already splits those cases; this command is
+# where v8.14.0 sends the user, so it must not contradict it.
+#
+# Reads the same attribution the summary and the prompt trend use, so all three
+# surfaces cannot disagree about one run. Falls back to the static line when
+# the split is unknown: guessing which case applies would be worse than the
+# generic advice.
+if status == "max_iterations_reached":
+    try:
+        import glob as _glob
+        _prog = _rew = 0
+        _rcost = 0.0
+        _effdir = os.environ.get("_LOKI_WHY_EFFICIENCY", "")
+        for _f in (_glob.glob(os.path.join(_effdir, "iteration-*.json")) if _effdir else []):
+            try:
+                _d = json.load(open(_f))
+            except Exception:
+                continue
+            _st = str(_d.get("status", "")).lower()
+            if _st in ("completed", "ok", "success"):
+                _prog += 1
+            elif _st in ("failed", "error", "blocked"):
+                _rew += 1
+                _rcost += float(_d.get("cost_usd") or 0)
+        if _prog + _rew > 0:
+            _tot = _prog + _rew
+            if _rew * 2 >= _tot:
+                action = (
+                    f"{_rew} of {_tot} iterations redid earlier work"
+                    + (f" (${_rcost:.2f})" if _rcost > 0 else "")
+                    + ". Raising LOKI_MAX_ITERATIONS buys more of the same at full price. "
+                      "Read the last reviewer findings in .loki/quality/reviews/ and fix the "
+                      "blocker, or narrow the spec."
+                )
+            else:
+                action = (
+                    f"Converging: {_prog} of {_tot} iterations made progress"
+                    + (f", {_rew} redid work (${_rcost:.2f})" if _rew else "")
+                    + ". Raise LOKI_MAX_ITERATIONS and resume."
+                )
+    except Exception:
+        pass
 
 # The completion.json branch/changes/PR belong to the LAST COMPLETED run. When
 # the live state shows a build that is still running or crashed mid-iteration

@@ -5,7 +5,25 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.14.0
+## v8.14.1
+
+### loki why contradicted the summary that sent you to it
+
+v8.14.0 made the completion summary's cap advice rework-aware, then told the
+user to run `loki why` for detail. That command still gave the old line: raise
+LOKI_MAX_ITERATIONS, with no awareness of whether the run was converging or
+thrashing.
+
+So the two surfaces disagreed, and the one the summary pointed at was the wrong
+one. On a thrashing run it recommended exactly the action that buys more
+thrashing at full price.
+
+Both now read the same attribution. A thrashing run is told what its redos cost
+and to read the reviewer findings first; a converging run is told to raise the
+cap. With no efficiency records the original static advice stands, because
+guessing which case applies with no data is worse than generic guidance.
+
+
 
 ### A run that stopped on a bound now names the lever
 
