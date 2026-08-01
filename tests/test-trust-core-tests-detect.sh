@@ -543,6 +543,20 @@ probe_case "the mutation gate still consults the stuck check" \
     '                    if false; then :; elif false; then \' \
     bash tests/test-gate-stuck-abort.sh
 
+# F3: iteration 1 must name the gates that will judge it. Probed on all three
+# axes -- the gate NAMES (substance), the imperative FRAMING (which survived a
+# reword until pinned), and byte-parity with the Bun route.
+probe_case "iteration 1 still names the static-analysis gate" \
+    "providers/claude.sh" \
+    '   - STATIC ANALYSIS: no syntax errors, no unused/undefined symbols, no lint errors in files you touched.' \
+    '   - (removed)' \
+    bash tests/test-first-pass-gate-directive.sh
+
+probe_case "the gate list keeps its imperative framing" \
+    "providers/claude.sh" \
+    '5. SATISFY THE GATES THAT WILL JUDGE THIS PASS.' '5. Do your best.' \
+    bash tests/test-first-pass-gate-directive.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.

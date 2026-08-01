@@ -5,6 +5,54 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.46.0
+
+### F3: the agent was never told which gates would judge it
+
+The first-pass directive already said *"self-verify by running, not by
+reading"* -- the right instruction, and it named **zero** of the gates that
+actually block.
+
+That matters because of what our own telemetry shows. Across every recorded
+run, **every** multi-iteration run had a failing gate and **every**
+single-iteration run had none. Iterations are gates rejecting work, not the
+model failing to finish. An agent cannot aim at a gate nobody named.
+
+Iteration 1 now names the four, with the concrete failure mode for each rather
+than a label:
+
+- **static analysis** -- no syntax errors, no unused/undefined symbols, no lint
+  errors in touched files
+- **test suite** -- existing tests must still pass; *run them, do not assume*
+- **mutation/mock integrity** -- no tautological assertions, no test that
+  passes whether or not the code works, no mocking the unit under test, no
+  inline mock data standing in for a real query
+- **code review** -- no scope creep, no dead or commented-out code, no leftover
+  debug output, follow the surrounding conventions
+
+Those are not an arbitrary list: `mutation_integrity`, `code_review` and
+`static_analysis` are the only gates that have ever failed here.
+
+### Iteration-1 only, and byte-mirrored
+
+Repeating it every iteration would waste tokens and risk drifting into the
+cache-stable half of the prompt (split at `[CACHE_BREAKPOINT]`), busting the
+prompt cache every pass. Asserted: present at iteration 1, absent at 3, with
+the autonomy preamble still shipping on both.
+
+The directive is byte-mirrored into `loki-ts/src/providers/claude_flags.ts`.
+Editing one route alone silently diverges the two runtimes -- deleting the
+mutation-integrity line from the Bun copy turns the test red.
+
+### A mutation that survived, and what it taught
+
+Rewording the header to "5. Do your best." left all four gate names in place,
+so every name assertion still passed while the list stopped being an
+instruction. **The substance and the framing are separate properties**, and a
+test that checks only the list cannot see the difference. Both are now pinned.
+
+Trust-core detector: 71 invariants.
+
 ## v8.45.0
 
 ### F0: stop grinding against a gate that can never pass
