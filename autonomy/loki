@@ -4017,7 +4017,8 @@ cmd_why() {
         _why_json_head_sha="$(git rev-parse HEAD 2>/dev/null || echo "")"
         _LOKI_WHY_STATE="$state_file" _LOKI_WHY_COMPLETION="$completion_file" \
         _LOKI_WHY_HEAD_SHA="$_why_json_head_sha" \
-        _LOKI_WHY_LAST_ERROR="$loki_dir/state/LAST_ERROR.json" python3 - <<'WHYJSON'
+        _LOKI_WHY_LAST_ERROR="$loki_dir/state/LAST_ERROR.json" \
+        _LOKI_WHY_EFFICIENCY="$loki_dir/metrics/efficiency" python3 - <<'WHYJSON'
 import json, os
 def load(p):
     try:
@@ -4039,12 +4040,53 @@ comp_head = comp.get("head_sha", "")
 comp_is_stale = bool(state.get("status") in live_statuses) or bool(
     head_sha and comp_head and comp_head != head_sha
 )
+# Rework attribution, same source the human report and the completion summary
+# read. Without it the JSON surface -- the one CI and automation consume -- knew
+# only that a run hit its cap, not whether it was converging or thrashing. That
+# is exactly the distinction the human output was taught to make, so omitting it
+# here left the machine-readable path giving less than the printed one.
+#
+# Absent or unreadable records emit null rather than a zeroed object: a 0-of-0
+# split would read as "no rework", a claim the data does not support.
+_rework = None
+_effdir = os.environ.get("_LOKI_WHY_EFFICIENCY", "")
+if _effdir:
+    try:
+        import glob as _g
+        _prog = _rew = 0
+        _rcost = 0.0
+        for _f in _g.glob(os.path.join(_effdir, "iteration-*.json")):
+            try:
+                _d = json.load(open(_f))
+            except Exception:
+                continue
+            _st = str(_d.get("status", "")).lower()
+            if _st in ("completed", "ok", "success"):
+                _prog += 1
+            elif _st in ("failed", "error", "blocked"):
+                _rew += 1
+                _rcost += float(_d.get("cost_usd") or 0)
+        if _prog + _rew > 0:
+            _rework = {
+                "progress_iterations": _prog,
+                "rework_iterations": _rew,
+                "total_iterations": _prog + _rew,
+                "rework_cost_usd": round(_rcost, 4),
+                # The verdict a caller actually branches on, so every consumer
+                # does not re-derive the threshold and drift from the human
+                # report's wording.
+                "verdict": "thrashing" if _rew * 2 >= _prog + _rew else "converging",
+            }
+    except Exception:
+        _rework = None
+
 print(json.dumps({
     "state": state,
     "completion": comp,
     "last_error": last_error,
     "completion_is_stale": comp_is_stale,
     "head_sha": head_sha or None,
+    "rework": _rework,
 }, indent=2))
 WHYJSON
         return 0

@@ -5,7 +5,29 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.14.1
+## v8.14.2
+
+### The machine-readable surface knew less than the printed one
+
+v8.14.1 taught `loki why` to tell a converging run from a thrashing one. It
+taught only the human output. `loki why --json`, the surface CI and scripts
+consume, is a separate code path that returns before the human report is built,
+so it still emitted a bare status.
+
+An automated caller deciding whether to retry a capped build therefore had
+strictly less information than a person reading the same terminal. It now
+carries the same split, including a verdict field so callers branch on one
+shared judgement instead of each re-deriving the threshold:
+
+  "rework": { "progress_iterations": 0, "rework_iterations": 3,
+              "total_iterations": 3, "rework_cost_usd": 3.6,
+              "verdict": "thrashing" }
+
+With no efficiency records the field is null rather than a zeroed object. A
+0-of-0 split reads as "no rework happened", which the data does not support, and
+a caller branching on it would retry a run that should not be retried.
+
+
 
 ### loki why contradicted the summary that sent you to it
 
