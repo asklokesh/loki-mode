@@ -161,6 +161,22 @@ probe_case "the TS read path preserves cache fields" \
     'records.push({ ...(parsed as EfficiencyRecord), cache_read_tokens: 0 });' \
     bun test test/budget_cache_pricing.test.ts
 
+# --- the completion gates must stay connected to the runner ------------------
+# Both branches of the same conditional decide whether a run is DONE. A
+# disconnected council fails open into "never approves"; a bypassed supervised
+# gate fails open into "always approves with gates unchecked". Both were blind.
+probe_case "the runner still consults the council" \
+    "autonomy/run.sh" \
+    'elif type council_should_stop &>/dev/null \' \
+    'elif false \' \
+    bash tests/test-council-convergence-floor.sh
+
+probe_case "the supervised path still runs its gates" \
+    "autonomy/run.sh" \
+    '_loki_supervised_completion_gates_pass "${gate_failures:-}" && _loki_completion_ready=0' \
+    '_loki_completion_ready=0' \
+    bash tests/test-council-convergence-floor.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.

@@ -5,7 +5,27 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.22.2
+## v8.23.0
+
+### The completion gates could be disconnected with every test still green
+
+The completion council decides when a run is done. The supervised path has its
+own gate that blocks completion when an iteration reported failures. Both live in
+the same conditional in the runner, and neither connection was tested.
+
+Disconnecting the council means no run can ever be approved, which then looks
+like a model problem rather than a wiring bug. Bypassing the supervised gate
+means every supervised run reports complete with its gates unchecked. Both
+failure modes were silent: the council suites test the decision logic directly
+and never asked whether the runner still consults it.
+
+Both connections are now asserted, along with the helpers still being defined
+under the names their callers use, since a rename touching one side leaves the
+guard permanently false with no error anywhere.
+
+The detection audit covers sixteen invariants, each proven to fail when broken.
+
+
 
 ### The last cost route was checked and is clean
 

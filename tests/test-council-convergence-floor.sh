@@ -347,6 +347,55 @@ else
 fi
 
 echo
+# === WIRING: the runner must actually CONSULT the council ====================
+# Everything above tests council_should_stop and its floor directly. That proves
+# the DECISION logic and says nothing about whether run.sh still asks it.
+#
+# Found by mutation probe: replacing the runner's `elif type council_should_stop`
+# guard with `elif false` -- so no run can ever be council-approved -- left this
+# file and the wider council suite green. The council is the gate that decides a
+# run is done; a disconnected one fails open into "never approves", which then
+# looks like a model problem rather than a wiring bug.
+_RUN_SH="$REPO_ROOT/autonomy/run.sh"
+
+if grep -qE 'elif type council_should_stop &>/dev/null' "$_RUN_SH"; then
+    ok "WIRING: run.sh checks for council_should_stop before calling it"
+else
+    bad "WIRING: run.sh no longer consults the council -- no run can be approved"
+fi
+
+if grep -qF 'council_should_stop; then' "$_RUN_SH"; then
+    ok "WIRING: run.sh invokes council_should_stop"
+else
+    bad "WIRING: the council decision is never invoked"
+fi
+
+# The SUPERVISED branch of the same conditional. It blocks completion when the
+# iteration reported gate failures, so bypassing it makes every supervised run
+# report complete with its gates unchecked -- the same fail-open shape, one
+# branch over, and also blind before this.
+if grep -qF '_loki_supervised_completion_gates_pass "${gate_failures:-}" && _loki_completion_ready=0' "$_RUN_SH"; then
+    ok "WIRING: the supervised path still runs its completion gates"
+else
+    bad "WIRING: supervised completion no longer checks its gates -- it would pass unchecked"
+fi
+
+if grep -qF '_loki_supervised_completion_gates_pass()' "$_RUN_SH"; then
+    ok "WIRING: the supervised gate is defined under the name its caller uses"
+else
+    bad "WIRING: supervised gate definition and call site have diverged"
+fi
+
+# The function must still exist under the name the runner calls: a rename that
+# updates one side leaves the guard permanently false and the council silently
+# skipped, with no error anywhere.
+if grep -qF 'council_should_stop()' "$REPO_ROOT/autonomy/completion-council.sh"; then
+    ok "WIRING: council_should_stop is defined under the name the runner calls"
+else
+    bad "WIRING: council_should_stop definition and call site have diverged"
+fi
+
+
 echo "-----------------------------------------------------"
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] && echo "ALL CONVERGENCE-FLOOR TESTS PASSED" || echo "SOME TESTS FAILED"
