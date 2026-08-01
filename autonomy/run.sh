@@ -16613,6 +16613,21 @@ is_rate_limited() {
         return 0
     fi
 
+    # SELF-SUFFICIENT phrases: unambiguous on their own, and broken by the
+    # co-occurrence rule above. "quota exceeded" CONTAINS its own error word, so
+    # the alternation consumed "exceeded" as the rate-limit half and then found
+    # no error half left to match -- "API quota exceeded for project", the
+    # canonical quota rate-limit line, did not match at all.
+    #
+    # These stay narrow deliberately. A bare "429", a bare "retry-after", or an
+    # "X-RateLimit-*" header must still NOT qualify alone: those appear in the
+    # agent's own generated source, and treating them as a limit caused the
+    # multi-minute false waits the co-occurrence rule was added to stop.
+    if printf '%s\n' "$tail_txt" \
+        | grep -qiE '(quota exceeded|rate limit exceeded|too many requests)' 2>/dev/null; then
+        return 0
+    fi
+
     # Claude-specific: the explicit "resets Xam/pm" reset-time line is itself an
     # unambiguous provider rate-limit signal (the CLI only prints it on a limit).
     if printf '%s\n' "$tail_txt" | grep -qE 'resets [0-9]+[ap]m' 2>/dev/null; then

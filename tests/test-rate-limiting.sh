@@ -91,12 +91,29 @@ else
     log_fail "Failed to detect 'Rate Limit' text"
 fi
 
-log_test "is_rate_limited() detects 'rate-limit' (hyphenated)"
+# A BARE header must NOT trigger. This case previously asserted the opposite
+# and had been failing on unmodified code -- the expectation was written before
+# the co-occurrence rule, and never updated when the rule landed.
+#
+# The rule is deliberate: "X-RateLimit-Remaining: 0" appears in the agent's OWN
+# generated source (any HTTP client that reads rate-limit headers), and treating
+# it as a live provider limit caused multi-minute false waits mid-build. A
+# header with no error frame is not evidence the CALL was limited.
+log_test "is_rate_limited() ignores a bare X-RateLimit header (no error frame)"
 echo "X-RateLimit-Remaining: 0" > "$TEMP_DIR/test4.log"
 if is_rate_limited "$TEMP_DIR/test4.log"; then
-    log_pass "Detected 'rate-limit' (hyphenated)"
+    log_fail "A bare X-RateLimit header triggered a wait; generated code will false-positive"
 else
-    log_fail "Failed to detect 'rate-limit' (hyphenated)"
+    log_pass "Bare X-RateLimit header correctly ignored"
+fi
+
+# The same header WITH an error frame must trigger: that is a real failing call.
+log_test "is_rate_limited() detects a rate-limit header in an error frame"
+echo "Error: request failed, X-RateLimit-Remaining: 0" > "$TEMP_DIR/test4b.log"
+if is_rate_limited "$TEMP_DIR/test4b.log"; then
+    log_pass "Rate-limit header with an error frame detected"
+else
+    log_fail "A genuine rate-limited call was missed"
 fi
 
 log_test "is_rate_limited() detects 'too many requests'"
@@ -115,9 +132,20 @@ else
     log_fail "Failed to detect 'quota exceeded'"
 fi
 
-log_test "is_rate_limited() detects 'retry-after' header"
+# Same correction as the X-RateLimit case: a bare Retry-After is generated-code
+# noise, not proof the call was limited. Asserting it must trigger contradicted
+# the co-occurrence rule and had been red on unmodified code.
+log_test "is_rate_limited() ignores a bare Retry-After header (no error frame)"
 echo "Retry-After: 60" > "$TEMP_DIR/test7.log"
 if is_rate_limited "$TEMP_DIR/test7.log"; then
+    log_fail "A bare Retry-After triggered a wait; generated code will false-positive"
+else
+    log_pass "Bare Retry-After correctly ignored"
+fi
+
+log_test "is_rate_limited() detects Retry-After inside an HTTP error frame"
+echo "HTTP 429 Too Many Requests, Retry-After: 60" > "$TEMP_DIR/test7b.log"
+if is_rate_limited "$TEMP_DIR/test7b.log"; then
     log_pass "Detected 'Retry-After' header"
 else
     log_fail "Failed to detect 'Retry-After' header"

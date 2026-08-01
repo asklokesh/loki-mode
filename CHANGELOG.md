@@ -5,6 +5,48 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.30.0
+
+### The baseline guard found two probes running zero tests
+
+v8.29.0 added a baseline check to `mutation-probe.sh`: run the test on
+UNMODIFIED code first, and refuse (rc 67) if it is already red. Its first full
+run across all 45 trust-core invariants immediately found three cases whose
+prior PASS verdicts meant nothing.
+
+**Two probes had been executing zero tests.** They invoked
+`bun test test/budget_cache_pricing.test.ts` from the repo root, but that file
+lives under `loki-ts/`. Bun searched 536 files, matched nothing, and **exited
+0** -- so the probe saw success, reported the invariant proven, and never ran a
+line of it. Both now run via `cd loki-ts` and genuinely detect their mutations.
+
+This is the exit-code false-green shape: a command that never did the work
+returns the same 0 as one that did.
+
+### A rate-limit signal that could not match, and two stale expectations
+
+`tests/test-rate-limiting.sh` was genuinely red on unmodified code (24 passed,
+3 failed) and had been for some time. The three failures split two ways:
+
+**One was a real defect.** `is_rate_limited` requires a rate-limit token and an
+error token to co-occur, but "quota exceeded" CONTAINS its own error word: the
+alternation consumed `exceeded` as the rate-limit half and found no error half
+left. `API quota exceeded for project` -- the canonical quota rate-limit line --
+did not match at all, so the runner would treat a quota limit as a hard failure
+instead of backing off. Self-sufficient phrases now match on their own.
+
+**Two were stale expectations.** The cases asserted that a bare
+`X-RateLimit-Remaining: 0` and a bare `Retry-After: 60` must trigger a wait.
+That contradicts a deliberate design decision: those strings appear in the
+agent's OWN generated source, and treating them as a live provider limit caused
+multi-minute false waits mid-build. The expectations predate the co-occurrence
+rule and were never updated when it landed. They now assert the correct
+behaviour, with companion cases proving the same headers DO trigger inside a
+real error frame.
+
+Deliberately NOT widened: a bare `429`, a bare `retry-after`, or an
+`X-RateLimit-*` header still must not qualify alone.
+
 ## v8.29.0
 
 ### The same blind spot on the Python side, on an input-validation boundary

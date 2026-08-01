@@ -107,11 +107,15 @@ probe_case "trust metrics count cache tokens" \
 # --- invariants outside the trust core ---------------------------------------
 # Same standard, applied to the things a user notices first.
 
+# NOTE: these two run via `cd loki-ts` because the probe executes from the
+# repo root and the test file lives under loki-ts/. Without the cd, `bun test`
+# searched 536 files, matched NOTHING, and exited 0 -- so both cases reported
+# PASS while running zero tests. Found by the new baseline guard (rc 67).
 probe_case "the TS budget prices cache reads" \
     "loki-ts/src/runner/budget.ts" \
     '(cRead / 1_000_000) * readRate' \
     '(cRead / 1_000_000) * 0' \
-    bun test test/budget_cache_pricing.test.ts
+    bash -c 'cd loki-ts && bun test test/budget_cache_pricing.test.ts'
 
 probe_case "codex tiers resolve to distinct models" \
     "providers/codex.sh" \
@@ -159,7 +163,7 @@ probe_case "the TS read path preserves cache fields" \
     "loki-ts/src/runner/budget.ts" \
     'records.push(parsed as EfficiencyRecord);' \
     'records.push({ ...(parsed as EfficiencyRecord), cache_read_tokens: 0 });' \
-    bun test test/budget_cache_pricing.test.ts
+    bash -c 'cd loki-ts && bun test test/budget_cache_pricing.test.ts'
 
 # --- the completion gates must stay connected to the runner ------------------
 # Both branches of the same conditional decide whether a run is DONE. A
