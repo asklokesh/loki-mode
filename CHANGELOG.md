@@ -5,6 +5,62 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.50.0
+
+### A real run found two defects my tests could not
+
+Re-ran FireLater issue #24 on v8.49.0 against the v8.8.0 baseline. Measured:
+
+| | baseline v8.8.0 | v8.49.0 |
+|---|---:|---:|
+| iterations | 3 | **2** |
+| `mutation_integrity` | **3 of 3 fail, 0-1s each** | 2 fail, 3s each |
+| `code_review` | 281s median | 1s (skip fired) |
+| agent share of wall clock | -- | **93%** (1814s of 1941s) |
+
+The detector fix is confirmed on a real run: `mutation_integrity` went from
+failing in 0-1 seconds every iteration (detector missing, gate could never
+pass) to executing properly. Iterations dropped 3 to 2.
+
+**Then the run exposed two defects in the F0 work itself.**
+
+### THE HEADER TRAP -- F0 was comparing a banner, not a cause
+
+`mutation-findings.txt` and `mock-findings.txt` both open with a static banner:
+
+```
+# Test mutation findings (HIGH blocks this iteration)
+```
+
+byte-identical on every run. F0 took `head -1`, so
+`gate-stuck-mutation_integrity.last` had recorded **the banner**. Two
+completely different findings therefore compared EQUAL, and the valve would
+abort a run that was making real progress through different findings each
+iteration -- **the one direction this valve must never fail in.**
+
+Now takes the first non-comment, non-blank line and strips ANSI colour (the
+detectors emit it, so the same finding rendered with and without colour would
+otherwise compare unequal). Verified against the real artifacts: extracted
+cause is now an actual `[HIGH] frontend/src/...` finding.
+
+### mock_integrity was the top failing gate and was not wired
+
+It failed **3 times** in this run -- more than any other gate -- and was not
+connected to the stuck check, so an unfixable mock problem could grind
+indefinitely. Now wired, making three gates covered.
+
+### What this says about the plan
+
+`agent` is **93%** of wall clock (1814s of 1941s). Every speed knob shipped in
+v8.33.0-v8.35.0 targets the remaining 7%. `docs/WANG-PRINCIPLES-PLAN.md` says
+this plainly and blocks further gate-latency work until the agent call is
+measured.
+
+Also unfixed and recorded: `first code change: not recorded` -- the v8.35.0
+first-artifact signal did not fire on its first real exercise.
+
+Trust-core detector: 74 invariants.
+
 ## v8.49.0
 
 ### F4: the 1000-iteration default was an 8.3-day runaway ceiling

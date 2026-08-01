@@ -139,6 +139,36 @@ mkjson 2026-08-01T04:00:00Z "A DIFFERENT error: b.sh."
     && ok "a changed JSON cause keeps iterating" \
     || bad "aborted although the JSON cause changed"
 
+# --- THE HEADER TRAP: compare a real finding, never the banner ---------------
+# Found by a REAL run, not by these tests. mutation-findings.txt and
+# mock-findings.txt both open with a static banner ("# Test mutation findings
+# (HIGH blocks this iteration)") that is byte-identical every run. The first
+# implementation compared head -1, so it recorded the BANNER as the cause --
+# meaning two completely different findings compared equal and the valve would
+# abort a run that was making real progress. That is the one direction this
+# valve must never fail in.
+reset_state
+_hdr="$SCRATCH/.loki/quality/hdr.txt"
+hwrite() { printf '# Test mutation findings (HIGH blocks this iteration)\n%s\n' "$1" > "$_hdr"; }
+hprobe() {
+    env TARGET_DIR="$SCRATCH" bash -c '
+        . "$1"
+        if _loki_gate_stuck hgate "$2" "$3"; then echo STUCK; else echo CONTINUE; fi
+    ' _ "$HARNESS" "$_hdr" "$1"
+}
+rm -f "$SCRATCH/.loki/quality/gate-stuck-hgate.last" 2>/dev/null || true
+
+hwrite "[HIGH] fileA.ts:1 - problem A"; hprobe 3 >/dev/null
+hwrite "[HIGH] fileB.ts:9 - a COMPLETELY different problem"
+[ "$(hprobe 3)" = "CONTINUE" ] \
+    && ok "different findings under the same banner keep iterating" \
+    || bad "the banner is being compared, not the finding -- aborts a progressing run"
+
+hwrite "[HIGH] fileB.ts:9 - a COMPLETELY different problem"
+[ "$(hprobe 3)" = "STUCK" ] \
+    && ok "an identical finding under the banner still aborts" \
+    || bad "a genuinely repeated finding no longer aborts"
+
 # --- fail-safe: missing/unreadable inputs never abort ------------------------
 reset_state
 _missing="$(env TARGET_DIR="$SCRATCH" bash -c '

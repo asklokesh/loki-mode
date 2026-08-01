@@ -10646,7 +10646,21 @@ LOKI_STUCK_JSON
 )" || return 1
             ;;
         *)
-            cur="$(head -1 "$reason_file" 2>/dev/null)" || return 1
+            # SKIP the header. These files open with a static banner --
+            # "# Test mutation findings (HIGH blocks this iteration)" -- which is
+            # byte-identical on every run. Comparing it meant EVERY repeated
+            # failure looked "stuck", including a run making real progress
+            # through different findings each iteration. That is the one
+            # direction this valve must never fail in, and a real FireLater run
+            # is what exposed it: gate-stuck-mutation_integrity.last had
+            # recorded the banner, not a cause.
+            #
+            # Take the first line that is neither blank nor a comment, and strip
+            # ANSI colour (the detectors emit it, and the same finding rendered
+            # with and without colour would otherwise compare unequal).
+            cur="$(grep -vE '^[[:space:]]*(#|$)' "$reason_file" 2>/dev/null \
+                   | head -1 \
+                   | sed 's/\x1b\[[0-9;]*m//g')" || return 1
             ;;
     esac
     [ -n "$cur" ] || return 1
@@ -22932,6 +22946,19 @@ if __name__ == "__main__":
                         mk_count=$(track_gate_failure "mock_integrity")
                         gate_failures="${gate_failures}mock_integrity,"
                         log_warn "Mock integrity gate FAILED ($mk_count consecutive) - CRITICAL/HIGH mock problems"
+                        # F0, third gate. Measured on the v8.49.0 FireLater run:
+                        # mock_integrity failed 3 times -- MORE than any other
+                        # gate -- and was not wired to the stuck check, so an
+                        # unfixable mock problem could grind indefinitely.
+                        if _loki_gate_stuck "mock_integrity" \
+                            "${TARGET_DIR:-.}/.loki/quality/mock-findings.txt" "$mk_count"; then
+                            log_error "Mock integrity has failed $mk_count times for the SAME reason. Another iteration would reach the same verdict. Stopping instead of grinding."
+                            emit_event_json "gate_stuck" \
+                                "gate=mock_integrity" \
+                                "consecutive=$mk_count" 2>/dev/null || true
+                            save_state "${retry:-0}" "gate_stuck_mock_integrity" 20 2>/dev/null || true
+                            return 20
+                        fi
                         ;;
                     *)
                         _stg_ok=not_run

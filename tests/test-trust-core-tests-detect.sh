@@ -585,6 +585,15 @@ probe_case "an explicit iteration cap is never overridden" \
     'if [ -z "${LOKI_MAX_ITERATIONS:-}" ] \' 'if true \' \
     bash tests/test-iteration-cap-default.sh
 
+# The header trap, found by a REAL run. Findings files open with a static banner
+# that is byte-identical every iteration; comparing it makes two DIFFERENT
+# findings look identical and aborts a run that is making progress.
+probe_case "the stuck check compares a finding, not the banner" \
+    "autonomy/run.sh" \
+    "            cur=\"\$(grep -vE '^[[:space:]]*(#|\$)' \"\$reason_file\" 2>/dev/null \\" \
+    "            cur=\"\$(cat \"\$reason_file\" 2>/dev/null \\" \
+    bash tests/test-gate-stuck-abort.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
