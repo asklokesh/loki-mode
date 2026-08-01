@@ -2802,16 +2802,31 @@ _SESSION_MODEL_ALLOWLIST = ("haiku", "sonnet", "opus", "fable")
 # allowlist is unchanged) because it is an explicit live-run control.
 _START_MODEL_ALLOWLIST = ("haiku", "sonnet", "opus")
 
+# Provider-agnostic capability tiers. These are the vocabulary the picker offers
+# on a non-Claude provider, and they resolve per-provider through
+# providers/models.sh (loki_tier_alias): small -> fast, medium -> development,
+# high -> planning. Accepting them here is what makes the start-time picker work
+# on codex at all -- the Claude aliases above are meaningless there, so before
+# this every value a codex user could pick normalized to "" and was silently
+# dropped, and the run started on the provider default with no feedback.
+_START_MODEL_GENERIC_TIERS = ("small", "medium", "high")
+
 
 def _normalize_start_model(raw: str | None) -> str:
-    """Normalize a start-time model / advisor alias (haiku|sonnet|opus, no fable).
+    """Normalize a start-time model / advisor alias.
 
-    Same trim + lowercase + exact-match rule as _normalize_session_model, but on
-    the narrower _START_MODEL_ALLOWLIST. Returns "" for absent/invalid/fable so
+    Accepts the Claude aliases (haiku|sonnet|opus, no fable) and the generic
+    capability tiers (small|medium|high). Returns "" for absent/invalid/fable so
     callers can treat empty as "no selection" (engine uses its own default).
+
+    fable stays excluded: it is advisory-only and the runner collapses it to
+    opus, so offering it as a start-time execution model would be a cost
+    surprise. That reasoning is unchanged by adding the generic tiers.
     """
     val = (raw or "").strip().lower()
-    return val if val in _START_MODEL_ALLOWLIST else ""
+    if val in _START_MODEL_ALLOWLIST or val in _START_MODEL_GENERIC_TIERS:
+        return val
+    return ""
 
 
 class SessionModelRequest(BaseModel):
@@ -3976,19 +3991,30 @@ async def start_build(request: Request, body: StartBuildRequest):
         popen_env["LOKI_TARGET_DIR"] = str(workspace_dir)
         popen_env["LOKI_DIR"] = str(loki_dir)
     if start_model:
-        # EXACT-model pin (not the session-pin tier route): set all three tier
-        # models to the chosen alias so resolve_model_for_tier returns the alias
-        # for every tier and every iteration dispatches exactly the picked model.
-        # This is the honest start-time equivalent of the mid-flight override
-        # file, which run.sh clears at iteration 0. LOKI_SESSION_MODEL is set too
-        # for internal coherence (the run's own tier accounting/logging), but the
-        # env triple is the load-bearing dispatch-honesty mechanism: on the
-        # v7.104.0 stock config the session pin alone would remap opus->planning->
-        # sonnet and haiku->fast->sonnet, dispatching sonnet for both.
-        popen_env["LOKI_CLAUDE_MODEL_PLANNING"] = start_model
-        popen_env["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = start_model
-        popen_env["LOKI_CLAUDE_MODEL_FAST"] = start_model
-        popen_env["LOKI_SESSION_MODEL"] = start_model
+        if start_model in _START_MODEL_GENERIC_TIERS:
+            # A generic capability tier is provider-agnostic BY CONSTRUCTION --
+            # it names a capability class, not a model, and each provider
+            # resolves its own latest model for that class via
+            # providers/models.sh. Pinning the LOKI_CLAUDE_MODEL_* triple here
+            # would be actively wrong: those variables are inert on codex and
+            # every other non-Claude provider, so the pin would silently do
+            # nothing. LOKI_SESSION_MODEL is the correct and only lever.
+            popen_env["LOKI_SESSION_MODEL"] = start_model
+        else:
+            # EXACT-model pin (not the session-pin tier route): set all three tier
+            # models to the chosen alias so resolve_model_for_tier returns the alias
+            # for every tier and every iteration dispatches exactly the picked model.
+            # This is the honest start-time equivalent of the mid-flight override
+            # file, which run.sh clears at iteration 0. LOKI_SESSION_MODEL is set too
+            # for internal coherence (the run's own tier accounting/logging), but the
+            # env triple is the load-bearing dispatch-honesty mechanism: on the
+            # v7.104.0 stock config the session pin alone would remap
+            # opus->planning->sonnet and haiku->fast->sonnet, dispatching sonnet
+            # for both.
+            popen_env["LOKI_CLAUDE_MODEL_PLANNING"] = start_model
+            popen_env["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = start_model
+            popen_env["LOKI_CLAUDE_MODEL_FAST"] = start_model
+            popen_env["LOKI_SESSION_MODEL"] = start_model
     if advisor_model:
         # Opt-in Opus (or other) judge for code review; execution model unchanged.
         popen_env["LOKI_ADVISOR_MODEL"] = advisor_model
