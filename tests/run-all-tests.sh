@@ -740,6 +740,7 @@ run_test "all reporting surfaces agree about one run" "$SCRIPT_DIR/test-surfaces
 run_test "recorded exit codes match the failure contract" "$SCRIPT_DIR/test-exit-code-contract.sh"
 run_test "the receipt shows disabled gates" "$SCRIPT_DIR/test-receipt-shows-disabled-gates.sh"
 run_test "the public HTML receipt shows disabled gates" "$SCRIPT_DIR/test-html-receipt-disabled-gates.sh"
+run_test "the founder-decisions document is accurate" "$SCRIPT_DIR/test-founder-decisions-doc-accurate.sh"
 run_test "a user-installed reviewer takes part in a run" "$SCRIPT_DIR/test-installed-agent-reviewer.sh"
 # Skill modules are loaded INTO the agent's context and acted on, so a false
 # claim there is worse than no claim. Asserts the load-bearing ones against source.

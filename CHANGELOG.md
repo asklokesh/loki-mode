@@ -5,7 +5,26 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.19.3
+## v8.19.4
+
+### The two open trust questions are written down
+
+Two questions surfaced during this work that change what "Verified" means on a
+receipt, so they were deliberately left unanswered. They were recorded only in
+commit messages, which is where decisions go to be forgotten.
+
+They are now a document, each with the measurement that raised it, both sides of
+the argument, and the exact function where the change would go. The sharper of
+the two: a receipt can read VERIFIED with an empty gaps list while the security
+scan never ran, because an absent scan is deliberately not counted as a gap and
+there is a test asserting that.
+
+A test keeps the document honest. It re-checks every quotation against the
+source and re-measures the behaviour the document describes, so answering either
+question turns it red and forces the record to be updated rather than left
+stale.
+
+
 
 ### The forgery-accusation fix was one status string from breaking again
 
