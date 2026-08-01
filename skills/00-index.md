@@ -35,6 +35,8 @@
 | Legacy healing, modernization, archaeology | `healing.md` |
 | Plan deepening, knowledge extraction | `compound-learning.md` |
 | Managed Agents memory, multiagent council, flag hierarchy | `memory.md` |
+| Non-trivial change (>3 files, agent runtime, MINOR/MAJOR release) | `sdlc-fleet.md` |
+| Adding your own gate/reviewer/agent to the loop | `extending.md` |
 
 ## Module Descriptions
 
@@ -158,6 +160,20 @@
 - Legacy-healing-auditor code review specialist
 - Language-specific guides (COBOL, legacy Java, PHP, Python 2)
 - Full reference: `references/legacy-healing-patterns.md`
+
+### sdlc-fleet.md
+**When:** Any non-trivial change (feature touching >3 files, bug fix in agent
+runtime / council / memory / auto-spawn, MINOR or MAJOR release, cross-route
+parity change). Binding per CLAUDE.md, so this index must be able to route to it.
+- Six roles: Architect, Product Owner, Dev Fleet, SDET, Council Reviewers, Real-User QA
+- Unanimous 3-of-3 APPROVE required from the review council
+- Skip rules: typo fixes, docs-only edits, reverts, emergency hotfixes
+
+### extending.md
+**When:** Adding a custom reviewer/agent to the loop without editing engine files
+- The live seam: `loki agent install` -> `.loki/agents/installed.json`
+- What is strictly additive vs what can never displace a built-in gate
+- Honest status of `src/plugins/` (built, tested, not wired into the loop)
 
 ### providers.md (v5.0.0)
 **When:** Using non-Claude providers (Codex, Cline, Aider), understanding degraded mode

@@ -1,12 +1,12 @@
 {
-  "key": "bc5a85bc97f40c25d5e620525596fad507e761c4cf181f4894d0813e0679dcd1",
+  "key": "1700853c93cc9e0a51a848e80616363213eb596f4e3103a4394763e1e62ed328",
   "result": {
     "appId": "acme",
-    "root": "/Users/lokesh/git/lokimode-anthropic/tests/fixtures/project-graph/acme",
+    "root": "/Users/lokesh/git/lokimode-anthropic/.claude/worktrees/pre-push-scoped-pytest/tests/fixtures/project-graph/acme",
     "members": [
-      "/Users/lokesh/git/lokimode-anthropic/tests/fixtures/project-graph/acme/ui",
-      "/Users/lokesh/git/lokimode-anthropic/tests/fixtures/project-graph/acme/api",
-      "/Users/lokesh/git/lokimode-anthropic/tests/fixtures/project-graph/acme/service"
+      "/Users/lokesh/git/lokimode-anthropic/.claude/worktrees/pre-push-scoped-pytest/tests/fixtures/project-graph/acme/ui",
+      "/Users/lokesh/git/lokimode-anthropic/.claude/worktrees/pre-push-scoped-pytest/tests/fixtures/project-graph/acme/api",
+      "/Users/lokesh/git/lokimode-anthropic/.claude/worktrees/pre-push-scoped-pytest/tests/fixtures/project-graph/acme/service"
     ]
   }
 }

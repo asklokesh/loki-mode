@@ -155,7 +155,27 @@ else
     bad "corrupt installed.json fail-safe" "baseline='$BASE' got='$GOT'"
 fi
 
-# --- 6. the manifest's executable field was never run ------------------------
+# --- 6. production invocation shape: LOKI_TARGET_DIR is NOT exported ---------
+# run.sh does not export LOKI_TARGET_DIR at the selection site, so in production
+# hub_install._target_dir() falls back to the heredoc's getcwd(). The cases above
+# set the var explicitly; this one proves the real, unset-var path also works --
+# otherwise the seam would be green in tests and dead for actual users.
+GOT="$(cd "$WORK/proj" && env -u LOKI_TARGET_DIR \
+    LOKI_AGENTS_TYPES_FILE="$TYPES" \
+    LOKI_REVIEW_DIFF_FILE="$WORK/a11y.diff" \
+    LOKI_REVIEW_FILES_FILE="$WORK/a11y.files" \
+    LOKI_REVIEW_HEALING_ACTIVE="false" \
+    LOKI_REVIEW_COMPLEXITY="standard" \
+    python3 "$SEL_PY" 2>/dev/null | python3 -c "
+import sys, json
+print(','.join(r['name'] for r in json.load(sys.stdin)['reviewers']))
+")"
+case ",$GOT," in
+    *,my-a11y-auditor,*) ok "fires with LOKI_TARGET_DIR unset (real run.sh invocation shape)" ;;
+    *) bad "unset LOKI_TARGET_DIR" "agent did not fire: $GOT" ;;
+esac
+
+# --- 7. the manifest's executable field was never run ------------------------
 if grep -q "THIS_MUST_NEVER_RUN" "$WORK/proj/.loki/agents/installed.json" 2>/dev/null; then
     bad "postinstall not stored" "executable field persisted into installed.json"
 else

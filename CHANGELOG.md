@@ -5,7 +5,45 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.11.0
+## v8.12.0
+
+### The scoped-change profile was dead on every real issue run
+
+v8.10.0 added a profile that skips greenfield-only phases for a scoped issue
+fix. It never armed. Two independent reasons, both found by running the real
+code path rather than a fixture.
+
+The spec arrives as a POSITIONAL argument: `loki start owner/repo#123` writes
+.loki/prd-issue-N.md and hands run.sh that path directly. The check read only an
+environment variable that is never set on that path. It also ran at source time,
+before argument parsing, so the spec was empty even when supplied.
+
+And it tested for a .git DIRECTORY. In a git worktree or a submodule, .git is a
+FILE, so every worktree run was classified as greenfield. The check now asks git
+whether it is inside a work tree.
+
+### Test gates could hang a run forever
+
+Language test gates ran with no wall-clock bound, so a hung test suite hung the
+whole run with no terminal and no signal. They are now bounded by a shared
+timeout helper.
+
+The helper matters more than the cap: stock macOS ships neither timeout nor
+gtimeout, so a bare timeout prefix resolves to command-not-found and turns every
+gate into a false failure. The probe falls back across the available binaries and
+degrades to running unbounded rather than failing closed on a missing tool.
+
+### Skill documentation that lied to the agent
+
+The skill modules are loaded into the agent's context and acted upon, so an
+inaccurate claim is worse than no claim. Claims in the model-selection and index
+modules were verified against source and corrected, and a test now asserts they
+stay accurate.
+
+A new module documents how to extend the engine at the orchestration layer
+without editing engine files.
+
+
 
 ### The iteration cap now looks at evidence before cutting a run off
 

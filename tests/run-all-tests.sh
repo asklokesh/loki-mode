@@ -215,6 +215,7 @@ run_test "Doctor JSON Sentrux Parity (Dev4)" "$SCRIPT_DIR/test-doctor-json-sentr
 run_test "Receipt Signing Discoverability" "$SCRIPT_DIR/test-receipt-signing-discoverability.sh"
 run_test "Dashboard Nav UAT (Dev5)" "$SCRIPT_DIR/test-dashboard-nav-uat.sh"
 run_test "Pytest Gate Timeout (Dev6)" "$SCRIPT_DIR/test-pytest-gate-timeout.sh"
+run_test "Go/Cargo Gate Timeout" "$SCRIPT_DIR/test-go-cargo-gate-timeout.sh"
 # Python tests (Dev2 + Dev7) -- registered via tiny wrapper scripts so the
 # bash runner (which expects a single executable file per entry) can include
 # them alongside the bash tests.
@@ -603,7 +604,6 @@ run_test "F3 Port Detection" "$SCRIPT_DIR/test-f3-port-detection.sh"
 run_test "Hard Deadline Confinement" "$SCRIPT_DIR/test-hard-deadline-confinement.sh"
 run_test "Honest Gate Status" "$SCRIPT_DIR/test-honest-gate-status.sh"
 run_test "Human Input Directive" "$SCRIPT_DIR/test-human-input-directive.sh"
-run_test "Installed Agent Reviewer" "$SCRIPT_DIR/test-installed-agent-reviewer.sh"
 run_test "Isolation Dial" "$SCRIPT_DIR/test-isolation-dial.sh"
 run_test "Iteration Card Plain" "$SCRIPT_DIR/test-iteration-card-plain.sh"
 run_test "Iteration Complete Accuracy" "$SCRIPT_DIR/test-iteration-complete-accuracy.sh"
@@ -731,6 +731,9 @@ run_test "scoped issue fix skips greenfield-only phases" "$SCRIPT_DIR/test-scope
 run_test "a force-stop reports failure, not success" "$SCRIPT_DIR/test-force-stop-exit-code.sh"
 run_test "the iteration cap considers evidence but stays a cap" "$SCRIPT_DIR/test-iteration-grace.sh"
 run_test "a user-installed reviewer takes part in a run" "$SCRIPT_DIR/test-installed-agent-reviewer.sh"
+# Skill modules are loaded INTO the agent's context and acted on, so a false
+# claim there is worse than no claim. Asserts the load-bearing ones against source.
+run_test "skill docs match source (gate flags, providers, tiers, index routing, seam)" "$SCRIPT_DIR/test-skill-doc-accuracy.sh"
 run_test "proof md (paste-able receipt, one renderer)" "$SCRIPT_DIR/test-proof-md.sh"
 run_test "air-gapped read-only path (egress severed)" "$SCRIPT_DIR/test-airgap-commands.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"

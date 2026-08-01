@@ -32,7 +32,7 @@ Claude Fable 5 (alias `fable`, full id `claude-fable-5`) is Anthropic's most cap
 
 ### Mid-flight model switching
 
-You can change the model a **live run** uses, from the dashboard or by writing a state file. The switch applies at the **next iteration boundary** (each iteration spawns a fresh `claude -p`, which fixes the model per invocation, so it never changes mid-invocation). The override applies to the **current run only**: the runner clears a leftover override at the start of a fresh run, so a switch never silently carries into future runs. The override is also clamped by `LOKI_MAX_TIER`: if the operator set a cost ceiling, an override above it is clamped down with one honest log line, and the dashboard reports the clamped effective model. The clamp is scoped, not blanket: on the override path a `sonnet` ceiling downgrades only `fable` (to `PROVIDER_MODEL_DEVELOPMENT`, opus by default), while a plain `opus` override stays opus; a `haiku` ceiling pins to `PROVIDER_MODEL_FAST`; an `opus` ceiling caps only `fable` back to opus. (The clamp is enforced on the bash runner, which is the live `start` route; the experimental Bun runner does not yet port it.)
+You can change the model a **live run** uses, from the dashboard or by writing a state file. The switch applies at the **next iteration boundary** (each iteration spawns a fresh `claude -p`, which fixes the model per invocation, so it never changes mid-invocation). The override applies to the **current run only**: the runner clears a leftover override at the start of a fresh run, so a switch never silently carries into future runs. The override is also clamped by `LOKI_MAX_TIER`: if the operator set a cost ceiling, an override above it is clamped down with one honest log line, and the dashboard reports the clamped effective model. The clamp is scoped, not blanket: on the override path a `sonnet` ceiling downgrades only `fable` (to `PROVIDER_MODEL_DEVELOPMENT`, sonnet by default per `providers/claude.sh:61`), while a plain `opus` override stays opus; a `haiku` ceiling pins to `PROVIDER_MODEL_FAST`; an `opus` ceiling caps only `fable` back to opus. (The clamp is enforced on the bash runner, which is the live `start` route; the experimental Bun runner does not yet port it.)
 
 - Dashboard: the Model selector in the session-control panel. The Fable option shows its 2x-Opus cost; an inline notice discloses the iteration-boundary timing. It calls `POST /api/session/model`.
 - File / CLI: write an allowlisted alias (`haiku`, `sonnet`, `opus`, `fable`) to `.loki/state/model-override`. Empty or absent file reverts to the tier mapping. Invalid content is ignored (the runtime warns once). The value is allowlist-validated because it is fed straight into `claude --model`.
@@ -58,7 +58,7 @@ For diffs that move money or mutate infrastructure (payments, billing, spend aut
 
 ### Cost estimate honesty
 
-`loki plan` quotes the model the runner actually dispatches, on **every** path, for the levers the runner honors. This includes the stock no-lever default: the `sonnet` session pin resolves through the development tier to opus, so the quote names Opus (not Sonnet) on the default path. Set `LOKI_SESSION_MODEL=fable`, or have a pending `.loki/state/model-override` of `fable`, and the estimate uses Fable's $10/$50 pricing with a 2x-Opus note. The quote, the dashboard `effective` model, and the actual `claude --model` argument always agree on both routes: the session-pin tier route (no override) and the override-path clamp (override present) are each mirrored exactly in the estimator and the dashboard, so the same lever that changes the quote changes the run. `LOKI_MAX_TIER` is applied to the quote too, so the estimate never quotes a model above the operator's cost ceiling. (`LOKI_MODEL` is not a session lever and does not affect the run; use `LOKI_SESSION_MODEL`.)
+`loki plan` quotes the model the runner actually dispatches, on **every** path, for the levers the runner honors. This includes the stock no-lever default: the `sonnet` session pin resolves through the development tier to sonnet, so the quote names Sonnet on the default path (`providers/claude.sh:61` sets `CLAUDE_DEFAULT_DEVELOPMENT="sonnet"`, and the estimator mirrors it at `autonomy/loki:17378-17382`; a stock `loki plan` prints `Model distribution: Sonnet x1`). Set `LOKI_SESSION_MODEL=fable`, or have a pending `.loki/state/model-override` of `fable`, and the estimate uses Fable's $10/$50 pricing with a 2x-Opus note. The quote, the dashboard `effective` model, and the actual `claude --model` argument always agree on both routes: the session-pin tier route (no override) and the override-path clamp (override present) are each mirrored exactly in the estimator and the dashboard, so the same lever that changes the quote changes the run. `LOKI_MAX_TIER` is applied to the quote too, so the estimate never quotes a model above the operator's cost ceiling. (`LOKI_MODEL` is not a session lever and does not affect the run; use `LOKI_SESSION_MODEL`.)
 
 **Where the dispatched model is disclosed (precisely):**
 - Override path (a `.loki/state/model-override` alias): the runner logs the override and the clamp line (`model override: <model>`, plus the one honest clamp-down log line when `LOKI_MAX_TIER` reduces it); the dashboard `GET /api/session/model` `effective` field reports the clamped model.
@@ -68,14 +68,29 @@ For diffs that move money or mutate infrastructure (payments, billing, spend aut
 
 ## Multi-Provider Support (v5.0.0)
 
-Loki Mode supports five AI providers. Claude has full features; all others run in **degraded mode** (sequential execution only, no Task tool, no parallel agents).
+Loki Mode supports five AI providers. The authoritative list is
+`SUPPORTED_PROVIDERS` in `providers/loader.sh:8`; each provider's capability
+flags live in its own `providers/<name>.sh`. Claude has full features. Every
+other provider runs sequentially (no Task tool, no parallel agents), but only
+those with `PROVIDER_DEGRADED=true` are flagged degraded.
 
-| Provider | Full Features | Degraded | CLI Flag |
-|----------|---------------|----------|----------|
-| **Claude Code** | Yes | No | `--provider claude` (default) |
-| **OpenAI Codex CLI** | No | Yes | `--provider codex` |
-| **Cline CLI** | No | Yes | `--provider cline` |
-| **Aider** | No | Yes | `--provider aider` |
+| Provider | Full Features | `PROVIDER_DEGRADED` | CLI Flag |
+|----------|---------------|---------------------|----------|
+| **Claude Code** | Yes | false (`providers/claude.sh:104`) | `--provider claude` (default) |
+| **OpenAI Codex CLI** | No | true (`providers/codex.sh:180`) | `--provider codex` |
+| **Cline CLI** | No | false (`providers/cline.sh:97`) | `--provider cline` |
+| **Aider** | No | true (`providers/aider.sh:95`) | `--provider aider` |
+| **opencode** | No | false (`providers/opencode.sh:66`) | `--provider opencode` |
+
+Only **codex** and **aider** are flagged degraded. Cline and opencode are
+sequential but not degraded, so do not describe them as degraded-mode providers.
+
+**opencode** is the model-agnostic route: it reaches 75+ model providers, so it
+is the path to cheap/open models. It is sequential like the others
+(`PROVIDER_HAS_SUBAGENTS=false`, `PROVIDER_HAS_PARALLEL=false`,
+`PROVIDER_HAS_TASK_TOOL=false` at `providers/opencode.sh:61-63`) but it does
+support MCP (`PROVIDER_HAS_MCP=true`, `:64`), which is why it is not marked
+degraded.
 
 **Degraded mode limitations:**
 - No Task tool (cannot spawn subagents)

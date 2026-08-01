@@ -657,16 +657,29 @@ loki_detect_scoped_change() {
 
     # Greenfield is not a scoped change: no repo, or a repo with almost no
     # history, means we are building something new.
+    #
+    # Ask git whether this is a work tree rather than testing for a .git
+    # DIRECTORY: in a git worktree (and in a submodule) .git is a FILE, so the
+    # old -d test rejected every worktree-based run -- including the parallel
+    # workflow streams this project runs by default. rev-parse is true for a
+    # plain clone, a worktree, and a submodule alike, and replaces two
+    # subprocesses' worth of checking with one.
     local target="${TARGET_DIR:-.}"
-    [ -d "$target/.git" ] || return 1
+    git -C "$target" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
     local commits
     commits="$(git -C "$target" rev-list --count HEAD 2>/dev/null || echo 0)"
     [ "${commits:-0}" -ge 5 ] || return 1
 
     # An issue-sourced spec is the canonical scoped change: someone filed a
     # discrete request against code that already exists.
+    #
+    # The spec path is passed in by the caller ($1). It used to be read only
+    # from LOKI_PRD_FILE / LOKI_ISSUE_REF, but `loki start <issue>` writes
+    # .loki/prd-issue-N.md and hands run.sh that path as a POSITIONAL argument,
+    # so neither variable was ever set and this check could not fire.
+    local spec="${1:-${LOKI_PRD_FILE:-}}"
     [ -n "${LOKI_ISSUE_REF:-}" ] && return 0
-    case "${LOKI_PRD_FILE:-}" in
+    case "$spec" in
         *prd-issue-*) return 0 ;;
     esac
 
@@ -674,7 +687,7 @@ loki_detect_scoped_change() {
 }
 
 loki_apply_scoped_change_profile() {
-    loki_detect_scoped_change || return 0
+    loki_detect_scoped_change "${1:-}" || return 0
 
     # Off: cannot affect the correctness of a scoped change to existing code.
     : "${LOKI_PHASE_WEB_RESEARCH:=false}"
@@ -10597,17 +10610,38 @@ print("REPEATED_GATE_BLOCKER (PRIORITY): action=escalate gate=%s count=%d thresh
 # Usage: _loki_run_pytest_with_timeout <target_dir> [pytest_args...]
 # Stdout: combined pytest output
 # Exit: 0 on pass, non-zero on fail. Exit 124 indicates the timeout fired.
+# Portable timeout-prefix probe, shared by every gate that must be wall-clock
+# bounded. Stock macOS ships NEITHER `timeout` NOR `gtimeout` (gtimeout arrives
+# with coreutils), so a bare `timeout` would resolve to "command not found"
+# (exit 127) and flip test_passed=false on every macOS run -- turning a rare
+# hang into a universal false RED. When no timeout binary exists we emit an
+# EMPTY prefix and run unbounded, which is the pre-existing behaviour.
+#
+# Usage: _loki_timeout_prefix <seconds> <gate-label>   (writes words to stdout)
+#   local _cmd=(); read -r -a _cmd <<< "$(_loki_timeout_prefix 300 'go test')"
+#   "${_cmd[@]}" go test ./...
+_loki_timeout_prefix() {
+    local secs="$1" label="${2:-gate}"
+    if command -v gtimeout >/dev/null 2>&1; then
+        printf 'gtimeout %ss' "$secs"
+    elif command -v timeout >/dev/null 2>&1; then
+        printf 'timeout %ss' "$secs"
+    else
+        # >&2 is LOAD-BEARING: this function's STDOUT becomes the command-prefix
+        # array at every call site. log_warn writes to stdout (run.sh:1684), so
+        # without this redirect the warning text itself would be executed as the
+        # command -> exit 127 -> test_passed=false on every box lacking a timeout
+        # binary (stock macOS). That would be a universal false RED, strictly
+        # worse than the unbounded hang this helper exists to prevent.
+        log_warn "Neither gtimeout nor timeout available; ${label} will run unbounded (install coreutils on macOS)" >&2
+    fi
+}
+
 _loki_run_pytest_with_timeout() {
     local target_dir="$1"; shift
     local pytest_timeout="${LOKI_PYTEST_TIMEOUT:-${LOKI_GATE_TIMEOUT:-300}}"
     local _to_cmd=()
-    if command -v gtimeout >/dev/null 2>&1; then
-        _to_cmd=(gtimeout "${pytest_timeout}s")
-    elif command -v timeout >/dev/null 2>&1; then
-        _to_cmd=(timeout "${pytest_timeout}s")
-    else
-        log_warn "Neither gtimeout nor timeout available; pytest gate will run unbounded (install coreutils on macOS)"
-    fi
+    read -r -a _to_cmd <<< "$(_loki_timeout_prefix "$pytest_timeout" 'pytest gate')"
     (cd "$target_dir" && "${_to_cmd[@]}" pytest "$@" 2>&1)
 }
 
@@ -11081,9 +11115,8 @@ sys.stdout.write(t.strip())
             test_runner="unittest"
             local output unittest_exit _ut_to
             _ut_to="${LOKI_PYTEST_TIMEOUT:-${LOKI_GATE_TIMEOUT:-300}}"
-            local _ut_cmd=(timeout "${_ut_to}s")
-            command -v gtimeout &>/dev/null && _ut_cmd=(gtimeout "${_ut_to}s")
-            command -v timeout &>/dev/null || command -v gtimeout &>/dev/null || _ut_cmd=()
+            local _ut_cmd=()
+            read -r -a _ut_cmd <<< "$(_loki_timeout_prefix "$_ut_to" 'unittest gate')"
             output=$(cd "${TARGET_DIR:-.}" && "${_ut_cmd[@]}" python3 -m unittest discover -p 'test_*.py' 2>&1)
             unittest_exit=$?
             if [ "$unittest_exit" -eq 124 ]; then
@@ -11098,19 +11131,46 @@ sys.stdout.write(t.strip())
     fi
 
     # Go
+    # Wall-clock bounded like every other runner above. `go test` self-imposes
+    # -timeout 10m PER TEST BINARY, but `./...` runs one binary per package, so
+    # the AGGREGATE is unbounded -- and a test blocked in a cgo call or a syscall
+    # can outlive that panic. `cargo test` has no default timeout at all. Without
+    # this the gate hangs the whole iteration with no verdict.
+    # $gate_timeout is NOT in scope here (it is declared inside the package.json
+    # block), so read LOKI_GATE_TIMEOUT directly.
     if [ "$test_runner" = "none" ] && [ -f "${TARGET_DIR:-.}/go.mod" ] && command -v go &>/dev/null; then
         test_runner="go-test"
-        local output
-        output=$(cd "${TARGET_DIR:-.}" && go test ./... 2>&1) || test_passed=false
-        details="go test: $(echo "$output" | tail -3 | tr '\n' ' ')"
+        local output go_exit _go_to _go_cmd=()
+        _go_to="${LOKI_GATE_TIMEOUT:-300}"
+        read -r -a _go_cmd <<< "$(_loki_timeout_prefix "$_go_to" 'go test gate')"
+        output=$(cd "${TARGET_DIR:-.}" && "${_go_cmd[@]}" go test ./... 2>&1)
+        go_exit=$?
+        if [ "$go_exit" -eq 124 ]; then
+            test_passed=false
+            log_warn "go test gate timed out after ${_go_to}s (exit 124)"
+            details="go test: TIMED OUT after ${_go_to}s -- $(echo "$output" | tail -3 | tr '\n' ' ')"
+        else
+            [ "$go_exit" -ne 0 ] && test_passed=false
+            details="go test: $(echo "$output" | tail -3 | tr '\n' ' ')"
+        fi
     fi
 
     # Rust
     if [ "$test_runner" = "none" ] && [ -f "${TARGET_DIR:-.}/Cargo.toml" ] && command -v cargo &>/dev/null; then
         test_runner="cargo-test"
-        local output
-        output=$(cd "${TARGET_DIR:-.}" && cargo test 2>&1) || test_passed=false
-        details="cargo test: $(echo "$output" | tail -3 | tr '\n' ' ')"
+        local output cargo_exit _cargo_to _cargo_cmd=()
+        _cargo_to="${LOKI_GATE_TIMEOUT:-300}"
+        read -r -a _cargo_cmd <<< "$(_loki_timeout_prefix "$_cargo_to" 'cargo test gate')"
+        output=$(cd "${TARGET_DIR:-.}" && "${_cargo_cmd[@]}" cargo test 2>&1)
+        cargo_exit=$?
+        if [ "$cargo_exit" -eq 124 ]; then
+            test_passed=false
+            log_warn "cargo test gate timed out after ${_cargo_to}s (exit 124)"
+            details="cargo test: TIMED OUT after ${_cargo_to}s -- $(echo "$output" | tail -3 | tr '\n' ' ')"
+        else
+            [ "$cargo_exit" -ne 0 ] && test_passed=false
+            details="cargo test: $(echo "$output" | tail -3 | tr '\n' ' ')"
+        fi
     fi
 
     # node --test (built-in Node test runner) -- config-less fallback (task #79).
@@ -24237,6 +24297,15 @@ main() {
     else
         set --
     fi
+
+    # Re-apply the scoped-change profile now that PRD_PATH is known.
+    #
+    # The module-scope call runs at source time, BEFORE this argument parsing,
+    # so the spec path was always empty there and an issue-sourced build could
+    # never be recognised. Re-running it here is idempotent: the profile assigns
+    # with := so anything already set (including an explicit operator override)
+    # is left untouched, and a non-scoped run still returns immediately.
+    loki_apply_scoped_change_profile "$PRD_PATH"
 
     # Validate PRD if provided
     if [ -n "$PRD_PATH" ] && [ ! -f "$PRD_PATH" ]; then
