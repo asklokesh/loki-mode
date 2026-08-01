@@ -5,6 +5,45 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.39.0
+
+### Auditing the rest of the packaging, and a false alarm worth recording
+
+v8.38.0 fixed four detectors that never shipped. That gap was found by
+accident, from telemetry -- so this audits the general case: **every** file the
+runtime shells out to, derived from all four entry points (`loki`, `run.sh`,
+`completion-council.sh`, `app-runner.sh`).
+
+**Result: no other gaps.** The detectors were the only ones. That is a real
+finding, recorded rather than turned into a fix that was not needed.
+
+### The 55-file false alarm
+
+The first audit reported 55 missing files -- including `autonomy/run.sh` itself,
+which is obviously shipped. Cause:
+
+```
+npm pack --dry-run 2>&1 > file     # WRONG: listing goes to the terminal
+npm pack --dry-run > file 2>&1     # right
+```
+
+npm writes the file listing to **stderr**. With the redirects in the wrong
+order, the capture held 10 lines of build chatter instead of 730, and every
+"is X in the listing" check failed against an empty haystack.
+
+Same shape as the grep-absence errors that appeared three times earlier in this
+session: **an empty result is not evidence, it is an absent measurement.**
+
+### Both directions now guarded
+
+- a **vacuity guard**: if the `npm pack` listing has fewer than 50 entries, the
+  test fails loudly rather than passing on assertions that prove nothing
+- the check is **generalised** beyond detectors: dropping `learning/` from
+  `files[]` -- unrelated to any detector -- now turns the test red, where the
+  original assertions would not have noticed
+
+Trust-core detector: 60 invariants.
+
 ## v8.38.0
 
 ### Four quality gates were broken for every npm user, on every iteration

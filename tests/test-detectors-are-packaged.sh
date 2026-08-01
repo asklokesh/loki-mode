@@ -83,7 +83,24 @@ done
 # files[] can be right while an .npmignore or a pack quirk still drops it, so
 # the authoritative check is the tarball itself.
 if command -v npm >/dev/null 2>&1; then
+    # NOTE the 2>&1 INSIDE the substitution: npm writes the file listing to
+    # STDERR. `npm pack --dry-run 2>&1 > file` (redirect order reversed) sends
+    # only build chatter to the file and the listing to the terminal, giving a
+    # ~10-line capture. A "is X in the listing" check against that empty haystack
+    # reports EVERY file as missing -- which happened while auditing this, and
+    # produced a 55-file false alarm including run.sh itself.
     pack_out="$(npm pack --dry-run 2>&1 || true)"
+
+    # Vacuity guard: a substring search cannot fail against an empty haystack in
+    # the direction that matters either. If the listing looks implausibly short,
+    # the assertions below prove nothing and must say so rather than pass.
+    _pack_lines="$(printf '%s\n' "$pack_out" | grep -c 'npm notice' || true)"
+    if [ "${_pack_lines:-0}" -lt 50 ]; then
+        bad "npm pack listing has only ${_pack_lines:-0} entries -- capture is broken, tarball assertions are vacuous"
+    else
+        ok "npm pack listing captured ($_pack_lines entries)"
+    fi
+
     if [ -z "$pack_out" ]; then
         echo "  SKIP: npm pack produced no output"
     else
@@ -136,6 +153,41 @@ case "$_mock_branch" in
     *)
         bad "mock-integrity skips silently -- an unrun gate indistinguishable from a clean one" ;;
 esac
+
+# --- EVERY runtime dependency, not just the detectors ------------------------
+# The detector gap was found by accident, from telemetry. The general rule is
+# that ANY file the runtime shells out to must ship, so this derives the full
+# set from the four entry points rather than trusting that detectors were the
+# only case. Audited on 2026-08-01: detectors were indeed the only gap, and this
+# keeps that true.
+if command -v npm >/dev/null 2>&1 && [ "${_pack_lines:-0}" -ge 50 ]; then
+    _dep_missing="$(LOKI_PACK="$pack_out" python3 - <<'PY'
+import os, pathlib, re
+tar = os.environ["LOKI_PACK"]
+missing = set()
+for f in ("autonomy/loki", "autonomy/run.sh",
+          "autonomy/completion-council.sh", "autonomy/app-runner.sh"):
+    p = pathlib.Path(f)
+    if not p.exists():
+        continue
+    for m in re.findall(
+            r'\$\{?(?:_LOKI_SCRIPT_DIR|SCRIPT_DIR|PROJECT_DIR)\}?/'
+            r'((?:\.\./)?[a-zA-Z0-9/_.-]+\.(?:sh|py))', p.read_text()):
+        rel = m.replace("../", "")
+        # The reference is relative to autonomy/; resolve to a real repo path.
+        real = next((c for c in (rel, f"autonomy/{rel}", f"autonomy/lib/{rel}")
+                     if pathlib.Path(c).exists()), None)
+        if real and real not in tar:
+            missing.add(real)
+print(" ".join(sorted(missing)))
+PY
+)"
+    if [ -z "$_dep_missing" ]; then
+        ok "every runtime dependency of the four entry points is packaged"
+    else
+        bad "runtime files referenced but NOT packaged:$_dep_missing"
+    fi
+fi
 
 echo ""
 echo "  Passed:     $PASS"

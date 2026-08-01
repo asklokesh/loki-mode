@@ -470,6 +470,12 @@ probe_case "a missing detector still fail-closes" \
         return 0' \
     bash tests/test-detectors-are-packaged.sh
 
+# Generalised packaging check: ANY runtime dependency, not only detectors.
+# Dropping learning/ (unrelated to detectors) must go red.
+probe_case "every runtime dependency stays packaged" \
+    "package.json" '"learning/",' '' \
+    bash tests/test-detectors-are-packaged.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
