@@ -397,6 +397,33 @@ for _gate in council_checklist_gate council_heldout_gate \
     fi
 done
 
+# The VOTE itself. council_evaluate runs the hard gates, aggregates votes and
+# applies the devil's advocate; a true return prints "PROJECT APPROVED" and
+# writes the .loki/COMPLETED marker. Bypassing it approves every run with no
+# vote taken at all, which is a stronger failure than any single gate.
+#
+# The circuit breaker beside it was probed too and is genuinely guarded -- worth
+# recording, so nobody re-derives whether it was ever checked.
+if grep -qF 'if council_evaluate; then' "$_COUNCIL_SH"; then
+    ok "WIRING: the council runs its evaluation before approving"
+else
+    bad "WIRING: council_evaluate is bypassed -- runs would be approved with no vote"
+fi
+
+if grep -qF 'council_evaluate()' "$_COUNCIL_SH"; then
+    ok "WIRING: council_evaluate is defined under the name its caller uses"
+else
+    bad "WIRING: council_evaluate definition and call site have diverged"
+fi
+
+# Approval must still be what writes the COMPLETED marker: a marker written
+# outside the approved branch would mean "done" without the vote.
+if grep -qF 'Council approved at iteration' "$_COUNCIL_SH"; then
+    ok "WIRING: the COMPLETED marker is written from the approval path"
+else
+    bad "WIRING: the completion marker is no longer tied to council approval"
+fi
+
 # The SUPERVISED branch of the same conditional. It blocks completion when the
 # iteration reported gate failures, so bypassing it makes every supervised run
 # report complete with its gates unchecked -- the same fail-open shape, one

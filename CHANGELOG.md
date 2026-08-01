@@ -5,7 +5,26 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.23.2
+## v8.23.3
+
+### The vote itself could be skipped
+
+Finishing the enumeration found the last and largest instance. The four hard
+gates were guarded a release ago, but the call that runs the actual evaluation
+was not. A true return from it is what prints project approved and writes the
+completion marker, so bypassing it approves every run with no vote taken.
+
+That is a stronger failure than any single gate: the gates each check one thing,
+while the evaluation is the decision.
+
+The safety valve beside it was probed at the same time and was already guarded.
+Both are now pinned, along with the completion marker still being written from
+the approval path rather than anywhere else.
+
+The council enumeration is complete: seven guards, all now proven to fail when
+disconnected. The detection audit covers twenty-three invariants.
+
+
 
 ### The other three completion gates had the same hole
 

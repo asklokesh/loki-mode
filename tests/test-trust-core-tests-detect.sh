@@ -198,6 +198,22 @@ for _cg in council_checklist_gate council_heldout_gate \
         bash tests/test-council-convergence-floor.sh
 done
 
+# The vote itself, and the safety valve beside it. council_evaluate returning
+# true is what prints PROJECT APPROVED and writes .loki/COMPLETED, so bypassing
+# it approves every run with no vote taken. The circuit breaker was probed at
+# the same time and was already guarded -- pinned here so that stays true.
+probe_case "the council runs its evaluation before approving" \
+    "autonomy/completion-council.sh" \
+    'if council_evaluate; then' \
+    'if false; then' \
+    bash tests/test-council-convergence-floor.sh
+
+probe_case "the council circuit breaker stays wired" \
+    "autonomy/completion-council.sh" \
+    'if council_circuit_breaker_triggered; then' \
+    'if false; then' \
+    bash tests/test-council-convergence-floor.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
