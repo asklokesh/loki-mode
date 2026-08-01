@@ -5,6 +5,54 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.9.0
+
+### The model was told to fix issues without being told which
+
+The strongest accuracy lever in the loop was disabled by a nesting bug.
+
+Structured reviewer findings were injected only when a gate had written
+gate-failures.txt. A reviewer council can BLOCK without that file, and in that
+case the prompt said "FIX THESE ISSUES BEFORE PROCEEDING" with no issues
+attached. The model re-derived what was wrong from scratch on every iteration,
+which is the slowest and least accurate way to converge and the direct cause of
+long, expensive runs.
+
+Proven by execution rather than inspection. With real reviewer findings present
+and no gate-failures.txt, the baseline prompt contained neither the offending
+file nor the defect text; with the fix it contains both, with severity, so
+iteration two is a targeted fix instead of a guess.
+
+### Runs stop being chopped into pieces a frontier model does not need
+
+The iteration budget was written when a model could not hold a whole feature in
+one pass. On a frontier tier that is now harmful: every iteration boundary is a
+context reset, and re-planning mid-feature is where a run loses the thread.
+
+The budget now scales with the capability tier actually dispatched. On a real
+322-word issue: high went from 18 estimated iterations to 3, medium to 9, small
+unchanged since smaller models genuinely benefit from more, smaller steps. This
+scales the estimate and the ceiling only. Nothing forces an early stop.
+
+### A bug fix no longer pays for greenfield orchestration
+
+Competitor web research, load and performance testing, regression simulation
+and UAT all defaulted on, so a scoped fix against an existing repository paid
+for all of them. An issue-sourced spec on a repository with real history now
+skips them, auto-detected rather than requiring another flag.
+
+Every trust gate stays on: code review, security, unit tests, end-to-end.
+Speed comes from not running phases that are irrelevant to the change, never
+from skipping verification. Greenfield builds and whole-repository refactors
+keep the full suite.
+
+### Complexity scoring stops inflating itself
+
+One PostgreSQL project counted as two data stores, because postgresql and
+postgres were separate keywords. ORMs counted as stores, as did the bare words
+database and migration, so a line about adding a migration scored two. Aliases
+now collapse to one name and access layers no longer count as storage.
+
 ## v8.8.1
 
 ### A running build displayed as STOPPED
