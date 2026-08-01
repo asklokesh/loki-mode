@@ -1278,7 +1278,14 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
             "item": _name,
             "status": "disabled",
             "reason": "switched off for this run, so the check never ran",
+            # Marks an entry appended AFTER the headline was computed. The
+            # verifier filters on this flag rather than on a status string:
+            # statuses will keep being added, and a filter keyed on one of them
+            # silently breaks the next time -- which is exactly what happened
+            # when the unrun-security entry landed with status "not_run".
+            "post_headline": True,
         })
+
     honesty = {
         "headline": headline,
         "degraded": degraded,

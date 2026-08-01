@@ -164,5 +164,56 @@ class OwnerPageOnARealProofTests(DegradedListsDisabledGatesTests):
         self.assertNotIn("switched off for this run", out)
 
 
+class PostHeadlineMarkerTests(DegradedListsDisabledGatesTests):
+    """Post-headline entries carry an explicit marker, not a status string.
+
+    The verifier must skip entries the generator appended AFTER computing the
+    headline, or it re-derives a different verdict and reports an honest proof
+    as forged (v8.19.2). That filter originally matched status == "disabled".
+
+    A status-string filter is fragile in a specific way: it works until the next
+    post-headline entry arrives with a different status, and then it fails
+    silently and re-introduces the false forgery accusation. An explicit flag
+    states the INTENT, so any future entry is covered by construction.
+    """
+
+    def test_disabled_gate_entries_carry_the_marker(self):
+        proof = self._run(LOKI_PHASE_SECURITY="false")
+        entry = next(g for g in proof["honesty"]["degraded"]
+                     if g.get("item") == "security")
+        self.assertIs(entry.get("post_headline"), True)
+
+    def test_the_verifier_filters_on_the_marker(self):
+        pv = _load("pv", os.path.join(os.path.dirname(_TESTS_DIR),
+                                      "autonomy", "lib", "proof-verify.py"))
+        # A future post-headline entry with a status the old filter never knew.
+        proof = {"honesty": {"degraded": [
+            {"item": "future_check", "status": "some_new_status",
+             "post_headline": True},
+        ]}}
+        self.assertEqual(
+            pv._recorded_degraded_raw(proof), [],
+            "a post-headline entry with an unfamiliar status reached the "
+            "re-derivation, which is how the false forgery accusation returns")
+
+    def test_legacy_disabled_entries_are_still_filtered(self):
+        """Proofs from v8.19.0-v8.19.2 predate the flag."""
+        pv = _load("pv", os.path.join(os.path.dirname(_TESTS_DIR),
+                                      "autonomy", "lib", "proof-verify.py"))
+        proof = {"honesty": {"degraded": [
+            {"item": "security", "status": "disabled"},
+        ]}}
+        self.assertEqual(pv._recorded_degraded_raw(proof), [])
+
+    def test_real_gaps_are_never_filtered(self):
+        pv = _load("pv", os.path.join(os.path.dirname(_TESTS_DIR),
+                                      "autonomy", "lib", "proof-verify.py"))
+        proof = {"honesty": {"degraded": [
+            {"item": "build", "status": "not_run"},
+        ]}}
+        self.assertEqual(
+            [g.get("item") for g in pv._recorded_degraded_raw(proof)], ["build"])
+
+
 if __name__ == "__main__":
     unittest.main()

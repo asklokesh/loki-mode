@@ -397,8 +397,18 @@ def _recorded_degraded(proof):
             # Accusing an honest receipt of forgery is the worst failure this
             # verifier can have, so the re-derivation must use exactly the list
             # the generator used: everything except the post-hoc gate entries.
+            # Entries the generator appended AFTER computing the headline were
+            # never an input to the recorded value, so re-deriving with them
+            # makes an honest proof look edited. Keyed on the explicit
+            # post_headline flag, not on a status string: the first version of
+            # this filter matched status=="disabled" and broke the moment a
+            # second post-headline entry arrived with a different status.
+            # status=="disabled" is still honoured for proofs written by
+            # v8.19.0-v8.19.2, which predate the flag.
             deg = [d for d in deg
-                   if not (isinstance(d, dict) and d.get("status") == "disabled")]
+                   if not (isinstance(d, dict)
+                           and (d.get("post_headline") is True
+                                or d.get("status") == "disabled"))]
             return [str(x) for x in deg]
     return []
 
@@ -425,8 +435,18 @@ def _recorded_degraded_raw(proof):
             # Accusing an honest receipt of forgery is the worst failure this
             # verifier can have, so the re-derivation must use exactly the list
             # the generator used: everything except the post-hoc gate entries.
+            # Entries the generator appended AFTER computing the headline were
+            # never an input to the recorded value, so re-deriving with them
+            # makes an honest proof look edited. Keyed on the explicit
+            # post_headline flag, not on a status string: the first version of
+            # this filter matched status=="disabled" and broke the moment a
+            # second post-headline entry arrived with a different status.
+            # status=="disabled" is still honoured for proofs written by
+            # v8.19.0-v8.19.2, which predate the flag.
             deg = [d for d in deg
-                   if not (isinstance(d, dict) and d.get("status") == "disabled")]
+                   if not (isinstance(d, dict)
+                           and (d.get("post_headline") is True
+                                or d.get("status") == "disabled"))]
             return deg
     return []
 

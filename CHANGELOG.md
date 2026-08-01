@@ -5,7 +5,21 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.19.2
+## v8.19.3
+
+### The forgery-accusation fix was one status string from breaking again
+
+v8.19.2 stopped the verifier accusing honest receipts of tampering, by skipping
+the gap entries the generator appends after computing the headline. That filter
+matched a single status string, which works only until a second kind of
+post-headline entry exists.
+
+Entries now carry an explicit marker saying they were appended after the
+headline, and the verifier filters on that intent rather than on a status it has
+to keep guessing. Any future entry is covered by construction. Receipts written
+by earlier versions, which predate the marker, are still recognised.
+
+
 
 ### An honest receipt was being accused of forgery
 
