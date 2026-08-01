@@ -693,7 +693,10 @@ function loadQueueTasks(cwd: string): string {
 // Gate failure context (run.sh:9007-9023).
 // ---------------------------------------------------------------------------
 
-async function buildGateFailureContext(cwd: string): Promise<string> {
+async function buildGateFailureContext(
+  cwd: string,
+  env: Record<string, string | undefined> = process.env,
+): Promise<string> {
   let ctx = "";
 
   // Gate-failure injection (run.sh:9007-9023 / 12296-12331). Guarded on
@@ -725,18 +728,34 @@ async function buildGateFailureContext(cwd: string): Promise<string> {
       if (summary.length > 0) ctx += `Tests: ${summary}. `;
     }
 
-    // Phase 1 (v7.5.0) -- LOKI_INJECT_FINDINGS=1 appends structured per-finding
-    // records (severity, file:line, reviewer) parsed from the previous
-    // iteration's per-reviewer *.txt files. Default off so existing prompts
-    // are byte-identical when the flag is not set.
-    if (process.env["LOKI_INJECT_FINDINGS"] !== "0") {
-      const findingsBlock = await buildStructuredFindingsBlock(cwd);
-      if (findingsBlock.length > 0) {
-        ctx += `\n\n${findingsBlock}\n`;
-      }
-    }
-
     ctx += `FIX THESE ISSUES BEFORE PROCEEDING WITH NEW WORK.`;
+  }
+
+  // Structured per-finding records (severity, file:line, reviewer) from the
+  // previous iteration's per-reviewer files.
+  //
+  // Surfaced INDEPENDENTLY of gate-failures.txt, for exactly the reason the
+  // semantic and invariant blocks below were hoisted: a reviewer council can
+  // BLOCK without any gate writing gate-failures.txt, and nesting this under
+  // that guard silently drops precisely that case. Verified by execution --
+  // with real reviewer findings present but no gate-failures.txt, the prompt
+  // contained neither the offending file nor the finding text, so the model
+  // was told to fix problems without being told which. That is a blind retry:
+  // the model re-derives what is wrong from scratch every iteration, which is
+  // both the slowest and the least accurate way to converge.
+  //
+  // This is the single highest-value accuracy lever in the loop. Telling a
+  // model precisely what a reviewer found is what turns iteration 2 into a fix
+  // rather than a guess.
+  // Read the opt-out from the RUN's env, not process.env. buildPrompt is
+  // driven by ctx.env, and a run that sets LOKI_INJECT_FINDINGS=0 there must
+  // be honoured -- reading process.env silently ignored the operator's opt-out.
+  if (envStr(env, "LOKI_INJECT_FINDINGS", "") !== "0") {
+    const findingsBlock = await buildStructuredFindingsBlock(cwd);
+    if (findingsBlock.length > 0) {
+      ctx += `\n\n${findingsBlock}\n`;
+      ctx += `FIX THESE ISSUES BEFORE PROCEEDING WITH NEW WORK.\n`;
+    }
   }
 
   // P1-3 semantic test-authenticity findings (run.sh:12338-12351). Surfaced
@@ -1386,7 +1405,7 @@ async function resolveDynamicSections(
 
   return {
     contextSection,
-    gateFailureContext: await buildGateFailureContext(ctx.cwd),
+    gateFailureContext: await buildGateFailureContext(ctx.cwd, ctx.env),
     gateEscalationContext,
     selfHealContext: buildSelfHealContext(ctx.cwd),
     humanDirective,

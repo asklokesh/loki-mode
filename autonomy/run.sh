@@ -630,6 +630,70 @@ PY
     export LOKI_SPEC_SHA256
 }
 
+# Scoped-change profile: a bug fix or a single feature in an EXISTING repo.
+#
+# Measured on a real user's run: a 322-word GitHub issue against an existing
+# codebase spent 25+ minutes still inside iteration 1. The work itself was
+# genuine, but the build was also running competitor web research, load and
+# performance testing, regression simulation and UAT -- all of which default to
+# true, and none of which a scoped issue fix needs. That is the difference
+# between a 5-minute fix and a 30-minute one.
+#
+# What this NEVER touches: code review, security, tests, E2E, and the
+# completion council all stay on. Speed here comes from not running phases that
+# are irrelevant to the change, never from skipping verification. A greenfield
+# build or a whole-repo refactor does not match this profile and keeps the full
+# suite.
+#
+# Auto-detected rather than another flag the user has to know: an existing git
+# repo with real history, plus a spec that reads as a scoped change. Set
+# LOKI_SCOPED_CHANGE=0 to force the full suite, or =1 to force this profile.
+loki_detect_scoped_change() {
+    # Explicit operator intent always wins, in both directions.
+    case "${LOKI_SCOPED_CHANGE:-}" in
+        0|false) return 1 ;;
+        1|true)  return 0 ;;
+    esac
+
+    # Greenfield is not a scoped change: no repo, or a repo with almost no
+    # history, means we are building something new.
+    local target="${TARGET_DIR:-.}"
+    [ -d "$target/.git" ] || return 1
+    local commits
+    commits="$(git -C "$target" rev-list --count HEAD 2>/dev/null || echo 0)"
+    [ "${commits:-0}" -ge 5 ] || return 1
+
+    # An issue-sourced spec is the canonical scoped change: someone filed a
+    # discrete request against code that already exists.
+    [ -n "${LOKI_ISSUE_REF:-}" ] && return 0
+    case "${LOKI_PRD_FILE:-}" in
+        *prd-issue-*) return 0 ;;
+    esac
+
+    return 1
+}
+
+loki_apply_scoped_change_profile() {
+    loki_detect_scoped_change || return 0
+
+    # Off: cannot affect the correctness of a scoped change to existing code.
+    : "${LOKI_PHASE_WEB_RESEARCH:=false}"
+    : "${LOKI_PHASE_PERFORMANCE:=false}"
+    : "${LOKI_PHASE_REGRESSION:=false}"
+    : "${LOKI_PHASE_UAT:=false}"
+
+    # On: every trust gate, unchanged. These are the moat.
+    : "${LOKI_PHASE_CODE_REVIEW:=true}"
+    : "${LOKI_PHASE_SECURITY:=true}"
+    : "${LOKI_PHASE_UNIT_TESTS:=true}"
+    : "${LOKI_PHASE_E2E_TESTS:=true}"
+
+    export LOKI_PHASE_WEB_RESEARCH LOKI_PHASE_PERFORMANCE LOKI_PHASE_REGRESSION
+    export LOKI_PHASE_UAT LOKI_PHASE_CODE_REVIEW LOKI_PHASE_SECURITY
+    export LOKI_PHASE_UNIT_TESTS LOKI_PHASE_E2E_TESTS
+    export LOKI_SCOPED_CHANGE_ACTIVE=1
+}
+
 loki_apply_build_profile() {
     [ "${LOKI_BUILD_PROFILE:-}" = "simple-web" ] || return 0
     : "${LOKI_PHASE_API_TESTS:=false}"
@@ -772,6 +836,7 @@ print(catalog["providers"]["claude"]["cli_aliases"].get(os.environ["_LOKI_SELECT
     export LOKI_SDK_JUDGE_MODEL LOKI_SDK_PRD_ENRICH_MODEL LOKI_SDK_REVIEW_MODEL
 }
 loki_apply_build_profile
+loki_apply_scoped_change_profile
 
 # Default hang guard for EVERY build, not just simple-web.
 #

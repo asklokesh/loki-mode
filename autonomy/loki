@@ -17629,12 +17629,37 @@ else:
             integrations.append(kw)
 
     # Count database mentions
-    db_keywords = ['postgresql', 'postgres', 'mysql', 'mongodb', 'sqlite',
-                   'dynamodb', 'cassandra', 'redis', 'prisma', 'typeorm',
-                   'sequelize', 'drizzle', 'knex', 'database', 'migration']
-    for kw in db_keywords:
-        if kw in content_lower:
-            databases.append(kw)
+    # Count DISTINCT data stores. This feeds a +1-complexity-for-multiple
+    # rule, so what counts as multiple is load-bearing: it pushed a
+    # 322-word issue from moderate to complex, and complex means 18 iterations
+    # instead of 9.
+    #
+    # Three ways the old flat list over-counted a single-database project:
+    #   1. Aliases. 'postgresql' and 'postgres' were separate entries, so one
+    #      PostgreSQL app scored TWO data stores by itself. That alone tripped
+    #      the rule on a real user's issue.
+    #   2. ORMs. prisma/typeorm/sequelize/drizzle/knex are ACCESS LAYERS, not
+    #      stores. Prisma plus PostgreSQL is one database, not two.
+    #   3. Generic words. 'database' and 'migration' matched any PRD that used
+    #      the words at all, so a migration-to-the-database line scored two.
+    #
+    # Aliases collapse to one canonical name, ORMs and generic terms are gone.
+    db_aliases = {
+        'postgresql': 'postgres', 'postgres': 'postgres', 'psql': 'postgres',
+        'mysql': 'mysql', 'mariadb': 'mysql',
+        'mongodb': 'mongodb', 'mongo': 'mongodb',
+        'sqlite': 'sqlite',
+        'dynamodb': 'dynamodb',
+        'cassandra': 'cassandra',
+        'redis': 'redis',
+        'elasticsearch': 'elasticsearch',
+        'clickhouse': 'clickhouse',
+    }
+    _seen_db = set()
+    for kw, canonical in db_aliases.items():
+        if kw in content_lower and canonical not in _seen_db:
+            _seen_db.add(canonical)
+            databases.append(canonical)
 
     # Count UI components
     ui_keywords = ['dashboard', 'form', 'table', 'modal', 'navbar',
@@ -17716,6 +17741,34 @@ iteration_map = {
     'enterprise': (24, 48),
 }
 min_iter, max_iter = iteration_map[complexity]
+
+# --- Capability-aware iteration budget ---------------------------------------
+# The map above was written when a model could not hold a whole feature in one
+# pass, so work was chopped into many small iterations. On a frontier tier that
+# is now actively harmful: each iteration boundary is a context reset, and
+# re-planning mid-feature is where a run loses the thread and burns money.
+#
+# A frontier model should be handed the whole job and left to finish it. So the
+# budget is divided by the capability tier the run will actually dispatch,
+# rather than assuming the weakest case for everyone. The floor is 1, never 0.
+#
+# This scales the ESTIMATE and the ceiling, not the work. A run that genuinely
+# needs more iterations still takes them; nothing here forces an early stop.
+_tier_raw = (os.environ.get('LOKI_SESSION_MODEL') or '').strip().lower()
+_frontier = ('high', 'planning', 'opus', 'sol')
+_small = ('small', 'fast', 'haiku', 'luna')
+if _tier_raw in _frontier:
+    # Frontier: one pass for anything short of enterprise scope.
+    min_iter = 1
+    max_iter = max(1, max_iter // 4)
+elif _tier_raw in _small:
+    # Small models genuinely benefit from more, smaller steps.
+    pass
+else:
+    # medium / unset: the common default. Halve the legacy budget -- current
+    # workhorse models complete in far fewer passes than this map assumed.
+    min_iter = max(1, min_iter // 2)
+    max_iter = max(min_iter, max_iter // 2)
 
 # Adjust based on specific counts
 if endpoint_count > 10:
