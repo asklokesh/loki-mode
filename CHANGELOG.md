@@ -5,6 +5,44 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.32.0
+
+### Aider's fallback named a Claude model
+
+`autonomy/run.sh` hardcoded `claude-opus-4-7` in seven places as the aider
+default. That id appears NOWHERE in `providers/model_catalog.json`, and
+`providers/aider.sh`'s own comment explains why it is worse than merely stale:
+aider takes litellm full model strings while Claude aliases are
+namespace-incompatible, so the fallback would have dispatched a Claude model
+name to aider. Now `openrouter/deepseek/deepseek-v3.2`, matching the catalog.
+
+Reachable only when the provider config was never sourced -- `aider.sh` already
+derives its default from the catalog -- so this hardens a fallback rather than
+changing normal operation.
+
+### On Claude, nothing needed changing
+
+That route already dispatches BARE aliases (`sonnet`, `haiku`), which always
+resolve to the provider's latest model with no catalog maintenance at all.
+Verified against the live CLI: `claude --model opus` reports `claude-opus-5`.
+
+### Codex tier pinning was investigated and deliberately NOT changed
+
+`providers/codex.sh` resolves all three tiers to the empty string on the real
+loader path, so selecting `high` does not select `gpt-5.6-sol`. That looks like
+a bug and a fix was written -- then reverted, because
+`tests/test-codex-model-trusted.sh` caught it and records why:
+
+**codex-cli rejects `gpt-5.3-codex` with "not supported when using Codex with a
+ChatGPT account", and Codex ships free with every ChatGPT plan.** A pinned
+default breaks the only zero-cost on-ramp in the category outright. Resolving
+tiers to catalog models re-introduces exactly that failure.
+
+The empty default is therefore correct: when a model cannot be known to be
+valid for the account tier, sending no `--model` and letting codex choose beats
+guessing. Making codex tiers work needs account-tier awareness, not a catalog
+lookup -- recorded here so the fix is not re-attempted from scratch.
+
 ## v8.31.0
 
 ### The planning tier was pointing at a superseded flagship

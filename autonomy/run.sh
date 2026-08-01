@@ -3455,7 +3455,7 @@ get_provider_tier_param() {
             echo "${CLINE_DEFAULT_MODEL:-${LOKI_CLINE_MODEL:-default}}"
             ;;
         aider)
-            echo "${AIDER_DEFAULT_MODEL:-${LOKI_AIDER_MODEL:-claude-opus-4-7}}"
+            echo "${AIDER_DEFAULT_MODEL:-${LOKI_AIDER_MODEL:-openrouter/deepseek/deepseek-v3.2}}"
             ;;
         *)
             echo "development"
@@ -6276,7 +6276,7 @@ invoke_cline_capture() {
 invoke_aider() {
     local prompt="$1"
     shift
-    local model="${AIDER_DEFAULT_MODEL:-${LOKI_AIDER_MODEL:-claude-opus-4-7}}"
+    local model="${AIDER_DEFAULT_MODEL:-${LOKI_AIDER_MODEL:-openrouter/deepseek/deepseek-v3.2}}"
     local extra_flags="${LOKI_AIDER_FLAGS:-}"
     # shellcheck disable=SC2086
     # < /dev/null prevents aider from blocking on stdin in non-interactive mode
@@ -6289,7 +6289,7 @@ invoke_aider() {
 invoke_aider_capture() {
     local prompt="$1"
     shift
-    local model="${AIDER_DEFAULT_MODEL:-${LOKI_AIDER_MODEL:-claude-opus-4-7}}"
+    local model="${AIDER_DEFAULT_MODEL:-${LOKI_AIDER_MODEL:-openrouter/deepseek/deepseek-v3.2}}"
     local extra_flags="${LOKI_AIDER_FLAGS:-}"
     # shellcheck disable=SC2086
     aider --message "$prompt" --yes-always --no-auto-commits \
@@ -7773,7 +7773,7 @@ track_iteration_complete() {
         elif [ "${PROVIDER_NAME:-claude}" = "cline" ]; then
             model_tier="${CLINE_DEFAULT_MODEL:-${LOKI_CLINE_MODEL:-sonnet}}"
         elif [ "${PROVIDER_NAME:-claude}" = "aider" ]; then
-            model_tier="${AIDER_DEFAULT_MODEL:-${LOKI_AIDER_MODEL:-claude-opus-4-7}}"
+            model_tier="${AIDER_DEFAULT_MODEL:-${LOKI_AIDER_MODEL:-openrouter/deepseek/deepseek-v3.2}}"
         fi
     fi
     local phase="${LAST_KNOWN_PHASE:-}"
@@ -13297,7 +13297,7 @@ _dispatch_reviewer() {
             if [ "$_review_deadline_ms" -gt 0 ]; then
                 _aider_cap=$(_loki_review_deadline_remaining "$_review_deadline_ms") || return 124
             fi
-            local _aider_model="${AIDER_DEFAULT_MODEL:-${LOKI_AIDER_MODEL:-claude-opus-4-7}}"
+            local _aider_model="${AIDER_DEFAULT_MODEL:-${LOKI_AIDER_MODEL:-openrouter/deepseek/deepseek-v3.2}}"
             local _aider_flags=()
             [ -n "${LOKI_AIDER_FLAGS:-}" ] && read -r -a _aider_flags <<< "$LOKI_AIDER_FLAGS"
             _loki_with_deadline "$_aider_cap" aider --message "$prompt_text" \
@@ -22359,8 +22359,8 @@ if __name__ == "__main__":
                 ;;
             aider)
                 # Aider: Tier 3 - degraded mode, 18+ providers
-                echo "[loki] Aider model: ${AIDER_DEFAULT_MODEL:-${LOKI_AIDER_MODEL:-claude-opus-4-7}}, tier: $tier_param" >> "$log_file"
-                echo "[loki] Aider model: ${AIDER_DEFAULT_MODEL:-${LOKI_AIDER_MODEL:-claude-opus-4-7}}, tier: $tier_param" >> "$agent_log"
+                echo "[loki] Aider model: ${AIDER_DEFAULT_MODEL:-${LOKI_AIDER_MODEL:-openrouter/deepseek/deepseek-v3.2}}, tier: $tier_param" >> "$log_file"
+                echo "[loki] Aider model: ${AIDER_DEFAULT_MODEL:-${LOKI_AIDER_MODEL:-openrouter/deepseek/deepseek-v3.2}}, tier: $tier_param" >> "$agent_log"
                 { invoke_aider "$prompt" 2>&1 | tee -a "$log_file" "$agent_log" "$iter_output"; \
                 } && exit_code=0 || exit_code=$?
                 ;;
