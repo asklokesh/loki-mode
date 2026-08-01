@@ -20881,6 +20881,16 @@ except Exception as exc:
             # Trim to last 500KB
             tail -c 500000 "$agent_log" > "$agent_log.tmp" && mv "$agent_log.tmp" "$agent_log"
         fi
+
+        # Same cap on the daily log. agent.log has been trimmed since it was
+        # introduced; its sibling never was, and it receives the full raw
+        # stream-json of every iteration -- measured ~1.5MB per iteration, so a
+        # 500-iteration run leaves ~725MB per day per build, times however many
+        # builds share the machine. Same threshold, same trim, no new rotation
+        # scheme.
+        if [ -f "$log_file" ] && [ "$(stat -f%z "$log_file" 2>/dev/null || stat -c%s "$log_file" 2>/dev/null)" -gt 1000000 ]; then
+            tail -c 500000 "$log_file" > "$log_file.tmp" && mv "$log_file.tmp" "$log_file"
+        fi
         touch "$agent_log"
         echo "" >> "$agent_log"
         echo "════════════════════════════════════════════════════════════════" >> "$agent_log"

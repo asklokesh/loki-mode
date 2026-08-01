@@ -18743,6 +18743,15 @@ main() {
             # deprecated-alias table; bare help prints the grouped front page.
             if [ "${1:-}" = "aliases" ]; then
                 show_help_aliases
+            elif [ -n "${1:-}" ]; then
+                # `loki help <command>` reaches the command's own help. Before
+                # this, $1 was read only for the literal "aliases" and otherwise
+                # discarded, so `loki help proof` printed the same generic front
+                # page as bare `loki help` -- while `loki proof --help` printed
+                # real help. Both spellings now agree.
+                local _help_target="$1"
+                shift
+                "$0" "$_help_target" --help "$@"
             else
                 show_help
             fi

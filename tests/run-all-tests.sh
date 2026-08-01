@@ -722,6 +722,7 @@ run_test "provider model scoping (global tier var must not leak)" "$SCRIPT_DIR/t
 run_test "model catalog is a single source of truth" "$SCRIPT_DIR/test-model-catalog-single-source.sh"
 run_test "model catalog staleness is advisory and route-consistent" "$SCRIPT_DIR/test-model-catalog-staleness.sh"
 run_test "pre-push pytest is scoped without failing open" "$SCRIPT_DIR/test-pre-push-scoped-pytest.sh"
+run_test "loki help <command> and the daily log cap" "$SCRIPT_DIR/test-help-and-log-cap.sh"
 run_test "proof md (paste-able receipt, one renderer)" "$SCRIPT_DIR/test-proof-md.sh"
 run_test "air-gapped read-only path (egress severed)" "$SCRIPT_DIR/test-airgap-commands.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
