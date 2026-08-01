@@ -1121,7 +1121,6 @@ const ENT3_CLEAN_STOP = new Set([
   "council_force_approved",
   "deterministic_gates_passed",
   "completion_promise_fulfilled",
-  "force_stopped",
   "paused",
   "interrupted",
   "stopped",
@@ -1129,6 +1128,12 @@ const ENT3_CLEAN_STOP = new Set([
 
 const ENT3_TERMINAL_FAILURE = new Set([
   "failed",
+  // force_stopped joins the DETERMINISTIC failures for the same reason
+  // budget_exceeded did: a stagnation or done-signal-flood force-stop is not a
+  // human-controlled pause, and the run is explicitly NOT verified-complete.
+  // Reporting it as a clean stop made it indistinguishable from success to
+  // every automated caller.
+  "force_stopped",
   "max_iterations_reached",
   "max_retries_exceeded",
   "budget_exceeded",

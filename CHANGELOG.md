@@ -5,7 +5,26 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.9.0
+## v8.9.1
+
+### A run that never verified its work reported success
+
+A council force-stop happens when a run stagnates or floods done-signals. It
+means the run gave up WITHOUT verifying anything, and the engine already said
+so in three places: the header reads STOPPED WITHOUT APPROVAL, the log warns
+that work is not verified-complete, and it deliberately refuses to open a pull
+request.
+
+It then exited 0. The exit code is the only signal an automated caller reads,
+so a CI job, a Kubernetes Job, or a shell && chain saw a stagnation force-stop
+as a pass. Meanwhile max_iterations_reached, which is the same class of outcome,
+exited 20. Two terminals with identical meaning reported opposite results.
+
+Force-stop now exits 20 on both routes, alongside max-iterations and
+budget-exceeded. Verified completions and human-controlled pauses are unchanged
+at 0.
+
+
 
 ### The model was told to fix issues without being told which
 

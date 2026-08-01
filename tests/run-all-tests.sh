@@ -726,6 +726,7 @@ run_test "loki help <command> and the daily log cap" "$SCRIPT_DIR/test-help-and-
 run_test "model picker is provider-aware (no claude models on codex)" "python3 $SCRIPT_DIR/test-provider-aware-model-picker.py"
 run_test "codex capability tiers resolve to distinct real models" "$SCRIPT_DIR/test-codex-tier-models.sh"
 run_test "scoped issue fix skips greenfield-only phases" "$SCRIPT_DIR/test-scoped-change-profile.sh"
+run_test "a force-stop reports failure, not success" "$SCRIPT_DIR/test-force-stop-exit-code.sh"
 run_test "proof md (paste-able receipt, one renderer)" "$SCRIPT_DIR/test-proof-md.sh"
 run_test "air-gapped read-only path (egress severed)" "$SCRIPT_DIR/test-airgap-commands.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"

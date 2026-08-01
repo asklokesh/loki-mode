@@ -22580,9 +22580,23 @@ if __name__ == "__main__":
                     run_memory_consolidation
                     # No on_run_complete: a force-stop must never open a "done" PR.
                     emit_completion_summary force_stopped
-                    save_state $retry "force_stopped" 0
+                    # Exit 20, not 0. Every other signal here already says this
+                    # run is NOT verified-complete -- the header, the warning,
+                    # the refusal to open a PR -- but the exit code said the
+                    # opposite, and the exit code is the only one a CI job, a
+                    # Kubernetes Job, or a shell `&&` actually reads. A
+                    # stagnation force-stop was therefore indistinguishable
+                    # from success to every automated caller.
+                    #
+                    # 20 is the established "deterministic terminal failure"
+                    # code, already used by max_iterations_reached
+                    # (run.sh:20796, :20877) for the same class of outcome:
+                    # the run stopped without verifying the work. Retrying is
+                    # pointless; a human needs to look. Two terminals with the
+                    # same meaning must not report opposite exit codes.
+                    save_state $retry "force_stopped" 20
                     rm -f "$iter_output" 2>/dev/null
-                    return 0
+                    return 20
                 fi
                 echo ""
                 if loki_is_supervised_simple_web; then
@@ -24610,8 +24624,14 @@ except Exception:
         _final_state_file="$(_loki_state_file)"
         _final_status=$(LOKI_STATE_FILE="$_final_state_file" python3 -c "import json, os; print(json.load(open(os.environ['LOKI_STATE_FILE'])).get('status','unknown'))" 2>/dev/null || echo "unknown")
         case "$_final_status" in
-            council_approved|council_force_approved|deterministic_gates_passed|completion_promise_fulfilled|force_stopped|paused|interrupted|stopped)
+            council_approved|council_force_approved|deterministic_gates_passed|completion_promise_fulfilled|paused|interrupted|stopped)
                 result=0 ;;
+            # force_stopped belongs HERE too, for the same reason. A council
+            # force-stop (stagnation, or a flood of done-signals) means the run
+            # gave up WITHOUT verifying the work -- the code already says so in
+            # its header, its warning, and its refusal to open a PR. Reporting
+            # it as a clean stop made it indistinguishable from success to the
+            # only consumer that matters to automation: the exit code.
             # budget_exceeded belongs HERE, not with the human-controlled stops.
             # It sat in the result=0 arm on the rationale that "a human will
             # resume", which is true of `paused` (a human pressed pause) and
