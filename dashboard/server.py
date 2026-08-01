@@ -7661,10 +7661,17 @@ def _compute_budget_snapshot(loki_dir: _Path) -> dict:
                 continue
             inp = data.get("input_tokens", 0) or 0
             out = data.get("output_tokens", 0) or 0
+            # Cache tiers, same as the /api/cost path. This snapshot drives the
+            # budget breaker and the 80% warning, so under-counting here lets a
+            # run sail past its cap unwarned. Measured on a real record: $0.1233
+            # without cache against $0.6617 with, a 5.4x under-count in the one
+            # place a user relies on to stop spending.
+            cr = data.get("cache_read_tokens", 0) or 0
+            cw = data.get("cache_creation_tokens", 0) or 0
             model = str(data.get("model", "sonnet")).lower()
             cost = data.get("cost_usd")
             if cost is None:
-                cost = _calculate_model_cost(model, inp, out)
+                cost = _calculate_model_cost(model, inp, out, cr, cw)
             else:
                 try:
                     cost = float(cost)
@@ -7760,10 +7767,17 @@ def _compute_cost_timeline() -> dict:
             cost_recorded = True
             inp = data.get("input_tokens", 0) or 0
             out = data.get("output_tokens", 0) or 0
+            # Cache tiers, same as the /api/cost path. This snapshot drives the
+            # budget breaker and the 80% warning, so under-counting here lets a
+            # run sail past its cap unwarned. Measured on a real record: $0.1233
+            # without cache against $0.6617 with, a 5.4x under-count in the one
+            # place a user relies on to stop spending.
+            cr = data.get("cache_read_tokens", 0) or 0
+            cw = data.get("cache_creation_tokens", 0) or 0
             model = str(data.get("model", "sonnet")).lower()
             cost = data.get("cost_usd")
             if cost is None:
-                cost = _calculate_model_cost(model, inp, out)
+                cost = _calculate_model_cost(model, inp, out, cr, cw)
             else:
                 try:
                     cost = float(cost)

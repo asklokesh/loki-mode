@@ -5,7 +5,24 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.22.0
+## v8.22.1
+
+### The budget breaker under-counted the tokens that dominate a bill
+
+Applying the isolation-versus-wiring check to the Python tests found a second
+caller of the cost calculator that never passed cache tokens. It feeds the
+budget snapshot, which decides when to warn at eighty percent and when to stop
+at the cap.
+
+On a real record it saw $0.12 where the true spend was $0.66, so a run could
+sail past its limit unwarned. The same bug, in its fourth location: the earlier
+three were fixed while this one stayed hidden because every test exercised the
+calculator directly and none checked what the callers pass it.
+
+All call sites now pass cache tokens, and a test asserts that for each of them
+rather than for the calculator alone.
+
+
 
 ### A security guard could be bypassed with every test still green
 

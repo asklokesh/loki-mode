@@ -119,6 +119,33 @@ class ApiCostPayloadTests(unittest.TestCase):
         """None, not 0.0. Cold cache and no data are different claims."""
         self.assertIn("if _read_in > 0 else None", self.src)
 
+    def test_every_call_site_passes_cache_arguments(self):
+        """WIRING. The isolation tests above prove the calculator handles cache
+        tokens and say nothing about whether callers pass them.
+
+        server.py calls _calculate_model_cost from two places: the /api/cost
+        snapshot and _compute_budget_snapshot, which drives the budget breaker
+        and the 80% warning. The second passed only input and output, so the
+        surface a user relies on to STOP spending under-counted 5.4x on a real
+        record while every test here stayed green.
+        """
+        import re
+        # Match the assignment form, which is what every invocation uses. A
+        # broader pattern matched the NESTED data.get(...) inside an argument
+        # and reported a false positive -- the scan has to be as precise as the
+        # claim it makes.
+        invocations = re.findall(
+            r"cost = _calculate_model_cost\((.*)\)", self.src)
+        self.assertGreaterEqual(len(invocations), 2,
+                                "expected at least two call sites; the scan "
+                                "may be matching nothing")
+        for call in invocations:
+            with self.subTest(call=call.strip()[:60]):
+                self.assertIn(
+                    "cr", call,
+                    "a call site omits cache-read tokens, so that surface "
+                    "prices ~98%% of real volume at zero")
+
     def test_totals_include_cache(self):
         self.assertIn(
             "total_input + total_output + total_cache_read + total_cache_creation",
