@@ -1460,6 +1460,29 @@ cmd_start() {
     # first start. Writes ~/.loki/.welcomed and never repeats; non-blocking,
     # and never auto-opens a browser in CI or non-interactive shells.
     cmd_welcome_maybe_firstrun 2>/dev/null || true
+
+    # Tell the user when their install is stale, on the command they ACTUALLY
+    # run. The hint existed but was wired only into `doctor` and `version` --
+    # neither of which anyone runs before a build -- so a stale install stayed
+    # invisible for as long as it took someone to go looking.
+    #
+    # That is not hypothetical. This machine was 4 releases behind (8.8.0 vs
+    # 8.41.0) while running builds, and that specific gap mattered: v8.38.0
+    # fixed four quality-gate detectors that had NEVER shipped, so on 8.8.0
+    # mutation-integrity fail-closed on every iteration and first-pass
+    # completion was impossible no matter how good the output was. The user had
+    # no way to know from the tool.
+    #
+    # Cheap and fail-silent by construction: the result is cached for 24h, the
+    # registry call has a 1.5s hard timeout, and any failure prints nothing
+    # rather than guessing (see maybe_print_update_hint).
+    # NOT `2>/dev/null`: the hint is PRINTED ON STDERR, so redirecting stderr
+    # discards the only thing this call exists to produce. A first draft did
+    # exactly that and the feature was silently dead. The function is already
+    # fail-silent internally (opt-out, CI, non-TTY, timeout, unparseable
+    # version all return 0 without output), so no guard is needed here.
+    maybe_print_update_hint || true
+
     local args=()
     local prd_file=""
     local provider=""

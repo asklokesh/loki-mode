@@ -5,6 +5,51 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.42.0
+
+### A stale install was invisible on the command people actually run
+
+The update hint existed and worked -- wired into `loki doctor` and
+`loki version`. Neither is run before a build, so a stale install stayed
+invisible until someone went looking.
+
+This machine was **4 releases behind** (8.8.0 vs 8.41.0) while running builds,
+and that gap was not cosmetic: v8.38.0 fixed four quality-gate detectors that
+had **never been packaged**, so on 8.8.0 mutation-integrity fail-closed on every
+iteration and first-pass completion was impossible regardless of model output.
+The tool gave the user no way to know.
+
+`loki start` now prints the one-line nudge. Cheap and fail-silent by
+construction: the result is cached 24h, the registry call has a 1.5s hard
+timeout, and CI / non-TTY / `LOKI_NO_UPDATE_CHECK=1` all return without output.
+
+### The first draft was silently dead
+
+I wrote it as:
+
+```bash
+maybe_print_update_hint 2>/dev/null || true
+```
+
+The hint prints **on stderr**. Redirecting stderr discards the only thing the
+call produces -- a defensive habit that turned a feature into a no-op which
+reads as correct in any source review, and which no existing test could see
+because a suppressed message and an absent message are identical.
+
+Both are now pinned by mutation: re-adding `2>/dev/null`, and removing the call
+outright, each turn `tests/test-start-update-hint.sh` red.
+
+### Two test-harness bugs found on the way
+
+- **`[ ! -t 1 ]`**: the hint deliberately stays silent when stdout is not a
+  terminal, so piping to `grep` suppressed it. Every early "it does not work"
+  reading was the harness, not the feature. Fixed with `script(1)`.
+- **`| grep -qi`**: `-q` exits on first match and closes the pipe, which races
+  with output delivery under a pty -- the assertion failed intermittently while
+  the identical command passed by hand. Now captures first, matches second.
+
+Trust-core detector: 62 invariants.
+
 ## v8.41.0
 
 ### Two more packaging checks were deferred, and one of them was broken

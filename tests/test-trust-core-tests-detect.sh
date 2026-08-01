@@ -476,6 +476,20 @@ probe_case "every runtime dependency stays packaged" \
     "package.json" '"learning/",' '' \
     bash tests/test-detectors-are-packaged.sh
 
+# The stale-install hint on `loki start`. The first probe is the mistake that
+# was actually made: `2>/dev/null` on a call whose ONLY output is on stderr,
+# which makes the feature silently dead while every source review looks right.
+probe_case "the update hint's stderr is not discarded" \
+    "autonomy/loki" \
+    '    maybe_print_update_hint || true' \
+    '    maybe_print_update_hint 2>/dev/null || true' \
+    bash tests/test-start-update-hint.sh
+
+probe_case "loki start still calls the update hint" \
+    "autonomy/loki" \
+    '    maybe_print_update_hint || true' '    :' \
+    bash tests/test-start-update-hint.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
