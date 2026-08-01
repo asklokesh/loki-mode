@@ -735,6 +735,7 @@ run_test "the token report counts cache tokens" "$SCRIPT_DIR/test-economics-cach
 run_test "a terminal outcome names the next step" "$SCRIPT_DIR/test-terminal-next-step.sh"
 run_test "loki why is rework-aware on the iteration cap" "$SCRIPT_DIR/test-why-rework-aware.sh"
 run_test "loki why --json carries the rework split" "$SCRIPT_DIR/test-why-json-rework.sh"
+run_test "loki cost --json exposes the token breakdown" "$SCRIPT_DIR/test-cost-json-tokens.sh"
 run_test "a user-installed reviewer takes part in a run" "$SCRIPT_DIR/test-installed-agent-reviewer.sh"
 # Skill modules are loaded INTO the agent's context and acted on, so a false
 # claim there is worse than no claim. Asserts the load-bearing ones against source.

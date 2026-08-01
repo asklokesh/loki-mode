@@ -5,7 +5,30 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.14.2
+## v8.15.0
+
+### loki cost --json said what a run cost, never why
+
+v8.13.1 taught the economics report to count cache tokens and report the hit
+ratio, after finding the old report described about one percent of a run.
+`loki cost --json`, the surface CI and dashboards consume, still emitted a bare
+dollar figure with no token breakdown at all.
+
+So an automated consumer could see that a run cost $3.60 and had no way to see
+that 240,000 of its tokens were cache reads at a 98.9% hit ratio. Cache is
+typically the overwhelming majority of input volume and the single biggest lever
+on the bill, which makes it the first thing anyone investigating cost needs.
+
+The data was never missing. The shared efficiency collector, also used by the
+proof generator, already sums the full breakdown; this surface took the dollar
+figure and discarded the rest. It now passes the whole thing through.
+
+A run with no tokens reports a null hit ratio rather than 0.0. A zero is a claim
+about a cold cache, which is a real and expensive condition, and reporting it for
+a run with no data would send someone hunting a caching problem that does not
+exist.
+
+
 
 ### The machine-readable surface knew less than the printed one
 

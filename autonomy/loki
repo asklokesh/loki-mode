@@ -25040,12 +25040,33 @@ def _fmt_usd(v):
 # benchmark adapters). On a broken install where the lib is missing, we degrade
 # honestly rather than ship a divergent 5th copy of the cost math.
 current_cost = None
+current_tokens = None
 current_model = ""
 lib_available = collect_efficiency is not None
 if lib_available:
     try:
         cost_dict, current_model = collect_efficiency(loki_dir)
         current_cost = cost_dict.get("usd")
+        # collect_efficiency ALREADY sums the token breakdown, including the
+        # cache tiers. This surface took only the dollar figure and dropped the
+        # rest, so a consumer could see WHAT a run cost but nothing about WHY --
+        # and cache reads are typically ~98% of input volume, the single
+        # biggest lever on that number.
+        current_tokens = {
+            k: int(cost_dict.get(k) or 0)
+            for k in ("input_tokens", "output_tokens",
+                      "cache_read_tokens", "cache_creation_tokens")
+        }
+        _read_in = current_tokens["input_tokens"] + current_tokens["cache_read_tokens"]
+        current_tokens["total_tokens"] = sum(
+            current_tokens[k] for k in ("input_tokens", "output_tokens",
+                                        "cache_read_tokens", "cache_creation_tokens"))
+        # Absent tokens leave the ratio null rather than 0.0: a zero would read
+        # as "the cache never hit", which is a claim about a cold cache, not an
+        # absence of data.
+        current_tokens["cache_hit_ratio"] = (
+            round(current_tokens["cache_read_tokens"] / _read_in, 4) if _read_in > 0 else None
+        )
     except Exception:
         current_cost = None
 
@@ -25134,6 +25155,7 @@ if show_json:
             "cost_usd": current_cost,
             "model": current_model or None,
             "cost_recorded": current_cost is not None,
+            "tokens": current_tokens,
             "cost_lib_available": lib_available,
         },
         "runs": runs,
