@@ -5,7 +5,31 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.19.8
+## v8.20.0
+
+### A mutation test that does not mutate looks exactly like one that passes
+
+Verifying a test by breaking the code and watching it go red depends entirely on
+the break landing. When the search string does not match, nothing breaks, the
+test passes, and the result is indistinguishable from a working test. A checker
+then ships with no evidence it detects anything.
+
+That happened twice here in consecutive releases. Both times the only clue was a
+debug line that existed by luck.
+
+There is now a probe that makes the distinction structural, with three separate
+exit codes: the mutation applied and the test caught it, the mutation did not
+apply, or the mutation applied and the test missed it. The middle case used to
+look like success and now fails loudly. The target file is restored in every
+outcome, including errors.
+
+Building it surfaced two of its own bugs, both found by pointing it at itself: a
+restore that ran twice and printed an error on a healthy run, and a self-test
+that recursed without bound and left the probe on disk with its own guard
+deleted. The second is recorded in the test file so the idea is not retried from
+scratch.
+
+
 
 ### The release checklist pointed at a file that never existed
 
