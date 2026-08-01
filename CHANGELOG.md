@@ -5,7 +5,30 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.17.1
+## v8.17.2
+
+### The shareable receipt now shows disabled gates too
+
+The HTML receipt is the artifact that gets linked and read by people who did not
+run the build. It rendered "3 of 3 gates passed" identically whether every gate
+ran or code review and security were switched off and three lesser gates ran
+instead.
+
+This is the third renderer of the same fact, after the proof record and the
+markdown receipt, and the most public of the three. The notice appears above the
+pass counts, so a reader who stops after the first line does not stop having read
+only the good news, and it states plainly that the counts do not cover the
+skipped checks.
+
+Phase names are escaped. This is a shared document rendering values from a JSON
+file, and interpolating them raw would be an injection vector in the one artifact
+whose entire purpose is to be trusted.
+
+Both of the template's render paths carry it, since wiring only the newer one
+would leave older receipts silent. An ordinary run, a proof predating the field,
+and a malformed value all render nothing at all.
+
+
 
 ### The receipt now shows the disabled gates it already recorded
 

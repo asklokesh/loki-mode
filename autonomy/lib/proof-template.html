@@ -1145,15 +1145,32 @@
       sec.classList.add("hide");
       return;
     }
+    // Gates the operator switched OFF for this run.
+    //
+    // This is the PUBLIC receipt -- the one that gets shared -- and it read
+    // "3 of 3 gates passed" identically whether every gate ran or code review
+    // and security were disabled and three lesser gates ran instead. The proof
+    // has recorded this since v8.17.0 and the markdown receipt showed it since
+    // v8.17.1; this surface still could not.
+    //
+    // Rendered ABOVE the pass counts deliberately: a reader who stops after the
+    // first line must not stop having read only the good news.
+    var offList = g(p, "quality_gates.disabled_phases", []);
+    var offHtml = "";
+    if (Array.isArray(offList) && offList.length > 0) {
+      offHtml = '<p class="opinion-note"><span aria-hidden="true">!</span>' +
+        "Gates disabled for this run: " + offList.map(esc).join(", ") +
+        ". Those checks did not run, so the counts below do not cover them.</p>";
+    }
     var exo = g(p, "quality_gates.exogenous", null);
     var adv = g(p, "quality_gates.advisory", null);
     if (!exo && !adv) {
       // Pre-TRUST-4 receipt: render the flat list exactly as before.
-      card.innerHTML = '<p class="note" style="margin:0 0 12px;">' + passed +
+      card.innerHTML = offHtml + '<p class="note" style="margin:0 0 12px;">' + passed +
         " of " + total + " gates passed.</p>" + gateChips(gates);
       return;
     }
-    var html = "";
+    var html = offHtml;
     var eg = g(exo, "gates", []);
     if (Array.isArray(eg) && eg.length > 0) {
       html += '<h3 style="margin:0 0 4px;font-size:14px;">Independent checks (count toward the verdict)</h3>' +
