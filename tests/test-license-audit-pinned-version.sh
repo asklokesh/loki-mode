@@ -110,6 +110,27 @@ out="$(run_harness fallback emptypkg '^9.9.9')"
 assert_eq "empty pinned query falls back to bare (latest) lookup" \
   "fallback|MIT|PASS" "$out"
 
+# --- WIRING ------------------------------------------------------------------
+# Everything above extracts lookup_license and drives it directly. That proves
+# the lookup resolves a license and says nothing about whether the audit still
+# ASKS it. Verified by mutation: hardcoding the caller to "MIT" left every
+# assertion above green -- and since the result feeds is_permissive, which
+# builds the offenders list, a GPL or AGPL dependency would pass the audit
+# silently. That is a compliance hole hiding behind a green test.
+if grep -qE 'license="\$\(lookup_license "\$name" "\$version"\)"' "$AUDIT_SCRIPT"; then
+  echo "  ok: WIRING: the audit still calls lookup_license"
+else
+  echo "  FAIL: WIRING: the audit no longer calls lookup_license; every dep reads as permissive"
+  FAILS=$((FAILS + 1))
+fi
+
+if grep -qE 'if ! is_permissive "\$license"; then' "$AUDIT_SCRIPT"; then
+  echo "  ok: WIRING: the resolved license still gates the offenders list"
+else
+  echo "  FAIL: WIRING: is_permissive is bypassed; nothing can be flagged"
+  FAILS=$((FAILS + 1))
+fi
+
 echo ""
 if [[ "$FAILS" -eq 0 ]]; then
   echo "LICENSE-AUDIT-PINNED-TEST: PASS"

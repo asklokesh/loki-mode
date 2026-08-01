@@ -140,6 +140,18 @@ assert_card_plain "brief" "$card" "snake game"
 
 echo ""
 echo "===================================="
+# --- WIRING ------------------------------------------------------------------
+# Everything above extracts _loki_iteration_spec_summary and drives it directly.
+# That proves the summary renders and says nothing about whether the iteration
+# card still asks for it. Verified by mutation: emptying the caller left every
+# assertion above green, so the card a user reads each iteration would silently
+# lose its spec summary while the tests still described one.
+if grep -qE '_spec_summary=\$\(_loki_iteration_spec_summary "\$prd"\)' "$RUN_SCRIPT"; then
+    ok "WIRING: the iteration card still requests the spec summary"
+else
+    fail "WIRING: nothing calls _loki_iteration_spec_summary; the card loses its summary"
+fi
+
 echo "Iteration card plain-language tests: PASS=$PASS FAIL=$FAIL"
 echo "===================================="
 [ "$FAIL" -eq 0 ]

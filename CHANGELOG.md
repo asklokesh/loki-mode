@@ -5,6 +5,42 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.28.0
+
+### The extraction-test sweep is finished: 6 of 8 were blind
+
+v8.27.0 probed four of the eight extraction-style tests in this repository and
+found three blind. This finishes the remaining four. One was already sound
+(`_loki_app_sandbox_dir`); the other three were not:
+
+- **`lookup_license`** (`scripts/license-audit.sh`) -- the sharpest of the set.
+  Hardcoding the caller to `"MIT"` left every assertion green. The result feeds
+  `is_permissive`, which builds the offenders list, so a GPL or AGPL dependency
+  would pass the license audit **silently**. A compliance hole behind a green
+  test.
+- **`_loki_state_file`** -- emptying the baseline reader left all assertions
+  green; state would silently stop being read or written.
+- **`_loki_iteration_spec_summary`** -- emptying the caller left all assertions
+  green; the card a user reads each iteration would lose its spec summary while
+  the tests still described one.
+
+Final tally across v8.27.0 and this release: **6 of 8 extraction tests were
+blind**. Every one is now pinned by a mutation that goes red.
+
+### An assertion loose enough to never fail is the same bug, one level up
+
+The state-file fix was wrong on the first attempt and the probe caught it. The
+first version asserted a call-site COUNT of at least three -- but the resolver
+has SEVEN call sites, so deleting one still cleared the bar and the mutation
+survived a second time.
+
+A count threshold that the defect cannot trip is exactly the failure mode this
+detector exists to find, just relocated from the test into the assertion. Now
+pinned to three specific call sites by exact text: the baseline reader, the
+terminal-status writer, and the final-status writer.
+
+Trust-core detector: 42 invariants.
+
 ## v8.27.0
 
 ### Four more gates could be disconnected with every test green

@@ -321,6 +321,24 @@ probe_case "the preflight still asks for the real login state" \
     '_login_state="$(_loki_claude_login_state)"' '_login_state="loggedin"' \
     bash tests/test-claude-login-state.sh
 
+# The last three blind extraction tests. The license one is the sharpest: its
+# result feeds is_permissive, which builds the offenders list, so a hardcoded
+# "MIT" lets a GPL/AGPL dependency pass the audit silently.
+probe_case "the license audit still resolves real licenses" \
+    "scripts/license-audit.sh" \
+    'license="$(lookup_license "$name" "$version")"' 'license="MIT"' \
+    bash tests/test-license-audit-pinned-version.sh
+
+probe_case "the state-file resolver stays wired" \
+    "autonomy/run.sh" \
+    'state_file="$(_loki_state_file 2>/dev/null)" || return 0' 'state_file=""; return 0' \
+    bash tests/test-state-baseline-lifecycle.sh
+
+probe_case "the iteration card still requests its spec summary" \
+    "autonomy/run.sh" \
+    '_spec_summary=$(_loki_iteration_spec_summary "$prd")' '_spec_summary=""' \
+    bash tests/test-iteration-card-plain.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
