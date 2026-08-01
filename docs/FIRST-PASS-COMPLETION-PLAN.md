@@ -65,7 +65,11 @@ work would have touched it.
 
 Ranked by measured contribution to iteration count.
 
-### F0 -- A gate that cannot pass must abort, not iterate (highest value)
+**STATUS 2026-08-01: F0, F2 and F3 SHIPPED. F1 was already built (verified, no
+work needed). F4's mechanism exists; only its default is open, and that needs
+real-build measurement rather than a guess.**
+
+### F0 -- SHIPPED v8.45.0. A gate that cannot pass aborts instead of iterating.
 
 FireLater burned 3 iterations against a gate whose detector did not exist. The
 gate correctly fail-closed each time; nothing noticed it was failing for the
@@ -81,7 +85,25 @@ same unfixable reason.
 - Guard rails: only on a byte-identical repeated cause, never a first failure,
   and it must map to a terminal-failure exit -- never a fake green.
 
-### F1 -- Front-load the 82%: make the spec gate the first-pass gate
+### F1 -- ALREADY BUILT (verified 2026-08-01). No work needed.
+
+The plan claimed this needed extending. It does not. Verified end to end:
+
+- `spec_interrogation_class_for()` already classifies findings as
+  **ambiguous / underspecified / missing / contradictory** -- the classes the
+  20,574-session study names, not just contradictions as the plan asserted.
+- `spec_ledger_prompt_block()` renders them and `run.sh:19399` assigns the
+  result to `assumption_context`.
+- `assumption_context` is interpolated into the built prompt at four sites
+  (run.sh:19685, 19687, 19691, 19693), so high-severity spec gaps reach the
+  agent on iteration 1.
+- `LOKI_SPEC_GRILL` defaults to 1, so it runs by default.
+
+**Recorded as a finding rather than converted into a change that was not
+needed.** The 82% planning bucket already has its lever; the honest next step
+is MEASURING what it catches per run, not building a second one.
+
+### F1-original (superseded) -- front-load the 82% via the spec gate
 
 `LOKI_SPEC_GRILL` already interrogates the spec before the loop and defaults
 ON. That is the correct lever for the 82% planning bucket, and it is already
@@ -95,7 +117,7 @@ paid for.
   **-3% success, +20% cost**; human-written ones **+4%**. So this must produce
   *questions and resolutions*, never a generated context blob.
 
-### F2 -- Findings injection must not be silently optional
+### F2 -- SHIPPED v8.44.0. Findings injection can no longer degrade silently.
 
 `LOKI_INJECT_FINDINGS` defaults on, but the injection is gated on
 `command -v bun`. **Without bun, the agent is told it failed and not what to
@@ -105,7 +127,7 @@ fix** -- the exact "no error recovery" shape that is 56% of failures.
 - A silent degradation of the feedback loop is worse than a missing feature,
   because the next iteration looks like a model failure.
 
-### F3 -- Verify before the gate, not after
+### F3 -- SHIPPED v8.46.0. Iteration 1 now names the gates that will judge it.
 
 47.8% first-iteration pass rate is the industry number. The cheap deterministic
 gates (test_suite, static_analysis, lsp_diagnostics) cost ~6s combined and run
@@ -117,15 +139,22 @@ gates (test_suite, static_analysis, lsp_diagnostics) cost ~6s combined and run
   edits the offending files, re-runs" -- their headline architectural change.
   We already have the gates; we just run them too late to help pass 1.
 
-### F4 -- Iteration budget as a measured decision
+### F4 -- Iteration budget: mechanism exists, default is the open question
 
-Research: 1-2 iteration caps fail even when the approach was sound; 5-10 is the
-recommended range. We ship `LOKI_MAX_ITERATIONS=1000`.
+Verified: hitting the cap already records the named terminal
+`max_iterations_reached` with exit 20 (run.sh:21433) -- it does NOT fake
+success. That half of the plan was already satisfied.
 
-- The goal is not a small cap. It is **finishing in one** and stopping honestly
-  when one is not enough.
-- Pairs with F0: a cap is a blunt instrument; a named terminal reason is a
-  diagnosis.
+What is genuinely open is the DEFAULT. `LOKI_MAX_ITERATIONS` defaults to
+**1000**; the 5 applies only to `LOKI_AUTO_FIX` tasks. Research puts the sound
+range at 5-10 and shows 1-2 fails even when the approach was correct.
+
+**Deliberately not changed here.** F0 (v8.45.0) already stops a doomed run at
+the cause rather than the count, which is the better instrument -- a cap is
+blunt, a named stuck-gate reason is a diagnosis. Lowering the default without
+measuring how often real runs legitimately exceed 5 would trade one arbitrary
+number for another. That measurement needs real builds, so it stays a founder
+decision rather than a guess.
 
 ## 4. What we do NOT do
 
