@@ -15,6 +15,11 @@
 # Usage:
 #   scripts/mutation-probe.sh <file> <find> <replace> <test-command...>
 #
+# MUTPROBE_AFTER=<marker> restricts the replacement to the region AFTER the
+# first occurrence of <marker>. Needed when the same code appears twice in one
+# file and only the second copy is the one under test -- probing the wrong copy
+# reports MUTATION SURVIVED and looks exactly like a blind test.
+#
 # Exits 0 only when: the file changed, the test then FAILED, and the file was
 # restored byte-identical. Anything else is an error, including the case this
 # exists for -- a replacement that matched nothing.
@@ -52,14 +57,26 @@ restore() {
 }
 trap restore EXIT INT TERM
 
-applied="$(TARGET="$target" FIND="$find_str" REPL="$replace_str" python3 - <<'PY'
+applied="$(TARGET="$target" FIND="$find_str" REPL="$replace_str" \
+    AFTER="${MUTPROBE_AFTER:-}" python3 - <<'PY'
 import os
 path = os.environ["TARGET"]
 find = os.environ["FIND"]
 repl = os.environ["REPL"]
+after = os.environ.get("AFTER", "")
 with open(path, encoding="utf-8") as handle:
     original = handle.read()
-mutated = original.replace(find, repl, 1)
+# Restrict to the region after a marker when the same code appears twice and
+# only the later copy is under test.
+offset = 0
+if after:
+    idx = original.find(after)
+    if idx == -1:
+        print("NO")
+        raise SystemExit
+    offset = idx
+head, tail = original[:offset], original[offset:]
+mutated = head + tail.replace(find, repl, 1)
 if mutated == original:
     print("NO")
 else:

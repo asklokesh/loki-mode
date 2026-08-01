@@ -72,6 +72,42 @@ class HeadlineRederivationTests(unittest.TestCase):
             "a post-hoc gate entry reached the re-derivation, which moves the "
             "headline and makes the verifier report a forged proof")
 
+    def test_the_post_headline_flag_is_filtered(self):
+        """The PRIMARY condition, and it was untested.
+
+        The filter has two arms: the explicit post_headline flag, and a legacy
+        status=="disabled" check kept for proofs written before the flag
+        existed. Every fixture in this file used the legacy shape, so the arm
+        that real generator output actually takes was never exercised --
+        breaking it left this suite green.
+
+        Found by mutation probe, not by reading: probing the primary arm
+        reported MUTATION SURVIVED while probing the legacy arm reported it
+        caught. Two arms, one covered.
+        """
+        proof = {"honesty": {"degraded": [
+            {"item": "security", "status": "not_run", "post_headline": True},
+        ]}}
+        self.assertEqual(
+            self.pv._recorded_degraded_raw(proof), [],
+            "a flagged post-headline entry reached the re-derivation; the "
+            "verifier will report this honest proof as forged")
+
+    def test_both_filter_arms_are_exercised(self):
+        """A post-headline entry whose status is NOT 'disabled' must still go.
+
+        This is the case the legacy arm cannot catch, so it pins the two arms
+        apart: if someone removes the flag check and keeps only the status
+        check, this fails while the legacy test still passes.
+        """
+        proof = {"honesty": {"degraded": [
+            {"item": "future_check", "status": "brand_new_status",
+             "post_headline": True},
+            {"item": "build", "status": "not_run"},
+        ]}}
+        kept = self.pv._recorded_degraded_raw(proof)
+        self.assertEqual([g.get("item") for g in kept], ["build"])
+
     def test_the_filter_keeps_real_gaps(self):
         proof = {"honesty": {"degraded": [
             {"item": "security", "status": "disabled"},

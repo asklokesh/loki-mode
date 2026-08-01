@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# The trust-core tests must actually detect their own regressions.
+#
+# Every test in this repository passes. That is not evidence any of them would
+# FAIL if the code broke -- a test asserting the wrong layer, or on a string
+# rather than a behaviour, is green either way. For the trust core specifically
+# that gap is the whole product: a receipt that claims verification, guarded by a
+# test that cannot tell when verification stopped happening.
+#
+# This runs a real mutation against each trust-core invariant and requires the
+# corresponding test to go red. It uses scripts/mutation-probe.sh, which fails
+# loudly when a mutation does not apply -- the case that used to look identical
+# to success, and shipped twice before it was fixed.
+#
+# SLOW BY CONSTRUCTION. Each case runs a full test suite against broken code.
+# That is the cost of knowing these tests work rather than assuming it, and it
+# is why the list is the load-bearing invariants rather than everything.
+#
+# Adding a case: pick a line whose removal MUST break something a user relies
+# on, not a line that merely exists.
+
+set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROBE="$REPO_ROOT/scripts/mutation-probe.sh"
+
+passed=0
+failed=0
+ok() { echo "  PASS: $1"; passed=$((passed + 1)); }
+ko() { echo "  FAIL: $1"; failed=$((failed + 1)); shift; [[ $# -gt 0 ]] && echo "        $*"; }
+
+echo "TEST: trust-core tests detect their regressions"
+
+[[ -x "$PROBE" ]] || { echo "  FAIL: mutation probe missing"; exit 1; }
+
+# name | file | find | replace | test command
+probe_case() {
+    local name="$1" file="$2" find_s="$3" repl_s="$4"; shift 4
+    ( cd "$REPO_ROOT" && MUTPROBE_AFTER="${MUTPROBE_AFTER:-}" \
+        timeout 300 bash "$PROBE" "$file" "$find_s" "$repl_s" "$@" ) >/dev/null 2>&1
+    local rc=$?
+    case "$rc" in
+        0)  ok "$name" ;;
+        1)  ko "$name" "the test PASSED with the invariant broken -- it is blind" ;;
+        65) ko "$name" "the probe did not apply; the search string is stale and this case proves nothing" ;;
+        124) ko "$name" "timed out" ;;
+        *)  ko "$name" "probe error rc=$rc" ;;
+    esac
+}
+
+# --- a force-stop must report failure, not success ---------------------------
+probe_case "force-stop records a non-zero exit code" \
+    "autonomy/run.sh" \
+    'save_state $retry "force_stopped" 20' \
+    'save_state $retry "force_stopped" 0' \
+    bash tests/test-force-stop-exit-code.sh
+
+# --- the iteration grace must stay bounded -----------------------------------
+# Without the marker check the grace is unlimited and the cap is not a cap.
+probe_case "the iteration grace is granted at most once" \
+    "autonomy/run.sh" \
+    '[ -f "$_marker" ] && return 1' \
+    '[ -f "$_marker" ] && return 0' \
+    bash tests/test-iteration-grace.sh
+
+# --- a worktree must be recognised as a real repo ----------------------------
+probe_case "scoped-change detects a git worktree" \
+    "autonomy/run.sh" \
+    'git -C "$target" rev-parse --is-inside-work-tree' \
+    '[ -d "$target/.git" ]' \
+    bash tests/test-scoped-change-profile.sh
+
+# --- the owner badge must not go green with gates off ------------------------
+probe_case "the ready badge blocks on a disabled trust gate" \
+    "autonomy/lib/own-render.py" \
+    'if any(str(name).strip().lower() in trust_gates for name in disabled):' \
+    'if False:' \
+    python3 -m pytest -q tests/test_own_render_gate_verdict.py
+
+# --- an honest receipt must not be called forged -----------------------------
+# proof-verify.py carries this filter TWICE: in _recorded_degraded (the human
+# report) and in _recorded_degraded_raw (the headline re-derivation). Only the
+# second can cause a false forgery accusation, and only it is what the tests
+# call. A probe against the first reports MUTATION SURVIVED and is
+# indistinguishable from a blind test -- that cost a real diagnosis here, so
+# MUTPROBE_AFTER pins the probe to the copy under test.
+MUTPROBE_AFTER='def _recorded_degraded_raw' \
+probe_case "the verifier filters post-headline gap entries" \
+    "autonomy/lib/proof-verify.py" \
+    'and (d.get("post_headline") is True' \
+    'and (False' \
+    python3 -m pytest -q tests/test_proof_verify_gate_gaps.py
+
+# --- cost must include the tokens that dominate the bill ---------------------
+probe_case "the dashboard prices cache reads" \
+    "dashboard/server.py" \
+    'cache_read_cost = (cache_read_tokens / 1_000_000)' \
+    'cache_read_cost = 0 * (cache_read_tokens / 1_000_000)' \
+    python3 -m pytest -q tests/dashboard/test_api_cost_cache.py
+
+probe_case "trust metrics count cache tokens" \
+    "autonomy/lib/trust_metrics.py" \
+    '"cache_read_tokens", "cache_creation_tokens")]' \
+    '"cache_read_tokens",)]' \
+    python3 -m pytest -q tests/test_trust_metrics_cache_tokens.py
+
+# --- the repo must be left exactly as found ----------------------------------
+# A probe that leaves a mutation on disk is worse than no probe: it breaks the
+# product silently while reporting on test quality.
+if [[ -z "$(cd "$REPO_ROOT" && git status --porcelain autonomy/ dashboard/ 2>/dev/null)" ]]; then
+    ok "every probed file was restored"
+else
+    ko "every probed file was restored" \
+       "left modified: $(cd "$REPO_ROOT" && git status --porcelain autonomy/ dashboard/ | head -3 | tr '\n' ' ')"
+fi
+
+echo ""
+echo "  Passed:     $passed"
+echo "  Failed:     $failed"
+[[ $failed -eq 0 ]] || exit 1

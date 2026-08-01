@@ -5,7 +5,30 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.20.0
+## v8.21.0
+
+### Proof that the trust-core tests would fail if the trust core broke
+
+Every test here passes. That was never evidence any of them would fail if the
+code broke, and for the trust core that gap is the product: a receipt claiming
+verification, guarded by a test that cannot tell when verification stopped
+happening.
+
+Seven load-bearing invariants are now proven detectable by breaking each one and
+requiring its test to go red. All seven pass, and the audit is a test itself, so
+it re-runs whenever anything changes rather than being a one-off exercise.
+
+The audit found a real coverage hole while being built. The verifier keeps its
+post-headline filter in two places, and every existing fixture exercised only
+the legacy arm, so the arm that real receipts actually take was unguarded. Two
+cases now pin the arms apart.
+
+It also found a trap in the method itself: probing the wrong copy of duplicated
+code reports that the mutation survived, which is indistinguishable from a blind
+test. The probe now takes a marker to pin which copy is under test, and the
+audit records why that matters where the next reader will hit it.
+
+
 
 ### A mutation test that does not mutate looks exactly like one that passes
 
