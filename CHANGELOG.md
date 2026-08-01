@@ -5,7 +5,26 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.19.4
+## v8.19.5
+
+### The open question was narrower than it looked
+
+Sweeping every fact the proof records showed that keeping an unrun check out of
+the honesty ledger is a deliberate, consistent pattern rather than a gap in one
+place. Three facts behave that way, and two of them said so in their own
+documentation while the third did not.
+
+The security collector now carries the same explicit note the other two have, so
+the behaviour is documented where a reader will find it instead of inferred from
+its absence. No verdict changes and no question is answered.
+
+The decision document was corrected: answering the security question alone would
+leave the receipt internally inconsistent, since a reader who sees an unrun scan
+flagged will ask why an unrun healthcheck is not. It is one decision about a
+tier, not three about separate facts. The recommendation that said otherwise was
+written before the sweep and has been replaced.
+
+
 
 ### The two open trust questions are written down
 

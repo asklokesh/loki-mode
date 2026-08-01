@@ -653,6 +653,16 @@ def _collect_security(loki_dir):
     {ran, total, active, waived, high_active, status, findings:[{rule,severity}]}.
     status: not_run (no scan) | clean (ran, no active findings) | findings
     (ran, active findings present).
+
+    PARTIAL record-half. An active HIGH finding IS read by _compute_degraded and
+    becomes a gap. An UNRUN scan is not: absence of a scan is deliberately not a
+    security gap (tests/test_proof_generator.py::test_no_security_file_is_not_a_gap),
+    so a receipt can read VERIFIED with an empty gap list while no scan ever ran.
+    That matches how `functional` and `healthcheck` behave, and like them,
+    changing it is the founder-gated trust decision rather than an inference to
+    make here. Stated explicitly because those two say so in their own
+    docstrings and this one did not, leaving the behaviour to be inferred from
+    silence -- which is the exact failure the honesty ledger exists to prevent.
     """
     out = {
         "ran": False, "total": 0, "active": 0, "waived": 0,

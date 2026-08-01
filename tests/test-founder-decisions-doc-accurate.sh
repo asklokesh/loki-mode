@@ -117,6 +117,20 @@ else
        "a one-sided decision doc is a recommendation in disguise"
 fi
 
+# --- the three-tier claim must still hold ------------------------------------
+# The document asserts that functional, healthcheck and security are all kept
+# out of the ledger when unrun, and that all three now say so in their own
+# docstring. If someone gates one of them, the document is stale.
+for _fact in functional healthcheck security; do
+    if grep -A 14 "def _collect_${_fact}" "$GEN" \
+        | grep -qiE "NOT read by _compute_headline|founder-gated|record-half|record half"; then
+        ok "$_fact documents its record-half behaviour in place"
+    else
+        ko "$_fact documents its record-half behaviour in place" \
+           "the document claims all three are documented; a reader would have to infer this one"
+    fi
+done
+
 # --- the verifier filter it references must still exist ----------------------
 if grep -q "post_headline" "$VERIFY"; then
     ok "the verifier filter the document warns about still exists"

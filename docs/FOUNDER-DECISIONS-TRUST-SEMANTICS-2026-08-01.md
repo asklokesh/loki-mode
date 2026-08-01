@@ -93,12 +93,53 @@ configured and it did not run. That distinguishes "not applicable" from
 
 ---
 
+## Context found after writing the above: it is three tiers, not two
+
+Sweeping every fact the proof records showed the exclusion is a deliberate,
+consistent pattern rather than an oversight in one place. Three facts are
+recorded and never enter the honesty ledger on a clean run:
+
+| Fact | In the ledger? | Documented as record-half? |
+|---|---|---|
+| `functional` | never | yes, explicitly (FV-2) |
+| `healthcheck` | never | yes, explicitly |
+| `security` | only on an active HIGH finding | no note, but behaves the same when unrun |
+
+`functional` and `healthcheck` both carry a note in their collector saying they
+are "NOT read by `_compute_headline` / `_compute_degraded`" and that gating on
+them is founder-gated. `security` carries no such note, yet an unrun scan is
+excluded exactly as they are.
+
+That changes decision 2 from "is this an oversight?" to "should the third tier
+join the first two, or move the other way?". It also means answering it in
+isolation would leave the receipt inconsistent: if an unrun security scan
+becomes a gap, a reader will reasonably ask why an unrun healthcheck is not.
+
+The cheapest correct step, if you want one, is to give `security` the same
+explicit record-half note the other two have, so the current behaviour is
+documented where a reader will find it rather than inferred from its absence.
+
+---
+
 ## What I would recommend, briefly
 
-Decision 2 first, using the middle option: it removes a real blind spot without
-padding every receipt. Decision 1 is the larger change and depends on how you
-want "Verified" to read to someone who did not run the build; it is worth
-deciding deliberately rather than inheriting.
+Revised after the three-tier finding above, which I had not made when I first
+wrote this section.
+
+Decision 2 should not be taken in isolation. Answering it for security alone
+makes the receipt internally inconsistent, because a reader who sees an unrun
+security scan flagged will reasonably ask why an unrun healthcheck is not. The
+real question is what the whole record-half tier should do, and that is one
+decision, not three.
+
+Decision 1 is the larger change and depends on how you want "Verified" to read
+to someone who did not run the build. It is worth deciding deliberately rather
+than inheriting, and it is independent of decision 2.
 
 Neither is blocking. Both facts are already visible to anyone who reads the
 receipt.
+
+The one change I made without asking is documentation only: `security` now
+carries the same explicit record-half note that `functional` and `healthcheck`
+have. That records the existing behaviour where a reader will find it. It
+changes no verdict and decides nothing.
