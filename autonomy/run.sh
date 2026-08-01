@@ -1111,6 +1111,41 @@ fi
 # Perpetual mode: never stop unless max iterations (ignores all completion signals)
 PERPETUAL_MODE=${LOKI_PERPETUAL_MODE:-false}
 
+# F4: bound the runaway ceiling for ORDINARY runs.
+#
+# MEASURED, not chosen. Real per-iteration wall clock across every recorded run
+# on this machine: median 718s, max 1746s. So the 1000 default is an 8.3-DAY
+# ceiling -- and it is the ONLY backstop, because the other two valves ship
+# disabled: LOKI_BUDGET_LIMIT defaults to "" (check_budget_limit returns
+# immediately) and LOKI_MAX_DURATION defaults to 0 (check_max_duration returns
+# "never stop").
+#
+# It also contradicts our own documentation. SETUP.md tells users to RAISE the
+# budget for large work with LOKI_MAX_ITERATIONS=40, and the demo uses 10 -- so
+# the shipped default is 25x the documented "large" setting.
+#
+# What real runs actually use: 1, 1, 3, 4. Every one terminated `completed` via
+# council approval or a completion promise; NONE hit a cap. Those are the
+# evidence-driven terminals, and they are unaffected by this -- the cap is a
+# backstop, not the mechanism.
+#
+# 25 is deliberately generous against that evidence (6x the observed maximum),
+# because the research is explicit that a too-small cap fails runs whose
+# approach was sound: 1-2 caps fail even when the agent was on track, and the
+# recommended range is 5-10. This is not a first-pass target; F0 (v8.45.0)
+# already stops a doomed run at its CAUSE, which is the better instrument.
+#
+# TWO GUARDS, both load-bearing:
+#   - an explicit LOKI_MAX_ITERATIONS always wins, so nobody's setting changes
+#   - PERPETUAL_MODE is untouched: it deliberately ignores every completion
+#     signal and relies on max-iterations as its ONLY stop, so lowering the cap
+#     there would silently truncate exactly the runs that opted out of stopping
+if [ -z "${LOKI_MAX_ITERATIONS:-}" ] \
+   && [ "$PERPETUAL_MODE" != "true" ] \
+   && [ "${LOKI_AUTO_FIX:-}" != "true" ]; then
+    MAX_ITERATIONS="${LOKI_MAX_ITERATIONS_DEFAULT:-25}"
+fi
+
 # Enterprise background service PIDs (OTEL bridge, audit subscriber, integration sync)
 ENTERPRISE_PIDS=()
 

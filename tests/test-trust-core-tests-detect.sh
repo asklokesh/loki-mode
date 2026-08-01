@@ -572,6 +572,19 @@ probe_case "static_analysis still consults the stuck check" \
     '                    if false; then :; elif false; then \' \
     bash tests/test-gate-stuck-abort.sh
 
+# F4: the runaway ceiling is bounded, but neither guard may be lost. Truncating
+# perpetual mode silently ends runs that opted out of stopping; overriding an
+# explicit setting silently changes behaviour for anyone who tuned it.
+probe_case "perpetual mode keeps its high ceiling" \
+    "autonomy/run.sh" \
+    '   && [ "$PERPETUAL_MODE" != "true" ] \' '   && true \' \
+    bash tests/test-iteration-cap-default.sh
+
+probe_case "an explicit iteration cap is never overridden" \
+    "autonomy/run.sh" \
+    'if [ -z "${LOKI_MAX_ITERATIONS:-}" ] \' 'if true \' \
+    bash tests/test-iteration-cap-default.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.

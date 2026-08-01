@@ -728,6 +728,7 @@ run_test "doctor detects an incomplete install" "$SCRIPT_DIR/test-doctor-install
 run_test "findings injection degrades loudly, never silently" "$SCRIPT_DIR/test-findings-injection-degrade.sh"
 run_test "a stuck gate aborts instead of grinding" "$SCRIPT_DIR/test-gate-stuck-abort.sh"
 run_test "iteration 1 names the gates that will judge it" "$SCRIPT_DIR/test-first-pass-gate-directive.sh"
+run_test "iteration cap is bounded without truncating real runs" "$SCRIPT_DIR/test-iteration-cap-default.sh"
 run_test "model catalog: no tier points at a superseded flagship" "$SCRIPT_DIR/test-model-catalog-current-flagship.sh"
 run_test "model catalog staleness is advisory in doctor" "$SCRIPT_DIR/test-model-catalog-staleness.sh"
 run_test "doctor blocker parity (both routes name blockers + offer loki tour)" "$SCRIPT_DIR/test-doctor-blocker-parity.sh"

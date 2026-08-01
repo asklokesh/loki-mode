@@ -5,6 +5,60 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.49.0
+
+### F4: the 1000-iteration default was an 8.3-day runaway ceiling
+
+Last item of `docs/FIRST-PASS-COMPLETION-PLAN.md`. I had parked this as "needs a
+founder decision". Measuring instead of asking resolved it.
+
+**Measured, not chosen.** Real per-iteration wall clock across every recorded
+run: median **718s**, max 1746s. So `LOKI_MAX_ITERATIONS=1000` was an **8.3-day**
+ceiling -- and the *only* backstop, because the other two valves ship disabled:
+
+```
+LOKI_BUDGET_LIMIT  defaults to ""  -> check_budget_limit returns immediately
+LOKI_MAX_DURATION  defaults to 0   -> check_max_duration "never stop"
+```
+
+It also contradicted our own documentation: `SETUP.md` tells users to RAISE the
+budget for large work with `LOKI_MAX_ITERATIONS=40`, and the demo uses 10. The
+shipped default was **25x the documented "large" value**.
+
+What real runs actually use: **1, 1, 3, 4** iterations. Every one terminated
+`completed` via council approval or a completion promise; **none hit a cap**.
+Those evidence-driven terminals are untouched -- the cap is a backstop, not the
+mechanism.
+
+New default **25**: 6x the observed maximum, deliberately generous because the
+research is explicit that a too-small cap fails runs whose approach was sound
+(1-2 fails even when on track; 5-10 recommended). Retune with
+`LOKI_MAX_ITERATIONS_DEFAULT`.
+
+### Two guards, both mutation-pinned
+
+- **an explicit `LOKI_MAX_ITERATIONS` always wins** -- anyone who tuned this
+  sees no change, in either direction
+- **perpetual mode is untouched** (keeps 1000). It deliberately ignores every
+  completion signal and relies on max-iterations as its ONLY stop, so lowering
+  the cap there would truncate exactly the runs that opted out of stopping
+
+Hitting the cap still records `max_iterations_reached` with exit 20. A bounded
+cap is only safe because reaching it fails honestly; if it exited 0 this would
+convert long runs into fake successes -- worse than the runaway it replaces.
+
+### The test's own copy hid a real defect
+
+The explicit-setting mutation SURVIVED at first. The test drove a hand-copied
+resolution chain, so mutating `run.sh` changed nothing it executed -- while the
+real defect was severe: an explicit `LOKI_MAX_ITERATIONS=200` silently became
+25. The probe is now sliced out of `run.sh` itself.
+
+Fourth time this session a synthetic harness hid a real defect. The rule holds:
+**a re-implementation tests the RULE; only the source tests the CODE.**
+
+Plan status: **all items closed.** F0, F2, F3, F4 shipped; F1 was already built.
+
 ## v8.48.0
 
 ### F0 covered one of the three gates that actually cause extra iterations

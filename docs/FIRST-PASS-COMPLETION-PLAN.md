@@ -65,9 +65,8 @@ work would have touched it.
 
 Ranked by measured contribution to iteration count.
 
-**STATUS 2026-08-01: F0, F2 and F3 SHIPPED. F1 was already built (verified, no
-work needed). F4's mechanism exists; only its default is open, and that needs
-real-build measurement rather than a guess.**
+**STATUS 2026-08-01: ALL ITEMS CLOSED. F0, F2, F3, F4 shipped. F1 was already
+built (verified, no work needed).**
 
 ### F0 -- SHIPPED v8.45.0. A gate that cannot pass aborts instead of iterating.
 
@@ -139,7 +138,7 @@ gates (test_suite, static_analysis, lsp_diagnostics) cost ~6s combined and run
   edits the offending files, re-runs" -- their headline architectural change.
   We already have the gates; we just run them too late to help pass 1.
 
-### F4 -- Iteration budget: mechanism exists, default is the open question
+### F4 -- SHIPPED v8.49.0. Bounded default, both guards mutation-pinned.
 
 Verified: hitting the cap already records the named terminal
 `max_iterations_reached` with exit 20 (run.sh:21433) -- it does NOT fake
