@@ -372,6 +372,33 @@ shipped THREE releases reporting the wrong version. At hourly cadence that
 reaches npm before anyone looks. The fast tier keeps that check and the syntax
 checks, and costs about a minute.
 
+**The packaged artifact is the blind spot (2026-08-01).** Four releases were
+spent finding that the checks guarding the SHIPPED PACKAGE were themselves
+unguarded. Everything works from a git checkout, so no in-repo test and no
+GitHub CI job can see these:
+
+- four quality-gate detectors under `tests/` were never in `files[]`, so
+  mutation-integrity fail-closed on EVERY iteration for EVERY npm user --
+  first-pass completion was impossible regardless of model output (v8.38.0)
+- the committed `dist/loki.js` hardcoded version 8.11.0 for 27 releases,
+  because the dist-freshness check was DEFERRED by the fast tier it justifies
+  (v8.40.0)
+- `npm pack tarball contents` was also deferred, and when promoted turned out
+  to pass on "6 or more" matches of 6 patterns that healthily produce 8 -- it
+  tolerated losing two required artifacts (v8.41.0)
+
+Three rules that fall out, and they generalise past packaging:
+
+1. **A check that guards the shipped artifact must run in the FAST tier.** It
+   is the only tier that runs before every push, and CI has no equivalent.
+2. **Assert each required thing individually, never a count.** A threshold
+   cannot say WHICH artifact vanished, and picks up slack it was never meant
+   to have.
+3. **Guard against vacuity.** A substring search over an empty listing reports
+   nothing missing. `npm pack` writes its listing to STDERR -- `2>&1 >file`
+   captures build chatter instead and makes every assertion pass. An empty
+   result is not evidence; it is an absent measurement.
+
 `LOCAL_CI_SHARDS` (default 4) controls local sharding; `LOCAL_CI_SERIAL=1`
 forces serial for diagnosis, since overlapping provider-backed suites starve
 each other.
