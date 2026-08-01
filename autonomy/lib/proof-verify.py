@@ -386,6 +386,19 @@ def _recorded_degraded(proof):
     if isinstance(honesty, dict):
         deg = honesty.get("degraded")
         if isinstance(deg, list):
+            # Disabled-gate entries are appended by the generator AFTER it
+            # computes the headline (v8.19.0), so they were never an input to
+            # the recorded value. Re-deriving WITH them made an honest proof
+            # look edited: on a run with security switched off the generator
+            # recorded "VERIFIED" and this function re-derived "VERIFIED WITH
+            # GAPS", and the mismatch is reported to the user as "the headline
+            # was edited to misrepresent the facts".
+            #
+            # Accusing an honest receipt of forgery is the worst failure this
+            # verifier can have, so the re-derivation must use exactly the list
+            # the generator used: everything except the post-hoc gate entries.
+            deg = [d for d in deg
+                   if not (isinstance(d, dict) and d.get("status") == "disabled")]
             return [str(x) for x in deg]
     return []
 
@@ -401,6 +414,19 @@ def _recorded_degraded_raw(proof):
     if isinstance(honesty, dict):
         deg = honesty.get("degraded")
         if isinstance(deg, list):
+            # Disabled-gate entries are appended by the generator AFTER it
+            # computes the headline (v8.19.0), so they were never an input to
+            # the recorded value. Re-deriving WITH them made an honest proof
+            # look edited: on a run with security switched off the generator
+            # recorded "VERIFIED" and this function re-derived "VERIFIED WITH
+            # GAPS", and the mismatch is reported to the user as "the headline
+            # was edited to misrepresent the facts".
+            #
+            # Accusing an honest receipt of forgery is the worst failure this
+            # verifier can have, so the re-derivation must use exactly the list
+            # the generator used: everything except the post-hoc gate entries.
+            deg = [d for d in deg
+                   if not (isinstance(d, dict) and d.get("status") == "disabled")]
             return deg
     return []
 

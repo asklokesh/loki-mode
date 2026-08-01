@@ -5,7 +5,28 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.19.1
+## v8.19.2
+
+### An honest receipt was being accused of forgery
+
+The verifier re-derives a receipt's headline from its recorded facts and reports
+any mismatch as evidence the headline was edited to misrepresent them. That is
+the strongest claim the tool makes.
+
+v8.19.0 added a gap entry for each disabled trust gate, appended after the
+headline is computed so the verdict does not move. The verifier re-derived using
+those entries, and the derivation only cares whether the gap list is empty, so a
+run with security switched off recorded one headline and re-derived another.
+
+The result was a user being told their honest proof had been edited to
+misrepresent the facts. For a product whose claim is verifiable trust, a false
+accusation of tampering is worse than the gap it was meant to surface.
+
+The re-derivation now uses exactly the list the generator used. Excluding those
+entries does not blind it: a genuinely edited proof is still caught, and a real
+gap recorded before the headline still counts, both asserted.
+
+
 
 ### The owner read the same problem three times
 
