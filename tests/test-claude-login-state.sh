@@ -142,6 +142,19 @@ else
     [ "$r" = "unknown" ] && ok "non-Darwin: no keychain -> unknown (fails open, never a false loggedout)" || bad "non-Darwin fail-open" "$r" "unknown"
 fi
 
+# --- WIRING ------------------------------------------------------------------
+# Everything above extracts _loki_claude_login_state and drives it directly.
+# That proves the helper classifies login state correctly and says nothing about
+# whether the preflight still asks it. Verified by mutation: hardcoding the
+# caller to "loggedin" left every assertion above green -- the fail-fast on a
+# never-logged-in user would silently stop working, and that user would enter
+# the build, make a failing call, and 401.
+if grep -qE '_login_state="\$\(_loki_claude_login_state\)"' "$RUN_SCRIPT"; then
+    ok "WIRING: the preflight still asks for the real login state"
+else
+    bad "WIRING: the login-state check is bypassed" "absent" "present"
+fi
+
 echo
 echo "-----------------------------------------------------"
 echo "PASS=$PASS FAIL=$FAIL"

@@ -222,5 +222,37 @@ d="$(mk optout)"; printf '{"scripts":{"build":"true"}}' > "$d/package.json"
 LOKI_BUILD_CHECK=0 TARGET_DIR="$d" enforce_build_check
 assert_status "LOKI_BUILD_CHECK=0 -> honest not_run gap (not fake N/A)" "$d" "not_run"
 
+# --- WIRING ------------------------------------------------------------------
+# Everything above extracts enforce_build_check and exercises it in isolation.
+# That proves the FUNCTION is correct and says nothing about whether the runner
+# still calls it. Verified by mutation: replacing the call site with `if true;`
+# left every assertion above green -- a production build that fails would stop
+# blocking completion and no test would notice.
+#
+# This is the caller-vs-callee gap that has now been found in nine subsystems
+# here. An isolation test without a wiring assertion is only half a test.
+_WIRE_RUN_SH="${RUN_SH:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/autonomy/run.sh}"
+
+if grep -qE '^\s*if enforce_build_check; then' "$_WIRE_RUN_SH"; then
+    ok "WIRING: the iteration loop still calls enforce_build_check"
+else
+    bad "WIRING: nothing calls enforce_build_check; a failed build never blocks"
+fi
+
+# The blocking half is the elif: only the supervised simple-web route turns a
+# failed build into a gate failure. Losing that branch makes the gate advisory
+# everywhere, which is a silent downgrade rather than a visible break.
+if grep -qE '^\s*elif loki_is_supervised_simple_web; then' "$_WIRE_RUN_SH"; then
+    ok "WIRING: a failed build still routes to the supervised blocking branch"
+else
+    bad "WIRING: the supervised branch is gone; a failed build blocks nothing"
+fi
+
+if grep -qE 'gate_failures="\$\{gate_failures\}production_build,"' "$_WIRE_RUN_SH"; then
+    ok "WIRING: a failed build feeds gate_failures"
+else
+    bad "WIRING: the build verdict never reaches gate_failures, so nothing acts on it"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

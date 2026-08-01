@@ -5,6 +5,39 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.27.0
+
+### Four more gates could be disconnected with every test green
+
+This release stops chasing the pattern one gate at a time and sweeps for it.
+
+An extraction test -- one that pulls a shell function out of `run.sh` and drives
+it directly -- proves the FUNCTION is correct and says nothing about whether
+anything still CALLS it. Eight tests in this repository have that shape. Four
+were probed by mutation; **three were blind**, and each blind one guards
+something a user relies on:
+
+- **`enforce_build_check`** -- replacing its call site with `if true;` left all
+  28 of its own assertions green. A failed production build would silently stop
+  blocking completion on the hosted simple-web route.
+- **`_loki_test_provenance`** -- emptying the council's call left all 8
+  assertions green. The council would stop checking test provenance entirely.
+- **`_loki_claude_login_state`** -- hardcoding the caller to `loggedin` left all
+  8 assertions green. A never-logged-in user would stop getting the fail-fast
+  with a one-step fix, and would instead enter the build, make a failing call,
+  and 401 -- the worst possible first impression.
+
+All three now carry wiring assertions, and all three previously-surviving
+mutations go red. Four cases added to the trust-core detector (now 39).
+
+The two probed paths that were already sound are recorded as such rather than
+"fixed": the sentrux security gate and the evidence-gate detail surface both
+end in `|| true`, but each captures its verdict separately and returns it
+intact -- the same shape v8.26.0's fix converged on.
+
+Nine subsystems have now been found with this caller-vs-callee gap. An
+isolation test without a wiring assertion is half a test.
+
 ## v8.26.0
 
 ### Gate 12 (Magic Modules debate) has never blocked anything

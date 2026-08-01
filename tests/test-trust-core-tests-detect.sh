@@ -291,6 +291,36 @@ probe_case "a missing provider degrades the debate gate, never blocks" \
         return 1' \
     bash tests/test-magic-debate-gate.sh
 
+# The production-build gate. Its test extracted enforce_build_check and verified
+# it in isolation, so disconnecting the CALL SITE left every assertion green --
+# a failed production build would silently stop blocking completion. Verified by
+# mutation before the wiring assertions were added: this probe SURVIVED.
+probe_case "the build check stays wired to the loop" \
+    "autonomy/run.sh" \
+    'if enforce_build_check; then' 'if true; then' \
+    bash tests/test-build-check-applicability.sh
+
+probe_case "a failed build still reaches the blocking branch" \
+    "autonomy/run.sh" \
+    'elif loki_is_supervised_simple_web; then' 'elif false; then' \
+    bash tests/test-build-check-applicability.sh
+
+# Two more extraction tests that proved blind under mutation. Both drive a real
+# helper directly and neither asserted that anything CALLS it: the council's
+# test-provenance check, and the preflight's login-state classifier. Losing the
+# first means the council stops checking test provenance; losing the second
+# means a never-logged-in user enters the build and 401s instead of getting a
+# one-step fix.
+probe_case "the council still calls the provenance helper" \
+    "autonomy/completion-council.sh" \
+    '_prov="$(_loki_test_provenance "$base_sha" "$_prov_cmd")"' '_prov=""' \
+    bash tests/test-test-provenance-gate.sh
+
+probe_case "the preflight still asks for the real login state" \
+    "autonomy/run.sh" \
+    '_login_state="$(_loki_claude_login_state)"' '_login_state="loggedin"' \
+    bash tests/test-claude-login-state.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.

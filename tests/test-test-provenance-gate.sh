@@ -150,6 +150,18 @@ if [ "$HAVE_PYTEST" = "1" ]; then
   else ok "D (provenance record optional; gate pass-through already proven)"; fi
 else ok "D skipped (no pytest)"; fi
 
+# --- WIRING ------------------------------------------------------------------
+# Everything above extracts _loki_test_provenance and drives it directly. That
+# proves the helper works and says nothing about whether the council still calls
+# it. Verified by mutation: replacing the call with an empty string left every
+# assertion above green, so a council that stopped checking test provenance
+# entirely would ship unnoticed.
+if grep -qE '_prov="\$\(_loki_test_provenance "\$base_sha" "\$_prov_cmd"\)"' "$COUNCIL_SH"; then
+    ok "WIRING: the council still calls _loki_test_provenance"
+else
+    bad "WIRING: the council no longer calls _loki_test_provenance" "absent" "present"
+fi
+
 echo
 echo "-----------------------------------------------------"
 echo "PASS=$PASS FAIL=$FAIL"
