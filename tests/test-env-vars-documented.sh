@@ -40,7 +40,39 @@ if [ "${#documented[@]}" -lt 10 ]; then
     # asserting nothing. Fail loudly rather than report full coverage over an
     # empty set -- a gate that passes vacuously is worse than no gate.
     bad "only ${#documented[@]} variables parsed out of the doc; the table format changed"
-    printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+    # --- REVERSE DIRECTION: every OPERATOR knob must be documented ---------------
+# The checks above verify doc -> code (nothing documented is fiction). They do
+# not catch code -> doc, and that is the gap that actually bit: six control
+# knobs shipped across v8.9-v8.15 (the eval trend, findings injection, the
+# iteration grace, the scoped-change profile, and both provider timeouts) were
+# live and undocumented. A switch nobody can find is not a switch; the operator
+# is stuck with the default and cannot even tell there IS a default.
+#
+# Scoped deliberately to a NAMED list rather than every LOKI_* token in the
+# source. Most are internal plumbing, and a test that demanded documentation for
+# all of them would be noise that gets muted -- which is worse than no test.
+# Add a knob here when it becomes an operator-facing decision.
+for _knob in LOKI_EVAL_TREND LOKI_INJECT_FINDINGS LOKI_ITERATION_GRACE \
+             LOKI_SCOPED_CHANGE LOKI_PROVIDER_IDLE_TIMEOUT LOKI_PROVIDER_CALL_TIMEOUT; do
+    if grep -q "$_knob" "$DOC"; then
+        ok "$_knob is documented"
+    else
+        bad "$_knob is an operator knob with no documentation -- users cannot find the switch"
+    fi
+done
+
+# The default must be stated, not just the variable named. "This exists" without
+# "and here is what happens if you do nothing" leaves the operator guessing.
+# Match on the flowed text, not a literal phrase: markdown wraps prose at ~78
+# columns, so "on by default" is split across lines in the source. Comparing
+# against the raw file made a correct doc look wrong.
+if tr '\n' ' ' < "$DOC" | grep -q "on by default"; then
+    ok "the steering knobs state their default"
+else
+    bad "the steering section does not state that these default to on"
+fi
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
     exit 1
 fi
 ok "parsed ${#documented[@]} documented variables from the reference table"
@@ -91,6 +123,38 @@ if grep -q 'log_error() { echo' "$REPO_ROOT/autonomy/run.sh"; then
     ok "log_error is genuinely ungated in run.sh (the floor is real)"
 else
     bad "log_error appears gated -- the documented error floor may not hold"
+fi
+
+# --- REVERSE DIRECTION: every OPERATOR knob must be documented ---------------
+# The checks above verify doc -> code (nothing documented is fiction). They do
+# not catch code -> doc, and that is the gap that actually bit: six control
+# knobs shipped across v8.9-v8.15 (the eval trend, findings injection, the
+# iteration grace, the scoped-change profile, and both provider timeouts) were
+# live and undocumented. A switch nobody can find is not a switch; the operator
+# is stuck with the default and cannot even tell there IS a default.
+#
+# Scoped deliberately to a NAMED list rather than every LOKI_* token in the
+# source. Most are internal plumbing, and a test that demanded documentation for
+# all of them would be noise that gets muted -- which is worse than no test.
+# Add a knob here when it becomes an operator-facing decision.
+for _knob in LOKI_EVAL_TREND LOKI_INJECT_FINDINGS LOKI_ITERATION_GRACE \
+             LOKI_SCOPED_CHANGE LOKI_PROVIDER_IDLE_TIMEOUT LOKI_PROVIDER_CALL_TIMEOUT; do
+    if grep -q "$_knob" "$DOC"; then
+        ok "$_knob is documented"
+    else
+        bad "$_knob is an operator knob with no documentation -- users cannot find the switch"
+    fi
+done
+
+# The default must be stated, not just the variable named. "This exists" without
+# "and here is what happens if you do nothing" leaves the operator guessing.
+# Match on the flowed text, not a literal phrase: markdown wraps prose at ~78
+# columns, so "on by default" is split across lines in the source. Comparing
+# against the raw file made a correct doc look wrong.
+if tr '\n' ' ' < "$DOC" | grep -q "on by default"; then
+    ok "the steering knobs state their default"
+else
+    bad "the steering section does not state that these default to on"
 fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

@@ -79,6 +79,35 @@ with `LOKI_<PROVIDER>_MODEL`.
 usefully set together. Note that `LOKI_MAX_TIER` is a **ceiling** and
 `LOKI_SESSION_MODEL` is a **choice** -- the ceiling still clamps the choice.
 
+## Steering the loop
+
+These control how the engine decides what to do next. Every one is on by
+default and takes `0` to turn it off, so an operator who needs the older
+behaviour has a switch rather than a fork.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `LOKI_EVAL_TREND` | on | Injects the run's own cost, duration and cache-hit trend into the next prompt, so the agent can steer on its own efficiency. `0` removes the block. |
+| `LOKI_INJECT_FINDINGS` | on | Injects the previous iteration's reviewer findings, by severity and file:line. `0` makes the next iteration a blind retry. |
+| `LOKI_ITERATION_GRACE` | on | When the agent reports done and no gate is failing, grants ONE extra iteration past the cap to land the work. Granted at most once per run. `0` restores a pure counter. |
+| `LOKI_SCOPED_CHANGE` | auto | Forces the scoped-change profile on (`1`) or off (`0`). Auto-detected from an issue-sourced spec on a repository with real history. Never disables a trust gate; it skips phases irrelevant to a scoped fix. |
+
+`LOKI_INJECT_FINDINGS=0` is the one to think twice about. Without it the model
+is told to fix problems without being told which, so it re-derives them from
+scratch every iteration -- the slowest and least accurate way to converge.
+
+## Timeouts
+
+| Variable | Default | Effect |
+|---|---|---|
+| `LOKI_PROVIDER_IDLE_TIMEOUT` | `120` (seconds) | Kills a provider call that has produced NO output for this long. Idle, not total: a coding agent streams constantly, so silence is the signal, and a long legitimate iteration is never interrupted. |
+| `LOKI_PROVIDER_CALL_TIMEOUT` | `7200` (seconds) | Hard ceiling on a single provider call, as a backstop against a process that streams forever without converging. |
+
+Setting either to `0` disables that guard entirely, which is the pre-v8.12
+behaviour: a hung provider then has nothing to stop it. Neither timeout
+retries. Re-running a coding agent that may already have edited files is not
+protective, so a timed-out call fails to the normal failure path instead.
+
 ## Output volume
 
 | Variable | Default | Effect |

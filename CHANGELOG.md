@@ -5,7 +5,29 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.15.0
+## v8.15.1
+
+### Six control knobs shipped without documentation
+
+The engine gained six operator-facing switches across the last several releases:
+the efficiency trend, reviewer-findings injection, the iteration grace, the
+scoped-change profile, and both provider timeouts. All are live, all default to
+on, and none of them appeared in the environment-variable reference.
+
+A switch nobody can find is not a switch. The operator is stuck with the default
+and cannot tell there is a default, which matters most for the findings
+injection: turning it off makes every iteration a blind retry, and that is a
+decision someone should be able to make deliberately rather than discover.
+
+All six are now documented with their defaults and their consequences, including
+the two timeouts, where setting either to zero restores the older behaviour of
+having no hang guard at all.
+
+The existing documentation test only checked one direction, that nothing
+documented is fiction. It now also checks the reverse, that a named operator
+knob is documented, which is the direction that actually failed.
+
+
 
 ### loki cost --json said what a run cost, never why
 
