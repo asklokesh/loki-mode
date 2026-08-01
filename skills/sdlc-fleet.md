@@ -142,4 +142,12 @@ Result: 4 releases shipped that day with all 8 GitHub workflows SUCCESS on each.
 
 ## Per-release checklist (always)
 
-See `artifacts/ROADMAP-v7.6.2-v7.7.0.md` "Per-release CLAUDE.md checklist" section for the binding 14-step checklist (architect plan, 14 version bumps, CHANGELOG, pre-publish validation, council, local-ci, individual staging, push, workflow validation, distribution validation, real-user smoke test, UI screenshot regression, cleanup).
+The binding release procedure is the **Release Workflow** section of `CLAUDE.md`,
+which is the authoritative and maintained copy: version bump across every listed
+file, dashboard build, tests, pre-publish validation, commit and push, and
+distribution verification across all channels.
+
+This previously pointed at an artifacts/ROADMAP file which has never
+existed in this repository -- so an agent following it for the "binding" steps
+found nothing and had to guess. The steps live in one place now, and that place
+is kept current because every release edits it.

@@ -5,7 +5,26 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.19.7
+## v8.19.8
+
+### The release checklist pointed at a file that never existed
+
+skills/sdlc-fleet.md has a section headed "Per-release checklist (always)". It
+sent the reader to a roadmap file for the binding fourteen steps. That file has
+never been tracked in this repository, and the only mention of the checklist
+anywhere is the pointer itself, so an agent following it for the binding
+procedure found nothing and had to guess.
+
+It now points at the Release Workflow section of CLAUDE.md, which is the real
+procedure and stays current because every release edits it.
+
+The pointer checker now covers the skills modules as well as the two entry
+documents, ninety-nine paths in total. Fenced code blocks are excluded, because
+one module shows an example learning note whose file names are illustrative, and
+two runtime paths are excluded by name for the same reason: a checker that flags
+correct things gets ignored.
+
+
 
 ### The project instructions pointed at a file nobody else has
 

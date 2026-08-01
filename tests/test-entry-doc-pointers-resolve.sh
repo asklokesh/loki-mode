@@ -37,16 +37,31 @@ root = sys.argv[1]
 broken = []
 checked = 0
 
-for src in ("CLAUDE.md", "SKILL.md"):
+sources = ["CLAUDE.md", "SKILL.md"]
+skills_dir = os.path.join(root, "skills")
+if os.path.isdir(skills_dir):
+    sources += [os.path.join("skills", f)
+                for f in sorted(os.listdir(skills_dir)) if f.endswith(".md")]
+
+for src in sources:
     path = os.path.join(root, src)
     if not os.path.exists(path):
         continue
     with open(path, encoding="utf-8") as handle:
         text = handle.read()
+    # Strip fenced blocks before extracting. skills/compound-learning.md shows
+    # an EXAMPLE learning note whose "See also" lines name files that are meant
+    # to be illustrative, not real. Flagging those would be a false positive,
+    # and a checker that cries wolf gets muted.
+    text = re.sub(r"```.*?```", "", text, flags=re.S)
     for ref in sorted(set(re.findall(
             r'`([A-Za-z0-9_./-]+\.(?:md|py|sh|json|ts|js))`', text))):
         # Runtime state, external, and bare prose filenames are out of scope.
-        if ref.startswith((".loki/", "http", "~")):
+        # .claude/mcp.json is the USER's own MCP config and behavioral-baseline/
+        # is a heal-mode runtime artifact: both are correctly absent at rest, so
+        # flagging them would train a reader to ignore this checker.
+        if ref.startswith((".loki/", "http", "~", ".claude/mcp",
+                           "behavioral-baseline/")):
             continue
         if "/" not in ref:
             continue
