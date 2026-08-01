@@ -5,6 +5,56 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.37.0
+
+### Make the unproven measurement one command
+
+v8.33.0-v8.36.0 shipped three speed knobs and verified they BIND on production
+code. The end-to-end win stayed unproven, because proving it needs a real build
+-- and reading the result meant hand-parsing `.loki/events.jsonl`, which is how
+the original numbers were derived. That is not something to re-derive under time
+pressure with a paid build already spent.
+
+`scripts/measure-run.sh <workspace>` reports where a run's wall clock went. It
+reads only what a run already wrote: it starts nothing, costs nothing, and never
+contacts a provider.
+
+Verified against the real FireLater run that produced the original analysis --
+it reproduces those numbers exactly:
+
+```
+stage                    n   median    total   share
+code_review              2     504s     785s     96%
+static_analysis          3       7s      26s      3%
+...
+TOTAL                                   817s
+
+CODE REVIEW, per council
+  seconds  reviewers  pass  fail
+      502          7     0     7
+      280          7     1     6
+```
+
+It also correctly reports `first code change: not recorded` for that pre-v8.35.0
+run rather than inventing a value -- the same silence-over-fabrication rule the
+signal writers follow.
+
+Degrades safely: a truncated or corrupt JSONL tail is skipped rather than
+aborting the report, a missing workspace exits 66, and `--json` emits a parseable
+object. The "Nx" scaling line prints only when the data contains more than one
+council size, because a single sample cannot support a claim about scaling.
+
+### The comparison it exists to make
+
+```
+baseline:  (knobs unset)
+capped:    LOKI_REVIEW_MAX_REVIEWERS=3 LOKI_REVIEW_SKIP_ON_GATE_FAIL=true
+```
+
+Run the same issue twice, diff the `code_review` row and the total. That is the
+number that answers the 21-minute complaint, and it still requires a real build
+-- this release removes the friction, not the requirement.
+
 ## v8.36.0
 
 ### Verifying the shipped knobs against production code, not a copy of it
