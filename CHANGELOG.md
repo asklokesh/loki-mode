@@ -5,6 +5,54 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.8.0
+
+### The model picker offered models it could not dispatch
+
+Starting a run with a non-Claude provider showed haiku/sonnet/opus in the model
+picker. On codex those are undispatchable, so the control offered choices that
+could never be honoured. The picker now derives its options from the provider
+actually executing, read from run-time state rather than from an environment
+variable the dashboard process never sees. A codex run offers that provider's
+model and the generic capability tiers, with no Claude alias anywhere in the
+payload. Mid-run switching is reported as unsupported where the engine does not
+support it, instead of accepting the request and ignoring it.
+
+The write half is fixed with it. The spawn endpoint validated the picked model
+against a Claude-only allowlist, so every value a codex user could choose was
+silently discarded and the run started on the provider default with no error.
+Generic tiers now pin through the provider-agnostic lever rather than the
+Claude-only environment triple, which was inert everywhere except Claude.
+
+### A runner that finished too quickly was reported as a launch failure
+
+The lineage guard proves a spawned runner is the child we launched. On Linux it
+reads /proc/<pid>/environ, which disappears the moment the process is reaped, so
+a fast-exiting runner was indistinguishable from one that never carried the
+marker. The supervisor reported it as a launch failure. A vanished process is
+now treated as unknown rather than absent, resolved against the process handle.
+A live process genuinely missing its marker still fails closed.
+
+### loki help <command> reached no command
+
+`loki help proof` printed the same generic front page as bare `loki help`, while
+`loki proof --help` printed real help. Two spellings of one request, one of them
+useless. They now agree. Because the help path re-enters dispatch, and dispatch
+reaches commands that start and stop things, asking for help is now structurally
+incapable of executing anything.
+
+### Speed and housekeeping
+
+- The pre-push gate ran all 1801 Python tests on every push regardless of
+  content. It is now scoped to what the push changes: docs-only skips, test-only
+  runs those files, anything else runs everything. Roughly 149s to 0.2s on a
+  docs push, with no loss of coverage in CI.
+- The test suite could commit into the real repository. Thirteen call sites ran
+  git with a working directory but no repository flag, which an inherited git
+  environment overrides. Fixed suite-wide.
+- The daily log grew without bound at roughly 1.5MB per iteration. It now uses
+  the same size cap its sibling log has always had.
+
 ## v8.7.0
 
 Five items aimed at one goal: making the harness work with a model that is not
