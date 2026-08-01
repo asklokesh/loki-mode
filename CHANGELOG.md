@@ -5,6 +5,55 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.31.0
+
+### The planning tier was pointing at a superseded flagship
+
+The founder's standing instruction is to re-check model tiers against provider
+docs after every release. Doing that found real drift:
+`providers/model_catalog.json` resolved the **planning** tier -- the most
+expensive tier, used for architecture decisions -- to `claude-opus-4-8` while
+`claude-opus-5` was already shipping.
+
+Verified against the live CLI before changing anything: `claude-opus-5`
+dispatches successfully, and so does `claude-opus-4-8`. This was staleness, not
+breakage -- runs were working, just on a previous-generation flagship.
+
+The promotion moves all three references together (`models[]`, the derived
+`latest_planning` mirror, and the `opus` CLI alias), because the catalog's own
+`_source_of_truth` note requires it and
+`tests/test-model-catalog-single-source.sh` fails when they disagree.
+
+Cost tracking is unaffected: `loki-ts/data/model-pricing.json` is keyed by
+ALIAS (`opus`), not by model id, so promoting the alias target does not orphan
+the pricing entry. Checked rather than assumed.
+
+### Catalog AGE could not have caught this
+
+`loki doctor` already reports catalog age and warns past 90 days. That check was
+useless here: the catalog was **3 days old**. A provider shipping mid-window
+makes age a poor proxy for correctness.
+
+`tests/test-model-catalog-current-flagship.sh` closes that gap offline, with no
+network and no hardcoded knowledge of what the newest model is (which would rot
+exactly like the catalog). It fails when the catalog contradicts ITSELF:
+
+- a tier resolves to an id absent from that provider's `models[]`
+- a tier points at a version superseded by another model of the same family
+  already listed in the catalog
+- a `cli_aliases` entry and its tier resolve to different ids -- the tier a user
+  picks and the model actually dispatched would silently differ
+- `updated` is not a valid ISO date (which degrades doctor's age check into a
+  vague "unreadable" warning)
+
+Both real drift shapes are pinned by mutation: restoring the pre-fix
+`latest_planning` and the pre-fix `opus` alias each turn the test red.
+
+Also ships `tests/test-model-catalog-staleness.sh` (13 assertions), which was
+written earlier in this session, passes, and had never been committed.
+
+Trust-core detector: 47 invariants.
+
 ## v8.30.0
 
 ### The baseline guard found two probes running zero tests

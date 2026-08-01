@@ -718,6 +718,8 @@ run_test "generic tiers (small|medium|high) resolve for every provider" "$SCRIPT
 run_test "wall-clock cap (LOKI_MAX_DURATION) fires and is terminal" "$SCRIPT_DIR/test-max-duration.sh"
 run_test "startup preflight blocks a doomed build, stays advisory where optional" "$SCRIPT_DIR/test-preflight-checks.sh"
 run_test "magic debate gate (Gate 12) can actually block" "$SCRIPT_DIR/test-magic-debate-gate.sh"
+run_test "model catalog: no tier points at a superseded flagship" "$SCRIPT_DIR/test-model-catalog-current-flagship.sh"
+run_test "model catalog staleness is advisory in doctor" "$SCRIPT_DIR/test-model-catalog-staleness.sh"
 run_test "doctor blocker parity (both routes name blockers + offer loki tour)" "$SCRIPT_DIR/test-doctor-blocker-parity.sh"
 run_test "first_run_blocked signal (opt-out silent, enum-clamped)" "$SCRIPT_DIR/test-first-run-blocked-signal.sh"
 run_test "help discoverability (every command reachable)" "$SCRIPT_DIR/test-help-discoverability.sh"

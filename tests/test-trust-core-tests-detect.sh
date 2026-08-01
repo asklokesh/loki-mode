@@ -367,6 +367,21 @@ probe_case "the model allowlist actually gates" \
     '    if True:' \
     python3 -m pytest -q tests/dashboard/test_start_model_generic_tiers.py
 
+# The model catalog. This drift was REAL and shipped: the planning tier -- the
+# most expensive tier, used for architecture decisions -- resolved to
+# claude-opus-4-8 while claude-opus-5 was already shipping. doctor's 90-day age
+# check could not catch it: the catalog was 3 days old. Age is a poor proxy for
+# correctness when a provider releases mid-window.
+probe_case "no tier points at a superseded flagship" \
+    "providers/model_catalog.json" \
+    '"latest_planning": "claude-opus-5"' '"latest_planning": "claude-opus-4-8"' \
+    bash tests/test-model-catalog-current-flagship.sh
+
+probe_case "a cli alias cannot drift from its tier" \
+    "providers/model_catalog.json" \
+    '"opus": "claude-opus-5"' '"opus": "claude-opus-4-8"' \
+    bash tests/test-model-catalog-current-flagship.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
