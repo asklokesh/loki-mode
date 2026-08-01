@@ -773,6 +773,35 @@ print(catalog["providers"]["claude"]["cli_aliases"].get(os.environ["_LOKI_SELECT
 }
 loki_apply_build_profile
 
+# Default hang guard for EVERY build, not just simple-web.
+#
+# The two timeouts above are set inside loki_apply_build_profile(), which
+# returns immediately unless LOKI_BUILD_PROFILE=simple-web. So on a normal
+# build both resolved to 0, and 0 means no guard at all -- verified by running
+# the deadline helper directly: `deadline.py 0 0 3 -- sleep 5` runs to
+# completion unkilled. A provider that hung had nothing to stop it.
+#
+# IDLE only, and no retry. That is what keeps this compatible with the standing
+# objection recorded above (search: "former invoke_with_timeout"), whose two
+# reasons remain correct:
+#
+#   1. "No safe generous default" applies to a fixed TOTAL timeout, which
+#      cannot tell a long legitimate iteration from a hang. An idle timeout
+#      can: it measures silence, not duration. Verified both directions --
+#      `sleep 600` under a 120s idle cap dies, while a process emitting output
+#      every second survives indefinitely. A coding agent streams constantly;
+#      one silent for two minutes is not working.
+#   2. "Wrong retry semantics" stands, so nothing here retries. The call is
+#      killed, and the existing failure path handles it. Re-running an agent
+#      that may have already edited files remains off the table.
+#
+# 7200s hard ceiling is a backstop against a process that streams forever
+# without converging; the idle cap is the load-bearing guard. Both are
+# overridable, and setting either to 0 restores the old unguarded behaviour.
+: "${LOKI_PROVIDER_IDLE_TIMEOUT:=120}"
+: "${LOKI_PROVIDER_CALL_TIMEOUT:=7200}"
+export LOKI_PROVIDER_IDLE_TIMEOUT LOKI_PROVIDER_CALL_TIMEOUT
+
 loki_background_services_enabled() {
     ! loki_is_supervised_simple_web
 }

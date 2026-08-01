@@ -5,6 +5,44 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.8.1
+
+### A running build displayed as STOPPED
+
+Reported from a real run: `loki start <issue-url>` was working normally -- the
+process alive, STATUS.txt reading BUILDING, iterations advancing -- while the
+dashboard showed STOPPED, iteration --, 0 agents.
+
+The liveness check had two sources and a background CLI run writes neither. It
+does not create .loki/loki.pid, and the engine only UPDATES .loki/session.json
+when that file already exists rather than creating it. Both checks failed, so
+every CLI-started build fell through to "stopped" the entire time it ran.
+
+Such a run does register itself in .loki/pids/. That is now a third source.
+Liveness is still proven by signalling the process, never by a file existing,
+so a stale entry from a crashed run still reads as stopped.
+
+### Capability tiers did nothing on codex
+
+Asking for small, medium or high on codex selected nothing: all three tiers
+fell back to an empty default, so no model was sent and the tier vocabulary was
+decorative. Users had to name a model by hand, which is exactly what the tiers
+exist to avoid.
+
+Each tier now resolves from the catalog to its own model:
+
+  small  -> gpt-5.6-luna    budget, high volume
+  medium -> gpt-5.6-terra   the default
+  high   -> gpt-5.6-sol     frontier work
+
+Model IDs verified against OpenAI's published model documentation. Naming a
+model explicitly still overrides the tier verbatim, and a Claude alias arriving
+through the generic chain still cannot reach codex.
+
+Displayed per-token rates for the new line are placeholders scaled from the
+previous model and are labelled as unverified in the source. They drive a
+display estimate only and never a gate.
+
 ## v8.8.0
 
 ### The model picker offered models it could not dispatch

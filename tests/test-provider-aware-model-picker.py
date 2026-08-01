@@ -61,7 +61,9 @@ def main():
     body = client.get("/api/session/model").json()
     blob = json.dumps(body)
     check("provider reported as codex", body.get("provider") == "codex", blob)
-    check("offers name gpt-5.3-codex", "gpt-5.3-codex" in blob, blob)
+    _cat = json.load(open("providers/model_catalog.json"))
+    _codex_medium = _cat["providers"]["codex"]["latest_development"]
+    check("offers the catalog's codex model", _codex_medium in blob, blob)
     check(
         "no claude alias offered",
         not any(a in body.get("allowed", []) for a in CLAUDE_ALIASES),
@@ -73,7 +75,7 @@ def main():
         blob,
     )
     check("offers generic tiers", body.get("allowed") == ["small", "medium", "high"], blob)
-    check("effective is the codex model", body.get("effective") == "gpt-5.3-codex", blob)
+    check("effective is the codex model", body.get("effective") == _codex_medium, blob)
     check("codex is not switchable", body.get("switchable") is False, blob)
 
     print("codex POST is refused and writes nothing")

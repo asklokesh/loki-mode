@@ -49,17 +49,29 @@
       ]
     },
     "codex": {
-      "latest_planning": "gpt-5.3-codex",
-      "latest_development": "gpt-5.3-codex",
-      "latest_fast": "gpt-5.3-codex",
-      "tier_fallback": {
-        "development": "planning",
-        "fast": "planning"
-      },
+      "latest_planning": "gpt-5.6-sol",
+      "latest_development": "gpt-5.6-terra",
+      "latest_fast": "gpt-5.6-luna",
       "models": [
         {
+          "id": "gpt-5.6-sol",
+          "tier": "planning",
+          "notes": "high tier. OpenAI: 'Frontier model for complex professional work'. Verified against developers.openai.com/api/docs/models."
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "tier": "development",
+          "notes": "medium tier, the DEFAULT. OpenAI: balances performance with affordability."
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "tier": "fast",
+          "notes": "small tier. OpenAI: budget-conscious, high-volume."
+        },
+        {
           "id": "gpt-5.3-codex",
-          "tier": "planning"
+          "tier": "legacy",
+          "notes": "Prior default, superseded by the gpt-5.6 line. Kept discoverable, not dispatched."
         },
         {
           "id": "o3",

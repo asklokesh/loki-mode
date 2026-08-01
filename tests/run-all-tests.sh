@@ -724,6 +724,7 @@ run_test "model catalog staleness is advisory and route-consistent" "$SCRIPT_DIR
 run_test "pre-push pytest is scoped without failing open" "$SCRIPT_DIR/test-pre-push-scoped-pytest.sh"
 run_test "loki help <command> and the daily log cap" "$SCRIPT_DIR/test-help-and-log-cap.sh"
 run_test "model picker is provider-aware (no claude models on codex)" "python3 $SCRIPT_DIR/test-provider-aware-model-picker.py"
+run_test "codex capability tiers resolve to distinct real models" "$SCRIPT_DIR/test-codex-tier-models.sh"
 run_test "proof md (paste-able receipt, one renderer)" "$SCRIPT_DIR/test-proof-md.sh"
 run_test "air-gapped read-only path (egress severed)" "$SCRIPT_DIR/test-airgap-commands.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"

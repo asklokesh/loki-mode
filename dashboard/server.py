@@ -678,6 +678,37 @@ async def _push_loki_state_loop() -> None:
                             except (json.JSONDecodeError, KeyError):
                                 pass
 
+                        # Third source: the .loki/pids/ registry, which a
+                        # CLI-started background run DOES write. Without this
+                        # the dashboard reported STOPPED for a healthy build:
+                        # `loki start` writes neither loki.pid nor session.json
+                        # (run.sh only UPDATES session.json when it already
+                        # exists), so both checks above failed and every such
+                        # run fell through to "stopped" while it was actively
+                        # working. Confirmed against a live build: STATUS.txt
+                        # said BUILDING and iterations were advancing while the
+                        # dashboard showed STOPPED with 0 agents.
+                        #
+                        # Liveness is proven with os.kill(pid, 0), never by the
+                        # file's presence -- a stale entry from a crashed run
+                        # must NOT read as alive, which is the same
+                        # anti-stale rule BUG-NEW-006 established above.
+                        if not _pid_alive:
+                            try:
+                                _pid_dir = loki_dir / "pids"
+                                for _entry in _pid_dir.glob("*.json"):
+                                    _rec = _safe_json_read(_entry, {})
+                                    if _rec.get("kind") not in ("wrapper", "runner"):
+                                        continue
+                                    try:
+                                        os.kill(int(_rec.get("pid", 0)), 0)
+                                    except (ValueError, OSError, ProcessLookupError):
+                                        continue
+                                    _pid_alive = True
+                                    break
+                            except OSError:
+                                pass
+
                         status_str = raw.get("mode", "autonomous")
                         # Control files are the AUTHORITY, and they are checked
                         # first. dashboard-state.json's "mode" is written by the
@@ -2925,7 +2956,7 @@ def _provider_model_offers(provider: str) -> list[dict]:
     Every other provider is offered the generic tiers (small/medium/high), which
     are provider-independent, each annotated with the concrete model id the
     catalog says that provider dispatches. That is what makes the picker read
-    "medium -> gpt-5.3-codex" on codex and "medium -> claude-sonnet-5" on claude
+    "medium -> gpt-5.6-terra" on codex and "medium -> claude-sonnet-5" on claude
     without the frontend knowing a single model id.
     """
     if provider == "claude":
@@ -7267,6 +7298,15 @@ _DEFAULT_PRICING = {
     "haiku":  {"input": 1.00, "output": 5.00},
     # OpenAI Codex
     "gpt-5.3-codex": {"input": 1.50, "output": 12.00},
+    # gpt-5.6 line: sol (high) / terra (medium, default) / luna (small).
+    # UNVERIFIED RATES. The model IDs are confirmed against
+    # developers.openai.com/api/docs/models, but OpenAI's published per-token
+    # prices for this line were not, so these are placeholders scaled from the
+    # gpt-5.3 rate. They drive a display estimate only, never a gate. Replace
+    # from the pricing page; tools/probe-model-catalog.py is the refresh path.
+    "gpt-5.6-sol":   {"input": 2.50, "output": 20.00},
+    "gpt-5.6-terra": {"input": 1.50, "output": 12.00},
+    "gpt-5.6-luna":  {"input": 0.50, "output": 4.00},
 }
 
 # Active pricing - starts with defaults, updated from .loki/pricing.json
@@ -7843,6 +7883,9 @@ _PROVIDER_LABELS = {
     "sonnet": "Sonnet 5",
     "haiku": "Haiku 4.5",
     "gpt-5.3-codex": "GPT-5.3 Codex",
+    "gpt-5.6-sol": "GPT-5.6 Sol",
+    "gpt-5.6-terra": "GPT-5.6 Terra",
+    "gpt-5.6-luna": "GPT-5.6 Luna",
 }
 
 # Display-only pricing notes, keyed by model. These annotate the pricing table in

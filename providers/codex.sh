@@ -132,9 +132,27 @@ _codex_validate_model() {
 # fallback is validated, since it may carry Claude aliases (opus/sonnet/haiku)
 # that are invalid for Codex. Validating the whole chain silently downgraded a
 # trusted LOKI_CODEX_MODEL to the default (BUG-PROV-003 fix).
-PROVIDER_MODEL_PLANNING="${LOKI_CODEX_MODEL:-$(_codex_validate_model "${LOKI_MODEL_PLANNING:-$CODEX_DEFAULT_MODEL}")}"
-PROVIDER_MODEL_DEVELOPMENT="${LOKI_CODEX_MODEL:-$(_codex_validate_model "${LOKI_MODEL_DEVELOPMENT:-$CODEX_DEFAULT_MODEL}")}"
-PROVIDER_MODEL_FAST="${LOKI_CODEX_MODEL:-$(_codex_validate_model "${LOKI_MODEL_FAST:-$CODEX_DEFAULT_MODEL}")}"
+#
+# Each tier resolves from the catalog, which is the single source of truth for
+# what "small / medium / high" means per provider. Before this, all three tiers
+# fell back to CODEX_DEFAULT_MODEL (empty), so a codex run sent no --model at
+# all and `LOKI_SESSION_MODEL=high` selected nothing -- the tier vocabulary was
+# inert on codex and a user had to name a model by hand.
+#
+# The empty default is still the last resort: if the catalog lookup yields
+# nothing, we send no --model and let Codex pick, which is the safe outcome for
+# a ChatGPT-account user rather than a guessed name.
+_codex_tier_model() {
+    local tier="$1" resolved=""
+    if command -v loki_latest_model >/dev/null 2>&1; then
+        resolved="$(loki_latest_model codex "$tier" 2>/dev/null)"
+    fi
+    printf '%s' "${resolved:-$CODEX_DEFAULT_MODEL}"
+}
+
+PROVIDER_MODEL_PLANNING="${LOKI_CODEX_MODEL:-$(_codex_validate_model "${LOKI_MODEL_PLANNING:-$(_codex_tier_model planning)}")}"
+PROVIDER_MODEL_DEVELOPMENT="${LOKI_CODEX_MODEL:-$(_codex_validate_model "${LOKI_MODEL_DEVELOPMENT:-$(_codex_tier_model development)}")}"
+PROVIDER_MODEL_FAST="${LOKI_CODEX_MODEL:-$(_codex_validate_model "${LOKI_MODEL_FAST:-$(_codex_tier_model fast)}")}"
 
 # Effort levels (Codex-specific: maps to reasoning time, not model capability)
 PROVIDER_EFFORT_PLANNING="xhigh"
