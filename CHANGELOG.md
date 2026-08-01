@@ -5,6 +5,67 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.38.0
+
+### Four quality gates were broken for every npm user, on every iteration
+
+The measurement harness shipped one release ago paid for itself immediately.
+Running it against a real FireLater run showed `mutation_integrity` failing
+**3 of 3 iterations in 0-1 SECONDS each**. Real mutation analysis cannot run in
+zero seconds -- that was a fail-closed branch firing instantly, forever.
+
+The recorded finding:
+
+```
+[HIGH] mutation detector unavailable:
+  /opt/homebrew/.../node_modules/loki-mode/autonomy/../tests/detect-test-mutations.sh
+```
+
+**`package.json`'s `files[]` had no `tests/` entry**, so the published package
+shipped ZERO files in `tests/`. Four gates shell out to detectors there:
+
+```
+enforce_mock_integrity        tests/detect-mock-problems.sh
+enforce_mutation_integrity    tests/detect-test-mutations.sh
+(semantic)                    tests/detect-semantic-test-problems.sh
+(invariants)                  tests/detect-invariant-violations.sh
+```
+
+Mutation-integrity is fail-CLOSED by design, which is correct -- a missing
+detector must never read as "nothing found". The consequence is that it could
+**never pass** for an installed user, forcing another iteration every single
+time.
+
+That is precisely the founder's complaint. First-pass completion was impossible
+for any npm user regardless of how good the model's output was, and no amount of
+model quality could have fixed it.
+
+The four detectors are now in `files[]`, verified present in the real
+`npm pack` tarball.
+
+### Why nothing caught this
+
+The detectors exist in the repo and run fine from a git checkout, so every
+in-repo test passed. Only the PACKAGED artifact was broken -- invisible to unit
+tests by construction, and invisible to the trust-core detector, which also runs
+from the checkout.
+
+`tests/test-detectors-are-packaged.sh` derives the required list FROM `run.sh`
+rather than hardcoding it, so a fifth gate added later is covered automatically,
+and asserts against the real tarball rather than only `files[]`.
+
+### Two corrections made while writing that test
+
+- The first fail-closed assertion keyed on the log phrase `-- BLOCK
+  (fail-closed)`. A mutation that changed both the message and `return 1` ->
+  `return 0` slipped through, because the assertion read the part of the line
+  carrying no authority. Now asserted on the **return value**.
+- The assertion then claimed all four gates fail-closed. They do not:
+  mock-integrity deliberately returns 0 while recording
+  `_LOKI_MOCK_INTEGRITY_REASON="detector_missing"`. Both directions are correct
+  for their own gate, so the invariant is now per-gate: a missing detector
+  either blocks, or records why it did not run -- never silence.
+
 ## v8.37.0
 
 ### Make the unproven measurement one command

@@ -454,6 +454,22 @@ probe_case "a capped council contains no duplicate reviewer" \
     '        if _r["name"] not in _mandatory_names:' '        if True:' \
     bash tests/test-review-cap-real-selector.sh
 
+# Gate detectors must SHIP. package.json had no tests/ entry, so four gates
+# fail-closed on every iteration for every npm user -- a guaranteed extra
+# iteration forever, which no in-repo test could see because the detectors work
+# fine from a git checkout.
+probe_case "the mutation detector is packaged" \
+    "package.json" '"tests/detect-test-mutations.sh",' '' \
+    bash tests/test-detectors-are-packaged.sh
+
+probe_case "a missing detector still fail-closes" \
+    "autonomy/run.sh" \
+    'log_warn "Mutation integrity gate: detector not found -- BLOCK (fail-closed)"
+        return 1' \
+    'log_warn "Mutation integrity gate: detector not found"
+        return 0' \
+    bash tests/test-detectors-are-packaged.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
