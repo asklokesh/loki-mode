@@ -5,7 +5,29 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.19.6
+## v8.19.7
+
+### The project instructions pointed at a file nobody else has
+
+CLAUDE.md is loaded into the context of every agent that works on this
+repository. It ended its architecture section by pointing at a codebase
+knowledge graph under a path that is machine-local Claude memory, under a
+previous repository name, neither tracked in git nor shipped in the package.
+
+It resolved on exactly one machine. Every other reader, human or agent,
+followed it to nothing.
+
+The reference now says where that file actually lives and states plainly that it
+is not in the repository, so a reader stops looking instead of assuming they
+have the wrong checkout. The in-repo tables are named as the authority for
+everyone else.
+
+A test now resolves every repository path cited in CLAUDE.md and SKILL.md.
+Scoped narrowly on purpose: runtime state paths and bare prose filenames are
+skipped, because a checker that flags those is noise, and a noisy checker gets
+muted.
+
+
 
 ### A month-old decision list was reading as current
 

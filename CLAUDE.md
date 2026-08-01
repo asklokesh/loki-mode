@@ -239,7 +239,11 @@ A PRD enters via `loki start` (`autonomy/loki:622`), which execs `run.sh`. The `
 **Deprecated entrypoints:**
 - `loki run <issue-ref>` is a deprecated alias for `loki start <issue-ref>` since v6.84.0. Emits a `cli_command_deprecated` telemetry event. See `autonomy/loki:4436-4456`. Prefer `loki start`.
 
-See `.claude/projects/-Users-lokesh-git-loki-mode/memory/CODEBASE-KNOWLEDGE-GRAPH.md` for complete reference.
+The fuller codebase knowledge graph lives in local Claude project memory
+(`~/.claude/projects/<sanitized-repo-path>/memory/CODEBASE-KNOWLEDGE-GRAPH.md`),
+not in this repository. It is not tracked in git and is not shipped in the npm
+package, so it resolves only on a machine where that memory exists. The tables
+above are the in-repo reference and are the authority for anyone else.
 
 ## Development Guidelines
 
@@ -331,7 +335,7 @@ Prompt: "Review the following claims for factual accuracy.
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v8.19.6 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
+- Current: v8.19.7 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
 - MAJOR bump for architecture changes (v6.0.0 = dual-mode architecture, loki run)
 - MINOR bump for new features (v5.23.0 = Dashboard File-Based API)
 - PATCH bump for fixes (v5.22.1 = session.json phantom state)
