@@ -31,7 +31,10 @@ bare_len=${#bare}
 
 # Sample several commands rather than one, so a fix that special-cases a single
 # name does not pass.
-for cmd in proof verify doctor status; do
+# Includes the SIDE-EFFECTING commands deliberately. A first pass sampled only
+# read-only ones (proof/verify/doctor/status), which is exactly the sample that
+# would miss `loki help stop` actually stopping something.
+for cmd in proof verify doctor status start stop update; do
     out="$(bash "$LOKI" help "$cmd" 2>&1)"
     if [[ ${#out} -eq $bare_len ]]; then
         ko "loki help $cmd differs from the generic front page" \
@@ -73,6 +76,24 @@ elif [[ "$unknown" == *"Unknown command"* ]]; then
     ok "loki help <unknown> reports the unknown command and exits"
 else
     ko "loki help <unknown> reports the unknown command and exits" "got: $unknown"
+fi
+
+# The help path must be incapable of executing, not merely observed not to.
+# LOKI_HELP_ONLY is set when `loki help <cmd>` re-enters dispatch; without a
+# --help in the argv the guard must refuse rather than run the command.
+guard_out="$(LOKI_HELP_ONLY=1 timeout 15 bash "$LOKI" stop 2>&1)"
+if [[ "$guard_out" == *"refusing to run"* ]]; then
+    ok "the help path refuses to execute a command without --help"
+else
+    ko "the help path refuses to execute a command without --help" \
+       "got: ${guard_out:0:120}"
+fi
+
+# ...and the guard must not leak into ordinary use.
+if timeout 20 bash "$LOKI" status --json >/dev/null 2>&1; then
+    ok "ordinary command dispatch is unaffected by the guard"
+else
+    ko "ordinary command dispatch is unaffected by the guard"
 fi
 
 # --- 2. daily log cap --------------------------------------------------------

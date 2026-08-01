@@ -2829,6 +2829,128 @@ def _normalize_start_model(raw: str | None) -> str:
     return ""
 
 
+# =============================================================================
+# Provider-aware model offer set
+# =============================================================================
+# The two allowlists above are WIRE values: what run.sh will actually honor in
+# .loki/state/model-override. They are Claude aliases because run.sh:20996 gates
+# the whole override block on PROVIDER_NAME=claude and feeds the file straight
+# into `claude --model`. They must not change.
+#
+# What the dashboard OFFERS is a separate question, and it was the bug: the
+# picker rendered those four Claude aliases on every run, so a codex session was
+# offered Haiku/Sonnet/Opus/Fable, none of which codex can dispatch. The offer
+# set below is derived from the RUNNING session's provider plus the canonical
+# providers/model_catalog.json, so the picker never names a model the active
+# provider cannot run.
+
+# Generic tier -> catalog key. These three tier names are provider-independent
+# (every catalog entry carries latest_fast/development/planning), which is what
+# makes the picker portable across providers.
+_TIER_LABELS = (
+    ("small", "fast"),
+    ("medium", "development"),
+    ("high", "planning"),
+)
+
+
+def _active_provider() -> str:
+    """The provider the CURRENT run is executing on.
+
+    Resolution order mirrors the CLI (autonomy/loki:5142): the per-project state
+    file run.sh writes at launch (run.sh:1458), then the environment, then the
+    stock default. The state file wins because it is the only source that
+    reflects the live run rather than the dashboard process's own environment.
+    """
+    try:
+        p = _get_loki_dir() / "state" / "provider"
+        if p.is_file():
+            val = p.read_text().strip().lower()
+            if val:
+                return val
+    except OSError:
+        pass
+    return (os.environ.get("LOKI_PROVIDER") or "claude").strip().lower() or "claude"
+
+
+def _load_model_catalog() -> dict:
+    """Read providers/model_catalog.json, the single source of truth for model ids.
+
+    Same candidate paths as GET /api/providers/models. Returns {} when the
+    catalog is unreadable; every caller degrades to "no model ids to show"
+    rather than inventing one.
+    """
+    for path in (
+        _Path(__file__).resolve().parent.parent / "providers" / "model_catalog.json",
+        _Path("providers/model_catalog.json"),
+    ):
+        try:
+            if path.exists():
+                with path.open("r", encoding="utf-8") as fh:
+                    return json.load(fh)
+        except (json.JSONDecodeError, OSError):
+            continue
+    return {}
+
+
+def _resolve_catalog_model(provider: str, catalog_tier: str) -> str:
+    """The model id `provider` dispatches for `catalog_tier` (fast/development/planning).
+
+    Python mirror of loki_latest_model (providers/models.sh:22), including its
+    env-override chain and its "generic" registry fallback for a provider the
+    catalog does not name. Kept in Python rather than shelling out to models.sh:
+    the dashboard answers this per request and a subprocess per tier per poll is
+    not worth it. Model IDS still come only from the catalog, never from here.
+    """
+    provider_env = re.sub(r"[^A-Z0-9_]", "_", provider.upper())
+    for var in (
+        f"LOKI_{provider_env}_MODEL_{catalog_tier.upper()}",
+        f"LOKI_{provider_env}_MODEL",
+    ):
+        val = (os.environ.get(var) or "").strip()
+        if val:
+            return val
+    providers = _load_model_catalog().get("providers", {})
+    entry = providers.get(provider) or providers.get("generic") or {}
+    return str(entry.get(f"latest_{catalog_tier}") or "")
+
+
+def _provider_model_offers(provider: str) -> list[dict]:
+    """The model choices to OFFER for `provider`, each with what it resolves to.
+
+    Claude keeps its established alias picker byte-for-byte: those aliases are
+    the values run.sh honors in the override file, so changing them would break
+    the one provider where mid-run switching actually works.
+
+    Every other provider is offered the generic tiers (small/medium/high), which
+    are provider-independent, each annotated with the concrete model id the
+    catalog says that provider dispatches. That is what makes the picker read
+    "medium -> gpt-5.3-codex" on codex and "medium -> claude-sonnet-5" on claude
+    without the frontend knowing a single model id.
+    """
+    if provider == "claude":
+        aliases = _load_model_catalog().get("providers", {}).get("claude", {}).get("cli_aliases", {})
+        return [
+            {"value": alias, "tier": None, "model": aliases.get(alias, "")}
+            for alias in _SESSION_MODEL_ALLOWLIST
+        ]
+    return [
+        {"value": tier, "tier": tier, "model": _resolve_catalog_model(provider, catalog_tier)}
+        for tier, catalog_tier in _TIER_LABELS
+    ]
+
+
+def _provider_supports_model_switch(provider: str) -> bool:
+    """Whether a live run on `provider` honors .loki/state/model-override.
+
+    Only claude does: run.sh:20996 gates the entire override-read block on
+    PROVIDER_NAME=claude. On any other provider the file is written and never
+    read, so the POST path rejects rather than reporting a switch that will not
+    happen.
+    """
+    return provider == "claude"
+
+
 class SessionModelRequest(BaseModel):
     """Schema for setting (or clearing) the live run's model override."""
     # Disable Pydantic's protected "model_" namespace so a field literally named
@@ -3152,11 +3274,24 @@ async def get_session_model():
     # the reported effective model agrees with dispatch on BOTH routes (v7.39.1).
     if effective == "fable":
         effective = "opus"
+    provider = _active_provider()
+    offers = _provider_model_offers(provider)
+    if provider != "claude":
+        # Non-claude: the claude-alias default/effective computed above describe a
+        # dispatch that is not happening on this run. Report what the provider
+        # actually runs, from the catalog, and drop the stale override (run.sh
+        # never reads the file on this provider, so it cannot be in effect).
+        override = None
+        default = "medium"
+        effective = _resolve_catalog_model(provider, "development")
     return {
         "override": override,
         "default": default,
         "effective": effective,
-        "allowed": list(_SESSION_MODEL_ALLOWLIST),
+        "provider": provider,
+        "switchable": _provider_supports_model_switch(provider),
+        "offers": offers,
+        "allowed": [o["value"] for o in offers],
     }
 
 
@@ -3182,6 +3317,22 @@ async def set_session_model(request: SessionModelRequest):
     """
     requested_raw = (request.model or "").strip().lower()
     override_path = _model_override_path()
+    # Mid-run switching is a claude-only runtime capability: run.sh:20996 gates the
+    # override-read block on PROVIDER_NAME=claude, so on any other provider this
+    # file would be written and never read. Reject instead of writing a file that
+    # does nothing and reporting success (a false affordance is worse than no
+    # control). Clearing is still allowed everywhere: removing a stale file is
+    # always safe and never claims a switch.
+    provider = _active_provider()
+    if requested_raw != "" and not _provider_supports_model_switch(provider):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Mid-run model switching is not supported on provider '{provider}'. "
+                f"The run dispatches {_resolve_catalog_model(provider, 'development') or 'its configured model'}; "
+                "restart the run with a different model to change it."
+            ),
+        )
     if requested_raw == "":
         # Clear the override; revert to tier mapping.
         try:

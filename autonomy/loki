@@ -18286,6 +18286,23 @@ main() {
     local command="$1"
     shift
 
+    # LOKI_HELP_ONLY is set by `loki help <command>`, which delegates by
+    # re-entering dispatch as `loki <command> --help`. Asking for help must
+    # never DO anything, and dispatch reaches commands that start builds, stop
+    # runs and modify the install. Every command honours --help today; this
+    # makes that a guaranteed property of the help path rather than a fact
+    # someone has to re-verify whenever a command is added. If the delegated
+    # invocation somehow lost its --help, refuse rather than execute.
+    if [ "${LOKI_HELP_ONLY:-0}" = "1" ]; then
+        case " $* " in
+            *" --help "*|*" -h "*) : ;;
+            *)
+                echo "loki: refusing to run '$command' from the help path" >&2
+                return 1
+                ;;
+        esac
+    fi
+
     # v7.4.13: first-run telemetry moved to bin/loki shim so it fires for
     # both Bun-routed and bash-routed commands (autonomy/loki main() never
     # runs for the 8 ported commands). Marker file: ~/.loki-first-run.
@@ -18749,9 +18766,16 @@ main() {
                 # discarded, so `loki help proof` printed the same generic front
                 # page as bare `loki help` -- while `loki proof --help` printed
                 # real help. Both spellings now agree.
+                #
+                # LOKI_HELP_ONLY makes this safe by construction rather than by
+                # audit. Delegation re-enters dispatch, and dispatch reaches
+                # commands that start, stop and modify things. Every one of them
+                # honours --help today, but "asking for help must never DO
+                # anything" is a property worth enforcing at the boundary
+                # instead of re-checking every time a command is added.
                 local _help_target="$1"
                 shift
-                "$0" "$_help_target" --help "$@"
+                LOKI_HELP_ONLY=1 "$0" "$_help_target" --help "$@"
             else
                 show_help
             fi
