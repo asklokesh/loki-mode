@@ -5,7 +5,29 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.16.0
+## v8.16.1
+
+### The dashboard's cost endpoint was the third route pricing cache at zero
+
+`/api/cost`, the surface a user watches while a build runs, summed input and
+output tokens only, and its cost fallback took no cache arguments at all. Cache
+reads are typically about 98% of input volume, so the token count described
+roughly one percent of the run, and when an iteration record carried no recorded
+cost the estimate under-counted by about five times.
+
+That degraded path is exactly where a runaway is most likely, and it is the same
+bug already fixed in the bash budget breaker and the TypeScript one. This was the
+third route carrying it.
+
+The rates now match the other two exactly, so a single run cannot report three
+different spends depending on which surface you look at. The endpoint also
+returns the cache token counts and the hit ratio it now computes.
+
+With nothing read in the ratio is null rather than zero. A zero is a claim about
+a cold cache, which is a real and expensive condition, so reporting it for a run
+with no data would send someone hunting a problem that does not exist.
+
+
 
 ### A test that catches a surface drifting from its siblings
 

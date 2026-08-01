@@ -7338,13 +7338,33 @@ def _get_model_pricing() -> dict:
     return _MODEL_PRICING
 
 
-def _calculate_model_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Calculate USD cost for a model's token usage."""
+def _calculate_model_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+) -> float:
+    """Calculate USD cost for a model's token usage, including cache tiers.
+
+    Cache tokens DOMINATE real traffic -- a measured iteration carried 797,496
+    cache-read against 10,272 plain input tokens. Pricing them at zero, which
+    this did, under-counted a real iteration by roughly 5x. This is the third
+    route to carry that same bug (bash check_budget_limit and the TS budget
+    breaker were fixed in v8.12); the rates match both.
+
+    An unpriced cache tier falls back to the FULL input rate rather than zero:
+    for anything driving a spend display the safe direction on an unknown rate
+    is to over-state, never to silently under-count.
+    """
     pricing_table = _get_model_pricing()
     pricing = pricing_table.get(model.lower(), pricing_table.get("sonnet", {}))
-    input_cost = (input_tokens / 1_000_000) * pricing.get("input", 3.00)
+    inp_rate = pricing.get("input", 3.00)
+    input_cost = (input_tokens / 1_000_000) * inp_rate
     output_cost = (output_tokens / 1_000_000) * pricing.get("output", 15.00)
-    return round(input_cost + output_cost, 6)
+    cache_read_cost = (cache_read_tokens / 1_000_000) * pricing.get("cache_read", inp_rate * 0.1)
+    cache_write_cost = (cache_creation_tokens / 1_000_000) * pricing.get("cache_write", inp_rate * 1.25)
+    return round(input_cost + output_cost + cache_read_cost + cache_write_cost, 6)
 
 
 @app.get("/api/cost", dependencies=[Depends(auth.require_scope("read"))])
@@ -7365,6 +7385,8 @@ def _compute_cost_snapshot() -> dict:
 
     total_input = 0
     total_output = 0
+    total_cache_read = 0
+    total_cache_creation = 0
     estimated_cost = 0.0
     by_phase: dict = {}
     by_model: dict = {}
@@ -7390,15 +7412,22 @@ def _compute_cost_snapshot() -> dict:
 
                 inp = data.get("input_tokens", 0)
                 out = data.get("output_tokens", 0)
+                # Cache tiers: recorded per iteration since v6.82.0 and
+                # typically ~98% of input volume. Omitting them made this
+                # endpoint report roughly 1% of a run's real token count.
+                cr = data.get("cache_read_tokens", 0) or 0
+                cw = data.get("cache_creation_tokens", 0) or 0
                 model = data.get("model", "sonnet").lower()
                 phase = data.get("phase", "unknown")
 
                 total_input += inp
                 total_output += out
+                total_cache_read += cr
+                total_cache_creation += cw
 
                 cost = data.get("cost_usd")
                 if cost is None:
-                    cost = _calculate_model_cost(model, inp, out)
+                    cost = _calculate_model_cost(model, inp, out, cr, cw)
                 estimated_cost += cost
 
                 # Aggregate by phase
@@ -7464,9 +7493,18 @@ def _compute_cost_snapshot() -> dict:
         except (json.JSONDecodeError, KeyError):
             pass
 
+    # Cache hit ratio against everything read IN. Null (not 0.0) when nothing
+    # was read: a zero is a claim about a COLD cache, which is a real and
+    # expensive condition, so reporting it for a run with no data would send
+    # someone hunting a caching problem that does not exist.
+    _read_in = total_input + total_cache_read
     return {
         "total_input_tokens": total_input,
         "total_output_tokens": total_output,
+        "total_cache_read_tokens": total_cache_read,
+        "total_cache_creation_tokens": total_cache_creation,
+        "total_tokens": total_input + total_output + total_cache_read + total_cache_creation,
+        "cache_hit_ratio": round(total_cache_read / _read_in, 4) if _read_in > 0 else None,
         "estimated_cost_usd": round(estimated_cost, 6),
         "by_phase": {k: {
             "input_tokens": v["input_tokens"],
