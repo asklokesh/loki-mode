@@ -5,7 +5,23 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.22.1
+## v8.22.2
+
+### The last cost route was checked and is clean
+
+Four cost routes had the same defect: a correct calculator receiving records
+that had already lost their cache tokens. The TypeScript path was the remaining
+one that had never been checked end to end, only through hand-built records.
+
+Driving the real file-to-cost flow shows it preserves the fields and produces
+the same total the other routes do, so there is no fifth instance. The test now
+exercises that flow rather than assuming it, and it is pinned in the detection
+audit, which covers fourteen invariants.
+
+Recording a clean result matters as much as recording a fix. Without it the next
+person has to re-derive whether this route was ever verified.
+
+
 
 ### The budget breaker under-counted the tokens that dominate a bill
 

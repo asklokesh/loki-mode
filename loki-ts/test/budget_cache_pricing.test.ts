@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { calculateCostFromRecords, PRICING } from "../src/runner/budget.ts";
+import {
+  calculateCostFromRecords,
+  readEfficiencyDir,
+  PRICING,
+} from "../src/runner/budget.ts";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 // The budget circuit breaker priced cache tokens at zero. Writers have emitted
 // cache_read_tokens / cache_creation_tokens since v6.82.0 (run.sh:7484), and
@@ -58,6 +65,32 @@ describe("budget: cache token pricing", () => {
       { model: "definitely-not-a-real-model", cache_read_tokens: 1_000_000 },
     ]);
     expect(cost).toBeGreaterThan(0);
+  });
+
+  test("the read-to-cost path preserves cache fields end to end", () => {
+    // WIRING, not arithmetic. Every other case here calls
+    // calculateCostFromRecords with a hand-built record, which proves the
+    // FUNCTION is right and says nothing about what reaches it.
+    //
+    // The same shape has now bitten four other cost routes: the calculator was
+    // correct and a caller dropped the cache fields on the way in. Here the
+    // caller is readEfficiencyDir, so this drives the real file-to-cost flow
+    // and asserts the total that the bash route and the dashboard also produce
+    // for this record. Three routes, one number.
+    const dir = mkdtempSync(join(tmpdir(), "loki-effread-"));
+    try {
+      writeFileSync(
+        join(dir, "iteration-1.json"),
+        JSON.stringify(MEASURED),
+        "utf-8",
+      );
+      const records = readEfficiencyDir(dir);
+      expect(records).toHaveLength(1);
+      expect(records[0]!.cache_read_tokens).toBe(MEASURED.cache_read_tokens);
+      expect(calculateCostFromRecords(records)).toBeCloseTo(0.6617, 3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("cache-heavy traffic is priced above a naive input-only estimate", () => {

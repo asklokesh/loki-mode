@@ -152,6 +152,15 @@ probe_case "rate-limit detection stays wired" \
     'if true; then' \
     bash tests/test-rate-limiting.sh
 
+# The TS read-to-cost path. Probed because the same caller-drops-the-field shape
+# hit four other cost routes; this one turned out clean, and the case exists to
+# keep it that way rather than to record a fix.
+probe_case "the TS read path preserves cache fields" \
+    "loki-ts/src/runner/budget.ts" \
+    'records.push(parsed as EfficiencyRecord);' \
+    'records.push({ ...(parsed as EfficiencyRecord), cache_read_tokens: 0 });' \
+    bun test test/budget_cache_pricing.test.ts
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
