@@ -420,6 +420,25 @@ probe_case "review is never skipped on a green build" \
     '               ; then' \
     bash tests/test-review-skip-on-gate-fail.sh
 
+# Time-to-first-artifact. Both guards live in the real writer and both probes
+# SURVIVED until the test asserted against the source rather than its own copy
+# of the writer -- the v8.34.0 lesson, hit again from a different direction.
+probe_case "the first-artifact signal is write-once" \
+    "autonomy/run.sh" \
+    '            if [ ! -f "$_fa_file" ]; then' '            if true; then' \
+    bash tests/test-first-artifact-signal.sh
+
+probe_case "a no-op run reports no first change" \
+    "autonomy/run.sh" \
+    '                if [ -n "$_fa_changed" ]; then' '                if true; then' \
+    bash tests/test-first-artifact-signal.sh
+
+probe_case "the first-artifact time is actually rendered" \
+    "autonomy/run.sh" \
+    '            printf '"'"'%-14s %ss\n'"'"' "First change:" "$first_artifact_s"' \
+    '            :' \
+    bash tests/test-first-artifact-signal.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.

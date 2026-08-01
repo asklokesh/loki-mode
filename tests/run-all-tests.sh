@@ -720,6 +720,7 @@ run_test "startup preflight blocks a doomed build, stays advisory where optional
 run_test "magic debate gate (Gate 12) can actually block" "$SCRIPT_DIR/test-magic-debate-gate.sh"
 run_test "review council cap trims the tail, never the mandate" "$SCRIPT_DIR/test-review-council-cap.sh"
 run_test "review skip on gate failure never records a pass" "$SCRIPT_DIR/test-review-skip-on-gate-fail.sh"
+run_test "time-to-first-artifact is recorded and rendered" "$SCRIPT_DIR/test-first-artifact-signal.sh"
 run_test "model catalog: no tier points at a superseded flagship" "$SCRIPT_DIR/test-model-catalog-current-flagship.sh"
 run_test "model catalog staleness is advisory in doctor" "$SCRIPT_DIR/test-model-catalog-staleness.sh"
 run_test "doctor blocker parity (both routes name blockers + offer loki tour)" "$SCRIPT_DIR/test-doctor-blocker-parity.sh"

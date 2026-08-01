@@ -5,6 +5,52 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.35.0
+
+### A run with no preview told the user nothing until it ended
+
+`seconds_to_first_preview` only fires for a previewable app. The shape the
+founder measured at 21 minutes -- a scoped GitHub issue fix -- produces no
+running app, so that number is empty and **nothing marked the moment the run
+first touched the codebase**. The user watched an idle terminal until the whole
+iteration finished.
+
+That is why felt time is worse than measured time even when measured time is
+competitive: Replit shows something at roughly 2 minutes, and we showed nothing
+at all.
+
+`.loki/state/first-artifact.json` now records seconds-to-first-code-change, and
+the summary renders it as `First change:` beside `First preview:`.
+
+Costs nothing on the common path: `start_time` and `end_time` already exist at
+the write site, so this adds no subprocess to the iteration.
+
+### Deliberately silent rather than fabricated
+
+- a run that changed nothing writes **no file** -- silence, never a `0s`
+- **write-once**: a later iteration cannot overwrite the first. Otherwise the
+  number quietly changes meaning from "when this run first did something" to
+  "the most recent change", a weaker and misleading claim
+- atomic write, so a partial read can never look valid
+
+### Two probes SURVIVED, for the same reason as last release
+
+The write-once and no-fabrication guards live in run.sh's real writer, while the
+test drove a faithful copy of it -- so mutating the original left every
+assertion green.
+
+This is the third time this exact shape has appeared (v8.28.0 extraction tests,
+v8.34.0 skip condition, here). The rule, now applied on sight:
+
+> A re-implementation tests the RULE. Only reading the source tests the CODE.
+> Any test that reproduces logic must also assert against the original.
+
+Both now turn red under mutation, alongside a third proving the value is
+rendered and not merely recorded -- the half-shipped pattern that cost six
+releases earlier in this session.
+
+Trust-core detector: 54 invariants.
+
 ## v8.34.0
 
 ### Spending 280-502s to describe a rejection that was already decided

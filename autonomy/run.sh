@@ -4167,6 +4167,21 @@ except Exception:
     print('')" "$_fp_file" 2>/dev/null)"
     fi
 
+    # Time to first CODE CHANGE. Companion to first_preview_s for the run that
+    # never previews anything, which is most of them: a scoped issue fix has no
+    # app to bring up, so the preview number is empty and the user had no signal
+    # at all until the run ended.
+    local first_artifact_s=""
+    local _fa_read="$loki_dir/state/first-artifact.json"
+    if [ -f "$_fa_read" ]; then
+        first_artifact_s="$(python3 -c "import json,sys
+try:
+    v=json.load(open(sys.argv[1])).get('seconds_to_first_artifact')
+    print(int(v) if isinstance(v,(int,float)) and v>=0 else '')
+except Exception:
+    print('')" "$_fa_read" 2>/dev/null)"
+    fi
+
     # Where the time went, per stage. Same "written but never read" story as
     # first-preview above: emit_stage_complete (run.sh:2413) has appended a
     # stage_complete record -- stage, status, duration_s, iteration -- to
@@ -4456,6 +4471,13 @@ except Exception:
         # fabricated zero for a run where nothing ever came up.
         if [ -n "$first_preview_s" ]; then
             printf '%-14s %ss\n' "First preview:" "$first_preview_s"
+        fi
+        # First code change, for the (far more common) run with no preview at
+        # all -- a scoped issue fix produces no running app, so first_preview_s
+        # is empty and the user had no signal of any kind until the end. Same
+        # discipline: rendered only when actually recorded, never fabricated.
+        if [ -n "$first_artifact_s" ]; then
+            printf '%-14s %ss\n' "First change:" "$first_artifact_s"
         fi
         printf '%-14s %s\n' "Finished:" "$ts"
         if [ -n "$delegate_branch" ]; then
@@ -22426,6 +22448,43 @@ if __name__ == "__main__":
         # the one the founder could not see. start_time already exists, so this
         # costs zero extra subprocesses -- we pass the existing epoch through.
         emit_stage_complete "agent" "$([ "$exit_code" -eq 0 ] 2>/dev/null && echo pass || echo fail)" "$start_time"
+
+        # TIME TO FIRST ARTIFACT. The companion to seconds_to_first_preview, for
+        # the case that has no preview at all.
+        #
+        # first-preview.json only fires for a previewable app. A scoped GitHub
+        # issue fix -- the shape the founder measured at 21 minutes -- produces
+        # no preview, so NOTHING marks the moment the run first changed code.
+        # The user sees an idle terminal until the whole iteration ends, which
+        # is why the felt time is worse than the measured time even when the
+        # measured time is competitive. Replit shows something at ~2 minutes;
+        # we showed nothing until the end.
+        #
+        # Write-once per run, and best-effort: a failure here must never affect
+        # the iteration. Measured against the ITERATION start, not the run
+        # start, because that is the interval the user is actually staring at.
+        if [ -z "${_LOKI_FIRST_ARTIFACT_DONE:-}" ]; then
+            local _fa_file="${TARGET_DIR:-.}/.loki/state/first-artifact.json"
+            if [ ! -f "$_fa_file" ]; then
+                local _fa_changed
+                _fa_changed="$(cd "${TARGET_DIR:-.}" 2>/dev/null \
+                    && git status --porcelain 2>/dev/null | head -1)"
+                if [ -n "$_fa_changed" ]; then
+                    mkdir -p "$(dirname "$_fa_file")" 2>/dev/null || true
+                    # Atomic: a partial read of this file must never look valid.
+                    local _fa_tmp="${_fa_file}.$$"
+                    printf '{"seconds_to_first_artifact":%s,"iteration":%s}\n' \
+                        "$((end_time - start_time))" "${ITERATION_COUNT:-0}" \
+                        > "$_fa_tmp" 2>/dev/null \
+                        && mv -f "$_fa_tmp" "$_fa_file" 2>/dev/null \
+                        && log_info "First code change after $((end_time - start_time))s"
+                    rm -f "$_fa_tmp" 2>/dev/null || true
+                    _LOKI_FIRST_ARTIFACT_DONE=1
+                fi
+            else
+                _LOKI_FIRST_ARTIFACT_DONE=1
+            fi
+        fi
 
         # v7.5.12 Gap A: Distinguish signal-induced exits (130/143/137) from clean failure.
         # Without this, post-iteration logic may quietly proceed past a SIGINT/SIGTERM,
