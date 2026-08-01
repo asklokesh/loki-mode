@@ -5,7 +5,30 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.21.1
+## v8.22.0
+
+### A security guard could be bypassed with every test still green
+
+Several tests extract a helper from the engine and verify it in isolation. That
+proves the helper works and proves nothing about whether anything still calls
+it. Sweeping for that specific shape found three blind tests, one of them on a
+security boundary.
+
+The app-runner validates a user-supplied command against a whitelist before
+executing it. Replacing that guard so an unvalidated command runs left the
+entire injection test suite passing, because every case tested the validator
+directly and none checked that execution still went through it.
+
+Two more had the same shape: the interactive handoff every launch shows could be
+disabled silently, and the language-gate timeout wiring fixed in the previous
+release. Rate-limit detection was checked and turned out to be genuinely
+guarded.
+
+All three now assert their call sites, and each is pinned in the detection audit,
+which grew from ten invariants to thirteen. Every one is proven to fail when
+broken.
+
+
 
 ### A gate could lose its timeout and every test would stay green
 

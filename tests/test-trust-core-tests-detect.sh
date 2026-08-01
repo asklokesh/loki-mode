@@ -129,10 +129,33 @@ probe_case "the go gate keeps its timeout" \
     '_go_cmd=()' \
     bash tests/test-go-cargo-gate-timeout.sh
 
+# --- extraction tests must assert their WIRING -------------------------------
+# A test that extracts a helper and verifies it in isolation proves the helper
+# works and says nothing about whether anything CALLS it. Three such tests were
+# blind here; each is now pinned by probing the call site, not the definition.
+
+probe_case "app-command validation guards execution" \
+    "autonomy/app-runner.sh" \
+    'if ! _validate_app_command "$LOKI_APP_COMMAND"; then' \
+    'if false; then' \
+    bash tests/test-app-runner-injection.sh
+
+probe_case "loki start still calls the handoff decision" \
+    "autonomy/loki" \
+    'if _loki_start_should_handoff "$_bg_already"; then' \
+    'if false; then' \
+    bash tests/test-start-handoff.sh
+
+probe_case "rate-limit detection stays wired" \
+    "autonomy/run.sh" \
+    'if ! is_rate_limited "$log_file"; then' \
+    'if true; then' \
+    bash tests/test-rate-limiting.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
-if [[ -z "$(cd "$REPO_ROOT" && git status --porcelain autonomy/ dashboard/ providers/ loki-ts/src/ 2>/dev/null)" ]]; then
+if [[ -z "$(cd "$REPO_ROOT" && git status --porcelain autonomy/ dashboard/ providers/ loki-ts/src/ .githooks/ 2>/dev/null)" ]]; then
     ok "every probed file was restored"
 else
     ko "every probed file was restored" \
