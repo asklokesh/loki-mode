@@ -5,7 +5,28 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.16.3
+## v8.17.0
+
+### A receipt can now say what was not checked
+
+The proof recorded which gates ran and how many passed. A gate that never ran
+was simply absent from the list, so a receipt reading "3 of 3 gates passed" was
+identical whether every gate executed or code review and security were switched
+off and three lesser gates ran instead.
+
+Nothing in the artifact was false. The information was missing, which for a
+product whose central claim is verification is the more dangerous shape:
+recording only successes is how a green badge stops meaning anything.
+
+Proofs now carry the phases that were disabled for that run, plus an explicit
+flag for the ordinary case. Phases remain configurable; the receipt simply
+reflects the run that actually happened.
+
+An ordinary run records an empty list rather than a misleading one. A field that
+reported phantom disabled phases on every normal run would be noise, and noise
+gets ignored, which is worse than not having the field at all.
+
+
 
 ### A terminal failure recorded itself as a success
 

@@ -444,10 +444,34 @@ def _collect_quality_gates(loki_dir):
     passed = sum(1 for gate in gates if gate.get("status") == "passed")
     exo = [g for g in gates if g.get("provenance") == "exogenous"]
     adv = [g for g in gates if g.get("provenance") == "advisory"]
+    # Phases the operator switched OFF for this run.
+    #
+    # Without this a receipt reading "3 of 3 gates passed" is identical whether
+    # every gate ran or code review and security were disabled and three lesser
+    # gates ran instead. A gate that never executed simply was not in the list,
+    # so its absence was indistinguishable from it not existing.
+    #
+    # For a product whose claim is verification, a receipt must be able to say
+    # what was NOT checked. Recording only successes is how a green badge stops
+    # meaning anything.
+    #
+    # Read from the environment the run executed under. Absent means the default
+    # (enabled), so an ordinary run records an empty list rather than a
+    # misleading one.
+    _disabled = sorted(
+        name.replace("LOKI_PHASE_", "").lower()
+        for name, value in os.environ.items()
+        if name.startswith("LOKI_PHASE_")
+        and str(value).strip().lower() in ("false", "0", "no", "off")
+    )
     return {
         "passed": passed,
         "total": total,
         "gates": gates,
+        "disabled_phases": _disabled,
+        # Explicit boolean so a consumer branches on one field instead of
+        # re-deriving intent from a list length.
+        "all_phases_enabled": not _disabled,
         # Pre-split counts so the renderer never has to re-derive provenance.
         "exogenous": {
             "passed": sum(1 for g in exo if g.get("status") == "passed"),
