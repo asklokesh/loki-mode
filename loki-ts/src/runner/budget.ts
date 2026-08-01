@@ -93,6 +93,12 @@ export interface EfficiencyRecord {
   model?: string;
   input_tokens?: number;
   output_tokens?: number;
+  // Cache tiers. Writers have emitted these since v6.82.0 (run.sh:7484) and
+  // they dominate real traffic -- a measured iteration shows 797,496 cache-read
+  // against 10,272 plain input tokens. Omitting them from this type is what
+  // made the fallback price them at zero.
+  cache_read_tokens?: number;
+  cache_creation_tokens?: number;
 }
 
 export interface CheckBudgetResult {
@@ -129,7 +135,12 @@ function round4(n: number): number {
 }
 
 // Resolve pricing for a model name, defaulting to sonnet (run.sh:7886).
-function pricingFor(model: string | undefined): { input: number; output: number } {
+function pricingFor(model: string | undefined): {
+  input: number;
+  output: number;
+  cache_read?: number;
+  cache_write?: number;
+} {
   const key = (model ?? DEFAULT_PRICING_KEY).toLowerCase();
   return PRICING[key] ?? PRICING[DEFAULT_PRICING_KEY]!;
 }
@@ -146,7 +157,20 @@ export function calculateCostFromRecords(records: readonly EfficiencyRecord[]): 
     const p = pricingFor(d.model);
     const inp = typeof d.input_tokens === "number" ? d.input_tokens : 0;
     const out = typeof d.output_tokens === "number" ? d.output_tokens : 0;
-    total += (inp / 1_000_000) * p.input + (out / 1_000_000) * p.output;
+    const cRead = typeof d.cache_read_tokens === "number" ? d.cache_read_tokens : 0;
+    const cWrite =
+      typeof d.cache_creation_tokens === "number" ? d.cache_creation_tokens : 0;
+    // Cache tiers fall back to the input rate when a pricing entry predates
+    // them. That over-estimates rather than under-estimates: this is a BUDGET
+    // circuit breaker, and the safe direction for an unknown rate is to stop
+    // sooner, never to keep spending because a table row was missing.
+    const readRate = p.cache_read ?? p.input;
+    const writeRate = p.cache_write ?? p.input;
+    total +=
+      (inp / 1_000_000) * p.input +
+      (out / 1_000_000) * p.output +
+      (cRead / 1_000_000) * readRate +
+      (cWrite / 1_000_000) * writeRate;
   }
   return round4(total);
 }
