@@ -111,12 +111,22 @@ if ! grep -q 'cargo test 2>&1) || test_passed=false' "$HARNESS_RED"; then
     echo "=== results: $PASS passed, $FAIL failed ==="; exit 1
 fi
 
-# ---- shim dir: a `cargo` that hangs, and one that passes fast --------------
-mk_repo() {  # $1 = repo dir, $2 = shim body
+# ---- shim dir: a runner that hangs, and one that passes fast ---------------
+# $3 selects the ecosystem so the SAME harness drives both branches. cargo and
+# go are separate branches in enforce_test_coverage AND go has its own arm in
+# _loki_zero_tests_executed, so a go timeout must be checked independently: it
+# must record pass=false, NOT pass="inconclusive" (a timeout misfiled as
+# inconclusive is the silently-wrong variant of this same defect).
+mk_repo() {  # $1 = repo dir, $2 = shim body, $3 = cargo|go (default cargo)
+    local tool="${3:-cargo}"
     mkdir -p "$1/bin"
-    printf '[package]\nname = "t"\n' > "$1/Cargo.toml"
-    printf '#!/usr/bin/env bash\n%s\n' "$2" > "$1/bin/cargo"
-    chmod +x "$1/bin/cargo"
+    if [ "$tool" = "go" ]; then
+        printf 'module t\n\ngo 1.21\n' > "$1/go.mod"
+    else
+        printf '[package]\nname = "t"\n' > "$1/Cargo.toml"
+    fi
+    printf '#!/usr/bin/env bash\n%s\n' "$2" > "$1/bin/$tool"
+    chmod +x "$1/bin/$tool"
 }
 
 run_gate() {  # $1 = repo, $2 = harness -> prints elapsed; writes test-results.json
@@ -208,6 +218,35 @@ if [ "$C_OUT" = "count=0" ]; then
 else
     _no "C: expected empty prefix with no timeout binary, got '$C_OUT'"
 fi
+
+# ---- Case D: hanging `go test` -- separate branch, separate classification --
+# go routes through its own arm of _loki_zero_tests_executed. A timed-out go run
+# emits no `[no test files]` marker, so it must land as pass=false rather than
+# being swept into pass="inconclusive".
+D_REPO="$TMP_ROOT/d"; mk_repo "$D_REPO" 'sleep 60' go
+START=$(date +%s)
+D_RC=$(run_gate "$D_REPO" "$HARNESS")
+D_ELAPSED=$(( $(date +%s) - START ))
+D_PASS="$(read_json "$D_REPO" pass)"
+D_DET="$(read_json "$D_REPO" summary)"
+D_RUNNER="$(read_json "$D_REPO" runner)"
+
+if [ "$D_RC" -ne 124 ] && [ "$D_ELAPSED" -lt 15 ]; then
+    _ok "D: hanging go test RETURNS in ${D_ELAPSED}s (runner=$D_RUNNER)"
+else
+    _no "D: go gate did not return promptly (rc=$D_RC, ${D_ELAPSED}s)"
+fi
+
+if [ "$D_PASS" = "false" ]; then
+    _ok "D: go timeout recorded pass=false (not 'inconclusive', not fake-green)"
+else
+    _no "D: expected go pass=false, got '$D_PASS'"
+fi
+
+case "$D_DET" in
+    *"TIMED OUT"*) _ok "D: go summary distinguishes TIMED OUT ($D_DET)" ;;
+    *) _no "D: go summary lacks the TIMED OUT marker, got '$D_DET'" ;;
+esac
 
 echo "=== results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]
