@@ -5,7 +5,31 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.12.1
+## v8.13.0
+
+### The user can now see how much of a run was rework
+
+The agent has been steering on its own progress-versus-rework split since the
+eval trend shipped. The user's completion summary never showed it, reporting
+only task counts, which cannot distinguish real work from a gate false positive
+that forced redos.
+
+That distinction is the difference between "the model was slow" and "our own
+gate was wrong". A measured run had the agent claim done on every iteration
+while a false positive blocked all six: it looked like six iterations of work
+and was one iteration plus five of harness bug. The summary now says, for
+example, "Rework: 2 of 5 iteration(s) redid earlier work ($0.80)", so the cost
+of our own mistakes is visible rather than buried in a total.
+
+When the split is unknown the line renders nothing at all. A zero-of-zero line
+would read as a clean bill of health that has not been earned, and pointing a
+user at the wrong culprit is worse than saying nothing. That is the same rule
+the timing table follows.
+
+The line and the agent's trend come from one shared attribution source, so the
+number the user reads and the number the agent steers on cannot drift apart.
+
+
 
 ### A documented feature that was only ever a delete
 

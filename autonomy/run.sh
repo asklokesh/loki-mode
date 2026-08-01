@@ -4185,6 +4185,33 @@ except Exception:
     # Best-effort and honest about absence: no events file, no stage records, or
     # unparseable lines render NOTHING rather than a fabricated zero -- same
     # reasoning as first_preview_s. A wrong timing table is worse than silence.
+    # Rework split for the user-facing summary. Reuses the SAME
+    # iteration_attribution.py the prompt-side eval trend calls, so the number
+    # the user reads and the number the agent steers on cannot drift apart.
+    # Emits nothing unless the split is actually known.
+    local _LOKI_REWORK_LINE=""
+    if [ -r "${SCRIPT_DIR:-}/lib/iteration_attribution.py" ]; then
+        _LOKI_REWORK_LINE="$(python3 "${SCRIPT_DIR}/lib/iteration_attribution.py" \
+            --loki-dir "$loki_dir" --json 2>/dev/null | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+prog, rew = d.get('progress', {}), d.get('rework', {})
+pc, rc = prog.get('count', 0), rew.get('count', 0)
+# Unknown-only runs render nothing: a 0/0 split is not evidence of no rework,
+# it is absence of attribution, and printing it would read as a clean bill.
+if pc + rc == 0:
+    sys.exit(0)
+cost = rew.get('cost_usd', 0.0) or 0.0
+line = 'Rework: %d of %d iteration(s) redid earlier work' % (rc, pc + rc)
+if cost > 0:
+    line += ' (\$%.2f)' % cost
+print(line)
+" 2>/dev/null || true)"
+    fi
+
     local stage_timing=""
     local _ev_file="$loki_dir/events.jsonl"
     if [ -f "$_ev_file" ]; then
@@ -4444,6 +4471,23 @@ except Exception:
         if [ -n "$stage_timing" ]; then
             echo "Where the time went:"
             echo "$stage_timing"
+            echo ""
+        fi
+        # Rework attribution. The AGENT has been steering on this since the eval
+        # trend shipped, but the user never saw it -- and it is the number that
+        # answers "why did this cost so much".
+        #
+        # iterations alone cannot distinguish real work from a gate false
+        # positive that forced redos. That is not hypothetical: a measured run
+        # had the agent claim done on EVERY iteration while a mock-integrity
+        # false positive blocked all six, so the run looked like six iterations
+        # of work and was one iteration of work plus five of harness bug.
+        #
+        # Renders NOTHING when the split is unknown, rather than a fabricated
+        # zero -- same rule as the timing table above. A wrong attribution is
+        # worse than silence because it points the user at the wrong culprit.
+        if [ -n "${_LOKI_REWORK_LINE:-}" ]; then
+            echo "$_LOKI_REWORK_LINE"
             echo ""
         fi
         if [ -n "$evidence_inconclusive_line" ]; then
