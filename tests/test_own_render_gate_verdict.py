@@ -133,14 +133,33 @@ class OwnRenderNotReadyExplanationTests(unittest.TestCase):
         return "\n".join(self.mod._section_is_it_working(proof, "r1"))
 
     def test_disabled_gates_are_named_as_the_gap(self):
+        """Each disabled gate must be named, once.
+
+        v8.19.0 made the proof's honesty ledger carry a per-gate entry, so the
+        gap list names them directly. This asserts the PROPERTY (the owner can
+        see which checks did not run) rather than a particular sentence, so
+        improving the wording does not fail the test while removing the
+        information would.
+        """
         out = self._render({
-            "honesty": {"headline": "VERIFIED", "degraded": []},
+            "honesty": {
+                "headline": "VERIFIED",
+                "degraded": [
+                    {"item": "code_review", "status": "disabled",
+                     "reason": "switched off for this run, so the check never ran"},
+                    {"item": "security", "status": "disabled",
+                     "reason": "switched off for this run, so the check never ran"},
+                ],
+            },
             "facts": {"tests": {"status": "passed"}, "build": {"ran": True}},
             "quality_gates": {"disabled_phases": ["code_review", "security"]},
         })
-        self.assertIn("switched OFF", out)
         self.assertIn("code_review", out)
         self.assertIn("security", out)
+        self.assertIn("never ran", out)
+        # Named ONCE. Repetition in a section about what went wrong reads as
+        # separate problems to a non-technical owner.
+        self.assertEqual(out.count("code_review"), 1)
 
     def test_the_unhelpful_fallback_is_not_used_when_gates_explain_it(self):
         out = self._render({

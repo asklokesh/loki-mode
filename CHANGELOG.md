@@ -5,7 +5,24 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.19.0
+## v8.19.1
+
+### The owner read the same problem three times
+
+Rendering a real generated proof through the owner-facing page showed a gate
+named three times in four lines: once by a summary line added in v8.18.1, then
+twice more by the per-gate entries the honesty ledger gained in v8.19.0.
+
+Repetition in a section about what went wrong reads as separate problems, which
+is the opposite of what a plain-English summary is for. The ledger is the
+canonical source now, so the redundant summary line is gone and each skipped
+check is named exactly once.
+
+The verdict is unchanged: a run with correctness gates disabled still does not
+show a green badge, and the unhelpful fallback that says no gaps were itemized
+still stays suppressed when the ledger explains the gap.
+
+
 
 ### A switched-off gate now appears in the honesty ledger
 

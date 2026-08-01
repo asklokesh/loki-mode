@@ -123,5 +123,46 @@ class DegradedListsDisabledGatesTests(unittest.TestCase):
             self.assertIn(item, off_gaps)
 
 
+class OwnerPageOnARealProofTests(DegradedListsDisabledGatesTests):
+    """End-to-end: generator output through the owner-facing renderer.
+
+    Every per-surface test in this area passed while the surfaces disagreed or
+    duplicated each other. Only rendering a REAL generated proof showed the
+    owner reading "code_review was switched off" three times in four lines --
+    once from the summary line added in v8.18.1 and twice from the ledger
+    entries added in v8.19.0. Repetition in a section about what went wrong
+    reads as three separate problems.
+    """
+
+    def test_a_real_proof_names_each_disabled_gate_exactly_once(self):
+        proof = self._run(LOKI_PHASE_CODE_REVIEW="false",
+                          LOKI_PHASE_SECURITY="false")
+        own = _load("own_render",
+                    os.path.join(os.path.dirname(_TESTS_DIR),
+                                 "autonomy", "lib", "own-render.py"))
+        out = "\n".join(own._section_is_it_working(proof, "r1"))
+        self.assertIn("code_review", out)
+        self.assertIn("security", out)
+        self.assertEqual(out.count("code_review"), 1,
+                         "the owner reads the same gate more than once, which "
+                         "looks like separate problems")
+        self.assertEqual(out.count("security"), 1)
+
+    def test_a_real_proof_still_blocks_the_ready_badge(self):
+        proof = self._run(LOKI_PHASE_SECURITY="false")
+        own = _load("own_render",
+                    os.path.join(os.path.dirname(_TESTS_DIR),
+                                 "autonomy", "lib", "own-render.py"))
+        self.assertFalse(own._is_ready(proof))
+
+    def test_a_real_clean_proof_says_nothing_about_gates(self):
+        proof = self._run()
+        own = _load("own_render",
+                    os.path.join(os.path.dirname(_TESTS_DIR),
+                                 "autonomy", "lib", "own-render.py"))
+        out = "\n".join(own._section_is_it_working(proof, "r1"))
+        self.assertNotIn("switched off for this run", out)
+
+
 if __name__ == "__main__":
     unittest.main()

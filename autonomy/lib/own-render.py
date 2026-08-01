@@ -333,9 +333,14 @@ def _section_is_it_working(proof, run_id=None):
     _trust_off = sorted(n for n in _off
                         if n.lower() in ("code_review", "security",
                                          "unit_tests", "e2e_tests"))
-    if _trust_off:
-        lines.append("- These checks were switched OFF for this run, so they "
-                     "never ran: %s" % ", ".join(_trust_off))
+    # NOTE (v8.19.0): the proof's honesty ledger now carries a per-gate entry
+    # for every disabled trust gate, so the loop below already names each one.
+    # A standalone summary line here repeated the same fact a third time -- the
+    # owner read "code_review was switched off" three times in four lines --
+    # and repetition in a section about what went wrong reads as three separate
+    # problems. _trust_off is still computed: it decides whether the unhelpful
+    # "no specific gaps were itemized" fallback should fire, which it must not
+    # when the ledger explains the gap.
 
     if isinstance(degraded, list) and degraded:
         for d in degraded:
@@ -512,9 +517,14 @@ def _section_still_to_do(proof, completion):
     _trust_off = sorted(n for n in _off
                         if n.lower() in ("code_review", "security",
                                          "unit_tests", "e2e_tests"))
-    if _trust_off:
-        lines.append("- These checks were switched OFF for this run, so they "
-                     "never ran: %s" % ", ".join(_trust_off))
+    # NOTE (v8.19.0): the proof's honesty ledger now carries a per-gate entry
+    # for every disabled trust gate, so the loop below already names each one.
+    # A standalone summary line here repeated the same fact a third time -- the
+    # owner read "code_review was switched off" three times in four lines --
+    # and repetition in a section about what went wrong reads as three separate
+    # problems. _trust_off is still computed: it decides whether the unhelpful
+    # "no specific gaps were itemized" fallback should fire, which it must not
+    # when the ledger explains the gap.
 
     if isinstance(degraded, list) and degraded:
         for d in degraded:
