@@ -4490,6 +4490,38 @@ except Exception:
             echo "$_LOKI_REWORK_LINE"
             echo ""
         fi
+        # What to DO about it. A terminal that names a bound without naming the
+        # lever leaves the user to guess which knob applies, and the wrong guess
+        # is expensive: raising an iteration cap on a run that was thrashing
+        # buys more thrashing at full price.
+        #
+        # The rework split above already distinguishes the two cases, so this
+        # points at the lever that actually matches the outcome rather than
+        # listing every environment variable.
+        case "$outcome" in
+            max_iterations)
+                echo "Next: this run hit its iteration ceiling, not a verdict."
+                echo "  Converging (low rework above)? Raise it: LOKI_MAX_ITERATIONS=<n>"
+                echo "  Thrashing (high rework above)? Raising the cap buys more"
+                echo "  of the same. Read the last reviewer findings first:"
+                echo "    loki why"
+                echo ""
+                ;;
+            budget_exceeded)
+                echo "Next: the spend cap stopped this run, not a failed gate."
+                echo "  Raise it with LOKI_BUDGET_LIMIT=<usd>, or check the cache"
+                echo "  hit ratio first -- a cold cache is the usual cause of a"
+                echo "  surprising bill:"
+                echo "    loki memory economics"
+                echo ""
+                ;;
+            force_stopped)
+                echo "Next: the council stopped this run WITHOUT approving it."
+                echo "  The work is not verified complete. See what blocked it:"
+                echo "    loki why"
+                echo ""
+                ;;
+        esac
         if [ -n "$evidence_inconclusive_line" ]; then
             echo "$evidence_inconclusive_line"
             echo ""

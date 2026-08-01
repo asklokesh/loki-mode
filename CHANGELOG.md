@@ -5,7 +5,32 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.13.1
+## v8.14.0
+
+### A run that stopped on a bound now names the lever
+
+"Max iterations" told a user what happened and nothing about what to do, and the
+obvious guess is expensive in a specific way: raising the cap on a run that was
+THRASHING buys more thrashing at full price, while raising it on a run that was
+CONVERGING is exactly right. Same message, opposite correct actions.
+
+The rework split added in v8.13.0 already separates those two cases in the same
+summary, so the advice points at it rather than listing every knob:
+
+  Next: this run hit its iteration ceiling, not a verdict.
+    Converging (low rework above)? Raise it: LOKI_MAX_ITERATIONS=<n>
+    Thrashing (high rework above)? Raising the cap buys more
+    of the same. Read the last reviewer findings first:
+      loki why
+
+A budget stop points at the cache hit ratio, since a cold cache is the usual
+cause of a surprising bill. A council force-stop states plainly that the work is
+not verified complete.
+
+A successful run prints none of this. Advice after a clean finish is noise, and
+noise in a summary is how users learn to stop reading summaries.
+
+
 
 ### The token report described about one percent of the run
 

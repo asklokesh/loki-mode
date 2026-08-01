@@ -732,6 +732,7 @@ run_test "a force-stop reports failure, not success" "$SCRIPT_DIR/test-force-sto
 run_test "the iteration cap considers evidence but stays a cap" "$SCRIPT_DIR/test-iteration-grace.sh"
 run_test "the user sees the rework split, not just the agent" "$SCRIPT_DIR/test-rework-in-summary.sh"
 run_test "the token report counts cache tokens" "$SCRIPT_DIR/test-economics-cache-tokens.sh"
+run_test "a terminal outcome names the next step" "$SCRIPT_DIR/test-terminal-next-step.sh"
 run_test "a user-installed reviewer takes part in a run" "$SCRIPT_DIR/test-installed-agent-reviewer.sh"
 # Skill modules are loaded INTO the agent's context and acted on, so a false
 # claim there is worse than no claim. Asserts the load-bearing ones against source.
