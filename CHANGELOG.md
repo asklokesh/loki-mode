@@ -5,7 +5,28 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.10.0
+## v8.11.0
+
+### The iteration cap now looks at evidence before cutting a run off
+
+The cap was a bare counter. It consulted no gate, no council, and no evidence,
+so a run one step from finishing was cut off identically to a run thrashing in
+circles, and both reported the same terminal failure.
+
+An iteration count is a proxy for "is this converging". Where real evidence
+already sits on disk, the cap now prefers it: when the agent has requested
+completion and no gate is failing, the run gets one extra iteration to land the
+work. A claim of done on top of a real gate failure is still stopped, which is
+exactly the case the cap exists for.
+
+It remains a cap. The grace is granted at most once per run, requires positive
+evidence rather than the absence of a failure signal, and extends by exactly one
+iteration. Published measurements put automated-verifier false-negative rates
+near 24 percent, so an unbounded verifier-driven terminal would burn real money
+re-doing work that was already correct. This is a bounded nudge, not a new
+termination rule. LOKI_ITERATION_GRACE=0 restores the pure counter.
+
+
 
 The engine now runs on a closed feedback loop. Five principles from Alexandr
 Wang's talk on agentic systems, mapped onto what loki actually does.

@@ -16936,8 +16936,64 @@ check_completion_promise() {
 }
 
 # Check if max iterations reached
+# EVIDENCE-AWARE ITERATION CAP.
+#
+# The cap used to be a bare counter: it consulted no gate, no council, and no
+# evidence. A run one step from finishing was cut off identically to a run
+# thrashing in circles, and both reported the same terminal.
+#
+# An iteration count is a PROXY for "is this converging". Where real evidence
+# exists, prefer the evidence. Two signals are already on disk at this point:
+#
+#   1. the model's own completion request (.loki/signals/COMPLETION_REQUESTED),
+#      which the agent writes when it believes the work is done
+#   2. gate state (.loki/quality/gate-failures.txt), which says whether the
+#      last verification pass actually found anything
+#
+# When the model says it is done AND no gate is failing, the run gets ONE extra
+# iteration to land it. That is the difference between a finished product and a
+# terminal failure at the buzzer.
+#
+# WHY THIS CANNOT LOOP FOREVER, which is the only thing that matters here:
+# the grace is granted at most once per run (a marker file, checked before it
+# is written), it requires POSITIVE evidence rather than the absence of a
+# signal, and it extends by exactly one iteration. A run that keeps claiming
+# done without finishing gets the cap, once, and then stops. Published
+# measurements put automated-verifier false-negative rates near 24%, so an
+# unbounded verifier-driven loop would burn real money on already-correct work.
+# This is deliberately a bounded nudge, not a verifier-driven terminal.
+#
+# LOKI_ITERATION_GRACE=0 restores the pure counter.
+_iteration_grace_available() {
+    [ "${LOKI_ITERATION_GRACE:-1}" != "0" ] || return 1
+
+    local _loki_root="${TARGET_DIR:-.}/.loki"
+    local _marker="$_loki_root/state/iteration-grace-used"
+    [ -f "$_marker" ] && return 1
+
+    # POSITIVE evidence the model believes it is done. Absence is not evidence.
+    [ -f "$_loki_root/signals/COMPLETION_REQUESTED" ] || return 1
+
+    # ...and nothing is currently failing. A non-empty gate-failures.txt means
+    # the last verification pass found real problems, so a "done" claim on top
+    # of it is exactly the case the cap should still stop.
+    local _gf="$_loki_root/quality/gate-failures.txt"
+    if [ -s "$_gf" ]; then
+        return 1
+    fi
+
+    mkdir -p "$_loki_root/state" 2>/dev/null || true
+    printf 'granted at iteration %s\n' "${ITERATION_COUNT:-0}" > "$_marker" 2>/dev/null || true
+    return 0
+}
+
 check_max_iterations() {
     if [ $ITERATION_COUNT -ge $MAX_ITERATIONS ]; then
+        if _iteration_grace_available; then
+            MAX_ITERATIONS=$((MAX_ITERATIONS + 1))
+            log_info "Iteration cap reached, but the agent reports done with no failing gate -- granting ONE final iteration to land it (once per run; LOKI_ITERATION_GRACE=0 to disable)."
+            return 1
+        fi
         log_warn "Max iterations ($MAX_ITERATIONS) reached. Stopping."
         return 0
     fi
