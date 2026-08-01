@@ -10583,7 +10583,6 @@ _loki_gate_stuck() {
     local threshold="${LOKI_GATE_STUCK_THRESHOLD:-3}"
 
     [ "${LOKI_GATE_STUCK_ABORT:-1}" = "0" ] && return 1
-    [ "${count:-0}" -lt "$threshold" ] 2>/dev/null && return 1
     [ -n "$reason_file" ] && [ -f "$reason_file" ] || return 1
 
     local cur prev_file prev
@@ -10592,10 +10591,25 @@ _loki_gate_stuck() {
     cur="$(head -1 "$reason_file" 2>/dev/null)" || return 1
     [ -n "$cur" ] || return 1
 
+    # RECORD ON EVERY FAILURE, compare only at threshold.
+    #
+    # The recording used to sit behind the threshold check, so the first
+    # comparison could not happen until count == threshold+1. Replayed against
+    # the REAL FireLater artifact that motivated this feature, the abort fired
+    # at iteration 4 -- and that run ended at 3. The safety valve would have
+    # missed the exact case it was built for, by one iteration.
+    #
+    # Found only by replaying the preserved .loki/quality/mutation-findings.txt
+    # rather than trusting the unit test, which used synthetic counts and so
+    # never exercised the real arrival order.
     prev_file="${TARGET_DIR:-.}/.loki/quality/gate-stuck-${gate_name}.last"
     prev="$(cat "$prev_file" 2>/dev/null || true)"
     ( mkdir -p "$(dirname "$prev_file")" 2>/dev/null \
         && printf '%s\n' "$cur" > "$prev_file" 2>/dev/null ) || true
+
+    # Below threshold: the reason is now on record for the next comparison, but
+    # this is not yet enough evidence to stop.
+    [ "${count:-0}" -lt "$threshold" ] 2>/dev/null && return 1
 
     [ -n "$prev" ] && [ "$prev" = "$cur" ] && return 0
     return 1

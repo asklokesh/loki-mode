@@ -5,6 +5,51 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.47.0
+
+### F0 would have missed the exact run it was built for, by one iteration
+
+v8.45.0 shipped the stuck-gate abort with 11 passing tests and three caught
+mutations. Then I replayed it against the **preserved FireLater artifact** --
+the real `.loki/quality/mutation-findings.txt` from the run that motivated the
+feature -- and it did not fire:
+
+```
+iteration 1 -> continue
+iteration 2 -> continue
+iteration 3 -> continue      <- FireLater ended here
+iteration 4 -> ABORT         <- one too late
+```
+
+**Cause:** the failure reason was recorded only *after* the threshold check, so
+the first comparison could not happen until `count == threshold + 1`. With a
+threshold of 3, the abort landed on iteration 4. FireLater ended at 3.
+
+The valve was correct in every unit case and useless on the one real case.
+
+Fixed by recording the reason on **every** failure and comparing only at
+threshold. Re-replayed against the same artifact: aborts at iteration 3.
+
+### Why the tests did not catch it
+
+The unit cases drove synthetic counts out of order (`probe 3`, then `probe 3`
+again) which happened to prime the prior. Real iterations arrive **1, 2, 3** --
+an ordering the tests never exercised.
+
+A regression case now replays that exact sequence and asserts the abort lands
+*on* the threshold iteration, not past it. Restoring the off-by-one turns it
+red.
+
+The generalisable rule, and the third time this session a synthetic harness hid
+a real defect:
+
+> Unit cases prove the RULE. Only the recorded artifact proves the CASE.
+> If a preserved artifact from the motivating failure exists, replay it.
+
+No behaviour changed for healthy runs: below-threshold, first-sighting,
+changed-reason, missing-file, empty-file and opt-out all still continue, and a
+stuck gate still exits 20 rather than reporting success.
+
 ## v8.46.0
 
 ### F3: the agent was never told which gates would judge it

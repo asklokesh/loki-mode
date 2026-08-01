@@ -87,6 +87,28 @@ reset_state
     && ok "a CHANGED reason keeps iterating (progress is being made)" \
     || bad "aborted although the failure reason changed -- kills a working loop"
 
+# --- THE REAL SEQUENCE: abort must land ON the threshold iteration -----------
+# Regression from the first implementation. The reason was recorded only AFTER
+# the threshold check, so the first comparison could not happen until
+# count == threshold+1: with threshold 3 the abort fired at iteration 4.
+#
+# The FireLater run that motivated this whole feature ended at iteration 3, so
+# the valve would have missed the exact case it was built for -- by one
+# iteration. Caught only by replaying the preserved artifact; the synthetic
+# unit cases above drove counts out of order and never saw it.
+reset_state
+_fired=""
+for _i in 1 2 3; do
+    if [ "$(probe "$_i" 'UNFIXABLE CAUSE')" = "STUCK" ]; then _fired="$_i"; break; fi
+done
+if [ "$_fired" = "3" ]; then
+    ok "abort fires ON the threshold iteration (3), not one past it"
+elif [ -z "$_fired" ]; then
+    bad "never aborted across the real 3-iteration sequence -- FireLater would still grind"
+else
+    bad "aborted at iteration $_fired, expected 3"
+fi
+
 # --- fail-safe: missing/unreadable inputs never abort ------------------------
 reset_state
 _missing="$(env TARGET_DIR="$SCRATCH" bash -c '
