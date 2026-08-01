@@ -5,7 +5,28 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.17.0
+## v8.17.1
+
+### The receipt now shows the disabled gates it already recorded
+
+v8.17.0 taught the proof to record which phases were switched off. Nothing
+rendered it, so the Evidence Receipt -- the artifact that lands on a pull
+request and is the entire point of the proof pipeline -- still could not
+distinguish a fully verified run from one with code review and security
+disabled.
+
+A recorded fact nobody can see does not make a receipt more honest. The receipt
+now names the disabled gates in its facts table.
+
+Only when something was actually disabled. A permanent "all gates ran" row on
+every receipt is noise, and noise in a trust artifact trains readers to skim
+past exactly the line that matters on the one run where it appears.
+
+Proofs written before the field existed render unchanged, and a malformed value
+degrades to omitting the row rather than failing to render: a receipt that does
+not render at all is worse than one missing a line.
+
+
 
 ### A receipt can now say what was not checked
 

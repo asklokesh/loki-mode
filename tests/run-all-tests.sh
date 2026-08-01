@@ -738,6 +738,7 @@ run_test "loki why --json carries the rework split" "$SCRIPT_DIR/test-why-json-r
 run_test "loki cost --json exposes the token breakdown" "$SCRIPT_DIR/test-cost-json-tokens.sh"
 run_test "all reporting surfaces agree about one run" "$SCRIPT_DIR/test-surfaces-agree.sh"
 run_test "recorded exit codes match the failure contract" "$SCRIPT_DIR/test-exit-code-contract.sh"
+run_test "the receipt shows disabled gates" "$SCRIPT_DIR/test-receipt-shows-disabled-gates.sh"
 run_test "a user-installed reviewer takes part in a run" "$SCRIPT_DIR/test-installed-agent-reviewer.sh"
 # Skill modules are loaded INTO the agent's context and acted on, so a false
 # claim there is worse than no claim. Asserts the load-bearing ones against source.
