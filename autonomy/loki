@@ -26798,6 +26798,9 @@ ig = r.get("_ignored_executable_fields") or []
 if ig:
     print(f"  NOTE: ignored executable-looking fields (never run): {', '.join(ig)}")
 print("Stored in .loki/agents/installed.json -- visible to 'loki agent list/info/run'.")
+print("It also joins the code-review reviewer pool: when its focus keywords match")
+print("a diff it is dispatched as a real reviewer (appended to the built-in battery,")
+print("never replacing one). See skills/quality-gates.md 'Adding Your Own Reviewer'.")
 PYEOF
             else
                 echo -e "${RED}Install failed:${NC} $result"

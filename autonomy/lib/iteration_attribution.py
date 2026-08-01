@@ -163,11 +163,102 @@ def _render(s):
     return "\n".join(lines)
 
 
+def _fmt_secs(ms):
+    return f"{ms / 1000.0:.0f}s"
+
+
+WINDOW = 3  # last N iterations rendered; the block ships in EVERY prompt
+
+
+def prompt_block(loki_dir):
+    """Render the run's own efficiency trend for injection into the next prompt.
+
+    WHY THIS EXISTS. The engine has written .loki/metrics/efficiency/iteration-N.json
+    every iteration for its entire life and never once read it back into a decision.
+    Cost, duration and cache data flowed OUT to a budget breaker and an offline
+    report, never IN to the agent producing the cost. The agent was the only party
+    to the run with no visibility into its own efficiency.
+
+    THE INCENTIVE TRAP, AND THE GUARD. A block reporting cost and duration ALONE
+    instructs the model to be cheap, and the cheapest iteration is the one that
+    does less work and verifies less. That is gate-weakening through the front
+    door, with no gate edited. So spend is NEVER rendered without the progress /
+    rework split beside it: the actionable number is "you failed N iterations and
+    repeated them", whose correct response is "stop failing gates", not "spend
+    less". Enforced by test, not by convention.
+
+    Returns "" when there are no usable records, so an absent or empty metrics
+    dir adds NOTHING to the prompt (no dangling header). This is why the block is
+    rendered here rather than from attribute(), whose notes list is non-empty even
+    on an empty dir.
+    """
+    recs = _iteration_records(loki_dir)
+    if not recs:
+        return ""
+
+    s = attribute(loki_dir)
+    lines = []
+
+    # Per-iteration tail: the shape of the trend (getting slower? pricier?) is
+    # what a model can actually steer on, and it is invisible in an aggregate.
+    # Windowed to the last few so the block stays a few lines in EVERY prompt.
+    tail = recs[-WINDOW:]
+    for r in tail:
+        it = r.get("iteration", "?")
+        parts = []
+        dur = r.get("duration_ms")
+        if isinstance(dur, (int, float)) and dur >= 0:
+            parts.append(_fmt_secs(dur))
+        cost = r.get("cost_usd")
+        if isinstance(cost, (int, float)):
+            parts.append(f"${float(cost):.2f}")
+        cread = r.get("cache_read_tokens")
+        inp = r.get("input_tokens")
+        if isinstance(cread, (int, float)) and isinstance(inp, (int, float)):
+            denom = float(inp) + float(cread)
+            if denom > 0:
+                parts.append(f"cache {cread / denom:.0%}")
+        st = str(r.get("status", "")).strip().lower()
+        if st:
+            parts.append(st)
+        lines.append(f"  iter {it}: " + ", ".join(parts) if parts else f"  iter {it}")
+
+    if not lines:
+        return ""
+
+    header = "EFFICIENCY TREND (your own last %d iteration(s); steer on it):" % len(tail)
+    out = [header] + lines
+
+    # The anti-incentive guard: spend never ships without the outcome split.
+    prog = s["progress"]["count"]
+    rew = s["rework"]["count"]
+    total = s["iterations"]
+    out.append(f"  progress {prog}/{total}, rework {rew}/{total}")
+    share = s.get("rework_cost_share")
+    if rew and share is not None:
+        out.append(
+            f"  {rew} iteration(s) failed and were repeated, costing {share:.0%} of the run. "
+            "Cut rework by fixing what the gate flagged, NEVER by verifying less."
+        )
+    return "\n".join(out)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--loki-dir", default=".loki")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument(
+        "--prompt-block",
+        action="store_true",
+        help="render the compact trend block for prompt injection (empty when no records)",
+    )
     args = ap.parse_args()
+
+    if args.prompt_block:
+        block = prompt_block(args.loki_dir)
+        if block:
+            print(block)
+        return 0
 
     s = attribute(args.loki_dir)
     if args.json:

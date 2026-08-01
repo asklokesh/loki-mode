@@ -4154,6 +4154,135 @@ except Exception:
     print('')" "$_fp_file" 2>/dev/null)"
     fi
 
+    # Where the time went, per stage. Same "written but never read" story as
+    # first-preview above: emit_stage_complete (run.sh:2413) has appended a
+    # stage_complete record -- stage, status, duration_s, iteration -- to
+    # events.jsonl since v7.91.x, and NOTHING consumed it. A founder watching a
+    # 322-word issue take 25+ minutes inside iteration 1 had no way to see which
+    # step ate it, because the measurement existed and was never surfaced.
+    #
+    # Read-only aggregation over a file the run already wrote: no new subprocess
+    # per stage, no new writer, one python3 pass at terminal time. We deliberately
+    # render the AGENT remainder (wall clock minus summed stages) rather than
+    # stages alone. The 9 emit_stage_complete sites are all post-iteration gates,
+    # which sum to seconds; a table of only those would print "gates: 90s" on a
+    # 25-minute run and still not answer the question. The remainder is the
+    # provider/agent time, and it is usually the answer.
+    #
+    # Best-effort and honest about absence: no events file, no stage records, or
+    # unparseable lines render NOTHING rather than a fabricated zero -- same
+    # reasoning as first_preview_s. A wrong timing table is worse than silence.
+    local stage_timing=""
+    local _ev_file="$loki_dir/events.jsonl"
+    if [ -f "$_ev_file" ]; then
+        stage_timing="$(LOKI_RUN_START_EPOCH="${_LOKI_RUN_START_EPOCH:-}" python3 -c "
+import json, os, sys
+tot = {}
+order = []
+first = last = None
+
+# events.jsonl is NEVER truncated between runs (no rm/rotate anywhere in the
+# tree), so a second 'loki start' in the same workspace would otherwise sum
+# stages from every previous run against THIS run's wall clock -- inflating
+# staged past wall and silently killing the total/remainder rows. Filter to
+# records at or after this run's start. The ISO timestamp is already on every
+# record, so this costs nothing extra.
+run_start_iso = None
+_es = (os.environ.get('LOKI_RUN_START_EPOCH') or '').strip()
+if _es:
+    try:
+        from datetime import datetime, timezone
+        run_start_iso = datetime.fromtimestamp(float(_es), timezone.utc)
+    except Exception:
+        run_start_iso = None
+
+def _in_run(ts):
+    if run_start_iso is None or not isinstance(ts, str) or not ts:
+        return True          # no reliable boundary: keep (old behavior)
+    try:
+        from datetime import datetime
+        t = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+        return t >= run_start_iso
+    except Exception:
+        return True
+try:
+    with open(sys.argv[1], errors='replace') as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue          # malformed line: skip, never abort the summary
+            if not isinstance(rec, dict):
+                continue
+            ts = rec.get('timestamp')
+            if not _in_run(ts):
+                continue      # record belongs to an earlier run in this workspace
+            if isinstance(ts, str) and ts:
+                if first is None:
+                    first = ts
+                last = ts
+            if rec.get('type') != 'stage_complete':
+                continue
+            d = rec.get('data') or {}
+            if not isinstance(d, dict):
+                continue
+            name = d.get('stage')
+            dur = d.get('duration_s')
+            if not name or not isinstance(dur, (int, float)) or dur < 0:
+                continue
+            if name not in tot:
+                tot[name] = 0.0
+                order.append(name)
+            tot[name] += float(dur)
+except Exception:
+    sys.exit(0)
+if not tot:
+    sys.exit(0)
+
+def human(s):
+    s = int(round(s))
+    return '%dm %02ds' % (s // 60, s % 60) if s >= 60 else '%ds' % s
+
+# Wall clock: prefer the run-start epoch the runner exported; else derive from
+# the first/last event timestamps. Absent both, we print stages with no total
+# rather than inventing a denominator.
+wall = None
+env_start = os.environ.get('LOKI_RUN_START_EPOCH') or ''
+try:
+    if env_start.strip():
+        import time
+        wall = time.time() - float(env_start)
+except Exception:
+    wall = None
+if wall is None and first and last:
+    try:
+        from datetime import datetime
+        f = datetime.fromisoformat(first.replace('Z', '+00:00'))
+        l = datetime.fromisoformat(last.replace('Z', '+00:00'))
+        wall = (l - f).total_seconds()
+    except Exception:
+        wall = None
+
+staged = sum(tot.values())
+out = []
+for name in sorted(order, key=lambda n: -tot[n]):
+    out.append('  %-22s %s' % (name.replace('_', ' '), human(tot[name])))
+if wall is not None and wall >= staged:
+    rem = wall - staged
+    # The bucket that answers 'where did the 25 minutes go'.
+    # NOT labeled 'agent': the provider call is itself a bracketed stage above,
+    # so this remainder is everything else (checklist verification, app runner,
+    # playwright, council, memory). Calling it 'agent' would print two different
+    # measurements under one name.
+    out.append('  %-22s %s' % ('other (unaccounted)', human(rem)))
+    out.append('  %-22s %s' % ('total', human(wall)))
+print('\n'.join(out))
+" "$_ev_file" 2>/dev/null)"
+    fi
+
     # Branch + diff stats vs the run-start SHA (best-effort; non-git or empty
     # baseline yields empty values, which we render as "unknown"/"0").
     local start_sha="${_LOKI_RUN_START_SHA:-}"
@@ -4299,6 +4428,11 @@ except Exception:
         fi
         printf '%-14s %s\n' "Tasks:" "pending=$pending in_progress=$in_progress completed=$completed failed=$failed"
         echo ""
+        if [ -n "$stage_timing" ]; then
+            echo "Where the time went:"
+            echo "$stage_timing"
+            echo ""
+        fi
         if [ -n "$evidence_inconclusive_line" ]; then
             echo "$evidence_inconclusive_line"
             echo ""
@@ -13821,6 +13955,42 @@ if types_file and os.path.exists(types_file):
     except Exception:
         pass  # Fall back to hardcoded specialists
 
+# R10 extension seam: agents installed by the user via `loki agent install`
+# (.loki/agents/installed.json) join the reviewer pool. Built-ins above are
+# gated on a hardcoded FOCUS_KEYWORDS allowlist, which no user-chosen type can
+# ever match, so an installed agent was silently dropped and its persona never
+# reached a reviewer. Keywords come from the manifest's own `focus` list, which
+# hub_install.py already validates as <= 200-char strings.
+# Data only: hub_install.py never executes anything from a manifest.
+# Kept in a SEPARATE dict, never merged into SPECIALISTS: entering the built-in
+# pool would let a user agent win a `ranked[:want]` slot and DISPLACE a built-in
+# reviewer (observed displacing security-sentinel before this was split out),
+# and would also flip the all-zero defaults path.
+INSTALLED_SPECIALISTS = {}
+try:
+    import importlib.util as _ilu
+    _hub_path = os.path.join(os.path.dirname(os.path.abspath(types_file)), "hub_install.py")
+    _spec = _ilu.spec_from_file_location("loki_hub_install", _hub_path)
+    _hub = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_hub)
+    for _inst in _hub.installed_agent_list():
+        _t = _inst.get("type", "")
+        # Never let an installed agent shadow a built-in reviewer perspective.
+        if not _t or _t in SPECIALISTS:
+            continue
+        _kw = [str(k).strip().lower() for k in _inst.get("focus", []) if str(k).strip()]
+        if not _kw:
+            continue  # No keywords means it could never score; skip rather than always-on.
+        INSTALLED_SPECIALISTS[_t] = {
+            "keywords": _kw,
+            "focus": _inst.get("capabilities", "") or _inst.get("name", _t),
+            "checks": "Review from " + _inst.get("name", _t) + " perspective: " + ", ".join(_inst.get("focus", [])),
+            "priority": 100 + len(INSTALLED_SPECIALISTS),
+            "persona": _inst.get("persona", ""),
+        }
+except Exception:
+    pass  # Corrupt or absent installed.json must never break code review.
+
 diff_path = os.environ.get("LOKI_REVIEW_DIFF_FILE", "")
 files_path = os.environ.get("LOKI_REVIEW_FILES_FILE", "")
 
@@ -13880,6 +14050,23 @@ if all(s == 0 for s in scores.values()):
 else:
     selected = ranked[:want]
 
+# User-installed agents are APPENDED, never allowed to compete for the `want`
+# built-in slots -- same discipline as the dependency-analyst append below, so
+# installing an agent can only ADD scrutiny, never remove a built-in reviewer.
+# Only those whose keywords actually matched this diff fire, so an installed
+# a11y auditor stays silent on a backend-only change.
+# ponytail: hard cap of 2, no env var. Each appended agent costs one more LLM
+# reviewer call every iteration. Raise the constant if that ceiling bites.
+_MAX_INSTALLED_REVIEWERS = 2
+installed_selected = []
+for _n, _spec in INSTALLED_SPECIALISTS.items():
+    scores[_n] = sum(1 for kw in _spec["keywords"] if kw in search_text)
+for _n in sorted(INSTALLED_SPECIALISTS, key=lambda n: (-scores[n], INSTALLED_SPECIALISTS[n]["priority"])):
+    if len(installed_selected) >= _MAX_INSTALLED_REVIEWERS:
+        break
+    if scores[_n] > 0:
+        installed_selected.append(_n)
+
 # A changed JavaScript manifest or lockfile always receives the specialist that
 # understands the compact Git/npm metadata. Append rather than replace so a
 # dependency change never removes another keyword-selected review perspective.
@@ -13929,6 +14116,13 @@ reviewers = mandatory + [
             "checks": SPECIALISTS[name]["checks"]
         }
         for name in selected
+    ] + [
+        {
+            "name": name,
+            "focus": INSTALLED_SPECIALISTS[name]["focus"],
+            "checks": INSTALLED_SPECIALISTS[name]["checks"]
+        }
+        for name in installed_selected
     ]
 if os.environ.get("LOKI_REVIEW_REQUIREMENTS_ONLY") == "1":
     reviewers = [
@@ -13939,7 +14133,7 @@ if os.environ.get("LOKI_REVIEW_REQUIREMENTS_ONLY") == "1":
 result = {
     "reviewers": reviewers,
     "scores": {n: scores[n] for n in scores},
-    "pool_size": len(SPECIALISTS)
+    "pool_size": len(SPECIALISTS) + len(installed_selected)
 }
 print(json.dumps(result))
 SPECIALIST_SELECT
@@ -18843,6 +19037,31 @@ if d.get('blocked'):
         memory_context_section="CONTEXT: $context_injection"
     fi
 
+    # Efficiency trend injection -- close the eval feedback loop.
+    # .loki/metrics/efficiency/iteration-N.json has been written every iteration
+    # for the engine's entire life and read back only by a stop-only budget
+    # breaker and an offline report, never by the agent producing the cost.
+    #
+    # SINGLE RENDERER: the text comes from iteration_attribution.py --prompt-block,
+    # the exact same entry point the Bun route calls (build_prompt.ts
+    # buildEfficiencyTrend), so the two routes are byte-identical by construction
+    # rather than by two renderers kept in sync forever.
+    #
+    # Emits "" on absent/empty metrics, so an unmeasured run adds NOTHING.
+    # Opt out with LOKI_EVAL_TREND=0.
+    # Accepts BOTH "0" and "false" (case-insensitive): this repo uses both
+    # toggle conventions, and honouring only one makes the other a silent no-op.
+    # Byte-mirrored in build_prompt.ts buildEfficiencyTrend().
+    local _eval_trend_optout
+    _eval_trend_optout="$(printf '%s' "${LOKI_EVAL_TREND:-1}" | tr '[:upper:]' '[:lower:]')"
+    local efficiency_trend=""
+    if [ "$_eval_trend_optout" != "0" ] && [ "$_eval_trend_optout" != "false" ] \
+        && [ -r "${SCRIPT_DIR}/lib/iteration_attribution.py" ] \
+        && [ -d ".loki" ]; then
+        efficiency_trend="$(python3 "${SCRIPT_DIR}/lib/iteration_attribution.py" \
+            --loki-dir ".loki" --prompt-block 2>/dev/null || true)"
+    fi
+
     # PRD Checklist status injection (v5.44.0)
     local checklist_status=""
     if [ -n "$prd" ] && [ ! -f ".loki/checklist/checklist.json" ]; then
@@ -19210,6 +19429,10 @@ except Exception:
     [ -n "$app_runner_info" ] && printf '%s\n' "$app_runner_info"
     [ -n "$playwright_info" ] && printf '%s\n' "$playwright_info"
     [ -n "$memory_context_section" ] && printf '%s\n' "$memory_context_section"
+    # Volatile per-iteration data: belongs below [CACHE_BREAKPOINT], never in the
+    # cache-stable prefix. Same ordinal position as the Bun route (after the
+    # context section, before the completion instruction).
+    [ -n "$efficiency_trend" ] && printf '%s\n' "$efficiency_trend"
     printf '%s\n' "$completion_instruction"
     printf '</dynamic_context>\n'
 }
@@ -21873,6 +22096,11 @@ if __name__ == "__main__":
 
         log_info "${PROVIDER_DISPLAY_NAME:-Claude} exited with code $exit_code after ${duration}s"
 
+        # The provider call is the largest single bucket in any iteration and was
+        # the one the founder could not see. start_time already exists, so this
+        # costs zero extra subprocesses -- we pass the existing epoch through.
+        emit_stage_complete "agent" "$([ "$exit_code" -eq 0 ] 2>/dev/null && echo pass || echo fail)" "$start_time"
+
         # v7.5.12 Gap A: Distinguish signal-induced exits (130/143/137) from clean failure.
         # Without this, post-iteration logic may quietly proceed past a SIGINT/SIGTERM,
         # leaving stale state and confusing the next iteration. Any non-zero exit is a
@@ -22419,8 +22647,14 @@ if __name__ == "__main__":
             # Auto-generate docs (default-on) BEFORE the staleness check and the
             # gate, so neither nags the user to run 'loki docs generate' by hand.
             # Opt out with LOKI_AUTO_DOCS=false.
+            # Bracketed because this is the single biggest non-provider step in
+            # the loop (the doc suite has cost ~25min on a real build) and it was
+            # the one nobody could see. Reuses the existing helper: one date call,
+            # no new subprocess per stage.
             if [ "$ITERATION_COUNT" -gt 0 ] && ! loki_is_supervised_simple_web; then
-                auto_generate_docs_if_needed
+                local _docgen_t0=$(date +%s 2>/dev/null); local _docgen_ok=pass
+                auto_generate_docs_if_needed || _docgen_ok=fail
+                emit_stage_complete "doc_generation" "$_docgen_ok" "$_docgen_t0"
             fi
             # Documentation staleness check (v6.75.0)
             if [ "$ITERATION_COUNT" -gt 0 ] && ! loki_is_supervised_simple_web; then

@@ -5,7 +5,53 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.9.1
+## v8.10.0
+
+The engine now runs on a closed feedback loop. Five principles from Alexandr
+Wang's talk on agentic systems, mapped onto what loki actually does.
+
+### Evals and metrics: the agent can finally see its own numbers
+
+The engine has written a rich per-iteration record for its entire life --
+duration, cost, tokens, cache hit rate, status -- and read it back only in a
+stop-only budget breaker and an offline report. The agent producing the cost
+never saw it.
+
+That trend is now injected into the next iteration's prompt: how long each
+iteration took, what it cost, whether the cache is working, how many iterations
+made progress versus reworked earlier output. An agent that can see it is
+getting slower and more expensive can steer on it. An unmeasured run adds
+nothing, and the block sits in the volatile part of the prompt so it never
+invalidates the cache-stable prefix.
+
+Both routes render it through one Python entry point, so they are byte-identical
+by construction rather than by two renderers kept in sync forever.
+
+### Speed and reliability: where the time actually went
+
+A run that took 25 minutes could not tell you which phase consumed them.
+Per-stage wall-clock is now recorded and surfaced in the completion summary, so
+"where did the time go" is answerable from the run's own artifacts.
+
+### Extensibility at the orchestration layer
+
+A user-supplied reviewer can now take part in a run without editing engine
+files, with the installation path tested end to end. Manifest data is treated
+as data: a postinstall field is never stored and never runs.
+
+### Cost correctness: the two routes disagreed 4.2x about the same run
+
+Found by executing both cost paths on one real record rather than reading them.
+The bash route under-counted 5.4x by pricing cache tokens at zero, on a record
+where cache reads were 98.7% of input volume. The TypeScript route over-charged
+10x on the same term, because the pricing loader copied only input and output
+and silently dropped the cache tiers the JSON defined.
+
+Both directions matter for a circuit breaker: under-counting lets a runaway pass
+the cap, over-charging stops a healthy run early and bills for a limit never
+reached. Both routes now agree.
+
+
 
 ### A run that never verified its work reported success
 

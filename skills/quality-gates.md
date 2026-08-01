@@ -857,6 +857,55 @@ velocity_quality_balance:
 4. **Tie-breaker priority:** security-sentinel > test-coverage-auditor > performance-oracle > dependency-analyst
 5. **No triggers match at all:** Default to security-sentinel + test-coverage-auditor
 
+### Adding Your Own Reviewer (extension seam)
+
+You can add a reviewer to the pool WITHOUT editing any engine file. Write an
+agent manifest and install it:
+
+```bash
+cat > a11y-agent.json <<'EOF'
+{
+  "schema_version": 1,
+  "kind": "agent",
+  "type": "my-a11y-auditor",
+  "name": "Accessibility Auditor",
+  "persona": "You are a WCAG 2.2 accessibility auditor.",
+  "focus": ["wcag", "aria", "contrast", "screenreader"],
+  "capabilities": "WCAG 2.2 AA, ARIA roles, color contrast, keyboard nav"
+}
+EOF
+
+loki agent install ./a11y-agent.json    # writes .loki/agents/installed.json
+loki agent list                          # your agent appears alongside built-ins
+```
+
+From the next code review onward, your agent is scored against the diff exactly
+like a built-in and dispatched as a real reviewer whose findings feed the same
+Critical/High=block mechanism.
+
+Rules that make this safe to use, and safe to ship:
+
+- **`focus` is your trigger-keyword list.** It is matched against the diff and
+  changed filenames, so an a11y auditor fires on an HTML change and stays silent
+  on a backend-only one. An agent with no `focus` entries never fires.
+- **Strictly additive.** Installed agents are APPENDED after the built-in
+  battery. They can never displace a built-in reviewer or the two always-on
+  mandatory reviewers, so installing an agent can only ADD scrutiny.
+- **At most 2 installed reviewers** fire per review (each costs an LLM call
+  every iteration). Highest keyword score wins.
+- **Cannot shadow a built-in.** A manifest whose `type` collides with a built-in
+  reviewer is rejected at install time and ignored by selection.
+- **Data only, never executed.** `loki agent install` reads JSON data and never
+  runs anything from a manifest -- `postinstall`, `scripts`, `exec`, `command`,
+  and `hooks` fields are reported as ignored and never invoked. Your persona and
+  focus text reach a reviewer prompt; nothing from the manifest reaches a shell.
+- **Fail-safe.** A corrupt `.loki/agents/installed.json` leaves the normal
+  battery intact rather than breaking code review.
+
+Works on both routes (Bun and `LOKI_LEGACY_BASH=1`). Tests:
+`tests/test-installed-agent-reviewer.sh`,
+`loki-ts/tests/runner/installed_agent_reviewer.test.ts`.
+
 ### Dispatch Pattern
 
 Launch all 3 in ONE message. Each reviewer sees ONLY the diff -- NOT other reviewers' findings (blind review preserved).

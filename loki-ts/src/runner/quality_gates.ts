@@ -1185,8 +1185,46 @@ export function isHealingActive(cwd: string, diff?: string): boolean {
   return false;
 }
 
+// R10 extension seam (parity with the INSTALLED_AGENT_TYPES block in the
+// SPECIALIST_SELECT heredoc, autonomy/run.sh). Agents a user installed via
+// `loki agent install` live in .loki/agents/installed.json as already-validated
+// DATA -- hub_install.py never executes anything from a manifest, and this
+// reader keeps that property: it only reads strings into a reviewer prompt.
+// Keywords come from the manifest's own `focus` list, because the built-in
+// FOCUS_KEYWORDS allowlist can never match a user-chosen agent type.
+type InstalledAgent = { type: string; name?: string; persona?: string; focus?: string[]; capabilities?: string };
+function loadInstalledSpecialists(cwd: string): Record<string, Specialist> {
+  const out: Record<string, Specialist> = {};
+  try {
+    const raw = readFileSync(join(cwd, ".loki", "agents", "installed.json"), "utf8");
+    const parsed = JSON.parse(raw) as { agents?: InstalledAgent[] } | InstalledAgent[];
+    const list = Array.isArray(parsed) ? parsed : (parsed.agents ?? []);
+    let priority = 100; // Always sorts after every built-in on a score tie.
+    for (const a of list) {
+      const t = (a?.type ?? "").trim();
+      // Never shadow a built-in reviewer perspective.
+      if (!t || t in SPECIALISTS || t in out) continue;
+      const kw = (a.focus ?? []).map((k) => String(k).trim().toLowerCase()).filter((k) => k.length > 0);
+      if (kw.length === 0) continue; // No keywords means it could never score.
+      out[t] = {
+        keywords: kw,
+        focus: a.capabilities || a.name || t,
+        checks: `Review from ${a.name ?? t} perspective: ${(a.focus ?? []).join(", ")}`,
+        priority: priority++,
+      };
+    }
+  } catch {
+    // Corrupt or absent installed.json must never break code review.
+  }
+  return out;
+}
+
 export type SelectReviewersOpts = {
   healingActive?: boolean;
+  // Project root. When set, user-installed agents from
+  // .loki/agents/installed.json are APPENDED to the battery (never displacing a
+  // built-in). Absent -> built-ins only, byte-identical to prior releases.
+  cwd?: string;
   // Complexity-proportional verification (rec #3): the detected task tier
   // (simple | standard | complex). Scales the keyword-specialist count with a
   // HARD FLOOR of 2 (parity with the bash SPECIALIST_SELECT). Absent/unknown ->
@@ -1254,6 +1292,32 @@ export function selectReviewers(
     selected = ranked.slice(0, want);
   }
 
+  // User-installed agents are scored separately and APPENDED, never allowed to
+  // compete for the `want` built-in slots -- installing an agent can only ADD
+  // scrutiny, never remove a built-in reviewer. Kept out of `pool` on purpose so
+  // they cannot flip the allZero defaults path above.
+  // ponytail: hard cap of 2, no env var. Each one costs an extra LLM reviewer
+  // call every iteration. Raise the constant if that ceiling bites.
+  const MAX_INSTALLED_REVIEWERS = 2;
+  const installed = opts.cwd === undefined ? {} : loadInstalledSpecialists(opts.cwd);
+  const installedSelected: string[] = [];
+  for (const [name, spec] of Object.entries(installed)) {
+    let s = 0;
+    for (const kw of spec.keywords) if (search.includes(kw)) s += 1;
+    scores[name] = s;
+  }
+  for (const name of Object.keys(installed).sort((a, b) => {
+    const sa = scores[a] ?? 0;
+    const sb = scores[b] ?? 0;
+    if (sb !== sa) return sb - sa;
+    return installed[a]!.priority - installed[b]!.priority;
+  })) {
+    if (installedSelected.length >= MAX_INSTALLED_REVIEWERS) break;
+    // Only agents whose keywords actually matched this diff fire, so an
+    // installed a11y auditor stays silent on a backend-only change.
+    if ((scores[name] ?? 0) > 0) installedSelected.push(name);
+  }
+
   const reviewers: Reviewer[] = [
     ARCHITECTURE_STRATEGIST,
     MAINTAINER_MERGEABILITY,
@@ -1261,9 +1325,13 @@ export function selectReviewers(
       const spec = pool[name]!;
       return { name, focus: spec.focus, checks: spec.checks };
     }),
+    ...installedSelected.map((name) => {
+      const spec = installed[name]!;
+      return { name, focus: spec.focus, checks: spec.checks };
+    }),
   ];
 
-  return { reviewers, scores, pool_size: Object.keys(pool).length };
+  return { reviewers, scores, pool_size: Object.keys(pool).length + installedSelected.length };
 }
 
 // Port of the BUILD_PROMPT block at autonomy/run.sh:6486-6505.
@@ -1737,6 +1805,8 @@ export async function runCodeReview(
 
   const selection = selectReviewers(diff, files, {
     healingActive: isHealingActive(cwd, diff),
+    // R10: pick up agents the user installed via `loki agent install`.
+    cwd,
     // Complexity-proportional battery (rec #3): DETECTED_COMPLEXITY is set by the
     // bash runner (run_autonomous) and by the Bun autonomous loop; absent ->
     // selectReviewers floors to the standard 4-reviewer battery.

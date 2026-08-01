@@ -929,6 +929,93 @@ function buildInvariantFindingsBlock(cwd: string): string {
   return ` INVARIANT VIOLATION FINDINGS (fix the violated invariants; a property/metamorphic invariant that the code under test must always uphold is currently broken): ${lines.join("\n")}`;
 }
 
+// Locate a file shipped inside the engine install, independent of how deep this
+// module sits. Dev runs from loki-ts/src/runner/; the shipped package runs from
+// the bundled loki-ts/dist/. Returns null when not found (engine files absent).
+function findEngineFile(rel: string): string | null {
+  let dir = import.meta.dir;
+  for (let i = 0; i < 6; i++) {
+    const candidate = resolve(dir, rel);
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+// Close the eval feedback loop: surface the run's OWN efficiency trend
+// (.loki/metrics/efficiency/iteration-N.json) into the next prompt, so the agent
+// producing the cost can finally see it. Those records have been written every
+// iteration for the engine's entire life and read back only by a stop-only budget
+// breaker and an offline report -- never by the agent.
+//
+// SINGLE RENDERER, BOTH ROUTES. The text is produced by
+// autonomy/lib/iteration_attribution.py --prompt-block, which both this function
+// and bash build_prompt() shell out to. That module already owns the
+// progress/rework bucketing (and is already imported by proof-generator.py:1097),
+// so this is an established shared-library seam, not a new one. Rendering in
+// each route independently would be two renderers that must be kept
+// byte-identical forever; one renderer is identical by construction.
+//
+// ponytail: one python3 subprocess per prompt build. The ceiling is fine -- the
+// same function already shells to python3 for readSummaryField's fallback, and it
+// runs alongside a multi-second model call. Port to readEfficiencyDir (budget.ts)
+// only if prompt-build latency ever shows up in a profile.
+//
+// Returns "" on absent/empty metrics, a non-zero exit, or a missing python3, so
+// an unmeasured run adds NOTHING to the prompt (no dangling header).
+//
+// DELIBERATELY NOT on the PROVIDER_DEGRADED path (Codex / Aider), same as
+// goalSharpening above: those providers carry a minimal instruction set by
+// design, and this is steering advice, not a requirement. Mirrored in bash --
+// the degraded assembly there does not emit $efficiency_trend either.
+async function buildEfficiencyTrend(
+  cwd: string,
+  env: Readonly<Record<string, string | undefined>>,
+): Promise<string> {
+  // Opt-out read from the RUN's env, never process.env. Default ON.
+  // Accepts BOTH spellings because this repo uses both conventions for toggles
+  // (LOKI_AUTO_DOCS=false alongside LOKI_GOAL_SCORING=0). Honouring only "0"
+  // means an operator who writes the documented-elsewhere "false" gets a silent
+  // no-op opt-out, which is worse than no flag at all. Byte-mirrored in
+  // run.sh's build_prompt().
+  const trendOptOut = envStr(env, "LOKI_EVAL_TREND", "").trim().toLowerCase();
+  if (trendOptOut === "0" || trendOptOut === "false") return "";
+  // Resolve the renderer from the ENGINE install dir, not from cwd. cwd is the
+  // user's project, which has no autonomy/lib/ -- bash uses $SCRIPT_DIR
+  // (run.sh:204) for exactly this reason. Resolving from cwd would make the Bun
+  // route silently render nothing on every real run while still passing a test
+  // whose fixture happens to sit inside this repo.
+  //
+  // Walk UP rather than hardcode a depth: this module runs from
+  // loki-ts/src/runner/ in dev but from the bundled loki-ts/dist/ in the shipped
+  // package, and those are different distances from the repo root. A fixed
+  // "../../../" is correct for exactly one of them and silently resolves to a
+  // nonexistent path (rendering nothing, forever) for the other.
+  const script = findEngineFile("autonomy/lib/iteration_attribution.py");
+  if (script === null) return "";
+  const lokiDir = resolve(cwd, ".loki");
+  if (!existsSync(lokiDir)) return "";
+  try {
+    // Import the module and call prompt_block directly -- the same entry point
+    // `--prompt-block` uses, and the same one proof-generator.py imports.
+    // runInline is already imported by this file (readSummaryField's fallback),
+    // so no new util export is needed.
+    const src = [
+      "import sys",
+      `sys.path.insert(0, ${JSON.stringify(dirname(script))})`,
+      "from iteration_attribution import prompt_block",
+      `sys.stdout.write(prompt_block(${JSON.stringify(lokiDir)}))`,
+    ].join("\n");
+    const r = await runInline(src, { cwd, timeoutMs: 10_000 });
+    if (r.exitCode !== 0) return "";
+    return r.stdout.trimEnd();
+  } catch {
+    return "";
+  }
+}
+
 // Phase 1 helper: read structured findings from the most recent review dir
 // and render them as a prompt-ready block. Lives here (not in
 // build_prompt_helpers.ts) to keep the env-flag gate in one file. Imports
@@ -1360,6 +1447,7 @@ interface ResolvedSections {
   mirofishContext: string;
   magicContext: string;
   checklistStatus: string;
+  efficiencyTrend: string;
 }
 
 async function resolveDynamicSections(
@@ -1417,6 +1505,7 @@ async function resolveDynamicSections(
     mirofishContext: buildMirofishContext(ctx.cwd),
     magicContext: buildMagicContext(ctx.cwd, targetDir),
     checklistStatus: buildChecklistStatus(ctx.cwd, prd, env),
+    efficiencyTrend: await buildEfficiencyTrend(ctx.cwd, env),
   };
 }
 
@@ -1548,6 +1637,10 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
   if (sections.appRunnerInfo.length > 0) lines.push(sections.appRunnerInfo);
   if (sections.playwrightInfo.length > 0) lines.push(sections.playwrightInfo);
   if (sections.contextSection.length > 0) lines.push(sections.contextSection);
+  // Volatile by definition (changes every iteration), so it belongs here inside
+  // <dynamic_context>, never in the cache-stable <loki_system> prefix -- putting
+  // it above [CACHE_BREAKPOINT] would bust the prompt cache every iteration.
+  if (sections.efficiencyTrend.length > 0) lines.push(sections.efficiencyTrend);
   lines.push(completionText);
   lines.push("</dynamic_context>");
 
