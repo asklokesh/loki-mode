@@ -370,6 +370,23 @@ else
     bad "WIRING: the council decision is never invoked"
 fi
 
+# The EVIDENCE gate inside council_should_stop. It requires a real diff and
+# green tests before the council may approve, so bypassing it lets the council
+# approve on no evidence at all -- the failure this whole product exists to
+# prevent. Blind before this: the council suites test the gate's own logic and
+# never asserted that council_should_stop still calls it.
+if grep -qF 'if ! council_evidence_gate; then' "$REPO_ROOT/autonomy/completion-council.sh"; then
+    ok "WIRING: council_should_stop consults the evidence gate"
+else
+    bad "WIRING: the evidence gate is bypassed -- the council could approve with no evidence"
+fi
+
+if grep -qF 'council_evidence_gate()' "$REPO_ROOT/autonomy/completion-council.sh"; then
+    ok "WIRING: council_evidence_gate is defined under the name its caller uses"
+else
+    bad "WIRING: evidence gate definition and call site have diverged"
+fi
+
 # The SUPERVISED branch of the same conditional. It blocks completion when the
 # iteration reported gate failures, so bypassing it makes every supervised run
 # report complete with its gates unchecked -- the same fail-open shape, one

@@ -177,6 +177,21 @@ probe_case "the supervised path still runs its gates" \
     '_loki_completion_ready=0' \
     bash tests/test-council-convergence-floor.sh
 
+# Two more gates on the completion path. Both fail OPEN when disconnected: the
+# review gate passes every iteration unreviewed, the evidence gate lets the
+# council approve with no diff and no green tests.
+probe_case "the code-review gate stays wired" \
+    "autonomy/run.sh" \
+    'if run_code_review; then' \
+    'if true; then' \
+    bash tests/test-code-review-verdict-parse-wave8.sh
+
+probe_case "the council consults the evidence gate" \
+    "autonomy/completion-council.sh" \
+    'if ! council_evidence_gate; then' \
+    'if false; then' \
+    bash tests/test-council-convergence-floor.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.

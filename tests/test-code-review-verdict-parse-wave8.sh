@@ -232,6 +232,36 @@ fi
 
 # --- Summary -----------------------------------------------------------------
 echo
+# === WIRING: the code-review gate must stay connected ========================
+# Everything above parses reviewer verdicts. That proves the PARSER and says
+# nothing about whether the runner still gates on the review at all.
+#
+# Found by mutation probe: replacing `if run_code_review; then` with `if true`
+# -- so every iteration passes review WITHOUT the review running -- left this
+# file green. That is the dangerous fail-open direction: unverified work
+# reported as reviewed.
+_RUN_SH="$SCRIPT_DIR/../autonomy/run.sh"
+
+if grep -qF 'if run_code_review; then' "$_RUN_SH"; then
+    ok "WIRING: the runner gates on run_code_review"
+else
+    bad "WIRING: the code-review gate is bypassed -- iterations would pass unreviewed"
+fi
+
+if grep -qF 'run_code_review()' "$_RUN_SH"; then
+    ok "WIRING: run_code_review is defined under the name the gate calls"
+else
+    bad "WIRING: run_code_review definition and call site have diverged"
+fi
+
+# The gate must remain conditional on the phase toggle, not hardcoded on or off.
+if grep -qF '[ "$PHASE_CODE_REVIEW" = "true" ]' "$_RUN_SH"; then
+    ok "WIRING: the gate still honours PHASE_CODE_REVIEW"
+else
+    bad "WIRING: the code-review phase toggle is no longer consulted"
+fi
+
+
 echo "================================"
 echo "PASS: $PASS  FAIL: $FAIL"
 echo "================================"

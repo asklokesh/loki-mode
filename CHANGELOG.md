@@ -5,7 +5,26 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v8.23.0
+## v8.23.1
+
+### Two more gates could be bypassed with every test still green
+
+The code-review gate and the evidence gate were both disconnectable without any
+test failing. Both fail in the dangerous direction.
+
+Bypassing the review gate makes every iteration pass review without the review
+running. Bypassing the evidence gate lets the completion council approve a run
+with no diff and no green tests, which is the exact claim the product exists to
+make honestly.
+
+Both were invisible for the same reason as the four before them: the suites test
+each gate's own logic thoroughly and never assert that anything still calls it.
+
+Both connections are now asserted, along with the phase toggle still being
+consulted so the review gate cannot be silently hardcoded on or off. The
+detection audit covers eighteen invariants.
+
+
 
 ### The completion gates could be disconnected with every test still green
 
