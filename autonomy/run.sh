@@ -22317,6 +22317,11 @@ def process_stream():
     # message. Stays False when partial messages are off (no stream_event lines).
     streamed_text_blocks = False
 
+    # Per-turn usage samples for the context-growth record (L1). Appended on
+    # every assistant message; written once at the result event. Bounded below
+    # so a pathological run cannot grow this without limit.
+    _turn_usage = []
+
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -22352,6 +22357,43 @@ def process_stream():
                 # Extract and print assistant text
                 message = data.get("message", {})
                 content = message.get("content", [])
+
+                # PER-TURN CONTEXT GROWTH (read-only instrumentation, L1).
+                #
+                # WHY. One measured iteration re-sent 10,651,759 cached-read
+                # tokens to produce 34,729 output tokens -- a 307:1 ratio, in a
+                # SINGLE provider call (one iteration_start, one
+                # result-cost-1.json, so cross-iteration reuse is ruled out).
+                # That call was 100% of measured stage time.
+                #
+                # The provider cache already saved us 10x ($31.96 -> $3.20 of a
+                # $4.74 iteration). We are not missing a cache; the ORDER being
+                # discounted is enormous, and cached reads are still 67% of the
+                # bill. Those tokens are prefill the model must process serially
+                # before emitting a character, so this is the only measured lever
+                # that touches BOTH cost and the 744s.
+                #
+                # "the tool loop re-accumulates history" is INFERRED from the
+                # ratio, not observed. Trimming context on an inference is how
+                # you ship an agent that forgets what it already tried and redoes
+                # the work -- raising iterations and costing more than it saves.
+                # So this MEASURES per turn and trims nothing. The cut is a
+                # separate decision, gated on iterations-to-done rather than on
+                # a token count.
+                try:
+                    _tu = (message.get("usage") or {})
+                    _tcr = _tu.get("cache_read_input_tokens")
+                    if isinstance(_tcr, int) and _tcr >= 0:
+                        _turn_usage.append({
+                            "turn": len(_turn_usage) + 1,
+                            "cache_read_tokens": _tcr,
+                            "input_tokens": _tu.get("input_tokens", 0) or 0,
+                            "output_tokens": _tu.get("output_tokens", 0) or 0,
+                            "cache_creation_tokens":
+                                _tu.get("cache_creation_input_tokens", 0) or 0,
+                        })
+                except Exception:
+                    pass
                 for item in content:
                     if item.get("type") == "text":
                         text = item.get("text", "")
@@ -22504,6 +22546,44 @@ def process_stream():
                         "cache_read_tokens": _u.get("cache_read_input_tokens", 0),
                         "cache_creation_tokens": _u.get("cache_creation_input_tokens", 0),
                     }
+                    # CONTEXT-GROWTH RECORD (L1). Written whenever turns were
+                    # observed, independently of whether cost was reported --
+                    # the growth shape is the finding, and tying it to
+                    # total_cost_usd would lose it on every provider that does
+                    # not report dollars (codex reports tokens, never cost).
+                    if _turn_usage:
+                        try:
+                            os.makedirs(".loki/metrics", exist_ok=True)
+                            _first = _turn_usage[0]["cache_read_tokens"]
+                            _last = _turn_usage[-1]["cache_read_tokens"]
+                            _growth = {
+                                "iteration": _iter,
+                                "turns": len(_turn_usage),
+                                "first_turn_cache_read": _first,
+                                "last_turn_cache_read": _last,
+                                # The headline: how much bigger the context got
+                                # between the first and last turn of ONE call.
+                                "growth_factor": (round(_last / _first, 2)
+                                                  if _first > 0 else None),
+                                "total_cache_read": sum(
+                                    t["cache_read_tokens"] for t in _turn_usage),
+                                "total_output": sum(
+                                    t["output_tokens"] for t in _turn_usage),
+                                # Bounded sample: the shape is visible in the
+                                # first and last few turns, and an unbounded
+                                # array would make this file grow with the run.
+                                "sample": (_turn_usage[:5] + _turn_usage[-5:]
+                                           if len(_turn_usage) > 10
+                                           else _turn_usage),
+                            }
+                            _gp = ".loki/metrics/context-growth-" + str(_iter) + ".json"
+                            _gt = _gp + ".tmp"
+                            with open(_gt, "w") as _gf:
+                                json.dump(_growth, _gf)
+                            os.replace(_gt, _gp)
+                        except Exception:
+                            pass
+
                     if _rec["total_cost_usd"] is not None:
                         os.makedirs(".loki/metrics", exist_ok=True)
                         _p = ".loki/metrics/result-cost-" + str(_iter) + ".json"

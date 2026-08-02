@@ -731,6 +731,19 @@ probe_case "an unmeasured prompt renders as not-recorded, not 0 KB" \
     '    print("  agent prompt      : 0 KB")' \
     bash tests/test-agent-prompt-size.sh
 
+# The 307:1 input-to-output ratio inside ONE provider call. The second probe is
+# the sharper one: the stream filter is a python heredoc, so a syntax error
+# there breaks every Claude-route run and `bash -n` cannot see it.
+probe_case "per-turn context growth is still collected" \
+    "autonomy/run.sh" \
+    '                        _turn_usage.append({' '                        [].append({' \
+    bash tests/test-context-growth-instrumentation.sh
+
+probe_case "a syntax error in the embedded stream parser is caught" \
+    "autonomy/run.sh" \
+    '                    if _turn_usage:' '                    if _turn_usage' \
+    bash tests/test-context-growth-instrumentation.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.

@@ -5,6 +5,72 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.62.0
+
+### Why we are slower: 10.65M tokens in, 34.7K tokens out
+
+Measured on one real iteration of GitHub issue #24:
+
+```
+cache_read : 10,651,759 tokens
+output     :     34,729 tokens
+ratio      :        307 : 1
+```
+
+in a **single** provider call -- one `iteration_start`, one
+`result-cost-1.json`, so cross-iteration reuse is ruled out. That call was
+**100% of measured stage time** (744s to first code change).
+
+**The gap is ~6x on time-to-first-signal, not 100x.** Replit shows a preview at
+~120s against our 744s; on first working version (~600s) it is 1.2x. Stating
+that plainly matters more than a dramatic number.
+
+### What is NOT wrong
+
+The provider cache is working: **97.5% hit rate**, already discounting the call
+**10x** ($31.96 -> $3.20). We are not missing a cache.
+
+The problem is that the order being discounted is enormous. Cached reads are
+still **67% of a $4.74 iteration**, and they are **prefill the model must
+process serially** before emitting a single character -- which makes this the
+only measured lever touching **both** cost and the 744s.
+
+Three other candidate levers were adversarially refuted and are recorded so
+they are not re-proposed: reviewer-prompt cache sharing (<3% of run cost, and
+mechanically inert -- no user-turn cache flag exists on the bash route),
+`LOKI_SDK_PROMPT_CACHE` (reaches only the one-shot judge path), and wiring
+`[CACHE_BREAKPOINT]` (a documentation anchor with no provider-side effect).
+
+### This measures. It does not trim.
+
+*"The tool loop re-accumulates history"* is **inferred** from the ratio, not
+observed per turn. Trimming context on an inference is how you ship an agent
+that forgets what it already tried and redoes the work -- **raising** iteration
+count and costing more than it saves.
+
+So per-turn usage is now recorded to `.loki/metrics/context-growth-<n>.json`
+with a `growth_factor` (first turn vs last turn within one call). Verified
+end-to-end against the real stream parser: a 50k -> 1.6M turn sequence yields
+`growth_factor: 32.0`.
+
+The cut is a separate decision, gated on **iterations-to-done**, never on a
+token count.
+
+### Absence is not a growth factor
+
+A run with no assistant turns writes **no record**, rather than a fabricated
+`0`. Gated on turns observed, not on cost being reported -- codex reports
+tokens and never dollars, so tying it to cost would lose the shape on every
+codex run.
+
+### The embedded parser is now syntax-checked
+
+The stream filter is a `python3 -u -c '...'` heredoc inside run.sh. A syntax
+error there breaks **every Claude-route run**, and `bash -n` cannot see it. The
+test extracts and `ast.parse`s it; breaking `if _turn_usage:` turns it red.
+
+Trust-core detector: 93 invariants.
+
 ## v8.61.0
 
 ### W3: the call costing 93% of the run never reported its own input

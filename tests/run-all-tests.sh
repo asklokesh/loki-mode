@@ -736,6 +736,7 @@ run_test "startup is instrumented, never a silent gap" "$SCRIPT_DIR/test-startup
 run_test "every handled gate escalates its findings" "$SCRIPT_DIR/test-gate-escalation-coverage.sh"
 run_test "cost honesty holds across every surface" "python3 -m pytest -q $SCRIPT_DIR/test_cost_honesty_end_to_end.py"
 run_test "the agent call reports its own prompt size" "$SCRIPT_DIR/test-agent-prompt-size.sh"
+run_test "per-turn context growth is measured" "$SCRIPT_DIR/test-context-growth-instrumentation.sh"
 run_test "model catalog: no tier points at a superseded flagship" "$SCRIPT_DIR/test-model-catalog-current-flagship.sh"
 run_test "model catalog staleness is advisory in doctor" "$SCRIPT_DIR/test-model-catalog-staleness.sh"
 run_test "doctor blocker parity (both routes name blockers + offer loki tour)" "$SCRIPT_DIR/test-doctor-blocker-parity.sh"
