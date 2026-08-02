@@ -69,6 +69,8 @@ LIBS=(
     "tools/verify-demo.sh"                # zero-cost proof of the chain
     "tools/gate-init.py"                  # scaffold a policy from measured history
     "tools/baseline-pin.py"               # pin a verified reference run
+    "tools/token-guard.py"                # provider-independent work ceiling
+    "tools/receipt-find.py"               # query receipts by measurable criteria
 )
 
 # --- they must exist in the repo first ---------------------------------------

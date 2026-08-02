@@ -5,6 +5,76 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.1.0
+
+### Gate on tokens, because dollars move under you
+
+`cost-guard` gates on DOLLARS, which depend on model pricing: a dollar ceiling
+silently loosens on a cheaper model and tightens on a dearer one. Tokens are
+the provider-independent unit of work.
+
+Demonstrated on this project's own 307:1 measurement, one real iteration:
+
+```
+--max-output-tokens 50000   exit 0   (34,729 out: the WORK signal)
+--max-total-tokens  50000   exit 1   (10.6M total: the CONTEXT signal)
+```
+
+Same run, two verdicts. That distinction is invisible in dollars, which is why
+a token gate is not a duplicate of the cost gate. The total's field list is one
+constant used by BOTH the sum and the printed definition, so the two can never
+disagree.
+
+### The predicate had to be asked a narrower question
+
+`record_is_measured()` is satisfied by cost OR tokens. Feeding it all five
+fields the way `cost-guard` does would be a hole in a TOKEN gate: a record with
+a real cost and no usage (the codex shape) would have printed
+"0 output tokens, WITHIN BUDGET" for a run whose tokens were never recorded.
+
+Verified against the real library before deciding:
+
+```
+all five fields   -> measured: True
+four token fields -> measured: False
+```
+
+It is fed the four token fields only. That is choosing which fields to ask
+about, not restating the rule.
+
+### An inherited limit, stated rather than defended
+
+A JSON `true` in `output_tokens` DOES fabricate a 1-token measurement and exits
+0. `collect_efficiency()` runs `_to_int()` over every field, so `True` is a
+genuine `int` 1 before the guard sees it. The bool check in the tool is dead on
+the CLI path, the fix belongs in `_to_int()` upstream, and the test pins the
+ACTUAL behaviour with a note to re-examine if upstream changes. Claiming a
+defense that does not exist would be worse than the gap.
+
+### Finding receipts without pretending unmeasured means cheap
+
+`receipt-find.py` filters by cost range, failure, and date.
+
+**An unmeasured receipt matches NEITHER `--min-usd` NOR `--max-usd`**, and is
+reported as excluded:
+
+```
+EXCLUDED from the cost filter: cost was never measured, so it is neither above
+nor below the threshold
+```
+
+Both directions are asserted deliberately: a tool substituting `0.0` still
+passes a `--min-usd`-only suite, because 0.0 correctly fails to match a
+positive floor. Testing one direction would have let the exact defect through.
+
+Zero matches and no receipts are DIFFERENT facts with different exits (1 and
+3): one means the filter ran, the other means nothing was searched. Malformed
+receipts are counted separately and never silently dropped.
+
+`--failed-only` matches `NOT VERIFIED` only. `VERIFIED WITH GAPS` verified with
+recorded gaps and does not match; a receipt with no headline is never claimed
+as failed, because "we cannot tell" is not "it failed".
+
 ## v9.0.0
 
 ### Adopting the merge gate is now two commands
