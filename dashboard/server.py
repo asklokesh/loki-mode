@@ -559,6 +559,40 @@ start_time = datetime.now(timezone.utc)
 _dashboard_start_time = time.time()
 
 
+def _registry_run_alive(loki_dir: _Path) -> bool:
+    """True when .loki/pids/ holds a LIVE wrapper/runner process.
+
+    Third liveness source for a CLI-started background run, which writes
+    neither loki.pid nor session.json (run.sh only UPDATES session.json when it
+    already exists). Both of those checks therefore fail for `loki start` and
+    the run falls through to "stopped" while it is actively building.
+
+    The kind filter is load-bearing: .loki/pids/ also registers the dashboard
+    itself, the status-monitor and the resource-monitor, none of which carry a
+    "kind" key. Accepting any live pid here would let the dashboard's own
+    process prove the run is alive, turning a false-stopped into a permanent
+    false-running. Keep it to wrapper/runner.
+
+    Liveness is proven with os.kill(pid, 0), never by the file's presence -- a
+    stale entry from a crashed run must NOT read as alive.
+    """
+    try:
+        for _entry in (loki_dir / "pids").glob("*.json"):
+            _rec = _safe_json_read(_entry, {})
+            if not isinstance(_rec, dict):
+                continue
+            if _rec.get("kind") not in ("wrapper", "runner"):
+                continue
+            try:
+                os.kill(int(_rec.get("pid", 0)), 0)
+            except (ValueError, TypeError, OSError, ProcessLookupError):
+                continue
+            return True
+    except OSError:
+        pass
+    return False
+
+
 async def _push_loki_state_loop() -> None:
     """Background loop: push .loki/ state changes to all WebSocket clients.
 
@@ -679,35 +713,15 @@ async def _push_loki_state_loop() -> None:
                                 pass
 
                         # Third source: the .loki/pids/ registry, which a
-                        # CLI-started background run DOES write. Without this
-                        # the dashboard reported STOPPED for a healthy build:
-                        # `loki start` writes neither loki.pid nor session.json
-                        # (run.sh only UPDATES session.json when it already
-                        # exists), so both checks above failed and every such
-                        # run fell through to "stopped" while it was actively
-                        # working. Confirmed against a live build: STATUS.txt
-                        # said BUILDING and iterations were advancing while the
-                        # dashboard showed STOPPED with 0 agents.
-                        #
-                        # Liveness is proven with os.kill(pid, 0), never by the
-                        # file's presence -- a stale entry from a crashed run
-                        # must NOT read as alive, which is the same
-                        # anti-stale rule BUG-NEW-006 established above.
+                        # CLI-started background run DOES write. Shared with
+                        # /api/status via _registry_run_alive so both live
+                        # surfaces agree -- they previously did not: on a real
+                        # `loki start` build this stream broadcast "running"
+                        # while /api/status returned "stopped" for the SAME run
+                        # in the same second, because only this copy had the
+                        # pids/ source.
                         if not _pid_alive:
-                            try:
-                                _pid_dir = loki_dir / "pids"
-                                for _entry in _pid_dir.glob("*.json"):
-                                    _rec = _safe_json_read(_entry, {})
-                                    if _rec.get("kind") not in ("wrapper", "runner"):
-                                        continue
-                                    try:
-                                        os.kill(int(_rec.get("pid", 0)), 0)
-                                    except (ValueError, OSError, ProcessLookupError):
-                                        continue
-                                    _pid_alive = True
-                                    break
-                            except OSError:
-                                pass
+                            _pid_alive = _registry_run_alive(loki_dir)
 
                         status_str = raw.get("mode", "autonomous")
                         # Control files are the AUTHORITY, and they are checked
@@ -1437,6 +1451,13 @@ async def get_status() -> StatusResponse:
         # Skill sessions are autonomous by definition
         if not mode:
             mode = "autonomous"
+
+    # Third source: .loki/pids/ registry (see _registry_run_alive). A
+    # CLI-started background run writes neither loki.pid nor session.json, so
+    # both checks above miss it and a healthy build reported "stopped" here
+    # while the WS stream -- which already had this source -- said "running".
+    if not running:
+        running = _registry_run_alive(loki_dir)
 
     # Determine status string
     if not running:

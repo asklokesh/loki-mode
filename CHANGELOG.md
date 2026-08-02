@@ -5,6 +5,60 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.56.0
+
+### The dashboard showed STOPPED while the build was running
+
+Reported from a real run. A build launched with `loki start <github issue>` was
+progressing normally -- prerequisites passed, PRD parsed, 6 tasks extracted --
+while the dashboard showed:
+
+```
+SESSION: STOPPED     PHASE: BUILDING     UPTIME: 1m 14s
+```
+
+STOPPED next to BUILDING and a live uptime counter is self-contradictory, and
+it is the first thing a user sees about their own run.
+
+### Root cause: the fix was applied to one of two duplicate code paths
+
+`server.py` computed liveness **twice**, independently:
+
+| surface | function | had `.loki/pids/`? |
+|---|---|---|
+| WebSocket stream | `_push_loki_state_loop` | yes |
+| REST `/api/status` (what the UI renders) | `get_status` | **no** |
+
+A prior fix added `.loki/pids/` as a third liveness source for CLI-started runs
+and reached the WebSocket path only. `/api/status` still decided from
+`loki.pid` and `session.json` -- and a CLI run writes **neither** (run.sh only
+UPDATES `session.json` when it already exists), so both checks missed.
+
+Two decisive symptoms, both observed on the live run:
+
+- **One response contradicted itself**: `status: "stopped"` with
+  `active_sessions: 1`. The live session PID was found later in the same
+  handler; `running` had been frozen ~120 lines earlier and never reconsidered.
+- **The two surfaces disagreed about the same run in the same second**: the
+  WebSocket broadcast `running` while REST returned `stopped`.
+
+Now one shared `_registry_run_alive()` called by both, so they cannot diverge
+again.
+
+### The `kind` filter is load-bearing
+
+`.loki/pids/` also registers the dashboard itself, the status monitor and the
+resource monitor -- none carrying a `kind`. Accepting any live pid would let
+**the dashboard's own PID prove the run alive**, trading a false STOPPED for a
+permanent false RUNNING. That is the worse failure: a dead or stuck run would
+look healthy forever. Both directions are mutation-pinned.
+
+Verified independently against the live workspace (`_registry_run_alive` ->
+True on the running build) and across four synthetic cases including the
+no-`kind` dashboard pid.
+
+Trust-core detector: 83 invariants.
+
 ## v8.55.0
 
 ### A raw shell error was the first thing users saw

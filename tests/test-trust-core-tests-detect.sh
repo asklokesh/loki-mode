@@ -651,6 +651,21 @@ probe_case "no raw shell error when .loki/config is a directory" \
     fi' '    :' \
     bash tests/test-disclosure-config-directory.sh
 
+# The dashboard reported a LIVE build as STOPPED. Liveness was computed twice
+# and the .loki/pids/ fix reached only the WebSocket path, not the REST
+# /api/status the UI renders. The second probe guards the kind filter: without
+# it the dashboard's OWN pid proves the run alive, which is worse -- a stuck run
+# would look healthy forever.
+probe_case "REST status consults the pid registry" \
+    "dashboard/server.py" \
+    '        running = _registry_run_alive(loki_dir)' '        running = running' \
+    python3 -m pytest -q tests/dashboard/test_status_registry_liveness.py
+
+probe_case "the pid-kind filter keeps the dashboard from proving itself alive" \
+    "dashboard/server.py" \
+    '("wrapper", "runner")' '("wrapper", "runner", None)' \
+    python3 -m pytest -q tests/dashboard/test_status_registry_liveness.py
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
