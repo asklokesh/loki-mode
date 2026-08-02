@@ -241,7 +241,7 @@ function _loki_commands {
 
 function _loki_start {
     _arguments \
-        '--provider[AI provider]:provider name:(claude codex cline aider)' \
+        '--provider[AI provider]:provider name:(claude cline codex aider opencode)' \
         '--parallel[Parallel mode]' \
         '--background[Background mode]' \
         '--bg[Background mode]' \

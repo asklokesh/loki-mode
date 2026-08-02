@@ -21,7 +21,7 @@ _loki_completion() {
                 # Active providers (loki rejects gemini since v7.5.18; cline/aider
                 # are supported). Keep in sync with providers/loader.sh
                 # SUPPORTED_PROVIDERS.
-                COMPREPLY=( $(compgen -W "claude codex cline aider" -- "$cur") )
+                COMPREPLY=( $(compgen -W "claude cline codex aider opencode" -- "$cur") )
                 return 0
             fi
 

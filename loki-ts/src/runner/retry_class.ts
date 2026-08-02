@@ -27,13 +27,30 @@ export type RetryClass = "transient" | "non_retryable";
 // Deliberately conservative. Anything ambiguous is left out so it falls through
 // to transient. A false "non_retryable" is the expensive mistake (it abandons
 // recoverable work); a false "transient" merely costs one more retry.
+//
+// SCAN-TARGET HAZARD, and this is why the patterns below are narrower than they
+// look like they "should" be. The text handed to classifyFailure is the agent's
+// ENTIRE captured output (autonomous.ts:856-860 reads capturedOutputPath, the
+// same file checkCompletionPromise parses at autonomous.ts:835) -- up to 64KB of
+// the agent's own prose, test logs, and fixtures. It is NOT a provider error
+// envelope. So any pattern that is also ordinary APPLICATION vocabulary matches
+// an agent that merely BUILT that feature: a bare "401" appears in every auth
+// test log, "permission denied" and "payment required" appear in ordinary UI
+// copy. Those alternatives were removed because they fired on benign output and
+// aborted healthy runs outright (the run terminates, it does not just skip a
+// retry). What remains is provider-specific wire text that an application
+// building the feature has no reason to emit.
+//
+// The rule for anything added here: it must be a string the PROVIDER emits when
+// rejecting the request, not a string an app can legitimately print. When in
+// doubt, leave it out -- omission costs one retry, inclusion can kill a build.
 const NON_RETRYABLE_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
-  ["auth", /\b(?:invalid[_ -]?api[_ -]?key|unauthorized|authentication[_ -]?(?:failed|error)|401\b|invalid[_ -]?x-api-key|permission[_ -]?denied|403\b)/i],
-  ["unknown_model", /\b(?:model[_ -]?not[_ -]?found|unknown[_ -]?model|invalid[_ -]?model|does not exist.{0,20}model)/i],
-  ["bad_request", /\b(?:invalid[_ -]?request[_ -]?error|malformed[_ -]?request|400\b.{0,40}invalid)/i],
+  ["auth", /\b(?:invalid[_ -]?api[_ -]?key|invalid[_ -]?x-api-key|authentication[_ -]?(?:failed|error))/i],
+  ["unknown_model", /\b(?:model[_ -]?not[_ -]?found|unknown[_ -]?model|does not exist.{0,20}model)/i],
+  ["bad_request", /\b(?:invalid[_ -]?request[_ -]?error|malformed[_ -]?request)/i],
   // "quota"/"billing" = the account is out of funds; unlike a rate limit this
   // does not clear on its own within a run.
-  ["quota_exhausted", /\b(?:insufficient[_ -]?(?:quota|credit|funds)|billing[_ -]?(?:hard[_ -]?limit|issue)|credit[_ -]?balance[_ -]?(?:is[_ -]?)?too[_ -]?low|payment[_ -]?required|402\b)/i],
+  ["quota_exhausted", /\b(?:insufficient[_ -]?(?:quota|credit|funds)|billing[_ -]?(?:hard[_ -]?limit|issue)|credit[_ -]?balance[_ -]?(?:is[_ -]?)?too[_ -]?low)/i],
 ];
 
 // Explicitly TRANSIENT markers that must win even if a permanent-looking word

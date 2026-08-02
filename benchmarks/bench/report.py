@@ -41,6 +41,10 @@ import sys
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _METHODOLOGY_PATH = os.path.join(_HERE, "methodology-template.md")
 
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+import bench_schema as _schema  # noqa: E402
+
 _METHODOLOGY_FALLBACK = (
     "## Methodology and disclaimers\n\n"
     "This report's methodology template was not found on disk. The harness is "
@@ -204,11 +208,20 @@ def _provenance_tag(row):
 
 
 def summarize_row(row):
-    """Aggregate one tool's trials into a summary dict."""
-    trials = row.get("trials") if isinstance(row.get("trials"), list) else []
+    """Aggregate one tool's trials into a summary dict.
+
+    Only MEASURED trials feed k/N. A trial whose adapter reports it never
+    produced a gradeable state (tool not installed, timed out, harness error) is
+    excluded from both numerator and denominator instead of being published as a
+    0 -- an uninstalled competitor scoring "0/3 (verified)" is a confident false
+    claim. bench_schema.trial_is_measured is the single definition; see it for
+    why exit_status is the discriminator and why absent reads as measured.
+    """
+    all_trials = row.get("trials") if isinstance(row.get("trials"), list) else []
+    all_trials = [t for t in all_trials if isinstance(t, dict)]
+    trials, unmeasured = _schema.split_measured(all_trials)
     n = len(trials)
-    successes = sum(1 for t in trials
-                    if isinstance(t, dict) and t.get("success") is True)
+    successes = sum(1 for t in trials if t.get("success") is True)
     success_rate = (successes / n) if n else None
     # quality may be a number (synthetic shape) or a dict {lint_ok, tests_ok}
     # (real grader shape). Only numeric qualities feed the median; dicts are
@@ -228,6 +241,8 @@ def summarize_row(row):
         "model_used": _row_model(row),
         "k": successes,
         "n": n,
+        "n_attempted": len(all_trials),
+        "n_unmeasured": len(unmeasured),
         "success_rate": success_rate,
         "quality_median": _median([q for q in qualities if q is not None]),
         "cost_usd_median": cost_median,
@@ -388,7 +403,17 @@ def render_markdown(results):
         "|---|---|---|---|---|---|---|---|"
     )
     for s in results.get("summaries", []):
-        kN = ("%d/%d" % (s["k"], s["n"])) if s["n"] else "n/a"
+        # A row with nothing measured says so. "0/3" would be a score it never
+        # earned; "n/a" alone hides that trials were attempted and lost.
+        if s["n"]:
+            kN = "%d/%d" % (s["k"], s["n"])
+            if s.get("n_unmeasured"):
+                kN += " (%d unmeasured)" % s["n_unmeasured"]
+        elif s.get("n_attempted"):
+            kN = "not measured (%d/%d trials produced no result)" % (
+                s["n_unmeasured"], s["n_attempted"])
+        else:
+            kN = "n/a"
         cost = fmt_usd(s["cost_usd_median"])
         wall = ("%.1fs" % s["wall_clock_median"]
                 if s["wall_clock_median"] is not None else "not recorded")

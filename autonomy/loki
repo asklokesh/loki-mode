@@ -5667,6 +5667,7 @@ cmd_provider_list() {
     local codex_status="${RED}not installed${NC}"
     local cline_status="${RED}not installed${NC}"
     local aider_status="${RED}not installed${NC}"
+    local opencode_status="${RED}not installed${NC}"
 
     if command -v claude &> /dev/null; then
         claude_status="${GREEN}installed${NC}"
@@ -5679,6 +5680,9 @@ cmd_provider_list() {
     fi
     if command -v aider &> /dev/null; then
         aider_status="${GREEN}installed${NC}"
+    fi
+    if command -v opencode &> /dev/null; then
+        opencode_status="${GREEN}installed${NC}"
     fi
 
     # Display providers
@@ -5697,6 +5701,14 @@ cmd_provider_list() {
     marker=""
     [ "$current" = "aider" ] && marker=" ${CYAN}(current)${NC}"
     echo -e "  aider   - Aider (terminal pair prog)  $aider_status$marker"
+
+    # opencode was absent here while auto_detect_provider() has selected it
+    # since v8.64.0, so `loki provider list` under-reported a provider the
+    # runner will happily choose -- the same drift that blocked opencode-only
+    # machines outright until v8.76.0.
+    marker=""
+    [ "$current" = "opencode" ] && marker=" ${CYAN}(current)${NC}"
+    echo -e "  opencode - opencode (multi-provider)  $opencode_status$marker"
 
     echo ""
     echo -e "Set provider: ${CYAN}loki provider set <name>${NC}"
@@ -14646,7 +14658,11 @@ ENDGITIGNORE
 
     # Check if an AI provider CLI is available
     local _has_provider=false
-    for _pcli in claude codex cline aider; do
+    # Must match auto_detect_provider() in providers/loader.sh. Omitting
+    # opencode here made `loki provider list` under-report a provider the
+    # runner will happily select -- the same drift that blocked
+    # opencode-only machines entirely until v8.76.0.
+    for _pcli in claude cline codex aider opencode; do
         if command -v "$_pcli" &>/dev/null; then
             _has_provider=true
             break

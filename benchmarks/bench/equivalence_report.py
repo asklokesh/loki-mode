@@ -45,6 +45,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # Reuse report.py's _median helper (same directory).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import bench_schema as _schema  # noqa: E402
 try:
     from report import _median  # type: ignore
 except Exception:  # pragma: no cover - fallback keeps the module importable
@@ -308,6 +309,7 @@ def cell_axes(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     successes = 0
     n = 0
+    n_unmeasured = 0
     obs: List[int] = []
     proof_present = 0
     proof_observed = 0
@@ -316,6 +318,14 @@ def cell_axes(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     for row in rows:
         for t in row.get("trials", []) or []:
             if not isinstance(t, dict):
+                continue
+            # A trial that produced no gradeable state (tool absent, timed out,
+            # harness error) is NOT a zero. Counting it would deflate this
+            # cell's success_rate, tighten its Wilson interval around a number
+            # nothing observed, and feed both into the hero gap. Excluded from
+            # the denominator; counted separately so the loss stays visible.
+            if not _schema.trial_is_measured(t):
+                n_unmeasured += 1
                 continue
             n += 1
             ok = 1 if t.get("success") else 0
@@ -337,6 +347,7 @@ def cell_axes(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
                else round(proof_present / proof_observed, 4))
     return {
         "n_trials": n,
+        "n_unmeasured": n_unmeasured,
         "n_success": successes,
         "correctness": {
             "success_rate": None if p_est is None else round(p_est, 4),
@@ -537,6 +548,11 @@ def _decision_line(gap, lo, hi, n_hf, n_ob, n_tasks) -> str:
 def _fmt_rate(cx: Dict[str, Any]) -> str:
     sr = cx["correctness"]["success_rate"]
     if sr is None:
+        # Distinguish "this cell never ran" from "it ran and every trial was
+        # lost". Both are not_run for decision purposes, but only the second
+        # means trials were paid for and produced nothing.
+        if cx.get("n_unmeasured"):
+            return "not_run (%d unmeasured)" % cx["n_unmeasured"]
         return "not_run"
     return ("%.2f [%.2f, %.2f]"
             % (sr, cx["correctness"]["wilson_low"], cx["correctness"]["wilson_high"]))

@@ -5,6 +5,94 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.82.0
+
+### An agent that BUILT an auth feature killed its own run
+
+`retry_class.ts` classifies a failure as permanent or transient. It is handed
+the agent's **entire captured output** -- the agent's own prose, up to 64KB --
+not a provider error envelope. Several patterns were ordinary application
+vocabulary. Measured on the shipped code:
+
+```
+agent built auth: test log shows 401       -> {"klass":"non_retryable","reason":"auth"}
+implemented permission denied handling     -> {"klass":"non_retryable","reason":"auth"}
+added a payment required page to checkout  -> {"klass":"non_retryable","reason":"quota_exhausted"}
+```
+
+The consequence is not a skipped retry. `autonomous.ts:873-881` persists
+`failed` and returns exit 1, **terminating the whole run on the first
+iteration** -- default-on, triggered by writing about auth or payments.
+
+This is precisely the inversion the module header forbids: an unrecognized
+condition taking the dangerous branch. Fixed by DELETION, in the sanctioned
+direction (toward TRANSIENT): bare `401`/`403`/`402`/`400`, `unauthorized`,
+`permission denied`, `payment required`, `invalid model` are gone. Every
+provider wire-text literal stays (`invalid x-api-key`, `insufficient quota`,
+`credit balance too low`, `model_not_found`).
+
+After:
+```
+agent built auth ...        -> {"klass":"transient","reason":"unrecognized"}
+invalid x-api-key           -> {"klass":"non_retryable","reason":"auth"}
+some unrecognized failure   -> {"klass":"transient","reason":"unrecognized"}
+```
+
+No proximity or context heuristics were added: that is a natural-language arms
+race, a bigger diff for less certainty. The module had ZERO prior test
+coverage; it now has 27 tests asserting all three directions, including that
+real provider failures still stop early -- without that group, deleting the
+pattern list entirely would pass.
+
+### A competitor we could not run scored 0 and we won by default
+
+The benchmark grader set `success = (acceptance exit == 0)` on whatever was in
+the workdir. When the tool never ran, that is the untouched fixture, so the
+trial scored `success=false`. Every distinct failure collapsed to the same
+number:
+
+```
+cli_not_found -> 0.0     timeout -> 0.0     adapter_error -> 0.0
+error_rc_1    -> 0.0     completed -> 0.0
+```
+
+Published as: `| aider | 0/3 | automated (verified) |` -- a confident false
+claim about a competitor that was merely **not installed**. It failed in our
+favour, which makes it worse than a gap: a missing number invites a question,
+"0/3 (verified)" does not.
+
+`benchmarks/bench/adapters/_base.py:129-131` already said of `cli_not_found`:
+*"Honest: not an error in the run, the tool is simply absent. Report it so the
+report can render 'tool absent'."* No consumer ever did.
+
+Now:
+```
+NOT INSTALLED            success_rate=None   attempted=3  unmeasured=3
+TIMED OUT                success_rate=None   attempted=3  unmeasured=3
+real zero (ran, failed)  success_rate=0.0    attempted=3  unmeasured=0
+```
+
+Measuredness is derived at READ time from `exit_status`, so historical rows
+retro-classify rather than all becoming UNKNOWN, and an unrecognized status
+reads as MEASURED -- the fail-safe direction, since this predicate must never
+silently delete real data.
+
+### opencode was missing from four more lists
+
+`loki provider list` (BOTH routes), the bash and zsh completions, and the
+README provider matrix all named the stale four. The Bun route needed two
+edits, not one: `ALL_PROVIDERS` *and* a separate hardcoded `rows` array that
+actually renders. Both routes now print identical output.
+
+### Two documented env vars did nothing
+
+`skills/healing.md` listed `LOKI_HEAL_BASELINE_DIR` and
+`LOKI_HEAL_PRESERVE_FRICTION` in its Environment Variables table. Neither is
+read anywhere: the baseline path is hardcoded at `migration-hooks.sh:776`, and
+friction preservation is unconditional. A phantom row is worse than an absent
+one -- an undocumented var makes you read the code, a documented one makes you
+trust a lie.
+
 ## v8.81.0
 
 ### Every emit.sh event was attributed to "unknown"

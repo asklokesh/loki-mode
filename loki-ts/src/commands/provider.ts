@@ -7,9 +7,14 @@ import { commandExists } from "../util/shell.ts";
 import { BOLD, CYAN, GREEN, YELLOW, RED, DIM, NC } from "../util/colors.ts";
 import { lokiDir } from "../util/paths.ts";
 
-type Provider = "claude" | "codex" | "cline" | "aider";
+type Provider = "claude" | "cline" | "codex" | "aider" | "opencode";
 
-const ALL_PROVIDERS: readonly Provider[] = ["claude", "codex", "cline", "aider"];
+// Must match auto_detect_provider() in providers/loader.sh, in ITS order --
+// the order is the selection priority, not a display preference. Omitting
+// opencode made `loki provider list` under-report a provider the runner has
+// selected since v8.64.0, the same drift that blocked opencode-only machines
+// outright until v8.76.0.
+const ALL_PROVIDERS: readonly Provider[] = ["claude", "cline", "codex", "aider", "opencode"];
 
 function readSavedProvider(): string {
   const path = resolve(lokiDir(), "state", "provider");
@@ -82,6 +87,7 @@ export async function runProviderList(): Promise<number> {
     ["codex", "codex   - Codex CLI (OpenAI)         "],
     ["cline", "cline   - Cline (multi-provider)     "],
     ["aider", "aider   - Aider (terminal pair prog) "],
+    ["opencode", "opencode - opencode (multi-provider) "],
   ];
 
   for (const [p, label] of rows) {
