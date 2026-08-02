@@ -741,6 +741,7 @@ run_test "the agent call reports its own prompt size" "$SCRIPT_DIR/test-agent-pr
 run_test "per-turn context growth is measured" "$SCRIPT_DIR/test-context-growth-instrumentation.sh"
 run_test "provider auto-detection is wired" "$SCRIPT_DIR/test-provider-autodetect.sh"
 run_test "the two provider lists agree" "$SCRIPT_DIR/test-provider-lists-agree.sh"
+run_test "preflight verdict is honest" "$SCRIPT_DIR/test-preflight-verdict.sh"
 run_test "the provider docs match the code" "$SCRIPT_DIR/test-provider-docs-match-code.sh"
 run_test "every opencode dispatch path passes --auto" "$SCRIPT_DIR/test-provider-config-autonomous-flag.sh"
 run_test "a dropped event is visible" "$SCRIPT_DIR/test-event-drop-visible.sh"

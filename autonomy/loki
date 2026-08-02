@@ -12195,7 +12195,11 @@ elif disk_status == 'warn': warn_count += 1
 # so an apostrophe or a double quote in a comment terminates the shell
 # string and mangles the program. First attempt did exactly that: doctor
 # --json printed nothing and exited 0. Keep this comment quote-free.
-_provider_cmds = ('claude', 'codex', 'cline', 'aider')
+# Must match auto_detect_provider() in providers/loader.sh, in ITS order.
+# Omitting opencode made doctor report 'No AI provider CLI' on a machine
+# where the runner would happily select opencode -- the fifth list in this
+# repo to drift from that authority (see v8.76.0, v8.82.0).
+_provider_cmds = ('claude', 'cline', 'codex', 'aider', 'opencode')
 _any_provider = any(shutil.which(_p) is not None for _p in _provider_cmds)
 ai_provider = {
     'found': _any_provider,

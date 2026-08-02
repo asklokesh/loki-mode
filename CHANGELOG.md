@@ -5,6 +5,71 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.87.0
+
+### One command that answers "will this run work, and what will it cost?"
+
+`scripts/preflight.sh` is net-new and READ-ONLY: it starts nothing, spends
+nothing, and contacts no provider.
+
+```
+Provider
+  OK    auto-detection would select: claude
+Environment
+  OK    doctor: 12 checks passed, 1 warning(s)
+Projected cost
+  measured per-iteration cost: $0.0500 (median of 3 priced iteration(s))
+  projected for 4 iteration(s): $0.20  [ESTIMATE, not a guarantee]
+VERDICT: READY
+```
+
+With no history it reads `UNKNOWN ... there is NO history to project from, so
+no cost is estimated (not $0.00)`. BLOCKED names each blocker AND its fix.
+
+It COMPOSES existing producers rather than reimplementing them --
+`auto_detect_provider`, `doctor --json`, `estimate-run.py` -- because a second
+implementation of a rule is how the rule drifts, which this repo has now proven
+five times over.
+
+### The fifth provider list, and doctor was the one lying
+
+Building preflight surfaced it: `_provider_cmds` in `autonomy/loki` backs
+`doctor --json`'s verdict and omitted opencode. On an opencode-only machine:
+
+```
+ai_provider.status : fail
+ai_provider.detail : No AI provider CLI. Fix: npm install -g @anthropic-ai/claude-code
+```
+
+The runner would have selected opencode without complaint. This is the surface
+a user consults FIRST when something looks wrong, so it sent them to install a
+provider they did not need -- the same defect as v8.76.0 and v8.82.0, on a
+fifth list. `tests/test-provider-lists-agree.sh` now pins this one too.
+
+### A test that encoded the bug as expected behaviour
+
+Preflight shipped with two assertions requiring it to REPORT the disagreement
+between the two provider checkers. That was correct when written and obsolete
+the moment the underlying list was fixed: with the checkers agreeing there is
+nothing to surface. Both assertions were rewritten to assert the RESOLVED state
+-- an opencode-only machine reads READY, and a re-emerging disagreement now
+FAILS rather than passes.
+
+### Three defects the author found by verifying rather than assuming
+
+- `timeout(1)` is homebrew-only on macOS; hardcoding it exited 127 on stock
+  bash and made the scrubbed-PATH test unrunnable. Now degrades to uncapped.
+- BLOCKED silently discarded warnings, so a user fixed the named blocker,
+  re-ran, and only then discovered a second known problem.
+- `loki resume` could not be used to detect resumable state: `cmd_resume` does
+  `rm -f "$LOKI_DIR/PAUSE"` and emits telemetry. `loki next --dry-run` was
+  verified to write nothing.
+
+One mutation probe SURVIVED and is reported as such: an `if proj is None:`
+guard is unreachable because the estimator always returns a projection when
+`has_basis` is true. It is defensive depth against a fabricated zero, not
+tested behaviour.
+
 ## v8.86.0
 
 ### doctor tells you what is broken; now something tells you how to fix it

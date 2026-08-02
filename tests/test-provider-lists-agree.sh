@@ -105,6 +105,29 @@ else
     ok "a machine with no provider is still blocked"
 fi
 
+# --- the FIFTH list: doctor's own provider check ------------------------------
+# `_provider_cmds` in autonomy/loki backs `doctor --json`'s ai_provider verdict.
+# It omitted opencode, so doctor reported "No AI provider CLI. Fix: npm install
+# -g @anthropic-ai/claude-code" on a machine where the runner would have
+# selected opencode without complaint. Same drift as the pre-flight gate above,
+# on the surface a user consults FIRST when something looks wrong.
+_doc="$(sed -n 's/^_provider_cmds = (\(.*\))$/\1/p' "$REPO_ROOT/autonomy/loki" \
+        | tr -d "', " | head -1)"
+_auto_squash="$(printf '%s' "$_auto" | tr -d ' ')"
+
+if [ -z "$_doc" ]; then
+    bad "could not read _provider_cmds from autonomy/loki; this check is inert"
+elif [ "$_doc" = "$_auto_squash" ]; then
+    ok "doctor's provider check matches the detector, membership and order"
+else
+    bad "doctor list drift -- doctor=[$_doc] detector=[$_auto_squash]"
+fi
+
+case "$_doc" in
+    *opencode*) ok "doctor's check includes opencode" ;;
+    *) bad "doctor would report 'No AI provider CLI' on an opencode-only machine" ;;
+esac
+
 echo ""
 echo "  Passed:     $PASS"
 echo "  Failed:     $FAIL"
