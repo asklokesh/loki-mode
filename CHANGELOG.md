@@ -5,6 +5,74 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.86.0
+
+### doctor tells you what is broken; now something tells you how to fix it
+
+`autonomy/lib/doctor-fix.py` is net-new: it turns a `loki doctor --json` report
+into an ordered, copy-pasteable remediation plan.
+
+```
+Remediation plan -- 2 blockers, in order (prerequisites first).
+These commands are NOT run for you. Copy, review, then run them yourself.
+
+1. Node.js is not installed
+   Install Node.js 18+: brew install node    (macOS)  |  https://nodejs.org
+
+2. No AI provider CLI installed (at least one is required)
+   npm install -g @anthropic-ai/claude-code
+```
+
+The ordering is load-bearing rather than cosmetic: step 2's `npm` does not
+exist until step 1 runs.
+
+### It refuses to guess
+
+An unrecognized blocker prints, verbatim:
+
+```
+   no automated fix known for this blocker -- diagnose manually, then re-run: loki doctor
+```
+
+A wrong command is worse than no command, because the user runs it and trusts
+the result. It also never executes anything and says so in its own output.
+
+An empty blocker list reads `System is healthy`; unparseable input is REFUSED
+rather than rendering as healthy, which is the same absent-vs-zero distinction
+this codebase has now applied to thirteen surfaces.
+
+### It parses doctor's own remedy rather than restating it
+
+`ai_provider.detail` already carries `"...Fix: npm install -g
+@anthropic-ai/claude-code"`. That `Fix:` is parsed, so doctor stays the single
+source of truth; hardcoding a duplicate turns the suite red. `cmd_why`'s
+`PROVIDER_AUTH` map was deliberately NOT reused: it keys on a `LAST_ERROR`
+`error_class`, an orthogonal axis, and `doctor --json` has no auth blocker to
+map from. Manufacturing one to demonstrate an ordering dependency would be the
+exact fabrication the tool refuses.
+
+Commands sourced from the repo are distinguished from conventional ones, since
+only `brew install python3`, `brew install jq` and the nodejs.org URL actually
+appear in-repo.
+
+### A stale-bytecode trap worth recording
+
+A mutation probe left the suite red against a provably-correct source.
+`spec_from_file_location` had cached a `.pyc`, and the probe's restore produced
+a same-size, same-mtime file, so Python reused **stale bytecode**: the suite
+ran mutated code against a restored file. That presents exactly like a genuine
+defect. Fixed at the root with `sys.dont_write_bytecode = True` before the
+loader; this bites any mutation probe against a hyphenated module.
+
+### Known gap, stated rather than implied
+
+`doctor --json` emits no blocker list. Blockers are DERIVED from
+`status == "fail"` across `checks[]`, `ai_provider`, and `disk`. Two text-path
+blockers (broken skill symlink, missing detectors) have no JSON representation
+today, so this tool cannot see them; it handles them if they ever appear.
+Nothing invokes `doctor-fix.py` from the CLI yet -- it runs standalone via
+`--report` or stdin.
+
 ## v8.85.0
 
 ### Compare two runs: what actually changed, and what cannot be compared
