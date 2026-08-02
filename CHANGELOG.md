@@ -5,6 +5,60 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.92.0
+
+### One exit code over every policy
+
+`tools/ci-gate.py` is net-new: the command a CI job runs after an agent build.
+It composes the existing policy tools by subprocess and returns a single
+verdict.
+
+```
+CASE 1 ALL PASS      cost PASS within_budget                GATE: PASS         EXIT=0
+CASE 2 FAILED        cost FAIL $0.5000 exceeds $0.0001      GATE: FAIL         EXIT=1
+CASE 3 UNEVALUABLE   cost is UNMEASURED                     GATE: UNEVALUABLE  EXIT=2
+CASE 4 NO POLICY     (empty table)                          GATE: UNEVALUABLE  EXIT=2
+CASE 5 MIXED         cost UNEVALUABLE / receipt FAIL        GATE: UNEVALUABLE  EXIT=2
+```
+
+Zero policy logic is reimplemented -- `cost-guard.py` and `receipt-attest.py`
+run via `sys.executable` with `--json`. A second copy of a rule is how the rule
+drifts, which this repo proved five separate times with provider lists.
+
+### Four decisions, each one a refusal to leak green
+
+**Weakest link, no threshold.** One FAIL fails the set. A tunable threshold is a
+request to let a known-bad policy through.
+
+**Unevaluable OUTRANKS fail.** The mixed case returns 2, not 1. "Your gate is
+partly blind" beats "this run is over budget": with 1, the operator fixes the
+cost, re-runs, sees green, and is still blind on the dead axis.
+
+**No policy configured is 2, never 0.** A gate that lost its flags in a
+refactor would otherwise go green forever while enforcing nothing -- worse than
+no gate, because it is trusted. That is the "check that can report a pass
+without having checked" hole CLAUDE.md records.
+
+**Child exit codes are whitelisted to {0,1,2}.** `receipt-attest.py` returns 64
+on a usage error and an uncaught traceback exits 1, so a naive "rc != 1 means
+pass" would read the first as green and misattribute the second as a policy
+verdict.
+
+`--require-receipt` with no receipt on disk is **1**, not 2: it was checked and
+the answer is no. 2 is reserved for a receipt that exists and could not be
+attested.
+
+### A cell that looked filled in while reporting nothing
+
+Found during verification, not assumed away: the PASS case first printed a bare
+`{` as its detail, because `cost-guard` sets `reason: null` on success and the
+fallback grabbed the first line of pretty-printed JSON. A cell that reports
+nothing while looking populated is the same class of defect as the gate itself,
+so the reason resolver now prefers `status` and refuses a raw JSON body.
+
+Every unevaluable assertion pins `!= 0` as well as `== 2`, so folding that
+state into a green path under a different name still fails.
+
 ## v8.91.0
 
 ### Eleven tools shipped and none were discoverable
