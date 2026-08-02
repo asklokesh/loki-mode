@@ -70,6 +70,17 @@ export type ReceiptSigningCheck = {
   required: "optional";
 };
 
+// Provider availability: install state of every provider in
+// providers/loader.sh SUPPORTED_PROVIDERS, plus the one auto_detect_provider
+// would choose. Produced by autonomy/provider-offer.sh (providers-json), the
+// SAME helper the bash route calls, so the two cannot drift. Not counted in the
+// summary tally: it is informational, and a missing optional provider must
+// never flip doctor exit code.
+export type ProviderAvailability = {
+  selected: string | null;
+  providers: { name: string; installed: boolean }[];
+};
+
 // v7.7.17: memory subsystem health surface. Mirrors the bash side
 // (autonomy/loki:cmd_doctor_json) which reports the latest entries from
 // .loki/memory/.errors.log (rotated by memory/error_log.py). Sibling of
@@ -88,6 +99,10 @@ export type DoctorJson = {
   // (autonomy/loki:cmd_doctor_json) which now sets LOKI_VERSION env.
   loki_mode_version: string;
   checks: ToolCheck[];
+  // Which provider a build would actually auto-select, plus the install state
+  // of every supported provider. Null when providers/loader.sh is unavailable,
+  // matching the bash route, which omits the section rather than erroring.
+  provider_availability: ProviderAvailability | null;
   disk: DiskCheck;
   ai_provider: AiProviderCheck;
   sentrux: SentruxCheck;
@@ -341,6 +356,57 @@ async function runAllToolChecks(): Promise<ToolRow[]> {
   );
 }
 
+// ---------- Provider availability bridge --------------------------------------
+
+// Both of these shell out to autonomy/provider-offer.sh rather than reading
+// providers/loader.sh from TypeScript. That is deliberate and load-bearing:
+// doctor stdout is compared byte for byte between the two routes
+// (tests/test-doctor-blocker-parity.sh + the bun-parity workflow), and the
+// auto-selection priority order lives in ONE bash function. A TypeScript
+// reimplementation would be a second copy of that order, free to drift.
+//
+// Both fail closed and silently: a missing script, a spawn error, or any
+// non-zero status yields null / no output, and doctor carries on. That is the
+// same graceful skip the bash route performs when loader.sh cannot be sourced.
+function providerOfferScript(): string | null {
+  const p = resolve(REPO_ROOT, "autonomy/provider-offer.sh");
+  return existsSync(p) ? p : null;
+}
+
+export function readProviderAvailability(): ProviderAvailability | null {
+  const script = providerOfferScript();
+  if (!script) return null;
+  try {
+    const r = spawnSync("bash", [script, "providers-json"], { encoding: "utf8" });
+    if (r.status !== 0 || !r.stdout) return null;
+    const parsed = JSON.parse(r.stdout) as ProviderAvailability;
+    if (!parsed || !Array.isArray(parsed.providers)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+// Returns the rendered section, or "" to print nothing.
+//
+// NOTE the capture-and-re-emit, rather than stdio "inherit". The install-offer
+// call below can use "inherit" because it is gated on stdout being a TTY, so
+// the parity capture never reaches it. This section is ALWAYS on: when stdout
+// is a pipe, Bun buffers process.stdout.write while an inherited child writes
+// straight to fd 1, which would let this section overtake the lines printed
+// before it and break parity in a way that never reproduces on a terminal.
+export function renderProviderAvailability(): string {
+  const script = providerOfferScript();
+  if (!script) return "";
+  try {
+    const r = spawnSync("bash", [script, "providers"], { encoding: "utf8" });
+    if (r.status !== 0 || !r.stdout) return "";
+    return r.stdout;
+  } catch {
+    return "";
+  }
+}
+
 // ---------- JSON mode ---------------------------------------------------------
 
 // v7.5.15: probe the sentrux binary for the JSON output. Mirrors the bash
@@ -515,6 +581,7 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
   return {
     loki_mode_version: getVersion(),
     checks,
+    provider_availability: readProviderAvailability(),
     disk,
     ai_provider: aiProvider,
     sentrux,
@@ -725,6 +792,16 @@ async function runText(): Promise<number> {
     }
   }
   process.stdout.write(`\n`);
+
+  // Provider Availability. Rendered by the shared bash helper so these bytes
+  // are the bash route bytes by construction. Empty string when loader.sh is
+  // unavailable, in which case nothing (not even the blank line) is printed --
+  // exactly what the bash route does.
+  const availability = renderProviderAvailability();
+  if (availability) {
+    process.stdout.write(availability);
+    process.stdout.write(`\n`);
+  }
 
   // API Keys (presence only -- never echo values)
   process.stdout.write(`${CYAN}API Keys:${NC}\n`);

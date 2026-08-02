@@ -11282,6 +11282,18 @@ cmd_doctor() {
     fi
     echo ""
 
+    # Provider Availability. Which provider a build would ACTUALLY pick, which
+    # is decided by providers/loader.sh auto_detect_provider, not by PATH order
+    # and not by the section above. Rendered by the shared helper in
+    # provider-offer.sh so the Bun route prints the identical bytes (doctor
+    # stdout is byte-compared -- tests/test-doctor-blocker-parity.sh). Skipped
+    # silently, with no error, when loader.sh is missing or unsourceable.
+    if declare -f render_provider_availability >/dev/null 2>&1; then
+        if render_provider_availability; then
+            echo ""
+        fi
+    fi
+
     echo -e "${CYAN}API Keys:${NC}"
     # Note: CLI tools use their own login sessions outside Docker/K8s.
     # This section helps first-time users verify they can authenticate.
@@ -11763,6 +11775,16 @@ else:
 cmd_doctor_json() {
     local _loki_version
     _loki_version=$(get_version)
+    # Provider availability, computed in bash and handed to the python program
+    # as an env var (same pattern as LOKI_VERSION). Computed here rather than
+    # inside the program because the answer comes from sourcing loader.sh.
+    # Empty when loader.sh is unavailable, and the key is then null: the same
+    # graceful skip the text section performs.
+    local _provider_availability=""
+    if declare -f provider_availability_json >/dev/null 2>&1; then
+        _provider_availability="$(provider_availability_json 2>/dev/null || true)"
+    fi
+    LOKI_PROVIDER_AVAILABILITY="$_provider_availability" \
     LOKI_VERSION="$_loki_version" \
     LOKI_CATALOG_PATH="${LOKI_MODEL_CATALOG:-${_LOKI_SCRIPT_DIR}/../providers/model_catalog.json}" \
     python3 -c "
@@ -11966,9 +11988,20 @@ except Exception:
     model_catalog = {'status': 'warn', 'updated': None, 'age_days': None,
                      'detail': 'Catalog unreadable or missing an ISO \"updated\" date -- cannot determine age'}
 
+# Provider availability, handed in from bash (see cmd_doctor_json). Null when
+# providers/loader.sh could not be sourced, mirroring the text sections skip.
+# CAUTION: this block lives inside a DOUBLE-QUOTED python3 -c program, so no
+# apostrophes and no double quotes anywhere here, comments included.
+try:
+    _pa_raw = os.environ.get('LOKI_PROVIDER_AVAILABILITY', '').strip()
+    provider_availability = json.loads(_pa_raw) if _pa_raw else None
+except Exception:
+    provider_availability = None
+
 result = {
     'loki_mode_version': os.environ.get('LOKI_VERSION', 'unknown'),
     'checks': checks,
+    'provider_availability': provider_availability,
     'disk': {
         'available_gb': disk_gb,
         'status': disk_status

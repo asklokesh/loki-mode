@@ -5,6 +5,55 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.67.0
+
+### doctor now tells you which provider will actually run
+
+`loki doctor` gained a Provider Availability section on both routes, and a
+`provider_availability` key in `--json`:
+
+```
+Provider Availability:
+  PASS  claude - installed (auto-selected)
+  PASS  codex - installed
+  WARN  cline - not installed
+  PASS  aider - installed
+  PASS  opencode - installed
+  Auto-selected provider: claude (override with LOKI_PROVIDER)
+```
+
+With auto-detection landing in v8.64.0, "which provider will run" became a
+question the user could no longer answer by reading their own command. This
+answers it before a run starts.
+
+### One renderer, in bash, on purpose
+
+Doctor stdout is compared byte-for-byte between the bash and Bun routes. Two
+renderers drift; one cannot. The section is rendered by
+`autonomy/provider-offer.sh` and the Bun route shells out to the same helper,
+reusing the seam the install offer and the `detect-sdk` probe already use.
+
+### The ordering trap this pinned down
+
+`auto_detect_provider()` walks `claude cline codex aider opencode`, but
+`SUPPORTED_PROVIDERS` is declared `claude codex cline aider opencode` -- codex
+and cline are **swapped**. Marking "the first installed entry in
+`SUPPORTED_PROVIDERS`" would name codex on a machine where a build actually
+runs cline.
+
+The selected provider therefore always comes from `auto_detect_provider()`;
+the declaration order is used only to order the rows. A test pins this with a
+fake PATH holding cline and codex but no claude, where the two candidate
+answers differ, and swapping the priority order turns the suite red.
+
+### A note on how this was integrated
+
+The work was built on a branch that predated v8.65.0, so its `dist/` did not
+contain the install-integrity check. Taking that dist wholesale would have
+silently reverted v8.65.0 and returned Bun Parity to red. Only the source
+changes were applied and `dist/` was rebuilt, with both features asserted
+present afterwards.
+
 ## v8.66.0
 
 ### Asking for a provider you do not have now fails immediately, and never substitutes

@@ -35,6 +35,22 @@ else
     _PO_NC=$'\033[0m'
 fi
 
+# Section colors for render_provider_availability. Deliberately gated on
+# NO_COLOR ALONE, unlike the _PO_* set above which also blanks on a non-TTY.
+# The section is printed inside `loki doctor` next to blocks colored by loki own
+# CYAN/GREEN/NC, and those are blanked on NO_COLOR only (autonomy/loki:37). A
+# TTY test here would strip color from this one section whenever doctor stdout
+# is piped while every neighbour kept its escapes.
+if [ -n "${NO_COLOR:-}" ]; then
+    _PO_S_CYAN=''; _PO_S_GREEN=''; _PO_S_YELLOW=''; _PO_S_DIM=''; _PO_S_NC=''
+else
+    _PO_S_CYAN=$'\033[0;36m'
+    _PO_S_GREEN=$'\033[0;32m'
+    _PO_S_YELLOW=$'\033[1;33m'
+    _PO_S_DIM=$'\033[2m'
+    _PO_S_NC=$'\033[0m'
+fi
+
 # The one canonical install command. Quoted everywhere; never re-derived.
 _PO_INSTALL_CMD="npm install -g @anthropic-ai/claude-code"
 
@@ -351,6 +367,109 @@ provider_offer_gate() {
     return 2
 }
 
+# render_provider_availability: print the "Provider Availability" doctor section.
+#
+# WHY IT LIVES HERE. `loki doctor` stdout is compared byte for byte between the
+# bash route and the Bun route (tests/test-doctor-blocker-parity.sh, and the
+# bun-parity workflow). Two independent renderers drift; one shared renderer
+# cannot. This is the same parity-by-construction seam the install offer and the
+# detect-sdk probe already use, so doctor.ts calls this instead of reimplementing
+# the priority list in TypeScript.
+#
+# WHY IT DOES NOT REUSE THE EXISTING "AI Providers" BLOCK. That block answers a
+# different question -- is each CLI on PATH, and how do I install it. This one
+# answers "which provider would a build actually pick", which is a property of
+# providers/loader.sh auto_detect_provider, not of PATH. It also covers opencode,
+# which the older block never listed.
+#
+# THE ORDER IS NOT SUPPORTED_PROVIDERS. auto_detect_provider walks
+# claude cline codex aider opencode; SUPPORTED_PROVIDERS is declared
+# claude codex cline aider opencode -- codex and cline are SWAPPED. Marking the
+# first installed entry of SUPPORTED_PROVIDERS would name codex on a machine
+# where a build would really pick cline. So the selected provider is always
+# whatever auto_detect_provider returns, never re-derived here.
+#
+# DEGRADES SILENTLY. Requirement: if loader.sh cannot be sourced, the section is
+# skipped rather than erroring. Everything runs inside one subshell, so a missing
+# or broken loader returns non-zero with nothing printed and doctor continues.
+render_provider_availability() {
+    # Path derived from THIS FILE, never from SKILL_DIR or _LOKI_SCRIPT_DIR:
+    # those belong to autonomy/loki and are unset when doctor.ts spawns this
+    # script standalone, which would blank the section on the Bun route only.
+    local _po_here
+    _po_here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" || return 1
+    local _loader="$_po_here/providers/loader.sh"
+    [ -f "$_loader" ] || return 1
+
+    (
+        # shellcheck source=/dev/null
+        source "$_loader" >/dev/null 2>&1 || exit 1
+        declare -f auto_detect_provider >/dev/null 2>&1 || exit 1
+        [ "${#SUPPORTED_PROVIDERS[@]}" -gt 0 ] 2>/dev/null || exit 1
+
+        local _selected
+        _selected="$(auto_detect_provider 2>/dev/null)"
+
+        printf '%s\n' "${_PO_S_CYAN}Provider Availability:${_PO_S_NC}"
+        local _p
+        for _p in "${SUPPORTED_PROVIDERS[@]}"; do
+            if check_provider_installed "$_p" >/dev/null 2>&1; then
+                if [ "$_p" = "$_selected" ]; then
+                    printf '%s\n' "  ${_PO_S_GREEN}PASS${_PO_S_NC}  $_p - installed ${_PO_S_DIM}(auto-selected)${_PO_S_NC}"
+                else
+                    printf '%s\n' "  ${_PO_S_GREEN}PASS${_PO_S_NC}  $_p - installed"
+                fi
+            else
+                printf '%s\n' "  ${_PO_S_YELLOW}WARN${_PO_S_NC}  $_p - not installed"
+            fi
+        done
+
+        if [ -n "$_selected" ]; then
+            printf '%s\n' "  ${_PO_S_DIM}Auto-selected provider: ${_selected} (override with LOKI_PROVIDER)${_PO_S_NC}"
+        else
+            printf '%s\n' "  ${_PO_S_DIM}Auto-selected provider: none (no supported CLI installed)${_PO_S_NC}"
+        fi
+    ) || return 1
+}
+
+# provider_availability_json: the same data as one JSON object, for doctor --json.
+# Separate from the renderer so neither format has to parse the other. Same
+# degrade rule: no loader means no output and a non-zero status.
+provider_availability_json() {
+    local _po_here
+    _po_here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" || return 1
+    local _loader="$_po_here/providers/loader.sh"
+    [ -f "$_loader" ] || return 1
+
+    (
+        # shellcheck source=/dev/null
+        source "$_loader" >/dev/null 2>&1 || exit 1
+        declare -f auto_detect_provider >/dev/null 2>&1 || exit 1
+        [ "${#SUPPORTED_PROVIDERS[@]}" -gt 0 ] 2>/dev/null || exit 1
+
+        local _selected _p _rows=""
+        _selected="$(auto_detect_provider 2>/dev/null)"
+        for _p in "${SUPPORTED_PROVIDERS[@]}"; do
+            if check_provider_installed "$_p" >/dev/null 2>&1; then
+                _rows="${_rows}${_p}=true"$'\n'
+            else
+                _rows="${_rows}${_p}=false"$'\n'
+            fi
+        done
+        _PA_SELECTED="$_selected" _PA_ROWS="$_rows" python3 -c '
+import json, os
+rows = []
+for line in os.environ.get("_PA_ROWS", "").splitlines():
+    if not line:
+        continue
+    name, _, installed = line.partition("=")
+    rows.append({"name": name, "installed": installed == "true"})
+selected = os.environ.get("_PA_SELECTED", "") or None
+print(json.dumps({"selected": selected, "providers": rows}, indent=2))
+' 2>/dev/null || exit 1
+    ) || return 1
+}
+
 # Executed directly (doctor.ts child_process bridge, or manual): run the offer.
 # When sourced by autonomy/loki, this block does not run.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
@@ -362,6 +481,10 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
         # (loki-ts/src/commands/doctor.ts). Prints nothing, so it cannot perturb
         # the parity-captured stdout.
         detect-sdk)   detect_bundled_sdk_provider ;;
+        # Doctor "Provider Availability" section + its --json payload. Both
+        # routes call these so the two renderings cannot drift apart.
+        providers)      render_provider_availability ;;
+        providers-json) provider_availability_json ;;
         *)            offer_provider_install report ;;
     esac
 fi
