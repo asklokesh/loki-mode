@@ -5,6 +5,54 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.2.0
+
+### The exit-code convention is now enforced, and it found a third violation
+
+Twenty-five tools compose in CI: `ci-gate` maps child exit codes, shell chains
+use `&&`, `gate-report` re-emits a verdict. The convention that emerged --
+0 passed, 1 FAILED, 2 could not check, 3 nothing to check, 64 usage, 66 input
+missing -- was enforced nowhere.
+
+Two violations had already been found one at a time (`model-advisor` exiting 0
+on a nonexistent workspace in v8.96.0, `receipt-attest` judging `--help` as a
+proof path in v8.95.0). Written as a CONTRACT over the real `tools/` directory,
+it immediately found a third:
+
+```
+AssertionError: estimate-run.py reported success for a path that does not exist
+```
+
+`preflight.sh` consumes that tool, so a mistyped or unmounted path silently
+became "NO BASIS: no measured, priced iteration to project from" instead of an
+error. Now exit 66, while a REAL workspace with no history still exits 0.
+
+### The distinction the rule had to make: gate versus advisor
+
+A GATE exiting 0 while its own output says it could not evaluate is a
+green-leak -- CI reads the code, sees success, merges on an unchecked axis.
+That is the defect this whole tool line exists to prevent.
+
+An ADVISOR is genuinely different. `model-advisor` answering "NO BASIS" HAS
+answered honestly: there is no recommendation to make, the output says so, and
+no gate consumes its exit code. Forcing it non-zero would train operators to
+ignore a failing advisor, which is worse than the gap.
+
+So the green-leak rule applies to gates only -- and the membership of that list
+is itself asserted. Anything named `*-guard` or `*-gate` is covered by
+construction, so a new gate cannot silently escape the stricter rule, and
+`model-advisor`'s exemption is pinned with its reasoning so a later reader does
+not "fix" it into a worse state.
+
+### On the agent that died
+
+The subagent assigned this stalled after reporting "four failures, two distinct
+tools" and never wrote its test. That claim was NOT taken on trust: the file it
+appeared to have produced turned out to be a pre-existing ENT-3 test with a
+different purpose, passing 2 of 2. The contract was re-derived by running the
+rules against the real tools, which is how the `estimate-run` violation was
+actually found.
+
 ## v9.1.0
 
 ### Gate on tokens, because dollars move under you

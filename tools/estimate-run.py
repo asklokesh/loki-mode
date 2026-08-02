@@ -332,13 +332,25 @@ def main(argv=None):
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 
+    # A workspace that does not EXIST is not the same fact as one with no cost
+    # history, and exit 0 collapsed them. preflight.sh consumes this tool, so a
+    # mistyped or unmounted path silently became "no basis to project from"
+    # instead of an error. Same defect fixed in model-advisor.py in v8.96.0;
+    # tests/test_tool_exit_contract.py now catches the class rather than the
+    # instance.
+    if not os.path.isdir(args.workspace):
+        sys.stderr.write(
+            "cannot estimate: workspace does not exist: %s\n" % args.workspace)
+        return 66
+
     est = estimate(args.workspace, args.iterations)
     if args.json:
         print(json.dumps(est, indent=2))
     else:
         print(render(est))
-    # Exit 0 either way: "no basis" is a successful, honest answer, not a tool
-    # failure. Callers read has_basis.
+    # Exit 0 for a REAL workspace with no basis: that is a successful, honest
+    # answer rather than a tool failure, and the output says so. Callers read
+    # has_basis.
     return 0
 
 
