@@ -118,6 +118,35 @@ for _pair in "mock_integrity:mock-findings.txt" "mutation_integrity:mutation-fin
     esac
 done
 
+# --- WRITER and READER must agree on the JSON contract -----------------------
+# The chain is: write_gate_escalation_guidance -> signals/GATE_ESCALATION.json
+# -> build_gate_escalation_context -> the PROMPT. A key renamed on either side
+# breaks it silently: the signal is still written, still read, and simply
+# carries nothing -- the agent gets an escalation with no findings attached,
+# which looks identical to no escalation at all.
+_writer_keys="$(awk '/^write_gate_escalation_guidance\(\)/,/^\}/' "$RUN_SH" \
+    | grep -oE '"(action|count|gate|threshold|latest_artifact)":' \
+    | tr -d '":' | sort -u)"
+_reader_keys="$(awk '/^build_gate_escalation_context\(\)/,/^\}/' "$RUN_SH" \
+    | grep -oE 'data\.get\("[a-z_]+"\)' \
+    | sed 's/.*("//; s/").*//' | sort -u)"
+
+if [ -z "$_writer_keys" ] || [ -z "$_reader_keys" ]; then
+    bad "could not extract the writer/reader key sets; this check is inert"
+elif [ "$_writer_keys" = "$_reader_keys" ]; then
+    ok "writer and reader agree on every JSON key ($(printf '%s' "$_writer_keys" | tr '\n' ' '))"
+else
+    bad "writer/reader key mismatch -- escalation would carry no findings. writer=[$(printf '%s' "$_writer_keys" | tr '\n' ' ')] reader=[$(printf '%s' "$_reader_keys" | tr '\n' ' ')]"
+fi
+
+# The context builder must actually reach the prompt, or the whole chain is a
+# report rather than a feedback loop.
+if grep -q 'gate_escalation_context=$(build_gate_escalation_context' "$RUN_SH"; then
+    ok "the escalation context is built for the prompt"
+else
+    bad "nothing calls build_gate_escalation_context -- the signal never reaches the agent"
+fi
+
 echo ""
 echo "  Passed:     $PASS"
 echo "  Failed:     $FAIL"

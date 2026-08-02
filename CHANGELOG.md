@@ -5,6 +5,51 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.59.0
+
+### Pinning the escalation chain end to end
+
+v8.58.0 wired three dead gates into the escalation writer. This verifies the
+signal those gates now emit actually reaches the agent, and pins the contract
+so it cannot silently break.
+
+The chain, verified link by link:
+
+```
+write_gate_escalation_guidance          (writer)
+  -> .loki/signals/GATE_ESCALATION.json (signal)
+  -> build_gate_escalation_context      (reader)
+  -> gate_escalation_context            (the PROMPT)
+```
+
+**All five JSON keys match exactly** -- `action`, `count`, `gate`,
+`threshold`, `latest_artifact` -- verified by extracting both sides from the
+source rather than assuming.
+
+### Why a matching-keys test earns its place
+
+This failure mode is invisible. Rename a key on either side and the signal is
+still written, still read, and simply carries nothing. The agent receives an
+escalation with **no findings attached**, which looks identical to no
+escalation at all -- no error, no log line, no failing test.
+
+Both key sets are now derived from the code and compared, so a rename on either
+side turns the test red. Verified: renaming `latest_artifact` to
+`artifact_path` on the reader alone fails it.
+
+### A dead-branch sweep, recorded as clean
+
+The v8.58.0 lesson -- derive the expectation from the code, because a hardcoded
+list passes over the case you did not think of -- was applied to the rest of
+the name-dispatch surface: `_loki_surface_why_hint`,
+`_loki_build_self_heal_hint`, `_loki_supervised_source_hints`. All three have
+live callers.
+
+**No fifth dead branch exists.** Recorded as a finding rather than turned into
+a change that was not needed.
+
+Trust-core detector: 87 invariants.
+
 ## v8.58.0
 
 ### Escalation guidance was dead for three of the four gates it handles

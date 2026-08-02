@@ -692,6 +692,14 @@ probe_case "the top failing gate still escalates its findings" \
     '                            :' \
     bash tests/test-gate-escalation-coverage.sh
 
+# The escalation chain is writer -> signal JSON -> prompt. A key renamed on
+# either side breaks it SILENTLY: the signal is still written, still read, and
+# carries nothing -- indistinguishable from no escalation at all.
+probe_case "the escalation writer and reader agree on the JSON contract" \
+    "autonomy/run.sh" \
+    'artifact = data.get("latest_artifact")' 'artifact = data.get("artifact_path")' \
+    bash tests/test-gate-escalation-coverage.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
