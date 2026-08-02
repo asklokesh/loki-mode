@@ -5,6 +5,54 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.0.0
+
+### Adopting the merge gate is now two commands
+
+`gate-init.py` scaffolds a reviewable policy, `baseline-pin.py` fixes the
+reference run it compares against. Together with the existing chain that closes
+CI cost-governance end to end.
+
+```
+$ tools/gate-init.py .
+max_usd = 2.6, derived from: median of 4 measured run(s) = $1.3000, times 2.0x headroom
+validated by policy-load.py; ci-gate args: --max-usd 2.6 --require-receipt
+```
+
+**With no history it invents nothing.** The `max_usd` key is ABSENT, not
+guessed, and stderr says the operator must choose one. A fabricated ceiling is
+worse than none: CI goes green while enforcing an arbitrary limit nobody chose.
+
+The shape was probed rather than assumed. `policy-load` rejects
+`"max_usd": null` ("must be a number, got None") AND rejects a JSON-embedded
+note ("unknown policy key"), so the only form satisfying both the no-invention
+rule and the must-load rule is key-absent with the note on stderr.
+
+**The 2.0x headroom is a CHOSEN constant, not derived.** The median has a basis
+in measured runs; the multiplier is judgment (a ceiling at the median blocks
+half of all normal runs). Only half of "derived from measured spend" is
+evidence, and the output says which half.
+
+### The tampered-baseline hole cost-guard documented against itself
+
+`cost-guard.py`'s own docstring recorded the gap: *"NON-GOAL: the baseline
+receipt's integrity hash is not verified. A tampered baseline that inflates the
+allowed ceiling is out of scope."*
+
+`baseline-pin.py` closes it. It REFUSES to pin a receipt that fails integrity
+("every later comparison would be against a number nobody can verify") or one
+with no measured cost ("a percentage increase against an unmeasured number is
+undefined. Unmeasured is not $0.00"). It records the hash, the cost and the
+time, so `show` detects a receipt edited AFTER pinning, and `path` refuses to
+emit a drifted baseline rather than quietly feeding it to the gate.
+
+Proven composing end to end: pinned $1.25 against an actual $1.30 passes at
+`--max-increase-pct 10` and fails at 1.
+
+**It hashes raw file bytes, not the canonical verification-stripped digest.**
+That digest is blind to edits confined to the `verification` block, so swapping
+a whole verification block would have read as "unchanged".
+
 ## v8.99.0
 
 ### `--json` produced non-JSON on the path a consumer most needs to read

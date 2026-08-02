@@ -67,6 +67,8 @@ LIBS=(
     "tools/gate-report.py"                # CI-native verdict rendering
     "tools/signing-status.py"             # can this machine sign receipts
     "tools/verify-demo.sh"                # zero-cost proof of the chain
+    "tools/gate-init.py"                  # scaffold a policy from measured history
+    "tools/baseline-pin.py"               # pin a verified reference run
 )
 
 # --- they must exist in the repo first ---------------------------------------
