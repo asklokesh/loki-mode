@@ -5,6 +5,67 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.71.0
+
+### `loki why` gave the same advice for a 401 and a timeout
+
+`cmd_why` already read `.loki/state/LAST_ERROR.json` and already printed the
+error class. What it did NOT have was any mapping from that class to a remedy:
+
+```
+sed -n '/^cmd_why()/,/^}/p' autonomy/loki | grep -cE 'rate_limited|auth_error|build_timeout'
+0
+```
+
+So every failure got the same status-keyed line: "Read .loki/logs/ + the
+handoff below for the failure, fix it, then re-run." Identical whether the
+provider returned HTTP 401 or the build timed out.
+
+Now:
+
+```
+  Last error  : auth_error (iteration 3)
+                Provider returned HTTP 401.
+  What to do  : Re-authenticate claude: claude login   (or set ANTHROPIC_API_KEY)
+```
+
+### The honesty call inside it
+
+The LAST_ERROR schema has **no provider field**. Rather than defaulting to
+claude and presenting a guess as the fix, `auth_error` uses `LOKI_PROVIDER`
+when set, and otherwise lists every provider's command while stating plainly
+that the provider was not recorded.
+
+The map is defined once and injected into both python heredocs `cmd_why` runs,
+so the human and `--json` paths cannot drift. `--json` also gains an honesty
+triple (`last_error_present` / `last_error_readable` / `last_error_recognized`)
+so a consumer can tell "no failure recorded" from "malformed" from "unmapped
+class" instead of one indistinguishable null.
+
+A latent bug surfaced while wiring this: `load()` collapsed *absent* and
+*unparseable* into `{}`, so a corrupt LAST_ERROR.json printed nothing and read
+as "no failure". Those are now distinguished.
+
+### What a run will cost, before you start it
+
+`tools/estimate-run.py` projects forward from **this workspace's own measured
+history**, which nothing did before. Three existing surfaces were checked
+first: `cost-summary.py` is backward-looking, `show_prd_plan()` estimates from
+PRD text rather than measurement, and `effort_estimator.py` reports hours.
+
+Two findings shaped it:
+
+**`record_is_measured` is field-agnostic**, so a record with real tokens but
+`cost_usd: 0` (an unpriced model) returns true. Filtering on it alone would
+pull a `0.0` into the median and ship a fabricated-low estimate -- the exact
+defect class this guards. The basis is measured AND non-zero cost, and the
+output reports three counts: found, measured, priced.
+
+**No multi-run history exists** to derive a horizon from, so `--iterations` is
+required rather than invented. With no basis at all it prints `NO BASIS` and
+`UNKNOWN`, never a number. If the basis model differs from the model that would
+run now, it says the projection may not transfer.
+
 ## v8.70.0
 
 ### The libs carrying the receipt verifier had no packaging guard

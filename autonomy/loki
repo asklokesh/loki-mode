@@ -4137,6 +4137,85 @@ cmd_ship() {
     return 0
 }
 
+# Per-error_class remediation, shared by BOTH cmd_why paths (human + --json).
+#
+# WHY THIS IS A SHELL VARIABLE. cmd_why runs two SEPARATE python3 heredocs, so a
+# helper defined in one is invisible to the other. Copy-pasting the map into
+# both is exactly the drift this file warns against everywhere else (see the
+# GUIDE / _loki_next_action "kept in lockstep" comments). Defining it once and
+# injecting it into both makes divergence impossible rather than merely
+# discouraged.
+#
+# SCOPE. The GUIDE map keys on run STATUS (council_approved / failed / ...).
+# This keys on the LAST_ERROR error_class -- a different, orthogonal axis. A
+# `failed` run got the same "read the logs" line whether the cause was a 401 or
+# a timeout; this is what makes the two cases differ.
+#
+# run.sh WRITES the classification (_loki_classify_iteration_error, :1857) and
+# injects a heal hint naming the class (:1889), but neither carries remediation
+# text -- so there is no second surface to mirror. This is the sole home for the
+# wording. If run.sh ever gains one, keep them in lockstep.
+#
+# HONESTY. last_error_action() returns None for any class not in the map --
+# including "unknown", which run.sh writes when it will not guess. A None means
+# the caller must print the recorded brief verbatim and infer NOTHING. Never add
+# a fallback action here: a generic string on an unknown class is a fabricated
+# diagnosis wearing an action's clothes.
+read -r -d '' _LOKI_WHY_ACTIONS_PY <<'WHYACTIONS' || true
+# error_class -> (action). Each is a command or env var the reader can act on.
+LAST_ERROR_ACTIONS = {
+    "rate_limited":
+        "Wait for the provider limit to reset, then re-run: loki start <spec>",
+    "build_timeout":
+        "Raise the per-iteration limit, or narrow the spec so one iteration does less:\n"
+        "LOKI_ITERATION_TIMEOUT=3600 loki start <spec>",
+    "provider_empty_output":
+        "The provider returned nothing. Check provider health first: loki doctor\n"
+        "then re-run. If doctor is clean, try another provider: LOKI_PROVIDER=<name> loki start <spec>",
+}
+
+# Auth remediation is PROVIDER-SPECIFIC and the LAST_ERROR schema records no
+# provider. So we use LOKI_PROVIDER when it is set, and when it is not we list
+# every option LABELLED rather than presenting one provider's fix as the answer.
+PROVIDER_AUTH = {
+    "claude": "claude login   (or set ANTHROPIC_API_KEY)",
+    "codex": "codex login   (or set OPENAI_API_KEY)",
+    "aider": "set the API key for your aider model (OPENAI_API_KEY / ANTHROPIC_API_KEY)",
+    "cline": "re-enter the API key in Cline's provider settings",
+    "opencode": "opencode auth login",
+}
+
+
+def last_error_action(rec, provider=""):
+    """Concrete next action for a LAST_ERROR record, or None if unrecognized.
+
+    None is a real answer: it means we have no mapped action and the caller must
+    fall back to the recorded brief verbatim. Do not turn it into a default.
+    """
+    if not isinstance(rec, dict):
+        return None
+    ec = str(rec.get("error_class") or "").strip()
+    if ec == "auth_error":
+        p = str(provider or "").strip().lower()
+        if p in PROVIDER_AUTH:
+            return "Re-authenticate %s: %s" % (p, PROVIDER_AUTH[p])
+        lines = ["Re-authenticate the provider in use (LOKI_PROVIDER is unset, so "
+                 "the provider was not recorded):"]
+        for _n in sorted(PROVIDER_AUTH):
+            lines.append("  %-9s %s" % (_n, PROVIDER_AUTH[_n]))
+        return "\n".join(lines)
+    action = LAST_ERROR_ACTIONS.get(ec)
+    if action is None:
+        return None
+    if ec == "rate_limited":
+        # retry_after is NOT in the documented schema. Read it defensively and
+        # print nothing when absent -- a placeholder would read as measured.
+        _r = rec.get("retry_after", rec.get("retry_after_seconds"))
+        if _r not in (None, ""):
+            action += "\nProvider reported retry-after: %s" % _r
+    return action
+WHYACTIONS
+
 # loki why -- actionable failure/outcome diagnosis (B5).
 # Reads the already-captured run artifacts (no new state): the terminal run state
 # (.loki/<autonomy-state>.json: status, lastExitCode, iterationCount), the durable
@@ -4173,8 +4252,11 @@ cmd_why() {
         _LOKI_WHY_STATE="$state_file" _LOKI_WHY_COMPLETION="$completion_file" \
         _LOKI_WHY_HEAD_SHA="$_why_json_head_sha" \
         _LOKI_WHY_LAST_ERROR="$loki_dir/state/LAST_ERROR.json" \
+        _LOKI_WHY_ACTIONS_PY="$_LOKI_WHY_ACTIONS_PY" \
         _LOKI_WHY_EFFICIENCY="$loki_dir/metrics/efficiency" python3 - <<'WHYJSON'
 import json, os
+# Shared per-class action map (single definition; see _LOKI_WHY_ACTIONS_PY).
+exec(os.environ.get("_LOKI_WHY_ACTIONS_PY", ""))
 def load(p):
     try:
         with open(p) as f: return json.load(f)
@@ -4235,10 +4317,38 @@ if _effdir:
     except Exception:
         _rework = None
 
+# The machine-readable surface got the raw record and no action, so every
+# consumer had to re-derive the remediation and drift from the printed report.
+# Emit the SAME mapping the human path prints, plus an explicit honesty triple
+# so a consumer can distinguish the three no-action cases instead of seeing one
+# indistinguishable null:
+#   present=False               -> no failure was recorded (NOT "it succeeded")
+#   present=True, readable=False-> a record exists but is malformed
+#   recognized=False            -> real record, class we have no action for
+_le_path = os.environ.get("_LOKI_WHY_LAST_ERROR", "")
+_le_present = bool(_le_path) and os.path.exists(_le_path)
+_le_readable = isinstance(last_error, dict) and bool(last_error)
+if _le_present and not _le_readable:
+    # load() collapses unreadable and absent into {}. Re-read to tell them
+    # apart -- reporting a malformed record as "no failure" is the exact lie
+    # this command exists to prevent.
+    try:
+        with open(_le_path) as _lf:
+            _parsed = json.load(_lf)
+        _le_readable = isinstance(_parsed, dict)
+    except Exception:
+        _le_readable = False
+_le_action = last_error_action(last_error, os.environ.get("LOKI_PROVIDER", "")) \
+    if _le_readable else None
+
 print(json.dumps({
     "state": state,
     "completion": comp,
     "last_error": last_error,
+    "last_error_present": _le_present,
+    "last_error_readable": _le_readable,
+    "last_error_recognized": _le_action is not None,
+    "last_error_action": _le_action,
     "completion_is_stale": comp_is_stale,
     "head_sha": head_sha or None,
     "rework": _rework,
@@ -4260,8 +4370,11 @@ WHYJSON
     _LOKI_WHY_CONVERGENCE="$loki_dir/council/convergence.log" \
     _LOKI_WHY_GATE="$loki_dir/signals/GATE_ESCALATION.json" \
     _LOKI_WHY_TARGET="${TARGET_DIR:-$(dirname "$loki_dir")}" \
+    _LOKI_WHY_ACTIONS_PY="$_LOKI_WHY_ACTIONS_PY" \
     _LOKI_WHY_HANDOFFS="$loki_dir/memory/handoffs" python3 - <<'WHYTXT'
 import json, os, glob
+# Shared per-class action map (single definition; see _LOKI_WHY_ACTIONS_PY).
+exec(os.environ.get("_LOKI_WHY_ACTIONS_PY", ""))
 def load(p):
     try:
         with open(p) as f: return json.load(f)
@@ -4490,11 +4603,29 @@ if _unc and os.path.exists(_unc):
 # (that would be a fake-green-adjacent lie) - using the same SUCCESS set below.
 SUCCESS_STATUSES = {"council_approved", "completion_promise_fulfilled", "complete", "completed"}
 le = {}
+_le_path = os.environ.get("_LOKI_WHY_LAST_ERROR", "")
+_le_bad = ""
 try:
-    with open(os.environ.get("_LOKI_WHY_LAST_ERROR", "")) as f:
+    with open(_le_path) as f:
         le = json.load(f)
-except Exception:
+    if not isinstance(le, dict):
+        # A bare list/string/null is not a record. Matches the isinstance guard
+        # below rather than silently rendering an empty one.
+        _le_bad = "record is a %s, expected a JSON object" % type(le).__name__
+        le = {}
+except IOError:
+    le = {}          # absent: genuinely no recorded failure. Say nothing here.
+except ValueError as _e:
+    # Present but unparseable. Reporting silence here would read as "no failure
+    # recorded", which is a different and false claim.
     le = {}
+    _le_bad = str(_e)
+if _le_bad and status not in SUCCESS_STATUSES:
+    print()
+    print(f"  Last error  : a failure record exists but could not be read.")
+    print(f"                File  : {_le_path}")
+    print(f"                Reason: {_le_bad}")
+    print(f"                Nothing is inferred from an unreadable record.")
 if isinstance(le, dict) and le.get("error_class") and status not in SUCCESS_STATUSES:
     print()
     _it = le.get("iteration")
@@ -4502,6 +4633,24 @@ if isinstance(le, dict) and le.get("error_class") and status not in SUCCESS_STAT
     print(f"  Last error  : {le.get('error_class')}{_it_s}")
     if le.get("brief"):
         print(f"                {le.get('brief')}")
+    # Per-class remediation. Naming the error_class told the user WHAT broke and
+    # nothing about what to do; the GUIDE map above is keyed on run STATUS, so a
+    # failed run got the same generic "read the logs" line whether the cause was
+    # a 401 or a timeout. This maps the CLASS to its own concrete action.
+    #
+    # Kept in lockstep with LAST_ERROR_ACTIONS in the --json path above -- the
+    # two must not drift (same norm as the GUIDE / _loki_next_action pair).
+    # run.sh classifies the error but carries NO remediation wording, so this is
+    # the sole home for these strings.
+    _act = last_error_action(le, os.environ.get("LOKI_PROVIDER", ""))
+    if _act:
+        for _i, _line in enumerate(_act.splitlines()):
+            print(f"  {'What to do  :' if _i == 0 else '             '} {_line}")
+    else:
+        # Unrecognized class: the brief above is all we honestly know. Say that
+        # rather than emitting a generic action that implies a diagnosis.
+        print("                (Unrecognized error class -- the description above is "
+              "the recorded text, verbatim. No cause is inferred.)")
 
 # Surface the latest structured handoff (already-captured context), honestly.
 hd = sorted(glob.glob(os.path.join(os.environ.get("_LOKI_WHY_HANDOFFS",""), "*.md")))
