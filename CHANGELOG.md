@@ -5,6 +5,53 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.91.0
+
+### Eleven tools shipped and none were discoverable
+
+```
+$ loki help | grep -cE 'receipt-diff|cost-guard|attest|preflight'
+0
+```
+
+Every tool under `tools/` was built, tested, and packaged -- and there was no
+way for a user to learn it existed. That is this repo's most-repeated defect,
+now on its eighth instance:
+
+```
+v5.0.0  -> v8.64.0   auto_detect_provider() called only by its own test
+v8.73.0 -> v8.84.0   the receipt's --human explanation reached no CLI path
+v8.87.0 -> v8.89.0   preflight.sh shipped to a directory not in files[]
+```
+
+A capability nobody can find is worth exactly what one that does not exist is
+worth. `tools/tool-index.py` lists all twelve with the descriptions their own
+authors wrote.
+
+### An index that guesses would be worse than no index
+
+Two properties carry the weight, and both are mutation-proven:
+
+**A tool with no description reads `(no description)`.** A summary inferred
+from a filename is indistinguishable, to the reader, from one the author wrote.
+The reader cannot tell a guess from a fact, so the guess is strictly worse than
+the gap. Making the fallback synthesise `"Runs <filename>"` turns the suite red.
+
+**SHIPPED is derived from `package.json` `files[]`**, the same source npm reads
+-- never assumed. A tool present in the checkout but absent from the tarball
+prints `[dev]` with an explicit note. That is the v8.87.0 defect exactly, and an
+index that listed it alongside the reachable ones would have helped that
+release lie. An unreadable manifest reads UNKNOWN (`[ ? ]`), not "not shipped":
+reporting False there would be a claim rather than an absence, and that
+mutation is caught too.
+
+Descriptions are extracted by `ast.parse`, not regex, so a `#` inside a string
+literal cannot be mistaken for a comment. A syntactically broken tool degrades
+to `(no description)` rather than crashing the index.
+
+An empty `tools/` directory exits 2 and says so. Zero tools is not a successful
+listing.
+
 ## v8.90.0
 
 ### A portable attestation that never claims more than it checked

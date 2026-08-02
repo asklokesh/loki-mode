@@ -57,6 +57,7 @@ LIBS=(
     "tools/cost-guard.py"                 # cost regression gate
     "tools/estimate-run.py"               # forward cost projection
     "tools/receipt-attest.py"             # portable third-party attestation
+    "tools/tool-index.py"                 # what ships, and what is reachable
 )
 
 # --- they must exist in the repo first ---------------------------------------
