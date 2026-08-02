@@ -5,6 +5,65 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.3.0
+
+### A policy edit now shows its safety DIRECTION, not just its diff
+
+Once a gate policy is in version control, the dangerous change is a LOOSENING.
+Raising a ceiling or dropping `require_receipt` weakens the gate, and inside a
+large PR it looks like any other one-line JSON edit.
+
+```
+$ policy-diff.py old.json new.json --fail-on-weaken
+policy-diff: 2 weakening(s) require an explicit human ack
+WEAKENS: max_usd: 5.0 -> 50.0
+WEAKENS: require_receipt removed (was true) -- this axis is no longer enforced at all
+exit=1
+```
+
+A tightening passes:
+
+```
+TIGHTENS: max_usd: 5.0 -> 2.0
+exit=0
+```
+
+A diff that only reports `max_usd: 5 -> 50` makes the reviewer do the safety
+reasoning. Doing it for them is the entire value.
+
+**Removing a key is treated as the most dangerous edit**, not as a neutral
+"removed": the gate then stops enforcing that axis completely, and the message
+says so.
+
+An unclassifiable change reads UNKNOWN DIRECTION, never "unchanged" and never
+assumed safe -- an unrecognized key is exactly where a silent loosening hides.
+Both files must be VALID policies first, because diffing garbage produces a
+confident nonsense verdict.
+
+### An exit-code collision worth recording
+
+`tests/test_tool_exit_contract.py` globs `tools/*.py` and auto-adopts any new
+tool, so `policy-diff.py` had to obey the convention from its first commit.
+argparse defaults a usage error to exit 2, which in this repo means "could not
+be checked" -- a usage typo would have been indistinguishable from a blind
+gate. `ArgumentParser.error()` is overridden to exit 64, leaving `--help`'s
+exit-0 path intact.
+
+66 (file absent) and 2 (present but invalid) are separated by an explicit
+existence check, since `policy-load` collapses both into one error.
+
+### A requirement collision, resolved rather than papered over
+
+Requirement 2 (an unclassifiable key reads UNKNOWN) collides with requirement 5
+(both files must be valid): `policy-load` rejects unknown keys, so an
+unclassifiable key can never reach the diff through a file. Handling it at the
+parse layer would be untestable dead code.
+
+Instead the direction table defaults to UNKNOWN and is tested by calling
+`classify()` directly, plus a guard that walks the real
+`policy_load.KNOWN_KEYS`. That catches the REACHABLE version of the bug:
+`KNOWN_KEYS` growing while the direction table does not.
+
 ## v9.2.0
 
 ### The exit-code convention is now enforced, and it found a third violation

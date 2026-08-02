@@ -71,6 +71,7 @@ LIBS=(
     "tools/baseline-pin.py"               # pin a verified reference run
     "tools/token-guard.py"                # provider-independent work ceiling
     "tools/receipt-find.py"               # query receipts by measurable criteria
+    "tools/policy-diff.py"                # classify a policy edit by safety direction
 )
 
 # --- they must exist in the repo first ---------------------------------------
