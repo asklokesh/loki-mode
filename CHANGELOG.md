@@ -5,6 +5,44 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.95.0
+
+### `receipt-attest --help` issued a verification verdict about a file nobody named
+
+```
+$ receipt-attest.py --help
+UNVERIFIABLE -- proof file not found: --help
+```
+
+The flag fell through to the positional slot and was read as a proof path. On
+the tool whose entire job is issuing trustworthy verdicts, that is the worst
+available failure: to a script parsing the output, an answer about a
+nonexistent file is indistinguishable from a real finding about a real receipt.
+
+Now `--help` prints usage and exits 0, and an unrecognized flag is an ERROR
+(exit 64) rather than a filename -- a typo'd `--jsonn` previously reported
+UNVERIFIABLE, which reads as a finding about the receipt rather than about the
+command line.
+
+### Isolated, and checked as a class
+
+Every sibling tool (`receipt-diff`, `receipt-bundle`, `cost-guard`, `ci-gate`,
+`model-advisor`, `tool-index`, `run-replay`) was probed with a nonsense flag
+and all seven reject it. They use `argparse`; this one hand-rolled its parsing,
+which is exactly how it drifted alone.
+
+### The test that kept failing on correct code
+
+Three drafts asserted that the word `UNVERIFIABLE` never appears in help
+output. All three failed -- because the usage text legitimately DEFINES the
+three states, so the assertion was matching documentation rather than a
+verdict.
+
+The fix was to assert the defect's own sentence (`proof file not found`) rather
+than a state name that appears in both correct and incorrect output. An
+assertion broad enough to match the docs is not measuring the defect; it is
+measuring the vocabulary.
+
 ## v8.94.0
 
 ### Replay what a run actually did, iteration by iteration

@@ -334,11 +334,50 @@ def render(record):
     return "\n".join(lines)
 
 
+_USAGE = """usage: receipt-attest.py <proof.json> [--json]
+
+Turn a receipt into a portable ATTESTATION a third party can check without the
+original workspace.
+
+  --json    emit the attestation record as JSON
+  --help    show this message
+
+States, which are never collapsed into one another:
+  VERIFIED      the axis was checked and passed
+  FAILED        the axis was checked and failed
+  UNVERIFIABLE  the axis could NOT be checked here, with the reason
+
+Exit: 0 all scored axes verified, 1 something FAILED, 2 something was
+UNVERIFIABLE, 64 usage error.
+"""
+
+
 def main(argv):
-    args = [a for a in argv[1:] if a != "--json"]
-    as_json = "--json" in argv[1:]
+    rest = argv[1:]
+
+    # --help must print usage, NOT be read as a filename. It previously fell
+    # through to the positional slot and produced
+    # "UNVERIFIABLE -- proof file not found: --help", which is a verification
+    # verdict about a file the user never named: a fabricated answer to a
+    # question they did not ask.
+    if "--help" in rest or "-h" in rest:
+        sys.stdout.write(_USAGE)
+        return 0
+
+    as_json = "--json" in rest
+    args = [a for a in rest if a != "--json"]
+
+    # An unrecognized flag is an ERROR, never a path. Treating "--jsonn" as a
+    # proof file reports UNVERIFIABLE for a typo, which reads as a finding
+    # about the receipt rather than about the command line.
+    unknown = [a for a in args if a.startswith("-")]
+    if unknown:
+        sys.stderr.write("unknown option(s): %s\n" % " ".join(unknown))
+        sys.stderr.write(_USAGE)
+        return 64
+
     if len(args) != 1:
-        sys.stderr.write("usage: receipt-attest.py <proof.json> [--json]\n")
+        sys.stderr.write(_USAGE)
         return 64
     record = attest(args[0])
     print(json.dumps(record, indent=2, sort_keys=True) if as_json

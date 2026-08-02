@@ -431,5 +431,60 @@ class ExitCodeContract(unittest.TestCase):
                 self.assertIn("drift", stdout)
 
 
+
+class TheCommandLineIsNotAReceipt(unittest.TestCase):
+    """A flag must never be read as a proof path.
+
+    `--help` fell through to the positional slot and produced
+    "UNVERIFIABLE -- proof file not found: --help": a verification VERDICT
+    about a file the user never named. On the tool whose entire job is issuing
+    trustworthy verdicts, answering a question nobody asked is the worst
+    possible failure mode -- it is indistinguishable, to a script, from a real
+    finding about a real receipt.
+
+    Every sibling tool uses argparse and rejects unknown flags; this one
+    hand-rolled its parsing, which is how it drifted alone.
+    """
+
+    def _run(self, *args):
+        return subprocess.run(
+            [sys.executable, str(_TOOL), *args],
+            capture_output=True, text=True, timeout=60)
+
+    def test_help_prints_usage_and_exits_zero(self):
+        r = self._run("--help")
+        self.assertEqual(r.returncode, 0, r.stderr[:200])
+        self.assertIn("usage:", r.stdout)
+
+    def test_help_is_not_treated_as_a_proof_path(self):
+        """Assert the DEFECT STRING, not the state names.
+
+        Earlier drafts asserted that "UNVERIFIABLE" never appears. That fails
+        on correct output, because the usage text legitimately DEFINES the
+        three states. The defect is precise and has its own sentence: the flag
+        being reported as a missing proof file.
+        """
+        r = self._run("--help")
+        self.assertNotIn(
+            "proof file not found", r.stdout + r.stderr,
+            "--help was read as a filename and produced a verdict about it")
+
+    def test_an_unknown_flag_is_an_error_not_a_path(self):
+        r = self._run("--jsonn")
+        self.assertEqual(r.returncode, 64, r.stdout[:200])
+        self.assertIn("unknown option", r.stderr)
+        self.assertNotIn(
+            "proof file not found", r.stdout + r.stderr,
+            "a typo'd flag was read as a proof path")
+
+    def test_a_real_path_still_attests(self):
+        """The guard must not block the tool's actual job."""
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d) / "proof.json"
+            p.write_text("{}", encoding="utf-8")
+            r = self._run(str(p))
+            self.assertIn(r.returncode, (0, 1, 2), r.stderr[:200])
+            self.assertTrue(r.stdout.strip(), "a real path produced no output")
+
 if __name__ == "__main__":
     unittest.main()
