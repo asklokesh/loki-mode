@@ -5,6 +5,60 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.84.0
+
+### The receipt could explain itself, but nobody could ask it to
+
+v8.73.0 taught `verify_integrity()` to return a `reasons` list naming every
+failed check, and shipped `render_reasons()` plus a `--human` flag on
+`proof-verify.py`. **Nothing in the CLI ever passed that flag.** `loki proof
+verify` printed raw JSON, so the person holding a failed receipt had to parse
+it by eye.
+
+Same shape as `auto_detect_provider()`, which sat unwired from v5.0.0 to
+v8.64.0: built, tested, unreachable.
+
+```
+$ loki proof verify <id> --human
+FAILED
+  - hash mismatch: recorded deadbeef, computed 287cf091... -- proof.json was
+    edited after it was written
+  - cost claim is incoherent: cost.available is true but every token count and
+    usd is zero or absent; the receipt claims a measurement it does not have
+    (an unmeasured run is unknown, not free)
+  - drift unverifiable: '.' is not a git work tree, so the recorded diff cannot
+    be re-derived
+```
+
+This matters more here than for a typical command. The Evidence Receipt is the
+differentiator -- of six installed CLIs, only loki-mode verifies its own output
+-- and a verifier that answers "false" without saying why spends most of that
+advantage.
+
+### JSON remains the default, deliberately
+
+Existing consumers pipe this stdout verbatim, so flipping the default would
+have been a silent breaking change dressed up as an improvement. `--human` is
+opt-in, and the test asserts the default is still parseable JSON. Making
+`--human` the default turns the suite red.
+
+The flag is STRIPPED from the positional args rather than assumed at a fixed
+index, so it works on either side of the proof id -- `id` is consumed
+positionally, and a fixed-index assumption would break one of the two orders a
+user will actually type.
+
+### A note on finding the right code
+
+The `verify)` arm was patched by locating it structurally rather than by string
+match: five separate blocks in `autonomy/loki` contain a byte-identical
+`Missing proof id.` guard, and a first-match replace silently patched a
+DIFFERENT command's arm. The symptom was an unbound-variable error at runtime,
+not a failed edit.
+
+A passing receipt still renders the verdict alone, never a fabricated reason --
+a tool that invents a complaint to look thorough is the same dishonesty in
+reverse.
+
 ## v8.83.0
 
 ### A quality gate reported unanimous PASS without running

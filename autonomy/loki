@@ -33749,6 +33749,21 @@ PYEOF
             # inconsistent edit is caught. It does NOT prove non-forgeability on
             # the unsigned path (a hand-forger can rewrite facts and re-hash);
             # neutral non-forgeability requires the signed record.
+            # --human renders the verdict plus every failure reason as prose.
+            # JSON stays the DEFAULT so machine consumers, which pipe this
+            # stdout verbatim, are unaffected. The flag is STRIPPED from the
+            # positional args rather than assumed at a fixed index, so it works
+            # before or after the id.
+            local _pv_human=0 _pv_args=()
+            local _pv_a
+            for _pv_a in "$@"; do
+                case "$_pv_a" in
+                    --human) _pv_human=1 ;;
+                    *) _pv_args+=("$_pv_a") ;;
+                esac
+            done
+            set -- "${_pv_args[@]+"${_pv_args[@]}"}"
+
             local id="${1:-}"
             if [ -z "$id" ]; then
                 echo -e "${RED}Missing proof id.${NC} Use 'loki proof list'."
@@ -33767,7 +33782,11 @@ PYEOF
                 echo -e "${RED}Verifier not found (autonomy/lib/proof-verify.py).${NC}"
                 exit 2
             fi
-            python3 "$verifier" "$pj" "${TARGET_DIR:-.}"
+            if [ "$_pv_human" -eq 1 ]; then
+                python3 "$verifier" --human "$pj" "${TARGET_DIR:-.}"
+            else
+                python3 "$verifier" "$pj" "${TARGET_DIR:-.}"
+            fi
             exit $?
             ;;
         open)
