@@ -5,6 +5,74 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.88.0
+
+### Gate a merge on cost, the way you gate on tests
+
+`tools/cost-guard.py` is net-new:
+
+```
+cost-guard.py <ws> --max-usd 5.00                        -> exit 0
+cost-guard.py <ws> --max-usd 1.00                        -> exit 1
+cost-guard.py <ws> --baseline b.json --max-increase-pct 10 -> exit 1
+```
+
+```
+OVER BUDGET: cost $2.5000 exceeds the ceiling $1.0000 by $1.5000 (150.0% over)
+OVER BUDGET: cost rose 150.0% ($1.0000 -> $2.5000, +$1.5000), over the allowed 10.0%
+```
+
+It names which number breached and by how much, never a bare FAILED.
+
+### Unmeasured exits 2, and that is the whole design
+
+A gate's exit code IS a merge decision. "We did not measure" carries zero
+information about budget compliance, so mapping absence to 0 makes the gate
+emit its most confident output -- a green -- at exactly the moment its
+instrumentation broke and it is least entitled to speak.
+
+```
+CANNOT EVALUATE: cost is UNMEASURED -- no efficiency record carried an observed
+cost or token count. Unmeasured is not within budget: this gate cannot say
+whether the run complied, so it reports no verdict rather than a green one.
+exit=2
+```
+
+Enforced structurally: **exit 0 is reachable from exactly one `return` at the
+bottom of `evaluate()`**, downstream of a measurement. No policy, half a
+policy, unreadable baseline, unmeasured baseline, unmeasured run -- all return
+2. That is the same class as the "6 or more matches" tarball hole: a check that
+can report a pass without having checked.
+
+A genuinely measured $0.00 with real tokens still passes. Those two shapes are
+the most easily confused in this codebase, and they land on 0 and 2.
+
+### Two real bugs its own tests found
+
+**Float boundary.** `1.00 -> 1.10` computes as 10.000000000000009%, so a run
+exactly at its allowance FAILED while printing "rose 10.0%, over the allowed
+10.0%" -- a verdict contradicting its own message. Same trap on the ceiling
+(`$0.10 + $0.20 > $0.30` is True in binary). Both now compare at the precision
+they report. Because that LOOSENS a fail-closed gate, two tests pin the
+tolerance ($1.01 vs $1.00 must fail; +10.2% vs 10% must fail) and a
+whole-dollar tolerance is mutation-caught.
+
+**Half-applied policy.** `--max-usd 5 --baseline old.json` never opened the
+baseline and could exit 0 having silently ignored half of what the operator
+asked for. Now exits 2.
+
+### An inherited limit, stated rather than silently owned
+
+`record_is_measured()` is satisfied by tokens OR cost, so a record with real
+token counts but no `cost_usd` field reads as a measured $0.00 and passes.
+Verified empirically. NOT fixed here: the rule that `cost_usd: 0.0` with tokens
+must pass makes those two shapes identical downstream of the sum, so the fix
+belongs in the pricing layer (`price_from_tokens` exists for exactly this),
+never in a second copy of the honesty predicate.
+
+The baseline receipt's integrity hash is not verified either -- a tampered
+baseline could inflate the allowed ceiling. `receipt-diff.py` covers that.
+
 ## v8.87.0
 
 ### One command that answers "will this run work, and what will it cost?"
