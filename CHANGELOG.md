@@ -5,6 +5,67 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.94.0
+
+### Replay what a run actually did, iteration by iteration
+
+`tools/run-replay.py` reconstructs a completed run from artifacts alone. Run
+against a real recorded workspace it surfaces something the aggregate stage
+table cannot:
+
+```
+RUN REPLAY -- reconstructed from artifacts only.
+Nothing was started and nothing was spent; this reads .loki/ and exits.
+  unparseable lines skipped: 0 (whole recording read)
+
+ITERATION 1  [completed]
+  code_review                  57s   fail
+  test_suite                    1s   pass
+  cost                     $0.1767  in 106 / out 15241 / cache-read 439834 tok  [haiku]
+  gates failed             code_review
+```
+
+`code_review` failed in BOTH iterations and consumed 125s of 129s total stage
+time. That is a diagnosis; a single aggregate row is not.
+
+### A dropped line must be counted, not vanish
+
+`scripts/measure-run.sh` skips unparseable lines with
+`except Exception: continue` and the comment *"a truncated tail must not abort
+the report"* -- correct as far as it goes, but the drop is silent, so a corrupt
+recording reports a cleaner run than happened. The replay COUNTS skipped lines
+and prints the count. Replacing `skipped += 1` with `pass` turns the suite red.
+
+### The subtler case: a truncation that parses perfectly
+
+A cleanly truncated `events.jsonl` -- exactly what a killed run leaves -- has no
+unparseable lines at all. `skipped_lines` is 0, the recording looks whole, and
+an entire iteration is simply absent with no signal, in precisely the scenario
+this tool exists for.
+
+Efficiency records are now read as a SECOND, INDEPENDENT WITNESS to which
+iterations existed. Without it, that iteration's cost vanished from both
+headline claims silently.
+
+Also fixed: `prev_cost` carried across an unmeasured gap, so a
+measured/unmeasured/measured sequence compared iteration 3 against iteration 1
+while printing "vs previous iteration".
+
+### Absent is not zero, on every axis
+
+An iteration with no efficiency record reads `cost not recorded`, never $0.00.
+A stage that never emitted `stage_complete` reads not-recorded rather than 0s,
+because 0s reads as "instant" -- a different claim. A genuine 0s duration
+survives as 0s; collapsing it into "not recorded" is its own mutation and is
+caught.
+
+### A probe that failed for the right reason
+
+The mandated probe first reported MUTATION SURVIVED because a comment quoted
+the find-string verbatim, so the replacement hit the comment instead of the
+code -- the exact ambiguity `mutation-probe.sh`'s own header warns about. The
+comment was reworded rather than the probe weakened.
+
 ## v8.93.0
 
 ### An audit trail across a sequence of runs

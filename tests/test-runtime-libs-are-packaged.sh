@@ -61,6 +61,7 @@ LIBS=(
     "tools/ci-gate.py"                    # one exit code over every policy
     "tools/receipt-bundle.py"             # audit trail across a run sequence
     "tools/model-advisor.py"              # cheaper-model recommendation
+    "tools/run-replay.py"                 # per-iteration run reconstruction
 )
 
 # --- they must exist in the repo first ---------------------------------------
