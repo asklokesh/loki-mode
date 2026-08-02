@@ -335,7 +335,7 @@ Prompt: "Review the following claims for factual accuracy.
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v8.76.0 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
+- Current: v8.77.0 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
 - MAJOR bump for architecture changes (v6.0.0 = dual-mode architecture, loki run)
 - MINOR bump for new features (v5.23.0 = Dashboard File-Based API)
 - PATCH bump for fixes (v5.22.1 = session.json phantom state)
@@ -385,7 +385,7 @@ GitHub CI job can see these:
   (v8.40.0)
 - `npm pack tarball contents` was also deferred, and when promoted turned out
   to pass on "6 or more" matches of 6 patterns that healthily produce 8 -- it
-  tolerated losing two required artifacts (v8.76.0)
+  tolerated losing two required artifacts (v8.77.0)
 
 Three rules that fall out, and they generalise past packaging:
 

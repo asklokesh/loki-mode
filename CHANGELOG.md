@@ -5,6 +5,54 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.77.0
+
+### Two cost tools shipped that no user could run
+
+```
+$ grep -rn "cost-summary\|estimate-run" autonomy/loki bin/loki
+(zero matches)
+```
+
+`autonomy/lib/cost-summary.py` (v8.69.0) and `tools/estimate-run.py` (v8.71.0)
+both existed and neither had a CLI path. Same shape as
+`auto_detect_provider()`, which sat unwired from v5.0.0 until v8.64.0: built,
+tested, unreachable.
+
+```
+loki cost --detail          per-iteration rows, cache hit ratio, cost trend,
+                            and the measured/found PARTIAL flag
+loki estimate --iterations N   projects forward from measured history
+```
+
+### The premise was half wrong, and replacing the old command would have been a regression
+
+`loki cost` was ALREADY reachable via `cmd_report cost`. What was unreachable
+was `cost-summary.py` specifically -- a different renderer over the same
+records. And `cmd_cost` supports `--last N` and budget caps that
+`cost-summary.py` does not, so swapping its body would have been a regression
+dressed as wiring. `--detail` is additive; `estimate` is a genuinely new arm.
+
+### Two defects found while wiring, both of the same family
+
+**`--detail --last N` silently discarded `--last`.** A flag that looks accepted
+and does nothing is the same dishonesty as a fabricated `$0.00`: the user gets
+an answer to a question they did not ask. It now rejects the combination and
+explains why.
+
+**A hardcoded `.` workspace ignored `LOKI_DIR`**, which is genuinely
+relocatable (`autonomy/serve.sh:224` exports a non-default). `loki cost` and
+`loki cost --detail` would have described DIFFERENT workspaces while appearing
+to describe one. Both wrappers now derive from `LOKI_DIR`.
+
+### Registered everywhere, because partial registration has bitten three times
+
+Dispatch arm, the `All commands` help block, both shell completions (bash and
+zsh), and both `--help` texts. The repo's own drift gate passes across 108
+dispatch tokens, and help-discoverability passes 4/4.
+
+An empty workspace still reads `Total cost: UNKNOWN`, never `$0.00`.
+
 ## v8.76.0
 
 ### An opencode-only machine was told it had no AI provider

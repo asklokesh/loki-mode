@@ -1040,7 +1040,8 @@ show_help() {
     echo "  agent analyze api assets audit bench checkpoint (cp) ci cleanup"
     echo "  cluster cockpit code compliance completions compound config context (ctx)"
     echo "  cost council crash dashboard demo deploy docker docs doctor dogfood"
-    echo "  enterprise explain export failover github grill heal help import init"
+    echo "  enterprise estimate explain export failover github grill heal help"
+    echo "  import init"
     echo "  issue kpis logs magic mcp memory metrics migrate modernize monitor"
     echo "  next notify onboard open optimize otel own (handoff) pause plan preview"
     echo "  projects proof (receipt) provider quick quickstart rc remote report reset"
@@ -19158,6 +19159,9 @@ main() {
             _deprecated_alias cost "report cost" "$@"
             cmd_report cost "$@"
             ;;
+        estimate)
+            cmd_estimate "$@"
+            ;;
         trust)
             cmd_trust "$@"
             ;;
@@ -25310,9 +25314,92 @@ cmd_trust_metrics() {
 # for the current-run aggregate (single source of truth) and reads .loki/proofs/
 # for persistent per-run history. Honest: prints "not recorded" when cost was
 # never collected, never a fabricated $0.00.
+# Forward cost projection. Wraps tools/estimate-run.py.
+#
+# --iterations is REQUIRED by that tool by design: no multi-run history exists
+# to derive a horizon from, so projecting a total without one would be guessing
+# at the single number the operator asked for. We surface that requirement here
+# rather than inventing a default, for the same reason cost reports UNKNOWN
+# instead of $0.00 -- an unearned number is worse than an absent one.
+cmd_estimate() {
+    local iterations=""
+    local show_json=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                echo -e "${BOLD}loki estimate${NC} - Project what a run is likely to cost"
+                echo ""
+                echo "Usage: loki estimate --iterations N [--json]"
+                echo ""
+                echo "Projects a run cost from this workspace's MEASURED history in"
+                echo ".loki/metrics/efficiency/. With no measured history there is no"
+                echo "basis, and it says so rather than returning a fabricated number."
+                echo ""
+                echo "Options:"
+                echo "  --iterations N       REQUIRED. How many iterations to project."
+                echo "                       No multi-run history exists to derive a horizon"
+                echo "                       from, so there is no honest default."
+                echo "  --json               Machine-readable JSON output"
+                echo "  --help, -h           Show this help"
+                echo ""
+                echo "Examples:"
+                echo "  loki estimate --iterations 10"
+                echo "  loki estimate --iterations 25 --json"
+                echo ""
+                echo "See also: loki cost --detail (what a run ALREADY spent)"
+                return 0
+                ;;
+            --json) show_json=true; shift ;;
+            --iterations) iterations="${2:-}"; shift 2 || shift ;;
+            --iterations=*) iterations="${1#*=}"; shift ;;
+            *) echo -e "${RED}Unknown option: $1${NC}" >&2; echo "Run 'loki estimate --help' for usage." >&2; return 1 ;;
+        esac
+    done
+
+    if [ -z "$iterations" ]; then
+        echo -e "${RED}--iterations is required${NC}" >&2
+        echo "" >&2
+        echo "No multi-run history exists to derive a horizon from, so there is no" >&2
+        echo "honest default for how many iterations to project. Say how many you" >&2
+        echo "expect and the projection is scaled from measured per-iteration cost." >&2
+        echo "" >&2
+        echo "  loki estimate --iterations 10" >&2
+        echo "" >&2
+        echo "Run 'loki estimate --help' for usage." >&2
+        return 1
+    fi
+
+    case "$iterations" in
+        ''|*[!0-9]*)
+            echo -e "${RED}--iterations must be a positive whole number (got: $iterations)${NC}" >&2
+            return 1
+            ;;
+    esac
+
+    local estimate_py="$SKILL_DIR/tools/estimate-run.py"
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo -e "${RED}python3 is required for 'loki estimate'${NC}" >&2
+        echo "Install python3 and re-run." >&2
+        return 1
+    fi
+    if [ ! -f "$estimate_py" ]; then
+        echo -e "${RED}Estimate tool not found: $estimate_py${NC}" >&2
+        echo "Your install looks incomplete. Reinstall: loki self-update" >&2
+        return 1
+    fi
+
+    # Same workspace derivation as 'loki cost --detail': the tool takes the
+    # workspace and appends .loki itself, while LOKI_DIR is the .loki path.
+    local est_args=("$(dirname "${LOKI_DIR:-.loki}")" "--iterations" "$iterations")
+    [ "$show_json" = "true" ] && est_args+=("--json")
+    python3 "$estimate_py" "${est_args[@]}"
+}
+
 cmd_cost() {
     local show_json=false
     local last_n=0
+    local detail=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -25328,22 +25415,66 @@ cmd_cost() {
                 echo "Options:"
                 echo "  --json               Machine-readable JSON output"
                 echo "  --last N             Show only the last N runs in history (default: all)"
+                echo "  --detail             Per-iteration breakdown: cache hit ratio, cost trend,"
+                echo "                       and the measured/found ratio (autonomy/lib/cost-summary.py)"
                 echo "  --help, -h           Show this help"
                 echo ""
                 echo "Examples:"
                 echo "  loki cost                      # Cost summary + budget status"
                 echo "  loki cost --json               # Machine-readable output"
                 echo "  loki cost --last 10            # Last 10 runs of history"
+                echo "  loki cost --detail             # Per-iteration cache + trend breakdown"
+                echo "  loki cost --detail --json      # Same, machine-readable"
                 echo ""
                 echo "Budget cap: set LOKI_BUDGET_LIMIT (USD). Warns at 80%, stops at 100%."
+                echo ""
+                echo "An unmeasured iteration reads UNKNOWN and is excluded from totals."
+                echo "Unmeasured is never reported as \$0.00 -- that would be indistinguishable"
+                echo "from a real measurement of zero."
                 exit 0
                 ;;
             --json) show_json=true; shift ;;
+            --detail) detail=true; shift ;;
             --last) last_n="${2:-0}"; shift 2 ;;
             --last=*) last_n="${1#*=}"; shift ;;
             *) echo -e "${RED}Unknown option: $1${NC}" >&2; echo "Run 'loki cost --help' for usage." >&2; exit 1 ;;
         esac
     done
+
+    # --detail routes to the per-run summarizer, which reports what the budget
+    # view cannot: cache hit ratio, cost trend, and the measured/found ratio.
+    # It reuses the SAME honesty predicate (efficiency_cost.record_is_measured),
+    # so both views agree on what counts as measured.
+    if [ "$detail" = "true" ]; then
+        # --last filters per-RUN history, which this view does not show (it
+        # breaks down the iterations of ONE run). Rejecting is the honest
+        # move: silently discarding it would make the filter look applied.
+        if [ "$last_n" != "0" ]; then
+            echo -e "${RED}--last is not supported with --detail${NC}" >&2
+            echo "--detail breaks down the iterations of the current run, not per-run history." >&2
+            echo "Use 'loki cost --last N' for the per-run history view." >&2
+            return 1
+        fi
+        local cost_summary_py="$SKILL_DIR/autonomy/lib/cost-summary.py"
+        if ! command -v python3 >/dev/null 2>&1; then
+            echo -e "${RED}python3 is required for 'loki cost --detail'${NC}" >&2
+            echo "Install python3, or run 'loki cost' for the budget view." >&2
+            return 1
+        fi
+        if [ ! -f "$cost_summary_py" ]; then
+            echo -e "${RED}Cost summary tool not found: $cost_summary_py${NC}" >&2
+            echo "Your install looks incomplete. Reinstall: loki self-update" >&2
+            return 1
+        fi
+        # cost-summary.py takes the WORKSPACE (it appends .loki itself), while
+        # LOKI_DIR is the .loki path and is genuinely relocatable
+        # (autonomy/serve.sh exports a non-default). Derive the parent so
+        # --detail describes the same workspace the budget view does.
+        local ws_args=("$(dirname "${LOKI_DIR:-.loki}")")
+        [ "$show_json" = "true" ] && ws_args+=("--json")
+        python3 "$cost_summary_py" "${ws_args[@]}"
+        return $?
+    fi
 
     local loki_dir="${LOKI_DIR:-.loki}"
 
