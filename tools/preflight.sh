@@ -76,7 +76,7 @@ while [ "$#" -gt 0 ]; do
         --help|-h)
             echo "loki preflight -- will this run succeed, and what will it cost?"
             echo ""
-            echo "Usage: scripts/preflight.sh [WORKSPACE] [--iterations N]"
+            echo "Usage: tools/preflight.sh [WORKSPACE] [--iterations N]"
             echo ""
             echo "Read-only. Starts nothing, spends nothing, contacts no provider."
             echo ""
@@ -325,7 +325,7 @@ if [ "${#BLOCKERS[@]}" -gt 0 ]; then
         done
     fi
     echo ""
-    echo "Then re-run: scripts/preflight.sh"
+    echo "Then re-run: tools/preflight.sh"
     exit 1
 elif [ "${#WARNINGS[@]}" -gt 0 ]; then
     echo -e "${YELLOW}${BOLD}VERDICT: READY WITH WARNINGS${NC}"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Test: scripts/preflight.sh verdict behaviour.
+# Test: tools/preflight.sh verdict behaviour.
 #
 # WHY THIS TEST EXISTS. preflight answers "will this run succeed, and what will
 # it cost" before a user spends anything, so the two ways it can lie are both
@@ -25,7 +25,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-PREFLIGHT="$REPO_ROOT/scripts/preflight.sh"
+PREFLIGHT="$REPO_ROOT/tools/preflight.sh"
 
 PASSED=0
 FAILED=0
@@ -41,7 +41,7 @@ echo "========================================"
 echo ""
 
 if [ ! -f "$PREFLIGHT" ]; then
-    echo -e "${RED}scripts/preflight.sh not found${NC}"
+    echo -e "${RED}tools/preflight.sh not found${NC}"
     exit 1
 fi
 

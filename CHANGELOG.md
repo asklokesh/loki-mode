@@ -5,6 +5,48 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.89.0
+
+### v8.87.0 shipped a feature no npm user could reach
+
+`preflight.sh` was released as a user-facing command and placed in `scripts/`.
+**`scripts/` is not in `package.json` `files[]`**, so it never entered the
+tarball. Verified by unpacking the real published package:
+
+```
+$ test -f package/tools/preflight.sh
+MISSING -- scripts/ is not in files[]
+```
+
+Everything worked from a git checkout, so no in-repo test and no CI job could
+see it. That is precisely the packaging blind spot CLAUDE.md records: *a check
+that guards the shipped artifact must run in the FAST tier, because it is the
+only tier that runs before every push and CI has no equivalent.*
+
+`scripts/` correctly stays out of the package -- it holds 23 dev-only files
+(local-ci, license-audit, test cleanup). So preflight moved to `tools/`,
+alongside the siblings it composes, all of which were already shipping.
+
+### The guard now names every user-facing tool individually
+
+`tests/test-runtime-libs-are-packaged.sh` covered `autonomy/lib/*.py` but not
+`tools/`. It now asserts each of `preflight.sh`, `receipt-diff.py`,
+`cost-guard.py`, `estimate-run.py`, and `doctor-fix.py` **individually** -- a
+count cannot say WHICH artifact vanished, and this repo has paid for that
+shortcut before (the "6 or more matches" tarball hole).
+
+Proven against the real defect: moving preflight back to `scripts/` turns the
+suite red twice, once on the vacuity guard (the file is not where the check
+looks) and once on the tarball assertion.
+
+### What actually caught it
+
+Not a test -- unpacking the published tarball and running the feature from it.
+The four `tools/` and `autonomy/lib/` features all shipped correctly; only the
+one placed in an unshipped directory did not. A green CI and a green local gate
+both reported success on a release that was, for every npm user, missing the
+thing it announced.
+
 ## v8.88.0
 
 ### Gate a merge on cost, the way you gate on tests

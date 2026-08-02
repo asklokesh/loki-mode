@@ -46,6 +46,16 @@ LIBS=(
     "autonomy/lib/cost-summary.py"        # per-run cost, unmeasured reads UNKNOWN
     "autonomy/lib/iteration_attribution.py"
     "autonomy/lib/codex-usage.py"         # codex token recovery
+    "autonomy/lib/doctor-fix.py"          # remediation planner
+    # User-facing tools. preflight.sh originally shipped to scripts/, which is
+    # NOT in files[] (it holds 23 dev-only scripts: local-ci, license-audit,
+    # test cleanup). It was released as a user feature while being unreachable
+    # for every npm user -- caught only by unpacking the real tarball, never by
+    # any in-repo test, which is the packaging blind spot this suite exists for.
+    "tools/preflight.sh"                  # readiness + cost preflight
+    "tools/receipt-diff.py"               # cross-run receipt comparison
+    "tools/cost-guard.py"                 # cost regression gate
+    "tools/estimate-run.py"               # forward cost projection
 )
 
 # --- they must exist in the repo first ---------------------------------------
