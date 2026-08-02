@@ -594,6 +594,19 @@ probe_case "the stuck check compares a finding, not the banner" \
     "            cur=\"\$(cat \"\$reason_file\" 2>/dev/null \\" \
     bash tests/test-gate-stuck-abort.sh
 
+# W1: codex cost. The first probe guards the property the whole feature exists
+# for -- an unpriced model must record UNKNOWN, never 0, because "free" is a
+# different claim from "we could not price it".
+probe_case "an unpriced codex model records unknown, not zero" \
+    "autonomy/lib/codex-usage.py" \
+    '    cost = ""' '    cost = "0.000000"' \
+    bash tests/test-codex-usage-cost.sh
+
+probe_case "cached tokens are not double-counted as uncached input" \
+    "autonomy/lib/codex-usage.py" \
+    '    uncached = max(total_in - cached, 0)' '    uncached = total_in' \
+    bash tests/test-codex-usage-cost.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.

@@ -5,6 +5,55 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.51.0
+
+### W1: codex runs recorded NO tokens and NO cost
+
+First item of `docs/WANG-PRINCIPLES-PLAN.md`. Wang states the thesis
+conditionally -- *"the right agentic loop AND the right eval or metric for the
+agents to optimize"*. We had the loop and not the metric.
+
+Measured on the real FireLater run: **every** efficiency record showed
+`input_tokens=0, output_tokens=0, cost_usd=0`. Not just cost -- nothing at all.
+`_read_iteration_cost` looks for `.loki/metrics/result-cost-<n>.json` or
+`.loki/context/tracking.json`, and codex writes **neither**, so the whole chain
+silently resolved to zero.
+
+A zero is a claim that the iteration was free.
+
+That made cost-per-resolved-issue unmeasurable -- the axis with a measured
+**20x industry spread** (~$14/pass on Sonnet 4.5; an open harness lands tasks
+at ~1/20th Devin's cost) and the number a buyer compares first.
+
+### Recovered from the session rollout, not from `--json`
+
+codex reports usage on `turn.completed`, but only under `codex exec --json`.
+The dispatch pipes stdout through `tee` into the logs the runner parses for
+completion signals, so switching to JSONL would change the format every one of
+those readers depends on.
+
+codex **also** persists `~/.codex/sessions/**/rollout-*.jsonl` carrying
+`total_token_usage`. Reading that is a side channel with zero risk to the
+pipeline. Verified against a live call: 20420 input / 11008 cached / 23 output.
+
+End to end, cost now resolves to **0.018719** where it read 0.
+
+### unknown != free
+
+The property the feature exists for. A model we cannot price records **no cost
+field at all**, never 0. Both directions are mutation-pinned: emitting
+`0.000000` for an unpriced model turns the test red.
+
+Also fixed: codex reports `input_tokens` **inclusive** of cached, and billing
+splits them. Reporting the inclusive figure overstates cost, so the helper
+emits the uncached remainder -- also mutation-pinned.
+
+Pricing added for the shipped codex tiers (`gpt-5.6-sol` / `-terra` / `-luna`);
+only `gpt-5.3-codex` was priced before, so current runs could not be costed at
+all.
+
+Trust-core detector: 76 invariants.
+
 ## v8.50.0
 
 ### A real run found two defects my tests could not

@@ -22537,6 +22537,11 @@ if __name__ == "__main__":
                 local -a _loki_codex_pipe_status=()
                 LOKI_CODEX_REASONING_EFFORT="$_loki_codex_effort" \
                 CODEX_MODEL_REASONING_EFFORT="$_loki_codex_effort" \
+                # Stamp BEFORE the call: the usage reader bounds its rollout
+                # search by mtime, so a stale session from an earlier iteration
+                # cannot be attributed to this one. Attributing the wrong
+                # session is worse than reporting nothing -- it looks like data.
+                _loki_codex_usage_since="$(date +%s 2>/dev/null || echo 0)"
                 LOKI_DEADLINE_IDLE_TIMEOUT="${LOKI_PROVIDER_IDLE_TIMEOUT:-0}" \
                 _loki_with_deadline "${LOKI_PROVIDER_CALL_TIMEOUT:-0}" \
                 codex exec --sandbox workspace-write --skip-git-repo-check \
@@ -22545,6 +22550,49 @@ if __name__ == "__main__":
                 exit_code="$(_loki_provider_pipeline_exit_code \
                     "${_loki_codex_pipe_status[0]:-125}" \
                     "${_loki_codex_pipe_status[1]:-125}" 0)"
+                # W1: recover token usage from the codex session rollout.
+                #
+                # Measured on a real FireLater run: EVERY efficiency record had
+                # input_tokens=0, output_tokens=0, cost_usd=0. Not just cost --
+                # we recorded nothing, because _read_iteration_cost looks for a
+                # result-cost file or context tracker and codex writes neither.
+                # A zero is a claim that the iteration was free.
+                #
+                # codex reports usage only under `codex exec --json`, and the
+                # dispatch above pipes stdout through tee into logs the runner
+                # parses for completion signals -- switching to JSONL would
+                # change the format every one of those readers depends on. The
+                # session rollout carries the same total_token_usage, so this
+                # reads it as a side channel with zero risk to the pipeline.
+                #
+                # Best-effort by construction: on any failure the helper prints
+                # nothing and exits non-zero, and no result-cost file is
+                # written, so cost stays UNKNOWN rather than a fabricated 0.
+                if [ -n "${_loki_codex_usage_since:-}" ] \
+                   && [ -f "${SCRIPT_DIR}/lib/codex-usage.py" ]; then
+                    _cx_usage="$(LOKI_CODEX_RESOLVED_MODEL="${LOKI_CURRENT_MODEL:-${PROVIDER_MODEL_DEVELOPMENT:-}}" \
+                        python3 "${SCRIPT_DIR}/lib/codex-usage.py" \
+                        "$_loki_codex_usage_since" 2>/dev/null)" || _cx_usage=""
+                    if [ -n "$_cx_usage" ]; then
+                        set -- $_cx_usage
+                        mkdir -p "${TARGET_DIR:-.}/.loki/metrics" 2>/dev/null || true
+                        # total_cost_usd is emitted ONLY when the model was
+                        # priced. Omitting the key leaves cost UNKNOWN; writing
+                        # 0 would claim the iteration was free.
+                        if [ -n "${5:-}" ]; then
+                            printf '{"input_tokens":%s,"output_tokens":%s,"cache_read_tokens":%s,"cache_creation_tokens":%s,"total_cost_usd":%s}\n' \
+                                "${1:-0}" "${2:-0}" "${3:-0}" "${4:-0}" "$5" \
+                                > "${TARGET_DIR:-.}/.loki/metrics/result-cost-${ITERATION_COUNT}.json" 2>/dev/null || true
+                        else
+                            printf '{"input_tokens":%s,"output_tokens":%s,"cache_read_tokens":%s,"cache_creation_tokens":%s}\n' \
+                                "${1:-0}" "${2:-0}" "${3:-0}" "${4:-0}" \
+                                > "${TARGET_DIR:-.}/.loki/metrics/result-cost-${ITERATION_COUNT}.json" 2>/dev/null || true
+                        fi
+                        log_info "Codex usage: ${1:-0} in (+${3:-0} cached), ${2:-0} out, cost=${5:-unknown}"
+                    else
+                        log_warn "Codex token usage unavailable for iteration ${ITERATION_COUNT}; cost will read UNKNOWN, not zero."
+                    fi
+                fi
                 ;;
 
             cline)
