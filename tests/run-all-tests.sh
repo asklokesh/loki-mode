@@ -733,6 +733,7 @@ run_test "codex usage and cost are recovered, unknown never zero" "$SCRIPT_DIR/t
 run_test "cache-stable prompt prefix stays free of volatile values" "$SCRIPT_DIR/test-cache-breakpoint-discipline.sh"
 run_test "no raw shell error when .loki/config is a directory" "$SCRIPT_DIR/test-disclosure-config-directory.sh"
 run_test "startup is instrumented, never a silent gap" "$SCRIPT_DIR/test-startup-instrumentation.sh"
+run_test "every handled gate escalates its findings" "$SCRIPT_DIR/test-gate-escalation-coverage.sh"
 run_test "model catalog: no tier points at a superseded flagship" "$SCRIPT_DIR/test-model-catalog-current-flagship.sh"
 run_test "model catalog staleness is advisory in doctor" "$SCRIPT_DIR/test-model-catalog-staleness.sh"
 run_test "doctor blocker parity (both routes name blockers + offer loki tour)" "$SCRIPT_DIR/test-doctor-blocker-parity.sh"

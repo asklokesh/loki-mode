@@ -22975,6 +22975,14 @@ if __name__ == "__main__":
                     local tc_count
                     tc_count=$(track_gate_failure "test_coverage")
                     gate_failures="${gate_failures}test_coverage,"
+                    # Fourth dead branch, found by deriving the handled-gate set
+                    # from the writer instead of hardcoding it: test_coverage
+                    # maps to quality/test-results.json and had no caller either.
+                    if [ "$(gate_failure_disposition "$tc_count")" != "block" ]; then
+                        local _tc_thresh="$GATE_CLEAR_LIMIT"
+                        [ "$GATE_ESCALATE_LIMIT" -lt "$_tc_thresh" ] && _tc_thresh="$GATE_ESCALATE_LIMIT"
+                        write_gate_escalation_guidance "test_coverage" "$tc_count" "$_tc_thresh" || true
+                    fi
                     # P0-1 Fix A: distinguish a coverage-only block (tests passed,
                     # enforced coverage below threshold) from a genuine tests-red
                     # block in the log so the operator is not misled.
@@ -23010,6 +23018,23 @@ if __name__ == "__main__":
                         mk_count=$(track_gate_failure "mock_integrity")
                         gate_failures="${gate_failures}mock_integrity,"
                         log_warn "Mock integrity gate FAILED ($mk_count consecutive) - CRITICAL/HIGH mock problems"
+                        # Escalation guidance was DEAD for this gate.
+                        # write_gate_escalation_guidance already handles
+                        # mock_integrity, mutation_integrity and test_coverage by
+                        # name -- and only code_review ever called it, so those
+                        # branches could never run.
+                        #
+                        # Measured: on a real run mock_integrity failed THREE
+                        # times (the most of any gate) and
+                        # .loki/signals/GATE_ESCALATION.json was never written.
+                        # The agent was told the gate failed and never handed the
+                        # findings file that says WHY, which is the 56%
+                        # "did not attempt to recover" failure shape.
+                        if [ "$(gate_failure_disposition "$mk_count")" != "block" ]; then
+                            local _mk_thresh="$GATE_CLEAR_LIMIT"
+                            [ "$GATE_ESCALATE_LIMIT" -lt "$_mk_thresh" ] && _mk_thresh="$GATE_ESCALATE_LIMIT"
+                            write_gate_escalation_guidance "mock_integrity" "$mk_count" "$_mk_thresh" || true
+                        fi
                         # F0, third gate. Measured on the v8.49.0 FireLater run:
                         # mock_integrity failed 3 times -- MORE than any other
                         # gate -- and was not wired to the stuck check, so an
@@ -23046,6 +23071,15 @@ if __name__ == "__main__":
                     mt_count=$(track_gate_failure "mutation_integrity")
                     gate_failures="${gate_failures}mutation_integrity,"
                     log_warn "Mutation integrity gate FAILED ($mt_count consecutive) - HIGH test-fitting detected"
+                    # Same dead-branch fix as mock_integrity above:
+                    # write_gate_escalation_guidance maps mutation_integrity to
+                    # mutation-findings.txt and nothing ever called it with that
+                    # gate name, so the mapping could never fire.
+                    if [ "$(gate_failure_disposition "$mt_count")" != "block" ]; then
+                        local _mt_thresh="$GATE_CLEAR_LIMIT"
+                        [ "$GATE_ESCALATE_LIMIT" -lt "$_mt_thresh" ] && _mt_thresh="$GATE_ESCALATE_LIMIT"
+                        write_gate_escalation_guidance "mutation_integrity" "$mt_count" "$_mt_thresh" || true
+                    fi
                     # F0: an unchanging cause means the next iteration reaches
                     # the same verdict. FireLater burned 3 iterations here on a
                     # detector that was never packaged, failing in 0-1s each

@@ -681,6 +681,17 @@ probe_case "a missing start epoch never fabricates a duration" \
     '    [ -n "$t0" ] || return 0' '    [ -n "$t0" ] || t0=$now' \
     bash tests/test-startup-instrumentation.sh
 
+# Escalation guidance was DEAD for three of four gates it handles. mock_integrity
+# failed 3x on a real run and .loki/signals/GATE_ESCALATION.json was never
+# written -- the agent told a gate failed, never handed the findings that say
+# why. That is the 56% "did not attempt to recover" shape, manufactured by our
+# own harness.
+probe_case "the top failing gate still escalates its findings" \
+    "autonomy/run.sh" \
+    '                            write_gate_escalation_guidance "mock_integrity" "$mk_count" "$_mk_thresh" || true' \
+    '                            :' \
+    bash tests/test-gate-escalation-coverage.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.

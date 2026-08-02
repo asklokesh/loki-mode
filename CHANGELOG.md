@@ -5,6 +5,52 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.58.0
+
+### Escalation guidance was dead for three of the four gates it handles
+
+`write_gate_escalation_guidance` maps four gates to the findings artifact that
+explains their failure:
+
+```
+code_review        -> quality/reviews/<latest>/
+mutation_integrity -> quality/mutation-findings.txt
+mock_integrity     -> quality/mock-findings.txt
+test_coverage      -> quality/test-results.json
+```
+
+**Only `code_review` ever called it.** The other three branches could never
+run -- code that reads as a feature and executes as nothing.
+
+Measured, not theoretical: on a real run `mock_integrity` failed **three
+times** (more than any other gate) and `.loki/signals/GATE_ESCALATION.json` was
+**never written**. The agent was told the gate failed and never handed the
+findings file that says WHY.
+
+That is the 56% *"did not attempt to recover from an error"* failure shape
+(SlopCodeBench, arXiv 2603.24755) -- manufactured by our own harness rather
+than by the model.
+
+### The test found a fourth one I had missed
+
+I wired `mock_integrity` and `mutation_integrity`, then wrote the test to
+**derive the handled set from the writer** rather than hardcode it. It
+immediately failed on `test_coverage` -- a fourth dead branch I had not
+noticed.
+
+A hardcoded list would have passed and left it dead. That is the entire
+argument for deriving the expectation from the code under test: it covers the
+case you did not think of, which is the only kind that survives review.
+
+### Guards on the new call sites
+
+- **disposition-gated**: no guidance once the gate is already blocking -- the
+  run is stopping regardless, so that would be noise
+- **best-effort (`|| true`)**: this is hot-path guidance; a failure here must
+  never abort an iteration that was otherwise fine
+
+Trust-core detector: 86 invariants.
+
 ## v8.57.0
 
 ### 111 seconds of startup were completely unmeasured
