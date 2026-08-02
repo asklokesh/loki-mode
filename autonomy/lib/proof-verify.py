@@ -589,10 +589,59 @@ def verify_integrity(proof):
                 "misrepresent the facts" % (recorded_headline, derived)
             )
 
+    # COST COHERENCE. The receipt is the product's trust artifact, and the
+    # verifier checked hashes, diffs, gates and the headline -- but never cost.
+    # A receipt could therefore claim ANY cost, $0.00 or $10,000, and
+    # `loki proof verify` would still pass it.
+    #
+    # That was not hypothetical. A real FireLater receipt shipped
+    # {"usd": 0.0, ..., "available": true} -- a shareable document asserting the
+    # run was FREE, because the collector keyed availability on a record file
+    # existing rather than carrying data (fixed v8.52.0). The verifier could not
+    # see it.
+    #
+    # This checks INTERNAL COHERENCE, which is what a verifier can honestly
+    # assert: the receipt must not contradict itself. It deliberately does NOT
+    # re-price the run -- that would require the token counts and price table at
+    # verify time, and a verifier that guesses is worse than one that abstains.
+    #
+    # The incoherent shapes:
+    #   available=True with every field zero/None -> claims measurement, has none
+    #   available=False with a non-zero usd       -> claims unmeasured, shows a number
+    #   usd present but no tokens at all          -> a cost from nowhere
+    result["cost_coherent"] = None
+    _cost = proof.get("cost") if isinstance(proof.get("cost"), dict) else None
+    if _cost is not None:
+        _avail = _cost.get("available")
+        _usd = _cost.get("usd")
+        _toks = [
+            _cost.get(k) for k in
+            ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
+        ]
+        _any_tok = any(isinstance(t, (int, float)) and t > 0 for t in _toks)
+        _usd_pos = isinstance(_usd, (int, float)) and _usd > 0
+
+        _bad = ""
+        if _avail is True and not _any_tok and not _usd_pos:
+            _bad = ("cost.available is true but every token count and usd is "
+                    "zero or absent; the receipt claims a measurement it does "
+                    "not have (an unmeasured run is unknown, not free)")
+        elif _avail is False and (_usd_pos or _any_tok):
+            _bad = ("cost.available is false but the receipt carries non-zero "
+                    "cost or token values")
+        elif _usd_pos and not _any_tok:
+            _bad = ("cost.usd is non-zero but no tokens were recorded; the "
+                    "cost has no basis in the receipt")
+
+        result["cost_coherent"] = not _bad
+        if _bad and not result["reason"]:
+            result["reason"] = _bad
+
     result["ok"] = bool(
         result["hash_ok"]
         and result["gpg_ok"] in (True, "n/a")
         and result["headline_consistent"] is not False
+        and result["cost_coherent"] is not False
     )
     if result["ok"]:
         result["reason"] = ""

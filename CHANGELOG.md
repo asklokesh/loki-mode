@@ -5,6 +5,59 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.54.0
+
+### The moat had a blind spot: the verifier never checked cost
+
+`benchmarks/results/competitor-verify-surface.json` records the measured
+competitive claim: of six installed coding-agent CLIs -- opencode, aider,
+codex, claude, cursor-agent, loki-mode -- **only loki-mode verifies its own
+output.** That is the differentiator.
+
+A moat with a blind spot is not a moat. `loki proof verify` checked the
+integrity hash, the diff, the gates and the headline. It **never looked at
+cost**, so a receipt could assert any spend -- $0.00 or $10,000 -- and pass.
+
+### This was not hypothetical
+
+A real FireLater receipt shipped with:
+
+```json
+"cost": {"usd": 0.0, "input_tokens": 0, ..., "available": true}
+```
+
+A shareable document asserting the run was **free**. Its integrity hash was
+**VALID** -- it passed the old verifier completely, because the collector keyed
+availability on a record file existing rather than carrying data (v8.52.0).
+Nothing downstream could see it.
+
+Replayed against the real artifact: `hash_ok=true`, `cost_coherent=false`,
+`ok=false`. A cryptographically intact receipt asserting a false fact, now
+caught.
+
+### What it checks, and what it deliberately does not
+
+**Internal coherence** -- the receipt must not contradict itself:
+
+- `available=true` with every token count and usd zero -> claims a measurement
+  it does not have
+- `available=false` carrying non-zero values -> claims unmeasured, shows numbers
+- `usd` non-zero with no tokens at all -> a cost from nowhere (the **inflation**
+  direction; under-reporting is not the only lie)
+
+It does **not** re-price the run. That would need token counts and a price
+table at verify time, and **a verifier that guesses is worse than one that
+abstains**. A receipt with no cost block abstains rather than fails -- older
+receipts predate the block and are not forgeries.
+
+### Why this over the speed work
+
+W3 targets the agent call at 93% of wall clock, which is real. But a receipt
+that can certify a false fact undermines the one claim no competitor can make.
+Fixing the moat outranks optimising throughput.
+
+Trust-core detector: 80 invariants.
+
 ## v8.53.0
 
 ### The prompt was telling the agent its work cost $0.00

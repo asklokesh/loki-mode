@@ -625,6 +625,22 @@ probe_case "the prompt trend never reports an unmeasured cost as \$0.00" \
     '        if isinstance(cost, (int, float)):' \
     python3 -m pytest -q tests/test_iteration_trend_cost_honesty.py
 
+# THE MOAT. competitor-verify-surface.json records that of six installed
+# coding-agent CLIs, only loki-mode verifies its own output. The verifier
+# checked hash, diff, gates and headline -- and never cost, so a receipt could
+# assert any spend and still pass. A real shipped receipt claimed usd=0.0 with
+# available=true AND A VALID HASH.
+probe_case "an incoherent cost claim fails verification" \
+    "autonomy/lib/proof-verify.py" \
+    '        if _avail is True and not _any_tok and not _usd_pos:' \
+    '        if False:' \
+    python3 -m pytest -q tests/test_proof_verify_cost_coherence.py
+
+probe_case "the cost check actually gates the verdict" \
+    "autonomy/lib/proof-verify.py" \
+    '        and result["cost_coherent"] is not False' '' \
+    python3 -m pytest -q tests/test_proof_verify_cost_coherence.py
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
