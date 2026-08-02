@@ -5,6 +5,49 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.78.0
+
+### The provider docs described the product as it was before v8.64.0
+
+`skills/providers.md` -- the page a user reading about providers lands on --
+listed FOUR providers, never mentioned opencode, and presented `LOKI_PROVIDER`
+as something you must set:
+
+```
+export LOKI_PROVIDER=claude  # or codex, cline, aider
+```
+
+That is the pre-v8.64.0 world. An opencode user reading it would conclude their
+working machine was unsupported, which is the same conclusion the v8.76.0 gate
+bug forced on them in code.
+
+The doc now leads with the fact that a provider is auto-detected
+(`claude > cline > codex > aider > opencode`), states that an explicit choice
+always wins and is never silently substituted, and points at `loki doctor` for
+which provider would actually run.
+
+### Docs are a surface, and this one is now pinned to the code
+
+v8.76.0's root cause was a SECOND list of providers that had drifted from
+`auto_detect_provider()`. `skills/providers.md` was a third. Rather than fix
+the wording and hope, a test extracts the authoritative order from
+`providers/loader.sh` and asserts:
+
+- every provider the code knows is named in the doc, asserted INDIVIDUALLY (a
+  count cannot say WHICH provider is undocumented)
+- the documented priority order matches the code exactly, since order decides
+  which provider actually runs
+- the doc still explains auto-detection at all
+
+Both drift directions are mutation-proven: adding a provider to the code turns
+it red, and reordering the doc turns it red.
+
+### Checked and correctly left alone
+
+The one `gemini` reference under `references/` is a DeepMind research citation
+(Gemini Robotics 1.5), not a stale provider claim. Gemini was removed as a
+provider upstream; nothing documents it as one.
+
 ## v8.77.0
 
 ### Two cost tools shipped that no user could run

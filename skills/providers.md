@@ -22,14 +22,38 @@ Loki Mode supports four AI providers for autonomous execution.
 
 ## Provider Selection
 
+**You do not have to choose one.** Since v8.64.0, leaving `LOKI_PROVIDER`
+unset auto-detects the first installed provider in this priority order:
+
+```
+claude > cline > codex > aider > opencode
+```
+
+```
+[loki] provider: codex (auto-detected)
+```
+
+The order lives in `auto_detect_provider()` (`providers/loader.sh`), which is
+the single authority. Any other list that names providers must agree with it --
+a second list that had drifted was blocking opencode-only machines from
+starting a build at all until v8.76.0.
+
+Set it explicitly only when you want a provider other than the highest-priority
+installed one. An explicit choice always wins, and is never silently
+substituted: naming a provider that is not installed fails immediately with its
+install command rather than quietly running a different model (v8.66.0).
+
 ```bash
 # Via environment variable
-export LOKI_PROVIDER=claude  # or codex, cline, aider
+export LOKI_PROVIDER=claude  # or cline, codex, aider, opencode
 
 # Via CLI flag
 ./autonomy/run.sh --provider codex ./prd.md
 loki start --provider cline ./prd.md
 ```
+
+`loki doctor` prints which providers are installed and which one would be
+auto-selected.
 
 ## Any Model, Any Provider (ANTHROPIC_BASE_URL)
 
