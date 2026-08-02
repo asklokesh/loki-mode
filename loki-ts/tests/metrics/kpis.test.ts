@@ -39,9 +39,13 @@ describe("computeKpis", () => {
     // claim as rendering $0.00, just in prose.
     expect(snap.notes.join(" ")).toContain("cost UNKNOWN");
     // Scoped per-note: the council note says "accuracy KPIs zeroed", which is
-    // correct (accuracy really is zeroed). Only a COST-zeroed claim is a lie.
+    // correct (accuracy really is zeroed). A COST- or TOKEN-zeroed claim is a
+    // lie -- both are UNKNOWN, not zero. Duration zeroed stays legal.
     for (const n of snap.notes) {
-      if (/zeroed/i.test(n)) expect(n).not.toMatch(/cost[^,)]*zeroed/i);
+      if (/zeroed/i.test(n)) {
+        expect(n).not.toMatch(/cost[^,)]*zeroed/i);
+        expect(n).not.toMatch(/token[^,)]*zeroed/i);
+      }
     }
   });
 
@@ -243,6 +247,99 @@ describe("unmeasured cost reads UNKNOWN, never zero", () => {
     expect(snap.efficiency.total_cost_usd).toBe(0);
     expect(snap.efficiency.avg_cost_per_iteration).toBe(0);
     expect(formatKpisHuman(snap)).not.toContain("UNKNOWN");
+  });
+
+  // Matches the token lines only when they render a bare zero.
+  const ZERO_INPUT_LINE = /Total input tokens:\s+0\s*$/m;
+  const ZERO_OUTPUT_LINE = /Total output tokens:\s+0\s*$/m;
+
+  it("nulls the TOKEN fields too when records carry no measured values", () => {
+    const dir = join(td, "metrics", "efficiency");
+    mkdirSync(dir, { recursive: true });
+    // Same FireLater shape. "we did not measure" must not render as "it was
+    // zero" for tokens any more than it may for cost.
+    writeFileSync(
+      join(dir, "iteration-1.json"),
+      JSON.stringify({
+        iteration: 1,
+        model: "gpt-5.3-codex",
+        status: "success",
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        cost_usd: 0,
+      }),
+    );
+    const snap = computeKpis(td);
+    expect(snap.efficiency.total_input_tokens).toBeNull();
+    expect(snap.efficiency.total_output_tokens).toBeNull();
+    const out = formatKpisHuman(snap);
+    expect(out).toContain("Total input tokens:   UNKNOWN (not measured)");
+    expect(out).toContain("Total output tokens:  UNKNOWN (not measured)");
+    expect(out).not.toMatch(ZERO_INPUT_LINE);
+    expect(out).not.toMatch(ZERO_OUTPUT_LINE);
+    expect(out).not.toContain("null");
+  });
+
+  it("nulls the TOKEN fields when there are no records at all", () => {
+    const snap = computeKpis(td);
+    expect(snap.efficiency.total_input_tokens).toBeNull();
+    expect(snap.efficiency.total_output_tokens).toBeNull();
+    // Duration is wall clock, not provider usage: it stays a real zero.
+    expect(snap.efficiency.total_duration_ms).toBe(0);
+    const reparsed = JSON.parse(formatKpisJson(snap)) as {
+      efficiency: { total_input_tokens: number | null; total_output_tokens: number | null };
+    };
+    expect(reparsed.efficiency.total_input_tokens).toBeNull();
+    expect(reparsed.efficiency.total_output_tokens).toBeNull();
+  });
+
+  // The direction that would blank REAL data. A run WAS measured (cache tokens
+  // observed) and genuinely emitted zero input and zero output tokens. Those
+  // zeros are facts and must render as 0. A falsy guard (`|| "UNKNOWN"`) in
+  // either the producer or the renderer fails exactly here.
+  it("preserves GENUINELY measured zero token counts rather than blanking them", () => {
+    const dir = join(td, "metrics", "efficiency");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "iteration-1.json"),
+      JSON.stringify({
+        iteration: 1,
+        model: "opus",
+        status: "success",
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 797496,
+      }),
+    );
+    const snap = computeKpis(td);
+    expect(snap.efficiency.total_input_tokens).toBe(0);
+    expect(snap.efficiency.total_output_tokens).toBe(0);
+    const out = formatKpisHuman(snap);
+    expect(out).toMatch(ZERO_INPUT_LINE);
+    expect(out).toMatch(ZERO_OUTPUT_LINE);
+    expect(out).not.toContain("UNKNOWN");
+  });
+
+  it("leaves measured non-zero token counts unchanged", () => {
+    const dir = join(td, "metrics", "efficiency");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "iteration-1.json"),
+      JSON.stringify({ iteration: 1, model: "opus", status: "success", input_tokens: 100, output_tokens: 50 }),
+    );
+    writeFileSync(
+      join(dir, "iteration-2.json"),
+      JSON.stringify({ iteration: 2, model: "opus", status: "success", input_tokens: 300, output_tokens: 400 }),
+    );
+    const snap = computeKpis(td);
+    expect(snap.efficiency.total_input_tokens).toBe(400);
+    expect(snap.efficiency.total_output_tokens).toBe(450);
+    const out = formatKpisHuman(snap);
+    expect(out).toContain("Total input tokens:   400");
+    expect(out).toContain("Total output tokens:  450");
+    expect(out).not.toContain("UNKNOWN");
   });
 
   it("counts a cache-only record as measured", () => {

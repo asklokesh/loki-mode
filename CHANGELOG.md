@@ -5,6 +5,49 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.74.0
+
+### Unmeasured token counts also stopped reading as zero
+
+v8.72.0 fixed `total_cost_usd` in `kpis.ts` and deliberately left the TOKEN
+fields for a follow-up. This is it: `total_input_tokens` and
+`total_output_tokens` reported `0` for an unmeasured run, so a reader could not
+tell a run that genuinely emitted no output tokens from one where nothing was
+ever recorded.
+
+Python nulls **five** keys together on ONE condition
+(`efficiency_cost.py:174-185`): `usd`, `input_tokens`, `output_tokens`,
+`cache_read_tokens`, `cache_creation_tokens`. Cost and tokens are not separate
+rules there, and they are not separate rules here now: `recordsMeasured()` is
+hoisted once and gates all three totals. No second predicate was introduced.
+
+### The half of this bug that is easy to get wrong
+
+A genuinely MEASURED zero must stay `0`. The renderer uses `??`, never `||` --
+`0` is falsy, so a `||` fallback would blank real data into UNKNOWN, which is
+its own dishonesty in the opposite direction.
+
+That is what the mutation probe pins. Swapping `??` for `||` still renders
+UNKNOWN correctly for the unmeasured case and would pass on that alone; it
+fails only through the measured-zero assertion, which uses a cache-only fixture
+(`input_tokens: 0, output_tokens: 0, cache_read_tokens: 797496`) where the run
+IS measured and both token totals are honest zeros.
+
+### A type-only mutation survived, and is reported as a non-proof
+
+Changing `number | null` back to `number` does NOT fail `bun test`, because
+TypeScript types are erased and the runner does not typecheck. That was
+established in v8.72.0 and held again here. It is recorded as a documented
+non-proof rather than presented as evidence; the three probes that bind all
+change runtime behaviour.
+
+### Two stale notes corrected
+
+The operator note claimed `token/duration KPIs zeroed`, which this change makes
+false. It now reads `cost UNKNOWN, tokens UNKNOWN, duration zeroed`.
+`total_duration_ms` stays a real `0`: it is wall clock, not provider-reported
+usage, and Python does not null it either.
+
 ## v8.73.0
 
 ### A failed receipt verification now says exactly what is wrong
