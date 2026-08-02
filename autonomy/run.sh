@@ -22651,6 +22651,33 @@ if __name__ == "__main__":
         # costs zero extra subprocesses -- we pass the existing epoch through.
         emit_stage_complete "agent" "$([ "$exit_code" -eq 0 ] 2>/dev/null && echo pass || echo fail)" "$start_time"
 
+        # AGENT PROMPT SIZE. The call this brackets is 93% of a run's wall clock
+        # (1814s of 1941s measured), and its INPUT was never measured -- every
+        # reviewer logs its prompt bytes, the dominant call logged nothing.
+        #
+        # Prompt size is the input side of that 93% and one of the few levers we
+        # actually control: we cannot make the provider faster, but we can send
+        # it less. Without the number, "the prompt got bigger" is invisible
+        # until it shows up as latency and cost with no attributable cause --
+        # the same gap W1 closed for tokens.
+        #
+        # Costs one `wc -c` on a string already in memory: no subprocess for the
+        # provider, no extra file read. Emitted on the existing event channel so
+        # measure-run.sh and the receipt pick it up with no new plumbing.
+        if [ -n "${prompt:-}" ]; then
+            local _agent_prompt_bytes
+            _agent_prompt_bytes=$(printf '%s' "$prompt" | wc -c 2>/dev/null | tr -d ' ')
+            case "$_agent_prompt_bytes" in
+                ''|*[!0-9]*) ;;   # unmeasurable -> emit nothing, never a zero
+                *)
+                    emit_event_json "agent_prompt" \
+                        "bytes=$_agent_prompt_bytes" \
+                        "iteration=${ITERATION_COUNT:-0}" \
+                        "duration_s=$duration" 2>/dev/null || true
+                    ;;
+            esac
+        fi
+
         # TIME TO FIRST ARTIFACT. The companion to seconds_to_first_preview, for
         # the case that has no preview at all.
         #

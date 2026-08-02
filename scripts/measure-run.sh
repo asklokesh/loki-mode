@@ -41,6 +41,7 @@ path = os.environ["LOKI_MEASURE_EVENTS"]
 as_json = os.environ["LOKI_MEASURE_JSON"] == "true"
 
 stages = defaultdict(list)
+prompt_bytes = []
 reviews = []          # (seconds, reviewer_count, pass, fail)
 starts = {}
 first_artifact = first_preview = None
@@ -70,6 +71,10 @@ with open(path, errors="replace") as fh:
                 stages[s].append(float(secs))
         elif t == "iteration_complete":
             iterations += 1
+        elif t == "agent_prompt":
+            b = d.get("bytes")
+            if isinstance(b, (int, float)) and b > 0:
+                prompt_bytes.append(int(b))
         elif t == "code_review_start":
             T = when(e)
             rid = d.get("review_id")
@@ -111,6 +116,7 @@ if as_json:
         "reviews": [{"seconds": s, "reviewers": n, "pass": p, "fail": f}
                     for s, n, p, f in reviews],
         "seconds_to_first_artifact": first_artifact,
+        "agent_prompt_bytes": prompt_bytes or None,
         "seconds_to_first_preview": first_preview,
     }, indent=2))
     raise SystemExit
@@ -152,6 +158,13 @@ print("TIME TO FIRST SIGNAL")
 print(f"  first code change : {str(first_artifact) + 's' if first_artifact is not None else 'not recorded'}")
 print(f"  first preview     : {str(first_preview) + 's' if first_preview is not None else 'not recorded (no previewable app)'}")
 print(f"  iterations        : {iterations}")
+if prompt_bytes:
+    _med = sorted(prompt_bytes)[len(prompt_bytes) // 2]
+    print(f"  agent prompt      : {_med / 1024:.0f} KB median "
+          f"({min(prompt_bytes) / 1024:.0f}-{max(prompt_bytes) / 1024:.0f} KB over "
+          f"{len(prompt_bytes)} call(s))")
+else:
+    print("  agent prompt      : not recorded")
 
 print()
 print("TO COMPARE: run the same issue twice and diff the code_review row.")

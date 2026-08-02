@@ -715,6 +715,22 @@ probe_case "the prompt cannot tell the agent its work was free" \
     '        if isinstance(cost, (int, float)):' \
     python3 -m pytest -q tests/test_cost_honesty_end_to_end.py
 
+# W3: the call that costs 93% of the run never reported its own input size.
+# Every reviewer logged prompt bytes; the dominant call logged nothing. Second
+# probe guards the honesty direction -- an absent measurement must not render
+# as 0 KB, which is a claim rather than an absence.
+probe_case "the agent call measures its prompt size" \
+    "autonomy/run.sh" \
+    '                    emit_event_json "agent_prompt" \' \
+    '                    false "agent_prompt" \' \
+    bash tests/test-agent-prompt-size.sh
+
+probe_case "an unmeasured prompt renders as not-recorded, not 0 KB" \
+    "scripts/measure-run.sh" \
+    '    print("  agent prompt      : not recorded")' \
+    '    print("  agent prompt      : 0 KB")' \
+    bash tests/test-agent-prompt-size.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.

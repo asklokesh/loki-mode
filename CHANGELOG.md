@@ -5,6 +5,57 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.61.0
+
+### W3: the call costing 93% of the run never reported its own input
+
+Measured on a real run: the agent call is **1814s of 1941s** wall clock. Every
+code reviewer logs its prompt bytes -- *"Reviewer security-sentinel: prompt
+160074 bytes"* -- and the dominant call logged **nothing**. Searching run.sh
+for an agent prompt-size metric returned zero.
+
+**Why prompt size specifically.** We cannot make the provider faster and we
+cannot train a model. The market's own finding is that *"the same model in a
+different harness routinely drops 10-15 points"* -- the harness is the lever,
+and prompt size is the input side of that 93%. Send less, pay less, wait less.
+
+Without the number a regression is invisible: a prompt that grows 40% surfaces
+only as latency and cost with **no attributable cause** -- the same shape as
+the cost arc, where four surfaces reported `$0.00` because nothing measured
+tokens.
+
+Now emitted with the agent stage, carrying `bytes` **and** `duration_s` so size
+and latency can be correlated, and rendered by `measure-run.sh`:
+
+```
+agent prompt      : 200 KB median (160-200 KB over 2 call(s))
+```
+
+Costs one `wc -c` on a string already in memory -- no subprocess, no file read.
+
+### Absent is not zero
+
+A run predating this emits nothing, and the report says **`not recorded`**, not
+`0 KB`. A fabricated zero would be averaged into later analysis as a real
+observation. Both directions mutation-pinned: removing the emit, and rendering
+`0 KB` for a run with no data, each turn the test red.
+
+Verified against the real FireLater workspace, which predates the event: it
+correctly reports `not recorded` rather than inventing a figure.
+
+### A harness bug caught before it became a false verdict
+
+The first version of the test used `grep -B12` and reported **three failures
+against correct code** -- the emit is a multi-line continuation, so its
+arguments live *after* the matched line while the guard lives before. A
+one-directional window cannot see both. Fixed to span `-B26 -A6`.
+
+That is the fourth time this session a harness bug produced a verdict about
+code that was actually fine. Verifying the tool before believing the verdict is
+what caught it each time.
+
+Trust-core detector: 91 invariants.
+
 ## v8.60.0
 
 ### One missing measurement must not become four different lies
