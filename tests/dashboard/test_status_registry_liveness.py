@@ -114,6 +114,20 @@ class ExecNamespaceIsVersionIndependent(unittest.TestCase):
         py = shutil.which("python3.12") or shutil.which("python3.13")
         if not py:
             self.skipTest("no pre-3.14 interpreter available to check against")
+
+        # The interpreter must be able to RUN the check before its verdict
+        # means anything. CI's 3.13 job resolves python3.12 to a SYSTEM python
+        # with no pytest installed, so the subprocess exited non-zero for a
+        # missing dependency and this guard reported a defect that did not
+        # exist. A tool that cannot run is an ABSENT measurement, not a
+        # failing one -- the same rule the cost work established.
+        probe = subprocess.run(
+            [py, "-c", "import pytest"],
+            capture_output=True, text=True, timeout=60)
+        if probe.returncode != 0:
+            self.skipTest(
+                "{} has no pytest, so it cannot run this check".format(py))
+
         r = subprocess.run(
             [py, "-m", "pytest", str(pathlib.Path(__file__).resolve()),
              "-q", "-k", "RegistryLivenessTests"],

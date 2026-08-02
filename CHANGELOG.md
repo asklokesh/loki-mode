@@ -5,6 +5,42 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.75.0
+
+### The 3.12 guard reported a defect that did not exist
+
+v8.63.0 added a guard that re-runs the dashboard liveness tests under Python
+3.12, because a local 3.14 physically cannot observe the PEP 649 annotation bug
+that took down two releases. That guard then failed CI's Python 3.13 job.
+
+Not a real defect. `shutil.which("python3.12")` on that runner resolves to
+`/usr/bin/python3.12`, a SYSTEM python with no pytest installed, so the
+subprocess exited non-zero for a missing dependency. The guard read that exit
+code as "the liveness tests fail on 3.12".
+
+**A tool that cannot run is an ABSENT measurement, not a failing one** -- the
+same rule the cost work established, applied to a test harness instead of a
+receipt. It now probes `python3 -c "import pytest"` first and SKIPS when the
+interpreter cannot run the check, rather than converting a missing dependency
+into a false alarm.
+
+It still runs and still passes where pytest exists, so the guard has not been
+hollowed out. Both directions are asserted, and removing the availability probe
+turns the suite red.
+
+### A cadence hazard worth recording
+
+The `Tests` workflow sets `cancel-in-progress: true` grouped by branch and
+takes about 25 minutes. Releases in this session have been landing every ~5
+minutes, so each push cancelled the previous run: **Tests completed on none of
+the last five releases.**
+
+The config is correct for normal cadence and is left alone. It is recorded here
+because "no red X" on those runs means *cancelled*, not *passed*, and reading
+it as a pass would be exactly the kind of absent-measurement-as-success this
+codebase keeps paying for. The local gate does run the full pytest suite before
+every push, which is what actually verified them.
+
 ## v8.74.0
 
 ### Unmeasured token counts also stopped reading as zero
