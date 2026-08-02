@@ -5,6 +5,73 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.97.0
+
+### The merge gate is now driveable from version control and visible on the PR
+
+Three tools complete the CI cost-governance chain. Verified end to end through
+a real shell pipe:
+
+```
+$ ci-gate.py $(policy-load.py --as-args)   -> exit 0 within budget, 1 over
+$ ci-gate.py ... --json | gate-report.py --format github
+::warning title=gate: cost (UNEVALUABLE)::cost is UNMEASURED ... this gate
+cannot say whether the run complied, so it reports no verdict rather than a
+green one.
+```
+
+**`policy-load.py`** makes the policy a reviewable file instead of CLI flags. An
+unknown key is an ERROR naming the key, never ignored: silently skipping
+`max_usd_` means the operator believes a ceiling is enforced when nothing is.
+An empty policy is refused for the same reason.
+
+**`gate-report.py`** renders the verdict as GitHub step-summary markdown or
+workflow annotations. UNEVALUABLE is a `::warning`, never a `::notice` and
+never silent -- a gate that could not check must not look green on the run
+page.
+
+**`signing-status.py`** proves whether this machine can produce SIGNED receipts
+by doing a real sign-and-verify round trip. `gpg installed + key id set` is NOT
+proof: the key may be expired, revoked, or need a passphrase this environment
+cannot supply. Four states, never a boolean. No key material is ever printed,
+including on error.
+
+### A probe that passed for the wrong reason
+
+`policy-load`'s unknown-key probe first reported OK -- but only the multi-key
+test failed, via an incidental `KeyError` traceback from `VALIDATORS[key]`
+being indexed with an unknown key. A crash also exits non-zero, so the check
+looked tested while the operator would have received a stack trace naming only
+the first typo.
+
+The validator loop now iterates `KNOWN_KEYS` so a crash cannot mask the named
+message, and the test asserts `"unknown policy key"` in stderr AND
+`assertNotIn("Traceback")`. Under the corrected probe,
+`{"max_usd": 5.0, "require_reciept": true}` exits 0 with the receipt
+requirement silently dropped -- which is the defect in the flesh.
+
+### A green verdict over an empty table, then a second layer beneath it
+
+`gate-report` rendered `{"state":"PASS","policies":[]}` as green. Fixing the
+row synthesis exposed a deeper one: `_verdict_state` trusted the JSON header
+independently, so the summary line still read PASS above an UNEVALUABLE table.
+It now reconciles against the rows by weakest link, and `exit_code` reuses it,
+so the exit code can never disagree with the report a human just read.
+
+### Three signing findings, stated rather than implied
+
+`proof-generator.py:_gpg_detached_sign` returns `None` on EVERY failure and
+`proof-verify.py:_verify_gpg` returns `"n/a"` when gpg is unavailable, so a
+broken key produces silently unsigned receipts with no error anywhere. That
+silence is what the tool makes visible.
+
+`ok` and `gpg_absent` were proven by PATH shim only: this keyring has zero
+secret keys and creating one was out of scope. `not_configured` and `broken`
+were verified against real gpg 2.5.20.
+
+Follow-up NOT taken: `autonomy/loki:11764` still does the boolean check and
+prints PASS for an expired or revoked key.
+
 ## v8.96.0
 
 ### Cost across many runs, where one null row changes the answer by 56%

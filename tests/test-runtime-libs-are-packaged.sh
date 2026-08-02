@@ -63,6 +63,9 @@ LIBS=(
     "tools/model-advisor.py"              # cheaper-model recommendation
     "tools/run-replay.py"                 # per-iteration run reconstruction
     "tools/cost-history.py"               # cost trend across many runs
+    "tools/policy-load.py"                # version-controlled gate policy
+    "tools/gate-report.py"                # CI-native verdict rendering
+    "tools/signing-status.py"             # can this machine sign receipts
 )
 
 # --- they must exist in the repo first ---------------------------------------
