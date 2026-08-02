@@ -5,6 +5,50 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.73.0
+
+### A failed receipt verification now says exactly what is wrong
+
+The Evidence Receipt is the differentiator: of six installed CLIs (opencode,
+aider, codex, claude, cursor-agent, loki-mode), only loki-mode verifies its own
+output. A verifier that returns `ok: False` and nothing else spends that
+advantage -- the user learns the receipt is bad, not why.
+
+`verify_integrity()` now returns a `reasons` list naming every failed check:
+
+```
+FAILED
+  - hash mismatch: recorded 94b4f487..., computed 981d39c2... -- proof.json was
+    edited after it was written
+  - cost claim is incoherent: cost.available is true but every token count and
+    usd is zero or absent; the receipt claims a measurement it does not have
+    (an unmeasured run is unknown, not free)
+  - diff drift: the receipt recorded 99 files / +4242 / -1717, the repository
+    now has 1 files / +2 / -0
+```
+
+Three failures reported at once. A pre-existing singular `reason` field was
+first-wins, and its precedence is asserted by four existing suites, so it was
+left exactly as-is; `reasons` is additive alongside it. A `--human` flag renders
+the list.
+
+### The half-fix this avoided
+
+Building the list only inside `verify_integrity()` would have left `verify()`'s
+own eight failure sites -- diff drift, tree drift, unresolvable base --
+returning `ok: False` with an EMPTY list. That is the same generic-failure
+problem relocated rather than fixed, and it would have looked complete. All
+fourteen sites append.
+
+### Verdicts are unchanged, and that is asserted
+
+This explains a verdict; it never changes one. A verifier made more talkative
+but more permissive would be strictly worse than a quiet one. 244 proof-related
+tests pass unchanged, and the moat-breaking mutation -- forcing
+`cost_coherent` to always be true -- turns the suite red.
+
+A passing receipt reports an empty list, never a fabricated reason.
+
 ## v8.72.0
 
 ### The sixth and last surface that called an unmeasured run free

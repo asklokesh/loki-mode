@@ -550,15 +550,21 @@ def verify_integrity(proof):
         "headline_consistent": None,
         "degraded": _recorded_degraded(proof) if isinstance(proof, dict) else [],
         "reason": "",
+        "reasons": [],
         "ok": False,
     }
     if not isinstance(proof, dict):
         result["reason"] = "proof root is not a JSON object"
+        result["reasons"].append(result["reason"])
         return result
 
     verification = proof.get("verification")
     if not isinstance(verification, dict) or not verification.get("hash"):
         result["reason"] = "no verification.hash recorded; cannot prove integrity"
+        result["reasons"].append(
+            "integrity hash missing: the receipt records no verification.hash, "
+            "so there is nothing to re-compute against and tampering cannot be "
+            "ruled out")
         return result
 
     unsigned = dict(proof)
@@ -571,23 +577,33 @@ def verify_integrity(proof):
         result["reason"] = (
             "integrity hash mismatch (proof.json was edited after signing)"
         )
+        result["reasons"].append(
+            "hash mismatch: recorded %s, computed %s -- proof.json was edited "
+            "after it was written" % (recorded_hash, recomputed))
 
     result["gpg_ok"] = _verify_gpg(
         canonical_bytes, verification.get("gpg_signature")
     )
     result["generator_trusted"] = result["gpg_ok"] is not True
+    if result["gpg_ok"] is False:
+        result["reasons"].append(
+            "gpg signature verification failed: a signature is recorded but "
+            "gpg could not verify it against the canonical receipt bytes")
 
     recorded_headline = _recorded_headline(proof)
     facts = proof.get("facts")
     if recorded_headline is not None and isinstance(facts, dict):
         derived = _compute_headline(facts, _recorded_degraded_raw(proof))
         result["headline_consistent"] = derived == recorded_headline
-        if not result["headline_consistent"] and not result["reason"]:
-            result["reason"] = (
+        if not result["headline_consistent"]:
+            _headline_reason = (
                 "honesty.headline (%r) disagrees with the headline re-derived "
                 "from the recorded facts (%r); the headline was edited to "
                 "misrepresent the facts" % (recorded_headline, derived)
             )
+            if not result["reason"]:
+                result["reason"] = _headline_reason
+            result["reasons"].append(_headline_reason)
 
     # COST COHERENCE. The receipt is the product's trust artifact, and the
     # verifier checked hashes, diffs, gates and the headline -- but never cost.
@@ -636,6 +652,12 @@ def verify_integrity(proof):
         result["cost_coherent"] = not _bad
         if _bad and not result["reason"]:
             result["reason"] = _bad
+        # Keyed on cost_coherent, not on _bad: a mutation that forces the
+        # verdict True must not keep emitting the explanation it contradicts.
+        if result["cost_coherent"] is False:
+            result["reasons"].append(
+                "cost claim is incoherent: %s (unmeasured must read UNKNOWN, "
+                "never $0.00)" % _bad)
 
     result["ok"] = bool(
         result["hash_ok"]
@@ -645,6 +667,7 @@ def verify_integrity(proof):
     )
     if result["ok"]:
         result["reason"] = ""
+        result["reasons"] = []
     elif not result["reason"]:
         result["reason"] = (
             "gpg signature verification failed"
@@ -668,8 +691,14 @@ def verify(proof_path, repo_dir="."):
         headline_consistent: bool | None        see note below
         degraded:           [str]               honesty.degraded from the proof
         reason:             str                 why ok is False (when it is)
+        reasons:            [str]               EVERY failed check, spelled out
         ok:                 bool                overall verdict
       }
+
+    reason vs reasons: `reason` is the FIRST failure only (first-wins
+    precedence, unchanged -- callers and tests depend on it). `reasons` lists
+    every check that failed, so a receipt failing on both cost and drift says
+    so instead of naming one. It is empty exactly when ok is True.
 
     `ok` = hash_ok AND diff_drift is False AND gpg_ok in (True, "n/a")
            AND headline_consistent is not False.
@@ -697,6 +726,7 @@ def verify(proof_path, repo_dir="."):
     integrity = verify_integrity(proof)
     result = {
         **integrity,
+        "reasons": list(integrity.get("reasons") or []),
         "diff_drift": None,
         "diff_recheck": {"recorded": None, "current": None},
         "tree_drift": None,
@@ -720,17 +750,28 @@ def verify(proof_path, repo_dir="."):
         result["diff_drift"] = None
         if not result["reason"]:
             result["reason"] = "repo_dir is not a git work tree; drift unverifiable"
+        result["reasons"].append(
+            "drift unverifiable: %r is not a git work tree, so the recorded "
+            "diff cannot be re-derived (re-run from the repository the receipt "
+            "was generated in)" % repo_dir)
     elif not base_sha:
         # Schema v1.0 (or a v1.1 proof missing base_sha): no recorded base ref,
         # so the diff cannot be re-derived. Report honestly, do NOT pass.
         result["diff_drift"] = None
         if not result["reason"]:
             result["reason"] = "base ref unresolvable (no recorded base_sha; drift unverifiable)"
+        result["reasons"].append(
+            "drift unverifiable: the receipt records no base_sha, so there is "
+            "no starting point to re-derive the diff from (schema v1.0 receipt)")
     elif not _rev_resolvable(repo_dir, base_sha):
         result["diff_drift"] = None
         if not result["reason"]:
             result["reason"] = ("base ref unresolvable (%s not found in repo; "
                                 "drift unverifiable)" % base_sha)
+        result["reasons"].append(
+            "drift unverifiable: recorded base ref %s is not present in this "
+            "repository (fetch the branch, or verify against the repo the "
+            "receipt was generated in)" % base_sha)
     else:
         # Drift answers "does this receipt still describe the CURRENT branch
         # state". A receipt is for verifying the work as it stands now, so we
@@ -747,6 +788,9 @@ def verify(proof_path, repo_dir="."):
             result["diff_drift"] = None
             if not result["reason"]:
                 result["reason"] = "git diff could not be computed; drift unverifiable"
+            result["reasons"].append(
+                "drift unverifiable: git diff %s..HEAD could not be computed"
+                % base_sha)
         else:
             drift = False
             if recorded_stat is not None:
@@ -762,6 +806,10 @@ def verify(proof_path, repo_dir="."):
                 if not result["reason"]:
                     result["reason"] = ("no recorded diff stat to compare; "
                                         "drift unverifiable")
+                result["reasons"].append(
+                    "drift unverifiable: the repository diff was re-derived, "
+                    "but the receipt recorded no diff stat to compare it "
+                    "against")
 
             # diff_sha256: a stronger content check than the counts. Only when
             # the receipt recorded one (v1.1).
@@ -782,6 +830,17 @@ def verify(proof_path, repo_dir="."):
                 result["diff_drift"] = drift
                 if drift and not result["reason"]:
                     result["reason"] = "recorded diff no longer matches the repo (drift detected)"
+                if drift:
+                    result["reasons"].append(
+                        "diff drift: the receipt recorded %s files / +%s / -%s, "
+                        "the repository now has %s files / +%s / -%s -- the "
+                        "branch changed after the receipt was generated" % (
+                            recorded_stat.get("count"),
+                            recorded_stat.get("insertions"),
+                            recorded_stat.get("deletions"),
+                            current_stat.get("count"),
+                            current_stat.get("insertions"),
+                            current_stat.get("deletions")))
 
     recorded_tree = _recorded_tree_sha256(proof)
     result["tree_recheck"]["recorded"] = recorded_tree
@@ -791,10 +850,18 @@ def verify(proof_path, repo_dir="."):
         if not current_tree:
             if not result["reason"]:
                 result["reason"] = "final workspace tree could not be re-derived"
+            result["reasons"].append(
+                "workspace tree unverifiable: the receipt records a final tree "
+                "digest, but the current workspace tree could not be re-derived")
         else:
             result["tree_drift"] = current_tree != recorded_tree
             if result["tree_drift"] and not result["reason"]:
                 result["reason"] = "recorded final workspace tree no longer matches the repo"
+            if result["tree_drift"]:
+                result["reasons"].append(
+                    "workspace tree drift: recorded %s, computed %s -- the "
+                    "working tree changed after the receipt was generated" % (
+                        recorded_tree, current_tree))
 
     # ----- overall verdict -------------------------------------------------
     result["ok"] = bool(
@@ -804,11 +871,18 @@ def verify(proof_path, repo_dir="."):
     )
     if result["ok"]:
         result["reason"] = ""
-    elif not result["reason"]:
-        if result["gpg_ok"] is False:
-            result["reason"] = "gpg signature verification failed"
-        else:
-            result["reason"] = "verification failed"
+        result["reasons"] = []
+    else:
+        if not result["reason"]:
+            if result["gpg_ok"] is False:
+                result["reason"] = "gpg signature verification failed"
+            else:
+                result["reason"] = "verification failed"
+        # A failed verdict with no explanation is the bug this list exists to
+        # fix, so never emit one. Reaching here means a check failed without a
+        # matching append -- say so, rather than printing nothing.
+        if not result["reasons"]:
+            result["reasons"].append(result["reason"])
     return result
 
 
@@ -816,11 +890,33 @@ def verify(proof_path, repo_dir="."):
 # CLI shim (mirrors dashboard/audit.py _unified_cli style)
 # ---------------------------------------------------------------------------
 
+def render_reasons(result):
+    """Render a verdict as human-readable lines.
+
+    The JSON report is the machine surface; this is the one a person reads.
+    A passing receipt renders the verdict alone -- never a fabricated reason.
+    """
+    lines = ["VERIFIED" if result.get("ok") else "FAILED"]
+    for reason in (result.get("reasons") or []):
+        lines.append("  - %s" % reason)
+    return "\n".join(lines)
+
+
 def _cli(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help"):
         print(json.dumps(
-            {"error": "usage: proof-verify.py <proof.json> [repo_dir]"}))
+            {"error":
+             "usage: proof-verify.py [--human] <proof.json> [repo_dir]"}))
+        return 2
+    # Flags are stripped BEFORE positional parsing: proof.ts pipes this
+    # command's stdout through verbatim, so --human must not shift repo_dir.
+    human = "--human" in argv
+    argv = [a for a in argv if a != "--human"]
+    if not argv:
+        print(json.dumps(
+            {"error":
+             "usage: proof-verify.py [--human] <proof.json> [repo_dir]"}))
         return 2
     proof_path = argv[0]
     repo_dir = argv[1] if len(argv) > 1 else "."
@@ -832,7 +928,7 @@ def _cli(argv=None):
     except Exception as exc:  # defensive: never a traceback-as-UX
         print(json.dumps({"ok": False, "error": "verify failed: %s" % exc}))
         return 2
-    print(json.dumps(result, indent=2))
+    print(render_reasons(result) if human else json.dumps(result, indent=2))
     return 0 if result.get("ok") else 1
 
 
