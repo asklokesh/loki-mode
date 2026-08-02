@@ -5,6 +5,54 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.81.0
+
+### Every emit.sh event was attributed to "unknown"
+
+`events/emit.sh` built its flat record with a comment asserting that `source`
+is "not part of the dashboard schema", and dropped it. That claim was false
+against the very code it describes. `dashboard/server.py:6686`:
+
+```python
+s = e.get("data", {}).get("source", "unknown")
+by_source[s] = by_source.get(s, 0) + 1
+```
+
+exposed as `signalsBySource`. So every event routed through emit.sh fell into
+the `unknown` bucket and the entire by-source breakdown was meaningless.
+
+Before:
+```
+{"timestamp":"...","type":"state","data":{"action":"phase_change"}}
+dashboard attributes to: 'unknown'
+```
+
+After:
+```
+{"timestamp":"...","type":"state","data":{"source":"my-component","action":"phase_change"}}
+```
+
+The failure shape is the dangerous kind: no error, no warning, a populated
+chart that is simply wrong. Nobody goes looking for a bug in a number that
+renders.
+
+### Spliced, not appended
+
+`PAYLOAD` always opens with `{"action":...`, so `source` is inserted after the
+brace rather than the object being rebuilt. Rebuilding is where a caller's
+`key=value` pairs would silently vanish, so the test asserts those survive:
+`emit.sh task runner complete task_id=task-001` keeps `task_id` alongside the
+new field.
+
+### The test pins the writer to the reader
+
+It asserts the dashboard still reads `data.source` FIRST -- if that stops being
+true the rest of the test is measuring nothing -- then emits real events and
+parses them with the dashboard's own expression, byte for byte. A test that
+merely grepped emit.sh for the string would have passed while the reader moved.
+
+Removing the splice turns it red.
+
 ## v8.80.0
 
 ### Three more surfaces called an unmeasured run free

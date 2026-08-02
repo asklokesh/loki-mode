@@ -299,13 +299,24 @@ fi
 # only in the pending dir and stay INVISIBLE to the dashboard.
 #
 # Mapping: data = the existing PAYLOAD object (mirrors emit_event_json, where
-# `data` is a JSON object). `source` is intentionally dropped from the flat
-# record (not part of the dashboard schema); the pending file above preserves
-# it for other consumers. PAYLOAD is already newline-free (built on lines
+# `data` is a JSON object). PAYLOAD is already newline-free (built on lines
 # 127-135), so the record is a single compact line. The helper appends its own
 # trailing newline. `|| true` keeps observability from ever aborting the emit
 # under `set -e` (matches autonomy/run.sh:9896).
-FLAT_EVENT="{\"timestamp\":\"$TIMESTAMP\",\"type\":\"$TYPE_ESC\",\"data\":$PAYLOAD}"
+#
+# `source` IS part of the dashboard schema. The earlier comment here asserted
+# the opposite and dropped it, but dashboard/server.py:6686 reads
+# `data.source` and defaults it to "unknown", then exposes the tally as
+# `signalsBySource`. So every emit.sh-routed event was attributed to "unknown"
+# and the whole by-source breakdown was meaningless -- an attribution silently
+# lost rather than an error anyone could see.
+#
+# Spliced in rather than appended blindly: PAYLOAD always opens with
+# {"action":..., so inserting after the brace keeps a single valid object and
+# preserves any key=value pairs the caller passed.
+SOURCE_ESC="$(json_escape "$SOURCE")"
+FLAT_PAYLOAD="{\"source\":\"$SOURCE_ESC\",${PAYLOAD#\{}"
+FLAT_EVENT="{\"timestamp\":\"$TIMESTAMP\",\"type\":\"$TYPE_ESC\",\"data\":$FLAT_PAYLOAD}"
 # An ABSENT size reading is the empty string, NOT 0 -- see the vacuity note
 # below. A missing file legitimately measures 0 bytes; a `stat` that could not
 # run measures NOTHING, and the two must not collapse to the same value.
