@@ -5,6 +5,58 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.52.0
+
+### The receipt was claiming runs cost $0.00
+
+W2 in `docs/WANG-PRINCIPLES-PLAN.md` -- and a receipt-integrity defect on its
+own terms.
+
+`collect_efficiency` feeds the `cost` block of the Evidence Receipt. Its guard
+keyed on whether a record FILE could be parsed, not on whether the record
+carried any data. So a run whose efficiency records were all zeros produced:
+
+```
+{'usd': 0.0, 'input_tokens': 0, ..., 'available': True}
+```
+
+**The receipt asserting the run cost nothing.** The Evidence Receipt exists to
+prevent exactly that kind of fabricated fact.
+
+Measured, not hypothetical: the real FireLater run wrote four efficiency
+records with every token field 0 (codex emitted no usage before v8.51.0), and
+this function reported `usd=0.0, available=True`.
+
+A run that did work necessarily consumed tokens. All-zero therefore means **we
+failed to measure**, not **it was free** -- different claims, and only one is
+honest. `available` now requires an OBSERVED non-zero value.
+
+### Both directions guarded
+
+A guard so strict it suppressed genuine data would blank the cost block
+permanently, which is its own dishonesty. Three cases pinned:
+
+- real tokens + real cost -> still reported ($0.0187)
+- **tokens observed, model unpriced** -> still reported. This is the v8.51.0
+  shape: codex reports tokens and never dollars, so an unpriced model yields
+  real tokens with no cost. Discarding that would throw away a measurement we
+  did make.
+- no records at all -> unavailable, as before
+
+### W2's real blocker, recorded honestly
+
+`benchmarks/datasets/swebench-lite.json` is a **placeholder**
+(`"status": "PLACEHOLDER"`, `"problems": 300` is a count, not data), `swebench`
+is not installed, and a real run is ~300 problems x ~2 iterations x ~900s =
+**~150 hours of wall clock** plus hundreds of dollars at the measured ~$14/pass.
+
+That is a founder spending decision, not an engineering one, so it was not
+launched autonomously. What WAS blocking it in code -- a cost aggregate that
+could not distinguish free from unmeasured -- is fixed here, so
+cost-per-resolved-issue becomes computable the moment a real eval runs.
+
+Trust-core detector: 77 invariants.
+
 ## v8.51.0
 
 ### W1: codex runs recorded NO tokens and NO cost

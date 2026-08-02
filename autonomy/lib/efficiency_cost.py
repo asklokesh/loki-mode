@@ -111,7 +111,27 @@ def collect_efficiency(loki_dir):
         cost["cache_creation_tokens"] += _to_int(rec.get("cache_creation_tokens"))
         if rec.get("model"):
             model = str(rec.get("model"))
-    if collected:
+    # A record EXISTING is not the same as a record carrying data. `collected`
+    # was true for any parseable file, so a run whose records were all zeros
+    # reported usd=0.0 with available=True -- the receipt asserting the run cost
+    # NOTHING. That is a fabricated fact, and the receipt exists to prevent
+    # exactly that.
+    #
+    # Measured on the real FireLater run: four efficiency records, every token
+    # field 0 (codex wrote no usage before v8.51.0), and collect_efficiency
+    # returned {'usd': 0.0, ..., 'available': True}.
+    #
+    # A run that did work necessarily consumed tokens. So "available" now means
+    # at least one record carried a non-zero token count or cost -- an OBSERVED
+    # value, not a present file. Zero everywhere means we failed to measure, and
+    # unmeasured must read as unknown.
+    _observed = any(
+        cost[k] for k in (
+            "usd", "input_tokens", "output_tokens",
+            "cache_read_tokens", "cache_creation_tokens",
+        )
+    )
+    if collected and _observed:
         # Round usd to a sane precision but keep it precise (anti-pattern:
         # round suspiciously-clean numbers). 4 decimals preserves odd values.
         cost["usd"] = round(cost["usd"], 4)

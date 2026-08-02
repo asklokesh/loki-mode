@@ -607,6 +607,15 @@ probe_case "cached tokens are not double-counted as uncached input" \
     '    uncached = max(total_in - cached, 0)' '    uncached = total_in' \
     bash tests/test-codex-usage-cost.sh
 
+# W2: the receipt must not claim a run was free. collect_efficiency keyed its
+# availability flag on a record FILE existing rather than on the record carrying
+# data, so all-zero records reported usd=0.0 with available=True -- a fabricated
+# fact in the artifact whose entire purpose is preventing those.
+probe_case "an unmeasured cost reads unknown, never zero" \
+    "autonomy/lib/efficiency_cost.py" \
+    '    if collected and _observed:' '    if collected:' \
+    python3 -m pytest -q tests/test_efficiency_cost_availability.py
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
