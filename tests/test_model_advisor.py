@@ -423,5 +423,36 @@ class CliContract(unittest.TestCase):
         self.assertIn("NO BASIS", proc.stdout)
 
 
+
+class AMissingWorkspaceIsNotNoHistory(unittest.TestCase):
+    """Exit 0 collapsed two different facts.
+
+    "this workspace has no cost history" and "this workspace does not exist"
+    are opposite diagnoses, and a CI job doing `model-advisor.py "$WS" && ...`
+    on a mistyped or unmounted path saw green and carried on. Every sibling
+    tool distinguishes them (run-replay 66, cost-guard 2, receipt-bundle 3).
+
+    Both directions are asserted: the missing path must fail, and a REAL
+    workspace with genuinely no history must still succeed, because "no basis"
+    is an honest answer rather than a tool failure.
+    """
+
+    def _run(self, ws):
+        return subprocess.run(
+            [sys.executable, str(_ROOT / "tools" / "model-advisor.py"), ws],
+            capture_output=True, text=True, timeout=60)
+
+    def test_a_nonexistent_workspace_fails(self):
+        r = self._run("/nonexistent/definitely/not/here")
+        self.assertNotEqual(r.returncode, 0,
+                            "a missing workspace reported success")
+        self.assertIn("does not exist", r.stderr)
+
+    def test_a_real_workspace_with_no_history_still_succeeds(self):
+        with tempfile.TemporaryDirectory() as d:
+            r = self._run(d)
+            self.assertEqual(r.returncode, 0, r.stderr[:200])
+            self.assertIn("NO BASIS", r.stdout)
+
 if __name__ == "__main__":
     unittest.main()

@@ -484,10 +484,21 @@ def main(argv=None):
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 
+    # A workspace that does not EXIST is not the same fact as a workspace with
+    # no cost history, and exit 0 collapsed them. A CI job doing
+    # `model-advisor.py "$WS" && ...` on a mistyped or unmounted path saw green
+    # and carried on. Every sibling tool distinguishes these (run-replay 66,
+    # cost-guard 2, receipt-bundle 3); this one did not.
+    if not os.path.isdir(args.workspace):
+        sys.stderr.write(
+            "cannot advise: workspace does not exist: %s\n" % args.workspace)
+        return 66
+
     adv = advise(args.workspace)
     print(json.dumps(adv, indent=2) if args.json else render(adv))
-    # Exit 0 either way: "no basis" is a successful, honest answer, not a tool
-    # failure. Callers read has_basis.
+    # Exit 0 for a real workspace with no basis: that IS a successful, honest
+    # answer rather than a tool failure, and the output says so in words.
+    # Callers read has_basis.
     return 0
 
 

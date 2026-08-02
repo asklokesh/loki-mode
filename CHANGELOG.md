@@ -5,6 +5,60 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.96.0
+
+### Cost across many runs, where one null row changes the answer by 56%
+
+`tools/cost-history.py` appends each run's measured cost to a durable JSONL
+history and reports the trend. `cost-guard` gates ONE run; `receipt-diff`
+compares TWO; nothing tracked spend over time.
+
+```
+5 run(s), 4 measured
+costs oldest to newest: $0.1100, $0.1200, $0.4000, $0.4600
+median: $0.2600
+direction: rising (median of the oldest 2 ($0.1150) vs the newest 2 ($0.4300); +273.9%)
+```
+
+**The median is $0.2600. Had the unmeasured run been stored as 0 it would read
+$0.1150 -- understating real spend by 56%.** That single number is the whole
+feature.
+
+An unmeasured run is recorded with an explicit `null` and EXCLUDED from the
+trend, rather than refused. Refusal leaves no trace: a month with four
+broken-instrumentation runs would look byte-identical to a month with eight
+clean ones. A null row is countable, so the report says "5 run(s), 4 measured"
+and the gap is visible instead of inferred from a short file.
+
+A trend from one point reads INSUFFICIENT DATA, never "flat" -- flat is a
+claim. A corrupt line is COUNTED and reported, never skipped. An empty history
+exits non-zero: zero runs is not a flat trend.
+
+On durability, the append is a single `O_APPEND` write, and the reasoning is
+recorded rather than assumed: write-temp-and-rename would be WORSE here because
+it rewrites the whole history each time, turning a crash into loss of every
+prior run instead of a partial final line. The residual risk is a truncated
+last line, which is why the newline terminator is load-bearing and why the
+corrupt counter exists.
+
+### `model-advisor` reported success on a workspace that does not exist
+
+```
+$ model-advisor.py /nonexistent/path ; echo $?
+NO BASIS: no measured, priced iteration in this workspace.
+0
+```
+
+The TEXT was honest. The EXIT CODE was not: a CI job doing
+`model-advisor.py "$WS" && ...` on a mistyped or unmounted path saw green and
+carried on. "This workspace has no history" and "this workspace does not exist"
+are opposite diagnoses, and exit 0 collapsed them.
+
+A missing workspace now exits 66, matching how every sibling distinguishes the
+case (`run-replay` 66, `cost-guard` 2, `receipt-bundle` 3). A REAL workspace
+with genuinely no history still exits 0, because "no basis" is an honest answer
+rather than a tool failure -- both directions are asserted.
+
 ## v8.95.0
 
 ### `receipt-attest --help` issued a verification verdict about a file nobody named

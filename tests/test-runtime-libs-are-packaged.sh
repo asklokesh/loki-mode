@@ -62,6 +62,7 @@ LIBS=(
     "tools/receipt-bundle.py"             # audit trail across a run sequence
     "tools/model-advisor.py"              # cheaper-model recommendation
     "tools/run-replay.py"                 # per-iteration run reconstruction
+    "tools/cost-history.py"               # cost trend across many runs
 )
 
 # --- they must exist in the repo first ---------------------------------------
