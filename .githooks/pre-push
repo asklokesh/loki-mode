@@ -71,7 +71,23 @@ fi
 # Note the exit code is captured BEFORE the pipe: `pytest | tail` under pipefail
 # reports tail's status when pytest floods a closed pipe, which would have
 # green-washed a genuine failure.
-if command -v python3 >/dev/null 2>&1 && [[ -f pytest.ini ]]; then
+# WHICH interpreter. GitHub CI runs Python 3.12. A dev Mac may run 3.14, and
+# the two disagree in ways that reached main twice in one day:
+#
+#   v8.61.0  Release red on `NameError: name 'Any' is not defined`, green
+#            locally. 3.14 defers annotations unconditionally (PEP 649), so an
+#            exec'd source slice never evaluates them; 3.12 does.
+#   (same)   A code-index skip filter matched substrings of the ABSOLUTE path,
+#            emptying the index for any checkout under `.claude/`. Invisible on
+#            3.14, where chromadb fails to import and the caller silently falls
+#            back to a different file list.
+#
+# This hook ran bare `python3` and saw NEITHER. Prefer the interpreter CI
+# actually uses, so a local green predicts a CI green.
+_PY=python3
+command -v python3.12 >/dev/null 2>&1 && _PY=python3.12
+
+if command -v "$_PY" >/dev/null 2>&1 && [[ -f pytest.ini ]]; then
     _range_base="$(git merge-base HEAD origin/main 2>/dev/null || echo "")"
     if [[ -n "$_range_base" ]]; then
         _changed="$(git diff --name-only "$_range_base"..HEAD 2>/dev/null || echo "FALLBACK")"
@@ -104,13 +120,13 @@ if command -v python3 >/dev/null 2>&1 && [[ -f pytest.ini ]]; then
     elif [[ -n "$(comm -23 <(sort -u <<<"$_non_doc") <(sort -u <<<"$_scopable"))" ]]; then
         # Something other than a plain test module changed (source, shell,
         # JSON, conftest, or the no-merge-base fallback) -- run everything.
-        echo "[pre-push] python3 -m pytest -q (full: non-test source changed)"
+        echo "[pre-push] $_PY -m pytest -q (full: non-test source changed)"
     else
         # Only self-contained test modules changed -- run exactly those.
         while IFS= read -r _f; do
             [[ -n "$_f" && -f "$_f" ]] && _pytest_args+=("$_f")
         done <<<"$_scopable"
-        echo "[pre-push] python3 -m pytest -q ${_pytest_args[*]}"
+        echo "[pre-push] $_PY -m pytest -q ${_pytest_args[*]}"
     fi
 
     if [[ $_run_pytest -eq 1 ]]; then
@@ -127,7 +143,7 @@ if command -v python3 >/dev/null 2>&1 && [[ -f pytest.ini ]]; then
         _pytest_out="$(env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE \
                            -u GIT_PREFIX -u GIT_OBJECT_DIRECTORY \
                            -u GIT_COMMON_DIR -u GIT_QUARANTINE_PATH \
-                           python3 -m pytest -q "${_pytest_args[@]+"${_pytest_args[@]}"}" 2>&1)" \
+                           "$_PY" -m pytest -q "${_pytest_args[@]+"${_pytest_args[@]}"}" 2>&1)" \
             && _pytest_rc=0 || _pytest_rc=$?
         if [[ $_pytest_rc -ne 0 ]]; then
             tail -25 <<<"$_pytest_out" >&2

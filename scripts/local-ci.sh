@@ -520,8 +520,25 @@ fi
 # The parallelism win is still real: the bash -n and shellcheck lanes launched
 # ABOVE run concurrently with this pytest block. The per-name array entries the
 # comments below justify are preserved.
+# CI's interpreter, not the newest one on the box. GitHub CI runs Python 3.12;
+# a dev Mac may run 3.14, and the two DISAGREE in ways that reached main twice
+# in one day:
+#
+#   v8.61.0  Release red on `NameError: name 'Any' is not defined`, green
+#            locally. 3.14 defers annotations unconditionally (PEP 649) so an
+#            exec'd source slice never evaluates them; 3.12 does.
+#   (same)   A code-index skip filter matched substrings of the ABSOLUTE path,
+#            emptying the index for any checkout under `.claude/`. Visible only
+#            on 3.12: on 3.14 chromadb fails to import and the caller silently
+#            falls back to a different file list.
+#
+# Deliberately ONE run, not both. 3.12 is the pass that predicts CI, and this
+# tier is the release gate the founder shortened for cadence -- a second
+# blanket run costs ~92s to protect a runtime CI does not use. Newer-runtime
+# coverage belongs in the FULL tier, not in front of every push.
 if command -v python3.12 >/dev/null 2>&1; then
-  run_check "python3.12 -m pytest -q" "python3.12 -m pytest -q 2>&1 | tail -10"
+  run_check "python3.12 -m pytest -q (CI interpreter)" \
+    "python3.12 -m pytest -q 2>&1 | tail -10"
 elif command -v python3 >/dev/null 2>&1; then
   run_check "python3 -m pytest -q" "python3 -m pytest -q 2>&1 | tail -10"
 else

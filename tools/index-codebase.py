@@ -320,6 +320,19 @@ def chunk_markdown_file(filepath: Path) -> list[dict]:
     return chunks
 
 
+def _is_skipped(p: Path) -> bool:
+    """True when a path lies inside a skipped directory.
+
+    Compares components of the path RELATIVE to PROJECT_ROOT. An absolute-path
+    substring test makes indexing depend on where the repo happens to live.
+    """
+    try:
+        rel = p.resolve().relative_to(PROJECT_ROOT)
+    except ValueError:
+        return False
+    return any(part in SKIP_DIRS for part in rel.parts)
+
+
 def collect_files() -> list[tuple[Path, str]]:
     """Collect all files to index with their type."""
     files = []
@@ -335,7 +348,12 @@ def collect_files() -> list[tuple[Path, str]]:
         for p in sorted(PROJECT_ROOT.glob(glob_pattern)):
             if p.name.startswith("__"):
                 continue
-            if any(skip in str(p) for skip in SKIP_DIRS):
+            # Match path COMPONENTS relative to the project root, never a
+            # substring of the absolute path. `.claude` in SKIP_DIRS plus a
+            # checkout living under .../.claude/worktrees/<name>/ meant EVERY
+            # python file matched and the index came back empty -- silently, as
+            # a search that returns nothing rather than an error.
+            if _is_skipped(p):
                 continue
             files.append((p, "python"))
 

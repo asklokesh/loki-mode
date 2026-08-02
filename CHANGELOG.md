@@ -5,6 +5,55 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.63.0
+
+### Two releases died to one blind spot: the local gate ran the wrong Python
+
+GitHub CI runs **Python 3.12**. This Mac runs **3.14**. `.githooks/pre-push`
+invoked bare `python3`, so every local green was measured on an interpreter CI
+does not use. Two bugs walked straight through it.
+
+**1. `NameError: name 'Any' is not defined`** (5 dashboard liveness tests).
+`tests/dashboard/test_status_registry_liveness.py` `exec`s a sliced function
+out of `dashboard/server.py`. The `from __future__ import annotations` at the
+top of server.py does NOT travel with a slice, and
+`_safe_json_read(default: Any = None)` puts an annotation in a **default
+value**, which evaluates at def time. Python 3.14 defers annotations
+unconditionally (PEP 649) and never evaluates it; 3.12 does, and raises. The
+slice now declares its own deferral.
+
+This is what failed v8.61.0's Release, which is why **v8.61.0 and v8.62.0 were
+both built but never tagged or published**. This release unblocks both.
+
+**2. The code index was empty for any checkout under `.claude/`.**
+`tools/index-codebase.py` filtered with
+`any(skip in str(p) for skip in SKIP_DIRS)` -- a substring test against the
+**absolute** path. `SKIP_DIRS` contains `.claude`, so a worktree at
+`.../.claude/worktrees/<name>/` matched on every file and collected **zero**
+Python sources. Now matched by path COMPONENT relative to the project root:
+515 -> 581 files, `memory/` restored (18 files), skip dirs still excluded.
+
+The failure mode is the dangerous kind: no error, just a code search that
+quietly returns nothing. It surfaced only on 3.12 -- on 3.14 chromadb fails to
+import and the caller silently falls back to a *different* file list that
+happens to include `memory/`.
+
+### The fix is to the gate, not just the bugs
+
+`.githooks/pre-push` (the tracked hook, wired via `core.hooksPath`) now prefers
+`python3.12` when present, so a local green predicts a CI green.
+
+`scripts/local-ci.sh` labels its run the CI interpreter but deliberately runs
+**one** interpreter, not two: 3.12 is the pass that predicts CI, and the fast
+tier is the release gate kept short for cadence. A second blanket run costs
+~92s to protect a runtime CI never uses.
+
+Mutation-proven both directions: reverting the substring filter turns the suite
+red, and neutering the filter entirely (so `node_modules` leaks in) also turns
+it red.
+
+Trust-core detector: 93 invariants.
+
 ## v8.62.0
 
 ### Why we are slower: 10.65M tokens in, 34.7K tokens out

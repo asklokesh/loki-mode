@@ -38,10 +38,16 @@ healthy forever.
 import json
 import os
 import pathlib
+import shutil
+import subprocess
 import tempfile
 import unittest
 
 _SERVER = pathlib.Path(__file__).resolve().parents[2] / "dashboard" / "server.py"
+# Absolute, resolved at import of the ORIGINAL file, so a copied/mutated test
+# still points at the real server.py instead of walking off the filesystem.
+_REAL_SERVER = _SERVER if _SERVER.is_file() else pathlib.Path(
+    __import__("os").environ.get("LOKI_SERVER_PY", "")) 
 
 
 def _load():
@@ -59,12 +65,72 @@ def _load():
         return "\n".join(lines[start:end])
 
     ns = {}
+    # `from __future__ import annotations` sits at the top of server.py but does
+    # NOT come along with a sliced function, so under Python < 3.14 the slice
+    # evaluates its annotations EAGERLY -- and `_safe_json_read(default: Any)`
+    # puts one in a default value, which runs at def time. Python 3.14 defers
+    # annotations by default (PEP 649), so a local 3.14 run passes while CI's
+    # 3.12 raises NameError. That is exactly how this shipped red.
+    #
+    # Re-declaring the future import makes the slice behave identically on
+    # every version instead of depending on the interpreter's default.
     exec(  # noqa: S102 - deliberate, scoped
-        "import os, json\nfrom pathlib import Path as _Path\n"
+        "from __future__ import annotations\n"
+        "import os, json\nfrom typing import Any\n"
+        "from pathlib import Path as _Path\n"
         + slice_fn("_safe_json_read") + "\n" + slice_fn("_registry_run_alive"),
         ns,
     )
     return ns["_registry_run_alive"]
+
+
+class ExecNamespaceIsVersionIndependent(unittest.TestCase):
+    """The slice must not depend on the interpreter's annotation default.
+
+    v8.61.0's Release went red with `NameError: name 'Any' is not defined` on
+    five tests that were green locally. `from __future__ import annotations`
+    sits atop server.py but does NOT travel with a sliced function, so under
+    Python < 3.14 the slice evaluates annotations EAGERLY -- and
+    `_safe_json_read(default: Any = None)` puts one in a DEFAULT VALUE, which
+    runs at def time. Local Python 3.14 defers annotations (PEP 649) and never
+    evaluates it; CI's 3.12 does, and raises.
+
+    A local `pytest -q` on 3.14 therefore CANNOT catch this class of bug. This
+    asserts the namespace directly, so it fails on every interpreter.
+    """
+
+    def test_the_loader_works_on_the_interpreter_ci_uses(self):
+        """Re-runs the liveness tests under Python 3.12 -- CI's interpreter.
+
+        THIS CANNOT BE SIMULATED. On Python 3.14 (PEP 649) annotations are
+        deferred UNCONDITIONALLY: stripping the future import changes nothing,
+        and an in-process "eager" probe passes no matter how broken the
+        namespace is. Three successive guards written that way all reported
+        green while both mutations survived.
+
+        So the only honest check is to execute on a 3.12 that evaluates
+        annotations eagerly. Skipped, never faked, when none is installed.
+        """
+        py = shutil.which("python3.12") or shutil.which("python3.13")
+        if not py:
+            self.skipTest("no pre-3.14 interpreter available to check against")
+        r = subprocess.run(
+            [py, "-m", "pytest", str(pathlib.Path(__file__).resolve()),
+             "-q", "-k", "RegistryLivenessTests"],
+            capture_output=True, text=True, timeout=300)
+        self.assertEqual(
+            r.returncode, 0,
+            "the liveness tests fail on {} -- the exec namespace is missing a "
+            "name its annotations need, exactly as v8.61.0's Release did:\n{}"
+            .format(py, r.stdout[-2000:]))
+
+    def test_the_future_import_leads_the_preamble(self):
+        """Belt and braces: the slice declares its own deferral."""
+        src = pathlib.Path(__file__).read_text(encoding="utf-8")
+        self.assertIn(
+            "from __future__ import annotations\\n", src,
+            "the slice no longer declares deferral, so it inherits the "
+            "interpreter default and CI can diverge from local again")
 
 
 class RegistryLivenessTests(unittest.TestCase):
