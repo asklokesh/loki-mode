@@ -2083,6 +2083,59 @@ cmd_start() {
         esac
     done
 
+    # Explicit-provider pre-flight. Runs BEFORE provider_offer_gate below, and
+    # is deliberately narrower than it.
+    #
+    # provider_offer_gate passes when ANY provider is on PATH, so `--provider
+    # codex` on a claude-only machine sails through it and dies much later in
+    # the runner. And when NOTHING is installed the gate offers to install
+    # CLAUDE, which is a nudge toward substituting a provider the user did not
+    # ask for. An explicit choice that cannot be honoured is an error, never a
+    # silent (or suggested) swap: running a different model than the one asked
+    # for is worse than failing.
+    #
+    # Only guards an EXPLICIT choice (--provider flag or LOKI_PROVIDER). The
+    # default path returns immediately and still gets the friendly install
+    # offer below. The later check at the "Pre-flight: check that the provider
+    # CLI is installed" block stays: it covers effective_provider, which
+    # includes the default, so the two have different scopes.
+    local _pf_explicit="${provider:-${LOKI_PROVIDER:-}}"
+    if [ -n "$_pf_explicit" ] && ! command -v "$_pf_explicit" >/dev/null 2>&1; then
+        # Provider name == binary name here, same assumption as the existing
+        # check below and provider-offer.sh:53. opencode is included; it is in
+        # SUPPORTED_PROVIDERS but missing from the older lists.
+        local _pf_installed=""
+        local _pf_p
+        for _pf_p in claude codex cline aider opencode; do
+            if command -v "$_pf_p" >/dev/null 2>&1; then
+                _pf_installed="${_pf_installed:+$_pf_installed }$_pf_p"
+            fi
+        done
+
+        echo -e "${RED}Error: you asked for provider '$_pf_explicit', but its CLI is not installed.${NC}" >&2
+        echo "" >&2
+        echo "Install it:" >&2
+        case "$_pf_explicit" in
+            claude)   echo "  npm install -g @anthropic-ai/claude-code" >&2 ;;
+            codex)    echo "  npm install -g @openai/codex" >&2 ;;
+            cline)    echo "  npm install -g cline" >&2 ;;
+            aider)    echo "  pip install aider-chat" >&2 ;;
+            opencode) echo "  npm install -g opencode-ai" >&2 ;;
+            *)        echo "  No install command is known for '$_pf_explicit'." >&2 ;;
+        esac
+        echo "" >&2
+        if [ -n "$_pf_installed" ]; then
+            echo "Installed providers on this machine: $_pf_installed" >&2
+            echo "Re-run with one of those, e.g. loki start --provider ${_pf_installed%% *}" >&2
+        else
+            echo "No supported provider CLI is installed on this machine." >&2
+            echo "Supported providers: claude, codex, cline, aider, opencode" >&2
+        fi
+        echo "" >&2
+        echo "Loki will not silently run a different provider than the one you asked for." >&2
+        exit 1
+    fi
+
     # v7.29.0: provider pre-flight gate. If no provider CLI is installed, offer
     # to install one (TTY) or print honest manual instructions and exit 2
     # (non-TTY/CI), BEFORE any spend or runner entry. This moves what used to be

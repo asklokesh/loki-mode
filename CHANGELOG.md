@@ -5,6 +5,54 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.66.0
+
+### Asking for a provider you do not have now fails immediately, and never substitutes
+
+`--provider codex` on a machine without Codex used to get most of the way into
+a run first. The existing guard sat after `load_memory_context`, the event
+emit, the cli-provider marker write, and the "Starting Loki Mode... Provider:
+codex" banner -- so the operator watched it announce a provider it was about to
+reject.
+
+The preflight now runs before any of that, and only for an EXPLICIT choice
+(`--provider` or `LOKI_PROVIDER`):
+
+```
+Error: you asked for provider 'codex', but its CLI is not installed.
+
+Install it:
+  npm install -g @openai/codex
+
+Installed providers on this machine: claude
+Re-run with one of those, e.g. loki start --provider claude
+
+Loki will not silently run a different provider than the one you asked for.
+```
+
+**It never falls back.** Quietly running a different model than the one asked
+for is worse than failing, so substitution is asserted against as its own test
+and mutation-proven: dropping the `exit 1` lets the run fall through to the
+start path, and the suite turns red.
+
+### Why the existing check was not enough, and why it stays
+
+`provider_offer_gate` passes when **any** provider is on PATH, so an explicit
+`--provider codex` on a claude-only box sailed straight through it. The later
+check at `autonomy/loki:2689` did catch the case, but only after the banner --
+and it fires on the *effective* provider, which includes the auto-detected
+default. Removing it would regress "default claude, only codex installed", so
+both remain, with different scopes.
+
+### Known gaps, stated rather than implied
+
+- Scoped to `cmd_start`. The `--provider` parse sites in `cmd_quick` keep their
+  own narrower checks; this is not a global fix.
+- Neither this check nor the one at 2689 calls `validate_provider`, so
+  `--provider <any-binary-on-PATH>` still passes both. Pre-existing, unchanged.
+- Explicit provider with nothing installed now exits **1** rather than 2. The
+  default path is untouched and still exits 2.
+
 ## v8.65.0
 
 ### The check that guards the shipped package was missing from the default route
