@@ -29,6 +29,21 @@ from typing import Optional, List, Dict, Any
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# THE canonical "was this actually measured?" predicate, imported (never
+# restated) from autonomy/lib/efficiency_cost.py. That module's docstring is
+# explicit that a second copy of this rule is how the honesty rule drifts.
+# autonomy/lib has no __init__.py, so it goes on sys.path by file-relative
+# path -- the same pattern tests/test_bench_adapters.py uses. Both autonomy/
+# and mcp/ ship in package.json files[], so this resolves in the npm tarball.
+sys.path.insert(
+    0,
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "autonomy", "lib",
+    ),
+)
+from efficiency_cost import record_is_measured  # noqa: E402
+
 # Import event bus for tool call events
 try:
     from events.bus import EventBus, EventType, EventSource, LokiEvent
@@ -1467,6 +1482,47 @@ async def loki_project_status() -> str:
         return json.dumps({"error": str(e)})
 
 
+_EFFICIENCY_MEASURED_FIELDS = (
+    "cost_usd",
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_creation_tokens",
+)
+
+
+def _honest_efficiency_record(rec):
+    """Blank cost/token fields on a record that carries NO observed value.
+
+    loki_agent_metrics is machine-consumed: another agent reads this and does
+    budget accounting on it. Returning cost_usd=0 for a run we simply failed to
+    measure asserts the run was FREE, which is a fabricated fact -- the same
+    class that cost this repo six releases. An unmeasured value must read as
+    null, never as zero.
+
+    The measured/unmeasured decision is delegated wholesale to
+    record_is_measured() (autonomy/lib/efficiency_cost.py), so this surface and
+    the receipt cannot drift apart.
+
+    A genuinely measured ZERO is preserved: record_is_measured() looks at ALL
+    five fields, so a record with cost_usd=0.002 and input_tokens=0 is measured
+    and is returned UNTOUCHED -- that 0 stays 0. The decision is therefore made
+    once for the WHOLE record, never per field: 0 is falsy, so a per-field falsy
+    test would blank exactly those genuine measured zeros (the v8.72.0 trap).
+    """
+    if not isinstance(rec, dict):
+        return rec
+    if record_is_measured(rec):
+        return rec
+    out = dict(rec)
+    for key in _EFFICIENCY_MEASURED_FIELDS:
+        if key in out:
+            out[key] = None
+    # Explicit, so a consumer can tell "we did not measure" from "absent key".
+    out["measured"] = False
+    return out
+
+
 @mcp.tool()
 async def loki_agent_metrics() -> str:
     """
@@ -1486,7 +1542,9 @@ async def loki_agent_metrics() -> str:
                 if fname.endswith('.json'):
                     fpath = safe_path_join('.loki', 'metrics', 'efficiency', fname)
                     with safe_open(fpath, 'r') as f:
-                        metrics["agents"].append(json.load(f))
+                        metrics["agents"].append(
+                            _honest_efficiency_record(json.load(f))
+                        )
 
         # Read token economics
         econ_path = safe_path_join('.loki', 'metrics', 'token-economics.json')

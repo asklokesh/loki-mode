@@ -5,6 +5,74 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.80.0
+
+### Three more surfaces called an unmeasured run free
+
+The class that took v8.51.0 through v8.54.0, then v8.69.0, v8.72.0 and v8.74.0.
+Six surfaces were fixed; these three were never audited.
+
+**`/api/cost`** had no measured/unmeasured concept at all. The user-facing cost
+endpoint rendered `estimated_cost_usd: 0.0` and `total_tokens: 0` for a run
+where nothing was recorded.
+
+**`/api/cost/timeline`** already had the right FIELD and set it wrong:
+`for data in records: cost_recorded = True` -- true for any parseable file. The
+canonical docstring forbids exactly this: *a present file is not a
+measurement*.
+
+**`loki_agent_metrics`** (MCP) returned efficiency records verbatim. This one
+has the widest blast radius: it is machine-consumed, so a downstream agent doing
+budget accounting reads `cost_usd: 0`, concludes the run was free, and no human
+is present to sanity-check it.
+
+All three now mirror `record_is_measured()` rather than restating the rule, and
+the decision is made once per RECORD, never per field -- `0` is falsy, so a
+per-field test would blank genuine measured zeros.
+
+### A test was asserting the lie
+
+`test_recorded_but_zero_distinct_from_not_recorded` used an all-zero fixture
+byte-identical to the canonical UNMEASURED shape, so it locked in "present file
+== measured". The regression net had a hole shaped exactly like the defect. Its
+fixture is now a genuine measured zero (real tokens, $0 cost), with a separate
+test for the all-zero case.
+
+### An emitted event could vanish with a receipt
+
+`events/emit.sh` discarded the append result, and the exit code could not carry
+a failure anyway: both best-effort fallback paths end in `|| true; return 0`.
+Probed against an unwritable `events.jsonl`:
+
+```
+ab585200
+EXIT=0
+--- jsonl size --- 0
+```
+
+An ID printed, exit 0, zero bytes written. `measure-run.sh` skips absent lines
+by design, so the loss surfaces as "0 events for a stage" -- an absent
+measurement read as "the stage did not happen".
+
+It now warns on stderr only: stdout still carries just the event ID so the
+`ID=$(bash emit.sh ...)` contract holds, the check sits inside an `if` so a
+failing `stat` cannot trip `set -e`, and the exit status stays 0. An emit
+failure must never crash a build.
+
+A false positive was caught during development and is pinned by its own test:
+defaulting an unmeasurable size probe to `0` made EVERY successful emit warn.
+A warning that cries wolf on the hot path is worse than none, so an
+unmeasurable size stays silent.
+
+### Recorded, not fixed
+
+`emit.sh` claims `source` is "not part of the dashboard schema", but
+`dashboard/server.py:6678` filters on `data.source` and `:6687` counts
+`by_source`, so emit.sh-routed events are attributed `unknown`. Separately,
+`bus.py` and `bus.ts` `emit()` write only the pending file and never reach
+`events.jsonl`, and their timestamp format differs from emit.sh in the same
+directory while `get_pending_events` compares timestamps as strings.
+
 ## v8.79.0
 
 ### Every autonomous opencode run would hang

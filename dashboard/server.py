@@ -7359,6 +7359,49 @@ def _get_model_pricing() -> dict:
     return _MODEL_PRICING
 
 
+# The five fields whose presence makes ONE efficiency record a measurement.
+# Mirrors _MEASURED_FIELDS in autonomy/lib/efficiency_cost.py, which is the
+# canonical source. Kept as a local copy deliberately: the dashboard must not
+# sys.path-hack into autonomy/lib at request time just to read a constant.
+_MEASURED_FIELDS = (
+    "cost_usd",
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_creation_tokens",
+)
+
+
+def _record_is_measured(rec: Any) -> bool:
+    """True when ONE efficiency record actually carries an observed value.
+
+    Mirrors record_is_measured() in autonomy/lib/efficiency_cost.py. Same field
+    list, same bool exclusion, same semantics -- read that docstring for the
+    reasoning. Do not let the two drift.
+
+    A PRESENT FILE IS NOT A MEASUREMENT. A run that did work necessarily
+    consumed tokens, so an all-zero record means we FAILED TO MEASURE, and
+    unmeasured must read as unknown rather than as free. This is the same
+    defect fixed on the receipt (v8.52.0), the prompt (v8.53.0), the verifier
+    (v8.54.0), the cost summary (v8.69.0) and kpis.ts (v8.72.0/v8.74.0); the
+    two dashboard cost readers were never audited for it.
+
+    Note the `and v` is a truthiness test on ONE field of ONE record, which is
+    the intended rule (zero contributes no evidence). It is NOT a guard on the
+    aggregate: a set of measured records summing to $0.00 is a real measured
+    zero and must still render 0.0, never null.
+    """
+    if not isinstance(rec, dict):
+        return False
+    for key in _MEASURED_FIELDS:
+        v = rec.get(key)
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)) and v:
+            return True
+    return False
+
+
 def _calculate_model_cost(
     model: str,
     input_tokens: int,
@@ -7414,6 +7457,8 @@ def _compute_cost_snapshot() -> dict:
     budget_limit = None
     budget_used = 0.0
     budget_remaining = None
+    # Did ANY record carry an observed value? Not "was a file present".
+    cost_recorded = False
 
     # Read efficiency files (one JSON file per iteration/task).
     # Use the iteration-*.json pattern so this reader sees the same
@@ -7430,6 +7475,8 @@ def _compute_cost_snapshot() -> dict:
                 # AttributeError. Skip such files rather than 500 the endpoint.
                 if not isinstance(data, dict):
                     continue
+                if _record_is_measured(data):
+                    cost_recorded = True
 
                 inp = data.get("input_tokens", 0)
                 out = data.get("output_tokens", 0)
@@ -7483,6 +7530,10 @@ def _compute_cost_snapshot() -> dict:
                 total_input = totals.get("total_input", 0)
                 total_output = totals.get("total_output", 0)
                 if total_input > 0 or total_output > 0:
+                    # Real observed tokens from the context tracker: this IS a
+                    # measurement, even if the recorded USD total happens to
+                    # be 0.
+                    cost_recorded = True
                     estimated_cost = totals.get("total_cost_usd", 0.0)
                     # Rebuild by_model and by_phase from per_iteration data
                     for it in ctx.get("per_iteration", []):
@@ -7519,14 +7570,21 @@ def _compute_cost_snapshot() -> dict:
     # expensive condition, so reporting it for a run with no data would send
     # someone hunting a caching problem that does not exist.
     _read_in = total_input + total_cache_read
+    # Unmeasured reads as null, never as 0/$0.00. `cost_recorded` is True when
+    # at least one record carried an OBSERVED value (_record_is_measured), so a
+    # set of measured records that genuinely sums to zero still renders 0.0 --
+    # the direction that would otherwise blank real data (the v8.72.0 trap).
     return {
-        "total_input_tokens": total_input,
-        "total_output_tokens": total_output,
-        "total_cache_read_tokens": total_cache_read,
-        "total_cache_creation_tokens": total_cache_creation,
-        "total_tokens": total_input + total_output + total_cache_read + total_cache_creation,
+        "total_input_tokens": total_input if cost_recorded else None,
+        "total_output_tokens": total_output if cost_recorded else None,
+        "total_cache_read_tokens": total_cache_read if cost_recorded else None,
+        "total_cache_creation_tokens": total_cache_creation if cost_recorded else None,
+        "total_tokens": (
+            total_input + total_output + total_cache_read + total_cache_creation
+        ) if cost_recorded else None,
         "cache_hit_ratio": round(total_cache_read / _read_in, 4) if _read_in > 0 else None,
-        "estimated_cost_usd": round(estimated_cost, 6),
+        "estimated_cost_usd": round(estimated_cost, 6) if cost_recorded else None,
+        "cost_recorded": cost_recorded,
         "by_phase": {k: {
             "input_tokens": v["input_tokens"],
             "output_tokens": v["output_tokens"],
@@ -7785,7 +7843,13 @@ def _compute_cost_timeline() -> dict:
         records.sort(key=_iter_key)
         cumulative = 0.0
         for data in records:
-            cost_recorded = True
+            # A PRESENT FILE IS NOT A MEASUREMENT. This previously flipped on
+            # for any parseable record, so the all-zero records a pre-v8.51.0
+            # codex run wrote reported total_usd $0.00 with cost_recorded True
+            # -- the endpoint asserting the run was FREE. Same predicate as
+            # /api/cost so the two cost readers cannot disagree.
+            if _record_is_measured(data):
+                cost_recorded = True
             inp = data.get("input_tokens", 0) or 0
             out = data.get("output_tokens", 0) or 0
             # Cache tiers, same as the /api/cost path. This snapshot drives the

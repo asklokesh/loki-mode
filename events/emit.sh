@@ -306,7 +306,47 @@ fi
 # trailing newline. `|| true` keeps observability from ever aborting the emit
 # under `set -e` (matches autonomy/run.sh:9896).
 FLAT_EVENT="{\"timestamp\":\"$TIMESTAMP\",\"type\":\"$TYPE_ESC\",\"data\":$PAYLOAD}"
+# An ABSENT size reading is the empty string, NOT 0 -- see the vacuity note
+# below. A missing file legitimately measures 0 bytes; a `stat` that could not
+# run measures NOTHING, and the two must not collapse to the same value.
+_size_before=$(stat -f%z "$EVENTS_LOG" 2>/dev/null || stat -c%s "$EVENTS_LOG" 2>/dev/null || echo "")
+[ -n "$_size_before" ] || _size_before=0
 safe_append_event_jsonl "$EVENTS_LOG" "$FLAT_EVENT" 2>/dev/null || true
+
+# VERIFY THE APPEND LANDED. A dropped event is an ABSENT MEASUREMENT, and an
+# absent measurement read as a fact is how "0 events for a stage" gets reported
+# as "the stage did not happen".
+#
+# The helper's exit code cannot be trusted for this: BOTH best-effort fallback
+# paths (the flock-timeout branch at line 62 and the mkdir give-up branch at
+# line 91) end in `printf ... || true; return 0`, so a failed append returns 0.
+# Measured on an unwritable events.jsonl: emit.sh printed an id and exited 0
+# having written ZERO bytes. Compare the file size instead -- it is the only
+# signal that reflects what a downstream reader will actually see.
+#
+# NOT FATAL, BY CONSTRUCTION. emit.sh is fire-and-forget telemetry on the hot
+# path of every run; nothing waits on its result and a wedged or aborted emit
+# costs far more than a dropped line. So this only makes the loss VISIBLE:
+#   - the warning goes to STDERR, never stdout. Line 312's `echo "$EVENT_ID"`
+#     is the caller contract (`ID=$(bash emit.sh ...)`); anything else on
+#     stdout corrupts it.
+#   - the whole check sits in an `if`, so a failing `stat` cannot trip `set -e`.
+#   - the exit status is unchanged: a dropped event still exits 0.
+# Set LOKI_EMIT_QUIET=1 to suppress the warning (the drop still happens; you
+# are only choosing not to hear about it).
+#
+# GUARD AGAINST VACUITY. If `stat` cannot run, the old `|| echo 0` made BOTH
+# readings 0, they compared equal, and every SUCCESSFUL emit warned. A warning
+# that cries wolf on the hot path is worse than none -- it is exactly what
+# trains people to filter the channel that was supposed to surface real loss.
+# An empty reading means "not measured", and an absent measurement is never
+# evidence of a drop, so we stay silent rather than guess. Verified: with a
+# `stat` forced to exit 1, a healthy emit is silent and still writes its line.
+_size_after=$(stat -f%z "$EVENTS_LOG" 2>/dev/null || stat -c%s "$EVENTS_LOG" 2>/dev/null || echo "")
+if [ "${LOKI_EMIT_QUIET:-0}" != "1" ] && [ -n "$_size_after" ] && [ "$_size_after" = "$_size_before" ]; then
+    printf '[loki-events] WARNING: event %s (type=%s) was NOT recorded in %s -- downstream counts will under-report\n' \
+        "$EVENT_ID" "$TYPE" "$EVENTS_LOG" >&2
+fi
 
 # Output event ID
 echo "$EVENT_ID"
