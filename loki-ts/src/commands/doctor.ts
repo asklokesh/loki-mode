@@ -1066,6 +1066,46 @@ async function runText(): Promise<number> {
   }
   process.stdout.write(`\n`);
 
+  // Install integrity. The bash route has checked this since v8.38.0; the Bun
+  // route -- the DEFAULT runtime -- did not, so the users most likely to hit
+  // the failure were the ones who could not see it.
+  //
+  // Why it matters: these four detectors ship via package.json `files[]`. When
+  // they were absent from the tarball, mutation-integrity failed closed on
+  // EVERY iteration for EVERY npm user, making first-pass completion
+  // impossible regardless of model output. Nothing in a git checkout can
+  // reproduce that -- which is exactly why doctor must assert it on the
+  // installed copy.
+  process.stdout.write(`${BOLD}Install integrity:${NC}\n`);
+  const detectors = [
+    "detect-test-mutations",
+    "detect-mock-problems",
+    "detect-semantic-test-problems",
+    "detect-invariant-violations",
+  ];
+  const missingDetectors: string[] = [];
+  for (const det of detectors) {
+    if (existsSync(resolve(REPO_ROOT, "tests", `${det}.sh`))) {
+      tally.pass++;
+    } else {
+      missingDetectors.push(`${det}.sh`);
+    }
+  }
+  if (missingDetectors.length === 0) {
+    process.stdout.write(
+      `  ${GREEN}OK${NC}    Quality-gate detectors present (${detectors.length}/${detectors.length})\n`,
+    );
+  } else {
+    process.stdout.write(
+      `  ${badge("fail")}  Quality-gate detectors MISSING: ${missingDetectors.join(" ")}\n`,
+    );
+    tally.fail++;
+    tally.blockers.push(
+      `Reinstall loki-mode: ${missingDetectors.length} quality-gate detector(s) missing, so every iteration fails closed`,
+    );
+  }
+  process.stdout.write(`\n`);
+
   // Summary
   process.stdout.write(
     `${BOLD}Summary:${NC} ${GREEN}${tally.pass} passed${NC}, ${RED}${tally.fail} failed${NC}, ${YELLOW}${tally.warn} warnings${NC}\n\n`,

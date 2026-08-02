@@ -5,6 +5,47 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.65.0
+
+### The check that guards the shipped package was missing from the default route
+
+`doctor` verifies four quality-gate detectors are present. They ship via
+package.json `files[]`, and when they were absent from the tarball,
+mutation-integrity failed closed on **every iteration for every npm user** --
+first-pass completion was impossible regardless of model output (v8.38.0).
+
+The bash route has checked this since then. The **Bun route -- the default
+runtime -- did not.** The users most likely to hit the packaging failure were
+exactly the ones whose `doctor` could not see it.
+
+Bun Parity had been **red since v8.59.0** reporting this, as a tally mismatch:
+
+```
+bash: Summary: 14 passed, 1 failed, 14 warnings
+bun:  Summary: 10 passed, 1 failed, 14 warnings
+```
+
+A difference of exactly the four detector checks. Both routes now report the
+same count.
+
+### Reproducing it needed the real CI diff, not a local guess
+
+The gap does not reproduce on a dev machine: both routes agreed locally, so a
+raw `diff` showed nothing and an early "fix confirmed" would have been wrong.
+Stripping the change and re-running still passed locally -- proof the local
+signal was not measuring the failure at all.
+
+A first reproduction attempt built a minimal PATH and appeared to reproduce it,
+showing bash omitting version strings. That was an artifact of the harness:
+the bash probes call `tr`, `awk`, and `sed`, and the stub PATH omitted `tr`.
+With full coreutils the difference vanished. **The reproduction was broken, not
+the product.** Only the actual CI log named the real diff.
+
+### Also in this release
+
+`loki doctor` on the Bun route now reports missing detectors as a BLOCKING
+failure with a reinstall instruction, rather than staying silent.
+
 ## v8.64.0
 
 ### You no longer pick a provider. Loki picks the one you have.
