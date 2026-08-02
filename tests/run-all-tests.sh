@@ -742,6 +742,7 @@ run_test "per-turn context growth is measured" "$SCRIPT_DIR/test-context-growth-
 run_test "provider auto-detection is wired" "$SCRIPT_DIR/test-provider-autodetect.sh"
 run_test "the two provider lists agree" "$SCRIPT_DIR/test-provider-lists-agree.sh"
 run_test "the provider docs match the code" "$SCRIPT_DIR/test-provider-docs-match-code.sh"
+run_test "every opencode dispatch path passes --auto" "$SCRIPT_DIR/test-provider-config-autonomous-flag.sh"
 run_test "cost and estimate are reachable from the CLI" "$SCRIPT_DIR/test-cost-cli.sh"
 run_test "quickstart names the provider that will run" "$SCRIPT_DIR/test-quickstart-provider-detect.sh"
 run_test "explicit provider preflight" "$SCRIPT_DIR/test-provider-preflight.sh"

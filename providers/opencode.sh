@@ -46,7 +46,15 @@ PROVIDER_CLI="opencode"
 # CLI Invocation
 # `run` takes the prompt POSITIONALLY; there is no -p/--prompt flag.
 PROVIDER_SUBCOMMAND="run"
-PROVIDER_AUTONOMOUS_FLAG=""
+# --auto is REQUIRED for autonomous operation. Verified against the real CLI
+# (opencode 1.18.9): `opencode run --help` documents
+#   --auto  auto-approve permissions that are not explicitly denied  [default: false]
+# The earlier empty value assumed `opencode run <prompt>` was already
+# non-interactive. It is not: without --auto the run stalls on the first
+# permission prompt with no TTY to answer it, which is indistinguishable from a
+# hang. This is opencode's equivalent of claude's --dangerously-skip-permissions
+# and aider's --yes-always, both of which their providers already pass.
+PROVIDER_AUTONOMOUS_FLAG="--auto"
 PROVIDER_PROMPT_FLAG=""
 PROVIDER_PROMPT_POSITIONAL=true
 
@@ -123,7 +131,7 @@ provider_invoke() {
     shift
     [ -n "$prompt" ] || return 1
     command -v opencode >/dev/null 2>&1 || return 127
-    opencode run --model "$PROVIDER_MODEL_DEVELOPMENT" "$prompt" "$@"
+    opencode run --auto --model "$PROVIDER_MODEL_DEVELOPMENT" "$prompt" "$@"
 }
 
 # provider_invoke_with_tier <tier> <prompt>
@@ -138,7 +146,7 @@ provider_invoke_with_tier() {
     command -v opencode >/dev/null 2>&1 || return 127
     local model
     model="$(provider_get_tier_param "$tier")"
-    opencode run --model "$model" "$prompt" "$@"
+    opencode run --auto --model "$model" "$prompt" "$@"
 }
 
 # provider_invoke_argv <tier> <prompt> -- see providers/claude.sh for rationale.
@@ -147,5 +155,5 @@ provider_invoke_argv() {
     local prompt="${2:-}"
     local model
     model="$(provider_get_tier_param "$tier")"
-    _LOKI_INVOKE_ARGV=(opencode run --model "$model" "$prompt")
+    _LOKI_INVOKE_ARGV=(opencode run --auto --model "$model" "$prompt")
 }

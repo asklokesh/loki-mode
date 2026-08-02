@@ -76,10 +76,18 @@ validate_provider_config() {
     # Variables that must be defined but can be empty string.
     #
     # PROVIDER_AUTONOMOUS_FLAG moved here in v8.2.0: not every CLI needs a flag
-    # to run non-interactively. `opencode run <prompt>` is already autonomous, so
-    # requiring a non-empty value rejected a perfectly valid provider as
-    # "incomplete". The variable must still be DEFINED -- an author who forgets
-    # it entirely is still caught -- but an intentional empty value is legal.
+    # to run non-interactively, so requiring a non-empty value could reject a
+    # valid provider as "incomplete". The variable must still be DEFINED -- an
+    # author who forgets it entirely is still caught -- but an intentional empty
+    # value is legal.
+    #
+    # The original justification cited `opencode run <prompt>` as already
+    # autonomous. That was WRONG and cost opencode users every run: `opencode run
+    # --help` (1.18.9) shows `--auto ... [default: false]`, so without it the run
+    # blocks on a permission prompt. opencode now declares "--auto". Keep this
+    # list for a provider that genuinely needs no flag, but VERIFY against the
+    # real CLI's --help before adding one -- an empty value here is a silent hang,
+    # not a validation error.
     local allow_empty_vars=(
         PROVIDER_PROMPT_FLAG
         PROVIDER_AUTONOMOUS_FLAG

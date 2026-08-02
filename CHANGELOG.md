@@ -5,6 +5,84 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.79.0
+
+### Every autonomous opencode run would hang
+
+`providers/opencode.sh` declared `PROVIDER_AUTONOMOUS_FLAG=""` and all three
+dispatch paths built `opencode run --model <m> <prompt>`. Verified against the
+real installed CLI (opencode **1.18.9**):
+
+```
+--auto   auto-approve permissions that are not explicitly denied (dangerous!)
+                                              [boolean] [default: false]
+```
+
+`loader.sh` justified the empty value by asserting that `opencode run <prompt>`
+is already autonomous. The CLI contradicts that outright. Without `--auto`,
+every autonomous run stalls on the first permission prompt with no TTY to
+answer it -- so it presents as a **hang**, not an error: no message, no exit
+code, nothing to grep for.
+
+This hit every opencode run, including the opencode-only machines v8.76.0 had
+just unblocked. Setting the variable alone would have been cosmetic, since
+nothing splices it into opencode's argv; the flag is spliced into all three
+paths.
+
+### The test covered one path of three
+
+The first version asserted only `provider_invoke_argv`. A mutation removing
+`--auto` from `provider_invoke` SURVIVED -- the other two paths call the binary
+directly and were unguarded, so a regression in either would have shipped
+silently.
+
+The test now runs each dispatch function against a stub `opencode` on PATH and
+asserts the real argv. All three mutations are now caught.
+
+### Checked and deliberately NOT changed
+
+**Codex "stale v0.98 assumptions" is a stale COMMENT, not a stale flag.**
+Installed codex is 0.146.0, and every element of
+`exec --sandbox workspace-write --skip-git-repo-check` was verified present in
+`codex exec --help`. An unverified flag change would break dispatch for real
+users, which is worse than an out-of-date comment.
+
+**opencode's missing cost/context scalars are cosmetic.** `review_effective_cap`
+explicitly guards unset and returns the default, so a provider declaring none
+takes the unset path. Adding values would only LOWER opencode's review cap -- a
+behaviour change dressed as a fix.
+
+**cline's `-y` flag is unverified**: cline is not installed on this machine, so
+it was left alone rather than changed on assumption.
+
+### Retrieved memories that were never in the knowledge base
+
+`build_rag_context` rendered rows matching only a category bucket -- no name,
+no description -- under a header asserting they were found in the knowledge
+base:
+
+```
+The following patterns were found in the organization knowledge base:
+
+### Unknown Pattern (retry)
+```
+
+A fabricated memory injected into the agent's prompt, burning context budget on
+nothing. Two falsy traps made the obvious guard useless, both verified against
+real code:
+
+```python
+{"category": "retry", "description": ""}.get('name', p.get('pattern', 'Unknown Pattern'))
+  -> 'Unknown Pattern'      # truthy, so `if not name` never fires
+
+{"description": "", "correct_approach": "Use a key."}.get('description', q.get(...))
+  -> ''                     # the key EXISTS, so the default never fires: real data lost
+```
+
+The second is the dangerous one -- the naive fix drops genuine memories. `or`
+chaining fixes both, and a substance guard requires a name or a description,
+since a category alone is a bucket label rather than a memory.
+
 ## v8.78.0
 
 ### The provider docs described the product as it was before v8.64.0

@@ -98,9 +98,24 @@ def build_rag_context(query, max_tokens=2000, knowledge_dir=None):
         # Support both 'name'/'pattern' and 'description' fields.
         # Every field is sanitized: memory entries are untrusted input and must
         # not be able to inject instructions or break the prompt structure.
-        name = _sanitize_field(p.get('name', p.get('pattern', 'Unknown Pattern')))
-        desc = _sanitize_field(p.get('description', p.get('correct_approach', '')))
+        # `or` chaining, not .get(a, .get(b, default)): a present-but-empty
+        # 'description' would otherwise shadow a real 'correct_approach', and a
+        # row missing BOTH name keys would resolve to the literal string
+        # 'Unknown Pattern' -- truthy, so the substance check below could never
+        # fire on it.
+        name = _sanitize_field(p.get('name') or p.get('pattern') or '')
+        desc = _sanitize_field(p.get('description') or p.get('correct_approach') or '')
         category = _sanitize_field(p.get('category', ''))
+
+        # Substance check: a pattern that matched only on its category (or
+        # whose fields sanitized away to nothing) has no memory to inject.
+        # Rendering it as "### Unknown Pattern" under the "patterns were found
+        # in the organization knowledge base" header presents a fabricated
+        # memory as a real one and burns prompt budget. Name OR description is
+        # enough -- category alone is a bucket label, not a memory, and a named
+        # pattern with no description is still genuine signal.
+        if not name and not desc:
+            continue
         source_raw = p.get('_source_project', '')
         # Path().name strips any directory traversal; sanitize the basename too.
         source = _sanitize_field(Path(str(source_raw)).name) if source_raw else ''
