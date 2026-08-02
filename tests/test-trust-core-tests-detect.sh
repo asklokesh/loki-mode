@@ -641,6 +641,16 @@ probe_case "the cost check actually gates the verdict" \
     '        and result["cost_coherent"] is not False' '' \
     python3 -m pytest -q tests/test_proof_verify_cost_coherence.py
 
+# The startup error a real user saw on their first screen. 2>/dev/null could
+# never suppress it: a redirect failure is reported by the SHELL before the
+# redirection is applied.
+probe_case "no raw shell error when .loki/config is a directory" \
+    "autonomy/crash.sh" \
+    '    if [ -d "$config" ]; then
+        return 0
+    fi' '    :' \
+    bash tests/test-disclosure-config-directory.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.

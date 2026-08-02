@@ -730,6 +730,8 @@ run_test "a stuck gate aborts instead of grinding" "$SCRIPT_DIR/test-gate-stuck-
 run_test "iteration 1 names the gates that will judge it" "$SCRIPT_DIR/test-first-pass-gate-directive.sh"
 run_test "iteration cap is bounded without truncating real runs" "$SCRIPT_DIR/test-iteration-cap-default.sh"
 run_test "codex usage and cost are recovered, unknown never zero" "$SCRIPT_DIR/test-codex-usage-cost.sh"
+run_test "cache-stable prompt prefix stays free of volatile values" "$SCRIPT_DIR/test-cache-breakpoint-discipline.sh"
+run_test "no raw shell error when .loki/config is a directory" "$SCRIPT_DIR/test-disclosure-config-directory.sh"
 run_test "model catalog: no tier points at a superseded flagship" "$SCRIPT_DIR/test-model-catalog-current-flagship.sh"
 run_test "model catalog staleness is advisory in doctor" "$SCRIPT_DIR/test-model-catalog-staleness.sh"
 run_test "doctor blocker parity (both routes name blockers + offer loki tour)" "$SCRIPT_DIR/test-doctor-blocker-parity.sh"

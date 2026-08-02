@@ -213,6 +213,22 @@ loki_show_disclosure_once() {
         return 0
     fi
     mkdir -p "$config_root" 2>/dev/null || return 0
-    echo "DISCLOSURE_SHOWN=true" >> "$config" 2>/dev/null || true
+    # A DIRECTORY at $config is a real, reachable state and must not print.
+    #
+    # LOKI_DIR is the PROJECT .loki when a build is running (not ~/.loki), and
+    # a project's .loki/config is legitimately a directory -- so this appended
+    # to a directory. `2>/dev/null` cannot suppress it: a redirect failure is
+    # reported by the SHELL before the redirection is applied, so every user
+    # saw a raw error on stdout at startup:
+    #
+    #   .../autonomy/crash.sh: line 216: .loki/config: Is a directory
+    #
+    # Observed on a real `loki start` run. The sentinel is back-compat only, so
+    # skipping it when the path is not a writable file costs nothing; printing
+    # a shell error into the first screen a user sees costs trust.
+    if [ -d "$config" ]; then
+        return 0
+    fi
+    { echo "DISCLOSURE_SHOWN=true" >> "$config"; } 2>/dev/null || true
     return 0
 }

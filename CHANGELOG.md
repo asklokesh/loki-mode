@@ -5,6 +5,56 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.55.0
+
+### A raw shell error was the first thing users saw
+
+Reported from a real `loki start` run. Before any Loki output:
+
+```
+.../autonomy/crash.sh: line 216: .loki/config: Is a directory
+```
+
+`loki_show_disclosure_once` appends a back-compat sentinel to
+`${LOKI_DIR:-$HOME/.loki}/config`. During a build **`LOKI_DIR` is the PROJECT
+`.loki`**, not `~/.loki` -- and a project's `.loki/config` is legitimately a
+**directory**. Appending to a directory fails.
+
+**`2>/dev/null` could never have suppressed it.** A redirection failure is
+reported by the SHELL, *before* the redirection that would silence it is
+applied. The `2>/dev/null || true` already on that line was decorative.
+
+Now guarded: a directory is a reachable, non-exceptional state, so the write is
+skipped. The sentinel is back-compat only, so the cost of skipping is zero --
+the cost of printing a `line 216:` error on a user's first screen is trust.
+
+Both directions pinned: silent on a directory, sentinel still written (once,
+idempotently) when config is a file.
+
+### W3: the prompt cache had no guard
+
+The prompt splits at `[CACHE_BREAKPOINT]` into a cache-stable prefix and a
+volatile tail. The prefix is currently clean -- **and nothing tested it.**
+
+The stakes are money, not style. Cache reads price at **0.1x input** and are
+~98% of input volume on the measured shape, so leaking `$iteration`, `$retry`,
+`$gate_failures` or the PRD body into the prefix is close to a **10x input-cost
+increase on every iteration**. And the agent call is **93% of wall clock**
+(1814s of 1941s, measured), making this the dominant cost lever we actually
+control -- we cannot train a faster model, but we can stop paying full price
+for a cache we already built.
+
+**The failure is silent**: the run still succeeds, just costs multiples more,
+forever, with nothing in any log saying so.
+
+`tests/test-cache-breakpoint-discipline.sh` asserts no per-iteration value is
+referenced between `<loki_system>` and `[CACHE_BREAKPOINT]`, that the prefix
+holds real content (so the check cannot go vacuous if the split moves), and
+that the volatile `<dynamic_context>` tail still exists. Verified by leaking
+`$iteration` into the prefix -- the test goes red.
+
+Trust-core detector: 81 invariants.
+
 ## v8.54.0
 
 ### The moat had a blind spot: the verifier never checked cost
