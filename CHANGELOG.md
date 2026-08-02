@@ -5,6 +5,65 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.90.0
+
+### A portable attestation that never claims more than it checked
+
+`tools/receipt-attest.py` is net-new: it turns a receipt into a compact record
+a third party can read without the original workspace.
+
+The design point is a THIRD state most systems do not have:
+
+```
+VERIFIED      checked, and it passed
+FAILED        checked, and it failed
+UNVERIFIABLE  could not be checked here, with the reason
+```
+
+Collapsing the third into either of the first two is the defect. An attestation
+claiming more than was checked is worse than none: it launders uncertainty into
+a credential. Axes are scored independently, so a receipt checked outside a git
+tree reports `integrity VERIFIED` alongside `drift UNVERIFIABLE ('.' is not a
+git work tree)` rather than one verdict smeared across everything.
+
+Exit `0` only when every scored axis was checked AND passed; `1` on any FAILED;
+`2` when nothing failed but something was unverifiable. `2` is non-zero
+specifically so a shell `&&` chain cannot read "unattested" as "attested",
+which would re-collapse the third state at the process boundary.
+
+### A dropped axis was attesting VERIFIED on real receipts
+
+The sharpest finding, reproduced against production shapes: `tree_sha256` is
+written on EVERY receipt by `proof-generator.py:1190` and scored by `verify()`,
+but the first attestation did not read it. A receipt that `verify()` REJECTS
+(`ok=False, tree_drift=True`) attested **VERIFIED, exit 0** -- exactly the
+laundering this feature exists to prevent.
+
+A dropped axis defaults to "passed", which makes FORGETTING one more dangerous
+than getting one wrong. The class invariant is now asserted directly: VERIFIED
+implies `verify().ok`, so a future dropped axis fails loudly instead of
+silently widening the credential.
+
+### Signature status is four states, not a boolean
+
+`_verify_gpg` returns `"n/a"` for two different facts: no signature at all, and
+a signature present with gpg unavailable. Reading `gpg_ok` alone reports a
+SIGNED receipt as unsigned on any machine without gpg. Now branched on whether
+the receipt actually carries a signature: `signed_valid`, `signed_invalid`,
+`signed_uncheckable`, `unsigned`.
+
+That probe SURVIVED at first, which proved the CLI tests could not reach the
+branch (gpg is installed here). It was closed with a function-level test rather
+than assumed covered.
+
+### One judgment call, stated
+
+Unsigned receipts still exit 0, following `verify()`'s existing rollup
+(`gpg_ok in (True, "n/a")`) rather than inventing stricter semantics -- signing
+is default-OFF, so scoring it would make exit 0 unreachable for nearly every
+receipt. Mitigated by an unmissable caveat on every summary line: *"receipt is
+UNSIGNED, so origin rests on its generator"*.
+
 ## v8.89.0
 
 ### v8.87.0 shipped a feature no npm user could reach

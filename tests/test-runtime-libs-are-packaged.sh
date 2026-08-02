@@ -56,6 +56,7 @@ LIBS=(
     "tools/receipt-diff.py"               # cross-run receipt comparison
     "tools/cost-guard.py"                 # cost regression gate
     "tools/estimate-run.py"               # forward cost projection
+    "tools/receipt-attest.py"             # portable third-party attestation
 )
 
 # --- they must exist in the repo first ---------------------------------------
