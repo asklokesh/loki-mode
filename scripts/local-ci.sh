@@ -1344,16 +1344,26 @@ run_check "npm pack tarball contents" '
     exit 1
   fi
   _missing=""
+  _total=0
+  # The autonomy/lib/*.py entries carry the receipt verifier and the
+  # cost-honesty rule ("unmeasured reads UNKNOWN, never $0.00"). They ship today
+  # only because files[] happens to hold a broad "autonomy/" entry; narrowing it
+  # would drop them silently, surfacing as a receipt that cannot be verified
+  # rather than as an error.
   for _f in loki-ts/dist/loki.js bin/loki dashboard/static/index.html \
             web-app/dist/index.html autonomy/provider-offer.sh \
-            autonomy/quickstart.sh; do
+            autonomy/quickstart.sh autonomy/lib/proof-verify.py \
+            autonomy/lib/efficiency_cost.py autonomy/lib/cost-summary.py; do
+    _total=$((_total + 1))
     case "$_pack" in *"$_f"*) ;; *) _missing="$_missing $_f" ;; esac
   done
   if [ -n "$_missing" ]; then
     echo "MISSING FROM TARBALL:$_missing"
     exit 1
   fi
-  echo "all 6 required artifacts present in the tarball ($_n entries)"'
+  # Counted from the loop, not hardcoded: a literal "all 6" goes stale the
+  # moment the list grows and then understates what is being guarded.
+  echo "all $_total required artifacts present in the tarball ($_n entries)"'
 
 # 10a-v8. The Agent SDK (@anthropic-ai/claude-agent-sdk) is a DYNAMIC import in
 # dist/loki.js (the opt-in LOKI_SDK_LOOP=1 RARV loop) + a per-platform native

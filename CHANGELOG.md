@@ -5,6 +5,44 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.70.0
+
+### The libs carrying the receipt verifier had no packaging guard
+
+Four releases were spent discovering that the checks guarding the SHIPPED
+PACKAGE were themselves unguarded. Everything works from a git checkout, so no
+in-repo test and no GitHub CI job can see a packaging break:
+
+- v8.38.0: four gate detectors were never in `files[]`, so mutation-integrity
+  failed closed on EVERY iteration for EVERY npm user
+- v8.63.0: the tarball check passed on "6 or more" matches of 6 patterns that
+  healthily produce 8, tolerating the loss of two required artifacts
+
+`tests/test-detectors-are-packaged.sh` now guards the detectors. **Nothing
+guarded `autonomy/lib/*.py`** -- which is where the Evidence Receipt verifier
+and the cost-honesty rule live. They ship today only because `files[]` happens
+to contain a broad `autonomy/` entry. Narrowing that entry for any reason would
+drop them silently, and the failure would surface as a receipt that cannot be
+verified rather than as an error.
+
+The fast-tier tarball check now asserts nine artifacts individually, adding
+`proof-verify.py`, `efficiency_cost.py`, and `cost-summary.py`.
+
+### Two rules applied, both learned expensively
+
+**Assert each thing individually, never a count.** A threshold cannot say WHICH
+artifact vanished. The check's closing line also stopped hardcoding "all 6" and
+now counts from the loop, because a literal count goes stale the moment the
+list grows and then understates what is guarded.
+
+**Guard against vacuity.** A substring search over an EMPTY listing reports
+nothing missing. `npm pack` writes its listing to STDERR, so `2>&1 >file`
+captures build chatter instead and makes every assertion pass. The new suite
+fails loudly on an empty or non-listing capture, and that path is
+mutation-proven: forcing the listing to empty turns it red rather than green.
+
+Narrowing `files[]` from `autonomy/` to `autonomy/loki` also turns it red.
+
 ## v8.69.0
 
 ### What did this run cost, and how much of that is honest
