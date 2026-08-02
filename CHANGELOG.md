@@ -5,6 +5,58 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.60.0
+
+### One missing measurement must not become four different lies
+
+A single defect -- codex writing no token usage -- surfaced independently on
+four surfaces, and every one of them turned *"we did not measure"* into
+*"it was free"*:
+
+| release | surface | the claim it made |
+|---|---|---|
+| v8.51.0 | codex dispatch | recorded no tokens at all |
+| v8.52.0 | Evidence Receipt | `{"usd": 0.0, "available": true}` |
+| v8.53.0 | **the prompt** | `$0.00`, steering the agent |
+| v8.54.0 | **the verifier** | never checked cost, so the claim passed |
+
+Each was fixed in isolation and each has its own unit test. **None of those
+tests can see a fifth surface drift, or one of the four regress in a way its
+neighbours mask.**
+
+This asserts the property they share:
+
+> An unmeasured cost reads as UNKNOWN on every surface. Never as $0.00.
+
+Verified end to end in both directions on a real record shape:
+
+```
+measured    receipt $0.0187  |  prompt "$0.02, cache 54%"  |  verifier ok
+unmeasured  receipt None     |  prompt "90s, completed"    |  verifier rejects
+```
+
+### Why the opposite direction is tested just as hard
+
+A guard strict enough to suppress genuine data would blank the cost surface
+permanently -- its own dishonesty, and it would make the **20x
+cost-per-resolved-issue spread** unmeasurable again, which is the axis a buyer
+compares first.
+
+So the measured case asserts the cost still appears, the cache ratio survives,
+and the duration is not dropped along with it.
+
+### One test, three surfaces caught
+
+Mutating any of the three fixable surfaces turns this single test red:
+reverting the receipt guard, restoring `$0.00` in the prompt, or disabling the
+verifier check. The fourth (capture) is pinned by asserting the helper exists,
+is called by the runner, and that every shipped codex tier is priced.
+
+That is the difference between four tests that each guard a symptom and one
+that guards the property.
+
+Trust-core detector: 89 invariants.
+
 ## v8.59.0
 
 ### Pinning the escalation chain end to end

@@ -700,6 +700,21 @@ probe_case "the escalation writer and reader agree on the JSON contract" \
     'artifact = data.get("latest_artifact")' 'artifact = data.get("artifact_path")' \
     bash tests/test-gate-escalation-coverage.sh
 
+# CROSS-SURFACE invariant. One missing measurement became four separate lies
+# (v8.51.0-v8.54.0). Each surface has its own unit test; none can see a
+# neighbour regress. This one test catches ANY of them, so probing a single
+# surface is enough to prove the whole property is guarded.
+probe_case "the receipt cannot claim an unmeasured run was free" \
+    "autonomy/lib/efficiency_cost.py" \
+    '    if collected and _observed:' '    if collected:' \
+    python3 -m pytest -q tests/test_cost_honesty_end_to_end.py
+
+probe_case "the prompt cannot tell the agent its work was free" \
+    "autonomy/lib/iteration_attribution.py" \
+    '        if isinstance(cost, (int, float)) and float(cost) > 0:' \
+    '        if isinstance(cost, (int, float)):' \
+    python3 -m pytest -q tests/test_cost_honesty_end_to_end.py
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
