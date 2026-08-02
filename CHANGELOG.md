@@ -5,6 +5,62 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.68.0
+
+### An interrupted run told you there was nothing to resume
+
+Ctrl-C at iteration 7, then `loki resume`:
+
+```
+No session to resume.
+Start a session with: loki start
+```
+
+Every part of the machinery was already correct. `run.sh` saves
+`status: "interrupted"` on Ctrl-C, `load_state` deliberately PRESERVES
+`iterationCount` for interrupted runs, `_loki_resolve_run_status` resolves
+`interrupted`, and `_loki_next_action` already maps it to `loki resume`. The
+state was saved, the status resolved, the action mapped -- and then
+`cmd_resume` hit an early exit that only ever handled explicit PAUSE/STOP
+signal files, and told the user their work was gone.
+
+Because `loki next` dispatches to `cmd_resume`, the one command whose job is
+"do the right next thing" ended at the same dead end. One function was the root
+cause; fixing it fixed `loki next` for free. No new command was added.
+
+Now:
+
+```
+Interrupted run found. Stopped at iteration 7 (last activity: 2026-08-02T09:14:02Z).
+Saved progress is intact. Resume it with:
+
+  loki start
+
+It picks up from iteration 7; verification re-runs, so nothing inherits a stale PASS.
+```
+
+### It reports the real iteration, and this is where the first version was wrong
+
+The hint read `iterationCount`. `save_state()` writes **`iteration`**
+(`autonomy/run.sh:6707`). So every REAL interrupted run would have reported
+**"Stopped at iteration 0"** -- the one number that makes the message
+reassuring rather than alarming.
+
+The test suite was green throughout, because its fixture used the same spelling
+the reader expected. A test that only ever sees its own fixture cannot catch a
+field-name mismatch with the production writer. It was caught by running the
+actual command against the shape `save_state` really emits, and is now pinned
+by a test that builds its fixture from the production key; reverting the reader
+turns the suite red.
+
+### It stays quiet when there is nothing to resume
+
+Keyed on `interrupted` ONLY, deliberately excluding `running`. A SIGKILL or
+power loss leaves `status: "running"`, which looks resumable, but `load_state`
+resets it to iteration 0 unless `LOKI_DURABLE_STATE=1`. Advertising "resume
+from iteration 47" there would promise progress the runner is about to discard.
+Widening the key to include `running` also turns the suite red.
+
 ## v8.67.0
 
 ### doctor now tells you which provider will actually run

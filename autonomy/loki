@@ -906,7 +906,7 @@ show_help() {
     echo "  next             Run the right next step for you (resume / ship / why)"
     echo "  stop             Stop execution immediately"
     echo "  pause            Pause after current session"
-    echo "  resume           Resume paused execution"
+    echo "  resume           Resume a paused or interrupted run (after Ctrl-C or a crash)"
     echo "  steer \"<note>\"    Nudge a running build (needs LOKI_PROMPT_INJECTION=1)"
     echo ""
     echo "Verify / trust:"
@@ -3605,17 +3605,87 @@ cmd_steer() {
     return 0
 }
 
+# Print the one copy-pasteable command that gets an INTERRUPTED run going again,
+# naming what was found (iteration reached, when it stopped) so the user can tell
+# it is their run and not a stale directory. Returns 0 when a hint was printed,
+# 1 when there is nothing resumable (caller then prints its own message).
+#
+# Keyed on status == "interrupted" ONLY, deliberately. run.sh's load_state
+# preserves iterationCount for exactly paused|interrupted|budget_exceeded|
+# stopped and RESETS it to 0 for everything else -- including "running", which
+# is what an uncatchable SIGKILL leaves behind. Printing "resume from iteration
+# 7" on a "running" record would promise progress that load_state is about to
+# throw away, on a dev box without LOKI_DURABLE_STATE=1. A hint pointing at
+# nothing is worse than silence, so the narrow key is the point, not an
+# oversight. budget_exceeded / max_iterations_reached already get their own
+# tailored guidance from _loki_next_action (raise the cap FIRST, then resume);
+# duplicating them here would contradict it.
+#
+# Read-only: reads state, writes nothing, spends nothing.
+_loki_print_interrupted_resume_hint() {
+    local status
+    status="$(_loki_resolve_run_status 2>/dev/null)" || return 1
+    [ "$status" = "interrupted" ] || return 1
+
+    local state_file="$LOKI_DIR/autonomy-state.json"
+    if [ -n "${LOKI_SESSION_ID:-}" ] && [ -f "$LOKI_DIR/sessions/${LOKI_SESSION_ID}/autonomy-state.json" ]; then
+        state_file="$LOKI_DIR/sessions/${LOKI_SESSION_ID}/autonomy-state.json"
+    fi
+    [ -f "$state_file" ] || return 1
+
+    # iteration, lastRun and prdPath in one read. Tab-separated so a spec path
+    # containing spaces survives; python3 is already a hard dep of this file.
+    local fields iteration last_run prd_path
+    fields="$(_LOKI_RH_STATE="$state_file" python3 -c "
+import json, os
+try:
+    d = json.load(open(os.environ['_LOKI_RH_STATE']))
+except Exception:
+    d = {}
+# save_state() writes "iteration" (autonomy/run.sh:6707). Reading only
+# "iterationCount" made every REAL interrupted run report iteration 0 -- the
+# one number that makes this message reassuring rather than alarming. The
+# fixture that first exercised this used the other spelling, so the test
+# passed while the shipped path was wrong. Accept both, real key first.
+print('\t'.join([
+    str(d.get('iteration', d.get('iterationCount', 0))),
+    str(d.get('lastRun', '') or 'unknown'),
+    str(d.get('prdPath', '') or ''),
+]))" 2>/dev/null)" || return 1
+    IFS=$'\t' read -r iteration last_run prd_path <<< "$fields"
+
+    # The spec path is what makes the command RESUME this run rather than start a
+    # different one, so only interpolate it when it still exists on disk. A stale
+    # path would produce a command that fails on paste.
+    local resume_cmd="loki start"
+    if [ -n "$prd_path" ] && [ -f "$prd_path" ]; then
+        resume_cmd="loki start \"$prd_path\""
+    fi
+
+    echo -e "${YELLOW}Interrupted run found.${NC} Stopped at iteration ${BOLD}${iteration}${NC} (last activity: ${last_run})."
+    echo "Saved progress is intact. Resume it with:"
+    echo ""
+    echo -e "  ${BOLD}${resume_cmd}${NC}"
+    echo ""
+    echo -e "${DIM}It picks up from iteration ${iteration}; verification re-runs, so nothing inherits a stale PASS.${NC}"
+    return 0
+}
+
 # Resume paused execution
 cmd_resume() {
     # v7.6.2 B-13 fix: --help must print help, not act on session state.
     case "${1:-}" in
         --help|-h|help)
-            echo -e "${BOLD}Loki Mode -- resume paused session${NC}"
+            echo -e "${BOLD}Loki Mode -- resume a paused or interrupted session${NC}"
             echo ""
             echo "Usage: loki resume [options]"
             echo ""
             echo "Clears the paused flag and lets the autonomous runner continue"
             echo "from where 'loki pause' stopped it."
+            echo ""
+            echo "If the run was interrupted instead (Ctrl-C, crash, closed laptop)"
+            echo "there is no flag to clear, so this prints the iteration it reached"
+            echo "and the exact command to continue from that saved state."
             echo ""
             echo "Options:"
             echo "  --help, -h   Show this help and exit"
@@ -3638,8 +3708,17 @@ cmd_resume() {
     local session_running=false
     is_session_running && session_running=true
 
-    # If nothing is paused/stopped and no session is running, exit early
+    # If nothing is paused/stopped and no session is running, the run may still
+    # be RESUMABLE: a Ctrl-C / crash / closed laptop leaves no PAUSE or STOP
+    # file, only autonomy-state.json with status "interrupted" and the iteration
+    # it reached. This branch used to print "No session to resume" and send the
+    # user to `loki start`, hiding real saved progress -- and because
+    # `loki next` maps interrupted -> cmd_resume, the one command whose job is
+    # "do the right next thing" hit the same dead end. Surface it instead.
     if ! $has_pause_signal && ! $has_stop_signal && ! $session_running; then
+        if _loki_print_interrupted_resume_hint; then
+            return 0
+        fi
         echo -e "${YELLOW}No session to resume.${NC}"
         echo "Start a session with: loki start"
         exit 0
@@ -4527,6 +4606,12 @@ cmd_status() {
     elif [ -f "$LOKI_DIR/STOP" ]; then
         echo -e "${RED}Status: STOPPED${NC}"
         echo -e "${DIM}  Clear with: loki resume${NC}"
+        echo ""
+    elif _loki_print_interrupted_resume_hint; then
+        # An interrupted run (Ctrl-C / crash / closed laptop) leaves no signal
+        # file, so the two branches above miss it entirely. Same hint cmd_resume
+        # prints. elif, not a separate block: it is mutually exclusive with an
+        # explicit PAUSE/STOP, and must not stack onto the "Last run:" line.
         echo ""
     fi
 

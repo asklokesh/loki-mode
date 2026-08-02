@@ -740,6 +740,7 @@ run_test "per-turn context growth is measured" "$SCRIPT_DIR/test-context-growth-
 run_test "provider auto-detection is wired" "$SCRIPT_DIR/test-provider-autodetect.sh"
 run_test "explicit provider preflight" "$SCRIPT_DIR/test-provider-preflight.sh"
 run_test "doctor shows provider availability" "$SCRIPT_DIR/test-doctor-providers.sh"
+run_test "interrupted runs surface how to resume" "$SCRIPT_DIR/test-resume-discoverability.sh"
 run_test "install integrity is checked on both doctor routes" "$SCRIPT_DIR/test-doctor-install-integrity-parity.sh"
 run_test "model catalog: no tier points at a superseded flagship" "$SCRIPT_DIR/test-model-catalog-current-flagship.sh"
 run_test "model catalog staleness is advisory in doctor" "$SCRIPT_DIR/test-model-catalog-staleness.sh"
