@@ -59,6 +59,8 @@ LIBS=(
     "tools/receipt-attest.py"             # portable third-party attestation
     "tools/tool-index.py"                 # what ships, and what is reachable
     "tools/ci-gate.py"                    # one exit code over every policy
+    "tools/receipt-bundle.py"             # audit trail across a run sequence
+    "tools/model-advisor.py"              # cheaper-model recommendation
 )
 
 # --- they must exist in the repo first ---------------------------------------

@@ -5,6 +5,77 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.93.0
+
+### An audit trail across a sequence of runs
+
+`tools/receipt-bundle.py` collects every receipt under a workspace into one
+verifiable bundle. Single-receipt verify, cross-run diff and portable
+attestation existed; proving a SEQUENCE did not.
+
+**The rollup is the weakest link, never an average.** One FAILED receipt among
+a thousand VERIFIED ones makes the bundle FAILED:
+
+```
+FAILED -- 1 of 3 receipts FAILED verification; the bundle is only as good as
+its weakest receipt. total cost $2.0600 across 3 of 3 receipts measured
+```
+
+Any scoring rule -- mean, median, majority, "90% or better" -- lets a forged
+run hide behind good ones, which is the laundering this whole product line
+exists to prevent. Replacing `min(states)` with a majority vote turns the suite
+red.
+
+An unverifiable receipt is COUNTED and NAMED, never silently dropped: a bundle
+that quietly excludes what it could not check reports a stronger claim than it
+earned. An empty workspace exits 3 with *"Zero receipts is not a passing
+audit."*
+
+### `ok` was the wrong source, and reading it would have collapsed two states
+
+`proof-verify.py:706` documents that `diff_drift: None` (unverifiable) makes
+`ok` False BY DESIGN. So `ok` is False both for a tampered receipt and for an
+honest one read from the wrong directory. Deriving state from it would have
+merged FAILED with UNVERIFIABLE and made the naming requirement unsatisfiable.
+Per-receipt state reads the axes individually.
+
+### What a run would have cost on a cheaper model
+
+`tools/model-advisor.py` recommends a cheaper model from this workspace's
+MEASURED history and quantifies the saving:
+
+```
+  Model used:     opus        Measured cost: $1.6558  (basis: 2 of 3 priced)
+    gpt-5.6-luna  0.04x  ->  $0.0595   saving $1.5963
+    haiku         0.20x  ->  $0.3312   saving $1.3246
+    fable         2.00x  ->  $3.3116   +$1.6558 more
+```
+
+The ratio is token-weighted across the full rate card, not an input-rate ratio,
+and it scales the RECORDED cost so the saving stays anchored to a measured
+number.
+
+**MiniMax M2.5 is not in the pricing table, so it cannot be a candidate.** It
+appears only as a cited external benchmark with its figures attached (75.8 vs
+Opus 4.6's 75.6 at 7.5x lower cost), never as a recommendation about the user's
+workload. Candidates come from the rate card; the benchmark ranks nothing.
+
+No history prints `NO BASIS ... no saving is projected (not $0.00)`. Forcing
+`has_basis` true turns the suite red. Every output carries the caveat that **a
+cheaper RATE is not a cheaper RUN** -- token counts differ between models, and
+that assumption is stated as unverified rather than buried.
+
+### Two defects found by verifying rather than assuming
+
+A more-expensive candidate rendered `$-1.6558` in a column headed SAVING, which
+skims as a saving. It now reads `+$1.6558 more`.
+
+An `ok` fallback branch was decorative until a probe SURVIVED against it:
+`cost_coherent` is a real failure axis that sinks `ok` but matched none of the
+enumerated branches, so it reached FAILED only through a path nothing tested.
+Deleting it left the suite green. That branch is what stops a FUTURE upstream
+check from arriving here as a pass.
+
 ## v8.92.0
 
 ### One exit code over every policy
