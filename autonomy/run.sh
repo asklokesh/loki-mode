@@ -1610,14 +1610,39 @@ COMPLEXITY_TIER=${LOKI_COMPLEXITY:-auto}
 DETECTED_COMPLEXITY=""
 
 # Multi-Provider Support (v5.0.0)
-# Provider: claude (default), codex, cline, aider
-LOKI_PROVIDER=${LOKI_PROVIDER:-claude}
+# Provider: auto-detected when unset; claude > cline > codex > aider > opencode.
+#
+# WHY NOT `:-claude`. That default was a hard failure for anyone who has Codex
+# but not Claude: run.sh would select a provider that is not installed and die,
+# even though auto_detect_provider() has existed in providers/loader.sh -- with
+# the right priority order and its own passing test -- since v5.0.0. Nothing in
+# production ever called it. Detection was built, tested, and never wired.
+#
+# An EXPLICIT choice still wins: this only fills an unset value, so
+# LOKI_PROVIDER=codex and --provider codex are untouched.
+_LOKI_PROVIDER_WAS_EXPLICIT=1
+[ -z "${LOKI_PROVIDER:-}" ] && _LOKI_PROVIDER_WAS_EXPLICIT=0
 
 # Source provider configuration
 PROVIDERS_DIR="$PROJECT_DIR/providers"
 if [ -f "$PROVIDERS_DIR/loader.sh" ]; then
     # shellcheck source=/dev/null
     source "$PROVIDERS_DIR/loader.sh"
+
+    # Detect only when the operator expressed no preference. Sourcing the
+    # loader first is required -- auto_detect_provider() is defined there.
+    if [ "$_LOKI_PROVIDER_WAS_EXPLICIT" -eq 0 ]; then
+        _detected="$(auto_detect_provider 2>/dev/null || true)"
+        if [ -n "$_detected" ]; then
+            LOKI_PROVIDER="$_detected"
+            echo "[loki] provider: $LOKI_PROVIDER (auto-detected)" >&2
+        else
+            # Nothing installed. Keep the historical default so the existing
+            # "not installed" error path reports claude, which is the actionable
+            # message -- rather than an empty provider name.
+            LOKI_PROVIDER=claude
+        fi
+    fi
 
     # Validate provider
     if ! validate_provider "$LOKI_PROVIDER"; then

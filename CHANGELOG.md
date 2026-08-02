@@ -5,6 +5,59 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.64.0
+
+### You no longer pick a provider. Loki picks the one you have.
+
+`loki start ./prd.md` on a machine with **Codex but not Claude** used to fail.
+Not because Codex is unsupported -- it is a first-class provider -- but because
+`autonomy/run.sh` hardcoded:
+
+```sh
+LOKI_PROVIDER=${LOKI_PROVIDER:-claude}
+```
+
+so an operator who expressed no preference got a provider they may not have
+installed, and a failure naming a tool they never chose.
+
+The detection has existed since **v5.0.0**. `auto_detect_provider()` sits in
+`providers/loader.sh` with the correct priority order
+(claude > cline > codex > aider > opencode) and its own passing test. Nothing
+in production ever called it: the only caller in the entire repo was its own
+unit test. Built, tested, and never wired.
+
+Now, when `LOKI_PROVIDER` is unset, the default consults it:
+
+```
+[loki] provider: codex (auto-detected)
+```
+
+### An explicit choice still wins
+
+This fills an UNSET value only. `LOKI_PROVIDER=codex` and `--provider codex`
+behave exactly as before, including when a higher-priority provider is
+installed. Silently running a different model than the operator asked for would
+be worse than the bug being fixed, so that direction is asserted as its own
+test and mutation-proven: forcing detection to run unconditionally turns the
+suite red.
+
+With nothing installed at all, the default stays `claude` so the existing
+"not installed" error names a real, actionable provider rather than an empty
+string.
+
+### Wiring, not the function
+
+The test asserts the CALL SITE, because the function was never the broken part.
+It extracts the real selection block out of run.sh and executes it -- a
+re-implementation would test the rule while the production default stayed
+hardcoded.
+
+That extraction earned its own assertion. An earlier slice cut the block
+mid-conditional; the resulting shell parse error was swallowed by a
+`2>/dev/null` and every unset case read as empty, which looks exactly like a
+broken feature instead of a broken harness. The slice is now `bash -n` checked
+before any behaviour is asserted.
+
 ## v8.63.0
 
 ### Two releases died to one blind spot: the local gate ran the wrong Python
