@@ -5,6 +5,65 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.98.0
+
+### See the verification work, without running a build
+
+`tools/verify-demo.sh` demonstrates the whole chain at zero cost. Run for real:
+
+```
+ THESE RECEIPTS ARE SYNTHETIC.
+VERIFIED -- every axis checked here passed
+  integrity VERIFIED  drift VERIFIED  headline VERIFIED  cost VERIFIED  tree VERIFIED
+  -> exit 0.
+
+FAILED -- drift, integrity did not pass here
+  integrity FAILED
+    hash mismatch: recorded 67e6f0a9..., computed 83319644... -- proof.json was
+    edited after it was written
+  drift FAILED
+  -> exit 1. Caught, with the reason printed above.
+
+GATE: FAIL -- 0 of 1 policies passed
+```
+
+The differentiator was previously invisible without a full paid build: of six
+installed competitor CLIs, none verifies its own output, and a prospective user
+could not see ours do it.
+
+### The good receipt is REAL, not hand-built
+
+`tests/test_ci_gate.py` records that a clean attestation "needs git state this
+test cannot honestly fabricate". That was probed rather than accepted: a
+scratch `git init` plus the actual `proof-generator.py` DOES reach exit 0. So
+the demo generates a genuine receipt and the real verifier passes it.
+
+SYNTHETIC means no build was run, no provider contacted and no money spent --
+it does NOT mean a fake receipt. The disclosure prints BEFORE the first
+verdict, because a reader who stops at the first `VERIFIED` must already have
+seen it.
+
+The tamper is caught on TWO independent axes, integrity and drift, which was
+not designed for and is a stronger result than one.
+
+### Two probes that survived, and what they exposed
+
+**Deleting the tamper guard survived at first.** The attester and the
+downstream gate BOTH cover that scenario, so blinding every tool at once proved
+the demo failed somewhere without isolating which guard fired. Fixed with a
+fixture that blinds only the attester while stubbing the gate to correctly
+FAIL, so nothing can supply the exit code on the guard's behalf.
+
+**Falsifying the SYNTHETIC banner survived**, because the word appears twice
+and the grep found the surviving one. It now asserts the disclosure precedes
+the first verdict.
+
+Both are the "asserts a string, not a behaviour" class this repo has paid for
+repeatedly. The required probe -- printing `VERIFIED` without running the
+verifier -- is caught even though the keyword IS present, because the test
+re-derives the receipt digest the way `receipt-attest.py:182` does rather than
+grepping for a word.
+
 ## v8.97.0
 
 ### The merge gate is now driveable from version control and visible on the PR

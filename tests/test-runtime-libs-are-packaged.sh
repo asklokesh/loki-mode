@@ -66,6 +66,7 @@ LIBS=(
     "tools/policy-load.py"                # version-controlled gate policy
     "tools/gate-report.py"                # CI-native verdict rendering
     "tools/signing-status.py"             # can this machine sign receipts
+    "tools/verify-demo.sh"                # zero-cost proof of the chain
 )
 
 # --- they must exist in the repo first ---------------------------------------
