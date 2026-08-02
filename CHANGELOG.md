@@ -5,6 +5,58 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.72.0
+
+### The sixth and last surface that called an unmeasured run free
+
+```
+  v8.51.0  codex dispatch   recorded no tokens at all
+  v8.52.0  receipt          {"usd": 0.0, "available": true}
+  v8.53.0  the PROMPT       "$0.00" per iteration, steering the agent
+  v8.54.0  the verifier     never checked cost, so the claim passed
+  v8.69.0  cost summary     the per-run reader
+  v8.72.0  kpis.ts          this one
+```
+
+`loki-ts/src/metrics/kpis.ts` typed `total_cost_usd` as a bare `number` and
+produced it unconditionally, with the empty snapshot seeded to `0`. An
+unmeasured run -- efficiency records present, every token and cost field zero,
+the pre-v8.51.0 codex shape -- rendered:
+
+```
+  Total cost USD:       0
+```
+
+certifying the run as free. Now `number | null`, rendering
+`UNKNOWN (not measured)`.
+
+### The predicate reads the records, not the derived total
+
+`recordsMeasured()` mirrors `record_is_measured` from `efficiency_cost.py`,
+summing the same five fields on the RAW records. Reading the derived
+`total_cost_usd` instead would have been wrong in a way that looks right:
+that value comes from `calculateCostFromRecords()`, which *prices* tokens, so
+it is non-zero even when no cost was ever observed. It answers "did we compute
+a number", not "did we measure one".
+
+### Measured-zero and unmeasured stay distinguishable
+
+`cost_usd: 0` with non-zero tokens is MEASURED and stays `0`. All five fields
+zero is UNMEASURED and becomes `null`. The average uses an explicit
+`=== null` guard rather than a falsy check, so a genuine measured zero is not
+blanked into UNKNOWN. Blanking real data would be its own dishonesty.
+
+Mutation-proven at the runtime layer: seeding the empty snapshot back to `0`
+turns the suite red. Note the type annotation alone is NOT sufficient evidence
+-- TypeScript types are erased, so a type-only mutation survives `bun test`.
+The probe that binds is the one that changes runtime behaviour.
+
+### Known remaining, stated rather than implied
+
+Python also nulls the TOKEN fields when unmeasured; `total_input_tokens` and
+`total_output_tokens` in kpis.ts still read `0`. Same class, deliberately not
+in scope here.
+
 ## v8.71.0
 
 ### `loki why` gave the same advice for a 401 and a timeout
