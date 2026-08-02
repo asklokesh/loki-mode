@@ -616,6 +616,15 @@ probe_case "an unmeasured cost reads unknown, never zero" \
     '    if collected and _observed:' '    if collected:' \
     python3 -m pytest -q tests/test_efficiency_cost_availability.py
 
+# W4: the efficiency trend is INJECTED INTO THE PROMPT, so rendering $0.00 for
+# an unmeasured cost teaches the agent its work is free. Not a report bug -- a
+# steering bug.
+probe_case "the prompt trend never reports an unmeasured cost as \$0.00" \
+    "autonomy/lib/iteration_attribution.py" \
+    '        if isinstance(cost, (int, float)) and float(cost) > 0:' \
+    '        if isinstance(cost, (int, float)):' \
+    python3 -m pytest -q tests/test_iteration_trend_cost_honesty.py
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.

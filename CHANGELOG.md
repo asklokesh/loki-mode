@@ -5,6 +5,55 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.53.0
+
+### The prompt was telling the agent its work cost $0.00
+
+W4 in `docs/WANG-PRINCIPLES-PLAN.md` -- the half of Wang's principle 5 that
+turns telemetry into an actual feedback loop.
+
+Good news first: the loop **is** wired. `iteration_attribution.py
+--prompt-block` renders an efficiency trend and `run.sh:19909` injects it into
+the prompt. Rendered against the real FireLater run:
+
+```
+EFFICIENCY TREND (your own last 3 iteration(s); steer on it):
+  iter 2: 226s, $0.00, failed
+  iter 3: 1730s, $0.00, completed
+  iter 4: 86s, $0.00, completed
+```
+
+**Every iteration said `$0.00`.** This text goes INTO THE PROMPT, so it was not
+merely misreporting a number -- it was actively teaching the agent that its
+work costs nothing, and that belief survives into every downstream decision it
+makes about effort and iteration.
+
+The honesty rule was already written at the top of that same file -- *"cost not
+recorded for any iteration (reported as null, not as $0.00)"* -- and only the
+SUMMARY path honoured it. The per-iteration line rendered any numeric cost,
+including 0.
+
+Now omitted when unmeasured. A missing field reads as unknown; a printed
+`$0.00` reads as a fact.
+
+### Three cases pinned, including the boundary
+
+- unmeasured -> **no cost shown**, and the rest of the steer survives (duration
+  and status are not dropped along with it)
+- real cost -> still rendered (`$0.02`, with cache ratio)
+- **a genuine sub-cent cost -> still counted.** It formats as `$0.00` and that
+  is fine *because it was measured*. This case exists so a future "just hide
+  $0.00 everywhere" fix cannot silently discard real sub-cent measurements.
+
+### Same root defect, third surface
+
+v8.51.0 fixed codex recording no tokens. v8.52.0 fixed the receipt claiming
+`usd: 0.0, available: True`. This is the same fabricated zero reaching the
+prompt. One missing measurement, three surfaces -- exactly the half-shipped
+pattern W5 exists to stop.
+
+Trust-core detector: 78 invariants.
+
 ## v8.52.0
 
 ### The receipt was claiming runs cost $0.00

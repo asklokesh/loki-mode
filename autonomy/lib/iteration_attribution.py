@@ -210,7 +210,20 @@ def prompt_block(loki_dir):
         if isinstance(dur, (int, float)) and dur >= 0:
             parts.append(_fmt_secs(dur))
         cost = r.get("cost_usd")
-        if isinstance(cost, (int, float)):
+        # A recorded 0 is "not measured", not "free". This block is INJECTED
+        # INTO THE PROMPT, so rendering $0.00 actively teaches the agent that
+        # its work costs nothing -- the opposite of the steer this exists to
+        # give, and it survives into every downstream decision the agent makes.
+        #
+        # Measured on the real FireLater run: every iteration rendered "$0.00"
+        # because codex wrote no usage before v8.51.0. The honesty rule was
+        # already documented at the top of this file ("reported as null, not as
+        # $0.00") and only the summary path honoured it; the per-iteration line
+        # did not.
+        #
+        # Omit the field entirely when unmeasured. A missing cost reads as
+        # unknown; a printed $0.00 reads as a fact.
+        if isinstance(cost, (int, float)) and float(cost) > 0:
             parts.append(f"${float(cost):.2f}")
         cread = r.get("cache_read_tokens")
         inp = r.get("input_tokens")
