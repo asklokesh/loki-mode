@@ -740,6 +740,8 @@ run_test "cost honesty holds across every surface" "python3 -m pytest -q $SCRIPT
 run_test "the agent call reports its own prompt size" "$SCRIPT_DIR/test-agent-prompt-size.sh"
 run_test "per-turn context growth is measured" "$SCRIPT_DIR/test-context-growth-instrumentation.sh"
 run_test "provider auto-detection is wired" "$SCRIPT_DIR/test-provider-autodetect.sh"
+run_test "the two provider lists agree" "$SCRIPT_DIR/test-provider-lists-agree.sh"
+run_test "quickstart names the provider that will run" "$SCRIPT_DIR/test-quickstart-provider-detect.sh"
 run_test "explicit provider preflight" "$SCRIPT_DIR/test-provider-preflight.sh"
 run_test "doctor shows provider availability" "$SCRIPT_DIR/test-doctor-providers.sh"
 run_test "interrupted runs surface how to resume" "$SCRIPT_DIR/test-resume-discoverability.sh"

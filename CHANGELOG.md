@@ -5,6 +5,53 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.76.0
+
+### An opencode-only machine was told it had no AI provider
+
+Two lists name the supported providers, and they disagreed:
+
+```
+providers/loader.sh    auto_detect_provider()  claude cline codex aider opencode
+autonomy/provider-offer.sh  detect_any_provider()   claude codex cline aider
+```
+
+`detect_any_provider` is the PRE-FLIGHT GATE -- `provider_offer_gate` routes
+through it and `cmd_start` exits 2 when it fails. So a machine with opencode
+installed and working got:
+
+```
+No AI provider CLI found; cannot prompt to install in a non-interactive shell.
+Run: npm install -g @anthropic-ai/claude-code
+No provider available; cannot start a build.
+```
+
+A redundant install instruction for a provider they did not need, and no build.
+That is a REQUIRED step added before first value, on hardware that was already
+ready.
+
+The order was wrong too, not just the membership: with codex and cline both
+installed, quickstart printed `Found: codex` while the runner would actually
+select cline.
+
+### Why the fix is a name, not a shared function
+
+`detect_any_provider` is deliberately PATH-only. Its callers (`cmd_demo`,
+`cmd_quick`) stay on the bash route and genuinely need a binary present, so
+routing it through the richer detector would be a fail-OPEN: a green pre-flight
+followed by a runner that cannot invoke anything.
+
+The bug was the missing NAME. The list is corrected, the mechanism is
+untouched, and a new test pins the two lists together -- membership AND order,
+since the order IS the selection priority. Both directions are mutation-proven:
+dropping opencode turns it red, and so does making the gate always pass.
+
+### quickstart now names the provider that will actually run
+
+`autonomy/quickstart.sh` re-derived its own provider list instead of asking
+`auto_detect_provider`. It now consults the single source of truth, so step 1
+cannot name a provider the runner would not pick.
+
 ## v8.75.0
 
 ### The 3.12 guard reported a defect that did not exist

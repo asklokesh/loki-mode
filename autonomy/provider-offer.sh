@@ -64,9 +64,17 @@ _PO_INSTALL_CMD="npm install -g @anthropic-ai/claude-code"
 # (providers/claude.sh:108 provider_detect is `command -v claude`). Opening this
 # gate for them would be a fail-open: a green pre-flight followed by a runner
 # that cannot invoke anything.
+# The list must match auto_detect_provider() in providers/loader.sh, which is
+# the authority on what counts as a usable provider. It omitted `opencode`, so
+# an opencode-only machine failed this gate entirely: quickstart told the user
+# they had no provider CLI and offered to install claude, and cmd_start exited
+# 2 -- a fully working machine blocked from starting a build.
+#
+# Kept PATH-only on purpose (see above): this gate must stay a real binary
+# check, so the fix is the missing NAME, never a looser mechanism.
 detect_any_provider() {
     local _dp
-    for _dp in claude codex cline aider; do
+    for _dp in claude cline codex aider opencode; do
         command -v "$_dp" >/dev/null 2>&1 && return 0
     done
     return 1

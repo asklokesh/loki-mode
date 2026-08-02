@@ -283,6 +283,43 @@ _qs_template_summary() {
     esac
 }
 
+# _qs_selected_provider: print the provider a build would ACTUALLY pick, or
+# nothing. Single source of truth is providers/loader.sh auto_detect_provider --
+# the same seam render_provider_availability (provider-offer.sh:395) uses, and
+# for the same institutionalized reason it states: "the selected provider is
+# always whatever auto_detect_provider returns, never re-derived here."
+#
+# Step 1 used to re-derive that list inline as `for _p in claude codex cline
+# aider`, which was wrong in two independent ways once v8.64.0 made provider
+# selection automatic:
+#   1. opencode was MISSING. On an opencode-only machine the loop set found=""
+#      and, worse, detect_any_provider (provider-offer.sh:67, the same stale
+#      four) returned 1, so quickstart took the install-offer branch and told a
+#      perfectly working machine "No provider available; cannot start a build",
+#      pushing a redundant `npm install -g @anthropic-ai/claude-code`.
+#   2. codex and cline were SWAPPED relative to auto_detect_provider's
+#      claude cline codex aider opencode, so a machine with both was told
+#      "Found: codex" while the runner would really pick cline.
+#
+# Subshelled and path-derived from THIS FILE (never SKILL_DIR, which is unset
+# when tests source this standalone), so a missing or broken loader degrades
+# silently to empty rather than erroring -- the render_provider_availability
+# contract. Safe as a gate because every providers/*.sh provider_detect is a
+# plain `command -v` binary check, so this cannot fail open onto a runner with
+# nothing to invoke.
+_qs_selected_provider() {
+    local _here
+    _here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" || return 1
+    local _loader="$_here/providers/loader.sh"
+    [ -f "$_loader" ] || return 1
+    (
+        # shellcheck source=/dev/null
+        source "$_loader" >/dev/null 2>&1 || exit 1
+        declare -f auto_detect_provider >/dev/null 2>&1 || exit 1
+        auto_detect_provider 2>/dev/null
+    )
+}
+
 # _qs_emit_plan <prd_path>: render the step-4 plan block from the REAL estimator.
 # Honesty invariant: NO LOKI_COMPLEXITY override is passed, so the complexity,
 # iterations, and cost are exactly what cmd_start will run with (cmd_start
@@ -421,13 +458,16 @@ cmd_quickstart() {
     # ----- Step 1 of 4: Setup (reuse the slice-B provider offer) -------------
     printf '%sStep 1 of 4: Setup%s\n' "$_QS_BOLD" "$_QS_NC"
     printf '  Checking for an AI provider CLI ...\n'
-    if detect_any_provider; then
-        local found=""
-        local _p
-        for _p in claude codex cline aider; do
-            if command -v "$_p" >/dev/null 2>&1; then found="$_p"; break; fi
-        done
+    # Ask the loader FIRST: it is the only thing that knows what the runner will
+    # really pick, and it is the only check that sees opencode. Falling back to
+    # detect_any_provider (stale four, PATH-only) keeps the no-provider guard
+    # intact when the loader is absent or unreadable.
+    local found=""
+    found="$(_qs_selected_provider)" || found=""
+    if [ -n "$found" ]; then
         printf '  Found: %s. Good.\n' "$found"
+    elif detect_any_provider; then
+        printf '  Found: an AI provider CLI. Good.\n'
     else
         # Run the inline install + login offer. provider_offer_gate returns 2 if
         # no provider ends up available (declined, or install failed).
