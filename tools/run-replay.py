@@ -362,7 +362,27 @@ def main(argv=None):
     ap.add_argument("--json", action="store_true", dest="as_json")
     args = ap.parse_args(argv)
 
-    rep = build_replay(args.workspace)
+    # build_replay raises SystemExit on a no-data workspace, which bypassed
+    # --json entirely: the caller asked for machine output and got a bare text
+    # line, so `json.load(...)` crashed on the failure path -- unreadable to
+    # the exact automation this tool exists for. A structured error is still
+    # structured output; the exit code carries the verdict either way.
+    try:
+        rep = build_replay(args.workspace)
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else EXIT_NO_DATA
+        if args.as_json:
+            print(json.dumps({
+                "status": "no_data",
+                "exit_code": code,
+                "workspace": args.workspace,
+                "why": "no replayable artifacts under this workspace; "
+                       "see stderr for the specific path",
+                "iterations": [],
+                "skipped_lines": None,
+            }, indent=2))
+        return code
+
     if args.as_json:
         print(json.dumps(rep, indent=2))
     else:

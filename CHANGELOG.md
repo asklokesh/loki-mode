@@ -5,6 +5,47 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.99.0
+
+### `--json` produced non-JSON on the path a consumer most needs to read
+
+Twelve tools accept `--json`, and CI composes them by piping stdout into
+`json.load`. Every one handled SUCCESS correctly. `run-replay.py` did not
+handle failure: on a workspace with no artifacts it printed a bare text line
+and raised `SystemExit` before `--json` was consulted, so the caller got
+
+```
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1
+```
+
+The failure was unreadable to precisely the automation the flag exists for. A
+structured error is still structured output:
+
+```json
+{ "status": "no_data", "exit_code": 66, "workspace": "...", "iterations": [] }
+```
+
+The process still exits 66. Both halves are pinned, because a tool that started
+emitting JSON but LOST its exit code would turn a blind gate green -- the exact
+defect this tool line exists to prevent, reintroduced through the fix for a
+different one.
+
+### Asserted as a CONTRACT, not per tool
+
+`tests/test_json_contract.py` walks the real `tools/` directory rather than
+listing cases, so a new tool is covered the day it lands instead of whenever
+someone remembers. The rule only has value if EVERY tool obeys it; a per-tool
+test proves one is fine while the next quietly breaks the convention.
+
+The contract is deliberately narrow: *if a tool writes to stdout under
+`--json`, that text parses.* Some tools legitimately put their payload on
+stderr and keep stdout clean, and asserting "stdout is always non-empty" would
+have failed them for a choice that is correct.
+
+`cost-history.py` was initially suspected of the same defect and cleared: it
+emits a full structured payload, and the first probe simply captured the wrong
+stream.
+
 ## v8.98.0
 
 ### See the verification work, without running a build
