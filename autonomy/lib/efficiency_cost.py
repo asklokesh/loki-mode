@@ -28,6 +28,7 @@ import os
 
 __all__ = [
     "collect_efficiency",
+    "record_is_measured",
     "load_prices",
     "price_from_tokens",
     "DEFAULT_PRICES_PATH",
@@ -66,6 +67,40 @@ def _to_float(v, default=0.0):
         return float(v)
     except Exception:
         return default
+
+
+_MEASURED_FIELDS = (
+    "cost_usd",
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_creation_tokens",
+)
+
+
+def record_is_measured(rec):
+    """True when ONE efficiency record actually carries an observed value.
+
+    THE SINGLE DEFINITION of "measured" for a per-iteration record. collect_
+    efficiency() applies the same rule to the SUM; anything wanting the rule
+    per iteration (cost-summary.py) must import this rather than restate it.
+    A second copy of this predicate is how the honesty rule drifts: the four
+    surfaces that once rendered an unmeasured run as "$0.00" each had their
+    own idea of what counted as measured.
+
+    A present file is not a measurement. A run that did work necessarily
+    consumed tokens, so all-zeros means we FAILED TO MEASURE, and unmeasured
+    must read as unknown, never as free.
+    """
+    if not isinstance(rec, dict):
+        return False
+    for key in _MEASURED_FIELDS:
+        v = rec.get(key)
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)) and v:
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -125,12 +160,17 @@ def collect_efficiency(loki_dir):
     # at least one record carried a non-zero token count or cost -- an OBSERVED
     # value, not a present file. Zero everywhere means we failed to measure, and
     # unmeasured must read as unknown.
-    _observed = any(
-        cost[k] for k in (
-            "usd", "input_tokens", "output_tokens",
-            "cache_read_tokens", "cache_creation_tokens",
-        )
-    )
+    #
+    # Applied through record_is_measured() so the aggregate rule and the
+    # per-iteration rule are literally the same code (see that docstring).
+    # The cost dict keys "usd" where a record says "cost_usd", so map across.
+    _observed = record_is_measured({
+        "cost_usd": cost["usd"],
+        "input_tokens": cost["input_tokens"],
+        "output_tokens": cost["output_tokens"],
+        "cache_read_tokens": cost["cache_read_tokens"],
+        "cache_creation_tokens": cost["cache_creation_tokens"],
+    })
     if collected and _observed:
         # Round usd to a sane precision but keep it precise (anti-pattern:
         # round suspiciously-clean numbers). 4 decimals preserves odd values.

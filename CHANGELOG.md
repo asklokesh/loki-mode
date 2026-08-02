@@ -5,6 +5,61 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.69.0
+
+### What did this run cost, and how much of that is honest
+
+`autonomy/lib/cost-summary.py` reads `.loki/metrics/efficiency/` and reports
+per-run cost, the per-iteration breakdown, the cost trend, and the cache hit
+ratio (the metric that dominates cost at a 97.5% hit rate).
+
+The whole point is the accounting rule this repo paid four releases to learn:
+**an unmeasured cost reads UNKNOWN, never $0.00.** Free and unmeasured are
+different claims and only one is honest.
+
+A partially-measured run says so, and excludes rather than zero-fills:
+
+```
+Iterations:  3 found, 2 measured  <- PARTIAL
+Total cost:  $0.0599
+Cache ratio: 77.8%   (cache_read / (input + cache_read))
+Cost trend:  CLIMBING (2 measured point(s))
+  iter 3: UNKNOWN (excluded from totals)
+
+note: PARTIAL: 2 of 3 iterations measured. The total covers only the measured
+ones; unmeasured iterations are excluded, not counted as zero, so the real cost
+is HIGHER than shown.
+```
+
+$0.0599 is exactly the sum of the two measured iterations. A fully unmeasured
+run reads `Total cost: UNKNOWN`, and `--json` emits `null`, never `0`.
+
+### One definition of "measured", not two
+
+`collect_efficiency()` already had the honesty guard, but only in aggregate: it
+summed everything and then checked the TOTAL, so it could not say WHICH
+iterations were measured. Rather than write a second rule that can drift,
+`record_is_measured()` was extracted as the single definition and
+`collect_efficiency` rewired to call it. Both surfaces now run the same code;
+renaming that function turns both suites red.
+
+### The failure mode that survived the first implementation
+
+A record with real tokens but `cost_usd: 0` -- an unpriced model, the exact
+shape codex tiers produce -- counted as measured on the strength of its tokens
+and rendered `Total cost: $0.0000`. The headline rule, inverted.
+
+The original fixtures could not reach it: they zero tokens AND cost, so the
+predicate short-circuits before the disagreement matters. The cost slot now
+reads UNKNOWN with an explanatory note while the token counts still render,
+since blanking real data would be its own dishonesty.
+
+### Known remaining surface
+
+`loki-ts/src/metrics/kpis.ts` types `total_cost_usd` as a bare `number`, which
+is a sixth surface with the same `$0.00` shape. Untouched here and recorded
+rather than implied.
+
 ## v8.68.0
 
 ### An interrupted run told you there was nothing to resume
