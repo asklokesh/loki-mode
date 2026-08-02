@@ -21379,7 +21379,23 @@ except Exception:
         # shellcheck disable=SC1090
         . "${SCRIPT_DIR}/spec-interrogation.sh" 2>/dev/null || true
         if type spec_interrogation_run &>/dev/null; then
+            # TIMED. Startup was completely unmeasured: on a real run, 128
+            # SECONDS elapsed between session_start and iteration_start -- over
+            # two minutes in which the user sees nothing and no agent work has
+            # begun. Nothing in .loki/events.jsonl accounted for any of it, so
+            # the interval could not be attributed, let alone optimised.
+            #
+            # This step calls the provider, so it is the prime suspect for the
+            # bulk of that window. Naming it turns "startup is slow" into a
+            # number, the same way stage timings turned "the run is slow" into
+            # "the agent call is 93% of wall clock".
+            #
+            # Uses the existing emit_stage_complete channel, so measure-run.sh
+            # and every other consumer pick it up with no new plumbing.
+            local _si_t0
+            _si_t0=$(date +%s 2>/dev/null || echo 0)
             spec_interrogation_run "$prd_path" || true
+            emit_stage_complete "spec_interrogation" "pass" "$_si_t0" 2>/dev/null || true
         fi
         # #87: no-HITL fast-fail on an unresolved spec-INTERNAL contradiction.
         # A contradiction (class=contradictory) is NEVER auto-acked (P2-4) and only

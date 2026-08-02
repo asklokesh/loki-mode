@@ -5,6 +5,55 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.57.0
+
+### 111 seconds of startup were completely unmeasured
+
+Timeline from a real run, relative to the first event:
+
+```
++   0s  session
++  17s  session_start
++ 128s  iteration_start      <-- 111 seconds unaccounted for
++ 872s  iteration_complete
+```
+
+Over two minutes in which the user sees nothing and **no agent work has
+begun** -- and `.loki/events.jsonl` recorded not one stage for any of it.
+Counting startup instrumentation returned literally **0**.
+
+This is the felt-latency surface. Time-to-first-signal on the same run was
+**744s**, against Replit's ~2 minutes to a visible preview. You cannot shorten
+an interval you cannot attribute -- the same gap W1 fixed for cost, on the
+surface a user notices first.
+
+`spec_interrogation_run` calls the **provider** during startup, making it the
+prime suspect for the bulk of that window. It is now timed through the existing
+`emit_stage_complete` channel, so `measure-run.sh` and every other consumer
+pick it up with no new plumbing.
+
+### A missing start epoch emits nothing, never a zero
+
+The same honesty rule as the cost work: a fabricated duration is worse than an
+absent one, because it would be averaged into later analysis as real data.
+Mutation-pinned in both directions -- removing the timing, and making a missing
+epoch produce `duration_s=0`, each turn the test red.
+
+### Correction to v8.50.0
+
+That release reported *"first code change: not recorded -- the v8.35.0 signal
+did not fire on its first real exercise."* **That was wrong.** The reading came
+from a pre-v8.35.0 run. On the current run the signal fires correctly:
+
+```
+.loki/state/first-artifact.json -> {"seconds_to_first_artifact":744,"iteration":1}
+```
+
+and `measure-run.sh` renders `first code change : 744s`. v8.35.0 works end to
+end. The 744s it measures is the real finding.
+
+Trust-core detector: 85 invariants.
+
 ## v8.56.0
 
 ### The dashboard showed STOPPED while the build was running

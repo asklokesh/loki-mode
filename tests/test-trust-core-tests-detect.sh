@@ -666,6 +666,21 @@ probe_case "the pid-kind filter keeps the dashboard from proving itself alive" \
     '("wrapper", "runner")' '("wrapper", "runner", None)' \
     python3 -m pytest -q tests/dashboard/test_status_registry_liveness.py
 
+# Startup was a 111-second unattributable gap before the user saw anything. The
+# second probe guards the honesty rule: a missing start epoch must emit NOTHING
+# rather than a fabricated 0, which would be averaged into later analysis as
+# real data.
+probe_case "startup keeps its stage timing" \
+    "autonomy/run.sh" \
+    '            emit_stage_complete "spec_interrogation" "pass" "$_si_t0" 2>/dev/null || true' \
+    '            :' \
+    bash tests/test-startup-instrumentation.sh
+
+probe_case "a missing start epoch never fabricates a duration" \
+    "autonomy/run.sh" \
+    '    [ -n "$t0" ] || return 0' '    [ -n "$t0" ] || t0=$now' \
+    bash tests/test-startup-instrumentation.sh
+
 # --- the repo must be left exactly as found ----------------------------------
 # A probe that leaves a mutation on disk is worse than no probe: it breaks the
 # product silently while reporting on test quality.
