@@ -5,6 +5,65 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v8.85.0
+
+### Compare two runs: what actually changed, and what cannot be compared
+
+`tools/receipt-diff.py` is net-new. Verification of ONE receipt existed;
+comparing TWO did not.
+
+```
+Evidence Receipt diff
+  cost             12.421 -> 3.112    delta -$9.3090
+  cache hit ratio  0.2000 -> 0.9000   delta +70.0%
+  iterations       6 -> 2             delta -4
+  duration         2333 -> 754        delta -1579s
+
+  REGRESSED  tests: passed -> failed
+  FIXED      lint: failed -> passed
+  ADDED      security (passed), absent in A
+```
+
+### A delta against an unmeasured value is UNKNOWN, never a number
+
+Thirteen surfaces have now been through this rule, and a diff is where it would
+have been easiest to violate: subtracting an absent measurement produces a
+plausible-looking saving.
+
+```
+  cost             12.421 -> UNKNOWN   delta UNKNOWN
+
+  NOT COMPARABLE (reported UNKNOWN, not zero):
+    cost: cost was not measured in <path>
+    cache_hit_ratio: no cached-plus-fresh input tokens recorded, so no ratio
+                     was observed (this is not a 0% hit rate)
+```
+
+Iterations and duration still compute; only the unmeasurable axis abstains.
+`--json` emits the string `"UNKNOWN"`, never a number. A genuinely measured
+zero delta stays `0.0` -- `is None` is load-bearing, since `0` is falsy and a
+falsy guard would blank a real observation.
+
+### Integrity first, and comparability before arithmetic
+
+A tampered receipt is refused before any delta is computed (`verify_integrity`
+is imported, not reimplemented), and receipts for different specs are refused
+with both paths named rather than producing a meaningless number. Both exit 2.
+
+`record_is_measured()` reads `cost_usd` while receipts store `cost.usd`, so the
+key is mapped and the canonical predicate called. `cost.available` is
+deliberately NOT trusted on its own -- that flag lying is precisely the v8.52.0
+defect.
+
+### A red test that was kept red
+
+The tool was asserted to classify the v8.52.0 shape (`available: true` over an
+all-zero cost block) as unmeasured. It never gets the chance: `verify_integrity`
+already scores that incoherent, so the integrity gate refuses it upstream. That
+became two tests -- one for the coherent all-zero variant that does reach the
+diff, one asserting the shipped defect is refused before arithmetic -- rather
+than weakening either.
+
 ## v8.84.0
 
 ### The receipt could explain itself, but nobody could ask it to
