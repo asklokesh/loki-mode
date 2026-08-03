@@ -33657,6 +33657,8 @@ cmd_proof() {
             echo ""
             echo "Subcommands:"
             echo "  list                 List proof-of-run artifacts in .loki/proofs/"
+            echo "  releases [--json]    Release history from git tags; version_is_ahead"
+            echo "                       reads UNKNOWN when it cannot be computed"
             echo "  phases [--json]      Measured phase history from real phase_change"
             echo "                       events; unrecorded boundaries read UNKNOWN"
             echo "  show <id>            Pretty-print .loki/proofs/<id>/proof.json"
@@ -33680,6 +33682,53 @@ cmd_proof() {
             echo "See docs/SIGNED-RECEIPTS.md."
             [ "$sub" = "" ] && exit 1
             exit 0
+            ;;
+        releases)
+            # CLI PARITY with GET /api/operator/releases. Same reader
+            # (dashboard/api_releases.py), so the two surfaces cannot disagree
+            # about which versions shipped.
+            _rel_json=0
+            [ "${1:-}" = "--json" ] && _rel_json=1
+            python3 - "$_rel_json" "$SKILL_DIR" <<'PYREL'
+import json, os, sys
+sys.dont_write_bytecode = True
+# Resolve the repo from THIS SCRIPT's location, not the cwd. Using getcwd()
+# made `loki proof releases` fail with "No module named dashboard" whenever it
+# was run from any other directory -- and it exited 0 while doing so, which is
+# a failure reported as success.
+# SKILL_DIR is the CLI's own install root, computed at loki:216. sys.argv[0]
+# is "-" inside a heredoc, so deriving the path from it does not work.
+_repo = sys.argv[2] if len(sys.argv) > 2 else ""
+for _cand in (_repo, os.getcwd()):
+    if os.path.isdir(os.path.join(_cand, "dashboard")):
+        sys.path.insert(0, _cand)
+        break
+as_json = sys.argv[1] == "1"
+try:
+    from dashboard import api_releases
+except Exception as exc:
+    sys.stderr.write("release history unavailable: %s\n" % exc)
+    raise SystemExit(2)
+env = api_releases.list_releases(os.getcwd())
+if as_json:
+    print(json.dumps(env, indent=2))
+    raise SystemExit(0)
+rows = env.get("releases") or []
+if not rows:
+    print("no releases readable: %s" % (env.get("reason") or "unknown"))
+    raise SystemExit(3)
+# version_is_ahead is None when it could not be computed. None is NOT False:
+# "I cannot compare" is a different claim from "it is not ahead".
+ahead = env.get("version_is_ahead")
+print("VERSION %s | newest tag %s | ahead: %s" % (
+    env.get("version") or "UNKNOWN",
+    env.get("newest_tag") or "UNKNOWN",
+    "UNKNOWN" if ahead is None else ("yes" if ahead else "no")))
+for r in rows:
+    print("  %-14s %s%s" % (r.get("tag"), r.get("date") or "date UNKNOWN",
+                            "  (current)" if r.get("is_current") else ""))
+PYREL
+            return $?
             ;;
         phases)
             # CLI PARITY with GET /api/operator/phases. Both call the SAME

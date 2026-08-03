@@ -157,6 +157,45 @@ else
     bad "an empty result printed no reason: $_eout"
 fi
 
+# --- releases: the second parity surface -----------------------------------
+# Same rule as phases: one reader, two surfaces, no drift. Added after a
+# measurement showed `releases` was the ONE operator surface with no CLI
+# equivalent (receipts -> proof list/show/verify, tests -> loki verify,
+# runs -> loki status --json were already covered).
+if grep -q 'releases' <<< "$_help"; then
+    ok "proof --help lists the releases subcommand"
+else
+    bad "releases is missing from 'loki proof --help'"
+fi
+
+_rel="$(bash "$LOKI_BIN" proof releases 2>&1)"
+_relrc=$?
+if [ "$_relrc" -eq 0 ] && grep -q 'VERSION' <<< "$_rel"; then
+    ok "proof releases reports VERSION and the newest tag"
+else
+    bad "proof releases exited $_relrc: $(head -1 <<< "$_rel")"
+fi
+
+# Run from a NON-REPO cwd. This caught a real bug: the heredoc used
+# sys.argv[0] to find the repo, which is "-" inside a heredoc, so the command
+# failed with "No module named dashboard" AND exited 0 -- a failure reported
+# as success. It now takes SKILL_DIR and reports the real reason.
+_far="$(cd / && bash "$LOKI_BIN" proof releases 2>&1)"
+_farrc=$?
+if grep -qi "no module named" <<< "$_far"; then
+    bad "proof releases cannot find its own package when run from another cwd"
+else
+    ok "proof releases resolves its package independently of cwd"
+fi
+# 0 (read it), 2 (could not check) and 3 (nothing to check) are all real
+# ANSWERS under this repo's exit convention. What must never happen is the old
+# behaviour: an import failure printed to stderr while exiting 0, which reports
+# a failure as success. That is asserted separately above.
+case "$_farrc" in
+    0|2|3) ok "a non-repo cwd yields a real answer (exit $_farrc), not a masked failure" ;;
+    *)     bad "a non-repo cwd exited $_farrc, which is not a defined answer" ;;
+esac
+
 echo ""
 echo "  Passed:     $PASS"
 echo "  Failed:     $FAIL"
