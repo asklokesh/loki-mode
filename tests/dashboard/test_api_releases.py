@@ -343,8 +343,38 @@ def test_against_this_repository():
     """
     env = api_releases.list_releases(_REPO)
     rows = env["releases"]
-    # VACUITY GUARD: this repo has hundreds of tags; zero means the read broke.
-    assert rows, "no releases read from the real repo: %r" % (env["reason"],)
+
+    # TAGS ARE NOT GUARANTEED HERE, and assuming they were took main red.
+    #
+    # The original guard read "this repo has hundreds of tags; zero means the
+    # read broke". That is true of a developer clone and FALSE on a GitHub
+    # Actions checkout, which fetches no tags by default. All four Python jobs
+    # failed on it.
+    #
+    # The fix is not to skip and not to make CI fetch full history -- either
+    # would trade a real assertion for a green tick. Both states are legitimate
+    # and each has a CONTRACT this test now enforces:
+    #
+    #   tags present -> newest_tag agrees with row 0, versions sort
+    #                   numerically, and version_is_ahead matches a numeric
+    #                   comparison
+    #   no tags      -> releases is EMPTY, newest_tag is None, a reason is
+    #                   stated, and version_is_ahead is None rather than False
+    #
+    # The no-tags branch is the more valuable of the two: it is exactly where a
+    # reader is tempted to report "up to date" for a repo it could not read.
+    if not rows:
+        assert env.get("newest_tag") is None, (
+            "no releases were read but newest_tag is %r; the reader invented a "
+            "tag it did not list" % env.get("newest_tag"))
+        assert env.get("reason"), (
+            "an empty release list carried no reason; a caller cannot tell "
+            "'no tags in this checkout' from 'git failed'")
+        assert env.get("version_is_ahead") is None, (
+            "version_is_ahead is %r with nothing to compare against; absent "
+            "must not read as False" % env.get("version_is_ahead"))
+        return
+
     assert env["newest_tag"] == rows[0]["tag"]
 
     vt = api_releases._version_tuple(env["version"])
