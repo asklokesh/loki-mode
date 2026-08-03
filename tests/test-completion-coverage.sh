@@ -68,15 +68,65 @@ awk -v start="$DISPATCH_START" '
 #
 # 2. `</dev/null` keeps the CLI from consuming the loop's stdin, which would
 #    otherwise eat the candidate list after the first iteration.
+# 3. EVERY PROBE IS TIME-BOUNDED, and this is not defensive padding.
+#
+#    This loop runs `loki <c> --help` for all ~274 candidates, and `help` is
+#    one of them. `loki help --help` used to delegate to itself unboundedly
+#    (fixed in ccf8dcbb), spawning a process per level until the fork table
+#    was exhausted. The probe had no timeout, so the whole suite was killed:
+#    the weekly integrity audit reported rc143 (SIGTERM, 128+15) with no
+#    indication of WHICH command hung, and a reader saw a dead job rather
+#    than a named defect.
+#
+#    A blanket skip of `help` would have hidden exactly the bug that needed
+#    fixing. The bound is per-command instead, so a future recursion in ANY
+#    command is reported by NAME and the remaining candidates still run.
+#
+#    A timed-out probe is NOT treated as "Unknown command": that would
+#    silently drop a real command from the coverage set and the gate would
+#    pass while checking less. It is recorded as a FAILURE with the culprit.
+_probe() {
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 15 "$@"
+    elif command -v gtimeout >/dev/null 2>&1; then
+        gtimeout 15 "$@"
+    else
+        "$@"
+    fi
+}
+
 : > "$WORK/real.txt"
+: > "$WORK/hung.txt"
 while read -r c; do
     case "$c" in -*|'') continue ;; esac
-    probe_out="$("$LOKI" "$c" --help </dev/null 2>&1 || true)"
+    # Reset per iteration. `_prc` persists once set, so without this a single
+    # timeout would mark every LATER command as hung too -- one real culprit
+    # rendered as dozens, which is worse than none.
+    _prc=0
+    # Capture the status of the PROBE, not of the assignment. `x="$(cmd || true)"`
+    # always yields 0, so `$?` afterwards reads the assignment and every timeout
+    # would be invisible. The `|| true` is therefore dropped here and the status
+    # taken directly.
+    probe_out="$(_probe "$LOKI" "$c" --help </dev/null 2>&1)" || _prc=$?
+    _prc="${_prc:-0}"
+    # 124 = timeout(1) killed it; 137 = SIGKILL after a stuck TERM.
+    if [ "$_prc" = "124" ] || [ "$_prc" = "137" ]; then
+        printf '%s\n' "$c" >> "$WORK/hung.txt"
+        continue
+    fi
     case "$probe_out" in
         *"Unknown command"*) ;;
         *) printf '%s\n' "$c" >> "$WORK/real.txt" ;;
     esac
 done < "$WORK/candidates.txt"
+
+if [ -s "$WORK/hung.txt" ]; then
+    while read -r _hc; do
+        bad "PROBE HUNG: 'loki $_hc --help' did not return within 15s -- it is
+     recursing or blocking. This is the defect that made the weekly audit
+     exit 143 with no culprit named."
+    done < "$WORK/hung.txt"
+fi
 
 real_count=$(wc -l < "$WORK/real.txt" | tr -d ' ')
 if [ "$real_count" -lt 50 ]; then
