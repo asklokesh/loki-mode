@@ -68,30 +68,58 @@ class TheRoutesAreActuallyThere(unittest.TestCase):
             self.skipTest("dashboard.server not importable: %s" % exc)
         self.server = server
 
-    def test_every_operator_route_is_mounted(self):
-        paths = [getattr(r, "path", "") for r in self.server.app.routes]
-        for expected in _EXPECTED:
-            self.assertIn(
-                expected, paths,
-                "%s is not mounted. If the module failed to import, the mount "
-                "swallowed the reason instead of failing loudly." % expected)
+    def test_every_operator_route_is_reachable(self):
+        """Reachability, NOT membership of app.routes.
 
-    def test_no_operator_route_is_registered_twice(self):
-        paths = [getattr(r, "path", "") for r in self.server.app.routes]
+        app.routes is a FastAPI implementation detail that CHANGED: through
+        0.128 include_router copied each route in, from 0.141 it appends one
+        lazy _IncludedRouter and resolves at request time. Asserting on the
+        list reported a perfectly working dashboard as broken on every Linux
+        CI run while passing on macOS. Routing a request is version-independent
+        and is the property that actually matters.
+        """
+        try:
+            from starlette.testclient import TestClient
+        except Exception as exc:  # pragma: no cover
+            self.skipTest("starlette unavailable: %s" % exc)
+        client = TestClient(self.server.app, raise_server_exceptions=False)
+        for expected in _EXPECTED:
+            path = expected.replace("{run_id}", "some-run")
+            r = client.get(path)
+            self.assertNotEqual(
+                r.status_code, 404,
+                "%s returned 404; nothing is mounted there. If the module "
+                "failed to import, the mount swallowed the reason instead of "
+                "failing loudly." % path)
+
+    def test_the_router_declares_each_path_exactly_once(self):
+        """Duplicate registration, checked on the ROUTER rather than the app.
+
+        Two handlers for one path means which answers depends on registration
+        order. The router object is the honest place to check this: it holds
+        the declarations regardless of how the app chooses to store them.
+        """
+        try:
+            from dashboard.api_operator import router  # noqa: PLC0415
+        except Exception as exc:  # pragma: no cover
+            self.skipTest("api_operator not importable: %s" % exc)
+        paths = [getattr(r, "path", "") for r in router.routes]
         for expected in _EXPECTED:
             self.assertEqual(
                 paths.count(expected), 1,
-                "%s is registered %d times; two handlers for one path means "
-                "which one answers depends on registration order"
+                "%s is declared %d times on the operator router"
                 % (expected, paths.count(expected)))
 
     def test_every_operator_route_still_requires_read_scope(self):
         """The mount must not be repaired by dropping auth."""
-        for r in self.server.app.routes:
-            if getattr(r, "path", "").startswith("/api/operator"):
-                self.assertTrue(
-                    getattr(r, "dependencies", []),
-                    "%s carries no auth dependency" % r.path)
+        try:
+            from dashboard.api_operator import router  # noqa: PLC0415
+        except Exception as exc:  # pragma: no cover
+            self.skipTest("api_operator not importable: %s" % exc)
+        for r in router.routes:
+            self.assertTrue(
+                getattr(r, "dependencies", []),
+                "%s carries no auth dependency" % getattr(r, "path", r))
 
 
 class TheMountDoesNotFailOpen(unittest.TestCase):

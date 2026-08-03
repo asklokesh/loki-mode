@@ -85,41 +85,58 @@ class TheRouterIsMountedOnTheRealDashboardApp(unittest.TestCase):
     """Assertion 1. Importing the module proves nothing; the app's route
     table is what serves users."""
 
-    def test_operator_paths_exist_on_dashboard_server_app(self):
-        """ORDER-INDEPENDENT ON PURPOSE.
+    def test_operator_paths_are_reachable_on_the_real_app(self):
+        """Asserted by ROUTING A REQUEST, not by walking app.routes.
 
-        Six tests under tests/dashboard/ delete dashboard.* from sys.modules or
-        importlib.reload it (test_control_app_auth, test_oidc_rbac_mapping,
-        test_phase1_endpoints, test_server_wave5_w5, test_tenant_create_admin_only,
-        test_migration_engine_bughunt_w4). Whichever runs first leaves a
-        REBUILT dashboard.server cached, and a cached module object captured
-        before that rebuild reports a route table that no longer reflects the
-        file on disk.
+        THE BUG THIS TEST ITSELF HAD. It originally asserted that each path
+        appeared in `[r.path for r in server.app.routes]`. That is an
+        IMPLEMENTATION DETAIL of FastAPI, and FastAPI changed it: up to 0.128
+        include_router copied each route into app.routes, while from 0.141 it
+        appends ONE lazy `_IncludedRouter` wrapper and resolves the real routes
+        at request time.
 
-        That is how this assertion failed on all four CI Python versions while
-        passing in isolation locally, and it reported "Mounted: []" -- which
-        reads as "the mount is broken" rather than "you are looking at a stale
-        module". Re-importing here means the assertion is about the SOURCE, not
-        about whatever a previous test left in sys.modules.
+        So on CI (fastapi 0.141.1) app.routes showed 189 entries with zero
+        /api/v2 and zero /api/operator, while macOS (0.128.0) showed 215 with
+        all 28 -- a deficit of exactly the 24 v2 + 4 operator routes. Every one
+        of those routes was mounted and serving correctly the whole time; only
+        the enumeration changed. Four CI rounds were spent treating a working
+        dashboard as broken.
+
+        Routing a real request is version-independent and is also the property
+        anyone actually cares about: not "is this row in a list" but "does a
+        caller reach the handler".
         """
         import importlib
         try:
             server = importlib.import_module("dashboard.server")
-            # If an earlier test rebuilt the package, the cached object may
-            # predate the mount. Reload so the table matches the file.
-            server = importlib.reload(server)
         except Exception as exc:  # pragma: no cover - import env varies
             self.skipTest("dashboard.server not importable here: %s" % exc)
-        paths = {getattr(r, "path", "") for r in server.app.routes}
-        for expected in ("/api/operator/runs/{run_id}",
-                         "/api/operator/tests",
-                         "/api/operator/receipts",
-                         "/api/operator/releases"):
-            self.assertIn(
-                expected, paths,
-                "%s is not mounted on dashboard.server.app; the reader behind "
-                "it is unreachable by any user. Mounted: %s"
-                % (expected, sorted(p for p in paths if "operator" in p)))
+        try:
+            from starlette.testclient import TestClient
+        except Exception as exc:  # pragma: no cover
+            self.skipTest("starlette unavailable: %s" % exc)
+
+        os.environ["LOKI_ENTERPRISE_AUTH"] = "false"
+        try:
+            from dashboard import auth as _auth
+            _auth.ENTERPRISE_AUTH_ENABLED = False
+            _auth.OIDC_ENABLED = False
+        except Exception:
+            pass
+
+        client = TestClient(server.app, raise_server_exceptions=False)
+        for path in ("/api/operator/runs/some-run",
+                     "/api/operator/tests",
+                     "/api/operator/receipts",
+                     "/api/operator/releases"):
+            r = client.get(path)
+            # 404 is the failure that matters: it means nothing is mounted
+            # there. Any other status means a handler ran.
+            self.assertNotEqual(
+                r.status_code, 404,
+                "%s returned 404 on the real dashboard app; the operator "
+                "router is not mounted, so the reader behind it is "
+                "unreachable by any user" % path)
 
 
 class TheEnvelopeSurvivesTheRoundTrip(unittest.TestCase):

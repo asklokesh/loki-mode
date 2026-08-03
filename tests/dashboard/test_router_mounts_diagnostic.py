@@ -1,26 +1,33 @@
-"""Why are api_v2 AND api_operator both absent from app.routes on CI?
+"""Both mounted routers must be REACHABLE, on every FastAPI version.
 
-THIS IS A DIAGNOSTIC, and it asserts a real contract while it reports.
+THE INVESTIGATION THIS FILE CLOSES. The mount assertions failed on Linux CI
+across Python 3.10-3.13 while passing on macOS. The evidence looked alarming:
+189 routes on CI versus 215 on macOS, a deficit of EXACTLY 28, which is
+precisely the 24 api_v2 routes plus the 4 api_operator routes. Both routers
+imported cleanly and reported 24 and 4 routes on their own objects.
 
-The facts that do not fit any theory tried so far:
-  - CI reports 156 routes on dashboard.server.app, including routes defined
-    at line ~400 and routes defined AFTER the mount block (/lab).
-  - It reports ZERO /api/v2/* and ZERO /api/operator/* routes.
-  - api_v2 is mounted at server.py:1011 with NO try/except at all, so an
-    exception there would abort the module and there would be no routes.
-  - No "operator API could not be imported" line appears in the CI log, so
-    the operator mount's except-ImportError branch never fired.
+THE CAUSE WAS NOT OUR CODE. FastAPI changed how include_router stores routes:
 
-Locally the same file yields 24 v2 routes and 4 operator routes.
+    <= 0.128   each route is copied into app.routes
+    >= 0.141   ONE lazy _IncludedRouter wrapper is appended, and the real
+               routes are resolved at request time
 
-Because api_v2 has no error handling, "v2 is missing but the module finished"
-is the observation that constrains everything: it means the mount statements
-did not run in the module object the test is looking at, which points at a
-module identity problem rather than an import failure.
+CI installs the latest fastapi (0.141.1); this machine had 0.128.0 pinned. So
+`app.include_router(router_with_24_routes)` added exactly 1 entry to
+app.routes, and every assertion that walked that list saw zero v2 and zero
+operator paths.
 
-The assertion below is the contract either way: if the dashboard app does not
-carry its own v2 routes, the dashboard is broken regardless of the cause, and
-the failure message carries the evidence needed to finish the diagnosis.
+Every one of those routes was mounted and serving the whole time. Verified in
+a Linux container on 0.141.1: GET /api/operator/tests returns 200, and
+/api/v2/tenants reaches its handler (it fails later on a database path, which
+is a different matter entirely).
+
+THE LESSON, and it is the reason this file stays. app.routes is an
+IMPLEMENTATION DETAIL of the framework. Asserting on it made a working
+dashboard look broken for four CI rounds and nearly justified quarantining a
+real assertion to manufacture a green build. Route tests here assert
+REACHABILITY by routing a request, which is both version-independent and the
+only property a user has.
 """
 
 import pathlib
@@ -34,52 +41,73 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 
-class TheMountRegionActuallyRuns(unittest.TestCase):
+class BothRoutersAreReachable(unittest.TestCase):
 
-    def test_v2_and_operator_routers_are_both_mounted(self):
+    def test_v2_and_operator_routes_both_reach_a_handler(self):
+        """A 404 is the only failure that matters: nothing mounted there."""
         import importlib
+        import os
         try:
             server = importlib.import_module("dashboard.server")
+            from starlette.testclient import TestClient
         except Exception as exc:  # pragma: no cover
-            self.skipTest("dashboard.server not importable: %s" % exc)
+            self.skipTest("dashboard.server/starlette not importable: %s" % exc)
 
-        paths = [getattr(r, "path", "") for r in server.app.routes]
-        v2 = sorted({p for p in paths if p.startswith("/api/v2")})
-        op = sorted({p for p in paths if p.startswith("/api/operator")})
+        os.environ["LOKI_ENTERPRISE_AUTH"] = "false"
+        try:
+            from dashboard import auth as _auth
+            _auth.ENTERPRISE_AUTH_ENABLED = False
+            _auth.OIDC_ENABLED = False
+        except Exception:
+            pass
 
-        # Evidence for whoever reads the failure, gathered before asserting.
-        detail = [
-            "module file: %s" % getattr(server, "__file__", "?"),
-            "module name: %s" % getattr(server, "__name__", "?"),
-            "total routes: %d" % len(paths),
-            "v2 routes: %d" % len(v2),
-            "operator routes: %d" % len(op),
-            "dashboard.api_v2 in sys.modules: %s"
-            % ("dashboard.api_v2" in sys.modules),
-            "dashboard.api_operator in sys.modules: %s"
-            % ("dashboard.api_operator" in sys.modules),
-            "has /lab (defined AFTER the mounts): %s" % ("/lab" in paths),
-        ]
-        # Whether the routers themselves can be imported and how many routes
-        # they carry, independent of whatever server.py did with them.
-        for mod in ("dashboard.api_v2", "dashboard.api_operator"):
-            try:
-                m = importlib.import_module(mod)
-                detail.append("%s imports OK, router routes: %d"
-                              % (mod, len(m.router.routes)))
-            except Exception as exc:
-                detail.append("%s IMPORT FAILED: %s: %s"
-                              % (mod, type(exc).__name__, exc))
+        client = TestClient(server.app, raise_server_exceptions=False)
+        for path in ("/api/operator/tests", "/api/v2/tenants"):
+            r = client.get(path)
+            self.assertNotEqual(
+                r.status_code, 404,
+                "%s returned 404 on the real app. Note this test asserts "
+                "REACHABILITY, not membership of app.routes: FastAPI >= 0.141 "
+                "stores an included router as one lazy wrapper rather than "
+                "copying its routes in, so an app.routes check reports a "
+                "working mount as missing." % path)
 
-        self.assertTrue(
-            v2,
-            "dashboard.server.app carries NO /api/v2 routes. api_v2 is mounted "
-            "with no try/except, so this cannot be a swallowed import error.\n"
-            + "\n".join("  " + d for d in detail))
-        self.assertTrue(
-            op,
-            "dashboard.server.app carries no /api/operator routes.\n"
-            + "\n".join("  " + d for d in detail))
+    def test_the_route_tests_do_not_assert_on_app_routes(self):
+        """Pins the lesson so it cannot silently regress.
+
+        Walking app.routes is what made a working dashboard look broken for
+        four CI rounds. Any route test that goes back to it will pass on an
+        older FastAPI and fail on a newer one, which is the worst combination:
+        green locally, red on CI, for a defect that does not exist.
+        """
+        import ast as _ast
+        import pathlib as _p
+        here = _p.Path(__file__).parent
+        for name in ("test_api_operator.py",
+                     "test_operator_mount_fails_closed.py"):
+            src = (here / name).read_text(encoding="utf-8", errors="replace")
+            tree = _ast.parse(src)
+            # Strip every docstring before searching. A docstring may quote the
+            # banned pattern to explain WHY it is banned -- including this
+            # file's own -- and a plain substring search cannot tell an
+            # explanation from a violation.
+            for node in _ast.walk(tree):
+                if isinstance(node, (_ast.Module, _ast.ClassDef,
+                                     _ast.FunctionDef, _ast.AsyncFunctionDef)):
+                    body = getattr(node, "body", [])
+                    if (body and isinstance(body[0], _ast.Expr)
+                            and isinstance(body[0].value, _ast.Constant)
+                            and isinstance(body[0].value.value, str)):
+                        body[0].value.value = ""
+            code = _ast.unparse(tree)
+            for banned in ("server.app.routes", "self.server.app.routes"):
+                self.assertNotIn(
+                    banned, code,
+                    "%s enumerates app.routes in EXECUTABLE code (%r). Assert "
+                    "reachability by routing a request: FastAPI >= 0.141 "
+                    "stores an included router as one lazy wrapper, so "
+                    "enumeration reports a working mount as missing."
+                    % (name, banned))
 
 
 if __name__ == "__main__":
