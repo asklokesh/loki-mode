@@ -73,6 +73,8 @@ export class LokiFleet extends LokiElement {
     this._summary = null;
     this._pollInterval = null;
     this._lastDataHash = null;
+    this._emptyReason = null;
+    this._source = null;
   }
 
   connectedCallback() {
@@ -134,14 +136,27 @@ export class LokiFleet extends LokiElement {
       if (api !== this._api) return;
       const runs = Array.isArray(runsResp) ? runsResp : (runsResp?.runs || []);
       const dataHash = JSON.stringify({ runs, summaryResp });
-      if (dataHash === this._lastDataHash) return;
+      // The `!this._error` guard is load-bearing: without it an identical
+      // payload arriving after a failed fetch short-circuits before the error
+      // is cleared, leaving the panel permanently claiming a read failure.
+      if (dataHash === this._lastDataHash && !this._error) return;
       this._lastDataHash = dataHash;
       this._runs = Array.isArray(runs) ? runs : [];
       this._summary = summaryResp || null;
+      // /api/fleet/runs is declared `response_model=list[FleetRunResponse]`
+      // and its docstring states registry problems degrade to []. So a broken
+      // registry returns 200 with an empty list and NO reason to read here.
+      // Passed through when present; the empty state is explicit that the
+      // server said nothing rather than implying the fleet is genuinely idle.
+      this._emptyReason = (runsResp && !Array.isArray(runsResp) && runsResp.reason) || null;
+      this._source = (runsResp && !Array.isArray(runsResp) && runsResp.source) || null;
       this._error = null;
     } catch (err) {
       // Drop a stale response if the api-url switched mid-flight.
       if (api !== this._api) return;
+      // Provenance from the last SUCCESS is not current once a fetch failed.
+      this._emptyReason = null;
+      this._source = null;
       if (!this._error) {
         this._error = `Failed to load fleet: ${err.message}`;
       }
@@ -317,6 +332,44 @@ export class LokiFleet extends LokiElement {
         font-size: 13px;
       }
 
+      .empty-reason,
+      .empty-source {
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--loki-text-muted, #939084);
+      }
+
+      /* Deliberately NOT muted grey like .empty-state: a read failure is a
+         different fact from an empty fleet and must be distinguishable at a
+         glance, not only by reading the words. */
+      .error-state {
+        text-align: center;
+        padding: 32px 24px;
+        border: 1px solid var(--loki-red, #ef4444);
+        border-radius: 4px;
+        background: var(--loki-red-muted, rgba(239, 68, 68, 0.15));
+      }
+
+      .error-state-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--loki-red, #ef4444);
+      }
+
+      .error-state-detail {
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--loki-text-secondary, #36342E);
+        font-family: var(--loki-font-mono, monospace);
+        word-break: break-word;
+      }
+
+      .error-state-hint {
+        margin-top: 8px;
+        font-size: 12px;
+        color: var(--loki-text-muted, #939084);
+      }
+
       .error-banner {
         margin-top: 12px;
         padding: 8px 12px;
@@ -369,8 +422,27 @@ export class LokiFleet extends LokiElement {
     let content;
     if (this._loading && runs.length === 0) {
       content = '<div class="loading">Loading fleet...</div>';
+    } else if (this._error && runs.length === 0) {
+      // ORDER IS THE FIX. This branch used to sit below the zero-rows check,
+      // so a failed fetch told the operator to run `loki start` -- advice
+      // premised on the fleet being genuinely empty, when in fact the fleet
+      // is unknown. Being blind must never render as being idle.
+      content = `
+        <div class="error-state" role="status">
+          <div class="error-state-title">Could not load the fleet</div>
+          <div class="error-state-detail">${this._escapeHtml(this._error)}</div>
+          <div class="error-state-hint">This is a read failure, not an empty fleet. Builds may be running.</div>
+        </div>
+      `;
     } else if (runs.length === 0) {
-      content = '<div class="empty-state">No registered builds. Run <code>loki start</code> in a project to populate the fleet.</div>';
+      const why = this._emptyReason
+        ? `<div class="empty-reason">${this._escapeHtml(this._emptyReason)}</div>`
+        : '<div class="empty-reason">The server did not state a reason, so an unreadable registry is indistinguishable from an idle one here.</div>';
+      const src = this._source
+        ? `<div class="empty-source">Source: ${this._escapeHtml(
+            Array.isArray(this._source) ? this._source.join(', ') : String(this._source))}</div>`
+        : '';
+      content = `<div class="empty-state">No registered builds. Run <code>loki start</code> in a project to populate the fleet.${why}${src}</div>`;
     } else {
       const rows = runs.map(run => {
         const status = (run.status || 'unknown').toLowerCase();
@@ -433,7 +505,9 @@ export class LokiFleet extends LokiElement {
           Job-watcher is future work.
         </div>
         ${content}
-        ${this._error ? `<div class="error-banner">${this._escapeHtml(this._error)}</div>` : ''}
+        ${this._error && runs.length > 0
+          ? `<div class="error-banner">${this._escapeHtml(this._error)}</div>`
+          : ''}
       </div>
     `;
 

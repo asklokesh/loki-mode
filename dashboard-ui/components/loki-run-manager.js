@@ -88,6 +88,14 @@ export class LokiRunManager extends LokiElement {
     this._runs = [];
     this._pollInterval = null;
     this._lastDataHash = null;
+    // An empty result must be able to say WHY. The envelope readers
+    // (dashboard/api_runs.py) carry `reason`; without keeping it, "no runs
+    // exist" and "the runs could not be read" render identically, which is
+    // the single most misleading thing a monitoring panel can do.
+    this._emptyReason = null;
+    // Which files the answer was read from. An empty panel that cannot say
+    // what it looked at cannot be audited.
+    this._source = null;
     // Freshness inputs. `_freshPayload` holds whatever the response carried a
     // server-side freshness_s on (the envelope, or the newest run row);
     // `_changedAtMs` is the fallback clock for a payload that carries none.
@@ -244,7 +252,11 @@ export class LokiRunManager extends LokiElement {
           : { freshness_s: freshestRowS(rows) };
 
       const dataHash = JSON.stringify(runs);
-      const changed = dataHash !== this._lastDataHash;
+      // `|| this._error` is load-bearing: after a failed fetch the next
+      // SUCCESSFUL poll often returns a byte-identical payload, and without
+      // this the render is skipped and the stale error banner survives a
+      // recovery that already happened.
+      const changed = dataHash !== this._lastDataHash || !!this._error;
       if (changed) {
         this._lastDataHash = dataHash;
         this._runs = rows;
@@ -255,6 +267,10 @@ export class LokiRunManager extends LokiElement {
         // which is the exact lie this whole feature exists to stop telling.
         this._changedAtMs = Date.now();
       }
+      this._emptyReason =
+        (data && !Array.isArray(data) && data.reason) || null;
+      this._source =
+        (data && !Array.isArray(data) && data.source) || null;
       this._error = null;
       this._loading = false;
 
@@ -499,8 +515,26 @@ export class LokiRunManager extends LokiElement {
     let content;
     if (this._loading && runs.length === 0) {
       content = '<div class="loading">Loading runs...</div>';
+    } else if (this._error && runs.length === 0) {
+      // A FAILED fetch is not an empty result. Rendering "No runs found."
+      // here would make a blind panel look like a healthy idle one.
+      content =
+        // role="status" (polite), NOT role="alert". This panel polls every
+        // 5s and render() replaces innerHTML wholesale, so a persistent
+        // outage re-creates this node forever; an assertive region would
+        // interrupt a screen-reader user every 5 seconds for the whole outage.
+        '<div class="empty-state error-state" role="status" aria-live="polite">' +
+        'Could not load runs.' +
+        `<div class="error-state-detail">${this._escapeHtml(this._error)}</div></div>`;
     } else if (runs.length === 0) {
-      content = '<div class="empty-state">No runs found.</div>';
+      const why = this._emptyReason
+        ? `<div class="empty-reason">${this._escapeHtml(this._emptyReason)}</div>`
+        : '<div class="empty-reason">The server did not state a reason.</div>';
+      const src = this._source
+        ? `<div class="empty-source">Read from: ${this._escapeHtml(
+             Array.isArray(this._source) ? this._source.join(', ') : this._source)}</div>`
+        : '';
+      content = `<div class="empty-state" role="status" aria-live="polite">No runs found.${why}${src}</div>`;
     } else {
       const rows = runs.map(run => {
         const status = (run.status || 'pending').toLowerCase();

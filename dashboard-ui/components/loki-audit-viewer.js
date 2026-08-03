@@ -67,6 +67,7 @@ export class LokiAuditViewer extends LokiElement {
     this._error = null;
     this._api = null;
     this._entries = [];
+    this._emptyReason = null;
     this._verifyResult = null;
     this._verifying = false;
 
@@ -136,10 +137,13 @@ export class LokiAuditViewer extends LokiElement {
       // Drop a stale response if the api-url switched mid-flight.
       if (api !== this._api) return;
       this._entries = data?.entries || data || [];
+      this._emptyReason = (data && !Array.isArray(data) && data.reason) || null;
       this._error = null;
     } catch (err) {
       // Drop a stale response if the api-url switched mid-flight.
       if (api !== this._api) return;
+      // Provenance from the last SUCCESS is not current once a fetch failed.
+      this._emptyReason = null;
       this._error = `Failed to load audit log: ${err.message}`;
     } finally {
       this._loading = false;
@@ -378,6 +382,43 @@ export class LokiAuditViewer extends LokiElement {
         font-size: 13px;
       }
 
+      .empty-reason {
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--loki-text-muted, #939084);
+      }
+
+      /* Deliberately NOT muted grey like .empty-state: an unread audit log is
+         a different fact from an empty one and must be distinguishable at a
+         glance, not only by reading the words. */
+      .error-state {
+        text-align: center;
+        padding: 32px 24px;
+        border: 1px solid var(--loki-red, #ef4444);
+        border-radius: 4px;
+        background: var(--loki-red-muted, rgba(239, 68, 68, 0.15));
+      }
+
+      .error-state-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--loki-red, #ef4444);
+      }
+
+      .error-state-detail {
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--loki-text-secondary, #36342E);
+        font-family: var(--loki-font-mono, monospace);
+        word-break: break-word;
+      }
+
+      .error-state-hint {
+        margin-top: 8px;
+        font-size: 12px;
+        color: var(--loki-text-muted, #939084);
+      }
+
       .error-banner {
         margin-top: 12px;
         padding: 8px 12px;
@@ -429,8 +470,23 @@ export class LokiAuditViewer extends LokiElement {
     let content;
     if (this._loading && entries.length === 0) {
       content = '<div class="loading">Loading audit log...</div>';
+    } else if (this._error && entries.length === 0) {
+      // ORDER IS THE FIX. Previously a failed fetch rendered "No audit
+      // entries found matching filters." -- telling an operator the audit log
+      // is clean when it was never read. For an audit surface specifically,
+      // an unread log presented as an empty log is the worst possible lie.
+      content = `
+        <div class="error-state" role="status">
+          <div class="error-state-title">Could not load the audit log</div>
+          <div class="error-state-detail">${this._escapeHtml(this._error)}</div>
+          <div class="error-state-hint">This is a read failure, not an empty log. Do not treat this as evidence that no audited actions occurred.</div>
+        </div>
+      `;
     } else if (entries.length === 0) {
-      content = '<div class="empty-state">No audit entries found matching filters.</div>';
+      const why = this._emptyReason
+        ? `<div class="empty-reason">${this._escapeHtml(this._emptyReason)}</div>`
+        : '<div class="empty-reason">The server did not state a reason.</div>';
+      content = `<div class="empty-state">No audit entries found matching filters.${why}</div>`;
     } else {
       const rows = entries.map(entry => `
         <tr>
@@ -501,7 +557,9 @@ export class LokiAuditViewer extends LokiElement {
 
         ${verifyHtml}
         ${content}
-        ${this._error ? `<div class="error-banner">${this._escapeHtml(this._error)}</div>` : ''}
+        ${this._error && entries.length > 0
+          ? `<div class="error-banner">${this._escapeHtml(this._error)}</div>`
+          : ''}
       </div>
     `;
 
