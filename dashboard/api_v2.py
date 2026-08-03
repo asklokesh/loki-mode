@@ -496,9 +496,55 @@ async def list_runs(
     listing is narrowed to the caller's own projects.
     """
     if tenant_ctx.is_global_admin or not tenant_ctx.auth_enabled:
-        return await runs_mod.list_runs(
+        _rows = await runs_mod.list_runs(
             db, project_id=project_id, status=status, limit=limit, offset=offset,
         )
+        # ONE CANONICAL RUN SURFACE, not two divergent APIs.
+        #
+        # These routes are real and mounted, but the SQL store behind them has
+        # NO RUNTIME WRITER: the only writers are this module and
+        # dashboard/runs.py, both API-side, while the actual run lifecycle
+        # writes to the filesystem (autonomy/run.sh, runner/council.ts,
+        # runner/checkpoint.ts). dashboard/runs.py contains zero filesystem
+        # references. So for every real `loki start` this returned [].
+        #
+        # The fix is a fallback here rather than a second /runs endpoint. A
+        # second endpoint would have produced a second surface disagreeing
+        # with this one, which is worse than an empty table.
+        #
+        # SCOPED DELIBERATELY TO THIS BRANCH. The filesystem adapter has no
+        # tenancy concept -- its signature is (loki_dir, now) and it carries
+        # zero project/tenant fields. Wiring it into the tenant-scoped paths
+        # below would let filesystem runs cross a boundary that is currently
+        # fail-closed (tenant_id is None -> []), trading a security property
+        # for a data fix. This branch is ALREADY unscoped: it is taken only
+        # when the caller is a global admin or auth is off entirely, which is
+        # exactly the local `loki start` case where the data is missing.
+        #
+        # Fallback only when SQL yields nothing, so a populated store always
+        # wins and enterprise behaviour is unchanged.
+        if not _rows and project_id is None:
+            try:
+                from . import api_runs as _fs_runs
+
+                _loki = os.environ.get("LOKI_DIR") or os.path.join(os.getcwd(), ".loki")
+                _fs = _fs_runs.list_runs(_loki)
+                # The adapter returns an envelope carrying source, freshness
+                # and an explicit reason when empty. Never fabricate a row:
+                # an empty filesystem result stays empty and the reason
+                # travels with it.
+                if _fs.get("runs"):
+                    return _fs["runs"]
+            except Exception as _fs_exc:  # pragma: no cover - never fatal
+                # This module defines no module-level logger, and referencing
+                # one would raise NameError inside the very handler whose job
+                # is to guarantee the fallback can never be fatal. Resolve it
+                # locally instead.
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning(
+                    "filesystem run fallback unavailable: %s", _fs_exc)
+        return _rows
 
     if project_id is not None:
         # Targeting a specific project: enforce it belongs to the caller.
