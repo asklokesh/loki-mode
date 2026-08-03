@@ -186,6 +186,49 @@ def probe_tier(tier, task):
     return rec
 
 
+# Acceptance commands that CANNOT FAIL. A task scored by one of these records
+# success unconditionally, so a timed-out run producing nothing is written down
+# as a pass.
+#
+# FOUND LIVE, not hypothesised. `loki bench run demo-pass` produced three
+# trials, every one `exit_status: "timeout"` at 60s with `iterations: 0` and no
+# tokens recorded -- and every one `success: True`. runner.py:242 computes
+# `success = (exit_code == 0)` from the acceptance command ALONE; the adapter's
+# timeout status and zero iteration count are recorded in the same file and
+# never consulted.
+#
+# demo-pass is a CLI smoke test, so an always-true acceptance is defensible
+# THERE. The hazard is that nothing distinguishes it from a real task in the
+# results, and a reader aggregating result rows sees success=True either way.
+_TRIVIAL_ACCEPTANCE = ("true", "/bin/true", ":", "exit 0")
+
+
+def scan_trivial_acceptance():
+    """Tasks whose acceptance command cannot fail. Reported, never silenced."""
+    tasks_dir = os.path.join(_ROOT, "benchmarks", "bench", "tasks")
+    out = []
+    if not os.path.isdir(tasks_dir):
+        return out
+    for name in sorted(os.listdir(tasks_dir)):
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(tasks_dir, name), encoding="utf-8") as fh:
+                spec = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        cmd = ((spec.get("acceptance") or {}).get("cmd") or "").strip()
+        if cmd in _TRIVIAL_ACCEPTANCE:
+            out.append({
+                "task": spec.get("id") or name[:-5],
+                "acceptance_cmd": cmd,
+                "why": ("this command exits 0 unconditionally, so runner.py's "
+                        "`success = (exit_code == 0)` records a pass even when "
+                        "the run timed out and produced nothing"),
+            })
+    return out
+
+
 def build_receipt():
     rows = [probe_tier(t, task) for t, task in TIERS]
     measured = sum(1 for r in rows if r.get("discriminates") is True)
@@ -200,6 +243,7 @@ def build_receipt():
         "agent_runs": 0,
         "spend_usd": 0,
         "tiers": rows,
+        "trivial_acceptance_tasks": scan_trivial_acceptance(),
         "summary": {
             "tiers_probed": len(rows),
             "oracles_fully_discriminating": measured,
@@ -242,6 +286,19 @@ def render(receipt):
         "  TIER AXIS is inferred from the filename prefix; the task JSON",
         "  records no tier field. Stamped as tier_source in the receipt.",
     ]
+    trivial = receipt.get("trivial_acceptance_tasks") or []
+    if trivial:
+        lines += [
+            "",
+            "  ACCEPTANCE COMMANDS THAT CANNOT FAIL (%d):" % len(trivial),
+        ]
+        for t in trivial:
+            lines.append("    %-22s cmd=%r" % (t["task"], t["acceptance_cmd"]))
+        lines += [
+            "    runner.py:242 sets success from the acceptance exit code",
+            "    ALONE. Observed live: demo-pass recorded success=True on 3",
+            "    trials that each TIMED OUT at 60s with 0 iterations.",
+        ]
     if s["oracles_broken"]:
         lines.append("")
         lines.append("  BROKEN ORACLES: %s" % ", ".join(s["oracles_broken"]))
