@@ -122,3 +122,10 @@ benchmarks/results/speed-*.json
 
 # graphify knowledge-graph artifacts (regenerable, machine-local)
 graphify-out/
+
+# Generated HumanEval model output. run-benchmarks.sh creates this dir
+# (mkdir -p at :531) and writes {task}.py into it (:867); nothing reads it.
+# Regenerate by re-running the benchmark. 164 files were committed by
+# accident and removed 2026-08-03.
+benchmarks/results/humaneval-loki-solutions/
+benchmarks/results/humaneval-solutions/
