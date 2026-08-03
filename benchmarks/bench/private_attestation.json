@@ -12,6 +12,16 @@
         "expected_exit": 0
       }
     },
+    "hard-2-ledger": {
+      "adversarial": {
+        "artifact_sha256": "bc9f0efd8c2158574c7568765385f3381e0487988847890ab963a232209c16f1",
+        "expected_exit": 1
+      },
+      "positive": {
+        "artifact_sha256": "f47a3f5706a3f220bc5d8c23b7cbb2fa3c353c3e9b01e354255aeff38476025d",
+        "expected_exit": 0
+      }
+    },
     "multifail-1-two-modules": {
       "adversarial": {
         "artifact_sha256": "f4daff9d346c6116e4bc53b8995feeb172557c6483f1c085305330260c9ad1b2",

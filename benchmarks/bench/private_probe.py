@@ -80,6 +80,14 @@ _PRIVATE = os.environ.get(
 _EXPECTED = {
     "multifail-1-two-modules": {"positive": 0, "adversarial": 1},
     "hard-1-order-api": {"positive": 0, "adversarial": 1},
+    # The strongest task in the corpus, and the only one that WITHHOLDS its
+    # rules: the prompt says "obey the fundamental accounting rule" without
+    # stating it, requires atomicity without describing rollback, and says
+    # money "must not drift" without naming Decimal. Its own docstring records
+    # why it exists -- haiku with the harness DISABLED passed hard-1-order-api
+    # first try, so a suite whose only failures were on fizzbuzz had no
+    # discriminating power left.
+    "hard-2-ledger": {"positive": 0, "adversarial": 1},
 }
 
 

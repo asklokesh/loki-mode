@@ -19,8 +19,29 @@ precisely the gap a harness is supposed to close through iteration and review.
 Exits 0 only if every assertion passes.
 """
 
+import os
 import sys
 import importlib
+
+# THE TASK WAS UNPASSABLE WITHOUT THIS LINE.
+#
+# The grader runs with the agent's workdir as cwd, but cwd is NOT on
+# sys.path for a script invoked by absolute path. So `import_module("ledger")`
+# could never find a correct ledger.py, and EVERY agent -- Loki, raw Claude,
+# any competitor -- scored FAIL for a reason that has nothing to do with its
+# output.
+#
+# Proven with one artifact, two runs:
+#   without cwd on sys.path -> "FAIL: cannot import ledger.py"
+#   with PYTHONPATH set     -> "PASS: all ledger assertions hold"
+#
+# hard-1-order-api-overlay has carried `sys.path.insert(0, os.getcwd())`
+# since it was written; this file was missing it. That asymmetry is why
+# hard-1 discriminates and hard-2 read as a universal failure.
+#
+# A benchmark task that cannot be passed is worse than a missing one: it
+# reports every tool as equally bad and looks like a finding.
+sys.path.insert(0, os.getcwd())
 
 try:
     led = importlib.import_module("ledger")
