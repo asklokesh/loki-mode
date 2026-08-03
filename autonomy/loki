@@ -33463,6 +33463,7 @@ cmd_bench() {
             echo "  vs <task>       Run all configured tools on a task-spec (head-to-head)"
             echo "  list            List available task-specs"
             echo "  verify <file>   Recompute task_hash + check tool versions for a result.json"
+            echo "  oracles         Are the graders trustworthy? Hash-bound, no spend, no provider"
             echo "  report <files>  Build results.json + RESULTS.md from per-tool result-rows"
             echo ""
             echo "Options:"
