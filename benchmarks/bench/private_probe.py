@@ -34,6 +34,26 @@ them here would put the answer key back in the repo through a side door. It
 verifies whatever a human has placed in the private directory, and reports
 NOT AVAILABLE when there is nothing there.
 
+THIS RECEIPT DOES NOT PROMOTE A TIER IN tier_receipt.py, deliberately.
+
+The obvious next step is to have tier_receipt read this result and upgrade
+medium/high from `not_attempted` to `discriminates`. That is refused, because
+the two receipts answer different questions for different readers:
+
+  tier_receipt   what can ANYONE with this repository verify?
+  private_probe  what can THIS MACHINE verify, given artifacts it holds?
+
+A reader on a fresh clone has no private directory. If tier_receipt promoted a
+tier on evidence they cannot reproduce, its output would depend on who ran it
+-- and a receipt whose verdict changes with the operator is exactly the thing
+this line of work exists to prevent. It would also re-create, one level up, the
+defect already retracted once here: a claim resting on artifacts the reader
+cannot see.
+
+So the two stay separate and a human combines them. Promotion would only be
+correct if the artifacts became shareable (a second repository, an attested
+bundle), which is a distribution decision rather than a code change.
+
 Exit codes: 0 reported, 1 a probe contradicted its recorded result,
             3 nothing to check (no private dir), 64 usage, 66 path missing.
 """
