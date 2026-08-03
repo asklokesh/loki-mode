@@ -77,6 +77,23 @@ _PRIVATE = os.environ.get(
 
 # Each entry: task -> {probe name -> expected exit code}. The probe names are
 # subdirectories the operator creates under <private>/<task>/.
+# CORPUS-WIDE GRADER AUDIT, 2026-08-03. Run after hard-2-ledger was found
+# unpassable, because a defect that silent is worth checking for everywhere
+# rather than assuming it was unique.
+#
+#   grader                    needs sys.path?  has it?
+#   hard-1-order-api          yes              yes
+#   hard-2-ledger             yes              NO -> fixed this commit
+#   multifail-1-two-modules   yes              yes
+#   simple-2-fizzbuzz         yes              yes
+#   tokenheavy-1-crm          yes              yes
+#   simple-1-contact-form     no (reads index.html from disk)  n/a
+#
+# hard-2-ledger was the only instance. simple-2-fizzbuzz and tokenheavy-1-crm
+# were additionally spot-checked against an empty workdir and both reject it
+# with a named reason (classify.py not found / missing files), so neither is
+# silently passing nothing.
+
 _EXPECTED = {
     "multifail-1-two-modules": {"positive": 0, "adversarial": 1},
     "hard-1-order-api": {"positive": 0, "adversarial": 1},
