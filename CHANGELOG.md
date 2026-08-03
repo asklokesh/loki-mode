@@ -33,9 +33,18 @@ mutation testing:
 - Five read-only routes under `/api/operator/*`, all carrying the read scope:
   run detail, gate results, receipts, releases, and phase history. Four readers
   existed before this and were reachable by no user.
-- `loki proof phases [--json]` reads the SAME module as the API, so the two
-  surfaces cannot drift about the same run. An empty result exits 3 (nothing to
-  check) and states why.
+- `loki proof phases [--json]` and `loki proof releases [--json]` read the SAME
+  modules the API serves, so the two surfaces cannot drift about the same run.
+  An empty result exits 3 (nothing to check) and states why.
+- Measured against real `--help` output, the other operator surfaces were
+  already covered: receipts by `proof list/show/verify`, gate results by
+  `loki verify`, run state by `loki status --json`.
+- Two defects found in this work and fixed: `proof phases` worked but was
+  absent from `--help` (a command nobody can discover), and `proof releases`
+  failed with "No module named dashboard" from any other directory WHILE
+  EXITING 0 -- a failure reported as success. Both are now asserted by the
+  parity suite, which checks discoverability and cwd-independence rather than
+  only behaviour.
 
 ### Security
 
