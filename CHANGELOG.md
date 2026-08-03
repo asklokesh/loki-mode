@@ -5,6 +5,35 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.10.1
+
+### A test shipped without the tool it tests, and every Python job died
+
+v9.10.0 staged with `git add -A tests/`, which swept in
+`test_receipt_stats.py` and `test_receipt_verify_batch.py`. Their tools were
+UNTRACKED, so the tests were committed and the tools were not:
+
+```
+ERROR collecting tests/test_receipt_stats.py
+E  FileNotFoundError: tools/receipt-stats.py
+```
+
+pytest fails at COLLECTION, so all four Python versions died before running a
+single test -- 2635 items collected, 2 errors, zero executed.
+
+Both tools exist and work: 66 tests pass once they are present. The fix is to
+commit them, not to delete working code.
+
+### `git add -A <dir>` is how this happened
+
+A directory-wide add cannot tell a file that belongs in this commit from one
+that happens to be sitting there. Every other release in this session staged
+files BY NAME, which is why this is the first time it bit.
+
+Both tools are now in `tests/test-runtime-libs-are-packaged.sh`, which asserts
+each shipped artifact individually -- so a tool that goes missing from the
+package is named, rather than inferred from a count.
+
 ## v9.10.0
 
 ### Two security controls were documented that do not exist

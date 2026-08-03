@@ -79,6 +79,8 @@ LIBS=(
     "tools/gate-explain.py"               # a verdict a human can act on
     "tools/gate-status.py"                # is the merge gate actually set up
     "tools/gate-badge.py"                 # live gate state as a README badge
+    "tools/receipt-stats.py"              # archive summary, unmeasured excluded
+    "tools/receipt-verify-batch.py"       # verify an explicit list of receipts
 )
 
 # --- they must exist in the repo first ---------------------------------------
