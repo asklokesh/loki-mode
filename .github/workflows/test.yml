@@ -115,6 +115,24 @@ jobs:
       - name: Install Node.js dependencies
         run: npm install --no-package-lock
 
+      # REQUIRED, not optional. tests/test-trust-core-tests-detect.sh runs two
+      # mutation probes as `cd loki-ts && bun test ...`. Without bun the probe
+      # baseline exits 127, the probe reports rc=67, and the suite goes red --
+      # which is the honest outcome, but the cause is a missing toolchain here,
+      # not a defect in the trust core.
+      #
+      # These probes are deliberately NOT skipped when bun is absent: they guard
+      # the trust core, and a probe that silently does not run is an absent
+      # measurement reported as a pass.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install loki-ts dependencies (for the TS mutation probes)
+        working-directory: loki-ts
+        run: bun install
+
       - name: Run shell tests (shard ${{ matrix.shard }} of 4)
         env:
           LOKI_TEST_SHARD: ${{ matrix.shard }}/4

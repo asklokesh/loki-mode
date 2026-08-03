@@ -75,7 +75,15 @@ else
     # closes the pipe; under script(1) that races with output delivery and the
     # match is intermittently missed -- the assertion failed here while the
     # identical command passed by hand.
-    _out="$(HOME="$D" script -q /dev/null bash "$LOKI" start 2>&1 || true)"
+    # CI must be unset for the BEHAVIOURAL cases. maybe_print_update_hint
+    # returns early on `[ -n "${CI:-}" ]` by design (autonomy/loki:387), so on
+    # any CI runner this case asserted a nag that the feature is correct to
+    # suppress -- red on GitHub, green on every laptop. Note the silent case
+    # below needs it too: under CI it passed VACUOUSLY, staying quiet because
+    # the hint was suppressed rather than because the version was current.
+    # The `guard present: ${CI:-}` source assertion above is what proves the
+    # suppression still exists; unsetting it here does not weaken that.
+    _out="$(HOME="$D" env -u CI script -q /dev/null bash "$LOKI" start 2>&1 || true)"
     case "$_out" in
         *"newer loki-mode is available"*) ok "a stale install warns on start" ;;
         *) bad "a stale install prints NO warning on start" ;;
@@ -85,7 +93,7 @@ else
     # to ignore the line, which costs more than it saves.
     printf '{"checkedAt":%s,"latest":"%s"}\n' "$(date +%s)" \
         "$(cat "$REPO_ROOT/VERSION" 2>/dev/null | tr -d '[:space:]')" > "$_cache"
-    _out="$(HOME="$D" script -q /dev/null bash "$LOKI" start 2>&1 || true)"
+    _out="$(HOME="$D" env -u CI script -q /dev/null bash "$LOKI" start 2>&1 || true)"
     case "$_out" in
         *"newer loki-mode is available"*) bad "an up-to-date install still nags" ;;
         *) ok "an up-to-date install stays silent" ;;

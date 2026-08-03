@@ -77,7 +77,21 @@ run_test() {
 
     TESTS_RUN=$((TESTS_RUN + 1))
 
-    if bash "$test_file"; then
+    # Most callers pass a bare path; two pass a full command line
+    # ("python3 .../x.py"). `bash "$cmd"` treats the whole string as ONE
+    # filename, so those two died with "No such file or directory" and reported
+    # as a product failure. Branch on what the argument actually is.
+    #
+    # Deliberately NOT `bash -c "$test_file"` for everything: -c execve's the
+    # file, which requires the exec bit, and 46 shell suites here are committed
+    # mode 100644. That swap turns every one of them into rc 126.
+    if [ -f "$test_file" ]; then
+        _run_suite() { bash "$test_file"; }
+    else
+        _run_suite() { bash -c "$test_file"; }
+    fi
+
+    if _run_suite; then
         echo ""
         echo -e "${GREEN}✓ ${test_name} PASSED${NC}"
         TOTAL_PASSED=$((TOTAL_PASSED + 1))
