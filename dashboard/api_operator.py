@@ -75,6 +75,63 @@ def _repo_dir() -> str:
     return os.environ.get("LOKI_REPO_DIR") or os.getcwd()
 
 
+def _allowed_roots() -> list:
+    """The only trees a caller may ask this API to walk.
+
+    LOKI_OPERATOR_ROOTS (os.pathsep-separated) when set, else the workspace and
+    the repo. Resolved to real paths so the comparison in _resolve_workspace
+    happens after symlinks are followed, not before.
+    """
+    raw = os.environ.get("LOKI_OPERATOR_ROOTS")
+    candidates = raw.split(os.pathsep) if raw else [_loki_dir(), _repo_dir()]
+    roots = []
+    for c in candidates:
+        c = c.strip()
+        if not c:
+            continue
+        try:
+            roots.append(os.path.realpath(c))
+        except OSError:
+            continue
+    return roots
+
+
+def _resolve_workspace(workspace: Optional[str]) -> str:
+    """Confine `workspace` to an allowed root, or refuse.
+
+    WHY THIS EXISTS. receipts_report walks its argument with an UNBOUNDED
+    rglob (api_evidence.py:346) and stats every entry. Passed a caller-supplied
+    path this is a filesystem-traversal primitive: `?workspace=/` walks the
+    whole disk, `../../..` climbs out of the workspace, and a symlink inside an
+    allowed root points anywhere at all. The auth dependency is not a
+    sufficient answer, because LOKI_ENTERPRISE_AUTH is off by default, so on a
+    default deployment this route is reachable unauthenticated.
+
+    The check is done on the REALPATH of both sides. Comparing the raw string
+    would be defeated by `..` segments and by a symlink whose name sits happily
+    inside an allowed root while its target does not.
+
+    Containment is tested by prefix on a path with a trailing separator:
+    plain startswith would let "/workspaces-evil" pass as inside
+    "/workspaces".
+    """
+    if workspace is None:
+        return _loki_dir()
+    try:
+        target = os.path.realpath(workspace)
+    except OSError as exc:
+        raise HTTPException(status_code=400,
+                            detail="workspace is not a usable path: %s" % exc)
+    for root in _allowed_roots():
+        if target == root or target.startswith(root.rstrip(os.sep) + os.sep):
+            return target
+    # The refusal names the parameter but NOT the allowed roots: echoing them
+    # back turns a rejection into a filesystem-layout oracle.
+    raise HTTPException(
+        status_code=403,
+        detail="workspace is outside the configured operator roots")
+
+
 def _fail(what: str, exc: Exception):
     """A reader that raised is a 503, never an empty 200.
 
@@ -134,11 +191,21 @@ def operator_receipts(workspace: Optional[str] = Query(default=None)):
     The verdict is the WEAKEST state present, imported from the verifier
     rather than restated here, so this route cannot drift into disagreeing
     with `loki proof verify` about the same receipts.
+
+    The `workspace` parameter is confined to the configured operator roots by
+    _resolve_workspace before it reaches the walker. See that function for why
+    an auth dependency alone does not cover this.
     """
+    root = _resolve_workspace(workspace)
     try:
         from . import api_evidence
-        return api_evidence.receipts_report(workspace or _loki_dir(),
-                                            repo_dir=_repo_dir())
+        return api_evidence.receipts_report(root, repo_dir=_repo_dir())
+    except HTTPException:
+        # A 403/400 from the confinement check is the ANSWER, not a failure to
+        # read. Letting it fall into _fail would relabel a refused traversal as
+        # a 503 "receipts unavailable", which reads as a broken disk and hides
+        # that someone asked for a path they may not have.
+        raise
     except Exception as exc:
         _fail("receipts", exc)
 
