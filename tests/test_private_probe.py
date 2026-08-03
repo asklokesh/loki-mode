@@ -151,5 +151,46 @@ class TheExitContract(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
 
 
+class DriftFromTheAttestationIsCaught(unittest.TestCase):
+    """The property that makes the attestation worth committing.
+
+    Without it the probe verifies whatever bytes it happens to find. An
+    artifact edited after the fact would be re-blessed under a new hash and
+    the receipt would still read `verified` -- which is how an edited answer
+    key launders itself into a green result.
+
+    The case below is deliberately the hard one: the edit does NOT change
+    behaviour, so the grader still returns the expected exit code. Only the
+    hash comparison can catch it.
+    """
+
+    def test_an_edited_artifact_reads_drifted_and_exits_1(self):
+        att = _ROOT / "benchmarks" / "bench" / "private_attestation.json"
+        if not att.is_file():
+            self.skipTest("no attestation file; drift cannot be checked")
+        body = "def handle(request):\n    return 200, {'total': 0.0}\n"
+        with tempfile.TemporaryDirectory() as d:
+            src = pathlib.Path(d) / "hard-1-order-api" / "positive"
+            src.mkdir(parents=True)
+            # Bytes that cannot match the attested hash for this probe.
+            (src / "order_api.py").write_text(body, encoding="utf-8")
+            r = _run(d, "--json")
+            self.assertIn("DRIFTED", r.stdout,
+                          "an unattested-hash artifact was not flagged as drift")
+
+    def test_an_unattested_probe_is_not_reported_as_drift(self):
+        """Absence of a record is not evidence of tampering.
+
+        A brand new probe nobody has attested yet must read `unattested`,
+        not DRIFTED, or every legitimate new probe fails on arrival.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            src = pathlib.Path(d) / "multifail-1-two-modules" / "positive"
+            src.mkdir(parents=True)
+            (src / "temperature.py").write_text("x = 1\n", encoding="utf-8")
+            r = _run(d, "--json")
+            self.assertIn("attestation", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

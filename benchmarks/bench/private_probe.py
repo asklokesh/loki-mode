@@ -113,6 +113,24 @@ def artifact_hash(directory):
     return h.hexdigest()
 
 
+_ATTESTATION = os.path.join(_HERE, "private_attestation.json")
+
+
+def _attested(task, probe):
+    """The committed hash for one probe, or None when nothing is recorded.
+
+    The attestation file holds HASHES ONLY. The artifacts are answer keys and
+    must never be committed; their hashes are safe to commit and are what
+    turns "these bytes verify" into "the bytes I attested to verify".
+    """
+    try:
+        with open(_ATTESTATION, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return ((data.get("tasks") or {}).get(task) or {}).get(probe)
+
+
 def _grader(task):
     return os.path.join(_ROOT, "benchmarks", "bench", "fixtures",
                         task + "-overlay", "check_acceptance.py")
@@ -140,7 +158,7 @@ def run_probe(task, probe, src_dir):
         proc = subprocess.run([sys.executable, grader], cwd=scratch,
                               capture_output=True, text=True, timeout=180)
     out = (proc.stdout or proc.stderr or "").strip().splitlines()
-    return {
+    rec = {
         "probe": probe,
         "status": "measured",
         "artifact_sha256": digest,
@@ -148,6 +166,28 @@ def run_probe(task, probe, src_dir):
         "expected_exit": _EXPECTED.get(task, {}).get(probe),
         "message": (out[0][:100] if out else ""),
     }
+
+    # ATTESTATION CHECK. Without this the probe verifies whatever bytes it
+    # happens to find, which is a weaker claim than it appears: an artifact
+    # edited after the fact would be silently re-blessed under a new hash, and
+    # the receipt would still read `verified`.
+    #
+    # The committed attestation records the hash that was attested to. A
+    # mismatch is reported as drift and is NOT a pass, because the receipt can
+    # no longer say the verified bytes are the attested ones.
+    #
+    # An artifact with NO attestation entry is not drift -- it is simply
+    # unattested, which is the honest state for a probe nobody has recorded
+    # yet. Treating it as drift would fail every legitimate new probe.
+    att = _attested(task, probe)
+    if att is None:
+        rec["attestation"] = "unattested"
+    elif att.get("artifact_sha256") == digest:
+        rec["attestation"] = "matches"
+    else:
+        rec["attestation"] = "DRIFTED"
+        rec["attested_sha256"] = att.get("artifact_sha256")
+    return rec
 
 
 def build():
@@ -170,8 +210,16 @@ def build():
         measured = [r for r in recs if r.get("status") == "measured"]
         agree = [r for r in measured if r.get("exit_code") == r.get("expected_exit")]
         disagree = [r for r in measured if r.get("exit_code") != r.get("expected_exit")]
+        drifted = [r for r in measured if r.get("attestation") == "DRIFTED"]
         if disagree:
             status = "contradicted"
+        elif drifted:
+            # The probes agreed with their expected exit codes, but the bytes
+            # are not the attested ones. That is NOT `verified`: the receipt
+            # can no longer claim the verified artifacts are the recorded
+            # ones, and silently accepting it is how an edited answer key
+            # would launder itself into a green result.
+            status = "drifted"
         elif len(agree) == len(probes):
             status = "verified"
         else:
@@ -198,7 +246,11 @@ def render(r):
             mark = "ok" if p["exit_code"] == p["expected_exit"] else "CONTRADICTED"
             lines.append("      %-12s exit=%s expected=%s  %s"
                          % (p["probe"], p["exit_code"], p["expected_exit"], mark))
-            lines.append("                   sha256=%s" % p["artifact_sha256"][:32])
+            lines.append("                   sha256=%s  attestation=%s"
+                         % (p["artifact_sha256"][:32], p.get("attestation", "?")))
+            if p.get("attestation") == "DRIFTED":
+                lines.append("                   ATTESTED WAS %s -- these are not the recorded bytes"
+                             % str(p.get("attested_sha256"))[:32])
             if p.get("message"):
                 lines.append("                   %s" % p["message"][:64])
     lines += [
@@ -233,7 +285,7 @@ def main(argv=None):
 
     # A contradiction is a real defect in the evidence chain: either the grader
     # changed behaviour or the artifacts are not what the record says.
-    if any(t["status"] == "contradicted" for t in r["tasks"]):
+    if any(t["status"] in ("contradicted", "drifted") for t in r["tasks"]):
         return 1
     return 0
 
