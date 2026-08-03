@@ -1,0 +1,284 @@
+#!/usr/bin/env python3
+"""Cross-tier benchmark receipt: what is VERIFIED, and what is merely planned.
+
+WHAT THIS IS FOR. A cross-tier comparison is only worth reading if the oracle
+that decides pass/fail is trustworthy. This emits a machine-readable receipt
+about the ORACLES themselves -- one representative task per complexity tier --
+and it does so WITHOUT running an agent, so it costs nothing.
+
+WHAT IT DELIBERATELY DOES NOT DO. It does not run the benchmark, and it never
+reports a completion-quality, cost, or time figure for a run that did not
+happen. Those fields are emitted with status "planned_experiment" and a value
+of null. An unmeasured quantity is never rendered as 0, and never omitted in a
+way that lets a reader assume it was measured.
+
+THE PROPERTY IT ACTUALLY MEASURES, at zero cost: does each tier's held-out
+grader DISCRIMINATE? A grader is only evidence if it fails an absent artifact
+AND passes a correct one. A grader that always fails is as useless as one that
+always passes, and both look identical in a results table that only records
+"the grader ran".
+
+  negative probe: run the grader in an EMPTY workdir      -> must exit non-zero
+  positive probe: run it against a known-good artifact    -> must exit zero
+
+Only the simple tier ships a positive probe here, because a known-good artifact
+for the medium and hard tiers is a full solution to those tasks. Writing one to
+satisfy this script would be writing the answer key into the repo, which is
+precisely the contamination the held-out design exists to prevent. Those tiers
+therefore report positive_probe as "not_attempted" with that reason, rather than
+quietly reporting only the half that was cheap.
+
+TIER IS NOT RECORDED IN THE TASK DATA. benchmarks/bench/tasks/*.json carries no
+tier or complexity field, so tier is inferred from the filename prefix here and
+that inference is stamped into the receipt as `tier_source: "filename_prefix"`.
+A reader can then see that the tier axis rests on a naming convention rather
+than on data, instead of trusting a column that looks authoritative.
+
+Exit codes follow the repo convention:
+    0  receipt emitted
+    1  a grader failed to discriminate (a real defect in the evidence chain)
+    2  could not check (graders missing)
+    3  nothing to check
+   64  usage error
+   66  input path missing
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+sys.dont_write_bytecode = True
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(os.path.dirname(_HERE))
+
+# One representative scenario per tier, chosen from the fixtures that ALREADY
+# exist. No new fixture was authored for this receipt.
+TIERS = [
+    ("small", "simple-1-contact-form"),
+    ("medium", "multifail-1-two-modules"),
+    ("high", "hard-1-order-api"),
+]
+
+# A known-good artifact for the small tier only. See the module docstring: the
+# medium and hard equivalents would be answer keys.
+_POSITIVE_FIXTURE = {
+    "simple-1-contact-form": (
+        "index.html",
+        '<!doctype html><html><body>\n'
+        '<form action="/contact" method="post">\n'
+        '<label for="name">Name</label>'
+        '<input type="text" id="name" name="name" required>\n'
+        '<label for="email">Email</label>'
+        '<input type="email" id="email" name="email" required>\n'
+        '<label for="message">Message</label>'
+        '<textarea id="message" name="message" required></textarea>\n'
+        '<button type="submit">Send</button></form></body></html>\n'
+    ),
+}
+
+# Metrics the steering brief asks for. Each is emitted for every tier with an
+# explicit status, so a reader never has to guess whether a blank means zero.
+_PLANNED = (
+    "completion_quality", "intervention_count", "intervention_rate",
+    "wall_time_s", "cost_usd", "tokens", "recovery_behavior",
+    "maintainability_proxy", "novelty_usefulness", "user_value",
+)
+
+
+class _Parser(argparse.ArgumentParser):
+    """Usage errors exit 64. argparse defaults to 2, which here means
+    "could not check" -- a claim about the subject rather than about the
+    command line."""
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        sys.stderr.write("%s: error: %s\n" % (self.prog, message))
+        raise SystemExit(64)
+
+
+def _grader_path(task):
+    return os.path.join(_ROOT, "benchmarks", "bench", "fixtures",
+                        task + "-overlay", "check_acceptance.py")
+
+
+def _run_grader(grader, workdir):
+    """Run a grader in workdir and return (rc, first_line)."""
+    proc = subprocess.run(
+        [sys.executable, grader],
+        cwd=workdir, capture_output=True, text=True, timeout=120)
+    out = (proc.stdout or proc.stderr or "").strip().splitlines()
+    return proc.returncode, (out[0][:80] if out else "")
+
+
+def probe_tier(tier, task):
+    """Both probes for one tier. Neither runs an agent; neither costs money."""
+    rec = {
+        "tier": tier,
+        "tier_source": "filename_prefix",
+        "task": task,
+        "grader": os.path.relpath(_grader_path(task), _ROOT),
+    }
+    grader = _grader_path(task)
+    if not os.path.isfile(grader):
+        rec["oracle_status"] = "missing"
+        rec["discriminates"] = None
+        return rec
+
+    with tempfile.TemporaryDirectory() as empty:
+        rc, msg = _run_grader(grader, empty)
+    rec["negative_probe"] = {
+        "description": "grader run in an EMPTY workdir",
+        "exit_code": rc,
+        "message": msg,
+        "expected": "non-zero",
+        "ok": rc != 0,
+        "status": "measured",
+    }
+
+    fixture = _POSITIVE_FIXTURE.get(task)
+    if fixture is None:
+        rec["positive_probe"] = {
+            "status": "not_attempted",
+            "reason": ("a known-good artifact for this tier would be a full "
+                       "solution to the task; committing one would put the "
+                       "answer key in the repo and contaminate the held-out "
+                       "design"),
+            "ok": None,
+        }
+    else:
+        name, body = fixture
+        with tempfile.TemporaryDirectory() as good:
+            with open(os.path.join(good, name), "w", encoding="utf-8") as fh:
+                fh.write(body)
+            rc2, msg2 = _run_grader(grader, good)
+        rec["positive_probe"] = {
+            "description": "grader run against a hand-built correct artifact",
+            "exit_code": rc2,
+            "message": msg2,
+            "expected": "zero",
+            "ok": rc2 == 0,
+            "status": "measured",
+        }
+
+    neg = rec["negative_probe"]["ok"]
+    pos = rec["positive_probe"].get("ok")
+    if neg and pos:
+        rec["oracle_status"] = "discriminates"
+        rec["discriminates"] = True
+    elif neg and pos is None:
+        # Half-verified, and labelled as such rather than promoted to a pass.
+        rec["oracle_status"] = "rejects_absent_artifact_only"
+        rec["discriminates"] = None
+    else:
+        rec["oracle_status"] = "does_not_discriminate"
+        rec["discriminates"] = False
+
+    rec["metrics"] = {
+        m: {"value": None, "status": "planned_experiment",
+            "why": "no agent was run; running one costs money and is "
+                   "founder-gated"}
+        for m in _PLANNED
+    }
+    return rec
+
+
+def build_receipt():
+    rows = [probe_tier(t, task) for t, task in TIERS]
+    measured = sum(1 for r in rows if r.get("discriminates") is True)
+    half = sum(1 for r in rows if r.get("oracle_status")
+               == "rejects_absent_artifact_only")
+    broken = [r["task"] for r in rows if r.get("discriminates") is False]
+    return {
+        "schema_version": "1.0",
+        "receipt_type": "cross_tier_oracle_verification",
+        "what_this_is": ("verification that each tier's held-out grader "
+                         "discriminates. NOT a benchmark result."),
+        "agent_runs": 0,
+        "spend_usd": 0,
+        "tiers": rows,
+        "summary": {
+            "tiers_probed": len(rows),
+            "oracles_fully_discriminating": measured,
+            "oracles_negative_only": half,
+            "oracles_broken": broken,
+        },
+    }
+
+
+def render(receipt):
+    lines = ["CROSS-TIER ORACLE RECEIPT",
+             "  verifies the graders, NOT the agent. 0 runs, $0 spent.",
+             ""]
+    for r in receipt["tiers"]:
+        lines.append("  %-7s %-26s %s" % (r["tier"], r["task"],
+                                          r.get("oracle_status", "unknown")))
+        neg = r.get("negative_probe")
+        if neg:
+            lines.append("      empty workdir   -> rc=%s  %s"
+                         % (neg["exit_code"], neg["message"]))
+        pos = r.get("positive_probe", {})
+        if pos.get("status") == "measured":
+            lines.append("      correct artifact-> rc=%s  %s"
+                         % (pos["exit_code"], pos["message"]))
+        else:
+            lines.append("      correct artifact-> NOT ATTEMPTED (%s)"
+                         % "would be an answer key in the repo")
+    s = receipt["summary"]
+    lines += [
+        "",
+        "  %d tier(s) probed: %d fully discriminating, %d negative-probe only."
+        % (s["tiers_probed"], s["oracles_fully_discriminating"],
+           s["oracles_negative_only"]),
+        "",
+        "  PLANNED EXPERIMENT, not measured here: completion quality,",
+        "  intervention count/rate, wall time, cost, tokens, recovery,",
+        "  maintainability, novelty, user value. Each is null with status",
+        "  planned_experiment. None is reported as 0.",
+        "",
+        "  TIER AXIS is inferred from the filename prefix; the task JSON",
+        "  records no tier field. Stamped as tier_source in the receipt.",
+    ]
+    if s["oracles_broken"]:
+        lines.append("")
+        lines.append("  BROKEN ORACLES: %s" % ", ".join(s["oracles_broken"]))
+    return "\n".join(lines)
+
+
+def main(argv=None):
+    p = _Parser(description="Verify each tier's held-out grader "
+                            "discriminates. Runs no agent, spends nothing.")
+    p.add_argument("--json", action="store_true", help="emit the receipt as JSON")
+    p.add_argument("--out", help="also write the JSON receipt to this path")
+    args = p.parse_args(argv)
+
+    if not os.path.isdir(os.path.join(_ROOT, "benchmarks", "bench", "fixtures")):
+        sys.stderr.write("tier-receipt: fixtures directory not found\n")
+        return 66
+
+    receipt = build_receipt()
+    if not receipt["tiers"]:
+        sys.stderr.write("tier-receipt: NOTHING TO CHECK -- no tiers\n")
+        return 3
+    if all(r.get("oracle_status") == "missing" for r in receipt["tiers"]):
+        sys.stderr.write("tier-receipt: COULD NOT CHECK -- no graders found\n")
+        return 2
+
+    if args.json:
+        sys.stdout.write(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    else:
+        sys.stdout.write(render(receipt) + "\n")
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+
+    # A grader that does not discriminate is a defect in the evidence chain,
+    # not a neutral observation: every future result scored by it is unsound.
+    return 1 if receipt["summary"]["oracles_broken"] else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
