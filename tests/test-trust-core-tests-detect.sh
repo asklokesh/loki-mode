@@ -532,9 +532,21 @@ probe_case "a changed failure reason keeps iterating" \
     '    [ -n "$prev" ] && return 0' \
     bash tests/test-gate-stuck-abort.sh
 
+# The search string must be UNIQUE. `return 20` now appears twice -- once for
+# static_analysis (run.sh:23056) and once for mutation_integrity (:23228) --
+# and mutation-probe rewrites the FIRST match. That is the static_analysis
+# site, which tests/test-gate-stuck-abort.sh does not exercise, so the
+# mutation landed somewhere unobserved and the probe reported the test "blind"
+# while the invariant was intact.
+#
+# Anchoring on the emit line above it pins the mutation_integrity site the
+# target test actually drives.
 probe_case "a stuck gate never reports success" \
     "autonomy/run.sh" \
-    '                        return 20' '                        return 0' \
+    '                        save_state "${retry:-0}" "gate_stuck_mutation_integrity" 20 2>/dev/null || true
+                        return 20' \
+    '                        save_state "${retry:-0}" "gate_stuck_mutation_integrity" 20 2>/dev/null || true
+                        return 0' \
     bash tests/test-gate-stuck-abort.sh
 
 probe_case "the mutation gate still consults the stuck check" \
@@ -560,10 +572,15 @@ probe_case "the gate list keeps its imperative framing" \
 # F0 extended to static_analysis. The JSON artifact carries a timestamp that
 # differs every run, so a whole-file compare would never match and the valve
 # would be silently dead on this gate.
+# The compare moved from `python3 -c "..."` to a heredoc, so the old search
+# string matched NOTHING and the probe reported the test blind while the
+# invariant held. The heredoc opener contains nested quotes that cannot be
+# passed through this file cleanly, so the anchor is the JSON key the
+# comparison reads -- unique, quote-free, and inside the block under test.
 probe_case "the JSON cause compare ignores the churning timestamp" \
     "autonomy/run.sh" \
-    '            cur="$(LOKI_RF="$reason_file" python3 -c "' \
-    '            cur="$(cat "$reason_file" 2>/dev/null)"; : "$(LOKI_RF="$reason_file" python3 -c "' \
+    "v = d.get('summary') or d.get('reason') or d.get('error')" \
+    "v = open(os.environ['LOKI_RF']).read()" \
     bash tests/test-gate-stuck-abort.sh
 
 probe_case "static_analysis still consults the stuck check" \

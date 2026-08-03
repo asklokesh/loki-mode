@@ -5,6 +5,62 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.9.0
+
+### Main is green: five shard failures, all of them my own guards lying
+
+Every one was a false alarm in a test, not a product defect. That is worse than
+it sounds -- a guard that cries wolf is a guard nobody reads.
+
+**1. SIGPIPE (v9.7.0).** `printf | grep -qF` had grep exit on first match and
+close the pipe, so the FIRST library in the loop was reported MISSING while
+shipping fine.
+
+**2. `stat` ordering (v9.8.0).** macOS-first at four call sites; the portability
+guard exists to catch exactly that before it bites on a Linux runner.
+
+**3. Caveman moat audit (v9.8.0).** Flagged `LOKI_PROVIDER=claude` as an
+unnamed claude subcall. It is a variable ASSIGNMENT, and the exclusion list
+already exempted every other way this file names claude as a value.
+
+**4. jest (v9.8.1).** My own version bump string-replaced `9.7.0` into
+`"jest": "^29.7.0"`, producing a version that never existed. `npm install`
+died with ETARGET and ALL ELEVEN JOBS failed before running a test. The bump
+now edits the JSON field.
+
+**5. pre-push scoping.** The test stubs `bin/python3`; the hook now prefers
+`python3.12` (v8.63.0), so the stub was never invoked and recorded no argv.
+Four assertions read as failures while the hook worked correctly.
+
+### Three trust-core probes were blind, and one hid a real hole
+
+The detector reported `the test PASSED with the invariant broken -- it is
+blind` three times.
+
+**Two were ambiguity.** `return 20` now appears twice, so the probe mutated
+static_analysis while the test drives mutation_integrity. And the JSON compare
+moved from `python3 -c` to a heredoc, so its search string matched nothing.
+Both re-anchored on unique, verified strings.
+
+**The third was a genuine coverage hole.** The wiring test asserted that an
+incoherent cost fails `ok` -- but its fixture used a `deadbeef` hash, so
+`hash_ok` was ALREADY False and `ok` was False regardless. Deleting
+`and result["cost_coherent"] is not False` from the verdict left the suite
+GREEN: a receipt claiming `$0.00` as measured would have verified clean.
+
+The fixture now carries a genuinely valid hash, computed the way the verifier
+computes it, so only the cost gate can fail it. Deleting that line now turns
+the suite red.
+
+Trust-core detector: 95 invariants, 0 blind.
+
+### What actually kept main red
+
+Not the defects -- each took minutes. It was releasing faster than a Tests run
+completes, so every run was cancelled by the next push and none ever reported.
+Two of the five do not reproduce on macOS at all, so the local gate stayed
+green throughout. A cancelled run is an absent measurement.
+
 ## v9.8.1
 
 ### My own release script took down all eleven CI jobs

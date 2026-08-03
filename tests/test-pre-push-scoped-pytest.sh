@@ -76,6 +76,13 @@ fi
 exec /usr/bin/env python3 "$@"
 STUB
     chmod +x bin/python3
+    # The hook prefers python3.12 when present (v8.63.0: CI runs 3.12 and a
+    # local 3.14 cannot observe the PEP 649 annotation bug). The stub must
+    # therefore stand in for whichever interpreter the hook actually selects,
+    # or it records no argv and every scoping assertion below reads as a
+    # failure while the hook is working correctly.
+    cp bin/python3 bin/python3.12
+    chmod +x bin/python3.12
 
     git -C "$dir" add -A >/dev/null 2>&1
     git -C "$dir" commit -q -m base --no-verify >/dev/null 2>&1
@@ -218,6 +225,7 @@ fi
 exec /usr/bin/env python3 "$@"
 STUB
 chmod +x bin/python3
+cp bin/python3 bin/python3.12 && chmod +x bin/python3.12
 printf 'def test_added():\n    assert True\n' >> tests/test_alpha.py
 g "$D" add tests/test_alpha.py bin/python3 >/dev/null 2>&1
 g "$D" commit -q -m "env leak probe" --no-verify >/dev/null 2>&1

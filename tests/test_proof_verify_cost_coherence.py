@@ -112,11 +112,25 @@ class CostCoherenceTests(unittest.TestCase):
         A check computed and never consulted is the half-shipped pattern this
         codebase has paid for repeatedly.
         """
-        r = _pv.verify_integrity(_proof({
-            "usd": 0.0, "input_tokens": 0, "output_tokens": 0,
-            "cache_read_tokens": 0, "cache_creation_tokens": 0,
-            "available": True,
-        }))
+        # The hash must be VALID, or this test passes for the wrong reason.
+        # With the default "deadbeef" placeholder, hash_ok is already False, so
+        # `ok` is False no matter what the cost gate does -- and deleting the
+        # cost line from the `ok` computation left this test GREEN. A
+        # mutation probe caught that: the wiring assertion was blind.
+        import hashlib as _h
+        p = {"cost": {"usd": 0.0, "input_tokens": 0, "output_tokens": 0,
+                      "cache_read_tokens": 0, "cache_creation_tokens": 0,
+                      "available": True},
+             "facts": {}, "honesty": {}}
+        digest = _h.sha256(_pv._canonical(p).encode("utf-8")).hexdigest()
+        p["verification"] = {"hash": digest}
+
+        r = _pv.verify_integrity(p)
+        self.assertTrue(
+            r["hash_ok"],
+            "the fixture's hash is invalid, so this test cannot isolate the "
+            "cost gate: `ok` would be False for the hash alone")
+        self.assertFalse(r["cost_coherent"])
         self.assertFalse(r["ok"], "cost_coherent=False did not fail `ok`")
 
 
