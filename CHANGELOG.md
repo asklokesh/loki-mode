@@ -5,6 +5,57 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [9.12.0] - 2026-08-03
+
+### Dashboard honesty
+
+The dashboard reported things it had not measured. Four fixes, each verified by
+mutation testing:
+
+- **Unmeasured cost read `$0.00`.** `null + null` is `0` in JavaScript, so a run
+  nobody measured summed to a confident zero while individual phases beside it
+  correctly read "unknown". Now `unknown`; a genuinely measured zero still reads
+  `$0.00`.
+- **Blind panels claimed "No runs found."** A failed fetch rendered identically
+  to an empty result, so a panel that could not reach the server looked like a
+  healthy idle one. Empty and unreadable are now distinct states, and an empty
+  result carries the server's own reason and names the sources it read.
+- **Data age was invisible.** `freshness_s` was consumed by 0 of 43 components,
+  so a 40-minute-old poll looked identical to a fresh one. Age is now shown,
+  preferring the server's measurement of the FILE over client receive time.
+- **The session timeline was fabricated.** Phase names came from a fixed
+  rotation and durations from `Math.random()`, rendered as history. It now reads
+  real `phase_change` events; boundaries that were never emitted read UNKNOWN
+  rather than being back-computed from process uptime.
+
+### Operator API and CLI parity
+
+- Five read-only routes under `/api/operator/*`, all carrying the read scope:
+  run detail, gate results, receipts, releases, and phase history. Four readers
+  existed before this and were reachable by no user.
+- `loki proof phases [--json]` reads the SAME module as the API, so the two
+  surfaces cannot drift about the same run. An empty result exits 3 (nothing to
+  check) and states why.
+
+### Security
+
+- `GET /api/operator/receipts?workspace=` forwarded a caller-supplied path into
+  an unbounded filesystem walk. Measured: walking `/` visits over 200,000
+  entries in 6 seconds. Now confined to configured roots, compared on realpath
+  so `..` and symlink escapes cannot pass, and bounded with honest PARTIAL
+  semantics when a limit stops the walk.
+- The release gate required only Python 3.12 before publishing to every
+  channel. It now waits for Tests, Bun Parity and Security Audit at the EXACT
+  release SHA and fails closed: missing, queued, cancelled, timed_out and
+  skipped are all not-a-pass.
+
+### Fixed
+
+- Route tests asserted membership of `app.routes`, an implementation detail
+  FastAPI changed in 0.141 (an included router is now stored as one lazy
+  wrapper). They assert reachability by routing a request instead, which is
+  version-independent.
+
 ## v9.11.0
 
 ### Two verification tools, released as features rather than as a fix
