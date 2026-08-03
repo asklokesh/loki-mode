@@ -55,6 +55,11 @@ _kill "loki-run-"       "loki-run-*"
 _kill "loadgen"         "loadgen (the 2026-08-01 runaway)"
 
 # Ports this project binds.
+# SC2043: the list is deliberately one element today. Kept as a loop because
+# the body is port-generic and a second port is added by extending this list,
+# not by restructuring the block. Silencing rather than rewriting keeps the
+# extension point obvious.
+# shellcheck disable=SC2043
 for port in 57374; do
     pids="$(lsof -ti:"$port" 2>/dev/null || true)"
     if [ -n "$pids" ]; then

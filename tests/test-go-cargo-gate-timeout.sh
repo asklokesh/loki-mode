@@ -131,7 +131,10 @@ mk_repo() {  # $1 = repo dir, $2 = shim body, $3 = cargo|go (default cargo)
 
 run_gate() {  # $1 = repo, $2 = harness -> prints elapsed; writes test-results.json
     local repo="$1" h="$2"
-    ( cd "$repo"; PATH="$repo/bin:$PATH" TARGET_DIR="$repo" LOKI_GATE_TIMEOUT=2 \
+    # `|| exit 1` is not cosmetic here: without it a failed cd leaves the
+    # subshell in the CALLER's directory and the gate below runs against the
+    # wrong tree, which can report a pass for a repo it never examined.
+    ( cd "$repo" || exit 1; PATH="$repo/bin:$PATH" TARGET_DIR="$repo" LOKI_GATE_TIMEOUT=2 \
         $OUTER 20s bash -c "source '$h'; enforce_test_coverage" >/dev/null 2>&1 )
     echo $?
 }

@@ -65,7 +65,7 @@ d="$(mk plain)"
     || ko "no completion signal: the cap still stops the run"
 
 # --- 2. positive evidence earns exactly one more iteration --------------------
-d="$(mk ready done)"
+d="$(mk ready "done")"
 out="$(probe "$d")"
 if [[ "$out" == "CONTINUE:6" ]]; then
     ok "agent reports done with clean gates: one extra iteration granted"
@@ -84,7 +84,7 @@ fi
 
 # --- 4. a failing gate defeats the claim --------------------------------------
 # "I am done" on top of a real gate failure is exactly what the cap should stop.
-d="$(mk claims_done_but_broken done failing)"
+d="$(mk claims_done_but_broken "done" failing)"
 [[ "$(probe "$d")" == STOP ]] \
     && ok "a failing gate overrides the agent's done claim" \
     || ko "a failing gate overrides the agent's done claim"
@@ -92,20 +92,20 @@ d="$(mk claims_done_but_broken done failing)"
 # --- 5. an EMPTY gate file is not a failure -----------------------------------
 # Gate files are commonly touched empty; treating that as failure would make the
 # grace unreachable in practice.
-d="$(mk empty_gatefile done empty_gate)"
+d="$(mk empty_gatefile "done" empty_gate)"
 out="$(probe "$d")"
 [[ "$out" == "CONTINUE:6" ]] \
     && ok "an empty gate-failures file does not block the grace" \
     || ko "an empty gate-failures file does not block the grace" "got: $out"
 
 # --- 6. the opt-out restores the pure counter ---------------------------------
-d="$(mk optout done)"
+d="$(mk optout "done")"
 [[ "$(probe "$d" "LOKI_ITERATION_GRACE=0")" == STOP ]] \
     && ok "LOKI_ITERATION_GRACE=0 restores the pure counter" \
     || ko "LOKI_ITERATION_GRACE=0 restores the pure counter"
 
 # --- 7. below the cap nothing changes -----------------------------------------
-d="$(mk below done)"
+d="$(mk below "done")"
 out="$(bash -c "source '$REPO_ROOT/autonomy/run.sh' 2>/dev/null
                 TARGET_DIR='$d'; ITERATION_COUNT=2; MAX_ITERATIONS=5
                 if check_max_iterations; then echo STOP; else echo \"CONTINUE:\$MAX_ITERATIONS\"; fi" \
