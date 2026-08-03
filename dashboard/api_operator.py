@@ -259,3 +259,25 @@ def operator_releases(limit: int = Query(default=20, ge=1, le=200)):
         return api_releases.list_releases(_repo_dir(), limit=limit)
     except Exception as exc:
         _fail("releases", exc)
+
+
+@router.get("/phases", dependencies=_READ)
+def operator_phases():
+    """Measured phase history for the current run, from real phase_change events.
+
+    Exists because the session-timeline component had no measured source and
+    SYNTHESIZED one: a fixed phase rotation with `Math.random()` durations,
+    rendered to an operator as history. The runtime does record the truth
+    (autonomy/run.sh:6562 emits phase_change to .loki/events.jsonl, NOT to
+    metrics/trust-events.jsonl); nothing exposed it.
+
+    Segment endpoints are event timestamps and nothing else. The opening
+    phase's start and the final phase's end were never emitted, so they read
+    None and are reported as such -- an unmeasured boundary must not be
+    back-computed from process uptime, which measures a different thing.
+    """
+    try:
+        from . import api_phases
+        return api_phases.phase_history(_loki_dir())
+    except Exception as exc:
+        _fail("phase history", exc)
