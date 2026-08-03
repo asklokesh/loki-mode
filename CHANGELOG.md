@@ -5,6 +5,38 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.8.1
+
+### My own release script took down all eleven CI jobs
+
+The v9.8.0 bump did a blind string replace of `9.7.0` -> `9.8.0` across
+package.json. That string also lives inside a dependency spec:
+
+```
+"jest": "^29.7.0"   ->   "jest": "^29.8.0"
+```
+
+**jest 29.8.0 has never existed** -- 29.7.0 is the highest 29.x. `npm install`
+failed with ETARGET, so every job died before running a single test: four shell
+shards, every Bun matrix entry, every Node version.
+
+The three red shards before this were genuine test failures, now fixed. This
+one was pure collateral from the release process itself, and it was worse: it
+turned three specific failures into eleven wholesale ones.
+
+### The bump now edits the version FIELD, not the file text
+
+`json.load`, set `["version"]`, `json.dump`. A blind replace cannot tell a
+project version from a dependency's, and on this release it could not tell a
+real version from one that does not exist.
+
+`tests/test_version_bump_safety.py` asserts the property that catches the
+CLASS: every exactly-pinned dependency must resolve to a published version. It
+skips, and says so, when npm is unreachable -- an absent measurement is not a
+pass. Restoring `^29.8.0` turns it red.
+
+An audit of every other pinned dependency found no further collateral.
+
 ## v9.8.0
 
 ### The remaining two red shards, both false alarms in my own guards
