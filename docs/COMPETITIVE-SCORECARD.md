@@ -12,7 +12,16 @@ Every cell in this document is one of three things and nothing else:
 - `UNKNOWN` - not measured and not sourced. This is a legitimate and common answer
   in this document.
 
-There is deliberately no fourth category. Unmarked guesses do not appear.
+There is deliberately no fourth category in the axis table. Unmarked guesses do
+not appear.
+
+One exception, quarantined: section 2b is a **planned** benchmark design. Nothing
+in it has been run, none of it is evidence, and it is excluded from the cell
+counts below. It is separated precisely so it can never be mistaken for a result.
+
+**Cell census** (the 48 axis-table cells in section 2, being 6 axes x 8 products):
+**10 measured, 5 sourced, 33 UNKNOWN**. Two thirds of this document is an
+admission of ignorance, which is the honest state of the evidence.
 
 This file is distinct from `docs/COMPETITIVE-ANALYSIS.md`, which is a narrative
 positioning document. This one is an evidence ledger and makes no claim it cannot
