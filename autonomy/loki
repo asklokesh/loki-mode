@@ -33679,6 +33679,42 @@ cmd_proof() {
             [ "$sub" = "" ] && exit 1
             exit 0
             ;;
+        phases)
+            # CLI PARITY with GET /api/operator/phases. Both call the SAME
+            # reader (dashboard/api_phases.py), so the two surfaces cannot
+            # drift into disagreeing about the same run.
+            _phases_json=0
+            [ "${1:-}" = "--json" ] && _phases_json=1
+            python3 - "$loki_dir" "$_phases_json" <<'PYPHASES'
+import json, os, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.getcwd())
+loki_dir, as_json = sys.argv[1], sys.argv[2] == "1"
+try:
+    from dashboard import api_phases
+except Exception as exc:
+    sys.stderr.write("phase history unavailable: %s\n" % exc)
+    raise SystemExit(2)
+env = api_phases.phase_history(loki_dir)
+if as_json:
+    print(json.dumps(env, indent=2))
+    raise SystemExit(0)
+segs = env.get("segments") or []
+if not segs:
+    # An empty result states WHY: "no phases" and "could not read" are
+    # different operator situations and must not print identically.
+    print("no measured phase history: %s" % (env.get("reason") or "unknown"))
+    raise SystemExit(3)
+lead = env.get("leading_phase")
+rows = ([lead] if lead else []) + list(segs)
+for seg in rows:
+    print("  %-12s start=%-14s end=%s" % (
+        seg.get("phase"),
+        seg.get("start") if seg.get("start") is not None else "UNKNOWN",
+        seg.get("end") if seg.get("end") is not None else "UNKNOWN"))
+PYPHASES
+            return $?
+            ;;
         list)
             if [ ! -d "$proofs_dir" ]; then
                 echo -e "${YELLOW}No proofs found.${NC} Run 'loki start' to generate one."
