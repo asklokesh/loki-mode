@@ -369,6 +369,7 @@ that cannot succeed.
 | `LOKI_CONFIDENCE_SPIKE_MIN` | `90` | Absolute level that counts as a spike on first arrival |
 | `LOKI_GOAL_SCORING=0` | on | Disable the goal-measurability advisory |
 | `LOKI_SMART_RETRY=0` | on | Retry every failure, including non-retryable ones |
+| `LOKI_SIMPLE=1` | off | Strip the coaching half of the system prompt (-78%, ~1562 tokens/iteration). Experimental ablation arm. |
 
 - **Prompt-cache discipline.** The prompt is split into a cache-stable
   `<loki_system>` prefix and a volatile `<dynamic_context>` tail at an explicit
