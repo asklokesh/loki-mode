@@ -56,9 +56,101 @@ jobs:
           bun run typecheck
           bun test
 
-  release:
+  # PROPORTIONAL CI AT THE EXACT RELEASE SHA.
+  #
+  # `gate` above runs the full pytest suite, but on Python 3.12 ONLY, and it
+  # never consults the security audit. Every publish job (npm, PyPI, TS SDK,
+  # Docker, Homebrew) hangs off `needs: release` -> `needs: gate`, so before
+  # this job a VERSION push could publish to every channel while the Tests
+  # matrix was still running -- or already red on 3.10, 3.11 or 3.13.
+  #
+  # That is not hypothetical for this repo: a releases test passed on a
+  # developer clone and failed on 3.10-3.13 in Actions, and the operator mount
+  # failed open on exactly those versions. Neither was visible to a 3.12-only
+  # gate.
+  #
+  # This job waits for the OTHER required workflows AT THIS COMMIT and fails
+  # closed. It deliberately polls the check-runs API for this exact SHA rather
+  # than adding matrix jobs here: re-running the matrix inside release.yml
+  # would verify a DIFFERENT execution than the one the branch was judged on,
+  # and doubles CI cost for a weaker guarantee.
+  #
+  # FAIL-CLOSED DIRECTION IS LOAD-BEARING. A workflow that is missing, still
+  # queued, cancelled, or timed out is NOT a pass. Only an explicit success
+  # conclusion counts. An absent measurement is never evidence of health.
+  required-ci:
     runs-on: ubuntu-latest
     needs: gate
+    permissions:
+      checks: read
+      actions: read
+      contents: read
+    steps:
+      - name: Require the full test matrix and audit to be green at this SHA
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Workflow names that must report success at this exact commit.
+          # One name per line, NO leading whitespace: these are matched against
+          # the API's workflow names with a literal grep, so an indented entry
+          # would never match and the loop would stall until the deadline.
+          REQUIRED=$(printf '%s\n' "Tests" "Bun Parity")
+          deadline=$(( $(date +%s) + 2400 ))
+          while :; do
+            runs=$(gh api "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" \
+                     --jq '.workflow_runs[] | "\(.name)\t\(.status)\t\(.conclusion)"' || true)
+            # VACUITY GUARD. An empty API result must never satisfy the loop:
+            # "no failing runs" over zero runs is not "everything passed".
+            if [ -z "$runs" ]; then
+              if [ "$(date +%s)" -ge "$deadline" ]; then
+                echo "FAIL: no workflow runs found for $SHA before the deadline"
+                exit 1
+              fi
+              echo "no runs reported yet for $SHA; waiting"
+              sleep 30
+              continue
+            fi
+            pending=0
+            failed=0
+            while IFS= read -r want; do
+              [ -n "$want" ] || continue
+              line=$(printf '%s\n' "$runs" | grep -F "$want	" | head -1 || true)
+              if [ -z "$line" ]; then
+                echo "  $want: not reported yet"
+                pending=1
+                continue
+              fi
+              status=$(printf '%s' "$line" | cut -f2)
+              concl=$(printf '%s' "$line" | cut -f3)
+              echo "  $want: $status/$concl"
+              if [ "$status" != "completed" ]; then
+                pending=1
+              elif [ "$concl" != "success" ]; then
+                # cancelled, timed_out, failure, skipped: none is a pass.
+                failed=1
+              fi
+            done <<< "$REQUIRED"
+            if [ "$failed" -eq 1 ]; then
+              echo "FAIL: a required workflow did not succeed at $SHA"
+              exit 1
+            fi
+            if [ "$pending" -eq 0 ]; then
+              echo "All required workflows succeeded at $SHA"
+              break
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "FAIL: required workflows did not complete before the deadline"
+              exit 1
+            fi
+            sleep 30
+          done
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [gate, required-ci]
     permissions:
       contents: write
 
