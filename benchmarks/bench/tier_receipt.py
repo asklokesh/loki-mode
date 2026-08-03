@@ -65,34 +65,30 @@ TIERS = [
 
 # A known-good artifact for the small tier only. See the module docstring: the
 # medium and hard equivalents would be answer keys.
-# OUT-OF-BAND VERIFICATION, recorded because the evidence is real but the
-# artifacts must not live in this repo.
+# NON-REPRODUCIBLE OBSERVATIONS. NOT verification, NOT a receipt.
 #
-# The medium and high tiers were validated on 2026-08-03 with positive and
-# adversarial probes built in a TEMPORARY directory and destroyed immediately.
-# They are not committed and must not be: a correct order_api.py or a correct
-# temperature.py + roman.py IS the answer key, and committing one contaminates
-# the held-out design the whole benchmark depends on.
+# These were seen by hand and CANNOT BE REPLAYED: the artifacts were built
+# in a temp directory and destroyed, no hash binds them to the run, and
+# nothing in this repo reproduces them. Calling that VERIFIED would fail
+# the same standard this codebase applies to every other claim, and an
+# earlier draft of this file did exactly that.
 #
-# What was run, and the exit codes observed:
+# They are kept as a prior for whoever builds the real probes. The tier
+# status stays NOT ATTEMPTED regardless of what is recorded here.
 #
-#   hard-1-order-api
-#     positive     full implementation (validation + totals + discount)  -> 0
-#     adversarial  same, but the >=100 discount omitted                  -> 1
-#                  named both failing cases: "should be 112.50, got 125.0"
-#                  and "should be 90.00, got 100.0"
+# WHAT WAS OBSERVED (by hand, 2026-08-03, unreplayable):
 #
-#   multifail-1-two-modules
-#     positive     both clusters correct (temperature + roman)           -> 0
-#     adversarial  ONLY cluster A fixed, cluster B absent                -> 1
-#                  which is the discrimination its own docstring promises
+#   hard-1-order-api          positive -> 0, near-miss omitting the
+#                             subtotal>=100 discount -> 1
+#   multifail-1-two-modules   positive -> 0, near-miss fixing only
+#                             cluster A -> 1
 #
-# So all three tiers are known to reject a plausible wrong answer, not merely
-# an absent one. This constant records that; the automated probe tables below
-# still report medium/high as not_attempted, because THIS PROCESS cannot
-# re-run them without the artifacts, and a receipt must not claim a probe it
-# did not execute. Read the two together.
-_OUT_OF_BAND_VERIFIED = {
+# WHAT WOULD MAKE THIS A RECEIPT: artifacts stored OUTSIDE this repository
+# (so the held-out design stays uncontaminated), content-hashed, with the
+# hash and both exit codes recorded so a later run can be checked against
+# it. None of that exists, so medium and high remain UNVERIFIED and must
+# not be spent against.
+_NON_REPRODUCIBLE_NOTE = {
     "hard-1-order-api": {
         "date": "2026-08-03",
         "positive_exit": 0,
@@ -385,15 +381,18 @@ def render(receipt):
             lines.append("      near-miss       -> rc=%s  %s"
                          % (adv["exit_code"], adv["message"]))
         else:
-            oob = _OUT_OF_BAND_VERIFIED.get(r["task"])
+            oob = _NON_REPRODUCIBLE_NOTE.get(r["task"])
             if oob:
-                lines.append("      near-miss       -> NOT RE-RUN HERE, but VERIFIED "
-                             "out-of-band %s:" % oob["date"])
-                lines.append("                         positive exit=%s, adversarial exit=%s (%s)"
-                             % (oob["positive_exit"], oob["adversarial_exit"],
-                                oob["adversarial_shape"]))
-                lines.append("                         artifacts were temporary and are NOT in "
-                             "the repo (they are answer keys)")
+                lines.append("      near-miss       -> NOT ATTEMPTED by this receipt.")
+                lines.append("                         NON-REPRODUCIBLE NOTE (%s), NOT a receipt:"
+                             % oob["date"])
+                lines.append("                         a by-hand run observed positive exit=%s, "
+                             "adversarial exit=%s"
+                             % (oob["positive_exit"], oob["adversarial_exit"]))
+                lines.append("                         (%s). The artifacts were temporary and are"
+                             % oob["adversarial_shape"])
+                lines.append("                         destroyed; no hash binds them, nothing can")
+                lines.append("                         replay it. Treat this tier as UNVERIFIED.")
             else:
                 lines.append("      near-miss       -> NOT ATTEMPTED "
                              "(no plausible-wrong fixture yet)")
