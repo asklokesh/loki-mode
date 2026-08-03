@@ -97,7 +97,13 @@ jobs:
           # One name per line, NO leading whitespace: these are matched against
           # the API's workflow names with a literal grep, so an indented entry
           # would never match and the loop would stall until the deadline.
-          REQUIRED=$(printf '%s\n' "Tests" "Bun Parity")
+          #
+          # "Security Audit" is required here, and security-audit.yml carries a
+          # matching `push: paths: [VERSION]` trigger so it actually RUNS at a
+          # release commit. Requiring a workflow that never fires at this SHA
+          # would deadlock every release rather than gate it, so the trigger
+          # and this list must be changed together.
+          REQUIRED=$(printf '%s\n' "Tests" "Bun Parity" "Security Audit")
           deadline=$(( $(date +%s) + 2400 ))
           while :; do
             runs=$(gh api "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" \

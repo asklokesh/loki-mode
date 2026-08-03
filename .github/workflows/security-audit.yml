@@ -6,6 +6,16 @@ name: Security Audit
 on:
   pull_request:
     branches: [main]
+  # A VERSION push is a release. release.yml's required-ci job will not let a
+  # release publish until this workflow reports success AT THAT EXACT SHA, and
+  # it can only report if it actually runs there -- on pull_request and a
+  # weekly cron alone, a release commit has no Security Audit run at all, and
+  # requiring one would deadlock every release instead of gating it.
+  push:
+    paths:
+      - 'VERSION'
+    branches:
+      - main
   schedule:
     # Mondays at 07:00 UTC
     - cron: '0 7 * * 1'
