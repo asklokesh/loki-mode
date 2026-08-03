@@ -76,6 +76,8 @@ LIBS=(
     "tools/receipt-export.py"             # portable evidence file
     "tools/cost-attribute.py"             # where a run's cost went, per stage
     "tools/gate-explain.py"               # a verdict a human can act on
+    "tools/gate-status.py"                # is the merge gate actually set up
+    "tools/gate-badge.py"                 # live gate state as a README badge
 )
 
 # --- they must exist in the repo first ---------------------------------------

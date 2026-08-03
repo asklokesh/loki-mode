@@ -5,6 +5,57 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.5.0
+
+### Is the merge gate actually set up, and does the badge tell the truth
+
+`gate-status.py` answers "is this repo's gate real?" in one screen, composing
+the existing tools by subprocess rather than reimplementing any of them.
+
+```
+would_run      PROBLEM   no: the policy does not load, so ci-gate would run with
+                         nothing to enforce, which is green without checking
+
+GATE: UNKNOWN -- the merge gate cannot be fully verified from here, so it is
+                 not known to be working
+exit=2
+```
+
+UNKNOWN is the state the file exists to keep. A component that cannot be
+checked is neither OK nor a failure, and the overall verdict is weakest-link,
+never a count.
+
+`gate-badge.py` renders the live verdict for a README:
+
+```
+{"schemaVersion":1,"label":"gate","message":"unevaluable","color":"orange"}
+```
+
+A badge is read at a glance, so a blind gate showing green is the worst
+possible rendering of that state. UNEVALUABLE gets its own colour, and
+recolouring it green turns the suite red.
+
+### A tool was built, tested green by its author, and dropped here
+
+`cost-forecast.py` reported "26 passed" in its own worktree. Integrated here it
+failed 6 tests and crashed outright on an empty history:
+
+```
+AssertionError: 0.0 is not None : zero recorded runs produced a forecast;
+absent is not zero
+AssertionError: 0.0 is not None : three unmeasured runs were averaged as 0 and
+projected; that is the $0.00-means-free lie pointed at the future
+TypeError: must be real number, not NoneType
+```
+
+Its own tests were correct and caught it; the reported green did not match this
+tree. Stale bytecode was ruled out by clearing `__pycache__` and re-running.
+
+It is NOT in this release. A cost forecaster that projects $0.00 from zero
+measured runs is the exact defect this codebase has spent sixteen surfaces
+removing, aimed at a number someone would budget against. Shipping it because
+three of four were ready would have been the worst trade available.
+
 ## v9.4.0
 
 ### Four tools, and the same rule holds in all four
