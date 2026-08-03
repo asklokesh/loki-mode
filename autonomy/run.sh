@@ -19874,8 +19874,38 @@ except Exception:
 
     # STATIC PREFIX (cache-stable across iterations).
     # Order is deterministic so the prefix is byte-identical for iter N and N+1.
+    #
+    # LOKI_SIMPLE=1 -- THE ABLATION ARM. Default off; the emitted bytes are
+    # unchanged unless it is explicitly set, so parity fixtures do not move.
+    #
+    # WHY THIS EXISTS. Every instruction below was written to correct a model
+    # that needed correcting. Anthropic deleted ~80% of Claude Code's system
+    # prompt for Opus 5 on the finding that the corrections had become dead
+    # weight -- and that the model measured slightly MORE capable without them.
+    # Their method was ablation: delete, then add back only what a measured
+    # failure demands. Nothing here had ever been measured at all.
+    #
+    # THE DISTINCTION THIS FLAG IS BUILT AROUND, and the reason it strips the
+    # prefix while leaving the tail completely alone:
+    #
+    #   The prefix is COACHING -- how to work. "Use a Reason-Act-Reflect-Verify
+    #   cycle", "execute all SDLC phases", "consult memory". A frontier model
+    #   does these natively; being told costs attention and buys nothing.
+    #
+    #   The tail is STATE -- what happened. Which gate failed, what the
+    #   self-heal found, what the checklist still shows open. That is
+    #   information the model cannot derive from anywhere else, and deleting
+    #   it would be deleting the run's memory, not its lecture.
+    #
+    # So this ablates coaching ONLY. The dynamic tail below is untouched, and
+    # so is every gate, receipt, and verification path: the trust core is not
+    # prompt correction, and it is never an ablation arm.
+    #
+    # prd_anchor stays in both arms -- it names the task, which is the one
+    # thing the model genuinely cannot infer.
     printf '<loki_system>\n'
     printf '%s\n' "$prd_anchor"
+    if [ "${LOKI_SIMPLE:-0}" != "1" ]; then
     printf '%s\n' "$rarv_instruction"
     printf '%s\n' "$sdlc_instruction"
     printf '%s\n' "$autonomous_suffix"
@@ -19885,6 +19915,7 @@ except Exception:
     printf '%s\n' "$compose_instruction"
     printf '%s\n' "$lsp_grounding_instruction"
     printf '%s\n' "$agents_md_instruction"
+    fi
     # v8 (3c): goal-measurability advisory. Empty (and therefore not emitted at
     # all) for a measurable goal, an absent goal, or perpetual mode. Sits in the
     # static prefix because COMPLETION_PROMISE is fixed for the run, so it stays
