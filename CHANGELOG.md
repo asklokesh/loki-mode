@@ -5,6 +5,39 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.11.0
+
+### Two verification tools, released as features rather than as a fix
+
+v9.10.1 committed `receipt-stats.py` and `receipt-verify-batch.py` to unbreak
+collection. They are user-facing capabilities, and this is what they do.
+
+**`receipt-stats.py`** summarises an archive of receipts:
+
+```
+2 receipt(s): 2 FAILED. Cost: total $2.5000, median $2.5000 across 1 measured
+receipt(s). 1 receipt(s) EXCLUDED from both figures: cost was never measured,
+and summing an absent measurement as 0 would understate the total and drag the
+median down.
+```
+
+The exclusion is the feature. With the unmeasured receipt summed as 0 the
+median reads $1.25 instead of $2.50 -- a 2x understatement of real spend,
+produced by a number nobody measured. An empty archive exits 3: zero receipts
+is not a clean archive.
+
+**`receipt-verify-batch.py`** verifies an explicit LIST, so CI can check
+exactly the receipts a PR touched rather than walking a whole workspace.
+
+A path that does not exist is NAMED and exits 66, never silently skipped -- a
+batch that quietly drops an input reports a stronger claim than it earned. An
+empty list exits 3: verifying nothing is not a pass. The rollup is
+weakest-link, so one FAILED sinks the batch; "9 of 10 passed" is not a verdict
+an auditor can use.
+
+Both reuse `verify()` and `record_is_measured()` rather than restating them.
+34 tools now ship, each asserted individually in the packaging guard.
+
 ## v9.10.1
 
 ### A test shipped without the tool it tests, and every Python job died
