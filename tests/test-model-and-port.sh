@@ -50,20 +50,45 @@ else
 fi
 
 # ===========================================
-# Test 2: catalog current planning model is claude-opus-4-8
+# Test 2: the catalog's planning model is a current Opus, not a stale pin
 # ===========================================
-log_test "model_catalog.json latest_planning is claude-opus-4-8"
+#
+# WHY THIS NO LONGER HARDCODES A VERSION. It asserted exactly
+# "claude-opus-4-8" and went red the moment the catalog was updated to
+# claude-opus-5 -- failing CI because the catalog was RIGHT. A test that
+# pins a model name has to be edited on every model release, and until
+# someone does, it reports the correct value as a defect.
+#
+# The property that actually matters is that latest_planning names a
+# current Opus for planning, not that it names one particular release. So
+# that is what is asserted. A regression to a superseded model (4-7, 4-8)
+# or to a non-planning tier still fails, which is the thing this test was
+# protecting.
+log_test "model_catalog.json latest_planning is a current Opus"
 catalog="$PROVIDERS_DIR/model_catalog.json"
+# Superseded pins. Naming them explicitly keeps the anti-regression teeth
+# that a bare "contains opus" check would lose.
+_STALE_PLANNING="claude-opus-4-7 claude-opus-4-8"
 if [ ! -f "$catalog" ]; then
     log_skip "model_catalog.json not found (deps absent)"
 elif ! command -v python3 >/dev/null 2>&1; then
     log_skip "python3 not available"
 else
     latest=$(python3 -c "import json,sys; d=json.load(open('$catalog')); print(d.get('providers',{}).get('claude',{}).get('latest_planning',''))" 2>/dev/null || true)
-    if [ "$latest" = "claude-opus-4-8" ]; then
-        log_pass "catalog latest_planning = claude-opus-4-8"
+    _stale=0
+    for _s in $_STALE_PLANNING; do
+        [ "$latest" = "$_s" ] && _stale=1
+    done
+    if [ -z "$latest" ]; then
+        # Absent is not a pass. An empty read means the key moved or the
+        # catalog shape changed, and every check below it would be vacuous.
+        log_fail "catalog latest_planning is EMPTY -- key missing or catalog shape changed"
+    elif [ "$_stale" = "1" ]; then
+        log_fail "catalog latest_planning = '$latest', which is a superseded model"
+    elif case "$latest" in *opus*) true ;; *) false ;; esac; then
+        log_pass "catalog latest_planning = $latest (a current Opus)"
     else
-        log_fail "catalog latest_planning = '$latest' (expected claude-opus-4-8)"
+        log_fail "catalog latest_planning = '$latest' -- planning should use an Opus tier"
     fi
 fi
 

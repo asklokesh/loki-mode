@@ -338,7 +338,21 @@ else
     check_ent3 council_approved 99 0
     check_ent3 council_force_approved 99 0
     check_ent3 completion_promise_fulfilled 99 0
-    check_ent3 force_stopped 99 0
+    # force_stopped is a TERMINAL FAILURE (20), not a clean stop.
+    #
+    # This assertion used to expect 0, and the status was in neither arm of the
+    # case, so it fell through to `*)` and passed the INCOMING code straight
+    # out -- returning 99 for an incoming 99. The test caught a real defect and
+    # then asserted the wrong remedy.
+    #
+    # run.sh's own comment beside the success arm already argued the correct
+    # answer and was never acted on: a council force-stop (stagnation, or a
+    # flood of done-signals) means the run gave up WITHOUT verifying the work.
+    # The code says so in its header, its warning, and its refusal to open a
+    # PR -- but the exit code, the only consumer automation reads, said clean
+    # stop. Same false-green shape as budget_exceeded, which was moved to 20
+    # for exactly this reason.
+    check_ent3 force_stopped 99 20
     check_ent3 paused 99 0
     check_ent3 interrupted 99 0
     check_ent3 stopped 99 0

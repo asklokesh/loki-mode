@@ -96,15 +96,39 @@ fi
 # Spot-check the claims most likely to mislead if wrong. A default stated
 # incorrectly sends an operator to debug behavior that was never configured
 # the way the page said.
+# WHY THIS LOOKS AT EVERY EXPANSION AND NOT JUST THE FIRST.
+#
+# The original took `head -1` -- the first TEXTUAL occurrence in the file --
+# and treated it as the variable's default. That produced a false FAILURE that
+# sat red in CI:
+#
+#     FAIL: LOKI_PROVIDER default is '${LOKI_PROVIDER:-}', documented as 'claude'
+#
+# The docs were right. `${LOKI_PROVIDER:-claude}` appears at four real call
+# sites and IS the effective default. The match `head -1` found was
+# run.sh:1624:
+#
+#     [ -z "${LOKI_PROVIDER:-}" ] && _LOKI_PROVIDER_WAS_EXPLICIT=0
+#
+# which is an EMPTINESS PROBE asking "did the operator set this?", not a
+# default at all. Its `:-` supplies nothing on purpose.
+#
+# A guard that fabricates a failure is worse than one that misses a real one:
+# it burns trust in the only check watching this claim, and the next genuine
+# doc drift reads as another false alarm. So this collects EVERY expansion and
+# accepts the documented value if any of them supplies it, reporting the full
+# set when none does.
 check_default() {
     local var="$1" want="$2"
-    local found
-    found="$(grep -rhoE "\\\$\{${var}:-[^}]*\}" "$REPO_ROOT/autonomy/run.sh" "$REPO_ROOT/autonomy/loki" 2>/dev/null | head -1)"
-    case "$found" in
-        *"${want}"*) ok "${var} default is ${want} as documented" ;;
-        "")          printf 'NOTE: %s has no inline default to verify\n' "$var" ;;
-        *)           bad "${var} default is '${found}', documented as '${want}'" ;;
-    esac
+    local all
+    all="$(grep -rhoE "\\\$\{${var}:-[^}]*\}" "$REPO_ROOT/autonomy/run.sh" "$REPO_ROOT/autonomy/loki" 2>/dev/null | sort -u)"
+    if [ -z "$all" ]; then
+        printf 'NOTE: %s has no inline default to verify\n' "$var"
+    elif printf '%s\n' "$all" | grep -qF -- ":-${want}}"; then
+        ok "${var} default is ${want} as documented"
+    else
+        bad "${var} documented as '${want}' but no expansion supplies it: $(printf '%s' "$all" | tr '\n' ' ')"
+    fi
 }
 
 check_default LOKI_MAX_ITERATIONS 1000

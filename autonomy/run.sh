@@ -25770,12 +25770,19 @@ except Exception:
         case "$_final_status" in
             council_approved|council_force_approved|deterministic_gates_passed|completion_promise_fulfilled|paused|interrupted|stopped)
                 result=0 ;;
-            # force_stopped belongs HERE too, for the same reason. A council
+            # force_stopped is in the result=20 arm below, NOT here. A council
             # force-stop (stagnation, or a flood of done-signals) means the run
             # gave up WITHOUT verifying the work -- the code already says so in
             # its header, its warning, and its refusal to open a PR. Reporting
             # it as a clean stop made it indistinguishable from success to the
             # only consumer that matters to automation: the exit code.
+            #
+            # This comment previously read "belongs HERE too" while the status
+            # appeared in NEITHER arm, so it fell through to `*)` and returned
+            # the incoming code unchanged -- a force-stop after a nonzero
+            # iteration exited nonzero, and one after a zero exited 1. The
+            # diagnosis was written and never applied; the wording is corrected
+            # here so the comment cannot be read as describing current behavior.
             # budget_exceeded belongs HERE, not with the human-controlled stops.
             # It sat in the result=0 arm on the rationale that "a human will
             # resume", which is true of `paused` (a human pressed pause) and
@@ -25792,7 +25799,7 @@ except Exception:
             # The operator raises the cap (or narrows the spec) and submits a
             # NEW Job -- the same remedy as max_iterations_reached, which is why
             # it shares that code.
-            failed|max_iterations_reached|max_retries_exceeded|budget_exceeded|max_duration_reached|policy_blocked|inconclusive_spec_contradiction)
+            failed|max_iterations_reached|max_retries_exceeded|budget_exceeded|max_duration_reached|policy_blocked|inconclusive_spec_contradiction|force_stopped)
                 result=20 ;;
             *)
                 # Unknown/running/exited terminal: leave $result as-is (nonzero on a

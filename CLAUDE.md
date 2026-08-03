@@ -380,7 +380,7 @@ GitHub CI job can see these:
 - four quality-gate detectors under `tests/` were never in `files[]`, so
   mutation-integrity fail-closed on EVERY iteration for EVERY npm user --
   first-pass completion was impossible regardless of model output (v8.38.0)
-- the committed `dist/loki.js` hardcoded version 8.11.0 for 27 releases,
+- the committed `loki-ts/dist/loki.js` hardcoded version 8.11.0 for 27 releases,
   because the dist-freshness check was DEFERRED by the fast tier it justifies
   (v8.40.0)
 - `npm pack tarball contents` was also deferred, and when promoted turned out
