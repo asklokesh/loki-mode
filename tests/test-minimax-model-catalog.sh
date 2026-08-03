@@ -52,9 +52,9 @@ assert m3["max_output"] == 524_288
 assert m3["input_modalities"] == ["text", "image", "video"]
 assert m3["thinking"] == ["adaptive", "disabled"]
 assert m3["pricing_usd_per_million_tokens"] == {
-    "input": 0.3,
-    "output": 1.2,
-    "cache_read": 0.06,
+    "input": 0.6,
+    "output": 2.4,
+    "cache_read": 0.12,
     "cache_write": None,
 }
 assert m3["pricing_tiers_usd_per_million_tokens"] == [
