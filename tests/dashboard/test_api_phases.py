@@ -230,19 +230,47 @@ class EmptyStatesStateTheirReason(unittest.TestCase):
 class TheRouteIsMountedAndScoped(unittest.TestCase):
     """A reader nothing can reach is the bug api_operator.py exists to fix."""
 
-    def test_route_is_on_the_real_app_and_carries_a_dependency(self):
+    def test_route_is_reachable_on_the_real_app_and_carries_a_dependency(self):
+        """Reachability, NOT membership of app.routes.
+
+        app.routes is a FastAPI implementation detail that CHANGED: through
+        0.128 include_router copied each route in, from 0.141 it appends ONE
+        lazy _IncludedRouter wrapper and resolves at request time. CI installs
+        0.141.1, so enumerating app.routes reports a perfectly working mount as
+        missing -- which is exactly how this test failed on all four Python
+        versions at 8c994558, hours after the same trap had already been fixed
+        in the sibling route tests.
+
+        The auth dependency is checked on the ROUTER, which holds the
+        declaration regardless of how the app chooses to store it.
+        """
         try:
             from dashboard import server
+            from starlette.testclient import TestClient
         except Exception as exc:
-            self.skipTest("dashboard.server not importable here: %s" % exc)
-        matches = [r for r in server.app.routes
-                   if getattr(r, "path", "") == "/api/operator/phases"]
+            self.skipTest("dashboard.server/starlette not importable: %s" % exc)
+
+        os.environ["LOKI_ENTERPRISE_AUTH"] = "false"
+        try:
+            from dashboard import auth as _auth
+            _auth.ENTERPRISE_AUTH_ENABLED = False
+            _auth.OIDC_ENABLED = False
+        except Exception:
+            pass
+
+        r = TestClient(server.app, raise_server_exceptions=False).get(
+            "/api/operator/phases")
+        self.assertNotEqual(
+            r.status_code, 404,
+            "/api/operator/phases returned 404 on the real app; the reader "
+            "behind it is unreachable by any user")
+
+        from dashboard.api_operator import router as _router
+        declared = [x for x in _router.routes
+                    if getattr(x, "path", "") == "/api/operator/phases"]
+        self.assertTrue(declared, "the route is not declared on the router")
         self.assertTrue(
-            matches,
-            "/api/operator/phases is not mounted; the reader behind it is "
-            "unreachable by any user")
-        self.assertTrue(
-            getattr(matches[0], "dependencies", None),
+            getattr(declared[0], "dependencies", None),
             "/api/operator/phases carries no auth dependency; "
             "test_all_data_gets_scoped.py exists for exactly this")
 

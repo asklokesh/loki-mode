@@ -83,8 +83,30 @@ class BothRoutersAreReachable(unittest.TestCase):
         import ast as _ast
         import pathlib as _p
         here = _p.Path(__file__).parent
-        for name in ("test_api_operator.py",
-                     "test_operator_mount_fails_closed.py"):
+        # Every file that asserts a route is MOUNTED. The original version
+        # named two, and a THIRD (test_api_phases.py, arriving later from a
+        # fleet worktree) reintroduced the banned pattern and took all four CI
+        # Python jobs red hours after the fix had already landed elsewhere. A
+        # manual allowlist only protects the files someone remembered, so this
+        # is derived: any dashboard test whose text claims a route "is not
+        # mounted" or "is mounted" is making a mount assertion.
+        #
+        # DELIBERATELY NOT every file that touches app.routes. Four others
+        # (test_all_data_gets_scoped, test_fleet_observability,
+        # test_fleet_retry, test_memory_read_scope_auth) enumerate routes to
+        # audit AUTH SCOPE, not to prove a mount, and they pass on 0.141.1 --
+        # the lazy wrapper still carries what they inspect. Banning the call
+        # outright would break four working tests to fix a bug they do not
+        # have.
+        _mount_assertors = [
+            f.name for f in here.glob("test_*.py")
+            if f.name != _p.Path(__file__).name
+            and "is not mounted" in f.read_text(errors="replace")
+        ]
+        self.assertTrue(_mount_assertors,
+                        "found no mount-asserting test files; the guard below "
+                        "would be vacuous")
+        for name in sorted(_mount_assertors):
             src = (here / name).read_text(encoding="utf-8", errors="replace")
             tree = _ast.parse(src)
             # Strip every docstring before searching. A docstring may quote the
