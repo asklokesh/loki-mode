@@ -192,6 +192,10 @@ else:
 metrics = {
   'label': label,
   'stamp': stamp,
+  # Which prompt arm produced this row. Recorded from the environment the
+  # engine actually ran under, NOT from the label, so a mislabelled invocation
+  # cannot silently attribute a result to the wrong arm.
+  'prompt_arm': 'simple' if os.environ.get('LOKI_SIMPLE') == '1' else 'full',
   'wall_clock_s': int(wall_s),
   'wall_clock_min': round(int(wall_s)/60,1),
   'build_exit_code': int(build_rc),
