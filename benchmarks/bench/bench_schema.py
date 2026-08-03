@@ -402,9 +402,29 @@ def trial_is_measured(trial: Dict[str, Any]) -> bool:
     if not isinstance(adapter, dict):
         return True
     status = adapter.get("exit_status")
-    if not isinstance(status, str):
-        return True
-    return status.strip().lower() not in UNMEASURED_EXIT_STATUSES
+    if isinstance(status, str) and status.strip().lower() in UNMEASURED_EXIT_STATUSES:
+        return False
+
+    # ZERO ITERATIONS IS DELIBERATELY *NOT* TREATED AS UNMEASURED HERE, and
+    # this is the second-order trap in this predicate.
+    #
+    # It looks like it should be: an agent that completed no iteration produced
+    # no artifact, so grading it measures the SEED rather than the agent. I
+    # added exactly that rule and it broke
+    # tests/test_bench_unmeasured_trial.py::test_genuine_failure_still_scores_zero.
+    #
+    # The reason is the failure it causes is WORSE than the one it prevents. A
+    # run that genuinely FAILED can legitimately record iterations: 0. Treating
+    # that as unmeasured deletes a real failure from the denominator, which
+    # inflates the success rate -- the same false-green shape, pointed the
+    # other way. The existing test pins that a genuine failure must still score
+    # 0.0 rather than vanish.
+    #
+    # exit_status already carries the distinction correctly: a run that could
+    # not happen reports timeout / cli_not_found / adapter_error, while a run
+    # that happened and failed reports a normal status. Iteration count is a
+    # symptom of both and discriminates neither.
+    return True
 
 
 def split_measured(trials: List[Dict[str, Any]]
