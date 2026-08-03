@@ -75,6 +75,23 @@ def _repo_dir() -> str:
     return os.environ.get("LOKI_REPO_DIR") or os.getcwd()
 
 
+# Ceilings for the receipt walk on the HTTP path. Generous enough that a real
+# workspace (this repo's own archive is on the order of 75 receipts) never hits
+# them, low enough that a pathological tree cannot hold a worker open. Both are
+# overridable so an operator with a genuinely large archive can raise them
+# rather than silently receiving PARTIAL results forever.
+def _int_env(name: str, default: int) -> int:
+    try:
+        v = int(os.environ.get(name, "") or default)
+        return v if v > 0 else default
+    except ValueError:
+        return default
+
+
+_RECEIPT_SCAN_MAX_ENTRIES = _int_env("LOKI_RECEIPT_SCAN_MAX_ENTRIES", 50000)
+_RECEIPT_SCAN_MAX_SECONDS = _int_env("LOKI_RECEIPT_SCAN_MAX_SECONDS", 10)
+
+
 def _allowed_roots() -> list:
     """The only trees a caller may ask this API to walk.
 
@@ -199,7 +216,16 @@ def operator_receipts(workspace: Optional[str] = Query(default=None)):
     root = _resolve_workspace(workspace)
     try:
         from . import api_evidence
-        return api_evidence.receipts_report(root, repo_dir=_repo_dir())
+        # Bounded because this walk is reached from an HTTP request. Confining
+        # the ROOT (above) limits where it walks; it does not limit how much,
+        # and a deep allowed tree is still an unbounded rglob plus a stat per
+        # entry. A truncated walk is reported honestly: receipts_report holds
+        # the verdict down to UNVERIFIABLE and states that the audit is
+        # PARTIAL, rather than certifying the subset it happened to reach.
+        return api_evidence.receipts_report(
+            root, repo_dir=_repo_dir(),
+            max_entries=_RECEIPT_SCAN_MAX_ENTRIES,
+            max_seconds=_RECEIPT_SCAN_MAX_SECONDS)
     except HTTPException:
         # A 403/400 from the confinement check is the ANSWER, not a failure to
         # read. Letting it fall into _fail would relabel a refused traversal as

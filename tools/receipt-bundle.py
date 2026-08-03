@@ -71,6 +71,7 @@ import json
 import os
 import pathlib
 import sys
+import time
 
 # A stale .pyc for a hyphenated module loaded by path makes mutation probes
 # report FALSE failures (the probe edits the source, the loader serves the old
@@ -196,9 +197,60 @@ def find_receipts(workspace):
     receipt archived elsewhere in the workspace still gets audited. Missing
     evidence is the failure mode this file exists to prevent; over-collecting
     is not.
+
+    UNBOUNDED ON PURPOSE, and only safe because every caller of THIS function
+    is a CLI auditing a workspace the operator chose. Truncating such an audit
+    silently is the missing-evidence failure above. A caller reached from an
+    HTTP request must use find_receipts_bounded() instead: there the walk is a
+    denial-of-service surface, not a chore.
+    """
+    paths, _ = find_receipts_bounded(workspace)
+    return paths
+
+
+def find_receipts_bounded(workspace, max_entries=None, max_seconds=None):
+    """find_receipts with explicit limits, returning (paths, truncated_reason).
+
+    truncated_reason is None on a COMPLETE walk, otherwise a string naming the
+    limit that stopped it. It is a return value rather than a log line because
+    a caller must not be able to report a partial audit as a complete one: a
+    truncated walk that looks complete lets a FAILED receipt sitting past the
+    cutoff read as "no problems found", which is the laundering this whole
+    module exists to prevent.
+
+    Both limits default to None, so this is a superset of find_receipts and the
+    unbounded CLI path keeps its exact behaviour.
     """
     root = pathlib.Path(workspace)
-    return sorted(p for p in root.rglob("proof.json") if p.is_file())
+    started = time.monotonic()
+    found = []
+    scanned = 0
+    reason = None
+    # rglob("proof.json") yields only MATCHES, so counting its results counts
+    # receipts, not work. The cost being bounded here is the TRAVERSAL: a tree
+    # of 400 empty directories yields zero matches while still walking every
+    # one of them. os.walk exposes the directories actually visited, which is
+    # the quantity that makes this a denial-of-service surface.
+    for dirpath, dirnames, filenames in os.walk(str(root)):
+        scanned += 1 + len(filenames)
+        if max_entries is not None and scanned > max_entries:
+            reason = ("stopped after scanning %d entries (limit); results are "
+                      "PARTIAL" % max_entries)
+            break
+        if max_seconds is not None and (time.monotonic() - started) > max_seconds:
+            reason = ("stopped after %.1fs (limit); results are PARTIAL"
+                      % max_seconds)
+            break
+        if "proof.json" in filenames:
+            p = pathlib.Path(dirpath) / "proof.json"
+            try:
+                if p.is_file():
+                    found.append(p)
+            except OSError:
+                # Vanished mid-walk or unreadable: skipped rather than
+                # aborting the whole audit.
+                continue
+    return sorted(found), reason
 
 
 def bundle(workspace, repo_dir="."):

@@ -67,6 +67,7 @@ _rb = _load("receipt_bundle", _ROOT / "tools" / "receipt-bundle.py")
 verify = _pv.verify
 receipt_state = _rb.receipt_state
 find_receipts = _rb.find_receipts
+find_receipts_bounded = _rb.find_receipts_bounded
 measured_cost = _rb.measured_cost
 
 VERIFIED = _rb.VERIFIED
@@ -140,7 +141,8 @@ def _cost_usd(proof):
     return cost.get("cost_usd")
 
 
-def list_receipts(workspace, repo_dir="."):
+def list_receipts(workspace, repo_dir=".", max_entries=None,
+                  max_seconds=None):
     """Every receipt under `workspace`, classified. Pure: no writes, no network.
 
     Returns a list of rows, one per receipt found, each carrying:
@@ -166,10 +168,21 @@ def list_receipts(workspace, repo_dir="."):
     root = pathlib.Path(workspace)
     if not root.is_dir():
         return []
+    paths, _truncated = find_receipts_bounded(root, max_entries=max_entries,
+                                              max_seconds=max_seconds)
+    return _rows_for_paths(paths, repo_dir)
 
+
+def _rows_for_paths(paths, repo_dir="."):
+    """Classify an ALREADY-WALKED list of receipt paths.
+
+    Split out from list_receipts so receipts_report can do the walk itself and
+    keep the truncation reason as a local. Sharing this loop means the two
+    entry points cannot drift into classifying the same receipt differently.
+    """
     rows = []
     now = _now()
-    for path in find_receipts(root):
+    for path in paths:
         state, reason = receipt_state(path, repo_dir)
 
         try:
@@ -212,7 +225,8 @@ def list_receipts(workspace, repo_dir="."):
     return rows
 
 
-def receipts_report(workspace, repo_dir="."):
+def receipts_report(workspace, repo_dir=".", max_entries=None,
+                    max_seconds=None):
     """list_receipts plus the batch verdict, source, and error state.
 
     The verdict is the WEAKEST state present (imported, never restated), and an
@@ -236,19 +250,39 @@ def receipts_report(workspace, repo_dir="."):
         # exactly when something went wrong, which is when it is needed most.
         "counts": {FAILED: 0, UNVERIFIABLE: 0, VERIFIED: 0},
         "verdict": EMPTY,
+        # Seeded here, not only on the success path, for the same reason
+        # `counts` is: a consumer reading report["truncated"] must not hit a
+        # KeyError on the branch where the walk could not run at all.
+        "truncated": None,
         "error": None,
     }
     if not root.is_dir():
         base["error"] = "workspace not found or not a directory: %s" % workspace
         return base
 
-    rows = list_receipts(root, repo_dir)
+    # The walk is done HERE, not inside list_receipts, so the truncation
+    # reason is a plain local rather than shared mutable state. Stashing it on
+    # the function object would race between concurrent requests and could
+    # report one caller's complete walk as another's partial one.
+    _paths, truncated = find_receipts_bounded(root, max_entries=max_entries,
+                                              max_seconds=max_seconds)
+    rows = _rows_for_paths(_paths, repo_dir)
+    base["truncated"] = truncated
     base["receipts"] = rows
     base["count"] = len(rows)
     base["verdict"] = _rb.rollup([r["verdict"] for r in rows])
     base["counts"] = {s: sum(1 for r in rows if r["verdict"] == s)
                       for s in (FAILED, UNVERIFIABLE, VERIFIED)}
-    if not rows:
+    if truncated:
+        # A partial walk cannot certify a sequence. The verdict is held down
+        # to UNVERIFIABLE rather than reported as VERIFIED over the subset
+        # that happened to be reached before the limit.
+        if base["verdict"] == VERIFIED:
+            base["verdict"] = UNVERIFIABLE
+        base["error"] = ("the receipt walk was truncated (%s), so this audit "
+                         "is PARTIAL and cannot certify the workspace"
+                         % truncated)
+    elif not rows:
         base["error"] = ("no receipts found under this workspace, so nothing "
                          "was audited. Zero receipts is not a passing audit.")
     return base
