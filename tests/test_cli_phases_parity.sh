@@ -170,11 +170,32 @@ fi
 
 _rel="$(bash "$LOKI_BIN" proof releases 2>&1)"
 _relrc=$?
-if [ "$_relrc" -eq 0 ] && grep -q 'VERSION' <<< "$_rel"; then
-    ok "proof releases reports VERSION and the newest tag"
-else
-    bad "proof releases exited $_relrc: $(head -1 <<< "$_rel")"
-fi
+# TAG AVAILABILITY DIFFERS BY ENVIRONMENT, and the contract must hold in both.
+# A developer clone has tags and reports them (exit 0). A GitHub Actions
+# checkout fetches NO tags, so the honest answer is "no releases readable"
+# with the reason stated (exit 3, nothing to check). Asserting exit 0 only
+# passes on a developer machine -- which is exactly how this test went red on
+# CI while passing locally, the same trap already fixed once this release for
+# tests/dashboard/test_api_releases.py.
+case "$_relrc" in
+    0)
+        if grep -q 'VERSION' <<< "$_rel"; then
+            ok "proof releases reports VERSION and the newest tag"
+        else
+            bad "proof releases exited 0 without reporting VERSION: $(head -1 <<< "$_rel")"
+        fi
+        ;;
+    3)
+        if grep -qiE 'no releases readable|no tags' <<< "$_rel"; then
+            ok "a tagless checkout reports no releases WITH a reason (exit 3)"
+        else
+            bad "exit 3 without a stated reason: $(head -1 <<< "$_rel")"
+        fi
+        ;;
+    *)
+        bad "proof releases exited $_relrc: $(head -1 <<< "$_rel")"
+        ;;
+esac
 
 # Run from a NON-REPO cwd. This caught a real bug: the heredoc used
 # sys.argv[0] to find the repo, which is "-" inside a heredoc, so the command
