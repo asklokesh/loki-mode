@@ -5,6 +5,67 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.4.0
+
+### Four tools, and the same rule holds in all four
+
+```
+gate-log.py         verdict history: how often does the gate block, on what
+receipt-export.py   one evidence file a third party can check
+cost-attribute.py   where a run's cost actually went, per stage
+gate-explain.py     a verdict a human can act on
+```
+
+Each was built in an isolated worktree, then handed to an adversarial verifier
+that re-ran its mutation probe BY HAND to confirm the failure was a clean
+assertion rather than a traceback. All four probes were then re-run
+independently here; all four bind.
+
+### A blind gate never reads as healthy
+
+```
+$ ci-gate <blind run> --json | gate-log record | gate-log report
+  pass                       0
+  unevaluable (NOT a pass)   1
+exit=2
+```
+
+`gate-log` keeps UNEVALUABLE in its own bucket, and blind OUTRANKS failed in
+the rollup -- the same precedence `ci-gate` uses, because "your gate is partly
+blind" is worse news than "this run breached". Collapsing it into pass makes
+the tool loudest, a confident green, exactly when its instrumentation broke.
+
+`gate-explain` states the third state in words:
+
+```
+POLICY: cost [UNEVALUABLE]
+  CHECKED: the gate could not check this, so it is neither a pass nor a
+           failure -- the axis is unverified
+```
+
+### Defects the builders found in their OWN code before reporting
+
+A 100%-corrupt log printed *"most failing policy: none -- no FAIL in any
+readable record"*. Nothing was read, so that was an unmeasured value claiming
+to be a measured none. It now prints UNKNOWN, with a test.
+
+A stored `"corrupt"` state was double-counted against the real unreadable-line
+tally, so the buckets no longer summed to the record total.
+
+An unreadable log path escaped as a traceback and exited 1 -- "checked and
+FAILED" under this convention, when the truth is 2 (could not check).
+
+### The contract adopted all four without a violation
+
+`tests/test_tool_exit_contract.py` globs `tools/*.py`, so these four were
+subject to the exit convention from their first run: `--help` exits 0 without a
+verdict, a nonexistent path never exits 0, and no tool exits 0 while its own
+output says it could not evaluate. Six contract tests pass with the new tools
+adopted.
+
+`gate-log` deliberately uses exit 64 for usage errors rather than argparse's
+default 2, so a typo can never be mistaken for a blind gate.
+
 ## v9.3.0
 
 ### A policy edit now shows its safety DIRECTION, not just its diff

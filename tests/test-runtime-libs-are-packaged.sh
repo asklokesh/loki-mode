@@ -72,6 +72,10 @@ LIBS=(
     "tools/token-guard.py"                # provider-independent work ceiling
     "tools/receipt-find.py"               # query receipts by measurable criteria
     "tools/policy-diff.py"                # classify a policy edit by safety direction
+    "tools/gate-log.py"                   # verdict history, blind never reads healthy
+    "tools/receipt-export.py"             # portable evidence file
+    "tools/cost-attribute.py"             # where a run's cost went, per stage
+    "tools/gate-explain.py"               # a verdict a human can act on
 )
 
 # --- they must exist in the repo first ---------------------------------------
