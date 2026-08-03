@@ -226,6 +226,14 @@ def probe_tier(tier, task):
         rec["oracle_status"] = "accepts_a_wrong_answer"
         rec["discriminates"] = False
     elif neg and pos and adv is None:
+        # UNREACHABLE TODAY, and kept deliberately. It fires only for a task
+        # that has a positive fixture but no adversarial one, and right now
+        # every task with the first has the second. A future task that gets a
+        # positive fixture without a near-miss would otherwise fall through to
+        # `discriminates` on two probes -- claiming the strongest status while
+        # skipping the probe that actually decides whether the grader measures
+        # the task. Verified unreachable by comparing the two fixture tables,
+        # not assumed.
         rec["oracle_status"] = "adversarially_unverified"
         rec["discriminates"] = None
     elif neg and pos is None:
