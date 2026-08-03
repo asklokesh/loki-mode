@@ -454,5 +454,62 @@ class AMissingWorkspaceIsNotNoHistory(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr[:200])
             self.assertIn("NO BASIS", r.stdout)
 
+
+class CalibrationIsACaveatAndNeverARankingInput(unittest.TestCase):
+    """The advisor may POINT AT the calibration signal, never consume it.
+
+    WHY THE LINE IS HERE. This module's own docstring refuses to rank on
+    quality: "whether the cheaper model would have produced the same result
+    on YOUR workload is not something any cost record can answer." The
+    calibration audit produces a LOCAL measurement, which makes it tempting
+    to treat as the missing quality term.
+
+    It is not one. The audit scores agreement with the council MAJORITY, and
+    the council outcome is derived from the votes, so a voter partly causes
+    its own label. Feeding that into a recommendation would dress up
+    "voted with the pack" as "was correct" -- the fabricated authority this
+    tool exists to refuse.
+
+    So the caveat is render-only, and this pins both halves: the text must
+    be present for a human, and the machine-readable contract must be
+    untouched so no downstream consumer can silently start ranking on it.
+    """
+
+    def _run(self, *args):
+        return subprocess.run(
+            [sys.executable, str(_TOOL), *args],
+            capture_output=True, text=True, timeout=120)
+
+    def test_the_caveat_names_the_limit_not_just_the_tool(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = self._run(d).stdout
+            self.assertIn("calibration-audit.py", out,
+                          "the advisor does not point at the local signal")
+            # Naming the tool without its limit would invite exactly the
+            # misreading the audit's own header exists to prevent.
+            self.assertIn("NOT accuracy", out,
+                          "the caveat cites the audit without stating that it "
+                          "measures agreement, not correctness")
+
+    def test_calibration_never_enters_the_machine_readable_contract(self):
+        """The load-bearing half.
+
+        A human reading a caveat cannot accidentally rank on it. A script
+        reading --json can. If a calibration key ever appears here, someone
+        has wired the signal into the recommendation.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            r = self._run(d, "--json")
+            self.assertEqual(r.returncode, 0, r.stderr[:200])
+            payload = json.loads(r.stdout)
+            leaked = [k for k in payload if "calib" in k.lower()
+                      or "brier" in k.lower() or "ece" in k.lower()]
+            self.assertEqual(
+                leaked, [],
+                "calibration leaked into the advisor's JSON contract (%s). "
+                "It is a caveat for a human, not a term in the ranking."
+                % leaked)
+
+
 if __name__ == "__main__":
     unittest.main()

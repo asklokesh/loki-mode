@@ -478,6 +478,39 @@ def render(adv):
             lines.append("  Cheapest rate:       none cheaper than the model "
                          "already in use")
 
+    # LOCAL CALIBRATION, shown as a CAVEAT and never as a ranking input.
+    #
+    # This module's own docstring says quality "is not something any cost
+    # record can answer", and that stands: nothing below re-ranks a candidate
+    # or weights a saving. advise() is untouched, so the recommendation is
+    # provably identical with and without this block.
+    #
+    # What it adds is one honest local fact. tools/calibration-audit.py scores
+    # council votes against council outcomes on THIS workload, so unlike the
+    # SWE-bench citation it is not borrowed from someone else's task. It is
+    # surfaced ABOVE that citation for exactly that reason: local evidence
+    # first, external evidence second.
+    #
+    # THE LIMIT, restated here because a reader arriving at a cost tool will
+    # not have read the audit's header: the audit measures AGREEMENT WITH THE
+    # MAJORITY, not correctness. The council outcome is derived from the votes,
+    # so a voter partly causes its own label. Treating that as a quality score
+    # would be the fabricated authority this tool exists to refuse -- so it is
+    # printed as a pointer, with the caveat attached, and never as a number
+    # that moves a recommendation.
+    lines.append("")
+    lines.append("  Local calibration -- a CAVEAT, not a ranking input:")
+    lines.append("    Cheaper is not better if the cheaper model agrees with "
+                 "your council less often.")
+    lines.append("    This tool does NOT measure that and does not pretend to. "
+                 "For the local signal:")
+    lines.append("      python3 tools/calibration-audit.py <workspace>")
+    lines.append("    Read its header first: it scores agreement with the "
+                 "majority, NOT accuracy.")
+    lines.append("    No artifact records whether the council was right, so no "
+                 "quality claim is")
+    lines.append("    available from any tool in this repo today.")
+
     cite = adv["swebench_citation"]
     lines.append("")
     lines.append("  Cited external benchmark (%s) -- NOT a measurement of your "
