@@ -72,8 +72,24 @@ def _participants():
 
 
 def _is_gate(name):
+    """True when a tool's exit code is a verdict a machine branches on.
+
+    Matches BOTH naming forms. The original predicate only matched the SUFFIX
+    form (`ci-gate.py`), so every prefix-named tool escaped the strictest rule
+    in this file: `gate-status.py`, `gate-log.py`, `gate-explain.py` and
+    `gate-badge.py` were all silently classified as advisors and exempted from
+    the green-leak check.
+
+    All four happened to comply already -- verified by running them against a
+    blind workspace, where they exit 2 or 64 and never 0. So this closes a
+    COVERAGE gap, not a defect. That is precisely why it was worth closing: an
+    exemption nobody noticed is one that will still be there when a tool
+    eventually does not comply.
+    """
+    stem = name.rsplit(".", 1)[0]
     return (name in _EXPLICIT_GATES
-            or "-guard." in name or "-gate." in name)
+            or stem.endswith(("-guard", "-gate"))
+            or stem.startswith(("gate-", "guard-")))
 
 
 def _run(path, *args, **kw):
@@ -159,13 +175,45 @@ class GatesNeverLeakGreen(unittest.TestCase):
                     "merge on an axis nobody checked" % (name, said[0]))
 
     def test_the_gate_list_covers_every_guard_and_gate_by_name(self):
-        """A new *-guard/*-gate tool is covered the day it lands."""
+        """A tool named like a gate is covered the day it lands.
+
+        This test previously restated the SAME suffix-only pattern it was
+        meant to guard (`"-gate." in name`), so it was blind to prefix-named
+        tools by construction: `gate-status`, `gate-log`, `gate-explain` and
+        `gate-badge` all escaped the green-leak rule and nothing noticed.
+
+        A guard that reuses the predicate's own rule cannot detect a gap in
+        that rule. It now derives the expectation from the NAME, independently
+        of how `_is_gate` happens to be written.
+        """
         for tool in _participants():
-            if "-guard." in tool.name or "-gate." in tool.name:
+            stem = tool.name.rsplit(".", 1)[0]
+            looks_like_a_gate = (
+                stem.endswith(("-guard", "-gate"))
+                or stem.startswith(("gate-", "guard-")))
+            if looks_like_a_gate:
                 self.assertTrue(
                     _is_gate(tool.name),
-                    "%s is named like a gate but escapes the gate rule"
-                    % tool.name)
+                    "%s is named like a gate but escapes the gate rule, so "
+                    "the green-leak check never runs against it" % tool.name)
+
+    def test_every_gate_named_tool_is_actually_covered(self):
+        """The membership itself, asserted by name rather than by count.
+
+        Names the four prefix-form tools explicitly. A count would pass while
+        silently losing one, and this file exists because an exemption nobody
+        noticed is one that is still there when a tool stops complying.
+        """
+        for name in ("gate-status.py", "gate-log.py", "gate-explain.py",
+                     "gate-badge.py", "ci-gate.py", "cost-guard.py",
+                     "token-guard.py"):
+            if not (_TOOLS / name).exists():
+                continue
+            with self.subTest(tool=name):
+                self.assertTrue(
+                    _is_gate(name),
+                    "%s is a gate but _is_gate() does not classify it as one; "
+                    "the strictest rule in this file would skip it" % name)
 
     def test_model_advisor_is_deliberately_not_a_gate(self):
         """Pins the JUDGEMENT, so a future reader does not 'fix' it.

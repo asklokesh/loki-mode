@@ -5,6 +5,57 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.6.0
+
+### Four gates were exempt from the strictest rule in the repo
+
+`_is_gate()` matched only the SUFFIX form, `"-gate." in name`. Every
+prefix-named tool escaped:
+
+```
+gate-status.py   gate=False
+gate-log.py      gate=False
+gate-explain.py  gate=False
+gate-badge.py    gate=False
+ci-gate.py       gate=True
+```
+
+Only `ci-gate.py` was covered. The other four were silently classified as
+advisors and exempted from the green-leak check -- the rule that stops a tool
+exiting 0 while its own output says it could not evaluate.
+
+All four already comply, verified by running each against a blind workspace
+(exit 2, 64, 64, 64; never 0). So this closes a COVERAGE gap rather than a
+defect, and that is exactly why it was worth closing: an exemption nobody
+noticed is one that is still there when a tool eventually stops complying.
+
+### The guard restated the rule it was meant to guard
+
+The membership test hardcoded the same suffix-only pattern:
+
+```python
+if "-guard." in tool.name or "-gate." in tool.name:
+    self.assertTrue(_is_gate(tool.name), ...)
+```
+
+So it was blind to prefix-named tools BY CONSTRUCTION. A guard that reuses the
+predicate's own rule cannot detect a gap in that rule -- it agrees with the bug.
+
+The first mutation probe proved it: reverting the pattern SURVIVED, because
+nothing asserted the membership independently. The expectation is now derived
+from the tool NAME rather than from `_is_gate`, plus a second test naming all
+seven gates explicitly. A count would pass while silently losing one.
+
+Reverting the pattern now turns the suite red.
+
+### On the verifier that found it
+
+A wave-D verifier flagged this as a one-tool judgement call about
+`gate-status.py`. Checking it directly showed FOUR tools affected, not one, and
+the guard itself was the reason none had been caught. The report was right to
+raise it and wrong about the scope, which is why the flag was checked rather
+than filed.
+
 ## v9.5.0
 
 ### Is the merge gate actually set up, and does the badge tell the truth
