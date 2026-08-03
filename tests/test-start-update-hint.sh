@@ -65,6 +65,63 @@ esac
 if ! command -v script >/dev/null 2>&1; then
     echo "  SKIP: no script(1) for a pty; source assertions above still apply"
 else
+    # script(1) TAKES ITS ARGUMENTS DIFFERENTLY ON THE TWO PLATFORMS, and the
+    # divergence is silent rather than an error.
+    #
+    #   BSD (macOS):        script -q /dev/null CMD ARGS...
+    #   util-linux (CI):    script -q -c "CMD ARGS..." /dev/null
+    #
+    # Under util-linux the BSD form reads /dev/null as the TYPESCRIPT FILE and
+    # the rest as further operands, so the command does not run under a pty.
+    # No usage error is printed. The result is a test that passes on every
+    # macOS laptop and fails on every Linux runner -- which is exactly what it
+    # did, and what the `env -u CI` fix alone did not cure, because there were
+    # two independent reasons the hint stayed silent on CI and fixing one left
+    # the other.
+    #
+    # Detected by BEHAVIOUR rather than by `uname`: ask each form whether it
+    # actually yields a tty. A platform string is a proxy; `[ -t 1 ]` is the
+    # property the code under test actually branches on.
+    _PTY_FORM=""
+    if script -q /dev/null bash -c '[ -t 1 ]' >/dev/null 2>&1; then
+        _PTY_FORM="bsd"
+    elif script -q -c '[ -t 1 ]' /dev/null >/dev/null 2>&1; then
+        _PTY_FORM="util-linux"
+    fi
+
+    # Run "$@" under a pty, whichever flavour is installed, with CI unset.
+    #
+    # CI IS UNSET INSIDE THE FUNCTION, not by `env -u CI _under_pty ...` in
+    # front of it. `env` execs a BINARY and cannot see shell functions, so that
+    # spelling fails with "env: _under_pty: No such file or directory" -- the
+    # command never runs, no hint is printed, and the assertion reports
+    # "a stale install prints NO warning" for a reason that has nothing to do
+    # with the feature. That is the same shape as the bug being fixed: a test
+    # failing because the harness never invoked the thing under test.
+    #
+    # maybe_print_update_hint returns early on `[ -n "${CI:-}" ]` by design
+    # (autonomy/loki:387), so the BEHAVIOURAL cases must run with it unset.
+    # The `guard present: ${CI:-}` source assertion below is what proves that
+    # suppression still exists; unsetting it here does not weaken it.
+    _under_pty() {
+        case "$_PTY_FORM" in
+            bsd)        ( unset CI; script -q /dev/null "$@" ) ;;
+            util-linux) ( unset CI; script -q -c "$*" /dev/null ) ;;
+            *)          return 127 ;;
+        esac
+    }
+
+fi
+
+if [ "${_PTY_FORM:-}" = "" ] && command -v script >/dev/null 2>&1; then
+    # Neither form produced a tty. That is an ABSENT MEASUREMENT, not a pass:
+    # every behavioural case would report "no warning" for the wrong reason,
+    # and a skip that silently runs the cases anyway is worse than no skip.
+    echo "  SKIP: script(1) present but no form yielded a pty;"
+    echo "        the behavioural cases are NOT run and NOT counted."
+fi
+
+if [ -n "${_PTY_FORM:-}" ]; then
     D="$(mktemp -d "${TMPDIR:-/tmp}/loki-hint-XXXXXX")"
     mkdir -p "$D/.loki/cache"
     _cache="$D/.loki/cache/update-check-bash.json"
@@ -83,7 +140,7 @@ else
     # the hint was suppressed rather than because the version was current.
     # The `guard present: ${CI:-}` source assertion above is what proves the
     # suppression still exists; unsetting it here does not weaken that.
-    _out="$(HOME="$D" env -u CI script -q /dev/null bash "$LOKI" start 2>&1 || true)"
+    _out="$(HOME="$D" _under_pty bash "$LOKI" start 2>&1 || true)"
     case "$_out" in
         *"newer loki-mode is available"*) ok "a stale install warns on start" ;;
         *) bad "a stale install prints NO warning on start" ;;
@@ -93,7 +150,7 @@ else
     # to ignore the line, which costs more than it saves.
     printf '{"checkedAt":%s,"latest":"%s"}\n' "$(date +%s)" \
         "$(cat "$REPO_ROOT/VERSION" 2>/dev/null | tr -d '[:space:]')" > "$_cache"
-    _out="$(HOME="$D" env -u CI script -q /dev/null bash "$LOKI" start 2>&1 || true)"
+    _out="$(HOME="$D" _under_pty bash "$LOKI" start 2>&1 || true)"
     case "$_out" in
         *"newer loki-mode is available"*) bad "an up-to-date install still nags" ;;
         *) ok "an up-to-date install stays silent" ;;
@@ -101,7 +158,7 @@ else
 
     # Opt-out must win.
     printf '{"checkedAt":%s,"latest":"9.99.0"}\n' "$(date +%s)" > "$_cache"
-    _out="$(HOME="$D" LOKI_NO_UPDATE_CHECK=1 script -q /dev/null bash "$LOKI" start 2>&1 || true)"
+    _out="$(HOME="$D" LOKI_NO_UPDATE_CHECK=1 _under_pty bash "$LOKI" start 2>&1 || true)"
     case "$_out" in
         *"newer loki-mode is available"*) bad "LOKI_NO_UPDATE_CHECK=1 does not suppress the hint" ;;
         *) ok "LOKI_NO_UPDATE_CHECK=1 suppresses the hint" ;;
