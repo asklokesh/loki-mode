@@ -19903,6 +19903,15 @@ except Exception:
     #
     # prd_anchor stays in both arms -- it names the task, which is the one
     # thing the model genuinely cannot infer.
+    #
+    # MEASURED, with its provenance: 8090 -> 1776 bytes (-78%) from a LIVE
+    # build_prompt call under the fixture-1 ENVIRONMENT with a gate-failure
+    # file present -- not from the fixture file itself, which is 7909 bytes.
+    # The distinction matters because a number attributed to the wrong source
+    # cannot be reproduced by the next person who tries.
+    #
+    # The strip is bounded: only the block below is gated, so the anchor and
+    # the surrounding tags survive. Prefix size is a CEILING on the saving.
     printf '<loki_system>\n'
     printf '%s\n' "$prd_anchor"
     if [ "${LOKI_SIMPLE:-0}" != "1" ]; then

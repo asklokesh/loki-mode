@@ -1599,7 +1599,17 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
   // boundary is the safety argument: deleting coaching drops a lecture,
   // deleting state would make the run blind to its own history.
   //
-  // Measured on fixture-1: 8090 -> 1776 bytes, -78%, ~1578 tokens/iteration.
+  // MEASURED, and the provenance matters: 8026 -> 1779 bytes (-78%, ~1562
+  // tokens/iteration) from a LIVE buildPrompt call with a gate-failure file
+  // present, not from a fixture. fixture-1 on disk is 7909 bytes; an earlier
+  // version of this comment cited "fixture-1: 8090 -> 1776" and was wrong
+  // about WHERE the number came from, which is exactly the kind of confident
+  // mis-sourcing that turns a real measurement into an unreproducible claim.
+  //
+  // Note the strip is bounded: only the nine pushes below are gated, so
+  // <loki_system>, the PRD anchor, the goal-score advisory and the closing tag
+  // all survive. The prefix size is therefore a CEILING on the saving, never
+  // the saving itself.
   //
   // Gates, receipts and verification are NEVER an ablation arm; the trust core
   // is not prompt correction.
