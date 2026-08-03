@@ -127,8 +127,24 @@ if command -v npm >/dev/null 2>&1; then
         bad "npm pack listing contains no autonomy/ entries at all; it is not a real listing"
     else
         ok "npm pack produced a non-empty listing (assertions below are live)"
+        # SIGPIPE, and it made this check LIE about a file that ships.
+        #
+        # `printf ... | grep -qF` has grep exit on its first match and close the
+        # pipe, so printf takes SIGPIPE and reports
+        #   printf: write error: Broken pipe
+        # On CI that write error surfaced as a non-zero pipeline status, and the
+        # FIRST library in the list -- proof-verify.py, the receipt verifier --
+        # was reported "MISSING from the tarball" while being present. Three
+        # shell shards were red for a packaging failure that did not exist.
+        #
+        # A checker that fabricates a MISSING is worse than one that fabricates
+        # a PASS: it burns trust in the only guard that watches the shipped
+        # artifact, and the next real miss reads as another false alarm.
+        #
+        # grep reads the listing from a HERE-STRING, so nothing writes into a
+        # pipe grep may close early. Same assertion, no SIGPIPE surface.
         for lib in "${LIBS[@]}"; do
-            if printf '%s' "$_listing" | grep -qF "$lib"; then
+            if grep -qF -- "$lib" <<< "$_listing"; then
                 ok "tarball contains $lib"
             else
                 bad "tarball is MISSING $lib"

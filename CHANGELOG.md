@@ -5,6 +5,52 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.7.0
+
+### Three CI shards were red for a packaging failure that did not exist
+
+```
+tests/test-runtime-libs-are-packaged.sh: line 131:
+  printf: write error: Broken pipe
+FAIL: tarball is MISSING autonomy/lib/proof-verify.py
+PASS: tarball contains autonomy/lib/efficiency_cost.py
+PASS: tarball contains autonomy/lib/cost-summary.py
+```
+
+`proof-verify.py` ships. Every other library in the same list passed against
+the same listing. Only the FIRST one failed, because
+`printf '%s' "$_listing" | grep -qF` has grep exit on its first match and close
+the pipe, so printf takes SIGPIPE and the pipeline reports failure.
+
+**A checker that fabricates a MISSING is worse than one that fabricates a
+PASS.** It burns trust in the only guard watching the shipped artifact, and the
+next real miss reads as another false alarm. This is the guard that has caught
+two genuine packaging breaks.
+
+grep now reads from a here-string, so nothing writes into a pipe grep may close
+early. Same assertion, no SIGPIPE surface.
+
+### It does not reproduce on macOS, which is why it survived
+
+Verified directly: with the real 36,421-byte `npm pack` listing, the old form
+produces NO error locally. The failure is Linux-specific, so a green local gate
+was compatible with three red shards for hours.
+
+Same class as the Python 3.14-vs-3.12 divergence in v8.63.0: the local gate and
+CI were not running the same thing, and the local green was not evidence.
+
+### The honest note on how long this stood
+
+Releases were going out faster than a full Tests run takes to finish, so each
+push cancelled the previous run. The last two Tests runs before this one were
+CANCELLED, not passed. The 2,539 passing tests reported alongside those
+releases were the pytest suite; the shell suite that was failing is DEFERRED by
+the fast tier.
+
+A cancelled run is an absent measurement. Reading it as a pass is the same
+error this codebase has spent sixteen surfaces removing, applied to my own
+release process.
+
 ## v9.6.0
 
 ### Four gates were exempt from the strictest rule in the repo
