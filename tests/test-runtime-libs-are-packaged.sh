@@ -126,7 +126,25 @@ if command -v npm >/dev/null 2>&1; then
     # satisfy every substring search below.
     if [ -z "$_listing" ]; then
         bad "npm pack produced NO listing; every assertion below would be vacuous"
-    elif ! printf '%s' "$_listing" | grep -q 'autonomy/'; then
+    # SIGPIPE AGAIN, and this time in the vacuity guard itself.
+    #
+    # `printf ... | grep -q` has grep exit on its first match and close the
+    # pipe, so printf takes SIGPIPE. Under `set -o pipefail` that makes the
+    # pipeline non-zero no matter what grep found, and this guard then reports
+    # "not a real listing" for a listing that is present and correct.
+    #
+    # Observed on CI shard 0 (run 30826895941), which failed with:
+    #   printf: write error: Broken pipe
+    #   FAIL: npm pack listing contains no autonomy/ entries at all
+    # while the same command locally produces a 37KB listing with 105
+    # autonomy/ entries. It does not reproduce on macOS.
+    #
+    # The library loop below was already converted to a here-string for this
+    # exact reason. This line was missed, so the fix was half-applied and the
+    # remaining half took main red. A guard that fabricates a MISSING is worse
+    # than one that fabricates a pass: it burns trust in the only check
+    # watching the shipped artifact.
+    elif ! grep -q 'autonomy/' <<< "$_listing"; then
         bad "npm pack listing contains no autonomy/ entries at all; it is not a real listing"
     else
         ok "npm pack produced a non-empty listing (assertions below are live)"
