@@ -107,17 +107,34 @@ export class LokiContextTracker extends LokiElement {
     this.render();
   }
 
+  // Absent is not zero. A value nobody measured must not render as a number
+  // an operator will read as a measurement: "0 tokens" and "$0.00" both claim
+  // a run was free. A measured 0 is a real reading and still renders as 0, so
+  // the test is `== null` (null and undefined) rather than a falsy check --
+  // `!count` would turn a genuine zero into "unknown", which is exactly as
+  // wrong in the other direction.
   _formatTokens(count) {
-    if (!count || count === 0) return '0';
+    if (count == null || Number.isNaN(count)) return 'unknown';
     if (count >= 1_000_000) return (count / 1_000_000).toFixed(2) + 'M';
     if (count >= 1_000) return (count / 1_000).toFixed(1) + 'K';
     return String(count);
   }
 
   _formatUSD(amount) {
-    if (!amount || amount === 0) return '$0.00';
+    if (amount == null || Number.isNaN(amount)) return 'unknown';
+    if (amount === 0) return '$0.00';
     if (amount < 0.01) return '<$0.01';
     return '$' + amount.toFixed(2);
+  }
+
+  // null + null is 0 in JS, so summing token fields with `|| 0` fabricates a
+  // measured-looking total for a run nobody counted. Returns null when NO
+  // component was measured, and sums the measured ones otherwise.
+  _sumTokens(it) {
+    const parts = [it.input_tokens, it.output_tokens,
+                   it.cache_read_tokens, it.cache_creation_tokens];
+    if (parts.every(p => p == null)) return null;
+    return parts.reduce((sum, p) => sum + (p == null ? 0 : p), 0);
   }
 
   _escapeHTML(str) {
@@ -241,7 +258,7 @@ export class LokiContextTracker extends LokiElement {
 
     // Find max tokens for bar scaling
     const maxTokens = Math.max(
-      ...iterations.map(it => (it.input_tokens || 0) + (it.output_tokens || 0) + (it.cache_read_tokens || 0) + (it.cache_creation_tokens || 0))
+      ...iterations.map(it => this._sumTokens(it) || 0)
     );
 
     // Build a set of compaction iteration numbers for separator display
@@ -249,7 +266,7 @@ export class LokiContextTracker extends LokiElement {
 
     let rows = '';
     for (const it of iterations) {
-      const totalIt = (it.input_tokens || 0) + (it.output_tokens || 0) + (it.cache_read_tokens || 0) + (it.cache_creation_tokens || 0);
+      const totalIt = this._sumTokens(it);
       const widthPct = maxTokens > 0 ? (totalIt / maxTokens) * 100 : 0;
       const isCompacted = it.compacted === true;
 
@@ -304,7 +321,7 @@ export class LokiContextTracker extends LokiElement {
 
     // Find max total for scaling
     const maxTokens = Math.max(
-      ...iterations.map(it => (it.input_tokens || 0) + (it.output_tokens || 0) + (it.cache_read_tokens || 0) + (it.cache_creation_tokens || 0))
+      ...iterations.map(it => this._sumTokens(it) || 0)
     );
 
     const legend = `
