@@ -111,12 +111,12 @@ SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/loki-logcap-XXXXXX")"
 trap 'rm -rf "$SCRATCH"' EXIT
 log_file="$SCRATCH/autonomy-test.log"
 head -c 2000000 /dev/zero | tr '\0' 'x' > "$log_file"
-before=$(stat -f%z "$log_file" 2>/dev/null || stat -c%s "$log_file" 2>/dev/null)
+before=$(stat -c%s "$log_file" 2>/dev/null || stat -f%z "$log_file" 2>/dev/null)
 
-if [ -f "$log_file" ] && [ "$(stat -f%z "$log_file" 2>/dev/null || stat -c%s "$log_file" 2>/dev/null)" -gt 1000000 ]; then
+if [ -f "$log_file" ] && [ "$(stat -c%s "$log_file" 2>/dev/null || stat -f%z "$log_file" 2>/dev/null)" -gt 1000000 ]; then
     tail -c 500000 "$log_file" > "$log_file.tmp" && mv "$log_file.tmp" "$log_file"
 fi
-after=$(stat -f%z "$log_file" 2>/dev/null || stat -c%s "$log_file" 2>/dev/null)
+after=$(stat -c%s "$log_file" 2>/dev/null || stat -f%z "$log_file" 2>/dev/null)
 
 if [[ $before -gt 1000000 && $after -le 500000 ]]; then
     ok "an oversized daily log is trimmed to the cap ($before -> $after)"
@@ -127,7 +127,7 @@ fi
 # A small log must be left alone.
 small="$SCRATCH/small.log"
 printf 'keep me\n' > "$small"
-if [ -f "$small" ] && [ "$(stat -f%z "$small" 2>/dev/null || stat -c%s "$small" 2>/dev/null)" -gt 1000000 ]; then
+if [ -f "$small" ] && [ "$(stat -c%s "$small" 2>/dev/null || stat -f%z "$small" 2>/dev/null)" -gt 1000000 ]; then
     tail -c 500000 "$small" > "$small.tmp" && mv "$small.tmp" "$small"
 fi
 if [[ "$(cat "$small")" == "keep me" ]]; then

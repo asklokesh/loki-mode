@@ -5,6 +5,54 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.8.0
+
+### The remaining two red shards, both false alarms in my own guards
+
+v9.7.0 fixed the SIGPIPE one. These are the other two, and neither was a
+product defect.
+
+**`stat` portability.** `tests/test-help-and-log-cap.sh` tried
+`stat -f%z` (macOS) before `stat -c%s` (GNU) at four call sites. On a Linux
+runner the macOS form fails, falls through, and works -- so the code was not
+broken, but the ordering is a latent trap and the portability guard exists
+precisely to catch it before it becomes one. All four are now GNU-first.
+
+**The caveman moat audit.** It flagged `autonomy/run.sh:1643`:
+
+```
+LOKI_PROVIDER=claude
+```
+
+as an "unsuppressed parsed claude subcall". It is a variable ASSIGNMENT, not a
+subcall -- the auto-detect fallback added in v8.64.0, which keeps the historical
+default so the "not installed" error names an actionable provider rather than an
+empty string.
+
+The audit's exclusion list already exempts every other way this file names
+claude as a VALUE (`--provider`, `Provider:`, `(claude default)`,
+`supports the claude`). This form was simply never added. The fix belongs in
+the exclusion, not in production code.
+
+### Widening a moat guard requires proving it still bites
+
+The exemption is one literal string. Replacing that exact line with a genuine
+unnamed subcall:
+
+```
+claude --print "leak"
+```
+
+still fails the audit, verified by mutation probe. The guard was narrowed by
+one false positive, not blunted.
+
+### What actually kept main red
+
+Not these three defects -- they were findable in minutes. It was releasing
+faster than a Tests run takes to finish, so every run was cancelled by the next
+push and nothing ever reported a verdict. Two of the three failures do not
+reproduce on macOS at all, so the local gate stayed green throughout.
+
 ## v9.7.0
 
 ### Three CI shards were red for a packaging failure that did not exist
