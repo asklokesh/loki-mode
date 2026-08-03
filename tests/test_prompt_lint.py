@@ -159,6 +159,15 @@ class RankingIsUsable(unittest.TestCase):
             "reclaim estimate understates every recurring block")
 
     def test_every_rank_shows_its_reasons(self):
+        """And the top rank shows a CONTENT reason, not just a size reason.
+
+        Asserting only that `signals` is non-empty is near-vacuous here: every
+        block over 100 bytes gets a `size:` entry automatically and the
+        smallest analyzed block is 140 bytes, so that assertion could only fail
+        for a size band the corpus does not contain. It would guard the size
+        curve while appearing to guard the scorer. So the top-ranked block must
+        also carry at least one NAMED content signal.
+        """
         _, report = _report()
         self.assertGreaterEqual(report["blocks_analyzed"], _MIN_BLOCKS)
         for b in report["blocks"]:
@@ -166,6 +175,14 @@ class RankingIsUsable(unittest.TestCase):
                 b["signals"],
                 "block scored with no named signal; a rank whose reasons are "
                 "invisible is one nobody can argue with")
+        top = report["blocks"][0]
+        content = [s for s in top["signals"]
+                   if not s.startswith(("size:", "frequency("))]
+        self.assertTrue(
+            content,
+            "top-ranked block justified by size and frequency alone (%s); "
+            "then the ranking is a length sort wearing signal names"
+            % top["signals"])
 
 
 class AdvisoryFramingIsPrinted(unittest.TestCase):

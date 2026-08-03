@@ -358,9 +358,16 @@ def _render(report, code, top):
     lines.append("  with cache prefix:   %d" % report["fixtures_with_prefix"])
     lines.append("  distinct blocks:     %d" % report["blocks_analyzed"])
 
-    reclaim = sum(b["est_tokens"] for b in report["blocks"])
-    lines.append("  est tokens in prefix: %s  (deduped; bytes/%d, an estimate)"
-                 % (reclaim if report["blocks"] else "UNKNOWN", BYTES_PER_TOKEN))
+    # NOT "tokens per prompt" and NOT "tokens across the corpus". It is the sum
+    # over DISTINCT blocks: no single prompt carries all of them, and a block
+    # sent 48 times counts once. Labelled for exactly what it measures, because
+    # a reader sizing an ablation will quote this number.
+    distinct = sum(b["est_tokens"] for b in report["blocks"])
+    lines.append("  distinct coaching tokens: %s  (deduped, NOT per-prompt; "
+                 "bytes/%d, an estimate)"
+                 % (distinct if report["blocks"] else "UNKNOWN",
+                    BYTES_PER_TOKEN))
+    lines.append("  per-prompt reclaim: see the x<N> prompts column per block")
     lines.append("  measured deletion value: UNKNOWN -- requires an ablation "
                  "trial; this tool ranks only")
 
