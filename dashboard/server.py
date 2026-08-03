@@ -1010,6 +1010,18 @@ except Exception as _gzip_exc:  # pragma: no cover - starlette always ships it
 from .api_v2 import router as api_v2_router
 app.include_router(api_v2_router)
 
+# Mount the operator router: the filesystem evidence readers (run detail, gate
+# results, receipts, releases) reachable over HTTP. Before this they were
+# libraries only the test suite imported -- four readers, none of them
+# reachable by a user. Best-effort so a dashboard missing an optional reader
+# still starts; the failure surfaces as a 404 on those paths rather than a
+# dashboard that will not come up.
+try:
+    from .api_operator import router as api_operator_router
+    app.include_router(api_operator_router)
+except Exception as _operator_exc:  # pragma: no cover - import env varies
+    logger.warning("operator API unavailable: %s", _operator_exc)
+
 # Phase Merge-4: Mount Purple Lab FastAPI app under /lab/ so it appears as a
 # sidebar entry in Dashboard. Same `app` is also wrapped by `standalone_app`
 # in web-app/server.py for `loki web` (port 57375). One source of truth, no
