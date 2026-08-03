@@ -70,18 +70,6 @@ class TheRoutesAreActuallyThere(unittest.TestCase):
 
     def test_every_operator_route_is_mounted(self):
         paths = [getattr(r, "path", "") for r in self.server.app.routes]
-        # KNOWN LINUX-ONLY DEFECT (see
-        # tests/dashboard/test_router_mounts_diagnostic.py for the full
-        # evidence): on Linux NEITHER the v2 nor the operator router attaches
-        # to dashboard.server.app, while both attach on macOS. This assertion
-        # is about the operator mount specifically, and it cannot pass while
-        # the platform-wide mount defect is open. Skipped WITH the reason
-        # rather than deleted, so it resumes guarding the moment that is fixed.
-        _v2 = [p for p in paths if str(p).startswith("/api/v2")]
-        if not _v2 and sys.platform.startswith("linux"):
-            self.skipTest(
-                "blocked by the open Linux mount defect: app carries no v2 "
-                "routes either, so this is not specific to the operator router")
         for expected in _EXPECTED:
             self.assertIn(
                 expected, paths,
@@ -90,18 +78,6 @@ class TheRoutesAreActuallyThere(unittest.TestCase):
 
     def test_no_operator_route_is_registered_twice(self):
         paths = [getattr(r, "path", "") for r in self.server.app.routes]
-        # KNOWN LINUX-ONLY DEFECT (see
-        # tests/dashboard/test_router_mounts_diagnostic.py for the full
-        # evidence): on Linux NEITHER the v2 nor the operator router attaches
-        # to dashboard.server.app, while both attach on macOS. This assertion
-        # is about the operator mount specifically, and it cannot pass while
-        # the platform-wide mount defect is open. Skipped WITH the reason
-        # rather than deleted, so it resumes guarding the moment that is fixed.
-        _v2 = [p for p in paths if str(p).startswith("/api/v2")]
-        if not _v2 and sys.platform.startswith("linux"):
-            self.skipTest(
-                "blocked by the open Linux mount defect: app carries no v2 "
-                "routes either, so this is not specific to the operator router")
         for expected in _EXPECTED:
             self.assertEqual(
                 paths.count(expected), 1,

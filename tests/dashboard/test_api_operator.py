@@ -111,18 +111,6 @@ class TheRouterIsMountedOnTheRealDashboardApp(unittest.TestCase):
         except Exception as exc:  # pragma: no cover - import env varies
             self.skipTest("dashboard.server not importable here: %s" % exc)
         paths = {getattr(r, "path", "") for r in server.app.routes}
-        # KNOWN LINUX-ONLY DEFECT (see
-        # tests/dashboard/test_router_mounts_diagnostic.py for the full
-        # evidence): on Linux NEITHER the v2 nor the operator router attaches
-        # to dashboard.server.app, while both attach on macOS. This assertion
-        # is about the operator mount specifically, and it cannot pass while
-        # the platform-wide mount defect is open. Skipped WITH the reason
-        # rather than deleted, so it resumes guarding the moment that is fixed.
-        _v2 = [p for p in paths if str(p).startswith("/api/v2")]
-        if not _v2 and sys.platform.startswith("linux"):
-            self.skipTest(
-                "blocked by the open Linux mount defect: app carries no v2 "
-                "routes either, so this is not specific to the operator router")
         for expected in ("/api/operator/runs/{run_id}",
                          "/api/operator/tests",
                          "/api/operator/receipts",
