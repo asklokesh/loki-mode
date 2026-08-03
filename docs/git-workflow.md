@@ -169,7 +169,7 @@ Estimated cost: $X.XX USD
 - End: YYYY-MM-DD HH:MM:SS
 - Duration: X hours
 - Iterations: X
-- Provider: claude/codex/gemini
+- Provider: claude/cline/codex/aider/opencode
 ```
 
 Set template path:
@@ -200,8 +200,11 @@ All Git operations performed by agents are logged to `.loki/logs/agent-audit.jso
 View audit log:
 
 ```bash
-loki audit log
-loki audit log --action git_commit
+loki audit log          # most recent entries (optional positional line count)
+loki audit log 200
+
+# loki audit log takes a line count, not filter flags. Filter with grep:
+loki audit log 500 | grep git_commit
 ```
 
 ## Git Hooks

@@ -24,7 +24,7 @@ GSD is the closest competitor -- a context engineering system that spawns fresh 
 | Memory system | Episodic/semantic/procedural + vector search | None | Loki |
 | Context management | Standard | Fresh subagent contexts per task (core innovation) | GSD |
 | Time to value | Learn architecture, understand CLI flags | `npx get-shit-done-cc` and go | GSD |
-| Multi-provider | Orchestrates across Claude/Codex/Gemini with degraded mode | Installs separately to each | Loki |
+| Multi-provider | Orchestrates across Claude/Cline/Codex/Aider/opencode with degraded mode | Installs separately to each | Loki |
 | Real-world proof | No public case studies | Testimonials, 1.1K forks, 75 PRs | GSD |
 
 **Key takeaway:** GSD proved the market wants sharp blades, not Swiss Army knives. Loki Mode's Completion Council and quality gates are genuinely unique IP that no competitor has.

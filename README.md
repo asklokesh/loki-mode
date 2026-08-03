@@ -15,7 +15,7 @@ _The free, source-available autonomous coding agent by [Autonomi](https://www.au
 
 [Website](https://www.autonomi.dev/) | [Documentation](wiki/Home.md) | [Installation](docs/INSTALLATION.md) | [Changelog](CHANGELOG.md) | [Purple Lab -- deprecated v7.44.0](#purple-lab)
 
-**Current release: v8.5.2**
+**Current release: v9.8.1**
 
 </div>
 
@@ -194,7 +194,7 @@ public key can verify offline. See [docs/SIGNED-RECEIPTS.md](docs/SIGNED-RECEIPT
 - **Legacy system healing** -- `loki modernize heal` archaeology/stabilize/isolate/modernize/validate phases (v6.67.0, see `skills/healing.md`)
 - **MCP server** -- 34 tools (including ChromaDB code search) plus 3 resources and 2 prompts (`mcp/server.py`, with magic tools registered from `mcp/magic_tools.py` and the managed-memory tool from `mcp/managed_tools.py`). Of the 34, 33 are always available; `loki_memory_redact` is registered but only succeeds when `LOKI_MANAGED_AGENTS=true` and `LOKI_MANAGED_MEMORY=true`. Launch with `loki mcp` (bootstraps the Python MCP SDK on first run).
 - **Full-stack output** -- Source code, tests, Docker Compose stacks (multi-service with healthchecks), CI/CD pipelines, audit logs
-- **Provider-agnostic** -- runs on Claude, Codex, Cline, or Aider with automatic failover (`loki-ts/src/runner/providers.ts`); no vendor lock-in. Gemini CLI deprecated v7.5.18.
+- **Provider-agnostic** -- runs on Claude, Cline, Codex, Aider, or opencode with automatic failover (`loki-ts/src/runner/providers.ts`); no vendor lock-in. When `LOKI_PROVIDER` is unset, Loki auto-detects in that order; an explicit choice always wins and is never silently substituted. Gemini was removed as a provider in v7.5.18.
 - **Source-available (BUSL-1.1)** -- Free for personal, internal, and academic use.
 
 ---
@@ -410,7 +410,7 @@ loki doctor                                    # check your setup before the fir
 
 Required:
 
-- An agent provider CLI: [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`, Tier 1, recommended and E2E-verified - the provider Loki Mode is built for). Codex, Cline, and Aider are supported as experimental providers (wiring in place; not yet E2E-verified by us). Loki cannot run a build without one of these installed and authenticated.
+- An agent provider CLI: [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`, Tier 1, recommended and E2E-verified - the provider Loki Mode is built for). Cline, Codex, Aider, and opencode are supported as experimental providers (wiring in place; not yet E2E-verified by us). Loki cannot run a build without one of these installed and authenticated.
 - Python 3.10+ (`python3`) for the dashboard, memory system, and orchestration helpers.
 - Git 2.x (`git`) for checkpoints and worktrees.
 - `curl` for installation and network calls.
@@ -656,7 +656,7 @@ The historical feature set (platform pages, Monaco IDE workspace, AI chat panel)
 | Feature | Loki Mode | bolt.new | Replit | Lovable |
 |---------|:---------:|:--------:|:------:|:-------:|
 | Self-hosted / your keys | Yes | No | No | No |
-| Multi-provider failover (4 providers) | Yes | No | No | No |
+| Multi-provider failover (5 providers) | Yes | No | No | No |
 | 8 quality gates | Yes | No | No | No |
 | Blind code review | Yes | No | No | No |
 | Enterprise auth (OIDC token + scoped RBAC) | Yes | No | Yes | No |
@@ -665,22 +665,23 @@ The historical feature set (platform pages, Monaco IDE workspace, AI chat panel)
 | Source-available (BUSL-1.1) | Yes | No | No | No |
 | Free tier | Source-available | Yes | Yes | Yes |
 
-Loki Mode is the only platform that is fully self-hosted, source-available (BUSL-1.1), and includes automated quality verification. Your code, your keys, your infrastructure.
+Among the four tools in this table, Loki Mode is the one that is fully self-hosted, source-available (BUSL-1.1), and includes automated quality verification. Your code, your keys, your infrastructure. We have not surveyed every tool on the market, so read this as a comparison against the named three, not a claim about the whole category.
 
 ---
 
 <details>
 <summary><strong>Provider matrix -- per-provider status, autonomous flags, parallelism, install (includes deprecated Gemini)</strong></summary>
 
-Loki's autonomy and quality loop are the product; the underlying coding CLI is swappable. Loki runs on any of the providers below so you are never locked to one vendor.
+Loki's autonomy and quality loop are the product; the underlying coding CLI is swappable. Loki runs on any of the providers below so you are never locked to one vendor. With `LOKI_PROVIDER` unset, Loki auto-detects the first installed provider in the order the table lists (claude, cline, codex, aider, opencode); setting it explicitly always wins and is never silently substituted.
 
 | Provider | Status | Autonomous Flag | Parallel Agents | Install |
 |----------|--------|:-:|:-:|---------|
 | **Claude Code** | Active (Tier 1, E2E-verified) | `--dangerously-skip-permissions` | Yes (10+) | `npm i -g @anthropic-ai/claude-code` |
-| **Codex CLI** | Experimental (Tier 3) | `--sandbox workspace-write --skip-git-repo-check` | Sequential | `npm i -g @openai/codex` |
-| **Cline CLI** | Experimental (Tier 2) | `-y` | Sequential | `npm i -g @anthropic-ai/cline` |
+| **Cline CLI** | Experimental (Tier 2) | `-y` | Sequential | `npm install -g cline` |
+| **Codex CLI** | Experimental (Tier 3) | `exec --sandbox workspace-write --skip-git-repo-check` | Sequential | `npm i -g @openai/codex` |
 | **Aider** | Experimental (Tier 3) | `--yes-always` | Sequential | `pip install aider-chat` |
-| **Google Gemini CLI** | DEPRECATED v7.5.18 | -- | -- | Upstream deprecated; runtime removed. `LOKI_PROVIDER=gemini` exits with migration message. |
+| **opencode** | Experimental | `--auto` | Sequential | `npm install -g opencode-ai` |
+| **Google Gemini CLI** | REMOVED v7.5.18 | -- | -- | Upstream deprecated; runtime removed. `LOKI_PROVIDER=gemini` exits with a migration message. |
 
 Status legend: "E2E-verified" means we run real spec-to-code builds on it ourselves. Claude Code is the primary, fully supported provider and the one Loki Mode is built for; it gets full features (subagents, parallelization, MCP, Task tool). "Experimental" means the wiring is in place but we have not produced an end-to-end verified build ourselves; treat as community-tested. Experimental providers run sequentially. Auto-failover switches providers when rate-limited. See [Provider Guide](skills/providers.md).
 
@@ -776,12 +777,15 @@ See [BMAD Integration Validation](docs/architecture/bmad-integration-validation.
 <details>
 <summary><strong>Enterprise Features</strong></summary>
 
-Enterprise features are included but require env var activation. Self-audit: 35/45 capabilities working, 0 broken, 1,314 tests passing.
+Enterprise features are included but require env var activation.
 
 ```bash
-export LOKI_TLS_ENABLED=true
-export LOKI_OIDC_PROVIDER=google
-export LOKI_AUDIT_ENABLED=true
+export LOKI_ENTERPRISE_AUTH=true                 # token auth (dashboard/auth.py)
+export LOKI_OIDC_ISSUER=https://accounts.google.com
+export LOKI_OIDC_CLIENT_ID=your-client-id        # OIDC needs issuer + client id
+export LOKI_ENTERPRISE_AUDIT=true                # force audit logging on
+export LOKI_TLS_CERT=/path/cert.pem              # HTTPS: set BOTH cert and key
+export LOKI_TLS_KEY=/path/key.pem
 loki enterprise status
 ```
 
@@ -823,7 +827,7 @@ See [benchmarks/](benchmarks/) for methodology.
 | **Code Gen** | Full-stack apps from PRDs | Complex domain logic may need human review |
 | **Deploy** | Generates configs, Dockerfiles, CI/CD; `loki deploy` prints the exact deploy command | Does not deploy -- human runs the printed deploy command (Loki never runs a cloud CLI or git push) |
 | **Testing** | 8 automated quality gates | Test quality depends on AI assertions |
-| **Providers** | 4 providers with auto-failover | Non-Claude providers lack parallel agents |
+| **Providers** | 5 providers with auto-failover | Non-Claude providers lack parallel agents |
 | **Dashboard** | Real-time single-machine monitoring | No multi-node clustering |
 
 > **What "autonomous" means:** The system runs RARV cycles without prompting. It does NOT access your cloud accounts, payment systems, or external services unless you provide credentials. Human oversight is expected for deployment, API keys, and critical decisions.

@@ -5,6 +5,75 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.10.0
+
+### Two security controls were documented that do not exist
+
+These are the sharpest findings of the docs sweep, because a reader believed
+they had a control they did not have.
+
+**Egress policy.** `docs/network-security.md` presented
+`LOKI_NETWORK_EGRESS_POLICY`, `LOKI_ALLOWED_HOSTS` and
+`LOKI_BLOCK_METADATA_ENDPOINT` as live configuration. **None is implemented.**
+Anyone who set them had no application-level egress control at all.
+`wiki/Network-Security.md` already said "Planned"; `docs/` contradicted it.
+
+**Metrics exposure.** `docs/metrics.md` implied `/metrics` could be turned off.
+It is an unconditional route (`dashboard/server.py:9637`) with **no auth scope
+dependency**, unlike `/api/*`. `LOKI_METRICS_ENABLED=false` never closed it.
+
+### A 572-line document for a feature that does not exist
+
+`docs/openclaw-integration.md` documented seven CLI subcommands, REST
+endpoints, six env vars, a config block and Prometheus metrics.
+
+```
+grep -c openclaw autonomy/loki   ->   0
+```
+
+What exists is `integrations/openclaw/bridge/`, whose own docstring says "This
+is a foundation/skeleton. The WebSocket gateway client is not yet implemented."
+Replaced with an accurate 52-line stub quoting that limitation.
+
+### The rest, all verified against source
+
+- **A broken install command**: `npm i -g @anthropic-ai/cline` returns 404. The
+  real package is `cline`.
+- **`opencode` missing from the provider list in 9 places**, including
+  `INSTALLATION.md:846`, which was directly contradicted by
+  `completions/loki.bash:24`.
+- **~15 fictional env vars and subcommands**: `LOKI_RBAC_*`, `LOKI_TLS_ENABLED`,
+  `LOKI_AUDIT_*`, `loki enterprise rbac check`, `loki audit verify`. RBAC is
+  real, but the variable is `LOKI_OIDC_DEFAULT_ROLE`; HTTPS turns on when BOTH
+  `LOKI_TLS_CERT` and `LOKI_TLS_KEY` are set.
+- **An unsupported self-audit claim** ("35/45 capabilities, 1,314 tests
+  passing") with zero support anywhere. Deleted rather than sourced.
+- **Gemini presented as a live provider** in 7 places including an iptables
+  egress allowlist rule -- a hole for a provider removed in v7.5.18.
+- **`docs/DEMOS.md` listed 5 files that do not exist.** 11 claimed, 6 real.
+
+Verified and left alone: 34 MCP tools, 41 agent roles across 8 domains, 8
+quality gates. `docs/EVALUATING.md` was already exemplary, scoping its
+competitive claim to six installed CLIs and explicitly excluding Devin and
+Replit.
+
+### The tool that finds this class
+
+`tools/audit-docs.py` scans markdown for checkable claims and verifies each
+against the repo. On this repo, at the moment it shipped:
+
+```
+docs scanned:  474
+claims checked: 2205  (false 178, passed 1949, uncheckable 78)
+```
+
+**Seventy-eight claims read UNCHECKABLE, not passing.** A claim the tool cannot
+verify is reported as unverified rather than counted as correct, which is the
+same absent-is-not-zero rule the cost surfaces enforce.
+
+`docs/TOOLS.md` is new: all 34 tools, grouped by what a user is trying to do,
+with every example verified by running it.
+
 ## v9.9.0
 
 ### Main is green: five shard failures, all of them my own guards lying

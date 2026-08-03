@@ -1,6 +1,23 @@
 # Confidence-Based Routing Reference
 
-Production-validated pattern from HN discussions and Claude Agent SDK guide.
+> **STATUS: DESIGN NOTE, NOT IMPLEMENTED.** Nothing in this document is wired
+> into the runtime. Do not configure against it.
+>
+> Verified against source at v9.8.1:
+> - `LOKI_CONFIDENCE_ROUTING` is read once (`autonomy/run.sh:1319`) and only
+>   printed to a log line (`autonomy/run.sh:21182`). No code branches on it.
+> - `LOKI_CONFIDENCE_AUTO_APPROVE`, `LOKI_CONFIDENCE_DIRECT`,
+>   `LOKI_CONFIDENCE_SUPERVISOR` and `LOKI_CONFIDENCE_CALIBRATION_DAYS` are
+>   read nowhere in the repo.
+> - `calculate_task_confidence()`, `save_confidence_calibration()`, the
+>   `force_routing` / `require_human_review` task metadata, and the Brier-score
+>   calibration dashboard do not exist in source.
+>
+> The Python and bash blocks below are illustrative pseudocode for a proposed
+> design. They are kept as a design record. For the routing that actually runs,
+> see `skills/model-selection.md` and `get_rarv_tier()` in `autonomy/run.sh`.
+
+Design pattern drawn from HN discussions and the Claude Agent SDK guide.
 
 ---
 

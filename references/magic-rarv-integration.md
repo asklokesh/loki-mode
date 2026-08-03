@@ -8,7 +8,6 @@ normal RARV-C phase execution.
 This reference describes which phase does what.
 
 ## BOOTSTRAP (before iteration 1)
-- `analyze_git_intelligence()` runs (from v6.75.0).
 - Magic-specific bootstrap:
   - `magic.core.design_tokens.DesignTokens.extract_from_codebase(save=True)`
     scans existing React and Web Components to learn the project's design

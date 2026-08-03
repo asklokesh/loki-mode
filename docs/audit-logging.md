@@ -44,8 +44,8 @@ enterprise:
 |----------|---------|-------------|
 | `LOKI_AUDIT_DISABLED` | `false` | Set to `true` to disable audit logging |
 | `LOKI_ENTERPRISE_AUDIT` | `false` | Force audit on (legacy, audit is now on by default) |
-| `LOKI_AUDIT_LEVEL` | `info` | Minimum log level: debug, info, warning, error |
-| `LOKI_AUDIT_RETENTION` | `90` | Retention period in days |
+| `LOKI_AUDIT_MAX_SIZE_MB` | `10` | Rotate the log once it exceeds this size |
+| `LOKI_AUDIT_MAX_FILES` | `10` | Number of rotated log files to keep |
 | `LOKI_AUDIT_SYSLOG_HOST` | - | Syslog server hostname for forwarding |
 | `LOKI_AUDIT_SYSLOG_PORT` | `514` | Syslog server port |
 | `LOKI_AUDIT_SYSLOG_PROTO` | `udp` | Syslog protocol: `udp` or `tcp` |
@@ -202,33 +202,34 @@ loki enterprise audit tail --event session.start
 loki enterprise audit tail --level error
 ```
 
-### Search Logs
+### Search and export logs
+
+`loki enterprise audit` has exactly two subcommands: `summary` and `tail`.
+There is no `search` and no `export` (an earlier version of this page
+documented both, with filter flags that do not exist). The log is newline
+-delimited JSON on disk, so query and export it with ordinary tools:
 
 ```bash
-# Search by event
-loki enterprise audit search --event auth.fail
+AUDIT=~/.loki/dashboard/audit/audit.jsonl
+
+# Search by event type
+jq -c 'select(.event == "auth.fail")' "$AUDIT"
 
 # Search by date range
-loki enterprise audit search --from 2026-02-01 --to 2026-02-15
+jq -c 'select(.timestamp >= "2026-02-01" and .timestamp <= "2026-02-15")' "$AUDIT"
 
 # Search by actor
-loki enterprise audit search --actor ci-bot
+jq -c 'select(.actor == "ci-bot")' "$AUDIT"
 
-# Combined filters
-loki enterprise audit search --event task.fail --from 2026-02-15 --level error
+# Export a filtered slice
+jq -s 'map(select(.event == "task.fail"))' "$AUDIT" > errors.json
 ```
 
-### Export Logs
+The built-in views:
 
 ```bash
-# Export to file
-loki enterprise audit export --output audit-export.json
-
-# Export with filters
-loki enterprise audit export --from 2026-01-01 --level error --output errors.json
-
-# Export as CSV
-loki enterprise audit export --format csv --output audit.csv
+loki enterprise audit summary   # aggregate counts
+loki enterprise audit tail      # most recent entries
 ```
 
 ## API Endpoints
@@ -297,10 +298,10 @@ Each audit entry includes a `chain_hash` field:
 
 ### Verification
 
-```bash
-# Verify integrity via CLI
-loki audit verify
+There is no `loki audit verify` subcommand (`loki audit` has `log`, `count`,
+and `scan`). Verify the chain through the Python API:
 
+```bash
 # Python verification
 from dashboard.audit import verify_log_integrity
 
@@ -422,19 +423,24 @@ In addition to dashboard audit logs, agent actions are tracked separately.
 
 ### CLI Commands
 
+Note that `loki audit` reads the agent-action audit trail, which is a separate
+store from the enterprise audit log covered above.
+
 ```bash
-# View recent agent actions
+# View recent agent actions (optional positional line count, default 50)
 loki audit log
+loki audit log 200
 
 # Count total agent actions
 loki audit count
 
-# Filter by action type
-loki audit log --action git_commit
-
-# Show help
-loki audit help
+# Run a quality scan
+loki audit scan --preset default
 ```
+
+`loki audit log` takes a line count, not filter flags; an earlier version of
+this page showed `--action git_commit`, which is not implemented. Filter with
+`grep` or `jq` over `.loki/audit.jsonl` instead.
 
 ## Compliance
 
@@ -521,15 +527,17 @@ echo '{"test": "entry"}' >> ~/.loki/dashboard/audit/test.jsonl
 ### Missing Events
 
 ```bash
-# Check minimum level configuration
+# Check audit status and recent events
 loki enterprise audit summary
 
-# Lower level to capture more events
-export LOKI_AUDIT_LEVEL=debug
-
-# Check exclude_events in config
-cat .loki/config.yaml | grep -A 5 exclude_events
+# Confirm audit is not disabled (it is ON by default)
+echo "${LOKI_AUDIT_DISABLED:-unset}"
 ```
+
+There is no minimum-severity filter and no per-event exclude list. Audit
+logging is all-or-nothing: on by default, off with `LOKI_AUDIT_DISABLED=true`.
+`LOKI_AUDIT_LEVEL` and `LOKI_AUDIT_EXCLUDE_EVENTS` appeared in an earlier
+version of this page and were never implemented.
 
 ### Disk Space Issues
 
@@ -543,8 +551,9 @@ find ~/.loki/dashboard/audit/ -type f -size +100M
 # Manually clean old logs
 find ~/.loki/dashboard/audit/ -name "*.jsonl" -mtime +30 -delete
 
-# Enable compression
-export LOKI_AUDIT_COMPRESS=true
+# Bound disk use via rotation (there is no built-in compression option)
+export LOKI_AUDIT_MAX_SIZE_MB=5
+export LOKI_AUDIT_MAX_FILES=4
 ```
 
 ### Syslog Not Forwarding

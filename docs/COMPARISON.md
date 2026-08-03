@@ -212,7 +212,7 @@
 | **npm/wk** | 6.1K | 21.4K | N/A | N/A | N/A | N/A | N/A |
 | **Agents** | 41 roles in 8 domains | 11 agents | Fresh per task | 108 agents | Swarm-based | 32 agents | N/A |
 | **Skills** | Progressive disclosure | 6 slash commands | N/A | 129 skills | N/A | 35 skills | Memory focus |
-| **Multi-Provider** | Yes (Claude/Codex/Gemini) | 3 CLIs (separate) | No | No | No | No | No |
+| **Multi-Provider** | Yes (Claude/Cline/Codex/Aider/opencode) | 3 CLIs (separate) | No | No | No | No | No |
 | **Memory System** | 3-tier (episodic/semantic/procedural) | None | N/A | N/A | Hybrid | N/A | SQLite+FTS5 |
 | **Quality Gates** | 8 gates + Completion Council | User verify only | Two-Stage Review | N/A | Consensus | Tiered | N/A |
 | **Context Mgmt** | Standard | Fresh per task (core innovation) | Fresh per task | N/A | N/A | N/A | Progressive |
@@ -237,7 +237,7 @@ These are patterns from competing projects that are **practically and scientific
 
 | Strength | Details | Competitors Lacking This |
 |----------|---------|-------------------------|
-| **Multi-Provider Support** | Only skill supporting Claude, Codex, and Gemini with graceful degradation | All 8 competitors are Claude-only |
+| **Multi-Provider Support** | Supports Claude, Cline, Codex, Aider, and opencode with graceful degradation | The 8 competitors compared here are Claude-only |
 | **RARV Cycle** | Reason-Act-Reflect-Verify is more rigorous than Plan-Execute | Most use simple Plan-Execute |
 | **8-Gate Quality System** | Static analysis + test suite (pass/fail) + 3 blind reviewers with severity blocking + devil's advocate + mock-integrity + test-mutation + documentation coverage + Magic Modules debate (backward-compat is a conditional healing auditor) + Phase 1 closure | Superpowers has 2-stage, others have less |
 | **Constitutional AI Integration** | Principles-based self-critique from Anthropic research | None have this |

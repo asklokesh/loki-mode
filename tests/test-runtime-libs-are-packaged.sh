@@ -71,6 +71,7 @@ LIBS=(
     "tools/baseline-pin.py"               # pin a verified reference run
     "tools/token-guard.py"                # provider-independent work ceiling
     "tools/receipt-find.py"               # query receipts by measurable criteria
+    "tools/audit-docs.py"                 # find documentation claims that are false
     "tools/policy-diff.py"                # classify a policy edit by safety direction
     "tools/gate-log.py"                   # verdict history, blind never reads healthy
     "tools/receipt-export.py"             # portable evidence file

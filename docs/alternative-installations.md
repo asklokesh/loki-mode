@@ -14,7 +14,6 @@ git clone https://github.com/asklokesh/loki-mode.git ~/.claude/skills/loki-mode
 
 # Optionally symlink for other providers:
 ln -sf ~/.claude/skills/loki-mode ~/.codex/skills/loki-mode
-ln -sf ~/.claude/skills/loki-mode ~/.gemini/skills/loki-mode
 
 # Optionally add CLI to PATH:
 ln -sf ~/.claude/skills/loki-mode/autonomy/loki /usr/local/bin/loki
@@ -28,7 +27,7 @@ ln -sf ~/.claude/skills/loki-mode/autonomy/loki /usr/local/bin/loki
 
 ## Docker
 
-**Status:** Image exists on Docker Hub. Tags: `latest`, version-specific (e.g., `8.0.0`).
+**Status:** Image exists on Docker Hub. Tags: `latest`, version-specific (e.g., `9.8.0`).
 
 ```bash
 docker pull asklokesh/loki-mode:latest
@@ -84,7 +83,7 @@ jobs:
 | Input | Default | Description |
 |-------|---------|-------------|
 | `mode` | `review` | `review`, `fix`, or `test` |
-| `provider` | `claude` | `claude` (recommended), `codex`, `cline`, or `aider`. `gemini` is DEPRECATED (v7.5.18). |
+| `provider` | `claude` | `claude` (recommended), `cline`, `codex`, `aider`, or `opencode`. `gemini` was REMOVED in v7.5.18. |
 | `budget_limit` | `5.00` | Max cost in USD |
 | `max_iterations` | `3` | Max RARV cycles |
 | `github_token` | (required) | GitHub token for PR comments |

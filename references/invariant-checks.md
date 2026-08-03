@@ -94,16 +94,21 @@ as an alternative to relying on the exit code.
 
 ## Wiring as a gate
 
-The detector is NOT wired into `autonomy/run.sh` yet. To wire it, add an
-`enforce_invariant_integrity()` wrapper next to `enforce_mock_integrity()`
-(`autonomy/run.sh:7932`) and call it where `enforce_mock_integrity` is called
-(`autonomy/run.sh:14676`). The full wrapper is documented in the header of
-`tests/detect-invariant-violations.sh`. It:
+The detector IS wired into `autonomy/run.sh`. The wrapper is
+`_invariant_gate_and_surface()` (`autonomy/run.sh:12715`), invoked from the
+completion path (`autonomy/run.sh:23889`). It:
 
 - honors `LOKI_SCAN_DIR=TARGET_DIR` (the detector scans the target, not loki-mode)
 - treats detector-not-found and timeout (exit 124) as inconclusive (does not block)
 - persists findings to `${TARGET_DIR}/.loki/quality/invariant-findings.txt`
-- opts out with `LOKI_GATE_INVARIANT=false`
 
-After wiring, add a gate row to `skills/quality-gates.md` and cross-reference
-this check from the Kiro Pattern section of `skills/testing.md`.
+Two flags control it, both PLURAL:
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `LOKI_GATE_INVARIANTS` | `true` | Run and surface findings as advisory (`autonomy/run.sh:23333`) |
+| `LOKI_GATE_INVARIANTS_BLOCK` | `false` | Opt in to letting CRITICAL/HIGH block completion (`autonomy/run.sh:23889`) |
+
+There is no `LOKI_GATE_INVARIANT` (singular). That name appears only in the
+superseded proposal comment in the header of
+`tests/detect-invariant-violations.sh` and is read by nothing.

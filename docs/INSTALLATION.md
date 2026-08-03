@@ -2,7 +2,7 @@
 
 The flagship product of [Autonomi](https://www.autonomi.dev/). Loki Mode is a spec-driven autonomous builder with a built-in trust layer that takes any spec to a deployed product and verifies completion with evidence (quality gates plus a completion council), not just a "done" claim. Complete installation instructions for all platforms and use cases.
 
-**Version:** v8.0.0
+**Version:** v9.8.1
 
 ---
 
@@ -36,7 +36,7 @@ Claude Code skill that compresses the model's OUTPUT tokens only (keeping all
 technical substance). It activates on free-form generation (the main RARV dev
 loop) and is HARD-SUPPRESSED on every trust-gate subcall (council votes, code
 review verdict, evidence-related parses) so determinism is never affected.
-- Claude-provider-only; runs are byte-identical on Codex / Cline / Aider.
+- Claude-provider-only; runs are byte-identical on Cline / Codex / Aider / opencode.
 - Default on; opt out with `LOKI_CAVEMAN=0`.
 - Level: `LOKI_CAVEMAN_LEVEL` (default `full`; also `lite`, `ultra`, `wenyan*`).
 - Pinned + vendor-less: `LOKI_CAVEMAN_VERSION` (default `1.9.0`); Loki bootstraps
@@ -46,7 +46,7 @@ review verdict, evidence-related parses) so determinism is never affected.
 
 ### Earlier highlights still in scope
 - Bash-to-Bun runtime migration in progress (see `UPGRADING.md`)
-- Provider-agnostic runtime: Claude (full), Codex, Cline, Aider (no vendor lock-in)
+- Provider-agnostic runtime: Claude (full), Cline, Codex, Aider, opencode (no vendor lock-in)
 - Memory system (episodic / semantic / procedural)
 - ChromaDB semantic code search via MCP
 
@@ -193,8 +193,9 @@ loki start ./spec.md
 loki start ./spec.md --provider codex
 loki start ./spec.md --provider cline
 
-# Spec as a GitHub issue
-loki start --github-issue https://github.com/owner/repo/issues/42
+# Spec as a GitHub issue -- pass it positionally, it is auto-detected
+loki start https://github.com/owner/repo/issues/42
+loki start owner/repo#42
 
 # Spec as a YAML feature description
 loki start ./feature.yaml
@@ -298,7 +299,7 @@ By default, prompt injection is **disabled** for enterprise safety:
 ./autonomy/run.sh ./my-spec.md
 
 # Opt-in to enable prompt injection
-LOKI_PROMPT_INJECTION_ENABLED=true ./autonomy/run.sh ./my-spec.md
+LOKI_PROMPT_INJECTION=true ./autonomy/run.sh ./my-spec.md
 ```
 
 #### Human Input Security
@@ -329,7 +330,13 @@ Loki Mode supports four active providers across three tiers, plus historical/upc
 | `cline`  | Active | Tier 2 | Full feature set; small models (<13B) may fail tool-use. |
 | `codex`  | Active | Tier 3 (degraded) | Sequential only, no Task tool; aligned with `@openai/codex` v0.125+. |
 | `aider`  | Active | Tier 3 (degraded) | Sequential only; `ollama_chat/<model>` works for local models. |
-| `gemini` | DEPRECATED v7.5.18 | -- | Upstream Gemini CLI deprecated by Google. Runtime removed; `LOKI_PROVIDER=gemini` exits with migration message. |
+| `opencode` | Active | Sequential | Model-agnostic route (`providers/opencode.sh`); autonomous flag `--auto`. Install: `npm install -g opencode-ai`. |
+| `gemini` | REMOVED v7.5.18 | -- | Upstream Gemini CLI deprecated by Google. Runtime removed; `LOKI_PROVIDER=gemini` exits with a migration message. |
+
+When `LOKI_PROVIDER` is unset, Loki auto-detects the first installed provider in
+this order: `claude`, `cline`, `codex`, `aider`, `opencode`
+(`providers/loader.sh:191`). An explicit `LOKI_PROVIDER` always wins and is
+never silently substituted.
 
 ### Configuration
 
@@ -440,7 +447,7 @@ one-line export command and the compose volume to uncomment.
 
 ##### Other providers in Docker
 
-The image ships only the Claude Code CLI. Codex, Cline, and Aider are
+The image ships only the Claude Code CLI. Cline, Codex, Aider, and opencode are
 bring-your-own-CLI: install the provider CLI in a derived image (or mount it),
 then select it with `-e LOKI_PROVIDER=<name>`. See
 [DOCKER_README.md](../DOCKER_README.md) for details.
@@ -498,7 +505,7 @@ Claude Code skill that compresses the model's OUTPUT tokens only (keeping all
 technical substance). It activates on free-form generation (the main RARV dev
 loop) and is HARD-SUPPRESSED on every trust-gate subcall (council votes, code
 review verdicts, evidence-related parses) so determinism is never affected. It
-is Claude-provider-only; runs are byte-identical on Codex / Cline / Aider. These
+is Claude-provider-only; runs are byte-identical on Cline / Codex / Aider / opencode. These
 variables are read in `autonomy/lib/claude-flags.sh`.
 
 - `LOKI_CAVEMAN` (default on) -- set `LOKI_CAVEMAN=0` to disable the compressor.
@@ -843,7 +850,7 @@ The completion scripts support:
 
 * **Smart Context**
 
-  * `loki start --provider <TAB>` shows only installed providers (`claude`, `codex`, `cline`, `aider`).
+  * `loki start --provider <TAB>` completes the supported providers (`claude`, `cline`, `codex`, `aider`, `opencode`; see `completions/loki.bash:24`).
   * `loki start <TAB>` defaults to file completion for spec files (PRD templates, YAML).
 
 * **Nested Commands**

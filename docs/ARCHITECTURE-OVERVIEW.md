@@ -67,8 +67,10 @@ What you get:
   the changed files (secret-leak axis) - v8.0.0, `SKILL.md`.
 
 Provider-agnostic (stable since v5.0.0): Claude (Tier 1, full), Cline (Tier 2),
-Codex and Aider (Tier 3, degraded, sequential). Gemini deprecated v7.5.18. See
-`skills/providers.md`.
+Codex and Aider (Tier 3, degraded, sequential), opencode (sequential). With
+`LOKI_PROVIDER` unset, auto-detection picks the first installed provider in that
+order (`providers/loader.sh:191`); an explicit choice always wins. Gemini was
+removed as a provider in v7.5.18. See `skills/providers.md`.
 
 ---
 
@@ -168,7 +170,7 @@ in `autonomy/completion-council.sh`; proof generation in
 sequenceDiagram
     participant Runner as run_autonomous (run.sh)
     participant Prompt as build_prompt
-    participant Provider as Provider (Claude/Codex/Cline/Aider)
+    participant Provider as Provider (Claude/Cline/Codex/Aider/opencode)
     participant Verify as Gates + council
     participant Evidence as Evidence gate
     participant Council as completion council

@@ -41,7 +41,10 @@ loki start ./prd.md
 | `LOKI_AUDIT_SYSLOG_PORT` | `514` | Syslog server port |
 | `LOKI_AUDIT_SYSLOG_PROTO` | `udp` | Protocol: `udp` or `tcp` |
 | `LOKI_SYSLOG_FACILITY` | `local0` | Syslog facility (local0-local7) |
-| `LOKI_SYSLOG_SEVERITY` | `info` | Minimum severity to forward |
+
+There is no minimum-severity filter: `LOKI_SYSLOG_SEVERITY` appeared in an
+earlier version of this page and is not read by any code. Everything audited is
+forwarded.
 
 ### Configuration File
 
@@ -314,9 +317,13 @@ parser.fields.actor=actor
 
 ### ArcSight CEF Format
 
+CEF formatting lives in `src/observability/siem-export.js`. There is no
+`LOKI_SYSLOG_FORMAT` switch (an earlier version of this page listed one); the
+vendor and product header fields are the parts you can override:
+
 ```bash
-# Enable CEF output format
-export LOKI_SYSLOG_FORMAT=cef
+export LOKI_CEF_VENDOR=Autonomi
+export LOKI_CEF_PRODUCT="Loki Mode"
 
 # CEF message example:
 # CEF:0|Autonomi|Loki Mode|5.42.2|session.start|Session Started|3|
@@ -467,45 +474,40 @@ enterprise:
 
 ## Compliance Reporting
 
-### SOC2 Reports
+**Loki does not generate framework-specific compliance reports.** An earlier
+version of this page showed `loki enterprise audit export --format soc2|hipaa|pci`
+and `loki compliance report --framework <name>`. Neither exists:
+`loki enterprise audit` has only `summary` and `tail`, and `loki compliance`
+has only `snapshot`.
+
+What Loki gives you is the raw evidence: a hash-chained, newline-delimited JSON
+audit log, plus the SIEM forwarding configured above. Build framework reporting
+in your SIEM, where the correlation and retention rules already live.
+
+To pull an evidence slice locally for an auditor:
 
 ```bash
-# Generate SOC2 audit report
-loki enterprise audit export \
-  --from 2026-01-01 \
-  --to 2026-12-31 \
-  --format soc2 \
-  --output soc2-audit-report.pdf
+AUDIT=~/.loki/dashboard/audit/audit.jsonl
 
-# Trust Services Criteria coverage
-loki compliance report --framework soc2
+# Access events in a date range (SOC2 / HIPAA evidence)
+jq -s 'map(select(.timestamp >= "2026-01-01" and .timestamp <= "2026-12-31"))' \
+  "$AUDIT" > audit-evidence.json
+
+# Token lifecycle events (PCI-DSS Requirement 8)
+jq -c 'select(.event | startswith("auth.token."))' "$AUDIT"
 ```
 
-### HIPAA Reports
+Verify the hash chain before handing the file over. There is no
+`loki audit verify` subcommand (`loki audit` has `log`, `count`, and `scan`);
+the chain verifier is a Python function in `dashboard/audit.py`:
 
 ```bash
-# PHI access audit trail
-loki enterprise audit search \
-  --event data.access \
-  --tag phi \
-  --from 2026-01-01 \
-  --format hipaa
-
-# Administrative safeguards report
-loki compliance report --framework hipaa --section administrative
-```
-
-### PCI-DSS Reports
-
-```bash
-# User access report (Requirement 8)
-loki enterprise audit search \
-  --event auth.token.create \
-  --event auth.token.revoke \
-  --format pci
-
-# Audit log review (Requirement 10)
-loki compliance report --framework pci --requirement 10
+python3 -c "
+from dashboard.audit import verify_log_integrity
+import json, os
+print(json.dumps(verify_log_integrity(
+    os.path.expanduser('~/.loki/dashboard/audit/audit.jsonl')), indent=2))
+"
 ```
 
 ## Alerting
@@ -618,9 +620,10 @@ find ~/.loki/dashboard/audit/ -type f -exec wc -l {} + | awk '{sum+=$1} END {pri
 # Monitor syslog queue
 ss -tunap | grep :514
 
-# Reduce log volume
-export LOKI_AUDIT_LEVEL=warning
-export LOKI_AUDIT_EXCLUDE_EVENTS=api.request,api.response
+# Bound local log volume via rotation (there is no severity filter or
+# per-event exclude list; audit logging is on or off)
+export LOKI_AUDIT_MAX_SIZE_MB=5
+export LOKI_AUDIT_MAX_FILES=4
 ```
 
 ## Examples
