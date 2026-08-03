@@ -33657,6 +33657,8 @@ cmd_proof() {
             echo ""
             echo "Subcommands:"
             echo "  list                 List proof-of-run artifacts in .loki/proofs/"
+            echo "  phases [--json]      Measured phase history from real phase_change"
+            echo "                       events; unrecorded boundaries read UNKNOWN"
             echo "  show <id>            Pretty-print .loki/proofs/<id>/proof.json"
             echo "  verify <id>          Re-check a receipt against the repo (tamper + drift);"
             echo "                       exit 0 clean, 1 tamper/drift. Verify it yourself."

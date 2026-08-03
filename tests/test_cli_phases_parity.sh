@@ -49,6 +49,18 @@ with open("%s/.loki/events.jsonl" % ws, "w") as fh:
         }) + "\n")
 PY
 
+# --- discoverability -------------------------------------------------------
+# A command that WORKS but is absent from --help is barely shipped: nobody
+# finds it. That is exactly what happened here -- the dispatch arm landed and
+# the help line did not, and only reading the real --help output caught it,
+# because every functional test passed.
+_help="$(bash "$LOKI_BIN" proof --help 2>&1)"
+if grep -q 'phases' <<< "$_help"; then
+    ok "proof --help lists the phases subcommand"
+else
+    bad "phases is missing from 'loki proof --help'; the command works but no user can discover it"
+fi
+
 # --- the populated case ----------------------------------------------------
 _out="$(LOKI_DIR="$WS/.loki" bash "$LOKI_BIN" proof phases 2>&1)"
 _rc=$?
