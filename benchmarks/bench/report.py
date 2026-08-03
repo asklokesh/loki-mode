@@ -114,6 +114,56 @@ def _row_model(row):
     return None
 
 
+def row_model_mismatch(row):
+    """The row's model LABEL versus the model its trials actually ran.
+
+    WHY THIS EXISTS. _row_model() above prefers the row-level label and only
+    falls back to trials[].adapter.model_used. That precedence is right for
+    rendering, and silently wrong for TRUST: a row labelled `haiku` whose
+    trials every recorded `sonnet` renders as haiku, and a cross-model
+    comparison built from it compares a model against itself under two names.
+
+    That is the sharpest failure available to a benchmark. A wrong number
+    invites a re-measurement; a wrong MODEL ATTRIBUTION invites a conclusion
+    about which model to buy, and nothing downstream can detect it, because
+    every other field is internally consistent.
+
+    Returns None when consistent or undecidable, else a dict naming both
+    sides. Undecidable (no label, or no trial ever recorded a model) is NOT a
+    mismatch: absence of evidence is not evidence of contradiction, and
+    treating it as one would fail every legitimate older row.
+    """
+    if not isinstance(row, dict):
+        return None
+    label = row.get("model_used") or row.get("model")
+    if not label:
+        return None
+    seen = []
+    for t in (row.get("trials") or []):
+        if not isinstance(t, dict):
+            continue
+        adapter = t.get("adapter")
+        if isinstance(adapter, dict) and adapter.get("model_used"):
+            seen.append(str(adapter["model_used"]))
+    if not seen:
+        return None
+    # Substring match in both directions: a label "haiku" legitimately backs a
+    # recorded "claude-haiku-4-5-20251001", and vice versa. Only a pair where
+    # neither contains the other is a real contradiction.
+    lab = str(label).lower()
+    bad = sorted({s for s in seen
+                  if lab not in s.lower() and s.lower() not in lab})
+    if not bad:
+        return None
+    return {
+        "row_label": str(label),
+        "trials_recorded": bad,
+        "why": ("the row is labelled with one model while its trials recorded "
+                "another; any cross-model claim built on this row attributes "
+                "results to the wrong model"),
+    }
+
+
 def fmt_usd(usd):
     """Format a USD value. None -> 'not recorded' (NEVER '$0.00')."""
     if usd is None:
@@ -486,6 +536,36 @@ def main(argv=None):
             for item in result_row:
                 if isinstance(item, dict):
                     item["sample"] = True
+    # MODEL-ATTRIBUTION GATE, before anything is rendered.
+    #
+    # A row labelled with one model whose trials recorded another produces a
+    # report that attributes results to the wrong model. Rendering it first and
+    # warning afterwards is not equivalent: the artifact is the thing that gets
+    # quoted, and once written it outlives the warning.
+    #
+    # Fails CLOSED with exit 1 and names both sides. Undecidable rows (no
+    # label, or no trial recorded a model) are NOT failures -- absence of
+    # evidence is not contradiction, and treating it as one would reject every
+    # legitimate older row.
+    _rows = result_row if isinstance(result_row, list) else [result_row]
+    _mismatches = []
+    for _r in _rows:
+        _m = row_model_mismatch(_r)
+        if _m:
+            _mismatches.append(_m)
+    if _mismatches:
+        sys.stderr.write(
+            "MODEL MISMATCH: refusing to write a report that would attribute "
+            "results to the wrong model.\n")
+        for _m in _mismatches:
+            sys.stderr.write(
+                "  row labelled %r but trials recorded %s\n"
+                % (_m["row_label"], ", ".join(_m["trials_recorded"])))
+        sys.stderr.write(
+            "  Nothing was written. Fix the row's provenance, or drop the "
+            "row; do not relabel it to match.\n")
+        return 1
+
     rp, mp = generate(result_row, args.out_dir)
     print("wrote: %s" % rp)
     print("wrote: %s" % mp)

@@ -2,6 +2,23 @@
 # DEFAULT-DENY release interlock: a VERSION-changing push must not publish
 # without an explicit, recorded approval.
 #
+# THIS CHECK IS BYPASSABLE, and saying so is the point.
+#
+# It is a script an operator runs; nothing forces it. Not running it is a
+# bypass, and so is `git push` from any other shell. It is NOT a control on
+# the publishing path -- it is an operator-side check that makes the exposure
+# visible and refuses by default when it IS run.
+#
+# The only non-bypassable controls are founder-gated and deliberately NOT
+# applied here, because both change the publishing path or repository
+# settings:
+#   - an `environment:` key on the publish jobs in release.yml, which makes
+#     GitHub require a reviewer before those jobs start
+#   - a branch ruleset on main
+#
+# Until one of those exists, treat a green run of this script as "the operator
+# checked", never as "publishing is gated".
+#
 # THE EXPOSURE THIS CLOSES, measured on this repository today:
 #
 #   .github/workflows/release.yml triggers on

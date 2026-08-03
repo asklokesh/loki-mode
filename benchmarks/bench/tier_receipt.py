@@ -80,6 +80,30 @@ _POSITIVE_FIXTURE = {
     ),
 }
 
+# ADVERSARIAL probe: an artifact that LOOKS right and is subtly wrong.
+#
+# Positive and negative probes together only prove a grader can tell "something"
+# from "nothing". That is a low bar: a grader checking merely that index.html
+# exists passes both. The question that decides whether a benchmark is worth
+# paying for is whether the grader rejects a PLAUSIBLE WRONG ANSWER, which is
+# the only kind an agent actually produces.
+#
+# This one is a real contact page that is missing the required email and
+# message fields. It renders, it is valid HTML, and it does not satisfy the
+# spec. A grader that passes it is measuring "did the model emit a form",
+# not "did the model do the task".
+_ADVERSARIAL_FIXTURE = {
+    "simple-1-contact-form": (
+        "index.html",
+        '<!doctype html><html><body>\n'
+        '<h1>Contact us</h1>\n'
+        '<form action="/contact" method="post">\n'
+        '<label for="name">Name</label>'
+        '<input type="text" id="name" name="name" required>\n'
+        '<button type="submit">Send</button></form></body></html>\n'
+    ),
+}
+
 # Metrics the steering brief asks for. Each is emitted for every tier with an
 # explicit status, so a reader never has to guess whether a blank means zero.
 _PLANNED = (
@@ -164,11 +188,46 @@ def probe_tier(tier, task):
             "status": "measured",
         }
 
+    adv_fixture = _ADVERSARIAL_FIXTURE.get(task)
+    if adv_fixture is None:
+        rec["adversarial_probe"] = {
+            "status": "not_attempted",
+            "reason": ("no plausible-wrong-answer fixture authored for this "
+                       "tier yet; a grader unverified against a near-miss has "
+                       "NOT been shown to measure the task"),
+            "ok": None,
+        }
+    else:
+        name, body = adv_fixture
+        with tempfile.TemporaryDirectory() as near:
+            with open(os.path.join(near, name), "w", encoding="utf-8") as fh:
+                fh.write(body)
+            rc3, msg3 = _run_grader(grader, near)
+        rec["adversarial_probe"] = {
+            "description": ("grader run against a PLAUSIBLE WRONG artifact "
+                            "(renders, valid, missing required fields)"),
+            "exit_code": rc3,
+            "message": msg3,
+            "expected": "non-zero",
+            "ok": rc3 != 0,
+            "status": "measured",
+        }
+
     neg = rec["negative_probe"]["ok"]
     pos = rec["positive_probe"].get("ok")
-    if neg and pos:
+    adv = rec["adversarial_probe"].get("ok")
+    if neg and pos and adv:
+        # The only status that licenses a PAID benchmark: the grader rejects
+        # nothing, accepts a correct artifact, AND rejects a plausible wrong
+        # one. Without the third, a green cell may only mean "output existed".
         rec["oracle_status"] = "discriminates"
         rec["discriminates"] = True
+    elif neg and pos and adv is False:
+        rec["oracle_status"] = "accepts_a_wrong_answer"
+        rec["discriminates"] = False
+    elif neg and pos and adv is None:
+        rec["oracle_status"] = "adversarially_unverified"
+        rec["discriminates"] = None
     elif neg and pos is None:
         # Half-verified, and labelled as such rather than promoted to a pass.
         rec["oracle_status"] = "rejects_absent_artifact_only"
@@ -271,6 +330,13 @@ def render(receipt):
         else:
             lines.append("      correct artifact-> NOT ATTEMPTED (%s)"
                          % "would be an answer key in the repo")
+        adv = r.get("adversarial_probe", {})
+        if adv.get("status") == "measured":
+            lines.append("      near-miss       -> rc=%s  %s"
+                         % (adv["exit_code"], adv["message"]))
+        else:
+            lines.append("      near-miss       -> NOT ATTEMPTED "
+                         "(no plausible-wrong fixture yet)")
     s = receipt["summary"]
     lines += [
         "",
@@ -285,6 +351,13 @@ def render(receipt):
         "",
         "  TIER AXIS is inferred from the filename prefix; the task JSON",
         "  records no tier field. Stamped as tier_source in the receipt.",
+        "",
+        "  PAID-BENCHMARK PRECONDITION: only a tier reading `discriminates`",
+        "  has passed all THREE probes (rejects nothing, accepts a correct",
+        "  artifact, rejects a plausible wrong one). A tier that is only",
+        "  negative-probe verified may be measuring 'output existed' rather",
+        "  than 'the task was done', and paying to run it buys a number whose",
+        "  meaning is unestablished.",
     ]
     trivial = receipt.get("trivial_acceptance_tasks") or []
     if trivial:

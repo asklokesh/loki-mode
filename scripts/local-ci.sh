@@ -147,6 +147,14 @@ declare -a _FAST_KEEP=(
   # hardcoded 8.11.0 for 27 releases, and v8.39.0 shipped a dist still saying
   # 8.38.0. Both are exactly the failure this check was written to stop.
   "dist/loki.js is a fresh build of src"
+  # Repo integrity. The parent checkout is NON-BARE (it has .git/, a working
+  # tree and .git/index) yet core.bare keeps being set true by something
+  # outside this repo: fixed 05:33, found true again 06:44 on 2026-08-03.
+  # While true, git status/log there fail with "must be run in a work tree"
+  # and CI cannot be inspected -- but worktrees keep working, so it goes
+  # unnoticed until someone tries the parent. FAST tier because it is a
+  # sub-second read and the fault is recurring, not theoretical.
+  "parent checkout is not falsely marked bare"
   # Same class as dist freshness, and deferred for the same reason nobody
   # noticed: these validate the PACKAGED ARTIFACT, which GitHub CI never
   # inspects and which no in-repo test can see, because everything works fine
@@ -645,6 +653,18 @@ if command -v bun >/dev/null 2>&1; then
   # rebuild silently ships old behavior (bit v7.68.0; nearly v7.69.0). Rebuild
   # and assert the committed bundle matches a fresh build, ignoring only the
   # per-build debugId line which legitimately varies.
+  run_check "parent checkout is not falsely marked bare" '
+    # Read-only. The watcher does NOT restore by default, deliberately: an
+    # auto-repair loop would hide a recurring mutation, and the recurrence is
+    # the finding. Repair is a human action (--restore).
+    if [ -x scripts/watch-core-bare.sh ]; then
+      bash scripts/watch-core-bare.sh
+    else
+      echo "watch-core-bare.sh missing; repo-integrity check SKIPPED (not a pass)"
+      exit 0
+    fi
+  '
+
   run_check "dist/loki.js is a fresh build of src" '
     cd loki-ts
     cp dist/loki.js /tmp/loki-ci-dist-committed.js
