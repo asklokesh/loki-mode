@@ -1013,14 +1013,30 @@ app.include_router(api_v2_router)
 # Mount the operator router: the filesystem evidence readers (run detail, gate
 # results, receipts, releases) reachable over HTTP. Before this they were
 # libraries only the test suite imported -- four readers, none of them
-# reachable by a user. Best-effort so a dashboard missing an optional reader
-# still starts; the failure surfaces as a 404 on those paths rather than a
-# dashboard that will not come up.
+# reachable by a user.
+#
+# THIS MOUNT FAILS CLOSED, and the first version did not. It was wrapped in a
+# bare `except Exception: logger.warning(...)`, which swallows a typo, a
+# refactor that breaks an import, or a syntax error just as happily as a
+# genuinely absent optional dependency. The dashboard then starts perfectly,
+# reports healthy, and serves 404 on every operator path -- the exact
+# "monitoring surface that is silently blind" failure this whole module exists
+# to prevent. It also makes the mount test fail on CI with no stated cause,
+# which is how it was found.
+#
+# A missing OPTIONAL dependency is the only tolerable degradation, so only
+# ImportError is caught, and even that is logged at error level rather than
+# warning. Every other exception propagates and takes the dashboard down,
+# because a dashboard that cannot show run evidence is not a dashboard that
+# should quietly claim to be up.
 try:
     from .api_operator import router as api_operator_router
+except ImportError as _operator_exc:  # pragma: no cover - optional dep absent
+    logger.error(
+        "operator API could not be imported, /api/operator/* will 404: %s",
+        _operator_exc)
+else:
     app.include_router(api_operator_router)
-except Exception as _operator_exc:  # pragma: no cover - import env varies
-    logger.warning("operator API unavailable: %s", _operator_exc)
 
 # Phase Merge-4: Mount Purple Lab FastAPI app under /lab/ so it appears as a
 # sidebar entry in Dashboard. Same `app` is also wrapped by `standalone_app`
