@@ -62,7 +62,7 @@ them:
 | 4. Scientific research - literature/web/code/data synthesis, hypothesis generation, experiment design, reproducibility, statistical rigor | No. Not probed at all. |
 | 5. Economics - best quality-adjusted completion per dollar and wall-clock, budget-aware routing, minimal coordination/verification tax | Barely. One prompt-size ablation, no quality-adjusted or wall-clock figure. |
 | 6. Developer experience - fastest intent to trustworthy shipped value, excellent observability/control, easy onboarding, graceful human collaboration | Partially, and only as affordances. The onboarding and observability rows list which commands exist; no one was timed, and "graceful human collaboration" is untested. |
-| 7. Extensibility/independence - model-agnostic orchestration that benefits automatically from exponential model improvement rather than being displaced by it | Partially. `loki start --provider claude\|codex\|cline\|aider` exists `[measured]` from `loki --help`, but whether quality holds across providers is unmeasured. |
+| 7. Extensibility/independence - model-agnostic orchestration that benefits automatically from exponential model improvement rather than being displaced by it | Partially, and the flag overstates it. `loki start --provider claude\|codex\|cline\|aider` exists `[measured]` from `loki --help`, but whether quality holds across providers is unmeasured. Concretely: this machine has `codex-cli 0.146.0` `[measured]`, while the repo still classifies Codex as Tier 3 on v0.98-era flag assumptions (CLAUDE.md). A provider flag that exists against stale assumptions is a capability claim, not an independence result - the same conflation this document polices elsewhere. |
 
 The axes in this document are process-and-plumbing axes, and passing all of them
 could coexist with mediocre outcomes. In particular the "quality of completion"
@@ -76,34 +76,35 @@ ambition do not exist yet; the gaps are enumerated in section 4.
 
 ## 1. Honest summary
 
-Of the six founder axes, three (reliability, time-to-first-success, quality of
-completion) are UNKNOWN for every product in this table including Loki Mode. We
-have run no head-to-head build benchmark, so any number there would be invented.
-The one place a difference is presently measurable is narrow, and it is a
-capability difference rather than an outcome difference: Loki is the only CLI
-probed here that writes a **persisted, schema-versioned evidence document to disk
-and can re-check that document's freshness against the current tree**
-(`loki verify --json` produced a `schema_version: "1.0"` doc with a per-gate
-`runner` field and an exit code of 2; `--check-fresh` then correctly returned
-STALE once the worktree moved). Read that for exactly what it is. It is a
-measurement of what the tools expose today, not a statement of what Loki Mode is
-for, and not a durable moat - see "How to read this document" below on why the
-value of that column is expected to decline as models get more capable. It is
-emphatically **not** a claim to be the only
-tool with review or machine-readable output - the opposite is true and the
-competitors are close here. Claude Code ships `ultrareview --json`, a cloud-hosted
-multi-agent review that prints a raw `bugs.json` payload; Codex ships a
+Thirty-three of the 48 cells in this table are UNKNOWN, and that is the headline.
+Three of the six axes (reliability, time-to-first-success, quality of completion)
+are UNKNOWN for every product including Loki Mode, because we have run no
+head-to-head build benchmark and any number there would be invented. None of the
+seven capability pillars that constitute the actual ambition - outcome
+intelligence, architecture depth, adaptive autonomy, scientific research,
+economics, developer experience, extensibility - is measured here at all; pillars
+3 and 4 are entirely unprobed. Every difference this document did find is a
+difference in **CLI affordances**, not in outcomes: what a tool's `--help`
+advertises is not what it delivers. Within that narrow frame, the one capability
+no competitor matched is a persisted, schema-versioned evidence document with a
+freshness re-check (`loki verify --json` emitted a `schema_version: "1.0"` doc
+with a per-gate `runner` field and exit code 2; `--check-fresh` then correctly
+returned STALE once the tree moved). That is one sub-axis of observability, it is
+adaptive scaffolding rather than an identity, and its value is expected to decline
+as models improve - see "How to read this document" above. It is emphatically not
+a claim to be the only tool with review or machine-readable output; the opposite
+is true and competitors are close. Claude Code ships `ultrareview --json`, a
+cloud-hosted multi-agent review printing a raw `bugs.json` payload; Codex ships a
 first-class `codex review` subcommand plus `exec --json` and `--output-schema`;
 cursor-agent has `--output-format json|stream-json`; OpenCode has `run --format
-json`, `export`, and a working `stats` command. Structured output is table stakes
-in 2026, and review-as-a-subcommand is no longer unique to us. On cost we can cite
-exactly one in-repo measurement (the `LOKI_SIMPLE=1` prompt ablation, -78% prompt
-size, ~1562 tokens/iteration) and that measurement's own README entry says its
-effect on build speed and quality is not yet measured, so it buys us a prompt-size
-number and nothing about value delivered. Devin, Replit and Emergent were **not
-tested**: Devin does publish a local CLI at cli.devin.ai which we deliberately did
-not install, and Replit and Emergent appear to be web-only. All three of their
-rows are public-source or UNKNOWN, never measured.
+json`, `export`, and a working `stats`. Structured output is table stakes in 2026.
+On cost we can cite exactly one in-repo measurement (the `LOKI_SIMPLE=1` prompt
+ablation, -78% prompt size, ~1562 tokens/iteration) whose own README entry says
+its effect on build speed and quality is not yet measured - a prompt-size number,
+nothing about value delivered. Devin, Replit and Emergent were **not tested**:
+Devin does publish a local CLI at cli.devin.ai which we deliberately did not
+install, and Replit and Emergent appear to be web-only; all three of their rows
+are sourced or UNKNOWN, never measured.
 
 ## 2. Axis table
 
@@ -212,6 +213,48 @@ not the frame:
 The verification-tax row is the one that keeps scaffolding honest: it measures
 overhead and the hit rate that justifies it. If overhead rises while the hit rate
 falls, the scaffolding is being over-applied and should be selectively bypassed.
+
+### 2b-FROZEN. Design seal for T1 and T2 (2026-08-03)
+
+T1 and T2 are FROZEN as designs. Nothing has been run, no money has been
+spent, and this seal exists so that stays true until a founder decision says
+otherwise.
+
+**Held-out discipline, and why it is written down BEFORE any run.** The value
+of a benchmark is destroyed by the ordinary act of debugging against it. Once a
+task has been attempted, the harness tuned, and the task attempted again, the
+score measures fit to that task rather than capability. So:
+
+1. **The T1 and T2 task instances are not selected yet, and must not be
+   selected by whoever tunes the harness.** Selection and tuning by the same
+   party is how a held-out set stops being held out.
+2. **One scored attempt per tool per task.** A retry after seeing the result is
+   a different experiment and must be reported as such, never averaged in.
+3. **The scoring rubric is frozen before the first run.** A dimension added
+   after seeing results is a dimension chosen because of them.
+4. **Task text is never committed to this repo.** A task in the repo is a task
+   in the training and context of the thing being measured.
+
+**What would make a T1/T2 result quotable**, stated now so it cannot be
+loosened later to fit an outcome:
+
+- n >= 3 independent instances per tier, scored blind to which tool produced
+  the artifact where the dimension allows it.
+- Every competitor run under the same instance, same day, same rubric.
+- Cost and wall clock read from each tool's own artifacts, never from a
+  supervising process.
+- Any dimension that could not be scored reads UNKNOWN. A partial rubric is
+  reported as partial rather than averaged over the dimensions that happened to
+  work.
+
+**Explicitly NOT frozen and NOT designed:** T3, T4 and T5. T5 in particular
+needs a domain judge for novelty, and no such judge is identified. Listing them
+in the tier table is a sketch, not a design.
+
+**Cost, stated because it is the reason this is frozen rather than run.** Each
+tier instance is a real build across eight tools. At n>=3 that is dozens of paid
+runs, and the T2 shape (cross-cutting migration over a large repo) is the
+expensive end. No run happens without an explicit founder spend decision.
 
 **Status separation.** Required reading before quoting anything from this file:
 
@@ -364,12 +407,15 @@ This section is mandatory and is not empty.
     system, a migration, or a performance investigation. Every probe in this
     document ran against a single repo's help text or a 5-file diff, which is
     the shallowest possible case.
-13. **The overhead of verification itself is unmeasured.** If verification is to
-    trend toward near-zero cost and be applied selectively by calibrated
-    confidence, the required baseline is what it currently costs in time and
-    tokens per build, and how often it changes an outcome. Neither number
-    exists. Without them, "make it cheaper and more selective" cannot be
-    validated as an improvement.
+13. **The overhead of verification itself is only partially measured.**
+    PARTIALLY CLOSED 2026-08-03. `tools/verification-tax.py` now computes wall
+    time and outcome-change rate from evidence documents. First real reading, on
+    the `loki verify HEAD~1` run cited in section 3: **19.0s, outcome changed 1
+    of 1 runs**. That is a single-run sample and a single axis - it is a
+    baseline, not a trend. Still unmeasured: **token** cost of verification (only
+    wall time is captured), and the hit rate over a meaningful history rather
+    than one run. Reproduce with
+    `python3 tools/verification-tax.py <log.jsonl>`.
 14. **Confidence calibration is unmeasured.** Selectively bypassing verification
     where confidence is high presupposes that the confidence signal is
     calibrated. We have not measured whether ours is, so we cannot currently
