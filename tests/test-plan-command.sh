@@ -340,8 +340,32 @@ if [ -f "$TODO_PRD" ]; then
     todo_cost=$(echo "$todo_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['cost']['total_usd'])" 2>/dev/null)
     todo_model=$(echo "$todo_json" | python3 -c "import json,sys; ibm=json.load(sys.stdin)['cost']['iterations_by_model']; m=[k for k,v in ibm.items() if v]; print(m[0] if len(m)==1 else 'MULTI')" 2>/dev/null)
     todo_iters=$(echo "$todo_json" | python3 -c "import json,sys; print(json.load(sys.stdin)['iterations']['estimated'])" 2>/dev/null)
-    if [ "$todo_tier" = "simple" ] && [ "$todo_cost" = "1.86" ] && [ "$todo_model" = "Sonnet" ] && [ "$todo_iters" = "4" ]; then
-        log_pass "demo PRD unforced plan quotes stock session path (simple, Sonnet x4, \$1.86, 4 iters)"
+    # WHY THIS NO LONGER PINS $1.86 AND 4 ITERATIONS.
+    #
+    # It did, and it went red because the estimator was CORRECTLY updated. The
+    # pin was written 2026-06-30 (v7.104.0); simple-tier iteration estimation
+    # changed 2026-07-09 (v7.127.0), nine days later. The test was the stale
+    # side, and it stayed red rather than being noticed -- exactly the shape of
+    # the claude-opus-4-8 pin fixed earlier in this suite's sibling.
+    #
+    # The PROPERTY the comment above actually describes is the one worth
+    # asserting: the quote must match what the runner DISPATCHES. Concretely
+    # that means a simple PRD quotes the simple tier, a single model rather
+    # than a MULTI mix, that model is the stock session model, and the cost is
+    # a real positive number rather than an absent one rendered as zero.
+    #
+    # Anti-regression teeth are kept: a MULTI-model quote, a zero or missing
+    # cost, a non-simple tier, or a non-positive iteration count all still
+    # fail. What no longer fails is the estimator improving.
+    _cost_ok=0
+    case "$todo_cost" in
+        ""|"None"|"0"|"0.0"|"0.00") _cost_ok=0 ;;
+        *) _cost_ok=1 ;;
+    esac
+    if [ "$todo_tier" = "simple" ] && [ "$_cost_ok" = "1" ] \
+       && [ "$todo_model" = "Sonnet" ] \
+       && [ -n "$todo_iters" ] && [ "$todo_iters" -ge 1 ] 2>/dev/null; then
+        log_pass "demo PRD unforced plan quotes stock session path (simple, ${todo_model} x${todo_iters}, \$${todo_cost})"
     else
         log_fail "demo PRD regression" "tier=$todo_tier cost=\$$todo_cost model=$todo_model iters=$todo_iters"
     fi
@@ -373,7 +397,13 @@ dry_exit=0
 dry_out=$(TMPDIR="$DEMO_TMP_24" run_guarded 30 "$LOKI" demo --dry-run 2>&1 | sed 's/\x1b\[[0-9;]*m//g') || dry_exit=$?
 if [ "$dry_exit" -eq 0 ] \
     && echo "$dry_out" | grep -q "Estimate (SIMPLE tier, the path this demo actually runs):" \
-    && echo "$dry_out" | grep -q 'Cost:        ~\$1.86' \
+    `# Same stale-pin fix as the assertion above: $1.86 was the June figure` \
+    `# and the estimator changed in v7.127.0. What must hold is that a cost is` \
+    `# QUOTED AT ALL and is not an absent value rendered as $0.00 -- a dry-run` \
+    `# that promises "$0.00" before a paid build is the false-green this repo` \
+    `# exists to prevent. The exact number is the estimator's business.` \
+    && echo "$dry_out" | grep -qE 'Cost: +~\$[0-9]+\.[0-9]{2}' \
+    && ! echo "$dry_out" | grep -qE 'Cost: +~\$0\.00' \
     && echo "$dry_out" | grep -q "\[dry-run\] Would run:"; then
     log_pass "loki demo --dry-run renders SIMPLE estimate block and exits 0"
 else
