@@ -79,26 +79,38 @@ class TheRequiredListCoversTheRealGates(unittest.TestCase):
 
     def test_every_required_workflow_can_actually_run_at_a_release_sha(self):
         """A required workflow that never fires at a VERSION push deadlocks
-        the gate rather than enforcing it."""
-        import yaml
+        the gate rather than enforcing it.
+
+        DEPENDENCY-FREE ON PURPOSE. This originally used PyYAML and turned all
+        four Python jobs red: CI installs pytest, fastapi, httpx, pydantic,
+        sqlalchemy, aiosqlite and uvicorn, and PyYAML is not among them. It
+        passed locally only because a transitive install happened to provide
+        it. A test that guards the RELEASE GATE must not itself depend on a
+        package the release environment does not install, so the two things it
+        needs -- a workflow's `name:` and whether its trigger block contains
+        `push:` -- are read with the standard library.
+        """
         wf_dir = _ROOT / ".github" / "workflows"
         by_name = {}
-        for path in wf_dir.glob("*.yml"):
-            try:
-                doc = yaml.safe_load(path.read_text(encoding="utf-8",
-                                                    errors="replace"))
-            except Exception:
+        for path in sorted(wf_dir.glob("*.yml")):
+            text = path.read_text(encoding="utf-8", errors="replace")
+            m = re.search(r"^name:[ \t]*(.+?)[ \t]*$", text, re.M)
+            if not m:
                 continue
-            if isinstance(doc, dict) and doc.get("name"):
-                by_name[doc["name"]] = doc
+            by_name[m.group(1).strip().strip("'\"")] = text
 
         for want in _required_names():
             self.assertIn(want, by_name,
                           "required workflow %r has no workflow file" % want)
-            # PyYAML parses the bare key `on:` as the boolean True.
-            triggers = by_name[want].get(True) or by_name[want].get("on") or {}
-            self.assertIn(
-                "push", triggers,
+            text = by_name[want]
+            # The trigger block runs from a line that is exactly `on:` until
+            # the next top-level (column-zero) key. Scanning the whole file for
+            # "push:" would match a job step or a comment.
+            block = re.search(r"^on:[ \t]*$\n((?:[ \t]+.*\n|\n)*)", text, re.M)
+            self.assertIsNotNone(
+                block, "%r has no parsable `on:` trigger block" % want)
+            self.assertRegex(
+                block.group(1), r"(?m)^[ \t]+push:",
                 "%r is required by the release gate but has no push trigger, "
                 "so it never runs at a release SHA and the gate would wait "
                 "until its deadline and then fail every release" % want)

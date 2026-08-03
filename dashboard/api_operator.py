@@ -42,11 +42,20 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from . import auth
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/operator", tags=["operator"])
+
+
+# Auth is imported at module scope, which is correct: dashboard/auth.py
+# imports PyJWT LAZILY (inside functions, auth.py:64 and :622), so importing
+# auth does NOT require PyJWT to be installed. An earlier version of this file
+# deferred the import on the theory that it did, and in doing so called the
+# async dependency by hand and threw away the un-awaited coroutine -- the scope
+# check silently stopped running. require_scope returns an ASYNC callable that
+# FastAPI must inject (it takes Security(get_current_token)), so it belongs in
+# Depends() and nowhere else.
+from . import auth
 
 # Every route below carries the "read" scope, matching api_v2. These endpoints
 # expose run detail, gate results, receipt verdicts and release state -- all of

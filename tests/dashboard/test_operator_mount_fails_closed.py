@@ -55,8 +55,15 @@ _EXPECTED = (
 class TheRoutesAreActuallyThere(unittest.TestCase):
 
     def setUp(self):
+        # Reloaded rather than plain-imported: six tests under tests/dashboard/
+        # delete dashboard.* from sys.modules or reload it, so a cached module
+        # object can report a route table that predates the mount. That is how
+        # this assertion failed on all four CI Python versions while passing in
+        # isolation. Reloading makes the assertion about the source on disk.
+        import importlib
         try:
-            from dashboard import server  # noqa: PLC0415
+            server = importlib.import_module("dashboard.server")
+            server = importlib.reload(server)
         except Exception as exc:  # pragma: no cover
             self.skipTest("dashboard.server not importable: %s" % exc)
         self.server = server

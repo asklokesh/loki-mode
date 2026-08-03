@@ -43,6 +43,19 @@ def _client(allowed_root):
     from fastapi import FastAPI
     from starlette.testclient import TestClient
 
+    # Auth pinned OFF: these tests assert the CONFINEMENT behaviour (403 for a
+    # path outside the roots, 200 for one inside), and an ambient
+    # LOKI_ENTERPRISE_AUTH left set by a sibling test file would turn every
+    # request into a 401 and mask both. See test_api_operator.py for the same
+    # note; test_tenant_create_admin_only sets that variable and never unsets it.
+    os.environ["LOKI_ENTERPRISE_AUTH"] = "false"
+    try:
+        from dashboard import auth as _auth
+        _auth.ENTERPRISE_AUTH_ENABLED = False
+        _auth.OIDC_ENABLED = False
+    except Exception:
+        pass
+
     os.environ["LOKI_OPERATOR_ROOTS"] = allowed_root
     from dashboard.api_operator import router
     app = FastAPI()

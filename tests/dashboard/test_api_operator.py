@@ -36,9 +36,32 @@ if str(_ROOT) not in sys.path:
 
 
 def _client_and_workspace():
-    """A live app carrying only the operator router, over a real .loki tree."""
+    """A live app carrying only the operator router, over a real .loki tree.
+
+    AUTH STATE IS PINNED OFF HERE, deliberately. These tests are about the
+    ENVELOPE contract, not about authentication, and they must not inherit
+    whichever auth mode a previously-run test left behind.
+    tests/dashboard/test_tenant_create_admin_only.py sets
+    LOKI_ENTERPRISE_AUTH=true in setUpClass and never unsets the environment
+    variable (it restores the auth module flags, but not the env). Running
+    after it, every request here returned 401 instead of 200 -- which is how
+    these tests went red on all four CI Python versions while passing in
+    isolation locally.
+
+    Pinning it here rather than "fixing" the other test keeps each file
+    self-contained: a test that depends on ambient auth state is fragile no
+    matter which file set it.
+    """
     from fastapi import FastAPI
     from starlette.testclient import TestClient
+
+    os.environ["LOKI_ENTERPRISE_AUTH"] = "false"
+    try:
+        from dashboard import auth as _auth
+        _auth.ENTERPRISE_AUTH_ENABLED = False
+        _auth.OIDC_ENABLED = False
+    except Exception:
+        pass
 
     d = tempfile.mkdtemp()
     loki = os.path.join(d, ".loki")
@@ -63,8 +86,28 @@ class TheRouterIsMountedOnTheRealDashboardApp(unittest.TestCase):
     table is what serves users."""
 
     def test_operator_paths_exist_on_dashboard_server_app(self):
+        """ORDER-INDEPENDENT ON PURPOSE.
+
+        Six tests under tests/dashboard/ delete dashboard.* from sys.modules or
+        importlib.reload it (test_control_app_auth, test_oidc_rbac_mapping,
+        test_phase1_endpoints, test_server_wave5_w5, test_tenant_create_admin_only,
+        test_migration_engine_bughunt_w4). Whichever runs first leaves a
+        REBUILT dashboard.server cached, and a cached module object captured
+        before that rebuild reports a route table that no longer reflects the
+        file on disk.
+
+        That is how this assertion failed on all four CI Python versions while
+        passing in isolation locally, and it reported "Mounted: []" -- which
+        reads as "the mount is broken" rather than "you are looking at a stale
+        module". Re-importing here means the assertion is about the SOURCE, not
+        about whatever a previous test left in sys.modules.
+        """
+        import importlib
         try:
-            from dashboard import server  # noqa: PLC0415
+            server = importlib.import_module("dashboard.server")
+            # If an earlier test rebuilt the package, the cached object may
+            # predate the mount. Reload so the table matches the file.
+            server = importlib.reload(server)
         except Exception as exc:  # pragma: no cover - import env varies
             self.skipTest("dashboard.server not importable here: %s" % exc)
         paths = {getattr(r, "path", "") for r in server.app.routes}
