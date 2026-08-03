@@ -19316,7 +19316,40 @@ main() {
                 # instead of re-checking every time a command is added.
                 local _help_target="$1"
                 shift
-                LOKI_HELP_ONLY=1 "$0" "$_help_target" --help "$@"
+                # FORK BOMB GUARD, and this is not hypothetical: it filled the
+                # process table with 3,788 chained `bash autonomy/loki --help
+                # --help` processes on this machine, after which even `pkill`
+                # could not fork.
+                #
+                # `loki help --help` sets _help_target="--help" and delegates as
+                # `"$0" --help --help`. That re-enters THIS case, and "$@"
+                # accumulates one more --help every pass, so the recursion is
+                # unbounded and spawns a process per level.
+                #
+                # LOKI_HELP_ONLY was described above as making delegation "safe
+                # by construction". It does -- against SIDE EFFECTS. It says
+                # nothing about SELF-REFERENCE, which is a different hazard: the
+                # danger is not that a command does something, it is that the
+                # help router asks itself for help forever.
+                #
+                # A help-shaped target has no command help to delegate to, so
+                # print the front page directly instead of recursing.
+                case "$_help_target" in
+                    --help|-h|help|--h|-help)
+                        show_help
+                        ;;
+                    *)
+                        # Second, independent stop: if we are ALREADY inside a
+                        # delegated help call, do not delegate again. Belt and
+                        # braces, because the pattern list above is a blacklist
+                        # and a future spelling would slip past it.
+                        if [ "${LOKI_HELP_ONLY:-}" = "1" ]; then
+                            show_help
+                        else
+                            LOKI_HELP_ONLY=1 "$0" "$_help_target" --help "$@"
+                        fi
+                        ;;
+                esac
             else
                 show_help
             fi
