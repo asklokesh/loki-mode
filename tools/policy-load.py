@@ -63,6 +63,24 @@ class PolicyError(Exception):
     """A policy that must not be handed to a gate."""
 
 
+class _Parser(argparse.ArgumentParser):
+    """Usage errors exit 64, not argparse's default 2.
+
+    In this repo's convention 2 means "could NOT be checked" -- a real
+    answer about the subject. A mistyped flag is not that: it is an error
+    about the INVOCATION, and nothing about the subject was examined. The
+    two call for opposite responses, since retrying cannot fix a typo.
+
+    argparse exits 2 for every usage error unless this is overridden, so
+    every tool needs it. tests/test_tool_exit_contract.py asserts it.
+    """
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        sys.stderr.write("%s: error: %s\n" % (self.prog, message))
+        raise SystemExit(64)
+
+
 def _check_max_usd(value):
     # bool is a subclass of int: `true` would otherwise become a $1.00 ceiling.
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -157,7 +175,7 @@ def as_args(policy):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(
+    ap = _Parser(
         description="Load and validate a merge policy file for ci-gate.py.")
     ap.add_argument("--file", default=DEFAULT_FILE,
                     help="policy file to load; default {}".format(DEFAULT_FILE))

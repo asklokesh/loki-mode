@@ -86,6 +86,24 @@ PRICING_PATH = os.path.join(
     _REPO_ROOT, "loki-ts", "data", "model-pricing.json")
 
 
+class _Parser(argparse.ArgumentParser):
+    """Usage errors exit 64, not argparse's default 2.
+
+    In this repo's convention 2 means "could NOT be checked" -- a real
+    answer about the subject. A mistyped flag is not that: it is an error
+    about the INVOCATION, and nothing about the subject was examined. The
+    two call for opposite responses, since retrying cannot fix a typo.
+
+    argparse exits 2 for every usage error unless this is overridden, so
+    every tool needs it. tests/test_tool_exit_contract.py asserts it.
+    """
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        sys.stderr.write("%s: error: %s\n" % (self.prog, message))
+        raise SystemExit(64)
+
+
 def _num(v):
     """Non-bool int/float, else None. Never coerces junk to 0."""
     if isinstance(v, bool) or not isinstance(v, (int, float)):
@@ -322,7 +340,7 @@ def render(est):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(
+    ap = _Parser(
         description="Estimate what a run is likely to cost, from measured history.")
     ap.add_argument("workspace", nargs="?", default=".")
     ap.add_argument("--iterations", type=int, default=None,

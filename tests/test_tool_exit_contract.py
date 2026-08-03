@@ -125,6 +125,42 @@ class HelpIsNeverAVerdict(unittest.TestCase):
                     "%s treated --help as a path and judged it" % tool.name)
 
 
+class AUsageErrorIsSixtyFour(unittest.TestCase):
+    """The convention this file DOCUMENTED but never checked.
+
+    The header at the top of this module has listed "64 usage error" since
+    it was written, and no test asserted it. argparse exits 2 for every
+    usage error unless a tool overrides ArgumentParser.error(), and 2 in
+    this convention means "could NOT be checked" -- a real verdict about
+    the subject.
+
+    So an unoverridden parser tells a CI caller that the axis was evaluated
+    and found unevaluable, when nothing was examined at all: the mistake
+    was in the command line. The two codes call for opposite responses,
+    since retrying cannot fix a typo.
+
+    This gap was not hypothetical. tools/verification-tax.py shipped with
+    no override (`--bogus` exited 2), a missing path returning 4, and
+    COULD_NOT_CHECK defined as 4 -- a code absent from the convention
+    entirely. All three passed this suite, because this suite never asked.
+
+    A convention stated in a comment and unasserted by a test is a
+    convention that holds only while everyone remembers it.
+    """
+
+    def test_an_unknown_flag_exits_64(self):
+        for tool in _participants():
+            with self.subTest(tool=tool.name):
+                r = _run(tool, "--zzz-not-a-real-flag")
+                self.assertEqual(
+                    r.returncode, 64,
+                    "%s exited %d for an unknown flag; the convention is 64. "
+                    "argparse defaults to 2, which here means 'could not be "
+                    "checked' -- a verdict about the subject rather than "
+                    "about the command line. Override ArgumentParser.error()."
+                    % (tool.name, r.returncode))
+
+
 class AMissingPathIsNeverSuccess(unittest.TestCase):
     def test_nonexistent_workspace_exits_non_zero(self):
         """model-advisor exited 0 here, so a CI job on a mistyped path saw green."""

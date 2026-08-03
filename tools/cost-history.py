@@ -67,6 +67,24 @@ DEFAULT_FILE = os.path.join(".loki", "cost-history.jsonl")
 FLAT_PCT = 5.0
 
 
+class _Parser(argparse.ArgumentParser):
+    """Usage errors exit 64, not argparse's default 2.
+
+    In this repo's convention 2 means "could NOT be checked" -- a real
+    answer about the subject. A mistyped flag is not that: it is an error
+    about the INVOCATION, and nothing about the subject was examined. The
+    two call for opposite responses, since retrying cannot fix a typo.
+
+    argparse exits 2 for every usage error unless this is overridden, so
+    every tool needs it. tests/test_tool_exit_contract.py asserts it.
+    """
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        sys.stderr.write("%s: error: %s\n" % (self.prog, message))
+        raise SystemExit(64)
+
+
 def _num(v):
     """A number as itself; None, "", or a bool as None."""
     if isinstance(v, bool) or not isinstance(v, (int, float)):
@@ -287,7 +305,7 @@ def render(d):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(
+    ap = _Parser(
         description="Track agent cost across many runs and report the trend.")
     sub = ap.add_subparsers(dest="cmd", required=True)
 

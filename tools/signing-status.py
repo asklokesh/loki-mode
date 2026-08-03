@@ -78,6 +78,24 @@ _REASONS = (
 )
 
 
+class _Parser(argparse.ArgumentParser):
+    """Usage errors exit 64, not argparse's default 2.
+
+    In this repo's convention 2 means "could NOT be checked" -- a real
+    answer about the subject. A mistyped flag is not that: it is an error
+    about the INVOCATION, and nothing about the subject was examined. The
+    two call for opposite responses, since retrying cannot fix a typo.
+
+    argparse exits 2 for every usage error unless this is overridden, so
+    every tool needs it. tests/test_tool_exit_contract.py asserts it.
+    """
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        sys.stderr.write("%s: error: %s\n" % (self.prog, message))
+        raise SystemExit(64)
+
+
 def _classify(stderr, fallback):
     """Map gpg stderr onto a known reason. NEVER returns the stderr itself.
 
@@ -256,7 +274,7 @@ def render(result):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(
+    parser = _Parser(
         description="Report whether this machine can produce SIGNED receipts.")
     parser.add_argument("--json", action="store_true",
                         help="emit the result as JSON")

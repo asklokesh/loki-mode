@@ -60,6 +60,24 @@ _UNKNOWN = ("UNEVALUABLE", "state not reported by the gate: the input carried "
             "no recognised verdict for this policy, so it has not passed")
 
 
+class _Parser(argparse.ArgumentParser):
+    """Usage errors exit 64, not argparse's default 2.
+
+    In this repo's convention 2 means "could NOT be checked" -- a real
+    answer about the subject. A mistyped flag is not that: it is an error
+    about the INVOCATION, and nothing about the subject was examined. The
+    two call for opposite responses, since retrying cannot fix a typo.
+
+    argparse exits 2 for every usage error unless this is overridden, so
+    every tool needs it. tests/test_tool_exit_contract.py asserts it.
+    """
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        sys.stderr.write("%s: error: %s\n" % (self.prog, message))
+        raise SystemExit(64)
+
+
 def _state_of(row):
     """The row's own verdict, or UNEVALUABLE. Never a default of PASS."""
     if not isinstance(row, dict):
@@ -206,7 +224,7 @@ def exit_code(verdict):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(
+    ap = _Parser(
         description="Render a ci-gate JSON verdict as CI-native output.")
     ap.add_argument("--format", choices=sorted(_FORMATS), default="markdown",
                     help="markdown (step summary), github (annotations), text")
