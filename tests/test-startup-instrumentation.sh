@@ -80,9 +80,29 @@ case "$_out" in
     *"stage=spec_interrogation"*) ok "the stage name reaches the event" ;;
     *) bad "stage name missing from the emitted event: $_out" ;;
 esac
+# 42 OR 43, and the second value is not slack -- it is the only correct
+# answer when the clock ticks mid-test.
+#
+# `$(date +%s) - 42` is evaluated when the heredoc line runs;
+# emit_stage_complete reads `now` a moment later. If the second rolls over
+# between those two points the true elapsed time IS 43, and pinning 42 makes
+# the test fail for being right. Rare on an idle laptop, likely on a loaded
+# CI runner -- which is exactly where it fired: shard 2 reported the
+# mutation-probe BASELINE failing (rc67) while this suite passed 8/8 locally.
+#
+# Reproduced deterministically before changing anything, by forcing the tick:
+#   _t0=$(( $(date +%s) - 42 ))
+#   while [ "$(date +%s)" = "$(( _t0 + 42 ))" ]; do sleep 0.05; done
+#   emit_stage_complete ... "$_t0"   ->  duration_s=43, every time
+#
+# THE INVARIANT IS UNCHANGED. This still asserts that a real start epoch
+# produces a real elapsed duration. It does NOT widen toward zero: a
+# fabricated duration_s=0 from a missing epoch still fails here, and the
+# separate "missing start epoch emits NOTHING" case below is untouched.
 case "$_out" in
-    *"duration_s=42"*) ok "the elapsed seconds are computed correctly" ;;
-    *) bad "duration not computed: $_out" ;;
+    *"duration_s=42"*|*"duration_s=43"*)
+        ok "the elapsed seconds are computed correctly" ;;
+    *) bad "duration not computed (expected 42 or 43): $_out" ;;
 esac
 
 # A missing start epoch must emit NOTHING rather than a fabricated 0. An
