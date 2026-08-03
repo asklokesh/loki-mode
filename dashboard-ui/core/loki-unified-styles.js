@@ -1182,6 +1182,74 @@ export class KeyboardHandler {
 // EXPORTS
 // =============================================================================
 
+// =============================================================================
+// UNMEASURED-METRIC FORMATTING
+// =============================================================================
+
+/**
+ * Rendered in place of a metric that was never measured.
+ *
+ * Word-shaped on purpose: a dash reads as a value (a minus sign, a zero rule,
+ * an em dash separator) and cannot be told apart from a real reading at a
+ * glance. "unknown" cannot be mistaken for a number.
+ */
+export const UNKNOWN = 'unknown';
+
+/**
+ * Format a metric that may never have been measured.
+ *
+ * The ONLY null test is `== null` (null and undefined). Every other value,
+ * including 0, is a genuine reading and is formatted normally. A helper that
+ * renders UNKNOWN for a measured 0 is exactly as wrong as one that renders 0
+ * for an unmeasured value -- 0 tokens and "we never counted" are different
+ * facts about a run.
+ *
+ * NaN is treated as unmeasured: it is the arithmetic residue of a missing
+ * operand, never a reading an operator should act on.
+ *
+ * @param {number|null|undefined} value
+ * @param {(n: number) => string} [format] renders a known number
+ * @returns {string}
+ */
+export function formatMetric(value, format = (n) => String(n)) {
+  if (value == null) return UNKNOWN;
+  const n = typeof value === 'number' ? value : Number(value);
+  if (Number.isNaN(n)) return UNKNOWN;
+  return format(n);
+}
+
+/** Cost. formatUSD(0) is "$0.00" (free), formatUSD(null) is "unknown". */
+export function formatUSD(value) {
+  return formatMetric(value, (n) => {
+    if (n !== 0 && Math.abs(n) < 0.01) return (n < 0 ? '>-$0.01' : '<$0.01');
+    return (n < 0 ? '-$' : '$') + Math.abs(n).toFixed(2);
+  });
+}
+
+/** Token counts. formatTokens(0) is "0", formatTokens(null) is "unknown". */
+export function formatTokens(value) {
+  return formatMetric(value, (n) => {
+    const abs = Math.abs(n);
+    if (abs >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
+    if (abs >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+    return String(n);
+  });
+}
+
+/** Milliseconds. formatDuration(0) is "0ms", formatDuration(null) is "unknown". */
+export function formatDuration(value) {
+  return formatMetric(value, (n) => {
+    if (Math.abs(n) < 1000) return Math.round(n) + 'ms';
+    if (Math.abs(n) < 60_000) return (n / 1000).toFixed(1) + 's';
+    return Math.floor(n / 60_000) + 'm ' + Math.round((n % 60_000) / 1000) + 's';
+  });
+}
+
+/** Percentages. formatPercent(0) is "0.0%", formatPercent(null) is "unknown". */
+export function formatPercent(value, digits = 1) {
+  return formatMetric(value, (n) => n.toFixed(digits) + '%');
+}
+
 export default {
   THEMES,
   SPACING,
@@ -1197,4 +1265,10 @@ export default {
   generateTokensCSS,
   UnifiedThemeManager,
   KeyboardHandler,
+  UNKNOWN,
+  formatMetric,
+  formatUSD,
+  formatTokens,
+  formatDuration,
+  formatPercent,
 };

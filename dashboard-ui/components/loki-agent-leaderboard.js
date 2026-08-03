@@ -11,6 +11,7 @@
 import { LokiElement } from '../core/loki-theme.js';
 import { getApiClient } from '../core/loki-api-client.js';
 import { registerPoll } from '../core/loki-poll-registry.js';
+import { formatUSD, formatPercent, formatMetric, UNKNOWN } from '../core/loki-unified-styles.js';
 
 const RANK_COLORS = {
   1: { bg: 'rgba(212, 160, 60, 0.15)', border: '#D4A03C', label: '1st' },
@@ -404,7 +405,8 @@ export class LokiAgentLeaderboard extends LokiElement {
       const isExpanded = this._expandedAgent === agentKey;
       const qualityColor = this._getQualityColor(agent.quality);
       const speedCfg = this._getSpeedLabel(agent.speed);
-      const qualityPct = ((agent.quality || 0) / 10) * 100;
+      // Bar geometry coerces to 0; the numeric readout below does not.
+      const qualityPct = ((agent.quality ?? 0) / 10) * 100;
 
       let rankHtml;
       if (rankCfg) {
@@ -424,15 +426,15 @@ export class LokiAgentLeaderboard extends LokiElement {
         <div class="agent-detail">
           <div class="detail-metric">
             <span class="detail-label">Total Cost</span>
-            <span class="detail-value">$${(agent.cost_usd || 0).toFixed(2)}</span>
+            <span class="detail-value">${formatUSD(agent.cost_usd)}</span>
           </div>
           <div class="detail-metric">
             <span class="detail-label">Avg Time/Task</span>
-            <span class="detail-value">${agent.avg_time || '--'}</span>
+            <span class="detail-value">${agent.avg_time || UNKNOWN}</span>
           </div>
           <div class="detail-metric">
             <span class="detail-label">Success Rate</span>
-            <span class="detail-value">${agent.success_rate != null ? agent.success_rate + '%' : '--'}</span>
+            <span class="detail-value">${formatPercent(agent.success_rate)}</span>
           </div>
         </div>
       ` : '';
@@ -448,7 +450,7 @@ export class LokiAgentLeaderboard extends LokiElement {
           <div class="metric-cell">${agent.tasks || 0}</div>
           <div class="metric-cell">
             <div class="quality-score">
-              <span style="color: ${qualityColor};">${(agent.quality || 0).toFixed(1)}</span>
+              <span style="color: ${qualityColor};">${formatMetric(agent.quality, (n) => n.toFixed(1))}</span>
               <div class="quality-bar"><div class="quality-fill" style="width: ${qualityPct}%; background: ${qualityColor};"></div></div>
             </div>
           </div>
