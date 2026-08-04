@@ -278,3 +278,48 @@ Phase B instrumentation -- it needs an evaluation over data that already
 exists. That is a cheaper and better-evidenced next step than instrumenting
 the gates, and it is squarely inside the directive's "improve routing before
 touching architecture."
+
+## The routing evaluation: blocked on corpus, not on code
+
+Having established that receipts retain the model, the obvious next step is the
+evaluation itself. It cannot be built yet, and the reason is worth recording
+precisely.
+
+Measured across the whole archive:
+
+```
+receipts:            9
+models:              {"unavailable": 9}
+with measured cost:  0
+```
+
+Every receipt reads `"model": "unavailable"` and `cost_usd: None`. They were
+written Jul 26 and Jul 31; the efficiency wiring that populates both landed
+later. The mechanism is proven to work -- generating a receipt with
+`LOKI_CURRENT_MODEL` set captures the exact model -- but no archived run
+exercised it.
+
+**So a routing evaluation today would have zero rows to compare.** Building it
+now produces a reader with nothing to read, and any number it reported would
+be derived from a single degenerate cohort.
+
+That is a corpus problem, not a code problem, and the fix is not more code: it
+is running builds and letting the archive fill. Each real `loki start` from
+here produces a receipt carrying model, provider, cost, tokens and wall clock.
+The evaluation becomes worth writing once the archive holds more than one
+distinct model.
+
+### What this means for sequencing
+
+The directive asks for verifier lift to exceed latency and cost on baseline
+plus ambitious E2E plus online outcomes. That bar cannot be cleared from a
+corpus of nine degenerate rows, and no amount of tooling changes it.
+
+The honest ordering is therefore:
+
+1. accumulate receipts from real runs (no code required)
+2. write the evaluation once two or more distinct models appear
+3. only then consider verifier instrumentation, which is the one gap where
+   the data genuinely does not exist at any volume
+
+Steps 1 and 2 need no runtime change. Step 3 remains unproposed.
