@@ -1174,6 +1174,62 @@ except Exception as _gzip_exc:  # pragma: no cover - starlette always ships it
 #
 # Only MUTATIONS are gated. Reads stay open so a container health probe, a
 # metrics scrape and the SPA itself keep working with no configuration.
+class WebSocketBoundaryMiddleware:
+    """The same local-or-authenticated rule, for WebSocket scopes.
+
+    WHY A SEPARATE MIDDLEWARE. @app.middleware("http") only wraps HTTP
+    scopes, so every WebSocket route was outside the boundary. Measured with
+    auth off, from a routable remote address, both accepted the connection:
+
+        /ws          CONNECTED
+        /ws/collab   CONNECTED   (and it is WRITABLE -- collaboration state
+                                  could be pushed by a network caller)
+
+    The routes are not careless: /ws checks a query-parameter token when
+    enterprise auth is ON, and dashboard/server.py:2732 records that
+    FastAPI's Depends() does not work on websocket routes. The hole is the
+    auth-OFF default, where that check is skipped -- exactly the case the
+    HTTP boundary already covers for requests.
+
+    This is plain ASGI rather than a Starlette BaseHTTPMiddleware because the
+    latter has no websocket hook. Registering it here also covers routes
+    added by OTHER modules (collab registers /ws/collab from its own file),
+    which a per-route decorator would miss.
+
+    The decision is shared with the HTTP path: same trusted-proxy resolution,
+    same loopback rule, same auth-enabled deferral. A refused upgrade is
+    closed with policy code 1008 rather than being silently dropped, so a
+    client can tell refusal from a network fault.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "websocket":
+            await self.app(scope, receive, send)
+            return
+        if not (auth.ENTERPRISE_AUTH_ENABLED or auth.OIDC_ENABLED):
+            client = scope.get("client")
+            host = client[0] if client else None
+            if host in _trusted_proxies():
+                for raw_name, raw_value in scope.get("headers", []):
+                    if raw_name == b"x-forwarded-for":
+                        first = raw_value.decode("latin-1").split(",")[0].strip()
+                        if first:
+                            host = first
+                        break
+            if not _is_local_caller(host):
+                # 1008 = policy violation. Closing with a code beats an
+                # accept-then-drop, which reads to a client as a flaky network.
+                await send({"type": "websocket.close", "code": 1008})
+                return
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(WebSocketBoundaryMiddleware)
+
+
 @app.middleware("http")
 async def dashboard_control_boundary(request: Request, call_next):
     # EVERY mutation, plus reads that expose operational or credential-adjacent

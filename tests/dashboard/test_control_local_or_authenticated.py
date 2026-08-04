@@ -283,5 +283,104 @@ class SensitiveReadsAreGatedAndProbesAreNot(unittest.TestCase):
                 % (path, r.status_code))
 
 
+class WebSocketsAreInsideTheBoundary(unittest.TestCase):
+    """@app.middleware("http") only wraps HTTP scopes.
+
+    Every WebSocket route was therefore OUTSIDE the boundary. Measured with
+    auth off, from a routable remote address, both accepted the connection:
+
+        /ws          CONNECTED
+        /ws/collab   CONNECTED   -- and it is WRITABLE, so a network caller
+                                    could push collaboration state
+
+    The routes are not careless: /ws checks a query-parameter token when
+    enterprise auth is ON, and server.py records that FastAPI's Depends() does
+    not work on websocket routes. The hole is the auth-OFF default.
+    """
+
+    def setUp(self):
+        try:
+            from starlette.testclient import TestClient  # noqa: PLC0415
+            from dashboard import server, auth  # noqa: PLC0415
+        except Exception as exc:  # pragma: no cover
+            self.skipTest("dashboard/starlette not importable: %s" % exc)
+        self.TestClient, self.server, self.auth = TestClient, server, auth
+        self._ent, self._oidc = auth.ENTERPRISE_AUTH_ENABLED, auth.OIDC_ENABLED
+        auth.ENTERPRISE_AUTH_ENABLED = False
+        auth.OIDC_ENABLED = False
+        self._prox = os.environ.get("LOKI_TRUSTED_PROXIES")
+        os.environ.pop("LOKI_TRUSTED_PROXIES", None)
+
+    def tearDown(self):
+        self.auth.ENTERPRISE_AUTH_ENABLED = self._ent
+        self.auth.OIDC_ENABLED = self._oidc
+        if self._prox is None:
+            os.environ.pop("LOKI_TRUSTED_PROXIES", None)
+        else:
+            os.environ["LOKI_TRUSTED_PROXIES"] = self._prox
+
+    def _connects(self, host, path="/ws", headers=None):
+        client = self.TestClient(self.server.app, raise_server_exceptions=False,
+                                 client=(host, 5555))
+        try:
+            with client.websocket_connect(path, headers=headers or {}):
+                return True
+        except Exception:
+            return False
+
+    def test_a_remote_caller_cannot_open_the_status_socket(self):
+        self.assertFalse(
+            self._connects("203.0.113.7"),
+            "/ws accepted a remote anonymous upgrade")
+
+    def test_a_remote_caller_cannot_open_the_writable_collab_socket(self):
+        self.assertFalse(
+            self._connects("203.0.113.7", "/ws/collab"),
+            "/ws/collab accepted a remote anonymous upgrade; it is WRITABLE, "
+            "so a network caller could push collaboration state")
+
+    def test_loopback_still_connects(self):
+        """The dashboard SPA is the main consumer of these sockets. If this
+        breaks, the guard is a regression rather than a fix."""
+        for path in ("/ws", "/ws/collab"):
+            self.assertTrue(
+                self._connects("127.0.0.1", path),
+                "loopback was refused on %s" % path)
+
+    def test_an_untrusted_forwarded_header_is_ignored(self):
+        self.assertTrue(
+            self._connects("127.0.0.1", "/ws",
+                           {"X-Forwarded-For": "203.0.113.9"}),
+            "an UNTRUSTED X-Forwarded-For changed the decision; any caller "
+            "can set that header")
+
+    def test_a_trusted_proxy_forwarding_a_remote_client_is_refused(self):
+        os.environ["LOKI_TRUSTED_PROXIES"] = "127.0.0.1"
+        self.assertFalse(
+            self._connects("127.0.0.1", "/ws",
+                           {"X-Forwarded-For": "203.0.113.9"}),
+            "a remote client forwarded by a TRUSTED proxy opened a socket")
+
+    def test_a_scope_without_a_peer_fails_closed(self):
+        """An unidentifiable caller is where 'assume local' is least safe."""
+        import asyncio
+        mw = self.server.WebSocketBoundaryMiddleware(
+            lambda scope, receive, send: None)
+        sent = []
+
+        async def _send(message):
+            sent.append(message)
+
+        async def _receive():
+            return {}
+
+        asyncio.run(mw({"type": "websocket", "headers": [], "path": "/ws"},
+                       _receive, _send))
+        self.assertEqual(
+            sent, [{"type": "websocket.close", "code": 1008}],
+            "a scope with no client address was passed through instead of "
+            "being closed")
+
+
 if __name__ == "__main__":
     unittest.main()

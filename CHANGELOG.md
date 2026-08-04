@@ -5,6 +5,35 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.12.3
+
+### Security
+
+- **WebSockets were outside the boundary added in 9.12.2.** That guard is an
+  `@app.middleware("http")`, which only wraps HTTP scopes, so every WebSocket
+  route stayed reachable. Measured with auth off from a routable remote
+  address, both accepted the upgrade:
+
+      /ws          CONNECTED
+      /ws/collab   CONNECTED
+
+  `/ws/collab` is writable, so a network caller could push collaboration
+  state. The routes are not careless -- `/ws` validates a query-parameter
+  token when enterprise auth is ON, and FastAPI's `Depends()` does not work on
+  websocket routes -- the hole is the auth-OFF default.
+
+  A plain ASGI middleware now applies the same decision to websocket scopes:
+  same trusted-proxy resolution, same loopback rule, same deferral when auth
+  is enabled. Registering it centrally also covers sockets declared by other
+  modules, which a per-route decorator would miss. A refused upgrade closes
+  with policy code 1008 rather than being dropped, so a client can tell
+  refusal from a network fault.
+
+  Verified: direct remote refused on both sockets, loopback still connects
+  (the SPA depends on it), an untrusted `X-Forwarded-For` is ignored, a
+  trusted proxy forwarding a remote client is refused, and a scope with no
+  peer address fails closed.
+
 ## v9.12.2
 
 ### Security
