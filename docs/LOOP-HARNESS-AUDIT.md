@@ -582,3 +582,50 @@ The one surface still unverified by execution is self-improvement: the
 `LOKI_AUTO_LEARNINGS` asymmetry was found by grep, and grep has been wrong
 three times in this audit. It should be confirmed by running before it is
 treated as a finding.
+
+## The matched pair, executed
+
+The previous entry said the smallest honest next step was the same spec run
+twice under two models. That has now been done: identical `prd.md` (byte-for-byte,
+`diff -q` verified), identical iteration cap, run SEQUENTIALLY so CPU contention
+could not confound latency, logs written OUTSIDE each workspace so the run could
+not invalidate its own receipt.
+
+| | sonnet | opus |
+|---|---|---|
+| cost_usd | 0.7177 | **0.6257** |
+| output tokens | 3658 | 3547 |
+| wall_clock_sec | 458 | **406** |
+| progress duration_ms | 65000 | 67000 |
+| iterations | 1 of 1 succeeded | 1 of 1 succeeded |
+| produced code | 1 test passing | 1 test passing |
+
+Both arms solved the task. On this pair, opus was 12.8% cheaper and 11% faster
+in wall clock, while taking marginally longer in measured progress duration --
+the wall/duration split suggests the difference sits in orchestration overhead,
+not model latency.
+
+### What this does and does not license
+
+It **does** establish that the corpus can now produce a matched comparison: same
+task, same budget, controlled ordering, both outcomes verified by running the
+produced tests rather than trusting the receipt.
+
+It **does not** clear the directive's bar. That requires lift above p95 latency
+and cost across seeds, and this is n=1 per arm. A single pair cannot separate
+model effect from run-to-run variance, and the two prior unmatched runs
+(sonnet $1.3828, opus $0.6823) differ from these by more than the arms differ
+from each other -- which is itself the evidence that one pair proves nothing
+about the population.
+
+The honest reading: the *method* is now demonstrated end to end. The *finding*
+needs repetition, and repetition is provider spend, which is a founder call.
+
+### Method notes worth keeping
+
+Three procedural constraints were learned by getting them wrong first:
+
+1. log outside the workspace, or the run invalidates its own receipt
+2. run arms sequentially, or contention confounds the latency column
+3. verify the produced artifact by executing it -- a receipt records what a run
+   claimed to do, not whether the code works
