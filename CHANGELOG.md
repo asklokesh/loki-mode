@@ -5,6 +5,33 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.12.4
+
+### Fixed
+
+- **The runs API reported `unknown` for every live run.** Found by running a
+  real build, not by reading code: during an actual `loki start`, the CLI and
+  the API disagreed about the same workspace at the same instant --
+  `loki status --json` reported `phase=BUILDING` while `api_runs.list_runs`
+  reported `status=unknown`.
+
+  `_current_status` read only `.loki/session.json`, which the current runtime
+  does not write. A live run writes `.loki/state/orchestrator.json`, and the
+  CLI reads its `currentPhase` (`autonomy/loki:4782`). The API was keyed on a
+  file that never appears, so every live run read `unknown` while the truth sat
+  one directory away with 24-second freshness.
+
+  Precedence is preserved: PAUSE wins, then STOP, then `session.json` if a
+  deployment writes it, and `orchestrator.json` is consulted last. A missing
+  signal still yields `unknown` and never `completed`, because absence of a
+  signal is not evidence of success.
+
+  Verified against the live run that exposed it: after the fix the CLI reported
+  BUILDING and the API reported building on the same workspace. That run went
+  on to build working code from its spec, pass its own test, complete a
+  four-reviewer blind council, and write a receipt recording $0.7381 of
+  measured cost.
+
 ## v9.12.3
 
 ### Security
