@@ -527,7 +527,12 @@ async def list_runs(
             try:
                 from . import api_runs as _fs_runs
 
-                _loki = os.environ.get("LOKI_DIR") or os.path.join(os.getcwd(), ".loki")
+                # A deleted cwd raises from os.getcwd(); this runs per request.
+                try:
+                    _cwd = os.getcwd()
+                except OSError:
+                    _cwd = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                _loki = os.environ.get("LOKI_DIR") or os.path.join(_cwd, ".loki")
                 _fs = _fs_runs.list_runs(_loki)
                 # The adapter returns an envelope carrying source, freshness
                 # and an explicit reason when empty. Never fabricate a row:

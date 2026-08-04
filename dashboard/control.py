@@ -72,22 +72,64 @@ def find_skill_dir() -> Path:
             return configured
         raise RuntimeError(f"LOKI_SKILL_DIR is not a Loki source tree: {configured}")
 
+    # os.getcwd() RAISES FileNotFoundError when the working directory has been
+    # deleted out from under the process. That is not hypothetical: a dashboard
+    # started inside a temp workspace keeps running after the workspace is
+    # cleaned up, and then EVERY endpoint that resolves a path 500s at once --
+    # observed as ~60 simultaneous 500s including /api/status, whose handler
+    # touches almost nothing. A long-lived server must survive losing its cwd.
+    def _cwd_or_none() -> "Path | None":
+        try:
+            return Path.cwd()
+        except OSError:
+            return None
+
     candidates = [
         Path.home() / ".claude" / "skills" / "loki-mode",
         Path(__file__).parent.parent,
-        Path.cwd()
+        _cwd_or_none(),
     ]
     for candidate in candidates:
-        if (candidate / "SKILL.md").exists() and (candidate / "autonomy" / "run.sh").exists():
-            return candidate
-    return Path.cwd()
+        if candidate is None:
+            continue
+        try:
+            if ((candidate / "SKILL.md").exists()
+                    and (candidate / "autonomy" / "run.sh").exists()):
+                return candidate
+        except OSError:
+            continue
+
+    # The fallback must not be the one path that can still raise. When the cwd
+    # is gone, resolve to this file's own tree -- it is on disk by definition,
+    # since we are executing out of it.
+    return _cwd_or_none() or Path(__file__).resolve().parent.parent
 
 SKILL_DIR = find_skill_dir()
 RUN_SH = SKILL_DIR / "autonomy" / "run.sh"
 
-# Ensure directories exist
-STATE_DIR.mkdir(parents=True, exist_ok=True)
-LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+def _cwd_or_skill_dir() -> Path:
+    """The cwd, or the skill tree when the cwd has been deleted.
+
+    Used where a real directory is required (subprocess cwd=), as opposed to
+    the confinement check in validate(), which must fail closed instead.
+    """
+    try:
+        return Path.cwd()
+    except OSError:
+        return SKILL_DIR
+
+# Ensure directories exist.
+# Best-effort at IMPORT time. LOKI_DIR defaults to the relative path ".loki",
+# so when the working directory has been deleted these mkdirs raise
+# FileNotFoundError and the whole module fails to import -- which takes the
+# entire dashboard down rather than the one feature that needs the directory.
+# Whoever actually writes into these paths still surfaces its own error.
+for _startup_dir in (STATE_DIR, LOG_DIR):
+    try:
+        _startup_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
 
 # Utility: atomic write with optional file locking
 def atomic_write_json(file_path: Path, data: dict, use_lock: bool = True):
@@ -202,8 +244,16 @@ class StartRequest(BaseModel):
         if not prd_path.is_file():
             raise ValueError(f"PRD path is not a file: {self.prd}")
 
-        # Verify path resolves within CWD or a reasonable parent
-        cwd = Path.cwd().resolve()
+        # Verify path resolves within CWD or a reasonable parent.
+        # FAIL CLOSED if the cwd is gone: this is a path-confinement check, so
+        # an unresolvable base must reject the path, never skip the comparison.
+        try:
+            cwd = Path.cwd().resolve()
+        except OSError as exc:
+            raise ValueError(
+                "cannot validate PRD path: the working directory no longer "
+                "exists (%s)" % exc
+            ) from exc
         try:
             prd_path.relative_to(cwd)
         except ValueError:
@@ -450,7 +500,9 @@ async def start_session(request: StartRequest):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
-            cwd=str(Path.cwd())
+            # A deleted cwd would make Popen itself raise; fall back to the
+            # skill tree rather than failing to launch the run at all.
+            cwd=str(_cwd_or_skill_dir())
         )
 
         # Save provider for status tracking

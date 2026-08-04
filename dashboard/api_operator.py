@@ -77,11 +77,24 @@ def _loki_dir() -> str:
     others, and an import-time snapshot would pin whichever was true when the
     module first loaded.
     """
-    return os.environ.get("LOKI_DIR") or os.path.join(os.getcwd(), ".loki")
+    return os.environ.get("LOKI_DIR") or os.path.join(_safe_getcwd(), ".loki")
+
+
+def _safe_getcwd() -> str:
+    """os.getcwd() raises FileNotFoundError once the cwd is deleted.
+
+    These helpers run per request, so letting that propagate turns a stale
+    working directory into a blanket 500 across the whole API. Fall back to
+    this package's tree, which is on disk by definition.
+    """
+    try:
+        return os.getcwd()
+    except OSError:
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _repo_dir() -> str:
-    return os.environ.get("LOKI_REPO_DIR") or os.getcwd()
+    return os.environ.get("LOKI_REPO_DIR") or _safe_getcwd()
 
 
 # Ceilings for the receipt walk on the HTTP path. Generous enough that a real
