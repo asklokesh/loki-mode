@@ -323,3 +323,47 @@ The honest ordering is therefore:
    the data genuinely does not exist at any volume
 
 Steps 1 and 2 need no runtime change. Step 3 remains unproposed.
+
+## Step 1 executed: the corpus has its first real row
+
+Rather than leave "accumulate receipts" as advice, one real `loki start` was
+run against a minimal spec. It completed exit 0, built working code (its own
+6 tests pass), and wrote a receipt carrying exactly what a routing evaluation
+needs:
+
+```
+provider     {"name": "claude", "model": "sonnet"}     <- not "unavailable"
+cost_usd     1.3828        input/output tokens  48 / 7290
+iterations   1 succeeded, 0 failed
+duration_ms  128000        wall_clock_sec       576
+base_sha     ef1efe909750  head_sha             5a727616da91
+```
+
+Contrast with the nine archived receipts, all `"model": "unavailable"` and
+`cost_usd: None`. The mechanism was never broken; those runs simply predate
+it.
+
+`iterations.attribution` is worth noting for any lift measurement: it splits
+cost into `progress` and `rework`, and states its own basis -- "rework counts
+FAILED iterations only; a completed iteration forced to repeat by a gate is
+counted as progress, so rework is a floor". That is a self-describing lower
+bound rather than an unqualified number.
+
+### The verdict reads FAILED, correctly
+
+`receipts_report` returns FAILED with `measured: True` and the real cost. The
+reason is diff drift: 11 files / +494 recorded, more now. The cause was
+verified by timestamp -- only `run.log` (still being appended) and
+`.pytest_cache/` from the verification run itself changed after signing.
+
+That is the verifier working. A receipt signed at time T and inspected at
+T+delta, with files touched in between, SHOULD fail. The lesson for a future
+evaluation harness: read receipts without running anything inside the
+workspace, or the act of measuring invalidates what is measured.
+
+### Where the corpus stands
+
+Two distinct models are needed before a comparison means anything. The archive
+now holds one real row (`sonnet`) plus nine degenerate ones. The evaluation
+remains unwritten, and that is still the honest position -- but step 1 is no
+longer hypothetical.
