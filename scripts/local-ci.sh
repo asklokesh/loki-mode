@@ -654,11 +654,14 @@ if command -v bun >/dev/null 2>&1; then
   # and assert the committed bundle matches a fresh build, ignoring only the
   # per-build debugId line which legitimately varies.
   run_check "parent checkout is not falsely marked bare" '
-    # Read-only. The watcher does NOT restore by default, deliberately: an
-    # auto-repair loop would hide a recurring mutation, and the recurrence is
-    # the finding. Repair is a human action (--restore).
+    # Self-healing. On mutation the gate still fails non-zero (--restore does
+    # not change that) and the watcher still logs MUTATED plus a config
+    # backup, so the recurrence stays evidenced -- but the parent checkout is
+    # restored to core.bare=false before this returns, so a failed run does
+    # not also leave git status/log broken on the parent until a human
+    # notices and repairs it by hand.
     if [ -x scripts/watch-core-bare.sh ]; then
-      bash scripts/watch-core-bare.sh
+      bash scripts/watch-core-bare.sh --restore
     else
       echo "watch-core-bare.sh missing; repo-integrity check SKIPPED (not a pass)"
       exit 0

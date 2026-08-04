@@ -695,6 +695,7 @@ run_test "Issue providers (GitHub/GitLab/Jira/Azure detect+parse+normalize)" "$S
 # pre-push gate, and must never stop covering the trust core. Static assertions
 # only -- never runs the real gate.
 run_test "local-ci tiers (fast never green-washes full; trust core always kept)" "$SCRIPT_DIR/test-local-ci-tiers.sh"
+run_test "parent checkout core.bare detection self-heals without green-washing" "$SCRIPT_DIR/test-core-bare-selfheal.sh"
 
 # Linting
 run_test "Export overwrite guard (non-interactive never hangs)" "$SCRIPT_DIR/test-export-overwrite-noninteractive.sh"
