@@ -435,3 +435,58 @@ evidenced user demand behind it.
 The durable output is the constraint, not a patch: **an evaluation harness
 must not write inside the workspace it measures**, including redirecting the
 run's own stdout there. Recorded so it is not rediscovered a third time.
+
+## Correction: two of the three trigger gaps were my grep, not the code
+
+The audit claimed `autonomy/trigger-server.py` was three properties short:
+dedupe 0, dead-letter 0, backpressure 0. Two of those were false negatives from
+searching for the wrong words.
+
+**Dedupe exists** and is well built. `Dispatcher.seen_delivery()` keeps recent
+GitHub delivery ids in a lock-guarded bounded `OrderedDict`. It deliberately
+does NOT refresh recency on a duplicate, and the code says why: "a flood of one
+valid (authenticated) duplicate id could keep it pinned and evict up to
+dedup_max genuinely-recent ids, letting real redeliveries slip through."
+
+Verified by executing the method directly:
+
+```
+first delivery abc   -> False   (new)
+repeat delivery abc  -> True    (deduped)
+absent header ""     -> False   (never deduplicated, falls through)
+after eviction       -> False   (bounded, evicts oldest first)
+```
+
+**Backpressure exists.** The dispatcher holds a bounded `queue.Queue`, catches
+`queue.Full`, and sheds load with 503 -- the module docstring states it at line
+12. My earlier check used a malformed `-E` alternation and returned 0 for terms
+plainly present in the file (`queue_size` alone appears 7 times).
+
+**Dead-letter state is the one that is genuinely absent.** No DLQ, no failed-job
+retention: a job that exhausts its retries is dropped.
+
+### The lesson, which is the same one twice
+
+`phases` was reported missing from `loki proof --help` by a grep that could not
+see it; dedupe was reported absent by a grep looking for the wrong noun. Both
+times the code was fine and the measurement was broken.
+
+An absence found by grep is a hypothesis, not a finding. It has to be confirmed
+by reading the code or executing it -- exactly the standard this audit applies
+to the runtime, now applied to the audit itself.
+
+### Revised trigger contract state
+
+| Property | State |
+|---|---|
+| authentication | present |
+| timeout | present |
+| bounded retry | present |
+| idempotency | present |
+| **dedupe** | **present** (verified by execution) |
+| **backpressure** | **present** (bounded queue, 503 shed) |
+| dead-letter state | absent |
+
+One property short, not three. A trigger-to-run-to-receipt path is therefore
+much closer to complete than the audit claimed, and the remaining gap is
+narrow: a job that exhausts retries vanishes without a record.
