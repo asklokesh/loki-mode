@@ -63,6 +63,58 @@ if [ -z "$BASH32" ]; then
 fi
 ok "found bash 3.x at $BASH32 ($("$BASH32" -c 'echo $BASH_VERSION'))"
 
+# THE SHIPPED ENTRY POINTS COME FIRST (added 2026-08-04).
+#
+# This guard existed, documented this exact apostrophe-in-heredoc bug, and
+# still missed a live one -- because its list below covers only TEST scripts.
+# `loki verify --help` exited 2 printing NOTHING on a stock Mac while working
+# under Homebrew bash 5: autonomy/verify.sh:2525 had an apostrophe in a
+# heredoc comment nested in "$( ... )", which swallowed ~270 lines and made
+# bash 3.2 reject the whole file.
+#
+# A guard that checks the tests but not the product is checking the wrong
+# artifact. These are the files a user actually executes, so they are checked
+# first and are never eligible for KNOWN_BROKEN.
+SHIPPED_ENTRY_POINTS="
+../autonomy/loki
+../autonomy/verify.sh
+../autonomy/run.sh
+../autonomy/completion-council.sh
+"
+
+shipped_broken=""
+shipped_checked=0
+for f in $SHIPPED_ENTRY_POINTS; do
+    path="$SCRIPT_DIR/$f"
+    [ -f "$path" ] || continue
+    shipped_checked=$((shipped_checked + 1))
+    "$BASH32" -n "$path" 2>/dev/null || shipped_broken="${shipped_broken}${f}\n"
+done
+
+if [ "$shipped_checked" -eq 0 ]; then
+    bad "no shipped entry points found to check (paths moved?)"
+elif [ -z "$shipped_broken" ]; then
+    ok "all $shipped_checked SHIPPED entry points parse under bash 3.2"
+else
+    bad "SHIPPED entry points bash 3.2 cannot parse (users on a stock Mac cannot run these):"
+    printf "%b" "$shipped_broken" | sed 's/^/        /'
+fi
+
+# End-to-end symptom, not just the parse. A user asking for help must get help.
+# Both halves asserted: a non-zero exit AND an empty-but-zero exit are failures,
+# since the original bug produced exit 2 with zero bytes.
+if [ -f "$SCRIPT_DIR/../autonomy/loki" ]; then
+    _help="$(cd "$SCRIPT_DIR/.." && "$BASH32" autonomy/loki verify --help 2>/dev/null)"
+    _rc=$?
+    if [ "$_rc" -ne 0 ]; then
+        bad "loki verify --help exited $_rc under bash 3.2 (asking for help must not fail)"
+    elif [ "${#_help}" -lt 200 ]; then
+        bad "loki verify --help printed only ${#_help} bytes under bash 3.2 (expected real help)"
+    else
+        ok "loki verify --help works under bash 3.2 (${#_help} bytes)"
+    fi
+fi
+
 # Scripts the macOS CI job runs directly (.github/workflows/test.yml, the
 # "Run v8 SDK bridge tests" step plus the deprecation suite).
 MACOS_CI_SCRIPTS="

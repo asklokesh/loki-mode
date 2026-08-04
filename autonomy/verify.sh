@@ -2522,9 +2522,18 @@ try:
     # secrets/lint/deps). It must NEVER claim "verified" when the authoritative
     # verdict is not VERIFIED -- a tool named Verify printing "-> verified" next
     # to a BLOCKED result is a fake-green-shaped surface, and this product never
-    # lies about done. So the banner reports the engine's partial finding,
+    # lies about done. So the banner reports the partial finding of the engine,
     # explicitly subordinated to the authoritative verdict, and never the word
     # "verified" on its own when the verdict disagrees.
+    #
+    # NO APOSTROPHES IN THIS BODY. This heredoc sits inside "$( ... )", and bash
+    # 3.2 -- the /bin/bash that every stock macOS ships -- tracks quoting THROUGH
+    # the command substitution even though the heredoc is quoted with <<PYEOF.
+    # One apostrophe opens a quote that never closes, so the parser swallows the
+    # rest of the file and reports "syntax error near unexpected token (" at a
+    # line ~270 later that is perfectly valid. The whole file then fails to
+    # parse: `loki verify --help` exits 2 printing NOTHING on a stock Mac, while
+    # working fine under Homebrew bash 5. Verified by minimal reproduction.
     verdict = (os.environ.get("_V_VERDICT") or "").strip().upper()
     if e.get("inconclusive"):
         finding = "inconclusive (%s)" % (e.get("inconclusive_reason") or "no reason")
