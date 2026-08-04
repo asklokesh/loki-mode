@@ -16,7 +16,7 @@ with a command and its output. Nothing here was pushed.
 | Failure | Class | Evidence |
 |---|---|---|
 | `test-onboard-command` (6 of 9) | **BASELINE**, now FIXED | `autonomy/loki` byte-identical to origin/main; `git diff --name-only dda8beec..HEAD` returns zero matches for that path |
-| `test-model-override` | **NOT A FAILURE** -- slow suite, mis-measured | 48/48 PASS then a ~100s section; my 120s foreground cap killed it mid-run and I read the truncation as a failure |
+| `test-model-override` | **BASELINE**, 1 of 66, still open | identical failure at `dda8beec` and at HEAD: `Results: 65 passed, 1 failed (of 66)`, `EXIT=1` |
 | `bun run typecheck` | **ENVIRONMENT** | `tsc` not installed locally; unchanged |
 
 ## The onboard defect
@@ -114,7 +114,112 @@ diagnostic `exit 141 (SIGPIPE)` on the old code and passes on the new. It also
 carries a vacuity guard rejecting exit 0 with under 100 bytes of output -- the
 precise shape of the bug, since the abort produced exit 141 *and* silence.
 
-## Correction to the earlier proposal
+## Correction: I called test-model-override a non-failure before it finished
+
+An earlier revision of THIS FILE classified `test-model-override` as "NOT A
+FAILURE -- slow suite, mis-measured". That was wrong, and it was wrong in the
+worst available way: I wrote the classification while the run was still
+executing, from a partial log that showed 50 PASS and no failures yet.
+
+The completed run:
+
+```
+FAIL: architect no-cap mismatch: estimator='Opus' runner-dispatch='opus'
+      runner-tier='fable' (expected Opus,Sonnet / opus / fable)
+Results: 65 passed, 1 failed (of 66)
+EXIT=1
+```
+
+The slowness was real -- a 224-cell parity matrix, each cell spawning a
+`python3` that imports the FastAPI dashboard at ~0.46s -- and it was NOT the
+explanation for the failure. Both things were true and I reported only the
+convenient one.
+
+The rule this violates is one already written down in this repo: an absent
+measurement is not a measurement. A log with no FAIL line yet is not a log with
+no failures; it is an unfinished log. I should have blocked on the EXIT marker
+before classifying, exactly as I did for the onboard suite.
+
+### The actual failure
+
+`tests/test-model-override.sh:827`. A three-way coherence assertion; two of the
+three legs are correct:
+
+| Leg | Expected | Actual |
+|---|---|---|
+| runner dispatch | `opus` | `opus` -- correct |
+| runner tier (pre-collapse) | `fable` | `fable` -- correct |
+| estimator quote | `Opus,Sonnet` | `Opus` -- **mismatch** |
+
+So the runtime routing is right and only the cost QUOTE disagrees: the
+estimator names one model where the run actually uses two. Per the test's own
+comment (line 800), this is the known "estimator needs the sonnet5-default
+update" case -- iter-1 collapses fable to opus, later iterations run the
+development tier which defaults to sonnet since v7.104.0, so an honest quote
+must name both.
+
+It under-quotes cost. It does not mis-route a model.
+
+### Root cause: the fixture stopped producing enough iterations
+
+The estimator is CORRECT. The expectation is only reachable when the estimate
+spans more than one iteration, and the suite's fixture no longer does.
+
+`autonomy/loki:18342` prices iteration 0 as Opus (the fable architect pass
+collapsing to opus), and every LATER iteration through
+`_priced_model_for(_dispatched_model)`, which defaults to Sonnet since
+v7.104.0. So `Opus,Sonnet` requires **iterations >= 2**.
+
+Measured on the suite's own fixture (`# PRD\nBuild a small todo API with one
+endpoint.`, byte-identical to v7.104.0):
+
+| Binary | tier | estimated iterations | nonzero models |
+|---|---|---|---|
+| `766219ac` (v7.104.0, where this was written and passed 66/0) | simple | **4** | `Opus,Sonnet` |
+| HEAD | simple | **1** | `Opus` |
+
+The complexity TIER is unchanged (`simple` in both). Only the iteration count
+for that tier fell, 4 -> 1, and with a single iteration the loop never reaches
+the branch where Sonnet appears.
+
+Confirmed causal by holding the binary fixed and enlarging the input: a 24-
+feature PRD at HEAD estimates 4 iterations and returns exactly `Opus,Sonnet`
+(`{"Fable":0,"Opus":1,"Sonnet":3,"Haiku":0}`). Same code, more iterations,
+expected answer.
+
+So the assertion is a **stale coupling**: it encodes "a simple PRD takes
+several iterations", which stopped being true. The v7.104.0 commit message
+claims "locked by tests/test-model-override.sh (66/0)" -- that lock silently
+came undone when the iteration estimate for simple PRDs changed.
+
+### Classification: BASELINE
+
+Run against `dda8beec`'s `autonomy/loki` (my onboard fix reverted), the failure
+is **identical**:
+
+```
+FAIL: architect no-cap mismatch: estimator='Opus' ...
+Results: 65 passed, 1 failed (of 66)
+EXIT=1
+```
+
+Not caused by any held commit. My `autonomy/loki` diff touches only three
+tree-building sites and no pricing or routing code.
+
+### Not fixed here, deliberately
+
+Two candidate fixes, and choosing between them is a product call I should not
+make unilaterally:
+
+1. **Enlarge the fixture** so a multi-iteration estimate is exercised. Restores
+   the assertion's original intent (verify the architect collapse across a
+   real multi-iteration run) and keeps its coverage.
+2. **Weaken the assertion** to accept `Opus`. Cheaper, and wrong: it would
+   stop testing the later-iteration Sonnet attribution entirely.
+
+(1) is almost certainly right, but it changes what the test measures, and the
+prior instruction excluded runtime changes without an evidenced deterministic
+requirement. The evidence is now here; the decision is not mine.
 
 `docs/LOOP-CANDIDATE-PROPOSAL-v1.md` states the onboard defect "cannot be
 addressed by any of [the six cheaper surfaces]" because it is a bash command
@@ -130,8 +235,20 @@ unknown size. Measured: 28 lines changed across three sites, all mechanical.
 Still not green, and this triage does not make it so.
 
 - `test-onboard-command`: **RESOLVED** (3/9 -> 10/10)
-- `test-model-override`: **was never failing** -- my measurement was wrong
+- `test-model-override`: **1 of 66 still failing, BASELINE** -- a stale test
+  coupling, not an estimator defect. Root-caused (fixture no longer produces a
+  multi-iteration estimate); two candidate fixes named, neither applied.
 - `bun run typecheck`: **unchanged**, `tsc` still absent
 
-The remaining item is the environment gap already named as the single
-gate-closing action.
+Two items remain, not one. Both are pre-existing at `dda8beec`; neither was
+introduced by a held commit.
+
+| Item | Needs |
+|---|---|
+| `bun run typecheck` | install the TS toolchain -- the environment fix already named |
+| `test-model-override` | a decision between enlarging the fixture and weakening the assertion |
+
+Neither is unblocked by the other, so "install tsc" was never sufficient on its
+own. That was an error in the earlier proposal, which named a single
+gate-closing action while a second real failure sat unclassified behind a
+measurement I had cut short.
