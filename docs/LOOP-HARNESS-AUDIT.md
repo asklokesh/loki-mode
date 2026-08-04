@@ -206,3 +206,60 @@ a real build's trace. That yields the first honest per-verifier row set, and
 its UNKNOWN columns are the evidenced requirement that would justify Phase B
 instrumentation -- which is a runtime change and is deliberately not proposed
 until that evidence exists.
+
+## Correction: the six named axes, measured
+
+The first pass treated routing as unmeasured. That was wrong, and the correction
+matters because it changes which work is worth doing.
+
+| Axis | State | Evidence |
+|---|---|---|
+| Memory / retrieval | wired into the loop | 13 references in `run.sh` |
+| Tool descriptions | present | 13 in `mcp/server.py` |
+| Context compression | shipped, unmeasured per-run | `[CACHE_BREAKPOINT]` prefix split |
+| Prompts | **not attributable** | main prompt in memory only (`run.sh:8987`); review prompts persisted (`:14700`) |
+| **Quality/latency/cost routing** | **fully recorded** | see below |
+| Verifier records | **absent** | unchanged from the first pass |
+
+### Routing is already instrumented
+
+`.loki/metrics/efficiency/` records carry:
+
+```
+model  provider  phase  iteration  status  timestamp
+cost_usd  duration_ms
+input_tokens  output_tokens  cache_read_tokens  cache_creation_tokens
+```
+
+`LOKI_CURRENT_MODEL` holds the EXACT dispatched `--model` value, exported after
+every mutation (opus-pin, `LOKI_MAX_TIER` clamp, mid-flight override), so the
+recorded model is the one actually used. `run.sh:7834` documents the bug that
+made this necessary: hardcoding the development-tier default mislabeled every
+non-development iteration and "made the model-equivalence bench unfalsifiable."
+
+`record_is_measured()` (`autonomy/lib/efficiency_cost.py:81`) is the single
+definition of measured, and its docstring records why a second copy is
+forbidden: "the four surfaces that once rendered an unmeasured run as $0.00
+each had their own idea of what counted as measured."
+
+`dashboard/api_runs.py` already reads these (22 references).
+
+**So a quality/latency/cost routing evaluation is possible today** -- model,
+cost, latency and tokens are all recorded per iteration with an honesty
+predicate. What is missing is not instrumentation but a *comparison*: no
+baseline pins a model choice to an outcome.
+
+### The caveat that bounds it
+
+Efficiency records are WIPED at run start (`run.sh:6212`), which is why a
+historical run reports `cost_usd: None` and why this workspace holds zero
+records. A routing evaluation must therefore collect across runs as they
+happen, or read receipts, which retain cost after the fact.
+
+### What this changes about the proposal
+
+Verifier records remain the real gap, unchanged. But routing does NOT need
+Phase B instrumentation -- it needs an evaluation over data that already
+exists. That is a cheaper and better-evidenced next step than instrumenting
+the gates, and it is squarely inside the directive's "improve routing before
+touching architecture."
