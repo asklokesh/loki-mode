@@ -629,3 +629,56 @@ Three procedural constraints were learned by getting them wrong first:
 2. run arms sequentially, or contention confounds the latency column
 3. verify the produced artifact by executing it -- a receipt records what a run
    claimed to do, not whether the code works
+
+## Read-only gap check: one evidenced product defect
+
+The directive asks whether memory, skills, prompts, tool descriptions,
+compression, or routing can address any evidenced gap. Running the full tier
+surfaced a defect that none of those six can touch, because it is not a model
+problem at all.
+
+### `loki onboard --stdout` produces nothing on a large repository
+
+Reproduced deterministically, not inferred:
+
+```
+small repo (1 source file), explicit path   394 bytes
+small repo, cwd form                        394 bytes
+this repo (4100 tracked files), any form      0 bytes
+this repo, --depth 1                          0 bytes
+```
+
+It is not the argument form: both spellings work on a small repo. It is not
+scan depth: depth 1 fails identically. The command logs three INFO lines --
+"Analyzing project at", "Depth: 2 | Format: markdown", "Scanning source
+files..." -- then stops, writes no file, emits nothing to stdout, and **exits
+0**.
+
+Exit 0 with no output is the worst available shape. A caller that checks the
+exit code sees success; a caller that reads stdout gets an empty string and
+cannot tell "this project has no structure" from "the command gave up". It is
+the same class as the dashboard rendering an unmeasured cost as `$0.00`, which
+this release line already fixed twice.
+
+This is what `tests/test-onboard-command.sh` has been failing on: six
+assertions, all downstream of empty output. The suite fails identically at
+`1c80c85ff~1`, so it is pre-existing, not introduced this session.
+
+### Why none of the six named levers apply
+
+Memory, retrieval, skills, prompts, tool descriptions, compression and routing
+all shape what a MODEL is asked or told. This defect is in a bash analysis
+command that never calls a model: it walks the filesystem and formats markdown.
+No prompt change makes it emit output, and no routing decision is involved.
+
+That is itself the useful finding. The directive's ordering -- try the cheap
+model-facing levers before touching runtime -- is correct as a default and
+does not apply here, and saying so is more honest than proposing a prompt
+change that could not work.
+
+### Not fixed here
+
+Fixing it means changing `autonomy/loki`, which is a runtime change this
+directive excludes, and the failure mode (silent give-up at scale) needs its
+own diagnosis before a patch. Recorded with a reproduction so it is actionable
+rather than rediscovered.
