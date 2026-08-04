@@ -217,6 +217,38 @@ case "$_farrc" in
     *)     bad "a non-repo cwd exited $_farrc, which is not a defined answer" ;;
 esac
 
+# --- the SHIPPED entry point ------------------------------------------------
+# bin/loki is what npm users get, and it routes through the Bun runtime rather
+# than straight to autonomy/loki. Both `phases` and `releases` shipped in
+# 9.12.0 reachable ONLY via autonomy/loki: through bin/loki they returned
+# "Unknown subcommand" because the TS dispatch has its own subcommand list and
+# rejected anything not in it.
+#
+# Every assertion above passed while that was true, because they all invoke
+# $LOKI_BIN (autonomy/loki) directly. Testing the surface a user actually
+# touches is the only way to catch this class.
+BIN_LOKI="$REPO_ROOT/bin/loki"
+if [ -x "$BIN_LOKI" ] || [ -f "$BIN_LOKI" ]; then
+    for _sub in phases releases; do
+        _o="$(bash "$BIN_LOKI" proof "$_sub" 2>&1)"
+        if grep -qi "unknown subcommand" <<< "$_o"; then
+            bad "bin/loki proof $_sub reports 'Unknown subcommand'; the command is unreachable through the shipped entry point"
+        else
+            ok "bin/loki proof $_sub reaches the real command"
+        fi
+    done
+    # A genuinely unknown subcommand must STILL fail, or the delegation has
+    # simply made every typo silently invoke bash and return its exit code.
+    bash "$BIN_LOKI" proof definitely-not-a-subcommand >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        ok "bin/loki still rejects a genuinely unknown proof subcommand"
+    else
+        bad "bin/loki now accepts any subcommand; the delegation lost its error path"
+    fi
+else
+    printf 'SKIP: bin/loki not present\n'
+fi
+
 echo ""
 echo "  Passed:     $PASS"
 echo "  Failed:     $FAIL"
