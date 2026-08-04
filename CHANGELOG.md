@@ -5,6 +5,35 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.12.2
+
+### Security
+
+- **A remote anonymous caller could stop a running build.** Every mutating
+  dashboard route carried `Depends(auth.require_scope(...))`, and all 46 of
+  them were bypassable: `require_scope` returns True when enterprise auth is
+  disabled, which is the default. Measured with `LOKI_ENTERPRISE_AUTH` unset,
+  `POST /api/control/stop` and `POST /api/control/app-stop` both returned 200
+  with no credentials.
+
+  Bound to 127.0.0.1 that is harmless. But running with
+  `LOKI_DASHBOARD_HOST=0.0.0.0` is a documented container configuration
+  (`docs/architecture/DASHBOARD_V2_ARCHITECTURE.md`), and there anyone on the
+  network could stop a build.
+
+  Mutations now pass through ONE central boundary rather than per-route
+  checks, so a route added later is covered the moment it exists:
+
+      auth enabled              require_scope decides, unchanged
+      loopback caller           allowed, exactly as before
+      non-IP peer (test/UDS)    allowed; a name is not evidence of remote
+      routable remote, no auth  403
+
+  Reads stay open, so container health probes, metrics scrapes and the SPA
+  keep working with no configuration. Zero-config local use is unchanged --
+  proven on a real socket bound to 0.0.0.0: a POST from 127.0.0.1 returns 200
+  and the same POST from the machine's LAN address returns 403.
+
 ## v9.12.1
 
 ### Fixed
