@@ -101,9 +101,47 @@ class BuildSupervisorTests(unittest.TestCase):
             try:
                 st = supervisor.read_state(self.execution_id)
                 if isinstance(st, dict):
+                    named = False
                     for key in ("launch_error", "termination_reason", "state"):
                         if st.get(key):
                             details.append(f"{key}: {st[key]}")
+                            named = True
+                    if not named:
+                        # A state file that exists but names no reason is its
+                        # own finding: the launch failed AFTER state was
+                        # created, so the writer had a chance to record why and
+                        # did not.
+                        details.append(
+                            "state: present but records no launch_error, "
+                            f"termination_reason or state (keys: {sorted(st)})"
+                        )
+                else:
+                    # THE CASE THAT KEPT COSTING INVESTIGATIONS. read_state
+                    # returns None when the state file is missing or
+                    # unparseable, and the old block appended NOTHING for it --
+                    # so the reader saw "exited 127" with no cause and went
+                    # hunting through PATH, which is exactly the wrong place.
+                    # Absent state is evidence: it means the launch failed
+                    # before the supervisor wrote anything, so the reason is in
+                    # runner.log or in the exec itself, not in the state file.
+                    # state_path() VALIDATES the id and raises on a bad one.
+                    # Calling it unguarded here would replace the real failure
+                    # with a ValueError from the diagnostic itself, which is
+                    # the one thing this block must never do.
+                    try:
+                        sp = supervisor.state_path(self.execution_id)
+                        where = (
+                            f"{sp} "
+                            + ("exists but is unparseable" if sp.is_file()
+                               else "does not exist")
+                        )
+                    except Exception as exc:
+                        where = f"state path unresolvable ({exc})"
+                    details.append(
+                        "state: UNAVAILABLE (read_state returned None) -- "
+                        f"{where}; the launch failed before state was written, "
+                        "so the cause is in runner.log below, not on PATH"
+                    )
             except Exception as exc:  # diagnostics must never mask the failure
                 details.append(f"state: unreadable ({exc})")
             try:
