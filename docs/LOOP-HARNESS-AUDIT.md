@@ -542,3 +542,43 @@ Four measurement errors in one audit section. The corrective standard, now
 demonstrated three times: **an absence is a hypothesis until the real code is
 read or executed** -- and a reproduction must exercise the real function, not
 a stand-in shaped like it.
+
+## Clean checkpoint: 5605deca, all 19 jobs green
+
+Recorded per the gate discipline: the trigger-contract correction reached
+`Tests@5605deca: completed / success`, 19 of 19 jobs, zero failures. No run was
+superseded to get there.
+
+### Where the four surfaces actually stand, after all corrections
+
+| Surface | State | Confidence |
+|---|---|---|
+| Composable core-agent | modular, separable functions | read |
+| Bounded verification | verifiers run; records carry no cost/latency/criterion/effect | read + grep |
+| Event-driven trigger | auth, timeout, retry, idempotency, dedupe, backpressure all present; failures logged but not queryable | **executed** |
+| Self-improvement | `LOKI_AUTO_LEARNINGS` on the TS route only, absent from `run.sh` and the CLI | grep, unverified |
+
+The confidence column matters more than the state column. Everything I checked
+by execution survived scrutiny; three of the four things I checked by grep did
+not.
+
+### The smallest next slice, and why it is not code
+
+The directive's bar for any verifier change is a matched ablation showing lift
+above p95 latency and cost, on the same task, across seeds. Nothing in this
+repo can currently produce that number:
+
+- verifier records carry no cost or latency at all, so the denominator is
+  missing
+- the routing corpus holds two real rows from two DIFFERENT specs, which is
+  explicitly excluded ("do not infer this from different tasks or one seed")
+
+So the smallest honest next slice is **the same spec run twice under two
+models**, which is the minimum a matched ablation admits. That is one command
+and no code. Until it exists, any harness or eval built on top would be
+measuring a corpus that cannot support the claim.
+
+The one surface still unverified by execution is self-improvement: the
+`LOKI_AUTO_LEARNINGS` asymmetry was found by grep, and grep has been wrong
+three times in this audit. It should be confirmed by running before it is
+treated as a finding.
