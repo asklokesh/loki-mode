@@ -29,10 +29,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       non-IP peer (test/UDS)    allowed; a name is not evidence of remote
       routable remote, no auth  403
 
-  Reads stay open, so container health probes, metrics scrapes and the SPA
-  keep working with no configuration. Zero-config local use is unchanged --
-  proven on a real socket bound to 0.0.0.0: a POST from 127.0.0.1 returns 200
-  and the same POST from the machine's LAN address returns 403.
+- **A reverse proxy on the same host defeated that check.** A proxy presents
+  127.0.0.1 as the peer, so "the peer is loopback" did not mean "the caller is
+  local": a remote request carrying `X-Forwarded-For` through a same-host proxy
+  reached `POST /api/control/stop` and got 200. Proxies are now named
+  explicitly in `LOKI_TRUSTED_PROXIES`; the forwarded client is believed only
+  when the peer is a declared proxy, and an undeclared proxy's headers are
+  ignored rather than trusted, because any direct caller can set them.
+
+- **Sensitive reads were open too.** Gating mutations alone left `/api/logs`,
+  `/api/secrets/status`, `/api/github/status`, `/api/tasks`,
+  `/api/council/transcripts` and `/api/proofs` returning 200 to an anonymous
+  remote caller. Reads that expose workspace or credential-adjacent state now
+  pass through the same boundary.
+
+  `/health` and `/metrics` are deliberately excluded, so container health
+  probes and Prometheus scrapes keep working with no configuration -- neither
+  carries workspace content. Zero-config local use is unchanged, proven on a
+  real socket bound to 0.0.0.0 with a trusted proxy declared:
+
+      loopback mutation                    200
+      loopback + X-Forwarded-For remote    403
+      loopback sensitive read              200
+      loopback health probe                200
+      remote LAN address sensitive read    403
 
 ## v9.12.1
 
