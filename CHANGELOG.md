@@ -5,6 +5,26 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.12.1
+
+### Fixed
+
+- **`loki proof phases` and `loki proof releases` were unreachable through
+  `bin/loki`.** Both shipped in 9.12.0 and worked when invoked through
+  `autonomy/loki`, but the entry point npm users actually get returned
+  `Unknown subcommand`. The Bun runtime kept its own `loki proof` subcommand
+  list and rejected anything not in it, so every bash-side subcommand added
+  after that file was written was invisible to the shipped CLI.
+
+  The TypeScript dispatch now delegates unknown subcommands to the bash CLI
+  instead of rejecting them, so bash stays the single source of truth for what
+  the surface is. A genuinely unknown subcommand still exits non-zero.
+
+  Found by verifying the PUBLISHED package rather than the repository. The
+  parity suite had 14 passing assertions at the time, all of which invoked
+  `autonomy/loki` directly -- they tested the implementation, not the surface
+  a user touches. Three assertions now run through `bin/loki`.
+
 ## v9.12.0
 
 ### Dashboard honesty
