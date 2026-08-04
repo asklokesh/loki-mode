@@ -152,3 +152,57 @@ a later proposal clear it.
 
 Phase A adds one file under `tools/` and touches no runtime path. Rollback is
 deleting it. Nothing in `.loki/` is written, so there is no state to unwind.
+
+## The four surfaces, measured
+
+| Surface | State | Evidence |
+|---|---|---|
+| Composable core-agent loop | present, modular | `run_autonomous()` + `get_rarv_tier()` + `build_prompt()` are separable functions |
+| Bounded verification loop | present, **unmeasured** | 3 gate fns emit 0 structured records; `code_review_complete` carries 3 fields |
+| Real-system event-driven loop | present, **partial contract** | `autonomy/trigger-server.py`: auth 7, timeout 12, idempotency 4, retry 2 -- but dedupe 0, dead-letter 0, backpressure 0 |
+| Self-improvement / hill-climbing | present, **not wired to traces** | `LOKI_AUTO_LEARNINGS` appears 0 times in `run.sh`; the TS route has it (`counter_evidence.ts`, `episode_bridge.ts`) |
+
+```bash
+for p in idempot dedupe dead.letter backpressure retry timeout auth; do
+  printf '%-16s %s\n' "$p" "$(grep -ciE "$p" autonomy/trigger-server.py)"
+done
+```
+
+### The three exact gaps
+
+1. **Verifier records carry no cost, latency, criterion, or effect.** This is
+   the blocker for every downstream ask -- a marginal-lift comparison, a
+   promotion rule, and a canary decision all need per-verifier cost and
+   outcome, and none is emitted.
+
+2. **The trigger contract is three properties short.** Auth, timeout,
+   idempotency and bounded retry exist. Dedupe, dead-letter state and
+   backpressure do not. An idempotent trigger without dedupe still processes a
+   duplicate delivery; without dead-letter state a poisoned message retries to
+   its cap and vanishes.
+
+3. **The learnings loop is route-asymmetric.** `LOKI_AUTO_LEARNINGS` is
+   documented as default-on in the Bun runner and is absent from `run.sh`, so
+   the bash route contributes nothing to hill-climbing. Any trace-driven
+   improvement claim measured on one route does not transfer to the other.
+
+## Why architecture stays unchanged
+
+Every downstream ask in the directive -- matched online cohorts, marginal-lift
+per verifier, a promotion rule, a canary window -- is **downstream of
+measurement that does not exist**. Building a manifest, a cohort comparison or
+an automation rule on top of absent instrumentation would produce numbers with
+no referent.
+
+The cheapest surface that changes this is Phase A: a read-only reader that
+reports what IS recorded and names what is not. It is implemented and tested
+(`tools/loop-harness-report.py`, 8 assertions, both fabrication modes
+mutation-tested). Against this repo's own trace it reads 776 records, finds no
+verifier events, and exits 3 with a reason rather than printing an empty table
+that reads as a clean run.
+
+**The smallest reversible next step** is adopting Phase A and running it over
+a real build's trace. That yields the first honest per-verifier row set, and
+its UNKNOWN columns are the evidenced requirement that would justify Phase B
+instrumentation -- which is a runtime change and is deliberately not proposed
+until that evidence exists.
