@@ -249,12 +249,27 @@ cost, latency and tokens are all recorded per iteration with an honesty
 predicate. What is missing is not instrumentation but a *comparison*: no
 baseline pins a model choice to an outcome.
 
-### The caveat that bounds it
+### The caveat, and why it is smaller than it looked
 
 Efficiency records are WIPED at run start (`run.sh:6212`), which is why a
 historical run reports `cost_usd: None` and why this workspace holds zero
-records. A routing evaluation must therefore collect across runs as they
-happen, or read receipts, which retain cost after the fact.
+records.
+
+But receipts survive, and they DO carry the model. `proof-generator.py:627`
+resolves it through four sources -- an observed value, `LOKI_CURRENT_MODEL`,
+`LOKI_SESSION_MODEL`, `SESSION_MODEL` -- then the execution policy's
+`sdk_id`/`alias`, and only then returns the string `"unavailable"`. It never
+guesses.
+
+Verified end to end: generating a receipt with `LOKI_CURRENT_MODEL=
+claude-sonnet-5` yields `provider: {"name": "claude", "model":
+"claude-sonnet-5"}`. The nine archived receipts read `"model": "unavailable"`
+with `cost_usd: None` because they predate the efficiency wiring, not because
+the mechanism is missing.
+
+**So the cross-run corpus for a routing evaluation is the receipt archive**,
+which retains model, provider, cost, tokens and wall clock per run. No new
+instrumentation is required.
 
 ### What this changes about the proposal
 
