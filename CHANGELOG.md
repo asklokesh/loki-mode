@@ -5,6 +5,31 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.12.5
+
+### Fixed
+
+- **A running build displayed the badge "PENDING".** This was a direct
+  consequence of 9.12.4: making the runs API read the orchestrator's
+  `currentPhase` widened the status vocabulary it emits to include `building`,
+  `bootstrap` and `complete`. The dashboard's `RUN_STATUS_CONFIG` did not know
+  those, and the lookup falls back to `pending`:
+
+      const cfg = RUN_STATUS_CONFIG[status] || RUN_STATUS_CONFIG.pending;
+
+  So an actively building run told an operator it was queued -- worse than
+  showing nothing, because it states something false with confidence to
+  someone deciding whether their build is stuck.
+
+  `unknown` had the same defect and is arguably worse: the API returns it when
+  NO signal could be read at all, and rendering "Pending" claims the run is
+  queued when the truth is that nothing is known. It now renders "Unknown".
+
+  The regression test DERIVES the required vocabulary from `autonomy/run.sh`'s
+  own `currentPhase` writes rather than hand-copying a list, so it fails if the
+  runtime gains a phase the UI cannot render, and includes a vacuity guard so
+  an empty match set fails rather than passing silently.
+
 ## v9.12.4
 
 ### Fixed
