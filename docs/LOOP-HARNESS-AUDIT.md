@@ -490,3 +490,55 @@ to the runtime, now applied to the audit itself.
 One property short, not three. A trigger-to-run-to-receipt path is therefore
 much closer to complete than the audit claimed, and the remaining gap is
 narrow: a job that exhausts retries vanishes without a record.
+
+## Third correction: the last "gap" is smaller still
+
+Applying the new standard to my own remaining claim -- dead-letter state absent
+-- turned up a near-miss worth recording, because the mistake is instructive.
+
+Reading `_worker` (trigger-server.py:425) shows `dispatch_event` wrapped in
+`try/finally` with NO `except`. That looks like a serious defect: one handler
+exception would kill the worker thread, and with `DEFAULT_WORKERS = 4`, four
+failures would silently drain all capacity while the server kept returning 200.
+
+I reproduced exactly that behaviour and was ready to report it. **The
+reproduction was wrong**: it used a stub that raised, not the real
+`dispatch_event`.
+
+The real function catches everything (`trigger-server.py:356`):
+
+```python
+except Exception as e:  # defensive: never let a worker die on bad input
+    logging.exception("Handler for %s raised: %s", event_type, e)
+    summary, status = None, "error"
+```
+
+Verified against the actual code: `dispatch_event` returns `(None, "error")`
+without raising, logs the traceback, and the daemon thread count is unchanged
+(1 before, 1 after). The worker survives, and the guard is placed at the callee
+precisely so the bare `try/finally` in the loop is safe.
+
+### What that leaves
+
+A failed job IS recorded -- `logging.exception` plus `log_event(..., status)`.
+So "dead-letter state absent" overstates it too. What is genuinely missing is a
+*queryable* record: the failure lands in logs, not in a structure something
+could retry from or report on.
+
+That is a real but narrow gap, and it is not worth a runtime change on this
+evidence.
+
+### Score on my own audit
+
+Of the three trigger gaps originally claimed:
+
+- dedupe -- **present**, found by grepping the wrong noun
+- backpressure -- **present**, found by a malformed regex
+- dead-letter -- **overstated**; failures are logged, just not queryable
+
+And one defect I nearly reported was an artifact of testing my own mock.
+
+Four measurement errors in one audit section. The corrective standard, now
+demonstrated three times: **an absence is a hypothesis until the real code is
+read or executed** -- and a reproduction must exercise the real function, not
+a stand-in shaped like it.
