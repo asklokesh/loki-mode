@@ -21,13 +21,24 @@ The rule is deliberately narrow so it cannot break a working local setup:
     auth disabled + unknown peer    403, because an unidentifiable caller is
                                     the case where "assume local" is least safe
 
-A NOTE ON TESTING THIS. Starlette's TestClient reports its peer host as the
-literal string "testclient", not 127.0.0.1, so a TestClient request is treated
-as REMOTE by this guard and receives 403. That is a test artifact, not the
-behaviour a real local user sees: verified against a real uvicorn socket on
-127.0.0.1, a genuine loopback POST still returns 200. The tests below assert
-the remote-refusal half through TestClient and pin the loopback allowance by
-calling the dependency directly with a loopback address.
+ENFORCED CENTRALLY. The check is one http middleware over every mutating
+method, not a dependency added per route. All 46 mutating routes already
+carried require_scope and all 46 were bypassable, because require_scope is a
+no-op when auth is disabled -- the count of scoped routes described the code
+accurately and the security posture not at all. A per-route guard protects the
+ones someone remembered and leaves every future route unprotected.
+
+ONLY A ROUTABLE ADDRESS IS REFUSED. Starlette's TestClient reports its peer as
+the literal string "testclient", and in-process and UDS transports report names
+too; a peer that is not an IP literal is not evidence of a remote caller.
+Refusing every non-loopback string broke 17 existing tests. The check parses
+the address and refuses only what is genuinely routable.
+
+PROVEN ON A REAL SOCKET, not only through TestClient. With the server bound to
+0.0.0.0 (the documented container configuration):
+
+    POST http://127.0.0.1:57398/api/control/stop      -> 200
+    POST http://192.168.1.74:57398/api/control/stop   -> 403
 """
 
 import pathlib
@@ -106,20 +117,36 @@ class TheGuardDecidesCorrectly(unittest.TestCase):
         self.server.require_local_or_authenticated(_FakeRequest("203.0.113.7"))
 
 
-class EveryMutatingControlRouteCarriesTheGuard(unittest.TestCase):
+class TheBoundaryIsCentralNotPerRoute(unittest.TestCase):
+    """One middleware, not 46 hand-applied dependencies.
 
-    def test_all_six_are_guarded(self):
+    A first attempt added a dependency to six control routes by hand. That
+    shape protects the six someone remembered, leaves the other forty, and
+    every route added later starts unprotected. All 46 mutating routes already
+    carried require_scope and all 46 were bypassable, because require_scope is
+    a no-op when auth is disabled -- so the count of scoped routes described
+    the code accurately and the security posture not at all.
+    """
+
+    def test_a_single_http_middleware_gates_mutations(self):
         src = (_ROOT / "dashboard" / "server.py").read_text(
             encoding="utf-8", errors="replace")
-        for path in _MUTATING:
-            needle = ('@app.post("%s", dependencies=[Depends('
-                      'auth.require_scope("control")), '
-                      'Depends(require_local_or_authenticated)])' % path)
-            self.assertIn(
-                needle, src,
-                "%s does not carry require_local_or_authenticated; a remote "
-                "anonymous caller could invoke it on a 0.0.0.0 deployment"
-                % path)
+        self.assertIn(
+            '@app.middleware("http")', src,
+            "the dashboard boundary middleware is gone; mutations are gated "
+            "per-route again and any new route starts unprotected")
+        self.assertIn(
+            "async def dashboard_control_boundary", src,
+            "the boundary function was renamed or removed")
+
+    def test_the_boundary_is_not_reimplemented_per_route(self):
+        src = (_ROOT / "dashboard" / "server.py").read_text(
+            encoding="utf-8", errors="replace")
+        n = src.count("Depends(require_local_or_authenticated)")
+        self.assertEqual(
+            n, 0,
+            "%d routes carry the guard as a per-route dependency; the "
+            "boundary is central so a new route cannot be forgotten" % n)
 
 
 class ARemoteRequestIsRefusedEndToEnd(unittest.TestCase):

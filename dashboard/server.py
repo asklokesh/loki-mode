@@ -1059,6 +1059,42 @@ except Exception as _gzip_exc:  # pragma: no cover - starlette always ships it
     # than one that does not start.
     logger.warning("gzip compression unavailable: %s", _gzip_exc)
 
+# THE DASHBOARD BOUNDARY. One central fail-closed check, not a per-route flag.
+#
+# WHY MIDDLEWARE AND NOT A DEPENDENCY PER ROUTE. All 46 mutating routes already
+# carry Depends(auth.require_scope(...)). Every one of them is a NO-OP when
+# enterprise auth is disabled, which is the default -- require_scope returns
+# True in that mode. So "42 of 46 are scoped" described the code accurately and
+# the security posture not at all: a remote anonymous caller could invoke any
+# of them. Measured before this guard, with LOKI_ENTERPRISE_AUTH unset:
+#
+#     POST /api/control/stop      -> 200
+#     POST /api/control/app-stop  -> 200
+#
+# A first attempt added a dependency to six control routes by hand. That is the
+# wrong shape: it protects the six someone remembered, leaves the other forty,
+# and every route added later starts unprotected. The boundary is one place.
+#
+# THE RULE, chosen so zero-config local use does not change:
+#
+#     auth enabled                 -> require_scope decides, unchanged
+#     loopback caller              -> allowed, exactly as today
+#     non-IP peer (test/UDS)       -> allowed; a name is not evidence of remote
+#     routable remote + no auth    -> 403
+#
+# Only MUTATIONS are gated. Reads stay open so a container health probe, a
+# metrics scrape and the SPA itself keep working with no configuration.
+@app.middleware("http")
+async def dashboard_control_boundary(request: Request, call_next):
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        try:
+            require_local_or_authenticated(request)
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code,
+                                content={"detail": exc.detail})
+    return await call_next(request)
+
+
 # Static file serving is configured at the end of the file (after all API routes)
 
 # Mount V2 API router
@@ -4157,7 +4193,7 @@ def _start_supervised_workspace_build(
     )
 
 
-@app.post("/api/control/start", dependencies=[Depends(auth.require_scope("control")), Depends(require_local_or_authenticated)])
+@app.post("/api/control/start", dependencies=[Depends(auth.require_scope("control"))])
 async def start_build(request: Request, body: StartBuildRequest):
     """Start a Loki Mode build from a spec, kicked off from the browser.
 
@@ -7211,7 +7247,7 @@ def _read_events(time_range: str = "7d", max_events: int = 10000, type_prefix: O
 
 
 # Session control endpoints (proxy to control.py functions)
-@app.post("/api/control/pause", dependencies=[Depends(auth.require_scope("control")), Depends(require_local_or_authenticated)])
+@app.post("/api/control/pause", dependencies=[Depends(auth.require_scope("control"))])
 async def pause_session():
     """Pause the current session by creating PAUSE file."""
     if not _control_limiter.check("control"):
@@ -7254,7 +7290,7 @@ async def pause_session():
         )
 
 
-@app.post("/api/control/resume", dependencies=[Depends(auth.require_scope("control")), Depends(require_local_or_authenticated)])
+@app.post("/api/control/resume", dependencies=[Depends(auth.require_scope("control"))])
 async def resume_session():
     """Resume a paused session by removing PAUSE/STOP files."""
     if not _control_limiter.check("control"):
@@ -7313,7 +7349,7 @@ async def resume_session():
     )
 
 
-@app.post("/api/control/stop", dependencies=[Depends(auth.require_scope("control")), Depends(require_local_or_authenticated)])
+@app.post("/api/control/stop", dependencies=[Depends(auth.require_scope("control"))])
 async def stop_session(request: Request):
     """Stop the session by creating STOP file and sending SIGTERM."""
     if not _control_limiter.check("control"):
@@ -10888,7 +10924,7 @@ async def get_app_runner_errors(lines: int = Query(default=50, ge=1, le=500)):
     }
 
 
-@app.post("/api/control/app-restart", dependencies=[Depends(auth.require_scope("control")), Depends(require_local_or_authenticated)])
+@app.post("/api/control/app-restart", dependencies=[Depends(auth.require_scope("control"))])
 async def control_app_restart(request: Request):
     """Signal app runner to restart the application."""
     if not _control_limiter.check(request.client.host if request.client else "unknown"):
@@ -10901,7 +10937,7 @@ async def control_app_restart(request: Request):
     return {"status": "restart_signaled"}
 
 
-@app.post("/api/control/app-stop", dependencies=[Depends(auth.require_scope("control")), Depends(require_local_or_authenticated)])
+@app.post("/api/control/app-stop", dependencies=[Depends(auth.require_scope("control"))])
 async def control_app_stop(request: Request):
     """Signal app runner to stop the application."""
     if not _control_limiter.check(request.client.host if request.client else "unknown"):
