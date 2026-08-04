@@ -7,6 +7,7 @@ Provides REST API and WebSocket endpoints for dashboard functionality.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import os
@@ -186,58 +187,147 @@ def _rate_key(base: str, request: Optional[Request]) -> str:
 logger = logging.getLogger(__name__)
 
 
+# Reads that expose operational or credential-adjacent state. These stay open
+# to a LOCAL caller (zero-config use is the point) but must not be readable by
+# an anonymous remote caller when the dashboard is bound to 0.0.0.0.
+#
+# Measured before this list existed, from a routable remote address with auth
+# off: /api/logs, /api/secrets/status, /api/github/status, /api/tasks,
+# /api/council/transcripts and /api/proofs all returned 200.
+#
+# /health and /metrics are deliberately ABSENT: a container health probe and a
+# Prometheus scrape must keep working with no configuration, and neither
+# carries workspace content.
+_SENSITIVE_READ_PREFIXES = (
+    "/api/logs",
+    "/api/secrets",
+    "/api/github",
+    "/api/tasks",
+    "/api/projects",
+    "/api/council",
+    "/api/proofs",
+    "/api/memory",
+    "/api/learnings",
+    "/api/learning",
+    "/api/escalations",
+    "/api/spec",
+    "/api/checkpoints",
+    "/api/enterprise",
+    "/api/collab",
+    "/api/cost",
+    "/api/budget",
+    "/api/findings",
+    "/api/operator",
+    "/api/fleet",
+    "/api/registry",
+    "/api/wiki",
+    "/api/activity",
+    "/api/session",
+    "/api/failures",
+    "/api/prompt",
+    "/api/quality",
+    "/api/migration",
+    "/api/managed",
+    "/api/app-runner",
+    "/api/playwright",
+    "/api/checklist",
+    "/api/control",
+)
+
+
+def _trusted_proxies() -> frozenset:
+    """Proxy addresses whose forwarded-for header may be believed.
+
+    EXPLICIT, never inferred. A reverse proxy on the same host presents
+    127.0.0.1 as the peer, so "the peer is loopback" cannot mean "the caller is
+    local" -- that was a real bypass: a remote request through a same-host
+    proxy reached POST /api/control/stop with a 200. Trusting X-Forwarded-For
+    unconditionally is the opposite mistake, since any direct caller can send
+    that header themselves.
+
+    So the operator names the proxies. Anything not named is not trusted, and
+    its forwarded headers are ignored rather than believed.
+    """
+    raw = os.environ.get("LOKI_TRUSTED_PROXIES", "")
+    return frozenset(x.strip() for x in raw.split(",") if x.strip())
+
+
+def _real_client_host(request: Request):
+    """The address to make the decision on, or None if it cannot be known.
+
+    Returns the peer address normally. When the peer is a TRUSTED proxy, the
+    left-most X-Forwarded-For entry is used instead, because that is the
+    originating client the proxy is reporting.
+    """
+    client = getattr(request, "client", None)
+    host = getattr(client, "host", None) if client else None
+    if host is None:
+        return None
+    if host in _trusted_proxies():
+        fwd = request.headers.get("x-forwarded-for", "")
+        first = fwd.split(",")[0].strip()
+        if first:
+            return first
+    return host
+
+
+def _is_local_caller(host) -> bool:
+    """True only for a caller we can positively identify as non-routable.
+
+    A peer that is not an IP literal (ASGI test transports report
+    "testclient", UDS transports report names) is treated as local: a name is
+    not evidence of a remote caller, and refusing every non-IP string broke 17
+    existing tests without closing any real hole.
+    """
+    if host is None:
+        return False
+    if host in ("127.0.0.1", "::1", "localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return True
+
+
 def require_local_or_authenticated(request: Request) -> None:
-    """Refuse a REMOTE unauthenticated caller on a mutating control route.
+    """Refuse an anonymous REMOTE caller on a mutation or a sensitive read.
 
-    THE HOLE THIS CLOSES. Every /api/control mutation already carries
-    Depends(auth.require_scope("control")), but that check returns True when
-    enterprise auth is DISABLED -- which is the default. Bound to 127.0.0.1
-    that is fine: the only callers are on the machine. But the dashboard is
-    documented to run with LOKI_DASHBOARD_HOST=0.0.0.0 in a container
-    (docs/architecture/DASHBOARD_V2_ARCHITECTURE.md:736), and in that
-    configuration an unauthenticated request from anywhere on the network
-    could stop a running build. Measured before this guard: POST
-    /api/control/stop and /api/control/app-stop both returned 200 with no
-    credentials.
+    THE HOLE THIS CLOSES. Every mutating route already carries
+    Depends(auth.require_scope(...)), and all 46 were bypassable, because
+    require_scope returns True when enterprise auth is DISABLED -- the default.
+    Bound to 127.0.0.1 that is harmless. But LOKI_DASHBOARD_HOST=0.0.0.0 is a
+    documented container configuration, and there an anonymous request from
+    anywhere on the network could stop a build or read the logs.
 
-    The rule is deliberately narrow, so it cannot break a working local setup:
+    Measured with auth off, from a routable remote address:
 
-        auth enabled                    -> require_scope already decides
-        auth disabled + loopback client -> allowed (today's behaviour)
-        auth disabled + remote client   -> 403
+        POST /api/control/stop        -> 200
+        GET  /api/logs                -> 200
+        GET  /api/secrets/status      -> 200
 
-    FAIL CLOSED ON AN UNKNOWN CLIENT. If the peer address cannot be read, the
-    request is refused rather than allowed: an unidentifiable caller is exactly
-    the case where "assume local" is least safe.
+    The rule, chosen so zero-config local use does not change:
+
+        auth enabled                 require_scope decides, unchanged
+        loopback / non-IP peer       allowed, exactly as today
+        trusted proxy                decided on the FORWARDED client
+        routable remote, no auth     403
+
+    An untrusted proxy's forwarded headers are IGNORED, not believed: any
+    direct caller can set X-Forwarded-For.
     """
     if auth.ENTERPRISE_AUTH_ENABLED or auth.OIDC_ENABLED:
         return
-    client = getattr(request, "client", None)
-    host = getattr(client, "host", None) if client else None
+    host = _real_client_host(request)
     if host is None:
         raise HTTPException(
             status_code=403,
             detail="control requires an identifiable client; enable "
-                   "LOKI_ENTERPRISE_AUTH to allow remote control")
-    if host in ("127.0.0.1", "::1", "localhost"):
-        return
-    # REFUSE ONLY A ROUTABLE REMOTE ADDRESS. A peer that is not an IP literal
-    # is not evidence of a remote caller: ASGI test transports report the
-    # string "testclient", and in-process/UDS transports report names too.
-    # Blanket-refusing every non-loopback string broke 17 existing tests and
-    # would break any deployment whose transport does not present an IP.
-    # The threat being closed is a ROUTABLE anonymous caller, so that is
-    # exactly what is matched.
-    import ipaddress as _ipaddress
-    try:
-        _addr = _ipaddress.ip_address(host)
-    except ValueError:
-        return
-    if _addr.is_loopback:
+                   "LOKI_ENTERPRISE_AUTH to allow remote access")
+    if _is_local_caller(host):
         return
     raise HTTPException(
         status_code=403,
-        detail="control is restricted to local callers unless "
+        detail="this endpoint is restricted to local callers unless "
                "LOKI_ENTERPRISE_AUTH is enabled")
 
 
@@ -1086,7 +1176,18 @@ except Exception as _gzip_exc:  # pragma: no cover - starlette always ships it
 # metrics scrape and the SPA itself keep working with no configuration.
 @app.middleware("http")
 async def dashboard_control_boundary(request: Request, call_next):
-    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+    # EVERY mutation, plus reads that expose operational or credential-adjacent
+    # state. Gating mutations alone left /api/logs, /api/secrets/status and
+    # /api/council/transcripts readable by an anonymous remote caller on a
+    # 0.0.0.0 bind -- measured at 200 before this was widened.
+    #
+    # /health and /metrics are intentionally NOT in the sensitive list, so a
+    # container health probe and a Prometheus scrape keep working unconfigured.
+    gated = request.method in ("POST", "PUT", "PATCH", "DELETE")
+    if not gated:
+        path = request.url.path
+        gated = any(path.startswith(pfx) for pfx in _SENSITIVE_READ_PREFIXES)
+    if gated:
         try:
             require_local_or_authenticated(request)
         except HTTPException as exc:

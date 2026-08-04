@@ -41,6 +41,7 @@ PROVEN ON A REAL SOCKET, not only through TestClient. With the server bound to
     POST http://192.168.1.74:57398/api/control/stop   -> 403
 """
 
+import os
 import pathlib
 import sys
 import unittest
@@ -173,6 +174,113 @@ class ARemoteRequestIsRefusedEndToEnd(unittest.TestCase):
         finally:
             auth.ENTERPRISE_AUTH_ENABLED = ent
             auth.OIDC_ENABLED = oidc
+
+
+from starlette.testclient import TestClient  # noqa: E402
+
+
+class TheProxyBypassIsClosed(unittest.TestCase):
+    """A reverse proxy on the same host presents 127.0.0.1 as the peer.
+
+    "The peer is loopback" therefore cannot mean "the caller is local". This
+    was a REAL bypass, measured: a remote request carrying
+    X-Forwarded-For: 203.0.113.9 through a same-host proxy reached
+    POST /api/control/stop and got 200.
+
+    Trusting X-Forwarded-For unconditionally is the opposite mistake, because
+    any direct caller can send that header. So the operator names the proxies
+    in LOKI_TRUSTED_PROXIES, and an unnamed proxy's headers are IGNORED.
+    """
+
+    def setUp(self):
+        try:
+            from starlette.testclient import TestClient  # noqa: PLC0415
+            from dashboard import server, auth  # noqa: PLC0415
+        except Exception as exc:  # pragma: no cover
+            self.skipTest("dashboard/starlette not importable: %s" % exc)
+        self.TestClient, self.server, self.auth = TestClient, server, auth
+        self._ent, self._oidc = auth.ENTERPRISE_AUTH_ENABLED, auth.OIDC_ENABLED
+        auth.ENTERPRISE_AUTH_ENABLED = False
+        auth.OIDC_ENABLED = False
+        self._prox = os.environ.get("LOKI_TRUSTED_PROXIES")
+
+    def tearDown(self):
+        self.auth.ENTERPRISE_AUTH_ENABLED = self._ent
+        self.auth.OIDC_ENABLED = self._oidc
+        if self._prox is None:
+            os.environ.pop("LOKI_TRUSTED_PROXIES", None)
+        else:
+            os.environ["LOKI_TRUSTED_PROXIES"] = self._prox
+
+    def _client(self, host):
+        return self.TestClient(self.server.app, raise_server_exceptions=False,
+                               client=(host, 5555))
+
+    def test_a_trusted_proxy_forwarding_a_remote_client_is_refused(self):
+        os.environ["LOKI_TRUSTED_PROXIES"] = "127.0.0.1"
+        r = self._client("127.0.0.1").post(
+            "/api/control/stop", json={},
+            headers={"X-Forwarded-For": "203.0.113.9"})
+        self.assertEqual(
+            r.status_code, 403,
+            "a remote client forwarded by a TRUSTED proxy was allowed to "
+            "mutate; the loopback peer address masked a remote caller")
+
+    def test_an_untrusted_proxy_header_is_ignored_not_believed(self):
+        os.environ.pop("LOKI_TRUSTED_PROXIES", None)
+        r = self._client("127.0.0.1").post(
+            "/api/control/stop", json={},
+            headers={"X-Forwarded-For": "203.0.113.9"})
+        self.assertEqual(
+            r.status_code, 200,
+            "an UNTRUSTED X-Forwarded-For changed the decision; any direct "
+            "caller can set that header, so it must be ignored unless the "
+            "peer is a declared proxy")
+
+
+class SensitiveReadsAreGatedAndProbesAreNot(unittest.TestCase):
+    """Gating mutations alone left operational state readable.
+
+    Measured from a routable remote address with auth off, before the read
+    classification existed: /api/logs, /api/secrets/status, /api/github/status,
+    /api/tasks, /api/council/transcripts and /api/proofs all returned 200.
+    """
+
+    def setUp(self):
+        try:
+            from starlette.testclient import TestClient  # noqa: PLC0415
+            from dashboard import server, auth  # noqa: PLC0415
+        except Exception as exc:  # pragma: no cover
+            self.skipTest("dashboard/starlette not importable: %s" % exc)
+        self.server, self.auth = server, auth
+        self._ent, self._oidc = auth.ENTERPRISE_AUTH_ENABLED, auth.OIDC_ENABLED
+        auth.ENTERPRISE_AUTH_ENABLED = False
+        auth.OIDC_ENABLED = False
+        self.remote = TestClient(server.app, raise_server_exceptions=False,
+                                 client=("203.0.113.7", 5555))
+
+    def tearDown(self):
+        self.auth.ENTERPRISE_AUTH_ENABLED = self._ent
+        self.auth.OIDC_ENABLED = self._oidc
+
+    def test_sensitive_reads_are_refused_from_a_remote_caller(self):
+        for path in ("/api/logs", "/api/secrets/status", "/api/github/status",
+                     "/api/tasks", "/api/council/transcripts", "/api/proofs"):
+            r = self.remote.get(path)
+            self.assertEqual(
+                r.status_code, 403,
+                "%s returned %d to an anonymous remote caller"
+                % (path, r.status_code))
+
+    def test_health_and_metrics_stay_open(self):
+        """A container health probe and a Prometheus scrape must keep working
+        with no configuration, or the guard breaks every container."""
+        for path in ("/health", "/metrics"):
+            r = self.remote.get(path)
+            self.assertEqual(
+                r.status_code, 200,
+                "%s returned %d; unconfigured container probes would fail"
+                % (path, r.status_code))
 
 
 if __name__ == "__main__":
