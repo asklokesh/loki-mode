@@ -60,6 +60,7 @@ _EFFICIENCY_DIR = ("metrics", "efficiency")
 _COMPLETION = ("state", "completion.json")
 _MANIFEST = "loki-run.json"
 _SESSION = "session.json"
+_ORCHESTRATOR = os.path.join("state", "orchestrator.json")
 
 # Declared for the envelope so a caller can see exactly what was read, in the
 # style already used at autonomy/loki:21677 (a real path, not a label).
@@ -227,6 +228,22 @@ def _current_status(loki_dir: str) -> str:
         status = session.get("status")
         if status:
             return str(status)
+    # THE CANONICAL PHASE, and the reason this fallback exists. session.json is
+    # not written by the current runtime -- a live `loki start` produces
+    # .loki/state/orchestrator.json instead, and the CLI reads its
+    # `currentPhase` (autonomy/loki:4782). Reading only session.json made this
+    # API report "unknown" for every live run while the CLI, on the same
+    # workspace at the same instant, correctly reported BUILDING.
+    #
+    # Measured during a real run: CLI phase=BUILDING, API status=unknown.
+    # Two surfaces disagreeing about one run is exactly the divergence the
+    # operator API exists to prevent, so it now reads the same file the CLI
+    # does.
+    orch = _read_json(_p(loki_dir, _ORCHESTRATOR))
+    if isinstance(orch, dict):
+        phase = orch.get("currentPhase") or orch.get("phase")
+        if phase:
+            return str(phase).lower()
     return "unknown"
 
 
