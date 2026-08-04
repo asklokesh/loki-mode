@@ -213,6 +213,56 @@ run_test "--help shows usage information"
     exit 0
 ) && pass || fail "help output missing"
 
+# --- Test 10: a large non-git tree still produces output ---
+# REGRESSION GUARD. cmd_onboard's find fallback ends `| sort | head -200`.
+# Under `set -euo pipefail` head exits after 200 lines and the pipeline yields
+# 141 (SIGPIPE), which -e turned into a silent abort emitting ZERO bytes.
+#
+# SIZING IS LOAD-BEARING, and a 250-file fixture is NOT enough -- verified: it
+# passes against the unfixed code. `sort` must consume all input before it
+# emits, so `sort` (not `find`) is what head's exit signals, and with only ~50
+# lines left to write it fits the 64KB pipe buffer and exits cleanly. The
+# residual output has to EXCEED that buffer for the signal to land. 3000 files
+# reproduces exit 141 deterministically; 250 never does.
+#
+# Non-git on purpose: that is what forces the find branch. A git fixture would
+# take the already-guarded ls-files branch and prove nothing.
+run_test "large non-git tree does not die on SIGPIPE"
+(
+    big="$TEST_DIR/big-nongit"
+    mkdir -p "$big/src"
+    # Long names as well as many files: both push residual bytes past 64KB.
+    for i in $(seq 1 3000); do
+        echo "console.log($i);" > "$big/src/module_with_a_reasonably_long_name_$i.js"
+    done
+    echo '{"name":"big-nongit","version":"1.0.0"}' > "$big/package.json"
+    [ -e "$big/.git" ] && { echo "fixture must not be a git repo" >&2; exit 1; }
+
+    set +e
+    output=$("$LOKI" onboard "$big" --stdout 2>/dev/null)
+    rc=$?
+    set -e
+
+    if [ "$rc" -eq 141 ]; then
+        echo "exit 141 (SIGPIPE): the head -200 pipeline is unguarded again" >&2
+        exit 1
+    fi
+    if [ "$rc" -ne 0 ]; then
+        echo "exit $rc on a valid project tree" >&2
+        exit 1
+    fi
+    # Vacuity guard: exit 0 with no output is the exact bug, not a pass.
+    if [ "${#output}" -lt 100 ]; then
+        echo "produced ${#output} bytes; the abort emitted 0" >&2
+        exit 1
+    fi
+    if ! echo "$output" | grep -q "big-nongit"; then
+        echo "output does not name the project" >&2
+        exit 1
+    fi
+    exit 0
+) && pass || fail "non-git >200-file tree failed"
+
 echo ""
 echo "=== Results: $PASS/$TOTAL passed, $FAIL failed ==="
 
