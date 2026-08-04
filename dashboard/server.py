@@ -186,6 +186,61 @@ def _rate_key(base: str, request: Optional[Request]) -> str:
 logger = logging.getLogger(__name__)
 
 
+def require_local_or_authenticated(request: Request) -> None:
+    """Refuse a REMOTE unauthenticated caller on a mutating control route.
+
+    THE HOLE THIS CLOSES. Every /api/control mutation already carries
+    Depends(auth.require_scope("control")), but that check returns True when
+    enterprise auth is DISABLED -- which is the default. Bound to 127.0.0.1
+    that is fine: the only callers are on the machine. But the dashboard is
+    documented to run with LOKI_DASHBOARD_HOST=0.0.0.0 in a container
+    (docs/architecture/DASHBOARD_V2_ARCHITECTURE.md:736), and in that
+    configuration an unauthenticated request from anywhere on the network
+    could stop a running build. Measured before this guard: POST
+    /api/control/stop and /api/control/app-stop both returned 200 with no
+    credentials.
+
+    The rule is deliberately narrow, so it cannot break a working local setup:
+
+        auth enabled                    -> require_scope already decides
+        auth disabled + loopback client -> allowed (today's behaviour)
+        auth disabled + remote client   -> 403
+
+    FAIL CLOSED ON AN UNKNOWN CLIENT. If the peer address cannot be read, the
+    request is refused rather than allowed: an unidentifiable caller is exactly
+    the case where "assume local" is least safe.
+    """
+    if auth.ENTERPRISE_AUTH_ENABLED or auth.OIDC_ENABLED:
+        return
+    client = getattr(request, "client", None)
+    host = getattr(client, "host", None) if client else None
+    if host is None:
+        raise HTTPException(
+            status_code=403,
+            detail="control requires an identifiable client; enable "
+                   "LOKI_ENTERPRISE_AUTH to allow remote control")
+    if host in ("127.0.0.1", "::1", "localhost"):
+        return
+    # REFUSE ONLY A ROUTABLE REMOTE ADDRESS. A peer that is not an IP literal
+    # is not evidence of a remote caller: ASGI test transports report the
+    # string "testclient", and in-process/UDS transports report names too.
+    # Blanket-refusing every non-loopback string broke 17 existing tests and
+    # would break any deployment whose transport does not present an IP.
+    # The threat being closed is a ROUTABLE anonymous caller, so that is
+    # exactly what is matched.
+    import ipaddress as _ipaddress
+    try:
+        _addr = _ipaddress.ip_address(host)
+    except ValueError:
+        return
+    if _addr.is_loopback:
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="control is restricted to local callers unless "
+               "LOKI_ENTERPRISE_AUTH is enabled")
+
+
 # Pydantic schemas for API
 def _sanitize_text_field(value: str) -> str:
     """Strip/reject control characters from text fields."""
@@ -4102,7 +4157,7 @@ def _start_supervised_workspace_build(
     )
 
 
-@app.post("/api/control/start", dependencies=[Depends(auth.require_scope("control"))])
+@app.post("/api/control/start", dependencies=[Depends(auth.require_scope("control")), Depends(require_local_or_authenticated)])
 async def start_build(request: Request, body: StartBuildRequest):
     """Start a Loki Mode build from a spec, kicked off from the browser.
 
@@ -7156,7 +7211,7 @@ def _read_events(time_range: str = "7d", max_events: int = 10000, type_prefix: O
 
 
 # Session control endpoints (proxy to control.py functions)
-@app.post("/api/control/pause", dependencies=[Depends(auth.require_scope("control"))])
+@app.post("/api/control/pause", dependencies=[Depends(auth.require_scope("control")), Depends(require_local_or_authenticated)])
 async def pause_session():
     """Pause the current session by creating PAUSE file."""
     if not _control_limiter.check("control"):
@@ -7199,7 +7254,7 @@ async def pause_session():
         )
 
 
-@app.post("/api/control/resume", dependencies=[Depends(auth.require_scope("control"))])
+@app.post("/api/control/resume", dependencies=[Depends(auth.require_scope("control")), Depends(require_local_or_authenticated)])
 async def resume_session():
     """Resume a paused session by removing PAUSE/STOP files."""
     if not _control_limiter.check("control"):
@@ -7258,7 +7313,7 @@ async def resume_session():
     )
 
 
-@app.post("/api/control/stop", dependencies=[Depends(auth.require_scope("control"))])
+@app.post("/api/control/stop", dependencies=[Depends(auth.require_scope("control")), Depends(require_local_or_authenticated)])
 async def stop_session(request: Request):
     """Stop the session by creating STOP file and sending SIGTERM."""
     if not _control_limiter.check("control"):
@@ -10833,7 +10888,7 @@ async def get_app_runner_errors(lines: int = Query(default=50, ge=1, le=500)):
     }
 
 
-@app.post("/api/control/app-restart", dependencies=[Depends(auth.require_scope("control"))])
+@app.post("/api/control/app-restart", dependencies=[Depends(auth.require_scope("control")), Depends(require_local_or_authenticated)])
 async def control_app_restart(request: Request):
     """Signal app runner to restart the application."""
     if not _control_limiter.check(request.client.host if request.client else "unknown"):
@@ -10846,7 +10901,7 @@ async def control_app_restart(request: Request):
     return {"status": "restart_signaled"}
 
 
-@app.post("/api/control/app-stop", dependencies=[Depends(auth.require_scope("control"))])
+@app.post("/api/control/app-stop", dependencies=[Depends(auth.require_scope("control")), Depends(require_local_or_authenticated)])
 async def control_app_stop(request: Request):
     """Signal app runner to stop the application."""
     if not _control_limiter.check(request.client.host if request.client else "unknown"):
