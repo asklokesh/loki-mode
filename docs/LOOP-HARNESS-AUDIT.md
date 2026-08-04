@@ -406,11 +406,32 @@ diff no longer matches the tree. Any user who runs
 `loki start ./prd.md > run.log` inside the workspace gets a receipt that
 cannot verify, through no fault of their own.
 
-This is not the verifier misbehaving -- the tree genuinely changed. It is a
-usability trap in how a run is invoked, and it is worth fixing at the source:
-either the receipt should exclude the active log from its diff basis, or the
-documented invocation should place the log outside the workspace.
+### Scoping that claim honestly
 
-Not proposed as a change here, because the audit is scoped to measurement and
-this belongs to the receipt generator. Recorded so it is not rediscovered a
-third time.
+The first write-up called this a usability trap users would hit. Checking
+rather than assuming shrinks it:
+
+- the documented invocation is plain `loki start prd.md` (README:333, 342,
+  360) with NO redirection, so an interactive user never creates `run.log` in
+  the workspace
+- the runtime has no concept of its own log path -- grepping `run.sh` and the
+  CLI for `LOKI_RUN_LOG`, `RUN_LOG=` or a log-path helper returns nothing
+- `> run.log` appears nowhere in the docs; it was MY invocation choice for a
+  backgrounded run
+
+So this is not a shipped defect users are hitting. It is a real constraint on
+anyone who captures stdout inside the workspace -- CI harnesses, scripted
+runs, and future evaluation tooling -- and that includes the routing
+evaluation this audit is building toward.
+
+`workspace_diff.py:28` already has an `_excluded()` predicate (currently
+`.loki/` only), so excluding a known log path would be a one-line change. It
+is NOT proposed, for a specific reason: excluding by the literal name
+`run.log` would silently drop a user's own file of that name from the receipt,
+which is a worse failure than the one being fixed. A correct fix needs the
+runtime to know its own log path, and that is a runtime change with no
+evidenced user demand behind it.
+
+The durable output is the constraint, not a patch: **an evaluation harness
+must not write inside the workspace it measures**, including redirecting the
+run's own stdout there. Recorded so it is not rediscovered a third time.
