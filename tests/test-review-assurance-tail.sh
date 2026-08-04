@@ -481,7 +481,10 @@ run_review_case() {
     local spec="$4"
     local expected_sha="${5:-auto}"
     local requirements_limit="${6:-64000}"
-    local review_timeout="${7:-6}"
+    # Exported so a failure message can name the budget it actually ran under
+    # rather than a hardcoded literal that goes stale the moment it is tuned.
+    local review_timeout="${7:-${REVIEW_TEST_DEFAULT_TIMEOUT:-6}}"
+    REVIEW_TEST_LAST_TIMEOUT="$review_timeout"
     local deadline_grace="${8:-1}"
     local rc=0
     if [ "$expected_sha" = "auto" ]; then
@@ -952,7 +955,44 @@ for invalid_mode in \
     invalid_repo="$TMPROOT/$invalid_mode-repo"
     setup_repo "$invalid_repo"
     invalid_rc=$(run_review_case "$invalid_repo" 1 "$invalid_mode" "$SPEC")
-    invalid_review="$(find "$invalid_repo/.loki/quality/reviews" -mindepth 1 -maxdepth 1 -type d | head -1)"
+    # 2>/dev/null: when the run never got far enough to create the reviews
+    # directory, find writes "No such file or directory" to the harness's own
+    # stderr. That noise was the only visible symptom of the hole closed below.
+    invalid_review="$(find "$invalid_repo/.loki/quality/reviews" -mindepth 1 \
+        -maxdepth 1 -type d 2>/dev/null | head -1 || true)"
+
+    # PRECONDITION, not an assertion. If the review directory was never
+    # created, every file test below is being applied to a BARE PATH:
+    # `[ ! -s "/requirements-verifier.txt" ]` is TRUE for a file that does not
+    # exist, so the "no text fallback" conjunct passes for the wrong reason and
+    # the case dies later on the timing JSON -- reporting
+    # "accepted or retried as free-form text", which is not what happened. The
+    # product accepted nothing; it never reached the point of writing a verdict.
+    #
+    # The vacuity above is certain and is what this guard fixes. The TRIGGER is
+    # not: `requirements-malformed-json` is the single assertion failing on
+    # main's Tests run, and forcing a short LOKI_REVIEW_CALL_TIMEOUT (this loop
+    # passes 4 args, so it takes run_review_case's default) reproduced CI's
+    # exact message twice -- with `find: ... No such file or directory` on
+    # stderr -- and then STOPPED reproducing at the same budget on a later run.
+    # So do not read the timeout as a proven cause; it is a correlate that did
+    # not survive repetition. What is measured: 43/43 at the 6s default here,
+    # and one failing case in CI.
+    #
+    # run.sh:15300 maps rc 124 to outcome "deadline", which is absent from the
+    # {error, no_output} set below -- so a killed call cannot satisfy the
+    # assertion no matter what the product did. That is worth asserting against
+    # explicitly whether or not it is what CI hit.
+    #
+    # An absent directory is therefore reported as ITS OWN failure, naming the
+    # budget it ran under. An environment failure and a real fail-open
+    # regression must never share a message: that conflation is what sent this
+    # investigation to a wrong root cause once already.
+    if [ -z "$invalid_review" ] || [ ! -d "$invalid_review" ]; then
+        bad "$invalid_mode produced NO review directory (review call likely exceeded LOKI_REVIEW_CALL_TIMEOUT=${REVIEW_TEST_LAST_TIMEOUT:-?}s; this is an environment/timing failure, NOT a text fallback)"
+        continue
+    fi
+
     if [ "$invalid_rc" -ne 0 ] \
        && [ "$(requirements_call_count "$invalid_repo")" = "1" ] \
        && [ ! -s "$invalid_review/requirements-verifier.txt" ] \
@@ -961,7 +1001,16 @@ import json
 import sys
 
 record = json.load(open(sys.argv[1], encoding="utf-8"))
-assert record["outcome"] in {"error", "no_output"}
+outcome = record["outcome"]
+
+# "deadline" is rc 124 (run.sh:15300) -- the call was KILLED, so the contract
+# was never adjudicated. Naming it separately keeps a slow runner from being
+# reported as a fail-open product defect.
+assert outcome != "deadline", (
+    "review call hit its deadline (rc 124); the malformed contract was never "
+    "adjudicated, so this run proves nothing about fail-closed behaviour"
+)
+assert outcome in {"error", "no_output"}, "unexpected outcome %r" % outcome
 assert record["exit_code"] != 0
 PY
     then
