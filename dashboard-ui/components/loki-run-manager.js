@@ -20,6 +20,24 @@ const RUN_STATUS_CONFIG = {
   cancelled: { color: 'var(--loki-yellow, #eab308)',     bg: 'var(--loki-yellow-muted, rgba(234, 179, 8, 0.15))', label: 'Cancelled' },
   pending:   { color: 'var(--loki-text-muted, #939084)', bg: 'var(--loki-bg-tertiary, #ECEAE3)',                   label: 'Pending' },
   queued:    { color: 'var(--loki-text-muted, #939084)', bg: 'var(--loki-bg-tertiary, #ECEAE3)',                   label: 'Queued' },
+
+  // A THIRD VOCABULARY: the orchestrator's own phases. api_runs._current_status
+  // reads .loki/state/orchestrator.json `currentPhase` (the same file the CLI
+  // reads at autonomy/loki:4782), so a LIVE run now arrives here as
+  // 'building' or 'bootstrap' rather than 'running'. Without these entries the
+  // lookup below falls through to `pending`, and a build that is actively
+  // running renders the badge "PENDING" -- worse than unknown, because it
+  // states something false with confidence.
+  building:  { color: 'var(--loki-green, #22c55e)',      bg: 'var(--loki-green-muted, rgba(34, 197, 94, 0.15))',  label: 'Building' },
+  bootstrap: { color: 'var(--loki-green, #22c55e)',      bg: 'var(--loki-green-muted, rgba(34, 197, 94, 0.15))',  label: 'Bootstrap' },
+  complete:  { color: 'var(--loki-blue, #3b82f6)',       bg: 'var(--loki-blue-muted, rgba(59, 130, 246, 0.15))',  label: 'Completed' },
+  stopped:   { color: 'var(--loki-yellow, #eab308)',     bg: 'var(--loki-yellow-muted, rgba(234, 179, 8, 0.15))', label: 'Stopped' },
+  paused:    { color: 'var(--loki-yellow, #eab308)',     bg: 'var(--loki-yellow-muted, rgba(234, 179, 8, 0.15))', label: 'Paused' },
+
+  // UNKNOWN IS ITS OWN STATE, not a synonym for pending. api_runs returns
+  // "unknown" when no signal was found, and rendering that as "Pending" would
+  // claim a run is queued when the truth is that nothing could be read.
+  unknown:   { color: 'var(--loki-text-muted, #939084)', bg: 'var(--loki-bg-tertiary, #ECEAE3)',                   label: 'Unknown' },
 };
 
 /**
