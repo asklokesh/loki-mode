@@ -367,3 +367,50 @@ Two distinct models are needed before a comparison means anything. The archive
 now holds one real row (`sonnet`) plus nine degenerate ones. The evaluation
 remains unwritten, and that is still the honest position -- but step 1 is no
 longer hypothetical.
+
+## Step 2: two models, and the first real comparison
+
+A second real run, pinned with `LOKI_SESSION_MODEL=opus`, gives the corpus its
+second distinct model. Both runs used the same shape of task (a small pure
+helper plus its test) and both succeeded in one iteration.
+
+| | sonnet | opus |
+|---|---|---|
+| cost_usd | 1.3828 | **0.6823** |
+| output tokens | 7290 | **4446** |
+| wall_clock_sec | 576 | **472** |
+| progress duration_ms | 128000 | **71000** |
+| iterations | 1 succeeded | 1 succeeded |
+
+**This is two data points, not a finding.** Two runs of two different specs
+cannot separate model effect from task effect, and the directive's bar --
+lift exceeding latency and cost across baseline, ambitious E2E, and online
+cohorts -- is nowhere near cleared. Recorded because it is the first
+comparison the corpus has ever supported, and because the shape is now
+proven: the fields needed for a routing evaluation arrive populated and
+measured on every real run.
+
+## A real defect the corpus work surfaced
+
+Both receipts read FAILED on diff drift. The first time, the cause was my own
+verification run writing `.pytest_cache/`. The second time I deliberately
+touched nothing, and it STILL failed. The only file newer than the receipt:
+
+```
+run.log
+```
+
+**A run whose stdout is redirected into its own workspace invalidates its own
+receipt.** The log keeps growing after the receipt is signed, so the recorded
+diff no longer matches the tree. Any user who runs
+`loki start ./prd.md > run.log` inside the workspace gets a receipt that
+cannot verify, through no fault of their own.
+
+This is not the verifier misbehaving -- the tree genuinely changed. It is a
+usability trap in how a run is invoked, and it is worth fixing at the source:
+either the receipt should exclude the active log from its diff basis, or the
+documented invocation should place the log outside the workspace.
+
+Not proposed as a change here, because the audit is scoped to measurement and
+this belongs to the receipt generator. Recorded so it is not rediscovered a
+third time.
