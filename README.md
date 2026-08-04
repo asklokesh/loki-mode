@@ -2,6 +2,8 @@
 
 # Loki Mode
 
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.asklokesh%2Floki-mode.svg)](https://mcptoplist.com/server/io.github.asklokesh%2Floki-mode)
+
 ### The spec-driven autonomous builder with verified completion.
 
 _The free, source-available autonomous coding agent by [Autonomi](https://www.autonomi.dev/). Same Loki CLI, SDK, and MCP for everyone; the commercial editions for teams and enterprises are sold under the **Autonomi** brand (Autonomi Cloud, Autonomi Enterprise)._
