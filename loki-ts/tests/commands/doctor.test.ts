@@ -297,6 +297,14 @@ describe("doctor.buildDoctorJson", () => {
     if (json.ai_provider.status === "pass") pass++;
     else if (json.ai_provider.status === "fail") fail++;
     else warn++;
+    // Skill-link integrity is counted per entry, exactly as buildDoctorJson
+    // and the text path tally it -- a dangling ~/.claude/skills/loki-mode is a
+    // genuine failure, so omitting it here understates the tally by one.
+    for (const s of json.skills) {
+      if (s.status === "pass") pass++;
+      else if (s.status === "fail") fail++;
+      else warn++;
+    }
     expect(json.summary.passed).toBe(pass);
     expect(json.summary.failed).toBe(fail);
     expect(json.summary.warnings).toBe(warn);
