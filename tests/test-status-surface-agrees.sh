@@ -58,7 +58,9 @@ bad = []
 for i, line in enumerate(lines):
     # Cover BOTH terminal writes at a blocking pause: the intervention record
     # and the stopped relabel (the queue can change while the run sits paused,
-    # so the relabel needs its own refresh, not the pause's older one).
+    # so the relabel needs its own refresh, not the older one from the pause).
+    # bash 3.2 scans for quotes inside this heredoc even though the delimiter is
+    # quoted, and it sits in $( ) -- keep this body free of apostrophes.
     if not (
         "build_completion_summary intervention" in line
         or "build_completion_summary stopped" in line
@@ -89,7 +91,9 @@ bad = []
 for i, line in enumerate(lines):
     # Cover BOTH terminal writes at a blocking pause: the intervention record
     # and the stopped relabel (the queue can change while the run sits paused,
-    # so the relabel needs its own refresh, not the pause's older one).
+    # so the relabel needs its own refresh, not the older one from the pause).
+    # bash 3.2 scans for quotes inside this heredoc even though the delimiter is
+    # quoted, and it sits in $( ) -- keep this body free of apostrophes.
     if not (
         "build_completion_summary intervention" in line
         or "build_completion_summary stopped" in line
