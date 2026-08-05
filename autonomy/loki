@@ -11630,7 +11630,19 @@ except Exception:
             pass_count=$((pass_count + 1))
         elif [ -L "$sdir" ]; then
             local _target
-            _target=$(readlink "$sdir" 2>/dev/null || echo "unknown")
+            # readlink is NOT in POSIX and is absent from minimal images and
+            # from constrained PATHs (the doctor parity harness builds one).
+            # When it is missing this reported the literal string "unknown"
+            # while the Bun route printed the real target, so the two routes
+            # diverged on the same host and bun-parity went red. ls -ld is
+            # POSIX and always present; strip through the FIRST " -> " only,
+            # since a link target may itself contain that sequence.
+            if command -v readlink >/dev/null 2>&1; then
+                _target=$(readlink "$sdir" 2>/dev/null || echo "unknown")
+            else
+                _target=$(ls -ld "$sdir" 2>/dev/null | sed -e 's/^[^>]*-> //')
+                [ -n "$_target" ] || _target="unknown"
+            fi
             echo -e "  ${RED}FAIL${NC}  $sname  ${DIM}(broken symlink -> $_target)${NC}"
             echo -e "         ${YELLOW}Fix: loki setup-skill${NC}"
             _doctor_block "$sname is a broken symlink. Fix: loki setup-skill"
