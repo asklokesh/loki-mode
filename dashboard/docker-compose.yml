@@ -25,6 +25,7 @@ services:
     environment:
       - LOKI_DASHBOARD_HOST=0.0.0.0
       - LOKI_DASHBOARD_PORT=57374
+      - LOKI_DATA_DIR=/home/appuser/.loki
       - LOKI_ENTERPRISE_AUTH=${LOKI_ENTERPRISE_AUTH:-false}
       - LOKI_ENTERPRISE_AUDIT=${LOKI_ENTERPRISE_AUDIT:-false}
       - LOKI_AUDIT_MAX_SIZE_MB=${LOKI_AUDIT_MAX_SIZE_MB:-10}

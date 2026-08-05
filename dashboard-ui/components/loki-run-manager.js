@@ -10,6 +10,7 @@
 import { LokiElement } from '../core/loki-theme.js';
 import { getApiClient } from '../core/loki-api-client.js';
 import { registerPoll } from '../core/loki-poll-registry.js';
+import { dataFreshness, freshnessText, freshestRowS } from '../core/loki-freshness.js';
 
 /** @type {Object<string, {color: string, bg: string, label: string}>} */
 const RUN_STATUS_CONFIG = {
@@ -19,6 +20,24 @@ const RUN_STATUS_CONFIG = {
   cancelled: { color: 'var(--loki-yellow, #eab308)',     bg: 'var(--loki-yellow-muted, rgba(234, 179, 8, 0.15))', label: 'Cancelled' },
   pending:   { color: 'var(--loki-text-muted, #939084)', bg: 'var(--loki-bg-tertiary, #ECEAE3)',                   label: 'Pending' },
   queued:    { color: 'var(--loki-text-muted, #939084)', bg: 'var(--loki-bg-tertiary, #ECEAE3)',                   label: 'Queued' },
+
+  // A THIRD VOCABULARY: the orchestrator's own phases. api_runs._current_status
+  // reads .loki/state/orchestrator.json `currentPhase` (the same file the CLI
+  // reads at autonomy/loki:4782), so a LIVE run now arrives here as
+  // 'building' or 'bootstrap' rather than 'running'. Without these entries the
+  // lookup below falls through to `pending`, and a build that is actively
+  // running renders the badge "PENDING" -- worse than unknown, because it
+  // states something false with confidence.
+  building:  { color: 'var(--loki-green, #22c55e)',      bg: 'var(--loki-green-muted, rgba(34, 197, 94, 0.15))',  label: 'Building' },
+  bootstrap: { color: 'var(--loki-green, #22c55e)',      bg: 'var(--loki-green-muted, rgba(34, 197, 94, 0.15))',  label: 'Bootstrap' },
+  complete:  { color: 'var(--loki-blue, #3b82f6)',       bg: 'var(--loki-blue-muted, rgba(59, 130, 246, 0.15))',  label: 'Completed' },
+  stopped:   { color: 'var(--loki-yellow, #eab308)',     bg: 'var(--loki-yellow-muted, rgba(234, 179, 8, 0.15))', label: 'Stopped' },
+  paused:    { color: 'var(--loki-yellow, #eab308)',     bg: 'var(--loki-yellow-muted, rgba(234, 179, 8, 0.15))', label: 'Paused' },
+
+  // UNKNOWN IS ITS OWN STATE, not a synonym for pending. api_runs returns
+  // "unknown" when no signal was found, and rendering that as "Pending" would
+  // claim a run is queued when the truth is that nothing could be read.
+  unknown:   { color: 'var(--loki-text-muted, #939084)', bg: 'var(--loki-bg-tertiary, #ECEAE3)',                   label: 'Unknown' },
 };
 
 /**
@@ -87,6 +106,85 @@ export class LokiRunManager extends LokiElement {
     this._runs = [];
     this._pollInterval = null;
     this._lastDataHash = null;
+    // An empty result must be able to say WHY. The envelope readers
+    // (dashboard/api_runs.py) carry `reason`; without keeping it, "no runs
+    // exist" and "the runs could not be read" render identically, which is
+    // the single most misleading thing a monitoring panel can do.
+    this._emptyReason = null;
+    // Which files the answer was read from. An empty panel that cannot say
+    // what it looked at cannot be audited.
+    this._source = null;
+    // Freshness inputs. `_freshPayload` holds whatever the response carried a
+    // server-side freshness_s on (the envelope, or the newest run row);
+    // `_changedAtMs` is the fallback clock for a payload that carries none.
+    // Both stay null until a load actually succeeds, so a component that has
+    // never loaded reports UNKNOWN rather than "0s ago".
+    this._freshPayload = null;
+    this._changedAtMs = null;
+  }
+
+  /**
+   * Current data age for this component.
+   *
+   * Prefers the server's freshness_s (the age of the FILE the answer was read
+   * from) and falls back to when this data last CHANGED. /api/v2/runs returns
+   * a bare list from the SQL store, but its filesystem fallback rows
+   * (dashboard/api_runs.py `_row`) each carry freshness_s -- so the
+   * authoritative path is live whenever the data came from the filesystem,
+   * which is every real `loki start`.
+   */
+  _freshness() {
+    // The AGE is always shown. The STALE MARKER is scoped to a run that claims
+    // to be running, and that scoping is the whole point of it.
+    //
+    // freshness_s grows without bound on an idle workspace, so an unscoped
+    // threshold would paint a permanent warning over "the last run finished
+    // three days ago" -- which is true, unremarkable, and exactly how you
+    // train an operator to stop reading a marker. A run whose status says
+    // RUNNING while its files have not been touched in two minutes is the
+    // actionable case: something claims to be working and is not writing.
+    // Set staleAfterS to Infinity rather than skipping the computation, so
+    // `known` and `ageS` keep their meaning and only `isStale` is suppressed.
+    //
+    // TWO ROUTES, TWO VOCABULARIES, so the predicate accepts either. The SQL
+    // store says `running` (the vocabulary this file's own RUN_STATUS_CONFIG
+    // and its Cancel button already assume). The filesystem fallback in
+    // dashboard/api_runs._row -- which is the ONLY route that carries
+    // freshness_s, and therefore the only one where a server-authoritative age
+    // exists at all -- passes `.loki/session.json`'s status straight through
+    // and additionally marks the live run with `current: true`. Historical
+    // rows there are hardcoded "unknown". Keying on `current` as well as the
+    // status string means the marker cannot be silently inert on the exact
+    // path that has the better age, which is what a status-string-only
+    // predicate would risk on any runner that renames its session status.
+    const isLive = (r) => {
+      if (!r) return false;
+      if (r.current === true) return true;
+      const s = String(r.status || '').toLowerCase();
+      return s === 'running' || s === 'in_progress' || s === 'active';
+    };
+    return dataFreshness({
+      payload: this._freshPayload,
+      receivedAtMs: this._changedAtMs,
+      staleAfterS: this._runs.some(isLive) ? undefined : Infinity,
+    });
+  }
+
+  /**
+   * Patch the freshness span in place, without rebuilding the shadow DOM.
+   * Used on the unchanged-data path so a scrolling table keeps its scroll
+   * position while the age keeps ticking.
+   */
+  _renderFreshness() {
+    const el = this.shadowRoot && this.shadowRoot.getElementById('freshness');
+    if (!el) return;
+    const f = this._freshness();
+    el.className = `freshness ${!f.known ? 'is-unknown' : (f.isStale ? 'is-stale' : '')}`;
+    el.dataset.source = f.source;
+    el.dataset.stale = f.isStale === null ? 'unknown' : String(f.isStale);
+    // textContent, not innerHTML: freshnessText is generated, but assigning it
+    // as markup would be one refactor away from injecting a server string.
+    el.textContent = freshnessText(f);
   }
 
   get projectId() {
@@ -162,11 +260,50 @@ export class LokiRunManager extends LokiElement {
       // Drop a stale response if the api-url switched mid-flight.
       if (api !== this._api) return;
       const runs = data?.runs || data || [];
+      const rows = Array.isArray(runs) ? runs : [];
+      // Envelope first (a reader that returns {runs, freshness_s}); otherwise
+      // the freshest of the rows, which is where the filesystem adapter in
+      // dashboard/api_runs.py puts it.
+      this._freshPayload =
+        (data && typeof data === 'object' && !Array.isArray(data) && 'freshness_s' in data)
+          ? data
+          : { freshness_s: freshestRowS(rows) };
+
       const dataHash = JSON.stringify(runs);
-      if (dataHash === this._lastDataHash) return;
-      this._lastDataHash = dataHash;
-      this._runs = Array.isArray(runs) ? runs : [];
+      // `|| this._error` is load-bearing: after a failed fetch the next
+      // SUCCESSFUL poll often returns a byte-identical payload, and without
+      // this the render is skipped and the stale error banner survives a
+      // recovery that already happened.
+      const changed = dataHash !== this._lastDataHash || !!this._error;
+      if (changed) {
+        this._lastDataHash = dataHash;
+        this._runs = rows;
+        // The client fallback stamps when the data CHANGED, not when the last
+        // response arrived. Stamping every poll would measure our own polling
+        // cadence -- a 5s loop would report "0s ago" forever, including for a
+        // run table that has been frozen since the runner died an hour ago,
+        // which is the exact lie this whole feature exists to stop telling.
+        this._changedAtMs = Date.now();
+      }
+      this._emptyReason =
+        (data && !Array.isArray(data) && data.reason) || null;
+      this._source =
+        (data && !Array.isArray(data) && data.source) || null;
       this._error = null;
+      this._loading = false;
+
+      // Unchanged data must NOT rebuild the shadow DOM. render() reassigns
+      // innerHTML wholesale, and .runs-table-wrapper scrolls -- a full rebuild
+      // every 5s would destroy the user's scroll position, text selection and
+      // button focus on an idle system. That is what the original dedupe
+      // early-return protected, and it stays protected. Only the age keeps
+      // moving while the payload does not, so patch that one node in place.
+      if (changed) {
+        this.render();
+      } else {
+        this._renderFreshness();
+      }
+      return;
     } catch (err) {
       // Drop a stale response if the api-url switched mid-flight.
       if (api !== this._api) return;
@@ -363,6 +500,27 @@ export class LokiRunManager extends LokiElement {
         color: var(--loki-text-muted, #939084);
         margin-bottom: 8px;
       }
+
+      .freshness {
+        font-size: 11px;
+        color: var(--loki-text-muted, #939084);
+        white-space: nowrap;
+      }
+
+      .freshness.is-stale {
+        color: var(--loki-yellow, #D4A03C);
+        font-weight: 600;
+      }
+
+      .freshness.is-unknown {
+        font-style: italic;
+      }
+
+      .header-right {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
     `;
   }
 
@@ -375,8 +533,26 @@ export class LokiRunManager extends LokiElement {
     let content;
     if (this._loading && runs.length === 0) {
       content = '<div class="loading">Loading runs...</div>';
+    } else if (this._error && runs.length === 0) {
+      // A FAILED fetch is not an empty result. Rendering "No runs found."
+      // here would make a blind panel look like a healthy idle one.
+      content =
+        // role="status" (polite), NOT role="alert". This panel polls every
+        // 5s and render() replaces innerHTML wholesale, so a persistent
+        // outage re-creates this node forever; an assertive region would
+        // interrupt a screen-reader user every 5 seconds for the whole outage.
+        '<div class="empty-state error-state" role="status" aria-live="polite">' +
+        'Could not load runs.' +
+        `<div class="error-state-detail">${this._escapeHtml(this._error)}</div></div>`;
     } else if (runs.length === 0) {
-      content = '<div class="empty-state">No runs found.</div>';
+      const why = this._emptyReason
+        ? `<div class="empty-reason">${this._escapeHtml(this._emptyReason)}</div>`
+        : '<div class="empty-reason">The server did not state a reason.</div>';
+      const src = this._source
+        ? `<div class="empty-source">Read from: ${this._escapeHtml(
+             Array.isArray(this._source) ? this._source.join(', ') : this._source)}</div>`
+        : '';
+      content = `<div class="empty-state" role="status" aria-live="polite">No runs found.${why}${src}</div>`;
     } else {
       const rows = runs.map(run => {
         const status = (run.status || 'pending').toLowerCase();
@@ -424,12 +600,21 @@ export class LokiRunManager extends LokiElement {
       `;
     }
 
+    // Data age. Never rendered as 0 when it was not measured: an unloaded or
+    // envelope-less response reads "Data age unknown", which is a different
+    // statement from "0s ago".
+    const f = this._freshness();
+    const freshClass = !f.known ? 'is-unknown' : (f.isStale ? 'is-stale' : '');
+
     s.innerHTML = `
       <style>${this.getBaseStyles()}${this._getStyles()}</style>
       <div class="run-manager">
         <div class="header">
           <h2 class="title">Run Manager</h2>
-          <button class="btn btn-refresh" id="refresh-btn">Refresh</button>
+          <div class="header-right">
+            <span class="freshness ${freshClass}" id="freshness" data-source="${f.source}" data-stale="${f.isStale === null ? 'unknown' : String(f.isStale)}">${this._escapeHtml(freshnessText(f))}</span>
+            <button class="btn btn-refresh" id="refresh-btn">Refresh</button>
+          </div>
         </div>
         ${content}
         ${this._error ? `<div class="error-banner">${this._escapeHtml(this._error)}</div>` : ''}

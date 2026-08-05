@@ -42,6 +42,17 @@ wiki-repo/
 # Source hooks live in autonomy/hooks/ (tracked)
 .loki/
 
+# EXCEPTION: test fixtures. tests/fixtures/project-graph/acme/ models a
+# multi-repo logical app, and loki_project_graph_discover only activates when
+# each member carries a `.loki/app.json` marker. Because `.loki/` above is
+# ignored globally, those markers could never be committed -- so the fixture
+# shipped with CLAUDE.md files and nothing to discover, and every suite relying
+# on it failed from birth while suites that synthesized their own markers
+# inline passed. That is the root cause, not the tests.
+# Negated narrowly (this one fixture path) rather than by weakening the rule.
+!tests/fixtures/**/.loki/
+!tests/fixtures/**/.loki/app.json
+
 # Runtime state in subdirectories
 dashboard-ui/.loki/
 vscode-extension/.loki/
@@ -77,6 +88,10 @@ tmp/
 HANDOFF.md
 # Internal strategy / roadmap / next-steps / MOAT specs -- hidden from the public repo.
 artifacts/ROADMAP-*.md
+artifacts/STRATEGY.md
+artifacts/AUTONOMOUS-SESSION-*.md
+artifacts/FOUNDER-HANDOFF-*.md
+artifacts/V8-SESSION-STATE.md
 artifacts/v7-e2e-saas/MOAT-*.md
 artifacts/v7-e2e-saas/DESIGN-*.md
 # Internal build/test/e2e output + screenshots under artifacts/ -- scratch, not
@@ -94,3 +109,23 @@ artifacts/live-preview-screens/
 artifacts/observability/screenshot.png
 artifacts/paolo/
 artifacts/v781-e2e/
+artifacts/E2E-CLIENT-FIX-RESULTS.md
+artifacts/V8-FACTORY-BACKLOG.md
+
+# Competitive research scratch (OpenHands vs Loki v8) - not product
+research/openhands-competitive/
+
+# A/B benchmark trial history and rendered dashboard (local measurement data)
+benchmarks/results/ab-history.jsonl
+benchmarks/results/ab-dashboard.html
+benchmarks/results/speed-*.json
+
+# graphify knowledge-graph artifacts (regenerable, machine-local)
+graphify-out/
+
+# Generated HumanEval model output. run-benchmarks.sh creates this dir
+# (mkdir -p at :531) and writes {task}.py into it (:867); nothing reads it.
+# Regenerate by re-running the benchmark. 164 files were committed by
+# accident and removed 2026-08-03.
+benchmarks/results/humaneval-loki-solutions/
+benchmarks/results/humaneval-solutions/

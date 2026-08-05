@@ -8,15 +8,17 @@ This guide covers network-level security controls for restricting outbound netwo
 
 ## Environment Variables
 
-The following environment variables control network egress policy enforcement:
+**None of the variables below are implemented. Do not rely on them.** They are
+reserved names for a planned application-level enforcement layer, and no
+runtime code reads any of them today. Network security is enforced entirely at
+the infrastructure level, using the Docker network and Kubernetes NetworkPolicy
+recipes in the rest of this guide.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LOKI_NETWORK_EGRESS_POLICY` | `unrestricted` | `unrestricted` (default), `ai-only` (restrict to AI APIs), `none` (block all outbound) |
-| `LOKI_ALLOWED_HOSTS` | (empty) | Comma-separated list of additional hostnames to allow when egress policy is `ai-only` |
-| `LOKI_BLOCK_METADATA_ENDPOINT` | `false` | Block cloud metadata endpoint (169.254.169.254) from within the application |
-
-Note: These variables are reserved for future application-level enforcement. Currently, network security is implemented at the infrastructure level using Docker networks or Kubernetes NetworkPolicy.
+| Variable | Default | Description | Status |
+|----------|---------|-------------|--------|
+| `LOKI_NETWORK_EGRESS_POLICY` | `unrestricted` | `unrestricted` (default), `ai-only` (restrict to AI APIs), `none` (block all outbound) | Planned, target TBD |
+| `LOKI_ALLOWED_HOSTS` | (empty) | Comma-separated list of additional hostnames to allow when egress policy is `ai-only` | Planned, target TBD |
+| `LOKI_BLOCK_METADATA_ENDPOINT` | `false` | Block cloud metadata endpoint (169.254.169.254) from within the application | Planned, target TBD |
 
 ## Docker Network Isolation
 
@@ -56,8 +58,10 @@ iptables -A DOCKER-USER -p tcp --dport 53 -j ACCEPT
 iptables -A DOCKER-USER -d api.anthropic.com -p tcp --dport 443 -j ACCEPT
 # OpenAI (Codex)
 iptables -A DOCKER-USER -d api.openai.com -p tcp --dport 443 -j ACCEPT
-# Google (Gemini)
-iptables -A DOCKER-USER -d generativelanguage.googleapis.com -p tcp --dport 443 -j ACCEPT
+# Add one rule per endpoint your chosen provider actually calls. Cline, Aider,
+# and opencode are model-agnostic, so their endpoints depend on your config.
+# The Gemini rule that used to sit here was removed with the provider (v7.5.18);
+# do not re-add an allowlist entry for a provider you are not running.
 
 # Drop all other outbound traffic from the isolated network
 iptables -A DOCKER-USER -s 172.28.0.0/16 -j DROP
@@ -185,8 +189,7 @@ spec:
 Enable encrypted dashboard connections:
 
 ```bash
-# Using environment variables
-export LOKI_TLS_ENABLED=true
+# HTTPS turns on when BOTH are set. There is no LOKI_TLS_ENABLED switch.
 export LOKI_TLS_CERT=/path/to/cert.pem
 export LOKI_TLS_KEY=/path/to/key.pem
 

@@ -1,0 +1,81 @@
+<!doctype html><meta charset=utf-8><title>Loki gate speedup</title>
+<style>
+:root{--bg:#0f1115;--fg:#e6e8ee;--mut:#8b93a7;--ok:#3ddc97;--warn:#ffb454;--line:#232838;--accent:#7aa2ff}
+@media(prefers-color-scheme:light){:root{--bg:#fbfbfd;--fg:#161922;--mut:#5b6478;--ok:#0f9d58;--warn:#b26a00;--line:#e3e6ee;--accent:#2b5cff}}
+*{box-sizing:border-box}body{margin:0;padding:2.5rem 1.25rem;background:var(--bg);color:var(--fg);
+font:15px/1.55 ui-sans-serif,-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:840px;margin:0 auto}h1{font-size:1.6rem;margin:0 0 .25rem;letter-spacing:-.02em}
+h2{font-size:1.05rem;margin:2rem 0 .6rem}.sub{color:var(--mut);margin:0 0 1.8rem}
+.hero{display:flex;gap:1rem;flex-wrap:wrap;margin:0 0 1.8rem}
+.card{flex:1 1 170px;border:1px solid var(--line);border-radius:10px;padding:1rem 1.1rem}
+.card .k{color:var(--mut);font-size:.76rem;text-transform:uppercase;letter-spacing:.06em}
+.card .v{font-size:1.7rem;font-weight:650;margin-top:.3rem;font-variant-numeric:tabular-nums}
+.card .v.ok{color:var(--ok)}
+table{width:100%;border-collapse:collapse;margin:0 0 1rem}
+th,td{text-align:left;padding:.55rem .5rem;border-bottom:1px solid var(--line)}
+th{color:var(--mut);font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.05em}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.note{color:var(--mut);font-size:.88rem;border-left:2px solid var(--accent);padding-left:.9rem;margin:1.2rem 0}
+.warn{border-left-color:var(--warn)}
+code{background:color-mix(in srgb,var(--fg) 8%,transparent);padding:.1rem .35rem;border-radius:4px;font-size:.86em}
+footer{color:var(--mut);font-size:.8rem;margin-top:2.4rem;border-top:1px solid var(--line);padding-top:1rem}
+</style>
+<div class=wrap>
+<h1>Gate latency</h1>
+<p class=sub>Measured on loki-mode, same machine, before and after. Generated 2026-07-30T06:14:06Z.</p>
+<div class=hero>
+<div class=card><div class=k>Fast tier</div><div class="v ok">77<span style="font-size:.9rem">s</span></div></div>
+<div class=card><div class=k>Checks</div><div class=v>66</div></div>
+<div class=card><div class=k>Failures</div><div class="v ok">0</div></div>
+<div class=card><div class=k>Was</div><div class=v>30+<span style="font-size:.9rem">min</span></div></div>
+</div>
+<h2>Per-suite</h2>
+<table><tr><th>Suite</th><th class=n>Before (ms)</th><th class=n>After (ms)</th><th class=n>Gain</th></tr>
+<tr><td><code>run-shellcheck.sh</code></td><td class=n>114,024</td><td class=n>57,732</td><td class=n><b>2.0x</b></td></tr><tr><td><code>detect-test-mutations.sh</code></td><td class=n>12,188</td><td class=n>3,462</td><td class=n><b>3.5x</b></td></tr><tr><td><code>detect-mock-problems.sh</code></td><td class=n>11,275</td><td class=n>4,227</td><td class=n><b>2.7x</b></td></tr><tr><td><code>test-provider-invoke-argv.sh</code></td><td class=n>15,682</td><td class=n>2,865</td><td class=n><b>5.5x</b></td></tr>
+<tr><td><b>These four</b></td><td class=n><b>153,169</b></td><td class=n><b>68,286</b></td><td class=n><b>2.2x</b></td></tr>
+</table>
+<h2>Where the time actually was</h2>
+<p class=note>Not the four full-tree <code>find</code> walks (120&nbsp;ms total). It was <b>4,022 and
+4,805 subprocess spawns</b> -- one <code>grep</code> per file per pattern, now ~30 and ~130.
+System time fell 9.1&nbsp;s to 0.5&nbsp;s. For the linter, <b>two files</b> dominate:
+<code>run.sh</code> (24,305 lines) and <code>loki</code> (33,130 lines), each linted twice.</p>
+<h2 style="color:var(--warn)">Two fail-opens caught, both of which looked green</h2>
+<p class="note warn"><b>Mine.</b> Collapsing the linter's two invocations into one was 2x faster and
+<b>silently lost 2 real failures</b> -- severity prints on the caret line, not the header, and a file
+that cannot be opened emits no code at all. Found only by diffing counts against the original.
+Reverted; shipped pure scheduling instead.</p>
+<p class="note warn"><b>The detectors lane.</b> Its test-file classifier moved from an unanchored
+regex to an anchored glob, flipping paths like <code>src/latest_thing.py</code> from TEST to IMPL.
+A test-fitting commit then loses its test file, skips the blocking check, and <b>exits 0 where it
+previously blocked</b>. Its own evidence missed it: 316 byte-identical findings on this repo, where
+no such filename exists. Corpus-bound parity cannot detect a latent input-class narrowing.</p>
+
+<h2>CI pipeline: one job was the whole wall clock</h2>
+<p class=sub>GitHub Actions job durations, run for commit bcf9fbce (v8.3.0), measured 19:41-19:54 UTC.</p>
+<table>
+<tr><th>Job</th><th class=n>Duration</th><th>Note</th></tr>
+<tr><td><b>Shell tests</b></td><td class=n><b>13m 01s</b></td><td>289 suites, serial, one runner</td></tr>
+<tr><td>Bun tests (ubuntu)</td><td class=n>2m 17s</td><td>test step itself is 41s</td></tr>
+<tr><td>Python 3.13</td><td class=n>1m 59s</td><td></td></tr>
+<tr><td>Node.js 24</td><td class=n>44s</td><td></td></tr>
+<tr><td>Helm lint</td><td class=n>8s</td><td></td></tr>
+</table>
+<p class=note>Shell tests was <b>6x the next slowest job</b> and set the pipeline wall clock by itself.
+Everything else finished inside ~2.5 minutes. The fix is a 4-way shard
+(<code>LOKI_TEST_SHARD=i/n</code>), splitting 289 suites as 73 / 72 / 72 / 72.</p>
+<p class=note><b>MEASURED, not projected.</b> Observed shard timings on commit 9d63f16b:
+5m35s / 2m33s / 3m50s / 2m26s. The pipeline wall clock is the <b>slowest</b> shard, so
+13m01s became <b>5m35s: a 2.33x cut</b>.
+<br><br>My earlier projection said ~3m15s and was wrong. It assumed the 289 suites cost the
+same each, so four shards would be a clean quarter. They are not: suite cost varies widely, the
+split is uneven, and the wall clock follows the worst shard rather than the mean. The projection
+is replaced here rather than quietly deleted, because a number that was published and turned out
+optimistic should be visibly corrected.</p>
+<p class=note>Safety, because a faster gate that stops noticing failures is worse than a slow one:
+<code>tests/test-shard-coverage.sh</code> (14/14) proves the shards partition the suite list exactly,
+that every suite lands in exactly one shard, and that an invalid shard spec exits non-zero rather
+than silently running nothing. The split was verified by <b>executed</b> counts, not arithmetic alone.</p>
+<footer>The fast tier covers syntax, structure and the entire trust core, and <b>prints every check
+it deferred</b> plus the command to run them -- without that, tiering would itself be a false-green.
+<code>LOCAL_CI_TIER=full</code> is required before push or release.</footer>
+</div>

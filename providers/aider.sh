@@ -58,12 +58,18 @@ _aider_default_from_catalog() {
     if [ -f "${script_dir}/models.sh" ]; then
         # shellcheck source=./models.sh
         source "${script_dir}/models.sh"
-        loki_latest_model aider development 2>/dev/null || echo "claude-opus-4-8"
+        loki_latest_model aider development 2>/dev/null || echo "openrouter/deepseek/deepseek-v3.2"
     else
-        echo "claude-opus-4-8"
+        echo "openrouter/deepseek/deepseek-v3.2"
     fi
 }
-AIDER_DEFAULT_MODEL="${LOKI_AIDER_MODEL:-${LOKI_MODEL_DEVELOPMENT:-$(_aider_default_from_catalog)}}"
+# Resolution: provider-scoped env > catalog. The GLOBAL tier var
+# (LOKI_MODEL_DEVELOPMENT) is deliberately NOT in this chain: aider takes
+# litellm full model strings ("openrouter/deepseek/deepseek-v3.2"), while the
+# global tier var carries Claude CLI aliases ("sonnet"), so a global set for
+# one provider silently produced `aider --model sonnet`. Namespace-incompatible,
+# not merely mis-ordered. Do not re-add it.
+AIDER_DEFAULT_MODEL="${LOKI_AIDER_MODEL:-$(_aider_default_from_catalog)}"
 PROVIDER_MODEL_PLANNING="$AIDER_DEFAULT_MODEL"
 PROVIDER_MODEL_DEVELOPMENT="$AIDER_DEFAULT_MODEL"
 PROVIDER_MODEL_FAST="$AIDER_DEFAULT_MODEL"
@@ -132,6 +138,32 @@ provider_get_tier_param() {
 resolve_model_for_tier() {
     local tier="$1"
     echo "$AIDER_DEFAULT_MODEL"
+}
+
+# provider_invoke_argv <tier> <prompt> -- see providers/claude.sh for the full
+# rationale. Populates _LOKI_INVOKE_ARGV so a caller can wrap it in `timeout`,
+# which cannot exec a shell function.
+#
+# Unlike Codex, provider_get_tier_param here returns a real MODEL NAME, so it is
+# safe to pass to --model. An empty value omits the flag rather than sending
+# `--model ""`, which aider rejects.
+provider_invoke_argv() {
+    local tier="${1:-development}"
+    local prompt="${2:-}"
+    local model
+    model="$(provider_get_tier_param "$tier" 2>/dev/null || printf '%s' "")"
+    _LOKI_INVOKE_ARGV=(aider --yes-always --no-auto-commits)
+    [ -n "$model" ] && _LOKI_INVOKE_ARGV+=(--model "$model")
+    # LOKI_AIDER_FLAGS is a documented operator knob (CLI --aider-flags) that
+    # provider_invoke honours. Dropping it here would make the timeout-safe path
+    # silently ignore operator config that the normal path applies. Deliberately
+    # word-split, matching provider_invoke's unquoted $extra_flags expansion.
+    if [ -n "${LOKI_AIDER_FLAGS:-}" ]; then
+        # shellcheck disable=SC2206
+        _LOKI_INVOKE_ARGV+=(${LOKI_AIDER_FLAGS})
+    fi
+    # Aider takes the prompt via --message, not positionally.
+    _LOKI_INVOKE_ARGV+=(--message "$prompt")
 }
 
 # Tier-aware invocation

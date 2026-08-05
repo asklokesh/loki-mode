@@ -1,5 +1,10 @@
 # RARV-C Loop-Efficiency Upgrade Plan (ultracode phase)
 
+> SUPERSEDED by `docs/RARV-C-100X-PLAN.md` (v8.0.0 arc, 2026-07-13). Kept as history.
+> Anchors here are grounded to v7.121.5 and have DRIFTED; use the 100X plan for current
+> file:line and for the native-primitives-already-adopted findings.
+
+
 Architect: synthesis of the six cookbook pattern sets against the current
 Loki RARV-C loop. This is a PLAN, not code. Every proposed change carries a
 constraint bucket and a bench-gate. No benchmark numbers are asserted here --

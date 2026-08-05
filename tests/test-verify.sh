@@ -297,10 +297,18 @@ if printf '%s' "$HELP_OUT" | grep -qi "DETERMINISTIC-ONLY" && \
 else
     _no "help missing deterministic-only / no-LLM statement"
 fi
-if printf '%s' "$HELP_OUT" | grep -q "1=CONCERNS"; then
-    _ok "help documents the exit-code divergence from spec"
+# The help must document the exit codes. This used to assert the literal
+# "1=CONCERNS" from a note explaining that the implementation DIVERGED from a
+# draft spec and "a human must reconcile the two". That reconciliation is done
+# -- in favor of this implementation, since the draft is not in the repo and
+# has no consumers -- so the note is gone and the assertion now checks what
+# actually matters: that a reader learns which code means what.
+if printf '%s' "$HELP_OUT" | grep -q "EXIT CODES" && \
+   printf '%s' "$HELP_OUT" | grep -q "CONCERNS" && \
+   printf '%s' "$HELP_OUT" | grep -q "BLOCKED"; then
+    _ok "help documents the exit codes (VERIFIED/CONCERNS/BLOCKED/error)"
 else
-    _no "help missing exit-code divergence note"
+    _no "help no longer documents its exit codes"
 fi
 
 # -------------------------------------------------------------------------

@@ -20,9 +20,8 @@
        the literal token anywhere else (this comment deliberately spells it out
        instead of repeating it, and the renderer detects an un-substituted
        blob structurally rather than by string-matching the token).
-    4. No other token substitution is required. All rendering happens client
-       side from the parsed blob. This keeps Bun and bash routes at exact
-       parity (one string replace, one template).
+    4. The generator also substitutes the receipt title, social description,
+       and share-button setting before embedding the parsed blob.
 
   The renderer below is defensive: every nullable / optional schema field is
   guarded (deployed_url, public_url, diffs, council.enabled false, empty
@@ -42,10 +41,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Loki Mode - Proof of Run</title>
+<title>__PROOF_RECEIPT_TITLE__ - Loki Mode Evidence Receipt</title>
 <!-- Static text-only social meta. No og:image (would break self-containment). -->
 <meta property="og:type" content="website">
-<meta property="og:title" content="Built and verified autonomously by Loki Mode">
+<meta property="og:title" content="__PROOF_RECEIPT_TITLE__ - Loki Mode Evidence Receipt">
 <!-- og:description and twitter:description are filled at generation time with
      the real measured cost + files-changed + council ratio (cost-free variant
      when cost was not collected). The generator replaces the og token below in
@@ -589,7 +588,7 @@
   function honestyVariant(headline) {
     var h = String(headline || "").toUpperCase();
     if (h === "VERIFIED") return { cls: "is-verified", mark: "OK",
-      sub: "Tests verified, a real diff exists, and nothing was left unverified. Every claim below is deterministic and re-checkable." };
+      sub: "The recorded tests passed and this receipt contains a non-empty source change. Review the evidence below for the exact scope." };
     if (h.indexOf("GAPS") !== -1) return { cls: "is-gaps", mark: "!",
       sub: "Some evidence is verified, but the items listed below were not. A gap is never hidden: read them before trusting this run." };
     return { cls: "is-failed", mark: "X",
@@ -625,12 +624,46 @@
     } else {
       gaps = '<p class="h-sub" style="margin-top:10px;">No gaps were flagged for this run.</p>';
     }
+    // Why the run stopped. The generator already collects facts.termination
+    // facts.execution (reason / outcome / run_status) but nothing rendered it,
+    // so a receipt for
+    // a run that stopped on a gate showed a headline with no cause -- the reader
+    // could see the verdict and not the reason for it. Display-only: the value
+    // is whatever the generator recorded, never recomputed here.
+    var term = "";
+    var tReason = String(g(p, "facts.execution.reason", "") || "").trim();
+    var tOutcome = String(g(p, "facts.execution.outcome", "") || "").trim();
+    if (tReason || (tOutcome && tOutcome !== "complete")) {
+      term = '<div class="h-sub">Stopped: ' +
+             esc(tReason || tOutcome) +
+             (tReason && tOutcome && tOutcome !== tReason
+                ? " (" + esc(tOutcome) + ")" : "") +
+             "</div>";
+    }
+    // Name the GATE that stopped the run, with how close it came to its
+    // threshold. "intervention" tells a reader that something blocked them;
+    // "code_review (failed 3 times, threshold 3)" tells them what to fix. The
+    // engine already surfaced this in COMPLETION.txt and PAUSED.md -- the
+    // signed receipt was the only surface that stayed silent about it.
+    // Display-only, and silent when no gate escalation was recorded.
+    var tGate = String(g(p, "facts.execution.blocking_gate", "") || "").trim();
+    if (tGate) {
+      var gFail = g(p, "facts.execution.blocking_gate_failures", null);
+      var gThr = g(p, "facts.execution.blocking_gate_threshold", null);
+      var detail = "";
+      if (typeof gFail === "number" && typeof gThr === "number") {
+        detail = " (failed " + esc(String(gFail)) + " times, threshold " +
+                 esc(String(gThr)) + ")";
+      }
+      term += '<div class="h-sub">Blocked by: ' + esc(tGate) + detail + "</div>";
+    }
     el.className = "honesty " + v.cls;
     el.innerHTML =
       '<span class="h-mark" aria-hidden="true">' + v.mark + "</span>" +
       '<div class="h-body">' +
         '<div class="h-headline">' + esc(headline) + "</div>" +
         '<div class="h-sub">' + v.sub + "</div>" +
+        term +
         gaps +
       "</div>";
   }
@@ -776,7 +809,7 @@
     // fmtUsd: a skeptic seeing a zero-dollar total assumes the artifact is fake.
     var usdRaw = g(p, "cost.usd", null);
     var fc = num(g(p, "files_changed.count", 0));
-    var parts = ["Built and verified autonomously"];
+    var parts = [__PROOF_RECEIPT_TITLE_JSON__];
     if (usdRaw !== null) parts.push(fmtUsd(usdRaw));
     else parts.push("cost not recorded");
     parts.push(fc + " file" + (fc === 1 ? "" : "s") + " changed");
@@ -929,11 +962,15 @@
   function renderCost(p) {
     var card = document.getElementById("costCard");
     var usdRaw = g(p, "cost.usd", null);
+    function tokenValue(path) {
+      var raw = g(p, path, null);
+      return raw === null ? "not recorded" : fmtInt(raw);
+    }
     var cells = [
-      ["Input tokens", fmtInt(g(p, "cost.input_tokens", 0))],
-      ["Output tokens", fmtInt(g(p, "cost.output_tokens", 0))],
-      ["Cache read", fmtInt(g(p, "cost.cache_read_tokens", 0))],
-      ["Cache write", fmtInt(g(p, "cost.cache_creation_tokens", 0))]
+      ["Input tokens", tokenValue("cost.input_tokens")],
+      ["Output tokens", tokenValue("cost.output_tokens")],
+      ["Cache read", tokenValue("cost.cache_read_tokens")],
+      ["Cache write", tokenValue("cost.cache_creation_tokens")]
     ];
     var grid = "";
     for (var i = 0; i < cells.length; i++) {
@@ -1080,6 +1117,24 @@
     card.innerHTML = (head ? '<div style="margin-bottom:14px;">' + head + "</div>" : "") + body + link;
   }
 
+  // Render one row of gate chips. Shared by the exogenous and advisory blocks.
+  function gateChips(gates) {
+    var chips = "";
+    if (!Array.isArray(gates)) return "";
+    for (var i = 0; i < gates.length; i++) {
+      var st = String(g(gates[i], "status", "")).toLowerCase();
+      var cls = (st === "pass" || st === "passed") ? "pass" : (st === "skip" || st === "skipped") ? "skip" : "fail";
+      var mark = cls === "pass" ? "OK" : cls === "skip" ? "-" : "X";
+      chips += '<span class="gate ' + cls + '"><span class="mk">' + mark + "</span>" +
+               esc(g(gates[i], "name", "gate")) + "</span>";
+    }
+    return chips ? '<div class="gates">' + chips + "</div>" : "";
+  }
+
+  // TRUST-4: quality gates split by PROVENANCE, not by outcome. The two blocks
+  // read from quality_gates.exogenous / quality_gates.advisory, the exact field
+  // names proof-generator.py writes. Falls back to the flat pre-split list so an
+  // older receipt still renders.
   function renderGates(p) {
     var sec = document.getElementById("secGates");
     var card = document.getElementById("gatesCard");
@@ -1090,18 +1145,51 @@
       sec.classList.add("hide");
       return;
     }
-    var head = '<p class="note" style="margin:0 0 12px;">' + passed + " of " + total + " gates passed.</p>";
-    var chips = "";
-    if (Array.isArray(gates)) {
-      for (var i = 0; i < gates.length; i++) {
-        var st = String(g(gates[i], "status", "")).toLowerCase();
-        var cls = (st === "pass" || st === "passed") ? "pass" : (st === "skip" || st === "skipped") ? "skip" : "fail";
-        var mark = cls === "pass" ? "OK" : cls === "skip" ? "-" : "X";
-        chips += '<span class="gate ' + cls + '"><span class="mk">' + mark + "</span>" +
-                 esc(g(gates[i], "name", "gate")) + "</span>";
-      }
+    // Gates the operator switched OFF for this run.
+    //
+    // This is the PUBLIC receipt -- the one that gets shared -- and it read
+    // "3 of 3 gates passed" identically whether every gate ran or code review
+    // and security were disabled and three lesser gates ran instead. The proof
+    // has recorded this since v8.17.0 and the markdown receipt showed it since
+    // v8.17.1; this surface still could not.
+    //
+    // Rendered ABOVE the pass counts deliberately: a reader who stops after the
+    // first line must not stop having read only the good news.
+    var offList = g(p, "quality_gates.disabled_phases", []);
+    var offHtml = "";
+    if (Array.isArray(offList) && offList.length > 0) {
+      offHtml = '<p class="opinion-note"><span aria-hidden="true">!</span>' +
+        "Gates disabled for this run: " + offList.map(esc).join(", ") +
+        ". Those checks did not run, so the counts below do not cover them.</p>";
     }
-    card.innerHTML = head + (chips ? '<div class="gates">' + chips + "</div>" : "");
+    var exo = g(p, "quality_gates.exogenous", null);
+    var adv = g(p, "quality_gates.advisory", null);
+    if (!exo && !adv) {
+      // Pre-TRUST-4 receipt: render the flat list exactly as before.
+      card.innerHTML = offHtml + '<p class="note" style="margin:0 0 12px;">' + passed +
+        " of " + total + " gates passed.</p>" + gateChips(gates);
+      return;
+    }
+    var html = offHtml;
+    var eg = g(exo, "gates", []);
+    if (Array.isArray(eg) && eg.length > 0) {
+      html += '<h3 style="margin:0 0 4px;font-size:14px;">Independent checks (count toward the verdict)</h3>' +
+        '<p class="note" style="margin:0 0 10px;">' +
+        num(g(exo, "passed", 0)) + " of " + num(g(exo, "total", 0)) +
+        " passed. These are deterministic programs the agent cannot write the " +
+        "result of, so only these set the verdict above.</p>" + gateChips(eg);
+    }
+    var ag = g(adv, "gates", []);
+    if (Array.isArray(ag) && ag.length > 0) {
+      html += '<h3 style="margin:18px 0 4px;font-size:14px;">Advisory checks (reported, not counted)</h3>' +
+        '<p class="opinion-note"><span aria-hidden="true">!</span>' +
+        num(g(adv, "passed", 0)) + " of " + num(g(adv, "total", 0)) +
+        " passed. These are the agent judging its own work (it wrote both the " +
+        "tests and the code, or a model graded the result), so a model that is " +
+        "confidently wrong scores itself green here. They are shown for context " +
+        "and can never raise or lower the verdict.</p>" + gateChips(ag);
+    }
+    card.innerHTML = html;
   }
 
   function renderFlagged(p) {
@@ -1167,9 +1255,23 @@
     if (hash) {
       kv += '<div class="k">Integrity hash</div><div class="v">' + esc(algo) + ":" + esc(hash) + "</div>";
     }
+    // Signing state, named explicitly. The hash-note below already says the
+    // hash does not prove provenance; without this row a reader is told what
+    // the receipt CANNOT do but never which state this particular receipt is
+    // in, nor how to change it. Signing is gated on LOKI_PROOF_GPG_KEY in
+    // proof-generator.py and is OFF by default -- deliberately, because a
+    // self-minted key would flip proof-verify.py's generator_trusted to false
+    // while the key came from the very process under audit.
+    var signed = !!g(p, "verification.gpg_signature", "");
+    kv += '<div class="k">Signature</div><div class="v">' +
+          (signed ? "SIGNED (detached GPG)" : "UNSIGNED") + "</div>";
+    var signNote = signed
+      ? '<p class="hash-note">This receipt carries a detached GPG signature over the same canonical bytes that were hashed. A verifier holding the signer public key can confirm its provenance offline with <code>loki proof verify</code>.</p>'
+      : '<p class="hash-note">This receipt is UNSIGNED, so it trusts the generator that produced it (<code>loki proof verify</code> reports <code>generator_trusted: true</code>). To sign future receipts, set <code>LOKI_PROOF_GPG_KEY</code> to a GPG key id before the run.</p>';
     card.innerHTML = '<div class="kv">' + kv + "</div>" +
       (hash ? '<p class="hash-note">The integrity hash is a ' + esc(algo) +
-              " digest of this proof. It proves the artifact has not been altered after it was emitted. It does not, by itself, prove who or what produced the work.</p>" : "");
+              " digest of this proof. It proves the artifact has not been altered after it was emitted. It does not, by itself, prove who or what produced the work.</p>" : "") +
+      signNote;
   }
 
   function renderCta(p) {
@@ -1249,7 +1351,7 @@
     function shareHook() {
       var m = document.querySelector('meta[property="og:description"]');
       var c = m ? (m.getAttribute("content") || "") : "";
-      return c || "Built and verified autonomously by Loki Mode";
+      return c || (__PROOF_RECEIPT_TITLE_JSON__ + " - Loki Mode Evidence Receipt");
     }
     document.addEventListener("click", function (e) {
       var t = e.target && e.target.closest ? e.target.closest("[data-share]") : null;

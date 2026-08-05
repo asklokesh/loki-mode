@@ -157,8 +157,11 @@ class CostMetricsCorruptFileTests(unittest.TestCase):
             resp = _client().get("/api/cost")
         self.assertEqual(resp.status_code, 200, resp.text)
         d = resp.json()
-        self.assertEqual(d["total_input_tokens"], 0)
-        self.assertEqual(d["total_output_tokens"], 0)
+        # Nothing was measured (no efficiency records, corrupt tracking file),
+        # so the honest answer is null, not a fabricated 0.
+        self.assertIsNone(d["total_input_tokens"])
+        self.assertIsNone(d["total_output_tokens"])
+        self.assertFalse(d["cost_recorded"])
 
     def test_metrics_endpoint_skips_list_json(self):
         # /metrics cost block has the same AttributeError exposure.

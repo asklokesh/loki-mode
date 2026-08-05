@@ -104,15 +104,35 @@ fi
 test_cmd "BUG-CLI-001: --port without value shows error" \
     1 "requires" web --port
 
-test_cmd "BUG-CLI-002: --prd without value shows error" \
-    1 "requires" web --prd
+# Retargeted: v7.89.0 (87855236) made `loki web` launch the real dashboard
+# instead of the deprecated Purple Lab. --prd is a Purple-Lab-only PRD prefill
+# the dashboard does not support, so cmd_web_redirect_to_dashboard now FILTERS
+# the flag AND its value out rather than erroring, keeping `loki web --prd X`
+# working. cmd_web_help no longer advertises --prd on this path, and the old
+# "--prd requires a file path" error lives in cmd_web_start, which the v7.89.0
+# dispatch no longer reaches. Asserted at source level rather than by invoking
+# the CLI: `loki web --prd` now really launches a dashboard server.
+#
+# The anchor is the `shift 2 2>/dev/null || shift` in that filter branch, which
+# consumes BOTH the flag and its value. Pattern stays single-line POSIX ERE on
+# purpose: `\n` inside an -E pattern means a newline in BSD grep but not in GNU
+# grep, so a multiline form would pass on a Mac and fail in CI. The leading
+# whitespace anchor and the `$` keep this unique (the other three occurrences
+# are either assigning a value first or continue with `|| true`).
+test_source "BUG-CLI-002: --prd and its value are filtered before dashboard start" \
+    '^[[:space:]]+shift 2 2>/dev/null \|\| shift$'
 
 # -------------------------------------------
 # BUG-CLI-003: cmd_web_stop unconditionally kills port 57374
 # Fix: Only kill if PID matches dashboard PID file
 # -------------------------------------------
-test_source "BUG-CLI-003: cmd_web_stop uses PID file instead of lsof" \
-    'dash_pid_file=.*dashboard/dashboard\.pid'
+# Retargeted: v6.64.2 (9531a556) deliberately replaced the CWD-relative
+# dash_pid_file lookup with pgrep-by-name plus a port fallback, because
+# dashboards started from another directory (or by `loki quick`) were left
+# orphaned by a PID file that only ever described the current CWD. The
+# current contract is "find the dashboard by process name", not "by PID file".
+test_source "BUG-CLI-003: cmd_web_stop finds the dashboard by process name" \
+    'pgrep -f "dashboard\.server.*dashboard/server"'
 
 test_source_absent "BUG-CLI-003: cmd_web_stop no longer uses lsof on hardcoded port" \
     'lsof -ti:57374'
@@ -149,8 +169,12 @@ test_source "BUG-CLI-012: child-pids.json uses env var for path" \
 # BUG-CMD-001: cmd_web wildcard duplicates first argument
 # Fix: Add shift before calling cmd_web_start in the *) case
 # -------------------------------------------
-test_source "BUG-CMD-001: web wildcard case has shift before cmd_web_start" \
-    'cmd_web_start "\$subcommand" "\$@"'
+# Retargeted: pure callee rename in v7.89.0 (87855236) -- the wildcard case now
+# calls cmd_web_redirect_to_dashboard instead of cmd_web_start. The `shift` this
+# bug was about is still present, so the assertion's intent (first argument is
+# passed once, not duplicated) is unchanged.
+test_source "BUG-CMD-001: web wildcard case has shift before the start path" \
+    'cmd_web_redirect_to_dashboard "\$subcommand" "\$@"'
 
 # -------------------------------------------
 # BUG-CMD-002: cmd_ci --test-suggest never exports LOKI_CI_CHANGED_FILES

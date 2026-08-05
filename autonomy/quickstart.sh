@@ -174,17 +174,30 @@ _qs_score_templates() {
     local tdir; tdir="$(_qs_templates_dir)"
     local brief_lc; brief_lc=$(printf '%s' "$brief" | tr '[:upper:]' '[:lower:]')
 
-    declare -A scores
+    # BASH 3.2 COMPATIBLE. This used `declare -A scores`, a bash 4 associative
+    # array. macOS ships bash 3.2.57 as /bin/bash (frozen since 2007, GPLv2,
+    # and Apple will not update it), so on the stock shell of the most common
+    # developer platform this function printed
+    #     declare: -A: invalid option
+    # and returned ZERO templates. The function body parses fine, which is why
+    # sourcing looked healthy and the failure only appeared when CALLED --
+    # and the test harness runs under homebrew bash 5, so nothing caught it.
+    # `loki quickstart` is the guided first build we point new users at, so
+    # this was a first-run failure on Macs.
+    #
+    # Scores are kept in a flat "name<TAB>score" list instead. Same semantics,
+    # portable to 3.2, and the final sort was already doing the ordering work.
+    local scores=""
     local name f
     while IFS= read -r f; do
         [ -z "$f" ] && continue
         name=$(basename "$f" .md)
         [ "$name" = "README" ] && continue
-        scores["$name"]=0
+        scores="${scores}${name}\t0\n"
     done < <(ls "$tdir"/*.md 2>/dev/null)
 
     # No templates resolvable: fall back to the guaranteed default only.
-    if [ "${#scores[@]}" -eq 0 ]; then
+    if [ -z "$scores" ]; then
         printf 'simple-todo-app\n'
         return 0
     fi
@@ -192,37 +205,52 @@ _qs_score_templates() {
     local -a tokens
     read -ra tokens <<< "$(printf '%s' "$brief_lc" | tr -cs 'a-z0-9' ' ')"
 
-    local tok kw tmpl wt
+    # Build the additive score deltas, then fold them in once with awk. Doing
+    # the arithmetic in awk rather than a bash re-write loop keeps this O(n) and
+    # avoids quoting a growing string repeatedly.
+    local deltas="" tok kw tmpl wt
     for tok in "${tokens[@]}"; do
         [ -z "$tok" ] && continue
         _qs_is_stopword "$tok" && continue
-        for name in "${!scores[@]}"; do
+        # +2 per template whose hyphenated name contains the token.
+        while IFS=$'\t' read -r name _; do
+            [ -z "$name" ] && continue
             case "-$name-" in
-                *"-$tok-"*) scores["$name"]=$(( ${scores["$name"]} + 2 ));;
+                *"-$tok-"*) deltas="${deltas}${name}\t2\n";;
             esac
-        done
+        done < <(printf '%b' "$scores")
+        # Curated keyword weights.
         while IFS=: read -r kw tmpl wt; do
             [ -z "$kw" ] && continue
             [ -z "$wt" ] && wt=3
-            if [ "$tok" = "$kw" ] && [ -n "${scores[$tmpl]+x}" ]; then
-                scores["$tmpl"]=$(( ${scores["$tmpl"]} + wt ))
+            if [ "$tok" = "$kw" ]; then
+                deltas="${deltas}${tmpl}\t${wt}\n"
             fi
         done < <(_qs_keyword_map)
     done
 
-    # Guaranteed default baseline.
-    if [ -n "${scores[simple-todo-app]+x}" ]; then
-        scores["simple-todo-app"]=$(( ${scores["simple-todo-app"]} + 1 ))
-    fi
+    # Guaranteed default baseline: simple-todo-app gets +1 and wins exact ties.
+    deltas="${deltas}simple-todo-app\t1\n"
 
-    # Emit "score<TAB>priority<TAB>name"; sort by score desc, priority asc
-    # (simple-todo-app=0 wins ties), then name asc for full determinism.
-    local prio
-    for name in "${!scores[@]}"; do
-        prio=1
-        [ "$name" = "simple-todo-app" ] && prio=0
-        printf '%s\t%s\t%s\n' "${scores[$name]}" "$prio" "$name"
-    done | sort -t$'\t' -k1,1nr -k2,2n -k3,3 | head -3 | cut -f3
+    # Fold: keep only names that are REAL templates (a keyword map entry naming
+    # a template that does not exist must not invent one), sum the deltas, then
+    # sort by score desc, priority asc (simple-todo-app=0 wins ties), name asc.
+    printf '%b' "$scores" > /dev/null  # (no-op guard: scores is always non-empty here)
+    {
+        printf '%b' "$scores"
+        printf '%b' "$deltas"
+    } | awk -F'\t' '
+        NF < 2 { next }
+        # First pass marker: names present in the base list are valid templates.
+        { sum[$1] += $2; if (!($1 in seen) && $2 == 0) seen[$1] = 1 }
+        END {
+            for (n in sum) {
+                if (!(n in seen)) continue
+                prio = (n == "simple-todo-app") ? 0 : 1
+                printf "%d\t%d\t%s\n", sum[n], prio, n
+            }
+        }
+    ' | sort -t"$(printf '\t')" -k1,1nr -k2,2n -k3,3 | head -3 | cut -f3
 }
 
 # _qs_template_summary <name>: a short one-line description for the picker.
@@ -253,6 +281,43 @@ _qs_template_summary() {
         web-scraper)         printf 'Web scraper';;
         *)                   printf 'PRD template';;
     esac
+}
+
+# _qs_selected_provider: print the provider a build would ACTUALLY pick, or
+# nothing. Single source of truth is providers/loader.sh auto_detect_provider --
+# the same seam render_provider_availability (provider-offer.sh:395) uses, and
+# for the same institutionalized reason it states: "the selected provider is
+# always whatever auto_detect_provider returns, never re-derived here."
+#
+# Step 1 used to re-derive that list inline as `for _p in claude codex cline
+# aider`, which was wrong in two independent ways once v8.64.0 made provider
+# selection automatic:
+#   1. opencode was MISSING. On an opencode-only machine the loop set found=""
+#      and, worse, detect_any_provider (provider-offer.sh:67, the same stale
+#      four) returned 1, so quickstart took the install-offer branch and told a
+#      perfectly working machine "No provider available; cannot start a build",
+#      pushing a redundant `npm install -g @anthropic-ai/claude-code`.
+#   2. codex and cline were SWAPPED relative to auto_detect_provider's
+#      claude cline codex aider opencode, so a machine with both was told
+#      "Found: codex" while the runner would really pick cline.
+#
+# Subshelled and path-derived from THIS FILE (never SKILL_DIR, which is unset
+# when tests source this standalone), so a missing or broken loader degrades
+# silently to empty rather than erroring -- the render_provider_availability
+# contract. Safe as a gate because every providers/*.sh provider_detect is a
+# plain `command -v` binary check, so this cannot fail open onto a runner with
+# nothing to invoke.
+_qs_selected_provider() {
+    local _here
+    _here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" || return 1
+    local _loader="$_here/providers/loader.sh"
+    [ -f "$_loader" ] || return 1
+    (
+        # shellcheck source=/dev/null
+        source "$_loader" >/dev/null 2>&1 || exit 1
+        declare -f auto_detect_provider >/dev/null 2>&1 || exit 1
+        auto_detect_provider 2>/dev/null
+    )
 }
 
 # _qs_emit_plan <prd_path>: render the step-4 plan block from the REAL estimator.
@@ -393,13 +458,16 @@ cmd_quickstart() {
     # ----- Step 1 of 4: Setup (reuse the slice-B provider offer) -------------
     printf '%sStep 1 of 4: Setup%s\n' "$_QS_BOLD" "$_QS_NC"
     printf '  Checking for an AI provider CLI ...\n'
-    if detect_any_provider; then
-        local found=""
-        local _p
-        for _p in claude codex cline aider; do
-            if command -v "$_p" >/dev/null 2>&1; then found="$_p"; break; fi
-        done
+    # Ask the loader FIRST: it is the only thing that knows what the runner will
+    # really pick, and it is the only check that sees opencode. Falling back to
+    # detect_any_provider (stale four, PATH-only) keeps the no-provider guard
+    # intact when the loader is absent or unreadable.
+    local found=""
+    found="$(_qs_selected_provider)" || found=""
+    if [ -n "$found" ]; then
         printf '  Found: %s. Good.\n' "$found"
+    elif detect_any_provider; then
+        printf '  Found: an AI provider CLI. Good.\n'
     else
         # Run the inline install + login offer. provider_offer_gate returns 2 if
         # no provider ends up available (declined, or install failed).

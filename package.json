@@ -1,7 +1,7 @@
 {
   "name": "loki-mode",
   "mcpName": "io.github.asklokesh/loki-mode",
-  "version": "7.128.2",
+  "version": "9.12.6",
   "description": "Loki Mode by Autonomi. Autonomous spec-to-product system: takes a PRD, GitHub issue, OpenAPI/JSON/YAML, or one-line brief to a deployed app via the RARV-C closure loop with 8 quality gates. Provider-agnostic (Claude Code, OpenAI Codex, Cline, Aider).",
   "keywords": [
     "agent",
@@ -106,7 +106,11 @@
     "web-app/migrations/",
     "web-app/Dockerfile",
     "web-app/docker-compose.purple-lab.yml",
-    "web-app/deploy/"
+    "web-app/deploy/",
+    "tests/detect-mock-problems.sh",
+    "tests/detect-test-mutations.sh",
+    "tests/detect-semantic-test-problems.sh",
+    "tests/detect-invariant-violations.sh"
   ],
   "scripts": {
     "prepack": "find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; find . -name '*.pyc' -delete 2>/dev/null; if command -v bun >/dev/null 2>&1; then (cd loki-ts && bun install --production && bun run build) || echo 'WARN: loki-ts build failed, using existing dist if present'; else echo 'WARN: bun not on PATH, skipping loki-ts build (using committed dist if present)'; fi; true",
@@ -126,10 +130,11 @@
     "linux"
   ],
   "optionalDependencies": {
-    "@opentelemetry/api": "^1.9.0",
-    "@opentelemetry/sdk-trace-node": "^1.30.0",
-    "@opentelemetry/sdk-trace-base": "^1.30.0",
-    "@opentelemetry/exporter-trace-otlp-http": "^0.57.0"
+    "@anthropic-ai/claude-agent-sdk": "0.3.208",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.221.0",
+    "@opentelemetry/sdk-trace-base": "^2.10.0",
+    "@opentelemetry/sdk-trace-node": "^2.10.0"
   },
   "overrides": {
     "protobufjs": ">=8.4.2"

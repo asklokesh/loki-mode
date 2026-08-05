@@ -2,7 +2,7 @@
 # autonomy/lib/voter-agents.sh -- Phase C (v7.5.20) bash side.
 #
 # Builds the JSON declaration of the council voter agents and orchestrates a
-# single `claude --agents <json> --json-schema <path>` dispatch per iteration.
+# single `claude --agents <json> --json-schema <inline-content>` dispatch per iteration.
 # Replaces the ad-hoc per-voter heuristic loop in council_aggregate_votes when
 # the locally installed Claude CLI supports both flags.
 #
@@ -176,7 +176,7 @@ loki_finding_schema_path() {
 #      --json-schema in `claude --help`. Either missing -> return 1 (fallback).
 #   2. Build the agents JSON via loki_voter_agents_json.
 #   3. Invoke `claude --dangerously-skip-permissions -p <prompt>
-#                    --agents <json> --json-schema <path>` and capture stdout.
+#                    --agents <json> --json-schema <inline-content>` and capture stdout.
 #      Any non-zero exit or empty stdout -> return 1 (fallback).
 #   4. Parse the response via python3 (no jq dependency): extract
 #      findings[].{role, vote, reason, confidence}. On parse failure -> 1.
@@ -236,20 +236,76 @@ loki_council_dispatch_agents() {
     local schema_path
     schema_path=$(loki_finding_schema_path) || return 1
 
-    # 3. Invoke claude. Guard against absent binary or non-zero exit.
-    command -v claude >/dev/null 2>&1 || return 1
+    # v8.x FIX: `claude --json-schema` takes the schema JSON as INLINE CONTENT,
+    # not a file path. Live-verified on CLI 2.1.207: passing a path errors with
+    # "--json-schema is not valid JSON: Unrecognized token '/'" -> rc!=0 ->
+    # fail-closed to the heuristic path, so this structured dispatch was SILENTLY
+    # DEAD (never actually schema-constrained the council). Read the file and pass
+    # its content. Fail-closed if unreadable/empty (return 1 -> heuristic path).
+    local schema_content
+    schema_content=$(cat "$schema_path" 2>/dev/null) || return 1
+    [ -n "$schema_content" ] || return 1
 
     local prompt
     prompt=$(printf 'Loki council iteration %s. Run each declared agent against the current workspace, return one finding per agent matching the provided JSON Schema. Be terse, be honest.' "$iteration")
 
-    # Capture stderr to a per-iteration log so hung / failing claude
-    # invocations are diagnosable instead of silently swallowed. Per Opus #2
-    # LOW finding: stored under COUNCIL_STATE_DIR, no PII risk beyond the
-    # prompt itself which already lives in the dispatch log.
-    local response
+    # Shared dispatch state (declared once, before either the SDK or claude arm).
+    local response=""
     local rc=0
     local stderr_log="$COUNCIL_STATE_DIR/votes/dispatch-stderr-${iteration}.log"
     mkdir -p "$(dirname "$stderr_log")" 2>/dev/null || true
+    local _va_sdk_done=0
+
+    # v8 RAW-SDK COUNCIL PATH (opt-in LOKI_SDK_VOTER_AGENTS=1). The bash route
+    # uses `claude --agents <json> --json-schema` (one dispatch fanning out to N
+    # named agents). The raw @anthropic-ai/sdk has no --agents primitive, so we
+    # inline the agent roster into the prompt and constrain the SAME
+    # finding-schema.json via the sdk-judge bridge -- the model returns the same
+    # {findings:[...]} object the downstream parser (line 302+) consumes, one
+    # finding per declared agent. Runs BEFORE the claude-binary guard so the
+    # no-binary deploy win holds. Fail-closed: on ANY miss (flag off, no key,
+    # bun/entrypoint absent, non-zero, empty) fall through to the claude path
+    # below, then to the heuristic council on a claude miss -- a hung/failed
+    # council can never become a false COMPLETE (same guarantee as the claude arm).
+    if [ "${LOKI_SDK_VOTER_AGENTS:-0}" = "1" ]; then
+        local _va_root _va_loki _va_schema_f _va_pf _va_out _va_rc
+        _va_root="$(cd "${__LOKI_VA_REPO_ROOT}" 2>/dev/null && pwd)" || _va_root="${__LOKI_VA_REPO_ROOT}"
+        _va_loki="${_va_root}/bin/loki"
+        _va_schema_f="${_va_root}/loki-ts/data/finding-schema.json"
+        if [ -x "$_va_loki" ] && [ -f "$_va_schema_f" ] && command -v bun >/dev/null 2>&1; then
+            _va_pf="$(mktemp 2>/dev/null)" || _va_pf=""
+            if [ -n "$_va_pf" ]; then
+                # inline the agent roster so a single schema-constrained call
+                # produces one finding per declared council agent.
+                printf '%s\n\nDeclared council agents (produce exactly one finding per agent, in this order):\n%s\n' \
+                    "$prompt" "$agents_json" > "$_va_pf"
+                _va_rc=0
+                local _va_to_s="${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}"
+                local _va_wrap
+                if command -v timeout >/dev/null 2>&1; then _va_wrap="timeout $(( _va_to_s + 15 ))"
+                elif command -v gtimeout >/dev/null 2>&1; then _va_wrap="gtimeout $(( _va_to_s + 15 ))"
+                else _va_wrap=""; fi
+                _va_out="$($_va_wrap "$_va_loki" internal sdk-judge \
+                    --prompt-file "$_va_pf" --schema-file "$_va_schema_f" \
+                    --model "${LOKI_SDK_COUNCIL_MODEL:-claude-sonnet-5}" --effort high \
+                    --timeout-ms "$(( _va_to_s * 1000 ))" 2>"$COUNCIL_STATE_DIR/votes/dispatch-stderr-${iteration}.log")" || _va_rc=$?
+                rm -f "$_va_pf" 2>/dev/null || true
+                if [ "$_va_rc" -eq 0 ] && [ -n "$_va_out" ]; then
+                    # feed the SDK object into the SAME parse+materialize path
+                    response="$_va_out"
+                    rc=0
+                    _va_sdk_done=1  # skip the claude dispatch below
+                fi
+            fi
+        fi
+        # fall through to the claude path (fail-closed) if not _va_sdk_done
+    fi
+
+    # 3. Invoke claude (only when the SDK path did not already produce a response).
+    # Guard against absent binary or non-zero exit.
+    if [ "$_va_sdk_done" != "1" ]; then
+    command -v claude >/dev/null 2>&1 || return 1
+
     # caveman HARD-SUPPRESS (parsed output, v7.41.0): the response is parsed for
     # findings[].vote against the JSON Schema. A globally-active caveman would
     # compress/reword it and break the schema match or flip a vote. The tree-wide
@@ -274,7 +330,11 @@ loki_council_dispatch_agents() {
                       env CAVEMAN_DEFAULT_MODE=off claude --dangerously-skip-permissions \
                       -p "$prompt" \
                       --agents "$agents_json" \
-                      --json-schema "$schema_path" 2>"$stderr_log") || rc=$?
+                      --json-schema "$schema_content" 2>"$stderr_log") || rc=$?
+    fi  # end claude-dispatch guard (SDK path skips it, already has $response)
+
+    # Shared fail-closed check for BOTH paths: any non-zero exit (claude/SDK
+    # timeout 124 or failure) or empty response -> return 1 -> heuristic fallback.
     if [ "$rc" -ne 0 ] || [ -z "$response" ]; then
         return 1
     fi

@@ -40,6 +40,7 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV LOKI_DASHBOARD_HOST=0.0.0.0
 ENV LOKI_DASHBOARD_PORT=57374
+ENV LOKI_DATA_DIR=/home/appuser/.loki
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash appuser
@@ -52,7 +53,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend code as a package (dashboard/)
 # This preserves the package structure for relative imports
-COPY __init__.py database.py models.py server.py registry.py auth.py audit.py secrets.py control.py run.py ./dashboard/
+COPY __init__.py database.py models.py server.py registry.py auth.py audit.py secrets.py control.py run.py build_supervisor.py ./dashboard/
 
 # Copy built frontend to static directory inside package
 COPY --from=frontend-builder /app/frontend/dist ./dashboard/static

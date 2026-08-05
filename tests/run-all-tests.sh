@@ -22,9 +22,53 @@ echo -e "${BLUE}║          LOKI MODE - COMPREHENSIVE TEST SUITE               
 echo -e "${BLUE}╚════════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
+# SHARDING (v8.3.x). Shell tests took 13m01s of a ~15m pipeline -- 6x the next
+# slowest job -- because all 289 suites ran serially on one runner. With
+# LOKI_TEST_SHARD=i/n each runner executes only the suites whose index satisfies
+# (index % n == i), so N runners cut the wall clock by roughly N.
+#
+# INDEX-BASED, NOT A CURATED LIST, and that is the load-bearing choice. A
+# hand-maintained "shard 1 runs these files" list is a place for a suite to go
+# missing: add a run_test line, forget the list, and it silently never runs
+# again. Here every run_test call takes the next index, so a new suite lands in
+# some shard automatically and the union of shards is provably the whole set.
+#
+# The precedent this repo already paid for: a shellcheck "optimization" that was
+# ~2x faster and SILENTLY LOST 2 real failures. It was reverted. Speed that
+# stops noticing failures is worse than slow. tests/test-shard-coverage.sh
+# asserts the shards partition the suite list exactly -- every suite in exactly
+# one shard, none dropped, none duplicated.
+_shard_index=0
+_shard_i=""
+_shard_n=""
+if [ -n "${LOKI_TEST_SHARD:-}" ]; then
+    _shard_i="${LOKI_TEST_SHARD%%/*}"
+    _shard_n="${LOKI_TEST_SHARD##*/}"
+    case "$_shard_i$_shard_n" in
+        ''|*[!0-9]*)
+            echo "run-all-tests: LOKI_TEST_SHARD must be i/n with integers (got '$LOKI_TEST_SHARD')" >&2
+            exit 2 ;;
+    esac
+    if [ "$_shard_n" -lt 1 ] || [ "$_shard_i" -ge "$_shard_n" ]; then
+        echo "run-all-tests: invalid shard '$LOKI_TEST_SHARD' (need 0 <= i < n, n >= 1)" >&2
+        exit 2
+    fi
+    echo -e "${BLUE}Shard ${_shard_i} of ${_shard_n} -- running every ${_shard_n}th suite${NC}"
+    echo ""
+fi
+
 run_test() {
     local test_name="$1"
     local test_file="$2"
+
+    # Take this suite's index BEFORE any skip, so indices are stable regardless
+    # of which shard is running. Two shards must agree on which index a suite
+    # has, or the partition breaks.
+    local _idx=$_shard_index
+    _shard_index=$((_shard_index + 1))
+    if [ -n "$_shard_n" ] && [ $((_idx % _shard_n)) -ne "$_shard_i" ]; then
+        return 0
+    fi
 
     echo -e "${YELLOW}┌────────────────────────────────────────────────────────────────┐${NC}"
     echo -e "${YELLOW}│ Running: ${test_name}${NC}"
@@ -33,7 +77,21 @@ run_test() {
 
     TESTS_RUN=$((TESTS_RUN + 1))
 
-    if bash "$test_file"; then
+    # Most callers pass a bare path; two pass a full command line
+    # ("python3 .../x.py"). `bash "$cmd"` treats the whole string as ONE
+    # filename, so those two died with "No such file or directory" and reported
+    # as a product failure. Branch on what the argument actually is.
+    #
+    # Deliberately NOT `bash -c "$test_file"` for everything: -c execve's the
+    # file, which requires the exec bit, and 46 shell suites here are committed
+    # mode 100644. That swap turns every one of them into rc 126.
+    if [ -f "$test_file" ]; then
+        _run_suite() { bash "$test_file"; }
+    else
+        _run_suite() { bash -c "$test_file"; }
+    fi
+
+    if _run_suite; then
         echo ""
         echo -e "${GREEN}✓ ${test_name} PASSED${NC}"
         TOTAL_PASSED=$((TOTAL_PASSED + 1))
@@ -77,6 +135,16 @@ run_test "Healing Friction Gate Tests" "$SCRIPT_DIR/test-healing-friction-gate.s
 
 # Parallel worktree Claude auto-flags (effort/budget/fallback/mcp parity)
 run_test "Worktree Auto-Flags Tests" "$SCRIPT_DIR/test-worktree-auto-flags.sh"
+run_test "Merge-queue log-once + nested-agent parallel guard (client parallel-issue fix)" "$SCRIPT_DIR/test-merge-queue-log-once.sh"
+
+# v8: raw-SDK judge/text bridges (fail-closed, opt-in, binary-free ordering)
+run_test "v8 SDK judge bridge (done-recognition + council-v2)" "$SCRIPT_DIR/test-sdk-done-recog-bridge.sh"
+run_test "v8 SDK text bridge (grill + prd-enrich)" "$SCRIPT_DIR/test-sdk-text-bridge.sh"
+run_test "v8 SDK council VOTE (member + contrarian, trust core)" "$SCRIPT_DIR/test-sdk-council-vote.sh"
+run_test "v8 SDK voter-agents council (Epic C, finding schema)" "$SCRIPT_DIR/test-sdk-voter-agents.sh"
+run_test "v8 SDK-loop start routing (LOKI_SDK_LOOP gate, default-off)" "$SCRIPT_DIR/test-sdk-loop-routing.sh"
+run_test "v8 Structured Review Self-Copy Asset Resolution" "$SCRIPT_DIR/test-code-review-self-copy.sh"
+run_test "Review deadline, requirements, and speculative assurance tail" "$SCRIPT_DIR/test-review-assurance-tail.sh"
 
 # Completion-council effective threshold (operator tighten-only floor + size guard)
 run_test "Council Threshold Tests" "$SCRIPT_DIR/test-council-threshold.sh"
@@ -85,6 +153,9 @@ run_test "Healing Test Gate Tests" "$SCRIPT_DIR/test-healing-test-gate.sh"
 # v7.114.0 accuracy/speed moat batch (ranks 2, 8, 9, 15)
 run_test "RARV mode-aware + PARALLEL_TOOL_CALLS build_prompt (rank 16+8)" "$SCRIPT_DIR/test-rarv-parallel-build-prompt.sh"
 run_test "Mergeability reviewer + quality score (rank 9 run_code_review)" "$SCRIPT_DIR/test-mergeability-review.sh"
+run_test "Code-review gitignore filter + oversized-diff loud-fail (client fix)" "$SCRIPT_DIR/test-review-gitignore-filter.sh"
+run_test "Code-review compact lockfile context and explicit size rejection" "$SCRIPT_DIR/test-review-lockfile-context.sh"
+run_test "Code-review size caps derive from PROVIDER_CONTEXT_WINDOW" "$SCRIPT_DIR/test-review-context-window-caps.sh"
 run_test "Council Convergence Floor (rank 15 no-claim early check)" "$SCRIPT_DIR/test-council-convergence-floor.sh"
 run_test "Acceptance-oracle source-grounded (rank 2 routes/LSP-symbols/invariant)" "$SCRIPT_DIR/test-oracle-source-grounded.sh"
 
@@ -104,13 +175,43 @@ run_test "Heal Assess Readiness Triage Tests (rank 13)" "$SCRIPT_DIR/test-heal-a
 
 # Process Supervisor Tests
 run_test "Process Supervisor Tests" "$SCRIPT_DIR/test-process-supervisor.sh"
+run_test "Supervised Signal Finalization and Honest Proof" "$SCRIPT_DIR/test-supervised-signal-finalization.sh"
 
 # Orphan wrapper reaper (loki-mode #92: liveness-gated self-reaping, nohup-safe)
 run_test "Orphan Wrapper Reaper (#92 liveness predicate)" "$SCRIPT_DIR/test-orphan-wrapper-reaper.sh"
 
 # Quality Gates
 run_test "Mock Detector (Gate #8)" "$SCRIPT_DIR/detect-mock-problems.sh"
+run_test "Mock Detector source-import false positive (subprocess E2E)" "$SCRIPT_DIR/test-mock-detector-source-import.sh"
+run_test "start-SHA empty-repo capture (council empty_diff blocker)" "$SCRIPT_DIR/test-start-sha-empty-repo.sh"
+run_test "stat portability (GNU-first ordering)" "$SCRIPT_DIR/test-stat-portability.sh"
+run_test "alt-provider model-alias warning (OpenRouter/Ollama/LiteLLM)" "$SCRIPT_DIR/test-alt-provider-warning.sh"
+run_test "bash 3.2 parse compatibility (macOS /bin/bash)" "$SCRIPT_DIR/test-bash32-parse.sh"
+run_test "greenfield diff-stat (report what was built)" "$SCRIPT_DIR/test-greenfield-diffstat.sh"
+run_test "PAUSED.md states the pause reason" "$SCRIPT_DIR/test-paused-md-reason.sh"
+run_test "per-outcome next-step guidance" "$SCRIPT_DIR/test-outcome-guidance.sh"
+run_test "Evidence Receipt run-level baseline (signed diff stat)" "$SCRIPT_DIR/test-receipt-run-baseline.sh"
+run_test "no hardcoded home-directory paths in tests" "$SCRIPT_DIR/test-no-hardcoded-paths.sh"
+run_test "loki why honest reporting (gate named, diff re-derived)" "$SCRIPT_DIR/test-why-honest-report.sh"
+run_test "status surfaces agree (STATUS.txt vs COMPLETION.txt, --json staleness)" "$SCRIPT_DIR/test-status-surface-agrees.sh"
+run_test "emit.sh append lock never hangs (telemetry must not outlive the run)" "$SCRIPT_DIR/test-emit-lock-no-hang.sh"
+run_test "emit.sh self-reaper caps every path (no 10-hour orphans)" "$SCRIPT_DIR/test-emit-self-reaper.sh"
+run_test "dashboard venv teardown is serialized (concurrent runs keep an importable venv)" "$SCRIPT_DIR/test-venv-concurrent-teardown.sh"
+run_test "verification runs air-gapped (enterprise perimeter, honest scope)" "$SCRIPT_DIR/test-airgap-verify.sh"
+run_test "doctor names what blocks you (first-run funnel)" "$SCRIPT_DIR/test-doctor-names-blockers.sh"
+run_test "server.json tracks VERSION (MCP registry not stale)" "$SCRIPT_DIR/test-server-json-current.sh"
+run_test "brownfield assess changes nothing (enterprise trust claim)" "$SCRIPT_DIR/test-brownfield-assess-readonly.sh"
+run_test "EVALUATING.md claims stay runnable (no COMPARISON.md rot)" "$SCRIPT_DIR/test-evaluating-doc-runnable.sh"
+run_test "council never fabricates a reviewer verdict (INCONCLUSIVE != REJECT)" "$SCRIPT_DIR/test-council-no-fabricated-verdict.sh"
+run_test "model catalog: no Claude defaults on non-Claude providers" "$SCRIPT_DIR/test-catalog-no-claude-default.sh"
+run_test "Evidence Receipt names the blocking gate (facts, not assessment)" "$SCRIPT_DIR/test-receipt-names-blocking-gate.sh"
+run_test "Evidence Receipt splits exogenous vs advisory verification" "$SCRIPT_DIR/test-receipt-exogenous-split.sh"
+run_test "project-graph bash/bun parity (members discovery default)" "$SCRIPT_DIR/test-parity-project-graph.sh"
+run_test "opencode provider (model-agnostic route, 75+ providers)" "$SCRIPT_DIR/test-opencode-provider.sh"
+run_test "fast_verify: millisecond deterministic verification" "$SCRIPT_DIR/test-fast-verify.sh"
+run_test "provider_invoke_argv timeout seam (judges keep their timeout)" "$SCRIPT_DIR/test-provider-invoke-argv.sh"
 run_test "Test Mutation Detector (Gate #9)" "$SCRIPT_DIR/detect-test-mutations.sh"
+run_test "Harness False-Green Regression and Mutation" "$SCRIPT_DIR/test-harness-false-green.sh"
 
 # Sentrux Gate (v7.5.14) -- unit tests only; uses fake on-PATH binary so safe
 # on every CI host (Linux/macOS). The real-binary integration test lives at
@@ -125,8 +226,10 @@ run_test "CI Sentrux Coverage" "$SCRIPT_DIR/test-ci-sentrux-coverage.sh"
 run_test "Sentrux Iteration Wireup (Dev1)" "$SCRIPT_DIR/test-sentrux-iteration-wireup.sh"
 run_test "Sentrux Init-Rules (Dev3)" "$SCRIPT_DIR/test-sentrux-init-rules.sh"
 run_test "Doctor JSON Sentrux Parity (Dev4)" "$SCRIPT_DIR/test-doctor-json-sentrux.sh"
+run_test "Receipt Signing Discoverability" "$SCRIPT_DIR/test-receipt-signing-discoverability.sh"
 run_test "Dashboard Nav UAT (Dev5)" "$SCRIPT_DIR/test-dashboard-nav-uat.sh"
 run_test "Pytest Gate Timeout (Dev6)" "$SCRIPT_DIR/test-pytest-gate-timeout.sh"
+run_test "Go/Cargo Gate Timeout" "$SCRIPT_DIR/test-go-cargo-gate-timeout.sh"
 # Python tests (Dev2 + Dev7) -- registered via tiny wrapper scripts so the
 # bash runner (which expects a single executable file per entry) can include
 # them alongside the bash tests.
@@ -158,6 +261,7 @@ fi
 # truth table. Skips gracefully when git/python3 are unavailable or the gate
 # is not yet defined.
 run_test "Evidence Gate (verified completion)" "$SCRIPT_DIR/test-evidence-gate.sh"
+run_test "No-mock data-render classification" "$SCRIPT_DIR/test-nomock-data-render.sh"
 
 # State baseline lifecycle: a fresh run after a terminal status (success,
 # failure, or crash) must reset ITERATION_COUNT so the evidence-gate baseline
@@ -309,6 +413,14 @@ run_test "Branch Lifecycle (default-on, base!=main, commit, advisory no-push)" "
 # endpoint points at an unroutable local sink, never the real PostHog host.
 run_test "Telemetry Disclosure PTY (TTY signal + no covert egress)" "$SCRIPT_DIR/test-telemetry-disclosure-pty.sh"
 
+# Opt-in build-outcome analytics (Build A). The build_verified event sits behind
+# a STRICT second-layer gate (LOKI_ANALYTICS/LOKI_POSTHOG=on) below base
+# telemetry, default OFF even for diagnostics-on users. Asserts the gate
+# precedence (default off, opt-in fires, every opt-out kills it) and that the
+# FIXED allowlist (autonomy/lib/proof-analytics-props.py) emits only already-
+# computed scalars -- never spec/PRD text or file paths. Hermetic: curl stubbed.
+run_test "Build Analytics Opt-In (strict gate + allowlist, no leak)" "$SCRIPT_DIR/test-build-analytics-optin.sh"
+
 # Deploy Advisory (FEAT-DEPLOY): `loki deploy` detects project type + CI/CD
 # pipeline and PRINTS the deploy command(s); print-only (NEVER runs a cloud CLI,
 # NEVER git push). Drives the real binary with fake cloud-CLI stubs; headline
@@ -356,6 +468,202 @@ run_test "Codex Model Trusted (LOKI_CODEX_MODEL verbatim)" "$SCRIPT_DIR/test-cod
 # MiniMax catalog metadata and user-configurable Anthropic/OpenAI adapter paths.
 run_test "MiniMax Model Catalog and Compatible Endpoints" "$SCRIPT_DIR/test-minimax-model-catalog.sh"
 
+# provider_invoke()/provider_invoke_with_tier() argv construction across all
+# four providers. Registered 2026-07-27: this file existed but was wired into
+# NO runner, so the layer it guards went unwatched -- which is how a hardcoded
+# codex model that ChatGPT accounts reject reached users. An unregistered test
+# is indistinguishable from no test.
+run_test "Provider Invocation (argv construction, all providers)" "$SCRIPT_DIR/test-provider-invocation.sh"
+
+# Provider capability flags + degraded-mode reasons must match what each CLI
+# actually supports, not a stale assumption.
+run_test "Provider Degraded Mode (capability flags)" "$SCRIPT_DIR/test-provider-degraded-mode.sh"
+
+# The loader contract itself (which vars every provider must export, tier
+# mapping, unknown-provider handling). Also previously unregistered.
+run_test "Provider Loader (contract + tier mapping)" "$SCRIPT_DIR/test-provider-loader.sh"
+
+# Audit-chain integrity across CONCURRENT WRITER PROCESSES. Registered with the
+# fix (2026-07-27): a threading.Lock plus an import-time chain tip meant every
+# concurrent writer process forked the tamper-evident chain at write time. 25 of
+# 67 audit files on a real machine were internally chain-broken.
+run_test "Audit Chain Multiprocess (cross-process flock + tip re-read)" "$SCRIPT_DIR/test-audit-chain-multiprocess.sh"
+
+# Test-coverage gate: a PASSING suite must record pass:true, a failing one must
+# BLOCK, and genuinely-no-tests must stay inconclusive. Registered with the
+# node-test detector fix (2026-07-27): node 26 defaults to the spec reporter, so
+# a green suite emitted no TAP "ok N -" lines and was mislabeled "no_tests_run".
+run_test "Coverage Gate Fail-Open (node-test detector)" "$SCRIPT_DIR/test-coverage-gate-fail-open.sh"
+
+# `loki init` surface, including --json. Registered with the stdout/stderr fix
+# (2026-07-27): the reinit banner was written to stdout, so the SECOND init in a
+# directory emitted invalid JSON to any tool parsing it.
+run_test "Init Command (templates, --json, --list)" "$SCRIPT_DIR/test-init-command.sh"
+
+# ANTHROPIC_BASE_URL + LOKI_MODEL_OVERRIDE fail-closed AND-gate (bash route).
+# Registered 2026-07-27 after retargeting 4 assertions that still expected the
+# pre-v7.104.0 opus default; the Bun mirror had been updated, the bash twin had
+# not, because no runner ever ran it.
+run_test "Anthropic Base URL (override AND-gate, bash)" "$SCRIPT_DIR/test-anthropic-base-url.sh"
+
+# The v8 completion secret gate must not call a finished app a leak. v7.129.5
+# had NO secret logic in the council, so every false positive here is a build
+# that COMPLETED on v7 and BLOCKS on v8. Pairs each relaxation with a real-leak
+# case so the gate cannot be loosened into uselessness.
+run_test "Secret Gate False Positives (templates vs real leaks)" "$SCRIPT_DIR/test-secret-gate-false-positives.sh"
+
+# Batch 6: previously-orphaned suites repaired 2026-07-27. Each was failing for
+# a DIFFERENT reason (a hoisted helper the extractor no longer carried, three
+# retargets to post-v7.89.0 contracts, an incomplete checked-in fixture, and a
+# test that scanned the repo's own branch diff), and none was a product defect.
+run_test "Council Contrarian Transcript Fields" "$SCRIPT_DIR/test-council-contrarian-transcript-fields.sh"
+run_test "Bugfix Audit (CLI regressions)" "$SCRIPT_DIR/test-bugfix-audit.sh"
+run_test "CLAUDE.md Walker (project graph layers)" "$SCRIPT_DIR/test-claude-md-walker.sh"
+run_test "CI Command (--fail-on thresholds)" "$SCRIPT_DIR/test-ci-command.sh"
+
+# Batch 7 of the orphaned-suite registration (2026-07-27).
+run_test "Report Command" "$SCRIPT_DIR/test-report-command.sh"
+run_test "Review Allowlist 167" "$SCRIPT_DIR/test-review-allowlist-167.sh"
+run_test "Review Command" "$SCRIPT_DIR/test-review-command.sh"
+run_test "Review Severity Calibration" "$SCRIPT_DIR/test-review-severity-calibration.sh"
+run_test "Run Sh Quoting" "$SCRIPT_DIR/test-run-sh-quoting.sh"
+run_test "Run Start Estimate" "$SCRIPT_DIR/test-run-start-estimate.sh"
+run_test "Runtime Gate" "$SCRIPT_DIR/test-runtime-gate.sh"
+run_test "Sandbox Bughunt W4" "$SCRIPT_DIR/test-sandbox-bughunt-w4.sh"
+run_test "Scaffold Hook" "$SCRIPT_DIR/test-scaffold-hook.sh"
+run_test "Sentrux Setup Hints" "$SCRIPT_DIR/test-sentrux-setup-hints.sh"
+run_test "Share Command" "$SCRIPT_DIR/test-share-command.sh"
+
+# ---------------------------------------------------------------------------
+# Batch 1 of the orphaned-suite registration (2026-07-27). These suites existed
+# and passed but were wired into NO runner, so they never executed. See
+# tests/test-registration-coverage.sh for the gate that now prevents new orphans.
+# ---------------------------------------------------------------------------
+run_test "Admin Quote Injection" "$SCRIPT_DIR/test-admin-quote-injection.sh"
+run_test "Aider Cloud" "$SCRIPT_DIR/test-aider-cloud.sh"
+run_test "Api Server" "$SCRIPT_DIR/test-api-server.sh"
+run_test "App Runner Compose" "$SCRIPT_DIR/test-app-runner-compose.sh"
+run_test "App Runner Injection" "$SCRIPT_DIR/test-app-runner-injection.sh"
+run_test "App Runner Nextjs Standalone" "$SCRIPT_DIR/test-app-runner-nextjs-standalone.sh"
+run_test "App Runner Port Reconcile" "$SCRIPT_DIR/test-app-runner-port-reconcile.sh"
+run_test "App Runner Static Site" "$SCRIPT_DIR/test-app-runner-static-site.sh"
+run_test "App Runner Token Lifecycle" "$SCRIPT_DIR/test-app-runner-token-lifecycle.sh"
+run_test "App Runner Tree Stop" "$SCRIPT_DIR/test-app-runner-tree-stop.sh"
+run_test "App Runner Watchdog Health" "$SCRIPT_DIR/test-app-runner-watchdog-health.sh"
+run_test "App Runner Wave5 W5" "$SCRIPT_DIR/test-app-runner-wave5-w5.sh"
+run_test "Apprunner Dockerfile Exec Wave8" "$SCRIPT_DIR/test-apprunner-dockerfile-exec-wave8.sh"
+run_test "Assumption Gate Brief Mode" "$SCRIPT_DIR/test-assumption-gate-brief-mode.sh"
+run_test "Auto Wiki" "$SCRIPT_DIR/test-auto-wiki.sh"
+run_test "Backend Floor" "$SCRIPT_DIR/test-backend-floor.sh"
+run_test "Bench Haschanges" "$SCRIPT_DIR/test-bench-haschanges.sh"
+run_test "Benchmarks Resume Atomic" "$SCRIPT_DIR/test-benchmarks-resume-atomic.sh"
+run_test "Bmad Integration" "$SCRIPT_DIR/test-bmad-integration.sh"
+run_test "Build Profile" "$SCRIPT_DIR/test-build-profile.sh"
+run_test "Caveman Loki Coverage" "$SCRIPT_DIR/test-caveman-loki-coverage.sh"
+run_test "Checkpoint Cli" "$SCRIPT_DIR/test-checkpoint-cli.sh"
+run_test "Checkpoint Prune Sort" "$SCRIPT_DIR/test-checkpoint-prune-sort.sh"
+
+# Batch 2 of the orphaned-suite registration (2026-07-27).
+run_test "Checkpoint Ref Prune Wave9" "$SCRIPT_DIR/test-checkpoint-ref-prune-wave9.sh"
+run_test "Claude Flags" "$SCRIPT_DIR/test-claude-flags.sh"
+run_test "Claude Login State" "$SCRIPT_DIR/test-claude-login-state.sh"
+run_test "Cli Allow Haiku Flag" "$SCRIPT_DIR/test-cli-allow-haiku-flag.sh"
+run_test "Cli Provider Flag" "$SCRIPT_DIR/test-cli-provider-flag.sh"
+run_test "Cluster Id Injection Wave10" "$SCRIPT_DIR/test-cluster-id-injection-wave10.sh"
+run_test "Cockpit Cmd" "$SCRIPT_DIR/test-cockpit-cmd.sh"
+run_test "Cockpit Follow" "$SCRIPT_DIR/test-cockpit-follow.sh"
+run_test "Cockpit Keys" "$SCRIPT_DIR/test-cockpit-keys.sh"
+run_test "Code Review Json Rematerialize" "$SCRIPT_DIR/test-code-review-json-rematerialize.sh"
+run_test "Code Review Verdict Parse Wave8" "$SCRIPT_DIR/test-code-review-verdict-parse-wave8.sh"
+run_test "Codex Max Tier Normalize" "$SCRIPT_DIR/test-codex-max-tier-normalize.sh"
+run_test "Completion Council Affirmative Evidence" "$SCRIPT_DIR/test-completion-council-affirmative-evidence.sh"
+run_test "Completion Paused Block" "$SCRIPT_DIR/test-completion-paused-block.sh"
+run_test "Completion Route Checklist Gate" "$SCRIPT_DIR/test-completion-route-checklist-gate.sh"
+run_test "Completion Signal Consume" "$SCRIPT_DIR/test-completion-signal-consume.sh"
+run_test "Complexity Proportional Review" "$SCRIPT_DIR/test-complexity-proportional-review.sh"
+run_test "Compound Cli" "$SCRIPT_DIR/test-compound-cli.sh"
+run_test "Concurrent Sessions" "$SCRIPT_DIR/test-concurrent-sessions.sh"
+run_test "Config Spawn Deprecated Wave10" "$SCRIPT_DIR/test-config-spawn-deprecated-wave10.sh"
+run_test "Context Optimization" "$SCRIPT_DIR/test-context-optimization.sh"
+run_test "Contract Scaffold" "$SCRIPT_DIR/test-contract-scaffold.sh"
+
+# Batch 3 of the orphaned-suite registration (2026-07-27).
+run_test "Council Convergence On Claim" "$SCRIPT_DIR/test-council-convergence-on-claim.sh"
+run_test "Council Force Stop Wave7" "$SCRIPT_DIR/test-council-force-stop-wave7.sh"
+run_test "Council Healing Audit Fixes" "$SCRIPT_DIR/test-council-healing-audit-fixes.sh"
+run_test "Council Member Timeout Wave10" "$SCRIPT_DIR/test-council-member-timeout-wave10.sh"
+run_test "Council Scope Honesty" "$SCRIPT_DIR/test-council-scope-honesty.sh"
+run_test "Council Transcripts Api" "$SCRIPT_DIR/test-council-transcripts-api.sh"
+run_test "Council V2 Quorum" "$SCRIPT_DIR/test-council-v2-quorum.sh"
+run_test "Council Vote Parse" "$SCRIPT_DIR/test-council-vote-parse.sh"
+run_test "Council Write Transcript Threshold" "$SCRIPT_DIR/test-council-write-transcript-threshold.sh"
+run_test "Cross Project Lift" "$SCRIPT_DIR/test-cross-project-lift.sh"
+run_test "Da Veto" "$SCRIPT_DIR/test-da-veto.sh"
+run_test "Dashboard Identity" "$SCRIPT_DIR/test-dashboard-identity.sh"
+run_test "Dashboard Json Guards" "$SCRIPT_DIR/test-dashboard-json-guards.sh"
+run_test "Dashboard Memory Endpoints" "$SCRIPT_DIR/test-dashboard-memory-endpoints.sh"
+run_test "Dashboard Multiproject" "$SCRIPT_DIR/test-dashboard-multiproject.sh"
+run_test "Design System" "$SCRIPT_DIR/test-design-system.sh"
+run_test "Docker Helpers W4" "$SCRIPT_DIR/test-docker-helpers-w4.sh"
+run_test "Docker Run" "$SCRIPT_DIR/test-docker-run.sh"
+run_test "Doctor Ux" "$SCRIPT_DIR/test-doctor-ux.sh"
+run_test "E2e Features" "$SCRIPT_DIR/test-e2e-features.sh"
+run_test "Embeddings" "$SCRIPT_DIR/test-embeddings.sh"
+run_test "Emit Jsonl" "$SCRIPT_DIR/test-emit-jsonl.sh"
+run_test "Empty Args No Prd" "$SCRIPT_DIR/test-empty-args-no-prd.sh"
+run_test "Enterprise Resilience" "$SCRIPT_DIR/test-enterprise-resilience.sh"
+run_test "Events Jsonl Concurrency" "$SCRIPT_DIR/test-events-jsonl-concurrency.sh"
+run_test "Evidence Proof Axes" "$SCRIPT_DIR/test-evidence-proof-axes.sh"
+run_test "Expectation Ledger" "$SCRIPT_DIR/test-expectation-ledger.sh"
+run_test "F3 Port Detection" "$SCRIPT_DIR/test-f3-port-detection.sh"
+
+# Batch 4 of the orphaned-suite registration (2026-07-27).
+run_test "Hard Deadline Confinement" "$SCRIPT_DIR/test-hard-deadline-confinement.sh"
+run_test "Honest Gate Status" "$SCRIPT_DIR/test-honest-gate-status.sh"
+run_test "Human Input Directive" "$SCRIPT_DIR/test-human-input-directive.sh"
+run_test "Isolation Dial" "$SCRIPT_DIR/test-isolation-dial.sh"
+run_test "Iteration Card Plain" "$SCRIPT_DIR/test-iteration-card-plain.sh"
+run_test "Iteration Complete Accuracy" "$SCRIPT_DIR/test-iteration-complete-accuracy.sh"
+run_test "Json Prd" "$SCRIPT_DIR/test-json-prd.sh"
+run_test "License Audit Pinned Version" "$SCRIPT_DIR/test-license-audit-pinned-version.sh"
+run_test "Log Debug Stderr" "$SCRIPT_DIR/test-log-debug-stderr.sh"
+run_test "Loki Stop Byid Reap Wave8" "$SCRIPT_DIR/test-loki-stop-byid-reap-wave8.sh"
+run_test "Lsp Diagnostics Regression" "$SCRIPT_DIR/test-lsp-diagnostics-regression.sh"
+run_test "Lsp Proxy Http" "$SCRIPT_DIR/test-lsp-proxy-http.sh"
+run_test "Lsp Proxy" "$SCRIPT_DIR/test-lsp-proxy.sh"
+run_test "Magic" "$SCRIPT_DIR/test-magic.sh"
+run_test "Mcp Config" "$SCRIPT_DIR/test-mcp-config.sh"
+run_test "Mcp Http Auth" "$SCRIPT_DIR/test-mcp-http-auth.sh"
+run_test "Memory Audit Fixes" "$SCRIPT_DIR/test-memory-audit-fixes.sh"
+run_test "Memory Capture Wedge" "$SCRIPT_DIR/test-memory-capture-wedge.sh"
+run_test "Memory Economics Endpoint" "$SCRIPT_DIR/test-memory-economics-endpoint.sh"
+run_test "Memory Error Log" "$SCRIPT_DIR/test-memory-error-log.sh"
+run_test "Memory Replay" "$SCRIPT_DIR/test-memory-replay.sh"
+run_test "Memory Speed Privacy" "$SCRIPT_DIR/test-memory-speed-privacy.sh"
+run_test "Memory Wake Dead Code" "$SCRIPT_DIR/test-memory-wake-dead-code.sh"
+run_test "Metrics Command" "$SCRIPT_DIR/test-metrics-command.sh"
+
+# Batch 5 of the orphaned-suite registration (2026-07-27).
+run_test "Migration Post Edit Revert" "$SCRIPT_DIR/test-migration-post-edit-revert.sh"
+run_test "Migration V2" "$SCRIPT_DIR/test-migration-v2.sh"
+run_test "Model And Port" "$SCRIPT_DIR/test-model-and-port.sh"
+run_test "Onboard Command" "$SCRIPT_DIR/test-onboard-command.sh"
+run_test "Onboard Json Injection Wave10" "$SCRIPT_DIR/test-onboard-json-injection-wave10.sh"
+run_test "Openspec Sentinel" "$SCRIPT_DIR/test-openspec-sentinel.sh"
+run_test "Parity Mcp Config" "$SCRIPT_DIR/test-parity-mcp-config.sh"
+run_test "Platform Infra" "$SCRIPT_DIR/test-platform-infra.sh"
+run_test "Policy Failclosed" "$SCRIPT_DIR/test-policy-failclosed.sh"
+run_test "Prd Checklist Interval W4" "$SCRIPT_DIR/test-prd-checklist-interval-w4.sh"
+run_test "Prd Directive Envelope" "$SCRIPT_DIR/test-prd-directive-envelope.sh"
+run_test "Prd Reuse Bash W4" "$SCRIPT_DIR/test-prd-reuse-bash-w4.sh"
+run_test "Proof Forgery Defense" "$SCRIPT_DIR/test-proof-forgery-defense.sh"
+run_test "Provider Degraded Reasons Honesty" "$SCRIPT_DIR/test-provider-degraded-reasons-honesty.sh"
+run_test "Provider Flags" "$SCRIPT_DIR/test-provider-flags.sh"
+run_test "Provider Source Cli" "$SCRIPT_DIR/test-provider-source-cli.sh"
+run_test "Rarv Tier Mapping" "$SCRIPT_DIR/test-rarv-tier-mapping.sh"
+run_test "Rate Limit Octal" "$SCRIPT_DIR/test-rate-limit-octal.sh"
+run_test "Ratelimit Debug Clean" "$SCRIPT_DIR/test-ratelimit-debug-clean.sh"
+
 # Secure-by-default gate (Loop 4): the secure-scan engine precision (bad/safe
 # matrix for all 5 rules + the named false-positive guards), the run_secure_scan
 # wiring (advisory default never blocks; LOKI_SECURE_GATE=block blocks an
@@ -386,7 +694,123 @@ run_test "Reuse done-recognition gate (no-PRD reuse: done/incomplete/inconclusiv
 # for GitHub / GitLab / Jira / Azure DevOps -- network-free, mocked responses.
 run_test "Issue providers (GitHub/GitLab/Jira/Azure detect+parse+normalize)" "$SCRIPT_DIR/test-issue-providers.sh"
 
+# local-ci FAST/FULL tiering: the fast tier must never be mistaken for the full
+# pre-push gate, and must never stop covering the trust core. Static assertions
+# only -- never runs the real gate.
+run_test "local-ci tiers (fast never green-washes full; trust core always kept)" "$SCRIPT_DIR/test-local-ci-tiers.sh"
+run_test "parent checkout core.bare detection self-heals without green-washing" "$SCRIPT_DIR/test-core-bare-selfheal.sh"
+
 # Linting
+run_test "Export overwrite guard (non-interactive never hangs)" "$SCRIPT_DIR/test-export-overwrite-noninteractive.sh"
+run_test "Time-to-first-preview metric (write-once, never invented)" "$SCRIPT_DIR/test-first-preview-metric.sh"
+run_test "Session knobs stay default-OFF (gates the v8 SDK-flip audit)" "$SCRIPT_DIR/test-session-knobs-default-off.sh"
+run_test "shards partition the suite list (no silently dropped suite)" "$SCRIPT_DIR/test-shard-coverage.sh"
+run_test "quickstart scorer works on macOS bash 3.2 (first-run path)" "$SCRIPT_DIR/test-quickstart-bash32.sh"
+run_test "first-run path works on macOS bash 3.2 (welcome, tour, quickstart)" "$SCRIPT_DIR/test-first-run-bash32.sh"
+run_test "competitor verify surface (head-to-head, locally reproducible)" "$SCRIPT_DIR/test-competitor-verify-surface.sh"
+run_test "efficiency baseline pipeline (writer + collector, honest zero)" "$SCRIPT_DIR/test-efficiency-baseline-pipeline.sh"
+run_test "time-to-first-preview reaches the user (not just disk)" "$SCRIPT_DIR/test-first-preview-surfaced.sh"
+run_test "per-stage timing reaches the user (where the time went)" "$SCRIPT_DIR/test-stage-timing-surfaced.sh"
+run_test "iteration attribution (progress vs rework, honest null)" "$SCRIPT_DIR/test-iteration-attribution.sh"
+run_test "receipt attributes cost to progress vs rework" "$SCRIPT_DIR/test-receipt-rework-attribution.sh"
+run_test "silence report (longest in-build gap, idle excluded)" "$SCRIPT_DIR/test-silence-report.sh"
+run_test "free on-ramp stays wired (codex, zero API spend)" "$SCRIPT_DIR/test-free-onramp.sh"
+run_test "argv seam model flags (all providers; codex effort, max-tier clamp)" "$SCRIPT_DIR/test-codex-argv-model.sh"
+run_test "helm values schema rejects bad values by name" "$SCRIPT_DIR/test-helm-values-schema.sh"
+run_test "helm test hook proves the release serves" "$SCRIPT_DIR/test-helm-test-hook.sh"
+run_test "ECS/Fargate module structure + Helm parity" "$SCRIPT_DIR/test-ecs-fargate-module.sh"
+run_test "audit PVC can outlive the release (compliance)" "$SCRIPT_DIR/test-audit-pvc-retention.sh"
+run_test "worker grace period honours mid-build shutdown" "$SCRIPT_DIR/test-worker-grace-period.sh"
+run_test "k8s sizing says what was measured and what was not" "$SCRIPT_DIR/test-k8s-sizing-honesty.sh"
+run_test "air-gapped k8s install is honest about scope" "$SCRIPT_DIR/test-airgap-k8s-install.sh"
+run_test "enterprise smoke script contract (offline)" "$SCRIPT_DIR/test-enterprise-smoke-script.sh"
+run_test "image provenance: signing and SBOM in the publish job" "$SCRIPT_DIR/test-image-provenance.sh"
+run_test "doctor is CI-gateable (nonzero on missing required dep)" "$SCRIPT_DIR/test-doctor-ci-gateable.sh"
+run_test "completion coverage (every real command in both shells)" "$SCRIPT_DIR/test-completion-coverage.sh"
+run_test "dry-run paths work and are discoverable from start --help" "$SCRIPT_DIR/test-dry-run-discoverable.sh"
+run_test "exit codes documented and matching the source" "$SCRIPT_DIR/test-exit-codes-documented.sh"
+run_test "log verbosity (--quiet / LOKI_LOG_LEVEL, errors never hidden)" "$SCRIPT_DIR/test-log-verbosity.sh"
+run_test "verify --json emits pipeable evidence on stdout" "$SCRIPT_DIR/test-verify-json-stdout.sh"
+run_test "documented env vars exist in the source" "$SCRIPT_DIR/test-env-vars-documented.sh"
+run_test "generic tiers (small|medium|high) resolve for every provider" "$SCRIPT_DIR/test-generic-tiers.sh"
+run_test "wall-clock cap (LOKI_MAX_DURATION) fires and is terminal" "$SCRIPT_DIR/test-max-duration.sh"
+run_test "startup preflight blocks a doomed build, stays advisory where optional" "$SCRIPT_DIR/test-preflight-checks.sh"
+run_test "magic debate gate (Gate 12) can actually block" "$SCRIPT_DIR/test-magic-debate-gate.sh"
+run_test "review council cap trims the tail, never the mandate" "$SCRIPT_DIR/test-review-council-cap.sh"
+run_test "review skip on gate failure never records a pass" "$SCRIPT_DIR/test-review-skip-on-gate-fail.sh"
+run_test "time-to-first-artifact is recorded and rendered" "$SCRIPT_DIR/test-first-artifact-signal.sh"
+run_test "council cap binds on the REAL selector" "$SCRIPT_DIR/test-review-cap-real-selector.sh"
+run_test "gate detectors ship in the npm package" "$SCRIPT_DIR/test-detectors-are-packaged.sh"
+run_test "runtime python libs ship in the npm package" "$SCRIPT_DIR/test-runtime-libs-are-packaged.sh"
+run_test "loki why maps each error class to an action" "$SCRIPT_DIR/test-why-actions.sh"
+run_test "loki start surfaces a stale install" "$SCRIPT_DIR/test-start-update-hint.sh"
+run_test "loki help does not recurse into itself" "$SCRIPT_DIR/test-help-no-recursion.sh"
+run_test "no test uses a platform-divergent construct" "$SCRIPT_DIR/test-ci-only-divergence.sh"
+run_test "doctor detects an incomplete install" "$SCRIPT_DIR/test-doctor-install-integrity.sh"
+run_test "findings injection degrades loudly, never silently" "$SCRIPT_DIR/test-findings-injection-degrade.sh"
+run_test "a stuck gate aborts instead of grinding" "$SCRIPT_DIR/test-gate-stuck-abort.sh"
+run_test "iteration 1 names the gates that will judge it" "$SCRIPT_DIR/test-first-pass-gate-directive.sh"
+run_test "iteration cap is bounded without truncating real runs" "$SCRIPT_DIR/test-iteration-cap-default.sh"
+run_test "codex usage and cost are recovered, unknown never zero" "$SCRIPT_DIR/test-codex-usage-cost.sh"
+run_test "cache-stable prompt prefix stays free of volatile values" "$SCRIPT_DIR/test-cache-breakpoint-discipline.sh"
+run_test "no raw shell error when .loki/config is a directory" "$SCRIPT_DIR/test-disclosure-config-directory.sh"
+run_test "startup is instrumented, never a silent gap" "$SCRIPT_DIR/test-startup-instrumentation.sh"
+run_test "every handled gate escalates its findings" "$SCRIPT_DIR/test-gate-escalation-coverage.sh"
+run_test "cost honesty holds across every surface" "python3 -m pytest -q $SCRIPT_DIR/test_cost_honesty_end_to_end.py"
+run_test "the agent call reports its own prompt size" "$SCRIPT_DIR/test-agent-prompt-size.sh"
+run_test "per-turn context growth is measured" "$SCRIPT_DIR/test-context-growth-instrumentation.sh"
+run_test "provider auto-detection is wired" "$SCRIPT_DIR/test-provider-autodetect.sh"
+run_test "the two provider lists agree" "$SCRIPT_DIR/test-provider-lists-agree.sh"
+run_test "preflight verdict is honest" "$SCRIPT_DIR/test-preflight-verdict.sh"
+run_test "the provider docs match the code" "$SCRIPT_DIR/test-provider-docs-match-code.sh"
+run_test "every opencode dispatch path passes --auto" "$SCRIPT_DIR/test-provider-config-autonomous-flag.sh"
+run_test "a dropped event is visible" "$SCRIPT_DIR/test-event-drop-visible.sh"
+run_test "events carry the source the dashboard reads" "$SCRIPT_DIR/test-event-source-attribution.sh"
+run_test "proof verify --human explains a failure" "$SCRIPT_DIR/test-proof-verify-human.sh"
+run_test "the verification demo runs the real tools" "$SCRIPT_DIR/test-verify-demo.sh"
+run_test "cost and estimate are reachable from the CLI" "$SCRIPT_DIR/test-cost-cli.sh"
+run_test "quickstart names the provider that will run" "$SCRIPT_DIR/test-quickstart-provider-detect.sh"
+run_test "explicit provider preflight" "$SCRIPT_DIR/test-provider-preflight.sh"
+run_test "doctor shows provider availability" "$SCRIPT_DIR/test-doctor-providers.sh"
+run_test "interrupted runs surface how to resume" "$SCRIPT_DIR/test-resume-discoverability.sh"
+run_test "install integrity is checked on both doctor routes" "$SCRIPT_DIR/test-doctor-install-integrity-parity.sh"
+run_test "model catalog: no tier points at a superseded flagship" "$SCRIPT_DIR/test-model-catalog-current-flagship.sh"
+run_test "model catalog staleness is advisory in doctor" "$SCRIPT_DIR/test-model-catalog-staleness.sh"
+run_test "doctor blocker parity (both routes name blockers + offer loki tour)" "$SCRIPT_DIR/test-doctor-blocker-parity.sh"
+run_test "first_run_blocked signal (opt-out silent, enum-clamped)" "$SCRIPT_DIR/test-first-run-blocked-signal.sh"
+run_test "help discoverability (every command reachable)" "$SCRIPT_DIR/test-help-discoverability.sh"
+run_test "assess runtime detection (declared, never guessed)" "$SCRIPT_DIR/test-assess-runtime-detection.sh"
+run_test "provider model scoping (global tier var must not leak)" "$SCRIPT_DIR/test-provider-model-scoping.sh"
+run_test "model catalog is a single source of truth" "$SCRIPT_DIR/test-model-catalog-single-source.sh"
+run_test "model catalog staleness is advisory and route-consistent" "$SCRIPT_DIR/test-model-catalog-staleness.sh"
+run_test "pre-push pytest is scoped without failing open" "$SCRIPT_DIR/test-pre-push-scoped-pytest.sh"
+run_test "loki help <command> and the daily log cap" "$SCRIPT_DIR/test-help-and-log-cap.sh"
+run_test "model picker is provider-aware (no claude models on codex)" "python3 $SCRIPT_DIR/test-provider-aware-model-picker.py"
+run_test "codex capability tiers resolve to distinct real models" "$SCRIPT_DIR/test-codex-tier-models.sh"
+run_test "scoped issue fix skips greenfield-only phases" "$SCRIPT_DIR/test-scoped-change-profile.sh"
+run_test "a force-stop reports failure, not success" "$SCRIPT_DIR/test-force-stop-exit-code.sh"
+run_test "the iteration cap considers evidence but stays a cap" "$SCRIPT_DIR/test-iteration-grace.sh"
+run_test "the user sees the rework split, not just the agent" "$SCRIPT_DIR/test-rework-in-summary.sh"
+run_test "the token report counts cache tokens" "$SCRIPT_DIR/test-economics-cache-tokens.sh"
+run_test "a terminal outcome names the next step" "$SCRIPT_DIR/test-terminal-next-step.sh"
+run_test "loki why is rework-aware on the iteration cap" "$SCRIPT_DIR/test-why-rework-aware.sh"
+run_test "loki why --json carries the rework split" "$SCRIPT_DIR/test-why-json-rework.sh"
+run_test "loki cost --json exposes the token breakdown" "$SCRIPT_DIR/test-cost-json-tokens.sh"
+run_test "all reporting surfaces agree about one run" "$SCRIPT_DIR/test-surfaces-agree.sh"
+run_test "recorded exit codes match the failure contract" "$SCRIPT_DIR/test-exit-code-contract.sh"
+run_test "the receipt shows disabled gates" "$SCRIPT_DIR/test-receipt-shows-disabled-gates.sh"
+run_test "the public HTML receipt shows disabled gates" "$SCRIPT_DIR/test-html-receipt-disabled-gates.sh"
+run_test "the founder-decisions document is accurate" "$SCRIPT_DIR/test-founder-decisions-doc-accurate.sh"
+run_test "entry-document pointers resolve" "$SCRIPT_DIR/test-entry-doc-pointers-resolve.sh"
+run_test "the mutation probe cannot silently no-op" "$SCRIPT_DIR/test-mutation-probe.sh"
+run_test "trust-core tests detect their regressions" "$SCRIPT_DIR/test-trust-core-tests-detect.sh"
+run_test "a user-installed reviewer takes part in a run" "$SCRIPT_DIR/test-installed-agent-reviewer.sh"
+# Skill modules are loaded INTO the agent's context and acted on, so a false
+# claim there is worse than no claim. Asserts the load-bearing ones against source.
+run_test "skill docs match source (gate flags, providers, tiers, index routing, seam)" "$SCRIPT_DIR/test-skill-doc-accuracy.sh"
+run_test "proof md (paste-able receipt, one renderer)" "$SCRIPT_DIR/test-proof-md.sh"
+run_test "air-gapped read-only path (egress severed)" "$SCRIPT_DIR/test-airgap-commands.sh"
+run_test "proof phases CLI/API parity (one reader, two surfaces)" "$SCRIPT_DIR/test_cli_phases_parity.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 
 # Summary

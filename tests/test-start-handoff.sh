@@ -229,6 +229,38 @@ else
     bad "could not extract _loki_brand_banner"
 fi
 
+# --- WIRING: the extracted helpers must still be CALLED ----------------------
+# Everything above awk-extracts the helpers and tests them in isolation. That
+# proves the helpers work and says nothing about whether `loki start` uses them.
+#
+# Found by mutation probe: replacing the call site with `if false` -- which
+# silently removes the interactive handoff from every `loki start` -- left this
+# entire file green. An isolation test cannot see a disconnected wire.
+_LOKI_SRC="$REPO_ROOT/autonomy/loki"
+
+if grep -qE 'if _loki_start_should_handoff .*; then' "$_LOKI_SRC"; then
+    ok "WIRING: loki start calls _loki_start_should_handoff"
+else
+    bad "WIRING: the handoff decision is no longer called -- loki start silently changed"
+fi
+
+if grep -qF '_loki_start_handoff "$_spec_label"' "$_LOKI_SRC"; then
+    ok "WIRING: the handoff renderer is invoked when the decision says yes"
+else
+    bad "WIRING: the handoff renderer is unreachable from loki start"
+fi
+
+# Both helpers must still be DEFINED under the names the call sites use: a
+# rename that updates one side leaves start invoking a command that is gone.
+for _fn in _loki_start_should_handoff _loki_start_handoff; do
+    if grep -qF "${_fn}()" "$_LOKI_SRC"; then
+        ok "WIRING: $_fn is defined under the name its caller uses"
+    else
+        bad "WIRING: $_fn definition and call site have diverged"
+    fi
+done
+
+
 echo ""
 echo "----------------------------------------"
 echo "PASS: $PASS   FAIL: $FAIL"

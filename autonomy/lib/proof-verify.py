@@ -30,10 +30,11 @@ Three checks (mirrors dashboard/audit.py verify-CLI style):
      ensure_ascii setting), sha256, compare to the recorded verification.hash.
      Any mismatch means the JSON was edited after signing.
 
-  2. DRIFT CHECK (diff_drift): from the recorded git base sha, re-run
-     `git diff --shortstat <base> <head>` in the repo and compare the file /
-     insertion / deletion counts (and diff_sha256 when present) to what the
-     receipt recorded. A mismatch means the repo no longer matches the receipt.
+  2. DRIFT CHECK (diff_drift): from the recorded git base sha, re-derive the
+     final committed, staged, unstaged, deleted, and untracked workspace diff.
+     Compare its stat and diff_sha256 to the receipt. When tree_sha256 is
+     present, also bind exact final file content so equal line counts cannot
+     hide content drift.
 
   3. GPG (gpg_ok): if a detached signature is present and gpg is available,
      verify it over the canonical bytes. Otherwise "n/a".
@@ -64,8 +65,16 @@ CLI:
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+from tree_digest import compute_tree_digest
+from workspace_diff import collect_workspace_diff
 
 
 # ---------------------------------------------------------------------------
@@ -105,50 +114,36 @@ def _is_git_repo(repo_dir):
 
 
 def _rev_resolvable(repo_dir, ref):
-    """True iff `ref` resolves to a commit in repo_dir."""
+    """True iff `ref` names something in repo_dir that a diff can be taken from.
+
+    Accepts a COMMIT or a TREE. The tree case is load-bearing: a greenfield run
+    starts in a repo with no commits, so the generator records the EMPTY TREE
+    (4b825dc6...) as its baseline -- "everything that now exists". That object
+    is a tree, not a commit, so a commit-only check rejects it and the verifier
+    reports "base ref unresolvable" for a perfectly genuine proof.
+
+    `git diff <empty-tree>` works fine, so the diff really is re-derivable; only
+    the resolvability probe was too narrow. This does NOT loosen the forgery
+    defense -- an unknown or fabricated SHA still resolves as neither and is
+    still rejected.
+    """
     if not ref:
         return False
-    out = _git(repo_dir, ["rev-parse", "--verify", "--quiet", str(ref) + "^{commit}"])
-    return bool(out and out.strip())
+    for kind in ("commit", "tree"):
+        out = _git(repo_dir, ["rev-parse", "--verify", "--quiet", "%s^{%s}" % (ref, kind)])
+        if out and out.strip():
+            return True
+    return False
 
 
 def _numstat(repo_dir, base, head):
-    """Return {count, insertions, deletions, files} for
-    `git diff --numstat base head`, or None if the diff could not be computed.
+    """Return final-worktree stats relative to ``base``.
 
-    The `files` list mirrors proof-generator._git_diffstat EXACTLY (path /
-    insertions / deletions / status) so that hashing the canonical stat here
-    reproduces the generator's diff_sha256. (Earlier this hashed the full patch
-    text while the generator hashed the stat object -- so every untampered v1.1
-    proof falsely reported drift. BUG-DIFFSHA.)"""
-    raw = _git(repo_dir, ["diff", "--numstat", str(base), str(head)])
-    if raw is None:
-        return None
-    files = []
-    ins_total = 0
-    del_total = 0
-    for line in raw.splitlines():
-        parts = line.split("\t")
-        if len(parts) < 3:
-            continue
-        ins_s, del_s, path = parts[0], parts[1], parts[2]
-        # binary files show "-" for both columns; count the file, add 0.
-        ins = 0 if ins_s == "-" else _to_int(ins_s)
-        dele = 0 if del_s == "-" else _to_int(del_s)
-        ins_total += ins
-        del_total += dele
-        files.append({
-            "path": path,
-            "insertions": ins,
-            "deletions": dele,
-            "status": "binary" if ins_s == "-" else "modified",
-        })
-    return {
-        "count": len(files),
-        "insertions": ins_total,
-        "deletions": del_total,
-        "files": files,
-    }
+    ``head`` remains in the signature for installed-layout compatibility. The
+    live working tree is the proof target, not only its current commit.
+    """
+    stat, _ = collect_workspace_diff(repo_dir, str(base), False)
+    return stat
 
 
 def _diff_sha256_from_stat(files_changed):
@@ -182,6 +177,57 @@ def _to_int(v, default=0):
 # headline re-derivation (MUST match proof-generator._compute_headline exactly)
 # ---------------------------------------------------------------------------
 
+# DRIFT-GUARD: mirrored from proof-generator.py. A gate the AGENT authored the
+# input to (it writes both the test and the fix) or that is an LLM judgment
+# cannot be independent evidence, so it must never force or lift a headline.
+# Keyed on the ADVISORY set so an unknown or renamed gate defaults to EXOGENOUS
+# and keeps its power to block -- fail-closed, never fail-open.
+#
+# This block exists because the generator gained a provenance split while this
+# file did not, and the two then disagreed about what a receipt meant. The
+# verifier is the INDEPENDENT re-derivation users are told to trust; if it
+# cannot reproduce the generator's headline, `loki proof verify` reports drift
+# on a receipt that was never tampered with -- a false alarm from our own trust
+# artifact, which is worse than no verifier at all.
+_ADVISORY_GATES = frozenset((
+    "test_coverage", "unit_tests", "test_suite", "semantic_tests", "tests",
+    "code_review", "devils_advocate", "devil_advocate", "magic_debate",
+    "council", "anti_sycophancy",
+))
+
+
+def _gate_key(name):
+    """Normalize a gate name for provenance lookup (mirrors the generator).
+
+    run.sh emits the same gate under multiple spellings (`static-analysis` vs
+    `static_analysis`) and track_gate_failure appends `_PAUSED`/`_ESCALATED`,
+    so an exact-match lookup would misfile real gates.
+    """
+    s = str(name or "").strip().lower().replace("-", "_")
+    return re.sub(r"_(paused|escalated|not_run|blocked)$", "", s)
+
+
+def _gate_provenance(name):
+    """'advisory' for a model-authored gate, else 'exogenous' (fail-closed)."""
+    return "advisory" if _gate_key(name) in _ADVISORY_GATES else "exogenous"
+
+
+def _is_exogenous(gate):
+    """Provenance of a gate dict, honoring a stamped value when present.
+
+    The generator stamps `provenance` so its `unresolved` override survives (a
+    gate that HALTED the run is an execution fact, not a model opinion). We
+    honor that stamp and fall back to name lookup for older receipts written
+    before the split existed.
+    """
+    if not isinstance(gate, dict):
+        return True
+    stamped = gate.get("provenance")
+    if stamped:
+        return stamped == "exogenous"
+    return _gate_provenance(gate.get("name")) == "exogenous"
+
+
 def _compute_headline(facts, degraded):
     """Deterministic headline re-derived from the recorded facts.
 
@@ -205,12 +251,42 @@ def _compute_headline(facts, degraded):
 
     sec = facts.get("security") or {}
     sec_high = bool(sec.get("ran") and (sec.get("high_active") or 0) > 0)
+    fn = facts.get("functional") or {}
+    fn_failed = bool(
+        os.environ.get("LOKI_FV_GATE") == "1"
+        and fn.get("ran")
+        and fn.get("functional_status") == "failed"
+    )
+    execution = facts.get("execution") or {}
+    execution_outcome = str(execution.get("outcome") or "").lower()
+    failed_run_statuses = {
+        "failed",
+        "force_stopped",
+        "inconclusive_spec_contradiction",
+        "interrupted",
+        "max_iterations_reached",
+        "max_retries_exceeded",
+        "paused",
+        "policy_blocked",
+        "provider_deadline_partial_mutation",
+    }
+    execution_failed = bool(
+        execution.get("terminated")
+        or execution.get("exit_code") not in (None, 0)
+        or str(execution.get("run_status") or "").lower() in failed_run_statuses
+        or (
+            execution_outcome
+            and execution_outcome not in ("complete", "completed", "success")
+        )
+    )
     any_failed = (
-        tests.get("status") == "failed"
+        execution_failed
+        or tests.get("status") == "failed"
         or build.get("status") == "failed"
         or any(g.get("status") == "failed"
                for g in (facts.get("quality_gates") or []))
         or sec_high
+        or fn_failed
     )
     if any_failed:
         return "NOT VERIFIED"
@@ -294,12 +370,45 @@ def _recorded_diff_sha256(proof):
     return None
 
 
+def _recorded_tree_sha256(proof):
+    facts = proof.get("facts")
+    if isinstance(facts, dict):
+        git = facts.get("git")
+        if isinstance(git, dict) and git.get("tree_sha256"):
+            return str(git["tree_sha256"])
+    value = proof.get("tree_sha256")
+    return str(value) if value else None
+
+
 def _recorded_degraded(proof):
     """Return the honesty.degraded list the generator disclosed, or []."""
     honesty = proof.get("honesty")
     if isinstance(honesty, dict):
         deg = honesty.get("degraded")
         if isinstance(deg, list):
+            # Disabled-gate entries are appended by the generator AFTER it
+            # computes the headline (v8.19.0), so they were never an input to
+            # the recorded value. Re-deriving WITH them made an honest proof
+            # look edited: on a run with security switched off the generator
+            # recorded "VERIFIED" and this function re-derived "VERIFIED WITH
+            # GAPS", and the mismatch is reported to the user as "the headline
+            # was edited to misrepresent the facts".
+            #
+            # Accusing an honest receipt of forgery is the worst failure this
+            # verifier can have, so the re-derivation must use exactly the list
+            # the generator used: everything except the post-hoc gate entries.
+            # Entries the generator appended AFTER computing the headline were
+            # never an input to the recorded value, so re-deriving with them
+            # makes an honest proof look edited. Keyed on the explicit
+            # post_headline flag, not on a status string: the first version of
+            # this filter matched status=="disabled" and broke the moment a
+            # second post-headline entry arrived with a different status.
+            # status=="disabled" is still honoured for proofs written by
+            # v8.19.0-v8.19.2, which predate the flag.
+            deg = [d for d in deg
+                   if not (isinstance(d, dict)
+                           and (d.get("post_headline") is True
+                                or d.get("status") == "disabled"))]
             return [str(x) for x in deg]
     return []
 
@@ -315,6 +424,29 @@ def _recorded_degraded_raw(proof):
     if isinstance(honesty, dict):
         deg = honesty.get("degraded")
         if isinstance(deg, list):
+            # Disabled-gate entries are appended by the generator AFTER it
+            # computes the headline (v8.19.0), so they were never an input to
+            # the recorded value. Re-deriving WITH them made an honest proof
+            # look edited: on a run with security switched off the generator
+            # recorded "VERIFIED" and this function re-derived "VERIFIED WITH
+            # GAPS", and the mismatch is reported to the user as "the headline
+            # was edited to misrepresent the facts".
+            #
+            # Accusing an honest receipt of forgery is the worst failure this
+            # verifier can have, so the re-derivation must use exactly the list
+            # the generator used: everything except the post-hoc gate entries.
+            # Entries the generator appended AFTER computing the headline were
+            # never an input to the recorded value, so re-deriving with them
+            # makes an honest proof look edited. Keyed on the explicit
+            # post_headline flag, not on a status string: the first version of
+            # this filter matched status=="disabled" and broke the moment a
+            # second post-headline entry arrived with a different status.
+            # status=="disabled" is still honoured for proofs written by
+            # v8.19.0-v8.19.2, which predate the flag.
+            deg = [d for d in deg
+                   if not (isinstance(d, dict)
+                           and (d.get("post_headline") is True
+                                or d.get("status") == "disabled"))]
             return deg
     return []
 
@@ -404,6 +536,147 @@ def _load_proof(proof_path):
     return data
 
 
+def verify_integrity(proof):
+    """Verify the receipt hash, signature, and recorded headline.
+
+    This is the canonical in-memory integrity check shared by the CLI verifier
+    and supervised execution binding. Repository drift is intentionally left to
+    verify(), whose caller supplies the repository path.
+    """
+    result = {
+        "hash_ok": False,
+        "gpg_ok": "n/a",
+        "generator_trusted": True,
+        "headline_consistent": None,
+        "degraded": _recorded_degraded(proof) if isinstance(proof, dict) else [],
+        "reason": "",
+        "reasons": [],
+        "ok": False,
+    }
+    if not isinstance(proof, dict):
+        result["reason"] = "proof root is not a JSON object"
+        result["reasons"].append(result["reason"])
+        return result
+
+    verification = proof.get("verification")
+    if not isinstance(verification, dict) or not verification.get("hash"):
+        result["reason"] = "no verification.hash recorded; cannot prove integrity"
+        result["reasons"].append(
+            "integrity hash missing: the receipt records no verification.hash, "
+            "so there is nothing to re-compute against and tampering cannot be "
+            "ruled out")
+        return result
+
+    unsigned = dict(proof)
+    unsigned.pop("verification", None)
+    canonical_bytes = _canonical(unsigned).encode("utf-8")
+    recorded_hash = str(verification.get("hash"))
+    recomputed = hashlib.sha256(canonical_bytes).hexdigest()
+    result["hash_ok"] = recomputed == recorded_hash
+    if not result["hash_ok"]:
+        result["reason"] = (
+            "integrity hash mismatch (proof.json was edited after signing)"
+        )
+        result["reasons"].append(
+            "hash mismatch: recorded %s, computed %s -- proof.json was edited "
+            "after it was written" % (recorded_hash, recomputed))
+
+    result["gpg_ok"] = _verify_gpg(
+        canonical_bytes, verification.get("gpg_signature")
+    )
+    result["generator_trusted"] = result["gpg_ok"] is not True
+    if result["gpg_ok"] is False:
+        result["reasons"].append(
+            "gpg signature verification failed: a signature is recorded but "
+            "gpg could not verify it against the canonical receipt bytes")
+
+    recorded_headline = _recorded_headline(proof)
+    facts = proof.get("facts")
+    if recorded_headline is not None and isinstance(facts, dict):
+        derived = _compute_headline(facts, _recorded_degraded_raw(proof))
+        result["headline_consistent"] = derived == recorded_headline
+        if not result["headline_consistent"]:
+            _headline_reason = (
+                "honesty.headline (%r) disagrees with the headline re-derived "
+                "from the recorded facts (%r); the headline was edited to "
+                "misrepresent the facts" % (recorded_headline, derived)
+            )
+            if not result["reason"]:
+                result["reason"] = _headline_reason
+            result["reasons"].append(_headline_reason)
+
+    # COST COHERENCE. The receipt is the product's trust artifact, and the
+    # verifier checked hashes, diffs, gates and the headline -- but never cost.
+    # A receipt could therefore claim ANY cost, $0.00 or $10,000, and
+    # `loki proof verify` would still pass it.
+    #
+    # That was not hypothetical. A real FireLater receipt shipped
+    # {"usd": 0.0, ..., "available": true} -- a shareable document asserting the
+    # run was FREE, because the collector keyed availability on a record file
+    # existing rather than carrying data (fixed v8.52.0). The verifier could not
+    # see it.
+    #
+    # This checks INTERNAL COHERENCE, which is what a verifier can honestly
+    # assert: the receipt must not contradict itself. It deliberately does NOT
+    # re-price the run -- that would require the token counts and price table at
+    # verify time, and a verifier that guesses is worse than one that abstains.
+    #
+    # The incoherent shapes:
+    #   available=True with every field zero/None -> claims measurement, has none
+    #   available=False with a non-zero usd       -> claims unmeasured, shows a number
+    #   usd present but no tokens at all          -> a cost from nowhere
+    result["cost_coherent"] = None
+    _cost = proof.get("cost") if isinstance(proof.get("cost"), dict) else None
+    if _cost is not None:
+        _avail = _cost.get("available")
+        _usd = _cost.get("usd")
+        _toks = [
+            _cost.get(k) for k in
+            ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
+        ]
+        _any_tok = any(isinstance(t, (int, float)) and t > 0 for t in _toks)
+        _usd_pos = isinstance(_usd, (int, float)) and _usd > 0
+
+        _bad = ""
+        if _avail is True and not _any_tok and not _usd_pos:
+            _bad = ("cost.available is true but every token count and usd is "
+                    "zero or absent; the receipt claims a measurement it does "
+                    "not have (an unmeasured run is unknown, not free)")
+        elif _avail is False and (_usd_pos or _any_tok):
+            _bad = ("cost.available is false but the receipt carries non-zero "
+                    "cost or token values")
+        elif _usd_pos and not _any_tok:
+            _bad = ("cost.usd is non-zero but no tokens were recorded; the "
+                    "cost has no basis in the receipt")
+
+        result["cost_coherent"] = not _bad
+        if _bad and not result["reason"]:
+            result["reason"] = _bad
+        # Keyed on cost_coherent, not on _bad: a mutation that forces the
+        # verdict True must not keep emitting the explanation it contradicts.
+        if result["cost_coherent"] is False:
+            result["reasons"].append(
+                "cost claim is incoherent: %s (unmeasured must read UNKNOWN, "
+                "never $0.00)" % _bad)
+
+    result["ok"] = bool(
+        result["hash_ok"]
+        and result["gpg_ok"] in (True, "n/a")
+        and result["headline_consistent"] is not False
+        and result["cost_coherent"] is not False
+    )
+    if result["ok"]:
+        result["reason"] = ""
+        result["reasons"] = []
+    elif not result["reason"]:
+        result["reason"] = (
+            "gpg signature verification failed"
+            if result["gpg_ok"] is False
+            else "verification failed"
+        )
+    return result
+
+
 def verify(proof_path, repo_dir="."):
     """Re-verify a proof.json against the repo.
 
@@ -418,8 +691,14 @@ def verify(proof_path, repo_dir="."):
         headline_consistent: bool | None        see note below
         degraded:           [str]               honesty.degraded from the proof
         reason:             str                 why ok is False (when it is)
+        reasons:            [str]               EVERY failed check, spelled out
         ok:                 bool                overall verdict
       }
+
+    reason vs reasons: `reason` is the FIRST failure only (first-wins
+    precedence, unchanged -- callers and tests depend on it). `reasons` lists
+    every check that failed, so a receipt failing on both cost and drift says
+    so instead of naming one. It is empty exactly when ok is True.
 
     `ok` = hash_ok AND diff_drift is False AND gpg_ok in (True, "n/a")
            AND headline_consistent is not False.
@@ -444,47 +723,22 @@ def verify(proof_path, repo_dir="."):
     """
     proof = _load_proof(proof_path)
 
+    integrity = verify_integrity(proof)
     result = {
-        "hash_ok": False,
+        **integrity,
+        "reasons": list(integrity.get("reasons") or []),
         "diff_drift": None,
         "diff_recheck": {"recorded": None, "current": None},
-        "gpg_ok": "n/a",
-        "generator_trusted": True,
-        "headline_consistent": None,
-        "degraded": _recorded_degraded(proof),
-        "reason": "",
+        "tree_drift": None,
+        "tree_recheck": {"recorded": None, "current": None},
         "ok": False,
     }
 
-    # ----- 1. TAMPER CHECK -------------------------------------------------
-    verification = proof.get("verification")
-    if not isinstance(verification, dict) or not verification.get("hash"):
-        result["hash_ok"] = False
-        result["reason"] = "no verification.hash recorded; cannot prove integrity"
+    if not integrity["hash_ok"] and not (
+        isinstance(proof.get("verification"), dict)
+        and proof["verification"].get("hash")
+    ):
         return result
-    recorded_hash = str(verification.get("hash"))
-
-    # Recompute over the canonical form with verification REMOVED, exactly as
-    # the generator hashed it (hash computed before verification was attached).
-    unsigned = dict(proof)
-    unsigned.pop("verification", None)
-    canonical_str = _canonical(unsigned)
-    canonical_bytes = canonical_str.encode("utf-8")
-    recomputed = hashlib.sha256(canonical_bytes).hexdigest()
-    result["hash_ok"] = (recomputed == recorded_hash)
-    if not result["hash_ok"]:
-        result["reason"] = "integrity hash mismatch (proof.json was edited after signing)"
-        # Continue to gather drift/gpg signals for the report, but ok stays False.
-
-    # ----- 3. GPG (compute before returning so the report is complete) -----
-    gpg_sig = verification.get("gpg_signature")
-    result["gpg_ok"] = _verify_gpg(canonical_bytes, gpg_sig)
-
-    # generator_trusted: only a VALID signature (gpg_ok is True) means the
-    # generator is NOT trusted (neutral non-forgeability). "n/a" or a bad sig
-    # leaves the generator trusted -- the facts are taken at face value and a
-    # consistent forger is NOT caught. Stated so ok=True still discloses it.
-    result["generator_trusted"] = (result["gpg_ok"] is not True)
 
     # ----- 2. DRIFT CHECK --------------------------------------------------
     recorded_stat = _recorded_diff_stat(proof)
@@ -496,17 +750,28 @@ def verify(proof_path, repo_dir="."):
         result["diff_drift"] = None
         if not result["reason"]:
             result["reason"] = "repo_dir is not a git work tree; drift unverifiable"
+        result["reasons"].append(
+            "drift unverifiable: %r is not a git work tree, so the recorded "
+            "diff cannot be re-derived (re-run from the repository the receipt "
+            "was generated in)" % repo_dir)
     elif not base_sha:
         # Schema v1.0 (or a v1.1 proof missing base_sha): no recorded base ref,
         # so the diff cannot be re-derived. Report honestly, do NOT pass.
         result["diff_drift"] = None
         if not result["reason"]:
             result["reason"] = "base ref unresolvable (no recorded base_sha; drift unverifiable)"
+        result["reasons"].append(
+            "drift unverifiable: the receipt records no base_sha, so there is "
+            "no starting point to re-derive the diff from (schema v1.0 receipt)")
     elif not _rev_resolvable(repo_dir, base_sha):
         result["diff_drift"] = None
         if not result["reason"]:
             result["reason"] = ("base ref unresolvable (%s not found in repo; "
                                 "drift unverifiable)" % base_sha)
+        result["reasons"].append(
+            "drift unverifiable: recorded base ref %s is not present in this "
+            "repository (fetch the branch, or verify against the repo the "
+            "receipt was generated in)" % base_sha)
     else:
         # Drift answers "does this receipt still describe the CURRENT branch
         # state". A receipt is for verifying the work as it stands now, so we
@@ -523,6 +788,9 @@ def verify(proof_path, repo_dir="."):
             result["diff_drift"] = None
             if not result["reason"]:
                 result["reason"] = "git diff could not be computed; drift unverifiable"
+            result["reasons"].append(
+                "drift unverifiable: git diff %s..HEAD could not be computed"
+                % base_sha)
         else:
             drift = False
             if recorded_stat is not None:
@@ -538,6 +806,10 @@ def verify(proof_path, repo_dir="."):
                 if not result["reason"]:
                     result["reason"] = ("no recorded diff stat to compare; "
                                         "drift unverifiable")
+                result["reasons"].append(
+                    "drift unverifiable: the repository diff was re-derived, "
+                    "but the receipt recorded no diff stat to compare it "
+                    "against")
 
             # diff_sha256: a stronger content check than the counts. Only when
             # the receipt recorded one (v1.1).
@@ -558,46 +830,59 @@ def verify(proof_path, repo_dir="."):
                 result["diff_drift"] = drift
                 if drift and not result["reason"]:
                     result["reason"] = "recorded diff no longer matches the repo (drift detected)"
+                if drift:
+                    result["reasons"].append(
+                        "diff drift: the receipt recorded %s files / +%s / -%s, "
+                        "the repository now has %s files / +%s / -%s -- the "
+                        "branch changed after the receipt was generated" % (
+                            recorded_stat.get("count"),
+                            recorded_stat.get("insertions"),
+                            recorded_stat.get("deletions"),
+                            current_stat.get("count"),
+                            current_stat.get("insertions"),
+                            current_stat.get("deletions")))
 
-    # ----- 4. HEADLINE CONSISTENCY (defense-in-depth) ----------------------
-    # Re-derive the headline from the recorded facts and compare to the stored
-    # honesty.headline. A mismatch means the headline was edited to disagree
-    # with the facts it claims to summarize (an INCONSISTENT forgery, e.g.
-    # headline flipped to VERIFIED while facts.tests.status is still not_run).
-    # This catches careless/partial tampering only. It does NOT catch a
-    # CONSISTENT forger who rewrites both the facts and the headline to a
-    # matching lie and recomputes the integrity hash -- on the unsigned path
-    # that still passes (see generator_trusted). Neutral non-forgeability needs
-    # the signed record, not this check.
-    recorded_headline = _recorded_headline(proof)
-    facts = proof.get("facts")
-    if recorded_headline is not None and isinstance(facts, dict):
-        derived = _compute_headline(facts, _recorded_degraded_raw(proof))
-        result["headline_consistent"] = (derived == recorded_headline)
-        if not result["headline_consistent"] and not result["reason"]:
-            result["reason"] = (
-                "honesty.headline (%r) disagrees with the headline re-derived "
-                "from the recorded facts (%r); the headline was edited to "
-                "misrepresent the facts" % (recorded_headline, derived)
-            )
-    else:
-        # No recorded headline, or no facts to re-derive from: cannot check.
-        result["headline_consistent"] = None
+    recorded_tree = _recorded_tree_sha256(proof)
+    result["tree_recheck"]["recorded"] = recorded_tree
+    if recorded_tree:
+        current_tree = compute_tree_digest(repo_dir)
+        result["tree_recheck"]["current"] = current_tree or None
+        if not current_tree:
+            if not result["reason"]:
+                result["reason"] = "final workspace tree could not be re-derived"
+            result["reasons"].append(
+                "workspace tree unverifiable: the receipt records a final tree "
+                "digest, but the current workspace tree could not be re-derived")
+        else:
+            result["tree_drift"] = current_tree != recorded_tree
+            if result["tree_drift"] and not result["reason"]:
+                result["reason"] = "recorded final workspace tree no longer matches the repo"
+            if result["tree_drift"]:
+                result["reasons"].append(
+                    "workspace tree drift: recorded %s, computed %s -- the "
+                    "working tree changed after the receipt was generated" % (
+                        recorded_tree, current_tree))
 
     # ----- overall verdict -------------------------------------------------
     result["ok"] = bool(
-        result["hash_ok"]
+        integrity["ok"]
         and result["diff_drift"] is False
-        and result["gpg_ok"] in (True, "n/a")
-        and result["headline_consistent"] is not False
+        and (not recorded_tree or result["tree_drift"] is False)
     )
     if result["ok"]:
         result["reason"] = ""
-    elif not result["reason"]:
-        if result["gpg_ok"] is False:
-            result["reason"] = "gpg signature verification failed"
-        else:
-            result["reason"] = "verification failed"
+        result["reasons"] = []
+    else:
+        if not result["reason"]:
+            if result["gpg_ok"] is False:
+                result["reason"] = "gpg signature verification failed"
+            else:
+                result["reason"] = "verification failed"
+        # A failed verdict with no explanation is the bug this list exists to
+        # fix, so never emit one. Reaching here means a check failed without a
+        # matching append -- say so, rather than printing nothing.
+        if not result["reasons"]:
+            result["reasons"].append(result["reason"])
     return result
 
 
@@ -605,11 +890,33 @@ def verify(proof_path, repo_dir="."):
 # CLI shim (mirrors dashboard/audit.py _unified_cli style)
 # ---------------------------------------------------------------------------
 
+def render_reasons(result):
+    """Render a verdict as human-readable lines.
+
+    The JSON report is the machine surface; this is the one a person reads.
+    A passing receipt renders the verdict alone -- never a fabricated reason.
+    """
+    lines = ["VERIFIED" if result.get("ok") else "FAILED"]
+    for reason in (result.get("reasons") or []):
+        lines.append("  - %s" % reason)
+    return "\n".join(lines)
+
+
 def _cli(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help"):
         print(json.dumps(
-            {"error": "usage: proof-verify.py <proof.json> [repo_dir]"}))
+            {"error":
+             "usage: proof-verify.py [--human] <proof.json> [repo_dir]"}))
+        return 2
+    # Flags are stripped BEFORE positional parsing: proof.ts pipes this
+    # command's stdout through verbatim, so --human must not shift repo_dir.
+    human = "--human" in argv
+    argv = [a for a in argv if a != "--human"]
+    if not argv:
+        print(json.dumps(
+            {"error":
+             "usage: proof-verify.py [--human] <proof.json> [repo_dir]"}))
         return 2
     proof_path = argv[0]
     repo_dir = argv[1] if len(argv) > 1 else "."
@@ -621,7 +928,7 @@ def _cli(argv=None):
     except Exception as exc:  # defensive: never a traceback-as-UX
         print(json.dumps({"ok": False, "error": "verify failed: %s" % exc}))
         return 2
-    print(json.dumps(result, indent=2))
+    print(render_reasons(result) if human else json.dumps(result, indent=2))
     return 0 if result.get("ok") else 1
 
 

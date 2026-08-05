@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "id": "hard-2-ledger",
+  "title": "Double-entry ledger with reconciliation",
+  "source": "authored",
+  "source_ref": "loki-mode/benchmarks 2026-07-31",
+  "default_model": "sonnet",
+  "agent_timeout_s": 1200,
+  "fixture": "../fixtures/hard-2-ledger",
+  "prompt": "Build a single Python file named `ledger.py` implementing a double-entry ledger. Define exactly these three functions:\n\n    def post(entries) -> tuple[int, dict]\n    def balance(account) -> tuple[int, dict]\n    def reconcile() -> tuple[int, dict]\n\nEach returns `(status_code, body)` where `body` is always a dict. No web server, no database, no external packages - keep state in a module-level structure.\n\n`post(entries)` accepts a list of entry dicts, each `{\"account\": str, \"amount\": number}`. A positive amount is a debit, a negative amount is a credit. Posting is atomic and must obey the fundamental accounting rule. Reject anything that violates it, and reject malformed input, with `(400, {\"error\": <message>})`.\n\n`balance(account)` returns `(200, {\"balance\": <number>})` for an account that has activity, and an appropriate error otherwise.\n\n`reconcile()` reports whether the books are internally consistent, returning `(200, {...})` with enough detail for a caller to act on.\n\nMoney must not drift: a caller posting values like 0.1 and 0.2 must not see floating point residue in any balance or total.\n\nA rejected post must leave the ledger byte-for-byte as it was before the call.",
+  "acceptance": {
+    "cmd": "python3 check_acceptance.py",
+    "timeout_s": 60,
+    "overlay": "../fixtures/hard-2-ledger-overlay"
+  }
+}

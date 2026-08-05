@@ -43,6 +43,16 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "autonomi.serviceAccountName" . }}
+      # GRACE PERIOD IS LOAD-BEARING HERE. queue-consumer.sh traps TERM and
+      # deliberately lets the CURRENT BUILD FINISH before exiting -- its comment
+      # promises "no item is left half-processed by our own shutdown".
+      #
+      # Kubernetes' default terminationGracePeriodSeconds is 30. A build takes
+      # minutes. Without this value that guarantee is VOID: on any rolling
+      # upgrade, node drain or scale-down, the pod is SIGKILLed 30s after TERM,
+      # mid-build, and the user gets a half-written workspace and no receipt --
+      # the silent-failure shape this project exists to prevent.
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
       securityContext:
         {{- toYaml .Values.security.podSecurityContext | nindent 8 }}
       containers:

@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "id": "demo-fail",
+  "source": "loki-self-test",
+  "source_ref": "benchmarks/bench/tasks/demo-fail.json",
+  "title": "Trivial always-fail demo task (grader-discrimination smoke fixture, not a real benchmark)",
+  "fixture": "../fixtures/demo-pass",
+  "prompt": "This is a demo task used only by the benchmark grader-discrimination smoke test. Its held-out acceptance ALWAYS fails, so a healthy grader must score it success=false regardless of what the agent produced. Paired with demo-pass to prove the grader distinguishes pass from fail.",
+  "acceptance": {
+    "cmd": "false",
+    "timeout_s": 30
+  },
+  "default_model": "claude-sonnet-5",
+  "agent_timeout_s": 60
+}

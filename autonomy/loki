@@ -61,6 +61,16 @@ if [ -f "$_LOKI_SCRIPT_DIR/tui.sh" ]; then
     source "$_LOKI_SCRIPT_DIR/tui.sh"
 fi
 
+# Portable lock helper -- provides safe_acquire_lock / safe_release_lock.
+# Needed here (not just in run.sh) because ensure_dashboard_venv tears down and
+# rebuilds the HOST-GLOBAL ~/.loki/dashboard-venv, so two concurrent CLI
+# invocations can otherwise delete the venv the other is importing from.
+# Self-guarded against double-source.
+if [ -f "$_LOKI_SCRIPT_DIR/lib/lock.sh" ]; then
+    # shellcheck source=lib/lock.sh
+    source "$_LOKI_SCRIPT_DIR/lib/lock.sh"
+fi
+
 # Crash-reporting helpers (provides loki_collection_enabled, used by
 # cmd_telemetry status and cmd_crash). Self-guarded against double-source.
 if [ -f "$_LOKI_SCRIPT_DIR/crash.sh" ]; then
@@ -141,6 +151,15 @@ fi
 if [ -f "$_LOKI_SCRIPT_DIR/lib/config-map.sh" ]; then
     # shellcheck source=autonomy/lib/config-map.sh
     source "$_LOKI_SCRIPT_DIR/lib/config-map.sh"
+fi
+
+# v8.1: one-switch SDK activation resolver (LOKI_SDK_MODE=off|judges|full,
+# default off). Idempotent; run.sh sources+resolves it too. Sourced here so any
+# in-CLI SDK judge site sees the resolved per-site flags. No-op when mode unset.
+if [ -f "$_LOKI_SCRIPT_DIR/lib/sdk-mode.sh" ]; then
+    # shellcheck source=autonomy/lib/sdk-mode.sh
+    source "$_LOKI_SCRIPT_DIR/lib/sdk-mode.sh"
+    loki_sdk_resolve_mode
 fi
 
 # Resolve the script's real path (handles symlinks)
@@ -437,6 +456,33 @@ ensure_dashboard_venv() {
         return 0
     fi
 
+    # The venv is HOST-GLOBAL, so concurrent runs must not rebuild it at once:
+    # one run's `rm -rf` would delete the tree another is importing from. Lock
+    # the venv path itself -- safe_acquire_lock appends ".lockdir", giving a
+    # SIBLING mutex that the teardown below cannot destroy. Timeout must outlast
+    # a real cold `python3 -m venv` + `pip install` (not the 5s used by the
+    # JSON read-modify-write call sites).
+    local _venv_locked=false
+    if type safe_acquire_lock >/dev/null 2>&1; then
+        if safe_acquire_lock "$dashboard_venv" "${LOKI_VENV_LOCK_TIMEOUT:-300}"; then
+            _venv_locked=true
+            # The winner may have finished the build while we waited -- re-probe
+            # before tearing anything down.
+            DASHBOARD_PYTHON="python3"
+            [ -x "${dashboard_venv}/bin/python3" ] && DASHBOARD_PYTHON="${dashboard_venv}/bin/python3"
+            if "$DASHBOARD_PYTHON" -c "import fastapi; import sqlalchemy; import aiosqlite" 2>/dev/null; then
+                safe_release_lock "$dashboard_venv"
+                return 0
+            fi
+        else
+            # Do NOT fall through into the rm -rf unlocked -- that is the exact
+            # race this lock exists to prevent.
+            echo -e "${RED}Timed out waiting for another run to finish building the dashboard venv${NC}"
+            echo "  Retry, or remove a stale lock: rm -rf ${dashboard_venv}.lockdir"
+            return 1
+        fi
+    fi
+
     echo -e "${YELLOW}Setting up dashboard virtualenv...${NC}"
 
     # Create venv if missing or broken
@@ -452,6 +498,7 @@ ensure_dashboard_venv() {
             echo "You may need to install python3-venv:"
             echo "  sudo apt install python3-venv    (Debian/Ubuntu)"
             echo "  brew install python3              (macOS)"
+            [ "$_venv_locked" = true ] && safe_release_lock "$dashboard_venv"
             return 1
         }
     fi
@@ -476,6 +523,7 @@ ensure_dashboard_venv() {
         if ! "${dashboard_venv}/bin/pip" install fastapi uvicorn pydantic websockets sqlalchemy aiosqlite httpx pexpect watchdog 2>&1 | tail -1; then
             echo -e "${RED}Failed to install dashboard dependencies${NC}"
             echo "Try manually: ${dashboard_venv}/bin/pip install fastapi uvicorn sqlalchemy aiosqlite"
+            [ "$_venv_locked" = true ] && safe_release_lock "$dashboard_venv"
             return 1
         fi
         # Try greenlet separately (optional, needs C compiler on some platforms)
@@ -488,9 +536,11 @@ ensure_dashboard_venv() {
         echo "Try removing the venv and retrying:"
         echo "  rm -rf ${dashboard_venv}"
         echo "  loki dashboard start"
+        [ "$_venv_locked" = true ] && safe_release_lock "$dashboard_venv"
         return 1
     fi
 
+    [ "$_venv_locked" = true ] && safe_release_lock "$dashboard_venv"
     return 0
 }
 
@@ -824,6 +874,7 @@ show_help() {
     echo "Usage: loki <command> [options]"
     echo ""
     echo "New here? Try these in order:"
+    echo "  loki welcome              Friendly first-run opener (what Loki is, next steps)"
     echo "  loki doctor               Check your setup is ready (a few seconds)"
     echo "  loki quickstart           Guided first build from your idea (no PRD needed)"
     echo "  loki start ./prd.md       Build from a spec (PRD file, GitHub/GitLab/Jira/Azure issue, or no arg)"
@@ -855,7 +906,8 @@ show_help() {
     echo "  next             Run the right next step for you (resume / ship / why)"
     echo "  stop             Stop execution immediately"
     echo "  pause            Pause after current session"
-    echo "  resume           Resume paused execution"
+    echo "  resume           Resume a paused or interrupted run (after Ctrl-C or a crash)"
+    echo "  steer \"<note>\"    Nudge a running build (needs LOKI_PROMPT_INJECTION=1)"
     echo ""
     echo "Verify / trust:"
     echo "  verify [base]    Deterministic PR verification (CI-gate exit codes)"
@@ -910,6 +962,8 @@ show_help() {
     echo "  --budget USD     Set cost budget limit (display in dashboard/status)"
     echo "  --bmad-project PATH  Use BMAD Method project artifacts as input"
     echo "  --openspec PATH      Use OpenSpec change directory as input"
+    echo "  --config PATH    Load settings from a config file (.yaml/.json/.env). Alias: --env-file, --vars"
+    echo "                   Precedence: CLI flag > env var > --config file > defaults. Secrets via \${VAR}."
     echo ""
     echo "Deprecated alias 'run': 'loki run <issue-ref>' still works as an alias"
     echo "for 'loki start'. See its options with 'loki run --help'."
@@ -941,10 +995,20 @@ show_help() {
     echo "  # Providers + model routing"
     echo "  loki provider list            # Show 4 providers (claude/codex/cline/aider)"
     echo "  loki provider set codex       # Switch active provider"
-    echo "  # OpenRouter / Ollama routing (Phase I v7.5.25+):"
-    echo "  export ANTHROPIC_BASE_URL=https://openrouter.ai/api/v1 \\\\"
-    echo "         LOKI_MODEL_OVERRIDE=anthropic/claude-sonnet-4.5"
-    echo "  loki start ./prd.md           # Routes to OpenRouter via Claude Code"
+    echo "  # Cheap / open models (DeepSeek, GLM, MiniMax, Kimi) via OpenRouter:"
+    echo "  loki provider set aider       # aider + cline reach any OpenRouter model"
+    echo "  export OPENROUTER_API_KEY=sk-or-..."
+    echo "  loki start ./prd.md           # defaults to deepseek-v3.2 (open weights)"
+    echo "  # Pick a specific model:"
+    echo "  export LOKI_AIDER_MODEL=openrouter/z-ai/glm-4.6"
+    echo ""
+    echo "  # Anthropic-PROTOCOL gateways (LiteLLM, Bedrock proxies, self-hosted):"
+    echo "  export ANTHROPIC_BASE_URL=https://your-gateway/v1 \\\\"
+    echo "         LOKI_MODEL_OVERRIDE=<model-id-your-gateway-serves>"
+    echo "  # NOTE: this routes Claude Code itself, so the endpoint must speak the"
+    echo "  #       Anthropic /v1/messages API. OpenRouter does NOT -- it serves"
+    echo "  #       only the OpenAI-shaped /v1/chat/completions. Use the aider or"
+    echo "  #       cline route above for OpenRouter."
     echo ""
     echo "  # Cross-project context (Phase F v7.5.23+)"
     echo "  # Drop .loki/app.json with {schema_version:1,app_id:myapp,members:[ui,api]}"
@@ -962,7 +1026,44 @@ show_help() {
     echo "  loki cockpit                  # Live multi-repo cockpit (terminal image)"
     echo "  loki remote                   # Remote session (phone/browser)"
     echo ""
+    # COMPLETE COMMAND INDEX. The curated sections above stay curated -- they
+    # are the onboarding path and stuffing 112 commands into them would make
+    # the first screen useless. But a command that appears NOWHERE in help does
+    # not exist to a user: measured, 43 of 112 were unreachable from here,
+    # including `loki proof` -- the Evidence Receipt, which is the whole trust
+    # argument. Discoverability is an adoption lever, not tidiness.
+    #
+    # tests/test-help-discoverability.sh fails the build when a real command is
+    # missing from this list, so a new command cannot ship invisible.
+    echo ""
+    echo "All commands:"
+    echo "  agent analyze api assets audit bench checkpoint (cp) ci cleanup"
+    echo "  cluster cockpit code compliance completions compound config context (ctx)"
+    echo "  cost council crash dashboard demo deploy docker docs doctor dogfood"
+    echo "  enterprise estimate explain export failover github grill heal help"
+    echo "  import init"
+    echo "  issue kpis logs magic mcp memory metrics migrate modernize monitor"
+    echo "  next notify onboard open optimize otel own (handoff) pause plan preview"
+    echo "  projects proof (receipt) provider quick quickstart rc remote report reset"
+    echo "  resume review rollback run sandbox secrets secure self-update sentrux"
+    echo "  serve setup-skill share ship spec start state stats status steer stop"
+    echo "  syslog telemetry template test tour trigger trust trust-metrics"
+    echo "  ultracode update verify version voice watch watchdog web welcome why"
+    echo "  wiki worktree (wt)"
+    echo ""
+    echo "Any command: loki <command> --help"
+    echo ""
     echo "Phase A-J features (v7.5.18 - v7.5.28) are default-on. See CHANGELOG."
+    echo ""
+    echo "Environment variables an operator would set: docs/environment-variables.md"
+    echo "Cost controls (budget, iteration and wall-clock caps): docs/cost-controls.md"
+    echo "Already have a codebase? Start read-only: docs/brownfield.md"
+    echo "No egress allowed? What runs disconnected: docs/air-gapped.md"
+    echo "Where this is going: docs/STRATEGY-2026-2028.md"
+    echo ""
+    echo "Scripting Loki? Exit codes for every command are documented in"
+    echo "docs/exit-codes.md. Severity rises with the code, and 'loki start'"
+    echo "has a richer contract under LOKI_DURABLE_STATE=1 for k8s and ECS."
     echo ""
     echo "Environment Variables:"
     echo "  Opt-outs: LOKI_HOOK_EVENTS=off, LOKI_DYNAMIC_PROMPT_SECTIONS=keep,"
@@ -1360,6 +1461,29 @@ cmd_start() {
     # first start. Writes ~/.loki/.welcomed and never repeats; non-blocking,
     # and never auto-opens a browser in CI or non-interactive shells.
     cmd_welcome_maybe_firstrun 2>/dev/null || true
+
+    # Tell the user when their install is stale, on the command they ACTUALLY
+    # run. The hint existed but was wired only into `doctor` and `version` --
+    # neither of which anyone runs before a build -- so a stale install stayed
+    # invisible for as long as it took someone to go looking.
+    #
+    # That is not hypothetical. This machine was 4 releases behind (8.8.0 vs
+    # 8.41.0) while running builds, and that specific gap mattered: v8.38.0
+    # fixed four quality-gate detectors that had NEVER shipped, so on 8.8.0
+    # mutation-integrity fail-closed on every iteration and first-pass
+    # completion was impossible no matter how good the output was. The user had
+    # no way to know from the tool.
+    #
+    # Cheap and fail-silent by construction: the result is cached for 24h, the
+    # registry call has a 1.5s hard timeout, and any failure prints nothing
+    # rather than guessing (see maybe_print_update_hint).
+    # NOT `2>/dev/null`: the hint is PRINTED ON STDERR, so redirecting stderr
+    # discards the only thing this call exists to produce. A first draft did
+    # exactly that and the feature was silently dead. The function is already
+    # fail-silent internally (opt-out, CI, non-TTY, timeout, unparseable
+    # version all return 0 without output), so no guard is needed here.
+    maybe_print_update_hint || true
+
     local args=()
     local prd_file=""
     local provider=""
@@ -1377,8 +1501,6 @@ cmd_start() {
     local positional_arg=""           # raw positional arg for mode detection
     local issue_ref_explicit=""       # --issue value (when explicit_mode=issue)
     local issue_mode_args=()          # captured issue-mode flags (--dry-run, --pr, etc.)
-    local issue_dry_run=false
-    local issue_no_start=false
     local issue_output_file=""
     local issue_use_worktree=false
     local issue_create_pr=false
@@ -1439,6 +1561,9 @@ cmd_start() {
                 echo "  --no-plan             Skip auto-shown PRD analysis at startup"
                 echo "  --brief \"TEXT\"        Zero-config fast first run from a one-line brief"
                 echo "  --yes, -y             Skip confirmation prompts (auto-confirm)"
+                echo "  --quiet               Suppress [INFO]/[STEP]; warnings and errors still print"
+                echo "  --log-level LEVEL     debug | info | warn | error (default: info)"
+                echo "  --max-duration DUR    Wall-clock cap: seconds, or 90m / 2h (default: none)"
                 echo ""
                 echo "Issue-mode options (only used when input is an ISSUE-REF):"
                 echo "  --dry-run             Preview generated PRD without starting"
@@ -1448,6 +1573,16 @@ cmd_start() {
                 echo "  --pr                  Worktree + auto-create PR"
                 echo "  --ship                Worktree + PR + auto-merge"
                 echo "  --detach, -d          Run in background"
+                echo ""
+                echo "Preview without spending (any input mode):"
+                echo "  loki plan <PRD>       Analyze a spec WITHOUT executing: complexity,"
+                echo "                        estimated iterations, tokens, and cost. Add --json"
+                echo "                        for machine-readable output. This is the dry run"
+                echo "                        for PRD and brief mode; --dry-run above is"
+                echo "                        issue-mode only."
+                echo "  LOKI_CONFIG_DUMP=1 loki start"
+                echo "                        Print the resolved LOKI_* configuration and exit"
+                echo "                        without starting a run or spending anything."
                 echo ""
                 echo "Environment Variables:"
                 echo "  LOKI_PRD_FILE         Path to PRD file (alternative to positional arg)"
@@ -1638,6 +1773,52 @@ cmd_start() {
                 export LOKI_AUTO_CONFIRM=true
                 shift
                 ;;
+            # Wall-clock cap. Accepts plain seconds or a suffix (30m, 2h) --
+            # an operator setting a build timeout thinks in minutes and hours,
+            # and forcing them to compute 7200 invites the off-by-3600 error.
+            --max-duration)
+                if [[ -n "${2:-}" ]]; then
+                    local _md="$2" _mdn _mdmul=1
+                    case "$_md" in
+                        *s) _mdn="${_md%s}" ;;
+                        *m) _mdn="${_md%m}"; _mdmul=60 ;;
+                        *h) _mdn="${_md%h}"; _mdmul=3600 ;;
+                        *)  _mdn="$_md" ;;
+                    esac
+                    if ! [[ "$_mdn" =~ ^[0-9]+$ ]] || [ "$_mdn" -eq 0 ]; then
+                        echo "Error: --max-duration must be a positive duration (e.g. 5400, 90m, 2h); got '$2'" >&2
+                        return 1
+                    fi
+                    export LOKI_MAX_DURATION=$(( _mdn * _mdmul ))
+                    shift 2
+                else
+                    echo "Error: --max-duration requires a value (e.g. 90m)" >&2
+                    return 1
+                fi
+                ;;
+            # Verbosity. --quiet suppresses [INFO]/[STEP]; warnings and errors
+            # always print, so a quiet run can still say why it failed.
+            --quiet)
+                export LOKI_LOG_LEVEL=warn
+                shift
+                ;;
+            --log-level)
+                if [[ -n "${2:-}" ]]; then
+                    case "$2" in
+                        debug|info|warn|error)
+                            export LOKI_LOG_LEVEL="$2"
+                            ;;
+                        *)
+                            echo "Error: --log-level must be debug, info, warn, or error (got '$2')" >&2
+                            return 1
+                            ;;
+                    esac
+                    shift 2
+                else
+                    echo "Error: --log-level requires a value (debug|info|warn|error)" >&2
+                    return 1
+                fi
+                ;;
             --bmad-project)
                 if [[ -n "${2:-}" ]]; then
                     bmad_project_path="$2"
@@ -1813,12 +1994,10 @@ cmd_start() {
                 ;;
             # v6.84.0: issue-mode flags (only meaningful when input is an issue)
             --dry-run)
-                issue_dry_run=true
                 issue_mode_args+=("--dry-run")
                 shift
                 ;;
             --no-start)
-                issue_no_start=true
                 issue_mode_args+=("--no-start")
                 shift
                 ;;
@@ -1904,6 +2083,59 @@ cmd_start() {
                 ;;
         esac
     done
+
+    # Explicit-provider pre-flight. Runs BEFORE provider_offer_gate below, and
+    # is deliberately narrower than it.
+    #
+    # provider_offer_gate passes when ANY provider is on PATH, so `--provider
+    # codex` on a claude-only machine sails through it and dies much later in
+    # the runner. And when NOTHING is installed the gate offers to install
+    # CLAUDE, which is a nudge toward substituting a provider the user did not
+    # ask for. An explicit choice that cannot be honoured is an error, never a
+    # silent (or suggested) swap: running a different model than the one asked
+    # for is worse than failing.
+    #
+    # Only guards an EXPLICIT choice (--provider flag or LOKI_PROVIDER). The
+    # default path returns immediately and still gets the friendly install
+    # offer below. The later check at the "Pre-flight: check that the provider
+    # CLI is installed" block stays: it covers effective_provider, which
+    # includes the default, so the two have different scopes.
+    local _pf_explicit="${provider:-${LOKI_PROVIDER:-}}"
+    if [ -n "$_pf_explicit" ] && ! command -v "$_pf_explicit" >/dev/null 2>&1; then
+        # Provider name == binary name here, same assumption as the existing
+        # check below and provider-offer.sh:53. opencode is included; it is in
+        # SUPPORTED_PROVIDERS but missing from the older lists.
+        local _pf_installed=""
+        local _pf_p
+        for _pf_p in claude codex cline aider opencode; do
+            if command -v "$_pf_p" >/dev/null 2>&1; then
+                _pf_installed="${_pf_installed:+$_pf_installed }$_pf_p"
+            fi
+        done
+
+        echo -e "${RED}Error: you asked for provider '$_pf_explicit', but its CLI is not installed.${NC}" >&2
+        echo "" >&2
+        echo "Install it:" >&2
+        case "$_pf_explicit" in
+            claude)   echo "  npm install -g @anthropic-ai/claude-code" >&2 ;;
+            codex)    echo "  npm install -g @openai/codex" >&2 ;;
+            cline)    echo "  npm install -g cline" >&2 ;;
+            aider)    echo "  pip install aider-chat" >&2 ;;
+            opencode) echo "  npm install -g opencode-ai" >&2 ;;
+            *)        echo "  No install command is known for '$_pf_explicit'." >&2 ;;
+        esac
+        echo "" >&2
+        if [ -n "$_pf_installed" ]; then
+            echo "Installed providers on this machine: $_pf_installed" >&2
+            echo "Re-run with one of those, e.g. loki start --provider ${_pf_installed%% *}" >&2
+        else
+            echo "No supported provider CLI is installed on this machine." >&2
+            echo "Supported providers: claude, codex, cline, aider, opencode" >&2
+        fi
+        echo "" >&2
+        echo "Loki will not silently run a different provider than the one you asked for." >&2
+        exit 1
+    fi
 
     # v7.29.0: provider pre-flight gate. If no provider CLI is installed, offer
     # to install one (TTY) or print honest manual instructions and exit 2
@@ -2346,6 +2578,44 @@ cmd_start() {
                 args+=("--provider" "$provider")
             fi
         fi
+    fi
+
+    # Shared-checkout concurrency guard (client bug: N `loki start ... --detach`
+    # in ONE working dir with a SHARED .loki/ collide on non-namespaced worktree
+    # paths + branches, producing missing worktrees and log spam). Issue-mode
+    # namespaces pids PER SESSION, so the global loki.pid check below never trips
+    # for DIFFERENT issues -- there was no guard on concurrent runs per checkout.
+    # Detect a LIVE sibling loki running in THIS checkout via per-run pid markers
+    # (crash-safe: dead markers are pruned via kill -0, so no deadlock). A run
+    # that isolates its state (a distinct LOKI_DIR, i.e. NOT the default .loki) is
+    # exempt -- that IS the safe per-issue pattern. Escape hatch:
+    # LOKI_ALLOW_SHARED_CHECKOUT=1.
+    local _co_loki_dir="${LOKI_DIR:-.loki}"
+    if [ "${LOKI_ALLOW_SHARED_CHECKOUT:-0}" != "1" ] \
+       && { [ -z "${LOKI_DIR:-}" ] || [ "$(cd "${LOKI_DIR}" 2>/dev/null && pwd)" = "$(cd .loki 2>/dev/null && pwd)" ]; }; then
+        local _co_runs_dir="$_co_loki_dir/checkout-runs"
+        mkdir -p "$_co_runs_dir" 2>/dev/null || true
+        local _co_marker _co_pid _co_live=""
+        for _co_marker in "$_co_runs_dir"/*; do
+            [ -f "$_co_marker" ] || continue
+            _co_pid=$(cat "$_co_marker" 2>/dev/null | tr -dc '0-9')
+            if [ -n "$_co_pid" ] && [ "$_co_pid" != "$$" ] && kill -0 "$_co_pid" 2>/dev/null; then
+                _co_live="$_co_pid"; break
+            fi
+            # Prune a dead marker.
+            [ -n "$_co_pid" ] && rm -f "$_co_marker" 2>/dev/null || true
+        done
+        if [ -n "$_co_live" ]; then
+            echo -e "${RED}Error: another loki run (pid $_co_live) is active in this checkout ($(pwd)).${NC}" >&2
+            echo -e "${YELLOW}Running several issues at once from ONE checkout + shared .loki/ collides on worktrees and branches.${NC}" >&2
+            echo -e "${YELLOW}Give each issue its own worktree AND state dir, e.g.:${NC}" >&2
+            echo -e "${YELLOW}  git worktree add ../repo-issue-N -b loki/issue-N && (cd ../repo-issue-N && LOKI_DIR=\"\$PWD/.loki\" loki start owner/repo#N --pr --detach)${NC}" >&2
+            echo -e "${YELLOW}See 'skills/github-integration.md' (Multiple issues at once). Override with LOKI_ALLOW_SHARED_CHECKOUT=1.${NC}" >&2
+            exit 1
+        fi
+        # Register our own marker for the duration of this run (best-effort;
+        # pruned by the next start if we die, and by 'loki stop').
+        echo "$$" > "$_co_runs_dir/$$" 2>/dev/null || true
     fi
 
     # v7.5.12 Gap B: Stale-PID detection. Hard-kill (Ctrl+C followed by SIGKILL or
@@ -3290,17 +3560,133 @@ cmd_pause() {
     fi
 }
 
+# RUN-25 iter 22 (Wave D #3): `loki steer "<note>"` writes an operator directive
+# the running loop actually reads (.loki/HUMAN_INPUT.md), replacing the dead
+# steering.md hint the cockpit used to advertise (nothing read it). The loop only
+# INJECTS the note when LOKI_PROMPT_INJECTION=1 (default off, for safety), so we
+# write the note and tell the operator the exact flag -- honest: the control now
+# genuinely persists the directive instead of silently no-op'ing.
+cmd_steer() {
+    case "${1:-}" in
+        --help|-h|help|"")
+            echo -e "${BOLD}Loki Mode -- steer the running build${NC}"
+            echo ""
+            echo "Usage: loki steer \"<guidance>\""
+            echo ""
+            echo "Writes your guidance to .loki/HUMAN_INPUT.md, which the running"
+            echo "loop reads at the next iteration boundary (when LOKI_PROMPT_INJECTION=1)."
+            echo ""
+            echo "  loki steer \"focus on the auth flow, skip the docs for now\""
+            echo ""
+            echo "The loop injects the note only when prompt injection is enabled:"
+            echo "  LOKI_PROMPT_INJECTION=1 loki start ...   (or export it before starting)"
+            [ -z "${1:-}" ] && return 2
+            return 0
+            ;;
+    esac
+    if [ ! -d "$LOKI_DIR" ]; then
+        echo -e "${YELLOW}No .loki directory found.${NC} Start a session first: loki start"
+        return 1
+    fi
+    local note="$*"
+    # Append with a timestamp so multiple steers accumulate; the reader consumes
+    # and clears the file each iteration, so this is the pending-directive buffer.
+    {
+        printf '## Operator directive (%s)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf '%s\n\n' "$note"
+    } >> "$LOKI_DIR/HUMAN_INPUT.md"
+    emit_event session cli steer "chars=${#note}" 2>/dev/null || true
+    echo -e "${GREEN}Steering note written to .loki/HUMAN_INPUT.md${NC}"
+    if [ "${LOKI_PROMPT_INJECTION:-false}" != "1" ] && [ "${LOKI_PROMPT_INJECTION:-false}" != "true" ]; then
+        echo -e "${YELLOW}Note: prompt injection is OFF, so the loop will NOT read this yet.${NC}"
+        echo -e "${DIM}Enable it: export LOKI_PROMPT_INJECTION=1 (then the next iteration ingests the note).${NC}"
+    else
+        echo -e "${DIM}The next iteration will read and apply it.${NC}"
+    fi
+    return 0
+}
+
+# Print the one copy-pasteable command that gets an INTERRUPTED run going again,
+# naming what was found (iteration reached, when it stopped) so the user can tell
+# it is their run and not a stale directory. Returns 0 when a hint was printed,
+# 1 when there is nothing resumable (caller then prints its own message).
+#
+# Keyed on status == "interrupted" ONLY, deliberately. run.sh's load_state
+# preserves iterationCount for exactly paused|interrupted|budget_exceeded|
+# stopped and RESETS it to 0 for everything else -- including "running", which
+# is what an uncatchable SIGKILL leaves behind. Printing "resume from iteration
+# 7" on a "running" record would promise progress that load_state is about to
+# throw away, on a dev box without LOKI_DURABLE_STATE=1. A hint pointing at
+# nothing is worse than silence, so the narrow key is the point, not an
+# oversight. budget_exceeded / max_iterations_reached already get their own
+# tailored guidance from _loki_next_action (raise the cap FIRST, then resume);
+# duplicating them here would contradict it.
+#
+# Read-only: reads state, writes nothing, spends nothing.
+_loki_print_interrupted_resume_hint() {
+    local status
+    status="$(_loki_resolve_run_status 2>/dev/null)" || return 1
+    [ "$status" = "interrupted" ] || return 1
+
+    local state_file="$LOKI_DIR/autonomy-state.json"
+    if [ -n "${LOKI_SESSION_ID:-}" ] && [ -f "$LOKI_DIR/sessions/${LOKI_SESSION_ID}/autonomy-state.json" ]; then
+        state_file="$LOKI_DIR/sessions/${LOKI_SESSION_ID}/autonomy-state.json"
+    fi
+    [ -f "$state_file" ] || return 1
+
+    # iteration, lastRun and prdPath in one read. Tab-separated so a spec path
+    # containing spaces survives; python3 is already a hard dep of this file.
+    local fields iteration last_run prd_path
+    fields="$(_LOKI_RH_STATE="$state_file" python3 -c "
+import json, os
+try:
+    d = json.load(open(os.environ['_LOKI_RH_STATE']))
+except Exception:
+    d = {}
+# save_state() writes "iteration" (autonomy/run.sh:6707). Reading only
+# "iterationCount" made every REAL interrupted run report iteration 0 -- the
+# one number that makes this message reassuring rather than alarming. The
+# fixture that first exercised this used the other spelling, so the test
+# passed while the shipped path was wrong. Accept both, real key first.
+print('\t'.join([
+    str(d.get('iteration', d.get('iterationCount', 0))),
+    str(d.get('lastRun', '') or 'unknown'),
+    str(d.get('prdPath', '') or ''),
+]))" 2>/dev/null)" || return 1
+    IFS=$'\t' read -r iteration last_run prd_path <<< "$fields"
+
+    # The spec path is what makes the command RESUME this run rather than start a
+    # different one, so only interpolate it when it still exists on disk. A stale
+    # path would produce a command that fails on paste.
+    local resume_cmd="loki start"
+    if [ -n "$prd_path" ] && [ -f "$prd_path" ]; then
+        resume_cmd="loki start \"$prd_path\""
+    fi
+
+    echo -e "${YELLOW}Interrupted run found.${NC} Stopped at iteration ${BOLD}${iteration}${NC} (last activity: ${last_run})."
+    echo "Saved progress is intact. Resume it with:"
+    echo ""
+    echo -e "  ${BOLD}${resume_cmd}${NC}"
+    echo ""
+    echo -e "${DIM}It picks up from iteration ${iteration}; verification re-runs, so nothing inherits a stale PASS.${NC}"
+    return 0
+}
+
 # Resume paused execution
 cmd_resume() {
     # v7.6.2 B-13 fix: --help must print help, not act on session state.
     case "${1:-}" in
         --help|-h|help)
-            echo -e "${BOLD}Loki Mode -- resume paused session${NC}"
+            echo -e "${BOLD}Loki Mode -- resume a paused or interrupted session${NC}"
             echo ""
             echo "Usage: loki resume [options]"
             echo ""
             echo "Clears the paused flag and lets the autonomous runner continue"
             echo "from where 'loki pause' stopped it."
+            echo ""
+            echo "If the run was interrupted instead (Ctrl-C, crash, closed laptop)"
+            echo "there is no flag to clear, so this prints the iteration it reached"
+            echo "and the exact command to continue from that saved state."
             echo ""
             echo "Options:"
             echo "  --help, -h   Show this help and exit"
@@ -3323,8 +3709,17 @@ cmd_resume() {
     local session_running=false
     is_session_running && session_running=true
 
-    # If nothing is paused/stopped and no session is running, exit early
+    # If nothing is paused/stopped and no session is running, the run may still
+    # be RESUMABLE: a Ctrl-C / crash / closed laptop leaves no PAUSE or STOP
+    # file, only autonomy-state.json with status "interrupted" and the iteration
+    # it reached. This branch used to print "No session to resume" and send the
+    # user to `loki start`, hiding real saved progress -- and because
+    # `loki next` maps interrupted -> cmd_resume, the one command whose job is
+    # "do the right next thing" hit the same dead end. Surface it instead.
     if ! $has_pause_signal && ! $has_stop_signal && ! $session_running; then
+        if _loki_print_interrupted_resume_hint; then
+            return 0
+        fi
         echo -e "${YELLOW}No session to resume.${NC}"
         echo "Start a session with: loki start"
         exit 0
@@ -3743,6 +4138,85 @@ cmd_ship() {
     return 0
 }
 
+# Per-error_class remediation, shared by BOTH cmd_why paths (human + --json).
+#
+# WHY THIS IS A SHELL VARIABLE. cmd_why runs two SEPARATE python3 heredocs, so a
+# helper defined in one is invisible to the other. Copy-pasting the map into
+# both is exactly the drift this file warns against everywhere else (see the
+# GUIDE / _loki_next_action "kept in lockstep" comments). Defining it once and
+# injecting it into both makes divergence impossible rather than merely
+# discouraged.
+#
+# SCOPE. The GUIDE map keys on run STATUS (council_approved / failed / ...).
+# This keys on the LAST_ERROR error_class -- a different, orthogonal axis. A
+# `failed` run got the same "read the logs" line whether the cause was a 401 or
+# a timeout; this is what makes the two cases differ.
+#
+# run.sh WRITES the classification (_loki_classify_iteration_error, :1857) and
+# injects a heal hint naming the class (:1889), but neither carries remediation
+# text -- so there is no second surface to mirror. This is the sole home for the
+# wording. If run.sh ever gains one, keep them in lockstep.
+#
+# HONESTY. last_error_action() returns None for any class not in the map --
+# including "unknown", which run.sh writes when it will not guess. A None means
+# the caller must print the recorded brief verbatim and infer NOTHING. Never add
+# a fallback action here: a generic string on an unknown class is a fabricated
+# diagnosis wearing an action's clothes.
+read -r -d '' _LOKI_WHY_ACTIONS_PY <<'WHYACTIONS' || true
+# error_class -> (action). Each is a command or env var the reader can act on.
+LAST_ERROR_ACTIONS = {
+    "rate_limited":
+        "Wait for the provider limit to reset, then re-run: loki start <spec>",
+    "build_timeout":
+        "Raise the per-iteration limit, or narrow the spec so one iteration does less:\n"
+        "LOKI_ITERATION_TIMEOUT=3600 loki start <spec>",
+    "provider_empty_output":
+        "The provider returned nothing. Check provider health first: loki doctor\n"
+        "then re-run. If doctor is clean, try another provider: LOKI_PROVIDER=<name> loki start <spec>",
+}
+
+# Auth remediation is PROVIDER-SPECIFIC and the LAST_ERROR schema records no
+# provider. So we use LOKI_PROVIDER when it is set, and when it is not we list
+# every option LABELLED rather than presenting one provider's fix as the answer.
+PROVIDER_AUTH = {
+    "claude": "claude login   (or set ANTHROPIC_API_KEY)",
+    "codex": "codex login   (or set OPENAI_API_KEY)",
+    "aider": "set the API key for your aider model (OPENAI_API_KEY / ANTHROPIC_API_KEY)",
+    "cline": "re-enter the API key in Cline's provider settings",
+    "opencode": "opencode auth login",
+}
+
+
+def last_error_action(rec, provider=""):
+    """Concrete next action for a LAST_ERROR record, or None if unrecognized.
+
+    None is a real answer: it means we have no mapped action and the caller must
+    fall back to the recorded brief verbatim. Do not turn it into a default.
+    """
+    if not isinstance(rec, dict):
+        return None
+    ec = str(rec.get("error_class") or "").strip()
+    if ec == "auth_error":
+        p = str(provider or "").strip().lower()
+        if p in PROVIDER_AUTH:
+            return "Re-authenticate %s: %s" % (p, PROVIDER_AUTH[p])
+        lines = ["Re-authenticate the provider in use (LOKI_PROVIDER is unset, so "
+                 "the provider was not recorded):"]
+        for _n in sorted(PROVIDER_AUTH):
+            lines.append("  %-9s %s" % (_n, PROVIDER_AUTH[_n]))
+        return "\n".join(lines)
+    action = LAST_ERROR_ACTIONS.get(ec)
+    if action is None:
+        return None
+    if ec == "rate_limited":
+        # retry_after is NOT in the documented schema. Read it defensively and
+        # print nothing when absent -- a placeholder would read as measured.
+        _r = rec.get("retry_after", rec.get("retry_after_seconds"))
+        if _r not in (None, ""):
+            action += "\nProvider reported retry-after: %s" % _r
+    return action
+WHYACTIONS
+
 # loki why -- actionable failure/outcome diagnosis (B5).
 # Reads the already-captured run artifacts (no new state): the terminal run state
 # (.loki/<autonomy-state>.json: status, lastExitCode, iterationCount), the durable
@@ -3774,9 +4248,16 @@ cmd_why() {
     fi
 
     if [ "$as_json" = "1" ]; then
+        local _why_json_head_sha
+        _why_json_head_sha="$(git rev-parse HEAD 2>/dev/null || echo "")"
         _LOKI_WHY_STATE="$state_file" _LOKI_WHY_COMPLETION="$completion_file" \
-        _LOKI_WHY_LAST_ERROR="$loki_dir/state/LAST_ERROR.json" python3 - <<'WHYJSON'
+        _LOKI_WHY_HEAD_SHA="$_why_json_head_sha" \
+        _LOKI_WHY_LAST_ERROR="$loki_dir/state/LAST_ERROR.json" \
+        _LOKI_WHY_ACTIONS_PY="$_LOKI_WHY_ACTIONS_PY" \
+        _LOKI_WHY_EFFICIENCY="$loki_dir/metrics/efficiency" python3 - <<'WHYJSON'
 import json, os
+# Shared per-class action map (single definition; see _LOKI_WHY_ACTIONS_PY).
+exec(os.environ.get("_LOKI_WHY_ACTIONS_PY", ""))
 def load(p):
     try:
         with open(p) as f: return json.load(f)
@@ -3784,7 +4265,95 @@ def load(p):
 state = load(os.environ.get("_LOKI_WHY_STATE", ""))
 comp = load(os.environ.get("_LOKI_WHY_COMPLETION", ""))
 last_error = load(os.environ.get("_LOKI_WHY_LAST_ERROR", ""))
-print(json.dumps({"state": state, "completion": comp, "last_error": last_error}, indent=2))
+
+# The human report labels a stale completion record "(from previous completed
+# run)". The JSON consumer got the same record with NO such marker, so a script
+# reading `completion.branch` or `completion.pr_url` after a crashed run would
+# attribute a PREVIOUS run's branch and PR to the current one -- silently, and
+# with no field to check. Emit the identical determination as explicit fields.
+# Kept byte-identical in logic to the human path below; the two must not drift.
+live_statuses = {"running", "exited"}
+head_sha = os.environ.get("_LOKI_WHY_HEAD_SHA", "")
+comp_head = comp.get("head_sha", "")
+comp_is_stale = bool(state.get("status") in live_statuses) or bool(
+    head_sha and comp_head and comp_head != head_sha
+)
+# Rework attribution, same source the human report and the completion summary
+# read. Without it the JSON surface -- the one CI and automation consume -- knew
+# only that a run hit its cap, not whether it was converging or thrashing. That
+# is exactly the distinction the human output was taught to make, so omitting it
+# here left the machine-readable path giving less than the printed one.
+#
+# Absent or unreadable records emit null rather than a zeroed object: a 0-of-0
+# split would read as "no rework", a claim the data does not support.
+_rework = None
+_effdir = os.environ.get("_LOKI_WHY_EFFICIENCY", "")
+if _effdir:
+    try:
+        import glob as _g
+        _prog = _rew = 0
+        _rcost = 0.0
+        for _f in _g.glob(os.path.join(_effdir, "iteration-*.json")):
+            try:
+                _d = json.load(open(_f))
+            except Exception:
+                continue
+            _st = str(_d.get("status", "")).lower()
+            if _st in ("completed", "ok", "success"):
+                _prog += 1
+            elif _st in ("failed", "error", "blocked"):
+                _rew += 1
+                _rcost += float(_d.get("cost_usd") or 0)
+        if _prog + _rew > 0:
+            _rework = {
+                "progress_iterations": _prog,
+                "rework_iterations": _rew,
+                "total_iterations": _prog + _rew,
+                "rework_cost_usd": round(_rcost, 4),
+                # The verdict a caller actually branches on, so every consumer
+                # does not re-derive the threshold and drift from the human
+                # report's wording.
+                "verdict": "thrashing" if _rew * 2 >= _prog + _rew else "converging",
+            }
+    except Exception:
+        _rework = None
+
+# The machine-readable surface got the raw record and no action, so every
+# consumer had to re-derive the remediation and drift from the printed report.
+# Emit the SAME mapping the human path prints, plus an explicit honesty triple
+# so a consumer can distinguish the three no-action cases instead of seeing one
+# indistinguishable null:
+#   present=False               -> no failure was recorded (NOT "it succeeded")
+#   present=True, readable=False-> a record exists but is malformed
+#   recognized=False            -> real record, class we have no action for
+_le_path = os.environ.get("_LOKI_WHY_LAST_ERROR", "")
+_le_present = bool(_le_path) and os.path.exists(_le_path)
+_le_readable = isinstance(last_error, dict) and bool(last_error)
+if _le_present and not _le_readable:
+    # load() collapses unreadable and absent into {}. Re-read to tell them
+    # apart -- reporting a malformed record as "no failure" is the exact lie
+    # this command exists to prevent.
+    try:
+        with open(_le_path) as _lf:
+            _parsed = json.load(_lf)
+        _le_readable = isinstance(_parsed, dict)
+    except Exception:
+        _le_readable = False
+_le_action = last_error_action(last_error, os.environ.get("LOKI_PROVIDER", "")) \
+    if _le_readable else None
+
+print(json.dumps({
+    "state": state,
+    "completion": comp,
+    "last_error": last_error,
+    "last_error_present": _le_present,
+    "last_error_readable": _le_readable,
+    "last_error_recognized": _le_action is not None,
+    "last_error_action": _le_action,
+    "completion_is_stale": comp_is_stale,
+    "head_sha": head_sha or None,
+    "rework": _rework,
+}, indent=2))
 WHYJSON
         return 0
     fi
@@ -3797,8 +4366,16 @@ WHYJSON
     _LOKI_WHY_STATE="$state_file" _LOKI_WHY_COMPLETION="$completion_file" \
     _LOKI_WHY_HEAD_SHA="$_why_head_sha" \
     _LOKI_WHY_LAST_ERROR="$loki_dir/state/LAST_ERROR.json" \
+    _LOKI_WHY_UNCERTAINTY="$loki_dir/signals/UNCERTAINTY_ESCALATION" \
+    _LOKI_WHY_EFFICIENCY="$loki_dir/metrics/efficiency" \
+    _LOKI_WHY_CONVERGENCE="$loki_dir/council/convergence.log" \
+    _LOKI_WHY_GATE="$loki_dir/signals/GATE_ESCALATION.json" \
+    _LOKI_WHY_TARGET="${TARGET_DIR:-$(dirname "$loki_dir")}" \
+    _LOKI_WHY_ACTIONS_PY="$_LOKI_WHY_ACTIONS_PY" \
     _LOKI_WHY_HANDOFFS="$loki_dir/memory/handoffs" python3 - <<'WHYTXT'
 import json, os, glob
+# Shared per-class action map (single definition; see _LOKI_WHY_ACTIONS_PY).
+exec(os.environ.get("_LOKI_WHY_ACTIONS_PY", ""))
 def load(p):
     try:
         with open(p) as f: return json.load(f)
@@ -3854,9 +4431,60 @@ GUIDE = {
                 "If no build is active it likely crashed; in durable mode (LOKI_DURABLE_STATE=1) a restart resumes, else loki start re-runs."),
     "exited": ("The build process exited mid-iteration (likely a crash, kill, or empty provider output).",
                "Read .loki/logs/ for the last error; if nothing is running it crashed -- re-run with loki start, or loki resume in durable mode."),
+    # A real terminal state that had no entry, so `loki why` answered the one
+    # question it exists to answer with "No diagnosis mapping for this status".
+    "inconclusive_spec_contradiction": (
+        "Loki could not reconcile parts of the spec, so it stopped rather than guess.",
+        "The specific contradictions are in .loki/assumptions/ledger.md -- resolve them in the spec, then re-run."),
 }
 meaning, action = GUIDE.get(status, ("No diagnosis mapping for this status; see the raw fields below.",
                                      "Check loki status and .loki/logs/ for detail."))
+
+# Rework-aware advice for the iteration cap. The static line said "raise
+# LOKI_MAX_ITERATIONS", which is right for a run that was CONVERGING and wrong
+# for one that was THRASHING -- there, a higher cap buys more thrashing at full
+# price. The completion summary already splits those cases; this command is
+# where v8.14.0 sends the user, so it must not contradict it.
+#
+# Reads the same attribution the summary and the prompt trend use, so all three
+# surfaces cannot disagree about one run. Falls back to the static line when
+# the split is unknown: guessing which case applies would be worse than the
+# generic advice.
+if status == "max_iterations_reached":
+    try:
+        import glob as _glob
+        _prog = _rew = 0
+        _rcost = 0.0
+        _effdir = os.environ.get("_LOKI_WHY_EFFICIENCY", "")
+        for _f in (_glob.glob(os.path.join(_effdir, "iteration-*.json")) if _effdir else []):
+            try:
+                _d = json.load(open(_f))
+            except Exception:
+                continue
+            _st = str(_d.get("status", "")).lower()
+            if _st in ("completed", "ok", "success"):
+                _prog += 1
+            elif _st in ("failed", "error", "blocked"):
+                _rew += 1
+                _rcost += float(_d.get("cost_usd") or 0)
+        if _prog + _rew > 0:
+            _tot = _prog + _rew
+            if _rew * 2 >= _tot:
+                action = (
+                    f"{_rew} of {_tot} iterations redid earlier work"
+                    + (f" (${_rcost:.2f})" if _rcost > 0 else "")
+                    + ". Raising LOKI_MAX_ITERATIONS buys more of the same at full price. "
+                      "Read the last reviewer findings in .loki/quality/reviews/ and fix the "
+                      "blocker, or narrow the spec."
+                )
+            else:
+                action = (
+                    f"Converging: {_prog} of {_tot} iterations made progress"
+                    + (f", {_rew} redid work (${_rcost:.2f})" if _rew else "")
+                    + ". Raise LOKI_MAX_ITERATIONS and resume."
+                )
+    except Exception:
+        pass
 
 # The completion.json branch/changes/PR belong to the LAST COMPLETED run. When
 # the live state shows a build that is still running or crashed mid-iteration
@@ -3880,13 +4508,92 @@ if iters is not None:
     print(f"  Iterations  : {iters}")
 if comp.get("branch"):
     print(f"  Branch      : {comp['branch']}{comp_label}")
-if comp.get("files_changed") is not None:
-    print(f"  Changes     : {comp.get('files_changed',0)} files (+{comp.get('insertions',0)}/-{comp.get('deletions',0)}){comp_label}")
+_fc = comp.get("files_changed")
+if _fc is not None:
+    if _fc == 0:
+        # A recorded 0 is NOT trustworthy on its own: a greenfield run whose
+        # baseline never resolved records 0 while having committed real work.
+        # Saying "0 files" flatly told users nothing was built on a run that
+        # produced 9 files and 1300 insertions. Re-derive from git, and only
+        # claim zero when git agrees.
+        _real = None
+        try:
+            import subprocess as _sp
+            _tgt = os.environ.get("_LOKI_WHY_TARGET") or "."
+            _base = (comp.get("start_sha") or "").strip()
+            if not _base or _base == "HEAD":
+                _base = _sp.run(["git", "-C", _tgt, "hash-object", "-t", "tree", os.devnull],
+                                capture_output=True, text=True, timeout=10).stdout.strip()
+            if _base:
+                _o = _sp.run(["git", "-C", _tgt, "diff", "--shortstat", f"{_base}..HEAD",
+                              "--", ".", ":(exclude).loki/"],
+                             capture_output=True, text=True, timeout=15).stdout.strip()
+                if _o:
+                    _real = _o
+        except Exception:
+            _real = None
+        if _real:
+            print(f"  Changes     : {_real}  (re-derived; the run record said 0)")
+        else:
+            print(f"  Changes     : none recorded (the run did not resolve a baseline)")
+    else:
+        print(f"  Changes     : {_fc} files (+{comp.get('insertions',0)}/-{comp.get('deletions',0)}){comp_label}")
 if comp.get("pr_url"):
     print(f"  PR          : {comp['pr_url']}{comp_label}")
+
+# Name the gate that actually stopped the run. Without this the user is told to
+# "resume", which the run's own pause notice warns will stop at the same gate.
+_gate = load(os.environ.get("_LOKI_WHY_GATE", "")) or {}
+_gname = str(_gate.get("gate", "") or "").strip()
+if _gname:
+    _gc, _gt = _gate.get("count"), _gate.get("threshold")
+    _detail = f"{_gname} (failed {_gc} times, threshold {_gt})" if isinstance(_gc, int) and isinstance(_gt, int) else _gname
+    print(f"  Blocked by  : {_detail}")
+
 print()
 print(f"  What happened: {meaning}")
-print(f"  What to do   : {action}")
+if _gname:
+    print(f"  What to do   : Read the {_gname} findings and fix what they name, then resume.")
+    print(f"                 Resuming unchanged will stop at the same gate again.")
+    _art = str(_gate.get("latest_artifact", "") or "")
+    if _art:
+        # Make the pointer relative to the workspace. The recorded value is an
+        # absolute path from the machine that ran the build -- on the preserved
+        # run it names a /var/folders temp dir that no longer exists, so the one
+        # actionable pointer in the whole notice led nowhere. Anchor on
+        # ".loki/" so it works even when the run happened elsewhere.
+        _i = _art.find(".loki/")
+        if _i != -1:
+            _art = _art[_i:]
+        print(f"                 Findings: {_art}")
+else:
+    print(f"  What to do   : {action}")
+
+# RUN-25 iter 22b/iter 23 (Wave D #6): when a run is PAUSED / live and actually
+# STUCK, name the REAL stall reason instead of the generic "resume". The runner
+# drops .loki/signals/UNCERTAINTY_ESCALATION when its proactive stuck-detector
+# fires (repeated no-progress / uncertainty), and council/convergence.log records
+# consecutive-no-change. Surface those so "why is it stuck" has a real answer, not
+# a generic resume hint. Reads existing files only (no new state, no spend).
+_unc = os.environ.get("_LOKI_WHY_UNCERTAINTY", "")
+if _unc and os.path.exists(_unc):
+    print()
+    print("  Stall reason : the runner's proactive stuck-detector escalated")
+    print("                 (UNCERTAINTY_ESCALATION): repeated no-progress or")
+    print("                 low-confidence iterations. It is not making headway on its own.")
+    # Add the consecutive-no-change count from the convergence log tail if present.
+    _conv = os.environ.get("_LOKI_WHY_CONVERGENCE", "")
+    if _conv and os.path.exists(_conv):
+        try:
+            with open(_conv) as _cf:
+                _tail = _cf.read().splitlines()[-1:]
+            if _tail:
+                print(f"                 Latest convergence signal: {_tail[0][:120]}")
+        except Exception:
+            pass
+    print("  Unstick it   : give the loop a concrete next step:")
+    print("                   loki steer \"<what to try next>\"   (needs LOKI_PROMPT_INJECTION=1)")
+    print("                 or narrow the spec / fix the blocker, then loki resume.")
 
 # Surface the structured per-iteration error record, if one exists at
 # .loki/state/LAST_ERROR.json (the run.sh writer that produces it ships in the
@@ -3897,11 +4604,29 @@ print(f"  What to do   : {action}")
 # (that would be a fake-green-adjacent lie) - using the same SUCCESS set below.
 SUCCESS_STATUSES = {"council_approved", "completion_promise_fulfilled", "complete", "completed"}
 le = {}
+_le_path = os.environ.get("_LOKI_WHY_LAST_ERROR", "")
+_le_bad = ""
 try:
-    with open(os.environ.get("_LOKI_WHY_LAST_ERROR", "")) as f:
+    with open(_le_path) as f:
         le = json.load(f)
-except Exception:
+    if not isinstance(le, dict):
+        # A bare list/string/null is not a record. Matches the isinstance guard
+        # below rather than silently rendering an empty one.
+        _le_bad = "record is a %s, expected a JSON object" % type(le).__name__
+        le = {}
+except IOError:
+    le = {}          # absent: genuinely no recorded failure. Say nothing here.
+except ValueError as _e:
+    # Present but unparseable. Reporting silence here would read as "no failure
+    # recorded", which is a different and false claim.
     le = {}
+    _le_bad = str(_e)
+if _le_bad and status not in SUCCESS_STATUSES:
+    print()
+    print(f"  Last error  : a failure record exists but could not be read.")
+    print(f"                File  : {_le_path}")
+    print(f"                Reason: {_le_bad}")
+    print(f"                Nothing is inferred from an unreadable record.")
 if isinstance(le, dict) and le.get("error_class") and status not in SUCCESS_STATUSES:
     print()
     _it = le.get("iteration")
@@ -3909,6 +4634,24 @@ if isinstance(le, dict) and le.get("error_class") and status not in SUCCESS_STAT
     print(f"  Last error  : {le.get('error_class')}{_it_s}")
     if le.get("brief"):
         print(f"                {le.get('brief')}")
+    # Per-class remediation. Naming the error_class told the user WHAT broke and
+    # nothing about what to do; the GUIDE map above is keyed on run STATUS, so a
+    # failed run got the same generic "read the logs" line whether the cause was
+    # a 401 or a timeout. This maps the CLASS to its own concrete action.
+    #
+    # Kept in lockstep with LAST_ERROR_ACTIONS in the --json path above -- the
+    # two must not drift (same norm as the GUIDE / _loki_next_action pair).
+    # run.sh classifies the error but carries NO remediation wording, so this is
+    # the sole home for these strings.
+    _act = last_error_action(le, os.environ.get("LOKI_PROVIDER", ""))
+    if _act:
+        for _i, _line in enumerate(_act.splitlines()):
+            print(f"  {'What to do  :' if _i == 0 else '             '} {_line}")
+    else:
+        # Unrecognized class: the brief above is all we honestly know. Say that
+        # rather than emitting a generic action that implies a diagnosis.
+        print("                (Unrecognized error class -- the description above is "
+              "the recorded text, verbatim. No cause is inferred.)")
 
 # Surface the latest structured handoff (already-captured context), honestly.
 hd = sorted(glob.glob(os.path.join(os.environ.get("_LOKI_WHY_HANDOFFS",""), "*.md")))
@@ -4013,6 +4756,12 @@ cmd_status() {
     elif [ -f "$LOKI_DIR/STOP" ]; then
         echo -e "${RED}Status: STOPPED${NC}"
         echo -e "${DIM}  Clear with: loki resume${NC}"
+        echo ""
+    elif _loki_print_interrupted_resume_hint; then
+        # An interrupted run (Ctrl-C / crash / closed laptop) leaves no signal
+        # file, so the two branches above miss it entirely. Same hint cmd_resume
+        # prints. elif, not a separate block: it is mutually exclusive with an
+        # explicit PAUSE/STOP, and must not stack onto the "Last run:" line.
         echo ""
     fi
 
@@ -4918,6 +5667,7 @@ cmd_provider_list() {
     local codex_status="${RED}not installed${NC}"
     local cline_status="${RED}not installed${NC}"
     local aider_status="${RED}not installed${NC}"
+    local opencode_status="${RED}not installed${NC}"
 
     if command -v claude &> /dev/null; then
         claude_status="${GREEN}installed${NC}"
@@ -4930,6 +5680,9 @@ cmd_provider_list() {
     fi
     if command -v aider &> /dev/null; then
         aider_status="${GREEN}installed${NC}"
+    fi
+    if command -v opencode &> /dev/null; then
+        opencode_status="${GREEN}installed${NC}"
     fi
 
     # Display providers
@@ -4948,6 +5701,14 @@ cmd_provider_list() {
     marker=""
     [ "$current" = "aider" ] && marker=" ${CYAN}(current)${NC}"
     echo -e "  aider   - Aider (terminal pair prog)  $aider_status$marker"
+
+    # opencode was absent here while auto_detect_provider() has selected it
+    # since v8.64.0, so `loki provider list` under-reported a provider the
+    # runner will happily choose -- the same drift that blocked opencode-only
+    # machines outright until v8.76.0.
+    marker=""
+    [ "$current" = "opencode" ] && marker=" ${CYAN}(current)${NC}"
+    echo -e "  opencode - opencode (multi-provider)  $opencode_status$marker"
 
     echo ""
     echo -e "Set provider: ${CYAN}loki provider set <name>${NC}"
@@ -5029,7 +5790,14 @@ cmd_provider_models() {
     echo -e "${BOLD}Model Configuration (resolved):${NC}"
     echo ""
 
-    local providers=("claude" "codex" "cline" "aider")
+    echo -e "  ${CYAN}Ask for a tier by capability -- small, medium or high -- and each"
+    echo -e "  provider supplies its own latest model in that class. medium is the"
+    echo -e "  default. Set one with LOKI_SESSION_MODEL=small or --session-model small.${NC}"
+    echo ""
+
+    # opencode ships a provider file and a catalog entry, so omitting it here
+    # under-reported what this command claims to show ("all providers").
+    local providers=("claude" "codex" "cline" "aider" "opencode")
     for provider in "${providers[@]}"; do
         local provider_file="$script_dir/providers/${provider}.sh"
         [ -f "$provider_file" ] || continue
@@ -5099,7 +5867,34 @@ cmd_provider_models() {
                 fast)        value="$fast" ;;
             esac
 
-            printf "    %-12s %-30s (source: %s)\n" "${tier^}:" "$value" "$source"
+            # Label each tier with the GENERIC vocabulary users actually select
+            # (small|medium|high), so this command answers "what do I really get
+            # if I ask for medium on this provider" without anyone having to know
+            # a vendor model name. The canonical tier name stays alongside it
+            # because every env var, log line and state file still uses it -- and
+            # a user reading LOKI_CLAUDE_MODEL_DEVELOPMENT needs to see the two
+            # spellings connected. Mapping mirrors loki_tier_alias() in
+            # providers/models.sh.
+            local generic
+            case "$tier" in
+                fast)        generic="small" ;;
+                development) generic="medium" ;;
+                planning)    generic="high" ;;
+                *)           generic="$tier" ;;
+            esac
+
+            # An EMPTY resolved model is a real, supported state, not a lookup
+            # failure: providers/codex.sh sets CODEX_DEFAULT_MODEL="" on purpose
+            # so no --model flag is passed and Codex resolves an
+            # account-appropriate default (a hardcoded name broke ChatGPT-account
+            # users outright). Say that plainly instead of printing a blank
+            # column. Deliberately NOT filled in from the catalog: this table
+            # reports what will be DISPATCHED, and the catalog id would be a
+            # guess this file is documented as unable to make.
+            [ -n "$value" ] || value="(provider default -- no --model sent)"
+
+            printf "    %-8s %-14s %-38s (source: %s)\n" \
+                "$generic" "(${tier})" "$value" "$source"
         done
 
         # Show extra info per provider
@@ -8019,6 +8814,16 @@ fi
 INNER_SCRIPT_EOF
         chmod +x "$run_script"
 
+        # Propagate the nested-agent signal into the detached run. CLAUDECODE (set
+        # by Claude Code / the Loki Mode skill) is NOT in the curated env list the
+        # inner script inherits, so run.sh's nested guard would never see it once
+        # detached. Forward it as LOKI_NESTED_AGENT (which run.sh honors) so the
+        # testing/docs worktree sub-streams stay OFF when nested even after the
+        # nohup fork. Already-set LOKI_NESTED_AGENT wins.
+        local _loki_nested_pass="${LOKI_NESTED_AGENT:-}"
+        if [ -z "$_loki_nested_pass" ] && [ -n "${CLAUDECODE:-}" ]; then
+            _loki_nested_pass=1
+        fi
         # Pass all variables safely via environment
         LOKI_RUN_DIR="$(pwd)" \
         LOKI_CMD="$loki_cmd" \
@@ -8031,6 +8836,7 @@ INNER_SCRIPT_EOF
         LOKI_AUTO_MERGE="$auto_merge" \
         LOKI_PR_TITLE="${title:-Implementation for issue ${issue_ref}}" \
         LOKI_ISSUE_NUMBER="${number:-}" \
+        LOKI_NESTED_AGENT="$_loki_nested_pass" \
         nohup bash "$run_script" > "$log_file" 2>&1 &
 
         local bg_pid=$!
@@ -9323,14 +10129,40 @@ cmd_assets() {
     esac
 }
 
-# Guard: check if output file exists and warn before overwriting
+# Guard: check if output file exists and warn before overwriting.
+#
+# NON-INTERACTIVE SAFETY: this is the single chokepoint every export format
+# (_export_json / _export_markdown / _export_csv / _export_timeline) routes
+# through, so the guard lives here once rather than in four callers. Without it
+# the prompt BLOCKS FOREVER whenever stdin is not closed and not answerable -- a
+# CI lane, a pipeline, or a test harness that leaves stdin attached. That wedged
+# local-ci for 40+ minutes at tests/cli/test-alias-forwarding.sh (the runner sat
+# at 0.0% CPU in state S waiting on a read that could never be satisfied).
+#
+# Semantics mirror the established precedent at the BMAD prompt (search
+# LOKI_AUTO_CONFIRM): LOKI_AUTO_CONFIRM=true (falling back to CI) means ANSWER
+# YES, and echoes an auditable "y (auto-confirmed)" line. A non-interactive
+# shell WITHOUT that opt-in FAILS CLOSED: it refuses the overwrite and names the
+# env var, because silently clobbering a user's file in CI is the worse failure.
+# `read` is `|| reply=""` guarded so an EOF cannot abort a `set -e` caller.
 _export_check_overwrite() {
     local output="$1"
     if [ -n "$output" ] && [ -f "$output" ]; then
         echo -e "${YELLOW}Warning: File already exists: $output${NC}"
+        local _auto="${LOKI_AUTO_CONFIRM:-${CI:-false}}"
+        if [ "$_auto" = "true" ]; then
+            echo -n "Overwrite? [y/N] "
+            echo "y (auto-confirmed)"
+            return 0
+        fi
+        if [ ! -t 0 ]; then
+            echo "Export cancelled (non-interactive: refusing to overwrite '$output'." >&2
+            echo "Set LOKI_AUTO_CONFIRM=true to overwrite, or choose a new output path.)" >&2
+            return 1
+        fi
         echo -n "Overwrite? [y/N] "
         local reply
-        read -r reply
+        read -r reply || reply=""
         case "$reply" in
             [yY]|[yY][eE][sS]) return 0 ;;
             *) echo "Export cancelled."; return 1 ;;
@@ -9625,6 +10457,7 @@ cmd_config() {
             echo "  issue.provider       Default issue provider: github, gitlab, jira, azure_devops"
             echo "  blind_validation     Blind validation mode: true, false (default: true)"
             echo "  adversarial_testing  Adversarial testing: true, false (default: true)"
+            echo "  log_level            Output verbosity: debug, info, warn, error (default: info)"
             echo "  spawn_timeout        [DEPRECATED] No effect since WAVE9 (no consumer); accepted for back-compat"
             echo "  spawn_retries        [DEPRECATED] No effect since WAVE9 (no consumer); accepted for back-compat"
             echo "  notify.slack         Slack webhook URL"
@@ -9700,6 +10533,12 @@ cmd_config_set() {
                 *) echo -e "${RED}Invalid $key: $value (expected: true, false)${NC}"; return 1 ;;
             esac
             ;;
+        log_level)
+            case "$value" in
+                debug|info|warn|error) ;;
+                *) echo -e "${RED}Invalid log_level: $value (expected: debug, info, warn, error)${NC}"; return 1 ;;
+            esac
+            ;;
         spawn_timeout|spawn_retries)
             if ! echo "$value" | grep -qE '^[0-9]+$'; then
                 echo -e "${RED}Invalid $key: $value (expected: integer)${NC}"; return 1
@@ -9731,7 +10570,7 @@ cmd_config_set() {
             echo -e "${RED}Unknown configuration key: '$key'${NC}"
             echo ""
             echo "Valid keys: maxTier, provider, issue.provider, blind_validation,"
-            echo "  adversarial_testing, spawn_timeout, spawn_retries, budget,"
+            echo "  adversarial_testing, log_level, spawn_timeout, spawn_retries, budget,"
             echo "  model.planning, model.development, model.fast,"
             echo "  notify.slack, notify.discord"
             echo ""
@@ -9995,7 +10834,18 @@ cmd_config_edit() {
 
     if [ -z "$config_file" ]; then
         echo -e "${YELLOW}No config file found.${NC}"
-        read -p "Create one? [Y/n]: " create
+        # Non-interactive safety (same class as _export_check_overwrite): a bare
+        # `read` here blocks forever when stdin is attached but unanswerable.
+        # This prompt DEFAULTS TO YES, so auto-confirm and non-interactive both
+        # take the create path; only the explicit interactive "n" declines.
+        local create=""
+        local _auto="${LOKI_AUTO_CONFIRM:-${CI:-false}}"
+        if [ "$_auto" = "true" ] || [ ! -t 0 ]; then
+            echo "Create one? [Y/n]: Y (non-interactive default; run 'loki config init' to control this)"
+            create="Y"
+        else
+            read -r -p "Create one? [Y/n]: " create || create=""
+        fi
         create="${create:-Y}"
         if [[ "$create" =~ ^[Yy] ]]; then
             cmd_config_init
@@ -10328,8 +11178,133 @@ EOF
 }
 
 # Check system prerequisites
+# _loki_airgap_audit <json?> -- enumerate every network egress this engine can
+# perform, classify each as REQUIRED or optional, and say how to disable it.
+#
+# WHY THIS EXISTS
+#   Air-gapped deployment is a real enterprise requirement and the incumbent
+#   (Tabnine) states it can "be deployed in a completely air-gapped environment"
+#   without publishing WHICH hosts it would otherwise contact. A claim you
+#   cannot audit is a claim you have to take on faith.
+#
+#   Sourcegraph is the honest counter-example: their own whitepaper states that
+#   self-hosted Cody still "sends requests from the Sourcegraph instance to
+#   Anthropic's API". Self-hosted control plane, egressing inference.
+#
+#   So the credible position is not "trust us, we are air-gapped" -- it is here
+#   is every host, here is which ones are required, here is how to turn each one
+#   off, now verify it yourself with tcpdump. We would rather be auditable than
+#   assertive.
+#
+# Exit 0 when no REQUIRED egress remains (air-gap achievable in this config),
+# 1 otherwise. Deterministic: reads configuration, performs NO network calls.
+_loki_airgap_audit() {
+    local as_json="${1:-false}"
+
+    # Provider inference endpoint: the one egress that is genuinely required,
+    # unless the active provider serves weights locally.
+    local provider="${LOKI_PROVIDER:-claude}"
+    local model_host="" model_required="yes" model_note=""
+    case "$provider" in
+        claude)
+            model_host="${ANTHROPIC_BASE_URL:-https://api.anthropic.com}"
+            model_note="Claude Code inference. Set ANTHROPIC_BASE_URL to an in-network gateway, or switch to a local-weights provider."
+            ;;
+        codex)
+            model_host="${OPENAI_BASE_URL:-https://api.openai.com}"
+            model_note="Codex inference. Point at an in-network gateway or switch provider."
+            ;;
+        opencode|cline|aider)
+            model_host="${OPENAI_BASE_URL:-${OPENROUTER_API_KEY:+https://openrouter.ai}}"
+            if [ -z "$model_host" ] || printf '%s' "${LOKI_OPENCODE_MODEL:-}${LOKI_AIDER_MODEL:-}" | grep -qiE 'ollama|localhost|127\.0\.0\.1|lmstudio'; then
+                model_host="local weights"
+                model_required="no"
+                model_note="Local model runtime (Ollama / LM Studio / llama.cpp). No inference egress."
+            else
+                model_note="Remote model gateway. Use an ollama/ model id for zero-egress inference."
+            fi
+            ;;
+        *)
+            model_host="unknown (provider '$provider')"
+            model_note="Unrecognized provider; audit its config manually."
+            ;;
+    esac
+
+    # Optional egress, each individually disableable.
+    local tel_state="off"
+    [ "${LOKI_TELEMETRY:-}" = "on" ] && tel_state="on"
+    local upd_state="on"
+    [ "${LOKI_NO_UPDATE_CHECK:-0}" = "1" ] && upd_state="off"
+
+    if [ "$as_json" = "true" ]; then
+        _AG_PROV="$provider" _AG_HOST="$model_host" _AG_REQ="$model_required" \
+        _AG_NOTE="$model_note" _AG_TEL="$tel_state" _AG_UPD="$upd_state" \
+        python3 -c '
+import json, os
+req = os.environ["_AG_REQ"] == "yes"
+egress = [{
+    "name": "model_inference",
+    "host": os.environ["_AG_HOST"],
+    "required": req,
+    "disable": "use a local-weights provider (ollama/, lmstudio/) or an in-network gateway",
+    "note": os.environ["_AG_NOTE"],
+}, {
+    "name": "telemetry",
+    "host": "telemetry endpoint",
+    "required": False,
+    "enabled": os.environ["_AG_TEL"] == "on",
+    "disable": "loki telemetry off (already the default)",
+}, {
+    "name": "update_check",
+    "host": "registry.npmjs.org",
+    "required": False,
+    "enabled": os.environ["_AG_UPD"] == "on",
+    "disable": "export LOKI_NO_UPDATE_CHECK=1",
+}]
+blockers = [e for e in egress if e.get("required")]
+print(json.dumps({
+    "provider": os.environ["_AG_PROV"],
+    "airgap_ready": not blockers,
+    "required_egress": [e["name"] for e in blockers],
+    "egress": egress,
+}, indent=2))
+'
+        [ "$model_required" = "yes" ] && return 1
+        return 0
+    fi
+
+    echo -e "${BOLD}Network egress audit${NC}"
+    echo ""
+    echo "  Active provider: $provider"
+    echo ""
+    echo -e "${BOLD}Egress points${NC}"
+    if [ "$model_required" = "yes" ]; then
+        echo -e "  ${YELLOW}REQUIRED${NC}  model inference -> $model_host"
+    else
+        echo -e "  ${GREEN}none${NC}      model inference -> $model_host"
+    fi
+    echo "            $model_note"
+    echo -e "  optional  telemetry           [$tel_state]  disable: loki telemetry off (default off)"
+    echo -e "  optional  update check        [$upd_state]  disable: export LOKI_NO_UPDATE_CHECK=1"
+    echo ""
+    if [ "$model_required" = "yes" ]; then
+        echo -e "${YELLOW}Not air-gap ready in this configuration.${NC}"
+        echo "  One required egress remains: model inference."
+        echo "  To close it, serve the model in-network:"
+        echo "    loki provider set opencode"
+        echo "    export LOKI_OPENCODE_MODEL=ollama/qwen2.5-coder"
+        echo ""
+        echo "  Then re-run: loki doctor --airgap"
+        return 1
+    fi
+    echo -e "${GREEN}Air-gap ready: no required egress in this configuration.${NC}"
+    echo "  Verify independently -- run with the interface down, or watch with tcpdump."
+    return 0
+}
+
 cmd_doctor() {
     local json_output=false
+    local airgap_audit=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -10337,13 +11312,21 @@ cmd_doctor() {
                 json_output=true
                 shift
                 ;;
+            --airgap)
+                airgap_audit=true
+                shift
+                ;;
             --help|-h)
                 echo -e "${BOLD}loki doctor${NC} - Check system prerequisites"
                 echo ""
-                echo "Usage: loki doctor [--json]"
+                echo "Usage: loki doctor [--json] [--airgap]"
                 echo ""
                 echo "Options:"
                 echo "  --json    Output machine-readable JSON"
+                echo "  --airgap  Audit network egress: list every host this engine"
+                echo "            can contact, whether it is REQUIRED or optional,"
+                echo "            and how to disable it. Exits non-zero if any"
+                echo "            required egress remains."
                 echo ""
                 echo "Checks: node, python3, jq, git, curl, bash version,"
                 echo "        claude/codex CLIs, disk space, and cockpit render capability."
@@ -10351,11 +11334,16 @@ cmd_doctor() {
                 ;;
             *)
                 echo -e "${RED}Unknown option: $1${NC}"
-                echo "Usage: loki doctor [--json]"
+                echo "Usage: loki doctor [--json] [--airgap]"
                 return 1
                 ;;
         esac
     done
+
+    if [ "$airgap_audit" = true ]; then
+        _loki_airgap_audit "$json_output"
+        return $?
+    fi
 
     if [ "$json_output" = true ]; then
         cmd_doctor_json
@@ -10369,6 +11357,15 @@ cmd_doctor() {
 
     local pass_count=0
     local fail_count=0
+    # FUNNEL FIX (v8.2.x): collect the NAME + FIX of every hard failure, not just
+    # a count. A first-time user on a bare machine sees 15 warnings (sentrux, GPG
+    # signing, bash 4, Bun, python3.12, truecolor, inline-image probe -- all
+    # OPTIONAL) around 2 real blockers, then a summary that says only "Some
+    # required prerequisites are missing" without naming them. That is the point
+    # where someone closes the terminal. Naming the blockers and their exact
+    # install command turns a wall of yellow into a two-line to-do.
+    local _doctor_blockers=""
+    _doctor_block() { _doctor_blockers="${_doctor_blockers}\n  - $1"; }
     local warn_count=0
 
     # Helper: check command exists and optionally check version
@@ -10381,6 +11378,7 @@ cmd_doctor() {
         if ! command -v "$cmd" &> /dev/null; then
             if [ "$required" = "required" ]; then
                 echo -e "  ${RED}FAIL${NC}  $name - not found"
+                _doctor_block "$name is not installed"
                 fail_count=$((fail_count + 1))
             elif [ "$required" = "recommended" ]; then
                 echo -e "  ${YELLOW}WARN${NC}  $name - not found (recommended)"
@@ -10446,6 +11444,7 @@ cmd_doctor() {
                { [ "$cur_major" -eq "$min_major" ] 2>/dev/null && [ "$cur_minor" -lt "$min_minor" ] 2>/dev/null; }; then
                 if [ "$required" = "required" ]; then
                     echo -e "  ${RED}FAIL${NC}  $name$version_display - requires >= $min_version"
+                    _doctor_block "$name must be >= $min_version"
                     fail_count=$((fail_count + 1))
                 else
                     echo -e "  ${YELLOW}WARN${NC}  $name$version_display - recommended >= $min_version"
@@ -10506,18 +11505,41 @@ cmd_doctor() {
     # Check if at least one provider is installed (detect_any_provider is the
     # shared helper from provider-offer.sh, extracted from this exact loop).
     if ! detect_any_provider; then
-        echo -e "  ${RED}FAIL${NC}  No AI provider CLI installed -- at least one is required"
-        echo -e "         ${YELLOW}Install: npm install -g @anthropic-ai/claude-code${NC}"
-        fail_count=$((fail_count + 1))
-        # v7.29.0: on a TTY (non-json), append the consent-gated install offer.
-        # In report mode the helper is a no-op on non-TTY/CI, so the doctor
-        # output stays byte-identical for the bun-parity matrix. --json never
-        # reaches here (cmd_doctor dispatches to cmd_doctor_json earlier).
-        if declare -f offer_provider_install >/dev/null 2>&1; then
-            offer_provider_install report || true
+        # The bundled Claude Agent SDK runs the main loop with no separate CLI,
+        # but ONLY when it is genuinely usable: binary extracted, credentials
+        # present, and the SDK loop actually active. detect_bundled_sdk_provider
+        # fails closed on any doubt, so when it returns false we emit today's
+        # blocker verbatim. Mirrored in loki-ts/src/commands/doctor.ts.
+        if declare -f detect_bundled_sdk_provider >/dev/null 2>&1 && detect_bundled_sdk_provider; then
+            echo -e "  ${GREEN}PASS${NC}  Bundled Claude Agent SDK is usable -- no separate CLI needed"
+            pass_count=$((pass_count + 1))
+        else
+            echo -e "  ${RED}FAIL${NC}  No AI provider CLI installed -- at least one is required"
+            echo -e "         ${YELLOW}Install: npm install -g @anthropic-ai/claude-code${NC}"
+            _doctor_block "No AI provider CLI. Fix: npm install -g @anthropic-ai/claude-code"
+            fail_count=$((fail_count + 1))
+            # v7.29.0: on a TTY (non-json), append the consent-gated install offer.
+            # In report mode the helper is a no-op on non-TTY/CI, so the doctor
+            # output stays byte-identical for the bun-parity matrix. --json never
+            # reaches here (cmd_doctor dispatches to cmd_doctor_json earlier).
+            if declare -f offer_provider_install >/dev/null 2>&1; then
+                offer_provider_install report || true
+            fi
         fi
     fi
     echo ""
+
+    # Provider Availability. Which provider a build would ACTUALLY pick, which
+    # is decided by providers/loader.sh auto_detect_provider, not by PATH order
+    # and not by the section above. Rendered by the shared helper in
+    # provider-offer.sh so the Bun route prints the identical bytes (doctor
+    # stdout is byte-compared -- tests/test-doctor-blocker-parity.sh). Skipped
+    # silently, with no error, when loader.sh is missing or unsourceable.
+    if declare -f render_provider_availability >/dev/null 2>&1; then
+        if render_provider_availability; then
+            echo ""
+        fi
+    fi
 
     echo -e "${CYAN}API Keys:${NC}"
     # Note: CLI tools use their own login sessions outside Docker/K8s.
@@ -10611,6 +11633,7 @@ except Exception:
             _target=$(readlink "$sdir" 2>/dev/null || echo "unknown")
             echo -e "  ${RED}FAIL${NC}  $sname  ${DIM}(broken symlink -> $_target)${NC}"
             echo -e "         ${YELLOW}Fix: loki setup-skill${NC}"
+            _doctor_block "$sname is a broken symlink. Fix: loki setup-skill"
             fail_count=$((fail_count + 1))
         else
             echo -e "  ${YELLOW}WARN${NC}  $sname  ${DIM}(not found - run 'loki setup-skill')${NC}"
@@ -10732,6 +11755,24 @@ except Exception:
         echo -e "  ${YELLOW}WARN${NC}  sentrux - not installed (optional, brew install sentrux/tap/sentrux)"
         warn_count=$((warn_count + 1))
     fi
+    # Evidence Receipt signing state (optional). Unsigned receipts are the
+    # default and are still checkable (hash + diff re-derivation); what they
+    # cannot prove is PROVENANCE, so proof-verify.py reports
+    # generator_trusted: true. Surface the state here because it is otherwise
+    # invisible until someone reads a receipt. WARN (never FAIL): unsigned is
+    # a supported, documented mode, not a broken install.
+    if [ -n "${LOKI_PROOF_GPG_KEY:-}" ]; then
+        if command -v gpg &>/dev/null; then
+            echo -e "  ${GREEN}PASS${NC}  Receipt signing: LOKI_PROOF_GPG_KEY set and gpg available"
+            pass_count=$((pass_count + 1))
+        else
+            echo -e "  ${YELLOW}WARN${NC}  Receipt signing: LOKI_PROOF_GPG_KEY set but gpg NOT on PATH - receipts will be UNSIGNED"
+            warn_count=$((warn_count + 1))
+        fi
+    else
+        echo -e "  ${YELLOW}WARN${NC}  Receipt signing: UNSIGNED (set LOKI_PROOF_GPG_KEY to a gpg key id; see docs/SIGNED-RECEIPTS.md)"
+        warn_count=$((warn_count + 1))
+    fi
     echo ""
 
     echo -e "${CYAN}System:${NC}"
@@ -10756,6 +11797,7 @@ except Exception:
         if [ -n "$disk_avail" ] && [ "$disk_avail" -gt 0 ] 2>/dev/null; then
             if [ "$disk_avail" -lt 1 ]; then
                 echo -e "  ${RED}FAIL${NC}  Disk space: ${disk_avail}GB available (need >= 1GB)"
+                _doctor_block "Free up disk: ${disk_avail}GB available, need >= 1GB"
                 fail_count=$((fail_count + 1))
             elif [ "$disk_avail" -lt 5 ]; then
                 echo -e "  ${YELLOW}WARN${NC}  Disk space: ${disk_avail}GB available (low)"
@@ -10795,6 +11837,49 @@ except Exception:
         echo -e "  ${GREEN}PASS${NC}  Python 3.12 (chromadb / sentence-transformers): ${py312_ver} at ${py312_path}"
     else
         echo -e "  ${YELLOW}WARN${NC}  Python 3.12 NOT on PATH -- chromadb / sentence-transformers may fail. Install via brew install python@3.12 or apt install python3.12."
+    fi
+    echo ""
+
+    # Model catalog freshness. Providers ship models constantly and this catalog
+    # is hand-maintained, so it rots silently -- nothing else in the system ever
+    # reports its age. Reads ONLY the local file's "updated" field: zero network
+    # I/O, so `loki doctor` stays air-gapped-safe (docs/air-gapped.md). We do not
+    # and will not auto-fetch or guess model IDs; inventing a model that does not
+    # exist is worse than being stale, so refresh stays a human-verified step.
+    #
+    # Informational only -- like Runtime route and Cockpit above, it does NOT
+    # touch pass/warn/fail counts and never calls _doctor_block, so a stale
+    # catalog can never flip doctor's exit code or block a build. Advisory by
+    # construction, not by convention.
+    #
+    # Mirrored byte-for-byte in loki-ts/src/commands/doctor.ts -- the bun-parity
+    # matrix diffs this section (it is NOT in the normalizer's strip list), so
+    # edit BOTH routes or parity fails.
+    echo -e "${CYAN}Model catalog:${NC}"
+    _catalog_path="${LOKI_MODEL_CATALOG:-${_LOKI_SCRIPT_DIR}/../providers/model_catalog.json}"
+    _catalog_line=$(LOKI_CATALOG_PATH="$_catalog_path" python3 -c "
+import json, os, datetime
+# Threshold: 90 days. The upstream probe workflow runs weekly, so a catalog
+# untouched for a quarter means the probe PRs are going unread.
+STALE_DAYS = 90
+p = os.environ['LOKI_CATALOG_PATH']
+try:
+    updated = json.load(open(p))['updated']
+    age = (datetime.date.today() - datetime.date.fromisoformat(updated)).days
+except Exception:
+    print('warn|Catalog unreadable or missing an ISO \"updated\" date -- cannot determine age')
+else:
+    if age > STALE_DAYS:
+        print(f'warn|Last updated {updated} ({age} days ago) -- may be missing newer models. Refresh: python3 tools/probe-model-catalog.py (reports new model IDs from provider docs; you verify and edit the catalog by hand -- never auto-applied)')
+    else:
+        print(f'pass|Last updated {updated} ({age} days ago)')
+" 2>/dev/null)
+    # Fail-open: if python3 is missing or the probe dies, say so and move on.
+    [ -n "$_catalog_line" ] || _catalog_line="warn|Could not probe catalog age"
+    if [ "${_catalog_line%%|*}" = "pass" ]; then
+        echo -e "  ${GREEN}PASS${NC}  ${_catalog_line#*|}"
+    else
+        echo -e "  ${YELLOW}WARN${NC}  ${_catalog_line#*|}"
     fi
     echo ""
 
@@ -10842,7 +11927,46 @@ except Exception:
         fi
     else
         echo -e "  ${YELLOW}WARN${NC}  Bun not found -- 'loki cockpit' uses the text summary + browser dashboard (install bun for the inline-image frame)"
+        # Report the protocol line here too. Without it doctor's Cockpit section
+        # is asymmetric: the bun branch prints BOTH "Inline-image protocol" and
+        # "Render path", the no-bun branch printed only "Render path". A user
+        # reading doctor on a machine without bun could not tell whether the
+        # inline-image path was unsupported by their terminal or simply never
+        # probed. Naming the reason keeps the section self-explanatory.
+        echo -e "  ${DIM}  --  ${NC}  Inline-image protocol: not probed (needs bun to run the cockpit renderer)"
         echo -e "  ${DIM}  --  ${NC}  Render path: text + browser dashboard"
+    fi
+    echo ""
+
+    # INSTALL INTEGRITY: the quality gates shell out to detector scripts. If the
+    # package shipped without them, four gates fail-CLOSED on every iteration --
+    # correct behaviour (a missing detector must never read as "nothing found"),
+    # but it means the build can never pass and first-pass completion is
+    # impossible no matter how good the output is.
+    #
+    # That shipped: package.json's files[] had no tests/ entry until v8.38.0, so
+    # every npm install had zero detectors. `doctor` reported a healthy system
+    # the whole time, because it only ever checked for external COMMANDS -- not
+    # for the files this package is supposed to contain. A broken install and a
+    # healthy one were indistinguishable from the one command meant to tell them
+    # apart.
+    echo -e "${BOLD}Install integrity:${NC}"
+    local _det_missing="" _det
+    for _det in detect-test-mutations detect-mock-problems \
+                detect-semantic-test-problems detect-invariant-violations; do
+        if [ -f "${_LOKI_SCRIPT_DIR}/../tests/${_det}.sh" ]; then
+            pass_count=$((pass_count + 1))
+        else
+            _det_missing="${_det_missing} ${_det}.sh"
+        fi
+    done
+    if [ -z "$_det_missing" ]; then
+        echo -e "  ${GREEN}OK${NC}    Quality-gate detectors present (4/4)"
+    else
+        echo -e "  ${RED}FAIL${NC}  Quality-gate detectors MISSING:${_det_missing}"
+        echo -e "  ${DIM}      These gates fail-closed, so every iteration will be blocked.${NC}"
+        _doctor_block "Incomplete install: quality-gate detectors are missing. Reinstall: bun install -g loki-mode"
+        fail_count=$((fail_count + 1))
     fi
     echo ""
 
@@ -10851,8 +11975,30 @@ except Exception:
     echo ""
 
     if [ "$fail_count" -gt 0 ]; then
-        echo -e "${RED}Some required prerequisites are missing.${NC}"
-        echo "Install missing dependencies and run 'loki doctor' again."
+        echo -e "${RED}Blocking ($fail_count). Everything else above is optional.${NC}"
+        printf '%b\n' "$_doctor_blockers"
+        echo ""
+        echo "Then re-run: loki doctor"
+        echo "Meanwhile 'loki tour' works right now -- no provider, no key, no spend."
+        # Adoption signal: which CLASS of dependency stopped this first run.
+        # Mapped to an enum here rather than forwarding the blocker TEXT, so
+        # the payload can never carry a path or a version. Best-effort and
+        # backgrounded: telemetry must never delay or fail a doctor run, and
+        # every existing opt-out still gates it downstream.
+        if declare -f loki_emit_first_run_blocked >/dev/null 2>&1; then
+            local _blk_key="other"
+            case "$_doctor_blockers" in
+                *"No AI provider CLI"*) _blk_key="no_provider" ;;
+                *"Node.js is not installed"*|*"Node.js must be"*) _blk_key="node" ;;
+                *"Python 3 is not installed"*|*"Python 3 must be"*) _blk_key="python3" ;;
+                *"jq is not installed"*) _blk_key="jq" ;;
+                *"git is not installed"*) _blk_key="git" ;;
+                *"curl is not installed"*) _blk_key="curl" ;;
+                *"Free up disk"*) _blk_key="disk" ;;
+                *"broken symlink"*) _blk_key="skill_symlink" ;;
+            esac
+            ( loki_emit_first_run_blocked "$_blk_key" >/dev/null 2>&1 </dev/null & ) 2>/dev/null || true
+        fi
         return 1
     elif [ "$warn_count" -gt 0 ]; then
         echo -e "${YELLOW}All required checks passed with some warnings.${NC}"
@@ -10876,7 +12022,19 @@ except Exception:
 cmd_doctor_json() {
     local _loki_version
     _loki_version=$(get_version)
-    LOKI_VERSION="$_loki_version" python3 -c "
+    # Provider availability, computed in bash and handed to the python program
+    # as an env var (same pattern as LOKI_VERSION). Computed here rather than
+    # inside the program because the answer comes from sourcing loader.sh.
+    # Empty when loader.sh is unavailable, and the key is then null: the same
+    # graceful skip the text section performs.
+    local _provider_availability=""
+    if declare -f provider_availability_json >/dev/null 2>&1; then
+        _provider_availability="$(provider_availability_json 2>/dev/null || true)"
+    fi
+    LOKI_PROVIDER_AVAILABILITY="$_provider_availability" \
+    LOKI_VERSION="$_loki_version" \
+    LOKI_CATALOG_PATH="${LOKI_MODEL_CATALOG:-${_LOKI_SCRIPT_DIR}/../providers/model_catalog.json}" \
+    python3 -c "
 import json, os, subprocess, sys, shutil
 
 def get_version(cmd, args=None):
@@ -10960,6 +12118,23 @@ sentrux = {
     'required': 'optional'
 }
 
+# Evidence Receipt signing state. Unsigned is the DEFAULT and is a supported
+# mode, so this is never 'fail'. Exposed because signing state is otherwise
+# invisible until someone reads a receipt, and it is exactly what decides
+# whether proof-verify.py reports generator_trusted: true. Sibling of
+# checks/disk/sentrux -- deliberately NOT counted in the summary tally so
+# existing consumers see unchanged numbers.
+signing_key_set = bool(os.environ.get('LOKI_PROOF_GPG_KEY', '').strip())
+signing_gpg_available = shutil.which('gpg') is not None
+signing_enabled = signing_key_set and signing_gpg_available
+receipt_signing = {
+    'enabled': signing_enabled,
+    'key_configured': signing_key_set,
+    'gpg_available': signing_gpg_available,
+    'status': 'pass' if signing_enabled else 'warn',
+    'required': 'optional'
+}
+
 # v7.7.17: memory subsystem health surface. Reports the latest entries
 # from .loki/memory/.errors.log (rotated by memory/error_log.py) so
 # developers see regressions in the previously-silent-fail call sites
@@ -11005,15 +12180,88 @@ if disk_status == 'pass': pass_count += 1
 elif disk_status == 'fail': fail_count += 1
 elif disk_status == 'warn': warn_count += 1
 
+# AGGREGATE PROVIDER CHECK. Each provider CLI is individually optional --
+# you need Claude OR Codex OR Cline OR Aider, not all four -- so no single
+# one can be marked required. But having NONE is a blocker, and the text
+# path reports it as one (the No-AI-provider branch near autonomy/loki:11000).
+#
+# --json omitted this entirely, so on a host with no provider the two
+# outputs gave OPPOSITE verdicts: the text path exited 1 while --json
+# reported zero failures and ok true. An operator gating a pipeline on the
+# JSON got a pass on a machine that cannot run a build -- the fake-green
+# this project exists to refuse.
+#
+# CAUTION: this block lives inside python3 -c with a DOUBLE-QUOTED program,
+# so an apostrophe or a double quote in a comment terminates the shell
+# string and mangles the program. First attempt did exactly that: doctor
+# --json printed nothing and exited 0. Keep this comment quote-free.
+# Must match auto_detect_provider() in providers/loader.sh, in ITS order.
+# Omitting opencode made doctor report 'No AI provider CLI' on a machine
+# where the runner would happily select opencode -- the fifth list in this
+# repo to drift from that authority (see v8.76.0, v8.82.0).
+_provider_cmds = ('claude', 'cline', 'codex', 'aider', 'opencode')
+_any_provider = any(shutil.which(_p) is not None for _p in _provider_cmds)
+ai_provider = {
+    'found': _any_provider,
+    'status': 'pass' if _any_provider else 'fail',
+    'required': 'required',
+    'detail': None if _any_provider
+              else 'No AI provider CLI. Fix: npm install -g @anthropic-ai/claude-code',
+}
+if _any_provider:
+    pass_count += 1
+else:
+    fail_count += 1
+
+# Model catalog freshness. Local read only -- no network. Advisory: deliberately
+# excluded from pass/fail/warn counts and from 'ok', so a stale catalog can never
+# flip doctor's exit code. Mirrors describeCatalogFreshness() in
+# loki-ts/src/commands/doctor.ts.
+CATALOG_STALE_DAYS = 90
+_cat_path = os.environ['LOKI_CATALOG_PATH']
+try:
+    import datetime as _dt
+    _cat_updated = json.load(open(_cat_path))['updated']
+    _cat_age = (_dt.date.today() - _dt.date.fromisoformat(_cat_updated)).days
+    if _cat_age > CATALOG_STALE_DAYS:
+        # Deliberately NOT counted. The block comment above states catalog age is
+        # excluded from pass/fail/warn and from 'ok' so a stale catalog can never
+        # fail a build -- this increment contradicted that contract, and it also
+        # broke route parity: the Bun route (doctor.ts) never counted it, so the
+        # same host reported warnings: 2 on bash and 1 on Bun. bun-parity
+        # compares these byte for byte, so it would have gone red on day 91.
+        model_catalog = {'status': 'warn', 'updated': _cat_updated, 'age_days': _cat_age,
+                         'detail': f'Last updated {_cat_updated} ({_cat_age} days ago) -- may be missing newer models'}
+    else:
+        model_catalog = {'status': 'pass', 'updated': _cat_updated, 'age_days': _cat_age,
+                         'detail': f'Last updated {_cat_updated} ({_cat_age} days ago)'}
+except Exception:
+    model_catalog = {'status': 'warn', 'updated': None, 'age_days': None,
+                     'detail': 'Catalog unreadable or missing an ISO \"updated\" date -- cannot determine age'}
+
+# Provider availability, handed in from bash (see cmd_doctor_json). Null when
+# providers/loader.sh could not be sourced, mirroring the text sections skip.
+# CAUTION: this block lives inside a DOUBLE-QUOTED python3 -c program, so no
+# apostrophes and no double quotes anywhere here, comments included.
+try:
+    _pa_raw = os.environ.get('LOKI_PROVIDER_AVAILABILITY', '').strip()
+    provider_availability = json.loads(_pa_raw) if _pa_raw else None
+except Exception:
+    provider_availability = None
+
 result = {
     'loki_mode_version': os.environ.get('LOKI_VERSION', 'unknown'),
     'checks': checks,
+    'provider_availability': provider_availability,
     'disk': {
         'available_gb': disk_gb,
         'status': disk_status
     },
+    'ai_provider': ai_provider,
     'sentrux': sentrux,
+    'receipt_signing': receipt_signing,
     'memory': memory,
+    'model_catalog': model_catalog,
     'summary': {
         'passed': pass_count,
         'failed': fail_count,
@@ -12928,7 +14176,12 @@ cmd_init() {
                 return 1
             fi
         fi
-        echo -e "${YELLOW}Reinitializing existing .loki/ directory${NC}"
+        # stderr, not stdout: `loki init --json` writes a machine-readable
+        # template list to stdout, and this human-facing banner was landing in
+        # the middle of it -- the second `init` in a directory emitted invalid
+        # JSON, so any tool parsing it broke on reinit but worked on first run.
+        # Diagnostics belong on stderr; stdout is the data channel.
+        echo -e "${YELLOW}Reinitializing existing .loki/ directory${NC}" >&2
     fi
 
     local version=$(get_version)
@@ -13237,7 +14490,10 @@ print(p or '')
                 return 1
             fi
         fi
-        echo -e "${YELLOW}Reinitializing existing .loki/ directory in $target_dir${NC}"
+        # stderr for the same reason as the sibling banner above: stdout is the
+        # machine-readable channel. Fixing only the path the failing test
+        # exercised would leave this one to resurface the same bug.
+        echo -e "${YELLOW}Reinitializing existing .loki/ directory in $target_dir${NC}" >&2
     fi
 
     # Build config JSON
@@ -13406,7 +14662,11 @@ ENDGITIGNORE
 
     # Check if an AI provider CLI is available
     local _has_provider=false
-    for _pcli in claude codex cline aider; do
+    # Must match auto_detect_provider() in providers/loader.sh. Omitting
+    # opencode here made `loki provider list` under-report a provider the
+    # runner will happily select -- the same drift that blocked
+    # opencode-only machines entirely until v8.76.0.
+    for _pcli in claude cline codex aider opencode; do
         if command -v "$_pcli" &>/dev/null; then
             _has_provider=true
             break
@@ -14595,6 +15855,33 @@ with open(manifest_path, 'w') as f:
 # usable.
 # ---------------------------------------------------------------------------
 cmd_verify() {
+    # --fast: deterministic checks only, in milliseconds. Measured on this repo
+    # (1,932 tracked files): 298 ms cold, 87 ms warm, 19 ms diff-scoped, against
+    # an 11,040 ms shell-based baseline.
+    #
+    # It runs ONLY exogenous checks -- no model call, no network -- so every
+    # verdict is reproducible by anyone with the same commit. That is the point,
+    # not a limitation: a verdict you can re-derive is a fact, and a fact is what
+    # an IDE, a CI step, or another vendor's agent can safely act on without
+    # trusting our model choices.
+    #
+    # The full `loki verify` remains the deeper, slower path.
+    for _fv_arg in "$@"; do
+        if [ "$_fv_arg" = "--fast" ]; then
+            local _fv_py="$_LOKI_SCRIPT_DIR/lib/fast_verify.py"
+            if [ ! -f "$_fv_py" ]; then
+                echo -e "${RED}Error: fast_verify not found at $_fv_py${NC}" >&2
+                return 3
+            fi
+            local _fv_argv=()
+            for _a in "$@"; do
+                [ "$_a" = "--fast" ] || _fv_argv+=("$_a")
+            done
+            python3 "$_fv_py" "${_fv_argv[@]+"${_fv_argv[@]}"}"
+            return $?
+        fi
+    done
+
     local verify_mod="$_LOKI_SCRIPT_DIR/verify.sh"
     if [ ! -f "$verify_mod" ]; then
         echo -e "${RED}Error: verify module not found at $verify_mod${NC}" >&2
@@ -15081,6 +16368,35 @@ for fn in sorted(os.listdir(root)) if os.path.isdir(root) else []:
 # dependency staleness is NOT computed offline -> reported as 'unknown', never guessed.
 dep_lock_present = len(found_lockfiles) > 0 if found_manifests else None
 
+# RUNTIME + TOP DEPENDENCIES, read from the manifest itself. Offline-safe: this
+# reports what the file DECLARES, never what is current upstream (that stays
+# 'unknown' -- see dependency_staleness above).
+#
+# Why it matters: after 'how far behind am I', the next question a legacy
+# modernization buyer asks is 'what is this even built on'. Answering
+# 'package.json exists' and nothing more leaves them to open the file
+# themselves, which is the work they were trying to delegate.
+runtime_info = {'declared_runtime': None, 'declared_dependencies': None, 'framework_hints': []}
+try:
+    if 'package.json' in found_manifests:
+        with open(os.path.join(root, 'package.json')) as _f:
+            _pkg = json.load(_f)
+        _eng = (_pkg.get('engines') or {}).get('node')
+        runtime_info['declared_runtime'] = ('node ' + _eng) if _eng else 'node (engine unspecified)'
+        _deps = dict(_pkg.get('dependencies') or {})
+        runtime_info['declared_dependencies'] = len(_deps)
+        # Name only frameworks actually present. A hint is a FACT from the file,
+        # not an inference about what the project "probably" is.
+        for _fw in ('express', 'react', 'next', 'vue', 'angular', 'fastify', 'koa', 'nest'):
+            if _fw in _deps:
+                runtime_info['framework_hints'].append(_fw + ' ' + str(_deps[_fw]))
+    elif 'pyproject.toml' in found_manifests or 'requirements.txt' in found_manifests:
+        runtime_info['declared_runtime'] = 'python (version unspecified in manifest)'
+except (OSError, ValueError):
+    # A malformed manifest is not a crash and not a guess: leave the fields None
+    # so the report says nothing rather than something wrong.
+    pass
+
 todo_density = round((todo_count / total_loc) * 1000, 2) if total_loc else 0.0
 
 # --- 4-level maturity model (Ad hoc -> Planned -> Systematic -> Optimized) ---
@@ -15175,6 +16491,7 @@ report = {
         'lockfiles': found_lockfiles,
         'dependency_lock_present': dep_lock_present,
         'dependency_staleness': 'unknown',  # not computable offline; never guessed
+        'runtime': runtime_info,
     },
     'maturity': {
         'level': maturity_level,
@@ -16474,8 +17791,19 @@ def _loki_norm_alias(raw):
 # pin is a tier route, so tier names ARE valid pins. This normalizer mirrors
 # run.sh's trim+lowercase (interior whitespace preserved, so 'fab le' stays junk
 # and falls through to the default tier exactly like the runner's '*' arm).
+#
+# GENERIC TIER VOCABULARY (small|medium|high): translated onto the canonical
+# tier names before the allowlist check, mirroring run.sh's entry-point case.
+# The estimator runs in its own process and reads LOKI_SESSION_MODEL directly,
+# so without this a 'medium' pin would fall through to the '' default and the
+# quote would silently price a different model than the run dispatches -- the
+# exact estimator-vs-runner divergence this file keeps paying down. Only the
+# three new words are translated; every existing value passes through unchanged.
+_LOKI_GENERIC_TIERS = {'small': 'fast', 'medium': 'development', 'high': 'planning'}
+
 def _loki_norm_session_pin(raw):
     raw = (raw or '').strip().lower()
+    raw = _LOKI_GENERIC_TIERS.get(raw, raw)
     return raw if raw in (
         'haiku', 'sonnet', 'opus', 'fable',
         'planning', 'development', 'fast',
@@ -16643,7 +17971,7 @@ def _resolve_session_pin(alias):
 #     override-path clamp). A 'sonnet' override dispatches sonnet.
 #   - No override (session pin): the runner maps alias -> tier ->
 #     resolve_model_for_tier -> clamp(model, real_tier). Use _resolve_session_pin.
-#     A 'sonnet' session pin dispatches OPUS (development tier).
+#     A 'sonnet' session pin dispatches SONNET (development tier; CLAUDE_DEFAULT_DEVELOPMENT=sonnet since v7.104.0).
 # This is the task-568 fix: price the actually-dispatched model on BOTH routes.
 _is_override = (_session_model_source == '.loki/state/model-override')
 if _is_override:
@@ -16786,12 +18114,37 @@ else:
             integrations.append(kw)
 
     # Count database mentions
-    db_keywords = ['postgresql', 'postgres', 'mysql', 'mongodb', 'sqlite',
-                   'dynamodb', 'cassandra', 'redis', 'prisma', 'typeorm',
-                   'sequelize', 'drizzle', 'knex', 'database', 'migration']
-    for kw in db_keywords:
-        if kw in content_lower:
-            databases.append(kw)
+    # Count DISTINCT data stores. This feeds a +1-complexity-for-multiple
+    # rule, so what counts as multiple is load-bearing: it pushed a
+    # 322-word issue from moderate to complex, and complex means 18 iterations
+    # instead of 9.
+    #
+    # Three ways the old flat list over-counted a single-database project:
+    #   1. Aliases. 'postgresql' and 'postgres' were separate entries, so one
+    #      PostgreSQL app scored TWO data stores by itself. That alone tripped
+    #      the rule on a real user's issue.
+    #   2. ORMs. prisma/typeorm/sequelize/drizzle/knex are ACCESS LAYERS, not
+    #      stores. Prisma plus PostgreSQL is one database, not two.
+    #   3. Generic words. 'database' and 'migration' matched any PRD that used
+    #      the words at all, so a migration-to-the-database line scored two.
+    #
+    # Aliases collapse to one canonical name, ORMs and generic terms are gone.
+    db_aliases = {
+        'postgresql': 'postgres', 'postgres': 'postgres', 'psql': 'postgres',
+        'mysql': 'mysql', 'mariadb': 'mysql',
+        'mongodb': 'mongodb', 'mongo': 'mongodb',
+        'sqlite': 'sqlite',
+        'dynamodb': 'dynamodb',
+        'cassandra': 'cassandra',
+        'redis': 'redis',
+        'elasticsearch': 'elasticsearch',
+        'clickhouse': 'clickhouse',
+    }
+    _seen_db = set()
+    for kw, canonical in db_aliases.items():
+        if kw in content_lower and canonical not in _seen_db:
+            _seen_db.add(canonical)
+            databases.append(canonical)
 
     # Count UI components
     ui_keywords = ['dashboard', 'form', 'table', 'modal', 'navbar',
@@ -16873,6 +18226,34 @@ iteration_map = {
     'enterprise': (24, 48),
 }
 min_iter, max_iter = iteration_map[complexity]
+
+# --- Capability-aware iteration budget ---------------------------------------
+# The map above was written when a model could not hold a whole feature in one
+# pass, so work was chopped into many small iterations. On a frontier tier that
+# is now actively harmful: each iteration boundary is a context reset, and
+# re-planning mid-feature is where a run loses the thread and burns money.
+#
+# A frontier model should be handed the whole job and left to finish it. So the
+# budget is divided by the capability tier the run will actually dispatch,
+# rather than assuming the weakest case for everyone. The floor is 1, never 0.
+#
+# This scales the ESTIMATE and the ceiling, not the work. A run that genuinely
+# needs more iterations still takes them; nothing here forces an early stop.
+_tier_raw = (os.environ.get('LOKI_SESSION_MODEL') or '').strip().lower()
+_frontier = ('high', 'planning', 'opus', 'sol')
+_small = ('small', 'fast', 'haiku', 'luna')
+if _tier_raw in _frontier:
+    # Frontier: one pass for anything short of enterprise scope.
+    min_iter = 1
+    max_iter = max(1, max_iter // 4)
+elif _tier_raw in _small:
+    # Small models genuinely benefit from more, smaller steps.
+    pass
+else:
+    # medium / unset: the common default. Halve the legacy budget -- current
+    # workhorse models complete in far fewer passes than this map assumed.
+    min_iter = max(1, min_iter // 2)
+    max_iter = max(min_iter, max_iter // 2)
 
 # Adjust based on specific counts
 if endpoint_count > 10:
@@ -17443,6 +18824,23 @@ main() {
     local command="$1"
     shift
 
+    # LOKI_HELP_ONLY is set by `loki help <command>`, which delegates by
+    # re-entering dispatch as `loki <command> --help`. Asking for help must
+    # never DO anything, and dispatch reaches commands that start builds, stop
+    # runs and modify the install. Every command honours --help today; this
+    # makes that a guaranteed property of the help path rather than a fact
+    # someone has to re-verify whenever a command is added. If the delegated
+    # invocation somehow lost its --help, refuse rather than execute.
+    if [ "${LOKI_HELP_ONLY:-0}" = "1" ]; then
+        case " $* " in
+            *" --help "*|*" -h "*) : ;;
+            *)
+                echo "loki: refusing to run '$command' from the help path" >&2
+                return 1
+                ;;
+        esac
+    fi
+
     # v7.4.13: first-run telemetry moved to bin/loki shim so it fires for
     # both Bun-routed and bash-routed commands (autonomy/loki main() never
     # runs for the 8 ported commands). Marker file: ~/.loki-first-run.
@@ -17459,7 +18857,17 @@ main() {
        && _loki_telemetry_enabled; then
         _loki_disclose_telemetry_once
     fi
-    loki_telemetry "cli_command" "command=$command" 2>/dev/null || true
+    # The command value is passed through the FIXED ALLOWLIST at the boundary
+    # (_loki_known_command, autonomy/telemetry.sh): a real subcommand goes out
+    # verbatim, anything else becomes the literal "other". Without this, the
+    # honest typo `loki ./client-acme-merger-prd.md` put the raw file name on the
+    # wire, because the payload builder is a pass-through dict, not an allowlist.
+    # Fail closed: if the sanitizer is somehow undefined, send "other".
+    if declare -f _loki_known_command >/dev/null 2>&1; then
+        loki_telemetry "cli_command" "command=$(_loki_known_command "$command")" 2>/dev/null || true
+    else
+        loki_telemetry "cli_command" "command=other" 2>/dev/null || true
+    fi
 
     # Unified config-file pre-pass (#691). For session commands ONLY, honor
     # LOKI_CONFIG_FILE / --config|--vars|--env-file and load the file BEFORE the
@@ -17531,6 +18939,9 @@ main() {
             ;;
         pause)
             cmd_pause "$@"
+            ;;
+        steer)
+            cmd_steer "$@"
             ;;
         resume)
             cmd_resume "$@"
@@ -17768,6 +19179,9 @@ main() {
             _deprecated_alias cost "report cost" "$@"
             cmd_report cost "$@"
             ;;
+        estimate)
+            cmd_estimate "$@"
+            ;;
         trust)
             cmd_trust "$@"
             ;;
@@ -17887,6 +19301,55 @@ main() {
             # deprecated-alias table; bare help prints the grouped front page.
             if [ "${1:-}" = "aliases" ]; then
                 show_help_aliases
+            elif [ -n "${1:-}" ]; then
+                # `loki help <command>` reaches the command's own help. Before
+                # this, $1 was read only for the literal "aliases" and otherwise
+                # discarded, so `loki help proof` printed the same generic front
+                # page as bare `loki help` -- while `loki proof --help` printed
+                # real help. Both spellings now agree.
+                #
+                # LOKI_HELP_ONLY makes this safe by construction rather than by
+                # audit. Delegation re-enters dispatch, and dispatch reaches
+                # commands that start, stop and modify things. Every one of them
+                # honours --help today, but "asking for help must never DO
+                # anything" is a property worth enforcing at the boundary
+                # instead of re-checking every time a command is added.
+                local _help_target="$1"
+                shift
+                # FORK BOMB GUARD, and this is not hypothetical: it filled the
+                # process table with 3,788 chained `bash autonomy/loki --help
+                # --help` processes on this machine, after which even `pkill`
+                # could not fork.
+                #
+                # `loki help --help` sets _help_target="--help" and delegates as
+                # `"$0" --help --help`. That re-enters THIS case, and "$@"
+                # accumulates one more --help every pass, so the recursion is
+                # unbounded and spawns a process per level.
+                #
+                # LOKI_HELP_ONLY was described above as making delegation "safe
+                # by construction". It does -- against SIDE EFFECTS. It says
+                # nothing about SELF-REFERENCE, which is a different hazard: the
+                # danger is not that a command does something, it is that the
+                # help router asks itself for help forever.
+                #
+                # A help-shaped target has no command help to delegate to, so
+                # print the front page directly instead of recursing.
+                case "$_help_target" in
+                    --help|-h|help|--h|-help)
+                        show_help
+                        ;;
+                    *)
+                        # Second, independent stop: if we are ALREADY inside a
+                        # delegated help call, do not delegate again. Belt and
+                        # braces, because the pattern list above is a blacklist
+                        # and a future spelling would slip past it.
+                        if [ "${LOKI_HELP_ONLY:-}" = "1" ]; then
+                            show_help
+                        else
+                            LOKI_HELP_ONLY=1 "$0" "$_help_target" --help "$@"
+                        fi
+                        ;;
+                esac
             else
                 show_help
             fi
@@ -18600,7 +20063,7 @@ $(cat "$f" 2>/dev/null)
 
     # --- Tally results ---
     local count_critical=0 count_high=0 count_medium=0 count_low=0 count_info=0
-    for f in "${findings[@]}"; do
+    for f in "${findings[@]+"${findings[@]}"}"; do
         local sev
         sev=$(echo "$f" | cut -d'|' -f3)
         case "$sev" in
@@ -18622,7 +20085,7 @@ $(cat "$f" 2>/dev/null)
     if [ "$review_format" = "json" ]; then
         local json_findings="["
         local first=true
-        for f in "${findings[@]}"; do
+        for f in "${findings[@]+"${findings[@]}"}"; do
             local f_file f_line f_sev f_cat f_finding f_suggestion
             f_file=$(echo "$f" | cut -d'|' -f1)
             f_line=$(echo "$f" | cut -d'|' -f2)
@@ -18651,7 +20114,7 @@ $(cat "$f" 2>/dev/null)
             # Group by severity
             for sev_name in CRITICAL HIGH MEDIUM LOW INFO; do
                 local printed_header=false
-                for f in "${findings[@]}"; do
+                for f in "${findings[@]+"${findings[@]}"}"; do
                     local f_sev
                     f_sev=$(echo "$f" | cut -d'|' -f3)
                     [ "$f_sev" != "$sev_name" ] && continue
@@ -20215,6 +21678,13 @@ totals = {
     'iterations': len(files),
     'total_input_tokens': 0,
     'total_output_tokens': 0,
+    # Cache tiers. These DOMINATE real traffic -- a measured iteration carried
+    # 797,496 cache-read tokens against 10,272 of plain input, so a report that
+    # omits them describes 1% of the run and hides the single biggest lever a
+    # user has on cost.
+    'total_cache_read_tokens': 0,
+    'total_cache_creation_tokens': 0,
+    'cache_hit_ratio': 0.0,
     'total_tokens': 0,
     'total_cost_usd': 0.0,
     'total_duration_ms': 0,
@@ -20235,15 +21705,26 @@ for f in files:
     to = int(_num(d.get('output_tokens'), int))
     co = float(_num(d.get('cost_usd'), float))
     du = int(_num(d.get('duration_ms'), int))
+    cr = int(_num(d.get('cache_read_tokens'), int))
+    cw = int(_num(d.get('cache_creation_tokens'), int))
     totals['total_input_tokens'] += ti
     totals['total_output_tokens'] += to
-    totals['total_tokens'] += ti + to
+    totals['total_cache_read_tokens'] += cr
+    totals['total_cache_creation_tokens'] += cw
+    # total_tokens counts EVERY token the run was billed for. Leaving cache out
+    # made the headline number describe a fraction of the run.
+    totals['total_tokens'] += ti + to + cr + cw
     totals['total_cost_usd'] += co
     totals['total_duration_ms'] += du
     m = d.get('model') or 'unknown'
     totals['by_model'][m] = totals['by_model'].get(m, 0) + 1
     p = d.get('phase') or 'unknown'
     totals['by_phase'][p] = totals['by_phase'].get(p, 0) + 1
+# Cache hit ratio against everything read IN: the number that says whether the
+# prompt cache is working. Zero reads renders 0.0 rather than a divide error.
+_read_in = totals['total_input_tokens'] + totals['total_cache_read_tokens']
+if _read_in > 0:
+    totals['cache_hit_ratio'] = round(totals['total_cache_read_tokens'] / _read_in, 4)
 print(json.dumps(totals, indent=2))
 PYEOF
             elif [ -f "$_legacy_file" ]; then
@@ -23886,9 +25367,92 @@ cmd_trust_metrics() {
 # for the current-run aggregate (single source of truth) and reads .loki/proofs/
 # for persistent per-run history. Honest: prints "not recorded" when cost was
 # never collected, never a fabricated $0.00.
+# Forward cost projection. Wraps tools/estimate-run.py.
+#
+# --iterations is REQUIRED by that tool by design: no multi-run history exists
+# to derive a horizon from, so projecting a total without one would be guessing
+# at the single number the operator asked for. We surface that requirement here
+# rather than inventing a default, for the same reason cost reports UNKNOWN
+# instead of $0.00 -- an unearned number is worse than an absent one.
+cmd_estimate() {
+    local iterations=""
+    local show_json=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                echo -e "${BOLD}loki estimate${NC} - Project what a run is likely to cost"
+                echo ""
+                echo "Usage: loki estimate --iterations N [--json]"
+                echo ""
+                echo "Projects a run cost from this workspace's MEASURED history in"
+                echo ".loki/metrics/efficiency/. With no measured history there is no"
+                echo "basis, and it says so rather than returning a fabricated number."
+                echo ""
+                echo "Options:"
+                echo "  --iterations N       REQUIRED. How many iterations to project."
+                echo "                       No multi-run history exists to derive a horizon"
+                echo "                       from, so there is no honest default."
+                echo "  --json               Machine-readable JSON output"
+                echo "  --help, -h           Show this help"
+                echo ""
+                echo "Examples:"
+                echo "  loki estimate --iterations 10"
+                echo "  loki estimate --iterations 25 --json"
+                echo ""
+                echo "See also: loki cost --detail (what a run ALREADY spent)"
+                return 0
+                ;;
+            --json) show_json=true; shift ;;
+            --iterations) iterations="${2:-}"; shift 2 || shift ;;
+            --iterations=*) iterations="${1#*=}"; shift ;;
+            *) echo -e "${RED}Unknown option: $1${NC}" >&2; echo "Run 'loki estimate --help' for usage." >&2; return 1 ;;
+        esac
+    done
+
+    if [ -z "$iterations" ]; then
+        echo -e "${RED}--iterations is required${NC}" >&2
+        echo "" >&2
+        echo "No multi-run history exists to derive a horizon from, so there is no" >&2
+        echo "honest default for how many iterations to project. Say how many you" >&2
+        echo "expect and the projection is scaled from measured per-iteration cost." >&2
+        echo "" >&2
+        echo "  loki estimate --iterations 10" >&2
+        echo "" >&2
+        echo "Run 'loki estimate --help' for usage." >&2
+        return 1
+    fi
+
+    case "$iterations" in
+        ''|*[!0-9]*)
+            echo -e "${RED}--iterations must be a positive whole number (got: $iterations)${NC}" >&2
+            return 1
+            ;;
+    esac
+
+    local estimate_py="$SKILL_DIR/tools/estimate-run.py"
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo -e "${RED}python3 is required for 'loki estimate'${NC}" >&2
+        echo "Install python3 and re-run." >&2
+        return 1
+    fi
+    if [ ! -f "$estimate_py" ]; then
+        echo -e "${RED}Estimate tool not found: $estimate_py${NC}" >&2
+        echo "Your install looks incomplete. Reinstall: loki self-update" >&2
+        return 1
+    fi
+
+    # Same workspace derivation as 'loki cost --detail': the tool takes the
+    # workspace and appends .loki itself, while LOKI_DIR is the .loki path.
+    local est_args=("$(dirname "${LOKI_DIR:-.loki}")" "--iterations" "$iterations")
+    [ "$show_json" = "true" ] && est_args+=("--json")
+    python3 "$estimate_py" "${est_args[@]}"
+}
+
 cmd_cost() {
     local show_json=false
     local last_n=0
+    local detail=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -23904,22 +25468,66 @@ cmd_cost() {
                 echo "Options:"
                 echo "  --json               Machine-readable JSON output"
                 echo "  --last N             Show only the last N runs in history (default: all)"
+                echo "  --detail             Per-iteration breakdown: cache hit ratio, cost trend,"
+                echo "                       and the measured/found ratio (autonomy/lib/cost-summary.py)"
                 echo "  --help, -h           Show this help"
                 echo ""
                 echo "Examples:"
                 echo "  loki cost                      # Cost summary + budget status"
                 echo "  loki cost --json               # Machine-readable output"
                 echo "  loki cost --last 10            # Last 10 runs of history"
+                echo "  loki cost --detail             # Per-iteration cache + trend breakdown"
+                echo "  loki cost --detail --json      # Same, machine-readable"
                 echo ""
                 echo "Budget cap: set LOKI_BUDGET_LIMIT (USD). Warns at 80%, stops at 100%."
+                echo ""
+                echo "An unmeasured iteration reads UNKNOWN and is excluded from totals."
+                echo "Unmeasured is never reported as \$0.00 -- that would be indistinguishable"
+                echo "from a real measurement of zero."
                 exit 0
                 ;;
             --json) show_json=true; shift ;;
+            --detail) detail=true; shift ;;
             --last) last_n="${2:-0}"; shift 2 ;;
             --last=*) last_n="${1#*=}"; shift ;;
             *) echo -e "${RED}Unknown option: $1${NC}" >&2; echo "Run 'loki cost --help' for usage." >&2; exit 1 ;;
         esac
     done
+
+    # --detail routes to the per-run summarizer, which reports what the budget
+    # view cannot: cache hit ratio, cost trend, and the measured/found ratio.
+    # It reuses the SAME honesty predicate (efficiency_cost.record_is_measured),
+    # so both views agree on what counts as measured.
+    if [ "$detail" = "true" ]; then
+        # --last filters per-RUN history, which this view does not show (it
+        # breaks down the iterations of ONE run). Rejecting is the honest
+        # move: silently discarding it would make the filter look applied.
+        if [ "$last_n" != "0" ]; then
+            echo -e "${RED}--last is not supported with --detail${NC}" >&2
+            echo "--detail breaks down the iterations of the current run, not per-run history." >&2
+            echo "Use 'loki cost --last N' for the per-run history view." >&2
+            return 1
+        fi
+        local cost_summary_py="$SKILL_DIR/autonomy/lib/cost-summary.py"
+        if ! command -v python3 >/dev/null 2>&1; then
+            echo -e "${RED}python3 is required for 'loki cost --detail'${NC}" >&2
+            echo "Install python3, or run 'loki cost' for the budget view." >&2
+            return 1
+        fi
+        if [ ! -f "$cost_summary_py" ]; then
+            echo -e "${RED}Cost summary tool not found: $cost_summary_py${NC}" >&2
+            echo "Your install looks incomplete. Reinstall: loki self-update" >&2
+            return 1
+        fi
+        # cost-summary.py takes the WORKSPACE (it appends .loki itself), while
+        # LOKI_DIR is the .loki path and is genuinely relocatable
+        # (autonomy/serve.sh exports a non-default). Derive the parent so
+        # --detail describes the same workspace the budget view does.
+        local ws_args=("$(dirname "${LOKI_DIR:-.loki}")")
+        [ "$show_json" = "true" ] && ws_args+=("--json")
+        python3 "$cost_summary_py" "${ws_args[@]}"
+        return $?
+    fi
 
     local loki_dir="${LOKI_DIR:-.loki}"
 
@@ -23991,12 +25599,33 @@ def _fmt_usd(v):
 # benchmark adapters). On a broken install where the lib is missing, we degrade
 # honestly rather than ship a divergent 5th copy of the cost math.
 current_cost = None
+current_tokens = None
 current_model = ""
 lib_available = collect_efficiency is not None
 if lib_available:
     try:
         cost_dict, current_model = collect_efficiency(loki_dir)
         current_cost = cost_dict.get("usd")
+        # collect_efficiency ALREADY sums the token breakdown, including the
+        # cache tiers. This surface took only the dollar figure and dropped the
+        # rest, so a consumer could see WHAT a run cost but nothing about WHY --
+        # and cache reads are typically ~98% of input volume, the single
+        # biggest lever on that number.
+        current_tokens = {
+            k: int(cost_dict.get(k) or 0)
+            for k in ("input_tokens", "output_tokens",
+                      "cache_read_tokens", "cache_creation_tokens")
+        }
+        _read_in = current_tokens["input_tokens"] + current_tokens["cache_read_tokens"]
+        current_tokens["total_tokens"] = sum(
+            current_tokens[k] for k in ("input_tokens", "output_tokens",
+                                        "cache_read_tokens", "cache_creation_tokens"))
+        # Absent tokens leave the ratio null rather than 0.0: a zero would read
+        # as "the cache never hit", which is a claim about a cold cache, not an
+        # absence of data.
+        current_tokens["cache_hit_ratio"] = (
+            round(current_tokens["cache_read_tokens"] / _read_in, 4) if _read_in > 0 else None
+        )
     except Exception:
         current_cost = None
 
@@ -24085,6 +25714,7 @@ if show_json:
             "cost_usd": current_cost,
             "model": current_model or None,
             "cost_recorded": current_cost is not None,
+            "tokens": current_tokens,
             "cost_lib_available": lib_available,
         },
         "runs": runs,
@@ -25856,6 +27486,9 @@ ig = r.get("_ignored_executable_fields") or []
 if ig:
     print(f"  NOTE: ignored executable-looking fields (never run): {', '.join(ig)}")
 print("Stored in .loki/agents/installed.json -- visible to 'loki agent list/info/run'.")
+print("It also joins the code-review reviewer pool: when its focus keywords match")
+print("a diff it is dispatched as a real reviewer (appended to the built-in battery,")
+print("never replacing one). See skills/quality-gates.md 'Adding Your Own Reviewer'.")
 PYEOF
             else
                 echo -e "${RED}Install failed:${NC} $result"
@@ -26248,11 +27881,17 @@ except: pass
 
     # --- Build directory tree ---
     local tree_output=""
-    if command -v git &>/dev/null && [ -d "$target_path/.git" ]; then
+    # -e not -d: in a git WORKTREE, .git is a pointer FILE, not a directory.
+    # -d sent every worktree down the find fallback below.
+    if command -v git &>/dev/null && [ -e "$target_path/.git" ]; then
         # Use git ls-files for accurate tree (respects .gitignore)
         tree_output=$(cd "$target_path" && git ls-files 2>/dev/null | head -200 || true)
     else
-        # Fallback: find with common excludions
+        # Fallback: find with common excludions.
+        # `|| true` is load-bearing under `set -euo pipefail` (line 22): head -200
+        # exits after 200 lines, find keeps writing, gets SIGPIPE, and the pipeline
+        # returns 141 -- which -e turned into a silent abort producing 0 bytes on
+        # any repo with more than 200 files. The git branch above is already guarded.
         tree_output=$(find "$target_path" -maxdepth 4 -type f \
             -not -path '*/node_modules/*' \
             -not -path '*/.git/*' \
@@ -26262,7 +27901,7 @@ except: pass
             -not -path '*/build/*' \
             -not -path '*/.next/*' \
             -not -path '*/target/*' \
-            2>/dev/null | sed "s|$target_path/||" | sort | head -200)
+            2>/dev/null | sed "s|$target_path/||" | sort | head -200 || true)
     fi
 
     # Categorize files
@@ -27019,8 +28658,13 @@ $devdeps_list"
     fi
 
     # --- File counts ---
+    # Same SIGPIPE pipeline as cmd_onboard, but a DIFFERENT symptom here: this
+    # assigns into a bare `tree_output=` after the local declaration, so under
+    # -e a 141 aborts. Where a site instead writes `local x=$(...)`, `local`
+    # resets $? and the 141 is swallowed -- silent truncation, no abort. Both
+    # are wrong; `|| true` plus -e (worktree .git is a FILE) fixes both.
     local tree_output=""
-    if command -v git &>/dev/null && [ -d "$target_path/.git" ]; then
+    if command -v git &>/dev/null && [ -e "$target_path/.git" ]; then
         tree_output=$(cd "$target_path" && git ls-files 2>/dev/null | head -500 || true)
     else
         tree_output=$(find "$target_path" -maxdepth 4 -type f \
@@ -27028,7 +28672,7 @@ $devdeps_list"
             -not -path '*/vendor/*' -not -path '*/__pycache__/*' \
             -not -path '*/dist/*' -not -path '*/build/*' \
             -not -path '*/.next/*' -not -path '*/target/*' \
-            2>/dev/null | sed "s|$target_path/||" | sort | head -500)
+            2>/dev/null | sed "s|$target_path/||" | sort | head -500 || true)
     fi
     local total_files src_count test_count doc_count config_count
     total_files=$(echo "$tree_output" | { grep -c . || true; })
@@ -27432,9 +29076,10 @@ cmd_docs() {
 _docs_scan_project() {
     local target_path="$1"
 
-    # Build file tree (excluding common noise)
+    # Build file tree (excluding common noise).
+    # Same SIGPIPE pipeline and same fix as cmd_onboard; see the comment there.
     local tree_output=""
-    if command -v git &>/dev/null && [ -d "$target_path/.git" ]; then
+    if command -v git &>/dev/null && [ -e "$target_path/.git" ]; then
         tree_output=$(cd "$target_path" && git ls-files 2>/dev/null | head -500 || true)
     else
         tree_output=$(find "$target_path" -maxdepth 4 -type f \
@@ -27442,7 +29087,7 @@ _docs_scan_project() {
             -not -path '*/vendor/*' -not -path '*/__pycache__/*' \
             -not -path '*/dist/*' -not -path '*/build/*' \
             -not -path '*/.next/*' -not -path '*/target/*' \
-            2>/dev/null | sed "s|$target_path/||" | sort | head -500)
+            2>/dev/null | sed "s|$target_path/||" | sort | head -500 || true)
     fi
     echo "$tree_output"
 }
@@ -29009,13 +30654,27 @@ try:
 except Exception as exc:
     sys.stderr.write(f'[ERROR] magic.core.debate not available: {exc}\n')
     sys.exit(2)
-run_debate(
+import json, os
+# run_debate takes component_path, not react_path/wc_path -- passing those
+# raised TypeError on EVERY invocation, and the caller's '|| true' swallowed it
+# so Gate 12 reported PASS on total failure. Pick whichever generated artifact
+# exists; the debate critiques code against the spec, so with neither present it
+# still runs on the spec alone.
+_react = '.loki/magic/generated/react/${name}.tsx'
+_wc = '.loki/magic/generated/webcomponent/${name}.js'
+_component = _react if os.path.exists(_react) else (_wc if os.path.exists(_wc) else '')
+_result = run_debate(
     name='$name',
     spec_path='$spec_path',
+    component_path=_component,
     rounds=$rounds,
-    react_path='.loki/magic/generated/react/${name}.tsx',
-    wc_path='.loki/magic/generated/webcomponent/${name}.js',
 )
+# The result must reach stdout: the gate greps it for a blocking severity, and
+# a returned-but-never-printed dict is invisible to every caller.
+print(json.dumps(_result, indent=2, default=str))
+if _result.get('error'):
+    sys.stderr.write('[ERROR] debate error: %s\n' % _result['error'])
+    sys.exit(1)
 " || {
         log_error "Debate failed"
         return 1
@@ -29190,6 +30849,7 @@ cmd_ci() {
                 echo "  --github-comment     Post review results as PR comment (needs GITHUB_TOKEN)"
                 echo "  --fail-on <levels>   Set exit code 1 on severity: critical,high,medium,low"
                 echo "  --format <fmt>       Output format: json, markdown, github (default: markdown)"
+                echo "  --json               Alias for --format json"
                 echo "  --help, -h           Show this help"
                 echo ""
                 echo "Exit codes:"
@@ -29230,6 +30890,15 @@ cmd_ci() {
                     return 2
                 fi
                 ci_fail_on="$(echo "$ci_fail_on" | tr '[:upper:]' '[:lower:]')"
+                shift
+                ;;
+            # --json is an alias for --format json. `loki ci` could already
+            # emit JSON, but only under a flag name no other command uses, so a
+            # script author reaching for the repo-wide --json convention found
+            # nothing and concluded the capability was missing. Same output,
+            # one spelling everywhere.
+            --json)
+                ci_format="json"
                 shift
                 ;;
             --format)
@@ -29424,6 +31093,20 @@ except Exception:
     fi
 
     # Gate 2: Security Scan
+    # Deny filter for the secret patterns below. This scanner sees RAW DIFF
+    # LINES with no file context, so unlike the other two copies of this matcher
+    # (autonomy/lib/secret-scan.sh, verify.sh) it cannot skip test paths -- it
+    # has to judge the VALUE. A credential whose value literally says "test",
+    # "example", "xxx", or "not-called" is a fixture; real leaked keys are not
+    # named after their own fakeness.
+    #
+    # Concretely, this is what reported 2 CRITICAL findings on the v8 PR:
+    #   sk-ant-xxx                 (loki-ts/test/runner/oauth_dev.test.ts)
+    #   sk-ant-test-not-called     (loki-ts/tests/runner/quality_gates.test.ts)
+    # Both exist to prove the SDK path fails closed without a real key. Flagging
+    # them trains people to ignore CRITICAL, which is how a real one gets missed.
+    local _ci_secret_deny='(test|example|sample|fixture|dummy|fake|placeholder|redacted|changeme|your[-_]|xxx+|not[-_]called|\$\{|\$[A-Za-z_]|process\.env|os\.(environ|getenv)|<[^>]*>)'
+
     _ci_scan() {
         local pattern="$1" sev="$2" cat="$3" finding="$4" suggestion="$5"
         # Only scan added lines (starting with "+") to avoid flagging deleted code
@@ -29432,7 +31115,10 @@ except Exception:
             local ml
             ml=$(echo "$match" | cut -d: -f1)
             _ci_add_finding "diff" "$ml" "$sev" "$cat" "$finding" "$suggestion"
-        done < <(echo "$diff_content" | grep -n '^+' | grep -E "$pattern" 2>/dev/null || true)
+        done < <(printf '%s\n' "$diff_content" \
+            | grep -n '^+' \
+            | grep -E "$pattern" 2>/dev/null \
+            | grep -vEi "$_ci_secret_deny" 2>/dev/null || true)
     }
 
     # Hardcoded secrets
@@ -29560,7 +31246,7 @@ TEST_SUGGEST_PY
 
     # --- Tally findings ---
     local count_critical=0 count_high=0 count_medium=0 count_low=0 count_info=0
-    for f in "${findings[@]}"; do
+    for f in "${findings[@]+"${findings[@]}"}"; do
         local sev
         sev=$(echo "$f" | cut -d'|' -f3)
         case "$sev" in
@@ -29576,7 +31262,7 @@ TEST_SUGGEST_PY
     # Determine exit code based on --fail-on threshold
     local exit_code=0
     if [ "$fail_threshold" -lt 99 ]; then
-        for f in "${findings[@]}"; do
+        for f in "${findings[@]+"${findings[@]}"}"; do
             local sev sev_num
             sev=$(echo "$f" | cut -d'|' -f3)
             sev_num=$(_ci_sev_level "$sev")
@@ -29596,7 +31282,7 @@ TEST_SUGGEST_PY
     if [ "$ci_format" = "json" ]; then
         # JSON output via python for proper escaping
         export LOKI_CI_JSON_FINDINGS=""
-        for f in "${findings[@]}"; do
+        for f in "${findings[@]+"${findings[@]}"}"; do
             LOKI_CI_JSON_FINDINGS+="${f}"$'\n'
         done
         export LOKI_CI_JSON_META="ci_env=${ci_env}|pr=${ci_pr_number}|ts=${report_timestamp}|files=${file_count}|exit=${exit_code}"
@@ -29678,7 +31364,7 @@ CI_JSON_OUT
             echo ""
             for sev_name in CRITICAL HIGH MEDIUM LOW INFO; do
                 local has_sev=false
-                for f in "${findings[@]}"; do
+                for f in "${findings[@]+"${findings[@]}"}"; do
                     local f_sev
                     f_sev=$(echo "$f" | cut -d'|' -f3)
                     [ "$f_sev" != "$sev_name" ] && continue
@@ -29738,7 +31424,7 @@ for t in tests:
         else
             for sev_name in CRITICAL HIGH MEDIUM LOW INFO; do
                 local printed_header=false
-                for f in "${findings[@]}"; do
+                for f in "${findings[@]+"${findings[@]}"}"; do
                     local f_sev
                     f_sev=$(echo "$f" | cut -d'|' -f3)
                     [ "$f_sev" != "$sev_name" ] && continue
@@ -31789,6 +33475,7 @@ cmd_bench() {
             echo "  vs <task>       Run all configured tools on a task-spec (head-to-head)"
             echo "  list            List available task-specs"
             echo "  verify <file>   Recompute task_hash + check tool versions for a result.json"
+            echo "  oracles         Are the graders trustworthy? Hash-bound, no spend, no provider"
             echo "  report <files>  Build results.json + RESULTS.md from per-tool result-rows"
             echo ""
             echo "Options:"
@@ -31982,10 +33669,15 @@ cmd_proof() {
             echo ""
             echo "Subcommands:"
             echo "  list                 List proof-of-run artifacts in .loki/proofs/"
+            echo "  releases [--json]    Release history from git tags; version_is_ahead"
+            echo "                       reads UNKNOWN when it cannot be computed"
+            echo "  phases [--json]      Measured phase history from real phase_change"
+            echo "                       events; unrecorded boundaries read UNKNOWN"
             echo "  show <id>            Pretty-print .loki/proofs/<id>/proof.json"
             echo "  verify <id>          Re-check a receipt against the repo (tamper + drift);"
             echo "                       exit 0 clean, 1 tamper/drift. Verify it yourself."
-            echo "  open <id>            Open .loki/proofs/<id>/index.html in a browser"
+            echo "  md <id>              Paste-able Markdown for a PR comment or Slack
+  open <id>            Open .loki/proofs/<id>/index.html in a browser"
             echo "  share <id>           Publish the proof page as a GitHub Gist (opt-in)"
             echo ""
             echo "Options for 'share':"
@@ -31994,8 +33686,97 @@ cmd_proof() {
             echo "  --hosted             Publish to LOKI_HOSTED_ENDPOINT (open-core seam; no official backend yet)"
             echo ""
             echo "Proofs are generated automatically at run completion (LOKI_PROOF=0 to opt out)."
+            echo ""
+            echo "Signing (off by default): receipts are UNSIGNED unless LOKI_PROOF_GPG_KEY is"
+            echo "set to a gpg key id. Unsigned, the integrity hash proves the bytes were not"
+            echo "edited after hashing but NOT who produced them, so verify reports"
+            echo "generator_trusted: true. Export LOKI_PROOF_GPG_KEY to close that gap."
+            echo "See docs/SIGNED-RECEIPTS.md."
             [ "$sub" = "" ] && exit 1
             exit 0
+            ;;
+        releases)
+            # CLI PARITY with GET /api/operator/releases. Same reader
+            # (dashboard/api_releases.py), so the two surfaces cannot disagree
+            # about which versions shipped.
+            _rel_json=0
+            [ "${1:-}" = "--json" ] && _rel_json=1
+            python3 - "$_rel_json" "$SKILL_DIR" <<'PYREL'
+import json, os, sys
+sys.dont_write_bytecode = True
+# Resolve the repo from THIS SCRIPT's location, not the cwd. Using getcwd()
+# made `loki proof releases` fail with "No module named dashboard" whenever it
+# was run from any other directory -- and it exited 0 while doing so, which is
+# a failure reported as success.
+# SKILL_DIR is the CLI's own install root, computed at loki:216. sys.argv[0]
+# is "-" inside a heredoc, so deriving the path from it does not work.
+_repo = sys.argv[2] if len(sys.argv) > 2 else ""
+for _cand in (_repo, os.getcwd()):
+    if os.path.isdir(os.path.join(_cand, "dashboard")):
+        sys.path.insert(0, _cand)
+        break
+as_json = sys.argv[1] == "1"
+try:
+    from dashboard import api_releases
+except Exception as exc:
+    sys.stderr.write("release history unavailable: %s\n" % exc)
+    raise SystemExit(2)
+env = api_releases.list_releases(os.getcwd())
+if as_json:
+    print(json.dumps(env, indent=2))
+    raise SystemExit(0)
+rows = env.get("releases") or []
+if not rows:
+    print("no releases readable: %s" % (env.get("reason") or "unknown"))
+    raise SystemExit(3)
+# version_is_ahead is None when it could not be computed. None is NOT False:
+# "I cannot compare" is a different claim from "it is not ahead".
+ahead = env.get("version_is_ahead")
+print("VERSION %s | newest tag %s | ahead: %s" % (
+    env.get("version") or "UNKNOWN",
+    env.get("newest_tag") or "UNKNOWN",
+    "UNKNOWN" if ahead is None else ("yes" if ahead else "no")))
+for r in rows:
+    print("  %-14s %s%s" % (r.get("tag"), r.get("date") or "date UNKNOWN",
+                            "  (current)" if r.get("is_current") else ""))
+PYREL
+            return $?
+            ;;
+        phases)
+            # CLI PARITY with GET /api/operator/phases. Both call the SAME
+            # reader (dashboard/api_phases.py), so the two surfaces cannot
+            # drift into disagreeing about the same run.
+            _phases_json=0
+            [ "${1:-}" = "--json" ] && _phases_json=1
+            python3 - "$loki_dir" "$_phases_json" <<'PYPHASES'
+import json, os, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.getcwd())
+loki_dir, as_json = sys.argv[1], sys.argv[2] == "1"
+try:
+    from dashboard import api_phases
+except Exception as exc:
+    sys.stderr.write("phase history unavailable: %s\n" % exc)
+    raise SystemExit(2)
+env = api_phases.phase_history(loki_dir)
+if as_json:
+    print(json.dumps(env, indent=2))
+    raise SystemExit(0)
+segs = env.get("segments") or []
+if not segs:
+    # An empty result states WHY: "no phases" and "could not read" are
+    # different operator situations and must not print identically.
+    print("no measured phase history: %s" % (env.get("reason") or "unknown"))
+    raise SystemExit(3)
+lead = env.get("leading_phase")
+rows = ([lead] if lead else []) + list(segs)
+for seg in rows:
+    print("  %-12s start=%-14s end=%s" % (
+        seg.get("phase"),
+        seg.get("start") if seg.get("start") is not None else "UNKNOWN",
+        seg.get("end") if seg.get("end") is not None else "UNKNOWN"))
+PYPHASES
+            return $?
             ;;
         list)
             if [ ! -d "$proofs_dir" ]; then
@@ -32064,6 +33845,38 @@ PYEOF
             fi
             exit 0
             ;;
+        md)
+            # Paste-able Markdown for a PR comment, a Slack message, or a
+            # ticket. The renderer already existed -- render_evidence_receipt_md
+            # in lib/proof-pr.sh -- but was reachable ONLY when Loki opened a PR
+            # itself. So the one form of the receipt built for humans to forward
+            # could not be produced on demand, which is the built-and-unreachable
+            # pattern this project keeps finding.
+            #
+            # Reuses that renderer rather than adding a second one: two writers
+            # of one artifact drift, and the drift surfaces as a PR body and a
+            # pasted summary disagreeing about the same run.
+            local id="${1:-}"
+            if [ -z "$id" ]; then
+                echo -e "${RED}Missing proof id.${NC} Use 'loki proof list'." >&2
+                exit 2
+            fi
+            local pj="${proofs_dir}/${id}/proof.json"
+            if [ ! -f "$pj" ]; then
+                echo -e "${RED}Proof not found: ${id}${NC}" >&2
+                echo "Use 'loki proof list' to see available proofs." >&2
+                exit 1
+            fi
+            local _pr_lib="$_LOKI_SCRIPT_DIR/lib/proof-pr.sh"
+            if [ ! -f "$_pr_lib" ]; then
+                echo -e "${RED}Renderer not found: ${_pr_lib}${NC}" >&2
+                exit 3
+            fi
+            # shellcheck source=/dev/null
+            source "$_pr_lib"
+            render_evidence_receipt_md "$pj"
+            exit 0
+            ;;
         verify)
             # Deterministic re-check of a receipt against the repo: re-hashes the
             # canonical proof (tamper check) and re-derives the diff from the
@@ -32073,6 +33886,21 @@ PYEOF
             # inconsistent edit is caught. It does NOT prove non-forgeability on
             # the unsigned path (a hand-forger can rewrite facts and re-hash);
             # neutral non-forgeability requires the signed record.
+            # --human renders the verdict plus every failure reason as prose.
+            # JSON stays the DEFAULT so machine consumers, which pipe this
+            # stdout verbatim, are unaffected. The flag is STRIPPED from the
+            # positional args rather than assumed at a fixed index, so it works
+            # before or after the id.
+            local _pv_human=0 _pv_args=()
+            local _pv_a
+            for _pv_a in "$@"; do
+                case "$_pv_a" in
+                    --human) _pv_human=1 ;;
+                    *) _pv_args+=("$_pv_a") ;;
+                esac
+            done
+            set -- "${_pv_args[@]+"${_pv_args[@]}"}"
+
             local id="${1:-}"
             if [ -z "$id" ]; then
                 echo -e "${RED}Missing proof id.${NC} Use 'loki proof list'."
@@ -32091,7 +33919,11 @@ PYEOF
                 echo -e "${RED}Verifier not found (autonomy/lib/proof-verify.py).${NC}"
                 exit 2
             fi
-            python3 "$verifier" "$pj" "${TARGET_DIR:-.}"
+            if [ "$_pv_human" -eq 1 ]; then
+                python3 "$verifier" --human "$pj" "${TARGET_DIR:-.}"
+            else
+                python3 "$verifier" "$pj" "${TARGET_DIR:-.}"
+            fi
             exit $?
             ;;
         open)

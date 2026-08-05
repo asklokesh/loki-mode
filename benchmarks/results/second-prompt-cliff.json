@@ -1,0 +1,22 @@
+{
+  "generated": "2026-07-30T23:51:08Z",
+  "question": "Does a follow-up request regress what the first request built? (the 'second-prompt cliff')",
+  "method": "Two scenarios, 3 trials each, opencode 1.18.9 on a fresh git repo per trial. Scenario A adds a NEW file and checks the first file survives untouched. Scenario B EXTENDS an existing file and checks the original function survives. Verified by file content, not by the agent's self-report.",
+  "scenario_a_new_file": {
+    "trials": 3,
+    "prompt1_built": 3,
+    "prompt2_built": 3,
+    "first_file_survived": 3,
+    "regressions": 0
+  },
+  "scenario_b_extend_code": {
+    "trials": 3,
+    "add_built": 3,
+    "add_survived": 3,
+    "sub_added": 3,
+    "regressions": 0
+  },
+  "result": "0 regressions in 6 trials",
+  "not_claimed": "This does NOT show the second-prompt cliff is absent in general. Two trivial scenarios on one CLI is a narrow probe: no multi-file refactor, no framework app, no ambiguous instruction, no long conversation history. It shows the simplest form of the failure did not reproduce here.",
+  "why_recorded_anyway": "A negative result is still a measurement. The alternative was to assert the cliff exists because research says it is a churn driver, and then 'fix' something that did not reproduce -- which would have been a fabricated problem and a fabricated fix."
+}

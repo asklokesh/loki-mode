@@ -107,12 +107,12 @@ fi
 
 # ---------- Idempotency: mtime stable across a re-call within 1s ----------
 if [ -f "$p" ]; then
-    mtime1=$(stat -f %m "$p" 2>/dev/null || stat -c %Y "$p" 2>/dev/null)
+    mtime1=$(stat -c %Y "$p" 2>/dev/null || stat -f %m "$p" 2>/dev/null)
     # Hold a brief delay then re-call. Bash bundle writes unconditionally
     # (see loki_mcp_config_path comment); we expect mtime change <= 1s.
     sleep 0.1
     p2=$(TARGET_DIR="$TMPROOT" loki_mcp_config_path)
-    mtime2=$(stat -f %m "$p" 2>/dev/null || stat -c %Y "$p" 2>/dev/null)
+    mtime2=$(stat -c %Y "$p" 2>/dev/null || stat -f %m "$p" 2>/dev/null)
     if [ "$p" = "$p2" ]; then
         ok "mcp_config_path: re-call returns the same path"
     else

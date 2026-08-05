@@ -171,6 +171,63 @@ LOKI_GITHUB_IMPORT=true \
 
 ---
 
+## Multiple issues at once (parallel, reliably)
+
+There are two safe ways to work several issues; pick by whether you want them
+concurrent.
+
+### Sequential (simplest, one process, one checkout)
+
+Import all open issues into one queue and let a single run drain them one at a
+time. No worktree/state collisions because there is only one run.
+
+```bash
+LOKI_GITHUB_IMPORT=true loki start        # drains .loki/queue sequentially
+```
+
+### Concurrent (one isolated run PER issue)
+
+To run N issues at the SAME time, each run needs its OWN git worktree AND its
+OWN state dir. `--pr`/`--worktree` isolates the git branch, but two runs in the
+same checkout still share one `.loki/` unless you also set a distinct `LOKI_DIR`.
+Give each issue its own checkout + `LOKI_DIR`:
+
+```bash
+for n in 101 102 103; do
+  git worktree add "../repo-issue-$n" -b "loki/issue-$n" >/dev/null
+  ( cd "../repo-issue-$n" \
+      && LOKI_DIR="$PWD/.loki" \
+         loki start "owner/repo#$n" --pr --detach )
+done
+loki status --all       # watch all runs
+```
+
+Each run is fully isolated: separate working tree, branch, and `.loki/` state, so
+they cannot corrupt each other's branches or worktrees.
+
+DO NOT run several `loki start ... --detach` from the SAME directory with a shared
+`.loki/`. The runs collide on shared (non-namespaced) worktree paths and state,
+which produces missing branches, "claimed worktree missing", and a repeating
+`Merge requested: testing/docs` log (the auxiliary sub-streams, not your issues).
+
+### Inside a Claude Code session (the Loki Mode skill)
+
+When you invoke Loki Mode from inside Claude Code, Loki detects the nested agent
+(`CLAUDECODE`) and automatically disables its internal `testing`/`docs`
+worktree sub-streams (they would spawn further nested `claude` sessions that
+collide) -- your issue work still runs. To fan out across several issues from a
+Claude Code session, prefer the per-issue-isolated loop above (each with its own
+worktree + `LOKI_DIR`), or let Claude Code orchestrate one Loki run per issue.
+Re-enable the sub-streams explicitly with `LOKI_PARALLEL_TESTING=true` /
+`LOKI_PARALLEL_DOCS=true` only if you know the checkout is not shared.
+
+Notes:
+- `--pr` leaves the PR for you to merge (auto-merge OFF). Use `--ship` to
+  auto-merge. Either way the "Merge requested" line now logs once, not on a loop.
+- `loki status --all` and `loki stop --all` operate across all runs/projects.
+
+---
+
 ## CLI Commands
 
 ```bash

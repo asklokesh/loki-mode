@@ -123,10 +123,10 @@ rm -rf "$TMP2"
 # ---------- 3. Idempotent write: re-call leaves mtime unchanged ----------
 # Re-call inside the original (no-LSP) directory; bundle bytes are
 # identical to the first call, so the file must not be rewritten.
-mtime_a=$(stat -f %m "$bundle1" 2>/dev/null || stat -c %Y "$bundle1" 2>/dev/null)
+mtime_a=$(stat -c %Y "$bundle1" 2>/dev/null || stat -f %m "$bundle1" 2>/dev/null)
 sleep 1
 bundle1b=$(PATH="$no_lsp_path" TARGET_DIR="$TMPROOT" loki_mcp_config_path)
-mtime_b=$(stat -f %m "$bundle1b" 2>/dev/null || stat -c %Y "$bundle1b" 2>/dev/null)
+mtime_b=$(stat -c %Y "$bundle1b" 2>/dev/null || stat -f %m "$bundle1b" 2>/dev/null)
 if [ "$bundle1" = "$bundle1b" ]; then
     ok "idempotent: re-call returns the same path"
 else

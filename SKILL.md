@@ -3,17 +3,19 @@ name: loki-mode
 description: Autonomous spec-driven build system with a built-in trust layer. It does not call work done until it is verified (RARV-C closure loop, 8 quality gates, completion council, verified-completion evidence gate). Triggers on "Loki Mode". Takes a spec (PRD, GitHub issue, OpenAPI doc, etc.) to deployed product with minimal human intervention. Provider-agnostic. Requires --dangerously-skip-permissions flag.
 ---
 
-# Loki Mode v7.128.2
+# Loki Mode v9.11.0
 
 **You are an autonomous agent. You make decisions. You do not ask questions. You do not stop.**
 
-**Spec in, verified product out.** Spec-driven: a "spec" is whatever describes the work -- a Markdown PRD, a GitHub issue, an OpenAPI doc, a Jira ticket (a PRD is one form of spec). The differentiator is the trust layer: Loki does not call work done until it is verified. The RARV-C closure loop, 8 quality gates, the completion council, and the verified-completion evidence gate must all clear before completion is accepted.
+**Spec in, verified product out.** Spec-driven: a "spec" is whatever describes the work -- a Markdown PRD, a GitHub issue, an OpenAPI doc, a Jira ticket (a PRD is one form of spec). The differentiator is the trust layer: Loki does not call work done until it is verified. The RARV-C closure loop, 8 quality gates, the completion council, and the verified-completion evidence gate must all clear before completion is accepted. The evidence gate blocks on empty-diff, red tests, an unhealthy serveable app (runtime-boot axis, `LOKI_EVIDENCE_BOOT_GATE=0` to opt out), and a leaked credential in the changed files (secret-leak axis, `LOKI_EVIDENCE_SECRET_GATE=0` to opt out) -- v8.0.0.
 
 **Evidence Receipt (verify it yourself).** Every run writes a receipt to `.loki/proofs/<run_id>/` (opt out with `LOKI_PROOF=0`) that separates deterministic FACTS (git diff with base/head SHAs and a `diff_sha256`, the test command + exit code, the build command + exit code, each gate verdict) from AI ASSESSMENTS (the council verdict, labeled judgment not proof). The headline is computed only from the facts: VERIFIED (tests ran a real command and exited 0, diff non-empty, nothing skipped), VERIFIED WITH GAPS (each gap listed by name), or NOT VERIFIED (a check ran and failed). Inspect and re-check with `loki proof list|show <id>|verify <id>` (aliased `loki receipt`); `loki proof verify` re-hashes the receipt (tamper) and re-derives the diff from the recorded base SHA against the live repo (drift), exiting 0 clean / 1 tamper-or-drift. This is honesty-of-done, not a claim that the code is bug-free.
 
-**Provider-agnostic (stable since v5.0.0):** runs on Claude/Codex/Cline/Aider with abstract model tiers and degraded mode for non-Claude providers; no vendor lock-in. Gemini deprecated v7.5.18. See `skills/providers.md`. **Current track (v7.7.x):** LSP grounding as first-class agent tool (v7.7.0-v7.7.9; lsp_get_diagnostics actually-returns-diagnostics regression fix v7.7.14), provider_source cli (v7.7.11-v7.7.12 bash/bun parity), Docker/bash-3.2 robustness (v7.7.13), audit chain cross-file verification fix (v7.7.15), Phase 1 RARV-C closure (real provider judges, gate-failure flock, synthetic PRD e2e, status `--json`).
+**Provider-agnostic (stable since v5.0.0):** runs on Claude/Codex/Cline/Aider with abstract model tiers and degraded mode for non-Claude providers; no vendor lock-in. Gemini deprecated v7.5.18. See `skills/providers.md`. **Current track (v8.0.0):** the Anthropic Agent SDK route (see below), spec-mode expansion for OpenAPI/GraphQL/Postman contracts, the runtime-boot and secret-leak evidence axes, and `loki steer` / `loki why` for mid-run control. Earlier tracks: LSP grounding as a first-class agent tool (v7.7.x) and Phase 1 RARV-C closure (real provider judges, gate-failure flock, synthetic PRD e2e, status `--json`).
 
 **Runtime migration:** Bash-to-Bun migration. Read-only commands (`version`, `status`, `stats`, `doctor`, `provider show/list`, `memory list/index`) flow through Bun runtime via `bin/loki` since v7.3.0. Every other command remains on the Bash runtime (`autonomy/loki`). Rollback: `LOKI_LEGACY_BASH=1`. See `UPGRADING.md` and `docs/architecture/ADR-001-runtime-migration.md`.
+
+**Anthropic Agent SDK route (v8.0.0, opt-in, default-off):** a claude-binary-free path where the RARV loop runs on `@anthropic-ai/claude-agent-sdk` `query()` and judges run on the raw `@anthropic-ai/sdk`. One operator switch `LOKI_SDK_MODE` (`off` default / `judges` / `full`), mirrored byte-for-byte in bash (`autonomy/lib/sdk-mode.sh`) and TypeScript (`loki-ts/src/runner/sdk_mode.ts`). Unset = byte-identical to the claude-CLI route. See `references/sdk-mode.md`.
 
 ---
 
@@ -203,7 +205,7 @@ claude --dangerously-skip-permissions
 # Unified `loki start` -- one command, auto-detected mode
 loki start                                   # no arg: analyze current dir, auto-generate spec
 loki start ./prd.md                          # PRD mode (.md/.json/.txt/.yaml) -- a PRD is one form of spec
-loki start ./openapi.yaml                    # SPEC mode (OpenAPI doc treated as the spec)
+loki start ./openapi.yaml                    # SPEC mode: OpenAPI/GraphQL/Postman contract expands to a per-operation checklist (v8.0.0)
 loki start owner/repo#123                    # ISSUE mode (GitHub specific repo)
 loki start https://github.com/o/r/issues/42  # ISSUE mode (GitHub URL)
 loki start 123                               # ISSUE mode (GitHub issue in current repo)
@@ -250,7 +252,9 @@ When running with `autonomy/run.sh`, you can intervene:
 | Method | Effect |
 |--------|--------|
 | `touch .loki/PAUSE` | Pauses after current session |
+| `loki steer "<note>"` | Appends a directive to `.loki/HUMAN_INPUT.md` (needs `LOKI_PROMPT_INJECTION=1`); v8.0.0 |
 | `echo "instructions" > .loki/HUMAN_INPUT.md` | Injects directive (requires `LOKI_PROMPT_INJECTION=true`) |
+| `loki why` | Explains the current outcome; on a stall names the real stall reason and suggests `loki steer` (v8.0.0) |
 | `touch .loki/STOP` | Stops immediately |
 | Ctrl+C (once) | Pauses, shows options |
 | Ctrl+C (twice) | Exits immediately |
@@ -352,6 +356,59 @@ Two completion-trust features extend the verification gates. Full details in `sk
 - **Held-out spec evals:** ~25% of checklist items (deterministic `sha256(id)` order, `N >= 4`) are reserved into `.loki/checklist/held-out.json` and excluded from the build prompt feed; the completion council blocks if a held-out item fails. Opt out with `LOKI_HELDOUT_GATE=0`. Honest limit: this guards the prompt feed, not a sandbox; the reservation file is on disk and an agent with filesystem access can read it.
 - **Inconclusive-baseline disclosure:** when the evidence gate cannot establish a diff baseline (`no_git_repo` / `no_run_start_sha`) it writes `.loki/state/evidence-inconclusive.json` and `COMPLETION.txt` carries an honest "not independently verified" line. It never blocks non-git projects; red tests still block.
 
+## Harness intelligence (v8.0.0)
+
+Four measured-harness disciplines layered onto the existing trust core. None of
+them can weaken a gate: each either adds verification or saves budget on work
+that cannot succeed.
+
+| Env Var | Default | Effect |
+|---------|---------|--------|
+| `LOKI_CONFIDENCE_SPIKE=0` | on | Disable the confidence-spike re-check |
+| `LOKI_CONFIDENCE_SPIKE_DELTA` | `40` | Confidence jump (points) that counts as a spike |
+| `LOKI_CONFIDENCE_SPIKE_MIN` | `90` | Absolute level that counts as a spike on first arrival |
+| `LOKI_GOAL_SCORING=0` | on | Disable the goal-measurability advisory |
+| `LOKI_SMART_RETRY=0` | on | Retry every failure, including non-retryable ones |
+| `LOKI_SIMPLE=1` | off | Strip the coaching half of the system prompt (-78%, ~1562 tokens/iteration). Experimental ablation arm. |
+
+- **Prompt-cache discipline.** The prompt is split into a cache-stable
+  `<loki_system>` prefix and a volatile `<dynamic_context>` tail at an explicit
+  `[CACHE_BREAKPOINT]`; the SDK judge path applies `cache_control` on that split.
+  Any new always-on instruction belongs in the prefix, or it busts the cache
+  every iteration.
+- **Confidence-spike re-check.** A jump to near-maximal self-reported confidence
+  forces ONE extra verification before the done-signal valve force-stops a run.
+  Strictly additive: a spike can only ADD a verification pass, never skip,
+  shorten, or satisfy a gate. It cannot delay the stagnation valve, and the
+  delay is one-shot, so a repeatedly-spiking run cannot postpone the valve
+  indefinitely.
+- **Hill-climbable goal scoring.** A `COMPLETION_PROMISE` with no measurable
+  target (no number, comparator, named metric, or verifiable artifact) gets a
+  prompt advisory asking for a checkable success condition. Advisory only: it
+  never blocks a build and never rewrites the goal. Suppressed for an absent
+  goal and in perpetual mode, where open-endedness is the chosen configuration.
+  Byte-mirrored across the bash and TypeScript routes.
+- **Smart retry.** A positively-identified permanent failure (bad credentials,
+  unknown model, exhausted quota) stops early instead of burning the retry
+  budget on guaranteed-identical failures. Fail-safe: an unrecognized error
+  stays TRANSIENT and retries exactly as before, and rate limits are explicitly
+  excluded from the permanent set.
+
+## Operational observability (v8.0.0)
+
+- **SDK capability-degradation event.** An SDK load or stream failure appends a
+  structured `capability_degraded` record to `.loki/events.jsonl` (same
+  `{type, source, timestamp, payload}` envelope as the hook events) instead of
+  existing only as prose in the captured output, so an unattended operator can
+  distinguish "the SDK could not load" from "the model did poor work". The
+  record states `fail_closed: true` rather than leaving it to be assumed. No env
+  var: this is signal an operator always wants.
+- **Time to first preview.** `.loki/app-runner/first-preview.json` records the
+  elapsed seconds from run start to the app first serving. Write-once, so a
+  restart cannot overwrite a genuine slow first preview with a flattering
+  warm-start number; skipped entirely rather than guessed when no baseline
+  exists. Bash route only (app-runner integration lives there).
+
 ## First-run UX (v7.29.0)
 
 - **`loki quickstart`:** guided 4-step first build (setup check, one-line idea, offline template match, plan review with real estimator figures); Enter-through-everything builds the sample Todo app; non-TTY/CI exits 2 with an automation hint.
@@ -389,6 +446,11 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.13] for the per-fix list and r
 | Managed Agents (memory mirror) | v7.2.0 | Opt-in via `LOKI_MANAGED_AGENTS` -- see Managed Agents section |
 | Bun runtime (Phase 1) | v7.3.0 | Read-only commands routed through `bin/loki`; `LOKI_LEGACY_BASH=1` to revert |
 | Phase 1 RARV-C closure | v7.5.x | Findings injection, real judges, auto-learnings, handoff.md |
+| Anthropic SDK route | v8.0.0 | Opt-in, default-off; one switch `LOKI_SDK_MODE` -- see `references/sdk-mode.md` |
+| Harness intelligence | v8.0.0 | Prompt-cache discipline, confidence-spike re-check, goal scoring, smart retry |
+| SDK degradation event | v8.0.0 | Structured `capability_degraded` record on `.loki/events.jsonl` |
+| Time to first preview | v8.0.0 | `.loki/app-runner/first-preview.json`, write-once (bash route) |
+| Opt-in build analytics | v8.0.0 | `build_verified` event behind a strict second gate, allowlist-only fields |
 
 ## Planned / In-Progress Features
 
@@ -408,4 +470,4 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.13] for the per-fix list and r
 
 ---
 
-**v7.128.2 | [Autonomi](https://www.autonomi.dev/) flagship product | ~260 lines core**
+**v9.11.0 | [Autonomi](https://www.autonomi.dev/) flagship product | ~410 lines core**

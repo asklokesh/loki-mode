@@ -1,0 +1,374 @@
+<title>loki start - execution flow</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --surface: #ffffff;
+    --surface-2: #eef0f4;
+    --ink: #1a1e27;
+    --ink-soft: #4a515f;
+    --muted: #79808f;
+    --line: #dce0e8;
+    --accent: #b9741a;       /* signal amber - the running-loop color */
+    --accent-soft: #f3e4cd;
+    --ok: #3f8a5b;
+    --ok-soft: #dbeee1;
+    --warn: #b98008;
+    --block: #b8433b;
+    --block-soft: #f6dedb;
+    --spine: #c9ced9;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --radius: 10px;
+    --measure: 68ch;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151c;
+      --surface: #191d26;
+      --surface-2: #1f242f;
+      --ink: #eef1f6;
+      --ink-soft: #b7becc;
+      --muted: #8b93a3;
+      --line: #2b313d;
+      --accent: #e0a53d;
+      --accent-soft: #33291596;
+      --ok: #58ac74;
+      --ok-soft: #1c2f2340;
+      --warn: #d8a53a;
+      --block: #d4655c;
+      --block-soft: #34201e80;
+      --spine: #38404e;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #f7f8fa; --surface: #fff; --surface-2: #eef0f4; --ink: #1a1e27;
+    --ink-soft: #4a515f; --muted: #79808f; --line: #dce0e8; --accent: #b9741a;
+    --accent-soft: #f3e4cd; --ok: #3f8a5b; --ok-soft: #dbeee1; --warn: #b98008;
+    --block: #b8433b; --block-soft: #f6dedb; --spine: #c9ced9;
+  }
+  :root[data-theme="dark"] {
+    --bg: #12151c; --surface: #191d26; --surface-2: #1f242f; --ink: #eef1f6;
+    --ink-soft: #b7becc; --muted: #8b93a3; --line: #2b313d; --accent: #e0a53d;
+    --accent-soft: #33291596; --ok: #58ac74; --ok-soft: #1c2f2340; --warn: #d8a53a;
+    --block: #d4655c; --block-soft: #34201e80; --spine: #38404e;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--sans); line-height: 1.6;
+    font-size: 16px; letter-spacing: -0.005em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 3.5rem 1.5rem 5rem; }
+
+  header { margin-bottom: 3rem; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 0.9rem;
+    font-weight: 600;
+  }
+  h1 {
+    font-size: clamp(1.9rem, 4.5vw, 2.7rem); line-height: 1.08;
+    margin: 0 0 0.7rem; font-weight: 680; letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+  h1 code { font-family: var(--mono); font-weight: 600; color: var(--accent); font-size: 0.86em; }
+  .lede { color: var(--ink-soft); max-width: var(--measure); font-size: 1.05rem; margin: 0; }
+
+  h2 {
+    font-size: 1.35rem; margin: 3.2rem 0 1.1rem; font-weight: 640;
+    letter-spacing: -0.015em; padding-top: 1.6rem; border-top: 1px solid var(--line);
+  }
+  h2 .n {
+    font-family: var(--mono); font-size: 0.8rem; color: var(--muted);
+    margin-right: 0.6rem; font-weight: 500;
+  }
+  p { max-width: var(--measure); }
+  p.note { color: var(--ink-soft); font-size: 0.96rem; }
+
+  /* ---- Flow spine ---- */
+  .flow { margin: 1.5rem 0 0.5rem; position: relative; }
+  .step {
+    display: grid; grid-template-columns: 2.4rem 1fr; gap: 0 1rem;
+    position: relative; padding-bottom: 1.4rem;
+  }
+  .step:last-child { padding-bottom: 0; }
+  .rail { display: flex; flex-direction: column; align-items: center; }
+  .dot {
+    width: 2.4rem; height: 2.4rem; border-radius: 50%; flex: none;
+    display: grid; place-items: center; font-family: var(--mono);
+    font-size: 0.82rem; font-weight: 600; background: var(--surface);
+    border: 1.5px solid var(--line); color: var(--ink-soft); z-index: 1;
+  }
+  .step.loop .dot { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .step.gate .dot { border-color: var(--block); color: var(--block); }
+  .step.done .dot { border-color: var(--ok); color: var(--ok); }
+  .connector { width: 2px; flex: 1 1 auto; background: var(--spine); min-height: 0.6rem; margin-top: 2px; }
+  .step:last-child .connector { display: none; }
+  .body-c { padding-top: 0.15rem; min-width: 0; }
+  .step h3 { margin: 0.35rem 0 0.25rem; font-size: 1.02rem; font-weight: 620; letter-spacing: -0.01em; }
+  .step p { margin: 0.15rem 0 0; font-size: 0.94rem; color: var(--ink-soft); max-width: 60ch; }
+  .step .meta {
+    font-family: var(--mono); font-size: 0.76rem; color: var(--muted);
+    margin-top: 0.45rem; display: flex; flex-wrap: wrap; gap: 0.3rem 0.9rem;
+  }
+  .step .meta b { color: var(--ink-soft); font-weight: 600; }
+  .step code { font-family: var(--mono); font-size: 0.85em; background: var(--surface-2); padding: 0.05em 0.35em; border-radius: 4px; }
+
+  /* the loop bracket */
+  .loopwrap { position: relative; }
+  .loopband {
+    border: 1.5px dashed var(--accent); border-radius: var(--radius);
+    background: var(--accent-soft); padding: 1.3rem 1.2rem 0.6rem;
+    margin: 0.2rem 0 1.4rem 0;
+  }
+  .loopband .tag {
+    display: inline-block; font-family: var(--mono); font-size: 0.7rem;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent);
+    font-weight: 600; margin-bottom: 0.9rem;
+  }
+  .loopband .flow { margin: 0; }
+  .loopback {
+    font-family: var(--mono); font-size: 0.78rem; color: var(--accent);
+    margin-top: 0.4rem; padding-left: 3.4rem;
+  }
+
+  /* ---- Tables ---- */
+  .tablewrap { overflow-x: auto; margin: 1.1rem 0; border: 1px solid var(--line); border-radius: var(--radius); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; min-width: 460px; }
+  th, td { text-align: left; padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th {
+    font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--muted); font-weight: 600;
+    background: var(--surface-2); position: sticky; top: 0;
+  }
+  tr:last-child td { border-bottom: none; }
+  td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink-soft); }
+  td code { font-family: var(--mono); font-size: 0.85em; }
+  .pill {
+    display: inline-block; font-family: var(--mono); font-size: 0.7rem;
+    padding: 0.1rem 0.5rem; border-radius: 20px; font-weight: 600; white-space: nowrap;
+  }
+  .pill.opus { background: var(--block-soft); color: var(--block); }
+  .pill.sonnet { background: var(--accent-soft); color: var(--accent); }
+  .pill.haiku { background: var(--ok-soft); color: var(--ok); }
+
+  /* ---- Improve cards ---- */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.9rem; margin: 1.2rem 0; }
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 1.1rem 1.15rem; border-left: 3px solid var(--accent);
+  }
+  .card.cut { border-left-color: var(--block); }
+  .card.keep { border-left-color: var(--ok); }
+  .card h4 { margin: 0 0 0.4rem; font-size: 0.98rem; font-weight: 620; }
+  .card p { margin: 0; font-size: 0.88rem; color: var(--ink-soft); max-width: none; }
+  .card .lbl {
+    font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.1em;
+    text-transform: uppercase; font-weight: 600; display: block; margin-bottom: 0.5rem;
+  }
+  .card.cut .lbl { color: var(--block); }
+  .card.keep .lbl { color: var(--ok); }
+  .card .lbl { color: var(--accent); }
+
+  .callout {
+    background: var(--surface-2); border-radius: var(--radius); padding: 1.1rem 1.25rem;
+    margin: 1.4rem 0; font-size: 0.92rem; color: var(--ink-soft); border: 1px solid var(--line);
+  }
+  .callout strong { color: var(--ink); }
+
+  footer { margin-top: 3.5rem; padding-top: 1.5rem; border-top: 1px solid var(--line); font-family: var(--mono); font-size: 0.76rem; color: var(--muted); }
+  footer code { color: var(--ink-soft); }
+
+  a { color: var(--accent); }
+  @media (max-width: 560px) {
+    .wrap { padding: 2.5rem 1.1rem 4rem; }
+    .step { grid-template-columns: 2rem 1fr; }
+    .dot { width: 2rem; height: 2rem; font-size: 0.72rem; }
+    .loopback { padding-left: 3rem; }
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Loki Mode v8 &middot; execution reference</p>
+    <h1>What happens when you run <code>loki start</code></h1>
+    <p class="lede">A grounded walk through the pipeline: one-time setup, the RARV loop that repeats until the work is verifiably done, and the gates that decide "done." Numbers below are the shipped defaults, read from the source.</p>
+  </header>
+
+  <!-- ============ SECTION 1: THE FLOW ============ -->
+  <h2><span class="n">01</span>The flow, end to end</h2>
+  <p class="note">Setup runs once. The middle band repeats: each pass is one <b>iteration</b>. The loop only exits when the completion council agrees the work is done, or a hard limit trips.</p>
+
+  <div class="flow">
+    <div class="step">
+      <div class="rail"><div class="dot">1</div><div class="connector"></div></div>
+      <div class="body-c">
+        <h3>Resolve the spec</h3>
+        <p>Detect what you passed: a PRD file, a GitHub/Jira issue ref, or an API contract. A contract (OpenAPI/GraphQL/Postman) is expanded into a per-operation checklist. No file? Loki reverse-engineers a PRD from the codebase.</p>
+        <div class="meta"><span><b>cost</b> free / local</span><span><b>time</b> seconds</span></div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="rail"><div class="dot">2</div><div class="connector"></div></div>
+      <div class="body-c">
+        <h3>Preflight and checkpoint</h3>
+        <p>Detect complexity (simple / standard / complex), pick the phase plan, snapshot a checkpoint and record the run-start git SHA. This SHA is what the evidence gate later diffs against to prove something shipped.</p>
+        <div class="meta"><span><b>cost</b> free / local</span><span><b>time</b> seconds</span></div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="rail"><div class="dot loop" style="border-color:var(--accent)">&#8635;</div><div class="connector"></div></div>
+      <div class="body-c">
+        <h3>Enter the RARV loop</h3>
+        <p>The core. Each iteration builds a prompt (spec + memory + phase + checklist status), calls the model, then runs post-iteration checks. Repeats.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- the loop band -->
+  <div class="loopwrap">
+    <div class="loopband">
+      <span class="tag">&#8635; repeats per iteration &middot; R &rarr; A &rarr; R &rarr; V</span>
+      <div class="flow">
+        <div class="step loop">
+          <div class="rail"><div class="dot">R</div><div class="connector"></div></div>
+          <div class="body-c">
+            <h3>Reason &middot; build the prompt</h3>
+            <p>Assemble spec, retrieved memory, current SDLC phase, queued tasks, and checklist state into one prompt. Iteration <code>% 4 == 0</code> uses the planning tier.</p>
+            <div class="meta"><span><b>model</b> planning tier</span></div>
+          </div>
+        </div>
+        <div class="step loop">
+          <div class="rail"><div class="dot">A</div><div class="connector"></div></div>
+          <div class="body-c">
+            <h3>Act &middot; the model works</h3>
+            <p>The provider runs: writes code, edits files, runs tests, commits. This is the expensive step - the model call dominates wall-clock and cost. (v8: this can run on the Anthropic SDK instead of the claude CLI.)</p>
+            <div class="meta"><span><b>model</b> development tier</span><span><b>cost</b> $$ (dominant)</span></div>
+          </div>
+        </div>
+        <div class="step loop">
+          <div class="rail"><div class="dot">R</div><div class="connector"></div></div>
+          <div class="body-c">
+            <h3>Reflect &middot; verify the work</h3>
+            <p>Checklist verifier maps each requirement to verified / failing / pending. The app runner boots the build and health-checks it. Playwright smoke tests run if it is a web app.</p>
+            <div class="meta"><span><b>cost</b> local + light model</span></div>
+          </div>
+        </div>
+        <div class="step loop">
+          <div class="rail"><div class="dot">V</div><div class="connector"></div></div>
+          <div class="body-c">
+            <h3>Verify &middot; gates + completion check</h3>
+            <p>Every ~5th iteration (after a 3-iteration minimum) the completion council + evidence gate decide: is this actually done? If not, loop back with the findings injected into the next prompt.</p>
+            <div class="meta"><span><b>model</b> fast tier + reviewers</span><span><b>cost</b> $ (council)</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="loopback">&#8617; not done &rarr; next iteration (findings fed forward)</div>
+    </div>
+  </div>
+
+  <div class="flow">
+    <div class="step gate">
+      <div class="rail"><div class="dot">&#10007;</div><div class="connector"></div></div>
+      <div class="body-c">
+        <h3>The completion gate</h3>
+        <p>Blocks "done" on: empty diff vs run-start SHA, red tests, an unhealthy serveable app (boot axis), or a leaked credential (secret axis). Any one failing keeps the loop running. This is the never-fake-green moat.</p>
+        <div class="meta"><span><b>result</b> pass &rarr; finish &middot; fail &rarr; loop</span></div>
+      </div>
+    </div>
+    <div class="step done">
+      <div class="rail"><div class="dot">&#10003;</div></div>
+      <div class="body-c">
+        <h3>Finish and own</h3>
+        <p>Write the Evidence Receipt (facts vs assessments), the proof-of-run, and the completion summary ("your app is live at ..."). The loop exits: complete, or max-iterations, or human stop.</p>
+        <div class="meta"><span><b>cost</b> free / local</span><span><b>time</b> seconds</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ SECTION 2: ITERATIONS + TIMING ============ -->
+  <h2><span class="n">02</span>Iterations, models, and timing</h2>
+  <p class="note">The RARV cycle rotates a model tier every iteration (<code>iteration % 4</code>). How many iterations a build takes depends on complexity and how fast the council is satisfied.</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>RARV step</th><th>Phase</th><th>Tier</th><th>Maps to</th><th>Rough time / call</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="num">iter % 4 = 0</td><td>Reason</td><td>planning</td><td><span class="pill sonnet">sonnet-5*</span></td><td class="num">~20-90s</td></tr>
+        <tr><td class="num">iter % 4 = 1</td><td>Act</td><td>development</td><td><span class="pill sonnet">sonnet-5*</span></td><td class="num">~1-5 min</td></tr>
+        <tr><td class="num">iter % 4 = 2</td><td>Reflect</td><td>development</td><td><span class="pill sonnet">sonnet-5*</span></td><td class="num">~1-5 min</td></tr>
+        <tr><td class="num">iter % 4 = 3</td><td>Verify</td><td>fast</td><td><span class="pill sonnet">sonnet-5*</span></td><td class="num">~20-90s</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">* Since v7.104.0 all three tiers default to <code>sonnet-5</code> (haiku disabled for quality; opus reachable for planning via config). So today the "tier rotation" changes <em>effort/prompt framing</em> more than the underlying model. Timings are order-of-magnitude for a real build step, not measured guarantees - actual cost is dominated by the Act/Reflect model turns.</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Complexity</th><th>Phase plan</th><th>Typical iterations</th><th>Hard ceiling</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>simple</td><td class="num">3 phases</td><td class="num">~3-8</td><td class="num" rowspan="3">1000 default<br>(5 in some quick modes)</td></tr>
+        <tr><td>standard</td><td class="num">6 phases</td><td class="num">~6-15</td></tr>
+        <tr><td>complex</td><td class="num">8 phases</td><td class="num">~12-30+</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout">
+    <strong>Completion cadence:</strong> the council runs at most every <code>5th</code> iteration and never before iteration <code>3</code> (both configurable via <code>LOKI_COUNCIL_CHECK_INTERVAL</code> / <code>LOKI_COUNCIL_MIN_ITERATIONS</code>). So the earliest a build can be declared done is around iteration 3-5. Most wall-clock and dollar cost is the model turns in Act/Reflect, not the gates.
+  </div>
+
+  <!-- ============ SECTION 3: WHAT TO IMPROVE ============ -->
+  <h2><span class="n">03</span>Worth revisiting now that models are stronger</h2>
+  <p class="note">Honest read: these are opportunities, not measured wins. Several would need the parked benchmark (a real baseline) to size. Flagged by intent, not fabricated numbers.</p>
+
+  <div class="cards">
+    <div class="card">
+      <span class="lbl">Tune</span>
+      <h4>Fewer, bigger iterations</h4>
+      <p>Stronger models finish more per turn. The 4-step tier rotation and the ~5-iteration council cadence were tuned for weaker models - a stronger model may warrant checking completion earlier (interval 2-3) so simple builds exit in 3-4 iterations, not 8.</p>
+    </div>
+    <div class="card">
+      <span class="lbl">Tune</span>
+      <h4>Collapse the tier rotation</h4>
+      <p>All tiers already resolve to sonnet-5, so the R/A/R/V model switch is now mostly effort framing. Consider making it explicitly effort-based (planning=high, fast=low) rather than pretending to swap models.</p>
+    </div>
+    <div class="card cut">
+      <span class="lbl">Cut / simplify</span>
+      <h4>Redundant re-verification passes</h4>
+      <p>Checklist verify + app boot + playwright + council partly overlap. With a more reliable model, the belt-and-suspenders re-verify on every cycle can likely move to only the pre-completion check, saving a light model call per iteration.</p>
+    </div>
+    <div class="card cut">
+      <span class="lbl">Cut / simplify</span>
+      <h4>Text-parse fallbacks</h4>
+      <p>Several judge sites still keep a regex/text-parse fallback beneath the structured path. Now that structured outputs are reliable, the fallbacks are dead weight to maintain (though they are the fail-closed safety net - remove only with a measured green).</p>
+    </div>
+    <div class="card keep">
+      <span class="lbl">Keep</span>
+      <h4>The evidence gate</h4>
+      <p>Empty-diff / red-test / boot / secret axes. This is the moat and gets more valuable as models get more confident - a stronger model is more persuasive when wrong, so the deterministic gate matters more, not less.</p>
+    </div>
+    <div class="card">
+      <span class="lbl">Speed</span>
+      <h4>Prompt caching + fewer spawns</h4>
+      <p>The static prompt prefix (spec, memory) is re-sent each iteration. Real <code>cache_control</code> on the prefix would cut per-iteration token cost on multi-iteration builds. (Contingent: verify the CLI/SDK folds cache across per-iteration processes first.)</p>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>The honest efficiency picture:</strong> no CLI-vs-SDK or before/after speed numbers exist yet - the benchmark that would produce them is parked (needs billable baseline runs). The measured wins so far are on-path micro-optimizations (a council log tail-read went 67ms &rarr; 0.8ms; a checkpoint rebuild dropped ~50 process spawns to 1), not end-to-end build speedups. Treat the "time to completion" gains above as hypotheses to measure, not claims.
+  </div>
+
+  <footer>
+    Sourced from <code>autonomy/run.sh</code> (RARV loop, get_rarv_tier, complexity), <code>autonomy/completion-council.sh</code> (cadence, evidence gate), and <code>references/sdk-mode.md</code>. Defaults as of v8.0.0 on branch feature/v8-agent-sdk. Timings are order-of-magnitude, not benchmarked.
+  </footer>
+</div>

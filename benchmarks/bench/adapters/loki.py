@@ -83,6 +83,64 @@ def _read_iteration_count(loki_dir):
     return None
 
 
+def _read_failure_reason(loki_dir):
+    """The classified reason a terminal failure occurred, from the durable record
+    loki itself writes (.loki/state/LAST_ERROR.json: {error_class, brief, ...}).
+    A failure whose reason is not captured cannot be learned from -- so surface
+    it. Returns a dict {error_class, brief} or None when there is no record
+    (a clean run). Best-effort: any read/parse problem returns None."""
+    path = os.path.join(loki_dir, "state", "LAST_ERROR.json")
+    try:
+        with open(path) as fh:
+            rec = json.load(fh)
+    except Exception:
+        return None
+    if not isinstance(rec, dict):
+        return None
+    cls = rec.get("error_class")
+    brief = rec.get("brief")
+    if cls is None and brief is None:
+        return None
+    return {"error_class": cls, "brief": brief}
+
+
+def _read_verify_verdict(loki_dir):
+    """The build's HONESTY verdict, from the proof loki writes
+    (.loki/proofs/<run_id>/proof.json -> honesty.headline, e.g. "VERIFIED" /
+    "NOT VERIFIED"). This is the honesty AXIS the equivalence report reads from
+    provenance.verify_verdict -- without it the axis is not_captured.
+
+    A build may write several proofs across iterations; the LATEST proof dir
+    (lexicographically largest, they are timestamp-prefixed) is this run's final
+    verdict. Returns the headline string or None (no proof machinery ran).
+    Best-effort: any read/parse problem returns None."""
+    proofs_dir = os.path.join(loki_dir, "proofs")
+    try:
+        run_dirs = sorted(
+            d for d in os.listdir(proofs_dir)
+            if os.path.isdir(os.path.join(proofs_dir, d))
+        )
+    except Exception:
+        return None
+    if not run_dirs:
+        return None
+    # Latest run dir = this run's final proof (timestamp-prefixed names sort).
+    path = os.path.join(proofs_dir, run_dirs[-1], "proof.json")
+    try:
+        with open(path) as fh:
+            proof = json.load(fh)
+    except Exception:
+        return None
+    if not isinstance(proof, dict):
+        return None
+    honesty = proof.get("honesty")
+    if isinstance(honesty, dict):
+        headline = honesty.get("headline")
+        if isinstance(headline, str) and headline.strip():
+            return headline.strip()
+    return None
+
+
 def run(workdir, spec, *, model="claude", timeout=900, runner=None,
         provider="claude"):
     """Run Loki on `spec` inside `workdir` and return the adapter-output dict.
@@ -111,9 +169,19 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
     # LOKI_SESSION_MODEL="claude" (invalid) and silently change nothing. Without
     # this, `--model haiku` in the bench was dropped (the run stayed on sonnet),
     # making tier-routing (Rank 2) unmeasurable.
+    # Do NOT promote the task-spec's default_model LABEL to a session pin when the
+    # CALLER already set LOKI_SESSION_MODEL in the parent env (e.g. the matrix
+    # runner pinning haiku). _base.run_cli merges os.environ then this run_env on
+    # top, so an unconditional set here would clobber the caller's real pin with
+    # the task label ("claude-sonnet-5") and silently dispatch sonnet. Only pin
+    # from the `model` arg when the parent env did NOT already choose a model.
     _pin = (model or "").strip().lower()
     _REAL_MODEL_ALIASES = ("haiku", "sonnet", "opus", "fable")
-    if _pin and (_pin in _REAL_MODEL_ALIASES or _pin.startswith("claude-")):
+    if (
+        "LOKI_SESSION_MODEL" not in os.environ
+        and _pin
+        and (_pin in _REAL_MODEL_ALIASES or _pin.startswith("claude-"))
+    ):
         run_env["LOKI_SESSION_MODEL"] = _pin
     rc, _out, _err, status, duration = _base.run_cli(
         cmd, cwd=workdir, timeout=timeout, runner=runner,
@@ -122,6 +190,8 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
 
     loki_dir = os.path.join(workdir, ".loki")
     iterations = _read_iteration_count(loki_dir)
+    failure_reason = _read_failure_reason(loki_dir)
+    verify_verdict = _read_verify_verdict(loki_dir)
 
     # Cost: shared with the proof generator. None usd == not recorded.
     cost = {"usd": None, "input_tokens": None, "output_tokens": None}
@@ -150,5 +220,13 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
             "verified": True,
             "harness": "loki.start",
             "command": " ".join(cmd),
+            # Why a terminal failure happened (from loki's own LAST_ERROR.json);
+            # None on a clean run. Lets a failed trial be diagnosed and learned
+            # from instead of showing only an opaque exit code.
+            "failure_reason": failure_reason,
+            # The build's honesty verdict (proof.json honesty.headline, e.g.
+            # "VERIFIED" / "NOT VERIFIED"). None when no proof ran. This feeds the
+            # equivalence report's HONESTY axis (was not_captured before this).
+            "verify_verdict": verify_verdict,
         },
     )

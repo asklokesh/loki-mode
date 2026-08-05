@@ -188,6 +188,22 @@ def main():
     _line("| Build | " + build_cell + " |")
     _line("| Security | " + sec_cell + " |")
     _line("| Cost | " + cost_cell + " |")
+    # Gates the operator switched OFF for this run.
+    #
+    # v8.17.0 taught the proof to RECORD disabled_phases; nothing rendered it,
+    # so the receipt a human actually reads still could not distinguish a fully
+    # verified run from one with code review and security switched off. A
+    # recorded fact nobody can see does not make the receipt more honest.
+    #
+    # Only emitted when something WAS disabled. An "all gates ran" row on every
+    # ordinary receipt is noise, and noise in a trust artifact trains readers to
+    # skim past exactly the line that matters on the one run where it appears.
+    _qg = proof.get("quality_gates")
+    _qg = _qg if isinstance(_qg, dict) else {}
+    _off = _qg.get("disabled_phases")
+    _off = [str(x) for x in _off] if isinstance(_off, list) else []
+    if _off:
+        _line("| Gates disabled | " + ", ".join(sorted(_off)) + " |")
     _line("| Base sha | `" + (base_sha or "(none)") + "` |")
     _line("| Head sha | `" + (head_sha or "(none)") + "` |")
     _line()

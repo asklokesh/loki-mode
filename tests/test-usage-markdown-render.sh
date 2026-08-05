@@ -3,10 +3,17 @@
 # Checks the built dashboard/static/index.html for the render function
 # and a representative markdown-to-HTML conversion call.
 
+# Resolve the repo from THIS file's location. A hardcoded absolute path
+# (/Users/lokesh/git/loki-mode) pointed at one developer's checkout: every grep
+# and syntax probe silently hit "No such file or directory" on CI and on any
+# other machine, so the assertions failed for a reason that had nothing to do
+# with the code under test.
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 set -euo pipefail
 
-STATIC_HTML="/Users/lokesh/git/loki-mode/dashboard/static/index.html"
-SCRIPT_JS="/Users/lokesh/git/loki-mode/dashboard-ui/scripts/build-standalone.js"
+STATIC_HTML="$REPO_DIR/dashboard/static/index.html"
+SCRIPT_JS="$REPO_DIR/dashboard-ui/scripts/build-standalone.js"
 PASS=0
 FAIL=0
 

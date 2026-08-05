@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://loki-mode.dev/schemas/code-review.json",
+  "title": "Loki Code-Review Verdict",
+  "description": "Structured output contract for the 8-gate code-review reviewer (main + Devils-Advocate). Claude Code emits this when invoked with --json-schema (INLINE content, not a path) --output-format json. A python3/TS adapter re-materializes it into the legacy 'VERDICT: X\\nFINDINGS:\\n- [severity] description' text so _classify_verdict, _severity_is_blocking, _count_nonblocking_findings, the mergeability score, the DA arm, and aggregate.json stay byte-identical. verdict is the sole gating token; findings[].severity feeds blocking (Critical/High) and mergeability (Medium/Low) weighting. NOTE: JSON Schema cannot express the cross-field rule 'a Critical/High finding requires verdict FAIL'; the re-materializer enforces it (force-FAIL on any Critical/High finding) so a self-contradictory PASS+Critical can never be waved through as non-blocking.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "findings"],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["PASS", "FAIL"],
+      "description": "PASS if no blocking issue; FAIL if a real issue was found. A FAIL with a Critical or High finding blocks the merge; a FAIL with only Medium/Low is a non-blocking dissent. If any finding is Critical or High you MUST set verdict to FAIL."
+    },
+    "findings": {
+      "type": "array",
+      "minItems": 0,
+      "description": "Zero or more issues. Empty array means clean (equivalent to the legacy '- None' bullet).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "description"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["Critical", "High", "Medium", "Low"],
+            "description": "Critical/High are blocking; Medium/Low are advisory and feed the mergeability score."
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "One-line issue description, ideally ending with (file:line)."
+          }
+        }
+      }
+    }
+  }
+}

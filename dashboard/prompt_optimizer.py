@@ -1,6 +1,13 @@
 """
 Prompt Optimizer for Loki Mode.
 
+EXPERIMENTAL / HEURISTIC-ONLY: this module does content-hash version
+tracking of prompt sections, not applied LLM optimization. The suggested
+"changes" are synthetic labels fed through _content_hash, and the
+LLM-as-judge optimization is not yet implemented (see the TODO in
+_generate_changes around line 108). Callers should treat the hash diffs as
+version markers, not as an applied optimization.
+
 Uses failure patterns from FailureExtractor to generate improved prompt
 sections for agents. Stores versioned prompts with change tracking.
 """

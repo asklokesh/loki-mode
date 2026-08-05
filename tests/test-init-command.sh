@@ -90,7 +90,12 @@ fi
 # Test 3: loki init --json produces valid JSON with 22 entries
 # -------------------------------------------
 ((TOTAL++))
-json_output=$("$LOKI" init --json 2>&1) || true
+# Capture stdout ONLY. `2>&1` merged diagnostics into the data channel and made
+# this assertion fail for the wrong reason: it could not distinguish "init emits
+# invalid JSON" (a real bug, which the reinit banner genuinely was) from "the
+# test merged stderr into stdout itself". stdout is the machine-readable
+# channel; a parser in the wild would read exactly this.
+json_output=$("$LOKI" init --json 2>/dev/null) || true
 json_count=$(echo "$json_output" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
 if [ "$json_count" -ge 20 ]; then
     log_pass "init --json produces valid JSON with $json_count entries"

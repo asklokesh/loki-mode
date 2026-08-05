@@ -11,6 +11,7 @@
 import { LokiElement } from '../core/loki-theme.js';
 import { getApiClient, ApiEvents } from '../core/loki-api-client.js';
 import { registerPoll } from '../core/loki-poll-registry.js';
+import { formatUSD, formatTokens, UNKNOWN } from '../core/loki-unified-styles.js';
 
 // Static fallback pricing per million tokens (USD) - updated 2026-02-07
 // At runtime, these are overridden by /api/pricing (which reads .loki/pricing.json)
@@ -39,14 +40,17 @@ export class LokiCostDashboard extends LokiElement {
 
   constructor() {
     super();
+    // Null, not 0: before the first fetch nothing has been measured. Seeding
+    // these at 0 rendered "$0.00 / 0 tokens" on a run that had simply never
+    // been read yet, which is a measurement claim we cannot make.
     this._data = {
-      total_input_tokens: 0,
-      total_output_tokens: 0,
-      estimated_cost_usd: 0,
+      total_input_tokens: null,
+      total_output_tokens: null,
+      estimated_cost_usd: null,
       by_phase: {},
       by_model: {},
       budget_limit: null,
-      budget_used: 0,
+      budget_used: null,
       budget_remaining: null,
       connected: false,
     };
@@ -134,13 +138,15 @@ export class LokiCostDashboard extends LokiElement {
     this._data = {
       ...this._data,
       connected: true,
-      total_input_tokens: cost.total_input_tokens || 0,
-      total_output_tokens: cost.total_output_tokens || 0,
-      estimated_cost_usd: cost.estimated_cost_usd || 0,
+      // `?? null` not `|| 0`: an absent cost field means the reader could not
+      // measure it. Coercing to 0 here told the operator the run was free.
+      total_input_tokens: cost.total_input_tokens ?? null,
+      total_output_tokens: cost.total_output_tokens ?? null,
+      estimated_cost_usd: cost.estimated_cost_usd ?? null,
       by_phase: cost.by_phase || {},
       by_model: cost.by_model || {},
       budget_limit: cost.budget_limit,
-      budget_used: cost.budget_used || 0,
+      budget_used: cost.budget_used ?? null,
       budget_remaining: cost.budget_remaining,
     };
 
@@ -168,21 +174,19 @@ export class LokiCostDashboard extends LokiElement {
   }
 
   _formatTokens(count) {
-    if (!count || count === 0) return '0';
-    if (count >= 1_000_000) return (count / 1_000_000).toFixed(2) + 'M';
-    if (count >= 1_000) return (count / 1_000).toFixed(1) + 'K';
-    return String(count);
+    return formatTokens(count);
   }
 
   _formatUSD(amount) {
-    if (!amount || amount === 0) return '$0.00';
-    if (amount < 0.01) return '<$0.01';
-    return '$' + amount.toFixed(2);
+    return formatUSD(amount);
   }
 
   _getBudgetPercent() {
+    // Geometry: a bar cannot be null pixels wide, so coerce at the point of
+    // use. The bar reads 0% when spend is unmeasured; the text beside it says
+    // so explicitly.
     if (!this._data.budget_limit || this._data.budget_limit <= 0) return 0;
-    return Math.min(100, (this._data.budget_used / this._data.budget_limit) * 100);
+    return Math.min(100, ((this._data.budget_used ?? 0) / this._data.budget_limit) * 100);
   }
 
   _getBudgetStatusClass() {
@@ -199,9 +203,9 @@ export class LokiCostDashboard extends LokiElement {
     }
 
     return Object.entries(phases).map(([phase, data]) => {
-      const input = data.input_tokens || 0;
-      const output = data.output_tokens || 0;
-      const cost = data.cost_usd || 0;
+      const input = data.input_tokens ?? null;
+      const output = data.output_tokens ?? null;
+      const cost = data.cost_usd ?? null;
       return `
         <tr>
           <td class="phase-name">${this._escapeHTML(phase)}</td>
@@ -220,9 +224,9 @@ export class LokiCostDashboard extends LokiElement {
     }
 
     return Object.entries(models).map(([model, data]) => {
-      const input = data.input_tokens || 0;
-      const output = data.output_tokens || 0;
-      const cost = data.cost_usd || 0;
+      const input = data.input_tokens ?? null;
+      const output = data.output_tokens ?? null;
+      const cost = data.cost_usd ?? null;
       return `
         <tr>
           <td class="model-name">${this._escapeHTML(model)}</td>
@@ -251,9 +255,12 @@ export class LokiCostDashboard extends LokiElement {
 
     const pct = this._getBudgetPercent();
     const statusClass = this._getBudgetStatusClass();
+    // Only derive remaining when BOTH operands were measured; otherwise the
+    // subtraction is an invented number wearing a currency sign.
+    const canDerive = this._data.budget_limit != null && this._data.budget_used != null;
     const remaining = this._data.budget_remaining != null
       ? this._formatUSD(this._data.budget_remaining)
-      : this._formatUSD(this._data.budget_limit - this._data.budget_used);
+      : this._formatUSD(canDerive ? this._data.budget_limit - this._data.budget_used : null);
 
     return `
       <div class="budget-section">
@@ -319,7 +326,12 @@ export class LokiCostDashboard extends LokiElement {
   }
 
   render() {
-    const totalTokens = this._data.total_input_tokens + this._data.total_output_tokens;
+    // `null + null` is 0 in JS, which would render a measured-looking "0" for a
+    // run nobody counted. Sum only what was actually measured; if neither half
+    // was, the total is unknown.
+    const inTok = this._data.total_input_tokens;
+    const outTok = this._data.total_output_tokens;
+    const totalTokens = (inTok == null && outTok == null) ? null : (inTok ?? 0) + (outTok ?? 0);
 
     this.shadowRoot.innerHTML = `
       <style>

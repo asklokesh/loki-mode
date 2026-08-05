@@ -1,15 +1,16 @@
 {
   "_comment": "Canonical model catalog. Update this single file when a provider ships a new model. Providers/web-app/docs read from here.",
+  "_source_of_truth": "models[] is authoritative. Each entry's `tier` decides what that tier resolves to, first match wins, so order within models[] is load-bearing. The top-level latest_<tier> keys are DERIVED mirrors kept only for existing readers (dashboard/server.py, tools/probe-model-catalog.py, tests); never hand-edit them out of step with models[] -- tests/test-model-catalog-single-source.sh fails when they disagree. A provider whose models[] has no entry for a tier must declare `tier_fallback` saying which tier substitutes; there is no implicit fallback.",
   "schema_version": 1,
-  "updated": "2026-07-13",
+  "updated": "2026-08-01",
   "providers": {
     "claude": {
-      "latest_planning": "claude-opus-4-8",
+      "latest_planning": "claude-opus-5",
       "latest_development": "claude-sonnet-5",
-      "latest_fast": "claude-sonnet-5",
+      "latest_fast": "claude-haiku-4-5",
       "cli_aliases": {
         "fable": "claude-fable-5",
-        "opus": "claude-opus-4-8",
+        "opus": "claude-opus-5",
         "sonnet": "claude-sonnet-5",
         "haiku": "claude-haiku-4-5"
       },
@@ -23,7 +24,7 @@
           "notes": "Top-tier advisory model. Pricing 2x Opus ($10/$50 per MTok). Doc-supported for architecture/root-cause; opt-in only (cost). Refuses cyber content, so NOT used for security review."
         },
         {
-          "id": "claude-opus-4-8",
+          "id": "claude-opus-5",
           "alias": "opus",
           "tier": "planning",
           "context_window": 1000000,
@@ -48,41 +49,165 @@
       ]
     },
     "codex": {
-      "latest_planning": "gpt-5.3-codex",
-      "latest_development": "gpt-5.3-codex",
-      "latest_fast": "gpt-5.3-codex",
+      "latest_planning": "gpt-5.6-sol",
+      "latest_development": "gpt-5.6-terra",
+      "latest_fast": "gpt-5.6-luna",
       "models": [
-        { "id": "gpt-5.3-codex", "tier": "planning" },
-        { "id": "o3", "tier": "planning" },
-        { "id": "o4-mini", "tier": "fast" }
+        {
+          "id": "gpt-5.6-sol",
+          "tier": "planning",
+          "notes": "high tier. OpenAI: 'Frontier model for complex professional work'. Verified against developers.openai.com/api/docs/models."
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "tier": "development",
+          "notes": "medium tier, the DEFAULT. OpenAI: balances performance with affordability."
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "tier": "fast",
+          "notes": "small tier. OpenAI: budget-conscious, high-volume."
+        },
+        {
+          "id": "gpt-5.3-codex",
+          "tier": "legacy",
+          "notes": "Prior default, superseded by the gpt-5.6 line. Kept discoverable, not dispatched."
+        },
+        {
+          "id": "o3",
+          "tier": "planning",
+          "notes": "Alternative planning model. NOT the default -- gpt-5.3-codex is listed first and first match wins."
+        },
+        {
+          "id": "o4-mini",
+          "tier": "legacy",
+          "notes": "Was tier=fast, which made the cheap tier resolve to o4-mini while latest_fast said gpt-5.3-codex. Codex does not differentiate tiers by model, so it is not any tier's default; parked at tier=legacy so it stays discoverable without being dispatched."
+        }
       ],
-      "notes": "Codex uses a single model with effort level (xhigh/high/low) for tier differentiation"
+      "notes": "Codex uses a single model with effort level (xhigh/high/low) for tier differentiation, so development and fast declare an explicit tier_fallback to planning rather than naming separate models."
     },
     "cline": {
-      "latest_planning": "claude-opus-4-8",
-      "latest_development": "claude-sonnet-5",
-      "latest_fast": "claude-sonnet-5",
+      "latest_planning": "openrouter/deepseek/deepseek-v3.2",
+      "latest_development": "openrouter/deepseek/deepseek-v3.2",
+      "latest_fast": "openrouter/deepseek/deepseek-chat",
       "models": [
-        { "id": "claude-opus-4-8", "tier": "planning" },
-        { "id": "claude-sonnet-5", "tier": "development" },
-        { "id": "gpt-4.1", "tier": "development" }
+        {
+          "id": "openrouter/deepseek/deepseek-v3.2",
+          "tier": "planning",
+          "open_weights": true
+        },
+        {
+          "id": "openrouter/deepseek/deepseek-v3.2",
+          "tier": "development",
+          "open_weights": true
+        },
+        {
+          "id": "openrouter/deepseek/deepseek-chat",
+          "tier": "fast",
+          "open_weights": true
+        },
+        {
+          "id": "openrouter/z-ai/glm-4.6",
+          "tier": "development",
+          "open_weights": true
+        }
       ]
     },
     "aider": {
-      "latest_planning": "claude-opus-4-8",
-      "latest_development": "claude-sonnet-5",
-      "latest_fast": "claude-sonnet-5",
+      "latest_planning": "openrouter/deepseek/deepseek-v3.2",
+      "latest_development": "openrouter/deepseek/deepseek-v3.2",
+      "latest_fast": "openrouter/deepseek/deepseek-chat",
       "models": [
-        { "id": "claude-opus-4-8", "tier": "planning" },
-        { "id": "claude-sonnet-5", "tier": "development" },
-        { "id": "gpt-4.1", "tier": "development" },
-        { "id": "ollama_chat/deepseek-coder", "tier": "fast" }
+        {
+          "id": "openrouter/deepseek/deepseek-v3.2",
+          "tier": "planning",
+          "open_weights": true
+        },
+        {
+          "id": "openrouter/deepseek/deepseek-v3.2",
+          "tier": "development",
+          "open_weights": true
+        },
+        {
+          "id": "openrouter/deepseek/deepseek-chat",
+          "tier": "fast",
+          "open_weights": true
+        },
+        {
+          "id": "openrouter/minimax/minimax-m2.1",
+          "tier": "development",
+          "open_weights": true
+        },
+        {
+          "id": "ollama_chat/deepseek-coder",
+          "tier": "fast",
+          "open_weights": true
+        }
+      ]
+    },
+    "opencode": {
+      "latest_planning": "openrouter/deepseek/deepseek-v3.2",
+      "latest_development": "openrouter/deepseek/deepseek-v3.2",
+      "latest_fast": "openrouter/deepseek/deepseek-chat",
+      "models": [
+        {
+          "id": "openrouter/deepseek/deepseek-v3.2",
+          "tier": "planning",
+          "open_weights": true
+        },
+        {
+          "id": "openrouter/deepseek/deepseek-v3.2",
+          "tier": "development",
+          "open_weights": true
+        },
+        {
+          "id": "openrouter/deepseek/deepseek-chat",
+          "tier": "fast",
+          "open_weights": true
+        },
+        {
+          "id": "openrouter/z-ai/glm-4.6",
+          "tier": "development",
+          "open_weights": true
+        },
+        {
+          "id": "openrouter/minimax/minimax-m2.1",
+          "tier": "development",
+          "open_weights": true
+        },
+        {
+          "id": "ollama/qwen2.5-coder",
+          "tier": "fast",
+          "open_weights": true
+        }
+      ]
+    },
+    "generic": {
+      "_comment": "Fallback for ANY provider not named above (bring-your-own endpoint). All three tiers collapse to one open model, the same shape codex uses, declared via tier_fallback. Override per tier with LOKI_<PROVIDER>_MODEL_<TIER> or wholesale with LOKI_<PROVIDER>_MODEL.",
+      "latest_planning": "openrouter/deepseek/deepseek-v3.2",
+      "latest_development": "openrouter/deepseek/deepseek-v3.2",
+      "latest_fast": "openrouter/deepseek/deepseek-v3.2",
+      "tier_fallback": {
+        "planning": "development",
+        "fast": "development"
+      },
+      "models": [
+        {
+          "id": "openrouter/deepseek/deepseek-v3.2",
+          "tier": "development",
+          "open_weights": true
+        }
       ]
     },
     "minimax": {
       "latest_planning": "MiniMax-M3",
       "latest_development": "MiniMax-M3",
       "latest_fast": "MiniMax-M3",
+      "tier_fallback": {
+        "development": "planning",
+        "fast": "planning"
+      },
+      "notes": "MiniMax-M3 is used for all tiers; MiniMax-M2.7 (tier: legacy) is catalog-only and not a latest_* default.",
       "endpoints": [
         {
           "region": "global_en",
@@ -148,7 +273,7 @@
         },
         {
           "id": "MiniMax-M2.7",
-          "tier": "development",
+          "tier": "legacy",
           "context_window": 204800,
           "max_output": 204800,
           "input_modalities": ["text"],

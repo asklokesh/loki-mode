@@ -682,16 +682,21 @@ class DebateRunner:
     def _critique_from_error(persona: str, exc: Exception) -> Critique:
         """Build a fail-safe Critique when a persona invocation errors.
 
-        The debate must continue even if one persona goes down. We mark
-        these as neutral ('info', approves=True) so they do not spuriously
-        block consensus; the underlying error is preserved in parse_error.
+        The debate must continue even if one persona goes down, but a
+        persona that never ran has NOT approved anything. approves=False
+        keeps a failed invocation out of the consensus tally: "the review
+        did not happen" and "the review passed" are opposite facts, and a
+        machine caller reads consensus as a gate verdict. The persona is
+        not a dissenter either, so severity stays 'info' (never 'block')
+        and parse_error carries the reason so callers can tell an
+        infrastructure failure from a genuine objection.
         """
         return Critique(
             persona=persona,
             severity="info",
             issues=[],
             suggestions=[],
-            approves=True,
+            approves=False,
             raw_response="",
             parse_error=f"{type(exc).__name__}: {exc}",
         )

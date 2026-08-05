@@ -10,7 +10,7 @@
 // re-introduces the bug (e.g. typoing the function name or reverting to the
 // object-returning call) would either hang here or fail an assertion.
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -24,6 +24,14 @@ import type {
   RunnerOpts,
   SignalSource,
 } from "../../src/runner/types.ts";
+
+// E2E-shaped: drives the real loop, which writes state files and spawns
+// processes. Bun's 5000ms default is fine idle and NOT fine inside a full CI
+// run, where the box is saturated -- tests then fail at exactly ~5000ms and
+// WHICH ones fail changes between runs. That is a timeout signature, not a
+// defect, and it reads as a regression. 30s is far beyond the honest worst
+// case while still catching a genuine hang.
+setDefaultTimeout(30_000);
 
 // ---------------------------------------------------------------------------
 // Test doubles -- mirror the patterns in autonomous.test.ts.

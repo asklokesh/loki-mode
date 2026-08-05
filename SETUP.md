@@ -7,7 +7,7 @@ This guide covers two paths:
 - **End users** who want to install and run the `loki` CLI.
 - **Contributors** who want to clone the repository and develop locally.
 
-Version: v7.121.1
+Version: v8.0.0
 
 ---
 
@@ -75,7 +75,7 @@ This creates symlinks at `~/.claude/skills/loki-mode` and `~/.codex/skills/loki-
 Verify the install:
 
 ```bash
-loki --version    # should print 7.121.1
+loki --version    # should print 8.0.0
 loki doctor       # checks provider CLIs, credentials, and environment
 ```
 

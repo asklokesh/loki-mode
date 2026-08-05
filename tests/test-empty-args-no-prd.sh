@@ -12,6 +12,13 @@
 #
 # Also tests v7.7.13 Docker non-interactive fix: when stdin is not a TTY,
 # the no-PRD prompt now auto-confirms instead of stalling.
+# Resolve the repo from THIS file's location. A hardcoded absolute path
+# (/Users/lokesh/git/loki-mode) pointed at one developer's checkout: every grep
+# and syntax probe silently hit "No such file or directory" on CI and on any
+# other machine, so the assertions failed for a reason that had nothing to do
+# with the code under test.
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 set -u
 
 PASS=0
@@ -38,7 +45,7 @@ fi
 # Test 3: grep autonomy/loki for any remaining unsafe ${args[@]} or
 # ${start_args[@]} expansion sites in execve-style contexts (exec, nohup,
 # eval). Skips known-safe sites where the array is initialized non-empty.
-UNSAFE=$(grep -nE '(exec |nohup |eval |^\s*"\$[A-Z_]+" )"\$\{(args|start_args|cmd_args|run_args)\[@\]\}"' /Users/lokesh/git/loki-mode/autonomy/loki 2>/dev/null | grep -v '${args\[@\]+' | head -3)
+UNSAFE=$(grep -nE '(exec |nohup |eval |^\s*"\$[A-Z_]+" )"\$\{(args|start_args|cmd_args|run_args)\[@\]\}"' $REPO_DIR/autonomy/loki 2>/dev/null | grep -v '${args\[@\]+' | head -3)
 if [ -z "$UNSAFE" ]; then
   ok "no remaining unsafe exec/nohup/eval expansions in autonomy/loki"
 else
@@ -49,19 +56,19 @@ fi
 # scenario) -- under -t 0 false the script should NOT hang and SHOULD exit 0.
 # We can't easily run real cmd_start without provider, but we can grep that
 # the new auto-confirm branch is present.
-if grep -q 'stdin not a TTY' /Users/lokesh/git/loki-mode/autonomy/loki; then
+if grep -q 'stdin not a TTY' $REPO_DIR/autonomy/loki; then
   ok "non-TTY auto-confirm branch present (Docker bug fixed)"
 else
   bad "non-TTY auto-confirm branch missing"
 fi
-if grep -q '\[ ! -t 0 \]' /Users/lokesh/git/loki-mode/autonomy/loki; then
+if grep -q '\[ ! -t 0 \]' $REPO_DIR/autonomy/loki; then
   ok "stdin-tty check (-t 0) wired into auto_confirm logic"
 else
   bad "stdin-tty check missing"
 fi
 
 # Test 5: bash -n syntax must pass on the file (catches missed parens/quotes)
-if /bin/bash -n /Users/lokesh/git/loki-mode/autonomy/loki 2>/dev/null; then
+if /bin/bash -n $REPO_DIR/autonomy/loki 2>/dev/null; then
   ok "autonomy/loki bash -n syntax OK"
 else
   bad "autonomy/loki bash -n syntax FAIL"

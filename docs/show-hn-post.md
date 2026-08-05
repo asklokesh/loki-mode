@@ -10,9 +10,9 @@ I built Loki Mode because I got tired of the copy-paste loop between AI coding a
 
 **What it does:** You give it a Product Requirements Document. It breaks the work into tasks across 41 specialized agent roles organized into 8 domains (engineering, operations, business, data, product, growth, review, orchestration) -- prompt-defined specifications the orchestrator adopts per phase, with parallel review (blind council) and optional worktree streams on Claude Code, sequential on other providers -- and runs every iteration through a self-verification loop called RARV: Reason, Act, Reflect, Verify. The idea is that the system catches its own mistakes before you have to.
 
-**Quality gates:** 9 automated gates including 3-reviewer blind review (agents review each other's work without seeing prior reviews), anti-sycophancy checks (a devil's advocate pass on unanimous approvals), and mock/mutation detection. These are not foolproof, but they catch a surprising number of issues that single-pass generation misses.
+**Quality gates:** 8 automated gates including 3-reviewer blind review (agents review each other's work without seeing prior reviews), anti-sycophancy checks (a devil's advocate pass on unanimous approvals), and mock/mutation detection. These are not foolproof, but they catch a surprising number of issues that single-pass generation misses.
 
-**Multi-provider:** Runs on Claude Code (full parallel agent support), OpenAI Codex CLI, or Google Gemini CLI. Codex and Gemini run in degraded sequential mode -- no parallel agents, no Task tool. Claude Code is the primary target.
+**Multi-provider:** Runs on Claude Code (full parallel agent support), Cline, OpenAI Codex CLI, Aider, or opencode. Everything other than Claude Code runs in degraded sequential mode -- no parallel agents, no Task tool. Claude Code is the primary target. (The Google Gemini CLI provider was removed in v7.5.18 after Google deprecated it upstream.)
 
 **Memory:** 3-tier system (episodic, semantic, procedural) so the system can learn from previous runs. Optional vector search with sentence-transformers if you want similarity-based retrieval.
 

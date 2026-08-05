@@ -47,6 +47,25 @@
 #
 #===============================================================================
 
+# RUN-25 iter 21 (Wave D #2): share the ONE secret matcher with the commit gate.
+# The completion evidence gate uses _commit_scan_secret_file / _commit_path_looks_secret
+# to add a secret-leak axis, so a credential can no longer ship in a "done"
+# deliverable via the completion-promise / dirty-tree route. Resolve this file's
+# dir robustly: BASH_SOURCE[0] can be EMPTY when the file is sourced at top level,
+# so fall back to run.sh's exported SCRIPT_DIR and finally to the on-disk location.
+_LOKI_CC_DIR="$(dirname "${BASH_SOURCE[0]:-}" 2>/dev/null)"
+if [ -z "$_LOKI_CC_DIR" ] || [ "$_LOKI_CC_DIR" = "." ]; then
+    _LOKI_CC_DIR="${SCRIPT_DIR:-}"
+fi
+for _cc_cand in "$_LOKI_CC_DIR/lib/secret-scan.sh" "${SCRIPT_DIR:-}/lib/secret-scan.sh" "autonomy/lib/secret-scan.sh"; do
+    if [ -n "$_cc_cand" ] && [ -f "$_cc_cand" ]; then
+        # shellcheck source=lib/secret-scan.sh
+        source "$_cc_cand"
+        break
+    fi
+done
+unset _LOKI_CC_DIR _cc_cand
+
 # Council configuration
 COUNCIL_ENABLED=${LOKI_COUNCIL_ENABLED:-true}
 COUNCIL_SIZE=${LOKI_COUNCIL_SIZE:-3}
@@ -127,6 +146,31 @@ _council_effective_min_iter() {
         return 0
     fi
     printf '%s' "${COUNCIL_MIN_ITERATIONS}"
+}
+
+# _loki_auto_tune_interval: OPT-IN auto-tune of the council CHECK interval by
+# complexity. Env: LOKI_AUTO_TUNE (default 0 = OFF; stock runs are unchanged).
+# Pure function of $1 (complexity tier) so it is unit-testable in isolation.
+# When LOKI_AUTO_TUNE!=1 -> echoes the current COUNCIL_CHECK_INTERVAL verbatim
+# (no behavior change). When ON: simple -> 3 (converge faster on trivial builds,
+# fewer idle iterations before the council MAY evaluate); standard/complex/unknown
+# -> COUNCIL_CHECK_INTERVAL (unchanged, default 5).
+#
+# This only changes WHEN the council is allowed to evaluate, never WHETHER a gate
+# passes: MIN_ITERATIONS floor, hard gate, evidence gate and the aggregate vote
+# are all unchanged. Explicit LOKI_COUNCIL_CHECK_INTERVAL still wins because
+# COUNCIL_CHECK_INTERVAL already carries it as the base value.
+_loki_auto_tune_interval() {
+    local complexity="${1:-}"
+    local base="${COUNCIL_CHECK_INTERVAL:-5}"
+    if [ "${LOKI_AUTO_TUNE:-0}" != "1" ]; then
+        printf '%s' "$base"
+        return 0
+    fi
+    case "$complexity" in
+        simple) printf '%s' 3 ;;
+        *)      printf '%s' "$base" ;;
+    esac
 }
 COUNCIL_CONVERGENCE_WINDOW=${LOKI_COUNCIL_CONVERGENCE_WINDOW:-3}
 COUNCIL_STAGNATION_LIMIT=${LOKI_COUNCIL_STAGNATION_LIMIT:-5}
@@ -263,8 +307,30 @@ council_track_iteration() {
     fi
     COUNCIL_LAST_DIFF_HASH="$combined_hash"
 
-    # Track "done" signals from agent output
-    if [ -n "$log_file" ] && [ -f "$log_file" ]; then
+    # Track "done" signals from agent output.
+    #
+    # A "done signal" is any claim by the agent that the work is complete this
+    # iteration. There are TWO ways it can claim: (1) the STRUCTURED path -- the
+    # loki_complete_task MCP tool writing .loki/signals/COMPLETION_REQUESTED (or
+    # the runner's TASK_COMPLETION_CLAIMED), which is the DEFAULT since v6.82.0;
+    # and (2) fuzzy completion-like language in the iteration log. Historically
+    # only (2) was counted -- so a build that claimed done every iteration via the
+    # structured signal (medium confidence, thin evidence, council correctly
+    # rejects) never incremented COUNCIL_TOTAL_DONE_SIGNALS, the done-signal safety
+    # valve (council_should_stop, "Safety valve 2") never armed, and the loop ran
+    # to the wall spending real dollars. Observed on real builds: 11 identical
+    # structured claims, 0 counted, 60-min timeout at ~$34. We now count a
+    # structured claim as a done signal too, PEEKING the signal files
+    # non-destructively (the council owns consumption; the same two paths the loop
+    # tests at the council_should_stop call site).
+    local _done_this_iter=0
+
+    if [ -f "${TARGET_DIR:-.}/.loki/signals/COMPLETION_REQUESTED" ] \
+       || [ -f "${TARGET_DIR:-.}/.loki/signals/TASK_COMPLETION_CLAIMED" ]; then
+        _done_this_iter=1
+    fi
+
+    if [ "$_done_this_iter" = "0" ] && [ -n "$log_file" ] && [ -f "$log_file" ]; then
         # Check last 200 lines for completion-like language
         local done_indicators
         done_indicators=$(tail -200 "$log_file" 2>/dev/null | grep -ciE \
@@ -273,14 +339,15 @@ council_track_iteration() {
         # Ensure we have a clean integer (strip any whitespace/newlines)
         done_indicators=$(echo "$done_indicators" | tr -dc '0-9')
         done_indicators="${done_indicators:-0}"
+        [ "$done_indicators" -gt 0 ] && _done_this_iter=1
+    fi
 
-        if [ "$done_indicators" -gt 0 ]; then
-            ((COUNCIL_DONE_SIGNALS++))
-            ((COUNCIL_TOTAL_DONE_SIGNALS++))
-        else
-            # Reset if agent stopped claiming done
-            COUNCIL_DONE_SIGNALS=0
-        fi
+    if [ "$_done_this_iter" = "1" ]; then
+        ((COUNCIL_DONE_SIGNALS++))
+        ((COUNCIL_TOTAL_DONE_SIGNALS++))
+    else
+        # Reset consecutive count if agent stopped claiming done
+        COUNCIL_DONE_SIGNALS=0
     fi
 
     # Store convergence data point
@@ -1252,7 +1319,25 @@ except: print('Results unavailable')
 council_reverify_checklist() {
     if type checklist_verify &>/dev/null && [ -f ".loki/checklist/checklist.json" ]; then
         log_info "[Council] Re-verifying checklist before evaluation..."
-        checklist_verify 2>/dev/null || true
+        # RUN-25 iter 15 (Wave B #10): capture the REAL exit status. The old
+        # `checklist_verify 2>/dev/null || true` swallowed a failure, leaving LAST
+        # iteration's (possibly-green) verification-results.json in place -- so a
+        # build that regressed since the last checklist run would sail through the
+        # gates on STALE green evidence. On a re-verify failure we cannot trust the
+        # existing results, so we mark them unverifiable: overwrite
+        # verification-results.json with an explicit critical-failure sentinel that
+        # council_checklist_gate reads as BLOCK (fail-closed). The next successful
+        # re-verify overwrites the sentinel with fresh data.
+        local _rv_rc=0
+        checklist_verify 2>/dev/null || _rv_rc=$?
+        if [ "$_rv_rc" -ne 0 ]; then
+            log_warn "[Council] Checklist re-verify FAILED (rc=$_rv_rc); invalidating stale results (fail-closed)."
+            local _rf=".loki/checklist/verification-results.json"
+            local _tmp="${_rf}.tmp.$$"
+            if printf '%s\n' '{"categories":[{"items":[{"id":"reverify_failed","title":"checklist re-verify failed","priority":"critical","status":"failing"}]}]}' > "$_tmp" 2>/dev/null; then
+                mv -f "$_tmp" "$_rf" 2>/dev/null || rm -f "$_tmp" 2>/dev/null
+            fi
+        fi
     fi
 }
 
@@ -1267,9 +1352,22 @@ council_checklist_gate() {
     local waivers_file=".loki/checklist/waivers.json"
     local heldout_file=".loki/checklist/held-out.json"
 
-    # No checklist = no gate (backwards compatible)
+    # No checklist = no gate (backwards compatible). Absent is genuinely "nothing
+    # to verify"; present-but-corrupt is handled fail-closed below.
     if [ ! -f "$results_file" ]; then
         return 0
+    fi
+
+    # RUN-25 iter 13 (Wave B #4): the results file EXISTS (a checklist was
+    # generated, possibly with a failing critical item), so if we cannot read it
+    # we must fail CLOSED -- a checklist we cannot parse is NOT proof of a clean
+    # build. python3 absent -> we cannot evaluate the gate at all -> BLOCK rather
+    # than the old `|| echo PASS`, which cleared the first hard gate on a broken
+    # host. (Absent python is a real deployment problem; failing open here is
+    # exactly the fake-green this gate exists to prevent.)
+    if ! command -v python3 >/dev/null 2>&1; then
+        log_warn "[Council] Hard gate BLOCKED: python3 unavailable, cannot verify checklist (fail-closed)."
+        return 1
     fi
 
     # Check for critical failures, excluding waived AND held-out items. Held-out
@@ -1287,8 +1385,11 @@ heldout_file = os.environ.get('_HELDOUT_FILE', '')
 try:
     with open(results_file) as f:
         results = json.load(f)
-except (json.JSONDecodeError, IOError, KeyError):
-    print('PASS')
+except (json.JSONDecodeError, IOError, KeyError, ValueError):
+    # RUN-25 iter 13 (Wave B #4): the file EXISTS but is unreadable/corrupt. A
+    # checklist we cannot parse is NOT proof of a clean build -- a failing
+    # critical item could be hiding in the unparseable bytes. Fail CLOSED.
+    print('BLOCK:unreadable_checklist_results')
     sys.exit(0)
 
 # Load waivers
@@ -1325,7 +1426,7 @@ if critical_failures:
 else:
     print('PASS')
     sys.exit(0)
-" 2>/dev/null || echo "PASS")
+" 2>/dev/null || echo "BLOCK:checklist_gate_error")
 
     if [[ "$gate_result" == BLOCK:* ]]; then
         local failures="${gate_result#BLOCK:}"
@@ -1425,8 +1526,14 @@ try:
         results = json.load(f)
     with open(heldout_file) as f:
         heldout_ids = set(json.load(f).get('held_out', []))
-except (json.JSONDecodeError, IOError, KeyError):
-    print('NONE 0 0')
+except (json.JSONDecodeError, IOError, KeyError, ValueError):
+    # RUN-25 iter 13 (Wave B #4): BOTH files are known to EXIST (guarded above),
+    # so an error here is a present-but-corrupt results/held-out file, NOT an
+    # inert no-items-reserved state. A held-out gate we cannot evaluate must fail
+    # CLOSED (BLOCK), never emit NONE (which the caller treats as nothing-to-check).
+    # The caller reads verdict pass fail, so emit BLOCK as the first field with a
+    # synthetic 1 fail. A hidden failing reserved item could ship otherwise.
+    print('BLOCK 0 1')
     sys.exit(0)
 
 # No held-out items reserved (e.g. N<4): gate is inert. Emit NONE so the caller
@@ -1476,7 +1583,7 @@ if matched == 0:
 
 verdict = 'BLOCK' if failed > 0 else 'PASS'
 print('%s %d %d' % (verdict, passed, failed))
-" 2>/dev/null || echo "NONE 0 0")
+" 2>/dev/null || echo "BLOCK 0 1")
 
     local verdict pass_count fail_count
     read -r verdict pass_count fail_count <<< "$gate_result"
@@ -1704,6 +1811,12 @@ _loki_test_provenance() {
 council_evidence_gate() {
     # Knob first: opt-out is exact-as-today, before any file read or write.
     [ "${LOKI_EVIDENCE_GATE:-1}" = "0" ] && return 0
+
+    # Every Python helper in this trust boundary inherits a sanitized import
+    # environment. A project-controlled sitecustomize.py must never execute
+    # while the engine decides whether completion evidence is credible.
+    local PYTHONPATH="" PYTHONNOUSERSITE=1
+    export PYTHONPATH PYTHONNOUSERSITE
 
     # The gate may run even when the completion council is disabled
     # (LOKI_COUNCIL_ENABLED=false leaves COUNCIL_STATE_DIR unset by council_init),
@@ -1984,6 +2097,14 @@ INCONCLUSIVE_EOF
         local _diff_ok _tests_ok
         if [ "$diff_fails" = "true" ]; then _diff_ok="false"; else _diff_ok="true"; fi
         if [ "$test_fails" = "true" ]; then _tests_ok="false"; else _tests_ok="true"; fi
+        # Proof-of-Function axes (nomock/persistence/auth) are declared later in
+        # the gate; default to "true"/"" when this helper runs before they are
+        # set (it never does in practice, but keep the write robust).
+        local _nomock_ok _persist_ok _auth_ok _authz_ok
+        if [ "${nomock_fails:-false}" = "true" ]; then _nomock_ok="false"; else _nomock_ok="true"; fi
+        if [ "${persist_fails:-false}" = "true" ]; then _persist_ok="false"; else _persist_ok="true"; fi
+        if [ "${auth_fails:-false}" = "true" ]; then _auth_ok="false"; else _auth_ok="true"; fi
+        if [ "${authz_fails:-false}" = "true" ]; then _authz_ok="false"; else _authz_ok="true"; fi
         cat > "$_det_tmp" << DETAILS_EOF
 {
     "recorded_at": "$_det_ts",
@@ -2002,14 +2123,462 @@ INCONCLUSIVE_EOF
         "pass": $test_pass,
         "inconclusive": $test_inconclusive,
         "inconclusive_reason": "$test_inconclusive_reason"
+    },
+    "nomock": {
+        "ok": $_nomock_ok,
+        "inconclusive": ${nomock_inconclusive:-false},
+        "reason": "${nomock_inconclusive_reason:-}"
+    },
+    "persistence": {
+        "ok": $_persist_ok,
+        "inconclusive": ${persist_inconclusive:-false},
+        "reason": "${persist_inconclusive_reason:-}"
+    },
+    "auth": {
+        "ok": $_auth_ok,
+        "inconclusive": ${auth_inconclusive:-false},
+        "reason": "${auth_inconclusive_reason:-}"
+    },
+    "authorization": {
+        "ok": $_authz_ok,
+        "inconclusive": ${authz_inconclusive:-false},
+        "reason": "${authz_inconclusive_reason:-}"
     }
 }
 DETAILS_EOF
         mv "$_det_tmp" "$_det_file" 2>/dev/null || rm -f "$_det_tmp" 2>/dev/null || true
     }
 
-    # --- Block decision: block iff DIFF FAILS or TEST FAILS ---
-    if [ "$diff_fails" != "true" ] && [ "$test_fails" != "true" ]; then
+    # --- Evidence check (c): RUNTIME BOOT -- does the built app actually run? ---
+    # RUN-25 iter 20 (Wave D #1): the single most load-bearing claim of a
+    # spec-to-product builder is "the app runs", and until now the evidence gate
+    # NEVER checked it -- app_runner_health_check already writes
+    # .loki/app-runner/health.json but nothing read it here. Mirror the test axis:
+    # a SERVEABLE app confirmed unhealthy -> boot_fails (BLOCK); no serveable
+    # runner / probe never attempted (a CLI tool or library has no server to boot)
+    # -> boot_inconclusive, pass-through (must NOT deadlock a non-web project).
+    # Opt out with LOKI_EVIDENCE_BOOT_GATE=0.
+    local boot_fails="false"
+    local boot_inconclusive="false"
+    local boot_inconclusive_reason=""
+    local _health_file=".loki/app-runner/health.json"
+    local _state_file=".loki/app-runner/state.json"
+    if [ "${LOKI_EVIDENCE_BOOT_GATE:-1}" = "0" ]; then
+        boot_inconclusive="true"
+        boot_inconclusive_reason="boot_gate_disabled"
+    elif [ ! -f "$_health_file" ] && [ ! -f "$_state_file" ]; then
+        # No app-runner artifacts at all -> no serveable app was ever launched
+        # (CLI/library project, or the runner never ran). Inconclusive, not a block.
+        boot_inconclusive="true"
+        boot_inconclusive_reason="no_app_runner"
+    elif command -v python3 >/dev/null 2>&1; then
+        local _boot_status
+        _boot_status=$(_HEALTH="$_health_file" _STATE="$_state_file" python3 <<'PYEOF' 2>/dev/null || echo "INCONCLUSIVE:parse_error"
+import json, os
+health_file = os.environ.get('_HEALTH', '')
+state_file = os.environ.get('_STATE', '')
+
+def load(p):
+    try:
+        with open(p) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+state = load(state_file) or {}
+health = load(health_file) or {}
+# A "serveable" app is one the runner classified with a real service (status not
+# 'none'/'unknown' and a primary_service or url present). Only then is an
+# unhealthy probe a genuine BLOCK; otherwise there is nothing to boot.
+status = str(state.get('status', 'unknown')).lower()
+svc = state.get('primary_service') or ''
+url = state.get('url') or ''
+serveable = status not in ('none', 'unknown', '') and (bool(svc) or bool(url))
+# health 'ok' is the last health-check verdict (True healthy / False failing).
+ok = health.get('ok', None)
+if not serveable:
+    print('INCONCLUSIVE:not_serveable')
+elif ok is True:
+    print('PASS')
+elif ok is False:
+    print('FAIL')
+else:
+    # serveable but no health verdict recorded -> probe never completed.
+    print('INCONCLUSIVE:no_health_probe')
+PYEOF
+)
+        case "$_boot_status" in
+            FAIL)
+                boot_fails="true" ;;
+            PASS)
+                : ;; # affirmative: the app boots and serves.
+            INCONCLUSIVE:*)
+                boot_inconclusive="true"
+                boot_inconclusive_reason="${_boot_status#INCONCLUSIVE:}" ;;
+            *)
+                boot_inconclusive="true"
+                boot_inconclusive_reason="unknown" ;;
+        esac
+    else
+        boot_inconclusive="true"
+        boot_inconclusive_reason="no_python3"
+    fi
+
+    # === Proof-of-Function (PoF) axes: NO-MOCK, PERSISTENCE, AUTH ==============
+    # Three functionality-proving axes. Each is proven by an OBSERVED artifact
+    # (static source scan for no-mock; a real browser drive + DB/API read-back
+    # for persistence + auth), never a self-report. Each fails CLOSED on POSITIVE
+    # disproof and passes through ONLY when genuinely inconclusive (non-web build,
+    # browser unavailable, no create path, no auth signal). Web-app-only: the
+    # dynamic axes reuse the SAME serveable gate as boot, so a CLI/API/library
+    # build is NEVER blocked. Master knob LOKI_PROOF_GATE=0 disables all three;
+    # per-axis LOKI_PROOF_NOMOCK / LOKI_PROOF_PERSIST / LOKI_PROOF_AUTH=0.
+    local _proof_gate="${LOKI_PROOF_GATE:-1}"
+    local nomock_fails="false" nomock_inconclusive="false" nomock_inconclusive_reason=""
+    local persist_fails="false" persist_inconclusive="false" persist_inconclusive_reason=""
+    local auth_fails="false" auth_inconclusive="false" auth_inconclusive_reason=""
+    local authz_fails="false" authz_inconclusive="false" authz_inconclusive_reason=""
+    local _proof_file=".loki/verification/functional-proof.json"
+
+    # --- Evidence check (e): NO-MOCK (static, cheap, runs first) ---
+    # A list/table/dashboard whose backing data traces to an inline mock array /
+    # faker / placeholder literal instead of a real fetch/query is a fake app.
+    # This is the ONLY axis that can run without the app up. Consumer of
+    # verify.sh writes nomock-scan.json as an audit artifact. Completion never
+    # trusts that mutable cache, even when its base SHA matches: the run base is
+    # constant across iterations while source bytes can keep changing. Re-run
+    # the engine-owned scanner over the current changed-file union every time.
+    if [ "$_proof_gate" = "0" ] || [ "${LOKI_PROOF_NOMOCK:-1}" = "0" ]; then
+        nomock_inconclusive="true"
+        nomock_inconclusive_reason="nomock_gate_disabled"
+    elif command -v python3 >/dev/null 2>&1; then
+        local _nm_files
+        _nm_files=$(
+            {
+                [ -n "$base_sha" ] && git diff --name-only "$base_sha" 2>/dev/null
+                git diff --name-only 2>/dev/null
+                git diff --name-only --cached 2>/dev/null
+                git ls-files --others --exclude-standard 2>/dev/null
+            } | grep -v '^$' | grep -vE '^\.loki/' | sort -u
+        )
+        local _nm_status _nm_scanner _nm_cc_dir
+        _nm_cc_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-}")" 2>/dev/null && pwd || true)"
+        _nm_scanner="$_nm_cc_dir/lib/no_mock_scan.py"
+        if [ -z "$_nm_cc_dir" ] || [ ! -f "$_nm_scanner" ]; then
+            _nm_status="INCONCLUSIVE:scanner_unavailable"
+        else
+            # STDIN, not an env var: a single env string is capped at
+            # MAX_ARG_STRLEN (131071 bytes) on Linux, so a large changed-file
+            # union makes execve fail with E2BIG and this gate silently
+            # degrades to inconclusive (pass-through). macOS has no per-string
+            # cap, so that failure mode was Linux-only.
+            _nm_status=$(
+                printf '%s\n' "$_nm_files" | {
+                    _NM_TREE="." \
+                    python3 -I "$_nm_scanner" 2>/dev/null \
+                        || echo "INCONCLUSIVE:detector_error"
+                }
+            )
+        fi
+        case "$_nm_status" in
+            FAIL:*) nomock_fails="true" ;;
+            PASS:*) : ;;
+            SKIP:*) nomock_inconclusive="true"; nomock_inconclusive_reason="no_ui_files" ;;
+            INCONCLUSIVE:*) nomock_inconclusive="true"; nomock_inconclusive_reason="${_nm_status#INCONCLUSIVE:}" ;;
+            *) nomock_inconclusive="true"; nomock_inconclusive_reason="unknown" ;;
+        esac
+    else
+        nomock_inconclusive="true"
+        nomock_inconclusive_reason="no_python3"
+    fi
+
+    # --- Evidence checks (f) PERSISTENCE + (g) AUTH (dynamic, driven) ---
+    # Both are read from .loki/verification/functional-proof.json, produced by
+    # playwright_prove_functional (run.sh interval-gated, serveable-only). The
+    # gate reads ONLY this artifact -- never a screenshot, never an LLM opinion.
+    # Tri-state per property: attempted / proven / reason. Fail-closed:
+    #   PERSISTENCE: proven==true -> PASS. attempted && !proven -> BLOCK (a
+    #     create path was exercised and the record did NOT survive reload; a
+    #     submit that errors is the #1 churn bug and must not green-wash).
+    #     attempted==false with reason no_create_path/not_serveable/driver_
+    #     unavailable -> logged pass-through. Missing/unparseable/STALE (a stamp
+    #     whose iteration != the current one) file -> treated as NOT PRESENT ->
+    #     inconclusive pass-through, NEVER a block. Only a FRESH attempted &&
+    #     !proven disproof blocks: absence and staleness must never false-block a
+    #     legitimate build (the fail-closed rule is disproven-blocks, not
+    #     absent-blocks).
+    #   AUTH: proven==true (observed 401/403/redirect) -> PASS. attempted &&
+    #     !proven (protected route served 200 logged-out, or only a login screen
+    #     rendered) -> BLOCK. no_auth/not_serveable -> pass-through. Auth
+    #     detected but unprovable under LOKI_PROOF_AUTH_STRICT=1 -> BLOCK
+    #     (security property never assumed).
+    # Web-app-only: only evaluate the dynamic axes when the app is SERVEABLE
+    # (same signal the boot axis uses). A non-web build never launches a browser,
+    # writes no proof file, and passes through by construction.
+    local _proof_persist_disabled="false" _proof_auth_disabled="false" _proof_authz_disabled="false"
+    [ "$_proof_gate" = "0" ] || [ "${LOKI_PROOF_PERSIST:-1}" = "0" ] && _proof_persist_disabled="true"
+    [ "$_proof_gate" = "0" ] || [ "${LOKI_PROOF_AUTH:-1}" = "0" ] && _proof_auth_disabled="true"
+    [ "$_proof_gate" = "0" ] || [ "${LOKI_PROOF_AUTHZ:-1}" = "0" ] && _proof_authz_disabled="true"
+
+    # Serveable? Reuse the boot axis's own classification: boot_fails or an
+    # affirmative boot pass both imply a serveable app was launched. Only a
+    # not_serveable / no_app_runner boot-inconclusive means non-web.
+    local _proof_serveable="false"
+    if [ "$boot_fails" = "true" ]; then
+        _proof_serveable="true"
+    elif [ "$boot_inconclusive" != "true" ]; then
+        _proof_serveable="true"
+    fi
+
+    if [ "$_proof_persist_disabled" = "true" ]; then
+        persist_inconclusive="true"; persist_inconclusive_reason="persist_gate_disabled"
+    elif [ "$_proof_serveable" != "true" ]; then
+        persist_inconclusive="true"; persist_inconclusive_reason="not_serveable"
+    elif command -v python3 >/dev/null 2>&1; then
+        local _p_status
+        _p_status=$(_PF="$_proof_file" _ITER="${ITERATION_COUNT:-0}" python3 <<'PYEOF' 2>/dev/null || echo "MISSING"
+import json, os
+p = os.environ['_PF']
+if not os.path.isfile(p):
+    print("MISSING"); raise SystemExit
+try:
+    d = json.load(open(p))
+except Exception:
+    print("UNPARSEABLE"); raise SystemExit
+# BUG 1b: freshness. A proof stamped for a different iteration is a STALE artifact
+# (a timeout/hang left a prior iteration's file, or the producer did not run this
+# iteration). Treat it as NOT PRESENT -- never let a stale proven:true pass.
+stamp = d.get("stamp") or {}
+try:
+    cur = int(os.environ.get("_ITER", "0"))
+except Exception:
+    cur = 0
+if "iteration" in stamp:
+    try:
+        if int(stamp.get("iteration")) != cur:
+            print("MISSING"); raise SystemExit
+    except (TypeError, ValueError):
+        print("MISSING"); raise SystemExit
+per = d.get("persistence") or {}
+attempted = per.get("attempted")
+proven = per.get("proven")
+reason = str(per.get("reason", "") or "")
+if attempted is True and proven is True:
+    print("PASS")
+elif attempted is False and reason in ("no_create_path", "not_serveable", "driver_unavailable"):
+    print("INCONCLUSIVE:" + reason)
+elif attempted is True and proven is False:
+    # A create path WAS exercised and the record did not survive -> disproven.
+    print("FAIL")
+else:
+    # attempted True/proven unknown, or malformed record on a serveable app.
+    # We cannot prove persistence, but "not proven" is not "disproven": pass
+    # through inconclusive rather than block a legitimate build (BUG 2).
+    print("INCONCLUSIVE:proof_indeterminate")
+PYEOF
+        )
+        case "$_p_status" in
+            PASS) : ;;
+            INCONCLUSIVE:*) persist_inconclusive="true"; persist_inconclusive_reason="${_p_status#INCONCLUSIVE:}" ;;
+            # BUG 2: absence / staleness / unparseable is NOT a disproof. A proof
+            # that was never freshly attempted this iteration (interval not fired,
+            # driver unavailable, timeout left nothing) is INCONCLUSIVE pass-through,
+            # never a hard block. ONLY a FRESHLY-attempted proven:false blocks.
+            MISSING) persist_inconclusive="true"; persist_inconclusive_reason="proof_not_attempted" ;;
+            UNPARSEABLE) persist_inconclusive="true"; persist_inconclusive_reason="proof_file_unparseable" ;;
+            FAIL) persist_fails="true" ;;
+            *) persist_inconclusive="true"; persist_inconclusive_reason="proof_indeterminate" ;;
+        esac
+    else
+        persist_inconclusive="true"; persist_inconclusive_reason="no_python3"
+    fi
+
+    if [ "$_proof_auth_disabled" = "true" ]; then
+        auth_inconclusive="true"; auth_inconclusive_reason="auth_gate_disabled"
+    elif [ "$_proof_serveable" != "true" ]; then
+        auth_inconclusive="true"; auth_inconclusive_reason="not_serveable"
+    elif command -v python3 >/dev/null 2>&1; then
+        local _a_status
+        _a_status=$(_PF="$_proof_file" _STRICT="${LOKI_PROOF_AUTH_STRICT:-1}" _ITER="${ITERATION_COUNT:-0}" python3 <<'PYEOF' 2>/dev/null || echo "MISSING"
+import json, os
+p = os.environ['_PF']
+strict = os.environ.get('_STRICT', '1') != '0'
+if not os.path.isfile(p):
+    # No proof file on a serveable app: cannot prove auth. If auth was never
+    # detected we would expect no_auth; a missing file is ambiguous. Under
+    # STRICT this is not a pass, but we cannot know auth was detected, so treat
+    # missing as inconclusive (the boot/persist axes already catch a dead app).
+    print("INCONCLUSIVE:proof_file_missing"); raise SystemExit
+try:
+    d = json.load(open(p))
+except Exception:
+    print("INCONCLUSIVE:proof_file_unparseable"); raise SystemExit
+# BUG 1b: freshness. A proof stamped for a different iteration is stale -> treat
+# as not present (inconclusive), never let a stale auth proven:true pass.
+stamp = d.get("stamp") or {}
+try:
+    cur = int(os.environ.get("_ITER", "0"))
+except Exception:
+    cur = 0
+if "iteration" in stamp:
+    try:
+        if int(stamp.get("iteration")) != cur:
+            print("INCONCLUSIVE:proof_stale"); raise SystemExit
+    except (TypeError, ValueError):
+        print("INCONCLUSIVE:proof_stale"); raise SystemExit
+a = d.get("auth") or {}
+attempted = a.get("attempted")
+proven = a.get("proven")
+reason = str(a.get("reason", "") or "")
+if attempted is True and proven is True:
+    print("PASS")
+elif attempted is True and proven is False:
+    # observed a protected route served logged-out, or only a login screen
+    # rendered -> auth NOT enforced -> BLOCK.
+    print("FAIL")
+elif attempted is False and reason in ("no_auth", "not_serveable", "driver_unavailable"):
+    print("INCONCLUSIVE:" + reason)
+elif reason in ("auth_detected_untestable", "auth_detected_timeout"):
+    # auth signal detected but enforcement could not be proven. Security
+    # property: STRICT fails closed to BLOCK; otherwise inconclusive-but-logged.
+    print("FAIL" if strict else "INCONCLUSIVE:" + reason)
+else:
+    print("INCONCLUSIVE:" + (reason or "unknown"))
+PYEOF
+        )
+        case "$_a_status" in
+            PASS) : ;;
+            INCONCLUSIVE:*) auth_inconclusive="true"; auth_inconclusive_reason="${_a_status#INCONCLUSIVE:}" ;;
+            FAIL) auth_fails="true" ;;
+            *) auth_inconclusive="true"; auth_inconclusive_reason="unknown" ;;
+        esac
+    else
+        auth_inconclusive="true"; auth_inconclusive_reason="no_python3"
+    fi
+
+    # --- Evidence check (h): AUTHORIZATION / TENANT ISOLATION (dynamic, driven) ---
+    # The Lovable-breach class: two LOGGED-IN users where user A can read user B's
+    # owned rows (ownership/RLS check inverted or missing). "auth" proves anon->401
+    # (authentication); "authorization" proves user-A-data-denied-to-user-B (tenant
+    # isolation). Read from the SAME functional-proof.json, key "authorization".
+    #
+    # CRITICAL ASYMMETRY vs persistence: a security property must NEVER be declared
+    # VIOLATED by our own tooling's inability to observe. So attempted && !proven
+    # blocks ONLY when the reason is the explicit positive-leak prefix
+    # 'user_b_read_user_a_' (B's real session actually received A's sentinel on a
+    # path). Every other outcome -- no multi-user auth, no owned data, could not
+    # create a second user, no read path for B, a drive error, missing/stale --
+    # is INCONCLUSIVE pass-through, never a block. Absence != insecure. This is the
+    # discipline that prevents the false-block: ONLY a fresh positive disproof of
+    # isolation blocks.
+    if [ "$_proof_authz_disabled" = "true" ]; then
+        authz_inconclusive="true"; authz_inconclusive_reason="authz_gate_disabled"
+    elif [ "$_proof_serveable" != "true" ]; then
+        authz_inconclusive="true"; authz_inconclusive_reason="not_serveable"
+    elif command -v python3 >/dev/null 2>&1; then
+        local _authz_status
+        _authz_status=$(_PF="$_proof_file" _ITER="${ITERATION_COUNT:-0}" python3 <<'PYEOF' 2>/dev/null || echo "MISSING"
+import json, os
+p = os.environ['_PF']
+if not os.path.isfile(p):
+    print("MISSING"); raise SystemExit
+try:
+    d = json.load(open(p))
+except Exception:
+    print("UNPARSEABLE"); raise SystemExit
+# Freshness: a proof stamped for a different iteration is stale -> treat as NOT
+# PRESENT. A stale proven:false leak reason must never linger-block; a stale
+# proven:true must never be a stale green.
+stamp = d.get("stamp") or {}
+try:
+    cur = int(os.environ.get("_ITER", "0"))
+except Exception:
+    cur = 0
+if "iteration" in stamp:
+    try:
+        if int(stamp.get("iteration")) != cur:
+            print("STALE"); raise SystemExit
+    except (TypeError, ValueError):
+        print("STALE"); raise SystemExit
+az = d.get("authorization") or {}
+attempted = az.get("attempted")
+proven = az.get("proven")
+reason = str(az.get("reason", "") or "")
+if attempted is True and proven is True:
+    # Isolation observed to HOLD on every path tried.
+    print("PASS")
+elif attempted is True and proven is False and reason.startswith("user_b_read_user_a_"):
+    # The ONLY blocking outcome: B's real session received A's sentinel on a path.
+    print("FAIL")
+else:
+    # EVERY other case is inconclusive pass-through (never a block):
+    #   attempted:false -> no_multiuser_auth / no_owned_data /
+    #     could_not_create_second_user / not_serveable / driver_unavailable
+    #   attempted:true/proven:false -> no_read_path_for_b / authz_drive_error:*
+    # A generic "could not read as B" or a driver error is OUR failure to observe,
+    # not a proven leak. Never block on it.
+    print("INCONCLUSIVE:" + (reason or "unknown"))
+PYEOF
+        )
+        case "$_authz_status" in
+            PASS) : ;;
+            INCONCLUSIVE:*) authz_inconclusive="true"; authz_inconclusive_reason="${_authz_status#INCONCLUSIVE:}" ;;
+            MISSING) authz_inconclusive="true"; authz_inconclusive_reason="proof_not_attempted" ;;
+            UNPARSEABLE) authz_inconclusive="true"; authz_inconclusive_reason="proof_file_unparseable" ;;
+            STALE) authz_inconclusive="true"; authz_inconclusive_reason="proof_stale" ;;
+            FAIL) authz_fails="true" ;;
+            *) authz_inconclusive="true"; authz_inconclusive_reason="unknown" ;;
+        esac
+    else
+        authz_inconclusive="true"; authz_inconclusive_reason="no_python3"
+    fi
+
+    # --- Evidence check (d): SECRET LEAK -- did the build ship a credential? ---
+    # RUN-25 iter 21 (Wave D #2): the secret matcher ran ONLY on the auto-commit
+    # path, so a completion via the promise / dirty-tree route could ship a leaked
+    # credential in a "done" deliverable -- a hole in the exact trust moat. Run the
+    # SAME matcher (shared lib) over the changed files. A high-confidence hit ->
+    # secret_fails (BLOCK); no matcher available or no scannable files ->
+    # inconclusive pass-through. Opt out LOKI_EVIDENCE_SECRET_GATE=0.
+    local secret_fails="false"
+    if [ "${LOKI_EVIDENCE_SECRET_GATE:-1}" != "0" ] \
+       && type _commit_scan_secret_file >/dev/null 2>&1; then
+        # Changed files vs run-start SHA (committed) + working-tree (staged/unstaged/
+        # untracked), excluding .loki/ (Loki's own state is never project work).
+        local _sec_files
+        _sec_files=$(
+            {
+                [ -n "$base_sha" ] && git diff --name-only "$base_sha" 2>/dev/null
+                git diff --name-only 2>/dev/null
+                git diff --name-only --cached 2>/dev/null
+                git ls-files --others --exclude-standard 2>/dev/null
+            } | grep -v '^$' | grep -vE '^\.loki/' | sort -u
+        )
+        local _sf
+        while IFS= read -r _sf; do
+            [ -n "$_sf" ] || continue
+            # CONTENT ONLY. The filename heuristic (_commit_path_looks_secret) is
+            # correct for the AUTO-COMMIT path -- refusing to stage a file called
+            # `.env` is cheap and right. It is WRONG as a completion gate, because
+            # it blocks on names alone with no look at what is inside:
+            # `src/auth/token.ts` is a routine file in any auth-enabled app, which
+            # is exactly what this engine is asked to build, and v7.129.5 shipped
+            # such builds without complaint (v7's council had no secret logic at
+            # all). Blocking there tells a user their finished, correct app is a
+            # security leak because of how they named a file.
+            # A real leak is still caught: _commit_scan_secret_file reads the
+            # bytes, and it carries the example/dummy/placeholder deny-filter that
+            # keeps fixtures and .env.example from tripping it.
+            if [ -f "$_sf" ] && _commit_scan_secret_file "$_sf"; then
+                secret_fails="true"
+                log_warn "[Council] Evidence gate: secret-leak match in changed file '${_sf}'"
+                break
+            fi
+        done <<< "$_sec_files"
+    fi
+
+    # --- Block decision: block iff any axis FAILS (diff/test/boot/secret/nomock/persist/auth/authz) ---
+    if [ "$diff_fails" != "true" ] && [ "$test_fails" != "true" ] && [ "$boot_fails" != "true" ] && [ "$secret_fails" != "true" ] && [ "$nomock_fails" != "true" ] && [ "$persist_fails" != "true" ] && [ "$auth_fails" != "true" ] && [ "$authz_fails" != "true" ]; then
         # Gate passes: remove any stale block report.
         if [ -f "$COUNCIL_STATE_DIR/evidence-block.json" ]; then
             rm -f "$COUNCIL_STATE_DIR/evidence-block.json"
@@ -2021,6 +2590,26 @@ DETAILS_EOF
         # the human-visible honesty at the pass site.
         if [ "$test_inconclusive" = "true" ]; then
             log_warn "[Council] Evidence gate: completion not backed by test evidence (${test_inconclusive_reason}). Pass-through; set LOKI_EVIDENCE_NO_TESTS_AFFIRMATIVE=1 to treat no-tests as affirmative."
+        fi
+        # Same honesty for the runtime-boot axis: a pass that could not confirm the
+        # app boots (CLI/library, probe never ran, gate disabled) says so out loud
+        # rather than implying the app was verified to run.
+        if [ "$boot_inconclusive" = "true" ]; then
+            log_warn "[Council] Evidence gate: app-boot not confirmed (${boot_inconclusive_reason}). Pass-through; set LOKI_EVIDENCE_BOOT_GATE=0 to silence, or run the app so its health probe records a verdict."
+        fi
+        # Proof-of-Function honesty: a pass-through that could not PROVE a
+        # functionality property says so out loud (never imply it was proven).
+        if [ "$nomock_inconclusive" = "true" ] && [ "$nomock_inconclusive_reason" != "nomock_gate_disabled" ]; then
+            log_warn "[Council] Evidence gate: no-mock not confirmed (${nomock_inconclusive_reason}). Pass-through; set LOKI_PROOF_NOMOCK=0 to silence."
+        fi
+        if [ "$persist_inconclusive" = "true" ] && [ "$persist_inconclusive_reason" != "persist_gate_disabled" ]; then
+            log_warn "[Council] Evidence gate: persistence not proven (${persist_inconclusive_reason}). Pass-through; set LOKI_PROOF_PERSIST=0 to silence, or expose a create form the driver can exercise (LOKI_PROOF_CREATE_SELECTOR)."
+        fi
+        if [ "$auth_inconclusive" = "true" ] && [ "$auth_inconclusive_reason" != "auth_gate_disabled" ]; then
+            log_warn "[Council] Evidence gate: auth enforcement not proven (${auth_inconclusive_reason}). Pass-through; set LOKI_PROOF_AUTH=0 to silence, or set LOKI_PROOF_PROTECTED_PATH so the driver can test a logged-out request."
+        fi
+        if [ "$authz_inconclusive" = "true" ] && [ "$authz_inconclusive_reason" != "authz_gate_disabled" ]; then
+            log_warn "[Council] Evidence gate: tenant isolation not proven (${authz_inconclusive_reason}). Pass-through; set LOKI_PROOF_AUTHZ=0 to silence, or configure LOKI_PROOF_AUTHZ_* selectors so the driver can drive two distinct sessions."
         fi
         _write_evidence_details "pass"
         return 0
@@ -2034,6 +2623,18 @@ DETAILS_EOF
         reason="empty_diff"
     elif [ "$test_fails" = "true" ]; then
         reason="tests_red"
+    elif [ "$boot_fails" = "true" ]; then
+        reason="app_boot_failed"
+    elif [ "$secret_fails" = "true" ]; then
+        reason="secret_leak_in_changed_files"
+    elif [ "$nomock_fails" = "true" ]; then
+        reason="mock_backed_data"
+    elif [ "$persist_fails" = "true" ]; then
+        reason="persistence_unproven"
+    elif [ "$auth_fails" = "true" ]; then
+        reason="auth_not_enforced"
+    elif [ "$authz_fails" = "true" ]; then
+        reason="tenant_isolation_broken"
     fi
 
     local failures=""
@@ -2048,6 +2649,75 @@ DETAILS_EOF
             failures="test runner '${test_runner}' ran and was red"
         fi
         log_warn "[Council] Evidence gate BLOCKED: test runner '${test_runner}' was red"
+    fi
+    if [ "$boot_fails" = "true" ]; then
+        # Wave D #1: the built app was launched and its health probe reported
+        # unhealthy -- a spec-to-product build cannot be "done" if its app does not
+        # run. Pass-through for CLI/library projects (boot_inconclusive above).
+        if [ -n "$failures" ]; then
+            failures="${failures}|app runner started but the app is not healthy (does not serve)"
+        else
+            failures="app runner started but the app is not healthy (does not serve)"
+        fi
+        log_warn "[Council] Evidence gate BLOCKED: the built app is not running/serving (app-runner health FAIL)"
+    fi
+    if [ "$secret_fails" = "true" ]; then
+        # Wave D #2: a credential-shaped secret is present in the changed files. A
+        # trust builder cannot call a build "done" while it would leak a secret.
+        if [ -n "$failures" ]; then
+            failures="${failures}|a secret/credential was detected in the changed files"
+        else
+            failures="a secret/credential was detected in the changed files"
+        fi
+        log_warn "[Council] Evidence gate BLOCKED: a secret/credential was detected in the changed files"
+    fi
+    if [ "$nomock_fails" = "true" ]; then
+        # PoF #1: a list, table, or dashboard resolves to an inline mock array,
+        # faker value, or placeholder literal. Opt out: LOKI_PROOF_NOMOCK=0.
+        if [ -n "$failures" ]; then
+            failures="${failures}|a rendered operational collection resolves to inline, faker, or placeholder-backed data (set LOKI_PROOF_NOMOCK=0 to opt out)"
+        else
+            failures="a rendered operational collection resolves to inline, faker, or placeholder-backed data (set LOKI_PROOF_NOMOCK=0 to opt out)"
+        fi
+        log_warn "[Council] Evidence gate BLOCKED: a rendered operational collection resolves to inline, faker, or placeholder-backed data. Opt out: LOKI_PROOF_NOMOCK=0"
+    fi
+    if [ "$persist_fails" = "true" ]; then
+        # PoF #2: a create path was FRESHLY driven this iteration and the record
+        # did NOT survive a fresh-context read-back (or the submit errored).
+        # "Submit does nothing" is the #1 churn bug. Absence/staleness of a proof
+        # is inconclusive pass-through, not this block. Opt out: LOKI_PROOF_PERSIST=0.
+        if [ -n "$failures" ]; then
+            failures="${failures}|a create/submit was exercised but the record did not persist across reload (set LOKI_PROOF_PERSIST=0 to opt out)"
+        else
+            failures="a create/submit was exercised but the record did not persist across reload (set LOKI_PROOF_PERSIST=0 to opt out)"
+        fi
+        log_warn "[Council] Evidence gate BLOCKED: persistence not proven -- a submit did not survive reload (${persist_inconclusive_reason:-not_persisted}). Opt out: LOKI_PROOF_PERSIST=0"
+    fi
+    if [ "$auth_fails" = "true" ]; then
+        # PoF #3: a protected route served logged-out (200), only a login screen
+        # rendered, or auth was detected but enforcement could not be proven
+        # under STRICT. A rendered login screen is not "auth done". Opt out:
+        # LOKI_PROOF_AUTH=0 (or LOKI_PROOF_AUTH_STRICT=0 to relax the detected-but-
+        # untestable case, or LOKI_PROOF_PROTECTED_PATH to point the driver).
+        if [ -n "$failures" ]; then
+            failures="${failures}|auth enforcement was not proven -- a protected route was reachable logged-out or could not be tested (set LOKI_PROOF_AUTH=0 to opt out)"
+        else
+            failures="auth enforcement was not proven -- a protected route was reachable logged-out or could not be tested (set LOKI_PROOF_AUTH=0 to opt out)"
+        fi
+        log_warn "[Council] Evidence gate BLOCKED: auth enforcement not proven (${auth_inconclusive_reason:-not_enforced}). Opt out: LOKI_PROOF_AUTH=0 (or LOKI_PROOF_PROTECTED_PATH / LOKI_PROOF_AUTH_STRICT=0)"
+    fi
+    if [ "$authz_fails" = "true" ]; then
+        # PoF #4 (the Lovable-breach class): user B's real second session READ user
+        # A's owned sentinel via a list/detail/API path -- tenant isolation is
+        # BROKEN (ownership/RLS check inverted or missing). This is the ONLY authz
+        # block outcome: absence/undetectable/driver-error all pass through. Opt
+        # out: LOKI_PROOF_AUTHZ=0.
+        if [ -n "$failures" ]; then
+            failures="${failures}|tenant isolation is broken -- a second user could read another user's owned data (set LOKI_PROOF_AUTHZ=0 to opt out)"
+        else
+            failures="tenant isolation is broken -- a second user could read another user's owned data (set LOKI_PROOF_AUTHZ=0 to opt out)"
+        fi
+        log_warn "[Council] Evidence gate BLOCKED: tenant isolation broken -- user B read user A's owned data (${authz_inconclusive_reason:-user_b_read_user_a}). Opt out: LOKI_PROOF_AUTHZ=0"
     fi
 
     # Rail 3 (one-step self-rescue): the terminal user (no dashboard open) must
@@ -2069,8 +2739,23 @@ import json, os
 items = [s for s in os.environ['_FAILURES'].split('|') if s]
 print(json.dumps(items[:5]))
 " 2>/dev/null || echo '[]')
+    local boot_ok secret_ok boot_reason_json
+    local nomock_ok persist_ok auth_ok authz_ok nomock_reason_json persist_reason_json auth_reason_json authz_reason_json
     if [ "$diff_fails" = "true" ]; then diff_ok="false"; else diff_ok="true"; fi
     if [ "$test_fails" = "true" ]; then tests_ok="false"; else tests_ok="true"; fi
+    if [ "$boot_fails" = "true" ]; then boot_ok="false"; else boot_ok="true"; fi
+    if [ "$secret_fails" = "true" ]; then secret_ok="false"; else secret_ok="true"; fi
+    if [ "$nomock_fails" = "true" ]; then nomock_ok="false"; else nomock_ok="true"; fi
+    if [ "$persist_fails" = "true" ]; then persist_ok="false"; else persist_ok="true"; fi
+    if [ "$auth_fails" = "true" ]; then auth_ok="false"; else auth_ok="true"; fi
+    if [ "$authz_fails" = "true" ]; then authz_ok="false"; else authz_ok="true"; fi
+    # Record WHY boot was inconclusive (no_app_runner / not_serveable / etc.) so a
+    # consumer of the block report can tell a genuine boot pass from a pass-through.
+    boot_reason_json=$(_R="${boot_inconclusive_reason:-}" python3 -c "import json,os; print(json.dumps(os.environ['_R']))" 2>/dev/null || echo '""')
+    nomock_reason_json=$(_R="${nomock_inconclusive_reason:-}" python3 -c "import json,os; print(json.dumps(os.environ['_R']))" 2>/dev/null || echo '""')
+    persist_reason_json=$(_R="${persist_inconclusive_reason:-}" python3 -c "import json,os; print(json.dumps(os.environ['_R']))" 2>/dev/null || echo '""')
+    auth_reason_json=$(_R="${auth_inconclusive_reason:-}" python3 -c "import json,os; print(json.dumps(os.environ['_R']))" 2>/dev/null || echo '""')
+    authz_reason_json=$(_R="${authz_inconclusive_reason:-}" python3 -c "import json,os; print(json.dumps(os.environ['_R']))" 2>/dev/null || echo '""')
     base_for_json="${base_sha:-}"
     cat > "$ev_tmp" << EVIDENCE_EOF
 {
@@ -2081,7 +2766,13 @@ print(json.dumps(items[:5]))
     "reason": "$reason",
     "checks": {
         "diff": {"ok": $diff_ok, "base_sha": "$base_for_json", "files_changed": $diff_files, "sources": "committed|unstaged|staged|untracked union"},
-        "tests": {"ok": $tests_ok, "runner": "$test_runner", "pass": $test_pass}
+        "tests": {"ok": $tests_ok, "runner": "$test_runner", "pass": $test_pass},
+        "boot": {"ok": $boot_ok, "inconclusive": $boot_inconclusive, "reason": $boot_reason_json},
+        "secret": {"ok": $secret_ok},
+        "nomock": {"ok": $nomock_ok, "inconclusive": $nomock_inconclusive, "reason": $nomock_reason_json},
+        "persistence": {"ok": $persist_ok, "inconclusive": $persist_inconclusive, "reason": $persist_reason_json},
+        "auth": {"ok": $auth_ok, "inconclusive": $auth_inconclusive, "reason": $auth_reason_json},
+        "authorization": {"ok": $authz_ok, "inconclusive": $authz_inconclusive, "reason": $authz_reason_json}
     },
     "failures": $failures_json
 }
@@ -2093,10 +2784,19 @@ EVIDENCE_EOF
     # be the cross-run corpus for the block rate. Append an event here, where a
     # block is definitely happening. Additive, best-effort, stdout-silent.
     if type record_trust_event_bash &>/dev/null; then
+        # proof_axis attributes a Proof-of-Function block to its axis (nomock|
+        # persistence|auth) so the TS trust metrics can attribute it without a
+        # schema-breaking change; empty for the diff/tests/boot/secret axes.
+        local _proof_axis=""
+        if [ "$nomock_fails" = "true" ]; then _proof_axis="nomock"
+        elif [ "$persist_fails" = "true" ]; then _proof_axis="persistence"
+        elif [ "$auth_fails" = "true" ]; then _proof_axis="auth"
+        elif [ "$authz_fails" = "true" ]; then _proof_axis="authorization"; fi
         record_trust_event_bash "evidence_block" \
             "reason=$reason" \
             "diff_ok=$diff_ok" \
             "tests_ok=$tests_ok" \
+            "proof_axis=$_proof_axis" \
             >/dev/null 2>&1 || true
     fi
 
@@ -2223,7 +2923,19 @@ council_member_review() {
 
     # Validate provider CLI is available
     case "${PROVIDER_NAME:-claude}" in
-        claude) command -v claude >/dev/null 2>&1 || { log_error "Claude CLI not found"; return 1; } ;;
+        claude)
+            # v8: the raw-SDK vote path (LOKI_SDK_COUNCIL_VOTE=1) needs no claude
+            # binary, so the precondition passes when that path is viable (bridge
+            # + bun). The vote body still falls closed to claude on an SDK miss.
+            if [ "${LOKI_SDK_COUNCIL_VOTE:-0}" = "1" ] \
+               && { [ -x "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bin/loki" ] \
+                 || [ -x "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../bin/loki" ]; } \
+               && command -v bun >/dev/null 2>&1; then
+                :
+            else
+                command -v claude >/dev/null 2>&1 || { log_error "Claude CLI not found"; return 1; }
+            fi
+            ;;
         codex) command -v codex >/dev/null 2>&1 || { log_error "Codex CLI not found"; return 1; } ;;
         gemini) command -v gemini >/dev/null 2>&1 || { log_error "Gemini CLI not found"; return 1; } ;;
         cline) command -v cline >/dev/null 2>&1 || { log_error "Cline CLI not found"; return 1; } ;;
@@ -2306,7 +3018,59 @@ ISSUES: CRITICAL:description (optional, one per line per issue)"
     # Use the configured provider for review
     case "${PROVIDER_NAME:-claude}" in
         claude)
-            if command -v claude &>/dev/null; then
+            # v8 RAW-SDK VOTE PATH (opt-in LOKI_SDK_COUNCIL_VOTE=1). Run the member
+            # completion vote via the pure-HTTPS @anthropic-ai/sdk text bridge (no
+            # claude binary) through `internal sdk-text`. The reviewer emits the
+            # SAME free-form VOTE/REASON/ISSUES text the claude path does, so the
+            # elaborate downstream parser (grep VOTE:/REASON:/ISSUES:) is UNCHANGED
+            # -- text bridge, not a schema change, to keep the trust-core parse
+            # byte-identical. Runs BEFORE the claude-binary guard so the no-binary
+            # deploy win holds. Fail-closed: on ANY miss (flag off, no key, bun/
+            # entrypoint absent, non-zero, empty) fall through to the claude path;
+            # a truly empty verdict then hits the conservative REJECT default. The
+            # captured text is written to $verdict (same var the claude arm sets)
+            # and _provider_rc is set so a timeout still routes conservatively.
+            if [ "${LOKI_SDK_COUNCIL_VOTE:-0}" = "1" ]; then
+                local _cv_root _cv_loki _cv_pf _cv_out _cv_rc
+                _cv_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+                _cv_loki="${_cv_root}/bin/loki"
+                [ -x "$_cv_loki" ] || _cv_loki="${_cv_root}/../bin/loki"
+                if [ -x "$_cv_loki" ] && command -v bun >/dev/null 2>&1; then
+                    _cv_pf="$(mktemp 2>/dev/null)" || _cv_pf=""
+                    if [ -n "$_cv_pf" ]; then
+                        printf '%s' "$prompt" > "$_cv_pf"
+                        _cv_rc=0
+                        local _cv_to_s="${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}"
+                        local _cv_wrap
+                        if command -v timeout >/dev/null 2>&1; then _cv_wrap="timeout $(( _cv_to_s + 15 ))"
+                        elif command -v gtimeout >/dev/null 2>&1; then _cv_wrap="gtimeout $(( _cv_to_s + 15 ))"
+                        else _cv_wrap=""; fi
+                        _cv_out="$($_cv_wrap "$_cv_loki" internal sdk-text \
+                            --prompt-file "$_cv_pf" \
+                            --model "${LOKI_SDK_COUNCIL_MODEL:-claude-haiku-4-5}" --effort medium \
+                            --timeout-ms "$(( _cv_to_s * 1000 ))" 2>/dev/null)" || _cv_rc=$?
+                        rm -f "$_cv_pf" 2>/dev/null || true
+                        if [ "$_cv_rc" -eq 0 ] && [ -n "$_cv_out" ]; then
+                            verdict="$_cv_out"
+                            _provider_rc=0
+                        elif [ "$_cv_rc" -eq 124 ] || [ "$_cv_rc" -eq 137 ] || [ "$_cv_rc" -eq 143 ]; then
+                            # TRUST-CORE SAFE DEFAULT (council review, bash-F4 parity):
+                            # an SDK-subprocess TIMEOUT must propagate to _provider_rc
+                            # so the post-case guard forces a conservative REJECT.
+                            # Without this, a no-claude-binary deploy would fall to
+                            # council_heuristic_review (which can APPROVE on benign
+                            # evidence) on a hung/rate-limited endpoint -- correlated
+                            # member timeouts could then fake-APPROVE the council.
+                            # Only set on a genuine timeout kill; a normal SDK miss
+                            # (rc 1: no key / transport / refusal) still falls through
+                            # to the claude arm exactly as before.
+                            _provider_rc=$_cv_rc
+                        fi
+                    fi
+                fi
+                # if verdict is still unset, fall through to the claude arm below
+            fi
+            if [ -z "${verdict:-}" ] && command -v claude &>/dev/null; then
                 local council_model="${PROVIDER_MODEL_FAST:-haiku}"
                 # EMBED 2 + 3 (v7.33.0). Council member completion vote. The
                 # $prompt is fully self-contained (evidence + instructions +
@@ -2377,6 +3141,25 @@ ISSUES: CRITICAL:description (optional, one per line per issue)"
                 _provider_rc=$?
             fi
             ;;
+        *)
+            # v8.2.0 TIMEOUT SEAM. Any provider exposing provider_invoke_argv can
+            # cast a real council vote instead of falling straight to the
+            # heuristic. argv is a REAL command, so `timeout` bounds it exactly as
+            # it bounds the named arms above (providers/claude.sh:321).
+            #
+            # SEMANTICS PRESERVED: _provider_rc is captured the same way, so the
+            # bash-F4 safe default below still forces a conservative REJECT on a
+            # timeout kill (124/137/143). An empty verdict falls to
+            # council_heuristic_review, identical to a missing CLI today.
+            if type provider_invoke_argv >/dev/null 2>&1; then
+                provider_invoke_argv fast "$prompt"
+                # caveman HARD-SUPPRESS: this vote is parsed for "VOTE:".
+                verdict=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" \
+                    env CAVEMAN_DEFAULT_MODE=off \
+                    "${_LOKI_INVOKE_ARGV[@]+"${_LOKI_INVOKE_ARGV[@]}"}" 2>/dev/null)
+                _provider_rc=$?
+            fi
+            ;;
     esac
 
     # bash-F4 (WAVE10 SAFE-DEFAULT): a provider timeout (124, incl. 128+SIGTERM
@@ -2415,7 +3198,19 @@ council_devils_advocate() {
 
     # Validate provider CLI is available
     case "${PROVIDER_NAME:-claude}" in
-        claude) command -v claude >/dev/null 2>&1 || { log_error "Claude CLI not found"; return 1; } ;;
+        claude)
+            # v8: the raw-SDK vote path (LOKI_SDK_COUNCIL_VOTE=1) needs no claude
+            # binary, so the precondition passes when that path is viable (bridge
+            # + bun). The vote body still falls closed to claude on an SDK miss.
+            if [ "${LOKI_SDK_COUNCIL_VOTE:-0}" = "1" ] \
+               && { [ -x "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bin/loki" ] \
+                 || [ -x "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../bin/loki" ]; } \
+               && command -v bun >/dev/null 2>&1; then
+                :
+            else
+                command -v claude >/dev/null 2>&1 || { log_error "Claude CLI not found"; return 1; }
+            fi
+            ;;
         codex) command -v codex >/dev/null 2>&1 || { log_error "Codex CLI not found"; return 1; } ;;
         gemini) command -v gemini >/dev/null 2>&1 || { log_error "Gemini CLI not found"; return 1; } ;;
         cline) command -v cline >/dev/null 2>&1 || { log_error "Cline CLI not found"; return 1; } ;;
@@ -2452,7 +3247,42 @@ REASON: your reasoning"
     local verdict=""
     case "${PROVIDER_NAME:-claude}" in
         claude)
-            if command -v claude &>/dev/null; then
+            # v8 RAW-SDK CONTRARIAN VOTE (opt-in LOKI_SDK_COUNCIL_VOTE=1). Same
+            # text-bridge pattern as the member vote: emit the SAME free-form
+            # VOTE/REASON text via the pure-HTTPS SDK (no claude binary), leaving
+            # the downstream VOTE: parser untouched. Runs BEFORE the claude guard.
+            # Fail-closed: on ANY miss fall through to the claude arm; a truly
+            # empty verdict then hits the conservative REJECT default. (The
+            # contrarian path tracks no _provider_rc -- an empty verdict already
+            # routes conservatively -- so we only set $verdict on success.)
+            if [ "${LOKI_SDK_COUNCIL_VOTE:-0}" = "1" ]; then
+                local _dv_root _dv_loki _dv_pf _dv_out _dv_rc
+                _dv_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+                _dv_loki="${_dv_root}/bin/loki"
+                [ -x "$_dv_loki" ] || _dv_loki="${_dv_root}/../bin/loki"
+                if [ -x "$_dv_loki" ] && command -v bun >/dev/null 2>&1; then
+                    _dv_pf="$(mktemp 2>/dev/null)" || _dv_pf=""
+                    if [ -n "$_dv_pf" ]; then
+                        printf '%s' "$prompt" > "$_dv_pf"
+                        _dv_rc=0
+                        local _dv_to_s="${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}"
+                        local _dv_wrap
+                        if command -v timeout >/dev/null 2>&1; then _dv_wrap="timeout $(( _dv_to_s + 15 ))"
+                        elif command -v gtimeout >/dev/null 2>&1; then _dv_wrap="gtimeout $(( _dv_to_s + 15 ))"
+                        else _dv_wrap=""; fi
+                        _dv_out="$($_dv_wrap "$_dv_loki" internal sdk-text \
+                            --prompt-file "$_dv_pf" \
+                            --model "${LOKI_SDK_COUNCIL_MODEL:-claude-haiku-4-5}" --effort medium \
+                            --timeout-ms "$(( _dv_to_s * 1000 ))" 2>/dev/null)" || _dv_rc=$?
+                        rm -f "$_dv_pf" 2>/dev/null || true
+                        if [ "$_dv_rc" -eq 0 ] && [ -n "$_dv_out" ]; then
+                            verdict="$_dv_out"
+                        fi
+                    fi
+                fi
+                # if verdict is still unset, fall through to the claude arm below
+            fi
+            if [ -z "${verdict:-}" ] && command -v claude &>/dev/null; then
                 local council_model="${PROVIDER_MODEL_FAST:-haiku}"
                 # EMBED 2 + 3 (v7.33.0). Contrarian (devil's-advocate) vote --
                 # an adversarial reviewer. Self-contained $prompt via stdin,
@@ -2498,6 +3328,22 @@ REASON: your reasoning"
                 verdict=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" aider --message "$prompt" --yes-always --no-auto-commits --no-git 2>/dev/null)
             fi
             ;;
+        *)
+            # v8.2.0 TIMEOUT SEAM (contrarian / devil's-advocate vote). Same
+            # rationale as the member vote: a real argv keeps the `timeout`
+            # bound that a shell function would silently remove.
+            #
+            # SEMANTICS PRESERVED: this path tracks no _provider_rc by design --
+            # an empty verdict (timeout or failure) already routes to the
+            # conservative REJECT fallback immediately below.
+            if type provider_invoke_argv >/dev/null 2>&1; then
+                provider_invoke_argv fast "$prompt"
+                # caveman HARD-SUPPRESS: parsed for "VOTE:".
+                verdict=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" \
+                    env CAVEMAN_DEFAULT_MODE=off \
+                    "${_LOKI_INVOKE_ARGV[@]+"${_LOKI_INVOKE_ARGV[@]}"}" 2>/dev/null)
+            fi
+            ;;
     esac
 
     if [ -z "$verdict" ]; then
@@ -2536,11 +3382,35 @@ council_heuristic_review() {
             fi
             ;;
         test_auditor)
-            # Check for test files
-            if ! echo "$evidence" | grep -qiE "(test|spec)"; then
+            # RUN-25 iter 14 (Wave B #9): require AFFIRMATIVE evidence that tests
+            # actually ran AND passed before approving -- the old logic approved on
+            # the ABSENCE of a negative signal (evidence merely MENTIONS "test" and
+            # lacks "fail"), which is a fake-green: a build where the suite never
+            # ran has no failure text either. Mirror council_evaluate_member: a real
+            # .loki/quality/test-results.json with a runner (not "none") AND pass
+            # true is the only thing that clears this auditor. No such affirmative
+            # evidence -> REJECT (keep iterating), never a heuristic APPROVE.
+            local _tr_file=".loki/quality/test-results.json"
+            local _tests_ok=0
+            if [ -f "$_tr_file" ] && command -v python3 >/dev/null 2>&1; then
+                _tests_ok=$(_TR="$_tr_file" python3 -c "
+import json, os
+try:
+    with open(os.environ['_TR']) as f:
+        d = json.load(f)
+except Exception:
+    print(0); raise SystemExit
+runner = str(d.get('runner', 'none'))
+p = d.get('pass', None)
+# affirmative: a real runner ran AND reported pass true (not inconclusive/false).
+print(1 if runner not in ('none', '', 'None') and p is True else 0)
+" 2>/dev/null || echo 0)
+            fi
+            if [ "${_tests_ok:-0}" != "1" ]; then
+                # No affirmative pass evidence -> this auditor cannot approve.
                 ((issues++))
             fi
-            # Check for passing indicators
+            # A negative signal in the evidence is still an independent issue.
             if echo "$evidence" | grep -qiE "(fail|error|FAIL)"; then
                 ((issues++))
             fi
@@ -3530,7 +4400,12 @@ _council_should_check_now() {
     local circuit_triggered="${1:-false}"
     local completion_claimed="${2:-false}"
     local iter="${ITERATION_COUNT:-0}"
-    local interval="${COUNCIL_CHECK_INTERVAL:-5}"
+    # LOKI_AUTO_TUNE (default 0): when on, converge faster on simple builds by
+    # lowering the check interval (simple -> 3). No-op when off. Resolved here (not
+    # at source time) because DETECTED_COMPLEXITY is populated after this file is
+    # sourced -- same reason _council_effective_min_iter is resolved at run time.
+    local interval
+    interval="$(_loki_auto_tune_interval "${DETECTED_COMPLEXITY:-}")"
     # SaaS #122: tier-aware effective floor (simple->1) so the no-claim early
     # check can also fire at iteration 1 on a genuinely-done simple app.
     local min_iter

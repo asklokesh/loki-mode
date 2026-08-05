@@ -106,20 +106,54 @@ printf '{"claudeAiOauth":{"expiresAt":%s}}' "$past_ms" > "$EXP_CFG/.credentials.
 r=$(run_case CLAUDE_FAKE_STATUS='' CLAUDE_CONFIG_DIR="$EXP_CFG" ANTHROPIC_API_KEY= FAKE_SECURITY_RC=1)
 [ "$r" = "expired" ] && ok "expired file + NO keychain -> expired" || bad "expired file no keychain" "$r" "expired"
 
-# (5) THE REGRESSION GUARD: expired cred file BUT a live keychain login (security
-#     exit 0) -> loggedin. A stale expired file must NEVER override a real
-#     Keychain login (the native-install case that broke test-prd-reuse-stub).
-r=$(run_case CLAUDE_FAKE_STATUS='' CLAUDE_CONFIG_DIR="$EXP_CFG" ANTHROPIC_API_KEY= FAKE_SECURITY_RC=0)
-[ "$r" = "loggedin" ] && ok "expired file + LIVE keychain -> loggedin (keychain overrides stale file)" || bad "expired+keychain" "$r" "loggedin"
+# Cases (5) and (6) exercise the macOS Keychain branch. The production helper
+# guards that probe with `[[ "$(uname)" == "Darwin" ]]` (autonomy/run.sh) so a
+# headless Linux build never risks a GUI keychain prompt -- which is correct and
+# must NOT change. On a non-Darwin runner the branch is unreachable by design,
+# so FAKE_SECURITY_RC has nothing to influence and both cases would report a
+# product failure for a platform difference. Skip them there instead.
+if [ "$(uname 2>/dev/null)" = "Darwin" ]; then
+    # (5) THE REGRESSION GUARD: expired cred file BUT a live keychain login
+    #     (security exit 0) -> loggedin. A stale expired file must NEVER override
+    #     a real Keychain login (the native-install case that broke
+    #     test-prd-reuse-stub).
+    r=$(run_case CLAUDE_FAKE_STATUS='' CLAUDE_CONFIG_DIR="$EXP_CFG" ANTHROPIC_API_KEY= FAKE_SECURITY_RC=0)
+    [ "$r" = "loggedin" ] && ok "expired file + LIVE keychain -> loggedin (keychain overrides stale file)" || bad "expired+keychain" "$r" "loggedin"
 
-# (6) keychain-only login (no file at all, security exit 0) -> loggedin
-r=$(run_case CLAUDE_FAKE_STATUS='' CLAUDE_CONFIG_DIR="$EMPTY_CFG" ANTHROPIC_API_KEY= FAKE_SECURITY_RC=0)
-[ "$r" = "loggedin" ] && ok "no file + keychain -> loggedin" || bad "keychain only" "$r" "loggedin"
+    # (6) keychain-only login (no file at all, security exit 0) -> loggedin
+    r=$(run_case CLAUDE_FAKE_STATUS='' CLAUDE_CONFIG_DIR="$EMPTY_CFG" ANTHROPIC_API_KEY= FAKE_SECURITY_RC=0)
+    [ "$r" = "loggedin" ] && ok "no file + keychain -> loggedin" || bad "keychain only" "$r" "loggedin"
+    # (7) macOS confident logout: no auth-status, no file, no keychain, claude
+    #     present -> loggedout (the genuine never-logged-in user is still
+    #     caught). Also Darwin-only: the helper can only be CONFIDENT that a user
+    #     is logged out when it was able to consult the Keychain and find
+    #     nothing. Off Darwin it correctly fails open to "unknown" rather than
+    #     accusing a logged-in user of being logged out.
+    r=$(run_case CLAUDE_FAKE_STATUS='' CLAUDE_CONFIG_DIR="$EMPTY_CFG" ANTHROPIC_API_KEY= FAKE_SECURITY_RC=1)
+    [ "$r" = "loggedout" ] && ok "no file + no keychain + claude present -> loggedout" || bad "confident logout" "$r" "loggedout"
+else
+    echo "[SKIP] cases 5-7: Keychain branch is Darwin-only in the helper (uname=$(uname 2>/dev/null))"
 
-# (7) macOS confident logout: no auth-status, no file, no keychain, claude present
-#     -> loggedout (the genuine never-logged-in user is still caught).
-r=$(run_case CLAUDE_FAKE_STATUS='' CLAUDE_CONFIG_DIR="$EMPTY_CFG" ANTHROPIC_API_KEY= FAKE_SECURITY_RC=1)
-[ "$r" = "loggedout" ] && ok "no file + no keychain + claude present -> loggedout" || bad "confident logout" "$r" "loggedout"
+    # The non-Darwin contract, asserted rather than merely skipped: with no
+    # keychain to consult the helper must fail OPEN to "unknown", never claim
+    # "loggedout". A regression to a confident-but-wrong answer would lock a
+    # logged-in Linux user out of their own build.
+    r=$(run_case CLAUDE_FAKE_STATUS='' CLAUDE_CONFIG_DIR="$EMPTY_CFG" ANTHROPIC_API_KEY= FAKE_SECURITY_RC=1)
+    [ "$r" = "unknown" ] && ok "non-Darwin: no keychain -> unknown (fails open, never a false loggedout)" || bad "non-Darwin fail-open" "$r" "unknown"
+fi
+
+# --- WIRING ------------------------------------------------------------------
+# Everything above extracts _loki_claude_login_state and drives it directly.
+# That proves the helper classifies login state correctly and says nothing about
+# whether the preflight still asks it. Verified by mutation: hardcoding the
+# caller to "loggedin" left every assertion above green -- the fail-fast on a
+# never-logged-in user would silently stop working, and that user would enter
+# the build, make a failing call, and 401.
+if grep -qE '_login_state="\$\(_loki_claude_login_state\)"' "$RUN_SCRIPT"; then
+    ok "WIRING: the preflight still asks for the real login state"
+else
+    bad "WIRING: the login-state check is bypassed" "absent" "present"
+fi
 
 echo
 echo "-----------------------------------------------------"

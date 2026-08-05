@@ -1,0 +1,32 @@
+{
+  "generated": "2026-07-30T04:12:15Z",
+  "claim": "The HARNESS is model-invariant: same gates run, same acceptance checked, same receipt semantics.",
+  "not_claimed": "Identical quality or identical speed across models. That is not deliverable and we do not assert it.",
+  "spec": "identical spec, same machine, same harness version",
+  "runs": [
+    {
+      "model": "haiku",
+      "wall_clock_s": 460,
+      "iterations": 1,
+      "exit_code": 0,
+      "engine_completed": true,
+      "acceptance": {
+        "greet.js_exists": true
+      },
+      "acceptance_met": true,
+      "work_s": 54.0
+    },
+    {
+      "model": "sonnet",
+      "wall_clock_s": 560,
+      "iterations": 1,
+      "exit_code": 0,
+      "engine_completed": true,
+      "acceptance": {
+        "greet.js_exists": true
+      },
+      "acceptance_met": true,
+      "work_s": 42.0
+    }
+  ]
+}

@@ -36,10 +36,15 @@ else
 fi
 
 # Case 2: generic LOKI_MODEL_* with a Claude alias is still validated -> default.
+# The default is now EMPTY (no --model flag passed) rather than a hardcoded
+# name: pinning gpt-5.3-codex broke ChatGPT-account users outright, since codex
+# rejects that model on that account tier. The property under test is unchanged
+# -- a Claude alias must never reach codex verbatim -- only the safe landing
+# spot changed from "a guessed model name" to "no model at all".
 out="$(resolve LOKI_MODEL_DEVELOPMENT=opus)"
 dev="${out#*|}"; dev="${dev%%|*}"
-if [ "$dev" = "gpt-5.3-codex" ]; then
-    ok "generic LOKI_MODEL_DEVELOPMENT=opus validated -> default"
+if [ -z "$dev" ]; then
+    ok "generic LOKI_MODEL_DEVELOPMENT=opus validated -> no model pinned"
 else
     bad "generic claude alias not validated: got '$dev'"
 fi
@@ -53,12 +58,17 @@ else
     bad "valid generic gpt model dropped: got '$dev'"
 fi
 
-# Case 4: no env -> default.
+# Case 4: no env -> NO model pinned on any tier.
+# This is the ChatGPT-account regression guard. codex-cli 0.144.6 rejects
+# gpt-5.3-codex with "not supported when using Codex with a ChatGPT account",
+# and Codex ships free with every ChatGPT plan, so a hardcoded default broke
+# the only zero-cost on-ramp in the category. All three tiers must resolve
+# empty so provider_invoke omits --model and codex picks for itself.
 out="$(resolve)"
-if [ "$out" = "gpt-5.3-codex|gpt-5.3-codex|gpt-5.3-codex" ]; then
-    ok "no env -> default model across tiers"
+if [ "$out" = "||" ]; then
+    ok "no env -> no model pinned on any tier (ChatGPT-account safe)"
 else
-    bad "default resolution changed: got '$out'"
+    bad "a default model is being pinned again: got '$out'"
 fi
 
 echo ""

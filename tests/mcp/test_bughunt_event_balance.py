@@ -125,6 +125,15 @@ class _ChdirToTmp:
 # Tools whose only reachable path on a fresh repo is the success path (which
 # already emits 'complete') still get exercised here and must also balance.
 _FRESH_REPO_CALLS = {
+    # Deterministic verification tool. Scoped to an empty diff base so the call
+    # is bounded and side-effect free in a fresh repo: it emits its start and
+    # complete events without scanning the tree.
+    "loki_verify_fast": dict(path=".", diff_base="HEAD"),
+    # Knowledge-graph query. In a fresh repo there is no graphify-out/, so this
+    # takes the structured no-graph branch -- which is exactly the path worth
+    # exercising here: it must still emit a balanced start/complete pair rather
+    # than returning early and leaving a dangling start event.
+    "loki_graph_query": dict(question="what is this", budget=100),
     "loki_memory_retrieve": dict(query="x"),
     "loki_memory_store_pattern": dict(pattern="p", category="c", correct_approach="a"),
     "loki_task_queue_list": dict(),

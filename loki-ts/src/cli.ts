@@ -13,6 +13,7 @@ import { runVersion } from "./commands/version.ts";
 import { runProvider } from "./commands/provider.ts";
 import { runMemory } from "./commands/memory.ts";
 import { installCrashHandlers } from "./runner/crash.ts";
+import { resolveSdkMode } from "./runner/sdk_mode.ts";
 
 const HELP = `Loki Mode (TypeScript port, Phase 2 of bash->Bun migration)
 
@@ -62,6 +63,11 @@ function warnIfLegacyBashSetUnderBun(): void {
 
 async function dispatch(argv: readonly string[]): Promise<number> {
   warnIfLegacyBashSetUnderBun();
+  // v8.1: resolve the one-switch SDK mode (LOKI_SDK_MODE=off|judges|full) into
+  // the per-site LOKI_SDK_* flags before any Bun SDK site reads them. Mirror of
+  // the bash resolver (run.sh sources autonomy/lib/sdk-mode.sh). No-op when the
+  // mode is unset; an explicit per-site flag always wins. See runner/sdk_mode.ts.
+  resolveSdkMode();
   const cmd = argv[0];
   const rest = argv.slice(1);
 
@@ -224,6 +230,14 @@ async function dispatch(argv: readonly string[]): Promise<number> {
           "                  append learnings, and write the escalation handoff",
           "                  doc once per iteration. Driven by run.sh; not",
           "                  intended for direct invocation.",
+          "  sdk-judge       (v8) Run a one-shot schema-constrained judge via the",
+          "                  raw @anthropic-ai/sdk (pure HTTPS, no binary) and print",
+          "                  the parsed JSON. Fail-closed: non-zero + no stdout ->",
+          "                  the bash caller falls back to claude/text. Driven by",
+          "                  the SDK judge sites (LOKI_SDK_* flags).",
+          "  sdk-text        (v8) The free-form (no-schema) sibling of sdk-judge for",
+          "                  prose sites (grill, prd-enrich). Prints raw text; same",
+          "                  fail-closed contract.",
           "",
           "Phase 1 (RARV-C closure) env vars:",
           "  LOKI_INJECT_FINDINGS=1   Persist structured reviewer findings to",
@@ -256,9 +270,30 @@ async function dispatch(argv: readonly string[]): Promise<number> {
         const { runInternalPhase1Hooks } = await import("./commands/internal_phase1.ts");
         return runInternalPhase1Hooks(rest.slice(1));
       }
+      if (subcmd === "sdk-judge") {
+        // v8: bash->raw-SDK judge bridge. Reads a prompt + JSON schema, runs the
+        // pure-HTTPS @anthropic-ai/sdk judge, prints the parsed JSON. Fail-closed
+        // (non-zero + no stdout) so the bash caller falls back to claude/text.
+        const { runInternalSdkJudge } = await import("./commands/internal_sdk_judge.ts");
+        return runInternalSdkJudge(rest.slice(1));
+      }
+      if (subcmd === "sdk-text") {
+        // v8: free-form (no-schema) sibling for prose sites (grill, prd-enrich).
+        // Prints raw text; same fail-closed contract (non-zero + no stdout).
+        const { runInternalSdkText } = await import("./commands/internal_sdk_judge.ts");
+        return runInternalSdkText(rest.slice(1));
+      }
       process.stderr.write(`Unknown internal subcommand: ${subcmd}\n`);
       process.stderr.write(`Run 'loki internal --help' for the supported list.\n`);
       return 2;
+    }
+
+    case "start": {
+      // v8 Phase 4: the RARV autonomous loop on the Bun route. Reached from
+      // bin/loki only when LOKI_SDK_LOOP is truthy (the default route still runs
+      // the bash cmd_start). Parses the supported flag subset -> runAutonomous.
+      const { runStart } = await import("./commands/start.ts");
+      return runStart(rest);
     }
 
     default:

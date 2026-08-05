@@ -33,6 +33,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import type { AgentVerdict } from "../runner/council.ts";
+import { judgeJson, sdkJudgeAvailable } from "../runner/sdk_invoker.ts";
 import type { CouncilEvaluateContext } from "../runner/council.ts";
 import { readStreamCapped } from "../util/shell.ts";
 import { parseMultiResponse } from "./finding_schema.ts";
@@ -273,6 +274,15 @@ function findingSchemaPath(): string {
   return resolvePath(import.meta.dir, "..", "..", "data", "finding-schema.json");
 }
 
+// v8.x FIX: `claude --json-schema` takes the schema JSON as INLINE CONTENT, not
+// a file path. Live-verified on CLI 2.1.207: passing a path errors with
+// "--json-schema is not valid JSON: Unrecognized token '/'" -> the dispatch
+// threw / fell back, so the structured council was silently non-functional.
+// Both dispatch sites pass this content. Parity with autonomy/lib/voter-agents.sh.
+function findingSchemaContent(): string {
+  return readFileSync(findingSchemaPath(), "utf8");
+}
+
 // Single-shot Claude invocation that declares all 3 base voters and asks for
 // a schema-validated multi-finding response. Throws on any failure so the
 // caller (councilEvaluate) can fall through to the existing heuristic.
@@ -302,7 +312,7 @@ export async function dispatchClaudeAgents(
   }
 
   const agentsJson = buildVoterAgentsJson(cec);
-  const schemaPath = findingSchemaPath();
+  const schemaContent = findingSchemaContent();
 
   // Minimal prompt: the agents declare the per-voter detail; the top-level
   // prompt tells Claude to produce the multi-finding wrapper.
@@ -312,6 +322,43 @@ export async function dispatchClaudeAgents(
     "Return ONE JSON object with a 'findings' array containing one entry per voter.",
     "The JSON must conform to the schema passed via --json-schema.",
   ].join("\n");
+
+  // v8 RAW-SDK COUNCIL PATH (opt-in LOKI_SDK_VOTER_AGENTS=1, only on the real
+  // route -- when a test runner is injected we honor the injection). The raw
+  // @anthropic-ai/sdk has no --agents primitive, so we inline the agent roster
+  // into the prompt and constrain the SAME finding schema via judgeJson, feeding
+  // the resulting {findings:[...]} object into the SAME parseMultiResponse. Runs
+  // BEFORE the claude spawn below so the no-binary deploy win holds. Fail-closed:
+  // judgeJson returns null on any miss (no key/transport/refusal/malformed) ->
+  // we fall through to the claude spawn; a caught throw here also falls through
+  // (the caller then uses the heuristic council). A council can never fake-APPROVE
+  // via this path: a missing per-voter finding still throws below and falls through.
+  if (!injected && process.env["LOKI_SDK_VOTER_AGENTS"] === "1" && sdkJudgeAvailable()) {
+    try {
+      const roster = JSON.stringify(agentsJson);
+      const sdkPrompt = `${topPrompt}\n\nDeclared council agents (produce exactly one finding per agent, keyed by its slug):\n${roster}`;
+      const schema = JSON.parse(schemaContent) as Record<string, unknown>;
+      const timeoutMs = (Number(process.env["LOKI_COUNCIL_REVIEW_TIMEOUT"]) || 600) * 1000;
+      const obj = await judgeJson({
+        prompt: sdkPrompt,
+        schema,
+        model: process.env["LOKI_SDK_COUNCIL_MODEL"] || "claude-sonnet-5",
+        effort: "high",
+        timeoutMs,
+      });
+      if (obj !== null) {
+        const verdicts = parseMultiResponse(JSON.stringify(obj));
+        const expectedSlugs = Object.keys(agentsJson);
+        const seen = new Set(verdicts.map((v) => v.role));
+        if (expectedSlugs.every((slug) => seen.has(slug))) {
+          return verdicts; // SDK path succeeded with a complete council
+        }
+        // incomplete -> fall through to the claude spawn (fail-closed)
+      }
+    } catch {
+      // fall through to the claude spawn (fail-closed)
+    }
+  }
 
   // NOTE (v7.7.31): council voters deliberately do NOT go through
   // buildAutoFlags(), so they never receive the --append-system-prompt autonomy
@@ -325,7 +372,7 @@ export async function dispatchClaudeAgents(
     "--agents",
     JSON.stringify(agentsJson),
     "--json-schema",
-    schemaPath,
+    schemaContent,
   ];
   // EMBED 3 (v7.33.0): --disallowedTools on the council voter argv. A reviewer
   // / voter agent should not casually mutate the working tree (a parallel agent
@@ -416,7 +463,7 @@ export async function dispatchDevilsAdvocate(
   const agentsJson: Record<string, AgentSpec> = {
     [VOTER_SLUGS.DEVILS_ADVOCATE]: daAgent,
   };
-  const schemaPath = findingSchemaPath();
+  const schemaContent = findingSchemaContent();
 
   const topPrompt = [
     `Iteration ${cec.iteration} anti-sycophancy re-review.`,
@@ -434,7 +481,7 @@ export async function dispatchDevilsAdvocate(
     "--agents",
     JSON.stringify(agentsJson),
     "--json-schema",
-    schemaPath,
+    schemaContent,
   ];
   if (
     process.env["LOKI_REVIEW_TOOL_GUARD"] !== "0" &&

@@ -207,11 +207,28 @@ loki_crash_friction() {
 # Kept as a callable no-op so existing callers (run.sh) do not break, and still
 # records the DISCLOSURE_SHOWN sentinel for back-compat with any reader of it.
 loki_show_disclosure_once() {
-    local config="${HOME}/.loki/config"
+    local config_root="${LOKI_DIR:-${HOME}/.loki}"
+    local config="${config_root}/config"
     if [ -f "$config" ] && grep -q "^DISCLOSURE_SHOWN=true" "$config" 2>/dev/null; then
         return 0
     fi
-    mkdir -p "${HOME}/.loki" 2>/dev/null || return 0
-    echo "DISCLOSURE_SHOWN=true" >> "$config" 2>/dev/null || true
+    mkdir -p "$config_root" 2>/dev/null || return 0
+    # A DIRECTORY at $config is a real, reachable state and must not print.
+    #
+    # LOKI_DIR is the PROJECT .loki when a build is running (not ~/.loki), and
+    # a project's .loki/config is legitimately a directory -- so this appended
+    # to a directory. `2>/dev/null` cannot suppress it: a redirect failure is
+    # reported by the SHELL before the redirection is applied, so every user
+    # saw a raw error on stdout at startup:
+    #
+    #   .../autonomy/crash.sh: line 216: .loki/config: Is a directory
+    #
+    # Observed on a real `loki start` run. The sentinel is back-compat only, so
+    # skipping it when the path is not a writable file costs nothing; printing
+    # a shell error into the first screen a user sees costs trust.
+    if [ -d "$config" ]; then
+        return 0
+    fi
+    { echo "DISCLOSURE_SHOWN=true" >> "$config"; } 2>/dev/null || true
     return 0
 }

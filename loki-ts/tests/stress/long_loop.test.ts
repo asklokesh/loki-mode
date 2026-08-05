@@ -128,9 +128,12 @@ beforeAll(() => {
   tmpRoot = mkdtempSync(resolve(tmpdir(), "loki-stress-longloop-"));
   lokiDir = resolve(tmpRoot, ".loki");
   mkdirSync(lokiDir, { recursive: true });
+  process.env["LOKI_GATE_LSP_WRITER"] = "0";
 });
 
 afterAll(() => {
+  if (prevLspWriter === undefined) delete process.env["LOKI_GATE_LSP_WRITER"];
+  else process.env["LOKI_GATE_LSP_WRITER"] = prevLspWriter;
   try {
     rmSync(tmpRoot, { recursive: true, force: true });
   } catch {
@@ -144,6 +147,23 @@ afterAll(() => {
 
 const ITERATIONS = 100;
 const HEAP_BUDGET_BYTES = 50 * 1024 * 1024; // 50 MB
+
+// The lsp_diagnostics gate spawns `python3 -m mcp.lsp_proxy --write-diagnostics`
+// once per iteration (quality_gates.ts runLSPDiagnosticsWriter). Against this
+// test's empty hermetic tmpdir that writer has nothing to measure -- it returns
+// {"measured": false, "reason": "no-changed-file-with-detected-server"} and
+// writes no artifact -- yet still costs ~2.1s of process startup per call. Over
+// 100 iterations that is ~210s against this test's 60s budget, which is why the
+// test timed out rather than failing an assertion.
+//
+// Pinning the WRITER off is not a weakening of what this test checks: the
+// lsp_diagnostics GATE still runs and still reads the artifact, and this test
+// asserts nothing about LSP (it checks the state file, the iteration counter,
+// orphan tmp files, checkpoint metadata, and heap). Zero measured signal is
+// lost, because on an empty tree the writer measures nothing by its own report.
+// The escape hatch is the production one (quality_gates.ts:2630), not a
+// test-only backdoor.
+const prevLspWriter = process.env["LOKI_GATE_LSP_WRITER"];
 
 function baseOpts(provider: ProviderInvoker, council: CouncilHook): RunnerOpts {
   // Silent log sink -- 100 iterations of console output would dominate runtime

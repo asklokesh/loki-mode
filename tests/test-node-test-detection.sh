@@ -107,6 +107,14 @@ make_harness() {  # $1 = source function file, $2 = output harness
         echo 'log_warn()  { :; }'
         echo 'log_error() { :; }'
         echo 'measure_test_coverage() { COVERAGE_MEASURED=false; COVERAGE_PCT=""; COVERAGE_TOOL="none"; COVERAGE_REASON="stub"; return 0; }'
+        # enforce_test_coverage calls these sibling helpers (defined above it in
+        # run.sh, so not pulled by the single-function extraction). Stub them to
+        # the SAFE default: _loki_zero_tests_executed returns 1 (normal -- tests
+        # ran, no honest-downgrade), so the runner LABEL under test is never
+        # altered by the zero-test path. _loki_run_pytest_with_timeout is only
+        # reached on a python project (not these node cases) -- stub it inert.
+        echo '_loki_zero_tests_executed() { return 1; }'
+        echo '_loki_run_pytest_with_timeout() { return 0; }'
         cat "$1"
     } > "$2"
 }

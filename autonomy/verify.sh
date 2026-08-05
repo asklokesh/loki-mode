@@ -39,12 +39,23 @@
 #   2  BLOCKED
 #   3  verifier error (could not complete; never silently passes)
 #
-# NOTE on exit-code divergence from the spec: spec Section 1.1 lists
-# 0=VERIFIED, 1=BLOCKED, 2=CONCERNS, 3=error (BLOCKED and CONCERNS swapped
-# vs this implementation). This module follows the explicit BUILD TASK
-# ordering (0/1/2 = VERIFIED/CONCERNS/BLOCKED). A human must reconcile the
-# two before the GitHub App (Phase 2) consumes exit codes. The divergence is
-# surfaced in `loki verify --help`.
+# EXIT-CODE ORDERING, RECONCILED. An early draft spec listed
+# 0=VERIFIED, 1=BLOCKED, 2=CONCERNS, and this header used to say a human must
+# reconcile the two before the GitHub App consumed exit codes. That is now
+# done, in favor of THIS implementation: 0/1/2/3 =
+# VERIFIED/CONCERNS/BLOCKED/error.
+#
+# Why this ordering wins. The code is authoritative and always has been
+# (VERIFY_EXIT_* below), `loki verify --help` documents it, and
+# wiki/CLI-Reference.md documents it. The draft spec that said otherwise is not
+# in this repository and has no consumers. Renumbering working code to match an
+# absent document would break every existing caller to satisfy nothing.
+#
+# It is also the ordering an integrator expects: severity rises with the code,
+# so `[ $rc -ge 2 ]` means "at least blocked". The reverse would make 1 more
+# severe than 2, which no one guesses correctly.
+#
+# See docs/exit-codes.md for the exit codes of every command.
 
 set -uo pipefail
 
@@ -427,6 +438,14 @@ _verify_zero_tests_executed() {
 verify_gate_tests() {
     local tree="$1"
     local timeout_s="${LOKI_GATE_TIMEOUT:-300}"
+    # Bounded-exec prefix: "timeout <secs>" / "gtimeout <secs>", or EMPTY when
+    # neither is on PATH (bare macOS, or a shadowed PATH). A bare `timeout ...`
+    # would exit 127 (command not found) and be misread as a test FAILURE ->
+    # spurious BLOCKED verdict. Degrade to running without a wall-clock cap
+    # instead. Mirrors run.sh's with_timeout discipline.
+    local _vt_bin _vt
+    _vt_bin="$(_verify_runtime_timeout_bin)"
+    if [ -n "$_vt_bin" ]; then _vt="$_vt_bin $timeout_s"; else _vt=""; fi
     local runner="none"
     local rc=0
     local out=""
@@ -434,13 +453,13 @@ verify_gate_tests() {
     if [ -f "$tree/package.json" ]; then
         if grep -q '"vitest"' "$tree/package.json" 2>/dev/null; then
             runner="vitest"
-            out="$(cd "$tree" && timeout "$timeout_s" npx vitest run 2>&1)" || rc=$?
+            out="$(cd "$tree" && $_vt npx vitest run 2>&1)" || rc=$?
         elif grep -q '"jest"' "$tree/package.json" 2>/dev/null; then
             runner="jest"
-            out="$(cd "$tree" && timeout "$timeout_s" npx jest --passWithNoTests --forceExit 2>&1)" || rc=$?
+            out="$(cd "$tree" && $_vt npx jest --passWithNoTests --forceExit 2>&1)" || rc=$?
         elif grep -q '"mocha"' "$tree/package.json" 2>/dev/null; then
             runner="mocha"
-            out="$(cd "$tree" && timeout "$timeout_s" npx mocha 2>&1)" || rc=$?
+            out="$(cd "$tree" && $_vt npx mocha 2>&1)" || rc=$?
         fi
     fi
 
@@ -480,7 +499,7 @@ verify_gate_tests() {
         if [ "$has_python" = "true" ]; then
             if command -v pytest >/dev/null 2>&1; then
                 runner="pytest"
-                out="$(cd "$tree" && timeout "$timeout_s" pytest --tb=short 2>&1)" || rc=$?
+                out="$(cd "$tree" && $_vt pytest --tb=short 2>&1)" || rc=$?
             elif command -v python3 >/dev/null 2>&1; then
                 # #139 parity: pytest ABSENT but a Python suite exists -> run it with
                 # stdlib unittest (zero third-party deps) instead of going blindly
@@ -490,7 +509,7 @@ verify_gate_tests() {
                 # a "Ran 0 tests" line detected by the zero-test guard on the run.sh
                 # mirror) so this never green-washes an empty suite.
                 runner="unittest"
-                out="$(cd "$tree" && timeout "$timeout_s" python3 -m unittest discover -p 'test_*.py' 2>&1)" || rc=$?
+                out="$(cd "$tree" && $_vt python3 -m unittest discover -p 'test_*.py' 2>&1)" || rc=$?
             else
                 # Applicable but cannot run -> inconclusive (Entanglement 2).
                 _verify_add_gate "tests" "inconclusive" "pytest" "python project detected but no pytest/python3 on PATH" "true"
@@ -502,7 +521,7 @@ verify_gate_tests() {
     if [ "$runner" = "none" ] && [ -f "$tree/go.mod" ]; then
         if command -v go >/dev/null 2>&1; then
             runner="go-test"
-            out="$(cd "$tree" && timeout "$timeout_s" go test ./... 2>&1)" || rc=$?
+            out="$(cd "$tree" && $_vt go test ./... 2>&1)" || rc=$?
         else
             _verify_add_gate "tests" "inconclusive" "go-test" "go project detected but go not on PATH" "true"
             return 0
@@ -512,7 +531,7 @@ verify_gate_tests() {
     if [ "$runner" = "none" ] && [ -f "$tree/Cargo.toml" ]; then
         if command -v cargo >/dev/null 2>&1; then
             runner="cargo-test"
-            out="$(cd "$tree" && timeout "$timeout_s" cargo test 2>&1)" || rc=$?
+            out="$(cd "$tree" && $_vt cargo test 2>&1)" || rc=$?
         else
             _verify_add_gate "tests" "inconclusive" "cargo-test" "rust project detected but cargo not on PATH" "true"
             return 0
@@ -550,7 +569,13 @@ verify_gate_tests() {
             runner="node-test"
             # Pass matched files explicitly (node --test globbing is
             # Node-version-sensitive); quote each so paths with spaces survive.
-            out="$(cd "$tree" && timeout "$timeout_s" node --test "${_nt_files[@]}" 2>&1)" || rc=$?
+            # Force --test-reporter=tap: Node 20+ defaults to the human "spec"
+            # reporter (Node 26 emits it even under capture), whose "i pass N" /
+            # check-mark lines the count parser + zero-tests detector below do NOT
+            # match; they expect TAP "# pass N" / "ok N - ". TAP is stable since
+            # Node 18, so forcing it restores a version-independent format with no
+            # parser change. Parity with autonomy/run.sh:9662.
+            out="$(cd "$tree" && $_vt node --test --test-reporter=tap "${_nt_files[@]}" 2>&1)" || rc=$?
         fi
     fi
 
@@ -561,6 +586,22 @@ verify_gate_tests() {
 
     if [ "$rc" -eq 124 ]; then
         _verify_add_gate "tests" "inconclusive" "$runner" "test run timed out after ${timeout_s}s" "true"
+        return 0
+    fi
+
+    # #82 (Python 3.12+): `python3 -m unittest` exits 5 (NOT 0) when it discovers
+    # ZERO tests -- e.g. a suite of pytest-style bare `def test_*` functions that
+    # unittest (TestCase-only) cannot collect. That non-zero exit would otherwise
+    # fall into the fail branch below and record tests=fail -> BLOCKED, when the
+    # honest classification is "applicable but ran no real tests" = inconclusive
+    # -> CONCERNS. Route the unittest zero-discovery case through the same guard
+    # the rc==0 path uses (its unittest arm matches "Ran 0 tests"/"NO TESTS RAN"
+    # but was unreachable behind rc==0). Scoped to unittest so pytest/go/cargo/node
+    # non-zero exits still correctly record fail.
+    if [ "$rc" -eq 5 ] && [ "$runner" = "unittest" ] \
+       && _verify_zero_tests_executed "$runner" "$out" "${_nt_files[@]:-}"; then
+        _verify_add_gate "tests" "inconclusive" "$runner" \
+            "runner ran but discovered zero tests (source_without_runnable_tests)" "true"
         return 0
     fi
 
@@ -697,6 +738,97 @@ verify_gate_static() {
 }
 
 # ---------------------------------------------------------------------------
+# Gate: NO-MOCK data render (Proof-of-Function, static half).
+#
+# WHAT IS SCANNED:
+#   The changed-file union identifies the trust boundary. The shared scanner may
+#   follow a named relative import into an unchanged source module, but it only
+#   blocks when either the render module or backing declaration changed. A
+#   rendered operational collection backed by an inline mock array, faker, or
+#   placeholder literal is the disproof: a fake app that only looks done.
+#
+# ARTIFACT:
+#   Writes .loki/verification/nomock-scan.json as an audit receipt. Completion
+#   never trusts this mutable file and independently reruns the engine-owned
+#   scanner over current source. On a hit, verify also emits a High finding so
+#   `loki verify` blocks. This is an observation of shipped source, not a guess.
+#
+# FAIL-CLOSED / FALSE-POSITIVE TUNING:
+#   Binds the rendered symbol to its declaration and exempts static content such
+#   as features, pricing, comparisons, and stories. Excludes test, story, mock,
+#   fixture, MSW, generated, and declaration paths. High-confidence only;
+#   anything else passes or skips to avoid blocking design-system demos, empty
+#   states, or seed files.
+# ---------------------------------------------------------------------------
+verify_gate_nomock() {
+    local tree="$1"
+    local changed="$VERIFY_DIFF_NAMES"
+    local PYTHONPATH="" PYTHONNOUSERSITE=1
+    export PYTHONPATH PYTHONNOUSERSITE
+
+    if [ "${LOKI_PROOF_NOMOCK:-1}" = "0" ]; then
+        _verify_add_gate "nomock" "skipped" "" "nomock gate disabled (LOKI_PROOF_NOMOCK=0)" "true"
+        return 0
+    fi
+    if [ -z "$changed" ]; then
+        _verify_add_gate "nomock" "skipped" "" "no changed files in diff" "true"
+        return 0
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        _verify_add_gate "nomock" "inconclusive" "" "python3 unavailable" "true"
+        return 0
+    fi
+
+    local scan_dir=".loki/verification"
+    mkdir -p "$scan_dir" 2>/dev/null || true
+    local scan_file="$scan_dir/nomock-scan.json"
+
+    # The scan runs in $tree over the changed files, writes the receipt JSON, and
+    # prints its status line (FAIL:<file>:<line>:<snippet> | PASS:<n> | SKIP:0).
+    local scanner
+    scanner="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/no_mock_scan.py"
+    if [ ! -f "$scanner" ]; then
+        _verify_add_gate "nomock" "inconclusive" "" "no-mock scanner unavailable" "true"
+        return 0
+    fi
+    local status_line
+    # The changed-file list goes over STDIN, not an env var. A single env string
+    # is capped at MAX_ARG_STRLEN (131071 bytes) on Linux; a large changed set
+    # (e.g. a generated source tree) makes execve fail with E2BIG, the fallback
+    # below fires, and the gate silently degrades to inconclusive. macOS has no
+    # per-string cap, so that failure was Linux-only.
+    status_line=$(
+        printf '%s\n' "$changed" | {
+            _NM_TREE="$tree" \
+            _NM_OUT="$scan_file" \
+            _NM_BASE="${VERIFY_MERGE_BASE:-}" \
+            python3 -I "$scanner" 2>/dev/null \
+                || echo "INCONCLUSIVE:detector_error"
+        }
+    )
+
+    case "$status_line" in
+        FAIL:*)
+            local rest="${status_line#FAIL:}"
+            local hit_file="${rest%%:*}"
+            _verify_add_gate "nomock" "fail" "static-scan" "rendered operational collection resolves to inline, faker, or placeholder-backed data: $rest" "true"
+            _verify_add_finding "High" "functionality" "deterministic:nomock-scan" "$hit_file" "null" \
+                "Mock-backed data render: a list, table, or dashboard in $hit_file resolves to an inline mock array, faker value, or placeholder literal. Wire the rendered collection to a real data source. ($rest)"
+            ;;
+        PASS:*)
+            _verify_add_gate "nomock" "pass" "static-scan" "${status_line#PASS:} UI module(s) scanned, no high-confidence rendered operational mock detected" "true"
+            ;;
+        SKIP:*)
+            _verify_add_gate "nomock" "skipped" "" "no scannable UI/data-render files in diff" "true"
+            ;;
+        *)
+            _verify_add_gate "nomock" "inconclusive" "" "scanner error" "true"
+            ;;
+    esac
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Gate: secret scan (NET-NEW).
 #
 # WHAT IS SCANNED:
@@ -749,6 +881,27 @@ verify_gate_static() {
 #   REDACTED, ${API_KEY}, process.env.X) clean.
 verify_secret_scan_file() {
     local file="$1"
+
+    # TEMPLATE / FIXTURE / TEST PATHS: a file whose name declares it is an
+    # example, or that exists to TEST the secret scanner, is not a leak.
+    # Kept byte-identical in intent to the same guard in
+    # autonomy/lib/secret-scan.sh, because these two matchers are duplicates and
+    # a fix applied to only one of them is a fix that does not hold.
+    #
+    # Concretely: tests/test-secret-gate-false-positives.sh has to contain
+    # realistic-looking keys to prove the gate still catches real ones. Without
+    # this, adding a test for the scanner FAILS the scanner -- and the CI gate
+    # reported exactly that, two CRITICAL "hardcoded secret" findings pointing
+    # at deliberately fake fixtures.
+    #
+    # Scoped to paths that ANNOUNCE themselves. A real secret in a real source
+    # path is still caught by both tiers below.
+    case "$file" in
+        *.example|*.example.*|*.sample|*.sample.*|*.template|*.template.*|*.dist)
+            return 1 ;;
+        */fixtures/*|*/__fixtures__/*|*/tests/*|*/test/*|*test-*.sh|*.test.*|*_test.*)
+            return 1 ;;
+    esac
 
     # TIER 1: specific formats. No deny filter -- a format match is a finding.
     local tier1=(
@@ -1668,6 +1821,7 @@ verify_emit_evidence() {
     _VERIFY_GATES="$_VERIFY_GATES_FILE" \
     _V_VERDICT="$VERIFY_VERDICT" \
     _V_EXIT="$VERIFY_EXIT" \
+    _V_JSON_STDOUT="${VERIFY_JSON:-0}" \
     _V_SCHEMA="$VERIFY_SCHEMA_VERSION" \
     _V_TOOLVER="$tool_version" \
     _V_REPO="$repo_name" \
@@ -1691,7 +1845,7 @@ verify_emit_evidence() {
     _V_SCOPE_MAX_FILES="${VERIFY_SCOPE_MAX_FILES:-}" \
     _V_SCOPE_MAX_NET="${VERIFY_SCOPE_MAX_NET_LINES:-}" \
     python3 - <<'PYEOF'
-import json, os, hashlib
+import json, os, hashlib, sys
 
 out_dir = os.environ["_VERIFY_OUT_DIR"]
 findings_file = os.environ["_VERIFY_FINDINGS"]
@@ -1817,6 +1971,27 @@ with open(ev_path, "w") as f:
     json.dump(doc, f, indent=2)
     f.write("\n")
 
+# --json emits the SAME document to stdout. Deliberately the same `doc` rather
+# than a second serializer: two writers of one contract drift, and the drift
+# shows up as a caller trusting a field the file no longer has. The evidence
+# file is still written either way, so --json adds a pipe without removing the
+# artifact.
+#
+# Written to FD 3, not stdout. The caller redirects this function's stdout to
+# /dev/null (it emits progress chatter the human path does not want), so a
+# plain stdout write here is discarded. FD 3 is opened by the caller only under
+# --json and routed to the real stdout.
+if os.environ.get("_V_JSON_STDOUT") == "1":
+    try:
+        with os.fdopen(os.dup(3), "w") as _jf:
+            _jf.write(json.dumps(doc, indent=2) + "\n")
+    except OSError:
+        # FD 3 not open: --json was requested but the caller did not wire it.
+        # Fail loudly rather than exit 0 having emitted nothing, which would
+        # look to a pipeline like a verify that produced an empty document.
+        sys.stderr.write("verify: --json requested but FD 3 is not open\n")
+        raise SystemExit(3)
+
 # ----- Markdown report -----
 def sev_rank(s):
     return {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Info": 4}.get(s, 5)
@@ -1908,6 +2083,11 @@ OPTIONS:
                        Default: critical,high  (one notch looser than the
                        Loki build loop, which also blocks on medium).
     --no-llm           Accepted for forward-compat; LLM is already off in MVP.
+    --json             Emit the evidence document to stdout so it can be piped
+                       (`loki verify --json | jq .verdict`). The same document
+                       is still written to <out>/evidence.json. The human
+                       VERDICT banner moves to stderr so stdout stays valid
+                       JSON. The verdict and exit code are unchanged.
     --explain          Print a one-screen, skeptic-legible trust proof: every
                        gate that ran, its status, the runner/scanner that
                        produced the evidence, whether it is reproducible, plus
@@ -1951,16 +2131,16 @@ VERDICT MODEL:
     Uncommitted working-tree changes are not verified; commit them first. An
     empty diff yields CONCERNS (nothing to verify), never VERIFIED.
 
-EXIT CODES (this implementation):
+EXIT CODES:
     0  VERIFIED
     1  CONCERNS
     2  BLOCKED
     3  verifier error (could not complete; never silently passes)
 
-    NOTE: the verification spec (Section 1.1) lists 1=BLOCKED, 2=CONCERNS.
-    This implementation follows the build-task ordering (1=CONCERNS,
-    2=BLOCKED). A human must reconcile the two before the GitHub App consumes
-    these codes.
+    Severity rises with the code, so `[ $rc -ge 2 ]` means "at least blocked".
+    An early draft spec listed 1=BLOCKED, 2=CONCERNS; that ordering was
+    rejected and is not used anywhere. See docs/exit-codes.md for every
+    command's codes.
 
 OUTPUT:
     <out>/evidence.json   consolidated machine-readable evidence (schema 1.0)
@@ -2342,9 +2522,18 @@ try:
     # secrets/lint/deps). It must NEVER claim "verified" when the authoritative
     # verdict is not VERIFIED -- a tool named Verify printing "-> verified" next
     # to a BLOCKED result is a fake-green-shaped surface, and this product never
-    # lies about done. So the banner reports the engine's partial finding,
+    # lies about done. So the banner reports the partial finding of the engine,
     # explicitly subordinated to the authoritative verdict, and never the word
     # "verified" on its own when the verdict disagrees.
+    #
+    # NO APOSTROPHES IN THIS BODY. This heredoc sits inside "$( ... )", and bash
+    # 3.2 -- the /bin/bash that every stock macOS ships -- tracks quoting THROUGH
+    # the command substitution even though the heredoc is quoted with <<PYEOF.
+    # One apostrophe opens a quote that never closes, so the parser swallows the
+    # rest of the file and reports "syntax error near unexpected token (" at a
+    # line ~270 later that is perfectly valid. The whole file then fails to
+    # parse: `loki verify --help` exits 2 printing NOTHING on a stock Mac, while
+    # working fine under Homebrew bash 5. Verified by minimal reproduction.
     verdict = (os.environ.get("_V_VERDICT") or "").strip().upper()
     if e.get("inconclusive"):
         finding = "inconclusive (%s)" % (e.get("inconclusive_reason") or "no reason")
@@ -2478,6 +2667,8 @@ verify_main() {
     # verify does NOT re-run gates: it reads a prior evidence.json and fails
     # closed if the repo has drifted since that evidence was graded.
     VERIFY_CHECK_FRESH=0
+    # Opt-in machine-readable stdout (--json). Default 0 = exactly today.
+    VERIFY_JSON=0
 
     # Fail-closed defaults. These globals are read at the end of this function
     # (the VERDICT banner and the function return code). verify_compute_verdict()
@@ -2502,6 +2693,16 @@ verify_main() {
                 block_on="$(printf '%s' "${2:-}" | tr '[:upper:]' '[:lower:]')"; shift 2 ;;
             --no-llm)
                 shift ;;
+            --json)
+                # Emit the evidence document to STDOUT so a caller can pipe it.
+                # The same document is still written to <out>/evidence.json --
+                # this adds a pipe, it does not move the artifact.
+                #
+                # Implies --quiet-banner: stdout must be JSON and nothing else,
+                # or `loki verify --json | jq` breaks on the human banner. The
+                # banner still goes to stderr, so an operator watching a
+                # terminal loses nothing.
+                VERIFY_JSON=1; shift ;;
             --explain)
                 # Render a one-screen, skeptic-legible trust proof: every gate
                 # that ran, its status, the runner/scanner that produced the
@@ -2627,6 +2828,7 @@ verify_main() {
         verify_gate_build "$tree"
         verify_gate_tests "$tree"
         verify_gate_static "$tree"
+        verify_gate_nomock "$tree"
         verify_gate_secret_scan "$tree"
         verify_gate_dependency_audit "$tree"
         # Runtime boot smoke (NET-NEW). Self-suppresses (no gate row) when no
@@ -2650,10 +2852,21 @@ verify_main() {
 
     completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-    verify_emit_evidence "$out_dir" "$started_at" "$completed_at" "$block_on" >/dev/null || {
-        _verify_err "failed to emit evidence document"
-        return $VERIFY_EXIT_ERROR
-    }
+    # stdout is discarded (the emitter's own chatter is not wanted on the human
+    # path). Under --json, FD 3 is opened onto the REAL stdout so the emitter
+    # can write the evidence document there while everything else stays
+    # suppressed -- that is what keeps `loki verify --json | jq` parseable.
+    if [ "${VERIFY_JSON:-0}" = "1" ]; then
+        verify_emit_evidence "$out_dir" "$started_at" "$completed_at" "$block_on" 3>&1 >/dev/null || {
+            _verify_err "failed to emit evidence document"
+            return $VERIFY_EXIT_ERROR
+        }
+    else
+        verify_emit_evidence "$out_dir" "$started_at" "$completed_at" "$block_on" >/dev/null || {
+            _verify_err "failed to emit evidence document"
+            return $VERIFY_EXIT_ERROR
+        }
+    fi
 
     # Opt-in (--hosted): fold the embedded Autonomi Verify engine's verdict
     # fields into the just-written evidence.json. Fully additive and fail-open:
@@ -2671,9 +2884,14 @@ verify_main() {
         _verify_render_explain "$started_at" "$completed_at" "$VERIFY_VERDICT"
     fi
 
-    printf 'VERDICT: %s\n' "$VERIFY_VERDICT"
-    printf 'Evidence: %s/evidence.json\n' "$out_dir"
-    printf 'Report:   %s/report.md\n' "$out_dir"
+    # Under --json stdout carries the evidence document alone, so the human
+    # banner is redirected to stderr rather than dropped: an operator watching a
+    # terminal still sees the verdict, and `| jq` still parses.
+    _v_banner_fd=1
+    [ "${VERIFY_JSON:-0}" = "1" ] && _v_banner_fd=2
+    printf 'VERDICT: %s\n' "$VERIFY_VERDICT" >&$_v_banner_fd
+    printf 'Evidence: %s/evidence.json\n' "$out_dir" >&$_v_banner_fd
+    printf 'Report:   %s/report.md\n' "$out_dir" >&$_v_banner_fd
     # --hosted only: surface the enrichment in human output so the extra signal
     # is visible without parsing JSON. Printed solely when a fold succeeded;
     # the default path never sets VERIFY_HOSTED_SUMMARY, so it stays byte-identical.

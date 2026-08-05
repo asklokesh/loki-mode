@@ -3,7 +3,17 @@
 // invoked; no network calls. The goal is to lock in the loop's exit
 // conditions before the C1/C2/C3/B1 modules land.
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
+
+// These are E2E-shaped: they drive the real runAutonomous loop, which writes
+// state files and spawns processes. Bun's 5000ms default is fine on an idle
+// machine and NOT fine inside a full local-ci run, where the box is already
+// saturated -- the suite then fails 4 or 5 tests at exactly ~5000ms, and WHICH
+// tests fail changes between runs. That is a timeout signature, not a defect,
+// and it cost real time to diagnose because a flake reads like a regression.
+// 30s is far beyond the honest worst case (the slowest of these does ~5s of
+// actual work) while still catching a genuine hang.
+setDefaultTimeout(30_000);
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -240,18 +250,28 @@ describe("runAutonomous", () => {
   it(
     "BUG-2 default: maxIterations defaults to 1000 (not 100) when both opt and env are unset",
     async () => {
-      // Omit maxIterations AND env so makeContext applies the bare 1000 default.
-      // We run 101 real iterations (council stops on the 101st). If the default
-      // were still 100, the loop would have aborted via max_iterations_reached at
-      // 100 (100 provider calls) before the council's stop fired. Reaching 101
-      // iterations proves the cap is > 100, i.e. 1000.
+      // Omit maxIterations AND env so makeContext applies the bare 1000 default
+      // (autonomous.ts:958, `opts.maxIterations ?? envIntLocal("MAX_ITERATIONS",
+      // 1000)`), then read the resolved cap straight off the startup banner the
+      // runner logs before any iteration runs (autonomous.ts:470,
+      // `max_retries=... max_iterations=...`).
       //
-      // Non-vacuity: against the old `?? 100` default this would see only 100
-      // provider calls and a max_iterations_reached terminal -- both fail.
-      const STOP_AT = 101;
-      const verdicts = Array.from({ length: STOP_AT }, (_, i) => i === STOP_AT - 1);
+      // This asserts the EXACT default. The previous form ran 101 real
+      // iterations and stopped via a council verdict on the 101st, which only
+      // ever proved the cap was `> 100` -- it could not distinguish 1000 from
+      // 101 or from 100000. It also could not pass: each iteration runs the
+      // real quality-gate battery, so 101 iterations needs minutes against this
+      // test's 60s budget and it timed out rather than asserting. Pinning the
+      // banner is both strictly tighter and O(1).
+      //
+      // Non-vacuity: against the pre-fix `?? 100` default the banner reads
+      // `max_iterations=100` and the toContain below fails. The sibling test at
+      // line 224 separately covers the env-reading path (MAX_ITERATIONS=3), so
+      // the "reads env, not a hardcoded constant" half stays covered.
       const provider = new FakeProvider([{ exitCode: 0, capturedOutputPath: "" }]);
-      const council = new FakeCouncil(verdicts);
+      // Stop on the first council vote so the loop exits after one iteration;
+      // the banner we assert on is already emitted by then.
+      const council = new FakeCouncil([true]);
       const opts = baseOpts({ maxRetries: 5, providerOverride: provider, council });
       delete (opts as Partial<RunnerOpts>).maxIterations;
       const prevEnv = process.env["MAX_ITERATIONS"];
@@ -259,7 +279,12 @@ describe("runAutonomous", () => {
       try {
         const code = await runAutonomous(opts);
         expect(code).toBe(0);
-        expect(provider.calls.length).toBe(STOP_AT);
+        const banner = logLines.find((l) => l.includes("max_iterations="));
+        expect(banner).toBeDefined();
+        expect(banner).toContain("max_iterations=1000");
+        // The cap must not have fired: 1000 is far above the single iteration
+        // this run performs, so the loop exits on the council vote instead.
+        expect(logLines.some((l) => l.includes("max iterations reached"))).toBe(false);
       } finally {
         if (prevEnv === undefined) delete process.env["MAX_ITERATIONS"];
         else process.env["MAX_ITERATIONS"] = prevEnv;

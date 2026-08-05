@@ -1,0 +1,24 @@
+{
+  "generated": "2026-07-30T23:53:43Z",
+  "status": "PARTIAL -- token usage measured for codex; dollar cost NOT comparable across CLIs",
+  "what_was_measured": {
+    "task": "create hello.txt containing exactly 'hi' (identical to the latency comparison)",
+    "codex": {
+      "cli": "codex-cli 0.146.0",
+      "tokens_reported": 27129,
+      "auth": "ChatGPT free tier",
+      "dollar_cost_to_user": 0.0,
+      "note": "codex prints a token total; on the ChatGPT free tier the user pays $0 regardless of tokens"
+    },
+    "opencode": {
+      "cli": "opencode 1.18.9",
+      "tokens_reported": null,
+      "dollar_cost_to_user": null,
+      "note": "opencode printed NO token or cost line for this run, so nothing was measured. Not recorded as zero."
+    }
+  },
+  "why_no_dollar_comparison": "A dollar figure needs per-model token pricing AND a measured token count from each tool. opencode reported no tokens, so any cost number for it would be invented. Publishing 'codex $X vs opencode $Y' with Y fabricated would be exactly the false-green this project exists to prevent.",
+  "what_our_engine_does_capture": "autonomy/run.sh _read_iteration_cost reads .loki/metrics/result-cost-<iter>.json for input_tokens, output_tokens and total_cost_usd, and efficiency_cost.collect_efficiency folds them while keeping 'not recorded' (usd=None) distinct from a genuine $0.00. That is authoritative for the Claude path; free-tier CLIs do not emit that file.",
+  "not_claimed": "No cost ranking between tools. No claim that a cheap model is cheaper for equivalent quality: that needs the same spec run to completion on both a cheap and a flagship model with cost recorded on both sides, which requires paid API access this session did not use.",
+  "what_would_close_it": "Run one identical multi-iteration spec end to end on (a) a flagship via API with cost recording and (b) a cheap model, then compare recorded cost per completed spec. De-risk ONE cell first; a bench cell that times out before its writer runs produces no result file and a matrix runner that greps stdout advances silently."
+}

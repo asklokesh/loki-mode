@@ -7,7 +7,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PY=/opt/homebrew/bin/python3.12
+# Resolve the interpreter instead of hardcoding one. This was pinned to
+# /opt/homebrew/bin/python3.12 -- one developer's Homebrew install. On CI every
+# invocation died with "No such file or directory" and the suite reported a
+# product failure ("structural attrs missing") for a path that does not exist
+# there. Prefer an explicit PYTHON override, then python3 on PATH.
+PY="${PYTHON:-$(command -v python3 2>/dev/null || echo python3)}"
 if [[ ! -x "$PY" ]]; then
     PY="$(command -v python3 || true)"
 fi

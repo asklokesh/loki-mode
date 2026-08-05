@@ -478,9 +478,11 @@ no-op, never a false-green. (Deterministic shell hooks, not LLM calls.)
 |----------|---------|---------|
 | `LOKI_HEAL_MODE` | `false` | Enable healing mode |
 | `LOKI_HEAL_PHASE` | `archaeology` | Current healing phase |
-| `LOKI_HEAL_PRESERVE_FRICTION` | `true` | Warn before removing friction points |
-| `LOKI_HEAL_BASELINE_DIR` | `.loki/healing/behavioral-baseline/` | Pre-healing snapshots |
 | `LOKI_HEAL_STRICT` | `false` | Block ALL behavioral changes without approval |
+
+Friction preservation is unconditional and the baseline path is hardcoded to
+`.loki/healing/behavioral-baseline/` (`autonomy/hooks/migration-hooks.sh:776`).
+Neither is configurable.
 
 ---
 

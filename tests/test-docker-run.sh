@@ -62,7 +62,11 @@ assert_no_line() {
 
 # Portable file-mode reader: macOS (stat -f) and GNU/Linux (stat -c).
 file_mode() {
-    stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null
+    # GNU stat -f means "filesystem status" and EXITS 0, so a macOS-first
+    # `stat -f ... || stat -c ...` never falls through on Linux -- it captures
+    # 'File: "..."' instead of the mode. Probe the GNU form FIRST; its failure
+    # on macOS is a genuine non-zero exit, so the fallback is sound.
+    stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
 }
 
 # Source the module under test.

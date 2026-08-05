@@ -65,11 +65,12 @@ GIT commit -qm second
 mkdir -p "$PROJ/.loki"
 
 if ! _LOKI_ITER_START_SHA="$BASE" python3 "$GENERATOR" \
-        --loki-dir "$PROJ/.loki" --out-dir "$PROJ/out" \
+        --loki-dir "$PROJ/.loki" \
+        --out-dir "$PROJ/.loki/proofs/forgery-test" \
         --run-id forgery-test --loki-version 7.111.0 --quiet; then
     _skip "proof generator failed (environment)"
 fi
-GENUINE="$PROJ/out/proof.json"
+GENUINE="$PROJ/.loki/proofs/forgery-test/proof.json"
 [ -f "$GENUINE" ] || _skip "generator produced no proof.json"
 
 # Extract a single field from a verifier JSON result.

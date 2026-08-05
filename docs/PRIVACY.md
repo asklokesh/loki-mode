@@ -88,8 +88,59 @@ the tools you use, plus the same anonymous `distinct_id`. It still never sends
 your name, email, or IP. In headless / Docker / CI environments there is no
 browser, so this path never runs.
 
+### 4. Build-outcome analytics (anonymous, STRICT opt-in, default OFF)
+
+A `build_verified` event that reports how a build turned out. Unlike crash
+reporting and usage telemetry (which default ON for individuals), this path is
+OFF by default even for users who have telemetry enabled -- it requires a
+SECOND, explicit opt-in:
+
+- Set `LOKI_ANALYTICS=on` (or `LOKI_POSTHOG=on`), or
+- Add `ANALYTICS_ENABLED=true` to `~/.loki/config`.
+
+It fires once when a build finishes, reading a FIXED allowlist of already-
+computed scalars from the run's Evidence Receipt (`proof.json`). The allowlist
+(`autonomy/lib/proof-analytics-props.py`) is the single source of truth; any
+field not named there is never read, so a schema change cannot silently start
+sending something new. Fields sent:
+
+- headline (a bounded enum: VERIFIED / VERIFIED WITH GAPS / NOT VERIFIED)
+- evidence_gate_verdict, final_verdict (bounded verdict strings)
+- iterations, files_changed_count (a COUNT -- never the file paths)
+- wall_clock_sec, gates_passed, gates_total, gate_pass_rate
+
+It NEVER sends your spec/PRD text, file paths or names, code, or diffs. Because
+it sits below the base telemetry gate, every telemetry opt-out (`loki telemetry
+off` / `LOKI_TELEMETRY=off` / `DO_NOT_TRACK=1`) also disables it -- opt-out
+always wins.
+
+### 5. First-run blocker (anonymous, STRICT opt-in, default OFF)
+
+A `first_run_blocked` event naming which CLASS of dependency stopped a first
+run, sent at most ONCE per install. It sits behind the same strict second
+opt-in as build-outcome analytics above (`LOKI_ANALYTICS=on`), so it is off by
+default even with telemetry enabled.
+
+It exists because we could see that a first run was ATTEMPTED and nothing about
+whether it succeeded, which made "why does a trial not convert" unanswerable.
+A real example we found and fixed: on a machine with no AI provider CLI, one
+route ended with a dead end instead of pointing at `loki tour` (which needs no
+provider, no key and no spend). Nobody could see that happening.
+
+The ONLY field is `blocker`, clamped to this fixed enum:
+
+    no_provider | node | python3 | jq | git | curl | disk | skill_symlink | other
+
+Anything not on that list becomes `other`. It is deliberately coarse: `node` is
+enough to act on, and a version string or an install path would be a leak. It
+NEVER sends paths, versions, hostnames, spec text, or command lines -- a test
+(`tests/test-first-run-blocked-signal.sh`) feeds a filesystem path through the
+real emitter and fails the build if anything but `other` reaches the payload.
+
 This document and the first-run notice describe ALL paths. The model is unified:
-one opt-in enables them and one opt-out (which always wins) disables them.
+opt-out always wins and disables everything; crash reporting and usage telemetry
+opt in together (default ON for individuals); build-outcome analytics and the
+first-run blocker each need an explicit second opt-in on top (default OFF).
 
 ## What is collected (the whitelist)
 

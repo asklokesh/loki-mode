@@ -40,10 +40,20 @@ export type KpiSnapshot = {
   // Efficiency KPIs (from .loki/metrics/efficiency/iteration-*.json).
   efficiency: {
     iteration_count: number;
-    total_cost_usd: number;
+    // null == NOT MEASURED. Free and unmeasured are different claims and only
+    // one is honest: a run that did work necessarily consumed tokens, so
+    // all-zeros means we failed to measure. Rendering that as 0 certifies the
+    // run cost nothing, which is a fabricated fact. Same rule, same reason as
+    // autonomy/lib/efficiency_cost.py record_is_measured() -- see recordsMeasured().
+    total_cost_usd: number | null;
     avg_cost_per_iteration: number | null;
-    total_input_tokens: number;
-    total_output_tokens: number;
+    // Same rule, same reason: Python's collect_efficiency() nulls the token
+    // fields alongside usd on the same unmeasured condition. A reader must be
+    // able to tell "emitted no output tokens" from "nothing was recorded".
+    total_input_tokens: number | null;
+    total_output_tokens: number | null;
+    // NOT part of the measured predicate, and Python does not null it either.
+    // Duration comes from the wall clock, not from provider-reported usage.
     total_duration_ms: number;
     avg_duration_ms_per_iteration: number | null;
     model_breakdown: Record<string, number>; // model alias -> count
@@ -103,13 +113,47 @@ function readCouncilRounds(councilDir: string): CouncilRound[] {
   return out;
 }
 
+// TS mirror of autonomy/lib/efficiency_cost.py record_is_measured(), applied to
+// the SUM across records exactly as collect_efficiency() does (that function
+// sums the five fields, then runs the predicate over the totals).
+//
+// Deliberately reads the raw records rather than this module's derived
+// total_cost_usd: that total comes from calculateCostFromRecords(), which
+// PRICES tokens, so it is nonzero even when no cost_usd was ever observed. It
+// would answer "did we compute a number", not "did we measure one".
+//
+// A parseable file is not a measurement. Measured means at least one record
+// carried a non-zero observed value in one of these five fields.
+const MEASURED_FIELDS = [
+  "cost_usd",
+  "input_tokens",
+  "output_tokens",
+  "cache_read_tokens",
+  "cache_creation_tokens",
+] as const;
+
+function recordsMeasured(records: readonly EfficiencyRecord[]): boolean {
+  if (records.length === 0) return false; // mirrors Python's `collected` gate
+  for (const key of MEASURED_FIELDS) {
+    let sum = 0;
+    for (const r of records) {
+      const v = r[key];
+      // typeof v === "number" already excludes booleans; Python needs an
+      // explicit isinstance(v, bool) skip only because bool subclasses int.
+      if (typeof v === "number" && Number.isFinite(v)) sum += v;
+    }
+    if (sum !== 0) return true;
+  }
+  return false;
+}
+
 function makeEmptyEfficiency(): KpiSnapshot["efficiency"] {
   return {
     iteration_count: 0,
-    total_cost_usd: 0,
+    total_cost_usd: null,
     avg_cost_per_iteration: null,
-    total_input_tokens: 0,
-    total_output_tokens: 0,
+    total_input_tokens: null,
+    total_output_tokens: null,
     total_duration_ms: 0,
     avg_duration_ms_per_iteration: null,
     model_breakdown: {},
@@ -131,10 +175,22 @@ function deriveEfficiency(records: readonly EfficiencyRecord[]): KpiSnapshot["ef
   const out = makeEmptyEfficiency();
   if (records.length === 0) return out;
   out.iteration_count = records.length;
-  out.total_cost_usd = Math.round(calculateCostFromRecords(records) * 10000) / 10000;
+  // ONE predicate for the whole snapshot -- cost and tokens are measured or
+  // unmeasured together, exactly as Python nulls usd and the token counts on
+  // the same condition. A second predicate is how the honesty rule drifts.
+  const measured = recordsMeasured(records);
+  // Unmeasured stays null. A genuine measured 0.0 (records carried non-zero
+  // tokens but priced to nothing) is preserved as 0, not blanked.
+  out.total_cost_usd = measured
+    ? Math.round(calculateCostFromRecords(records) * 10000) / 10000
+    : null;
+  // Summed into locals, not into out.*: those fields admit null now, and
+  // `null += n` is not a thing.
+  let inputTokens = 0;
+  let outputTokens = 0;
   for (const r of records) {
-    if (typeof r.input_tokens === "number") out.total_input_tokens += r.input_tokens;
-    if (typeof r.output_tokens === "number") out.total_output_tokens += r.output_tokens;
+    if (typeof r.input_tokens === "number") inputTokens += r.input_tokens;
+    if (typeof r.output_tokens === "number") outputTokens += r.output_tokens;
     const ext = r as EfficiencyRecord & {
       duration_ms?: number;
       phase?: string;
@@ -151,8 +207,17 @@ function deriveEfficiency(records: readonly EfficiencyRecord[]): KpiSnapshot["ef
       out.status_breakdown[ext.status] = (out.status_breakdown[ext.status] ?? 0) + 1;
     }
   }
+  // A measured total of 0 is real data and stays 0. Only `measured === false`
+  // blanks it -- a falsy check on the sum would report a genuinely zero token
+  // count as unmeasured, which is the same dishonesty pointed the other way.
+  out.total_input_tokens = measured ? inputTokens : null;
+  out.total_output_tokens = measured ? outputTokens : null;
+  // Explicit null check, never falsy: a measured total of 0 must still yield a
+  // measured average of 0. `if (!total)` would turn that into "not measured".
   out.avg_cost_per_iteration =
-    Math.round((out.total_cost_usd / out.iteration_count) * 10000) / 10000;
+    out.total_cost_usd === null
+      ? null
+      : Math.round((out.total_cost_usd / out.iteration_count) * 10000) / 10000;
   out.avg_duration_ms_per_iteration = Math.round(out.total_duration_ms / out.iteration_count);
   return out;
 }
@@ -197,9 +262,16 @@ export function computeKpis(lokiDir: string): KpiSnapshot {
 
   const records = existsSync(efficiencyDir) ? readEfficiencyDir(efficiencyDir) : [];
   if (!existsSync(efficiencyDir)) {
-    notes.push(`no .loki/metrics/efficiency/ dir (efficiency KPIs zeroed)`);
+    // "zeroed" would be the same false claim in prose: cost is UNKNOWN here,
+    // not zero. Tokens are UNKNOWN for the same reason. Duration alone is
+    // genuinely zeroed -- it is wall clock, not provider-reported usage.
+    notes.push(
+      `no .loki/metrics/efficiency/ dir (cost UNKNOWN, tokens UNKNOWN, duration zeroed)`,
+    );
   } else if (records.length === 0) {
-    notes.push(`.loki/metrics/efficiency/ exists but no iteration files found`);
+    notes.push(
+      `.loki/metrics/efficiency/ exists but no iteration files found (cost UNKNOWN, not zero)`,
+    );
   }
 
   const rounds = readCouncilRounds(councilDir);
@@ -210,6 +282,13 @@ export function computeKpis(lokiDir: string): KpiSnapshot {
   }
 
   const efficiency = deriveEfficiency(records);
+  // Records present but every measured field zero (the shape a pre-v8.51.0
+  // codex run wrote). Cost reads UNKNOWN rather than $0.00; say why.
+  if (records.length > 0 && efficiency.total_cost_usd === null) {
+    notes.push(
+      `${records.length} efficiency record(s) present but no token/cost values recorded (cost UNKNOWN, not zero; tokens UNKNOWN)`,
+    );
+  }
   const successCount = efficiency.status_breakdown["success"] ?? 0;
   const accuracy = deriveAccuracy(rounds, successCount, efficiency.iteration_count);
 
@@ -235,12 +314,21 @@ export function formatKpisHuman(snap: KpiSnapshot): string {
   lines.push(``);
   lines.push(`Efficiency`);
   lines.push(`  Iterations:           ${snap.efficiency.iteration_count}`);
-  lines.push(`  Total cost USD:       ${snap.efficiency.total_cost_usd}`);
+  // Explicit branch: a bare interpolation of null renders the string "null",
+  // and rendering it as 0 would certify an unmeasured run as free.
   lines.push(
-    `  Avg cost per iter:    ${snap.efficiency.avg_cost_per_iteration ?? "n/a"}`,
+    `  Total cost USD:       ${snap.efficiency.total_cost_usd ?? "UNKNOWN (not measured)"}`,
   );
-  lines.push(`  Total input tokens:   ${snap.efficiency.total_input_tokens}`);
-  lines.push(`  Total output tokens:  ${snap.efficiency.total_output_tokens}`);
+  lines.push(
+    `  Avg cost per iter:    ${snap.efficiency.avg_cost_per_iteration ?? "UNKNOWN (not measured)"}`,
+  );
+  // `??` and never `||`: a measured 0 is falsy, and `||` would blank real data.
+  lines.push(
+    `  Total input tokens:   ${snap.efficiency.total_input_tokens ?? "UNKNOWN (not measured)"}`,
+  );
+  lines.push(
+    `  Total output tokens:  ${snap.efficiency.total_output_tokens ?? "UNKNOWN (not measured)"}`,
+  );
   lines.push(`  Total duration (ms):  ${snap.efficiency.total_duration_ms}`);
   lines.push(
     `  Avg duration / iter:  ${snap.efficiency.avg_duration_ms_per_iteration ?? "n/a"}`,

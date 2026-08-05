@@ -25,18 +25,25 @@ import { lokiDir } from "../util/paths.ts";
 // values in run.sh:7870-7876 since shell-side JSON parsing is heavier
 // than the maintenance gain). The JSON file is the source of truth for
 // the Bun route; bash will catch up when it next ports cost calc.
-type PricingEntry = { input: number; output: number };
+type PricingEntry = {
+  input: number;
+  output: number;
+  cache_read?: number;
+  cache_write?: number;
+};
 type PricingMap = Record<string, PricingEntry>;
 
 const _FALLBACK_PRICING: PricingMap = {
   // Fable 5: top-tier advisory model at 2x Opus. Kept in sync with the bash
   // route (run.sh pricing tables) and providers/model_catalog.json so a fable
   // run never silently prices at the sonnet fallback (a 3.3x undercount).
-  fable: { input: 10.0, output: 50.0 },
-  opus: { input: 5.0, output: 25.0 },
-  sonnet: { input: 3.0, output: 15.0 },
-  haiku: { input: 1.0, output: 5.0 },
-  "gpt-5.3-codex": { input: 1.5, output: 12.0 },
+  // Cache tiers included: without them the cost loop falls back to the input
+  // rate for cache reads, a 10x overcharge on the dominant term.
+  fable: { input: 10.0, output: 50.0, cache_read: 1.0, cache_write: 12.5 },
+  opus: { input: 5.0, output: 25.0, cache_read: 0.5, cache_write: 6.25 },
+  sonnet: { input: 3.0, output: 15.0, cache_read: 0.3, cache_write: 3.75 },
+  haiku: { input: 1.0, output: 5.0, cache_read: 0.1, cache_write: 1.25 },
+  "gpt-5.3-codex": { input: 1.5, output: 12.0, cache_read: 0.15, cache_write: 1.875 },
 };
 
 function _loadPricing(): PricingMap {
@@ -57,7 +64,19 @@ function _loadPricing(): PricingMap {
         typeof (value as PricingEntry).input === "number" &&
         typeof (value as PricingEntry).output === "number"
       ) {
-        out[key] = { input: (value as PricingEntry).input, output: (value as PricingEntry).output };
+        // Carry the cache tiers through. Copying only input/output silently
+        // dropped them, so the `?? p.input` fallback in the cost loop charged
+        // cache reads at the FULL input rate -- a 10x overcharge on the term
+        // that dominates real traffic (a measured iteration: 797,496
+        // cache-read vs 10,272 input tokens). The two routes then disagreed
+        // 4.2x on the same run.
+        const _e = value as PricingEntry;
+        out[key] = {
+          input: _e.input,
+          output: _e.output,
+          ...(typeof _e.cache_read === "number" ? { cache_read: _e.cache_read } : {}),
+          ...(typeof _e.cache_write === "number" ? { cache_write: _e.cache_write } : {}),
+        };
       }
     }
     // Any required key missing? Fall back rather than ship partial.
@@ -70,7 +89,7 @@ function _loadPricing(): PricingMap {
   }
 }
 
-export const PRICING: Readonly<Record<string, { input: number; output: number }>> = Object.freeze(
+export const PRICING: Readonly<Record<string, PricingEntry>> = Object.freeze(
   _loadPricing(),
 );
 
@@ -93,6 +112,12 @@ export interface EfficiencyRecord {
   model?: string;
   input_tokens?: number;
   output_tokens?: number;
+  // Cache tiers. Writers have emitted these since v6.82.0 (run.sh:7484) and
+  // they dominate real traffic -- a measured iteration shows 797,496 cache-read
+  // against 10,272 plain input tokens. Omitting them from this type is what
+  // made the fallback price them at zero.
+  cache_read_tokens?: number;
+  cache_creation_tokens?: number;
 }
 
 export interface CheckBudgetResult {
@@ -129,7 +154,12 @@ function round4(n: number): number {
 }
 
 // Resolve pricing for a model name, defaulting to sonnet (run.sh:7886).
-function pricingFor(model: string | undefined): { input: number; output: number } {
+function pricingFor(model: string | undefined): {
+  input: number;
+  output: number;
+  cache_read?: number;
+  cache_write?: number;
+} {
   const key = (model ?? DEFAULT_PRICING_KEY).toLowerCase();
   return PRICING[key] ?? PRICING[DEFAULT_PRICING_KEY]!;
 }
@@ -146,7 +176,20 @@ export function calculateCostFromRecords(records: readonly EfficiencyRecord[]): 
     const p = pricingFor(d.model);
     const inp = typeof d.input_tokens === "number" ? d.input_tokens : 0;
     const out = typeof d.output_tokens === "number" ? d.output_tokens : 0;
-    total += (inp / 1_000_000) * p.input + (out / 1_000_000) * p.output;
+    const cRead = typeof d.cache_read_tokens === "number" ? d.cache_read_tokens : 0;
+    const cWrite =
+      typeof d.cache_creation_tokens === "number" ? d.cache_creation_tokens : 0;
+    // Cache tiers fall back to the input rate when a pricing entry predates
+    // them. That over-estimates rather than under-estimates: this is a BUDGET
+    // circuit breaker, and the safe direction for an unknown rate is to stop
+    // sooner, never to keep spending because a table row was missing.
+    const readRate = p.cache_read ?? p.input;
+    const writeRate = p.cache_write ?? p.input;
+    total +=
+      (inp / 1_000_000) * p.input +
+      (out / 1_000_000) * p.output +
+      (cRead / 1_000_000) * readRate +
+      (cWrite / 1_000_000) * writeRate;
   }
   return round4(total);
 }

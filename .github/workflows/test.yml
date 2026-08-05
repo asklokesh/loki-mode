@@ -62,8 +62,29 @@ jobs:
         run: python3 -m pytest
 
   shell-tests:
-    name: Shell tests
+    name: Shell tests (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
+    # SHARDED because this job WAS the pipeline. Measured 2026-07-30:
+    #   Shell tests  13m01s   <- sets the wall clock single-handedly
+    #   Bun (ubuntu)  2m17s
+    #   Python 3.13   1m59s
+    #   Helm lint        8s
+    # 289 suites ran serially on one runner. Four shards cut that to roughly
+    # 3m15s, putting the whole pipeline near the ~2.5m the other jobs already
+    # take.
+    #
+    # fail-fast is OFF deliberately: one shard failing must not cancel the
+    # others, or a single red suite hides every other failure and the next
+    # push rediscovers them one cycle at a time.
+    #
+    # Safety: tests/test-shard-coverage.sh proves the shards partition the
+    # suite list exactly (every suite in exactly one shard, none dropped, none
+    # duplicated) and that an invalid shard spec exits non-zero rather than
+    # silently running nothing.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -76,7 +97,15 @@ jobs:
       - name: Install Python dependencies
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install pydantic httpx fastapi uvicorn
+          # Install from the canonical list, not a hand-maintained subset. This
+          # job previously installed only "pydantic httpx fastapi uvicorn" and
+          # omitted sqlalchemy/aiosqlite, so every shell test that imports
+          # dashboard/server.py died with
+          #   ModuleNotFoundError: No module named 'sqlalchemy'
+          # and reported as a product failure. Five suites were red for that one
+          # missing dependency. Sourcing requirements-test.txt keeps this job and
+          # the python-tests job from drifting apart again.
+          python3 -m pip install -r requirements-test.txt
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -86,7 +115,27 @@ jobs:
       - name: Install Node.js dependencies
         run: npm install --no-package-lock
 
-      - name: Run shell tests
+      # REQUIRED, not optional. tests/test-trust-core-tests-detect.sh runs two
+      # mutation probes as `cd loki-ts && bun test ...`. Without bun the probe
+      # baseline exits 127, the probe reports rc=67, and the suite goes red --
+      # which is the honest outcome, but the cause is a missing toolchain here,
+      # not a defect in the trust core.
+      #
+      # These probes are deliberately NOT skipped when bun is absent: they guard
+      # the trust core, and a probe that silently does not run is an absent
+      # measurement reported as a pass.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install loki-ts dependencies (for the TS mutation probes)
+        working-directory: loki-ts
+        run: bun install
+
+      - name: Run shell tests (shard ${{ matrix.shard }} of 4)
+        env:
+          LOKI_TEST_SHARD: ${{ matrix.shard }}/4
         run: bash tests/run-all-tests.sh
 
   helm-lint:
@@ -101,6 +150,41 @@ jobs:
 
       - name: Lint Helm chart
         run: helm lint deploy/helm/autonomi
+
+      # LINT IS NOT ENOUGH ON ITS OWN. `helm lint` renders with the DEFAULT
+      # values, where ingress and keda are off and worker.mode is "job". Every
+      # template guarded by `{{- if .Values.ingress.enabled }}` or the
+      # deployment/serverless worker branches is therefore never exercised, so a
+      # broken conditional ships green and only fails for the operator who turns
+      # that feature on.
+      #
+      # Rendering each optional path costs seconds and is the difference between
+      # "the chart parses" and "the chart works in the configurations we
+      # document".
+      - name: Render optional paths
+        run: |
+          set -euo pipefail
+          for combo in \
+            "ingress.enabled=true" \
+            "keda.enabled=true" \
+            "worker.mode=deployment" \
+            "worker.mode=serverless" \
+            "security.networkPolicy.enabled=true"
+          do
+            echo "== helm template --set ${combo}"
+            helm template ci deploy/helm/autonomi --set "${combo}" > /dev/null
+          done
+
+      # The schema must REJECT bad values, not merely exist. A schema that
+      # accepts everything looks like validation and is not.
+      - name: values.schema.json rejects bad values
+        run: |
+          set -uo pipefail
+          if helm template ci deploy/helm/autonomi --set worker.mode=Deployment >/dev/null 2>&1; then
+            echo "FAIL: worker.mode=Deployment was accepted; the schema is not enforcing"
+            exit 1
+          fi
+          echo "OK: invalid worker.mode rejected by values.schema.json"
 
   dashboard-build:
     name: Dashboard build verification
@@ -185,6 +269,35 @@ jobs:
         working-directory: loki-ts
         run: bun test
 
+      - name: Build loki-ts bundle (for the SDK bridge tests + bin/loki)
+        working-directory: loki-ts
+        run: bun run build
+
+      # v8: the raw-SDK judge/text bridges. With bun + the built bundle present,
+      # these run the wiring / opt-in / binary-free-ordering / mocked-success
+      # assertions FOR REAL (they self-skip only when bun is absent). No API key
+      # is set, so every path is exercised fail-closed -- no billable call.
+      - name: Run v8 SDK bridge tests (fail-closed, no ANTHROPIC_API_KEY)
+        run: |
+          bash tests/test-sdk-done-recog-bridge.sh
+          bash tests/test-sdk-text-bridge.sh
+          bash tests/test-sdk-council-vote.sh
+          bash tests/test-sdk-voter-agents.sh
+          bash tests/test-sdk-loop-routing.sh
+          bash tests/test-sdk-mode.sh
+          bash tests/test-bundled-sdk-provider.sh
+          bash tests/test-sandbox-deprecation.sh
+          bash tests/test-acceptance-resume-idempotence.sh
+
+      # First-run funnel privacy. Stubs curl and asserts on the real POST body,
+      # so it observes what would actually reach the wire (the reverted attempt's
+      # test stubbed loki_telemetry itself and could never see a leak). Hermetic:
+      # fake HOME, fake curl on PATH, no real network send. It sets
+      # LOKI_TELEMETRY=on explicitly, which by the documented gate precedence
+      # overrides the CI auto-off, so the gates are genuinely open here.
+      - name: Run first-run funnel privacy tests (stubbed curl, no real egress)
+        run: bash tests/test-funnel-privacy.sh
+
       - name: Run CLI tests via bash route (LOKI_LEGACY_BASH=1)
         env:
           LOKI_LEGACY_BASH: "1"
@@ -204,3 +317,274 @@ jobs:
       - name: Sanity bench-suite (hyperfine, 5 runs, 1 warmup)
         working-directory: loki-ts
         run: bun run scripts/bench-suite.ts --runs 5 --warmup 1
+
+  # v8: the real SDK-loop E2E (LOKI_SDK_LOOP=1 + LOKI_E2E_SDK=1) makes a BILLABLE
+  # API call, so it runs ONLY when the ANTHROPIC_API_KEY secret is configured.
+  # It self-skips when the gate is off, so forks / secret-less runs stay free and
+  # green. This closes the loop on the SDK RARV path: the unit + bridge tests
+  # prove the mechanism keyless; this proves a real one-file app builds end to end.
+  sdk-loop-e2e:
+    name: v8 SDK-loop E2E (gated on ANTHROPIC_API_KEY secret)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.13"
+
+      - name: Install loki-ts dependencies
+        working-directory: loki-ts
+        run: bun install
+
+      - name: Build loki-ts bundle
+        working-directory: loki-ts
+        run: bun run build
+
+      - name: Run the gated SDK-loop E2E (real build; self-skips without the key)
+        working-directory: loki-ts
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LOKI_E2E_SDK: ${{ secrets.ANTHROPIC_API_KEY != '' && '1' || '0' }}
+        run: bun test ./tests/integration/sdk_loop_e2e.test.ts
+
+  # v8.1 (Story 6, T3-prep): prove the SDK JUDGE path works from the SHIPPED npm
+  # tarball on a host with NO `claude` binary on PATH and only ANTHROPIC_API_KEY.
+  # This is the gate that later lets LOKI_SDK_LOOP flip default-on safely: it
+  # catches the ".gitignore-excluded dist" class of bug (v6.25 lesson) for the SDK
+  # route, because the bundled @anthropic-ai/sdk judge code MUST be inside the
+  # tarball for the keyless fail-closed probe to load at all.
+  #
+  # KEYLESS probe (always runs, free): from the packed tarball, `loki internal
+  # sdk-judge` with no key must exit 1 (fail-closed null) WITHOUT a module-not-found
+  # -- proving the bundled SDK ships and the judge wiring is intact. BILLABLE probe
+  # (gated on the ANTHROPIC_API_KEY secret): the same call with a key returns exit 0
+  # + valid JSON, proving the SDK judge path end-to-end from the artifact.
+  sdk-tarball-no-binary:
+    name: v8.1 SDK judge from packed tarball (no claude binary)
+    runs-on: ubuntu-latest
+    # The `secrets` context is NOT available in a step-level `if:` -- referencing
+    # it there makes GitHub reject the whole workflow file at parse time, so ZERO
+    # jobs are created and the run reports the opaque "workflow file issue"
+    # failure. Hoist the secret to job-level env and gate on the env var instead;
+    # `env` IS available in `if:`. A secret-less fork sees an empty string and the
+    # billable steps self-skip exactly as intended.
+    env:
+      HAS_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.13"
+
+      - name: Setup Node.js (npm pack/install)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build the loki-ts bundle (dist/loki.js the tarball ships)
+        working-directory: loki-ts
+        run: bun install && bun run build
+
+      - name: Pack the npm tarball and install it into a clean prefix
+        run: |
+          set -euo pipefail
+          # Pack exactly what npm publish would ship.
+          TARBALL="$(npm pack --silent | tail -1)"
+          echo "packed: $TARBALL"
+          # Prove the load-bearing files are IN the tarball before installing.
+          # Assert the EXACT file bin/loki resolves (dist/loki.js), not just the
+          # dir prefix: a partial/empty dist/ would pass a prefix grep while
+          # bin/loki's `[ -f dist/loki.js ]` check fails and routes to bash --
+          # green-washing a missing bundle (council S5+S6 R2 HIGH). Exact file closes it.
+          # List ONCE into a file, then grep the file. Piping `tar tzf` straight
+          # into `grep -q` is a SIGPIPE trap: grep -q exits at the first match and
+          # closes the pipe, GNU tar then dies with "tar: stdout: write error",
+          # and `set -o pipefail` fails the whole step even though the assertion
+          # SUCCEEDED. That is exactly how this job broke -- it reported a missing
+          # artifact when the artifact was present. (BSD tar on macOS tolerates
+          # the closed pipe, so it does not reproduce locally.)
+          TARLIST="$RUNNER_TEMP/tarball-contents.txt"
+          tar tzf "$TARBALL" > "$TARLIST"
+          grep -qx 'package/loki-ts/dist/loki.js' "$TARLIST" \
+            || { echo 'FAIL: loki-ts/dist/loki.js missing from tarball (SDK judge would not ship)'; exit 1; }
+          grep -qx 'package/autonomy/lib/sdk-mode.sh' "$TARLIST" \
+            || { echo 'FAIL: autonomy/lib/sdk-mode.sh missing from tarball (mode resolver would not ship)'; exit 1; }
+          mkdir -p "$RUNNER_TEMP/loki-prefix"
+          npm install -g --prefix "$RUNNER_TEMP/loki-prefix" "./$TARBALL"
+          echo "$RUNNER_TEMP/loki-prefix/bin" >> "$GITHUB_PATH"
+          # Resolve the INSTALLED dist/loki.js and pin LOKI_TS_ENTRY to it for the
+          # probes. This forces bin/loki onto the Bun/TS route: if the installed
+          # bundle is missing, bin/loki prints an explicit "LOKI_TS_ENTRY ... does
+          # not exist; falling through" and routes to bash -- which the probe below
+          # asserts must NOT happen. Exit code alone cannot tell the TS null path
+          # (exit 1) from bash's Unknown-command (also exit 1); this pin + the
+          # positive TS-route assertion below close that false-green.
+          DIST="$(find "$RUNNER_TEMP/loki-prefix/lib/node_modules" -path '*/loki-ts/dist/loki.js' 2>/dev/null | head -1)"
+          [ -n "$DIST" ] && [ -f "$DIST" ] \
+            || { echo "FAIL: installed loki-ts/dist/loki.js not found under the npm prefix"; exit 1; }
+          echo "installed dist: $DIST"
+          echo "LOKI_TS_ENTRY=$DIST" >> "$GITHUB_ENV"
+
+      - name: Assert NO claude binary on PATH (the whole point)
+        run: |
+          if command -v claude >/dev/null 2>&1; then
+            echo "FAIL: a claude binary is on PATH; this job must prove the binary-free SDK path"
+            exit 1
+          fi
+          echo "confirmed: no claude binary on PATH"
+
+      - name: Prepare a tiny judge prompt + schema fixture
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/fix"
+          printf '%s\n' 'Is the number 4 even? Answer via the schema.' > "$RUNNER_TEMP/fix/prompt.txt"
+          cat > "$RUNNER_TEMP/fix/schema.json" <<'JSON'
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["verdict"],
+            "properties": { "verdict": { "type": "string", "enum": ["yes", "no"] } }
+          }
+          JSON
+
+      - name: POSITIVE proof the TS SDK route runs (bash fall-through cannot fake)
+        run: |
+          set -uo pipefail
+          # Exit-1 alone is a false-green: if dist/loki.js were missing, bin/loki
+          # falls through to the bash CLI, which has NO `internal` handler -> prints
+          # "Unknown command: internal", exits 1, empty stdout -- passing the keyless
+          # probe's exit-1/no-module/empty checks for the WRONG reason (council
+          # S5+S6 R2 HIGH). Close it with a POSITIVE assertion only the TS bridge
+          # can satisfy: call `internal sdk-judge` with NO flags. The TS bridge
+          # (internal_sdk_judge.ts) exits 2 with the EXACT string
+          # "sdk-judge: --prompt-file and --schema-file are required"; the bash CLI
+          # would instead say "Unknown command: internal". This proves control
+          # actually reached the shipped TS bundle, not the bash fall-through.
+          set +e
+          loki internal sdk-judge >"$RUNNER_TEMP/pout.txt" 2>"$RUNNER_TEMP/perr.txt"
+          PRC=$?
+          set -e
+          echo "no-flags exit=$PRC"; echo "--- stderr ---"; cat "$RUNNER_TEMP/perr.txt" || true
+          if grep -qiE 'Unknown command|falling through|does not exist' "$RUNNER_TEMP/perr.txt"; then
+            echo "FAIL: bin/loki fell through to the bash CLI -- the TS SDK bundle did NOT run (missing dist?)"; exit 1
+          fi
+          grep -q 'sdk-judge: --prompt-file and --schema-file are required' "$RUNNER_TEMP/perr.txt" \
+            || { echo "FAIL: did not see the TS bridge's arg-required message; TS SDK route not confirmed"; exit 1; }
+          [ "$PRC" -eq 2 ] || { echo "FAIL: expected exit 2 (TS bridge bad-args); got $PRC"; exit 1; }
+          echo "PASS: the shipped TS SDK bridge ran (arg-required message + exit 2 from internal_sdk_judge.ts)"
+
+      - name: UNPINNED proof (natural bin/loki dist resolution, no LOKI_TS_ENTRY)
+        run: |
+          set -uo pipefail
+          # The step above PINS LOKI_TS_ENTRY, which disambiguates exit codes but
+          # masks bin/loki's NATURAL `[ -f dist/loki.js ]` resolution -- the path a
+          # real npm user (no LOKI_TS_ENTRY) actually hits. Run the SAME positive
+          # assertion with LOKI_TS_ENTRY UNSET so a bin/loki resolution regression
+          # (broken REPO_ROOT / dist branch) that routes a real user to bash is
+          # caught HERE too, not only by the dual-route CI (council S5+S6 re-review
+          # R1 LOW hardening). Same TS-only markers; bash fall-through cannot fake.
+          set +e
+          env -u LOKI_TS_ENTRY loki internal sdk-judge >"$RUNNER_TEMP/upout.txt" 2>"$RUNNER_TEMP/uperr.txt"
+          URC=$?
+          set -e
+          echo "unpinned no-flags exit=$URC"; echo "--- stderr ---"; cat "$RUNNER_TEMP/uperr.txt" || true
+          if grep -qiE 'Unknown command|falling through|does not exist' "$RUNNER_TEMP/uperr.txt"; then
+            echo "FAIL: natural bin/loki resolution routed to bash -- a real npm user would not hit the TS SDK"; exit 1
+          fi
+          grep -q 'sdk-judge: --prompt-file and --schema-file are required' "$RUNNER_TEMP/uperr.txt" \
+            || { echo "FAIL: natural resolution did not reach the TS bridge"; exit 1; }
+          [ "$URC" -eq 2 ] || { echo "FAIL: expected exit 2 from the natural TS route; got $URC"; exit 1; }
+          echo "PASS: natural bin/loki dist resolution reaches the shipped TS bridge (no LOKI_TS_ENTRY)"
+
+      - name: KEYLESS fail-closed probe (no ANTHROPIC_API_KEY) -- always runs
+        env:
+          LOKI_SDK_MODE: judges
+        run: |
+          set -uo pipefail
+          # With the TS route proven above, this asserts the fail-closed contract:
+          # no key -> judgeJson returns null -> EXACTLY exit 1, no stdout, no module
+          # error. Distinct from exit 2 (bad args) / exit 3 (read error) / 0 (ran).
+          # The named --prompt-file/--schema-file flags the bridge requires are used.
+          set +e
+          OUT="$(loki internal sdk-judge --prompt-file "$RUNNER_TEMP/fix/prompt.txt" --schema-file "$RUNNER_TEMP/fix/schema.json" 2>"$RUNNER_TEMP/err.txt")"
+          RC=$?
+          set -e
+          echo "exit=$RC stdout=[$OUT]"
+          echo "--- stderr ---"; cat "$RUNNER_TEMP/err.txt" || true
+          if grep -qiE 'cannot find (package|module)|ERR_MODULE_NOT_FOUND|Cannot find module' "$RUNNER_TEMP/err.txt"; then
+            echo "FAIL: the bundled @anthropic-ai/sdk did not ship in the tarball (module-not-found)"; exit 1
+          fi
+          if grep -qiE 'Unknown command|falling through|does not exist' "$RUNNER_TEMP/err.txt"; then
+            echo "FAIL: bin/loki fell through to bash -- exit 1 here would be a false-green"; exit 1
+          fi
+          if [ "$RC" -ne 1 ]; then
+            echo "FAIL: expected exit 1 (fail-closed null from judgeJson); got $RC."
+            echo "  exit 2 = args never parsed; exit 3 = fixture unreadable; exit 0 = ran without a key."
+            exit 1
+          fi
+          [ -z "$OUT" ] || { echo "FAIL: fail-closed path must print no stdout"; exit 1; }
+          echo "PASS: keyless SDK judge fail-closed cleanly (exit 1) from the tarball -- SDK code shipped"
+
+      - name: BILLABLE judge probe (gated on the ANTHROPIC_API_KEY secret)
+        if: env.HAS_ANTHROPIC_KEY == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LOKI_SDK_MODE: judges
+        run: |
+          set -euo pipefail
+          OUT="$(loki internal sdk-judge --prompt-file "$RUNNER_TEMP/fix/prompt.txt" --schema-file "$RUNNER_TEMP/fix/schema.json")"
+          echo "verdict output: $OUT"
+          echo "$OUT" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d['verdict'] in ('yes','no'), d; print('PASS: real SDK judge verdict from the tarball:', d['verdict'])"
+
+      # RUN-25 iter 5 (T3(d)): drive the full RARV LOOP end-to-end from the INSTALLED
+      # tarball with NO claude binary and LOKI_SDK_LOOP=1, on a tiny fixture spec. The
+      # judge probes above prove the one-shot SDK path ships; this proves the agentic
+      # loop (the Agent SDK query() path + consumeSdkStream) works from the shipped
+      # artifact -- the platform-specific Agent-SDK native binary resolves under a clean
+      # npm install, the loop runs to a terminal result, and it writes the real .loki
+      # state (agents.json + result-cost). This is the LAST loop-flip pre-flight gate:
+      # without it, flipping LOKI_SDK_LOOP default-on could ship a tarball whose loop
+      # crashes on a fresh install (the v6.25 dist-excluded bug class, for the loop).
+      # Billable + gated on the secret (self-skips on forks / secret-less pushes).
+      - name: BILLABLE RARV-loop E2E from the tarball (gated on ANTHROPIC_API_KEY)
+        if: env.HAS_ANTHROPIC_KEY == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LOKI_SDK_LOOP: "1"
+          LOKI_MAX_ITERATIONS: "2"
+        run: |
+          set -uo pipefail
+          # A trivially-completable one-file spec so the loop terminates fast+cheap.
+          WORK="$RUNNER_TEMP/loop-e2e"
+          mkdir -p "$WORK"
+          cat > "$WORK/spec.md" <<'SPEC'
+          # Tiny spec
+          Create a file hello.txt containing exactly the text "hello world".
+          That is the entire task. When hello.txt exists with that content, the task is complete.
+          SPEC
+          cd "$WORK"
+          # Bound wall-clock so a hang fails the job instead of running the full budget.
+          set +e
+          timeout 600 loki start ./spec.md --max-iterations 2 > "$RUNNER_TEMP/loop.out" 2>&1
+          RC=$?
+          set -e
+          echo "loop exit=$RC"; echo "--- tail ---"; tail -30 "$RUNNER_TEMP/loop.out" || true
+          # The loop must have written real .loki state from the SDK stream parser.
+          if [ ! -f "$WORK/.loki/state/agents.json" ]; then
+            echo "FAIL: .loki/state/agents.json not written -- the SDK loop did not run from the tarball"; exit 1
+          fi
+          if ! ls "$WORK/.loki/metrics/"result-cost-*.json >/dev/null 2>&1; then
+            echo "FAIL: no result-cost-*.json -- the SDK loop produced no terminal result from the tarball"; exit 1
+          fi
+          # Module-not-found / SDK-load failure would mean the Agent SDK binary did not
+          # resolve from the installed tarball.
+          if grep -qiE 'cannot find (package|module)|ERR_MODULE_NOT_FOUND|sdk-loop error' "$RUNNER_TEMP/loop.out"; then
+            echo "FAIL: Agent SDK failed to load/run from the tarball"; exit 1
+          fi
+          echo "PASS: RARV loop ran end-to-end from the tarball (agents.json + result-cost written, no SDK-load error)"

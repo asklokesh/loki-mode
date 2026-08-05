@@ -100,6 +100,55 @@ describe("populatePrdQueue", () => {
     expect(existsSync(`${pendingPath}.tmp.${process.pid}`)).toBe(false);
   });
 
+  it("extracts tasks only after an explicit directive envelope terminator", async () => {
+    const prdPath = join(tmp, "PRD.md");
+    const prd = `# DESIGN SYSTEM DIRECTIVE v5
+
+## Functionality + backend
+- DEAD SUBMIT: wire every form to a persistent backend
+- BROKEN AUTH: enforce authorization at the data boundary
+- UNSAFE WRITES: require idempotency keys for every write
+
+--- END DESIGN SYSTEM DIRECTIVE ---
+
+# Atlas Notes
+
+## Requirements
+- Build the Atlas Notes landing page
+- Verify the responsive layout and production build
+`;
+    writeFileSync(prdPath, prd);
+
+    await populatePrdQueue(makeCtx(prdPath));
+
+    const tasks = JSON.parse(
+      readFileSync(join(lokiDir, "queue", "pending.json"), "utf8"),
+    ) as Array<{ title: string }>;
+    expect(tasks.map((task) => task.title)).toEqual([
+      "Build the Atlas Notes landing page",
+      "Verify the responsive layout and production build",
+    ]);
+    expect(readFileSync(prdPath, "utf8")).toBe(prd);
+  });
+
+  it("keeps legacy extraction unchanged when no directive terminator exists", async () => {
+    const prdPath = join(tmp, "PRD.md");
+    writeFileSync(prdPath, `# Existing PRD
+
+## Functionality + backend
+- Build the persisted contact workflow
+`);
+
+    await populatePrdQueue(makeCtx(prdPath));
+
+    const tasks = JSON.parse(
+      readFileSync(join(lokiDir, "queue", "pending.json"), "utf8"),
+    ) as Array<{ title: string }>;
+    expect(tasks.map((task) => task.title)).toEqual([
+      "Build the persisted contact workflow",
+    ]);
+  });
+
   it("is a no-op when prdPath is missing", async () => {
     const ctx = makeCtx(undefined);
     await populatePrdQueue(ctx);

@@ -10,6 +10,7 @@
 import { LokiElement } from '../core/loki-theme.js';
 import { getApiClient } from '../core/loki-api-client.js';
 import { registerPoll } from '../core/loki-poll-registry.js';
+import { formatUSD } from '../core/loki-unified-styles.js';
 
 /** @type {Object<string, {color: string, label: string}>} Phase color mapping */
 const PHASE_COLORS = {
@@ -36,7 +37,10 @@ export class LokiCostWaterfall extends LokiElement {
     super();
     this._phases = [];
     this._budget = null;
-    this._totalCost = 0;
+    // null, not 0. Before any fetch nothing has been measured, and seeding a
+    // number here makes a component that has never loaded render "$0.00" --
+    // a measured-looking claim that the run was free.
+    this._totalCost = null;
     this._hoveredPhase = null;
     this._api = null;
     this._pollInterval = null;
@@ -99,7 +103,19 @@ export class LokiCostWaterfall extends LokiElement {
       if (api !== this._api) return;
       this._phases = data.phases || [];
       this._budget = data.budget_usd || null;
-      this._totalCost = data.total_usd || this._phases.reduce((sum, p) => sum + (p.cost_usd || 0), 0);
+      // `|| 0` inside a reduce fabricates a total: null + null is 0 in JS, so
+      // phases that nobody measured summed to a confident $0.00 while each
+      // individual phase correctly rendered "unknown" right beside it. The
+      // total is null unless at least ONE phase carries a real number, and
+      // sums only the measured ones otherwise.
+      if (data.total_usd != null) {
+        this._totalCost = data.total_usd;
+      } else {
+        const measured = this._phases.filter(p => p.cost_usd != null);
+        this._totalCost = measured.length
+          ? measured.reduce((sum, p) => sum + p.cost_usd, 0)
+          : null;
+      }
     } catch {
       // Drop a stale response if the api-url switched mid-flight.
       if (api !== this._api) return;
@@ -123,8 +139,9 @@ export class LokiCostWaterfall extends LokiElement {
   }
 
   _formatCost(usd) {
-    if (usd == null) return '--';
-    return '$' + usd.toFixed(2);
+    // Was '--', which reads as a value (a minus, a zero rule) rather than an
+    // absent measurement.
+    return formatUSD(usd);
   }
 
   _escapeHtml(str) {

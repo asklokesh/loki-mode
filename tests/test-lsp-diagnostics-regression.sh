@@ -13,7 +13,12 @@ FAIL=0
 ok()  { PASS=$((PASS+1)); echo "PASS: $1"; }
 bad() { FAIL=$((FAIL+1)); echo "FAIL: $1"; }
 
-PY=/opt/homebrew/bin/python3.12
+# Resolve the interpreter instead of hardcoding one. This was pinned to
+# /opt/homebrew/bin/python3.12 -- one developer's Homebrew install. On CI every
+# invocation died with "No such file or directory" and the suite reported a
+# product failure ("structural attrs missing") for a path that does not exist
+# there. Prefer an explicit PYTHON override, then python3 on PATH.
+PY="${PYTHON:-$(command -v python3 2>/dev/null || echo python3)}"
 
 # Test 1: structural - LSPClient has pending_diagnostics + reader thread
 $PY -c "
@@ -87,7 +92,7 @@ fixture_ts = os.path.join(tmpdir, 'broken.ts')
 open(fixture_ts, 'w').write('const x: number = "wrong"; // type error\n')
 
 from mcp import lsp_proxy
-client = lsp_proxy.LSPClient('typescript', '/opt/homebrew/bin/python3.12', [fake_path])
+client = lsp_proxy.LSPClient('typescript', sys.executable, [fake_path])
 try:
     client.start()
     # Reader thread is now running; send didOpen to trigger the fake's diagnostic
@@ -148,7 +153,7 @@ os.makedirs(tmpdir, exist_ok=True)
 fake_path = os.path.join(tmpdir, 'fake_lsp2.py')
 open(fake_path, 'w').write(FAKE_SERVER)
 from mcp import lsp_proxy
-client = lsp_proxy.LSPClient('python', '/opt/homebrew/bin/python3.12', [fake_path])
+client = lsp_proxy.LSPClient('python', sys.executable, [fake_path])
 try:
     client.start()
     resp = client.request('test/method', {'foo':'bar'}, timeout=2.0)
@@ -194,7 +199,7 @@ os.makedirs(tmpdir, exist_ok=True)
 hang_path = os.path.join(tmpdir, 'hang_lsp.py')
 open(hang_path, 'w').write(HANG_SERVER)
 from mcp import lsp_proxy
-client = lsp_proxy.LSPClient('python', '/opt/homebrew/bin/python3.12', [hang_path])
+client = lsp_proxy.LSPClient('python', sys.executable, [hang_path])
 try:
     client.start()
     # Fire a request in background; kill subprocess mid-request
@@ -253,7 +258,7 @@ os.makedirs(tmpdir, exist_ok=True)
 srv = os.path.join(tmpdir, 'srv.py')
 open(srv, 'w').write(SERVER)
 from mcp import lsp_proxy
-client = lsp_proxy.LSPClient('python', '/opt/homebrew/bin/python3.12', [srv])
+client = lsp_proxy.LSPClient('python', sys.executable, [srv])
 client.start()
 old_thread = client._reader_thread
 # Crash the subprocess

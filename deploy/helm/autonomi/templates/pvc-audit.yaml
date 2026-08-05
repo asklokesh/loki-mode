@@ -5,6 +5,19 @@ metadata:
   name: {{ include "autonomi.fullname" . }}-audit-logs
   labels:
     {{- include "autonomi.labels" . | nindent 4 }}
+  {{- if .Values.persistence.auditLogs.retainOnUninstall }}
+  annotations:
+    # RETAIN AUDIT LOGS ACROSS UNINSTALL. Without this annotation `helm
+    # uninstall` deletes the PVC and the audit trail goes with it. For most
+    # workloads that is fine; for an AUDIT LOG it is a compliance problem, and
+    # the operator discovers it only after the data is gone.
+    #
+    # Opt-in rather than default-on, deliberately: flipping the default would
+    # start leaving orphaned PVCs (and their cost) behind for every existing
+    # user who uninstalls, which is a surprise in the other direction. The
+    # runbook documents the tradeoff and the manual cleanup command.
+    helm.sh/resource-policy: keep
+  {{- end }}
 spec:
   accessModes:
     - {{ .Values.persistence.auditLogs.accessMode }}

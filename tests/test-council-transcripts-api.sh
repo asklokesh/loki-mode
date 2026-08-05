@@ -27,6 +27,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 LOKI_TS_DIR="${REPO_ROOT}/loki-ts"
 
+# Every assertion below drives councilEvaluate through `bun run` (see
+# run_evaluate). Without bun the transcript is never written and the suite
+# reports a product failure -- "no iter-1-*.json file found" -- for a missing
+# toolchain. The shell-tests CI job does not install bun (the bun-tests job
+# does), which is exactly where this surfaced. Skip honestly instead.
+if ! command -v bun >/dev/null 2>&1; then
+  echo "[SKIP] bun not on PATH; councilEvaluate cannot run (transcripts are written by the TS route)"
+  exit 0
+fi
+
 # Create a temp directory that acts as a fake .loki root.
 LOKI_TMP=$(mktemp -d /tmp/loki-transcript-e2e-XXXXXX)
 trap 'rm -rf "${LOKI_TMP}"' EXIT

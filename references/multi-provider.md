@@ -1,12 +1,17 @@
 # Multi-Provider Architecture Reference
 
-> **Version:** 5.25.0 | **Status:** Production | **Last Updated:** 2026-05-22
+> **Status:** Production | **Provider list and model config verified against source at v9.8.1**
+>
+> Values below are illustrative. `providers/*.sh` is the authority; prefer
+> reading it over trusting a literal copied into this document.
 
-Loki Mode supports four AI CLI providers with a unified abstraction layer. This document provides detailed technical reference for the multi-provider system.
+Loki Mode supports five AI CLI providers with a unified abstraction layer. This document provides detailed technical reference for the multi-provider system.
 
 ---
 
 ## Provider Overview
+
+Source of truth: `SUPPORTED_PROVIDERS` in `providers/loader.sh:8`.
 
 | Provider | CLI | Status | Features |
 |----------|-----|--------|----------|
@@ -14,6 +19,13 @@ Loki Mode supports four AI CLI providers with a unified abstraction layer. This 
 | **OpenAI Codex** | `codex` | Degraded | Sequential, Effort Parameter, MCP (basic) |
 | **Cline CLI** | `cline` | Near-Full (Tier 2) | Subagents, MCP, 12+ providers |
 | **Aider** | `aider` | Degraded | Sequential, 18+ providers |
+| **opencode** | `opencode` | Sequential | MCP, 75+ providers, model-agnostic |
+
+When `LOKI_PROVIDER` is unset, providers auto-detect in priority order:
+`claude > cline > codex > aider > opencode`. An explicit choice always wins and
+is never silently substituted.
+
+Gemini was removed as a provider.
 
 ---
 
@@ -27,6 +39,7 @@ providers/
   codex.sh    # Degraded mode, effort parameter
   cline.sh    # Near-full mode, 12+ providers (Tier 2)
   aider.sh    # Degraded mode, 18+ providers
+  opencode.sh # Sequential, 75+ providers, model-agnostic
   loader.sh   # Provider loader utility
 ```
 
@@ -58,11 +71,20 @@ PROVIDER_MAX_PARALLEL=10       # Maximum concurrent agents
 ```
 
 #### Model Configuration
+
+Models are NOT hardcoded model IDs. Each tier resolves through env indirection
+to a tier alias (`providers/claude.sh:70-72`):
+
 ```bash
-PROVIDER_MODEL_PLANNING="claude-opus-4-7"
-PROVIDER_MODEL_DEVELOPMENT="claude-sonnet-4-6"
-PROVIDER_MODEL_FAST="claude-haiku-4-5-20251001"
+PROVIDER_MODEL_PLANNING="${LOKI_CLAUDE_MODEL_PLANNING:-${LOKI_MODEL_PLANNING:-$CLAUDE_DEFAULT_PLANNING}}"
+PROVIDER_MODEL_DEVELOPMENT="${LOKI_CLAUDE_MODEL_DEVELOPMENT:-${LOKI_MODEL_DEVELOPMENT:-$CLAUDE_DEFAULT_DEVELOPMENT}}"
+PROVIDER_MODEL_FAST="${LOKI_CLAUDE_MODEL_FAST:-${LOKI_MODEL_FAST:-$CLAUDE_DEFAULT_FAST}}"
 ```
+
+Defaults are all `sonnet` (`providers/claude.sh:60-62`). Setting
+`LOKI_ALLOW_HAIKU` flips the fast tier to `haiku` (`providers/claude.sh:66`).
+Do not cite pinned model IDs here; they drift. Read `providers/claude.sh` and
+`providers/model_catalog.json` for current values.
 
 #### Rate Limiting
 ```bash
@@ -70,6 +92,15 @@ PROVIDER_RATE_LIMIT_RPM=50      # Requests per minute
 PROVIDER_CONTEXT_WINDOW=1000000 # Max context tokens (Opus 4.7: 1M at standard pricing)
 PROVIDER_MAX_OUTPUT_TOKENS=128000
 ```
+
+`PROVIDER_CONTEXT_WINDOW` also caps code-review size. The review diff and prompt
+limits derive from it (assuming ~3 bytes per token and ~75% of the window for
+input), so a small-window local model is not handed a prompt sized for a 200k
+one. The derived value is only ever used to LOWER a cap, and a window at or above
+roughly 188889 tokens clamps to the historical 400000/425000 byte defaults, so no
+provider shipping today changes behavior (a provider that declares no window
+keeps the defaults as well). `LOKI_REVIEW_MAX_DIFF_BYTES` and
+`LOKI_REVIEW_MAX_PROMPT_BYTES` still override both.
 
 #### Degraded Mode
 ```bash

@@ -80,12 +80,14 @@ beforeEach(() => {
   // Wipe tier/maxTier env so tests start from a clean slate.
   delete process.env["LOKI_ALLOW_HAIKU"];
   delete process.env["LOKI_MAX_TIER"];
+  delete process.env["LOKI_HOST_GUARD"];
 });
 
 afterEach(() => {
   delete process.env["LOKI_CLAUDE_CLI"];
   delete process.env["LOKI_ALLOW_HAIKU"];
   delete process.env["LOKI_MAX_TIER"];
+  delete process.env["LOKI_HOST_GUARD"];
   rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -109,6 +111,15 @@ describe("resolveProvider dispatch", () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       resolveProvider("not-a-provider" as any),
     ).rejects.toThrow(/unknown provider/);
+  });
+
+  it("hosted mode rejects a provider without an enforceable hook", async () => {
+    process.env["LOKI_HOST_GUARD"] = "1";
+    try {
+      await expect(resolveProvider("codex")).rejects.toThrow(/no enforced PreToolUse hook/);
+    } finally {
+      delete process.env["LOKI_HOST_GUARD"];
+    }
   });
 });
 
@@ -316,6 +327,40 @@ describe("claudeProvider invocation", () => {
     expect(argv).toContain("sonnet");
     expect(argv).toContain("-p");
     expect(argv).toContain("build x");
+  });
+
+  it("hosted CLI loop injects the trusted Bash hook settings", async () => {
+    _resetClaudeHelpCacheForTest("  --settings <file-or-json>  load settings");
+    process.env["LOKI_HOST_GUARD"] = "1";
+    try {
+      const argvLog = writeStub({ stdout: "ok" });
+      const r = await claudeProvider().invoke(makeCall({ mainLoop: true }));
+      expect(r.exitCode).toBe(0);
+      const argv = readArgv(argvLog);
+      const settingsIndex = argv.indexOf("--settings");
+      expect(settingsIndex).toBeGreaterThanOrEqual(0);
+      const settings = JSON.parse(argv[settingsIndex + 1] ?? "{}") as {
+        hooks?: { PreToolUse?: Array<{ matcher?: string }> };
+      };
+      expect(settings.hooks?.PreToolUse?.[0]?.matcher).toBe("Bash");
+    } finally {
+      _resetClaudeHelpCacheForTest(null);
+      delete process.env["LOKI_HOST_GUARD"];
+    }
+  });
+
+  it("hosted CLI loop fails closed when --settings is unavailable", async () => {
+    _resetClaudeHelpCacheForTest("  --model <model>  select model");
+    process.env["LOKI_HOST_GUARD"] = "1";
+    try {
+      writeStub({ stdout: "should not run" });
+      const r = await claudeProvider().invoke(makeCall({ mainLoop: true }));
+      expect(r.exitCode).toBe(1);
+      expect(readFileSync(r.capturedOutputPath, "utf8")).toContain("requires Claude CLI --settings support");
+    } finally {
+      _resetClaudeHelpCacheForTest(null);
+      delete process.env["LOKI_HOST_GUARD"];
+    }
   });
 
   it("propagates exit code", async () => {

@@ -44,11 +44,41 @@ export type DiskCheck = {
 // v7.5.15: sentrux architectural-drift gate state exposed in --json output.
 // Sibling of checks/disk -- intentionally not counted in the summary tally
 // to keep summary numbers backwards-compatible with v7.5.14 consumers.
-export type SentruxCheck = {
+export type AiProviderCheck = {
+  found: boolean;
+  status: Status;
+  required: string;
+  detail: string | null;
+};
+
+type SentruxCheck = {
   found: boolean;
   version: string | null;
   status: Status;
   required: "optional";
+};
+
+// Evidence Receipt signing state. Mirrors the bash cmd_doctor_json
+// receipt_signing block. Unsigned is the DEFAULT and a supported mode, so
+// status is never "fail". Sibling of checks/disk/sentrux -- NOT counted in
+// the summary tally, preserving backwards-compatible summary numbers.
+export type ReceiptSigningCheck = {
+  enabled: boolean;
+  key_configured: boolean;
+  gpg_available: boolean;
+  status: Status;
+  required: "optional";
+};
+
+// Provider availability: install state of every provider in
+// providers/loader.sh SUPPORTED_PROVIDERS, plus the one auto_detect_provider
+// would choose. Produced by autonomy/provider-offer.sh (providers-json), the
+// SAME helper the bash route calls, so the two cannot drift. Not counted in the
+// summary tally: it is informational, and a missing optional provider must
+// never flip doctor exit code.
+export type ProviderAvailability = {
+  selected: string | null;
+  providers: { name: string; installed: boolean }[];
 };
 
 // v7.7.17: memory subsystem health surface. Mirrors the bash side
@@ -69,9 +99,16 @@ export type DoctorJson = {
   // (autonomy/loki:cmd_doctor_json) which now sets LOKI_VERSION env.
   loki_mode_version: string;
   checks: ToolCheck[];
+  // Which provider a build would actually auto-select, plus the install state
+  // of every supported provider. Null when providers/loader.sh is unavailable,
+  // matching the bash route, which omits the section rather than erroring.
+  provider_availability: ProviderAvailability | null;
   disk: DiskCheck;
+  ai_provider: AiProviderCheck;
   sentrux: SentruxCheck;
+  receipt_signing: ReceiptSigningCheck;
   memory: MemoryHealth;
+  model_catalog: CatalogFreshness;
   summary: {
     passed: number;
     failed: number;
@@ -319,6 +356,57 @@ async function runAllToolChecks(): Promise<ToolRow[]> {
   );
 }
 
+// ---------- Provider availability bridge --------------------------------------
+
+// Both of these shell out to autonomy/provider-offer.sh rather than reading
+// providers/loader.sh from TypeScript. That is deliberate and load-bearing:
+// doctor stdout is compared byte for byte between the two routes
+// (tests/test-doctor-blocker-parity.sh + the bun-parity workflow), and the
+// auto-selection priority order lives in ONE bash function. A TypeScript
+// reimplementation would be a second copy of that order, free to drift.
+//
+// Both fail closed and silently: a missing script, a spawn error, or any
+// non-zero status yields null / no output, and doctor carries on. That is the
+// same graceful skip the bash route performs when loader.sh cannot be sourced.
+function providerOfferScript(): string | null {
+  const p = resolve(REPO_ROOT, "autonomy/provider-offer.sh");
+  return existsSync(p) ? p : null;
+}
+
+export function readProviderAvailability(): ProviderAvailability | null {
+  const script = providerOfferScript();
+  if (!script) return null;
+  try {
+    const r = spawnSync("bash", [script, "providers-json"], { encoding: "utf8" });
+    if (r.status !== 0 || !r.stdout) return null;
+    const parsed = JSON.parse(r.stdout) as ProviderAvailability;
+    if (!parsed || !Array.isArray(parsed.providers)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+// Returns the rendered section, or "" to print nothing.
+//
+// NOTE the capture-and-re-emit, rather than stdio "inherit". The install-offer
+// call below can use "inherit" because it is gated on stdout being a TTY, so
+// the parity capture never reaches it. This section is ALWAYS on: when stdout
+// is a pipe, Bun buffers process.stdout.write while an inherited child writes
+// straight to fd 1, which would let this section overtake the lines printed
+// before it and break parity in a way that never reproduces on a terminal.
+export function renderProviderAvailability(): string {
+  const script = providerOfferScript();
+  if (!script) return "";
+  try {
+    const r = spawnSync("bash", [script, "providers"], { encoding: "utf8" });
+    if (r.status !== 0 || !r.stdout) return "";
+    return r.stdout;
+  } catch {
+    return "";
+  }
+}
+
 // ---------- JSON mode ---------------------------------------------------------
 
 // v7.5.15: probe the sentrux binary for the JSON output. Mirrors the bash
@@ -331,6 +419,24 @@ async function checkSentrux(): Promise<SentruxCheck> {
   const version = found ? await probeVersion("sentrux") : null;
   const status: Status = found ? "pass" : "warn";
   return { found, version, status, required: "optional" };
+}
+
+// Evidence Receipt signing state for doctor --json. Mirrors the bash
+// cmd_doctor_json receipt_signing block: signing is enabled only when BOTH
+// LOKI_PROOF_GPG_KEY is set AND gpg is on PATH (proof-generator.py shells out
+// to gpg, so a key with no gpg still yields an UNSIGNED receipt). The env var
+// is checked for presence only -- the value is never read into the output.
+async function checkReceiptSigning(): Promise<ReceiptSigningCheck> {
+  const keyConfigured = (process.env["LOKI_PROOF_GPG_KEY"] ?? "").trim() !== "";
+  const gpgAvailable = (await commandExists("gpg")) !== null;
+  const enabled = keyConfigured && gpgAvailable;
+  return {
+    enabled,
+    key_configured: keyConfigured,
+    gpg_available: gpgAvailable,
+    status: enabled ? "pass" : "warn",
+    required: "optional",
+  };
 }
 
 // v7.7.17: read the memory subsystem error log surface for doctor --json.
@@ -385,12 +491,58 @@ async function checkMemoryHealth(): Promise<MemoryHealth> {
   };
 }
 
+// Days after which a hand-maintained catalog is called stale. The upstream
+// probe workflow runs weekly, so a catalog untouched for a quarter means the
+// probe PRs are going unread. Mirrored in autonomy/loki:cmd_doctor.
+const CATALOG_STALE_DAYS = 90;
+
+export interface CatalogFreshness {
+  status: "pass" | "warn";
+  updated: string | null;
+  age_days: number | null;
+  detail: string;
+}
+
+// Age of providers/model_catalog.json from its own "updated" field. Local read
+// only -- no network, ever. Honours LOKI_MODEL_CATALOG so tests (and operators
+// with a vendored catalog) can point it elsewhere, matching providers/models.sh.
+export function describeCatalogFreshness(): CatalogFreshness {
+  const path = process.env["LOKI_MODEL_CATALOG"] || resolve(REPO_ROOT, "providers/model_catalog.json");
+  let updated: string;
+  let ageDays: number;
+  try {
+    updated = JSON.parse(readFileSync(path, "utf-8"))["updated"];
+    // Parse as UTC midnight on both sides so the day count never shifts with
+    // the host timezone.
+    const then = Date.parse(`${updated}T00:00:00Z`);
+    const today = Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`);
+    if (Number.isNaN(then)) throw new Error("bad date");
+    ageDays = Math.round((today - then) / 86_400_000);
+  } catch {
+    return {
+      status: "warn",
+      updated: null,
+      age_days: null,
+      detail: 'Catalog unreadable or missing an ISO "updated" date -- cannot determine age',
+    };
+  }
+  return ageDays > CATALOG_STALE_DAYS
+    ? {
+        status: "warn",
+        updated,
+        age_days: ageDays,
+        detail: `Last updated ${updated} (${ageDays} days ago) -- may be missing newer models`,
+      }
+    : { status: "pass", updated, age_days: ageDays, detail: `Last updated ${updated} (${ageDays} days ago)` };
+}
+
 export async function buildDoctorJson(): Promise<DoctorJson> {
   const rows = await runAllToolChecks();
   // Strip the displayName field for JSON output -- bash JSON has bare names.
   const checks: ToolCheck[] = rows.map(({ displayName: _displayName, ...rest }) => rest);
   const disk = checkDisk();
   const sentrux = await checkSentrux();
+  const receiptSigning = await checkReceiptSigning();
   const memory = await checkMemoryHealth();
 
   let passed = 0;
@@ -405,12 +557,39 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
   else if (disk.status === "fail") failed++;
   else warnings++;
 
+  // AGGREGATE PROVIDER CHECK, mirroring autonomy/loki:cmd_doctor_json. Each
+  // provider CLI is individually optional -- Claude OR Codex OR Cline OR Aider
+  // -- so none can be marked required on its own. Having NONE is a blocker,
+  // and the text path on both routes reports it as one.
+  //
+  // Without this, --json reported zero failures and ok true on a host that
+  // cannot run a build, disagreeing with the same command's own exit code.
+  const anyProviderFound = ["claude", "codex", "cline", "aider"].some(
+    (p) => checks.find((c) => c.command === p)?.found === true,
+  );
+  const aiProvider: AiProviderCheck = {
+    found: anyProviderFound,
+    status: anyProviderFound ? "pass" : "fail",
+    required: "required",
+    detail: anyProviderFound
+      ? null
+      : "No AI provider CLI. Fix: npm install -g @anthropic-ai/claude-code",
+  };
+  if (anyProviderFound) passed++;
+  else failed++;
+
   return {
     loki_mode_version: getVersion(),
     checks,
+    provider_availability: readProviderAvailability(),
     disk,
+    ai_provider: aiProvider,
     sentrux,
+    receipt_signing: receiptSigning,
     memory,
+    // Advisory only: deliberately excluded from the passed/failed/warnings
+    // tally and from `ok`, so a stale catalog can never flip the exit code.
+    model_catalog: describeCatalogFreshness(),
     summary: { passed, failed, warnings, ok: failed === 0 },
   };
 }
@@ -494,7 +673,11 @@ function formatToolLine(c: ToolRow): string {
   return `  ${badge(c.status)}  ${label}${ver}`;
 }
 
-type Tally = { pass: number; fail: number; warn: number };
+// blockers carries WHY each required check failed, not just how many did.
+// The bash route has always named them; this route only counted, so its
+// trailer could say "some prerequisites are missing" without saying which --
+// the exact dead end a first-run user hits.
+type Tally = { pass: number; fail: number; warn: number; blockers: string[] };
 
 function bump(t: Tally, s: Status): void {
   if (s === "pass") t.pass++;
@@ -515,7 +698,7 @@ async function runText(): Promise<number> {
   process.stdout.write(`${BOLD}Loki Mode Doctor${NC}\n\n`);
   process.stdout.write(`Checking system prerequisites...\n\n`);
 
-  const tally: Tally = { pass: 0, fail: 0, warn: 0 };
+  const tally: Tally = { pass: 0, fail: 0, warn: 0, blockers: [] };
   const allChecks = await runAllToolChecks();
   const byCmd = new Map(allChecks.map((c) => [c.command, c]));
 
@@ -525,6 +708,16 @@ async function runText(): Promise<number> {
     const c = byCmd.get(cmd)!;
     process.stdout.write(formatToolLine(c) + "\n");
     bump(tally, c.status);
+    // Blocker wording mirrors the bash route's _doctor_block calls exactly
+    // (autonomy/loki:10864 and :10930) so the two trailers stay byte-identical
+    // under the bun-parity gate.
+    if (c.status === "fail") {
+      if (!c.found) {
+        tally.blockers.push(`${c.name} is not installed`);
+      } else if (c.min_version) {
+        tally.blockers.push(`${c.name} must be >= ${c.min_version}`);
+      }
+    }
   }
   process.stdout.write(`\n`);
 
@@ -556,28 +749,59 @@ async function runText(): Promise<number> {
     if (c.found) anyProvider = true;
   }
   if (!anyProvider) {
-    process.stdout.write(
-      `  ${badge("fail")}  No AI provider CLI installed -- at least one is required\n`,
-    );
-    process.stdout.write(
-      `         ${YELLOW}Install: npm install -g @anthropic-ai/claude-code${NC}\n`,
-    );
-    tally.fail++;
-    // v7.29.0: consent-gated install offer. Parity by construction: rather than
-    // re-implementing the prompt copy in TypeScript (which would drift from the
-    // bash route), invoke the single shared helper autonomy/provider-offer.sh
-    // via child_process with inherited stdio. The helper's "report" mode is a
-    // no-op on non-TTY/CI, so doctor's non-interactive and --json output stay
-    // byte-identical (this is the only path; --json never reaches runText).
-    // Guarded on stdout being a TTY so we never spawn bash in piped/CI doctor.
-    if (process.stdout.isTTY) {
-      const offerScript = resolve(REPO_ROOT, "autonomy/provider-offer.sh");
-      if (existsSync(offerScript)) {
-        spawnSync("bash", [offerScript, "report"], { stdio: "inherit" });
+    // The bundled Claude Agent SDK runs the main loop with no separate CLI, but
+    // only when genuinely usable (binary extracted + credentials + SDK loop
+    // active). Parity by construction: rather than reimplement that predicate in
+    // TypeScript (this provider block is already an independent reimplementation
+    // of the bash loop, and a second copy would drift), shell out to the SAME
+    // shared helper the bash doctor calls. Fails closed: a missing helper, a
+    // spawn error, or any non-zero status all keep today's blocker verbatim.
+    let sdkUsable = false;
+    const sdkOfferScript = resolve(REPO_ROOT, "autonomy/provider-offer.sh");
+    if (existsSync(sdkOfferScript)) {
+      const probe = spawnSync("bash", [sdkOfferScript, "detect-sdk"], { stdio: "ignore" });
+      sdkUsable = probe.status === 0;
+    }
+    if (sdkUsable) {
+      process.stdout.write(
+        `  ${badge("pass")}  Bundled Claude Agent SDK is usable -- no separate CLI needed\n`,
+      );
+      tally.pass++;
+    } else {
+      process.stdout.write(
+        `  ${badge("fail")}  No AI provider CLI installed -- at least one is required\n`,
+      );
+      process.stdout.write(
+        `         ${YELLOW}Install: npm install -g @anthropic-ai/claude-code${NC}\n`,
+      );
+      tally.fail++;
+      tally.blockers.push("No AI provider CLI. Fix: npm install -g @anthropic-ai/claude-code");
+      // v7.29.0: consent-gated install offer. Parity by construction: rather than
+      // re-implementing the prompt copy in TypeScript (which would drift from the
+      // bash route), invoke the single shared helper autonomy/provider-offer.sh
+      // via child_process with inherited stdio. The helper's "report" mode is a
+      // no-op on non-TTY/CI, so doctor's non-interactive and --json output stay
+      // byte-identical (this is the only path; --json never reaches runText).
+      // Guarded on stdout being a TTY so we never spawn bash in piped/CI doctor.
+      if (process.stdout.isTTY) {
+        const offerScript = resolve(REPO_ROOT, "autonomy/provider-offer.sh");
+        if (existsSync(offerScript)) {
+          spawnSync("bash", [offerScript, "report"], { stdio: "inherit" });
+        }
       }
     }
   }
   process.stdout.write(`\n`);
+
+  // Provider Availability. Rendered by the shared bash helper so these bytes
+  // are the bash route bytes by construction. Empty string when loader.sh is
+  // unavailable, in which case nothing (not even the blank line) is printed --
+  // exactly what the bash route does.
+  const availability = renderProviderAvailability();
+  if (availability) {
+    process.stdout.write(availability);
+    process.stdout.write(`\n`);
+  }
 
   // API Keys (presence only -- never echo values)
   process.stdout.write(`${CYAN}API Keys:${NC}\n`);
@@ -657,6 +881,7 @@ async function runText(): Promise<number> {
       process.stdout.write(`  ${badge("fail")}  ${s.name}  ${DIM}${s.detail}${NC}\n`);
       process.stdout.write(`         ${YELLOW}Fix: loki setup-skill${NC}\n`);
       tally.fail++;
+      tally.blockers.push(`${s.name} is a broken symlink. Fix: loki setup-skill`);
     } else {
       process.stdout.write(`  ${badge("warn")}  ${s.name}  ${DIM}${s.detail}${NC}\n`);
       tally.warn++;
@@ -785,6 +1010,27 @@ async function runText(): Promise<number> {
     );
     tally.warn++;
   }
+  // Evidence Receipt signing state. Byte-mirrors the bash-route lines at
+  // autonomy/loki:cmd_doctor so the bun-parity matrix diff stays empty.
+  // WARN (never FAIL): unsigned is a supported, documented default.
+  if ((process.env["LOKI_PROOF_GPG_KEY"] ?? "").trim() !== "") {
+    if ((await commandExists("gpg")) !== null) {
+      process.stdout.write(
+        `  ${badge("pass")}  Receipt signing: LOKI_PROOF_GPG_KEY set and gpg available\n`,
+      );
+      tally.pass++;
+    } else {
+      process.stdout.write(
+        `  ${badge("warn")}  Receipt signing: LOKI_PROOF_GPG_KEY set but gpg NOT on PATH - receipts will be UNSIGNED\n`,
+      );
+      tally.warn++;
+    }
+  } else {
+    process.stdout.write(
+      `  ${badge("warn")}  Receipt signing: UNSIGNED (set LOKI_PROOF_GPG_KEY to a gpg key id; see docs/SIGNED-RECEIPTS.md)\n`,
+    );
+    tally.warn++;
+  }
   process.stdout.write(`\n`);
 
   // System
@@ -815,6 +1061,7 @@ async function runText(): Promise<number> {
       `  ${badge("fail")}  Disk space: ${diskTextGb}GB available (need >= 1GB)\n`,
     );
     tally.fail++;
+    tally.blockers.push(`Free up disk: ${diskTextGb}GB available, need >= 1GB`);
   } else if (disk.status === "warn") {
     process.stdout.write(
       `  ${badge("warn")}  Disk space: ${diskTextGb}GB available (low)\n`,
@@ -877,14 +1124,94 @@ async function runText(): Promise<number> {
   }
   process.stdout.write(`\n`);
 
+  // Model catalog freshness -- mirrors autonomy/loki:cmd_doctor byte for byte.
+  // The bun-parity matrix diffs this section (it is NOT stripped by the
+  // normalizer), so edit BOTH routes together.
+  //
+  // Reads ONLY the local file's "updated" field: zero network I/O, keeping
+  // doctor air-gapped-safe. Informational only -- never touches the tally, so a
+  // stale catalog can never change doctor's exit code.
+  process.stdout.write(`${CYAN}Model catalog:${NC}\n`);
+  const catalogAge = describeCatalogFreshness();
+  if (catalogAge.status === "pass") {
+    process.stdout.write(`  ${badge("pass")}  ${catalogAge.detail}\n`);
+  } else {
+    process.stdout.write(`  ${badge("warn")}  ${catalogAge.detail}\n`);
+    process.stdout.write(
+      `         ${YELLOW}Refresh: python3 tools/probe-model-catalog.py${NC} (reports new model IDs from provider docs; you verify and edit the catalog by hand -- never auto-applied)\n`,
+    );
+  }
+  process.stdout.write(`\n`);
+
+  // Install integrity. The bash route has checked this since v8.38.0; the Bun
+  // route -- the DEFAULT runtime -- did not, so the users most likely to hit
+  // the failure were the ones who could not see it.
+  //
+  // Why it matters: these four detectors ship via package.json `files[]`. When
+  // they were absent from the tarball, mutation-integrity failed closed on
+  // EVERY iteration for EVERY npm user, making first-pass completion
+  // impossible regardless of model output. Nothing in a git checkout can
+  // reproduce that -- which is exactly why doctor must assert it on the
+  // installed copy.
+  process.stdout.write(`${BOLD}Install integrity:${NC}\n`);
+  const detectors = [
+    "detect-test-mutations",
+    "detect-mock-problems",
+    "detect-semantic-test-problems",
+    "detect-invariant-violations",
+  ];
+  const missingDetectors: string[] = [];
+  for (const det of detectors) {
+    if (existsSync(resolve(REPO_ROOT, "tests", `${det}.sh`))) {
+      tally.pass++;
+    } else {
+      missingDetectors.push(`${det}.sh`);
+    }
+  }
+  if (missingDetectors.length === 0) {
+    process.stdout.write(
+      `  ${GREEN}OK${NC}    Quality-gate detectors present (${detectors.length}/${detectors.length})\n`,
+    );
+  } else {
+    process.stdout.write(
+      `  ${badge("fail")}  Quality-gate detectors MISSING: ${missingDetectors.join(" ")}\n`,
+    );
+    tally.fail++;
+    tally.blockers.push(
+      `Reinstall loki-mode: ${missingDetectors.length} quality-gate detector(s) missing, so every iteration fails closed`,
+    );
+  }
+  process.stdout.write(`\n`);
+
   // Summary
   process.stdout.write(
     `${BOLD}Summary:${NC} ${GREEN}${tally.pass} passed${NC}, ${RED}${tally.fail} failed${NC}, ${YELLOW}${tally.warn} warnings${NC}\n\n`,
   );
 
   if (tally.fail > 0) {
-    process.stdout.write(`${RED}Some required prerequisites are missing.${NC}\n`);
-    process.stdout.write(`Install missing dependencies and run 'loki doctor' again.\n`);
+    // Byte-identical to the bash route (autonomy/loki:11374-11379). This route
+    // used to print "Some required prerequisites are missing / Install missing
+    // dependencies", which names nothing and offers no way forward -- a
+    // first-run user with no provider CLI hit a dead end. The bash route has
+    // long named each blocker and pointed at `loki tour`, which needs no
+    // provider, no key and no spend; that is the one path that turns a failed
+    // first run into a result instead of an uninstall.
+    process.stdout.write(
+      `${RED}Blocking (${tally.fail}). Everything else above is optional.${NC}\n`,
+    );
+    // Leading blank line: bash accumulates blockers into a string that already
+    // begins with "\n" and prints it with printf '%b\n' (autonomy/loki:10851,
+    // :11375), so its output carries one. bun-parity compares byte for byte,
+    // so this cosmetic newline is load-bearing.
+    process.stdout.write(`\n`);
+    for (const b of tally.blockers) {
+      process.stdout.write(`  - ${b}\n`);
+    }
+    process.stdout.write(`\n`);
+    process.stdout.write(`Then re-run: loki doctor\n`);
+    process.stdout.write(
+      `Meanwhile 'loki tour' works right now -- no provider, no key, no spend.\n`,
+    );
     return 1;
   }
   if (tally.warn > 0) {

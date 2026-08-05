@@ -187,9 +187,12 @@ fi
 # Test 6: SUPPORTED_PROVIDERS array
 # ===========================================
 log_test "SUPPORTED_PROVIDERS array contents"
-# v7.5.18: gemini removed, now 4 providers.
-if [ ${#SUPPORTED_PROVIDERS[@]} -eq 4 ]; then
-    expected=("claude" "codex" "cline" "aider")
+# v7.5.18: gemini removed (4 providers).
+# v8.2.0: opencode added as the model-agnostic route -- it reaches 75+ providers
+# via the AI SDK + Models.dev registry plus any OpenAI-compatible endpoint, so a
+# user can run cheap open models without us maintaining a per-vendor model list.
+if [ ${#SUPPORTED_PROVIDERS[@]} -eq 5 ]; then
+    expected=("claude" "codex" "cline" "aider" "opencode")
     all_match=true
     for i in "${!expected[@]}"; do
         if [ "${SUPPORTED_PROVIDERS[$i]}" != "${expected[$i]}" ]; then
@@ -198,12 +201,12 @@ if [ ${#SUPPORTED_PROVIDERS[@]} -eq 4 ]; then
         fi
     done
     if $all_match; then
-        log_pass "SUPPORTED_PROVIDERS contains correct providers in order (claude, codex, cline, aider)"
+        log_pass "SUPPORTED_PROVIDERS contains correct providers in order (claude, codex, cline, aider, opencode)"
     else
         log_fail "SUPPORTED_PROVIDERS order mismatch"
     fi
 else
-    log_fail "SUPPORTED_PROVIDERS should have 4 entries (got: ${#SUPPORTED_PROVIDERS[@]})"
+    log_fail "SUPPORTED_PROVIDERS should have 5 entries (got: ${#SUPPORTED_PROVIDERS[@]})"
 fi
 
 # ===========================================

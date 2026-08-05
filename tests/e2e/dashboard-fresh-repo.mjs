@@ -153,15 +153,19 @@ async function main() {
       record('trust iframe present', true, frame.url());
       const spaBgLight = await readCssVar(page, '--loki-bg-primary');
       const frameBgLight = await readCssVar(frame, '--bg');
-      // Light SPA primary is #FAFAF7; the iframe maps --bg to the same cream.
-      const lightOk = /fafaf7/i.test(frameBgLight) && /fafaf7/i.test(spaBgLight);
+      // The iframe's --bg must MATCH the SPA's --loki-bg-primary so the embedded
+      // trust page blends seamlessly. Assert equality (case-insensitive, trimmed)
+      // rather than a hardcoded hex, so a deliberate SPA palette change (e.g. the
+      // v7.126.0 Cockpit move to #F1F2F6) is honored without the test going stale.
+      const norm = (v) => (v || '').trim().toLowerCase();
+      const lightOk = norm(frameBgLight) !== '' && norm(frameBgLight) === norm(spaBgLight);
       record('light theme: iframe matches SPA cream', lightOk,
         `spa=${spaBgLight} iframe=${frameBgLight}`);
 
       // Light-only invariant (v7.90.1): there is no Dark toggle to click, and
       // the iframe is pinned to ?theme=light. Re-visit the trust section to
       // exercise a repeat interaction, then confirm the iframe --bg is STILL
-      // the cream #FAFAF7 (it never drifts to a dark theme).
+      // the SPA light bg (it never drifts to a dark theme).
       await page.evaluate(() => {
         const overview = document.querySelector('.nav-link[data-section="overview"]');
         if (overview) overview.click();
@@ -174,9 +178,10 @@ async function main() {
       await page.waitForTimeout(1500);
       const frame2 = page.frames().find((f) => f.url().includes('/trust'));
       const frameBgAfter = frame2 ? await readCssVar(frame2, '--bg') : '';
-      const stayLightOk = /fafaf7/i.test(frameBgAfter);
+      // Still matches the SPA light bg after a re-open (never drifts to dark).
+      const stayLightOk = norm(frameBgAfter) !== '' && norm(frameBgAfter) === norm(spaBgLight);
       record('light-only: iframe stays cream after interaction', stayLightOk,
-        `iframe(after re-open)=${frameBgAfter}`);
+        `iframe(after re-open)=${frameBgAfter} spa=${spaBgLight}`);
     }
   } catch (e) {
     record('theme consistency check', false, e.message);

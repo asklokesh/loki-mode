@@ -11,7 +11,7 @@
 // drive the actual runCodeReview + buildPrompt + override council flow
 // end-to-end against a deterministic stub reviewer.
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import {
   existsSync,
   mkdtempSync,
@@ -27,6 +27,14 @@ import {
 import type { ReviewerFn } from "../../src/runner/quality_gates.ts";
 import type { RunnerContext } from "../../src/runner/types.ts";
 import { canonicalFindingId } from "../../src/runner/counter_evidence.ts";
+
+// E2E-shaped: drives the real loop, which writes state files and spawns
+// processes. Bun's 5000ms default is fine idle and NOT fine inside a full CI
+// run, where the box is saturated -- tests then fail at exactly ~5000ms and
+// WHICH ones fail changes between runs. That is a timeout signature, not a
+// defect, and it reads as a regression. 30s is far beyond the honest worst
+// case while still catching a genuine hang.
+setDefaultTimeout(30_000);
 
 let scratch = "";
 const ENV_KEYS = [

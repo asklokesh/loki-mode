@@ -138,9 +138,21 @@ def _is_ready(proof):
     """Deterministic green gate. True ONLY when:
       - honesty.headline == "VERIFIED", AND
       - facts.tests.status in (passed, verified), AND
-      - the build actually ran (facts.build.ran true / status not 'not_run').
+      - the build actually ran (facts.build.ran true / status not 'not_run'), AND
+      - no trust gate was disabled for the run.
 
     Any one missing -> not ready. This is the line that must never overclaim.
+
+    The disabled-gate condition is the newest and the one this page needs most.
+    This renderer exists for a NON-TECHNICAL owner: the reader least equipped to
+    notice that code review and security never ran. Every other surface can show
+    a caveat beside a green badge and trust the reader to weigh it. Here the
+    badge IS the message, so a run with its trust gates switched off must not
+    reach green at all.
+
+    Only gates that bear on correctness count. Turning off performance testing
+    or competitor research does not make a build unverified, and treating it as
+    such would push honest runs to amber and teach owners to ignore the colour.
     """
     if not isinstance(proof, dict):
         return False
@@ -154,7 +166,18 @@ def _is_ready(proof):
     build = facts.get("build") or {}
     build_ran = bool(build.get("ran")) or \
         str(build.get("status") or "").strip().lower() not in ("not_run", "", "none")
-    return build_ran
+    if not build_ran:
+        return False
+
+    # A trust gate switched off means the work was not fully checked, whatever
+    # the headline says. Recorded by the proof generator since v8.17.0.
+    gates = proof.get("quality_gates") or {}
+    disabled = gates.get("disabled_phases")
+    disabled = disabled if isinstance(disabled, list) else []
+    trust_gates = {"code_review", "security", "unit_tests", "e2e_tests"}
+    if any(str(name).strip().lower() in trust_gates for name in disabled):
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +319,29 @@ def _section_is_it_working(proof, run_id=None):
     lines.append("This means Loki is NOT telling you it is ready to ship. Here is "
                  "what was not verified:")
     lines.append("")
+    # Gates the operator switched off. This is the FIRST gap listed, because a
+    # run blocked only by disabled gates has headline VERIFIED and an EMPTY
+    # degraded list -- so without this the owner was told "no specific gaps were
+    # itemized" when the reason was precise and already known.
+    #
+    # It also resolves a contradiction the owner could see on the page: the
+    # verdict line reads VERIFIED while the section refuses to call it ready.
+    # Naming the skipped gates is what makes those two statements consistent.
+    _qg = (proof or {}).get("quality_gates") or {}
+    _off = _qg.get("disabled_phases")
+    _off = [str(x).strip() for x in _off] if isinstance(_off, list) else []
+    _trust_off = sorted(n for n in _off
+                        if n.lower() in ("code_review", "security",
+                                         "unit_tests", "e2e_tests"))
+    # NOTE (v8.19.0): the proof's honesty ledger now carries a per-gate entry
+    # for every disabled trust gate, so the loop below already names each one.
+    # A standalone summary line here repeated the same fact a third time -- the
+    # owner read "code_review was switched off" three times in four lines --
+    # and repetition in a section about what went wrong reads as three separate
+    # problems. _trust_off is still computed: it decides whether the unhelpful
+    # "no specific gaps were itemized" fallback should fire, which it must not
+    # when the ledger explains the gap.
+
     if isinstance(degraded, list) and degraded:
         for d in degraded:
             if isinstance(d, dict):
@@ -307,7 +353,7 @@ def _section_is_it_working(proof, run_id=None):
                 lines.append("- %s%s" % (item, tail))
             else:
                 lines.append("- %s" % str(d))
-    else:
+    elif not _trust_off:
         lines.append("- (no specific gaps were itemized, but the verdict above is "
                      "not a clean pass)")
     lines.append("")
@@ -457,6 +503,29 @@ def _section_still_to_do(proof, completion):
     # Anything not verified (degraded items) is also a to-do.
     honesty = (proof or {}).get("honesty") or {}
     degraded = honesty.get("degraded") or []
+    # Gates the operator switched off. This is the FIRST gap listed, because a
+    # run blocked only by disabled gates has headline VERIFIED and an EMPTY
+    # degraded list -- so without this the owner was told "no specific gaps were
+    # itemized" when the reason was precise and already known.
+    #
+    # It also resolves a contradiction the owner could see on the page: the
+    # verdict line reads VERIFIED while the section refuses to call it ready.
+    # Naming the skipped gates is what makes those two statements consistent.
+    _qg = (proof or {}).get("quality_gates") or {}
+    _off = _qg.get("disabled_phases")
+    _off = [str(x).strip() for x in _off] if isinstance(_off, list) else []
+    _trust_off = sorted(n for n in _off
+                        if n.lower() in ("code_review", "security",
+                                         "unit_tests", "e2e_tests"))
+    # NOTE (v8.19.0): the proof's honesty ledger now carries a per-gate entry
+    # for every disabled trust gate, so the loop below already names each one.
+    # A standalone summary line here repeated the same fact a third time -- the
+    # owner read "code_review was switched off" three times in four lines --
+    # and repetition in a section about what went wrong reads as three separate
+    # problems. _trust_off is still computed: it decides whether the unhelpful
+    # "no specific gaps were itemized" fallback should fire, which it must not
+    # when the ledger explains the gap.
+
     if isinstance(degraded, list) and degraded:
         for d in degraded:
             if isinstance(d, dict):

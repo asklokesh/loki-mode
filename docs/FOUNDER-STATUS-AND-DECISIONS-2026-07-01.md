@@ -1,5 +1,31 @@
 # Founder Status + Decision List (2026-07-01)
 
+> **STATUS AS OF 2026-08-01: partly stale. Read this note before acting on
+> section 4.**
+>
+> Re-checked a month later against the current repo. The decisions below were
+> real when written; several can no longer be verified or acted on from
+> loki-mode, and a decision list that cannot be acted on where it is read is
+> worse than no list, because it looks current.
+>
+> - **A1-A4 (license, npm name, hosted deploy, verifyCompletion):** these
+>   concern `@autonomi/verify`, which lives in the separate `autonomi-verify`
+>   repository. No `@autonomi/verify` package exists in loki-mode, so none of
+>   these can be actioned here. Track them in that repo.
+> - **C7 (SWE-bench Pro paused at 35/119):** unverifiable from this repo. The
+>   pilot harness is present at `benchmarks/swebench-pro-pilot/`, but
+>   `benchmarks/results/` is gitignored, so the 35/119 progress claim cannot be
+>   confirmed or refuted here.
+> - **B5, B6, D8:** not re-verified. Treat as open but unconfirmed.
+>
+> Still accurate: `loki verify` exists as a subcommand, so the naming collision
+> A2 describes is real.
+>
+> Current open decisions for THIS repo are in
+> `docs/FOUNDER-DECISIONS-TRUST-SEMANTICS-2026-08-01.md`, which carries a test
+> that fails if its claims drift from the code -- the guard this document did
+> not have.
+
 The consolidated "where everything stands + the decisions only you can make" report.
 Written after: 5 patch releases shipped, top-100 backlog enumerated + triaged, ecosystem
 currency assessed, no-HITL product principle recorded.

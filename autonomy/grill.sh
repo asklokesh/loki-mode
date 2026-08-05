@@ -138,6 +138,14 @@ grill_check_provider() {
     local provider="${LOKI_PROVIDER:-claude}"
     case "$provider" in
         claude)
+            # v8: the raw-SDK grill path (LOKI_SDK_GRILL=1) needs no claude binary,
+            # so the precondition passes when that path is viable (bridge + bun).
+            # grill_invoke_provider still fails closed to claude on an SDK miss.
+            if [ "${LOKI_SDK_GRILL:-0}" = "1" ] \
+               && [ -x "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bin/loki" ] \
+               && command -v bun >/dev/null 2>&1; then
+                return 0
+            fi
             if ! command -v claude >/dev/null 2>&1; then
                 _grill_err "Claude Code CLI not found. Install: https://docs.anthropic.com/en/docs/claude-code"
                 return $GRILL_EXIT_ERROR
@@ -150,6 +158,12 @@ grill_check_provider() {
             fi
             ;;
         *)
+            # v8.2.0: capability, not identity. Must stay in lockstep with the
+            # matching arm in grill_invoke_provider -- this gate runs FIRST, so
+            # rejecting here would make that arm dead code.
+            if type provider_invoke_argv >/dev/null 2>&1; then
+                return 0
+            fi
             _grill_err "grill currently supports the claude and codex providers (got: $provider)"
             return $GRILL_EXIT_ERROR
             ;;
@@ -181,6 +195,40 @@ grill_invoke_provider() {
 
     case "$provider" in
         claude)
+            # v8 RAW-SDK TEXT PATH (opt-in LOKI_SDK_GRILL=1). Free-form grill via
+            # the pure-HTTPS @anthropic-ai/sdk (no claude binary) through the
+            # loki-ts `internal sdk-text` bridge. Runs BEFORE the claude-binary
+            # check so the no-binary deploy win holds. Fail-closed: on ANY miss
+            # (flag off, no key, bun/entrypoint absent, non-zero, empty) fall
+            # through to the claude path below. Output is the free-form question
+            # text loki-grill parses, same as the claude path.
+            if [ "${LOKI_SDK_GRILL:-0}" = "1" ]; then
+                local _gs_root _gs_loki _gs_pf _gs_out _gs_rc
+                _gs_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+                _gs_loki="${_gs_root}/bin/loki"
+                if [ -x "$_gs_loki" ] && command -v bun >/dev/null 2>&1; then
+                    _gs_pf="$(mktemp 2>/dev/null)" || _gs_pf=""
+                    if [ -n "$_gs_pf" ]; then
+                        printf '%s' "$prompt" > "$_gs_pf"
+                        _gs_rc=0
+                        local _gs_to_s="${LOKI_GRILL_TIMEOUT:-180}"
+                        local _gs_wrap
+                        if command -v timeout >/dev/null 2>&1; then _gs_wrap="timeout $(( _gs_to_s + 15 ))"
+                        elif command -v gtimeout >/dev/null 2>&1; then _gs_wrap="gtimeout $(( _gs_to_s + 15 ))"
+                        else _gs_wrap=""; fi
+                        _gs_out="$($_gs_wrap "$_gs_loki" internal sdk-text \
+                            --prompt-file "$_gs_pf" \
+                            --model "${LOKI_SDK_GRILL_MODEL:-claude-sonnet-5}" --effort high \
+                            --timeout-ms "$(( _gs_to_s * 1000 ))" 2>/dev/null)" || _gs_rc=$?
+                        rm -f "$_gs_pf" 2>/dev/null || true
+                        if [ "$_gs_rc" -eq 0 ] && [ -n "$_gs_out" ]; then
+                            printf '%s\n' "$_gs_out"
+                            return 0
+                        fi
+                    fi
+                fi
+                # fall through to the claude path (fail-closed)
+            fi
             if ! command -v claude >/dev/null 2>&1; then
                 _grill_err "Claude Code CLI not found. Install: https://docs.anthropic.com/en/docs/claude-code"
                 return $GRILL_EXIT_ERROR
@@ -236,6 +284,32 @@ grill_invoke_provider() {
             return 0
             ;;
         *)
+            # v8.2.0 TIMEOUT SEAM. Previously any other provider was a hard
+            # error. A provider exposing provider_invoke_argv builds a REAL argv
+            # (not a shell function), so _grill_with_timeout still bounds it --
+            # the whole reason the seam exists (providers/claude.sh:321).
+            # Nothing to preserve on this arm, so nothing can regress: it
+            # produced no output at all before.
+            #
+            # Deliberate: no --disallowedTools. That flag is claude-specific with
+            # no portable equivalent, so a seam-provider grill CAN write to the
+            # tree. Accepted; the alternative is the hard error below.
+            if type provider_invoke_argv >/dev/null 2>&1; then
+                local out
+                provider_invoke_argv fast "$prompt"
+                # env CAVEMAN_DEFAULT_MODE=off: grill output is parsed downstream
+                # and caveman compression would reword the questions. `env` (not a
+                # bare prefix) because _grill_with_timeout execs its first token.
+                out="$(_grill_with_timeout "${LOKI_GRILL_TIMEOUT:-180}" \
+                    env CAVEMAN_DEFAULT_MODE=off \
+                    "${_LOKI_INVOKE_ARGV[@]+"${_LOKI_INVOKE_ARGV[@]}"}" 2>/dev/null)"
+                if [ -z "$out" ]; then
+                    _grill_err "provider returned no output (timeout or invocation error)"
+                    return $GRILL_EXIT_ERROR
+                fi
+                printf '%s\n' "$out"
+                return 0
+            fi
             _grill_err "grill currently supports the claude and codex providers (got: $provider)"
             return $GRILL_EXIT_ERROR
             ;;

@@ -87,6 +87,8 @@ docker compose run loki start prd.md
 
 To change anything (budget, provider, max iterations), edit `.env` and run the command again. No flags to retype.
 
+For a mounted config file instead of a long `.env`, pass `loki start --config /path/to/config.yaml` (also accepts `.json`/`.env`; secrets via `${VAR}`). See "Configuration file" in [docs/INSTALLATION.md](docs/INSTALLATION.md).
+
 With the dashboard UI:
 
 ```bash
@@ -446,7 +448,7 @@ docker inspect --format='{{.State.Health.Status}}' <container-id>
 | Tag | Description |
 |-----|-------------|
 | `latest` | Latest stable release |
-| `7.121.1` | Specific version (current release) |
+| `8.0.0` | Specific version (current release) |
 | `7.x.x` | Prior versions |
 | `sandbox` | Security-hardened image (Debian slim) |
 

@@ -77,7 +77,15 @@ describe("budget.calculateCostFromRecords -- pricing per provider", () => {
 
   it("exposes the pricing table immutably", () => {
     expect(Object.isFrozen(PRICING)).toBe(true);
-    expect(PRICING["opus"]).toEqual({ input: 5.0, output: 25.0 });
+    // Cache tiers are part of the entry since the loader began carrying them:
+    // dropping them made the cost loop charge cache reads at the full input
+    // rate, a 10x overcharge on the term that dominates real traffic.
+    expect(PRICING["opus"]).toEqual({
+      input: 5.0,
+      output: 25.0,
+      cache_read: 0.5,
+      cache_write: 6.25,
+    });
   });
 
   // Phase J (v7.5.26): PRICING is now loaded from loki-ts/data/model-pricing.json

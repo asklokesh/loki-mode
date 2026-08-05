@@ -47,6 +47,7 @@ Subcommands:
   vs <task>       Run all configured tools on a task-spec (head-to-head)
   list            List available task-specs
   verify <file>   Recompute task_hash + check tool versions for a result.json
+  oracles         Are the graders trustworthy? Hash-bound, no spend, no provider
   report <files>  Build results.json + RESULTS.md from per-tool result-rows
 
 Options:
@@ -204,6 +205,20 @@ case "$SUB" in
     verify)
         [ -n "$POSITIONAL" ] || { echo "missing result file. Usage: loki bench verify <result.json>" >&2; exit 2; }
         "$PYTHON" "$RUNNER" verify "$POSITIONAL"
+        exit $?
+        ;;
+    oracles)
+        # Can these graders be trusted BEFORE anyone pays to run them?
+        #
+        # Reachable here because this is where the spend decision is made: the
+        # natural question in front of `bench run` is whether a green cell
+        # would mean anything. A tool that answers it and cannot be invoked
+        # from the CLI is one nobody consults at the moment it matters --
+        # which is how tools/verify-demo.sh sat unreferenced in this repo.
+        #
+        # Costs nothing: runs local graders against artifacts already on disk,
+        # never a provider.
+        "$PYTHON" "$(dirname "$0")/private_probe.py" "$@"
         exit $?
         ;;
     report)

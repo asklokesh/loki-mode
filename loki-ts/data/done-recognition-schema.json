@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://loki-mode.dev/schemas/done-recognition.json",
+  "title": "Loki Done-Recognition Verdict",
+  "description": "Structured output contract for the done-recognition gate (is a reused PRD already satisfied by the current codebase?). Claude Code emits this when invoked with --json-schema (INLINE content, not a path) --output-format json. The gate DEFENSIVELY re-derives the verdict from requirements[].status, never trusting the top-line verdict, so a valid requirements array is the load-bearing part. Any parse miss falls back to the existing json.loads/brace-slice path, which defaults to inconclusive (the safe direction).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "summary", "requirements"],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["done", "incomplete", "inconclusive"],
+      "description": "Top-line claim. done ONLY when ALL requirements are met AND fresh tests are green; incomplete when any requirement is unmet; inconclusive when ground truth cannot be established. The gate re-derives this from requirements[].status regardless."
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "One plain sentence for the user."
+    },
+    "tests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "total", "green"],
+      "properties": {
+        "passed": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 },
+        "green": { "type": "boolean" }
+      }
+    },
+    "requirements": {
+      "type": "array",
+      "minItems": 0,
+      "description": "One entry per PRD requirement, with its satisfaction status. The gate re-derives the verdict from these statuses.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "status"],
+        "properties": {
+          "id": { "type": "string", "maxLength": 256 },
+          "title": { "type": "string", "minLength": 1, "maxLength": 512 },
+          "status": {
+            "type": "string",
+            "enum": ["met", "unmet", "uncertain"],
+            "description": "met = proven satisfied; unmet = not implemented; uncertain = cannot establish."
+          },
+          "evidence": { "type": "string", "maxLength": 1024 }
+        }
+      }
+    }
+  }
+}

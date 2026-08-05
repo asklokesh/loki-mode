@@ -1,0 +1,88 @@
+{{/*
+`helm test` hook: prove the release actually SERVES, not just that manifests applied.
+
+WHY THIS EXISTS. `helm install` succeeding means Kubernetes accepted the
+manifests. It does not mean the control plane came up, bound its port, or can
+answer a request. Without a test hook an operator has no first-class way to
+answer "is this release healthy" and has to hand-roll kubectl checks -- so the
+first time anyone verifies the deployment is usually during an incident.
+
+This is the same distinction the Evidence Receipt draws between "code was
+written" and "it does what was asked". Applied to a chart: applied != working.
+
+WHAT IT PROVES, and deliberately no more: the controlplane Service resolves and
+returns HTTP 2xx on the readiness path. It does NOT prove a build can run, that
+providers are reachable, or that storage is writable -- claiming any of those
+from a health probe would be exactly the overclaim this project refuses.
+
+The path and port are read from the SAME values the deployment's probes use
+(controlplane.probes.readiness.path, service.port), so the test cannot drift
+from what Kubernetes is actually probing. Hardcoding /health here would let the
+two disagree silently after someone changes the values.
+
+helm.sh/hook-delete-policy keeps a FAILED pod around: deleting it on failure
+would destroy the logs that explain why, which is the whole reason to run a test.
+*/}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "autonomi.fullname" . }}-test-controlplane-health
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "autonomi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.security.podSecurityContext }}
+  securityContext:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  containers:
+    - name: probe
+      image: curlimages/curl:8.11.1
+      {{- with .Values.security.containerSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -eu
+          URL="http://{{ include "autonomi.fullname" . }}-controlplane:{{ .Values.service.port }}{{ .Values.controlplane.probes.readiness.path }}"
+          echo "probing ${URL}"
+          # Retry rather than probing once: a pod that is still starting is not
+          # the same failure as a pod that is broken, and a single-shot check
+          # turns a slow start into a false red.
+          i=0
+          while [ "$i" -lt 12 ]; do
+            code=$(curl -s -o /tmp/body -w '%{http_code}' --max-time 5 "${URL}" || echo 000)
+            if [ "$code" -ge 200 ] && [ "$code" -lt 300 ]; then
+              echo "OK ${code}"
+              cat /tmp/body || true
+              exit 0
+            fi
+            echo "attempt $((i+1)): HTTP ${code}"
+            i=$((i+1))
+            sleep 5
+          done
+          # Print what we got. An exit code with no cause costs an investigation;
+          # the body and the last status are what make this self-diagnosing.
+          echo "FAILED: controlplane did not return 2xx on ${URL} after 12 attempts"
+          echo "last body:"; cat /tmp/body 2>/dev/null || echo "(empty)"
+          exit 1
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi

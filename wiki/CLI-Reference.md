@@ -1227,8 +1227,9 @@ on PATH) is recorded as `inconclusive` and forces at-least-CONCERNS.
 | 2 | BLOCKED |
 | 3 | verifier error (could not complete; never silently passes) |
 
-Note: the internal verification spec lists `1=BLOCKED, 2=CONCERNS`. This
-implementation follows the build-task ordering (`1=CONCERNS, 2=BLOCKED`); the
+Severity rises with the code, so `[ $rc -ge 2 ]` means "at least blocked".
+An early draft spec listed `1=BLOCKED, 2=CONCERNS`; that ordering was rejected
+and is used nowhere. See `docs/exit-codes.md` for every command's codes. The
 divergence is documented here and in `loki verify --help` so it can be
 reconciled before the GitHub App phase consumes these codes.
 

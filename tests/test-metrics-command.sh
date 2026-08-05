@@ -69,7 +69,10 @@ fi
 # Create a temp dir for isolated testing
 TMPDIR_BASE=$(mktemp -d /tmp/loki-test-metrics-XXXXXX)
 ORIG_DIR="$(pwd)"
-trap 'cd "$ORIG_DIR"; rm -rf "$TMPDIR_BASE"' EXIT
+# INT/TERM as well as EXIT: a bare EXIT trap does not fire when the harness
+# signals the test (local-ci does), and the /tmp dir then survives the run and
+# trips the "no /tmp/loki-* leftovers" gate.
+trap 'cd "$ORIG_DIR"; rm -rf "$TMPDIR_BASE"' EXIT INT TERM
 
 # -------------------------------------------
 # Test 1: Help flag works

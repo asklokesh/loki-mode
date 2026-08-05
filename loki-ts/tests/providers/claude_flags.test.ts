@@ -29,6 +29,8 @@ import {
   resumeTargetUuid,
   sessionResumeArgv,
   _resetClaudeHelpCacheForTest,
+  AUTONOMY_OVERRIDE_TEXT,
+  FIRST_PASS_EXCELLENCE_TEXT,
 } from "../../src/providers/claude_flags.ts";
 
 describe("claude_flags.effortForTier", () => {
@@ -234,6 +236,63 @@ describe("claude_flags.buildAutoFlags composition", () => {
     delete process.env["LOKI_DYNAMIC_PROMPT_SECTIONS"];
     const out = buildAutoFlags({ tier: "development", primary: "opus", targetDir: td });
     expect(out.includes("--exclude-dynamic-system-prompt-sections")).toBe(false);
+  });
+
+  // v8 first-pass-excellence append: iteration-1-only + LOKI_FIRST_PASS_EXCELLENCE
+  // gate. The appended system prompt text must mirror providers/claude.sh.
+  describe("first-pass-excellence append", () => {
+    let savedIter: string | undefined;
+    let savedFP: string | undefined;
+    let savedOverride: string | undefined;
+    beforeEach(() => {
+      savedIter = process.env["ITERATION_COUNT"];
+      savedFP = process.env["LOKI_FIRST_PASS_EXCELLENCE"];
+      savedOverride = process.env["LOKI_AUTONOMY_OVERRIDE"];
+      _resetClaudeHelpCacheForTest("  --append-system-prompt <text>");
+    });
+    afterEach(() => {
+      for (const [k, v] of [
+        ["ITERATION_COUNT", savedIter],
+        ["LOKI_FIRST_PASS_EXCELLENCE", savedFP],
+        ["LOKI_AUTONOMY_OVERRIDE", savedOverride],
+      ] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    });
+    const appendText = (out: string[]): string => {
+      const i = out.indexOf("--append-system-prompt");
+      expect(i).toBeGreaterThanOrEqual(0);
+      return out[i + 1]!;
+    };
+
+    it("appends the first-pass block on iteration 1 (default gate on)", () => {
+      process.env["ITERATION_COUNT"] = "1";
+      delete process.env["LOKI_FIRST_PASS_EXCELLENCE"];
+      const out = buildAutoFlags({ tier: "fast", primary: "sonnet", targetDir: td });
+      expect(appendText(out)).toBe(AUTONOMY_OVERRIDE_TEXT + FIRST_PASS_EXCELLENCE_TEXT);
+    });
+
+    it("does NOT append the first-pass block on iteration 2 (base only)", () => {
+      process.env["ITERATION_COUNT"] = "2";
+      const out = buildAutoFlags({ tier: "fast", primary: "sonnet", targetDir: td });
+      expect(appendText(out)).toBe(AUTONOMY_OVERRIDE_TEXT);
+    });
+
+    it("suppresses the first-pass block when LOKI_FIRST_PASS_EXCELLENCE=0", () => {
+      process.env["ITERATION_COUNT"] = "1";
+      process.env["LOKI_FIRST_PASS_EXCELLENCE"] = "0";
+      const out = buildAutoFlags({ tier: "fast", primary: "sonnet", targetDir: td });
+      expect(appendText(out)).toBe(AUTONOMY_OVERRIDE_TEXT);
+    });
+
+    it("first-pass text names the key anti-slop tells and the wire-the-backend rule", () => {
+      // Guards against the directive silently losing its research-grounded content.
+      expect(FIRST_PASS_EXCELLENCE_TEXT).toContain("FIRST-PASS EXCELLENCE");
+      expect(FIRST_PASS_EXCELLENCE_TEXT).toContain("WIRE IT");
+      expect(FIRST_PASS_EXCELLENCE_TEXT).toContain("indigo/blue-to-purple gradient");
+      expect(FIRST_PASS_EXCELLENCE_TEXT).toContain("observed behavior");
+    });
   });
 
   // Phase D (v7.5.22) regression tests for --mcp-config + --include-hook-events.

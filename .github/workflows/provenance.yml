@@ -1,9 +1,23 @@
 name: Supply-Chain Provenance (Sigstore)
 
-# v7.4.10: signs npm tarball + Docker image digests with sigstore/cosign
-# in keyless mode (OIDC token from GitHub Actions). Produces .sig + .pem
-# attached to the GitHub Release. Closes the W2-R6 supply-chain provenance
-# gap.
+# BACKFILL / MANUAL USE ONLY. This workflow does NOT sign current releases.
+#
+# v7.4.10 added this to sign the npm tarball and Docker image digests with
+# sigstore/cosign in keyless mode. It never worked on a real release. The
+# `release: published` trigger below does not fire, because releases in this
+# repo are created by release.yml using the default GITHUB_TOKEN, and GitHub
+# deliberately suppresses trigger events for actions taken with that token.
+# Between v7.4.10 and v8.5.2 this ran exactly twice, both manual, and the
+# registry showed the result: zero sha256-*.sig tags on asklokesh/loki-mode.
+#
+# As of v8.6.0, image signing and the image SBOM live in release.yml's
+# publish-docker job -- the same job that pushes the image, so there is no
+# trigger left to not fire. See docs/image-provenance.md.
+#
+# What remains useful here: workflow_dispatch, to sign a specific older tag by
+# hand. Note that the certificate identity will name provenance.yml rather
+# than release.yml, so verification of a backfilled tag needs a matching
+# --certificate-identity-regexp.
 #
 # Verification (downstream consumers):
 #   cosign verify-blob \

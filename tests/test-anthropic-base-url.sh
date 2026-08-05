@@ -32,18 +32,25 @@ _resolve() {
 }
 
 # ---------- No override (existing alias-based defaults) ----------
-v=$(_resolve planning "" ""); [ "$v" = "opus" ] && ok "no override: planning=opus" || bad "no override planning got [$v]"
-v=$(_resolve development "" ""); [ "$v" = "opus" ] && ok "no override: development=opus" || bad "no override development got [$v]"
+# v7.104.0 (commit 766219ac) made Sonnet the default execution model for the
+# planning and development tiers (~40% cheaper, near-frontier; restore opus via
+# LOKI_CLAUDE_MODEL_DEVELOPMENT). These four assertions still expected opus.
+# The Bun-route mirror (loki-ts/tests/runner/providers.test.ts) WAS updated for
+# that flip; this bash twin was not, because no runner ever executed it.
+# The contract under test -- the fail-closed BASE_URL AND override AND-gate --
+# is unchanged and still asserted below.
+v=$(_resolve planning "" ""); [ "$v" = "sonnet" ] && ok "no override: planning=sonnet" || bad "no override planning got [$v]"
+v=$(_resolve development "" ""); [ "$v" = "sonnet" ] && ok "no override: development=sonnet" || bad "no override development got [$v]"
 v=$(_resolve fast "" ""); [ "$v" = "sonnet" ] && ok "no override: fast=sonnet" || bad "no override fast got [$v]"
 
 # ---------- ANTHROPIC_BASE_URL alone (no override -> still alias) ----------
 v=$(_resolve development "https://openrouter.ai/api/v1" "")
-[ "$v" = "opus" ] && ok "BASE_URL alone: development still=opus (no override)" \
+[ "$v" = "sonnet" ] && ok "BASE_URL alone: development still=sonnet (no override)" \
     || bad "BASE_URL alone development got [$v]"
 
 # ---------- LOKI_MODEL_OVERRIDE alone (no BASE_URL -> ignored) ----------
 v=$(_resolve development "" "anthropic/claude-3.5-sonnet")
-[ "$v" = "opus" ] && ok "override alone: ignored when no BASE_URL" \
+[ "$v" = "sonnet" ] && ok "override alone: ignored when no BASE_URL" \
     || bad "override alone development got [$v]"
 
 # ---------- BOTH set: override wins across all tiers ----------

@@ -31,6 +31,18 @@ SECURITY MODEL
         ignored, never run, and their presence is reported)
       - manifests that are not the declared kind
 
+WHAT AN INSTALLED AGENT DOES
+    An installed agent is not inert metadata. Beyond `loki agent
+    list/info/run`, it joins the code-review reviewer pool: its `focus`
+    entries act as trigger keywords scored against the diff, and on a match
+    it is dispatched as a real reviewer whose findings feed the same
+    Critical/High = BLOCK mechanism as a built-in. Selection is strictly
+    ADDITIVE -- installed agents are appended after the built-in battery and
+    can never displace a built-in reviewer, and at most 2 fire per review.
+    Consistent with the security model above, only manifest TEXT (persona /
+    focus / capabilities) reaches the reviewer prompt; nothing is executed.
+    See skills/quality-gates.md "Adding Your Own Reviewer".
+
 STORE LAYOUT (project-local, under .loki/)
     .loki/agents/installed.json      list of installed agent manifests
     .loki/templates/<name>.md        installed template body

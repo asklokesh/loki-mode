@@ -7,7 +7,7 @@
 #
 # Usage: ./tests/detect-semantic-test-problems.sh [--strict] [--block-high]
 #   --strict:     Exit 1 if ANY CRITICAL or HIGH finding exists (for CI gates).
-#                 Mirrors tests/detect-mock-problems.sh:182-188.
+#                 Mirrors the --strict block in tests/detect-mock-problems.sh.
 #   --block-high: Exit 2 when one or more HIGH-severity findings are present, 0
 #                 otherwise (clean exit-code contract for a run.sh wrapper that
 #                 does not want to grep stdout). --strict takes precedence.

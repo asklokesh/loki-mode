@@ -29,6 +29,7 @@ shape, preserving usd=None ("not collected") semantics.
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import importlib.util
 import json
@@ -354,7 +355,40 @@ def run_trial(adapter: Callable[..., Dict[str, Any]],
         # task dir to resolve a held-out overlay); never adapter-output.
         verdict = grade(workdir, spec, task_dir=task_dir)
         cost_usd = adapter_out.get("cost_usd")
-        return {
+
+        # UNMEASURED CLASSIFICATION. A trial where the agent never ran cannot
+        # carry success=true, whatever the grader said.
+        #
+        # OBSERVED, not hypothesised: `loki bench run demo-pass` produced three
+        # trials, each `exit_status: "timeout"` at 60s with `iterations: 0` and
+        # no tokens, and each recorded `success: True`. The grader's acceptance
+        # command was literally `true`, so it exited 0 without inspecting
+        # anything. The adapter's timeout status sat in the same row, unread.
+        #
+        # The two facts answer different questions and both must survive:
+        #   grader_verdict  -- did the artifact satisfy the held-out oracle
+        #   measured        -- did a run actually happen to produce an artifact
+        # Collapsing them is what let a timeout read as a pass. So the grader
+        # evidence is PRESERVED verbatim under `grader_verdict`, and `success`
+        # is forced to None (not False) when the run is unmeasured: a run that
+        # did not happen did not fail, it was not observed, and False would be
+        # a different lie in the other direction.
+        # Classification is delegated to bench_schema.trial_is_measured so the
+        # raw row, the summary, the report and the equivalence table can never
+        # disagree about what counts. Duplicating the rule here is how two
+        # layers drift into contradicting each other.
+        #
+        # NOTE zero-iterations is NOT a reason. It looks like one, but a run
+        # that genuinely FAILED can legitimately record iterations: 0, and
+        # excluding those deletes real failures from the denominator -- the
+        # same false-green, inverted. See the comment in trial_is_measured.
+        exit_status = adapter_out.get("exit_status")
+        unmeasured_reasons = []
+        if isinstance(exit_status, str) and exit_status.strip().lower() in \
+                schema.UNMEASURED_EXIT_STATUSES:
+            unmeasured_reasons.append("adapter exit_status=%s" % exit_status)
+
+        row = {
             "trial": trial_index,
             "success": verdict["success"],
             "quality": verdict["quality"],
@@ -362,7 +396,39 @@ def run_trial(adapter: Callable[..., Dict[str, Any]],
             "adapter": adapter_out,
             "cost_usd": cost_usd,
             "duration_s": adapter_out.get("duration_s"),
+            # Always present so a consumer never has to infer measuredness from
+            # a missing key, which is how the original defect stayed invisible.
+            "measured": not unmeasured_reasons,
+            "unmeasured_reasons": unmeasured_reasons,
         }
+        if unmeasured_reasons:
+            # Held-out grader evidence preserved separately, never discarded.
+            #
+            # `success` STAYS A BOOL. The schema validator requires
+            # trials[].success to be a bool (grader-set), and setting it None
+            # here made every assembled row invalid -- caught by that validator
+            # rather than by me. The bool is the GRADER's answer and remains
+            # exactly what the grader said; measuredness is carried by the
+            # `measured` flag beside it, which is what bench_schema's
+            # split_measured() and every summary/report consumer already read.
+            #
+            # So the two facts stay separable without breaking the contract:
+            #   success        -- did the artifact satisfy the held-out oracle
+            #   measured=False -- but no run happened, so it proves nothing
+            #                     about the agent and is excluded from k/N
+            row["grader_verdict"] = {
+                "success": verdict["success"],
+                "acceptance_exit_code": verdict["acceptance_exit_code"],
+                "note": ("the held-out grader's own verdict on whatever was in "
+                         "the workdir. Real evidence about the ARTIFACT; NOT "
+                         "evidence that a run happened. measured=False, so "
+                         "this trial is excluded from k/N."),
+            }
+            # Cost and tokens from a run that did not happen are UNKNOWN, never
+            # zero. Left untouched if the adapter recorded something real.
+            if cost_usd is None:
+                row["cost_usd"] = None
+        return row
     finally:
         if not keep_workdir:
             shutil.rmtree(workdir, ignore_errors=True)
@@ -385,6 +451,26 @@ def run_task(task_path: str, adapter_name: str, *,
     used_model = model or spec.get("default_model", "")
 
     if adapter is None:
+        # SPEND INTERLOCK. Loading a NAMED adapter is the point where this
+        # harness starts a real tool and therefore starts costing money.
+        #
+        # It exists because a task named "demo-pass" was run on the assumption
+        # that a demo is free. It invoked the provider for three 60-second
+        # trials. Nothing was recorded as billed, but an absent cost record is
+        # not a zero cost record, so the true spend of that run is UNKNOWN --
+        # which is precisely the outcome an interlock prevents.
+        #
+        # Default-DENY, and deliberately not a warning: a prompt that can be
+        # ignored is not an interlock. An explicitly-passed `adapter` (the mock
+        # path used by tests) never reaches here, so offline verification is
+        # unaffected and stays runnable with no opt-in.
+        if os.environ.get("LOKI_BENCH_SPEND_APPROVED") != "1":
+            raise RuntimeError(
+                "SPEND INTERLOCK: running adapter %r starts a real tool and "
+                "costs money. This is founder-gated. Set "
+                "LOKI_BENCH_SPEND_APPROVED=1 to authorise, or pass a mock "
+                "adapter for offline verification. No run was started."
+                % adapter_name)
         adapter = load_adapter(adapter_name)
 
     trial_rows: List[Dict[str, Any]] = []
@@ -402,11 +488,20 @@ def run_task(task_path: str, adapter_name: str, *,
         # outside the repo fall back to an absolute path.
         "task_path": _store_task_path(task_path),
         "task_hash": task_hash,
+        # Which engine drove these trials. The report refuses to pool rows whose
+        # signatures differ (see equivalence_report.group_by_harness).
+        "harness_sig": harness_signature(),
         "tool": adapter_name,
         "model": used_model,
         "trials": trial_rows,
         "summary": schema.summarize_trials(trial_rows),
     }
+    # Model-equivalence matrix (matrix.sh) sets LOKI_BENCH_CELL per cell so the
+    # aggregation report can group results into the model x config grid. Persist
+    # it when set; absent for ordinary (non-matrix) runs.
+    _cell = os.environ.get("LOKI_BENCH_CELL")
+    if _cell:
+        row["cell"] = _cell
     errs = schema.validate_result_row(row)
     if errs:
         raise ValueError("assembled result-row invalid: %s" % "; ".join(errs))
@@ -481,6 +576,52 @@ def verify_result(result_path: str) -> Dict[str, Any]:
         "version_checks": version_checks,
         "problems": problems,
     }
+
+
+# ---------------------------------------------------------------------------
+# harness signature: which engine produced this row
+# ---------------------------------------------------------------------------
+# task_hash answers "was the TASK the same?". This answers "was the HARNESS the
+# same?". Without it, editing run.sh mid-campaign silently pools trials from two
+# different engines into one arm.
+#
+# Why working-tree bytes and not `git rev-parse HEAD`:
+#   - HEAD moves on every unrelated commit (docs, tests), which would shard the
+#     strata spuriously and invalidate a valid pooled record.
+#   - `git rev-parse HEAD:<file>` ignores UNCOMMITTED edits, which is exactly
+#     the threat here (edit run.sh, keep running trials, never commit).
+# Hashing the bytes on disk tracks what actually ran, committed or not.
+
+_ENGINE_FILES = (
+    "autonomy/run.sh",
+    "autonomy/loki",
+    "autonomy/completion-council.sh",
+)
+
+
+def harness_signature(repo: Optional[str] = None) -> str:
+    """sha256 over the engine files that decide how a trial is driven.
+
+    Returns "unknown" when no engine file is readable (e.g. the runner is
+    vendored without the engine) -- an honest absent marker, never a fake
+    digest that would let two different harnesses compare equal.
+    """
+    root = repo or _REPO
+    h = hashlib.sha256()
+    found = False
+    for rel in _ENGINE_FILES:
+        path = os.path.join(root, rel)
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read()
+        except OSError:
+            continue
+        found = True
+        # Length-prefix the path and body so no two file sets can collide by
+        # concatenating to the same byte stream.
+        h.update(("%s:%d:" % (rel, len(data))).encode("utf-8"))
+        h.update(data)
+    return h.hexdigest() if found else "unknown"
 
 
 def _current_tool_version(tool: str) -> Optional[str]:

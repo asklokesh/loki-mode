@@ -40,7 +40,15 @@ LIFT_CODE=$?
 if [ "$LIFT_CODE" = "0" ]; then ok "lift bench reports positive cross-project lift (exit 0)"; else bad "lift bench exit=$LIFT_CODE (no lift detected)"; fi
 
 # Test 3: lift JSON has baseline < cross and net-new from siblings > 0.
-RESULT=$($PY tools/bench_cross_project_lift.py --json 2>&1 | $PY -c "
+# stderr must NOT be folded into stdout here: this pipes straight into
+# json.loads, so a single warning line (a deprecation notice, a logging handler,
+# anything the runner's python emits that a local one does not) prepends
+# non-JSON text and the parse dies with
+#   LIFT_PARSE_FAIL: Expecting value: line 1 column 1 (char 0)
+# -- which is exactly what CI reported while Test 2, which discards output
+# entirely, passed on the same runner. Reproduced verbatim by injecting one
+# stderr line locally. Keep stderr separate; the exit code is checked by Test 2.
+RESULT=$($PY tools/bench_cross_project_lift.py --json 2>/dev/null | $PY -c "
 import json, sys
 try:
     d = json.loads(sys.stdin.read())

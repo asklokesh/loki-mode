@@ -172,9 +172,13 @@ check_autonomy_override() {
     local bash_txt="$TMPDIR_PARITY/override.bash.txt"
     local bun_txt="$TMPDIR_PARITY/override.bun.txt"
 
-    # Source providers/claude.sh in a subshell and dump the function output to a
-    # file (NO command substitution -> trailing newline preserved).
-    if ! ( set +u; . providers/claude.sh >/dev/null 2>&1; _loki_autonomy_override_text ) > "$bash_txt" 2>/dev/null; then
+    # Source providers/claude.sh in a subshell and dump the BASE function output
+    # to a file (NO command substitution -> trailing newline preserved). Force
+    # ITERATION_COUNT=2 so the iteration-1-only FIRST-PASS EXCELLENCE block is NOT
+    # appended -- this invariant checks the BASE autonomy text (bun's
+    # AUTONOMY_OVERRIDE_TEXT). First-pass-append parity is covered separately by
+    # the claude_flags unit test (bash<->TS byte-identity was verified directly).
+    if ! ( set +u; ITERATION_COUNT=2; . providers/claude.sh >/dev/null 2>&1; _loki_autonomy_override_text ) > "$bash_txt" 2>/dev/null; then
         fail "$name" "could not source providers/claude.sh / call _loki_autonomy_override_text"
         return
     fi
@@ -352,7 +356,24 @@ $d"
 # ---------------------------------------------------------------------------
 # Allowed-asymmetry: gate names that are legitimately bash-only (documented in
 # the header). Keep this list as small as possible and justify every entry.
-GATE_ALLOWED_BASH_ONLY=("LOKI_GATE_TIMEOUT")
+# LOKI_GATE_MAGIC_DEBATE_BLOCKING is bash-only because the two routes implement
+# DIFFERENT gates under the same name, by design:
+#   bash  (autonomy/run.sh)  runs a real multi-persona debate via the provider
+#                            CLI and parses a per-persona severity
+#   bun   (quality_gates.ts) statically checks each spec for Pros/Cons headers;
+#                            it never invokes a debate and has no severity
+# Only the bash route can produce a blocking severity, so only it needs a knob
+# to decide whether that severity stops the run. Adding the var to the bun route
+# would be a dead toggle that reads as a supported feature.
+# LOKI_GATE_STUCK_ABORT / _THRESHOLD are bash-only because the mechanism they
+# tune is bash-only. The stuck check compares a gate's CONSECUTIVE failure count
+# against a persisted failure reason, and that counter is track_gate_failure(),
+# which this file's own header documents as living in autonomy/run.sh -- the TS
+# route has no equivalent (its read accessor was removed as dead code in
+# v7.78.0). Adding the vars to the bun route would be dead toggles that read as
+# supported features.
+GATE_ALLOWED_BASH_ONLY=("LOKI_GATE_TIMEOUT" "LOKI_GATE_MAGIC_DEBATE_BLOCKING"
+                        "LOKI_GATE_STUCK_ABORT" "LOKI_GATE_STUCK_THRESHOLD")
 # Allowed-asymmetry: gate names that are legitimately bun-only.
 #   (none) -- LOKI_GATE_LSP_DIAGNOSTICS and LOKI_GATE_LSP_WRITER are now wired
 #   on BOTH routes: the diagnostics writer is route-neutral Python
@@ -366,9 +387,14 @@ GATE_ALLOWED_BUN_ONLY=()
 check_gate_env() {
     local name="LOKI_GATE_* env var set (autonomy/ <-> loki-ts/src/)"
 
+    # Only PUBLIC LOKI_GATE_* toggles participate in parity. Internal python-heredoc
+    # env vars use a leading underscore (e.g. _LOKI_GATE_GUIDANCE_FILE) and are an
+    # implementation detail of one route, not a user-facing gate. The bare pattern
+    # matches those as a substring, so require the match to start at a non-word,
+    # non-underscore boundary, then strip that leading char.
     local bash_set bun_set
-    bash_set="$(grep -rhoE 'LOKI_GATE_[A-Z_]+' autonomy/ 2>/dev/null | sort -u)"
-    bun_set="$(grep -rhoE 'LOKI_GATE_[A-Z_]+' loki-ts/src/ 2>/dev/null | sort -u)"
+    bash_set="$(grep -rhoE '(^|[^A-Za-z0-9_])LOKI_GATE_[A-Z_]+' autonomy/ 2>/dev/null | grep -oE 'LOKI_GATE_[A-Z_]+' | sort -u)"
+    bun_set="$(grep -rhoE '(^|[^A-Za-z0-9_])LOKI_GATE_[A-Z_]+' loki-ts/src/ 2>/dev/null | grep -oE 'LOKI_GATE_[A-Z_]+' | sort -u)"
 
     if [ -z "$bash_set" ]; then
         fail "$name" "no LOKI_GATE_* found in autonomy/ (grep pattern broken?)"
@@ -382,7 +408,8 @@ check_gate_env() {
     # Subtract the allowed bash-only names from the bash set.
     local allowed_pat=""
     local g
-    for g in "${GATE_ALLOWED_BASH_ONLY[@]}"; do
+    for g in "${GATE_ALLOWED_BASH_ONLY[@]-}"; do
+        [ -n "$g" ] || continue
         allowed_pat="${allowed_pat}${allowed_pat:+|}^${g}\$"
     done
     local bash_filtered
@@ -394,7 +421,11 @@ check_gate_env() {
 
     # Subtract the allowed bun-only names from the bun set.
     local allowed_bun_pat=""
-    for g in "${GATE_ALLOWED_BUN_ONLY[@]}"; do
+    # Bash 3.2 treats an empty array expansion as an unbound variable under
+    # nounset. The default expansion keeps the legitimate empty allow-list
+    # portable without inventing a sentinel gate name.
+    for g in "${GATE_ALLOWED_BUN_ONLY[@]-}"; do
+        [ -n "$g" ] || continue
         allowed_bun_pat="${allowed_bun_pat}${allowed_bun_pat:+|}^${g}\$"
     done
     if [ -n "$allowed_bun_pat" ]; then

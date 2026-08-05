@@ -1,0 +1,16 @@
+{
+  "generated": "2026-07-31T02:58:25Z",
+  "measured": {
+    "controlplane_import_peak_rss_mb": 118,
+    "controlplane_import_seconds": 0.5,
+    "controlplane_serving_rss_mb": 99,
+    "method": "imported dashboard.server the same way the container command does, then booted uvicorn on 127.0.0.1:57399 and issued 50 /health requests before sampling RSS",
+    "chart_request_mi": 512,
+    "headroom": "roughly 4x over observed steady state"
+  },
+  "not_measured": {
+    "worker": "Worker requests/limits (500m/1Gi, limits 2Gi) are plausible defaults, NOT observations. memory.limits is a HARD cap: a build exceeding it is OOMKilled mid-run and the user sees the agent silently stop -- no error, no receipt."
+  },
+  "why_recorded_this_way": "A confident wrong sizing number is worse than an admitted unknown. Presenting an unmeasured worker limit as a recommendation would send an operator to production on a guess, and the failure mode is silent.",
+  "how_to_close_it": "Run real builds and read `kubectl top pod -l app.kubernetes.io/component=worker --containers`, then set limits above the observed peak with headroom. Requires a live cluster and real builds."
+}

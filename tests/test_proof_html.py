@@ -255,6 +255,35 @@ class SocialHookAndNullCostTests(unittest.TestCase):
         self.assertIsNone(d["cost"]["usd"])
 
 
+class VerdictAwareCopyTests(unittest.TestCase):
+    def test_title_hero_and_banner_copy_follow_each_verdict(self):
+        mod = _load_generator_module()
+        cases = {
+            "VERIFIED": "Recorded checks passed",
+            "VERIFIED WITH GAPS": "Checks completed with gaps",
+            "NOT VERIFIED": "Not verified",
+        }
+        for headline, label in cases.items():
+            with self.subTest(headline=headline):
+                proof = {
+                    "honesty": {"headline": headline},
+                    "cost": {"usd": None},
+                    "files_changed": {"count": 1},
+                    "council": {"reviewers": []},
+                }
+                html = mod._render_html(proof, _REPO)
+                full_title = label + " - Loki Mode Evidence Receipt"
+                self.assertIn("<title>%s</title>" % full_title, html)
+                self.assertIn('property="og:title" content="%s"' % full_title, html)
+                self.assertIn("var parts = [%s];" % json.dumps(label), html)
+                self.assertNotIn("__PROOF_RECEIPT_TITLE", html)
+
+        self.assertNotIn("Built and verified autonomously", html)
+        self.assertNotIn("nothing was left unverified", html)
+        self.assertNotIn("Every claim below is deterministic", html)
+        self.assertIn("Review the evidence below for the exact scope.", html)
+
+
 class FallbackRendererTests(unittest.TestCase):
     """Exercise the server-side fallback renderer directly: the Tier1-4 key
     fields must render as visible text."""

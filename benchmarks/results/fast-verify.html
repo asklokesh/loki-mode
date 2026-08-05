@@ -1,0 +1,68 @@
+<!doctype html><meta charset=utf-8><title>Loki fast_verify benchmark</title>
+<style>
+:root{--bg:#0f1115;--fg:#e6e8ee;--mut:#8b93a7;--ok:#3ddc97;--line:#232838;--accent:#7aa2ff}
+@media(prefers-color-scheme:light){:root{--bg:#fbfbfd;--fg:#161922;--mut:#5b6478;--ok:#0f9d58;--line:#e3e6ee;--accent:#2b5cff}}
+*{box-sizing:border-box}body{margin:0;padding:2.5rem 1.25rem;background:var(--bg);color:var(--fg);
+font:15px/1.55 ui-sans-serif,-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:880px;margin:0 auto}h1{font-size:1.6rem;margin:0 0 .25rem;letter-spacing:-.02em}
+h2{font-size:1.05rem;margin:2.2rem 0 .6rem;letter-spacing:-.01em}
+.sub{color:var(--mut);margin:0 0 2rem}
+.hero{display:flex;gap:1rem;flex-wrap:wrap;margin:0 0 2rem}
+.card{flex:1 1 170px;border:1px solid var(--line);border-radius:10px;padding:1rem 1.1rem}
+.card .k{color:var(--mut);font-size:.76rem;text-transform:uppercase;letter-spacing:.06em}
+.card .v{font-size:1.7rem;font-weight:650;margin-top:.3rem;font-variant-numeric:tabular-nums}
+.card .v.ok{color:var(--ok)}
+table{width:100%;border-collapse:collapse;margin:0 0 1rem}
+th,td{text-align:left;padding:.55rem .5rem;border-bottom:1px solid var(--line)}
+th{color:var(--mut);font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.05em}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.note{color:var(--mut);font-size:.88rem;border-left:2px solid var(--accent);padding-left:.9rem;margin:1.3rem 0}
+code{background:color-mix(in srgb,var(--fg) 8%,transparent);padding:.1rem .35rem;border-radius:4px;font-size:.86em}
+footer{color:var(--mut);font-size:.8rem;margin-top:2.5rem;border-top:1px solid var(--line);padding-top:1rem}
+</style>
+<div class=wrap>
+<h1>Deterministic verification latency</h1>
+<p class=sub>Measured on loki-mode, 1,932 tracked source files. Generated 2026-07-30T03:35:44Z.</p>
+
+<div class=hero>
+<div class=card><div class=k>Before</div><div class=v>11,040<span style="font-size:.9rem">ms</span></div></div>
+<div class=card><div class=k>Full repo, warm</div><div class="v ok">87<span style="font-size:.9rem">ms</span></div></div>
+<div class=card><div class=k>PR-scoped</div><div class="v ok">19<span style="font-size:.9rem">ms</span></div></div>
+<div class=card><div class=k>Speedup</div><div class="v ok">579x</div></div>
+</div>
+
+<h2>Latency by scope</h2>
+<table>
+<tr><th>Run</th><th class=n>Latency (ms)</th><th class=n>Files</th><th class=n>From cache</th><th class=n>vs baseline</th></tr>
+<tr><td>full repo, cold (no cache)</td><td class=n>298.1</td><td class=n>1,932</td><td class=n>0</td><td class=n><b>37x</b></td></tr><tr><td>full repo, cold (writes cache)</td><td class=n>285.8</td><td class=n>1,932</td><td class=n>14</td><td class=n><b>39x</b></td></tr><tr><td>full repo, warm</td><td class=n>87.2</td><td class=n>1,932</td><td class=n>1,932</td><td class=n><b>127x</b></td></tr><tr><td>PR-scoped (HEAD~1)</td><td class=n>19.1</td><td class=n>14</td><td class=n>14</td><td class=n><b>579x</b></td></tr>
+</table>
+
+<h2>Latency by embedding surface</h2>
+<table><tr><th>Surface</th><th class=n>Latency (ms)</th></tr><tr><td>Python API (in-process)</td><td class=n>19.1</td></tr><tr><td>MCP tool <code>loki_verify_fast</code></td><td class=n>20.0</td></tr><tr><td>CLI <code>loki verify --fast</code> (incl. shell+interpreter start)</td><td class=n>125</td></tr></table>
+<p class=note>The same engine, three ways in. The CLI number carries shell and interpreter
+startup that an embedded caller does not pay, which is why the in-process and MCP paths are
+the honest figures for &quot;plug this into your tool&quot;.</p>
+
+<h2>Why it was slow</h2>
+<p class=note>The work was never the bottleneck. One detector performed <b>four separate
+full-tree <code>find</code> walks</b> (110&nbsp;ms each) and spawned ~25 subprocesses at ~24&nbsp;ms
+of interpreter startup apiece. <code>git ls-files</code> returns the same file set in 37&nbsp;ms,
+already deduplicated and gitignore-aware.</p>
+
+<h2>What changed</h2>
+<p class=note>Walk once and classify in that pass; run every detector as a pure function in a
+single process; cache findings by <b>content hash</b> so an unchanged file is never re-read and
+there is no staleness window to reason about; and scope to the diff, because verifying a change
+does not require reading the repository.</p>
+
+<h2>What is deliberately excluded</h2>
+<p class=note>No model call and no network on this path, enforced by a test. Only checks the
+agent cannot author or influence. A verdict you can re-derive is a <b>fact</b>; a verdict a model
+produced is an <b>opinion</b>. That constraint is what lets this be embedded in someone else's
+product: they need to trust our arithmetic, not our model choices.</p>
+
+<footer>Baseline: <code>tests/detect-mock-problems.sh</code> 11,040&nbsp;ms and
+<code>tests/detect-test-mutations.sh</code> 12,361&nbsp;ms on the same machine. Correctness is
+asserted alongside speed in <code>tests/test-fast-verify.sh</code> (10/10), including
+no-false-positive cases, because a fast verifier that passes broken code is worse than a slow one.</footer>
+</div>

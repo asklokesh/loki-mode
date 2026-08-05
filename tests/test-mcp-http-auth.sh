@@ -27,7 +27,25 @@ log_skip() { echo "[SKIP] $1"; }
 PY="${PYTHON:-python3}"
 
 # Preflight: need the MCP SDK, uvicorn, starlette, and curl.
-if ! "$PY" -c "import mcp, uvicorn, starlette" >/dev/null 2>&1; then
+#
+# `import mcp` is NOT a valid probe for the SDK here. This repo contains a local
+# package directory named mcp/, and the test runs from the repo root, so
+# Python's implicit cwd-on-sys.path resolves `import mcp` to ./mcp/ -- the
+# guard passed on CI with no SDK installed, the test proceeded, and the server
+# then died with "MCP SDK (pip package 'mcp') not found". mcp/_sdk_loader.py
+# exists precisely because of this shadowing.
+#
+# Probe the way the server does: drop repo-root/cwd entries from sys.path, then
+# import a symbol that only the real SDK provides.
+if ! "$PY" - <<'PREFLIGHT' >/dev/null 2>&1
+import os, sys
+_root = os.getcwd()
+sys.path[:] = [p for p in sys.path
+               if p not in ("", ".", _root) and os.path.abspath(p or ".") != _root]
+import mcp.server            # only the installed SDK has this
+import uvicorn, starlette    # noqa: F401
+PREFLIGHT
+then
     log_skip "MCP SDK / uvicorn / starlette not importable; skipping HTTP auth test"
     exit 0
 fi

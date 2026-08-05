@@ -20,17 +20,27 @@
 // discoverable "STUB: Phase 5" marker so failures surface loudly instead
 // of silently degrading (BUG-22 stub-discipline rule).
 
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync, existsSync, readFileSync, realpathSync, appendFileSync } from "node:fs";
+import { delimiter, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { run as shellRun } from "../util/shell.ts";
+import { REPO_ROOT } from "../util/paths.ts";
 import {
   buildAutoFlags,
+  claudeFlagSupported,
   ensureClaudeHelpCache,
+  autonomyAppendText,
+  autonomyAppendEnabled,
   sessionStampArgv,
   sessionResumeArgv,
   cavemanActivateEnv,
   cavemanSuppressEnv,
+  effortForTier,
+  remainingBudget,
+  fallbackForPrimary,
+  tierRouteModel,
 } from "../providers/claude_flags.ts";
+import { mcpConfigPath } from "../providers/mcp_config.ts";
+import { consumeSdkStream, type StreamMsg } from "./sdk_stream_parser.ts";
 import type {
   ProviderInvocation,
   ProviderInvoker,
@@ -49,9 +59,26 @@ import type {
 export async function resolveProvider(
   name: ProviderName,
 ): Promise<ProviderInvoker> {
+  const guardCwd = process.env["LOKI_TARGET_DIR"] ?? process.cwd();
+  if (name !== "claude" && hostGuardRequired(guardCwd)) {
+    throw new Error(`host command guard is required, but provider '${name}' has no enforced PreToolUse hook`);
+  }
   switch (name) {
     case "claude":
-      return claudeProvider();
+      // v8 Phase 4: when LOKI_SDK_LOOP is on, the main RARV loop runs on the
+      // Agent SDK's query() instead of spawning `claude -p ... stream-json`.
+      // Default-off: the bash/shellRun claude path is byte-identical until opted
+      // in. sdkQueryProvider delegates non-mainLoop calls back to claudeProvider,
+      // so judge subcalls never touch query(). Uses the established truthy()
+      // helper so the spelling matches the rest of the codebase.
+      //
+      // v8.1 (Story 6, T3-prep): LOKI_LEGACY_BASH is a SYMMETRIC escape hatch --
+      // see selectClaudeInvokerKind for the precedence. Decision is extracted to
+      // a pure helper so the release-safety rollback can be unit-tested without
+      // constructing/spawning a provider.
+      return selectClaudeInvokerKind(process.env) === "sdk"
+        ? sdkQueryProvider()
+        : claudeProvider();
     case "codex":
       return codexProvider();
     case "cline":
@@ -104,6 +131,25 @@ export function truthy(value: string | undefined): boolean {
     default:
       return false;
   }
+}
+
+// v8.1 (Story 6, T3-prep): decide whether the claude main-loop provider runs on
+// the Agent SDK ("sdk") or the legacy bash claude spawn ("legacy"). Pure over
+// env so the release-safety rollback is unit-testable without spawning.
+//
+// Precedence (LOKI_LEGACY_BASH is the SYMMETRIC escape hatch):
+//   1. LOKI_LEGACY_BASH truthy  -> "legacy"  (rollback ALWAYS wins, even if the
+//      loop is opted-on or, in a future release, default-on). bin/loki also
+//      honors it at the shim; this is the in-process backstop for when the Bun
+//      route is reached another way (LOKI_TS_ENTRY / direct src run / a default
+//      flip). CI-tested now so the rollback exists before LOKI_SDK_LOOP flips.
+//   2. else LOKI_SDK_LOOP truthy -> "sdk".
+//   3. else                      -> "legacy" (default-off; byte-identical to v8).
+export function selectClaudeInvokerKind(
+  env: Record<string, string | undefined>,
+): "sdk" | "legacy" {
+  if (truthy(env["LOKI_LEGACY_BASH"])) return "legacy";
+  return truthy(env["LOKI_SDK_LOOP"]) ? "sdk" : "legacy";
 }
 
 // Resolve tier -> Claude model alias. Mirrors claude.sh:121-142
@@ -193,6 +239,48 @@ function ensureParentDir(path: string): void {
   mkdirSync(parent, { recursive: true });
 }
 
+function physicalPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function hostGuardRequired(cwd: string): boolean {
+  if (truthy(process.env["LOKI_HOST_GUARD"])) return true;
+  const target = process.env["LOKI_TARGET_DIR"];
+  const roots = process.env["LOKI_WORKSPACE_ROOTS"];
+  if (!target || !roots || physicalPath(target) !== physicalPath(cwd)) return false;
+  const candidate = physicalPath(cwd);
+  return roots.split(delimiter).some((root) => {
+    if (!root) return false;
+    const fromRoot = relative(physicalPath(root), candidate);
+    return fromRoot === "" || (
+      fromRoot !== ".." &&
+      !fromRoot.startsWith(`..${sep}`) &&
+      !isAbsolute(fromRoot)
+    );
+  });
+}
+
+function hostGuardSettingsJson(): string {
+  const hookPath = resolve(REPO_ROOT, "autonomy", "hooks", "validate-bash.sh");
+  if (!existsSync(hookPath)) throw new Error(`host command guard hook is missing: ${hookPath}`);
+  return JSON.stringify({
+    hooks: {
+      PreToolUse: [{
+        matcher: "Bash",
+        hooks: [{ type: "command", command: `bash ${shellQuote(hookPath)}` }],
+      }],
+    },
+  });
+}
+
 // Write captured output to disk. Used by every provider to honor the
 // `iterationOutputPath` contract from types.ts:87 -- the runner reads the
 // captured file for completion-promise / rate-limit detection.
@@ -224,7 +312,11 @@ export function claudeProvider(): ProviderInvoker {
   return {
     async invoke(call: ProviderInvocation): Promise<ProviderResult> {
       const baseModel = claudeTierToModel(call.tier);
-      let model = applyMaxTierCeiling(call.tier, baseModel);
+      // Complexity-aware routing (opt-in LOKI_TIER_ROUTING=1). Applied after base
+      // resolution and BEFORE the max-tier ceiling, byte-mirroring claude.sh
+      // resolve_model_for_tier (route then clamp).
+      const routedModel = tierRouteModel(call.tier, baseModel);
+      let model = applyMaxTierCeiling(call.tier, routedModel);
 
       // Phase I (v7.5.25): when ANTHROPIC_BASE_URL is set, the user is
       // routing Claude Code to an alt-provider (OpenRouter, Ollama,
@@ -241,6 +333,12 @@ export function claudeProvider(): ProviderInvoker {
       // the auto-derived flag set. ensureClaudeHelpCache is idempotent --
       // first call populates, subsequent calls return immediately.
       await ensureClaudeHelpCache();
+      const hostGuard = hostGuardRequired(call.cwd);
+      if (hostGuard && !claudeFlagSupported("--settings")) {
+        const message = "host command guard requires Claude CLI --settings support";
+        await writeCaptured(call.iterationOutputPath, "", message);
+        return { exitCode: 1, capturedOutputPath: call.iterationOutputPath };
+      }
       const autoFlags = buildAutoFlags({
         tier: call.tier,
         complexity: process.env["LOKI_COMPLEXITY"] ?? "standard",
@@ -279,6 +377,7 @@ export function claudeProvider(): ProviderInvoker {
         model,
         ...autoFlags,
         ...sessionArgv,
+        ...(hostGuard ? ["--settings", hostGuardSettingsJson()] : []),
         // claude.sh:32 PROVIDER_PROMPT_FLAG
         "-p",
         call.prompt,
@@ -309,6 +408,316 @@ export function claudeProvider(): ProviderInvoker {
         exitCode: r.exitCode,
         capturedOutputPath: call.iterationOutputPath,
       };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Append a structured capability-degradation record to .loki/events.jsonl.
+//
+// Same {type, source, timestamp, payload} envelope the SDK hook events use
+// (sdk_stream_parser.ts), so existing consumers of that stream need no change.
+// Best-effort by design: diagnostics must NEVER be able to fail a build, so
+// every error here is swallowed exactly like the hook-event appender.
+//
+// Exported for the test that asserts the event actually lands.
+export function emitSdkDegradationEvent(
+  cwd: string,
+  payload: { reason: string; tier?: string; model?: string; iteration?: string },
+): void {
+  try {
+    const lokiRoot = process.env["LOKI_DIR"] ?? resolve(cwd, ".loki");
+    mkdirSync(lokiRoot, { recursive: true });
+    const record = {
+      type: "capability_degraded",
+      source: "sdk_loop",
+      timestamp: new Date().toISOString(),
+      payload: { capability: "sdk_query", fail_closed: true, ...payload },
+    };
+    appendFileSync(resolve(lokiRoot, "events.jsonl"), `${JSON.stringify(record)}\n`);
+  } catch {
+    // best-effort: a diagnostic must never break the run it is describing.
+  }
+}
+
+// SDK query() provider (v8 Phase 4) -- the RARV main loop on @anthropic-ai/
+// claude-agent-sdk instead of spawning the claude binary. Reached only when
+// LOKI_SDK_LOOP is truthy (see resolveProvider). No binary spawn: query() drives
+// the agentic loop in-process; sdk_stream_parser writes the SAME .loki state the
+// bash stream-json parser writes, so downstream consumers are unchanged.
+// ---------------------------------------------------------------------------
+
+// RUN-25 iter 3 (T3(b)): compose the query() options the SDK loop was MISSING
+// vs the shell route -- MCP tools, effort tier, USD budget backstop, fallback
+// model, settingSources. Without these the SDK loop silently dropped all 34 MCP
+// tools (loki_complete_task, code search, memory, ...), effort tuning, the
+// per-call budget circuit breaker, and the rate-limit fallback model: the exact
+// hidden-capability regression the T3 pre-flight gate exists to block. Each value
+// derives from the SAME helpers the shell route uses (effortForTier /
+// remainingBudget / fallbackForPrimary / mcp_config), so bash and the SDK loop
+// resolve identically. Every field is best-effort: any miss (no budget set, MCP
+// bundle unreadable) simply omits that option -- never throws, never wedges.
+export interface SdkLoopExtraOptions {
+  mcpServers?: Array<Record<string, unknown>>;
+  strictMcpConfig?: boolean;
+  settingSources?: string[];
+  effort?: string;
+  maxBudgetUsd?: number;
+  fallbackModel?: string;
+}
+export function buildSdkLoopOptions(args: {
+  tier: string | undefined;
+  model: string;
+  cwd: string;
+  complexity?: string;
+  allowHaiku?: boolean;
+}): SdkLoopExtraOptions {
+  const out: SdkLoopExtraOptions = {};
+
+  // MCP tools: reuse the exact bundle the shell route writes (loki-mode server +
+  // optional lsp-proxy). mcpConfigPath writes it idempotently; read its server
+  // map and pass as one mcpServers array element. strictMcpConfig ignores any
+  // ambient project .mcp.json (parity with the hardcoded-bundle shell behavior).
+  try {
+    const cfgPath = mcpConfigPath(args.cwd);
+    if (existsSync(cfgPath)) {
+      const bundle = JSON.parse(readFileSync(cfgPath, "utf8")) as { mcpServers?: Record<string, unknown> };
+      if (bundle.mcpServers && Object.keys(bundle.mcpServers).length > 0) {
+        out.mcpServers = [bundle.mcpServers];
+        out.strictMcpConfig = true;
+      }
+    }
+  } catch {
+    // MCP bundle unreadable -> omit (loop still runs, just without MCP tools).
+  }
+  // settingSources: match the shell route's claude_code preset behavior (project
+  // + user settings resolved by the CLI). Explicit so the SDK does not diverge.
+  out.settingSources = ["user", "project", "local"];
+
+  // effort tier (same mapping as buildAutoFlags).
+  try {
+    out.effort = effortForTier(args.tier, args.complexity);
+  } catch {
+    // omit
+  }
+  // USD budget backstop: only when a limit is configured AND spend remains.
+  try {
+    const rem = remainingBudget(args.cwd);
+    if (rem !== null) {
+      const n = Number(rem);
+      if (Number.isFinite(n) && n > 0) out.maxBudgetUsd = n;
+    }
+  } catch {
+    // omit
+  }
+  // fallback model (rate-limit resilience), same derivation as the shell route.
+  try {
+    const fb = fallbackForPrimary(args.model, args.allowHaiku);
+    if (fb) out.fallbackModel = fb;
+  } catch {
+    // omit
+  }
+  return out;
+}
+
+function hostGuardDecision(reason: string) {
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse" as const,
+      permissionDecision: "deny" as const,
+      permissionDecisionReason: reason,
+    },
+  };
+}
+
+async function runSdkHostGuard(input: unknown, cwd: string) {
+  const hookPath = resolve(REPO_ROOT, "autonomy", "hooks", "validate-bash.sh");
+  try {
+    const proc = Bun.spawn({
+      cmd: ["bash", hookPath],
+      cwd,
+      env: {
+        ...process.env,
+        LOKI_HOST_GUARD: "1",
+        LOKI_TARGET_DIR: cwd,
+      },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    proc.stdin.write(JSON.stringify(input));
+    proc.stdin.end();
+    const [stdout, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      proc.exited,
+    ]);
+    const parsed = JSON.parse(stdout) as {
+      hookSpecificOutput?: { permissionDecision?: string };
+    };
+    const decision = parsed.hookSpecificOutput?.permissionDecision;
+    if (exitCode === 0 && decision === "allow") return parsed;
+    if (exitCode !== 0 && decision === "deny") return parsed;
+    return hostGuardDecision("LOKI_HOST_GUARD: invalid hook verdict was denied.");
+  } catch {
+    return hostGuardDecision("LOKI_HOST_GUARD: hook execution failed, so the Bash command was denied.");
+  }
+}
+
+export function sdkQueryProvider(): ProviderInvoker {
+  return {
+    async invoke(call: ProviderInvocation): Promise<ProviderResult> {
+      // Subcalls (council judge, etc.) NEVER run through query(): only the main
+      // RARV loop. resolveProvider already scopes this to the main provider, but
+      // guard here too so a future subcall reuse can't leak into the agentic path.
+      if (!call.mainLoop) return claudeProvider().invoke(call);
+
+      // Model resolution is shared with claudeProvider (do NOT fork it).
+      const baseModel = claudeTierToModel(call.tier);
+      // Complexity-aware routing (opt-in LOKI_TIER_ROUTING=1), route then clamp,
+      // byte-mirroring claude.sh resolve_model_for_tier.
+      const routedModel = tierRouteModel(call.tier, baseModel);
+      let model = applyMaxTierCeiling(call.tier, routedModel);
+      if (process.env["ANTHROPIC_BASE_URL"] && process.env["LOKI_MODEL_OVERRIDE"]) {
+        model = process.env["LOKI_MODEL_OVERRIDE"];
+      }
+
+      // caveman (main loop -> activate at the tier-inferred level, if warranted).
+      const cavemanLvl = cavemanActivateEnv(call.tier);
+
+      // Lazy dynamic import so the default-off path never loads the SDK.
+      // A load failure (SDK missing / platform binary absent) is fail-closed:
+      // write whatever we captured (empty) and return exitCode 1.
+      let captured = "";
+      let exitCode = 1;
+      let rateLimit: { resetSeconds?: number } | undefined;
+      try {
+        const { query } = await import("@anthropic-ai/claude-agent-sdk");
+        // options.env REPLACES the whole subprocess env -- MUST spread
+        // process.env or PATH/HOME/ANTHROPIC_API_KEY vanish and query() fails.
+        const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+        if (cavemanLvl) env["CAVEMAN_DEFAULT_MODE"] = cavemanLvl;
+
+        // T3(b): compose the MCP/effort/budget/fallback options the loop was
+        // missing vs the shell route (see buildSdkLoopOptions). Only fields that
+        // resolved are spread in; a miss omits that option.
+        const extra = buildSdkLoopOptions({
+          tier: call.tier,
+          model,
+          cwd: call.cwd,
+          complexity: process.env["DETECTED_COMPLEXITY"] ?? process.env["LOKI_COMPLEXITY"],
+          allowHaiku: process.env["LOKI_ALLOW_HAIKU"] === "true",
+        });
+
+        // SLICE 6b note: the Agent SDK query() prompt contract is a plain
+        // string (or a stream of SDKUserMessage objects), NOT raw content
+        // blocks, so the sdk_invoker buildUserContent([CACHE_BREAKPOINT]) split
+        // does not apply here. The Agent SDK/CLI already applies prompt caching
+        // to the system prompt and conversation history internally. Explicit
+        // per-block cache_control is only wired on the raw-SDK judge path
+        // (sdk_invoker.ts) where messages.create accepts content blocks.
+        const q = query({
+          prompt: call.prompt,
+          options: {
+            model,
+            cwd: call.cwd,
+            // fully autonomous, like --dangerously-skip-permissions. bypassPermissions
+            // REQUIRES the allowDangerouslySkipPermissions companion or it throws.
+            permissionMode: "bypassPermissions",
+            allowDangerouslySkipPermissions: true,
+            includePartialMessages: true, // live delta streaming
+            includeHookEvents: true, // hooks arrive as system messages (parser)
+            ...(hostGuardRequired(call.cwd)
+              ? {
+                  hooks: {
+                    PreToolUse: [{
+                      matcher: "Bash",
+                      hooks: [(input: unknown) => runSdkHostGuard(input, call.cwd)],
+                    }],
+                  },
+                }
+              : {}),
+            // build_prompt owns the ITERATION prompt; the preset matches
+            // `claude -p`. The one thing build_prompt does NOT carry is the
+            // autonomy/first-pass append, which the CLI route sends via
+            // --append-system-prompt. That flag path is gated on a `claude`
+            // BINARY probe, so on this route (no CLI required) the FIRST-PASS
+            // EXCELLENCE directive was silently dropped -- losing a measured
+            // 2.8x iterations-to-done reduction on the very route v8 promotes.
+            // Same text, same iteration-1 gate, same opt-out, no binary probe.
+            systemPrompt: autonomyAppendEnabled()
+              ? {
+                  type: "preset",
+                  preset: "claude_code",
+                  append: autonomyAppendText(),
+                }
+              : { type: "preset", preset: "claude_code" },
+            env,
+            // T3(b) parity: MCP tools + effort + USD budget + fallback model.
+            ...(extra.mcpServers ? { mcpServers: extra.mcpServers } : {}),
+            ...(extra.strictMcpConfig ? { strictMcpConfig: true } : {}),
+            ...(extra.settingSources ? { settingSources: extra.settingSources } : {}),
+            ...(extra.effort ? { effort: extra.effort } : {}),
+            ...(extra.maxBudgetUsd ? { maxBudgetUsd: extra.maxBudgetUsd } : {}),
+            ...(extra.fallbackModel ? { fallbackModel: extra.fallbackModel } : {}),
+          },
+          // biome-ignore lint/suspicious/noExplicitAny: SDK Options type is broader than our subset
+        } as any);
+
+        const res = await consumeSdkStream(q as AsyncIterable<StreamMsg>, {
+          cwd: call.cwd,
+          iteration: process.env["LOKI_ITERATION"] ?? "0",
+          hookEventsEnabled: process.env["LOKI_HOOK_EVENTS"] !== "off",
+          write: (s) => process.stdout.write(s),
+        });
+        captured = res.capturedText;
+        // Fail-closed: a stream that never produced a terminal result is a
+        // failed iteration, never counted as success.
+        exitCode = res.sawResult ? res.exitCode : 1;
+        rateLimit = res.rateLimit;
+      } catch (e) {
+        captured += `\n[sdk-loop error: ${(e as Error).message}]\n`;
+        exitCode = 1;
+        // CAPABILITY DEGRADATION (structured, not just prose in the log).
+        //
+        // The SDK path is already fail-closed: there is NO silent downgrade to
+        // the claude CLI, and exitCode stays 1 so a failed iteration can never
+        // be counted as success. What was missing is OBSERVABILITY -- the
+        // failure existed only as text inside the captured output, so an
+        // operator running unattended had nothing to alert on and no way to
+        // distinguish "the SDK could not load" from "the model did poor work".
+        //
+        // Emitted onto the SAME append-only .loki/events.jsonl stream the hook
+        // events use, with the same {type, source, timestamp, payload} shape,
+        // so every existing consumer picks it up for free. Deliberately NO new
+        // env var: this is diagnostic signal an operator always wants, and a
+        // knob to enable your own error reporting is a knob nobody would find.
+        emitSdkDegradationEvent(call.cwd, {
+          reason: (e as Error).message,
+          tier: call.tier,
+          model,
+          iteration: process.env["LOKI_ITERATION"] ?? "0",
+        });
+      }
+
+      // Always write the captured text (even on a thrown query()) so the
+      // completion-promise / rate-limit / council scanners have their file.
+      await writeCaptured(call.iterationOutputPath, captured, "");
+
+      const out: ProviderResult = {
+        exitCode,
+        capturedOutputPath: call.iterationOutputPath,
+      };
+      // Populate the structured rate-limit hint when the SDK gave a concrete
+      // reset. NOTE (council polish): the current Bun runner reads rate limits
+      // from the captured-text `[rate_limit]` marker (budget.ts::isRateLimited),
+      // not this field, so it is presently a no-op consumer-side. We still emit
+      // it because it is part of the ProviderResult contract (types.ts) and the
+      // bash route's structured signal; a future runner that prefers the
+      // structured value over the text scan gets it for free. Harmless when unread.
+      if (rateLimit?.resetSeconds && rateLimit.resetSeconds > 0) {
+        out.rateLimitWaitSeconds = rateLimit.resetSeconds;
+      }
+      return out;
     },
   };
 }

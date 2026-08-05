@@ -289,17 +289,46 @@ result=$(
     source "$PROVIDERS_DIR/codex.sh"
     PATH="$CODEX_STUB_DIR:$PATH"
     argv="$(provider_invoke "do the thing" 2>&1)"
-    # Expect the explicit --model gpt-5.3-codex (default resolved model).
-    if echo "$argv" | grep -q -- '--model gpt-5.3-codex'; then
+    # With NO model env set, NO --model flag may be passed. Pinning a default
+    # broke ChatGPT-account users outright: codex-cli 0.144.6 rejects
+    # gpt-5.3-codex with "not supported when using Codex with a ChatGPT
+    # account", and Codex ships free with every ChatGPT plan, so the pin broke
+    # the only zero-cost on-ramp in the category. Codex resolves its own
+    # account-appropriate model when we say nothing. See providers/codex.sh.
+    if echo "$argv" | grep -q -- '--model'; then
+        echo "fail: a default model is being pinned again: $argv"
+    else
+        echo "pass"
+    fi
+)
+if [ "$result" = "pass" ]; then
+    log_pass "codex provider_invoke() passes NO --model by default (ChatGPT-account safe)"
+else
+    log_fail "codex provider_invoke() pinned a default model - $result"
+fi
+
+# ===========================================
+# Test 11b: an EXPLICIT model still reaches argv (the flag is omitted, not dropped)
+# ===========================================
+# Guards the other direction of the same change: making the default empty must
+# not silently swallow a model the operator asked for on purpose.
+log_test "codex provider_invoke() passes an explicit LOKI_CODEX_MODEL through"
+
+result=$(
+    export LOKI_CODEX_MODEL="gpt-5.6-sol"
+    source "$PROVIDERS_DIR/codex.sh"
+    PATH="$CODEX_STUB_DIR:$PATH"
+    argv="$(provider_invoke "do the thing" 2>&1)"
+    if echo "$argv" | grep -q -- '--model gpt-5.6-sol'; then
         echo "pass"
     else
         echo "fail: $argv"
     fi
 )
 if [ "$result" = "pass" ]; then
-    log_pass "codex provider_invoke() passes --model gpt-5.3-codex"
+    log_pass "codex provider_invoke() passes an explicit --model through"
 else
-    log_fail "codex provider_invoke() did not pass --model - $result"
+    log_fail "codex provider_invoke() dropped an explicit model - $result"
 fi
 
 # ===========================================

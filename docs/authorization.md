@@ -100,19 +100,27 @@ Security and compliance monitoring.
 
 ## Configuration
 
-### Enable RBAC
+### Enable enterprise auth
+
+There is no separate `LOKI_RBAC_ENABLED` switch. Role mapping is part of the
+enterprise auth path, enabled by `LOKI_ENTERPRISE_AUTH` for token auth and by
+`LOKI_OIDC_ISSUER` + `LOKI_OIDC_CLIENT_ID` for OIDC/SSO (`dashboard/auth.py`).
 
 ```bash
-export LOKI_RBAC_ENABLED=true
+export LOKI_ENTERPRISE_AUTH=true
 loki start ./prd.md
 ```
 
-### Assign Roles via Tokens
+### Assign scopes via tokens
+
+`loki enterprise token generate` takes `--scopes` (a comma-separated scope
+list), not a `--role` flag. Roles as such are resolved from OIDC claims; tokens
+carry scopes directly.
 
 ```bash
-# Generate token with role
-loki enterprise token generate dev-1 --role operator --expires 30
-loki enterprise token generate viewer-1 --role viewer --expires 90
+# Generate token with scopes
+loki enterprise token generate dev-1 --scopes control,read,write --expires 30
+loki enterprise token generate viewer-1 --scopes read --expires 90
 loki enterprise token generate auditor-1 --role auditor --expires 180
 loki enterprise token generate admin-1 --role admin --expires 365
 ```
@@ -228,81 +236,75 @@ loki enterprise token generate metrics-bot --role metrics_viewer
 
 ### CLI
 
+There is no `loki enterprise rbac` subcommand. `loki enterprise` has exactly
+`status`, `token`, and `audit`. To see what a token can do, list the tokens and
+read their scopes:
+
 ```bash
-# Check current permissions
-loki enterprise rbac check
-
-# Check specific permission
-loki enterprise rbac check --scope control
-
-# List permissions for role
-loki enterprise rbac permissions --role operator
+loki enterprise token list
+loki enterprise status
 ```
 
 ### API
 
-```bash
-# Check token permissions
-curl -H "Authorization: Bearer $LOKI_TOKEN" \
-     http://localhost:57374/api/enterprise/rbac/check
+There is no `/api/enterprise/rbac/check` endpoint; an earlier version of this
+page documented one along with a `permissions` response object, and neither
+exists. Scopes are enforced per-route: each `/api/*` route declares the scope it
+requires via `Depends(auth.require_scope(...))` in `dashboard/server.py`. A
+request either succeeds or is rejected, so exercise the route you care about:
 
-# Response:
-{
-  "role": "operator",
-  "scopes": ["control", "read", "write"],
-  "permissions": {
-    "can_start_session": true,
-    "can_stop_session": true,
-    "can_create_tasks": true,
-    "can_modify_config": false,
-    "can_manage_tokens": false
-  }
-}
+```bash
+# Succeeds only if the token carries the route's required scope
+curl -i -H "Authorization: Bearer $LOKI_TOKEN" \
+     http://localhost:57374/api/status
 ```
+
+Scope implication is resolved by `has_scope()` in `dashboard/auth.py:394`.
 
 ## Agent Action Authorization
 
-Control which roles can trigger agent actions:
-
-```yaml
-enterprise:
-  rbac:
-    agent_actions:
-      git_commit:
-        required_scope: control
-      cli_invoke:
-        required_scope: control
-      file_write:
-        required_scope: write
-      file_read:
-        required_scope: read
-```
+**Not implemented.** An earlier version of this page showed an
+`enterprise.rbac.agent_actions` block mapping individual agent actions
+(`git_commit`, `cli_invoke`, `file_write`, `file_read`) to required scopes. No
+such configuration is read by any code. Scope enforcement happens at the
+dashboard API boundary only, per route, not per agent action.
 
 ## Environment Variables
 
+These are the variables actually read by `dashboard/auth.py`. There is no
+`LOKI_RBAC_ENABLED`, `LOKI_RBAC_STRICT_MODE`, or `LOKI_RBAC_AUDIT_CHECKS`; an
+earlier version of this page listed all three and they were never implemented.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LOKI_RBAC_ENABLED` | `false` | Enable RBAC system |
-| `LOKI_RBAC_DEFAULT_ROLE` | `viewer` | Default role for OIDC users |
-| `LOKI_RBAC_STRICT_MODE` | `false` | Deny access when role is undefined (vs default to viewer) |
-| `LOKI_RBAC_AUDIT_CHECKS` | `true` | Log all permission checks to audit log |
+| `LOKI_ENTERPRISE_AUTH` | `false` | Enable token authentication |
+| `LOKI_OIDC_ISSUER` | (empty) | OIDC issuer URL; set with `LOKI_OIDC_CLIENT_ID` to enable OIDC/SSO |
+| `LOKI_OIDC_CLIENT_ID` | (empty) | OIDC client id |
+| `LOKI_OIDC_AUDIENCE` | (empty) | Expected audience; usually the same as the client id |
+| `LOKI_OIDC_ROLES_CLAIM` | (empty) | Claim to read roles from; supports a dotted path |
+| `LOKI_OIDC_DEFAULT_ROLE` | `viewer` | Role applied when no recognized role claim is present |
+
+`_scopes_from_claims()` never returns `["*"]`/admin by default: full access
+requires an explicit admin role claim. When no recognized role claim is present,
+the least-privileged default role applies.
 
 ## Examples
 
 ### Multi-Environment Setup
 
 ```bash
-# Production - strict RBAC
-export LOKI_RBAC_ENABLED=true
-export LOKI_RBAC_STRICT_MODE=true
-export LOKI_RBAC_DEFAULT_ROLE=viewer
+# Production - OIDC with a least-privilege default
+export LOKI_ENTERPRISE_AUTH=true
+export LOKI_OIDC_ISSUER=https://accounts.example.com
+export LOKI_OIDC_CLIENT_ID=loki-prod
+export LOKI_OIDC_DEFAULT_ROLE=viewer
 
-# Development - relaxed RBAC
-export LOKI_RBAC_ENABLED=false
+# Development - auth off
+export LOKI_ENTERPRISE_AUTH=false
 
-# Staging - moderate RBAC
-export LOKI_RBAC_ENABLED=true
-export LOKI_RBAC_DEFAULT_ROLE=operator
+# Staging - OIDC with a more permissive default
+export LOKI_ENTERPRISE_AUTH=true
+export LOKI_OIDC_DEFAULT_ROLE=operator
 ```
 
 ### Team-Based Access
@@ -362,7 +364,8 @@ loki enterprise token generate security-scanner \
 
 ### Auditing
 
-1. Enable `LOKI_RBAC_AUDIT_CHECKS` to log permission checks
+1. Review audit logs for authentication and authorization events (audit logging
+   is on by default; there is no separate per-permission-check toggle)
 2. Review audit logs for unauthorized access attempts
 3. Monitor for privilege escalation attempts
 4. Alert on admin role usage in production
@@ -376,8 +379,8 @@ loki enterprise token generate security-scanner \
 # Check token role and scopes
 loki enterprise token list
 
-# Verify required scope for operation
-loki enterprise rbac permissions --role <your-role>
+# Read the route's required scope from dashboard/server.py, then compare
+# against the scopes on your token from the listing above
 
 # Check audit log for denial reason
 loki enterprise audit tail --event permission.denied
@@ -406,10 +409,10 @@ loki enterprise audit tail --event auth.oidc.success
 ### Scope Confusion
 
 ```bash
-# List all scopes for a role
-loki enterprise rbac permissions --role operator
+# List the scopes actually attached to each token
+loki enterprise token list
 
-# Check if scope is implied by hierarchy
+# Check if scope is implied by hierarchy (see has_scope, dashboard/auth.py:394)
 # control -> write -> read
 # audit (separate, not included in control)
 
@@ -420,32 +423,35 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 ## Migration Guide
 
-### Upgrading from Token-Only to RBAC
+### Upgrading from Token-Only to role-mapped OIDC
 
-1. Enable RBAC in audit mode first:
+There is no separate "RBAC mode" to switch on, and no in-place token editing.
+`loki enterprise` has exactly three subcommands: `status`, `token`, and
+`audit`. An earlier version of this page described `loki enterprise rbac check`
+and `loki enterprise token update --role`; neither exists.
+
+1. Turn on enterprise auth and point Loki at your identity provider:
 ```bash
-export LOKI_RBAC_ENABLED=true
-export LOKI_RBAC_STRICT_MODE=false  # Allow during migration
+export LOKI_ENTERPRISE_AUTH=true
+export LOKI_OIDC_ISSUER=https://accounts.example.com
+export LOKI_OIDC_CLIENT_ID=your-client-id
+export LOKI_OIDC_DEFAULT_ROLE=viewer
 ```
 
-2. Assign roles to existing tokens:
+2. Re-issue tokens with the scopes each holder should have. Tokens carry scopes
+   directly and are not editable after creation, so revoke and regenerate:
 ```bash
-for token in $(loki enterprise token list --format json | jq -r '.[].id'); do
-  loki enterprise token update $token --role operator
-done
+loki enterprise token list
+loki enterprise token generate dev-1 --scopes control,read,write --expires 30
 ```
 
-3. Test permissions:
+3. Confirm the configuration is active:
 ```bash
-loki enterprise rbac check
+loki enterprise status
 ```
 
-4. Enable strict mode:
-```bash
-export LOKI_RBAC_STRICT_MODE=true
-```
-
-5. Monitor audit logs for denials and adjust roles as needed.
+4. Monitor audit logs for denials and adjust the role claim mapping
+   (`LOKI_OIDC_ROLES_CLAIM`) as needed.
 
 ## See Also
 

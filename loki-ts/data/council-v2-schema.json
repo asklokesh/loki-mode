@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://loki-mode.dev/schemas/council-v2.json",
+  "title": "Loki Council-v2 Reviewer Verdict",
+  "description": "Structured output contract for a council-v2 reviewer (requirements/test/quality/devils-advocate/general). Claude Code emits this when invoked with --json-schema (INLINE content, not a path) --output-format json. The council-v2 dispatch reads structured_output directly; a sed-carve of prose JSON remains the fail-closed fallback. verdict is the gating token; any parse miss defaults to REJECT (the safe direction).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "reasoning", "issues"],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["APPROVE", "REJECT"],
+      "description": "APPROVE if the evidence satisfies the requirements for this reviewer's lens; REJECT otherwise."
+    },
+    "reasoning": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000,
+      "description": "Short justification for the verdict."
+    },
+    "issues": {
+      "type": "array",
+      "minItems": 0,
+      "description": "Zero or more issues found. Empty array is allowed on APPROVE.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "description"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"],
+            "description": "Issue severity."
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "One-line issue description."
+          }
+        }
+      }
+    }
+  }
+}

@@ -91,6 +91,18 @@ awk '
     f && /^}/ { exit }
 ' "$RUN_SH" > "$BRANCH_LIB"
 
+# RUN-25 iter 21 (Wave D #2): the two secret-guard helpers were moved OUT of
+# run.sh into the shared autonomy/lib/secret-scan.sh (so the commit gate and the
+# completion evidence gate use ONE implementation). Append the lib so the
+# assembled branch-lib still defines _commit_scan_secret_file /
+# _commit_path_looks_secret exactly as before -- the non-vacuity check + the
+# mutation checks below operate on this assembled copy, so the test remains valid.
+_SECRET_LIB="$PROJECT_DIR/autonomy/lib/secret-scan.sh"
+if [ -f "$_SECRET_LIB" ]; then
+    printf '\n' >> "$BRANCH_LIB"
+    cat "$_SECRET_LIB" >> "$BRANCH_LIB"
+fi
+
 # Non-vacuity gate: all three function definitions MUST be present, else every
 # test below is meaningless. Fail loudly (not vacuously) and abort.
 _extract_ok=true

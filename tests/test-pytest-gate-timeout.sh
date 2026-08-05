@@ -40,7 +40,9 @@ fi
 
 # Source only what we need from run.sh without executing it as a script.
 # The helper _loki_run_pytest_with_timeout depends on log_warn (defined in run.sh)
-# and uses no other run.sh state. We extract both via a sourced subshell wrapper.
+# and on _loki_timeout_prefix (the shared portable timeout probe, also used by the
+# unittest / go test / cargo test gates -- see tests/test-go-cargo-gate-timeout.sh).
+# It uses no other run.sh state. We extract all three via a sourced subshell wrapper.
 SOURCE_HARNESS=$(mktemp -t loki-pytest-gate-source.XXXXXX) || exit 2
 trap 'rm -f "$SOURCE_HARNESS"' EXIT
 
@@ -49,13 +51,20 @@ trap 'rm -f "$SOURCE_HARNESS"' EXIT
 {
     echo '#!/usr/bin/env bash'
     echo 'log_warn() { echo "[WARN] $*" >&2; }'
-    # Pull the helper definition (between the function name and its closing brace).
+    # Pull the helper definitions (between each function name and its closing brace).
     awk '
-        /^_loki_run_pytest_with_timeout\(\) \{/ { in_fn = 1 }
+        /^(_loki_timeout_prefix|_loki_run_pytest_with_timeout)\(\) \{/ { in_fn = 1 }
         in_fn { print }
         in_fn && /^}$/ { in_fn = 0 }
     ' "$RUN_SH"
 } > "$SOURCE_HARNESS"
+
+if ! grep -q '^_loki_timeout_prefix()' "$SOURCE_HARNESS"; then
+    log_fail "extract helper" "_loki_timeout_prefix not found in $RUN_SH"
+    echo
+    echo "Results: $PASS passed, $FAIL failed"
+    exit 1
+fi
 
 if ! grep -q '^_loki_run_pytest_with_timeout()' "$SOURCE_HARNESS"; then
     log_fail "extract helper" "_loki_run_pytest_with_timeout not found in $RUN_SH"

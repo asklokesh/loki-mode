@@ -42,6 +42,18 @@ if [ ! -f "$CHECKLIST_SH" ]; then
     echo "SKIP: $CHECKLIST_SH not found. (Not a fail.)"; exit 0
 fi
 
+if /bin/bash -n "$CHECKLIST_SH"; then
+    ok "stock /bin/bash parses prd-checklist.sh"
+else
+    bad "stock /bin/bash syntax" "prd-checklist.sh did not parse"
+fi
+if /bin/bash -c 'set -uo pipefail; source "$1"; type checklist_oracle_triangulate >/dev/null 2>&1' \
+    _ "$CHECKLIST_SH"; then
+    ok "stock /bin/bash sources prd-checklist.sh under strict mode"
+else
+    bad "stock /bin/bash source" "prd-checklist.sh did not source under strict mode"
+fi
+
 # Stub the log_* helpers (defined in run.sh) so the library sources cleanly.
 log_info()    { :; }
 log_warn()    { :; }
@@ -294,6 +306,49 @@ print('yes' if any(('stack axes' in x) or ('domain invariant' in x) or ('money' 
         || bad "case13 deferral" "deferred list missing remaining-deferral entries"
 else
     bad "case13 deferral" "oracle-findings.json not written for a clean run"
+fi
+
+# ===========================================================================
+# Case 14: the private status file is removed, and mktemp failure degrades to
+#          a silent NOOP instead of aborting the sourced host shell.
+# ===========================================================================
+echo "Case 14: status transport cleans up and fails to NOOP"
+d="$TMP_ROOT/case14"; mkdir -p "$d/.loki/checklist" "$d/status-tmp"
+printf '# Spec\nUse PostgreSQL.\n' > "$d/spec.md"
+printf '{"name":"app","dependencies":{"pg":"^8.11.0"}}\n' > "$d/package.json"
+(
+    cd "$d" || exit 1
+    CHECKLIST_DIR=".loki/checklist"
+    CHECKLIST_PRD_PATH="$d/spec.md"
+    CHECKLIST_ORACLE_ENABLED=1
+    TMPDIR="$d/status-tmp"
+    export TMPDIR
+    checklist_oracle_triangulate
+)
+if find "$d/status-tmp" -type f -name 'loki-oracle-status.*' -print | grep -q .; then
+    bad "case14 status cleanup" "private status file remained after triangulation"
+else
+    ok "case14 private status file removed after triangulation"
+fi
+
+d="$TMP_ROOT/case14-mktemp-fail"; mkdir -p "$d/.loki/checklist"
+printf '# Spec\nUse PostgreSQL.\n' > "$d/spec.md"
+printf '{"name":"app","dependencies":{"mongoose":"^8.0.0"}}\n' > "$d/package.json"
+if (
+    cd "$d" || exit 1
+    CHECKLIST_DIR=".loki/checklist"
+    CHECKLIST_PRD_PATH="$d/spec.md"
+    CHECKLIST_ORACLE_ENABLED=1
+    mktemp() { return 1; }
+    checklist_oracle_triangulate
+); then
+    if [ ! -f "$d/.loki/checklist/oracle-findings.json" ]; then
+        ok "case14 mktemp failure returns a NOOP without findings"
+    else
+        bad "case14 mktemp NOOP" "oracle ran without a private status file"
+    fi
+else
+    bad "case14 mktemp NOOP" "mktemp failure escaped the oracle wrapper"
 fi
 
 # ---------------------------------------------------------------------------

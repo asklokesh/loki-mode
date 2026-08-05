@@ -1,5 +1,10 @@
 # RARV-C Efficiency Change Map (apply-and-measure, from lever investigation)
 
+> SUPERSEDED by `docs/RARV-C-100X-PLAN.md` (v8.0.0 arc, 2026-07-13). Kept as history.
+> Anchors here are grounded to v7.121.5 and have DRIFTED; use the 100X plan for current
+> file:line. Note: budget/effort (#7) and council --json-schema were adopted AFTER this doc.
+
+
 Both checks resolve cleanly:
 
 **Check 1 (env propagation): CONFIRMED SAFE.** `_base.py:113` does `full_env = dict(os.environ)` then passes it as `env=full_env` to subprocess. The loki adapter (`loki.py:120`) uses `run_env`. So env-prefixing the bench invocation propagates the knob into the loki subprocess, where completion-council.sh:84 reads it at source time. Every `KNOB=x bench run` command in the plan is a real measurement, not a no-op.

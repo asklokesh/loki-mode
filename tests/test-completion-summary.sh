@@ -217,6 +217,49 @@ else
     bad "non-git: completion.json missing"
 fi
 
+# ===========================================================================
+# Case 6: a post-commit refresh binds both durable records to final HEAD.
+# ===========================================================================
+REPO6="$WORK/post-commit-refresh"
+mkdir -p "$REPO6"
+(
+    cd "$REPO6" || exit 1
+    git init -q
+    git config user.email t@t.t
+    git config user.name t
+    git config commit.gpgsign false
+    echo "base" > app.txt
+    git add app.txt
+    git commit -qm base
+    _LOKI_RUN_START_SHA="$(git rev-parse HEAD)" ; export _LOKI_RUN_START_SHA
+    TARGET_DIR="." ; export TARGET_DIR
+    echo "final" >> app.txt
+    build_completion_summary failed
+    git add app.txt
+    git commit -qm final
+    build_completion_summary failed
+)
+if REPO6="$REPO6" python3 - <<'PY'
+import json
+import os
+import subprocess
+
+repo = os.environ["REPO6"]
+head = subprocess.check_output(["git", "-C", repo, "rev-parse", "HEAD"], text=True).strip()
+with open(os.path.join(repo, ".loki", "state", "completion.json"), encoding="utf-8") as handle:
+    completion = json.load(handle)
+with open(os.path.join(repo, ".loki", "loki-run.json"), encoding="utf-8") as handle:
+    manifest = json.load(handle)
+assert completion["head_sha"] == head
+assert completion["files_changed"] == 1
+assert manifest["git"]["head_sha"] == head
+PY
+then
+    ok "post-commit refresh: completion and run manifest bind final HEAD"
+else
+    bad "post-commit refresh: durable records remained stale"
+fi
+
 echo ""
 echo "build_completion_summary: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

@@ -81,7 +81,9 @@ fi
 # -----------------------------------------------------------------------
 echo "Test 3: SQLite file permissions"
 if [[ -f "$TEST_DB" ]]; then
-    perms=$(stat -f "%Lp" "$TEST_DB" 2>/dev/null || stat -c "%a" "$TEST_DB" 2>/dev/null)
+    # GNU-first: `stat -f` is valid-and-succeeds on Linux (filesystem status),
+    # so the macOS-first order silently captured the wrong string there.
+    perms=$(stat -c "%a" "$TEST_DB" 2>/dev/null || stat -f "%Lp" "$TEST_DB" 2>/dev/null)
     if [[ "$perms" == "600" ]]; then
         pass "SQLite file permissions are 600"
     else

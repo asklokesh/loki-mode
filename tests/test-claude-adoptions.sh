@@ -41,6 +41,90 @@ grep -q 'msg_type == "stream_event"' "$RUN" \
   && ok "stream-json parser handles stream_event + de-dupes final text" \
   || bad "parser missing stream_event handling"
 
+# --- v8.x: code-review structured verdict (--json-schema), BOTH routes ---------
+# Catches the two failure modes the adversarial review named: (P1) passing a PATH
+# to --json-schema (CLI rejects it -> feature silently dead), and (P2) one-route
+# divergence (a flag on bash but not TS passes every other gate since the CLI
+# matrix never invokes a model). Assert BOTH routes wire it, gated + content-not-path.
+QG="$REPO_ROOT/loki-ts/src/runner/quality_gates.ts"
+CRSCHEMA="$REPO_ROOT/loki-ts/data/code-review-schema.json"
+
+# bash route: gated on --json-schema support, passes CONTENT (schema_content), opt-out.
+grep -q 'loki_claude_flag_supported "--json-schema"' "$RUN" \
+  && grep -q -- '--json-schema "\$_cr_schema_content"' "$RUN" \
+  && grep -q 'LOKI_REVIEW_JSON_SCHEMA' "$RUN" \
+  && ok "run.sh reviewer adds gated --json-schema with CONTENT (not a path) + opt-out" \
+  || bad "run.sh reviewer missing gated --json-schema content-wiring"
+# bash route must NOT pass a bare schema PATH to --json-schema (the P1 bug).
+if grep -Eq -- '--json-schema "\$_cr_schema"( |$)' "$RUN"; then
+  bad "run.sh passes a PATH to --json-schema (CLI rejects it -> structured review dead)"
+else
+  ok "run.sh does not pass a bare schema PATH to --json-schema"
+fi
+
+# TS route: same adoption, gated on claudeFlagSupported, passes readFileSync content.
+grep -q 'claudeFlagSupported("--json-schema")' "$QG" \
+  && grep -q 'readFileSync(CODE_REVIEW_SCHEMA_PATH' "$QG" \
+  && grep -q 'LOKI_REVIEW_JSON_SCHEMA' "$QG" \
+  && ok "quality_gates.ts reviewer adds gated --json-schema with CONTENT + opt-out (parity)" \
+  || bad "quality_gates.ts reviewer missing gated --json-schema content-wiring (route divergence)"
+
+# schema file exists + is valid JSON + carries the PASS/FAIL + severity contract.
+if [ -f "$CRSCHEMA" ] && $PY -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['properties']['verdict']['enum']==['PASS','FAIL']; assert 'Critical' in d['properties']['findings']['items']['properties']['severity']['enum']" "$CRSCHEMA" 2>/dev/null; then
+  ok "code-review-schema.json valid + PASS/FAIL verdict + severity enum"
+else
+  bad "code-review-schema.json missing/invalid or wrong contract"
+fi
+
+# re-materializer exists + T1 (Critical/High forces FAIL) is present on both routes.
+REMAT="$REPO_ROOT/autonomy/lib/cr-rematerialize.py"
+if [ -f "$REMAT" ] && grep -q '_BLOCKING' "$REMAT" && grep -q 'verdict = "FAIL"' "$REMAT"; then
+  ok "cr-rematerialize.py present with T1 force-FAIL-on-blocking-severity"
+else
+  bad "cr-rematerialize.py missing or missing the T1 force-FAIL guard"
+fi
+grep -q 'hasBlocking) verdict = "FAIL"' "$QG" \
+  && ok "quality_gates.ts rematerializeCodeReview has the T1 force-FAIL guard (parity)" \
+  || bad "quality_gates.ts missing the T1 force-FAIL guard (route divergence on fake-green)"
+
+# --- v8.x: council-v2 structured verdict (--json-schema, content not path) -----
+C2="$REPO_ROOT/autonomy/council-v2.sh"
+C2SCHEMA="$REPO_ROOT/loki-ts/data/council-v2-schema.json"
+grep -q 'loki_claude_flag_supported "--json-schema"' "$C2" \
+  && grep -q -- '--json-schema "\$_c2_schema_content"' "$C2" \
+  && grep -q 'LOKI_REVIEW_JSON_SCHEMA' "$C2" \
+  && ok "council-v2.sh adds gated --json-schema with CONTENT (not a path) + opt-out" \
+  || bad "council-v2.sh missing gated --json-schema content-wiring"
+if grep -Eq -- '--json-schema "\$_c2_schema"( |$)' "$C2"; then
+  bad "council-v2.sh passes a PATH to --json-schema (CLI rejects it -> structured dead)"
+else
+  ok "council-v2.sh does not pass a bare schema PATH to --json-schema"
+fi
+if [ -f "$C2SCHEMA" ] && $PY -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['properties']['verdict']['enum']==['APPROVE','REJECT']" "$C2SCHEMA" 2>/dev/null; then
+  ok "council-v2-schema.json valid + APPROVE/REJECT verdict enum"
+else
+  bad "council-v2-schema.json missing/invalid or wrong contract"
+fi
+
+# --- v8.x: done-recognition structured verdict (--json-schema, content not path)
+DR="$REPO_ROOT/autonomy/lib/done-recognition.sh"
+DRSCHEMA="$REPO_ROOT/loki-ts/data/done-recognition-schema.json"
+grep -q 'loki_claude_flag_supported "--json-schema"' "$DR" \
+  && grep -q -- '--json-schema "\$_dr_schema_content"' "$DR" \
+  && grep -q 'LOKI_REVIEW_JSON_SCHEMA' "$DR" \
+  && ok "done-recognition.sh adds gated --json-schema with CONTENT (not a path) + opt-out" \
+  || bad "done-recognition.sh missing gated --json-schema content-wiring"
+if grep -Eq -- '--json-schema "\$_dr_schema"( |$)' "$DR"; then
+  bad "done-recognition.sh passes a PATH to --json-schema (CLI rejects it -> structured dead)"
+else
+  ok "done-recognition.sh does not pass a bare schema PATH to --json-schema"
+fi
+if [ -f "$DRSCHEMA" ] && $PY -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['properties']['verdict']['enum']==['done','incomplete','inconclusive']; assert 'requirements' in d['required']" "$DRSCHEMA" 2>/dev/null; then
+  ok "done-recognition-schema.json valid + verdict enum + requirements required"
+else
+  bad "done-recognition-schema.json missing/invalid or wrong contract"
+fi
+
 # --- syntax ------------------------------------------------------------------
 bash -n "$RUN" && ok "autonomy/run.sh passes bash -n" || bad "run.sh syntax error"
 bash -n "$CLAUDE_SH" && ok "providers/claude.sh passes bash -n" || bad "claude.sh syntax error"

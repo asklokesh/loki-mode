@@ -1,0 +1,35 @@
+{
+  "_comment": "v8.1 shared parity fixture for the one-switch SDK resolver. Ground truth generated from autonomy/lib/sdk-mode.sh (the bash resolver). Both tests/test-sdk-mode.sh (bash) and loki-ts/test/runner/sdk_mode.test.ts (TS) assert against this. Empty string means the var is UNSET (mode writes nothing). Keep in sync with the resolvers via: regenerate from bash, then run both suites.",
+  "modes": {
+    "off": {
+      "LOKI_SDK_DONE_RECOG": "",
+      "LOKI_SDK_COUNCIL_V2": "",
+      "LOKI_SDK_CODE_REVIEW": "",
+      "LOKI_SDK_COUNCIL_VOTE": "",
+      "LOKI_SDK_VOTER_AGENTS": "",
+      "LOKI_SDK_GRILL": "",
+      "LOKI_SDK_PRD_ENRICH": "",
+      "LOKI_SDK_LOOP": ""
+    },
+    "judges": {
+      "LOKI_SDK_DONE_RECOG": "1",
+      "LOKI_SDK_COUNCIL_V2": "1",
+      "LOKI_SDK_CODE_REVIEW": "1",
+      "LOKI_SDK_COUNCIL_VOTE": "1",
+      "LOKI_SDK_VOTER_AGENTS": "1",
+      "LOKI_SDK_GRILL": "1",
+      "LOKI_SDK_PRD_ENRICH": "1",
+      "LOKI_SDK_LOOP": "0"
+    },
+    "full": {
+      "LOKI_SDK_DONE_RECOG": "1",
+      "LOKI_SDK_COUNCIL_V2": "1",
+      "LOKI_SDK_CODE_REVIEW": "1",
+      "LOKI_SDK_COUNCIL_VOTE": "1",
+      "LOKI_SDK_VOTER_AGENTS": "1",
+      "LOKI_SDK_GRILL": "1",
+      "LOKI_SDK_PRD_ENRICH": "1",
+      "LOKI_SDK_LOOP": "1"
+    }
+  }
+}

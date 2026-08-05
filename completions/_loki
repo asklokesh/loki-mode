@@ -126,10 +126,12 @@ function _loki_commands {
         'monitor:Monitor Docker Compose services with auto-fix'
         'demo:Interactive 60-second demo'
         'tour:Offline sample receipt replay (no key, no spend)'
+        'welcome:Friendly first-run opener (what Loki is, next steps)'
         'init:Interactive PRD builder'
         'stop:Stop execution'
         'pause:Pause execution'
         'resume:Resume execution'
+        'steer:Steer a running build with a note (needs LOKI_PROMPT_INJECTION=1)'
         'status:Show status'
         'next:Run the right next step for the current build'
         'ship:Finish the build (gates + PR advice) in one command'
@@ -144,18 +146,27 @@ function _loki_commands {
         'notify:Notification commands'
         'import:Import GitHub issues'
         'issue:GitHub issue commands'
+        'github:GitHub integration commands'
         'config:Config commands'
         'provider:Provider commands'
         'reset:Reset session state'
         'memory:Memory commands'
         'compound:Knowledge compounding commands'
+        'checkpoint:Snapshot and restore session state'
+        'cp:Snapshot and restore session state (alias of checkpoint)'
         'council:Completion council commands'
         'dogfood:Self-development statistics'
         'projects:Project registry commands'
         'enterprise:Enterprise feature commands'
+        'secrets:Secrets and API key management'
+        'cockpit:Live cockpit view of a running build'
+        'secure:Secure-by-default gate (findings and waivers)'
+        'own:Finish-and-own ownership handoff'
         'telemetry:OpenTelemetry management'
         'agent:Agent type dispatch'
         'doctor:Check system prerequisites'
+        'watchdog:Watchdog process supervision'
+        'docs:Documentation commands'
         'onboard:Analyze repo and generate CLAUDE.md'
         'metrics:Session productivity report'
         'share:Share session report as GitHub Gist'
@@ -168,7 +179,8 @@ function _loki_commands {
         'web:Start the web dashboard'
         'plan:Preview the build plan for a spec'
         'report:Reporting commands (cost, kpis, share)'
-        'cost:Show cost of recent runs'
+        'cost:Show cost of recent runs (--detail for cache + trend)'
+        'estimate:Project run cost (requires --iterations N)'
         'kpis:Key performance indicators'
         'stats:Session statistics'
         'preview:Open the running app preview'
@@ -229,7 +241,7 @@ function _loki_commands {
 
 function _loki_start {
     _arguments \
-        '--provider[AI provider]:provider name:(claude codex cline aider)' \
+        '--provider[AI provider]:provider name:(claude cline codex aider opencode)' \
         '--parallel[Parallel mode]' \
         '--background[Background mode]' \
         '--bg[Background mode]' \

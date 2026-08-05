@@ -146,6 +146,40 @@ function resolveMembers(
     }
   }
 
+  // DISCOVERY DEFAULT -- parity with the bash route (project-graph.sh:366-380).
+  //
+  // A manifest may declare an app_id with NO `members` key at all; that is the
+  // common real-world shape. Bash treats an absent members[] as "discover every
+  // sibling whose own .loki/app.json declares the same app_id", and only honors
+  // an explicit members[] as an OVERRIDE when present.
+  //
+  // This route implemented only the explicit-list half, so `declared` being
+  // empty meant the loop above never ran and the graph came back EMPTY. Measured
+  // on tests/fixtures/project-graph (manifest {"schema_version":1,"app_id":
+  // "acme"}): bash resolved 3 members, bun resolved 0 -- so any project that
+  // omits members[] silently lost its whole graph on the bun route.
+  //
+  // The caller applies the same app_id filter to explicitly-declared members, so
+  // discovery reuses that predicate rather than inventing a second one.
+  if (declared.length === 0) {
+    for (const child of children) {
+      const full = join(rootDir, child);
+      if (seen.has(full)) continue;
+      let st;
+      try {
+        st = statSync(full);
+      } catch {
+        continue;
+      }
+      if (!st.isDirectory()) continue;
+      // Only dirs carrying their own manifest are candidates; the caller then
+      // drops any whose app_id differs from the graph's.
+      if (!existsSync(join(full, ".loki", "app.json"))) continue;
+      seen.add(full);
+      out.push(full);
+    }
+  }
+
   // The manifest is authoritative: if the originating dir is not declared
   // as a member, it is not in the graph. Caller can decide how to handle
   // that signal (e.g. warn, fall back to non-graph mode).

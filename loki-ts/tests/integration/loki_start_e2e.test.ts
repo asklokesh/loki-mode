@@ -26,7 +26,7 @@
 // LOKI_OVERRIDE_REAL_JUDGE=0 so any judge dispatch falls back to the stub
 // instead of spawning a provider CLI.
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import {
   existsSync,
   mkdirSync,
@@ -50,6 +50,14 @@ import type {
   RunnerOpts,
   SignalSource,
 } from "../../src/runner/types.ts";
+
+// E2E-shaped: drives the real loop, which writes state files and spawns
+// processes. Bun's 5000ms default is fine idle and NOT fine inside a full CI
+// run, where the box is saturated -- tests then fail at exactly ~5000ms and
+// WHICH ones fail changes between runs. That is a timeout signature, not a
+// defect, and it reads as a regression. 30s is far beyond the honest worst
+// case while still catching a genuine hang.
+setDefaultTimeout(30_000);
 
 // ---------------------------------------------------------------------------
 // Test doubles -- mirror the patterns in autonomous.test.ts and
@@ -517,8 +525,14 @@ describe("loki start <prd> e2e (runAutonomous + stub provider)", () => {
     // Persistent failure -> max_retries_exceeded -> exit 1.
     expect(code).toBe(1);
     expect(provider.calls.length).toBe(2);
-    // FakeClock means real time elapsed is just JS overhead; should be << 2s.
-    expect(elapsedMs).toBeLessThan(2000);
+    // FakeClock means no real sleeping happens, so what is left is JS overhead.
+    // The point of this assertion is "the loop does not HANG" -- it must not sit
+    // on a real backoff -- not "the machine is fast". A 2s bound was measuring
+    // the latter: under a saturated CI run this took 3222ms of pure overhead and
+    // failed, which reads as a hang regression when nothing hung. 15s is still
+    // two orders of magnitude below the real backoff this would take if FakeClock
+    // were not in play, so a genuine hang is still caught.
+    expect(elapsedMs).toBeLessThan(15_000);
 
     // Terminal state reflects the failure path.
     const statePath = resolve(lokiDir, "autonomy-state.json");
@@ -526,6 +540,12 @@ describe("loki start <prd> e2e (runAutonomous + stub provider)", () => {
     const state = JSON.parse(readFileSync(statePath, "utf8")) as {
       status: string;
     };
-    expect(state.status).toBe("failed");
+    // "max_retries_exceeded", not "failed". This path exhausts its retries
+    // against an always-failing provider, which is a distinct terminal from a
+    // quality-gate failure; it used to persist "failed" and was therefore
+    // indistinguishable in state from one. Both map to exit 20, so the exit
+    // code was right by luck, but every downstream reader of the status -- the
+    // receipt, `loki why`, the dashboard -- was told the wrong thing.
+    expect(state.status).toBe("max_retries_exceeded");
   });
 });

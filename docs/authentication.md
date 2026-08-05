@@ -154,7 +154,18 @@ export LOKI_OIDC_CLIENT_ID=your-client-id
 | `LOKI_OIDC_ISSUER` | - | OIDC issuer URL (required) |
 | `LOKI_OIDC_CLIENT_ID` | - | OIDC client/application ID (required) |
 | `LOKI_OIDC_AUDIENCE` | *(client_id)* | Expected JWT audience claim |
-| `LOKI_OIDC_SCOPES` | `openid,email,profile` | OIDC scopes to request |
+| `LOKI_OIDC_ROLES_CLAIM` | - | Claim to read roles from; supports a dotted path |
+| `LOKI_OIDC_DEFAULT_ROLE` | `viewer` | Role applied when no recognized role claim is present |
+| `LOKI_OIDC_SKIP_SIGNATURE_VERIFY` | `false` | Allow the claims-only path without PyJWT. **Insecure**; see the warning below. |
+
+Scopes are requested by your identity provider configuration, not by Loki:
+there is no `LOKI_OIDC_SCOPES` variable (an earlier version of this page listed
+one). All of the above are read in `dashboard/auth.py`.
+
+**Install PyJWT and cryptography for any production deployment.** Without them
+JWT signatures are not cryptographically verified, and the claims-only path is
+refused unless you explicitly set `LOKI_OIDC_SKIP_SIGNATURE_VERIFY=true`.
+Running with signature verification off provides no authentication security.
 
 ### OIDC Flow
 
@@ -256,7 +267,7 @@ GET /auth/logout
 ### General
 
 1. Enable `LOKI_ENTERPRISE_AUTH` in production
-2. Enable `LOKI_TLS_ENABLED` for encrypted connections
+2. Set both `LOKI_TLS_CERT` and `LOKI_TLS_KEY` for encrypted connections (HTTPS turns on when both are present; there is no `LOKI_TLS_ENABLED` switch)
 3. Use audit logging to track authentication events
 4. Monitor failed authentication attempts
 5. Implement rate limiting on auth endpoints

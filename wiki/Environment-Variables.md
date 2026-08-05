@@ -148,6 +148,8 @@ export LOKI_PHASE_E2E_TESTS=false
 | `LOKI_MAX_ITERATIONS` | `1000` | Maximum loop iterations |
 | `LOKI_PERPETUAL_MODE` | `false` | Ignore ALL completion signals |
 | `LOKI_HELDOUT_GATE` | `1` | Held-out spec evals (v7.28.0). When checklist items have been reserved as held-out, the completion council blocks completion if a held-out item is failing. Set to `0` to opt out (the gate never blocks). The gate is inert anyway when no held-out items were reserved (checklists with fewer than 4 items reserve nothing). See [[Quality Gates]]. |
+| `LOKI_SMART_RETRY` | `1` (on) | Smart retry (v8.0.0). A positively-identified permanent failure (invalid credentials, unknown model, malformed request, exhausted quota/billing) exits the loop immediately instead of burning the retry budget on guaranteed-identical failures. Fail-safe by construction: an UNRECOGNIZED failure classifies as transient and retries exactly as before, so a misclassification costs one retry rather than abandoning a recoverable build. Rate limits are explicitly excluded from the permanent set and always retry. Set `0` to retry every failure regardless. |
+| `LOKI_GOAL_SCORING` | `1` (on) | Goal-measurability advisory (v8.0.0). A `COMPLETION_PROMISE` with no measurable target (no number with a unit, comparison threshold, named metric, or verifiable artifact) gets a prompt advisory asking for a checkable success condition, because a goal the loop cannot measure gives it no gradient to climb. Advisory ONLY: it never blocks a build, never fails a gate, and never rewrites the goal. Suppressed when the goal is absent and in perpetual mode, where open-endedness is the chosen configuration. Set `0` to opt out. |
 
 **Example - Custom completion promise:**
 ```bash
@@ -167,6 +169,9 @@ export LOKI_COMPLETION_PROMISE="ALL TESTS PASSING 100%"
 | `LOKI_COUNCIL_MIN_ITERATIONS` | `3` | Minimum iterations before council runs |
 | `LOKI_COUNCIL_CONVERGENCE_WINDOW` | `3` | Iterations to track for convergence |
 | `LOKI_COUNCIL_STAGNATION_LIMIT` | `5` | Max iterations with no git changes |
+| `LOKI_CONFIDENCE_SPIKE` | `1` (on) | Confidence-spike re-check (v8.0.0). When the agent's self-reported confidence jumps to near-certainty, the done-signal force-stop is delayed by ONE iteration so the claim is verified rather than trusted. Strictly additive: it can only add a verification pass, never skip, shorten, or satisfy a gate, and it never delays the stagnation valve. The delay is one-shot, so a repeatedly-spiking run cannot postpone the valve indefinitely. Set `0` to opt out. |
+| `LOKI_CONFIDENCE_SPIKE_DELTA` | `40` | Confidence jump (in points) that counts as a spike (v8.0.0) |
+| `LOKI_CONFIDENCE_SPIKE_MIN` | `90` | Absolute confidence level that counts as a spike on first arrival, so an agent that opens at 100 (and therefore never "jumps") still triggers a re-check (v8.0.0) |
 
 **Example - Disable council:**
 ```bash

@@ -671,9 +671,47 @@ cleanup_worktrees() {
 #===============================================================================
 # Docker Desktop Sandbox (microVM-based isolation via Docker Desktop 4.58+)
 #===============================================================================
+#
+# v8.1 DEPRECATION SPLIT (binary-hosting is legacy; isolation is NOT):
+# This path creates a microVM from Docker Desktop's "claude" sandbox TEMPLATE,
+# which bakes the `claude` CLI binary into the VM so the agent can run inside it.
+# With v8's SDK route, the judge/text sites (and, under LOKI_SDK_MODE, the whole
+# engine) run pure-HTTPS with only ANTHROPIC_API_KEY -- NO in-VM `claude` binary
+# is needed. So the *binary-hosting* purpose of this template is obsolete.
+#
+# What is NOT obsolete, and matters MORE with an in-process SDK: isolating
+# untrusted CODE EXECUTION (npm install / build / test / the generated app).
+# In-process SDK judging runs at HOST privilege, so wrapping the code-exec in a
+# container/VM is still the right posture. The forward path is the existing
+# `start_sandbox` container/worktree isolation (the automatic fallback at the
+# `docker sandbox create` failure below); a future release ships a lightweight
+# `bun + SDK` sandbox image with no bundled agent binary.
+#
+# This release: annotation + a one-shot deprecation notice on selection only. No
+# behavior change, no removal. See tests/test-sandbox-deprecation.sh.
 
 # Desktop sandbox name follows same pattern as container name
 DESKTOP_SANDBOX_NAME="$CONTAINER_NAME"
+
+# Emit a one-shot deprecation notice for the microVM binary-hosting path. Names
+# the binary-hosting only and states explicitly that ISOLATION is retained (so it
+# is never misread as "the sandbox is going away"). Best-effort + non-blocking:
+# telemetry must never abort a sandbox start. Mirrors the cli_command_deprecated
+# pattern (event type/source/action + a human log line). Opt out with
+# LOKI_SANDBOX_DEPRECATION_QUIET=1.
+_desktop_deprecation_notice() {
+    [ "${LOKI_SANDBOX_DEPRECATION_QUIET:-0}" = "1" ] && return 0
+    log_warn "DEPRECATED: the Docker Desktop microVM 'claude' template hosts the"
+    log_warn "  claude BINARY in-VM, which the v8 SDK route no longer needs."
+    log_warn "  Code-execution ISOLATION is RETAINED via the container/worktree"
+    log_warn "  sandbox (unchanged); only the binary-hosting template is legacy."
+    # Best-effort telemetry (never abort the start on a telemetry miss).
+    if [ -f "$SKILL_DIR/events/emit.sh" ]; then
+        bash "$SKILL_DIR/events/emit.sh" sandbox cli sandbox_microvm_binary_deprecated \
+            isolation_retained=true path=docker-desktop >/dev/null 2>&1 || true
+    fi
+    return 0
+}
 
 # Install provider CLI inside sandbox if not pre-installed
 _desktop_install_provider_cli() {
@@ -769,6 +807,10 @@ start_docker_desktop_sandbox() {
 
     validate_project_dir || return 1
     warn_missing_api_keys "$provider"
+
+    # v8.1: one-shot deprecation notice for the microVM binary-hosting path
+    # (isolation is retained; only the bundled-binary template is legacy).
+    _desktop_deprecation_notice
 
     # Check if sandbox already exists
     local sandbox_exists=false

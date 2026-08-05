@@ -1,0 +1,38 @@
+{
+  "recorded": "2026-08-03",
+  "schema_version": "1.0",
+  "tasks": {
+    "hard-1-order-api": {
+      "adversarial": {
+        "artifact_sha256": "486a62137c64167a0b567e7f8ebc048cd3bad1218f13be960f494928b7ea806b",
+        "expected_exit": 1
+      },
+      "positive": {
+        "artifact_sha256": "884d555b6e53833d5e18de010073b044f092e6b0ee5c358fc7628400cf2dd7df",
+        "expected_exit": 0
+      }
+    },
+    "hard-2-ledger": {
+      "adversarial": {
+        "artifact_sha256": "bc9f0efd8c2158574c7568765385f3381e0487988847890ab963a232209c16f1",
+        "expected_exit": 1
+      },
+      "positive": {
+        "artifact_sha256": "f47a3f5706a3f220bc5d8c23b7cbb2fa3c353c3e9b01e354255aeff38476025d",
+        "expected_exit": 0
+      }
+    },
+    "multifail-1-two-modules": {
+      "adversarial": {
+        "artifact_sha256": "f4daff9d346c6116e4bc53b8995feeb172557c6483f1c085305330260c9ad1b2",
+        "expected_exit": 1
+      },
+      "positive": {
+        "artifact_sha256": "a7134c9c1ae36ae98e13eccc906d6b3ddff627007edf36ad3d73dfbfcba90c2d",
+        "expected_exit": 0
+      }
+    }
+  },
+  "what": "Attested artifact hashes for the private oracle probes.",
+  "why": "The artifacts are answer keys and must never be committed. Their HASHES are safe to commit and are what makes the claim checkable: private_probe compares what it finds against these, so an artifact that silently changes is detected instead of quietly re-blessed."
+}

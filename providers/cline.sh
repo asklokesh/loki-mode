@@ -59,12 +59,18 @@ _cline_default_from_catalog() {
     if [ -f "${script_dir}/models.sh" ]; then
         # shellcheck source=./models.sh
         source "${script_dir}/models.sh"
-        loki_latest_model cline development 2>/dev/null || echo "claude-opus-4-8"
+        loki_latest_model cline development 2>/dev/null || echo "openrouter/deepseek/deepseek-v3.2"
     else
-        echo "claude-opus-4-8"
+        echo "openrouter/deepseek/deepseek-v3.2"
     fi
 }
-CLINE_DEFAULT_MODEL="${LOKI_CLINE_MODEL:-${LOKI_MODEL_DEVELOPMENT:-$(_cline_default_from_catalog)}}"
+# Resolution: provider-scoped env > catalog. The GLOBAL tier var
+# (LOKI_MODEL_DEVELOPMENT) is deliberately NOT in this chain: cline takes
+# full routed model strings ("openrouter/deepseek/deepseek-v3.2"), while the
+# global tier var carries Claude CLI aliases ("sonnet"), so a global set for
+# one provider silently changed cline's model too. Namespace-incompatible,
+# not merely mis-ordered. Do not re-add it.
+CLINE_DEFAULT_MODEL="${LOKI_CLINE_MODEL:-$(_cline_default_from_catalog)}"
 PROVIDER_MODEL_PLANNING="$CLINE_DEFAULT_MODEL"
 PROVIDER_MODEL_DEVELOPMENT="$CLINE_DEFAULT_MODEL"
 PROVIDER_MODEL_FAST="$CLINE_DEFAULT_MODEL"
@@ -130,6 +136,23 @@ provider_get_tier_param() {
 resolve_model_for_tier() {
     local tier="$1"
     echo "$CLINE_DEFAULT_MODEL"
+}
+
+# provider_invoke_argv <tier> <prompt> -- see providers/claude.sh for the full
+# rationale. Populates _LOKI_INVOKE_ARGV so a caller can wrap it in `timeout`,
+# which cannot exec a shell function.
+#
+# Unlike Codex, provider_get_tier_param here returns a real MODEL NAME, so it is
+# safe to pass to -m. An empty value omits the flag rather than sending `-m ""`,
+# matching provider_invoke's existing model_args guard.
+provider_invoke_argv() {
+    local tier="${1:-development}"
+    local prompt="${2:-}"
+    local model
+    model="$(provider_get_tier_param "$tier" 2>/dev/null || printf '%s' "")"
+    _LOKI_INVOKE_ARGV=(cline -y)
+    [ -n "$model" ] && _LOKI_INVOKE_ARGV+=(-m "$model")
+    _LOKI_INVOKE_ARGV+=("$prompt")
 }
 
 # Tier-aware invocation

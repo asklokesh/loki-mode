@@ -164,6 +164,225 @@ test_validate_bash_blocks_forkbomb() {
     fi
 }
 
+run_host_guard_case() {
+    local command_text="$1"
+    local event output rc decision
+    event=$(COMMAND_TEXT="$command_text" EVENT_CWD="$TEST_DIR" python3 -c '
+import json, os
+print(json.dumps({
+    "tool_input": {"command": os.environ["COMMAND_TEXT"]},
+    "cwd": os.environ["EVENT_CWD"],
+}))
+')
+    output=$(printf '%s' "$event" | LOKI_HOST_GUARD=1 LOKI_TARGET_DIR="$TEST_DIR" \
+        "$PROJECT_ROOT/autonomy/hooks/validate-bash.sh" 2>/dev/null)
+    rc=$?
+    decision=$(printf '%s' "$output" | python3 -c '
+import json, sys
+print(json.load(sys.stdin).get("hookSpecificOutput", {}).get("permissionDecision", ""))
+' 2>/dev/null || true)
+    printf '%s:%s' "$rc" "$decision"
+}
+
+run_simple_web_guard_case() {
+    local command_text="$1"
+    local event output rc decision
+    event=$(COMMAND_TEXT="$command_text" EVENT_CWD="$TEST_DIR" python3 -c '
+import json, os
+print(json.dumps({
+    "tool_input": {"command": os.environ["COMMAND_TEXT"]},
+    "cwd": os.environ["EVENT_CWD"],
+}))
+')
+    output=$(printf '%s' "$event" | LOKI_HOST_GUARD=1 LOKI_TARGET_DIR="$TEST_DIR" \
+        LOKI_SUPERVISED_BUILD=1 LOKI_BUILD_PROFILE=simple-web \
+        "$PROJECT_ROOT/autonomy/hooks/validate-bash.sh" 2>/dev/null)
+    rc=$?
+    decision=$(printf '%s' "$output" | python3 -c '
+import json, sys
+print(json.load(sys.stdin).get("hookSpecificOutput", {}).get("permissionDecision", ""))
+' 2>/dev/null || true)
+    printf '%s:%s' "$rc" "$decision"
+}
+
+# Test 11: hosted guard blocks container and host process control
+test_host_guard_blocks_host_control() {
+    log_test "host guard blocks Docker and host process control"
+    local command_text result
+    local commands=(
+        "docker stop autonomi-postgres-1"
+        "docker compose -p autonomi down"
+        "docker compose down --project-name autonomi"
+        "/usr/local/bin/docker stop autonomi-postgres-1"
+        "env DOCKER_HOST=unix:///var/run/docker.sock docker ps"
+        "env -u DOCKER_HOST docker ps"
+        "time -f elapsed docker ps"
+        "sudo -u root docker stop autonomi-postgres-1"
+        "kill -9 12345"
+        "/bin/kill -9 12345"
+        "pkill -f autonomi"
+        "lsof -ti:5432 | xargs kill -9"
+        "bash -lc 'docker stop autonomi-postgres-1'"
+    )
+    for command_text in "${commands[@]}"; do
+        result=$(run_host_guard_case "$command_text")
+        if [ "$result" != "2:deny" ]; then
+            fail "Host guard missed: $command_text (got $result)"
+            return
+        fi
+    done
+    pass "Host guard blocks direct, wrapped, absolute-path, and nested host control commands"
+}
+
+# Test 12: hosted guard blocks explicit host listeners
+test_host_guard_blocks_port_claims() {
+    log_test "host guard blocks explicit host port claims"
+    local command_text result
+    local commands=(
+        "PORT=5432 npm run dev"
+        "npm run dev -- --port 8787"
+        "python3 -m http.server 5180"
+        "nc -l 6379"
+        "socat TCP-LISTEN:9000,fork STDOUT"
+    )
+    for command_text in "${commands[@]}"; do
+        result=$(run_host_guard_case "$command_text")
+        if [ "$result" != "2:deny" ]; then
+            fail "Host guard missed port claim: $command_text (got $result)"
+            return
+        fi
+    done
+    pass "Host guard blocks explicit listeners and fixed port claims"
+}
+
+# Test 13: ordinary workspace commands and tests remain usable
+test_host_guard_allows_workspace_commands() {
+    log_test "host guard allows workspace-local commands"
+    local command_text result
+    local commands=(
+        "npm test"
+        "npm run build"
+        "git status --short"
+        "rg docker ."
+        "node --test"
+        "PORT=0 npm test"
+    )
+    for command_text in "${commands[@]}"; do
+        result=$(run_host_guard_case "$command_text")
+        if [ "$result" != "0:allow" ]; then
+            fail "Host guard blocked safe command: $command_text (got $result)"
+            return
+        fi
+    done
+    pass "Host guard allows workspace-local build, test, and inspection commands"
+}
+
+# Test 14: malformed hook input and cwd escape fail closed
+test_host_guard_fails_closed() {
+    log_test "host guard fails closed on malformed input and cwd escape"
+    local output rc decision event
+    output=$(printf '{' | LOKI_HOST_GUARD=1 LOKI_TARGET_DIR="$TEST_DIR" \
+        "$PROJECT_ROOT/autonomy/hooks/validate-bash.sh" 2>/dev/null)
+    rc=$?
+    decision=$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["permissionDecision"])' 2>/dev/null || true)
+    if [ "$rc:$decision" != "2:deny" ]; then
+        fail "Malformed host guard input did not fail closed (got $rc:$decision)"
+        return
+    fi
+
+    event='{"tool_input":{"command":"npm test"},"cwd":"/"}'
+    output=$(printf '%s' "$event" | LOKI_HOST_GUARD=1 LOKI_TARGET_DIR="$TEST_DIR" \
+        "$PROJECT_ROOT/autonomy/hooks/validate-bash.sh" 2>/dev/null)
+    rc=$?
+    decision=$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["permissionDecision"])' 2>/dev/null || true)
+    if [ "$rc:$decision" != "2:deny" ]; then
+        fail "Outside-workspace cwd did not fail closed (got $rc:$decision)"
+        return
+    fi
+    pass "Host guard denies malformed input and outside-workspace cwd"
+}
+
+# Test 15: local non-hosted behavior remains unchanged
+test_host_guard_is_hosted_only() {
+    log_test "Docker guard is inactive outside hosted mode"
+    local event output
+    event='{"tool_input":{"command":"docker version"},"cwd":"'"$TEST_DIR"'"}'
+    output=$(printf '%s' "$event" | "$PROJECT_ROOT/autonomy/hooks/validate-bash.sh" 2>/dev/null)
+    if printf '%s' "$output" | grep -q '"permissionDecision": "allow"'; then
+        pass "Non-hosted hook does not block ordinary local Docker workflows"
+    else
+        fail "Non-hosted hook unexpectedly blocked Docker"
+    fi
+}
+
+# Test 16: the live autonomous route injects the trusted settings payload
+test_host_guard_run_wiring() {
+    log_test "run.sh wires host guard into Claude settings"
+    # shellcheck disable=SC2016
+    if grep -q '_loki_prepare_host_guard' "$PROJECT_ROOT/autonomy/run.sh" \
+       && grep -Fq '_loki_claude_argv+=("--settings" "$LOKI_HOST_GUARD_SETTINGS_JSON")' "$PROJECT_ROOT/autonomy/run.sh" \
+       && grep -q 'LOKI_AUTO_GIT_INIT=0 _loki_workspace_is_engine_owned' "$PROJECT_ROOT/autonomy/run.sh"; then
+        pass "Engine-owned Claude builds inject the trusted PreToolUse settings"
+    else
+        fail "run.sh host guard wiring is incomplete"
+    fi
+}
+
+# Test 17: hosted mode rejects providers without an enforceable command hook
+test_host_guard_rejects_unhooked_provider() {
+    log_test "host guard rejects providers without PreToolUse hooks"
+    if (
+        export LOKI_HOST_GUARD=0
+        export TARGET_DIR="$TEST_DIR"
+        export LOKI_TARGET_DIR="$TEST_DIR"
+        LOKI_WORKSPACE_ROOTS="$(dirname "$TEST_DIR")"
+        export LOKI_WORKSPACE_ROOTS
+        # shellcheck disable=SC1091
+        source "$PROJECT_ROOT/autonomy/run.sh"
+        export PROVIDER_NAME=codex
+        _loki_prepare_host_guard >/dev/null 2>&1
+    ); then
+        fail "Hosted mode allowed a provider without an enforceable command hook"
+    else
+        pass "Hosted mode fails closed for providers without PreToolUse hooks"
+    fi
+}
+
+# Test 18: supervised simple-web blocks commands that caused the incident
+test_simple_web_guard_bounds_model_commands() {
+    log_test "simple-web guard blocks installs, watchers, dev servers, and Git loops"
+    local command_text result
+    local blocked=(
+        "npm install @testing-library/react"
+        "pnpm add vitest"
+        "npm run dev"
+        "npx jest --watch"
+        "git status --short"
+    )
+    for command_text in "${blocked[@]}"; do
+        result=$(run_simple_web_guard_case "$command_text")
+        if [ "$result" != "2:deny" ]; then
+            fail "Simple-web guard missed: $command_text (got $result)"
+            return
+        fi
+    done
+
+    printf '%s\n' '{"scripts":{"test":"jest --watch","test:ci":"jest --ci"}}' > "$TEST_DIR/package.json"
+    result=$(run_simple_web_guard_case "npm test -- --passWithNoTests")
+    if [ "$result" != "2:deny" ]; then
+        fail "Simple-web guard allowed a package-script watcher (got $result)"
+        return
+    fi
+    for command_text in "npm run test:ci" "npm run build" "npx vitest run" "node --test"; do
+        result=$(run_simple_web_guard_case "$command_text")
+        if [ "$result" != "0:allow" ]; then
+            fail "Simple-web guard blocked one-shot command: $command_text (got $result)"
+            return
+        fi
+    done
+    pass "Simple-web guard enforces the bounded model command contract"
+}
+
 # Run tests
 setup
 test_session_init_exists
@@ -176,6 +395,14 @@ test_track_metrics
 test_settings_json
 test_settings_hook_events
 test_validate_bash_blocks_forkbomb
+test_host_guard_blocks_host_control
+test_host_guard_blocks_port_claims
+test_host_guard_allows_workspace_commands
+test_host_guard_fails_closed
+test_host_guard_is_hosted_only
+test_host_guard_run_wiring
+test_host_guard_rejects_unhooked_provider
+test_simple_web_guard_bounds_model_commands
 
 # Summary
 echo ""

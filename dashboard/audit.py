@@ -22,6 +22,15 @@ import os
 import socket
 import sys
 import threading
+
+# POSIX-only. Used to serialize the tamper-evident chain append ACROSS PROCESSES
+# (threading.Lock cannot). Imported defensively so this module still loads on a
+# platform without it; the writer degrades to thread-only serialization rather
+# than refusing to record an audit entry.
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX
+    fcntl = None  # type: ignore[assignment]
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -57,6 +66,40 @@ _last_hash: str = "0" * 64  # Genesis hash
 # Holding this lock makes "compute hash, update _last_hash, append the line" a
 # single atomic step so on-disk line order always matches chain order.
 _hash_lock = threading.Lock()
+
+
+def _tail_chain_hash(fh) -> "str | None":
+    """Return the _integrity_hash of the LAST well-formed line in an open log.
+
+    Called while holding the exclusive flock, so what it reads is the true chain
+    tip on disk rather than whatever this process last remembered. That is the
+    whole point: a second writer process must chain from the first writer's
+    entry, not from its own frozen import-time tip.
+
+    Returns None when there is nothing to chain from -- an empty file, or a tail
+    this function cannot parse. None means "no opinion", and the caller keeps its
+    existing _last_hash. It deliberately does NOT return a genesis or an empty
+    string on a parse failure: inventing a tip is how a chain silently re-roots,
+    which reads downstream as tampering. Scanning backwards means a torn final
+    line (a process killed mid-append) is skipped rather than treated as the tip.
+    """
+    try:
+        fh.seek(0)
+        lines = fh.read().splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+    for raw in reversed(lines):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            h = json.loads(raw).get("_integrity_hash")
+        except (ValueError, AttributeError):
+            continue  # torn or foreign line; keep looking back
+        if isinstance(h, str) and h:
+            return h
+    return None
 
 
 def _recover_last_hash() -> str:
@@ -281,16 +324,62 @@ def log_event(
     # change and is intentionally not done here.
     global _last_hash
     with _hash_lock:
-        if INTEGRITY_ENABLED:
-            entry_json = json.dumps(entry, sort_keys=True, default=str)
-            entry["_integrity_hash"] = _compute_chain_hash(entry_json, _last_hash)
-            _last_hash = entry["_integrity_hash"]
-
         log_file = _get_current_log_file()
         _rotate_logs_if_needed(log_file)
 
-        with open(log_file, "a") as f:
-            f.write(json.dumps(entry) + "\n")
+        if not INTEGRITY_ENABLED:
+            with open(log_file, "a") as f:
+                f.write(json.dumps(entry) + "\n")
+            _forward_to_syslog(entry)
+            return entry
+
+        # CROSS-PROCESS serialization. _hash_lock is a threading.Lock, which has
+        # no meaning across processes, and _last_hash is resolved ONCE at import
+        # (see the _recover_last_hash call near the top of this module). Together
+        # those meant every concurrently-live writer PROCESS chained from its own
+        # frozen tip, silently forking the chain at write time with no tampering
+        # involved. Measured on a real machine: 25 of 67 audit files internally
+        # chain-broken, ~10k entries, spanning months and still occurring.
+        #
+        # That is not a cosmetic bug. This chain is the tamper-evidence: a
+        # verifier cannot distinguish "two writers raced" from "someone edited
+        # the log", so a self-inflicted fork burns the very signal the chain
+        # exists to provide. It fails LOUD rather than silent, which is the safe
+        # direction, but it destroys the guarantee either way.
+        #
+        # Fix: take an exclusive flock on the log file and re-derive the true
+        # tail INSIDE it, so the tip we chain from is whatever actually landed on
+        # disk, not what this process remembered. Best effort by design -- a
+        # platform without flock, or a filesystem that refuses it, degrades to
+        # the previous behavior rather than dropping the audit record. Losing an
+        # audit entry is worse than a fork.
+        with open(log_file, "a+") as f:
+            locked = False
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                locked = True
+            except (OSError, AttributeError, NameError):
+                pass  # no flock here; fall through unserialized
+
+            try:
+                if locked:
+                    tail = _tail_chain_hash(f)
+                    if tail is not None:
+                        _last_hash = tail
+
+                entry_json = json.dumps(entry, sort_keys=True, default=str)
+                entry["_integrity_hash"] = _compute_chain_hash(entry_json, _last_hash)
+                _last_hash = entry["_integrity_hash"]
+
+                f.seek(0, os.SEEK_END)
+                f.write(json.dumps(entry) + "\n")
+                f.flush()
+            finally:
+                if locked:
+                    try:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                    except OSError:
+                        pass
 
     # Forward to syslog if configured (outside the lock: fire-and-forget and
     # must never extend the critical section / block other writers).

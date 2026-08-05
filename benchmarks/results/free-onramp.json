@@ -1,0 +1,19 @@
+{
+  "generated": "2026-07-30T22:42:56Z",
+  "claim": "A build completes end to end on a FREE on-ramp, through the Loki provider layer, with zero API spend.",
+  "not_claimed": "Not a quality or speed comparison against a flagship model, and not a multi-iteration build. One task, one invocation, verified by the artifact it produced.",
+  "run": {
+    "provider": "codex",
+    "cli_version": "codex-cli 0.146.0",
+    "auth": "ChatGPT (free tier, no API key)",
+    "invoked_via": "providers/codex.sh provider_invoke (not a direct CLI call)",
+    "flags": "exec --sandbox workspace-write --skip-git-repo-check",
+    "task": "Create a file named hello.txt containing exactly: hi",
+    "wall_clock_s": 72,
+    "tokens_reported": 55889,
+    "api_cost_usd": 0.0,
+    "artifact_verified": "hello.txt present with the exact expected content",
+    "outcome": "success"
+  },
+  "why_it_matters": "Codex is the only free on-ramp left since Gemini's free tier ended 2026-06-18. A tier label is not evidence; a completed build is. This is the model-agnostic claim made concrete."
+}

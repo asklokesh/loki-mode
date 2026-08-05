@@ -29,6 +29,7 @@ import { run as shellRun } from "../util/shell.ts";
 import { maybeGenerateProof } from "./proof.ts";
 import { cavemanCaptureUserMode } from "../providers/claude_flags.ts";
 import { resolvePrdForRun } from "./prd_reuse.ts";
+import { classifyFailure, shouldStopRetrying } from "./retry_class.ts";
 
 // ---------------------------------------------------------------------------
 // Graceful dynamic imports.
@@ -49,7 +50,12 @@ type StateMod = {
 };
 
 type PromptMod = {
-  buildPrompt(ctx: RunnerContext): Promise<string>;
+  // buildPromptForRunner is the RunnerContext-shaped entry point: it adapts the
+  // loop context into BuildPromptOpts (setting ctx.env = process.env, which the
+  // raw buildPrompt(opts) requires). Calling the raw buildPrompt with a
+  // RunnerContext instead threw `ctx.env is undefined` and silently fell back to
+  // a stub prompt on EVERY iteration -- the Bun start route was never functional.
+  buildPromptForRunner(ctx: RunnerContext): Promise<string>;
 };
 
 type CouncilMod = {
@@ -95,6 +101,135 @@ type GatesMod = {
   runQualityGates(ctx: RunnerContext): Promise<GateOutcomeShape>;
 };
 
+// Truthy per the bash `[ "$X" = "true" ] || [ "$X" = "1" ]` convention used by
+// the _BLOCK completion toggles. Exported for the unit test.
+export function envBlockFlagOn(v: string | undefined): boolean {
+  if (v === undefined || v === "") return false;
+  return v === "true" || v === "1";
+}
+
+// PURE decision: on a successful iteration (exitCode 0, non-perpetual), should
+// completion be REFUSED this iteration (continue) before the council vote runs?
+// Returns a short reason string when completion must be refused, or null to
+// proceed to the council vote. Centralizes every fail-closed refusal arm so the
+// trust-critical logic is unit-testable without driving the whole loop.
+//
+// Bash parity: gatesThrew mirrors run.sh:18702-18708 (unverifiable gates ->
+// refuse, fail-closed); code_review mirrors run.sh:16868-16930; semantic_tests /
+// invariants mirror the opt-in _BLOCK arms at run.sh:17482/17499. A clean run is
+// never over-blocked: every gate arm requires blocked AND the gate in failed[]
+// (and, for the opt-in gates, its _BLOCK toggle on).
+export function completionRefusalReason(
+  gatesThrew: boolean,
+  gateOutcome: { blocked: boolean; failed: string[]; cleared?: string[] },
+  env: Record<string, string | undefined>,
+): string | null {
+  if (gatesThrew) {
+    return "quality-gate battery crashed -- refusing completion this iteration (fail-closed)";
+  }
+  // code_review is the always-on completion-refusing gate. Repeated failures
+  // remain in failed[] and can never be converted into a passing outcome.
+  //
+  // `cleared` is read defensively; no producer emits it today. Bash
+  // gate_failure_disposition returns pause|escalate|block and never removes a
+  // gate from the failed list (run.sh:1272-1274, "A blocking gate is never
+  // cleared into a pass merely because it repeated"), and the TS ladder mirrors
+  // that (quality_gates.ts:126-128). But a blocked outcome reporting code_review
+  // as *cleared* rather than *failed* is precisely the CLEAR_LIMIT loophole this
+  // arm exists to close, so refuse on it too rather than trust a future producer
+  // to preserve the invariant.
+  //   ponytail: only the always-on code_review arm reads cleared; the opt-in
+  //   _BLOCK gates below mirror bash, which has no cleared concept at all.
+  if (
+    gateOutcome.blocked &&
+    (gateOutcome.failed.includes("code_review") ||
+      (gateOutcome.cleared ?? []).includes("code_review"))
+  ) {
+    return "code_review BLOCK -- refusing completion this iteration";
+  }
+  if (
+    gateOutcome.blocked &&
+    gateOutcome.failed.includes("semantic_tests") &&
+    envBlockFlagOn(env["LOKI_GATE_SEMANTIC_TESTS_BLOCK"])
+  ) {
+    return "semantic_tests BLOCK (LOKI_GATE_SEMANTIC_TESTS_BLOCK) -- refusing completion this iteration";
+  }
+  if (
+    gateOutcome.blocked &&
+    gateOutcome.failed.includes("invariants") &&
+    envBlockFlagOn(env["LOKI_GATE_INVARIANTS_BLOCK"])
+  ) {
+    return "invariants BLOCK (LOKI_GATE_INVARIANTS_BLOCK) -- refusing completion this iteration";
+  }
+  // test_coverage opt-in completion refusal. By DEFAULT (parity with bash)
+  // test_coverage is ADVISORY at completion: a failing suite lands in failed[]
+  // and is surfaced/counted, but the completion-council evidence gate
+  // (council_evidence_gate, which reads queue/failed.json) is the backstop that
+  // refuses "done" on a red suite -- it is NOT refused here. That backstop can be
+  // bypassed only by a heuristic council with no evidence gate, so we add an
+  // OPT-IN hard block (default OFF, same shape as semantic_tests/invariants) for
+  // operators who want a failing test suite to refuse completion deterministically
+  // at this layer too. Set LOKI_GATE_TEST_COVERAGE_BLOCK=1 to enable.
+  //   ponytail: mock_integrity / mutation_integrity are left advisory here (same
+  //   ceiling) -- the evidence gate is their backstop; add opt-in _BLOCK arms
+  //   likewise if a deployment needs them fail-closed at this layer.
+  if (
+    gateOutcome.blocked &&
+    gateOutcome.failed.includes("test_coverage") &&
+    envBlockFlagOn(env["LOKI_GATE_TEST_COVERAGE_BLOCK"])
+  ) {
+    return "test_coverage BLOCK (LOKI_GATE_TEST_COVERAGE_BLOCK) -- failing test suite refuses completion this iteration";
+  }
+  return null;
+}
+
+// RUN-25 iter 6 (Wave B rank #1): the completion-EVIDENCE gate for the Bun route.
+// The parent fail-open: defaultCouncil.shouldStop is a no-op (council.ts returns
+// false), so on the Bun route the ONLY thing that ends a build is the agent's
+// self-attested completion signal / promise (checkCompletionPromise). Nothing
+// verified that unresolved gate failures were actually cleared -- a run with a
+// red test suite (test_coverage advisory by default) plus a self-signal shipped
+// "complete". The bash route gates this with council_evidence_gate reading
+// queue/failed.json; this ports that backstop: a completion claim is REFUSED
+// while the failed-task ledger is non-empty OR corrupt (present-but-unparseable
+// fails CLOSED -- a failure ledger we cannot read is treated as red, never as
+// clear). Returns a refusal reason, or null to allow the completion.
+export function completionEvidenceRefusal(
+  lokiDir: string,
+  readFile: (p: string) => string | null = (p) => {
+    try {
+      return readFileSync(p, "utf8");
+    } catch {
+      return null;
+    }
+  },
+  fileExists: (p: string) => boolean = existsSync,
+): string | null {
+  const failedFile = resolve(lokiDir, "queue", "failed.json");
+  if (!fileExists(failedFile)) return null; // no ledger yet -> nothing failed
+  const raw = readFile(failedFile);
+  if (raw === null) {
+    // Present but unreadable -> fail closed (cannot verify the ledger is clear).
+    return "completion refused: failure ledger present but unreadable (queue/failed.json)";
+  }
+  const trimmed = raw.trim();
+  if (trimmed === "" || trimmed === "[]" || trimmed === "{}") return null; // empty ledger
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    // Corrupt ledger -> fail closed (a failing entry could be hiding in it).
+    return "completion refused: failure ledger corrupt (queue/failed.json unparseable)";
+  }
+  if (Array.isArray(parsed) && parsed.length > 0) {
+    return `completion refused: ${parsed.length} unresolved task(s) in the failure ledger (queue/failed.json)`;
+  }
+  if (parsed && typeof parsed === "object" && Object.keys(parsed as object).length > 0) {
+    return "completion refused: unresolved entries in the failure ledger (queue/failed.json)";
+  }
+  return null;
+}
+
 // Generic runtime type guard: verifies that every `key` in `keys` is present
 // on `mod` AND points at a function value. Narrows `mod` to a record where
 // every listed key is a function, which is the strongest contract we can
@@ -127,10 +262,49 @@ function hasRequiredFunctions<K extends string>(
 //      path AND the offending key. This is a contract violation (the file
 //      exists, so it MUST conform) and silently null-returning would mask
 //      the bug behind a stub fallback for the rest of the run.
+// v8 (bundle fix): Bun's bundler cannot follow the variable `import(spec)` inside
+// tryImport, so in the shipped dist/loki.js those runtime imports resolved
+// relative to dist/ (where the .ts files do not exist) and every runner module
+// failed to load -- the Bun `start` route worked from source but crashed from the
+// bundle. This maps each KNOWN spec to a STATIC-literal import() that the bundler
+// DOES inline, so the modules ship inside the bundle. An unknown spec (or source
+// mode) still falls through to the dynamic import below. Keep this list in sync
+// with the tryImport call sites.
+async function staticImport(spec: string): Promise<Record<string, unknown> | undefined> {
+  switch (spec) {
+    case "./state.ts":
+      return (await import("./state.ts")) as Record<string, unknown>;
+    case "./build_prompt.ts":
+      return (await import("./build_prompt.ts")) as Record<string, unknown>;
+    case "./council.ts":
+      return (await import("./council.ts")) as Record<string, unknown>;
+    case "./providers.ts":
+      return (await import("./providers.ts")) as Record<string, unknown>;
+    case "./queues.ts":
+      return (await import("./queues.ts")) as Record<string, unknown>;
+    case "./budget.ts":
+      return (await import("./budget.ts")) as Record<string, unknown>;
+    case "./completion.ts":
+      return (await import("./completion.ts")) as Record<string, unknown>;
+    case "./quality_gates.ts":
+      return (await import("./quality_gates.ts")) as Record<string, unknown>;
+    case "./intervention.ts":
+      return (await import("./intervention.ts")) as Record<string, unknown>;
+    case "./rarv.ts":
+      return (await import("./rarv.ts")) as Record<string, unknown>;
+    case "./checkpoint.ts":
+      return (await import("./checkpoint.ts")) as Record<string, unknown>;
+    default:
+      return undefined;
+  }
+}
+
 export async function tryImport<T>(spec: string, requiredKeys: readonly string[] = []): Promise<T | null> {
   let mod: Record<string, unknown>;
   try {
-    mod = (await import(spec)) as Record<string, unknown>;
+    // Prefer the static-literal map (bundler-inlinable); fall back to the dynamic
+    // import for any unknown spec or when running from source.
+    mod = (await staticImport(spec)) ?? ((await import(spec)) as Record<string, unknown>);
   } catch {
     return null;
   }
@@ -379,7 +553,11 @@ async function runAutonomousCore(
   // EXECUTION of these modules -- preserving the legitimate runtime-error
   // fallbacks (a transient buildPrompt/gate throw must not kill the loop).
   const promptModule = requireModule(promptMod, "./build_prompt.ts");
-  const gatesModule = requireModule(gatesMod, "./quality_gates.ts");
+  // opts.gatesOverride is a hermetic test injection (e.g. a throwing battery to
+  // drive the fail-closed path); production leaves it undefined and uses the real
+  // dynamically-imported module.
+  const gatesModule: GatesMod =
+    opts.gatesOverride ?? requireModule(gatesMod, "./quality_gates.ts");
 
   // Pre-loop max-iterations gate (run.sh:10303-10306).
   if (ctx.iterationCount >= ctx.maxIterations) {
@@ -450,7 +628,7 @@ async function runAutonomousCore(
     if (ctx.iterationCount >= ctx.maxIterations) {
       log(`[runner] max iterations reached (${ctx.iterationCount}/${ctx.maxIterations})`);
       await persistState(stateMod, ctx, "max_iterations_reached", 0);
-      return 0;
+      return ent3ExitCode("max_iterations_reached", 0);
     }
 
     // Build prompt (run.sh:10342). Wrap in try/catch -- a thrown buildPrompt
@@ -462,7 +640,7 @@ async function runAutonomousCore(
     // failure via provider invocation logs.
     let prompt: string;
     try {
-      prompt = await promptModule.buildPrompt(ctx);
+      prompt = await promptModule.buildPromptForRunner(ctx);
     } catch (err) {
       log(`[runner] buildPrompt threw: ${(err as Error).message} -- using stub`);
       prompt = `[stub-prompt-fallback iteration=${ctx.iterationCount} retry=${ctx.retryCount}]`;
@@ -572,14 +750,26 @@ async function runAutonomousCore(
       blocked: false,
       escalated: false,
     };
+    // Distinguishes "the gate battery threw" from "the gates ran and passed
+    // clean". A thrown battery leaves gateOutcome at its default, which used to
+    // be indistinguishable from a real all-clear -- so a gate crash (detector
+    // OOM, malformed artifact, transient tool error) fell through every refusal
+    // arm below and let council.shouldStop declare the build complete UNGATED:
+    // a fake-PASS. The bash route fails CLOSED for the same class (run.sh:18702-
+    // 18708 refuses a completion claim when the gate functions are unverifiable,
+    // "exactly when failing open is unsafe"). Mirror that: on a throw, refuse
+    // completion THIS iteration and continue iterating (the loop is not crashed;
+    // the next iteration re-runs the gates).
+    let gatesThrew = false;
     try {
       // Module absence was already made fatal at resolution time (gatesModule
-      // via requireModule); only gate EXECUTION errors are best-effort -- the
-      // bash equivalent at run.sh:10845-10980 logs and continues. Do not crash
-      // the loop on a gate runtime error.
+      // via requireModule); only gate EXECUTION errors are handled here.
       gateOutcome = await gatesModule.runQualityGates(ctx);
     } catch (err) {
-      log(`[runner] runQualityGates threw (non-fatal): ${(err as Error).message}`);
+      gatesThrew = true;
+      log(
+        `[runner] runQualityGates threw -- cannot verify completion this iteration; refusing completion (fail-closed) and continuing to iterate: ${(err as Error).message}`,
+      );
     }
 
     if (council.trackIteration) {
@@ -598,77 +788,32 @@ async function runAutonomousCore(
         continue;
       }
 
-      // Honor the quality-gate verdict like bash, with bash-parity semantics
-      // (run.sh:16868-16930). The ONLY gate that drives a completion refusal on
-      // the bash route is code_review: a real code_review BLOCK appends
-      // `code_review` to gate-failures.txt (and at GATE_PAUSE_LIMIT writes a
-      // PAUSE) so the build cannot be called complete. Every other gate
-      // (static_analysis, test_coverage, mock_integrity, ...) is advisory here:
-      // it injects findings into the next iteration but never refuses
-      // completion. So we refuse ONLY when:
-      //   gateOutcome.blocked              -- hard-gates path is active
-      //                                       (quality_gates.ts:2519/2529 force
-      //                                       blocked=false on the soft-gates
-      //                                       path, so this implies hardGates)
-      //   AND failed.includes("code_review") -- a genuine code_review BLOCK,
-      //                                       not a bare-project test_coverage
-      //                                       fail that would over-block a clean
-      //                                       run (LOKI_HARD_GATES defaults true
-      //                                       + blocked = failed.length > 0).
-      // A cleared code_review (CLEAR_LIMIT) lands in `passed`, not `failed`
-      // (quality_gates.ts:2583-2587), so it correctly does NOT refuse.
-      if (gateOutcome.blocked && gateOutcome.failed.includes("code_review")) {
-        log(
-          "[runner] code_review BLOCK -- refusing completion this iteration; continuing to next iteration with findings injected",
-        );
+      // FAIL-CLOSED completion refusal (centralized in completionRefusalReason,
+      // unit-tested). Runs BEFORE the council vote so no refusal arm can be
+      // overridden into completion. Covers, in order:
+      //   - gatesThrew: the gate battery crashed -> gate signal unverifiable ->
+      //     refuse (parity with bash run.sh:18702-18708, "fail open is unsafe").
+      //   - code_review BLOCK (parity run.sh:16868-16930): the one always-on
+      //     completion-refusing gate. Repeated blockers remain in failed[].
+      //   - semantic_tests / invariants: opt-in _BLOCK arms (run.sh:17482/17499),
+      //     each requiring blocked + in failed[] + its _BLOCK toggle on, so a
+      //     surfaced-but-advisory finding never over-blocks a clean run.
+      const refusal = completionRefusalReason(gatesThrew, gateOutcome, process.env);
+      if (refusal !== null) {
+        log(`[runner] ${refusal}; continuing to next iteration`);
         ctx.retryCount = 0;
         continue;
       }
 
-      // Wave-10 trust parity: two completion-time BLOCK gates the bash route
-      // honors but the Bun route was MISSING. The bash arms live at
-      // run.sh:17482 (semantic_tests) and run.sh:17499 (invariants), each an
-      // OPT-IN completion refusal gated on its own _BLOCK toggle (default OFF;
-      // accepts "true" or "1", the same truthiness convention used by the bash
-      // guard `[ "$X" = "true" ] || [ "$X" = "1" ]` and by quality_gates.ts
-      // readToggles' flag() helper). We read the toggle inline here -- matching
-      // the existing env-read pattern in this file -- rather than importing
-      // readToggles, which is a private helper in another module.
-      //
-      // Mirror the code_review arm's defensive shape EXACTLY so a clean run is
-      // never over-blocked (the FIX-A lesson): refuse ONLY when
-      //   gateOutcome.blocked                          (hard-gates path active)
-      //   AND failed.includes(<gate>)                  (a genuine BLOCK finding)
-      //   AND its _BLOCK toggle is on                  (operator opted in).
-      // In production each gate returns advisory passed:true (-> passed[], not
-      // failed[]) whenever its _BLOCK toggle is off (quality_gates.ts:776-785
-      // for semantic_tests, :960-970 for invariants), so the toggle check is the
-      // parity guard that keeps a surfaced-but-not-blocking finding from
-      // refusing completion.
-      const envBlockFlag = (key: string): boolean => {
-        const v = process.env[key];
-        if (v === undefined || v === "") return false;
-        return v === "true" || v === "1";
-      };
-      if (
-        gateOutcome.blocked &&
-        gateOutcome.failed.includes("semantic_tests") &&
-        envBlockFlag("LOKI_GATE_SEMANTIC_TESTS_BLOCK")
-      ) {
-        log(
-          "[runner] semantic_tests BLOCK (LOKI_GATE_SEMANTIC_TESTS_BLOCK) -- refusing completion this iteration; continuing to next iteration with findings injected",
-        );
-        ctx.retryCount = 0;
-        continue;
-      }
-      if (
-        gateOutcome.blocked &&
-        gateOutcome.failed.includes("invariants") &&
-        envBlockFlag("LOKI_GATE_INVARIANTS_BLOCK")
-      ) {
-        log(
-          "[runner] invariants BLOCK (LOKI_GATE_INVARIANTS_BLOCK) -- refusing completion this iteration; continuing to next iteration with findings injected",
-        );
+      // RUN-25 iter 6 (Wave B #1): completion-EVIDENCE backstop. Before honoring
+      // ANY completion (council OR the self-attested promise), refuse if the
+      // failure ledger is red/corrupt. defaultCouncil.shouldStop is a no-op, so
+      // without this a self-signaled completion with unresolved failures ships
+      // "complete" ungated. Mirrors the bash council_evidence_gate. A refusal here
+      // continues the iteration rather than declaring done.
+      const evidenceRefusal = completionEvidenceRefusal(ctx.lokiDir);
+      if (evidenceRefusal !== null) {
+        log(`[runner] ${evidenceRefusal}; continuing to next iteration`);
         ctx.retryCount = 0;
         continue;
       }
@@ -713,6 +858,29 @@ async function runAutonomousCore(
         captured && existsSync(captured)
           ? readFileSyncSafeForRunner(captured)
           : "";
+
+      // v8 harness intelligence (3d): SMART RETRY. A positively-identified
+      // permanent failure (bad credentials, unknown model, exhausted quota)
+      // fails identically on every retry, so retrying only burns the budget and
+      // wall-clock the run could spend on real work.
+      //
+      // Fail-safe by construction: classifyFailure returns "transient" for
+      // anything it does not positively recognize, so unknown errors keep the
+      // existing retry behavior. Only a matched permanent pattern stops early.
+      // Rate limits are explicitly transient and never caught here.
+      if (txt) {
+        const decision = classifyFailure(txt);
+        if (shouldStopRetrying(decision, process.env as NodeJS.ProcessEnv)) {
+          log(
+            `[runner] non-retryable failure (${decision.reason}); stopping early to save budget ` +
+              `instead of ${ctx.maxRetries - ctx.retryCount - 1} further identical retries. ` +
+              `Set LOKI_SMART_RETRY=0 to retry regardless.`,
+          );
+          await persistState(stateMod, ctx, "failed", 1);
+          return ent3ExitCode("failed", 1);
+        }
+      }
+
       if (txt) {
         const budgetMod2 = await tryImport<{
           isRateLimited(text: string): boolean;
@@ -734,8 +902,8 @@ async function runAutonomousCore(
   }
 
   log(`[runner] max retries (${ctx.maxRetries}) exceeded`);
-  await persistState(stateMod, ctx, "failed", 1);
-  return 1;
+  await persistState(stateMod, ctx, "max_retries_exceeded", 1);
+  return ent3ExitCode("max_retries_exceeded", 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -928,6 +1096,59 @@ function makeIterationOutputPath(ctx: RunnerContext): string {
     // surfaced by downstream readers
   }
   return path;
+}
+
+// ENT-3 process-exit contract, mirrored from autonomy/run.sh:24260-24299.
+//
+// WHY THIS EXISTS ON THIS ROUTE. The bash runner translates a terminal run
+// STATUS into a stable process exit code so a k8s Job's podFailurePolicy can
+// tell "completed but failed the gate -> do NOT retry" from "crashed -> retry
+// and resume". The Bun route returned only 0/1/2 and never 20, so a build
+// routed through here (LOKI_SDK_LOOP) silently lost the no-retry signal: a
+// deterministically-failing build burned the entire backoffLimit re-running
+// something that cannot succeed. That is exactly the failure the bash contract
+// was written to prevent, reintroduced on the route we are moving toward.
+//
+// GATED IDENTICALLY to bash: LOKI_DURABLE_STATE=1 only, so local and CI exit
+// codes are unchanged. A caller that has not opted in sees the old behavior.
+//
+// The status lists must stay byte-equivalent to the bash case arms. Note
+// budget_exceeded sits with the DETERMINISTIC failures, not the clean stops:
+// re-running the same inputs against the same cap exhausts the same budget and
+// fails identically, and inside a Job there is no human to resume it.
+const ENT3_CLEAN_STOP = new Set([
+  "council_approved",
+  "council_force_approved",
+  "deterministic_gates_passed",
+  "completion_promise_fulfilled",
+  "paused",
+  "interrupted",
+  "stopped",
+]);
+
+const ENT3_TERMINAL_FAILURE = new Set([
+  "failed",
+  // force_stopped joins the DETERMINISTIC failures for the same reason
+  // budget_exceeded did: a stagnation or done-signal-flood force-stop is not a
+  // human-controlled pause, and the run is explicitly NOT verified-complete.
+  // Reporting it as a clean stop made it indistinguishable from success to
+  // every automated caller.
+  "force_stopped",
+  "max_iterations_reached",
+  "max_retries_exceeded",
+  "budget_exceeded",
+  "max_duration_reached",
+  "policy_blocked",
+  "inconclusive_spec_contradiction",
+]);
+
+export function ent3ExitCode(status: string, fallback: number): number {
+  if (process.env.LOKI_DURABLE_STATE !== "1") return fallback;
+  if (ENT3_CLEAN_STOP.has(status)) return 0;
+  if (ENT3_TERMINAL_FAILURE.has(status)) return 20;
+  // Unknown / "running" / "exited": a crash the platform SHOULD retry. Never
+  // report 0 here -- a SIGKILL mid-run must not look like success.
+  return fallback === 0 ? 1 : fallback;
 }
 
 async function persistState(

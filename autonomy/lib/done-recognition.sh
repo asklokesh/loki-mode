@@ -50,7 +50,100 @@
 # needs a real command, not a shell function.
 _loki_done_recog_invoke() {
     local prompt="$1"
+
+    # v8 RAW-SDK JUDGE PATH (opt-in LOKI_SDK_DONE_RECOG=1). Runs this one-shot
+    # judge via the pure-HTTPS @anthropic-ai/sdk (no claude binary) through the
+    # loki-ts `internal sdk-judge` bridge. This is the first end-to-end SDK
+    # adoption -- CLAUDE-ONLY site, one prompt -> one schema-constrained JSON
+    # object, already inconclusive-safe. Fail-closed: on ANY miss (flag off, no
+    # ANTHROPIC_API_KEY, bun/entrypoint absent, non-zero, empty) we fall straight
+    # through to the existing claude/deterministic paths below -- zero behavior
+    # change when off or unavailable. Same schema, same output shape (a JSON
+    # object parse_object consumes), so parity holds by construction.
+    if [ "${LOKI_SDK_DONE_RECOG:-0}" = "1" ]; then
+        local _sdk_root _sdk_loki _sdk_schema _sdk_prompt_f _sdk_out _sdk_rc
+        _sdk_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+        _sdk_loki="${_sdk_root}/bin/loki"
+        _sdk_schema="${_sdk_root}/loki-ts/data/done-recognition-schema.json"
+        if [ -x "$_sdk_loki" ] && [ -f "$_sdk_schema" ] && command -v bun >/dev/null 2>&1; then
+            _sdk_prompt_f="$(mktemp 2>/dev/null)" || _sdk_prompt_f=""
+            if [ -n "$_sdk_prompt_f" ]; then
+                printf '%s' "$prompt" > "$_sdk_prompt_f"
+                _sdk_rc=0
+                # OS-level ceiling around the whole bun subprocess (council review:
+                # --timeout-ms only bounds the in-process HTTP call; a bun cold-start
+                # / DNS stall could hang the command substitution otherwise). Mirror
+                # the claude path's `timeout` wrap, with a small buffer over the
+                # in-process budget. Degrade to no-cap only if neither timeout binary
+                # is present.
+                local _sdk_to_s=$(( ${LOKI_DONE_RECOG_TIMEOUT:-180} + 15 ))
+                local _sdk_wrap
+                if command -v timeout >/dev/null 2>&1; then _sdk_wrap="timeout ${_sdk_to_s}"
+                elif command -v gtimeout >/dev/null 2>&1; then _sdk_wrap="gtimeout ${_sdk_to_s}"
+                else _sdk_wrap=""; fi
+                _sdk_out="$($_sdk_wrap "$_sdk_loki" internal sdk-judge \
+                    --prompt-file "$_sdk_prompt_f" --schema-file "$_sdk_schema" \
+                    --model "${LOKI_SDK_JUDGE_MODEL:-claude-haiku-4-5}" --effort low \
+                    --timeout-ms "$(( ${LOKI_DONE_RECOG_TIMEOUT:-180} * 1000 ))" 2>/dev/null)" || _sdk_rc=$?
+                rm -f "$_sdk_prompt_f" 2>/dev/null || true
+                if [ "$_sdk_rc" -eq 0 ] && [ -n "$_sdk_out" ]; then
+                    printf '%s' "$_sdk_out"
+                    return 0
+                fi
+            fi
+        fi
+        # fall through to the claude/deterministic paths (fail-closed)
+    fi
+
     command -v claude >/dev/null 2>&1 || return 1
+
+    # STRUCTURED VERDICT (v8.x): when the CLI supports --json-schema, force valid
+    # JSON so parse_object never has to brace-slice prose. --json-schema takes
+    # INLINE content, not a path (CLI 2.1.207 rejects a path). On any miss (flag
+    # unsupported, empty, no structured_output) fall through to the plain -p call
+    # below; parse_object then handles it and defaults to inconclusive (safe).
+    # Opt out LOKI_REVIEW_JSON_SCHEMA=off.
+    local _dr_schema_dir _dr_schema
+    _dr_schema_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+    _dr_schema="${_dr_schema_dir}/loki-ts/data/done-recognition-schema.json"
+    if [ "${LOKI_REVIEW_JSON_SCHEMA:-on}" != "off" ] && [ -f "$_dr_schema" ] \
+       && type loki_claude_flag_supported >/dev/null 2>&1 \
+       && loki_claude_flag_supported "--json-schema"; then
+        local _dr_schema_content _dr_json _dr_obj
+        _dr_schema_content="$(cat "$_dr_schema" 2>/dev/null)" || _dr_schema_content=""
+        if [ -n "$_dr_schema_content" ]; then
+            if command -v timeout >/dev/null 2>&1; then
+                _dr_json=$(CAVEMAN_DEFAULT_MODE=off timeout "${LOKI_DONE_RECOG_TIMEOUT}" \
+                    claude --dangerously-skip-permissions -p "$prompt" \
+                    --json-schema "$_dr_schema_content" --output-format json 2>/dev/null) || _dr_json=""
+            else
+                _dr_json=$(CAVEMAN_DEFAULT_MODE=off \
+                    claude --dangerously-skip-permissions -p "$prompt" \
+                    --json-schema "$_dr_schema_content" --output-format json 2>/dev/null) || _dr_json=""
+            fi
+            if [ -n "$_dr_json" ]; then
+                _dr_obj=$(printf '%s' "$_dr_json" | python3 -c 'import sys,json
+try:
+    e=json.load(sys.stdin)
+    p=e.get("structured_output")
+    if not isinstance(p,dict):
+        r=e.get("result")
+        p=json.loads(r) if isinstance(r,str) else None
+    if isinstance(p,dict) and "requirements" in p:
+        sys.stdout.write(json.dumps(p))
+    else:
+        sys.exit(1)
+except Exception:
+    sys.exit(1)' 2>/dev/null) || _dr_obj=""
+                if [ -n "$_dr_obj" ]; then
+                    printf '%s' "$_dr_obj"
+                    return 0
+                fi
+            fi
+        fi
+        # fall through to the plain text call (parse_object handles it, inconclusive-safe)
+    fi
+
     local rc=0
     local out=""
     if command -v timeout >/dev/null 2>&1; then
@@ -66,12 +159,24 @@ _loki_done_recog_invoke() {
     return 0
 }
 
-# Decide whether model verification can be attempted. Returns 0 (ok) only when
-# the active provider is claude and not degraded. Mirrors
-# _loki_prd_enrich_provider_ok (autonomy/lib/prd-enrich.sh:65).
+# Decide whether model verification can be attempted.
+#
+# v8.2.0: this used to require LOKI_PROVIDER=claude specifically, so a user on
+# codex/opencode/cline/aider silently lost done-recognition. That is a
+# CAPABILITY question, not an identity question -- the real requirement is "can
+# we reach a model AND bound the call with a timeout". Any provider exposing the
+# argv seam (provider_invoke_argv, see providers/claude.sh) satisfies both.
+#
+# Falls back to the historical claude-binary check when the seam is absent, so
+# nothing regresses for existing installs.
 _loki_done_recog_provider_ok() {
-    [ "${LOKI_PROVIDER:-claude}" = "claude" ] || return 1
     [ "${PROVIDER_DEGRADED:-false}" != "true" ] || return 1
+    # Preferred: a provider that can build a timeout-able argv.
+    if type provider_invoke_argv >/dev/null 2>&1; then
+        return 0
+    fi
+    # Legacy path: claude binary present.
+    [ "${LOKI_PROVIDER:-claude}" = "claude" ] || return 1
     command -v claude >/dev/null 2>&1 || return 1
     return 0
 }

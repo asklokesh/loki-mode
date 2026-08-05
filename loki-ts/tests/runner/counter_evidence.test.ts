@@ -487,21 +487,26 @@ describe("runOverrideCouncil -- canonicalFindingId collision safety", () => {
     expect(outcome.rejectedFindingIds.has(fid)).toBe(true);
   });
 
-  it("does NOT call judges on a collided id (no evidence is trusted across siblings)", async () => {
+  it("does NOT call judges on a collided id, but DOES fan out 3 for a clean id (contrast)", async () => {
     const { f1, f2 } = collidingPair();
     const fid = canonicalFindingId(f1);
+    const clean = makeFinding({ reviewer: "architecture-strategist" });
+    const cleanFid = canonicalFindingId(clean);
     const evidenceFile: CounterEvidenceFile = {
       iteration: 1,
-      evidence: [makeEvidence({ findingId: fid })],
+      evidence: [makeEvidence({ findingId: fid }), makeEvidence({ findingId: cleanFid })],
     };
     let judgeCalls = 0;
     const countingJudge: OverrideJudgeFn = async ({ judge }) => {
       judgeCalls++;
       return { judge, verdict: "APPROVE_OVERRIDE", reasoning: "ok" };
     };
-    await runOverrideCouncil([f1, f2], evidenceFile, countingJudge);
-    // No judge fan-out for the ambiguous collided id.
-    expect(judgeCalls).toBe(0);
+    // Same call, same counter: the collided pair contributes 0 judge calls,
+    // the clean finding contributes judges.length (3) -- proving the counter
+    // actually moves when the fan-out runs, not just that it stays at its
+    // initial value.
+    await runOverrideCouncil([f1, f2, clean], evidenceFile, countingJudge);
+    expect(judgeCalls).toBe(DEFAULT_OVERRIDE_JUDGES.length);
   });
 
   it("still lifts a non-colliding finding with its own evidence (no regression)", async () => {

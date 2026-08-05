@@ -14,7 +14,28 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
 # Test 1 (bar 7): bench runs + reports percentiles + p95 under threshold
-OUT=$($PY tools/bench_memory_retrieval.py --episodes 150 --runs 30 --json 2>&1 | tail -20)
+# DO NOT MERGE STDERR INTO THE JSON. This was `2>&1 | tail -20`, which folds any
+# stderr line the interpreter emits (a DeprecationWarning, a
+# sentence-transformers notice, a urllib3 warning) into the same stream as the
+# JSON document. The parse then dies with
+# "BENCH_PARSE_FAIL: Expecting value: line 1 column 1 (char 0)" and the failure
+# names the parser rather than the warning that caused it. Observed on a CI
+# runner while passing on this machine, which is precisely the shape that costs
+# an investigation.
+#
+# `tail -20` was a second hazard: the JSON is 11 lines today, so a document that
+# grows past 20 would be silently decapitated and fail the same way.
+#
+# Keep stderr on stderr. If the tool genuinely fails, the empty-output guard
+# below reports THAT rather than a parser error.
+OUT=$($PY tools/bench_memory_retrieval.py --episodes 150 --runs 30 --json 2>/dev/null)
+if [ -z "$OUT" ]; then
+    # An empty document is a distinct failure from a malformed one, and saying
+    # so saves the next reader from debugging a JSON parser that was never the
+    # problem.
+    bad "bench produced NO output (tool failed to run; not a JSON parse issue)"
+    OUT='{}'
+fi
 RESULT=$(echo "$OUT" | $PY -c "
 import json, sys
 try:

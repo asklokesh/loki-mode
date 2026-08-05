@@ -6,13 +6,13 @@
 # / council subcalls. Mirrors the structure of tests/test-cli-embeds-v733.sh.
 #
 # Asserts:
-#   - loki_review_allowlist_enabled predicate gating: DEFAULT OFF, opt-in
-#     LOKI_REVIEW_ALLOWLIST=1, gated on --allowedTools CLI support.
+#   - loki_review_allowlist_enabled predicate gating: default on, explicit
+#     opt-out, and gated on --allowedTools CLI support.
 #   - loki_review_allowlist token content: read/inspect tools only (Read, Grep,
 #     Glob, read-only git), NEVER Edit/Write/NotebookEdit or git mutation forms.
 #   - graceful degrade: no --allowedTools in `claude --help` -> predicate OFF.
-#   - call sites (run.sh reviewer + adversarial) append --allowedTools after the
-#     denylist via the guard helper, default-off so it stays opt-in.
+#   - the shared reviewer dispatch appends --allowedTools after the denylist,
+#     and Devil's Advocate reuses that same path.
 #   - cross-route parity: the bash token string-equals the TS
 #     REVIEW_ALLOWLIST_TOKEN in loki-ts/src/providers/claude_flags.ts.
 set -uo pipefail
@@ -136,7 +136,7 @@ DST
 if grep -qx B6_OK "$TMP/secB.out"; then ok "EMBED3b degrades gracefully (no --allowedTools in help -> OFF even when =1)"; else bad "EMBED3b graceful degrade" "marker missing"; fi
 
 # ---------------------------------------------------------------------------
-# Section C: call-site wiring (run.sh reviewer + adversarial)
+# Section C: shared call-site wiring
 # ---------------------------------------------------------------------------
 # Reviewer site: _rv_argv must append --allowedTools via the guard helper.
 rv_block="$(awk '/_rv_argv=\("--dangerously-skip-permissions"\)/,/claude "\$\{_rv_argv\[@\]\}"/' "$RUN_SH")"
@@ -147,27 +147,21 @@ else
   bad "EMBED3b reviewer site" "missing --allowedTools append in _rv_argv block"
 fi
 
-# Adversarial site: _adv_argv must append --allowedTools via the guard helper.
-adv_block="$(awk '/_adv_argv=\("--dangerously-skip-permissions"\)/,/claude "\$\{_adv_argv\[@\]\}"/' "$RUN_SH")"
-if printf '%s' "$adv_block" | grep -q 'loki_review_allowlist_enabled' \
-   && printf '%s' "$adv_block" | grep -q '_adv_argv+=("--allowedTools" "$(loki_review_allowlist)")'; then
-  ok "EMBED3b: adversarial site appends --allowedTools via guard helper"
+# Devil's Advocate must reuse the same dispatcher, not maintain a second argv.
+if grep -q '_dispatch_reviewer_recorded "$da_prompt_text" "$da_stage_output"' "$RUN_SH"; then
+  ok "EMBED3b: Devil's Advocate reuses the guarded reviewer dispatcher"
 else
-  bad "EMBED3b adversarial site" "missing --allowedTools append in _adv_argv block"
+  bad "EMBED3b Devil's Advocate path" "shared reviewer dispatch is not used"
 fi
 
-# The append must come AFTER the denylist append at both sites (deny precedence
-# is order-independent in claude, but we keep allow-after-deny for readability and
-# to mirror the TS call site). Assert denylist line precedes allowlist line.
-for tag in _rv_argv _adv_argv; do
-  deny_ln=$(grep -n "${tag}+=(\"--disallowedTools\"" "$RUN_SH" | head -1 | cut -d: -f1)
-  allow_ln=$(grep -n "${tag}+=(\"--allowedTools\"" "$RUN_SH" | head -1 | cut -d: -f1)
-  if [ -n "$deny_ln" ] && [ -n "$allow_ln" ] && [ "$allow_ln" -gt "$deny_ln" ]; then
-    ok "EMBED3b: ${tag} allowlist append follows the denylist append"
-  else
-    bad "EMBED3b ${tag} ordering" "deny_ln=$deny_ln allow_ln=$allow_ln"
-  fi
-done
+# Keep the allowlist after the denylist for readability and TS parity.
+deny_ln=$(grep -n '_rv_argv+=("--disallowedTools"' "$RUN_SH" | head -1 | cut -d: -f1)
+allow_ln=$(grep -n '_rv_argv+=("--allowedTools"' "$RUN_SH" | head -1 | cut -d: -f1)
+if [ -n "$deny_ln" ] && [ -n "$allow_ln" ] && [ "$allow_ln" -gt "$deny_ln" ]; then
+  ok "EMBED3b: reviewer allowlist append follows the denylist append"
+else
+  bad "EMBED3b reviewer ordering" "deny_ln=$deny_ln allow_ln=$allow_ln"
+fi
 
 # ---------------------------------------------------------------------------
 # Section D: cross-route parity (bash token string-equals the TS token)

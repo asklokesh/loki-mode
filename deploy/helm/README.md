@@ -8,6 +8,11 @@ Production Kubernetes deployment for the Autonomi Loki Mode multi-agent autonomo
 - Helm 3.12+
 - Container image `asklokesh/loki-mode` available (Docker Hub or private registry)
 
+To verify the image signature and SBOM before deploying, see
+[docs/image-provenance.md](../../docs/image-provenance.md). Images from the first
+release after v8.5.2 are signed and carry a CycloneDX SBOM; v8.5.2 and
+earlier are not signed.
+
 ## Quickstart
 
 ```bash
@@ -280,3 +285,200 @@ This runs two test pods:
   |  Survives pod loss -> crash-resume from last cp.  |
   +---------------------------------------------------+
 ```
+
+## Operator runbook
+
+The sections above cover installing and configuring. This one covers the things
+you need when something is wrong or when you are handing the deployment to
+somebody else.
+
+### Is this release actually healthy
+
+`helm install` succeeding means Kubernetes accepted the manifests. It does not
+mean the control plane came up or can answer a request. To check that:
+
+```bash
+helm test <release> -n <namespace>
+```
+
+The test pod probes the control-plane Service on the same readiness path the
+kubelet uses, and retries for a minute so a slow cold start is not reported as
+a failure. A failed test pod is deliberately **kept** so you can read its logs:
+
+```bash
+kubectl logs -n <namespace> <release>-autonomi-test-controlplane-health
+```
+
+### Rollback
+
+```bash
+helm history <release> -n <namespace>          # find the last good REVISION
+helm rollback <release> <REVISION> -n <namespace>
+```
+
+Rollback reverts the manifests. It does **not** revert data on the PVCs, so a
+migration that changed on-disk state is not undone by rolling back the chart.
+
+### What the volumes hold, and what happens on uninstall
+
+| Volume | Holds | Deleted on `helm uninstall`? |
+| --- | --- | --- |
+| `<release>-audit-logs` | the audit trail | **Yes, unless `persistence.auditLogs.retainOnUninstall=true`** |
+| `<release>-checkpoints` | build checkpoints for resume | Yes |
+
+The audit PVC default matches the chart's historical behaviour. If your
+retention policy requires the audit trail to outlive the release, set:
+
+```yaml
+persistence:
+  auditLogs:
+    retainOnUninstall: true
+```
+
+With that set the PVC survives uninstall and you delete it deliberately:
+
+```bash
+kubectl delete pvc -n <namespace> <release>-autonomi-audit-logs
+```
+
+Back up before an uninstall you are unsure about:
+
+```bash
+kubectl exec -n <namespace> deploy/<release>-autonomi-controlplane -- \
+  tar czf - /var/lib/loki/audit > audit-backup-$(date +%Y%m%d).tgz
+```
+
+### A pod will not start
+
+Work outward from the pod, not from the chart:
+
+```bash
+kubectl get pods -n <namespace>                       # phase and restart count
+kubectl describe pod -n <namespace> <pod>             # events: image pull, scheduling, probes
+kubectl logs -n <namespace> <pod> --previous          # the crash before the restart
+```
+
+Three failures account for most cases:
+
+- **`ImagePullBackOff`** - `image.repository`/`tag` wrong, or the registry needs
+  `imagePullSecrets`.
+- **`CreateContainerConfigError`** - a referenced Secret or ConfigMap does not
+  exist yet. The chart does not create your provider secret; see Quickstart.
+- **Readiness never passes** - the control plane is up but not answering on
+  `controlplane.probes.readiness.path`. Port-forward and check by hand:
+  `kubectl port-forward -n <ns> svc/<release>-autonomi-controlplane 57374:57374`
+  then `curl localhost:57374/health`.
+
+### No builds are being picked up
+
+If the control plane is healthy but nothing progresses, check that a worker
+exists at all:
+
+```bash
+kubectl get pods -n <namespace> -l app.kubernetes.io/component=worker
+kubectl get scaledjob,scaledobject -n <namespace>     # if keda.enabled
+```
+
+`worker.mode` selects which worker resource renders (`job`, `deployment`, or
+`serverless`). An invalid value is now rejected at install time by
+`values.schema.json`, but a release installed before that schema existed may be
+running with no worker at all and no error anywhere.
+
+### Scaling
+
+- `worker.mode=deployment` scales via the HPA (`worker.autoscaling`).
+- `keda.enabled=true` scales on queue depth via KEDA; `keda.triggers` defines
+  the source, and `maxReplicaCount` bounds it.
+- `pdb` keeps a minimum available during voluntary disruptions such as node
+  drains. It does not protect against a node failing outright.
+
+## Air-gapped and restricted-egress installs
+
+### What is actually air-gappable
+
+Be precise here, because a security review will be:
+
+- **Verification is air-gapped.** The deterministic checks make no network
+  calls. Proven offline, not asserted: `tests/test-airgap-verify.sh` blackholes
+  every proxy variable, strips the environment, and still gets a real verdict.
+- **Generation is not.** Every provider we ship calls a hosted API. A fully
+  offline build needs a model served inside your network.
+
+Anyone claiming a fully air-gapped LLM agent without shipping weights is worth a
+second question.
+
+### Find out exactly what leaves the network
+
+```bash
+loki doctor --airgap
+```
+
+It lists every egress point, marks which are **required** versus optional, and
+refuses to report air-gap ready while a required one remains. On a default
+install that is one line: model inference to the provider API. The output also
+names the remediation, which is to serve the model in-network:
+
+```bash
+loki provider set opencode
+export LOKI_OPENCODE_MODEL=ollama/qwen2.5-coder
+loki doctor --airgap        # re-run; the required egress should be gone
+```
+
+Run this **before** writing NetworkPolicy rules. It is the host inventory those
+rules have to cover, and guessing the list is how a policy blocks something the
+engine needs.
+
+### Pin egress in the chart
+
+The shipped NetworkPolicy declares `policyTypes: [Ingress, Egress]` but its
+egress rule is `- {}`, which restricts **nothing**. That default is deliberate:
+the engine must reach a provider API, and a chart that blocked it out of the box
+would leave every new install unable to build with no obvious cause. It does
+mean an operator who installs the NetworkPolicy may reasonably assume egress is
+controlled when it is not.
+
+To actually control it:
+
+```yaml
+security:
+  networkPolicy:
+    enabled: true
+    egress:
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: kube-system
+        ports:
+          - port: 53
+            protocol: UDP          # DNS, or nothing resolves
+      - to:
+          - ipBlock:
+              cidr: 10.0.0.0/8     # your in-network model gateway
+        ports:
+          - port: 443
+            protocol: TCP
+```
+
+Omitting the DNS rule is the most common mistake: pods then fail to resolve
+anything and the symptom looks like the provider being down.
+
+### Private registry
+
+```yaml
+image:
+  repository: registry.internal.example.com/autonomi/loki-mode
+  tag: "8.5.2"
+imagePullSecrets:
+  - name: internal-registry
+```
+
+Mirror the image before installing:
+
+```bash
+docker pull asklokesh/loki-mode:8.5.2
+docker tag  asklokesh/loki-mode:8.5.2 registry.internal.example.com/autonomi/loki-mode:8.5.2
+docker push registry.internal.example.com/autonomi/loki-mode:8.5.2
+```
+
+Pin a tag or digest rather than `latest`: during an incident "which build is
+running" has to be answerable, and `latest` makes rollback unreasonable.

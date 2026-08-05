@@ -13,6 +13,7 @@ Behavior contract (preserved from the R1 proof generator):
   - cost.usd is None when NO valid efficiency record was read (cost was never
     collected for this run). A skeptic seeing "$0.00" assumes the artifact is
     fake; "cost not recorded" is the honest signal.
+  - Token counts are also None and available is False when no record exists.
   - A genuine 0.0 (records existed but summed to zero) is preserved as 0.0.
   - usd is rounded to 4 decimals only when records were collected.
 
@@ -27,6 +28,7 @@ import os
 
 __all__ = [
     "collect_efficiency",
+    "record_is_measured",
     "load_prices",
     "price_from_tokens",
     "DEFAULT_PRICES_PATH",
@@ -67,6 +69,40 @@ def _to_float(v, default=0.0):
         return default
 
 
+_MEASURED_FIELDS = (
+    "cost_usd",
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_creation_tokens",
+)
+
+
+def record_is_measured(rec):
+    """True when ONE efficiency record actually carries an observed value.
+
+    THE SINGLE DEFINITION of "measured" for a per-iteration record. collect_
+    efficiency() applies the same rule to the SUM; anything wanting the rule
+    per iteration (cost-summary.py) must import this rather than restate it.
+    A second copy of this predicate is how the honesty rule drifts: the four
+    surfaces that once rendered an unmeasured run as "$0.00" each had their
+    own idea of what counted as measured.
+
+    A present file is not a measurement. A run that did work necessarily
+    consumed tokens, so all-zeros means we FAILED TO MEASURE, and unmeasured
+    must read as unknown, never as free.
+    """
+    if not isinstance(rec, dict):
+        return False
+    for key in _MEASURED_FIELDS:
+        v = rec.get(key)
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)) and v:
+            return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # efficiency collection (extracted verbatim from proof-generator.py)
 # ---------------------------------------------------------------------------
@@ -76,10 +112,10 @@ def collect_efficiency(loki_dir):
 
     Returns (cost dict, best-effort model name (last non-empty seen)).
 
-    Credibility: cost.usd is set to None when NO valid efficiency record was
-    read (cost was never collected for this run). A skeptic seeing "$0.00" on
-    HN assumes the artifact is fake; "cost not recorded" is the honest signal.
-    A genuine 0.0 (records existed but summed to zero) is preserved as 0.0.
+    Credibility: unavailable cost and token values are None when NO valid
+    efficiency record was read. A skeptic seeing "$0.00" assumes the artifact
+    is fake; "cost not recorded" is the honest signal. A genuine 0.0 from a
+    present record is preserved as 0.0.
     """
     cost = {
         "usd": 0.0,
@@ -87,6 +123,7 @@ def collect_efficiency(loki_dir):
         "output_tokens": 0,
         "cache_read_tokens": 0,
         "cache_creation_tokens": 0,
+        "available": False,
     }
     model = ""
     collected = False
@@ -109,13 +146,43 @@ def collect_efficiency(loki_dir):
         cost["cache_creation_tokens"] += _to_int(rec.get("cache_creation_tokens"))
         if rec.get("model"):
             model = str(rec.get("model"))
-    if collected:
+    # A record EXISTING is not the same as a record carrying data. `collected`
+    # was true for any parseable file, so a run whose records were all zeros
+    # reported usd=0.0 with available=True -- the receipt asserting the run cost
+    # NOTHING. That is a fabricated fact, and the receipt exists to prevent
+    # exactly that.
+    #
+    # Measured on the real FireLater run: four efficiency records, every token
+    # field 0 (codex wrote no usage before v8.51.0), and collect_efficiency
+    # returned {'usd': 0.0, ..., 'available': True}.
+    #
+    # A run that did work necessarily consumed tokens. So "available" now means
+    # at least one record carried a non-zero token count or cost -- an OBSERVED
+    # value, not a present file. Zero everywhere means we failed to measure, and
+    # unmeasured must read as unknown.
+    #
+    # Applied through record_is_measured() so the aggregate rule and the
+    # per-iteration rule are literally the same code (see that docstring).
+    # The cost dict keys "usd" where a record says "cost_usd", so map across.
+    _observed = record_is_measured({
+        "cost_usd": cost["usd"],
+        "input_tokens": cost["input_tokens"],
+        "output_tokens": cost["output_tokens"],
+        "cache_read_tokens": cost["cache_read_tokens"],
+        "cache_creation_tokens": cost["cache_creation_tokens"],
+    })
+    if collected and _observed:
         # Round usd to a sane precision but keep it precise (anti-pattern:
         # round suspiciously-clean numbers). 4 decimals preserves odd values.
         cost["usd"] = round(cost["usd"], 4)
+        cost["available"] = True
     else:
-        # No efficiency files were read: cost was not collected for this run.
-        cost["usd"] = None
+        # No record means unavailable, never an observed zero.
+        for key in (
+            "usd", "input_tokens", "output_tokens",
+            "cache_read_tokens", "cache_creation_tokens",
+        ):
+            cost[key] = None
     return cost, model
 
 

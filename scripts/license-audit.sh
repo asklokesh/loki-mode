@@ -4,9 +4,16 @@
 #
 # Print the license of every direct (non-dev) dependency listed in the root
 # package.json and loki-ts/package.json. Verifies each is in the permissive
-# allowlist (MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC). Prints a
+# allowlist (MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0). Prints a
 # verdict line (LICENSE-AUDIT: PASS or LICENSE-AUDIT: REVIEW) and exits 0 on
 # PASS, 1 on REVIEW.
+#
+# MPL-2.0 note: Mozilla Public License 2.0 is OSI-approved, file-level ("weak")
+# copyleft -- using a package under it as an UNMODIFIED dependency imposes no
+# obligation on the rest of the codebase (only modifications to the MPL-licensed
+# files themselves must stay MPL). The only MPL-2.0 deps here are @resvg/resvg-js
+# and @resvg/resvg-wasm, used unmodified for SVG rasterization in the cockpit, so
+# they are safe to allow for a proprietary/BUSL-licensed project.
 #
 # No source files are modified. Stock macOS / Ubuntu CI tooling only.
 
@@ -19,8 +26,18 @@ PACKAGE_FILES=(
 )
 
 # Permissive license allowlist (case-insensitive substring match against
-# the SPDX identifier returned by npm view).
-ALLOWED_PATTERN='^(MIT|Apache-2\.0|BSD-2-Clause|BSD-3-Clause|ISC)$'
+# the SPDX identifier returned by npm view). Unlicense/0BSD/CC0-1.0 are
+# public-domain-equivalent (more permissive than MIT), added v8 for a transitive
+# dep (fast-sha256 is Unlicense) pulled in by @anthropic-ai/claude-agent-sdk.
+ALLOWED_PATTERN='^(MIT|Apache-2\.0|BSD-2-Clause|BSD-3-Clause|ISC|MPL-2\.0|Unlicense|0BSD|CC0-1\.0)$'
+
+# First-party / vendor package-name exceptions (v8). These are Anthropic's own
+# official SDKs, declared with a non-SPDX license string ("SEE LICENSE IN
+# README.md") or npm-view badge-URL misparses ("Custom: https://...") that the
+# SPDX matcher cannot classify. They are FIRST-PARTY dependencies we adopt
+# deliberately (the whole v8 arc), so they are allowlisted by NAME. Bare name or
+# name@version (incl. the per-platform native-binary subpackages).
+LICENSE_NAME_EXCEPTIONS='^@anthropic-ai/claude-agent-sdk(-[a-z0-9-]+)?(@|$)'
 
 # Require jq to parse package.json (available on stock macOS via brew and
 # on Ubuntu CI runners by default).
@@ -146,6 +163,9 @@ for pkg_json in "${PACKAGE_FILES[@]}"; do
     TOTAL=$((TOTAL + 1))
     license="$(lookup_license "$name" "$version")"
     printf '%-50s %-20s %s\n' "$name" "$version" "$license"
+    if [[ "$name" =~ $LICENSE_NAME_EXCEPTIONS ]]; then
+      continue  # first-party vendor SDK; non-SPDX license string, allowlisted by name
+    fi
     if ! is_permissive "$license"; then
       OFFENDERS+=("${name}@${version} :: ${license}")
     fi
@@ -194,6 +214,9 @@ if (
         loki-mode|loki-mode@*) continue ;;
       esac
       TRANSITIVE_COUNT=$((TRANSITIVE_COUNT + 1))
+      if [[ "$module" =~ $LICENSE_NAME_EXCEPTIONS ]]; then
+        continue  # first-party vendor SDK subpackage (native binary etc.)
+      fi
       if ! is_permissive "$licenses"; then
         OFFENDERS+=("${module} :: ${licenses} (transitive)")
       fi

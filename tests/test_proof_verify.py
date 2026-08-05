@@ -67,13 +67,21 @@ def _run_verifier(proof_path, repo_dir):
     return r.returncode, result
 
 
+def _load_json(path):
+    with open(path) as handle:
+        return json.load(handle)
+
+
 def _run_generator(loki_dir, out_dir, *, env_extra=None, include_diffs=False,
-                   run_id="verify-fixed-001", loki_version="7.9.0"):
+                   run_id="verify-fixed-001", loki_version="7.9.0",
+                   session_exit_code=None):
     cmd = [sys.executable, _GENERATOR, "--loki-dir", loki_dir,
            "--out-dir", out_dir, "--run-id", run_id,
            "--loki-version", loki_version, "--quiet"]
     if include_diffs:
         cmd.append("--include-diffs")
+    if session_exit_code is not None:
+        cmd.extend(["--session-exit-code", str(session_exit_code)])
     env = dict(os.environ)
     env.pop("PRD_PATH", None)
     env.pop("LOKI_SESSION_ID", None)
@@ -106,10 +114,10 @@ class _GitFixtureMixin:
 
         loki_dir = os.path.join(proj, ".loki")
         os.makedirs(loki_dir)
-        out_dir = os.path.join(proj, "proof-out")
+        out_dir = os.path.join(loki_dir, "proofs", "verify-fixed-001")
         proof_path = _run_generator(
             loki_dir, out_dir,
-            env_extra={"_LOKI_ITER_START_SHA": base},
+            env_extra={"_LOKI_RUN_START_SHA": base},
             include_diffs=include_diffs)
         return proj, base, proof_path
 
@@ -124,7 +132,7 @@ class TamperTests(_GitFixtureMixin, unittest.TestCase):
     def test_untampered_proof_passes(self):
         proj, base, proof_path = self._make_proj_and_proof()
         # Sanity: the receipt recorded the base sha so drift is verifiable.
-        proof = json.load(open(proof_path))
+        proof = _load_json(proof_path)
         self.assertEqual(proof["facts"]["git"]["base_sha"], base)
         rc, res = _run_verifier(proof_path, proj)
         self.assertEqual(rc, 0, "unmodified proof should verify: %s" % res)
@@ -136,7 +144,7 @@ class TamperTests(_GitFixtureMixin, unittest.TestCase):
         # Flip one byte of a non-hash field (cost.usd) WITHOUT touching the
         # recorded verification.hash. The re-canonicalized hash must mismatch.
         proj, base, proof_path = self._make_proj_and_proof()
-        proof = json.load(open(proof_path))
+        proof = _load_json(proof_path)
         original_hash = proof["verification"]["hash"]
         proof.setdefault("cost", {})["usd"] = 99999.99
         # Leave verification.hash untouched (the forger edits a fact only).
@@ -154,7 +162,7 @@ class TamperTests(_GitFixtureMixin, unittest.TestCase):
         # forger recomputed the hash, the live-repo drift check would catch it;
         # here we only edit the count, so the hash mismatch catches it first.
         proj, base, proof_path = self._make_proj_and_proof()
-        proof = json.load(open(proof_path))
+        proof = _load_json(proof_path)
         proof["facts"]["git"]["diff"]["count"] = 999
         with open(proof_path, "w") as f:
             json.dump(proof, f, indent=2)
@@ -198,6 +206,37 @@ class DriftTests(_GitFixtureMixin, unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIs(res["diff_drift"], False)
 
+    def test_worktree_proof_passes_then_same_stat_content_drift_fails(self):
+        proj = os.path.join(self.tmp, "worktree")
+        os.makedirs(proj)
+        _git(proj, "init")
+        with open(os.path.join(proj, "a.txt"), "w") as handle:
+            handle.write("base\n")
+        _git(proj, "add", "a.txt")
+        _git(proj, "commit", "-m", "baseline")
+        base = _git(proj, "rev-parse", "HEAD").stdout.strip()
+        with open(os.path.join(proj, "a.txt"), "w") as handle:
+            handle.write("first\n")
+        with open(os.path.join(proj, "new.txt"), "w") as handle:
+            handle.write("new\n")
+        loki_dir = os.path.join(proj, ".loki")
+        out_dir = os.path.join(loki_dir, "proofs", "worktree")
+        os.makedirs(loki_dir)
+        proof_path = _run_generator(
+            loki_dir, out_dir, env_extra={"_LOKI_RUN_START_SHA": base}
+        )
+
+        rc, result = _run_verifier(proof_path, proj)
+        self.assertEqual(rc, 0, result)
+        self.assertIs(result["diff_drift"], False)
+        self.assertIs(result["tree_drift"], False)
+
+        with open(os.path.join(proj, "a.txt"), "w") as handle:
+            handle.write("other\n")
+        rc, result = _run_verifier(proof_path, proj)
+        self.assertEqual(rc, 1, result)
+        self.assertIs(result["tree_drift"], True)
+
 
 class HonestyTests(_GitFixtureMixin, unittest.TestCase):
     def setUp(self):
@@ -211,7 +250,7 @@ class HonestyTests(_GitFixtureMixin, unittest.TestCase):
         # the repo: drift is unverifiable. The verifier must NOT pass -- it
         # reports diff_drift None, ok False, with a base-ref reason.
         proj, base, proof_path = self._make_proj_and_proof()
-        proof = json.load(open(proof_path))
+        proof = _load_json(proof_path)
         # Rewrite base_sha to a non-existent (but well-formed) sha, then re-sign
         # so the hash check passes and ONLY the base-ref honesty path is tested.
         proof["facts"]["git"]["base_sha"] = "0" * 40
@@ -230,7 +269,7 @@ class HonestyTests(_GitFixtureMixin, unittest.TestCase):
         # re-derived. Re-sign after stripping so only the missing-base path is
         # exercised (not a hash failure).
         proj, base, proof_path = self._make_proj_and_proof()
-        proof = json.load(open(proof_path))
+        proof = _load_json(proof_path)
         proof["facts"]["git"]["base_sha"] = ""
         proof = _resign(proof)
         with open(proof_path, "w") as f:
@@ -268,7 +307,7 @@ class HonestyTests(_GitFixtureMixin, unittest.TestCase):
     def test_no_verification_hash_does_not_pass(self):
         # A proof stripped of its verification block cannot prove integrity.
         proj, base, proof_path = self._make_proj_and_proof()
-        proof = json.load(open(proof_path))
+        proof = _load_json(proof_path)
         proof.pop("verification", None)
         with open(proof_path, "w") as f:
             json.dump(proof, f, indent=2)
@@ -288,6 +327,28 @@ class HonestyTests(_GitFixtureMixin, unittest.TestCase):
         self.assertIsInstance(res["degraded"], list)
         # tests + build were never run in the fixture -> degraded is non-empty.
         self.assertTrue(res["degraded"])
+
+    def test_rehashed_verified_headline_cannot_hide_failed_execution(self):
+        proj, base, proof_path = self._make_proj_and_proof()
+        proof = _load_json(proof_path)
+        proof["facts"]["execution"] = {
+            "terminated": False,
+            "exit_code": 20,
+            "run_status": "max_iterations_reached",
+            "outcome": "max_iterations",
+        }
+        proof["honesty"]["headline"] = "VERIFIED"
+        proof["honesty"]["degraded"] = []
+        proof = _resign(proof)
+        with open(proof_path, "w") as handle:
+            json.dump(proof, handle, indent=2)
+
+        rc, res = _run_verifier(proof_path, proj)
+
+        self.assertEqual(rc, 1, res)
+        self.assertTrue(res["hash_ok"], "tampered facts were deliberately rehashed")
+        self.assertFalse(res["headline_consistent"])
+        self.assertFalse(res["ok"])
 
 
 def _resign(proof):

@@ -347,6 +347,109 @@ else
 fi
 
 echo
+# === WIRING: the runner must actually CONSULT the council ====================
+# Everything above tests council_should_stop and its floor directly. That proves
+# the DECISION logic and says nothing about whether run.sh still asks it.
+#
+# Found by mutation probe: replacing the runner's `elif type council_should_stop`
+# guard with `elif false` -- so no run can ever be council-approved -- left this
+# file and the wider council suite green. The council is the gate that decides a
+# run is done; a disconnected one fails open into "never approves", which then
+# looks like a model problem rather than a wiring bug.
+_RUN_SH="$REPO_ROOT/autonomy/run.sh"
+
+if grep -qE 'elif type council_should_stop &>/dev/null' "$_RUN_SH"; then
+    ok "WIRING: run.sh checks for council_should_stop before calling it"
+else
+    bad "WIRING: run.sh no longer consults the council -- no run can be approved"
+fi
+
+if grep -qF 'council_should_stop; then' "$_RUN_SH"; then
+    ok "WIRING: run.sh invokes council_should_stop"
+else
+    bad "WIRING: the council decision is never invoked"
+fi
+
+# The FOUR hard gates inside council_should_stop. Each blocks completion for a
+# different reason -- unmet checklist, failing held-out evals, missing evidence,
+# unresolved assumptions -- and each returns CONTINUE rather than approving.
+#
+# All four were blind: the council suites test each gate's own logic and none
+# asserted that council_should_stop still calls them. Bypassing any one lets a
+# run complete while the thing that gate exists to check was never checked, and
+# the receipt still reads VERIFIED.
+#
+# Asserted as a group because they are a group: a future gate added beside them
+# without a call-site assertion is the same hole again.
+_COUNCIL_SH="$REPO_ROOT/autonomy/completion-council.sh"
+for _gate in council_checklist_gate council_heldout_gate \
+             council_evidence_gate council_assumption_ledger_gate; do
+    if grep -qF "if ! $_gate; then" "$_COUNCIL_SH"; then
+        ok "WIRING: council_should_stop consults $_gate"
+    else
+        bad "WIRING: $_gate is bypassed -- completion would skip that check entirely"
+    fi
+
+    if grep -qF "$_gate()" "$_COUNCIL_SH"; then
+        ok "WIRING: $_gate is defined under the name its caller uses"
+    else
+        bad "WIRING: $_gate definition and call site have diverged"
+    fi
+done
+
+# The VOTE itself. council_evaluate runs the hard gates, aggregates votes and
+# applies the devil's advocate; a true return prints "PROJECT APPROVED" and
+# writes the .loki/COMPLETED marker. Bypassing it approves every run with no
+# vote taken at all, which is a stronger failure than any single gate.
+#
+# The circuit breaker beside it was probed too and is genuinely guarded -- worth
+# recording, so nobody re-derives whether it was ever checked.
+if grep -qF 'if council_evaluate; then' "$_COUNCIL_SH"; then
+    ok "WIRING: the council runs its evaluation before approving"
+else
+    bad "WIRING: council_evaluate is bypassed -- runs would be approved with no vote"
+fi
+
+if grep -qF 'council_evaluate()' "$_COUNCIL_SH"; then
+    ok "WIRING: council_evaluate is defined under the name its caller uses"
+else
+    bad "WIRING: council_evaluate definition and call site have diverged"
+fi
+
+# Approval must still be what writes the COMPLETED marker: a marker written
+# outside the approved branch would mean "done" without the vote.
+if grep -qF 'Council approved at iteration' "$_COUNCIL_SH"; then
+    ok "WIRING: the COMPLETED marker is written from the approval path"
+else
+    bad "WIRING: the completion marker is no longer tied to council approval"
+fi
+
+# The SUPERVISED branch of the same conditional. It blocks completion when the
+# iteration reported gate failures, so bypassing it makes every supervised run
+# report complete with its gates unchecked -- the same fail-open shape, one
+# branch over, and also blind before this.
+if grep -qF '_loki_supervised_completion_gates_pass "${gate_failures:-}" && _loki_completion_ready=0' "$_RUN_SH"; then
+    ok "WIRING: the supervised path still runs its completion gates"
+else
+    bad "WIRING: supervised completion no longer checks its gates -- it would pass unchecked"
+fi
+
+if grep -qF '_loki_supervised_completion_gates_pass()' "$_RUN_SH"; then
+    ok "WIRING: the supervised gate is defined under the name its caller uses"
+else
+    bad "WIRING: supervised gate definition and call site have diverged"
+fi
+
+# The function must still exist under the name the runner calls: a rename that
+# updates one side leaves the guard permanently false and the council silently
+# skipped, with no error anywhere.
+if grep -qF 'council_should_stop()' "$REPO_ROOT/autonomy/completion-council.sh"; then
+    ok "WIRING: council_should_stop is defined under the name the runner calls"
+else
+    bad "WIRING: council_should_stop definition and call site have diverged"
+fi
+
+
 echo "-----------------------------------------------------"
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] && echo "ALL CONVERGENCE-FLOOR TESTS PASSED" || echo "SOME TESTS FAILED"

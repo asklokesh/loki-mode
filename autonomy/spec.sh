@@ -91,7 +91,13 @@ spec_resolve_source() {
         ".loki/generated-prd.md" \
         "prd.md" \
         "PRD.md" \
-        "docs/prd.md"; do
+        "docs/prd.md" \
+        "openapi.yaml" \
+        "openapi.yml" \
+        "openapi.json" \
+        "api/openapi.yaml" \
+        "api/openapi.json" \
+        "schema.graphql"; do
         if [ -f "$candidate" ]; then
             printf '%s\n' "$candidate"
             return 0
@@ -120,6 +126,117 @@ except OSError as exc:
     sys.exit(3)
 
 lines = raw.splitlines()
+
+# ---------------------------------------------------------------------------
+# Contract fast path (RUN-25 iter 25): when the spec IS an OpenAPI / GraphQL /
+# Postman contract, lock one requirement PER OPERATION with a per-operation
+# content hash, so `spec status` reports the exact operation id that DRIFTED
+# (a response schema edit on /users flags "users.get", not the whole file).
+# Falls through to the markdown heading/checklist logic below on anything else,
+# byte-identical to the prior behavior for a normal PRD.
+# ---------------------------------------------------------------------------
+def _contract_requirements(text):
+    def load_structured(t):
+        try:
+            return json.loads(t)
+        except Exception:
+            pass
+        try:
+            import yaml
+            return yaml.safe_load(t)
+        except Exception:
+            return None
+
+    def op_hash(payload):
+        # Stable hash of the operation's own definition (order-insensitive for
+        # dict payloads via sort_keys), so a change to THIS op flips only its id.
+        try:
+            blob = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+        except Exception:
+            blob = repr(payload)
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+    data = load_structured(text)
+    ops = []
+
+    # OpenAPI / Swagger
+    if isinstance(data, dict) and ("openapi" in data or "swagger" in data) and isinstance(data.get("paths"), dict):
+        for p, item in data["paths"].items():
+            if not isinstance(item, dict):
+                continue
+            for method, op in item.items():
+                if method.lower() not in ("get", "post", "put", "patch", "delete", "head", "options", "trace"):
+                    continue
+                if not isinstance(op, dict):
+                    continue
+                opid = op.get("operationId") or ("%s %s" % (method.upper(), p))
+                ops.append((str(opid).strip(), "operation", op_hash(op)))
+        return ops
+
+    # Postman collection
+    if isinstance(data, dict) and isinstance(data.get("info"), dict) and "item" in data:
+        def walk(items, prefix=""):
+            for it in items or []:
+                if not isinstance(it, dict):
+                    continue
+                name = it.get("name", "request")
+                if isinstance(it.get("item"), list):
+                    walk(it["item"], prefix + name + " / ")
+                elif "request" in it:
+                    label = (prefix + name).strip()
+                    ops.append((label, "request", op_hash(it.get("request"))))
+        walk(data.get("item"))
+        return ops
+
+    # GraphQL SDL (text)
+    if re.search(r"\btype\s+(Query|Mutation|Subscription)\b", text):
+        for root in ("Query", "Mutation", "Subscription"):
+            m = re.search(r"\btype\s+" + root + r"\b[^{]*\{", text)
+            if not m:
+                continue
+            i = m.end()
+            depth = 1
+            body_start = i
+            while i < len(text) and depth > 0:
+                if text[i] == "{":
+                    depth += 1
+                elif text[i] == "}":
+                    depth -= 1
+                i += 1
+            body = text[body_start:i - 1]
+            for fm in re.finditer(r"^\s*([A-Za-z_]\w*)\s*(\([^)]*\))?\s*:\s*([^\n#]+)", body, re.M):
+                field = fm.group(1)
+                sig = fm.group(0).strip()
+                ops.append(("%s.%s" % (root, field), "field", hashlib.sha256(sig.encode("utf-8")).hexdigest()))
+        return ops
+
+    return []
+
+
+_contract_ops = _contract_requirements(raw)
+if _contract_ops:
+    _out = []
+    _seen = {}
+    for _name, _kind, _h in _contract_ops:
+        base = _name.strip().lower() or "op"
+        base = re.sub(r"\s+", " ", base)
+        if base in _seen:
+            _seen[base] += 1
+            rid = "%s#%d" % (base, _seen[base])
+        else:
+            _seen[base] = 0
+            rid = base
+        _out.append({
+            "id": rid,
+            "kind": _kind,
+            "level": 100,
+            "text": _name,
+            "line": 0,
+            "content_hash": _h,
+        })
+    json.dump({"requirements": _out}, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    sys.exit(0)
 
 heading_re = re.compile(r'^(#{1,6})\s+(.*\S)\s*$')
 # Checklist item: optional leading whitespace, a bullet, then [ ] / [x] / [X].

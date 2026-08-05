@@ -134,14 +134,32 @@ class CostTimelineTests(unittest.TestCase):
         self.assertGreater(d["current_run"]["iterations"][0]["cost_usd"], 0)
 
     def test_recorded_but_zero_distinct_from_not_recorded(self):
+        # A MEASURED zero: real observed tokens, provider reported $0 cost.
+        # The record must carry an observed value somewhere, otherwise it is
+        # not "recorded but zero" at all -- it is unmeasured. This fixture
+        # previously had every field 0, which is byte-identical to the
+        # _UNMEASURED shape in tests/test_cost_honesty_end_to_end.py, so it
+        # asserted the very lie that arc exists to prevent (a present file
+        # treated as a measurement).
         self._write_eff("iteration-001.json", {
             "iteration": 1, "model": "sonnet", "phase": "build",
-            "input_tokens": 0, "output_tokens": 0, "cost_usd": 0})
+            "input_tokens": 9412, "output_tokens": 0, "cost_usd": 0})
         with _ForceLokiDir(self.tmp):
             d = _client().get("/api/cost/timeline").json()
         # Recorded but zero: cost_recorded True, total 0.0 (NOT null).
         self.assertTrue(d["current_run"]["cost_recorded"])
         self.assertEqual(d["current_run"]["total_usd"], 0.0)
+
+    def test_all_zero_record_is_unmeasured_not_free(self):
+        """The FireLater shape: records present, every field 0."""
+        self._write_eff("iteration-001.json", {
+            "iteration": 1, "model": "sonnet", "phase": "build",
+            "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
+            "cache_creation_tokens": 0, "cost_usd": 0})
+        with _ForceLokiDir(self.tmp):
+            d = _client().get("/api/cost/timeline").json()
+        self.assertFalse(d["current_run"]["cost_recorded"])
+        self.assertIsNone(d["current_run"]["total_usd"])
 
     # ---------- per-run history --------------------------------------------
 

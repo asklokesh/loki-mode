@@ -7,10 +7,13 @@ Provides REST API and WebSocket endpoints for dashboard functionality.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import os
+import platform
 import subprocess
+import sys
 import threading
 import time
 from collections import defaultdict
@@ -31,7 +34,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,6 +57,7 @@ from . import auth
 from . import audit
 from . import app_secrets as secrets_mod
 from . import telemetry as _telemetry
+from . import build_supervisor as _build_execution
 from .control import atomic_write_json, find_skill_dir, is_process_running
 from .activity_logger import get_activity_logger
 from .api_v2 import (
@@ -181,6 +185,150 @@ def _rate_key(base: str, request: Optional[Request]) -> str:
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+
+# Reads that expose operational or credential-adjacent state. These stay open
+# to a LOCAL caller (zero-config use is the point) but must not be readable by
+# an anonymous remote caller when the dashboard is bound to 0.0.0.0.
+#
+# Measured before this list existed, from a routable remote address with auth
+# off: /api/logs, /api/secrets/status, /api/github/status, /api/tasks,
+# /api/council/transcripts and /api/proofs all returned 200.
+#
+# /health and /metrics are deliberately ABSENT: a container health probe and a
+# Prometheus scrape must keep working with no configuration, and neither
+# carries workspace content.
+_SENSITIVE_READ_PREFIXES = (
+    "/api/logs",
+    "/api/secrets",
+    "/api/github",
+    "/api/tasks",
+    "/api/projects",
+    "/api/council",
+    "/api/proofs",
+    "/api/memory",
+    "/api/learnings",
+    "/api/learning",
+    "/api/escalations",
+    "/api/spec",
+    "/api/checkpoints",
+    "/api/enterprise",
+    "/api/collab",
+    "/api/cost",
+    "/api/budget",
+    "/api/findings",
+    "/api/operator",
+    "/api/fleet",
+    "/api/registry",
+    "/api/wiki",
+    "/api/activity",
+    "/api/session",
+    "/api/failures",
+    "/api/prompt",
+    "/api/quality",
+    "/api/migration",
+    "/api/managed",
+    "/api/app-runner",
+    "/api/playwright",
+    "/api/checklist",
+    "/api/control",
+)
+
+
+def _trusted_proxies() -> frozenset:
+    """Proxy addresses whose forwarded-for header may be believed.
+
+    EXPLICIT, never inferred. A reverse proxy on the same host presents
+    127.0.0.1 as the peer, so "the peer is loopback" cannot mean "the caller is
+    local" -- that was a real bypass: a remote request through a same-host
+    proxy reached POST /api/control/stop with a 200. Trusting X-Forwarded-For
+    unconditionally is the opposite mistake, since any direct caller can send
+    that header themselves.
+
+    So the operator names the proxies. Anything not named is not trusted, and
+    its forwarded headers are ignored rather than believed.
+    """
+    raw = os.environ.get("LOKI_TRUSTED_PROXIES", "")
+    return frozenset(x.strip() for x in raw.split(",") if x.strip())
+
+
+def _real_client_host(request: Request):
+    """The address to make the decision on, or None if it cannot be known.
+
+    Returns the peer address normally. When the peer is a TRUSTED proxy, the
+    left-most X-Forwarded-For entry is used instead, because that is the
+    originating client the proxy is reporting.
+    """
+    client = getattr(request, "client", None)
+    host = getattr(client, "host", None) if client else None
+    if host is None:
+        return None
+    if host in _trusted_proxies():
+        fwd = request.headers.get("x-forwarded-for", "")
+        first = fwd.split(",")[0].strip()
+        if first:
+            return first
+    return host
+
+
+def _is_local_caller(host) -> bool:
+    """True only for a caller we can positively identify as non-routable.
+
+    A peer that is not an IP literal (ASGI test transports report
+    "testclient", UDS transports report names) is treated as local: a name is
+    not evidence of a remote caller, and refusing every non-IP string broke 17
+    existing tests without closing any real hole.
+    """
+    if host is None:
+        return False
+    if host in ("127.0.0.1", "::1", "localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return True
+
+
+def require_local_or_authenticated(request: Request) -> None:
+    """Refuse an anonymous REMOTE caller on a mutation or a sensitive read.
+
+    THE HOLE THIS CLOSES. Every mutating route already carries
+    Depends(auth.require_scope(...)), and all 46 were bypassable, because
+    require_scope returns True when enterprise auth is DISABLED -- the default.
+    Bound to 127.0.0.1 that is harmless. But LOKI_DASHBOARD_HOST=0.0.0.0 is a
+    documented container configuration, and there an anonymous request from
+    anywhere on the network could stop a build or read the logs.
+
+    Measured with auth off, from a routable remote address:
+
+        POST /api/control/stop        -> 200
+        GET  /api/logs                -> 200
+        GET  /api/secrets/status      -> 200
+
+    The rule, chosen so zero-config local use does not change:
+
+        auth enabled                 require_scope decides, unchanged
+        loopback / non-IP peer       allowed, exactly as today
+        trusted proxy                decided on the FORWARDED client
+        routable remote, no auth     403
+
+    An untrusted proxy's forwarded headers are IGNORED, not believed: any
+    direct caller can set X-Forwarded-For.
+    """
+    if auth.ENTERPRISE_AUTH_ENABLED or auth.OIDC_ENABLED:
+        return
+    host = _real_client_host(request)
+    if host is None:
+        raise HTTPException(
+            status_code=403,
+            detail="control requires an identifiable client; enable "
+                   "LOKI_ENTERPRISE_AUTH to allow remote access")
+    if _is_local_caller(host):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="this endpoint is restricted to local callers unless "
+               "LOKI_ENTERPRISE_AUTH is enabled")
 
 
 # Pydantic schemas for API
@@ -404,6 +552,29 @@ class SessionInfo(BaseModel):
     log_file: str = ""
 
 
+def _npm_execution_target() -> tuple[str, str, str]:
+    """Return the npm-native target used by provider and verification commands."""
+    os_name = {
+        "darwin": "darwin",
+        "linux": "linux",
+        "win32": "win32",
+    }.get(sys.platform, "")
+    cpu = {
+        "aarch64": "arm64",
+        "arm64": "arm64",
+        "amd64": "x64",
+        "x86_64": "x64",
+    }.get(platform.machine().lower(), "")
+    libc = ""
+    if os_name == "linux":
+        detected_libc = platform.libc_ver()[0].lower()
+        libc = {"glibc": "glibc", "musl": "musl"}.get(detected_libc, "")
+    return os_name, cpu, libc
+
+
+_EXECUTION_OS, _EXECUTION_CPU, _EXECUTION_LIBC = _npm_execution_target()
+
+
 class StatusResponse(BaseModel):
     """Schema for system status response."""
     status: str
@@ -413,6 +584,11 @@ class StatusResponse(BaseModel):
     running_agents: int = 0
     pending_tasks: int = 0
     database_connected: bool = True
+    # Native dependency target for commands executed by this engine. Callers
+    # must treat blanks as unknown and skip cross-environment preparation.
+    execution_os: str = _EXECUTION_OS
+    execution_cpu: str = _EXECUTION_CPU
+    execution_libc: str = _EXECUTION_LIBC
     # File-based session fields
     phase: str = ""
     iteration: int = 0
@@ -526,6 +702,40 @@ start_time = datetime.now(timezone.utc)
 
 
 _dashboard_start_time = time.time()
+
+
+def _registry_run_alive(loki_dir: _Path) -> bool:
+    """True when .loki/pids/ holds a LIVE wrapper/runner process.
+
+    Third liveness source for a CLI-started background run, which writes
+    neither loki.pid nor session.json (run.sh only UPDATES session.json when it
+    already exists). Both of those checks therefore fail for `loki start` and
+    the run falls through to "stopped" while it is actively building.
+
+    The kind filter is load-bearing: .loki/pids/ also registers the dashboard
+    itself, the status-monitor and the resource-monitor, none of which carry a
+    "kind" key. Accepting any live pid here would let the dashboard's own
+    process prove the run is alive, turning a false-stopped into a permanent
+    false-running. Keep it to wrapper/runner.
+
+    Liveness is proven with os.kill(pid, 0), never by the file's presence -- a
+    stale entry from a crashed run must NOT read as alive.
+    """
+    try:
+        for _entry in (loki_dir / "pids").glob("*.json"):
+            _rec = _safe_json_read(_entry, {})
+            if not isinstance(_rec, dict):
+                continue
+            if _rec.get("kind") not in ("wrapper", "runner"):
+                continue
+            try:
+                os.kill(int(_rec.get("pid", 0)), 0)
+            except (ValueError, TypeError, OSError, ProcessLookupError):
+                continue
+            return True
+    except OSError:
+        pass
+    return False
 
 
 async def _push_loki_state_loop() -> None:
@@ -647,15 +857,49 @@ async def _push_loki_state_loop() -> None:
                             except (json.JSONDecodeError, KeyError):
                                 pass
 
-                        status_str = raw.get("mode", "autonomous")
+                        # Third source: the .loki/pids/ registry, which a
+                        # CLI-started background run DOES write. Shared with
+                        # /api/status via _registry_run_alive so both live
+                        # surfaces agree -- they previously did not: on a real
+                        # `loki start` build this stream broadcast "running"
+                        # while /api/status returned "stopped" for the SAME run
+                        # in the same second, because only this copy had the
+                        # pids/ source.
                         if not _pid_alive:
-                            status_str = "stopped"
-                        elif status_str == "paused":
-                            status_str = "paused"
-                        elif status_str in ("stopped", ""):
-                            status_str = "stopped"
-                        else:
-                            status_str = "running"
+                            _pid_alive = _registry_run_alive(loki_dir)
+
+                        status_str = raw.get("mode", "autonomous")
+                        # Control files are the AUTHORITY, and they are checked
+                        # first. dashboard-state.json's "mode" is written by the
+                        # engine and goes stale the moment a run pauses: on a
+                        # real paused run it still read "autonomous", so this
+                        # stream reported "running" while /api/status -- which
+                        # reads .loki/PAUSE -- reported "paused" for the SAME
+                        # run. Two live surfaces disagreeing about whether a
+                        # build is running is worse than either being wrong
+                        # alone, because the user cannot tell which to believe.
+                        try:
+                            _ctl = loki_dir
+                            if (_ctl / "STOP").exists():
+                                status_str = "stopped"
+                            elif (_ctl / "PAUSE").exists():
+                                status_str = "paused"
+                            elif not _pid_alive:
+                                status_str = "stopped"
+                            elif status_str == "paused":
+                                status_str = "paused"
+                            elif status_str in ("stopped", ""):
+                                status_str = "stopped"
+                            else:
+                                status_str = "running"
+                        except (OSError, TypeError, NameError):
+                            # Never let a control-file read break the stream.
+                            if not _pid_alive:
+                                status_str = "stopped"
+                            elif status_str in ("stopped", ""):
+                                status_str = "stopped"
+                            elif status_str != "paused":
+                                status_str = "running"
 
                         payload = {
                             "status": status_str,
@@ -879,11 +1123,168 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
 
+# RESPONSE COMPRESSION. Measured, not assumed: the served dashboard bundle
+# (dashboard/static/index.html) is 779,725 bytes raw and 150,341 gzipped --
+# an 81% reduction. Until now only CORS and the collab WS auth middleware were
+# registered, so every dashboard load shipped the full 780KB.
+#
+# That single fact is the most plausible cause of "the dashboard feels slow":
+# it is not a rendering problem, it is 630KB of avoidable transfer on first
+# paint, and it costs one middleware to fix.
+#
+# minimum_size=1024 leaves small JSON responses uncompressed, where the CPU
+# round-trip outweighs the saving. GZipMiddleware is stdlib-backed and does
+# not negotiate brotli, so it cannot fail closed on a client that only sends
+# `Accept-Encoding: gzip` -- responses stay correct either way.
+#
+# Streaming endpoints are unaffected in a way that matters: Starlette's
+# GZipMiddleware passes through responses it cannot buffer, so SSE and the
+# WebSocket upgrade path keep their existing behaviour.
+try:
+    from starlette.middleware.gzip import GZipMiddleware
+
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
+except Exception as _gzip_exc:  # pragma: no cover - starlette always ships it
+    # Never fatal: a dashboard that starts uncompressed is strictly better
+    # than one that does not start.
+    logger.warning("gzip compression unavailable: %s", _gzip_exc)
+
+# THE DASHBOARD BOUNDARY. One central fail-closed check, not a per-route flag.
+#
+# WHY MIDDLEWARE AND NOT A DEPENDENCY PER ROUTE. All 46 mutating routes already
+# carry Depends(auth.require_scope(...)). Every one of them is a NO-OP when
+# enterprise auth is disabled, which is the default -- require_scope returns
+# True in that mode. So "42 of 46 are scoped" described the code accurately and
+# the security posture not at all: a remote anonymous caller could invoke any
+# of them. Measured before this guard, with LOKI_ENTERPRISE_AUTH unset:
+#
+#     POST /api/control/stop      -> 200
+#     POST /api/control/app-stop  -> 200
+#
+# A first attempt added a dependency to six control routes by hand. That is the
+# wrong shape: it protects the six someone remembered, leaves the other forty,
+# and every route added later starts unprotected. The boundary is one place.
+#
+# THE RULE, chosen so zero-config local use does not change:
+#
+#     auth enabled                 -> require_scope decides, unchanged
+#     loopback caller              -> allowed, exactly as today
+#     non-IP peer (test/UDS)       -> allowed; a name is not evidence of remote
+#     routable remote + no auth    -> 403
+#
+# Only MUTATIONS are gated. Reads stay open so a container health probe, a
+# metrics scrape and the SPA itself keep working with no configuration.
+class WebSocketBoundaryMiddleware:
+    """The same local-or-authenticated rule, for WebSocket scopes.
+
+    WHY A SEPARATE MIDDLEWARE. @app.middleware("http") only wraps HTTP
+    scopes, so every WebSocket route was outside the boundary. Measured with
+    auth off, from a routable remote address, both accepted the connection:
+
+        /ws          CONNECTED
+        /ws/collab   CONNECTED   (and it is WRITABLE -- collaboration state
+                                  could be pushed by a network caller)
+
+    The routes are not careless: /ws checks a query-parameter token when
+    enterprise auth is ON, and dashboard/server.py:2732 records that
+    FastAPI's Depends() does not work on websocket routes. The hole is the
+    auth-OFF default, where that check is skipped -- exactly the case the
+    HTTP boundary already covers for requests.
+
+    This is plain ASGI rather than a Starlette BaseHTTPMiddleware because the
+    latter has no websocket hook. Registering it here also covers routes
+    added by OTHER modules (collab registers /ws/collab from its own file),
+    which a per-route decorator would miss.
+
+    The decision is shared with the HTTP path: same trusted-proxy resolution,
+    same loopback rule, same auth-enabled deferral. A refused upgrade is
+    closed with policy code 1008 rather than being silently dropped, so a
+    client can tell refusal from a network fault.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "websocket":
+            await self.app(scope, receive, send)
+            return
+        if not (auth.ENTERPRISE_AUTH_ENABLED or auth.OIDC_ENABLED):
+            client = scope.get("client")
+            host = client[0] if client else None
+            if host in _trusted_proxies():
+                for raw_name, raw_value in scope.get("headers", []):
+                    if raw_name == b"x-forwarded-for":
+                        first = raw_value.decode("latin-1").split(",")[0].strip()
+                        if first:
+                            host = first
+                        break
+            if not _is_local_caller(host):
+                # 1008 = policy violation. Closing with a code beats an
+                # accept-then-drop, which reads to a client as a flaky network.
+                await send({"type": "websocket.close", "code": 1008})
+                return
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(WebSocketBoundaryMiddleware)
+
+
+@app.middleware("http")
+async def dashboard_control_boundary(request: Request, call_next):
+    # EVERY mutation, plus reads that expose operational or credential-adjacent
+    # state. Gating mutations alone left /api/logs, /api/secrets/status and
+    # /api/council/transcripts readable by an anonymous remote caller on a
+    # 0.0.0.0 bind -- measured at 200 before this was widened.
+    #
+    # /health and /metrics are intentionally NOT in the sensitive list, so a
+    # container health probe and a Prometheus scrape keep working unconfigured.
+    gated = request.method in ("POST", "PUT", "PATCH", "DELETE")
+    if not gated:
+        path = request.url.path
+        gated = any(path.startswith(pfx) for pfx in _SENSITIVE_READ_PREFIXES)
+    if gated:
+        try:
+            require_local_or_authenticated(request)
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code,
+                                content={"detail": exc.detail})
+    return await call_next(request)
+
+
 # Static file serving is configured at the end of the file (after all API routes)
 
 # Mount V2 API router
 from .api_v2 import router as api_v2_router
 app.include_router(api_v2_router)
+
+# Mount the operator router: the filesystem evidence readers (run detail, gate
+# results, receipts, releases) reachable over HTTP. Before this they were
+# libraries only the test suite imported -- four readers, none of them
+# reachable by a user.
+#
+# THIS MOUNT FAILS CLOSED, and the first version did not. It was wrapped in a
+# bare `except Exception: logger.warning(...)`, which swallows a typo, a
+# refactor that breaks an import, or a syntax error just as happily as a
+# genuinely absent optional dependency. The dashboard then starts perfectly,
+# reports healthy, and serves 404 on every operator path -- the exact
+# "monitoring surface that is silently blind" failure this whole module exists
+# to prevent. It also makes the mount test fail on CI with no stated cause,
+# which is how it was found.
+#
+# A missing OPTIONAL dependency is the only tolerable degradation, so only
+# ImportError is caught, and even that is logged at error level rather than
+# warning. Every other exception propagates and takes the dashboard down,
+# because a dashboard that cannot show run evidence is not a dashboard that
+# should quietly claim to be up.
+try:
+    from .api_operator import router as api_operator_router
+except ImportError as _operator_exc:  # pragma: no cover - optional dep absent
+    logger.error(
+        "operator API could not be imported, /api/operator/* will 404: %s",
+        _operator_exc)
+else:
+    app.include_router(api_operator_router)
 
 # Phase Merge-4: Mount Purple Lab FastAPI app under /lab/ so it appears as a
 # sidebar entry in Dashboard. Same `app` is also wrapped by `standalone_app`
@@ -1352,6 +1753,13 @@ async def get_status() -> StatusResponse:
         # Skill sessions are autonomous by definition
         if not mode:
             mode = "autonomous"
+
+    # Third source: .loki/pids/ registry (see _registry_run_alive). A
+    # CLI-started background run writes neither loki.pid nor session.json, so
+    # both checks above miss it and a healthy build reported "stopped" here
+    # while the WS stream -- which already had this source -- said "running".
+    if not running:
+        running = _registry_run_alive(loki_dir)
 
     # Determine status string
     if not running:
@@ -2748,16 +3156,153 @@ _SESSION_MODEL_ALLOWLIST = ("haiku", "sonnet", "opus", "fable")
 # allowlist is unchanged) because it is an explicit live-run control.
 _START_MODEL_ALLOWLIST = ("haiku", "sonnet", "opus")
 
+# Provider-agnostic capability tiers. These are the vocabulary the picker offers
+# on a non-Claude provider, and they resolve per-provider through
+# providers/models.sh (loki_tier_alias): small -> fast, medium -> development,
+# high -> planning. Accepting them here is what makes the start-time picker work
+# on codex at all -- the Claude aliases above are meaningless there, so before
+# this every value a codex user could pick normalized to "" and was silently
+# dropped, and the run started on the provider default with no feedback.
+_START_MODEL_GENERIC_TIERS = ("small", "medium", "high")
+
 
 def _normalize_start_model(raw: str | None) -> str:
-    """Normalize a start-time model / advisor alias (haiku|sonnet|opus, no fable).
+    """Normalize a start-time model / advisor alias.
 
-    Same trim + lowercase + exact-match rule as _normalize_session_model, but on
-    the narrower _START_MODEL_ALLOWLIST. Returns "" for absent/invalid/fable so
+    Accepts the Claude aliases (haiku|sonnet|opus, no fable) and the generic
+    capability tiers (small|medium|high). Returns "" for absent/invalid/fable so
     callers can treat empty as "no selection" (engine uses its own default).
+
+    fable stays excluded: it is advisory-only and the runner collapses it to
+    opus, so offering it as a start-time execution model would be a cost
+    surprise. That reasoning is unchanged by adding the generic tiers.
     """
     val = (raw or "").strip().lower()
-    return val if val in _START_MODEL_ALLOWLIST else ""
+    if val in _START_MODEL_ALLOWLIST or val in _START_MODEL_GENERIC_TIERS:
+        return val
+    return ""
+
+
+# =============================================================================
+# Provider-aware model offer set
+# =============================================================================
+# The two allowlists above are WIRE values: what run.sh will actually honor in
+# .loki/state/model-override. They are Claude aliases because run.sh:20996 gates
+# the whole override block on PROVIDER_NAME=claude and feeds the file straight
+# into `claude --model`. They must not change.
+#
+# What the dashboard OFFERS is a separate question, and it was the bug: the
+# picker rendered those four Claude aliases on every run, so a codex session was
+# offered Haiku/Sonnet/Opus/Fable, none of which codex can dispatch. The offer
+# set below is derived from the RUNNING session's provider plus the canonical
+# providers/model_catalog.json, so the picker never names a model the active
+# provider cannot run.
+
+# Generic tier -> catalog key. These three tier names are provider-independent
+# (every catalog entry carries latest_fast/development/planning), which is what
+# makes the picker portable across providers.
+_TIER_LABELS = (
+    ("small", "fast"),
+    ("medium", "development"),
+    ("high", "planning"),
+)
+
+
+def _active_provider() -> str:
+    """The provider the CURRENT run is executing on.
+
+    Resolution order mirrors the CLI (autonomy/loki:5142): the per-project state
+    file run.sh writes at launch (run.sh:1458), then the environment, then the
+    stock default. The state file wins because it is the only source that
+    reflects the live run rather than the dashboard process's own environment.
+    """
+    try:
+        p = _get_loki_dir() / "state" / "provider"
+        if p.is_file():
+            val = p.read_text().strip().lower()
+            if val:
+                return val
+    except OSError:
+        pass
+    return (os.environ.get("LOKI_PROVIDER") or "claude").strip().lower() or "claude"
+
+
+def _load_model_catalog() -> dict:
+    """Read providers/model_catalog.json, the single source of truth for model ids.
+
+    Same candidate paths as GET /api/providers/models. Returns {} when the
+    catalog is unreadable; every caller degrades to "no model ids to show"
+    rather than inventing one.
+    """
+    for path in (
+        _Path(__file__).resolve().parent.parent / "providers" / "model_catalog.json",
+        _Path("providers/model_catalog.json"),
+    ):
+        try:
+            if path.exists():
+                with path.open("r", encoding="utf-8") as fh:
+                    return json.load(fh)
+        except (json.JSONDecodeError, OSError):
+            continue
+    return {}
+
+
+def _resolve_catalog_model(provider: str, catalog_tier: str) -> str:
+    """The model id `provider` dispatches for `catalog_tier` (fast/development/planning).
+
+    Python mirror of loki_latest_model (providers/models.sh:22), including its
+    env-override chain and its "generic" registry fallback for a provider the
+    catalog does not name. Kept in Python rather than shelling out to models.sh:
+    the dashboard answers this per request and a subprocess per tier per poll is
+    not worth it. Model IDS still come only from the catalog, never from here.
+    """
+    provider_env = re.sub(r"[^A-Z0-9_]", "_", provider.upper())
+    for var in (
+        f"LOKI_{provider_env}_MODEL_{catalog_tier.upper()}",
+        f"LOKI_{provider_env}_MODEL",
+    ):
+        val = (os.environ.get(var) or "").strip()
+        if val:
+            return val
+    providers = _load_model_catalog().get("providers", {})
+    entry = providers.get(provider) or providers.get("generic") or {}
+    return str(entry.get(f"latest_{catalog_tier}") or "")
+
+
+def _provider_model_offers(provider: str) -> list[dict]:
+    """The model choices to OFFER for `provider`, each with what it resolves to.
+
+    Claude keeps its established alias picker byte-for-byte: those aliases are
+    the values run.sh honors in the override file, so changing them would break
+    the one provider where mid-run switching actually works.
+
+    Every other provider is offered the generic tiers (small/medium/high), which
+    are provider-independent, each annotated with the concrete model id the
+    catalog says that provider dispatches. That is what makes the picker read
+    "medium -> gpt-5.6-terra" on codex and "medium -> claude-sonnet-5" on claude
+    without the frontend knowing a single model id.
+    """
+    if provider == "claude":
+        aliases = _load_model_catalog().get("providers", {}).get("claude", {}).get("cli_aliases", {})
+        return [
+            {"value": alias, "tier": None, "model": aliases.get(alias, "")}
+            for alias in _SESSION_MODEL_ALLOWLIST
+        ]
+    return [
+        {"value": tier, "tier": tier, "model": _resolve_catalog_model(provider, catalog_tier)}
+        for tier, catalog_tier in _TIER_LABELS
+    ]
+
+
+def _provider_supports_model_switch(provider: str) -> bool:
+    """Whether a live run on `provider` honors .loki/state/model-override.
+
+    Only claude does: run.sh:20996 gates the entire override-read block on
+    PROVIDER_NAME=claude. On any other provider the file is written and never
+    read, so the POST path rejects rather than reporting a switch that will not
+    happen.
+    """
+    return provider == "claude"
 
 
 class SessionModelRequest(BaseModel):
@@ -2836,17 +3381,28 @@ def _normalize_session_model(raw: str | None) -> str:
 # tier names ARE valid pins.
 _SESSION_PIN_ALLOWLIST = _SESSION_MODEL_ALLOWLIST + ("planning", "development", "fast")
 
+# Generic capability vocabulary. A user picks a CLASS of model (small/medium/
+# high) and each provider supplies its own latest model in that class, so nobody
+# has to know a vendor's model names. These are translated onto the canonical
+# tier names rather than added to the allowlist, keeping this mirror in step
+# with run.sh's entry-point case and the `loki plan` estimator without widening
+# what any of the three actually route on. Mirrors loki_tier_alias() in
+# providers/models.sh.
+_GENERIC_TIERS = {"small": "fast", "medium": "development", "high": "planning"}
+
 
 def _normalize_session_pin(raw: str | None) -> str:
     """Normalize a LOKI_SESSION_MODEL pin value (aliases + raw tier names).
 
     Mirrors run.sh's session-pin case: trim + lowercase, accept the four model
-    aliases and the three tier names. Interior whitespace is preserved (so
+    aliases and the three tier names, and translate the generic small/medium/
+    high vocabulary onto those tier names. Interior whitespace is preserved (so
     "fab le" stays junk and falls through to the default tier, exactly like the
     runner's "*" arm). Use this for the session-pin (no-override) derivation;
     use _normalize_session_model for the override-file / POST path.
     """
     val = (raw or "").strip().lower()
+    val = _GENERIC_TIERS.get(val, val)
     return val if val in _SESSION_PIN_ALLOWLIST else ""
 
 
@@ -3059,7 +3615,8 @@ async def get_session_model():
     default = _normalize_session_pin(os.environ.get("LOKI_SESSION_MODEL")) or "sonnet"
     # Resolve on the route the runner will actually take: override-path clamp when
     # an override file is present, session-pin tier route otherwise. This closes
-    # the task-568 stock-path gap (a "sonnet" pin dispatches opus).
+    # the task-568 stock-path gap (a "sonnet" pin dispatches sonnet post-v7.104.0;
+    # the gap it originally fixed was the pre-flip opus default).
     if override is not None:
         effective = _clamp_to_max_tier(override)
     else:
@@ -3071,11 +3628,24 @@ async def get_session_model():
     # the reported effective model agrees with dispatch on BOTH routes (v7.39.1).
     if effective == "fable":
         effective = "opus"
+    provider = _active_provider()
+    offers = _provider_model_offers(provider)
+    if provider != "claude":
+        # Non-claude: the claude-alias default/effective computed above describe a
+        # dispatch that is not happening on this run. Report what the provider
+        # actually runs, from the catalog, and drop the stale override (run.sh
+        # never reads the file on this provider, so it cannot be in effect).
+        override = None
+        default = "medium"
+        effective = _resolve_catalog_model(provider, "development")
     return {
         "override": override,
         "default": default,
         "effective": effective,
-        "allowed": list(_SESSION_MODEL_ALLOWLIST),
+        "provider": provider,
+        "switchable": _provider_supports_model_switch(provider),
+        "offers": offers,
+        "allowed": [o["value"] for o in offers],
     }
 
 
@@ -3101,6 +3671,22 @@ async def set_session_model(request: SessionModelRequest):
     """
     requested_raw = (request.model or "").strip().lower()
     override_path = _model_override_path()
+    # Mid-run switching is a claude-only runtime capability: run.sh:20996 gates the
+    # override-read block on PROVIDER_NAME=claude, so on any other provider this
+    # file would be written and never read. Reject instead of writing a file that
+    # does nothing and reporting success (a false affordance is worse than no
+    # control). Clearing is still allowed everywhere: removing a stale file is
+    # always safe and never claims a switch.
+    provider = _active_provider()
+    if requested_raw != "" and not _provider_supports_model_switch(provider):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Mid-run model switching is not supported on provider '{provider}'. "
+                f"The run dispatches {_resolve_catalog_model(provider, 'development') or 'its configured model'}; "
+                "restart the run with a different model to change it."
+            ),
+        )
     if requested_raw == "":
         # Clear the override; revert to tier mapping.
         try:
@@ -3274,6 +3860,9 @@ class StartBuildRequest(BaseModel):
     # The path is path-guarded against ALLOWED_WORKSPACE_ROOTS (see
     # _validate_workspace) -- it is NOT a free-form filesystem write target.
     workspace: Optional[str] = None
+    # Stable SaaS build UUID. Required for workspace starts so a retried POST
+    # returns the same durable execution instead of launching a second runner.
+    request_id: Optional[str] = None
     # Start-time execution model (haiku|sonnet|opus; fable NOT accepted). When a
     # valid alias is supplied, the run is pinned to EXACTLY that model for every
     # iteration via the LOKI_CLAUDE_MODEL_{PLANNING,DEVELOPMENT,FAST} env triple
@@ -3292,6 +3881,21 @@ class StartBuildRequest(BaseModel):
     # execution stays on the chosen/default execution model. Absent/invalid -> no
     # advisor pin (reviewers use the account default).
     advisor_model: Optional[str] = None
+    # Build profile (e.g. "simple-web"): exported as LOKI_BUILD_PROFILE into the
+    # run env, where run.sh's loki_apply_build_profile helper (run.sh:562) maps it
+    # to a set of LOKI_PHASE_* gate defaults (a simple landing page skips the
+    # gates irrelevant to a static frontend while KEEPING E2E, code review, the
+    # completion council, security, and accessibility). Absent -> unset -> the
+    # full gate suite runs (byte-identical to before this field existed). Never
+    # weakens the moat: the council + evidence/proof gate are not disable-able by
+    # a profile.
+    build_profile: Optional[str] = None
+    # Optional runtime complexity tier. Unknown values are ignored so they can
+    # never widen policy or become arbitrary environment input.
+    complexity: Optional[str] = None
+    # The provider's first-pass excellence prompt is default-on. A caller may
+    # explicitly disable it for non-UI work such as CLI and library builds.
+    first_pass_directive: Optional[bool] = None
 
     def validate_provider(self) -> None:
         """Validate provider is from the supported list.
@@ -3478,6 +4082,274 @@ def _project_run_active(loki_dir: _Path) -> Optional[int]:
     return None
 
 
+def _supervised_start_response(state: dict[str, Any], replay: bool = False) -> dict[str, Any]:
+    """Build the additive start response shared by new and replayed starts."""
+    execution_id = str(state.get("execution_id") or "")
+    provider = str(state.get("provider") or "")
+    return {
+        "success": True,
+        "message": (
+            "Existing build execution returned"
+            if replay
+            else f"Build accepted with provider {provider}"
+        ),
+        "execution_id": execution_id,
+        "state": str(state.get("state") or "accepted"),
+        "status_url": f"/api/control/builds/{execution_id}",
+        # Deprecated compatibility handle. Callers must use execution_id.
+        "pid": int(state.get("supervisor_pid") or 0),
+        "spec": str(state.get("spec") or ""),
+        "provider": provider,
+        "workspace": str(state.get("workspace") or ""),
+        "run_id": str(state.get("run_id") or ""),
+        "model": str(state.get("model") or ""),
+        "advisor_model": str(state.get("advisor_model") or ""),
+        "build_profile": str(state.get("build_profile") or ""),
+        "complexity": str(state.get("complexity") or "auto"),
+        "first_pass_directive": bool(state.get("first_pass_directive", True)),
+    }
+
+
+def _reap_supervisor_process(process: subprocess.Popen[Any]) -> None:
+    """Wait for a dashboard child so an exited supervisor cannot stay zombie."""
+    try:
+        process.wait()
+    except Exception:
+        logging.getLogger(__name__).debug(
+            "Build supervisor reaper could not wait for child", exc_info=True
+        )
+
+
+def _start_supervised_workspace_build(
+    request: Request,
+    body: StartBuildRequest,
+    execution_id: str,
+    workspace_dir: _Path,
+    loki_dir: _Path,
+    spec_content: bytes,
+    run_sh: _Path,
+    skill_dir: _Path,
+    popen_env: dict[str, str],
+    start_model: str,
+    advisor_model: str,
+    build_profile: Optional[str],
+    complexity: str,
+    first_pass_directive: bool,
+) -> JSONResponse:
+    """Start one durable workspace execution without the run.sh --bg wrapper."""
+    spec_sha256 = _build_execution.sha256_bytes(spec_content)
+    fingerprint_payload = json.dumps(
+        {
+            "workspace": str(workspace_dir),
+            "spec_sha256": spec_sha256,
+            "provider": body.provider,
+            "parallel": body.parallel,
+            "model": start_model,
+            "advisor_model": advisor_model,
+            "build_profile": build_profile or "",
+            "complexity": complexity,
+            "first_pass_directive": first_pass_directive,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    request_fingerprint = _build_execution.sha256_bytes(fingerprint_payload)
+
+    created = False
+    with _build_execution.execution_lock(execution_id):
+        existing = _build_execution.read_state_unlocked(execution_id)
+        if existing is not None:
+            if existing.get("request_fingerprint") != request_fingerprint:
+                raise HTTPException(
+                    status_code=409,
+                    detail="request_id is already bound to different build inputs",
+                )
+            return JSONResponse(
+                status_code=200,
+                content=_supervised_start_response(existing, replay=True),
+            )
+        if _build_execution.state_path(execution_id).exists():
+            raise HTTPException(
+                status_code=409,
+                detail="Execution state exists but cannot be read safely",
+            )
+
+        active_pid = _project_run_active(loki_dir)
+        if active_pid is not None:
+            detail = "A build is already running in this project"
+            if active_pid > 0:
+                detail += f" (PID {active_pid})"
+            raise HTTPException(status_code=409, detail=detail)
+
+        try:
+            spec_file = _build_execution.write_spec_snapshot_unlocked(
+                execution_id, spec_content
+            )
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500, detail=f"Could not persist spec snapshot: {exc}"
+            ) from exc
+
+        if os.environ.get("LOKI_HOST_SEATBELT", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            try:
+                auth_status = _build_execution.confined_provider_auth_status(
+                    body.provider,
+                    workspace_dir,
+                    run_sh,
+                    spec_file,
+                )
+            except (OSError, RuntimeError, ValueError):
+                auth_status = {
+                    "available": False,
+                    "classification": "provider_auth_probe_failed",
+                    "action": (
+                        "Check the controlled-local provider auth boundary, "
+                        "then retry."
+                    ),
+                }
+            if auth_status.get("available") is not True:
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "code": "provider_auth_unavailable_in_confinement",
+                        "provider": body.provider,
+                        "reason": str(
+                            auth_status.get("classification") or "unknown"
+                        ),
+                        "action": str(
+                            auth_status.get("action")
+                            or "Authenticate the provider, then retry."
+                        ),
+                    },
+                )
+
+        accepted_at = _build_execution.utc_now()
+        state: dict[str, Any] = {
+            "schema_version": _build_execution.SCHEMA_VERSION,
+            "execution_id": execution_id,
+            "request_fingerprint": request_fingerprint,
+            "workspace": str(workspace_dir),
+            "spec": str(spec_file),
+            "spec_sha256": spec_sha256,
+            "provider": body.provider,
+            "parallel": body.parallel,
+            "model": start_model,
+            "advisor_model": advisor_model,
+            "build_profile": build_profile or "",
+            "complexity": complexity,
+            "first_pass_directive": first_pass_directive,
+            "state": "accepted",
+            "accepted_at": accepted_at,
+            "started_at": None,
+            "exited_at": None,
+            "finished_at": None,
+            "supervisor_pid": None,
+            "supervisor_birth_token": None,
+            "runner_pid": None,
+            "runner_pgid": None,
+            "runner_sid": None,
+            "runner_birth_token": None,
+            "returncode": None,
+            "exit_code": None,
+            "signal": None,
+            "termination_reason": None,
+            "descendants": _build_execution.empty_descendant_outcome(),
+            "run_id": "",
+            "final_tree_sha256": "",
+            "proof": _build_execution.empty_proof_binding(execution_id),
+        }
+        _build_execution.write_state_unlocked(execution_id, state)
+
+        supervisor_args = [
+            sys.executable,
+            "-m",
+            "dashboard.build_supervisor",
+            "--execution-id",
+            execution_id,
+            "--run-sh",
+            str(run_sh),
+            "--workspace",
+            str(workspace_dir),
+            "--loki-dir",
+            str(loki_dir),
+            "--spec",
+            str(spec_file),
+            "--provider",
+            body.provider,
+        ]
+        if body.parallel:
+            supervisor_args.append("--parallel")
+
+        popen_env["LOKI_OWN_SESSION"] = "1"
+        popen_env["LOKI_SPEC_SHA256"] = spec_sha256
+        supervisor_log = _build_execution.execution_dir(execution_id) / "supervisor.log"
+        try:
+            with _build_execution.open_private_log(supervisor_log) as log_handle:
+                process = subprocess.Popen(
+                    supervisor_args,
+                    stdout=log_handle,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                    cwd=str(skill_dir),
+                    env=popen_env,
+                )
+        except (OSError, subprocess.SubprocessError) as exc:
+            finished_at = _build_execution.utc_now()
+            state.update(
+                state="exited",
+                exited_at=finished_at,
+                finished_at=finished_at,
+                exit_code=None,
+                signal=None,
+                termination_reason="launch_failed",
+                launch_error=str(exc),
+            )
+            _build_execution.write_state_unlocked(execution_id, state)
+            raise HTTPException(
+                status_code=500, detail=f"Failed to start build supervisor: {exc}"
+            ) from exc
+
+        state.update(
+            supervisor_pid=process.pid,
+            supervisor_birth_token=_build_execution.process_birth_token(process.pid),
+            supervisor_log=str(supervisor_log),
+        )
+        _build_execution.write_state_unlocked(execution_id, state)
+        threading.Thread(
+            target=_reap_supervisor_process,
+            args=(process,),
+            name=f"build-supervisor-reaper-{execution_id[:8]}",
+            daemon=True,
+        ).start()
+        created = True
+
+    if created:
+        audit.log_event(
+            action="start",
+            resource_type="session",
+            details={
+                "source": "dashboard",
+                "provider": body.provider,
+                "spec": state["spec"],
+                "execution_id": execution_id,
+                "supervisor_pid": state["supervisor_pid"],
+                "workspace": str(workspace_dir),
+                "model": start_model,
+                "advisor_model": advisor_model,
+            },
+            ip_address=request.client.host if request.client else None,
+        )
+    return JSONResponse(
+        status_code=202,
+        content=_supervised_start_response(state),
+    )
+
+
 @app.post("/api/control/start", dependencies=[Depends(auth.require_scope("control"))])
 async def start_build(request: Request, body: StartBuildRequest):
     """Start a Loki Mode build from a spec, kicked off from the browser.
@@ -3515,9 +4387,19 @@ async def start_build(request: Request, body: StartBuildRequest):
     # When omitted, behavior is byte-identical to before: the active dashboard
     # project (the engine's own _get_loki_dir).
     workspace_dir: Optional[_Path] = None
+    execution_id = ""
     if body.workspace and body.workspace.strip():
         try:
             workspace_dir = _validate_workspace(body.workspace)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if not body.request_id:
+            raise HTTPException(
+                status_code=400,
+                detail="request_id is required for workspace builds",
+            )
+        try:
+            execution_id = _build_execution.validate_execution_id(body.request_id)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
@@ -3535,20 +4417,32 @@ async def start_build(request: Request, body: StartBuildRequest):
         loki_dir = workspace_dir / ".loki"
     else:
         loki_dir = _get_loki_dir()
-        project_dir = loki_dir.parent if loki_dir.name == ".loki" else _Path.cwd()
+        project_dir = (loki_dir.parent if loki_dir.name == ".loki"
+                       else (_safe_cwd() or _Path(".")))
         project_dir = project_dir.resolve()
 
-    # Single-flight: refuse if a run is already active in this project.
-    active_pid = _project_run_active(loki_dir)
-    if active_pid is not None:
-        detail = "A build is already running in this project"
-        if active_pid > 0:
-            detail += f" (PID {active_pid})"
-        raise HTTPException(status_code=409, detail=detail)
+    # Legacy no-workspace starts keep their existing single-flight behavior.
+    # Workspace starts check under their execution lock below so a retried POST
+    # can return its existing execution before the active-run guard fires.
+    if workspace_dir is None:
+        active_pid = _project_run_active(loki_dir)
+        if active_pid is not None:
+            detail = "A build is already running in this project"
+            if active_pid > 0:
+                detail += f" (PID {active_pid})"
+            raise HTTPException(status_code=409, detail=detail)
 
     # Resolve the spec to a concrete, path-guarded file.
+    spec_content: Optional[bytes] = None
     try:
-        if has_path:
+        if workspace_dir is not None:
+            if has_path:
+                source_spec = _validate_prd_path(body.prd_path.strip(), project_dir)
+                spec_content = source_spec.read_bytes()
+            else:
+                spec_content = body.prd_text.encode("utf-8")
+            spec_file = None
+        elif has_path:
             spec_file = _validate_prd_path(body.prd_path.strip(), project_dir)
         else:
             spec_file = _write_spec_text(body.prd_text, project_dir)
@@ -3563,14 +4457,6 @@ async def start_build(request: Request, body: StartBuildRequest):
     if not run_sh.exists():
         raise HTTPException(status_code=500, detail=f"run.sh not found at {run_sh}")
 
-    # Build args: mirror control.py:start_session (provider, optional parallel,
-    # background, then the spec path).
-    args = [str(run_sh), "--provider", body.provider]
-    if body.parallel:
-        args.append("--parallel")
-    args.append("--bg")
-    args.append(str(spec_file))
-
     # When a workspace is given, pass an explicit env that PINS run.sh to the
     # workspace. cwd alone is not enough: `loki` exports LOKI_DIR (default
     # .loki) into the dashboard process, and run.sh resolves its workspace as
@@ -3584,33 +4470,94 @@ async def start_build(request: Request, body: StartBuildRequest):
     # haiku|sonnet|opus (no fable); invalid/absent -> "" -> no pin.
     start_model = _normalize_start_model(body.model)
     advisor_model = _normalize_start_model(body.advisor_model)
+    # Build profile: a light allow-list (only known profiles are forwarded, so a
+    # stray value can never disable a gate we did not intend). Absent -> no profile.
+    build_profile = body.build_profile if body.build_profile in ("simple-web",) else None
+    complexity = (
+        body.complexity
+        if body.complexity in ("auto", "simple", "standard", "complex")
+        else "auto"
+    )
+    first_pass_directive = body.first_pass_directive is not False
 
     # Build a custom env only when we actually need to change something
     # (workspace pin, start-time model pin, or advisor pin). When nothing is set,
     # env stays None (inherit) so behavior is byte-identical to before.
     popen_env = None
-    if workspace_dir is not None or start_model or advisor_model:
+    if (
+        workspace_dir is not None
+        or start_model
+        or advisor_model
+        or build_profile
+        or complexity != "auto"
+        or not first_pass_directive
+    ):
         popen_env = dict(os.environ)
     if workspace_dir is not None:
         popen_env["LOKI_TARGET_DIR"] = str(workspace_dir)
         popen_env["LOKI_DIR"] = str(loki_dir)
     if start_model:
-        # EXACT-model pin (not the session-pin tier route): set all three tier
-        # models to the chosen alias so resolve_model_for_tier returns the alias
-        # for every tier and every iteration dispatches exactly the picked model.
-        # This is the honest start-time equivalent of the mid-flight override
-        # file, which run.sh clears at iteration 0. LOKI_SESSION_MODEL is set too
-        # for internal coherence (the run's own tier accounting/logging), but the
-        # env triple is the load-bearing dispatch-honesty mechanism: on the
-        # v7.104.0 stock config the session pin alone would remap opus->planning->
-        # sonnet and haiku->fast->sonnet, dispatching sonnet for both.
-        popen_env["LOKI_CLAUDE_MODEL_PLANNING"] = start_model
-        popen_env["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = start_model
-        popen_env["LOKI_CLAUDE_MODEL_FAST"] = start_model
-        popen_env["LOKI_SESSION_MODEL"] = start_model
+        if start_model in _START_MODEL_GENERIC_TIERS:
+            # A generic capability tier is provider-agnostic BY CONSTRUCTION --
+            # it names a capability class, not a model, and each provider
+            # resolves its own latest model for that class via
+            # providers/models.sh. Pinning the LOKI_CLAUDE_MODEL_* triple here
+            # would be actively wrong: those variables are inert on codex and
+            # every other non-Claude provider, so the pin would silently do
+            # nothing. LOKI_SESSION_MODEL is the correct and only lever.
+            popen_env["LOKI_SESSION_MODEL"] = start_model
+        else:
+            # EXACT-model pin (not the session-pin tier route): set all three tier
+            # models to the chosen alias so resolve_model_for_tier returns the alias
+            # for every tier and every iteration dispatches exactly the picked model.
+            # This is the honest start-time equivalent of the mid-flight override
+            # file, which run.sh clears at iteration 0. LOKI_SESSION_MODEL is set too
+            # for internal coherence (the run's own tier accounting/logging), but the
+            # env triple is the load-bearing dispatch-honesty mechanism: on the
+            # v7.104.0 stock config the session pin alone would remap
+            # opus->planning->sonnet and haiku->fast->sonnet, dispatching sonnet
+            # for both.
+            popen_env["LOKI_CLAUDE_MODEL_PLANNING"] = start_model
+            popen_env["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = start_model
+            popen_env["LOKI_CLAUDE_MODEL_FAST"] = start_model
+            popen_env["LOKI_SESSION_MODEL"] = start_model
     if advisor_model:
         # Opt-in Opus (or other) judge for code review; execution model unchanged.
         popen_env["LOKI_ADVISOR_MODEL"] = advisor_model
+    if build_profile:
+        # run.sh's loki_apply_build_profile maps this to LOKI_PHASE_* gate defaults
+        # (skips gates irrelevant to a static frontend; keeps E2E, code review,
+        # council, security, accessibility). The moat gates cannot be disabled here.
+        popen_env["LOKI_BUILD_PROFILE"] = build_profile
+    if complexity != "auto":
+        popen_env["LOKI_COMPLEXITY"] = complexity
+    if not first_pass_directive:
+        popen_env["LOKI_FIRST_PASS_EXCELLENCE"] = "0"
+
+    if workspace_dir is not None:
+        return _start_supervised_workspace_build(
+            request=request,
+            body=body,
+            execution_id=execution_id,
+            workspace_dir=workspace_dir,
+            loki_dir=loki_dir,
+            spec_content=spec_content or b"",
+            run_sh=run_sh,
+            skill_dir=skill_dir,
+            popen_env=popen_env,
+            start_model=start_model,
+            advisor_model=advisor_model,
+            build_profile=build_profile,
+            complexity=complexity,
+            first_pass_directive=first_pass_directive,
+        )
+
+    # Legacy behavior for local dashboard starts without a workspace.
+    args = [str(run_sh), "--provider", body.provider]
+    if body.parallel:
+        args.append("--parallel")
+    args.append("--bg")
+    args.append(str(spec_file))
     try:
         process = subprocess.Popen(
             args,
@@ -3698,7 +4645,175 @@ async def start_build(request: Request, body: StartBuildRequest):
         # so the UI can confirm what the run was actually pinned to.
         "model": start_model,
         "advisor_model": advisor_model,
+        "build_profile": build_profile or "",
+        "complexity": complexity,
+        "first_pass_directive": first_pass_directive,
     }
+
+
+def _execution_status_response(state: dict[str, Any]) -> dict[str, Any]:
+    """Add fail-closed liveness facts to a durable execution snapshot."""
+    result = dict(state)
+    defaults: dict[str, Any] = {
+        "schema_version": _build_execution.SCHEMA_VERSION,
+        "state": "accepted",
+        "accepted_at": None,
+        "started_at": None,
+        "exited_at": None,
+        "finished_at": None,
+        "supervisor_pid": None,
+        "supervisor_birth_token": None,
+        "runner_pid": None,
+        "runner_pgid": None,
+        "runner_sid": None,
+        "runner_birth_token": None,
+        "returncode": None,
+        "exit_code": None,
+        "signal": None,
+        "termination_reason": None,
+        "descendants": _build_execution.empty_descendant_outcome(),
+        "run_id": "",
+        "final_tree_sha256": "",
+        "proof": _build_execution.empty_proof_binding(
+            str(state.get("execution_id") or "")
+        ),
+    }
+    for key, value in defaults.items():
+        result.setdefault(key, value)
+    raw_proof = result.get("proof")
+    proof = dict(raw_proof) if isinstance(raw_proof, dict) else {}
+    proof.pop("proof_path", None)
+    proof_defaults = dict(defaults["proof"])
+    proof_defaults.pop("proof_path", None)
+    for key, value in proof_defaults.items():
+        proof.setdefault(key, value)
+    result["proof"] = proof
+    supervisor_alive = _build_execution.process_identity_matches(
+        state.get("supervisor_pid"), state.get("supervisor_birth_token")
+    )
+    runner_alive = _build_execution.process_identity_matches(
+        state.get("runner_pid"), state.get("runner_birth_token")
+    )
+    result["supervisor_alive"] = supervisor_alive
+    result["runner_alive"] = runner_alive
+    if result.get("state") == "exited":
+        result["lifecycle_health"] = "exited"
+        result["terminal"] = True
+        result["reconciliation_reason"] = ""
+    elif supervisor_alive:
+        result["lifecycle_health"] = (
+            "running" if result.get("state") == "running" else "starting"
+        )
+        result["terminal"] = False
+        result["reconciliation_reason"] = ""
+    elif runner_alive:
+        result["lifecycle_health"] = "runner_orphaned"
+        result["terminal"] = True
+        result["reconciliation_reason"] = "supervisor_lost"
+    else:
+        result["lifecycle_health"] = "supervisor_lost"
+        result["terminal"] = True
+        result["reconciliation_reason"] = "supervisor_lost"
+    return result
+
+
+@app.get(
+    "/api/control/builds/{execution_id}",
+    dependencies=[Depends(auth.require_scope("read"))],
+)
+async def get_build_execution(execution_id: str):
+    """Read server-owned build state by durable execution identity."""
+    try:
+        execution_id = _build_execution.validate_execution_id(execution_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    state = _build_execution.read_state(execution_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Build execution not found")
+    return _execution_status_response(state)
+
+
+@app.get(
+    "/api/control/builds/{execution_id}/proof",
+    dependencies=[Depends(auth.require_scope("read"))],
+)
+async def get_build_execution_proof(execution_id: str):
+    """Serve the immutable server-owned proof snapshot for one execution."""
+    try:
+        execution_id = _build_execution.validate_execution_id(execution_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    state = _build_execution.read_state(execution_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Build execution not found")
+    proof = state.get("proof") if isinstance(state.get("proof"), dict) else {}
+    expected_sha = str(proof.get("document_sha256") or "")
+    snapshot = _build_execution.execution_dir(execution_id) / "proof.json"
+    try:
+        raw = snapshot.read_bytes()
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail="Proof snapshot not found") from exc
+    if not expected_sha or _build_execution.sha256_bytes(raw) != expected_sha:
+        raise HTTPException(
+            status_code=409,
+            detail="Proof snapshot integrity check failed",
+        )
+    return Response(
+        content=raw,
+        media_type="application/json",
+        headers={"ETag": f'"sha256:{expected_sha}"'},
+    )
+
+
+@app.post(
+    "/api/control/builds/{execution_id}/stop",
+    dependencies=[Depends(auth.require_scope("control"))],
+)
+async def stop_build_execution(request: Request, execution_id: str):
+    """Ask the exact long-lived supervisor to stop its owned runner group."""
+    if not _control_limiter.check("control"):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    try:
+        execution_id = _build_execution.validate_execution_id(execution_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    with _build_execution.execution_lock(execution_id):
+        state = _build_execution.read_state_unlocked(execution_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="Build execution not found")
+        if state.get("state") == "exited":
+            return {
+                "success": True,
+                "message": "Build execution already exited",
+                "execution_id": execution_id,
+                "state": "exited",
+            }
+        if not _build_execution.process_identity_matches(
+            state.get("supervisor_pid"), state.get("supervisor_birth_token")
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Build supervisor identity cannot be verified",
+            )
+        state.setdefault("stop_requested_at", _build_execution.utc_now())
+        _build_execution.write_state_unlocked(execution_id, state)
+
+    audit.log_event(
+        action="stop",
+        resource_type="session",
+        details={"source": "api", "execution_id": execution_id},
+        ip_address=request.client.host if request.client else None,
+    )
+    return JSONResponse(
+        status_code=202,
+        content={
+            "success": True,
+            "message": "Stop requested",
+            "execution_id": execution_id,
+            "state": str(state.get("state") or "running"),
+        },
+    )
 
 
 class RunningProjectStopRequest(BaseModel):
@@ -4523,6 +5638,22 @@ _active_project_dir: Optional[str] = None
 _DASHBOARD_AUTOSTARTED: bool = os.environ.get("LOKI_DASHBOARD_AUTOSTARTED") == "1"
 
 
+def _safe_cwd() -> "_Path | None":
+    """The current directory, or None if it no longer exists.
+
+    os.getcwd() RAISES FileNotFoundError when the working directory has been
+    deleted out from under a live process. A dashboard started inside a temp
+    workspace keeps serving after that workspace is cleaned up, and every
+    endpoint resolving a path then 500s simultaneously -- observed as ~60
+    concurrent 500s including /api/status, whose handler touches almost
+    nothing. Losing the cwd must degrade to a fallback, never to a stack trace.
+    """
+    try:
+        return _Path.cwd()
+    except OSError:
+        return None
+
+
 def _get_loki_dir() -> _Path:
     """Get LOKI_DIR, refreshing from env on each call for consistency.
 
@@ -4547,10 +5678,14 @@ def _get_loki_dir() -> _Path:
     if env_dir and _Path(env_dir).is_absolute():
         return _Path(env_dir)
 
-    # Check CWD first
-    cwd_loki = _Path.cwd() / ".loki"
-    if cwd_loki.is_dir():
-        return cwd_loki
+    # Check CWD first. _safe_cwd() rather than _Path.cwd(): this function runs
+    # on nearly every request, and a deleted working directory would otherwise
+    # raise FileNotFoundError here and 500 the entire API at once.
+    _cwd = _safe_cwd()
+    if _cwd is not None:
+        cwd_loki = _cwd / ".loki"
+        if cwd_loki.is_dir():
+            return cwd_loki
 
     # Check home directory fallback
     home_loki = _Path.home() / ".loki"
@@ -6507,6 +7642,15 @@ _DEFAULT_PRICING = {
     "haiku":  {"input": 1.00, "output": 5.00},
     # OpenAI Codex
     "gpt-5.3-codex": {"input": 1.50, "output": 12.00},
+    # gpt-5.6 line: sol (high) / terra (medium, default) / luna (small).
+    # UNVERIFIED RATES. The model IDs are confirmed against
+    # developers.openai.com/api/docs/models, but OpenAI's published per-token
+    # prices for this line were not, so these are placeholders scaled from the
+    # gpt-5.3 rate. They drive a display estimate only, never a gate. Replace
+    # from the pricing page; tools/probe-model-catalog.py is the refresh path.
+    "gpt-5.6-sol":   {"input": 2.50, "output": 20.00},
+    "gpt-5.6-terra": {"input": 1.50, "output": 12.00},
+    "gpt-5.6-luna":  {"input": 0.50, "output": 4.00},
 }
 
 # Active pricing - starts with defaults, updated from .loki/pricing.json
@@ -6538,13 +7682,76 @@ def _get_model_pricing() -> dict:
     return _MODEL_PRICING
 
 
-def _calculate_model_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Calculate USD cost for a model's token usage."""
+# The five fields whose presence makes ONE efficiency record a measurement.
+# Mirrors _MEASURED_FIELDS in autonomy/lib/efficiency_cost.py, which is the
+# canonical source. Kept as a local copy deliberately: the dashboard must not
+# sys.path-hack into autonomy/lib at request time just to read a constant.
+_MEASURED_FIELDS = (
+    "cost_usd",
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_creation_tokens",
+)
+
+
+def _record_is_measured(rec: Any) -> bool:
+    """True when ONE efficiency record actually carries an observed value.
+
+    Mirrors record_is_measured() in autonomy/lib/efficiency_cost.py. Same field
+    list, same bool exclusion, same semantics -- read that docstring for the
+    reasoning. Do not let the two drift.
+
+    A PRESENT FILE IS NOT A MEASUREMENT. A run that did work necessarily
+    consumed tokens, so an all-zero record means we FAILED TO MEASURE, and
+    unmeasured must read as unknown rather than as free. This is the same
+    defect fixed on the receipt (v8.52.0), the prompt (v8.53.0), the verifier
+    (v8.54.0), the cost summary (v8.69.0) and kpis.ts (v8.72.0/v8.74.0); the
+    two dashboard cost readers were never audited for it.
+
+    Note the `and v` is a truthiness test on ONE field of ONE record, which is
+    the intended rule (zero contributes no evidence). It is NOT a guard on the
+    aggregate: a set of measured records summing to $0.00 is a real measured
+    zero and must still render 0.0, never null.
+    """
+    if not isinstance(rec, dict):
+        return False
+    for key in _MEASURED_FIELDS:
+        v = rec.get(key)
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)) and v:
+            return True
+    return False
+
+
+def _calculate_model_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+) -> float:
+    """Calculate USD cost for a model's token usage, including cache tiers.
+
+    Cache tokens DOMINATE real traffic -- a measured iteration carried 797,496
+    cache-read against 10,272 plain input tokens. Pricing them at zero, which
+    this did, under-counted a real iteration by roughly 5x. This is the third
+    route to carry that same bug (bash check_budget_limit and the TS budget
+    breaker were fixed in v8.12); the rates match both.
+
+    An unpriced cache tier falls back to the FULL input rate rather than zero:
+    for anything driving a spend display the safe direction on an unknown rate
+    is to over-state, never to silently under-count.
+    """
     pricing_table = _get_model_pricing()
     pricing = pricing_table.get(model.lower(), pricing_table.get("sonnet", {}))
-    input_cost = (input_tokens / 1_000_000) * pricing.get("input", 3.00)
+    inp_rate = pricing.get("input", 3.00)
+    input_cost = (input_tokens / 1_000_000) * inp_rate
     output_cost = (output_tokens / 1_000_000) * pricing.get("output", 15.00)
-    return round(input_cost + output_cost, 6)
+    cache_read_cost = (cache_read_tokens / 1_000_000) * pricing.get("cache_read", inp_rate * 0.1)
+    cache_write_cost = (cache_creation_tokens / 1_000_000) * pricing.get("cache_write", inp_rate * 1.25)
+    return round(input_cost + output_cost + cache_read_cost + cache_write_cost, 6)
 
 
 @app.get("/api/cost", dependencies=[Depends(auth.require_scope("read"))])
@@ -6565,12 +7772,16 @@ def _compute_cost_snapshot() -> dict:
 
     total_input = 0
     total_output = 0
+    total_cache_read = 0
+    total_cache_creation = 0
     estimated_cost = 0.0
     by_phase: dict = {}
     by_model: dict = {}
     budget_limit = None
     budget_used = 0.0
     budget_remaining = None
+    # Did ANY record carry an observed value? Not "was a file present".
+    cost_recorded = False
 
     # Read efficiency files (one JSON file per iteration/task).
     # Use the iteration-*.json pattern so this reader sees the same
@@ -6587,18 +7798,27 @@ def _compute_cost_snapshot() -> dict:
                 # AttributeError. Skip such files rather than 500 the endpoint.
                 if not isinstance(data, dict):
                     continue
+                if _record_is_measured(data):
+                    cost_recorded = True
 
                 inp = data.get("input_tokens", 0)
                 out = data.get("output_tokens", 0)
+                # Cache tiers: recorded per iteration since v6.82.0 and
+                # typically ~98% of input volume. Omitting them made this
+                # endpoint report roughly 1% of a run's real token count.
+                cr = data.get("cache_read_tokens", 0) or 0
+                cw = data.get("cache_creation_tokens", 0) or 0
                 model = data.get("model", "sonnet").lower()
                 phase = data.get("phase", "unknown")
 
                 total_input += inp
                 total_output += out
+                total_cache_read += cr
+                total_cache_creation += cw
 
                 cost = data.get("cost_usd")
                 if cost is None:
-                    cost = _calculate_model_cost(model, inp, out)
+                    cost = _calculate_model_cost(model, inp, out, cr, cw)
                 estimated_cost += cost
 
                 # Aggregate by phase
@@ -6633,6 +7853,10 @@ def _compute_cost_snapshot() -> dict:
                 total_input = totals.get("total_input", 0)
                 total_output = totals.get("total_output", 0)
                 if total_input > 0 or total_output > 0:
+                    # Real observed tokens from the context tracker: this IS a
+                    # measurement, even if the recorded USD total happens to
+                    # be 0.
+                    cost_recorded = True
                     estimated_cost = totals.get("total_cost_usd", 0.0)
                     # Rebuild by_model and by_phase from per_iteration data
                     for it in ctx.get("per_iteration", []):
@@ -6664,10 +7888,26 @@ def _compute_cost_snapshot() -> dict:
         except (json.JSONDecodeError, KeyError):
             pass
 
+    # Cache hit ratio against everything read IN. Null (not 0.0) when nothing
+    # was read: a zero is a claim about a COLD cache, which is a real and
+    # expensive condition, so reporting it for a run with no data would send
+    # someone hunting a caching problem that does not exist.
+    _read_in = total_input + total_cache_read
+    # Unmeasured reads as null, never as 0/$0.00. `cost_recorded` is True when
+    # at least one record carried an OBSERVED value (_record_is_measured), so a
+    # set of measured records that genuinely sums to zero still renders 0.0 --
+    # the direction that would otherwise blank real data (the v8.72.0 trap).
     return {
-        "total_input_tokens": total_input,
-        "total_output_tokens": total_output,
-        "estimated_cost_usd": round(estimated_cost, 6),
+        "total_input_tokens": total_input if cost_recorded else None,
+        "total_output_tokens": total_output if cost_recorded else None,
+        "total_cache_read_tokens": total_cache_read if cost_recorded else None,
+        "total_cache_creation_tokens": total_cache_creation if cost_recorded else None,
+        "total_tokens": (
+            total_input + total_output + total_cache_read + total_cache_creation
+        ) if cost_recorded else None,
+        "cache_hit_ratio": round(total_cache_read / _read_in, 4) if _read_in > 0 else None,
+        "estimated_cost_usd": round(estimated_cost, 6) if cost_recorded else None,
+        "cost_recorded": cost_recorded,
         "by_phase": {k: {
             "input_tokens": v["input_tokens"],
             "output_tokens": v["output_tokens"],
@@ -6823,10 +8063,17 @@ def _compute_budget_snapshot(loki_dir: _Path) -> dict:
                 continue
             inp = data.get("input_tokens", 0) or 0
             out = data.get("output_tokens", 0) or 0
+            # Cache tiers, same as the /api/cost path. This snapshot drives the
+            # budget breaker and the 80% warning, so under-counting here lets a
+            # run sail past its cap unwarned. Measured on a real record: $0.1233
+            # without cache against $0.6617 with, a 5.4x under-count in the one
+            # place a user relies on to stop spending.
+            cr = data.get("cache_read_tokens", 0) or 0
+            cw = data.get("cache_creation_tokens", 0) or 0
             model = str(data.get("model", "sonnet")).lower()
             cost = data.get("cost_usd")
             if cost is None:
-                cost = _calculate_model_cost(model, inp, out)
+                cost = _calculate_model_cost(model, inp, out, cr, cw)
             else:
                 try:
                     cost = float(cost)
@@ -6919,13 +8166,26 @@ def _compute_cost_timeline() -> dict:
         records.sort(key=_iter_key)
         cumulative = 0.0
         for data in records:
-            cost_recorded = True
+            # A PRESENT FILE IS NOT A MEASUREMENT. This previously flipped on
+            # for any parseable record, so the all-zero records a pre-v8.51.0
+            # codex run wrote reported total_usd $0.00 with cost_recorded True
+            # -- the endpoint asserting the run was FREE. Same predicate as
+            # /api/cost so the two cost readers cannot disagree.
+            if _record_is_measured(data):
+                cost_recorded = True
             inp = data.get("input_tokens", 0) or 0
             out = data.get("output_tokens", 0) or 0
+            # Cache tiers, same as the /api/cost path. This snapshot drives the
+            # budget breaker and the 80% warning, so under-counting here lets a
+            # run sail past its cap unwarned. Measured on a real record: $0.1233
+            # without cache against $0.6617 with, a 5.4x under-count in the one
+            # place a user relies on to stop spending.
+            cr = data.get("cache_read_tokens", 0) or 0
+            cw = data.get("cache_creation_tokens", 0) or 0
             model = str(data.get("model", "sonnet")).lower()
             cost = data.get("cost_usd")
             if cost is None:
-                cost = _calculate_model_cost(model, inp, out)
+                cost = _calculate_model_cost(model, inp, out, cr, cw)
             else:
                 try:
                     cost = float(cost)
@@ -7083,6 +8343,9 @@ _PROVIDER_LABELS = {
     "sonnet": "Sonnet 5",
     "haiku": "Haiku 4.5",
     "gpt-5.3-codex": "GPT-5.3 Codex",
+    "gpt-5.6-sol": "GPT-5.6 Sol",
+    "gpt-5.6-terra": "GPT-5.6 Terra",
+    "gpt-5.6-luna": "GPT-5.6 Luna",
 }
 
 # Display-only pricing notes, keyed by model. These annotate the pricing table in
@@ -9942,7 +11205,10 @@ def get_prompt_versions():
     if not _read_limiter.check("prompt_versions"):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     try:
-        return _get_prompt_optimizer().get_current_version()
+        result = _get_prompt_optimizer().get_current_version()
+        result["experimental"] = True
+        result["note"] = "heuristic-only: returns content-hash version tracking, not an applied LLM optimization"
+        return result
     except Exception as exc:
         logger.error("Prompt version read error: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to read prompt versions")
@@ -9956,7 +11222,10 @@ def optimize_prompts(sessions: int = 10, dry_run: bool = True):
     if not _control_limiter.check("prompt_optimize"):
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     try:
-        return _get_prompt_optimizer().optimize(sessions=sessions, dry_run=dry_run)
+        result = _get_prompt_optimizer().optimize(sessions=sessions, dry_run=dry_run)
+        result["experimental"] = True
+        result["note"] = "heuristic-only: returns content-hash version tracking, not an applied LLM optimization"
+        return result
     except Exception as exc:
         logger.error("Prompt optimization error: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to run prompt optimization")
@@ -9967,7 +11236,7 @@ def optimize_prompts(sessions: int = 10, dry_run: bool = True):
 # =============================================================================
 # Must be configured AFTER all API routes to avoid conflicts
 
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse
 
 # Find static files in multiple possible locations
 DASHBOARD_DIR = os.path.dirname(os.path.abspath(__file__))

@@ -73,7 +73,14 @@ JSON
 # Run the CLI in the fixture cwd with the chosen route env. All stdout/stderr is
 # captured by the caller via redirection.
 run_loki() {
-    ( cd "$WORKDIR" && env "${ROUTE_ENV[@]}" bash "$LOKI_SHIM" "$@" )
+    # stdin closed: this harness must never inherit an answerable-looking stdin.
+    # A CLI prompt reached from here (e.g. the export overwrite confirm) would
+    # block FOREVER under CI -- that wedged local-ci for 40+ minutes once, with
+    # the runner at 0.0% CPU waiting on a read that could never be satisfied.
+    # The CLI now guards its prompts (see _export_check_overwrite in
+    # autonomy/loki), so this is belt-and-braces: it keeps a NEWLY ADDED prompt
+    # from wedging CI before anyone notices the missing guard.
+    ( cd "$WORKDIR" && env "${ROUTE_ENV[@]}" bash "$LOKI_SHIM" "$@" </dev/null )
 }
 
 # The deprecation pointer grep pattern: "is now 'loki <canonical>'".

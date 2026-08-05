@@ -118,8 +118,9 @@ else
         # locate the env file created by the function
         f=\$(ls \"$work\"/loki-sandbox-env.* 2>/dev/null | head -1)
         if [[ -n \"\$f\" ]]; then
-            # macOS stat -f, GNU stat -c
-            stat -f '%Lp' \"\$f\" 2>/dev/null > \"$perm_out\" || stat -c '%a' \"\$f\" 2>/dev/null > \"$perm_out\"
+            # GNU form FIRST: on Linux `stat -f` is filesystem-status and EXITS 0,
+            # so a macOS-first order never falls through and captures the wrong string.
+            stat -c '%a' \"\$f\" 2>/dev/null > \"$perm_out\" || stat -f '%Lp' \"\$f\" 2>/dev/null > \"$perm_out\"
             printf '%s' \"\$f\" > \"$path_out\"
         fi
     " 2>/dev/null

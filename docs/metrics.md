@@ -15,12 +15,12 @@ Loki Mode exposes a `/metrics` endpoint that returns production-ready metrics in
 
 ## Quick Start
 
-```bash
-# Enable metrics endpoint
-export LOKI_METRICS_ENABLED=true
+The `/metrics` endpoint is served by the dashboard and needs no enabling flag.
+Start the dashboard and scrape it.
 
-# Start Loki Mode
-loki start ./prd.md
+```bash
+# Start the dashboard (serves /metrics)
+loki dashboard start
 
 # View metrics
 curl http://localhost:57374/metrics
@@ -362,22 +362,21 @@ Configure alerts in Grafana panels:
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LOKI_METRICS_ENABLED` | `false` | Enable `/metrics` endpoint |
-| `LOKI_METRICS_PORT` | `57374` | Port for metrics endpoint (same as dashboard) |
-| `LOKI_METRICS_PATH` | `/metrics` | Endpoint path |
+There are none. `/metrics` is an unconditional route on the dashboard app
+(`dashboard/server.py:9637`), served at the dashboard's own port and path. An
+earlier version of this page listed `LOKI_METRICS_ENABLED`,
+`LOKI_METRICS_PORT`, and `LOKI_METRICS_PATH`; none of the three is read by any
+code, so the endpoint cannot be turned off, moved, or re-pathed by environment.
+
+To change the port, change the dashboard port. To restrict access, put the
+dashboard behind a reverse proxy: unlike the `/api/*` routes, `/metrics` has no
+auth scope dependency, so anything that can reach the port can read it.
 
 ## Best Practices
 
 ### Production Deployment
 
-1. Enable metrics in production:
-```bash
-export LOKI_METRICS_ENABLED=true
-```
-
-2. Secure endpoint with reverse proxy authentication
+1. Secure endpoint with reverse proxy authentication
 3. Set up Prometheus scraping with appropriate interval (15-30s)
 4. Create Grafana dashboards for visualization
 5. Configure alerts for budget, stagnation, and failures

@@ -27,8 +27,54 @@ import {
   appendFileSync,
   readdirSync,
   statSync,
+  openSync,
+  fstatSync,
+  readSync,
+  closeSync,
 } from "node:fs";
 import { resolve, dirname } from "node:path";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+
+// RUN-25 iter 17 (Wave C #1/#3): read only the LAST `n` lines of a file by
+// reading at most `maxBytes` from its tail, instead of readFileSync-ing the whole
+// file and slicing. The council devil's-advocate reads the unbounded, append-only
+// events.jsonl (and each test log) on EVERY completion attempt; a full read is
+// O(filesize) and grows with run length (micro-bench: 3.5MB file 0.89ms vs
+// 0.026ms tail = 34x; 17.6MB 5.11ms vs 0.024ms = 210x). This ports the bash
+// `tail -50` the TS side had regressed away from. Returns the last n lines (or
+// fewer). 64KB holds ~400 lines at ~150B, comfortably covering the -50/-30 tails.
+// Fail-soft: any error returns null (caller treats it as "could not read").
+export function tailLines(path: string, n: number, maxBytes = 65536): string[] | null {
+  let fd: number | null = null;
+  try {
+    fd = openSync(path, "r");
+    const size = fstatSync(fd).size;
+    const readLen = Math.min(size, maxBytes);
+    const start = size - readLen;
+    const buf = Buffer.allocUnsafe(readLen);
+    let got = 0;
+    while (got < readLen) {
+      const r = readSync(fd, buf, got, readLen - got, start + got);
+      if (r <= 0) break;
+      got += r;
+    }
+    // If we did not read from byte 0, the first (partial) line may be truncated;
+    // slice(-n) discards it whenever n < available lines, which is the intent.
+    const text = buf.toString("utf-8", 0, got);
+    return text.split("\n").slice(-n);
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
 import type { CouncilHook, RunnerContext } from "./types.ts";
 import { lokiDir as defaultLokiDir } from "../util/paths.ts";
 import { claudeFlagSupported } from "../providers/claude_flags.ts";
@@ -62,15 +108,27 @@ function atomicWriteFile(target: string, contents: string): void {
 export type CouncilState = {
   initialized: true;
   enabled: true;
-  total_votes: 0;
-  approve_votes: 0;
-  reject_votes: 0;
-  last_check_iteration: 0;
-  consecutive_no_change: 0;
-  done_signals: 0;
-  convergence_history: [];
-  verdicts: [];
+  total_votes: number;
+  approve_votes: number;
+  reject_votes: number;
+  last_check_iteration: number;
+  consecutive_no_change: number;
+  done_signals: number;
+  convergence_history: unknown[];
+  verdicts: unknown[];
   prd_path: string | null;
+  // Written by trackIteration (mirrors the bash state.json keys). Optional so a
+  // state file written by councilInit (or by the bash route before any
+  // trackIteration call) still parses.
+  total_done_signals?: number;
+  last_diff_hash?: string;
+  files_changed?: number;
+  last_track_iteration?: number;
+  // v8 harness intelligence (3b): confidence-spike re-check. Highest confidence
+  // asserted so far, and whether a spike is currently pending re-verification.
+  last_confidence?: number;
+  confidence_spike_pending?: boolean;
+  confidence_spikes_total?: number;
 };
 
 export async function councilInit(prdPath: string | undefined): Promise<void> {
@@ -99,20 +157,302 @@ export async function councilInit(prdPath: string | undefined): Promise<void> {
 // TOUCH per task brief).
 // ---------------------------------------------------------------------------
 
+// Completion-like language the bash route greps for in the last 200 log lines
+// when no STRUCTURED signal is present. Byte-mirrors the bash alternation in
+// council_track_iteration (completion-council.sh).
+const DONE_LANGUAGE_RE =
+  /(all tests pass|all requirements met|implementation complete|feature complete|task complete|project complete|all tasks done|everything is working)/i;
+
+// One convergence fingerprint for the working tree, mirroring bash:
+//   md5(git diff --stat HEAD) - md5(git diff --cached --stat) - <short commit>
+// All three components matter. Unstaged-only would miss a `git add`, and
+// omitting the commit hash would treat a COMMITTED iteration as "no change"
+// (bash BUG-QG-004). The exact digest need not equal bash's byte-for-byte --
+// each route only ever compares against its OWN previous value -- but the
+// SENSITIVITY must match, or the valve fires while real work is happening.
+// Fail-soft: any failing git call contributes "unknown", exactly like bash's
+// `|| echo "unknown"`.
+function diffFingerprint(cwd: string): string {
+  const part = (args: string[]): string => {
+    try {
+      const out = execFileSync("git", args, {
+        cwd,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      return createHash("md5").update(out).digest("hex");
+    } catch {
+      return "unknown";
+    }
+  };
+  let commit = "unknown";
+  try {
+    commit = execFileSync("git", ["log", "--oneline", "-1"], {
+      cwd,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .trim()
+      .split(/\s+/)[0] || "unknown";
+  } catch {
+    commit = "unknown";
+  }
+  return `${part(["diff", "--stat", "HEAD"])}-${part(["diff", "--cached", "--stat"])}-${commit}`;
+}
+
+// ---------------------------------------------------------------------------
+// v8 harness intelligence (3b): CONFIDENCE-SPIKE RE-CHECK.
+//
+// jcode's measured finding: an agent asserting maximal confidence is NOT
+// evidence the work is done. A confidence jump to ~100 correlates with the
+// agent having stopped looking, not with correctness. Loki already refuses to
+// take a self-report as a gate (the whole council exists for that), so this
+// adds the cheap complement: notice the spike and force ONE extra verification.
+//
+// STRICTLY ADDITIVE -- this is the load-bearing safety property. A confidence
+// spike can only ever ADD a verification pass. There is deliberately no branch
+// anywhere below that lets high confidence SKIP, shorten, or satisfy a gate:
+// that would be a false-green vector, the exact class the trust core exists to
+// prevent. High confidence makes the engine look HARDER, never less hard.
+//
+// Default ON but effectively inert unless the agent actually emits a
+// confidence figure; no new required knob. Tune with
+// LOKI_CONFIDENCE_SPIKE_DELTA (default 40) / _MIN (default 90), or disable
+// entirely with LOKI_CONFIDENCE_SPIKE=0.
+// ---------------------------------------------------------------------------
+
+// Confidence self-reports the agent may emit, e.g. "confidence: 95",
+// "confidence 100%", "I am 98% confident". Deliberately narrow: a loose pattern
+// would match unrelated percentages (coverage, progress) and force pointless
+// re-verification. Returns the HIGHEST value seen in the sampled tail, since a
+// single maximal claim is the signal even if hedged elsewhere.
+const CONFIDENCE_RE = /confiden(?:ce|t)\D{0,12}(\d{1,3})\s*%?|(\d{1,3})\s*%\s*confiden/gi;
+
+export function extractConfidence(lines: readonly string[]): number | null {
+  let best: number | null = null;
+  for (const line of lines) {
+    CONFIDENCE_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = CONFIDENCE_RE.exec(line)) !== null) {
+      const raw = m[1] ?? m[2];
+      if (raw === undefined) continue;
+      const n = Number.parseInt(raw, 10);
+      // >100 is not a confidence figure (version strings, byte counts).
+      if (!Number.isFinite(n) || n < 0 || n > 100) continue;
+      if (best === null || n > best) best = n;
+    }
+  }
+  return best;
+}
+
+// Is this iteration's confidence a SPIKE worth re-verifying? Two arms, either
+// of which fires:
+//   - a jump of >= delta from the previous reading, or
+//   - landing at/above min (near-certainty) having not been there before.
+// The second arm matters because an agent that opens at 100 never "jumps".
+export function isConfidenceSpike(
+  prev: number | null | undefined,
+  current: number | null,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (env["LOKI_CONFIDENCE_SPIKE"] === "0") return false;
+  if (current === null) return false;
+  const delta = envIntFrom(env, "LOKI_CONFIDENCE_SPIKE_DELTA", 40);
+  const min = envIntFrom(env, "LOKI_CONFIDENCE_SPIKE_MIN", 90);
+  if (current >= min && (prev === null || prev === undefined || prev < min)) return true;
+  if (prev === null || prev === undefined) return false;
+  return current - prev >= delta;
+}
+
+// Non-destructively PEEK the structured completion signals. The council owns
+// CONSUMPTION of these files; tracking must never delete them or a later
+// consumer would see no claim. Same two paths the bash route tests.
+function hasStructuredDoneSignal(targetDir: string): boolean {
+  const sig = resolve(targetDir, ".loki", "signals");
+  return (
+    existsSync(resolve(sig, "COMPLETION_REQUESTED")) ||
+    existsSync(resolve(sig, "TASK_COMPLETION_CLAIMED"))
+  );
+}
+
 export const defaultCouncil: CouncilHook = {
   async shouldStop(_ctx: RunnerContext): Promise<boolean> {
+    // Force-stop safety valves, ported from bash council_should_stop
+    // ("Safety valve" / "Safety valve 2", completion-council.sh). These read
+    // the counters trackIteration persists, so this route now FAILS CHEAP
+    // instead of running to max-iterations/timeout.
+    //
+    // Returning true here is a FORCE STOP, never a council approval: the work
+    // is NOT verified-complete. The bash route flags this distinction with
+    // COUNCIL_FORCE_STOPPED so a force-stop is not reported as a verified
+    // product; callers on this route must treat a true from these valves the
+    // same way.
+    const stateDir = resolve(defaultLokiDir(), "council");
+    const state = readCouncilState(stateDir);
+
+    const stagnationLimit = envInt("LOKI_COUNCIL_STAGNATION_LIMIT", 5);
+    const doneSignalLimit = envInt("LOKI_COUNCIL_DONE_SIGNAL_LIMIT", 3);
+
+    // Valve 1: stagnation. Bash force-stops at 2x the limit (the plain limit
+    // only triggers a council review); mirror that 2x exactly.
+    const noChange = state.consecutive_no_change ?? 0;
+    if (stagnationLimit > 0 && noChange >= stagnationLimit * 2) return true;
+
+    // Valve 2: the agent keeps claiming done. TOTAL (monotonic), not the
+    // consecutive counter -- an agent that alternates claim/no-claim must still
+    // trip this, which is precisely the case that burned a real build to its
+    // timeout when only fuzzy log language was counted.
+    //
+    // 3b INTERACTION, and the reason the order here matters: a pending
+    // confidence spike DELAYS this force-stop by exactly one iteration so the
+    // spike gets verified rather than terminated on. It can never delay valve 1
+    // (stagnation), which is checked above and stays untouched -- a stagnant
+    // build must still fail cheap no matter how confident the agent sounds.
+    //
+    // The delay is consumed here (one-shot). Without consuming it, a run that
+    // keeps re-spiking could postpone the valve forever, converting a safety
+    // valve into a budget leak.
+    const totalDone = state.total_done_signals ?? 0;
+    if (doneSignalLimit > 0 && totalDone >= doneSignalLimit) {
+      if (state.confidence_spike_pending === true) {
+        const stateDir2 = resolve(defaultLokiDir(), "council");
+        try {
+          state.confidence_spike_pending = false;
+          atomicWriteFile(
+            resolve(stateDir2, "state.json"),
+            JSON.stringify(state, null, 2) + "\n",
+          );
+        } catch {
+          // Fail-safe: if the consume-write fails we must NOT keep returning
+          // false forever (that would disable the valve). Fall through to the
+          // force-stop instead -- erring toward stopping, never toward running.
+          return true;
+        }
+        return false; // one extra iteration, so the spike is verified not trusted
+      }
+      return true;
+    }
+
     return false;
   },
   async trackIteration(logFile: string): Promise<void> {
+    // Convergence tracking, ported from bash council_track_iteration
+    // (completion-council.sh). Previously this appended a row of placeholder
+    // ZEROS, so the stagnation and done-signal valves could never arm on the
+    // SDK/TS route: a build that claimed done every iteration (structured
+    // COMPLETION_REQUESTED) while the council rejected would run to
+    // max-iterations or its timeout. On the bash route that exact bug was
+    // measured on real builds at 11 identical structured claims, 0 counted, a
+    // 60-minute timeout at roughly $34.
+    //
+    // State lives in state.json, NOT in module memory: bash keeps these as
+    // shell globals that survive within one sourced process, but this function
+    // is called per-iteration and must survive a process restart. Read,
+    // increment, write back.
     const stateDir = resolve(defaultLokiDir(), "council");
     mkdirSync(stateDir, { recursive: true });
-    const convergenceLog = resolve(stateDir, "convergence.log");
-    const timestamp = Math.floor(Date.now() / 1000);
+    const state = readCouncilState(stateDir);
+
+    const targetDir = process.env.TARGET_DIR || process.cwd();
+
+    // --- no-change detection -------------------------------------------------
+    const combinedHash = diffFingerprint(targetDir);
+    const prevHash = state.last_diff_hash ?? "";
+    const consecutiveNoChange =
+      combinedHash === prevHash ? (state.consecutive_no_change ?? 0) + 1 : 0;
+
+    // --- done-signal detection ----------------------------------------------
+    // Structured signal FIRST (the default since v6.82.0); the fuzzy log grep
+    // is only consulted when the structured check came back negative, matching
+    // bash's precedence exactly.
+    let doneThisIter = hasStructuredDoneSignal(targetDir);
+    // Read the tail ONCE and reuse it for both the done-language grep and the
+    // confidence scan, rather than walking the same file twice per iteration.
+    let tailCache: string[] | null = null;
+    if (logFile && existsSync(logFile)) tailCache = tailLines(logFile, 200);
+    if (!doneThisIter && tailCache) {
+      doneThisIter = tailCache.some((l) => DONE_LANGUAGE_RE.test(l));
+    }
+
+    // --- confidence-spike detection (3b) -------------------------------------
+    // Purely observational here: record that a spike happened so shouldStop can
+    // force ONE extra verification. Never suppresses anything.
+    const currentConfidence = tailCache ? extractConfidence(tailCache) : null;
+    const spiked = isConfidenceSpike(state.last_confidence, currentConfidence);
+    if (spiked) {
+      state.confidence_spike_pending = true;
+      state.confidence_spikes_total = (state.confidence_spikes_total ?? 0) + 1;
+    }
+    // Only advance the baseline when a figure was actually read; a silent
+    // iteration must not reset the high-water mark and re-arm the same spike.
+    if (currentConfidence !== null) state.last_confidence = currentConfidence;
+
+    // Two counters with DIFFERENT reset rules, and mixing them up would stop
+    // the valve arming: done_signals is CONSECUTIVE (resets the moment the
+    // agent stops claiming done), total_done_signals is MONOTONIC and is what
+    // valve 2 reads.
+    const doneSignals = doneThisIter ? (state.done_signals ?? 0) + 1 : 0;
+    const totalDoneSignals = doneThisIter
+      ? (state.total_done_signals ?? 0) + 1
+      : (state.total_done_signals ?? 0);
+
+    let filesChanged = 0;
+    try {
+      const out = execFileSync("git", ["diff", "--name-only", "HEAD"], {
+        cwd: targetDir,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      filesChanged = out.split("\n").filter((l) => l.trim() !== "").length;
+    } catch {
+      filesChanged = 0;
+    }
+
     const iteration = readIterationFromState(stateDir);
-    const row = `${timestamp}|${iteration}|0|0|0|${logFile}\n`;
-    appendFileSync(convergenceLog, row);
+    const timestamp = Math.floor(Date.now() / 1000);
+
+    // Row keeps SIX fields (bash writes five). The trailing logFile column is
+    // pre-existing on this route and a reader may depend on it, so the counters
+    // fill fields 3-5 in bash order and logFile stays last.
+    const row = `${timestamp}|${iteration}|${filesChanged}|${consecutiveNoChange}|${doneSignals}|${logFile}\n`;
+    appendFileSync(resolve(stateDir, "convergence.log"), row);
+
+    state.consecutive_no_change = consecutiveNoChange;
+    state.done_signals = doneSignals;
+    state.total_done_signals = totalDoneSignals;
+    state.last_diff_hash = combinedHash;
+    state.files_changed = filesChanged;
+    state.last_track_iteration = iteration;
+    // confidence_spike_pending / _total / last_confidence were set above.
+    atomicWriteFile(resolve(stateDir, "state.json"), JSON.stringify(state, null, 2) + "\n");
   },
 };
+
+// Read state.json fail-soft. A missing or corrupt file yields an empty object so
+// tracking still runs (and re-establishes state) rather than throwing mid-run.
+function readCouncilState(stateDir: string): Partial<CouncilState> {
+  const f = resolve(stateDir, "state.json");
+  if (!existsSync(f)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(f, "utf-8")) as Partial<CouncilState>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function envInt(name: string, fallback: number): number {
+  return envIntFrom(process.env, name, fallback);
+}
+
+// Same parse against an explicit env, so the confidence predicates stay pure
+// over their input and are callable without mutating process.env.
+function envIntFrom(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const raw = env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) ? n : fallback;
+}
 
 function readIterationFromState(stateDir: string): number {
   const f = resolve(stateDir, "state.json");
@@ -395,14 +735,11 @@ export async function councilDevilsAdvocate(
   // Check 2: recent error events
   const eventsFile = resolve(root, "events.jsonl");
   if (existsSync(eventsFile)) {
-    let lines: string[] | null = null;
-    try {
-      lines = readFileSync(eventsFile, "utf-8").split("\n").slice(-50);
-    } catch (err) {
-      console.warn(
-        `council devil's advocate: failed to read ${eventsFile}: ${(err as Error).message}`,
-      );
-      lines = null;
+    // Tail-read: events.jsonl is append-only and unbounded; only the last 50
+    // lines are inspected. Reads at most 64KB from the tail (Wave C #1).
+    const lines = tailLines(eventsFile, 50);
+    if (lines === null) {
+      console.warn(`council devil's advocate: failed to read ${eventsFile}`);
     }
     if (lines !== null) {
       let errors = 0;
@@ -428,11 +765,14 @@ export async function councilDevilsAdvocate(
           const full = resolve(logsDir, entry);
           const st = statSync(full);
           if (st.isFile()) {
-            if (st.size > 5_000_000) {
-              console.warn(`[council] skipping large log ${full} (${st.size} bytes)`);
-              continue;
-            }
-            const tail = readFileSync(full, "utf-8").split("\n").slice(-30).join("\n");
+            // Wave C #3: tail-read the last 30 lines (at most 64KB from the tail)
+            // instead of reading the whole log then slicing. This also drops the
+            // old `st.size > 5MB -> skip` guard, which was a BLIND SPOT: a large
+            // verbose pytest/jest log would silently contribute NO pass marker,
+            // so a real passing suite could read as "no pass marker found". The
+            // pass/fail marker lives in the tail, which we now always read cheaply.
+            const tailArr = tailLines(full, 30);
+            const tail = tailArr ? tailArr.join("\n") : "";
             if (/passed|success|all tests|\bok\b/i.test(tail)) {
               hasPassMarker = true;
             }

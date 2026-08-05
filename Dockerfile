@@ -6,12 +6,12 @@
 FROM ubuntu:24.04
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="7.128.2"
+LABEL version="9.12.6"
 # v7.4.5 fix (BUG-3): override the OCI-standard image.version label that
 # BuildKit auto-injects from the FROM ubuntu:24.04 base. Registries and
 # scanners read this; without the override they reported the Ubuntu version
 # (24.04) instead of the Loki Mode version.
-LABEL org.opencontainers.image.version="7.128.2"
+LABEL org.opencontainers.image.version="9.12.6"
 LABEL description="Loki Mode by Autonomi - Autonomous spec-to-product system (RARV-C closure loop). Provider-agnostic: Claude Code, Codex CLI, Cline, Aider"
 LABEL url="https://www.autonomi.dev/"
 
@@ -146,6 +146,19 @@ COPY --chown=loki:loki completions/ ./completions/
 COPY --chown=loki:loki bin/ ./bin/
 COPY --chown=loki:loki loki-ts/dist/ ./loki-ts/dist/
 COPY --chown=loki:loki loki-ts/data/ ./loki-ts/data/
+
+# v8: the Agent SDK (@anthropic-ai/claude-agent-sdk) powers the opt-in
+# LOKI_SDK_LOOP=1 RARV loop via a DYNAMIC import in dist/loki.js, so it cannot be
+# bundled into dist (unlike the raw @anthropic-ai/sdk judge bridge, which is a
+# static import and IS bundled). It also ships a per-platform NATIVE binary. So
+# it must exist in node_modules at runtime: install it into loki-ts/ (where the
+# dynamic import resolves from) with the correct platform binary. --no-save keeps
+# the committed package.json untouched; the version is pinned to match the source.
+# Default-off, so a base image without LOKI_SDK_LOOP never loads it; installing it
+# just makes the opt-in path work in the shipped image (the raw judge SDK is
+# already bundled and needs nothing here).
+RUN cd loki-ts && npm install --no-save --no-package-lock @anthropic-ai/claude-agent-sdk@0.3.208 \
+    && chown -R loki:loki node_modules
 
 # Install dashboard, web-app, and MCP server Python dependencies.
 # mcp/requirements.txt is installed here so the MCP SDK is present in the image:

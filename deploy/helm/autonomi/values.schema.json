@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "Autonomi (Loki Mode) Helm values",
+  "description": "Validated at `helm install/upgrade/template` time. The point is to reject a bad values file with a field-level message instead of rendering a broken manifest that fails later as a CrashLoopBackOff. Enum values here are taken from the templates themselves, not invented: worker.mode is branched on in deployment-worker.yaml and hpa-worker.yaml, and storage.backend is documented inline in values.yaml.",
+  "type": "object",
+  "properties": {
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "createNamespace": { "type": "boolean" },
+
+    "image": {
+      "type": "object",
+      "description": "An empty repository renders an invalid image reference and the pod never schedules, so repository is required.",
+      "required": ["repository"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"],
+          "description": "Kubernetes rejects any other value; catching it here names the field instead of failing at admission."
+        }
+      }
+    },
+
+    "imagePullSecrets": { "type": "array", "items": { "type": "object" } },
+
+    "serviceAccount": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "type": "object" }
+      }
+    },
+
+    "controlplane": {
+      "type": "object",
+      "properties": {
+        "replicas": { "type": "integer", "minimum": 0 },
+        "resources": { "type": "object" },
+        "extraEnv": { "type": "array" },
+        "nodeSelector": { "type": "object" },
+        "tolerations": { "type": "array" },
+        "affinity": { "type": "object" },
+        "podAnnotations": { "type": "object" },
+        "probes": { "type": "object" }
+      }
+    },
+
+    "worker": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["job", "deployment", "serverless"],
+          "description": "LOAD-BEARING. Templates branch on this exact string (deployment-worker.yaml, hpa-worker.yaml, job-worker.yaml). A typo such as 'Deployment' or 'jobs' renders NO worker at all and the chart still installs cleanly, so the failure is silent until nothing processes the queue."
+        },
+        "backoffLimit": { "type": "integer", "minimum": 0 },
+        "activeDeadlineSeconds": { "type": "integer", "minimum": 1 },
+        "replicas": { "type": "integer", "minimum": 0 },
+        "resources": { "type": "object" },
+        "exitCodes": { "type": "object" },
+        "autoscaling": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "minReplicas": { "type": "integer", "minimum": 0 },
+            "maxReplicas": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "extraEnv": { "type": "array" }
+      }
+    },
+
+    "workspace": { "type": "object" },
+    "queue": { "type": "object" },
+
+    "keda": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "cooldownPeriod": { "type": "integer", "minimum": 0 },
+        "pollingInterval": { "type": "integer", "minimum": 1 },
+        "minReplicaCount": { "type": "integer", "minimum": 0 },
+        "maxReplicaCount": { "type": "integer", "minimum": 1 },
+        "maxReplicaCountScaledJob": { "type": "integer", "minimum": 1 },
+        "triggers": { "type": "array" }
+      }
+    },
+
+    "service": { "type": "object" },
+
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "annotations": { "type": "object" },
+        "hosts": { "type": "array" },
+        "tls": { "type": "array" }
+      }
+    },
+
+    "storage": {
+      "type": "object",
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": ["", "local", "s3", "gcs", "azure-blob"],
+          "description": "Empty or 'local' means no off-cluster sync. Any other value silently disables sync rather than erroring, so the enum is what turns a typo into a visible failure."
+        },
+        "bucket": { "type": "string" },
+        "prefix": { "type": "string" },
+        "region": { "type": "string" },
+        "endpoint": { "type": "string" }
+      }
+    },
+
+    "persistence": { "type": "object" },
+    "config": { "type": "object" },
+    "secrets": { "type": "object" },
+    "observability": { "type": "object" },
+
+    "security": {
+      "type": "object",
+      "properties": {
+        "podSecurityContext": { "type": "object" },
+        "containerSecurityContext": { "type": "object" },
+        "rbac": { "type": "object" },
+        "networkPolicy": { "type": "object" }
+      }
+    },
+
+    "pdb": { "type": "object" }
+  }
+}

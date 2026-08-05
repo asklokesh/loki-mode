@@ -48,7 +48,7 @@ PROVIDER_MAX_PARALLEL=10
 # The Claude Code CLI resolves aliases (opus/sonnet/haiku) to the latest available
 # model at invocation time, so we pass aliases rather than dated IDs. The canonical
 # mapping lives in providers/model_catalog.json (single source of truth):
-#   opus   -> latest Opus   (e.g. claude-opus-4-8 -- 1M context, adaptive thinking)
+#   opus   -> latest Opus   (e.g. claude-opus-5 -- 1M context, adaptive thinking)
 #   sonnet -> latest Sonnet (e.g. claude-sonnet-4-6)
 #   haiku  -> latest Haiku  (e.g. claude-haiku-4-5)
 # Override per tier with LOKI_CLAUDE_MODEL_PLANNING, _DEVELOPMENT, _FAST.
@@ -121,6 +121,33 @@ if [ -f "$_loki_claude_flags_helper" ]; then
     # shellcheck disable=SC1090
     . "$_loki_claude_flags_helper"
 fi
+
+# Absolute path to the curated design archetype library appended to the
+# iteration-1 system prompt by _loki_autonomy_override_text below. Resolved via
+# the same LOKI_SKILL_DIR / PROJECT_DIR precedence run.sh uses (run.sh:1311)
+# rather than BASH_SOURCE: this file is sourced, and under a plain
+# `. providers/claude.sh` BASH_SOURCE[0] can be EMPTY, which silently resolves a
+# dirname-based path one level above the repo root. The two helper paths above
+# still carry that latent defect; they survive it only because each is guarded by
+# a `[ -f ]` that quietly fails open.
+# Resolved FILE-RELATIVE first, matching how the Bun route resolves it from
+# import.meta.url. Deliberately no $PWD anywhere in this chain: at source time
+# $PWD is the TARGET PROJECT's directory during a real build, so a project that
+# happened to contain references/design-archetypes.md would have its own file
+# read straight into the autonomy system prompt (arbitrary user-controlled text,
+# and silent drift from the Bun route, which can never pick up a project file).
+# The env vars are the fallback only for the empty-BASH_SOURCE case.
+_loki_design_archetypes_path=""
+for _loki_dap_root in \
+    "$([ -n "${BASH_SOURCE[0]:-}" ] && cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && cd .. 2>/dev/null && pwd)" \
+    "${LOKI_SKILL_DIR:-}" \
+    "${PROJECT_DIR:-}"; do
+    if [ -n "$_loki_dap_root" ] && [ -f "$_loki_dap_root/references/design-archetypes.md" ]; then
+        _loki_design_archetypes_path="$_loki_dap_root/references/design-archetypes.md"
+        break
+    fi
+done
+unset _loki_dap_root
 
 # Source the v7.5.22 Phase D mcp-config helper (idempotent).
 # shellcheck source=../autonomy/lib/mcp-config.sh
@@ -281,6 +308,42 @@ Commit hygiene still applies: git checkpoints are LOCAL only. Never push or forc
 
 This precedence override is narrow. It does NOT relax any safety rule. Every safety prohibition in CLAUDE.md or memory still fully binds: anything genuinely destructive or irreversible remains out of scope unless the task explicitly calls for it. This includes (not limited to) force-pushing, deleting or overwriting the user's data, dropping or truncating databases, publishing or releasing, rotating or exfiltrating secrets, touching production systems, and anything a CLAUDE.md safety rule explicitly forbids. When in doubt about whether an action is destructive, treat it as destructive and do not do it.
 LOKI_AUTONOMY_EOF
+
+    # First-pass excellence directive (v8): front-load intelligence into
+    # iteration 1 so a single informed pass lands the COMPLETE, working solution
+    # instead of a rough draft the loop then spends iterations correcting. This
+    # is the mechanism behind "a cheap model in one pass matches a strong model":
+    # the iteration count is a proxy for how much the first pass missed, so a
+    # more directive first prompt is the lever, not more loops. Iteration-1-only
+    # (ITERATION_COUNT<=1) and gated on LOKI_FIRST_PASS_EXCELLENCE (default ON;
+    # set to 0 to disable). Grounded in the user-research directives: nail the
+    # first working preview, WIRE the backend (a form that does nothing is the #1
+    # churn), do not defer/stub, escape the AI-slop defaults.
+    if [ "${LOKI_FIRST_PASS_EXCELLENCE:-1}" != "0" ] && [ "${ITERATION_COUNT:-1}" -le 1 ] 2>/dev/null; then
+        cat <<'LOKI_FIRSTPASS_EOF'
+
+[FIRST-PASS EXCELLENCE] Treat THIS pass as your one shot to ship a complete, working, verified solution. Do not produce a rough draft to refine later; the loop exists as a safety net, not a plan. Before you finish this iteration:
+1. BUILD IT FULLY. Implement every requirement end to end. No stubs, no TODOs, no "coming soon", no placeholder or hardcoded/mock data where real logic belongs. If the spec implies a backend (auth, persistence, a form that submits, a list that saves), WIRE IT so it actually works and persists -- a beautiful UI whose buttons do nothing is the single most common failure, not a draft. Every list/table must trace to a real query, never an inline mock array.
+2. SELF-VERIFY BY RUNNING, not by reading. Run the build and the tests yourself; for each acceptance criterion, DRIVE the actual path and observe the result (submit the form, then reload and confirm the record persisted; hit a protected route logged-out and confirm it is rejected). Fix what fails now, in this pass. Do not mark done on "looks right" or a self-claim -- observed behavior is the only proof.
+3. LOCK THE ARCHITECTURE on this pass so later edits are small and additive. Decide the data model, routes, and component structure up front and build to them; never rewrite whole files later to patch a small thing (that is the doom loop that breaks working features).
+4. DESIGN: commit to ONE named aesthetic direction up front (editorial, brutalist, luxury, retro-futuristic, soft/pastel, industrial, etc. -- chosen from the product domain) and hold it on every surface. Use real content (never lorem). AVOID the AI-slop tells that instantly read as machine-generated: NO indigo/blue-to-purple gradient (the #1 tell), NO Inter/Roboto/system-font headlines (pick a real display+body pairing), NO three-equal-rounded-cards-in-a-row skeleton, NO flat 1px gray card borders or colored left-border strips, NO untouched shadcn defaults, NO reflexive dark mode. Cap the palette at ~3 hues (60/30/10), tinted not pure #fff/#000, separate sections by whitespace then a slight background shift before any border. Aim for Linear/Stripe/Duolingo-tier taste: "this does not look AI-generated".
+5. SATISFY THE GATES THAT WILL JUDGE THIS PASS. Your work is checked by deterministic gates before it can be accepted, and in measured runs EVERY extra iteration was caused by one of these rejecting the work -- never by the model failing to finish. Clear them now, in this pass:
+   - STATIC ANALYSIS: no syntax errors, no unused/undefined symbols, no lint errors in files you touched.
+   - TEST SUITE: the existing tests must still pass. Run them; do not assume.
+   - MUTATION/MOCK INTEGRITY: tests must assert real behaviour. No tautological assertions (expect(true).toBe(true)), no test that passes whether or not the code works, no mocking the very unit under test, no inline mock data standing in for a real query.
+   - CODE REVIEW: no scope creep beyond the stated task, no dead or commented-out code, no leftover debug output, and follow the conventions already in the surrounding files.
+Deliver the finished, self-verified, genuinely-designed result in THIS pass. Additional iterations should be the exception, not the plan.
+LOKI_FIRSTPASS_EOF
+
+        # Positive half of the DESIGN directive. Item 4 above only says what NOT
+        # to do, which leaves the model on the priors that ARE the slop. This
+        # appends a curated archetype library (real Radix hexes, real OFL fonts)
+        # so it has something concrete to commit to. Emitted VERBATIM on both
+        # routes -- no interpolation, no selection logic -- so the byte-parity
+        # surface stays a plain file compare and the MODEL picks the archetype.
+        # Fails open: a missing file degrades to the negative-only directive.
+        [ -f "$_loki_design_archetypes_path" ] && cat "$_loki_design_archetypes_path"
+    fi
 }
 
 # Invocation function (basic, no tier).
@@ -294,6 +357,53 @@ provider_invoke() {
     # variable" on bash 3.2 (stock macOS /bin/bash). ${arr[@]+...} expands to
     # nothing when unset/empty and preserves spaced elements otherwise.
     claude --dangerously-skip-permissions "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@"
+}
+
+# provider_invoke_argv <tier> <prompt> -- populate _LOKI_INVOKE_ARGV with the
+# exact command line, WITHOUT executing it.
+#
+# WHY THIS EXISTS (the timeout seam)
+#   Eight auxiliary judge sites bypass provider_invoke entirely and shell out to
+#   `claude ... -p` directly. The reason is documented in the source
+#   (done-recognition.sh:49, prd-enrich.sh:40): "`timeout` needs a real command,
+#   not a shell function." That is true -- `timeout provider_invoke ...` cannot
+#   work, because timeout(1) execs a binary.
+#
+#   So the naive fix ("route the judges through provider_invoke") would have to
+#   drop the timeout, reintroducing exactly the hang class that left 59 orphaned
+#   emit.sh processes alive for 21 hours (v8.1.0). Never trade a hang guard for
+#   an abstraction.
+#
+#   The seam that satisfies both: a builder that PRINTS argv into an array the
+#   caller can hand to `timeout`:
+#
+#       provider_invoke_argv development "$prompt"
+#       timeout 120 "${_LOKI_INVOKE_ARGV[@]}"
+#
+#   Now the judges get provider-agnostic dispatch AND keep their timeout.
+provider_invoke_argv() {
+    local tier="${1:-development}"
+    local prompt="${2:-}"
+    _loki_build_claude_auto_flags "$tier" "${LOKI_COMPLEXITY:-standard}" ""
+    local model
+    # Use the SAME resolver as the non-argv path. This previously called
+    # loki_tier_route_model with one argument, but that function takes TWO
+    # (tier, model) and echoes its second arg when routing is off -- so it
+    # returned an EMPTY string with rc=0, the `||` fallback never fired, and
+    # every argv-based claude invocation shipped with no --model flag at all.
+    #
+    # Do NOT "fix" this by chaining provider_get_tier_param + loki_tier_route_model
+    # here: that reproduces base+route but SKIPS loki_apply_max_tier_clamp, so
+    # LOKI_MAX_TIER=sonnet still emitted `--model opus` and the cost ceiling was
+    # silently unenforced on exactly the timeout-safe seam. resolve_model_for_tier
+    # is base -> route -> clamp -> alt-provider in one call; keep both paths on it.
+    model="$(resolve_model_for_tier "$tier" 2>/dev/null || provider_get_tier_param "$tier")"
+    _LOKI_INVOKE_ARGV=(
+        claude --dangerously-skip-permissions
+        "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}"
+    )
+    [ -n "$model" ] && _LOKI_INVOKE_ARGV+=(--model "$model")
+    _LOKI_INVOKE_ARGV+=(-p "$prompt")
 }
 
 # Model tier to Task tool model parameter value
@@ -380,6 +490,54 @@ loki_apply_max_tier_clamp() {
     printf '%s' "$model"
 }
 
+# Complexity-aware MODEL routing (net-new; effort routing already exists in
+# loki_effort_for_tier). ENV VAR: LOKI_TIER_ROUTING (DEFAULT "0" = OFF = current
+# flat resolution, zero change to stock runs). When LOKI_TIER_ROUTING=1 the
+# resolved model is nudged by the auto-detected project complexity signal
+# (LOKI_COMPLEXITY: simple|standard|complex):
+#   complex + planning -> opus  (deeper reasoning for hard architecture)
+#   simple  + fast     -> haiku ONLY when LOKI_ALLOW_HAIKU=true (support gate);
+#                         else stay put (never route to an unavailable model)
+#   standard, or the development/ACT tier -> UNCHANGED.
+# HARD GUARD: the development/ACT tier is NEVER routed below sonnet regardless of
+# complexity (implementation stays >= sonnet). "explicit override wins": we skip
+# the nudge whenever the operator pinned that tier via LOKI_CLAUDE_MODEL_PLANNING
+# / LOKI_MODEL_PLANNING (or the _FAST pair), so a deliberate pin is never
+# overridden. Byte-mirrored by loki_tier_route_model in loki-ts claude_flags.ts.
+loki_tier_route_model() {
+    local tier="$1"
+    local model="$2"
+    # Default OFF: only the explicit "1" opt-in engages routing.
+    [ "${LOKI_TIER_ROUTING:-0}" = "1" ] || { printf '%s' "$model"; return; }
+    local complexity="${LOKI_COMPLEXITY:-standard}"
+    case "$tier" in
+        planning)
+            # Bump to opus for complex work, but only when the operator did NOT
+            # pin planning explicitly (an explicit override always wins, even if
+            # they pinned it back to the flat default).
+            if [ "$complexity" = "complex" ] \
+               && [ -z "${LOKI_CLAUDE_MODEL_PLANNING:-}" ] \
+               && [ -z "${LOKI_MODEL_PLANNING:-}" ]; then
+                model="opus"
+            fi
+            ;;
+        fast)
+            # Drop to haiku for trivial verify work, gated on haiku availability
+            # and on the operator not having pinned fast explicitly.
+            if [ "$complexity" = "simple" ] \
+               && [ "${LOKI_ALLOW_HAIKU:-false}" = "true" ] \
+               && [ -z "${LOKI_CLAUDE_MODEL_FAST:-}" ] \
+               && [ -z "${LOKI_MODEL_FAST:-}" ]; then
+                model="haiku"
+            fi
+            ;;
+        # development/ACT and every other tier: unchanged. HARD GUARD -- never
+        # route implementation below sonnet, so this arm deliberately does nothing.
+        *) ;;
+    esac
+    printf '%s' "$model"
+}
+
 # Dynamic model resolution (v6.0.0)
 # Resolves a capability tier to a concrete model name at runtime.
 # Respects LOKI_MAX_TIER to cap cost via loki_apply_max_tier_clamp. NOTE the
@@ -431,6 +589,11 @@ resolve_model_for_tier() {
     # run.sh sets CURRENT_TIER=fable for that one iteration, which lands on the
     # `fable)` arm above. Keeping the decision in run.sh is the only place that
     # has ITERATION_COUNT, so the scoping is honest.
+
+    # Complexity-aware MODEL routing (opt-in). Applied AFTER base resolution and
+    # BEFORE the max-tier clamp, so the ceiling still bounds any bump-up. Byte-
+    # mirrored by loki_tier_route_model in loki-ts claude_flags.ts.
+    model="$(loki_tier_route_model "$tier" "$model")"
 
     # Apply the shared LOKI_MAX_TIER ceiling (same clamp the run.sh override path
     # uses, so the cost ceiling is enforced byte-identically on both paths).

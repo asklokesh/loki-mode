@@ -22,7 +22,15 @@ if command -v aider &>/dev/null; then
     version=$(aider --version 2>/dev/null | head -1 || echo "unknown")
     pass "aider found (version: $version)"
 else
-    fail "aider not found" "Install: pip install aider-chat"
+    # Aider is an OPTIONAL Tier-3 provider. Its absence on a machine says
+    # nothing about loki's aider support, which is what the other 8 assertions
+    # in this file actually verify (config sources, model default, env vars,
+    # invoke functions, stdin redirect). Hard-failing here made the whole suite
+    # red on any runner without `pip install aider-chat` -- including CI, where
+    # it was one of the failures hidden while the workflow was not starting.
+    # Report it as a skip so a genuine regression in the assertions below is not
+    # buried under an environment difference.
+    echo "  SKIP  aider not on PATH (optional Tier-3 provider; install: pip install aider-chat)"
 fi
 
 # Test 2: Provider config file exists

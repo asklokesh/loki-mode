@@ -63,13 +63,32 @@ grep -q 'append-system-prompt' "$BUN_FLAGS" \
   || bad "Bun route missing autonomy override (parity regression)"
 
 # --- override text byte-identical across routes ----------------------------
-BASH_OV=$(bash -c "cd '$REPO_ROOT'; source providers/loader.sh; load_provider claude >/dev/null 2>&1; _loki_autonomy_override_text" 2>/dev/null)
+# The two routes COMPOSE the override differently: bash _loki_autonomy_override_text
+# appends the first-pass block itself (gated on ITERATION_COUNT <= 1), while the Bun
+# route keeps AUTONOMY_OVERRIDE_TEXT and FIRST_PASS_EXCELLENCE_TEXT as separate
+# exports and concatenates them at the call site under the same gate. Comparing
+# bash's iteration-1 output against the Bun base export alone therefore diffs the
+# first-pass block every time and reports a parity break that does not exist.
+# Assert parity in BOTH iteration states instead -- that catches a real divergence
+# in either half, which the single-state check could not.
+BASH_OV=$(bash -c "cd '$REPO_ROOT'; source providers/loader.sh; load_provider claude >/dev/null 2>&1; ITERATION_COUNT=1 _loki_autonomy_override_text" 2>/dev/null)
+BASH_OV_LATER=$(bash -c "cd '$REPO_ROOT'; source providers/loader.sh; load_provider claude >/dev/null 2>&1; ITERATION_COUNT=2 _loki_autonomy_override_text" 2>/dev/null)
 if command -v bun >/dev/null 2>&1; then
-    BUN_OV=$(cd "$REPO_ROOT" && bun -e 'import { AUTONOMY_OVERRIDE_TEXT } from "./loki-ts/src/providers/claude_flags.ts"; process.stdout.write(AUTONOMY_OVERRIDE_TEXT);' 2>/dev/null)
-    if [ "$BASH_OV" = "$BUN_OV" ] && [ -n "$BASH_OV" ]; then
-        ok "autonomy override text is byte-identical (bash == Bun)"
+    BUN_OV=$(cd "$REPO_ROOT" && bun -e 'import { AUTONOMY_OVERRIDE_TEXT, FIRST_PASS_EXCELLENCE_TEXT } from "./loki-ts/src/providers/claude_flags.ts"; process.stdout.write(AUTONOMY_OVERRIDE_TEXT + FIRST_PASS_EXCELLENCE_TEXT);' 2>/dev/null)
+    BUN_OV_LATER=$(cd "$REPO_ROOT" && bun -e 'import { AUTONOMY_OVERRIDE_TEXT } from "./loki-ts/src/providers/claude_flags.ts"; process.stdout.write(AUTONOMY_OVERRIDE_TEXT);' 2>/dev/null)
+    if [ "$BASH_OV" = "$BUN_OV" ] && [ -n "$BASH_OV" ] \
+       && [ "$BASH_OV_LATER" = "$BUN_OV_LATER" ] && [ -n "$BASH_OV_LATER" ]; then
+        ok "autonomy override text is byte-identical (bash == Bun, iteration 1 and later)"
     else
         bad "autonomy override text differs between bash and Bun routes"
+    fi
+    # The first-pass block must actually be the thing that differs between the two
+    # iteration states, on BOTH routes -- otherwise the gate silently stopped firing
+    # and the lever is dead while this test still reads green.
+    if [ "$BASH_OV" = "$BASH_OV_LATER" ] || [ "$BUN_OV" = "$BUN_OV_LATER" ]; then
+        bad "first-pass excellence block not gated on iteration 1 (lever dead on a route)"
+    else
+        ok "first-pass excellence block present on iteration 1 only (both routes)"
     fi
 else
     ok "autonomy override text identity skipped (bun not on PATH)"

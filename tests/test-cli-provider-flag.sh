@@ -363,8 +363,11 @@ fi
 # ===========================================
 log_test "SUPPORTED_PROVIDERS array contains expected providers"
 
-# v7.5.18: gemini removed, now 4 providers.
-expected_providers=("claude" "codex" "cline" "aider")
+# v7.5.18: gemini removed, leaving 4.
+# v8.2.0: opencode added as the model-agnostic route (providers/opencode.sh),
+# so this is 5. Kept as an EXACT ordered list rather than a count: order is what
+# the loader iterates, and a bare count would let a rename or a reorder pass.
+expected_providers=("claude" "codex" "cline" "aider" "opencode")
 
 if [ ${#SUPPORTED_PROVIDERS[@]} -eq ${#expected_providers[@]} ]; then
     all_match=true

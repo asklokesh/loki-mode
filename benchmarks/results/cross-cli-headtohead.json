@@ -1,0 +1,110 @@
+{
+  "generated": "2026-07-30T23:36:21Z",
+  "status": "MEASURED for codex and opencode (5 trials each); other CLIs not yet run",
+  "method": "Identical task ('create hello.txt containing exactly: hi'), same machine, artifact-verified (file must exist AND contain exactly 'hi'), invoked through providers/codex.sh provider_invoke_argv -- the Loki provider layer, not a raw CLI call. 5 trials, 300s cap.",
+  "codex": {
+    "cli_version": "codex-cli 0.146.0",
+    "auth": "ChatGPT free tier, no API key",
+    "api_cost_usd": 0.0,
+    "trials": [
+      {
+        "n": 1,
+        "elapsed_s": 300,
+        "artifact": false,
+        "note": "hit the 300s cap"
+      },
+      {
+        "n": 2,
+        "elapsed_s": 48,
+        "artifact": true
+      },
+      {
+        "n": 3,
+        "elapsed_s": 80,
+        "artifact": true
+      },
+      {
+        "n": 4,
+        "elapsed_s": 71,
+        "artifact": true
+      },
+      {
+        "n": 5,
+        "elapsed_s": 67,
+        "artifact": true
+      }
+    ],
+    "success_rate": "4/5",
+    "median_s_of_successes": 69.0,
+    "range_s_of_successes": [
+      48,
+      80
+    ],
+    "note": "The single timeout is reported, not discarded. Dropping it would turn a 4/5 success rate into an implied 5/5 and overstate reliability."
+  },
+  "why_5_trials": "A single sample is not a measurement here. An earlier one-shot run timed out and would have been published as 'codex: timeout' -- a fabricated competitive claim, since the same command completed in 51s minutes later. The spread (48s to a 300s timeout) is the actual finding.",
+  "bug_found_by_measuring": "provider_invoke_argv passed provider_get_tier_param to --model, but for Codex that returns an EFFORT level (high/xhigh/low), not a model name. Every argv invocation sent '--model high' and got a 400. Fixed; effort now travels in CODEX_MODEL_REASONING_EFFORT. Guarded by tests/test-codex-argv-model.sh.",
+  "not_claimed": "No overall ranking between tools. aider, Claude Code and cursor-agent have NOT been run on this task. Devin and Replit Agent ship no local CLI. Cost is not compared: codex ran on a free tier and opencode's per-call cost was not recorded.",
+  "opencode": {
+    "cli_version": "1.18.9",
+    "model_reported": "gpt-5.6-terra-fast",
+    "api_cost_usd": null,
+    "invoked_via": "opencode run <message> (direct CLI; Loki drives it via providers/opencode.sh)",
+    "trials": [
+      {
+        "n": 1,
+        "elapsed_s": 265,
+        "artifact": true
+      },
+      {
+        "n": 2,
+        "elapsed_s": 7,
+        "artifact": true
+      },
+      {
+        "n": 3,
+        "elapsed_s": 12,
+        "artifact": true
+      },
+      {
+        "n": 4,
+        "elapsed_s": 11,
+        "artifact": true
+      },
+      {
+        "n": 5,
+        "elapsed_s": 4,
+        "artifact": true
+      }
+    ],
+    "success_rate": "5/5",
+    "median_s": 11,
+    "range_s": [
+      4,
+      265
+    ],
+    "note": "First trial 265s, then 7/12/11/4s. The first-run cost is real and worth reporting: a new user experiences the 265s, not the median."
+  },
+  "comparison": {
+    "task": "create hello.txt containing exactly 'hi'; artifact verified by content",
+    "trials_per_cell": 5,
+    "codex": {
+      "success": "4/5",
+      "median_s": 69,
+      "range_s": [
+        48,
+        80
+      ]
+    },
+    "opencode": {
+      "success": "5/5",
+      "median_s": 11,
+      "range_s": [
+        4,
+        265
+      ]
+    },
+    "reading": "On this ONE trivial task, opencode was faster at the median and completed 5/5; codex was slower and timed out once. Both show a large first-run penalty, which a median alone hides.",
+    "do_not_overread": "One trivial file-creation task is NOT a proxy for build quality, multi-iteration work, or brownfield capability. It measures headless invocation latency and nothing more."
+  }
+}

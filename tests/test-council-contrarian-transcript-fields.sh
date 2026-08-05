@@ -30,22 +30,44 @@ pass() { echo "PASS: $*"; PASS=$(( PASS + 1 )); }
 fail() { echo "FAIL: $*"; FAIL=$(( FAIL + 1 )); }
 
 # ---------------------------------------------------------------------------
-# Extract the real council_vote() using brace-depth counting. Line-end `/^}/`
-# matching fails because the embedded python3 heredoc contains top-level `}`.
+# Extract real functions using brace-depth counting. Line-end `/^}/` matching
+# fails because the embedded python3 heredoc contains top-level `}`.
+#
+# We extract _council_effective_threshold as well as council_vote. v7.98.0
+# (5bc3f690, "council trust-config fixes") hoisted the effective-threshold math
+# out of council_vote into its own top-level helper so COUNCIL_THRESHOLD could
+# act as a tighten-only floor-raise. The extractor only pulls the named
+# function's body, so the hoisted helper is no longer carried along and must be
+# extracted too -- without it `effective_threshold` is empty and every
+# `[ n -ge "" ]` comparison in council_vote errors out.
+#
+# Extract the REAL helper rather than hand-rolling the 2/3 math here: a copied
+# formula would silently keep asserting the old contract if the floor ever
+# changes.
 # ---------------------------------------------------------------------------
 EXTRACTED_FUNC_FILE="$(mktemp /tmp/council_vote_func_XXXXXX)"
 
-awk '
-/^council_vote\(\)/ { found=1; depth=0 }
-found {
-    print
-    for (i=1; i<=length($0); i++) {
-        c = substr($0, i, 1)
-        if (c == "{") depth++
-        else if (c == "}") { depth--; if (depth == 0) { exit } }
+extract_func() {
+    awk -v fn="$1" '
+    $0 ~ "^" fn "\\(\\)" { found=1; depth=0 }
+    found {
+        print
+        for (i=1; i<=length($0); i++) {
+            c = substr($0, i, 1)
+            if (c == "{") depth++
+            else if (c == "}") { depth--; if (depth == 0) { exit } }
+        }
     }
+    ' "$COUNCIL_SH"
 }
-' "$COUNCIL_SH" > "$EXTRACTED_FUNC_FILE"
+
+extract_func _council_effective_threshold > "$EXTRACTED_FUNC_FILE"
+if [ ! -s "$EXTRACTED_FUNC_FILE" ]; then
+    echo "FATAL: could not extract _council_effective_threshold from $COUNCIL_SH"
+    rm -f "$EXTRACTED_FUNC_FILE"
+    exit 1
+fi
+extract_func council_vote >> "$EXTRACTED_FUNC_FILE"
 
 if [ ! -s "$EXTRACTED_FUNC_FILE" ]; then
     echo "FATAL: could not extract council_vote from $COUNCIL_SH"

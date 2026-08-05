@@ -300,7 +300,12 @@ fi
 # the MAIN RARV loop argv is NEVER given --bare (the wrong-site guard).
 
 # Reviewer council site (run_code_review, ~7806) appends --bare AND the guard.
-rv_block=$(awk '/SECURITY-REVIEW MODEL GUARD/{f=1} f{print} /-p "\$prompt_text"/{if(f)exit}' "$RUN_SH")
+# End boundary: the reviewer `claude` invocation. The prompt may sit on the same
+# line (-p "$prompt_text") or, since the deadline-wrapped form, on a continuation
+# line (the argv line ends in `-p \`). Match either so the block stays bounded to
+# the reviewer site and never runs to EOF (which would silently swallow the whole
+# file and mask a real regression).
+rv_block=$(awk '/SECURITY-REVIEW MODEL GUARD/{f=1} f{print} /-p "\$prompt_text"/{if(f)exit} /claude "\$\{_rv_argv\[@\]\}" -p \\$/{if(f)exit}' "$RUN_SH")
 if printf '%s' "$rv_block" | grep -q 'loki_subcall_bare_enabled' \
    && printf '%s' "$rv_block" | grep -q '_rv_argv+=("--bare")'; then
   ok "EMBED2: reviewer council site appends --bare via helper"
@@ -340,10 +345,16 @@ if [ -n "$main_block" ] && ! printf '%s' "$main_block" | grep -q '\-\-bare'; the
 else
   bad "EMBED2 WRONG-SITE GUARD" "main loop block missing or contains --bare"
 fi
-if [ -n "$main_block" ] && ! printf '%s' "$main_block" | grep -q 'disallowedTools'; then
-  ok "EMBED3 WRONG-SITE GUARD: main RARV loop argv never gets --disallowedTools"
+# The EMBED3 wrong-site guard polices the REVIEW guard denylist specifically: the
+# main RARV loop must never get the reviewer's mutation-tool deny list. It may,
+# however, legitimately carry an UNRELATED host-guard (--disallowedTools "Task",
+# the LOKI_HOST_GUARD feature that disables the Task subagent at host level). So
+# assert on the review-guard signature (loki_review_guard_denylist), not on a bare
+# "disallowedTools" substring, which the unrelated host-guard would false-trip.
+if [ -n "$main_block" ] && ! printf '%s' "$main_block" | grep -q 'loki_review_guard_denylist'; then
+  ok "EMBED3 WRONG-SITE GUARD: main RARV loop argv never gets the review-guard denylist"
 else
-  bad "EMBED3 WRONG-SITE GUARD" "main loop block missing or contains --disallowedTools"
+  bad "EMBED3 WRONG-SITE GUARD" "main loop block missing or carries the review-guard denylist"
 fi
 
 # Additional council / adversarial reviewer sites discovered by full grep of

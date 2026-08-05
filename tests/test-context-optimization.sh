@@ -39,8 +39,18 @@ log_test() {
 
 cleanup() {
     rm -rf "$TEST_DIR"
-    # Clean up any test processes
-    pkill -f "test-context-optimization" 2>/dev/null || true
+    # NO pkill HERE. The previous line was:
+    #     pkill -f "test-context-optimization" 2>/dev/null || true
+    # which matches THIS SCRIPT'S OWN command line. Running from the EXIT trap,
+    # it SIGTERMed the very shell that was exiting, so the harness printed
+    # "Passed: 13  Failed: 0  All tests passed!" and then "Terminated", and the
+    # suite recorded the script as FAILED on a non-zero exit with every
+    # assertion green. On macOS the pattern did not match the same way, so this
+    # reproduced only on the Linux CI runner.
+    #
+    # This test spawns no background processes (verified: zero `... &` in the
+    # file), so there is nothing to reap and the correct fix is to reap nothing.
+    :
 }
 trap cleanup EXIT
 

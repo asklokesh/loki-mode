@@ -145,6 +145,33 @@ done
 
 echo ""
 echo "===================================="
+# --- WIRING ------------------------------------------------------------------
+# Everything above extracts _loki_state_file and drives it directly. That proves
+# the resolver works and says nothing about whether the runner still asks it.
+# Verified by mutation: emptying the first caller left every assertion above
+# green, so state would silently stop being read or written.
+#
+# Pinned to the SPECIFIC call site, not a count and not bare presence.
+#
+# A count threshold was tried first and was itself blind: the resolver has SEVEN
+# call sites, so removing one still cleared a ">= 3" bar and the mutation
+# survived a second time. An assertion loose enough that the defect cannot trip
+# it is the same failure this file exists to catch, just one level up.
+#
+# Each pinned site is one a user notices when it stops working: the baseline
+# reader, the terminal-status writer, and the final-status writer.
+for _site in \
+    'state_file="$(_loki_state_file 2>/dev/null)" || return 0' \
+    '_terminal_state_file="$(_loki_state_file)"' \
+    '_final_state_file="$(_loki_state_file)"'
+do
+    if grep -qF "$_site" "$RUN_SCRIPT"; then
+        ok "WIRING: state-file call site present: ${_site:0:38}"
+    else
+        fail "WIRING: a state-file call site was removed: ${_site:0:38}"
+    fi
+done
+
 echo "Lifecycle baseline tests: PASS=$PASS FAIL=$FAIL"
 echo "===================================="
 [ "$FAIL" -eq 0 ]

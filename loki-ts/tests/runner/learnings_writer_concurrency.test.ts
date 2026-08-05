@@ -56,6 +56,12 @@ describe("v7.5.2 concurrency fixes (B1 + B4)", () => {
     expect(ids.size).toBe(200);
   });
 
+  // Timeout raised from bun's 5s default. This test does 100 lock-serialized
+  // filesystem appends, so its wall time tracks RUNNER DISK SPEED, not code
+  // health: it runs in ~278ms locally and timed out at 5683ms on a loaded
+  // ubuntu CI box while its 200-append sibling took 2829ms on that same box.
+  // The assertions are unchanged and still exact (all 100 entries must persist)
+  // -- only the clock budget moves, so a genuine lost-update still fails here.
   it("B1: 100 concurrent appends with same target serialize and persist all entries", async () => {
     // Pre-fix: TOCTOU + GC-broken Map could lose entries. With withAppendLock
     // serialization in place, all entries land.
@@ -79,7 +85,7 @@ describe("v7.5.2 concurrency fixes (B1 + B4)", () => {
     await Promise.all(promises);
     const file = loadLearnings(scratch);
     expect(file.learnings.length).toBe(100);
-  });
+  }, 30_000);
 
   it("B4: a rejected episodeBridge does not poison subsequent appends", async () => {
     // Inject a rejecting bridge for the first call. The second call must

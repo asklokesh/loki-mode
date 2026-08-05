@@ -157,6 +157,11 @@ function atomicWriteJson(target: string, body: unknown): void {
   renameSync(tmp, target);
 }
 
+function extractTaskScope(md: string): string {
+  const end = /^---[ \t]+END[ \t]+[^\r\n]+?[ \t]+DIRECTIVE[ \t]+---[ \t]*\r?$/im.exec(md);
+  return end ? md.slice(end.index + end[0].length) : md;
+}
+
 // Extract feature titles from a markdown PRD. We look for top-level bullets
 // (`- foo`, `* foo`, `1. foo`) under non-meta `##` sections, plus `###`
 // sub-headings. This is a deliberately conservative subset of the bash
@@ -228,7 +233,7 @@ export async function populatePrdQueue(ctx: RunnerContext): Promise<void> {
   } catch {
     return;
   }
-  const features = extractFeatures(md);
+  const features = extractFeatures(extractTaskScope(md));
   if (features.length === 0) return;
 
   if (!existsSync(queueDir)) mkdirSync(queueDir, { recursive: true });

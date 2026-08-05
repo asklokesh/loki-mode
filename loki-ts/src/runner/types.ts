@@ -34,6 +34,17 @@ export type RunnerOpts = {
   // autonomous.ts uses this object instead of dynamically importing
   // ./state.ts. Production code leaves this undefined.
   stateOverride?: RunnerStateMod;
+  // Hermetic test override for the quality-gate battery. When set, autonomous.ts
+  // uses this instead of the dynamically imported ./quality_gates.ts, so a test
+  // can drive the fail-closed-on-gate-crash path (runQualityGates throwing must
+  // refuse completion, not fall through to council). Production leaves undefined.
+  // Shape mirrors GatesMod in autonomous.ts (kept structural to avoid a cross-file
+  // type move); the return object is the GateOutcomeShape {passed,failed,blocked,escalated}.
+  gatesOverride?: {
+    runQualityGates: (
+      ctx: RunnerContext,
+    ) => Promise<{ passed: string[]; failed: string[]; blocked: boolean; escalated: boolean }>;
+  };
   // Pre-iteration policy gate. Returning false maps to POLICY_BLOCKED state
   // and skips the iteration after a brief backoff. Phase 4+ port; the real
   // policy engine integration lands in Phase 5.

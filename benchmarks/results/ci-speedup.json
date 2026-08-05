@@ -1,0 +1,77 @@
+{
+  "generated": "2026-07-30T20:08:03Z",
+  "fast_tier_s": 77,
+  "fast_checks": 66,
+  "fast_failures": 0,
+  "suites": [
+    {
+      "name": "run-shellcheck.sh",
+      "before": 114024,
+      "after": 57732
+    },
+    {
+      "name": "detect-test-mutations.sh",
+      "before": 12188,
+      "after": 3462
+    },
+    {
+      "name": "detect-mock-problems.sh",
+      "before": 11275,
+      "after": 4227
+    },
+    {
+      "name": "test-provider-invoke-argv.sh",
+      "before": 15682,
+      "after": 2865
+    }
+  ],
+  "ci_pipeline": {
+    "measured_utc": "2026-07-30T19:41-19:54",
+    "note": "GitHub Actions job durations on run for commit bcf9fbce (v8.3.0).",
+    "before": {
+      "shell_tests_s": 781,
+      "bun_ubuntu_s": 137,
+      "python_313_s": 119,
+      "nodejs_24_s": 44,
+      "helm_lint_s": 8,
+      "critical_path_s": 781,
+      "cause": "289 suites ran serially on ONE runner"
+    },
+    "change": "LOKI_TEST_SHARD=i/n in tests/run-all-tests.sh + 4-way CI matrix",
+    "shard_split": {
+      "0": 73,
+      "1": 72,
+      "2": 72,
+      "3": 72,
+      "total": 289,
+      "verified": "executed counts, not just arithmetic"
+    },
+    "safety": "tests/test-shard-coverage.sh (14/14) proves the shards partition the suite list exactly and that an invalid shard spec exits non-zero rather than silently running nothing.",
+    "local_shard_measurement": {
+      "measured_utc": "2026-07-30T20:13:24Z",
+      "shard": "1/4",
+      "suites_run": 72,
+      "elapsed_s": 128,
+      "failures": 0,
+      "note": "Local Mac timing for ONE shard, executed end to end. Confirms the split runs and passes; it is NOT the CI number, since runners are slower than this machine."
+    },
+    "MEASURED_after": {
+      "measured_utc": "2026-07-30T20:09-20:14",
+      "run": "commit 9d63f16b, 4-way shard matrix",
+      "shard_0_s": 335,
+      "shard_1_s": 153,
+      "shard_2_s": 230,
+      "shard_3_s": 146,
+      "critical_path_s": 335,
+      "before_s": 781,
+      "speedup": "2.33x (781s -> 335s on the slowest shard)",
+      "note": "OBSERVED CI timings, replacing the earlier ~195s projection. The real number is 335s, not 195s: shards are uneven because suite cost varies, so the wall clock is the SLOWEST shard, not the mean. The projection assumed even cost and was optimistic.",
+      "green_run": {
+        "commit": "20cdb0ae (v8.3.1)",
+        "shards": "success success success success",
+        "note": "First fully green sharded run. The two failures on the prior commit were latent bugs the sharding EXPOSED (a skip that exited 1; stderr folded into a JSON stream), both fixed in v8.3.1 -- not regressions caused by sharding.",
+        "verified_utc": "2026-07-30T20:44:41Z"
+      }
+    }
+  }
+}

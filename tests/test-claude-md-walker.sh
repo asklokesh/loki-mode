@@ -55,6 +55,19 @@ fi
 cp -R "$FIXTURE_SRC" "$TMPROOT/acme"
 ACME="$TMPROOT/acme"
 
+# Harness gap, not a product change: v7.5.23 (17423c8c) introduced this test
+# and tests/fixtures/project-graph/acme/ in the same commit, but the fixture
+# shipped with only CLAUDE.md files and no `.loki/app.json` markers. Discovery
+# requires that marker per member (see the v7.5.23 commit message), so this
+# case never activated discovery and has failed since birth. Cases 3 and 4
+# below synthesize their manifests inline and have always passed -- same
+# product code, different fixture completeness. Synthesize the markers here
+# using that same inline pattern.
+for d in "" ui api service; do
+    mkdir -p "$ACME/$d/.loki"
+    printf '%s\n' '{"schema_version":1,"app_id":"acme"}' > "$ACME/$d/.loki/app.json"
+done
+
 # Prime discovery to set the env vars, then call the walker from the ui dir.
 loki_project_graph_discover "$ACME/ui"
 TARGET_DIR="$ACME/ui" load_app_graph_context > "$TMPROOT/walker.out"

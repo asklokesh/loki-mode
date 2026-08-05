@@ -1,0 +1,46 @@
+{
+  "generated": "2026-07-30T03:35:44Z",
+  "baseline_ms": {
+    "detect-mock-problems.sh": 11040,
+    "detect-test-mutations.sh": 12361
+  },
+  "runs": [
+    {
+      "label": "full repo, cold (no cache)",
+      "internal_ms": 298.1,
+      "wall_ms": 339.5,
+      "files": 1932,
+      "cached": 0,
+      "verdict": "FAIL"
+    },
+    {
+      "label": "full repo, cold (writes cache)",
+      "internal_ms": 285.75,
+      "wall_ms": 327.0,
+      "files": 1932,
+      "cached": 14,
+      "verdict": "FAIL"
+    },
+    {
+      "label": "full repo, warm",
+      "internal_ms": 87.18,
+      "wall_ms": 128.7,
+      "files": 1932,
+      "cached": 1932,
+      "verdict": "FAIL"
+    },
+    {
+      "label": "PR-scoped (HEAD~1)",
+      "internal_ms": 19.06,
+      "wall_ms": 58.6,
+      "files": 14,
+      "cached": 14,
+      "verdict": "PASS"
+    }
+  ],
+  "surfaces": {
+    "cli_loki_verify_fast_wall_ms": 124.9,
+    "mcp_loki_verify_fast_ms": 20.0,
+    "python_api_ms": 19.06
+  }
+}

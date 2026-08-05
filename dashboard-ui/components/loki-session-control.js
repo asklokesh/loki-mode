@@ -48,6 +48,9 @@ export class LokiSessionControl extends LokiElement {
       default: 'sonnet',  // tier-mapping fallback
       effective: 'sonnet',// what the next iteration will use
       notice: '',         // inline disclosure shown after a change
+      provider: 'claude', // the RUNNING session's provider (from the server)
+      switchable: true,   // whether this provider honors a mid-run switch
+      offers: [],         // [{value, tier, model}] from the server's catalog read
     };
     this._modelBusy = false;
     // Browser PRD-input: start a build from a spec.
@@ -338,6 +341,13 @@ export class LokiSessionControl extends LokiElement {
           override: m.override ?? null,
           default: m.default || 'sonnet',
           effective: m.effective || m.default || 'sonnet',
+          // Provider-aware picker: the server derives these from the RUNNING
+          // session's provider plus providers/model_catalog.json, so the
+          // dropdown never offers a model the active provider cannot dispatch.
+          // Absent on an older server: fall back to the claude shape.
+          provider: m.provider || 'claude',
+          switchable: m.switchable !== false,
+          offers: Array.isArray(m.offers) ? m.offers : [],
         };
         this.render();
       }
@@ -369,32 +379,59 @@ export class LokiSessionControl extends LokiElement {
     }
   }
 
+  // Extra copy for the Claude aliases only. Cost/positioning notes are
+  // model-specific and cannot be derived from the catalog, so they are keyed by
+  // alias and simply absent for every other provider.
+  static get MODEL_HINTS() {
+    return {
+      haiku: 'fastest, cheapest',
+      sonnet: 'balanced',
+      opus: 'top coding',
+      fable: '2x Opus cost: $10/$50 per MTok',
+    };
+  }
+
   _renderModelControl() {
-    // The selected value: the active override if set, else empty (= default/
-    // tier mapping). The empty option clears the override.
+    // Options come from the server, which derives them from the RUNNING
+    // session's provider and providers/model_catalog.json. Each option shows
+    // what it RESOLVES TO for that provider ("medium -> gpt-5.3-codex"), so the
+    // picker is truthful on every provider without hardcoding a model id here.
     const selected = this._model.override || '';
+    const offers = this._model.offers;
+    const hints = LokiSessionControl.MODEL_HINTS;
     const opts = [
-      { value: '', label: `Default (tier: ${this._escapeHtml(this._model.default)})` },
-      { value: 'haiku', label: 'Haiku (fastest, cheapest)' },
-      { value: 'sonnet', label: 'Sonnet 5 (balanced)' },
-      { value: 'opus', label: 'Opus (top coding)' },
-      { value: 'fable', label: 'Fable 5 (2x Opus cost: $10/$50 per MTok)' },
+      { value: '', label: `Default (${this._model.default})` },
+      ...offers.map((o) => {
+        const hint = hints[o.value];
+        // "medium -> gpt-5.3-codex" / "opus (top coding) -> claude-opus-4-8".
+        // The arrow half is dropped when the catalog has no id for this tier,
+        // rather than inventing one.
+        const head = hint ? `${o.value} (${hint})` : o.value;
+        return { value: o.value, label: o.model ? `${head} -> ${o.model}` : head };
+      }),
     ];
     const optionsHtml = opts.map((o) => {
       const sel = o.value === selected ? ' selected' : '';
       return `<option value="${this._escapeHtml(o.value)}"${sel}>${this._escapeHtml(o.label)}</option>`;
     }).join('');
     const isFable = this._model.effective === 'fable';
+    // A provider whose runner ignores .loki/state/model-override gets a
+    // read-only control: offering a switch that the run will not honor is a
+    // false affordance (the server rejects the POST for the same reason).
+    const locked = this._model.switchable === false;
+    const disabled = this._modelBusy || locked ? ' disabled' : '';
     return `
       <div class="model-control">
         <div class="model-row">
           <label for="model-select">Model</label>
-          <select class="model-select" id="model-select" aria-label="Run model"${this._modelBusy ? ' disabled' : ''}>
+          <select class="model-select" id="model-select" aria-label="Run model"${disabled}>
             ${optionsHtml}
           </select>
         </div>
         ${isFable ? `<div class="model-cost-note">Fable 5 costs 2x Opus per token ($10/$50 per MTok).</div>` : ''}
-        <div class="model-disclosure">Model changes apply from the next iteration, for the current run only.</div>
+        <div class="model-disclosure">${locked
+          ? `Provider ${this._escapeHtml(this._model.provider)} runs ${this._escapeHtml(this._model.effective)} and does not support switching models mid-run. Restart the run to change it.`
+          : 'Model changes apply from the next iteration, for the current run only.'}</div>
         ${this._model.notice ? `<div class="model-notice">${this._escapeHtml(this._model.notice)}</div>` : ''}
       </div>
     `;
@@ -404,14 +441,21 @@ export class LokiSessionControl extends LokiElement {
     // Browser PRD-input: a spec textarea + model picker + Start button, shown
     // when no run is active so a user can kick off a build (and choose the
     // execution model + optional Opus advisor) straight from the dashboard.
-    // Start-time model options: haiku|sonnet|opus (NO fable at start time -- fable
-    // is an advisory-only 2x-Opus model and is not a Claude API dispatch model).
-    // The default '' pins nothing, so the engine uses Sonnet 5.
+    // Start-time model options come from the server's provider-aware offer set,
+    // same source as the mid-run picker, so a non-claude provider is never
+    // offered Claude aliases here either. Fable is excluded at start time (it is
+    // an advisory-only 2x-Opus model, not a Claude API dispatch model). The
+    // default '' pins nothing, so the engine uses its own default.
+    const hints = LokiSessionControl.MODEL_HINTS;
     const startModelOpts = [
-      { value: '', label: 'Sonnet 5 (default)' },
-      { value: 'haiku', label: 'Haiku (fastest, cheapest)' },
-      { value: 'sonnet', label: 'Sonnet 5 (balanced)' },
-      { value: 'opus', label: 'Opus (top coding, priciest)' },
+      { value: '', label: `Default (${this._model.default})` },
+      ...this._model.offers
+        .filter((o) => o.value !== 'fable')
+        .map((o) => {
+          const hint = hints[o.value];
+          const head = hint ? `${o.value} (${hint})` : o.value;
+          return { value: o.value, label: o.model ? `${head} -> ${o.model}` : head };
+        }),
     ];
     const startModelHtml = startModelOpts.map((o) => {
       const sel = o.value === this._startModel ? ' selected' : '';
@@ -419,11 +463,13 @@ export class LokiSessionControl extends LokiElement {
     }).join('');
 
     // Advisor judge: account default, or an opt-in Opus reviewer that judges the
-    // code-review gate while execution stays on the chosen model.
-    const advisorOpts = [
+    // code-review gate while execution stays on the chosen model. Claude-only:
+    // the pin is applied by appending --model to a `claude` reviewer argv
+    // (run.sh:12501), so on any other provider it is inert and is not offered.
+    const advisorOpts = this._model.provider === 'claude' ? [
       { value: '', label: 'Account default' },
       { value: 'opus', label: 'Opus (stronger judge)' },
-    ];
+    ] : [];
     const advisorHtml = advisorOpts.map((o) => {
       const sel = o.value === this._advisorModel ? ' selected' : '';
       return `<option value="${this._escapeHtml(o.value)}"${sel}>${this._escapeHtml(o.label)}</option>`;
@@ -451,6 +497,7 @@ export class LokiSessionControl extends LokiElement {
           </select>
         </div>
 
+        ${advisorOpts.length ? `
         <div class="start-field">
           <label for="advisor-select">Advisor</label>
           <select
@@ -461,7 +508,7 @@ export class LokiSessionControl extends LokiElement {
             ${advisorHtml}
           </select>
         </div>
-        <div class="start-hint" id="advisor-hint">Advisor judges the code-review gate; execution stays on the model above.</div>
+        <div class="start-hint" id="advisor-hint">Advisor judges the code-review gate; execution stays on the model above.</div>` : ''}
 
         <button class="control-btn start" id="start-btn" aria-label="Start build" ${this._startBusy ? 'disabled' : ''}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>

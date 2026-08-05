@@ -21,6 +21,8 @@
     "typescript": "^5.6.0"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.208",
+    "@anthropic-ai/sdk": "^0.111.0",
     "@resvg/resvg-wasm": "^2.6.2"
   },
   "optionalDependencies": {

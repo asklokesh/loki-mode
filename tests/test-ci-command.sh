@@ -140,16 +140,36 @@ fi
 # --- Test 9: GitHub format output (uses test repo with changes) ---
 ((TOTAL++))
 GH_TEST_DIR=$(mktemp -d)
+# FIXTURE IDENTITY IS REQUIRED, not optional. A bare CI runner has no global
+# user.email, so `git commit` fails there; with the whole block redirected to
+# /dev/null that failure was INVISIBLE and left a repo with no HEAD. `git diff`
+# against nothing is empty, so the command correctly printed "No changes to
+# review" and the assertion reported "missing ## header" -- pointing at the
+# wrong thing entirely. Passed on a developer machine only because the global
+# gitconfig supplied an identity. Set it per-repo so the fixture is
+# self-sufficient on any machine.
 (
     cd "$GH_TEST_DIR" || exit 1
     git init -q
+    git config user.email "test@example.invalid"
+    git config user.name "loki test fixture"
+    git config commit.gpgsign false
     echo "clean" > app.py
     git add app.py
     git commit -q -m "init"
+    # Leave this change UNCOMMITTED. `ci --pr` tries `gh pr diff` first and falls
+    # back to `git diff` (uncommitted changes) when there is no PR or no gh auth,
+    # which is the CI condition. Committing everything made that fallback empty.
     echo "changed" >> app.py
-    git add app.py
-    git commit -q -m "change"
 ) >/dev/null 2>&1
+
+# ASSERT THE FIXTURE BUILT. Without this, any future setup breakage silently
+# degrades into "No changes to review" and gets misread as a product bug -- the
+# exact loop that cost three CI cycles to unwind.
+if ! (cd "$GH_TEST_DIR" && git rev-parse HEAD >/dev/null 2>&1 && [ -n "$(git diff --name-only)" ]); then
+    echo "  fixture FAILED to build (no HEAD, or no uncommitted diff) -- not a product failure"
+fi
+
 gh_output=$(cd "$GH_TEST_DIR" && "$LOKI" ci --pr --format github 2>&1) || true
 rm -rf "$GH_TEST_DIR"
 if echo "$gh_output" | grep -q "## Loki CI Quality Report"; then
@@ -161,13 +181,38 @@ else
 fi
 
 # --- Test 10: --fail-on with clean repo should pass ---
+# Must run in an isolated repo, like tests 8, 9, 11 and 13. `ci --pr` scans
+# `git diff origin/main...HEAD` of whatever repo it is invoked from; run bare it
+# scanned loki-mode's own branch diff, which carries CRITICAL secret-scan hits
+# (fixture literals such as the `sk-...` string in the secret-scan tests), so
+# --fail-on critical correctly exited 1. No product commit changed this: the
+# assertion was environment-dependent from its introduction in v6.22.0
+# (e00eb8dc) and only passed while the branch diff happened to be clean.
+# The temp repo gets two commits so the scanner runs on a real non-empty diff
+# and reports status "pass" (findings below threshold), not "skip" (nothing
+# scanned) -- the latter would exit 0 without exercising the threshold at all.
 ((TOTAL++))
+CLEAN_TEST_DIR=$(mktemp -d)
+(
+    cd "$CLEAN_TEST_DIR" || exit 1
+    git init -q
+    git config user.email "test@test.com"
+    git config user.name "Test"
+    echo "clean" > app.py
+    git add app.py
+    git commit -q -m "init"
+    echo "changed" >> app.py
+    git add app.py
+    git commit -q -m "change"
+) >/dev/null 2>&1
 clean_exit=0
-"$LOKI" ci --pr --fail-on critical --format json >/dev/null 2>&1 || clean_exit=$?
-if [ "$clean_exit" -eq 0 ]; then
+clean_output=$(cd "$CLEAN_TEST_DIR" && "$LOKI" ci --pr --fail-on critical --format json 2>/dev/null) || clean_exit=$?
+rm -rf "$CLEAN_TEST_DIR"
+clean_status=$(echo "$clean_output" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null)
+if [ "$clean_exit" -eq 0 ] && [ "$clean_status" = "pass" ]; then
     log_pass "ci --fail-on critical passes on clean diff"
 else
-    log_fail "ci --fail-on critical passes on clean diff" "exit code was $clean_exit"
+    log_fail "ci --fail-on critical passes on clean diff" "exit code was $clean_exit, status was '$clean_status'"
 fi
 
 # --- Test 11: Security scan detects secrets in diff ---

@@ -90,5 +90,30 @@ assert_accept "uvicorn with key=value"    'uvicorn main=app --port=8000'
 assert_accept "go run dot"                'go run .'
 assert_accept "cargo run"                 'cargo run'
 
+# --- WIRING: the validator must still guard the real execution path ----------
+# Every case above extracts _validate_app_command and tests it in isolation:
+# the whitelist, the rejections, the shell-metacharacter cases. All correct, and
+# all silent about whether app-runner still CALLS it before executing.
+#
+# This is a security boundary, so the disconnected-wire case is the one that
+# matters most: found by mutation probe, replacing the guard with `if false`
+# lets an unvalidated command through and left this entire file green.
+_APP_RUNNER="$REPO_ROOT/autonomy/app-runner.sh"
+
+if grep -qF 'if ! _validate_app_command "$LOKI_APP_COMMAND"; then' "$_APP_RUNNER"; then
+    PASS=$((PASS+1)); printf 'PASS: WIRING: app-runner validates LOKI_APP_COMMAND before use\n'
+else
+    FAIL=$((FAIL+1))
+    printf 'FAIL: WIRING: the validator is no longer guarding execution -- an unvalidated command would run\n'
+fi
+
+if grep -qF '_validate_app_command()' "$_APP_RUNNER"; then
+    PASS=$((PASS+1)); printf 'PASS: WIRING: the validator is defined under the name its caller uses\n'
+else
+    FAIL=$((FAIL+1))
+    printf 'FAIL: WIRING: validator definition and call site have diverged\n'
+fi
+
+
 printf '\n--- summary: %d passed, %d failed ---\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

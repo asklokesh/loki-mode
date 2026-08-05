@@ -343,6 +343,98 @@ def validate_result_row(row: Dict[str, Any]) -> List[str]:
     return errs
 
 
+# ---------------------------------------------------------------------------
+# "was this trial actually measured?" -- the ONE definition
+# ---------------------------------------------------------------------------
+# Mirrors autonomy/lib/efficiency_cost.py::record_is_measured: an unmeasured
+# value reads UNKNOWN, never 0. Here the unit is a TRIAL rather than an
+# efficiency record, but the rule is the same one, and it exists in exactly one
+# place for the same reason -- a second copy is how the honesty rule drifts.
+#
+# The grader sets success = (acceptance exit == 0) on whatever state it finds in
+# the workdir. When the tool never ran, that state is the untouched fixture, so
+# the acceptance command fails and the trial scores success=false. That is
+# indistinguishable from a tool that ran hard and genuinely failed -- and it is
+# the number that gets published as a competitor's score.
+#
+# exit_status is the discriminator, and _base.run_cli already records it
+# precisely (cli_not_found / timeout / adapter_error are its own words). It has
+# been a REQUIRED adapter-output key since schema 1.0, so every historical
+# result row on disk already carries it and retro-classifies correctly. That is
+# why measuredness is DERIVED at read time instead of stamped as a new field:
+# a new field would be absent on every existing row, and absent must not read as
+# unmeasured.
+#
+# Deliberately NOT a bare falsy check anywhere below: a real measured zero must
+# survive as zero.
+
+# The tool ran and terminated under its own control; the grader graded what it
+# actually left behind. A failure here is a REAL failure and must stay one.
+#   completed   -- ran, exited 0
+#   error_rc_N  -- ran, exited non-zero (a genuine failure to solve the task)
+#   manual      -- operator-supplied entry (report.py already tags it unverified)
+#
+# Everything else means no measurement was taken:
+#   cli_not_found -- the tool is not installed; it never ran at all
+#   timeout       -- killed mid-work; the workdir is a snapshot of an unfinished
+#                    run, not a verdict. matrix.sh already treats a timed-out
+#                    cell as MISSING (it warns and returns 1), and the "first
+#                    pilot produced zero haiku-full rows" incident is exactly
+#                    this case. Scoring it 0 would contradict that.
+#   adapter_error -- the harness broke, not the tool
+UNMEASURED_EXIT_STATUSES = frozenset({
+    "cli_not_found", "timeout", "adapter_error",
+})
+
+
+def trial_is_measured(trial: Dict[str, Any]) -> bool:
+    """True when this trial represents a real, gradeable observation.
+
+    False means the tool never produced a state worth grading, so the trial must
+    be EXCLUDED from k/N rather than counted as a failure. An unrecognized or
+    absent exit_status is treated as MEASURED: that is the fail-safe direction
+    here, because it preserves every pre-existing row's k/N exactly and keeps
+    this predicate from silently deleting real data it does not recognize.
+    """
+    if not isinstance(trial, dict):
+        return False
+    adapter = trial.get("adapter")
+    if not isinstance(adapter, dict):
+        return True
+    status = adapter.get("exit_status")
+    if isinstance(status, str) and status.strip().lower() in UNMEASURED_EXIT_STATUSES:
+        return False
+
+    # ZERO ITERATIONS IS DELIBERATELY *NOT* TREATED AS UNMEASURED HERE, and
+    # this is the second-order trap in this predicate.
+    #
+    # It looks like it should be: an agent that completed no iteration produced
+    # no artifact, so grading it measures the SEED rather than the agent. I
+    # added exactly that rule and it broke
+    # tests/test_bench_unmeasured_trial.py::test_genuine_failure_still_scores_zero.
+    #
+    # The reason is the failure it causes is WORSE than the one it prevents. A
+    # run that genuinely FAILED can legitimately record iterations: 0. Treating
+    # that as unmeasured deletes a real failure from the denominator, which
+    # inflates the success rate -- the same false-green shape, pointed the
+    # other way. The existing test pins that a genuine failure must still score
+    # 0.0 rather than vanish.
+    #
+    # exit_status already carries the distinction correctly: a run that could
+    # not happen reports timeout / cli_not_found / adapter_error, while a run
+    # that happened and failed reports a normal status. Iteration count is a
+    # symptom of both and discriminates neither.
+    return True
+
+
+def split_measured(trials: List[Dict[str, Any]]
+                   ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Partition trials into (measured, unmeasured). Order preserved."""
+    measured = [t for t in trials if trial_is_measured(t)]
+    unmeasured = [t for t in trials if not trial_is_measured(t)]
+    return measured, unmeasured
+
+
 def _median(values: List[float]) -> Optional[float]:
     vals = sorted(v for v in values if v is not None)
     if not vals:
@@ -357,22 +449,35 @@ def _median(values: List[float]) -> Optional[float]:
 def summarize_trials(trials: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Build the result-row.summary. Lead-conservative, null-honest.
 
-    success_rate = n_success / n_trials over grader-passed trials. A 0-success
-    run yields success_rate 0.0 (it renders, it does not vanish). Cost summaries
-    are null when no trial recorded a cost (never invented).
+    success_rate = n_success / n_trials over MEASURED trials only. A 0-success
+    run yields success_rate 0.0 (a real zero renders, it does not vanish), but a
+    trial that produced no measurement (tool absent, timed out, harness error)
+    is excluded from BOTH numerator and denominator rather than counted as a
+    failure -- the denominator is the measured count, never the attempted count.
+    n_unmeasured records how many were dropped so the loss is visible.
+
+    With nothing measured there is no rate at all: success_rate is None, not
+    0.0. An unmeasured cell must never publish as a perfect failure.
+
+    Cost summaries are null when no trial recorded a cost (never invented).
     """
-    n = len(trials)
-    n_success = sum(1 for t in trials if t.get("success") is True)
-    durations = [t.get("duration_s") for t in trials if t.get("duration_s") is not None]
-    costs = [t.get("cost_usd") for t in trials if t.get("cost_usd") is not None]
+    n_attempted = len(trials)
+    measured, unmeasured = split_measured(trials)
+    n = len(measured)
+    n_success = sum(1 for t in measured if t.get("success") is True)
+    durations = [t.get("duration_s") for t in measured if t.get("duration_s") is not None]
+    costs = [t.get("cost_usd") for t in measured if t.get("cost_usd") is not None]
     total_cost = sum(costs) if costs else None
     per_solved = None
     if total_cost is not None and n_success > 0:
         per_solved = round(total_cost / n_success, 4)
     return {
         "n_trials": n,
+        "n_attempted": n_attempted,
+        "n_unmeasured": len(unmeasured),
         "n_success": n_success,
-        "success_rate": round(n_success / n, 4) if n else 0.0,
+        # None (not 0.0) when nothing was measured: no observation, no rate.
+        "success_rate": round(n_success / n, 4) if n else None,
         "duration_s_median": _median(durations),
         "duration_s_min": min(durations) if durations else None,
         "duration_s_max": max(durations) if durations else None,

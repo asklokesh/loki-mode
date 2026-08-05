@@ -58,7 +58,16 @@ source "$REPO_ROOT/autonomy/app-runner.sh"
 # container stays in the "running" state for the duration of the test.
 TMPDIR_TEST="$(mktemp -d -t loki-app-runner-compose.XXXXXX)"
 PROJECT_NAME="loki_test_$$"
-trap 'cd / >/dev/null 2>&1 || true; (cd "$TMPDIR_TEST" && docker compose -p "$PROJECT_NAME" down -v --remove-orphans >/dev/null 2>&1) || true; rm -rf "$TMPDIR_TEST" 2>/dev/null || true' EXIT
+# Tear down BOTH project names. Test 4 deliberately re-runs compose under the
+# DEFAULT (directory-derived) project so the helper under test sees the same
+# project it would in production -- but the original trap only removed
+# "$PROJECT_NAME", so every run leaked one default-project network.
+#
+# Measured consequence: after a session of repeated runs this host reached 32
+# docker networks and compose began failing with "all predefined address pools
+# have been fully subnetted". The test then reported "docker compose up -d
+# failed", which reads as a product defect and is actually this leak.
+trap 'cd / >/dev/null 2>&1 || true; (cd "$TMPDIR_TEST" && docker compose -p "$PROJECT_NAME" down -v --remove-orphans >/dev/null 2>&1) || true; (cd "$TMPDIR_TEST" && docker compose down -v --remove-orphans >/dev/null 2>&1) || true; rm -rf "$TMPDIR_TEST" 2>/dev/null || true' EXIT
 
 cat > "$TMPDIR_TEST/docker-compose.yml" <<'YAML'
 services:

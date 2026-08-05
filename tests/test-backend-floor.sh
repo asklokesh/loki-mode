@@ -41,7 +41,7 @@ fi
 # by the backgrounded node child; the server would fall back to :3000).
 APP_PORT=8971
 pkill -f "index.mjs" 2>/dev/null || true
-PORT="$APP_PORT" node index.mjs >/tmp/test-backend-floor.log 2>&1 &
+PORT="$APP_PORT" node index.mjs >"$DEMO/backend-floor.log" 2>&1 &
 SRV=$!
 PORT="$APP_PORT"
 # Wait until the port actually serves HTTP 200 (check the CODE, not curl's exit,
@@ -53,7 +53,7 @@ for _ in $(seq 1 30); do
   sleep 0.5
 done
 if [ -z "$ready" ]; then
-  fail "server did not become ready on port $PORT (log: $(tail -1 /tmp/test-backend-floor.log))"
+  fail "server did not become ready on port $PORT (log: $(tail -1 "$DEMO/backend-floor.log"))"
   kill "$SRV" 2>/dev/null; echo "RESULT: $PASS passed, $FAIL failed"; exit 1
 fi
 pass "generated backend starts and serves"

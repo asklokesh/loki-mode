@@ -10,6 +10,7 @@
 import { LokiElement } from '../core/loki-theme.js';
 import { getApiClient } from '../core/loki-api-client.js';
 import { registerPoll } from '../core/loki-poll-registry.js';
+import { formatUSD, formatTokens, formatDuration } from '../core/loki-unified-styles.js';
 
 /** @type {Object<string, {initial: string, color: string, bgColor: string}>} */
 const PROVIDER_ICONS = {
@@ -133,22 +134,18 @@ export class LokiProviderHealth extends LokiElement {
     ];
   }
 
+  // These were already null-aware but rendered '--', which an operator cannot
+  // tell apart from a real reading. Same null semantics, explicit marker.
   _formatTokens(n) {
-    if (n == null) return '--';
-    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
-    return String(n);
+    return formatTokens(n);
   }
 
   _formatLatency(ms) {
-    if (ms == null) return '--';
-    if (ms < 1000) return ms + 'ms';
-    return (ms / 1000).toFixed(1) + 's';
+    return formatDuration(ms);
   }
 
   _formatCost(usd) {
-    if (usd == null) return '--';
-    return '$' + usd.toFixed(2);
+    return formatUSD(usd);
   }
 
   _escapeHtml(str) {

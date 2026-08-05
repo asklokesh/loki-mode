@@ -27,6 +27,7 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUN_SH="$REPO_ROOT/autonomy/run.sh"
+SCRIPT_DIR="$REPO_ROOT/autonomy"
 
 PASS=0
 FAIL=0
@@ -49,23 +50,27 @@ TMPROOT=$(mktemp -d -t loki-static-analysis-lang.XXXXXX)
 #-------------------------------------------------------------------------------
 FN_FILE="$TMPROOT/_fn.sh"
 # enforce_static_analysis() now calls the has_npm_lint_script() helper (prefer
-# the app's own `lint` script), so extract BOTH into the harness.
-awk '/^has_npm_lint_script\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "$RUN_SH" > "$FN_FILE"
+# the app's own `lint` script) and the shared hard deadline helper.
+awk '/^_loki_with_deadline\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "$RUN_SH" > "$FN_FILE"
+echo >> "$FN_FILE"
+awk '/^has_npm_lint_script\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "$RUN_SH" >> "$FN_FILE"
 echo >> "$FN_FILE"
 awk '/^enforce_static_analysis\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "$RUN_SH" >> "$FN_FILE"
 
 if ! grep -q '^enforce_static_analysis() {' "$FN_FILE" || \
-   ! grep -q '^has_npm_lint_script() {' "$FN_FILE"; then
-    bad "could not extract enforce_static_analysis() + has_npm_lint_script() from run.sh"
+   ! grep -q '^has_npm_lint_script() {' "$FN_FILE" || \
+   ! grep -q '^_loki_with_deadline() {' "$FN_FILE"; then
+    bad "could not extract static analysis and deadline helpers from run.sh"
     echo "Total: $((PASS+FAIL+SKIP))  Passed: $PASS  Failed: $FAIL  Skipped: $SKIP"
     exit 1
 fi
-ok "extracted enforce_static_analysis() + has_npm_lint_script() from run.sh"
+ok "extracted static analysis and deadline helpers from run.sh"
 
 # Source into harness with stub loggers so the function is callable in isolation.
 load_fn() {
     log_info() { :; }
     log_warn() { :; }
+    log_error() { :; }
     # shellcheck disable=SC1090
     source "$FN_FILE"
 }
@@ -110,6 +115,41 @@ if bash -n "$RUN_SH" 2>/dev/null; then
     ok "autonomy/run.sh parses with bash -n"
 else
     bad "autonomy/run.sh failed bash -n parse"
+fi
+
+#-------------------------------------------------------------------------------
+# TypeScript regression: a Vitest module must be type-checked, never executed
+#-------------------------------------------------------------------------------
+P=$(make_fixture ts-vitest "src/component.test.tsx" 'import { describe, it } from "vitest";
+describe("component", () => { it("loads", () => {}); });
+')
+mkdir -p "$P/node_modules/.bin" "$P/fake-bin"
+cat > "$P/tsconfig.json" <<'JSON'
+{"compilerOptions":{"jsx":"preserve","noEmit":true},"include":["src/**/*.tsx"]}
+JSON
+cat > "$P/node_modules/.bin/tsc" <<'SH'
+#!/usr/bin/env sh
+printf '%s\n' "$*" > .tsc-invocation
+exit 0
+SH
+chmod +x "$P/node_modules/.bin/tsc"
+cat > "$P/fake-bin/bun" <<'SH'
+#!/usr/bin/env sh
+touch .bun-was-executed
+exit 97
+SH
+chmod +x "$P/fake-bin/bun"
+TS_GATE_RESULT=$(
+    load_fn
+    TARGET_DIR="$P"
+    PATH="$P/fake-bin:$PATH"
+    enforce_static_analysis >/dev/null 2>&1
+    printf 'rc=%s\n' "$?"
+)
+if [ "$TS_GATE_RESULT" = "rc=0" ] && [ -f "$P/.tsc-invocation" ] && [ ! -e "$P/.bun-was-executed" ]; then
+    ok "TypeScript: local tsc checks Vitest modules without executing them through Bun"
+else
+    bad "TypeScript: static analysis executed a module or skipped the local compiler"
 fi
 
 #-------------------------------------------------------------------------------

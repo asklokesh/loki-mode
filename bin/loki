@@ -32,6 +32,19 @@ SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)
 BASH_CLI="$REPO_ROOT/autonomy/loki"
 
+# v8.1: resolve the one-switch SDK mode (LOKI_SDK_MODE=off|judges|full) into the
+# per-site LOKI_SDK_* flags HERE, in the outermost shim, BEFORE the `start`
+# routing fork below reads LOKI_SDK_LOOP. Without this, `LOKI_SDK_MODE=full loki
+# start` would run the judges on the SDK but silently keep the RARV loop on the
+# legacy bash binary, because the routing decision predates autonomy/loki's own
+# resolve. Same idempotent lib all three entrypoints source; exported flags reach
+# the child (bash or Bun). No-op when the mode is unset.
+if [ -f "$REPO_ROOT/autonomy/lib/sdk-mode.sh" ]; then
+    # shellcheck source=../autonomy/lib/sdk-mode.sh
+    source "$REPO_ROOT/autonomy/lib/sdk-mode.sh"
+    loki_sdk_resolve_mode
+fi
+
 # v7.89.0 telemetry TTY fix (council cH_r1): resolve interactivity EXACTLY ONCE
 # here, while this shim still owns the user's real TTY, and export it as an
 # explicit signal. The telemetry gates (telemetry.sh / crash.sh / dashboard
@@ -164,7 +177,7 @@ if [ -z "${LOKI_TELEMETRY_DISABLED:-}" ] && [ "${DO_NOT_TRACK:-}" != "1" ] && [ 
             _loki_disclose_telemetry_once
             # Fire-and-forget the installed event; detach all FDs (v7.8.3 broken-pipe fix).
             ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null \
-              && loki_telemetry "installed" "first_command=${1:-}" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
+              && loki_telemetry "installed" "first_command=$(_loki_known_command "${1:-}")" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
             disown 2>/dev/null || true
         fi
     fi
@@ -180,6 +193,45 @@ if [ "${LOKI_PROVIDER:-}" = "gemini" ]; then
     exit 1
 fi
 
+# First-run funnel, stage C: the activation ATTEMPT (first `loki start`).
+#
+# WHY HERE. This shim runs for BOTH routes before any exec, so one emit at this
+# point covers all four dispositions of a start: the Bun SDK fork, the
+# needs-bash divert, LOKI_LEGACY_BASH, and the no-Bun fallthrough. An emit down
+# in run.sh would be bash-route-only and would report installs climbing while
+# starts sat near zero under LOKI_SDK_MODE=full, which is exactly the blind spot
+# this is meant to close. Placed after the gemini guard (that path exits) and
+# before the LOKI_LEGACY_BASH check (which execs).
+#
+# `run` is the deprecated start alias and `quick` is grouped with them in the
+# bash config pre-pass, so all three count as an activation attempt.
+#
+# Gate: the strict EXISTING double gate, unchanged -- telemetry enabled AND
+# analytics explicitly opted in (_loki_analytics_enabled), default OFF even for
+# diagnostics-on users. No new consent knob, no new endpoint.
+#
+# Disclosure runs in the FOREGROUND first (the backgrounded emit has all three
+# FDs detached, so a disclosure printed in there would go to /dev/null and the
+# user would never see it), gated on the same analytics gate the egress uses so
+# we never disclose for an egress that will not happen. This mirrors the
+# cli_command sites below. No arguments are read, so nothing user-authored can
+# reach the payload.
+case "${1:-}" in
+    start|run|quick)
+        if command -v curl &>/dev/null && [ -f "$REPO_ROOT/autonomy/telemetry.sh" ]; then
+            if ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null \
+                 && declare -f _loki_analytics_enabled >/dev/null 2>&1 && _loki_analytics_enabled \
+                 && [ ! -f "${HOME}/.loki/funnel-start-attempted" ] ); then
+                _loki_disclose_telemetry_once
+            fi
+            ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null \
+              && loki_emit_funnel_once "start-attempted" "first_start_attempted" \
+                   "entry=$(_loki_known_command "${1:-}")" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
+            disown 2>/dev/null || true
+        fi
+        ;;
+esac
+
 # Force-fall-through to bash when the rollback flag is set.
 if [ "${LOKI_LEGACY_BASH:-0}" = "1" ] || [ "${LOKI_LEGACY_BASH:-}" = "true" ]; then
     exec "$BASH_CLI" "$@"
@@ -189,6 +241,61 @@ fi
 # silently rather than fail. This keeps users on systems without Bun working.
 if ! command -v bun &>/dev/null; then
     exec "$BASH_CLI" "$@"
+fi
+
+# v8 Phase 4: route `start` to the Bun RARV loop ONLY when LOKI_SDK_LOOP is on.
+# Default (unset) keeps `loki start` on the bash cmd_start, byte-identical. This
+# guard is AFTER the legacy check (LOKI_LEGACY_BASH=1 still force-overrides to
+# bash above) and AFTER the bun-presence check (a bun-less host already fell to
+# bash). Accepts 1|true to match the flag's documented =1 usage; bash cannot
+# cheaply reproduce truthy()'s yes/on spellings, so those are not honored here
+# (documented divergence, same as other bin/loki bool guards). v8.1: LOKI_SDK_LOOP
+# may also be set by the mode resolver above (LOKI_SDK_MODE=full -> LOOP=1), so
+# `LOKI_SDK_MODE=full loki start` now correctly routes the loop to Bun here.
+#
+# RUN-25 iter 2 (T3(c) pre-flight): the Bun runAutonomous loop handles the RARV
+# loop only. Orchestration flags that do pre-loop work the Bun loop does NOT do
+# (git-worktree parallel streams, GitHub/issue import, Docker sandbox, the API
+# server, backgrounding, alternate spec sources) must run on the bash route so the
+# user gets FULL behavior even with the loop flag on. Scan the start args for any
+# such flag (or an issue-ref positional) and, if present, DIVERT back to bash
+# instead of taking the Bun fork. This is the "pre-loop handled, not rejected"
+# guarantee that makes the eventual loop default-flip a no-regression. Runner
+# flags (--simple, --allow-haiku, --regen-prd, --skip-memory, provider knobs) are
+# handled by start.ts and do NOT divert. See artifacts/ITER1-FLAG-RECONCILE.md.
+_loki_start_needs_bash() {
+    # $@ = the start args (already know $1 = start). Return 0 (divert to bash) if
+    # any bash-only orchestration flag or an issue-ref spec is present.
+    local a
+    for a in "$@"; do
+        case "$a" in
+            --parallel|--bg|--background|--github|--api|--sandbox \
+            |--bmad-project|--openspec \
+            |--mirofish|--mirofish-docker|--mirofish-rounds|--mirofish-timeout|--mirofish-bg \
+            |--issue|--dry-run|--no-start|--output|--worktree|-w|--pr|--ship|--detach|-d)
+                return 0 ;;
+            --isolation)
+                # value follows; only worktree/docker/sandbox divert (none stays Bun).
+                _loki_iso_next=1 ;;
+            worktree|wt|docker|sandbox)
+                [ "${_loki_iso_next:-0}" = "1" ] && { unset _loki_iso_next; return 0; }
+                _loki_iso_next=0 ;;
+            *)
+                # issue-ref positional: owner/repo#N, a tracker URL, or *#<digits>.
+                case "$a" in
+                    */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*) return 0 ;;
+                esac
+                _loki_iso_next=0 ;;
+        esac
+    done
+    unset _loki_iso_next
+    return 1
+}
+if [ "${1:-}" = "start" ] && { [ "${LOKI_SDK_LOOP:-}" = "1" ] || [ "${LOKI_SDK_LOOP:-}" = "true" ]; }; then
+    if _loki_start_needs_bash "${@:2}"; then
+        exec "$BASH_CLI" "$@"
+    fi
+    exec bun "$BUN_CLI" "$@"
 fi
 
 # CLI consolidation (Phase A): `trust detail` is the grouped form of the
@@ -249,7 +356,7 @@ if [ "${1:-}" = "report" ]; then
                  && declare -f _loki_telemetry_enabled >/dev/null 2>&1 && _loki_telemetry_enabled ); then
                 _loki_disclose_telemetry_once
             fi
-            ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null && loki_telemetry "cli_command" "command=${1:-}" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
+            ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null && loki_telemetry "cli_command" "command=$(_loki_known_command "${1:-}")" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
             disown 2>/dev/null || true
         fi
         exec bun "$BUN_CLI" "$@"
@@ -291,7 +398,7 @@ case "${1:-}" in
                  && declare -f _loki_telemetry_enabled >/dev/null 2>&1 && _loki_telemetry_enabled ); then
                 _loki_disclose_telemetry_once
             fi
-            ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null && loki_telemetry "cli_command" "command=${1:-}" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
+            ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null && loki_telemetry "cli_command" "command=$(_loki_known_command "${1:-}")" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
             disown 2>/dev/null || true
         fi
         exec bun "$BUN_CLI" "$@"

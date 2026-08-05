@@ -56,11 +56,128 @@ if ! bash -n autonomy/loki; then
     failures=$((failures + 1))
 fi
 
-if command -v python3 >/dev/null 2>&1 && [[ -f pytest.ini ]]; then
-    echo "[pre-push] python3 -m pytest -q"
-    if ! python3 -m pytest -q 2>&1 | tail -25; then
-        echo "[pre-push] FAIL: python tests failed (full output above)" >&2
-        failures=$((failures + 1))
+# --- Python tests, scoped to what this push actually changes -----------------
+# Measured 2026-07-31: the full suite is 1801 tests / 149s. At an hourly release
+# cadence a 2.5-minute gate in front of every push is the cadence blocker, and
+# it was buying almost nothing -- a push touching only shell or docs re-ran all
+# 1801 Python tests to prove nothing about the diff.
+#
+# So: run the tests whose files this push changes, plus every test when a
+# non-test Python file changes (a change to dashboard/ or memory/ can break any
+# test, so file-mapping there would be a false-green). A push with no Python in
+# it skips pytest entirely. GitHub CI still runs the full suite on every push --
+# this narrows the LOCAL gate, it does not remove coverage.
+#
+# Note the exit code is captured BEFORE the pipe: `pytest | tail` under pipefail
+# reports tail's status when pytest floods a closed pipe, which would have
+# green-washed a genuine failure.
+# WHICH interpreter. GitHub CI runs Python 3.12. A dev Mac may run 3.14, and
+# the two disagree in ways that reached main twice in one day:
+#
+#   v8.61.0  Release red on `NameError: name 'Any' is not defined`, green
+#            locally. 3.14 defers annotations unconditionally (PEP 649), so an
+#            exec'd source slice never evaluates them; 3.12 does.
+#   (same)   A code-index skip filter matched substrings of the ABSOLUTE path,
+#            emptying the index for any checkout under `.claude/`. Invisible on
+#            3.14, where chromadb fails to import and the caller silently falls
+#            back to a different file list.
+#
+# This hook ran bare `python3` and saw NEITHER. Prefer the interpreter CI
+# actually uses, so a local green predicts a CI green.
+_PY=python3
+command -v python3.12 >/dev/null 2>&1 && _PY=python3.12
+
+if command -v "$_PY" >/dev/null 2>&1 && [[ -f pytest.ini ]]; then
+    _range_base="$(git merge-base HEAD origin/main 2>/dev/null || echo "")"
+    if [[ -n "$_range_base" ]]; then
+        _changed="$(git diff --name-only "$_range_base"..HEAD 2>/dev/null || echo "FALLBACK")"
+    else
+        # No merge-base (new repo, detached, no origin): fall back to the full
+        # suite rather than silently testing nothing.
+        _changed="FALLBACK"
+    fi
+
+    # What gets skipped is DOCS, not "anything that isn't Python". Measured
+    # 2026-07-31: five Python tests assert on shell and JSON source
+    # (test_event_bus_jsonl_schema, test_bench_cli, test_failure_memory_mapping,
+    # test_managed_review_fallback, test_provider_budget_ratelimit). Skipping
+    # pytest because a push touched only autonomy/run.sh would fail open on
+    # precisely the case this hook's header names first: "a pre-existing test
+    # asserts on a contract you changed".
+    _non_doc="$(grep -vE '^(docs/|wiki/|.*\.md$|.*\.txt$|LICENSE|\.gitignore$)' <<<"$_changed" || true)"
+
+    # Scoping to individual files is only safe for real test MODULES. A
+    # conftest.py or a tests/helpers/ module affects collection for everything,
+    # and `pytest <conftest.py>` collects zero tests and exits 5 -- which would
+    # abort the push with a nonsense message.
+    _scopable="$(grep -E '^tests/.*/?(test_[^/]+|[^/]+_test)\.py$' <<<"$_non_doc" || true)"
+
+    _pytest_args=()
+    _run_pytest=1
+    if [[ -z "$_non_doc" ]]; then
+        echo "[pre-push] pytest: docs-only push, skipping"
+        _run_pytest=0
+    elif [[ -n "$(comm -23 <(sort -u <<<"$_non_doc") <(sort -u <<<"$_scopable"))" ]]; then
+        # Something other than a plain test module changed (source, shell,
+        # JSON, conftest, or the no-merge-base fallback) -- run everything.
+        echo "[pre-push] $_PY -m pytest -q (full: non-test source changed)"
+    else
+        # Only self-contained test modules changed -- run exactly those.
+        while IFS= read -r _f; do
+            [[ -n "$_f" && -f "$_f" ]] && _pytest_args+=("$_f")
+        done <<<"$_scopable"
+        echo "[pre-push] $_PY -m pytest -q ${_pytest_args[*]}"
+    fi
+
+    if [[ $_run_pytest -eq 1 ]]; then
+        # Run pytest with git's own environment stripped. Git exports GIT_DIR,
+        # GIT_INDEX_FILE and friends into every hook; they are inherited by
+        # each `git` subprocess a test spawns, which silently redirects tests
+        # that build a throwaway fixture repo at this repository instead. That
+        # is 22 real failures (test_wiki_index, test_wiki_generator and
+        # others) that reproduce with nothing else running, and pass the
+        # instant GIT_DIR is unset.
+        #
+        # This was latent before: the old `pytest | tail` masked pytest's exit
+        # code, so the hook never noticed it was failing them.
+        _pytest_out="$(env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE \
+                           -u GIT_PREFIX -u GIT_OBJECT_DIRECTORY \
+                           -u GIT_COMMON_DIR -u GIT_QUARANTINE_PATH \
+                           "$_PY" -m pytest -q "${_pytest_args[@]+"${_pytest_args[@]}"}" 2>&1)" \
+            && _pytest_rc=0 || _pytest_rc=$?
+        if [[ $_pytest_rc -ne 0 ]]; then
+            tail -25 <<<"$_pytest_out" >&2
+            echo "[pre-push] FAIL: python tests failed (full output above)" >&2
+            failures=$((failures + 1))
+        fi
+    fi
+fi
+
+# --- Red-main guard ----------------------------------------------------------
+# THE FAILURE THIS EXISTS FOR, measured 2026-07-30: main sat RED for THREE
+# consecutive releases (v8.0.3, v8.1.0, and the commit before them) because
+# nothing ever forced anyone to look. The red was reporting a GENUINE bug the
+# whole time -- providers/opencode.sh silently dropped every caller-supplied
+# flag -- and three releases shipped straight over it.
+#
+# A warning, not a block. Whether the tip is red is a fact about the PREVIOUS
+# push, and the most common reason to push onto a red main is to FIX it, which
+# a hard block would prevent. But it must be impossible to do accidentally: you
+# now have to read the words "main is currently RED" before your push proceeds.
+#
+# Requires gh; silently skipped without it (an offline or gh-less machine still
+# pushes normally, and CI remains the backstop).
+if command -v gh >/dev/null 2>&1 && [[ "${PRE_PUSH_NO_CI_CHECK:-0}" != "1" ]]; then
+    _tip_state=$(gh run list --branch main --workflow=Tests --limit 1 \
+                    --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "")
+    if [[ "$_tip_state" == "failure" ]]; then
+        echo "[pre-push] ---------------------------------------------------" >&2
+        echo "[pre-push] WARNING: main is currently RED (last Tests run failed)." >&2
+        echo "[pre-push] If this push is not the fix, you are stacking work on" >&2
+        echo "[pre-push] a broken tip -- that is how v8.0.3 through v8.1.0 shipped" >&2
+        echo "[pre-push] over a real arg-dropping bug in the opencode provider." >&2
+        echo "[pre-push]   gh run list --branch main --workflow=Tests --limit 1" >&2
+        echo "[pre-push] ---------------------------------------------------" >&2
     fi
 fi
 

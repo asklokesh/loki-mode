@@ -188,13 +188,17 @@ checklist_oracle_triangulate() {
 
     # Feed the detector to python3 via a quoted heredoc (delimiter in quotes) so
     # bash performs NO interpolation: no dollar-digit footgun, no quote-escaping
-    # hazards. All inputs arrive through _ORACLE_* env vars.
-    local status_token
-    status_token=$(_ORACLE_SPEC="$CHECKLIST_PRD_PATH" \
-                   _ORACLE_OUT="$findings_file" \
-                   _ORACLE_PROJECT="$project_dir" \
-                   _ORACLE_INSTALL_DIR="$oracle_install_dir" \
-                   python3 - <<'ORACLE_PY' 2>/dev/null || echo "NOOP"
+    # hazards. Keep the heredoc outside command substitution for macOS Bash 3.2.
+    # All inputs arrive through _ORACLE_* env vars.
+    local status_token="NOOP"
+    local status_file=""
+    local status_tmp_root="${TMPDIR:-/tmp}"
+    if status_file="$(mktemp "${status_tmp_root%/}/loki-oracle-status.XXXXXX" 2>/dev/null)"; then
+        if _ORACLE_SPEC="$CHECKLIST_PRD_PATH" \
+           _ORACLE_OUT="$findings_file" \
+           _ORACLE_PROJECT="$project_dir" \
+           _ORACLE_INSTALL_DIR="$oracle_install_dir" \
+           python3 - > "$status_file" 2>/dev/null <<'ORACLE_PY'
 import json, os, re, sys, tempfile, glob
 
 spec_path = os.environ["_ORACLE_SPEC"]
@@ -656,7 +660,12 @@ if findings:
 else:
     print("CLEAN")
 ORACLE_PY
-)
+        then
+            IFS= read -r status_token < "$status_file" || status_token="NOOP"
+            [ -n "$status_token" ] || status_token="NOOP"
+        fi
+        rm -f "$status_file" 2>/dev/null || true
+    fi
 
     # Honest logging + best-effort trust event on a real conflict only.
     local tok rest

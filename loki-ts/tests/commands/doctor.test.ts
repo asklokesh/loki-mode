@@ -289,6 +289,14 @@ describe("doctor.buildDoctorJson", () => {
     if (json.disk.status === "pass") pass++;
     else if (json.disk.status === "fail") fail++;
     else warn++;
+    // ai_provider is an AGGREGATE over the individually-optional provider CLIs
+    // (Claude OR Codex OR Cline OR Aider). It is counted in the tally because
+    // having none is a genuine blocker -- without it, --json reported zero
+    // failures and ok true on a host that cannot run a build, contradicting
+    // the same command's own exit code.
+    if (json.ai_provider.status === "pass") pass++;
+    else if (json.ai_provider.status === "fail") fail++;
+    else warn++;
     expect(json.summary.passed).toBe(pass);
     expect(json.summary.failed).toBe(fail);
     expect(json.summary.warnings).toBe(warn);

@@ -96,6 +96,9 @@ provider abstraction, and metrics.
 - `src/version.ts` - Version reporting.
 - `src/runner/` - Autonomous run loop, state, RARV phasing.
 - `src/runner/providers.ts` - Provider abstraction with automatic failover.
+- `src/runner/council.ts` - Completion-council hook: convergence tracking, the stagnation and done-signal force-stop valves, and the v8 confidence-spike re-check.
+- `src/runner/goal_score.ts` - Goal-measurability scoring (v8.0.0). Advisory only; flags a goal the loop cannot hill-climb. Byte-mirrored in `autonomy/run.sh`.
+- `src/runner/retry_class.ts` - Failure classification (v8.0.0). Separates transient failures from positively-identified permanent ones; unrecognized failures stay transient.
 - `src/council/` - Reviewer council and verdict logic.
 - `src/commands/` - Command implementations.
 - `src/metrics/` - Efficiency and reward metrics.

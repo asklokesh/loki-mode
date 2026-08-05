@@ -13,7 +13,8 @@
 // Side-effect free: reads env + filesystem only. Returns flags as an array of
 // alternating ["--flag", "value", ...] that the caller appends to its CLI argv.
 import { existsSync, readFileSync } from "node:fs";
-import { resolve as resolvePath } from "node:path";
+import { resolve as resolvePath, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { buildMcpConfigArgv } from "./mcp_config.ts";
 
@@ -57,6 +58,54 @@ export function effortForTier(tier: string | undefined, complexity?: string): Ef
     }
   }
   return effort;
+}
+
+// Complexity-aware MODEL routing (net-new; effort routing already exists in
+// effortForTier). ENV VAR: LOKI_TIER_ROUTING (DEFAULT "0" = OFF = current flat
+// resolution, zero change to stock runs). Byte-mirror of loki_tier_route_model in
+// providers/claude.sh. When LOKI_TIER_ROUTING=1 the resolved model is nudged by
+// the auto-detected complexity signal (LOKI_COMPLEXITY: simple|standard|complex):
+//   complex + planning -> opus
+//   simple  + fast     -> haiku ONLY when LOKI_ALLOW_HAIKU=true (support gate)
+//   standard, or development/ACT tier -> UNCHANGED.
+// HARD GUARD: the development/ACT tier is NEVER routed below sonnet (the switch
+// has no development arm, so it falls through unchanged). "explicit override
+// wins": we skip the nudge whenever the operator pinned that tier via
+// LOKI_CLAUDE_MODEL_PLANNING / LOKI_MODEL_PLANNING (or the _FAST pair), so a
+// deliberate pin is never overridden -- byte-mirroring the bash arm's env checks.
+function envPinned(...names: string[]): boolean {
+  return names.some((n) => {
+    const v = process.env[n];
+    return v !== undefined && v !== "";
+  });
+}
+
+export function tierRouteModel(tier: string, model: string): string {
+  if (process.env["LOKI_TIER_ROUTING"] !== "1") return model;
+  const complexity = process.env["LOKI_COMPLEXITY"] ?? "standard";
+  switch (tier) {
+    case "planning":
+      if (
+        complexity === "complex" &&
+        !envPinned("LOKI_CLAUDE_MODEL_PLANNING", "LOKI_MODEL_PLANNING")
+      ) {
+        return "opus";
+      }
+      return model;
+    case "fast":
+      if (
+        complexity === "simple" &&
+        process.env["LOKI_ALLOW_HAIKU"] === "true" &&
+        !envPinned("LOKI_CLAUDE_MODEL_FAST", "LOKI_MODEL_FAST")
+      ) {
+        return "haiku";
+      }
+      return model;
+    // development/ACT and every other tier: unchanged. HARD GUARD -- never route
+    // implementation below sonnet, so no arm here touches it.
+    default:
+      return model;
+  }
 }
 
 // Mirror of loki_remaining_budget in autonomy/lib/claude-flags.sh.
@@ -216,7 +265,14 @@ export function buildAutoFlags(args: AutoFlagsArgs): string[] {
     process.env["LOKI_AUTONOMY_OVERRIDE"] !== "off" &&
     claudeFlagSupported("--append-system-prompt")
   ) {
-    out.push("--append-system-prompt", AUTONOMY_OVERRIDE_TEXT);
+    // First-pass excellence (v8): on iteration 1, append a directive that
+    // front-loads intelligence so a single informed pass lands the complete,
+    // working, well-designed solution instead of a draft the loop then corrects.
+    // Iteration-1-only + gated on LOKI_FIRST_PASS_EXCELLENCE (default on). MUST
+    // mirror providers/claude.sh _loki_autonomy_override_text so both routes send
+    // the same append at runtime (the matrix parity gate does not spawn a model,
+    // so a one-route-only change would pass every gate yet diverge live).
+    out.push("--append-system-prompt", autonomyAppendText());
   }
   // v7.34.0: --no-session-persistence. OPT-IN via LOKI_NO_SESSION_PERSIST=1;
   // DEFAULT OFF (zero behavior change). Disables Claude's own transcript JSONL
@@ -231,6 +287,40 @@ export function buildAutoFlags(args: AutoFlagsArgs): string[] {
   return out;
 }
 
+// autonomyAppendText: the exact system-prompt append both routes send.
+//
+// EXTRACTED so the SDK route can reach it. This composition used to live inline
+// inside the CLI flag builder, behind claudeFlagSupported("--append-system-prompt")
+// -- a probe of the `claude` BINARY. On the SDK route with no CLI installed
+// (LOKI_SDK_MODE=full, the configuration v8 steers new users toward) that
+// predicate is false, so the FIRST-PASS EXCELLENCE directive silently vanished
+// from exactly the route v8 promotes. That directive is the measured
+// iterations-to-done lever: a hard task dropped from [3,2] iterations to [1,1],
+// 2.8x cheaper, with correctness held. Losing it on the default route is the
+// opposite of what the loop is for.
+//
+// The CLI caller still gates on binary support (it must -- an unsupported flag
+// would be rejected by the binary). The SDK caller has no such constraint and
+// passes this text straight to query()'s systemPrompt append.
+//
+// Iteration-1-only, gated on LOKI_FIRST_PASS_EXCELLENCE (default on). Callers
+// on BOTH routes must use this function so the two can never diverge at
+// runtime: the matrix parity gate does not spawn a model, so a one-route-only
+// change would pass every gate and still send different prompts live.
+export function autonomyAppendText(): string {
+  const iter = Number.parseInt(process.env["ITERATION_COUNT"] ?? "1", 10);
+  const firstPassOn = process.env["LOKI_FIRST_PASS_EXCELLENCE"] !== "0";
+  return firstPassOn && (Number.isNaN(iter) || iter <= 1)
+    ? AUTONOMY_OVERRIDE_TEXT + FIRST_PASS_EXCELLENCE_TEXT
+    : AUTONOMY_OVERRIDE_TEXT;
+}
+
+// autonomyAppendEnabled: whether the append should be sent at all. Shared by
+// both routes so the opt-out (LOKI_AUTONOMY_OVERRIDE=off) behaves identically.
+export function autonomyAppendEnabled(): boolean {
+  return process.env["LOKI_AUTONOMY_OVERRIDE"] !== "off";
+}
+
 // The system-prompt text that authorizes autonomous operation and resolves
 // precedence against a conflicting user/project CLAUDE.md. MUST stay
 // byte-identical to providers/claude.sh _loki_autonomy_override_text so the
@@ -242,6 +332,50 @@ export const AUTONOMY_OVERRIDE_TEXT =
   "Therefore, for this session: do NOT ask the user questions, do NOT call the AskUserQuestion tool, do NOT stop to request confirmation, and do NOT refuse routine, reversible engineering work (writing code, running tests, creating files, atomic git checkpoints in the working tree). Proceed and complete the task directly. If a decision is genuinely ambiguous, choose the most reasonable option, record the assumption in .loki/CONTINUITY.md, and continue rather than halting.\n\n" +
   "Commit hygiene still applies: git checkpoints are LOCAL only. Never push or force-push. Stage files by explicit path, never `git add -A` or `git add .`, and never commit secrets, credentials, .env files, or untracked files you did not author this session.\n\n" +
   "This precedence override is narrow. It does NOT relax any safety rule. Every safety prohibition in CLAUDE.md or memory still fully binds: anything genuinely destructive or irreversible remains out of scope unless the task explicitly calls for it. This includes (not limited to) force-pushing, deleting or overwriting the user's data, dropping or truncating databases, publishing or releasing, rotating or exfiltrating secrets, touching production systems, and anything a CLAUDE.md safety rule explicitly forbids. When in doubt about whether an action is destructive, treat it as destructive and do not do it.\n";
+
+// The curated design archetype library, read VERBATIM from
+// references/design-archetypes.md. Item 4 of the first-pass directive is purely
+// negative ("NO purple gradient, NO Inter"), which leaves the model on exactly
+// the priors that produce the slop; this file is the positive half, giving it a
+// concrete aesthetic to commit to. Deliberately no interpolation and no
+// archetype-selection logic on either route: the MODEL picks, so the bash/Bun
+// parity surface is a plain byte compare of one shared file. Mirror of
+// providers/claude.sh _loki_design_archetypes_file. Fails open -- a missing file
+// degrades to the negative-only directive rather than erroring.
+function designArchetypesText(): string {
+  try {
+    const moduleDir = dirname(fileURLToPath(import.meta.url));
+    for (const rel of [
+      ["..", "..", "..", "references", "design-archetypes.md"], // src/providers -> repo root
+      ["..", "..", "references", "design-archetypes.md"], // dist -> repo root
+    ]) {
+      const p = resolvePath(moduleDir, ...rel);
+      if (existsSync(p)) return readFileSync(p, "utf8");
+    }
+  } catch {
+    // fall through to the empty string (fail open)
+  }
+  return "";
+}
+
+// First-pass excellence directive appended to the iteration-1 system prompt.
+// MUST stay byte-identical to the LOKI_FIRSTPASS_EOF heredoc in
+// providers/claude.sh _loki_autonomy_override_text (the bash `cat` emits a
+// leading newline before the heredoc body, reproduced here), INCLUDING the
+// design-archetype library both routes append after it. No emojis, no dashes.
+export const FIRST_PASS_EXCELLENCE_TEXT =
+  "\n[FIRST-PASS EXCELLENCE] Treat THIS pass as your one shot to ship a complete, working, verified solution. Do not produce a rough draft to refine later; the loop exists as a safety net, not a plan. Before you finish this iteration:\n" +
+  "1. BUILD IT FULLY. Implement every requirement end to end. No stubs, no TODOs, no \"coming soon\", no placeholder or hardcoded/mock data where real logic belongs. If the spec implies a backend (auth, persistence, a form that submits, a list that saves), WIRE IT so it actually works and persists -- a beautiful UI whose buttons do nothing is the single most common failure, not a draft. Every list/table must trace to a real query, never an inline mock array.\n" +
+  "2. SELF-VERIFY BY RUNNING, not by reading. Run the build and the tests yourself; for each acceptance criterion, DRIVE the actual path and observe the result (submit the form, then reload and confirm the record persisted; hit a protected route logged-out and confirm it is rejected). Fix what fails now, in this pass. Do not mark done on \"looks right\" or a self-claim -- observed behavior is the only proof.\n" +
+  "3. LOCK THE ARCHITECTURE on this pass so later edits are small and additive. Decide the data model, routes, and component structure up front and build to them; never rewrite whole files later to patch a small thing (that is the doom loop that breaks working features).\n" +
+  "4. DESIGN: commit to ONE named aesthetic direction up front (editorial, brutalist, luxury, retro-futuristic, soft/pastel, industrial, etc. -- chosen from the product domain) and hold it on every surface. Use real content (never lorem). AVOID the AI-slop tells that instantly read as machine-generated: NO indigo/blue-to-purple gradient (the #1 tell), NO Inter/Roboto/system-font headlines (pick a real display+body pairing), NO three-equal-rounded-cards-in-a-row skeleton, NO flat 1px gray card borders or colored left-border strips, NO untouched shadcn defaults, NO reflexive dark mode. Cap the palette at ~3 hues (60/30/10), tinted not pure #fff/#000, separate sections by whitespace then a slight background shift before any border. Aim for Linear/Stripe/Duolingo-tier taste: \"this does not look AI-generated\".\n" +
+  "5. SATISFY THE GATES THAT WILL JUDGE THIS PASS. Your work is checked by deterministic gates before it can be accepted, and in measured runs EVERY extra iteration was caused by one of these rejecting the work -- never by the model failing to finish. Clear them now, in this pass:\n" +
+  "   - STATIC ANALYSIS: no syntax errors, no unused/undefined symbols, no lint errors in files you touched.\n" +
+  "   - TEST SUITE: the existing tests must still pass. Run them; do not assume.\n" +
+  "   - MUTATION/MOCK INTEGRITY: tests must assert real behaviour. No tautological assertions (expect(true).toBe(true)), no test that passes whether or not the code works, no mocking the very unit under test, no inline mock data standing in for a real query.\n" +
+  "   - CODE REVIEW: no scope creep beyond the stated task, no dead or commented-out code, no leftover debug output, and follow the conventions already in the surrounding files.\n" +
+  "Deliver the finished, self-verified, genuinely-designed result in THIS pass. Additional iterations should be the exception, not the plan.\n" +
+  designArchetypesText();
 
 // ---------------------------------------------------------------------------
 // v7.34.0 Claude session-id stamping (Phase 1, correlation-only).

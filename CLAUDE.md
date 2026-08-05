@@ -19,7 +19,7 @@ loki start owner/repo#123        # issue-mode (GitHub issue)
 ## Project Structure
 
 ```
-SKILL.md                    # Slim core skill (~266 lines) - progressive disclosure
+SKILL.md                    # Slim core skill (~410 lines) - progressive disclosure
 providers/                  # Multi-provider support (4 providers)
   claude.sh                 # Claude Code - full features (Tier 1)
   cline.sh                  # Cline - Tier 2
@@ -148,7 +148,33 @@ Conditional auditor (not numbered): Backward-compatibility / legacy-healing-audi
 
 ### Metrics System (ToolOrchestra-inspired)
 - **Efficiency**: Task cost tracking (`.loki/metrics/efficiency/`)
-- **Rewards**: Outcome/efficiency/preference signals (`.loki/metrics/rewards/`)
+
+### v8 Harness Intelligence (v8.0.0)
+
+Four measured-harness disciplines on the trust core. None can weaken a gate.
+
+- **Prompt-cache discipline**: prompt splits into a cache-stable `<loki_system>`
+  prefix and a volatile `<dynamic_context>` tail at `[CACHE_BREAKPOINT]`;
+  `sdk_invoker.ts` applies `cache_control` on that split. **Any new always-on
+  instruction MUST go in the prefix** or it busts the cache every iteration.
+- **Confidence-spike re-check** (`loki-ts/src/runner/council.ts`): delays the
+  done-signal force-stop by ONE iteration when self-reported confidence spikes.
+  Strictly additive (never skips a gate), never delays the stagnation valve,
+  one-shot so a re-spiking run cannot postpone the valve forever.
+  `LOKI_CONFIDENCE_SPIKE=0` / `_DELTA` (40) / `_MIN` (90).
+- **Goal scoring** (`loki-ts/src/runner/goal_score.ts`): flags a
+  `COMPLETION_PROMISE` with no measurable target. Advisory only. Suppressed for
+  an absent goal and in perpetual mode. **Byte-mirrored in `autonomy/run.sh`** --
+  edit BOTH or the `build_prompt` parity fixtures diverge. `LOKI_GOAL_SCORING=0`.
+- **Smart retry** (`loki-ts/src/runner/retry_class.ts`): exits early on a
+  positively-identified permanent failure. **Fail-safe direction is
+  load-bearing**: unrecognized failures stay TRANSIENT and retry as before; rate
+  limits are explicitly excluded from the permanent set. Never invert this
+  default. `LOKI_SMART_RETRY=0`.
+
+Observability: SDK failures emit a structured `capability_degraded` record to
+`.loki/events.jsonl`; `.loki/app-runner/first-preview.json` records
+time-to-first-preview write-once (bash route only).
 
 ### Phase 1 / RARV-C Closure Env Vars
 
@@ -165,18 +191,20 @@ These knobs together implement the RARV-C (closure) loop: findings -> override c
 
 ### Top-Level File Map
 
+Line counts approximate; re-run `wc -l` for exact.
+
 | File | Lines | Role |
 |---|---|---|
-| `autonomy/loki` | 23,109 | CLI (102 cmd_ functions, dispatch at `loki:11828`) |
-| `autonomy/run.sh` | 12,170 | Orchestration engine (RARV loop) |
-| `autonomy/completion-council.sh` | 1,771 | Completion detection (council voting) |
-| `dashboard/server.py` | 5,952 | FastAPI (100+ endpoints, WebSocket) |
-| `memory/retrieval.py` | 1,611 | Task-aware memory retrieval |
-| `memory/storage.py` | 1,521 | File-based memory backend |
-| `memory/engine.py` | 1,401 | Memory orchestrator |
-| `memory/consolidation.py` | 999 | Episodic-to-semantic pipeline |
-| `mcp/server.py` | 2,288 | MCP server (34 tools: 26 in-file + 7 magic + 1 gated managed; +3 resources, 2 prompts) |
-| `providers/loader.sh` | 185 | Provider loader |
+| `autonomy/loki` | ~32,700 | CLI (102 cmd_ functions, dispatch at `loki:main`) |
+| `autonomy/run.sh` | ~20,400 | Orchestration engine (RARV loop) |
+| `autonomy/completion-council.sh` | ~3,800 | Completion detection (council voting) |
+| `dashboard/server.py` | ~11,500 | FastAPI (100+ endpoints, WebSocket) |
+| `memory/retrieval.py` | ~2,100 | Task-aware memory retrieval |
+| `memory/storage.py` | ~2,000 | File-based memory backend |
+| `memory/engine.py` | ~1,600 | Memory orchestrator |
+| `memory/consolidation.py` | ~1,100 | Episodic-to-semantic pipeline |
+| `mcp/server.py` | ~2,700 | MCP server (34 tools: 26 in-file + 7 magic + 1 gated managed; +3 resources, 2 prompts) |
+| `providers/loader.sh` | ~185 | Provider loader |
 
 ### Key Function Lookup
 
@@ -184,25 +212,25 @@ Verified against v7.5.13 source on 2026-04-29. Line numbers drift; re-verify wit
 
 | Function | Location | Purpose |
 |---|---|---|
-| `cmd_start()` | `autonomy/loki:622` | Start autonomous execution |
-| `main()` (CLI) | `autonomy/loki:11828` | CLI dispatch |
-| `main()` (runner) | `autonomy/run.sh:11633` | Runner entry point |
-| `run_autonomous()` | `autonomy/run.sh:10253` | Main iteration loop |
-| `build_prompt()` | `autonomy/run.sh:8987` | Prompt construction |
-| `save_state()` | `autonomy/run.sh:8806` | Persist state |
-| `council_should_stop()` | `autonomy/completion-council.sh:1605` | Completion decision |
-| `run_code_review()` | `autonomy/run.sh:6259` | 3-reviewer code review |
-| `create_checkpoint()` | `autonomy/run.sh:6943` | Snapshot state |
-| `store_episode_trace()` | `autonomy/run.sh:8504` | Memory storage bridge |
-| `check_human_intervention()` | `autonomy/run.sh:11262` | PAUSE/STOP/INPUT signals |
-| `detect_complexity()` | `autonomy/run.sh:1338` | Auto-detect project complexity |
-| `get_rarv_tier()` | `autonomy/run.sh:1484` | Map iteration to model tier |
-| `check_budget_limit()` | `autonomy/run.sh:7897` | Budget circuit breaker |
-| `is_rate_limited()` | `autonomy/run.sh:7712` | Rate limit detection |
-| `cmd_heal()` | `autonomy/loki:9916` | Legacy system healing |
-| `hook_pre_healing_modify()` | `autonomy/hooks/migration-hooks.sh:283` | Friction safety gate |
-| `hook_post_healing_modify()` | `autonomy/hooks/migration-hooks.sh:328` | Characterization test verification |
-| `hook_healing_phase_gate()` | `autonomy/hooks/migration-hooks.sh:386` | Healing phase transition gate |
+| `cmd_start()` | `autonomy/loki` | Start autonomous execution |
+| `main()` (CLI) | `autonomy/loki` | CLI dispatch |
+| `main()` (runner) | `autonomy/run.sh` | Runner entry point |
+| `run_autonomous()` | `autonomy/run.sh` | Main iteration loop |
+| `build_prompt()` | `autonomy/run.sh` | Prompt construction |
+| `save_state()` | `autonomy/run.sh` | Persist state |
+| `council_should_stop()` | `autonomy/completion-council.sh` | Completion decision |
+| `run_code_review()` | `autonomy/run.sh` | 3-reviewer code review |
+| `create_checkpoint()` | `autonomy/run.sh` | Snapshot state |
+| `store_episode_trace()` | `autonomy/run.sh` | Memory storage bridge |
+| `check_human_intervention()` | `autonomy/run.sh` | PAUSE/STOP/INPUT signals |
+| `detect_complexity()` | `autonomy/run.sh` | Auto-detect project complexity |
+| `get_rarv_tier()` | `autonomy/run.sh` | Map iteration to model tier |
+| `check_budget_limit()` | `autonomy/run.sh` | Budget circuit breaker |
+| `is_rate_limited()` | `autonomy/run.sh` | Rate limit detection |
+| `cmd_heal()` | `autonomy/loki` | Legacy system healing |
+| `hook_pre_healing_modify()` | `autonomy/hooks/migration-hooks.sh` | Friction safety gate |
+| `hook_post_healing_modify()` | `autonomy/hooks/migration-hooks.sh` | Characterization test verification |
+| `hook_healing_phase_gate()` | `autonomy/hooks/migration-hooks.sh` | Healing phase transition gate |
 
 ### Critical Data Flow
 
@@ -211,7 +239,11 @@ A PRD enters via `loki start` (`autonomy/loki:622`), which execs `run.sh`. The `
 **Deprecated entrypoints:**
 - `loki run <issue-ref>` is a deprecated alias for `loki start <issue-ref>` since v6.84.0. Emits a `cli_command_deprecated` telemetry event. See `autonomy/loki:4436-4456`. Prefer `loki start`.
 
-See `.claude/projects/-Users-lokesh-git-loki-mode/memory/CODEBASE-KNOWLEDGE-GRAPH.md` for complete reference.
+The fuller codebase knowledge graph lives in local Claude project memory
+(`~/.claude/projects/<sanitized-repo-path>/memory/CODEBASE-KNOWLEDGE-GRAPH.md`),
+not in this repository. It is not tracked in git and is not shipped in the npm
+package, so it resolves only on a machine where that memory exists. The tables
+above are the in-repo reference and are the authority for anyone else.
 
 ## Development Guidelines
 
@@ -296,14 +328,14 @@ Prompt: "Review the following claims for factual accuracy.
 6. Only after user confirms, commit and push if requested
 
 ### When Modifying SKILL.md
-- Keep under 500 lines (currently ~266)
+- Keep under 500 lines (currently ~410)
 - Reference detailed docs in `references/` instead of inlining
 - Update version in header AND footer
 - Update CHANGELOG.md with new version entry
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v7.128.2 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
+- Current: v9.12.6 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
 - MAJOR bump for architecture changes (v6.0.0 = dual-mode architecture, loki run)
 - MINOR bump for new features (v5.23.0 = Dashboard File-Based API)
 - PATCH bump for fixes (v5.22.1 = session.json phantom state)
@@ -315,19 +347,66 @@ Follows semantic versioning: MAJOR.MINOR.PATCH
 - Clear, concise comments only when necessary
 - Follow existing patterns in codebase
 
-## Local CI Before Every Push (MANDATORY -- 2026-04-26 user mandate)
+## Local CI Before Every Push (2026-07-31 mandate -- SUPERSEDES 2026-04-26)
 
-**Every change must pass `bash scripts/local-ci.sh` on this Mac before
-`git push`.** No exceptions. The script mirrors every GitHub Actions
-workflow: bun typecheck/test, bash CLI 14/14 dual-route, bun-parity
-matrix (catches doctor text drift like the v7.4.18 Bun-probe-not-rendered
-bug), npm pack contents, SBOM cyclonedx-npm, license-audit, npm audit
-(with overrides), shellcheck, YAML parse, no-emoji, no-`git add -A`,
-cleanup probe.
+**The FAST tier is the release gate. The FULL tier is not a blocker.**
 
-If `local-ci.sh` reports "DO NOT PUSH", do not push. Fix the failures
-and re-run. The Mac is the canonical pre-push gate; GitHub Actions is
-the post-push verifier, not the discovery channel.
+Founder decision 2026-07-31, on measured numbers: GitHub CI runs Tests in
+**31 seconds** and Release in **2 minutes**, because it shards the 323-suite
+shell run 4 ways. The local FULL tier took **26m50s** and had no sharding at
+all. A 26-minute gate cannot sit in front of an hourly release cadence.
+
+The rule now:
+
+- **Before push/release: `bash scripts/local-ci.sh`** (fast tier, default).
+- **Do NOT block a release on `LOCAL_CI_TIER=full`.** Ship, let GitHub Actions
+  verify, and fix what it finds in the next hourly release.
+- Run the FULL tier when diagnosing something specific, or on a quiet cycle --
+  not as a release precondition.
+
+**Why the fast tier and not nothing.** Of seven real defects found on
+2026-07-31, four were caught by the local gate ALONE -- GitHub CI has no
+equivalent check. The sharpest is **dist freshness**: CI never validates that
+the committed `loki-ts/dist/loki.js` matches src, and when that slipped we
+shipped THREE releases reporting the wrong version. At hourly cadence that
+reaches npm before anyone looks. The fast tier keeps that check and the syntax
+checks, and costs about a minute.
+
+**The packaged artifact is the blind spot (2026-08-01).** Four releases were
+spent finding that the checks guarding the SHIPPED PACKAGE were themselves
+unguarded. Everything works from a git checkout, so no in-repo test and no
+GitHub CI job can see these:
+
+- four quality-gate detectors under `tests/` were never in `files[]`, so
+  mutation-integrity fail-closed on EVERY iteration for EVERY npm user --
+  first-pass completion was impossible regardless of model output (v8.38.0)
+- the committed `loki-ts/dist/loki.js` hardcoded version 8.11.0 for 27 releases,
+  because the dist-freshness check was DEFERRED by the fast tier it justifies
+  (v8.40.0)
+- `npm pack tarball contents` was also deferred, and when promoted turned out
+  to pass on "6 or more" matches of 6 patterns that healthily produce 8 -- it
+  tolerated losing two required artifacts (v9.11.0)
+
+Three rules that fall out, and they generalise past packaging:
+
+1. **A check that guards the shipped artifact must run in the FAST tier.** It
+   is the only tier that runs before every push, and CI has no equivalent.
+2. **Assert each required thing individually, never a count.** A threshold
+   cannot say WHICH artifact vanished, and picks up slack it was never meant
+   to have.
+3. **Guard against vacuity.** A substring search over an empty listing reports
+   nothing missing. `npm pack` writes its listing to STDERR -- `2>&1 >file`
+   captures build chatter instead and makes every assertion pass. An empty
+   result is not evidence; it is an absent measurement.
+
+`LOCAL_CI_SHARDS` (default 4) controls local sharding; `LOCAL_CI_SERIAL=1`
+forces serial for diagnosis, since overlapping provider-backed suites starve
+each other.
+
+**Measured 2026-07-31:** the 323-suite shell run went from ~1440s serial to
+**352s sharded 4 ways -- 4.1x, 0 failures, identical coverage** (the partition
+is index-based, so the union of shards is provably the whole suite). That step
+was the bulk of the old 26m50s gate.
 
 After a release ships, run the post-release distribution validation:
 - npm: `npm pack loki-mode@<VERSION>`, untar, run `bash package/bin/loki version`
@@ -357,9 +436,13 @@ Update the version string in every file listed below. Search for the old version
 VERSION                                  # Single line: X.Y.Z
 package.json                             # "version": "X.Y.Z"
 SKILL.md                                 # Header (line ~6) AND footer (last line)
-Dockerfile                               # LABEL version="X.Y.Z"
-Dockerfile.sandbox                       # LABEL version="X.Y.Z"
+Dockerfile                               # TWO labels: LABEL version="X.Y.Z" AND
+                                         # LABEL org.opencontainers.image.version="X.Y.Z".
+                                         # The OCI one silently drifted to 8.2.0 for four
+                                         # releases because only the first was being bumped.
+Dockerfile.sandbox                       # Same TWO labels, same drift.
 plugins/loki-mode/.claude-plugin/plugin.json  # "version": "X.Y.Z" (added v7.39.0; pins plugin updates, must track VERSION). marketplace.json carries no version.
+server.json                              # "version" AND packages[loki-mode].version -- the MCP registry submission manifest. Was absent from this list and silently drifted to 7.34.1 while the repo shipped 8.2.0 (30+ releases). Enforced by tests/test-server-json-current.sh.
 vscode-extension/package.json            # "version": "X.Y.Z" (DEPRECATED in v7.2.0 -- see CHANGELOG L2525-2533; publish-vscode workflow removed; source kept for reference, no longer published. Bump only if vendoring; otherwise skip.)
 CLAUDE.md                                # Version Numbering section (Current: vX.Y.Z)
 ```

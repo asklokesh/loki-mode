@@ -3,9 +3,16 @@
 # provider_source="cli" when .loki/state/cli-provider is present.
 # Without this fix the bun route silently downgraded to "default",
 # breaking the UT2-13 feature for npm-installed users.
+# Resolve the repo from THIS file's location. A hardcoded absolute path
+# (/Users/lokesh/git/loki-mode) pointed at one developer's checkout: every grep
+# and syntax probe silently hit "No such file or directory" on CI and on any
+# other machine, so the assertions failed for a reason that had nothing to do
+# with the code under test.
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 set -u
 
-LOKI_BIN_DIR=/Users/lokesh/git/loki-mode/bin
+LOKI_BIN_DIR=$REPO_DIR/bin
 PASS=0
 FAIL=0
 ok()  { PASS=$((PASS+1)); echo "PASS: $1"; }

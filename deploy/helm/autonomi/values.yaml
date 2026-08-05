@@ -34,6 +34,17 @@ serviceAccount:
 # Control Plane (Dashboard / API)
 # ---------------------------------------------------------------------------
 controlplane:
+  # SIZING BASIS, measured 2026-07-30 on this repo rather than guessed:
+  #   import of dashboard.server        118 MB peak RSS, 0.5s
+  #   uvicorn serving, after 50 /health  99 MB RSS
+  # The 512Mi request therefore carries roughly 4x headroom over observed
+  # steady state, which is deliberate: the control plane also holds request
+  # buffers and the dashboard's in-memory state, and a request set too close to
+  # the observed floor gets the pod evicted under memory pressure.
+  #
+  # These figures are for the CONTROL PLANE ONLY. Worker sizing below is NOT
+  # measured -- see the note there. Presenting an unmeasured number as a sizing
+  # recommendation would be worse than admitting the gap.
   replicas: 1
 
   resources:
@@ -83,6 +94,24 @@ controlplane:
 # durable /workspace volume below plus the run.sh crash-resume + exit-code
 # contract (activated by LOKI_DURABLE_STATE=1).
 worker:
+  # Seconds Kubernetes waits after SIGTERM before SIGKILL. The queue
+  # consumer finishes the CURRENT build before exiting, so this must be
+  # longer than a typical build or the pod is killed mid-work on every
+  # rolling upgrade and node drain. k8s defaults to 30, which is far too
+  # short. 1800 = 30 minutes; raise it if your builds run longer.
+  terminationGracePeriodSeconds: 1800
+  # WORKER SIZING IS NOT MEASURED. The values below are plausible defaults, not
+  # observations, and they are the single most likely cause of a mysterious
+  # build failure: memory.limits is a HARD cap, so a build that exceeds it is
+  # OOMKilled by the kernel mid-run. To the user that looks like the agent
+  # silently stopping -- no error, no receipt.
+  #
+  # Before running real workloads, measure YOUR builds and set limits from that:
+  #   kubectl top pod -n <ns> -l app.kubernetes.io/component=worker --containers
+  # then raise memory.limits above the observed peak with headroom.
+  #
+  # An OOMKill is visible after the fact as reason: OOMKilled in
+  #   kubectl describe pod <worker-pod>
   # Worker execution model. Pick ONE. Tradeoffs are stated honestly: none of the
   # scale modes are turnkey -- they require infrastructure you must run yourself.
   #
@@ -419,6 +448,10 @@ persistence:
     accessMode: ReadWriteOnce
     size: 50Gi
     existingClaim: ""
+    # Keep the audit PVC when the release is uninstalled. Default false to
+    # match prior behaviour; set true where the audit trail must outlive the
+    # release (then delete the PVC by hand when you genuinely want it gone).
+    retainOnUninstall: false
 
 # ---------------------------------------------------------------------------
 # Configuration (non-secret environment)
@@ -490,6 +523,15 @@ security:
 
   networkPolicy:
     enabled: false
+    # Egress rules for the control plane. EMPTY = allow-all, which is the
+    # default because the engine must reach a hosted provider API and a chart
+    # that blocked it by default would leave every new install unable to run a
+    # build with no obvious cause.
+    #
+    # Populate this in air-gapped or regulated environments. Run
+    # `loki doctor --airgap` FIRST: it names every host the engine contacts,
+    # which is exactly what these rules have to cover.
+    egress: []
 
 # ---------------------------------------------------------------------------
 # Pod Disruption Budget

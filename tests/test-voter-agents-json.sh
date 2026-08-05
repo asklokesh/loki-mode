@@ -128,6 +128,22 @@ case "$sp" in
     *)  bad "finding_schema_path: not absolute [$sp]" ;;
 esac
 
+# ---------- v8.x: --json-schema must receive schema CONTENT, not a path ----------
+# Regression guard for the silently-dead structured council: `claude --json-schema`
+# rejects a file path ("Unrecognized token '/'") and only accepts inline JSON
+# content. The dispatch MUST read the file (schema_content) and pass THAT, never a
+# bare "$schema_path". This static grep would have caught the original bug.
+if grep -Fq -- '--json-schema "$schema_content"' "$HELPER"; then
+    ok "dispatch passes schema CONTENT to --json-schema (not a path)"
+else
+    bad "dispatch must pass \$schema_content to --json-schema, not \$schema_path (CLI rejects a path)"
+fi
+if grep -Fq -- '--json-schema "$schema_path"' "$HELPER"; then
+    bad "dispatch still passes \$schema_path to --json-schema (CLI rejects a path -> structured council dead)"
+else
+    ok "dispatch does not pass a bare schema PATH to --json-schema"
+fi
+
 # ---------- loki_council_dispatch_agents fallback paths ----------
 TMPROOT=$(mktemp -d -t loki-voter-agents-XXXX)
 mkdir -p "$TMPROOT/.loki/council/verdicts" "$TMPROOT/.loki/council/votes"

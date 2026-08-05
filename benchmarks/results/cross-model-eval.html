@@ -1,0 +1,56 @@
+<!doctype html><meta charset=utf-8><title>Cross-model harness equivalence</title>
+<style>
+:root{--bg:#0f1115;--fg:#e6e8ee;--mut:#8b93a7;--ok:#3ddc97;--warn:#ffb454;--line:#232838;--accent:#7aa2ff}
+@media(prefers-color-scheme:light){:root{--bg:#fbfbfd;--fg:#161922;--mut:#5b6478;--ok:#0f9d58;--warn:#b26a00;--line:#e3e6ee;--accent:#2b5cff}}
+*{box-sizing:border-box}body{margin:0;padding:2.5rem 1.25rem;background:var(--bg);color:var(--fg);
+font:15px/1.55 ui-sans-serif,-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:860px;margin:0 auto}h1{font-size:1.6rem;margin:0 0 .25rem;letter-spacing:-.02em}
+h2{font-size:1.05rem;margin:2rem 0 .6rem}.sub{color:var(--mut);margin:0 0 1.8rem}
+table{width:100%;border-collapse:collapse;margin:0 0 1rem}
+th,td{text-align:left;padding:.55rem .5rem;border-bottom:1px solid var(--line)}
+th{color:var(--mut);font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.05em}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.claim{border:1px solid var(--ok);border-radius:10px;padding:1rem 1.1rem;margin:0 0 1rem}
+.claim .k{color:var(--ok);font-size:.75rem;text-transform:uppercase;letter-spacing:.07em}
+.limit{border:1px solid var(--warn);border-radius:10px;padding:1rem 1.1rem;margin:0 0 1.5rem}
+.limit .k{color:var(--warn);font-size:.75rem;text-transform:uppercase;letter-spacing:.07em}
+.note{color:var(--mut);font-size:.88rem;border-left:2px solid var(--accent);padding-left:.9rem;margin:1.2rem 0}
+code{background:color-mix(in srgb,var(--fg) 8%,transparent);padding:.1rem .35rem;border-radius:4px;font-size:.86em}
+footer{color:var(--mut);font-size:.8rem;margin-top:2.5rem;border-top:1px solid var(--line);padding-top:1rem}
+</style>
+<div class=wrap>
+<h1>Cross-model harness equivalence</h1>
+<p class=sub>Identical spec, same machine, same harness version. Generated 2026-07-30T04:12:15Z.</p>
+
+<div class=claim><div class=k>What this shows</div>
+<p style="margin:.5rem 0 0">Both models converged in <b>one iteration</b>, exited <b>0</b>, and
+<b>met the acceptance check</b>. The harness ran the same gates and applied the same completion
+standard regardless of which model was behind it.</p></div>
+
+<div class=limit><div class=k>What this does not show</div>
+<p style="margin:.5rem 0 0">This is <b>two models on one small spec</b>. It is evidence that the
+harness is model-invariant, not evidence that every model produces equal quality. We do not claim
+identical output across models, because that is not deliverable and asserting it would be the kind
+of unfalsifiable marketing this project exists to argue against.</p></div>
+
+<table>
+<tr><th>Model</th><th class=n>Wall clock (s)</th><th class=n>Iterations</th><th class=n>Exit</th><th class=n>Acceptance met</th></tr>
+<tr><td><b>haiku</b></td><td class=n>460</td><td class=n>1</td><td class=n>0</td><td class=n>yes</td></tr><tr><td><b>sonnet</b></td><td class=n>560</td><td class=n>1</td><td class=n>0</td><td class=n>yes</td></tr>
+</table>
+
+<h2>Why publish this at all</h2>
+<p class=note>Nobody in this category publishes a same-harness cross-model evaluation. The market
+is moving the other way: Bolt collapsed model choice into Standard/Max, Lovable curates a fixed
+menu, and OpenHands' own docs advise using "the strongest model you can afford". Broad provider
+support is table stakes. <b>Demonstrating that outcomes hold across models is unclaimed.</b></p>
+
+<h2>The honest claim</h2>
+<p class=note><b>The harness is model-invariant: the same gates actually run, the receipt tells the
+same truth, and when a model is too weak you are told rather than silently given less.</b> That is
+narrower than "same results on any model" and it is the version we can defend with measurement.</p>
+
+<footer>Raw data: <code>benchmarks/results/cross-model-eval.json</code>. Source runs:
+<code>speed-agnostic-haiku</code> and <code>speed-agnostic-sonnet</code>, both engine-completed with
+<code>build_exit_code: 0</code>. Extending this to open models via the opencode provider is the
+next step, and until it is run those results are not asserted here.</footer>
+</div>

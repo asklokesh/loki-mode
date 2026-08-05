@@ -142,6 +142,43 @@ _write_health() {
 {"ok": ${ok}, "checked_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
 HEALTH_EOF
     mv "$tmp_file" "$_APP_RUNNER_DIR/health.json"
+
+    # TIME TO FIRST PREVIEW (write-once).
+    #
+    # The single number that most predicts whether someone keeps using a
+    # spec-to-product builder is how long they wait before seeing their app
+    # actually running. Everything else -- gates, councils, receipts -- is
+    # invisible until there is something on screen. We had `started_at` (when
+    # the runner launched the app) and `checked_at` (when a probe ran), but no
+    # anchor to the START OF THE RUN, so the number a user actually feels
+    # could not be derived from what we stored.
+    #
+    # Recorded ONLY on the first transition to healthy: the elapsed seconds
+    # from run start to the app first serving. Write-once by the -f guard, so
+    # a later restart cannot overwrite the genuine first-preview time with a
+    # warm-start number that flatters the metric.
+    #
+    # Baseline is the runner's EXISTING _LOKI_RUN_START_EPOCH (exported at
+    # run.sh:20014) -- deliberately reusing it rather than adding a second
+    # start-time variable that could drift out of agreement with the first.
+    # Absent (a direct app-runner call outside a run), this is skipped entirely
+    # rather than guessed: a fabricated baseline is worse than no measurement.
+    if [ "$ok" = "true" ] \
+       && [ ! -f "$_APP_RUNNER_DIR/first-preview.json" ] \
+       && [ -n "${_LOKI_RUN_START_EPOCH:-}" ]; then
+        local _now_epoch _elapsed
+        _now_epoch="$(date +%s 2>/dev/null || echo 0)"
+        _elapsed=$(( _now_epoch - _LOKI_RUN_START_EPOCH ))
+        # Negative or absurd values mean a bad baseline (clock change, stale
+        # export). Record nothing rather than a number nobody can trust.
+        if [ "$_elapsed" -ge 0 ] && [ "$_elapsed" -lt 86400 ]; then
+            local _fp_tmp="$_APP_RUNNER_DIR/first-preview.json.tmp.$$"
+            cat > "$_fp_tmp" << FIRSTPREVIEW_EOF
+{"seconds_to_first_preview": ${_elapsed}, "at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+FIRSTPREVIEW_EOF
+            mv "$_fp_tmp" "$_APP_RUNNER_DIR/first-preview.json" 2>/dev/null || rm -f "$_fp_tmp"
+        fi
+    fi
 }
 
 # L5 fix (PID-file reuse race): capture a disambiguating identity token for a

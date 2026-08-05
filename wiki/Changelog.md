@@ -4,6 +4,15 @@ For the complete release history and detailed changes, see the main [CHANGELOG.m
 
 ## Recent Releases
 
+### [8.0.0] - unreleased (feature branch)
+
+Major arc. Everything SDK-related is opt-in and default-off, so an unset config is byte-identical to v7.
+
+- **Anthropic Agent SDK route.** A claude-binary-free execution path: the RARV loop runs on `@anthropic-ai/claude-agent-sdk` `query()` and every judge site (completion council, code review, grill, prd-enrich, voter-agents) runs on the raw `@anthropic-ai/sdk`. One operator switch `LOKI_SDK_MODE` (`off`/`judges`/`full`), mirrored byte-for-byte in bash and TypeScript.
+- **API-contract ingest.** An OpenAPI/GraphQL/Postman contract passed as the build source expands into a per-operation build checklist instead of being truncated to the first prompt bytes. `loki spec lock/status` locks one requirement per operation with a per-operation hash, so a changed response schema drifts exactly that operationId.
+- **Completion evidence gate hardening.** New runtime-BOOT axis (a serveable app confirmed unhealthy cannot self-complete; `LOKI_EVIDENCE_BOOT_GATE=0` to opt out) and SECRET-LEAK axis (a credential in the changed files blocks completion; `LOKI_EVIDENCE_SECRET_GATE=0` to opt out), plus a fail-closed sweep of the checklist/heuristic/reverify gates.
+- **Operator controls.** `loki steer "<note>"` nudges a running build (writes `.loki/HUMAN_INPUT.md`; needs `LOKI_PROMPT_INJECTION=1`); `loki why` now names the real stall reason and points to `loki steer`.
+
 ### [7.121.5] - 2026-07-04
 
 Chore (non-functional):

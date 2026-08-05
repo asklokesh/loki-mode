@@ -56,9 +56,107 @@ jobs:
           bun run typecheck
           bun test
 
-  release:
+  # PROPORTIONAL CI AT THE EXACT RELEASE SHA.
+  #
+  # `gate` above runs the full pytest suite, but on Python 3.12 ONLY, and it
+  # never consults the security audit. Every publish job (npm, PyPI, TS SDK,
+  # Docker, Homebrew) hangs off `needs: release` -> `needs: gate`, so before
+  # this job a VERSION push could publish to every channel while the Tests
+  # matrix was still running -- or already red on 3.10, 3.11 or 3.13.
+  #
+  # That is not hypothetical for this repo: a releases test passed on a
+  # developer clone and failed on 3.10-3.13 in Actions, and the operator mount
+  # failed open on exactly those versions. Neither was visible to a 3.12-only
+  # gate.
+  #
+  # This job waits for the OTHER required workflows AT THIS COMMIT and fails
+  # closed. It deliberately polls the check-runs API for this exact SHA rather
+  # than adding matrix jobs here: re-running the matrix inside release.yml
+  # would verify a DIFFERENT execution than the one the branch was judged on,
+  # and doubles CI cost for a weaker guarantee.
+  #
+  # FAIL-CLOSED DIRECTION IS LOAD-BEARING. A workflow that is missing, still
+  # queued, cancelled, or timed out is NOT a pass. Only an explicit success
+  # conclusion counts. An absent measurement is never evidence of health.
+  required-ci:
     runs-on: ubuntu-latest
     needs: gate
+    permissions:
+      checks: read
+      actions: read
+      contents: read
+    steps:
+      - name: Require the full test matrix and audit to be green at this SHA
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Workflow names that must report success at this exact commit.
+          # One name per line, NO leading whitespace: these are matched against
+          # the API's workflow names with a literal grep, so an indented entry
+          # would never match and the loop would stall until the deadline.
+          #
+          # "Security Audit" is required here, and security-audit.yml carries a
+          # matching `push: paths: [VERSION]` trigger so it actually RUNS at a
+          # release commit. Requiring a workflow that never fires at this SHA
+          # would deadlock every release rather than gate it, so the trigger
+          # and this list must be changed together.
+          REQUIRED=$(printf '%s\n' "Tests" "Bun Parity" "Security Audit")
+          deadline=$(( $(date +%s) + 2400 ))
+          while :; do
+            runs=$(gh api "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" \
+                     --jq '.workflow_runs[] | "\(.name)\t\(.status)\t\(.conclusion)"' || true)
+            # VACUITY GUARD. An empty API result must never satisfy the loop:
+            # "no failing runs" over zero runs is not "everything passed".
+            if [ -z "$runs" ]; then
+              if [ "$(date +%s)" -ge "$deadline" ]; then
+                echo "FAIL: no workflow runs found for $SHA before the deadline"
+                exit 1
+              fi
+              echo "no runs reported yet for $SHA; waiting"
+              sleep 30
+              continue
+            fi
+            pending=0
+            failed=0
+            while IFS= read -r want; do
+              [ -n "$want" ] || continue
+              line=$(printf '%s\n' "$runs" | grep -F "$want	" | head -1 || true)
+              if [ -z "$line" ]; then
+                echo "  $want: not reported yet"
+                pending=1
+                continue
+              fi
+              status=$(printf '%s' "$line" | cut -f2)
+              concl=$(printf '%s' "$line" | cut -f3)
+              echo "  $want: $status/$concl"
+              if [ "$status" != "completed" ]; then
+                pending=1
+              elif [ "$concl" != "success" ]; then
+                # cancelled, timed_out, failure, skipped: none is a pass.
+                failed=1
+              fi
+            done <<< "$REQUIRED"
+            if [ "$failed" -eq 1 ]; then
+              echo "FAIL: a required workflow did not succeed at $SHA"
+              exit 1
+            fi
+            if [ "$pending" -eq 0 ]; then
+              echo "All required workflows succeeded at $SHA"
+              break
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "FAIL: required workflows did not complete before the deadline"
+              exit 1
+            fi
+            sleep 30
+          done
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [gate, required-ci]
     permissions:
       contents: write
 
@@ -175,8 +273,13 @@ jobs:
         if: steps.check_release.outputs.release_exists == 'false'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          # Write awk output directly to file to avoid bash backtick interpretation
-          awk "/^## \[$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md > changelog_body.txt
+          # Extract the section body for this version from CHANGELOG.md. The
+          # CHANGELOG uses unbracketed `## vX.Y.Z` headers (not `## [X.Y.Z]`), so
+          # match `## v$VERSION` and stop at the next `## v` header. The prior
+          # bracketed pattern never matched -> release notes were silently the
+          # generic fallback for every release. Write to file to avoid backtick
+          # interpretation.
+          awk "/^## v$VERSION\$/{flag=1; next} /^## v/{flag=0} flag" CHANGELOG.md > changelog_body.txt
           if [ ! -s changelog_body.txt ]; then
             echo "Release v$VERSION" > changelog_body.txt
           fi
@@ -228,7 +331,7 @@ jobs:
         run: |
           VERSION="${{ needs.release.outputs.version }}"
           # Write awk output to file to avoid bash backtick interpretation in variables
-          awk "/^## \[$VERSION\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md > /tmp/changelog-body.txt
+          awk "/^## v$VERSION\$/{flag=1; next} /^## v/{flag=0} flag" CHANGELOG.md > /tmp/changelog-body.txt
           if [ ! -s /tmp/changelog-body.txt ]; then
             echo "Release v$VERSION" > /tmp/changelog-body.txt
           fi
@@ -406,6 +509,14 @@ jobs:
     needs: release
     if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
     runs-on: ubuntu-latest
+    # id-token: write is what makes cosign KEYLESS signing possible -- it mints
+    # the short-lived OIDC token that Fulcio exchanges for a signing
+    # certificate, so no private key is ever stored or rotated by us. Scoped to
+    # this job rather than the workflow: every other job here publishes
+    # artifacts and has no business minting identity tokens.
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -451,6 +562,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push (amd64 + arm64)
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -460,6 +572,73 @@ jobs:
             asklokesh/loki-mode:v${{ needs.release.outputs.version }}
             asklokesh/loki-mode:${{ needs.release.outputs.version }}
             asklokesh/loki-mode:latest
+
+      # SIGNING AND SBOM LIVE HERE, NOT IN provenance.yml, AND THAT IS THE POINT.
+      #
+      # provenance.yml triggers on `release: published`. Releases in this repo are
+      # created by release.yml using the default GITHUB_TOKEN, and GitHub
+      # deliberately does not emit trigger events for actions taken with that
+      # token -- otherwise a workflow could recursively trigger itself. So
+      # provenance.yml has never once fired on a real release: its only two runs
+      # ever were manual workflow_dispatch on 2026-04-26, and the registry
+      # confirms the consequence -- zero `sha256-*.sig` tags exist on
+      # asklokesh/loki-mode despite the header comment in provenance.yml
+      # claiming images are signed.
+      #
+      # A dead workflow shows up as an EMPTY run list, never as a red one, which
+      # is why this went unnoticed for months across many releases. Signing in
+      # the same job that pushed the image removes the trigger from the equation
+      # entirely: if the image published, the signature ran.
+      #
+      # We sign the DIGEST rather than a tag. Tags are mutable -- `latest` and
+      # even a version tag can be repointed -- so a signature bound to a tag
+      # attests to whatever that tag happens to mean today. A digest is the
+      # content itself.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Sign the image digest (keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          test -n "$DIGEST" || { echo "FATAL: build step produced no digest"; exit 1; }
+          REF="asklokesh/loki-mode@${DIGEST}"
+          cosign sign --yes "$REF"
+          echo "Signed ${REF}"
+
+      # The SBOM that already existed describes the npm TARBALL. Anyone
+      # deploying via Helm or ECS runs the IMAGE, which carries an OS layer, a
+      # Python runtime and system packages that the npm SBOM never listed. An
+      # enterprise scanning us for CVEs was scanning the wrong artifact.
+      - name: Generate image SBOM (CycloneDX)
+        uses: anchore/sbom-action@v0
+        with:
+          image: asklokesh/loki-mode@${{ steps.build.outputs.digest }}
+          format: cyclonedx-json
+          output-file: image-sbom.cdx.json
+          upload-artifact: false
+
+      - name: Attest the SBOM to the image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          test -s image-sbom.cdx.json || { echo "FATAL: SBOM is empty"; exit 1; }
+          cosign attest --yes \
+            --predicate image-sbom.cdx.json \
+            --type cyclonedx \
+            "asklokesh/loki-mode@${DIGEST}"
+          echo "SBOM attested to asklokesh/loki-mode@${DIGEST}"
+
+      - name: Upload image SBOM as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-sbom-${{ needs.release.outputs.version }}
+          path: image-sbom.cdx.json
+          retention-days: 365
 
       - name: Update Docker Hub description
         continue-on-error: true  # Cosmetic step; image publish already succeeded above. PATs without admin scope return Forbidden here.

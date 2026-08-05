@@ -1,6 +1,6 @@
 # Sonnet 5 Default - Implementation Plan
 
-Status: PLAN (no code written). Worktree: `../loki-sonnet5-wt` (branch `feat/sonnet5-default`).
+Status: SHIPPED (v7.104.0; kept as design history). Worktree: `../loki-sonnet5-wt` (branch `feat/sonnet5-default`).
 Board decision: `strategy/roadmap/13-BOARD-2026-06-30.md`. Verified facts: `reference-sonnet5-model-ids` memory.
 Release class: MINOR (new default execution model for every user). Full local-ci + council 3/3 + release ladder.
 

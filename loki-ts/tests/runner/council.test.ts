@@ -331,7 +331,15 @@ describe("councilEvaluate -- LLM devil's-advocate wiring", () => {
     onDaCall?: () => void;
   }) {
     return async (argv: string[]) => {
-      const isDa = argv.some((a) => a.includes("devils-advocate"));
+      // Distinguish the DA dispatch by the --agents PAYLOAD only (the DA call
+      // declares the devils-advocate agent), NOT by any argv element. Since v8.x
+      // the --json-schema arg carries the schema CONTENT inline, and that content
+      // mentions "devils-advocate" as an example role -- so a naive
+      // argv.some(includes("devils-advocate")) false-matches the BASE call. Read
+      // the value that follows --agents and test only that.
+      const agentsIdx = argv.indexOf("--agents");
+      const agentsPayload = agentsIdx >= 0 ? (argv[agentsIdx + 1] ?? "") : "";
+      const isDa = agentsPayload.includes("devils-advocate");
       if (isDa) {
         opts.onDaCall?.();
         if (opts.daThrow) throw new Error("simulated provider crash");

@@ -41,7 +41,11 @@ test_cmd() {
     fi
 
     if [ -n "$pattern" ]; then
-        if ! echo "$output" | grep -qi "$pattern"; then
+        # -E so a pattern can offer alternatives. Some preconditions are
+        # checked in an order that depends on the machine (e.g. gh auth before
+        # the .loki probe), and the contract under test is "fails gracefully",
+        # not "fails for this exact reason".
+        if ! echo "$output" | grep -qiE "$pattern"; then
             log_fail "$desc" "output missing pattern: $pattern"
             echo "  Actual output (first 5 lines):"
             echo "$output" | head -5 | sed 's/^/    /'
@@ -99,8 +103,15 @@ test_cmd "loki share --help mentions gh CLI" \
 # Test 5: --format text is accepted (fails gracefully without .loki)
 # -------------------------------------------
 cd "$TMPDIR_BASE" || exit 1
+# The assertion is GRACEFUL FAILURE (exit 1 + an actionable message), not which
+# precondition trips first. `gh auth status` is checked before the .loki probe
+# (autonomy/loki:31717 vs :31727), so on a machine with an authenticated gh the
+# user sees "No .loki/ directory found", and on CI -- where gh is not
+# authenticated -- they see "GitHub CLI not authenticated" and a fix command.
+# Both are correct. Pinning the message to one of them made this a test of the
+# runner's gh login rather than of the command.
 test_cmd "loki share --format text fails gracefully without .loki/" \
-    1 "no .loki" share --format text
+    1 "no \.loki|not authenticated" share --format text
 cd "$ORIG_DIR" || exit 1
 
 # -------------------------------------------
@@ -108,7 +119,7 @@ cd "$ORIG_DIR" || exit 1
 # -------------------------------------------
 cd "$TMPDIR_BASE" || exit 1
 test_cmd "loki share --private fails gracefully without .loki/" \
-    1 "no .loki" share --private
+    1 "no \.loki|not authenticated" share --private
 cd "$ORIG_DIR" || exit 1
 
 # -------------------------------------------

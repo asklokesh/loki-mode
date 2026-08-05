@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import string
 import subprocess
 import sys
@@ -37,6 +38,8 @@ if _HERE not in sys.path:
 import proof_redact  # noqa: E402
 from efficiency_cost import collect_efficiency as _collect_efficiency  # noqa: E402
 import effort_estimator  # noqa: E402
+from tree_digest import MANIFEST_VERSION, compute_tree_digest  # noqa: E402
+from workspace_diff import collect_workspace_diff  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +243,70 @@ def _norm_gate_status(raw):
     return "inconclusive"
 
 
+# TRUST-4: gate provenance. The discriminating property of a verification signal
+# is NOT how many checks ran -- it is whether the checker sits OUTSIDE the agent's
+# control. arXiv 2606.28438 shows AI-self-gates "look strong early but later lose
+# their filtering effect", drifting into "a rubber-stamp regime where acceptance
+# scores rise while benchmark correctness falls". arXiv 2607.05904 shows a judge
+# conditioned on a candidate "scores plausibility, not correctness": self-play
+# drove judge pass rate 0.72 -> 0.94 while TRUE accuracy stayed 0.20, and "a
+# strict three-judge ensemble still accepts 55% of them". So a model-coupled gate
+# is REPORTED but may never lift the headline.
+#
+# ADVISORY = the agent (or a model it prompts) authored the verdict. Everything
+# else is EXOGENOUS: a deterministic script whose output the agent cannot write.
+#
+# Membership is keyed on the ADVISORY side only, and an UNKNOWN gate defaults to
+# EXOGENOUS. That direction is load-bearing and must never be inverted: an
+# unrecognized gate then still counts against VERIFIED (fail-closed). Defaulting
+# unknown gates to advisory would let any newly-added or renamed gate silently
+# lose its power to block -- the exact fake-green vector this split exists to
+# close. Names are matched on a normalized key because run.sh emits BOTH
+# spellings for the same gate (static-analysis / static_analysis, test-mutation /
+# mutation_integrity), verified against run.sh's gate_failures writers.
+_ADVISORY_GATES = frozenset((
+    # The agent writes both the test and the fix, so a green suite is a claim
+    # about its own work, not an independent measurement.
+    "test_coverage", "unit_tests", "test_suite", "semantic_tests", "tests",
+    # LLM-judgment gates: blind council, devil's advocate, magic-module debate.
+    "code_review", "devils_advocate", "devil_advocate", "magic_debate",
+    "council", "anti_sycophancy",
+))
+
+
+def _gate_key(name):
+    """Normalize a gate name for provenance lookup.
+
+    run.sh emits the same gate under multiple spellings (`static-analysis` vs
+    `static_analysis`), and track_gate_failure appends `_PAUSED`/`_ESCALATED`
+    /`_not_run` suffixes. Fold all of them onto one key so classification cannot
+    be defeated by a cosmetic rename.
+    """
+    s = str(name or "").strip().lower().replace("-", "_")
+    s = re.sub(r"_(paused|escalated|not_run|blocked)$", "", s)
+    return s
+
+
+def _gate_provenance(name):
+    """'advisory' for a model-authored gate, else 'exogenous' (fail-closed)."""
+    return "advisory" if _gate_key(name) in _ADVISORY_GATES else "exogenous"
+
+
+def _is_exogenous(gate):
+    """Provenance of a collected gate dict, honoring the stamped value.
+
+    Reads the `provenance` key stamped by _collect_quality_gates so the
+    `unresolved` override (a gate that HALTED the run counts as an execution
+    fact) is respected. Falls back to name lookup for a gate dict that never
+    passed through the collector. Fail-closed: anything not positively
+    identified as advisory counts as exogenous.
+    """
+    stamped = gate.get("provenance")
+    if stamped:
+        return stamped == "exogenous"
+    return _gate_provenance(gate.get("name")) == "exogenous"
+
+
 def _collect_quality_gates(loki_dir):
     gates_raw = _read_json(
         os.path.join(loki_dir, "state", "quality-gates.json"), default=None
@@ -326,7 +393,97 @@ def _collect_quality_gates(loki_dir):
                         {"name": "unit_tests", "status": _norm_gate_status(st)}
                     )
                     total += 1
-    return {"passed": passed, "total": total, "gates": gates}
+    # The iteration loop writes the authoritative unresolved-gate set here.
+    # These failures must be merged even when individual pass markers exist.
+    # Otherwise a run can stop on code_review while the receipt reports only
+    # static_analysis and unit_tests, producing a cryptographically valid but
+    # semantically false green receipt.
+    failure_path = os.path.join(loki_dir, "quality", "gate-failures.txt")
+    try:
+        with open(failure_path, "r", encoding="utf-8") as handle:
+            raw_failures = handle.read(8192)
+    except OSError:
+        raw_failures = ""
+    failed_names = []
+    for token in re.split(r"[,\s]+", raw_failures):
+        name = token.strip()
+        if not name or not re.fullmatch(r"[A-Za-z0-9_.:-]+", name):
+            continue
+        name = re.sub(r"_(PAUSED|ESCALATED)$", "", name,
+                      flags=re.IGNORECASE)
+        if name not in failed_names:
+            failed_names.append(name)
+    if failed_names:
+        by_name = {str(g.get("name") or ""): g for g in gates}
+        for name in failed_names:
+            if name in by_name:
+                by_name[name]["status"] = "failed"
+                by_name[name]["unresolved"] = True
+            else:
+                gate = {"name": name, "status": "failed", "unresolved": True}
+                gates.append(gate)
+                by_name[name] = gate
+
+    # TRUST-4: stamp provenance on every gate at the single point the list is
+    # finalized, so every downstream reader (headline, template, verifier) sees
+    # the same classification and none can drift.
+    # An UNRESOLVED gate (listed in gate-failures.txt) is classified EXOGENOUS
+    # even when the gate itself is model-coupled. The fact being recorded is not
+    # "a judge disliked the code" -- it is "the run halted here and never
+    # cleared this blocker", which is an execution outcome the agent did not
+    # author. Without this, a run stopped dead by an unresolved code_review
+    # would emit a green receipt: the "cryptographically valid but semantically
+    # false green" the gate-failures merge above exists to prevent.
+    for gate in gates:
+        gate["provenance"] = (
+            "exogenous" if gate.get("unresolved")
+            else _gate_provenance(gate.get("name"))
+        )
+
+    total = len(gates)
+    passed = sum(1 for gate in gates if gate.get("status") == "passed")
+    exo = [g for g in gates if g.get("provenance") == "exogenous"]
+    adv = [g for g in gates if g.get("provenance") == "advisory"]
+    # Phases the operator switched OFF for this run.
+    #
+    # Without this a receipt reading "3 of 3 gates passed" is identical whether
+    # every gate ran or code review and security were disabled and three lesser
+    # gates ran instead. A gate that never executed simply was not in the list,
+    # so its absence was indistinguishable from it not existing.
+    #
+    # For a product whose claim is verification, a receipt must be able to say
+    # what was NOT checked. Recording only successes is how a green badge stops
+    # meaning anything.
+    #
+    # Read from the environment the run executed under. Absent means the default
+    # (enabled), so an ordinary run records an empty list rather than a
+    # misleading one.
+    _disabled = sorted(
+        name.replace("LOKI_PHASE_", "").lower()
+        for name, value in os.environ.items()
+        if name.startswith("LOKI_PHASE_")
+        and str(value).strip().lower() in ("false", "0", "no", "off")
+    )
+    return {
+        "passed": passed,
+        "total": total,
+        "gates": gates,
+        "disabled_phases": _disabled,
+        # Explicit boolean so a consumer branches on one field instead of
+        # re-deriving intent from a list length.
+        "all_phases_enabled": not _disabled,
+        # Pre-split counts so the renderer never has to re-derive provenance.
+        "exogenous": {
+            "passed": sum(1 for g in exo if g.get("status") == "passed"),
+            "total": len(exo),
+            "gates": exo,
+        },
+        "advisory": {
+            "passed": sum(1 for g in adv if g.get("status") == "passed"),
+            "total": len(adv),
+            "gates": adv,
+        },
+    }
 
 
 def _collect_build(loki_dir):
@@ -378,6 +535,115 @@ def _collect_build(loki_dir):
     return out
 
 
+def _collect_termination(loki_dir, session_exit_code=None):
+    """Read the supervised-process termination marker.
+
+    The marker is written before proof generation when INT or TERM ends a
+    supervised build. File presence is fail-closed: a truncated marker still
+    proves that the process did not complete normally.
+    """
+    path = os.path.join(loki_dir, "state", "termination.json")
+    out = {
+        "terminated": False,
+        "status": "completed",
+        "reason": "",
+        "signal": "",
+        "exit_code": None,
+        "outcome": "",
+        "run_status": "",
+        # Which gate stopped the run, if one did. The receipt previously named
+        # only a bare outcome ("intervention"), so a user reading the artifact
+        # could not tell WHICH gate blocked them or how close it came to its
+        # threshold -- the single most actionable fact about a blocked run. The
+        # engine already writes it to .loki/signals/GATE_ESCALATION.json and
+        # already surfaces it in COMPLETION.txt and PAUSED.md; the signed
+        # receipt was the one surface that stayed silent.
+        #
+        # These are deterministic FACTS read from a file the engine wrote, not
+        # an AI assessment, so they belong in the facts block.
+        "blocking_gate": "",
+        "blocking_gate_failures": None,
+        "blocking_gate_threshold": None,
+    }
+    state_paths = [os.path.join(loki_dir, "autonomy-state.json")]
+    sessions_dir = os.path.join(loki_dir, "sessions")
+    try:
+        for entry in os.listdir(sessions_dir):
+            state_paths.append(
+                os.path.join(sessions_dir, entry, "autonomy-state.json")
+            )
+    except OSError:
+        pass
+    state_paths = [path for path in state_paths if os.path.isfile(path)]
+    if state_paths:
+        latest_state = max(state_paths, key=os.path.getmtime)
+        state = _read_json(latest_state, default=None)
+        if isinstance(state, dict):
+            out["run_status"] = str(state.get("status") or "").strip().lower()
+    completion = _read_json(
+        os.path.join(loki_dir, "state", "completion.json"), default=None
+    )
+    if isinstance(completion, dict):
+        outcome = str(completion.get("outcome") or "").strip().lower()
+        out["outcome"] = outcome
+        if outcome:
+            out["status"] = outcome
+            if outcome not in ("complete", "completed", "success"):
+                out["reason"] = outcome
+    # Gate escalation: name the gate that stopped the run. Best-effort and
+    # non-fatal -- a missing or corrupt signal simply leaves the fields empty,
+    # which reads as "no gate escalation recorded", never as a false claim.
+    gate = _read_json(
+        os.path.join(loki_dir, "signals", "GATE_ESCALATION.json"), default=None
+    )
+    if isinstance(gate, dict):
+        gate_name = str(gate.get("gate") or "").strip()
+        if gate_name:
+            out["blocking_gate"] = gate_name
+            count = gate.get("count")
+            thr = gate.get("threshold")
+            out["blocking_gate_failures"] = _to_int(count, None)
+            out["blocking_gate_threshold"] = _to_int(thr, None)
+    if session_exit_code is not None:
+        out["exit_code"] = session_exit_code
+        if session_exit_code != 0 and not out["reason"]:
+            out["reason"] = "nonzero_session_exit"
+    if not os.path.exists(path):
+        return out
+    raw = _read_json(path, default=None)
+    out["terminated"] = True
+    out["status"] = "interrupted"
+    if not isinstance(raw, dict):
+        out["reason"] = "invalid_termination_record"
+        return out
+    out["reason"] = str(raw.get("reason") or "supervisor_signal")
+    out["signal"] = str(raw.get("signal") or "")
+    ec = raw.get("exit_code")
+    out["exit_code"] = _to_int(ec, None) if ec is not None else None
+    return out
+
+
+def _collect_model(loki_dir, observed):
+    """Return the dispatched model when recorded, otherwise ``unavailable``."""
+    for value in (
+        observed,
+        os.environ.get("LOKI_CURRENT_MODEL"),
+        os.environ.get("LOKI_SESSION_MODEL"),
+        os.environ.get("SESSION_MODEL"),
+    ):
+        if str(value or "").strip():
+            return str(value).strip()
+    policy = _read_json(
+        os.path.join(loki_dir, "state", "execution-policy.json"), default={}
+    )
+    model = policy.get("model") if isinstance(policy, dict) else None
+    if isinstance(model, dict):
+        value = model.get("sdk_id") or model.get("alias")
+        if str(value or "").strip():
+            return str(value).strip()
+    return "unavailable"
+
+
 def _collect_security(loki_dir):
     """Read .loki/quality/security-findings.json (the secure-by-default gate).
 
@@ -387,6 +653,16 @@ def _collect_security(loki_dir):
     {ran, total, active, waived, high_active, status, findings:[{rule,severity}]}.
     status: not_run (no scan) | clean (ran, no active findings) | findings
     (ran, active findings present).
+
+    PARTIAL record-half. An active HIGH finding IS read by _compute_degraded and
+    becomes a gap. An UNRUN scan is not: absence of a scan is deliberately not a
+    security gap (tests/test_proof_generator.py::test_no_security_file_is_not_a_gap),
+    so a receipt can read VERIFIED with an empty gap list while no scan ever ran.
+    That matches how `functional` and `healthcheck` behave, and like them,
+    changing it is the founder-gated trust decision rather than an inference to
+    make here. Stated explicitly because those two say so in their own
+    docstrings and this one did not, leaving the behaviour to be inferred from
+    silence -- which is the exact failure the honesty ledger exists to prevent.
     """
     out = {
         "ran": False, "total": 0, "active": 0, "waived": 0,
@@ -584,6 +860,53 @@ def _collect_evidence_gate(loki_dir):
     return out
 
 
+def _classify_func_axis(raw):
+    """Map one recorded functional axis {ok, inconclusive, reason} to an HONEST
+    tri-state. This is the trust-critical rule -- get it wrong and the receipt
+    fabricates a green:
+
+      - PROVEN   iff ok is True AND NOT inconclusive (a fresh positive proof:
+                 the record survived / the 401 was observed / the scan was clean).
+      - GAP      iff ok is False AND NOT inconclusive (freshly disproven).
+      - NOT_CHECKED otherwise (inconclusive, or absent). Never a green, never a
+                 gap -- it was not proven and it was not disproven.
+
+    inconclusive DOMINATES ok: an axis flagged inconclusive is never proven even
+    if ok happens to be true (the gate writes ok:true as its non-blocking default
+    when it could not run, so ok alone is not evidence)."""
+    if not isinstance(raw, dict):
+        return "not_checked", ""
+    reason = str(raw.get("reason") or "")
+    if raw.get("inconclusive") is True:
+        return "not_checked", reason
+    if raw.get("ok") is True:
+        return "proven", reason
+    if raw.get("ok") is False:
+        return "gap", reason
+    return "not_checked", reason
+
+
+def _collect_functionality(loki_dir):
+    """Read the nomock/persistence/auth axes from evidence-gate-details.json and
+    surface each as an HONEST proof fact. Deterministic + re-derivable: the values
+    come straight from the recorded axes, no LLM opinion.
+
+    Shape (per axis): {state: proven|gap|not_checked, reason}. Only `proven` is a
+    green receipt row; `gap` is an honest disproven row (lands in degraded[]);
+    `not_checked` is omitted from the receipt's green rows entirely. Absent file
+    or absent axis -> not_checked (the gate did not record it -> nothing proven)."""
+    raw = _read_json(
+        os.path.join(loki_dir, "council", "evidence-gate-details.json"),
+        default=None,
+    )
+    axes = raw if isinstance(raw, dict) else {}
+    out = {}
+    for axis in ("nomock", "persistence", "auth", "authorization"):
+        state, reason = _classify_func_axis(axes.get(axis))
+        out[axis] = {"state": state, "reason": reason}
+    return out
+
+
 def _diff_sha256(files_changed):
     """sha256 of the canonical diff stat (count/insertions/deletions/files).
 
@@ -602,93 +925,58 @@ def _diff_sha256(files_changed):
 
 
 def _git_diffstat(target_dir, include_diffs):
-    """Return (files_changed dict, diffs list|None).
+    """Return the final worktree diff relative to the RUN's base.
 
-    base = $_LOKI_ITER_START_SHA, else HEAD~1. Non-git -> empty.
+    The receipt is a run-level document, so its diff stat must span the WHOLE
+    run. This previously passed _LOKI_ITER_START_SHA -- the per-ITERATION
+    baseline -- so a multi-iteration run attested only to the changes since its
+    last iteration. Measured on a real 2-commit run: 850 insertions + 76
+    deletions reported where the run actually produced 1300 insertions.
+
+    That matters more than an ordinary display bug: the returned object flows
+    into _diff_sha256, the receipt's integrity hash, which is written on EVERY
+    run. A verifier recomputing it therefore attests to the understated stat,
+    and the receipt is exactly the artifact users are told to trust. (Detached
+    GPG signing is a separate opt-in layer gated on LOKI_PROOF_GPG_KEY and
+    default OFF; when enabled it signs these same bytes, but the integrity hash
+    is the always-on path.)
+
+    Order of preference:
+      1. _LOKI_RUN_START_SHA -- the run's own baseline (run.sh exports it).
+      2. The empty tree -- correct for a GREENFIELD run (a repo with no commits
+         at start), where "everything that now exists" IS the run's output and
+         there is no earlier commit to diff against.
+      3. Empty string -- let workspace_diff apply its own fallbacks.
     """
-    empty = {"count": 0, "insertions": 0, "deletions": 0, "files": []}
-
-    def _git(args):
-        try:
-            out = subprocess.run(
-                ["git", "-C", target_dir] + args,
-                capture_output=True, text=True, timeout=30,
-            )
-            if out.returncode != 0:
-                return None
-            return out.stdout
-        except Exception:
-            return None
-
-    # Confirm we are in a git repo.
-    if _git(["rev-parse", "--is-inside-work-tree"]) is None:
-        return empty, (None if not include_diffs else None)
-
-    base = os.environ.get("_LOKI_ITER_START_SHA", "").strip()
+    base = os.environ.get("_LOKI_RUN_START_SHA", "").strip()
     if not base:
-        base = "HEAD~1"
+        # Greenfield: no baseline commit existed when the run started.
+        base = _empty_tree_sha(target_dir)
+    files_changed, diffs = collect_workspace_diff(target_dir, base, include_diffs)
+    # Return the base too. git_facts records base_sha NEXT TO diff and
+    # diff_sha256; if they disagree the signed receipt is internally
+    # inconsistent and a verifier recomputing the diff from base_sha gets a
+    # different answer than the one that was signed.
+    return files_changed, diffs, base
 
-    numstat = _git(["diff", "--numstat", base, "HEAD"])
-    if numstat is None:
-        # base may be invalid (shallow / first commit); fall back to HEAD only.
-        numstat = _git(["diff", "--numstat", "HEAD"])
-    if numstat is None:
-        return empty, (None if not include_diffs else None)
 
-    files = []
-    ins_total = 0
-    del_total = 0
-    for line in numstat.splitlines():
-        parts = line.split("\t")
-        if len(parts) < 3:
-            continue
-        ins_s, del_s, path = parts[0], parts[1], parts[2]
-        ins = _to_int(ins_s) if ins_s != "-" else 0
-        dele = _to_int(del_s) if del_s != "-" else 0
-        ins_total += ins
-        del_total += dele
-        files.append({
-            "path": path,
-            "insertions": ins,
-            "deletions": dele,
-            "status": "binary" if ins_s == "-" else "modified",
-        })
+def _empty_tree_sha(repo_dir):
+    """The canonical empty-tree object, or "" when git is unavailable.
 
-    files_changed = {
-        "count": len(files),
-        "insertions": ins_total,
-        "deletions": del_total,
-        "files": files,
-    }
-
-    diffs = None
-    if include_diffs:
-        diffs = []
-        patch = _git(["diff", base, "HEAD"])
-        if patch is None:
-            patch = _git(["diff", "HEAD"])
-        if patch:
-            # Split per file on the diff --git markers, preserving the header.
-            chunks = []
-            current = []
-            for line in patch.splitlines(keepends=True):
-                if line.startswith("diff --git ") and current:
-                    chunks.append("".join(current))
-                    current = [line]
-                else:
-                    current.append(line)
-            if current:
-                chunks.append("".join(current))
-            for chunk in chunks:
-                # Best-effort path extraction from the "diff --git a/x b/x" line.
-                p = ""
-                first = chunk.splitlines()[0] if chunk else ""
-                bits = first.split(" b/")
-                if len(bits) == 2:
-                    p = bits[1].strip()
-                diffs.append({"path": p, "patch": chunk})
-
-    return files_changed, diffs
+    Diffing against this yields "everything that currently exists", which is the
+    truthful baseline for a run that started from a repo with no commits.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "hash-object", "-t", "tree", os.devnull],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception:
+        return ""
+    return out.stdout.strip() if out.returncode == 0 else ""
 
 
 def _collect_iterations(loki_dir):
@@ -823,20 +1111,53 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
 
     cost, model_from_eff = _collect_efficiency(loki_dir)
     provider_name = args.provider or os.environ.get("PROVIDER_NAME") or "claude"
-    model = model_from_eff or os.environ.get("SESSION_MODEL") or ""
+    model = _collect_model(loki_dir, model_from_eff)
 
-    files_changed, diffs = _git_diffstat(target_dir, args.include_diffs)
+    files_changed, diffs, diff_base_sha = _git_diffstat(target_dir, args.include_diffs)
     iterations = _collect_iterations(loki_dir)
+    # Attribute iterations to PROGRESS vs REWORK. The receipt previously reported
+    # only {count, succeeded, failed}, so a user seeing "6 iterations" could not
+    # tell real work from a gate false-positive that forced five redos -- and
+    # neither could we, which is worse, because it hides whether an expensive run
+    # was a slow model or our own harness being wrong. Measured here: an agent
+    # once claimed done on EVERY iteration while a mock-integrity false positive
+    # blocked all six.
+    #
+    # Deterministic and derived only from records the engine already writes, so
+    # this belongs with the FACTS, not the AI assessments. Failure to import or
+    # attribute leaves iterations untouched rather than guessing: a fabricated
+    # attribution would send someone optimising the wrong thing.
+    try:
+        from iteration_attribution import attribute as _attribute_iterations
+        _attr = _attribute_iterations(loki_dir)
+        if _attr.get("iterations"):
+            iterations["attribution"] = {
+                "progress": _attr["progress"],
+                "rework": _attr["rework"],
+                "rework_cost_share": _attr.get("rework_cost_share"),
+                # Stated in the artifact, not just the tool: rework is a FLOOR.
+                # An iteration that completed but was forced to repeat by a gate
+                # counts as progress, because the blocking gate is not recorded
+                # per iteration. Overstating certainty here would be worse than
+                # omitting the split.
+                "basis": "rework counts FAILED iterations only; a completed "
+                         "iteration forced to repeat by a gate is counted as "
+                         "progress, so rework is a floor",
+            }
+    except Exception:
+        pass
     spec = _collect_spec(loki_dir, target_dir)
     council = _collect_council(loki_dir)
     quality_gates = _collect_quality_gates(loki_dir)
 
     build = _collect_build(loki_dir)
+    termination = _collect_termination(loki_dir, args.session_exit_code)
     tests = _collect_tests(loki_dir)
     security = _collect_security(loki_dir)
     functional = _collect_functional(loki_dir)  # FV-2 record-half: descriptive only
     healthcheck = _collect_healthcheck(loki_dir)  # Evidence Receipt record-half
     evidence_gate = _collect_evidence_gate(loki_dir)
+    functionality = _collect_functionality(loki_dir)  # func axes as HONEST facts
 
     deployed_url = os.environ.get("LOKI_DEPLOYED_URL") or None
 
@@ -859,17 +1180,33 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
     # recompute the hash. True non-forgeability requires the neutral signed record
     # (service-held key). See proof-verify.py verify() docstring.
     git_facts = {
-        "base_sha": os.environ.get("_LOKI_ITER_START_SHA", "").strip(),
+        # Must be the SAME base the diff above was computed against.
+        "base_sha": diff_base_sha,
         "head_sha": _git_head_sha(target_dir),
         "diff": files_changed,
         "diff_sha256": _diff_sha256(files_changed),
+        # Exact source snapshot verified by this receipt. Dashboard supervisors
+        # recompute it after runner exit to reject proofs followed by code edits.
+        "tree_sha256": compute_tree_digest(target_dir),
+        "tree_manifest_version": MANIFEST_VERSION,
     }
     facts = {
         "git": git_facts,
+        "execution": termination,
         "build": build,
         "tests": tests,
+        # TRUST-4: carry `provenance` into the facts projection. _compute_headline
+        # and _compute_degraded read THIS list, so dropping the field silently
+        # sent them back to name-only lookup -- which mis-classified an
+        # UNRESOLVED code_review (a run-halting execution fact) as advisory and
+        # green-washed a blocked run.
         "quality_gates": [
-            {"name": g.get("name", ""), "status": g.get("status", "not_run")}
+            {
+                "name": g.get("name", ""),
+                "status": g.get("status", "not_run"),
+                "provenance": g.get("provenance")
+                or _gate_provenance(g.get("name")),
+            }
             for g in (quality_gates.get("gates") or [])
         ],
         "security": security,
@@ -878,6 +1215,14 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
         # _compute_degraded, so it does not (yet) change the verdict. Wiring it into
         # the green headline is the founder-gated trust-semantics decision.
         "functional": functional,
+        # Functionality-proving axes (nomock / persistence / auth), surfaced as
+        # HONEST facts straight from the recorded evidence-gate axes. Each is
+        # {state: proven|gap|not_checked, reason}. ONLY `proven` (a fresh ok:true)
+        # is a green receipt row; `not_checked` (inconclusive/absent) is never a
+        # green and never a gap; `gap` (a fresh ok:false) is a disproven row and
+        # ALSO lands in degraded[] (below), so it forces VERIFIED WITH GAPS and can
+        # never hide behind a green headline. Deterministic + re-derivable.
+        "functionality": functionality,
         # Evidence Receipt (record half): did the built app come up + respond?
         # Descriptive; NOT read by _compute_headline (gating is founder-gated).
         "healthcheck": healthcheck,
@@ -921,6 +1266,36 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
     # signed record.
     degraded = _compute_degraded(facts)
     headline = _compute_headline(facts, degraded)
+
+    # Trust gates the operator switched off are a gap in the proof of done, and
+    # the honesty ledger exists so "a reader sees exactly what was NOT verified
+    # rather than inferring it from silence". Measured through the real
+    # generator: a run with code review and security disabled listed only
+    # "build" as its gap, while two correctness checks had not run at all.
+    #
+    # Appended AFTER the headline is computed, deliberately. Feeding these into
+    # _compute_headline would change what "Verified" MEANS, and this file
+    # already records that as a trust-semantics decision for the council and
+    # founder rather than an inference (see the FV-2 note on the functional
+    # fact). This is the record half: the gap becomes visible without the
+    # verdict silently moving under anyone.
+    _dis = (quality_gates or {}).get("disabled_phases") if isinstance(quality_gates, dict) else None
+    _dis = [str(x).strip() for x in _dis] if isinstance(_dis, list) else []
+    for _name in sorted(n for n in _dis
+                        if n.lower() in ("code_review", "security",
+                                         "unit_tests", "e2e_tests")):
+        degraded.append({
+            "item": _name,
+            "status": "disabled",
+            "reason": "switched off for this run, so the check never ran",
+            # Marks an entry appended AFTER the headline was computed. The
+            # verifier filters on this flag rather than on a status string:
+            # statuses will keep being added, and a filter keyed on one of them
+            # silently breaks the next time -- which is exactly what happened
+            # when the unrun-security entry landed with status "not_run".
+            "post_headline": True,
+        })
+
     honesty = {
         "headline": headline,
         "degraded": degraded,
@@ -966,6 +1341,9 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
         "quality_gates": quality_gates,
         "cost": cost,
         "deployment": deployment,
+        # Typed compatibility mirror for consumers that do not traverse facts.
+        "tree_sha256": git_facts["tree_sha256"],
+        "tree_manifest_version": git_facts["tree_manifest_version"],
         # Rank 6: work-based engineering-hours estimate (top-level, NOT a fact).
         "effort_estimate": effort_estimate,
         # v1.1 evidence model (additive).
@@ -988,6 +1366,28 @@ def _compute_degraded(facts):
     # must SHOW it (otherwise a failed test would render an amber banner whose
     # "items below" list is empty -- the exact misleading state we forbid).
     weak = ("not_run", "inconclusive", "skipped", "failed")
+    execution = facts.get("execution") or {}
+    if execution.get("terminated"):
+        signal_name = execution.get("signal") or "unknown"
+        reason = execution.get("reason") or "interrupted"
+        out.append({"item": "execution", "status": "failed",
+                    "reason": "%s (%s)" % (reason, signal_name)})
+    else:
+        outcome = str(execution.get("outcome") or "").lower()
+        run_status = str(execution.get("run_status") or "").lower()
+        if execution.get("exit_code") not in (None, 0):
+            out.append({"item": "execution", "status": "failed",
+                        "reason": "exit_code=%s" % execution.get("exit_code")})
+        elif outcome and outcome not in ("complete", "completed", "success"):
+            out.append({"item": "execution", "status": "failed",
+                        "reason": outcome})
+        elif run_status in {
+            "failed", "force_stopped", "inconclusive_spec_contradiction",
+            "interrupted", "max_iterations_reached", "max_retries_exceeded",
+            "paused", "policy_blocked", "provider_deadline_partial_mutation",
+        }:
+            out.append({"item": "execution", "status": "failed",
+                        "reason": run_status})
     tests = facts.get("tests") or {}
     if tests.get("status") in weak:
         reason = "no test command recorded" if not tests.get("command") \
@@ -1000,8 +1400,14 @@ def _compute_degraded(facts):
             else ("exit_code=%s" % build.get("exit_code"))
         out.append({"item": "build", "status": build.get("status"),
                     "reason": reason})
+    # TRUST-4: only EXOGENOUS gates enter the degraded ledger, because degraded[]
+    # is an INPUT to the headline (a non-empty ledger blocks VERIFIED). Letting an
+    # advisory gate in here would give a model-authored verdict the power to
+    # downgrade the headline through the back door, which is exactly what this
+    # split forbids. Advisory outcomes are still reported in full -- they render
+    # from quality_gates.advisory, which the template shows verbatim.
     for g in facts.get("quality_gates") or []:
-        if g.get("status") in weak:
+        if g.get("status") in weak and _is_exogenous(g):
             out.append({"item": "quality_gate:%s" % g.get("name", ""),
                         "status": g.get("status"),
                         "reason": "gate %s" % g.get("status")})
@@ -1018,6 +1424,19 @@ def _compute_degraded(facts):
     if not (git.get("diff") or {}).get("count"):
         out.append({"item": "git.diff", "status": "not_run",
                     "reason": "no file changes detected"})
+    # Functionality axes: ONLY a freshly-disproven axis (state == gap, i.e. the
+    # gate ran and the axis FAILED -- a record did not survive, auth was NOT
+    # enforced, the diff shipped mock data) is a gap in the proof of done. A
+    # `not_checked` axis (inconclusive / not attempted) is deliberately NOT a gap:
+    # the honesty rule is that not-proven is not the same as disproven, and the
+    # gate already passes those through. Surfacing them here would spam the ledger
+    # with "we didn't check X" for every axis the driver could not exercise.
+    fnc = facts.get("functionality") or {}
+    for axis in ("nomock", "persistence", "auth", "authorization"):
+        rec = fnc.get(axis) or {}
+        if rec.get("state") == "gap":
+            out.append({"item": "functionality:%s" % axis, "status": "failed",
+                        "reason": rec.get("reason") or "axis disproven"})
     return out
 
 
@@ -1057,11 +1476,43 @@ def _compute_headline(facts, degraded):
         and fn.get("ran")
         and fn.get("functional_status") == "failed"
     )
+    execution = facts.get("execution") or {}
+    execution_outcome = str(execution.get("outcome") or "").lower()
+    failed_run_statuses = {
+        "failed",
+        "force_stopped",
+        "inconclusive_spec_contradiction",
+        "interrupted",
+        "max_iterations_reached",
+        "max_retries_exceeded",
+        "paused",
+        "policy_blocked",
+        "provider_deadline_partial_mutation",
+    }
+    execution_failed = bool(
+        execution.get("terminated")
+        or execution.get("exit_code") not in (None, 0)
+        or str(execution.get("run_status") or "").lower() in failed_run_statuses
+        or (
+            execution_outcome
+            and execution_outcome not in ("complete", "completed", "success")
+        )
+    )
+    # TRUST-4: only an EXOGENOUS gate failure forces NOT VERIFIED. An advisory
+    # (model-authored) gate is reported but cannot move the verdict in EITHER
+    # direction -- see _ADVISORY_GATES for the research basis. Note the
+    # asymmetry is deliberate and one-way: advisory results are barred from
+    # UPGRADING a verdict (below, in any_verified), and barred from downgrading
+    # one here, because a judge that scores plausibility is not a measurement.
+    # tests.status keeps its own hard-fail check: it is the recorded suite
+    # outcome (an exit code), not the model's opinion of the suite.
     any_failed = (
-        tests.get("status") == "failed"
+        execution_failed
+        or tests.get("status") == "failed"
         or build.get("status") == "failed"
         or any(g.get("status") == "failed"
-               for g in (facts.get("quality_gates") or []))
+               for g in (facts.get("quality_gates") or [])
+               if _is_exogenous(g))
         or sec_high
         or fn_failed
     )
@@ -1082,11 +1533,15 @@ def _compute_headline(facts, degraded):
     # produced code emit "VERIFIED WITH GAPS" - a fake-green at the receipt. Only
     # a fact that actually ran and passed (tests/build verified, or a passed gate)
     # may qualify; otherwise the honest headline is NOT VERIFIED.
+    # TRUST-4: an advisory PASS is not positive evidence. A run whose ONLY green
+    # signals are a council vote and a devil's-advocate nod has proven nothing
+    # deterministically, so it must not reach "VERIFIED WITH GAPS" on that basis.
     any_verified = (
         tests.get("status") == "verified"
         or build.get("status") == "verified"
         or any(g.get("status") == "passed"
-               for g in (facts.get("quality_gates") or []))
+               for g in (facts.get("quality_gates") or [])
+               if _is_exogenous(g))
     )
     if any_verified and degraded:
         return "VERIFIED WITH GAPS"
@@ -1165,6 +1620,15 @@ def _build_social_hook(proof):
     return " - ".join(parts)
 
 
+def _receipt_title(proof):
+    """Conservative user-facing verdict label for the rendered receipt."""
+    headline = str((proof.get("honesty") or {}).get("headline") or "").upper()
+    return {
+        "VERIFIED": "Recorded checks passed",
+        "VERIFIED WITH GAPS": "Checks completed with gaps",
+    }.get(headline, "Not verified")
+
+
 def _attr_esc(s):
     """HTML-attribute-escape a string destined for content="...".`"""
     return (str(s).replace("&", "&amp;").replace('"', "&quot;")
@@ -1213,10 +1677,14 @@ def _render_fallback_html(proof):
     rows.append("<ul>")
     rows.append("<li>Cost (USD): %s</li>" % (
         esc(usd_disp) if usd_disp is not None else "not recorded for this run"))
-    rows.append("<li>Input tokens: %s</li>" % esc(cost.get("input_tokens", 0)))
-    rows.append("<li>Output tokens: %s</li>" % esc(cost.get("output_tokens", 0)))
-    rows.append("<li>Cache read tokens: %s</li>" % esc(cost.get("cache_read_tokens", 0)))
-    rows.append("<li>Cache creation tokens: %s</li>" % esc(cost.get("cache_creation_tokens", 0)))
+    def token_value(key):
+        value = cost.get(key)
+        return value if value is not None else "not recorded"
+
+    rows.append("<li>Input tokens: %s</li>" % esc(token_value("input_tokens")))
+    rows.append("<li>Output tokens: %s</li>" % esc(token_value("output_tokens")))
+    rows.append("<li>Cache read tokens: %s</li>" % esc(token_value("cache_read_tokens")))
+    rows.append("<li>Cache creation tokens: %s</li>" % esc(token_value("cache_creation_tokens")))
     rows.append("<li>Wall clock (sec): %s</li>" % esc(proof.get("wall_clock_sec", 0)))
     rows.append("</ul>")
 
@@ -1235,6 +1703,19 @@ def _render_fallback_html(proof):
     ver = proof.get("verification", {})
     rows.append('<p class="hash">Integrity hash (%s): %s</p>' % (
         esc(ver.get("algo", "sha256")), esc(ver.get("hash", ""))))
+    # Signing state, stated plainly. Mirrors renderProvenance in
+    # proof-template.html (the primary renderer); this fallback path must not
+    # be quieter about provenance than the page it stands in for.
+    if ver.get("gpg_signature"):
+        rows.append("<p>Signature: SIGNED (detached GPG over the canonical "
+                    "bytes). A verifier holding the signer public key can "
+                    "confirm provenance offline: loki proof verify &lt;id&gt;</p>")
+    else:
+        rows.append("<p>Signature: UNSIGNED. The integrity hash proves the "
+                    "bytes were not edited after hashing; it does NOT prove "
+                    "who produced them, so this receipt trusts its generator. "
+                    "To sign future receipts, set LOKI_PROOF_GPG_KEY to a gpg "
+                    "key id (see docs/SIGNED-RECEIPTS.md).</p>")
     red = proof.get("redaction", {})
     rows.append("<p>Redaction applied: %s (%s redactions, rules v%s)</p>" % (
         esc(red.get("applied")), esc(red.get("redactions_count")),
@@ -1269,6 +1750,9 @@ def _render_html(proof, repo_root):
     tpl = _read_text(template_path, default="")
     marker = "__PROOF_JSON__"
     if tpl and marker in tpl:
+        receipt_title = _receipt_title(proof)
+        tpl = tpl.replace("__PROOF_RECEIPT_TITLE__", _attr_esc(receipt_title))
+        tpl = tpl.replace("__PROOF_RECEIPT_TITLE_JSON__", json.dumps(receipt_title))
         # Substitute the dynamic social hook BEFORE the JSON payload, so a proof
         # value that happens to contain the hook token cannot get clobbered.
         # The hook embeds the real measured cost + files-changed + council ratio
@@ -1406,7 +1890,14 @@ def generate(args):
     return out_dir
 
 
-def main(argv=None):
+def build_parser():
+    """The generator's CLI parser.
+
+    Split out of main() so callers (notably the tests, which drive generate()
+    directly with a synthetic args object) can obtain every argument at its
+    declared default instead of hand-listing fields that go stale whenever a new
+    argument lands here.
+    """
     parser = argparse.ArgumentParser(description="Loki Mode proof-of-run generator")
     parser.add_argument("--loki-dir", default=".loki")
     parser.add_argument("--out-dir", default="")
@@ -1414,8 +1905,13 @@ def main(argv=None):
     parser.add_argument("--run-id", default="")
     parser.add_argument("--loki-version", default="")
     parser.add_argument("--provider", default="")
+    parser.add_argument("--session-exit-code", type=int, default=None)
     parser.add_argument("--quiet", action="store_true")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
 
     try:
         generate(args)

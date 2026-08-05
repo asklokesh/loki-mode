@@ -46,7 +46,10 @@ done
 IGNORE=(
     run        # deprecated alias of start
     stats      # deprecated alias of report session
-    welcome    # auto-shown first-run screen, not typed
+    cp         # alias of checkpoint (canonical 'checkpoint' is completed)
+    handoff    # alias of own (canonical 'own' is completed)
+    receipt    # alias of proof (canonical 'proof' is completed)
+    gitlab     # alias of github (canonical 'github' is completed)
     cleanup    # internal maintenance
     "")
 
@@ -67,8 +70,15 @@ if [ -z "$dispatch_start" ]; then
     exit 1
 fi
 
-# Find the matching esac line that closes the dispatch block.
-dispatch_end="$(awk -v start="$dispatch_start" 'NR>start && /^[[:space:]]*esac[[:space:]]*$/ {print NR; exit}' "$LOKI_SRC")"
+# Find the matching esac line that closes the dispatch block. The dispatch case
+# contains NESTED case/esac pairs (e.g. serve)/api) sub-help menus) whose esac is
+# indented deeper. Matching the first esac at ANY indentation stops at a nested
+# one and truncates the scan to a fraction of the real dispatch arms (a
+# grep-absence false-green: the coverage test passed while never checking most
+# commands). Match only an esac at the SAME indentation as the opening `case`.
+dispatch_indent="$(sed -n "${dispatch_start}p" "$LOKI_SRC" | sed 's/[^[:space:]].*$//')"
+dispatch_end="$(awk -v start="$dispatch_start" -v indent="$dispatch_indent" \
+    'NR>start && $0==(indent "esac") {print NR; exit}' "$LOKI_SRC")"
 if [ -z "$dispatch_end" ]; then
     echo -e "${RED}[FAIL]${NC} could not find esac closing the dispatch case"
     exit 1

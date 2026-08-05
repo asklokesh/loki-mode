@@ -373,12 +373,18 @@ PYEV
 
 # Print a steering hint for the focused run. Steering is opt-in prompt injection;
 # this only tells the operator how, it does not inject anything.
+# RUN-25 iter 22 (Wave D #3): the hint used to name .loki/steering.md, which
+# NOTHING reads -- a control the UI advertised silently no-op'd (a quiet lie to
+# the operator). The file the loop actually reads is .loki/HUMAN_INPUT.md, gated
+# behind LOKI_PROMPT_INJECTION=1. Name the REAL file + flag (or the `loki steer`
+# helper) so the advertised control genuinely steers the run.
 cockpit_steer_hint() {
     local focus_repo="$1"
     local repo="${focus_repo:-$(pwd)}"
     printf '\n'
     echo "Steer this run"
-    echo "  Drop a note the next iteration will read:"
-    echo "    echo 'your guidance' > $repo/.loki/steering.md"
+    echo "  Drop a note the next iteration will read (needs LOKI_PROMPT_INJECTION=1):"
+    echo "    loki steer 'your guidance'            # writes it for you"
+    echo "    echo 'your guidance' > $repo/.loki/HUMAN_INPUT.md"
     echo "  Or open the dashboard chat: loki dashboard"
 }

@@ -401,13 +401,12 @@ describe('LokiLearningDashboard', () => {
 
       // Click on a list item
       const listItem = el.shadowRoot.querySelector('.list-item');
-      if (listItem) {
-        listItem.click();
-        await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(listItem).toBeTruthy();
+      listItem.click();
+      await new Promise((resolve) => setTimeout(resolve, 50));
 
-        const detailPanel = el.shadowRoot.querySelector('.detail-panel');
-        expect(detailPanel).toBeTruthy();
-      }
+      const detailPanel = el.shadowRoot.querySelector('.detail-panel');
+      expect(detailPanel).toBeTruthy();
 
       removeDashboard(el);
     });
@@ -417,20 +416,18 @@ describe('LokiLearningDashboard', () => {
 
       // Open detail panel
       const listItem = el.shadowRoot.querySelector('.list-item');
-      if (listItem) {
-        listItem.click();
-        await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(listItem).toBeTruthy();
+      listItem.click();
+      await new Promise((resolve) => setTimeout(resolve, 50));
 
-        // Close it
-        const closeBtn = el.shadowRoot.querySelector('#close-detail');
-        if (closeBtn) {
-          closeBtn.click();
-          await new Promise((resolve) => setTimeout(resolve, 50));
+      // Close it
+      const closeBtn = el.shadowRoot.querySelector('#close-detail');
+      expect(closeBtn).toBeTruthy();
+      closeBtn.click();
+      await new Promise((resolve) => setTimeout(resolve, 50));
 
-          const detailPanel = el.shadowRoot.querySelector('.detail-panel');
-          expect(detailPanel).toBeFalsy();
-        }
-      }
+      const detailPanel = el.shadowRoot.querySelector('.detail-panel');
+      expect(detailPanel).toBeFalsy();
 
       removeDashboard(el);
     });
@@ -447,14 +444,13 @@ describe('LokiLearningDashboard', () => {
       });
 
       const listItem = el.shadowRoot.querySelector('.list-item');
-      if (listItem) {
-        listItem.click();
-        await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(listItem).toBeTruthy();
+      listItem.click();
+      await new Promise((resolve) => setTimeout(resolve, 50));
 
-        expect(eventFired).toBe(true);
-        expect(eventDetail).toHaveProperty('type');
-        expect(eventDetail).toHaveProperty('item');
-      }
+      expect(eventFired).toBe(true);
+      expect(eventDetail).toHaveProperty('type');
+      expect(eventDetail).toHaveProperty('item');
 
       removeDashboard(el);
     });
