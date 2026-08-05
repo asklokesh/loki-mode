@@ -164,9 +164,18 @@ class BuildSupervisorTests(unittest.TestCase):
             print("\n".join(details), file=sys.stderr)
         return rc
 
-    def _seatbelt_env(self, protected_root: Path, workspace_root: Path):
-        runtime_read = self.root / "runtime-read"
-        runtime_write = self.root / "runtime-write"
+    def _seatbelt_env(
+        self,
+        protected_root: Path,
+        workspace_root: Path,
+        base: Path | None = None,
+    ):
+        # `base` lets a caller anchor the runtime dirs somewhere other than the
+        # TMPDIR-derived self.root, which matters when the granted write paths
+        # must not contain protected_root.
+        base = self.root if base is None else base
+        runtime_read = base / "runtime-read"
+        runtime_write = base / "runtime-write"
         child_bin = runtime_read / "bin"
         child_bin.mkdir(parents=True, exist_ok=True)
         runtime_write.mkdir(parents=True, exist_ok=True)
@@ -454,7 +463,20 @@ class BuildSupervisorTests(unittest.TestCase):
         if not host_logged_in:
             self.skipTest("Claude CLI is not logged in outside Seatbelt")
 
-        protected_root = self.root / "protected"
+        # The confined readiness probe runs the real Claude CLI, which writes
+        # shell snapshots directly into /private/tmp and so needs that whole
+        # directory writable. That grant is only safe while this test's own tree
+        # sits outside it: _host_confinement_config rejects a runtime write path
+        # containing LOKI_HOST_PROTECTED_ROOT, and TMPDIR points under
+        # /private/tmp in the FULL gate (TMPDIR=/private/tmp/a004-tasktmp-...),
+        # which put self.root -- and therefore protected_root -- inside the grant.
+        # Anchor this fixture's tree under HOME instead of the ambient TMPDIR so
+        # the two never overlap regardless of how the suite is invoked.
+        probe_root = Path(
+            tempfile.mkdtemp(prefix="loki-supervisor-auth-", dir=str(Path.home()))
+        )
+        self.addCleanup(shutil.rmtree, probe_root, ignore_errors=True)
+        protected_root = probe_root / "protected"
         engine_source = protected_root / "engine"
         run_sh = engine_source / "autonomy" / "run.sh"
         workspace_root = protected_root / "workspaces"
@@ -463,7 +485,7 @@ class BuildSupervisorTests(unittest.TestCase):
         workspace.mkdir(parents=True)
         run_sh.write_text("#!/bin/sh\n", encoding="utf-8")
 
-        env = self._seatbelt_env(protected_root, workspace_root)
+        env = self._seatbelt_env(protected_root, workspace_root, base=probe_root)
         runtime_read_paths = [Path(env["LOKI_HOST_RUNTIME_READ_PATHS"])]
         runtime_write_paths = [Path(env["LOKI_HOST_RUNTIME_WRITE_PATHS"])]
         for candidate in (
@@ -569,6 +591,11 @@ class BuildSupervisorTests(unittest.TestCase):
         workspace = workspace_root / "build-a"
         sibling = workspace_root / "build-b" / "secret.txt"
         provider_session_env = self.root / "provider-session-env"
+        # Own-tree runtime tmp, not /private/tmp: see the note in the confined
+        # auth test. A shared tmp root that contains protected_root is exactly
+        # what the confinement config refuses.
+        runtime_tmp = self.root / "runtime-tmp"
+        runtime_tmp.mkdir(parents=True, exist_ok=True)
         loki_dir = workspace / ".loki"
         deadline = runner.parent / "lib" / "deadline.py"
         deadline.parent.mkdir(parents=True)
@@ -621,7 +648,7 @@ class BuildSupervisorTests(unittest.TestCase):
                     if Path(value).exists()
                 ),
                 "LOKI_HOST_RUNTIME_WRITE_PATHS": ":".join(
-                    ("/private/tmp", str(provider_session_env))
+                    (str(runtime_tmp), str(provider_session_env))
                 ),
                 "LOKI_HOST_CHILD_PATH": ":".join(
                     value
