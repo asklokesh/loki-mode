@@ -863,13 +863,17 @@ loki_config_validate_file() {
     pairs="$(
         _loki_cfg_collect_pairs() {
             local f="$1" fm="$2"
+            # NOTE: every case pattern below carries a leading open-paren --
+            # bash 3.2 (macOS /bin/bash) ends a command substitution at the
+            # close-paren of a case label, truncating this function body. The
+            # balanced form parses identically on 3.2 and 4+. Do not strip it.
             case "$fm" in
-                env)
+                (env)
                     local line key val
                     while IFS= read -r line || [ -n "$line" ]; do
-                        case "$line" in ''|'#'*) continue ;; esac
+                        case "$line" in (''|'#'*) continue ;; esac
                         line="${line#export }"
-                        case "$line" in *=*) ;; *) continue ;; esac
+                        case "$line" in (*=*) ;; (*) continue ;; esac
                         key="${line%%=*}"; val="${line#*=}"
                         key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
                         val="${val#"${val%%[![:space:]]*}"}"
@@ -878,7 +882,7 @@ loki_config_validate_file() {
                         printf '%s\t%s\n' "$key" "$val"
                     done < "$f"
                     ;;
-                yaml)
+                (yaml)
                     local mapping yaml_path env_var value have_yq=0
                     if command -v yq >/dev/null 2>&1; then have_yq=1; fi
                     for mapping in "${LOKI_CONFIG_MAP[@]}"; do
@@ -894,8 +898,8 @@ loki_config_validate_file() {
                         printf '%s\t%s\n' "$env_var" "$value"
                     done
                     ;;
-                json)
-                    # Reuse the json parser's emit path by calling a print-only variant.
+                (json)
+                    # Reuse the JSON parser emit path via a print-only variant.
                     _loki_cfg_json_emit "$f"
                     ;;
             esac

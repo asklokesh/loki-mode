@@ -69,7 +69,7 @@ run_dump() {
         env -i \
             PATH="$PATH" HOME="$HOME" \
             LOKI_CONFIG_DUMP=1 LOKI_NO_NEW_SESSION=1 \
-            "${ambient[@]}" \
+            ${ambient[@]+"${ambient[@]}"} \
             bash "$LOKI_BIN" start --config "$cfg" "$PRD" 2>"$DUMP_ERR"
     )"
     DUMP_RC=$?
