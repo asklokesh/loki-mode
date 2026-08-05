@@ -10155,7 +10155,14 @@ _export_check_overwrite() {
             echo "y (auto-confirmed)"
             return 0
         fi
-        if [ ! -t 0 ]; then
+        # A prompt is only answerable when BOTH ends are a terminal. Testing
+        # stdin alone was the bug: under a PTY harness that redirects stdout
+        # (the gate runs every check as `bash tests/... | tail -3`), `-t 0` is
+        # true, so we fell through to `read` -- but the process is not the
+        # terminal's foreground group, so reading the tty raises SIGTTIN and
+        # STOPS it. A stopped process never runs its SIGALRM handler, which is
+        # why `read -t` cannot rescue this; only not reading at all can.
+        if [ ! -t 0 ] || [ ! -t 1 ]; then
             echo "Export cancelled (non-interactive: refusing to overwrite '$output'." >&2
             echo "Set LOKI_AUTO_CONFIRM=true to overwrite, or choose a new output path.)" >&2
             return 1
@@ -10165,7 +10172,7 @@ _export_check_overwrite() {
         read -r reply || reply=""
         case "$reply" in
             [yY]|[yY][eE][sS]) return 0 ;;
-            *) echo "Export cancelled."; return 1 ;;
+            *) echo "Export cancelled (set LOKI_AUTO_CONFIRM=true to overwrite)."; return 1 ;;
         esac
     fi
     return 0
