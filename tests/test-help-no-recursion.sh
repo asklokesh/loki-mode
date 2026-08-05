@@ -31,6 +31,20 @@
 # fail this test -- it takes down the machine running it, including CI. The
 # subshell cap means the worst case is a bounded failure with a readable
 # message.
+#
+# WHY THE CAP IS RELATIVE AND NOT AN ABSOLUTE 400. `ulimit -u` is RLIMIT_NPROC,
+# which counts every process owned by the UID -- not just this subshell's
+# descendants. An absolute cap is therefore an absolute bound on a quantity we
+# only partly control. On a busy macOS host the user baseline measured 453
+# against a cap of 400, so the subshell could not fork its FIRST child: every
+# assertion below failed for want of a process, and none of them were about
+# `loki`. Budget from the measured baseline instead, so the headroom is what
+# stays fixed.
+#
+# The headroom is what does the discriminating, and it is not a close call: the
+# original bomb reached 3,788 chained processes. A budget of 150 stops a real
+# regression more than an order of magnitude early while leaving an idle host
+# untouched.
 
 set -uo pipefail
 
@@ -49,18 +63,45 @@ if [ ! -f "$LOKI" ]; then
     echo "SKIP: autonomy/loki not found. (Not a fail.)"; exit 0
 fi
 
+# Processes already owned by this UID. `ulimit -u` counts these too, so the
+# cap has to be measured from here rather than assumed.
+_uid_procs() { ps -u "$(id -u)" 2>/dev/null | wc -l | tr -d ' '; }
+
+_PROC_BUDGET=150
+_baseline=$(_uid_procs)
+_CAP=$(( ${_baseline:-0} + _PROC_BUDGET ))
+echo "  process budget: baseline ${_baseline} + ${_PROC_BUDGET} = cap ${_CAP}"
+
+# A cap we failed to SET is worse than no cap: the subshell would run the fork
+# bomb unbounded. `ulimit -u` can refuse when the value exceeds a low hard limit
+# (containers), so prove settability on a throwaway subshell BEFORE running
+# anything. Kept separate from _run_capped so that function's exit status stays
+# a clean signal about `loki`, never about the harness failing to budget.
+if ! ( ulimit -u "$_CAP" ) 2>/dev/null; then
+    echo "SKIP: cannot set ulimit -u to $_CAP (hard limit $(ulimit -Hu 2>/dev/null))."
+    echo "      Refusing to run an unbounded fork-bomb probe. (Not a fail.)"
+    exit 0
+fi
+
 # Bound BOTH axes. The process cap stops a regression from exhausting the
 # machine; the timeout stops a non-forking hang. Either alone leaves a hole.
+#
+# The subshell's OWN stderr must land in "$out" as well. When the cap bites, it
+# is the SHELL that reports "fork: Resource temporarily unavailable", not the
+# command -- and that message went to the harness's terminal while "$out" stayed
+# empty, so the fork-exhaustion grep below was searching a file that could never
+# contain what it looked for. Truncate once on the outside, append within.
 _run_capped() {
     local out="$1"; shift
-    ( ulimit -u 400 2>/dev/null
+    : > "$out"
+    ( ulimit -u "$_CAP" 2>/dev/null || exit 125
       if command -v timeout >/dev/null 2>&1; then
-          timeout 20 "$@" > "$out" 2>&1
+          timeout 20 "$@" >> "$out" 2>&1
       elif command -v gtimeout >/dev/null 2>&1; then
-          gtimeout 20 "$@" > "$out" 2>&1
+          gtimeout 20 "$@" >> "$out" 2>&1
       else
-          "$@" > "$out" 2>&1
-      fi )
+          "$@" >> "$out" 2>&1
+      fi ) >> "$out" 2>&1
 }
 
 _before=$(ps -e 2>/dev/null | wc -l | tr -d ' ')
@@ -88,8 +129,15 @@ else
     bad "loki help --help printed only ${_lines:-0} lines -- it died instead of printing"
 fi
 
-if grep -qE "fork failed|Resource temporarily unavailable" "$_out" 2>/dev/null; then
-    bad "loki help --help hit the process cap -- still forking"
+# Fail closed on an ABSENT measurement. A substring search over an empty file
+# reports nothing wrong, which reads exactly like a clean run -- and did, on the
+# very host that motivated this fix: the cap blocked the first fork, "$_out" was
+# empty, and this assertion PASSED while the command had produced no output at
+# all. No output is not evidence of no forking.
+if [ ! -s "$_out" ]; then
+    bad "loki help --help produced NO output -- cannot judge fork exhaustion (absent measurement)"
+elif grep -qE "fork failed|fork: retry|Resource temporarily unavailable" "$_out" 2>/dev/null; then
+    bad "loki help --help hit the process cap (budget $_PROC_BUDGET) -- still forking"
 else
     ok "loki help --help did not exhaust the process cap"
 fi
@@ -101,6 +149,8 @@ for _spelling in "-h" "help"; do
     _rc2=$?
     if [ "$_rc2" -eq 124 ] || [ "$_rc2" -eq 137 ]; then
         bad "loki help $_spelling TIMED OUT -- that spelling still recurses"
+    elif grep -qE "fork failed|fork: retry|Resource temporarily unavailable" "$_o2" 2>/dev/null; then
+        bad "loki help $_spelling hit the process cap -- that spelling still recurses"
     else
         ok "loki help $_spelling terminates"
     fi

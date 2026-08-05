@@ -4417,7 +4417,8 @@ async def start_build(request: Request, body: StartBuildRequest):
         loki_dir = workspace_dir / ".loki"
     else:
         loki_dir = _get_loki_dir()
-        project_dir = loki_dir.parent if loki_dir.name == ".loki" else _Path.cwd()
+        project_dir = (loki_dir.parent if loki_dir.name == ".loki"
+                       else (_safe_cwd() or _Path(".")))
         project_dir = project_dir.resolve()
 
     # Legacy no-workspace starts keep their existing single-flight behavior.
@@ -5637,6 +5638,22 @@ _active_project_dir: Optional[str] = None
 _DASHBOARD_AUTOSTARTED: bool = os.environ.get("LOKI_DASHBOARD_AUTOSTARTED") == "1"
 
 
+def _safe_cwd() -> "_Path | None":
+    """The current directory, or None if it no longer exists.
+
+    os.getcwd() RAISES FileNotFoundError when the working directory has been
+    deleted out from under a live process. A dashboard started inside a temp
+    workspace keeps serving after that workspace is cleaned up, and every
+    endpoint resolving a path then 500s simultaneously -- observed as ~60
+    concurrent 500s including /api/status, whose handler touches almost
+    nothing. Losing the cwd must degrade to a fallback, never to a stack trace.
+    """
+    try:
+        return _Path.cwd()
+    except OSError:
+        return None
+
+
 def _get_loki_dir() -> _Path:
     """Get LOKI_DIR, refreshing from env on each call for consistency.
 
@@ -5661,10 +5678,14 @@ def _get_loki_dir() -> _Path:
     if env_dir and _Path(env_dir).is_absolute():
         return _Path(env_dir)
 
-    # Check CWD first
-    cwd_loki = _Path.cwd() / ".loki"
-    if cwd_loki.is_dir():
-        return cwd_loki
+    # Check CWD first. _safe_cwd() rather than _Path.cwd(): this function runs
+    # on nearly every request, and a deleted working directory would otherwise
+    # raise FileNotFoundError here and 500 the entire API at once.
+    _cwd = _safe_cwd()
+    if _cwd is not None:
+        cwd_loki = _cwd / ".loki"
+        if cwd_loki.is_dir():
+            return cwd_loki
 
     # Check home directory fallback
     home_loki = _Path.home() / ".loki"

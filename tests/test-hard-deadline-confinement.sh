@@ -255,7 +255,11 @@ idle_output="$(LOKI_DEADLINE_IDLE_TIMEOUT=1 _loki_with_deadline 5 bash -c '
 ' _ "$idle_child_file" 2>&1)"
 idle_rc=$?
 idle_elapsed=$(( $(date +%s) - start ))
-if [ "$idle_rc" -eq 124 ] && [ "$idle_elapsed" -le 3 ] \
+# The idle path floors at idle_timeout(1) + kill_grace(2) + quiescence(0.2) = 3.2s,
+# so the old `-le 3` bound could only pass on the lucky side of second-truncation.
+# What the bound was really proving is that the IDLE deadline fired and not the
+# hard cap, so assert that directly: strictly under hard_seconds(5).
+if [ "$idle_rc" -eq 124 ] && [ "$idle_elapsed" -lt 5 ] \
    && printf '%s\n' "$idle_output" | grep -q '"reason":"idle_timeout"'; then
     ok "silent provider hits the idle deadline"
 else

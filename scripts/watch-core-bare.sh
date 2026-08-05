@@ -25,15 +25,23 @@
 # happened and what the config looked like, which is the evidence a future
 # diagnosis needs and which nothing currently preserves.
 #
-# DELIBERATELY READ-ONLY BY DEFAULT. It reports and records; it does not
-# restore. An auto-repair loop would hide the recurrence, and the recurrence is
-# the finding. Pass --restore to also set core.bare=false after recording.
+# READ-ONLY BY DEFAULT when run standalone: it reports and records without
+# restoring, because an unattended auto-repair loop would hide the recurrence,
+# and the recurrence is the finding. Pass --restore to also set
+# core.bare=false after recording -- this is what local CI does, because
+# leaving the parent checkout unusable (git status/log broken) until a human
+# notices is worse than the alternative: the gate still fails non-zero, the
+# MUTATED line is still logged, and the config is still backed up, so the
+# recurrence is still preserved as evidence even though the checkout is
+# usable again by the time the gate reports failure.
 #
 # Usage:
 #   scripts/watch-core-bare.sh            check once, report, exit 1 if mutated
 #   scripts/watch-core-bare.sh --restore  also restore after recording
 #
-# Exit codes: 0 healthy, 1 mutation detected, 66 repo not found.
+# Exit codes: 0 healthy, 1 mutation detected (restored, or restore not
+# requested), 65 mutation detected but restore was requested and failed,
+# 66 repo not found.
 
 set -uo pipefail
 
@@ -71,8 +79,16 @@ if [ "$bare" = "true" ] && [ "$has_index" = "yes" ]; then
     if [ "$RESTORE" = "1" ]; then
         cp "$REPO/.git/config" "$REPO/.git/config.bak-$(date +%s)" 2>/dev/null || true
         git -C "$REPO" config core.bare false 2>/dev/null
-        printf '  restored:     core.bare=%s\n' "$(git -C "$REPO" config --get core.bare)"
-        printf '%s\tRESTORED\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG" 2>/dev/null || true
+        after="$(git -C "$REPO" config --get core.bare 2>/dev/null)"
+        printf '  restored:     core.bare=%s\n' "$after"
+        if [ "$after" = "false" ]; then
+            printf '%s\tRESTORED\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG" 2>/dev/null || true
+        else
+            printf '  RESTORE FAILED: core.bare is still not false\n'
+            printf '%s\tRESTORE_FAILED\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG" 2>/dev/null || true
+            printf '  log:          %s\n' "$LOG"
+            exit 65
+        fi
     else
         printf '  NOT restored (read-only by default; pass --restore to repair)\n'
     fi

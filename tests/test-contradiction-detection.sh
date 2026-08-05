@@ -517,10 +517,22 @@ map_result="$(
     esac
     printf '%s' "$result"
 )"
-if grep -q 'policy_blocked|inconclusive_spec_contradiction)' "$REPO_ROOT/autonomy/run.sh" 2>/dev/null; then
+# DRIFT GUARD, matched on the PROPERTY not on a byte sequence. The previous
+# form grepped for the literal 'policy_blocked|inconclusive_spec_contradiction)'
+# -- with the closing paren -- so ADDING another status to the same failure arm
+# broke it. That happened: `force_stopped` was appended to the arm (1c80c85ff),
+# behaviour unchanged and correct, and this assertion failed anyway.
+#
+# A test that breaks when a sibling value is added to the same list is
+# asserting the shape of the source text, not the behaviour. What matters is
+# that inconclusive_spec_contradiction sits in the FAILURE arm, wherever in it.
+# Select the arm BY the token, not by position: several case arms in run.sh
+# begin `failed|`, and taking the first one matched an unrelated block.
+_f3_arm="$(grep -oE '^ *failed\|[a-z_|]*inconclusive_spec_contradiction[a-z_|]*\)' "$REPO_ROOT/autonomy/run.sh" 2>/dev/null | head -1)"
+if [ -n "$_f3_arm" ]; then
     :
 else
-    bad "(f3) mapping drift" "run.sh no longer lists inconclusive_spec_contradiction in the failure verdict case"
+    bad "(f3) mapping drift" "inconclusive_spec_contradiction is not in run.sh's failure verdict arm (arm found: '${_f3_arm:-none}')"
 fi
 if [ "$map_result" = "20" ]; then
     ok "(f3) inconclusive_spec_contradiction -> exit 20 (terminal failure), NEVER 0/green (no fake-green)"

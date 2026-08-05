@@ -27881,11 +27881,17 @@ except: pass
 
     # --- Build directory tree ---
     local tree_output=""
-    if command -v git &>/dev/null && [ -d "$target_path/.git" ]; then
+    # -e not -d: in a git WORKTREE, .git is a pointer FILE, not a directory.
+    # -d sent every worktree down the find fallback below.
+    if command -v git &>/dev/null && [ -e "$target_path/.git" ]; then
         # Use git ls-files for accurate tree (respects .gitignore)
         tree_output=$(cd "$target_path" && git ls-files 2>/dev/null | head -200 || true)
     else
-        # Fallback: find with common excludions
+        # Fallback: find with common excludions.
+        # `|| true` is load-bearing under `set -euo pipefail` (line 22): head -200
+        # exits after 200 lines, find keeps writing, gets SIGPIPE, and the pipeline
+        # returns 141 -- which -e turned into a silent abort producing 0 bytes on
+        # any repo with more than 200 files. The git branch above is already guarded.
         tree_output=$(find "$target_path" -maxdepth 4 -type f \
             -not -path '*/node_modules/*' \
             -not -path '*/.git/*' \
@@ -27895,7 +27901,7 @@ except: pass
             -not -path '*/build/*' \
             -not -path '*/.next/*' \
             -not -path '*/target/*' \
-            2>/dev/null | sed "s|$target_path/||" | sort | head -200)
+            2>/dev/null | sed "s|$target_path/||" | sort | head -200 || true)
     fi
 
     # Categorize files
@@ -28652,8 +28658,13 @@ $devdeps_list"
     fi
 
     # --- File counts ---
+    # Same SIGPIPE pipeline as cmd_onboard, but a DIFFERENT symptom here: this
+    # assigns into a bare `tree_output=` after the local declaration, so under
+    # -e a 141 aborts. Where a site instead writes `local x=$(...)`, `local`
+    # resets $? and the 141 is swallowed -- silent truncation, no abort. Both
+    # are wrong; `|| true` plus -e (worktree .git is a FILE) fixes both.
     local tree_output=""
-    if command -v git &>/dev/null && [ -d "$target_path/.git" ]; then
+    if command -v git &>/dev/null && [ -e "$target_path/.git" ]; then
         tree_output=$(cd "$target_path" && git ls-files 2>/dev/null | head -500 || true)
     else
         tree_output=$(find "$target_path" -maxdepth 4 -type f \
@@ -28661,7 +28672,7 @@ $devdeps_list"
             -not -path '*/vendor/*' -not -path '*/__pycache__/*' \
             -not -path '*/dist/*' -not -path '*/build/*' \
             -not -path '*/.next/*' -not -path '*/target/*' \
-            2>/dev/null | sed "s|$target_path/||" | sort | head -500)
+            2>/dev/null | sed "s|$target_path/||" | sort | head -500 || true)
     fi
     local total_files src_count test_count doc_count config_count
     total_files=$(echo "$tree_output" | { grep -c . || true; })
@@ -29065,9 +29076,10 @@ cmd_docs() {
 _docs_scan_project() {
     local target_path="$1"
 
-    # Build file tree (excluding common noise)
+    # Build file tree (excluding common noise).
+    # Same SIGPIPE pipeline and same fix as cmd_onboard; see the comment there.
     local tree_output=""
-    if command -v git &>/dev/null && [ -d "$target_path/.git" ]; then
+    if command -v git &>/dev/null && [ -e "$target_path/.git" ]; then
         tree_output=$(cd "$target_path" && git ls-files 2>/dev/null | head -500 || true)
     else
         tree_output=$(find "$target_path" -maxdepth 4 -type f \
@@ -29075,7 +29087,7 @@ _docs_scan_project() {
             -not -path '*/vendor/*' -not -path '*/__pycache__/*' \
             -not -path '*/dist/*' -not -path '*/build/*' \
             -not -path '*/.next/*' -not -path '*/target/*' \
-            2>/dev/null | sed "s|$target_path/||" | sort | head -500)
+            2>/dev/null | sed "s|$target_path/||" | sort | head -500 || true)
     fi
     echo "$tree_output"
 }

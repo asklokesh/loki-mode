@@ -240,11 +240,21 @@ class PresenceManager:
         self._cleanup_running = False
         self._cleanup_thread: Optional[threading.Thread] = None
 
-        # Ensure directories exist
+        # Ensure directories exist.
+        # loki_dir is relative (".loki") by default, so when the working
+        # directory has been deleted this mkdir raises FileNotFoundError. This
+        # constructor runs at IMPORT time via create_collab_routes(), so the
+        # exception took down the ENTIRE dashboard -- every endpoint 500s,
+        # including ones that never touch collab. Presence is an optional
+        # feature; losing its directory must disable persistence, not the app.
         if self.enable_persistence:
             self._presence_dir = self.loki_dir / "collab" / "presence"
-            self._presence_dir.mkdir(parents=True, exist_ok=True)
-            self._load_persisted_users()
+            try:
+                self._presence_dir.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                self.enable_persistence = False
+            else:
+                self._load_persisted_users()
 
     def _load_persisted_users(self) -> None:
         """Load persisted users from disk (for recovery)."""

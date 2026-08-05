@@ -314,11 +314,17 @@ class StateSync:
         self._subscriber_lock = threading.Lock()
         self._async_subscribers: List[Callable] = []
 
-        # Persistence
+        # Persistence. Same hazard as PresenceManager: loki_dir is relative by
+        # default, so a deleted working directory makes this mkdir raise at
+        # import time and takes the whole dashboard down. Degrade to in-memory.
         if self.enable_persistence:
             self._sync_dir = self.loki_dir / "collab" / "sync"
-            self._sync_dir.mkdir(parents=True, exist_ok=True)
-            self._load_state()
+            try:
+                self._sync_dir.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                self.enable_persistence = False
+            else:
+                self._load_state()
 
     def _load_state(self) -> None:
         """Load persisted state."""
