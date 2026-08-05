@@ -1,5 +1,12 @@
 pytest
 pytest-asyncio
+# The MCP SDK client half (ClientSession/stdio_client), required by
+# tests/test-mcp-tool-surface-packaged.sh to handshake the packaged server.
+# Same bound as the canonical product constraint in mcp/requirements.txt --
+# kept identical there and here so the two cannot drift into disagreeing
+# ranges. Not `-r mcp/requirements.txt`: that would also drag chromadb and
+# anthropic into every test job, which the shell shards do not need.
+mcp>=1.0.0,<2.0.0
 pydantic
 fastapi
 uvicorn

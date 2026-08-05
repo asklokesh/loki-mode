@@ -13,6 +13,9 @@
 #   2. deletion            (36 -> 35, one name gone)
 #   3. npm unavailable     (prerequisite missing)         <- must not SKIP green
 #   4. MCP SDK unavailable (measurement unavailable)      <- must not SKIP green
+#   4b. MCP SDK absent but SHADOWED by the repo's own mcp/ <- run 30991330118
+#   4c. SDK probe exits nonzero, empty stderr    <- verdict must bind to $?, not stderr
+#   4d. SDK probe exits zero, benign stderr      <- nonempty stderr alone must not fail it
 #   5. contradictory doc   (a current file states 36 AND 34) <- the false-green
 #
 # Mutant 5 is the docs-arm analogue of mutant 1. Presence of the correct count
@@ -184,6 +187,117 @@ if grep -qi "^SKIP" "$M4/out.txt"; then
 else
     ok "MCP SDK unavailable: guard emitted no SKIP"
 fi
+
+# --- mutant 4b: SDK ABSENT, BUT SHADOWED BY THE REPO'S OWN mcp/ PACKAGE ------
+# The false-green from GitHub Tests run 30991330118, shards 2/4 and 3/4.
+#
+# Mutant 4 above shadows `mcp` with a package that RAISES on import, so any
+# probe fails. That cannot catch the real defect, where `import mcp` SUCCEEDS
+# and binds Loki's own mcp/ (cwd is on sys.path) while ClientSession and
+# stdio_client do not exist. The old `python3 -c 'import mcp'` prerequisite
+# passed on a CI host with no SDK installed at all, and the guard fell through
+# to report "handshake returned NO tools" -- a server defect that was not one.
+#
+# Reproduced by construction: the mutant tree's own mcp/ is importable and has
+# no client symbols, and PYTHONPATH is emptied via a shim that hides any real
+# SDK, so `import mcp` from the repo root succeeds and the capability probe
+# must still fail. A guard that probes the package NAME false-greens here; one
+# that probes the client SYMBOLS from a non-repo cwd fails closed.
+M4B="$WORK/m4b"; seed_tree "$M4B" || { bad "seed m4b"; exit 1; }
+# Precondition: the seeded tree's mcp/ must be importable-by-name and lack the
+# client symbols. Without this the mutant could pass for the wrong reason.
+touch "$M4B/mcp/__init__.py"
+NOSDK2="$WORK/nosdk2"; mkdir -p "$NOSDK2/mcp"
+printf 'raise ImportError("MUTANT: no real MCP SDK on this host")\n' > "$NOSDK2/mcp/__init__.py"
+if ( cd "$M4B" && PYTHONPATH="$NOSDK2" python3 -c 'import mcp' >/dev/null 2>&1 ); then
+    ok "repo-shadowed SDK: 'import mcp' still SUCCEEDS in the mutant (shadow is real)"
+else
+    bad "repo-shadowed SDK: mutant did not reproduce the shadow -- test is inert"
+fi
+M4BRC="$( cd "$M4B" && PYTHONPATH="$NOSDK2" bash tests/test-mcp-tool-surface-packaged.sh >"$M4B/out.txt" 2>&1; echo $? )"
+if [ "$M4BRC" -ne 0 ] && grep -q "MCP SDK not importable" "$M4B/out.txt"; then
+    ok "repo-shadowed SDK: guard exited $M4BRC and failed closed on the capability probe"
+else
+    bad "repo-shadowed SDK: guard exited $M4BRC (expected nonzero + 'MCP SDK not importable')"
+    sed -n '1,20p' "$M4B/out.txt" | sed 's/^/    /'
+fi
+# The defect must be named as a PREREQUISITE failure, never as a server-side
+# handshake failure. Misattribution is what cost run 30991330118 its diagnosis.
+if grep -q "handshake returned NO tools" "$M4B/out.txt"; then
+    bad "repo-shadowed SDK: guard blamed the server handshake for a missing prerequisite"
+else
+    ok "repo-shadowed SDK: guard did not misattribute this to a server handshake failure"
+fi
+
+# --- shared shim for mutants 4c/4d: a PATH python3 that discriminates the ----
+# SDK capability probe (PYSDK) by its exact stdin content and delegates every
+# other invocation -- the SOURCE derivation and the PYHS handshake -- to the
+# real interpreter. Deterministic and host-independent: the verdict direction
+# is fixed by the shim, not by whether this machine happens to have the SDK.
+REAL_PYTHON3="$(command -v python3)" || { bad "no real python3 on PATH -- cannot build shim"; echo "  Passed: $PASS  Failed: $FAIL"; exit 1; }
+make_sdk_probe_shim() {  # $1 = shim dir  $2 = probe-rc  $3 = probe-stderr (may be empty)
+    local dir="$1" rc="$2" err="$3"
+    mkdir -p "$dir" || return 1
+    cat > "$dir/python3" <<SHIM
+#!/usr/bin/env bash
+if [ "\$1" = "-" ]; then
+    IN="\$(cat)"
+    case "\$IN" in
+        *"from mcp import ClientSession, StdioServerParameters"*"from mcp.client.stdio import stdio_client"*)
+            printf '%s' "$err" >&2
+            exit $rc
+            ;;
+    esac
+    printf '%s' "\$IN" | exec "$REAL_PYTHON3" "\$@"
+fi
+exec "$REAL_PYTHON3" "\$@"
+SHIM
+    chmod +x "$dir/python3"
+}
+
+# --- mutant 4c: SDK PROBE EXITS NONZERO, STDERR EMPTY ------------------------
+# The verdict must bind to the exit status alone. A probe that fails silently
+# (exit nonzero, nothing on stderr) is the case a stderr-keyed check gets
+# backwards in the fail direction: `[ -n "$SDK_ERR" ]` would stay false and
+# let a genuinely broken prerequisite through as satisfied.
+M4C="$WORK/m4c"; seed_tree "$M4C" || { bad "seed m4c"; exit 1; }
+SHIM4C="$WORK/shim4c"; make_sdk_probe_shim "$SHIM4C" 1 "" || { bad "build shim4c"; exit 1; }
+M4CRC="$( cd "$M4C" && PATH="$SHIM4C:$PATH" bash tests/test-mcp-tool-surface-packaged.sh >"$M4C/out.txt" 2>&1; echo $? )"
+if [ "$M4CRC" -ne 0 ] && grep -q "MCP SDK not importable (probe exit 1)" "$M4C/out.txt"; then
+    ok "SDK probe nonzero/empty stderr: guard exited $M4CRC and named the nonzero probe exit"
+else
+    bad "SDK probe nonzero/empty stderr: guard exited $M4CRC (expected nonzero + 'probe exit 1')"
+    sed -n '1,20p' "$M4C/out.txt" | sed 's/^/    /'
+fi
+if grep -q "handshake returned NO tools" "$M4C/out.txt"; then
+    bad "SDK probe nonzero/empty stderr: guard blamed the handshake instead of the prerequisite"
+else
+    ok "SDK probe nonzero/empty stderr: guard did not misattribute this to a handshake failure"
+fi
+
+# --- mutant 4d: SDK PROBE EXITS ZERO, STDERR NONEMPTY (benign warning) -------
+# The other direction of the same bug: a satisfied prerequisite that happens to
+# print something benign (e.g. a DeprecationWarning) to stderr must not be
+# rejected as "MCP SDK not importable" merely because stderr is nonempty. The
+# shim's real handshake (PYHS) is left to the genuine interpreter, so with no
+# real SDK on this host it fails later at the handshake -- proving the guard
+# passed the prerequisite arm rather than never reaching it.
+M4D="$WORK/m4d"; seed_tree "$M4D" || { bad "seed m4d"; exit 1; }
+SHIM4D="$WORK/shim4d"; make_sdk_probe_shim "$SHIM4D" 0 "DeprecationWarning: benign, ignore me" || { bad "build shim4d"; exit 1; }
+M4DRC="$( cd "$M4D" && PATH="$SHIM4D:$PATH" bash tests/test-mcp-tool-surface-packaged.sh >"$M4D/out.txt" 2>&1; echo $? )"
+if grep -q "MCP SDK not importable" "$M4D/out.txt"; then
+    bad "SDK probe zero/benign stderr: guard rejected the prerequisite on stderr alone"
+    sed -n '1,20p' "$M4D/out.txt" | sed 's/^/    /'
+else
+    ok "SDK probe zero/benign stderr: guard did not reject on nonempty stderr"
+fi
+if grep -q "^PASS: MCP SDK client capabilities importable from a non-repo cwd" "$M4D/out.txt"; then
+    ok "SDK probe zero/benign stderr: guard recorded the prerequisite PASS despite stderr"
+else
+    bad "SDK probe zero/benign stderr: guard never reached the prerequisite PASS"
+    sed -n '1,20p' "$M4D/out.txt" | sed 's/^/    /'
+fi
+[ "$M4DRC" -ne 0 ] || bad "SDK probe zero/benign stderr: guard exited 0 -- expected a later, different failure"
 
 # --- mutant 5: CONTRADICTORY DOCUMENT (a current surface states 36 AND 34) ---
 # The docs arm is the guard's LAST section, so this mutant must survive sections

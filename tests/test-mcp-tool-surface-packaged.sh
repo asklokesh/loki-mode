@@ -217,10 +217,51 @@ ok "packaged tarball contains mcp/server.py"
 # surface is UNMEASURED. Previously this exited 0, which is the false-green this
 # gate exists to prevent. Nothing is installed here -- the host must provide the
 # SDK for the gate to be satisfiable.
-python3 -c 'import mcp' >/dev/null 2>&1 \
-    || die "MCP SDK not importable -- packaged handshake unmeasurable; required gate fails closed"
+#
+# TWO properties this probe must have, both learned from run 30991330118:
+#
+# 1. IT RUNS FROM A NON-REPO cwd. `python3 -c 'import mcp'` from $REPO_ROOT
+#    resolves to Loki's OWN mcp/ package (cwd is on sys.path), so the check
+#    passed on a host with NO SDK at all. Measured here: from the repo it binds
+#    mcp/__init__.py and succeeds; from /tmp it binds site-packages. A
+#    prerequisite check that the repo can satisfy by shadowing is not a check.
+#
+# 2. IT PROBES THE CLIENT SYMBOLS, not the package name. The handshake below
+#    needs ClientSession, StdioServerParameters and stdio_client. `import mcp`
+#    is true of the repo-local package, which has none of them.
+#
+# Run from $WORK, which exists, is outside both the repo and the extracted
+# package, and is where the handshake itself runs -- so the probe resolves
+# imports exactly the way the measurement does.
+#
+# 3. THE VERDICT BINDS TO THE EXIT STATUS, NEVER TO STDERR. Stderr is a
+#    diagnostic, not a result: a successful import that emits a benign
+#    DeprecationWarning is a satisfied prerequisite, and a failed import that
+#    happens to print nothing is still a failure. Keying on `[ -n "$SDK_ERR" ]`
+#    gets both directions wrong. Stderr is captured only so a FAILURE can be
+#    quoted; it never decides the outcome.
+#
+# Bash 3.2 portable, and correct without `set -e` (which is deliberately not
+# enabled here -- this suite counts failures and continues). $? is read on the
+# line immediately after the assignment; nothing may be inserted between them.
+SDK_ERR="$(cd "$WORK" && python3 - <<'PYSDK' 2>&1 >/dev/null
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+PYSDK
+)"
+SDK_RC=$?
+if [ "$SDK_RC" -ne 0 ]; then
+    [ -n "$SDK_ERR" ] && printf '  SDK probe stderr: %s\n' "$(printf '%s\n' "$SDK_ERR" | tail -1)"
+    die "MCP SDK not importable (probe exit $SDK_RC) -- packaged handshake unmeasurable; required gate fails closed"
+fi
+ok "MCP SDK client capabilities importable from a non-repo cwd"
 
-ACTUAL="$(cd "$WORK" && LOKI_PKG="$WORK/package" python3 - <<'PYHS' 2>/dev/null
+# Handshake failures are a DIFFERENT defect from a missing prerequisite, so
+# stderr is captured and surfaced rather than sent to /dev/null. Run
+# 30991330118 reported only "handshake returned NO tools" for what was in fact
+# an absent SDK, and the real cause was unreadable from the CI log.
+HS_ERR="$WORK/handshake.err"
+ACTUAL="$(cd "$WORK" && LOKI_PKG="$WORK/package" python3 - <<'PYHS' 2>"$HS_ERR"
 import asyncio, os, sys
 pkg = os.environ["LOKI_PKG"]
 from mcp import ClientSession, StdioServerParameters
@@ -244,7 +285,13 @@ print("\n".join(asyncio.run(run())))
 PYHS
 )"
 
-[ -n "$ACTUAL" ] || die "packaged MCP handshake returned NO tools (initialize or tools/list failed)"
+if [ -z "$ACTUAL" ]; then
+    # The prerequisite is already proven above, so an empty result here is a
+    # genuine server-side handshake failure. Quote it, or the next reader
+    # repeats run 30991330118's diagnosis from a bare symptom.
+    [ -s "$HS_ERR" ] && sed -n '1,15p' "$HS_ERR" | sed 's/^/    handshake stderr: /'
+    die "packaged MCP handshake returned NO tools (initialize or tools/list failed)"
+fi
 ACTUAL_N="$(printf '%s\n' "$ACTUAL" | wc -l | tr -d ' ')"
 ok "packaged server completed initialize -> tools/list ($ACTUAL_N tools)"
 
