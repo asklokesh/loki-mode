@@ -408,7 +408,8 @@ check_gate_env() {
     # Subtract the allowed bash-only names from the bash set.
     local allowed_pat=""
     local g
-    for g in "${GATE_ALLOWED_BASH_ONLY[@]}"; do
+    for g in "${GATE_ALLOWED_BASH_ONLY[@]-}"; do
+        [ -n "$g" ] || continue
         allowed_pat="${allowed_pat}${allowed_pat:+|}^${g}\$"
     done
     local bash_filtered
@@ -420,7 +421,11 @@ check_gate_env() {
 
     # Subtract the allowed bun-only names from the bun set.
     local allowed_bun_pat=""
-    for g in "${GATE_ALLOWED_BUN_ONLY[@]}"; do
+    # Bash 3.2 treats an empty array expansion as an unbound variable under
+    # nounset. The default expansion keeps the legitimate empty allow-list
+    # portable without inventing a sentinel gate name.
+    for g in "${GATE_ALLOWED_BUN_ONLY[@]-}"; do
+        [ -n "$g" ] || continue
         allowed_bun_pat="${allowed_bun_pat}${allowed_bun_pat:+|}^${g}\$"
     done
     if [ -n "$allowed_bun_pat" ]; then

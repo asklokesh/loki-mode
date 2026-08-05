@@ -128,7 +128,7 @@ run_under_pty() {
         HOME="$home" \
         PATH="$PATH" \
         LOKI_TELEMETRY_ENDPOINT="http://127.0.0.1:1" \
-        "${envv[@]}" \
+        ${envv[@]+"${envv[@]}"} \
         python3 -c "$PTY_DRIVER" "$LOKI_SHIM" "$@" 2>/dev/null \
         || echo "__PTY_UNAVAILABLE__"
 }
@@ -145,7 +145,7 @@ run_non_pty() {
         HOME="$home" \
         PATH="$PATH" \
         LOKI_TELEMETRY_ENDPOINT="http://127.0.0.1:1" \
-        "${envv[@]}" \
+        ${envv[@]+"${envv[@]}"} \
         "$LOKI_SHIM" "$@" </dev/null 2>&1 | cat
 }
 
