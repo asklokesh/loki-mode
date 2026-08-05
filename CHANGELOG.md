@@ -5,6 +5,36 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.12.6
+
+### Added
+
+- **Loop-harness measurement without invented outcomes.** The new read-only
+  report derives routing and verification evidence from existing receipts and
+  emits an explicit absent-data state when no measurement exists.
+
+### Fixed
+
+- **The dashboard survives deletion of its launch directory.** A long-running
+  dashboard whose original temporary working directory has been removed no
+  longer turns unrelated endpoints into HTTP 500 responses. Runtime path
+  resolution now degrades safely, optional collaboration persistence disables
+  itself when its base cannot be resolved, and PRD path confinement still
+  fails closed.
+- **`loki verify` works on stock macOS Bash 3.2.** A quoted-heredoc comment no
+  longer breaks parsing, and the Bash 3.2 gate now checks shipped entrypoints
+  rather than test scripts alone.
+- **CP-1 and disclosure gates are portable on macOS.** Help-recursion limits
+  are relative to the measured per-user process baseline; Bash/Bun parity and
+  telemetry fixtures handle legitimate empty arrays under Bash 3.2; model
+  override, contradiction, assurance-tail, and absent-state fixtures now fail
+  on product regressions rather than harness assumptions.
+- **The local release gate self-heals a recurring bare parent checkout.** The
+  repair is bounded to the known parent checkout and retains fail-closed test
+  and export behavior.
+- **Onboarding no longer loses its output to SIGPIPE** when repository file
+  enumeration exceeds the preview limit.
+
 ## v9.12.5
 
 ### Fixed
