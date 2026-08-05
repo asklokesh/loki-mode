@@ -203,7 +203,7 @@ Line counts approximate; re-run `wc -l` for exact.
 | `memory/storage.py` | ~2,000 | File-based memory backend |
 | `memory/engine.py` | ~1,600 | Memory orchestrator |
 | `memory/consolidation.py` | ~1,100 | Episodic-to-semantic pipeline |
-| `mcp/server.py` | ~2,700 | MCP server (34 tools: 26 in-file + 7 magic + 1 gated managed; +3 resources, 2 prompts) |
+| `mcp/server.py` | ~2,700 | MCP server (36 tools: 28 in-file + 7 magic + 1 gated managed; +3 resources, 2 prompts) |
 | `providers/loader.sh` | ~185 | Provider loader |
 
 ### Key Function Lookup

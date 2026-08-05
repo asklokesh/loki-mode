@@ -218,6 +218,10 @@ declare -a _FAST_KEEP=(
   "tests/cli/test-provider-offer.sh"          # 869ms
   "tests/test-emit-json-escape.sh"            # 870ms
   "tests/test-bash-bun-parity.sh"             # 997ms
+  # A-004: guards the SHIPPED MCP tool surface by name. Artifact-guarding, so
+  # the fast tier must run it -- deferring it is the dist-8.11.0 failure mode.
+  "tests/test-mcp-tool-surface-packaged.sh"   # 2.9s
+  "tests/test-mcp-tool-surface-guard-rejects.sh" # 8s, proves the guard rejects
   # CLAUDE.md cleanup mandate: sub-second, and the whole point is that it runs
   # on every invocation, not only the slow one.
   "no /tmp/loki-* /tmp/test-* leftovers"
@@ -1052,6 +1056,31 @@ PYHS
     exit "$code"
   )
 '
+
+# A-004 (MCP discovery contract drift): the handshake above proves the server
+# BOOTS and lists >0 tools. It cannot detect drift, because a minimum-count
+# assertion passes at 34, at 36 and at 1 -- which is exactly how the repo came
+# to ship 36 tools while every public doc said 34. This one builds the real npm
+# tarball, handshakes against the server.py INSIDE it, and asserts BOTH the
+# source registration names and the packaged tools/list names against a frozen,
+# source-controlled 36-name contract. Not derived from source: a source-derived
+# expectation moves with a rename, so a same-count rename passes while the
+# published contract breaks. Fails closed when npm or the MCP SDK is absent --
+# an unavailable measurement is not evidence of a healthy surface.
+#
+# FAST TIER, deliberately (CLAUDE.md: "a check that guards the shipped artifact
+# must run in the FAST tier"). Its two siblings, test-detectors-are-packaged and
+# test-runtime-libs-are-packaged, live only inside the deferred run-all-tests.sh
+# -- the same deferral that let dist ship 8.11.0 for 27 releases. Measured 2.9s.
+run_check "tests/test-mcp-tool-surface-packaged.sh (packaged MCP surface, exact names)" \
+  "bash tests/test-mcp-tool-surface-packaged.sh 2>&1 | tail -4"
+
+# The guard above is only a gate if it REJECTS. This mutates a copy of the tree
+# and proves it fails on a same-count rename, a deletion, absent npm and absent
+# MCP SDK -- the same-count rename being the mutant a count check cannot see.
+# Measured 8s, no installs, no network.
+run_check "tests/test-mcp-tool-surface-guard-rejects.sh (contract guard rejects drift)" \
+  "bash tests/test-mcp-tool-surface-guard-rejects.sh 2>&1 | tail -4"
 
 # task 566: real MCP stdio handshake for the LSP PROXY. The proxy carried the
 # same `mcp` namespace collision as server.py and silently degraded to a no-op

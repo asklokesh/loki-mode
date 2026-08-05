@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.asklokesh/loki-mode",
-  "description": "Autonomous spec-to-product coding-agent CLI with an MCP server exposing 34 tools over stdio.",
+  "description": "Autonomous spec-to-product coding-agent CLI with an MCP server exposing 36 tools over stdio.",
   "repository": {
     "url": "https://github.com/asklokesh/loki-mode",
     "source": "github"

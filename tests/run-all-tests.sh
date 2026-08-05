@@ -739,6 +739,8 @@ run_test "time-to-first-artifact is recorded and rendered" "$SCRIPT_DIR/test-fir
 run_test "council cap binds on the REAL selector" "$SCRIPT_DIR/test-review-cap-real-selector.sh"
 run_test "gate detectors ship in the npm package" "$SCRIPT_DIR/test-detectors-are-packaged.sh"
 run_test "runtime python libs ship in the npm package" "$SCRIPT_DIR/test-runtime-libs-are-packaged.sh"
+run_test "packaged MCP server exposes the exact tool surface" "$SCRIPT_DIR/test-mcp-tool-surface-packaged.sh"
+run_test "MCP contract guard rejects rename/deletion/missing prereqs" "$SCRIPT_DIR/test-mcp-tool-surface-guard-rejects.sh"
 run_test "loki why maps each error class to an action" "$SCRIPT_DIR/test-why-actions.sh"
 run_test "loki start surfaces a stale install" "$SCRIPT_DIR/test-start-update-hint.sh"
 run_test "loki help does not recurse into itself" "$SCRIPT_DIR/test-help-no-recursion.sh"

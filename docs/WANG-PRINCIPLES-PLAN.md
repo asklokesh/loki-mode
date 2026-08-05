@@ -53,7 +53,7 @@ Measured on this machine, not asserted.
 | **1 Systems Thinking** | STRONG | 8 quality gates, RARV-C loop, council, Evidence Receipt, dual-route parity enforced by test |
 | **2 Speed** | MEASURED, UNOPTIMISED | agent call = **980s = 96%** of iteration; all gates together = 44s |
 | **3 Reliability** | STRONG, newly so | 73 mutation-proven trust invariants; four gates were shipping broken until v8.38.0 |
-| **4 Extensibility** | STRONG | 4 providers, 41 agent types, MCP (34 tools), plugin marketplace |
+| **4 Extensibility** | STRONG | 4 providers, 41 agent types, MCP (36 tools), plugin marketplace |
 | **5 Feedback Loops / Evals** | **BROKEN** | `cost_usd == 0` on **3 of 5** efficiency records; no eval score for our own harness |
 
 **Principle 5 is the gap, and it is the one Wang weights highest.** He states the
