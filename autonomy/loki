@@ -12172,9 +12172,59 @@ memory = {
     'status': 'pass' if not memory_recent_errors else 'warn',
 }
 
+# SKILL LINK INTEGRITY. The text path has always failed closed on a broken
+# skill symlink (the Skills section, _doctor_block, exit 1), but --json
+# omitted skills entirely -- so on a host with a dangling ~/.claude/skills/
+# loki-mode the two outputs gave OPPOSITE verdicts: text exited 1 while
+# --json reported failed 0 and ok true. An operator gating on the JSON got a
+# green on a host where the skill cannot load. Same class of fake-green as
+# the ai_provider block below, and fixed the same way: counted in the tally.
+#
+# Per-entry counting matches the text path, which tallies each of the four
+# entries separately. Paths are the same ones the text path already prints,
+# so this exposes nothing new.
+#
+# CAUTION: this block lives inside a DOUBLE-QUOTED python3 -c program, so no
+# apostrophes and no double quotes anywhere here, comments included.
+_SKILL_ENTRIES = (
+    ('Claude Code', '.claude/skills/loki-mode'),
+    ('Codex CLI', '.codex/skills/loki-mode'),
+    ('Cline CLI', '.cline/skills/loki-mode'),
+    ('Aider CLI', '.aider/skills/loki-mode'),
+)
+skills = []
+for _sk_name, _sk_rel in _SKILL_ENTRIES:
+    _sk_dir = os.path.join(os.path.expanduser('~'), _sk_rel)
+    if os.path.isfile(os.path.join(_sk_dir, 'SKILL.md')):
+        skills.append({'name': _sk_name, 'path': _sk_dir, 'status': 'pass',
+                       'detail': None, 'required': 'required'})
+    elif os.path.islink(_sk_dir):
+        # islink is true for a DANGLING link (lstat-based), which is exactly
+        # the broken case the text path reports as FAIL.
+        try:
+            _sk_target = os.readlink(_sk_dir)
+        except OSError:
+            _sk_target = 'unknown'
+        skills.append({'name': _sk_name, 'path': _sk_dir, 'status': 'fail',
+                       'detail': 'broken symlink -> ' + _sk_target
+                                 + '. Fix: loki setup-skill',
+                       'required': 'required'})
+    else:
+        skills.append({'name': _sk_name, 'path': _sk_dir, 'status': 'warn',
+                       'detail': 'not found - run loki setup-skill',
+                       'required': 'required'})
+
 pass_count = sum(1 for c in checks if c['status'] == 'pass')
 fail_count = sum(1 for c in checks if c['status'] == 'fail')
 warn_count = sum(1 for c in checks if c['status'] == 'warn')
+
+for _sk in skills:
+    if _sk['status'] == 'pass':
+        pass_count += 1
+    elif _sk['status'] == 'fail':
+        fail_count += 1
+    else:
+        warn_count += 1
 
 if disk_status == 'pass': pass_count += 1
 elif disk_status == 'fail': fail_count += 1
@@ -12258,6 +12308,7 @@ result = {
         'status': disk_status
     },
     'ai_provider': ai_provider,
+    'skills': skills,
     'sentrux': sentrux,
     'receipt_signing': receipt_signing,
     'memory': memory,

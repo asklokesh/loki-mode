@@ -105,6 +105,8 @@ export type DoctorJson = {
   provider_availability: ProviderAvailability | null;
   disk: DiskCheck;
   ai_provider: AiProviderCheck;
+  // Skill-link integrity, counted in the summary tally. See buildDoctorJson.
+  skills: SkillJson[];
   sentrux: SentruxCheck;
   receipt_signing: ReceiptSigningCheck;
   memory: MemoryHealth;
@@ -312,6 +314,33 @@ export function checkSkills(): SkillStatus[] {
       detail: "(not found - run 'loki setup-skill')",
     };
   });
+}
+
+// JSON projection of a SkillStatus, byte-matching the bash cmd_doctor_json
+// `skills` entries. Kept next to checkSkills so text and JSON cannot drift.
+export type SkillJson = {
+  name: string;
+  path: string;
+  status: Status;
+  detail: string | null;
+  required: "required";
+};
+
+// Text mode renders `detail` with surrounding parens and a separate Fix line;
+// JSON carries the bare sentence with the fix inlined, matching bash.
+export function skillsForJson(): SkillJson[] {
+  return checkSkills().map((s) => ({
+    name: s.name,
+    path: s.path,
+    status: s.status,
+    detail:
+      s.status === "pass"
+        ? null
+        : s.status === "fail"
+          ? `${s.detail.replace(/^\(|\)$/g, "")}. Fix: loki setup-skill`
+          : "not found - run loki setup-skill",
+    required: "required" as const,
+  }));
 }
 
 // ---------- Tool list (single source of truth shared by text + JSON) ----------
@@ -578,12 +607,25 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
   if (anyProviderFound) passed++;
   else failed++;
 
+  // SKILL LINK INTEGRITY, mirroring autonomy/loki:cmd_doctor_json. The text
+  // path on both routes fails closed on a broken skill symlink, but --json
+  // omitted skills entirely -- so a host with a dangling ~/.claude/skills/
+  // loki-mode had text exit 1 while --json reported failed 0 and ok true.
+  // Counted per entry, exactly as the text path tallies them.
+  const skills = skillsForJson();
+  for (const s of skills) {
+    if (s.status === "pass") passed++;
+    else if (s.status === "fail") failed++;
+    else warnings++;
+  }
+
   return {
     loki_mode_version: getVersion(),
     checks,
     provider_availability: readProviderAvailability(),
     disk,
     ai_provider: aiProvider,
+    skills,
     sentrux,
     receipt_signing: receiptSigning,
     memory,
