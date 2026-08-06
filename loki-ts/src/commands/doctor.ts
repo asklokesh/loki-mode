@@ -805,8 +805,17 @@ async function runText(): Promise<number> {
       sdkUsable = probe.status === 0;
     }
     if (sdkUsable) {
+      // Byte-mirrors the bash route. "No separate CLI needed" was true for
+      // `loki start` and false for demo/quick/quickstart, which stay on bash and
+      // require a binary on PATH -- so a green doctor was followed by exit 2.
       process.stdout.write(
-        `  ${badge("pass")}  Bundled Claude Agent SDK is usable -- no separate CLI needed\n`,
+        `  ${badge("pass")}  Bundled Claude Agent SDK is usable -- 'loki start' needs no separate CLI\n`,
+      );
+      process.stdout.write(
+        `         ${YELLOW}Note: loki demo/quick/quickstart still need a provider CLI on PATH${NC}\n`,
+      );
+      process.stdout.write(
+        `         ${YELLOW}      Install: npm install -g @anthropic-ai/claude-code${NC}\n`,
       );
       tally.pass++;
     } else {
@@ -867,15 +876,26 @@ async function runText(): Promise<number> {
       );
       tally.pass++;
     } else if (loggedIn === "no") {
+      // BLOCKER, not a warning; byte-mirrors the bash route. As a warning this
+      // let a user pass doctor and confirm the spend before the auth preflight
+      // refused the build. A missing credential belongs at doctor time.
       process.stdout.write(
-        `  ${badge("warn")}  Claude CLI is NOT logged in -- run 'claude login' before a build (it would otherwise stall)\n`,
+        `  ${badge("fail")}  Claude CLI is NOT logged in -- a build would stall instead of running\n`,
       );
-      tally.warn++;
+      process.stdout.write(
+        `         ${YELLOW}Fix: claude login${NC}   (or set ANTHROPIC_API_KEY)\n`,
+      );
+      tally.blockers.push("Claude CLI is not logged in. Fix: claude login (or set ANTHROPIC_API_KEY)");
+      tally.fail++;
     } else if (claudeOauthExpired()) {
       process.stdout.write(
-        `  ${badge("warn")}  Claude login has EXPIRED -- run 'claude login' before a build (it would otherwise stall)\n`,
+        `  ${badge("fail")}  Claude login has EXPIRED -- a build would stall instead of running\n`,
       );
-      tally.warn++;
+      process.stdout.write(
+        `         ${YELLOW}Fix: claude login${NC}   (or set ANTHROPIC_API_KEY)\n`,
+      );
+      tally.blockers.push("Claude login has expired. Fix: claude login (or set ANTHROPIC_API_KEY)");
+      tally.fail++;
     } else {
       process.stdout.write(
         `  ${DIM}  --  ${NC}  ANTHROPIC_API_KEY not set (Claude CLI uses its own login)\n`,

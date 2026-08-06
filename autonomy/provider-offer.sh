@@ -369,10 +369,34 @@ offer_provider_install() {
 # signal the caller should `exit 2` (no provider, declined or non-interactive).
 provider_offer_gate() {
     detect_any_provider && return 0
-    offer_provider_install gate || return 2
+    offer_provider_install gate || { _provider_gate_emit_blocked; return 2; }
     # After an accepted install, re-detect; if still absent, fail the gate.
     detect_any_provider && return 0
+    _provider_gate_emit_blocked
     return 2
+}
+
+# Report that a first run died here. THIS is the wall most first runs hit --
+# every one of `loki start`, `demo`, `quick` and `quickstart` funnels through
+# provider_offer_gate and exits 2 -- and until now not one of those four exits
+# emitted anything. `first_start_attempted` fired, so the funnel recorded that a
+# first run was ATTEMPTED and nothing about whether it survived: an attempt that
+# died for want of a provider CLI looked identical to one that shipped a build.
+#
+# Emitting from the gate rather than from each of the four callers is deliberate:
+# one site cannot drift out of sync with the others, and a future caller of the
+# gate is instrumented by construction rather than by remembering.
+#
+# Sends the bounded enum `no_provider` and nothing else -- no path, no version,
+# no hostname, no command line -- and routes through loki_emit_first_run_blocked,
+# so every existing opt-out and the once-per-machine marker still apply. Silent
+# and non-fatal if telemetry is unavailable: a diagnostic must never be able to
+# break the command it is diagnosing.
+_provider_gate_emit_blocked() {
+    if declare -f loki_emit_first_run_blocked >/dev/null 2>&1; then
+        ( loki_emit_first_run_blocked "no_provider" >/dev/null 2>&1 </dev/null & ) 2>/dev/null || true
+    fi
+    return 0
 }
 
 # render_provider_availability: print the "Provider Availability" doctor section.

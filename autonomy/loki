@@ -11518,7 +11518,16 @@ cmd_doctor() {
         # fails closed on any doubt, so when it returns false we emit today's
         # blocker verbatim. Mirrored in loki-ts/src/commands/doctor.ts.
         if declare -f detect_bundled_sdk_provider >/dev/null 2>&1 && detect_bundled_sdk_provider; then
-            echo -e "  ${GREEN}PASS${NC}  Bundled Claude Agent SDK is usable -- no separate CLI needed"
+            # Say exactly which commands this covers. "No separate CLI needed" was
+            # true for `loki start` and FALSE for demo/quick/quickstart, which stay
+            # on the bash route and require a binary on PATH (provider-offer.sh:44
+            # documents why folding the SDK predicate into detect_any_provider
+            # would be a fail-open). The old wording produced the worst first-run
+            # outcome we have: a green doctor ending in "Next: loki quickstart",
+            # followed by quickstart, demo, quick and start-on-bash all exiting 2.
+            echo -e "  ${GREEN}PASS${NC}  Bundled Claude Agent SDK is usable -- 'loki start' needs no separate CLI"
+            echo -e "         ${YELLOW}Note: loki demo/quick/quickstart still need a provider CLI on PATH${NC}"
+            echo -e "         ${YELLOW}      Install: npm install -g @anthropic-ai/claude-code${NC}"
             pass_count=$((pass_count + 1))
         else
             echo -e "  ${RED}FAIL${NC}  No AI provider CLI installed -- at least one is required"
@@ -11588,11 +11597,23 @@ except Exception:
             echo -e "  ${GREEN}PASS${NC}  Claude CLI is logged in (subscription/OAuth login)"
             pass_count=$((pass_count + 1))
         elif [ "$_claude_login" = "no" ]; then
-            echo -e "  ${YELLOW}WARN${NC}  Claude CLI is NOT logged in -- run 'claude login' before a build (it would otherwise stall)"
-            warn_count=$((warn_count + 1))
+            # BLOCKER, not a warning. A build cannot run without a login, and the
+            # warning form let a user pass doctor, answer every quickstart prompt,
+            # pick a template and CONFIRM THE SPEND before hitting the refusal at
+            # run.sh's auth preflight. Discovering a missing login after the
+            # consent screen is the worst placement available. Doctor is where a
+            # missing credential belongs. (An ANTHROPIC_API_KEY short-circuits
+            # that preflight, which is why this branch is reached only when the
+            # key is absent too.)
+            echo -e "  ${RED}FAIL${NC}  Claude CLI is NOT logged in -- a build would stall instead of running"
+            echo -e "         ${YELLOW}Fix: claude login${NC}   (or set ANTHROPIC_API_KEY)"
+            _doctor_block "Claude CLI is not logged in. Fix: claude login (or set ANTHROPIC_API_KEY)"
+            fail_count=$((fail_count + 1))
         elif [ "$_claude_expired" = "expired" ]; then
-            echo -e "  ${YELLOW}WARN${NC}  Claude login has EXPIRED -- run 'claude login' before a build (it would otherwise stall)"
-            warn_count=$((warn_count + 1))
+            echo -e "  ${RED}FAIL${NC}  Claude login has EXPIRED -- a build would stall instead of running"
+            echo -e "         ${YELLOW}Fix: claude login${NC}   (or set ANTHROPIC_API_KEY)"
+            _doctor_block "Claude login has expired. Fix: claude login (or set ANTHROPIC_API_KEY)"
+            fail_count=$((fail_count + 1))
         else
             echo -e "  ${DIM}  --  ${NC}  ANTHROPIC_API_KEY not set (Claude CLI uses its own login)"
         fi

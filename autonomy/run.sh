@@ -3147,13 +3147,26 @@ validate_api_keys() {
     if [[ "$provider" == "claude" && "${LOKI_SKIP_AUTH_PREFLIGHT:-}" != "1" && -z "${ANTHROPIC_API_KEY:-}" ]]; then
         local _login_state
         _login_state="$(_loki_claude_login_state)"
+        # Both branches report the blocker before returning. This is the wall a
+        # user hits AFTER answering every quickstart prompt and confirming the
+        # spend, and until now it emitted nothing -- so the funnel showed a first
+        # run attempted, then silence, indistinguishable from a successful build.
+        # Bounded enum only (`not_logged_in`), never the login state, path or
+        # credential; backgrounded and non-fatal so a diagnostic can never break
+        # the refusal it is describing.
         if [[ "$_login_state" == "loggedout" ]]; then
+            if declare -f loki_emit_first_run_blocked >/dev/null 2>&1; then
+                ( loki_emit_first_run_blocked "not_logged_in" >/dev/null 2>&1 </dev/null & ) 2>/dev/null || true
+            fi
             log_error "Claude Code is installed but not logged in -- the build would stall instead of running."
             log_error "Log in once, then retry:"
             log_error "    claude login"
             log_error "(or set ANTHROPIC_API_KEY, or LOKI_SKIP_AUTH_PREFLIGHT=1 to bypass this check)"
             return 1
         elif [[ "$_login_state" == "expired" ]]; then
+            if declare -f loki_emit_first_run_blocked >/dev/null 2>&1; then
+                ( loki_emit_first_run_blocked "not_logged_in" >/dev/null 2>&1 </dev/null & ) 2>/dev/null || true
+            fi
             log_error "Your Claude Code login has expired -- the build would stall instead of running."
             log_error "Fix it in one step, then retry:"
             log_error "    claude login"

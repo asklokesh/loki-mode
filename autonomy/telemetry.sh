@@ -194,7 +194,14 @@ _loki_known_command() {
 # a first run, never the user's paths, versions, or hostnames.
 _loki_known_blocker() {
     case "${1:-}" in
-        no_provider|node|python3|jq|git|curl|disk|skill_symlink)
+        # not_logged_in is distinct from no_provider on purpose. They are the two
+        # halves of the same wall and they need opposite fixes: no_provider means
+        # "install something", not_logged_in means "authenticate the thing you
+        # already installed". Collapsing the second into `other` would make the
+        # single most common post-install failure unactionable in the data --
+        # and it is the worst-placed one, since without this the user only learns
+        # of it after confirming the spend.
+        no_provider|not_logged_in|node|python3|jq|git|curl|disk|skill_symlink)
             printf '%s' "$1" ;;
         *)
             printf 'other' ;;
