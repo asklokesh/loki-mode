@@ -224,7 +224,7 @@ declare -a _FAST_KEEP=(
   "tests/test-mcp-tool-surface-guard-rejects.sh" # 8s, proves the guard rejects
   # CLAUDE.md cleanup mandate: sub-second, and the whole point is that it runs
   # on every invocation, not only the slow one.
-  "no /tmp/loki-* /tmp/test-* leftovers"
+  "no leftovers from this run"
 )
 
 # Returns 0 when the check should RUN in the fast tier.
@@ -649,6 +649,16 @@ harvest_lanes
 # 7. loki-ts typecheck + tests (mirrors test.yml bun-tests)
 # ---------------------------------------------------------------------------
 if command -v bun >/dev/null 2>&1; then
+  # Install loki-ts deps BEFORE any check that uses them. loki-ts/node_modules is
+  # gitignored, so a freshly-created worktree has none -- and the three checks
+  # below then fail for a reason that has nothing to do with the code. Measured
+  # on a fresh worktree 2026-08-06: 99 packages present vs 103, `typescript`
+  # absent, so `bun run typecheck` died with `Script not found "tsc"`, the dist
+  # build produced no output (reported as DIST STALE, see below), and `bun test`
+  # reported 50 failures of which 49 were the missing toolchain -- burying the
+  # ONE real regression in noise and costing a full 26-minute cycle to diagnose.
+  # --frozen-lockfile so the gate can never silently drift the lockfile.
+  run_check "loki-ts dependencies installed" "(cd loki-ts && bun install --frozen-lockfile) 2>&1 | tail -3"
   run_check "bun run typecheck" "(cd loki-ts && bun run typecheck) 2>&1 | tail -5"
   run_check "bun test" "(cd loki-ts && bun test) 2>&1 | tail -5"
   # dist freshness: the committed loki-ts/dist/loki.js is the artifact npm/Docker
@@ -672,18 +682,52 @@ if command -v bun >/dev/null 2>&1; then
     fi
   '
 
+  # This check REBUILDS a git-tracked file (loki-ts/dist/loki.js is force-added
+  # despite loki-ts/.gitignore), so restoring it is not optional. Three defects
+  # were fixed here on 2026-08-06, all of which had produced real false verdicts:
+  #
+  #   1. FALSE REPORT. The body had no `set -e` and ran under `eval`, which only
+  #      inspects the final status. With dist/loki.js ABSENT, the initial `cp`
+  #      failed to stderr and execution continued, the build then created the
+  #      file, `diff` compared it against a stale/absent backup, and the else
+  #      branch announced "DIST STALE" -- asserting divergence for a file that
+  #      simply was not there. That message sent a 26-minute diagnosis down the
+  #      wrong path. Absence and divergence are now reported distinctly.
+  #   2. NO TRAP. Restoration was a bare `cp` on both branches; an interrupt
+  #      between build and restore left the rebuilt bundle in the worktree. The
+  #      restore now runs from a trap, so it fires on any exit path.
+  #   3. NON-IDEMPOTENT. In the absent-file case the restore `cp` also failed,
+  #      leaving the fresh build in place -- so the check failed once and passed
+  #      on retry, exactly the phantom-failure signature this script condemns.
+  #
+  # The fixed /tmp backup path was also per-machine, not per-run: two sanctioned
+  # concurrent runs (LOCAL_CI_ALLOW_CONCURRENT=1) clobbered each other'"'"'s backup
+  # and could restore foreign bytes into a tracked file. Now mktemp.
   run_check "dist/loki.js is a fresh build of src" '
+    set -e
     cd loki-ts
-    cp dist/loki.js /tmp/loki-ci-dist-committed.js
+    if [ ! -f dist/loki.js ]; then
+      echo "DIST MISSING: loki-ts/dist/loki.js does not exist, so it cannot be compared against a fresh build."
+      echo "This is NOT a staleness verdict. Run: cd loki-ts && bun run build, then git add -f loki-ts/dist/loki.js"
+      exit 1
+    fi
+    _dist_backup="$(mktemp "${TMPDIR:-/tmp}/loki-ci-dist-committed.XXXXXX")"
+    _map_backup="$(mktemp "${TMPDIR:-/tmp}/loki-ci-dist-map.XXXXXX")"
+    cp dist/loki.js "$_dist_backup"
+    # dist/loki.js.map is tracked too and the rebuild rewrites it (its debugId
+    # varies per build). Restoring only the bundle left the map modified, so a
+    # green gate still dirtied the worktree. Both are restored together.
+    cp dist/loki.js.map "$_map_backup" 2>/dev/null || true
+    trap "cp \"$_dist_backup\" dist/loki.js 2>/dev/null || true; cp \"$_map_backup\" dist/loki.js.map 2>/dev/null || true; rm -f \"$_dist_backup\" \"$_map_backup\"" EXIT
     bun run build >/dev/null 2>&1
-    if diff <(grep -v "debugId" /tmp/loki-ci-dist-committed.js) <(grep -v "debugId" dist/loki.js) >/dev/null; then
-      cp /tmp/loki-ci-dist-committed.js dist/loki.js
-      rm -f /tmp/loki-ci-dist-committed.js
+    if [ ! -f dist/loki.js ]; then
+      echo "DIST BUILD FAILED: bun run build produced no dist/loki.js. Run: cd loki-ts && bun run build"
+      exit 1
+    fi
+    if diff <(grep -v "debugId" "$_dist_backup") <(grep -v "debugId" dist/loki.js) >/dev/null; then
       echo "dist matches fresh build (committed bundle is not stale)"
     else
-      cp /tmp/loki-ci-dist-committed.js dist/loki.js
-      rm -f /tmp/loki-ci-dist-committed.js
-      echo "DIST STALE: committed loki-ts/dist/loki.js differs from a fresh build of src. Run: cd loki-ts \&\& bun run build, then git add -f loki-ts/dist/loki.js"
+      echo "DIST STALE: committed loki-ts/dist/loki.js differs from a fresh build of src. Run: cd loki-ts && bun run build, then git add -f loki-ts/dist/loki.js"
       exit 1
     fi
   '
@@ -1515,7 +1559,35 @@ run_check "npm audit (production deps, high+)" "
 # ---------------------------------------------------------------------------
 # 14. Cleanup probe (CLAUDE.md mandate)
 # ---------------------------------------------------------------------------
-run_check "no /tmp/loki-* /tmp/test-* leftovers" 'ls /tmp/loki-* /tmp/test-* 2>&1 | grep -q "No such file" || ! ls /tmp/loki-* /tmp/test-* 2>/dev/null | grep -q .'
+# Cleanup hygiene, scoped to THIS run. Rewritten 2026-08-06; the previous form
+#   ls /tmp/loki-* /tmp/test-* 2>&1 | grep -q "No such file" || ! ls ... | grep -q .
+# was wrong in three independent ways:
+#
+#   1. FALSE GREEN (the worst of the three). With 2>&1 merging stderr, an
+#      unmatched glob printed "No such file" and the FIRST clause succeeded, so
+#      `||` short-circuited. A genuine /tmp/loki-* leftover therefore PASSED
+#      whenever no /tmp/test-* happened to exist. It only enforced anything in
+#      the single state where both globs matched.
+#   2. FALSE RED. It matched every /tmp/loki-* on the machine -- other worktrees,
+#      other users, other agents' concurrent runs. A hygiene check that fails on
+#      someone else's litter is noise, and it failed a fully green 165-check run.
+#   3. WRONG DIRECTORY. This run writes to ${TMPDIR:-/tmp}; on macOS TMPDIR is a
+#      per-user private path, so the check could not see its own artifacts at all
+#      while policing a directory it never wrote to.
+#
+# Now: delete the shard logs this run created (they were never cleaned up -- the
+# harvest at the shard step only cat'd them), then assert THIS run's temp dir is
+# clean. Scoped, single-clause, and it fails only on litter we are responsible for.
+run_check "no leftovers from this run" '
+  rm -f "${TMPDIR:-/tmp}"/loki-shard-*.log 2>/dev/null || true
+  _leftovers="$(ls -d "${TMPDIR:-/tmp}"/loki-ci-dist-committed.* "${TMPDIR:-/tmp}"/loki-shard-*.log 2>/dev/null || true)"
+  if [ -n "$_leftovers" ]; then
+    echo "This run left temp artifacts behind:"
+    echo "$_leftovers"
+    exit 1
+  fi
+  echo "no leftovers from this run"
+'
 
 # ---------------------------------------------------------------------------
 # Harvest parallel lanes: wait for all background lanes launched above, then
