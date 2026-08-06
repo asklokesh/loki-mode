@@ -5,6 +5,48 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.15.0
+
+### Added
+
+- **Claim grounding -- the completion claim is the one artifact nobody checks.**
+  Our evidence gate has six axes (diff non-empty, tests green, runtime boot,
+  no-mock, authorization, secret leak) and every one is a REPO-LEVEL fact. None
+  reads what the agent actually claimed. So an agent could finish by asserting
+  "added retry logic to payments.py and covered it with tests" while the diff
+  showed a README edit, and all six axes pass. Path-shaped tokens in a claim are
+  now resolved against the real changed-file set. Deliberately fail-open: only a
+  path demonstrably absent from the diff is a finding, because a check that fires
+  on ordinary prose gets disabled inside a week and takes the real detections
+  with it.
+
+- **LLM Decision Record -- which model, at what temperature, made each call.**
+  Factory AI's audit log has eight event types and not one records an agent
+  action; agent forensics exists only as customer-built OTEL. Records are
+  append-only and make a mid-project model or temperature change detectable,
+  which is what makes "we ran an approved configuration" falsifiable. The field
+  set is a pinned allowlist: a prompt body, an API key and file contents are all
+  refused, with the refusal surfaced rather than silent. Nothing is transmitted.
+
+- **Failure memory -- learn from being wrong without poisoning the next run.**
+  Factory has no memory system at all; Devin discards session state at teardown
+  and ships a "Misleading Knowledge" tab enumerating memory items that led it
+  astray. That names the mechanism: memory written from an agent's narration
+  records what the agent believed, which is exactly what was wrong when it
+  failed. So a lesson requires a named gate, a verdict, and EVIDENCE, and is
+  refused without it. Recall returns checkable counts rather than
+  generalizations, and states what happened rather than prescribing a fix.
+
+### Fixed
+
+- **The release gate no longer fails on a host fault it already repaired.** The
+  core.bare check fired three times in one day, each on a FULL gate whose other
+  165 checks passed, each on a mutation it had already fixed before returning. A
+  check that repairs a problem and then reports red teaches one response, re-run
+  and ignore, which is how the next genuine red gets waved through. Evidence is
+  unchanged (the watcher still logs MUTATED with a config backup); only the false
+  block is gone. A repair that FAILS still blocks.
+
 ## v9.14.0
 
 ### Added
