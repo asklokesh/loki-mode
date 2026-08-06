@@ -5,6 +5,44 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.13.0
+
+### Added
+
+- **`loki outcomes` -- measure whether the work was RIGHT, not that it happened.**
+  Every competing agent reports volume. Measured against their own published
+  docs: Factory AI's analytics expose files edited, lines modified, commits, PRs
+  created, tokens and DAU, and no defect rate, no revert rate, no change-failure
+  rate; their telemetry doc leaves outcome correlation to the customer's own
+  stack. Devin's security page concedes the agent "can still experience
+  hallucinations, introduce bugs into code" and points at your existing review.
+  Both can prove the agent was busy. Neither shows it was right.
+
+  `loki outcomes [--json] [--run-id X]` follows each Evidence Receipt past the
+  moment it was written and reports, from local git alone: was it reverted (read
+  from git's own "This reverts commit" trailer, so a fact rather than an
+  inference), did its lines survive (`git blame --porcelain` attribution), how
+  much was reworked, and the change-failure rate across receipts. Read-only; it
+  never writes to the repo it analyses.
+
+  **The anchor gate is the feature.** `facts.git.head_sha` is `git rev-parse
+  HEAD` at receipt-generation time, which for uncommitted work is the run's
+  starting commit, not what the change became. On this repo's own nine receipts,
+  eight carry an empty `base_sha` and share a `head_sha` whose commit touches two
+  files while those receipts attest to eight. Following it regardless would have
+  attributed one commit's fate to eight unrelated runs and printed it as a
+  change-failure rate. File-overlap was tested as a fallback and rejected (those
+  receipts overlap that commit by two files, so any overlap rule accepts all
+  eight). A receipt is measured only when sha algebra proves `base..head` is that
+  change, including a full file-set match.
+
+  So on this repo today it reports ANCHORED 0 of 9 with a reason distribution and
+  a change-failure rate of UNKNOWN. That is the correct output: an unmeasurable
+  denominator yields 0.0 if nobody guards it, and 0.0 would look better and be a
+  lie. Verified in a synthetic repo that an anchored change reports SURVIVED, and
+  after `git revert` the same receipt reports REVERTED with three independent
+  signals agreeing.
+
 ## v9.12.6
 
 ### Added
