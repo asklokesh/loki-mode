@@ -1,9 +1,26 @@
 name: SBOM (CycloneDX)
 
 # Generates a CycloneDX Software Bill of Materials for the published npm
-# package on every push to main / feat/bun-migration and on every release.
-# The SBOM is uploaded as a workflow artifact and (on release) attached to
-# the GitHub Release assets.
+# package on every push to main / feat/bun-migration. The SBOM is uploaded as a
+# workflow artifact.
+#
+# THE `release: published` TRIGGER IS DEAD, AND THE HEADER USED TO LIE ABOUT IT.
+# Releases are created by `gh release create` in release.yml under the default
+# GITHUB_TOKEN, and GitHub deliberately suppresses trigger events for that token
+# to prevent workflow recursion. So this workflow has NEVER fired on a release:
+# measured over its last 15 runs, every one was `push`, none was `release`.
+# The old header claimed the SBOM was "(on release) attached to the GitHub
+# Release assets" -- it never has been, and a dead trigger shows up as an EMPTY
+# run list rather than a red one, which is why it went unnoticed.
+#
+# This repo already learned this exact lesson twice: provenance.yml:3-15 and
+# release.yml:576-591 both document it, and release.yml responded by generating
+# its container SBOM INLINE rather than relying on a release-triggered workflow.
+#
+# The trigger is kept (harmless, and correct the day releases are cut by a PAT
+# instead), but the claim is not. Attaching the npm-tarball SBOM to releases
+# needs the same treatment the container SBOM got: generate it inside
+# release.yml, where the release is actually being made. Tracked separately.
 
 on:
   push:
