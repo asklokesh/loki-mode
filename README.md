@@ -13,23 +13,68 @@ _The free, source-available autonomous coding agent by [Autonomi](https://www.au
 [![Docker Pulls](https://img.shields.io/docker/pulls/asklokesh/loki-mode?style=for-the-badge&logo=docker&logoColor=white&color=2F71E3)](https://hub.docker.com/r/asklokesh/loki-mode)
 [![License](https://img.shields.io/badge/License-BUSL--1.1-36342E?style=for-the-badge)](LICENSE)
 
-[Website](https://www.autonomi.dev/) | [Documentation](wiki/Home.md) | [Installation](docs/INSTALLATION.md) | [Changelog](CHANGELOG.md) | [Purple Lab -- deprecated v7.44.0](#purple-lab)
+[Website](https://www.autonomi.dev/) | [Documentation](wiki/Home.md) | [Installation](docs/INSTALLATION.md) | [Changelog](CHANGELOG.md)
 
-**Current release: v9.8.1**
+**Current release: v9.16.0**
 
 </div>
 
 ---
 
-## See the receipt before you install anything
-
-Every agent claims it finished. Ours hands you an artifact you can check:
+## Install
 
 ```bash
-npx loki-mode tour     # no install, no API key, no spend, no network
+bun install -g loki-mode          # recommended (npm, Homebrew, Docker below)
 ```
 
-That prints a real Evidence Receipt from a past build. Note what it says:
+<details>
+<summary>Other install methods</summary>
+
+| Method | Command | Notes |
+|--------|---------|-------|
+| **Bun (recommended)** | `bun install -g loki-mode` | Fastest startup for CLI commands. |
+| **npm** | `npm install -g loki-mode` | Works without Bun (bash fallback). Migrate any time with `loki self-update --to bun`. |
+| **Homebrew** | `brew tap asklokesh/tap && brew install loki-mode` | Auto-installs Bun as a dep. |
+| **Docker** | `docker pull asklokesh/loki-mode:latest` | Bun + Claude CLI pre-installed. See [DOCKER_README.md](DOCKER_README.md). |
+
+Upgrade with `loki self-update`. Long form: [Installation Guide](docs/INSTALLATION.md).
+
+</details>
+
+## Use it
+
+```bash
+loki quickstart                   # guided first build: asks a few questions, quotes cost, builds
+```
+
+That is the whole happy path. It asks for a one-line idea, picks a template,
+shows the real cost and time estimate before spending anything, then builds.
+Press Enter through every step and you get a sample Todo app.
+
+Or go straight at it:
+
+```bash
+loki quick "build a landing page with a signup form"     # one-shot task
+loki start prd.md                                        # build from a spec you wrote
+loki modernize heal ./your-repo --assess                 # existing codebase, read-only
+```
+
+**Loki needs a model to drive.** An `ANTHROPIC_API_KEY` alone is enough (the
+Claude Agent SDK ships inside Loki); or point it at Claude Code, aider, cline,
+or an open model. Run `loki doctor` and it tells you exactly what is missing.
+
+```bash
+export ANTHROPIC_API_KEY=sk-...
+loki doctor                       # checks your setup, names any blocker
+```
+
+## Try it first, without installing
+
+```bash
+npx loki-mode tour                # no install, no API key, no spend, no network
+```
+
+Prints a real Evidence Receipt from a past build, headline and all:
 
 ```
 Headline: VERIFIED WITH GAPS
@@ -43,14 +88,18 @@ Headline: VERIFIED WITH GAPS
 | Cost          | $10.3218                                 |
 ```
 
-**"WITH GAPS" is the point.** Build was not run. Security has findings. The
-receipt says so on its own front page, and separates deterministic FACTS -- the
-diff hash, the test result, the cost -- from AI ASSESSMENTS, because only four
-of the eight quality gates are agent-independent and a receipt that implied
-otherwise would be marketing.
+**"WITH GAPS" is the point.** Build was not run, security has findings, and the
+receipt says so on its own front page. Recompute the diff hash yourself and
+check it matches -- you are not asked to trust the agent's self-report.
 
-Recompute the diff hash yourself and check it matches. That is the whole idea:
-you are not asked to trust the agent's self-report.
+---
+
+> **How it works:** Drop a spec -- a PRD, GitHub issue, OpenAPI/JSON/YAML, or one-line brief. Loki Mode classifies complexity (`run.sh:detect_complexity()`), assembles an agent team from 41 specialized agent roles across 8 domains - prompt-defined specifications the orchestrator adopts per phase, with parallel review (blind council) and optional worktree streams on Claude Code, sequential on other providers - and runs autonomous RARV cycles (Reason - Act - Reflect - Verify, see `run.sh:run_autonomous()`) with 8 quality gates (see `skills/quality-gates.md`). Code is not "done" until it passes automated verification. Output is a Git repo with source, tests, configs, and audit logs.
+
+---
+
+<details>
+<summary><b>Why verified completion matters</b> -- the failure this exists to fix</summary>
 
 Self-reported completion is the failure users actually hit. A survey of the
 open issue trackers of seven coding harnesses (OpenHands, Cline, Aider,
@@ -70,8 +119,7 @@ exposes a command that verifies the agent's own output. Rerun it yourself with
 
 That is a measurement of the CLI surface, not of whole products: a web UI or an
 API could expose something `--help` does not, and Devin and Replit Agent ship no
-local CLI so they are not covered. The receipt stands on its own either way:
-run the tour and check the hash.
+local CLI so they are not covered.
 
 **Evaluating this against something else?** [docs/EVALUATING.md](docs/EVALUATING.md)
 puts a runnable command next to every claim we make, and states plainly what we
@@ -79,11 +127,7 @@ do not have (no enterprise case studies, no independent benchmark placement, and
 generation is not air-gapped). It ends with the one question worth asking any
 agent vendor, including us.
 
----
-
-> **How it works:** Drop a spec -- a PRD, GitHub issue, OpenAPI/JSON/YAML, or one-line brief. Loki Mode classifies complexity (`run.sh:detect_complexity()`), assembles an agent team from 41 specialized agent roles across 8 domains - prompt-defined specifications the orchestrator adopts per phase, with parallel review (blind council) and optional worktree streams on Claude Code, sequential on other providers - and runs autonomous RARV cycles (Reason - Act - Reflect - Verify, see `run.sh:run_autonomous()`) with 8 quality gates (see `skills/quality-gates.md`). Code is not "done" until it passes automated verification. Output is a Git repo with source, tests, configs, and audit logs.
-
----
+</details>
 
 ## Already have a codebase? Start read-only.
 
@@ -295,45 +339,19 @@ status check in your repository's branch-protection settings.
 
 ---
 
-## Get Started in 30 Seconds
+<details>
+<summary><b>Setup details: providers, other models, what loki doctor checks</b></summary>
 
-Zero install, zero key, zero spend. See a real Evidence Receipt right now:
-
-```bash
-npx loki-mode tour                             # replay a real sample receipt (no install, no key, no spend)
-```
-
-Ready to build? Install and run the guided first build:
-
-```bash
-bun install -g loki-mode                       # install (npm/brew/Docker also work, see below)
-loki quickstart                                # one guided command: your first real build
-```
-
-`loki quickstart` is the recommended way to start. It asks a few quick questions
-(setup check, one-line idea, template pick, plan review), quotes the real
-cost/time estimate before anything is spent, and then runs the build. Pressing
-Enter through every step builds the sample Todo app.
-
-Want a taste with zero key and zero spend first? Run:
-
-```bash
-loki demo --offline                            # replay a real sample Evidence Receipt (no key, no spend)
-```
-
-It replays a real past build's Evidence Receipt so you can see Loki's honest
-verdict (VERIFIED / VERIFIED WITH GAPS / NOT VERIFIED) in seconds, with no
-provider, no API key, no spend, and no network. It is a sample (a replay), not a
-verdict on your own code.
-
-Prefer the explicit, scriptable path? Scaffold a PRD and run the build yourself:
+Other spec sources work the same way:
 
 ```bash
 loki init my-app --template simple-todo-app    # scaffold a starter PRD
-cd my-app && loki start prd.md                 # autonomous build from the spec
+loki start owner/repo#123                      # a GitHub issue
+loki start ./openapi.yaml                      # an OpenAPI/YAML spec
+loki demo --offline                            # replay a sample receipt, no key, no spend
 ```
 
-One thing to know first: Loki needs a model to drive. There are two ways to give it one.
+Loki needs a model to drive. There are two ways to give it one.
 
 **Without a separate CLI (v8).** The Claude Agent SDK ships inside Loki, so an API key alone is enough:
 
@@ -401,12 +419,7 @@ which model produced the code. They check what was actually built.
 
 Either way, run `loki doctor` any time and it tells you exactly what is present and what is missing, with a copy-pasteable install command for each gap.
 
-```bash
-loki doctor                                    # check your setup before the first build
-```
-
-<details>
-<summary><strong>What Loki needs (and what loki doctor checks)</strong></summary>
+**What Loki needs (and what `loki doctor` checks)**
 
 Required:
 
@@ -424,48 +437,23 @@ Recommended:
 
 You also need credentials for whichever provider you use (for Claude Code, an authenticated `claude` login or `ANTHROPIC_API_KEY`). `loki doctor` flags a missing or unauthenticated provider as the first thing to fix.
 
-</details>
-
 If you do not have Bun yet:
 
 ```bash
 curl -fsSL https://bun.sh/install | bash       # macOS / Linux (or: brew install oven-sh/bun/bun)
 ```
 
-Other spec sources work the same way:
+Docker without installing loki locally: `loki docker start prd.md` runs it in the
+published image with zero config, bind-mounting the current folder so `.loki`
+state and resume work exactly like local. See [DOCKER_README.md](DOCKER_README.md).
 
-```bash
-loki start owner/repo#123                       # a GitHub issue
-loki start ./openapi.yaml                        # an OpenAPI/YAML spec
-```
-
-Or skip scaffolding and go straight to a quick task:
-
-```bash
-loki quick "build a landing page with a signup form"
-```
-
-**Other install methods (all work, all keep working):**
-
-| Method | Command | Notes |
-|--------|---------|-------|
-| **Bun (recommended)** | `bun install -g loki-mode` | Fastest startup for CLI commands. |
-| **Homebrew** | `brew tap asklokesh/tap && brew install loki-mode` | Auto-installs Bun as a dep |
-| **Docker (easiest)** | `loki docker start prd.md` | Host wrapper: runs loki in the published image with zero config. Bind-mounts the current folder so `.loki` state, resume, and continuity work exactly like local. Auto-detects auth (`ANTHROPIC_API_KEY`, else your host Claude Code login). Needs loki + Docker on the host. See DOCKER_README.md |
-| **Docker (raw)** | `docker pull asklokesh/loki-mode:latest && docker run --rm -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" asklokesh/loki-mode:latest start prd.md` | Bun + Claude CLI pre-installed; needs an API key, or use docker compose with a .env file, see DOCKER_README.md |
-| **npm (compat)** | `npm install -g loki-mode` | Works without Bun (bash fallback). Migrate any time with `loki self-update --to bun`. |
-
-**Upgrading:**
-
-```bash
-loki self-update                  # upgrade in place via current manager
-loki self-update --to bun         # switch from npm/brew to Bun
-loki self-update --check          # show current install path + manager
-```
-
-`loki self-update` auto-detects which package manager installed loki and runs the right upgrade. If you installed via npm and want to switch to Bun (recommended for v8.0.0 forward-compat), `loki self-update --to bun` does the migration in one command (installs via Bun first, then uninstalls the npm copy).
+Upgrading: `loki self-update` auto-detects which package manager installed loki
+and runs the right upgrade. `loki self-update --to bun` migrates an npm install
+to Bun in one command. `loki self-update --check` shows the install path.
 
 See the [Installation Guide](docs/INSTALLATION.md) for the long form.
+
+</details>
 
 ---
 
@@ -640,14 +628,6 @@ env vars. See [Enterprise Identity Roadmap](docs/ENTERPRISE-IDENTITY-ROADMAP.md)
 </table>
 
 </details>
-
----
-
-## Purple Lab
-
-**[DEPRECATED in v7.44.0]** Purple Lab (`loki web`, port 57375) is deprecated. The local build monitor and project dashboard are now the dashboard (auto-launched by `loki start`, http://localhost:57374). For the hosted/commercial platform, see [Autonomi Cloud](https://www.autonomi.dev/).
-
-The historical feature set (platform pages, Monaco IDE workspace, AI chat panel) lives on in the dashboard and in Autonomi Cloud. `loki web` still invokes the old binary for backward compatibility but will be removed in a future major version.
 
 ---
 
