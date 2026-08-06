@@ -5,6 +5,43 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.14.0
+
+### Added
+
+- **`loki intent` -- detect the drift a verification gate structurally cannot see.**
+  Our gates prove code matches spec. They cannot prove the spec was RIGHT. 8090 AI
+  documents a real build where "the software converged with the interpretation.
+  The interpretation had diverged from the intent" -- a perfect verification gate
+  passes that build and the build is still wrong. No competitor ships an answer:
+  8090 published the argument and their own "Tests" module has zero documentation
+  pages and zero changelog entries.
+
+  An intent statement is linked to a spec requirement at that requirement's
+  current `content_hash`, so divergence is a pure hash comparison against
+  `.loki/spec/spec.lock`. Verified end to end: a requirement rewritten from "users
+  can export their data" to "admins can export via internal API" reads
+  LINKED-STALE naming both hashes, while the code would still match that spec byte
+  for byte.
+
+  There is deliberately no semantic fidelity score. Asking a model "does this spec
+  express this intent?" and printing a percentage is an LLM judgment wearing the
+  costume of a measurement, and our receipts exist to separate deterministic FACTS
+  from AI ASSESSMENTS. Two structural tests enforce the absence against executable
+  code, so it cannot be added later as an improvement without the suite going red.
+
+- **Pre-edit snapshot -- measure the agent, not the agent-plus-whoever-fixed-it.**
+  Every quality number we publish is measured after a human may have touched the
+  diff, so a strong reviewer flatters the agent and a weak one maligns it. 8090's
+  framing: a post-edit score "describes the writer-plus-AI workflow, not the AI
+  alone." An immutable snapshot of the agent's output is captured at the moment it
+  stops, with a sha256 anyone can recompute.
+
+  Write-once is load-bearing: re-capturing after a human edit would record the
+  human's work as the agent's, reintroducing the exact contamination via the tool
+  meant to prevent it. It scores nothing on purpose -- a low pre-edit result is a
+  diagnostic, not a failure.
+
 ## v9.13.0
 
 ### Added
