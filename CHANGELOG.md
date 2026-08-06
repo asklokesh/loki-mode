@@ -5,6 +5,46 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.16.0
+
+Completes the 10-item competitive roadmap.
+
+### Added
+
+- **Agent readiness -- a measurement where the competitor ships an opinion.**
+  Factory AI's Agent Readiness Model records `modelUsed` and `reasoningEffort`
+  per report, so its score is a model's opinion and two runs can disagree about
+  the same commit. Ours is filesystem facts: three runs of the same repo produce
+  byte-identical output, with no key, no spend and no network. It asks the
+  narrower question our product depends on, can an agent verify itself here,
+  and does not duplicate the deterministic maturity rubric
+  `loki modernize heal --assess` already ships.
+
+- **SCIM 2.0 provisioning.** Measured before building: OIDC is real here (76
+  references in dashboard/auth.py) and SAML and SCIM were both zero. The gap was
+  never authentication, it was PROVISIONING -- with OIDC alone a terminated
+  employee stops being able to log in while an already-issued token keeps
+  working. IdP groups map onto the scope hierarchy auth.py already enforces, so
+  there is one authorization model rather than two that drift. An unknown group
+  maps to the lowest scope, and a corrupt store denies rather than reading as
+  "nobody provisioned"; both are mutation-checked. Deprovisioning is soft by
+  default because an audit log that cannot say who acted is not an audit log.
+
+- **`loki verdict` -- the five measured signals, where a reviewer sees them.**
+  A moat nobody sees is not a moat. One block, five lines, each a measured fact
+  or an explicit UNKNOWN, rendered into the Evidence Receipt already attached to
+  PRs. No composite score: averaging a revert count, a hash comparison and a
+  model id yields a number nobody can explain, which is what competitors already
+  ship. UNKNOWN lines are printed, never hidden.
+
+- **docs/VERIFICATION-COST.md -- what our verification costs, and what it does
+  not prove.** The FULL gate takes 23 to 26 minutes and we do not offer a mode
+  that makes it free. The page states that the unsigned receipt path is
+  forgeable, that only four of eight gates are agent-independent, that
+  verification cannot prove the spec was right, and that 0 of 9 of our own
+  receipts are anchored so `loki outcomes` reports UNKNOWN for all of them. A
+  14-assertion test keeps it true rather than merely present.
+
 ## v9.15.0
 
 ### Added
