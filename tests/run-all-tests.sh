@@ -200,6 +200,7 @@ run_test "dashboard venv teardown is serialized (concurrent runs keep an importa
 run_test "verification runs air-gapped (enterprise perimeter, honest scope)" "$SCRIPT_DIR/test-airgap-verify.sh"
 run_test "doctor names what blocks you (first-run funnel)" "$SCRIPT_DIR/test-doctor-names-blockers.sh"
 run_test "first-run funnel covers the walls users hit" "$SCRIPT_DIR/test-first-run-funnel-coverage.sh"
+run_test "a completion claim must name work in the diff" "$SCRIPT_DIR/test-claim-grounding.sh"
 run_test "outcome ledger anchors before it measures" "$SCRIPT_DIR/test-outcome-ledger.sh"
 run_test "intent ledger detects spec-drifted-from-intent" "$SCRIPT_DIR/test-intent-ledger.sh"
 run_test "pre-edit snapshot separates agent from human rescue" "$SCRIPT_DIR/test-preedit-snapshot.sh"
