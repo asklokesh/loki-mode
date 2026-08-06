@@ -191,6 +191,7 @@ function _loki_commands {
         'magic:Spec-driven component generation'
         'assets:Export/import shareable team assets'
         'spec:Living spec drift detection'
+        'intent:Does the spec still say what was actually wanted'
         'verify:Deterministic PR verification'
         'grill:Interrogate a spec before building'
         'trust:Visible trust trajectory'

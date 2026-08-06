@@ -1041,7 +1041,7 @@ show_help() {
     echo "  cluster cockpit code compliance completions compound config context (ctx)"
     echo "  cost council crash dashboard demo deploy docker docs doctor dogfood"
     echo "  enterprise estimate explain export failover github grill heal help"
-    echo "  import init"
+    echo "  import init intent"
     echo "  issue kpis logs magic mcp memory metrics migrate modernize monitor"
     echo "  next notify onboard open optimize otel outcomes own (handoff) pause plan preview"
     echo "  projects proof (receipt) provider quick quickstart rc remote report reset"
@@ -15993,6 +15993,25 @@ cmd_verify() {
 # and detects drift deterministically, emitting .loki/spec/drift-report.json.
 # Exit codes are propagated so `loki spec status` is CI-gate usable.
 # ---------------------------------------------------------------------------
+# loki intent: does the spec still say what was actually wanted?
+#
+# Our gates prove code matches spec. They cannot prove the spec was RIGHT --
+# 8090 AI documents a build where "the software converged with the
+# interpretation. The interpretation had diverged from the intent", which a
+# perfect verification gate passes. This measures that gap deterministically by
+# comparing the requirement hash an intent was affirmed against with the
+# requirement's hash now. No model judges anything; see autonomy/intent.sh.
+cmd_intent() {
+    local intent_mod="$_LOKI_SCRIPT_DIR/intent.sh"
+    if [ ! -f "$intent_mod" ]; then
+        echo -e "${RED}Error: intent module not found at $intent_mod${NC}" >&2
+        return 3
+    fi
+    # shellcheck source=/dev/null
+    source "$intent_mod"
+    intent_main "$@"
+}
+
 cmd_spec() {
     local spec_mod="$_LOKI_SCRIPT_DIR/spec.sh"
     if [ ! -f "$spec_mod" ]; then
@@ -19231,6 +19250,11 @@ main() {
             ;;
         spec)
             cmd_spec "$@"
+            ;;
+        intent)
+            # The spec is an INTERPRETATION of what was wanted. This checks
+            # whether it still matches the intent it was affirmed against.
+            cmd_intent "$@"
             ;;
         grill)
             cmd_grill "$@"
