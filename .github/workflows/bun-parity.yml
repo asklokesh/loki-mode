@@ -182,6 +182,29 @@ jobs:
                   | sed -E '/Cockpit:/,/^$/d' \
                   > "${src}.norm"
               done
+              # COMMON-MODE FAILURE GUARD. Parity is a diff, and two routes that
+              # break IDENTICALLY diff clean. bun_ec/bash_ec were captured but
+              # never asserted, and stderr is discarded, so a command that exits
+              # 127 with empty stdout on BOTH routes was recorded as PASS and the
+              # job printed "All commands parity-verified". Both routes share the
+              # bin/loki shim, so a shim-level break is exactly the common-mode
+              # case this would wave through.
+              #
+              # Identical output is only evidence of parity when the commands
+              # actually RAN. The json branch is already protected -- an empty or
+              # invalid capture fails `jq -S` and lands in FAILED -- so this guard
+              # is the text branch's equivalent, not a duplicate.
+              #
+              # Deliberately narrow: only a matching-nonzero-exit-AND-empty-output
+              # pair fails here. A command that legitimately exits nonzero while
+              # still printing (a doctor run with blockers) keeps working, which
+              # is why the emptiness half of the condition is load-bearing.
+              if [ "$bun_ec" -ne 0 ] && [ "$bash_ec" -ne 0 ] \
+                 && [ ! -s "${bash_out}.norm" ] && [ ! -s "${bun_out}.norm" ]; then
+                echo "FAIL [$label]: BOTH routes failed identically (bash exit=$bash_ec, bun exit=$bun_ec) with no output -- identical breakage is not parity"
+                FAILED+=("$label (common-mode failure, exit $bash_ec/$bun_ec)")
+                continue
+              fi
               if diff -u "${bash_out}.norm" "${bun_out}.norm" >"$diff_out"; then
                 PASSED+=("$label")
               else

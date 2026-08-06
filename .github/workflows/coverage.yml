@@ -66,19 +66,39 @@ jobs:
         env:
           MIN_LINE_PCT: '70'
         run: |
-          # Bun's text summary line: "All files | 87.50 |  80.00 | ..."
-          # Extract the "All files" row's first numeric column (lines).
-          # Strip ANSI color codes first (bun may colorize the table even when
-          # piped, depending on CI TTY detection) so the `^All files` anchor and
-          # the column split are robust.
-          PCT=$(sed -E 's/\x1b\[[0-9;]*m//g' coverage/coverage.txt 2>/dev/null \
+          # Bun's real header is:
+          #   File | % Funcs | % Lines | Uncovered Line #s
+          # so the FIRST numeric column is % Funcs and the SECOND is % Lines.
+          # This gate is named MIN_LINE_PCT and read $2, i.e. it had never once
+          # measured line coverage -- verified against bun 1.3.13 on this repo:
+          #   All files | 89.29 | 85.90 |      ($2=funcs, $3=lines)
+          # The false-PASS direction is the dangerous one: many small functions
+          # each called once scores high on % Funcs while their bodies stay
+          # largely unexecuted, so the gate would wave through exactly the
+          # coverage profile it exists to catch.
+          #
+          # The header is parsed rather than assumed, so a future column
+          # reordering by bun fails loudly here instead of silently measuring
+          # the wrong number again.
+          COVTXT=$(sed -E 's/\x1b\[[0-9;]*m//g' coverage/coverage.txt 2>/dev/null)
+          LINES_COL=$(printf '%s\n' "$COVTXT" \
+            | grep -E "^File .*\|" \
+            | head -1 \
+            | awk -F'[|]' '{ for (i=2; i<=NF; i++) { gsub(/^[ \t]+|[ \t]+$/, "", $i); if ($i == "% Lines") { print i; exit } } }')
+          if [ -z "$LINES_COL" ]; then
+            echo "::error::could not locate the '% Lines' column in bun's coverage header; the table format has drifted. Failing the gate rather than measuring the wrong column."
+            printf '%s\n' "$COVTXT" | head -3
+            exit 1
+          fi
+          PCT=$(printf '%s\n' "$COVTXT" \
             | grep -E "^All files" \
             | head -1 \
-            | awk -F'[|]' '{ gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2 }')
+            | awk -F'[|]' -v c="$LINES_COL" '{ gsub(/^[ \t]+|[ \t]+$/, "", $c); print $c }')
           if [ -z "$PCT" ]; then
             echo "::error::could not parse line coverage from bun test output; coverage format may have drifted. Failing the gate rather than silently disabling it."
             exit 1
           fi
+          echo "line coverage (column $LINES_COL, '% Lines'): ${PCT}%"
           # Compare as integers (floor). awk handles float arithmetic.
           BELOW=$(awk -v p="$PCT" -v m="$MIN_LINE_PCT" 'BEGIN{ print (p+0 < m+0) ? "1" : "0" }')
           echo "Line coverage: ${PCT}% (minimum required: ${MIN_LINE_PCT}%)"

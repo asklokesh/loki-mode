@@ -55,8 +55,19 @@ jobs:
       - name: Install dependencies
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install pytest pytest-asyncio
-          python3 -m pip install fastapi httpx pydantic sqlalchemy[asyncio] aiosqlite uvicorn
+          # Install from the canonical list, not a hand-maintained subset -- the
+          # same fix shell-tests already made after its own drift incident (see
+          # the comment on that job). Two hand-written lists for one test suite
+          # drift apart by construction; one source cannot.
+          #
+          # This list also carries the pinned `mcp`, which the hand-written one
+          # omitted. Note that installing it does NOT by itself un-skip
+          # tests/test_mcp_agent_metrics_honesty.py: the repo's own `mcp/`
+          # package shadows the installed SDK on sys.path, so `from mcp import
+          # server` reaches our module, which then cannot import the SDK and
+          # exits. That shadowing is a separate defect, tracked separately --
+          # what this change fixes is the drift, not the skip.
+          python3 -m pip install -r requirements-test.txt
 
       - name: Run tests
         run: python3 -m pytest
