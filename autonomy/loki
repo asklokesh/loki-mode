@@ -1043,7 +1043,7 @@ show_help() {
     echo "  enterprise estimate explain export failover github grill heal help"
     echo "  import init"
     echo "  issue kpis logs magic mcp memory metrics migrate modernize monitor"
-    echo "  next notify onboard open optimize otel own (handoff) pause plan preview"
+    echo "  next notify onboard open optimize otel outcomes own (handoff) pause plan preview"
     echo "  projects proof (receipt) provider quick quickstart rc remote report reset"
     echo "  resume review rollback run sandbox secrets secure self-update sentrux"
     echo "  serve setup-skill share ship spec start state stats status steer stop"
@@ -19347,6 +19347,11 @@ main() {
             # Receipt surface): same subcommands (list/show/verify/open/share).
             cmd_proof "$@"
             ;;
+        outcomes)
+            # The receipt says what was proven at the time. This says what
+            # happened to it afterwards -- reverted, reworked, or survived.
+            cmd_outcomes "$@"
+            ;;
         secure)
             # Secure-by-default gate surface: inspect findings + manage waivers.
             cmd_secure "$@"
@@ -30784,6 +30789,44 @@ if _result.get('error'):
 # this is a thin dispatcher, mirroring how cmd_proof delegates to the proof
 # generator. Generation is incremental (skips when the codebase is unchanged).
 # =============================================================================
+# loki outcomes: what happened to the work AFTER the receipt was written.
+#
+# Every competing agent reports VOLUME. Factory AI's analytics expose files
+# edited, lines modified, commits, PRs created, tokens and DAU -- and no defect
+# rate, no revert rate, no change-failure rate; their own telemetry doc leaves
+# outcome correlation to the customer. Devin's security page concedes the agent
+# "can still experience hallucinations, introduce bugs into code" and points at
+# your existing review. Both can prove the agent was BUSY. Neither shows it was
+# RIGHT. This answers the other question, from local git history alone.
+#
+# It reports UNKNOWN far more often than it reports a number, and that is the
+# feature. See autonomy/lib/outcome_ledger.py for the anchor gate and the
+# measured evidence behind it.
+cmd_outcomes() {
+    local lib="${_LOKI_SCRIPT_DIR}/lib/outcome_ledger.py"
+    if [ ! -f "$lib" ]; then
+        echo "outcome ledger is not installed at $lib" >&2
+        return 2
+    fi
+    case "${1:-}" in
+        --help|-h|help)
+            echo -e "${BOLD}loki outcomes${NC} - did the work turn out to be RIGHT, not just that it happened"
+            echo ""
+            echo "Usage: loki outcomes [--json] [--run-id <id>]"
+            echo ""
+            echo "Follows each Evidence Receipt past the moment it was written and"
+            echo "reports, from local git only: was it reverted, did its lines survive,"
+            echo "how much was reworked, and the change-failure rate across receipts."
+            echo ""
+            echo "A receipt is measured ONLY when sha algebra proves base..head is that"
+            echo "change. Everything else reads UNKNOWN with a named reason -- never 0,"
+            echo "never a pass. Read-only: it never writes to the repo it analyses."
+            return 0
+            ;;
+    esac
+    LOKI_DIR="${LOKI_DIR:-.loki}" python3 "$lib" "$@"
+}
+
 cmd_wiki() {
     local subcmd="${1:-}"
     shift 2>/dev/null || true

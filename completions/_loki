@@ -171,6 +171,7 @@ function _loki_commands {
         'metrics:Session productivity report'
         'share:Share session report as GitHub Gist'
         'proof:Inspect/share proof-of-run artifacts'
+        'outcomes:What happened to the work AFTER the receipt (reverted/reworked/survived)'
         'preview:Preview the locally-running app'
         'deploy:Deploy the built product (CI/CD-aware)'
         'context:Context window management'
