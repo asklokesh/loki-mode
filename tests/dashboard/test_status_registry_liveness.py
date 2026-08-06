@@ -50,6 +50,40 @@ _REAL_SERVER = _SERVER if _SERVER.is_file() else pathlib.Path(
     __import__("os").environ.get("LOKI_SERVER_PY", "")) 
 
 
+# Every module-level name a slice may legitimately reach for, mapped to the
+# import that supplies it. Deriving the import block from the slice TEXT rather
+# than hand-listing it is the whole point: the hand-written list was correct
+# when written and silently wrong the moment `_registry_run_alive` grew a
+# `time.time()` call, which is how CI went red on 3.11/3.12 while a local
+# 3.14 run stayed green. Adding a name here is cheap; forgetting one is a
+# red Release.
+_SLICE_IMPORT_SOURCES = {
+    "os": "import os",
+    "json": "import json",
+    "time": "import time",
+    "datetime": "from datetime import datetime",
+    "timezone": "from datetime import timezone",
+    "Any": "from typing import Any",
+    "Path": "from pathlib import Path",
+    "_Path": "from pathlib import Path as _Path",
+}
+
+
+def _slice_imports(slice_text):
+    """Return the import lines the given slice actually needs.
+
+    Substring matching, deliberately over-inclusive: importing a name the slice
+    does not use is harmless, while missing one is a NameError at def time.
+    Callers get a stable trailing newline so the block concatenates cleanly.
+    """
+    needed = []
+    for name, imp in _SLICE_IMPORT_SOURCES.items():
+        if f"{name}." in slice_text or f": {name}" in slice_text or f"[{name}]" in slice_text:
+            if imp not in needed:
+                needed.append(imp)
+    return ("\n".join(needed) + "\n") if needed else ""
+
+
 def _load():
     """Exec just the liveness helper and its one dependency.
 
@@ -74,14 +108,90 @@ def _load():
     #
     # Re-declaring the future import makes the slice behave identically on
     # every version instead of depending on the interpreter's default.
+    # The namespace must carry EVERY name the two slices reference, not just the
+    # ones they referenced when this was written. `time`, `datetime` and
+    # `timezone` were added to the sliced functions later and never added here,
+    # so CI's 3.11/3.12 raised `NameError: name 'time' is not defined` -- the
+    # same failure mode as the `Any` one this test was created to catch, with a
+    # different name. A hand-maintained import list re-breaks every time the
+    # server grows a dependency, so the list is no longer hand-maintained:
+    # _slice_imports below derives it from the slice text itself.
     exec(  # noqa: S102 - deliberate, scoped
         "from __future__ import annotations\n"
-        "import os, json\nfrom typing import Any\n"
-        "from pathlib import Path as _Path\n"
+        + _slice_imports(slice_fn("_safe_json_read") + "\n" + slice_fn("_registry_run_alive"))
         + slice_fn("_safe_json_read") + "\n" + slice_fn("_registry_run_alive"),
         ns,
     )
     return ns["_registry_run_alive"]
+
+
+class SliceImportsCoverEveryNameTheSliceUses(unittest.TestCase):
+    """The namespace must cover names used at RUNTIME, not only at def time.
+
+    The previous guard executed the whole file on a pre-3.14 interpreter, which
+    catches a name needed while DEFINING the slice (the `Any`-in-a-default case
+    it was built for). It did not catch this one: `time` is reached only when
+    `_safe_json_read` falls into its corrupt-JSON branch, so the module imported
+    cleanly and blew up later, in CI, on a path a passing import never touches.
+
+    Reproduced before fixing, on the exact CI interpreter:
+        _safe_json_read(<file containing "{oops">, {})
+        -> NameError: name 'time' is not defined
+
+    So this asserts the derived import block against the slice text directly.
+    It fails the moment a slice reaches for a name the namespace does not carry,
+    whether that happens at def time or three branches deep.
+    """
+
+    def _slices(self):
+        lines = _SERVER.read_text(encoding="utf-8").splitlines()
+
+        def slice_fn(name):
+            start = next(i for i, l in enumerate(lines) if l.startswith(f"def {name}"))
+            end = next(i for i in range(start + 1, len(lines))
+                       if lines[i].startswith(("def ", "@")))
+            return "\n".join(lines[start:end])
+
+        return slice_fn("_safe_json_read") + "\n" + slice_fn("_registry_run_alive")
+
+    # A static "every dotted name must be importable" check was tried here and
+    # deleted: distinguishing a module reference from a local, a parameter or a
+    # loop variable by regex produced a list of eleven false positives
+    # (`state.`, `task.`, `e.`), and a guard that cries wolf every time the
+    # server grows a local is worse than no guard. The behavioural assertions
+    # below catch the same defect by EXERCISING the paths instead of parsing
+    # them, which is what actually failed in CI.
+
+    def test_the_corrupt_json_path_does_not_NameError(self):
+        """The exact CI failure, as a direct assertion.
+
+        `time` was reached only here, which is why an import-time guard missed
+        it entirely.
+        """
+        alive = _load()  # proves the namespace builds
+        self.assertTrue(callable(alive))
+
+        lines = _SERVER.read_text(encoding="utf-8").splitlines()
+
+        def slice_fn(name):
+            start = next(i for i, l in enumerate(lines) if l.startswith(f"def {name}"))
+            end = next(i for i in range(start + 1, len(lines))
+                       if lines[i].startswith(("def ", "@")))
+            return "\n".join(lines[start:end])
+
+        ns = {}
+        body = slice_fn("_safe_json_read") + "\n" + slice_fn("_registry_run_alive")
+        exec(  # noqa: S102 - deliberate, scoped
+            "from __future__ import annotations\n" + _slice_imports(body) + body, ns)
+
+        tmp = tempfile.mkdtemp()
+        try:
+            bad = pathlib.Path(tmp) / "bad.json"
+            bad.write_text("{oops", encoding="utf-8")
+            # Must return the default, not raise. A NameError here is the CI red.
+            self.assertEqual(ns["_safe_json_read"](bad, {}), {})
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 class ExecNamespaceIsVersionIndependent(unittest.TestCase):
