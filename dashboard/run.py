@@ -8,15 +8,26 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 
 
 def main():
     parser = argparse.ArgumentParser(description="Loki Mode Dashboard Server")
+    # Loopback by default, matching server.py:run_server and control.py. This
+    # launcher defaulted to 0.0.0.0, which published an UNAUTHENTICATED control
+    # plane on every interface: dashboard auth is opt-in
+    # (LOKI_ENTERPRISE_AUTH, default false in dashboard/auth.py), so with it
+    # unset -- the default -- anyone routable to the host could reach endpoints
+    # that stop builds and read receipts. A default must be safe on its own;
+    # exposing the network is a decision an operator makes explicitly, so
+    # --host 0.0.0.0 and LOKI_DASHBOARD_HOST both still work for the container
+    # and Helm paths that genuinely need it.
     parser.add_argument(
         "--host",
-        default="0.0.0.0",
-        help="Host to bind to (default: 0.0.0.0)",
+        default=os.environ.get("LOKI_DASHBOARD_HOST", "127.0.0.1"),
+        help="Host to bind to (default: $LOKI_DASHBOARD_HOST or 127.0.0.1). "
+             "Use 0.0.0.0 only with authentication enabled.",
     )
     parser.add_argument(
         "--port",

@@ -1224,6 +1224,28 @@ class WebSocketBoundaryMiddleware:
                 # accept-then-drop, which reads to a client as a flaky network.
                 await send({"type": "websocket.close", "code": 1008})
                 return
+            # Cross-Site WebSocket Hijacking. The address check above proves the
+            # PEER is local; it says nothing about who told that peer to connect.
+            # A browser on any origin can open ws://127.0.0.1:57374/ws -- the
+            # request comes FROM the loopback interface and passes the check
+            # above, and CORS does not apply to WebSocket upgrades, so no
+            # existing control stops it. /ws/collab is writable, so this is not
+            # read-only exposure.
+            #
+            # Same-origin browsers send Origin; non-browser clients (CLI, tests,
+            # health probes) send none. An ABSENT Origin is therefore allowed --
+            # it cannot be forged by a page, since browsers always attach it --
+            # while a PRESENT one must be in the allowlist the HTTP path already
+            # uses. That keeps every scripted client working and closes the
+            # browser-driven path, without a second source of truth for origins.
+            origin = None
+            for raw_name, raw_value in scope.get("headers", []):
+                if raw_name == b"origin":
+                    origin = raw_value.decode("latin-1").strip()
+                    break
+            if origin and "*" not in _cors_origins and origin not in _cors_origins:
+                await send({"type": "websocket.close", "code": 1008})
+                return
         await self.app(scope, receive, send)
 
 
