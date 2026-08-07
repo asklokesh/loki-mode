@@ -417,7 +417,19 @@ if [ -f "$RUN_SH" ]; then
     # (b) force-review route: the COUNCIL_REVIEW_REQUESTED signal block must call
     #     council_heldout_gate. Slice from the signal handling to the end of the
     #     elif chain (council_vote) and assert the gate appears inside it.
-    fr_block="$(awk '/COUNCIL_REVIEW_REQUESTED/{f=1} f{print} f&&/elif type council_vote/{exit}' "$RUN_SH" 2>/dev/null || true)"
+    # The slice used to terminate on `elif type council_vote`, which no longer
+    # exists in run.sh -- grep -c returns 0 for it. With no terminator the awk
+    # ran 1426 lines past the block, and the assertion failed while the gate was
+    # correctly wired the whole time (run.sh:24834). A test anchored on a string
+    # the source no longer contains reports a defect that is not there, and this
+    # one had been red long enough to read as normal.
+    #
+    # Terminating on the assumption-ledger gate instead: it is the elif directly
+    # AFTER the held-out gate in the same chain, so the slice is bounded by a
+    # line whose presence the very next assertion (>=2 call sites) already
+    # depends on. If that anchor ever moves too, this fails loudly rather than
+    # silently widening again.
+    fr_block="$(awk '/COUNCIL_REVIEW_REQUESTED/{f=1} f{print} f&&/elif type council_assumption_ledger_gate/{exit}' "$RUN_SH" 2>/dev/null || true)"
     if printf '%s' "$fr_block" | grep -q '! council_heldout_gate'; then
         ok "case11 force-review route wires council_heldout_gate after COUNCIL_REVIEW_REQUESTED"
     else
