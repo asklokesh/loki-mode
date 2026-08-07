@@ -1784,8 +1784,18 @@ function generateStandaloneHTML(bundleCode) {
         <div class="section-page-header">
           <h2 class="section-page-title">Trust Trajectory</h2>
         </div>
+        <!-- EVIDENCE RECEIPTS. /api/proofs served 9 receipts with verdict,
+             file count and an HTML view, and NOTHING in the dashboard read it
+             -- only /api/proofs/summary (the header badge) was consumed. The
+             receipt is the thing we ask users to check; it was unreachable
+             from the UI. -->
+        <div id="receipts-panel" style="margin-bottom:16px;display:none;">
+          <h3 style="font-size:13px;font-weight:600;margin:0 0 8px;">Evidence receipts</h3>
+          <div id="receipts-list"></div>
+          <div id="receipts-note" style="font-size:11px;color:var(--loki-text-muted);margin-top:8px;"></div>
+        </div>
         <iframe id="trust-frame" title="Trust trajectory" src="about:blank"
-          style="width:100%;height:calc(100vh - 160px);border:0;border-radius:8px;background:var(--loki-bg-primary);"></iframe>
+          style="width:100%;height:calc(100vh - 260px);border:0;border-radius:8px;background:var(--loki-bg-primary);"></iframe>
       </div>
 
       <!-- Checkpoints -->
@@ -2369,6 +2379,60 @@ document.addEventListener('DOMContentLoaded', function() {
       badge.classList.add('show');
     }
 
+    // RECEIPT LIST. Fetched on demand when the Trust section opens, not on a
+    // timer: it is a history view, and polling it would spend a request every
+    // 30s on data that only changes when a run finishes.
+    //
+    // Every field rendered comes straight from the receipt. Nothing is derived,
+    // and an absent value renders as "-" rather than a zero or a guess -- a
+    // fabricated 0 cost or a blank verdict read as "clean" is the exact false
+    // green the receipt exists to prevent.
+    window.loadReceipts = function () {
+      var panel = document.getElementById('receipts-panel');
+      var list = document.getElementById('receipts-list');
+      var note = document.getElementById('receipts-note');
+      if (!panel || !list) return;
+      fetch('/api/proofs', { headers: { 'Accept': 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (!d) return;                      // endpoint absent: leave hidden
+          var rows = Array.isArray(d) ? d : (d.proofs || d.receipts || []);
+          if (!rows.length) return;            // no receipts yet: say nothing
+          rows = rows.slice().reverse().slice(0, 10);
+          var html = '';
+          for (var i = 0; i < rows.length; i++) {
+            var x = rows[i] || {};
+            var verdict = x.headline || x.final_verdict || 'UNKNOWN';
+            var verified = /^VERIFIED/i.test(verdict);
+            var col = verified ? 'var(--loki-success)' : 'var(--loki-text-muted)';
+            var files = (x.files_changed === null || x.files_changed === undefined)
+              ? '-' : String(x.files_changed);
+            var cost = (x.cost_usd === null || x.cost_usd === undefined)
+              ? '-' : ('$' + Number(x.cost_usd).toFixed(2));
+            var when = x.generated_at ? String(x.generated_at).slice(0, 16).replace('T', ' ') : '-';
+            var link = x.has_html
+              ? ('<a href="/api/proofs/' + encodeURIComponent(x.run_id || '') + '/html"'
+                 + ' target="_blank" rel="noopener" style="color:var(--loki-accent);">open</a>')
+              : '<span style="color:var(--loki-text-muted);">no html</span>';
+            html += '<div style="display:flex;gap:12px;align-items:center;padding:6px 8px;'
+                 + 'border-bottom:1px solid var(--loki-border);font-size:12px;">'
+                 + '<span style="color:' + col + ';font-weight:600;min-width:130px;">'
+                 + String(verdict).slice(0, 22) + '</span>'
+                 + '<span style="color:var(--loki-text-muted);min-width:120px;">' + when + '</span>'
+                 + '<span style="min-width:90px;">' + files + ' files</span>'
+                 + '<span style="min-width:70px;">' + cost + '</span>'
+                 + link + '</div>';
+          }
+          list.innerHTML = html;
+          if (note) {
+            note.textContent = 'Newest first. "open" renders the receipt itself. '
+              + 'Re-check any of them: loki proof verify <run-id>';
+          }
+          panel.style.display = 'block';
+        })
+        .catch(function () { /* leave hidden: no receipt surface is better than a wrong one */ });
+    };
+
     function poll() {
       fetch('/api/proofs/summary', { headers: { 'Accept': 'application/json' } })
         .then(function (r) { return r.ok ? r.json() : null; })
@@ -2414,6 +2478,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // pass the resolved theme as a query param (?theme=dark|light); the
     // standalone page reads it and matches. v7.18.0.
     if (sectionId === 'trust') {
+      loadReceipts();
       var tframe = document.getElementById('trust-frame');
       if (tframe && (!tframe.src || tframe.src === 'about:blank' ||
           tframe.getAttribute('src') === 'about:blank')) {
