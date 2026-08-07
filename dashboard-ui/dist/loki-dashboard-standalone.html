@@ -1323,6 +1323,14 @@
             <h3 style="font-family: 'Fraunces', Georgia, serif; font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Logs</h3>
             <loki-log-stream id="log-stream" auto-scroll max-lines="500"></loki-log-stream>
           </div>
+          <!-- LEARNINGS. /api/learnings held real records with a rootCause,
+               a fix and a preventInFuture, and had no UI consumer -- the
+               system was learning from its runs and never showing anyone
+               what it learned. Hidden until data arrives. -->
+          <div id="learnings-panel" style="display:none;">
+            <h3 style="font-family: var(--loki-font-family, 'Inter', system-ui, -apple-system, sans-serif); font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">What this build learned</h3>
+            <div id="learnings-list"></div>
+          </div>
           <div>
             <h3 style="font-family: 'Fraunces', Georgia, serif; font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Memory</h3>
             <loki-memory-browser id="memory-browser" tab="summary"></loki-memory-browser>
@@ -16031,6 +16039,49 @@ document.addEventListener('DOMContentLoaded', function() {
       badge.classList.add('show');
     }
 
+    // LEARNINGS. What the build learned from its own gate failures.
+    //
+    // /api/learnings held real records -- rootCause, fix, preventInFuture --
+    // with no UI consumer. The system was learning from its runs and showing
+    // nobody, which makes the memory unfalsifiable: a user cannot correct a
+    // learning they cannot see. Devin's "misleading knowledge" surface is the
+    // same idea and the reason it is worth showing.
+    //
+    // Renders the record's OWN words. Nothing is summarised or re-derived: a
+    // paraphrased root cause is a second claim about a claim.
+    window.loadLearnings = function () {
+      var panel = document.getElementById('learnings-panel');
+      var list = document.getElementById('learnings-list');
+      if (!panel || !list) return;
+      fetch('/api/learnings', { headers: { 'Accept': 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (!d) return;
+          var rows = Array.isArray(d) ? d : (d.learnings || []);
+          if (!rows.length) return;      // nothing learned yet: say nothing
+          rows = rows.slice().reverse().slice(0, 8);
+          var html = '';
+          for (var i = 0; i < rows.length; i++) {
+            var x = rows[i] || {};
+            var when = x.timestamp ? String(x.timestamp).slice(0, 16).replace('T', ' ') : '-';
+            var iter = (x.iteration === null || x.iteration === undefined) ? '-' : ('iter ' + x.iteration);
+            html += '<div style="padding:8px;border-bottom:1px solid var(--loki-border);font-size:12px;">'
+                 + '<div style="display:flex;gap:10px;color:var(--loki-text-muted);margin-bottom:4px;">'
+                 + '<span>' + when + '</span><span>' + iter + '</span>'
+                 + '<span>' + String(x.trigger || 'unknown trigger') + '</span></div>'
+                 + '<div style="margin-bottom:3px;"><strong>cause:</strong> '
+                 + String(x.rootCause || 'not recorded') + '</div>'
+                 + (x.fix ? '<div style="margin-bottom:3px;"><strong>fix:</strong> ' + String(x.fix) + '</div>' : '')
+                 + (x.preventInFuture ? '<div style="color:var(--loki-text-muted);"><strong>prevent:</strong> '
+                     + String(x.preventInFuture) + '</div>' : '')
+                 + '</div>';
+          }
+          list.innerHTML = html;
+          panel.style.display = 'block';
+        })
+        .catch(function () { /* leave hidden */ });
+    };
+
     // RECEIPT LIST. Fetched on demand when the Trust section opens, not on a
     // timer: it is a history view, and polling it would spend a request every
     // 30s on data that only changes when a run finishes.
@@ -16129,6 +16180,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // document and cannot see the SPA's manual data-loki-theme toggle, so we
     // pass the resolved theme as a query param (?theme=dark|light); the
     // standalone page reads it and matches. v7.18.0.
+    if (sectionId === 'insights') { loadLearnings(); }
     if (sectionId === 'trust') {
       loadReceipts();
       var tframe = document.getElementById('trust-frame');
