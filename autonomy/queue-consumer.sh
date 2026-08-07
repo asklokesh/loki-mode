@@ -37,9 +37,16 @@
 #     processing/ directory.
 #     It was at-most-once (LPOP-then-run) until this was fixed; a crash after
 #     the pop lost the build with no record anywhere.
-#     Still missing, and NOT claimed: an automatic visibility timeout. Nothing
-#     reaps a stale <key>:processing entry on its own yet, so a re-drive is an
-#     operator action. LOKI_QUEUE_ACK=0 restores the legacy lossy path.
+#     A VISIBILITY TIMEOUT now exists: `queue-consumer.sh --reap` requeues
+#     in-flight items whose claim is older than LOKI_QUEUE_VISIBILITY_SEC
+#     (default 7200). Run it on a schedule (a CronJob) or by hand. It is a
+#     separate mode, not folded into the consume loop, because a consumer that
+#     reaped on every poll would race its peers on a busy queue.
+#     A FRESH claim is never reaped -- requeuing a live item would build the
+#     user's work twice -- and an in-flight item with NO claim is treated as
+#     infinitely old, since that means the worker died between the LMOVE and the
+#     claim stamp, which is exactly the case that must be recoverable.
+#     LOKI_QUEUE_ACK=0 restores the legacy lossy path.
 #   - The file backend's atomicity relies on `mv` being atomic within a single
 #     filesystem (true for a normal PVC). Two consumers racing the same pending
 #     dir is safe (mv either wins or fails-and-skips), but is not load-balanced.
@@ -233,6 +240,18 @@ redis_pop() {
     if [ -z "$out" ]; then
         out="$(redis-cli -u "$QUEUE_URL" RPOPLPUSH "$QUEUE_KEY" "${QUEUE_KEY}:processing" 2>/dev/null)"
     fi
+    # Record WHEN this item was claimed. A bare list carries no time, so nothing
+    # could tell a stale entry (dead worker) from a running one (long build) --
+    # and requeuing a live item duplicates the user's build. The claim hash is
+    # what makes the reaper below safe to run at all.
+    #
+    # Written AFTER the move, so a crash between them leaves the item in-flight
+    # with no claim time. The reaper treats a missing claim as INFINITELY OLD
+    # rather than infinitely young: an item nothing is tracking is exactly the
+    # case that must be recoverable.
+    if [ -n "$out" ]; then
+        redis-cli -u "$QUEUE_URL" HSET "${QUEUE_KEY}:claims" "$out" "$(date +%s)" >/dev/null 2>&1 || true
+    fi
     printf '%s' "$out"
 }
 
@@ -247,6 +266,58 @@ redis_ack() {
     [ "${LOKI_QUEUE_ACK:-1}" = "0" ] && return 0
     [ -n "${1:-}" ] || return 0
     redis-cli -u "$QUEUE_URL" LREM "${QUEUE_KEY}:processing" 0 "$1" >/dev/null 2>&1 || true
+    # Drop the claim too, or the hash grows without bound and every completed
+    # item looks like a candidate for reaping forever.
+    redis-cli -u "$QUEUE_URL" HDEL "${QUEUE_KEY}:claims" "$1" >/dev/null 2>&1 || true
+}
+
+# Requeue in-flight items whose claim is older than the visibility timeout.
+#
+# THE GAP THIS CLOSES. LMOVE made a crashed worker's item RECOVERABLE, but
+# nothing recovered it: re-drive was an operator action, so an unattended fleet
+# still stalled on every dead worker. That was documented rather than claimed;
+# this closes it.
+#
+# SAFETY IS THE WHOLE DESIGN. Requeuing an item a worker is still building
+# duplicates the user's build, so the timeout must exceed the longest legitimate
+# build. Default 2h (LOKI_MAX_DURATION territory), tunable.
+#
+# An item with NO claim entry is treated as INFINITELY OLD, not young: it means
+# the worker died between the LMOVE and the HSET, which is precisely the case
+# that must be recoverable. Erring the other way would strand exactly the items
+# this exists to rescue.
+#
+# Reports what it did on stdout. Requeues nothing when the timeout has not
+# elapsed, and says so rather than printing a silent zero.
+redis_reap() {
+    [ "${LOKI_QUEUE_ACK:-1}" = "0" ] && { echo "reap: acking disabled, nothing to reap"; return 0; }
+    local timeout now items requeued=0 kept=0
+    timeout="${LOKI_QUEUE_VISIBILITY_SEC:-7200}"
+    now="$(date +%s)"
+    items="$(redis-cli -u "$QUEUE_URL" LRANGE "${QUEUE_KEY}:processing" 0 -1 2>/dev/null)"
+    [ -n "$items" ] || { echo "reap: nothing in flight"; return 0; }
+    while IFS= read -r it; do
+        [ -n "$it" ] || continue
+        local claimed age
+        claimed="$(redis-cli -u "$QUEUE_URL" HGET "${QUEUE_KEY}:claims" "$it" 2>/dev/null)"
+        if [ -z "$claimed" ]; then
+            age="$((timeout + 1))"   # unclaimed == infinitely old, see above
+        else
+            age="$((now - claimed))"
+        fi
+        if [ "$age" -gt "$timeout" ]; then
+            # LREM then RPUSH, not LMOVE: the item may appear more than once and
+            # LREM 0 clears every copy, so the queue cannot gain duplicates.
+            redis-cli -u "$QUEUE_URL" LREM "${QUEUE_KEY}:processing" 0 "$it" >/dev/null 2>&1 || true
+            redis-cli -u "$QUEUE_URL" HDEL "${QUEUE_KEY}:claims" "$it" >/dev/null 2>&1 || true
+            redis-cli -u "$QUEUE_URL" RPUSH "$QUEUE_KEY" "$it" >/dev/null 2>&1 || true
+            requeued=$((requeued + 1))
+            log "reaped stale item (age ${age}s > ${timeout}s), requeued"
+        else
+            kept=$((kept + 1))
+        fi
+    done <<< "$items"
+    echo "reap: requeued $requeued, left $kept in flight (timeout ${timeout}s)"
 }
 
 # --no-raw LPOP wraps the value in quotes; strip a single surrounding pair and
@@ -376,6 +447,19 @@ main() {
     if [ "$backend" != "redis" ] && [ "$backend" != "file" ]; then
         log "ERROR: unknown LOKI_QUEUE_BACKEND='$backend' (supported: redis, file)"
         return 2
+    fi
+
+    # --reap requeues stale in-flight items and exits. Kept a SEPARATE mode
+    # rather than folded into the consume loop: a reaper wants its own cadence
+    # (a CronJob, or an operator hand-running it), and a consumer that reaped on
+    # every poll would race its own peers on a busy queue.
+    if [ "${1:-}" = "--reap" ] || [ "${LOKI_QUEUE_REAP:-0}" = "1" ]; then
+        if [ "$backend" != "redis" ]; then
+            log "ERROR: --reap is redis-only (the file backend leaves items in processing/ already)"
+            return 2
+        fi
+        redis_reap
+        return 0
     fi
 
     if [ "$ONESHOT" = "1" ]; then

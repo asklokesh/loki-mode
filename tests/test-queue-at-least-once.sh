@@ -161,7 +161,54 @@ else
     bad "the opt-out still writes an in-flight record"
 fi
 
-_R DEL "$_K" "${_K}:processing" >/dev/null
+# --- LIVE 5: the reaper requeues a STALE in-flight item ---------------------
+# LMOVE made a dead worker's item recoverable; nothing recovered it. An
+# unattended fleet still stalled on every dead worker until this closed.
+_R DEL "$_K" "${_K}:processing" "${_K}:claims" >/dev/null
+_R RPUSH "$_K" '{"spec":"stale"}' >/dev/null
+_R LMOVE "$_K" "${_K}:processing" LEFT RIGHT >/dev/null
+_R HSET "${_K}:claims" '{"spec":"stale"}' "$(( $(date +%s) - 99999 ))" >/dev/null
+LOKI_QUEUE_BACKEND=redis LOKI_QUEUE_URL="redis://127.0.0.1:$_PORT" LOKI_QUEUE_KEY="$_K" \
+    bash "$QC" --reap >/dev/null 2>&1
+if [ "$(_R LLEN "$_K")" = "1" ] && [ "$(_R LLEN "${_K}:processing")" = "0" ]; then
+    ok "the reaper requeues an item whose worker died"
+else
+    bad "a stale in-flight item was not recovered"
+fi
+if [ "$(_R HLEN "${_K}:claims")" = "0" ]; then
+    ok "the reaper clears the claim (the hash cannot grow without bound)"
+else
+    bad "the claim survived the reap -- the hash leaks"
+fi
+
+# --- LIVE 6: THE SAFETY GUARD -- a RUNNING build is never reaped ------------
+# Requeuing a live item duplicates the user's build. This is the assertion that
+# makes the reaper safe to run unattended at all.
+_R DEL "$_K" "${_K}:processing" "${_K}:claims" >/dev/null
+_R RPUSH "$_K" '{"spec":"running"}' >/dev/null
+_R LMOVE "$_K" "${_K}:processing" LEFT RIGHT >/dev/null
+_R HSET "${_K}:claims" '{"spec":"running"}' "$(date +%s)" >/dev/null
+LOKI_QUEUE_BACKEND=redis LOKI_QUEUE_URL="redis://127.0.0.1:$_PORT" LOKI_QUEUE_KEY="$_K" \
+    bash "$QC" --reap >/dev/null 2>&1
+if [ "$(_R LLEN "${_K}:processing")" = "1" ] && [ "$(_R LLEN "$_K")" = "0" ]; then
+    ok "a FRESH claim is left alone (no duplicate build)"
+else
+    bad "the reaper requeued a running build -- the user gets it built twice"
+fi
+
+# --- LIVE 7: an UNCLAIMED in-flight item is treated as infinitely old -------
+# The worker died between the LMOVE and the HSET. Erring young would strand
+# exactly the items the reaper exists to rescue.
+_R HDEL "${_K}:claims" '{"spec":"running"}' >/dev/null
+LOKI_QUEUE_BACKEND=redis LOKI_QUEUE_URL="redis://127.0.0.1:$_PORT" LOKI_QUEUE_KEY="$_K" \
+    bash "$QC" --reap >/dev/null 2>&1
+if [ "$(_R LLEN "$_K")" = "1" ]; then
+    ok "an in-flight item with NO claim is reaped (crash between move and stamp)"
+else
+    bad "an unclaimed item was left stranded forever"
+fi
+
+_R DEL "$_K" "${_K}:processing" "${_K}:claims" >/dev/null
 
 echo ""
 echo "  Passed: $PASS   Failed: $FAIL"
