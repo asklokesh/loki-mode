@@ -85,19 +85,36 @@ make_fake_redis() {
     mkdir -p "$bindir"
     cat > "$bindir/redis-cli" <<'STUB'
 #!/usr/bin/env bash
-# Fake redis-cli. Recognizes LPOP and BLPOP; serves FAKE_REDIS_ITEM once.
+# Fake redis-cli.
+#
+# The consumer moved from LPOP (at-most-once) to LMOVE (at-least-once: pop and
+# record in-flight atomically), so a stub that only knew LPOP/BLPOP answered
+# nothing and the oneshot test saw an empty queue. It now speaks the operations
+# the consumer actually issues.
+#
+# LMOVE/RPOPLPUSH emit RAW output, matching the real redis-cli invocation --
+# `--no-raw` escapes the INNER quotes of a JSON payload, which mangles the item
+# AND makes the later LREM match nothing. That was a real bug found against a
+# live redis; keeping the stub raw here means it cannot come back unnoticed.
 state="${FAKE_REDIS_STATE:?FAKE_REDIS_STATE must be set}"
 op=""
 for a in "$@"; do
     case "$a" in
-        LPOP|BLPOP) op="$a"; break ;;
+        LPOP|BLPOP|LMOVE|RPOPLPUSH|LREM|HSET|HDEL|HGET|LRANGE) op="$a"; break ;;
     esac
 done
+# Bookkeeping the consumer performs around a pop. They must succeed quietly, or
+# the `|| true` paths mask a stub that is simply mute.
+case "$op" in
+    LREM|HSET|HDEL) exit 0 ;;
+    HGET|LRANGE)    exit 0 ;;   # no claim / nothing in flight
+esac
 if [ -f "$state" ]; then
     # Already served once -> empty queue.
     case "$op" in
         LPOP) echo "(nil)" ;;   # --no-raw style nil
         BLPOP) : ;;             # BLPOP timeout: print nothing
+        LMOVE|RPOPLPUSH) : ;;   # raw: empty means empty queue
     esac
     exit 0
 fi
@@ -105,6 +122,7 @@ fi
 case "$op" in
     LPOP)  printf '"%s"\n' "${FAKE_REDIS_ITEM:-}" ;;   # --no-raw quotes the value
     BLPOP) printf '%s\n%s\n' "loki-builds" "${FAKE_REDIS_ITEM:-}" ;;  # key, then value
+    LMOVE|RPOPLPUSH) printf '%s\n' "${FAKE_REDIS_ITEM:-}" ;;  # RAW, see above
     *) exit 0 ;;
 esac
 STUB
