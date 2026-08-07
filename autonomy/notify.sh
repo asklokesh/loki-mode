@@ -86,6 +86,68 @@ _get_discord_color() {
 # Slack Notifications
 #===============================================================================
 
+# Verdict fields for a Slack card, from the newest Evidence Receipt.
+#
+# Roadmap item 9: "put the receipt where review already happens". Slack
+# notifications carried the event name and the project name and nothing else --
+# grep for receipt/verdict/proof in this file returned 0. A team watching a
+# channel saw "build finished" and had to go somewhere else to learn whether it
+# was verified, which is the surface problem item 9 names: verification nobody
+# sees does not build trust.
+#
+# Emits Slack `fields` entries (the payload already has that array), so this
+# adds to the card rather than restructuring it.
+#
+# SILENT AND EMPTY ON ANY DOUBT. No receipt, unreadable JSON, no python -- emit
+# nothing. A notification is a side channel; it must never fail a build, and it
+# must never guess a verdict. An absent receipt yields no verdict field at all
+# rather than a reassuring default.
+_slack_verdict_fields() {
+    local loki_dir="${LOKI_DIR:-.loki}"
+    [ -d "$loki_dir/proofs" ] || return 0
+    command -v python3 >/dev/null 2>&1 || return 0
+    python3 - "$loki_dir" <<'PY' 2>/dev/null || true
+import glob, json, os, sys
+d = sys.argv[1]
+paths = sorted(glob.glob(os.path.join(d, "proofs", "*", "proof.json")))
+if not paths:
+    sys.exit(0)
+try:
+    r = json.load(open(paths[-1]))
+except (OSError, ValueError):
+    sys.exit(0)
+
+def esc(s):
+    return json.dumps(str(s))[1:-1]
+
+out = []
+qg = r.get("quality_gates") or {}
+gates = qg.get("gates") or []
+if gates:
+    passed = sum(1 for g in gates if str(g.get("status", "")).startswith("pass"))
+    out.append(("Gates", f"{passed}/{len(gates)} passed"))
+
+git = (r.get("facts") or {}).get("git") or {}
+# base_sha empty means the receipt cannot be anchored, so it cannot be
+# verified. Say that plainly rather than showing a diff count that implies it.
+if not git.get("base_sha"):
+    out.append(("Verified", "no (unanchored receipt)"))
+else:
+    diff = git.get("diff") or {}
+    if diff.get("count") is not None:
+        out.append(("Files changed", str(diff["count"])))
+
+run_id = r.get("run_id")
+if run_id:
+    out.append(("Receipt", esc(run_id)))
+
+print(",".join(
+    '{"title": "%s", "value": "%s", "short": true}' % (esc(t), esc(v))
+    for t, v in out
+))
+PY
+}
+
 _notify_slack() {
     local event="$1"
     local title="$2"
@@ -106,6 +168,13 @@ _notify_slack() {
     escaped_event="$(_json_escape "$event")"
     escaped_project="$(_json_escape "$project")"
 
+    # Receipt-derived fields. Empty on any doubt, and the ${var:+,...} expansion
+    # below means an empty value adds no trailing comma -- a malformed payload
+    # would make Slack reject the whole card, so the failure mode of "no receipt"
+    # must be a card without verdict fields, never a card that does not send.
+    local verdict_fields
+    verdict_fields="$(_slack_verdict_fields 2>/dev/null || true)"
+
     # Build Slack payload with attachment
     local payload
     payload=$(cat <<PAYLOAD
@@ -116,7 +185,7 @@ _notify_slack() {
         "text": "$escaped_message",
         "fields": [
             {"title": "Event", "value": "$escaped_event", "short": true},
-            {"title": "Project", "value": "$escaped_project", "short": true}
+            {"title": "Project", "value": "$escaped_project", "short": true}${verdict_fields:+,$verdict_fields}
         ],
         "footer": "Loki Mode",
         "ts": $(date +%s)

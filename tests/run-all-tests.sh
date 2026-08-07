@@ -827,6 +827,7 @@ run_test "every consumed dashboard token is defined" "$SCRIPT_DIR/test-dashboard
 run_test "readiness --fix repairs what it can and refuses the rest" "$SCRIPT_DIR/test-readiness-fix.sh"
 run_test "the gate ladder reports mode, hits and the promotion knob" "$SCRIPT_DIR/test-gate-policy-ladder.sh"
 run_test "the steer flag the CLI advertises is the one the runner honours" "$SCRIPT_DIR/test-steer-flag-parity.sh"
+run_test "the Slack card carries the verdict and never guesses one" "$SCRIPT_DIR/test-slack-verdict-card.sh"
 run_test "trust-core tests detect their regressions" "$SCRIPT_DIR/test-trust-core-tests-detect.sh"
 run_test "a user-installed reviewer takes part in a run" "$SCRIPT_DIR/test-installed-agent-reviewer.sh"
 # Skill modules are loaded INTO the agent's context and acted on, so a false
