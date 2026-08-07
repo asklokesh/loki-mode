@@ -344,14 +344,22 @@ export class LokiCouncilDashboard extends LokiElement {
         ${points.map(p => {
           const height = Math.max(4, (p.files_changed / maxFiles) * 60);
           const isStagnant = p.no_change_streak > 0;
+          // Stagnant vs active was colour-only. Mark stagnant bars with a
+          // hatch pattern and an asterisk on the label so the state reads
+          // without colour.
+          const state = isStagnant ? 'stagnant' : 'active';
+          const title = `Iter ${p.iteration}: ${p.files_changed} files changed (${state})`;
           return `
-            <div class="bar-wrapper" title="Iter ${p.iteration}: ${p.files_changed} files changed">
-              <div class="bar ${isStagnant ? 'bar-stagnant' : 'bar-active'}" style="height: ${height}px"></div>
-              <div class="bar-label">${p.iteration}</div>
+            <div class="bar-wrapper" title="${title}">
+              <div class="bar ${isStagnant ? 'bar-stagnant' : 'bar-active'}" style="height: ${height}px" role="img" aria-label="${title}"></div>
+              <div class="bar-label">${p.iteration}${isStagnant ? '*' : ''}</div>
             </div>
           `;
         }).join('')}
       </div>
+      ${points.some(p => p.no_change_streak > 0)
+        ? '<div class="bar-chart-legend">* hatched = stagnant (no files changed)</div>'
+        : ''}
     `;
   }
 
@@ -736,6 +744,19 @@ export class LokiCouncilDashboard extends LokiElement {
 
       .bar-stagnant {
         background: var(--loki-warning-muted);
+        /* Second, non-colour channel: diagonal hatch distinguishes stagnant
+           bars from active ones in greyscale and for colourblind users. */
+        background-image: repeating-linear-gradient(
+          45deg,
+          transparent 0 3px,
+          var(--loki-warning) 3px 5px
+        );
+      }
+
+      .bar-chart-legend {
+        font-size: 9px;
+        color: var(--loki-text-muted);
+        margin-top: 6px;
       }
 
       .bar-label {

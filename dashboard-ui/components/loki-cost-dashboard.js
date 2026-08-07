@@ -271,9 +271,10 @@ export class LokiCostDashboard extends LokiElement {
           <span class="section-title">Budget</span>
         </div>
         <div class="budget-bar-container">
-          <div class="budget-bar ${statusClass}" style="width: ${pct.toFixed(1)}%"></div>
+          <div class="budget-bar ${statusClass}" style="width: ${pct.toFixed(1)}%" role="img" aria-label="Budget ${statusClass}: ${pct.toFixed(1)} percent used"></div>
         </div>
         <div class="budget-details">
+          <span class="budget-status budget-status-${statusClass}">${statusClass.toUpperCase()}</span>
           <span class="budget-used">${this._formatUSD(this._data.budget_used)} used</span>
           <span class="budget-remaining">${remaining} remaining</span>
           <span class="budget-limit">of ${this._formatUSD(this._data.budget_limit)}</span>
@@ -514,6 +515,17 @@ export class LokiCostDashboard extends LokiElement {
         .budget-bar.critical {
           background: var(--loki-red);
         }
+
+        /* Text badge repeats the bar's threshold state so it is not
+           conveyed by the bar colour alone. */
+        .budget-status {
+          font-weight: 700;
+          letter-spacing: 0.04em;
+        }
+
+        .budget-status-ok { color: var(--loki-green); }
+        .budget-status-warning { color: var(--loki-yellow); }
+        .budget-status-critical { color: var(--loki-red); }
 
         .budget-details {
           display: flex;

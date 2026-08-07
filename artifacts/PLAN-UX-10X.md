@@ -121,16 +121,50 @@ page-load assertions) is how you ship a regression you cannot detect.
 Current chrome is warm neutrals + `DM Serif Display` headings + eight accent
 colours. Linear/Vercel/Sentry/Ona run cool neutrals, dense type, one accent.
 
-Concretely:
-- serif headings out of product chrome (keep for marketing)
-- one accent with one meaning; status colours reserved for status only
-- status legible without colour (icon or label carries it too)
-- increase density -- an operator wants more rows per screen, not fewer
-- **never a spinner without a claim**: every wait states the step, the bound,
-  and what happens next (the rule we already applied to `docs generate`)
+Concretely, and only the checkable parts:
+- serif headings out of product chrome (keep the token for marketing)
+- status legible without colour (a label or glyph carries it too)
+- bare hex literals wired to the token scale that already exists
 
-Before-shots captured for Overview, Trust, Quality. Any change is judged against
-those, and I will capture after-shots of the same three.
+**The enabling discovery**, and the reason this is mechanical rather than a
+redesign. `dashboard-ui/core/loki-unified-styles.js` defines a full `TYPOGRAPHY`
+scale and emits it as CSS variables (`:579` -> `--loki-font-serif`), and that
+token IS present in the shipped bundle. But **zero components consume it** --
+`grep -c "var(--loki-font-serif"` over `dashboard-ui/` returns 0, while 8 sites
+hardcode `'Fraunces', Georgia, serif` directly.
+
+(I first wrote that the scale was entirely unconsumed. That was wrong: it is
+consumed at the token-emission layer and bypassed at the component layer, which
+is a different and more fixable defect.)
+
+So the token layer already exists and is being routed around. 2.2 is "stop
+bypassing it", not "restyle 43 components" -- the same shape as the 34 undefined
+tokens fixed in `b9c0ff17`.
+
+**DEFERRED BY NAME, not silently dropped:**
+
+- *"Increase density"* -- no measurable target, so no way to tell a good change
+  from a bad one. An agent told to "increase density" will shrink type and
+  tighten padding until something breaks, and nothing would catch it. Reopen
+  with a number (rows visible at 1440x900, say) and it becomes shippable.
+- *"One accent with one meaning"* -- the four RARV timeline hues and the
+  status colours are load-bearing today; collapsing them needs a per-surface
+  decision, not a global sweep.
+- *"Never a spinner without a claim"* -- correct and worth doing, but it is a
+  behaviour change across long-running panels, not a design-token change. It
+  belongs with the steering work, not here.
+
+**Build contention is the binding constraint on parallelising this.**
+`npm run build:all` writes `dashboard/static/index.html` (787KB, tracked). Two
+agents building in one tree is last-writer-wins on a minified blob. Every agent
+edits `dashboard-ui/` source ONLY and runs no build; the integrator builds once
+at the end. I already shipped a wrong artifact today by running the wrong build
+script, so this is a recorded failure mode, not a hypothetical.
+
+Before-shot re-captured at `55aac384` (the earlier ones predate `b9c0ff17` and
+are not a valid baseline for this change). After-shots of the same pages, plus
+`test-dashboard-token-coverage.sh` against the SHIPPED artifact and the
+`getComputedStyle` dark-mode probe.
 
 ---
 

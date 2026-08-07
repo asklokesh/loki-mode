@@ -321,9 +321,17 @@ export class LokiChecklistViewer extends LokiElement {
         flex-shrink: 0;
       }
       .v-dot {
-        width: 6px;
-        height: 6px;
+        width: 12px;
+        height: 12px;
         border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 9px;
+        font-weight: 700;
+        line-height: 1;
+        font-family: 'JetBrains Mono', monospace;
+        color: var(--loki-text-inverse, #ffffff);
       }
       .v-dot-pass { background: var(--loki-status-success, #22c55e); }
       .v-dot-fail { background: var(--loki-status-error, #ef4444); }
@@ -400,12 +408,12 @@ export class LokiChecklistViewer extends LokiElement {
       }
       .gate-blocked {
         background: rgba(239, 68, 68, 0.1);
-        border-left: 3px solid #ef4444;
+        border-left: 3px solid var(--loki-status-error, #ef4444);
         color: #fca5a5;
       }
       .gate-passed {
         background: rgba(34, 197, 94, 0.1);
-        border-left: 3px solid #22c55e;
+        border-left: 3px solid var(--loki-status-success, #22c55e);
         color: #86efac;
       }
 
@@ -555,8 +563,13 @@ export class LokiChecklistViewer extends LokiElement {
           ${waiverButton}
           <div class="verification-dots">
             ${checks.map(c => {
+              // Colour alone cannot carry pass/fail. Pair each dot with a plain
+              // ASCII glyph so the outcome survives a colourblind or mono render.
               const cls = c.passed === true ? 'v-dot-pass' : c.passed === false ? 'v-dot-fail' : 'v-dot-pending';
-              return `<div class="v-dot ${cls}" title="${this._escapeHtml(c.type || '')}"></div>`;
+              const outcome = c.passed === true ? 'pass' : c.passed === false ? 'fail' : 'pending';
+              const glyph = c.passed === true ? '+' : c.passed === false ? 'x' : '-';
+              const label = `${c.type || 'check'}: ${outcome}`;
+              return `<span class="v-dot ${cls}" role="img" aria-label="${this._escapeHtml(label)}" title="${this._escapeHtml(label)}">${glyph}</span>`;
             }).join('')}
           </div>
         </div>

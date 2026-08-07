@@ -14,10 +14,10 @@ import { formatUSD, formatTokens, formatDuration } from '../core/loki-unified-st
 
 /** @type {Object<string, {initial: string, color: string, bgColor: string}>} */
 const PROVIDER_ICONS = {
-  claude:  { initial: 'C', color: '#553DE9', bgColor: 'rgba(85, 61, 233, 0.12)' },
-  codex:   { initial: 'X', color: '#1FC5A8', bgColor: 'rgba(31, 197, 168, 0.12)' },
-  cline:   { initial: 'L', color: '#D4A03C', bgColor: 'rgba(212, 160, 60, 0.12)' },
-  aider:   { initial: 'A', color: '#C45B5B', bgColor: 'rgba(196, 91, 91, 0.12)' },
+  claude:  { initial: 'C', color: 'var(--loki-accent, #553DE9)', bgColor: 'rgba(85, 61, 233, 0.12)' },
+  codex:   { initial: 'X', color: 'var(--loki-success, #1FC5A8)', bgColor: 'rgba(31, 197, 168, 0.12)' },
+  cline:   { initial: 'L', color: 'var(--loki-warning, #D4A03C)', bgColor: 'rgba(212, 160, 60, 0.12)' },
+  aider:   { initial: 'A', color: 'var(--loki-error, #C45B5B)', bgColor: 'rgba(196, 91, 91, 0.12)' },
 };
 
 const STATUS_COLORS = {
@@ -249,6 +249,16 @@ export class LokiProviderHealth extends LokiElement {
         flex: 1;
       }
 
+      /* Visible status word: the dot's title was hover-only and so invisible
+         on touch devices and to screen readers. */
+      .status-text {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--loki-text-muted);
+        flex-shrink: 0;
+      }
+
       .status-dot {
         width: 10px;
         height: 10px;
@@ -363,7 +373,7 @@ export class LokiProviderHealth extends LokiElement {
       content = '<div class="empty-state">Provider status will appear once a build starts.</div>';
     } else {
       content = `<div class="provider-grid">${this._providers.map(p => {
-        const icon = PROVIDER_ICONS[p.name] || { initial: (p.name ?? '?').charAt(0).toUpperCase(), color: '#939084', bgColor: 'rgba(147, 144, 132, 0.12)' };
+        const icon = PROVIDER_ICONS[p.name] || { initial: (p.name ?? '?').charAt(0).toUpperCase(), color: 'var(--loki-text-muted, #939084)', bgColor: 'rgba(147, 144, 132, 0.12)' };
         const statusColor = STATUS_COLORS[p.status] || STATUS_COLORS.unknown;
         const isExpanded = this._expandedProvider === p.name;
         const rateLimitPct = p.rate_limit ? ((p.rate_limit.remaining / p.rate_limit.limit) * 100) : 100;
@@ -374,7 +384,8 @@ export class LokiProviderHealth extends LokiElement {
             <div class="card-header">
               <div class="provider-icon" style="background: ${icon.bgColor}; color: ${icon.color};">${icon.initial}</div>
               <span class="provider-name">${this._escapeHtml(p.name)}</span>
-              <div class="status-dot ${p.status === 'healthy' ? 'pulse' : ''}" style="background: ${statusColor};" title="${this._escapeHtml(p.status)}"></div>
+              <span class="status-text">${this._escapeHtml(p.status ?? 'unknown')}</span>
+              <div class="status-dot ${p.status === 'healthy' ? 'pulse' : ''}" style="background: ${statusColor};" role="img" aria-label="Status: ${this._escapeHtml(p.status ?? 'unknown')}" title="${this._escapeHtml(p.status ?? 'unknown')}"></div>
             </div>
             <div class="card-metrics">
               <div class="metric">

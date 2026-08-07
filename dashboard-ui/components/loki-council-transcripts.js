@@ -302,7 +302,7 @@ export class LokiCouncilTranscripts extends LokiElement {
           color: var(--text-primary, #201515);
         }
         .ct-heading {
-          font-family: 'Fraunces', Georgia, serif;
+          font-family: var(--loki-font-family, 'Inter', system-ui, -apple-system, sans-serif);
           font-size: 1.15rem;
           font-weight: 400;
           color: var(--loki-text-primary, #201515);
@@ -459,7 +459,7 @@ export class LokiCouncilTranscripts extends LokiElement {
         .ct-badge-reject   { background: #fde8e8; color: #C45B5B; }
         .ct-badge-cannot   { background: #fdf3d4; color: #8a6c0e; }
         .ct-badge-blocked  { background: #ede8fd; color: #5b3dc4; }
-        .ct-badge-override { background: #C45B5B; color: #ffffff; }
+        .ct-badge-override { background: var(--loki-error, #C45B5B); color: var(--loki-text-inverse, #ffffff); }
         .ct-badge-da       { background: #fdf3d4; color: #8a6c0e; }
         .ct-badge-unknown  { background: var(--bg-secondary, #F8F4F0); color: var(--text-muted, #939084); }
       </style>

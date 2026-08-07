@@ -184,7 +184,7 @@ export class LokiDashboardHeader extends LokiElement {
         }
 
         .logo-brand {
-          font-family: 'Fraunces', Georgia, serif;
+          font-family: var(--loki-font-family, 'Inter', system-ui, -apple-system, sans-serif);
           font-size: 18px;
           font-weight: 400;
           color: var(--loki-text-primary);

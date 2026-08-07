@@ -391,7 +391,7 @@ export class LokiAppPreview extends LokiElement {
       .btn { padding: 6px 12px; font-size: 13px; border-radius: 6px; border: 1px solid var(--loki-border, #e4e4e7); background: var(--loki-bg-subtle, #f4f4f5); color: var(--loki-text-primary, #201515); cursor: pointer; }
       .btn:hover:not(:disabled) { background: var(--loki-bg-hover, #e4e4e7); }
       .btn:disabled { opacity: 0.45; cursor: not-allowed; }
-      .btn-primary { background: var(--loki-accent, #2563eb); color: #fff; border-color: var(--loki-accent, #2563eb); }
+      .btn-primary { background: var(--loki-accent, #2563eb); color: var(--loki-text-inverse, #fff); border-color: var(--loki-accent, #2563eb); }
       /* Per-service tab strip. Rendered only when more than one service is
          exposed; a single service shows no tabs (unchanged behavior). */
       .service-tabs { display: flex; gap: 4px; margin-top: 12px; flex-wrap: wrap; border-bottom: 1px solid var(--loki-border, #e4e4e7); }

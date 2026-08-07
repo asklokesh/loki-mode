@@ -107,7 +107,7 @@ function generateStandaloneHTML(bundleCode) {
   <title>Loki Mode Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512' width='32' height='32'><rect width='512' height='512' rx='118' fill='%23553DE9'/><path d='M152 405 L242 120' fill='none' stroke='%23FFFEFB' stroke-width='28' stroke-linecap='round'/><path d='M360 405 L270 120' fill='none' stroke='%23FFFEFB' stroke-width='28' stroke-linecap='round'/><path d='M242 120 Q256 86 270 120' fill='none' stroke='%23FFFEFB' stroke-width='28' stroke-linecap='round'/><circle cx='256' cy='295' r='20' fill='%231FC5A8'/></svg>">
   <style>
     /* Autonomi Design Language. Light-grey ground is the default (founder-
@@ -448,7 +448,7 @@ function generateStandaloneHTML(bundleCode) {
     }
 
     .logo-brand {
-      font-family: 'Fraunces', Georgia, serif;
+      font-family: var(--loki-font-family, 'Inter', system-ui, -apple-system, sans-serif);
       font-size: 22px;
       font-weight: 400;
       color: var(--loki-text-primary);
@@ -1085,7 +1085,7 @@ function generateStandaloneHTML(bundleCode) {
     }
 
     .section-page-title {
-      font-family: 'Fraunces', Georgia, serif;
+      font-family: var(--loki-font-family, 'Inter', system-ui, -apple-system, sans-serif);
       font-size: 1.8rem;
       font-weight: 400;
       color: var(--loki-text-primary);
@@ -1128,7 +1128,7 @@ function generateStandaloneHTML(bundleCode) {
     }
     .first-run-hero__icon svg { width: 22px; height: 22px; }
     .first-run-hero__title {
-      font-family: 'Fraunces', Georgia, serif;
+      font-family: var(--loki-font-family, 'Inter', system-ui, -apple-system, sans-serif);
       font-size: 1.5rem;
       font-weight: 400;
       color: var(--loki-text-primary);
@@ -1557,11 +1557,11 @@ function generateStandaloneHTML(bundleCode) {
         </div>
         <div style="display: grid; gap: 24px;">
           <div>
-            <h3 style="font-family: 'Fraunces', Georgia, serif; font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Logs</h3>
+            <h3 style="font-family: var(--loki-font-family, 'Inter', system-ui, -apple-system, sans-serif); font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Logs</h3>
             <loki-log-stream id="log-stream" auto-scroll max-lines="500"></loki-log-stream>
           </div>
           <div>
-            <h3 style="font-family: 'Fraunces', Georgia, serif; font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Memory</h3>
+            <h3 style="font-family: var(--loki-font-family, 'Inter', system-ui, -apple-system, sans-serif); font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Memory</h3>
             <loki-memory-browser id="memory-browser" tab="summary"></loki-memory-browser>
             <!-- v7.7.21 token economics tile: hit rate + tokens + top patterns -->
             <div id="memory-economics-tile" style="margin-top: 12px; background: var(--loki-bg-card, rgba(255,255,255,0.72)); border: 1px solid var(--loki-border, rgba(0,0,0,0.08)); border-radius: 5px; padding: 12px;">
@@ -1614,7 +1614,7 @@ function generateStandaloneHTML(bundleCode) {
             </script>
           </div>
           <div>
-            <h3 style="font-family: 'Fraunces', Georgia, serif; font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Memory Files</h3>
+            <h3 style="font-family: var(--loki-font-family, 'Inter', system-ui, -apple-system, sans-serif); font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Memory Files</h3>
             <div id="memory-files-panel" style="background: var(--loki-bg-card, rgba(255,255,255,0.72)); border: 1px solid var(--loki-border, rgba(0,0,0,0.08)); border-radius: 5px; padding: 12px;">
               <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px;" id="memory-files-tabs"></div>
               <div style="display: grid; grid-template-columns: minmax(220px, 320px) 1fr; gap: 12px; min-height: 280px;">
@@ -1694,12 +1694,12 @@ function generateStandaloneHTML(bundleCode) {
             </script>
           </div>
           <div>
-            <h3 style="font-family: 'Fraunces', Georgia, serif; font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Learning Metrics</h3>
+            <h3 style="font-family: var(--loki-font-family, 'Inter', system-ui, -apple-system, sans-serif); font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Learning Metrics</h3>
             <loki-learning-dashboard id="learning-dashboard" time-range="7d"></loki-learning-dashboard>
           </div>
           <!-- v7.7.1 F-1 follow-up: How to Run (USAGE.md) -->
           <div>
-            <h3 style="font-family: 'Fraunces', Georgia, serif; font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">How to Run (USAGE.md)</h3>
+            <h3 style="font-family: var(--loki-font-family, 'Inter', system-ui, -apple-system, sans-serif); font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">How to Run (USAGE.md)</h3>
             <div id="usage-doc-panel" style="background: var(--loki-bg-card, rgba(255,255,255,0.72)); border: 1px solid var(--loki-border, rgba(0,0,0,0.08)); border-radius: 5px; padding: 12px;">
               <div id="usage-doc-meta" style="font-size: 11px; color: var(--loki-text-muted, #888); margin-bottom: 8px;">Loading...</div>
               <div id="usage-doc-content" class="usage-md"></div>

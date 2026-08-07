@@ -24,6 +24,19 @@ const SEVERITY_COLORS = {
 };
 
 /**
+ * Compact severity labels. The dot's colour is not a sufficient channel on
+ * its own, so each row also carries the severity as text. Abbreviated to keep
+ * the dense row layout intact; unknown values fall back to the full string.
+ * @type {Object<string, string>}
+ */
+const SEVERITY_ABBR = {
+  critical: 'CRIT',
+  warning: 'WARN',
+  info: 'INFO',
+  success: 'OK',
+};
+
+/**
  * Notification categories with icons and labels.
  * @type {Object<string, {label: string, icon: string}>}
  */
@@ -413,7 +426,8 @@ export class LokiNotificationCenter extends LokiElement {
 
         return `
           <div class="notif-row ${acked ? 'acknowledged' : ''}">
-            <span class="severity-dot" style="background: ${severityColor};" title="${this._escapeHTML(n.severity)}"></span>
+            <span class="severity-dot" style="background: ${severityColor};" role="img" aria-label="Severity: ${this._escapeHTML(n.severity ?? 'unknown')}" title="${this._escapeHTML(n.severity ?? 'unknown')}"></span>
+            <span class="severity-text">${this._escapeHTML(SEVERITY_ABBR[n.severity] || String(n.severity ?? 'unknown'))}</span>
             <span class="cat-icon" title="${this._escapeHTML(catCfg.label)}">${catCfg.icon}</span>
             <span class="notif-time">${this._formatTime(n.timestamp)}</span>
             <span class="notif-message">${this._escapeHTML(n.message)}</span>
@@ -695,6 +709,15 @@ export class LokiNotificationCenter extends LokiElement {
           height: 6px;
           border-radius: 2px;
           flex-shrink: 0;
+        }
+
+        .severity-text {
+          font-size: 9px;
+          font-weight: 700;
+          letter-spacing: 0.04em;
+          color: var(--loki-text-muted);
+          flex-shrink: 0;
+          width: 30px;
         }
 
         .cat-icon {

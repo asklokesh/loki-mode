@@ -358,6 +358,8 @@ export const RADIUS = {
 export const TYPOGRAPHY = {
   fontFamily: {
     sans: "'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+    // Retained for marketing surfaces only. Deliberately not used in product
+    // chrome, which runs the sans stack (Linear/Vercel/Sentry convention).
     serif: "'Fraunces', Georgia, 'Times New Roman', serif",
     mono: "'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, monospace",
   },
