@@ -193,20 +193,45 @@ configs against the same task and the same model:
 Paired on identical tasks, both arms on `haiku`, from
 `benchmarks/bench/results/`:
 
-| Task | harness (`full`) | raw model (`baseline`) |
-|---|---|---|
-| `hard-2-ledger` | **4/4 succeeded**, $0.89 median | **0/4 succeeded**, $0.19 median |
-| `hard-1-order-api` | 1/1 succeeded, $0.58 (n=3) | 1/1 succeeded, $0.20 (n=1) |
+| Task | harness (`full`) | raw model (`baseline`) | verdict |
+|---|---|---|---|
+| `hard-2-ledger` | **4/4**, $0.89 | **0/4**, $0.19 | harness wins outright |
+| `hard-1-order-api` | 3 runs, 1.00, $0.58 | 1 run, 1.00, $0.20 | harness cost 2.8x for nothing |
+| `multifail-1-two-modules` | 2 runs, 1.00, $0.27 | 1 run, 1.00, $0.14 | harness cost 1.9x for nothing |
 
-**On `hard-2-ledger` the raw model never finished the task and the harness
-finished it every time.** That is not a percentage improvement; the baseline
-success rate is zero at n=4. The harness cost 4.7x more per run on that task,
-and produced a working result instead of nothing.
+**Two of the three paired tasks are UNFAVOURABLE to the harness.** That is the
+honest headline, and it is narrower than "the harness is worth more than the
+model":
 
-**On `hard-1-order-api` the harness bought nothing** and cost 2.9x more. The
-baseline arm there is a SINGLE trial, so "equal outcome" is weakly supported --
-but we report it because the direction is unfavourable to us and hiding it
-would make the table an advertisement.
+**The harness matters on hard tasks and is pure overhead on easy ones.**
+
+On `hard-2-ledger` the raw model never finished the task across 4 trials and
+the harness finished it every time. That is not a percentage improvement; the
+baseline success rate is zero. It cost 4.7x more per run and produced a working
+result instead of nothing.
+
+On the other two, both arms succeed and the harness simply costs 1.9x-2.8x
+more. We publish those rows because the direction is unfavourable to us, and a
+benchmark table that only survives its favourable rows is an advertisement.
+
+**Two further baseline cells were attempted and produced NO data.**
+`tokenheavy-1-crm` (2 trials) and a wider `hard-1-order-api` (3 trials) both hit
+the 1200s cell timeout, which caps all trials of a cell together. The harness
+wrote no result file and the runner said so:
+
+> WARNING: cell haiku-baseline / tokenheavy-1-crm wrote NO new result (likely
+> timed out at 1200s). This cell is MISSING from the report.
+
+They are absent from the table rather than counted as failures. A timeout is
+not evidence the raw model cannot do the task; it is evidence we did not
+measure it. Reporting them as baseline losses would have made the harness look
+better on data that does not exist.
+
+An earlier version of this section reported only the first two tasks and read
+as a stronger claim than the data supported. The `multifail` baseline arm was
+run afterwards specifically to test whether the claim would survive more data.
+It did not survive intact, and the table was corrected rather than the
+measurement dropped.
 
 Aggregate across all recorded cells:
 

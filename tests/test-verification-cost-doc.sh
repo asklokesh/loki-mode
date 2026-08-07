@@ -154,10 +154,30 @@ done
 #
 # THIS IS THE LOAD-BEARING ASSERTION HERE. A benchmark table that only survives
 # its favourable rows is an advertisement.
-if grep -q "the harness bought nothing" "$DOC"; then
-    ok "the benchmark keeps the task where the harness did NOT help"
+# Matched on the PROPERTY (a row where the harness cost more for no gain), not
+# on one sentence. The first version keyed on the literal phrase "the harness
+# bought nothing" and fired on my own edit -- one that ADDED a second
+# unfavourable task and reworded the first. A guard that breaks when the thing
+# it protects gets stronger is measuring the wording, not the honesty.
+if grep -qE "harness cost [0-9.]+x for nothing|harness bought nothing" "$DOC"; then
+    ok "the benchmark keeps at least one task where the harness did NOT help"
 else
-    bad "the unfavourable benchmark row was dropped -- the table is now an advertisement"
+    bad "no unfavourable benchmark row remains -- the table is now an advertisement"
+fi
+# And the losing rows must not be outnumbered into invisibility: state the split.
+if grep -q "UNFAVOURABLE to the harness" "$DOC"; then
+    ok "the doc states how many paired tasks went against us"
+else
+    bad "the unfavourable tasks are present but their weight is not stated"
+fi
+# Cells that produced NO data must be named as absent, never as losses.
+# Counting a timed-out baseline as a baseline failure would flatter the harness
+# on data that does not exist -- the most tempting omission in this whole file,
+# because the missing cells are the ones that would have helped us.
+if grep -q "produced NO data" "$DOC" && grep -q "not evidence the raw model cannot do the task" "$DOC"; then
+    ok "attempted-but-unmeasured cells are recorded as absent, not as losses"
+else
+    bad "the unmeasured baseline cells were dropped or counted as failures"
 fi
 # Sample sizes must travel with the numbers, or n=1 reads like n=100.
 if grep -q "n=1" "$DOC"; then
