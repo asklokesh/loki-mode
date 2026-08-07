@@ -5,6 +5,66 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.17.0
+
+Sixteen commits of trust-layer repair. The theme: six of these were FALSE
+SIGNALS, not missing features. The machinery was built and telling users
+things that were not true.
+
+### Fixed
+
+- **The receipt could never be verified.** `facts.git.base_sha` was empty on
+  every receipt, so `resolve_anchor()` returned `unanchored/base_sha_empty` and
+  the dashboard honestly reported "9 receipts, 0 verified". The baseline was on
+  disk at `.loki/state/start-sha` the whole time and both other consumers read
+  it; the receipt writer was the only one that did not. First anchored receipt
+  in this repo's history.
+- **A crashed queue worker silently lost the user's build.** The redis backend
+  was at-most-once: pop, crash, item gone, no record anywhere. Proven against a
+  real redis 8.6.3 before the fix. Now LMOVE (RPOPLPUSH pre-6.2) with the ack
+  only after a zero-exit build. `LOKI_QUEUE_ACK=0` restores the old path.
+- **Quality showed eight gates as "Last checked: Never"** on a repo holding
+  nine receipts, because `/api/council/gate` served static defaults. Now reads
+  the newest receipt. Only gates the receipt names are filled in; the rest stay
+  pending with no timestamp.
+- **Harness failures were reported as Critical defects in the user's code.**
+  All 16 findings read "Critical" and all 16 were the REVIEWER failing to
+  answer. Split severity from confidence: these now carry `[unverified]` and
+  say plainly that the review harness failed, not the code. Still blocks.
+- **`loki steer` told users to set a value the runner rejected.** The CLI
+  printed `export LOKI_PROMPT_INJECTION=1`; the runner tested `!= "true"` only,
+  so a note followed exactly was moved to a REJECTED log unread.
+- **34 dashboard tokens were consumed but never defined**, silently falling
+  back to light-mode literals, so status colours were wrong in dark mode.
+
+### Added
+
+- `loki gates` -- what blocks here, what only advises, how many times each has
+  fired, and the exact variable that promotes an advisory gate. An unmeasured
+  gate reports "not measured", never 0.
+- `loki readiness --fix` -- writes the missing files whose content can be
+  derived honestly, and REFUSES to fabricate a test command, lockfile or CI
+  config. Guessing one makes the score green while the capability is absent.
+- `queue-consumer.sh --reap` -- requeues in-flight items past
+  `LOKI_QUEUE_VISIBILITY_SEC` (default 7200). A fresh claim is never reaped; an
+  item with no claim is treated as infinitely old.
+- Stable acceptance-criterion IDs (`AC-AUTH-001`) on both intake paths, so a
+  receipt can cite a criterion instead of listing prose.
+- The verdict on the Slack card: gate results, changed files, receipt id. An
+  unanchored receipt reports "Verified: no", not a diff count.
+- Product chrome runs sans; Fraunces went 11 occurrences to 1 in the shipped
+  bundle and is no longer downloaded. Status carries a glyph plus aria-label,
+  not colour alone.
+
+### Documented
+
+- `docs/VERIFICATION-COST.md` now carries the measured harness comparison,
+  INCLUDING the task where the harness bought nothing and cost 2.9x more, and
+  a live false-green exclusion where a trial the grader PASSED was thrown out
+  because the run timed out. It also states plainly that no 2-10x number
+  against Factory/Devin/8090/Replit exists here, because none of them has a
+  runnable local arm.
+
 ## v9.16.0
 
 Completes the 10-item competitive roadmap.
