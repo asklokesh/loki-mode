@@ -332,12 +332,26 @@ class SigningStatusTest(unittest.TestCase):
             self.assertNotIn(mutating, recorded)
 
     def test_round_trip_leaves_no_scratch_files(self):
+        # Asserts the DELTA, not set equality.
+        #
+        # This globs a SHARED temp dir, so `assertEqual(before, after)` also
+        # fails when some unrelated concurrent process creates or removes its
+        # own loki-signing-status-* file between the two snapshots. That is not
+        # this code leaking; it is another process existing. It went red in a
+        # local FULL gate purely because several suites were running at once,
+        # and passed alone in 0.28s -- a red that says "you leaked a scratch
+        # file" when nothing leaked is worse than no check, because the next
+        # real leak reads as the same known flake.
+        #
+        # `after - before` is exactly the claim in the test's name: files that
+        # were not there before and are there now. Removals by other processes
+        # are correctly ignored, and a genuine leak by THIS call still fails.
         before = set(pathlib.Path(tempfile.gettempdir()).glob(
             "loki-signing-status-*"))
         _run(self.shim(_SHIM_WORKS), key="KEYID")
         after = set(pathlib.Path(tempfile.gettempdir()).glob(
             "loki-signing-status-*"))
-        self.assertEqual(before, after)
+        self.assertEqual(after - before, set())
 
 
 class RealGpgTest(unittest.TestCase):
