@@ -73,6 +73,7 @@ export class LokiQualityGates extends LokiElement {
     this._api = null;
     this._gates = [];
     this._evidence = { blocked: false };
+    this._policy = null;   // gate-policy rows, null until fetched (never [] -- absent != empty)
     this._pollInterval = null;
     this._lastDataHash = null;
     this._scanning = false;
@@ -126,6 +127,48 @@ export class LokiQualityGates extends LokiElement {
     }
   }
 
+
+  // One line per card: does this gate BLOCK, or only advise?
+  //
+  // Matching is by DISPLAY NAME, mapped explicitly. The policy reporter speaks
+  // snake_case (static_analysis) and the cards carry display names (Static
+  // Analysis); a lower()/replace() heuristic silently mis-maps "Test Suite" onto
+  // test_coverage and "Test Mutation" onto mutation_integrity, which are
+  // different gates. Same explicit-mapping rule as the server side.
+  //
+  // Renders NOTHING when the policy is unavailable or the gate is unknown to
+  // it. An absent policy must not be drawn as "advisory" -- that would tell a
+  // user a blocking gate is optional, which is the dangerous direction.
+  _policyLine(displayName) {
+    if (!Array.isArray(this._policy) || !displayName) return '';
+    const KEY = {
+      'Static Analysis': 'static_analysis',
+      'Test Suite': 'test_coverage',
+      'Blind Code Review': 'code_review',
+      'Anti-Sycophancy': 'anti_sycophancy',
+      'Mock Integrity': 'mock_integrity',
+      'Test Mutation': 'mutation_integrity',
+      'Documentation Coverage': 'doc_coverage',
+      'Magic Modules Debate': 'magic_debate',
+    };
+    const key = KEY[displayName];
+    if (!key) return '';
+    const p = this._policy.find((g) => g && g.gate === key);
+    if (!p || !p.mode) return '';
+    const blocking = p.mode === 'blocking';
+    // audit_hits is null when UNMEASURED. Rendering that as 0 would claim the
+    // gate ran and never fired, which is the false green the reporter refuses
+    // to emit; keep the distinction all the way to the pixel.
+    const hits = (p.audit_hits === null || p.audit_hits === undefined)
+      ? 'not measured'
+      : `${p.audit_hits} hit${p.audit_hits === 1 ? '' : 's'}`;
+    const label = blocking ? 'BLOCKS' : 'advisory';
+    const promote = (!blocking && p.promote_with)
+      ? ` -- promote with ${this._escapeHtml(p.promote_with)}`
+      : '';
+    return `<div class="gate-meta gate-policy">${label} &middot; ${hits}${promote}</div>`;
+  }
+
   async _loadData() {
     // Capture the api instance so a mid-flight api-url switch can be detected.
     const api = this._api;
@@ -139,11 +182,33 @@ export class LokiQualityGates extends LokiElement {
       // quality gates so a blocked completion shows WHY (empty diff / red
       // tests) instead of the run silently refusing to stop.
       const evidence = data?.evidence || { blocked: false };
-      const dataHash = JSON.stringify({ gates, evidence });
+
+      // GATE POLICY: which gates BLOCK and which only advise.
+      //
+      // /api/gate-policy shipped with zero UI consumers -- the same
+      // inert-surface pattern as the six modules found earlier: built, tested,
+      // and unreachable by the people it was built for. A user looking at eight
+      // gate cards could not tell which ones would actually stop a build.
+      //
+      // Fetched SEPARATELY and failure-tolerated: this is decoration on top of
+      // the gate list, so a missing or erroring policy endpoint must leave the
+      // page exactly as it was rather than blanking the gates. Older servers
+      // have no such route at all.
+      let policy = null;
+      try {
+        const p = await api._get('/api/gate-policy');
+        if (api !== this._api) return;
+        policy = Array.isArray(p?.gates) ? p.gates : null;
+      } catch (_) {
+        policy = null;   // older server, or reporter unavailable
+      }
+
+      const dataHash = JSON.stringify({ gates, evidence, policy });
       if (dataHash === this._lastDataHash) return;
       this._lastDataHash = dataHash;
       this._gates = Array.isArray(gates) ? gates : [];
       this._evidence = evidence;
+      this._policy = policy;
       this._error = null;
     } catch (err) {
       // Drop a stale response if the api-url switched mid-flight.
@@ -490,6 +555,7 @@ export class LokiQualityGates extends LokiElement {
             </div>
             ${gate.description ? `<div class="gate-description">${this._escapeHtml(gate.description)}</div>` : ''}
             <div class="gate-meta">Last checked: ${formatGateTime(gate.last_checked || gate.lastChecked)}</div>
+            ${this._policyLine(gate.name)}
           </div>
         `;
       }).join('');
