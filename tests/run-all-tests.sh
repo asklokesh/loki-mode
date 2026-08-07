@@ -206,6 +206,7 @@ run_test "the runtime actually writes decision records" "$SCRIPT_DIR/test-decisi
 run_test "failure memory learns from measured events only" "$SCRIPT_DIR/test-failure-memory.sh"
 run_test "agent readiness is measured, not judged" "$SCRIPT_DIR/test-agent-readiness.sh"
 run_test "degraded providers get the full spec and the first-pass push" "$SCRIPT_DIR/test-degraded-provider-quality.sh"
+run_test "a one-liner yields criteria derived from the request" "$SCRIPT_DIR/test-brief-acceptance-criteria.sh"
 run_test "the verification-cost page stays honest" "$SCRIPT_DIR/test-verification-cost-doc.sh"
 run_test "outcome ledger anchors before it measures" "$SCRIPT_DIR/test-outcome-ledger.sh"
 run_test "intent ledger detects spec-drifted-from-intent" "$SCRIPT_DIR/test-intent-ledger.sh"

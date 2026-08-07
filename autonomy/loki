@@ -13803,12 +13803,76 @@ set_ttfv_lightweight_profile() {
 # never pollutes the v7.8.1 generated-PRD-reuse signature logic. The brief text
 # is the project intent; the rest is a minimal scaffold the agent fills in.
 # Usage: synthesize_brief_prd <output_file> <brief_text>
+# _brief_acceptance_criteria <brief_text>: acceptance criteria derived from what
+# the user ACTUALLY asked for, not constants.
+#
+# WHY. Every one-liner used to get byte-identical Requirements and Success
+# Criteria: "build a todo app" and "build a Stripe billing dashboard" produced
+# the same acceptance criteria, and the user's own words appeared exactly once,
+# under Overview. So the completion council, the checklist and the evidence gate
+# were all checking generic prose rather than the request. That is the weakest
+# input shape getting the least specific help, which is backwards -- a cheap
+# model's output quality depends more on how precisely the target is stated than
+# on the model.
+#
+# DETERMINISTIC ON PURPOSE. No model call: this runs before a provider is even
+# selected, must work with no API key, and must not add latency or cost to the
+# first thing a new user does. It is keyword-to-obligation mapping, which is
+# honest about being shallow -- it turns stated nouns into checkable lines and
+# claims nothing about intent it cannot see. Anything cleverer belongs in the
+# spec-interrogation grill, which already runs after this and does call a model.
+_brief_acceptance_criteria() {
+    local t
+    t="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+    local out=""
+    _bac() { out="${out}- ${1}"$'\n'; }
+
+    # Persistence. The single most common churn report is "I submitted the form
+    # and nothing happened", so a stated store or form becomes an explicit
+    # survives-a-reload obligation rather than an implied one.
+    case "$t" in
+        *save*|*persist*|*store*|*databas*|*crud*|*todo*|*note*|*task*|*record*)
+            _bac "Data the user creates survives a page reload and a server restart (it is written to a real store, not held in memory)." ;;
+    esac
+    case "$t" in
+        *form*|*submit*|*signup*|*"sign up"*|*contact*|*upload*|*checkout*)
+            _bac "Every form actually submits: the happy path writes real data and the user sees a confirmation, and a validation failure shows an inline error." ;;
+    esac
+    case "$t" in
+        *auth*|*login*|*"log in"*|*"sign in"*|*account*|*user*|*password*|*session*)
+            _bac "Authentication works end to end: a real signup, a real login, and a protected route that returns 401 when logged out." ;;
+    esac
+    case "$t" in
+        *api*|*endpoint*|*rest*|*graphql*|*backend*|*server*)
+            _bac "Each endpoint returns real data with correct status codes, and is callable with curl without a browser." ;;
+    esac
+    case "$t" in
+        *payment*|*stripe*|*billing*|*subscription*|*checkout*|*invoice*)
+            _bac "The payment path is wired to the provider's test mode and a test transaction completes; no mocked charge stands in for the integration." ;;
+    esac
+    case "$t" in
+        *search*|*filter*|*sort*)
+            _bac "Search or filtering queries the real dataset and returns different results for different inputs." ;;
+    esac
+    case "$t" in
+        *dashboard*|*chart*|*graph*|*analytic*|*report*|*metric*)
+            _bac "Every figure shown traces to a real query. No hardcoded sample numbers." ;;
+    esac
+    case "$t" in
+        *page*|*landing*|*site*|*website*|*ui*|*app*|*frontend*)
+            _bac "The page renders with real content, no lorem ipsum, and no placeholder image where a real asset belongs." ;;
+    esac
+    printf '%s' "$out"
+}
+
 synthesize_brief_prd() {
     local out_file="$1"
     local brief_text="$2"
     local out_dir
     out_dir="$(dirname "$out_file")"
     mkdir -p "$out_dir" 2>/dev/null || true
+    local _derived
+    _derived="$(_brief_acceptance_criteria "$brief_text")"
     cat > "$out_file" << BRIEFEOF
 # Project Brief
 
@@ -13824,6 +13888,7 @@ $brief_text
 ## Success Criteria
 - A user can run the result and observe the core behavior described above.
 - No errors on a clean start; the happy path works end to end.
+${_derived}
 
 ## Constraints
 - This is a fast first pass (zero-config first run). Keep scope tight.
@@ -13925,6 +13990,10 @@ cmd_quick() {
     find "$LOKI_DIR" -maxdepth 1 -name 'quick-prd-*.md' -mtime +1 -delete 2>/dev/null || true
     find "$LOKI_DIR" -maxdepth 1 -name 'brief-prd-*.md' -mtime +1 -delete 2>/dev/null || true
     local quick_prd="$LOKI_DIR/quick-prd-$$.md"
+    # Same spec-derived criteria as the brief path: a quick task was getting the
+    # identical generic Success Criteria regardless of what was asked.
+    local _derived
+    _derived="$(_brief_acceptance_criteria "$task_desc")"
     cat > "$quick_prd" << QPRDEOF
 # Quick Task
 
@@ -13941,6 +14010,7 @@ $task_desc
 - Task is completed as described
 - No errors or regressions introduced
 - Code follows project conventions
+${_derived}
 
 ## Constraints
 - This is a quick single-task execution
