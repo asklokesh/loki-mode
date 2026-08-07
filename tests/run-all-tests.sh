@@ -824,6 +824,7 @@ run_test "concurrent mutation probes do not corrupt the target" "$SCRIPT_DIR/tes
 run_test "a stranded VERSION bump is reported" "$SCRIPT_DIR/test-release-drift-check.sh"
 run_test "the receipt anchors to the run's real baseline" "$SCRIPT_DIR/test-proof-base-sha-anchor.sh"
 run_test "every consumed dashboard token is defined" "$SCRIPT_DIR/test-dashboard-token-coverage.sh"
+run_test "readiness --fix repairs what it can and refuses the rest" "$SCRIPT_DIR/test-readiness-fix.sh"
 run_test "trust-core tests detect their regressions" "$SCRIPT_DIR/test-trust-core-tests-detect.sh"
 run_test "a user-installed reviewer takes part in a run" "$SCRIPT_DIR/test-installed-agent-reviewer.sh"
 # Skill modules are loaded INTO the agent's context and acted on, so a false

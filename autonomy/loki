@@ -31036,7 +31036,7 @@ cmd_readiness() {
         --help|-h|help)
             echo -e "${BOLD}loki readiness${NC} - can an agent verify its own work in this repo?"
             echo ""
-            echo "Usage: loki readiness [path] [--json]"
+            echo "Usage: loki readiness [path] [--json] [--fix]"
             echo ""
             echo "Measures whether this repo gives an agent a way to check itself: a"
             echo "test command, a build, CI config, typed sources, a lockfile. Not"
@@ -31044,7 +31044,18 @@ cmd_readiness() {
             echo ""
             echo "Deterministic: no model, no key, no spend. Same commit, same answer."
             echo "Criteria that cannot be determined report UNKNOWN rather than failing."
-            echo "Read-only: it never writes to the repo it analyses."
+            echo ""
+            echo -e "${BOLD}--fix${NC} writes the missing files whose content can be derived"
+            echo "honestly (README.md, AGENTS.md, .gitignore) as TODO stubs, then"
+            echo "re-measures and reports what is true AFTER the change."
+            echo ""
+            echo "It deliberately REFUSES to generate a test command, a lockfile or a"
+            echo "CI config. Guessing one writes a line that lies: an invented"
+            echo "'npm test' in a repo with no runner fails forever, and this check"
+            echo "would then report the criterion present for something that does not"
+            echo "work. Those stay reported, never generated."
+            echo ""
+            echo "Without --fix it is read-only and never writes to the repo."
             return 0
             ;;
     esac
