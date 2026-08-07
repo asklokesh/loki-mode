@@ -209,6 +209,7 @@ run_test "degraded providers get the full spec and the first-pass push" "$SCRIPT
 run_test "a one-liner yields criteria derived from the request" "$SCRIPT_DIR/test-brief-acceptance-criteria.sh"
 run_test "an imported issue yields criteria derived from the issue" "$SCRIPT_DIR/test-issue-acceptance-criteria.sh"
 run_test "a dependency does not decide the complexity tier" "$SCRIPT_DIR/test-complexity-external-prune.sh"
+run_test "long silent steps announce themselves" "$SCRIPT_DIR/test-no-silent-gaps.sh"
 run_test "the verification-cost page stays honest" "$SCRIPT_DIR/test-verification-cost-doc.sh"
 run_test "outcome ledger anchors before it measures" "$SCRIPT_DIR/test-outcome-ledger.sh"
 run_test "intent ledger detects spec-drifted-from-intent" "$SCRIPT_DIR/test-intent-ledger.sh"

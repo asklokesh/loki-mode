@@ -12322,6 +12322,14 @@ auto_generate_docs_if_needed() {
     elif command -v timeout >/dev/null 2>&1; then
         _doc_cmd=(timeout "${_doc_to}s")
     fi
+    # SAY WHAT IS HAPPENING BEFORE GOING QUIET. This call discards child output
+    # and can run for the full timeout (default 300s), so without this line the
+    # user sees a single "Auto-documentation" header and then minutes of nothing.
+    # A silent gap reads as a hang: the observed incident was a build stuck ~55
+    # min here with the work committed but never pushed, and nothing on screen
+    # said which step owned the time. Naming the step and its cap turns an
+    # apparent freeze into a bounded wait the user can reason about.
+    log_info "Auto-documentation: generating architecture suite (no output until it finishes; up to ${_doc_to}s)"
     if "${_doc_cmd[@]}" "$loki_bin" docs generate "$project_dir" >/dev/null 2>&1; then
         :
     else
@@ -12380,6 +12388,10 @@ run_magic_debate_gate() {
     # verdict on genuinely thin input, not a spurious process block.
     log_info "Magic Modules: running debate on '$latest_name'"
     local debate_out debate_rc
+    # Captured to a variable, so nothing reaches the screen for up to 300s. Same
+    # reasoning as the doc suite above: name the step and its cap so a bounded
+    # wait does not read as a hang.
+    log_info "Magic debate: reviewing $latest_name (2 rounds, output shown when it finishes; up to 300s)"
     debate_out=$(cd "$TARGET_DIR" && PYTHONPATH="$PROJECT_DIR" LOKI_PROVIDER="${PROVIDER_NAME:-claude}" \
         timeout 300 "$PROJECT_DIR/autonomy/loki" magic debate "$latest_name" --rounds 2 2>&1) \
         && debate_rc=0 || debate_rc=$?
