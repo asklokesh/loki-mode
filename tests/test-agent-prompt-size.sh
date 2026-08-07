@@ -40,15 +40,41 @@ else
     bad "the agent prompt size is never measured -- the 93% call has no input metric"
 fi
 
-# Window spans BOTH directions. The emit is a multi-line continuation, so its
-# arguments (duration_s, || true) live AFTER the matched line while the guard
-# and the agent stage live before -- a -B-only window reported three false
-# failures against correct code.
+# CO-LOCATION IS ASSERTED BY ENCLOSING FUNCTION, NOT BY LINE DISTANCE.
+#
+# This was a -B26/-A6 window, and it went red on main for a reason that had
+# nothing to do with the measurement: unrelated work inserted lines between
+# `emit_stage_complete "agent"` and this emit, pushing the gap to 88 lines. The
+# code was correct the whole time -- both calls live in run_autonomous() and the
+# emit reads the same $prompt and $duration the completed call just set.
+#
+# A line-distance heuristic asserts "nobody edited nearby", which is not the
+# property we care about and breaks on every insertion. Extracting the enclosing
+# function and asserting both markers appear inside it tests the actual
+# invariant: the measurement happens in the same scope as the call it measures,
+# so it cannot be reading some other invocation's prompt.
+_fn_body="$(awk '/^run_autonomous\(\) \{/{f=1} f{print} f && /^\}/{exit}' "$RUN_SH")"
+if [ -z "$_fn_body" ]; then
+    bad "could not extract run_autonomous() -- the emit's scope is unverifiable"
+# `printf | grep -q` is deliberately avoided here: under `set -o pipefail`
+# grep -q exits on first match, printf dies of SIGPIPE, and the pipeline reports
+# non-zero even though the pattern MATCHED. That inverts the assertion and is
+# how this check first read red against correct code. Match on the string with
+# case, no pipeline, no exit status to misread.
+elif case "$_fn_body" in *'emit_event_json "agent_prompt"'*) true ;; *) false ;; esac \
+   && case "$_fn_body" in *'emit_stage_complete "agent"'*) true ;; *) false ;; esac; then
+    ok "the measurement shares run_autonomous() with the agent stage"
+else
+    bad "the emit left the agent call's function -- it may measure the wrong prompt"
+fi
+
+# Scope alone is not enough: it must read the variables the completed call set.
+# A copy that measured some other string would still sit in the right function.
 _blk="$(grep -B26 -A6 'emit_event_json "agent_prompt"' "$RUN_SH")"
 case "$_blk" in
-    *'emit_stage_complete "agent"'*)
-        ok "the measurement sits with the agent stage, not some other call" ;;
-    *) bad "the emit is not adjacent to the agent stage -- it may measure the wrong prompt" ;;
+    *'printf '\''%s'\'' "$prompt" | wc -c'*)
+        ok "it measures \$prompt, the string actually sent to the provider" ;;
+    *) bad "the emit does not measure \$prompt -- it may be sizing something else" ;;
 esac
 
 # It must carry the duration too: bytes alone cannot show a size/latency
