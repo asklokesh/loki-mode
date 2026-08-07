@@ -81,6 +81,39 @@ else
 fi
 rm -rf "$T"
 
+# --- 2b. THE MANIFEST BOUNDARY, asserted rather than accidental --------------
+# Test 1 puts the mention inside node_modules, so it says nothing about a
+# dependency declared in the project's OWN package.json. That case was
+# undocumented in either direction, and it is the one most likely to be
+# "fixed" by mistake later.
+#
+# It must stay TRUE, deliberately: declaring the Azure SDK in your own
+# dependencies IS evidence of an integration, and the whole point of test 2 is
+# that suppressing real signal is worse than the original bug. Recorded here so
+# the next person reads it as intent and not as an oversight.
+T="$(mktemp -d)"
+printf '{"name":"app","dependencies":{"@azure/core":"^1.0.0"}}\n' > "$T/package.json"
+printf 'export default function Page(){return "hi"}\n' > "$T/page.jsx"
+if _has_external "$T"; then
+    ok "a dependency declared in the project's OWN manifest still counts (intended)"
+else
+    bad "a declared SDK dependency no longer counts -- real signal was suppressed"
+fi
+rm -rf "$T"
+
+# A plain project with no integration must NOT trip, manifest included. This is
+# the coffee-landing-page shape: verified against a real `npm i next react
+# react-dom` tree, whose lockfile contains none of the terms.
+T="$(mktemp -d)"
+printf '{"name":"landing","dependencies":{"next":"^16.0.0","react":"^19.0.0"}}\n' > "$T/package.json"
+printf 'export default function Page(){return "coffee"}\n' > "$T/page.jsx"
+if _has_external "$T"; then
+    bad "a plain landing page trips the external check -- it lands on the expensive tier"
+else
+    ok "a plain landing page with ordinary deps stays eligible for the fast path"
+fi
+rm -rf "$T"
+
 # --- 3. Each excluded directory is genuinely inert ---------------------------
 # Checked individually rather than as a set: a single wrong --exclude-dir would
 # otherwise hide behind the others passing.
