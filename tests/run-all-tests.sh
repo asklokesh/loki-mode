@@ -818,6 +818,7 @@ run_test "every consumed dashboard token is defined" "$SCRIPT_DIR/test-dashboard
 run_test "the Quality page shows which gates block" "$SCRIPT_DIR/test-gate-policy-ui-line.sh"
 run_test "the evidence receipt is reachable from the dashboard" "$SCRIPT_DIR/test-receipts-panel.sh"
 run_test "the build's learnings are visible" "$SCRIPT_DIR/test-learnings-panel.sh"
+run_test "the spend-cap state is visible" "$SCRIPT_DIR/test-budget-banner.sh"
 run_test "product chrome runs sans, measured without a false green" "$SCRIPT_DIR/test-dashboard-serif-removed.sh"
 run_test "a crashed worker does not lose the build" "$SCRIPT_DIR/test-queue-at-least-once.sh"
 run_test "the file backend recovers a dead worker's item" "$SCRIPT_DIR/test-queue-file-reap.sh"

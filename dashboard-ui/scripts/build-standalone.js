@@ -1782,6 +1782,13 @@ function generateStandaloneHTML(bundleCode) {
         <div class="section-page-header">
           <h2 class="section-page-title">Cost</h2>
         </div>
+        <!-- SPEND CAP. /api/budget reports budget_limit, and it ships NULL:
+             there is no automatic spend stop. Nothing in the UI said so, and
+             the only place that fact surfaced was a bill. Shown ALWAYS, not
+             just when a cap exists, because "no cap" is the state a user most
+             needs to know about. -->
+        <div id="budget-banner" style="display:none;margin-bottom:12px;padding:10px 12px;
+             border:1px solid var(--loki-border);border-radius:6px;font-size:12px;"></div>
         <loki-cost-dashboard id="cost-dashboard"></loki-cost-dashboard>
       </div>
 
@@ -2387,6 +2394,46 @@ document.addEventListener('DOMContentLoaded', function() {
       badge.classList.add('show');
     }
 
+    // SPEND CAP STATE. budget_limit is NULL by default -- LOKI_BUDGET_LIMIT
+    // ships unset, so a long run has no automatic stop. That is a defensible
+    // default (a run killed at a threshold the user never chose is worse), but
+    // it must not be INVISIBLE: today the only place it surfaced was a bill.
+    //
+    // Renders the no-cap state as prominently as a cap, and names the variable
+    // that sets one. Never invents a number: an unknown current cost reads
+    // "not measured", not $0.00.
+    window.loadBudget = function () {
+      var el = document.getElementById('budget-banner');
+      if (!el) return;
+      fetch('/api/budget', { headers: { 'Accept': 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (!d) return;
+          var lim = d.budget_limit;
+          var cur = d.current_cost;
+          var curTxt = (cur === null || cur === undefined) ? 'not measured'
+                     : ('$' + Number(cur).toFixed(2));
+          if (lim === null || lim === undefined) {
+            el.style.borderColor = 'var(--loki-warning)';
+            el.innerHTML = '<strong>No spend cap set.</strong> This run will not stop on cost. '
+              + 'Spent so far: ' + curTxt + '. '
+              + 'Set one with <code>LOKI_BUDGET_LIMIT=&lt;usd&gt;</code>.';
+          } else if (d.exceeded) {
+            el.style.borderColor = 'var(--loki-error)';
+            el.innerHTML = '<strong>Budget exceeded.</strong> Cap $' + Number(lim).toFixed(2)
+              + ', spent ' + curTxt + '.';
+          } else {
+            var rem = (d.remaining === null || d.remaining === undefined)
+              ? 'not measured' : ('$' + Number(d.remaining).toFixed(2));
+            el.style.borderColor = 'var(--loki-border)';
+            el.innerHTML = 'Spend cap $' + Number(lim).toFixed(2)
+              + '. Spent ' + curTxt + ', remaining ' + rem + '.';
+          }
+          el.style.display = 'block';
+        })
+        .catch(function () { /* leave hidden */ });
+    };
+
     // LEARNINGS. What the build learned from its own gate failures.
     //
     // /api/learnings held real records -- rootCause, fix, preventInFuture --
@@ -2529,6 +2576,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // pass the resolved theme as a query param (?theme=dark|light); the
     // standalone page reads it and matches. v7.18.0.
     if (sectionId === 'insights') { loadLearnings(); }
+    if (sectionId === 'cost') { loadBudget(); }
     if (sectionId === 'trust') {
       loadReceipts();
       var tframe = document.getElementById('trust-frame');
