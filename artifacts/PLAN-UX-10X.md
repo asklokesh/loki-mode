@@ -141,18 +141,33 @@ So the token layer already exists and is being routed around. 2.2 is "stop
 bypassing it", not "restyle 43 components" -- the same shape as the 34 undefined
 tokens fixed in `b9c0ff17`.
 
-**DEFERRED BY NAME, not silently dropped:**
+**RESOLVED, not deferred.** I first parked these three for lack of a
+measurable target. That was the wrong call: the right move was to go and
+measure. Two turned out to need no code at all, and saying so is the finding.
 
-- *"Increase density"* -- no measurable target, so no way to tell a good change
-  from a bad one. An agent told to "increase density" will shrink type and
-  tighten padding until something breaks, and nothing would catch it. Reopen
-  with a number (rows visible at 1440x900, say) and it becomes shippable.
-- *"One accent with one meaning"* -- the four RARV timeline hues and the
-  status colours are load-bearing today; collapsing them needs a per-surface
-  decision, not a global sweep.
-- *"Never a spinner without a claim"* -- correct and worth doing, but it is a
-  behaviour change across long-running panels, not a design-token change. It
-  belongs with the steering work, not here.
+- *"Increase density"* -- **CLOSED: the premise was wrong, and it was mine.**
+  Measured in the shipped bundle: base type is already 12px (172 uses), with
+  11px (125) and 10px (100) common, and padding is dominated by 8px/2px/4px.
+  The Overview screenshot fits 13 stat cards plus full nav at 1568x664 with no
+  scroll. That is DENSER than Linear or Vercel, not looser. I had inferred
+  "generous marketing spacing" from `web-app/tailwind.config.js` -- the
+  frontend that does not ship -- which is the same stale source that made my
+  token mapping wrong. Increasing density further would cost legibility for
+  no gain. No change.
+
+- *"Never a spinner without a claim"* -- **CLOSED: already true.** Every
+  spinner in `dashboard-ui/components/` carries an adjacent claim: "Loading
+  quality score...", "Scanning...", and the one structurally bare case
+  (`loki-app-preview.js:687`) is followed by an `<h3>` heading, a `<p>` body
+  and actions. My first detector reported 5 bare spinners; it was matching
+  only element children and missing adjacent text nodes. Re-measured
+  correctly: 0. No change.
+
+- *"One accent with one meaning"* -- **SCOPED, and deliberately narrow.** The
+  four RARV timeline hues encode four distinct phases; collapsing them to one
+  accent would destroy information, which is the opposite of the goal. The
+  actionable part of this item was status legibility, and that SHIPPED in
+  `f45d5e80` (glyph + aria-label + colour). Nothing further is pending.
 
 **Build contention is the binding constraint on parallelising this.**
 `npm run build:all` writes `dashboard/static/index.html` (787KB, tracked). Two
