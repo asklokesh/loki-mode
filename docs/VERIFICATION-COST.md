@@ -180,3 +180,54 @@ repo it reported ANCHORED 0 of 9 for weeks, and the fix
   reported as SKIP, never as a competitor that lacks the feature.
 - Nothing here measures build quality, speed, or cost against those four.
   Those comparisons are not available to us and are not claimed.
+
+### Measured: what the harness is worth, model held constant
+
+The one comparison we CAN run. `benchmarks/bench/matrix.sh` defines two
+configs against the same task and the same model:
+
+- `baseline` -- raw model, minimal orchestration (in-repo comment: "the
+  Replit/Cursor mode")
+- `full` -- the harness: council, code review, self-heal, auto-tune
+
+Paired on identical tasks, both arms on `haiku`, from
+`benchmarks/bench/results/`:
+
+| Task | harness (`full`) | raw model (`baseline`) |
+|---|---|---|
+| `hard-2-ledger` | **4/4 succeeded**, $0.89 median | **0/4 succeeded**, $0.19 median |
+| `hard-1-order-api` | 1/1 succeeded, $0.58 (n=3) | 1/1 succeeded, $0.20 (n=1) |
+
+**On `hard-2-ledger` the raw model never finished the task and the harness
+finished it every time.** That is not a percentage improvement; the baseline
+success rate is zero at n=4. The harness cost 4.7x more per run on that task,
+and produced a working result instead of nothing.
+
+**On `hard-1-order-api` the harness bought nothing** and cost 2.9x more. The
+baseline arm there is a SINGLE trial, so "equal outcome" is weakly supported --
+but we report it because the direction is unfavourable to us and hiding it
+would make the table an advertisement.
+
+Aggregate across all recorded cells:
+
+| Cell | n | success (median) | cost (median) |
+|---|---|---|---|
+| `haiku` + harness | 11 | 1.00 | $0.54 |
+| `opus` + baseline | 5 | 1.00 | $0.83 |
+| `haiku` + baseline | 8 | 0.50 | $0.19 |
+
+The cheap model WITH the harness matches the expensive model without it, at
+35% lower cost. Treat that as directional, not as a headline: the task sets
+differ between those three cells, which is exactly why the paired table above
+is the one that carries the argument.
+
+**Limits of this measurement, stated so it cannot be over-read:**
+
+- Two paired tasks. `hard-1-order-api`'s baseline arm is n=1.
+- It measures OUR harness against OUR baseline config. `baseline` is a
+  documented stand-in for "raw model, minimal orchestration", NOT a
+  measurement of Replit, Cursor, or any other product.
+- Success is a held-out acceptance exit code, not a judgement of code quality.
+- Reproduce it: `LOKI_BENCH_SPEND_APPROVED=1 bash benchmarks/bench/matrix.sh pilot`.
+  The spend interlock is default-deny on purpose; a benchmark that starts a
+  paid tool without an explicit opt-in is how a surprise bill happens.

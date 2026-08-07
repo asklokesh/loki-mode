@@ -145,6 +145,40 @@ for src in "docs.factory.ai_missions_overview.md" "docs.devin.ai_admin_security.
     fi
 done
 
+# --- 5c. The benchmark section keeps its UNFAVOURABLE result ----------------
+#
+# The measured harness comparison contains one result that makes us look bad:
+# on hard-1-order-api the harness bought nothing and cost ~2.9x more. That line
+# is the reason the rest of the table is credible, and it is the first thing a
+# later edit would quietly drop.
+#
+# THIS IS THE LOAD-BEARING ASSERTION HERE. A benchmark table that only survives
+# its favourable rows is an advertisement.
+if grep -q "the harness bought nothing" "$DOC"; then
+    ok "the benchmark keeps the task where the harness did NOT help"
+else
+    bad "the unfavourable benchmark row was dropped -- the table is now an advertisement"
+fi
+# Sample sizes must travel with the numbers, or n=1 reads like n=100.
+if grep -q "n=1" "$DOC"; then
+    ok "weak sample sizes are stated inline"
+else
+    bad "the benchmark reports rates without exposing small-n cells"
+fi
+# The baseline arm must not be labelled as a competitor product.
+if grep -q "NOT a\s*measurement of Replit" "$DOC" || grep -q "NOT a" "$DOC"; then
+    ok "the baseline arm is explicitly not claimed as a competitor measurement"
+else
+    bad "the baseline config is presented as if it measured a real competitor"
+fi
+# The spend interlock must stay documented: a paid benchmark that runs without
+# an explicit opt-in is how a surprise bill happens.
+if grep -q "LOKI_BENCH_SPEND_APPROVED" "$DOC"; then
+    ok "the reproduce command names the spend interlock"
+else
+    bad "the reproduce instructions omit that this costs money"
+fi
+
 # --- 6. House style ---------------------------------------------------------
 if ! grep -qP '[\x{1F300}-\x{1FAFF}\x{2014}\x{2013}]' "$DOC" 2>/dev/null; then
     ok "no emoji and no em-dash"
