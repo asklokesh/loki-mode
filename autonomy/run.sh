@@ -20020,8 +20020,11 @@ except Exception:
             if [ -n "$gate_escalation_context" ]; then
                 _legacy_priority="${_legacy_priority}${_legacy_priority:+ }${gate_escalation_context}"
             fi
+            # Same cap, same reason, same default as the degraded path above --
+            # a pasted spec has to be bounded, but the bound must not silently
+            # eat requirements. 4000 bytes dropped anything past ~600 words.
             if [ -n "$prd" ] && [ -f "$prd" ]; then
-                _legacy_prd_content=$(head -c 4000 "$prd")
+                _legacy_prd_content=$(head -c "${LOKI_DEGRADED_PRD_CAP:-24000}" "$prd")
             fi
             if [ $retry -eq 0 ]; then
                 if [ -n "$prd" ]; then
@@ -20072,9 +20075,35 @@ except Exception:
 
     if [ "${PROVIDER_DEGRADED:-false}" = "true" ]; then
         # Degraded providers: simpler wording, but still static-first.
+        #
+        # THE CAP IS NOW ANNOUNCED, NOT SILENT. This path PASTES the spec text
+        # (a degraded provider cannot be told "read the file at this path" the
+        # way claude/cline/opencode are at :20196), so it has to be bounded. It
+        # was bounded at 4000 bytes with no notice: a requirement past ~600 words
+        # was dropped mid-sentence and the model never knew a spec existed beyond
+        # what it saw. Demonstrated on a 4229-byte spec -- the requirement on the
+        # last line was simply absent from what the model received.
+        #
+        # That is the same class of defect spec-expand.sh:5-7 already names for
+        # OpenAPI ("a 40-operation file loses 21 of 40 ops") and fixed for
+        # contracts only. Markdown specs still had it, and only for the two
+        # degraded providers -- so codex and aider users silently got a worse
+        # build than claude users from the identical spec.
+        #
+        # Raised to 24000 (a large PRD fits whole) and, when the spec still
+        # exceeds it, the model is TOLD so and given the path to read the rest.
+        # An unannounced truncation makes the model confidently build the wrong
+        # thing; an announced one makes it go look.
+        local _prd_cap="${LOKI_DEGRADED_PRD_CAP:-24000}"
         local prd_content=""
+        local _prd_truncated=0
         if [ -n "$prd" ] && [ -f "$prd" ]; then
-            prd_content=$(head -c 4000 "$prd")
+            prd_content=$(head -c "$_prd_cap" "$prd")
+            local _prd_bytes
+            _prd_bytes=$(wc -c < "$prd" 2>/dev/null | tr -d ' ')
+            if [ -n "$_prd_bytes" ] && [ "$_prd_bytes" -gt "$_prd_cap" ] 2>/dev/null; then
+                _prd_truncated=1
+            fi
         fi
 
         local degraded_prd_anchor="Loki Mode"
@@ -20103,6 +20132,38 @@ except Exception:
         [ -n "$queue_tasks" ] && printf 'Tasks: %s\n' "$queue_tasks"
         if [ -n "$prd" ]; then
             printf 'PRD contents: %s\n' "$prd_content"
+            # Announce the cut. Silence here is what made the old 4000-byte cap
+            # dangerous: the model treated a partial spec as the whole spec and
+            # built confidently against requirements it had never seen. Naming
+            # the file lets it read the remainder itself.
+            if [ "${_prd_truncated:-0}" = "1" ]; then
+                printf 'NOTE: the spec above is TRUNCATED at %s bytes. The full spec is at %s -- read it before deciding the work is complete.\n' \
+                    "$_prd_cap" "$prd"
+            fi
+        fi
+
+        # FIRST-PASS EXCELLENCE FOR DEGRADED PROVIDERS.
+        #
+        # This directive existed only for Claude. providers/claude.sh:322 injects
+        # it via --append-system-prompt, a flag codex/aider do not have, so the
+        # one mechanism built specifically to make a WEAKER model land complete
+        # on iteration 1 reached only the strongest one. Measured before writing
+        # this: grep for FIRST_PASS_EXCELLENCE returns 0 in codex.sh, aider.sh,
+        # cline.sh and opencode.sh.
+        #
+        # It matters most exactly where it was missing. The premise (recorded
+        # when the Claude version was built) is that iteration count is a proxy
+        # for how much the first pass missed, and that for a weak model context
+        # quality beats iteration count. Codex is also the free on-ramp, so the
+        # users least able to absorb a bad build were the ones getting no help.
+        #
+        # Condensed rather than byte-mirrored: the Claude text is ~4.3KB of
+        # system prompt, and these providers take it inline in the user turn
+        # where budget is tighter. The four load-bearing instructions are kept --
+        # build fully, wire the backend, verify by RUNNING, commit to one design.
+        # Same iteration-1 gate and same env var, so one switch controls both.
+        if [ "${LOKI_FIRST_PASS_EXCELLENCE:-1}" != "0" ] && [ "${iteration:-1}" -le 1 ] 2>/dev/null; then
+            printf '%s\n' '[FIRST-PASS EXCELLENCE] Treat THIS pass as your one shot to ship a complete, working solution. The loop is a safety net, not a plan. 1) BUILD IT FULLY: no stubs, no TODOs, no placeholder or mock data where real logic belongs. If the spec implies a backend (auth, persistence, a form that submits), WIRE IT so it actually persists -- a UI whose buttons do nothing is the most common failure. 2) VERIFY BY RUNNING each acceptance path, not by reading the code. 3) DECIDE the architecture now rather than refactoring later. 4) Commit to ONE specific design; avoid the generic purple-gradient default look.'
         fi
         printf '</dynamic_context>\n'
         return 0
