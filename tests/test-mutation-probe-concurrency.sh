@@ -66,7 +66,7 @@ WORK="$(mktemp -d)"
 # The lock path is mutprobe-lock-<shasum of target path>, so we can name ours
 # exactly. Never glob.
 _lockfor() { printf '%s/mutprobe-lock-%s' "${TMPDIR:-/tmp}" "$(printf '%s' "$1" | shasum | cut -c1-16)"; }
-_our_targets() { printf '%s\n' "$WORK/ctl.sh" "$WORK/tgt.sh" "$WORK/tgt3.sh" "$WORK/one.sh" "$WORK/a.sh" "$WORK/b.sh"; }
+_our_targets() { printf '%s\n' "$WORK/ctl.sh" "$WORK/tgt.sh" "$WORK/tgt3.sh" "$WORK/one.sh" "$WORK/a.sh" "$WORK/b.sh" "$WORK/seq.sh"; }
 _rm_our_locks() {
     local t
     while IFS= read -r t; do rmdir "$(_lockfor "$t")" 2>/dev/null || true; done < <(_our_targets)
@@ -126,10 +126,44 @@ fi
 # --- 3. Serializing must not break DETECTION ---------------------------------
 # A lock that made both probes report success by skipping the mutation would
 # pass test 2 and be worthless. Both must still detect their own mutation.
-if [ "${RACE_RC1:-1}" -eq 0 ] && [ "${RACE_RC2:-1}" -eq 0 ]; then
-    ok "both probes still detect their mutation (rc=0), the lock only serializes"
+#
+# ASSERTED SEQUENTIALLY, ON PURPOSE. This read RACE_RC1/RACE_RC2 from test 2's
+# concurrent run and failed in CI three times with `rc1=0 rc2=1` while tests 1
+# and 2 passed -- the race is reliable, reading a DETECTION verdict out of it is
+# not. I could not reproduce it in ~10 local runs, including under 8-way CPU
+# load and with the second probe forced to wait through the whole lock hold, so
+# there was no mechanism to fix.
+#
+# The property here is "the lock only serializes; it does not break detection".
+# That does not need overlap: two probes run back-to-back on the same file
+# exercise acquire/mutate/test/restore/release exactly the same way, with no
+# wall-clock dependency at all. A lock that skipped mutating still fails, which
+# is the failure mode the paragraph above names -- it would return 65 (did not
+# apply) or 1 (mutation survived), never 0.
+#
+# The sleep is dropped here too. It exists only to widen the race window in
+# tests 1 and 2, which keep it.
+cat > "$WORK/quick.sh" <<'EOF'
+grep -q "alpha=1" "$1" || exit 1
+grep -q "beta=1"  "$1" || exit 1
+EOF
+printf 'alpha=1\nbeta=1\n' > "$WORK/seq.sh"
+bash "$PROBE" "$WORK/seq.sh" 'alpha=1' 'alpha=9' bash "$WORK/quick.sh" "$WORK/seq.sh" \
+    >"$WORK/s1.log" 2>&1; _s1=$?
+bash "$PROBE" "$WORK/seq.sh" 'beta=1' 'beta=9' bash "$WORK/quick.sh" "$WORK/seq.sh" \
+    >"$WORK/s2.log" 2>&1; _s2=$?
+if [ "$_s1" -eq 0 ] && [ "$_s2" -eq 0 ]; then
+    ok "both probes detect their mutation through the lock (the lock only serializes)"
 else
-    bad "a serialized probe stopped detecting: rc1=${RACE_RC1:-?} rc2=${RACE_RC2:-?}"
+    # Print the prober's own diagnosis. The old race version discarded both
+    # probes' output, which is why three CI failures produced no mechanism.
+    bad "a locked probe stopped detecting: rc1=$_s1 rc2=$_s2 -- $(tr '\n' ' ' < "$WORK/s1.log") | $(tr '\n' ' ' < "$WORK/s2.log")"
+fi
+# And the file survives both, so detection did not come at the cost of a leak.
+if [ "$(cat "$WORK/seq.sh")" = "$(printf 'alpha=1\nbeta=1\n')" ]; then
+    ok "the file is byte-identical after both locked probes"
+else
+    bad "a mutation survived: $(tr '\n' ' ' < "$WORK/seq.sh")"
 fi
 
 # --- 4. The lock is released on every exit path ------------------------------
