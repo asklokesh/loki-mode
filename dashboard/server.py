@@ -8355,6 +8355,93 @@ async def get_trust_trajectory():
 
 
 # =============================================================================
+# Gate policy API: which gates block here, and which only advise?
+# =============================================================================
+
+_GATE_POLICY_MODULE = None  # cached import of autonomy/lib/gate_policy.py
+
+
+def _load_gate_policy_module():
+    """Import the shared gate-policy reporter (single source of truth).
+
+    Same shape as _load_trust_module above: the derivation lives in
+    autonomy/lib/gate_policy.py so this endpoint, the bash `loki gates`, and the
+    test suite all agree, and it loads via importlib because autonomy/lib is not
+    an importable package. Cached after first load, None when unavailable.
+    """
+    global _GATE_POLICY_MODULE
+    if _GATE_POLICY_MODULE is not None:
+        return _GATE_POLICY_MODULE
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    mod_path = os.path.join(repo_root, "autonomy", "lib", "gate_policy.py")
+    if not os.path.isfile(mod_path):
+        return None
+    try:
+        import importlib.util as _ilu
+        spec = _ilu.spec_from_file_location("gate_policy", mod_path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _GATE_POLICY_MODULE = mod
+        return mod
+    except Exception:
+        return None
+
+
+@app.get("/api/gate-policy", dependencies=[Depends(auth.require_scope("read"))])
+async def get_gate_policy():
+    """Which quality gates block on this repo, and which only advise.
+
+    Read-only by construction. There is deliberately no POST counterpart:
+    promoting an advisory gate to blocking stays an explicit operator act via
+    the environment variable named in each record's `promote_with`, because a
+    surface that can silently start blocking is the thing operators most
+    reasonably fear. This endpoint reports; it never promotes.
+
+    Honest-data rule, and the reason `audit_hits` is nullable: an unmeasured
+    gate reports null, NEVER 0. Zero is the positive claim that the gate ran and
+    never fired; an absent ledger is not evidence of that. See the shape
+    contract in the gate_policy module docstring.
+
+    Fails open like /api/trust/trajectory: a missing module returns a renderable
+    available=False payload rather than a 500. Unlike that sibling the assess()
+    call is also wrapped, because it reads a ledger file that an unrelated
+    writer can leave malformed, and a broken ledger must not take down a
+    read-only report.
+
+    Response keys are the module shape contract plus `available` (bool). On the
+    fail-open path `available` is False, `status` is "unavailable" (a value the
+    module contract does not itself define, since assess() never returned), an
+    `error` string explains why, and `gates` is empty. A UI should branch on
+    `available`, not on a non-empty `gates`.
+    """
+    mod = _load_gate_policy_module()
+    if mod is None:
+        return {
+            "schema_version": 1,
+            "available": False,
+            "error": "gate_policy module not found",
+            "status": "unavailable",
+            "ledger": "absent",
+            "gates": [],
+        }
+    try:
+        res = mod.assess(str(_get_loki_dir()))
+    except Exception as e:
+        return {
+            "schema_version": 1,
+            "available": False,
+            "error": f"gate policy assessment failed: {e}",
+            "status": "unavailable",
+            "ledger": "absent",
+            "gates": [],
+        }
+    res["available"] = True
+    return res
+
+
+# =============================================================================
 # Pricing API
 # =============================================================================
 

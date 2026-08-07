@@ -20,6 +20,29 @@ NEVER PROMOTES ANYTHING. This reports; it does not change policy. Turning a gate
 blocking stays an explicit operator act via the named environment variable,
 because a tool that silently starts blocking is the thing operators most
 reasonably fear.
+
+Shape (assess() and --json, schema_version 1). This is the contract the
+dashboard endpoint GET /api/gate-policy and tests/test_gate_policy_endpoint.py
+both read against, so field names here are load-bearing:
+
+  schema_version int    1
+  status         str    "measured"
+  ledger         str    "present" | "absent" -- whether the per-gate failure
+                        ledger .loki/quality/gate-failure-count.json was read
+  gates          list   one record per known gate, blocking gates first, each
+                        group sorted by name:
+    gate         str    gate name (e.g. "code_review")
+    mode         str    "blocking" | "advisory" -- for a promotable gate this
+                        depends on the ENVIRONMENT at call time
+    promotable   bool   True when a real promotion knob exists in run.sh
+    audit_hits   int|null  failures counted for this gate. null means
+                        UNMEASURED -- no ledger, or no entry for this gate.
+                        NEVER 0 for an unmeasured gate: 0 is the positive claim
+                        that the gate ran and never fired, which is the false
+                        green an absent measurement always produces.
+    why          str    one-line description of what the gate checks
+    promote_with str|null  "VAR=value" to make an advisory gate blocking; null
+                        when the gate already blocks
 """
 
 import json

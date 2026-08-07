@@ -1506,5 +1506,95 @@ class FunctionalityAxesTests(unittest.TestCase):
         self.assertEqual(self._fnc(d)["authorization"]["state"], "not_checked")
 
 
+class CriteriaDeclaredTests(unittest.TestCase):
+    """spec.criteria_declared records WHICH acceptance-criterion ids the spec
+    declares, so a receipt can cite AC-PERSIST-001 instead of restating prose.
+
+    DECLARED, NOT SATISFIED: nothing here measures whether a criterion was met,
+    and no assertion below should ever be read as claiming one was."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="loki-proof-gen-ac-")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _gen_with_prd(self, body, name="prd"):
+        loki_dir = os.path.join(self.tmp, name, ".loki")
+        out_dir = os.path.join(self.tmp, "out-" + name)
+        os.makedirs(os.path.join(loki_dir, "state"))
+        prd = os.path.join(self.tmp, name, "prd.md")
+        with open(prd, "w") as f:
+            f.write(body)
+        return _run_generator(loki_dir, out_dir, env_extra={"PRD_PATH": prd})
+
+    def test_three_ids_yield_three(self):
+        d = self._gen_with_prd(
+            "# PRD\n\n## Acceptance Criteria\n"
+            "- AC-AUTH-001: login works end to end.\n"
+            "- AC-PERSIST-001: data survives a reload.\n"
+            "- AC-API-002: endpoints return real status codes.\n",
+            name="three")
+        self.assertEqual(d["spec"]["criteria_declared"],
+                         ["AC-AUTH-001", "AC-PERSIST-001", "AC-API-002"])
+
+    def test_no_ids_yield_none(self):
+        # A spec with plain bullets declares no citable criteria. The field must
+        # be empty, never a placeholder and never invented.
+        d = self._gen_with_prd(
+            "# PRD\n\n## Acceptance Criteria\n"
+            "- login works end to end.\n"
+            "- data survives a reload.\n",
+            name="none")
+        self.assertEqual(d["spec"]["criteria_declared"], [])
+
+    def test_malformed_lines_are_not_counted(self):
+        # Each line breaks the minted shape in exactly one way. None is a
+        # citable id, so none may be counted: a receipt that cites AC-AUTH-01
+        # points at nothing.
+        d = self._gen_with_prd(
+            "# PRD\n"
+            "- AC-AUTH-01: too few digits.\n"
+            "- AC-AUTH-0001: too many digits.\n"
+            "- AC-auth-001: axis not upper case.\n"
+            "- AC-AUTH-001 no colon separator.\n"
+            "  - AC-AUTH-001: indented, not a top-level criterion.\n"
+            "prose mentioning AC-AUTH-001: in passing.\n",
+            name="malformed")
+        self.assertEqual(d["spec"]["criteria_declared"], [])
+
+    def test_ids_past_the_600_char_brief_cap_are_still_found(self):
+        # brief is capped at 600 chars for display. Criteria are parsed from the
+        # FULL spec text, so an AC block below the cap must still be recorded.
+        filler = "Background prose. " * 60  # >600 chars
+        d = self._gen_with_prd(
+            "# PRD\n\n" + filler + "\n\n## Acceptance Criteria\n"
+            "- AC-PERSIST-001: data survives a reload.\n",
+            name="deep")
+        self.assertLessEqual(len(d["spec"]["brief"]), 600)
+        self.assertNotIn("AC-PERSIST-001", d["spec"]["brief"])
+        self.assertEqual(d["spec"]["criteria_declared"], ["AC-PERSIST-001"])
+
+    def test_duplicate_id_is_one_citation_target(self):
+        d = self._gen_with_prd(
+            "# PRD\n"
+            "- AC-AUTH-001: login works.\n"
+            "- AC-AUTH-001: restated later in the doc.\n",
+            name="dupe")
+        self.assertEqual(d["spec"]["criteria_declared"], ["AC-AUTH-001"])
+
+    def test_spec_block_declares_existence_and_nothing_more(self):
+        # Guard the honesty boundary by pinning the EXACT key set rather than
+        # denylisting words. A denylist ("met", "satisfied") misses
+        # criteria_verified / criteria_ok / criteria_status; pinning the key set
+        # catches ANY added field, including one that claims a criterion passed.
+        # Nothing in this generator measures satisfaction, so any new spec key
+        # asserting it must fail here and be justified deliberately.
+        d = self._gen_with_prd(
+            "# PRD\n- AC-AUTH-001: login works.\n", name="honest")
+        self.assertEqual(sorted(d["spec"]),
+                         ["brief", "criteria_declared", "source"])
+
+
 if __name__ == "__main__":
     unittest.main()

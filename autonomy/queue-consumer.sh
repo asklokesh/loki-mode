@@ -42,11 +42,18 @@
 #     (default 7200). Run it on a schedule (a CronJob) or by hand. It is a
 #     separate mode, not folded into the consume loop, because a consumer that
 #     reaped on every poll would race its peers on a busy queue.
+#     `--reap` works on BOTH backends. It was redis-only until this was fixed,
+#     which left the file backend with no crash recovery at all: a dead worker's
+#     item sat in processing/ forever and an unattended fleet stalled on it.
 #     A FRESH claim is never reaped -- requeuing a live item would build the
 #     user's work twice -- and an in-flight item with NO claim is treated as
 #     infinitely old, since that means the worker died between the LMOVE and the
 #     claim stamp, which is exactly the case that must be recoverable.
 #     LOKI_QUEUE_ACK=0 restores the legacy lossy path.
+#     The file backend's claim time is the item file's MTIME, stamped on claim,
+#     since a flat directory carries no claim hash. The limit is real and worth
+#     stating: a consumer that rewrote its own item file would reset that clock
+#     and look fresh forever. See file_reap.
 #   - The file backend's atomicity relies on `mv` being atomic within a single
 #     filesystem (true for a normal PVC). Two consumers racing the same pending
 #     dir is safe (mv either wins or fails-and-skips), but is not load-balanced.
@@ -67,6 +74,8 @@
 #   LOKI_QUEUE_POLL_SEC  loop-mode empty-poll wait, seconds (default: 5)
 #   LOKI_QUEUE_BLOCK_SEC redis BLPOP block timeout, seconds (default: 5)
 #   LOKI_TERMINAL_EXIT   run.sh terminal-failure exit code (default: 20)
+#   LOKI_QUEUE_VISIBILITY_SEC  --reap requeues in-flight items older than this,
+#                        both backends, seconds (default: 7200)
 #===============================================================================
 
 set -uo pipefail
@@ -383,6 +392,18 @@ file_claim_oldest() {
         base="$(basename "$f")"
         dest="$QUEUE_DIR/processing/$base"
         if mv "$f" "$dest" 2>/dev/null; then
+            # Stamp the CLAIM TIME. This is the file-backend analogue of the
+            # `HSET <key>:claims` that redis_pop does right after its LMOVE, and
+            # file_reap below depends on it being here.
+            #
+            # Load-bearing: `mv` is a rename(2), which PRESERVES mtime. An item
+            # that sat in pending/ behind a backlog for longer than the
+            # visibility timeout would arrive in processing/ already looking
+            # stale, and the reaper would requeue it while a worker was actively
+            # building it -- the exact duplicate build the timeout exists to
+            # prevent, firing on precisely the busy queues that need a reaper.
+            # Verified on darwin: mv of a file stamped 2020 kept the 2020 mtime.
+            touch "$dest" 2>/dev/null || true
             printf '%s' "$dest"
             return 0
         fi
@@ -414,11 +435,108 @@ file_consume_one() {
         mv "$claimed" "$QUEUE_DIR/failed/$base" 2>/dev/null || log "WARN: could not move $base to failed/"
         log "item $base TERMINAL-FAILED (exit $rc); moved to failed/, not acked"
     else
-        # Transient crash: leave it in processing/ for manual re-drive. We do NOT
-        # auto-requeue (no retry counter in a flat dir); honest at-least-once.
+        # Transient crash: leave it in processing/ for re-drive. We do not
+        # requeue INLINE (no retry counter in a flat dir, so an instant retry
+        # could hot-loop a poison item). `--reap` picks it up once the
+        # visibility timeout has elapsed; see file_reap.
         log "item $base crashed (exit $rc); left in processing/ for re-drive"
     fi
     return "$rc"
+}
+
+# Requeue in-flight items whose claim is older than the visibility timeout.
+#
+# THE GAP THIS CLOSES. The redis backend got a reaper; the file backend did not,
+# so an item left in processing/ by a dead worker stayed there FOREVER and an
+# unattended fleet on the file backend stalled on every crash. `--reap` answered
+# "redis-only" and changed nothing.
+#
+# CLAIM TIME IS THE FILE MTIME. The file backend has no claim hash, so the mtime
+# stamped by file_claim_oldest stands in for one.
+#
+# THE LIMIT, stated plainly: mtime is whatever last WROTE the file. A build that
+# rewrites its own item file resets the clock and would look fresh forever, so
+# it would never be reaped. Nothing here writes back to a claimed item, but a
+# custom consumer that did would silently opt out of recovery. The redis claim
+# hash does not have this weakness; the file backend accepts it rather than
+# maintain a second sidecar file whose own staleness would need reaping too.
+#
+# There is also no retry counter (a flat dir carries none), so a poison item can
+# be reaped repeatedly. That is the same shape the backend already documents for
+# manual re-drive, not a new failure introduced here.
+#
+# SAFETY IS THE WHOLE DESIGN, mirroring redis_reap:
+#   - a FRESH item is NEVER requeued; a live build requeued is the user's work
+#     built twice, which is worse than the stranding this fixes
+#   - it NEVER deletes an item -- a name collision in pending/ leaves the item
+#     in processing/ and says so, rather than clobbering the pending copy
+#   - it reports counts on stdout; per-item detail goes to stderr via log()
+file_reap() {
+    local timeout now requeued=0 kept=0 seen=0 f base mt age
+    timeout="${LOKI_QUEUE_VISIBILITY_SEC:-7200}"
+    now="$(date +%s)"
+    if [ ! -d "$QUEUE_DIR/processing" ]; then
+        echo "reap: nothing in flight"
+        return 0
+    fi
+    mkdir -p "$QUEUE_DIR/pending" 2>/dev/null || true
+    # Glob, not `ls`: a filename with a space or newline survives it.
+    for f in "$QUEUE_DIR"/processing/*; do
+        [ -e "$f" ] || continue   # unmatched glob stays literal
+        [ -f "$f" ] || continue
+        seen=$((seen + 1))
+        base="$(basename "$f")"
+        # GNU FIRST, and the order is load-bearing. `stat -f` means
+        # --file-system on GNU coreutils and EXITS 0, printing a mount point
+        # rather than an mtime -- so a `-f`-first probe never falls through on
+        # Linux and hands back garbage. BSD `stat -c` has no such ambiguity: it
+        # is an illegal option and exits 1 (verified on darwin), so `-f %m` is
+        # reached only where it means what we want.
+        # `find -printf` and `-mmin` are GNU-only / minute-granular, and the
+        # fresh-vs-stale distinction needs seconds.
+        mt="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)"
+        case "$mt" in
+            ''|*[!0-9]*)
+                # Unreadable or non-numeric claim time. KEEP the item, and note
+                # the ASYMMETRY with redis_reap deliberately: a missing redis
+                # claim is DIAGNOSTIC (the worker died between LMOVE and HSET),
+                # but a file that exists ALWAYS has an mtime, so failing to read
+                # one means our stat invocation is wrong -- a portability bug,
+                # not a dead worker.
+                # MEASURED, not assumed: with a `stat` that prints a non-number
+                # and exits 0, the un-guarded arithmetic aborts the reaper under
+                # `set -uo pipefail` (rc=1, nothing requeued). So the observed
+                # failure is a DEAD REAPER on the affected platform, not a
+                # duplicate build. Keeping the item is correct either way, and
+                # the WARN names the reason instead of exiting silently.
+                kept=$((kept + 1))
+                log "WARN: cannot read mtime for $base (got '$mt'); left in processing/ rather than guess a claim time"
+                continue
+                ;;
+        esac
+        age="$((now - mt))"
+        if [ "$age" -le "$timeout" ]; then
+            kept=$((kept + 1))
+            continue
+        fi
+        if [ -e "$QUEUE_DIR/pending/$base" ]; then
+            kept=$((kept + 1))
+            log "stale item $base NOT requeued: pending/$base already exists (never overwrite an item)"
+            continue
+        fi
+        if mv "$f" "$QUEUE_DIR/pending/$base" 2>/dev/null; then
+            requeued=$((requeued + 1))
+            log "reaped stale item $base (age ${age}s > ${timeout}s), requeued"
+        else
+            kept=$((kept + 1))
+            log "WARN: could not requeue $base; left in processing/"
+        fi
+    done
+    if [ "$seen" -eq 0 ]; then
+        echo "reap: nothing in flight"
+        return 0
+    fi
+    echo "reap: requeued $requeued, left $kept in flight (timeout ${timeout}s)"
 }
 
 # =============================================================================
@@ -454,12 +572,11 @@ main() {
     # (a CronJob, or an operator hand-running it), and a consumer that reaped on
     # every poll would race its own peers on a busy queue.
     if [ "${1:-}" = "--reap" ] || [ "${LOKI_QUEUE_REAP:-0}" = "1" ]; then
-        if [ "$backend" != "redis" ]; then
-            log "ERROR: --reap is redis-only (the file backend leaves items in processing/ already)"
-            return 2
-        fi
-        redis_reap
-        return 0
+        case "$backend" in
+            redis) redis_reap ;;
+            file)  file_init_dirs && file_reap ;;
+        esac
+        return $?
     fi
 
     if [ "$ONESHOT" = "1" ]; then

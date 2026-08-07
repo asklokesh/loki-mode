@@ -826,6 +826,8 @@ run_test "the receipt anchors to the run's real baseline" "$SCRIPT_DIR/test-proo
 run_test "every consumed dashboard token is defined" "$SCRIPT_DIR/test-dashboard-token-coverage.sh"
 run_test "product chrome runs sans, measured without a false green" "$SCRIPT_DIR/test-dashboard-serif-removed.sh"
 run_test "a crashed worker does not lose the build" "$SCRIPT_DIR/test-queue-at-least-once.sh"
+run_test "the file backend recovers a dead worker's item" "$SCRIPT_DIR/test-queue-file-reap.sh"
+run_test "an old unanchorable receipt is history, not a regression" "$SCRIPT_DIR/test-outcome-ledger-historical.sh"
 run_test "pre-push warns when a release is mid-flight" "$SCRIPT_DIR/test-pre-push-release-guard.sh"
 run_test "readiness --fix repairs what it can and refuses the rest" "$SCRIPT_DIR/test-readiness-fix.sh"
 run_test "the gate ladder reports mode, hits and the promotion knob" "$SCRIPT_DIR/test-gate-policy-ladder.sh"

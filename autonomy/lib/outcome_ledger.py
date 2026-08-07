@@ -93,6 +93,92 @@ ANCHOR_REASONS = {
     "diff_range_mismatch": "the base..head diff does not match the receipt's file set",
 }
 
+# HISTORICAL vs LIVE: the distinction that stops an old receipt from reading as
+# a regression.
+#
+# `ANCHORED 0 of 9` is alarming until you know WHY. Two very different things
+# produce it, and a flat count of reasons cannot tell them apart:
+#
+#   FROZEN   The receipt file itself lacks the anchor. base_sha was written as
+#            "" and that JSON is on disk forever. No future fix can anchor it,
+#            and rewriting a receipt to make a metric look better is the exact
+#            dishonesty this module exists to refuse. These are HISTORY.
+#   LIVE     The receipt records real shas; only the ENVIRONMENT cannot resolve
+#            them right now -- a shallow clone, an unmerged branch, or a file
+#            set that still has uncommitted edits. These can anchor later, with
+#            no change to the receipt.
+#
+# Measured on this repo: all 9 receipts are frozen (8 base_sha_empty, 1
+# greenfield_no_baseline) and were generated 2026-07-27 and 2026-07-31, BEFORE
+# proof-generator learned to read .loki/state/start-sha (commit 99ce689d,
+# 2026-08-07). So the zero is fully explained by history.
+# Frozen because the GENERATOR failed to record something it should have. These
+# are the only two where recency is meaningful: before the fix they are history,
+# after it they are a live bug in proof-generator.
+FROZEN_GENERATOR_REASONS = frozenset({
+    "head_sha_empty",
+    "base_sha_empty",
+})
+
+# Frozen BY DESIGN, and correct at any date. A genuinely greenfield repo has no
+# earlier commit to diff against, and a receipt written over uncommitted work
+# honestly has base == head. Neither can ever anchor, and neither is a defect --
+# so recency must NOT be applied to them. Calling a correct greenfield receipt a
+# regression would be a false alarm on the signal added to prevent false alarms.
+FROZEN_BY_DESIGN_REASONS = frozenset({
+    "greenfield_no_baseline",
+    "change_not_committed",
+})
+
+FROZEN_REASONS = FROZEN_GENERATOR_REASONS | FROZEN_BY_DESIGN_REASONS
+
+# The two sets must stay disjoint. If a reason appeared in both, classification
+# would depend on which branch is checked first -- and a by-design case that
+# drifted into the generator set would start alarming as a regression the moment
+# someone reordered the checks. Assert the invariant rather than trusting order.
+assert not (FROZEN_GENERATOR_REASONS & FROZEN_BY_DESIGN_REASONS), \
+    "a reason cannot be both a generator failure and correct by design"
+
+# The commit that taught proof-generator to resolve base_sha from
+# .loki/state/start-sha when the env var is absent. A receipt generated at or
+# after this instant should carry a real baseline, so a FROZEN reason on one is
+# NOT history -- it is a live regression in the generator.
+#
+# Recency is the discriminator because it is the only one the receipts actually
+# support: they carry generated_at (verified on all 9), and loki_version tracks
+# releases rather than this fix. A frozen-vs-live split ALONE would file a newly
+# broken receipt under history, which is the green-wash this guards against.
+BASE_SHA_FIX_UTC = "2026-08-07T13:39:32Z"  # 99ce689d, committed 09:39:32 -04:00
+
+
+def classify_unanchored(reason, generated_at):
+    """Bucket an unanchored receipt: historical, regression, or live.
+
+    Returns one of:
+      "by_design"  -- unanchorable and CORRECT: a greenfield run with no earlier
+                      commit, or a receipt over uncommitted work. Never a defect,
+                      at any date, so recency is not applied.
+      "historical" -- the generator failed to record an anchor, in a receipt
+                      written BEFORE the fix. History, and never anchorable now.
+      "regression" -- the same generator failure AFTER the fix. The anchor is
+                      being dropped again. This is the only bucket that alarms.
+      "live"       -- the receipt is fine; the environment cannot resolve it yet.
+    """
+    if reason in FROZEN_BY_DESIGN_REASONS:
+        return "by_design"
+    if reason not in FROZEN_GENERATOR_REASONS:
+        return "live"
+    # No timestamp means we cannot place it relative to the fix. Refuse to call
+    # it history, because that is the direction that hides a regression.
+    #
+    # ponytail: lexicographic compare, correct only for the "...Z" ISO form the
+    # generator writes (verified on all 9 receipts). An offset-form timestamp
+    # would sort below the constant and read as historical -- the hiding
+    # direction. Parse properly only if a generator ever emits offsets.
+    if not generated_at:
+        return "regression"
+    return "historical" if generated_at < BASE_SHA_FIX_UTC else "regression"
+
 
 def _git(args, cwd, timeout=30):
     """Run a git command read-only. Returns (rc, stdout). Never raises.
@@ -315,6 +401,9 @@ def outcome_for_receipt(proof_path, cwd):
     state, reason = resolve_anchor(base_sha, head_sha, files, cwd)
     rec["anchor"] = {"state": state, "reason": reason}
     if state != "anchored":
+        # An old receipt is not a regression. Classify so a reader can tell a
+        # frozen pre-fix receipt from a generator that started dropping anchors.
+        rec["anchor"]["klass"] = classify_unanchored(reason, rec["generated_at"])
         rec["outcome"] = UNKNOWN
         rec["reason"] = ANCHOR_REASONS.get(reason, reason or "not anchored")
         rec["commands"] = [
@@ -381,11 +470,15 @@ def summarize(records):
     # as "no data" instead of "your receipts are not recording a landed sha",
     # which is an actionable defect.
     reasons = {}
+    klasses = {"by_design": 0, "historical": 0, "regression": 0, "live": 0}
     for r in records:
         a = r.get("anchor") or {}
         if a.get("state") and a["state"] != "anchored":
             key = a.get("reason") or "unknown"
             reasons[key] = reasons.get(key, 0) + 1
+            k = a.get("klass")
+            if k in klasses:
+                klasses[k] += 1
 
     summary = {
         "receipts_total": total,
@@ -393,6 +486,12 @@ def summarize(records):
         "receipts_unknown": len(unknown),
         "reverted": len(reverted),
         "unanchored_reasons": reasons,
+        # The count that turns an alarming zero into an explained one. A
+        # regression here is the only bucket that warrants action.
+        "unanchored_by_design": klasses["by_design"],
+        "unanchored_historical": klasses["historical"],
+        "unanchored_regression": klasses["regression"],
+        "unanchored_live": klasses["live"],
     }
     if measured:
         summary["change_failure_rate"] = round(len(reverted) / len(measured), 4)
@@ -442,6 +541,29 @@ def render_text(records, summary, note=None):
         out.append("  Why not anchored (a receipt must prove base..head IS the change):")
         for k, n in sorted(reasons.items(), key=lambda kv: -kv[1]):
             out.append(f"    {k:24} {n:3}   {ANCHOR_REASONS.get(k, '')}")
+
+    # Without this, ANCHORED 0 of N reads as a regression when it is history.
+    hist = summary.get("unanchored_historical", 0)
+    regr = summary.get("unanchored_regression", 0)
+    live = summary.get("unanchored_live", 0)
+    design = summary.get("unanchored_by_design", 0)
+    if hist or regr or live or design:
+        out.append("")
+        if design:
+            out.append(f"    {design} by design: a greenfield run or uncommitted"
+                       f" work has no baseline to diff against. Correct, not a"
+                       f" defect, and never anchorable.")
+        if hist:
+            out.append(f"    {hist} historical: written before the base_sha fix"
+                       f" ({BASE_SHA_FIX_UTC[:10]}); the receipt itself has no"
+                       f" baseline, so these can never anchor. Not a defect.")
+        if live:
+            out.append(f"    {live} live: the receipt records real shas; this"
+                       f" clone cannot resolve them yet. May anchor later.")
+        if regr:
+            out.append(f"    {regr} REGRESSION: written AFTER the fix and still"
+                       f" missing a baseline. The generator is dropping the"
+                       f" anchor -- this one is a defect.")
     out.append("")
     cfr = summary.get("change_failure_rate")
     if cfr == UNKNOWN:

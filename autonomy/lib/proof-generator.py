@@ -1024,8 +1024,33 @@ def _collect_iterations(loki_dir):
     return {"count": count, "succeeded": n_completed, "failed": n_failed}
 
 
+# Acceptance-criterion ids as minted at intake ("- AC-<AXIS>-NNN: <text>", see
+# _brief_acceptance_criteria in autonomy/loki). Anchored and strict on purpose:
+# a loose pattern would count prose that merely mentions an id, and the whole
+# value of the id is that a citation points at exactly one criterion.
+_AC_ID_RE = re.compile(r"^- (AC-[A-Z]+-[0-9]{3}): ", re.MULTILINE)
+
+
+def _spec_criteria_declared(text):
+    """Return the acceptance-criterion ids the spec DECLARES, in spec order.
+
+    DECLARED, NOT SATISFIED. This records which criteria exist in the spec and
+    nothing more -- no check runs here, and no field in the receipt asserts that
+    any of these was met. Naming it criteria_met would be a lie we cannot back.
+
+    Empty list when the spec declares none (an older PRD, a hand-written spec,
+    or a run with no spec file at all). Never invented, never a placeholder.
+    """
+    if not text:
+        return []
+    # Deduped: an id is a citation target, so each must resolve to one criterion.
+    # A repeated id is a spec bug; counting it twice would not make it citable.
+    return list(dict.fromkeys(_AC_ID_RE.findall(text)))
+
+
 def _collect_spec(loki_dir, target_dir):
-    """Return spec dict {source, brief}. brief truncated to 600 chars."""
+    """Return spec dict {source, brief, criteria_declared}. brief truncated to
+    600 chars."""
     prd_path = os.environ.get("PRD_PATH", "").strip()
     source = ""
     brief = ""
@@ -1052,7 +1077,15 @@ def _collect_spec(loki_dir, target_dir):
     # Full brief here; the <=600 cap is applied AFTER redaction in generate()
     # so a secret straddling the cap cannot be sliced into an under-length
     # fragment that bypasses the redactor.
-    return {"source": source, "brief": brief}
+    #
+    # Criteria are parsed from the FULL spec text, not from the 600-char display
+    # cap: a PRD's acceptance-criteria block sits well past char 600, so parsing
+    # the capped brief would silently drop most of them.
+    return {
+        "source": source,
+        "brief": brief,
+        "criteria_declared": _spec_criteria_declared(brief),
+    }
 
 
 def _self_version():
