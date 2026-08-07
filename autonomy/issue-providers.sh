@@ -380,6 +380,26 @@ repo = data.get('repo', '')
 
 labels_str = ', '.join(labels) if labels else ''
 
+_ac_text = (title + ' ' + body).lower()
+_ac_rules = [
+    (['save', 'persist', 'store', 'databas', 'crud'],
+     'Data the change writes survives a restart (a real store, not in-memory state).'),
+    (['auth', 'login', 'sign in', 'session', 'permission'],
+     'The auth path is exercised end to end including the denied case (401/403), not only the happy path.'),
+    (['api', 'endpoint', 'rest', 'graphql', 'route'],
+     'Each affected endpoint returns the documented status codes and is callable without a browser.'),
+    (['payment', 'stripe', 'billing', 'invoice', 'subscription'],
+     'The payment path runs against provider test mode; no mocked charge stands in for the integration.'),
+    (['bug', 'fix', 'regression', 'broken', 'crash', 'error'],
+     'A test reproduces the reported failure and FAILS before the fix, then passes after it.'),
+    (['perf', 'slow', 'latency', 'timeout', 'memory leak'],
+     'The improvement is measured before and after, and the numbers appear in the change.'),
+    (['security', 'vulnerab', 'injection', 'xss', 'csrf'],
+     'A test demonstrates the vulnerable behavior is refused after the change.'),
+]
+_hits = [c for kws, c in _ac_rules if any(k in _ac_text for k in kws)]
+derived_ac = ('\n'.join('- ' + h for h in _hits) + '\n') if _hits else ''
+
 prd = f'''# PRD: {title}
 
 **Source:** {provider.replace('_', ' ').title()} Issue [{number}]({url})
@@ -408,6 +428,7 @@ Based on the issue description, implement the following:
 2. Ensure backward compatibility (unless explicitly breaking changes are requested)
 3. Add appropriate tests for new functionality
 4. Update documentation as needed
+{derived_ac}
 
 ---
 
