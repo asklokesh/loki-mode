@@ -11905,7 +11905,14 @@ STALE_DAYS = 90
 p = os.environ['LOKI_CATALOG_PATH']
 try:
     updated = json.load(open(p))['updated']
-    age = (datetime.date.today() - datetime.date.fromisoformat(updated)).days
+    # UTC, matching the --json path below (loki:12337) and the Bun route
+    # (doctor.ts:545). This is the TEXT-mode twin of that computation, and it was
+    # missed when the JSON one was fixed: the parity gate compares BOTH surfaces,
+    # so fixing only --json left `doctor` (text) still diverging 5 vs 6 and the
+    # gate still red. Two copies of one calculation is the actual defect here;
+    # they are left as two only because the text path prints and the JSON path
+    # returns a dict.
+    age = (datetime.datetime.now(datetime.timezone.utc).date() - datetime.date.fromisoformat(updated)).days
 except Exception:
     print('warn|Catalog unreadable or missing an ISO \"updated\" date -- cannot determine age')
 else:
