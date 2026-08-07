@@ -38,6 +38,47 @@ if [ ! -f "$target" ]; then
     exit 66
 fi
 
+# SERIALIZE ON THE TARGET FILE. Backup-mutate-restore against a shared repo file
+# is not safe to run concurrently, and the failure is silent in the worst way:
+# probe B backs up while probe A's mutation is live, so B's "restore" writes A's
+# mutation back as if it were the original. Both probes then report OK and the
+# mutation is left on disk.
+#
+# Observed exactly that: two harness runs overlapped and left an inverted
+# iteration-grace return and a disabled enforce_build_check in autonomy/run.sh,
+# with all 94 probes green. Only the harness's final git-status check caught it.
+# Committing either would have shipped a real defect while the tooling reported
+# clean.
+#
+# mkdir is the lock: atomic on every filesystem we run on, no flock dependency
+# (macOS has no flock(1)). Keyed on the target path so probes against different
+# files still run in parallel. Stale locks are broken by age, not by PID -- a
+# PID check cannot distinguish a dead prober from one in another container.
+_lockdir="${TMPDIR:-/tmp}/mutprobe-lock-$(printf '%s' "$target" | shasum | cut -c1-16)"
+_lock_held=0
+_deadline=$(( $(date +%s) + ${MUTPROBE_LOCK_WAIT:-600} ))
+while :; do
+    if mkdir "$_lockdir" 2>/dev/null; then _lock_held=1; break; fi
+    # Break a lock older than the probe timeout: its owner cannot still be alive
+    # within any run we schedule, so waiting on it would hang the suite forever.
+    if [ -d "$_lockdir" ]; then
+        _age=$(( $(date +%s) - $(stat -f %m "$_lockdir" 2>/dev/null || stat -c %Y "$_lockdir" 2>/dev/null || echo 0) ))
+        if [ "$_age" -gt "${MUTPROBE_LOCK_STALE:-900}" ]; then
+            rmdir "$_lockdir" 2>/dev/null || true
+            continue
+        fi
+    fi
+    if [ "$(date +%s)" -ge "$_deadline" ]; then
+        echo "mutation-probe: timed out waiting for the lock on $target" >&2
+        echo "  Another probe is mutating the same file. Running concurrently would" >&2
+        echo "  leave a mutation on disk with every probe reporting green." >&2
+        exit 75
+    fi
+    sleep 1
+done
+_unlock() { [ "$_lock_held" = "1" ] && rmdir "$_lockdir" 2>/dev/null; _lock_held=0; }
+trap _unlock EXIT INT TERM
+
 # mktemp already guarantees a unique name, including for nested probes -- $$ is
 # NOT unique here, because `bash -c` shares the parent's PID.
 backup="$(mktemp "${TMPDIR:-/tmp}/mutprobe-XXXXXX")"
@@ -74,7 +115,12 @@ restore() {
     cp "$backup" "$target"
     rm -f "$backup"
 }
-trap restore EXIT INT TERM
+# Restore THEN unlock, in one handler. A second `trap ... EXIT` would replace the
+# unlock trap installed above rather than adding to it, so the lock would leak on
+# every error path and the next run would block until the staleness timeout.
+# Order matters: releasing the lock before restoring lets the next prober back up
+# a still-mutated file, which is the exact race this lock exists to prevent.
+trap 'restore; _unlock' EXIT INT TERM
 
 applied="$(TARGET="$target" FIND="$find_str" REPL="$replace_str" \
     AFTER="${MUTPROBE_AFTER:-}" python3 - <<'PY'
@@ -119,6 +165,11 @@ fi
 test_rc=$?
 
 restore
+# Release the lock explicitly before disarming. `trap -` clears the unlock
+# handler too, so without this the lock leaked on every SUCCESSFUL run and the
+# next prober blocked until the staleness timeout -- a self-inflicted hang on
+# the healthy path.
+_unlock
 trap - EXIT INT TERM
 
 if [ "$test_rc" -eq 0 ]; then
