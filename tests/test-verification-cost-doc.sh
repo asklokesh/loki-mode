@@ -104,6 +104,47 @@ for refusal in "semantic fidelity score" "composite trust score" "readiness perc
     fi
 done
 
+# --- 5b. The competitive section refuses the claim it cannot support --------
+#
+# A goal was set to be "2-10x better than factory.ai, devin, 8090, replit".
+# None of those four has a runnable local arm (verified: droid/devin/replit are
+# not installed; claude/aider/codex/loki are), so no such benchmark exists. The
+# doc must SAY that. A section that quietly omitted it would read as though the
+# comparison had been done and merely not printed, which is how an unearned
+# multiplier gets laundered into a spec sheet.
+#
+# THIS IS THE LOAD-BEARING ASSERTION OF THIS FILE. Every other check guards a
+# number we published; this one guards a number we refused to publish.
+if grep -q "no \"2-10x vs Factory/Devin/8090/Replit\" number here" "$DOC"; then
+    ok "the doc explicitly refuses the unmeasurable multiplier"
+else
+    bad "the doc does not state that the headline comparison was NOT measured"
+fi
+if grep -q "NOT installed" "$DOC"; then
+    ok "the doc shows WHICH competitors have no runnable arm"
+else
+    bad "the doc asserts the competitors are unbenchmarkable without showing it"
+fi
+# The measurable claim must be present AND scoped to what it actually checks.
+if grep -q "0 expose an output-verification command" "$DOC"; then
+    ok "the measurable claim (verify-surface count) is recorded"
+else
+    bad "the verify-surface measurement is missing"
+fi
+if grep -q "check for a COMMAND, not for internal" "$DOC"; then
+    ok "the verify-surface claim states its own limit (a CLI check, not proof of absence)"
+else
+    bad "the verify-surface count is published without its limit"
+fi
+# Every competitor quote must carry the file it came from, or it is hearsay.
+for src in "docs.factory.ai_missions_overview.md" "docs.devin.ai_admin_security.md" "www.8090.ai_terms-of-service.md"; do
+    if grep -q "$src" "$DOC"; then
+        ok "a competitor quote cites its source file ($src)"
+    else
+        bad "a competitor claim has no source path ($src) -- unverifiable"
+    fi
+done
+
 # --- 6. House style ---------------------------------------------------------
 if ! grep -qP '[\x{1F300}-\x{1FAFF}\x{2014}\x{2013}]' "$DOC" 2>/dev/null; then
     ok "no emoji and no em-dash"

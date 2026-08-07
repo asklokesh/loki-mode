@@ -101,3 +101,82 @@ bash tests/test-competitor-verify-surface.sh  # the competitor CLI measurement
 
 If a number here does not reproduce on your machine, that is a defect and we
 want the report.
+
+## How we compare, and what we cannot measure
+
+A goal was set to be "2-10x better than factory.ai, cognition devin, 8090.ai
+and replit". This section reports what is measurable and refuses the rest.
+
+### What is NOT benchmarked, and why
+
+None of those four products has a runnable local arm. Checked on this machine:
+
+```
+droid    NOT installed        devin    NOT installed
+replit   NOT installed
+claude   on PATH              aider    on PATH
+codex    on PATH              loki     on PATH
+```
+
+Devin and 8090 are hosted services with no CLI. Factory's droid and Replit run
+cloud-side. `benchmarks/bench/adapters/` can drive a competing arm as a
+subprocess (`claude_code.py` invokes `claude -p` live), but it cannot drive a
+product that has no local binary.
+
+**So there is no "2-10x vs Factory/Devin/8090/Replit" number here, and any such
+figure elsewhere should be treated as unearned.** Publishing one would be the
+same error as sourcing a colour token from a frontend that does not ship: a
+number that looks authoritative and measures something else.
+
+### What IS measured: the verification surface
+
+`tests/test-competitor-verify-surface.sh`, run on this machine:
+
+> **5 installed competitor CLIs. 0 expose an output-verification command.**
+
+That is not a multiplier, it is a category. The comparison is not "our
+verification is faster" but "there is nothing on the other side to compare
+against". Re-run it yourself; it names each CLI it checked and SKIPs the ones
+it could not find rather than counting them as absent.
+
+### What the competitors say about verification, in their own words
+
+Verbatim, with the file each came from, so every line is checkable against the
+scraped corpora:
+
+| Source | Their words |
+|---|---|
+| `factory_ai/docs.factory.ai_missions_overview.md` | "**How do you maximize correctness?** Long-running plans accumulate errors." -- published as an OPEN QUESTION |
+| `factory_ai/docs.factory.ai_missions_overview.md` | "Without it, the mission **cannot reliably verify its own work**" (Missions require repo readiness Level 4+) |
+| `devin_cognition_ai/docs.devin.ai_admin_security.md.md` | "it can still experience **hallucinations, introduce bugs into code**, or suggest insecure code" |
+| `8090_ai/www.8090.ai_terms-of-service.md` | "**HUMAN REVIEW AND VERIFICATION OF ALL OUTPUT**" required, while the same ToS caps liability at "FIFTY US DOLLARS" and disclaims "ACCURACY" |
+
+Factory's is the most honest of the four: they name verification as an open
+research question rather than a solved feature, and they state that
+self-verification is a property of the ENVIRONMENT, not of the agent. We agree,
+which is why `loki readiness` measures the repo and not the model.
+
+### The claim we will actually defend
+
+Not a multiplier. A receipt you can recompute:
+
+```
+loki proof verify <id>     # re-hash the receipt; exit 1 on tamper
+loki outcomes --json       # anchored, or UNKNOWN with a named reason
+```
+
+Against "human review and verification of all output" and "cannot reliably
+verify its own work", an anchored receipt is a categorical difference. It is
+also falsifiable: if `loki outcomes` reports UNKNOWN, we say UNKNOWN. On this
+repo it reported ANCHORED 0 of 9 for weeks, and the fix
+(`facts.git.base_sha` was empty) is in the history.
+
+### Honest limits on this section
+
+- The verify-surface count is a check for a COMMAND, not for internal
+  verification a product may do without exposing it. A hosted product could
+  verify server-side and expose nothing to a CLI.
+- It measures what is installed HERE. A CLI absent from this machine is
+  reported as SKIP, never as a competitor that lacks the feature.
+- Nothing here measures build quality, speed, or cost against those four.
+  Those comparisons are not available to us and are not claimed.
