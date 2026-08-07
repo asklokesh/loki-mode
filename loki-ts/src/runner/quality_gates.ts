@@ -1371,6 +1371,33 @@ export const stubReviewer: ReviewerFn = async () => "VERDICT: PASS\nFINDINGS:\n-
 // detail rather than counting it as a real PASS.
 export const REVIEWER_UNAVAILABLE_MARKER = "REVIEWER_UNAVAILABLE";
 
+// CONFIDENCE, separate from SEVERITY.
+//
+// Severity answers "how bad if real". Confidence answers "how sure it is real".
+// Collapsing them mislabels harness failures as code defects: measured on this
+// repo, all 16 findings in .loki/state/findings-*.json read "Critical", and all
+// 16 were `structured reviewer produced no valid verdict` -- the REVIEWER not
+// answering, not a defect in the user's code. A user reading that sees 16
+// critical bugs in a codebase that has none. That is a false RED, and it costs
+// the same credibility a false green does: findings the user learns to discount.
+//
+// Adopted from Devin's review taxonomy, which splits findings by epistemic
+// status -- Bugs (high confidence, fix it), Flags/Investigate ("you should
+// review this yourself and verify whether there is an actual bug"), and
+// Flags/Informational.
+//
+// The tag is ADDITIVE and changes no verdict. Every site below still returns
+// VERDICT: FAIL and still blocks; fail-closed is correct and untouched. What
+// changes is only that the line says WHY it cannot vouch for the result, so a
+// reviewer-dispatch failure is not read as a code defect.
+export const CONFIDENCE_UNVERIFIED = "unverified";
+
+/** Tag a synthetic finding that reports a HARNESS failure, not a code defect. */
+export function harnessFinding(detail: string): string {
+  return `VERDICT: FAIL\nFINDINGS:\n- [Critical] [${CONFIDENCE_UNVERIFIED}] ${detail} `
+    + `(this is the review harness failing, not a defect found in your code; the gate blocks because an unverified change must not pass)`;
+}
+
 // Real reviewer dispatch -- parity with the bash _dispatch_reviewer (claude arm,
 // autonomy/run.sh). The orchestrator hands a fully self-contained prompt (diff,
 // changed files, checks, strict VERDICT/FINDINGS contract) and expects raw text
@@ -1515,7 +1542,7 @@ export const claudeReviewer: ReviewerFn = async ({ prompt }) => {
         if (legacy !== null) return legacy;
       }
       // fail-closed: structured path failed -> blocking synthetic (never a PASS).
-      return `VERDICT: FAIL\nFINDINGS:\n- [Critical] structured reviewer produced no valid verdict`;
+      return harnessFinding("structured reviewer produced no valid verdict");
     }
   }
 
@@ -1531,11 +1558,11 @@ export const claudeReviewer: ReviewerFn = async ({ prompt }) => {
     // A failed dispatch must not silently pass. Surface a blocking Critical so a
     // broken reviewer cannot approve a change by accident (parity with the bash
     // arm where a non-zero claude leaves an empty file -> NO_VERDICT -> not a PASS).
-    return `VERDICT: FAIL\nFINDINGS:\n- [Critical] reviewer dispatch failed (claude exit ${r.exitCode})`;
+    return harnessFinding(`reviewer dispatch failed (claude exit ${r.exitCode})`);
   }
   const out = r.stdout.trim();
   if (out.length === 0) {
-    return `VERDICT: FAIL\nFINDINGS:\n- [Critical] reviewer produced no output`;
+    return harnessFinding("reviewer produced no output");
   }
   return r.stdout;
 };
@@ -1825,7 +1852,7 @@ export async function runCodeReview(
         output = await reviewer({ reviewer: rv, diff, files, prompt });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        output = `VERDICT: FAIL\nFINDINGS:\n- [Critical] reviewer threw: ${msg}`;
+        output = harnessFinding(`reviewer threw: ${msg}`);
       }
       writeFileSync(join(reviewDir, `${rv.name}.txt`), output);
       return parseVerdict(rv.name, output);
