@@ -46,9 +46,33 @@ else
     bad "the guard misses a cancellable release state: $_cond"
 fi
 
+
+# --- 1b. IT MUST WATCH THE TESTS RUN, NOT ONLY release.yml ------------------
+# The third v9.17.0 attempt died here. release.yml can already read "completed"
+# for a PREVIOUS run while the Tests run the NEXT release needs is still going.
+# Checking only the release workflow says "safe to push", the push cancels
+# Tests, and the release dispatched afterwards fails closed on
+# "Tests: completed/cancelled".
+if grep -q "_tests_state" "$HOOK"; then
+    ok "the guard also watches the in-flight Tests run"
+else
+    bad "the guard only watches release.yml -- a push still cancels the Tests run a release needs"
+fi
+_cond2="$(grep -A 2 'if \[\[ "\$_rel_state"' "$HOOK" | head -3)"
+if printf '%s' "$_cond2" | grep -q "_tests_state"; then
+    ok "both workflows are in the SAME condition (either one blocks the warning off)"
+else
+    bad "_tests_state exists but is not part of the warning condition"
+fi
+
+# Blocks are extracted by a LOOSE anchor on purpose. The first version keyed on
+# the exact sentence "WARNING: a RELEASE is running", and rewording the message
+# to cover the Tests run (a strictly better warning) orphaned the extraction and
+# failed two assertions against correct code. Anchor on the stable prefix.
+
 # --- 2. THE LOAD-BEARING ONE: it WARNS, it does not BLOCK ------------------
 # A block would prevent the very commit that fixes a broken release.
-_block="$(sed -n '/WARNING: a RELEASE is running/,/^    fi$/p' "$HOOK" | grep -cE 'exit 1|failures=\$\(\(')"
+_block="$(sed -n '/WARNING: a rel/,/^    fi$/p' "$HOOK" | grep -cE 'exit 1|failures=\$\(\(')"
 if [ "${_block:-1}" -eq 0 ]; then
     ok "the release check warns without failing the push"
 else
@@ -58,7 +82,7 @@ fi
 # --- 3. It names the CONSEQUENCE, not just the state -----------------------
 # "A release is running" tells the reader nothing actionable. The reason the
 # warning works is that it says what happens next.
-_msg="$(sed -n '/WARNING: a RELEASE is running/,/^    fi$/p' "$HOOK")"
+_msg="$(sed -n '/WARNING: a rel/,/^    fi$/p' "$HOOK")"
 if printf '%s' "$_msg" | grep -qi "CANCELS"; then
     ok "the warning states that the push CANCELS the release's Tests run"
 else

@@ -194,17 +194,34 @@ if command -v gh >/dev/null 2>&1 && [[ "${PRE_PUSH_NO_CI_CHECK:-0}" != "1" ]]; t
     # as a release that silently published nothing.
     #
     # A warning, not a block: the push may BE the fix for a failing release.
+    # Checks BOTH the release workflow AND the Tests run it depends on.
+    #
+    # The first version only looked at release.yml, and that was not enough. A
+    # release dispatches, required-ci starts WAITING on Tests, and release.yml
+    # can already read "completed" for a PREVIOUS run while the Tests run the
+    # next release needs is still going. Pushing then cancels Tests, and the
+    # release you dispatch afterwards fails closed on
+    # "Tests: completed/cancelled".
+    #
+    # That is exactly how the third v9.17.0 attempt died: I checked for a
+    # release in flight, saw none, pushed, and cancelled the Tests run the
+    # release was about to need. The guard was right about the mechanism and
+    # wrong about which workflow to watch.
     _rel_state=$(gh run list --workflow=release.yml --limit 1 \
                     --json status --jq '.[0].status' 2>/dev/null || echo "")
-    if [[ "$_rel_state" == "in_progress" || "$_rel_state" == "queued" ]]; then
+    _tests_state=$(gh run list --branch main --workflow=Tests --limit 1 \
+                    --json status --jq '.[0].status' 2>/dev/null || echo "")
+    if [[ "$_rel_state" == "in_progress" || "$_rel_state" == "queued" \
+       || "$_tests_state" == "in_progress" || "$_tests_state" == "queued" ]]; then
         echo "[pre-push] ---------------------------------------------------" >&2
-        echo "[pre-push] WARNING: a RELEASE is running right now." >&2
+        echo "[pre-push] WARNING: a release or its Tests run is IN FLIGHT." >&2
         echo "[pre-push] Pushing makes this commit the tip, which CANCELS the" >&2
         echo "[pre-push] Tests run the release is waiting on. required-ci then" >&2
         echo "[pre-push] fails closed and every publish job is SKIPPED -- the" >&2
         echo "[pre-push] release ships nothing and looks like a CI failure." >&2
         echo "[pre-push] Wait for it, or re-dispatch the release afterwards:" >&2
         echo "[pre-push]   gh run list --workflow=release.yml --limit 1" >&2
+        echo "[pre-push]   gh run list --branch main --workflow=Tests --limit 1" >&2
         echo "[pre-push] ---------------------------------------------------" >&2
     fi
 fi
