@@ -2049,7 +2049,40 @@ except Exception:
     pass
 " 2>/dev/null || true)"
     fi
-    [ -n "$_cost" ] && _fields="${_fields} | \$${_cost}"
+    if [ -n "$_cost" ]; then
+        _fields="${_fields} | \$${_cost}"
+        # PROJECTED spend at the iteration cap, shown beside the actual.
+        #
+        # WHY. MAX_ITERATIONS (default 25) is the ONLY backstop on a run's cost:
+        # LOKI_BUDGET_LIMIT defaults to "" and LOKI_MAX_DURATION to 0, both
+        # documented at run.sh:1118-1121, and the runtime says so out loud at
+        # :21333. That is a defensible default -- a run killed mid-flight at a
+        # dollar threshold the user never chose is worse than one that finishes.
+        # But it left the user unable to SEE where the run was heading: $4.20 at
+        # iteration 3 of 25 reads as cheap right up to the moment it is not.
+        #
+        # Linear extrapolation, and labelled "proj" rather than presented as a
+        # forecast: later iterations are usually cheaper than early ones (more
+        # cache hits, smaller diffs), so this is an upper bound, not a promise.
+        # Shown only when it would actually tell the user something -- from
+        # iteration 2 (one data point cannot extrapolate) and only when the
+        # projection is meaningfully above what has already been spent.
+        if [ "${_iter:-0}" -ge 2 ] && [ "${_max:-0}" -gt 0 ]; then
+            local _proj
+            _proj="$(LOKI_C="$_cost" LOKI_I="$_iter" LOKI_M="$_max" python3 -c "
+import os
+try:
+    c = float(os.environ['LOKI_C']); i = int(os.environ['LOKI_I']); m = int(os.environ['LOKI_M'])
+    if i > 0 and m > i:
+        p = c / i * m
+        if p >= c * 1.5:
+            print('%.2f' % p)
+except Exception:
+    pass
+" 2>/dev/null || true)"
+            [ -n "$_proj" ] && _fields="${_fields} (proj \$${_proj} at ${_max})"
+        fi
+    fi
 
     # Files changed (+ins/-del and file count) vs the run start SHA. Reuse the
     # build_completion_summary diff approach incl. the .loki/.git exclude pathspec.
