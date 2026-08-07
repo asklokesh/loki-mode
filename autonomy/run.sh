@@ -24889,7 +24889,17 @@ check_human_intervention() {
     # Security: Check it's a regular file (not symlink) to prevent symlink attacks
     if [ -f "$loki_dir/HUMAN_INPUT.md" ] && [ ! -L "$loki_dir/HUMAN_INPUT.md" ]; then
         # Security: Prompt injection disabled by default for enterprise security
-        if [ "${LOKI_PROMPT_INJECTION:-false}" != "true" ]; then
+        # Accepts "1" AND "true". It used to accept only "true", while
+        # `loki steer` prints "Enable it: export LOKI_PROMPT_INJECTION=1" and
+        # then "The next iteration will read and apply it." A user who followed
+        # that instruction exactly had their steering note moved to
+        # logs/human-input-REJECTED-*.md and never read -- the CLI reported
+        # success, the runner silently discarded it, and the only warning went
+        # to the runner log rather than to the person who typed the command.
+        #
+        # Both forms is the convention here (LOKI_GATE_SEMANTIC_TESTS_BLOCK and
+        # LOKI_DURABLE_STATE each test for both); this flag was the outlier.
+        if [ "${LOKI_PROMPT_INJECTION:-false}" != "true" ] && [ "${LOKI_PROMPT_INJECTION:-false}" != "1" ]; then
             log_warn "HUMAN_INPUT.md detected but prompt injection is DISABLED"
             log_warn "To enable, set LOKI_PROMPT_INJECTION=true (only in trusted environments)"
             # Move to rejected instead of processed
