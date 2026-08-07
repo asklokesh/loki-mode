@@ -10183,6 +10183,71 @@ async def remove_checklist_waiver(item_id: str):
 # Council Hard Gate Endpoint (Phase 4)
 # =============================================================================
 
+# Receipts name gates in snake_case; the UI rows are display names. Mapping is
+# explicit rather than derived (a lower()/replace() heuristic would silently
+# mis-map "Test Suite" <-> "test_coverage" and "Test Mutation" <->
+# "mutation_integrity", which are different gates).
+_RECEIPT_GATE_NAMES = {
+    "static_analysis": "Static Analysis",
+    "test_coverage": "Test Suite",
+    "code_review": "Blind Code Review",
+    "anti_sycophancy": "Anti-Sycophancy",
+    "mock_integrity": "Mock Integrity",
+    "mutation_integrity": "Test Mutation",
+    "doc_coverage": "Documentation Coverage",
+    "magic_debate": "Magic Modules Debate",
+}
+
+
+# Receipts say "passed"/"failed"; the UI switches on "pass"/"fail"
+# (dashboard-ui/components/loki-quality-gates.js:51). Passing the receipt's word
+# through unchanged matched nothing, so every gate fell to the "pending" default
+# and the page still read "0 Pass, 0 Fail, 8 Pending" while showing real
+# timestamps -- half-fixed, and only visible by loading the page.
+#
+# An UNRECOGNISED status maps to nothing and the gate stays pending. Guessing
+# (e.g. treating any unknown word as a pass) is how a future status string would
+# silently become a green badge.
+_RECEIPT_GATE_STATUS = {
+    "passed": "pass", "pass": "pass", "ok": "pass",
+    "failed": "fail", "fail": "fail", "blocked": "fail",
+}
+
+
+def _receipt_backed_gates():
+    """_DEFAULT_QUALITY_GATES, with results filled in from the newest receipt.
+
+    Fail-open by design: any error returns the plain defaults, so a malformed
+    receipt degrades to "pending" rather than breaking the Quality page.
+
+    Gates absent from the receipt keep status "pending" and get NO last_checked.
+    An absent measurement is never rendered as a result.
+    """
+    gates = [dict(g) for g in _DEFAULT_QUALITY_GATES]
+    try:
+        proofs = sorted((_get_loki_dir() / "proofs").glob("*/proof.json"))
+        if not proofs:
+            return gates
+        receipt = json.loads(proofs[-1].read_text())
+        checked_at = receipt.get("generated_at") or ""
+        by_display = {}
+        for entry in receipt.get("quality_gates", {}).get("gates", []) or []:
+            display = _RECEIPT_GATE_NAMES.get(entry.get("name", ""))
+            status = _RECEIPT_GATE_STATUS.get(str(entry.get("status", "")).lower())
+            if display and status:
+                by_display[display] = status
+        for gate in gates:
+            status = by_display.get(gate.get("name"))
+            if status:
+                gate["status"] = status
+                if checked_at:
+                    gate["last_checked"] = checked_at
+                gate["source"] = "receipt"
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return [dict(g) for g in _DEFAULT_QUALITY_GATES]
+    return gates
+
+
 _DEFAULT_QUALITY_GATES = [
     {"name": "Static Analysis", "description": "CodeQL, ESLint/Pylint, type-checker findings on the diff", "status": "pending"},
     {"name": "Test Suite", "description": "Project test runner pass/fail (red blocks)", "status": "pending"},
@@ -10221,7 +10286,22 @@ async def get_council_gate():
         except (json.JSONDecodeError, IOError):
             data = {"blocked": False, "gates": _DEFAULT_QUALITY_GATES, "error": "Failed to read gate file"}
     else:
-        data = {"blocked": False, "gates": _DEFAULT_QUALITY_GATES}
+        # No live gate file. Fall back to the most recent RECEIPT, which already
+        # records per-gate results -- rather than serving eight rows that all
+        # say "Last checked: Never" while .loki/proofs/ holds the real answers.
+        #
+        # That "Never" was not a display bug: /api/council/gate served
+        # _DEFAULT_QUALITY_GATES verbatim, and those entries carry no
+        # last_checked, so the UI honestly rendered "Never" for every gate on a
+        # repo with 9 receipts.
+        #
+        # ONLY gates the receipt actually names are filled in. Measured across
+        # all 9 receipts here, that is 3 of 8 (static_analysis, code_review,
+        # doc_coverage); the other five stay "pending" with no timestamp,
+        # because a gate that never ran must not inherit a neighbour's result.
+        # Filling all eight from a 3-gate receipt is the exact false-green this
+        # codebase exists to prevent.
+        data = {"blocked": False, "gates": _receipt_backed_gates()}
 
     # Verified-completion evidence gate (additive).
     if evidence_file.exists():
