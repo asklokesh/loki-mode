@@ -481,6 +481,9 @@ run_test "Emit JSON Escape (C0 control chars + UTF-8)" "$SCRIPT_DIR/test-emit-js
 # against CODEX_KNOWN_MODELS. Regression guard for the silent-downgrade bug.
 run_test "Codex Model Trusted (LOKI_CODEX_MODEL verbatim)" "$SCRIPT_DIR/test-codex-model-trusted.sh"
 
+# MiniMax catalog metadata and user-configurable Anthropic/OpenAI adapter paths.
+run_test "MiniMax Model Catalog and Compatible Endpoints" "$SCRIPT_DIR/test-minimax-model-catalog.sh"
+
 # provider_invoke()/provider_invoke_with_tier() argv construction across all
 # four providers. Registered 2026-07-27: this file existed but was wired into
 # NO runner, so the layer it guards went unwatched -- which is how a hardcoded
