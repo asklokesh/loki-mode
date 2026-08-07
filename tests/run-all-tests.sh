@@ -821,6 +821,7 @@ run_test "entry-document pointers resolve" "$SCRIPT_DIR/test-entry-doc-pointers-
 run_test "the mutation probe cannot silently no-op" "$SCRIPT_DIR/test-mutation-probe.sh"
 run_test "concurrent mutation probes do not corrupt the target" "$SCRIPT_DIR/test-mutation-probe-concurrency.sh"
 run_test "a stranded VERSION bump is reported" "$SCRIPT_DIR/test-release-drift-check.sh"
+run_test "the receipt anchors to the run's real baseline" "$SCRIPT_DIR/test-proof-base-sha-anchor.sh"
 run_test "trust-core tests detect their regressions" "$SCRIPT_DIR/test-trust-core-tests-detect.sh"
 run_test "a user-installed reviewer takes part in a run" "$SCRIPT_DIR/test-installed-agent-reviewer.sh"
 # Skill modules are loaded INTO the agent's context and acted on, so a false

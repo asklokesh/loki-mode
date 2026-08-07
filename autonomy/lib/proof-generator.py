@@ -943,12 +943,46 @@ def _git_diffstat(target_dir, include_diffs):
 
     Order of preference:
       1. _LOKI_RUN_START_SHA -- the run's own baseline (run.sh exports it).
-      2. The empty tree -- correct for a GREENFIELD run (a repo with no commits
+      2. .loki/state/start-sha -- the SAME baseline, persisted to disk. The env
+         var is only exported inside run_autonomous (run.sh:21690), so a receipt
+         generated outside that scope -- `loki proof` run by hand, a resumed
+         run, a receipt written after the runner exited -- saw an empty env var
+         and fell straight through to the empty tree.
+      3. The empty tree -- correct for a GREENFIELD run (a repo with no commits
          at start), where "everything that now exists" IS the run's output and
          there is no earlier commit to diff against.
-      3. Empty string -- let workspace_diff apply its own fallbacks.
+      4. Empty string -- let workspace_diff apply its own fallbacks.
+
+    WHY STEP 2 EXISTS. Without it every receipt on this repo recorded
+    base_sha="" -- measured: 9 of 9 receipts in .loki/proofs/, and the dashboard
+    correctly reported "9 receipts, 0 verified". An empty base is unanchorable,
+    so outcome_ledger.resolve_anchor() returns unanchored/base_sha_empty and NO
+    receipt can be verified. The persisted file already existed and both other
+    consumers already read it (run.sh:7779, completion-council.sh:1834); this
+    reader was the only one that did not, so it silently lost the anchor.
+
+    The greenfield fallback is deliberately kept BELOW the file: falling back to
+    the empty tree when a real baseline exists would attest to "everything in
+    the repo" as this run's output, which is a much worse lie than an empty
+    base_sha. Order matters more than the addition.
     """
     base = os.environ.get("_LOKI_RUN_START_SHA", "").strip()
+    if not base:
+        # Same baseline, read from disk. Mirrors run.sh:7779 and
+        # completion-council.sh:1834 rather than inventing a third convention.
+        try:
+            with open(os.path.join(target_dir, ".loki", "state", "start-sha")) as fh:
+                _persisted = fh.read().strip()
+            # Only trust it if it names a commit that actually exists HERE. A
+            # stale or foreign SHA would produce a diff against nothing and an
+            # integrity hash nobody can recompute.
+            if _persisted and subprocess.run(
+                ["git", "cat-file", "-e", _persisted + "^{commit}"],
+                cwd=target_dir, capture_output=True, timeout=10,
+            ).returncode == 0:
+                base = _persisted
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
     if not base:
         # Greenfield: no baseline commit existed when the run started.
         base = _empty_tree_sha(target_dir)
