@@ -231,3 +231,18 @@ is the one that carries the argument.
 - Reproduce it: `LOKI_BENCH_SPEND_APPROVED=1 bash benchmarks/bench/matrix.sh pilot`.
   The spend interlock is default-deny on purpose; a benchmark that starts a
   paid tool without an explicit opt-in is how a surprise bill happens.
+
+**The exclusion rule, observed on a live run rather than asserted.** A fresh
+`haiku-full` trial on `hard-1-order-api` (2026-08-07) hit the 1200s adapter
+timeout. The held-out grader inspected the workdir and returned
+`success: true` -- there WAS a passing artifact. The harness still recorded
+`measured: false`, `unmeasured_reasons: ["adapter exit_status=timeout"]`, and
+excluded the trial from k/N, with this note in the result file:
+
+> "the held-out grader's own verdict on whatever was in the workdir. Real
+> evidence about the ARTIFACT; NOT evidence that a run happened."
+
+A naive harness scores that 1/1. Ours scores it 0/0 and says why, so the
+`hard-1-order-api` row above stayed at n=3 instead of being inflated to n=4 by
+a run that never finished. The number in this document is smaller because of
+that rule, which is the point of having it.

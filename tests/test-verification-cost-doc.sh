@@ -178,6 +178,20 @@ if grep -q "LOKI_BENCH_SPEND_APPROVED" "$DOC"; then
 else
     bad "the reproduce instructions omit that this costs money"
 fi
+# The live exclusion is the strongest evidence in this document that the
+# numbers are not curated: a trial the GRADER passed was still thrown out
+# because the run did not finish. Dropping it would leave only self-reported
+# wins, which is the shape of every benchmark nobody believes.
+if grep -q "measured: false" "$DOC" && grep -q "NOT evidence that a run happened" "$DOC"; then
+    ok "the live false-green exclusion is recorded with the harness's own words"
+else
+    bad "the observed exclusion was dropped -- the table loses its strongest honesty signal"
+fi
+if grep -q "stayed at n=3 instead of being inflated to n=4" "$DOC"; then
+    ok "the doc states which number the exclusion made SMALLER"
+else
+    bad "the exclusion is described without saying what it cost us"
+fi
 
 # --- 6. House style ---------------------------------------------------------
 if ! grep -qP '[\x{1F300}-\x{1FAFF}\x{2014}\x{2013}]' "$DOC" 2>/dev/null; then
