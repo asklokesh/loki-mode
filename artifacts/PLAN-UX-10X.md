@@ -86,15 +86,36 @@ says it because the number changed, not because the label did.
 ## Phase 2 -- One UI, and it is the dashboard
 
 ### 2.1 Settle the two-frontend problem
-`web-app/` is 174 source files including a 2,510-line / 81-hook
-`ProjectWorkspace.tsx` with no behavioural test coverage, and it does not ship.
-Two competing UIs is itself a source of the "complex and complicated" feeling.
 
-Decision: **the dashboard is the product.** `web-app/` is either deleted or
-explicitly marked non-shipping in one commit, so nobody (including me) analyses
-it again by mistake. I will not rewrite `ProjectWorkspace.tsx` -- rewriting
-2,510 lines with 81 hooks and zero behavioural coverage is how you ship a
-regression you cannot detect.
+**CORRECTION (checked before acting, not after).** I wrote above that `web-app/`
+"does not ship". That is wrong, and deleting it would have destroyed a shipping
+product. Verified:
+
+- `package.json` `files[]` includes `web-app/dist/`, `web-app/server.py`,
+  `web-app/migrations/`, `web-app/deploy/` -- it is in the npm tarball
+- `Dockerfile:128-133` copies it into the image
+- it has its own command, PID file, state dir and port:
+  `PURPLE_LAB_DEFAULT_PORT=57375` (`autonomy/loki:6588`)
+
+So these are TWO products, not one product and dead code:
+
+| | port | serves | backend |
+|---|---|---|---|
+| Dashboard | 57374 | `dashboard/static/index.html` (787,917 b) | `dashboard/server.py` |
+| Purple Lab | 57375 | `web-app/dist/` | `web-app/server.py` (own FastAPI + alembic) |
+
+My earlier 800-byte reading of `web-app/dist/index.html` was correct but
+misinterpreted: it is a Vite shell that loads hashed asset bundles, which is
+normal for that build, not evidence the app is empty.
+
+Revised decision: **do not delete or merge anything.** The trust work in Phase 1
+and the design work in 2.2 target the DASHBOARD, which is the surface the founder
+screenshotted and the one that renders receipts. Purple Lab is out of scope for
+this plan and stays as it is.
+
+What remains true: I will not rewrite `ProjectWorkspace.tsx`. 2,510 lines with 81
+hooks and no behavioural coverage (its 76 "E2E" tests are API-level plus
+page-load assertions) is how you ship a regression you cannot detect.
 
 ### 2.2 Design language: operational, not editorial
 Current chrome is warm neutrals + `DM Serif Display` headings + eight accent

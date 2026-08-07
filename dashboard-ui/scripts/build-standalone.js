@@ -135,6 +135,52 @@ function generateStandaloneHTML(bundleCode) {
       --loki-glass-bg: rgba(255, 255, 255, 0.7);
       --loki-glass-border: rgba(255, 255, 255, 0.4);
       --loki-glass-shadow: 0 4px 24px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+
+      /* Aliases for tokens components consume but no theme defined.
+         33 var(--loki-*) names were referenced with a hardcoded fallback and
+         never declared, so they resolved to their LIGHT-mode literal in every
+         theme -- e.g. loki-checklist-viewer.js used --loki-status-success and
+         rendered #22c55e on a dark background while --loki-success was #2ED8B6.
+         Each alias points at a token this theme already defines, so it tracks
+         the theme instead of freezing one palette. */
+      --loki-accent-active: var(--loki-accent-hover);
+      --loki-info-muted: color-mix(in srgb, var(--loki-info, #2F71E3) 15%, transparent);
+      --loki-text: var(--loki-text-primary);
+      --loki-status-success: var(--loki-success);
+      --loki-status-warning: var(--loki-warning);
+      --loki-status-error: var(--loki-error);
+      --loki-success-muted: color-mix(in srgb, var(--loki-success) 15%, transparent);
+      --loki-warning-muted: color-mix(in srgb, var(--loki-warning) 15%, transparent);
+      --loki-error-muted: color-mix(in srgb, var(--loki-error) 15%, transparent);
+      --loki-red-muted: color-mix(in srgb, var(--loki-error) 15%, transparent);
+      --loki-green-muted: color-mix(in srgb, var(--loki-success) 15%, transparent);
+      --loki-yellow-muted: color-mix(in srgb, var(--loki-warning) 15%, transparent);
+      --loki-blue-muted: color-mix(in srgb, var(--loki-info, #2F71E3) 15%, transparent);
+      --loki-purple-muted: color-mix(in srgb, var(--loki-accent) 15%, transparent);
+      --loki-accent-muted: color-mix(in srgb, var(--loki-accent) 15%, transparent);
+      --loki-accent-light: var(--loki-accent-hover);
+      --loki-red: var(--loki-error);
+      --loki-red-bg: color-mix(in srgb, var(--loki-error) 12%, transparent);
+      --loki-green: var(--loki-success);
+      --loki-yellow: var(--loki-warning);
+      --loki-amber: var(--loki-warning);
+      --loki-blue: var(--loki-info, #2F71E3);
+      --loki-purple: var(--loki-accent);
+      --loki-bg-subtle: var(--loki-bg-secondary);
+      --loki-bg-overlay: var(--loki-bg-card);
+      --loki-bg-code: var(--loki-bg-tertiary);
+      --loki-code-bg: var(--loki-bg-tertiary);
+      --loki-text-inverse: var(--loki-bg-primary);
+      --loki-border-focus: var(--loki-accent);
+      --loki-shadow-focus: 0 0 0 3px var(--loki-accent-glow);
+      --loki-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+      --loki-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.10);
+      --loki-font-family: var(--loki-font-sans, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif);
+      /* Model tiers keep a fixed hue so a tier is recognisable across themes. */
+      --loki-opus: var(--loki-accent);
+      --loki-sonnet: var(--loki-info, #2F71E3);
+      --loki-haiku: var(--loki-success);
+
       --loki-transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
@@ -159,6 +205,52 @@ function generateStandaloneHTML(bundleCode) {
       --loki-glass-bg: rgba(255, 255, 255, 0.7);
       --loki-glass-border: rgba(255, 255, 255, 0.4);
       --loki-glass-shadow: 0 4px 24px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+
+      /* Aliases for tokens components consume but no theme defined.
+         33 var(--loki-*) names were referenced with a hardcoded fallback and
+         never declared, so they resolved to their LIGHT-mode literal in every
+         theme -- e.g. loki-checklist-viewer.js used --loki-status-success and
+         rendered #22c55e on a dark background while --loki-success was #2ED8B6.
+         Each alias points at a token this theme already defines, so it tracks
+         the theme instead of freezing one palette. */
+      --loki-accent-active: var(--loki-accent-hover);
+      --loki-info-muted: color-mix(in srgb, var(--loki-info, #2F71E3) 15%, transparent);
+      --loki-text: var(--loki-text-primary);
+      --loki-status-success: var(--loki-success);
+      --loki-status-warning: var(--loki-warning);
+      --loki-status-error: var(--loki-error);
+      --loki-success-muted: color-mix(in srgb, var(--loki-success) 15%, transparent);
+      --loki-warning-muted: color-mix(in srgb, var(--loki-warning) 15%, transparent);
+      --loki-error-muted: color-mix(in srgb, var(--loki-error) 15%, transparent);
+      --loki-red-muted: color-mix(in srgb, var(--loki-error) 15%, transparent);
+      --loki-green-muted: color-mix(in srgb, var(--loki-success) 15%, transparent);
+      --loki-yellow-muted: color-mix(in srgb, var(--loki-warning) 15%, transparent);
+      --loki-blue-muted: color-mix(in srgb, var(--loki-info, #2F71E3) 15%, transparent);
+      --loki-purple-muted: color-mix(in srgb, var(--loki-accent) 15%, transparent);
+      --loki-accent-muted: color-mix(in srgb, var(--loki-accent) 15%, transparent);
+      --loki-accent-light: var(--loki-accent-hover);
+      --loki-red: var(--loki-error);
+      --loki-red-bg: color-mix(in srgb, var(--loki-error) 12%, transparent);
+      --loki-green: var(--loki-success);
+      --loki-yellow: var(--loki-warning);
+      --loki-amber: var(--loki-warning);
+      --loki-blue: var(--loki-info, #2F71E3);
+      --loki-purple: var(--loki-accent);
+      --loki-bg-subtle: var(--loki-bg-secondary);
+      --loki-bg-overlay: var(--loki-bg-card);
+      --loki-bg-code: var(--loki-bg-tertiary);
+      --loki-code-bg: var(--loki-bg-tertiary);
+      --loki-text-inverse: var(--loki-bg-primary);
+      --loki-border-focus: var(--loki-accent);
+      --loki-shadow-focus: 0 0 0 3px var(--loki-accent-glow);
+      --loki-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+      --loki-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.10);
+      --loki-font-family: var(--loki-font-sans, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif);
+      /* Model tiers keep a fixed hue so a tier is recognisable across themes. */
+      --loki-opus: var(--loki-accent);
+      --loki-sonnet: var(--loki-info, #2F71E3);
+      --loki-haiku: var(--loki-success);
+
     }
 
     [data-loki-theme="dark"] {
@@ -182,6 +274,52 @@ function generateStandaloneHTML(bundleCode) {
       --loki-glass-bg: rgba(23, 22, 28, 0.7);
       --loki-glass-border: rgba(255, 255, 255, 0.08);
       --loki-glass-shadow: 0 4px 24px rgba(0, 0, 0, 0.25), 0 1px 2px rgba(0, 0, 0, 0.12);
+
+      /* Aliases for tokens components consume but no theme defined.
+         33 var(--loki-*) names were referenced with a hardcoded fallback and
+         never declared, so they resolved to their LIGHT-mode literal in every
+         theme -- e.g. loki-checklist-viewer.js used --loki-status-success and
+         rendered #22c55e on a dark background while --loki-success was #2ED8B6.
+         Each alias points at a token this theme already defines, so it tracks
+         the theme instead of freezing one palette. */
+      --loki-accent-active: var(--loki-accent-hover);
+      --loki-info-muted: color-mix(in srgb, var(--loki-info, #2F71E3) 15%, transparent);
+      --loki-text: var(--loki-text-primary);
+      --loki-status-success: var(--loki-success);
+      --loki-status-warning: var(--loki-warning);
+      --loki-status-error: var(--loki-error);
+      --loki-success-muted: color-mix(in srgb, var(--loki-success) 15%, transparent);
+      --loki-warning-muted: color-mix(in srgb, var(--loki-warning) 15%, transparent);
+      --loki-error-muted: color-mix(in srgb, var(--loki-error) 15%, transparent);
+      --loki-red-muted: color-mix(in srgb, var(--loki-error) 15%, transparent);
+      --loki-green-muted: color-mix(in srgb, var(--loki-success) 15%, transparent);
+      --loki-yellow-muted: color-mix(in srgb, var(--loki-warning) 15%, transparent);
+      --loki-blue-muted: color-mix(in srgb, var(--loki-info, #2F71E3) 15%, transparent);
+      --loki-purple-muted: color-mix(in srgb, var(--loki-accent) 15%, transparent);
+      --loki-accent-muted: color-mix(in srgb, var(--loki-accent) 15%, transparent);
+      --loki-accent-light: var(--loki-accent-hover);
+      --loki-red: var(--loki-error);
+      --loki-red-bg: color-mix(in srgb, var(--loki-error) 12%, transparent);
+      --loki-green: var(--loki-success);
+      --loki-yellow: var(--loki-warning);
+      --loki-amber: var(--loki-warning);
+      --loki-blue: var(--loki-info, #2F71E3);
+      --loki-purple: var(--loki-accent);
+      --loki-bg-subtle: var(--loki-bg-secondary);
+      --loki-bg-overlay: var(--loki-bg-card);
+      --loki-bg-code: var(--loki-bg-tertiary);
+      --loki-code-bg: var(--loki-bg-tertiary);
+      --loki-text-inverse: var(--loki-bg-primary);
+      --loki-border-focus: var(--loki-accent);
+      --loki-shadow-focus: 0 0 0 3px var(--loki-accent-glow);
+      --loki-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+      --loki-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.10);
+      --loki-font-family: var(--loki-font-sans, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif);
+      /* Model tiers keep a fixed hue so a tier is recognisable across themes. */
+      --loki-opus: var(--loki-accent);
+      --loki-sonnet: var(--loki-info, #2F71E3);
+      --loki-haiku: var(--loki-success);
+
     }
 
     * {
