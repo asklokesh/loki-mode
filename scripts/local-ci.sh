@@ -776,7 +776,7 @@ if command -v bun >/dev/null 2>&1; then
       echo "9.13.0 through 9.16.0 -- 15 commits landed after the 9.16.0 bump."
       echo ""
       echo "RECOVERY for an already-stranded bump -- all three must be green at"
-      echo "the SAME head, or release.yml's required-ci fails closed:"
+      echo "the SAME head, or the required-ci job in release.yml fails closed:"
       echo "  gh workflow run security-audit.yml --ref main   # else 'not reported yet'"
       echo "  # wait for Tests + Bun Parity + Security Audit to pass at that SHA"
       echo "  gh workflow run release.yml --ref main"

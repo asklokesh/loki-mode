@@ -45,10 +45,35 @@ echo "TEST: concurrent mutation probes do not corrupt the target"
 [ -f "$PROBE" ] || { echo "  FAIL: $PROBE missing"; exit 1; }
 
 WORK="$(mktemp -d)"
+
+# EVERY LOCK OPERATION HERE IS SCOPED TO OUR OWN TARGETS.
+#
+# The first version globbed `mutprobe-lock-*`, and the comment even claimed
+# "only our own locks" while deleting every lock on the machine. That broke in
+# CI, not locally: run-all-tests.sh shards 4 ways, and
+# test-trust-core-tests-detect.sh runs 95 probes against autonomy/run.sh in a
+# DIFFERENT shard at the same time. A global glob then does two harmful things
+#   - deletes that suite's LIVE lock, reintroducing the exact corruption this
+#     file exists to prevent, in another test
+#   - counts its lock as ours, so the "lock released" assertions read a
+#     concurrent holder as a leak
+#
+# The observed CI failure was `rc2=1` (MUTATION SURVIVED) with the file still
+# byte-identical -- consistent with interference, not with the lock failing.
+# It passed locally on every attempt including under 8-way CPU load, because
+# nothing else was probing concurrently.
+#
+# The lock path is mutprobe-lock-<shasum of target path>, so we can name ours
+# exactly. Never glob.
+_lockfor() { printf '%s/mutprobe-lock-%s' "${TMPDIR:-/tmp}" "$(printf '%s' "$1" | shasum | cut -c1-16)"; }
+_our_targets() { printf '%s\n' "$WORK/ctl.sh" "$WORK/tgt.sh" "$WORK/tgt3.sh" "$WORK/one.sh" "$WORK/a.sh" "$WORK/b.sh"; }
+_rm_our_locks() {
+    local t
+    while IFS= read -r t; do rmdir "$(_lockfor "$t")" 2>/dev/null || true; done < <(_our_targets)
+}
 cleanup() {
+    _rm_our_locks
     rm -rf "$WORK"
-    # Only our own locks, matched by the targets we created.
-    rm -rf "${TMPDIR:-/tmp}"/mutprobe-lock-* 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -118,20 +143,22 @@ EOF
 cat > "$WORK/blind.sh" <<'EOF'
 exit 0
 EOF
-rm -rf "${TMPDIR:-/tmp}"/mutprobe-lock-* 2>/dev/null || true
+_rm_our_locks
 
-_locks() { ls -d "${TMPDIR:-/tmp}"/mutprobe-lock-* 2>/dev/null | wc -l | tr -d ' '; }
+# Asks about OUR target's lock only. The earlier version counted every lock in
+# TMPDIR, so a trust-core probe running in another shard registered as our leak.
+_our_lock_held() { [ -d "$(_lockfor "$WORK/one.sh")" ] && echo yes || echo no; }
 
 bash "$PROBE" "$WORK/one.sh" 'alpha=1' 'alpha=9' bash "$WORK/detect.sh" "$WORK/one.sh" >/dev/null 2>&1
-[ "$(_locks)" = "0" ] && ok "lock released after a detected mutation (exit 0)" \
+[ "$(_our_lock_held)" = "no" ] && ok "lock released after a detected mutation (exit 0)" \
                       || bad "lock leaked on the success path"
 
 bash "$PROBE" "$WORK/one.sh" 'alpha=1' 'alpha=9' bash "$WORK/blind.sh" >/dev/null 2>&1
-[ "$(_locks)" = "0" ] && ok "lock released after MUTATION SURVIVED (exit 1)" \
+[ "$(_our_lock_held)" = "no" ] && ok "lock released after MUTATION SURVIVED (exit 1)" \
                       || bad "lock leaked when the mutation survived"
 
 bash "$PROBE" "$WORK/one.sh" 'nomatch' 'x' bash "$WORK/detect.sh" "$WORK/one.sh" >/dev/null 2>&1
-[ "$(_locks)" = "0" ] && ok "lock released after a stale search string (exit 65)" \
+[ "$(_our_lock_held)" = "no" ] && ok "lock released after a stale search string (exit 65)" \
                       || bad "lock leaked when the probe did not apply"
 
 # --- 5. Different files still run in parallel --------------------------------
