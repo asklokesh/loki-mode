@@ -91,9 +91,25 @@ def _authorship_line(loki_dir, run_id=None):
 
 
 def _grounding_line(loki_dir):
-    # Grounding is computed per claim at completion time, not stored, so this
-    # reports availability rather than inventing a stale result.
-    return UNKNOWN, "run `loki verify` to check the completion claim against the diff"
+    # The completion route now persists the per-claim result here
+    # (run.sh:_loki_check_claim_grounding, written at the non-destructive claim
+    # peek). Absent file means the run never reached a completion claim, which
+    # is UNKNOWN -- not a pass, and not a failure.
+    d = _read_json(os.path.join(loki_dir, "state", "claim-grounding.json"))
+    if not isinstance(d, dict) or d.get("status") != "measured":
+        return UNKNOWN, "no completion claim was checked against the diff"
+    named = d.get("paths_named") or []
+    if not named:
+        # Reported by name rather than scored: a claim naming no path is
+        # UNGROUNDABLE, which is a different fact from a claim that checked out.
+        return UNKNOWN, "the completion claim named no file path, so it cannot be grounded"
+    ungrounded = d.get("ungrounded") or []
+    if d.get("has_ungrounded_claim"):
+        return "finding", (
+            f"the completion claim names {len(ungrounded)} path(s) absent from the diff: "
+            + ", ".join(str(p) for p in ungrounded[:3])
+        )
+    return "measured", f"all {len(named)} path(s) named in the completion claim are in the diff"
 
 
 def _model_line(loki_dir):
@@ -161,7 +177,12 @@ def render_markdown(v):
     out.append("| Signal | Status | Detail |")
     out.append("|---|---|---|")
     for r in v["signals"]:
-        status = "measured" if r["status"] == "measured" else "UNKNOWN"
+        # Three states, not two. Collapsing everything non-measured to UNKNOWN
+        # would render a real finding ("the claim names a file absent from the
+        # diff") identically to "we could not check" -- the false equivalence
+        # this whole module exists to refuse. Anything unrecognised still
+        # degrades to UNKNOWN, so an unmeasured signal can never read as a pass.
+        status = r["status"] if r["status"] in ("measured", "finding") else UNKNOWN
         out.append(f"| {r['signal']} | {status} | {r['detail']} |")
     out.append("")
     out.append("Every line is derived from a file in `.loki/` that you can read "

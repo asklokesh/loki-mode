@@ -11,7 +11,7 @@
 // probe never hangs the CLI. Secret env vars are checked for presence only --
 // the value is never read or echoed.
 import { existsSync, lstatSync, readFileSync, readlinkSync, statfsSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { REPO_ROOT } from "../util/paths.ts";
@@ -719,7 +719,20 @@ function formatToolLine(c: ToolRow): string {
 // The bash route has always named them; this route only counted, so its
 // trailer could say "some prerequisites are missing" without saying which --
 // the exact dead end a first-run user hits.
-type Tally = { pass: number; fail: number; warn: number; blockers: string[] };
+type Tally = {
+  pass: number;
+  fail: number;
+  warn: number;
+  blockers: string[];
+  // Adoption-funnel blocker CLASSES, recorded structurally alongside the
+  // human-readable blocker text. Kept separate on purpose: re-deriving the enum
+  // by regex-matching `blockers` would couple a telemetry key to prose that
+  // exists to be edited, and the bun-parity gate compares that prose byte for
+  // byte -- so a wording fix would silently retarget the signal. Values here
+  // must stay inside _loki_known_blocker's allowlist (autonomy/telemetry.sh:195);
+  // anything else is coerced to `other` by that helper, never dropped silently.
+  blockerKeys: string[];
+};
 
 function bump(t: Tally, s: Status): void {
   if (s === "pass") t.pass++;
@@ -736,11 +749,96 @@ function printHelp(): void {
   process.stdout.write(`        claude/codex CLIs, and disk space.\n`);
 }
 
+// Priority order for collapsing several simultaneous blockers into the ONE enum
+// the funnel carries. Byte-mirrors the bash doctor's case-arm order
+// (autonomy/loki:12030-12039), which is a priority list, not the order blockers
+// were appended: a host missing node AND a provider CLI must report the same key
+// on both routes, or the two routes' numbers cannot be added together. Kept
+// adjacent to that comment on purpose -- edit both or the routes diverge.
+const BLOCKER_PRIORITY = [
+  "no_provider",
+  "not_logged_in",
+  "node",
+  "python3",
+  "jq",
+  "git",
+  "curl",
+  "disk",
+  "skill_symlink",
+  "other",
+] as const;
+
+// Route the Bun doctor's first-run blocker into the ONE telemetry egress point.
+//
+// WHY A SHELL-OUT AND NOT AN HTTP CALL HERE. This repo keeps exactly one egress:
+// autonomy/telemetry.sh. Nothing under loki-ts/src performs analytics HTTP, and
+// adding a fetch here would create a second endpoint, a second consent gate to
+// keep in sync, and a second thing to audit before every release. Instead this
+// invokes the SAME bash helper the bash doctor calls, so opt-out
+// (LOKI_TELEMETRY_DISABLED / DO_NOT_TRACK), the strict analytics gate
+// (_loki_analytics_enabled, default OFF), the payload allowlist
+// (_loki_known_blocker), and the once-per-machine marker
+// (~/.loki/funnel-first-run-blocked) are all enforced in one place for both
+// routes. The shared marker is also what prevents a double count when a user
+// runs doctor on each route.
+//
+// Precedent for the mechanism is a few hundred lines up: the SDK-usable probe
+// shells out to provider-offer.sh rather than reimplement the predicate in TS.
+//
+// WHY THIS COULD NOT LIVE IN bin/loki. The shim already emits the
+// `start-attempted` funnel event because a start ATTEMPT is knowable before
+// dispatch. A blocker is not: the shim `exec`s into Bun before any check has
+// run, so at that point there is nothing to report. Capturing doctor's exit code
+// in the shim instead would yield only failed/not-failed -- never WHICH class --
+// and would cost the exec's signal and TTY semantics.
+//
+// Detached + unref'd, never awaited: loki_telemetry does not background its own
+// curl (every bash caller wraps it in `( ... & )`), so a synchronous spawn would
+// hold doctor's exit open on a network round trip. stdio is fully ignored, which
+// also swallows the disclosure line -- that is exactly what the bash call site
+// does (autonomy/loki:12040), so it is parity rather than a new gap, and it
+// keeps stdout byte-clean for the bun-parity gate.
+//
+// Fail-open on purpose, and stated plainly: a missing telemetry.sh, an absent
+// bash, or a spawn error all leave doctor's output and exit code untouched. An
+// adoption metric must never be able to break the command that diagnoses a
+// broken install.
+function emitFirstRunBlocked(keys: readonly string[]): void {
+  if (keys.length === 0) return;
+  const key = BLOCKER_PRIORITY.find((k) => keys.includes(k));
+  // No priority match means a key was added above without being added to the
+  // list. Report it anyway: _loki_known_blocker coerces anything unrecognized to
+  // `other`, so the event still says "a first run was blocked" instead of
+  // vanishing, which is the honest reading of an unmapped blocker.
+  const blocker = key ?? "other";
+  const telemetry = resolve(REPO_ROOT, "autonomy/telemetry.sh");
+  if (!existsSync(telemetry)) return;
+  try {
+    const child = spawn(
+      "bash",
+      [
+        "-c",
+        // SCRIPT_DIR is what telemetry.sh uses to locate VERSION. The blocker is
+        // passed as a separate argv entry ($1), never interpolated into the
+        // script text, so no value can be read as shell syntax -- and the value
+        // is a compile-time constant from BLOCKER_PRIORITY regardless.
+        'SCRIPT_DIR="$(dirname "$0")"; . "$0" 2>/dev/null && loki_emit_first_run_blocked "$1"',
+        telemetry,
+        blocker,
+      ],
+      { detached: true, stdio: "ignore" },
+    );
+    child.unref();
+  } catch {
+    // Ignored deliberately -- see the fail-open note above.
+  }
+}
+
 async function runText(): Promise<number> {
   process.stdout.write(`${BOLD}Loki Mode Doctor${NC}\n\n`);
   process.stdout.write(`Checking system prerequisites...\n\n`);
 
-  const tally: Tally = { pass: 0, fail: 0, warn: 0, blockers: [] };
+  const tally: Tally = { pass: 0, fail: 0, warn: 0, blockers: [], blockerKeys: [] };
   const allChecks = await runAllToolChecks();
   const byCmd = new Map(allChecks.map((c) => [c.command, c]));
 
@@ -759,6 +857,10 @@ async function runText(): Promise<number> {
       } else if (c.min_version) {
         tally.blockers.push(`${c.name} must be >= ${c.min_version}`);
       }
+      // This loop iterates exactly node/python3/jq/git/curl, and those five
+      // command tokens are already spelled identically in the blocker enum, so
+      // c.command IS the key -- no mapping table to drift out of sync.
+      tally.blockerKeys.push(c.command);
     }
   }
   process.stdout.write(`\n`);
@@ -827,6 +929,7 @@ async function runText(): Promise<number> {
       );
       tally.fail++;
       tally.blockers.push("No AI provider CLI. Fix: npm install -g @anthropic-ai/claude-code");
+      tally.blockerKeys.push("no_provider");
       // v7.29.0: consent-gated install offer. Parity by construction: rather than
       // re-implementing the prompt copy in TypeScript (which would drift from the
       // bash route), invoke the single shared helper autonomy/provider-offer.sh
@@ -886,6 +989,7 @@ async function runText(): Promise<number> {
         `         ${YELLOW}Fix: claude login${NC}   (or set ANTHROPIC_API_KEY)\n`,
       );
       tally.blockers.push("Claude CLI is not logged in. Fix: claude login (or set ANTHROPIC_API_KEY)");
+      tally.blockerKeys.push("not_logged_in");
       tally.fail++;
     } else if (claudeOauthExpired()) {
       process.stdout.write(
@@ -895,6 +999,7 @@ async function runText(): Promise<number> {
         `         ${YELLOW}Fix: claude login${NC}   (or set ANTHROPIC_API_KEY)\n`,
       );
       tally.blockers.push("Claude login has expired. Fix: claude login (or set ANTHROPIC_API_KEY)");
+      tally.blockerKeys.push("not_logged_in");
       tally.fail++;
     } else {
       process.stdout.write(
@@ -944,6 +1049,7 @@ async function runText(): Promise<number> {
       process.stdout.write(`         ${YELLOW}Fix: loki setup-skill${NC}\n`);
       tally.fail++;
       tally.blockers.push(`${s.name} is a broken symlink. Fix: loki setup-skill`);
+      tally.blockerKeys.push("skill_symlink");
     } else {
       process.stdout.write(`  ${badge("warn")}  ${s.name}  ${DIM}${s.detail}${NC}\n`);
       tally.warn++;
@@ -1124,6 +1230,7 @@ async function runText(): Promise<number> {
     );
     tally.fail++;
     tally.blockers.push(`Free up disk: ${diskTextGb}GB available, need >= 1GB`);
+    tally.blockerKeys.push("disk");
   } else if (disk.status === "warn") {
     process.stdout.write(
       `  ${badge("warn")}  Disk space: ${diskTextGb}GB available (low)\n`,
@@ -1239,6 +1346,14 @@ async function runText(): Promise<number> {
       `  ${badge("fail")}  Quality-gate detectors MISSING: ${missingDetectors.join(" ")}\n`,
     );
     tally.fail++;
+    // Recorded explicitly as `other` rather than left out. It is last in
+    // priority so it only ever wins when it is the SOLE blocker, and in that
+    // case the honest report is "a blocked first run we cannot name", not
+    // silence -- an omitted key here would make a broken install look like a
+    // clean one. Bash's case (autonomy/loki:12030-12039) has no arm for this
+    // either and its _loki_known_blocker default coerces to the same `other`,
+    // so the two routes agree.
+    tally.blockerKeys.push("other");
     tally.blockers.push(
       `Reinstall loki-mode: ${missingDetectors.length} quality-gate detector(s) missing, so every iteration fails closed`,
     );
@@ -1274,6 +1389,7 @@ async function runText(): Promise<number> {
     process.stdout.write(
       `Meanwhile 'loki tour' works right now -- no provider, no key, no spend.\n`,
     );
+    emitFirstRunBlocked(tally.blockerKeys);
     return 1;
   }
   if (tally.warn > 0) {

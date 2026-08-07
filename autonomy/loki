@@ -1044,11 +1044,11 @@ show_help() {
     echo "  import init intent"
     echo "  issue kpis logs magic mcp memory metrics migrate modernize monitor"
     echo "  next notify onboard open optimize otel outcomes own (handoff) pause plan preview"
-    echo "  projects proof (receipt) provider quick quickstart rc remote report reset"
+    echo "  projects proof (receipt) provider quick quickstart rc readiness remote report reset"
     echo "  resume review rollback run sandbox secrets secure self-update sentrux"
     echo "  serve setup-skill share ship spec start state stats status steer stop"
     echo "  syslog telemetry template test tour trigger trust trust-metrics"
-    echo "  ultracode update verify version voice watch watchdog web welcome why"
+    echo "  ultracode update verdict verify version voice watch watchdog web welcome why"
     echo "  wiki worktree (wt)"
     echo ""
     echo "Any command: loki <command> --help"
@@ -19376,6 +19376,15 @@ main() {
             # happened to it afterwards -- reverted, reworked, or survived.
             cmd_outcomes "$@"
             ;;
+        verdict)
+            # All five trust signals in one block. The individual measurements
+            # existed and were unreachable; this is the surface a reviewer reads.
+            cmd_verdict "$@"
+            ;;
+        readiness)
+            # Can an agent verify its own work here? Measured, not LLM-scored.
+            cmd_readiness "$@"
+            ;;
         secure)
             # Secure-by-default gate surface: inspect findings + manage waivers.
             cmd_secure "$@"
@@ -30849,6 +30858,84 @@ cmd_outcomes() {
             ;;
     esac
     LOKI_DIR="${LOKI_DIR:-.loki}" python3 "$lib" "$@"
+}
+
+# loki verdict: the five measured trust signals, in one block a reviewer reads
+# in ten seconds.
+#
+# WHY A COMMAND AND NOT JUST A LIBRARY. We measure five things nobody else does
+# -- did the work survive, does the spec still match intent, was this the agent
+# or a human rescue, does the completion claim name real work, which model
+# decided -- and each was correct, tested, and unreachable. A moat nobody can
+# see is not a moat. This is the surface.
+#
+# There is deliberately NO composite score. Averaging a revert count, a hash
+# comparison, a diff hash, a path match and a model id yields a number whose
+# movement nobody can explain, which is what competitors already ship. UNKNOWN
+# is PRINTED, never suppressed: a reviewer must tell "we checked and it is fine"
+# from "we could not check". See autonomy/lib/verdict.py.
+cmd_verdict() {
+    local lib="${_LOKI_SCRIPT_DIR}/lib/verdict.py"
+    if [ ! -f "$lib" ]; then
+        echo "verdict renderer is not installed at $lib" >&2
+        return 2
+    fi
+    case "${1:-}" in
+        --help|-h|help)
+            echo -e "${BOLD}loki verdict${NC} - the five measured trust signals, in one readable block"
+            echo ""
+            echo "Usage: loki verdict [--json]"
+            echo ""
+            echo "Prints one line each for outcome, intent, authorship, grounding and"
+            echo "model: what survived, whether the spec still matches intent, whether"
+            echo "this was the agent or a human rescue, whether the completion claim"
+            echo "named real work, and which model decided."
+            echo ""
+            echo "Every line is either a measured fact or an explicit UNKNOWN. There is"
+            echo "no composite score: a number nobody can explain is not evidence."
+            echo "Read-only: it never writes to the repo it analyses."
+            return 0
+            ;;
+    esac
+    LOKI_DIR="${LOKI_DIR:-.loki}" python3 "$lib" "$@"
+}
+
+# loki readiness: can an autonomous agent verify its own work in THIS repo?
+#
+# WHY THIS IS NOT A COPY OF FACTORY AI'S AGENT READINESS MODEL. Theirs is
+# LLM-scored -- their report objects record modelUsed and reasoningEffort, so
+# the number is a model's opinion and two runs can disagree about the same
+# commit. Every criterion here is a file that exists or does not, a command
+# present or absent: same commit, same answer, every machine, no key, no spend.
+#
+# No percentage and no letter grade. A composite invites ranking, ranking
+# invites gaming, and the individual signals are the actionable part -- "there
+# is no test command" tells you what to do, "readiness 62%" does not. Criteria
+# that cannot be determined report UNKNOWN by name rather than counting as
+# failures. See autonomy/lib/agent_readiness.py.
+cmd_readiness() {
+    local lib="${_LOKI_SCRIPT_DIR}/lib/agent_readiness.py"
+    if [ ! -f "$lib" ]; then
+        echo "readiness assessor is not installed at $lib" >&2
+        return 2
+    fi
+    case "${1:-}" in
+        --help|-h|help)
+            echo -e "${BOLD}loki readiness${NC} - can an agent verify its own work in this repo?"
+            echo ""
+            echo "Usage: loki readiness [path] [--json]"
+            echo ""
+            echo "Measures whether this repo gives an agent a way to check itself: a"
+            echo "test command, a build, CI config, typed sources, a lockfile. Not"
+            echo "general code quality -- the narrower question every agent depends on."
+            echo ""
+            echo "Deterministic: no model, no key, no spend. Same commit, same answer."
+            echo "Criteria that cannot be determined report UNKNOWN rather than failing."
+            echo "Read-only: it never writes to the repo it analyses."
+            return 0
+            ;;
+    esac
+    python3 "$lib" "$@"
 }
 
 cmd_wiki() {

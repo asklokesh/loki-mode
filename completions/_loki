@@ -172,6 +172,8 @@ function _loki_commands {
         'share:Share session report as GitHub Gist'
         'proof:Inspect/share proof-of-run artifacts'
         'outcomes:What happened to the work AFTER the receipt (reverted/reworked/survived)'
+        'verdict:The five measured trust signals in one readable block'
+        'readiness:Can an agent verify its own work in this repo? (measured, not LLM-scored)'
         'preview:Preview the locally-running app'
         'deploy:Deploy the built product (CI/CD-aware)'
         'context:Context window management'

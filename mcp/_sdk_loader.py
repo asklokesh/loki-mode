@@ -147,6 +147,31 @@ def _load_real_fastmcp():
         for _k in ("mcp", "mcp.server"):
             if _k in _saved_local:
                 sys.modules[_k] = _saved_local[_k]
+            elif _k in sys.modules:
+                # The SDK claimed a name the local package had NOT yet loaded,
+                # so there is no local module to re-pin and the old code left
+                # the SDK's module cached under it PERMANENTLY, process-wide.
+                #
+                # Measured (issue #190, python3.12 + SDK, from the repo root):
+                # any caller that reaches the loader before our own
+                # mcp/server.py is imported -- mcp/lsp_proxy.py, or a test that
+                # imports mcp._sdk_loader directly -- leaves the SDK's
+                # site-packages/mcp/server/__init__.py under "mcp.server". Every
+                # later `from mcp import server` in that process then silently
+                # gets the SDK instead of ours. That is how
+                # tests/test_mcp_agent_metrics_honesty.py skipped for its full
+                # life: it passed 7/7 alone but hit its capability guard in a
+                # full run, because tests/mcp/* ran first and poisoned the name.
+                #
+                # Deleting is correct where re-pinning is impossible: it leaves
+                # the name UNCLAIMED, so the next `import mcp.server` resolves
+                # through the local package exactly as it would have. Verified
+                # this does not disturb the SDK's own runtime subtree --
+                # mcp.types, mcp.server.lowlevel and mcp.server.fastmcp.* stay
+                # cached and FastMCP still instantiates, because FastMCP holds
+                # direct references to its dependencies rather than re-resolving
+                # "mcp.server" by name.
+                del sys.modules[_k]
         for _k, _v in _saved_local.items():
             # Restore any other purely-local submodules that the SDK import did
             # not legitimately replace (e.g. mcp.magic_tools, mcp.tools).

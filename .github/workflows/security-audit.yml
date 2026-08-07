@@ -1,7 +1,41 @@
 name: Security Audit
 
-# Runs `npm audit` (and `bun audit` if available) on every PR and weekly.
-# Fails the workflow on high or critical vulnerabilities.
+# Dependency, secret, and static-analysis scanning on every PR and weekly.
+#
+# EXACTLY ONE JOB IS BLOCKING: `npm audit (high+)`. It fails the workflow on
+# high/critical production advisories via scripts/audit-check.sh.
+#
+# Every other job here is ADVISORY (job-level `continue-on-error: true`) and
+# each carries a comment naming what would have to be true to promote it.
+#
+# WHY JOB-LEVEL continue-on-error IS LOAD-BEARING, NOT DECORATIVE:
+# release.yml's required-ci gate (release.yml:106) requires the workflow named
+# "Security Audit" to report a `success` CONCLUSION at the release SHA. A
+# workflow's conclusion is `failure` if ANY job in it fails. So a new job that
+# exits nonzero here does not merely print red -- it deadlocks every release,
+# no matter what the job is named. `continue-on-error: true` at the JOB level
+# keeps an advisory job's failure out of the workflow conclusion. Removing it
+# from a job is therefore the same action as making that job block releases,
+# and must be a deliberate, reviewed decision. Precedent: sentrux-real.yml:35.
+#
+# WHY EVERYTHING NEW STARTS ADVISORY:
+# The bun-audit job below documents what this repo already paid for once: it
+# hard-failed on GHSA-v2hh-gcrm-f6hx, four levels deep in a dependency we do
+# not control, with no action available to us. "Blocking every release on an
+# unactionable transitive advisory trains people to ignore the gate."
+#
+# Each new scanner was RUN LOCALLY before being added here, and its real
+# first-run numbers are recorded on its job. Those numbers are the argument:
+#   pip-audit  1 finding, chromadb PYSEC-2026-311, NO FIX VERSION EXISTS
+#   gitleaks   39 findings, all 39 reviewed, ZERO real credentials
+#   bandit     15 findings over 62,593 lines, none yet adjudicated
+# A blocking pip-audit would have deadlocked releases on day one with nothing
+# to bump to; a blocking gitleaks would have fired 39 times with nothing to fix.
+# Advisory-first here is measured, not timid.
+#
+# UNKNOWN IS NOT PASS. Each advisory job below distinguishes "scanned, no
+# findings" from "could not scan" and prints a NAMED reason for the latter.
+# An advisory job that silently no-ops looks identical to a clean one.
 
 on:
   pull_request:
@@ -114,3 +148,282 @@ jobs:
           else
             echo "bun audit clean"
           fi
+
+  pip-audit:
+    name: pip-audit (Python deps, advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # THIS LINE IS THE RELEASE-SAFETY GUARANTEE, not the `exit 0` inside the
+    # steps. Shell-level error handling protects only the paths I predicted; a
+    # setup-python outage or a pip install failure exits nonzero before any of
+    # it runs, and without this line that failure becomes the workflow's
+    # conclusion and deadlocks release.yml's required-ci gate.
+    continue-on-error: true
+    # ADVISORY. See the header: this must stay until the finding backlog is
+    # triaged, or it deadlocks releases via required-ci.
+    #
+    # MEASURED 2026-08-06, first local run with these exact flags:
+    #   dashboard/requirements.txt -- "No known vulnerabilities found"
+    #   mcp/requirements.txt       -- 1 finding: chromadb 1.5.9, PYSEC-2026-311,
+    #     pre-auth code injection via trust_remote_code on the /api/v2 collections
+    #     endpoint. FIX VERSIONS: NONE PUBLISHED as of this run.
+    #
+    # THAT FINDING IS WHY THIS JOB IS ADVISORY, and it is not a hypothetical:
+    # an unfixable transitive advisory turned up on the very first run. Making
+    # this blocking on day one would have deadlocked every release immediately,
+    # reproducing the bun-audit incident documented above rather than learning
+    # from it. There is no version to bump to.
+    #
+    # REACHABILITY IS NOT YET ASSESSED -- deliberately UNKNOWN, not "fine".
+    # chromadb is an mcp/ dependency; whether the shipped MCP server ever runs a
+    # Chroma HTTP server exposing that endpoint (as opposed to embedded/local
+    # use) is the question that decides whether this matters. Answering it is
+    # triage work, tracked with issue #189, not something this workflow decides.
+    #
+    # PROMOTE TO BLOCKING WHEN ALL THREE HOLD:
+    #   1. A full run over the scanned files reports zero high/critical findings
+    #      (or each survivor has a written not-reachable rationale).
+    #   2. There is a per-advisory waiver mechanism, the way scripts/audit-check.sh
+    #      gives the npm side one. pip-audit has `--ignore-vuln <ID>` natively.
+    #      Without a waiver path, ONE unactionable transitive CVE in a pinned
+    #      transitive of fastapi/chromadb blocks releases forever -- the exact
+    #      failure the bun-audit job above documents.
+    #   3. Promotion means deleting `continue-on-error` here, which is the
+    #      release-blocking decision itself. Do it deliberately.
+    #
+    # SCOPE: the two requirements files that SHIP in package.json `files[]`
+    # (dashboard/requirements.txt, mcp/requirements.txt). These are what a user
+    # actually installs, and the dashboard is the network-facing component.
+    # requirements-test.txt and web-app/requirements-test.txt are deliberately
+    # excluded: a CVE in pytest is not in any user's install path, and test-only
+    # noise is what gets a scanner ignored.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          # Matches the 3.12 used by test.yml / release.yml / integrity-audit.yml.
+          python-version: '3.12'
+
+      - name: Install pip-audit
+        run: python3 -m pip install --upgrade pip pip-audit
+
+      - name: Audit shipped Python requirements
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          # Both files use RANGES (>=x,<y), not pins, so pip-audit resolves the
+          # latest matching release -- which is the same thing a user gets from
+          # a fresh `pip install -r`. That is the question worth asking here.
+          #
+          # NOT --strict: pip-audit exits nonzero under --strict when a
+          # dependency simply has no known-vulnerability data, which is an
+          # UNKNOWN, not a finding. Conflating the two is how a scanner earns
+          # its reputation for crying wolf.
+          rc=0
+          for req in dashboard/requirements.txt mcp/requirements.txt; do
+            echo "::group::pip-audit $req"
+            if [ ! -f "$req" ]; then
+              # Named UNKNOWN, never a silent pass: this loop is the only thing
+              # standing between "scanned and clean" and "scanned nothing".
+              echo "::warning::UNKNOWN: $req not found -- not scanned, not clean"
+              rc=1
+              echo "::endgroup::"
+              continue
+            fi
+            set +e
+            pip-audit --requirement "$req" --progress-spinner off --desc
+            ec=$?
+            set -e
+            if [ "$ec" -ne 0 ]; then
+              # pip-audit does not distinguish "found vulns" from "resolution
+              # failed" by exit code alone, so the log above is the record.
+              echo "::warning::pip-audit reported findings or failed to resolve $req (exit $ec) -- read the group above"
+              rc=1
+            else
+              echo "pip-audit clean: $req"
+            fi
+            echo "::endgroup::"
+          done
+          if [ "$rc" -ne 0 ]; then
+            echo "::warning::pip-audit: see findings above (advisory -- no gate is weakened by this)"
+          fi
+          # Exit 0 deliberately: the job-level continue-on-error already keeps
+          # this out of the workflow conclusion, and exiting 0 here keeps the
+          # step's own annotation readable rather than red-on-red.
+          exit 0
+
+  gitleaks:
+    name: gitleaks (secret scan, advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Job-level guarantee -- see the pip-audit job for why the step-level one
+    # below is not sufficient on its own. Both are present here on purpose: the
+    # step-level one lets the reporting step still run after a gitleaks failure,
+    # this one keeps the job out of the workflow conclusion regardless.
+    continue-on-error: true
+    # ADVISORY. See the header.
+    #
+    # WHY GITLEAKS SPECIFICALLY: this repo already understands it. The shipped
+    # product gate autonomy/verify.sh:976 shells out to `gitleaks detect` when
+    # it is on PATH (with a regex fallback when it is not), so this is the same
+    # tool the product already trusts -- just pointed at OUR repo instead of a
+    # user's. #189's gap is real despite that: verify.sh scans the repos Loki
+    # BUILDS, and nothing has ever scanned THIS one in CI.
+    #
+    # MEASURED 2026-08-06, gitleaks 8.30.0, `gitleaks dir .` on the working
+    # tree: 39 findings, ALL 39 reviewed, ZERO real credentials.
+    #   31  under tests/ or *.test.js or fixtures/ -- deliberate secret-shaped
+    #       literals. tests/test-secret-scan.sh and
+    #       tests/test-secret-gate-false-positives.sh EXIST TO CONTAIN THESE:
+    #       they drive the product's own secret gate, so a real-format AKIA key
+    #       is the test input, not a leak.
+    #    3  the PostHog key phc_ya0vGB... in autonomy/telemetry.sh:56,
+    #       dashboard/telemetry.py:28, assets/welcome/welcome.html:262. A `phc_`
+    #       PostHog PROJECT key is a write-only ingest key designed to ship in
+    #       distributed client code. Public by construction, not a secret.
+    #    2  SKILL.md / .loki/SKILL.md -- matched the env var NAME
+    #       `LOKI_EVIDENCE_SECRET_GATE=0`, no value at all
+    #    1  docs/CONFIG-FILE-PLAN.md -- `LOKI_MAX_ITERATIONS=4242`
+    #    1  autonomy/graphify-out/cache/stat-index.json -- a content hash
+    #    1  .loki/logs/bash-audit.jsonl -- AKIAIOSFODNN7EXAMPLX, AWS's own
+    #       canonical documentation example key
+    #
+    # FULL HISTORY was scanned too, since that is what this job actually does:
+    # `gitleaks git .` over 1,877 commits also reports 39, likewise all benign.
+    # The only history-exclusive hits are the same public phc_ key in a since-
+    # changed bin/postinstall.js and two `sk-1234567890abc...` sequential
+    # placeholders in a deleted the_app/sdk/ example. No credential has been
+    # committed and later scrubbed -- which is the question a history scan
+    # exists to answer, and it is answered NO on evidence, not on assumption.
+    #
+    # SO: 100% false-positive rate on this repo today. That is the whole
+    # argument for advisory-first in one number -- a blocking gate here would
+    # have fired 39 times on day one with nothing to fix, and been switched off
+    # by the end of the week, taking the real detection with it.
+    #
+    # PROMOTE TO BLOCKING WHEN: a .gitleaks.toml allowlist covers the classes
+    # above (by path for tests/fixtures, by fingerprint or a stopword for the
+    # phc_ key) and a clean run is demonstrated. THEN blocking is cheap and
+    # meaningful, because any NEW finding is by construction unexplained.
+    # Do not promote by deleting continue-on-error without writing that config.
+    #
+    # NOTE ON REACH: a finding here is about THIS REPO's history. A real leaked
+    # credential must be ROTATED, not just deleted from the tree -- history
+    # rewriting alone does not un-leak a pushed secret.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history: a secret's danger is that it was COMMITTED, even if a
+          # later commit removed it. A shallow clone only sees the tip and would
+          # report clean on a repo with a live credential three commits back --
+          # a false green far worse than no scan at all.
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        id: gitleaks
+        continue-on-error: true
+        # Pinned to a release tag rather than a floating major: this action runs
+        # over full repo history, and an unreviewed upgrade changing default
+        # rules would silently change what "clean" means.
+        uses: gitleaks/gitleaks-action@v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No GITLEAKS_LICENSE: that is required only for GitHub *organization*
+          # accounts. This repo is user-owned (github.com/asklokesh), so the
+          # action runs unlicensed. If it ever moves to an org, this job starts
+          # failing on a licence error -- which, being advisory, surfaces as a
+          # warning rather than blocking releases.
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+          GITLEAKS_ENABLE_SUMMARY: "true"
+
+      - name: Report scan status
+        if: always()
+        run: |
+          # The step above is continue-on-error, so this job goes green either
+          # way. Without this line a gitleaks failure (licence error, rate
+          # limit, action outage) is indistinguishable from a clean scan.
+          echo "gitleaks step outcome: ${{ steps.gitleaks.outcome }}"
+          echo "::notice::gitleaks is ADVISORY -- read the step log above; a green job here does NOT mean 'no secrets'"
+
+  bandit:
+    name: bandit (Python SAST, advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Job-level guarantee -- see the pip-audit job for why the `exit 0` inside
+    # the step is not sufficient on its own.
+    continue-on-error: true
+    # ADVISORY. See the header.
+    #
+    # MEASURED 2026-08-06, first local run with these exact flags:
+    #   15 findings over 62,593 lines of code. By rule:
+    #     8x B310 urlopen scheme (medium) -- incl. dashboard/auth.py:439,464,
+    #        the OIDC discovery + JWKS fetches
+    #     4x B324 weak hash (high) -- MD5/SHA1 in memory/embeddings.py:550,915,
+    #        memory/ingest.py:181, autonomy/mirofish-adapter.py:174. These read
+    #        as cache/content keys rather than security hashes; if so the fix is
+    #        `usedforsecurity=False`, which is a one-word change per site.
+    #     2x B602 shell=True (high) -- web-app/server.py:1090,1101, an
+    #        internally-constructed build command
+    #     1x B108 hardcoded /tmp (medium)
+    #
+    # 15 findings is a TRIAGEABLE backlog, not an unbounded one -- that is the
+    # measurement that makes promotion realistic rather than aspirational.
+    # NONE of these has been adjudicated yet; "looks defensible in context" is
+    # not the same as reviewed, and this comment does not claim they are safe.
+    #
+    # PROMOTE TO BLOCKING WHEN: the medium+ backlog is triaged to zero, and
+    # surviving findings carry `# nosec <rule>  -- <why>` at the line, so the
+    # gate fails only on NEW issues. Bandit reports "Total lines skipped
+    # (#nosec): 0" today, so that annotation work has not started.
+    #
+    # WHY MEDIUM+ AND NOT LOW: bandit's low tier on a codebase like this one is
+    # dominated by B101 (assert_used) and B603/B607 (subprocess with a partial
+    # path) -- both pervasive and both intended here, since autonomy/ shells out
+    # by design. Reporting them would bury the findings worth reading.
+    # CodeQL is the heavier next step and is deliberately NOT started here.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install bandit
+        run: python3 -m pip install --upgrade pip bandit
+
+      - name: Run bandit over shipped Python
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          # Scope mirrors the pip-audit job: directories that SHIP in
+          # package.json `files[]`. tests/ and */fixtures are excluded -- a
+          # deliberately-insecure legacy fixture (tests/fixtures/) is test data,
+          # and flagging it is the definition of an unactionable finding.
+          #
+          # -ll / -ii = medium-or-higher severity AND confidence. See the
+          # rationale above for why low is excluded.
+          set +e
+          bandit -r dashboard mcp memory web-app autonomy sdk \
+            --exclude '*/tests/*,*/fixtures/*,*/node_modules/*,*/.venv/*' \
+            -ll -ii -f screen
+          ec=$?
+          set -e
+          if [ "$ec" -ne 0 ]; then
+            # bandit exits 1 on findings; anything else is a tool/scope error.
+            # Distinguishing them matters: "no issues" and "bandit crashed"
+            # must not look the same.
+            if [ "$ec" -eq 1 ]; then
+              echo "::warning::bandit reported medium+ findings (advisory) -- read the report above"
+            else
+              echo "::warning::UNKNOWN: bandit failed to run (exit $ec) -- NOT scanned, NOT clean"
+            fi
+          else
+            echo "bandit clean at medium+ severity/confidence"
+          fi
+          exit 0

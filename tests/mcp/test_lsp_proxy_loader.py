@@ -276,5 +276,67 @@ class TestLspProxyDocstringConsistency(unittest.TestCase):
             )
 
 
+class TestLoaderDoesNotLeakSdkServerName(unittest.TestCase):
+    """issue #190: the loader must not leave the SDK cached at `mcp.server`.
+
+    _load_real_fastmcp() evicts the local `mcp.*` modules so the genuine SDK
+    can claim the `mcp` name, then re-pins the local ones. It used to re-pin
+    ONLY names it had snapshotted, so a caller that reached it before our own
+    mcp/server.py was imported (mcp/lsp_proxy.py, or any test importing
+    mcp._sdk_loader directly) left the SDK's mcp/server/__init__.py cached
+    under "mcp.server" for the life of the process.
+
+    Measured cost of that leak: tests/test_mcp_agent_metrics_honesty.py passed
+    7/7 in isolation and SKIPPED in the full run -- `pytest tests/mcp/
+    tests/test_mcp_agent_metrics_honesty.py` reproduced it in ~1s -- so seven
+    honesty assertions on a machine-consumed surface were green-by-skip.
+    """
+
+    def test_local_mcp_server_still_resolves_after_loading_fastmcp(self):
+        # A SUBPROCESS is the whole mechanism: this defect is about the initial
+        # sys.modules state, and by the time a sibling test in this file has
+        # run, `mcp.server` is already populated in THIS interpreter. Only a
+        # fresh process reproduces the "ours was never loaded" ordering.
+        probe = textwrap.dedent(
+            """
+            import sys
+            sys.path.insert(0, %r)
+            from mcp import _sdk_loader
+            if not _sdk_loader._mcp_sdk_present():
+                print("SKIP")
+                raise SystemExit(0)
+            fastmcp = _sdk_loader._load_real_fastmcp()
+            from mcp import server
+            print("OURS" if hasattr(server, "loki_agent_metrics") else "SDK")
+            # The SDK subtree must survive the fix, or we would have traded a
+            # shadowing bug for a broken server.
+            import importlib
+            importlib.import_module("mcp.types")
+            importlib.import_module("mcp.server.lowlevel")
+            print("FASTMCP_OK" if fastmcp is not None else "FASTMCP_NONE")
+            """
+        ) % (_repo_root(),)
+        import subprocess
+        out = subprocess.run(
+            [sys.executable, "-c", probe],
+            capture_output=True, text=True, cwd=_repo_root(),
+        )
+        if "SKIP" in out.stdout:
+            # Honest UNKNOWN, not a pass: without the SDK installed there is no
+            # namespace collision to leak, so this guard has nothing to check.
+            self.skipTest("pip MCP SDK not installed on this interpreter")
+        self.assertIn(
+            "OURS", out.stdout,
+            "after _load_real_fastmcp(), `from mcp import server` resolved to "
+            "the installed SDK instead of loki's mcp/server.py. stdout=%r "
+            "stderr=%r" % (out.stdout, out.stderr[-500:]),
+        )
+        self.assertIn(
+            "FASTMCP_OK", out.stdout,
+            "FastMCP failed to load, or the SDK subtree was evicted by the "
+            "restore. stdout=%r stderr=%r" % (out.stdout, out.stderr[-500:]),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

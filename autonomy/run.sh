@@ -7656,6 +7656,80 @@ generate_proof_of_run() {
     return 0
 }
 
+# capture_preedit_snapshot: freeze the agent's raw diff BEFORE anything else
+# touches the tree, so quality numbers measure the agent and not the
+# agent-plus-whoever-fixed-it (autonomy/lib/preedit_snapshot.py owns the schema
+# and the write-once rule; this is only the call site).
+#
+# WHY THIS IS NOT INSIDE generate_proof_of_run, even though the receipt is the
+# obvious neighbour. Two reasons, both measured in this file:
+#
+#  1. TOO LATE AT THE LATE PROOF SITES. commit_session_changes commits the
+#     session's work, and the module's default baseline is `git diff HEAD`.
+#     After that commit `git diff HEAD` is EMPTY, so a capture at the teardown
+#     proof site would freeze an empty diff -- and because the snapshot is
+#     write-once by design, that empty capture would be permanent and
+#     unrecoverable. run.sh already documents this mutation window itself: the
+#     comment above the final generate_proof_of_run call says "HANDOFF.md and
+#     commit_session_changes can change the worktree after the earlier receipt".
+#     The receipt can be regenerated against a later tree; the snapshot cannot.
+#  2. WRONG GATE. Every generate_proof_of_run call site is gated on
+#     LOKI_PROOF!=0, and the run_id resolution only exists inside its
+#     LOKI_PROVEN_PR!=0 branch. Authorship evidence and shareable proofs are
+#     different concerns, so a user who turns off proofs must not silently lose
+#     the ability to tell agent output from human edits.
+#
+# So the capture happens EARLIER, immediately after run_autonomous returns,
+# before any post-processing step can modify the diff.
+#
+# Baseline: _LOKI_RUN_START_SHA (exported at runner init, persisted to
+# .loki/state/start-sha) is passed when available, so the snapshot is anchored
+# to the run's own starting commit rather than to a moving HEAD. That makes the
+# capture correct even if a later caller fires after a commit. Falls back to the
+# module's `git diff HEAD` default when no baseline resolved (greenfield repos
+# with no commits write an empty file there by design).
+#
+# run_id: read-path _loki_trust_run_id ONLY, never --new (minting here would
+# clobber the trust-events id file). If it resolves empty we SKIP: a snapshot
+# filed under an id nothing else references is worse than no snapshot, because
+# verdict.py would count it as authorship evidence that no receipt can join to.
+#
+# Guarded and non-fatal throughout: a diagnostic must never break the run it is
+# diagnosing. Write-once makes repeat calls free (later ones return "exists"),
+# so the earliest caller wins and extra call sites cost nothing.
+capture_preedit_snapshot() {
+    local snap="$SCRIPT_DIR/lib/preedit_snapshot.py"
+    [ -f "$snap" ] || return 0
+    command -v python3 >/dev/null 2>&1 || return 0
+    # Match _loki_trust_run_id's dir expression, not generate_proof_of_run's:
+    # with LOKI_DIR set, ${TARGET_DIR:-.}/.loki would write the snapshot beside
+    # a run-id file that lives somewhere else.
+    local loki_dir="${LOKI_DIR:-${TARGET_DIR:-.}/.loki}"
+    [ -d "$loki_dir" ] || return 0
+    local _rid=""
+    if declare -f _loki_trust_run_id >/dev/null 2>&1; then
+        _rid="$(_loki_trust_run_id 2>/dev/null || true)"
+    fi
+    [ -n "$_rid" ] || return 0
+    # Resolve the baseline from the PERSISTED file when the exported variable is
+    # not visible. _LOKI_RUN_START_SHA is exported inside run_autonomous, and in
+    # PARALLEL_MODE run_autonomous runs in a subshell -- an export from a
+    # subshell never reaches the parent, so at that call site the variable is
+    # empty and only the file survives. Same read the pause path already does.
+    # Without this the parallel branch would silently fall back to `git diff
+    # HEAD` instead of the anchored baseline this function documents.
+    local _base="${_LOKI_RUN_START_SHA:-}"
+    [ -n "$_base" ] || _base="$(cat "$loki_dir/state/start-sha" 2>/dev/null || true)"
+    # LOKI_PREEDIT_CWD is load-bearing: the module defaults cwd to os.getcwd(),
+    # and if that is not the target repo capture returns not_a_git_repo and
+    # writes nothing SILENTLY -- a call site that looks wired but never fires.
+    LOKI_DIR="$loki_dir" \
+    LOKI_PREEDIT_CWD="${TARGET_DIR:-.}" \
+    LOKI_RUN_START_SHA="$_base" \
+    python3 "$snap" capture "$_rid" >/dev/null 2>&1 || true
+    return 0
+}
+
 # print_ttfv_next_steps: R7 zero-config first-run "what next / go deeper"
 # message. The wording MUST match what actually ran, so it branches on the mode:
 #   - brief: a one-line brief ran on the lightweight profile (council off,
@@ -10729,6 +10803,14 @@ LOKI_STUCK_JSON
 
 track_gate_failure() {
     local gate_name="$1"
+    # Optional evidence for the durable failure lesson (see the failure_memory
+    # block below). Either a findings-artifact PATH or a literal detail string;
+    # callers pass whichever they already name on an adjacent line.
+    #
+    # MUST be "${2:-}", not "$2": this file runs under `set -u` (line 185) and
+    # most call sites are still one-arg, so a bare $2 aborts the gate it is only
+    # supposed to be observing. Caught by the end-to-end check, not by review.
+    local evidence="${2:-}"
     local gate_file="${TARGET_DIR:-.}/.loki/quality/gate-failure-count.json"
     mkdir -p "$(dirname "$gate_file")"
 
@@ -10764,6 +10846,56 @@ print(counts[gate_name])
     # write is fully stdout-suppressed and best-effort; it cannot change the
     # echoed count or any gate behavior.
     record_trust_event_bash "gate_failure" "gate=${gate_name}" "consecutive=${count}" >/dev/null 2>&1 || true
+
+    # Failure memory: turn this measured failure into a durable, falsifiable
+    # lesson the NEXT run is told about (read side: build_prompt, below the
+    # cache breakpoint).
+    #
+    # EVIDENCE IS REQUIRED, and deliberately not defaulted. failure_memory.py
+    # refuses to write without it, because a lesson recorded from the agent's
+    # own account of why it failed is unfalsifiable -- it records what the agent
+    # BELIEVED, which is exactly what was wrong. Passing "$gate_name" as its own
+    # evidence would satisfy the truthiness check and defeat that, so callers
+    # with nothing concrete in scope pass nothing and record nothing.
+    #
+    # A readable evidence PATH is reduced to its first non-blank, non-comment
+    # line with ANSI colour stripped -- the same reduction _loki_gate_stuck
+    # applies above, so the stored lesson matches the cause that valve compares.
+    #
+    # CRITICAL: this function's stdout IS its return value, so this is fully
+    # stdout-suppressed and best-effort, exactly like the trust-event write
+    # above. failure_memory.py exits 3 on an UNKNOWN status (an expected result,
+    # not an error), hence the `|| true`.
+    #
+    # ponytail: failures.jsonl is append-only with no dedup, so a gate stuck for
+    # N iterations writes N records and recall() reads the whole file. Counts
+    # stay true, so this is a ceiling not a defect; dedup on gate+evidence if a
+    # perpetual run ever makes the file big enough to matter.
+    if [ -n "$evidence" ] && [ -r "${SCRIPT_DIR}/lib/failure_memory.py" ]; then
+        local _fm_evidence="$evidence"
+        if [ -r "$_fm_evidence" ] && [ -f "$_fm_evidence" ]; then
+            # `|| true`: head closing the pipe kills grep with SIGPIPE, which is
+            # nonzero under `set -o pipefail` (line 185) even though the value is
+            # correct. Same discipline as the trust-event write above.
+            _fm_evidence="$(grep -vE '^[[:space:]]*(#|$)' "$_fm_evidence" 2>/dev/null \
+                | head -1 | sed 's/\x1b\[[0-9;]*m//g' | head -c 200 || true)"
+        fi
+        if [ -n "$_fm_evidence" ]; then
+            # run_id via the repo's existing resolver (the same one
+            # record_trust_event_bash uses above), so a lesson can be traced back
+            # to the run that produced it. Resolves to "" if unavailable, which
+            # the module accepts -- only EVIDENCE is mandatory.
+            local _fm_run_id=""
+            if declare -f _loki_trust_run_id >/dev/null 2>&1; then
+                _fm_run_id="${LOKI_TRUST_RUN_ID:-$(_loki_trust_run_id 2>/dev/null || true)}"
+            fi
+            LOKI_DIR="${LOKI_DIR:-${TARGET_DIR:-.}/.loki}" \
+            python3 "${SCRIPT_DIR}/lib/failure_memory.py" record \
+                "--gate=${gate_name}" "--verdict=FAIL" \
+                "--evidence=${_fm_evidence}" \
+                "--run_id=${_fm_run_id}" >/dev/null 2>&1 || true
+        fi
+    fi
 
     echo "$count"
 }
@@ -17266,6 +17398,70 @@ except Exception:
 # tried to signal completion via state files; we now honor that.
 #
 # Output on stdout: the JSON payload (for callers that want to log it).
+# _loki_check_claim_grounding: does the completion claim name files this run
+# actually changed? Report-only, never a gate.
+#
+# READS THE SIGNAL FILE WITHOUT CONSUMING IT. check_task_completion_signal below
+# owns consumption (rm -f on read); this must run BEFORE that owner and must not
+# race it, so it only ever opens the file for reading. Both signal shapes carry
+# the text under the same key: the MCP tool writes {"statement": ...}, and the
+# COMPLETION_REQUESTED fallback is normalised into the same envelope by the
+# owner. One key covers both.
+#
+# The changed-file set is derived from _LOKI_RUN_START_SHA -- the same baseline
+# the evidence gate and the review diff use (run.sh:13817) -- so the receipt and
+# the grounding line describe ONE diff. Untracked files are included: a claim
+# naming a file the agent created but never staged is grounded, and calling it
+# ungrounded would be exactly the false positive this check must never produce.
+#
+# Passed via --files-from, never --files: --files is a comma-separated list, so
+# any path containing a comma would split into two bogus paths, and a large
+# changed set would approach ARG_MAX. The module's own comment documents that
+# flag's history.
+_loki_check_claim_grounding() {
+    local lib="${SCRIPT_DIR}/lib/claim_grounding.py"
+    [ -f "$lib" ] || return 0
+    command -v python3 >/dev/null 2>&1 || return 0
+
+    local target="${TARGET_DIR:-.}"
+    local sig="$target/.loki/signals/TASK_COMPLETION_CLAIMED"
+    [ -f "$sig" ] || sig="$target/.loki/signals/COMPLETION_REQUESTED"
+    [ -f "$sig" ] || return 0
+
+    local claim
+    claim=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    sys.stdout.write(str(d.get('statement', '')) if isinstance(d, dict) else '')
+except Exception:
+    pass
+" "$sig" 2>/dev/null || echo "")
+    # A signal with no statement (bare touch of COMPLETION_REQUESTED) is
+    # UNGROUNDABLE, not a finding. Nothing to check; leave no stale artifact.
+    [ -n "$claim" ] || return 0
+
+    local files_tmp="$target/.loki/state/claim-grounding-files.$$"
+    mkdir -p "$target/.loki/state" 2>/dev/null || return 0
+    {
+        if [ -n "${_LOKI_RUN_START_SHA:-}" ] \
+           && git -C "$target" rev-parse --verify --quiet "${_LOKI_RUN_START_SHA}^{commit}" >/dev/null 2>&1; then
+            git -C "$target" diff --name-only "${_LOKI_RUN_START_SHA}" 2>/dev/null
+        else
+            git -C "$target" diff --name-only HEAD 2>/dev/null
+        fi
+        git -C "$target" diff --name-only --cached 2>/dev/null
+        git -C "$target" ls-files --others --exclude-standard 2>/dev/null
+    } | sort -u > "$files_tmp" 2>/dev/null || { rm -f "$files_tmp" 2>/dev/null; return 0; }
+
+    # Exit 1 means "a named path is absent from the diff" -- the finding itself,
+    # not an error. Swallowed: this reports, it never blocks completion.
+    python3 "$lib" --claim "$claim" --files-from "$files_tmp" \
+        > "$target/.loki/state/claim-grounding.json" 2>/dev/null || true
+    rm -f "$files_tmp" 2>/dev/null
+    return 0
+}
+
 check_task_completion_signal() {
     local signal_file=".loki/signals/TASK_COMPLETION_CLAIMED"
     local fallback_file=".loki/signals/COMPLETION_REQUESTED"
@@ -19574,6 +19770,41 @@ if d.get('blocked'):
             --loki-dir ".loki" --prompt-block 2>/dev/null || true)"
     fi
 
+    # Failure memory (read side; write side: track_gate_failure). Tells this
+    # iteration what has actually failed in THIS repo before, so a gate the
+    # agent has already lost to is not re-learned from scratch every run.
+    #
+    # COUNTS, NOT PROSE, and that restriction is the whole point. "the
+    # mock_integrity gate has failed here 6 times" is a fact the reader can
+    # check; "this repo tends to have mocking problems" is a generalization that
+    # reads identically and is not falsifiable. The module renders the lines and
+    # this only prints them -- no second renderer to drift, matching the
+    # single-renderer discipline used for efficiency_trend above.
+    #
+    # Emits "" when nothing has been recorded, so a repo with no failure history
+    # adds NOTHING to the prompt (and the 60 build_prompt parity fixtures, none
+    # of which carry a failures.jsonl, stay byte-identical).
+    #
+    # Calls prompt_context() in-process rather than the CLI: the CLI prints JSON
+    # and exits 3 on an UNKNOWN status, which is an expected "no lessons yet"
+    # result and not an error worth parsing around.
+    local failure_memory_context=""
+    if [ -r "${SCRIPT_DIR}/lib/failure_memory.py" ] && [ -d ".loki" ]; then
+        failure_memory_context="$(_FM_LIB="${SCRIPT_DIR}/lib" \
+            _FM_DIR="${LOKI_DIR:-${TARGET_DIR:-.}/.loki}" python3 -c '
+import os, sys
+sys.path.insert(0, os.environ["_FM_LIB"])
+try:
+    from failure_memory import prompt_context
+    lines = prompt_context(os.environ["_FM_DIR"]).get("lines") or []
+except Exception:
+    lines = []
+if lines:
+    print("KNOWN FAILURE HISTORY IN THIS REPO (measured, from previous runs): "
+          + "; ".join(lines) + ".")
+' 2>/dev/null || true)"
+    fi
+
     # PRD Checklist status injection (v5.44.0)
     local checklist_status=""
     if [ -n "$prd" ] && [ ! -f ".loki/checklist/checklist.json" ]; then
@@ -19981,6 +20212,10 @@ except Exception:
     [ -n "$app_runner_info" ] && printf '%s\n' "$app_runner_info"
     [ -n "$playwright_info" ] && printf '%s\n' "$playwright_info"
     [ -n "$memory_context_section" ] && printf '%s\n' "$memory_context_section"
+    # Failure memory: volatile (it changes the moment a gate fails), so it lives
+    # here in the dynamic tail, never in the cache-stable <loki_system> prefix.
+    # Sits with the other memory context, before the efficiency trend.
+    [ -n "$failure_memory_context" ] && printf '%s\n' "$failure_memory_context"
     # Volatile per-iteration data: belongs below [CACHE_BREAKPOINT], never in the
     # cache-stable prefix. Same ordinal position as the Bun route (after the
     # context section, before the completion instruction).
@@ -22809,6 +23044,73 @@ if __name__ == "__main__":
         # costs zero extra subprocesses -- we pass the existing epoch through.
         emit_stage_complete "agent" "$([ "$exit_code" -eq 0 ] 2>/dev/null && echo pass || echo fail)" "$start_time"
 
+        # LLM DECISION RECORD (autonomy/lib/decision_record.py).
+        #
+        # WHY HERE. This is the single point where every provider arm converges
+        # after dispatch: claude, codex, cline and aider all land here with
+        # $tier_param (the model actually dispatched), $exit_code and $duration
+        # in scope. Recording per-arm would be four call sites that drift.
+        #
+        # WHY tier_param AND NOT LOKI_CURRENT_MODEL. Only the claude arm exports
+        # LOKI_CURRENT_MODEL (line ~22214); on a codex/cline/aider iteration that
+        # variable is either unset or a STALE value left by an earlier claude
+        # iteration after a failover. tier_param is the same string the claude
+        # arm exports, and it is correct on every arm. It is read AFTER every
+        # mutation (opus-pin force, LOKI_MAX_TIER clamp, mid-flight override,
+        # fable collapse), so it is the model that ran, not the tier alias.
+        #
+        # WHAT IS DELIBERATELY OMITTED. temperature: this runtime never sets one
+        # on any provider (claude dispatch passes --model/--effort, never a
+        # temperature), so writing a value would be inventing the exact field
+        # whose whole purpose is making config drift falsifiable. The module
+        # treats an absent field as absent; a guessed 0.0 would be a lie that
+        # reads as a measurement. confidence: self-reported and not available at
+        # this seam. Tokens come from the authoritative per-iteration result-cost
+        # file when the provider wrote one, and are omitted rather than zeroed
+        # when it did not (a zero claims the call was free).
+        #
+        # NON-FATAL AND BACKGROUNDED: a diagnostic must never be able to break
+        # the iteration it is diagnosing, and this is a python3 spawn on the
+        # critical path of the loop's largest stage.
+        if [ -n "${tier_param:-}" ] && [ -f "${SCRIPT_DIR:-}/lib/decision_record.py" ]; then
+            local _dr_args=(
+                "--model_id=$tier_param"
+                "--provider=${PROVIDER_NAME:-claude}"
+                "--stage=iteration_${ITERATION_COUNT:-0}_${rarv_phase:-unknown}"
+                "--outcome=$([ "$exit_code" -eq 0 ] 2>/dev/null && echo ok || echo error)"
+                "--duration_ms=$((duration * 1000))"
+            )
+            # Correlation ids only when genuinely set: an empty run_id written as
+            # "" is indistinguishable from a real one in a later diff, and the
+            # module records whatever an allowlisted field carries.
+            [ -n "${LOKI_TRUST_RUN_ID:-}" ] && _dr_args+=("--run_id=$LOKI_TRUST_RUN_ID") || true
+            [ -n "${LOKI_SESSION_ID:-}" ] && _dr_args+=("--session_id=$LOKI_SESSION_ID") || true
+            local _dr_cost="${TARGET_DIR:-.}/.loki/metrics/result-cost-${ITERATION_COUNT:-0}.json"
+            if [ -s "$_dr_cost" ]; then
+                # Read into named locals, NOT `set --`: this runs in the middle of
+                # run_autonomous, and clobbering the function's positional
+                # parameters to parse a diagnostic is how a metrics read turns
+                # into a control-flow bug.
+                local _dr_in="" _dr_out=""
+                read -r _dr_in _dr_out <<EOF
+$(python3 -c 'import json,sys
+d = json.load(open(sys.argv[1]))
+# Print BOTH or neither: a half-record invites a reader to treat a missing
+# output count as zero output, which reads as "the model produced nothing".
+i, o = d.get("input_tokens"), d.get("output_tokens")
+if isinstance(i, int) and isinstance(o, int):
+    print(i, o)' "$_dr_cost" 2>/dev/null)
+EOF
+                case "${_dr_in}${_dr_out}" in
+                    ''|*[!0-9]*) ;;   # unparseable -> omit rather than fabricate
+                    *) _dr_args+=("--tokens_in=$_dr_in" "--tokens_out=$_dr_out") ;;
+                esac
+            fi
+            ( LOKI_DIR="${TARGET_DIR:-.}/.loki" \
+              python3 "${SCRIPT_DIR}/lib/decision_record.py" record "${_dr_args[@]}" \
+              >/dev/null 2>&1 </dev/null & ) 2>/dev/null || true
+        fi
+
         # AGENT PROMPT SIZE. The call this brackets is 93% of a run's wall clock
         # (1814s of 1941s measured), and its INPUT was never measured -- every
         # reviewer logs its prompt bytes, the dominant call logged nothing.
@@ -23092,7 +23394,8 @@ if __name__ == "__main__":
                 else
                     _stg_ok=fail
                     local sa_count
-                    sa_count=$(track_gate_failure "static_analysis")
+                    sa_count=$(track_gate_failure "static_analysis" \
+                        "${TARGET_DIR:-.}/.loki/quality/static-analysis.json")
                     gate_failures="${gate_failures}static_analysis,"
                     log_warn "Static analysis FAILED ($sa_count consecutive) - findings injected into next iteration"
                     # F0, extended past mutation_integrity. Static analysis is
@@ -23200,7 +23503,8 @@ if __name__ == "__main__":
                         ;;
                     fail)
                         local mk_count
-                        mk_count=$(track_gate_failure "mock_integrity")
+                        mk_count=$(track_gate_failure "mock_integrity" \
+                            "${TARGET_DIR:-.}/.loki/quality/mock-findings.txt")
                         gate_failures="${gate_failures}mock_integrity,"
                         log_warn "Mock integrity gate FAILED ($mk_count consecutive) - CRITICAL/HIGH mock problems"
                         # Escalation guidance was DEAD for this gate.
@@ -23253,7 +23557,8 @@ if __name__ == "__main__":
                 else
                     _stg_ok=fail
                     local mt_count
-                    mt_count=$(track_gate_failure "mutation_integrity")
+                    mt_count=$(track_gate_failure "mutation_integrity" \
+                        "${TARGET_DIR:-.}/.loki/quality/mutation-findings.txt")
                     gate_failures="${gate_failures}mutation_integrity,"
                     log_warn "Mutation integrity gate FAILED ($mt_count consecutive) - HIGH test-fitting detected"
                     # Same dead-branch fix as mock_integrity above:
@@ -23319,7 +23624,8 @@ if __name__ == "__main__":
                         _lsp_e=$(printf '%s' "${_LOKI_LSP_DIAGNOSTICS_DETAIL:-}" | awk '{print $2}')
                         _lsp_w=$(printf '%s' "${_LOKI_LSP_DIAGNOSTICS_DETAIL:-}" | awk '{print $3}')
                         local lsp_count
-                        lsp_count=$(track_gate_failure "lsp_diagnostics")
+                        lsp_count=$(track_gate_failure "lsp_diagnostics" \
+                            "${_LOKI_LSP_DIAGNOSTICS_DETAIL:-}")
                         log_warn "LSP diagnostics reported errors ($lsp_count consecutive) - ${_lsp_e} error(s), ${_lsp_w} warning(s); advisory only"
                         ;;
                     pass)
@@ -23363,7 +23669,8 @@ if __name__ == "__main__":
                     clear_gate_failure "semantic_tests"
                 else
                     local sem_count
-                    sem_count=$(track_gate_failure "semantic_tests")
+                    sem_count=$(track_gate_failure "semantic_tests" \
+                        "${TARGET_DIR:-.}/.loki/quality/semantic-findings.txt")
                     if [ "${LOKI_GATE_SEMANTIC_TESTS_BLOCK:-false}" = "true" ] \
                        || [ "${LOKI_GATE_SEMANTIC_TESTS_BLOCK:-false}" = "1" ]; then
                         gate_failures="${gate_failures}semantic_tests,"
@@ -23389,7 +23696,8 @@ if __name__ == "__main__":
                     clear_gate_failure "invariants"
                 else
                     local inv_count
-                    inv_count=$(track_gate_failure "invariants")
+                    inv_count=$(track_gate_failure "invariants" \
+                        "${TARGET_DIR:-.}/.loki/quality/invariant-findings.txt")
                     if [ "${LOKI_GATE_INVARIANTS_BLOCK:-false}" = "true" ] \
                        || [ "${LOKI_GATE_INVARIANTS_BLOCK:-false}" = "1" ]; then
                         gate_failures="${gate_failures}invariants,"
@@ -23706,6 +24014,31 @@ if __name__ == "__main__":
             if [ -f "${TARGET_DIR:-.}/.loki/signals/TASK_COMPLETION_CLAIMED" ] \
                || [ -f "${TARGET_DIR:-.}/.loki/signals/COMPLETION_REQUESTED" ]; then
                 _loki_completion_claimed=1
+            fi
+            # CLAIM GROUNDING (report-only): does the completion claim name files
+            # that are actually in this run's diff? Every existing evidence axis is
+            # a REPO-level fact (diff non-empty, tests green, app boots), so an
+            # agent can finish by claiming "added retry logic to the payment
+            # client" while the diff shows a README edit and all six axes pass.
+            # The claim itself is the one artifact nothing else reads.
+            #
+            # PLACED HERE, at the non-destructive peek, deliberately: this is the
+            # only point where the claim signal still EXISTS. The default route
+            # below (check_completion_promise -> check_task_completion_signal)
+            # consumes it with rm -f on read, so reading the statement after that
+            # returns nothing, and re-reading it through the consuming detector
+            # would re-introduce the v7.28 claim-drop bug. We read the signal file
+            # directly and never remove it -- consumption keeps its single owner.
+            #
+            # FAIL-OPEN AND NON-BLOCKING BY DESIGN: only a claim naming a path
+            # demonstrably absent from the diff is a finding, and it is written to
+            # a file, never returned into the gate chain. claim_grounding.py exits
+            # 1 on exactly that case, hence `|| true` -- an ungrounded claim must
+            # report, not block. A grounding check that blocked on ambiguity would
+            # fire on ordinary prose and be disabled within a week.
+            if [ "$_loki_completion_claimed" = 1 ] \
+               && [ -f "${SCRIPT_DIR}/lib/claim_grounding.py" ]; then
+                _loki_check_claim_grounding || true
             fi
             local _loki_completion_ready=1
             if loki_is_supervised_simple_web; then
@@ -24822,6 +25155,17 @@ except (json.JSONDecodeError, OSError): pass
             _loki_write_termination_record "$signal_name" "$final_exit_code"
         fi
         emit_event_json "session_end" "result=$final_exit_code" "reason=$final_reason"
+        # An interrupted run still produced agent output, and this teardown is
+        # the only exit it takes -- it never reaches the post-loop capture.
+        # Backgrounded here (and ONLY here) because this runs inside a signal
+        # handler, where a blocking git call would stall the shutdown the user
+        # just asked for. Backgrounding is safe at this site specifically
+        # because the capture is ORDERING-INDEPENDENT: it baselines to the
+        # run-start SHA, not to a moving HEAD, and nothing between here and
+        # process exit commits -- so it records the same diff whenever the
+        # subshell lands. Do NOT copy this backgrounding to the post-loop site,
+        # where completing before the tree mutates is the entire point.
+        ( capture_preedit_snapshot >/dev/null 2>&1 </dev/null & ) 2>/dev/null || true
         if [ "$supervised_signal" = "true" ] \
            && [ "${LOKI_PROOF:-1}" != "0" ] \
            && type generate_proof_of_run >/dev/null 2>&1; then
@@ -25541,6 +25885,13 @@ main() {
         kill $orchestrator_pid 2>/dev/null || true
         wait $orchestrator_pid 2>/dev/null || true
 
+        # Same pre-edit capture as the standard branch, placed before
+        # cleanup_parallel_streams because that tears down worktrees and can
+        # change what the diff sees. Parallel mode never reaches the standard
+        # branch's call site, so without this the whole mode would have no
+        # authorship evidence. Write-once, so this is still a single snapshot.
+        capture_preedit_snapshot || true
+
         # Cleanup parallel streams
         cleanup_parallel_streams
     else
@@ -25549,6 +25900,17 @@ main() {
         # a stuck "Planning" state.
         _advance_current_phase "BUILDING"
         run_autonomous "$PRD_PATH" || result=$?
+        # PRE-EDIT SNAPSHOT: freeze the agent's raw diff HERE, the first
+        # instruction after the loop returns, because everything below this line
+        # can change the tree -- commit_session_changes commits the work (after
+        # which `git diff HEAD` is empty), and HANDOFF.md/learnings writers touch
+        # files before that. The snapshot is write-once, so capturing it late
+        # would permanently record someone else's edits as the agent's. Runs in
+        # the FOREGROUND on purpose: the entire value of this position is that
+        # the capture COMPLETES before any mutation, and backgrounding it would
+        # reintroduce exactly the race the placement exists to remove (the
+        # module bounds each git call at 60s, so the cost is bounded).
+        capture_preedit_snapshot || true
         # ZOMBIE-RECEIPT GUARD: proof generation + the COMPLETED marker live in the
         # teardown far below. If the process is killed (Docker restart, OOM, worker
         # reap) between here and there, a genuinely finished build (real code, exit

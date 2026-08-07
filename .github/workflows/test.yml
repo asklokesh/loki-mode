@@ -61,12 +61,21 @@ jobs:
           # drift apart by construction; one source cannot.
           #
           # This list also carries the pinned `mcp`, which the hand-written one
-          # omitted. Note that installing it does NOT by itself un-skip
-          # tests/test_mcp_agent_metrics_honesty.py: the repo's own `mcp/`
-          # package shadows the installed SDK on sys.path, so `from mcp import
-          # server` reaches our module, which then cannot import the SDK and
-          # exits. That shadowing is a separate defect, tracked separately --
-          # what this change fixes is the drift, not the skip.
+          # omitted -- and installing it is what lets
+          # tests/test_mcp_agent_metrics_honesty.py run at all.
+          #
+          # The note that used to sit here was wrong about WHY that suite
+          # skipped, so it is corrected rather than deleted (issue #190). It
+          # claimed our mcp/server.py "cannot import the SDK and exits". It
+          # can: mcp/_sdk_loader.py resolves the local-vs-SDK `mcp` namespace
+          # collision, and the suite passed 7/7 when run on its own. The real
+          # cause was ORDERING -- _load_real_fastmcp() re-pinned only the local
+          # `mcp.*` modules it had snapshotted, so any caller reaching it
+          # before our own mcp/server.py was imported (tests/mcp/* do) left the
+          # SDK's mcp/server/__init__.py cached under "mcp.server" for the rest
+          # of the process, and the suite's capability guard then skipped.
+          # Fixed in mcp/_sdk_loader.py; regression test in
+          # tests/mcp/test_lsp_proxy_loader.py.
           python3 -m pip install -r requirements-test.txt
 
       - name: Run tests
