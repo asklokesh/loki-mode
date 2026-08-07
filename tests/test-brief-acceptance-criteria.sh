@@ -93,8 +93,14 @@ fi
 # says an endpoint should be "callable with curl" -- flagging correct code for
 # quoting a tool name. The question is whether the extractor RUNS anything, so
 # the emitted strings (_bac "...") are stripped before matching.
+# Criterion lines are excluded by matching `_bac` plus its optional AXIS
+# argument, not `_bac "`. Criteria gained stable IDs (`_bac API "..."`), so the
+# old `_bac "` pattern stopped matching and the prose came back into scope --
+# and one criterion legitimately contains the word "curl" ("callable with curl
+# without a browser"), which tripped this guard against correct code. The guard
+# is right; its exclusion was stale.
 _body="$(sed -n '/^_brief_acceptance_criteria()/,/^}/p' "$LOKI" \
-         | grep -vE '^\s*#' | grep -vE '^\s*_bac "')"
+         | grep -vE '^\s*#' | grep -vE '^\s*_bac( [A-Z]+)? "')"
 if printf '%s' "$_body" | grep -qiE "curl |claude |codex |aider |provider_invoke|python3 |\\\$\(.*http"; then
     bad "the extractor shells out -- it must be pure bash, no model, no network"
 else

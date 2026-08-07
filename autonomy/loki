@@ -13821,46 +13821,60 @@ set_ttfv_lightweight_profile() {
 # honest about being shallow -- it turns stated nouns into checkable lines and
 # claims nothing about intent it cannot see. Anything cleverer belongs in the
 # spec-interrogation grill, which already runs after this and does call a model.
+#
+# STABLE IDs. Each criterion is emitted as "AC-<AXIS>-NNN: <text>" rather than a
+# bare bullet. An anonymous bullet cannot be referred to: a receipt can say "3 of
+# 8 gates passed" but never "AC-PERSIST-001 is satisfied by this test", drift
+# cannot be tracked per criterion, and two runs of the same spec produce lists
+# nothing can diff. The ID is what turns a criterion into a citable claim, which
+# is the whole point of shipping a receipt someone can check.
+#
+# The axis is derived from WHICH obligation fired, not from the criterion's
+# position, so IDs are stable across runs: adding a payment criterion never
+# renumbers the persistence one. Same reason we do not use a running counter.
 _brief_acceptance_criteria() {
     local t
     t="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
     local out=""
-    _bac() { out="${out}- ${1}"$'\n'; }
+    # _bac <AXIS> <text>. The sequence is per-axis and always 001 today because
+    # each axis fires at most once; the NNN slot exists so a second criterion on
+    # the same axis can be added later without renumbering the first.
+    _bac() { out="${out}- AC-${1}-001: ${2}"$'\n'; }
 
     # Persistence. The single most common churn report is "I submitted the form
     # and nothing happened", so a stated store or form becomes an explicit
     # survives-a-reload obligation rather than an implied one.
     case "$t" in
         *save*|*persist*|*store*|*databas*|*crud*|*todo*|*note*|*task*|*record*)
-            _bac "Data the user creates survives a page reload and a server restart (it is written to a real store, not held in memory)." ;;
+            _bac PERSIST "Data the user creates survives a page reload and a server restart (it is written to a real store, not held in memory)." ;;
     esac
     case "$t" in
         *form*|*submit*|*signup*|*"sign up"*|*contact*|*upload*|*checkout*)
-            _bac "Every form actually submits: the happy path writes real data and the user sees a confirmation, and a validation failure shows an inline error." ;;
+            _bac FORM "Every form actually submits: the happy path writes real data and the user sees a confirmation, and a validation failure shows an inline error." ;;
     esac
     case "$t" in
         *auth*|*login*|*"log in"*|*"sign in"*|*account*|*user*|*password*|*session*)
-            _bac "Authentication works end to end: a real signup, a real login, and a protected route that returns 401 when logged out." ;;
+            _bac AUTH "Authentication works end to end: a real signup, a real login, and a protected route that returns 401 when logged out." ;;
     esac
     case "$t" in
         *api*|*endpoint*|*rest*|*graphql*|*backend*|*server*)
-            _bac "Each endpoint returns real data with correct status codes, and is callable with curl without a browser." ;;
+            _bac API "Each endpoint returns real data with correct status codes, and is callable with curl without a browser." ;;
     esac
     case "$t" in
         *payment*|*stripe*|*billing*|*subscription*|*checkout*|*invoice*)
-            _bac "The payment path is wired to the provider's test mode and a test transaction completes; no mocked charge stands in for the integration." ;;
+            _bac PAY "The payment path is wired to the provider's test mode and a test transaction completes; no mocked charge stands in for the integration." ;;
     esac
     case "$t" in
         *search*|*filter*|*sort*)
-            _bac "Search or filtering queries the real dataset and returns different results for different inputs." ;;
+            _bac SEARCH "Search or filtering queries the real dataset and returns different results for different inputs." ;;
     esac
     case "$t" in
         *dashboard*|*chart*|*graph*|*analytic*|*report*|*metric*)
-            _bac "Every figure shown traces to a real query. No hardcoded sample numbers." ;;
+            _bac DATA "Every figure shown traces to a real query. No hardcoded sample numbers." ;;
     esac
     case "$t" in
         *page*|*landing*|*site*|*website*|*ui*|*app*|*frontend*)
-            _bac "The page renders with real content, no lorem ipsum, and no placeholder image where a real asset belongs." ;;
+            _bac UI "The page renders with real content, no lorem ipsum, and no placeholder image where a real asset belongs." ;;
     esac
     printf '%s' "$out"
 }

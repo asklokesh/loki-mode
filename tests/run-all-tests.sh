@@ -207,6 +207,7 @@ run_test "failure memory learns from measured events only" "$SCRIPT_DIR/test-fai
 run_test "agent readiness is measured, not judged" "$SCRIPT_DIR/test-agent-readiness.sh"
 run_test "degraded providers get the full spec and the first-pass push" "$SCRIPT_DIR/test-degraded-provider-quality.sh"
 run_test "a one-liner yields criteria derived from the request" "$SCRIPT_DIR/test-brief-acceptance-criteria.sh"
+run_test "acceptance criteria carry stable, citable ids" "$SCRIPT_DIR/test-acceptance-criteria-ids.sh"
 run_test "an imported issue yields criteria derived from the issue" "$SCRIPT_DIR/test-issue-acceptance-criteria.sh"
 run_test "a dependency does not decide the complexity tier" "$SCRIPT_DIR/test-complexity-external-prune.sh"
 run_test "long silent steps announce themselves" "$SCRIPT_DIR/test-no-silent-gaps.sh"
