@@ -1040,7 +1040,7 @@ show_help() {
     echo "  agent analyze api assets audit bench checkpoint (cp) ci cleanup"
     echo "  cluster cockpit code compliance completions compound config context (ctx)"
     echo "  cost council crash dashboard demo deploy docker docs doctor dogfood"
-    echo "  enterprise estimate explain export failover github grill heal help"
+    echo "  enterprise estimate explain export failover gates github grill heal help"
     echo "  import init intent"
     echo "  issue kpis logs magic mcp memory metrics migrate modernize monitor"
     echo "  next notify onboard open optimize otel outcomes own (handoff) pause plan preview"
@@ -19498,6 +19498,11 @@ main() {
             # Can an agent verify its own work here? Measured, not LLM-scored.
             cmd_readiness "$@"
             ;;
+        gates)
+            # What blocks here vs only advises, and what promoting a gate would
+            # have cost. Reports only; never promotes.
+            cmd_gates "$@"
+            ;;
         secure)
             # Secure-by-default gate surface: inspect findings + manage waivers.
             cmd_secure "$@"
@@ -31026,6 +31031,47 @@ cmd_verdict() {
 # is no test command" tells you what to do, "readiness 62%" does not. Criteria
 # that cannot be determined report UNKNOWN by name rather than counting as
 # failures. See autonomy/lib/agent_readiness.py.
+cmd_gates() {
+    local lib="${_LOKI_SCRIPT_DIR}/lib/gate_policy.py"
+    if [ ! -f "$lib" ]; then
+        echo "gate policy reporter is not installed at $lib" >&2
+        return 2
+    fi
+    case "${1:-}" in
+        --help|-h|help)
+            echo -e "${BOLD}loki gates${NC} - what blocks here, and what only advises"
+            echo ""
+            echo "Usage: loki gates [.loki-dir] [--json]"
+            echo ""
+            echo "Ona's Veto Exec ships an audit-first ladder: start in audit mode,"
+            echo "review what matched, then promote the confirmed rules to block. The"
+            echo "middle step is the load-bearing one -- a policy you cannot safely"
+            echo "turn on is a policy nobody turns on."
+            echo ""
+            echo "We had both ends and nothing between them: gates are advisory or"
+            echo "blocking, three promotion knobs exist, and the failure ledger has"
+            echo "counted per-gate hits all along. Nothing joined them, so deciding"
+            echo "whether to promote a gate meant guessing."
+            echo ""
+            echo "For each gate this prints its mode, how many times it has fired,"
+            echo "and -- for an advisory one -- the exact variable that promotes it."
+            echo ""
+            echo "Deterministic: reads two files and the environment. No model, no"
+            echo "key, no spend. Counts come from"
+            echo ".loki/quality/gate-failure-count.json; open it and count them"
+            echo "yourself."
+            echo ""
+            echo "A gate with no ledger entry reports 'not measured', never 0: an"
+            echo "absent measurement is not evidence a gate never fired."
+            echo ""
+            echo "This command NEVER promotes a gate. Promotion stays an explicit"
+            echo "operator act via the named variable."
+            return 0
+            ;;
+    esac
+    python3 "$lib" "$@"
+}
+
 cmd_readiness() {
     local lib="${_LOKI_SCRIPT_DIR}/lib/agent_readiness.py"
     if [ ! -f "$lib" ]; then

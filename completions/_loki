@@ -120,6 +120,7 @@ function _loki {
 function _loki_commands {
     local -a commands
     commands=(
+        'gates:What blocks here vs only advises, and the promotion knob'
         'start:Start Loki Mode'
         'quick:Quick single-task mode'
         'quickstart:Guided first build from your idea'
