@@ -166,7 +166,26 @@ PY
         requirements-shards-parallel|requirements-shard-invalid|requirements-shard-fail-fast)
             mkdir -p "$REVIEW_TEST_SHARD_STATE"
             : > "$REVIEW_TEST_SHARD_STATE/started-$shard_index"
-            for _attempt in $(seq 1 500); do
+            # RENDEZVOUS BARRIER. Every shard blocks until all of them have
+            # started, so a SERIAL implementation deadlocks here and the case
+            # fails -- that is the property under test, and it is unaffected by
+            # how long the cap is.
+            #
+            # The cap was 500 x 10ms = 5 SECONDS, which is a timing assumption
+            # about process spawn, not about parallelism. It held locally (this
+            # suite runs 99s and passes 12/12) and went red on GitHub CI, which
+            # shards run-all-tests.sh 4 ways: four suites competing for the same
+            # runner can easily take more than 5s to get four subshells
+            # scheduled. The failure then reads "requirements sharding changed
+            # order, launched serially, or inflated votes" -- a product-defect
+            # message for a runner-contention event, which is the worst kind of
+            # red because it points at innocent code.
+            #
+            # 60s cannot mask a serial implementation: serial never satisfies
+            # the barrier at ANY timeout, it only fails later. What the larger
+            # cap buys is that a slow-but-parallel launch is no longer
+            # misreported as a serial one.
+            for _attempt in $(seq 1 6000); do
                 started_count=$(find "$REVIEW_TEST_SHARD_STATE" \
                     -name 'started-*' -type f | wc -l | tr -d ' ')
                 [ "$started_count" -ge "$REVIEW_TEST_SHARD_EXPECTED" ] && break
@@ -190,7 +209,10 @@ PY
             ;;
         requirements-shard-fail-fast)
             if [ "$shard_index" -eq 2 ]; then
-                for _attempt in $(seq 1 500); do
+                # Same 5s-to-60s change, same reasoning as the started-* barrier
+                # above: this waits for sibling children to exist before shard 2
+                # fails, and a serial run never produces them at any cap.
+                for _attempt in $(seq 1 6000); do
                     child_count=$(find "$REVIEW_TEST_SHARD_STATE" \
                         -name 'child-*.pid' -type f | wc -l | tr -d ' ')
                     [ "$child_count" -ge $((REVIEW_TEST_SHARD_EXPECTED - 1)) ] && break
