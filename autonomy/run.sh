@@ -3316,10 +3316,34 @@ detect_complexity() {
     file_count="${file_count:-0}"
     file_count="${file_count//[^0-9]/}"
 
-    # Check for external integrations
+    # Check for external integrations.
+    #
+    # THE EXCLUDES ARE LOAD-BEARING. This grep used to prune nothing while the
+    # find eleven lines above it prunes node_modules/.git/vendor/dist/build --
+    # same function, same intent, inconsistent implementation. With --include
+    # "*.json" that meant ANY transitive dependency whose package.json mentions
+    # azure, stripe or aws-sdk set has_external=true.
+    #
+    # And has_external does not merely block "simple": in the classifier below it
+    # jumps straight to "complex", skipping "standard". So a one-liner in any
+    # repo that has ever run npm install landed on the MOST expensive tier, which
+    # then runs the architecture doc suite (up to 300s of silence per attempt)
+    # and holds the council's forced minimum-iteration floor at 3 instead of 1.
+    #
+    # Reproduced from scratch before fixing: a project with ONE dependency naming
+    # @azure/core classified complex; adding --exclude-dir=node_modules made the
+    # identical project classify simple. It also fired TRUE on this repo.
+    #
+    # A prior incident matches exactly -- a coffee landing page took 1h34m over
+    # 11 iterations because the simple fast-path never engaged. The fast path was
+    # correctly built and correctly wired the whole time; this one missing prune
+    # was what made it unreachable.
     local has_external=false
     if grep -rq "oauth\|SAML\|OIDC\|stripe\|twilio\|aws-sdk\|@google-cloud\|azure" \
-        "$target_dir" --include="*.json" --include="*.ts" --include="*.js" 2>/dev/null; then
+        "$target_dir" --include="*.json" --include="*.ts" --include="*.js" \
+        --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=vendor \
+        --exclude-dir=dist --exclude-dir=build --exclude-dir=__pycache__ \
+        --exclude-dir=.venv --exclude-dir=venv 2>/dev/null; then
         has_external=true
     fi
 
