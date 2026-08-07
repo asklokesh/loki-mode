@@ -128,6 +128,55 @@ else
     bad "the emit is unguarded -- an absent telemetry.sh would error"
 fi
 
+# --- 5. The DEFAULT (Bun) route must be covered too ---------------------------
+# `doctor` is unconditionally Bun-routed (bin/loki:370), so the bash emit at
+# autonomy/loki:12028 never fires for it on the route most users take. Without
+# the doctor.ts call the funnel would measure only the LOKI_LEGACY_BASH
+# fallback and report a near-empty blocker table as if it were the truth.
+_doctor_ts="$REPO_ROOT/loki-ts/src/commands/doctor.ts"
+if grep -q 'emitFirstRunBlocked(tally.blockerKeys)' "$_doctor_ts"; then
+    ok "the Bun doctor reports its blocker (the default route is not blind)"
+else
+    bad "the Bun doctor never emits -- the default route's funnel is blind"
+fi
+
+# THE single-egress rule: loki-ts owns no analytics endpoint. The Bun route must
+# reach the network only by invoking autonomy/telemetry.sh, so one consent gate,
+# one allowlist and one once-per-machine marker serve both routes. A fetch()
+# added here would be a second egress point with its own opt-out to keep in sync.
+if grep -q 'loki_emit_first_run_blocked' "$_doctor_ts" \
+   && ! grep -qE 'fetch\(.*(posthog|telemetry|analytics)' "$_doctor_ts"; then
+    ok "the Bun route emits THROUGH autonomy/telemetry.sh, adding no second egress"
+else
+    bad "doctor.ts appears to emit analytics directly -- single-egress rule broken"
+fi
+
+# Detached and never awaited: loki_telemetry does not background its own curl,
+# so a synchronous spawn would hold doctor's exit open on a network round trip.
+if grep -q 'detached: true' "$_doctor_ts" && grep -q 'child.unref()' "$_doctor_ts"; then
+    ok "the Bun emit is detached, so telemetry cannot delay doctor's exit"
+else
+    bad "the Bun emit is not detached -- telemetry could stall the command"
+fi
+
+# Priority order decides the key when several blockers are live at once. If the
+# two routes ordered them differently, the same broken host would be counted
+# under different keys depending on route and the totals could not be summed.
+# not_logged_in is deliberately NOT filtered out here. It is the one key where
+# the routes could disagree: the Bun doctor pushes it directly, while bash maps
+# it from blocker TEXT, and until that arm existed the same logged-out host
+# answered `other` on bash and `not_logged_in` on Bun. Excluding it would make
+# this assertion pass while the property it names was false.
+_bash_order="$(grep -oE '_blk_key="(no_provider|not_logged_in|node|python3|jq|git|curl|disk|skill_symlink)"' \
+    "$REPO_ROOT/autonomy/loki" | sed 's/.*="//;s/"//' | tr '\n' ' ')"
+_ts_order="$(sed -n '/^const BLOCKER_PRIORITY/,/^] as const;/p' "$_doctor_ts" \
+    | grep -oE '"[a-z_0-9]+"' | sed 's/"//g' | grep -vE '^other$' | tr '\n' ' ')"
+if [ -n "$_bash_order" ] && [ "$_bash_order" = "$_ts_order" ]; then
+    ok "blocker priority matches bash arm-for-arm (same host -> same key)"
+else
+    bad "blocker priority diverged: bash [$_bash_order] vs ts [$_ts_order]"
+fi
+
 echo ""
 echo "  Passed: $PASS   Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

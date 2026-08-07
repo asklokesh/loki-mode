@@ -750,11 +750,18 @@ function printHelp(): void {
 }
 
 // Priority order for collapsing several simultaneous blockers into the ONE enum
-// the funnel carries. Byte-mirrors the bash doctor's case-arm order
-// (autonomy/loki:12030-12039), which is a priority list, not the order blockers
+// the funnel carries. Mirrors the bash doctor's case-arm order
+// (autonomy/loki:12030-12041), which is a priority list, not the order blockers
 // were appended: a host missing node AND a provider CLI must report the same key
-// on both routes, or the two routes' numbers cannot be added together. Kept
-// adjacent to that comment on purpose -- edit both or the routes diverge.
+// on both routes, or the two routes' numbers cannot be added together.
+//
+// not_logged_in sits at priority 2 on BOTH routes. Bash detected that wall but
+// had no case arm for it and so reported `other`; the arm was added alongside
+// this list rather than demoting the key here, because losing the
+// install-vs-authenticate distinction to `other` would make the most common
+// post-install failure unactionable in the data. tests/test-first-run-funnel-
+// coverage.sh asserts the two orders match arm-for-arm, not_logged_in included.
+// Edit both or that test fails.
 const BLOCKER_PRIORITY = [
   "no_provider",
   "not_logged_in",

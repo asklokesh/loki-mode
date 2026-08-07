@@ -12029,6 +12029,17 @@ else:
             local _blk_key="other"
             case "$_doctor_blockers" in
                 *"No AI provider CLI"*) _blk_key="no_provider" ;;
+                # This doctor DETECTS the logged-out / expired wall above
+                # (:11610, :11615) but had no arm for it, so the single most
+                # common post-install failure was reported as `other` -- the one
+                # bucket that cannot be acted on. not_logged_in is already a
+                # first-class enum value (telemetry.sh:204) and the Bun doctor
+                # already reports it, so without this arm the SAME host answered
+                # `other` on bash and `not_logged_in` on Bun and the two routes'
+                # counts could not be added together. Ordered directly after
+                # no_provider because install-vs-authenticate need opposite fixes
+                # and a missing provider is the earlier wall.
+                *"not logged in"*|*"login has expired"*) _blk_key="not_logged_in" ;;
                 *"Node.js is not installed"*|*"Node.js must be"*) _blk_key="node" ;;
                 *"Python 3 is not installed"*|*"Python 3 must be"*) _blk_key="python3" ;;
                 *"jq is not installed"*) _blk_key="jq" ;;
@@ -12312,7 +12323,18 @@ _cat_path = os.environ['LOKI_CATALOG_PATH']
 try:
     import datetime as _dt
     _cat_updated = json.load(open(_cat_path))['updated']
-    _cat_age = (_dt.date.today() - _dt.date.fromisoformat(_cat_updated)).days
+    # UTC, not local. date.today() is the HOST's date, while the Bun route parses
+    # both sides at UTC midnight (doctor.ts:545 says so, to keep the day count
+    # from shifting with the host timezone). Anywhere west of UTC the two
+    # disagree for the hours between local midnight and UTC midnight, and
+    # doctor --json is compared BYTE FOR BYTE between routes by bun-parity.
+    #
+    # Measured on this host at 02:45 UTC / 22:45 local: bash reported age_days 5
+    # and Bun reported 6, from the same file at the same instant. It reproduced
+    # across two full gate runs hours apart, so it is not a midnight-rollover
+    # flake. It is a real parity defect that stays invisible while the local date
+    # and the UTC date agree, which is most of the day.
+    _cat_age = (_dt.datetime.now(_dt.timezone.utc).date() - _dt.date.fromisoformat(_cat_updated)).days
     if _cat_age > CATALOG_STALE_DAYS:
         # Deliberately NOT counted. The block comment above states catalog age is
         # excluded from pass/fail/warn and from 'ok' so a stale catalog can never
