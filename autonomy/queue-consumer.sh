@@ -30,11 +30,16 @@
 #   - Only redis and file are shipped. SQS, Pub/Sub, RabbitMQ, Kafka, etc. are
 #     BRING-YOUR-OWN: override queue.command in values.yaml with your own
 #     consumer. They are documented, not implemented here.
-#   - The redis backend is at-most-once (LPOP-then-run). It has no visibility
-#     timeout / dead-letter requeue. If a build crashes after the item is popped,
-#     that item is lost from the queue. For at-least-once delivery use the file
-#     backend (a crashed build leaves the item in processing/ for manual
-#     re-drive) or bring a real broker.
+#   - The redis backend is AT-LEAST-ONCE by default. LMOVE (RPOPLPUSH pre-6.2)
+#     pops and records the item in <key>:processing atomically, and the ack
+#     (LREM) runs only after a zero-exit build. A crashed worker leaves its item
+#     in <key>:processing for re-drive -- the same shape as the file backend's
+#     processing/ directory.
+#     It was at-most-once (LPOP-then-run) until this was fixed; a crash after
+#     the pop lost the build with no record anywhere.
+#     Still missing, and NOT claimed: an automatic visibility timeout. Nothing
+#     reaps a stale <key>:processing entry on its own yet, so a re-drive is an
+#     operator action. LOKI_QUEUE_ACK=0 restores the legacy lossy path.
 #   - The file backend's atomicity relies on `mv` being atomic within a single
 #     filesystem (true for a normal PVC). Two consumers racing the same pending
 #     dir is safe (mv either wins or fails-and-skips), but is not load-balanced.
@@ -176,17 +181,72 @@ redis_cli() {
     redis-cli -u "$QUEUE_URL" "$@"
 }
 
-# Pop one item from the redis list. In loop mode use BLPOP (blocks up to
-# BLOCK_SEC, then returns empty so we can check the stop flag); in one-shot use
-# LPOP (non-blocking, exits immediately on an empty queue).
-# Prints the popped item to stdout, or nothing if the queue was empty.
+# Pop one item from the redis list, ATOMICALLY RECORDING IT AS IN-FLIGHT.
+#
+# THE DEFECT THIS FIXES, proven on a real redis 8.6.3 before it was written:
+#
+#   RPUSH loki-builds '{"spec":"build a todo app"}'   -> LLEN 1
+#   LPOP  loki-builds                                 -> worker holds the item
+#   <worker is OOM-killed / node evicted / kill -9>
+#   LLEN  loki-builds                                 -> 0
+#
+# The user's build is gone and NOTHING anywhere records that it existed. For a
+# product whose entire thesis is "we hand you a receipt you can check", silently
+# losing the work is the worst failure mode available: there is no receipt, no
+# error, and no queue entry to retry.
+#
+# LMOVE (redis 6.2+) pops and pushes to a processing list in ONE atomic step, so
+# a crash between the two is impossible. A dead worker leaves its item in
+# <key>:processing where `loki queue reap` (or an operator) can re-drive it.
+# RPOPLPUSH is the pre-6.2 equivalent and is tried automatically.
+#
+# Kept OPT-OUT rather than opt-in (LOKI_QUEUE_ACK=0 restores LPOP). At-least-once
+# is the safer default: its failure mode is a duplicate build, which the
+# idempotence work already handles, versus silent data loss. But an operator
+# running a broker that already guarantees delivery should be able to turn it
+# off rather than maintain two in-flight records.
+#
+# In loop mode with acking we use a short-poll LMOVE plus a sleep instead of
+# BLMOVE, because BLMOVE blocks the connection and the stop-flag check has to
+# stay responsive; the empty-poll backoff below already bounds the cost.
 redis_pop() {
-    if [ "$ONESHOT" = "1" ]; then
-        redis-cli -u "$QUEUE_URL" --no-raw LPOP "$QUEUE_KEY" 2>/dev/null | _redis_unquote
-    else
-        # BLPOP returns two lines: the key name, then the value. Take the value.
-        redis-cli -u "$QUEUE_URL" BLPOP "$QUEUE_KEY" "$BLOCK_SEC" 2>/dev/null | sed -n '2p'
+    if [ "${LOKI_QUEUE_ACK:-1}" = "0" ]; then
+        # Legacy at-most-once path, explicitly requested.
+        if [ "$ONESHOT" = "1" ]; then
+            redis-cli -u "$QUEUE_URL" --no-raw LPOP "$QUEUE_KEY" 2>/dev/null | _redis_unquote
+        else
+            redis-cli -u "$QUEUE_URL" BLPOP "$QUEUE_KEY" "$BLOCK_SEC" 2>/dev/null | sed -n '2p'
+        fi
+        return 0
     fi
+
+    # RAW output, not --no-raw. `--no-raw` escapes the INNER quotes of a JSON
+    # payload ({"spec":"x"} comes back as "{\"spec\":\"x\"}"), and
+    # _redis_unquote only strips the outer pair -- so the item reaching
+    # extract_spec was mangled AND the string handed to LREM no longer matched
+    # what redis stored, silently acking nothing. Both were caught by running
+    # against a real redis 8.6.3; neither is visible in a mock.
+    local out
+    out="$(redis-cli -u "$QUEUE_URL" LMOVE "$QUEUE_KEY" "${QUEUE_KEY}:processing" LEFT RIGHT 2>/dev/null)"
+    # Pre-6.2 servers reject LMOVE as an unknown command (stderr, empty stdout),
+    # so fall back rather than reporting an empty queue.
+    if [ -z "$out" ]; then
+        out="$(redis-cli -u "$QUEUE_URL" RPOPLPUSH "$QUEUE_KEY" "${QUEUE_KEY}:processing" 2>/dev/null)"
+    fi
+    printf '%s' "$out"
+}
+
+# Remove a completed item from the in-flight list. Called ONLY after the build
+# finished; until then the item stays recoverable.
+#
+# LREM with count 0 removes every equal element. Two identical specs queued twice
+# would both clear on the first ack -- accepted deliberately: the alternative is
+# a per-item token, which needs a producer change, and the failure mode here is
+# one duplicate re-drive rather than a lost build.
+redis_ack() {
+    [ "${LOKI_QUEUE_ACK:-1}" = "0" ] && return 0
+    [ -n "${1:-}" ] || return 0
+    redis-cli -u "$QUEUE_URL" LREM "${QUEUE_KEY}:processing" 0 "$1" >/dev/null 2>&1 || true
 }
 
 # --no-raw LPOP wraps the value in quotes; strip a single surrounding pair and
@@ -207,10 +267,21 @@ redis_consume_one() {
     if [ -z "$item" ]; then
         return 100  # sentinel: queue empty
     fi
-    local spec
+    local spec rc
     spec="$(extract_spec "$item")"
     run_build "$spec"
-    return $?
+    rc=$?
+    # ACK ONLY ON SUCCESS, and the order is load-bearing: acking before the
+    # build would reintroduce the exact data loss this exists to prevent, and
+    # acking a FAILED build would discard work that a re-drive could complete.
+    # A failed item stays in <key>:processing so `loki queue reap` can requeue
+    # it -- the same shape as the file backend leaving it in processing/.
+    if [ "$rc" -eq 0 ]; then
+        redis_ack "$item"
+    else
+        log "item left in ${QUEUE_KEY}:processing for re-drive (exit $rc)"
+    fi
+    return "$rc"
 }
 
 # =============================================================================

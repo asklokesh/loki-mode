@@ -825,6 +825,7 @@ run_test "a stranded VERSION bump is reported" "$SCRIPT_DIR/test-release-drift-c
 run_test "the receipt anchors to the run's real baseline" "$SCRIPT_DIR/test-proof-base-sha-anchor.sh"
 run_test "every consumed dashboard token is defined" "$SCRIPT_DIR/test-dashboard-token-coverage.sh"
 run_test "product chrome runs sans, measured without a false green" "$SCRIPT_DIR/test-dashboard-serif-removed.sh"
+run_test "a crashed worker does not lose the build" "$SCRIPT_DIR/test-queue-at-least-once.sh"
 run_test "readiness --fix repairs what it can and refuses the rest" "$SCRIPT_DIR/test-readiness-fix.sh"
 run_test "the gate ladder reports mode, hits and the promotion knob" "$SCRIPT_DIR/test-gate-policy-ladder.sh"
 run_test "the steer flag the CLI advertises is the one the runner honours" "$SCRIPT_DIR/test-steer-flag-parity.sh"
