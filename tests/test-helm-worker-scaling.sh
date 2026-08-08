@@ -29,6 +29,23 @@ echo "TEST: worker scaling knob and the tenancy invariant"
 [ -d "$CHART" ] || { echo "  FAIL: $CHART missing"; exit 1; }
 command -v helm >/dev/null 2>&1 || { echo "  SKIPPED: helm not installed (not a pass)"; exit 0; }
 command -v python3 >/dev/null 2>&1 || { echo "  SKIPPED: python3 not installed (not a pass)"; exit 0; }
+# PyYAML is NOT stdlib. Without it every parse below raises, the 2>/dev/null
+# swallows the traceback, and each assertion compares against an empty string --
+# reporting "the scaling knob is not wired" about a chart that is perfectly
+# fine. That is a false accusation from a missing dependency, the same class of
+# defect this session shipped fixes for, and it is exactly how this test failed
+# in CI while passing locally. Skip loudly instead.
+python3 -c 'import yaml' >/dev/null 2>&1 \
+  || { echo "  SKIPPED: python3 has no PyYAML, cannot parse rendered manifests (not a pass)"; exit 0; }
+
+# Fail LOUDLY if the chart cannot render at all. Without this the empty-string
+# comparisons below would blame the scaling knob for a chart-wide failure.
+if ! helm template "$CHART" >/dev/null 2>&1; then
+    bad "helm template failed for $CHART -- every assertion below would be vacuous"
+    echo ""
+    echo "  Passed: $PASS   Failed: $FAIL"
+    exit 1
+fi
 
 # Reads one field out of the rendered worker Deployment. Parses YAML rather than
 # grepping: a grep for `replicas:` would also match the receiver and redis, and
