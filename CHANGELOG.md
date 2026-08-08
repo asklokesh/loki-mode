@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.17.1
+
+Re-release of v9.17.0. The 9.17.0 tarball on npm was published from an older
+commit (gitHead 00b9f4e2) by a concurrent release run, so it did not contain
+the fixes its changelog described -- verified by grepping the published
+tarball with a positive control. No code change; this ships the intended tree.
+
 ## v9.17.0
 
 ### Fixed
