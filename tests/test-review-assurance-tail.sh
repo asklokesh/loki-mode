@@ -1223,8 +1223,25 @@ LOKI_REVIEW_REQUIREMENTS_IDENTITY="$req_timeout_identity" \
 req_timeout_ended=$(monotonic_ms)
 req_timeout_elapsed=$((req_timeout_ended - req_timeout_started))
 req_timeout_child="$(cat "$REQ_TIMEOUT_CHILD_PID" 2>/dev/null || true)"
+# Each clause reports separately -- the third instance of this flaw in this
+# file. CI printed "requirements timeout escaped its budget, containment, or
+# one-call contract (rc=124 elapsed_ms=8181)" and the elapsed figure in that
+# very message was INSIDE its bound (8181 < 14000), so the named cause was the
+# one thing that had not failed. A message that lists four causes and proves
+# none sends the reader to the wrong file.
+_req_why=""
+[ "$req_timeout_rc" -ne 0 ] || _req_why="$_req_why rc=0 (expected nonzero);"
+_req_bound=$(( 3500 * REVIEW_TIMEOUT_SCALE ))
+[ "$req_timeout_elapsed" -lt "$_req_bound" ] \
+  || _req_why="$_req_why elapsed ${req_timeout_elapsed}ms exceeds bound ${_req_bound}ms;"
+_req_calls="$(wc -l < "$REQ_TIMEOUT_CALLS" | tr -d ' ')"
+[ "$_req_calls" = "1" ] || _req_why="$_req_why calls=$_req_calls (expected exactly 1);"
+[ ! -s "$TMPROOT/requirements-timeout.txt" ] \
+  || _req_why="$_req_why a verdict was written despite the timeout;"
+[ -f "$TMPROOT/requirements-timeout-stderr.log" ] \
+  || _req_why="$_req_why stderr log absent (the call never reached dispatch);"
 if [ "$req_timeout_rc" -ne 0 ] \
-   && [ "$req_timeout_elapsed" -lt "$(( 3500 * REVIEW_TIMEOUT_SCALE ))" ] \
+   && [ "$req_timeout_elapsed" -lt "$_req_bound" ] \
    && [ "$(wc -l < "$REQ_TIMEOUT_CALLS" | tr -d ' ')" = "1" ] \
    && [ ! -s "$TMPROOT/requirements-timeout.txt" ] \
    && [ -f "$TMPROOT/requirements-timeout-stderr.log" ] \
@@ -1243,7 +1260,7 @@ then
 else
     timeout_alive=false
     [ -n "$req_timeout_child" ] && kill -0 "$req_timeout_child" 2>/dev/null && timeout_alive=true
-    bad "requirements timeout escaped its budget, containment, or one-call contract (rc=$req_timeout_rc elapsed_ms=$req_timeout_elapsed child_alive=$timeout_alive)"
+    bad "requirements timeout:${_req_why:- child containment or the stderr assertion below failed} (rc=$req_timeout_rc elapsed_ms=$req_timeout_elapsed bound_ms=$_req_bound child_alive=$timeout_alive)"
 fi
 rm -f "$REQ_TIMEOUT_CHILD_PID"
 
