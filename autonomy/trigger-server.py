@@ -555,11 +555,13 @@ class Dispatcher:
         self._job_max = max(1, job_history)
         self._jobs = collections.OrderedDict()
         self._jobs_lock = threading.Lock()
-        # Monotonic count of builds dispatched, incremented for EVERY dispatch
-        # (webhook and remote-submit alike). Guards proof attribution: the
-        # pointer is per-working-directory, so it only identifies a job when no
-        # other build was dispatched after that job started.
-        self._dispatch_seq = 0
+        # Proof-attribution bookkeeping. The proof pointer is global to the
+        # working directory, so a receipt only identifies a job when that job
+        # was the only build that could have written it. All three are updated
+        # on EVERY dispatch (webhook and remote-submit alike) under _jobs_lock.
+        self._dispatch_seq = 0    # monotonic count of dispatches
+        self._pending = 0         # dispatches with no receipt seen yet
+        self._last_pointer = read_proof_pointer()
         # Idempotency: remember recently seen GitHub delivery IDs so a
         # redelivered webhook (GitHub retries on non-2xx, and operators can
         # manually redeliver) does not dispatch the same build twice. Bounded
@@ -620,10 +622,23 @@ class Dispatcher:
         """
         with self._jobs_lock:
             self._dispatch_seq += 1
+            # A build whose receipt has not yet appeared stays PENDING. While
+            # any earlier dispatch is pending, a pointer change is ambiguous:
+            # it could be that build finishing late rather than this one. The
+            # snapshot is only taken when this job is the sole pending build.
+            pointer = read_proof_pointer()
+            if pointer != self._last_pointer:
+                # Every pending build's receipt could be the one that just
+                # landed, so none of them can claim it, and the slate clears.
+                self._last_pointer = pointer
+                self._pending = 0
+            sole = self._pending == 0
+            self._pending += 1
             entry = self._jobs.get(job_id) if job_id else None
             if entry is not None:
-                entry["_proof_before"] = read_proof_pointer()
+                entry["_proof_before"] = pointer
                 entry["_proof_seq"] = self._dispatch_seq
+                entry["_proof_sole"] = sole
 
     def _resolve_proof_id(self, entry):
         """Attribute the current proof pointer to `entry`, or refuse to guess.
@@ -647,7 +662,13 @@ class Dispatcher:
         seq = entry.get("_proof_seq")
         if seq is None:
             return "", "this job was not dispatched with proof tracking"
-        if seq != self._dispatch_seq:
+        # Attributable only when this job was the sole pending build at
+        # dispatch (nothing earlier could still write a receipt) AND nothing
+        # has been dispatched since (nothing later could have written the one
+        # we are about to read). Either alone is insufficient: without the
+        # first, a second job claims the first job's receipt; without the
+        # second, a job claims a receipt a later build produced.
+        if not entry.get("_proof_sole") or seq != self._dispatch_seq:
             return "", (
                 "another build was dispatched during this job's window, so "
                 "the proof pointer cannot be attributed to this job"

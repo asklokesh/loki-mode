@@ -718,18 +718,35 @@ class TestJobProofEndpoint(_JobsTestBase):
         """Submit a job whose fake build writes a receipt, and return its id."""
         tmpdir = self.tmpdir
 
-        def fake_run(args, dry_run=False):
+        # THE TIMING THAT MATTERS. handle_job_event dispatches `loki start
+        # --detach`, which returns as soon as the child forks; the build then
+        # runs for minutes and writes its receipt at the very END. A fixture
+        # that writes the proof inline would make the receipt appear before the
+        # dispatch returns -- and an implementation that resolved attribution
+        # at dispatch-return would pass that fixture while 404-ing on every
+        # real build. So the write happens on a timer, AFTER fake_run returns.
+        done = threading.Event()
+
+        def write_later():
             _write_proof(tmpdir, run_id, proof, set_pointer=set_pointer)
+            done.set()
+
+        def fake_run(args, dry_run=False):
+            threading.Timer(0.2, write_later).start()
             self.fired.set()
             return True
 
         patch.object(ts, "run_loki_command", side_effect=fake_run).start()
+        self.addCleanup(done.wait, 5)
         srv = self.start(workers=1)
         status, data = srv.submit("./prd.md")
         self.assertEqual(status, 202)
         job_id = json.loads(data)["id"]
         self.assertTrue(self.fired.wait(timeout=10))
         self.disp.queue.join()
+        # Wait for the receipt the detached "build" writes after dispatch
+        # returned, mirroring a client that polls until the job is terminal.
+        self.assertTrue(done.wait(timeout=10))
         return srv, job_id
 
     def test_fail_closed_without_a_token(self):
@@ -835,18 +852,14 @@ class TestJobProofEndpoint(_JobsTestBase):
         _, data = srv.submit("./prd.md")
         job_id = json.loads(data)["id"]
         self.assertTrue(self.fired.wait(timeout=10))
-        self.disp._begin_proof_window(job_id)
-        try:
-            self.assertIn("_proof_before", self.disp._jobs[job_id],
-                          "test premise: the internal key should be present here")
-            _, body = srv.request(
-                "GET", "/jobs/%s" % job_id,
-                headers={"Authorization": "Bearer " + API_TOKEN})
-            for key in json.loads(body):
-                self.assertFalse(key.startswith("_"),
-                                 "internal key %r leaked into the status API" % key)
-        finally:
-            self.disp._end_proof_window(job_id)
+        self.assertIn("_proof_before", self.disp._jobs[job_id],
+                      "test premise: the internal key should be present here")
+        _, body = srv.request(
+            "GET", "/jobs/%s" % job_id,
+            headers={"Authorization": "Bearer " + API_TOKEN})
+        for key in json.loads(body):
+            self.assertFalse(key.startswith("_"),
+                             "internal key %r leaked into the status API" % key)
 
 
 class TestProofAttributionUnderConcurrency(unittest.TestCase):
@@ -866,42 +879,71 @@ class TestProofAttributionUnderConcurrency(unittest.TestCase):
     def tearDown(self):
         os.chdir(self.orig_cwd)
 
-    def test_overlapping_window_refuses_to_attribute(self):
+    def test_overlapping_jobs_refuse_to_attribute(self):
         disp = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
         try:
             disp.record_job("job-a", "queued")
             disp.record_job("job-b", "queued")
-            # Both jobs run concurrently; a build writes a receipt in between.
+            # Two builds dispatched, then a receipt appears. It belongs to
+            # whichever finished last, which nobody here can know.
             disp._begin_proof_window("job-a")
             disp._begin_proof_window("job-b")
             _write_proof(self.tmpdir, "run-x", {"run_id": "x"})
-            disp._end_proof_window("job-b")
-            disp._end_proof_window("job-a")
-            self.assertEqual(disp.get_job_proof_id("job-a"), "")
-            self.assertEqual(disp.get_job_proof_id("job-b"), "")
-            self.assertIn("shared", disp.get_job("job-a")["proof_unavailable"])
+            for job in ("job-a", "job-b"):
+                run_id, reason = disp.get_job_proof_id(job)
+                self.assertEqual(run_id, "", "%s was misattributed" % job)
+            self.assertIn("another build", disp.get_job_proof_id("job-a")[1])
         finally:
             disp.shutdown()
 
-    def test_exclusive_window_attributes_the_new_pointer(self):
+    def test_a_webhook_build_also_spoils_attribution(self):
+        # THE HOLE A JOB-ONLY COUNTER LEAVES. Webhook dispatches carry no
+        # job_id, but they run `loki start` in the same working directory and
+        # write the same global pointer. Uncounted, a webhook build finishing
+        # during a submitted job's window would be handed to that submitter as
+        # their own evidence.
         disp = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
         try:
             disp.record_job("job-a", "queued")
             disp._begin_proof_window("job-a")
+            disp._begin_proof_window(None)  # a webhook build, no job id
+            _write_proof(self.tmpdir, "run-webhook", {"run_id": "webhook"})
+            run_id, reason = disp.get_job_proof_id("job-a")
+            self.assertEqual(run_id, "",
+                             "a webhook build's receipt was attributed to a job")
+            self.assertIn("another build", reason)
+        finally:
+            disp.shutdown()
+
+    def test_uncontended_window_attributes_a_receipt_written_later(self):
+        # The receipt appears well AFTER dispatch returns, which is how a
+        # detached build behaves. Resolution is lazy, so this still attributes.
+        disp = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
+        try:
+            disp.record_job("job-a", "queued")
+            disp._begin_proof_window("job-a")
+            self.assertEqual(disp.get_job_proof_id("job-a")[0], "",
+                             "attributed a receipt before one existed")
             _write_proof(self.tmpdir, "run-x", {"run_id": "x"})
-            disp._end_proof_window("job-a")
-            self.assertEqual(disp.get_job_proof_id("job-a"), "run-x")
+            self.assertEqual(disp.get_job_proof_id("job-a")[0], "run-x")
         finally:
             disp.shutdown()
 
     def test_corrupt_pointer_cannot_name_an_arbitrary_path(self):
         # The pointer is server-written, not request-supplied, so this is
-        # defense in depth -- but a corrupt pointer must not traverse.
+        # defense in depth -- but a corrupt pointer must not traverse. ".." is
+        # the sharp case: it passes an alphabet check yet resolves to
+        # .loki/proof.json, one level ABOVE the proofs directory.
         state = Path(self.tmpdir) / ".loki" / "state"
         state.mkdir(parents=True, exist_ok=True)
         (state / "last-proof-id.txt").write_text("../../../etc")
         self.assertEqual(ts.read_proof_pointer(), "../../../etc")
         self.assertIsNone(ts.read_proof("../../../etc"))
+        loki = Path(self.tmpdir) / ".loki"
+        (loki / "proofs").mkdir(parents=True, exist_ok=True)
+        (loki / "proof.json").write_text('{"run_id": "escaped"}')
+        self.assertIsNone(ts.read_proof(".."))
+        self.assertIsNone(ts.read_proof("."))
 
 
 if __name__ == "__main__":
