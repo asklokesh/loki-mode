@@ -1,0 +1,309 @@
+# Loki Mode build service.
+#
+# Two halves:
+#   receiver -- autonomy/trigger-server.py. Validates a GitHub webhook HMAC and
+#               enqueues a build. Never runs a build itself.
+#   worker   -- autonomy/queue-consumer.sh. Pulls one item at a time and runs
+#               `loki start <spec>`. THIS is where builds actually happen, and
+#               where the scaling knob lives (worker.replicaCount).
+
+image:
+  repository: asklokesh/loki-mode
+  tag: ""          # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# ---------------------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------------------
+# NOTHING here is baked into an image. A credential in a shared image is
+# readable by every job that image ever runs, so all three land as Secret keys
+# mounted via secretKeyRef at pod start.
+#
+# The webhook HMAC and the API token are SEPARATE keys on purpose. They
+# authenticate different callers (GitHub vs. a human/CI calling POST /jobs);
+# sharing one value would mean rotating the webhook secret revokes every API
+# client, and a leaked API token would let the holder forge GitHub webhooks.
+secrets:
+  # Set create=false and point existingSecret at a Secret you manage out of band
+  # (sealed-secrets, External Secrets Operator, Vault injector). Preferred for
+  # production: values.yaml tends to end up in git.
+  create: true
+  existingSecret: ""
+
+  # GitHub webhook HMAC. Read by trigger-server.py as GITHUB_WEBHOOK_SECRET.
+  # If this is empty the receiver still starts (so /health stays up) but rejects
+  # EVERY webhook with 503. That is deliberate: it never silently accepts
+  # unauthenticated webhooks.
+  githubWebhookSecret: ""
+
+  # Bearer token for POST /jobs (remote submit). Separate from the webhook HMAC
+  # on purpose: the HMAC authenticates GitHub, this authenticates a human
+  # operator, so holding one must never grant the other. Empty means /jobs is
+  # rejected with 503 rather than left open.
+  apiToken: ""
+
+  # Provider credential for the builds themselves. Worker-only -- the receiver
+  # never needs it, and not giving it one means a receiver compromise does not
+  # hand over your provider account.
+  anthropicApiKey: ""
+
+  # Optional: token used by builds for git push / PR creation.
+  githubToken: ""
+
+# ---------------------------------------------------------------------------
+# Receiver
+# ---------------------------------------------------------------------------
+receiver:
+  enabled: true
+  replicaCount: 2   # stateless; two for availability across a node drain
+
+  # 7373 is trigger-server.py's default port (--port overrides it). The image
+  # EXPOSEs 57374, which is the dashboard, NOT this.
+  port: 7373
+
+  service:
+    type: ClusterIP
+    port: 80
+
+  # Probes hit GET /health, which trigger-server.py serves at :456 and which
+  # returns 200 without touching the queue or the provider. /health and /status
+  # are the only GET routes; everything else 404s.
+  livenessProbe:
+    httpGet: { path: /health, port: http }
+    initialDelaySeconds: 10
+    periodSeconds: 20
+  readinessProbe:
+    httpGet: { path: /health, port: http }
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+  # The receiver only parses JSON and pushes to a queue. 30s is plenty.
+  terminationGracePeriodSeconds: 30
+
+  # Worker threads draining the receiver's in-process dispatch queue, and the
+  # bound on that queue. Full queue => 503 (shed load) rather than forking
+  # unbounded builds during a webhook storm.
+  workers: 4
+  queueSize: 64
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    host: loki.example.com
+    path: /webhook
+    pathType: Prefix
+    tls: []
+
+# ---------------------------------------------------------------------------
+# Worker
+# ---------------------------------------------------------------------------
+worker:
+  enabled: true
+
+  # THE scaling knob. Each replica runs one build at a time (see concurrency).
+  # Want more parallel builds: raise this, subject to the tenancy note below.
+  replicaCount: 2
+
+  # ONE TENANT PER WORKER.
+  #
+  # A worker checks out a submitter's source into its own filesystem. If one
+  # worker serves two submitters, the second build starts on a filesystem the
+  # first one wrote -- source, credentials in a .env, and build output all leak
+  # across the boundary. This is why self-hosted-runner guidance is one user per
+  # runner, and the same reasoning applies to a shared build service.
+  #
+  # Concurrency is fixed at 1 per pod by the reference consumer, which pulls one
+  # item and runs it to completion. Raising parallelism means adding replicas,
+  # not adding concurrency inside a pod.
+  #
+  # If your submitters are not mutually trusting, replicas alone are NOT enough:
+  # any worker may pick up any item. Run a separate release per tenant, each
+  # with its own queue key and its own namespace.
+  concurrency: 1
+
+  # GRACE PERIOD MUST EXCEED THE DRAIN BUDGET.
+  #
+  # On SIGTERM the consumer sets a stop flag and lets the CURRENT BUILD RUN TO
+  # COMPLETION before exiting, so the drain budget here is a whole Loki build --
+  # minutes to hours, not seconds. Kubernetes then SIGKILLs at the end of the
+  # grace period regardless.
+  #
+  # At the 30s Kubernetes default, every rolling update and node drain would
+  # SIGKILL a build mid-flight. On the redis backend that item was already
+  # popped, so the build is not requeued and not retried -- the submitter's
+  # build just vanishes, with no error anywhere. 2h is a deliberate ceiling:
+  # set it above your p99 build time.
+  terminationGracePeriodSeconds: 7200
+
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits:   { cpu: "2",  memory: 4Gi }
+
+  # Scratch space for the build. emptyDir is per-pod and dies with the pod,
+  # which is what you want for tenancy: nothing survives to the next build.
+  # Size it above your largest checkout plus node_modules.
+  workspace:
+    sizeLimit: 20Gi
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ---------------------------------------------------------------------------
+# Queue
+# ---------------------------------------------------------------------------
+queue:
+  # redis | file. Env var: LOKI_QUEUE_BACKEND.
+  #
+  # HONESTY, straight from autonomy/queue-consumer.sh:29-40 -- the shipped redis
+  # backend is AT-MOST-ONCE. It LPOPs an item and then runs it, with no
+  # visibility timeout and no dead-letter requeue. If a worker dies after the
+  # pop, that build is gone from the queue and nothing retries it.
+  #
+  # The file backend is at-least-once by hand: a crashed build leaves its item
+  # in processing/ for a human to re-drive. It needs a RWX volume shared by
+  # every worker, and it is not load-balanced.
+  #
+  # If you need real at-least-once delivery, bring a broker that has it and
+  # override queue.command with your own consumer.
+  backend: redis
+
+  # Redis list key (LOKI_QUEUE_KEY). One key per tenant if you run a release per
+  # tenant -- see the tenancy note above.
+  key: loki-builds
+
+  # Redis connection (LOKI_QUEUE_URL). Empty => the in-chart Redis below.
+  url: ""
+
+  # File-backend root (LOKI_QUEUE_DIR). Only used when backend=file.
+  dir: /workspace/.loki/queue
+
+  # Loop-mode tuning. pollSec is the file backend's empty-poll sleep; blockSec is
+  # the redis BLPOP block timeout (it also bounds how long a shutdown waits when
+  # the queue is idle).
+  pollSec: 5
+  blockSec: 5
+
+  # Override to run your own consumer instead of the reference one -- this is
+  # the documented hook for SQS, Pub/Sub, RabbitMQ, Kafka, none of which are
+  # implemented here.
+  command: []
+
+# In-chart Redis. Turn this off and set queue.url to use your own.
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false   # ClusterIP-only inside the namespace; enable if you expose it
+  master:
+    persistence:
+      enabled: true
+      size: 8Gi
+
+# ---------------------------------------------------------------------------
+# Triggers
+# ---------------------------------------------------------------------------
+# IMPORTANT, and different from what you may expect: the receiver dispatches on
+# whichever events GitHub actually delivers. It does NOT filter by an allowlist
+# at dispatch time. So these values are enforced by what you subscribe the
+# GitHub webhook to, NOT by the receiver refusing the event.
+#
+# Setting pullRequest=false below therefore does two things: it keeps the PR
+# event out of the rendered config, and -- the part that actually enforces it --
+# docs/DEPLOYMENT.md tells you not to tick "Pull requests" when you create the
+# webhook. If you subscribe to PR events anyway, they WILL fire regardless of
+# this value.
+triggers:
+  # Issue opened -> loki start owner/repo#N --pr --detach
+  issues: true
+
+  # PR synchronized (new commits pushed) -> loki start owner/repo#N --detach
+  #
+  # OFF BY DEFAULT. This is the fastest way to surprise a team with spend: every
+  # push to every open PR starts a build. Turn it on deliberately, once you know
+  # what your PR volume costs.
+  pullRequest: false
+
+  # Workflow run completed with conclusion=failure -> loki start --detach
+  workflowRun: true
+
+# ---------------------------------------------------------------------------
+# Network policy
+# ---------------------------------------------------------------------------
+networkPolicy:
+  # Default-deny egress on the worker, with an explicit deny for the cloud
+  # metadata endpoint.
+  #
+  # 169.254.169.254 needs its own rule because it is LINK-LOCAL: it is not
+  # inside any pod or service CIDR, so a policy written in terms of subnets
+  # never intercepts it. Reaching it from a build gets you the node's instance
+  # credentials, which is a container escape into your cloud account.
+  #
+  # WHAT THIS CHART CANNOT DO: a NetworkPolicy is enforced by your CNI. If your
+  # cluster runs a CNI without policy support (or none), applying this object
+  # silently does NOTHING -- it is accepted by the API server and never
+  # enforced. It also cannot constrain traffic once it leaves the cluster.
+  # Egress filtering to the internet belongs in a NAT/firewall/proxy you run.
+  # Verify enforcement rather than assuming it.
+  enabled: false
+
+  # Egress the worker genuinely needs. Default-deny with these holes punched.
+  allowDNS: true
+
+  # Provider APIs, git remotes, package registries. Empty means the worker can
+  # reach nothing outside the cluster, which will break most real builds --
+  # populate it for your environment.
+  allowedEgressCIDRs: []
+
+  # Also apply a default-deny egress policy to the receiver. Off by default: the
+  # receiver needs to reach the queue only, but a build-notification callback
+  # would break under it.
+  restrictReceiver: false
+
+# ---------------------------------------------------------------------------
+# Pod security
+# ---------------------------------------------------------------------------
+# Non-root, no privilege escalation, all capabilities dropped. UID 1000 is the
+# `loki` user the image creates.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  # readOnlyRootFilesystem is set per-Deployment in the templates, because both
+  # processes write to disk by design: the receiver writes .loki/triggers/
+  # (config.json, events.log, server.pid) relative to its cwd, and the worker
+  # writes the whole build tree. Both get a writable emptyDir mounted at the
+  # paths they need, so the root filesystem itself stays read-only.
+  readOnlyRootFilesystem: true
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  # The pods make no Kubernetes API calls. Not mounting the token means a
+  # compromised build has no cluster credential to find.
+  automountServiceAccountToken: false
+
+# Extra env for both Deployments, e.g. LOKI_PROVIDER or a proxy setting.
+extraEnv: []

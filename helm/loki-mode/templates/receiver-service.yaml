@@ -1,0 +1,53 @@
+{{- if .Values.receiver.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "loki-mode.fullname" . }}-receiver
+  labels:
+    {{- include "loki-mode.labels" . | nindent 4 }}
+    app.kubernetes.io/component: receiver
+spec:
+  # ClusterIP by default. GitHub has to reach /webhook from the internet, but
+  # that should go through an Ingress with TLS (see receiver.ingress), not a
+  # LoadBalancer publishing the receiver directly.
+  type: {{ .Values.receiver.service.type }}
+  ports:
+    - port: {{ .Values.receiver.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "loki-mode.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: receiver
+{{- end }}
+{{- if and .Values.receiver.enabled .Values.receiver.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "loki-mode.fullname" . }}-receiver
+  labels:
+    {{- include "loki-mode.labels" . | nindent 4 }}
+    app.kubernetes.io/component: receiver
+  {{- with .Values.receiver.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.receiver.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.receiver.ingress.tls }}
+  tls: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.receiver.ingress.host | quote }}
+      http:
+        paths:
+          - path: {{ .Values.receiver.ingress.path }}
+            pathType: {{ .Values.receiver.ingress.pathType }}
+            backend:
+              service:
+                name: {{ include "loki-mode.fullname" . }}-receiver
+                port:
+                  number: {{ .Values.receiver.service.port }}
+{{- end }}

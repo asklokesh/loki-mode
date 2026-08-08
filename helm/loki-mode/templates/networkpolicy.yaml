@@ -1,0 +1,119 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- /*
+  DEFAULT-DENY EGRESS FOR THE WORKER, PLUS AN EXPLICIT METADATA-ENDPOINT BLOCK.
+
+  How this is expressed: NetworkPolicy has no deny rules. A policy that selects
+  a pod and lists Egress makes everything not listed denied, so the "block" on
+  169.254.169.254 is written as an `except` carved out of the allowed range.
+
+  Why the metadata endpoint needs naming at all: 169.254.169.254 is link-local.
+  It is not in any pod CIDR, service CIDR or VPC subnet, so a policy written in
+  terms of subnets never intercepts it -- a rule allowing "the VPC" leaves it
+  reachable. From a build, reaching it returns the NODE's instance credentials,
+  which turns an ordinary build into access to your cloud account. It has to be
+  excluded by address, explicitly, or it is not excluded.
+
+  WHAT THIS CHART CANNOT ENFORCE: a NetworkPolicy is enforced by the CNI. On a
+  cluster whose CNI has no policy support, the API server accepts this object
+  and NOTHING enforces it -- there is no error and no warning, so `kubectl get
+  networkpolicy` returning your policy is not evidence it is in effect. It also
+  stops at the cluster edge: it cannot filter traffic once it has left. Egress
+  control to the internet belongs in a NAT gateway, firewall or proxy you run.
+  Verify enforcement with an actual `curl 169.254.169.254` from a worker pod
+  before believing any of this.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "loki-mode.fullname" . }}-worker
+  labels:
+    {{- include "loki-mode.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "loki-mode.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  # Listing Egress with the rules below makes every unlisted destination denied.
+  policyTypes:
+    - Egress
+  egress:
+    {{- if .Values.networkPolicy.allowDNS }}
+    # DNS. Without this the worker cannot resolve anything, including Redis.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- end }}
+    {{- if .Values.redis.enabled }}
+    # The in-chart queue. The worker's one required in-cluster peer.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    {{- end }}
+    {{- range .Values.networkPolicy.allowedEgressCIDRs }}
+    # Operator-allowed egress: provider APIs, git remotes, package registries.
+    # Every entry excludes the link-local range so a broad CIDR (0.0.0.0/0 being
+    # the common one) cannot re-open the metadata endpoint by accident. This is
+    # the case the `except` exists for: an allow rule wide enough to be useful
+    # is also wide enough to cover 169.254.0.0/16.
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+            except:
+              - 169.254.169.254/32
+              - 169.254.0.0/16
+    {{- end }}
+{{- if .Values.networkPolicy.restrictReceiver }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "loki-mode.fullname" . }}-receiver
+  labels:
+    {{- include "loki-mode.labels" . | nindent 4 }}
+    app.kubernetes.io/component: receiver
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "loki-mode.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: receiver
+  policyTypes:
+    - Egress
+  egress:
+    {{- if .Values.networkPolicy.allowDNS }}
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- end }}
+    {{- if .Values.redis.enabled }}
+    # The receiver enqueues and does nothing else outbound.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    {{- end }}
+{{- end }}
+{{- end }}

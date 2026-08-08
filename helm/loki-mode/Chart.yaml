@@ -1,0 +1,30 @@
+apiVersion: v2
+name: loki-mode
+description: Loki Mode build service - a GitHub webhook receiver that enqueues builds and a worker pool that consumes them.
+type: application
+
+# Chart version is independent of the application version. Bump this when the
+# templates change; bump appVersion when you point at a new loki-mode image.
+version: 0.1.0
+appVersion: "9.17.2"
+
+home: https://www.autonomi.dev/
+sources:
+  - https://github.com/asklokesh/loki-mode
+
+maintainers:
+  - name: Autonomi
+
+keywords:
+  - loki-mode
+  - autonomous-agent
+  - ci
+
+dependencies:
+  # Redis is the queue between the receiver and the worker pool. Disable it and
+  # set queue.backend=file if you would rather run the file backend on a PVC, or
+  # point queue.url at a Redis you already operate.
+  - name: redis
+    version: "~20.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled

@@ -1,0 +1,128 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "loki-mode.fullname" . }}-worker
+  labels:
+    {{- include "loki-mode.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  # ONE TENANT PER WORKER: replicaCount is the parallelism knob, and it is a
+  # tenancy decision before it is a performance one. Each pod runs exactly one
+  # build at a time on a filesystem no other build touches. Adding replicas adds
+  # parallel builds without letting two builds share a checkout.
+  #
+  # Replicas alone do NOT isolate mutually-untrusting submitters: any worker can
+  # claim any queue item, so tenant A's build may land on a pod that just ran
+  # tenant B's. For that, run one release per tenant with its own queue key and
+  # namespace.
+  replicas: {{ .Values.worker.replicaCount }}
+  # Recreate, not RollingUpdate: a rolling update would start new workers while
+  # old ones still hold in-flight builds, doubling concurrent builds during
+  # every deploy and, on the at-most-once redis backend, competing for items.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "loki-mode.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "loki-mode.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "loki-mode.serviceAccountName" . }}
+      # A build runs untrusted-ish code. Not mounting the API token means a
+      # build that goes wrong has no cluster credential lying around to find.
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # GRACE PERIOD MUST EXCEED THE DRAIN BUDGET.
+      #
+      # queue-consumer.sh traps SIGTERM by setting a stop flag and letting the
+      # CURRENT BUILD FINISH, so the drain budget is one whole build. Kubernetes
+      # SIGKILLs unconditionally when the grace period expires.
+      #
+      # The 30s Kubernetes default would SIGKILL a running build on every
+      # rolling update, node drain, autoscaler scale-in and spot reclaim. On the
+      # redis backend the item was already popped, so nothing requeues it: the
+      # submitter's build disappears with no error recorded anywhere. That
+      # silent loss is the failure this value exists to prevent -- set it above
+      # your p99 build time, not to a round number that looks tidy.
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
+      containers:
+        - name: worker
+          image: {{ include "loki-mode.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # The image ENTRYPOINT is `loki`; the consumer is a separate script.
+          # Override queue.command to run your own consumer against a broker
+          # this reference implementation does not support.
+          {{- if .Values.queue.command }}
+          command: {{- toYaml .Values.queue.command | nindent 12 }}
+          {{- else }}
+          command: ["bash", "/opt/loki-mode/autonomy/queue-consumer.sh"]
+          {{- end }}
+          env:
+            # NO LONG-LIVED CREDENTIALS IN THE IMAGE. Injected at pod start, so
+            # rotating the Secret and restarting is the whole rotation, and the
+            # published image contains nothing worth stealing.
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "loki-mode.secretName" . }}
+                  key: anthropic-api-key
+                  optional: true
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "loki-mode.secretName" . }}
+                  key: github-token
+                  optional: true
+            # Loop mode: pull items until SIGTERM. Set to 1 only if you are
+            # driving one-item-per-Job from KEDA instead of a Deployment.
+            - name: LOKI_QUEUE_ONESHOT
+              value: "0"
+            {{- include "loki-mode.queueEnv" . | nindent 12 }}
+            - name: LOKI_NOTIFICATIONS
+              value: "false"
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources: {{- toYaml .Values.worker.resources | nindent 12 }}
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          workingDir: /workspace
+          volumeMounts:
+            # The build tree. Read-only root filesystem is kept by giving the
+            # build its own writable mount rather than by pretending a build
+            # does not write.
+            - name: workspace
+              mountPath: /workspace
+            - name: tmp
+              mountPath: /tmp
+            # HOME must be writable: tool caches and provider config land there.
+            - name: home
+              mountPath: /home/loki
+      volumes:
+        # emptyDir is the tenancy boundary made physical: it is created with the
+        # pod and destroyed with it, so one submitter's checkout cannot be read
+        # by the next build. A shared PVC here would undo one-tenant-per-worker.
+        - name: workspace
+          emptyDir:
+            sizeLimit: {{ .Values.worker.workspace.sizeLimit }}
+        - name: tmp
+          emptyDir: {}
+        - name: home
+          emptyDir: {}
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

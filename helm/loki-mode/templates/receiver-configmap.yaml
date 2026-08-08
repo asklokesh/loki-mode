@@ -1,0 +1,40 @@
+{{- if .Values.receiver.enabled }}
+{{- /*
+  Trigger configuration, rendered from .Values.triggers.
+
+  READ THIS BEFORE TRUSTING IT AS A CONTROL.
+
+  This ConfigMap records which events the deployment INTENDS to act on. The
+  receiver dispatches on whatever GitHub delivers and does not consult an
+  allowlist at dispatch time, so removing an event here does not make the
+  receiver refuse it.
+
+  What actually keeps the PR trigger off is the GitHub webhook subscription:
+  do not tick "Pull requests" when you create the webhook. docs/DEPLOYMENT.md
+  walks through it. This file is the declaration of intent and the thing to
+  diff when someone asks "why did that build start?", not the enforcement
+  point. Treating it as enforcement is how you get a surprise bill.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "loki-mode.fullname" . }}-triggers
+  labels:
+    {{- include "loki-mode.labels" . | nindent 4 }}
+    app.kubernetes.io/component: receiver
+data:
+  # The GitHub webhook events this deployment intends to act on, and the single
+  # action of each that actually fires a build.
+  intended-events: |
+    {{- if .Values.triggers.issues }}
+    issues (action=opened) -> loki start owner/repo#N --pr --detach
+    {{- end }}
+    {{- if .Values.triggers.pullRequest }}
+    pull_request (action=synchronize) -> loki start owner/repo#N --detach
+    {{- end }}
+    {{- if .Values.triggers.workflowRun }}
+    workflow_run (action=completed, conclusion=failure) -> loki start --detach
+    {{- end }}
+  pull-request-trigger-enabled: {{ .Values.triggers.pullRequest | quote }}
+  enforcement: "github-webhook-subscription"
+{{- end }}

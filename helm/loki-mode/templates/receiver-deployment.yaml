@@ -1,0 +1,113 @@
+{{- if .Values.receiver.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "loki-mode.fullname" . }}-receiver
+  labels:
+    {{- include "loki-mode.labels" . | nindent 4 }}
+    app.kubernetes.io/component: receiver
+spec:
+  replicas: {{ .Values.receiver.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "loki-mode.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: receiver
+  template:
+    metadata:
+      labels:
+        {{- include "loki-mode.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: receiver
+      annotations:
+        # Roll the receiver when the trigger config changes, so an operator
+        # flipping triggers.pullRequest sees it take effect without a manual
+        # restart.
+        checksum/config: {{ include (print $.Template.BasePath "/receiver-configmap.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "loki-mode.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # The receiver parses JSON and pushes to a queue; it holds nothing that
+      # needs draining, so the default 30s is genuinely enough here. Contrast
+      # the worker, whose drain budget is an entire build.
+      terminationGracePeriodSeconds: {{ .Values.receiver.terminationGracePeriodSeconds }}
+      containers:
+        - name: receiver
+          image: {{ include "loki-mode.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # The image ENTRYPOINT is `loki`, which does not start the webhook
+          # server, and `loki trigger start` nohups it into the background and
+          # returns -- which would exit PID 1 immediately. Run the server
+          # directly so it stays in the foreground and the container lifecycle
+          # tracks the actual process.
+          command: ["python3", "/opt/loki-mode/autonomy/trigger-server.py"]
+          args:
+            - "--port"
+            - {{ .Values.receiver.port | quote }}
+            - "--workers"
+            - {{ .Values.receiver.workers | quote }}
+            - "--queue-size"
+            - {{ .Values.receiver.queueSize | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.receiver.port }}
+              protocol: TCP
+          env:
+            # The secret never appears in argv (where any process on the node
+            # could read it from /proc) -- the server reads this env var when no
+            # --secret flag is given.
+            - name: GITHUB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "loki-mode.secretName" . }}
+                  key: github-webhook-secret
+                  optional: true
+            # Bearer token for POST /jobs, mounted ahead of the endpoint landing.
+            - name: LOKI_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "loki-mode.secretName" . }}
+                  key: api-token
+                  optional: true
+            {{- include "loki-mode.queueEnv" . | nindent 12 }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          livenessProbe: {{- toYaml .Values.receiver.livenessProbe | nindent 12 }}
+          readinessProbe: {{- toYaml .Values.receiver.readinessProbe | nindent 12 }}
+          resources: {{- toYaml .Values.receiver.resources | nindent 12 }}
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            # trigger-server.py resolves .loki/triggers RELATIVE TO CWD and
+            # writes config.json, events.log and server.pid there at startup.
+            # With a read-only root filesystem it needs a writable mount at its
+            # working directory or it crashes on the first write.
+            - name: state
+              mountPath: /workspace
+            - name: tmp
+              mountPath: /tmp
+            - name: trigger-config
+              mountPath: /etc/loki-mode
+              readOnly: true
+      volumes:
+        # emptyDir, not a PVC: receiver state is a log and a pidfile, both
+        # per-pod and worthless after restart.
+        - name: state
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: trigger-config
+          configMap:
+            name: {{ include "loki-mode.fullname" . }}-triggers
+      {{- with .Values.receiver.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.receiver.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.receiver.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -7,10 +7,23 @@ response. Supports constant-time HMAC-SHA256 signature validation, a bounded
 worker queue so a webhook storm cannot fork unbounded builds, child-process
 reaping (no zombies), and event logging.
 
+Also serves an authenticated remote-submit API so a local `loki` client can
+enqueue a build against a deployed cluster:
+
+    POST /jobs        {"spec": "<ref-or-brief>"}  -> 202 {"id": ...}
+    GET  /jobs/<id>                               -> job status
+
 Security note: a webhook secret is REQUIRED. If no secret is configured the
 server still starts (so /health and /status stay available for operators), but
 every webhook POST is rejected with 503 and an audit log line. The server never
 silently accepts unauthenticated webhooks.
+
+The SAME rule holds for the /jobs API, with a SEPARATE credential: it is
+authenticated by a bearer token (LOKI_API_TOKEN / LOKI_API_TOKEN_FILE), never by
+the webhook HMAC. The two have different threat models -- the HMAC authenticates
+GitHub, the bearer token authenticates a human operator -- so holding one must
+never grant the other. If no API token is configured the server still starts but
+every /jobs request is rejected with 503 and an audit log line.
 
 Usage:
     python3 autonomy/trigger-server.py [--port PORT] [--secret SECRET] [--dry-run]
@@ -27,6 +40,7 @@ import logging
 import os
 import queue
 import re
+import secrets
 import socket
 import socketserver
 import subprocess
@@ -68,6 +82,61 @@ def valid_issue_number(number):
     a crafted payload) is rejected so only a clean integer reaches the ref.
     """
     return isinstance(number, int) and not isinstance(number, bool) and number > 0
+
+
+# Remote-submit ("/jobs") limits. A remotely-submitted spec is UNTRUSTED input:
+# it is passed to `loki start` as a single argv element (never a shell string),
+# and must additionally survive the same rigor as REPO_FULL_NAME_RE above.
+MAX_SPEC_BYTES = 4096
+
+# Control characters are rejected outright: a spec is a ref, path or one-line
+# brief, so NUL/CR/LF/ESC in it is either an injection attempt or a mistake.
+CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+# Pseudo-event name for a remotely-submitted job. Deliberately NOT a GitHub
+# event name, and explicitly refused on the /webhook path (see do_POST): a
+# holder of the webhook HMAC must never be able to submit an arbitrary spec by
+# sending X-GitHub-Event: loki_job. That is the whole point of the separate
+# credential.
+JOB_EVENT = "loki_job"
+
+# How many recent job records to keep for GET /jobs/<id>. Bounded so a submit
+# storm cannot grow memory without limit.
+DEFAULT_JOB_HISTORY = 1024
+
+
+def valid_spec(spec):
+    """Return True if spec is a safe `loki start` argument.
+
+    Must be a non-empty str (a dict/list/int is rejected outright rather than
+    coerced, exactly like valid_issue_number), within the size cap, free of
+    control characters, and not dash-leading -- a leading dash would be parsed
+    by `loki start` as a CLI FLAG, the same injection REPO_FULL_NAME_RE guards
+    against on the webhook path.
+    """
+    if not isinstance(spec, str):
+        return False
+    spec = spec.strip()
+    if not spec:
+        return False
+    if len(spec.encode("utf-8")) > MAX_SPEC_BYTES:
+        return False
+    if CONTROL_CHARS_RE.search(spec):
+        return False
+    if spec.startswith("-"):
+        return False
+    return True
+
+
+def constant_time_equals(a, b):
+    """Constant-time string compare that never raises on odd input.
+
+    hmac.compare_digest raises TypeError on a non-ASCII str, so both sides are
+    encoded to bytes first: a weird header must produce a 401, not a 500.
+    """
+    if not isinstance(a, str) or not isinstance(b, str):
+        return False
+    return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
 
 
 # How long to wait for a dispatched `loki start` to finish before we stop
@@ -112,6 +181,29 @@ def load_config():
     return defaults
 
 
+def load_api_token():
+    """Return the /jobs bearer token from env or a mounted file ("" if unset).
+
+    Sources, in order: LOKI_API_TOKEN, then the file at LOKI_API_TOKEN_FILE
+    (the normal Kubernetes mounted-secret path). Deliberately NOT a CLI flag --
+    an argv secret is readable by any local user via the process list -- and
+    never persisted to config.json.
+
+    A mounted secret file usually ends with a newline, so the contents are
+    stripped; otherwise every comparison would fail.
+    """
+    token = os.environ.get("LOKI_API_TOKEN", "").strip()
+    if token:
+        return token
+    token_file = os.environ.get("LOKI_API_TOKEN_FILE", "").strip()
+    if token_file:
+        try:
+            return Path(token_file).read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError) as e:
+            logging.error("Failed to read LOKI_API_TOKEN_FILE %s: %s", token_file, e)
+    return ""
+
+
 def save_config(config):
     """Save trigger config to .loki/triggers/config.json."""
     config_path = get_loki_dir() / "config.json"
@@ -124,10 +216,15 @@ def save_config(config):
 _log_lock = threading.Lock()
 
 
+def _utc_now():
+    """UTC timestamp string shared by the event log and job records."""
+    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def log_event(event_type, action, payload_summary, status):
     """Append event to .loki/triggers/events.log (thread-safe)."""
     log_path = get_loki_dir() / "events.log"
-    timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    timestamp = _utc_now()
     entry = {
         "timestamp": timestamp,
         "event": event_type,
@@ -331,11 +428,34 @@ def handle_workflow_run_event(payload, dry_run=False):
     return summary, status
 
 
-# Map GitHub event name -> handler. Keeps do_POST routing declarative.
+def handle_job_event(payload, dry_run=False):
+    """Handle a remotely-submitted job: loki start <spec> --detach.
+
+    Runs on the same worker pool as the webhook handlers. The spec was already
+    validated by valid_spec() at admission; it is re-checked here so this
+    handler is safe no matter who calls it, and it is passed as a single argv
+    element -- never interpolated into a shell string.
+    """
+    spec = payload.get("spec")
+    if not valid_spec(spec):
+        return None, "rejected (invalid spec)"
+    args = ["start", spec.strip(), "--detach"]
+    summary = "job %s: %s" % (payload.get("job_id", "?"), spec.strip())
+    success = run_loki_command(args, dry_run=dry_run)
+    status = "fired" if success else "error"
+    if success:
+        send_notification("Trigger fired: %s" % summary)
+    return summary, status
+
+
+# Map event name -> handler. Keeps do_POST routing declarative. JOB_EVENT rides
+# the same table (and therefore the same bounded queue and worker pool) but is
+# explicitly refused on the /webhook path.
 EVENT_HANDLERS = {
     "issues": handle_issues_event,
     "pull_request": handle_pull_request_event,
     "workflow_run": handle_workflow_run_event,
+    JOB_EVENT: handle_job_event,
 }
 
 
@@ -370,9 +490,16 @@ class Dispatcher:
     """
 
     def __init__(self, workers=DEFAULT_WORKERS, queue_size=DEFAULT_QUEUE_SIZE,
-                 dry_run=False, dedup_size=DEFAULT_DEDUP_SIZE):
+                 dry_run=False, dedup_size=DEFAULT_DEDUP_SIZE,
+                 job_history=DEFAULT_JOB_HISTORY):
         self.dry_run = dry_run
         self.queue = queue.Queue(maxsize=max(1, queue_size))
+        # Job status for GET /jobs/<id>. Same bounded-FIFO idiom as the dedup
+        # cache below: oldest records are evicted so memory cannot grow without
+        # limit under a submit storm.
+        self._job_max = max(1, job_history)
+        self._jobs = collections.OrderedDict()
+        self._jobs_lock = threading.Lock()
         # Idempotency: remember recently seen GitHub delivery IDs so a
         # redelivered webhook (GitHub retries on non-2xx, and operators can
         # manually redeliver) does not dispatch the same build twice. Bounded
@@ -414,6 +541,26 @@ class Dispatcher:
                 self._seen_deliveries.popitem(last=False)
             return False
 
+    def record_job(self, job_id, status, summary=""):
+        """Create or update the status record for a remotely-submitted job."""
+        with self._jobs_lock:
+            entry = self._jobs.get(job_id)
+            if entry is None:
+                entry = {"id": job_id, "created": _utc_now()}
+                self._jobs[job_id] = entry
+                while len(self._jobs) > self._job_max:
+                    self._jobs.popitem(last=False)
+            entry["status"] = status
+            entry["updated"] = _utc_now()
+            if summary:
+                entry["summary"] = summary
+
+    def get_job(self, job_id):
+        """Return a copy of the job record, or None if unknown/evicted."""
+        with self._jobs_lock:
+            entry = self._jobs.get(job_id)
+            return dict(entry) if entry else None
+
     def submit(self, event_type, payload):
         """Enqueue an event. Returns True if accepted, False if the queue is full."""
         try:
@@ -430,7 +577,14 @@ class Dispatcher:
                 continue
             try:
                 event_type, payload = item
-                dispatch_event(event_type, payload, dry_run=self.dry_run)
+                job_id = payload.get("job_id") if isinstance(payload, dict) else None
+                if job_id:
+                    self.record_job(job_id, "running")
+                summary, status = dispatch_event(
+                    event_type, payload, dry_run=self.dry_run
+                )
+                if job_id:
+                    self.record_job(job_id, status, summary or "")
             finally:
                 self.queue.task_done()
 
@@ -444,6 +598,9 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
     # Set on the class in main() before the server starts.
     dry_run = False
     secret = ""
+    # Bearer token for the /jobs API. MUST be a different secret from `secret`
+    # above: one authenticates GitHub, the other authenticates a human.
+    api_token = ""
     dispatcher = None
 
     # Cap the body we will read so a huge POST cannot exhaust memory.
@@ -453,9 +610,11 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
         logging.info("%s - %s", self.address_string(), format % args)
 
     def do_GET(self):
-        if self.path == "/health":
+        # Strip any query string: do_GET matches paths exactly.
+        path = self.path.split("?", 1)[0]
+        if path == "/health":
             self._send_json(200, {"status": "ok", "service": "loki-trigger-server"})
-        elif self.path == "/status":
+        elif path == "/status":
             config = load_config()
             self._send_json(200, {
                 "status": "running",
@@ -463,56 +622,187 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
                 "port": config.get("port", 7373),
                 "enabled_events": config.get("enabled_events", []),
                 "secret_configured": bool(self.secret),
+                "api_token_configured": bool(self.api_token),
             })
+        elif path.startswith("/jobs/"):
+            self._handle_job_status(path[len("/jobs/"):])
         else:
             self._send_json(404, {"error": "not found"})
 
-    def do_POST(self):
-        if self.path != "/webhook":
-            self._send_json(404, {"error": "not found"})
-            return
+    def _check_api_auth(self):
+        """Authenticate a /jobs request. Returns True if the caller may proceed.
 
+        Sends the error response itself (503 / 401) and returns False otherwise,
+        so callers just `if not self._check_api_auth(): return`.
+
+        Fails closed exactly like the webhook path: with no API token configured
+        every /jobs request is rejected with 503 plus an audit line. It is never
+        satisfied by the webhook HMAC -- a different credential entirely.
+        """
+        if not self.api_token:
+            logging.warning(
+                "Rejecting /jobs request from %s: no API token configured "
+                "(set LOKI_API_TOKEN or LOKI_API_TOKEN_FILE to enable submits)",
+                self.address_string(),
+            )
+            log_event(JOB_EVENT, "", "", "rejected (no API token configured)")
+            self._send_json(503, {"error": "API token not configured"})
+            return False
+
+        header = self.headers.get("Authorization", "") or ""
+        prefix = "Bearer "
+        if not header.startswith(prefix):
+            log_event(JOB_EVENT, "", "", "rejected (missing bearer token)")
+            self._send_json(401, {"error": "missing bearer token"})
+            return False
+
+        if not constant_time_equals(header[len(prefix):].strip(), self.api_token):
+            logging.warning("Invalid API token from %s", self.address_string())
+            log_event(JOB_EVENT, "", "", "rejected (invalid API token)")
+            self._send_json(401, {"error": "invalid API token"})
+            return False
+
+        return True
+
+    def _handle_job_status(self, job_id):
+        """GET /jobs/<id>. Authenticated: a status record echoes the spec."""
+        if not self._check_api_auth():
+            return
+        job = self.dispatcher.get_job(job_id) if self.dispatcher else None
+        if job is None:
+            self._send_json(404, {"error": "unknown job id"})
+            return
+        self._send_json(200, job)
+
+    def _read_body(self):
+        """Read and return the request body, or None if it was refused.
+
+        Shared by /webhook and /jobs so both get the same Content-Length cap and
+        the same bounded read (a slow-loris that drips or never finishes the
+        body must not tie up a worker thread BEFORE authentication). On refusal
+        the error response is already sent and None is returned.
+        """
         try:
             content_length = int(self.headers.get("Content-Length", 0))
         except (TypeError, ValueError):
             self._send_json(400, {"error": "invalid Content-Length"})
-            return
+            return None
         if content_length < 0 or content_length > self.MAX_BODY_BYTES:
             self._send_json(413, {"error": "payload too large"})
-            return
+            return None
 
-        # L3 fix: bound the body read so a slow or under-delivering client (a
-        # slow-loris that drips or never finishes the body) cannot tie up a
-        # worker thread BEFORE authentication. A stalled read raises
-        # socket.timeout; we drop the connection rather than block forever.
         prev_timeout = self.connection.gettimeout()
         self.connection.settimeout(BODY_READ_TIMEOUT_SECONDS)
         try:
             body = self.rfile.read(content_length)
         except (socket.timeout, TimeoutError, ConnectionError, OSError):
             logging.warning(
-                "Dropping slow/incomplete webhook body from %s",
+                "Dropping slow/incomplete request body from %s",
                 self.address_string(),
             )
             try:
                 self._send_json(408, {"error": "request body timeout"})
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
-            return
+            return None
         finally:
             try:
                 self.connection.settimeout(prev_timeout)
             except OSError:
                 pass
+
         if len(body) != content_length:
             # Client closed before delivering the declared body. Refuse rather
             # than authenticate a truncated payload.
             self._send_json(400, {"error": "incomplete request body"})
+            return None
+        return body
+
+    def _handle_job_submit(self):
+        """POST /jobs -- authenticated remote submit of a spec.
+
+        Enqueues onto the SAME bounded queue and worker pool as the webhook
+        path; only the credential and the admission validation differ.
+        """
+        body = self._read_body()
+        if body is None:
+            return
+        # Authenticate BEFORE parsing: an unauthenticated caller never reaches
+        # the JSON parser, and never gets a job id back.
+        if not self._check_api_auth():
+            return
+
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid JSON"})
+            return
+        if not isinstance(payload, dict):
+            self._send_json(400, {"error": "payload must be a JSON object"})
+            return
+
+        spec = payload.get("spec")
+        if not valid_spec(spec):
+            log_event(JOB_EVENT, "", "", "rejected (invalid spec)")
+            self._send_json(400, {"error": "invalid spec"})
+            return
+
+        job_id = secrets.token_urlsafe(12)
+        job = {"spec": spec.strip(), "job_id": job_id}
+
+        # Record BEFORE enqueueing. A worker can pick the job up the instant
+        # submit() returns and write "running"/"fired"; record_job is
+        # last-writer-wins, so recording afterwards could clobber a terminal
+        # status with "queued" and leave a finished job polling as queued
+        # forever. On the 429 path below the record is unreachable (no id is
+        # handed out) and the store is bounded, so nothing leaks.
+        self.dispatcher.record_job(job_id, "queued", job["spec"])
+
+        # Enforce the existing queue bound so a submit storm cannot fork
+        # unbounded builds. 429 (not a silent drop) tells the client to retry.
+        if not self.dispatcher.submit(JOB_EVENT, job):
+            logging.warning(
+                "Queue full; shedding job submit from %s", self.address_string()
+            )
+            log_event(JOB_EVENT, "", "", "rejected (queue full)")
+            self._send_json(429, {"error": "server busy, retry later"})
+            return
+
+        log_event(JOB_EVENT, "", job["spec"], "queued")
+        self._send_json(202, {"id": job_id, "status": "queued"})
+
+    def do_POST(self):
+        path = self.path.split("?", 1)[0]
+        if path == "/jobs":
+            self._handle_job_submit()
+            return
+        if path != "/webhook":
+            self._send_json(404, {"error": "not found"})
+            return
+
+        body = self._read_body()
+        if body is None:
             return
 
         event_type = self.headers.get("X-GitHub-Event", "")
         signature = self.headers.get("X-Hub-Signature-256", "")
         delivery_id = self.headers.get("X-GitHub-Delivery", "")
+
+        # Credential separation: JOB_EVENT rides the shared EVENT_HANDLERS table
+        # so it uses one dispatch path, but it is NOT a GitHub event and must
+        # never be reachable with the webhook HMAC. Without this, a holder of
+        # the webhook secret could POST X-GitHub-Event: loki_job and submit an
+        # arbitrary spec, defeating the separate-credential requirement.
+        if event_type == JOB_EVENT:
+            logging.warning(
+                "Rejecting %s on /webhook from %s: submits require the /jobs "
+                "API and its own bearer token",
+                JOB_EVENT,
+                self.address_string(),
+            )
+            log_event(event_type, "", "", "rejected (job submit not allowed on webhook)")
+            self._send_json(403, {"error": "use POST /jobs to submit a job"})
+            return
 
         # Defect 1 fix: refuse to dispatch when no secret is configured. The
         # server stays up for ops endpoints, but webhooks are rejected with an
@@ -641,6 +931,17 @@ def main():
     if not secret:
         secret = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
 
+    # The /jobs bearer token has NO CLI flag on purpose: a CLI arg lands in the
+    # process list where any local user can read it. Env or mounted file only.
+    api_token = load_api_token()
+    if api_token and secret and constant_time_equals(api_token, secret):
+        logging.error(
+            "LOKI_API_TOKEN is identical to the webhook secret. They "
+            "authenticate different parties and MUST differ; disabling the "
+            "/jobs API until a distinct token is configured."
+        )
+        api_token = ""
+
     # Persist resolved values, but never write the secret to disk.
     config["port"] = port
     config["dry_run"] = dry_run
@@ -653,6 +954,7 @@ def main():
 
     WebhookHandler.dry_run = dry_run
     WebhookHandler.secret = secret
+    WebhookHandler.api_token = api_token
     WebhookHandler.dispatcher = dispatcher
 
     server = ThreadingWebhookServer(("", port), WebhookHandler)
@@ -662,7 +964,14 @@ def main():
     logging.info("Loki trigger server starting on port %d%s", port, mode_label)
     logging.info("Webhook endpoint: POST http://localhost:%d/webhook", port)
     logging.info("Health check: GET http://localhost:%d/health", port)
+    logging.info("Submit endpoint: POST http://localhost:%d/jobs", port)
     logging.info("Workers: %d, queue size: %d", workers, queue_size)
+    if not api_token:
+        logging.warning(
+            "No API token configured: ALL /jobs requests will be rejected with "
+            "503. Set LOKI_API_TOKEN or LOKI_API_TOKEN_FILE to enable remote "
+            "submits."
+        )
     if not secret:
         logging.warning(
             "No webhook secret configured: ALL webhooks will be rejected with "

@@ -11,6 +11,26 @@
 #      `LOKI_OAUTH` volume below and DOCKER_README.md "Option 2: host OAuth".
 #
 # Note: version key removed - deprecated in Docker Compose v2+
+#
+# ---------------------------------------------------------------------------
+# Two ways to run, and they are different products:
+#
+#   docker compose run loki start prd.md
+#       One build, right now, in this directory. The `loki` service below.
+#       Nothing is listening; nothing runs when you are not looking.
+#
+#   docker compose --profile service up -d
+#       The single-node BUILD SERVICE: a webhook receiver that enqueues builds,
+#       a worker that consumes them, and Redis between the two. This is the
+#       docker-compose equivalent of helm/loki-mode, for one machine.
+#       See docs/DEPLOYMENT.md for what actually starts a build once it is up.
+#
+# The service profile needs two secrets in .env before it will do anything:
+#   GITHUB_WEBHOOK_SECRET=...   # same value you paste into the GitHub webhook
+#   ANTHROPIC_API_KEY=...       # the worker needs it; the receiver does not
+# Without the first, the receiver starts and rejects every webhook with 503. It
+# will not silently accept unauthenticated builds.
+# ---------------------------------------------------------------------------
 
 services:
   loki:
@@ -78,6 +98,144 @@ services:
       retries: 3
     restart: unless-stopped
 
+  # =========================================================================
+  # Build service (profile: service). Receiver + worker + queue.
+  # =========================================================================
+
+  # Webhook receiver. Validates the GitHub HMAC and enqueues. Never builds.
+  receiver:
+    build: .
+    image: loki-mode:latest
+    profiles: ["service"]
+    # The image ENTRYPOINT is `loki`, which does not start the webhook server,
+    # and `loki trigger start` nohups it into the background and returns --
+    # which would exit PID 1 immediately. Run the server in the foreground so
+    # the container lifecycle tracks the real process.
+    entrypoint: ["python3", "/opt/loki-mode/autonomy/trigger-server.py"]
+    command: ["--port", "7373", "--workers", "4", "--queue-size", "64"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Read by trigger-server.py. Never passed as --secret: an argv secret is
+      # readable by any process on the host via /proc.
+      - GITHUB_WEBHOOK_SECRET
+      # Bearer token for POST /jobs. Separate value from the webhook HMAC on
+      # purpose: different callers, different rotation, and a leak of one does
+      # not compromise the other.
+      - LOKI_API_TOKEN
+      - LOKI_QUEUE_BACKEND=redis
+      - LOKI_QUEUE_KEY=loki-builds
+      - LOKI_QUEUE_URL=redis://redis:6379
+      - LOKI_NOTIFICATIONS=false
+      # NOTE: the receiver holds NO provider credential. It cannot start a
+      # build directly, so a receiver compromise cannot spend your budget.
+    ports:
+      # Bound to loopback. Put a TLS-terminating reverse proxy in front before
+      # letting GitHub reach this; publishing 0.0.0.0:7373 puts an unencrypted
+      # webhook endpoint on every interface the host has.
+      - "127.0.0.1:7373:7373"
+    volumes:
+      # trigger-server.py resolves .loki/triggers relative to CWD and writes
+      # config.json, events.log and server.pid there at startup. Named volume,
+      # not a bind: receiver state has no business in your source tree.
+      - receiver-state:/workspace
+    working_dir: /workspace
+    # /health is a real route on this server and does not touch the queue.
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request;urllib.request.urlopen('http://localhost:7373/health').read()\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # Worker. Pulls one item at a time and runs it. This is where builds happen.
+  worker:
+    build: .
+    image: loki-mode:latest
+    profiles: ["service"]
+    entrypoint: ["bash", "/opt/loki-mode/autonomy/queue-consumer.sh"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # NO LONG-LIVED CREDENTIALS IN THE IMAGE: injected at start from .env, so
+      # rotation is "edit .env, restart" and the image itself holds nothing.
+      - ANTHROPIC_API_KEY
+      - GITHUB_TOKEN
+      - GH_TOKEN
+      - LOKI_QUEUE_BACKEND=redis
+      - LOKI_QUEUE_KEY=loki-builds
+      - LOKI_QUEUE_URL=redis://redis:6379
+      - LOKI_QUEUE_ONESHOT=0
+      - LOKI_NOTIFICATIONS=false
+    volumes:
+      # ONE TENANT PER WORKER. A named volume per worker, NOT a bind of your
+      # source tree: each build gets a filesystem no other submitter's build
+      # has written to. Bind-mounting a shared host directory here would put
+      # every submitter's checkout in one place, which is the leak this avoids.
+      #
+      # `docker compose up --scale worker=N` is the scaling knob, and it is a
+      # tenancy decision before a performance one: any worker may claim any
+      # queue item, so scale within one trust boundary. Separate tenants want
+      # separate stacks with separate queue keys, not more replicas here.
+      - worker-workspace:/workspace
+    working_dir: /workspace
+    # GRACE PERIOD MUST EXCEED THE DRAIN BUDGET.
+    #
+    # queue-consumer.sh traps SIGTERM by letting the CURRENT BUILD FINISH, so
+    # the drain budget is a whole build -- minutes to hours. Docker's default
+    # stop_grace_period is 10s, after which it SIGKILLs regardless. On the
+    # redis backend the item was already popped, so a killed build is not
+    # requeued and not retried: it disappears with no error recorded anywhere.
+    # Raise this above your p99 build time.
+    stop_grace_period: 2h
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # Queue between the two halves.
+  #
+  # HONESTY (autonomy/queue-consumer.sh:29-40): the shipped redis consumer is
+  # AT-MOST-ONCE. It LPOPs an item and then runs it, with no visibility timeout
+  # and no dead-letter requeue. A worker that dies mid-build loses that build
+  # from the queue and nothing retries it. That is why stop_grace_period above
+  # is measured in hours rather than seconds.
+  redis:
+    image: redis:7-alpine
+    profiles: ["service"]
+    # No published ports: reachable only on the compose network. An unauthed
+    # Redis on a host interface is a remote-code-execution primitive.
+    expose:
+      - "6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
 volumes:
   chroma-data:
+  receiver-state:
+  worker-workspace:
+  redis-data:
 
