@@ -5,7 +5,25 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v9.18.1
+## v9.18.2
+
+Third attempt to publish the session-killer fix. 9.18.0's release was blocked
+when its Tests run was cancelled by later pushes; 9.18.1's gate failed because
+the pushed commit contained an intermediate state where a test referenced a
+method that did not exist yet. Both were my sequencing errors, not defects in
+the fix. No code change from 9.18.1 beyond the receipt-verdict hardening below.
+
+### Fixed
+
+- Remote receipt verdicts: a signature gpg cannot evaluate (public key absent)
+  is reported as UNCHECKED, never TAMPERED (which would accuse a user of a
+  forgery that did not happen) and never VERIFIED (which would claim provenance
+  that was never established).
+- `docs/VERIFICATION-COST.md` corrected: `loki proof verify` does not simply
+  "exit 1 on tamper" -- an untampered receipt whose tree has drifted also exits
+  1. Read `hash_ok` for integrity. A three-command reproduction is included.
+
+
 
 Re-release of v9.18.0, whose release job was blocked when its Tests run was
 cancelled by subsequent pushes to main (required-ci correctly refuses to treat
