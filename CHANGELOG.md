@@ -5,6 +5,45 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.17.0
+
+### Fixed
+
+- **`loki verify` returned BLOCKED on a clean tree, permanently.** The test
+  runner was chosen by grepping `package.json` for `"jest"` / `"vitest"` /
+  `"mocha"`, which matches a **devDependency**. This repository is the case
+  that exposed it: jest is a devDependency with no jest config while
+  `scripts.test` runs `bash -n` plus `node --test`, so verify ran jest, jest
+  globbed 895 files that are not jest tests, and every run blocked for a defect
+  that did not exist. Now reads `scripts.test` with a JSON parser and runs what
+  the project declares. Fixed on both routes (`autonomy/verify.sh` and
+  `autonomy/run.sh`). A false BLOCK is the more damaging direction of that
+  error: a gate that cries wolf every run trains users to ignore the verdict.
+- **The dependency-audit finding now says whether CVEs reach shipped code.**
+  This repo reports 4 high while `npm audit --omit=dev` reports 0, so nothing a
+  user installs is affected; the old wording read as "the shipped product is
+  vulnerable". Adds one audit call, measured at 418ms (0.5% of a 77s verify).
+
+### Added
+
+- **The Evidence Receipt is reachable from the dashboard.** `/api/proofs`
+  served receipts with a verdict, file count and cost, and nothing in the UI
+  read it. Adds receipts, learnings and budget panels, each rendering an absent
+  value as `-` or "not measured" rather than a fabricated zero.
+- **A browser harness for those panels** (`tests/e2e/dashboard-evidence-panels.mjs`),
+  in the fast tier at 7s. Three unit tests over stubbed fetches all passed
+  while the real page rendered three empty panels, so a real DOM against a real
+  server is the only non-vacuous check here.
+- **`run_test` now reports a missing script as a bookkeeping fault**, not as a
+  product failure. Removes 13 stale registrations found this way.
+
+### Changed
+
+- Timing-fragile assertions in the review-assurance suite now express their
+  bounds against the timeout they test, and scale on a contended CI runner.
+  Measured: idle 43/43, CPU-saturated fails at a different assertion each run,
+  load removed 43/43 again -- one environmental sensitivity, not four defects.
+
 ## v9.16.0
 
 Completes the 10-item competitive roadmap.
