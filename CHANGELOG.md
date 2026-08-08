@@ -5,7 +5,32 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v9.18.2
+## v9.18.3
+
+### Fixed
+
+- **A failed remote build exited 0.** `loki start --remote` was shipped in
+  9.18.2 with the job status taken from the LAUNCH result, so a build that
+  started and then failed reported success. Anyone gating CI on it got a green
+  pipeline on a red build -- the exact defect class this product exists to
+  prevent. Terminal statuses are now explicit: only `passed` means the build
+  succeeded, `failed` means it ran and failed, and `unknown` (detached past the
+  wait window, exit code never observed) fails CLOSED because an unobserved
+  outcome is not a pass. `queued` and `running` are deliberately not terminal so
+  a client can tell "not done yet" from "done and failed".
+
+- **A webhook credential could overwrite a job's terminal status.** The same
+  defect had a second door: `job_id` was honoured from any payload, and a GitHub
+  webhook payload carries none of its own, so a holder of the webhook HMAC could
+  supply one and flip `passed` back to `fired`. That is a webhook credential
+  reaching a `/jobs` capability, which the separate-credential design exists to
+  prevent. `job_id` is now honoured only for a remotely-submitted job.
+
+Both were found by auditing delivered work rather than by a failing test, and
+the second was more serious than the first: the first was a wrong default, the
+second was a privilege boundary.
+
+
 
 Third attempt to publish the session-killer fix. 9.18.0's release was blocked
 when its Tests run was cancelled by later pushes; 9.18.1's gate failed because
