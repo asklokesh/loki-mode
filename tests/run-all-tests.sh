@@ -813,6 +813,8 @@ run_test "model catalog: no tier points at a superseded flagship" "$SCRIPT_DIR/t
 run_test "model catalog staleness is advisory in doctor" "$SCRIPT_DIR/test-model-catalog-staleness.sh"
 run_test "doctor blocker parity (both routes name blockers + offer loki tour)" "$SCRIPT_DIR/test-doctor-blocker-parity.sh"
 run_test "first_run_blocked signal (opt-out silent, enum-clamped)" "$SCRIPT_DIR/test-first-run-blocked-signal.sh"
+run_test "a green doctor never recommends a command that exits 2" "$SCRIPT_DIR/test-doctor-next-recommendation.sh"
+run_test "analytics opt-in has a writer (the funnel can fire)" "$SCRIPT_DIR/test-telemetry-analytics-toggle.sh"
 run_test "help discoverability (every command reachable)" "$SCRIPT_DIR/test-help-discoverability.sh"
 run_test "assess runtime detection (declared, never guessed)" "$SCRIPT_DIR/test-assess-runtime-detection.sh"
 run_test "provider model scoping (global tier var must not leak)" "$SCRIPT_DIR/test-provider-model-scoping.sh"

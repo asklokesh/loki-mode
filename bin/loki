@@ -216,8 +216,14 @@ fi
 # we never disclose for an egress that will not happen. This mirrors the
 # cli_command sites below. No arguments are read, so nothing user-authored can
 # reach the payload.
+#
+# `quickstart` and `demo` are here because they are the two commands `loki
+# doctor` actually RECOMMENDS as a first build. Without them the funnel missed
+# every user who followed the product's own advice, which is precisely the
+# population whose drop-off this measures. Both are already in the
+# _loki_known_command allowlist, so `entry=` stays a bounded enum.
 case "${1:-}" in
-    start|run|quick)
+    start|run|quick|quickstart|demo)
         if command -v curl &>/dev/null && [ -f "$REPO_ROOT/autonomy/telemetry.sh" ]; then
             if ( SCRIPT_DIR="$REPO_ROOT/autonomy"; source "$SCRIPT_DIR/telemetry.sh" 2>/dev/null \
                  && declare -f _loki_analytics_enabled >/dev/null 2>&1 && _loki_analytics_enabled \

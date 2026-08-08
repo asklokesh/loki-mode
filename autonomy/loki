@@ -11364,6 +11364,10 @@ cmd_doctor() {
 
     local pass_count=0
     local fail_count=0
+    # Set to 1 when the bundled SDK is the ONLY usable provider (no CLI on PATH).
+    # Declared here, not inside the branch that sets it, so the "Next:" block at
+    # the end of this function always reads an initialized value.
+    local _doctor_sdk_only=0
     # FUNNEL FIX (v8.2.x): collect the NAME + FIX of every hard failure, not just
     # a count. A first-time user on a bare machine sees 15 warnings (sentrux, GPG
     # signing, bash 4, Bun, python3.12, truecolor, inline-image probe -- all
@@ -11528,6 +11532,12 @@ cmd_doctor() {
             echo -e "  ${GREEN}PASS${NC}  Bundled Claude Agent SDK is usable -- 'loki start' needs no separate CLI"
             echo -e "         ${YELLOW}Note: loki demo/quick/quickstart still need a provider CLI on PATH${NC}"
             echo -e "         ${YELLOW}      Install: npm install -g @anthropic-ai/claude-code${NC}"
+            # The note above was only half the fix. The final "Next:" line at the
+            # bottom of this function recommended quickstart unconditionally, so a
+            # user reading a GREEN doctor followed its LAST line straight into
+            # quickstart.sh:476 exit 2. Record the state here (where the predicate
+            # is already evaluated) and let the recommendation read it.
+            _doctor_sdk_only=1
             pass_count=$((pass_count + 1))
         else
             echo -e "  ${RED}FAIL${NC}  No AI provider CLI installed -- at least one is required"
@@ -12050,8 +12060,17 @@ else:
     # on fail_count==0 above, so a failing setup is never told to build. The
     # --json path returns long before this code, so machine output is untouched.
     echo ""
-    echo "Next: loki quickstart (guided first build from your idea, no PRD needed)"
-    echo "      or loki demo (builds a sample todo app end to end) or loki start ./prd.md"
+    if [ "$_doctor_sdk_only" = "1" ]; then
+        # SDK-only host: quickstart and demo stay on the bash route and need a
+        # binary on PATH, so recommending them here is a green doctor pointing at
+        # an exit 2. Recommend only what actually runs, plus the one command that
+        # unlocks the rest.
+        echo "Next: loki start ./prd.md (runs on the bundled SDK, no CLI install needed)"
+        echo "      For loki quickstart/demo: npm install -g @anthropic-ai/claude-code"
+    else
+        echo "Next: loki quickstart (guided first build from your idea, no PRD needed)"
+        echo "      or loki demo (builds a sample todo app end to end) or loki start ./prd.md"
+    fi
     # Best-effort stale-install nudge (stderr only; never blocks; off on
     # non-TTY/CI). Reached only on the human-readable path (--json returns above).
     maybe_print_update_hint
@@ -25040,6 +25059,60 @@ TELEM_DISABLE_PY
             echo "  OTEL tracing can be configured with 'loki telemetry enable [endpoint]'."
             ;;
 
+        analytics)
+            # Opt-in gate for build-outcome analytics (telemetry.sh
+            # _loki_analytics_enabled). That gate reads ANALYTICS_ENABLED=true from
+            # ~/.loki/config, and until now NOTHING in this repo ever wrote that
+            # key -- docs/PRIVACY.md told users to hand-edit the file. So the
+            # first-run funnel (first_start_attempted / first_run_blocked /
+            # build_verified) could not fire for anyone, and drop-off was
+            # structurally unmeasurable.
+            #
+            # Stays STRICTLY OPT-IN and default OFF: this only gives the existing
+            # consent a way to be expressed. Same filter-then-append shape as
+            # start|on above, so it is idempotent and never clobbers other keys.
+            local global_config="${HOME}/.loki/config"
+            local _an_action="${1:-status}"
+            case "$_an_action" in
+                on)
+                    mkdir -p "${HOME}/.loki"
+                    if [ -f "$global_config" ]; then
+                        grep -v "^ANALYTICS_ENABLED=" "$global_config" > "${global_config}.tmp" 2>/dev/null || true
+                        mv "${global_config}.tmp" "$global_config"
+                    fi
+                    echo "ANALYTICS_ENABLED=true" >> "$global_config"
+                    echo -e "${BOLD}Build analytics enabled${NC}"
+                    echo ""
+                    echo "  Opt-in saved to: $global_config"
+                    echo "  Only already-computed scalars are sent -- never code, spec text, or paths."
+                    echo "  Requires telemetry to be on as well (loki telemetry status)."
+                    echo "  Run 'loki telemetry analytics off' to opt back out."
+                    ;;
+                off)
+                    if [ -f "$global_config" ]; then
+                        grep -v "^ANALYTICS_ENABLED=" "$global_config" > "${global_config}.tmp" 2>/dev/null || true
+                        mv "${global_config}.tmp" "$global_config"
+                    fi
+                    echo -e "${BOLD}Build analytics disabled${NC}"
+                    echo ""
+                    echo "  ANALYTICS_ENABLED removed from: $global_config"
+                    echo "  Nothing build-related is sent. This is the default state."
+                    ;;
+                status)
+                    if [ -f "$global_config" ] && grep -q "^ANALYTICS_ENABLED=true" "$global_config" 2>/dev/null; then
+                        echo -e "  Build analytics: ${GREEN}enabled${NC} (you opted in; opt out with: loki telemetry analytics off)"
+                    else
+                        echo -e "  Build analytics: ${YELLOW}off${NC} (the default; opt in with: loki telemetry analytics on)"
+                    fi
+                    ;;
+                *)
+                    echo -e "${RED}Unknown analytics action: $_an_action${NC}"
+                    echo "Usage: loki telemetry analytics on|off|status"
+                    return 1
+                    ;;
+            esac
+            ;;
+
         --help|-h|help)
             echo -e "${BOLD}loki telemetry${NC} - OpenTelemetry management"
             echo ""
@@ -25053,6 +25126,8 @@ TELEM_DISABLE_PY
             echo "  off                 Opt out of all anonymous diagnostics (telemetry + crash)"
             echo "  start               Alias for 'on' (persistent opt-in across all sessions)"
             echo "  stop                Alias for 'off' (persistent opt-out across all sessions)"
+            echo "  analytics on|off|status"
+            echo "                      Opt in/out of build-outcome analytics (off by default)"
             echo ""
             echo "Anonymous diagnostics are OFF by default. Nothing is collected or"
             echo "sent unless you opt in. See docs/PRIVACY.md for the full disclosure."
