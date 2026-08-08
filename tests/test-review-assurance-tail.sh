@@ -473,7 +473,7 @@ else
     [ -n "$deadline_child" ] && kill -0 "$deadline_child" 2>/dev/null && deadline_alive=true
     bad "review deadline reset, exceeded bound, or left a descendant (rc=$deadline_rc elapsed_ms=$deadline_elapsed bound_ms=$_deadline_bound_ms calls=$deadline_calls child_alive=$deadline_alive)"
 fi
-if python3 - "$TMPROOT/deadline-review-timing.json" <<'PY'
+if python3 - "$TMPROOT/deadline-review-timing.json" "$(review_budget 2)" <<'PY'
 import json
 import sys
 
@@ -481,7 +481,11 @@ record = json.load(open(sys.argv[1], encoding="utf-8"))
 assert record["deadline_scope"] == "provider_with_fallbacks"
 assert record["outcome"] == "deadline"
 assert record["exit_code"] == 124
-assert record["budget_seconds"] == 2
+# Compare against the SCALED budget dispatched above, not the literal.
+expected = int(sys.argv[2])
+assert record["budget_seconds"] == expected, (
+    "budget_seconds %r != dispatched budget %r" % (record["budget_seconds"], expected)
+)
 assert record["stderr_bytes"] > 0
 PY
 then
@@ -1246,14 +1250,22 @@ if [ "$req_timeout_rc" -ne 0 ] \
    && [ ! -s "$TMPROOT/requirements-timeout.txt" ] \
    && [ -f "$TMPROOT/requirements-timeout-stderr.log" ] \
    && { [ -z "$req_timeout_child" ] || ! kill -0 "$req_timeout_child" 2>/dev/null; } \
-   && python3 - "$TMPROOT/requirements-timeout-timing.json" <<'PY'
+   && python3 - "$TMPROOT/requirements-timeout-timing.json" "$(review_budget 1)" <<'PY'
 import json
 import sys
 
 record = json.load(open(sys.argv[1], encoding="utf-8"))
 assert record["outcome"] == "deadline"
 assert record["exit_code"] == 124
-assert record["budget_seconds"] == 1
+# The budget is SCALED on a contended runner (review_budget), so this must
+# compare against the value actually dispatched, not the literal 1. Hardcoding
+# it made my own timeout-scale change fail this assertion in CI: the record
+# correctly said 4, the test demanded 1, and the failure read as a containment
+# defect.
+expected = int(sys.argv[2])
+assert record["budget_seconds"] == expected, (
+    "budget_seconds %r != dispatched budget %r" % (record["budget_seconds"], expected)
+)
 PY
 then
     ok "requirements timeout is bounded, contained, and has no text fallback"
