@@ -397,6 +397,37 @@ bash tests/test-competitor-verify-surface.sh               # the installed-CLI a
 loki proof verify <id>                                     # re-hash a receipt, exit 1 on tamper
 ```
 
+### 3d. Our own numbers on the axes people ask about, measured 2026-08-08
+
+These are ABSOLUTE measurements of this product with a CI guard behind each. They
+are deliberately NOT presented as a comparison: no competitor number appears
+here, because three of the four named competitors have no runnable binary on
+this machine and the fourth exposes no equivalent command. A number next to a
+blank is not a ratio.
+
+| Axis | Measured | Budget | Guarded by |
+|---|---|---|---|
+| UI page weight | 787 KB | 1024 KB | `tests/test-dashboard-bundle-budget.sh` |
+| Backend verify latency | 7 ms | under 1000 ms | `tests/test-fast-verify.sh` |
+| Worker horizontal scale | 1..25 replicas render | n/a | `tests/test-helm-worker-scaling.sh` |
+
+Two of those three guards already existed; only the page-weight budget was added
+on 2026-08-08. Recording that because "we measured it" and "we added a
+measurement" are different claims and the difference matters.
+
+What these numbers do NOT establish: they say nothing about output quality,
+which is the axis a user actually cares about, and nothing about how any
+competitor performs on the same axes. A fast gate that verifies the wrong thing
+is worse than a slow one that verifies the right thing.
+
+Reproduce:
+
+```bash
+bash tests/test-dashboard-bundle-budget.sh   # prints the KB and the budget
+bash tests/test-fast-verify.sh               # prints the ms and the budget
+bash tests/test-helm-worker-scaling.sh       # renders 1, 2, 5 and 25 replicas
+```
+
 ### 3c. Deploy surface, measured 2026-08-08
 
 Ran on the four competitor CLIs installed on this machine. Method matters here:
