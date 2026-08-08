@@ -100,9 +100,9 @@ class _JobsTestBase(unittest.TestCase):
             with self.dispatch_lock:
                 self.dispatched.append(args)
             self.fired.set()
-            return True
+            return ts.OUTCOME_PASSED
 
-        patch.object(ts, "run_loki_command", side_effect=fake_run).start()
+        patch.object(ts, "run_loki_outcome", side_effect=fake_run).start()
         self.disp = None
         self.srv = None
 
@@ -169,7 +169,8 @@ class TestSpecValidation(unittest.TestCase):
     def test_shell_metacharacters_are_not_a_shell_risk(self):
         # The spec goes into argv as ONE element, never a shell string, so
         # metacharacters need no escaping. Assert the handler passes it whole.
-        with patch.object(ts, "run_loki_command", return_value=True) as m, \
+        with patch.object(ts, "run_loki_outcome",
+                          return_value=ts.OUTCOME_PASSED) as m, \
                 patch.object(ts, "send_notification"), \
                 patch.object(ts, "log_event"):
             ts.handle_job_event({"spec": "a; rm -rf /", "job_id": "j1"})
@@ -421,7 +422,7 @@ class TestSuccessfulSubmit(_JobsTestBase):
         self.assertEqual(status, 200)
         data = json.loads(body)
         self.assertEqual(data["id"], job_id)
-        self.assertEqual(data["status"], "fired")
+        self.assertEqual(data["status"], ts.JOB_STATUS_PASSED)
         self.assertIn("owner/repo#7", data["summary"])
 
     def test_terminal_status_is_not_clobbered_by_the_queued_write(self):
@@ -430,7 +431,8 @@ class TestSuccessfulSubmit(_JobsTestBase):
         record_job is last-writer-wins, and a worker can pick the job up the
         instant submit() returns. If the handler wrote "queued" AFTER
         enqueueing, that write could land on top of the worker's terminal
-        "fired" and the client would poll a completed job as queued forever.
+        terminal status and the client would poll a completed job as queued
+        forever.
 
         Reproduced deterministically by making the worker's terminal write land
         before the handler's enqueue call returns: submit() is wrapped so that
@@ -453,7 +455,7 @@ class TestSuccessfulSubmit(_JobsTestBase):
 
         def record_and_signal(job_id, status, summary=""):
             original_record(job_id, status, summary)
-            if status in ("fired", "error"):
+            if status in ts.JOB_TERMINAL_STATUSES:
                 done.set()
 
         with patch.object(self.disp, "record_job", side_effect=record_and_signal), \
@@ -468,7 +470,7 @@ class TestSuccessfulSubmit(_JobsTestBase):
         job = self.disp.get_job(job_id)
         self.assertIsNotNone(job)
         self.assertEqual(
-            job["status"], "fired",
+            job["status"], ts.JOB_STATUS_PASSED,
             "terminal status was clobbered by the handler's queued write",
         )
 
@@ -573,11 +575,11 @@ class TestQueueBound(_JobsTestBase):
 
         def blocking_run(args, dry_run=False):
             release.wait(timeout=10)
-            return True
+            return ts.OUTCOME_PASSED
 
         patch.stopall()
         patch.object(ts, "send_notification").start()
-        patch.object(ts, "run_loki_command", side_effect=blocking_run).start()
+        patch.object(ts, "run_loki_outcome", side_effect=blocking_run).start()
 
         # 1 worker + queue of 1 -> capacity 2 in flight, the rest are shed.
         srv = self.start(workers=1, queue_size=1)
@@ -597,8 +599,9 @@ class TestQueueBound(_JobsTestBase):
 
         patch.stopall()
         patch.object(ts, "send_notification").start()
-        patch.object(ts, "run_loki_command",
-                     side_effect=lambda *a, **k: release.wait(timeout=10)).start()
+        patch.object(ts, "run_loki_outcome",
+                     side_effect=lambda *a, **k: release.wait(timeout=10)
+                     and ts.OUTCOME_PASSED).start()
 
         srv = self.start(workers=1, queue_size=1)
         try:
@@ -613,6 +616,150 @@ class TestQueueBound(_JobsTestBase):
         finally:
             release.set()
             self.disp.queue.join()
+
+
+class TestBuildOutcomeIsReported(unittest.TestCase):
+    """A remote client gates CI on this, so "launched" must never read as "passed".
+
+    THE BUG THIS PINS: handle_job_event used to derive its status from
+    run_loki_command, which returns True when the LAUNCH succeeded -- including
+    the detach-timeout path. So a build that started and then FAILED reported
+    "fired" and a CI pipeline gating on it went green on a failed build.
+    """
+
+    def setUp(self):
+        patch.object(ts, "send_notification").start()
+        patch.object(ts, "log_event").start()
+
+    def tearDown(self):
+        patch.stopall()
+
+    def _outcome_for(self, exit_code=0, launch_error=None, hang=False):
+        """Drive the real run_loki_outcome against a stubbed child process."""
+        import subprocess as real_subprocess
+        real_popen = real_subprocess.Popen
+
+        def fake_popen(cmd, **kwargs):
+            if launch_error is not None:
+                raise launch_error
+            script = "import time; time.sleep(5)" if hang else \
+                     "import sys; sys.exit(%d)" % exit_code
+            return real_popen([sys.executable, "-c", script], **kwargs)
+
+        with patch("subprocess.Popen", side_effect=fake_popen), \
+                patch.object(ts, "DISPATCH_WAIT_SECONDS", 0.3):
+            return ts.run_loki_outcome(["start", "spec", "--detach"])
+
+    def test_exit_zero_is_passed(self):
+        self.assertEqual(self._outcome_for(exit_code=0), ts.OUTCOME_PASSED)
+
+    def test_nonzero_exit_is_failed(self):
+        # THE BUG: this used to be indistinguishable from a pass.
+        self.assertEqual(self._outcome_for(exit_code=1), ts.OUTCOME_FAILED)
+
+    def test_launch_failure_is_failed(self):
+        self.assertEqual(
+            self._outcome_for(launch_error=FileNotFoundError("no loki")),
+            ts.OUTCOME_FAILED,
+        )
+
+    def test_detached_build_is_unknown_not_passed(self):
+        """Fail closed: an outcome we never observed is NOT a pass."""
+        outcome = self._outcome_for(hang=True)
+        self.assertEqual(outcome, ts.OUTCOME_UNKNOWN)
+        self.assertNotEqual(outcome, ts.OUTCOME_PASSED)
+
+    def test_terminal_statuses_are_all_distinct(self):
+        # "launched" and "passed" must never share a value.
+        self.assertEqual(len(set(ts.JOB_TERMINAL_STATUSES)), 3)
+        self.assertIn(ts.JOB_STATUS_PASSED, ts.JOB_TERMINAL_STATUSES)
+        self.assertIn(ts.JOB_STATUS_UNKNOWN, ts.JOB_TERMINAL_STATUSES)
+
+    def test_in_flight_statuses_are_not_terminal(self):
+        # A client must tell "not done yet" from "done and failed".
+        self.assertNotIn("queued", ts.JOB_TERMINAL_STATUSES)
+        self.assertNotIn("running", ts.JOB_TERMINAL_STATUSES)
+
+    def test_handler_reports_the_build_outcome(self):
+        for outcome in (ts.OUTCOME_PASSED, ts.OUTCOME_FAILED, ts.OUTCOME_UNKNOWN):
+            with patch.object(ts, "run_loki_outcome", return_value=outcome):
+                _, status = ts.handle_job_event({"spec": "x", "job_id": "j"})
+            self.assertEqual(status, outcome)
+
+    def test_webhook_handlers_keep_launch_semantics(self):
+        """The webhook path only cares that a dispatch started; unchanged."""
+        with patch.object(ts, "run_loki_outcome", return_value=ts.OUTCOME_UNKNOWN):
+            self.assertTrue(ts.run_loki_command(["start"]))
+        with patch.object(ts, "run_loki_outcome", return_value=ts.OUTCOME_FAILED):
+            self.assertFalse(ts.run_loki_command(["start"]))
+
+
+class TestWebhookCannotWriteJobStatus(unittest.TestCase):
+    """A webhook payload must not reach the /jobs status store.
+
+    _worker honoured job_id from ANY payload, so a holder of the WEBHOOK HMAC
+    could POST a crafted GitHub payload carrying a top-level job_id and
+    overwrite a real submitted job's terminal status -- turning a "passed" back
+    into "fired" and re-introducing the false-green this work exists to remove.
+    A webhook credential must never reach a /jobs capability.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.orig_cwd = os.getcwd()
+        os.chdir(self.tmpdir)
+        patch.object(ts, "send_notification").start()
+        patch.object(ts, "log_event").start()
+        patch.object(ts, "run_loki_command", return_value=True).start()
+        patch.object(ts, "run_loki_outcome", return_value=ts.OUTCOME_PASSED).start()
+
+    def tearDown(self):
+        patch.stopall()
+        os.chdir(self.orig_cwd)
+
+    def test_webhook_payload_cannot_overwrite_a_job_status(self):
+        disp = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
+        try:
+            disp.record_job("real-job", ts.JOB_STATUS_PASSED, "a real build")
+            # A GitHub payload smuggling a top-level job_id.
+            disp.submit("issues", {
+                "action": "opened",
+                "issue": {"number": 1},
+                "repository": {"full_name": "o/r"},
+                "job_id": "real-job",
+            })
+            disp.queue.join()
+            job = disp.get_job("real-job")
+            self.assertEqual(
+                job["status"], ts.JOB_STATUS_PASSED,
+                "a webhook payload overwrote a submitted job's terminal status",
+            )
+        finally:
+            disp.shutdown()
+
+    def test_webhook_payload_cannot_create_a_job_record(self):
+        disp = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
+        try:
+            disp.submit("issues", {
+                "action": "opened",
+                "issue": {"number": 1},
+                "repository": {"full_name": "o/r"},
+                "job_id": "invented-by-webhook",
+            })
+            disp.queue.join()
+            self.assertIsNone(disp.get_job("invented-by-webhook"))
+        finally:
+            disp.shutdown()
+
+    def test_a_real_job_still_records_its_status(self):
+        # Sanity: the gate must not break the path it protects.
+        disp = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
+        try:
+            disp.submit(ts.JOB_EVENT, {"spec": "x", "job_id": "mine"})
+            disp.queue.join()
+            self.assertEqual(disp.get_job("mine")["status"], ts.JOB_STATUS_PASSED)
+        finally:
+            disp.shutdown()
 
 
 class TestJobRecordsAreBounded(unittest.TestCase):
@@ -635,9 +782,9 @@ class TestJobRecordsAreBounded(unittest.TestCase):
         try:
             disp.record_job("j", "queued", "spec")
             disp.record_job("j", "running")
-            disp.record_job("j", "fired", "done")
+            disp.record_job("j", "passed", "done")
             job = disp.get_job("j")
-            self.assertEqual(job["status"], "fired")
+            self.assertEqual(job["status"], "passed")
             self.assertEqual(job["summary"], "done")
         finally:
             disp.shutdown()
@@ -734,9 +881,9 @@ class TestJobProofEndpoint(_JobsTestBase):
         def fake_run(args, dry_run=False):
             threading.Timer(0.2, write_later).start()
             self.fired.set()
-            return True
+            return ts.OUTCOME_PASSED
 
-        patch.object(ts, "run_loki_command", side_effect=fake_run).start()
+        patch.object(ts, "run_loki_outcome", side_effect=fake_run).start()
         self.addCleanup(done.wait, 5)
         srv = self.start(workers=1)
         status, data = srv.submit("./prd.md")
