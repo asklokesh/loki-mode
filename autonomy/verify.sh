@@ -421,6 +421,30 @@ _verify_zero_tests_executed() {
 }
 
 # ---------------------------------------------------------------------------
+# Reads scripts.test out of a package.json, or prints nothing.
+#
+# Parsed as JSON, never grepped: a substring search over the whole file is the
+# exact bug this helper exists to remove, and re-introducing it one level down
+# would be invisible. A malformed package.json prints nothing, which routes to
+# runner=none -> INCONCLUSIVE, never to a guessed runner.
+_verify_pkg_test_script() {
+    local tree="$1"
+    [ -f "$tree/package.json" ] || return 0
+    python3 -c '
+import json,sys
+try:
+    with open(sys.argv[1]) as fh:
+        d = json.load(fh)
+except Exception:
+    sys.exit(0)
+if not isinstance(d, dict):
+    sys.exit(0)
+s = d.get("scripts")
+if isinstance(s, dict) and isinstance(s.get("test"), str):
+    sys.stdout.write(s["test"])
+' "$tree/package.json" 2>/dev/null || true
+}
+
 # Gate: tests (faithful port of enforce_test_coverage detection, run.sh:6624).
 #
 # Detection order mirrors the source: vitest -> jest -> mocha (package.json),
@@ -451,16 +475,52 @@ verify_gate_tests() {
     local out=""
 
     if [ -f "$tree/package.json" ]; then
-        if grep -q '"vitest"' "$tree/package.json" 2>/dev/null; then
-            runner="vitest"
-            out="$(cd "$tree" && $_vt npx vitest run 2>&1)" || rc=$?
-        elif grep -q '"jest"' "$tree/package.json" 2>/dev/null; then
-            runner="jest"
-            out="$(cd "$tree" && $_vt npx jest --passWithNoTests --forceExit 2>&1)" || rc=$?
-        elif grep -q '"mocha"' "$tree/package.json" 2>/dev/null; then
-            runner="mocha"
-            out="$(cd "$tree" && $_vt npx mocha 2>&1)" || rc=$?
-        fi
+        # WHICH runner, decided by what `npm test` ACTUALLY INVOKES -- not by
+        # what happens to be installed.
+        #
+        # The old check was `grep '"jest"' package.json`, which matches a
+        # DEVDEPENDENCY entry. On this very repo that is exactly what happened:
+        # jest is a devDependency with NO jest config, while scripts.test runs
+        # bash -n plus `node --test`. So verify hijacked the runner, jest globbed
+        # 895 files that are not jest tests, every one reported "Your test suite
+        # must contain at least one test", and `loki verify` returned BLOCKED on
+        # a clean tree -- permanently, for a defect that does not exist.
+        #
+        # A false BLOCK on the flagship verification command is worse than a
+        # missed one: it trains users to ignore the verdict.
+        #
+        # scripts.test is the project's own declaration of its runner, so it is
+        # the signal with authority here. A declared script that names none of
+        # the three is still RUN, via `npm test` -- mirroring run.sh's npm-test
+        # fallback. Falling through instead would be its own defect: this repo
+        # declares `bash -n ... && node --test ...`, and without the fallback
+        # verify skipped it and ran PYTEST over a bash/node project.
+        local _test_script=""
+        _test_script="$(_verify_pkg_test_script "$tree")"
+        case "$_test_script" in
+            *vitest*)
+                runner="vitest"
+                out="$(cd "$tree" && $_vt npx vitest run 2>&1)" || rc=$? ;;
+            *jest*)
+                runner="jest"
+                out="$(cd "$tree" && $_vt npx jest --passWithNoTests --forceExit 2>&1)" || rc=$? ;;
+            *mocha*)
+                runner="mocha"
+                out="$(cd "$tree" && $_vt npx mocha 2>&1)" || rc=$? ;;
+            "")
+                : ;;   # nothing declared: leave runner=none for the paths below
+            *"no test specified"*)
+                : ;;   # npm's placeholder is not a test script
+            *)
+                # Labelled by what it invokes, so the evidence names the real
+                # runner rather than a generic "npm".
+                case "$_test_script" in
+                    *"node --test"*|*"node:test"*) runner="node-test" ;;
+                    *pytest*)                      runner="pytest" ;;
+                    *)                             runner="npm-test" ;;
+                esac
+                out="$(cd "$tree" && $_vt npm test 2>&1)" || rc=$? ;;
+        esac
     fi
 
     if [ "$runner" = "none" ]; then
@@ -1060,10 +1120,38 @@ print("%d %d %d %d" % (crit, high, mod, low))
 ' 2>/dev/null || echo "")"
                 if [ -n "$sev" ]; then
                     read -r _c _h _m _l <<<"$sev"
+                    # SHIPPED vs dev. The audit above covers ALL dependencies,
+                    # which is right for a gate -- a compromised build tool is a
+                    # real risk -- but the FINDING must say which of the two it
+                    # is. This repo reports 4 high CVEs while `npm audit
+                    # --omit=dev` reports ZERO: nothing a user installs is
+                    # vulnerable. A receipt that says "4 high severity
+                    # vulnerabilities" with no such qualifier reads as "the
+                    # shipped product is vulnerable", which is a materially
+                    # different and false claim.
+                    #
+                    # Measured separately rather than subtracted: the two runs
+                    # count different dependency graphs, so arithmetic on the
+                    # totals would not be sound.
+                    local _prod_hc=""
+                    _prod_hc="$(cd "$tree" && npm audit --omit=dev --json 2>/dev/null | python3 -c '
+import sys, json
+try:
+    v = json.load(sys.stdin).get("metadata", {}).get("vulnerabilities", {})
+except Exception:
+    sys.exit(0)
+print(v.get("critical", 0) + v.get("high", 0))
+' 2>/dev/null || echo "")"
+                    local _scope_note=""
+                    if [ "$_prod_hc" = "0" ]; then
+                        _scope_note=" All are in devDependencies; \`npm audit --omit=dev\` reports 0 high/critical, so nothing in the shipped dependency tree is affected."
+                    elif [ -n "$_prod_hc" ]; then
+                        _scope_note=" $_prod_hc of these are in the SHIPPED (non-dev) dependency tree."
+                    fi
                     if [ "$_c" -gt 0 ] || [ "$_h" -gt 0 ]; then
-                        _verify_add_gate "dependency_audit" "fail" "npm-audit" "$_c critical, $_h high CVEs" "true"
+                        _verify_add_gate "dependency_audit" "fail" "npm-audit" "$_c critical, $_h high CVEs (shipped high/critical: ${_prod_hc:-unmeasured})" "true"
                         _verify_add_finding "High" "dependencies" "deterministic:npm-audit" "package-lock.json" "null" \
-                            "npm audit found $_c critical and $_h high severity vulnerabilities."
+                            "npm audit found $_c critical and $_h high severity vulnerabilities.${_scope_note}"
                     elif [ "$_m" -gt 0 ]; then
                         _verify_add_gate "dependency_audit" "fail" "npm-audit" "$_m moderate CVEs" "true"
                         _verify_add_finding "Medium" "dependencies" "deterministic:npm-audit" "package-lock.json" "null" \
