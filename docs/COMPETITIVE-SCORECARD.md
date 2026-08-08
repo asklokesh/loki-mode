@@ -397,6 +397,51 @@ bash tests/test-competitor-verify-surface.sh               # the installed-CLI a
 loki proof verify <id>                                     # re-hash a receipt, exit 1 on tamper
 ```
 
+### 3c. Deploy surface, measured 2026-08-08
+
+Ran on the four competitor CLIs installed on this machine. Method matters here:
+a `--help` grep is NOT sufficient -- an earlier audit in this repo counted
+aider's `--verify-ssl` as a verification capability, which it is not. So each
+CLI was invoked as `<cli> deploy --help` and the result classified as a real
+subcommand only when it exited 0 AND its output named the subcommand, rather
+than falling through to generic help.
+
+| CLI | `deploy` subcommand |
+|---|---|
+| claude | none `[measured]` |
+| aider | none `[measured]` |
+| opencode | none `[measured]` |
+| codex | none `[measured]` |
+| loki | present, and evidence-gated `[measured]` |
+
+**4 of 4 installed competitor CLIs expose no deploy verb.** Loki's is gated on a
+verified receipt: it refuses on UNSIGNED, TAMPERED, anchor mismatch, or a dirty
+tree, and writes a receipt for the deploy itself naming the authorizing run_id.
+
+Scope limits, same as everywhere else in this file. This covers CLIs INSTALLED
+HERE. Factory, Devin, Replit and 8090 have no runnable binary on this machine
+(`bash benchmarks/head-to-head-readiness.sh` reports 3 ready / 4 blocked), so no
+claim is made about them. A hosted product may deploy without exposing a CLI
+verb -- Replit Agent's documented headline capability is exactly that. This
+measures a CLI surface, not a product capability, and it is not a quality
+comparison.
+
+Reproduce:
+
+```bash
+# Exit code ALONE is not the test: every CLI here exits 0 on `deploy --help`
+# because an unknown subcommand falls through to generic help. The first
+# version of this recipe did exactly that and reported all four as having a
+# deploy command. The output must NAME the subcommand.
+for c in claude aider opencode codex loki; do
+  out="$($c deploy --help 2>&1 | head -3)"
+  printf '%s' "$out" | grep -qiE "$c deploy|deploy -" \
+    && echo "$c: real deploy subcommand" \
+    || echo "$c: no deploy subcommand (fell through to generic help)"
+done
+bash autonomy/loki deploy --execute       # refuses, naming each failed check
+```
+
 ## 4. What we do NOT know
 
 This section is mandatory and is not empty.
