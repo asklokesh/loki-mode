@@ -768,6 +768,33 @@ loki_remote_fetch_receipt() {
 # UNSIGNED there would be a false statement about the receipt (it IS signed),
 # and saying VERIFIED would be a false statement about this machine (it checked
 # nothing). It gets its own line and never claims verification.
+# Ask gpg WHY a signature failed. Echoes "nopubkey" when the signing key is
+# absent (uncheckable), "" otherwise (a genuinely bad signature, or we could
+# not tell). Fails toward "" so an unclear answer keeps the loud TAMPERED
+# verdict rather than silently downgrading a real forgery to a soft warning.
+loki_remote_gpg_status() {
+    local pj="$1"
+    local d="${TMPDIR:-/tmp}/loki-sigcheck.$$"
+    mkdir -p "$d" || return 0
+    python3 - "$pj" "$d" <<'PY' 2>/dev/null || { rm -rf "$d"; return 0; }
+import json, sys, os
+proof = json.load(open(sys.argv[1]))
+d = sys.argv[2]
+sig = (proof.get("verification") or {}).get("gpg_signature") or ""
+proof.pop("verification", None)
+open(os.path.join(d, "canon.bin"), "wb").write(
+    json.dumps(proof, sort_keys=True, separators=(",", ":")).encode())
+open(os.path.join(d, "sig.asc"), "w").write(sig)
+PY
+    local st
+    st="$(gpg --status-fd 1 --verify "$d/sig.asc" "$d/canon.bin" 2>/dev/null)"
+    rm -rf "$d"
+    case "$st" in
+        *NO_PUBKEY*) printf 'nopubkey' ;;
+        *) printf '' ;;
+    esac
+}
+
 loki_remote_verify_receipt() {
     local pj="$1"
     local verifier="${_LOKI_SCRIPT_DIR}/lib/proof-verify.py"
@@ -805,7 +832,33 @@ loki_remote_verify_receipt() {
         return 1
     fi
 
+    # gpg_ok=false covers TWO facts that must never be conflated: the signature
+    # is cryptographically bad over this content (the receipt was ALTERED), and
+    # gpg could not evaluate it at all (we do not hold the public key). Only the
+    # first is an accusation. Reporting a missing key as TAMPERED would send a
+    # user hunting a forgery that never happened, and would train them to shrug
+    # at a real TAMPERED -- the same error as calling an unsigned receipt
+    # verified, just pointed the other way.
+    #
+    # proof-verify.py returns a bare boolean, so the distinction is drawn here
+    # from gpg's own status codes: BADSIG = bad over this content, NO_PUBKEY /
+    # ERRSIG = could not be checked.
     if [ "$signed" -eq 1 ] && [ "$gpg_ok" = "false" ]; then
+        local _why=""
+        if command -v gpg >/dev/null 2>&1; then
+            _why="$(loki_remote_gpg_status "$pj")"
+        fi
+        if [ "$_why" = "nopubkey" ]; then
+            echo -e "  ${YELLOW}NOT CHECKED${NC}: the receipt is signed, but the signing key is not in your keyring." >&2
+            echo "    Nothing is wrong with the contents: the integrity hash matches. The" >&2
+            echo "    signature could not be evaluated, so PROVENANCE is unproven here." >&2
+            echo "    Import the publisher's public key and re-run: loki proof verify $(basename "$(dirname "$pj")")" >&2
+            # Non-zero: a caller who asked for a signed receipt did not get
+            # proof, and in CI that must not pass silently. The message states
+            # plainly that no fault was found in the content, so this is a
+            # missing-proof exit, not an accusation of tampering.
+            return 1
+        fi
         echo -e "  ${RED}TAMPERED: the receipt carries a gpg signature that does not verify.${NC}" >&2
         echo "    Either the contents or the signature was altered. Do not trust this build." >&2
         return 1

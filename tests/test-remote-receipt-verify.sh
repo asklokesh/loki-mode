@@ -52,11 +52,17 @@ trap 'rm -rf "$TMP"' EXIT
 # command. Extracting the functions keeps this a unit test of the verdict
 # logic. Written to a file and sourced rather than eval'd: our own quality gate
 # flags eval as a HIGH finding (see tests/test-verify-runner-selection.sh).
-sed -n '/^loki_remote_verify_receipt()/,/^}/p' "$SRC" > "$TMP/fn.sh"
-if [ ! -s "$TMP/fn.sh" ]; then
-  bad "could not extract loki_remote_verify_receipt from autonomy/loki"
-  echo "RESULT: $PASS passed, $FAIL failed"; exit 1
-fi
+sed -n '/^loki_remote_gpg_status()/,/^}/p' "$SRC" > "$TMP/fn.sh"
+sed -n '/^loki_remote_verify_receipt()/,/^}/p' "$SRC" >> "$TMP/fn.sh"
+for _f in loki_remote_gpg_status loki_remote_verify_receipt; do
+  # A helper that failed to extract would silently return empty and the
+  # verdict would fall through to the wrong branch, so assert both landed
+  # rather than discovering it as a confusing assertion failure later.
+  grep -q "^$_f()" "$TMP/fn.sh" || {
+    bad "could not extract $_f from autonomy/loki"
+    echo "RESULT: $PASS passed, $FAIL failed"; exit 1
+  }
+done
 
 # Build a real receipt with a real integrity hash, canonicalized EXACTLY the
 # way proof-generator does, so the hash check under test is the genuine one
@@ -227,6 +233,32 @@ PY
     ok "a signature over DIFFERENT content is rejected (not merely 'a signature exists')"
   else
     bad "a signature over other content was ACCEPTED (rc=$rc): $out"
+  fi
+
+  # 7b. THE ACCUSATION BOUNDARY. gpg RUNS but the signing key is not in the
+  # keyring. gpg exits non-zero here exactly as it does for a forged
+  # signature, so a verifier reading only the exit code calls this TAMPERED --
+  # accusing the publisher of altering a receipt whose content is fine. That is
+  # the same class of error as calling an unsigned receipt verified, pointed
+  # the other way: it sends a user hunting a forgery that never happened, and
+  # trains them to shrug at a real TAMPERED.
+  _empty_ring="$TMP/emptyring"
+  mkdir -p "$_empty_ring"; chmod 700 "$_empty_ring"
+  out="$(GNUPGHOME="$_empty_ring" run_verify "$TMP/signed.json")"; rc=$?
+  if printf '%s' "$out" | grep -q 'TAMPERED'; then
+    bad "a missing public key was reported as TAMPERED -- a false accusation of forgery"
+  elif printf '%s' "$out" | grep -qi 'not checked\|keyring'; then
+    ok "a signature that gpg cannot evaluate (no public key) is NOT called TAMPERED"
+  else
+    bad "unexpected verdict for a signature with no public key (rc=$rc): $out"
+  fi
+
+  # 7c. ...and it must not read as VERIFIED either: provenance was not
+  # established, so both directions of the false label are closed off.
+  if printf '%s' "$out" | grep -q 'VERIFIED'; then
+    bad "an unevaluated signature was reported as VERIFIED"
+  else
+    ok "an unevaluated signature is never reported as VERIFIED"
   fi
 
   # 8. A signed receipt must never be labelled UNSIGNED.
