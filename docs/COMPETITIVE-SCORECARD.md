@@ -359,6 +359,44 @@ Cleanup after reproducing:
 rm -rf /tmp/loki-verify-scorecard /tmp/loki-verify-sc2 /tmp/loki-verify-scorecard.err
 ```
 
+## 3b. Deployment and self-hosting (added 2026-08-08)
+
+Sourced from vendor documentation on 2026-08-08. Full quotes, URLs and the
+per-vendor UNKNOWN list are in `docs/COMPETITOR-DEPLOYMENT-MODELS.md`. Same
+rules as the rest of this file: `[sourced]` means a page was actually fetched,
+UNKNOWN means we could not establish it.
+
+| Product | Self-hosting | Inference routing | Output-verification artifact |
+|---|---|---|---|
+| Factory AI | Yes, incl. airgapped `[sourced]` | Customer-controlled, BYOK `[sourced]` | Not documented publicly |
+| Claude Code (self-hosted envs) | Execution only; control plane stays Anthropic-hosted `[sourced]` | Pinned to Anthropic; not routable to Bedrock/Vertex/Foundry/gateway `[sourced]` | Not documented publicly |
+| Devin | No; prior self-hosted offering in maintenance mode since 2025-05-12 `[sourced]` | UNKNOWN | Not documented publicly |
+| Replit Agent | Not documented publicly | Vendor-pinned `[sourced]` | Not documented publicly |
+| 8090 | UNKNOWN | UNKNOWN | Not documented publicly |
+| Loki Mode | Yes, control plane included `[measured]` | Provider-agnostic `[measured]` | `loki proof verify` `[measured]` |
+
+**This CORRECTS a claim we were making internally.** "Fully self-hosted and
+provider-agnostic" was treated as the differentiator. It is not: Factory AI
+documents airgapped installs with customer-controlled model routing, so that
+column does not separate us from them. Recording the correction rather than
+quietly dropping it, because a scorecard that only ever moves in our favour is
+not evidence.
+
+The column that does separate is the last one, and it is the weakest kind of
+finding: **absence from documentation is not absence from a product.** The
+honest statement is "not documented publicly as of 2026-08-08", never "does not
+exist". A vendor may ship this behind a login, in an enterprise tier, or simply
+undocumented.
+
+Loki's two `[measured]` cells are reproducible:
+
+```bash
+grep -c "api.anthropic.com" autonomy/*.sh providers/*.sh   # 1, inside a per-provider case
+ls providers/*.sh                                          # claude, codex, aider, cline, opencode
+bash tests/test-competitor-verify-surface.sh               # the installed-CLI audit
+loki proof verify <id>                                     # re-hash a receipt, exit 1 on tamper
+```
+
 ## 4. What we do NOT know
 
 This section is mandatory and is not empty.
