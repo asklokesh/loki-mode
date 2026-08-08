@@ -313,6 +313,101 @@ else
   bad "unexpected verdict for an uncheckable signature (rc=$rc): $out"
 fi
 
+# --- 9b/9c/9d. DRIFT ON A REMOTE RECEIPT IS EXPECTED, NOT TAMPERING --------
+# A receipt produced inside a cluster pod is verified against a DIFFERENT tree
+# (a laptop checkout). The recorded diff cannot re-derive there, so drift is
+# the normal result and says nothing about whether anyone edited the receipt.
+# Presenting it as a failure would train users to ignore a signal that means
+# something real locally. docs/VERIFICATION-COST.md states the split: hash_ok
+# is integrity; `ok` folds in tree_drift and false-alarms exactly here.
+#
+# Real drift, not a simulated field: a git repo whose tree genuinely differs
+# from the base sha the receipt records.
+if command -v git >/dev/null 2>&1; then
+  _dr="$TMP/driftrepo"
+  mkdir -p "$_dr"
+  (
+    cd "$_dr" || exit 1
+    git init -q . && git config user.email t@t.invalid && git config user.name t
+    echo one > f.txt && git add f.txt && git commit -qm base
+    echo two >> f.txt && git add f.txt && git commit -qm later
+  ) >/dev/null 2>&1
+  _base="$(git -C "$_dr" rev-parse HEAD~1 2>/dev/null)"
+
+  make_drift_proof() {
+    # $1 = out path. Records a base sha and a diff stat that the CURRENT tree
+    # cannot reproduce, which is what a pod-produced receipt looks like here.
+    python3 - "$1" "$_base" <<'PY'
+import hashlib, json, sys
+out, base = sys.argv[1], sys.argv[2]
+proof = {
+    "run_id": "run-remote-1",
+    "facts": {"git": {"base_sha": base, "head_sha": base,
+                      "diff": {"count": 7, "insertions": 70, "deletions": 7}}},
+}
+c = json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
+proof["verification"] = {"hash": hashlib.sha256(c).hexdigest(),
+                         "algo": "sha256", "scope": "integrity"}
+json.dump(proof, open(out, "w"), indent=2)
+PY
+  }
+
+  run_verify_in_repo() {
+    (
+      RED=''; GREEN=''; YELLOW=''; NC=''
+      _LOKI_SCRIPT_DIR="$REPO_ROOT/autonomy"
+      TARGET_DIR="$_dr"
+      # shellcheck disable=SC1090
+      . "$TMP/fn.sh"
+      loki_remote_verify_receipt "$1" 2>&1
+    )
+  }
+
+  make_drift_proof "$TMP/drift.json"
+  # Confirm the fixture actually drifts, or the assertions below are vacuous.
+  _dstate="$(python3 "$VERIFIER" "$TMP/drift.json" "$_dr" 2>/dev/null \
+             | jq -r '[.hash_ok,(.diff_drift//.tree_drift)]|tostring')"
+  if [ "$_dstate" != '["true",true]' ] && [ "$_dstate" != '[true,true]' ]; then
+    bad "drift fixture did not produce hash_ok+drift (got $_dstate); assertions would be vacuous"
+  else
+    out="$(run_verify_in_repo "$TMP/drift.json")"; rc=$?
+    # THE ASSERTION: drift alone is neither TAMPERED nor a non-zero exit.
+    if printf '%s' "$out" | grep -q 'TAMPERED'; then
+      bad "a drifted remote receipt with a MATCHING hash was reported as TAMPERED"
+    elif [ "$rc" -ne 0 ]; then
+      bad "a drifted remote receipt exited $rc; drift alone must not fail the verdict"
+    else
+      ok "a remote receipt with drift but a matching hash is not TAMPERED and exits 0"
+    fi
+
+    # Reported, not suppressed. A user must be able to tell "no drift" from
+    # "drift, expected because this ran remotely" -- dropping a true fact
+    # because it is inconvenient is the error this whole verdict layer avoids.
+    if printf '%s' "$out" | grep -qi 'drift'; then
+      ok "the drift is stated in the output, not silently suppressed"
+    else
+      bad "drift was suppressed entirely; the user cannot tell it from no-drift"
+    fi
+
+    # THE CONTROL. Without this, "ignore drift" could quietly become "ignore
+    # everything": same drifted repo, but the recorded hash no longer matches.
+    python3 - "$TMP/drift.json" "$TMP/drift-bad.json" <<'PY'
+import json, sys
+p = json.load(open(sys.argv[1]))
+p["facts"]["git"]["diff"]["count"] = 999
+json.dump(p, open(sys.argv[2], "w"), indent=2)
+PY
+    out="$(run_verify_in_repo "$TMP/drift-bad.json")"; rc=$?
+    if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q 'TAMPERED'; then
+      ok "a drifted remote receipt with a BAD hash still reports TAMPERED and exits non-zero"
+    else
+      bad "tamper went undetected on a drifted receipt (rc=$rc): $out"
+    fi
+  fi
+else
+  echo "  SKIPPED: git not installed, drift assertions did not run (not a pass)"
+fi
+
 # --- 10. The verdict is not gated on the verifier's own exit code ----------
 # `ok` in proof-verify.py includes diff_drift, re-derived against the LOCAL
 # repo -- which is not the machine that built a remote job. Gating on it would

@@ -55,6 +55,8 @@ HELPERS="$TMPROOT/helpers.sh"
   sed -n '/^loki_remote_curl()/,/^}/p'          "$SRC"
   sed -n '/^loki_remote_submit()/,/^}/p'        "$SRC"
   sed -n '/^loki_remote_fetch_receipt()/,/^}/p' "$SRC"
+  sed -n '/^loki_remote_verify_receipt()/,/^}/p' "$SRC"
+  sed -n '/^loki_remote_gpg_status()/,/^}/p'     "$SRC"
 } > "$HELPERS"
 bash -n "$HELPERS" || { echo "  FAIL: extracted helpers do not parse"; exit 1; }
 
@@ -96,7 +98,7 @@ run_remote() {
 
 # --- 1. THE TOKEN NEVER APPEARS IN ARGV --------------------------------------
 BIN1="$TMPROOT/bin1"; WORK1="$TMPROOT/work1"; mkdir -p "$WORK1"
-make_curl_stub "$BIN1" '{"id":"job-1","status":"queued"}' '{"id":"job-1","status":"fired"}'
+make_curl_stub "$BIN1" '{"id":"job-1","status":"queued"}' '{"id":"job-1","status":"passed"}'
 run_remote "$BIN1" "https://loki.example.com" "$WORK1" \
   "LOKI_REMOTE_TOKEN=$TOKEN" "LOKI_REMOTE_POLL_SEC=0"
 rc1=$?
@@ -127,9 +129,9 @@ else
 fi
 
 if [ "$rc1" -eq 0 ]; then
-  ok "a job reaching 'fired' exits 0"
+  ok "a job reaching 'passed' exits 0"
 else
-  bad "successful remote job exited $rc1 (expected 0): $(tail -2 "$WORK1/out.log")"
+  bad "passed remote job exited $rc1 (expected 0): $(tail -2 "$WORK1/out.log")"
 fi
 
 # --- 2. RECEIPT LANDS WHERE THE LOCAL PATH PUTS IT ---------------------------
@@ -171,7 +173,7 @@ fi
 # --- 3. PLAINTEXT TO A REMOTE HOST IS REFUSED --------------------------------
 for host in "http://loki.example.com" "http://localhost.evil.com" "http://127.0.0.1.evil.com"; do
   BIN2="$TMPROOT/bin2"; WORK2="$TMPROOT/work2"; mkdir -p "$WORK2"
-  make_curl_stub "$BIN2" '{"id":"j","status":"queued"}' '{"id":"j","status":"fired"}'
+  make_curl_stub "$BIN2" '{"id":"j","status":"queued"}' '{"id":"j","status":"passed"}'
   run_remote "$BIN2" "$host" "$WORK2" "LOKI_REMOTE_TOKEN=$TOKEN" "LOKI_REMOTE_POLL_SEC=0"
   rc=$?
   if [ "$rc" -ne 0 ] && grep -qi "plaintext" "$WORK2/out.log"; then
@@ -184,7 +186,7 @@ done
 
 # Loopback over http is fine: it never leaves the machine.
 BIN3="$TMPROOT/bin3"; WORK3="$TMPROOT/work3"; mkdir -p "$WORK3"
-make_curl_stub "$BIN3" '{"id":"job-1","status":"queued"}' '{"id":"job-1","status":"fired"}'
+make_curl_stub "$BIN3" '{"id":"job-1","status":"queued"}' '{"id":"job-1","status":"passed"}'
 run_remote "$BIN3" "http://127.0.0.1:7373" "$WORK3" \
   "LOKI_REMOTE_TOKEN=$TOKEN" "LOKI_REMOTE_POLL_SEC=0"
 if [ $? -eq 0 ]; then
@@ -195,7 +197,7 @@ fi
 
 # The explicit override works, so the refusal is a decision and not a wall.
 BIN4="$TMPROOT/bin4"; WORK4="$TMPROOT/work4"; mkdir -p "$WORK4"
-make_curl_stub "$BIN4" '{"id":"job-1","status":"queued"}' '{"id":"job-1","status":"fired"}'
+make_curl_stub "$BIN4" '{"id":"job-1","status":"queued"}' '{"id":"job-1","status":"passed"}'
 run_remote "$BIN4" "http://loki.example.com" "$WORK4" \
   "LOKI_REMOTE_TOKEN=$TOKEN" "LOKI_REMOTE_POLL_SEC=0" "LOKI_REMOTE_INSECURE=1"
 if [ $? -eq 0 ]; then
@@ -247,9 +249,54 @@ else
   bad "a failed remote job exited 0 -- CI would treat a failure as success"
 fi
 
+# --- 5b. THE BUILD OUTCOME IS WHAT GATES, NOT "a build was launched" ---------
+# THE BUG THIS PINS: the server used to report "fired" (the pod LAUNCHED a
+# build) and the client exited 0 on it. A build that started and then failed
+# therefore produced a GREEN CI pipeline. "launched" and "passed" must never
+# share a value, and an outcome nobody observed must fail closed.
+check_outcome() {
+  local status="$1" want_rc="$2" label="$3"
+  local bindir="$TMPROOT/bin-$status" workdir="$TMPROOT/work-$status"
+  mkdir -p "$workdir"
+  make_curl_stub "$bindir" '{"id":"job-1","status":"queued"}' \
+    "{\"id\":\"job-1\",\"status\":\"$status\"}"
+  run_remote "$bindir" "https://loki.example.com" "$workdir" \
+    "LOKI_REMOTE_TOKEN=$TOKEN" "LOKI_REMOTE_POLL_SEC=0"
+  local rc=$?
+  if [ "$want_rc" = "zero" ] && [ "$rc" -eq 0 ]; then
+    ok "$label"
+  elif [ "$want_rc" = "nonzero" ] && [ "$rc" -ne 0 ]; then
+    ok "$label"
+  else
+    bad "$label (rc=$rc): $(tail -2 "$workdir/out.log")"
+  fi
+}
+
+check_outcome passed  zero    "a build that PASSED exits 0"
+check_outcome failed  nonzero "a build that STARTED AND THEN FAILED exits non-zero"
+check_outcome unknown nonzero "an UNKNOWN outcome exits non-zero (fails closed)"
+
+# The client must not treat the old launch-only status as a pass.
+check_outcome fired nonzero "the legacy 'fired' (launched, not passed) does not exit 0"
+
+# The poll loop must RECOGNISE each terminal status, not merely time out on it.
+# Without this, a loop that never breaks still "fails" (empty status -> non-zero)
+# and check_outcome above would pass for entirely the wrong reason.
+_poll_case="$(sed -n '/^loki_remote_submit()/,/^}/p' "$SRC" \
+              | sed -n '/case "\$status" in/,/esac/p' | head -5)"
+_missing=""
+for _s in passed failed unknown; do
+  printf '%s' "$_poll_case" | grep -q "$_s" || _missing="$_missing $_s"
+done
+if [ -z "$_missing" ]; then
+  ok "poll loop breaks on every terminal status (passed/failed/unknown)"
+else
+  bad "poll loop does not recognise:$_missing -- it would spin until max-polls"
+fi
+
 # --- 6. NO TOKEN CONFIGURED: refuse rather than submit unauthenticated -------
 BIN7="$TMPROOT/bin7"; WORK7="$TMPROOT/work7"; mkdir -p "$WORK7"
-make_curl_stub "$BIN7" '{"id":"j","status":"queued"}' '{"id":"j","status":"fired"}'
+make_curl_stub "$BIN7" '{"id":"j","status":"queued"}' '{"id":"j","status":"passed"}'
 ( cd "$WORK7" && export PATH="$BIN7:$PATH" \
   && env -u LOKI_REMOTE_TOKEN -u LOKI_REMOTE_TOKEN_FILE bash -c \
      "source '$HELPERS'; loki_remote_submit 'https://loki.example.com' 'spec'" \
@@ -263,7 +310,7 @@ fi
 # A token FILE works, and is stripped of its trailing newline (k8s mounts).
 BIN8="$TMPROOT/bin8"; WORK8="$TMPROOT/work8"; mkdir -p "$WORK8"
 printf '%s\n' "$TOKEN" > "$TMPROOT/token.txt"
-make_curl_stub "$BIN8" '{"id":"job-1","status":"queued"}' '{"id":"job-1","status":"fired"}'
+make_curl_stub "$BIN8" '{"id":"job-1","status":"queued"}' '{"id":"job-1","status":"passed"}'
 ( cd "$WORK8" && export PATH="$BIN8:$PATH" \
   && env -u LOKI_REMOTE_TOKEN "LOKI_REMOTE_TOKEN_FILE=$TMPROOT/token.txt" \
      "LOKI_REMOTE_POLL_SEC=0" bash -c \

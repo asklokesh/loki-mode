@@ -684,7 +684,7 @@ loki_remote_submit() {
             last="$status"
         fi
         case "$status" in
-            fired|error|rejected*)
+            passed|failed|unknown|error|rejected*)
                 break
                 ;;
         esac
@@ -701,16 +701,22 @@ loki_remote_submit() {
         return 1
     fi
 
-    # ponytail: the server reports DISPATCH success ("fired" = the pod launched
-    # the build), not the build's own exit code -- run_loki_command returns true
-    # for a --detach launch and for the detach-timeout path. So a non-"fired"
-    # status is a real failure, but "fired" is not yet proof the build passed.
-    # Upgrade path: have trigger-server record the build's exit code and expose
-    # a terminal status here, then gate CI on that instead.
+    # Gate on the BUILD's outcome, not on "a build was launched". The server
+    # reports passed / failed / unknown as distinct terminal statuses (see
+    # JOB_TERMINAL_STATUSES in trigger-server.py). Anything that is not
+    # "passed" exits non-zero so a CI pipeline cannot go green on a failed
+    # build. "unknown" -- the build detached and its exit code was never
+    # observed -- fails CLOSED: an outcome nobody observed is not a pass.
     case "$status" in
-        fired) return 0 ;;
-        "")    echo -e "${RED}loki: job $job_id did not reach a terminal status${NC}" >&2; return 1 ;;
-        *)     echo -e "${RED}loki: remote job $job_id failed: $status${NC}" >&2; return 1 ;;
+        passed) return 0 ;;
+        unknown)
+            echo -e "${RED}loki: remote job $job_id outcome UNKNOWN${NC}" >&2
+            echo "  The build detached and its exit code was never observed." >&2
+            echo "  An unobserved outcome is not a pass; treating it as a failure." >&2
+            return 1
+            ;;
+        "")     echo -e "${RED}loki: job $job_id did not reach a terminal status${NC}" >&2; return 1 ;;
+        *)      echo -e "${RED}loki: remote job $job_id failed: $status${NC}" >&2; return 1 ;;
     esac
 }
 
@@ -830,6 +836,17 @@ loki_remote_verify_receipt() {
         echo -e "  ${RED}TAMPERED: the receipt's integrity hash does not match its contents.${NC}" >&2
         echo "    proof.json was edited after it was written. Do not trust this build." >&2
         return 1
+    fi
+
+    # Drift is REPORTED, never a verdict. This receipt was produced in a cluster
+    # pod and is being checked against a different tree, so drift is the normal
+    # result and says nothing about tampering -- docs/VERIFICATION-COST.md:
+    # hash_ok is integrity, `ok` folds in tree_drift and false-alarms here.
+    # Stated rather than suppressed: silently dropping a true fact because it is
+    # inconvenient is the same error as folding UNCHECKED into UNSIGNED.
+    if [ "$(printf '%s' "$out" | jq -r '[.diff_drift,.tree_drift]|index(true)!=null' 2>/dev/null)" = "true" ]; then
+        echo "  Drift: this tree differs from the one the receipt records. Expected --"
+        echo "    the build ran elsewhere. Not tampering, and not part of the verdict."
     fi
 
     # gpg_ok=false covers TWO facts that must never be conflated: the signature

@@ -105,6 +105,19 @@ JOB_EVENT = "loki_job"
 # storm cannot grow memory without limit.
 DEFAULT_JOB_HISTORY = 1024
 
+# Terminal job statuses a remote client can gate on. "queued" and "running"
+# are deliberately absent: a client must be able to tell "not done yet" from
+# "done and failed", which a single non-passed value could not express.
+#
+# Only JOB_STATUS_PASSED means the build itself succeeded. JOB_STATUS_UNKNOWN
+# means the build detached past our wait window and its exit code was never
+# observed -- an unobserved outcome is NOT a pass, and the client exits
+# non-zero on it (fail closed).
+JOB_STATUS_PASSED = "passed"
+JOB_STATUS_FAILED = "failed"
+JOB_STATUS_UNKNOWN = "unknown"
+JOB_TERMINAL_STATUSES = (JOB_STATUS_PASSED, JOB_STATUS_FAILED, JOB_STATUS_UNKNOWN)
+
 # A run id names a directory under .loki/proofs/. run.sh mints it as
 # "run-<utc>-<pid>-<rand>" or "proof-<utc>-<pid>-<rand>"; this is the alphabet
 # those forms use. Applied to the pointer file's contents (never to a request
@@ -338,21 +351,30 @@ def _reap_child(proc):
         pass
 
 
-def run_loki_command(args, dry_run=False):
-    """Run a loki command synchronously and reap it; or print it if dry_run.
+# Outcome of a dispatch, as distinct from "did it launch".
+#
+# run_loki_command already distinguished all three of these and then threw two
+# of them away by returning a bool. Collapsing "exited 0" and "still detached"
+# into True is what made a remotely-submitted build that STARTS and then FAILS
+# report success: the client had no value to gate on. UNKNOWN is not a pass --
+# an outcome we could not observe must fail closed.
+# ponytail: the outcome IS the terminal job status, so they are the same three
+# strings rather than two enums plus a mapping table.
+OUTCOME_PASSED = JOB_STATUS_PASSED    # ran to completion and exited 0
+OUTCOME_FAILED = JOB_STATUS_FAILED    # launch failed, or exited non-zero
+OUTCOME_UNKNOWN = JOB_STATUS_UNKNOWN  # detached; exit code never observed
 
-    Returns True if the command was launched and exited 0 (or backgrounded
-    cleanly within the wait window), False if the launch failed or it exited
-    non-zero. The child is always waited on, so no zombies accumulate. stderr
-    is captured on failure so a broken dispatch is diagnosable.
 
-    This is invoked from worker threads, so blocking here does not block the
-    HTTP listener.
+def run_loki_outcome(args, dry_run=False):
+    """Run a loki command and report WHICH of the three outcomes occurred.
+
+    Returns one of OUTCOME_PASSED / OUTCOME_FAILED / OUTCOME_UNKNOWN. This is
+    the honest version of run_loki_command, which answers only "did it launch".
     """
     cmd = ["loki"] + args
     if dry_run:
         logging.info("[DRY-RUN] Would run: %s", " ".join(cmd))
-        return True
+        return OUTCOME_PASSED
     logging.info("Running: %s", " ".join(cmd))
     try:
         proc = subprocess.Popen(
@@ -362,18 +384,14 @@ def run_loki_command(args, dry_run=False):
         )
     except (FileNotFoundError, OSError) as e:
         logging.error("Failed to launch %s: %s", " ".join(cmd), e)
-        return False
+        return OUTCOME_FAILED
 
     try:
-        # Wait (and thereby reap) the child. A --detach launch returns quickly;
-        # this bound only guards against a wedged launch.
         _, stderr = proc.communicate(timeout=DISPATCH_WAIT_SECONDS)
     except subprocess.TimeoutExpired:
-        # The dispatch is still running past our wait window. We stop blocking
-        # the worker thread, but the child is NOT abandoned: a one-shot daemon
-        # reaper thread waits on it so it is always reaped (no zombie) while
-        # THIS process is alive, and the OS reparents it after we exit. This
-        # keeps the "always waited on, no zombies" guarantee honest.
+        # Detached past the wait window. The reaper collects the child, but we
+        # never see its exit code, so the outcome is genuinely UNKNOWN -- NOT a
+        # pass. Reporting success here is exactly the defect this replaces.
         logging.info(
             "Dispatch pid=%d still running after %ds; reaping in background",
             proc.pid,
@@ -385,11 +403,11 @@ def run_loki_command(args, dry_run=False):
             name="loki-trigger-reaper-%d" % proc.pid,
             daemon=True,
         ).start()
-        return True
+        return OUTCOME_UNKNOWN
 
     if proc.returncode == 0:
         logging.info("Dispatch pid=%d completed (exit 0)", proc.pid)
-        return True
+        return OUTCOME_PASSED
 
     stderr_text = ""
     if stderr:
@@ -400,7 +418,28 @@ def run_loki_command(args, dry_run=False):
         proc.returncode,
         stderr_text or "(no stderr)",
     )
-    return False
+    return OUTCOME_FAILED
+
+
+def run_loki_command(args, dry_run=False):
+    """Run a loki command synchronously and reap it; or print it if dry_run.
+
+    Returns True if the command was launched and exited 0 (or backgrounded
+    cleanly within the wait window), False if the launch failed or it exited
+    non-zero. The child is always waited on, so no zombies accumulate. stderr
+    is captured on failure so a broken dispatch is diagnosable.
+
+    This is invoked from worker threads, so blocking here does not block the
+    HTTP listener.
+
+    Kept as the bool view for the GitHub webhook handlers, which only care
+    whether a dispatch started. A caller that must know whether the BUILD
+    passed wants run_loki_outcome instead. Behaviour is unchanged: a detached
+    dispatch (UNKNOWN) still reads as True here, exactly as before.
+    """
+    return run_loki_outcome(args, dry_run=dry_run) in (
+        OUTCOME_PASSED, OUTCOME_UNKNOWN,
+    )
 
 
 def handle_issues_event(payload, dry_run=False):
@@ -496,9 +535,11 @@ def handle_job_event(payload, dry_run=False):
         return None, "rejected (invalid spec)"
     args = ["start", spec.strip(), "--detach"]
     summary = "job %s: %s" % (payload.get("job_id", "?"), spec.strip())
-    success = run_loki_command(args, dry_run=dry_run)
-    status = "fired" if success else "error"
-    if success:
+    # A remote submitter gates CI on this, so report the BUILD's outcome, not
+    # merely that a build was launched. "fired" (launched) and "passed" must
+    # never share a value.
+    status = run_loki_outcome(args, dry_run=dry_run)
+    if status != OUTCOME_FAILED:
         send_notification("Trigger fired: %s" % summary)
     return summary, status
 
