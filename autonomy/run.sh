@@ -24668,6 +24668,58 @@ kill_provider_child() {
 # ~run.sh:15034); in interactive foreground we share the user's shell group,
 # leave the pgid absent, and skip this reap entirely -- so Ctrl+C semantics
 # and the user's shell are untouched.
+# --- pgid stamp helpers (P0: stale-pgid session killer) ---------------------
+# The pgid file is written as `pgid=<n> boot=<id> started=<epoch>` so a reader
+# can tell a live record from a week-old orphan. See reap_own_process_group.
+
+# Extract one field from a stamp. A bare number (legacy file) yields the pgid
+# and nothing else, so the reader's fail-closed branch rejects it.
+_loki_pgid_field() {
+    local _s="$1" _k="$2"
+    case "$_s" in
+        *=*) ;;
+        *) [ "$_k" = "pgid" ] && printf '%s' "$(printf '%s' "$_s" | tr -d ' ')"; return 0 ;;
+    esac
+    # Prefix/suffix trimming, not `for _tok in $_s`. Two reasons:
+    #   - `while read` in a pipeline runs in a SUBSHELL and drops a final field
+    #     with no trailing newline, silently returning an empty `started`.
+    #   - unquoted `$_s` in a `for` relies on word splitting, which bash does
+    #     and ZSH DOES NOT. run.sh is bash, but this file gets sourced and
+    #     probed from other shells, and a helper whose correctness depends on
+    #     the caller's shell is a trap. This form needs no word splitting.
+    local _rest="$_s" _tok
+    while [ -n "$_rest" ]; do
+        _tok="${_rest%% *}"                    # first space-delimited token
+        case "$_tok" in
+            "$_k"=*) printf '%s' "${_tok#*=}"; return 0 ;;
+        esac
+        case "$_rest" in
+            *" "*) _rest="${_rest#* }" ;;      # advance past this token
+            *) _rest="" ;;                     # last token: stop
+        esac
+    done
+}
+
+# A value that changes on every reboot, so a pgid recorded before a reboot can
+# never validate afterwards. Empty when unavailable -- callers fail closed.
+_loki_boot_id() {
+    if [ -r /proc/stat ]; then
+        awk '/^btime /{print $2; exit}' /proc/stat 2>/dev/null && return 0
+    fi
+    # macOS: `kern.boottime` prints `{ sec = 1234567890, usec = 0 } ...`
+    sysctl -n kern.boottime 2>/dev/null | sed -n 's/.*sec *= *\([0-9][0-9]*\).*/\1/p'
+}
+
+# Start time of a pid as a unix epoch, or empty when it cannot be determined.
+_loki_proc_start_epoch() {
+    local _p="${1:-$$}" _lstart
+    _lstart="$(ps -o lstart= -p "$_p" 2>/dev/null)"
+    [ -n "$_lstart" ] || return 0
+    date -j -f '%a %b %e %T %Y' "$_lstart" '+%s' 2>/dev/null \
+        || date -d "$_lstart" '+%s' 2>/dev/null \
+        || true
+}
+
 reap_own_process_group() {
     local loki_dir="${TARGET_DIR:-.}/.loki"
     # Resolve the pgid file the same way main() recorded it (global or per-session).
@@ -24678,8 +24730,13 @@ reap_own_process_group() {
     _reap_pgid_file="${_reap_pgid_file%.pid}.pgid"
     [ -f "$_reap_pgid_file" ] || return 0   # interactive / no own session: skip
 
-    local _pgid
-    _pgid=$(cat "$_reap_pgid_file" 2>/dev/null | tr -d ' ')
+    # Parse the stamped format `pgid=<n> boot=<id> started=<epoch>`, falling back
+    # to a bare number for a file written by an older version.
+    local _stamp _pgid _boot _started
+    _stamp=$(cat "$_reap_pgid_file" 2>/dev/null | tr -d '\n')
+    _pgid=$(_loki_pgid_field "$_stamp" pgid)
+    _boot=$(_loki_pgid_field "$_stamp" boot)
+    _started=$(_loki_pgid_field "$_stamp" started)
     case "$_pgid" in ''|*[!0-9]*) return 0 ;; esac
     [ "$_pgid" -gt 1 ] 2>/dev/null || return 0    # never touch pgid 0/1
 
@@ -24689,6 +24746,40 @@ reap_own_process_group() {
     local _my_pgid
     _my_pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
     [ -n "$_my_pgid" ] && [ "$_pgid" = "$_my_pgid" ] || return 0
+
+    # BOOT + AGE GUARD (the fix for the session-killer).
+    #
+    # The self-check above is NOT sufficient on its own. loki.pgid was removed
+    # only on the normal exit path, so a Ctrl+C'd or crashed run left the file
+    # behind indefinitely -- measured on a real machine: two orphans aged 155h
+    # and 202h. PIDs recycle (macOS wraps near 99999; max observed 99762), so a
+    # week-old pgid eventually matches a LIVE, unrelated shell group. The
+    # self-check then passes and every sibling in the user's terminal -- their
+    # editor, another agent session -- is TERM'd then KILL'd.
+    #
+    # A recycled pgid cannot forge both of these:
+    #   - boot id: a file from a previous boot can never match this boot.
+    #   - started: the recording run must not predate THIS process.
+    #
+    # Fails CLOSED. A missing or malformed stamp means we do nothing: an
+    # orphaned agent (the v7.41.x problem this reap was added for) is strictly
+    # less harmful than killing a user's editor.
+    local _now_boot
+    _now_boot="$(_loki_boot_id)"
+    if [ -z "$_boot" ] || [ -z "$_started" ]; then
+        return 0    # unstamped legacy file: never trust it
+    fi
+    if [ -z "$_now_boot" ] || [ "$_boot" != "$_now_boot" ]; then
+        return 0    # different boot (or boot id unavailable): refuse
+    fi
+    case "$_started" in ''|*[!0-9]*) return 0 ;; esac
+    local _self_started
+    _self_started="$(_loki_proc_start_epoch $$)"
+    # The stamp must not predate this process by more than a small clock skew.
+    # A stale file is always OLDER than the process now reading it.
+    if [ -n "$_self_started" ] && [ "$_started" -lt "$(( _self_started - 5 ))" ]; then
+        return 0
+    fi
 
     # Collect protected pids (dashboard, app-runner, registered children) so the
     # reap never takes down the shared dashboard if it happens to share our
@@ -25091,6 +25182,20 @@ _loki_remove_temp_self_copy() {
     fi
 }
 
+# P0 (stale-pgid session killer): the pgid file must never outlive its run.
+# Recorded by the writer (see _LOKI_PGID_FILE below) rather than re-derived, so
+# the removal hits the exact path written -- global OR per-session -- and can
+# never delete a concurrent run's file.
+_loki_remove_pgid_file() {
+    [ -n "${_LOKI_PGID_FILE:-}" ] || return 0
+    # A `trap ... EXIT` fires in SUBSHELLS too, and a subshell exiting must not
+    # delete a LIVE parent's file (repo scar: a bare trap deleted a parent's
+    # lock). $$ does NOT change in a subshell -- BASHPID does, so it is the only
+    # real discriminator here.
+    [ "${BASHPID:-$$}" = "${_LOKI_PGID_OWNER:-$$}" ] || return 0
+    rm -f "$_LOKI_PGID_FILE" 2>/dev/null || true
+}
+
 _loki_session_exit_cleanup() {
     local exit_code=$?
     _loki_terminal_record 2>/dev/null || true
@@ -25098,6 +25203,12 @@ _loki_session_exit_cleanup() {
        && type safe_release_lock >/dev/null 2>&1; then
         safe_release_lock "$_LOKI_SESSION_LOCK_FILE" 2>/dev/null || true
     fi
+    # Covers EXIT plus INT/TERM: every cleanup() path that actually terminates
+    # does so via `exit`, which fires this trap. Deliberately NOT called from
+    # cleanup() itself -- its perpetual/pause branches RETURN and the run
+    # continues, so removing the file there would silently disable the
+    # completion-path reap for the rest of the run.
+    _loki_remove_pgid_file
     _loki_remove_temp_self_copy
     return "$exit_code"
 }
@@ -25766,6 +25877,10 @@ main() {
         fi
     else
         # Lock helper not loaded (lib/lock.sh missing). PID-only fallback.
+        # This branch still falls through to the pgid writer below, so it needs
+        # the same EXIT cleanup or the pgid file leaks on every interrupt here.
+        # An empty lock file is safe: the release is [ -n ]-guarded.
+        _loki_arm_session_exit_cleanup ""
         if [ -f "$pid_file" ]; then
             local existing_pid
             existing_pid=$(cat "$pid_file" 2>/dev/null)
@@ -25796,7 +25911,22 @@ main() {
     if [ "${LOKI_OWN_SESSION:-}" = "1" ]; then
         _loki_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
         if [ -n "$_loki_pgid" ]; then
-            echo "$_loki_pgid" > "${pid_file%.pid}.pgid" 2>/dev/null || true
+            # STAMPED, not a bare number. The reader requires boot id + start
+            # epoch to match before it will signal anything, because this file
+            # outlived its run (measured: 155h and 202h orphans) and PIDs
+            # recycle -- a stale bare pgid eventually matches a live shell group
+            # and the reap killed the user's other terminal sessions.
+            _loki_pgid_started="$(_loki_proc_start_epoch $$)"
+            [ -n "$_loki_pgid_started" ] || _loki_pgid_started="$(date +%s 2>/dev/null)"
+            # Record the EXACT path written (global or per-session) plus the
+            # owning shell, so the EXIT trap removes THIS file and only from
+            # this process. Without removal on the interrupt/crash paths the
+            # file outlived its run -- measured orphans aged 155h and 202h.
+            _LOKI_PGID_FILE="${pid_file%.pid}.pgid"
+            _LOKI_PGID_OWNER="${BASHPID:-$$}"
+            printf 'pgid=%s boot=%s started=%s\n' \
+                "$_loki_pgid" "$(_loki_boot_id)" "$_loki_pgid_started" \
+                > "$_LOKI_PGID_FILE" 2>/dev/null || true
         fi
     fi
     # Store session ID in state for dashboard/status visibility
