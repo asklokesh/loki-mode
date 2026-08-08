@@ -66,7 +66,9 @@ EOF
     chmod +x "$FAKE_BIN/$cli"
 done
 reset_sentinels() { rm -f "$SENTINEL_DIR"/* 2>/dev/null || true; }
-any_sentinel()    { ls -1 "$SENTINEL_DIR" 2>/dev/null | grep -c . ; }
+# Counts sentinel files with a glob rather than `ls | grep` (SC2010): ls parses
+# badly on names with spaces or newlines, and a stub CLI is free to write one.
+any_sentinel()    { local _f _n=0; for _f in "$SENTINEL_DIR"/*; do [ -e "$_f" ] && _n=$((_n+1)); done; printf '%s' "$_n"; }
 
 # --- fixture builder --------------------------------------------------------
 # A git repo with >=2 commits (so base..head is real sha algebra, not the
@@ -164,7 +166,7 @@ fi
 # 2. --execute with NO receipt refuses, and NAMES that as the reason.
 # ===========================================================================
 echo "2. --execute with no receipt refuses"
-D2_BASE="$(make_fixture d2)"; D2="$WORKROOT/d2"   # deliberately no gen_receipt
+make_fixture d2 >/dev/null; D2="$WORKROOT/d2"   # deliberately no gen_receipt
 reset_sentinels
 OUT2="$(run_deploy "$D2" --execute)"
 if [ "$(any_sentinel)" -eq 0 ] \
@@ -594,6 +596,51 @@ sys.exit(0 if d.get('anchor_state')=='anchored'
     else
         bad "an anchored deploy did not record itself as anchored" \
             "$(cat "$REC8" 2>/dev/null | head -12)"
+    fi
+
+    # The marker the gate uses to carry "unproven" across the $( ) boundary is
+    # an INTERNAL token. If a future edit moves the strip after the emptiness
+    # test, the user is shown "__LOKI_ANCHOR_UNPROVEN__" as a refusal reason.
+    if printf '%s' "$OUT12" | grep -q "__LOKI_ANCHOR_UNPROVEN__" \
+       || printf '%s' "$OUT11" | grep -q "__LOKI_ANCHOR_UNPROVEN__"; then
+        bad "the internal anchor marker leaked into user-facing output"
+    else
+        ok "the internal marker never reaches the user, on either path"
+    fi
+
+    # --- 12c. UNANCHORED + a REAL reason: strip one, keep the other --------
+    # The ONLY path where `reasons` carries the marker AND a genuine refusal.
+    # It is what the newline-stripping exists for: remove the marker without
+    # joining or swallowing the real reason. Test 12's fixture is clean, so
+    # this branch would otherwise never execute.
+    # TWO real reasons alongside the marker, so the joined-vs-separate
+    # distinction is observable: a dirty tree AND an untracked second file are
+    # both counted by _deploy_tree_clean, so instead we take the dirty tree plus
+    # an UNSIGNED receipt (generated without the key) -- two distinct lines.
+    make_fixture d12c >/dev/null; D12C="$WORKROOT/d12c"
+    ( cd "$D12C" && _LOKI_RUN_START_SHA="" \
+        python3 "$GENERATOR" --loki-dir "$D12C/.loki" >/dev/null 2>&1 )
+    printf 'dirty\n' >> "$D12C/package.json"    # dirty + unsigned + unanchored
+    reset_sentinels
+    OUT12C="$(run_signed "$D12C" --execute --allow-unanchored)"
+    if [ "$(any_sentinel)" -eq 0 ] \
+       && printf '%s' "$OUT12C" | grep -qi "REFUSED" \
+       && printf '%s' "$OUT12C" | grep -qi "dirty" \
+       && ! printf '%s' "$OUT12C" | grep -q "__LOKI_ANCHOR_UNPROVEN__"; then
+        ok "override + a real reason: the marker is stripped, the reason survives"
+    else
+        bad "stripping the marker lost or mangled a co-occurring refusal reason" \
+            "$(printf '%s' "$OUT12C" | grep -i ' - ' | head -3)"
+    fi
+    # Reasons must stay one PER LINE. MEASURED: stripping with `tr -d '\n'`
+    # collapses two reasons into one line -- and a grep for either substring
+    # still matches, so only counting the lines detects it. This tree is dirty
+    # AND unsigned, so two reasons are expected.
+    if [ "$(printf '%s\n' "$OUT12C" | grep -c '^  - ')" -ge 2 ]; then
+        ok "co-occurring reasons stay one per line (not joined into one)"
+    else
+        bad "multiple refusal reasons were joined onto a single line" \
+            "$(printf '%s\n' "$OUT12C" | grep '^  - ' | head -3)"
     fi
 
     # --- 12b. an AMBIENT env var must not opt in ---------------------------
