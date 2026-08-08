@@ -47,18 +47,28 @@ trap 'rm -rf "$TMPROOT"' EXIT
 # the whole CLI. Any drift in these functions is picked up here.
 HELPERS="$TMPROOT/helpers.sh"
 {
-  echo 'RED=""; NC=""'
+  echo 'RED=""; NC=""; YELLOW=""; GREEN=""'
   echo 'require_jq() { command -v jq >/dev/null 2>&1; }'
-  sed -n '/^loki_remote_host()/,/^}/p'          "$SRC"
-  sed -n '/^loki_remote_is_local_host()/,/^}/p' "$SRC"
-  sed -n '/^loki_remote_token()/,/^}/p'         "$SRC"
-  sed -n '/^loki_remote_curl()/,/^}/p'          "$SRC"
-  sed -n '/^loki_remote_submit()/,/^}/p'        "$SRC"
-  sed -n '/^loki_remote_fetch_receipt()/,/^}/p' "$SRC"
-  sed -n '/^loki_remote_verify_receipt()/,/^}/p' "$SRC"
-  sed -n '/^loki_remote_gpg_status()/,/^}/p'     "$SRC"
+  # Extract EVERY loki_remote_* function by pattern, not by a hand-kept list.
+  # A list drifts silently the moment someone adds a function -- which is
+  # exactly what happened when loki_remote_verify_receipt was added here: the
+  # harness picked up the call site but not the definition and failed with
+  # "command not found" at runtime.
+  sed -n '/^loki_remote_[a-z_]*() {/,/^}/p' "$SRC"
 } > "$HELPERS"
 bash -n "$HELPERS" || { echo "  FAIL: extracted helpers do not parse"; exit 1; }
+
+# Guard against the NEXT drift: every loki_remote_* called in the extracted
+# copy must also be DEFINED in it. Fails by name, not as "command not found"
+# three assertions later.
+_undefined=""
+for _fn in $(grep -oE '\bloki_remote_[a-z_]+' "$HELPERS" | sort -u); do
+  grep -q "^${_fn}() {" "$HELPERS" || _undefined="$_undefined $_fn"
+done
+if [ -n "$_undefined" ]; then
+  echo "  FAIL: harness extracted a call but not the definition of:$_undefined"
+  exit 1
+fi
 
 TOKEN="s3cr3t-bearer-token-do-not-leak"
 
