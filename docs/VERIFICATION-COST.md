@@ -115,9 +115,39 @@ above less trustworthy:
 LOCAL_CI_TIER=full bash scripts/local-ci.sh   # the full gate, timed
 loki outcomes --json                          # post-merge outcomes, or UNKNOWN with reasons
 loki intent status --json                     # spec-vs-intent drift
-loki proof verify <id>                        # re-hash a receipt, exit 1 on tamper
+loki proof verify <id>                        # re-hash a receipt (see below)
 bash tests/test-competitor-verify-surface.sh  # the competitor CLI measurement
 ```
+
+### Prove the tamper detection yourself, in three commands
+
+The claim is narrow and worth stating exactly: editing a receipt's recorded
+facts is DETECTED. Run this against any receipt in `.loki/proofs/`:
+
+```bash
+ID=$(ls .loki/proofs | head -1)
+V() { loki proof verify "$ID" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["hash_ok"])'; }
+V                                                    # True
+python3 -c "import json;p='.loki/proofs/$ID/proof.json';d=json.load(open(p));d['files_changed']={'count':999999};json.dump(d,open(p,'w'))"
+V                                                    # False
+```
+
+Measured on this repository: `True` -> `False` -> `True` after restoring.
+
+**Read `hash_ok`, not `ok`.** They answer different questions and conflating
+them produces a false alarm. `hash_ok` is integrity: do the recorded facts still
+hash to the recorded digest. `ok` also folds in `tree_drift`, which is true
+whenever the working tree has moved since the receipt was written -- so an
+untampered receipt from last month correctly reports `ok: false` with
+`hash_ok: true`. An earlier version of this document said "exit 1 on tamper",
+which is wrong in exactly that way: a drifted-but-intact receipt also exits 1.
+
+**What this does NOT establish.** Integrity is not provenance. On the unsigned
+path a party who rewrites the facts AND recomputes the digest passes this check
+-- see the forgeability limit above. Provenance requires the signed path
+(`LOKI_PROOF_GPG_KEY`, [SIGNED-RECEIPTS.md](SIGNED-RECEIPTS.md)), and the remote
+client reports the two separately for that reason: VERIFIED, UNSIGNED,
+UNCHECKED and TAMPERED are four distinct verdicts, never collapsed.
 
 If a number here does not reproduce on your machine, that is a defect and we
 want the report.
