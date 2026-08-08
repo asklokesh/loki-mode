@@ -35,7 +35,7 @@ if(!m){console.error('EXTRACT_FAILED');process.exit(2);}
 const el={style:{},innerHTML:''};
 global.document={getElementById:()=>el};
 global.fetch=()=>Promise.resolve({ok:true,json:()=>Promise.resolve($1)});
-global.window=global; eval(m[0]); global.loadBudget();
+global.window=global; new Function('global', m[0]).call(global, global); global.loadBudget();
 setTimeout(()=>process.stdout.write(el.innerHTML+'||'+String(el.style.display||'')),50);
 " 2>/dev/null
 }

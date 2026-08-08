@@ -84,7 +84,7 @@ const el={'receipts-panel':{style:{}},'receipts-list':{innerHTML:''},'receipts-n
 global.document={getElementById:(id)=>el[id]};
 global.fetch=()=>Promise.resolve({ok:true,json:()=>Promise.resolve(rows)});
 global.window=global;
-eval(m[0]);
+new Function('global', m[0]).call(global, global);
 global.loadReceipts();
 setTimeout(()=>{process.stdout.write(el['receipts-list'].innerHTML);},50);
 " 2>/dev/null

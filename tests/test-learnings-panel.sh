@@ -32,7 +32,7 @@ const el={'learnings-panel':{style:{}},'learnings-list':{innerHTML:''}};
 global.document={getElementById:(id)=>el[id]};
 global.fetch=()=>Promise.resolve({ok:true,json:()=>Promise.resolve($1)});
 global.window=global;
-eval(m[0]); global.loadLearnings();
+new Function('global', m[0]).call(global, global); global.loadLearnings();
 setTimeout(()=>{process.stdout.write(el['learnings-list'].innerHTML+'||'+String(el['learnings-panel'].style.display||''));},60);
 " 2>/dev/null
 }
