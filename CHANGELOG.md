@@ -5,7 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v9.18.3
+## v9.18.4
+
+Re-release of v9.18.3, whose release was blocked by a FALSE test failure of my
+own making: a helm test guarded on `helm` and `python3` but not on PyYAML, which
+is not stdlib. Without it every manifest parse raised, the redirect swallowed
+the traceback, and four assertions compared against empty strings -- reporting
+"the scaling knob is not wired" about a chart that renders correctly. It now
+skips with a named reason, and fails loudly if `helm template` cannot render at
+all rather than blaming the knob for a chart-wide failure.
+
+No product change from 9.18.3. The two false-green fixes below are the payload.
+
+
 
 ### Fixed
 
