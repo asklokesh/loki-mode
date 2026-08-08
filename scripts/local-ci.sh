@@ -185,9 +185,19 @@ declare -a _FAST_KEEP=(
   "tests/test-evidence-gate"
   "tests/test-evidence-boot-axis.sh"
   "tests/test-evidence-secret-axis.sh"
+  # The receipt surface is trust-core, and the LAST INCH of it is the pixel: a
+  # receipt the user cannot reach, or one rendered with a fabricated $0.00 where
+  # the proof says UNKNOWN, defeats the guarantee no matter how honest the JSON
+  # is. Three unit tests over stubbed fetches all passed while the real page
+  # rendered three EMPTY panels, so a browser is the only non-vacuous check
+  # here. Measured 7s. The trust-core scan above cannot catch this one on its
+  # own -- it greps for tests/*.{sh,py} and this harness is a .mjs driven by a
+  # runner script -- which is exactly why it is pinned by hand.
+  "dashboard evidence panels render honestly"
   "tests/test-verify.sh"
   "tests/test-verify-scope-record.sh"
   "tests/test-verify-setup-recipe.sh"
+  "tests/test-verify-runner-selection.sh"
   "tests/test-council-"
   "tests/test-heuristic-council-affirmative.sh"
   "tests/test-playwright-verify-as-evidence.sh"
@@ -1234,6 +1244,7 @@ run_check "tests/test-evidence-gate-no-tests.sh (P1-1 no-tests not affirmative)"
 run_check "tests/test-verify.sh (loki verify deterministic gates)" "bash tests/test-verify.sh 2>&1 | tail -3"
 run_check "tests/test-verify-scope-record.sh (rank 10 locality scope record, advisory-first)" "bash tests/test-verify-scope-record.sh 2>&1 | tail -3"
 run_check "tests/test-verify-setup-recipe.sh (rank 7 setup-recipe writer, env NAMES not values)" "bash tests/test-verify-setup-recipe.sh 2>&1 | tail -3"
+run_check "tests/test-verify-runner-selection.sh (declared runner, not an installed devDep)" "bash tests/test-verify-runner-selection.sh 2>&1 | tail -3"
 run_check "tests/test-node-test-detection.sh (task #79: node --test detection, run.sh + verify.sh false-negative)" "bash tests/test-node-test-detection.sh 2>&1 | tail -3"
 run_check "tests/test-loki-dir-double-path.sh (#80 double-.loki COMPLETED guard)" "bash tests/test-loki-dir-double-path.sh 2>&1 | tail -3"
 run_check "tests/test-zero-test-inconclusive.sh (#82: zero-test-file -> inconclusive, run.sh + verify.sh + council)" "bash tests/test-zero-test-inconclusive.sh 2>&1 | tail -3"
@@ -1537,8 +1548,13 @@ if [ -n "$_DASH_PY" ] && command -v node >/dev/null 2>&1 \
    && [ -d dashboard-ui/node_modules/playwright ] \
    && { [ -d "$HOME/Library/Caches/ms-playwright" ] || [ -d "$HOME/.cache/ms-playwright" ]; }; then
   run_check "dashboard fresh-repo integrated UX harness" 'bash scripts/run-dashboard-fresh-repo-harness.sh'
+  # Inverse fixture: the cold harness above would pass against panels that
+  # never render anything at all. This one seeds receipts + learnings and
+  # asserts they reach the pixel WITHOUT fabricating an unmeasured cost.
+  run_check "dashboard evidence panels render honestly" 'bash scripts/run-dashboard-evidence-panels-harness.sh'
 else
   skip_check "dashboard fresh-repo integrated UX harness" "needs python3.12 + dashboard-ui playwright + chromium"
+  skip_check "dashboard evidence panels render honestly" "needs python3.12 + dashboard-ui playwright + chromium"
 fi
 
 # ---------------------------------------------------------------------------

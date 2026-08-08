@@ -25,6 +25,8 @@ different answer on your hardware.
 | FULL local gate | 23 to 26 minutes | `LOCAL_CI_TIER=full bash scripts/local-ci.sh`, 166 checks, five runs on an M-series Mac |
 | FAST local gate | about 1 minute | `bash scripts/local-ci.sh`, the documented pre-push tier |
 | Shell suite, sharded | 352 seconds | 323 suites, `LOCAL_CI_SHARDS=4`; 1440 seconds serial, so 4.1x |
+| `loki verify` | 77 seconds | `loki verify HEAD~1` on this repository, 5 changed files; dominated by the project's own test suite, not by our gates |
+| of which, shipped-vs-dev CVE split | 418 ms | one extra `npm audit --omit=dev`; 0.5% of the run, and the reason the audit finding can say whether a CVE reaches users |
 | `loki outcomes` | under 1 second per receipt | `git blame` and one `git log` per changed file |
 | `loki intent status` | milliseconds | hash comparison against `.loki/spec/spec.lock` |
 | Agent readiness | milliseconds | filesystem checks only, no network |
@@ -49,6 +51,24 @@ pass verification. That is defense in depth, not non-forgeability. Neutral
 non-forgeability requires the signed path
 (`LOKI_PROOF_GPG_KEY`, see [SIGNED-RECEIPTS.md](SIGNED-RECEIPTS.md)). We removed
 our own "non-forgeable" claim in v7.111.0 after finding it false on that path.
+
+**The tests gate depends on correctly identifying YOUR test runner, and it has
+been wrong before.** Until 2026-08-07 the runner was chosen by grepping
+`package.json` for `"jest"` / `"vitest"` / `"mocha"`, which matches a
+**devDependency**. This repository is the case that exposed it: jest is a
+devDependency with no jest config while `scripts.test` runs `bash -n` plus
+`node --test`, so verify ran jest, jest globbed 895 files that are not jest
+tests, and `loki verify` returned BLOCKED on a clean tree -- permanently, for a
+defect that did not exist. It now reads `scripts.test` with a JSON parser and
+runs what the project declares.
+
+We record this rather than quietly fixing it because a false BLOCK is the more
+damaging direction of that error: a gate that cries wolf on every run trains
+you to ignore the verdict, which costs more than the gate ever earned. If the
+tests gate reports a runner you do not use, that is a bug in our detection, not
+a finding about your code -- the runner is named in
+`.loki/verify/evidence.json` under `deterministic_gates[].runner` so you can
+check which one it picked.
 
 **Only four of the eight quality gates are agent-independent.** Static analysis,
 mock-integrity, test-mutation and documentation coverage do not ask a model

@@ -70,6 +70,33 @@ run_test() {
         return 0
     fi
 
+    # A registration whose script does not exist is a BOOKKEEPING fault, not a
+    # product failure, and it must say so. Four suites failed this way on a
+    # cherry-pick that took the registrations without the files, and the CI log
+    # read exactly like four real regressions -- the message is what cost the
+    # time, not the fix. Fails loudly rather than skipping: a silently skipped
+    # registration is a suite nobody runs and nobody misses.
+    # Two registration forms exist here: a bare path, and a full command
+    # ("python3 -m pytest -q $SCRIPT_DIR/x.py"). Checking the raw value with
+    # -f treats a command as a filename and reports a PRESENT file as missing,
+    # which my first version did -- it failed a suite whose script was on disk.
+    # So resolve the path OUT of either form, and check only that.
+    local _script_path="$test_file"
+    case "$test_file" in
+        *" "*)
+            # Command form: the script is the last whitespace-separated token
+            # that looks like a path to a test file.
+            _script_path="$(printf '%s\n' $test_file | grep -E '\.(sh|py)$' | tail -1)"
+            ;;
+    esac
+    if [ -n "$_script_path" ] && [ ! -f "$_script_path" ]; then
+        echo -e "${RED}✗ ${test_name}: registered but its script is MISSING (${_script_path##*/})${NC}"
+        echo -e "${RED}  This is a stale run_test registration, not a code defect.${NC}"
+        echo -e "${RED}  Either restore the script or remove the registration.${NC}"
+        TOTAL_FAILED=$((TOTAL_FAILED + 1))
+        return 1
+    fi
+
     echo -e "${YELLOW}┌────────────────────────────────────────────────────────────────┐${NC}"
     echo -e "${YELLOW}│ Running: ${test_name}${NC}"
     echo -e "${YELLOW}└────────────────────────────────────────────────────────────────┘${NC}"
@@ -811,6 +838,10 @@ run_test "the public HTML receipt shows disabled gates" "$SCRIPT_DIR/test-html-r
 run_test "the founder-decisions document is accurate" "$SCRIPT_DIR/test-founder-decisions-doc-accurate.sh"
 run_test "entry-document pointers resolve" "$SCRIPT_DIR/test-entry-doc-pointers-resolve.sh"
 run_test "the mutation probe cannot silently no-op" "$SCRIPT_DIR/test-mutation-probe.sh"
+run_test "the Quality page shows which gates block" "$SCRIPT_DIR/test-gate-policy-ui-line.sh"
+run_test "the evidence receipt is reachable from the dashboard" "$SCRIPT_DIR/test-receipts-panel.sh"
+run_test "the build's learnings are visible" "$SCRIPT_DIR/test-learnings-panel.sh"
+run_test "the spend-cap state is visible" "$SCRIPT_DIR/test-budget-banner.sh"
 run_test "trust-core tests detect their regressions" "$SCRIPT_DIR/test-trust-core-tests-detect.sh"
 run_test "a user-installed reviewer takes part in a run" "$SCRIPT_DIR/test-installed-agent-reviewer.sh"
 # Skill modules are loaded INTO the agent's context and acted on, so a false

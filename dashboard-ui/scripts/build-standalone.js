@@ -1422,6 +1422,14 @@ function generateStandaloneHTML(bundleCode) {
             <h3 style="font-family: 'Fraunces', Georgia, serif; font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Logs</h3>
             <loki-log-stream id="log-stream" auto-scroll max-lines="500"></loki-log-stream>
           </div>
+          <!-- LEARNINGS. /api/learnings held real records with a rootCause,
+               a fix and a preventInFuture, and had no UI consumer -- the
+               system was learning from its runs and never showing anyone
+               what it learned. Hidden until data arrives. -->
+          <div id="learnings-panel" style="display:none;">
+            <h3 style="font-family: var(--loki-font-family, 'Inter', system-ui, -apple-system, sans-serif); font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">What this build learned</h3>
+            <div id="learnings-list"></div>
+          </div>
           <div>
             <h3 style="font-family: 'Fraunces', Georgia, serif; font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Memory</h3>
             <loki-memory-browser id="memory-browser" tab="summary"></loki-memory-browser>
@@ -1774,6 +1782,13 @@ function generateStandaloneHTML(bundleCode) {
         <div class="section-page-header">
           <h2 class="section-page-title">Cost</h2>
         </div>
+        <!-- SPEND CAP. /api/budget reports budget_limit, and it ships NULL:
+             there is no automatic spend stop. Nothing in the UI said so, and
+             the only place that fact surfaced was a bill. Shown ALWAYS, not
+             just when a cap exists, because "no cap" is the state a user most
+             needs to know about. -->
+        <div id="budget-banner" style="display:none;margin-bottom:12px;padding:10px 12px;
+             border:1px solid var(--loki-border);border-radius:6px;font-size:12px;"></div>
         <loki-cost-dashboard id="cost-dashboard"></loki-cost-dashboard>
       </div>
 
@@ -1784,8 +1799,18 @@ function generateStandaloneHTML(bundleCode) {
         <div class="section-page-header">
           <h2 class="section-page-title">Trust Trajectory</h2>
         </div>
+        <!-- EVIDENCE RECEIPTS. /api/proofs served 9 receipts with verdict,
+             file count and an HTML view, and NOTHING in the dashboard read it
+             -- only /api/proofs/summary (the header badge) was consumed. The
+             receipt is the thing we ask users to check; it was unreachable
+             from the UI. -->
+        <div id="receipts-panel" style="margin-bottom:16px;display:none;">
+          <h3 style="font-size:13px;font-weight:600;margin:0 0 8px;">Evidence receipts</h3>
+          <div id="receipts-list"></div>
+          <div id="receipts-note" style="font-size:11px;color:var(--loki-text-muted);margin-top:8px;"></div>
+        </div>
         <iframe id="trust-frame" title="Trust trajectory" src="about:blank"
-          style="width:100%;height:calc(100vh - 160px);border:0;border-radius:8px;background:var(--loki-bg-primary);"></iframe>
+          style="width:100%;height:calc(100vh - 260px);border:0;border-radius:8px;background:var(--loki-bg-primary);"></iframe>
       </div>
 
       <!-- Checkpoints -->
@@ -2369,6 +2394,143 @@ document.addEventListener('DOMContentLoaded', function() {
       badge.classList.add('show');
     }
 
+    // SPEND CAP STATE. budget_limit is NULL by default -- LOKI_BUDGET_LIMIT
+    // ships unset, so a long run has no automatic stop. That is a defensible
+    // default (a run killed at a threshold the user never chose is worse), but
+    // it must not be INVISIBLE: today the only place it surfaced was a bill.
+    //
+    // Renders the no-cap state as prominently as a cap, and names the variable
+    // that sets one. Never invents a number: an unknown current cost reads
+    // "not measured", not $0.00.
+    window.loadBudget = function () {
+      var el = document.getElementById('budget-banner');
+      if (!el) return;
+      fetch('/api/budget', { headers: { 'Accept': 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (!d) return;
+          var lim = d.budget_limit;
+          var cur = d.current_cost;
+          var curTxt = (cur === null || cur === undefined) ? 'not measured'
+                     : ('$' + Number(cur).toFixed(2));
+          if (lim === null || lim === undefined) {
+            el.style.borderColor = 'var(--loki-warning)';
+            el.innerHTML = '<strong>No spend cap set.</strong> This run will not stop on cost. '
+              + 'Spent so far: ' + curTxt + '. '
+              + 'Set one with <code>LOKI_BUDGET_LIMIT=&lt;usd&gt;</code>.';
+          } else if (d.exceeded) {
+            el.style.borderColor = 'var(--loki-error)';
+            el.innerHTML = '<strong>Budget exceeded.</strong> Cap $' + Number(lim).toFixed(2)
+              + ', spent ' + curTxt + '.';
+          } else {
+            var rem = (d.remaining === null || d.remaining === undefined)
+              ? 'not measured' : ('$' + Number(d.remaining).toFixed(2));
+            el.style.borderColor = 'var(--loki-border)';
+            el.innerHTML = 'Spend cap $' + Number(lim).toFixed(2)
+              + '. Spent ' + curTxt + ', remaining ' + rem + '.';
+          }
+          el.style.display = 'block';
+        })
+        .catch(function () { /* leave hidden */ });
+    };
+
+    // LEARNINGS. What the build learned from its own gate failures.
+    //
+    // /api/learnings held real records -- rootCause, fix, preventInFuture --
+    // with no UI consumer. The system was learning from its runs and showing
+    // nobody, which makes the memory unfalsifiable: a user cannot correct a
+    // learning they cannot see. Devin's "misleading knowledge" surface is the
+    // same idea and the reason it is worth showing.
+    //
+    // Renders the record's OWN words. Nothing is summarised or re-derived: a
+    // paraphrased root cause is a second claim about a claim.
+    window.loadLearnings = function () {
+      var panel = document.getElementById('learnings-panel');
+      var list = document.getElementById('learnings-list');
+      if (!panel || !list) return;
+      fetch('/api/learnings', { headers: { 'Accept': 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (!d) return;
+          var rows = Array.isArray(d) ? d : (d.learnings || []);
+          if (!rows.length) return;      // nothing learned yet: say nothing
+          rows = rows.slice().reverse().slice(0, 8);
+          var html = '';
+          for (var i = 0; i < rows.length; i++) {
+            var x = rows[i] || {};
+            var when = x.timestamp ? String(x.timestamp).slice(0, 16).replace('T', ' ') : '-';
+            var iter = (x.iteration === null || x.iteration === undefined) ? '-' : ('iter ' + x.iteration);
+            html += '<div style="padding:8px;border-bottom:1px solid var(--loki-border);font-size:12px;">'
+                 + '<div style="display:flex;gap:10px;color:var(--loki-text-muted);margin-bottom:4px;">'
+                 + '<span>' + when + '</span><span>' + iter + '</span>'
+                 + '<span>' + String(x.trigger || 'unknown trigger') + '</span></div>'
+                 + '<div style="margin-bottom:3px;"><strong>cause:</strong> '
+                 + String(x.rootCause || 'not recorded') + '</div>'
+                 + (x.fix ? '<div style="margin-bottom:3px;"><strong>fix:</strong> ' + String(x.fix) + '</div>' : '')
+                 + (x.preventInFuture ? '<div style="color:var(--loki-text-muted);"><strong>prevent:</strong> '
+                     + String(x.preventInFuture) + '</div>' : '')
+                 + '</div>';
+          }
+          list.innerHTML = html;
+          panel.style.display = 'block';
+        })
+        .catch(function () { /* leave hidden */ });
+    };
+
+    // RECEIPT LIST. Fetched on demand when the Trust section opens, not on a
+    // timer: it is a history view, and polling it would spend a request every
+    // 30s on data that only changes when a run finishes.
+    //
+    // Every field rendered comes straight from the receipt. Nothing is derived,
+    // and an absent value renders as "-" rather than a zero or a guess -- a
+    // fabricated 0 cost or a blank verdict read as "clean" is the exact false
+    // green the receipt exists to prevent.
+    window.loadReceipts = function () {
+      var panel = document.getElementById('receipts-panel');
+      var list = document.getElementById('receipts-list');
+      var note = document.getElementById('receipts-note');
+      if (!panel || !list) return;
+      fetch('/api/proofs', { headers: { 'Accept': 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (!d) return;                      // endpoint absent: leave hidden
+          var rows = Array.isArray(d) ? d : (d.proofs || d.receipts || []);
+          if (!rows.length) return;            // no receipts yet: say nothing
+          rows = rows.slice().reverse().slice(0, 10);
+          var html = '';
+          for (var i = 0; i < rows.length; i++) {
+            var x = rows[i] || {};
+            var verdict = x.headline || x.final_verdict || 'UNKNOWN';
+            var verified = /^VERIFIED/i.test(verdict);
+            var col = verified ? 'var(--loki-success)' : 'var(--loki-text-muted)';
+            var files = (x.files_changed === null || x.files_changed === undefined)
+              ? '-' : String(x.files_changed);
+            var cost = (x.cost_usd === null || x.cost_usd === undefined)
+              ? '-' : ('$' + Number(x.cost_usd).toFixed(2));
+            var when = x.generated_at ? String(x.generated_at).slice(0, 16).replace('T', ' ') : '-';
+            var link = x.has_html
+              ? ('<a href="/api/proofs/' + encodeURIComponent(x.run_id || '') + '/html"'
+                 + ' target="_blank" rel="noopener" style="color:var(--loki-accent);">open</a>')
+              : '<span style="color:var(--loki-text-muted);">no html</span>';
+            html += '<div style="display:flex;gap:12px;align-items:center;padding:6px 8px;'
+                 + 'border-bottom:1px solid var(--loki-border);font-size:12px;">'
+                 + '<span style="color:' + col + ';font-weight:600;min-width:130px;">'
+                 + String(verdict).slice(0, 22) + '</span>'
+                 + '<span style="color:var(--loki-text-muted);min-width:120px;">' + when + '</span>'
+                 + '<span style="min-width:90px;">' + files + ' files</span>'
+                 + '<span style="min-width:70px;">' + cost + '</span>'
+                 + link + '</div>';
+          }
+          list.innerHTML = html;
+          if (note) {
+            note.textContent = 'Newest first. "open" renders the receipt itself. '
+              + 'Re-check any of them: loki proof verify <run-id>';
+          }
+          panel.style.display = 'block';
+        })
+        .catch(function () { /* leave hidden: no receipt surface is better than a wrong one */ });
+    };
+
     function poll() {
       fetch('/api/proofs/summary', { headers: { 'Accept': 'application/json' } })
         .then(function (r) { return r.ok ? r.json() : null; })
@@ -2413,7 +2575,10 @@ document.addEventListener('DOMContentLoaded', function() {
     // document and cannot see the SPA's manual data-loki-theme toggle, so we
     // pass the resolved theme as a query param (?theme=dark|light); the
     // standalone page reads it and matches. v7.18.0.
+    if (sectionId === 'insights') { loadLearnings(); }
+    if (sectionId === 'cost') { loadBudget(); }
     if (sectionId === 'trust') {
+      loadReceipts();
       var tframe = document.getElementById('trust-frame');
       if (tframe && (!tframe.src || tframe.src === 'about:blank' ||
           tframe.getAttribute('src') === 'about:blank')) {

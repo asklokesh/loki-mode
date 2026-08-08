@@ -11342,7 +11342,58 @@ enforce_test_coverage() {
     if [ -f "${TARGET_DIR:-.}/package.json" ]; then
         # BUG-EC-014: Wrap test runners with timeout to prevent hanging indefinitely
         local gate_timeout="${LOKI_GATE_TIMEOUT:-300}"  # 5 minutes default
-        if grep -q '"vitest"' "${TARGET_DIR:-.}/package.json" 2>/dev/null; then
+        # A DECLARED scripts.test wins over an installed package.
+        #
+        # The v7.41.x fix below already established that grep false-positives on
+        # devDependencies -- read its comment -- but it only guarded the `else`
+        # branch, so the three grep branches AHEAD of it still shadowed it. This
+        # repo is the proof: jest is a devDependency with no jest config while
+        # scripts.test runs `bash -n` + `node --test`, and the grep branch
+        # hijacked the runner, ran jest over 895 non-jest files and failed every
+        # one of them.
+        #
+        # _has_declared_test_script is true only when the project DECLARES a real
+        # test script, which is the project's own statement of its runner. When
+        # it declares nothing, the grep branches still apply exactly as before --
+        # that is the legitimate case they were written for (a package that ships
+        # a runner but no npm script).
+        local _declared_test_script=""
+        _declared_test_script=$(_LOKI_PKG="${TARGET_DIR:-.}/package.json" python3 -c "
+import json, os, sys
+try:
+    with open(os.environ['_LOKI_PKG']) as f:
+        d = json.load(f)
+except Exception:
+    sys.exit(0)
+if not isinstance(d, dict):
+    sys.exit(0)
+t = (d.get('scripts') or {}).get('test') or ''
+if 'no test specified' in t.lower():
+    sys.exit(0)
+sys.stdout.write(t.strip())
+" 2>/dev/null || echo "")
+        if [ -n "$_declared_test_script" ]; then
+            # Run the DECLARED script. This body used to live in the trailing
+            # `else`; a no-op `:` here would have terminated the if/elif chain
+            # and left test_runner=none, turning a false BLOCK into a silently
+            # unmeasured gate -- strictly worse than the bug being fixed.
+            #
+            # LOKI_TEST_COMMAND lets an operator override the invocation; the
+            # default is the project's own `npm test`.
+            local _test_cmd="${LOKI_TEST_COMMAND:-npm test}"
+            # Label the runner by what the script invokes so evidence is honest
+            # (node --test, vitest, jest, etc. all surface here).
+            case "$_declared_test_script" in
+                *"node --test"*|*"node:test"*) test_runner="node-test" ;;
+                *vitest*) test_runner="vitest" ;;
+                *jest*)   test_runner="jest" ;;
+                *mocha*)  test_runner="mocha" ;;
+                *)        test_runner="npm-test" ;;
+            esac
+            local output
+            output=$(cd "${TARGET_DIR:-.}" && timeout "$gate_timeout" sh -c "$_test_cmd" 2>&1) || test_passed=false
+            details="$test_runner ($_test_cmd): $(echo "$output" | tail -5 | tr '\n' ' ')"
+        elif grep -q '"vitest"' "${TARGET_DIR:-.}/package.json" 2>/dev/null; then
             test_runner="vitest"
             local output
             output=$(cd "${TARGET_DIR:-.}" && timeout "$gate_timeout" npx vitest run --reporter=json 2>&1) || test_passed=false
@@ -11368,37 +11419,13 @@ enforce_test_coverage() {
             # would false-positive on devDeps / unrelated keys), then run the
             # configured command. This MUST sit before the monorepo/python/go/rust
             # checks, all of which gate on test_runner=="none".
-            local _pkg_test_script
-            _pkg_test_script=$(_LOKI_PKG="${TARGET_DIR:-.}/package.json" python3 -c "
-import json, os, sys
-try:
-    with open(os.environ['_LOKI_PKG']) as f:
-        d = json.load(f)
-except Exception:
-    sys.exit(0)
-t = (d.get('scripts') or {}).get('test') or ''
-# npm's default placeholder; treat as 'no test'.
-if 'no test specified' in t.lower():
-    sys.exit(0)
-sys.stdout.write(t.strip())
-" 2>/dev/null || echo "")
-            if [ -n "$_pkg_test_script" ]; then
-                # LOKI_TEST_COMMAND lets an operator override the invocation; the
-                # default is the project's own `npm test`.
-                local _test_cmd="${LOKI_TEST_COMMAND:-npm test}"
-                # Label the runner by what the script invokes so evidence is
-                # honest (node --test, vitest, jest, etc. all surface here).
-                case "$_pkg_test_script" in
-                    *"node --test"*|*"node:test"*) test_runner="node-test" ;;
-                    *vitest*) test_runner="vitest" ;;
-                    *jest*)   test_runner="jest" ;;
-                    *mocha*)  test_runner="mocha" ;;
-                    *)        test_runner="npm-test" ;;
-                esac
-                local output
-                output=$(cd "${TARGET_DIR:-.}" && timeout "$gate_timeout" sh -c "$_test_cmd" 2>&1) || test_passed=false
-                details="$test_runner ($_test_cmd): $(echo "$output" | tail -5 | tr '\n' ' ')"
-            fi
+            #
+            # That handler now runs in the FIRST branch above, because a declared
+            # script must win over an installed devDependency. Nothing is left to
+            # do here: reaching this point means the project declares no test
+            # script AND ships no recognised runner, so test_runner stays "none"
+            # and the monorepo/python/go/rust detection below takes over.
+            :
         fi
     fi
 
