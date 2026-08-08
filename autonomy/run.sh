@@ -11467,14 +11467,60 @@ sys.stdout.write(t.strip())
                                 "${TARGET_DIR:-.}"/apps/*/package.json \
                                 "${TARGET_DIR:-.}"/services/*/package.json; do
                     [ -f "$pkg_json" ] || continue
-                    if grep -q '"vitest"' "$pkg_json" 2>/dev/null; then
-                        workspace_runner="vitest"
-                        break
-                    elif grep -q '"jest"' "$pkg_json" 2>/dev/null; then
-                        workspace_runner="jest"
-                        break
-                    fi
+                    # Read the workspace's DECLARED test script, same rule as the
+                    # single-package path above. A bare grep for '"jest"' matches
+                    # a devDependency, so a workspace that merely depends on jest
+                    # got labelled monorepo-jest.
+                    #
+                    # LOWER SEVERITY than the single-package case, and worth being
+                    # precise about why: all three branches below dispatch the
+                    # project's own script (turbo test / pnpm test --recursive /
+                    # npm test), so the grep only ever picked the LABEL, never
+                    # what ran. This corrects the evidence, not the execution.
+                    local _ws_script
+                    _ws_script=$(_LOKI_PKG="$pkg_json" python3 -c "
+import json, os, sys
+try:
+    with open(os.environ['_LOKI_PKG']) as f:
+        d = json.load(f)
+except Exception:
+    sys.exit(0)
+if not isinstance(d, dict):
+    sys.exit(0)
+t = (d.get('scripts') or {}).get('test') or ''
+if 'no test specified' in t.lower():
+    sys.exit(0)
+sys.stdout.write(t.strip())
+" 2>/dev/null || echo "")
+                    case "$_ws_script" in
+                        *vitest*) workspace_runner="vitest"; break ;;
+                        *jest*)   workspace_runner="jest"; break ;;
+                        *mocha*)  workspace_runner="mocha"; break ;;
+                        "")       : ;;
+                        *)        workspace_runner="npm-test"; break ;;
+                    esac
                 done
+
+                # FAIL-SAFE. If no workspace DECLARES a test script but one has a
+                # runner installed, still run the monorepo suite -- labelled
+                # "installed" so the evidence does not claim a declaration that
+                # does not exist.
+                #
+                # Without this the change would trade a wrong label for a SKIPPED
+                # GATE, which is the dangerous direction: the old grep at least
+                # dispatched `npm test`. Reporting a runner inaccurately is a
+                # documentation bug; silently not testing a monorepo is not.
+                if [ -z "$workspace_runner" ]; then
+                    for pkg_json in "${TARGET_DIR:-.}"/packages/*/package.json \
+                                    "${TARGET_DIR:-.}"/apps/*/package.json \
+                                    "${TARGET_DIR:-.}"/services/*/package.json; do
+                        [ -f "$pkg_json" ] || continue
+                        if grep -qE '"(vitest|jest|mocha)"' "$pkg_json" 2>/dev/null; then
+                            workspace_runner="installed"
+                            break
+                        fi
+                    done
+                fi
 
                 if [ -n "$workspace_runner" ]; then
                     test_runner="monorepo-$workspace_runner"
