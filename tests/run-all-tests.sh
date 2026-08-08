@@ -76,8 +76,21 @@ run_test() {
     # read exactly like four real regressions -- the message is what cost the
     # time, not the fix. Fails loudly rather than skipping: a silently skipped
     # registration is a suite nobody runs and nobody misses.
-    if [ ! -f "$test_file" ]; then
-        echo -e "${RED}✗ ${test_name}: registered but its script is MISSING (${test_file##*/})${NC}"
+    # Two registration forms exist here: a bare path, and a full command
+    # ("python3 -m pytest -q $SCRIPT_DIR/x.py"). Checking the raw value with
+    # -f treats a command as a filename and reports a PRESENT file as missing,
+    # which my first version did -- it failed a suite whose script was on disk.
+    # So resolve the path OUT of either form, and check only that.
+    local _script_path="$test_file"
+    case "$test_file" in
+        *" "*)
+            # Command form: the script is the last whitespace-separated token
+            # that looks like a path to a test file.
+            _script_path="$(printf '%s\n' $test_file | grep -E '\.(sh|py)$' | tail -1)"
+            ;;
+    esac
+    if [ -n "$_script_path" ] && [ ! -f "$_script_path" ]; then
+        echo -e "${RED}✗ ${test_name}: registered but its script is MISSING (${_script_path##*/})${NC}"
         echo -e "${RED}  This is a stale run_test registration, not a code defect.${NC}"
         echo -e "${RED}  Either restore the script or remove the registration.${NC}"
         TOTAL_FAILED=$((TOTAL_FAILED + 1))
