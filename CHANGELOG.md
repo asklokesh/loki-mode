@@ -5,6 +5,22 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.17.2
+
+Ships the tree v9.17.0 and v9.17.1 were both meant to. 9.17.0 on npm carries
+gitHead 00b9f4e2 (an older commit, published by a concurrent release run) so it
+lacks the fixes its changelog describes; 9.17.1 was blocked by required-ci while
+shell shard 2/4 was red. That shard now passes. No code change beyond the test
+fixes below.
+
+### Fixed
+
+- Review-assurance timing assertions now scale on a contended CI runner and
+  report which clause failed. Measured: idle 43/43, CPU-saturated fails at a
+  different assertion each run, load removed 43/43 -- one environmental
+  sensitivity, not the four defects it was patched as. Two assertions compared
+  a scaled budget against the literal it replaced.
+
 ## v9.17.1
 
 Re-release of v9.17.0. The 9.17.0 tarball on npm was published from an older
