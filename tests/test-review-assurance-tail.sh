@@ -1324,7 +1324,15 @@ fi
 DA_REPO="$TMPROOT/da-block-repo"
 setup_repo "$DA_REPO"
 da_started=$(monotonic_ms)
-da_rc=$(run_review_case "$DA_REPO" 1 da-block "$SPEC")
+# DA cases get an explicit budget: this path dispatches a reviewer AND a
+# speculative devils-advocate -- two sequential model calls under ONE budget --
+# so the shared default is marginal on a contended runner. Measured: shard 2/4
+# failed three consecutive CI runs here while the suite passed 43/43 locally,
+# and the failing assertion MOVED between adjacent DA cases, which is the
+# signature of a shared environmental cause rather than a defect in any one.
+# Args 5 and 6 are passed at their documented defaults so arg 7 (the timeout)
+# lands in the right position.
+da_rc=$(run_review_case "$DA_REPO" 1 da-block "$SPEC" auto 64000 "$(review_budget 12)")
 da_ended=$(monotonic_ms)
 da_elapsed=$((da_ended - da_started))
 da_review="$(find "$DA_REPO/.loki/quality/reviews" -mindepth 1 -maxdepth 1 -type d | head -1)"
@@ -1351,7 +1359,7 @@ fi
 # Council dissent does not authorize discarding a speculative DA blocker.
 DA_DISSENT_REPO="$TMPROOT/da-dissent-block-repo"
 setup_repo "$DA_DISSENT_REPO"
-da_dissent_rc=$(run_review_case "$DA_DISSENT_REPO" 1 da-nonunanimous-block "$SPEC")
+da_dissent_rc=$(run_review_case "$DA_DISSENT_REPO" 1 da-nonunanimous-block "$SPEC" auto 64000 "$(review_budget 12)")
 da_dissent_review="$(find "$DA_DISSENT_REPO/.loki/quality/reviews" -mindepth 1 -maxdepth 1 -type d | head -1)"
 # Each clause reports SEPARATELY -- the fourth instance of this flaw in this
 # file. It failed twice consecutively in CI shard 2/4 while passing 43/43
@@ -1396,7 +1404,7 @@ unset _dis_why _dis_py
 
 DA_NOT_NEEDED_REPO="$TMPROOT/da-dissent-pass-repo"
 setup_repo "$DA_NOT_NEEDED_REPO"
-da_not_needed_rc=$(run_review_case "$DA_NOT_NEEDED_REPO" 1 da-nonunanimous-pass "$SPEC")
+da_not_needed_rc=$(run_review_case "$DA_NOT_NEEDED_REPO" 1 da-nonunanimous-pass "$SPEC" auto 64000 "$(review_budget 12)")
 da_not_needed_review="$(find "$DA_NOT_NEEDED_REPO/.loki/quality/reviews" -mindepth 1 -maxdepth 1 -type d | head -1)"
 if [ "$da_not_needed_rc" -eq 0 ] && python3 - "$da_not_needed_review/aggregate.json" <<'PY'
 import json
@@ -1599,7 +1607,7 @@ unset REVIEW_TEST_SHARD_STATE
 # A unanimous council cannot turn an empty DA response into a fabricated pass.
 EMPTY_REPO="$TMPROOT/da-empty-repo"
 setup_repo "$EMPTY_REPO"
-empty_rc=$(run_review_case "$EMPTY_REPO" 1 da-empty "$SPEC")
+empty_rc=$(run_review_case "$EMPTY_REPO" 1 da-empty "$SPEC" auto 64000 "$(review_budget 12)")
 empty_review="$(find "$EMPTY_REPO/.loki/quality/reviews" -mindepth 1 -maxdepth 1 -type d | head -1)"
 if [ "$empty_rc" -ne 0 ] && python3 - "$empty_review/aggregate.json" <<'PY'
 import json
