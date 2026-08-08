@@ -206,6 +206,7 @@ _SENSITIVE_READ_PREFIXES = (
     "/api/projects",
     "/api/council",
     "/api/proofs",
+    "/api/phases",
     "/api/memory",
     "/api/learnings",
     "/api/learning",
@@ -12224,6 +12225,23 @@ def _proof_pr_url(run_dir: _Path) -> Optional[str]:
     if isinstance(url, str) and url:
         return url
     return None
+
+
+@app.get("/api/phases", dependencies=[Depends(auth.require_scope("read"))])
+async def phase_timeline():
+    """Measured phase segments for the active run, from real phase_change events.
+
+    dashboard/api_phases.py had NO importer and NO consumer: a complete
+    phase-timeline module, tested and unreachable. This route is the wiring.
+
+    The envelope is returned VERBATIM. Reshaping it here would fork the honesty
+    contract the module carries -- an unmeasured start is None (never 0), an
+    unreadable log reads differently from an empty one, and `sampled` says the
+    history can be missing phases shorter than one poll interval. A second
+    format is a second place for those distinctions to die.
+    """
+    from . import api_phases
+    return api_phases.phase_history(str(_get_loki_dir()))
 
 
 @app.get("/api/proofs", dependencies=[Depends(auth.require_scope("read"))])

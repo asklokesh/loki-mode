@@ -1294,6 +1294,17 @@
           <loki-spec-panel id="spec-panel"></loki-spec-panel>
         </div>
         <loki-overview id="overview"></loki-overview>
+        <!-- PIPELINE. dashboard/api_phases.py parsed real phase_change events
+             into measured segments and had NO importer in server.py and NO
+             consumer here: a user could see a build finish or not, never WHICH
+             PHASE it was in or where it was stuck. Lives on Overview because
+             this SPA has no Activity section (no data-section="activity"), and
+             Overview is the live-run home. Hidden until data arrives. -->
+        <div id="pipeline-panel" style="display:none;margin-bottom:24px;">
+          <h3 style="font-family: var(--loki-font-family, 'Inter', system-ui, -apple-system, sans-serif); font-size: 1.15rem; font-weight: 400; color: var(--loki-text-primary); margin-bottom: 12px;">Pipeline</h3>
+          <div id="pipeline-list"></div>
+          <div id="pipeline-note" style="font-size:11px;color:var(--loki-text-muted);margin-top:8px;"></div>
+        </div>
         <loki-rarv-timeline id="rarv-timeline"></loki-rarv-timeline>
         <loki-session-diff id="session-diff"></loki-session-diff>
         <div style="margin-top: 28px;">
@@ -16184,6 +16195,127 @@ document.addEventListener('DOMContentLoaded', function() {
         .catch(function () { /* leave hidden: no receipt surface is better than a wrong one */ });
     };
 
+    // PIPELINE. The measured phase timeline from /api/phases, which serves
+    // dashboard/api_phases.py's envelope verbatim.
+    //
+    // WHAT IS NOT HERE, DELIBERATELY: a "not started" row. The envelope only
+    // contains phases that HAVE started, and the runtime declares no canonical
+    // ordered phase list -- _advance_current_phase takes any string, and the
+    // envelope's own "sampled" flag says absence of a segment is not evidence
+    // the phase did not occur. Drawing a fixed pipeline and marking the missing
+    // rows "not started" would invent exactly the fiction api_phases.py was
+    // written to replace (the old timeline rotated a hardcoded four-phase list
+    // and gave each invented segment a Math.random() duration). The three
+    // states we CAN measure are rendered distinctly, which is what keeps a
+    // stalled build from reading as a healthy one:
+    //
+    //   ENDED    start and end both measured -- a real duration
+    //   RUNNING  ongoing, no recorded end; elapsed is anchored to the server's
+    //            checked_at, never to the client clock
+    //   FAILED   the phase the runtime itself named FAILED
+    //
+    // and a fourth the envelope reports separately: the leading phase, known to
+    // have run but with no emitted start, so its duration is "not measured".
+    //
+    // An unmeasured duration renders "not measured", NEVER 0. A measured zero
+    // (two events inside one second -- timestamps are second-granular) still
+    // renders as 0s, so the guard is on the ENDPOINTS being absent, never on
+    // the duration being falsy.
+    window.loadPhases = function () {
+      var panel = document.getElementById('pipeline-panel');
+      var list = document.getElementById('pipeline-list');
+      var note = document.getElementById('pipeline-note');
+      if (!panel || !list) return;
+      fetch('/api/phases', { headers: { 'Accept': 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) {
+          if (!d) return;                      // endpoint absent: leave hidden
+          var rows = (d.segments || []).slice();
+          if (d.leading_phase) rows.unshift(d.leading_phase);
+          if (!rows.length) return;            // no phase history: say nothing
+          var html = '';
+          for (var i = 0; i < rows.length; i++) {
+            var x = rows[i] || {};
+            // ESCAPED, unlike the verdict in loadReceipts. That comes from a
+            // controlled set; a phase name does not -- api_phases.py passes
+            // names through verbatim and _advance_current_phase accepts ANY
+            // string, so the set is open and this is untrusted text going into
+            // innerHTML on a dashboard that can be bound remotely.
+            var raw = String(x.phase || 'UNKNOWN');
+            var _d = document.createElement('div');
+            _d.textContent = raw;
+            var phase = _d.innerHTML;
+            var failed = /^FAIL/i.test(raw);
+            // The end a RUNNING segment is measured against is the server's
+            // own checked_at. A client clock would drift against the log.
+            var end = x.end;
+            if (end === null || end === undefined) {
+              if (x.ongoing) end = d.checked_at;
+            }
+            // Gate on the endpoints, not on the duration: end - start === 0 is
+            // a real measurement (second-granular timestamps), and hiding it
+            // as "-" would be the same lie in the other direction.
+            var measured = (x.start !== null && x.start !== undefined
+                            && end !== null && end !== undefined);
+            var secs = measured ? Math.max(0, Math.round(end - x.start)) : null;
+            var dur = measured
+              ? (secs < 60 ? (secs + 's')
+                 : (Math.floor(secs / 60) + 'm ' + (secs % 60) + 's'))
+              : 'not measured';
+            var state, col;
+            if (failed) {
+              state = 'FAILED'; col = 'var(--loki-error)';
+            } else if (x.ongoing) {
+              state = 'RUNNING'; col = 'var(--loki-warning)';
+            } else if (x.start === null || x.start === undefined) {
+              // The leading phase: it ran, but its start was never emitted, so
+              // it has no coordinate on a time axis. Named, not drawn.
+              state = 'RAN (start not recorded)'; col = 'var(--loki-text-muted)';
+            } else {
+              state = 'ENDED'; col = 'var(--loki-text-muted)';
+            }
+            var iter = (x.iteration === null || x.iteration === undefined)
+              ? '-' : ('iter ' + x.iteration);
+            html += '<div style="display:flex;gap:12px;align-items:center;padding:6px 8px;'
+                 + 'border-bottom:1px solid var(--loki-border);font-size:12px;">'
+                 + '<span style="font-weight:600;min-width:130px;">' + phase + '</span>'
+                 + '<span style="color:' + col + ';min-width:170px;">' + state + '</span>'
+                 + '<span style="min-width:90px;">' + dur + '</span>'
+                 + '<span style="color:var(--loki-text-muted);">' + iter + '</span>'
+                 + '</div>';
+          }
+          list.innerHTML = html;
+          if (note) {
+            // The envelope's own caveats, surfaced. Sampled data presented as
+            // complete is a claim the module explicitly refuses to make.
+            var parts = [];
+            // The VIEW's own age, not just the data's. A one-shot fetch of a
+            // LIVE pipeline freezes: "TESTING RUNNING 1m 40s" would sit there
+            // unchanged an hour later, which is the stalled-build-reads-as-
+            // healthy shape arriving through the view instead of the data.
+            // Polled below, and stamped here so a frozen row is self-labelling
+            // even if the poll dies.
+            if (d.checked_at) {
+              parts.push('Measured as of '
+                + new Date(d.checked_at * 1000).toISOString().slice(11, 19) + 'Z.');
+            }
+            if (d.sampled) {
+              parts.push('Sampled: the phase recorder polls, so a phase shorter '
+                + 'than one poll interval left no event and is absent here.');
+            }
+            if (d.freshness_s === null || d.freshness_s === undefined) {
+              parts.push('Age of this data: not measured.');
+            } else if (d.freshness_s > 120) {
+              parts.push('STALE: the phase log was last written '
+                + Math.floor(d.freshness_s / 60) + 'm ago.');
+            }
+            note.textContent = parts.join(' ');
+          }
+          panel.style.display = 'block';
+        })
+        .catch(function () { /* leave hidden: no pipeline is better than a wrong one */ });
+    };
+
     function poll() {
       fetch('/api/proofs/summary', { headers: { 'Accept': 'application/json' } })
         .then(function (r) { return r.ok ? r.json() : null; })
@@ -16228,6 +16360,18 @@ document.addEventListener('DOMContentLoaded', function() {
     // document and cannot see the SPA's manual data-loki-theme toggle, so we
     // pass the resolved theme as a query param (?theme=dark|light); the
     // standalone page reads it and matches. v7.18.0.
+    // The pipeline is a LIVE view, so unlike loadReceipts (a history view where
+    // one-shot is correct) it polls. Guarded on the Overview page being the
+    // visible one so a user sitting on another section spends no requests.
+    if (sectionId === 'overview') {
+      loadPhases();
+      if (!window._lokiPhasePoll) {
+        window._lokiPhasePoll = setInterval(function () {
+          var pg = document.getElementById('page-overview');
+          if (pg && pg.classList.contains('active')) loadPhases();
+        }, 15000);
+      }
+    }
     if (sectionId === 'insights') { loadLearnings(); }
     if (sectionId === 'cost') { loadBudget(); }
     if (sectionId === 'trust') {
