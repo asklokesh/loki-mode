@@ -1389,12 +1389,35 @@ while IFS= read -r child_pid_file; do
         shard_children_clean=false
     fi
 done < <(find "$SHARD_FAIL_STATE" -name 'child-*.pid' -type f | sort)
-if [ "$shard_fail_rc" -ne 0 ] \
-   && [ "$shard_fail_elapsed" -lt 6000 ] \
-   && [ "$(requirements_call_count "$SHARD_FAIL_REPO")" = "4" ] \
-   && [ "$shard_children_clean" = "true" ] \
-   && ! find "$shard_fail_review/.pending" -name 'deadline-*.json' -type f \
-        | grep -q . \
+# CANCELLED EARLY, expressed against the TIMEOUT rather than a stopwatch.
+#
+# This was `-lt 6000` against a 12s timeout. Measured locally on an idle
+# machine: 3395ms. That is 1.77x headroom, and CI runs four shards
+# concurrently on a slower runner, so the margin does not survive -- shard 2/4
+# went red on exactly this assertion while the same suite passed 43/0 locally.
+#
+# The PROPERTY is "it cancelled instead of waiting for the deadline", so the
+# bound belongs at a fraction of the timeout that still falsifies waiting.
+# 12s timeout, 8s bound: a run that actually waited takes >=12s and still
+# fails, while normal 3-4s scheduling jitter no longer does. Loosening past
+# the timeout itself would make the clause vacuous, which is why it is
+# two-thirds and not "generous".
+_shard_timeout_ms=12000
+_shard_bound_ms=$(( _shard_timeout_ms * 2 / 3 ))
+# Each clause reports SEPARATELY. One `bad` line covering seven conditions
+# could not say which failed, which is why the CI log named all seven and
+# proved none -- diagnosing it needed a local re-measurement that then did not
+# reproduce.
+_shard_why=""
+[ "$shard_fail_rc" -ne 0 ] || _shard_why="$_shard_why rc=0(expected nonzero);"
+[ "$shard_fail_elapsed" -lt "$_shard_bound_ms" ] \
+  || _shard_why="$_shard_why waited ${shard_fail_elapsed}ms (bound ${_shard_bound_ms}ms of ${_shard_timeout_ms}ms timeout);"
+[ "$(requirements_call_count "$SHARD_FAIL_REPO")" = "4" ] \
+  || _shard_why="$_shard_why calls=$(requirements_call_count "$SHARD_FAIL_REPO")(expected 4);"
+[ "$shard_children_clean" = "true" ] || _shard_why="$_shard_why leaked a live descendant;"
+find "$shard_fail_review/.pending" -name 'deadline-*.json' -type f 2>/dev/null \
+  | grep -q . && _shard_why="$_shard_why a deadline controller was left pending;"
+if [ -z "$_shard_why" ] \
    && python3 - "$shard_fail_review" <<'PY'
 import json
 import pathlib
@@ -1415,8 +1438,11 @@ PY
 then
     ok "first valid shard FAIL cancels sibling lineages and publishes one exact FAIL vote"
 else
-    bad "semantic shard FAIL waited, leaked a descendant, or lost logical failure routing"
+    # The python heredoc above asserts the published-vote shape; when it is the
+    # failing part _shard_why is empty and that is what the message says.
+    bad "semantic shard FAIL:${_shard_why:- published-vote shape assertion failed (see python AssertionError above)}"
 fi
+unset _shard_why _shard_bound_ms _shard_timeout_ms
 unset REVIEW_TEST_REQUIREMENTS_ONLY REVIEW_TEST_DA REVIEW_TEST_SHARD_EXPECTED
 unset REVIEW_TEST_SHARD_STATE
 
