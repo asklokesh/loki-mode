@@ -773,7 +773,16 @@ class Dispatcher:
                 continue
             try:
                 event_type, payload = item
-                job_id = payload.get("job_id") if isinstance(payload, dict) else None
+                # Honour job_id ONLY for a remotely-submitted job. A GitHub
+                # payload carries no job_id of its own, so accepting one from
+                # any payload let a holder of the WEBHOOK HMAC write into the
+                # /jobs status store -- overwriting a real job's terminal
+                # status (e.g. "passed" -> "fired") and re-introducing the
+                # false-green. That is a webhook credential reaching a /jobs
+                # capability, which the separate-credential design forbids.
+                job_id = (payload.get("job_id")
+                          if event_type == JOB_EVENT and isinstance(payload, dict)
+                          else None)
                 if job_id:
                     self.record_job(job_id, "running")
                 # Counted for every dispatch, including webhook builds that
