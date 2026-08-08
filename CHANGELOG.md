@@ -5,6 +5,45 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.18.0
+
+### Fixed
+
+- **`loki start` could kill the user's other terminal sessions.** This is the
+  headline fix and it affects anyone running builds from a terminal that also
+  holds an editor or agent session. `reap_own_process_group()` TERM/KILLs every
+  PID sharing a recorded process group; `.loki/loki.pgid` was removed only on
+  the normal exit path, so a Ctrl+C'd or crashed run left it behind. Measured on
+  a real machine: five orphan files, the oldest 1435 hours (60 days). PIDs
+  recycle (macOS wraps near 99999; max observed there was 99762), so a stale
+  pgid eventually matches a LIVE unrelated shell group, the "is this my own
+  group?" check passes, and every sibling in that terminal is killed.
+
+  The file is now stamped `pgid/boot/started`; the reader requires the boot id
+  to match this boot AND the stamp not to predate the reading process, which a
+  recycled pgid cannot forge. Removal moved onto the EXIT trap, guarded on
+  BASHPID rather than `$$` (which does not change in a subshell). Fails closed:
+  an unprovable stamp reaps nothing, because an orphaned agent is strictly less
+  harmful than killing someone's editor.
+
+- **A green `doctor` recommended a command that exits 2.** With the bundled SDK
+  and no provider CLI, doctor PASSed and its final line said
+  `Next: loki quickstart` -- which exits 2. A warning existed 520 lines above
+  the recommendation and never reached it.
+
+### Added
+
+- **Deployment path.** `POST /jobs` on the trigger server: an authenticated
+  non-GitHub submit with a credential separate from the webhook HMAC,
+  constant-time comparison, fail-closed 503 when unconfigured, and validation of
+  untrusted spec input. Plus `helm/loki-mode` (receiver + worker + Redis) with
+  one tenant per worker, a worker grace period that exceeds the drain budget,
+  and a value-gated NetworkPolicy that carves the cloud metadata endpoint out of
+  any operator-supplied CIDR.
+- **`loki telemetry analytics on|off|status`.** The first-run funnel was gated on
+  `ANALYTICS_ENABLED`, a key with no writer anywhere in the repo, so drop-off was
+  structurally unmeasurable. Still default-off and opt-in.
+
 ## v9.17.2
 
 Ships the tree v9.17.0 and v9.17.1 were both meant to. 9.17.0 on npm carries
