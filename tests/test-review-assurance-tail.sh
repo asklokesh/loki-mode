@@ -1353,24 +1353,46 @@ DA_DISSENT_REPO="$TMPROOT/da-dissent-block-repo"
 setup_repo "$DA_DISSENT_REPO"
 da_dissent_rc=$(run_review_case "$DA_DISSENT_REPO" 1 da-nonunanimous-block "$SPEC")
 da_dissent_review="$(find "$DA_DISSENT_REPO/.loki/quality/reviews" -mindepth 1 -maxdepth 1 -type d | head -1)"
-if [ "$da_dissent_rc" -ne 0 ] && python3 - "$da_dissent_review/aggregate.json" <<'PY'
+# Each clause reports SEPARATELY -- the fourth instance of this flaw in this
+# file. It failed twice consecutively in CI shard 2/4 while passing 43/43
+# locally, and the single message "council dissent discarded a speculative DA
+# blocker" names a fail-open (a blocker being DROPPED) without establishing
+# that any blocker-dropping actually occurred. Six conditions shared it,
+# including rc and an aggregate.json that may not exist at all. Capturing the
+# python assertion text is what turns "something in here" into a diagnosis.
+_dis_why=""
+[ "$da_dissent_rc" -ne 0 ] || _dis_why="$_dis_why rc=0 (expected nonzero);"
+[ -n "$da_dissent_review" ] || _dis_why="$_dis_why no review directory was produced;"
+[ -f "$da_dissent_review/aggregate.json" ] \
+  || _dis_why="$_dis_why aggregate.json absent (the run did not reach aggregation);"
+# Captured ONCE and branched on, rather than run in the `if` and re-run in the
+# else. A second copy of the assertions cannot explain a failure in the first:
+# it has its own (correct) copy, so it passes and reports an empty cause. That
+# is exactly what my first attempt at this diagnostic did.
+_dis_py="$(python3 - "$da_dissent_review/aggregate.json" 2>&1 <<'PY'
 import json
 import sys
 
 aggregate = json.load(open(sys.argv[1], encoding="utf-8"))
-assert aggregate["fail_count"] == 1
-assert aggregate["pass_count"] > 0
+assert aggregate["fail_count"] == 1, "fail_count=%r" % aggregate.get("fail_count")
+assert aggregate["pass_count"] > 0, "pass_count=%r" % aggregate.get("pass_count")
 assert aggregate["devils_advocate"] == {
     "status": "block", "exit_code": 0, "speculative": True
-}
-assert aggregate["has_blocking"] is True
-assert aggregate["quality_score"] == 0
+}, "devils_advocate=%r" % aggregate.get("devils_advocate")
+assert aggregate["has_blocking"] is True, "has_blocking=%r" % aggregate.get("has_blocking")
+assert aggregate["quality_score"] == 0, "quality_score=%r" % aggregate.get("quality_score")
 PY
-then
+)"
+_dis_rc=$?
+[ "$_dis_rc" -eq 0 ] || _dis_why="$_dis_why $(printf '%s' "$_dis_py" | tail -1);"
+if [ "$da_dissent_rc" -ne 0 ] && [ "$_dis_rc" -eq 0 ]; then
     ok "nonunanimous Medium council still consumes and propagates a High DA blocker"
 else
-    bad "council dissent discarded a speculative DA blocker"
+    # _dis_why already carries every failing clause, including the python
+    # assertion text, because the gating run above captured it once. No re-run.
+    bad "council dissent:${_dis_why:- rc=$da_dissent_rc but no clause reported a cause}"
 fi
+unset _dis_why _dis_py
 
 DA_NOT_NEEDED_REPO="$TMPROOT/da-dissent-pass-repo"
 setup_repo "$DA_NOT_NEEDED_REPO"
