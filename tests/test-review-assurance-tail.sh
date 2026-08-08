@@ -993,10 +993,21 @@ for invalid_mode in \
         continue
     fi
 
-    if [ "$invalid_rc" -ne 0 ] \
-       && [ "$(requirements_call_count "$invalid_repo")" = "1" ] \
-       && [ ! -s "$invalid_review/requirements-verifier.txt" ] \
-       && python3 - "$invalid_review/requirements-verifier-timing.json" <<'PY'
+    # Each condition reports SEPARATELY, and the python assertion's own message
+    # is captured rather than discarded. The block below already separates a
+    # deadline kill from a fail-open -- with the reason written out -- but the
+    # single `bad` line at the bottom threw that reasoning away, so CI printed
+    # "accepted or retried as free-form text" for FOUR different causes,
+    # including the environmental one the comment above warns about. The
+    # conflation this suite documents having been burned by was still in the
+    # output path.
+    _invalid_why=""
+    [ "$invalid_rc" -ne 0 ] || _invalid_why="$_invalid_why rc=0 (expected nonzero);"
+    _invalid_calls="$(requirements_call_count "$invalid_repo")"
+    [ "$_invalid_calls" = "1" ] || _invalid_why="$_invalid_why calls=$_invalid_calls (expected exactly 1: a retry IS the fallback);"
+    [ ! -s "$invalid_review/requirements-verifier.txt" ] \
+      || _invalid_why="$_invalid_why a verifier verdict was written from malformed input;"
+    _invalid_py="$(python3 - "$invalid_review/requirements-verifier-timing.json" 2>&1 <<'PY'
 import json
 import sys
 
@@ -1013,11 +1024,13 @@ assert outcome != "deadline", (
 assert outcome in {"error", "no_output"}, "unexpected outcome %r" % outcome
 assert record["exit_code"] != 0
 PY
-    then
+)" || _invalid_why="$_invalid_why $(printf '%s' "$_invalid_py" | tail -1);"
+    if [ -z "$_invalid_why" ]; then
         ok "$invalid_mode fails closed without a text fallback"
     else
-        bad "$invalid_mode was accepted or retried as free-form text"
+        bad "$invalid_mode:${_invalid_why}"
     fi
+    unset _invalid_why _invalid_py _invalid_calls
 done
 
 # Missing contract artifacts are internal assurance failures. They block before
