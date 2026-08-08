@@ -5,7 +5,24 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v9.18.0
+## v9.18.1
+
+Re-release of v9.18.0, whose release job was blocked when its Tests run was
+cancelled by subsequent pushes to main (required-ci correctly refuses to treat
+`cancelled` as a pass). No code change from 9.18.0 beyond the additions below.
+
+### Added
+
+- **A remote build's Evidence Receipt is verifiable without trusting the machine
+  that produced it.** `GET /jobs/<id>/proof` serves the receipt and its detached
+  signature; `loki start --remote` re-hashes and verifies before reporting
+  success, with four distinct verdicts: VERIFIED, UNSIGNED (integrity only, not
+  provenance), UNCHECKED (signed but the key is absent, so it cannot be
+  evaluated), and TAMPERED. UNCHECKED is deliberately not folded into either
+  neighbour: calling it TAMPERED accuses a user of a forgery that did not
+  happen, and calling it UNSIGNED is false about a receipt that is signed.
+
+
 
 ### Fixed
 
