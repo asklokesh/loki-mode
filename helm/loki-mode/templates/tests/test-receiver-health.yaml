@@ -1,0 +1,47 @@
+{{- if .Values.receiver.enabled }}
+{{- /*
+  `helm test loki` runs this Pod against the live release.
+
+  It proves the one thing a render cannot: that the receiver is actually
+  serving. A rendered manifest says the Service and Deployment are well-formed;
+  this says a request crossed the Service, reached a pod, and came back 200.
+
+  Uses the release image rather than pulling curl: it is already on the node
+  after install, so the test cannot fail on an unrelated image pull, and it has
+  python3. ponytail: no separate test image, add one if you ever need a probe
+  the release image cannot make.
+*/}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "loki-mode.fullname" . }}-test-receiver-health
+  labels:
+    {{- include "loki-mode.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    # Keep the Pod after a failure so `kubectl logs` still explains why.
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext: {{- toYaml .Values.podSecurityContext | nindent 4 }}
+  containers:
+    - name: health
+      image: {{ include "loki-mode.image" . | quote }}
+      imagePullPolicy: {{ .Values.image.pullPolicy }}
+      securityContext: {{- toYaml .Values.securityContext | nindent 8 }}
+      command: ["python3", "-c"]
+      args:
+        - |
+          import json, sys, urllib.request
+          url = "http://{{ include "loki-mode.fullname" . }}-receiver:{{ .Values.receiver.service.port }}/health"
+          with urllib.request.urlopen(url, timeout=10) as r:
+              code, body = r.status, r.read().decode()
+          print("GET %s -> %s %s" % (url, code, body))
+          # Assert on the payload, not just the status: a proxy or a wrong
+          # backend can return 200 with something that is not this receiver.
+          if code != 200 or json.loads(body).get("status") != "ok":
+              sys.exit("FAIL: expected 200 with status=ok")
+          print("PASS: receiver is serving")
+{{- end }}

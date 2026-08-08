@@ -1,0 +1,113 @@
+{{- if .Values.redis.enabled }}
+{{- /*
+  The queue between the receiver and the worker pool.
+
+  Deliberately minimal, and deliberately the stock redis:7-alpine image -- the
+  same one docker-compose.yml uses, so the two deployment paths cannot drift.
+  A subchart was tried first and its pinned image had been removed from the
+  registry, which broke every default install. Fifty lines we control beats a
+  dependency whose image tags disappear.
+
+  Not built for durability: it is a work queue, and the shipped consumer is
+  at-most-once regardless (see values.yaml queue.backend). Point queue.url at a
+  Redis you actually operate if the queue matters to you.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "loki-mode.fullname" . }}-redis
+  labels:
+    {{- include "loki-mode.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  replicas: 1
+  # Recreate: two Redis pods briefly sharing one PVC would corrupt the AOF, and
+  # a second queue replica would hand the same item to two workers.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "loki-mode.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        {{- include "loki-mode.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redis
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: redis
+          image: {{ .Values.redis.image | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["redis-server", "--appendonly", "yes", "--dir", "/data"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          # ping is the honest readiness signal: it answers only once Redis is
+          # actually accepting commands, so the worker never starts against a
+          # socket that is open but not yet serving.
+          livenessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources: {{- toYaml .Values.redis.resources | nindent 12 }}
+          securityContext: {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          {{- if .Values.redis.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "loki-mode.fullname" . }}-redis
+          {{- else }}
+          # emptyDir: the queue is drained by workers, not archived. Anything
+          # still queued when the pod dies is lost -- which is the same
+          # at-most-once property the consumer already has.
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "loki-mode.fullname" . }}-redis
+  labels:
+    {{- include "loki-mode.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  # ClusterIP only. An unauthenticated Redis reachable off-cluster is a
+  # remote-code-execution primitive, not just a data leak.
+  type: ClusterIP
+  ports:
+    - port: 6379
+      targetPort: redis
+      protocol: TCP
+      name: redis
+  selector:
+    {{- include "loki-mode.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+{{- if .Values.redis.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "loki-mode.fullname" . }}-redis
+  labels:
+    {{- include "loki-mode.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.redis.persistence.size }}
+  {{- with .Values.redis.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end }}
+{{- end }}

@@ -202,16 +202,32 @@ queue:
   # implemented here.
   command: []
 
-# In-chart Redis. Turn this off and set queue.url to use your own.
+# In-chart Redis (templates/redis.yaml). Turn this off and set queue.url to
+# point at a Redis you operate.
+#
+# This is a plain Deployment on the stock image, NOT a subchart. It was a
+# bitnami subchart until a verification install found the version it pinned had
+# been removed from Docker Hub, so every default install died on
+# ImagePullBackOff. Fifty lines we control beats a dependency whose tags vanish,
+# and it keeps the Helm and Compose paths on the same image.
 redis:
   enabled: true
-  architecture: standalone
-  auth:
-    enabled: false   # ClusterIP-only inside the namespace; enable if you expose it
-  master:
-    persistence:
-      enabled: true
-      size: 8Gi
+
+  # Same image as docker-compose.yml. Multi-arch, and it is not going anywhere.
+  image: redis:7-alpine
+
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+  persistence:
+    # Off by default: this is a work queue, not a datastore, and the shipped
+    # consumer is at-most-once regardless -- a PVC does not make a build that
+    # was already popped come back. Turn it on if you want queued-but-not-yet-
+    # claimed items to survive a Redis restart.
+    enabled: false
+    size: 8Gi
+    storageClass: ""
 
 # ---------------------------------------------------------------------------
 # Triggers

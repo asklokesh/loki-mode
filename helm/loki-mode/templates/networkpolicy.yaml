@@ -56,8 +56,8 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
-              app.kubernetes.io/name: redis
+              {{- include "loki-mode.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: redis
       ports:
         - protocol: TCP
           port: 6379
@@ -109,8 +109,8 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app.kubernetes.io/instance: {{ .Release.Name }}
-              app.kubernetes.io/name: redis
+              {{- include "loki-mode.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: redis
       ports:
         - protocol: TCP
           port: 6379

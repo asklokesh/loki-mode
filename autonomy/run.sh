@@ -1519,6 +1519,22 @@ PYREG
 # if any other project is still running (KEEP) it is left up. NEVER uses a
 # blanket pkill and NEVER touches another folder's pids. Best-effort and
 # failure-swallowed: teardown bookkeeping must never block a clean exit.
+# Is this pid plausibly OUR dashboard, or a recycled number now naming something
+# else? Fails OPEN (returns 0) whenever ps cannot tell us, so the only behavior
+# change is refusing to kill a process that is positively identified as NOT a
+# dashboard. See the call site for the measured stale-file evidence.
+_loki_pid_looks_like_dashboard() {
+    local _p="$1" _cmd
+    case "$_p" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$_p" -gt 1 ] 2>/dev/null || return 1     # never signal pid 0/1
+    _cmd="$(ps -o command= -p "$_p" 2>/dev/null)"
+    [ -n "$_cmd" ] || return 0                   # ps unavailable: behave as before
+    case "$_cmd" in
+        *dashboard*|*uvicorn*|*loki*) return 0 ;;
+    esac
+    return 1
+}
+
 loki_mark_project_stopped_and_maybe_kill_shared_dashboard() {
     local _skill="${LOKI_SKILL_DIR:-${PROJECT_DIR:-$SCRIPT_DIR/..}}"
     local _shared_pidfile="${HOME}/.loki/dashboard/dashboard.pid"
@@ -1566,7 +1582,19 @@ PYCHECK
         if [ -f "$_shared_pidfile" ]; then
             local _shared_pid
             _shared_pid=$(cat "$_shared_pidfile" 2>/dev/null)
-            if [ -n "$_shared_pid" ]; then
+            # Identity check before signalling. dashboard.pid is removed only on
+            # the explicit stop paths (:16608, :16658, :17399) -- nothing covers
+            # a crash, so the file outlives its dashboard. Measured in this very
+            # checkout: .loki/dashboard/dashboard.pid held a DEAD 87992 with an
+            # 8-day-old mtime. PIDs recycle, so a stale number eventually names
+            # an unrelated LIVE process and this `kill -9` hits it.
+            #
+            # kill -0 is NOT sufficient: a recycled pid is alive by definition,
+            # which is exactly the insufficiency the loki.pgid self-check had.
+            # Mirrors _app_runner_pid_is_ours (app-runner.sh:242) and fails OPEN
+            # the same way -- if `ps` says nothing we signal as before, so a
+            # legitimate dashboard is never left running by this check.
+            if [ -n "$_shared_pid" ] && _loki_pid_looks_like_dashboard "$_shared_pid"; then
                 kill "$_shared_pid" 2>/dev/null || true
                 sleep 0.5
                 kill -9 "$_shared_pid" 2>/dev/null || true

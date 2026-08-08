@@ -5,8 +5,14 @@ type: application
 
 # Chart version is independent of the application version. Bump this when the
 # templates change; bump appVersion when you point at a new loki-mode image.
+#
+# appVersion tracks VERSION and is the default image tag. It therefore names a
+# tag that only exists AFTER the release pipeline publishes it -- installing
+# from a source tree whose VERSION is ahead of Docker Hub fails on
+# ImagePullBackOff. Pin an image that exists with `--set image.tag=...` when
+# working from an unreleased tree. Verified end to end on 9.17.2.
 version: 0.1.0
-appVersion: "9.17.2"
+appVersion: "9.18.0"
 
 home: https://www.autonomi.dev/
 sources:
@@ -20,11 +26,13 @@ keywords:
   - autonomous-agent
   - ci
 
-dependencies:
-  # Redis is the queue between the receiver and the worker pool. Disable it and
-  # set queue.backend=file if you would rather run the file backend on a PVC, or
-  # point queue.url at a Redis you already operate.
-  - name: redis
-    version: "~20.x"
-    repository: https://charts.bitnami.com/bitnami
-    condition: redis.enabled
+# No subchart dependency on purpose. Redis is ~50 lines in templates/redis.yaml
+# on the stock redis:7-alpine image.
+#
+# This started as a bitnami/redis subchart. A verification install found that
+# the version it pins, bitnami/redis:7.4.3-debian-12-r0, no longer exists on
+# Docker Hub -- Bitnami moved their catalog and only bitnamilegacy still
+# carries it. Every default install failed on ImagePullBackOff. Pinning the
+# legacy mirror would just defer the same breakage, so the queue now runs the
+# same image docker-compose.yml already uses. It also means no
+# `helm dependency build` step before `helm template`.

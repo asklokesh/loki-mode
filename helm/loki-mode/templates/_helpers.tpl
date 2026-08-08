@@ -49,12 +49,13 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- end }}
 
-{{/* Redis URL: an explicit queue.url wins, else the in-chart Redis service. */}}
+{{/* Redis URL: an explicit queue.url wins, else the in-chart Redis service.
+     Must match the Service name in templates/redis.yaml. */}}
 {{- define "loki-mode.redisURL" -}}
 {{- if .Values.queue.url }}
 {{- .Values.queue.url }}
 {{- else if .Values.redis.enabled }}
-{{- printf "redis://%s-redis-master:6379" .Release.Name }}
+{{- printf "redis://%s-redis:6379" (include "loki-mode.fullname" .) }}
 {{- end }}
 {{- end }}
 

@@ -255,11 +255,16 @@ ground manually today.
 
 ## Kubernetes (Helm)
 
-```bash
-cd helm/loki-mode
-helm dependency build          # fetches the Redis subchart
-cd ../..
+No `helm dependency build` step: the chart has no subchart dependencies. Redis
+is a plain Deployment on `redis:7-alpine`, the same image `docker-compose.yml`
+uses.
 
+The default image tag is the chart's `appVersion`, which tracks `VERSION` and so
+names a tag that exists only once the release pipeline has published it. If you
+install from a source tree whose `VERSION` is ahead of Docker Hub, pods fail on
+`ImagePullBackOff` -- add `--set image.tag=<a published version>`.
+
+```bash
 helm upgrade --install loki helm/loki-mode \
   --namespace loki --create-namespace \
   --set secrets.githubWebhookSecret='<hmac>' \
@@ -283,6 +288,122 @@ helm template loki helm/loki-mode | less
 | `queue.backend` | `redis` | `file` gives at-least-once, needs an RWX volume. |
 | `networkPolicy.enabled` | `false` | Turn on if your CNI enforces policy. |
 | `secrets.existingSecret` | `""` | Use a real secret manager. |
+
+### Verify your install
+
+Rendering valid YAML is not evidence that a pod starts. Run these after every
+install.
+
+Everything in this section was executed against a real cluster (kind v0.31.0,
+Kubernetes v1.35.0) on the `asklokesh/loki-mode:9.17.2` image, except the two
+items explicitly marked UNVERIFIED.
+
+**1. Everything reached Ready.** `--wait` already fails the install if not, but
+check what is running:
+
+```bash
+kubectl get pods -n loki-verify
+# loki-loki-mode-receiver-...  1/1  Running
+# loki-loki-mode-receiver-...  1/1  Running
+# loki-loki-mode-redis-...     1/1  Running
+# loki-loki-mode-worker-...    1/1  Running
+```
+
+**2. The receiver is actually serving.** This is what `helm test` is for:
+
+```bash
+helm test loki -n loki-verify --logs
+# Phase: Succeeded
+# GET http://loki-loki-mode-receiver:80/health -> 200 {"status": "ok", "service": "loki-trigger-server"}
+# PASS: receiver is serving
+```
+
+The test asserts on the response body, not just the status code, so a proxy or
+a wrong backend answering 200 still fails it.
+
+**3. The receiver picked up its secret.** `secret_configured: true` is the
+difference between a working webhook and one that 503s every delivery:
+
+```bash
+kubectl port-forward -n loki-verify svc/loki-loki-mode-receiver 18080:80 &
+curl -s http://127.0.0.1:18080/status
+# {"status": "running", "dry_run": false, "port": 7373,
+#  "enabled_events": [...], "secret_configured": true}
+```
+
+**4. The worker can reach the queue.** A worker that cannot reach Redis sits in
+its poll loop forever and looks perfectly healthy:
+
+```bash
+W=$(kubectl get pod -n loki-verify -l app.kubernetes.io/component=worker \
+      --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n loki-verify "$W" -- sh -c 'redis-cli -u "$LOKI_QUEUE_URL" ping'
+# PONG
+```
+
+**5. A queued item actually gets picked up.** The end-to-end check:
+
+```bash
+R=$(kubectl get pod -n loki-verify -l app.kubernetes.io/component=redis -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n loki-verify "$R" -- redis-cli RPUSH loki-builds 'smoke-test-spec'
+sleep 10
+kubectl exec -n loki-verify "$R" -- redis-cli LLEN loki-builds   # 0 == claimed
+kubectl logs -n loki-verify "$W"
+# [queue-consumer] starting build: spec=smoke-test-spec
+```
+
+`starting build:` is the line that matters. With a placeholder API key the
+build then fails, which is expected -- you are verifying that the item was
+dequeued and `loki start` was invoked, not that the build succeeded.
+
+Watch for one thing here: if the build exits 2, the consumer treats that as a
+fatal configuration error and exits, and the pod restarts. `kubectl logs
+--previous` shows what the previous container did.
+
+**6. Confirm the hardening actually applied.** Cluster policy can override what
+you set:
+
+```bash
+kubectl exec -n loki-verify "$W" -- id
+# uid=1000(loki) gid=1000(loki)
+
+kubectl get deploy -n loki-verify loki-loki-mode-worker \
+  -o jsonpath='{.spec.template.spec.terminationGracePeriodSeconds}'
+# 7200
+```
+
+**7. NetworkPolicy enforcement -- test it, do not assume it.**
+
+```bash
+kubectl exec -n loki-verify "$W" -- curl -s --max-time 5 http://169.254.169.254/
+```
+
+**A timeout here does not prove the policy works.** On a laptop cluster there
+is no metadata service to reach, so the request times out either way. Run the
+control before believing it:
+
+```bash
+kubectl delete networkpolicy -n loki-verify loki-loki-mode-worker
+kubectl exec -n loki-verify "$W" -- curl -s --max-time 5 http://169.254.169.254/
+# Same timeout with the policy deleted => the policy was never what blocked it.
+helm upgrade loki helm/loki-mode -n loki-verify --reuse-values   # restore
+```
+
+That control was run on kind, whose default CNI (kindnet) does **not** enforce
+NetworkPolicy: the result was identical with and without the policy. The object
+applied cleanly and rendered the correct `except` for 169.254.169.254, and
+nothing enforced it. This is the silent no-op described above, observed rather
+than assumed.
+
+**UNVERIFIED:** that the metadata endpoint is genuinely blocked on a
+policy-enforcing CNI (Calico, Cilium). That needs a cluster with one, plus a
+real metadata service. Run the delete-and-retry control there: on an enforcing
+CNI the two results differ.
+
+**UNVERIFIED:** the GitHub webhook path end to end. Delivery from GitHub to
+`/webhook` with a real HMAC signature was not exercised, since it needs a
+publicly reachable Ingress. The receiver's HMAC validation itself is covered by
+the repository's test suite.
 
 ### Worker scaling is a tenancy decision
 
