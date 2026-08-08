@@ -750,6 +750,7 @@ run_test "silence report (longest in-build gap, idle excluded)" "$SCRIPT_DIR/tes
 run_test "free on-ramp stays wired (codex, zero API spend)" "$SCRIPT_DIR/test-free-onramp.sh"
 run_test "argv seam model flags (all providers; codex effort, max-tier clamp)" "$SCRIPT_DIR/test-codex-argv-model.sh"
 run_test "helm values schema rejects bad values by name" "$SCRIPT_DIR/test-helm-values-schema.sh"
+run_test "helm worker scaling knob and tenancy invariant" "$SCRIPT_DIR/test-helm-worker-scaling.sh"
 run_test "helm test hook proves the release serves" "$SCRIPT_DIR/test-helm-test-hook.sh"
 run_test "ECS/Fargate module structure + Helm parity" "$SCRIPT_DIR/test-ecs-fargate-module.sh"
 run_test "audit PVC can outlive the release (compliance)" "$SCRIPT_DIR/test-audit-pvc-retention.sh"
