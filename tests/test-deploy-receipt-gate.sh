@@ -494,6 +494,157 @@ else
     echo "  SKIPPED: needs test 8's signed fixture (not a pass)"
 fi
 
+# ===========================================================================
+# 11-13. THE ANCHOR OVERRIDE.
+#
+# WHY IT EXISTS: measured on this repository, 8 of 9 receipts record no
+# base_sha and the 9th records the empty tree, so the anchor check refused
+# ~89% of real receipts. A gate that always refuses teaches users to route
+# around it, and then the bypass becomes the default path.
+#
+# THE DISTINCTION, and it is the whole design:
+#   UNANCHORED  no baseline recorded. Neither match nor mismatch can be
+#               proven. Refuse by default, overridable, record that nothing
+#               was proven.
+#   MISMATCH    a baseline IS recorded and resolves elsewhere. Positive
+#               evidence of the wrong build. The override must NOT bypass it.
+#
+# Test 13 is the load-bearing one: without it, --allow-unanchored silently
+# degrades into "skip the anchor check entirely".
+#
+# These use the SIGNED fixture. Against an unsigned receipt the gate refuses on
+# UNSIGNED too, so an override that did nothing would be indistinguishable from
+# one that worked.
+# ===========================================================================
+echo "11-13. the anchor override covers UNKNOWN, never KNOWN WRONG"
+if [ -n "${KEYID:-}" ] && [ "${D8S_EXECUTED:-0}" = "1" ]; then
+    # Build a signed fixture whose receipt records NO baseline. Empty
+    # _LOKI_RUN_START_SHA is exactly how the 8 real unanchored receipts arose.
+    mk_signed() {  # <name> <base-sha-for-generator>
+        # Split: under `set -u`, referencing $n inside the SAME `local`
+        # statement that declares it reads an unbound variable.
+        local n="$1" b="${2:-}"
+        local bd="$WORKROOT/$n"
+        make_fixture "$n" >/dev/null
+        ( cd "$bd" && _LOKI_RUN_START_SHA="$b" \
+            LOKI_PROOF_GPG_KEY="$KEYID" GNUPGHOME="$GNUPGHOME" \
+            python3 "$GENERATOR" --loki-dir "$bd/.loki" >/dev/null 2>&1 )
+    }
+    run_signed() {  # <dir> [flags...]
+        local d="$1"; shift
+        ( cd "$d" && PATH="$FAKE_BIN:$PATH" LOKI_DIR="$d/.loki" GNUPGHOME="$GNUPGHOME" \
+            bash "$LOKI_BIN" deploy --dir "$d" --no-clip "$@" 2>&1 )
+    }
+
+    mk_signed d11 ""
+    D11="$WORKROOT/d11"
+
+    # --- 11. unanchored refuses BY DEFAULT, and names anchoring as unproven ---
+    reset_sentinels
+    OUT11="$(run_signed "$D11" --execute)"
+    if [ "$(any_sentinel)" -eq 0 ] \
+       && printf '%s' "$OUT11" | grep -qi "REFUSED" \
+       && printf '%s' "$OUT11" | grep -qi "records no baseline" \
+       && printf '%s' "$OUT11" | grep -q -- "--allow-unanchored"; then
+        ok "unanchored refuses by default and names the override"
+    else
+        bad "unanchored did not refuse, or did not say why" \
+            "$(printf '%s' "$OUT11" | grep -i ' - ' | head -3)"
+    fi
+
+    # --- 12. the SAME receipt passes WITH the flag, and the record says so ---
+    reset_sentinels
+    OUT12="$(run_signed "$D11" --execute --allow-unanchored)"
+    if [ "$(any_sentinel)" -ge 1 ] && printf '%s' "$OUT12" | grep -qi "gate PASSED"; then
+        ok "--allow-unanchored lets the same receipt through"
+    else
+        bad "the override did not admit an unanchored receipt" \
+            "$(printf '%s' "$OUT12" | grep -i ' - ' | head -3)"
+    fi
+    # The banner must NOT claim the tree was verified, and the RECORD must state
+    # that the anchor was unproven. A deploy that logs itself as fully anchored
+    # when it was overridden is a false green written to disk.
+    if printf '%s' "$OUT12" | grep -qi "UNPROVEN" \
+       && ! printf '%s' "$OUT12" | grep -qi "VERIFIED this tree"; then
+        ok "the banner says the anchor was unproven, not that the tree was verified"
+    else
+        bad "an overridden deploy reported itself as fully verified" "$OUT12"
+    fi
+    REC12="$(ls -1t "$D11"/.loki/deploys/*.json 2>/dev/null | head -1)"
+    if [ -n "$REC12" ] && python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1]))
+sys.exit(0 if d.get('anchor_state')=='unanchored_overridden'
+            and d.get('anchor_proven') is False else 1)" "$REC12" 2>/dev/null; then
+        ok "the deploy record states the anchor was unproven (overridden)"
+    else
+        bad "the deploy record does not distinguish overridden from anchored" \
+            "$(cat "$REC12" 2>/dev/null | head -12)"
+    fi
+    # POSITIVE CONTROL for the record field: a genuinely anchored deploy must
+    # record anchored/true. Without this, "records overridden" could pass by
+    # writing that value unconditionally.
+    REC8="$(ls -1t "$D8S"/.loki/deploys/*.json 2>/dev/null | head -1)"
+    if [ -n "$REC8" ] && python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1]))
+sys.exit(0 if d.get('anchor_state')=='anchored'
+            and d.get('anchor_proven') is True else 1)" "$REC8" 2>/dev/null; then
+        ok "POSITIVE CONTROL: a genuinely anchored deploy records anchored/proven"
+    else
+        bad "an anchored deploy did not record itself as anchored" \
+            "$(cat "$REC8" 2>/dev/null | head -12)"
+    fi
+
+    # --- 12b. an AMBIENT env var must not opt in ---------------------------
+    # The help text promises "no env var or config file alone can opt in", and
+    # the flag is implemented by setting a variable the gate reads -- so an
+    # exported LOKI_DEPLOY_ALLOW_UNANCHORED=true would silently weaken the gate
+    # for every deploy in that shell. cmd_deploy declares it `local`; this is
+    # what proves that declaration is load-bearing.
+    reset_sentinels
+    OUT12B="$( cd "$D11" && PATH="$FAKE_BIN:$PATH" LOKI_DIR="$D11/.loki" GNUPGHOME="$GNUPGHOME" \
+        LOKI_DEPLOY_ALLOW_UNANCHORED=true \
+        bash "$LOKI_BIN" deploy --dir "$D11" --no-clip --execute 2>&1 )"
+    if [ "$(any_sentinel)" -eq 0 ] && printf '%s' "$OUT12B" | grep -qi "REFUSED"; then
+        ok "an ambient env var alone does NOT opt in (the flag is per-invocation)"
+    else
+        bad "an exported env var weakened the gate without the flag" \
+            "sentinels=$(any_sentinel)"
+    fi
+
+    # --- 13. LOAD-BEARING: a MISMATCH still refuses WITH the flag set -------
+    # Stale-head mismatch: the receipt anchors, then the tree advances past it.
+    # resolve_anchor still returns "anchored" (it answers "can I follow this
+    # receipt", not "is this the tree I am shipping"), so the stale-head branch
+    # is what refuses. That branch must stay unreachable from the override.
+    D13_BASE="$(make_fixture d13)"; D13="$WORKROOT/d13"
+    ( cd "$D13" && _LOKI_RUN_START_SHA="$D13_BASE" \
+        LOKI_PROOF_GPG_KEY="$KEYID" GNUPGHOME="$GNUPGHOME" \
+        python3 "$GENERATOR" --loki-dir "$D13/.loki" >/dev/null 2>&1 )
+    echo "// advanced past the receipt" >> "$D13/package.json"
+    git -C "$D13" add package.json
+    git -C "$D13" commit -qm "advance past the receipt"
+    reset_sentinels
+    OUT13="$(run_signed "$D13" --execute --allow-unanchored)"
+    if [ "$(any_sentinel)" -eq 0 ] && printf '%s' "$OUT13" | grep -qi "REFUSED"; then
+        ok "a MISMATCH still refuses WITH --allow-unanchored (override is not a skip)"
+    else
+        bad "--allow-unanchored bypassed a recorded mismatch -- it became skip-the-check" \
+            "sentinels=$(any_sentinel); $(printf '%s' "$OUT13" | grep -i ' - ' | head -3)"
+    fi
+    # And it must refuse for the RIGHT reason: naming the mismatch, not silently
+    # failing on something unrelated that would mask a broken override.
+    if printf '%s' "$OUT13" | grep -qiE "different commit|does not anchor"; then
+        ok "the mismatch refusal names the anchor mismatch as the cause"
+    else
+        bad "the mismatch refusal did not name anchoring" \
+            "$(printf '%s' "$OUT13" | grep -i ' - ' | head -3)"
+    fi
+else
+    echo "  SKIPPED: needs gpg and test 8's signed fixture (not a pass)"
+fi
+
 echo ""
 echo "==================================================================="
 echo "Passed: $PASS   Failed: $FAIL"

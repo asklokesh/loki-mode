@@ -8372,8 +8372,25 @@ if state != "anchored":
     #
     # The override covers "unknown", never "known wrong". Emitting a machine
     # readable prefix so the caller can tell the two apart without parsing prose.
-    if not base:
-        print("UNANCHORED:receipt records no baseline, so it cannot be tied to this tree", end="")
+    #
+    # DISCRIMINATED ON THE REASON NAME, not on `not base`. MEASURED: the receipt
+    # this repo's gate actually selects carries base_sha=4b825dc6 (the empty
+    # tree), so `base` is TRUTHY and a `not base` test files it under MISMATCH --
+    # the one case blocking the repo would stay unoverridable. resolve_anchor
+    # returns base_sha_empty (line 135) BEFORE the greenfield check (line 137),
+    # so reaching greenfield_no_baseline proves base_sha was non-empty.
+    #
+    # Exactly two reasons mean "no baseline was recorded", and together they
+    # cover all 9 receipts here (8 base_sha_empty, 1 greenfield_no_baseline).
+    # Every OTHER reason keeps refusing, including with the flag set:
+    #   not_reachable_from_head, diff_range_mismatch -- positive evidence of a
+    #     DIFFERENT change. Mismatch by construction.
+    #   change_not_committed, sha_not_in_history, head_sha_empty, no_git -- the
+    #     check could not be evaluated, and this gate's stated doctrine is that
+    #     an unevaluable check is a refusal, not a pass.
+    if reason in ("base_sha_empty", "greenfield_no_baseline"):
+        print("UNANCHORED:receipt records no baseline (%s), so it cannot be tied "
+              "to this tree" % reason, end="")
     else:
         print("receipt does not anchor to this tree (%s)" % (reason or "unresolvable"), end="")
 elif head != os.environ["LIVE_HEAD"]:
@@ -8443,19 +8460,30 @@ _deploy_latest_receipt() {
 # mistaken for a verifiable receipt.
 _deploy_record() {
     local dir="${1:-.}" command="$2" rc="$3" run_id="$4" anchor="$5"
+    # WHICH of the three applied: anchored (the receipt was tied to this tree)
+    # or unanchored_overridden (it was not, and the operator said go anyway).
+    # "refused" needs no value: a refusal never reaches this function, so the
+    # existence of a record already means one of the two above.
+    local anchor_state="${6:-anchored}"
     local ddir="$dir/.loki/deploys"
     [ -d "${LOKI_DIR:-}" ] && ddir="${LOKI_DIR}/deploys"
     mkdir -p "$ddir" 2>/dev/null || return 0
     local f="$ddir/$(date -u +%Y%m%dT%H%M%SZ)-$$.json"
     DR_CMD="$command" DR_RC="$rc" DR_RUN="$run_id" DR_ANCHOR="$anchor" DR_OUT="$f" \
+    DR_STATE="$anchor_state" \
         python3 -c '
 import json, os, datetime
+state = os.environ.get("DR_STATE") or "anchored"
 json.dump({
     "recorded_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "command": os.environ["DR_CMD"],
     "exit_code": int(os.environ["DR_RC"]),
     "authorizing_run_id": os.environ["DR_RUN"],
     "anchor_sha": os.environ["DR_ANCHOR"],
+    "anchor_state": state,
+    # Spelled out so a reader months later does not have to know the vocabulary
+    # to judge how strong the authorization was.
+    "anchor_proven": state == "anchored",
 }, open(os.environ["DR_OUT"], "w"), indent=2)
 ' 2>/dev/null || return 0
     printf '%s' "$f"
@@ -8505,6 +8533,25 @@ _deploy_try_execute() {
 
     local reasons
     reasons="$(_deploy_gate "$dir" "$command")"
+
+    # Split the marker out BEFORE the emptiness test: it is a fact about how
+    # the gate passed, never a reason it failed. Left in, it would refuse every
+    # overridden deploy and print the marker as a reason.
+    local anchor_state="anchored"
+    case "$reasons" in
+        *"$_DEPLOY_ANCHOR_MARKER"*)
+            anchor_state="unanchored_overridden"
+            # Shell substitution, NOT `grep -v`: under `set -e` a grep that
+            # filters out every line exits 1 and aborts the deploy silently --
+            # measured, and it looked exactly like the gate refusing.
+            reasons="${reasons//$_DEPLOY_ANCHOR_MARKER/}"
+            # Drop the blank line the removal left WITHOUT joining the real
+            # reasons together: sed deletes empty lines only, so a refusal that
+            # also carries other reasons still prints them one per line.
+            reasons="$(printf '%s' "$reasons" | sed '/^[[:space:]]*$/d')"
+            ;;
+    esac
+
     if [ -n "$reasons" ]; then
         echo ""
         echo -e "${RED}REFUSED: not deploying. The evidence gate did not pass.${NC}" >&2
@@ -8530,7 +8577,16 @@ _deploy_try_execute() {
     anchor="$(git -C "$dir" rev-parse HEAD 2>/dev/null || printf '')"
 
     echo ""
-    echo -e "${GREEN}Evidence gate PASSED.${NC} Receipt ${run_id:-unknown} VERIFIED this tree (${anchor:0:12})."
+    if [ "$anchor_state" = "unanchored_overridden" ]; then
+        # "VERIFIED this tree" would be FALSE here: the receipt's checks passed,
+        # but nothing tied it to the code about to ship. Saying so is the whole
+        # point of allowing the override rather than weakening the gate.
+        echo -e "${YELLOW}Evidence gate PASSED with the anchor UNPROVEN (--allow-unanchored).${NC}"
+        echo "  Receipt ${run_id:-unknown} passed its own checks, but records no baseline,"
+        echo "  so it was NOT tied to this tree (${anchor:0:12}). You authorized this."
+    else
+        echo -e "${GREEN}Evidence gate PASSED.${NC} Receipt ${run_id:-unknown} VERIFIED this tree (${anchor:0:12})."
+    fi
     echo "Running: ${command}"
     echo ""
 
@@ -8546,7 +8602,8 @@ _deploy_try_execute() {
     ( cd "$dir" && eval "$command" ) || rc=$?
 
     local rec
-    rec="$(_deploy_record "$dir" "$command" "$rc" "${run_id:-unknown}" "${anchor:-unknown}")"
+    rec="$(_deploy_record "$dir" "$command" "$rc" "${run_id:-unknown}" "${anchor:-unknown}" \
+        "$anchor_state")"
     echo ""
     if [ "$rc" -eq 0 ]; then
         echo -e "${GREEN}Deploy command exited 0.${NC}"
@@ -8568,6 +8625,11 @@ _deploy_try_execute() {
     fi
     return "$rc"
 }
+
+# Emitted by _deploy_gate (not a refusal reason) when the anchor was UNPROVEN
+# and the operator overrode it. The gate runs inside $( ), so this travels on
+# stdout; a global assigned in the subshell would not survive.
+_DEPLOY_ANCHOR_MARKER="__LOKI_ANCHOR_UNPROVEN__"
 
 # _deploy_gate <dir> <command>
 # THE GATE. Echoes "" when all four checks pass, else the REFUSE reason(s), one
@@ -8615,8 +8677,30 @@ _deploy_gate() {
         esac
         local anchor_reason
         anchor_reason="$(_deploy_anchor_ok "$pj" "$dir")"
-        [ -n "$anchor_reason" ] && reasons="${reasons}${anchor_reason}
+        case "$anchor_reason" in
+            UNANCHORED:*)
+                # Nothing was PROVEN either way. Overridable per invocation, and
+                # only the UNANCHORED-prefixed line is dropped: discarding the
+                # whole anchor check (or skipping the call) would also swallow
+                # the stale-receipt refusal, silently turning this flag into
+                # "skip anchoring entirely".
+                if [ "${LOKI_DEPLOY_ALLOW_UNANCHORED:-false}" = "true" ]; then
+                    # Emitted on STDOUT as a non-reason marker, not stored in a
+                    # variable: _deploy_gate is called inside $( ), so a global
+                    # assigned here dies with the subshell. The caller strips
+                    # this line before treating what remains as refusal reasons.
+                    reasons="${reasons}${_DEPLOY_ANCHOR_MARKER}
 "
+                else
+                    reasons="${reasons}${anchor_reason#UNANCHORED:} (re-run with --allow-unanchored to deploy anyway; nothing about the tree will have been proven)
+"
+                fi
+                ;;
+            "") : ;;
+            *)  # Positive evidence of the wrong build. No flag bypasses this.
+                reasons="${reasons}${anchor_reason}
+" ;;
+        esac
     fi
 
     local dirty
@@ -8639,6 +8723,11 @@ cmd_deploy() {
     local dir="${TARGET_DIR:-.}"
     local do_clip=true
     local do_execute=false
+    # `local` so an AMBIENT LOKI_DEPLOY_ALLOW_UNANCHORED=true in the environment
+    # cannot opt in: it is reset to false on every invocation and only the flag
+    # below sets it. Same rule --execute already follows -- no env var or config
+    # file alone weakens this gate.
+    local LOKI_DEPLOY_ALLOW_UNANCHORED=false
 
     # Arg parse (mirror cmd_preview: lenient on unknown args -> no behavior drift).
     while [ $# -gt 0 ]; do
@@ -8669,6 +8758,14 @@ cmd_deploy() {
                 echo "     refuse -- integrity is not provenance."
                 echo "  3. The receipt anchors to the commit being deployed. A receipt for"
                 echo "     a different commit does not authorize this deploy."
+                echo "     Two outcomes are distinguished here, and only one is overridable:"
+                echo "       UNANCHORED  the receipt records no baseline, so neither a match"
+                echo "                   nor a mismatch can be proven. Refuses by default;"
+                echo "                   --allow-unanchored proceeds and records that the"
+                echo "                   anchor was never proven."
+                echo "       MISMATCH    a baseline IS recorded and resolves to a different"
+                echo "                   tree. That is evidence of the wrong build, and"
+                echo "                   --allow-unanchored does NOT bypass it."
                 echo "  4. You passed --execute on THIS invocation. No env var or config"
                 echo "     file alone can opt in."
                 echo ""
@@ -8686,18 +8783,28 @@ cmd_deploy() {
                 echo "    than what was verified is the exact failure this prevents."
                 echo ""
                 echo "Every executed deploy writes its own record to .loki/deploys/:"
-                echo "the command, its exit code, the authorizing receipt's run_id, and"
-                echo "the resolved anchor."
+                echo "the command, its exit code, the authorizing receipt's run_id, the"
+                echo "resolved anchor, and anchor_state -- so a reader can tell later"
+                echo "whether the anchor was proven or explicitly overridden."
                 echo ""
                 echo "Options:"
                 echo "  --dir <path>   Project directory to scan (default: current dir)"
                 echo "  --no-clip      Do not copy the idiomatic command to the clipboard"
                 echo "  --execute      Run the deploy command if the receipt gate passes"
+                echo "  --allow-unanchored"
+                echo "                 Proceed when the receipt records NO baseline (nothing"
+                echo "                 about this tree is proven). Never bypasses a recorded"
+                echo "                 mismatch. Per-invocation only; no env var opts in."
                 echo "  --help, -h     Show this help and exit"
                 return 0
                 ;;
             --execute)
                 do_execute=true
+                ;;
+            --allow-unanchored)
+                # Per-invocation, like --execute: exported for the gate to read,
+                # never persisted and never settable by config alone.
+                LOKI_DEPLOY_ALLOW_UNANCHORED=true
                 ;;
             --dir)
                 # Guard against a missing OR flag-shaped value: an unguarded
