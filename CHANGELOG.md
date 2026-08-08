@@ -5,7 +5,39 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v9.19.0
+## v9.19.1
+
+Ships v9.19.0's payload, whose release was blocked by two CI failures of my own
+making: a ShellCheck warning in a new test, and a suite whose failing assertion
+moved between adjacent cases run to run.
+
+### Fixed
+
+- **The DA review cases now carry their own budget.** Shard 2/4 failed three
+  consecutive CI runs while the suite passed 43/43 locally, and the failing
+  assertion MOVED between adjacent devils-advocate cases. A failure that
+  relocates between neighbours is a shared environmental cause, not a defect in
+  any one assertion. All four DA cases took the shared default budget, and that
+  path dispatches a reviewer AND a speculative devils-advocate -- two sequential
+  model calls under one budget. Now scaled explicitly: tight locally, generous on
+  a contended runner. Verified 43/43 in both configurations.
+
+- **A failure message that named a cause it had not measured.** "council dissent
+  discarded a speculative DA blocker" asserted a fail-open across six shared
+  conditions. Each clause now reports separately with the assertion text
+  captured. The first attempt at this fix re-ran the assertions in the else
+  branch, which passes on its own correct copy and reported an empty cause --
+  the gating run is now captured once and branched on.
+
+### Added
+
+- **A measured page-weight budget for the dashboard bundle.** It is a single
+  788 KB file every user downloads before seeing anything, and nothing guarded
+  its size. The budget is derived from three recorded measurements, and the
+  positive control is load-bearing: a bare size check passes perfectly on a
+  missing or truncated bundle.
+
+
 
 Closes the spec-to-production loop. Two gaps, both of which broke the promise of
 an end-to-end autonomous lifecycle.

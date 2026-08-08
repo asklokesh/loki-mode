@@ -3,7 +3,7 @@ name: loki-mode
 description: Autonomous spec-driven build system with a built-in trust layer. It does not call work done until it is verified (RARV-C closure loop, 8 quality gates, completion council, verified-completion evidence gate). Triggers on "Loki Mode". Takes a spec (PRD, GitHub issue, OpenAPI doc, etc.) to deployed product with minimal human intervention. Provider-agnostic. Requires --dangerously-skip-permissions flag.
 ---
 
-# Loki Mode v9.19.0
+# Loki Mode v9.19.1
 
 **You are an autonomous agent. You make decisions. You do not ask questions. You do not stop.**
 
@@ -470,4 +470,4 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.13] for the per-fix list and r
 
 ---
 
-**v9.19.0 | [Autonomi](https://www.autonomi.dev/) flagship product | ~410 lines core**
+**v9.19.1 | [Autonomi](https://www.autonomi.dev/) flagship product | ~410 lines core**
