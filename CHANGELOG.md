@@ -5,7 +5,39 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v9.18.4
+## v9.19.0
+
+Closes the spec-to-production loop. Two gaps, both of which broke the promise of
+an end-to-end autonomous lifecycle.
+
+### Added
+
+- **A deploy is now authorized by a verified receipt, or refused.** `loki deploy`
+  was print-only: Loki built, verified, produced an Evidence Receipt, then handed
+  the user a string to paste. `--execute` now runs the detected command, but only
+  when the receipt's verdict is VERIFIED, its facts still hash to their digest, it
+  anchors to the tree being deployed, and the tree is clean. UNSIGNED, UNCHECKED
+  and TAMPERED all refuse, because integrity is not provenance. Fail-closed
+  throughout: a check that cannot be evaluated is a refusal, and the refusal names
+  which check could not run. Destructive operations are refused even with a valid
+  receipt; `git push` and PR creation stay out of scope; Loki never reads cloud
+  credentials. Every executed deploy writes its own receipt naming the command,
+  exit code, anchor and authorizing run_id.
+
+  Known limitation, stated rather than hidden: an unanchored receipt cannot
+  authorize a deploy, and 8 of 9 receipts measured in this repo carry no
+  baseline. `--execute` will refuse those by name. A per-invocation override
+  covering "unknown" but never "known wrong" is the fix and is not in this
+  release.
+
+- **The build pipeline is visible while it runs.** `dashboard/api_phases.py` was
+  262 lines of working phase-timeline parsing that nothing imported and nothing
+  consumed. Now wired to an endpoint and a panel. An unmeasured duration renders
+  as unmeasured rather than 0; not-started, running and failed are three distinct
+  renderings, because collapsing not-started into running shows a stalled build as
+  healthy; sampled or stale data is labelled as such.
+
+
 
 Re-release of v9.18.3, whose release was blocked by a FALSE test failure of my
 own making: a helm test guarded on `helm` and `python3` but not on PyYAML, which
