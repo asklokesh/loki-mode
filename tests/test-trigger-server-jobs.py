@@ -687,5 +687,222 @@ class TestApiTokenSources(unittest.TestCase):
         self.assertNotIn("add_argument('--api-token'", source)
 
 
+def _write_proof(tmpdir, run_id, proof, set_pointer=True):
+    """Emulate a build writing .loki/proofs/<run_id>/proof.json + the pointer.
+
+    This is what generate_proof_of_run does in run.sh: emit the receipt, then
+    atomically write .loki/state/last-proof-id.txt naming the directory. The
+    server observes that pointer; it cannot predict the run id.
+    """
+    d = Path(tmpdir) / ".loki" / "proofs" / run_id
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "proof.json").write_text(json.dumps(proof))
+    if set_pointer:
+        state = Path(tmpdir) / ".loki" / "state"
+        state.mkdir(parents=True, exist_ok=True)
+        (state / "last-proof-id.txt").write_text(run_id)
+    return d
+
+
+class TestJobProofEndpoint(_JobsTestBase):
+    """GET /jobs/<id>/proof -- the remote Evidence Receipt.
+
+    The endpoint's entire value is that a submitter can check a build without
+    trusting the machine that ran it. Two properties carry that: it is
+    fail-closed like every other /jobs route, and it NEVER synthesizes or
+    borrows a receipt -- an unattributable job must 404.
+    """
+
+    def _run_job_writing_proof(self, proof, run_id="run-20260808-1-1",
+                               set_pointer=True):
+        """Submit a job whose fake build writes a receipt, and return its id."""
+        tmpdir = self.tmpdir
+
+        def fake_run(args, dry_run=False):
+            _write_proof(tmpdir, run_id, proof, set_pointer=set_pointer)
+            self.fired.set()
+            return True
+
+        patch.object(ts, "run_loki_command", side_effect=fake_run).start()
+        srv = self.start(workers=1)
+        status, data = srv.submit("./prd.md")
+        self.assertEqual(status, 202)
+        job_id = json.loads(data)["id"]
+        self.assertTrue(self.fired.wait(timeout=10))
+        self.disp.queue.join()
+        return srv, job_id
+
+    def test_fail_closed_without_a_token(self):
+        # Same rule as POST /jobs: no token configured -> 503, never a receipt.
+        srv = self.start(api_token="")
+        status, _ = srv.request("GET", "/jobs/anything/proof")
+        self.assertEqual(status, 503)
+
+    def test_missing_bearer_is_401(self):
+        srv = self.start()
+        status, _ = srv.request("GET", "/jobs/anything/proof")
+        self.assertEqual(status, 401)
+
+    def test_wrong_token_is_401(self):
+        srv = self.start()
+        status, _ = srv.request(
+            "GET", "/jobs/anything/proof",
+            headers={"Authorization": "Bearer wrong-token"})
+        self.assertEqual(status, 401)
+
+    def test_unknown_job_is_404(self):
+        srv = self.start()
+        status, _ = srv.request(
+            "GET", "/jobs/no-such-job/proof",
+            headers={"Authorization": "Bearer " + API_TOKEN})
+        self.assertEqual(status, 404)
+
+    def test_job_with_no_proof_is_404_never_synthesized(self):
+        # THE LOAD-BEARING ABSENCE CASE. A build that wrote no receipt must
+        # yield nothing. A synthesized receipt would be a fabricated claim
+        # about a build that produced no evidence.
+        srv = self.start(workers=1)
+        status, data = srv.submit("./prd.md")
+        job_id = json.loads(data)["id"]
+        self.assertTrue(self.fired.wait(timeout=10))
+        self.disp.queue.join()
+        status, body = srv.request(
+            "GET", "/jobs/%s/proof" % job_id,
+            headers={"Authorization": "Bearer " + API_TOKEN})
+        self.assertEqual(status, 404)
+        self.assertNotIn("verification", body.decode())
+
+    def test_returns_the_proof_unwrapped(self):
+        # Unwrapped is load-bearing: the integrity hash is computed over the
+        # receipt with `verification` stripped, so an outer envelope written to
+        # disk would make every honest receipt recompute to a different hash
+        # and read as TAMPERED.
+        proof = {"run_id": "r1", "facts": {"a": 1},
+                 "verification": {"hash": "abc", "algo": "sha256"}}
+        srv, job_id = self._run_job_writing_proof(proof)
+        status, body = srv.request(
+            "GET", "/jobs/%s/proof" % job_id,
+            headers={"Authorization": "Bearer " + API_TOKEN})
+        self.assertEqual(status, 200)
+        got = json.loads(body)
+        self.assertEqual(got, proof)
+        self.assertEqual(got["verification"]["hash"], "abc")
+
+    def test_signature_is_carried_through(self):
+        # The detached signature lives INSIDE proof.json. If the endpoint drops
+        # it, every signed remote receipt silently degrades to UNSIGNED.
+        proof = {"run_id": "r1",
+                 "verification": {"hash": "abc", "gpg_signature": "-----BEGIN-----"}}
+        srv, job_id = self._run_job_writing_proof(proof)
+        _, body = srv.request(
+            "GET", "/jobs/%s/proof" % job_id,
+            headers={"Authorization": "Bearer " + API_TOKEN})
+        self.assertEqual(
+            json.loads(body)["verification"]["gpg_signature"], "-----BEGIN-----")
+
+    def test_no_pointer_written_is_404(self):
+        # LOKI_PROVEN_PR=0 suppresses the pointer. The proof dir may exist, but
+        # nothing attributes it to this job, so we must not go looking for the
+        # newest directory under .loki/proofs/ and serve that.
+        proof = {"run_id": "r1", "verification": {"hash": "abc"}}
+        srv, job_id = self._run_job_writing_proof(proof, set_pointer=False)
+        status, _ = srv.request(
+            "GET", "/jobs/%s/proof" % job_id,
+            headers={"Authorization": "Bearer " + API_TOKEN})
+        self.assertEqual(status, 404)
+
+    def test_stale_pointer_from_an_earlier_run_is_404(self):
+        # A pointer that did NOT change during this job's window names some
+        # earlier run's receipt. Serving it would hand the submitter another
+        # build's evidence labelled as theirs.
+        _write_proof(self.tmpdir, "run-earlier", {"run_id": "earlier"})
+        srv = self.start(workers=1)
+        _, data = srv.submit("./prd.md")
+        job_id = json.loads(data)["id"]
+        self.assertTrue(self.fired.wait(timeout=10))
+        self.disp.queue.join()
+        status, _ = srv.request(
+            "GET", "/jobs/%s/proof" % job_id,
+            headers={"Authorization": "Bearer " + API_TOKEN})
+        self.assertEqual(status, 404)
+
+    def test_status_response_hides_internal_bookkeeping(self):
+        # Asserted while the job is MID-FLIGHT, when _proof_before is actually
+        # present. Checking only after completion proves nothing: the window
+        # keys are popped at the end, so a get_job() that leaked everything
+        # would still look clean by then.
+        srv = self.start(workers=1)
+        _, data = srv.submit("./prd.md")
+        job_id = json.loads(data)["id"]
+        self.assertTrue(self.fired.wait(timeout=10))
+        self.disp._begin_proof_window(job_id)
+        try:
+            self.assertIn("_proof_before", self.disp._jobs[job_id],
+                          "test premise: the internal key should be present here")
+            _, body = srv.request(
+                "GET", "/jobs/%s" % job_id,
+                headers={"Authorization": "Bearer " + API_TOKEN})
+            for key in json.loads(body):
+                self.assertFalse(key.startswith("_"),
+                                 "internal key %r leaked into the status API" % key)
+        finally:
+            self.disp._end_proof_window(job_id)
+
+
+class TestProofAttributionUnderConcurrency(unittest.TestCase):
+    """Overlapping jobs must yield NO proof rather than the wrong one.
+
+    The pointer is global to the working directory, so when two builds overlap
+    it names whichever finished last. Attributing it to either submitter would
+    hand one of them someone else's receipt while labelling it theirs -- worse
+    than the 404 an absent receipt already returns.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.orig_cwd = os.getcwd()
+        os.chdir(self.tmpdir)
+
+    def tearDown(self):
+        os.chdir(self.orig_cwd)
+
+    def test_overlapping_window_refuses_to_attribute(self):
+        disp = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
+        try:
+            disp.record_job("job-a", "queued")
+            disp.record_job("job-b", "queued")
+            # Both jobs run concurrently; a build writes a receipt in between.
+            disp._begin_proof_window("job-a")
+            disp._begin_proof_window("job-b")
+            _write_proof(self.tmpdir, "run-x", {"run_id": "x"})
+            disp._end_proof_window("job-b")
+            disp._end_proof_window("job-a")
+            self.assertEqual(disp.get_job_proof_id("job-a"), "")
+            self.assertEqual(disp.get_job_proof_id("job-b"), "")
+            self.assertIn("shared", disp.get_job("job-a")["proof_unavailable"])
+        finally:
+            disp.shutdown()
+
+    def test_exclusive_window_attributes_the_new_pointer(self):
+        disp = ts.Dispatcher(workers=1, queue_size=4, dry_run=True)
+        try:
+            disp.record_job("job-a", "queued")
+            disp._begin_proof_window("job-a")
+            _write_proof(self.tmpdir, "run-x", {"run_id": "x"})
+            disp._end_proof_window("job-a")
+            self.assertEqual(disp.get_job_proof_id("job-a"), "run-x")
+        finally:
+            disp.shutdown()
+
+    def test_corrupt_pointer_cannot_name_an_arbitrary_path(self):
+        # The pointer is server-written, not request-supplied, so this is
+        # defense in depth -- but a corrupt pointer must not traverse.
+        state = Path(self.tmpdir) / ".loki" / "state"
+        state.mkdir(parents=True, exist_ok=True)
+        (state / "last-proof-id.txt").write_text("../../../etc")
+        self.assertEqual(ts.read_proof_pointer(), "../../../etc")
+        self.assertIsNone(ts.read_proof("../../../etc"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

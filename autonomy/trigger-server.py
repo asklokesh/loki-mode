@@ -10,8 +10,9 @@ reaping (no zombies), and event logging.
 Also serves an authenticated remote-submit API so a local `loki` client can
 enqueue a build against a deployed cluster:
 
-    POST /jobs        {"spec": "<ref-or-brief>"}  -> 202 {"id": ...}
-    GET  /jobs/<id>                               -> job status
+    POST /jobs           {"spec": "<ref-or-brief>"}  -> 202 {"id": ...}
+    GET  /jobs/<id>                                  -> job status
+    GET  /jobs/<id>/proof                            -> that job's Evidence Receipt
 
 Security note: a webhook secret is REQUIRED. If no secret is configured the
 server still starts (so /health and /status stay available for operators), but
@@ -104,6 +105,12 @@ JOB_EVENT = "loki_job"
 # storm cannot grow memory without limit.
 DEFAULT_JOB_HISTORY = 1024
 
+# A run id names a directory under .loki/proofs/. run.sh mints it as
+# "run-<utc>-<pid>-<rand>" or "proof-<utc>-<pid>-<rand>"; this is the alphabet
+# those forms use. Applied to the pointer file's contents (never to a request
+# path) so a corrupt pointer cannot name an arbitrary path.
+RUN_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
 
 def valid_spec(spec):
     """Return True if spec is a safe `loki start` argument.
@@ -158,6 +165,54 @@ def get_loki_dir():
     loki_dir = Path(".loki") / "triggers"
     loki_dir.mkdir(parents=True, exist_ok=True)
     return loki_dir
+
+
+def read_proof_pointer():
+    """Return the run id in .loki/state/last-proof-id.txt, or "" if absent.
+
+    run.sh's generate_proof_of_run writes this pointer atomically after emitting
+    a receipt, naming the directory it wrote (.loki/proofs/<run_id>/). It is the
+    ONLY durable link from a finished build to its proof: the run id is minted
+    inside run.sh and is deliberately NOT derivable from LOKI_SESSION_ID (the
+    persisted per-run id file wins over the env var), so the server cannot
+    predict it and must observe it instead.
+
+    The pointer is global to the working directory and is not written at all
+    when LOKI_PROVEN_PR=0. Both cases are handled by the caller, which fails
+    closed rather than guessing.
+    """
+    try:
+        return Path(".loki/state/last-proof-id.txt").read_text(
+            encoding="utf-8"
+        ).strip()
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def read_proof(run_id):
+    """Return the parsed proof.json for run_id, or None if unreadable.
+
+    run_id comes from the server-written pointer above, never from a request
+    path, so there is no traversal sink here. It is still constrained to the
+    id alphabet as defense in depth, since a corrupt pointer file must not be
+    able to name an arbitrary path.
+    """
+    # RUN_ID_RE alone is not enough: it permits "." and "..", and ".." would
+    # resolve to .loki/proof.json, one level above the proofs directory. The
+    # dot-forms are rejected outright and the resolved path is then confined
+    # under .loki/proofs, so no run id -- however corrupt -- escapes it.
+    if not run_id or run_id in (".", "..") or not RUN_ID_RE.match(run_id):
+        return None
+    proofs_root = (Path(".loki") / "proofs").resolve()
+    target = (proofs_root / run_id / "proof.json").resolve()
+    if proofs_root not in target.parents:
+        return None
+    try:
+        with open(target) as f:
+            data = json.load(f)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def load_config():
@@ -500,6 +555,11 @@ class Dispatcher:
         self._job_max = max(1, job_history)
         self._jobs = collections.OrderedDict()
         self._jobs_lock = threading.Lock()
+        # Monotonic count of builds dispatched, incremented for EVERY dispatch
+        # (webhook and remote-submit alike). Guards proof attribution: the
+        # pointer is per-working-directory, so it only identifies a job when no
+        # other build was dispatched after that job started.
+        self._dispatch_seq = 0
         # Idempotency: remember recently seen GitHub delivery IDs so a
         # redelivered webhook (GitHub retries on non-2xx, and operators can
         # manually redeliver) does not dispatch the same build twice. Bounded
@@ -541,6 +601,62 @@ class Dispatcher:
                 self._seen_deliveries.popitem(last=False)
             return False
 
+    def _begin_proof_window(self, job_id=None):
+        """Record that a build was dispatched, snapshotting the proof pointer.
+
+        Called for EVERY dispatch, not just remotely-submitted ones. A webhook
+        build (issues / pull_request / workflow_run) runs `loki start` in the
+        same working directory and writes the same global pointer, so if it
+        finished during a submitted job's window and was not counted here, its
+        receipt would be attributed to that job. That is exactly the
+        borrowed-receipt failure this design exists to prevent.
+
+        Attribution is deliberately NOT resolved when the dispatch returns.
+        `loki start --detach` returns as soon as the child forks, while the
+        build runs for minutes and writes its receipt at the very end -- so a
+        window closed at dispatch-return would always see an unchanged pointer
+        and every real build would 404. Resolution happens lazily in
+        get_job_proof_id() instead, at the moment someone asks.
+        """
+        with self._jobs_lock:
+            self._dispatch_seq += 1
+            entry = self._jobs.get(job_id) if job_id else None
+            if entry is not None:
+                entry["_proof_before"] = read_proof_pointer()
+                entry["_proof_seq"] = self._dispatch_seq
+
+    def _resolve_proof_id(self, entry):
+        """Attribute the current proof pointer to `entry`, or refuse to guess.
+
+        Caller holds _jobs_lock. Returns (run_id, reason): exactly one is set.
+
+        A CHANGED pointer means some build wrote a receipt since this job was
+        dispatched. That identifies THIS job's receipt only if no other build
+        was dispatched afterwards -- otherwise the pointer names whichever
+        finished last, and handing that to this submitter would give them
+        someone else's evidence labelled as theirs. Worse than the 404 an
+        absent receipt already returns, so a contended window resolves to
+        nothing.
+
+        An UNCHANGED pointer means no receipt has been written yet (the build
+        is still running, produced none, or LOKI_PROVEN_PR=0 suppressed the
+        pointer). Also nothing: we never fall back to the newest directory
+        under .loki/proofs/, which would serve an unrelated earlier run.
+        """
+        before = entry.get("_proof_before", "")
+        seq = entry.get("_proof_seq")
+        if seq is None:
+            return "", "this job was not dispatched with proof tracking"
+        if seq != self._dispatch_seq:
+            return "", (
+                "another build was dispatched during this job's window, so "
+                "the proof pointer cannot be attributed to this job"
+            )
+        after = read_proof_pointer()
+        if after and after != before:
+            return after, ""
+        return "", "this job wrote no Evidence Receipt"
+
     def record_job(self, job_id, status, summary=""):
         """Create or update the status record for a remotely-submitted job."""
         with self._jobs_lock:
@@ -556,10 +672,28 @@ class Dispatcher:
                 entry["summary"] = summary
 
     def get_job(self, job_id):
-        """Return a copy of the job record, or None if unknown/evicted."""
+        """Return a copy of the job record, or None if unknown/evicted.
+
+        Underscore-prefixed keys are internal bookkeeping for proof attribution
+        and are stripped: the status response is a public API surface.
+        """
         with self._jobs_lock:
             entry = self._jobs.get(job_id)
-            return dict(entry) if entry else None
+            if not entry:
+                return None
+            return {k: v for k, v in entry.items() if not k.startswith("_")}
+
+    def get_job_proof_id(self, job_id):
+        """Return (run_id, reason) for job_id. Exactly one is non-empty.
+
+        Resolved lazily, at ask time, because a detached build finishes long
+        after its dispatch returns (see _begin_proof_window).
+        """
+        with self._jobs_lock:
+            entry = self._jobs.get(job_id)
+            if entry is None:
+                return "", "unknown job id"
+            return self._resolve_proof_id(entry)
 
     def submit(self, event_type, payload):
         """Enqueue an event. Returns True if accepted, False if the queue is full."""
@@ -580,6 +714,10 @@ class Dispatcher:
                 job_id = payload.get("job_id") if isinstance(payload, dict) else None
                 if job_id:
                     self.record_job(job_id, "running")
+                # Counted for every dispatch, including webhook builds that
+                # have no job_id: they write the same global proof pointer, so
+                # an uncounted one would be misattributed to a submitted job.
+                self._begin_proof_window(job_id)
                 summary, status = dispatch_event(
                     event_type, payload, dry_run=self.dry_run
                 )
@@ -624,6 +762,8 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
                 "secret_configured": bool(self.secret),
                 "api_token_configured": bool(self.api_token),
             })
+        elif path.startswith("/jobs/") and path.endswith("/proof"):
+            self._handle_job_proof(path[len("/jobs/"):-len("/proof")])
         elif path.startswith("/jobs/"):
             self._handle_job_status(path[len("/jobs/"):])
         else:
@@ -673,6 +813,37 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(404, {"error": "unknown job id"})
             return
         self._send_json(200, job)
+
+    def _handle_job_proof(self, job_id):
+        """GET /jobs/<id>/proof -- that job's Evidence Receipt.
+
+        Returns proof.json UNWRAPPED at the top level. The detached gpg
+        signature, when the build made one, already lives inside it at
+        verification.gpg_signature, and the integrity hash is computed over the
+        receipt with `verification` stripped. Wrapping the body in an envelope
+        would therefore break hash recomputation for a client that writes the
+        response to disk, making every honest receipt read as tampered.
+
+        Same bearer-token auth and fail-closed behavior as POST /jobs. A job
+        that produced no attributable proof is a 404: a synthesized or
+        borrowed-from-another-run receipt would be worse than none, since its
+        whole value is that the submitter can check it without trusting us.
+        """
+        if not self._check_api_auth():
+            return
+        job = self.dispatcher.get_job(job_id) if self.dispatcher else None
+        if job is None:
+            self._send_json(404, {"error": "unknown job id"})
+            return
+        run_id, reason = self.dispatcher.get_job_proof_id(job_id)
+        proof = read_proof(run_id) if run_id else None
+        if proof is None:
+            self._send_json(404, {
+                "error": "no proof available for this job",
+                "reason": reason or "the recorded receipt could not be read",
+            })
+            return
+        self._send_json(200, proof)
 
     def _read_body(self):
         """Read and return the request body, or None if it was refused.

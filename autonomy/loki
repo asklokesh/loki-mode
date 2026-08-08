@@ -691,7 +691,15 @@ loki_remote_submit() {
         sleep "$poll_sec"
     done
 
-    loki_remote_fetch_receipt "$url" "$token" "$job_id"
+    # A TAMPERED receipt fails the whole submit regardless of the job status:
+    # reporting a build as successful while holding proof that its own receipt
+    # was altered would make the receipt decorative.
+    local _receipt_rc=0
+    loki_remote_fetch_receipt "$url" "$token" "$job_id" || _receipt_rc=$?
+    if [ "$_receipt_rc" -ne 0 ]; then
+        echo -e "${RED}loki: remote job $job_id returned a receipt that failed verification${NC}" >&2
+        return 1
+    fi
 
     # ponytail: the server reports DISPATCH success ("fired" = the pod launched
     # the build), not the build's own exit code -- run_loki_command returns true
@@ -707,15 +715,21 @@ loki_remote_submit() {
 }
 
 # Fetch the Evidence Receipt and write it where a local run puts it, so
-# `loki proof` works on a remote build. Best-effort: the endpoint is not yet
-# served (see the message to the lead), so a miss is a warning, not a failure.
+# `loki proof` works on a remote build, then VERIFY it here -- on the machine
+# that did NOT produce it. That is the entire point: a receipt you can only
+# check by asking the builder whether it is good proves nothing.
+#
+# Returns 0 when the receipt verified or is honestly reported as unverifiable,
+# and NON-ZERO when the receipt is TAMPERED. Absence of a receipt is not a
+# failure (a build may legitimately produce none); a receipt that fails its
+# own integrity check is.
 loki_remote_fetch_receipt() {
     local url="$1" token="$2" job_id="$3"
     local dir="${LOKI_DIR:-.loki}/proofs/$job_id"
     local tmp resp
 
     if ! resp="$(loki_remote_curl "$token" -fsS --max-time 30 \
-            "$url/jobs/$job_id/receipt" 2>/dev/null)"; then
+            "$url/jobs/$job_id/proof" 2>/dev/null)"; then
         echo "  (no evidence receipt available from $url for $job_id)" >&2
         return 0
     fi
@@ -729,7 +743,96 @@ loki_remote_fetch_receipt() {
     tmp="$dir/.proof.json.$$"
     printf '%s' "$resp" > "$tmp" && mv "$tmp" "$dir/proof.json"
     echo "  Evidence Receipt: $dir/proof.json"
-    echo "  Verify it: loki proof verify $job_id"
+
+    loki_remote_verify_receipt "$dir/proof.json"
+}
+
+# Verify a fetched receipt locally and print exactly what was and was not
+# proven. Exit 1 ONLY on tamper.
+#
+# THREE OUTCOMES, NEVER COLLAPSED INTO TWO:
+#   VERIFIED  a gpg signature is present and valid  -> integrity AND provenance
+#   UNSIGNED  the hash matches, no signature        -> integrity ONLY
+#   TAMPERED  hash mismatch or bad signature        -> exit 1
+#
+# UNSIGNED is not a weaker VERIFIED, it is a different claim. docs/VERIFICATION-COST.md
+# records that the unsigned path is FORGEABLE: whoever rewrites the facts and
+# the headline into a mutually consistent lie and recomputes the hash passes
+# every check here. A user who trusts a "verified" label meaning only "these
+# bytes are self-consistent" is worse off than one who knows they hold no proof,
+# because they will stop looking. So the word "verified" is never printed for an
+# unsigned receipt.
+#
+# There is a FOURTH state and it must not be folded into UNSIGNED: a signature
+# is present but gpg is not installed here, so it could not be checked. Saying
+# UNSIGNED there would be a false statement about the receipt (it IS signed),
+# and saying VERIFIED would be a false statement about this machine (it checked
+# nothing). It gets its own line and never claims verification.
+loki_remote_verify_receipt() {
+    local pj="$1"
+    local verifier="${_LOKI_SCRIPT_DIR}/lib/proof-verify.py"
+
+    if [ ! -f "$verifier" ] || ! command -v python3 >/dev/null 2>&1; then
+        echo "  NOT VERIFIED: no local verifier available (need python3 and lib/proof-verify.py)" >&2
+        return 0
+    fi
+
+    # Whether the receipt CARRIES a signature is read from the receipt itself,
+    # not inferred from the verifier's gpg verdict. proof-verify.py reports
+    # gpg_ok="n/a" for two distinct situations -- no signature present, and gpg
+    # unavailable on this machine -- so gpg_ok alone cannot tell them apart, and
+    # collapsing them is exactly how a signed receipt gets mislabelled UNSIGNED.
+    local signed=0
+    if jq -e '.verification.gpg_signature // empty' "$pj" >/dev/null 2>&1; then
+        signed=1
+    fi
+
+    # Deliberately NOT gated on the verifier's exit code or its `ok` field.
+    # `ok` includes diff_drift, re-derived against the LOCAL repo -- which is
+    # not the machine that produced this build, so an honest remote receipt
+    # drifts by construction and would report TAMPERED on every single run.
+    # A false BLOCK is the more damaging direction (docs/VERIFICATION-COST.md):
+    # a gate that cries wolf every time trains users to ignore the verdict.
+    # Only hash_ok and gpg_ok are load-bearing here; drift is not our verdict.
+    local out hash_ok gpg_ok
+    out="$(python3 "$verifier" "$pj" "${TARGET_DIR:-.}" 2>/dev/null)"
+    hash_ok="$(printf '%s' "$out" | jq -r '.hash_ok // false' 2>/dev/null)"
+    gpg_ok="$(printf '%s' "$out" | jq -r '.gpg_ok | tostring' 2>/dev/null)"
+
+    if [ "$hash_ok" != "true" ]; then
+        echo -e "  ${RED}TAMPERED: the receipt's integrity hash does not match its contents.${NC}" >&2
+        echo "    proof.json was edited after it was written. Do not trust this build." >&2
+        return 1
+    fi
+
+    if [ "$signed" -eq 1 ] && [ "$gpg_ok" = "false" ]; then
+        echo -e "  ${RED}TAMPERED: the receipt carries a gpg signature that does not verify.${NC}" >&2
+        echo "    Either the contents or the signature was altered. Do not trust this build." >&2
+        return 1
+    fi
+
+    if [ "$signed" -eq 1 ] && [ "$gpg_ok" = "true" ]; then
+        echo -e "  ${GREEN}VERIFIED${NC}: integrity hash matches and the gpg signature is valid."
+        echo "    Proven: these receipt bytes are unaltered, and they were signed by the"
+        echo "    holder of the signing key. Verify that key is one you trust."
+        echo "    NOT proven: that the code is correct. A receipt records which checks ran."
+        return 0
+    fi
+
+    if [ "$signed" -eq 1 ]; then
+        # gpg_ok is "n/a" with a signature present: gpg is missing here.
+        echo -e "  ${YELLOW}NOT CHECKED${NC}: the receipt is signed, but gpg is unavailable on this machine."
+        echo "    Its integrity hash matches. The signature was NOT checked, so provenance"
+        echo "    is unproven here. Install gpg and re-run: loki proof verify $(basename "$(dirname "$pj")")"
+        return 0
+    fi
+
+    echo -e "  ${YELLOW}UNSIGNED${NC}: integrity hash matches. This is NOT proof of provenance."
+    echo "    Proven: the receipt is internally consistent with its own hash."
+    echo "    NOT proven: who produced it. An unsigned receipt is forgeable -- whoever"
+    echo "    controls the builder can rewrite the facts and recompute the hash."
+    echo "    For provenance, the build must set LOKI_PROOF_GPG_KEY (docs/SIGNED-RECEIPTS.md)."
+    return 0
 }
 
 # Emit event (non-blocking)
