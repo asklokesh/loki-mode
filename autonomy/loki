@@ -556,6 +556,182 @@ require_jq() {
     fi
 }
 
+# --- remote submit (loki start --remote <url>) --------------------------------
+#
+# Submits a spec to a deployed trigger-server's POST /jobs instead of building
+# locally, then polls GET /jobs/<id> until the job reaches a terminal state.
+#
+# The bearer token is read from LOKI_REMOTE_TOKEN or LOKI_REMOTE_TOKEN_FILE and
+# is NEVER placed in argv (the process list is world-readable) and never logged.
+# It reaches curl through `--config -` on stdin.
+
+# Extract the host from a URL: strip scheme, userinfo, then cut at the first
+# '/', ':' or '?'. Compared EXACTLY, never by prefix -- "http://localhost*"
+# would happily accept http://localhost.evil.com and leak a bearer token.
+loki_remote_host() {
+    local url="$1"
+    local rest="${url#*://}"
+    rest="${rest##*@}"
+    rest="${rest%%/*}"
+    rest="${rest%%\?*}"
+    # Strip a :port, but keep an [::1] literal intact.
+    case "$rest" in
+        \[*\]*) rest="${rest%%\]*}]" ;;
+        *) rest="${rest%%:*}" ;;
+    esac
+    printf '%s' "$rest"
+}
+
+loki_remote_is_local_host() {
+    case "$(loki_remote_host "$1")" in
+        localhost|127.0.0.1|\[::1\]|::1) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Read the token from env or a file. Never echoed, never passed as an argument.
+loki_remote_token() {
+    if [ -n "${LOKI_REMOTE_TOKEN:-}" ]; then
+        printf '%s' "$LOKI_REMOTE_TOKEN"
+        return 0
+    fi
+    if [ -n "${LOKI_REMOTE_TOKEN_FILE:-}" ] && [ -f "${LOKI_REMOTE_TOKEN_FILE}" ]; then
+        # Mounted secrets end with a newline; strip it or every compare fails.
+        tr -d '\r\n' < "${LOKI_REMOTE_TOKEN_FILE}"
+        return 0
+    fi
+    return 1
+}
+
+# curl with the Authorization header fed on stdin via --config, so the token
+# never appears in argv. Usage: loki_remote_curl <token> <curl-args...>
+loki_remote_curl() {
+    local _tok="$1"; shift
+    printf 'header = "Authorization: Bearer %s"\n' "$_tok" \
+        | curl --config - "$@"
+}
+
+loki_remote_submit() {
+    local url="$1"
+    local spec="$2"
+
+    url="${url%/}"
+
+    if [ -z "$spec" ]; then
+        echo -e "${RED}loki: --remote needs a spec to submit${NC}" >&2
+        echo "  e.g. loki start ./prd.md --remote $url" >&2
+        return 1
+    fi
+
+    # A bearer token over plaintext to a remote host is a credential leak.
+    # Loopback is exempt (it never leaves the machine); anything else needs an
+    # explicit opt-in so the leak is a decision, not an accident.
+    case "$url" in
+        http://*)
+            if ! loki_remote_is_local_host "$url" && [ "${LOKI_REMOTE_INSECURE:-}" != "1" ]; then
+                echo -e "${RED}loki: refusing to send a bearer token over plaintext http to $(loki_remote_host "$url")${NC}" >&2
+                echo "  Use https://, or set LOKI_REMOTE_INSECURE=1 to override." >&2
+                return 1
+            fi
+            ;;
+    esac
+
+    local token
+    if ! token="$(loki_remote_token)" || [ -z "$token" ]; then
+        echo -e "${RED}loki: no remote token configured${NC}" >&2
+        echo "  Set LOKI_REMOTE_TOKEN or LOKI_REMOTE_TOKEN_FILE (never pass it as an argument)." >&2
+        return 1
+    fi
+
+    require_jq || return 1
+
+    local body resp
+    body="$(jq -nc --arg s "$spec" '{spec:$s}')"
+
+    echo "Submitting to $url ..."
+    if ! resp="$(loki_remote_curl "$token" -fsS --max-time 30 \
+            -H "Content-Type: application/json" \
+            -X POST --data "$body" "$url/jobs" 2>&1)"; then
+        # NEVER fall back to a local run: a user who asked for remote and
+        # silently got a local build would pay local spend they did not ask for.
+        echo -e "${RED}loki: remote submit failed: $url/jobs${NC}" >&2
+        echo "  Is the server reachable, and is LOKI_REMOTE_TOKEN correct?" >&2
+        echo "  Not falling back to a local build (you asked for --remote)." >&2
+        return 1
+    fi
+
+    local job_id
+    job_id="$(printf '%s' "$resp" | jq -r '.id // empty' 2>/dev/null)"
+    if [ -z "$job_id" ]; then
+        echo -e "${RED}loki: remote accepted the request but returned no job id${NC}" >&2
+        return 1
+    fi
+    echo "Job $job_id queued on $url"
+
+    local poll_sec="${LOKI_REMOTE_POLL_SEC:-5}"
+    local max_polls="${LOKI_REMOTE_MAX_POLLS:-720}"
+    local status="" last="" i=0
+    while [ "$i" -lt "$max_polls" ]; do
+        i=$((i+1))
+        if ! resp="$(loki_remote_curl "$token" -fsS --max-time 30 \
+                "$url/jobs/$job_id" 2>&1)"; then
+            echo -e "${RED}loki: lost contact with $url while polling job $job_id${NC}" >&2
+            return 1
+        fi
+        status="$(printf '%s' "$resp" | jq -r '.status // empty' 2>/dev/null)"
+        if [ "$status" != "$last" ]; then
+            echo "  [$job_id] $status"
+            last="$status"
+        fi
+        case "$status" in
+            fired|error|rejected*)
+                break
+                ;;
+        esac
+        sleep "$poll_sec"
+    done
+
+    loki_remote_fetch_receipt "$url" "$token" "$job_id"
+
+    # ponytail: the server reports DISPATCH success ("fired" = the pod launched
+    # the build), not the build's own exit code -- run_loki_command returns true
+    # for a --detach launch and for the detach-timeout path. So a non-"fired"
+    # status is a real failure, but "fired" is not yet proof the build passed.
+    # Upgrade path: have trigger-server record the build's exit code and expose
+    # a terminal status here, then gate CI on that instead.
+    case "$status" in
+        fired) return 0 ;;
+        "")    echo -e "${RED}loki: job $job_id did not reach a terminal status${NC}" >&2; return 1 ;;
+        *)     echo -e "${RED}loki: remote job $job_id failed: $status${NC}" >&2; return 1 ;;
+    esac
+}
+
+# Fetch the Evidence Receipt and write it where a local run puts it, so
+# `loki proof` works on a remote build. Best-effort: the endpoint is not yet
+# served (see the message to the lead), so a miss is a warning, not a failure.
+loki_remote_fetch_receipt() {
+    local url="$1" token="$2" job_id="$3"
+    local dir="${LOKI_DIR:-.loki}/proofs/$job_id"
+    local tmp resp
+
+    if ! resp="$(loki_remote_curl "$token" -fsS --max-time 30 \
+            "$url/jobs/$job_id/receipt" 2>/dev/null)"; then
+        echo "  (no evidence receipt available from $url for $job_id)" >&2
+        return 0
+    fi
+    # Only write something that parses as JSON: a proxy error page must not
+    # land in .loki/proofs/ looking like a receipt.
+    if ! printf '%s' "$resp" | jq -e . >/dev/null 2>&1; then
+        echo "  (remote returned a non-JSON receipt for $job_id; not written)" >&2
+        return 0
+    fi
+    mkdir -p "$dir"
+    tmp="$dir/.proof.json.$$"
+    printf '%s' "$resp" > "$tmp" && mv "$tmp" "$dir/proof.json"
+    echo "  Evidence Receipt: $dir/proof.json"
+    echo "  Verify it: loki proof verify $job_id"
+}
+
 # Emit event (non-blocking)
 # Usage: emit_event <type> <source> <action> [key=value ...]
 emit_event() {
@@ -1495,6 +1671,7 @@ cmd_start() {
     local mirofish_bg=false
     local mirofish_disabled=false
     local no_plan=false  # v6.81.1: --no-plan opts out of auto-plan display
+    local remote_url="${LOKI_REMOTE_URL:-}"   # --remote: submit to a deployed cluster
 
     # v6.84.0: unified entry point -- explicit mode overrides + issue-mode args
     local explicit_mode=""            # "prd" | "issue" | "" (auto-detect)
@@ -1532,6 +1709,10 @@ cmd_start() {
                 echo "  --brief \"TEXT\"        Force zero-config brief mode (fast first run)"
                 echo ""
                 echo "Options:"
+                echo "  --remote URL          Submit to a deployed Loki (POST /jobs) instead of"
+                echo "                        building locally; polls until the job finishes."
+                echo "                        Token from LOKI_REMOTE_TOKEN / LOKI_REMOTE_TOKEN_FILE"
+                echo "                        (never an argument). Env: LOKI_REMOTE_URL."
                 echo "  --provider NAME       AI provider: claude (default), codex, cline, aider"
                 echo "  --parallel            Enable parallel mode with git worktrees"
                 echo "  --allow-haiku         Enable Haiku model for the fast tier (default: disabled)"
@@ -2058,6 +2239,19 @@ cmd_start() {
             --config=*|--vars=*|--env-file=*)
                 shift
                 ;;
+            --remote)
+                if [ "$#" -ge 2 ]; then
+                    remote_url="$2"
+                    shift 2
+                else
+                    echo "loki: --remote requires a URL (e.g. --remote https://loki.example.com)" >&2
+                    exit 1
+                fi
+                ;;
+            --remote=*)
+                remote_url="${1#--remote=}"
+                shift
+                ;;
             --)
                 # End-of-options: everything after is positional. Lets a caller
                 # pass an untrusted spec that might start with '-' safely, e.g.
@@ -2083,6 +2277,18 @@ cmd_start() {
                 ;;
         esac
     done
+
+    # --remote: submit to a deployed cluster instead of building locally.
+    #
+    # Branches HERE, after arg parsing but BEFORE the provider pre-flight and
+    # provider_offer_gate below: those require a provider CLI on PATH, and the
+    # whole point of a remote submit is that this machine is not doing the
+    # work. Gating a remote submit on a local provider install would defeat it.
+    if [ -n "$remote_url" ]; then
+        local _remote_spec="${brief_text:-${prd_file:-$positional_arg}}"
+        loki_remote_submit "$remote_url" "$_remote_spec"
+        return $?
+    fi
 
     # Explicit-provider pre-flight. Runs BEFORE provider_offer_gate below, and
     # is deliberately narrower than it.
