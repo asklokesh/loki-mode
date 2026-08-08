@@ -463,6 +463,13 @@ run_test "Build Analytics Opt-In (strict gate + allowlist, no leak)" "$SCRIPT_DI
 # proves non-execution + CI/CD git-advice precedence over cloud options.
 run_test "Deploy advisory (print-only, CI/CD precedence)" "$SCRIPT_DIR/test-deploy.sh"
 
+# Receipt-gated deploy: `loki deploy --execute` runs a deploy ONLY when a
+# VERIFIED Evidence Receipt authorizes THIS tree (hash_ok + VERIFIED verdict +
+# anchor to HEAD + clean tree + per-invocation opt-in), and fails closed on any
+# check it cannot evaluate. Includes the POSITIVE CONTROL that stops the gate
+# from passing by refusing everything, and the destructive/git-push limits.
+run_test "Deploy receipt gate (--execute authorization)" "$SCRIPT_DIR/test-deploy-receipt-gate.sh"
+
 # Unified config-file (#691): `loki start --config <path>` (.env/YAML/JSON), the
 # locked precedence ladder (--config beats ambient env -- the keystone), ${VAR}
 # expansion, raw-secret detection, injection rejection, and `config

@@ -7967,12 +7967,23 @@ cmd_preview() {
 # build started, so it has NO running-app precondition. Folding it into preview
 # would force preview's running-app gate onto a feature that must not have one.
 #
-# HARD INVARIANT (DEPLOY-PLAN LOCK 5 + BRANCH-LIFECYCLE LOCK B4): PRINT-ONLY.
-# cmd_deploy NEVER runs a cloud CLI (vercel/netlify/flyctl/wrangler) -- not even
-# `--version` -- and NEVER runs `git push` or `gh pr create`. Tool detection is
-# `command -v` ONLY. Loki advises; the human runs the printed command. This keeps
-# the README promise ("Does not deploy -- human runs deploy commands") literally
-# true. Only the clipboard tools (pbcopy/wl-copy/...) and `command -v` may run.
+# HARD INVARIANT (DEPLOY-PLAN LOCK 5 + BRANCH-LIFECYCLE LOCK B4): PRINT-ONLY BY
+# DEFAULT. Without --execute, cmd_deploy NEVER runs a cloud CLI
+# (vercel/netlify/flyctl/wrangler) -- not even `--version`. Tool detection is
+# `command -v` ONLY. Loki advises; the human runs the printed command.
+#
+# --execute (added for receipt-gated deploy) is the ONLY path that runs a deploy
+# command, and it is gated on an Evidence Receipt that VERIFIES this exact tree
+# (see the RECEIPT-GATED EXECUTION block below). The invariants that survive
+# unconditionally, with or without --execute:
+#   - NEVER `git push`, NEVER `gh pr create`. Out of scope entirely.
+#   - NEVER a destructive cloud operation (delete/destroy/teardown/drop),
+#     refused even with a perfect receipt.
+#   - NEVER reads or forwards cloud credentials. The deploy command inherits the
+#     user's already-authenticated CLI session; Loki does not touch credential
+#     files or secret-bearing env vars.
+# Only the clipboard tools (pbcopy/wl-copy/...), `command -v`, and -- under
+# --execute alone -- the gated deploy command itself may run.
 #
 # This whole block is contiguous (helpers + cmd_deploy) so a test can extract it
 # by name anchor, mirroring tests/test-preview-public.sh.
@@ -8193,7 +8204,16 @@ $options
 EOF
 
     if [ "$printed" = true ]; then
-        echo "Loki does not deploy for you. Review, then run the command yourself."
+        # This sentence is TRUE only on the print-only path. Under --execute the
+        # very next thing that happens may be the deploy running, and printing
+        # "Loki does not deploy for you" immediately before Loki deploys is
+        # exactly the kind of false statement this feature exists to not make.
+        # _LOKI_DEPLOY_EXECUTING is set by cmd_deploy for this one decision.
+        if [ "${_LOKI_DEPLOY_EXECUTING:-false}" = true ]; then
+            echo "Reviewing this command against the evidence gate (--execute)."
+        else
+            echo "Loki does not deploy for you. Review, then run the command yourself."
+        fi
         if [ "$do_clip" = true ] && [ -n "$first_cmd" ]; then
             _deploy_copy_clipboard "$first_cmd"
         fi
@@ -8208,9 +8228,409 @@ EOF
     return 1
 }
 
-# cmd_deploy [--dir <path>] [--no-clip] [--help]
+# =============================================================================
+# RECEIPT-GATED EXECUTION (--execute). Everything below is INERT unless the user
+# passes --execute on THIS invocation; the default path stays print-only.
+#
+# The design idea: a deploy is an action a VERIFIED RECEIPT AUTHORIZES. Not
+# "let the agent run gcloud" -- the gate is the evidence artifact we already
+# ship, and it must hold on every one of four independent checks.
+#
+# FAIL CLOSED IS THE WHOLE CONTRACT. Every helper here answers "" or a REFUSE
+# reason when it cannot evaluate its check. An unevaluated gate is not a pass:
+# no receipt, no python3, no gpg, a non-repo dir and an unresolvable anchor all
+# REFUSE. That direction is deliberate -- a gate that cannot tell you whether
+# the tree was verified must not deploy it.
+# =============================================================================
+
+# _deploy_receipt_verdict <proof.json>
+# Echoes exactly one of VERIFIED | UNSIGNED | UNCHECKED | TAMPERED, the same four
+# verdicts loki_remote_verify_receipt reports (see its header at loki:756).
+# The vocabulary is REUSED, not reinvented, because a second set of words for
+# the same four states is how they get collapsed into two.
+#
+# Deliberately NOT loki_remote_verify_receipt itself: that function returns 0 for
+# UNSIGNED, which is right for its caller (submit) and wrong here (integrity is
+# not provenance). We read the same signed/hash_ok/gpg_ok triple and let the
+# CALLER decide which verdicts authorize.
+#
+# hash_ok is read, NOT the top-level `ok` and NOT the exit code: `ok` folds in
+# tree_drift, and proof-verify.py exits 1 on drift alone. Gating on either would
+# refuse every honest receipt whose tree moved -- the false-alarm direction
+# docs/VERIFICATION-COST.md documents. Anything unreadable is TAMPERED-or-worse,
+# so the fallback verdict is UNCHECKED (never a pass).
+_deploy_receipt_verdict() {
+    local pj="$1"
+    local verifier="${_LOKI_SCRIPT_DIR}/lib/proof-verify.py"
+
+    [ -f "$pj" ] || { printf '%s' "UNCHECKED"; return 0; }
+    if [ ! -f "$verifier" ] || ! command -v python3 >/dev/null 2>&1; then
+        printf '%s' "UNCHECKED"; return 0
+    fi
+
+    local out hash_ok gpg_ok signed=0
+    out="$(python3 "$verifier" "$pj" "${TARGET_DIR:-.}" 2>/dev/null || true)"
+
+    # "The verifier did not RUN" and "the verifier says the hash is bad" are
+    # different facts and must not collapse. If they do, a broken python3
+    # produces the verdict TAMPERED -- an accusation of forgery for a check that
+    # never executed. That is the same error the signed path is careful to avoid
+    # with NO_PUBKEY (see loki:852): it sends a user hunting a forgery that never
+    # happened, and trains them to shrug at a real TAMPERED. Unparseable output
+    # is UNCHECKED, which still REFUSES -- fail-closed, honestly labelled.
+    if [ -z "$out" ] || ! printf '%s' "$out" | python3 -c 'import json,sys;json.load(sys.stdin)' >/dev/null 2>&1; then
+        printf '%s' "UNCHECKED"; return 0
+    fi
+
+    hash_ok="$(printf '%s' "$out" | python3 -c 'import json,sys;print(str(json.load(sys.stdin).get("hash_ok",False)).lower())' 2>/dev/null || printf 'false')"
+    gpg_ok="$(printf '%s' "$out" | python3 -c 'import json,sys;print(str(json.load(sys.stdin).get("gpg_ok","n/a")).lower())' 2>/dev/null || printf 'n/a')"
+
+    # Whether the receipt CARRIES a signature is read from the receipt, never
+    # inferred from gpg_ok -- gpg_ok is "n/a" both for "no signature" and for
+    # "gpg missing here", and conflating those mislabels a signed receipt.
+    if python3 -c 'import json,sys;sys.exit(0 if (json.load(open(sys.argv[1])).get("verification") or {}).get("gpg_signature") else 1)' "$pj" 2>/dev/null; then
+        signed=1
+    fi
+
+    if [ "$hash_ok" != "true" ]; then printf '%s' "TAMPERED"; return 0; fi
+    if [ "$signed" -eq 0 ]; then printf '%s' "UNSIGNED"; return 0; fi
+    case "$gpg_ok" in
+        true)  printf '%s' "VERIFIED" ;;
+        # Signed but the signature does not verify: contents or signature were
+        # altered. A missing PUBLIC KEY is a different fact (uncheckable, not an
+        # accusation), so it reports UNCHECKED -- which refuses here anyway.
+        false) if command -v gpg >/dev/null 2>&1 && [ "$(loki_remote_gpg_status "$pj")" = "nopubkey" ]; then
+                   printf '%s' "UNCHECKED"
+               else
+                   printf '%s' "TAMPERED"
+               fi ;;
+        *)     printf '%s' "UNCHECKED" ;;
+    esac
+    return 0
+}
+
+# _deploy_anchor_ok <proof.json> <dir>
+# Echoes "" when the receipt anchors to the tree in front of us, else a REFUSE
+# reason. Two checks, and BOTH are load-bearing:
+#
+#   1. resolve_anchor (autonomy/lib/outcome_ledger.py:122) -- sha algebra proving
+#      base..head is reachable and produces exactly the receipt's file set.
+#   2. head_sha == live HEAD.
+#
+# Check 2 is NOT redundant, and this was MEASURED rather than assumed: on a
+# fixture where the tree advanced one commit past the receipt, resolve_anchor
+# still returned ("anchored", None) -- correctly, because it answers "can I
+# follow this receipt to measure outcomes", not "does this receipt describe the
+# tree I am about to ship". Without check 2 a receipt for an ANCESTOR commit
+# authorizes deploying code it never verified, which is the exact failure this
+# feature exists to prevent.
+_deploy_anchor_ok() {
+    local pj="$1" dir="${2:-.}"
+    command -v python3 >/dev/null 2>&1 || { printf '%s' "anchor could not be evaluated (python3 unavailable)"; return 0; }
+    git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || { printf '%s' "anchor could not be evaluated (not a git repository)"; return 0; }
+
+    local live_head
+    live_head="$(git -C "$dir" rev-parse HEAD 2>/dev/null || printf '')"
+    [ -n "$live_head" ] || { printf '%s' "anchor could not be evaluated (no HEAD commit)"; return 0; }
+
+    # _LOKI_SCRIPT_DIR is a plain shell var, so it is passed EXPLICITLY here --
+    # relying on it being exported would silently fall back to a bare "lib" path
+    # and report every receipt as unevaluable.
+    PJ="$pj" LIVE_HEAD="$live_head" LOKI_LIB="${_LOKI_SCRIPT_DIR}/lib" \
+        python3 - "$dir" <<'PYANCHOR' 2>/dev/null || printf '%s' "anchor could not be evaluated (anchor check failed to run)"
+import json, os, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("LOKI_LIB", ""))
+try:
+    from outcome_ledger import resolve_anchor
+except Exception:
+    print("anchor could not be evaluated (outcome_ledger unavailable)", end="")
+    raise SystemExit(0)
+d = json.load(open(os.environ["PJ"]))
+git = (d.get("facts") or {}).get("git") or {}
+base, head = git.get("base_sha") or "", git.get("head_sha") or ""
+files = git.get("diff") or d.get("files_changed") or []
+if not isinstance(files, list):
+    files = []
+state, reason = resolve_anchor(base, head, files, sys.argv[1])
+if state != "anchored":
+    # TWO DIFFERENT FACTS, and collapsing them makes this gate unusable.
+    #
+    # Measured on this repository: 8 of 9 receipts carry NO facts.git.base_sha,
+    # which matches the "0 of 9 anchored" figure already published in
+    # docs/VERIFICATION-COST.md. Refusing both cases identically means the gate
+    # rejects ~89% of real receipts on anchoring alone -- and a gate that always
+    # refuses teaches users to reach for an override, which is worse than no
+    # gate at all.
+    #
+    #   UNANCHORED  no baseline was recorded. We can prove neither match nor
+    #               mismatch. Refuse by DEFAULT, but let the caller override
+    #               per invocation, and record that nothing was proven.
+    #   MISMATCH    a baseline WAS recorded and it does not resolve to this
+    #               tree. That is positive evidence of the wrong build, and no
+    #               override may bypass it.
+    #
+    # The override covers "unknown", never "known wrong". Emitting a machine
+    # readable prefix so the caller can tell the two apart without parsing prose.
+    if not base:
+        print("UNANCHORED:receipt records no baseline, so it cannot be tied to this tree", end="")
+    else:
+        print("receipt does not anchor to this tree (%s)" % (reason or "unresolvable"), end="")
+elif head != os.environ["LIVE_HEAD"]:
+    # Anchored but STALE: the receipt verified an ancestor, not this tree.
+    print("receipt records a different commit (%s) than HEAD (%s)"
+          % (head[:12], os.environ["LIVE_HEAD"][:12]), end="")
+PYANCHOR
+    return 0
+}
+
+# _deploy_is_destructive <command>
+# Returns 0 (true) if the command names a destructive cloud operation. Refused
+# even under --execute with a perfect receipt: a receipt authorizes shipping the
+# verified tree, never tearing an environment down. Word-boundary matched so
+# "wrangler pages deploy dist" is not caught by "destroy" appearing in a path.
+_deploy_is_destructive() {
+    printf '%s' "${1:-}" | grep -Eqi '(^|[^[:alnum:]_-])(delete|destroy|teardown|down|drop|rm|remove|purge|prune|wipe|scale-down)([^[:alnum:]_-]|$)'
+}
+
+# _deploy_tree_clean <dir>
+# Echoes "" when the working tree is clean, else a REFUSE reason. A dirty tree
+# means the bytes about to ship are NOT the bytes that were verified, which is
+# precisely the failure the receipt gate exists to prevent. A non-repo is
+# UNEVALUABLE, not clean -- it lands in REFUSE with a named reason.
+_deploy_tree_clean() {
+    local dir="${1:-.}"
+    git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || { printf '%s' "working tree could not be evaluated (not a git repository)"; return 0; }
+    local st rc=0
+    st="$(git -C "$dir" status --porcelain 2>/dev/null)" || rc=$?
+    # A git that could not report is UNEVALUABLE, never "clean" and never
+    # "dirty": naming it dirty invents a specific finding out of a failed
+    # measurement, and the user would go looking for edits that do not exist.
+    [ "$rc" -eq 0 ] || { printf '%s' "working tree could not be evaluated (git status failed)"; return 0; }
+    [ -z "$st" ] || printf '%s' "working tree is dirty ($(printf '%s\n' "$st" | grep -c '') uncommitted change(s))"
+    return 0
+}
+
+# _deploy_latest_receipt <dir>
+# Echoes the newest .loki/proofs/<id>/proof.json path, or "" if none exists.
+# Newest-by-name: proof ids are timestamp-prefixed, so lexical order is
+# chronological. Absence is not an error here; the caller turns "" into the
+# named REFUSE reason "no receipt".
+_deploy_latest_receipt() {
+    local dir="${1:-.}"
+    local proofs="$dir/${LOKI_DIR:-.loki}/proofs"
+    # LOKI_DIR may already be absolute (it is elsewhere in this CLI); prefer it
+    # directly when it resolves, else fall back to the dir-relative form.
+    [ -d "${LOKI_DIR:-}/proofs" ] && proofs="${LOKI_DIR}/proofs"
+    [ -d "$proofs" ] || { printf '%s' ""; return 0; }
+    local newest=""
+    local d
+    for d in "$proofs"/*/; do
+        [ -f "$d/proof.json" ] || continue
+        newest="$d/proof.json"
+    done
+    printf '%s' "$newest"
+    return 0
+}
+
+# _deploy_record <dir> <command> <exit_code> <run_id> <anchor_sha>
+# Writes the executed deploy's own record. A deploy with no record of itself
+# defeats the entire premise of gating on evidence.
+#
+# NOT written into .loki/proofs/: a hand-written JSON there carries no integrity
+# hash, so `loki proof verify` would read it as a TAMPERED receipt -- a
+# self-inflicted false alarm. It lives in .loki/deploys/ where it cannot be
+# mistaken for a verifiable receipt.
+_deploy_record() {
+    local dir="${1:-.}" command="$2" rc="$3" run_id="$4" anchor="$5"
+    local ddir="$dir/.loki/deploys"
+    [ -d "${LOKI_DIR:-}" ] && ddir="${LOKI_DIR}/deploys"
+    mkdir -p "$ddir" 2>/dev/null || return 0
+    local f="$ddir/$(date -u +%Y%m%dT%H%M%SZ)-$$.json"
+    DR_CMD="$command" DR_RC="$rc" DR_RUN="$run_id" DR_ANCHOR="$anchor" DR_OUT="$f" \
+        python3 -c '
+import json, os, datetime
+json.dump({
+    "recorded_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "command": os.environ["DR_CMD"],
+    "exit_code": int(os.environ["DR_RC"]),
+    "authorizing_run_id": os.environ["DR_RUN"],
+    "anchor_sha": os.environ["DR_ANCHOR"],
+}, open(os.environ["DR_OUT"], "w"), indent=2)
+' 2>/dev/null || return 0
+    printf '%s' "$f"
+    return 0
+}
+
+# _deploy_first_installed_command <dir> <type>
+# Echoes the idiomatic deploy command for the FIRST installed CLI of this type,
+# or "" if none is installed. Same ordering and same canonical strings
+# _deploy_print_cloud_options prints, so --execute can never run a command that
+# differs from the one the advisory showed. `command -v` only; no CLI is run.
+_deploy_first_installed_command() {
+    local dir="${1:-.}" type="${2:-}"
+    local options provider cli command docs
+    options="$(_deploy_options_for_type "$type")"
+    while IFS='|' read -r provider cli command docs; do
+        [ -n "$cli" ] || continue
+        if command -v "$cli" >/dev/null 2>&1; then
+            printf '%s' "$command"
+            return 0
+        fi
+    done <<EOF
+$options
+EOF
+    printf '%s' ""
+    return 0
+}
+
+# _deploy_try_execute <dir> <type>
+# The ONLY place a deploy command is ever run. Evaluates the gate, and either
+# executes + records, or REFUSES naming every failed check. Returns the deploy
+# command's exit code on execution, 1 on refusal.
+#
+# Ordering matters: the advisory has ALREADY been printed by the caller, so a
+# refusal still leaves the user with exactly the output they get today.
+_deploy_try_execute() {
+    local dir="${1:-.}" type="${2:-}"
+
+    local command
+    command="$(_deploy_first_installed_command "$dir" "$type")"
+    if [ -z "$command" ]; then
+        echo "" >&2
+        echo -e "${RED}REFUSED: --execute found no installed deploy CLI for this ${type} project.${NC}" >&2
+        echo "  Nothing was run. Install one of the CLIs listed above and re-run." >&2
+        return 1
+    fi
+
+    local reasons
+    reasons="$(_deploy_gate "$dir" "$command")"
+    if [ -n "$reasons" ]; then
+        echo ""
+        echo -e "${RED}REFUSED: not deploying. The evidence gate did not pass.${NC}" >&2
+        echo "  Would have run: ${command}" >&2
+        echo "" >&2
+        # printf '%s\n', NOT '%s': command substitution strips the trailing
+        # newline, and `read` then DISCARDS a final unterminated line -- so a
+        # single-reason refusal printed no reasons at all. A refusal that names
+        # nothing is the one thing this gate must never do.
+        printf '%s\n' "$reasons" | while IFS= read -r r; do
+            [ -n "$r" ] && echo "  - ${r}" >&2
+        done
+        echo "" >&2
+        echo "  A check that could not be EVALUATED is a refusal, not a pass." >&2
+        echo "  Nothing was executed. The advisory command above is unchanged." >&2
+        return 1
+    fi
+
+    # Gate passed. Capture the authorizing receipt's identity for the record.
+    local pj run_id anchor
+    pj="$(_deploy_latest_receipt "$dir")"
+    run_id="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("run_id") or "")' "$pj" 2>/dev/null || printf '')"
+    anchor="$(git -C "$dir" rev-parse HEAD 2>/dev/null || printf '')"
+
+    echo ""
+    echo -e "${GREEN}Evidence gate PASSED.${NC} Receipt ${run_id:-unknown} VERIFIED this tree (${anchor:0:12})."
+    echo "Running: ${command}"
+    echo ""
+
+    # Run in the project dir. No credential env var is read, set, or forwarded:
+    # the command inherits the user's already-authenticated CLI session as-is.
+    #
+    # eval is used because the canonical commands carry their own flags
+    # ("vercel --prod", "netlify deploy --prod --dir=<out>") and must word-split.
+    # The string is NOT user input: it comes from the hardcoded
+    # _deploy_options_for_type table, and the only path here has already passed
+    # the destructive-operation check in _deploy_gate.
+    local rc=0
+    ( cd "$dir" && eval "$command" ) || rc=$?
+
+    local rec
+    rec="$(_deploy_record "$dir" "$command" "$rc" "${run_id:-unknown}" "${anchor:-unknown}")"
+    echo ""
+    if [ "$rc" -eq 0 ]; then
+        echo -e "${GREEN}Deploy command exited 0.${NC}"
+    else
+        echo -e "${RED}Deploy command exited ${rc}.${NC}" >&2
+    fi
+    if [ -n "$rec" ]; then
+        echo "Deploy record: ${rec}"
+    else
+        # The deploy ALREADY RAN. Failing to record it silently is the exact
+        # thing this feature exists to prevent -- an executed deploy with no
+        # evidence of itself -- so it is reported LOUDLY rather than swallowed.
+        # Not an error exit: the deploy's own exit code is the honest verdict on
+        # the deploy, and overriding it would misreport what happened.
+        echo -e "${RED}WARNING: the deploy ran but its record could NOT be written.${NC}" >&2
+        echo "  Command: ${command}" >&2
+        echo "  Authorizing receipt run_id: ${run_id:-unknown}; anchor: ${anchor:-unknown}" >&2
+        echo "  Record this yourself: a deploy with no record of itself is unevidenced." >&2
+    fi
+    return "$rc"
+}
+
+# _deploy_gate <dir> <command>
+# THE GATE. Echoes "" when all four checks pass, else the REFUSE reason(s), one
+# per line. Every check is evaluated so a refusal names everything wrong at once
+# rather than making the user re-run to discover the next problem.
+# The opt-in (check 4) is the CALLER's --execute flag and is not re-checked here.
+_deploy_gate() {
+    local dir="${1:-.}" command="${2:-}"
+    local reasons=""
+
+    # Hard limit, checked FIRST: no receipt authorizes a destructive operation.
+    if _deploy_is_destructive "$command"; then
+        reasons="${reasons}destructive operation refused: no receipt authorizes delete/destroy/teardown/drop
+"
+    fi
+
+    # An UNFILLED <placeholder> is a command written for a HUMAN to complete,
+    # not one to run. Executing it is at best a shell syntax error and at worst
+    # an unintended redirection ("--dir=<build-output>" redirects stdin from a
+    # file named build-output). Guessing the value would be worse still: we
+    # would deploy a directory nobody chose.
+    case "$command" in
+        *"<"*">"*) reasons="${reasons}deploy command contains an unfilled placeholder -- run it yourself with the real value: ${command}
+" ;;
+    esac
+
+    local pj
+    pj="$(_deploy_latest_receipt "$dir")"
+    if [ -z "$pj" ]; then
+        reasons="${reasons}no Evidence Receipt found (nothing has verified this tree)
+"
+    else
+        local verdict
+        verdict="$(_deploy_receipt_verdict "$pj")"
+        case "$verdict" in
+            VERIFIED) : ;;
+            UNSIGNED)  reasons="${reasons}receipt is UNSIGNED: integrity holds but provenance is unproven (set LOKI_PROOF_GPG_KEY; docs/SIGNED-RECEIPTS.md)
+" ;;
+            UNCHECKED) reasons="${reasons}receipt is UNCHECKED: its signature could not be evaluated here, so nothing was proven
+" ;;
+            TAMPERED)  reasons="${reasons}receipt is TAMPERED: its integrity hash does not match its contents
+" ;;
+            *)         reasons="${reasons}receipt verdict could not be determined
+" ;;
+        esac
+        local anchor_reason
+        anchor_reason="$(_deploy_anchor_ok "$pj" "$dir")"
+        [ -n "$anchor_reason" ] && reasons="${reasons}${anchor_reason}
+"
+    fi
+
+    local dirty
+    dirty="$(_deploy_tree_clean "$dir")"
+    [ -n "$dirty" ] && reasons="${reasons}${dirty}
+"
+
+    printf '%s' "$reasons"
+    return 0
+}
+
+# cmd_deploy [--dir <path>] [--no-clip] [--execute] [--help]
 # Advisory orchestration: detect project type + CI/CD pipeline + installed cloud
-# CLIs, then PRINT the canonical deploy command(s). PRINT-ONLY (see block header).
+# CLIs, then PRINT the canonical deploy command(s). PRINT-ONLY BY DEFAULT.
 # Placed LAST in the contiguous deploy block (all helpers above it) so the SDET
 # can extract from the first helper def to the close of cmd_deploy and capture the
 # whole self-contained unit (mirrors test-preview-public.sh, where cmd_preview is
@@ -8218,30 +8638,66 @@ EOF
 cmd_deploy() {
     local dir="${TARGET_DIR:-.}"
     local do_clip=true
+    local do_execute=false
 
     # Arg parse (mirror cmd_preview: lenient on unknown args -> no behavior drift).
     while [ $# -gt 0 ]; do
         case "${1:-}" in
             --help|-h|help)
-                echo -e "${BOLD}Loki Mode -- advisory deploy command (print-only)${NC}"
+                echo -e "${BOLD}Loki Mode -- deploy command advisory (print-only by default)${NC}"
                 echo ""
-                echo "Usage: loki deploy [--dir <path>] [--no-clip]"
+                echo "Usage: loki deploy [--dir <path>] [--no-clip] [--execute]"
                 echo ""
                 echo "Detects your project type and your installed cloud CLI (and any"
                 echo "CI/CD pipeline), then PRINTS the exact deploy command for YOU to run."
-                echo "It is advisory only: it NEVER deploys, NEVER runs a cloud CLI (not"
-                echo "even --version), and NEVER runs 'git push'. Loki does not access your"
-                echo "cloud account. You run the printed command. Detection is read-only."
+                echo "By default this is print-only and advisory: it NEVER deploys and"
+                echo "NEVER runs a cloud CLI (not even --version). It NEVER runs"
+                echo "'git push' on ANY path. Detection is read-only. You run the"
+                echo "printed command."
                 echo ""
                 echo "If a CI/CD pipeline (GitHub Actions, GitLab CI, Jenkins, CircleCI,"
                 echo "Azure Pipelines, Bitbucket) is detected, the primary advice is the"
                 echo "git push + pull-request path, because your pipeline deploys on merge."
                 echo ""
+                echo -e "${BOLD}--execute: a deploy authorized by a verified receipt${NC}"
+                echo ""
+                echo "With --execute, Loki runs the detected deploy command ONLY when ALL"
+                echo "of these hold. Any one failing REFUSES, and the refusal names which:"
+                echo "  1. An Evidence Receipt exists for this tree and its integrity hash"
+                echo "     matches (hash_ok)."
+                echo "  2. Its verdict is VERIFIED. UNSIGNED, UNCHECKED and TAMPERED all"
+                echo "     refuse -- integrity is not provenance."
+                echo "  3. The receipt anchors to the commit being deployed. A receipt for"
+                echo "     a different commit does not authorize this deploy."
+                echo "  4. You passed --execute on THIS invocation. No env var or config"
+                echo "     file alone can opt in."
+                echo ""
+                echo "It FAILS CLOSED: if a check cannot be evaluated at all (no receipt,"
+                echo "gpg unavailable, anchor unresolvable, not a git repo), that is a"
+                echo "REFUSAL, not a pass. A refusal still prints the advisory command."
+                echo ""
+                echo "Hard limits, with or without --execute:"
+                echo "  - NEVER runs a destructive cloud operation (delete, destroy,"
+                echo "    teardown, drop). Refused even with a valid receipt."
+                echo "  - NEVER runs 'git push' and NEVER creates a PR. Out of scope."
+                echo "  - NEVER reads or forwards cloud credentials. The deploy command"
+                echo "    inherits your already-authenticated CLI session."
+                echo "  - REFUSES if the working tree is dirty: deploying something other"
+                echo "    than what was verified is the exact failure this prevents."
+                echo ""
+                echo "Every executed deploy writes its own record to .loki/deploys/:"
+                echo "the command, its exit code, the authorizing receipt's run_id, and"
+                echo "the resolved anchor."
+                echo ""
                 echo "Options:"
                 echo "  --dir <path>   Project directory to scan (default: current dir)"
                 echo "  --no-clip      Do not copy the idiomatic command to the clipboard"
+                echo "  --execute      Run the deploy command if the receipt gate passes"
                 echo "  --help, -h     Show this help and exit"
                 return 0
+                ;;
+            --execute)
+                do_execute=true
                 ;;
             --dir)
                 # Guard against a missing OR flag-shaped value: an unguarded
@@ -8262,6 +8718,10 @@ cmd_deploy() {
 
     # Resolve to '.' if the chosen dir does not exist (honest, no crash).
     [ -d "$dir" ] || dir="."
+
+    # Tells the advisory printer which closing sentence is TRUE for this run.
+    # Scoped to this invocation only.
+    local _LOKI_DEPLOY_EXECUTING="$do_execute"
 
     # Detect CI/CD pipeline FIRST (BRANCH-LIFECYCLE LOCK B3 precedence).
     local cicd=""
@@ -8327,6 +8787,21 @@ cmd_deploy() {
                 : # No installed cloud CLI; the pipeline path already advised. Fine.
             fi
         fi
+        # --execute applies to the CLOUD command only. git push / PR creation
+        # stay out of scope entirely, so on the pipeline path --execute never
+        # touches the primary (git) advice above -- it can only run the
+        # secondary cloud command, and only if the receipt gate passes.
+        if [ "$do_execute" = true ]; then
+            if [ -n "$type" ]; then
+                _deploy_try_execute "$dir" "$type"
+                return $?
+            fi
+            echo "" >&2
+            echo -e "${RED}REFUSED: --execute has nothing to run here.${NC}" >&2
+            echo "  No deployable project type detected, and Loki never runs 'git push'" >&2
+            echo "  or creates a PR. Run the git advice above yourself." >&2
+            return 1
+        fi
         return 0
     fi
 
@@ -8346,6 +8821,14 @@ cmd_deploy() {
     # honest install hint) when NO matching CLI is installed.
     local rc=0
     _deploy_print_cloud_options "$dir" "$type" "$do_clip" "true" || rc=$?
+
+    # Execute ONLY if the user opted in on THIS invocation and the advisory
+    # above found something to run. The advisory has already printed, so a
+    # refusal below still leaves the user with today's output.
+    if [ "$do_execute" = true ] && [ "$rc" -eq 0 ]; then
+        _deploy_try_execute "$dir" "$type"
+        return $?
+    fi
     return $rc
 }
 
