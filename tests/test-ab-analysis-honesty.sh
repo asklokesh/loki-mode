@@ -44,10 +44,21 @@ python3 -c "import json,statistics,itertools" 2>/dev/null || {
 # and SKIPPED -- reporting 0/0 for a tool that was broken. A skip must mean the
 # input is genuinely absent, never that the tool died, or a regression here
 # would pass CI silently.
+# ab-history.jsonl is a LOCAL artifact and is not tracked in git, so it is
+# absent on every CI runner. That is an absent input, not a broken tool, and it
+# must SKIP -- an earlier version of this guard failed the whole shard on it.
+# The distinction is the same one the analyser itself makes and I failed to
+# mirror here: check whether the input exists BEFORE interpreting the exit code.
+if [ ! -f "$REPO_ROOT/benchmarks/results/ab-history.jsonl" ]; then
+  echo "  SKIP: no ab-history.jsonl on this machine (local artifact, untracked) -- nothing measured"
+  echo ""; echo "  Passed: 0   Failed: 0 (skipped)"; exit 0
+fi
+
+# With the input present, a nonzero exit IS a crash and must fail loudly.
 _rc=0
 OUT="$(python3 "$TOOL" --json 2>/tmp/ab-analyse.err)" || _rc=$?
 if [ "$_rc" -ne 0 ]; then
-  bad "the analyser exited $_rc (crash, not an absent input)"
+  bad "the analyser exited $_rc with a readable history (crash, not an absent input)"
   sed -n '1,3p' /tmp/ab-analyse.err 2>/dev/null | sed 's/^/        /'
   rm -f /tmp/ab-analyse.err
   echo ""; echo "  Passed: $PASS   Failed: $FAIL"; exit 1

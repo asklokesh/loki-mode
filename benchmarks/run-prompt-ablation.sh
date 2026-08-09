@@ -203,14 +203,19 @@ for i in $(seq 1 "$TRIALS"); do
     [ "$arm" = "simple" ] && simple_val=1
     label="${arm}-${MODEL}-t${i}"
     echo "-- arm: $arm"
+    # LOKI_ABL_LOGDIR captures each trial's output. Default /dev/null keeps
+    # the run quiet; set it when a trial produces no result file and you need
+    # to see WHY, which is otherwise invisible.
+    _trial_log=/dev/null
+    [ -n "${LOKI_ABL_LOGDIR:-}" ] && { mkdir -p "$LOKI_ABL_LOGDIR"; _trial_log="$LOKI_ABL_LOGDIR/${label}.log"; }
     ( cd "$REPO_ROOT" && \
       LOKI_SIMPLE="$simple_val" \
       LOKI_SESSION_MODEL="$MODEL" LOKI_MAX_TIER="$MODEL" \
       LOKI_BENCH_MAX_ITERS="$MAX_ITERS" LOKI_BENCH_TIMEOUT_S="$TIMEOUT_S" \
-      ${GRADER:+LOKI_BENCH_GRADER="$GRADER"} \
+      LOKI_BENCH_GRADER="$GRADER" \
       _run_capped "$HARNESS_CAP" bash benchmarks/speed-benchmark.sh --label "$label" \
       ${SPEC:+--spec "$SPEC"} \
-      >/dev/null 2>&1 )
+      > "$_trial_log" 2>&1 )
     _record "$arm" "$label"
   done
   echo ""
