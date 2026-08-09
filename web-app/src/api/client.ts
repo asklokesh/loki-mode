@@ -161,11 +161,23 @@ export interface ProofDetail extends ProofSummary {
   cost?: { usd?: number | null };
 }
 
+// Mirrors GET /api/proofs/summary. `unknown` is a first-class bucket, not a
+// rounding error: the endpoint refuses to count a receipt as verified when it
+// cannot prove it was, and the UI must not quietly fold those into a total.
+export interface ProofsSummary {
+  total_receipts: number;
+  verified: number;
+  with_gaps: number;
+  not_verified: number;
+  unknown: number;
+}
+
 export const api = {
   // Evidence Receipts. The backend has served these since /api/proofs shipped
   // and nothing in the UI ever called them, so the one artifact no competitor
   // CLI exposes was invisible to every user who did not use the terminal.
   listProofs: () => fetchJSON<{ proofs: ProofSummary[] }>('/proofs'),
+  proofsSummary: () => fetchJSON<ProofsSummary>('/proofs/summary'),
   getProof: (runId: string) =>
     fetchJSON<ProofDetail>(`/proofs/${encodeURIComponent(runId)}`),
 

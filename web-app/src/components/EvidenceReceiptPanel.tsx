@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, type ProofSummary, type ProofDetail } from '../api/client';
+import { api, type ProofSummary, type ProofDetail, type ProofsSummary } from '../api/client';
 
 /**
  * The Evidence Receipt, surfaced in the UI.
@@ -73,6 +73,67 @@ function classify(detail: ProofDetail | null): Provenance {
   // A signature of either kind is present but not evaluated in-browser.
   if (v.attestation || v.gpg_signature) return 'unchecked';
   return 'unsigned';
+}
+
+/**
+ * Verdict distribution across every receipt in the project.
+ *
+ * `unknown` IS RENDERED, ALWAYS, and that is the point of this strip. The
+ * endpoint deliberately refuses to count a receipt as verified when it cannot
+ * prove it was (schema v1.0 proofs carry no honesty block), so hiding that
+ * bucket in the UI would launder "we do not know" into an implied pass and
+ * undo the one guarantee the aggregate makes.
+ *
+ * It also does NOT re-verify anything: these are the headlines the generator
+ * recorded. On the unsigned path the generator is trusted, so the footnote says
+ * so rather than letting a green count imply adversarial proof.
+ */
+const BUCKETS: Array<{ key: keyof ProofsSummary; label: string; bar: string; text: string }> = [
+  { key: 'verified', label: 'Verified', bar: 'bg-success', text: 'text-success' },
+  { key: 'with_gaps', label: 'With gaps', bar: 'bg-warning', text: 'text-warning' },
+  { key: 'not_verified', label: 'Not verified', bar: 'bg-danger', text: 'text-danger' },
+  { key: 'unknown', label: 'Unknown', bar: 'bg-muted/40', text: 'text-muted' },
+];
+
+function SummaryStrip({ summary }: { summary: ProofsSummary }) {
+  const total = summary.total_receipts;
+  if (!total) return null;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex h-1.5 rounded-full overflow-hidden bg-muted/10">
+        {BUCKETS.map(({ key, bar }) => {
+          const n = summary[key];
+          if (!n) return null;
+          return (
+            <div
+              key={key}
+              className={bar}
+              style={{ width: `${(n / total) * 100}%` }}
+              title={`${n} ${key}`}
+            />
+          );
+        })}
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+        {BUCKETS.map(({ key, label, text }) => {
+          const n = summary[key];
+          if (!n) return null;
+          return (
+            <span key={key} className={text}>
+              <span className="font-semibold">{n}</span> {label.toLowerCase()}
+            </span>
+          );
+        })}
+      </div>
+      {/* Stated, never implied. A count of "verified" here is the generator's
+          own recorded headline; adversarial non-forgeability needs the signed
+          record, which only `loki proof verify` can actually check. */}
+      <p className="text-muted text-xs">
+        Recorded verdicts across {total} receipt{total === 1 ? '' : 's'}, not re-verified here.
+      </p>
+    </div>
+  );
 }
 
 function Field({ label, value }: { label: string; value: string }) {
@@ -209,6 +270,7 @@ function ReceiptRow({ proof }: { proof: ProofSummary }) {
 
 export function EvidenceReceiptPanel() {
   const [proofs, setProofs] = useState<ProofSummary[] | null>(null);
+  const [summary, setSummary] = useState<ProofsSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -216,6 +278,13 @@ export function EvidenceReceiptPanel() {
     api.listProofs()
       .then((r) => { if (!cancelled) setProofs(r.proofs || []); })
       .catch((e) => { if (!cancelled) setError(e?.message || 'could not load receipts'); });
+    // Fetched independently: a failing summary must not blank the list, which
+    // is the more useful of the two. Its failure is silent because the list
+    // below already carries every verdict -- the strip is an at-a-glance
+    // convenience, not the source of truth.
+    api.proofsSummary()
+      .then((s) => { if (!cancelled) setSummary(s); })
+      .catch(() => { /* strip is omitted; the list still renders */ });
     return () => { cancelled = true; };
   }, []);
 
@@ -230,6 +299,8 @@ export function EvidenceReceiptPanel() {
 
       {error && <p className="text-xs text-danger">Could not load receipts: {error}</p>}
       {!error && proofs === null && <p className="text-xs text-muted">Loading…</p>}
+
+      {summary && <SummaryStrip summary={summary} />}
 
       {/* An empty state that explains itself. "No receipts" with no reason
           reads like a broken panel, and a user cannot tell that apart from a
