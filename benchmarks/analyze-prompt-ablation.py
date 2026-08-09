@@ -67,6 +67,14 @@ def _accepted(row):
     """
     acc = row.get("acceptance")
     if isinstance(acc, dict):
+        # spec_acceptance_unmatched means the harness had NO acceptance check
+        # for that spec and fell back to generic "something was produced"
+        # signals. Those cannot establish a spec-level pass, and the flag is
+        # itself truthy -- so an all-values-truthy test would count an
+        # UNCHECKED run as accepted. That is the exact mirror of the false
+        # negative this flag was added to prevent, so it is refused here.
+        if acc.get("spec_acceptance_unmatched"):
+            return False
         return bool(acc) and all(bool(v) for v in acc.values())
     if isinstance(acc, bool):
         return acc

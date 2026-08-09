@@ -42,6 +42,7 @@ TRIALS=3
 MODEL="sonnet"
 MAX_ITERS=8
 TIMEOUT_S=1200
+SPEC=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -49,6 +50,11 @@ while [ $# -gt 0 ]; do
     --model)     MODEL="$2"; shift 2 ;;
     --max-iters) MAX_ITERS="$2"; shift 2 ;;
     --timeout-s) TIMEOUT_S="$2"; shift 2 ;;
+    # A HARDER SPEC IS THE POINT OF THIS FLAG. The default greet CLI completes
+    # in ONE iteration, so a prompt that coaches planning, decomposition and
+    # gate recovery has nothing to do -- a null result there says the ablation
+    # is safe on a task that exercises none of what the prompt is for.
+    --spec)      SPEC="$2"; shift 2 ;;
     -h|--help)   sed -n '2,36p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
@@ -131,6 +137,7 @@ for i in $(seq 1 "$TRIALS"); do
       LOKI_SESSION_MODEL="$MODEL" LOKI_MAX_TIER="$MODEL" \
       LOKI_BENCH_MAX_ITERS="$MAX_ITERS" LOKI_BENCH_TIMEOUT_S="$TIMEOUT_S" \
       _run_capped "$HARNESS_CAP" bash benchmarks/speed-benchmark.sh --label "$label" \
+      ${SPEC:+--spec "$SPEC"} \
       >/dev/null 2>&1 )
     _record "$arm" "$label"
   done

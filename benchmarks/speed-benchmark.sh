@@ -186,8 +186,26 @@ if 'Task API service' in spec_txt:
     acc['test_file_exists'] = any(
         n.endswith('.test.js') or n.startswith('test-') or n.startswith('test_')
         for n in (os.listdir(proj) if os.path.isdir(proj) else []))
-else:
+elif not spec_txt or 'greet CLI' in spec_txt:
     acc['greet.js_exists'] = os.path.exists(os.path.join(proj,'greet.js'))
+else:
+    # A CUSTOM --spec WITH NO MATCHING ACCEPTANCE CHECK. Falling through to
+    # greet.js_exists here would be a guaranteed FALSE NEGATIVE: that file can
+    # never exist for a spec that does not ask for it, so every trial would
+    # record acceptance=False and an ablation would read as a total regression
+    # in both arms. An absent measurement must not masquerade as a failed one.
+    #
+    # The generic checks below are deliberately weak -- they say the build
+    # produced SOMETHING and left a test behind, not that it met the spec --
+    # and the unmatched flag says so, so no caller can mistake this for a
+    # spec-level pass. Add a branch above when you add a spec.
+    acc['spec_acceptance_unmatched'] = True
+    acc['produced_files'] = bool(
+        [n for n in (os.listdir(proj) if os.path.isdir(proj) else [])
+         if not n.startswith('.')])
+    acc['test_file_exists'] = any(
+        n.endswith('.test.js') or n.startswith('test-') or n.startswith('test_')
+        for n in (os.listdir(proj) if os.path.isdir(proj) else []))
 
 metrics = {
   'label': label,
