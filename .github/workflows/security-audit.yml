@@ -2,6 +2,18 @@ name: Security Audit
 
 # Runs `npm audit` (and `bun audit` if available) on every PR and weekly.
 # Fails the workflow on high or critical vulnerabilities.
+#
+# Also runs `pip-audit` over every Python requirements file and `gitleaks` over
+# the working tree. Both are REPORTING ONLY today -- see the posture note on the
+# python-audit job for the measured baseline that forced that choice, and for
+# the promotion path to blocking.
+#
+# SCOPE NOTE (deliberate omission): this workflow adds NO SAST -- no CodeQL, no
+# semgrep, no bandit. That is a scoping decision, not an oversight. SAST across
+# a 32k-line bash CLI plus Python plus TypeScript produces a large finding set
+# whose triage cost lands on whoever is next, and a noisy gate everyone learns
+# to ignore is worse than no gate. Dependency and secret scanning were taken
+# first because they are deterministic and have no false-positive tax.
 
 on:
   pull_request:
@@ -53,6 +65,222 @@ jobs:
         # a blanket suppression. Kept in lockstep with scripts/local-ci.sh (both
         # call the same script) so the local pre-push gate and this CI gate agree.
         run: bash scripts/audit-check.sh
+
+  python-audit:
+    name: pip-audit (Python deps, reporting)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pip-audit (pinned)
+        run: python -m pip install --disable-pip-version-check 'pip-audit==2.9.0'
+
+      - name: pip-audit every requirements file
+        # POSTURE: REPORTING, NOT BLOCKING -- and this is a measured decision.
+        #
+        # Baseline on 2026-08-08, before this job existed, two advisories, BOTH
+        # in files that ship to users via package.json files[]:
+        #   mcp/requirements.txt       chromadb 1.5.9  PYSEC-2026-311   no fix version
+        #   web-app/requirements.txt   ecdsa    0.19.2 PYSEC-2026-1325  no fix version
+        # Neither has a fix release available, so a blocking gate would have
+        # nothing to bump to. It would just be red forever.
+        #
+        # That matters more than usual HERE: release.yml's required-ci job waits
+        # on this WORKFLOW's conclusion by name ("Security Audit"), not on named
+        # jobs. Any job in this file that fails blocks EVERY release. Landing a
+        # blocking scanner on an unmeasured -- or in this case known-dirty --
+        # baseline would wedge the release pipeline, not tighten it.
+        #
+        # PROMOTION PATH, so this stays a plan and not a permanent excuse:
+        # when both advisories above are resolved (upstream fix, or a pin we can
+        # move to), flip the shipped files to blocking by deleting the
+        # `continue-on-error` below for the shipped set and failing when their
+        # JSON reports a non-empty `vulns` array. Waive anything intentionally
+        # accepted BY ID with `--ignore-vuln <ID>` plus a written rationale,
+        # exactly as scripts/audit-check.sh does for npm GHSAs. That mirrors the
+        # house style: fail on any NEW advisory, waive documented ones by ID.
+        #
+        # WHY NOT "block only on HIGH/CRITICAL": pip-audit 2.9.0 has no severity
+        # filter (no --severity flag) and its JSON carries no severity field --
+        # each vuln is {id, fix_versions, aliases, description}. A severity
+        # filter here would be a JSON query matching nothing, i.e. a gate that
+        # looks strict and silently never fires. "Any advisory, waivable by ID"
+        # is the honest translation and is what the promotion path uses.
+        #
+        # SHIPPED vs TEST-ONLY is recorded per file below and carried into the
+        # JSON filenames, so the promotion above can flip the two sets
+        # independently. Membership is from package.json files[]: dashboard/,
+        # mcp/ and web-app/requirements.txt ship; the two *-test.txt do not.
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          mkdir -p /tmp/pip-audit
+
+          # FAIL CLOSED on a missing tool. A scanner that silently no-ops when
+          # its binary is absent is worse than no scanner, because the green
+          # check implies coverage that never happened -- see sbom.yml:7-23 for
+          # the workflow in this repo that ran green for months on a dead
+          # trigger. This step is `continue-on-error` for FINDINGS; a tool that
+          # is not installed is not a finding, it is an absent measurement, so
+          # it exits nonzero here and the assert step below also fails hard.
+          if ! command -v pip-audit >/dev/null 2>&1; then
+            echo "FAIL: pip-audit is not installed -- audit did NOT run"
+            exit 1
+          fi
+
+          # Each file is audited INDIVIDUALLY rather than with one multi-flag
+          # invocation, so a per-file JSON exists to assert on and the
+          # shipped/test posture can diverge later without restructuring.
+          # SHIPPED (in package.json files[], reaches every install):
+          for f in dashboard/requirements.txt mcp/requirements.txt web-app/requirements.txt; do
+            echo "::group::pip-audit (shipped) $f"
+            pip-audit -r "$f" --format json \
+              --output "/tmp/pip-audit/shipped-$(echo "$f" | tr '/' '_').json" \
+              --progress-spinner off || true
+            echo "::endgroup::"
+          done
+          # TEST-ONLY (not in files[], does not reach users):
+          for f in requirements-test.txt web-app/requirements-test.txt; do
+            echo "::group::pip-audit (test-only) $f"
+            pip-audit -r "$f" --format json \
+              --output "/tmp/pip-audit/testonly-$(echo "$f" | tr '/' '_').json" \
+              --progress-spinner off || true
+            echo "::endgroup::"
+          done
+
+      - name: Assert the audit actually produced a report for every file
+        # THE FAIL-CLOSED GATE. The step above is continue-on-error so that
+        # FINDINGS report instead of blocking. That alone would also swallow a
+        # crashed or missing scanner, which is the exact sbom.yml failure mode.
+        # So correctness is asserted on the ARTIFACT, never on an exit code:
+        # each expected JSON must exist AND parse. An empty result is not
+        # evidence of a clean tree, it is an absent measurement.
+        run: |
+          set -euo pipefail
+          missing=0
+          # Enumerated individually and NOT counted: a count cannot say WHICH
+          # file was dropped, and would pick up slack it was never meant to have.
+          for want in \
+            shipped-dashboard_requirements.txt.json \
+            shipped-mcp_requirements.txt.json \
+            shipped-web-app_requirements.txt.json \
+            testonly-requirements-test.txt.json \
+            testonly-web-app_requirements-test.txt.json ; do
+            p="/tmp/pip-audit/$want"
+            if [ ! -s "$p" ]; then
+              echo "FAIL: no pip-audit report for $want -- that file was NOT audited"
+              missing=1
+              continue
+            fi
+            python -c "import json,sys; json.load(open(sys.argv[1]))" "$p" || {
+              echo "FAIL: pip-audit report $want is not valid JSON -- the scan did not complete"
+              missing=1
+            }
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          echo "all five requirements files produced a parseable pip-audit report"
+
+      - name: Summarise findings (reporting)
+        if: always()
+        run: |
+          set -uo pipefail
+          python - <<'PY'
+          import glob, json, os
+          for p in sorted(glob.glob('/tmp/pip-audit/*.json')):
+              try:
+                  d = json.load(open(p))
+              except Exception:
+                  continue
+              hits = [(x['name'], v['id'])
+                      for x in d.get('dependencies', []) for v in (x.get('vulns') or [])]
+              if hits:
+                  tag = 'SHIPPED' if os.path.basename(p).startswith('shipped-') else 'test-only'
+                  for name, vid in hits:
+                      print(f"::warning::[{tag}] {os.path.basename(p)}: {name} {vid}")
+          PY
+
+      - name: Upload pip-audit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-reports
+          path: /tmp/pip-audit/
+          if-no-files-found: error
+
+  secret-scan:
+    name: gitleaks (secrets, reporting)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install gitleaks (pinned)
+        run: |
+          set -euo pipefail
+          curl -sSfL -o /tmp/gitleaks.tar.gz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.0/gitleaks_8.30.0_linux_x64.tar.gz
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          /tmp/gitleaks version
+
+      - name: gitleaks scan (working tree)
+        # POSTURE: REPORTING, NOT BLOCKING. Same measured reason as pip-audit.
+        # Baseline on 2026-08-08, before this job existed: 182 findings over the
+        # working tree (102 generic-api-key, 45 aws-access-token, 15 private-key,
+        # 5 each stripe-access-token / jwt / github-pat / curl-auth-header).
+        # Most are expected to be test fixtures and documentation samples, but
+        # that is a HYPOTHESIS until someone triages the report -- and blocking
+        # on 182 unreviewed findings would wedge every release (required-ci gates
+        # on this workflow's conclusion), then get switched off within a week.
+        #
+        # PROMOTION PATH: triage the uploaded report, add real fixtures to a
+        # .gitleaksignore by FINGERPRINT (never a blanket path or rule
+        # suppression), fix anything genuine, then drop --exit-code 0 below so a
+        # NEW secret fails the job. The baseline count above is the yardstick:
+        # once .gitleaksignore covers the triaged set, any finding is a new one.
+        #
+        # `dir` is the working-tree subcommand in v8.30.0; the older
+        # `detect --no-git` spelling no longer exists in this version.
+        run: |
+          set -uo pipefail
+          # FAIL CLOSED: an absent binary is not "no secrets found".
+          if [ ! -x /tmp/gitleaks ]; then
+            echo "FAIL: gitleaks is not installed -- secret scan did NOT run"
+            exit 1
+          fi
+          /tmp/gitleaks dir . \
+            --report-format json \
+            --report-path /tmp/gitleaks-report.json \
+            --exit-code 0 \
+            --no-banner
+
+      - name: Assert the secret scan actually produced a report
+        # Same artifact-based fail-closed as pip-audit: --exit-code 0 makes
+        # FINDINGS non-blocking, and would equally mask a crash, so the report
+        # must exist and parse. A missing report means no measurement happened.
+        run: |
+          set -euo pipefail
+          if [ ! -f /tmp/gitleaks-report.json ]; then
+            echo "FAIL: gitleaks produced no report -- the tree was NOT scanned"
+            exit 1
+          fi
+          n=$(python3 -c "import json,sys; print(len(json.load(open('/tmp/gitleaks-report.json'))))")
+          echo "::notice::gitleaks reported $n finding(s) (reporting only; see the posture note in this workflow)"
+
+      - name: Upload gitleaks report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: /tmp/gitleaks-report.json
+          if-no-files-found: error
 
   bun-audit:
     name: bun audit (best-effort)
