@@ -11,6 +11,7 @@ import { PhaseVisualizer } from '../components/PhaseVisualizer';
 import { AgentDashboard } from '../components/AgentDashboard';
 import { TerminalOutput } from '../components/TerminalOutput';
 import { QualityGatesPanel } from '../components/QualityGatesPanel';
+import { EvidenceReceiptPanel } from '../components/EvidenceReceiptPanel';
 import { FileBrowser } from '../components/FileBrowser';
 import { MemoryViewer } from '../components/MemoryViewer';
 import { ReportPanel } from '../components/ReportPanel';
@@ -498,6 +499,13 @@ export default function HomePage() {
                 </ErrorBoundary>
                 <ErrorBoundary name="QualityGates">
                   <QualityGatesPanel checklist={checklist} loading={checklistLoading} />
+                </ErrorBoundary>
+                {/* Directly below the gates, because the receipt is the durable
+                    record of exactly those gate results -- the panel above says
+                    what ran now, this one says what was proven and is still
+                    checkable afterwards. */}
+                <ErrorBoundary name="EvidenceReceipts">
+                  <EvidenceReceiptPanel />
                 </ErrorBoundary>
               </div>
             </div>

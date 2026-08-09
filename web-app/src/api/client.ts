@@ -129,7 +129,46 @@ export interface QuickStartResponse {
   provider: string;
 }
 
+// Mirrors GET /api/proofs (dashboard/server.py list_proofs). Every field is
+// optional because a receipt from an older loki version legitimately lacks the
+// newer ones -- rendering "unknown" is correct there, inventing a value is not.
+export interface ProofSummary {
+  run_id: string;
+  generated_at?: string | null;
+  loki_version?: string | null;
+  cost_usd?: number | null;
+  files_changed?: number | null;
+  final_verdict?: string | null;
+  headline?: string | null;
+  pr_url?: string | null;
+  has_html?: boolean;
+}
+
+// GET /api/proofs/<run_id> returns the whole redacted proof.json, so this types
+// only the parts the panel reads. `verification` is what makes a receipt
+// checkable: hash is integrity, gpg_signature and attestation are provenance.
+export interface ProofDetail extends ProofSummary {
+  verification?: {
+    hash?: string;
+    algo?: string;
+    scope?: string;
+    gpg_signature?: string;
+    attestation?: string;
+    attestation_kid?: string;
+  };
+  honesty?: { headline?: string | null };
+  council?: { final_verdict?: string | null };
+  cost?: { usd?: number | null };
+}
+
 export const api = {
+  // Evidence Receipts. The backend has served these since /api/proofs shipped
+  // and nothing in the UI ever called them, so the one artifact no competitor
+  // CLI exposes was invisible to every user who did not use the terminal.
+  listProofs: () => fetchJSON<{ proofs: ProofSummary[] }>('/proofs'),
+  getProof: (runId: string) =>
+    fetchJSON<ProofDetail>(`/proofs/${encodeURIComponent(runId)}`),
+
   // Session management
   startSession: (req: StartSessionRequest) =>
     fetchJSON<StartSessionResponse>('/session/start', {
