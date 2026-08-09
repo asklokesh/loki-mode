@@ -90,6 +90,48 @@ def _rank_sum(x, _y, pool):
     return sum(ranks[v] for v in x) - expected
 
 
+def _mad(x):
+    """Median absolute deviation -- a dispersion statistic ONE outlier cannot move.
+
+    Range and standard deviation are both outlier-driven, and this dataset
+    proves why that matters: the simple arm's range was 9.6x the full arm's,
+    which read as a dramatic variance effect. It came entirely from a single
+    1330s run. MAD reports 31s vs 35s on the same data. A claim that survives
+    range but not MAD is a claim about one trial, not about the arm.
+    """
+    m = st.median(x)
+    return st.median([abs(v - m) for v in x])
+
+
+def dispersion(metric, a, b):
+    """Is the SPREAD different? Reported for every metric, three ways.
+
+    A location test returning null does not mean the arms behave the same --
+    an arm can share a median and still be wildly less predictable, which
+    matters more than speed for a build tool. But dispersion is exactly where
+    a non-robust statistic invents effects, so all three are reported and MAD
+    is the one to believe.
+    """
+    if len(a) < 3 or len(b) < 3:
+        return {"metric": metric, "verdict": "UNDERPOWERED",
+                "reason": "dispersion needs at least 3 trials per arm"}
+    out = {"metric": metric}
+    for name, stat in (("range", lambda x: max(x) - min(x)),
+                       ("stdev", st.pstdev),
+                       ("mad", _mad)):
+        p, splits = exact_permutation(a, b, lambda x, y, _p, s=stat: s(x) - s(y))
+        out["%s_full" % name] = round(stat(a), 1)
+        out["%s_simple" % name] = round(stat(b), 1)
+        out["p_%s" % name] = round(p, 4)
+        out["p_floor_at_this_n"] = round(2.0 / splits, 4)
+    out["believe"] = "p_mad"
+    out["verdict"] = "SIGNIFICANT" if out["p_mad"] <= 0.05 else "NOT SIGNIFICANT"
+    out["reason"] = ("MAD is robust to a single slow run; range and stdev are "
+                     "not, and a difference visible only in those is a claim "
+                     "about one trial")
+    return out
+
+
 def compare(metric, a, b):
     if len(a) < 2 or len(b) < 2:
         return {"metric": metric, "verdict": "UNDERPOWERED",
@@ -179,6 +221,11 @@ def main():
             b = [r[metric] for r in rb if r.get(metric) is not None]
             if a and b:
                 report["tests"].append(compare(metric, a, b))
+                # A null LOCATION result is not "no difference": the arms can
+                # share a median and differ in predictability. Checked for
+                # every metric so that question is never left unasked.
+                report.setdefault("dispersion", []).append(
+                    dispersion(metric, a, b))
 
     report["not_claimed"] = (
         "No multiplier is reported. The 78% prompt reduction is a TOKEN "
@@ -211,6 +258,17 @@ def main():
               % (t["p_median_diff"], t["p_rank_sum"], t["p_floor_at_this_n"]))
         print("    believe %s -> %s  (%s)" % (t["believe"], t["verdict"], t["reason"]))
         print()
+    for d in report.get("dispersion", []):
+        if "p_mad" not in d:
+            print("  dispersion %-14s %s -- %s" % (d["metric"], d["verdict"], d["reason"]))
+            continue
+        print("  dispersion %s: range %s/%s (p=%.4f)  stdev %s/%s (p=%.4f)  "
+              "MAD %s/%s (p=%.4f)"
+              % (d["metric"], d["range_full"], d["range_simple"], d["p_range"],
+                 d["stdev_full"], d["stdev_simple"], d["p_stdev"],
+                 d["mad_full"], d["mad_simple"], d["p_mad"]))
+        print("    believe p_mad -> %s  (%s)" % (d["verdict"], d["reason"]))
+    print()
     print("  NOT CLAIMED: %s" % report["not_claimed"])
     return 0
 
