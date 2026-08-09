@@ -175,10 +175,20 @@ completed = ('VERIFIED' in log or 'completion' in log.lower()) and build_rc=='0'
 # the default CLI's greet.js (which would always report a meaningless failure).
 acc = {}
 spec_txt = ''
-try:
-    spec_txt = open(os.environ.get('LOKI_BENCH_SPEC_PATH','')).read()
-except Exception:
-    pass
+_spec_path = os.environ.get('LOKI_BENCH_SPEC_PATH', '')
+_spec_readable = None          # None = no spec was requested at all
+if _spec_path:
+    try:
+        spec_txt = open(_spec_path).read()
+        _spec_readable = True
+    except Exception:
+        # A REQUESTED SPEC THAT CANNOT BE READ IS NOT A DEFAULT RUN. Falling
+        # through with spec_txt='' sends this to the greet branch, which then
+        # records greet.js_exists for a build that was never asked to produce
+        # greet.js -- a silently WRONG acceptance value on a run that looks
+        # completely normal. Caught exactly that way: a --task ablation
+        # reported greet.js_exists while claiming to measure hard-1-order-api.
+        _spec_readable = False
 if 'Task API service' in spec_txt:
     for f in ('server.js','store.js','README.md'):
         acc[f + '_exists'] = os.path.exists(os.path.join(proj,f))
@@ -212,7 +222,12 @@ if _grader and os.path.isfile(_grader):
             os.remove(_dst)
         except OSError:
             pass
-elif not spec_txt or 'greet CLI' in spec_txt:
+elif _spec_readable is False:
+    # Refuse to score it. The build may have been perfect; we simply do not
+    # know what it was asked to do, and any check we pick here is a guess.
+    acc['spec_unreadable'] = True
+    acc['spec_path'] = _spec_path[-120:]
+elif _spec_readable is None or 'greet CLI' in spec_txt:
     acc['greet.js_exists'] = os.path.exists(os.path.join(proj,'greet.js'))
 else:
     # A CUSTOM --spec WITH NO MATCHING ACCEPTANCE CHECK. Falling through to

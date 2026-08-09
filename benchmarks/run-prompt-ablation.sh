@@ -85,7 +85,12 @@ if [ -n "$TASK" ]; then
     echo "available: $(ls "$REPO_ROOT/benchmarks/bench/tasks/" 2>/dev/null | sed 's/\.json$//' | tr '\n' ' ')" >&2
     exit 2
   fi
-  SPEC="$(mktemp "${TMPDIR:-/tmp}/loki-taskspec-XXXXXX.md")"
+  # The template MUST end in XXXXXX -- BSD mktemp fails with a suffix after
+  # it ("mkstemp failed ... File exists"), which silently left SPEC empty and
+  # the guard below then refused the whole run. Renamed to .md afterwards
+  # because speed-benchmark.sh reads the spec by path, not by extension.
+  SPEC="$(mktemp "${TMPDIR:-/tmp}/loki-taskspec-XXXXXX")" || {
+    echo "could not create a temp spec file" >&2; exit 2; }
   python3 - "$_task_json" "$SPEC" <<'TASKPY' || exit 2
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -148,7 +153,7 @@ _record() {
     return
   fi
   python3 - "$arm" "$f" "$HISTORY" <<'PY'
-import json, sys, time
+import json, os, sys, time
 arm, src, hist = sys.argv[1], sys.argv[2], sys.argv[3]
 d = json.load(open(src))
 d['arm'] = arm
@@ -162,6 +167,26 @@ if stamped is not None and stamped != arm:
         "  ERROR: arm mismatch -- harness says %r, engine stamped %r. "
         "NOT recorded.\n" % (arm, stamped))
     sys.exit(1)
+# REFUSE A DUPLICATE. _record picks the newest speed-<label>-*.json, so a run
+# that produced NO new file silently re-records the previous one -- observed
+# when a --task run aborted and appended 6 stale rows, inflating n and faking
+# significance. Keyed on (stamp, arm): the stamp is minted per benchmark run,
+# so a repeat means no new trial happened.
+_key = (d.get('stamp'), d.get('prompt_arm') or d.get('arm'))
+if os.path.exists(hist):
+    for _line in open(hist):
+        _line = _line.strip()
+        if not _line:
+            continue
+        try:
+            _prev = json.loads(_line)
+        except Exception:
+            continue
+        if (_prev.get('stamp'), _prev.get('prompt_arm') or _prev.get('arm')) == _key:
+            sys.stderr.write(
+                "  ERROR: duplicate trial (stamp %s, arm %s) -- the benchmark "
+                "produced no new result file. NOT recorded.\n" % _key)
+            sys.exit(1)
 with open(hist, 'a') as fh:
     fh.write(json.dumps(d) + "\n")
 sys.stderr.write("  arm=%-6s iters=%-3s wall=%-5s completed=%-5s acceptance=%s\n" % (
