@@ -271,6 +271,7 @@ run_test "remote receipt attestation verdict (JWKS)" "$SCRIPT_DIR/test-remote-at
 run_test "proof verify --jwks (third-party offline)" "$SCRIPT_DIR/test-proof-verify-jwks.sh"
 run_test "worker autoscaling on queue depth" "$SCRIPT_DIR/test-worker-autoscaling.sh"
 run_test "helm receipt signing (receiver only)" "$SCRIPT_DIR/test-helm-receipt-signing.sh"
+run_test "webapp receipt panel renders (real browser)" "$SCRIPT_DIR/../scripts/run-webapp-receipt-panel.sh"
 run_test "local receipt attestation" "$SCRIPT_DIR/test-local-receipt-attestation.sh"
 run_test "Pytest Gate Timeout (Dev6)" "$SCRIPT_DIR/test-pytest-gate-timeout.sh"
 run_test "Go/Cargo Gate Timeout" "$SCRIPT_DIR/test-go-cargo-gate-timeout.sh"

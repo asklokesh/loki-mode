@@ -194,6 +194,14 @@ declare -a _FAST_KEEP=(
   # own -- it greps for tests/*.{sh,py} and this harness is a .mjs driven by a
   # runner script -- which is exactly why it is pinned by hand.
   "dashboard evidence panels render honestly"
+  # Same reasoning as the line above, for the React web-app's receipt panel.
+  # Pinned BY HAND for the same reason: the trust-core scan greps
+  # tests/*.{sh,py} and cannot see a .mjs driven by a runner script. This one
+  # earned its place -- it found that /api/proofs did not exist on the server
+  # `loki web` actually runs, and that the panel was only visible during a
+  # running build. Neither was reachable by a type check or a stubbed unit
+  # test. Measured 25s (boots a server and a browser).
+  "webapp receipt panel renders honestly"
   "tests/test-verify.sh"
   "tests/test-verify-scope-record.sh"
   "tests/test-verify-setup-recipe.sh"
@@ -1592,6 +1600,7 @@ if [ -n "$_DASH_PY" ] && command -v node >/dev/null 2>&1 \
   # never render anything at all. This one seeds receipts + learnings and
   # asserts they reach the pixel WITHOUT fabricating an unmeasured cost.
   run_check "dashboard evidence panels render honestly" 'bash scripts/run-dashboard-evidence-panels-harness.sh'
+  run_check "webapp receipt panel renders honestly" 'bash scripts/run-webapp-receipt-panel.sh'
 else
   skip_check "dashboard fresh-repo integrated UX harness" "needs python3.12 + dashboard-ui playwright + chromium"
   skip_check "dashboard evidence panels render honestly" "needs python3.12 + dashboard-ui playwright + chromium"
