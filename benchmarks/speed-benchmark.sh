@@ -186,6 +186,32 @@ if 'Task API service' in spec_txt:
     acc['test_file_exists'] = any(
         n.endswith('.test.js') or n.startswith('test-') or n.startswith('test_')
         for n in (os.listdir(proj) if os.path.isdir(proj) else []))
+_grader = os.environ.get('LOKI_BENCH_GRADER', '')
+if _grader and os.path.isfile(_grader):
+    # A REAL HELD-OUT GRADER BEATS EVERY HEURISTIC HERE. The file-existence
+    # checks below say a build produced something with the right NAME; a
+    # grader imports the artifact and asserts the contract. It is copied in
+    # AFTER the run, so the agent never sees it and cannot write to satisfy it.
+    # Exit 0 is the only pass.
+    import shutil, subprocess
+    _dst = os.path.join(proj, os.path.basename(_grader))
+    try:
+        shutil.copy(_grader, _dst)
+        _r = subprocess.run([sys.executable, os.path.basename(_grader)],
+                            cwd=proj, capture_output=True, text=True, timeout=120)
+        acc['graded'] = (_r.returncode == 0)
+        if _r.returncode != 0:
+            # Kept short: the reason belongs in the row, the transcript does not.
+            acc['grader_stderr'] = (_r.stdout or _r.stderr or '')[-300:]
+    except Exception as _e:
+        # A grader that could not RUN is an absent measurement, not a failure.
+        # Recording it as graded=False would blame the build for our harness.
+        acc['grader_error'] = str(_e)[:200]
+    finally:
+        try:
+            os.remove(_dst)
+        except OSError:
+            pass
 elif not spec_txt or 'greet CLI' in spec_txt:
     acc['greet.js_exists'] = os.path.exists(os.path.join(proj,'greet.js'))
 else:

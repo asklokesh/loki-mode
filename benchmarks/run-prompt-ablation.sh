@@ -43,6 +43,8 @@ MODEL="sonnet"
 MAX_ITERS=8
 TIMEOUT_S=1200
 SPEC=""
+GRADER=""
+TASK=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -55,6 +57,14 @@ while [ $# -gt 0 ]; do
     # gate recovery has nothing to do -- a null result there says the ablation
     # is safe on a task that exercises none of what the prompt is for.
     --spec)      SPEC="$2"; shift 2 ;;
+    # A HELD-OUT GRADER, copied in only AFTER the run so the agent never sees
+    # it. This is what makes a harder ablation meaningful: file-existence
+    # heuristics say a build produced the right FILENAME, a grader asserts the
+    # contract. Verified satisfiable AND strict before use -- a correct
+    # order_api.py passes, a naive one that skips validation fails.
+    --grader)    GRADER="$2"; shift 2 ;;
+    # Shorthand for the two above, from benchmarks/bench/tasks/<id>.json.
+    --task)      TASK="$2"; shift 2 ;;
     -h|--help)   sed -n '2,36p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 64 ;;
   esac
@@ -63,6 +73,42 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HISTORY="$REPO_ROOT/benchmarks/results/prompt-ablation.jsonl"
+
+# --task <id> resolves the spec and grader from benchmarks/bench/tasks/<id>.json,
+# so an operator does not have to know where either lives. Fails LOUDLY on an
+# unknown id or a missing overlay: silently falling back to the greet spec would
+# run a whole ablation against the wrong task and look like a valid result.
+if [ -n "$TASK" ]; then
+  _task_json="$REPO_ROOT/benchmarks/bench/tasks/${TASK}.json"
+  if [ ! -f "$_task_json" ]; then
+    echo "unknown --task '$TASK' (no $_task_json)" >&2
+    echo "available: $(ls "$REPO_ROOT/benchmarks/bench/tasks/" 2>/dev/null | sed 's/\.json$//' | tr '\n' ' ')" >&2
+    exit 2
+  fi
+  SPEC="$(mktemp "${TMPDIR:-/tmp}/loki-taskspec-XXXXXX.md")"
+  python3 - "$_task_json" "$SPEC" <<'TASKPY' || exit 2
+import json, sys
+d = json.load(open(sys.argv[1]))
+open(sys.argv[2], "w").write(d.get("prompt", ""))
+TASKPY
+  if [ ! -s "$SPEC" ]; then
+    echo "--task '$TASK' has an empty prompt; refusing to run" >&2
+    exit 2
+  fi
+  _overlay="$(python3 -c "
+import json,sys
+print((json.load(open(sys.argv[1])).get('acceptance') or {}).get('overlay',''))" "$_task_json")"
+  if [ -n "$_overlay" ]; then
+    _g="$REPO_ROOT/benchmarks/bench/tasks/$_overlay/check_acceptance.py"
+    if [ -f "$_g" ]; then
+      GRADER="$_g"
+    else
+      echo "--task '$TASK' declares an overlay but $_g is missing; refusing" >&2
+      exit 2
+    fi
+  fi
+  echo "task:    $TASK  (spec $(wc -c < "$SPEC" | tr -d ' ') bytes, grader ${GRADER:-none})"
+fi
 mkdir -p "$(dirname "$HISTORY")"
 
 echo "prompt ablation: ${TRIALS} trials/arm | model=${MODEL} | max_iters=${MAX_ITERS}"
@@ -136,6 +182,7 @@ for i in $(seq 1 "$TRIALS"); do
       LOKI_SIMPLE="$simple_val" \
       LOKI_SESSION_MODEL="$MODEL" LOKI_MAX_TIER="$MODEL" \
       LOKI_BENCH_MAX_ITERS="$MAX_ITERS" LOKI_BENCH_TIMEOUT_S="$TIMEOUT_S" \
+      ${GRADER:+LOKI_BENCH_GRADER="$GRADER"} \
       _run_capped "$HARNESS_CAP" bash benchmarks/speed-benchmark.sh --label "$label" \
       ${SPEC:+--spec "$SPEC"} \
       >/dev/null 2>&1 )

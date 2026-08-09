@@ -75,6 +75,15 @@ def _accepted(row):
         # negative this flag was added to prevent, so it is refused here.
         if acc.get("spec_acceptance_unmatched"):
             return False
+        # A grader that could not RUN measured nothing. Counting it either way
+        # blames or credits the build for a harness fault.
+        if "grader_error" in acc:
+            return False
+        # When a held-out grader ran, IT is the verdict. The diagnostic strings
+        # beside it (grader_stderr) are non-empty and would otherwise be read
+        # as truthy checks by the all-values test below.
+        if "graded" in acc:
+            return bool(acc["graded"])
         return bool(acc) and all(bool(v) for v in acc.values())
     if isinstance(acc, bool):
         return acc
