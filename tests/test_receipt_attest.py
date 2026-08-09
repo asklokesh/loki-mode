@@ -98,7 +98,12 @@ def _receipt(base_sha, head_sha, signature=None, diff=None, tree=None):
     if tree is not None:
         facts["git"]["tree_sha256"] = tree
     proof = {
-        "schema": "1.1",
+        # "schema_version" is the key the generator actually writes
+        # (proof-generator.py:1329); this fixture said "schema" and so produced
+        # a receipt no real run ever emits. Harmless while nothing read the
+        # field -- once proof-verify.py began enforcing it the fixture failed
+        # closed and, correctly, took this suite's VERIFIED assertion with it.
+        "schema_version": "1.1",
         "facts": facts,
         "honesty": {"headline": _pv._compute_headline(facts, []),
                     "degraded": []},

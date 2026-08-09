@@ -109,7 +109,12 @@ def _receipt(base_sha, head_sha, usd=0.42, measured=True):
              "output_tokens": 0, "cache_read_tokens": 0,
              "cache_creation_tokens": 0})
     proof = {
-        "schema": "1.1",
+        # "schema_version" is the key the generator writes
+        # (proof-generator.py:1329). This fixture said "schema" and so
+        # built a receipt no real run emits -- latent while nothing read
+        # the field, and correctly refused once proof-verify.py began
+        # enforcing it.
+        "schema_version": "1.1",
         "facts": facts,
         "honesty": {"headline": _pv._compute_headline(facts, []),
                     "degraded": []},

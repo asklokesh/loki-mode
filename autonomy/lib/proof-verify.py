@@ -76,6 +76,46 @@ if _HERE not in sys.path:
 from tree_digest import compute_tree_digest
 from workspace_diff import collect_workspace_diff
 
+# Receipt schema major this verifier understands. proof-generator.py writes
+# schema_version ("1.1" today) and NOTHING read it -- a version stamped on
+# every receipt and enforced nowhere, so a future incompatible receipt would
+# have been verified against rules written for a different shape and reported
+# as a clean pass.
+#
+# FAIL CLOSED on absent or unknown: a receipt we cannot place is not a receipt
+# we can verify, and "cannot tell" must never render as "verified".
+#
+# ACCEPT EVERY MINOR of the supported major -- that is the legacy compatibility
+# guarantee, and it is what keeps this from being a breaking change. Minor bumps
+# are additive by convention, so 1.0 and today's 1.1 both verify; only a MAJOR
+# bump (2.x) means the shape changed enough that these rules no longer apply.
+SUPPORTED_SCHEMA_MAJOR = 1
+
+
+def check_schema_version(proof):
+    """Return None when the receipt's schema is supported, else a reason string.
+
+    Returns a reason rather than raising so the caller folds it into the normal
+    reason/reasons/ok contract, which every consumer (loki proof verify, the
+    remote receipt path, the dashboard) already handles.
+    """
+    raw = proof.get("schema_version")
+    if raw is None:
+        return ("receipt has no schema_version, so the rules to verify it "
+                "cannot be established (expected major %d)" % SUPPORTED_SCHEMA_MAJOR)
+    text = str(raw).strip()
+    major_text = text.split(".", 1)[0]
+    try:
+        major = int(major_text)
+    except (TypeError, ValueError):
+        return ("receipt schema_version %r is not a parseable version, so the "
+                "rules to verify it cannot be established" % raw)
+    if major != SUPPORTED_SCHEMA_MAJOR:
+        return ("receipt schema_version %s is major %d; this verifier "
+                "understands major %d only, so its checks may not apply"
+                % (text, major, SUPPORTED_SCHEMA_MAJOR))
+    return None
+
 
 # ---------------------------------------------------------------------------
 # canonicalization (MUST match proof-generator._canonical exactly)
@@ -863,11 +903,24 @@ def verify(proof_path, repo_dir="."):
                     "working tree changed after the receipt was generated" % (
                         recorded_tree, current_tree))
 
+    # ----- schema version --------------------------------------------------
+    # Folded into the verdict rather than raised, so every existing caller
+    # inherits it through reason/reasons/ok with no signature change. ANDed in
+    # below: an unsupported schema cannot be rescued by a passing hash, because
+    # the hash only proves the bytes are unedited -- not that these rules are
+    # the right ones to judge them by.
+    schema_reason = check_schema_version(proof)
+    result["schema_version"] = proof.get("schema_version")
+    result["schema_supported"] = schema_reason is None
+    if schema_reason:
+        result["reasons"].append(schema_reason)
+
     # ----- overall verdict -------------------------------------------------
     result["ok"] = bool(
         integrity["ok"]
         and result["diff_drift"] is False
         and (not recorded_tree or result["tree_drift"] is False)
+        and schema_reason is None
     )
     if result["ok"]:
         result["reason"] = ""
