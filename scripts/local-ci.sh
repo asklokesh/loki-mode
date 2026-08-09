@@ -230,6 +230,12 @@ declare -a _FAST_KEEP=(
   "tests/test-bash-bun-parity.sh"             # 997ms
   # A-004: guards the SHIPPED MCP tool surface by name. Artifact-guarding, so
   # the fast tier must run it -- deferring it is the dist-8.11.0 failure mode.
+  # Guards a RELEASE artifact, so by the same rule it runs in the fast tier:
+  # the SBOM asset only exists at `gh release create` time, and nothing else
+  # checks that the definition still attaches it. The gap it closes went
+  # unnoticed for months because a dead workflow trigger reads as an empty run
+  # list, never a red one.
+  "tests/test-release-sbom-attached.sh"       # 0.2s
   "tests/test-mcp-tool-surface-packaged.sh"   # 2.9s
   "tests/test-mcp-tool-surface-guard-rejects.sh" # 8s, proves the guard rejects
   # CLAUDE.md cleanup mandate: sub-second, and the whole point is that it runs
@@ -1152,6 +1158,15 @@ PYHS
 # -- the same deferral that let dist ship 8.11.0 for 27 releases. Measured 2.9s.
 run_check "tests/test-mcp-tool-surface-packaged.sh (packaged MCP surface, exact names)" \
   "bash tests/test-mcp-tool-surface-packaged.sh 2>&1 | tail -4"
+
+# Same rule, a different shipped artifact: the SBOM exists ONLY as a release
+# asset, attached at `gh release create` time. Nothing else checks that the
+# workflow still attaches it, and the failure it guards against is invisible by
+# construction -- a dead `release:` trigger produces an EMPTY run list, never a
+# red one, so the release shipped zero SBOM assets for months under a green
+# badge. Static check of the workflow definition; measured 0.2s.
+run_check "tests/test-release-sbom-attached.sh (npm SBOM ships as a release asset)" \
+  "bash tests/test-release-sbom-attached.sh 2>&1 | tail -3"
 
 # The guard above is only a gate if it REJECTS. This mutates a copy of the tree
 # and proves it fails on a same-count rename, a deletion, absent npm and absent
