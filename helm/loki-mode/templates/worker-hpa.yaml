@@ -1,0 +1,64 @@
+{{- if .Values.worker.autoscaling.enabled }}
+{{/*
+  Worker autoscaling on QUEUE DEPTH, not CPU.
+
+  WHY NOT CPU. A worker spends nearly all of a build waiting on a model API
+  response. It is idle by CPU measure for most of its working life, so a
+  CPU-targeted HPA reads a saturated cluster as an underused one and scales it
+  DOWN exactly when the backlog is growing. Queue saturation is the only signal
+  here that moves when work is waiting.
+
+  THIS REQUIRES A METRICS ADAPTER. An `External` metric is resolved by the
+  custom-metrics API, not by the HPA itself, so this template is OFF by default
+  and documents the dependency rather than silently producing an HPA that never
+  scales. `loki-mode.queue_saturation` is served by the receiver at GET /metrics
+  (authenticated); point your adapter at it.
+
+  A pod killed mid-build loses that build, so scale-down is deliberately slow
+  and asymmetric with scale-up: a 10-minute stabilization window plus the
+  drain-aware terminationGracePeriodSeconds on the worker Deployment.
+*/}}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "loki-mode.fullname" . }}-worker
+  labels:
+    {{- include "loki-mode.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "loki-mode.fullname" . }}-worker
+  minReplicas: {{ .Values.worker.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.worker.autoscaling.maxReplicas }}
+  metrics:
+    - type: External
+      external:
+        metric:
+          name: {{ .Values.worker.autoscaling.metricName }}
+          selector:
+            matchLabels:
+              service: {{ include "loki-mode.fullname" . }}-receiver
+        target:
+          type: Value
+          # A fraction of the configured queue size, so this target does not
+          # have to change when an operator resizes the queue.
+          averageValue: {{ .Values.worker.autoscaling.targetSaturation | quote }}
+  behavior:
+    scaleUp:
+      # Backlog is the reason to scale, so react promptly.
+      stabilizationWindowSeconds: {{ .Values.worker.autoscaling.scaleUpStabilizationSeconds }}
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+    scaleDown:
+      # Slow on purpose. Removing a worker mid-build destroys that build, and a
+      # brief lull is not evidence the backlog is gone.
+      stabilizationWindowSeconds: {{ .Values.worker.autoscaling.scaleDownStabilizationSeconds }}
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+{{- end }}

@@ -16,7 +16,15 @@ spec:
   # claim any queue item, so tenant A's build may land on a pod that just ran
   # tenant B's. For that, run one release per tenant with its own queue key and
   # namespace.
+  {{- if not .Values.worker.autoscaling.enabled }}
+  {{/*
+    OMITTED when autoscaling is on, deliberately. Leaving a templated replica
+    count in place while an HPA owns the same field makes every `helm upgrade`
+    reset the count the HPA just chose, and the two then fight on each sync --
+    scaling thrash that looks like a cluster problem rather than a chart bug.
+  */}}
   replicas: {{ .Values.worker.replicaCount }}
+  {{- end }}
   # Recreate, not RollingUpdate: a rolling update would start new workers while
   # old ones still hold in-flight builds, doubling concurrent builds during
   # every deploy and, on the at-most-once redis backend, competing for items.

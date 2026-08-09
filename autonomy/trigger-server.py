@@ -786,6 +786,38 @@ class Dispatcher:
                 return "", "unknown job id"
             return self._resolve_proof_id(entry)
 
+    def metrics(self):
+        """Queue depth and saturation, for autoscaling and for operators.
+
+        QUEUE DEPTH IS THE RIGHT SCALING SIGNAL HERE, AND CPU IS THE WRONG ONE.
+        A worker spends nearly all of a build waiting on a model API, so it is
+        idle by CPU measure while the backlog grows. An HPA on CPU would scale
+        DOWN a saturated cluster. Depth is the only metric that moves when work
+        is waiting.
+
+        `queue_saturation` is depth/maxsize, so a chart can target a fraction
+        without knowing the absolute size an operator configured.
+
+        Reads `_pending` under the same lock that writes it; `qsize()` is
+        approximate by design in CPython and is documented as such rather than
+        presented as exact.
+        """
+        with self._jobs_lock:
+            pending = self._pending
+            dispatched = self._dispatch_seq
+        depth = self.queue.qsize()
+        maxsize = self.queue.maxsize or 1
+        return {
+            "queue_depth": depth,
+            "queue_maxsize": maxsize,
+            "queue_saturation": round(depth / maxsize, 4),
+            "dispatched_total": dispatched,
+            "awaiting_receipt": pending,
+            "note": "queue_depth is approximate (queue.qsize semantics); scale on "
+                    "queue_saturation, never on CPU -- a worker blocked on a model "
+                    "call is idle by CPU measure while the backlog grows.",
+        }
+
     def submit(self, event_type, payload):
         """Enqueue an event. Returns True if accepted, False if the queue is full."""
         try:
@@ -870,6 +902,8 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             })
         elif path == "/.well-known/jwks.json":
             self._handle_jwks()
+        elif path == "/metrics":
+            self._handle_metrics()
         elif path.startswith("/jobs/") and path.endswith("/proof"):
             self._handle_job_proof(path[len("/jobs/"):-len("/proof")])
         elif path.startswith("/jobs/"):
@@ -921,6 +955,26 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(404, {"error": "unknown job id"})
             return
         self._send_json(200, job)
+
+    def _handle_metrics(self):
+        """GET /metrics -- queue depth for autoscaling and for operators.
+
+        AUTHENTICATED, unlike /.well-known/jwks.json, and the difference is
+        deliberate. JWKS is public key material whose whole value is that
+        anyone can fetch it. Queue depth is operational posture: it reveals
+        load, capacity and whether a cluster is saturated. Publishing that
+        unauthenticated would hand an attacker a free saturation oracle.
+
+        In-cluster scrapers (an HPA adapter, Prometheus) present the same
+        bearer token as any other /jobs caller, so no new credential is
+        introduced for this.
+        """
+        if not self._check_api_auth():
+            return
+        if self.dispatcher is None:
+            self._send_json(503, {"error": "no dispatcher"})
+            return
+        self._send_json(200, self.dispatcher.metrics())
 
     def _handle_jwks(self):
         """GET /.well-known/jwks.json -- the public keys that sign receipts.

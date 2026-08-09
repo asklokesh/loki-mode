@@ -115,7 +115,36 @@ worker:
 
   # THE scaling knob. Each replica runs one build at a time (see concurrency).
   # Want more parallel builds: raise this, subject to the tenancy note below.
+  # Ignored when autoscaling.enabled is true -- the HPA owns replicas then, and
+  # leaving both active would have the two fight each other on every sync.
   replicaCount: 2
+
+  # AUTOSCALING ON QUEUE DEPTH, NOT CPU.
+  #
+  # Off by default because it has a real prerequisite: an External metric is
+  # resolved by the custom-metrics API, so it needs a metrics adapter pointed at
+  # the receiver's GET /metrics (authenticated; it exposes queue_saturation).
+  # Shipping this on by default would produce an HPA that silently never scales,
+  # which is worse than no HPA at all -- it looks like capacity management while
+  # doing nothing.
+  #
+  # Do NOT retarget this at CPU. A worker waits on a model API for nearly all of
+  # a build, so it reads as idle while the backlog grows, and a CPU-targeted HPA
+  # would scale a saturated cluster DOWN.
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    # Served by the receiver at GET /metrics as `queue_saturation`.
+    metricName: loki-mode.queue_saturation
+    # Fraction of the configured queue size (0.5 = half full). Expressed as a
+    # fraction so it survives an operator resizing the queue.
+    targetSaturation: "0.5"
+    # Scale up promptly: a backlog is the reason to add workers.
+    scaleUpStabilizationSeconds: 60
+    # Scale down slowly: killing a worker mid-build destroys that build, and a
+    # brief lull is not evidence the backlog is gone.
+    scaleDownStabilizationSeconds: 600
 
   # ONE TENANT PER WORKER.
   #
