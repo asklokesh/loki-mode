@@ -6307,6 +6307,34 @@ else
     DASHBOARD_DEFAULT_HOST="127.0.0.1"
 fi
 
+# EXPOSED BIND REQUIRES AUTH (issue #188).
+#
+# dashboard/auth.py:788 returns True -- allow -- when neither LOKI_ENTERPRISE_AUTH
+# nor OIDC is configured. That makes all 166 Depends(require_scope) endpoints
+# open. On loopback that is defensible: the trust boundary is the machine.
+# Bound to 0.0.0.0 it is not, and NEITHER the Dockerfile NOR the Helm chart set
+# any auth env, so an operator following the shipped chart gets an
+# unauthenticated dashboard on every interface without choosing it.
+#
+# Refuses to start rather than auto-minting a token. An auto-token an operator
+# never sees is worse than a refusal: they believe they are protected, and the
+# credential is sitting in a container they did not know to guard. A refusal is
+# loud, happens at deploy time rather than after exposure, and names the fix.
+#
+# LOKI_DASHBOARD_ALLOW_INSECURE_BIND=1 is the deliberate override, for a cluster
+# whose network policy already bounds ingress. Named so it appears in a diff and
+# a reviewer can ask why it is set.
+_loki_dashboard_bind_is_safe() {
+    local _host="${1:-}"
+    case "$_host" in
+        127.0.0.1|localhost|::1|"") return 0 ;;
+    esac
+    [ "${LOKI_DASHBOARD_ALLOW_INSECURE_BIND:-}" = "1" ] && return 0
+    [ "${LOKI_ENTERPRISE_AUTH:-}" = "true" ] || [ "${LOKI_ENTERPRISE_AUTH:-}" = "1" ] && return 0
+    [ -n "${LOKI_OIDC_ISSUER:-}" ] && [ -n "${LOKI_OIDC_CLIENT_ID:-}" ] && return 0
+    return 1
+}
+
 cmd_dashboard() {
     local subcommand="${1:-}"
 
@@ -6460,6 +6488,23 @@ cmd_dashboard_start() {
                 ;;
         esac
     done
+
+    # Refuse an exposed bind with auth disabled (issue #188). Checked AFTER
+    # argument parsing so an explicit --host is covered, not just the default.
+    if ! _loki_dashboard_bind_is_safe "$host"; then
+        echo -e "${RED}Refusing to start: binding $host with authentication disabled.${NC}" >&2
+        echo "" >&2
+        echo "  Every dashboard endpoint would be reachable on all interfaces with no" >&2
+        echo "  credential. dashboard/auth.py allows all requests when neither" >&2
+        echo "  LOKI_ENTERPRISE_AUTH nor OIDC is configured." >&2
+        echo "" >&2
+        echo "  Pick one:" >&2
+        echo "    LOKI_ENTERPRISE_AUTH=true          enable token auth (loki dashboard token create)" >&2
+        echo "    LOKI_OIDC_ISSUER + _CLIENT_ID      enable OIDC" >&2
+        echo "    --host 127.0.0.1                   bind loopback only" >&2
+        echo "    LOKI_DASHBOARD_ALLOW_INSECURE_BIND=1   accept the exposure deliberately" >&2
+        exit 2
+    fi
 
     # Validate port is numeric
     if [[ ! "$port" =~ ^[0-9]+$ ]]; then

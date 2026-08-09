@@ -198,6 +198,11 @@ declare -a _FAST_KEEP=(
   "tests/test-verify-scope-record.sh"
   "tests/test-verify-setup-recipe.sh"
   "tests/test-verify-runner-selection.sh"
+  # A security boundary in the SHIPPED cli. CI has no equivalent check, and the
+  # reachable path is `docker run -p 57374:57374 <img> dashboard start`, which
+  # no in-repo test exercises. By the packaged-artifact rule it must run before
+  # every push, not only in the tier nobody blocks on. Measured 6s.
+  "tests/test-dashboard-bind-auth-guard.sh"
   "tests/test-council-"
   "tests/test-heuristic-council-affirmative.sh"
   "tests/test-playwright-verify-as-evidence.sh"
@@ -1260,6 +1265,7 @@ run_check "tests/test-verify.sh (loki verify deterministic gates)" "bash tests/t
 run_check "tests/test-verify-scope-record.sh (rank 10 locality scope record, advisory-first)" "bash tests/test-verify-scope-record.sh 2>&1 | tail -3"
 run_check "tests/test-verify-setup-recipe.sh (rank 7 setup-recipe writer, env NAMES not values)" "bash tests/test-verify-setup-recipe.sh 2>&1 | tail -3"
 run_check "tests/test-verify-runner-selection.sh (declared runner, not an installed devDep)" "bash tests/test-verify-runner-selection.sh 2>&1 | tail -3"
+run_check "tests/test-dashboard-bind-auth-guard.sh (#188 exposed bind refuses without auth)" "bash tests/test-dashboard-bind-auth-guard.sh 2>&1 | tail -3"
 run_check "tests/test-node-test-detection.sh (task #79: node --test detection, run.sh + verify.sh false-negative)" "bash tests/test-node-test-detection.sh 2>&1 | tail -3"
 run_check "tests/test-loki-dir-double-path.sh (#80 double-.loki COMPLETED guard)" "bash tests/test-loki-dir-double-path.sh 2>&1 | tail -3"
 run_check "tests/test-zero-test-inconclusive.sh (#82: zero-test-file -> inconclusive, run.sh + verify.sh + council)" "bash tests/test-zero-test-inconclusive.sh 2>&1 | tail -3"
