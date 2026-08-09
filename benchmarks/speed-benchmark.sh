@@ -153,6 +153,22 @@ def ts(e):
     try: return datetime.fromisoformat(e['timestamp'].replace('Z','+00:00'))
     except: return None
 
+# Sum stage_complete durations per stage. Summed, not last-wins: a gate that
+# runs once per iteration should show its TOTAL cost across the build, which is
+# what an optimisation decision needs.
+stage_durations = {}
+for e in sess:
+    if e.get('type') != 'stage_complete':
+        continue
+    d = e.get('data', {}) or {}
+    st_name = d.get('stage')
+    try:
+        st_dur = int(d.get('duration_s', 0))
+    except (TypeError, ValueError):
+        continue
+    if st_name:
+        stage_durations[st_name] = stage_durations.get(st_name, 0) + st_dur
+
 iters = [e for e in sess if e.get('type')=='iteration_start']
 completes = [e for e in sess if e.get('type')=='iteration_complete']
 claims = [e for e in sess if e.get('type')=='task_completion_claim']
@@ -268,6 +284,13 @@ metrics = {
   'max_iteration_work_min': round(max((w['work_s'] for w in work), default=0)/60,1),
   'acceptance': acc,
   'events_total': len(sess),
+  # PER-GATE DURATIONS. The engine has emitted stage_complete{stage,duration_s}
+  # for 11 gates all along, and this harness parsed the events file and threw
+  # them away -- so "84% of a build is overhead" was measurable but not
+  # ATTRIBUTABLE, and nobody could say which gate to fix. Preserved here so the
+  # next optimisation targets the real cost instead of the first guess.
+  'stage_durations_s': stage_durations,
+  'stage_total_s': sum(stage_durations.values()),
 }
 json.dump(metrics, open(out_json,'w'), indent=2)
 print(json.dumps(metrics, indent=2))
