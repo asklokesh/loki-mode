@@ -41,6 +41,26 @@ class ProofPassportTests(unittest.TestCase):
         self.assertIn("canonical-json", result["contract"]["digest"]["canonicalization"])
         self.assertIn("raw file bytes", result["receipt"]["digest"]["canonicalization"])
         self.assertNotIn(str(self.path), json.dumps(result))
+        # The RESOLVED form too. These differ on macOS (/var -> /private/var),
+        # and the attester embeds the UNRESOLVED string, so a redactor built
+        # only from resolve() silently missed it: green on Linux, leaking on
+        # every developer Mac.
+        self.assertNotIn(str(self.path.resolve()), json.dumps(result))
+
+    def test_no_absolute_user_path_of_any_kind_leaks(self):
+        """No absolute home/user path may appear anywhere in a passport.
+
+        Asserted on the CLASS of leak rather than the one temp dir the other
+        test happens to use: any '/Users/<name>', '/home/<name>', '/var/folders'
+        or '/private/var' substring is a machine path escaping into an artifact
+        meant to be handed to a third party. The earlier assertion could only
+        catch the single root it was given, which is how a resolve()-only
+        redactor passed review.
+        """
+        result = json.dumps(pp.build_passport(self.contract, self.receipt, self.path))
+        for marker in ("/Users/", "/home/", "/var/folders", "/private/var"):
+            self.assertNotIn(marker, result,
+                             "passport leaked an absolute path containing %r" % marker)
 
     def test_missing_generator_trust_is_not_invented(self):
         original = pp._load_attester

@@ -42,9 +42,22 @@ def build_passport(contract_path, receipt_path, repo_dir="."):
     outcome_contract.validate(contract)
     receipt_bytes = receipt_path.read_bytes()
     attestation = _load_attester().attest(str(receipt_path), str(repo_dir))
-    private_roots = sorted({str(pathlib.Path(repo_dir).resolve()),
-                            str(contract_path.parent.resolve()),
-                            str(receipt_path.parent.resolve())}, key=len, reverse=True)
+    # BOTH the raw and resolved form of every root. The attester is handed the
+    # UNRESOLVED strings (str(receipt_path), str(repo_dir) above), so a
+    # resolve()-only root list never matches what it actually embedded. On
+    # macOS /var is a symlink to /private/var, so a temp-dir path arrived as
+    # "/var/folders/..." while this list held "/private/var/folders/...", and
+    # the machine path shipped inside verification.axes.drift.reason. Linux has
+    # no such symlink, resolve() == raw, and the leak is invisible there --
+    # which is why CI was green while every developer Mac leaked.
+    #
+    # Longest-first ordering is retained so a nested root is redacted before
+    # its parent; adding the raw forms only lengthens the candidate set.
+    _root_paths = (pathlib.Path(repo_dir), contract_path.parent,
+                   receipt_path.parent)
+    private_roots = sorted(
+        {str(p) for p in _root_paths} | {str(p.resolve()) for p in _root_paths},
+        key=len, reverse=True)
     attestation = _redact_paths(attestation, private_roots)
     return {
         "format": "autonomi-proof-passport/v0.1",
