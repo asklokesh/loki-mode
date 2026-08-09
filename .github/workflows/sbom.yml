@@ -1,26 +1,31 @@
 name: SBOM (CycloneDX)
 
-# Generates a CycloneDX Software Bill of Materials for the published npm
-# package on every push to main / feat/bun-migration. The SBOM is uploaded as a
-# workflow artifact.
+# Generates a CycloneDX Software Bill of Materials (JSON + XML) for the
+# published npm package on every push to main / feat/bun-migration, and uploads
+# it as a workflow artifact. That per-push artifact is ALL this workflow is for.
 #
-# THE `release: published` TRIGGER IS DEAD, AND THE HEADER USED TO LIE ABOUT IT.
-# Releases are created by `gh release create` in release.yml under the default
-# GITHUB_TOKEN, and GitHub deliberately suppresses trigger events for that token
-# to prevent workflow recursion. So this workflow has NEVER fired on a release:
-# measured over its last 15 runs, every one was `push`, none was `release`.
-# The old header claimed the SBOM was "(on release) attached to the GitHub
-# Release assets" -- it never has been, and a dead trigger shows up as an EMPTY
-# run list rather than a red one, which is why it went unnoticed.
+# IT DOES NOT PUT THE SBOM ON A RELEASE. release.yml does that, inline in the
+# job that creates the release, attaching release/npm-sbom.cdx.json at
+# `gh release create` time. Look there, not here, for the release asset.
 #
-# This repo already learned this exact lesson twice: provenance.yml:3-15 and
+# THE `release: published` TRIGGER BELOW IS DEAD. Releases are created by
+# `gh release create` in release.yml under the default GITHUB_TOKEN, and GitHub
+# deliberately suppresses trigger events for that token to prevent workflow
+# recursion. So this workflow has NEVER fired on a release: measured over its
+# last 15 runs, every one was `push`, none was `release`. An older version of
+# this header claimed the SBOM was "(on release) attached to the GitHub Release
+# assets" -- it never was, and a dead trigger shows up as an EMPTY run list
+# rather than a red one, which is why it went unnoticed for months of releases.
+#
+# This repo learned the same lesson twice more: provenance.yml:3-15 and
 # release.yml:576-591 both document it, and release.yml responded by generating
 # its container SBOM INLINE rather than relying on a release-triggered workflow.
+# Attaching the npm-tarball SBOM got that same treatment.
 #
-# The trigger is kept (harmless, and correct the day releases are cut by a PAT
-# instead), but the claim is not. Attaching the npm-tarball SBOM to releases
-# needs the same treatment the container SBOM got: generate it inside
-# release.yml, where the release is actually being made. Tracked separately.
+# The trigger and the "Attach SBOM to release" step below are KEPT: they are
+# harmless while dead, and they become correct the day releases are cut with a
+# PAT instead of GITHUB_TOKEN. The `--clobber` on that upload means it would
+# then refresh release.yml's asset rather than conflict with it.
 
 on:
   push:

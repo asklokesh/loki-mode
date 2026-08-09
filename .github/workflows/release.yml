@@ -261,6 +261,60 @@ jobs:
           tar -czvf loki-mode-claude-code-${{ steps.version.outputs.version }}.tar.gz loki-mode
           cd ..
 
+      # THE NPM-TARBALL SBOM IS GENERATED HERE, NOT IN sbom.yml, FOR THE SAME
+      # REASON THE CONTAINER SBOM IS GENERATED IN publish-docker (see :576-591).
+      #
+      # sbom.yml has a `release: published` trigger that has NEVER fired. This
+      # release is created by `gh release create` below under the default
+      # GITHUB_TOKEN, and GitHub suppresses trigger events for that token to
+      # prevent workflow recursion -- measured over sbom.yml's last 15 runs,
+      # every one was `push`, none was `release`. So every release ever cut has
+      # shipped with zero SBOM assets while a green workflow claimed otherwise.
+      # A dead trigger shows as an EMPTY run list, never a red one.
+      #
+      # It must run BEFORE `gh release create`, not after: releases here are
+      # immutable and a post-publish upload fails HTTP 422 (:293-297).
+      #
+      # This SBOM describes the npm TARBALL. publish-docker generates a
+      # SEPARATE image-sbom.cdx.json describing the CONTAINER, which carries an
+      # OS layer and Python runtime the npm tree never lists. They are NOT
+      # interchangeable, which is why the filenames differ -- a collision would
+      # silently overwrite one and ship half the evidence the release claims.
+      - name: Setup Node.js (for SBOM generation)
+        if: steps.check_release.outputs.release_exists == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Generate npm-tarball SBOM (CycloneDX)
+        if: steps.check_release.outputs.release_exists == 'false'
+        run: |
+          set -euo pipefail
+          # Describe what users actually receive from `npm install`, so pack
+          # the tarball and resolve deps inside it rather than in the source
+          # tree. --omit dev twice: the published tarball declares
+          # devDependencies but does not ship them, and cyclonedx-npm's
+          # `npm ls --all` errors ELSPROBLEMS on the missing ones.
+          npm pack
+          mkdir -p /tmp/published
+          tar xzf loki-mode-*.tgz -C /tmp/published
+          cd /tmp/published/package
+          npm install --omit=dev --no-package-lock
+          npx --yes @cyclonedx/cyclonedx-npm \
+            --omit dev \
+            --output-format JSON \
+            --output-file "$GITHUB_WORKSPACE/release/npm-sbom.cdx.json" \
+            --spec-version 1.5
+
+      - name: Verify the npm SBOM is non-empty
+        if: steps.check_release.outputs.release_exists == 'false'
+        run: |
+          set -euo pipefail
+          # Fail closed. A zero-byte SBOM asset is WORSE than no asset: it
+          # looks like compliance to anyone scanning the release.
+          test -s release/npm-sbom.cdx.json || { echo "FATAL: npm SBOM is empty"; exit 1; }
+          echo "npm SBOM size: $(wc -c < release/npm-sbom.cdx.json) bytes"
+
       - name: Create Git Tag
         if: steps.check_tag.outputs.tag_exists == 'false'
         run: |
@@ -310,6 +364,7 @@ jobs:
             release/loki-mode-${VERSION}.tar.gz \
             release/loki-mode-claude-code-${VERSION}.zip \
             release/loki-mode-claude-code-${VERSION}.tar.gz \
+            release/npm-sbom.cdx.json \
             --title "Loki Mode v${VERSION}" \
             --notes-file changelog_body.txt
 
