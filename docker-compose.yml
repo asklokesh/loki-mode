@@ -128,6 +128,20 @@ services:
       - LOKI_QUEUE_KEY=loki-builds
       - LOKI_QUEUE_URL=redis://redis:6379
       - LOKI_NOTIFICATIONS=false
+      # Ed25519 key that attests each served Evidence Receipt, so a submitter
+      # can verify WHO produced a receipt against /.well-known/jwks.json --
+      # no gpg key import over a side channel. Points at the read-only mount
+      # below rather than carrying the PEM inline: a multi-line private key in
+      # an env var survives shells and process listings poorly.
+      #
+      # RECEIVER ONLY. The worker must never hold this: it runs model-directed
+      # code, so a key there would let a build sign its own receipt, and a
+      # self-attested receipt attests to nothing.
+      #
+      # Unset the mount and receipts are served UNSIGNED, which is honest --
+      # they keep their existing verdict. Generate a key with:
+      #   openssl genpkey -algorithm ed25519 -out ./receipt-signing-key.pem
+      # - LOKI_RECEIPT_SIGNING_KEY_FILE=/etc/loki/receipt-signing-key
       # NOTE: the receiver holds NO provider credential. It cannot start a
       # build directly, so a receiver compromise cannot spend your budget.
     ports:
@@ -140,6 +154,23 @@ services:
       # config.json, events.log and server.pid there at startup. Named volume,
       # not a bind: receiver state has no business in your source tree.
       - receiver-state:/workspace
+      # RECEIPT SIGNING (optional). Uncomment BOTH this mount and the
+      # LOKI_RECEIPT_SIGNING_KEY_FILE line above to attest served receipts.
+      #
+      # Left commented rather than made conditional because Docker has no
+      # optional bind mount: a bind to a missing path is a HARD START FAILURE
+      # ("bind source path does not exist"), verified here, and
+      # `create_host_path: false` prevents directory creation without making
+      # the mount optional. Shipping it enabled would stop the receiver from
+      # starting for every user who has not generated a key -- strictly worse
+      # than not offering the feature.
+      #
+      #   openssl genpkey -algorithm ed25519 -out ./receipt-signing-key.pem
+      #
+      # NEVER commit that file. Without it, receipts are served UNSIGNED and
+      # /.well-known/jwks.json returns an empty key set, which is honest: they
+      # keep their existing verdict.
+      # - ./receipt-signing-key.pem:/etc/loki/receipt-signing-key:ro
     working_dir: /workspace
     # /health is a real route on this server and does not touch the queue.
     healthcheck:

@@ -222,6 +222,10 @@ declare -a _FAST_KEEP=(
   # The third-party surface: an auditor verifying a receipt offline with no
   # token and no Loki install. This is the product claim itself. Measured 5s.
   "tests/test-proof-verify-jwks.sh"
+  # Guards the SHIPPED compose file: an active bind to a missing key is a hard
+  # container start failure, so a careless edit here breaks every compose user.
+  # Measured 3s (schema only; no containers started).
+  "tests/test-compose-receipt-signing.sh"
   # Trust core: the local generator writes the attestation INSIDE the subtree
   # the integrity hash excludes. Get that wrong and every honest receipt reads
   # TAMPERED the moment it is signed. Measured 4s.
@@ -1292,6 +1296,7 @@ run_check "tests/test-dashboard-bind-auth-guard.sh (#188 exposed bind refuses wi
 run_check "tests/test-receipt-jwt-attestation.sh (signed receipt + JWKS rotation)" "bash tests/test-receipt-jwt-attestation.sh 2>&1 | tail -3"
 run_check "tests/test-remote-attestation-verdict.sh (remote receipt VERIFIED without a key import)" "bash tests/test-remote-attestation-verdict.sh 2>&1 | tail -3"
 run_check "tests/test-proof-verify-jwks.sh (third party verifies a receipt offline)" "bash tests/test-proof-verify-jwks.sh 2>&1 | tail -3"
+run_check "tests/test-compose-receipt-signing.sh (opt-in signing, default starts)" "bash tests/test-compose-receipt-signing.sh 2>&1 | tail -3"
 run_check "tests/test-local-receipt-attestation.sh (local receipt carries provenance)" "bash tests/test-local-receipt-attestation.sh 2>&1 | tail -3"
 run_check "tests/test-node-test-detection.sh (task #79: node --test detection, run.sh + verify.sh false-negative)" "bash tests/test-node-test-detection.sh 2>&1 | tail -3"
 run_check "tests/test-loki-dir-double-path.sh (#80 double-.loki COMPLETED guard)" "bash tests/test-loki-dir-double-path.sh 2>&1 | tail -3"

@@ -160,6 +160,21 @@ Left unset, the receiver serves receipts unsigned and `/.well-known/jwks.json`
 returns an empty key set -- honest, but a `--remote` submitter then has no way
 to prove who produced their receipt without an out-of-band key import.
 
+### With docker-compose
+
+Opt-in, and deliberately shipped commented out. Docker has no optional bind
+mount: a bind to a missing path is a hard container start failure, so enabling
+it by default would stop the receiver from starting for everyone who has not
+generated a key.
+
+```bash
+openssl genpkey -algorithm ed25519 -out ./receipt-signing-key.pem
+```
+
+Then uncomment the two lines the compose file points at (the
+`LOKI_RECEIPT_SIGNING_KEY_FILE` env var and the `receipt-signing-key.pem`
+mount) on the `receiver` service. Never commit that key file.
+
 ### Configuration
 
 | Variable | Effect |
