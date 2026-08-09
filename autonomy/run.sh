@@ -12393,6 +12393,36 @@ auto_generate_docs_if_needed() {
     # never pushed). Wrap it in a timeout; docs are non-gating, so on timeout we
     # warn and continue to the gate (which scores whatever docs exist).
     local _doc_to="${LOKI_DOCS_TIMEOUT:-${LOKI_GATE_TIMEOUT:-300}}"
+    # SCALE THE BUDGET TO WHAT THERE IS TO DOCUMENT. Measured on a graded
+    # single-file build (hard-1-order-api): 2.8 min of iteration work, 13.4 min
+    # wall clock, and 5.0 of those minutes were THIS step timing out at 300s
+    # over one 20-line Python file -- 37% of the build spent generating an
+    # eight-file architecture suite for a project that has one module.
+    #
+    # The simple-tier fast-path above did not catch it: detect_complexity reads
+    # PRD PROSE (288 words, 3 sections) rather than build effort, so a
+    # tersely-specified one-function task classifies "standard". Rather than
+    # move those thresholds -- they also drive iteration caps and model tiers --
+    # this bounds the WASTE directly, where the cost actually is.
+    #
+    # Only ever LOWERS the budget, and only when the operator did not set one.
+    # A big project keeps the full 300s. Counting is capped so the find itself
+    # cannot become the new cost.
+    if [ -z "${LOKI_DOCS_TIMEOUT:-}" ]; then
+        local _doc_src=0
+        _doc_src=$(find "$project_dir" -type f \
+            \( -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.tsx' \
+               -o -name '*.go' -o -name '*.rs' -o -name '*.java' \) \
+            -not -path '*/node_modules/*' -not -path '*/.loki/*' \
+            -not -path '*/.git/*' -not -path '*/dist/*' 2>/dev/null | head -40 | wc -l | tr -d ' ')
+        _doc_src="${_doc_src:-0}"
+        # <=3 source files cannot need an architecture suite. 90s still allows a
+        # README + USAGE pass, which is all the gate asks of a small project.
+        if [ "$_doc_src" -le 3 ] && [ "$_doc_to" -gt 90 ]; then
+            log_info "Auto-documentation: ${_doc_src} source file(s) -- capping generation at 90s (was ${_doc_to}s)"
+            _doc_to=90
+        fi
+    fi
     local _doc_cmd=()
     if command -v gtimeout >/dev/null 2>&1; then
         _doc_cmd=(gtimeout "${_doc_to}s")
