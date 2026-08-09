@@ -33,6 +33,24 @@ class OutcomeContractTests(unittest.TestCase):
         with self.assertRaisesRegex(oc.ContractValidationError, r"\$\.verifier\.id"):
             oc.validate(value)
 
+    def test_typed_economic_and_deployment_boundaries(self):
+        cases = [
+            ("risk", {"level": "extreme"}, r"\$\.risk\.level"),
+            ("budget", {"max_amount": "10", "currency": "USD"},
+             r"\$\.budget\.max_amount"),
+            ("deployment", {"environment": "prod", "approval_required": "yes"},
+             r"\$\.deployment\.approval_required"),
+            ("rollback", {"required": 1, "strategy": "revert"},
+             r"\$\.rollback\.required"),
+            ("dispute", {"process": 42}, r"\$\.dispute\.process"),
+        ]
+        for field, invalid, path in cases:
+            with self.subTest(field=field):
+                value = contract()
+                value[field] = invalid
+                with self.assertRaisesRegex(oc.ContractValidationError, path):
+                    oc.validate(value)
+
 
 if __name__ == "__main__":
     unittest.main()

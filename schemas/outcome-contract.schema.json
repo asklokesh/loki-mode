@@ -16,6 +16,46 @@
     "executor": {"$ref": "#/$defs/identity"},
     "verifier": {"$ref": "#/$defs/identity"},
     "constraints": {"type": "object"},
+    "risk": {
+      "type": "object", "additionalProperties": false,
+      "required": ["level"],
+      "properties": {
+        "level": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
+        "notes": {"type": "string", "minLength": 1}
+      }
+    },
+    "budget": {
+      "type": "object", "additionalProperties": false,
+      "required": ["max_amount", "currency"],
+      "properties": {
+        "max_amount": {"type": "number", "minimum": 0},
+        "currency": {"type": "string", "minLength": 1}
+      }
+    },
+    "deployment": {
+      "type": "object", "additionalProperties": false,
+      "required": ["environment", "approval_required"],
+      "properties": {
+        "environment": {"type": "string", "minLength": 1},
+        "approval_required": {"type": "boolean"}
+      }
+    },
+    "rollback": {
+      "type": "object", "additionalProperties": false,
+      "required": ["required", "strategy"],
+      "properties": {
+        "required": {"type": "boolean"},
+        "strategy": {"type": "string", "minLength": 1}
+      }
+    },
+    "dispute": {
+      "type": "object", "additionalProperties": false,
+      "required": ["process"],
+      "properties": {
+        "process": {"type": "string", "minLength": 1},
+        "arbiter": {"$ref": "#/$defs/identity"}
+      }
+    },
     "evidence": {
       "type": "array", "items": {"type": "string", "minLength": 1}
     }

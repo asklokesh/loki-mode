@@ -6,7 +6,8 @@ import json
 SCHEMA = "autonomi-outcome-contract/v0.1"
 KINDS = {"human", "agent", "service", "organization"}
 TOP_KEYS = {"schema", "id", "intent", "acceptance", "executor", "verifier",
-            "constraints", "evidence"}
+            "constraints", "evidence", "risk", "budget", "deployment",
+            "rollback", "dispute"}
 
 
 class ContractValidationError(ValueError):
@@ -39,6 +40,17 @@ def _identity(value, path):
         _fail(path + ".kind", "must be one of: %s" % ", ".join(sorted(KINDS)))
 
 
+def _object(value, path, required, allowed):
+    if not isinstance(value, dict):
+        _fail(path, "must be an object")
+    extra = sorted(set(value) - set(allowed))
+    if extra:
+        _fail(path + "." + extra[0], "unknown property")
+    for key in required:
+        if key not in value:
+            _fail(path + "." + key, "is required")
+
+
 def validate(contract):
     if not isinstance(contract, dict):
         _fail("$", "must be an object")
@@ -63,6 +75,41 @@ def validate(contract):
         _fail("$.verifier.id", "must differ from executor.id")
     if "constraints" in contract and not isinstance(contract["constraints"], dict):
         _fail("$.constraints", "must be an object")
+    if "risk" in contract:
+        value = contract["risk"]
+        _object(value, "$.risk", ("level",), ("level", "notes"))
+        if value["level"] not in {"low", "medium", "high", "critical"}:
+            _fail("$.risk.level", "must be one of: low, medium, high, critical")
+        if "notes" in value:
+            _text(value["notes"], "$.risk.notes")
+    if "budget" in contract:
+        value = contract["budget"]
+        _object(value, "$.budget", ("max_amount", "currency"),
+                ("max_amount", "currency"))
+        if isinstance(value["max_amount"], bool) or not isinstance(
+                value["max_amount"], (int, float)) or value["max_amount"] < 0:
+            _fail("$.budget.max_amount", "must be a non-negative number")
+        _text(value["currency"], "$.budget.currency")
+    if "deployment" in contract:
+        value = contract["deployment"]
+        _object(value, "$.deployment", ("environment", "approval_required"),
+                ("environment", "approval_required"))
+        _text(value["environment"], "$.deployment.environment")
+        if not isinstance(value["approval_required"], bool):
+            _fail("$.deployment.approval_required", "must be a boolean")
+    if "rollback" in contract:
+        value = contract["rollback"]
+        _object(value, "$.rollback", ("required", "strategy"),
+                ("required", "strategy"))
+        if not isinstance(value["required"], bool):
+            _fail("$.rollback.required", "must be a boolean")
+        _text(value["strategy"], "$.rollback.strategy")
+    if "dispute" in contract:
+        value = contract["dispute"]
+        _object(value, "$.dispute", ("process",), ("process", "arbiter"))
+        _text(value["process"], "$.dispute.process")
+        if "arbiter" in value:
+            _identity(value["arbiter"], "$.dispute.arbiter")
     if "evidence" in contract:
         if not isinstance(contract["evidence"], list):
             _fail("$.evidence", "must be an array")

@@ -35,8 +35,26 @@ class ProofPassportTests(unittest.TestCase):
         self.assertEqual(result["receipt"]["sha256"],
                          hashlib.sha256(self.receipt.read_bytes()).hexdigest())
         self.assertTrue(result["parties"]["independent"])
-        self.assertTrue(any("unsigned" in x.lower() for x in result["limitations"]))
+        self.assertEqual(result["passport_signature"]["status"], "unsigned")
+        self.assertIn("receipt_signature", result["verification"])
+        self.assertEqual(result["contract"]["digest"]["algorithm"], "sha256")
+        self.assertIn("canonical-json", result["contract"]["digest"]["canonicalization"])
+        self.assertIn("raw file bytes", result["receipt"]["digest"]["canonicalization"])
         self.assertNotIn(str(self.path), json.dumps(result))
+
+    def test_missing_generator_trust_is_not_invented(self):
+        original = pp._load_attester
+        class Attester:
+            @staticmethod
+            def attest(*_args):
+                return {"verdict": "UNVERIFIABLE", "summary": "missing",
+                        "axes": {}, "signature": {"status": "unsigned"}}
+        pp._load_attester = lambda: Attester
+        try:
+            result = pp.build_passport(self.contract, self.receipt, self.path)
+        finally:
+            pp._load_attester = original
+        self.assertIsNone(result["verification"]["generator_trusted"])
 
     def test_tamper_is_failed(self):
         proof = json.loads(self.receipt.read_text())

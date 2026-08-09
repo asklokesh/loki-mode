@@ -51,10 +51,18 @@ def build_passport(contract_path, receipt_path, repo_dir="."):
         "contract": {
             "id": contract["id"],
             "sha256": outcome_contract.digest(contract),
+            "digest": {
+                "algorithm": "sha256",
+                "canonicalization": "canonical-json: sorted keys, compact separators, UTF-8",
+            },
         },
         "receipt": {
             "name": receipt_path.name,
             "sha256": hashlib.sha256(receipt_bytes).hexdigest(),
+            "digest": {
+                "algorithm": "sha256",
+                "canonicalization": "none; exact raw file bytes",
+            },
         },
         "parties": {
             "executor": contract["executor"],
@@ -64,13 +72,18 @@ def build_passport(contract_path, receipt_path, repo_dir="."):
         "verification": {
             "verdict": attestation["verdict"],
             "axes": attestation.get("axes", {}),
-            "signature": attestation.get("signature", {}),
-            "generator_trusted": attestation.get("generator_trusted", True),
+            "receipt_signature": attestation.get("signature", {}),
+            "generator_trusted": attestation.get("generator_trusted"),
             "summary": attestation["summary"],
         },
+        "passport_signature": {
+            "status": "unsigned",
+            "reason": "this passport carries no cryptographic signature",
+        },
         "limitations": [
-            "The passport is unsigned and does not prove who generated it.",
-            "Generator-trusted receipt facts are claims unless independently signed.",
+            "The passport itself is unsigned and does not prove who generated the passport.",
+            "Receipt-origin assurance is reported separately in verification.receipt_signature.",
+            "A true generator_trusted value means receipt facts remain generator claims.",
         ],
     }
 
