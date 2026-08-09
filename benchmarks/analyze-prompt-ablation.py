@@ -6,6 +6,25 @@ measurement and it licenses no claim about outcomes. This answers the only
 question that matters: does the stripped arm still build the thing, and does it
 take more or fewer iterations to do it?
 
+RELATIONSHIP TO report-prompt-ablation.py, WHICH ALREADY EXISTED. That script
+is DESCRIPTIVE: medians with spread, and an explicit "NO DIFFERENCE
+DEMONSTRATED" verdict whenever the arms overlap. It is not redundant with this
+one and it should be read first -- it reaches the correct conclusion on this
+dataset by refusing to claim on overlapping ranges, which is the right default.
+
+This script is INFERENTIAL and adds four things that one does not compute:
+exact-permutation p-values, the DESIGN FLOOR (the smallest p the sample size
+can produce, which is what stopped an 18% speed claim at n=3), a rank-sum
+statistic for the separated case where a median test is near-powerless, and a
+DISPERSION test with MAD -- added after a 9.6x range difference here turned out
+to be one outlier (MAD 31s vs 35s, p=0.80). It also reads `acceptance`, the
+per-artifact check, which the descriptive report does not.
+
+If the two ever disagree, the descriptive one is the safer default: a null it
+reports is a null. A p-value from this script that contradicts an overlap
+verdict there means the statistic was chosen badly, not that a finding was
+uncovered.
+
 WHY THIS IS NOT analyze-ab-history.py. That script compares ENGINE VERSIONS and
 its metrics are speed-shaped. Here the arms are one environment variable in one
 binary, and the load-bearing metric is not speed at all -- it is ACCEPTANCE. A
