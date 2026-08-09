@@ -1,0 +1,42 @@
+{
+ "generated": "2026-08-09",
+ "task": "hard-1-order-api (held-out grader: REST handler, input validation, boundary discount rule)",
+ "question": "Does LOKI_SIMPLE=1 (-78% prompt) still build correctly on a task that actually exercises what the coaching prompt is for? The greet-CLI ablation could not answer this: it completes in one iteration for both arms, so a prompt coaching planning, decomposition and gate recovery has nothing to do.",
+ "method": "benchmarks/run-prompt-ablation.sh --task hard-1-order-api, 3 trials per arm, one engine copy, same model (sonnet), caps and machine. Acceptance is a HELD-OUT grader copied in AFTER the run: it imports order_api.handle and asserts the full contract. The agent never sees it. Verified strict and satisfiable beforehand -- a correct implementation passes, a naive one that skips validation fails.",
+ "result": {
+  "graded_pass": "3/3 in BOTH arms -- every build produced contract-correct code",
+  "act_iterations": {
+   "full": [
+    1,
+    1,
+    1
+   ],
+   "simple": [
+    1,
+    3,
+    3
+   ]
+  },
+  "engine_completed": {
+   "full": "3/3",
+   "simple": "1/3"
+  },
+  "wall_clock_s": {
+   "full": [
+    450,
+    606,
+    802
+   ],
+   "simple": [
+    733,
+    1201,
+    1260
+   ]
+  }
+ },
+ "signal": "The stripped arm FAILED TO CONVERGE in 2 of 3 runs: 3 iterations and ~20 minutes each, versus 1 iteration every time for the full prompt. Both arms still passed the grader, so this is a COST and RELIABILITY difference, not a correctness one -- the stripped arm gets there, but takes three times the loop to do it.",
+ "significance": "NOT YET SIGNIFICANT. Exact permutation on iterations gives p=0.4000 against a floor of 0.1 at n=3/3, and the arms overlap (the simple arm did produce one 1-iteration run). This is a signal worth more trials, not a result. n=6 per arm drops the floor to 0.0022; that run is in flight.",
+ "contrast_with_the_trivial_spec": "On the greet CLI both arms were 1 iteration, 5/5 accepted, p=0.5714 on wall clock -- no difference measurable. The harder task is where the prompt earns its tokens, which is exactly why a null on a trivial spec licensed nothing.",
+ "not_claimed": "No multiplier. No claim that LOKI_SIMPLE=1 is unsafe: it produced contract-correct code in every run. Arms differ by one environment variable on one machine; nothing here compares Loki to another vendor.",
+ "raw": "benchmarks/results/prompt-ablation.jsonl"
+}
