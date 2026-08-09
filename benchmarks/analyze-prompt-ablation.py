@@ -33,6 +33,29 @@ HISTORY = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "results", "prompt-ablation.jsonl")
 
 
+def _accepted(row):
+    """True only when EVERY recorded acceptance check passed.
+
+    The harness records acceptance as a DICT of named checks --
+    {"greet.js_exists": true} -- not a boolean. Treating that dict as a truthy
+    scalar would count a run where every check FAILED as accepted, because a
+    non-empty dict is truthy in Python; testing it against True would count
+    every run as unaccepted. Both errors are silent and both would make the
+    acceptance verdict, which gates the whole analysis, meaningless.
+
+    An empty dict is NOT acceptance: no checks recorded is an absent
+    measurement, not a pass.
+    """
+    acc = row.get("acceptance")
+    if isinstance(acc, dict):
+        return bool(acc) and all(bool(v) for v in acc.values())
+    if isinstance(acc, bool):
+        return acc
+    if isinstance(acc, str):
+        return acc.strip().lower() in ("pass", "true", "ok")
+    return False
+
+
 def _avg_ranks(pool):
     ordered = sorted(pool)
     out = {}
@@ -129,7 +152,7 @@ def main():
             "act_iterations": sorted(r["act_iterations"] for r in rs
                                      if r.get("act_iterations") is not None),
         }
-        accepted = sum(1 for r in rs if r.get("acceptance") in (True, "PASS", "pass"))
+        accepted = sum(1 for r in rs if _accepted(r))
         report["acceptance"][name] = {"accepted": accepted, "of": len(rs)}
 
     # ACCEPTANCE FIRST. A faster arm that completes fewer builds is a
