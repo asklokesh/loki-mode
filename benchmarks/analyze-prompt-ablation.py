@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+"""Analyse benchmarks/results/prompt-ablation.jsonl.
+
+THE QUESTION. LOKI_SIMPLE=1 cuts the assembled prompt by 78%. That is a TOKEN
+measurement and it licenses no claim about outcomes. This answers the only
+question that matters: does the stripped arm still build the thing, and does it
+take more or fewer iterations to do it?
+
+WHY THIS IS NOT analyze-ab-history.py. That script compares ENGINE VERSIONS and
+its metrics are speed-shaped. Here the arms are one environment variable in one
+binary, and the load-bearing metric is not speed at all -- it is ACCEPTANCE. A
+prompt ablation that runs 20% faster while completing fewer builds is a
+regression that a speed-only summary would report as a win, so acceptance is
+checked FIRST and a drop there is fatal regardless of every timing number.
+
+The statistical method is inherited deliberately, because the same tiny-n trap
+applies: a median-difference permutation test is near-powerless on separated
+constant data, so both it and a rank-sum statistic are reported with the reason
+one was believed. See the header of analyze-ab-history.py for the worked case
+where the two disagree (p 0.486 vs 0.0286 on identical data).
+
+Usage:  python3 benchmarks/analyze-prompt-ablation.py [--json]
+Exit:   0 always (an analysis is not a gate); 2 if the history is unreadable.
+"""
+
+import itertools
+import json
+import os
+import statistics as st
+import sys
+
+HISTORY = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "results", "prompt-ablation.jsonl")
+
+
+def _avg_ranks(pool):
+    ordered = sorted(pool)
+    out = {}
+    for value in set(ordered):
+        idx = [i + 1 for i, v in enumerate(ordered) if v == value]
+        out[value] = sum(idx) / len(idx)
+    return out
+
+
+def exact_permutation(a, b, statistic):
+    """Two-sided exact p, enumerating every split. No normal approximation."""
+    pool = list(a) + list(b)
+    n = len(a)
+    observed = abs(statistic(a, b, pool))
+    hits = total = 0
+    for combo in itertools.combinations(range(len(pool)), n):
+        x = [pool[i] for i in combo]
+        y = [pool[i] for i in range(len(pool)) if i not in combo]
+        if abs(statistic(x, y, pool)) >= observed:
+            hits += 1
+        total += 1
+    return (hits / total if total else 1.0), total
+
+
+def _median_diff(x, y, _pool):
+    return st.median(x) - st.median(y)
+
+
+def _rank_sum(x, _y, pool):
+    ranks = _avg_ranks(pool)
+    expected = len(x) * (len(pool) + 1) / 2
+    return sum(ranks[v] for v in x) - expected
+
+
+def compare(metric, a, b):
+    if len(a) < 2 or len(b) < 2:
+        return {"metric": metric, "verdict": "UNDERPOWERED",
+                "reason": "fewer than 2 trials in an arm; no test is meaningful",
+                "n": [len(a), len(b)]}
+    p_med, splits = exact_permutation(a, b, _median_diff)
+    p_rank, _ = exact_permutation(a, b, _rank_sum)
+    separated = min(a) > max(b) or min(b) > max(a)
+    out = {
+        "metric": metric, "n": [len(a), len(b)],
+        "median": [st.median(a), st.median(b)],
+        "range": [[min(a), max(a)], [min(b), max(b)]],
+        "ranges_overlap": not separated,
+        "p_median_diff": round(p_med, 4),
+        "p_rank_sum": round(p_rank, 4),
+        "p_floor_at_this_n": round(2.0 / splits, 4),
+    }
+    if separated:
+        out["believe"] = "p_rank_sum"
+        out["reason"] = ("arms are completely separated; a median-difference "
+                         "test is near-powerless on separated constant data")
+        out["verdict"] = "SIGNIFICANT" if p_rank <= 0.05 else "UNDERPOWERED"
+    else:
+        out["believe"] = "p_median_diff"
+        out["reason"] = ("ranges overlap, so no separation claim is available; "
+                         "a rank statistic would not rescue it")
+        out["verdict"] = "SIGNIFICANT" if p_med <= 0.05 else "NOT SIGNIFICANT"
+    return out
+
+
+def main():
+    as_json = "--json" in sys.argv
+    try:
+        with open(HISTORY) as fh:
+            rows = [json.loads(line) for line in fh if line.strip()]
+    except FileNotFoundError:
+        print("no prompt-ablation.jsonl yet -- run "
+              "benchmarks/run-prompt-ablation.sh first", file=sys.stderr)
+        return 2
+    except (OSError, json.JSONDecodeError) as exc:
+        print("cannot read %s: %s" % (HISTORY, exc), file=sys.stderr)
+        return 2
+
+    arms = {}
+    for row in rows:
+        # The engine stamps prompt_arm from its OWN environment. Trust that over
+        # the harness label: if they ever disagree the attribution is wrong, and
+        # averaging the two arms would silently corrupt every median below.
+        arm = row.get("prompt_arm") or row.get("arm")
+        if not arm or row.get("wall_clock_s") is None:
+            continue
+        arms.setdefault(arm, []).append(row)
+
+    report = {"source": os.path.relpath(HISTORY), "rows_total": len(rows),
+              "arms": {}, "acceptance": {}, "tests": []}
+    for name, rs in sorted(arms.items()):
+        report["arms"][name] = {
+            "n": len(rs),
+            "wall_clock_s": sorted(r["wall_clock_s"] for r in rs),
+            "act_iterations": sorted(r["act_iterations"] for r in rs
+                                     if r.get("act_iterations") is not None),
+        }
+        accepted = sum(1 for r in rs if r.get("acceptance") in (True, "PASS", "pass"))
+        report["acceptance"][name] = {"accepted": accepted, "of": len(rs)}
+
+    # ACCEPTANCE FIRST. A faster arm that completes fewer builds is a
+    # regression, and a speed-only summary would report it as a win.
+    if len(report["acceptance"]) == 2:
+        (n1, a1), (n2, a2) = sorted(report["acceptance"].items())
+        if a1["accepted"] != a2["accepted"]:
+            report["acceptance_verdict"] = (
+                "DIFFERS: %s %d/%d vs %s %d/%d. Timing comparisons below are "
+                "NOT a summary of this run -- an arm that completes fewer "
+                "builds has regressed regardless of how fast it was."
+                % (n1, a1["accepted"], a1["of"], n2, a2["accepted"], a2["of"]))
+        else:
+            report["acceptance_verdict"] = (
+                "EQUAL: both arms %d/%d. Timing comparisons below are "
+                "meaningful because the arms built comparable outcomes."
+                % (a1["accepted"], a1["of"]))
+
+    if len(arms) == 2:
+        (na, ra), (nb, rb) = sorted(arms.items())
+        report["arm_order"] = [na, nb]
+        for metric in ("wall_clock_s", "act_iterations"):
+            a = [r[metric] for r in ra if r.get(metric) is not None]
+            b = [r[metric] for r in rb if r.get(metric) is not None]
+            if a and b:
+                report["tests"].append(compare(metric, a, b))
+
+    report["not_claimed"] = (
+        "No multiplier is reported. The 78% prompt reduction is a TOKEN "
+        "measurement and says nothing about outcomes; only the acceptance and "
+        "iteration results below speak to behaviour. Arms differ by one "
+        "environment variable in one binary on one machine -- nothing here "
+        "compares Loki to another vendor.")
+
+    if as_json:
+        print(json.dumps(report, indent=1))
+        return 0
+
+    print("prompt ablation: %d rows" % report["rows_total"])
+    for name, info in report["arms"].items():
+        acc = report["acceptance"].get(name, {})
+        print("  %-8s n=%d  accepted=%s/%s  wall_s=%s  act_iters=%s"
+              % (name, info["n"], acc.get("accepted", "?"), acc.get("of", "?"),
+                 info["wall_clock_s"], info["act_iterations"]))
+    if "acceptance_verdict" in report:
+        print("\n  ACCEPTANCE: %s" % report["acceptance_verdict"])
+    print()
+    for t in report["tests"]:
+        if "median" not in t:
+            print("  %-16s %s -- %s" % (t["metric"], t["verdict"], t["reason"]))
+            continue
+        print("  %s: medians %s, ranges %s%s"
+              % (t["metric"], t["median"], t["range"],
+                 "  (SEPARATED)" if not t["ranges_overlap"] else ""))
+        print("    p_median_diff=%.4f  p_rank_sum=%.4f  floor=%.4f"
+              % (t["p_median_diff"], t["p_rank_sum"], t["p_floor_at_this_n"]))
+        print("    believe %s -> %s  (%s)" % (t["believe"], t["verdict"], t["reason"]))
+        print()
+    print("  NOT CLAIMED: %s" % report["not_claimed"])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
