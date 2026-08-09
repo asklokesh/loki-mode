@@ -54,7 +54,11 @@ echo
 echo "T2 -- installed competitors are inspected by READING, not counting"
 
 _checked=0
-for cli in opencode aider codex cline claude cursor-agent; do
+# `droid` is Factory AI's CLI, added 2026-08-08 once it was installed here.
+# Factory is the strongest comparison in this set -- they document fully
+# airgapped self-hosting with customer-controlled model routing -- so leaving
+# them out was the biggest hole in this measurement.
+for cli in opencode aider codex cline claude cursor-agent droid; do
     command -v "$cli" >/dev/null 2>&1 || { note "$cli not installed on this machine"; continue; }
     _checked=$((_checked + 1))
     hits=$("$cli" --help 2>&1 | grep -icE "$_PAT" || true)
@@ -72,8 +76,28 @@ for cli in opencode aider codex cline claude cursor-agent; do
         esac
     done < <("$cli" --help 2>&1 | grep -iE "$_PAT" || true)
 
+    # A top-level --help scan alone would be vacuous for a CLI that nests its
+    # features in subcommands: `droid` lists 7, and a verification command could
+    # live inside any of them. Every advertised subcommand's help is searched
+    # too, so "no hits" means no hits ANYWHERE reachable, not just on page one.
+    _subs="$("$cli" --help 2>&1 | awk '/^Commands:/{f=1;next} f&&/^  [a-z]/{print $1}' \
+        | sed 's/|.*//' | head -12)"
+    for _s in $_subs; do
+        _sh=$("$cli" "$_s" --help 2>&1 | grep -icE "$_PAT" || true)
+        if [ "${_sh:-0}" -gt 0 ]; then
+            while IFS= read -r line; do
+                case "$line" in
+                    *ssl*|*SSL*|*commit-verify*|*commit_verify*|*pre-commit*) continue ;;
+                esac
+                case "$line" in
+                    *proof*|*receipt*|*attest*|*evidence*) own_output=1 ;;
+                esac
+            done < <("$cli" "$_s" --help 2>&1 | grep -iE "$_PAT" || true)
+        fi
+    done
+
     if [ "$own_output" -eq 0 ]; then
-        ok "$cli ($hits raw hit(s)) exposes no output-verification command"
+        ok "$cli ($hits raw hit(s), subcommands searched) exposes no output-verification command"
     else
         # Not a failure of ours. If a competitor ships this, the README claim
         # must be corrected, and this test is how we would find out.

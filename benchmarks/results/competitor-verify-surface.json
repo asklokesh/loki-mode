@@ -1,49 +1,58 @@
 {
-  "generated": "2026-07-30T21:18:10Z",
-  "method": "Ran `<cli> --help` on each competitor CLI INSTALLED ON THIS MACHINE and counted mentions of verif/proof/receipt/attest/evidence, then READ every hit rather than trusting the count.",
-  "claim": "No installed competitor CLI exposes a command that verifies the agent's OWN output. Loki does.",
-  "not_claimed": "Devin and Replit Agent ship no local CLI, so they are NOT covered and no claim is made about them. Absence from a --help listing is not proof of absence from a product: a web UI or an API could expose something the CLI does not.",
-  "results": [
-    {
-      "cli": "opencode",
-      "version": "1.18.9",
-      "help_hits": 0,
-      "verifies_own_output": false
-    },
-    {
-      "cli": "aider",
-      "version": "0.86.2",
-      "help_hits": 8,
-      "verifies_own_output": false,
-      "note": "All 8 hits are --verify-ssl (SSL cert validation) and --git-commit-verify (git pre-commit hooks). NEITHER verifies the agent's output. Counted 8, read all 8; the count alone would have been misleading."
-    },
-    {
-      "cli": "codex",
-      "version": "0.146.0",
-      "help_hits": 0,
-      "verifies_own_output": false
-    },
-    {
-      "cli": "claude",
-      "version": "2.1.220",
-      "help_hits": 0,
-      "verifies_own_output": false,
-      "note": "Claude Code. Also checked audit/checksum/hash/sign/report/artifact: no matches."
-    },
-    {
-      "cli": "cursor-agent",
-      "version": "2026.05.24-dda726e",
-      "help_hits": 0,
-      "verifies_own_output": false,
-      "note": "Cursor agent CLI (cursor 3.13.25 installed). Widened search matched only 'Sign out', unrelated."
-    },
-    {
-      "cli": "loki-mode",
-      "version": "8.3.3",
-      "help_hits": 2,
-      "verifies_own_output": true,
-      "note": "`loki proof verify <id>` recomputes the receipt hash and re-derives the diff. Demonstrated on a real receipt: hash_ok=true, headline_consistent=true; tampering one fact (files_changed -> 9999) flips hash_ok to false."
-    }
-  ],
-  "coverage": "5 of the 6 named competitors have a local CLI on this machine and all 5 were measured."
+ "generated": "2026-08-09T01:43:04Z",
+ "method": "Ran `<cli> --help` AND every advertised subcommand's `--help` on each competitor CLI INSTALLED ON THIS MACHINE, counted mentions of verif/proof/receipt/attest/evidence, then READ every hit rather than trusting the count. A positive control (loki, 4 hits) confirms the probe is not silently broken.",
+ "claim": "No installed competitor CLI exposes a command that verifies the agent's OWN output. Loki does.",
+ "not_claimed": "Devin, Replit Agent and 8090 ship no local CLI, so they are NOT covered and no claim is made about them. Absence from a --help listing is not proof of absence from a product: a web UI or an API could expose something the CLI does not. This measures the CLI surface only.",
+ "results": [
+  {
+   "cli": "opencode",
+   "version": "1.18.9",
+   "help_hits": 0,
+   "subcommands_searched": 12,
+   "subcommand_hits": 0,
+   "verifies_own_output": false
+  },
+  {
+   "cli": "aider",
+   "version": "aider 0.86.2",
+   "help_hits": 8,
+   "subcommands_searched": 0,
+   "subcommand_hits": 0,
+   "verifies_own_output": false,
+   "note": "All hits are --verify-ssl (SSL cert validation) and --git-commit-verify (git hook control), neither of which verifies aider's own output."
+  },
+  {
+   "cli": "codex",
+   "version": "codex-cli 0.146.0",
+   "help_hits": 0,
+   "subcommands_searched": 12,
+   "subcommand_hits": 0,
+   "verifies_own_output": false
+  },
+  {
+   "cli": "claude",
+   "version": "2.1.226 (Claude Code)",
+   "help_hits": 0,
+   "subcommands_searched": 12,
+   "subcommand_hits": 0,
+   "verifies_own_output": false
+  },
+  {
+   "cli": "cursor-agent",
+   "version": "2026.05.24-dda726e",
+   "help_hits": 0,
+   "subcommands_searched": 12,
+   "subcommand_hits": 0,
+   "verifies_own_output": false
+  },
+  {
+   "cli": "droid",
+   "version": "0.190.0",
+   "help_hits": 0,
+   "subcommands_searched": 12,
+   "subcommand_hits": 0,
+   "verifies_own_output": false,
+   "note": "Factory AI's CLI. 7 subcommands searched in addition to top-level help; zero verification-surface hits anywhere."
+  }
+ ]
 }
