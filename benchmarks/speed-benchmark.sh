@@ -129,6 +129,18 @@ echo "started: $STAMP"
 # The LOKI_* assignments below are a command-prefix env list for the `timeout`
 # child, so shellcheck's SC2034 ("appears unused") is a false positive here --
 # it cannot see they are passed to another process.
+# Runner selection as an ARRAY, built before the subshell. A $( ... ) inside
+# the command line is expanded to a bare word and was silently producing the
+# BASH runner for --route bun: the smoke test reported route=bash with zero bun
+# markers. Same class of bug as the ${GRADER:+VAR=val} env-prefix expansion --
+# an expanded word is not a command or an assignment.
+_runner_argv=(bash "$RUN_SH")
+_legacy_bash=1
+if [ "$ROUTE" = "bun" ]; then
+    _runner_argv=(bash "$ENGINE/bin/loki" start)
+    _legacy_bash=0
+fi
+
 WALL_START=$(date +%s)
 # Run the build. Non-interactive, hermetic-ish, no dashboard/app-runner to isolate the
 # reason-act-verify loop timing. Council + gates STAY ON (they are the product; we are
@@ -144,17 +156,16 @@ WALL_START=$(date +%s)
   LOKI_NO_NEW_SESSION=1 \
   CI=true \
   LOKI_BENCH_ROUTE="$ROUTE" \
-  $( [ "$ROUTE" = "bash" ] && echo "LOKI_LEGACY_BASH=1" ) \
+  LOKI_LEGACY_BASH="$_legacy_bash" \
   timeout --kill-after=60 "$TIMEOUT_S" \
-    $( [ "$ROUTE" = "bun" ] && echo "bash $ENGINE/bin/loki start" || echo "bash $RUN_SH" ) \
-    "$SPEC" > "$WORK/build.log" 2>&1 )
+    "${_runner_argv[@]}" "$SPEC" > "$WORK/build.log" 2>&1 )
 BUILD_RC=$?
 WALL_END=$(date +%s)
 WALL_S=$((WALL_END - WALL_START))
 
 # --- Parse THIS run's timeline from the target's events.jsonl ----------------
 EVENTS="$WORK/project/.loki/events.jsonl"
-LOKI_BENCH_SPEC_PATH="$SPEC" python3 - "$EVENTS" "$WORK/build.log" "$WORK/project" "$OUT_JSON" "$LABEL" "$WALL_S" "$BUILD_RC" "$STAMP" <<'PY'
+LOKI_BENCH_SPEC_PATH="$SPEC" LOKI_BENCH_ROUTE="$ROUTE" python3 - "$EVENTS" "$WORK/build.log" "$WORK/project" "$OUT_JSON" "$LABEL" "$WALL_S" "$BUILD_RC" "$STAMP" <<'PY'
 import json, sys, os
 from datetime import datetime
 events_path, log_path, proj, out_json, label, wall_s, build_rc, stamp = sys.argv[1:9]
