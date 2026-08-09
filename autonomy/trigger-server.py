@@ -51,6 +51,35 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+# Receipt attestation. Imported by path because trigger-server.py runs as a
+# script from an arbitrary cwd, so a bare `import receipt_jwt` would depend on
+# the caller's directory. An ImportError is NOT fatal: signing is optional, and
+# a server that refused to start without it would turn an optional feature into
+# a hard dependency on `cryptography`.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from receipt_jwt import (
+        build_jwks,
+        load_retired_public_keys,
+        load_signing_key,
+        sign_attestation,
+    )
+    _ATTESTATION_AVAILABLE = True
+except ImportError:  # pragma: no cover - only on a stripped install
+    _ATTESTATION_AVAILABLE = False
+
+    def build_jwks(private_key=None, retired_public_keys=None):
+        return {"keys": []}
+
+    def load_signing_key():
+        return None, ""
+
+    def load_retired_public_keys():
+        return []
+
+    def sign_attestation(*_a, **_k):
+        return ""
+
 
 # A GitHub repository full_name is "owner/repo". Both segments are restricted to
 # the characters GitHub itself allows (letters, digits, dot, underscore, dash).
@@ -811,6 +840,12 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
     # above: one authenticates GitHub, the other authenticates a human.
     api_token = ""
     dispatcher = None
+    # Ed25519 key that attests receipts, and the retired public keys that keep
+    # pre-rotation receipts verifiable. Both default to unconfigured, which
+    # means receipts stay UNSIGNED exactly as before this existed.
+    signing_key = None
+    signing_kid = ""
+    retired_pubkeys = ()
 
     # Cap the body we will read so a huge POST cannot exhaust memory.
     MAX_BODY_BYTES = 5 * 1024 * 1024
@@ -833,6 +868,8 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
                 "secret_configured": bool(self.secret),
                 "api_token_configured": bool(self.api_token),
             })
+        elif path == "/.well-known/jwks.json":
+            self._handle_jwks()
         elif path.startswith("/jobs/") and path.endswith("/proof"):
             self._handle_job_proof(path[len("/jobs/"):-len("/proof")])
         elif path.startswith("/jobs/"):
@@ -884,6 +921,29 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(404, {"error": "unknown job id"})
             return
         self._send_json(200, job)
+
+    def _handle_jwks(self):
+        """GET /.well-known/jwks.json -- the public keys that sign receipts.
+
+        DELIBERATELY UNAUTHENTICATED, and that is the whole point. This is
+        public key material, and the value of an attested receipt is that a
+        third party can check it WITHOUT holding our API token. Requiring the
+        token here would mean only people we already trust could verify, which
+        is the same as not being verifiable at all.
+
+        Serves the active key plus any retired ones, so a receipt issued before
+        a rotation still verifies afterwards. Without that, rotating would make
+        every historical receipt read as unverifiable -- and a checker cannot
+        tell that apart from tampering.
+
+        Returns an empty key set (not a 404) when signing is unconfigured: the
+        endpoint exists and honestly reports that nothing is signed, which is
+        distinguishable from "this server has no such endpoint".
+        """
+        self._send_json(200, build_jwks(
+            private_key=self.signing_key,
+            retired_public_keys=self.retired_pubkeys,
+        ))
 
     def _handle_job_proof(self, job_id):
         """GET /jobs/<id>/proof -- that job's Evidence Receipt.
@@ -1199,6 +1259,11 @@ def main():
     WebhookHandler.api_token = api_token
     WebhookHandler.dispatcher = dispatcher
 
+    signing_key, signing_kid = load_signing_key()
+    WebhookHandler.signing_key = signing_key
+    WebhookHandler.signing_kid = signing_kid
+    WebhookHandler.retired_pubkeys = tuple(load_retired_public_keys())
+
     server = ThreadingWebhookServer(("", port), WebhookHandler)
     write_pid_file()
 
@@ -1207,6 +1272,25 @@ def main():
     logging.info("Webhook endpoint: POST http://localhost:%d/webhook", port)
     logging.info("Health check: GET http://localhost:%d/health", port)
     logging.info("Submit endpoint: POST http://localhost:%d/jobs", port)
+    if signing_key is not None:
+        logging.info(
+            "Receipt attestation: ACTIVE (kid %s), public keys at "
+            "GET http://localhost:%d/.well-known/jwks.json%s",
+            signing_kid, port,
+            " (+%d retired)" % len(WebhookHandler.retired_pubkeys)
+            if WebhookHandler.retired_pubkeys else "",
+        )
+    elif not _ATTESTATION_AVAILABLE:
+        logging.info(
+            "Receipt attestation: unavailable (cryptography not installed); "
+            "receipts remain UNSIGNED"
+        )
+    else:
+        logging.info(
+            "Receipt attestation: not configured; receipts remain UNSIGNED. "
+            "Set LOKI_RECEIPT_SIGNING_KEY_FILE to let submitters verify a "
+            "receipt without trusting this server."
+        )
     logging.info("Workers: %d, queue size: %d", workers, queue_size)
     if not api_token:
         logging.warning(
