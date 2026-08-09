@@ -211,6 +211,9 @@ declare -a _FAST_KEEP=(
   # vs UNCHECKED for a receipt fetched from a cluster. Measured 8s (it starts a
   # real trigger-server and waits for readiness rather than sleeping).
   "tests/test-remote-attestation-verdict.sh"
+  # The third-party surface: an auditor verifying a receipt offline with no
+  # token and no Loki install. This is the product claim itself. Measured 5s.
+  "tests/test-proof-verify-jwks.sh"
   "tests/test-council-"
   "tests/test-heuristic-council-affirmative.sh"
   "tests/test-playwright-verify-as-evidence.sh"
@@ -1276,6 +1279,7 @@ run_check "tests/test-verify-runner-selection.sh (declared runner, not an instal
 run_check "tests/test-dashboard-bind-auth-guard.sh (#188 exposed bind refuses without auth)" "bash tests/test-dashboard-bind-auth-guard.sh 2>&1 | tail -3"
 run_check "tests/test-receipt-jwt-attestation.sh (signed receipt + JWKS rotation)" "bash tests/test-receipt-jwt-attestation.sh 2>&1 | tail -3"
 run_check "tests/test-remote-attestation-verdict.sh (remote receipt VERIFIED without a key import)" "bash tests/test-remote-attestation-verdict.sh 2>&1 | tail -3"
+run_check "tests/test-proof-verify-jwks.sh (third party verifies a receipt offline)" "bash tests/test-proof-verify-jwks.sh 2>&1 | tail -3"
 run_check "tests/test-node-test-detection.sh (task #79: node --test detection, run.sh + verify.sh false-negative)" "bash tests/test-node-test-detection.sh 2>&1 | tail -3"
 run_check "tests/test-loki-dir-double-path.sh (#80 double-.loki COMPLETED guard)" "bash tests/test-loki-dir-double-path.sh 2>&1 | tail -3"
 run_check "tests/test-zero-test-inconclusive.sh (#82: zero-test-file -> inconclusive, run.sh + verify.sh + council)" "bash tests/test-zero-test-inconclusive.sh 2>&1 | tail -3"

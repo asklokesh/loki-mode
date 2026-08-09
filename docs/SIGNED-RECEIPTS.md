@@ -94,9 +94,73 @@ which exact code" without asking anyone to trust the agent that produced it.
 - If the signing key is compromised, signed receipts from that key are worth
   exactly what the key is worth. Normal key hygiene applies.
 
+## Attestation: provenance without a key exchange
+
+gpg settles the local case, where the operator already holds the keyring. It
+does not survive the remote path. A submitter who ran `loki start --remote`
+never had access to the cluster, so "import the publisher's public key" is the
+step where independent verification stops happening in practice.
+
+A receipt served by `trigger-server.py` therefore also carries an **attestation**
+under `verification.attestation`: an Ed25519 JWT signed by the receiver, with
+the signing keys published, unauthenticated, at `/.well-known/jwks.json`.
+
+```bash
+# Third party, offline. Needs proof.json and jwks.json -- nothing else.
+curl -s https://loki.example.com/.well-known/jwks.json > jwks.json
+loki proof verify <id> --jwks ./jwks.json
+
+# Or fetch the key set directly from the server that produced the receipt.
+loki proof verify <id> --jwks https://loki.example.com
+```
+
+Four outcomes, deliberately kept distinct:
+
+| Verdict | Meaning |
+|---|---|
+| `VERIFIED` | The token is valid **and** covers these exact bytes. |
+| `FAILED` | The token does not cover these bytes: altered after signing, or lifted from another run. |
+| `ABSENT` | This receipt carries no attestation. A fact about the receipt. |
+| `NOT CHECKED` | The key set could not be read. **Not** a verdict, in either direction. |
+
+`ABSENT` and `NOT CHECKED` are never collapsed. One is a property of the
+receipt; the other is an absent measurement, and reporting an unchecked receipt
+as merely unattested would overstate what was established.
+
+The JWT binds `job_id`, `run_id` and `receipt_sha256`, and the verifier
+**recomputes** that digest from the receipt body rather than trusting the
+recorded `verification.hash`. Editing the body and rewriting the hash to match
+therefore still fails: the signed claim is the anchor, not the field in the file.
+
+### Key rotation
+
+Every token carries a `kid`, and JWKS serves the active key plus any retired
+ones (`LOKI_RECEIPT_RETIRED_PUBKEYS`, a colon-separated list of PEM paths). This
+is required rather than optional: with a single unlabeled key, the first
+rotation would make every previously-issued receipt fail verification -- and a
+receipt that stops verifying is indistinguishable from a tampered one.
+
+### Configuration
+
+| Variable | Effect |
+|---|---|
+| `LOKI_RECEIPT_SIGNING_KEY_FILE` | PEM path to the Ed25519 private key (normal Kubernetes mounted-secret path). |
+| `LOKI_RECEIPT_SIGNING_KEY` | The PEM inline, for non-Kubernetes deployments. |
+| `LOKI_RECEIPT_RETIRED_PUBKEYS` | Colon-separated PEM paths for retired public keys. |
+
+Unset means unsigned: no attestation is attached and the receipt keeps its
+existing verdict. **The receiver signs, never the worker** -- a worker runs
+model-directed code and already holds provider credentials, so a key there would
+let a build sign its own receipt, which attests to nothing.
+
 ## Source
 
 - Signing: `autonomy/lib/proof-generator.py` (`_gpg_detached_sign`, and the
   `LOKI_PROOF_GPG_KEY` gate)
 - Verification: `autonomy/lib/proof-verify.py` (`_verify_gpg`)
 - Scope test: `tests/test-proof-forgery-defense.sh`
+- Attestation: `autonomy/receipt_jwt.py`; served by `autonomy/trigger-server.py`
+  (`_attest`, `_handle_jwks`); checked by `loki_proof_attestation_check` and
+  `loki_remote_attestation_status` in `autonomy/loki`
+- Attestation tests: `tests/test-receipt-jwt-attestation.sh`,
+  `tests/test-remote-attestation-verdict.sh`, `tests/test-proof-verify-jwks.sh`

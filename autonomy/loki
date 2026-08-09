@@ -856,6 +856,70 @@ print("ok" if claims.get("receipt_sha256") == hashlib.sha256(canon).hexdigest()
 PY
 }
 
+# Check a receipt's attestation against a key set given as a URL OR a file.
+#
+# The file form is what makes this usable by a third party with no network and
+# no Loki install: hand them proof.json and jwks.json and they can check both
+# integrity and provenance themselves. That is the whole claim -- "a receipt you
+# can check yourself" is false if checking requires our infrastructure.
+#
+# Prints "ok", "bad", "none" (no attestation present), or "" (could not check).
+# "none" and "" are deliberately distinct: one is a fact about the receipt, the
+# other is an absent measurement, and collapsing them would report an unchecked
+# receipt as an unattested one.
+# NOTE: this shares its verification logic with loki_remote_attestation_status
+# above. The two differ only in their key-set source (that one is URL-only, from
+# a live fetch during a --remote run; this one also accepts a FILE for the
+# offline third-party case). If you change the digest-recompute rule, CHANGE
+# BOTH -- they are covered by different tests
+# (test-remote-attestation-verdict.sh and test-proof-verify-jwks.sh), so a
+# one-sided edit passes one suite and silently weakens the other. Mutation
+# testing found exactly this: a mutation applied to the first copy left every
+# assertion of the second suite green.
+loki_proof_attestation_check() {
+    local pj="$1" src="$2"
+    [ -n "$src" ] || { printf ''; return 0; }
+    command -v python3 >/dev/null 2>&1 || { printf ''; return 0; }
+    python3 - "$pj" "$src" "${_LOKI_SCRIPT_DIR}" <<'PY' 2>/dev/null || printf ''
+import json, sys, os, hashlib, urllib.request
+sys.path.insert(0, sys.argv[3])
+try:
+    from receipt_jwt import verify_attestation
+except ImportError:
+    sys.exit(1)                      # "" : cannot check
+try:
+    proof = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(1)
+tok = (proof.get("verification") or {}).get("attestation") or ""
+if not tok:
+    print("none"); sys.exit(0)       # a FACT about the receipt, not an error
+src = sys.argv[2]
+try:
+    if os.path.isfile(src):
+        jwks = json.load(open(src))
+    else:
+        if not src.startswith(("http://", "https://")):
+            sys.exit(1)
+        url = src if src.rstrip("/").endswith("jwks.json") else \
+            src.rstrip("/") + "/.well-known/jwks.json"
+        with urllib.request.urlopen(url, timeout=10) as r:
+            jwks = json.loads(r.read())
+except Exception:
+    sys.exit(1)                      # "" : unreachable/unreadable, no verdict
+ok, claims = verify_attestation(tok, jwks)
+if not ok:
+    print("bad"); sys.exit(0)
+# A verifying signature is not enough: it must attest to THESE bytes. Recompute
+# the digest the way the receipt records it, so a token lifted from another run
+# cannot vouch for this one.
+proof.pop("verification", None)
+canon = json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
+print("ok" if claims.get("receipt_sha256") == hashlib.sha256(canon).hexdigest()
+      else "bad")
+PY
+}
+
 loki_remote_verify_receipt() {
     local pj="$1"
     local verifier="${_LOKI_SCRIPT_DIR}/lib/proof-verify.py"
@@ -35019,6 +35083,13 @@ cmd_proof() {
             echo "  show <id>            Pretty-print .loki/proofs/<id>/proof.json"
             echo "  verify <id>          Re-check a receipt against the repo (tamper + drift);"
             echo "                       exit 0 clean, 1 tamper/drift. Verify it yourself."
+            echo ""
+            echo "Options for 'verify':"
+            echo "  --human              Render the verdict and every failure reason as prose"
+            echo "  --jwks <url|file>    Also check the receipt's attestation against a published"
+            echo "                       key set. Accepts a server URL or a local jwks.json, so a"
+            echo "                       third party can check WHO produced a receipt with no API"
+            echo "                       token, no gpg key import, and no network."
             echo "  md <id>              Paste-able Markdown for a PR comment or Slack
   open <id>            Open .loki/proofs/<id>/index.html in a browser"
             echo "  share <id>           Publish the proof page as a GitHub Gist (opt-in)"
@@ -35234,14 +35305,31 @@ PYEOF
             # stdout verbatim, are unaffected. The flag is STRIPPED from the
             # positional args rather than assumed at a fixed index, so it works
             # before or after the id.
-            local _pv_human=0 _pv_args=()
-            local _pv_a
+            # --jwks <url-or-file> additionally checks the receipt's
+            # attestation against a published key set. This is the third-party
+            # path: an auditor who was handed a proof.json can check WHO
+            # produced it without running a build, without our API token, and
+            # without importing a gpg key. A FILE is accepted as well as a URL
+            # so an air-gapped reviewer, handed the receipt and the key set on
+            # disk, can still verify -- requiring the network would exclude
+            # exactly the reviewer who most needs this.
+            local _pv_human=0 _pv_jwks="" _pv_args=()
+            local _pv_a _pv_want_jwks=0
             for _pv_a in "$@"; do
+                if [ "$_pv_want_jwks" -eq 1 ]; then
+                    _pv_jwks="$_pv_a"; _pv_want_jwks=0; continue
+                fi
                 case "$_pv_a" in
                     --human) _pv_human=1 ;;
+                    --jwks) _pv_want_jwks=1 ;;
+                    --jwks=*) _pv_jwks="${_pv_a#--jwks=}" ;;
                     *) _pv_args+=("$_pv_a") ;;
                 esac
             done
+            if [ "$_pv_want_jwks" -eq 1 ]; then
+                echo -e "${RED}--jwks needs a URL or file path.${NC}" >&2
+                exit 2
+            fi
             set -- "${_pv_args[@]+"${_pv_args[@]}"}"
 
             local id="${1:-}"
@@ -35262,12 +35350,53 @@ PYEOF
                 echo -e "${RED}Verifier not found (autonomy/lib/proof-verify.py).${NC}"
                 exit 2
             fi
+            # `|| _pv_rc=$?` is load-bearing: this script runs under `set -e`
+            # (loki:22), so a bare call to a verifier that exits 1 on drift --
+            # its NORMAL result -- aborts the whole command before the exit
+            # status can be read. Without the guard the attestation block below
+            # is unreachable on exactly the receipts it exists to check.
+            local _pv_rc=0
             if [ "$_pv_human" -eq 1 ]; then
-                python3 "$verifier" --human "$pj" "${TARGET_DIR:-.}"
+                python3 "$verifier" --human "$pj" "${TARGET_DIR:-.}" || _pv_rc=$?
             else
-                python3 "$verifier" "$pj" "${TARGET_DIR:-.}"
+                python3 "$verifier" "$pj" "${TARGET_DIR:-.}" || _pv_rc=$?
             fi
-            exit $?
+
+            # The attestation check runs AFTER, and can only make the verdict
+            # worse, never better. A valid attestation does not excuse a failed
+            # integrity hash: the signature proves who produced the bytes, not
+            # that the bytes are internally consistent. Folding the two together
+            # would let a signed-but-tampered receipt exit 0.
+            if [ -n "$_pv_jwks" ]; then
+                local _pv_att
+                _pv_att="$(loki_proof_attestation_check "$pj" "$_pv_jwks")"
+                case "$_pv_att" in
+                    ok)
+                        echo "attestation: VERIFIED against ${_pv_jwks}" >&2
+                        echo "  Proven: these bytes were signed by the holder of a key in that set." >&2
+                        echo "  NOT proven: that the code is correct. A receipt records which checks ran." >&2
+                        ;;
+                    bad)
+                        echo -e "${RED}attestation: FAILED -- the token does not cover these bytes.${NC}" >&2
+                        echo "  Either the receipt was altered after signing, or the attestation" >&2
+                        echo "  belongs to a different run. Do not trust this receipt." >&2
+                        _pv_rc=1
+                        ;;
+                    none)
+                        echo -e "${YELLOW}attestation: ABSENT -- this receipt carries no attestation.${NC}" >&2
+                        echo "  Nothing was checked against ${_pv_jwks}. The receipt may still be" >&2
+                        echo "  gpg-signed; this says only that it has no JWKS attestation." >&2
+                        ;;
+                    *)
+                        # Unreachable key set, unreadable file, missing python
+                        # deps. NOT a verdict: an absent measurement must never
+                        # read as either a pass or an accusation.
+                        echo -e "${YELLOW}attestation: NOT CHECKED -- could not read a key set from ${_pv_jwks}.${NC}" >&2
+                        echo "  This is not a failure of the receipt. Nothing was proven either way." >&2
+                        ;;
+                esac
+            fi
+            exit "$_pv_rc"
             ;;
         open)
             local id="${1:-}"
