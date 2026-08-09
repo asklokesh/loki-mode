@@ -9977,6 +9977,71 @@ def _build_metrics_text() -> str:
     lines.append(f"loki_uptime_seconds {round(uptime_seconds, 1)}")
     lines.append("")
 
+    # -- Evidence Receipts -----------------------------------------------------
+    # The receipt is the product's differentiator and was INVISIBLE to
+    # monitoring: /metrics emitted 12 lines and none of them were about
+    # verification. An operator could not alert on "builds stopped producing
+    # receipts" or "the unknown-verdict share is climbing", which are the two
+    # failures that make the whole guarantee worthless in production.
+    #
+    # `unknown` IS ITS OWN SERIES, deliberately. The summary endpoint refuses
+    # to count a receipt as verified when it cannot prove it was, and folding
+    # that into either verified or not_verified would launder the distinction
+    # the receipt exists to preserve.
+    #
+    # Bucketed on honesty.headline exactly as proofs_summary does, reading the
+    # same files, so the metric and the API cannot drift.
+    _proof_total = _proof_verified = _proof_gaps = _proof_notver = _proof_unknown = 0
+    _proof_attested = _proof_signed = 0
+    try:
+        _pdir = loki_dir / "proofs"
+        _entries = sorted(_pdir.iterdir()) if _pdir.is_dir() else []
+    except OSError:
+        _entries = []
+    for _entry in _entries:
+        if not _entry.is_dir():
+            continue
+        _pj = _entry / "proof.json"
+        if not _pj.is_file():
+            continue
+        _data = _safe_json_read(_pj, default=None)
+        if not isinstance(_data, dict):
+            continue
+        _proof_total += 1
+        _honesty = _data.get("honesty")
+        _head = _honesty.get("headline") if isinstance(_honesty, dict) else None
+        if _head == "VERIFIED":
+            _proof_verified += 1
+        elif _head == "VERIFIED WITH GAPS":
+            _proof_gaps += 1
+        elif _head == "NOT VERIFIED":
+            _proof_notver += 1
+        else:
+            _proof_unknown += 1
+        _ver = _data.get("verification")
+        if isinstance(_ver, dict):
+            if _ver.get("attestation"):
+                _proof_attested += 1
+            if _ver.get("gpg_signature"):
+                _proof_signed += 1
+
+    lines.append("# HELP loki_receipts_total Evidence Receipts on disk")
+    lines.append("# TYPE loki_receipts_total gauge")
+    lines.append(f"loki_receipts_total {_proof_total}")
+    lines.append("")
+    lines.append("# HELP loki_receipts_by_verdict Receipts bucketed on the recorded honesty headline")
+    lines.append("# TYPE loki_receipts_by_verdict gauge")
+    lines.append(f'loki_receipts_by_verdict{{verdict="verified"}} {_proof_verified}')
+    lines.append(f'loki_receipts_by_verdict{{verdict="with_gaps"}} {_proof_gaps}')
+    lines.append(f'loki_receipts_by_verdict{{verdict="not_verified"}} {_proof_notver}')
+    lines.append(f'loki_receipts_by_verdict{{verdict="unknown"}} {_proof_unknown}')
+    lines.append("")
+    lines.append("# HELP loki_receipts_with_provenance Receipts carrying a checkable provenance record")
+    lines.append("# TYPE loki_receipts_with_provenance gauge")
+    lines.append(f'loki_receipts_with_provenance{{kind="attestation"}} {_proof_attested}')
+    lines.append(f'loki_receipts_with_provenance{{kind="gpg"}} {_proof_signed}')
+    lines.append("")
+
     return "\n".join(lines) + "\n"
 
 

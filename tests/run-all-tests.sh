@@ -273,6 +273,7 @@ run_test "worker autoscaling on queue depth" "$SCRIPT_DIR/test-worker-autoscalin
 run_test "helm receipt signing (receiver only)" "$SCRIPT_DIR/test-helm-receipt-signing.sh"
 run_test "compose receipt signing (opt-in, default intact)" "$SCRIPT_DIR/test-compose-receipt-signing.sh"
 run_test "head-to-head corpus honesty" "$SCRIPT_DIR/test-headtohead-honesty.sh"
+run_test "receipt metrics exposed to monitoring" "$SCRIPT_DIR/test-receipt-metrics.sh"
 run_test "A/B analysis honesty (tiny-n statistics)" "$SCRIPT_DIR/test-ab-analysis-honesty.sh"
 run_test "webapp receipt panel renders (real browser)" "$SCRIPT_DIR/../scripts/run-webapp-receipt-panel.sh"
 run_test "local receipt attestation" "$SCRIPT_DIR/test-local-receipt-attestation.sh"
