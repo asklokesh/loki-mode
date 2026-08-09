@@ -171,6 +171,37 @@ if [ "$_emit_max" -gt 0 ]; then
             kill -0 "$_emit_target" 2>/dev/null || exit 0
             _waited=$((_waited + 1))
         done
+        # FORENSICS BEFORE THE KILL (issue #184).
+        #
+        # The watchdog bounds the damage but has never recorded WHY the hang
+        # happened, which is why the cause is still unknown after two disproved
+        # hypotheses (the lock-retry counter, and six synthetic race probes).
+        # A SIGKILL destroys the only evidence that existed.
+        #
+        # Captures a stack sample and the process tree to a file, then kills. On
+        # the next occurrence the reader gets a stack instead of a guess.
+        #
+        # Every part is bounded and best-effort: this runs INSIDE the watchdog,
+        # so a capture that blocks would replace a bounded failure with an
+        # unbounded one -- the exact thing the watchdog exists to prevent.
+        # `sample` is macOS-only and absent on Linux; both branches are guarded
+        # and neither is allowed to fail the watchdog.
+        _emit_diag_dir="${LOKI_EMIT_DIAG_DIR:-${TMPDIR:-/tmp}}"
+        _emit_diag="$_emit_diag_dir/loki-emit-hang-$_emit_target.txt"
+        {
+            echo "emit.sh watchdog fired after ${_emit_max}s on pid $_emit_target"
+            echo "captured: $(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
+            echo "--- ps ---"
+            ps -o pid=,ppid=,pgid=,stat=,etime=,command= -p "$_emit_target" 2>/dev/null
+            echo "--- children ---"
+            ps -eo pid=,ppid=,stat=,command= 2>/dev/null | awk -v p="$_emit_target" '$2==p'
+            echo "--- stack (macOS sample, 1s) ---"
+            if command -v sample >/dev/null 2>&1; then
+                sample "$_emit_target" 1 -mayDie 2>/dev/null | head -60
+            else
+                echo "(sample unavailable on this platform)"
+            fi
+        } > "$_emit_diag" 2>/dev/null || true
         kill -9 "$_emit_target" 2>/dev/null || true
     ) >/dev/null 2>&1 &
     # Disown so the watchdog is not a tracked job of the caller's shell.
