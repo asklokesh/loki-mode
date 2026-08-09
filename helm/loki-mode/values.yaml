@@ -46,6 +46,28 @@ secrets:
   # rejected with 503 rather than left open.
   apiToken: ""
 
+  # Ed25519 PEM that signs the attestation on each served Evidence Receipt.
+  # RECEIVER-ONLY, deliberately: a worker runs model-directed code, so a key
+  # there would let a build sign its own receipt, which attests to nothing.
+  #
+  # Generate one with:
+  #   openssl genpkey -algorithm ed25519 -out receipt-signing-key.pem
+  #   helm install ... --set-file secrets.receiptSigningKey=receipt-signing-key.pem
+  #
+  # Empty (the default) means receipts are served UNSIGNED and
+  # /.well-known/jwks.json returns an empty key set. That is honest -- the
+  # receipt keeps its existing verdict -- but a submitter who ran
+  # `loki start --remote` then has no way to prove WHO produced their receipt
+  # without importing a gpg key out of band, which is the step this exists to
+  # remove. Set it if your submitters are not the same people who run the
+  # cluster.
+  #
+  # Rotation: move the previous PUBLIC key into
+  # LOKI_RECEIPT_RETIRED_PUBKEYS (see docs/SIGNED-RECEIPTS.md) before swapping
+  # this, or every receipt signed by the old key stops verifying -- and a
+  # receipt that stops verifying is indistinguishable from a tampered one.
+  receiptSigningKey: ""
+
   # Provider credential for the builds themselves. Worker-only -- the receiver
   # never needs it, and not giving it one means a receiver compromise does not
   # hand over your provider account.

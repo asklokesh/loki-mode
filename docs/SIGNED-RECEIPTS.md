@@ -140,6 +140,26 @@ is required rather than optional: with a single unlabeled key, the first
 rotation would make every previously-issued receipt fail verification -- and a
 receipt that stops verifying is indistinguishable from a tampered one.
 
+### In a Kubernetes cluster
+
+The Helm chart wires this for you. Generate a key and pass it as a file:
+
+```bash
+openssl genpkey -algorithm ed25519 -out receipt-signing-key.pem
+helm upgrade --install loki ./helm/loki-mode \
+  --set-file secrets.receiptSigningKey=receipt-signing-key.pem
+```
+
+The chart mounts it **into the receiver only**, read-only at mode `0400`, and
+sets `LOKI_RECEIPT_SIGNING_KEY_FILE` to the projected path. The worker never
+receives it, and that asymmetry is enforced by the chart rather than left to
+convention: a worker runs model-directed code, so a key there would let a build
+sign its own receipt.
+
+Left unset, the receiver serves receipts unsigned and `/.well-known/jwks.json`
+returns an empty key set -- honest, but a `--remote` submitter then has no way
+to prove who produced their receipt without an out-of-band key import.
+
 ### Configuration
 
 | Variable | Effect |

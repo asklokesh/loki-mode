@@ -71,6 +71,14 @@ spec:
                   name: {{ include "loki-mode.secretName" . }}
                   key: api-token
                   optional: true
+            {{- if .Values.secrets.receiptSigningKey }}
+            # Points at a MOUNTED FILE rather than carrying the PEM inline. A
+            # multi-line private key in an env var survives poorly through
+            # shells and process listings, and the file form is what
+            # load_signing_key() treats as the normal Kubernetes path.
+            - name: LOKI_RECEIPT_SIGNING_KEY_FILE
+              value: /etc/loki/receipt-signing-key
+            {{- end }}
             {{- include "loki-mode.queueEnv" . | nindent 12 }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
@@ -91,6 +99,11 @@ spec:
             - name: trigger-config
               mountPath: /etc/loki-mode
               readOnly: true
+            {{- if .Values.secrets.receiptSigningKey }}
+            - name: receipt-signing-key
+              mountPath: /etc/loki
+              readOnly: true
+            {{- end }}
       volumes:
         # emptyDir, not a PVC: receiver state is a log and a pidfile, both
         # per-pod and worthless after restart.
@@ -101,6 +114,17 @@ spec:
         - name: trigger-config
           configMap:
             name: {{ include "loki-mode.fullname" . }}-triggers
+        {{- if .Values.secrets.receiptSigningKey }}
+        # 0400: readable only by the process that needs it. A private key at
+        # the default 0644 is readable by every other process in the pod.
+        - name: receipt-signing-key
+          secret:
+            secretName: {{ include "loki-mode.secretName" . }}
+            defaultMode: 0400
+            items:
+              - key: receipt-signing-key
+                path: receipt-signing-key
+        {{- end }}
       {{- with .Values.receiver.nodeSelector }}
       nodeSelector: {{- toYaml . | nindent 8 }}
       {{- end }}
