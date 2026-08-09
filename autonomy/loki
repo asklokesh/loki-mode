@@ -750,7 +750,11 @@ loki_remote_fetch_receipt() {
     printf '%s' "$resp" > "$tmp" && mv "$tmp" "$dir/proof.json"
     echo "  Evidence Receipt: $dir/proof.json"
 
-    loki_remote_verify_receipt "$dir/proof.json"
+    # The URL is passed so the receipt's attestation can be checked against that
+    # server's published JWKS. Without it the attestation is simply not checked
+    # and the verdict falls back to the gpg path, which is the pre-existing
+    # behaviour rather than a downgrade.
+    loki_remote_verify_receipt "$dir/proof.json" "$url"
 }
 
 # Verify a fetched receipt locally and print exactly what was and was not
@@ -801,6 +805,57 @@ PY
     esac
 }
 
+# Check a receipt's JWKS attestation against the server's PUBLISHED key set.
+#
+# This is the half gpg cannot do over a network. gpg proves provenance only if
+# you already hold the publisher's key, which a submitter who ran
+# `loki start --remote` never does -- so the honest gpg outcome there is
+# NOT CHECKED, and it stays that way until someone performs an out-of-band key
+# import. Fetching /.well-known/jwks.json over the same TLS the API already
+# uses removes that step.
+#
+# Prints "ok", "bad", or "" (could not check). Fails toward "" so an
+# unreachable JWKS never manufactures a verdict in either direction -- an
+# absent measurement is not evidence, and inventing a PASS here would be worse
+# than inventing a FAIL.
+loki_remote_attestation_status() {
+    local pj="$1" url="$2"
+    [ -n "$url" ] || { printf ''; return 0; }
+    command -v python3 >/dev/null 2>&1 || { printf ''; return 0; }
+    local tok
+    tok="$(jq -r '.verification.attestation // empty' "$pj" 2>/dev/null)"
+    [ -n "$tok" ] || { printf ''; return 0; }
+    python3 - "$pj" "$url" "${_LOKI_SCRIPT_DIR}" <<'PY' 2>/dev/null || printf ''
+import json, sys, hashlib, urllib.request
+sys.path.insert(0, sys.argv[3])
+try:
+    from receipt_jwt import verify_attestation
+except ImportError:
+    sys.exit(1)          # -> "" : cannot check, never a verdict
+proof = json.load(open(sys.argv[1]))
+tok = (proof.get("verification") or {}).get("attestation") or ""
+if not tok:
+    sys.exit(1)
+try:
+    with urllib.request.urlopen(
+            sys.argv[2].rstrip("/") + "/.well-known/jwks.json", timeout=10) as r:
+        jwks = json.loads(r.read())
+except Exception:
+    sys.exit(1)          # unreachable JWKS is UNCHECKED, not a failure
+ok, claims = verify_attestation(tok, jwks)
+if not ok:
+    print("bad"); sys.exit(0)
+# The signature verifying is not enough on its own: it must attest to THIS
+# receipt. Recompute the digest the same way the receipt records it (with
+# `verification` stripped) and require the signed claim to match, or a valid
+# token lifted from a different run would vouch for these bytes.
+proof.pop("verification", None)
+canon = json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
+print("ok" if claims.get("receipt_sha256") == hashlib.sha256(canon).hexdigest()
+      else "bad")
+PY
+}
+
 loki_remote_verify_receipt() {
     local pj="$1"
     local verifier="${_LOKI_SCRIPT_DIR}/lib/proof-verify.py"
@@ -828,6 +883,10 @@ loki_remote_verify_receipt() {
     # a gate that cries wolf every time trains users to ignore the verdict.
     # Only hash_ok and gpg_ok are load-bearing here; drift is not our verdict.
     local out hash_ok gpg_ok
+    # Second argument is the remote URL when this receipt came from a cluster;
+    # empty for a local receipt, which simply means no attestation is checked.
+    local _attest_url="${2:-}" _attest=""
+    _attest="$(loki_remote_attestation_status "$pj" "$_attest_url")"
     out="$(python3 "$verifier" "$pj" "${TARGET_DIR:-.}" 2>/dev/null)"
     hash_ok="$(printf '%s' "$out" | jq -r '.hash_ok // false' 2>/dev/null)"
     gpg_ok="$(printf '%s' "$out" | jq -r '.gpg_ok | tostring' 2>/dev/null)"
@@ -849,6 +908,18 @@ loki_remote_verify_receipt() {
         echo "    the build ran elsewhere. Not tampering, and not part of the verdict."
     fi
 
+    # An attestation that does not verify is an ACCUSATION, and it is checked
+    # before the gpg branches because it is the stronger statement: the server's
+    # own published key says this token does not cover these bytes. Either the
+    # receipt was altered after the server signed it, or the token was lifted
+    # from a different run. Both mean: do not trust this build.
+    if [ "$_attest" = "bad" ]; then
+        echo -e "  ${RED}TAMPERED: the receipt's attestation does not verify against the server's published keys.${NC}" >&2
+        echo "    Either these bytes were altered after signing, or the attestation" >&2
+        echo "    belongs to a different run. Do not trust this build." >&2
+        return 1
+    fi
+
     # gpg_ok=false covers TWO facts that must never be conflated: the signature
     # is cryptographically bad over this content (the receipt was ALTERED), and
     # gpg could not evaluate it at all (we do not hold the public key). Only the
@@ -866,6 +937,17 @@ loki_remote_verify_receipt() {
             _why="$(loki_remote_gpg_status "$pj")"
         fi
         if [ "$_why" = "nopubkey" ]; then
+            # JWKS exists precisely for this case: the gpg key is absent, but a
+            # remote-issued receipt can still prove provenance against the
+            # server's published key set, with no out-of-band import.
+            if [ "$_attest" = "ok" ]; then
+                echo -e "  ${GREEN}VERIFIED${NC}: integrity hash matches and the receipt's attestation is valid."
+                echo "    Proven: these bytes are unaltered, and the build server signed them"
+                echo "    with a key published at ${_attest_url}/.well-known/jwks.json."
+                echo "    The gpg key is not in your keyring; the attestation covers provenance."
+                echo "    NOT proven: that the code is correct. A receipt records which checks ran."
+                return 0
+            fi
             echo -e "  ${YELLOW}NOT CHECKED${NC}: the receipt is signed, but the signing key is not in your keyring." >&2
             echo "    Nothing is wrong with the contents: the integrity hash matches. The" >&2
             echo "    signature could not be evaluated, so PROVENANCE is unproven here." >&2
@@ -894,6 +976,20 @@ loki_remote_verify_receipt() {
         echo -e "  ${YELLOW}NOT CHECKED${NC}: the receipt is signed, but gpg is unavailable on this machine."
         echo "    Its integrity hash matches. The signature was NOT checked, so provenance"
         echo "    is unproven here. Install gpg and re-run: loki proof verify $(basename "$(dirname "$pj")")"
+        return 0
+    fi
+
+    # No gpg signature, but a verified attestation. This is the normal shape for
+    # a cluster build: the receiver signs, the build never holds a gpg key, and
+    # provenance is still proven -- so calling it UNSIGNED would understate what
+    # was actually checked, the mirror of the error we refuse in the other
+    # direction.
+    if [ "$_attest" = "ok" ]; then
+        echo -e "  ${GREEN}VERIFIED${NC}: integrity hash matches and the receipt's attestation is valid."
+        echo "    Proven: these bytes are unaltered, and they were signed by the build"
+        echo "    server whose key is published at ${_attest_url}/.well-known/jwks.json."
+        echo "    Verify that server is one you trust."
+        echo "    NOT proven: that the code is correct. A receipt records which checks ran."
         return 0
     fi
 

@@ -267,6 +267,7 @@ run_test "Dashboard Nav UAT (Dev5)" "$SCRIPT_DIR/test-dashboard-nav-uat.sh"
 run_test "dashboard bundle stays within its measured budget" "$SCRIPT_DIR/test-dashboard-bundle-budget.sh"
 run_test "exposed dashboard bind requires auth (#188)" "$SCRIPT_DIR/test-dashboard-bind-auth-guard.sh"
 run_test "per-job receipt attestation (signed JWT + JWKS)" "$SCRIPT_DIR/test-receipt-jwt-attestation.sh"
+run_test "remote receipt attestation verdict (JWKS)" "$SCRIPT_DIR/test-remote-attestation-verdict.sh"
 run_test "Pytest Gate Timeout (Dev6)" "$SCRIPT_DIR/test-pytest-gate-timeout.sh"
 run_test "Go/Cargo Gate Timeout" "$SCRIPT_DIR/test-go-cargo-gate-timeout.sh"
 # Python tests (Dev2 + Dev7) -- registered via tiny wrapper scripts so the

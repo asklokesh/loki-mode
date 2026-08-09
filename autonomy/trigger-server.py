@@ -974,7 +974,54 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
                 "reason": reason or "the recorded receipt could not be read",
             })
             return
-        self._send_json(200, proof)
+        self._send_json(200, self._attest(proof, job_id, run_id))
+
+    def _attest(self, proof, job_id, run_id):
+        """Attach a signed attestation to a receipt, if signing is configured.
+
+        The JWT is bound to `verification.hash` -- the digest the receipt ALREADY
+        records over itself with `verification` stripped. Signing any other value
+        would let the attestation and the checker's own recomputation disagree
+        while both looked valid, which is worse than not signing at all.
+
+        The token is added under `verification.attestation`, which sits inside
+        the subtree the hash excludes. Putting it anywhere else would change the
+        bytes the hash covers and make every honest receipt read as tampered the
+        moment it was signed.
+
+        Returns the receipt UNCHANGED when signing is unconfigured or the hash
+        is missing. An unsigned receipt is a valid state with an existing
+        verdict; a receipt claiming an attestation it does not have is not.
+        """
+        if self.signing_key is None:
+            return proof
+        verification = proof.get("verification")
+        if not isinstance(verification, dict):
+            return proof
+        receipt_hash = verification.get("hash") or ""
+        if not receipt_hash:
+            # No self-recorded digest means there is nothing to bind to. Signing
+            # the whole body instead would attest to bytes the checker never
+            # recomputes, so the honest move is to leave it unsigned.
+            logging.warning(
+                "receipt attestation: run %s has no verification.hash; left UNSIGNED",
+                run_id,
+            )
+            return proof
+        token = sign_attestation(
+            self.signing_key, self.signing_kid,
+            job_id=job_id, run_id=run_id, receipt_hash=receipt_hash,
+        )
+        if not token:
+            return proof
+        # Copied rather than mutated: read_proof returns a fresh parse today, but
+        # a future cache would make in-place mutation compound tokens across
+        # requests.
+        out = dict(proof)
+        out["verification"] = dict(verification)
+        out["verification"]["attestation"] = token
+        out["verification"]["attestation_kid"] = self.signing_kid
+        return out
 
     def _read_body(self):
         """Read and return the request body, or None if it was refused.
