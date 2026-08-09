@@ -132,7 +132,7 @@ def _receipt(sha, usd=0.42, measured=True):
              "output_tokens": 0, "cache_read_tokens": 0,
              "cache_creation_tokens": 0})
     proof = {
-        "schema": "1.1",
+        "schema_version": "1.1",
         "facts": facts,
         "honesty": {"headline": _pv._compute_headline(facts, []),
                     "degraded": []},
@@ -655,7 +655,7 @@ class RunsOutsideItsOwnTree(unittest.TestCase):
         os.makedirs(os.path.join(ws, ".loki", "proofs", "r1"))
         with open(os.path.join(ws, ".loki", "proofs", "r1", "proof.json"),
                   "w", encoding="utf-8") as f:
-            json.dump({"schema": "1.1", "facts": {},
+            json.dump({"schema_version": "1.1", "facts": {},
                        "cost": {"usd": 1.5, "input_tokens": 10,
                                 "output_tokens": 5}}, f)
 

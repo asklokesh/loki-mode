@@ -13,6 +13,14 @@ sys.path.insert(0, str(ROOT / "autonomy" / "lib"))
 import outcome_contract
 
 
+class _Parser(argparse.ArgumentParser):
+    """Keep CLI usage mistakes distinct from verification verdicts."""
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(64, f"{self.prog}: error: {message}\n")
+
+
 def _load_attester():
     spec = importlib.util.spec_from_file_location(
         "receipt_attest", ROOT / "tools" / "receipt-attest.py")
@@ -102,7 +110,7 @@ def build_passport(contract_path, receipt_path, repo_dir="."):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser()
+    parser = _Parser()
     parser.add_argument("contract")
     parser.add_argument("receipt")
     parser.add_argument("output")
@@ -111,11 +119,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     output = pathlib.Path(args.output)
     if output.exists() and not args.force:
-        parser.error("output exists; pass --force to overwrite")
+        parser.exit(2, f"{parser.prog}: output exists; pass --force to overwrite\n")
     try:
         passport = build_passport(args.contract, args.receipt, args.repo_dir)
     except (OSError, json.JSONDecodeError, outcome_contract.ContractValidationError) as exc:
-        parser.error(str(exc))
+        parser.exit(2, f"{parser.prog}: {exc}\n")
     output.write_text(json.dumps(passport, indent=2, sort_keys=True) + "\n",
                       encoding="utf-8")
     return {"VERIFIED": 0, "FAILED": 1, "UNVERIFIABLE": 2}.get(
