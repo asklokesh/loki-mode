@@ -1867,6 +1867,51 @@ def generate(args):
         if sig:
             verification["gpg_signature"] = sig
 
+    # Optional Ed25519 attestation over the SAME digest, for the case gpg
+    # cannot serve: a receipt checked by someone who does not hold the signing
+    # key. gpg proves provenance only to a verifier who already imported the
+    # public key, which a customer, auditor or CI system handed a proof.json
+    # generally has not. An attestation is checkable against a published JWKS
+    # (or a jwks.json file, offline) with no key exchange at all.
+    #
+    # Binds the DIGEST, not the body, so it attests to exactly the bytes a
+    # verifier independently recomputes. Written INSIDE `verification`, which
+    # the hash excludes -- anywhere else would change the hashed bytes and make
+    # every honest receipt read as tampered the moment it was signed.
+    #
+    # Same default-OFF discipline as gpg above: absent the key, no field, and
+    # the bytes stay identical to an unattested proof. Best-effort for the same
+    # reason -- a signing failure must not cost the user their receipt.
+    # This env check is an EARLY EXIT, not the control that enforces default-off.
+    # Mutation testing showed that removing it changes nothing observable:
+    # load_signing_key() returns (None, "") when neither variable is set, so the
+    # block below cannot attest anyway. It is kept because it skips an import
+    # and a try/except on the overwhelmingly common unconfigured path -- stated
+    # here rather than left to imply a guarantee it does not provide.
+    att_key = (os.environ.get("LOKI_RECEIPT_SIGNING_KEY_FILE", "").strip()
+               or os.environ.get("LOKI_RECEIPT_SIGNING_KEY", "").strip())
+    if att_key:
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__))))
+            from receipt_jwt import load_signing_key, sign_attestation
+            _priv, _kid = load_signing_key()
+            if _priv is not None:
+                _tok = sign_attestation(
+                    _priv, _kid,
+                    job_id=str(redacted.get("run_id") or ""),
+                    run_id=str(redacted.get("run_id") or ""),
+                    receipt_hash=digest,
+                )
+                if _tok:
+                    verification["attestation"] = _tok
+                    verification["attestation_kid"] = _kid
+        except Exception:
+            # Swallowed deliberately, matching the gpg path: an unattested
+            # receipt is a valid state with an existing verdict. Losing the
+            # receipt entirely because signing failed would be strictly worse.
+            pass
+
     redacted["verification"] = verification
 
     # Determine output dir.

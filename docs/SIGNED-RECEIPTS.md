@@ -149,9 +149,21 @@ receipt that stops verifying is indistinguishable from a tampered one.
 | `LOKI_RECEIPT_RETIRED_PUBKEYS` | Colon-separated PEM paths for retired public keys. |
 
 Unset means unsigned: no attestation is attached and the receipt keeps its
-existing verdict. **The receiver signs, never the worker** -- a worker runs
+existing verdict.
+
+The same two variables also work for a **local** build. Set
+`LOKI_RECEIPT_SIGNING_KEY_FILE` before `loki start` and the generator attests
+the receipt directly, so a laptop or CI receipt is checkable by the same
+`--jwks` path a cluster receipt uses. Publish the matching JWKS wherever your
+consumers can reach it (or hand them `jwks.json` alongside the receipt).
+
+**In a cluster, the receiver signs -- never the worker.** A worker runs
 model-directed code and already holds provider credentials, so a key there would
-let a build sign its own receipt, which attests to nothing.
+let a build sign its own receipt, which attests to nothing. The local case is
+different in kind, not an exception to this: there is no separation between
+submitter and builder on your own machine, and the attestation says "this
+receipt came from a holder of this key" rather than "an independent party
+witnessed this build."
 
 ## Source
 
