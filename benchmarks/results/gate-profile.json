@@ -1,0 +1,24 @@
+{
+ "generated": "2026-08-09",
+ "build": "hard-1-order-api, graded PASS, 16.0 min wall, 6.6 min iteration work",
+ "method": "Per-gate durations from stage_complete{stage,duration_s} events the engine already emitted; preserved into the metrics JSON by 4a435ffa. Before that they were computed on every build and discarded.",
+ "attribution_s": {
+  "agent_model_work": 392,
+  "code_review": 211,
+  "doc_generation": 90,
+  "spec_interrogation": 28,
+  "static_analysis": 1,
+  "lsp_diagnostics": 1,
+  "security_scan": 0,
+  "test_suite": 0,
+  "mock_integrity": 0,
+  "mutation_integrity": 0,
+  "code_review_other_gates_combined": 2
+ },
+ "stage_total_s": 723,
+ "wall_clock_s": 960,
+ "finding": "The gates are NOT the overhead. Eight of the eleven instrumented gates cost 2 seconds COMBINED. Time is: the agent itself (392s, 41%), code review (211s, 22%), and doc generation (90s, 9%, already capped from 300s by 7e32778f). That is the opposite of where I would have optimised by guessing -- the static/security/test/mock/mutation gates look expensive in a log because they print a lot, and they cost nothing.",
+ "code_review_is_not_waste": "211s is roughly ONE reviewer's latency, not four serial: the log shows 4 reviewers dispatched then a single wait, so it is already parallel. And on this build it earned the time -- the reviewers found a High-severity hole the HELD-OUT GRADER PASSED: NaN and Infinity bypass the money-path validation, because `nan < 0` is False in Python. Cutting this gate to save 22% would trade a real correctness catch for three minutes.",
+ "next_target": "The agent's own 392s is the largest single line and the one worth attacking, not the gates. That is prompt and model-tier work, not harness work.",
+ "not_claimed": "No multiplier. One build on one task on one machine; stage durations are wall-clock seconds from the engine's own events, not CPU time. 237s of the 960s wall clock is unattributed (process startup, git, rsync of the engine copy, teardown)."
+}
