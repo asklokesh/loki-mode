@@ -1,0 +1,9 @@
+{
+ "generated": "2026-08-09",
+ "finding": "The speed benchmark has only ever measured the BASH route. benchmarks/speed-benchmark.sh:86 hardcodes RUN_SH=autonomy/run.sh, so every number in this repo's speed corpus -- including the 392s agent line in gate-profile.json -- is from the route that does NOT apply prompt caching.",
+ "why_it_matters": "The two routes differ on exactly the axis the agent line measures. loki-ts/src/runner/sdk_invoker.ts:54 sends the prompt as [static-prefix with cache_control:ephemeral, dynamic-tail], so the cache-stable prefix is billed once and reused. run.sh cannot: it pipes a single prompt string through `claude -p`, and the CLI exposes no way to express cache_control. run.sh:20139 says so honestly -- the [CACHE_BREAKPOINT] marker is 'a documentation anchor today'.",
+ "measured_prefix_size": "8090 bytes default, 1776 with LOKI_SIMPLE=1 (tests/test-simple-prompt-ablation.sh) -- roughly 1578 tokens of stable prefix re-sent every iteration on the bash route.",
+ "what_this_does_NOT_establish": "That the Bun route is faster. Nobody has run it through this harness. Caching reduces input TOKEN COST and can reduce latency, but the agent's 392s is dominated by output generation and tool turns, and no measurement here separates those. Claiming a speedup from the mechanism alone would be exactly the reasoning this corpus refuses.",
+ "next_experiment": "Teach speed-benchmark.sh to drive the Bun route, then run the same graded hard task on both with n>=6 per arm. That is the first comparison in this repo where a real mechanism predicts a direction in advance, which makes it worth the trials.",
+ "blocker": "Not blocked. It needs a --route flag on the harness and a way to invoke loki-ts with the same caps; roughly an hour of harness work plus 3-4 hours of trials."
+}

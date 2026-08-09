@@ -33,6 +33,7 @@ LABEL="run"
 SPEC=""
 MAX_ITERS="${LOKI_BENCH_MAX_ITERS:-20}"
 TIMEOUT_S="${LOKI_BENCH_TIMEOUT_S:-3600}"
+ROUTE="${LOKI_BENCH_ROUTE:-bash}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -40,6 +41,12 @@ while [ $# -gt 0 ]; do
     --spec) SPEC="$2"; shift 2 ;;
     --max-iters) MAX_ITERS="$2"; shift 2 ;;
     --timeout-s) TIMEOUT_S="$2"; shift 2 ;;
+    # WHICH ROUTE TO MEASURE. Every number in this repo's speed corpus is from
+    # the BASH route, because this harness hardcoded run.sh -- and the two
+    # routes differ on exactly the axis the agent line measures: loki-ts sends
+    # a cache_control:ephemeral prefix (sdk_invoker.ts:54), run.sh pipes one
+    # string through `claude -p` and cannot express caching at all.
+    --route)     ROUTE="$2"; shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -86,6 +93,21 @@ fi
 RUN_SH="$ENGINE/autonomy/run.sh"
 [ -f "$RUN_SH" ] || { echo "FATAL: run.sh not found in engine copy"; exit 2; }
 
+# Route selection. REFUSES an unknown value rather than falling back to bash:
+# a silent fallback would label a bash run "bun" and put a wrong number in the
+# corpus, which is worse than not running.
+case "$ROUTE" in
+  bash) ;;
+  bun)
+    if [ ! -f "$ENGINE/loki-ts/dist/loki.js" ] && [ ! -f "$ENGINE/loki-ts/src/cli.ts" ]; then
+      echo "FATAL: --route bun but neither loki-ts/dist/loki.js nor src/cli.ts is in the engine copy" >&2
+      exit 2
+    fi
+    command -v bun >/dev/null 2>&1 || { echo "FATAL: --route bun but bun is not on PATH" >&2; exit 2; }
+    ;;
+  *) echo "FATAL: unknown --route '$ROUTE' (want: bash|bun)" >&2; exit 2 ;;
+esac
+
 # --- Prepare the empty target project dir ------------------------------------
 mkdir -p "$WORK/project"
 ( cd "$WORK/project" && git init -q && git config user.email b@b && git config user.name b )
@@ -94,6 +116,7 @@ echo "=== Loki speed benchmark [$LABEL] ==="
 echo "spec:    $SPEC"
 echo "target:  $WORK/project"
 echo "engine:  $ENGINE (isolated copy)"
+echo "route:   $ROUTE"
 echo "caps:    max_iters=$MAX_ITERS timeout=${TIMEOUT_S}s"
 echo "started: $STAMP"
 
@@ -120,7 +143,11 @@ WALL_START=$(date +%s)
   LOKI_APP_RUNNER=false \
   LOKI_NO_NEW_SESSION=1 \
   CI=true \
-  timeout --kill-after=60 "$TIMEOUT_S" bash "$RUN_SH" "$SPEC" > "$WORK/build.log" 2>&1 )
+  LOKI_BENCH_ROUTE="$ROUTE" \
+  $( [ "$ROUTE" = "bash" ] && echo "LOKI_LEGACY_BASH=1" ) \
+  timeout --kill-after=60 "$TIMEOUT_S" \
+    $( [ "$ROUTE" = "bun" ] && echo "bash $ENGINE/bin/loki start" || echo "bash $RUN_SH" ) \
+    "$SPEC" > "$WORK/build.log" 2>&1 )
 BUILD_RC=$?
 WALL_END=$(date +%s)
 WALL_S=$((WALL_END - WALL_START))
@@ -284,6 +311,7 @@ metrics = {
   'max_iteration_work_min': round(max((w['work_s'] for w in work), default=0)/60,1),
   'acceptance': acc,
   'events_total': len(sess),
+  'route': os.environ.get('LOKI_BENCH_ROUTE', 'bash'),
   # PER-GATE DURATIONS. The engine has emitted stage_complete{stage,duration_s}
   # for 11 gates all along, and this harness parsed the events file and threw
   # them away -- so "84% of a build is overhead" was measurable but not
