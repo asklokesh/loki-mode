@@ -8629,6 +8629,84 @@ async def docs_get_file(session_id: str, filename: str) -> Response:
 
 
 # ---------------------------------------------------------------------------
+# Evidence Receipts.
+#
+# MUST be declared ABOVE the SPA catch-all below, or these return text/html
+# instead of JSON -- the exact v7.6.0 bug documented there, which silently
+# swallowed 22 API routes.
+#
+# The EvidenceReceiptPanel calls these. Without them `loki web` (port 57375)
+# rendered "Could not load receipts" for every user while the identical panel
+# worked against the dashboard on 57374, because only the dashboard defined
+# /api/proofs. Found by driving the built bundle in a real browser -- a unit
+# test against a stubbed fetch cannot see a route that does not exist.
+#
+# Delegates to dashboard.server's readers rather than reimplementing the
+# traversal guards and the honesty bucketing. Two implementations of "which
+# receipts exist" WILL drift, and a verification surface that disagrees with
+# itself is worse than one that is merely missing.
+# ---------------------------------------------------------------------------
+def _dashboard_proofs_module():
+    """Import the dashboard's proof readers, or None if unavailable."""
+    try:
+        import sys as _sys
+        _root = str(SCRIPT_DIR.parent)
+        if _root not in _sys.path:
+            _sys.path.insert(0, _root)
+        from dashboard import server as _dash  # type: ignore
+        return _dash
+    except Exception:
+        return None
+
+
+@app.get("/api/proofs")
+async def webapp_list_proofs() -> Response:
+    """List Evidence Receipts. Mirrors the dashboard's /api/proofs exactly."""
+    dash = _dashboard_proofs_module()
+    if dash is None:
+        # An honest empty list, not a 500: a missing dashboard package means we
+        # cannot read receipts, and the panel's own empty state explains that
+        # none were found. A 500 would render as a scary error for what is a
+        # normal partial install.
+        return JSONResponse(content={"proofs": []})
+    try:
+        return JSONResponse(content=await dash.list_proofs())
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/proofs/summary")
+async def webapp_proofs_summary() -> Response:
+    """Verdict distribution across receipts. Mirrors the dashboard endpoint."""
+    dash = _dashboard_proofs_module()
+    if dash is None:
+        return JSONResponse(content={
+            "total_receipts": 0, "verified": 0, "with_gaps": 0,
+            "not_verified": 0, "unknown": 0,
+        })
+    try:
+        return JSONResponse(content=await dash.proofs_summary())
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/proofs/{run_id}")
+async def webapp_get_proof(run_id: str) -> Response:
+    """One receipt. The dashboard reader enforces the path-traversal guard."""
+    dash = _dashboard_proofs_module()
+    if dash is None:
+        return JSONResponse(status_code=404, content={"error": "proofs unavailable"})
+    try:
+        return await dash.get_proof(run_id)
+    except Exception as e:
+        # HTTPException carries its own status (404 for an unknown run id);
+        # anything else is a genuine read failure.
+        status = getattr(e, "status_code", 500)
+        detail = getattr(e, "detail", str(e))
+        return JSONResponse(status_code=status, content={"error": detail})
+
+
+# ---------------------------------------------------------------------------
 # SPA catch-all (MUST be last @app route -- see comment at the old serve_spa
 # location higher in this file). Any path that isn't matched by a specific
 # @app.get/post/... above falls through here and serves the React bundle.

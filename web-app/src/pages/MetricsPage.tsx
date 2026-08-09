@@ -16,6 +16,7 @@ import { HeatMap } from '../components/charts/HeatMap';
 import { RadarChart } from '../components/charts/RadarChart';
 import { Timeline } from '../components/charts/Timeline';
 import { CodeTimeline } from '../components/CodeTimeline';
+import { EvidenceReceiptPanel } from '../components/EvidenceReceiptPanel';
 import { ProviderRace } from '../components/ProviderRace';
 
 // --------------------------------------------------------------------------
@@ -207,6 +208,17 @@ export function MetricsPage() {
         <p className="text-sm text-[#6B6960] dark:text-[#8A8880] mt-1">
           Build performance, cost tracking, and system health
         </p>
+      </div>
+
+      {/* Evidence Receipts.
+          Mounted HERE as well as on HomePage because HomePage renders its
+          dashboard column only while a build isRunning (HomePage:260) -- so a
+          receipt, which is a DURABLE record of a build that already finished,
+          was visible only during a run and never afterwards. This route needs
+          no running session, which is the state a user is in when they come
+          looking for what a past build actually proved. */}
+      <div className="mb-6 rounded-card border border-[#ECEAE3] dark:border-[#2A2A2E] bg-white dark:bg-[#18181B] p-4">
+        <EvidenceReceiptPanel />
       </div>
 
       {/* KPI cards - 4 column grid */}
