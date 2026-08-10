@@ -276,6 +276,7 @@ _loki_start_needs_bash() {
     for a in "$@"; do
         case "$a" in
             --parallel|--bg|--background|--github|--api|--sandbox \
+            |--fast|--repo-fast|--full|--repo-full \
             |--bmad-project|--openspec \
             |--mirofish|--mirofish-docker|--mirofish-rounds|--mirofish-timeout|--mirofish-bg \
             |--issue|--dry-run|--no-start|--output|--worktree|-w|--pr|--ship|--detach|-d)

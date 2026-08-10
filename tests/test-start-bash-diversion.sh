@@ -62,6 +62,10 @@ route bash --mirofish ./prd.md
 route bash --issue 42
 route bash --pr ./prd.md
 route bash --ship ./prd.md
+route bash ./repo --fast
+route bash ./repo --repo-fast
+route bash ./repo --full
+route bash ./repo --repo-full
 
 # --- Issue-ref positionals DIVERT to bash ----------------------------------
 route bash owner/repo#123

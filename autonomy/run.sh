@@ -7784,9 +7784,14 @@ print_ttfv_next_steps() {
     echo "============================================================"
     echo ""
     echo "  What I did:"
-    if [ "$mode" = "brief" ]; then
+    if [ "$mode" = "brief" ] || [ "$mode" = "repo-fast" ]; then
+        if [ "$mode" = "repo-fast" ]; then
+            echo "    - Inspected your repository on a fast, lightweight first"
+            echo "      pass (council off, simple tier, capped iterations)."
+        else
         echo "    - Worked from your one-line brief on a fast, lightweight first"
         echo "      pass (council off, simple tier, capped iterations)."
+        fi
         echo "    - Generated a proof-of-run (diffs, cost, time)."
     else
         echo "    - Analyzed your codebase and generated a PRD, then ran a full"
@@ -7808,7 +7813,7 @@ print_ttfv_next_steps() {
         echo "    loki proof list"
     fi
     echo ""
-    if [ "$mode" = "brief" ]; then
+    if [ "$mode" = "brief" ] || [ "$mode" = "repo-fast" ]; then
         echo "  Go deeper (full RARV-C depth, council-gated):"
         echo "    loki start                 # continue / harden this project"
         echo "    loki start ./prd.md        # build from a full PRD"
