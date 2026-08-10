@@ -98,6 +98,56 @@ class ProofPassportTests(unittest.TestCase):
         self.assertEqual(run.returncode, 2)
         self.assertEqual(output.read_text(), "keep")
 
+    def test_markdown_summary_is_portable_and_evidence_bound(self):
+        passport = pp.build_passport(self.contract, self.receipt, self.path)
+        summary = pp.render_markdown(passport)
+        expected = {"VERIFIED": "PASS", "FAILED": "FAIL"}.get(
+            passport["verification"]["verdict"], "UNVERIFIABLE")
+        self.assertIn(
+            f"**{expected}: {passport['verification']['verdict']}**", summary)
+        self.assertIn(passport["contract"]["sha256"], summary)
+        self.assertIn(passport["receipt"]["sha256"], summary)
+        self.assertIn("| Independent verifier | `yes` |", summary)
+        self.assertIn("| Passport signature | `unsigned` |", summary)
+        self.assertNotIn(str(self.path), summary)
+        self.assertNotIn(str(self.path.resolve()), summary)
+
+    def test_cli_writes_markdown_summary(self):
+        output = self.path / "passport.json"
+        summary = self.path / "summary.md"
+        run = subprocess.run([
+            "python3", str(TOOL), str(self.contract), str(self.receipt),
+            str(output), "--repo-dir", str(self.path),
+            "--markdown-output", str(summary)], capture_output=True, text=True)
+        passport = json.loads(output.read_text())
+        expected_rc = {"VERIFIED": 0, "FAILED": 1, "UNVERIFIABLE": 2}[
+            passport["verification"]["verdict"]]
+        self.assertEqual(run.returncode, expected_rc, run.stderr)
+        self.assertTrue(output.exists())
+        self.assertIn(passport["verification"]["verdict"], summary.read_text())
+
+    def test_markdown_conflict_prevents_both_outputs(self):
+        output = self.path / "passport.json"
+        summary = self.path / "summary.md"
+        summary.write_text("keep")
+        run = subprocess.run([
+            "python3", str(TOOL), str(self.contract), str(self.receipt),
+            str(output), "--markdown-output", str(summary)],
+            capture_output=True, text=True)
+        self.assertEqual(run.returncode, 2)
+        self.assertFalse(output.exists())
+        self.assertEqual(summary.read_text(), "keep")
+
+    def test_markdown_escapes_untrusted_contract_and_verifier_text(self):
+        passport = pp.build_passport(self.contract, self.receipt, self.path)
+        passport["contract"]["id"] = "`x` | injected"
+        passport["verification"]["summary"] = "ok\n<script>alert(1)</script>"
+        summary = pp.render_markdown(passport)
+        self.assertNotIn("<script>", summary)
+        self.assertNotIn("\n<script>", summary)
+        self.assertNotIn("`x` | injected", summary)
+        self.assertIn("&lt;script&gt;", summary)
+
 
 if __name__ == "__main__":
     unittest.main()
