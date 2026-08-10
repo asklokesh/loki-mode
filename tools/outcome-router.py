@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Recommend a route from measured accepted-outcome efficiency, or refuse."""
-import argparse, json, math, os, sys
+import argparse, hashlib, json, math, os, sys
 
 OK, NO_ELIGIBLE, USAGE, NO_INPUT = 0, 3, 64, 66
 
@@ -52,7 +52,12 @@ def route(path, min_trials=3, max_risk=.25, risk_weight=1.0):
             "accepted_per_dollar": per_dollar, "accepted_per_minute": per_minute,
             "score": score, "eligible": not reasons, "refusal_reasons": reasons})
     eligible = sorted((c for c in candidates if c["eligible"]), key=lambda c: (-c["score"], c["route"]))
+    with open(path, "rb") as source_handle:
+        source_sha256 = hashlib.sha256(source_handle.read()).hexdigest()
     return {"report": "loki-outcome-router/v1", "source": os.path.abspath(path),
+            "source_sha256": source_sha256,
+            "policy": {"min_trials": min_trials, "max_risk": max_risk,
+                       "risk_weight": risk_weight},
             "selected_route": eligible[0]["route"] if eligible else None,
             "invalid_observations": invalid, "candidates": candidates,
             "formula": "harmonic(accepted/USD, accepted/minute) * max(0, 1-risk_weight*mean_risk)"}

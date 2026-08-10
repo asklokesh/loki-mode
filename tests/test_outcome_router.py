@@ -20,6 +20,11 @@ class TestOutcomeRouter(unittest.TestCase):
     def test_bad_bool_and_nonfinite_poison_input(self):
         rows=[self.row() for _ in range(3)]; rows += [{**self.row(),"accepted":1}, {**self.row(),"risk":float("nan")}, "{"]
         r=mod.route(self.write(rows)); self.assertIsNone(r["selected_route"]); self.assertEqual(len(r["invalid_observations"]),3)
+    def test_report_carries_source_digest_and_policy(self):
+        import hashlib
+        p=self.write([self.row()]*3); r=mod.route(p,min_trials=3,max_risk=.25,risk_weight=1.0)
+        self.assertEqual(r["source_sha256"], hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest())
+        self.assertEqual(r["policy"], {"min_trials":3,"max_risk":.25,"risk_weight":1.0})
     def test_cli_json_human_and_codes(self):
         p=self.write([self.row()]*3)
         j=subprocess.run([sys.executable,str(TOOL),p,"--json"],capture_output=True,text=True); self.assertEqual(j.returncode,0); json.loads(j.stdout)
