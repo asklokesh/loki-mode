@@ -281,7 +281,16 @@ def _process_has_lineage_token(pid: int, token: str) -> bool:
     if sys.platform.startswith("linux"):
         try:
             with open(f"/proc/{pid}/environ", "rb") as handle:
-                return needle in handle.read().split(b"\0")
+                payload = handle.read()
+            if not payload:
+                # A zero-length read raises NOTHING. The kernel empties
+                # /proc/<pid>/environ as the process is reaped, so a fast
+                # runner yields b"" -- which splits to [b""], does not contain
+                # the needle, and returns "no marker" for a process that
+                # carried one. Indistinguishable from the FileNotFoundError
+                # case below and must be answered the same way.
+                raise _LineageUnknown(pid)
+            return needle in payload.split(b"\0")
         except FileNotFoundError:
             # The process is already gone. /proc/<pid>/environ disappears the
             # moment a child is reaped, so a short-lived runner that exits
@@ -295,7 +304,18 @@ def _process_has_lineage_token(pid: int, token: str) -> bool:
             # macOS never hit this: it has the pipe-handle fallback, so the
             # bug was Linux-only and invisible on a developer Mac.
             raise _LineageUnknown(pid) from None
+        except ProcessLookupError:
+            # ESRCH: the pid was reaped between opening and reading. Same fact
+            # as ENOENT above -- the process is gone, so its marker is UNKNOWN,
+            # not absent. Listed BEFORE the OSError clause because it is a
+            # subclass and would otherwise be swallowed into "no marker",
+            # which fails the lineage guard and reports 127 for a process that
+            # launched and completed.
+            raise _LineageUnknown(pid) from None
         except OSError:
+            # Anything else (EACCES on a hardened /proc, EIO) is a genuine
+            # read failure rather than evidence of a completed child, so it
+            # stays fail-closed: no marker.
             return False
     return False
 
