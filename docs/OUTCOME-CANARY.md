@@ -16,6 +16,9 @@ The tool refuses unless the evidence stands up on its own terms:
   a 64-hex `source_sha256`, and a `candidates` list
 - the recorded source file still exists and still hashes to `source_sha256`, so a
   plan cannot rest on trials that changed after they were measured
+- the exact router-report bytes are hashed as `report_sha256`; that digest is
+  emitted in the plan and participates in assignment, so a report edited after
+  review cannot reuse the prior plan binding
 - the report selected a primary route, the control route is present, both are
   `eligible`, and the two differ
 - `trials` and `mean_risk` on both routes are strictly valid numbers: booleans,
@@ -31,7 +34,7 @@ rather than partially applied.
 
 Assignment is deterministic and needs no stored state. The tool hashes a
 NUL-joined, domain-separated string of `loki-outcome-canary/v1`, the subject, the
-source digest, the primary route, the control route, and the percentage, then takes
+router-report digest, the source digest, the primary route, the control route, and the percentage, then takes
 that sha256 modulo 10000 against the percentage. The same subject and the same
 evidence always land in the same arm, in any process; different subjects spread
 across arms. Because the digest includes the evidence, changing the trials

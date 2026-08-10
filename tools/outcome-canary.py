@@ -30,21 +30,23 @@ def sha256_file(path):
             digest.update(chunk)
     return digest.hexdigest()
 
-def evidence_digest(subject, source_sha256, primary, control, percent):
+def evidence_digest(subject, report_sha256, source_sha256, primary, control, percent):
     # NUL-joined so a route name containing a separator cannot collide with another split.
-    parts = [DOMAIN, subject, source_sha256, primary, control, f"{percent:.6f}"]
+    parts = [DOMAIN, subject, report_sha256, source_sha256, primary, control, f"{percent:.6f}"]
     return hashlib.sha256("\x00".join(parts).encode("utf-8")).hexdigest()
 
 def assign(digest, percent):
     return "canary" if int(digest, 16) % 10000 < round(percent * 100) else "control"
 
 def load_report(path):
-    """Return (report, refusal_reasons). Raises ValueError on unreadable/unparsable input."""
-    with open(path, encoding="utf-8") as handle:
-        report = json.load(handle)
+    """Return (report, report_sha256, refusal_reasons) from one exact byte read."""
+    with open(path, "rb") as handle:
+        report_bytes = handle.read()
+    report_sha256 = hashlib.sha256(report_bytes).hexdigest()
+    report = json.loads(report_bytes.decode("utf-8"))
     reasons = []
     if not isinstance(report, dict):
-        return None, ["report is not a JSON object"]
+        return None, report_sha256, ["report is not a JSON object"]
     if report.get("report") != REPORT:
         reasons.append(f"report version is not {REPORT}")
     source = report.get("source")
@@ -55,7 +57,7 @@ def load_report(path):
         reasons.append("report has no valid source_sha256")
     if not isinstance(report.get("candidates"), list):
         reasons.append("report has no candidates")
-    return report, reasons
+    return report, report_sha256, reasons
 
 def candidate(report, name):
     for row in report.get("candidates") or []:
@@ -73,13 +75,15 @@ def plan(report_path, subject, control_route, canary_percent=10.0, max_risk=.25,
     if not enable_canary:
         reasons.append("canary is opt-in; pass --enable-canary")
     try:
-        report, schema_reasons = load_report(report_path)
+        report, report_sha256, schema_reasons = load_report(report_path)
     except Exception as exc:
-        return {"plan": DOMAIN, "report": os.path.abspath(report_path), "assignment": None,
+        return {"plan": DOMAIN, "report": os.path.abspath(report_path), "report_sha256": None,
+                "assignment": None,
                 "refusal_reasons": reasons + [f"report is malformed: {exc}"]}
     reasons += schema_reasons
     if report is None:
-        return {"plan": DOMAIN, "report": os.path.abspath(report_path), "assignment": None,
+        return {"plan": DOMAIN, "report": os.path.abspath(report_path),
+                "report_sha256": report_sha256, "assignment": None,
                 "refusal_reasons": reasons}
 
     source = report.get("source") if isinstance(report.get("source"), str) else None
@@ -130,7 +134,8 @@ def plan(report_path, subject, control_route, canary_percent=10.0, max_risk=.25,
     if len(trials) == 2 and trials["primary"] != trials["control"]:
         reasons.append(f"evidence is unmatched: {trials['primary']} primary trials vs {trials['control']} control trials")
 
-    out = {"plan": DOMAIN, "report": os.path.abspath(report_path), "report_version": report.get("report"),
+    out = {"plan": DOMAIN, "report": os.path.abspath(report_path),
+           "report_sha256": report_sha256, "report_version": report.get("report"),
            "source": source, "source_sha256": source_sha256, "source_missing": source_missing,
            "primary_route": primary, "control_route": control_route,
            "canary_percent": percent, "max_risk": ceiling, "subject": subject,
@@ -138,7 +143,7 @@ def plan(report_path, subject, control_route, canary_percent=10.0, max_risk=.25,
            "rollback": None, "refusal_reasons": reasons}
     if reasons:
         return out
-    digest = evidence_digest(subject, source_sha256, primary, control_route, percent)
+    digest = evidence_digest(subject, report_sha256, source_sha256, primary, control_route, percent)
     out["evidence_digest"] = digest
     out["assignment"] = assign(digest, percent)
     out["route"] = primary if out["assignment"] == "canary" else control_route
@@ -180,6 +185,7 @@ def main(argv=None):
     else:
         print(f"Canary plan: {result['assignment']} -> {result['route']}")
         print(f"  primary={result['primary_route']} control={result['control_route']} percent={result['canary_percent']:.6f}")
+        print(f"  report sha256: {result['report_sha256']}")
         print(f"  evidence digest: {result['evidence_digest']}")
         print(f"  reversible: {result['reversible']}; rollback assigns {result['rollback']['assignment']}")
         print(f"  rollback: {result['rollback']['command']}")

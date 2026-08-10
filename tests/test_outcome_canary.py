@@ -57,6 +57,18 @@ class TestOutcomeCanary(unittest.TestCase):
         self.assertNotEqual(self.plan(path, subject="a")["evidence_digest"],
                             self.plan(path, subject="b")["evidence_digest"])
 
+    def test_report_bytes_are_bound_to_plan_and_assignment_digest(self):
+        path = self.report()
+        before = self.plan(path)
+        self.assertEqual(before["report_sha256"], hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest())
+        body = json.loads(pathlib.Path(path).read_text())
+        body["review_note"] = "changed after review"
+        pathlib.Path(path).write_text(json.dumps(body))
+        after = self.plan(path)
+        self.assertEqual(after["refusal_reasons"], [])
+        self.assertNotEqual(after["report_sha256"], before["report_sha256"])
+        self.assertNotEqual(after["evidence_digest"], before["evidence_digest"])
+
     # evidence integrity
     def test_malformed_and_wrong_version_reports_refuse(self):
         f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False); f.write("{"); f.close()
@@ -148,6 +160,7 @@ class TestOutcomeCanary(unittest.TestCase):
         payload = json.loads(j.stdout)
         self.assertEqual(payload["rollback"]["assignment"], "control")
         self.assertEqual(payload["primary_route"], "fast")
+        self.assertEqual(payload["report_sha256"], hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest())
         optout = subprocess.run(base, capture_output=True, text=True)
         self.assertEqual(optout.returncode, 3); self.assertIn("REFUSED", optout.stdout)
         self.assertEqual(subprocess.run(base + ["--wat"], capture_output=True).returncode, 64)
