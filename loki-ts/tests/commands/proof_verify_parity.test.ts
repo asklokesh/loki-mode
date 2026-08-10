@@ -91,6 +91,11 @@ empty_stat = {"count": 0, "insertions": 0, "deletions": 0, "files": []}
 diff_sha256 = hashlib.sha256(_canonical(empty_stat).encode("utf-8")).hexdigest()
 
 proof = {
+    # schema_version is what proof-verify.py enforces (SUPPORTED_SCHEMA_MAJOR);
+    # a receipt without it fails closed, and no real generator emits one --
+    # proof-generator.py:1329 always writes it. Omitting it here made this
+    # "CLEAN, unmodified proof" fixture unrepresentable in production.
+    "schema_version": "1.1",
     "run_id": "run-parity-clean",
     "generated_at": "2026-06-20T00:00:00Z",
     "facts": {
