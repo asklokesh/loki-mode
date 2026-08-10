@@ -5,6 +5,42 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.21.0
+
+Four features from the parallel lanes plus one post-release fix to v9.20.0's
+lineage guard.
+
+### Added
+
+- **`loki start <dir>` accepts an existing repository directory**, not only a
+  spec file, with an opt-in fast repository pass for the common case.
+- **Outcome route advisor** (`tools/outcome-router.py`): picks a route from
+  recorded outcome data rather than a fixed default.
+- **Reversible outcome route canary** (`tools/outcome-canary.py`): rolls a
+  route change forward on evidence and back out without one.
+
+### Fixed
+
+- **A reaped child's lineage marker is UNKNOWN, not absent.** v9.20.0's Tests
+  run failed on Python 3.10 only -- 3.11, 3.12 and 3.13 passed in the same
+  matrix -- with `127 != 0` and "provider attempt lineage marker is
+  unavailable". 127 is reported for a LAUNCH failure; the runner had in fact
+  launched and completed, then been reaped before the check could read
+  `/proc/<pid>/environ`.
+
+  That read has three "process is gone" outcomes and only one was handled.
+  `ENOENT` raised `_LineageUnknown`; `ESRCH` was swallowed by
+  `except OSError: return False`; and a zero-length read raised nothing at all,
+  splitting to `[b""]` and answering "no marker" for a process that carried
+  one. Both now classify as unknown and reach the caller's existing
+  `poll()`-based decision.
+
+  Fail-closed is preserved and asserted twice: a populated environ without the
+  marker still returns False, and `EACCES`/`EIO` stay False -- a read failure
+  is not evidence of a completed child. Only "the process is gone" is
+  reclassified. Linux-only: macOS has the pipe-handle fallback, which is why
+  the local repro passed 5/5 while CI stayed red.
+
 ## v9.20.0
 
 The Evidence Receipt becomes portable. A receipt from any build -- laptop, CI,
