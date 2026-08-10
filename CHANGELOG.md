@@ -5,6 +5,86 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.20.0
+
+The Evidence Receipt becomes portable. A receipt from any build -- laptop, CI,
+or cluster -- can now prove WHO produced it to someone holding only proof.json
+and a public key set: no API token, no gpg key import over a side channel, no
+network, and no Loki install. That closes the gap that made receipts checkable
+only by people who already had our infrastructure.
+
+Two security fixes ship alongside it, and both were reachable in production.
+
+### Added
+
+- **Per-job receipt attestation.** Ed25519 JWT binding job id, run id and the
+  receipt's own integrity digest, with the signing keys published at
+  `GET /.well-known/jwks.json` -- unauthenticated, deliberately, because a
+  receipt only a token-holder can check is not independently verifiable.
+  `kid` and multi-key rotation from day one: without them the first key
+  rotation would make every historical receipt fail verification, and a
+  receipt that stops verifying is indistinguishable from a tampered one.
+- **`loki proof verify <id> --jwks <url|file>`.** The third-party path. A file
+  is accepted as well as a URL so an air-gapped reviewer can verify offline.
+  Four outcomes kept distinct -- VERIFIED, FAILED, ABSENT, NOT CHECKED --
+  because "we could not check" must never render as "unattested".
+- **Local receipts are attested too**, not only cluster-served ones. The
+  generator signs when `LOKI_RECEIPT_SIGNING_KEY_FILE` is set.
+- **Receipt signing in Helm and docker-compose.** Receiver-only in both: a
+  worker runs model-directed code, so a key there would let a build sign its
+  own receipt. Compose ships the mount commented out because Docker has no
+  optional bind and an active bind to a missing file is a hard start failure.
+- **Evidence Receipts in the web app** -- a panel listing every receipt with
+  its verdict, plus a distribution strip. `unknown` is its own series and is
+  never folded into verified.
+- **Receipt metrics on `/metrics`**: `loki_receipts_total`,
+  `loki_receipts_by_verdict`, `loki_receipts_with_provenance`. Twelve metric
+  lines became nineteen; verification was previously invisible to monitoring.
+- **Worker autoscaling on queue depth** (Helm, off by default). CPU is the
+  wrong signal: a worker blocked on a model call is idle by CPU measure while
+  the backlog grows, so a CPU-targeted HPA scales a saturated cluster DOWN.
+- **Outcome Contract + Proof Passport foundation** (`autonomy/lib/
+  outcome_contract.py`, `tools/proof-passport.py`, schema, tests).
+
+### Fixed
+
+- **SECURITY: `loki dashboard start` refused an exposed bind without auth.**
+  `dashboard/auth.py` returns allow when neither `LOKI_ENTERPRISE_AUTH` nor
+  OIDC is configured, leaving all 166 scoped endpoints open. Fine on loopback;
+  not on `0.0.0.0`, which `docker run -p 57374:57374 <img> dashboard start`
+  reaches. Now refused unless auth is configured, checked AFTER argument
+  parsing so an explicit `--host` is covered. Refuses rather than auto-minting
+  a token: a credential the operator never sees is worse than a refusal.
+- **PRIVACY: the Proof Passport leaked absolute machine paths on macOS.**
+  Redaction was built from `.resolve()` while the attester embeds the
+  unresolved path; `/var` -> `/private/var` meant the redactor never matched.
+  Green on Linux CI, leaking on every developer Mac.
+- **The receipt verifier now enforces `schema_version`.** The generator has
+  stamped it on every receipt since it shipped and nothing read it -- a future
+  incompatible receipt would have been judged by the wrong rules and reported
+  as a clean pass. Fails closed on absent or unknown major; every minor of
+  major 1 still verifies, so no existing receipt breaks.
+- **The receipt panel was unreachable for every `loki web` user.**
+  `/api/proofs*` existed only on the dashboard server, not the one `loki web`
+  runs, and the panel rendered only while a build was in flight.
+
+### Performance
+
+- **Auto-documentation no longer spends five minutes on a one-file project.**
+  Measured on a graded build: 2.8 min of iteration work, 13.4 min wall clock,
+  5.0 of which was the doc suite timing out at 300s over one 20-line module.
+  The budget now scales to source-file count (<=3 files -> 90s). Median wall
+  clock on the same task moved 12.8 -> 8.6 min.
+
+### Measurement
+
+- Per-gate durations are preserved in the benchmark metrics. The engine had
+  emitted them for eleven gates all along and the harness discarded them. First
+  attribution: agent 392s, code_review 211s, doc_generation 90s, and all eight
+  other gates 2s COMBINED -- the gates are not the overhead.
+- Factory's `droid` measured in the competitor surface audit; the head-to-head
+  corpus now refuses a zero-result row without a positive control.
+
 ## v9.19.1
 
 Ships v9.19.0's payload, whose release was blocked by two CI failures of my own

@@ -74,6 +74,38 @@ Returns metrics in OpenMetrics text format. No authentication required by defaul
 |--------|------|-------------|
 | `loki_events_total` | counter | Total number of events recorded in events.jsonl |
 
+### Evidence Receipt Metrics
+
+The verification surface, exposed so an operator can alert on it. Two failures
+make the receipt guarantee worthless in production and neither was observable
+before these existed: builds silently stopping producing receipts, and the
+`unknown` share climbing.
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `loki_receipts_total` | gauge | Evidence Receipts on disk for the active project |
+| `loki_receipts_by_verdict{verdict=...}` | gauge | Receipts bucketed on the recorded honesty headline: `verified`, `with_gaps`, `not_verified`, `unknown` |
+| `loki_receipts_with_provenance{kind=...}` | gauge | Receipts carrying a checkable provenance record: `attestation` (Ed25519 JWT) or `gpg` |
+
+`unknown` IS ITS OWN SERIES and must stay that way. The summary refuses to
+count a receipt as verified when it cannot prove it was -- schema v1.0 receipts
+carry no honesty block -- so folding that bucket into `verified` is dishonest
+and folding it into `not_verified` is alarming and also wrong.
+
+These read the same files as `GET /api/proofs/summary`, so the metric and the
+API cannot disagree; a test asserts it. An empty project reports `0`, not an
+error, so a fresh install does not look like a broken exporter.
+
+Example alerts:
+
+```
+# receipts stopped being produced
+increase(loki_receipts_total[6h]) == 0
+
+# the unverifiable share is growing
+loki_receipts_by_verdict{verdict="unknown"} / loki_receipts_total > 0.2
+```
+
 ## Data Sources
 
 Metrics are derived from `.loki/` flat files:
