@@ -324,7 +324,7 @@ metrics = {
   'events_total': len(sess),
   'route': os.environ.get('LOKI_BENCH_ROUTE', 'bash'),
   # PER-GATE DURATIONS. The engine has emitted stage_complete{stage,duration_s}
-  # for 11 gates all along, and this harness parsed the events file and threw
+  # for the quality-gate stages all along, and this harness parsed the events file and threw
   # them away -- so "84% of a build is overhead" was measurable but not
   # ATTRIBUTABLE, and nobody could say which gate to fix. Preserved here so the
   # next optimisation targets the real cost instead of the first guess.

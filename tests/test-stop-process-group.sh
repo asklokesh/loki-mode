@@ -34,6 +34,15 @@ launch_session_leader() { # runs "$@" as a new session leader, backgrounded; ech
     esac
 }
 
+pid_alive_non_zombie() {
+    local pid="${1:-}"
+    [ -n "$pid" ] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    local state
+    state=$(ps -o state= -p "$pid" 2>/dev/null | tr -d '[:space:]')
+    [ -n "$state" ] && [[ "$state" != Z* ]]
+}
+
 # --- static wiring -----------------------------------------------------------
 grep -q '_loki_new_session_exec' "$REPO_ROOT/autonomy/loki" \
   && ok "loki launches the runner as a session leader (_loki_new_session_exec)" \
@@ -252,9 +261,12 @@ export LOKI_OWN_SESSION=1
 export TARGET_DIR="$FWORK"
 perl -e '\$0="claude --dangerously-skip-permissions [LOKI-AUTONOMY-AGENT]"; \$SIG{TERM}="IGNORE"; sleep 120;' &
 echo \$! > "$FWORK/.loki/agent.pid"
-ps -o pgid= -p \$\$ | tr -d ' ' > "$FWORK/.loki/loki.pgid"
 echo \$\$ > "$FWORK/.loki/leader.pid"
 source "$REPO_ROOT/autonomy/run.sh" >/dev/null 2>&1 || true
+_pgid=\$(ps -o pgid= -p \$\$ | tr -d ' ')
+_boot=\$(_loki_boot_id)
+_started=\$(_loki_proc_start_epoch \$\$)
+printf 'pgid=%s boot=%s started=%s\n' "\$_pgid" "\$_boot" "\$_started" > "$FWORK/.loki/loki.pgid"
 reap_own_process_group
 echo done > "$FWORK/.loki/reap.done"
 sleep 30
@@ -269,7 +281,7 @@ LEADEOF
     F_AGENT=$(cat "$FWORK/.loki/agent.pid" 2>/dev/null)
     F_LEADER=$(cat "$FWORK/.loki/leader.pid" 2>/dev/null)
     sleep 1
-    if [ -f "$FWORK/.loki/reap.done" ] && [ -n "$F_AGENT" ] && ! kill -0 "$F_AGENT" 2>/dev/null; then
+    if [ -f "$FWORK/.loki/reap.done" ] && [ -n "$F_AGENT" ] && ! pid_alive_non_zombie "$F_AGENT"; then
         ok "completion reap kills the in-group SIGTERM-ignoring agent (no orphan)"
     else
         bad "completion reap left the agent alive (orphan-on-completion bug)"
