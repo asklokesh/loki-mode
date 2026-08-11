@@ -105,8 +105,8 @@ else
     # suppression still exists; unsetting it here does not weaken it.
     _under_pty() {
         case "$_PTY_FORM" in
-            bsd)        ( unset CI; script -q /dev/null "$@" ) ;;
-            util-linux) ( unset CI; script -q -c "$*" /dev/null ) ;;
+            bsd)        ( unset CI; script -q /dev/null "$@" </dev/null ) ;;
+            util-linux) ( unset CI; script -q -c "$*" /dev/null </dev/null ) ;;
             *)          return 127 ;;
         esac
     }
@@ -128,6 +128,9 @@ if [ -n "${_PTY_FORM:-}" ]; then
 
     # A far-future latest must warn.
     printf '{"checkedAt":%s,"latest":"9.99.0"}\n' "$(date +%s)" > "$_cache"
+    # `start --help` still exercises cmd_start and the hint, then exits before
+    # entering the interactive no-spec workflow. A bare `start` under the PTY
+    # waits for operator input forever and can wedge the full pre-push gate.
     # Capture FIRST, then match. `... | grep -qi` exits on the first match and
     # closes the pipe; under script(1) that races with output delivery and the
     # match is intermittently missed -- the assertion failed here while the
@@ -140,7 +143,7 @@ if [ -n "${_PTY_FORM:-}" ]; then
     # the hint was suppressed rather than because the version was current.
     # The `guard present: ${CI:-}` source assertion above is what proves the
     # suppression still exists; unsetting it here does not weaken that.
-    _out="$(HOME="$D" _under_pty bash "$LOKI" start 2>&1 || true)"
+    _out="$(HOME="$D" _under_pty bash "$LOKI" start --help 2>&1 || true)"
     case "$_out" in
         *"newer loki-mode is available"*) ok "a stale install warns on start" ;;
         *) bad "a stale install prints NO warning on start" ;;
@@ -150,7 +153,7 @@ if [ -n "${_PTY_FORM:-}" ]; then
     # to ignore the line, which costs more than it saves.
     printf '{"checkedAt":%s,"latest":"%s"}\n' "$(date +%s)" \
         "$(cat "$REPO_ROOT/VERSION" 2>/dev/null | tr -d '[:space:]')" > "$_cache"
-    _out="$(HOME="$D" _under_pty bash "$LOKI" start 2>&1 || true)"
+    _out="$(HOME="$D" _under_pty bash "$LOKI" start --help 2>&1 || true)"
     case "$_out" in
         *"newer loki-mode is available"*) bad "an up-to-date install still nags" ;;
         *) ok "an up-to-date install stays silent" ;;
@@ -158,7 +161,7 @@ if [ -n "${_PTY_FORM:-}" ]; then
 
     # Opt-out must win.
     printf '{"checkedAt":%s,"latest":"9.99.0"}\n' "$(date +%s)" > "$_cache"
-    _out="$(HOME="$D" LOKI_NO_UPDATE_CHECK=1 _under_pty bash "$LOKI" start 2>&1 || true)"
+    _out="$(HOME="$D" LOKI_NO_UPDATE_CHECK=1 _under_pty bash "$LOKI" start --help 2>&1 || true)"
     case "$_out" in
         *"newer loki-mode is available"*) bad "LOKI_NO_UPDATE_CHECK=1 does not suppress the hint" ;;
         *) ok "LOKI_NO_UPDATE_CHECK=1 suppresses the hint" ;;
