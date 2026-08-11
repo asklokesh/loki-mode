@@ -5,6 +5,28 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.22.0
+
+Source-bound measurement closes the outcome-routing canary loop without
+invoking or switching a provider.
+
+### Added
+
+- **Deterministic outcome canary evaluation**
+  (`tools/outcome-canary-evaluate.py`): validates a canary plan against its
+  exact router report, consumes bounded consented control and challenger
+  observations, and returns `PROMOTE`, `HOLD`, or `ROLLBACK` with stable reason
+  codes. The evaluator rejects tampered, mismatched, stale, sparse, and
+  threshold-invalid evidence and remains offline and read-only.
+
+### Fixed
+
+- **Release-gate reliability after canary evaluation:** rebuilt the shipped
+  TypeScript distribution from source, bounded the stale-install PTY probe,
+  aligned completion-reap checks with process-group safety, and removed an
+  obsolete gate-count assertion. The exact release predecessor passed the full
+  GitHub Tests matrix plus Bun Parity, Coverage, SBOM, and Pages.
+
 ## v9.21.0
 
 Four features from the parallel lanes plus one post-release fix to v9.20.0's
