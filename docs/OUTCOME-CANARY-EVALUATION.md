@@ -11,6 +11,28 @@ python3 tools/outcome-canary-evaluate.py report.json observations.json \
 
 Evaluation is opt-in. Without `--enable-evaluation`, the command refuses.
 
+## Record an observation
+
+Use the installed recorder instead of hand-editing the observation contract:
+
+```bash
+python3 tools/outcome-canary-observe.py report.json observations.json \
+  --enable-recording --subject '<locally chosen opaque key>' \
+  --accepted --risk 0.10 --control-route safe --canary-percent 10
+```
+
+Choose exactly one of `--accepted` or `--rejected`. The risk value is a finite
+number from zero through one. The recorder independently reproduces the subject's
+deterministic assignment and route, then creates or appends one canonical item
+through an atomic local replacement. Existing report and source bindings must
+match, and every prior item is rebound before the append is accepted.
+
+Recording is explicit and local: the command never invokes a provider, changes a
+route, or emits the subject or input pathname. Duplicate subjects, symlinks,
+malformed or oversized evidence, binding drift, assignment drift, and unsafe
+values are refused without changing the observation file. A sidecar `.lock` file
+serializes cooperating writers.
+
 ## Observation contract
 
 The input is one `loki-outcome-canary-observations/v1` JSON object:
