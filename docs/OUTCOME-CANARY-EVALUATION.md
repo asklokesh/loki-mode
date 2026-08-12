@@ -11,6 +11,29 @@ python3 tools/outcome-canary-evaluate.py report.json observations.json \
 
 Evaluation is opt-in. Without `--enable-evaluation`, the command refuses.
 
+## Retain a decision receipt
+
+After a complete evaluation, create one immutable portable proof by independently
+rerunning the same decision:
+
+```bash
+python3 tools/outcome-canary-receipt.py report.json observations.json receipt.json \
+  --enable-receipt --control-route safe --canary-percent 10 --min-samples 5
+```
+
+The command creates a new canonical `loki-outcome-canary-decision-receipt/v1`
+file. It binds the exact report, source, and observation digests; the full
+evaluation policy; privacy-safe aggregate arm results; the acceptance delta; and
+the `PROMOTE`, `HOLD`, or `ROLLBACK` verdict. It never includes subject keys or
+local input/output pathnames, invokes a provider, or changes a route.
+
+Receipt creation is explicit and create-only. An existing file or symlink is
+never replaced, and a target created by another process wins without being
+changed. Refused or sparse evaluation, malformed or oversized inputs, unsafe
+path indirection, source drift, evidence drift, and publication failure leave no
+receipt claim. The output is written with mode `0600`, fsynced, and published
+atomically in its destination directory.
+
 ## Record an observation
 
 Use the installed recorder instead of hand-editing the observation contract:
