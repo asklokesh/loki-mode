@@ -34,6 +34,22 @@ path indirection, source drift, evidence drift, and publication failure leave no
 receipt claim. The output is written with mode `0600`, fsynced, and published
 atomically in its destination directory.
 
+Verify a handed-off receipt against the exact current evidence before acting on
+its verdict:
+
+```bash
+python3 tools/outcome-canary-receipt-verify.py report.json observations.json receipt.json \
+  --enable-verification --json
+```
+
+The read-only verifier takes the policy from the canonical receipt, independently
+reruns the deterministic evaluation, rechecks the report, source, and observation
+bytes, and requires the complete rederived receipt to match exactly. It returns
+`VERIFIED` only for the same bound evidence, aggregates, policy, and verdict.
+Missing, symlinked, oversized, malformed, non-canonical, sparse, refused,
+substituted, or drifted inputs fail closed without writes, telemetry, provider
+calls, or route changes.
+
 ## Record an observation
 
 Use the installed recorder instead of hand-editing the observation contract:
