@@ -20,7 +20,7 @@ class TestLokiCanaryCli(unittest.TestCase):
             "NO_COLOR": "1",
         })
         return subprocess.run(
-            ["bash", str(CLI), "canary", *args],
+            ["bash", str(CLI), "outcomes", "canary", *args],
             cwd=cwd or ROOT,
             env=env,
             capture_output=True,
