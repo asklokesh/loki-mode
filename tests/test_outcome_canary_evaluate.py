@@ -81,6 +81,8 @@ class TestOutcomeCanaryEvaluate(unittest.TestCase):
         self.assertEqual(result["accepted_delta_bps"], 10_000)
         self.assertEqual(result["control"]["trials"], 4)
         self.assertEqual(result["canary"]["trials"], 4)
+        self.assertNotIn("report", result)
+        self.assertNotIn("observations", result)
 
     def test_rolls_back_acceptance_regression(self):
         path = self.observations(self.assigned(canary_accepted=False, control_accepted=True))
@@ -154,6 +156,27 @@ class TestOutcomeCanaryEvaluate(unittest.TestCase):
         huge.write_bytes(b" " * (mod.MAX_BYTES + 1))
         self.assertTrue(any("exceeds" in reason for reason in self.evaluate(huge)["refusal_reasons"]))
 
+    def test_refuses_symlinked_report_and_observations_without_path_disclosure(self):
+        path = self.observations()
+        linked_report = self.root / "linked-report.json"
+        linked_report.symlink_to(self.report)
+        report_result = mod.evaluate(
+            str(linked_report), str(path), "safe",
+            canary_percent=50, min_samples=4, enable_evaluation=True,
+        )
+        self.assertTrue(any("named regular file" in reason for reason in report_result["refusal_reasons"]))
+
+        linked_observations = self.root / "linked-observations.json"
+        linked_observations.symlink_to(path)
+        observations_result = self.evaluate(linked_observations)
+        self.assertTrue(any("named regular file" in reason for reason in observations_result["refusal_reasons"]))
+
+        serialized = json.dumps({"report": report_result, "observations": observations_result})
+        self.assertNotIn(str(self.root), serialized)
+        for result in (report_result, observations_result):
+            self.assertNotIn("report", result)
+            self.assertNotIn("observations", result)
+
     def test_observation_byte_drift_changes_digest(self):
         path = self.observations()
         first = self.evaluate(path)
@@ -170,7 +193,10 @@ class TestOutcomeCanaryEvaluate(unittest.TestCase):
         self.assertEqual(human.returncode, 0)
         self.assertIn("Canary evaluation: PROMOTE", human.stdout)
         machine = subprocess.run(base + ["--json"], capture_output=True, text=True)
-        self.assertEqual(json.loads(machine.stdout)["verdict"], "PROMOTE")
+        machine_result = json.loads(machine.stdout)
+        self.assertEqual(machine_result["verdict"], "PROMOTE")
+        self.assertNotIn("report", machine_result)
+        self.assertNotIn("observations", machine_result)
         refused = subprocess.run([item for item in base if item != "--enable-evaluation"], capture_output=True, text=True)
         self.assertEqual(refused.returncode, mod.REFUSED)
         missing = subprocess.run([sys.executable, str(TOOL), str(self.report), str(path) + "x",

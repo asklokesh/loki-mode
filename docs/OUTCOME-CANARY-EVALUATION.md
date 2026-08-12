@@ -37,10 +37,12 @@ Each item has exactly those five fields. Subjects must be unique and non-empty;
 The file is capped at 5 MiB and 100,000 observations. Duplicate JSON keys are
 rejected.
 
-The evaluator hashes the exact report and observation bytes, rechecks the report's
-underlying source digest, and reruns the released deterministic canary assignment
-for every subject. A recorded arm or route that does not match that assignment
-refuses the entire evaluation. Output contains no subject keys.
+The evaluator accepts only named regular report and observation files. Symlinks,
+directories, devices, and other path indirection are refused. It hashes the exact
+report and observation bytes, rechecks the report's underlying source digest, and
+reruns the released deterministic canary assignment for every subject. A recorded
+arm or route that does not match that assignment refuses the entire evaluation.
+Output contains no subject keys or input pathnames.
 
 ## Verdict policy
 
@@ -60,6 +62,7 @@ unbound evidence returns `REFUSED` rather than a partial verdict.
 ## Output and exit codes
 
 `--json` emits the aggregate arms, policy, exact evidence digests, verdict, and
-refusal reasons. The default output is a short human-readable summary. Exit 0 means
+refusal reasons. It is portable across machines because it omits local input paths.
+The default output is a short human-readable summary. Exit 0 means
 a verdict was produced (including `ROLLBACK`), 3 means evaluation was refused, 64
 is an invocation error, and 66 is a missing input file.

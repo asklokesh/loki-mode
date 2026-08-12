@@ -7,6 +7,7 @@ import json
 import math
 import os
 import pathlib
+import stat
 import sys
 
 OK, REFUSED, USAGE, NO_INPUT = 0, 3, 64, 66
@@ -53,7 +54,17 @@ def _sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def _require_named_regular_file(path, label):
+    try:
+        mode = os.lstat(path).st_mode
+    except OSError as exc:
+        raise ValueError(f"{label} cannot be inspected: {exc}") from exc
+    if not stat.S_ISREG(mode):
+        raise ValueError(f"{label} must be a named regular file")
+
+
 def _read_json(path):
+    _require_named_regular_file(path, "input")
     with open(path, "rb") as handle:
         data = handle.read(MAX_BYTES + 1)
     if len(data) > MAX_BYTES:
@@ -105,10 +116,8 @@ def evaluate(report_path, observations_path, control_route, canary_percent=10.0,
 
     out = {
         "evaluation": DOMAIN,
-        "report": os.path.abspath(report_path),
         "report_sha256": None,
         "source_sha256": None,
-        "observations": os.path.abspath(observations_path),
         "observations_sha256": None,
         "control_route": control_route,
         "canary_route": None,
@@ -141,6 +150,7 @@ def evaluate(report_path, observations_path, control_route, canary_percent=10.0,
         return out
 
     try:
+        _require_named_regular_file(report_path, "report")
         planner = _load_planner()
         report, report_sha256, report_reasons = planner.load_report(report_path)
     except Exception as exc:
@@ -228,7 +238,7 @@ def main(argv=None):
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     for path in (args.report, args.observations):
-        if not os.path.isfile(path):
+        if not os.path.lexists(path):
             print(f"outcome-canary-evaluate: no such file: {path}", file=sys.stderr)
             return NO_INPUT
     result = evaluate(
