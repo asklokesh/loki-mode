@@ -4,8 +4,22 @@
 observations into one deterministic aggregate verdict. It never invokes a provider,
 changes an assignment, or promotes a route.
 
+Installed Loki distributions expose the complete workflow through one command:
+
 ```bash
-python3 tools/outcome-canary-evaluate.py report.json observations.json \
+loki canary plan --help
+loki canary record --help
+loki canary evaluate --help
+loki canary receipt --help
+loki canary verify --help
+```
+
+`loki canary` resolves the bundled tools from the installation, so these commands
+work outside the Loki source checkout. It passes arguments and exit codes through
+unchanged; the explicit opt-in gates documented below still apply.
+
+```bash
+loki canary evaluate report.json observations.json \
   --enable-evaluation --control-route safe --canary-percent 10 --json
 ```
 
@@ -17,7 +31,7 @@ After a complete evaluation, create one immutable portable proof by independentl
 rerunning the same decision:
 
 ```bash
-python3 tools/outcome-canary-receipt.py report.json observations.json receipt.json \
+loki canary receipt report.json observations.json receipt.json \
   --enable-receipt --control-route safe --canary-percent 10 --min-samples 5
 ```
 
@@ -38,7 +52,7 @@ Verify a handed-off receipt against the exact current evidence before acting on
 its verdict:
 
 ```bash
-python3 tools/outcome-canary-receipt-verify.py report.json observations.json receipt.json \
+loki canary verify report.json observations.json receipt.json \
   --enable-verification --json
 ```
 
@@ -55,7 +69,7 @@ calls, or route changes.
 Use the installed recorder instead of hand-editing the observation contract:
 
 ```bash
-python3 tools/outcome-canary-observe.py report.json observations.json \
+loki canary record report.json observations.json \
   --enable-recording --subject '<locally chosen opaque key>' \
   --accepted --risk 0.10 --control-route safe --canary-percent 10
 ```

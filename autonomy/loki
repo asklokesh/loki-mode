@@ -1547,7 +1547,7 @@ show_help() {
     echo ""
     echo "All commands:"
     echo "  agent analyze api assets audit bench checkpoint (cp) ci cleanup"
-    echo "  cluster cockpit code compliance completions compound config context (ctx)"
+    echo "  canary cluster cockpit code compliance completions compound config context (ctx)"
     echo "  cost council crash dashboard demo deploy docker docs doctor dogfood"
     echo "  enterprise estimate explain export failover github grill heal help"
     echo "  import init intent"
@@ -20726,6 +20726,11 @@ main() {
             # happened to it afterwards -- reverted, reworked, or survived.
             cmd_outcomes "$@"
             ;;
+        canary)
+            # Local outcome-routing canary workflow. The Python tools own the
+            # contracts and exit codes; this installed surface only dispatches.
+            cmd_canary "$@"
+            ;;
         secure)
             # Secure-by-default gate surface: inspect findings + manage waivers.
             cmd_secure "$@"
@@ -32219,6 +32224,55 @@ if _result.get('error'):
 # this is a thin dispatcher, mirroring how cmd_proof delegates to the proof
 # generator. Generation is incremental (skips when the codebase is unchanged).
 # =============================================================================
+# loki canary: installed access to the complete local outcome-canary workflow.
+#
+# Keep this as a thin dispatcher. Each Python tool retains its own explicit
+# opt-in gate, input validation, privacy contract, writes (where applicable),
+# and exit codes. Resolving from the installed Loki root makes the workflow
+# usable from any current directory without copying repository-relative paths.
+cmd_canary() {
+    local subcommand="${1:-}"
+    local tool_name=""
+    local tools_dir="${_LOKI_SCRIPT_DIR}/../tools"
+
+    case "$subcommand" in
+        plan)     tool_name="outcome-canary.py" ;;
+        record)   tool_name="outcome-canary-observe.py" ;;
+        evaluate) tool_name="outcome-canary-evaluate.py" ;;
+        receipt)  tool_name="outcome-canary-receipt.py" ;;
+        verify)   tool_name="outcome-canary-receipt-verify.py" ;;
+        --help|-h|help|"")
+            echo -e "${BOLD}loki canary${NC} - run the local outcome-routing canary workflow"
+            echo ""
+            echo "Usage: loki canary <command> [options]"
+            echo ""
+            echo "Commands:"
+            echo "  plan       Plan a deterministic reversible canary assignment"
+            echo "  record     Record one explicitly consented local observation"
+            echo "  evaluate   Produce an aggregate PROMOTE, HOLD, or ROLLBACK verdict"
+            echo "  receipt    Create one portable immutable decision receipt"
+            echo "  verify     Independently verify a receipt against current evidence"
+            echo ""
+            echo "Every mutating or decision-producing step remains explicitly opt-in."
+            echo "Run 'loki canary <command> --help' for its exact arguments."
+            return 0
+            ;;
+        *)
+            echo "loki canary: unknown command: $subcommand" >&2
+            echo "Run 'loki canary --help' for usage." >&2
+            return 64
+            ;;
+    esac
+
+    shift
+    local tool="${tools_dir}/${tool_name}"
+    if [ ! -f "$tool" ]; then
+        echo "loki canary: installed tool is unavailable: $tool_name" >&2
+        return 2
+    fi
+    python3 "$tool" "$@"
+}
+
 # loki outcomes: what happened to the work AFTER the receipt was written.
 #
 # Every competing agent reports VOLUME. Factory AI's analytics expose files
