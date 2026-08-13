@@ -497,9 +497,8 @@ async def start_session(request: StartRequest):
         # Start the process
         # RUN_SH is a trusted fixed path; provider and PRD were validated above,
         # and argv is passed directly without a command shell.
-        # lgtm[py/command-line-injection]
         process = subprocess.Popen(
-            args,
+            args,  # lgtm[py/command-line-injection]
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,

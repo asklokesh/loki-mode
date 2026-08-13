@@ -32,7 +32,12 @@ def _subprocess_calls(source: str) -> list[ast.Call]:
 
 
 def test_reviewed_codeql_sinks_are_explicitly_shell_free() -> None:
-    """Every suppression stays adjacent to an explicit ``shell=False`` call."""
+    """Every suppression stays on an explicit ``shell=False`` call.
+
+    CodeQL suppressions apply to the line carrying the alert. Keeping the marker
+    on the tainted argv expression makes the reviewed disposition effective,
+    while this AST check prevents it from drifting onto unrelated code.
+    """
 
     for relative_path, expected_count in EXPECTED_REVIEWED_SINKS.items():
         source = (ROOT / relative_path).read_text(encoding="utf-8")
@@ -49,7 +54,7 @@ def test_reviewed_codeql_sinks_are_explicitly_shell_free() -> None:
             adjacent = [
                 call
                 for call in calls
-                if marker_line < call.lineno <= marker_line + 2
+                if call.lineno <= marker_line <= (call.end_lineno or call.lineno)
             ]
             assert len(adjacent) == 1, (relative_path, marker_line)
             shell_keywords = [

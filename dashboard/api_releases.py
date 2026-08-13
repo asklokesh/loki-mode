@@ -135,9 +135,9 @@ def _git_tags(repo_dir: str, limit: int) -> tuple:
     try:
         # Fixed git executable, integer-formatted option, separate cwd, and an
         # argv vector keep caller data out of shell parsing.
-        # lgtm[py/command-line-injection]
         proc = subprocess.run(
-            cmd, cwd=repo_dir, capture_output=True, text=True,
+            cmd,  # lgtm[py/command-line-injection]
+            cwd=repo_dir, capture_output=True, text=True,
             timeout=_GIT_TIMEOUT_S, shell=False,
         )
     except FileNotFoundError:

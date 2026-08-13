@@ -170,9 +170,8 @@ class LokiAPIHandler(BaseHTTPRequestHandler):
 
             # run_script is a trusted fixed path and run.sh validates provider;
             # request values remain individual argv entries, never shell text.
-            # lgtm[py/command-line-injection]
             proc = subprocess.Popen(
-                args,
+                args,  # lgtm[py/command-line-injection]
                 start_new_session=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,

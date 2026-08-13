@@ -2670,9 +2670,8 @@ async def start_session(req: StartRequest) -> JSONResponse:
 
             # LOKI_CLI is a trusted fixed path; request data stays in an argv
             # vector and is never parsed as shell command text.
-            # lgtm[py/command-line-injection]
             proc = subprocess.Popen(
-                cmd,
+                cmd,  # lgtm[py/command-line-injection]
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
@@ -4259,9 +4258,8 @@ async def chat_session(session_id: str, req: ChatRequest) -> JSONResponse:
             chat_env["LOKI_PROVIDER"] = chat_provider
             # loki is resolved from the trusted application install; message,
             # provider, and PRD path remain argv data with no command shell.
-            # lgtm[py/command-line-injection]
             proc = subprocess.Popen(
-                cmd_args,
+                cmd_args,  # lgtm[py/command-line-injection]
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,

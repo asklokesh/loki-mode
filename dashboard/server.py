@@ -4315,9 +4315,8 @@ def _start_supervised_workspace_build(
             with _build_execution.open_private_log(supervisor_log) as log_handle:
                 # sys.executable and the module name are fixed; validated build
                 # fields remain argv data and never reach a command shell.
-                # lgtm[py/command-line-injection]
                 process = subprocess.Popen(
-                    supervisor_args,
+                    supervisor_args,  # lgtm[py/command-line-injection]
                     stdout=log_handle,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
@@ -4588,9 +4587,8 @@ async def start_build(request: Request, body: StartBuildRequest):
     try:
         # run_sh is a trusted fixed path; provider and spec were validated, and
         # the argv vector is executed directly without shell interpretation.
-        # lgtm[py/command-line-injection]
         process = subprocess.Popen(
-            args,
+            args,  # lgtm[py/command-line-injection]
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
