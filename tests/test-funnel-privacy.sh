@@ -31,17 +31,31 @@ GREP=/usr/bin/grep
 
 # Hard cap for CLI invocations. The funnel emit happens in the shim before any
 # exec, so nothing here needs the invoked command to finish -- but a `start` that
-# reaches a real runner would otherwise outlive this script. `timeout` is GNU
-# coreutils (present in CI and via brew, absent on a stock macOS), so degrade to
-# no cap rather than hard-failing where it is missing.
-# CAP is never empty: "${CAP[@]}" on an EMPTY array is an unbound-variable error
-# under `set -u` on bash 3.2 (still the /bin/bash on macOS), so the no-timeout
-# branch falls back to a bare `env`, which every invocation needs anyway.
-if command -v timeout >/dev/null 2>&1; then
-    CAP=(timeout -s KILL 20 env)
-else
-    CAP=(env)
-fi
+# reaches a real runner would otherwise outlive this script. GNU `timeout` is
+# available on Linux CI but not on stock macOS. Python is already required by
+# this suite and provides the macOS fallback; a new process session lets the
+# fallback kill the full invoked process group instead of leaving a runner child.
+cap_command() {
+    if command -v timeout >/dev/null 2>&1; then
+        timeout -s KILL 20 env "$@"
+        return $?
+    fi
+
+    python3 - "$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+process = subprocess.Popen(["env", *sys.argv[1:]], start_new_session=True)
+try:
+    return_code = process.wait(timeout=20)
+except subprocess.TimeoutExpired:
+    os.killpg(process.pid, signal.SIGKILL)
+    return_code = process.wait()
+sys.exit(return_code)
+PY
+}
 
 ok()   { PASS=$((PASS+1)); printf 'PASS  %s\n' "$1"; }
 bad()  { FAIL=$((FAIL+1)); printf 'FAIL  %s\n' "$1"; [ $# -gt 1 ] && printf '      %s\n' "$2"; }
@@ -91,7 +105,7 @@ settle() {
 # the invoked command to finish. Hard-cap every invocation so a `start` that
 # reaches a real runner cannot outlive the test.
 run_cli() {
-    "${CAP[@]}" PATH="$BINDIR:$PATH" \
+    cap_command PATH="$BINDIR:$PATH" \
         HOME="$HOME" \
         LOKI_TEST_CAPTURE="$LOKI_TEST_CAPTURE" \
         LOKI_TELEMETRY=on \
@@ -287,7 +301,7 @@ new_case route_bun
 # emit already happened in the shim, and the Bun runner it exec'd must not
 # outlive the test.
 (
-  "${CAP[@]}" PATH="$BINDIR:$PATH" HOME="$HOME" LOKI_TEST_CAPTURE="$LOKI_TEST_CAPTURE" \
+  cap_command PATH="$BINDIR:$PATH" HOME="$HOME" LOKI_TEST_CAPTURE="$LOKI_TEST_CAPTURE" \
       LOKI_TELEMETRY=on LOKI_ANALYTICS=on LOKI_TTY_INTERACTIVE=1 LOKI_SDK_LOOP=1 \
       "$REPO_ROOT/bin/loki" start ./spec.md >/dev/null 2>&1 </dev/null || true
 ) 2>/dev/null
