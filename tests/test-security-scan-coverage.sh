@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Security scanning covers Python dependencies and secrets, not just npm.
+# Security scanning covers source, Python dependencies, and secrets, not just npm.
 #
 # THE GAP. `grep -rlE "codeql|semgrep|bandit|gitleaks|trufflehog|pip-audit|safety"
 # .github/workflows/*.yml` returned NOTHING. security-audit.yml audited npm
@@ -12,13 +12,12 @@
 # .github/workflows/security-audit.yml and asserts the scanners are wired up
 # over the right inputs with the right failure posture.
 #
-# WHAT IT THEREFORE CANNOT PROVE. It does not run pip-audit or gitleaks, so it
-# cannot show that either tool actually detects a real CVE or a real secret, nor
-# that the pinned versions still resolve, nor that the scan passes on today's
-# tree. It proves the gate is CONNECTED, not that the gate WORKS. Only a live
-# CI run proves the latter. Note both scanners are deliberately REPORTING-ONLY
-# right now (measured baseline: 2 pip-audit advisories, 182 gitleaks findings),
-# so a green CI run is not evidence of a clean tree either.
+# WHAT IT THEREFORE CANNOT PROVE. It does not run the scanners, so it cannot
+# show that a tool actually detects a vulnerability/secret, that the
+# pinned versions still resolve, or that the scans pass on today's tree. It
+# proves the gate is CONNECTED, not that the gate WORKS. Only a live CI run
+# proves the latter. Findings are deliberately REPORTING-ONLY right now, so a
+# green CI run is not evidence of a clean tree either.
 #
 # ASSERTIONS ARE MADE AGAINST PARSED `run:` BODIES, NEVER THE RAW FILE TEXT.
 # The workflow's posture comments name every requirements path while explaining
@@ -39,7 +38,7 @@ PASS=0; FAIL=0
 ok()  { echo "  PASS: $1"; PASS=$((PASS+1)); }
 bad() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
-echo "TEST: security-audit.yml covers Python deps and secrets, fail-closed"
+echo "TEST: security-audit.yml covers source, Python deps, and secrets, fail-closed"
 
 [ -f "$WF" ] || { echo "  FAIL: $WF missing"; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "  SKIPPED: python3 not installed (not a pass)"; exit 0; }
@@ -92,6 +91,13 @@ for step in job.get('steps') or []:
 # summarise or upload its output.
 _PY_SCAN_STEP="$(_step python-audit 'pip-audit every requirements file')"
 _PY_ASSERT_STEP="$(_step python-audit 'Assert the audit actually produced')"
+_SAST_ASSERT_STEP="$(_step sast 'Assert CodeQL produced parseable SARIF')"
+_SAST_USES="$( _LOKI_WF="$WF" python3 -c "
+import os, yaml
+d = yaml.safe_load(open(os.environ['_LOKI_WF']))
+steps = ((d.get('jobs') or {}).get('sast') or {}).get('steps') or []
+print('\\n'.join(step.get('uses', '') for step in steps if step.get('uses')))
+" 2>/dev/null )"
 
 # --- 1. Every requirements file is covered, ENUMERATED INDIVIDUALLY ---------
 # Deliberately NOT a count. A count cannot say WHICH file was dropped, and
@@ -213,6 +219,50 @@ printf '%s' "$_SECRET_RUNS" | grep -qE "gitleaks/releases/download/v[0-9]" \
 python3 -c "import yaml;yaml.safe_load(open('$WF'))" 2>/dev/null \
   && ok "security-audit.yml parses as YAML" \
   || bad "security-audit.yml is not valid YAML"
+
+# --- 9. SAST covers supported shipped languages ----------------------------
+# CodeQL has no Bash extractor. The matrix must cover BOTH supported product
+# surfaces without implying the shell CLI is analyzed.
+_sast_matrix="$( _LOKI_WF="$WF" python3 -c "
+import os, yaml
+d = yaml.safe_load(open(os.environ['_LOKI_WF']))
+langs = (((d.get('jobs') or {}).get('sast') or {}).get('strategy') or {}).get('matrix', {}).get('language', [])
+print(' '.join(langs))
+" 2>/dev/null )"
+for _lang in javascript-typescript python; do
+  if printf '%s\n' "$_sast_matrix" | grep -qw -- "$_lang"; then
+    ok "CodeQL SAST matrix covers $_lang"
+  else
+    bad "CodeQL SAST matrix does not cover $_lang"
+  fi
+done
+
+# --- 10. SAST tooling and results are immutable/auditable ------------------
+if printf '%s' "$_SAST_USES" | grep -qE 'github/codeql-action/init@[0-9a-f]{40}' \
+   && printf '%s' "$_SAST_USES" | grep -qE 'github/codeql-action/analyze@[0-9a-f]{40}'; then
+  ok "CodeQL actions are pinned to immutable commits"
+else
+  bad "CodeQL actions are not pinned to immutable commits"
+fi
+
+if printf '%s' "$_SAST_ASSERT_STEP" | grep -q 'glob.glob' \
+   && printf '%s' "$_SAST_ASSERT_STEP" | grep -q 'json.load' \
+   && printf '%s' "$_SAST_ASSERT_STEP" | grep -q '2.1.0'; then
+  ok "CodeQL fails closed unless parseable SARIF 2.1.0 exists"
+else
+  bad "CodeQL result is not verified through parseable SARIF"
+fi
+
+_sast_name="$( _LOKI_WF="$WF" python3 -c "
+import os, yaml
+d = yaml.safe_load(open(os.environ['_LOKI_WF']))
+print(((d.get('jobs') or {}).get('sast') or {}).get('name', ''))
+" 2>/dev/null )"
+if printf '%s' "$_sast_name" | grep -qi 'reporting'; then
+  ok "CodeQL finding posture is explicitly reporting-only for baseline"
+else
+  bad "CodeQL baseline posture is not explicit in the job identity"
+fi
 
 echo ""
 echo "  Passed: $PASS   Failed: $FAIL"
