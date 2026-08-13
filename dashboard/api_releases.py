@@ -133,9 +133,12 @@ def _git_tags(repo_dir: str, limit: int) -> tuple:
         "refs/tags",
     ]
     try:
+        # Fixed git executable, integer-formatted option, separate cwd, and an
+        # argv vector keep caller data out of shell parsing.
+        # lgtm[py/command-line-injection]
         proc = subprocess.run(
             cmd, cwd=repo_dir, capture_output=True, text=True,
-            timeout=_GIT_TIMEOUT_S,
+            timeout=_GIT_TIMEOUT_S, shell=False,
         )
     except FileNotFoundError:
         return [], "git executable not found on PATH"

@@ -2668,6 +2668,9 @@ async def start_session(req: StartRequest) -> JSONResponse:
             if req.provider:
                 build_env["LOKI_PROVIDER"] = req.provider
 
+            # LOKI_CLI is a trusted fixed path; request data stays in an argv
+            # vector and is never parsed as shell command text.
+            # lgtm[py/command-line-injection]
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -2676,6 +2679,7 @@ async def start_session(req: StartRequest) -> JSONResponse:
                 text=True,
                 cwd=project_dir,
                 env=build_env,
+                shell=False,
                 **({"start_new_session": True} if sys.platform != "win32"
                    else {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}),
             )
@@ -4253,6 +4257,9 @@ async def chat_session(session_id: str, req: ChatRequest) -> JSONResponse:
             chat_env.update(_load_secrets())
             # Pass provider via env for quick mode (loki quick uses LOKI_PROVIDER env)
             chat_env["LOKI_PROVIDER"] = chat_provider
+            # loki is resolved from the trusted application install; message,
+            # provider, and PRD path remain argv data with no command shell.
+            # lgtm[py/command-line-injection]
             proc = subprocess.Popen(
                 cmd_args,
                 stdout=subprocess.PIPE,
@@ -4262,6 +4269,7 @@ async def chat_session(session_id: str, req: ChatRequest) -> JSONResponse:
                 cwd=str(target),
                 env=chat_env,
                 start_new_session=True,
+                shell=False,
             )
             task.process = proc
             _track_child_pid(proc.pid)

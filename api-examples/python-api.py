@@ -168,11 +168,15 @@ class LokiAPIHandler(BaseHTTPRequestHandler):
             if prd:
                 args.append(prd)
 
+            # run_script is a trusted fixed path and run.sh validates provider;
+            # request values remain individual argv entries, never shell text.
+            # lgtm[py/command-line-injection]
             proc = subprocess.Popen(
                 args,
                 start_new_session=True,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.DEVNULL,
+                shell=False,
             )
 
             (STATE_DIR / 'session.pid').write_text(str(proc.pid))

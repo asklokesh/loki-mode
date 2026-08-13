@@ -5,8 +5,10 @@ name: Security Audit
 #
 # Also runs `pip-audit` over every Python requirements file, `gitleaks` over the
 # working tree, and CodeQL SAST over the Python and JavaScript/TypeScript source
-# surfaces. All three are REPORTING ONLY today -- see each job's posture note
-# for its measured baseline or first-run promotion path.
+# surfaces. Python dependencies, secrets, and sub-critical SAST remain
+# REPORTING ONLY today -- see each job's posture note for its measured baseline
+# or promotion path. CodeQL findings with a security severity of 9.0 or greater
+# fail the workflow after the first exact-SHA critical baseline was triaged.
 #
 # SAST SCOPE: CodeQL does not support Bash, so this job does not imply coverage
 # of the 32k-line shell CLI. It does cover the shipped Python dashboard/runtime
@@ -283,7 +285,7 @@ jobs:
           if-no-files-found: error
 
   sast:
-    name: CodeQL SAST (${{ matrix.language }}, reporting)
+    name: CodeQL SAST (${{ matrix.language }}, critical-blocking)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -308,19 +310,17 @@ jobs:
 
       - name: Analyze supported source
         id: analyze
-        # REPORTING, NOT BLOCKING ON FINDINGS. The action still fails if database
-        # creation/querying/upload fails. CodeQL findings appear in code scanning
-        # and the retained SARIF; they do not fail this first-baseline job. After
-        # one live exact-SHA run, triage the result and promote high-confidence
-        # actionable rules through a reviewed repository ruleset. Do not invent
-        # a severity gate before the finding set exists.
+        # Analysis/upload failures block. Findings below the critical threshold
+        # still report in code scanning and retained SARIF; the separately
+        # measured gate below rejects security-severity >= 9.0 after all seven
+        # first-baseline critical candidates received reviewed dispositions.
         uses: github/codeql-action/analyze@f3712979fa5f215279b101dd0a2e3bdfb4353324
         with:
           category: /language:${{ matrix.language }}
           output: /tmp/codeql-results
           upload: always
 
-      - name: Assert CodeQL produced parseable SARIF
+      - name: Assert CodeQL SARIF and reject critical findings
         # FAIL CLOSED ON THE ARTIFACT. A completed action without a retained,
         # parseable result is not evidence that analysis happened. Validate the
         # action-provided output path rather than assuming a generated filename.
@@ -340,12 +340,42 @@ jobs:
           reports = sorted(glob.glob(os.path.join(root, "**", "*.sarif"), recursive=True))
           if not reports:
               raise SystemExit("FAIL: CodeQL produced no SARIF report")
+          critical = []
           for report in reports:
               with open(report, encoding="utf-8") as handle:
                   payload = json.load(handle)
               if payload.get("version") != "2.1.0" or not isinstance(payload.get("runs"), list):
                   raise SystemExit(f"FAIL: invalid SARIF structure: {report}")
+              for run in payload["runs"]:
+                  tool = run.get("tool") or {}
+                  rules = []
+                  rules.extend(((tool.get("driver") or {}).get("rules") or []))
+                  for extension in tool.get("extensions") or []:
+                      rules.extend(extension.get("rules") or [])
+                  severities = {}
+                  for rule in rules:
+                      raw = (rule.get("properties") or {}).get("security-severity")
+                      try:
+                          severities[rule.get("id")] = float(raw)
+                      except (TypeError, ValueError):
+                          continue
+                  for result in run.get("results") or []:
+                      rule_id = result.get("ruleId")
+                      severity = severities.get(rule_id, 0.0)
+                      if severity < 9.0:
+                          continue
+                      location = ((result.get("locations") or [{}])[0].get("physicalLocation") or {})
+                      artifact = (location.get("artifactLocation") or {}).get("uri", "unknown")
+                      line = (location.get("region") or {}).get("startLine", "?")
+                      critical.append((rule_id, severity, artifact, line))
           print(f"validated {len(reports)} CodeQL SARIF report(s)")
+          if critical:
+              for rule_id, severity, artifact, line in critical:
+                  print(f"CRITICAL: {rule_id} severity={severity:g} at {artifact}:{line}")
+              raise SystemExit(
+                  f"FAIL: CodeQL reported {len(critical)} finding(s) at security-severity >= 9.0"
+              )
+          print("CodeQL critical gate clean (security-severity >= 9.0)")
           PY
 
       - name: Retain CodeQL SARIF

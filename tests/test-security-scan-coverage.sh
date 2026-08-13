@@ -16,8 +16,8 @@
 # show that a tool actually detects a vulnerability/secret, that the
 # pinned versions still resolve, or that the scans pass on today's tree. It
 # proves the gate is CONNECTED, not that the gate WORKS. Only a live CI run
-# proves the latter. Findings are deliberately REPORTING-ONLY right now, so a
-# green CI run is not evidence of a clean tree either.
+# proves the latter. Findings below the reviewed critical threshold remain
+# REPORTING-ONLY, so a green CI run is not evidence of a clean tree either.
 #
 # ASSERTIONS ARE MADE AGAINST PARSED `run:` BODIES, NEVER THE RAW FILE TEXT.
 # The workflow's posture comments name every requirements path while explaining
@@ -91,7 +91,7 @@ for step in job.get('steps') or []:
 # summarise or upload its output.
 _PY_SCAN_STEP="$(_step python-audit 'pip-audit every requirements file')"
 _PY_ASSERT_STEP="$(_step python-audit 'Assert the audit actually produced')"
-_SAST_ASSERT_STEP="$(_step sast 'Assert CodeQL produced parseable SARIF')"
+_SAST_ASSERT_STEP="$(_step sast 'Assert CodeQL SARIF and reject critical findings')"
 _SAST_USES="$( _LOKI_WF="$WF" python3 -c "
 import os, yaml
 d = yaml.safe_load(open(os.environ['_LOKI_WF']))
@@ -247,10 +247,12 @@ fi
 
 if printf '%s' "$_SAST_ASSERT_STEP" | grep -q 'glob.glob' \
    && printf '%s' "$_SAST_ASSERT_STEP" | grep -q 'json.load' \
-   && printf '%s' "$_SAST_ASSERT_STEP" | grep -q '2.1.0'; then
-  ok "CodeQL fails closed unless parseable SARIF 2.1.0 exists"
+   && printf '%s' "$_SAST_ASSERT_STEP" | grep -q '2.1.0' \
+   && printf '%s' "$_SAST_ASSERT_STEP" | grep -q 'security-severity' \
+   && printf '%s' "$_SAST_ASSERT_STEP" | grep -q 'severity < 9.0'; then
+  ok "CodeQL fails closed on missing SARIF and security-severity >= 9.0"
 else
-  bad "CodeQL result is not verified through parseable SARIF"
+  bad "CodeQL result lacks parseable-SARIF or critical-severity enforcement"
 fi
 
 _sast_name="$( _LOKI_WF="$WF" python3 -c "
@@ -258,10 +260,10 @@ import os, yaml
 d = yaml.safe_load(open(os.environ['_LOKI_WF']))
 print(((d.get('jobs') or {}).get('sast') or {}).get('name', ''))
 " 2>/dev/null )"
-if printf '%s' "$_sast_name" | grep -qi 'reporting'; then
-  ok "CodeQL finding posture is explicitly reporting-only for baseline"
+if printf '%s' "$_sast_name" | grep -qi 'critical-blocking'; then
+  ok "CodeQL job identity names its critical-blocking posture"
 else
-  bad "CodeQL baseline posture is not explicit in the job identity"
+  bad "CodeQL critical-blocking posture is not explicit in the job identity"
 fi
 
 echo ""
