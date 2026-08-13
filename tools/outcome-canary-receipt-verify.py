@@ -160,6 +160,7 @@ def main(argv=None):
     parser.add_argument("observations")
     parser.add_argument("receipt")
     parser.add_argument("--enable-verification", action="store_true")
+    parser.add_argument("--require-verdict", choices=("PROMOTE", "HOLD", "ROLLBACK"))
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     for path in (args.report, args.observations, args.receipt):
@@ -169,14 +170,28 @@ def main(argv=None):
     result = verify_receipt(
         args.report, args.observations, args.receipt, args.enable_verification
     )
+    requirement_met = (
+        result["status"] == "VERIFIED"
+        and (args.require_verdict is None or result["verdict"] == args.require_verdict)
+    )
     if args.json:
-        print(json.dumps(result, sort_keys=True))
+        output = result
+        if args.require_verdict is not None:
+            output = {
+                **result,
+                "required_verdict": args.require_verdict,
+                "requirement_met": requirement_met,
+            }
+        print(json.dumps(output, sort_keys=True))
     elif result["status"] == "VERIFIED":
         print(f"Canary decision receipt: VERIFIED ({result['verdict']})")
         print(f"  sha256={result['receipt_sha256']}")
+        if args.require_verdict is not None:
+            status = "MET" if requirement_met else "NOT MET"
+            print(f"  required verdict: {args.require_verdict} ({status})")
     else:
         print(f"Canary decision receipt: REFUSED ({result['refusal_reason']})")
-    return OK if result["status"] == "VERIFIED" else REFUSED
+    return OK if requirement_met else REFUSED
 
 
 if __name__ == "__main__":

@@ -71,6 +71,20 @@ loki outcomes canary verify report.json observations.json receipt.json \
   --enable-verification --json
 ```
 
+Automation that may act only on one exact independently verified decision can
+gate the verifier itself:
+
+```bash
+loki outcomes canary verify report.json observations.json receipt.json \
+  --enable-verification --require-verdict PROMOTE --json
+```
+
+`--require-verdict` accepts only `PROMOTE`, `HOLD`, or `ROLLBACK`. A receipt that
+fully verifies still prints its actual verdict, but exits 3 when that verdict
+does not exactly match the required value. JSON output also includes
+`required_verdict` and `requirement_met` when the gate is requested. Omitting the
+gate preserves the existing behavior: every fully verified receipt exits 0.
+
 The read-only verifier takes the policy from the canonical receipt, independently
 reruns the deterministic evaluation, rechecks the report, source, and observation
 bytes, and requires the complete rederived receipt to match exactly. It returns

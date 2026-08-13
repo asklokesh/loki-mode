@@ -165,6 +165,55 @@ class TestOutcomeCanaryReceiptVerify(unittest.TestCase):
         self.assertEqual(help_result.returncode, 0)
         self.assertIn("--enable-verification", help_result.stdout)
 
+    def test_cli_can_require_one_exact_verified_verdict(self):
+        base = [
+            sys.executable, str(TOOL), str(self.report), str(self.observations),
+            str(self.receipt), "--enable-verification",
+        ]
+        matched = subprocess.run(
+            base + ["--require-verdict", "PROMOTE", "--json"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(matched.returncode, mod.OK)
+        matched_result = json.loads(matched.stdout)
+        self.assertEqual(matched_result["verdict"], "PROMOTE")
+        self.assertEqual(matched_result["required_verdict"], "PROMOTE")
+        self.assertIs(matched_result["requirement_met"], True)
+
+        mismatched = subprocess.run(
+            base + ["--require-verdict", "ROLLBACK", "--json"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(mismatched.returncode, mod.REFUSED)
+        mismatched_result = json.loads(mismatched.stdout)
+        self.assertEqual(mismatched_result["status"], "VERIFIED")
+        self.assertEqual(mismatched_result["verdict"], "PROMOTE")
+        self.assertEqual(mismatched_result["required_verdict"], "ROLLBACK")
+        self.assertIs(mismatched_result["requirement_met"], False)
+
+        human = subprocess.run(
+            base + ["--require-verdict", "ROLLBACK"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(human.returncode, mod.REFUSED)
+        self.assertIn("Canary decision receipt: VERIFIED (PROMOTE)", human.stdout)
+        self.assertIn("required verdict: ROLLBACK (NOT MET)", human.stdout)
+
+        refused = subprocess.run(
+            [item for item in base if item != "--enable-verification"]
+            + ["--require-verdict", "PROMOTE", "--json"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(refused.returncode, mod.REFUSED)
+        refused_result = json.loads(refused.stdout)
+        self.assertEqual(refused_result["status"], "REFUSED")
+        self.assertIs(refused_result["requirement_met"], False)
+
+        invalid = subprocess.run(
+            base + ["--require-verdict", "promote"], capture_output=True, text=True,
+        )
+        self.assertEqual(invalid.returncode, mod.USAGE)
+
 
 if __name__ == "__main__":
     unittest.main()
