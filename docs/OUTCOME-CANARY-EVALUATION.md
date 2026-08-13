@@ -50,6 +50,19 @@ loki outcomes canary receipt report.json observations.json receipt.json \
   --enable-receipt --control-route safe --canary-percent 10 --min-samples 5
 ```
 
+Automation can require the rederived verdict before the receipt is published:
+
+```bash
+loki outcomes canary receipt report.json observations.json receipt.json \
+  --enable-receipt --control-route safe --canary-percent 10 --min-samples 5 \
+  --require-verdict PROMOTE --json
+```
+
+The target is created only when the actual verdict exactly matches the required
+`PROMOTE`, `HOLD`, or `ROLLBACK` value. A mismatch exits `3`, reports both verdicts
+and `"requirement_met": false`, and leaves the target absent. Omitting
+`--require-verdict` preserves the existing behavior of recording any complete verdict.
+
 The command creates a new canonical `loki-outcome-canary-decision-receipt/v1`
 file. It binds the exact report, source, and observation digests; the full
 evaluation policy; privacy-safe aggregate arm results; the acceptance delta; and

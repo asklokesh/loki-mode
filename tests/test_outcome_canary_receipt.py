@@ -165,6 +165,56 @@ class TestOutcomeCanaryReceipt(unittest.TestCase):
         self.assertEqual(help_result.returncode, 0)
         self.assertIn("--enable-receipt", help_result.stdout)
 
+    def test_cli_requires_exact_verdict_before_publishing(self):
+        base = [
+            sys.executable, str(TOOL), str(self.report), str(self.observations),
+            str(self.receipt), "--control-route", "safe", "--canary-percent", "50",
+            "--min-samples", "4", "--enable-receipt", "--json",
+        ]
+        mismatch = subprocess.run(
+            base + ["--require-verdict", "ROLLBACK"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(mismatch.returncode, mod.REFUSED)
+        mismatch_result = json.loads(mismatch.stdout)
+        self.assertEqual(mismatch_result["status"], "REFUSED")
+        self.assertEqual(mismatch_result["verdict"], "PROMOTE")
+        self.assertEqual(mismatch_result["required_verdict"], "ROLLBACK")
+        self.assertIs(mismatch_result["requirement_met"], False)
+        self.assertEqual(mismatch_result["refusal_reason"], "verdict_mismatch")
+        self.assertFalse(self.receipt.exists())
+
+        matched = subprocess.run(
+            base + ["--require-verdict", "PROMOTE"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(matched.returncode, mod.OK)
+        matched_result = json.loads(matched.stdout)
+        self.assertEqual(matched_result["status"], "RECORDED")
+        self.assertEqual(matched_result["verdict"], "PROMOTE")
+        self.assertEqual(matched_result["required_verdict"], "PROMOTE")
+        self.assertIs(matched_result["requirement_met"], True)
+        self.assertTrue(self.receipt.exists())
+
+        invalid = subprocess.run(
+            base + ["--require-verdict", "promote"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(invalid.returncode, mod.USAGE)
+
+    def test_cli_human_mismatch_reports_actual_verdict_without_writing(self):
+        result = subprocess.run([
+            sys.executable, str(TOOL), str(self.report), str(self.observations),
+            str(self.receipt), "--control-route", "safe", "--canary-percent", "50",
+            "--min-samples", "4", "--enable-receipt",
+            "--require-verdict", "ROLLBACK",
+        ], capture_output=True, text=True)
+        self.assertEqual(result.returncode, mod.REFUSED)
+        self.assertIn("REFUSED (verdict_mismatch)", result.stdout)
+        self.assertIn("actual verdict: PROMOTE", result.stdout)
+        self.assertIn("required verdict: ROLLBACK (NOT MET)", result.stdout)
+        self.assertFalse(self.receipt.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

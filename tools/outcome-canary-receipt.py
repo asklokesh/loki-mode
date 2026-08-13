@@ -13,6 +13,7 @@ import tempfile
 OK, REFUSED, USAGE, NO_INPUT = 0, 3, 64, 66
 DOMAIN = "loki-outcome-canary-decision-receipt/v1"
 MAX_BYTES = 5 * 1024 * 1024
+VERDICTS = {"PROMOTE", "HOLD", "ROLLBACK"}
 
 
 class Parser(argparse.ArgumentParser):
@@ -106,7 +107,8 @@ def _publish_create_only(path, payload):
 
 def create_receipt(report_path, observations_path, receipt_path, control_route,
                    canary_percent=10.0, max_risk=.25, min_samples=5,
-                   min_lift_bps=1, enable_receipt=False):
+                   min_lift_bps=1, enable_receipt=False,
+                   require_verdict=None):
     """Reverify a decision and publish one immutable portable receipt."""
     result = {
         "receipt": DOMAIN,
@@ -118,6 +120,14 @@ def create_receipt(report_path, observations_path, receipt_path, control_route,
     if not enable_receipt:
         result["refusal_reason"] = "receipt_not_enabled"
         return result
+    if require_verdict is not None:
+        result.update({
+            "required_verdict": require_verdict,
+            "requirement_met": False,
+        })
+        if require_verdict not in VERDICTS:
+            result["refusal_reason"] = "required_verdict_invalid"
+            return result
     try:
         _target_is_absent(receipt_path)
         evaluator = _load_tool(
@@ -127,11 +137,11 @@ def create_receipt(report_path, observations_path, receipt_path, control_route,
             report_path, observations_path, control_route, canary_percent,
             max_risk, min_samples, min_lift_bps, True,
         )
-        if decision.get("refusal_reasons") or decision.get("verdict") not in {
-            "PROMOTE", "HOLD", "ROLLBACK"
-        }:
+        if decision.get("refusal_reasons") or decision.get("verdict") not in VERDICTS:
             result["refusal_reason"] = "evaluation_refused"
             return result
+        if require_verdict is not None:
+            result["verdict"] = decision["verdict"]
 
         report_bytes = _read_named_regular(report_path)
         observations_bytes = _read_named_regular(observations_path)
@@ -148,6 +158,9 @@ def create_receipt(report_path, observations_path, receipt_path, control_route,
         source_bytes = _read_named_regular(source)
         if _sha256(source_bytes) != decision["source_sha256"]:
             result["refusal_reason"] = "source_unsafe_or_drifted"
+            return result
+        if require_verdict is not None and decision["verdict"] != require_verdict:
+            result["refusal_reason"] = "verdict_mismatch"
             return result
 
         receipt = {
@@ -184,6 +197,8 @@ def create_receipt(report_path, observations_path, receipt_path, control_route,
             "verdict": decision["verdict"],
             "receipt_sha256": _sha256(payload),
         })
+        if require_verdict is not None:
+            result["requirement_met"] = True
     except FileNotFoundError:
         result["refusal_reason"] = "input_missing"
     except (OSError, ValueError, json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -210,6 +225,7 @@ def main(argv=None):
     parser.add_argument("--max-risk", type=float, default=.25)
     parser.add_argument("--min-samples", type=int, default=5)
     parser.add_argument("--min-lift-bps", type=int, default=1)
+    parser.add_argument("--require-verdict", choices=("PROMOTE", "HOLD", "ROLLBACK"))
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     for path in (args.report, args.observations):
@@ -219,15 +235,20 @@ def main(argv=None):
     result = create_receipt(
         args.report, args.observations, args.receipt, args.control_route,
         args.canary_percent, args.max_risk, args.min_samples,
-        args.min_lift_bps, args.enable_receipt,
+        args.min_lift_bps, args.enable_receipt, args.require_verdict,
     )
     if args.json:
         print(json.dumps(result, sort_keys=True))
     elif result["status"] == "RECORDED":
         print(f"Canary decision receipt: RECORDED ({result['verdict']})")
         print(f"  sha256={result['receipt_sha256']}")
+        if args.require_verdict is not None:
+            print(f"  required verdict: {args.require_verdict} (MET)")
     else:
         print(f"Canary decision receipt: REFUSED ({result['refusal_reason']})")
+        if args.require_verdict is not None and result["verdict"] is not None:
+            print(f"  actual verdict: {result['verdict']}")
+            print(f"  required verdict: {args.require_verdict} (NOT MET)")
     return OK if result["status"] == "RECORDED" else REFUSED
 
 
