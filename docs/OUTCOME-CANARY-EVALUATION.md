@@ -25,6 +25,21 @@ loki outcomes canary evaluate report.json observations.json \
 
 Evaluation is opt-in. Without `--enable-evaluation`, the command refuses.
 
+Automation that may act only on one exact decision can add an explicit verdict
+gate:
+
+```bash
+loki outcomes canary evaluate report.json observations.json \
+  --enable-evaluation --control-route safe --canary-percent 10 \
+  --require-verdict PROMOTE --json
+```
+
+`--require-verdict` accepts only `PROMOTE`, `HOLD`, or `ROLLBACK`. A complete
+evaluation still prints its actual verdict, but exits 3 when that verdict does
+not exactly match the required value. JSON output also includes
+`required_verdict` and `requirement_met` when the gate is requested. Omitting the
+gate preserves the existing behavior: every complete verdict exits 0.
+
 ## Retain a decision receipt
 
 After a complete evaluation, create one immutable portable proof by independently
@@ -139,5 +154,6 @@ unbound evidence returns `REFUSED` rather than a partial verdict.
 `--json` emits the aggregate arms, policy, exact evidence digests, verdict, and
 refusal reasons. It is portable across machines because it omits local input paths.
 The default output is a short human-readable summary. Exit 0 means
-a verdict was produced (including `ROLLBACK`), 3 means evaluation was refused, 64
-is an invocation error, and 66 is a missing input file.
+a verdict was produced (including `ROLLBACK`) and any requested exact-verdict
+gate matched. Exit 3 means evaluation was refused or an exact-verdict gate did
+not match, 64 is an invocation error, and 66 is a missing input file.

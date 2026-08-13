@@ -235,6 +235,7 @@ def main(argv=None):
     parser.add_argument("--max-risk", type=float, default=.25)
     parser.add_argument("--min-samples", type=int, default=5)
     parser.add_argument("--min-lift-bps", type=int, default=1)
+    parser.add_argument("--require-verdict", choices=("PROMOTE", "HOLD", "ROLLBACK"))
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     for path in (args.report, args.observations):
@@ -245,8 +246,19 @@ def main(argv=None):
         args.report, args.observations, args.control_route, args.canary_percent,
         args.max_risk, args.min_samples, args.min_lift_bps, args.enable_evaluation,
     )
+    requirement_met = (
+        not result["refusal_reasons"]
+        and (args.require_verdict is None or result["verdict"] == args.require_verdict)
+    )
     if args.json:
-        print(json.dumps(result, sort_keys=True))
+        output = result
+        if args.require_verdict is not None:
+            output = {
+                **result,
+                "required_verdict": args.require_verdict,
+                "requirement_met": requirement_met,
+            }
+        print(json.dumps(output, sort_keys=True))
     elif result["refusal_reasons"]:
         print("Canary evaluation: REFUSED")
         for reason in result["refusal_reasons"]:
@@ -264,7 +276,10 @@ def main(argv=None):
         print(f"  accepted delta: {result['accepted_delta_bps']} bps")
         print(f"  report sha256: {result['report_sha256']}")
         print(f"  observations sha256: {result['observations_sha256']}")
-    return REFUSED if result["refusal_reasons"] else OK
+        if args.require_verdict is not None:
+            status = "MET" if requirement_met else "NOT MET"
+            print(f"  required verdict: {args.require_verdict} ({status})")
+    return OK if requirement_met else REFUSED
 
 
 if __name__ == "__main__":

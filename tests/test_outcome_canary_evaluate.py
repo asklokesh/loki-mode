@@ -205,6 +205,43 @@ class TestOutcomeCanaryEvaluate(unittest.TestCase):
         usage = subprocess.run(base + ["--wat"], capture_output=True)
         self.assertEqual(usage.returncode, mod.USAGE)
 
+    def test_cli_can_require_one_exact_verdict(self):
+        path = self.observations()
+        base = [sys.executable, str(TOOL), str(self.report), str(path), "--enable-evaluation",
+                "--control-route", "safe", "--canary-percent", "50", "--min-samples", "4"]
+
+        matched = subprocess.run(
+            base + ["--require-verdict", "PROMOTE", "--json"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(matched.returncode, mod.OK)
+        matched_result = json.loads(matched.stdout)
+        self.assertEqual(matched_result["verdict"], "PROMOTE")
+        self.assertEqual(matched_result["required_verdict"], "PROMOTE")
+        self.assertIs(matched_result["requirement_met"], True)
+
+        mismatched = subprocess.run(
+            base + ["--require-verdict", "ROLLBACK", "--json"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(mismatched.returncode, mod.REFUSED)
+        mismatched_result = json.loads(mismatched.stdout)
+        self.assertEqual(mismatched_result["verdict"], "PROMOTE")
+        self.assertEqual(mismatched_result["required_verdict"], "ROLLBACK")
+        self.assertIs(mismatched_result["requirement_met"], False)
+
+        human = subprocess.run(
+            base + ["--require-verdict", "ROLLBACK"], capture_output=True, text=True,
+        )
+        self.assertEqual(human.returncode, mod.REFUSED)
+        self.assertIn("Canary evaluation: PROMOTE", human.stdout)
+        self.assertIn("required verdict: ROLLBACK (NOT MET)", human.stdout)
+
+        invalid = subprocess.run(
+            base + ["--require-verdict", "promote"], capture_output=True, text=True,
+        )
+        self.assertEqual(invalid.returncode, mod.USAGE)
+
 
 if __name__ == "__main__":
     unittest.main()
