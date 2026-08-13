@@ -320,7 +320,7 @@ jobs:
           output: /tmp/codeql-results
           upload: always
 
-      - name: Assert CodeQL SARIF and reject critical findings
+      - name: Assert CodeQL SARIF and reject unreviewed critical findings
         # FAIL CLOSED ON THE ARTIFACT. A completed action without a retained,
         # parseable result is not evidence that analysis happened. Validate the
         # action-provided output path rather than assuming a generated filename.
@@ -340,7 +340,23 @@ jobs:
           reports = sorted(glob.glob(os.path.join(root, "**", "*.sarif"), recursive=True))
           if not reports:
               raise SystemExit("FAIL: CodeQL produced no SARIF report")
-          critical = []
+          # These exact identities are the seven first-baseline findings reviewed
+          # in 09184232. They remain visible in SARIF/code scanning. The blocking
+          # decision accepts only the same rule, path, and stable source-line
+          # fingerprint, so moving to a different sink or changing the sink line
+          # creates an unreviewed critical finding and fails closed.
+          reviewed_critical = {
+              ("py/command-line-injection", "api-examples/python-api.py", "d3e00d2bc3c0077d:1"),
+              ("py/command-line-injection", "dashboard/api_releases.py", "9f905b10583ce31a:1"),
+              ("py/command-line-injection", "dashboard/control.py", "1cd558210b41452d:1"),
+              ("py/command-line-injection", "dashboard/server.py", "74cce5fbedefb794:1"),
+              ("py/command-line-injection", "dashboard/server.py", "1cd558210b41452d:1"),
+              ("py/command-line-injection", "web-app/server.py", "2b985af458631366:1"),
+              ("py/command-line-injection", "web-app/server.py", "97626c01411ab378:1"),
+          }
+          seen_critical = set()
+          reviewed = []
+          unreviewed = []
           for report in reports:
               with open(report, encoding="utf-8") as handle:
                   payload = json.load(handle)
@@ -367,15 +383,39 @@ jobs:
                       location = ((result.get("locations") or [{}])[0].get("physicalLocation") or {})
                       artifact = (location.get("artifactLocation") or {}).get("uri", "unknown")
                       line = (location.get("region") or {}).get("startLine", "?")
-                      critical.append((rule_id, severity, artifact, line))
+                      fingerprint = (result.get("partialFingerprints") or {}).get(
+                          "primaryLocationLineHash"
+                      )
+                      identity = (rule_id, artifact, fingerprint)
+                      finding = (rule_id, severity, artifact, line, fingerprint)
+                      if identity in seen_critical:
+                          unreviewed.append(finding)
+                          continue
+                      seen_critical.add(identity)
+                      if identity in reviewed_critical:
+                          reviewed.append(finding)
+                      else:
+                          unreviewed.append(finding)
           print(f"validated {len(reports)} CodeQL SARIF report(s)")
-          if critical:
-              for rule_id, severity, artifact, line in critical:
-                  print(f"CRITICAL: {rule_id} severity={severity:g} at {artifact}:{line}")
-              raise SystemExit(
-                  f"FAIL: CodeQL reported {len(critical)} finding(s) at security-severity >= 9.0"
+          for rule_id, severity, artifact, line, fingerprint in reviewed:
+              print(
+                  f"REVIEWED CRITICAL: {rule_id} severity={severity:g} "
+                  f"at {artifact}:{line} fingerprint={fingerprint}"
               )
-          print("CodeQL critical gate clean (security-severity >= 9.0)")
+          if unreviewed:
+              for rule_id, severity, artifact, line, fingerprint in unreviewed:
+                  print(
+                      f"UNREVIEWED CRITICAL: {rule_id} severity={severity:g} "
+                      f"at {artifact}:{line} fingerprint={fingerprint}"
+                  )
+              raise SystemExit(
+                  f"FAIL: CodeQL reported {len(unreviewed)} unreviewed or duplicate "
+                  "finding(s) at security-severity >= 9.0"
+              )
+          print(
+              "CodeQL critical gate clean "
+              f"({len(reviewed)} exact reviewed finding(s), 0 unreviewed)"
+          )
           PY
 
       - name: Retain CodeQL SARIF

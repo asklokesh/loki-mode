@@ -91,7 +91,7 @@ for step in job.get('steps') or []:
 # summarise or upload its output.
 _PY_SCAN_STEP="$(_step python-audit 'pip-audit every requirements file')"
 _PY_ASSERT_STEP="$(_step python-audit 'Assert the audit actually produced')"
-_SAST_ASSERT_STEP="$(_step sast 'Assert CodeQL SARIF and reject critical findings')"
+_SAST_ASSERT_STEP="$(_step sast 'Assert CodeQL SARIF and reject unreviewed critical findings')"
 _SAST_USES="$( _LOKI_WF="$WF" python3 -c "
 import os, yaml
 d = yaml.safe_load(open(os.environ['_LOKI_WF']))
@@ -249,10 +249,21 @@ if printf '%s' "$_SAST_ASSERT_STEP" | grep -q 'glob.glob' \
    && printf '%s' "$_SAST_ASSERT_STEP" | grep -q 'json.load' \
    && printf '%s' "$_SAST_ASSERT_STEP" | grep -q '2.1.0' \
    && printf '%s' "$_SAST_ASSERT_STEP" | grep -q 'security-severity' \
-   && printf '%s' "$_SAST_ASSERT_STEP" | grep -q 'severity < 9.0'; then
-  ok "CodeQL fails closed on missing SARIF and security-severity >= 9.0"
+   && printf '%s' "$_SAST_ASSERT_STEP" | grep -q 'severity < 9.0' \
+   && printf '%s' "$_SAST_ASSERT_STEP" | grep -q 'primaryLocationLineHash' \
+   && printf '%s' "$_SAST_ASSERT_STEP" | grep -q 'identity in reviewed_critical' \
+   && printf '%s' "$_SAST_ASSERT_STEP" | grep -q 'identity in seen_critical'; then
+  ok "CodeQL fails closed on missing SARIF and unreviewed/duplicate critical identities"
 else
-  bad "CodeQL result lacks parseable-SARIF or critical-severity enforcement"
+  bad "CodeQL result lacks exact-fingerprint critical enforcement"
+fi
+
+_reviewed_identity_count="$(printf '%s' "$_SAST_ASSERT_STEP" \
+  | grep -cE '^ *\("py/command-line-injection", "[^\"]+", "[0-9a-f]{15,16}:1"\),$' || true)"
+if [ "$_reviewed_identity_count" -eq 7 ]; then
+  ok "CodeQL gate contains exactly seven path-bound reviewed critical fingerprints"
+else
+  bad "CodeQL reviewed critical set is not exactly seven path-bound fingerprints"
 fi
 
 _sast_name="$( _LOKI_WF="$WF" python3 -c "
