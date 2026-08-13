@@ -5,6 +5,21 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.22.3
+
+### Added
+
+- **Exact-verdict automation gates:** installed outcome-canary evaluation and
+  receipt verification now accept `--require-verdict PROMOTE|HOLD|ROLLBACK`.
+  Complete results retain their actual verdict while returning a nonzero exit
+  when the caller-required verdict does not match.
+
+### Fixed
+
+- **macOS release verification:** the first-run privacy suite now uses a
+  portable process-group cap when GNU `timeout` is unavailable, so stuck child
+  runners are terminated and the macOS Bun matrix completes reliably.
+
 ## v9.22.2
 
 ### Added
