@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -8,6 +9,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TOOL = ROOT / "tools" / "proof-passport.py"
+CLI = ROOT / "autonomy" / "loki"
 spec = importlib.util.spec_from_file_location("proof_passport", TOOL)
 pp = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pp)
@@ -125,6 +127,40 @@ class ProofPassportTests(unittest.TestCase):
         self.assertEqual(run.returncode, expected_rc, run.stderr)
         self.assertTrue(output.exists())
         self.assertIn(passport["verification"]["verdict"], summary.read_text())
+
+    def test_product_cli_accepts_local_proof_id(self):
+        proof_dir = self.path / ".loki" / "proofs" / "external-agent-run"
+        proof_dir.mkdir(parents=True)
+        (proof_dir / "proof.json").write_bytes(self.receipt.read_bytes())
+        output = self.path / "passport.json"
+        summary = self.path / "summary.md"
+        env = os.environ.copy()
+        env.update(LOKI_DIR=str(self.path / ".loki"), NO_COLOR="1")
+        run = subprocess.run([
+            "bash", str(CLI), "proof", "passport", str(self.contract),
+            "external-agent-run", str(output), "--repo-dir", str(self.path),
+            "--markdown-output", str(summary)],
+            capture_output=True, text=True, cwd=self.path, env=env)
+        passport = json.loads(output.read_text())
+        expected_rc = {"VERIFIED": 0, "FAILED": 1, "UNVERIFIABLE": 2}[
+            passport["verification"]["verdict"]]
+        self.assertEqual(run.returncode, expected_rc, run.stderr)
+        self.assertTrue(passport["parties"]["independent"])
+        self.assertIn(passport["receipt"]["sha256"], summary.read_text())
+
+    def test_product_cli_accepts_external_receipt_path(self):
+        output = self.path / "external-passport.json"
+        env = os.environ.copy()
+        env["NO_COLOR"] = "1"
+        run = subprocess.run([
+            "bash", str(CLI), "proof", "passport", str(self.contract),
+            str(self.receipt), str(output), "--repo-dir", str(self.path)],
+            capture_output=True, text=True, cwd=self.path, env=env)
+        passport = json.loads(output.read_text())
+        expected_rc = {"VERIFIED": 0, "FAILED": 1, "UNVERIFIABLE": 2}[
+            passport["verification"]["verdict"]]
+        self.assertEqual(run.returncode, expected_rc, run.stderr)
+        self.assertEqual(passport["receipt"]["name"], "proof.json")
 
     def test_markdown_conflict_prevents_both_outputs(self):
         output = self.path / "passport.json"

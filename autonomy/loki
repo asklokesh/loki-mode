@@ -35298,6 +35298,9 @@ cmd_proof() {
             echo "  show <id>            Pretty-print .loki/proofs/<id>/proof.json"
             echo "  verify <id>          Re-check a receipt against the repo (tamper + drift);"
             echo "                       exit 0 clean, 1 tamper/drift. Verify it yourself."
+            echo "  passport <contract> <id|proof.json> <output.json>"
+            echo "                       Bind work from any agent to a portable Outcome Contract"
+            echo "                       and independently rechecked Evidence Receipt"
             echo ""
             echo "Options for 'verify':"
             echo "  --human              Render the verdict and every failure reason as prose"
@@ -35473,6 +35476,47 @@ PYEOF
                 LOKI_PROOF_JSON="$pj" python3 -c "import json,os; print(json.dumps(json.load(open(os.environ['LOKI_PROOF_JSON'])), indent=2))"
             fi
             exit 0
+            ;;
+        passport)
+            # EXEC-PROOF-01: make the provider-neutral Proof Passport reachable
+            # from the installed product. The Python implementation already
+            # binds the executor/verifier identities, exact contract digest,
+            # exact receipt bytes, and independently re-derived verdict. Before
+            # this subcommand, users had to know the repository-only tools/
+            # path, so the portable proof workflow was not actually a product
+            # workflow for npm consumers.
+            #
+            # The second positional accepts either a local proof id or an
+            # explicit receipt path. That lets a Loki run use its short id while
+            # Codex, Claude Code, Cursor, Factory, or any other executor can hand
+            # over a provider-neutral proof.json without copying it into .loki.
+            local contract="${1:-}"
+            local receipt_ref="${2:-}"
+            local output="${3:-}"
+            if [ -z "$contract" ] || [ -z "$receipt_ref" ] || [ -z "$output" ]; then
+                echo -e "${RED}Usage: loki proof passport <contract.json> <proof-id|proof.json> <output.json> [options]${NC}" >&2
+                echo "Options: --repo-dir DIR --markdown-output FILE --force" >&2
+                exit 64
+            fi
+            shift 3
+
+            local receipt_path="$receipt_ref"
+            if [ ! -f "$receipt_path" ]; then
+                receipt_path="${proofs_dir}/${receipt_ref}/proof.json"
+            fi
+            if [ ! -f "$receipt_path" ]; then
+                echo -e "${RED}Receipt not found: ${receipt_ref}${NC}" >&2
+                echo "Pass a proof id from 'loki proof list' or a path to proof.json." >&2
+                exit 2
+            fi
+
+            local passport_tool="${SKILL_DIR}/tools/proof-passport.py"
+            if [ ! -f "$passport_tool" ]; then
+                echo -e "${RED}Proof Passport tool not found: ${passport_tool}${NC}" >&2
+                exit 3
+            fi
+            python3 "$passport_tool" "$contract" "$receipt_path" "$output" "$@"
+            exit $?
             ;;
         md)
             # Paste-able Markdown for a PR comment, a Slack message, or a

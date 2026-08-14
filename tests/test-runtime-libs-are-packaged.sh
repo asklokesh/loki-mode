@@ -57,6 +57,7 @@ LIBS=(
     "tools/cost-guard.py"                 # cost regression gate
     "tools/estimate-run.py"               # forward cost projection
     "tools/receipt-attest.py"             # portable third-party attestation
+    "tools/proof-passport.py"             # provider-neutral independent proof
     "tools/tool-index.py"                 # what ships, and what is reachable
     "tools/ci-gate.py"                    # one exit code over every policy
     "tools/receipt-bundle.py"             # audit trail across a run sequence

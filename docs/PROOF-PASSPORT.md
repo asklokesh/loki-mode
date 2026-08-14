@@ -5,10 +5,12 @@ receipt. The JSON artifact preserves the exact contract and receipt digests,
 the verifier verdict, executor/verifier separation, and explicit trust
 limitations.
 
-Generate the machine-readable passport and a portable PR/CI summary together:
+Generate the machine-readable passport and a portable PR/CI summary together
+from the installed product. The receipt argument can be a proof id from
+`loki proof list` or a path to any provider's compatible `proof.json`:
 
 ```bash
-python3 tools/proof-passport.py \
+loki proof passport \
   outcome-contract.json proof.json proof-passport.json \
   --repo-dir . \
   --markdown-output proof-passport.md
