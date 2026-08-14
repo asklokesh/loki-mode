@@ -5,6 +5,16 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.22.5
+
+### Added
+
+- **Provider-free quickstart template discovery:**
+  `loki quickstart --list-templates` enumerates all 21 shipped starter
+  templates and their purposes in stable catalog order before provider
+  discovery, estimation, consent, project writes, or build execution.
+  `--json` emits the same catalog as a schema-v1 object for local automation.
+
 ## v9.22.4
 
 ### Added
