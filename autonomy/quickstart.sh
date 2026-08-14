@@ -327,7 +327,7 @@ _qs_selected_provider() {
 # non-zero if the estimator gave no result (caller falls back to a no-number
 # confirm, never fabricating a figure).
 _qs_emit_plan() {
-    local prd_path="$1" template_name="$2"
+    local prd_path="$1" template_name="$2" json_output="${3:-false}" input_kind="${4:-idea}"
     local plan_json=""
     plan_json=$(show_prd_plan "$prd_path" "true" "false" 2>/dev/null) || plan_json=""
     if [ -z "$plan_json" ]; then
@@ -357,6 +357,32 @@ print('{}{}'.format(iters, rng_str))
 " 2>/dev/null) || parsed=""
     if [ -z "$parsed" ]; then
         return 1
+    fi
+
+    if [ "$json_output" = true ]; then
+        local json_payload=""
+        json_payload=$(printf '%s' "$plan_json" | python3 -c '
+import json
+import sys
+
+plan = json.load(sys.stdin)
+if not isinstance(plan, dict):
+    sys.exit(1)
+template_name, input_kind = sys.argv[1:3]
+payload = {
+    "schema_version": 1,
+    "command": "loki quickstart",
+    "mode": "dry-run",
+    "input_kind": input_kind,
+    "selected_template": template_name if input_kind == "idea" else None,
+    "source_name": template_name if input_kind == "prd" else None,
+    "plan": plan,
+}
+json.dump(payload, sys.stdout, separators=(",", ":"), sort_keys=True)
+' "$template_name" "$input_kind" 2>/dev/null) || json_payload=""
+        [ -n "$json_payload" ] || return 1
+        printf '%s\n' "$json_payload" >&3
+        return 0
     fi
     local tier_u cost_u time_u iter_u
     tier_u=$(printf '%s' "$parsed" | sed -n '1p')
@@ -392,6 +418,7 @@ _qs_help() {
     printf 'Options:\n'
     printf '  --yes, -y     Auto-confirm the final build prompt (still shows the plan)\n'
     printf '  --dry-run     Preview the selected template and plan; write/start nothing\n'
+    printf '  --json        With --dry-run, emit one machine-readable JSON object\n'
     printf '  --help, -h    Show this help and exit\n'
     printf '\n'
     printf 'Non-interactive use:\n'
@@ -404,6 +431,7 @@ _qs_help() {
     printf '  loki quickstart "a todo app" --dry-run\n'
     printf '  An IDEA (or readable PRD path) is required. No provider is checked,\n'
     printf '  no file is written, and no build is started. Do not combine with --yes.\n'
+    printf '  Add --json for versioned JSON only; --json requires --dry-run.\n'
     printf '\n'
     printf 'Steps:\n'
     printf '  1. Setup      Check for an AI provider for execution (skipped in preview)\n'
@@ -434,6 +462,7 @@ cmd_quickstart() {
     local positional=""
     local assume_yes=false
     local dry_run=false
+    local json_output=false
     if _qs_assume_yes; then assume_yes=true; fi
 
     # yes_flag tracks EXPLICIT --yes/-y on THIS command's argv, and nothing else.
@@ -462,6 +491,10 @@ cmd_quickstart() {
                 dry_run=true
                 shift
                 ;;
+            --json)
+                json_output=true
+                shift
+                ;;
             --*)
                 printf '%sUnknown option: %s%s\n' "$_QS_RED" "$1" "$_QS_NC" >&2
                 printf "Run 'loki quickstart --help' for usage.\n" >&2
@@ -485,6 +518,11 @@ cmd_quickstart() {
     # provider discovery, estimation, and every write.
     if [ "$dry_run" = true ] && [ "$yes_flag" = true ]; then
         printf '%s--dry-run cannot be combined with --yes or -y.%s\n' "$_QS_RED" "$_QS_NC" >&2
+        exit 2
+    fi
+
+    if [ "$json_output" = true ] && [ "$dry_run" != true ]; then
+        printf '%s--json requires --dry-run.%s\n' "$_QS_RED" "$_QS_NC" >&2
         exit 2
     fi
 
@@ -534,6 +572,17 @@ cmd_quickstart() {
         fi
     fi
 
+    # Machine-readable preview follows the exact same selection and estimator
+    # path as the human preview. Suppress presentation stdout while retaining a
+    # duplicate of the caller's stdout on fd 3; _qs_emit_plan writes the single
+    # validated JSON object there only after estimation succeeds. Stderr stays
+    # available for fail-closed diagnostics.
+    local json_stdout_redirected=false
+    if [ "$json_output" = true ]; then
+        exec 3>&1 1>/dev/null
+        json_stdout_redirected=true
+    fi
+
     printf '\n'
     if [ "$dry_run" = true ]; then
         printf '%sLoki Mode quickstart preview -- template and plan only.%s\n' "$_QS_BOLD" "$_QS_NC"
@@ -577,9 +626,11 @@ cmd_quickstart() {
     local prd_source=""        # an existing PRD file path, when the user has one
     local brief=""             # the one-line idea (drives template matching)
     local template_name=""
+    local input_kind="idea"
 
     if [ -n "$positional" ] && [ -f "$positional" ]; then
         prd_source="$positional"
+        input_kind="prd"
         printf '%sUsing your PRD: %s%s\n' "$_QS_DIM" "$positional" "$_QS_NC"
         printf '\n'
     else
@@ -680,7 +731,7 @@ cmd_quickstart() {
     # prompt: the operator still gets the honest quote in the transcript, and it
     # is still the figure cmd_start runs with, so the quote equals the charge.
     local estimate_ok=true
-    if ! _qs_emit_plan "$prd_source" "$template_name"; then
+    if ! _qs_emit_plan "$prd_source" "$template_name" "$json_output" "$input_kind"; then
         estimate_ok=false
         # No honest number available. Interactively this flips the confirm to
         # default-NO below. Non-interactively there is no one to review the
@@ -688,6 +739,10 @@ cmd_quickstart() {
         # Explicit --yes authorizes the displayed estimate; it is not consent
         # to spend without one.
         if [ "$noninteractive_ok" = true ]; then
+            if [ "$json_stdout_redirected" = true ]; then
+                exec 1>&3 3>&-
+                json_stdout_redirected=false
+            fi
             printf 'Could not compute a cost estimate; non-interactive quickstart requires a displayed plan and started no build.\n' >&2
             return 2
         else
@@ -702,6 +757,9 @@ cmd_quickstart() {
     # structurally unreachable.
     if [ "$dry_run" = true ]; then
         printf 'Preview complete. No provider was run, no file was written, and no build was started.\n'
+        if [ "$json_stdout_redirected" = true ]; then
+            exec 1>&3 3>&-
+        fi
         return 0
     fi
 

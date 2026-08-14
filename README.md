@@ -77,6 +77,18 @@ Preview requires an idea or readable PRD path, works without a terminal or AI
 provider, and exits before creating a PRD or starting a build. `--dry-run` and
 `--yes` are mutually exclusive so execution intent is never ambiguous.
 
+For scripts and local dashboards, add `--json` to receive one versioned JSON
+object instead of terminal text:
+
+```bash
+loki quickstart "a todo app with user accounts" --dry-run --json
+```
+
+The object contains the input kind, deterministic selected template (or `null`
+for an existing PRD), and the exact estimator response under `plan`. `--json`
+requires `--dry-run`; invalid input or estimator failure writes no JSON, and the
+command still exits before provider discovery, file writes, or build execution.
+
 Or go straight at it:
 
 ```bash

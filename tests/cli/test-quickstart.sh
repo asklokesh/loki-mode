@@ -589,6 +589,106 @@ else
     log_fail "preview estimator failure" "rc=$rc or zero-side-effect refusal missing"
 fi
 
+# ===========================================================================
+# Machine-readable zero-spend preview (LOKI-QUICKSTART-JSON-PREVIEW-49).
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Test 23: an idea JSON preview emits exactly one parseable versioned object
+# containing the canonical template choice and untouched estimator response.
+# Human presentation, providers, writes, and execution remain absent.
+# ---------------------------------------------------------------------------
+T23="$TMP/t23"; mkdir -p "$T23"
+make_harness "$T23" "$PREVIEW_NONINT"
+printf 'cmd_quickstart "a todo app with user accounts" --dry-run --json </dev/null\n' >> "$T23/harness.sh"
+(cd "$T23" && run_to 15 bash harness.sh >stdout 2>stderr); rc=$?
+ok=true
+[ "$rc" -eq 0 ] || ok=false
+python3 - "$T23/stdout" <<'PY' || ok=false
+import json, pathlib, sys
+raw = pathlib.Path(sys.argv[1]).read_text()
+assert raw.endswith("\n") and raw.count("\n") == 1
+d = json.loads(raw)
+assert d["schema_version"] == 1
+assert d["command"] == "loki quickstart"
+assert d["mode"] == "dry-run"
+assert d["input_kind"] == "idea"
+assert d["selected_template"] == "simple-todo-app"
+assert d["source_name"] is None
+assert d["plan"]["cost"]["total_usd"] == 0.40
+assert d["plan"]["iterations"] == {"estimated": 4, "range": [3, 5]}
+PY
+[ ! -s "$T23/stderr" ] || ok=false
+[ -f "$T23/provider-called" ] && ok=false
+[ -f "$T23/prd.md" ] && ok=false
+[ -f "$T23/cmd_start.log" ] && ok=false
+if [ "$ok" = true ]; then
+    log_pass "idea --dry-run --json: one exact plan object, zero human/provider/write/build output"
+else
+    log_fail "idea JSON preview" "rc=$rc; JSON schema, purity, or side-effect boundary violated"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 24: a PRD JSON preview identifies the input honestly: no selected
+# template is invented, while only the source basename is exposed.
+# ---------------------------------------------------------------------------
+T24="$TMP/t24"; mkdir -p "$T24"
+printf '# Existing PRD\n\nBuild the existing spec.\n' > "$T24/customer-prd.md"
+before=$(shasum -a 256 "$T24/customer-prd.md" | awk '{print $1}')
+make_harness "$T24" "$PREVIEW_NONINT"
+printf 'cmd_quickstart "%s/customer-prd.md" --json --dry-run </dev/null\n' "$T24" >> "$T24/harness.sh"
+(cd "$T24" && run_to 15 bash harness.sh >stdout 2>stderr); rc=$?
+after=$(shasum -a 256 "$T24/customer-prd.md" | awk '{print $1}')
+ok=true
+[ "$rc" -eq 0 ] || ok=false
+[ "$before" = "$after" ] || ok=false
+python3 - "$T24/stdout" <<'PY' || ok=false
+import json, pathlib, sys
+d = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert d["input_kind"] == "prd"
+assert d["selected_template"] is None
+assert d["source_name"] == "customer-prd.md"
+assert d["plan"]["time"]["estimated"] == "14 minutes"
+PY
+[ ! -s "$T24/stderr" ] || ok=false
+[ -f "$T24/provider-called" ] && ok=false
+[ -f "$T24/prd.md" ] && ok=false
+[ -f "$T24/cmd_start.log" ] && ok=false
+if [ "$ok" = true ]; then
+    log_pass "PRD --dry-run --json: source identified without inventing a template or changing bytes"
+else
+    log_fail "PRD JSON preview" "rc=$rc; source truth, JSON, or side-effect boundary violated"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 25: --json is preview-only. Without --dry-run it refuses before stdout,
+# provider discovery, writes, or build execution.
+# ---------------------------------------------------------------------------
+T25="$TMP/t25"; mkdir -p "$T25"
+make_harness "$T25" "$PREVIEW_NONINT"
+printf 'cmd_quickstart "a todo app" --json </dev/null\n' >> "$T25/harness.sh"
+(cd "$T25" && run_to 15 bash harness.sh >stdout 2>stderr); rc=$?
+if [ "$rc" -eq 2 ] && [ ! -s "$T25/stdout" ] && grep -q -- "--json requires --dry-run" "$T25/stderr" && [ ! -f "$T25/provider-called" ] && [ ! -f "$T25/cmd_start.log" ]; then
+    log_pass "--json without --dry-run: exit 2 with no data or side effects"
+else
+    log_fail "JSON mode guard" "rc=$rc or stdout/refusal/side-effect contract missing"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 26: estimator failure emits no partial JSON. Diagnostics remain on
+# stderr and every provider/write/build boundary remains untouched.
+# ---------------------------------------------------------------------------
+T26="$TMP/t26"; mkdir -p "$T26"
+make_harness "$T26" "$PREVIEW_NONINT
+show_prd_plan() { return 1; }"
+printf 'cmd_quickstart "a todo app" --dry-run --json </dev/null\n' >> "$T26/harness.sh"
+(cd "$T26" && run_to 15 bash harness.sh >stdout 2>stderr); rc=$?
+if [ "$rc" -eq 2 ] && [ ! -s "$T26/stdout" ] && grep -q "requires a displayed plan" "$T26/stderr" && [ ! -f "$T26/provider-called" ] && [ ! -f "$T26/prd.md" ] && [ ! -f "$T26/cmd_start.log" ]; then
+    log_pass "JSON estimator failure: exit 2 with no partial data or side effects"
+else
+    log_fail "JSON estimator failure" "rc=$rc or empty-stdout/zero-side-effect refusal missing"
+fi
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
