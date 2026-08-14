@@ -66,6 +66,17 @@ or a stray argument in CI can never start a paid build on its own. Existing
 files are never overwritten: if `prd.md` is present the PRD lands at
 `prd-quickstart.md`, then numbered suffixes as needed.
 
+Preview the same deterministic template choice and estimator-backed plan with
+zero writes or execution:
+
+```bash
+loki quickstart "a todo app with user accounts" --dry-run
+```
+
+Preview requires an idea or readable PRD path, works without a terminal or AI
+provider, and exits before creating a PRD or starting a build. `--dry-run` and
+`--yes` are mutually exclusive so execution intent is never ambiguous.
+
 Or go straight at it:
 
 ```bash

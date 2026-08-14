@@ -96,7 +96,7 @@ log_pass "fixture: quickstart.sh and loki present"
 # Test 1: loki quickstart --help exits 0 and prints concise usage.
 # ---------------------------------------------------------------------------
 out=$(run_to 10 "$LOKI" quickstart --help </dev/null 2>&1); rc=$?
-if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qi "guided first build"; then
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qi "guided first build" && printf '%s' "$out" | grep -q -- "--dry-run"; then
     log_pass "quickstart --help exits 0 with usage"
 else
     log_fail "quickstart --help" "exit=$rc or missing usage text"
@@ -473,6 +473,120 @@ if [ "$ok" = true ]; then
     log_pass "estimator failure: exit 2, zero writes, no unpriced build"
 else
     log_fail "estimator failure refusal" "rc=$rc; wrote a file or started an unpriced build"
+fi
+
+# ===========================================================================
+# Zero-spend preview path (LOKI-QUICKSTART-PREVIEW-48).
+# ===========================================================================
+
+PREVIEW_NONINT='_qs_non_interactive() { return 0; }
+_qs_selected_provider() { printf provider-called > "$PWD/provider-called"; return 1; }
+detect_any_provider() { printf provider-called > "$PWD/provider-called"; return 1; }
+provider_offer_gate() { printf provider-called > "$PWD/provider-called"; return 1; }'
+
+# ---------------------------------------------------------------------------
+# Test 17: an idea preview works without a terminal or provider. It uses the
+# canonical top match and estimator, then exits before every write/build seam.
+# ---------------------------------------------------------------------------
+T17="$TMP/t17"; mkdir -p "$T17"
+make_harness "$T17" "$PREVIEW_NONINT"
+printf 'cmd_quickstart "a todo app with user accounts" --dry-run </dev/null\n' >> "$T17/harness.sh"
+out=$(cd "$T17" && run_to 15 bash harness.sh 2>&1); rc=$?
+ok=true
+[ "$rc" -eq 0 ] || ok=false
+printf '%s' "$out" | grep -q "Template:    simple-todo-app" || ok=false
+printf '%s' "$out" | grep -q "Cost:        ~\$0.40" || ok=false
+printf '%s' "$out" | grep -q "Preview complete" || ok=false
+printf '%s' "$out" | grep -q "Start the build now" && ok=false
+[ -f "$T17/provider-called" ] && ok=false
+[ -f "$T17/prd.md" ] && ok=false
+[ -f "$T17/prd-quickstart.md" ] && ok=false
+[ -f "$T17/cmd_start.log" ] && ok=false
+if [ "$ok" = true ]; then
+    log_pass "idea --dry-run: plan shown without provider, prompts, PRD writes, or build"
+else
+    log_fail "idea preview" "rc=$rc; provider, prompt, write, or build boundary violated"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 18: a readable PRD preview estimates that exact file and still writes
+# nothing. The absence of cmd_start.log is the execution boundary proof.
+# ---------------------------------------------------------------------------
+T18="$TMP/t18"; mkdir -p "$T18"
+printf '# Preview PRD\n\nBuild a thing.\n' > "$T18/my-prd.md"
+before=$(shasum -a 256 "$T18/my-prd.md" | awk '{print $1}')
+make_harness "$T18" "$PREVIEW_NONINT"
+printf 'cmd_quickstart "%s/my-prd.md" --dry-run </dev/null\n' "$T18" >> "$T18/harness.sh"
+out=$(cd "$T18" && run_to 15 bash harness.sh 2>&1); rc=$?
+after=$(shasum -a 256 "$T18/my-prd.md" | awk '{print $1}')
+ok=true
+[ "$rc" -eq 0 ] || ok=false
+[ "$before" = "$after" ] || ok=false
+printf '%s' "$out" | grep -q "Template:    my-prd.md" || ok=false
+[ -f "$T18/provider-called" ] && ok=false
+[ -f "$T18/prd.md" ] && ok=false
+[ -f "$T18/cmd_start.log" ] && ok=false
+if [ "$ok" = true ]; then
+    log_pass "PRD --dry-run: exact source estimated and byte-preserved; zero execution"
+else
+    log_fail "PRD preview" "rc=$rc; source changed or side effect observed"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 19: preview requires explicit input even in an interactive-capable
+# harness. It never falls back to prompting for an idea.
+# ---------------------------------------------------------------------------
+T19="$TMP/t19"; mkdir -p "$T19"
+make_harness "$T19" "$PREVIEW_NONINT"
+printf 'cmd_quickstart --dry-run </dev/null\n' >> "$T19/harness.sh"
+out=$(cd "$T19" && run_to 15 bash harness.sh 2>&1); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q "requires an IDEA" && [ ! -f "$T19/cmd_start.log" ]; then
+    log_pass "--dry-run without input: exit 2 before provider, write, or build"
+else
+    log_fail "preview missing input" "rc=$rc or refusal/zero-execution contract missing"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 20: preview and explicit execution consent are incompatible. Reject at
+# argv validation so option order cannot silently choose a mode.
+# ---------------------------------------------------------------------------
+T20="$TMP/t20"; mkdir -p "$T20"
+make_harness "$T20" "$PREVIEW_NONINT"
+printf 'cmd_quickstart "a todo app" --yes --dry-run </dev/null\n' >> "$T20/harness.sh"
+out=$(cd "$T20" && run_to 15 bash harness.sh 2>&1); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q "cannot be combined" && [ ! -f "$T20/provider-called" ] && [ ! -f "$T20/cmd_start.log" ]; then
+    log_pass "--yes + --dry-run: ambiguous execution intent refused before side effects"
+else
+    log_fail "preview/consent conflict" "rc=$rc or early-refusal contract missing"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 21: a path-looking typo is not reinterpreted as an idea. This prevents a
+# plausible but unrelated template plan from being presented for a missing PRD.
+# ---------------------------------------------------------------------------
+T21="$TMP/t21"; mkdir -p "$T21"
+make_harness "$T21" "$PREVIEW_NONINT"
+printf 'cmd_quickstart "./missing-prd.md" --dry-run </dev/null\n' >> "$T21/harness.sh"
+out=$(cd "$T21" && run_to 15 bash harness.sh 2>&1); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q "not a readable file" && [ ! -f "$T21/provider-called" ] && [ ! -f "$T21/cmd_start.log" ]; then
+    log_pass "missing PRD-looking path: exit 2 instead of previewing an unrelated idea"
+else
+    log_fail "missing preview PRD" "rc=$rc or path refusal contract missing"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 22: estimator failure is terminal for preview, with no provider, file,
+# or build side effect.
+# ---------------------------------------------------------------------------
+T22="$TMP/t22"; mkdir -p "$T22"
+make_harness "$T22" "$PREVIEW_NONINT
+show_prd_plan() { return 1; }"
+printf 'cmd_quickstart "a todo app" --dry-run </dev/null\n' >> "$T22/harness.sh"
+out=$(cd "$T22" && run_to 15 bash harness.sh 2>&1); rc=$?
+if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q "requires a displayed plan" && [ ! -f "$T22/provider-called" ] && [ ! -f "$T22/prd.md" ] && [ ! -f "$T22/cmd_start.log" ]; then
+    log_pass "preview estimator failure: exit 2 with zero provider/write/build side effects"
+else
+    log_fail "preview estimator failure" "rc=$rc or zero-side-effect refusal missing"
 fi
 
 # ---------------------------------------------------------------------------

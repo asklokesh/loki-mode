@@ -391,6 +391,7 @@ _qs_help() {
     printf '\n'
     printf 'Options:\n'
     printf '  --yes, -y     Auto-confirm the final build prompt (still shows the plan)\n'
+    printf '  --dry-run     Preview the selected template and plan; write/start nothing\n'
     printf '  --help, -h    Show this help and exit\n'
     printf '\n'
     printf 'Non-interactive use:\n'
@@ -399,8 +400,13 @@ _qs_help() {
     printf '  Missing either one exits 2 and writes nothing. The top-ranked\n'
     printf '  template is chosen automatically and the plan is still shown.\n'
     printf '\n'
+    printf 'Zero-spend preview:\n'
+    printf '  loki quickstart "a todo app" --dry-run\n'
+    printf '  An IDEA (or readable PRD path) is required. No provider is checked,\n'
+    printf '  no file is written, and no build is started. Do not combine with --yes.\n'
+    printf '\n'
     printf 'Steps:\n'
-    printf '  1. Setup      Check for an AI provider; offer to install if missing\n'
+    printf '  1. Setup      Check for an AI provider for execution (skipped in preview)\n'
     printf '  2. Build      Describe what you want, or Enter for the sample Todo app\n'
     printf '  3. Template   Pick the closest starting template (offline keyword match)\n'
     printf '  4. Plan       Review the honest cost/time estimate, then confirm\n'
@@ -414,21 +420,20 @@ _qs_help() {
 # (slice B), show_prd_plan (slice A), the template matcher, and cmd_start.
 #
 # Order is load-bearing:
-#   --help (exit 0) -> non-TTY/CI gate (hint + exit 2) -> provider gate ->
+#   argv validation -> non-TTY/CI gate (hint + exit 2) -> provider gate or skip ->
 #   step 2 (idea / PRD path) -> step 3 (template) -> step 4 (plan + confirm) ->
 #   write PRD to CWD -> cmd_start --yes --no-plan (subshelled; it execs the runner).
 #
-# The non-TTY/CI gate admits ONE fully-specified shape:
+# The non-TTY/CI gate admits two fully-specified shapes:
 #   loki quickstart "<idea>|<prd-path>" --yes
-# Both halves required (see the gate for why consent must come from argv, not
-# from an ambient env var). On that path every prompt is skipped -- the four read
-# points are step 2, step 3's picker, the confirm, and the prd.md collision --
-# while the provider gate, the template ranking, the honest estimator and the
-# no-clobber suffix walk are all REUSED unchanged, not reimplemented. Nothing is
-# overwritten and no figure is fabricated on either path.
+#   loki quickstart "<idea>|<prd-path>" --dry-run
+# Execution requires argv consent; preview forbids it. Both paths skip prompts
+# and share template ranking plus the honest estimator. Only execution crosses
+# the provider, confirm, write, and cmd_start boundaries.
 cmd_quickstart() {
     local positional=""
     local assume_yes=false
+    local dry_run=false
     if _qs_assume_yes; then assume_yes=true; fi
 
     # yes_flag tracks EXPLICIT --yes/-y on THIS command's argv, and nothing else.
@@ -453,6 +458,10 @@ cmd_quickstart() {
                 yes_flag=true
                 shift
                 ;;
+            --dry-run)
+                dry_run=true
+                shift
+                ;;
             --*)
                 printf '%sUnknown option: %s%s\n' "$_QS_RED" "$1" "$_QS_NC" >&2
                 printf "Run 'loki quickstart --help' for usage.\n" >&2
@@ -471,11 +480,38 @@ cmd_quickstart() {
         esac
     done
 
+    # A preview is an explicit no-execution request. Reject simultaneous build
+    # consent instead of guessing which instruction wins. This check precedes
+    # provider discovery, estimation, and every write.
+    if [ "$dry_run" = true ] && [ "$yes_flag" = true ]; then
+        printf '%s--dry-run cannot be combined with --yes or -y.%s\n' "$_QS_RED" "$_QS_NC" >&2
+        exit 2
+    fi
+
+    # Preview is deliberately non-interactive: without an explicit idea or PRD
+    # path there is nothing deterministic to estimate. A path-looking argument
+    # must resolve to a readable regular file; otherwise treating a typo such as
+    # ./prd.md as prose would preview an unrelated template and mislead the user.
+    if [ "$dry_run" = true ]; then
+        if [ -z "$positional" ]; then
+            printf 'loki quickstart --dry-run requires an IDEA or readable PRD path.\n' >&2
+            exit 2
+        fi
+        case "$positional" in
+            */*|*.md|*.markdown|*.txt|*.json|*.yaml|*.yml)
+                if [ ! -f "$positional" ] || [ ! -r "$positional" ]; then
+                    printf 'PRD path is not a readable file: %s\n' "$positional" >&2
+                    exit 2
+                fi
+                ;;
+        esac
+    fi
+
     # Non-TTY / CI: quickstart is interactive by definition, so by default it
     # never hangs on a read -- it prints the automation hint to stderr and exits
     # 2 (design 3.8).
     #
-    # The ONE exception is a fully-specified invocation:
+    # The execution exception is a fully-specified invocation:
     #   loki quickstart "<idea>" --yes      (or a PRD path in place of the idea)
     # Both halves are required. A non-empty positional supplies the input that
     # steps 2-3 would otherwise have to ask for, and an explicit argv --yes
@@ -490,7 +526,7 @@ cmd_quickstart() {
     # something an environment can arrive at on its own.
     local noninteractive_ok=false
     if _qs_non_interactive; then
-        if [ -n "$positional" ] && [ "$yes_flag" = true ]; then
+        if [ "$dry_run" = true ] || { [ -n "$positional" ] && [ "$yes_flag" = true ]; }; then
             noninteractive_ok=true
         else
             printf 'loki quickstart is interactive and needs a terminal. For automation use: loki start <prd> --yes\n' >&2
@@ -499,28 +535,38 @@ cmd_quickstart() {
     fi
 
     printf '\n'
-    printf '%sLoki Mode quickstart -- four quick questions, then your build starts.%s\n' "$_QS_BOLD" "$_QS_NC"
+    if [ "$dry_run" = true ]; then
+        printf '%sLoki Mode quickstart preview -- template and plan only.%s\n' "$_QS_BOLD" "$_QS_NC"
+    else
+        printf '%sLoki Mode quickstart -- four quick questions, then your build starts.%s\n' "$_QS_BOLD" "$_QS_NC"
+    fi
     printf '\n'
 
     # ----- Step 1 of 4: Setup (reuse the slice-B provider offer) -------------
     printf '%sStep 1 of 4: Setup%s\n' "$_QS_BOLD" "$_QS_NC"
-    printf '  Checking for an AI provider CLI ...\n'
+    if [ "$dry_run" = true ]; then
+        # Estimation and deterministic template selection are local. Previewing
+        # must work before provider installation and must not run provider code.
+        printf '  Preview mode: provider check skipped; no build will start.\n'
+    else
+        printf '  Checking for an AI provider CLI ...\n'
     # Ask the loader FIRST: it is the only thing that knows what the runner will
     # really pick, and it is the only check that sees opencode. Falling back to
     # detect_any_provider (stale four, PATH-only) keeps the no-provider guard
     # intact when the loader is absent or unreadable.
-    local found=""
-    found="$(_qs_selected_provider)" || found=""
-    if [ -n "$found" ]; then
-        printf '  Found: %s. Good.\n' "$found"
-    elif detect_any_provider; then
-        printf '  Found: an AI provider CLI. Good.\n'
-    else
-        # Run the inline install + login offer. provider_offer_gate returns 2 if
-        # no provider ends up available (declined, or install failed).
-        if ! provider_offer_gate; then
-            printf '%sNo provider available; cannot start a build. Install one and re-run loki quickstart.%s\n' "$_QS_RED" "$_QS_NC" >&2
-            exit 2
+        local found=""
+        found="$(_qs_selected_provider)" || found=""
+        if [ -n "$found" ]; then
+            printf '  Found: %s. Good.\n' "$found"
+        elif detect_any_provider; then
+            printf '  Found: an AI provider CLI. Good.\n'
+        else
+            # Run the inline install + login offer. provider_offer_gate returns 2 if
+            # no provider ends up available (declined, or install failed).
+            if ! provider_offer_gate; then
+                printf '%sNo provider available; cannot start a build. Install one and re-run loki quickstart.%s\n' "$_QS_RED" "$_QS_NC" >&2
+                exit 2
+            fi
         fi
     fi
     printf '\n'
@@ -538,20 +584,25 @@ cmd_quickstart() {
         printf '\n'
     else
         printf '%sStep 2 of 4: What do you want to build?%s\n' "$_QS_BOLD" "$_QS_NC"
-        printf '  Describe it in one line, or paste a path to a PRD file.\n'
-        printf '  (Press Enter to build the sample Todo app.)\n'
-        if [ -n "$positional" ]; then
+        if [ "$dry_run" = true ]; then
             brief="$positional"
-            printf '> %s\n' "$brief"
+            printf '  Previewing idea: %s\n' "$brief"
         else
-            local answer=""
-            printf '> '
-            read -r answer 2>/dev/null || answer=""
-            # If the typed value is an existing file, treat it as a PRD path.
-            if [ -n "$answer" ] && [ -f "$answer" ]; then
-                prd_source="$answer"
+            printf '  Describe it in one line, or paste a path to a PRD file.\n'
+            printf '  (Press Enter to build the sample Todo app.)\n'
+            if [ -n "$positional" ]; then
+                brief="$positional"
+                printf '> %s\n' "$brief"
             else
-                brief="$answer"
+                local answer=""
+                printf '> '
+                read -r answer 2>/dev/null || answer=""
+                # If the typed value is an existing file, treat it as a PRD path.
+                if [ -n "$answer" ] && [ -f "$answer" ]; then
+                    prd_source="$answer"
+                else
+                    brief="$answer"
+                fi
             fi
         fi
         printf '\n'
@@ -643,6 +694,15 @@ cmd_quickstart() {
             printf '%sCould not compute a cost estimate (the estimator did not return a result).%s\n' "$_QS_YELLOW" "$_QS_NC"
             printf '\n'
         fi
+    fi
+
+    # The preview terminal boundary is intentionally immediately after the
+    # shared estimator. Reaching it proves the same template and plan were
+    # rendered, while returning here makes the confirm, PRD copy, and cmd_start
+    # structurally unreachable.
+    if [ "$dry_run" = true ]; then
+        printf 'Preview complete. No provider was run, no file was written, and no build was started.\n'
+        return 0
     fi
 
     # ----- Confirm ----------------------------------------------------------
