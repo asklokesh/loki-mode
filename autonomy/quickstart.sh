@@ -283,6 +283,19 @@ _qs_template_summary() {
     esac
 }
 
+# _qs_template_exists <name>: accept only an exact shipped template basename.
+# Keeping validation here (rather than accepting an arbitrary path) prevents
+# --template from becoming a second PRD/file-read surface. The intentionally
+# narrow character set also makes names safe to join below without traversal.
+_qs_template_exists() {
+    local name="${1:-}"
+    case "$name" in
+        ""|*[!a-z0-9-]*) return 1;;
+    esac
+    [ "$name" != "README" ] || return 1
+    [ -f "$(_qs_templates_dir)/$name.md" ]
+}
+
 # _qs_selected_provider: print the provider a build would ACTUALLY pick, or
 # nothing. Single source of truth is providers/loader.sh auto_detect_provider --
 # the same seam render_provider_availability (provider-offer.sh:395) uses, and
@@ -419,6 +432,7 @@ _qs_help() {
     printf '  --yes, -y     Auto-confirm the final build prompt (still shows the plan)\n'
     printf '  --dry-run     Preview the selected template and plan; write/start nothing\n'
     printf '  --json        With --dry-run, emit one machine-readable JSON object\n'
+    printf '  --template N  Use the exact shipped template N for an IDEA\n'
     printf '  --help, -h    Show this help and exit\n'
     printf '\n'
     printf 'Non-interactive use:\n'
@@ -426,6 +440,7 @@ _qs_help() {
     printf '  Both an IDEA (or PRD path) and --yes are required with no terminal.\n'
     printf '  Missing either one exits 2 and writes nothing. The top-ranked\n'
     printf '  template is chosen automatically and the plan is still shown.\n'
+    printf '  Add --template NAME to choose a shipped template instead.\n'
     printf '\n'
     printf 'Zero-spend preview:\n'
     printf '  loki quickstart "a todo app" --dry-run\n'
@@ -463,6 +478,8 @@ cmd_quickstart() {
     local assume_yes=false
     local dry_run=false
     local json_output=false
+    local template_override=""
+    local template_flag_seen=false
     if _qs_assume_yes; then assume_yes=true; fi
 
     # yes_flag tracks EXPLICIT --yes/-y on THIS command's argv, and nothing else.
@@ -495,6 +512,19 @@ cmd_quickstart() {
                 json_output=true
                 shift
                 ;;
+            --template)
+                if [ "$template_flag_seen" = true ]; then
+                    printf '%s--template may be specified only once.%s\n' "$_QS_RED" "$_QS_NC" >&2
+                    exit 2
+                fi
+                template_flag_seen=true
+                if [ $# -lt 2 ] || [ -z "${2:-}" ] || [[ "${2:-}" == --* ]]; then
+                    printf '%s--template requires an exact shipped template name.%s\n' "$_QS_RED" "$_QS_NC" >&2
+                    exit 2
+                fi
+                template_override="$2"
+                shift 2
+                ;;
             --*)
                 printf '%sUnknown option: %s%s\n' "$_QS_RED" "$1" "$_QS_NC" >&2
                 printf "Run 'loki quickstart --help' for usage.\n" >&2
@@ -524,6 +554,30 @@ cmd_quickstart() {
     if [ "$json_output" = true ] && [ "$dry_run" != true ]; then
         printf '%s--json requires --dry-run.%s\n' "$_QS_RED" "$_QS_NC" >&2
         exit 2
+    fi
+
+    # Explicit template selection is deliberately an IDEA-only surface. It is
+    # validated before provider discovery, estimation, and every write/build
+    # boundary so a typo or conflicting PRD can never fall through to spend.
+    if [ "$template_flag_seen" = true ]; then
+        if [ -z "$positional" ]; then
+            printf '%s--template requires an IDEA argument.%s\n' "$_QS_RED" "$_QS_NC" >&2
+            exit 2
+        fi
+        case "$positional" in
+            */*|*.md|*.markdown|*.txt|*.json|*.yaml|*.yml)
+                printf '%s--template cannot be combined with a PRD path.%s\n' "$_QS_RED" "$_QS_NC" >&2
+                exit 2
+                ;;
+        esac
+        if [ -f "$positional" ]; then
+            printf '%s--template cannot be combined with a PRD path.%s\n' "$_QS_RED" "$_QS_NC" >&2
+            exit 2
+        fi
+        if ! _qs_template_exists "$template_override"; then
+            printf '%sUnknown shipped template: %s%s\n' "$_QS_RED" "$template_override" "$_QS_NC" >&2
+            exit 2
+        fi
     fi
 
     # Preview is deliberately non-interactive: without an explicit idea or PRD
@@ -661,6 +715,11 @@ cmd_quickstart() {
 
     # ----- Step 3 of 4: Pick a template (skipped if a PRD path was given) ----
     if [ -z "$prd_source" ]; then
+        if [ -n "$template_override" ]; then
+            template_name="$template_override"
+            printf '%sStep 3 of 4: Template%s\n' "$_QS_BOLD" "$_QS_NC"
+            printf '  Selected %s (--template).\n\n' "$template_name"
+        else
         local -a top3=()
         local line
         while IFS= read -r line; do
@@ -713,6 +772,8 @@ cmd_quickstart() {
             3) template_name="${top3[2]:-${top3[0]}}";;
             *) template_name="${top3[0]}";;  # any unexpected input -> the default
         esac
+
+        fi
 
         local tdir; tdir="$(_qs_templates_dir)"
         prd_source="$tdir/$template_name.md"

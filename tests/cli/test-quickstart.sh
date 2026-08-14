@@ -690,6 +690,109 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Explicit shipped-template selection (LOKI-QUICKSTART-TEMPLATE-SELECT-50).
+# ---------------------------------------------------------------------------
+
+# Human preview: an exact override bypasses ranking/picker but keeps the real
+# estimator and all preview no-side-effect guarantees.
+T27="$TMP/t27"; mkdir -p "$T27"
+make_harness "$T27" "$PREVIEW_NONINT"
+printf 'cmd_quickstart "a todo app" --template dashboard --dry-run </dev/null\n' >> "$T27/harness.sh"
+out=$(cd "$T27" && run_to 15 bash harness.sh 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q "Selected dashboard (--template)" && printf '%s' "$out" | grep -q "Template:    dashboard" && ! printf '%s' "$out" | grep -q "simple-todo-app" && [ ! -f "$T27/provider-called" ] && [ ! -f "$T27/prd.md" ] && [ ! -f "$T27/cmd_start.log" ]; then
+    log_pass "explicit template human preview: exact selection, no ranking/provider/write/build"
+else
+    log_fail "explicit template human preview" "rc=$rc or override/purity contract missing"
+fi
+
+# JSON preview reports the explicit selection and retains the estimator object.
+T28="$TMP/t28"; mkdir -p "$T28"
+make_harness "$T28" "$PREVIEW_NONINT"
+printf 'cmd_quickstart "a todo app" --dry-run --json --template dashboard </dev/null\n' >> "$T28/harness.sh"
+(cd "$T28" && run_to 15 bash harness.sh >stdout 2>stderr); rc=$?
+ok=true
+[ "$rc" -eq 0 ] || ok=false
+python3 - "$T28/stdout" <<'PY' || ok=false
+import json, pathlib, sys
+d = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert d["selected_template"] == "dashboard"
+assert d["input_kind"] == "idea"
+assert d["plan"]["cost"]["total_usd"] == 0.40
+PY
+[ ! -s "$T28/stderr" ] || ok=false
+[ -f "$T28/provider-called" ] && ok=false
+[ -f "$T28/prd.md" ] && ok=false
+[ -f "$T28/cmd_start.log" ] && ok=false
+if [ "$ok" = true ]; then
+    log_pass "explicit template JSON preview: selected_template is exact and side-effect free"
+else
+    log_fail "explicit template JSON preview" "rc=$rc or JSON/purity contract missing"
+fi
+
+# Fully specified non-interactive execution uses the selected shipped PRD and
+# reaches only the existing cmd_start seam after showing its plan.
+T29="$TMP/t29"; mkdir -p "$T29"
+make_harness "$T29" "$NONINT"
+printf 'cmd_quickstart "a todo app" --template dashboard --yes </dev/null\n' >> "$T29/harness.sh"
+out=$(cd "$T29" && run_to 15 bash harness.sh 2>&1); rc=$?
+start_args=$(cat "$T29/cmd_start.log" 2>/dev/null || echo "")
+if [ "$rc" -eq 0 ] && [ "$start_args" = "./prd.md --yes --no-plan" ] && head -1 "$T29/prd.md" | grep -q "Analytics Dashboard" && printf '%s' "$out" | grep -q "Template:    dashboard"; then
+    log_pass "explicit template execution: selected shipped PRD reaches unchanged cmd_start seam"
+else
+    log_fail "explicit template execution" "rc=$rc start_args='$start_args' or selected PRD mismatch"
+fi
+
+# Invalid override shapes all refuse before provider discovery, estimation,
+# stdout data, file creation, or cmd_start. Keep each contract independently
+# visible so a parser regression cannot hide behind a combined matrix result.
+T30="$TMP/t30"; mkdir -p "$T30"
+make_harness "$T30" "$PREVIEW_NONINT
+show_prd_plan() { printf estimator-called > \"\$PWD/estimator-called\"; return 1; }"
+printf 'cmd_quickstart "a todo app" --template </dev/null\n' >> "$T30/harness.sh"
+(cd "$T30" && run_to 15 bash harness.sh >stdout 2>stderr); rc=$?
+if [ "$rc" -eq 2 ] && grep -q "requires an exact shipped template name" "$T30/stderr" && [ ! -s "$T30/stdout" ] && [ ! -e "$T30/estimator-called" ] && [ ! -e "$T30/provider-called" ] && [ ! -e "$T30/prd.md" ] && [ ! -e "$T30/cmd_start.log" ]; then
+    log_pass "missing --template value refuses before provider/estimator/write/build"
+else
+    log_fail "missing template value" "rc=$rc or early refusal boundary missing"
+fi
+
+T31="$TMP/t31"; mkdir -p "$T31"
+make_harness "$T31" "$PREVIEW_NONINT
+show_prd_plan() { printf estimator-called > \"\$PWD/estimator-called\"; return 1; }"
+printf 'cmd_quickstart "a todo app" --template does-not-exist --dry-run </dev/null\n' >> "$T31/harness.sh"
+(cd "$T31" && run_to 15 bash harness.sh >stdout 2>stderr); rc=$?
+if [ "$rc" -eq 2 ] && grep -q "Unknown shipped template" "$T31/stderr" && [ ! -s "$T31/stdout" ] && [ ! -e "$T31/estimator-called" ] && [ ! -e "$T31/provider-called" ] && [ ! -e "$T31/prd.md" ] && [ ! -e "$T31/cmd_start.log" ]; then
+    log_pass "unknown --template name refuses before provider/estimator/write/build"
+else
+    log_fail "unknown template name" "rc=$rc or early refusal boundary missing"
+fi
+
+T32="$TMP/t32"; mkdir -p "$T32"
+make_harness "$T32" "$PREVIEW_NONINT
+show_prd_plan() { printf estimator-called > \"\$PWD/estimator-called\"; return 1; }"
+printf 'cmd_quickstart "a todo app" --template dashboard --template cli-tool --dry-run </dev/null\n' >> "$T32/harness.sh"
+(cd "$T32" && run_to 15 bash harness.sh >stdout 2>stderr); rc=$?
+if [ "$rc" -eq 2 ] && grep -q "may be specified only once" "$T32/stderr" && [ ! -s "$T32/stdout" ] && [ ! -e "$T32/estimator-called" ] && [ ! -e "$T32/provider-called" ] && [ ! -e "$T32/prd.md" ] && [ ! -e "$T32/cmd_start.log" ]; then
+    log_pass "duplicate --template flags refuse before provider/estimator/write/build"
+else
+    log_fail "duplicate template flags" "rc=$rc or early refusal boundary missing"
+fi
+
+T33="$TMP/t33"; mkdir -p "$T33"
+printf '# Existing PRD\n' > "$T33/customer-prd.md"
+before=$(shasum -a 256 "$T33/customer-prd.md" | awk '{print $1}')
+make_harness "$T33" "$PREVIEW_NONINT
+show_prd_plan() { printf estimator-called > \"\$PWD/estimator-called\"; return 1; }"
+printf 'cmd_quickstart "%s/customer-prd.md" --template dashboard --dry-run </dev/null\n' "$T33" >> "$T33/harness.sh"
+(cd "$T33" && run_to 15 bash harness.sh >stdout 2>stderr); rc=$?
+after=$(shasum -a 256 "$T33/customer-prd.md" | awk '{print $1}')
+if [ "$rc" -eq 2 ] && [ "$before" = "$after" ] && grep -q "cannot be combined with a PRD path" "$T33/stderr" && [ ! -s "$T33/stdout" ] && [ ! -e "$T33/estimator-called" ] && [ ! -e "$T33/provider-called" ] && [ ! -e "$T33/prd.md" ] && [ ! -e "$T33/cmd_start.log" ]; then
+    log_pass "PRD plus --template refuses before provider/estimator/write/build"
+else
+    log_fail "template with PRD" "rc=$rc or early refusal/source-preservation boundary missing"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

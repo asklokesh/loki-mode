@@ -183,6 +183,17 @@ builds the sample Todo app.
 loki quickstart
 ```
 
+For a fully specified first build, provide the idea, an optional exact shipped
+starter template, and explicit consent:
+
+```bash
+loki quickstart "an internal reporting workspace" --template dashboard --yes
+```
+
+Use `--dry-run` instead of `--yes` to preview the same template and plan without
+provider discovery, file writes, or execution; add `--json` for one versioned
+machine-readable object.
+
 Drop a spec -- any artifact that describes what you want built -- and Loki
 Mode takes it from spec to deployed app. Specs can be a markdown PRD, a
 GitHub issue URL, or a YAML feature description.

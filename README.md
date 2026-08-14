@@ -66,6 +66,18 @@ or a stray argument in CI can never start a paid build on its own. Existing
 files are never overwritten: if `prd.md` is present the PRD lands at
 `prd-quickstart.md`, then numbered suffixes as needed.
 
+Choose an exact shipped starter when the top-ranked match is not the one you
+want:
+
+```bash
+loki quickstart "an internal reporting workspace" --template dashboard --yes
+```
+
+`--template` accepts an exact template name for idea inputs and works the same
+way with interactive use or `--dry-run` (including JSON preview). Unknown
+templates, duplicate flags, and combinations with a PRD path refuse before
+provider discovery, estimation, writes, or build execution.
+
 Preview the same deterministic template choice and estimator-backed plan with
 zero writes or execution:
 
