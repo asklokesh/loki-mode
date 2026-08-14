@@ -283,6 +283,72 @@ _qs_template_summary() {
     esac
 }
 
+# _qs_shipped_template_names: print every shipped template basename in stable
+# catalog order. The filesystem is the source of truth: adding or removing a
+# templates/*.md payload changes discovery automatically, while README.md is
+# deliberately excluded because it is gallery documentation, not a PRD.
+_qs_shipped_template_names() {
+    local tdir; tdir="$(_qs_templates_dir)"
+    local f name
+    for f in "$tdir"/*.md; do
+        [ -f "$f" ] || continue
+        name=$(basename "$f" .md)
+        [ "$name" = "README" ] && continue
+        printf '%s\n' "$name"
+    done | LC_ALL=C sort
+}
+
+# _qs_list_templates [json]: provider-free discovery for terminals and local
+# automation. Human and machine output are derived from the same shipped-name
+# stream and the same stable purpose table used by the interactive picker.
+_qs_list_templates() {
+    local json_output="${1:-false}"
+    local catalog="" count=0 name purpose
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        purpose="$(_qs_template_summary "$name")"
+        catalog="${catalog}${name}\t${purpose}\n"
+        count=$((count + 1))
+    done < <(_qs_shipped_template_names)
+
+    if [ "$count" -eq 0 ]; then
+        printf 'No shipped quickstart templates were found.\n' >&2
+        return 2
+    fi
+
+    if [ "$json_output" = true ]; then
+        printf '%b' "$catalog" | python3 -c '
+import json
+import sys
+
+templates = []
+for raw in sys.stdin:
+    name, purpose = raw.rstrip("\n").split("\t", 1)
+    templates.append({"name": name, "purpose": purpose})
+json.dump(
+    {
+        "schema_version": 1,
+        "command": "loki quickstart",
+        "mode": "list-templates",
+        "templates": templates,
+    },
+    sys.stdout,
+    separators=(",", ":"),
+    sort_keys=True,
+)
+sys.stdout.write("\n")
+' || return 2
+        return 0
+    fi
+
+    printf '%sShipped quickstart templates (%d)%s\n' "$_QS_BOLD" "$count" "$_QS_NC"
+    printf '%b' "$catalog" | while IFS=$'\t' read -r name purpose; do
+        [ -n "$name" ] || continue
+        printf '  %-20s %s\n' "$name" "$purpose"
+    done
+    return 0
+}
+
 # _qs_template_exists <name>: accept only an exact shipped template basename.
 # Keeping validation here (rather than accepting an arbitrary path) prevents
 # --template from becoming a second PRD/file-read surface. The intentionally
@@ -433,6 +499,7 @@ _qs_help() {
     printf '  --dry-run     Preview the selected template and plan; write/start nothing\n'
     printf '  --json        With --dry-run, emit one machine-readable JSON object\n'
     printf '  --template N  Use the exact shipped template N for an IDEA\n'
+    printf '  --list-templates  List every shipped template and its purpose\n'
     printf '  --help, -h    Show this help and exit\n'
     printf '\n'
     printf 'Non-interactive use:\n'
@@ -441,6 +508,7 @@ _qs_help() {
     printf '  Missing either one exits 2 and writes nothing. The top-ranked\n'
     printf '  template is chosen automatically and the plan is still shown.\n'
     printf '  Add --template NAME to choose a shipped template instead.\n'
+    printf '  Run with --list-templates (and optional --json) to discover names.\n'
     printf '\n'
     printf 'Zero-spend preview:\n'
     printf '  loki quickstart "a todo app" --dry-run\n'
@@ -480,6 +548,8 @@ cmd_quickstart() {
     local json_output=false
     local template_override=""
     local template_flag_seen=false
+    local list_templates=false
+    local list_templates_flag_seen=false
     if _qs_assume_yes; then assume_yes=true; fi
 
     # yes_flag tracks EXPLICIT --yes/-y on THIS command's argv, and nothing else.
@@ -525,6 +595,15 @@ cmd_quickstart() {
                 template_override="$2"
                 shift 2
                 ;;
+            --list-templates)
+                if [ "$list_templates_flag_seen" = true ]; then
+                    printf '%s--list-templates may be specified only once.%s\n' "$_QS_RED" "$_QS_NC" >&2
+                    exit 2
+                fi
+                list_templates=true
+                list_templates_flag_seen=true
+                shift
+                ;;
             --*)
                 printf '%sUnknown option: %s%s\n' "$_QS_RED" "$1" "$_QS_NC" >&2
                 printf "Run 'loki quickstart --help' for usage.\n" >&2
@@ -542,6 +621,19 @@ cmd_quickstart() {
                 ;;
         esac
     done
+
+    # Discovery is a standalone read-only command shape. Refuse input and every
+    # execution/preview selector rather than guessing intent; --json is its only
+    # compatible modifier. This return precedes terminal, provider, estimator,
+    # consent, PRD, and build boundaries.
+    if [ "$list_templates" = true ]; then
+        if [ -n "$positional" ] || [ "$yes_flag" = true ] || [ "$dry_run" = true ] || [ "$template_flag_seen" = true ]; then
+            printf '%s--list-templates accepts only the optional --json flag.%s\n' "$_QS_RED" "$_QS_NC" >&2
+            exit 2
+        fi
+        _qs_list_templates "$json_output"
+        return $?
+    fi
 
     # A preview is an explicit no-execution request. Reject simultaneous build
     # consent instead of guessing which instruction wins. This check precedes

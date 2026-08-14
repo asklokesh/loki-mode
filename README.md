@@ -70,8 +70,15 @@ Choose an exact shipped starter when the top-ranked match is not the one you
 want:
 
 ```bash
+loki quickstart --list-templates
+loki quickstart --list-templates --json       # schema-v1 automation output
 loki quickstart "an internal reporting workspace" --template dashboard --yes
 ```
+
+Template discovery works without a terminal or provider and lists every shipped
+starter's stable name and purpose in catalog order. It returns before estimation,
+consent, PRD writes, or build execution. Positional input and execution/preview
+flags are intentionally incompatible; `--json` is the only optional modifier.
 
 `--template` accepts an exact template name for idea inputs and works the same
 way with interactive use or `--dry-run` (including JSON preview). Unknown

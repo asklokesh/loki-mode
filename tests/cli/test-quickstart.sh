@@ -792,6 +792,89 @@ else
     log_fail "template with PRD" "rc=$rc or early refusal/source-preservation boundary missing"
 fi
 
+# ===========================================================================
+# Provider-free shipped-template discovery (LOKI-QUICKSTART-TEMPLATE-DISCOVERY-52).
+# ===========================================================================
+
+# Human output lists every actual shipped PRD exactly once in stable filename
+# order and includes the same purpose copy used by the interactive picker.
+T34="$TMP/t34"; mkdir -p "$T34"
+make_harness "$T34" 'show_prd_plan() { printf estimator-called > "$PWD/estimator-called"; return 1; }
+provider_offer_gate() { printf provider-called > "$PWD/provider-called"; return 1; }'
+printf 'cmd_quickstart --list-templates </dev/null\n' >> "$T34/harness.sh"
+(cd "$T34" && run_to 15 bash harness.sh >stdout 2>stderr); rc=$?
+expected_names=$(find "$REPO_ROOT/templates" -maxdepth 1 -type f -name '*.md' ! -name README.md -print | sed 's#.*/##; s/\.md$//' | LC_ALL=C sort)
+actual_names=$(sed -n 's/^  \([^ ]*\)  *.*/\1/p' "$T34/stdout")
+if [ "$rc" -eq 0 ] && [ "$actual_names" = "$expected_names" ] && grep -q 'dashboard.*Analytics / admin dashboard' "$T34/stdout" && [ ! -s "$T34/stderr" ] && [ ! -e "$T34/provider-called" ] && [ ! -e "$T34/estimator-called" ] && [ ! -e "$T34/prd.md" ] && [ ! -e "$T34/cmd_start.log" ]; then
+    log_pass "template discovery human list: every shipped name/purpose in stable order, zero side effects"
+else
+    log_fail "template discovery human list" "rc=$rc, catalog mismatch, purpose missing, or forbidden boundary crossed"
+fi
+
+# JSON discovery is one schema-v1 object over the identical ordered catalog.
+T35="$TMP/t35"; mkdir -p "$T35"
+make_harness "$T35" 'show_prd_plan() { printf estimator-called > "$PWD/estimator-called"; return 1; }
+provider_offer_gate() { printf provider-called > "$PWD/provider-called"; return 1; }'
+printf 'cmd_quickstart --list-templates --json </dev/null\n' >> "$T35/harness.sh"
+(cd "$T35" && run_to 15 bash harness.sh >stdout 2>stderr); rc=$?
+python3 - "$T35/stdout" "$REPO_ROOT/templates" <<'PY' || rc=99
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+expected = sorted(p.stem for p in pathlib.Path(sys.argv[2]).glob("*.md") if p.name != "README.md")
+assert payload["schema_version"] == 1
+assert payload["command"] == "loki quickstart"
+assert payload["mode"] == "list-templates"
+assert [item["name"] for item in payload["templates"]] == expected
+assert all(set(item) == {"name", "purpose"} and item["purpose"] for item in payload["templates"])
+PY
+if [ "$rc" -eq 0 ] && [ ! -s "$T35/stderr" ] && [ ! -e "$T35/provider-called" ] && [ ! -e "$T35/estimator-called" ] && [ ! -e "$T35/prd.md" ] && [ ! -e "$T35/cmd_start.log" ]; then
+    log_pass "template discovery JSON: one ordered schema-v1 catalog object, zero side effects"
+else
+    log_fail "template discovery JSON" "rc=$rc, schema/order mismatch, or forbidden boundary crossed"
+fi
+
+# Positional input conflicts with standalone discovery and refuses before all
+# provider, estimator, write, and build boundaries.
+T36="$TMP/t36"; mkdir -p "$T36"
+make_harness "$T36" 'show_prd_plan() { printf estimator-called > "$PWD/estimator-called"; return 1; }
+provider_offer_gate() { printf provider-called > "$PWD/provider-called"; return 1; }'
+printf 'cmd_quickstart "a todo app" --list-templates </dev/null\n' >> "$T36/harness.sh"
+(cd "$T36" && run_to 15 bash harness.sh >stdout 2>stderr); rc=$?
+if [ "$rc" -eq 2 ] && [ ! -s "$T36/stdout" ] && grep -q 'accepts only the optional --json flag' "$T36/stderr" && [ ! -e "$T36/provider-called" ] && [ ! -e "$T36/estimator-called" ] && [ ! -e "$T36/prd.md" ] && [ ! -e "$T36/cmd_start.log" ]; then
+    log_pass "template discovery plus positional input refuses before every side-effect boundary"
+else
+    log_fail "template discovery positional conflict" "rc=$rc or early refusal boundary missing"
+fi
+
+# Execution and preview flags are incompatible with discovery, including an
+# explicit template selector that otherwise consumes a following value.
+T37="$TMP/t37"; mkdir -p "$T37"
+make_harness "$T37" 'show_prd_plan() { printf estimator-called > "$PWD/estimator-called"; return 1; }
+provider_offer_gate() { printf provider-called > "$PWD/provider-called"; return 1; }'
+for args in '--list-templates --yes' '--list-templates --dry-run' '--list-templates --template dashboard'; do
+    (cd "$T37" && run_to 15 bash -c "source ./harness.sh; cmd_quickstart $args </dev/null" >"stdout-${args// /_}" 2>"stderr-${args// /_}"); rc=$?
+    [ "$rc" -eq 2 ] || printf 'bad-rc\n' >> "$T37/failures"
+done
+if [ ! -e "$T37/failures" ] && [ ! -e "$T37/provider-called" ] && [ ! -e "$T37/estimator-called" ] && [ ! -e "$T37/prd.md" ] && [ ! -e "$T37/cmd_start.log" ]; then
+    log_pass "template discovery rejects execution/preview flags before every side-effect boundary"
+else
+    log_fail "template discovery flag conflicts" "one conflict did not fail closed"
+fi
+
+# Duplicate discovery flags fail deterministically rather than emitting twice.
+T38="$TMP/t38"; mkdir -p "$T38"
+make_harness "$T38"
+printf 'cmd_quickstart --list-templates --list-templates </dev/null\n' >> "$T38/harness.sh"
+(cd "$T38" && run_to 15 bash harness.sh >stdout 2>stderr); rc=$?
+if [ "$rc" -eq 2 ] && [ ! -s "$T38/stdout" ] && grep -q 'may be specified only once' "$T38/stderr" && [ ! -e "$T38/prd.md" ] && [ ! -e "$T38/cmd_start.log" ]; then
+    log_pass "duplicate --list-templates refuses with no catalog or side effects"
+else
+    log_fail "duplicate template discovery" "rc=$rc or duplicate refusal missing"
+fi
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
