@@ -293,6 +293,188 @@ else
     log_fail "CI side-effect gate" "prd.md or prd-quickstart.md leaked under CI"
 fi
 
+# ===========================================================================
+# Non-interactive one-command path (LOKI-QUICKSTART-ONE-COMMAND-47).
+#
+# Contract: with NO terminal, quickstart proceeds ONLY when BOTH a non-empty
+# positional (idea or readable PRD path) AND an explicit argv --yes/-y are
+# present. Anything less keeps the exit-2 refusal and writes nothing.
+#
+# Every test below feeds </dev/null rather than a pipe of newlines. That is the
+# discriminating part: a piped '\n\n\n' would satisfy a `read` and pass even if
+# the code still prompted. With /dev/null, any surviving prompt yields an empty
+# read and the assertions on output/argv catch it -- rc=0 plus the absence of
+# every prompt string is what actually proves "never prompts".
+#
+# _qs_non_interactive is forced to 0 (true) via make_harness's existing $extra
+# slot, so these exercise the real gate rather than a TTY accident.
+# ===========================================================================
+NONINT='_qs_non_interactive() { return 0; }'
+
+# ---------------------------------------------------------------------------
+# Test 10: allowed idea flow. Idea + --yes with no terminal must reach cmd_start
+# with zero prompts. Asserts POSITIVELY that the plan rendered and the
+# top-ranked template was chosen, and NEGATIVELY that none of the three
+# interactive prompts (picker, choose-line, confirm) appeared.
+# ---------------------------------------------------------------------------
+T10="$TMP/t10"; mkdir -p "$T10"
+make_harness "$T10" "$NONINT"
+printf 'cmd_quickstart "a todo app with user accounts" --yes </dev/null\n' >> "$T10/harness.sh"
+out=$(cd "$T10" && run_to 15 bash harness.sh 2>&1); rc=$?
+start_args=$(cat "$T10/cmd_start.log" 2>/dev/null || echo "")
+ok=true
+[ "$rc" -eq 0 ] || ok=false
+[ -f "$T10/prd.md" ] || ok=false
+[ "$start_args" = "./prd.md --yes --no-plan" ] || ok=false
+# The honest estimator still rendered, and the deterministic top match was used.
+printf '%s' "$out" | grep -q "Cost:" || ok=false
+printf '%s' "$out" | grep -q "Template:    simple-todo-app" || ok=false
+# No prompt may appear anywhere in the transcript.
+printf '%s' "$out" | grep -q "Pick a starting template" && ok=false
+printf '%s' "$out" | grep -q "Choose 1-" && ok=false
+printf '%s' "$out" | grep -q "Start the build now" && ok=false
+if [ "$ok" = true ]; then
+    log_pass "non-interactive idea + --yes: no prompts, plan shown, top template, cmd_start reached"
+else
+    log_fail "non-interactive idea flow" "rc=$rc start_args='$start_args' prd=$([ -f "$T10/prd.md" ] && echo yes || echo no)"
+    printf '%s\n' "$out" | sed 's/^/    /'
+fi
+
+# ---------------------------------------------------------------------------
+# Test 11: allowed PRD-path flow. A readable PRD path + --yes uses the PRD
+# directly, still renders the plan, and never shows the template picker.
+# ---------------------------------------------------------------------------
+T11="$TMP/t11"; mkdir -p "$T11"
+printf '# Headless PRD\n\nBuild a thing.\n' > "$T11/my-prd.md"
+make_harness "$T11" "$NONINT"
+printf 'cmd_quickstart "%s/my-prd.md" --yes </dev/null\n' "$T11" >> "$T11/harness.sh"
+out=$(cd "$T11" && run_to 15 bash harness.sh 2>&1); rc=$?
+start_args=$(cat "$T11/cmd_start.log" 2>/dev/null || echo "")
+ok=true
+[ "$rc" -eq 0 ] || ok=false
+[ "$start_args" = "./prd.md --yes --no-plan" ] || ok=false
+# The user's PRD content is what landed, not a template.
+head -1 "$T11/prd.md" 2>/dev/null | grep -qi "Headless PRD" || ok=false
+printf '%s' "$out" | grep -q "Cost:" || ok=false
+printf '%s' "$out" | grep -q "Pick a starting template" && ok=false
+printf '%s' "$out" | grep -q "Start the build now" && ok=false
+if [ "$ok" = true ]; then
+    log_pass "non-interactive PRD path + --yes: uses the PRD directly, plan shown, no picker"
+else
+    log_fail "non-interactive PRD flow" "rc=$rc start_args='$start_args'"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 12: missing consent. An idea with NO --yes must keep the exit-2 refusal
+# and write nothing. The absence of cmd_start.log is the load-bearing half: it
+# proves no build was STARTED, which absence of prd.md alone does not.
+# ---------------------------------------------------------------------------
+T12="$TMP/t12"; mkdir -p "$T12"
+make_harness "$T12" "$NONINT"
+printf 'cmd_quickstart "a todo app" </dev/null\n' >> "$T12/harness.sh"
+out=$(cd "$T12" && run_to 15 bash harness.sh 2>&1); rc=$?
+ok=true
+[ "$rc" -eq 2 ] || ok=false
+printf '%s' "$out" | grep -qi "interactive and needs a terminal" || ok=false
+[ -f "$T12/prd.md" ] && ok=false
+[ -f "$T12/prd-quickstart.md" ] && ok=false
+[ -f "$T12/cmd_start.log" ] && ok=false
+if [ "$ok" = true ]; then
+    log_pass "idea without --yes: exit 2, zero writes, no build started"
+else
+    log_fail "missing consent refusal" "rc=$rc; wrote a file or started a build"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 13: missing input. --yes with NO positional must also refuse. Consent
+# alone is not enough: there is still nothing to build without an idea or PRD.
+# ---------------------------------------------------------------------------
+T13="$TMP/t13"; mkdir -p "$T13"
+make_harness "$T13" "$NONINT"
+printf 'cmd_quickstart --yes </dev/null\n' >> "$T13/harness.sh"
+out=$(cd "$T13" && run_to 15 bash harness.sh 2>&1); rc=$?
+ok=true
+[ "$rc" -eq 2 ] || ok=false
+printf '%s' "$out" | grep -qi "interactive and needs a terminal" || ok=false
+[ -f "$T13/prd.md" ] && ok=false
+[ -f "$T13/cmd_start.log" ] && ok=false
+if [ "$ok" = true ]; then
+    log_pass "--yes without an idea: exit 2, zero writes, no build started"
+else
+    log_fail "missing input refusal" "rc=$rc; wrote a file or started a build"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 14: ambient consent env vars must NOT unlock the bypass. This is the
+# test that discriminates the argv-only yes_flag from the env-inclusive
+# _qs_assume_yes. LOKI_AUTO_CONFIRM=true is what `loki --yes <cmd>` and CI-ish
+# environments export; if the gate read THAT, an ambient variable plus a stray
+# positional would silently start a paid build with no human in the loop.
+# ---------------------------------------------------------------------------
+T14="$TMP/t14"; mkdir -p "$T14"
+make_harness "$T14" "$NONINT"
+printf 'export LOKI_AUTO_CONFIRM=true\nexport LOKI_ASSUME_YES=1\ncmd_quickstart "a todo app" </dev/null\n' >> "$T14/harness.sh"
+out=$(cd "$T14" && run_to 15 bash harness.sh 2>&1); rc=$?
+ok=true
+[ "$rc" -eq 2 ] || ok=false
+printf '%s' "$out" | grep -qi "interactive and needs a terminal" || ok=false
+[ -f "$T14/prd.md" ] && ok=false
+[ -f "$T14/cmd_start.log" ] && ok=false
+if [ "$ok" = true ]; then
+    log_pass "ambient LOKI_AUTO_CONFIRM/LOKI_ASSUME_YES do not unlock the bypass (argv --yes required)"
+else
+    log_fail "ambient consent must not unlock" "rc=$rc; env var alone started a build"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 15: collision safety on the allowed path. With prd.md AND
+# prd-quickstart.md present, the non-interactive run must never prompt to
+# overwrite and never clobber: it walks to prd-quickstart-2.md and both
+# originals survive byte-for-byte.
+# ---------------------------------------------------------------------------
+T15="$TMP/t15"; mkdir -p "$T15"
+printf 'ORIGINAL-PRD-CONTENT\n' > "$T15/prd.md"
+printf 'ORIG-QUICKSTART-PRD\n' > "$T15/prd-quickstart.md"
+make_harness "$T15" "$NONINT"
+printf 'cmd_quickstart "a todo app" --yes </dev/null\n' >> "$T15/harness.sh"
+out=$(cd "$T15" && run_to 15 bash harness.sh 2>&1); rc=$?
+start_args=$(cat "$T15/cmd_start.log" 2>/dev/null || echo "")
+ok=true
+[ "$rc" -eq 0 ] || ok=false
+grep -q "ORIGINAL-PRD-CONTENT" "$T15/prd.md" 2>/dev/null || ok=false
+grep -q "ORIG-QUICKSTART-PRD" "$T15/prd-quickstart.md" 2>/dev/null || ok=false
+[ -f "$T15/prd-quickstart-2.md" ] || ok=false
+[ "$start_args" = "./prd-quickstart-2.md --yes --no-plan" ] || ok=false
+# The overwrite prompt must never have been shown.
+printf '%s' "$out" | grep -qi "Overwrite?" && ok=false
+if [ "$ok" = true ]; then
+    log_pass "non-interactive collision: no overwrite prompt, walks to prd-quickstart-2.md, originals intact"
+else
+    log_fail "non-interactive collision safety" "rc=$rc start_args='$start_args'; clobbered or prompted"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 16: an explicit --yes authorizes the displayed estimate, not an
+# unbounded build. If the estimator fails, the non-interactive path must refuse
+# before writing a PRD or calling cmd_start.
+# ---------------------------------------------------------------------------
+T16="$TMP/t16"; mkdir -p "$T16"
+make_harness "$T16" "$NONINT
+show_prd_plan() { return 1; }"
+printf 'cmd_quickstart "a todo app" --yes </dev/null\n' >> "$T16/harness.sh"
+out=$(cd "$T16" && run_to 15 bash harness.sh 2>&1); rc=$?
+ok=true
+[ "$rc" -eq 2 ] || ok=false
+printf '%s' "$out" | grep -qi "requires a displayed plan" || ok=false
+[ -f "$T16/prd.md" ] && ok=false
+[ -f "$T16/prd-quickstart.md" ] && ok=false
+[ -f "$T16/cmd_start.log" ] && ok=false
+if [ "$ok" = true ]; then
+    log_pass "estimator failure: exit 2, zero writes, no unpriced build"
+else
+    log_fail "estimator failure refusal" "rc=$rc; wrote a file or started an unpriced build"
+fi
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

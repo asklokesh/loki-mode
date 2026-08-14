@@ -393,14 +393,20 @@ _qs_help() {
     printf '  --yes, -y     Auto-confirm the final build prompt (still shows the plan)\n'
     printf '  --help, -h    Show this help and exit\n'
     printf '\n'
+    printf 'Non-interactive use:\n'
+    printf '  loki quickstart "a todo app with user accounts" --yes\n'
+    printf '  Both an IDEA (or PRD path) and --yes are required with no terminal.\n'
+    printf '  Missing either one exits 2 and writes nothing. The top-ranked\n'
+    printf '  template is chosen automatically and the plan is still shown.\n'
+    printf '\n'
     printf 'Steps:\n'
     printf '  1. Setup      Check for an AI provider; offer to install if missing\n'
     printf '  2. Build      Describe what you want, or Enter for the sample Todo app\n'
     printf '  3. Template   Pick the closest starting template (offline keyword match)\n'
     printf '  4. Plan       Review the honest cost/time estimate, then confirm\n'
     printf '\n'
-    printf 'The PRD is written to ./prd.md in the current directory, then the build\n'
-    printf 'starts. For non-interactive automation use: loki start <prd> --yes\n'
+    printf 'The PRD is written to ./prd.md in the current directory (or the next\n'
+    printf 'free prd-quickstart*.md name if that exists), then the build starts.\n'
     return 0
 }
 
@@ -411,10 +417,30 @@ _qs_help() {
 #   --help (exit 0) -> non-TTY/CI gate (hint + exit 2) -> provider gate ->
 #   step 2 (idea / PRD path) -> step 3 (template) -> step 4 (plan + confirm) ->
 #   write PRD to CWD -> cmd_start --yes --no-plan (subshelled; it execs the runner).
+#
+# The non-TTY/CI gate admits ONE fully-specified shape:
+#   loki quickstart "<idea>|<prd-path>" --yes
+# Both halves required (see the gate for why consent must come from argv, not
+# from an ambient env var). On that path every prompt is skipped -- the four read
+# points are step 2, step 3's picker, the confirm, and the prd.md collision --
+# while the provider gate, the template ranking, the honest estimator and the
+# no-clobber suffix walk are all REUSED unchanged, not reimplemented. Nothing is
+# overwritten and no figure is fabricated on either path.
 cmd_quickstart() {
     local positional=""
     local assume_yes=false
     if _qs_assume_yes; then assume_yes=true; fi
+
+    # yes_flag tracks EXPLICIT --yes/-y on THIS command's argv, and nothing else.
+    # It is deliberately NOT assume_yes: _qs_assume_yes also returns true for an
+    # ambient LOKI_ASSUME_YES or LOKI_AUTO_CONFIRM=true, and LOKI_AUTO_CONFIRM is
+    # exactly what `loki --yes <anything>` (loki:2313) and CI-ish environments
+    # export. Gating the non-interactive bypass on assume_yes would let an
+    # ambient env var plus a stray positional silently start a PAID build in CI
+    # with no human in the loop. The safety contract asks for explicit consent,
+    # so consent must come from argv. assume_yes keeps its existing meaning for
+    # the confirm prompt, so the interactive journey is byte-identical.
+    local yes_flag=false
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -424,6 +450,7 @@ cmd_quickstart() {
                 ;;
             --yes|-y)
                 assume_yes=true
+                yes_flag=true
                 shift
                 ;;
             --*)
@@ -444,11 +471,31 @@ cmd_quickstart() {
         esac
     done
 
-    # Non-TTY / CI: quickstart is interactive by definition. Never hang on read;
-    # print the automation hint to stderr and exit 2 (design 3.8).
+    # Non-TTY / CI: quickstart is interactive by definition, so by default it
+    # never hangs on a read -- it prints the automation hint to stderr and exits
+    # 2 (design 3.8).
+    #
+    # The ONE exception is a fully-specified invocation:
+    #   loki quickstart "<idea>" --yes      (or a PRD path in place of the idea)
+    # Both halves are required. A non-empty positional supplies the input that
+    # steps 2-3 would otherwise have to ask for, and an explicit argv --yes
+    # supplies the consent step 4 would otherwise have to ask for. With both
+    # present there is nothing left to prompt about, so the refusal is pure
+    # friction for a newly installed operator running one command.
+    #
+    # Missing EITHER half keeps the refusal verbatim and writes nothing: a bare
+    # `loki quickstart` in CI still cannot spend, and neither can one that has an
+    # idea but no consent. Fail-closed is the load-bearing direction here -- the
+    # bypass must be something an operator opts into by typing both, never
+    # something an environment can arrive at on its own.
+    local noninteractive_ok=false
     if _qs_non_interactive; then
-        printf 'loki quickstart is interactive and needs a terminal. For automation use: loki start <prd> --yes\n' >&2
-        exit 2
+        if [ -n "$positional" ] && [ "$yes_flag" = true ]; then
+            noninteractive_ok=true
+        else
+            printf 'loki quickstart is interactive and needs a terminal. For automation use: loki start <prd> --yes\n' >&2
+            exit 2
+        fi
     fi
 
     printf '\n'
@@ -523,25 +570,40 @@ cmd_quickstart() {
             top3=("simple-todo-app")
         fi
 
-        printf '%sStep 3 of 4: Pick a starting template%s\n' "$_QS_BOLD" "$_QS_NC"
-        if [ -n "$brief" ]; then
-            printf '  Closest matches for "%s":\n' "$brief"
-        else
-            printf '  Closest matches for the sample Todo app:\n'
-        fi
-        local i=1 t suffix
-        for t in "${top3[@]}"; do
-            suffix=""
-            [ "$i" -eq 1 ] && suffix="   (default)"
-            printf '    %d) %-18s %s%s\n' "$i" "$t" "$(_qs_template_summary "$t")" "$suffix"
-            i=$((i + 1))
-        done
-        printf '  Choose 1-%d, or press Enter for 1.\n' "${#top3[@]}"
-
+        # The MENU, not just the read, is interactive-only. Offering "Choose 1-3"
+        # to a shell that can never answer is a prompt the operator has to read
+        # and mistrust; worse, it makes a transcript indistinguishable from one
+        # that actually stopped for input. The ranking above is shared by both
+        # paths -- only its presentation differs.
         local pick=""
-        printf '> '
-        read -r pick 2>/dev/null || pick=""
-        printf '\n'
+        if [ "$noninteractive_ok" != true ]; then
+            printf '%sStep 3 of 4: Pick a starting template%s\n' "$_QS_BOLD" "$_QS_NC"
+            if [ -n "$brief" ]; then
+                printf '  Closest matches for "%s":\n' "$brief"
+            else
+                printf '  Closest matches for the sample Todo app:\n'
+            fi
+            local i=1 t suffix
+            for t in "${top3[@]}"; do
+                suffix=""
+                [ "$i" -eq 1 ] && suffix="   (default)"
+                printf '    %d) %-18s %s%s\n' "$i" "$t" "$(_qs_template_summary "$t")" "$suffix"
+                i=$((i + 1))
+            done
+            printf '  Choose 1-%d, or press Enter for 1.\n' "${#top3[@]}"
+            printf '> '
+            read -r pick 2>/dev/null || pick=""
+            printf '\n'
+        else
+            # Deterministic selection: the empty pick below resolves to top3[0],
+            # the same rank the interactive picker offers as "(default)". The
+            # ranking itself is unchanged -- _qs_score_templates is offline,
+            # deterministic and already the single source of order -- so the
+            # non-interactive choice is exactly the one an operator pressing
+            # Enter would get. No picker, no prompt, no second code path.
+            printf '%sStep 3 of 4: Template%s\n' "$_QS_BOLD" "$_QS_NC"
+            printf '  Selected %s (top match) for "%s".\n\n' "${top3[0]}" "$brief"
+        fi
 
         case "$pick" in
             ""|1) template_name="${top3[0]}";;
@@ -562,11 +624,25 @@ cmd_quickstart() {
 
     # ----- Step 4 of 4: Review the plan (reuse the slice-A estimator) --------
     printf '%sStep 4 of 4: Review the plan%s\n' "$_QS_BOLD" "$_QS_NC"
+    # The plan is ALWAYS rendered, on both paths, from the same real estimator.
+    # The non-interactive path shows it before execution rather than before a
+    # prompt: the operator still gets the honest quote in the transcript, and it
+    # is still the figure cmd_start runs with, so the quote equals the charge.
     local estimate_ok=true
     if ! _qs_emit_plan "$prd_source" "$template_name"; then
         estimate_ok=false
-        printf '%sCould not compute a cost estimate (the estimator did not return a result).%s\n' "$_QS_YELLOW" "$_QS_NC"
-        printf '\n'
+        # No honest number available. Interactively this flips the confirm to
+        # default-NO below. Non-interactively there is no one to review the
+        # missing plan, so fail closed before writing a PRD or starting a build.
+        # Explicit --yes authorizes the displayed estimate; it is not consent
+        # to spend without one.
+        if [ "$noninteractive_ok" = true ]; then
+            printf 'Could not compute a cost estimate; non-interactive quickstart requires a displayed plan and started no build.\n' >&2
+            return 2
+        else
+            printf '%sCould not compute a cost estimate (the estimator did not return a result).%s\n' "$_QS_YELLOW" "$_QS_NC"
+            printf '\n'
+        fi
     fi
 
     # ----- Confirm ----------------------------------------------------------
@@ -595,8 +671,16 @@ cmd_quickstart() {
     local target="./prd.md"
     if [ -e "$target" ]; then
         local overwrite=""
-        printf 'prd.md already exists. Overwrite? [y/N] '
-        read -r overwrite 2>/dev/null || overwrite=""
+        # Non-interactive never asks and never overwrites. Leaving $overwrite
+        # empty falls into the existing suffix walk below, which is already the
+        # correct no-clobber behavior -- prd-quickstart.md, then numbered free
+        # suffixes exactly as needed. Reused rather than reimplemented so the two
+        # paths cannot drift, and so "never overwrite" holds by construction
+        # (there is no branch here that can reach the clobber).
+        if [ "$noninteractive_ok" != true ]; then
+            printf 'prd.md already exists. Overwrite? [y/N] '
+            read -r overwrite 2>/dev/null || overwrite=""
+        fi
         if [[ ! "$overwrite" =~ ^[Yy] ]]; then
             # Declining to overwrite one file must never silently destroy
             # another (bug-hunt MEDIUM): the fallback gets the same existence

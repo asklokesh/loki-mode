@@ -51,6 +51,21 @@ That is the whole happy path. It asks for a one-line idea, picks a template,
 shows the real cost and time estimate before spending anything, then builds.
 Press Enter through every step and you get a sample Todo app.
 
+One command, no prompts (CI, scripts, containers, any shell without a terminal):
+
+```bash
+loki quickstart "a todo app with user accounts" --yes
+```
+
+Both halves are required with no terminal: an idea (or a path to a PRD file)
+and an explicit `--yes`. Given both, Loki picks the top-ranked template
+automatically, prints the same honest cost and time estimate, and starts the
+build without asking anything. Missing either half exits 2 with the
+needs-a-terminal message and writes nothing, so an ambient `LOKI_AUTO_CONFIRM`
+or a stray argument in CI can never start a paid build on its own. Existing
+files are never overwritten: if `prd.md` is present the PRD lands at
+`prd-quickstart.md`, then numbered suffixes as needed.
+
 Or go straight at it:
 
 ```bash
