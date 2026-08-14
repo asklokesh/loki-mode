@@ -5,6 +5,29 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.22.4
+
+### Added
+
+- **One-command first build:** `loki quickstart "<idea-or-prd>" --yes` now
+  supports non-interactive shells while preserving the estimator-backed plan,
+  explicit argv consent, collision-safe PRD writes, and the existing build
+  path. Operators can select an exact shipped starter with `--template`.
+- **Zero-spend quickstart preview:** `--dry-run` shows the same deterministic
+  template and estimator plan before any provider, file, or build boundary;
+  `--json` emits a stable schema-v1 object for local automation.
+- **Installed Proof Passport:** the provider-neutral passport verifier is now
+  available from the packaged Loki CLI for a local proof id or compatible
+  `proof.json`.
+
+### Fixed
+
+- **Reviewed SAST gate integrity:** CodeQL dispositions are bound to exact alert
+  fingerprints and lines so stale review records cannot satisfy the release
+  security gate.
+- **Outcome receipt automation:** canary receipt creation supports an exact
+  required verdict without replacing the independently derived actual verdict.
+
 ## v9.22.3
 
 ### Added
