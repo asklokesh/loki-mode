@@ -406,11 +406,20 @@ _qs_selected_provider() {
 # non-zero if the estimator gave no result (caller falls back to a no-number
 # confirm, never fabricating a figure).
 _qs_emit_plan() {
-    local prd_path="$1" template_name="$2" json_output="${3:-false}" input_kind="${4:-idea}"
+    local prd_path="$1" template_name="$2" json_output="${3:-false}" input_kind="${4:-idea}" input_value="${5:-}"
+    local source_digest_before="" source_digest_after=""
+    if [ "$json_output" = true ] && [ "$input_kind" = "prd" ]; then
+        source_digest_before=$(shasum -a 256 "$prd_path" 2>/dev/null | awk '{print $1}') || return 1
+        [ -n "$source_digest_before" ] || return 1
+    fi
     local plan_json=""
     plan_json=$(show_prd_plan "$prd_path" "true" "false" 2>/dev/null) || plan_json=""
     if [ -z "$plan_json" ]; then
         return 1
+    fi
+    if [ "$json_output" = true ] && [ "$input_kind" = "prd" ]; then
+        source_digest_after=$(shasum -a 256 "$prd_path" 2>/dev/null | awk '{print $1}') || return 1
+        [ "$source_digest_before" = "$source_digest_after" ] || return 1
     fi
     local parsed
     parsed=$(printf '%s' "$plan_json" | python3 -c "
@@ -447,7 +456,19 @@ import sys
 plan = json.load(sys.stdin)
 if not isinstance(plan, dict):
     sys.exit(1)
-template_name, input_kind = sys.argv[1:3]
+template_name, input_kind, input_value, source_digest = sys.argv[1:5]
+if input_kind == "idea":
+    continuation = {
+        "kind": "idea",
+        "template": template_name,
+        "value": input_value,
+    }
+else:
+    continuation = {
+        "kind": "prd",
+        "path": input_value,
+        "sha256": source_digest,
+    }
 payload = {
     "schema_version": 1,
     "command": "loki quickstart",
@@ -456,9 +477,10 @@ payload = {
     "selected_template": template_name if input_kind == "idea" else None,
     "source_name": template_name if input_kind == "prd" else None,
     "plan": plan,
+    "continuation": continuation,
 }
 json.dump(payload, sys.stdout, separators=(",", ":"), sort_keys=True)
-' "$template_name" "$input_kind" 2>/dev/null) || json_payload=""
+' "$template_name" "$input_kind" "$input_value" "$source_digest_after" 2>/dev/null) || json_payload=""
         [ -n "$json_payload" ] || return 1
         printf '%s\n' "$json_payload" >&3
         return 0
@@ -481,6 +503,111 @@ json.dump(payload, sys.stdout, separators=(",", ":"), sort_keys=True)
     return 0
 }
 
+# _qs_load_preview <path>: validate one bounded schema-v1 preview before any
+# provider, estimator, PRD, or build boundary. Only the continuation fields are
+# handed to the shell. The saved plan is evidence, not execution authority;
+# cmd_quickstart always recomputes and displays the current estimator result.
+_qs_load_preview() {
+    local preview_path="$1"
+    if [ ! -f "$preview_path" ] || [ ! -r "$preview_path" ] || [ -L "$preview_path" ]; then
+        printf 'Preview path is not a readable regular non-symlink file: %s\n' "$preview_path" >&2
+        return 2
+    fi
+    local preview_size
+    preview_size=$(wc -c < "$preview_path" 2>/dev/null | tr -d '[:space:]') || return 2
+    case "$preview_size" in
+        ""|*[!0-9]*) return 2;;
+    esac
+    if [ "$preview_size" -eq 0 ] || [ "$preview_size" -gt 1048576 ]; then
+        printf 'Preview JSON must be between 1 byte and 1 MiB.\n' >&2
+        return 2
+    fi
+
+    python3 - "$preview_path" <<'PY'
+import base64
+import json
+import os
+import re
+import stat
+import sys
+
+path = sys.argv[1]
+try:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size < 1 or metadata.st_size > 1048576:
+            raise ValueError("unsafe preview")
+        raw = os.read(descriptor, 1048577)
+    finally:
+        os.close(descriptor)
+    if len(raw) > 1048576:
+        raise ValueError("oversized")
+    def reject_duplicate_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate key")
+            result[key] = value
+        return result
+
+    payload = json.loads(raw, object_pairs_hook=reject_duplicate_keys)
+except Exception:
+    sys.exit(2)
+
+if not isinstance(payload, dict):
+    sys.exit(2)
+if payload.get("schema_version") != 1:
+    sys.exit(2)
+if payload.get("command") != "loki quickstart" or payload.get("mode") != "dry-run":
+    sys.exit(2)
+if not isinstance(payload.get("plan"), dict) or not payload["plan"]:
+    sys.exit(2)
+
+continuation = payload.get("continuation")
+if not isinstance(continuation, dict):
+    sys.exit(2)
+kind = continuation.get("kind")
+
+def valid_text(value):
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= 4096
+        and not any(ord(char) < 32 or ord(char) == 127 for char in value)
+    )
+
+if kind == "idea":
+    value = continuation.get("value")
+    template = continuation.get("template")
+    if not valid_text(value):
+        sys.exit(2)
+    if not isinstance(template, str) or re.fullmatch(r"[a-z0-9-]+", template) is None:
+        sys.exit(2)
+    if payload.get("input_kind") != "idea":
+        sys.exit(2)
+    if payload.get("selected_template") != template or payload.get("source_name") is not None:
+        sys.exit(2)
+    encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
+    print(f"idea|{template}|{encoded}|")
+elif kind == "prd":
+    value = continuation.get("path")
+    digest = continuation.get("sha256")
+    if not valid_text(value):
+        sys.exit(2)
+    if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+        sys.exit(2)
+    if payload.get("input_kind") != "prd":
+        sys.exit(2)
+    if payload.get("selected_template") is not None or payload.get("source_name") != os.path.basename(value):
+        sys.exit(2)
+    encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
+    print(f"prd||{encoded}|{digest}")
+else:
+    sys.exit(2)
+PY
+}
+
 # _qs_help: concise usage for `loki quickstart --help`.
 _qs_help() {
     printf '%sloki quickstart%s - guided first build (setup, idea, template, plan, go)\n' "$_QS_BOLD" "$_QS_NC"
@@ -498,6 +625,7 @@ _qs_help() {
     printf '  --yes, -y     Auto-confirm the final build prompt (still shows the plan)\n'
     printf '  --dry-run     Preview the selected template and plan; write/start nothing\n'
     printf '  --json        With --dry-run, emit one machine-readable JSON object\n'
+    printf '  --from-preview F  Continue a saved JSON preview; requires explicit --yes\n'
     printf '  --template N  Use the exact shipped template N for an IDEA\n'
     printf '  --list-templates  List every shipped template and its purpose\n'
     printf '  --help, -h    Show this help and exit\n'
@@ -515,6 +643,7 @@ _qs_help() {
     printf '  An IDEA (or readable PRD path) is required. No provider is checked,\n'
     printf '  no file is written, and no build is started. Do not combine with --yes.\n'
     printf '  Add --json for versioned JSON only; --json requires --dry-run.\n'
+    printf '  Save that JSON, then continue it with --from-preview FILE --yes.\n'
     printf '\n'
     printf 'Steps:\n'
     printf '  1. Setup      Check for an AI provider for execution (skipped in preview)\n'
@@ -550,6 +679,9 @@ cmd_quickstart() {
     local template_flag_seen=false
     local list_templates=false
     local list_templates_flag_seen=false
+    local from_preview=""
+    local from_preview_flag_seen=false
+    local preview_prd_digest=""
     if _qs_assume_yes; then assume_yes=true; fi
 
     # yes_flag tracks EXPLICIT --yes/-y on THIS command's argv, and nothing else.
@@ -604,6 +736,19 @@ cmd_quickstart() {
                 list_templates_flag_seen=true
                 shift
                 ;;
+            --from-preview)
+                if [ "$from_preview_flag_seen" = true ]; then
+                    printf '%s--from-preview may be specified only once.%s\n' "$_QS_RED" "$_QS_NC" >&2
+                    exit 2
+                fi
+                from_preview_flag_seen=true
+                if [ $# -lt 2 ] || [ -z "${2:-}" ] || [[ "${2:-}" == --* ]]; then
+                    printf '%s--from-preview requires a preview JSON path.%s\n' "$_QS_RED" "$_QS_NC" >&2
+                    exit 2
+                fi
+                from_preview="$2"
+                shift 2
+                ;;
             --*)
                 printf '%sUnknown option: %s%s\n' "$_QS_RED" "$1" "$_QS_NC" >&2
                 printf "Run 'loki quickstart --help' for usage.\n" >&2
@@ -621,6 +766,52 @@ cmd_quickstart() {
                 ;;
         esac
     done
+
+    # Continuation is a standalone execution shape. Explicit argv consent is
+    # mandatory, and no caller-supplied input or selector may compete with the
+    # reviewed preview. Validation happens before every provider, estimator,
+    # PRD, and build boundary. Accepted values then rejoin the existing path.
+    if [ "$from_preview_flag_seen" = true ]; then
+        if [ -n "$positional" ] || [ "$yes_flag" != true ] || [ "$dry_run" = true ] || [ "$json_output" = true ] || [ "$template_flag_seen" = true ] || [ "$list_templates" = true ]; then
+            printf '%s--from-preview accepts only a preview JSON path and explicit --yes.%s\n' "$_QS_RED" "$_QS_NC" >&2
+            exit 2
+        fi
+        local preview_fields="" preview_kind="" preview_template="" preview_encoded="" preview_digest="" preview_value=""
+        preview_fields=$(_qs_load_preview "$from_preview") || {
+            printf 'Preview JSON is malformed or incompatible.\n' >&2
+            exit 2
+        }
+        IFS='|' read -r preview_kind preview_template preview_encoded preview_digest <<< "$preview_fields"
+        preview_value=$(python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.argv[1], validate=True))' "$preview_encoded" 2>/dev/null) || {
+            printf 'Preview JSON continuation is invalid.\n' >&2
+            exit 2
+        }
+        [ -n "$preview_value" ] || {
+            printf 'Preview JSON continuation is empty.\n' >&2
+            exit 2
+        }
+        if [ "$preview_kind" = "idea" ]; then
+            positional="$preview_value"
+            template_override="$preview_template"
+            template_flag_seen=true
+        elif [ "$preview_kind" = "prd" ]; then
+            positional="$preview_value"
+            if [ ! -f "$positional" ] || [ ! -r "$positional" ] || [ -L "$positional" ]; then
+                printf 'Preview PRD is not a readable regular non-symlink file: %s\n' "$positional" >&2
+                exit 2
+            fi
+            local current_digest=""
+            current_digest=$(shasum -a 256 "$positional" 2>/dev/null | awk '{print $1}') || current_digest=""
+            if [ -z "$current_digest" ] || [ "$current_digest" != "$preview_digest" ]; then
+                printf 'Preview PRD has changed since the saved preview; run --dry-run --json again.\n' >&2
+                exit 2
+            fi
+            preview_prd_digest="$preview_digest"
+        else
+            printf 'Preview JSON continuation kind is unsupported.\n' >&2
+            exit 2
+        fi
+    fi
 
     # Discovery is a standalone read-only command shape. Refuse input and every
     # execution/preview selector rather than guessing intent; --json is its only
@@ -883,8 +1074,20 @@ cmd_quickstart() {
     # The non-interactive path shows it before execution rather than before a
     # prompt: the operator still gets the honest quote in the transcript, and it
     # is still the figure cmd_start runs with, so the quote equals the charge.
+    if [ -n "$preview_prd_digest" ]; then
+        local pre_estimate_digest=""
+        if [ ! -f "$prd_source" ] || [ ! -r "$prd_source" ] || [ -L "$prd_source" ]; then
+            printf 'Preview PRD changed before estimation; run --dry-run --json again.\n' >&2
+            return 2
+        fi
+        pre_estimate_digest=$(shasum -a 256 "$prd_source" 2>/dev/null | awk '{print $1}') || pre_estimate_digest=""
+        if [ "$pre_estimate_digest" != "$preview_prd_digest" ]; then
+            printf 'Preview PRD changed before estimation; run --dry-run --json again.\n' >&2
+            return 2
+        fi
+    fi
     local estimate_ok=true
-    if ! _qs_emit_plan "$prd_source" "$template_name" "$json_output" "$input_kind"; then
+    if ! _qs_emit_plan "$prd_source" "$template_name" "$json_output" "$input_kind" "$positional"; then
         estimate_ok=false
         # No honest number available. Interactively this flips the confirm to
         # default-NO below. Non-interactively there is no one to review the
@@ -901,6 +1104,19 @@ cmd_quickstart() {
         else
             printf '%sCould not compute a cost estimate (the estimator did not return a result).%s\n' "$_QS_YELLOW" "$_QS_NC"
             printf '\n'
+        fi
+    fi
+
+    if [ -n "$preview_prd_digest" ]; then
+        local post_estimate_digest=""
+        if [ ! -f "$prd_source" ] || [ ! -r "$prd_source" ] || [ -L "$prd_source" ]; then
+            printf 'Preview PRD changed during estimation; started no build.\n' >&2
+            return 2
+        fi
+        post_estimate_digest=$(shasum -a 256 "$prd_source" 2>/dev/null | awk '{print $1}') || post_estimate_digest=""
+        if [ "$post_estimate_digest" != "$preview_prd_digest" ]; then
+            printf 'Preview PRD changed during estimation; started no build.\n' >&2
+            return 2
         fi
     fi
 
@@ -968,7 +1184,36 @@ cmd_quickstart() {
             done
         fi
     fi
-    if ! cp "$prd_source" "$target" 2>/dev/null; then
+    if [ "$from_preview_flag_seen" = true ]; then
+        # A reviewed continuation must publish exactly the bytes that were
+        # previewed, and must never win a race by overwriting another file.
+        # Stage in the destination directory, verify the staged bytes, then
+        # claim the final name with an atomic hard link (which fails if another
+        # process created it after the suffix walk). Removing the private stage
+        # leaves the linked final file intact.
+        local preview_stage="" preview_stage_digest=""
+        preview_stage=$(mktemp "./.loki-quickstart-prd.XXXXXX") || {
+            printf '%sCould not stage the reviewed PRD in the current directory.%s\n' "$_QS_RED" "$_QS_NC" >&2
+            return 2
+        }
+        if ! cp "$prd_source" "$preview_stage" 2>/dev/null; then
+            rm -f "$preview_stage"
+            printf '%sCould not stage the reviewed PRD in the current directory.%s\n' "$_QS_RED" "$_QS_NC" >&2
+            return 2
+        fi
+        preview_stage_digest=$(shasum -a 256 "$preview_stage" 2>/dev/null | awk '{print $1}') || preview_stage_digest=""
+        if [ -z "$preview_stage_digest" ] || { [ -n "$preview_prd_digest" ] && [ "$preview_stage_digest" != "$preview_prd_digest" ]; }; then
+            rm -f "$preview_stage"
+            printf '%sReviewed PRD changed before publish; started no build.%s\n' "$_QS_RED" "$_QS_NC" >&2
+            return 2
+        fi
+        if ! ln "$preview_stage" "$target" 2>/dev/null; then
+            rm -f "$preview_stage"
+            printf '%sPRD destination changed before publish; started no build.%s\n' "$_QS_RED" "$_QS_NC" >&2
+            return 2
+        fi
+        rm -f "$preview_stage"
+    elif ! cp "$prd_source" "$target" 2>/dev/null; then
         printf '%sCould not write the PRD to the current directory. Try a writable directory.%s\n' "$_QS_RED" "$_QS_NC" >&2
         exit 1
     fi

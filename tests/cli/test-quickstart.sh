@@ -615,6 +615,11 @@ assert d["mode"] == "dry-run"
 assert d["input_kind"] == "idea"
 assert d["selected_template"] == "simple-todo-app"
 assert d["source_name"] is None
+assert d["continuation"] == {
+    "kind": "idea",
+    "template": "simple-todo-app",
+    "value": "a todo app with user accounts",
+}
 assert d["plan"]["cost"]["total_usd"] == 0.40
 assert d["plan"]["iterations"] == {"estimated": 4, "range": [3, 5]}
 PY
@@ -648,6 +653,9 @@ d = json.loads(pathlib.Path(sys.argv[1]).read_text())
 assert d["input_kind"] == "prd"
 assert d["selected_template"] is None
 assert d["source_name"] == "customer-prd.md"
+assert d["continuation"]["kind"] == "prd"
+assert d["continuation"]["path"].endswith("/customer-prd.md")
+assert len(d["continuation"]["sha256"]) == 64
 assert d["plan"]["time"]["estimated"] == "14 minutes"
 PY
 [ ! -s "$T24/stderr" ] || ok=false
@@ -873,6 +881,118 @@ if [ "$rc" -eq 2 ] && [ ! -s "$T38/stdout" ] && grep -q 'may be specified only o
     log_pass "duplicate --list-templates refuses with no catalog or side effects"
 else
     log_fail "duplicate template discovery" "rc=$rc or duplicate refusal missing"
+fi
+
+# ===========================================================================
+# Reviewed JSON preview continuation (LOKI-QUICKSTART-PREVIEW-CONTINUE-54).
+# ===========================================================================
+
+# An idea preview carries the exact idea and selected shipped template. With a
+# later explicit --yes, continuation rejoins the existing quickstart seams.
+T39="$TMP/t39"; mkdir -p "$T39"
+make_harness "$T39" "$PREVIEW_NONINT"
+(cd "$T39" && run_to 15 bash -c 'source ./harness.sh; cmd_quickstart "an internal reporting workspace" --template dashboard --dry-run --json </dev/null' >preview.json 2>preview.stderr); rc=$?
+ok=true
+[ "$rc" -eq 0 ] || ok=false
+[ -s "$T39/preview.json" ] || ok=false
+[ ! -s "$T39/preview.stderr" ] || ok=false
+make_harness "$T39" "$NONINT"
+(cd "$T39" && run_to 15 bash -c 'source ./harness.sh; cmd_quickstart --from-preview preview.json --yes </dev/null' >stdout 2>stderr); rc=$?
+[ "$rc" -eq 0 ] || ok=false
+[ "$(cat "$T39/cmd_start.log" 2>/dev/null)" = "./prd.md --yes --no-plan" ] || ok=false
+head -1 "$T39/prd.md" | grep -q 'Analytics Dashboard' || ok=false
+grep -q 'Template:    dashboard' "$T39/stdout" || ok=false
+if [ "$ok" = true ]; then
+    log_pass "idea preview continuation: exact reviewed template reaches existing start seam"
+else
+    log_fail "idea preview continuation" "rc=$rc or reviewed input/estimator/no-clobber/start seam mismatch"
+fi
+
+# A PRD preview binds the path to its exact SHA-256. Unchanged evidence may
+# continue; the current estimate is still recomputed before cmd_start.
+T40="$TMP/t40"; mkdir -p "$T40"
+printf '# Customer PRD\n\nBuild the reviewed service.\n' > "$T40/customer-prd.md"
+make_harness "$T40" "$PREVIEW_NONINT"
+(cd "$T40" && run_to 15 bash -c 'source ./harness.sh; cmd_quickstart "$PWD/customer-prd.md" --dry-run --json </dev/null' >preview.json 2>preview.stderr); rc=$?
+before=$(shasum -a 256 "$T40/customer-prd.md" | awk '{print $1}')
+make_harness "$T40" "$NONINT"
+(cd "$T40" && run_to 15 bash -c 'source ./harness.sh; cmd_quickstart --from-preview preview.json --yes </dev/null' >stdout 2>stderr); rc=$?
+after=$(shasum -a 256 "$T40/customer-prd.md" | awk '{print $1}')
+if [ "$rc" -eq 0 ] && [ "$before" = "$after" ] && [ "$(cat "$T40/cmd_start.log" 2>/dev/null)" = "./prd.md --yes --no-plan" ] && cmp -s "$T40/customer-prd.md" "$T40/prd.md"; then
+    log_pass "PRD preview continuation: exact digest-bound source is preserved and started"
+else
+    log_fail "PRD preview continuation" "rc=$rc, source changed, or start seam mismatch"
+fi
+
+# A source changed after preview is stale evidence. Refuse before provider,
+# estimator, PRD copy, or cmd_start, and leave the changed source untouched.
+T41="$TMP/t41"; mkdir -p "$T41"
+printf '# Original PRD\n' > "$T41/customer-prd.md"
+make_harness "$T41" "$PREVIEW_NONINT"
+(cd "$T41" && run_to 15 bash -c 'source ./harness.sh; cmd_quickstart "$PWD/customer-prd.md" --dry-run --json </dev/null' >preview.json 2>/dev/null); rc=$?
+printf '# Changed PRD\n' > "$T41/customer-prd.md"
+changed=$(shasum -a 256 "$T41/customer-prd.md" | awk '{print $1}')
+make_harness "$T41" '_qs_selected_provider() { printf provider-called > "$PWD/provider-called"; printf codex; }
+show_prd_plan() { printf estimator-called > "$PWD/estimator-called"; return 1; }'
+(cd "$T41" && run_to 15 bash -c 'source ./harness.sh; cmd_quickstart --from-preview preview.json --yes </dev/null' >stdout 2>stderr); rc=$?
+if [ "$rc" -eq 2 ] && grep -q 'has changed since the saved preview' "$T41/stderr" && [ "$changed" = "$(shasum -a 256 "$T41/customer-prd.md" | awk '{print $1}')" ] && [ ! -s "$T41/stdout" ] && [ ! -e "$T41/provider-called" ] && [ ! -e "$T41/estimator-called" ] && [ ! -e "$T41/prd.md" ] && [ ! -e "$T41/cmd_start.log" ]; then
+    log_pass "changed PRD continuation refuses before provider/estimator/write/build"
+else
+    log_fail "changed PRD continuation" "rc=$rc or stale-evidence refusal boundary missing"
+fi
+
+# Malformed, duplicate-key, cross-field-tampered, and symlinked preview files
+# all fail closed.
+T42="$TMP/t42"; mkdir -p "$T42"
+make_harness "$T42" "$PREVIEW_NONINT"
+(cd "$T42" && run_to 15 bash -c 'source ./harness.sh; cmd_quickstart "a todo app" --dry-run --json </dev/null' >valid.json 2>/dev/null); rc=$?
+printf '{not-json}\n' > "$T42/malformed.json"
+printf '{"schema_version":1,"schema_version":1}\n' > "$T42/duplicate.json"
+python3 - "$T42/valid.json" "$T42/tampered.json" <<'PY'
+import json, pathlib, sys
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+payload["selected_template"] = "dashboard"
+pathlib.Path(sys.argv[2]).write_text(json.dumps(payload))
+PY
+ln -s valid.json "$T42/symlink.json"
+for preview in malformed.json duplicate.json tampered.json symlink.json; do
+    (cd "$T42" && run_to 15 bash -c "source ./harness.sh; cmd_quickstart --from-preview $preview --yes </dev/null" >"stdout-$preview" 2>"stderr-$preview"); rc=$?
+    [ "$rc" -eq 2 ] || printf 'bad-rc\n' >> "$T42/failures"
+done
+if [ ! -e "$T42/failures" ] && [ ! -e "$T42/provider-called" ] && [ ! -e "$T42/prd.md" ] && [ ! -e "$T42/cmd_start.log" ]; then
+    log_pass "malformed, duplicate-key, tampered, and symlinked previews refuse before execution boundaries"
+else
+    log_fail "unsafe preview files" "one unsafe preview did not fail closed"
+fi
+
+# Consent and parser conflicts remain explicit argv decisions.
+T43="$TMP/t43"; mkdir -p "$T43"
+make_harness "$T43" "$PREVIEW_NONINT"
+(cd "$T43" && run_to 15 bash -c 'source ./harness.sh; cmd_quickstart "a todo app" --dry-run --json </dev/null' >preview.json 2>/dev/null); rc=$?
+for args in '--from-preview preview.json' '--from-preview preview.json --yes competing-input' '--from-preview preview.json --yes --template dashboard' '--from-preview preview.json --yes --dry-run'; do
+    (cd "$T43" && run_to 15 bash -c "source ./harness.sh; cmd_quickstart $args </dev/null" >"stdout-${args// /_}" 2>"stderr-${args// /_}"); rc=$?
+    [ "$rc" -eq 2 ] || printf 'bad-rc\n' >> "$T43/failures"
+done
+if [ ! -e "$T43/failures" ] && [ ! -e "$T43/provider-called" ] && [ ! -e "$T43/prd.md" ] && [ ! -e "$T43/cmd_start.log" ]; then
+    log_pass "preview continuation requires explicit lone --yes execution intent"
+else
+    log_fail "preview continuation consent/conflicts" "one ambiguous invocation did not fail closed"
+fi
+
+# The final reviewed PRD name is claimed atomically. A destination appearing
+# after the suffix walk is preserved, the private stage is removed, and no
+# build starts.
+T44="$TMP/t44"; mkdir -p "$T44"
+make_harness "$T44" "$PREVIEW_NONINT"
+(cd "$T44" && run_to 15 bash -c 'source ./harness.sh; cmd_quickstart "a todo app" --dry-run --json </dev/null' >preview.json 2>/dev/null); rc=$?
+make_harness "$T44" "$NONINT
+ln() { printf 'competing bytes\n' > \"\$2\"; return 1; }"
+(cd "$T44" && run_to 15 bash -c 'source ./harness.sh; cmd_quickstart --from-preview preview.json --yes </dev/null' >stdout 2>stderr); rc=$?
+stages=$(find "$T44" -maxdepth 1 -name '.loki-quickstart-prd.*' -print)
+if [ "$rc" -eq 2 ] && [ "$(cat "$T44/prd.md" 2>/dev/null)" = "competing bytes" ] && [ -z "$stages" ] && [ ! -e "$T44/cmd_start.log" ]; then
+    log_pass "continuation publish race preserves the competing destination and starts no build"
+else
+    log_fail "continuation atomic publish" "rc=$rc, competing destination changed, stage leaked, or build started"
 fi
 
 # ---------------------------------------------------------------------------

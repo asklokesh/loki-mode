@@ -100,13 +100,20 @@ For scripts and local dashboards, add `--json` to receive one versioned JSON
 object instead of terminal text:
 
 ```bash
-loki quickstart "a todo app with user accounts" --dry-run --json
+loki quickstart "a todo app with user accounts" --dry-run --json > preview.json
+loki quickstart --from-preview preview.json --yes
 ```
 
 The object contains the input kind, deterministic selected template (or `null`
-for an existing PRD), and the exact estimator response under `plan`. `--json`
-requires `--dry-run`; invalid input or estimator failure writes no JSON, and the
-command still exits before provider discovery, file writes, or build execution.
+for an existing PRD), the exact estimator response under `plan`, and a bounded
+continuation containing the exact idea/template or the PRD path and SHA-256.
+`--from-preview` requires explicit argv `--yes`, rejects malformed, conflicting,
+symlinked, or changed inputs before provider and build boundaries, then uses the
+existing no-clobber quickstart path. The saved plan is evidence rather than
+execution authority: Loki recomputes and displays the current estimate before
+starting. `--json` requires `--dry-run`; invalid input or estimator failure
+writes no JSON, and preview still exits before provider discovery, file writes,
+or build execution.
 
 Or go straight at it:
 
