@@ -389,6 +389,38 @@ export async function handlePause(opts: HandlePauseOptions = {}): Promise<Handle
     // Non-fatal: PAUSED.md is informational. The wait still proceeds.
   }
 
+  // Human-intervention counter for the Evidence Receipt. Mirrors the bash
+  // writer in run.sh::handle_pause. The Bun runner is the DEFAULT route, so
+  // without this the count would only ever increment under LOKI_LEGACY_BASH=1
+  // and the receipt row would be permanently absent for most users.
+  //
+  // Counted here for the same reason as bash: handlePause is the single point
+  // where the run actually blocks on a person, so an auto-cleared perpetual
+  // pause (which no human saw) is never counted. Best-effort: a failure here
+  // must never affect the pause itself.
+  try {
+    const stateDir = join(dir, "state");
+    mkdirSync(stateDir, { recursive: true });
+    const ivPath = join(stateDir, "interventions.json");
+    let prev = 0;
+    if (existsSync(ivPath)) {
+      try {
+        const parsed = JSON.parse(readFileSync(ivPath, "utf8"));
+        if (typeof parsed?.count === "number" && Number.isInteger(parsed.count) && parsed.count >= 0) {
+          prev = parsed.count;
+        }
+      } catch {
+        // Unreadable/corrupt counter restarts at 0 rather than throwing.
+      }
+    }
+    atomicWriteFileSync(
+      ivPath,
+      JSON.stringify({ count: prev + 1, basis: "blocking pauses that waited on a human" }) + "\n",
+    );
+  } catch {
+    // Non-fatal: the receipt simply renders no interventions row.
+  }
+
   try {
     for (;;) {
       // STOP escalates immediately (run.sh:11298-11303).

@@ -247,6 +247,110 @@ extract_type_from_labels() {
 #===============================================================================
 
 # Parse a GitHub issue and output structured data
+#===============================================================================
+# Golden path: issue context + early plan
+#===============================================================================
+
+# Split the extracted acceptance-criteria blob into one normalized item per
+# line. Keeps ONLY genuine list items (checkbox / bullet / numbered) so a
+# section heading or a stray prose line never becomes a fake "criterion".
+# Prints nothing when there is nothing to print -- an empty criteria list is a
+# truthful answer, and inventing one would poison every downstream coverage
+# claim.
+_gp_criteria_lines() {
+    printf '%s\n' "${1:-}" \
+        | sed -E 's/^[[:space:]]*[-*][[:space:]]*\[[ xX]\][[:space:]]*//; s/^[[:space:]]*[-*][[:space:]]+//; s/^[[:space:]]*[0-9]+[.)][[:space:]]+//' \
+        | grep -vE '^[[:space:]]*$' \
+        | grep -vE '^[[:space:]]*-{3,}[[:space:]]*$'
+}
+
+# write_journey_context <owner> <repo> <number> <title> <url> <acceptance>
+#                       <files> <type> <priority>
+#
+# Writes .loki/state/issue-context.json (feature 2: the exact acceptance context)
+# and .loki/state/journey-plan.json (feature 3: the early machine-readable
+# status/plan). Both are written from `gh` output BEFORE the first provider
+# call, so the early artifact is deterministic rather than latency-dependent.
+#
+# Never fails the caller: every write is best-effort and the function always
+# returns 0. Honors LOKI_DIR so a test can point it at a scratch directory.
+write_journey_context() {
+    local owner="$1" repo="$2" number="$3" title="$4" url="$5"
+    local acceptance="$6" files="$7" issue_type="$8" priority="$9"
+
+    local state_dir="${LOKI_DIR:-.loki}/state"
+    mkdir -p "$state_dir" 2>/dev/null || return 0
+
+    local criteria
+    criteria=$(_gp_criteria_lines "$acceptance")
+
+    # jq builds both documents so quoting/escaping is handled once, correctly.
+    command -v jq >/dev/null 2>&1 || return 0
+
+    local ctx_tmp="$state_dir/.issue-context.$$.json"
+    if jq -n \
+        --arg owner "$owner" --arg repo "$repo" --arg number "$number" \
+        --arg title "$title" --arg url "$url" --arg criteria "$criteria" \
+        --arg files "$files" --arg type "$issue_type" --arg priority "$priority" \
+        --arg captured_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{
+            schema_version: "1.0",
+            captured_at: $captured_at,
+            issue: {
+                owner: $owner, repo: $repo,
+                number: (try ($number | tonumber) catch null),
+                ref: ($owner + "/" + $repo + "#" + $number),
+                url: $url, title: $title,
+                type: $type, priority: $priority
+            },
+            acceptance_criteria: (
+                if ($criteria | length) == 0 then []
+                else ($criteria | split("\n") | map(select(length > 0)))
+                end
+            ),
+            file_references: (
+                if ($files | length) == 0 then []
+                else ($files | split("\n") | map(select(length > 0)))
+                end
+            )
+        }' > "$ctx_tmp" 2>/dev/null; then
+        mv -f "$ctx_tmp" "$state_dir/issue-context.json" 2>/dev/null || rm -f "$ctx_tmp"
+    else
+        rm -f "$ctx_tmp" 2>/dev/null || true
+    fi
+
+    # The early plan is a PLAN, not a result: it states what was understood and
+    # what will be attempted. It deliberately carries no outcome fields -- a
+    # status file that guessed at outcomes before any work happened would be the
+    # exact fake-green this repo's trust core forbids.
+    local plan_tmp="$state_dir/.journey-plan.$$.json"
+    if jq -n \
+        --arg ref "$owner/$repo#$number" --arg title "$title" --arg url "$url" \
+        --arg criteria "$criteria" \
+        --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{
+            schema_version: "1.0",
+            command: "loki start",
+            mode: "issue",
+            stage: "planned",
+            generated_at: $generated_at,
+            issue: { ref: $ref, title: $title, url: $url },
+            acceptance_criteria: (
+                if ($criteria | length) == 0 then []
+                else ($criteria | split("\n") | map(select(length > 0)))
+                end
+            ),
+            provider_invoked: false,
+            next: "implement, verify, then review-ready result with evidence receipt"
+        }' > "$plan_tmp" 2>/dev/null; then
+        mv -f "$plan_tmp" "$state_dir/journey-plan.json" 2>/dev/null || rm -f "$plan_tmp"
+    else
+        rm -f "$plan_tmp" 2>/dev/null || true
+    fi
+
+    return 0
+}
+
 parse_github_issue() {
     local issue_ref="$1"
     local output_format="${2:-yaml}"  # yaml or json
@@ -302,6 +406,14 @@ parse_github_issue() {
     local priority issue_type
     priority=$(extract_priority_from_labels "$labels_json")
     issue_type=$(extract_type_from_labels "$labels_json")
+
+    # Golden path (feature 2): persist the EXACT criteria we just extracted, plus
+    # the early machine-readable plan (feature 3), before any provider call. Both
+    # are derived from `gh` output only, so the early artifact does not depend on
+    # provider latency at all. Best-effort: a failure here must never break issue
+    # parsing, which is why it is guarded and ignores its own exit status.
+    write_journey_context "$owner" "$repo" "$number" "$title" "$url" \
+        "$acceptance_criteria" "$file_references" "$issue_type" "$priority" || true
 
     # Output based on format
     if [ "$output_format" = "json" ]; then

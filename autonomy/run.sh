@@ -25125,6 +25125,32 @@ handle_pause() {
     PAUSED=true
     local loki_dir="${TARGET_DIR:-.}/.loki"
 
+    # Human-intervention counter for the Evidence Receipt.
+    #
+    # Counted HERE because this is the single point where a run actually blocks
+    # waiting on a person -- every pause path funnels through handle_pause, and
+    # the _PAUSE_IN_PROGRESS guard above means one blocking pause counts once.
+    # Counting at the PAUSE-file write sites instead would over-count
+    # auto-cleared perpetual-mode pauses, which no human ever saw.
+    #
+    # proof-generator reads this; when the file is absent the receipt renders NO
+    # interventions row rather than claiming zero. Best-effort: never fail a run.
+    if [ -n "${loki_dir}" ]; then
+        mkdir -p "$loki_dir/state" 2>/dev/null || true
+        local _iv_file="$loki_dir/state/interventions.json"
+        local _iv_prev=0
+        if [ -f "$_iv_file" ]; then
+            _iv_prev=$(python3 -c "import json,sys
+try:
+    v=json.load(open(sys.argv[1])).get('count')
+    print(int(v) if isinstance(v,int) and v>=0 else 0)
+except Exception:
+    print(0)" "$_iv_file" 2>/dev/null || echo 0)
+        fi
+        printf '{"count":%s,"basis":"blocking pauses that waited on a human"}\n' \
+            "$(( _iv_prev + 1 ))" > "$_iv_file" 2>/dev/null || true
+    fi
+
     # Save state before pausing so it persists across potential crashes
     save_state ${RETRY_COUNT:-0} "paused" 0
 
