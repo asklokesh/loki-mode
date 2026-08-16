@@ -5,6 +5,21 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.22.6
+
+### Added
+
+- **Verified issue-to-PR golden path:** `loki start owner/repo#123 --pr`
+  imports a bounded GitHub issue, runs the existing autonomous engine, and
+  publishes a pull request only after the generated proof reaches a verified
+  verdict.
+- **Adaptive harness intelligence:** the Bun runner profiles repository
+  capabilities, selects safe available verification commands, persists an
+  execution manifest, and applies bounded recovery policies to failed gates.
+- **Local execution cockpit:** the dashboard exposes live phase progress,
+  agent activity, changes, risks, evidence, run economics, and reviewed final
+  actions for the selected local project.
+
 ## v9.22.5
 
 ### Added
