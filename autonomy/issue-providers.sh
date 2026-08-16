@@ -190,20 +190,91 @@ fetch_github_issue() {
         }
     fi
 
-    # Normalize to common format (pass repo via env to prevent injection)
-    _LOKI_REPO_REF="$repo_ref" python3 -c "
+    # Normalize to common format only after binding the returned identity to the
+    # exact issue requested. A syntactically valid substituted response must not
+    # be allowed to seed an issue context or early journey plan.
+    _LOKI_REPO_REF="$repo_ref" _LOKI_ISSUE_NUMBER="$number" python3 -c "
 import json, sys, os
-data = json.loads(sys.stdin.read())
-print(json.dumps({
-    'provider': 'github',
-    'number': data.get('number', 0),
+from urllib.parse import urlsplit
+
+repo_ref = os.environ.get('_LOKI_REPO_REF', '')
+expected_number = os.environ.get('_LOKI_ISSUE_NUMBER', '')
+
+def refuse(reason):
+    raise SystemExit(f'Error: GitHub issue identity mismatch: {reason}')
+
+try:
+    data = json.loads(sys.stdin.read())
+except (json.JSONDecodeError, UnicodeDecodeError):
+    refuse('response is not valid JSON')
+if not isinstance(data, dict):
+    refuse('response root is not an object')
+if not repo_ref or repo_ref.count('/') != 1 or not all(repo_ref.split('/')):
+    refuse('requested repository could not be resolved')
+if not expected_number.isdigit():
+    refuse('requested issue number is invalid')
+expected_number_normalized = str(int(expected_number))
+
+returned_number = data.get('number')
+url = data.get('url')
+if type(returned_number) is not int or returned_number != int(expected_number):
+    refuse(f'expected issue {expected_number_normalized}, received {returned_number!r}')
+if not isinstance(url, str):
+    refuse('response URL is not a string')
+if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in url):
+    refuse('response URL contains whitespace or control characters')
+
+expected_path = f'/{repo_ref}/issues/{expected_number_normalized}'
+try:
+    parsed_url = urlsplit(url)
+    parsed_hostname = parsed_url.hostname
+    parsed_port = parsed_url.port
+except ValueError:
+    refuse(f'expected https://github.com{expected_path}, received {url!r}')
+if (
+    parsed_url.scheme != 'https'
+    or (parsed_hostname or '').lower() != 'github.com'
+    or parsed_url.username is not None
+    or parsed_url.password is not None
+    or parsed_port is not None
+    or parsed_url.query
+    or parsed_url.fragment
+    or parsed_url.path.rstrip('/').casefold() != expected_path.casefold()
+):
+    refuse(f'expected https://github.com{expected_path}, received {url!r}')
+
+labels = data.get('labels', [])
+author = data.get('author') or {}
+if not isinstance(labels, list) or any(not isinstance(label, dict) for label in labels):
+    refuse('response labels are not an array of objects')
+if not isinstance(author, dict):
+    refuse('response author is not an object')
+scalar_fields = {
     'title': data.get('title', ''),
     'body': data.get('body', '') or '',
-    'labels': [l.get('name','') for l in data.get('labels', [])],
-    'author': data.get('author', {}).get('login', ''),
-    'url': data.get('url', ''),
-    'created_at': data.get('createdAt', ''),
-    'repo': os.environ.get('_LOKI_REPO_REF', '')
+    'createdAt': data.get('createdAt', ''),
+    'author.login': author.get('login', ''),
+}
+for field, value in scalar_fields.items():
+    if not isinstance(value, str):
+        refuse(f'response {field} is not a string')
+label_names = []
+for label in labels:
+    name = label.get('name', '')
+    if not isinstance(name, str):
+        refuse('response label name is not a string')
+    label_names.append(name)
+
+print(json.dumps({
+    'provider': 'github',
+    'number': returned_number,
+    'title': scalar_fields['title'],
+    'body': scalar_fields['body'],
+    'labels': label_names,
+    'author': scalar_fields['author.login'],
+    'url': url,
+    'created_at': scalar_fields['createdAt'],
+    'repo': repo_ref
 }))
 " <<< "$issue_json"
 }
