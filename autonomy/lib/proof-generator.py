@@ -990,6 +990,78 @@ def _collect_iterations(loki_dir):
     return {"count": count, "succeeded": n_completed, "failed": n_failed}
 
 
+def _collect_journey(loki_dir):
+    """Issue-to-PR journey facts (golden path features 4 and 10).
+
+    Descriptive record half ONLY. Like `functional` and `healthcheck`, this is
+    NOT read by _compute_headline / _compute_degraded: nothing here can turn a
+    receipt green or make a blocked run look finished.
+
+    Every field is absent-not-zero. A measurement that did not happen renders
+    nothing rather than a fabricated 0, matching run.sh:4258 ("a wrong timing
+    table is worse than silence"). Returns {} when this run was not an
+    issue-mode run, so a PRD/brief run's proof bytes are unchanged.
+    """
+    state = os.path.join(loki_dir, "state")
+    ctx = _read_json(os.path.join(state, "issue-context.json"), default=None)
+    if not isinstance(ctx, dict):
+        return {}
+
+    issue = ctx.get("issue") if isinstance(ctx.get("issue"), dict) else {}
+    stated = ctx.get("acceptance_criteria")
+    stated = [str(c) for c in stated] if isinstance(stated, list) else []
+
+    out = {
+        "issue": {
+            "ref": str(issue.get("ref") or ""),
+            "url": str(issue.get("url") or ""),
+            "title": str(issue.get("title") or ""),
+        },
+        # Coverage is a CORRESPONDENCE, not a verdict. There is no deterministic
+        # checker for free-text criteria, so we report what the issue stated and
+        # decline to claim any of it was satisfied. `addressed` is deliberately
+        # null rather than 0: 0 would read as "none met", which we do not know.
+        "acceptance": {
+            "stated": stated,
+            "stated_count": len(stated),
+            "addressed_count": None,
+            "basis": "criteria imported verbatim from the issue; no "
+                     "deterministic checker exists for free-text criteria, so "
+                     "this receipt reports what was ASKED, never what was met",
+        },
+    }
+
+    # Time to first useful result. Reuses the number run.sh already writes; we
+    # do not add a second writer and we never synthesize the value.
+    fa = _read_json(os.path.join(state, "first-artifact.json"), default=None)
+    if isinstance(fa, dict):
+        v = fa.get("seconds_to_first_artifact")
+        if isinstance(v, (int, float)) and v >= 0:
+            out["time_to_first_result_sec"] = int(v)
+
+    # Human interventions. Fills the socket trust_trajectory.py:145 already
+    # reads and documents as "no per-run counter persisted today". Absent file
+    # means unmeasured, NOT zero -- claiming a confident 0 would overstate
+    # autonomy, which is the one direction this number must never err in.
+    iv = _read_json(os.path.join(state, "interventions.json"), default=None)
+    if isinstance(iv, dict):
+        n = iv.get("count")
+        if isinstance(n, int) and n >= 0:
+            out["interventions"] = n
+
+    # PR state/URL, written by the consent-gated PR step. "prepared" means a PR
+    # body exists locally and GitHub was NOT mutated.
+    pr = _read_json(os.path.join(state, "pr.json"), default=None)
+    if isinstance(pr, dict) and pr.get("state"):
+        out["pull_request"] = {
+            "state": str(pr.get("state")),
+            "url": str(pr.get("url") or ""),
+            "branch": str(pr.get("branch") or ""),
+        }
+
+    return out
+
+
 def _collect_spec(loki_dir, target_dir):
     """Return spec dict {source, brief}. brief truncated to 600 chars."""
     prd_path = os.environ.get("PRD_PATH", "").strip()
@@ -1158,6 +1230,7 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
     healthcheck = _collect_healthcheck(loki_dir)  # Evidence Receipt record-half
     evidence_gate = _collect_evidence_gate(loki_dir)
     functionality = _collect_functionality(loki_dir)  # func axes as HONEST facts
+    journey = _collect_journey(loki_dir)  # issue-to-PR record half; {} when N/A
 
     deployed_url = os.environ.get("LOKI_DEPLOYED_URL") or None
 
@@ -1237,6 +1310,12 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
             "wall_clock_sec": wall_clock_sec,
         },
     }
+
+    # Issue-to-PR journey facts, attached ONLY on an issue-mode run so a PRD or
+    # brief run's proof bytes stay exactly as they were. Record half: descriptive
+    # only, never read by _compute_headline / _compute_degraded.
+    if journey:
+        facts["journey"] = journey
 
     # ASSESSMENTS: LLM opinions. Explicitly labeled as judgment, NOT proof. A
     # green council verdict is an opinion that can be wrong or gamed; it never
@@ -1351,6 +1430,15 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
         "assessments": assessments,
         "honesty": honesty,
     }
+
+    # Top-level mirror for the intervention axis. trust_trajectory.py:145 already
+    # reads proof["interventions"] and documents that no writer exists yet; this
+    # is that writer. Mirrored (not moved) for the same back-compat reason the
+    # other flat keys are mirrored. Only ever set when actually measured, so the
+    # axis stays honestly "unavailable" rather than showing a fabricated zero.
+    if isinstance(journey, dict) and isinstance(journey.get("interventions"), int):
+        proof["interventions"] = journey["interventions"]
+
     return proof, run_id
 
 

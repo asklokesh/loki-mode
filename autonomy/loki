@@ -2583,6 +2583,14 @@ cmd_start() {
                 issue_mode_args+=("--pr")
                 shift
                 ;;
+            --prepare-pr)
+                # Feature 1: the SAME `loki start <issue>` entrypoint carries the
+                # prepare-only flag through to cmd_run. Does not set
+                # issue_create_pr -- preparing is not publishing.
+                issue_use_worktree=true
+                issue_mode_args+=("--prepare-pr")
+                shift
+                ;;
             --ship)
                 issue_use_worktree=true
                 issue_create_pr=true
@@ -9734,6 +9742,7 @@ cmd_run() {
     local provider_override=""
     local use_worktree=false
     local create_pr=false
+    local prepare_pr=false
     local auto_merge=false
     local run_detached=false
 
@@ -9772,6 +9781,8 @@ cmd_run() {
                 echo "Progressive Isolation:"
                 echo "  --worktree, -w     Git worktree isolation (separate branch)"
                 echo "  --pr               Worktree + auto-create PR (implies --worktree)"
+                echo "  --prepare-pr       Worktree + write a review-ready PR title/body"
+                echo "                     locally; never contacts GitHub (implies --worktree)"
                 echo "  --ship             Worktree + PR + auto-merge (implies --pr)"
                 echo "  --detach, -d       Run in background (implies --worktree)"
                 echo ""
@@ -9888,6 +9899,15 @@ cmd_run() {
                 create_pr=true
                 shift
                 ;;
+            --prepare-pr)
+                # Golden path (feature 9): produce a review-ready PR WITHOUT any
+                # GitHub mutation. Writes the title/body to .loki/state/ and
+                # records state="prepared" for the receipt. Deliberately does not
+                # set create_pr: consent to prepare is not consent to publish.
+                use_worktree=true
+                prepare_pr=true
+                shift
+                ;;
             --ship)
                 use_worktree=true
                 create_pr=true
@@ -9971,6 +9991,21 @@ cmd_run() {
     fi
     source "$issue_providers_script"
 
+    # Golden path: also source issue-parser.sh for write_journey_context and
+    # extract_acceptance_criteria. Optional -- a missing file must never break a
+    # run, so this is guarded rather than fatal like the block above.
+    #
+    # issue-parser.sh sets `set -euo pipefail` at the top, which would otherwise
+    # LEAK into cmd_run and abort the CLI on the first benign non-zero. We
+    # snapshot the current options and restore them immediately after sourcing.
+    local _gp_parser_script="$SKILL_DIR/autonomy/issue-parser.sh"
+    if [[ -f "$_gp_parser_script" ]]; then
+        local _gp_saved_opts
+        _gp_saved_opts=$(set +o)
+        source "$_gp_parser_script" 2>/dev/null || true
+        eval "$_gp_saved_opts" 2>/dev/null || true
+    fi
+
     # Detect provider
     local issue_provider
     issue_provider=$(detect_issue_provider "$issue_ref")
@@ -9995,6 +10030,38 @@ cmd_run() {
         echo -e "${DIM}$url${NC}"
     fi
     echo ""
+
+    # Golden path (features 2 + 3): capture the EXACT acceptance context and the
+    # early machine-readable plan here, at the real `loki start <issue>`
+    # chokepoint, BEFORE any provider call.
+    #
+    # This is deliberately hooked to fetch_issue rather than to
+    # issue-parser.sh's parse_github_issue: `loki start` routes through
+    # fetch_issue (issue-providers.sh:333), while parse_github_issue serves only
+    # the DEPRECATED `loki issue parse|view` commands. Hooking the parser alone
+    # would leave the required path with no context written at all. fetch_issue
+    # is also provider-agnostic, so gitlab/jira/azure get the same artifacts.
+    #
+    # Best-effort: never allowed to break the run.
+    if declare -f write_journey_context >/dev/null 2>&1; then
+        # owner/repo come from the NORMALIZED json's `repo` field ("owner/name"),
+        # not from ISSUE_OWNER/ISSUE_REPO: those globals are re-cleared by any
+        # later parse_issue_reference call, which yielded a "/#42" ref here.
+        # Every provider populates `repo`, so this stays provider-agnostic.
+        local _gp_owner="" _gp_repo="" _gp_acc="" _gp_body="" _gp_repo_ref=""
+        _gp_repo_ref=$(printf '%s' "$issue_json" | python3 -c \
+            "import json,sys; print(json.loads(sys.stdin.read()).get('repo','') or '')" 2>/dev/null || true)
+        _gp_owner="${_gp_repo_ref%%/*}"
+        _gp_repo="${_gp_repo_ref#*/}"
+        [ "$_gp_owner" = "$_gp_repo_ref" ] && _gp_repo=""
+        _gp_body=$(printf '%s' "$issue_json" | python3 -c \
+            "import json,sys; print(json.loads(sys.stdin.read()).get('body','') or '')" 2>/dev/null || true)
+        if declare -f extract_acceptance_criteria >/dev/null 2>&1; then
+            _gp_acc=$(extract_acceptance_criteria "$_gp_body" 2>/dev/null || true)
+        fi
+        write_journey_context "$_gp_owner" "$_gp_repo" "${number:-}" "$title" \
+            "$url" "$_gp_acc" "" "${issue_provider:-github}" "" 2>/dev/null || true
+    fi
 
     # Per-session locking (v6.4.0): export session ID so run.sh uses
     # per-session PID/lock files instead of the global lock. This allows
@@ -10190,7 +10257,71 @@ INNER_SCRIPT_EOF
     else
         echo ""
         echo -e "${GREEN}Starting Loki Mode with generated PRD...${NC}"
-        cmd_start "$output_file" ${start_args[@]+"${start_args[@]}"}
+        # cmd_start EXEC-replaces this process (loki:3490
+        # _loki_new_session_exec), so ANY code after a bare call is unreachable
+        # -- which is why the --pr block below has never run on this path and
+        # why the detached route at ~:10088 reimplements PR creation instead of
+        # sharing it. Verified empirically, not inferred.
+        #
+        # Only --prepare-pr subshells the runner, so the exec replaces the CHILD
+        # and control returns here. The default path keeps the bare call
+        # untouched: subshelling everything would change signal delivery and
+        # Ctrl+C semantics for every existing user, which this slice must not do.
+        if $prepare_pr && ! $create_pr; then
+            ( cmd_start "$output_file" ${start_args[@]+"${start_args[@]}"} )
+        else
+            cmd_start "$output_file" ${start_args[@]+"${start_args[@]}"}
+        fi
+
+        # Golden path (feature 9): prepare-only. Builds the SAME review-ready
+        # title/body the --pr path would publish, writes it to .loki/state/, and
+        # records state="prepared" for the receipt -- without ever invoking gh.
+        # Consent to prepare is not consent to publish, so this branch is
+        # deliberately separate from create_pr and never falls through to it.
+        if $prepare_pr && ! $create_pr; then
+            echo ""
+            echo -e "${GREEN}Preparing pull request (no GitHub changes)...${NC}"
+            local _pp_title="${title:-Implementation for issue ${issue_ref}}"
+            local _pp_branch
+            _pp_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+            local _pp_body="Implemented by Loki Mode (autonomous agent)
+
+Issue: ${issue_ref}
+Provider: ${issue_provider}
+
+## Changes
+$(git log --oneline "main..HEAD" 2>/dev/null || echo "See diff")"
+
+            # Same receipt the published path appends, so a prepared PR body is
+            # byte-for-byte what would be posted. Print-only and honesty-gated.
+            if [ "${LOKI_PROVEN_PR:-1}" != "0" ] && declare -f render_evidence_receipt_md >/dev/null 2>&1; then
+                local _pp_idfile=".loki/state/last-proof-id.txt"
+                if [ -s "$_pp_idfile" ]; then
+                    local _pp_rid=""
+                    _pp_rid="$(cat "$_pp_idfile" 2>/dev/null || true)"
+                    if [ -n "$_pp_rid" ] && [ -f ".loki/proofs/$_pp_rid/proof.json" ]; then
+                        local _pp_receipt=""
+                        _pp_receipt="$(render_evidence_receipt_md ".loki/proofs/$_pp_rid/proof.json" "" "" 2>/dev/null || true)"
+                        [ -n "$_pp_receipt" ] && _pp_body="${_pp_body}
+
+${_pp_receipt}"
+                    fi
+                fi
+            fi
+
+            mkdir -p .loki/state 2>/dev/null || true
+            printf '%s\n' "$_pp_title" > .loki/state/pr-title.txt 2>/dev/null || true
+            printf '%s\n' "$_pp_body" > .loki/state/pr-body.md 2>/dev/null || true
+            if command -v jq >/dev/null 2>&1; then
+                jq -n --arg branch "$_pp_branch" --arg title "$_pp_title" \
+                    '{state:"prepared", url:"", branch:$branch, title:$title,
+                      body_path:".loki/state/pr-body.md",
+                      note:"written locally; GitHub was not contacted"}' \
+                    > .loki/state/pr.json 2>/dev/null || true
+            fi
+            echo -e "${GREEN}PR prepared${NC} -- review .loki/state/pr-body.md"
+            echo -e "${DIM}Publish it yourself: gh pr create --title \"\$(cat .loki/state/pr-title.txt)\" --body-file .loki/state/pr-body.md${NC}"
+        fi
 
         # Progressive isolation: create PR
         if $create_pr; then
@@ -10234,9 +10365,22 @@ ${_gh_receipt}"
                         branch_current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
                         if [[ -n "$branch_current" && "$branch_current" != "main" && "$branch_current" != "master" ]]; then
                             git push origin "$branch_current" 2>/dev/null || true
-                            gh pr create --title "$pr_title" --body "$pr_body" --head "$branch_current" 2>/dev/null && \
-                                echo -e "${GREEN}PR created${NC}" || \
+                            local _pr_out=""
+                            if _pr_out=$(gh pr create --title "$pr_title" --body "$pr_body" --head "$branch_current" 2>/dev/null); then
+                                echo -e "${GREEN}PR created${NC}"
+                                # Record the real outcome for the receipt. Only
+                                # written on ACTUAL success, so a failed create
+                                # can never leave a "created" claim behind.
+                                mkdir -p .loki/state 2>/dev/null || true
+                                if command -v jq >/dev/null 2>&1; then
+                                    jq -n --arg url "$(printf '%s' "$_pr_out" | grep -Eo 'https://[^[:space:]]+' | head -1)" \
+                                          --arg branch "$branch_current" \
+                                        '{state:"created", url:$url, branch:$branch}' \
+                                        > .loki/state/pr.json 2>/dev/null || true
+                                fi
+                            else
                                 echo -e "${YELLOW}PR creation failed${NC}"
+                            fi
                         fi
                     fi
                     ;;

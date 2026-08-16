@@ -206,6 +206,58 @@ def main():
         _line("| Gates disabled | " + ", ".join(sorted(_off)) + " |")
     _line("| Base sha | `" + (base_sha or "(none)") + "` |")
     _line("| Head sha | `" + (head_sha or "(none)") + "` |")
+
+    # Issue-to-PR journey rows. Emitted ONLY on an issue-mode run, and each row
+    # ONLY when that fact was actually measured -- an unmeasured number renders
+    # no row rather than a zero, the same rule the rest of this receipt follows.
+    journey = facts.get("journey") if isinstance(facts.get("journey"), dict) else {}
+    if journey:
+        jissue = journey.get("issue") if isinstance(journey.get("issue"), dict) else {}
+        jref = str(jissue.get("ref") or "").strip()
+        jurl = str(jissue.get("url") or "").strip()
+        if jref:
+            _line("| Issue | " + (("[" + jref + "](" + jurl + ")") if jurl else jref) + " |")
+
+        ttfr = journey.get("time_to_first_result_sec")
+        if isinstance(ttfr, int):
+            _line("| Time to first result | " + str(ttfr) + "s |")
+
+        ivs = journey.get("interventions")
+        if isinstance(ivs, int):
+            _line("| Human interventions | " + str(ivs) + " |")
+
+        acc = journey.get("acceptance") if isinstance(journey.get("acceptance"), dict) else {}
+        n_stated = acc.get("stated_count")
+        if isinstance(n_stated, int):
+            # Reported as ASKED, never as met. addressed_count is null by design
+            # (no deterministic checker for free-text criteria), so this row must
+            # never be phrased as coverage or a pass -- that would be the exact
+            # fake-green the headline rules forbid.
+            _line("| Acceptance criteria | " + str(n_stated)
+                  + " stated in the issue (not machine-verified) |")
+
+        pr = journey.get("pull_request") if isinstance(journey.get("pull_request"), dict) else {}
+        pr_state = str(pr.get("state") or "").strip()
+        if pr_state:
+            pr_url = str(pr.get("url") or "").strip()
+            _line("| Pull request | " + pr_state + ((" -- " + pr_url) if pr_url else "") + " |")
+
+        # Rollback: derived from the base sha this run started at, so the reader
+        # gets a runnable command rather than a promise. Only emitted when the
+        # base is actually known.
+        if base_sha:
+            _line("| Rollback | `git reset --hard " + base_sha + "` |")
+
+        # Uncertainty: the honest count of checks that did NOT conclusively pass,
+        # read from the SAME honesty.degraded[] the headline is computed from, so
+        # it can never disagree with the verdict above it.
+        _degraded = honesty.get("degraded")
+        _degraded = _degraded if isinstance(_degraded, list) else []
+        if effective_headline == "VERIFIED" and not _degraded:
+            _line("| Uncertainty | none recorded; every check that ran concluded |")
+        elif _degraded:
+            _line("| Uncertainty | " + str(len(_degraded))
+                  + " check(s) not conclusive -- see the list below |")
     _line()
 
     # Gaps: when headline != VERIFIED, list honesty.degraded[] verbatim. By

@@ -16,6 +16,10 @@ export interface StatusResponse {
   max_iterations?: number;
   cost?: number;
   start_time?: number;
+  // Present whenever the loki process has exited (web-app/server.py:3025-3026).
+  // The server has always returned these; the type just never declared them.
+  exit_code?: number | null;
+  last_output?: string[];
 }
 
 export interface Agent {

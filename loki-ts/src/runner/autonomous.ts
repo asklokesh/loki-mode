@@ -29,7 +29,7 @@ import { run as shellRun } from "../util/shell.ts";
 import { maybeGenerateProof } from "./proof.ts";
 import { cavemanCaptureUserMode } from "../providers/claude_flags.ts";
 import { resolvePrdForRun } from "./prd_reuse.ts";
-import { classifyFailure, shouldStopRetrying } from "./retry_class.ts";
+import { decideRecovery } from "./recovery_policy.ts";
 
 // ---------------------------------------------------------------------------
 // Graceful dynamic imports.
@@ -868,12 +868,21 @@ async function runAutonomousCore(
       // anything it does not positively recognize, so unknown errors keep the
       // existing retry behavior. Only a matched permanent pattern stops early.
       // Rate limits are explicitly transient and never caught here.
+      //
+      // Harness intelligence (feature 8): the smart-retry decision is now made
+      // by decideRecovery, which extends the above with caps and a
+      // repeated-signature circuit breaker. It is DEFAULT OFF: with
+      // LOKI_RECOVERY_POLICY unset it delegates to shouldStopRetrying and
+      // reproduces the behavior described above verbatim.
       if (txt) {
-        const decision = classifyFailure(txt);
-        if (shouldStopRetrying(decision, process.env as NodeJS.ProcessEnv)) {
+        const recovery = decideRecovery(
+          { output: txt, attempts: ctx.retryCount },
+          { env: process.env as NodeJS.ProcessEnv },
+        );
+        if (recovery.action === "stop" || recovery.action === "escalate") {
           log(
-            `[runner] non-retryable failure (${decision.reason}); stopping early to save budget ` +
-              `instead of ${ctx.maxRetries - ctx.retryCount - 1} further identical retries. ` +
+            `[runner] recovery decision '${recovery.action}' (${recovery.reason}); stopping early ` +
+              `to save budget instead of ${ctx.maxRetries - ctx.retryCount - 1} further retries. ` +
               `Set LOKI_SMART_RETRY=0 to retry regardless.`,
           );
           await persistState(stateMod, ctx, "failed", 1);
