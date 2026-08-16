@@ -11,7 +11,7 @@
 import { describe, expect, it, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 
 import { routeTaskClass, requestTier } from "../../src/runner/capability_router.ts";
 import {
@@ -142,7 +142,7 @@ describe("feature 6: repository profile", () => {
     const { root, loki } = repoWith({ "go.mod": "module x" });
     const p = buildProfile({ repoRoot: root, lokiDirOverride: loki });
     expect(p.namespace).not.toContain("/");
-    expect(p.namespace).toBe(root.split("/").pop());
+    expect(p.namespace).toBe(basename(root));
   });
 
   it("privacy: evidence paths are repo-relative, and script BODIES are never recorded", () => {
