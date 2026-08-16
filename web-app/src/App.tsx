@@ -16,6 +16,7 @@ if (typeof window !== 'undefined') {
 
 const HomePage = lazy(() => import('./pages/HomePage'));
 const ProjectPage = lazy(() => import('./pages/ProjectPage'));
+const CockpitPage = lazy(() => import('./pages/CockpitPage'));
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'));
 const TemplatesPage = lazy(() => import('./pages/TemplatesPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
@@ -46,6 +47,14 @@ export default function App() {
         {/* Login page -- no shell, no onboarding overlay */}
         <Route path="/login" element={
           <Suspense fallback={<LoadingFallback />}><LoginPage /></Suspense>
+        } />
+
+        {/* Execution cockpit -- issue-to-PR review surface, no sidebar.
+            Declared before /project/:sessionId so the more specific path wins. */}
+        <Route path="/project/:sessionId/cockpit" element={
+          <ProtectedRoute>
+            <Suspense fallback={<LoadingFallback />}><CockpitPage /></Suspense>
+          </ProtectedRoute>
         } />
 
         {/* Full-screen IDE -- no sidebar */}
