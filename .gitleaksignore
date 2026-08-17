@@ -1,0 +1,44 @@
+# Reviewed public telemetry ingestion key. PostHog project ingestion keys are
+# intentionally embedded in clients and do not grant administrative access.
+assets/welcome/welcome.html:generic-api-key:262
+autonomy/telemetry.sh:generic-api-key:56
+dashboard/telemetry.py:generic-api-key:28
+
+# Reviewed product/configuration prose; these values are feature flags and
+# iteration settings, not credentials.
+SKILL.md:generic-api-key:10
+docs/CONFIG-FILE-PLAN.md:generic-api-key:362
+
+# Reviewed synthetic test and fixture values. Each is deliberately secret-shaped
+# so the corresponding scanner, redaction, policy, or lifecycle test is
+# non-vacuous. Exact fingerprints ensure a changed line is reviewed again.
+dashboard-ui/tests/ui-components.test.js:stripe-access-token:322
+loki-ts/tests/runner/quality_gates.test.ts:aws-access-token:1213
+tests/fixtures/project-graph/acme/ui/.loki/state/project-graph.json:generic-api-key:2
+tests/crash/test_crash_redact.py:jwt:58
+tests/integrations/linear-client.test.js:generic-api-key:22
+tests/policies/types.test.js:generic-api-key:265
+tests/policies/types.test.js:generic-api-key:275
+tests/policies/types.test.js:github-pat:275
+tests/integrations/linear-config.test.js:generic-api-key:99
+tests/integrations/linear-config.test.js:generic-api-key:105
+tests/policies/engine.test.js:generic-api-key:287
+tests/test-memory-capture-wedge.sh:curl-auth-header:143
+tests/test-branch-lifecycle.sh:generic-api-key:570
+tests/test-branch-lifecycle.sh:generic-api-key:894
+tests/test-invariant-detector.sh:aws-access-token:37
+tests/test-invariant-detector.sh:aws-access-token:175
+tests/test-invariant-detector.sh:aws-access-token:179
+tests/test-invariant-detector.sh:aws-access-token:185
+tests/test-secret-gate-false-positives.sh:generic-api-key:58
+tests/test-secret-gate-false-positives.sh:generic-api-key:60
+tests/test-secret-gate-false-positives.sh:generic-api-key:61
+tests/test-secret-scan.sh:generic-api-key:145
+tests/test-secret-scan.sh:private-key:128
+tests/test-review-command.sh:generic-api-key:64
+tests/test-review-command.sh:generic-api-key:150
+tests/test-secure-scan.sh:private-key:104
+tests/test-secure-scan.sh:aws-access-token:124
+tests/test-secure-scan.sh:aws-access-token:140
+tests/test-secure-scan.sh:aws-access-token:376
+tests/test_proof_redaction.py:private-key:66

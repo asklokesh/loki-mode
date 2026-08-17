@@ -91,6 +91,8 @@ for step in job.get('steps') or []:
 # summarise or upload its output.
 _PY_SCAN_STEP="$(_step python-audit 'pip-audit every requirements file')"
 _PY_ASSERT_STEP="$(_step python-audit 'Assert the audit actually produced')"
+_SECRET_SCAN_STEP="$(_step secret-scan 'gitleaks scan')"
+_SECRET_ASSERT_STEP="$(_step secret-scan 'Assert the secret scan completed cleanly')"
 _SAST_ASSERT_STEP="$(_step sast 'Assert CodeQL SARIF and reject unreviewed critical findings')"
 _SAST_USES="$( _LOKI_WF="$WF" python3 -c "
 import os, yaml
@@ -155,11 +157,12 @@ else
   bad "pip-audit result is not verified via its report artifact"
 fi
 
-if printf '%s' "$_SECRET_RUNS" | grep -q 'gitleaks-report.json' \
-   && printf '%s' "$_SECRET_RUNS" | grep -q 'json.load'; then
-  ok "gitleaks asserts its report exists and parses"
+if printf '%s' "$_SECRET_ASSERT_STEP" | grep -q 'gitleaks-report.json' \
+   && printf '%s' "$_SECRET_ASSERT_STEP" | grep -q 'json.load' \
+   && printf '%s' "$_SECRET_ASSERT_STEP" | grep -qE '\[ "\$n" -ne 0 \]'; then
+  ok "gitleaks asserts its report exists, parses, and contains no unmatched findings"
 else
-  bad "gitleaks result is not verified via its report artifact"
+  bad "gitleaks result is not verified as a parseable empty report"
 fi
 
 # --- 5. Shipped vs test-only requirements are distinguished -----------------
@@ -215,12 +218,82 @@ printf '%s' "$_SECRET_RUNS" | grep -qE "gitleaks/releases/download/v[0-9]" \
   && ok "gitleaks version is pinned" \
   || bad "gitleaks is unpinned -- the baseline can move without a commit"
 
-# --- 8. The workflow is valid YAML -----------------------------------------
+# --- 8. Secret findings block outside an exact reviewed baseline ------------
+_secret_name="$( _LOKI_WF="$WF" python3 -c "
+import os, yaml
+d = yaml.safe_load(open(os.environ['_LOKI_WF']))
+print(((d.get('jobs') or {}).get('secret-scan') or {}).get('name', ''))
+" 2>/dev/null )"
+if printf '%s' "$_secret_name" | grep -qi 'new-findings-blocking'; then
+  ok "gitleaks job identity names its new-finding blocking posture"
+else
+  bad "gitleaks blocking posture is not explicit in the job identity"
+fi
+
+if printf '%s' "$_SECRET_SCAN_STEP" | grep -q -- '--gitleaks-ignore-path .gitleaksignore' \
+   && ! printf '%s' "$_SECRET_SCAN_STEP" | grep -q -- '--exit-code 0' \
+   && printf '%s' "$_SECRET_SCAN_STEP" | grep -q 'set -euo pipefail'; then
+  ok "gitleaks uses the exact baseline and default blocking exit code"
+else
+  bad "gitleaks findings are non-blocking or the exact baseline is not selected"
+fi
+
+_ignore="$REPO_ROOT/.gitleaksignore"
+_ignore_count="$(awk 'NF && $1 !~ /^#/ {n++} END {print n+0}' "$_ignore" 2>/dev/null)"
+_ignore_unique="$(awk 'NF && $1 !~ /^#/ {print}' "$_ignore" 2>/dev/null | sort -u | wc -l | tr -d ' ')"
+_ignore_malformed="$(awk 'NF && $1 !~ /^#/ && $0 !~ /^[^:]+:[a-z0-9-]+:[1-9][0-9]*$/ {n++} END {print n+0}' "$_ignore" 2>/dev/null)"
+if [ "$_ignore_count" -eq 35 ] && [ "$_ignore_unique" -eq 35 ] \
+   && [ "$_ignore_malformed" -eq 0 ]; then
+  ok "gitleaks baseline contains 35 unique exact file/rule/line fingerprints"
+else
+  bad "gitleaks baseline is not the reviewed 35-entry exact-fingerprint set"
+fi
+
+# Optional live mutation proof. Exact-SHA acceptance supplies the same pinned
+# v8.30.0 binary as the workflow. Ordinary repository tests retain their static
+# coverage when that binary is unavailable.
+if [ -n "${LOKI_GITLEAKS_BIN:-}" ]; then
+  if [ ! -x "$LOKI_GITLEAKS_BIN" ]; then
+    bad "LOKI_GITLEAKS_BIN is set but is not executable"
+  else
+    _clean_report="$(mktemp "${TMPDIR:-/tmp}/loki-gitleaks-clean.XXXXXX")"
+    if (cd "$REPO_ROOT" && "$LOKI_GITLEAKS_BIN" dir . \
+         --gitleaks-ignore-path .gitleaksignore --report-format json \
+         --report-path "$_clean_report" --redact --no-banner >/dev/null 2>&1) \
+       && python3 -c 'import json,sys; assert json.load(open(sys.argv[1])) == []' \
+            "$_clean_report"; then
+      ok "live gitleaks accepts the exact reviewed fingerprint baseline"
+    else
+      bad "live gitleaks rejects the exact reviewed baseline or emits findings"
+    fi
+
+    _mutation_root="$(mktemp -d "${TMPDIR:-/tmp}/loki-gitleaks-mutation.XXXXXX")"
+    _mutation_report="$_mutation_root/report.json"
+    # Keep the detector literal split in this source file; only the disposable
+    # mutation receives the contiguous, intentionally synthetic token.
+    printf '%s%s\n' 'const key = "AKIA' 'ABCDEFGHIJKLMNOP";' \
+      > "$_mutation_root/novel-secret.js"
+    if "$LOKI_GITLEAKS_BIN" dir "$_mutation_root" \
+         --gitleaks-ignore-path "$_ignore" --report-format json \
+         --report-path "$_mutation_report" --redact --no-banner >/dev/null 2>&1; then
+      bad "live gitleaks accepted a novel unmatched synthetic secret"
+    elif python3 -c 'import json,sys; assert len(json.load(open(sys.argv[1]))) == 1' \
+           "$_mutation_report"; then
+      ok "live gitleaks blocks a novel unmatched synthetic secret"
+    else
+      bad "live gitleaks failed without one parseable novel-finding report"
+    fi
+  fi
+else
+  echo "  SKIP: live gitleaks mutation proof (set LOKI_GITLEAKS_BIN to pinned v8.30.0)"
+fi
+
+# --- 9. The workflow is valid YAML -----------------------------------------
 python3 -c "import yaml;yaml.safe_load(open('$WF'))" 2>/dev/null \
   && ok "security-audit.yml parses as YAML" \
   || bad "security-audit.yml is not valid YAML"
 
-# --- 9. SAST covers supported shipped languages ----------------------------
+# --- 10. SAST covers supported shipped languages ---------------------------
 # CodeQL has no Bash extractor. The matrix must cover BOTH supported product
 # surfaces without implying the shell CLI is analyzed.
 _sast_matrix="$( _LOKI_WF="$WF" python3 -c "
@@ -237,7 +310,7 @@ for _lang in javascript-typescript python; do
   fi
 done
 
-# --- 10. SAST tooling and results are immutable/auditable ------------------
+# --- 11. SAST tooling and results are immutable/auditable ------------------
 if printf '%s' "$_SAST_USES" | grep -qE 'github/codeql-action/init@[0-9a-f]{40}' \
    && printf '%s' "$_SAST_USES" | grep -qE 'github/codeql-action/analyze@[0-9a-f]{40}'; then
   ok "CodeQL actions are pinned to immutable commits"

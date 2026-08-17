@@ -5,10 +5,11 @@ name: Security Audit
 #
 # Also runs `pip-audit` over every Python requirements file, `gitleaks` over the
 # working tree, and CodeQL SAST over the Python and JavaScript/TypeScript source
-# surfaces. Python dependencies, secrets, and sub-critical SAST remain
-# REPORTING ONLY today -- see each job's posture note for its measured baseline
-# or promotion path. CodeQL findings with a security severity of 9.0 or greater
-# fail the workflow after the first exact-SHA critical baseline was triaged.
+# surfaces. Python dependencies and sub-critical SAST remain REPORTING ONLY
+# today -- see each job's posture note for its measured baseline or promotion
+# path. Secret scanning blocks every finding outside the exact reviewed-
+# fingerprint baseline. CodeQL findings with a security severity of 9.0 or
+# greater fail after the first exact-SHA critical baseline was triaged.
 #
 # SAST SCOPE: CodeQL does not support Bash, so this job does not imply coverage
 # of the 32k-line shell CLI. It does cover the shipped Python dashboard/runtime
@@ -217,7 +218,7 @@ jobs:
           if-no-files-found: error
 
   secret-scan:
-    name: gitleaks (secrets, reporting)
+    name: gitleaks (secrets, new-findings-blocking)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -233,40 +234,35 @@ jobs:
           /tmp/gitleaks version
 
       - name: gitleaks scan (working tree)
-        # POSTURE: REPORTING, NOT BLOCKING. Same measured reason as pip-audit.
-        # Baseline on 2026-08-08, before this job existed: 182 findings over the
-        # working tree (102 generic-api-key, 45 aws-access-token, 15 private-key,
-        # 5 each stripe-access-token / jwt / github-pat / curl-auth-header).
-        # Most are expected to be test fixtures and documentation samples, but
-        # that is a HYPOTHESIS until someone triages the report -- and blocking
-        # on 182 unreviewed findings would wedge every release (required-ci gates
-        # on this workflow's conclusion), then get switched off within a week.
-        #
-        # PROMOTION PATH: triage the uploaded report, add real fixtures to a
-        # .gitleaksignore by FINGERPRINT (never a blanket path or rule
-        # suppression), fix anything genuine, then drop --exit-code 0 below so a
-        # NEW secret fails the job. The baseline count above is the yardstick:
-        # once .gitleaksignore covers the triaged set, any finding is a new one.
+        # POSTURE: NEW FINDINGS BLOCK. A fresh pinned v8.30.0 scan on 2026-08-17
+        # found 35 current-tree hits: three copies of the same public PostHog
+        # ingestion key, two configuration/prose false positives, and 30
+        # intentionally secret-shaped scanner/redaction test fixtures. Every hit
+        # received an exact file/rule/line fingerprint in .gitleaksignore. There
+        # are no blanket path or rule suppressions, so moving or changing one of
+        # those lines, or adding any other finding, returns the scanner's default
+        # nonzero exit and blocks this workflow and the release gate.
         #
         # `dir` is the working-tree subcommand in v8.30.0; the older
         # `detect --no-git` spelling no longer exists in this version.
         run: |
-          set -uo pipefail
+          set -euo pipefail
           # FAIL CLOSED: an absent binary is not "no secrets found".
           if [ ! -x /tmp/gitleaks ]; then
             echo "FAIL: gitleaks is not installed -- secret scan did NOT run"
             exit 1
           fi
           /tmp/gitleaks dir . \
+            --gitleaks-ignore-path .gitleaksignore \
             --report-format json \
             --report-path /tmp/gitleaks-report.json \
-            --exit-code 0 \
+            --redact \
             --no-banner
 
-      - name: Assert the secret scan actually produced a report
-        # Same artifact-based fail-closed as pip-audit: --exit-code 0 makes
-        # FINDINGS non-blocking, and would equally mask a crash, so the report
-        # must exist and parse. A missing report means no measurement happened.
+      - name: Assert the secret scan completed cleanly
+        # Defense in depth: the scanner already exits nonzero on an unmatched
+        # finding. Also require a parseable empty report so a changed tool that
+        # returns zero while reporting findings cannot silently weaken the gate.
         run: |
           set -euo pipefail
           if [ ! -f /tmp/gitleaks-report.json ]; then
@@ -274,7 +270,11 @@ jobs:
             exit 1
           fi
           n=$(python3 -c "import json,sys; print(len(json.load(open('/tmp/gitleaks-report.json'))))")
-          echo "::notice::gitleaks reported $n finding(s) (reporting only; see the posture note in this workflow)"
+          if [ "$n" -ne 0 ]; then
+            echo "FAIL: gitleaks reported $n unmatched finding(s)"
+            exit 1
+          fi
+          echo "gitleaks reported zero unmatched findings"
 
       - name: Upload gitleaks report
         if: always()
