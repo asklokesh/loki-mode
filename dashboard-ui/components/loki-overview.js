@@ -47,6 +47,8 @@ export class LokiOverview extends LokiElement {
     this._appRunnerStatus = null;
     this._playwrightResults = null;
     this._gateStatus = null;
+    this._journeyProof = null;
+    this._journeyState = 'empty';
   }
 
   connectedCallback() {
@@ -133,12 +135,13 @@ export class LokiOverview extends LokiElement {
     const { signal } = this._loadAbortController;
 
     try {
-      const [status, checklistSummary, appRunnerStatus, playwrightResults, gateStatus] = await Promise.allSettled([
+      const [status, checklistSummary, appRunnerStatus, playwrightResults, gateStatus, proofs] = await Promise.allSettled([
         this._api.getStatus(),
         this._api.getChecklistSummary(),
         this._api.getAppRunnerStatus(),
         this._api.getPlaywrightResults(),
         this._api.getCouncilGate(),
+        this._api._get('/api/proofs'),
       ]);
       // If aborted while awaiting, don't update state
       if (signal.aborted) return;
@@ -160,6 +163,32 @@ export class LokiOverview extends LokiElement {
       }
       if (gateStatus.status === 'fulfilled') {
         this._gateStatus = gateStatus.value;
+      }
+      if (proofs.status === 'fulfilled') {
+        const rows = Array.isArray(proofs.value?.proofs) ? proofs.value.proofs : [];
+        if (rows.length === 0) {
+          this._journeyProof = null;
+          this._journeyState = 'empty';
+        } else {
+          const runId = rows[0]?.run_id;
+          if (typeof runId === 'string' && runId) {
+            try {
+              const proof = await this._api._get(`/api/proofs/${encodeURIComponent(runId)}`);
+              if (signal.aborted) return;
+              this._journeyProof = proof;
+              this._journeyState = 'ready';
+            } catch (_) {
+              this._journeyProof = null;
+              this._journeyState = 'unavailable';
+            }
+          } else {
+            this._journeyProof = null;
+            this._journeyState = 'unavailable';
+          }
+        }
+      } else {
+        this._journeyProof = null;
+        this._journeyState = 'unavailable';
       }
       this.render();
     } catch (error) {
@@ -401,6 +430,76 @@ export class LokiOverview extends LokiElement {
     `;
   }
 
+  _renderJourney() {
+    if (this._journeyState === 'unavailable') {
+      return `<div class="journey-state" role="status">Issue-to-PR evidence is unavailable. No readiness claim can be made.</div>`;
+    }
+    if (this._journeyState !== 'ready' || !this._journeyProof) {
+      return `<div class="journey-state" role="status">No issue-to-PR receipt yet. Start an issue run to record its first result, proof, and PR state.</div>`;
+    }
+
+    const proof = this._journeyProof;
+    const journey = proof?.facts?.journey;
+    if (!journey || !journey.issue) {
+      return `<div class="journey-state" role="status">Latest receipt is not an issue run. Issue-to-PR readiness is not applicable.</div>`;
+    }
+
+    const firstSeconds = journey.time_to_first_result_sec;
+    const firstMeasured = typeof firstSeconds === 'number' && firstSeconds >= 0;
+    const firstKind = journey.first_result_kind === 'code_change'
+      ? 'verified patch'
+      : journey.first_result_kind === 'proposed_solution_plan'
+        ? 'proposed solution'
+        : 'result';
+    const firstValue = firstMeasured ? `${Math.round(firstSeconds)}s to ${firstKind}` : 'Not measured';
+
+    const headline = typeof proof?.honesty?.headline === 'string' ? proof.honesty.headline : null;
+    const gaps = Array.isArray(proof?.honesty?.degraded) ? proof.honesty.degraded.length : null;
+    const proofValue = headline || 'Not evaluated';
+    const proofMeta = gaps === null ? 'Uncertainty not measured' : (gaps === 0 ? 'No recorded gaps' : `${gaps} recorded gap${gaps === 1 ? '' : 's'}`);
+
+    const pullRequest = journey.pull_request;
+    let prValue = 'Not prepared';
+    let prLink = '';
+    if (pullRequest && pullRequest.state) {
+      prValue = String(pullRequest.state).replace(/_/g, ' ');
+      if (this._isSafeWebUrl(pullRequest.url)) {
+        const safeUrl = this._escapeHtml(pullRequest.url);
+        prLink = `<a class="journey-link" href="${safeUrl}" target="_blank" rel="noopener noreferrer">Open PR</a>`;
+      }
+    }
+
+    const phaseValue = this._data.phase || (this._data.status === 'running' ? 'In progress' : 'Run complete');
+    return `
+      <section class="journey" aria-labelledby="journey-heading">
+        <div class="journey-heading" id="journey-heading">Issue to PR</div>
+        <div class="journey-steps">
+          ${this._renderJourneyStep('Current phase', phaseValue, 'Live session status')}
+          ${this._renderJourneyStep('First useful result', firstValue, firstMeasured && journey.first_result_verified_patch !== true ? 'Plan only, not a verified patch' : 'From the run receipt')}
+          ${this._renderJourneyStep('Gates and evidence', proofValue, proofMeta)}
+          ${this._renderJourneyStep('PR readiness', prValue, prLink || 'No public PR URL recorded')}
+        </div>
+      </section>`;
+  }
+
+  _renderJourneyStep(label, value, meta) {
+    return `<div class="journey-step">
+      <div class="journey-label">${this._escapeHtml(label)}</div>
+      <div class="journey-value">${this._escapeHtml(value)}</div>
+      <div class="journey-meta">${meta}</div>
+    </div>`;
+  }
+
+  _isSafeWebUrl(value) {
+    if (typeof value !== 'string') return false;
+    try {
+      const url = new URL(value);
+      return url.protocol === 'https:' || url.protocol === 'http:';
+    } catch (_) {
+      return false;
+    }
+  }
+
   render() {
     const statusDotClass = this._getStatusDotClass();
     const statusLabel = this._escapeHtml((this._data.status || 'OFFLINE').toUpperCase());
@@ -456,6 +555,55 @@ export class LokiOverview extends LokiElement {
           display: grid;
           grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
           gap: 10px;
+        }
+
+        .journey {
+          margin-bottom: 14px;
+          border: 1px solid var(--loki-border);
+          border-radius: 5px;
+          overflow: hidden;
+        }
+
+        .journey-heading {
+          padding: 9px 12px;
+          border-bottom: 1px solid var(--loki-border);
+          color: var(--loki-text-muted);
+          font-size: 10px;
+          font-weight: 600;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
+        }
+
+        .journey-steps {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          background: var(--loki-bg-secondary);
+        }
+
+        .journey-step {
+          min-width: 0;
+          padding: 12px;
+          border-right: 1px solid var(--loki-border);
+        }
+
+        .journey-step:last-child { border-right: 0; }
+        .journey-label, .journey-meta { color: var(--loki-text-muted); font-size: 10px; }
+        .journey-label { margin-bottom: 5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+        .journey-value { color: var(--loki-text-primary); font: 600 13px/1.35 'JetBrains Mono', monospace; overflow-wrap: anywhere; }
+        .journey-meta { margin-top: 4px; line-height: 1.35; }
+        .journey-link { color: var(--loki-accent); }
+        .journey-state { margin-bottom: 14px; padding: 12px; border: 1px dashed var(--loki-border); border-radius: 5px; color: var(--loki-text-muted); font-size: 12px; }
+
+        @media (max-width: 760px) {
+          .journey-steps { grid-template-columns: 1fr 1fr; }
+          .journey-step:nth-child(2) { border-right: 0; }
+          .journey-step:nth-child(-n + 2) { border-bottom: 1px solid var(--loki-border); }
+        }
+
+        @media (max-width: 420px) {
+          .journey-steps { grid-template-columns: 1fr; }
+          .journey-step { border-right: 0; border-bottom: 1px solid var(--loki-border); }
+          .journey-step:last-child { border-bottom: 0; }
         }
 
         .overview-card {
@@ -540,6 +688,8 @@ export class LokiOverview extends LokiElement {
           </svg>
           <span class="overview-title">Overview</span>
         </div>
+
+        ${this._renderJourney()}
 
         <div class="overview-grid">
           <div class="overview-card">
