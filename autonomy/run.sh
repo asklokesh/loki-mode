@@ -1709,12 +1709,14 @@ fi
 if [ "$BASH_VERSION_MAJOR" -ge 4 ] 2>/dev/null; then
     declare -A WORKTREE_PIDS=()
     declare -A WORKTREE_PATHS=()
+    declare -A WORKTREE_BASE_SHAS=()
 else
     # Fallback: parallel mode will check and warn
     # shellcheck disable=SC2178
     WORKTREE_PIDS=""
     # shellcheck disable=SC2178
     WORKTREE_PATHS=""
+    WORKTREE_BASE_SHAS=""
 fi
 # Track background install PIDs for cleanup (indexed array, works on all bash versions)
 WORKTREE_INSTALL_PIDS=()
@@ -5184,6 +5186,81 @@ ${_del_receipt}"
 # Parallel Workflow Functions (Git Worktrees)
 #===============================================================================
 
+# Production bridge for the Bun execution-manifest intelligence. The feature is
+# explicitly opt-in; with LOKI_EXEC_MANIFEST unset this performs no I/O and the
+# legacy parallel workflow remains byte-for-byte on its old path.
+_loki_exec_manifest() {
+    [ "${LOKI_EXEC_MANIFEST:-0}" = "1" ] || return 0
+    bun "${SCRIPT_DIR}/../loki-ts/dist/loki.js" internal exec-manifest "$@"
+}
+
+init_exec_manifest() {
+    [ "${LOKI_EXEC_MANIFEST:-0}" = "1" ] || return 0
+    local base_sha plan_file
+    # create_worktree's built-in streams branch from main (with HEAD only as its
+    # final fallback), so the manifest must pin that exact production base.
+    base_sha=$(git -C "$TARGET_DIR" rev-parse main 2>/dev/null) || \
+        base_sha=$(git -C "$TARGET_DIR" rev-parse HEAD 2>/dev/null) || return 1
+    mkdir -p "${TARGET_DIR}/.loki"
+    plan_file=$(mktemp "${TARGET_DIR}/.loki/.exec-manifest-plan.XXXXXX") || return 1
+    LOKI_PLAN_FILE="$plan_file" LOKI_BASE_SHA="$base_sha" \
+      LOKI_PARALLEL_TESTING_VALUE="$PARALLEL_TESTING" \
+      LOKI_PARALLEL_DOCS_VALUE="$PARALLEL_DOCS" \
+      LOKI_PARALLEL_BLOG_VALUE="$PARALLEL_BLOG" python3 <<'PY'
+import json, os
+streams = []
+if os.environ["LOKI_PARALLEL_TESTING_VALUE"] == "true":
+    streams.append({"name": "testing", "paths": ["tests", "loki-ts/tests"],
+                    "acceptance": "test stream exits successfully"})
+if os.environ["LOKI_PARALLEL_DOCS_VALUE"] == "true":
+    streams.append({"name": "docs", "paths": ["docs", "README.md", "CHANGELOG.md"],
+                    "acceptance": "documentation stream exits successfully"})
+if os.environ["LOKI_PARALLEL_BLOG_VALUE"] == "true":
+    streams.append({"name": "blog", "paths": ["blog"],
+                    "acceptance": "blog stream exits successfully"})
+with open(os.environ["LOKI_PLAN_FILE"], "w") as f:
+    json.dump({"baseSha": os.environ["LOKI_BASE_SHA"],
+               "integrationOwner": "parallel-orchestrator",
+               "streams": streams,
+               "env": {"LOKI_EXEC_MANIFEST": "1"}}, f)
+PY
+    _loki_exec_manifest plan "$plan_file" "${TARGET_DIR}/.loki" >/dev/null
+    local rc=$?
+    rm -f "$plan_file"
+    return "$rc"
+}
+
+validate_exec_manifest_result() {
+    local stream_name="$1" branch="$2"
+    [ "${LOKI_EXEC_MANIFEST:-0}" = "1" ] || return 0
+    local base_sha result_file
+    base_sha="${WORKTREE_BASE_SHAS[$stream_name]:-}"
+    [ -n "$base_sha" ] || base_sha=$(git -C "$TARGET_DIR" merge-base "$branch" HEAD 2>/dev/null) || return 1
+    result_file=$(mktemp "${TARGET_DIR}/.loki/.exec-manifest-result.XXXXXX") || return 1
+    LOKI_RESULT_FILE="$result_file" LOKI_RESULT_STREAM="$stream_name" \
+      LOKI_RESULT_BASE="$base_sha" LOKI_RESULT_BRANCH="$branch" \
+      LOKI_RESULT_REPO="$TARGET_DIR" python3 <<'PY'
+import json, os, subprocess
+paths = subprocess.check_output(
+    ["git", "-C", os.environ["LOKI_RESULT_REPO"], "diff", "--name-only",
+     f'{os.environ["LOKI_RESULT_BASE"]}..{os.environ["LOKI_RESULT_BRANCH"]}'],
+    text=True).splitlines()
+with open(os.environ["LOKI_RESULT_FILE"], "w") as f:
+    json.dump({"name": os.environ["LOKI_RESULT_STREAM"],
+               "baseSha": os.environ["LOKI_RESULT_BASE"],
+               "changedPaths": paths, "acceptanceMet": True}, f)
+PY
+    local outcome rc=0
+    outcome=$(_loki_exec_manifest validate "$result_file" "${TARGET_DIR}/.loki" 2>&1) || rc=$?
+    rm -f "$result_file"
+    if [ "$rc" -ne 0 ]; then
+        log_error "Execution manifest rejected $stream_name: $outcome"
+        return 1
+    fi
+    log_info "Execution manifest accepted: $stream_name"
+    return 0
+}
+
 # Check if parallel mode is supported (bash 4+ required for associative arrays)
 check_parallel_support() {
     if [ "$BASH_VERSION_MAJOR" -lt 4 ] 2>/dev/null; then
@@ -5211,6 +5288,9 @@ create_worktree() {
     if [ -d "$worktree_path" ]; then
         log_info "Worktree already exists: $stream_name"
         WORKTREE_PATHS[$stream_name]="$worktree_path"
+        if [ "${LOKI_EXEC_MANIFEST:-0}" = "1" ]; then
+            WORKTREE_BASE_SHAS[$stream_name]="$(python3 -c "import json; print(json.load(open('${TARGET_DIR}/.loki/manifest/exec-manifest.json'))['base_sha'])" 2>/dev/null)"
+        fi
         return 0
     fi
 
@@ -5231,6 +5311,7 @@ create_worktree() {
 
     if [ $wt_exit -eq 0 ]; then
         WORKTREE_PATHS[$stream_name]="$worktree_path"
+        WORKTREE_BASE_SHAS[$stream_name]="$(git -C "$worktree_path" rev-parse HEAD 2>/dev/null)"
 
         # Copy .loki state to worktree
         if [ -d "$TARGET_DIR/.loki" ]; then
@@ -5304,6 +5385,7 @@ remove_worktree() {
 
     unset "WORKTREE_PATHS[$stream_name]"
     unset "WORKTREE_PIDS[$stream_name]"
+    unset "WORKTREE_BASE_SHAS[$stream_name]"
 
     log_info "Removed worktree: $stream_name"
 }
@@ -5609,6 +5691,12 @@ merge_worktree() {
 
     log_step "Merging worktree: $stream_name (branch: $branch)"
 
+    # Validate the actual branch result at the integration seam, immediately
+    # before any checkout or merge can mutate the integration tree.
+    if ! validate_exec_manifest_result "$stream_name" "$branch"; then
+        return 1
+    fi
+
     # BUG-PAR-009: Verify git checkout main before merge
     local current_branch
     current_branch=$(git -C "${TARGET_DIR:-.}" branch --show-current 2>/dev/null)
@@ -5797,7 +5885,24 @@ merge_feature() {
     local clean_feature="${feature#feature-}"
     local branch="feature/$clean_feature"
 
+    # The session signal is authoritative for worktree branches (for example
+    # parallel-testing). The historical feature/<name> convention remains the
+    # fallback for legacy feature streams.
+    local _mf_signal="$TARGET_DIR/.loki/signals/MERGE_REQUESTED_$feature"
+    if [ -f "$_mf_signal" ]; then
+        local _mf_branch=""
+        _mf_branch=$(LOKI_SIGNAL_FILE="$_mf_signal" python3 -c \
+            "import json,os; print(json.load(open(os.environ['LOKI_SIGNAL_FILE'])).get('branch',''))" 2>/dev/null || true)
+        [ -n "$_mf_branch" ] && branch="$_mf_branch"
+    fi
+
     log_step "Merging feature: $clean_feature"
+
+    # This is the autonomous orchestrator's real integration seam. Reject a
+    # stale, out-of-scope, unknown, or unsuccessful stream before checkout/merge.
+    if ! validate_exec_manifest_result "$feature" "$branch"; then
+        return 1
+    fi
 
     # BUG-PAR-011: Ensure we're on main using git -C (no subshell)
     git -C "$TARGET_DIR" checkout main 2>/dev/null
@@ -5846,6 +5951,11 @@ init_parallel_streams() {
     fi
 
     log_header "Initializing Parallel Workflows"
+
+    if ! init_exec_manifest; then
+        log_error "Failed to initialize execution manifest"
+        return 1
+    fi
 
     local active_streams=0
 

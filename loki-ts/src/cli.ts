@@ -283,6 +283,10 @@ async function dispatch(argv: readonly string[]): Promise<number> {
         const { runInternalSdkText } = await import("./commands/internal_sdk_judge.ts");
         return runInternalSdkText(rest.slice(1));
       }
+      if (subcmd === "exec-manifest") {
+        const { runInternalExecManifest } = await import("./commands/internal_exec_manifest.ts");
+        return runInternalExecManifest(rest.slice(1));
+      }
       process.stderr.write(`Unknown internal subcommand: ${subcmd}\n`);
       process.stderr.write(`Run 'loki internal --help' for the supported list.\n`);
       return 2;
