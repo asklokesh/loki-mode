@@ -8361,6 +8361,61 @@ async def get_trust_trajectory():
     return traj
 
 
+# Gate policy is derived in one deterministic module so the dashboard never
+# invents whether a gate blocks or whether an absent measurement means zero.
+_GATE_POLICY_MODULE = None
+
+
+def _load_gate_policy_module():
+    global _GATE_POLICY_MODULE
+    if _GATE_POLICY_MODULE is not None:
+        return _GATE_POLICY_MODULE
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    module_path = os.path.join(repo_root, "autonomy", "lib", "gate_policy.py")
+    if not os.path.isfile(module_path):
+        return None
+    try:
+        import importlib.util as importlib_util
+
+        spec = importlib_util.spec_from_file_location("gate_policy", module_path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib_util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _GATE_POLICY_MODULE = module
+        return module
+    except Exception:
+        return None
+
+
+@app.get("/api/gate-policy", dependencies=[Depends(auth.require_scope("read"))])
+async def get_gate_policy():
+    """Report blocking/advisory policy; never promote or mutate a gate."""
+    module = _load_gate_policy_module()
+    if module is None:
+        return {
+            "schema_version": 1,
+            "available": False,
+            "status": "unavailable",
+            "ledger": "absent",
+            "gates": [],
+            "error": "gate_policy module not found",
+        }
+    try:
+        result = module.assess(str(_get_loki_dir()))
+    except Exception as error:
+        return {
+            "schema_version": 1,
+            "available": False,
+            "status": "unavailable",
+            "ledger": "absent",
+            "gates": [],
+            "error": f"gate policy assessment failed: {error}",
+        }
+    result["available"] = True
+    return result
+
+
 # =============================================================================
 # Pricing API
 # =============================================================================
