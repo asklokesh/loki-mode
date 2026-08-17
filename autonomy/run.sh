@@ -1716,6 +1716,7 @@ else
     WORKTREE_PIDS=""
     # shellcheck disable=SC2178
     WORKTREE_PATHS=""
+    # shellcheck disable=SC2178
     WORKTREE_BASE_SHAS=""
 fi
 # Track background install PIDs for cleanup (indexed array, works on all bash versions)
