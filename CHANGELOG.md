@@ -5,6 +5,21 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.22.8
+
+### Added
+
+- **Zero-file reviewed quickstart continuation:** a schema-v1 JSON preview can
+  be piped directly into `loki quickstart --from-preview - --yes`. Stdin is
+  bounded to 1 MiB and the preview is revalidated and re-estimated before the
+  existing build boundary.
+
+### Fixed
+
+- **Fail-closed secret release gate:** the security audit now blocks releases
+  on every gitleaks finding outside the exact reviewed fingerprint baseline,
+  and also blocks when the scanner or report step fails.
+
 ## v9.22.7
 
 ### Fixed
