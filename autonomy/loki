@@ -4617,6 +4617,89 @@ cmd_next() {
 }
 
 # loki ship -- the build is done, now get it out (review + PR advice in one flow).
+# Publish an already-prepared PR. This is deliberately a separate, explicit
+# mutation boundary from the default print-only `loki ship` flow. Preparation
+# writes the exact reviewed title/body under .loki/state; publishing consumes
+# those bytes without rebuilding, re-rendering, or inventing evidence.
+publish_prepared_pr() {
+    local state_dir="${LOKI_DIR:-.loki}/state"
+    local title_file="$state_dir/pr-title.txt"
+    local body_file="$state_dir/pr-body.md"
+    local pr_state="$state_dir/pr.json"
+
+    if [ ! -s "$title_file" ] || [ ! -s "$body_file" ]; then
+        echo "Error: no prepared PR found. Run 'loki start <issue> --prepare-pr' first." >&2
+        return 2
+    fi
+    if ! command -v git >/dev/null 2>&1 || ! git rev-parse --git-dir >/dev/null 2>&1; then
+        echo "Error: publishing a prepared PR requires a git repository." >&2
+        return 2
+    fi
+    if ! command -v gh >/dev/null 2>&1; then
+        echo "Error: publishing a prepared PR requires the GitHub CLI (gh)." >&2
+        return 2
+    fi
+
+    local branch base title existing_url pr_url tmp_state
+    branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    case "$branch" in
+        ""|HEAD|main|master)
+            echo "Error: refusing to publish prepared work from '$branch'; check out its issue branch." >&2
+            return 2 ;;
+    esac
+    if ! git remote get-url origin >/dev/null 2>&1; then
+        echo "Error: publishing a prepared PR requires an 'origin' remote." >&2
+        return 2
+    fi
+    title="$(cat "$title_file")"
+    if [ -z "$title" ]; then
+        echo "Error: prepared PR title must be one non-empty line." >&2
+        return 2
+    fi
+    case "$title" in
+        *$'\n'*)
+            echo "Error: prepared PR title must be one non-empty line." >&2
+            return 2 ;;
+    esac
+
+    # Idempotence: an interrupted/retried publish reuses the open PR and never
+    # creates a duplicate. This read-only query occurs only after --publish.
+    existing_url="$(gh pr list --head "$branch" --state open --json url --jq '.[0].url // empty' 2>/dev/null || true)"
+    if [ -n "$existing_url" ]; then
+        pr_url="$existing_url"
+    else
+        # Do not attempt PR creation after a failed push. The prepared body
+        # remains local and byte-identical, so the operator can fix auth/network
+        # and retry. A successful push followed by create failure is reversible
+        # with the exact command printed below.
+        if ! git push --set-upstream origin "$branch"; then
+            echo "Error: branch push failed; prepared PR files were preserved." >&2
+            return 1
+        fi
+        if ! pr_url="$(gh pr create --head "$branch" --title "$title" --body-file "$body_file")"; then
+            echo "Error: PR creation failed; prepared PR files were preserved." >&2
+            echo "Rollback remote branch: git push origin --delete $branch" >&2
+            return 1
+        fi
+        pr_url="$(printf '%s\n' "$pr_url" | grep -Eo 'https://[^[:space:]]+' | head -1)"
+        if [ -z "$pr_url" ]; then
+            echo "Error: gh reported success without a PR URL; prepared files were preserved." >&2
+            echo "Inspect: gh pr list --head $branch" >&2
+            return 1
+        fi
+    fi
+
+    mkdir -p "$state_dir" || return 1
+    tmp_state="$pr_state.tmp.$$"
+    if command -v jq >/dev/null 2>&1; then
+        jq -n --arg url "$pr_url" --arg branch "$branch" --arg title "$title" \
+            '{state:"created", url:$url, branch:$branch, title:$title,
+              body_path:".loki/state/pr-body.md"}' > "$tmp_state" \
+            && mv "$tmp_state" "$pr_state" || { rm -f "$tmp_state"; return 1; }
+    fi
+    echo "PR ready: $pr_url"
+}
+
 # Composes existing surfaces only: optionally opens the running app (--preview),
 # runs the SAME diff quality gates as cmd_review, and on a clean-enough result
 # prints the exact branch-aware PR command via the shared print_pr_advice (the
@@ -4626,6 +4709,7 @@ cmd_next() {
 # and points at the findings instead of advising a PR.
 cmd_ship() {
     local do_preview=false
+    local publish=false
     local review_args=()
     # Tracks whether the caller passed an explicit scope flag (--staged, --since,
     # ...). Passthrough flags like --yes/--severity do NOT set this, so they do
@@ -4637,6 +4721,7 @@ cmd_ship() {
                 echo -e "${BOLD}Loki Mode -- finish the build: review, then PR advice (print-only)${NC}"
                 echo ""
                 echo "Usage: loki ship [--preview] [--yes] [review options]"
+                echo "       loki ship --publish"
                 echo ""
                 echo "Runs the natural finish line in one command:"
                 echo "  1. (with --preview) opens the app Loki built and started locally"
@@ -4645,13 +4730,15 @@ cmd_ship() {
                 echo "  3. on a clean-enough result, PRINTS the exact branch-aware"
                 echo "     git push + pull-request command for YOU to run"
                 echo ""
-                echo "It is advisory only for shipping: it NEVER runs 'git push', NEVER"
-                echo "creates a PR, and NEVER deploys. You run the printed command."
+                echo "The default flow is advisory only: it NEVER runs 'git push' or"
+                echo "creates a PR. --publish is the explicit mutation boundary: it"
+                echo "publishes the exact title/body previously written by --prepare-pr."
                 echo "If review finds HIGH or CRITICAL findings it stops and points you"
                 echo "at the findings instead of advising a PR (exit code 1)."
                 echo ""
                 echo "Options:"
                 echo "  --preview    Open the running local app first (loki preview)"
+                echo "  --publish    Push the current issue branch and publish its prepared PR"
                 echo "  --yes, -y    Pass through to review (skip its confirmation prompt)"
                 echo "  --help, -h   Show this help and exit"
                 echo ""
@@ -4660,6 +4747,7 @@ cmd_ship() {
                 return 0
                 ;;
             --preview) do_preview=true ;;
+            --publish) publish=true ;;
             # Only a known set of NON-scope passthrough flags are exempt from
             # "explicit scope". Everything else the caller passes -- an explicit
             # scope flag (--staged/--since/...), a positional <file-or-dir>, or any
@@ -4688,6 +4776,15 @@ cmd_ship() {
         esac
         shift
     done
+
+    if [ "$publish" = true ]; then
+        if [ "$do_preview" = true ] || [ "${#review_args[@]}" -gt 0 ]; then
+            echo "Error: --publish cannot be combined with preview/review options." >&2
+            return 2
+        fi
+        publish_prepared_pr
+        return $?
+    fi
 
     # 1. Optional preview of the running local app. Only when an app-runner state
     #    file exists, so we never imply an app is running when it is not.

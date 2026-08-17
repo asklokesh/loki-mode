@@ -399,6 +399,19 @@ honest verdict (VERIFIED / VERIFIED WITH GAPS / NOT VERIFIED), the key facts
 only when the receipt's own headline is VERIFIED. This is on by default whenever
 Loki opens or advises a PR; opt out with `LOKI_PROVEN_PR=0`.
 
+For a review-before-publish workflow, preparation and GitHub mutation are two
+explicit steps:
+
+```bash
+loki start owner/repo#42 --prepare-pr  # builds and writes exact title/body locally
+loki ship --publish                    # pushes that issue branch and opens the PR
+```
+
+The second command consumes `.loki/state/pr-title.txt` and
+`.loki/state/pr-body.md` byte-for-byte. Plain `loki ship`, previews, and default
+start paths remain non-publishing. A failed PR creation preserves both files and
+prints the exact remote-branch rollback command.
+
 An optional advisory status check (`loki: verified-completion`) maps the verdict
 to a GitHub check-run. It is opt-in (`LOKI_PROVEN_PR_CHECK=1`) and can never block
 a merge on its own. To make verified-completion blocking, add it as a required

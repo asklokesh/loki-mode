@@ -746,6 +746,7 @@ run_test "Reuse done-recognition gate (no-PRD reuse: done/incomplete/inconclusiv
 # Multi-provider issue backends (#7 team parity): detection, parse, normalize
 # for GitHub / GitLab / Jira / Azure DevOps -- network-free, mocked responses.
 run_test "Issue providers (GitHub/GitLab/Jira/Azure detect+parse+normalize)" "$SCRIPT_DIR/test-issue-providers.sh"
+run_test "prepared PR publishes only with explicit consent, exact body, and rollback" "$SCRIPT_DIR/cli/test-publish-prepared-pr.sh"
 
 # local-ci FAST/FULL tiering: the fast tier must never be mistaken for the full
 # pre-push gate, and must never stop covering the trust core. Static assertions
