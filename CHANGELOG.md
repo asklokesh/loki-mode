@@ -5,6 +5,31 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.22.9
+
+### Added
+
+- **Live capability/task-class routing:** the Bun runner now routes each
+  iteration's RARV phase to a task class (`REASON` -> planning, `ACT` ->
+  implementation, `REFLECT` -> review, `VERIFY` -> verification, and any retry
+  -> recovery) and hands that class to the capability router, which previously
+  had no production callers. The router moves the model TIER only, leaving
+  `providers.ts` the sole owner of model identity so the `LOKI_MAX_TIER`
+  ceiling still applies. Only a decision the router actually made
+  (`task_class`, `session_ceiling`, `explicit_override`) may move the tier, so
+  an opus- or haiku-pinned session is never clobbered down to development;
+  `fable`-pinned sessions are skipped because the tier has no capability
+  mapping. Default off, gated on `LOKI_CAPABILITY_ROUTER=1`.
+
+- **Execution-manifest enforcement before parallel merge:** the parallel
+  worktree orchestrator can now pin a manifest of the expected base SHA and
+  per-stream path scope, then validate each stream's actual changed paths
+  against it before the branch is merged. A rejected stream is logged and
+  blocked instead of merged. A new hidden bridge, `loki internal exec-manifest
+  plan|validate`, connects the bash orchestrator to the Bun implementation.
+  Default off, gated on `LOKI_EXEC_MANIFEST=1`; with the flag unset the
+  parallel workflow performs no additional I/O and stays on its previous path.
+
 ## v9.22.8
 
 ### Added
