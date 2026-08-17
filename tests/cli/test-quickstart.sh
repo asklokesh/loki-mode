@@ -995,6 +995,84 @@ else
     log_fail "continuation atomic publish" "rc=$rc, competing destination changed, stage leaked, or build started"
 fi
 
+# ===========================================================================
+# Piped JSON preview continuation (LOKI-QUICKSTART-STDIN-CONTINUE-60).
+# ===========================================================================
+
+# A schema-v1 preview can flow directly between two installed command shapes.
+# The continuation still requires explicit argv --yes and replays the current
+# estimator before it reaches the existing write/start seams.
+T45="$TMP/t45"; mkdir -p "$T45"
+make_harness "$T45" "$NONINT"
+(
+    cd "$T45" &&
+    run_to 15 bash -c 'source ./harness.sh; cmd_quickstart "an internal reporting workspace" --template dashboard --dry-run --json </dev/null' 2>preview.stderr |
+        run_to 15 bash -c 'source ./harness.sh; cmd_quickstart --from-preview - --yes' >stdout 2>stderr
+); rc=$?
+if [ "$rc" -eq 0 ] && [ ! -s "$T45/preview.stderr" ] && [ ! -s "$T45/stderr" ] && [ ! -e "$T45/preview.json" ] && [ "$(cat "$T45/cmd_start.log" 2>/dev/null)" = "./prd.md --yes --no-plan" ] && head -1 "$T45/prd.md" | grep -q 'Analytics Dashboard' && grep -q 'Template:    dashboard' "$T45/stdout"; then
+    log_pass "piped preview continuation: no handoff file, current estimate replayed, existing start seam reached"
+else
+    log_fail "piped preview continuation" "rc=$rc, a handoff file appeared, or reviewed continuation/start contract changed"
+fi
+
+# Empty, duplicate-key, and oversized stdin all fail before provider,
+# estimator, PRD, or build boundaries. The reader consumes at most 1 MiB + 1.
+T46="$TMP/t46"; mkdir -p "$T46"
+make_harness "$T46" '_qs_selected_provider() { printf provider-called > "$PWD/provider-called"; printf codex; }
+show_prd_plan() { printf estimator-called > "$PWD/estimator-called"; return 1; }'
+case_no=0
+for generator in \
+    "printf ''" \
+    "printf '%s' '{\"schema_version\":1,\"schema_version\":1}'" \
+    "python3 -c 'import sys; sys.stdout.write(\"x\" * 1048577)'"; do
+    case_no=$((case_no + 1))
+    (cd "$T46" && eval "$generator" | run_to 15 bash -c 'source ./harness.sh; cmd_quickstart --from-preview - --yes' >"stdout-$case_no" 2>"stderr-$case_no"); rc=$?
+    [ "$rc" -eq 2 ] || printf 'bad-rc\n' >> "$T46/failures"
+done
+if [ ! -e "$T46/failures" ] && [ ! -e "$T46/provider-called" ] && [ ! -e "$T46/estimator-called" ] && [ ! -e "$T46/prd.md" ] && [ ! -e "$T46/cmd_start.log" ]; then
+    log_pass "empty, duplicate-key, and oversized preview stdin refuse before every execution boundary"
+else
+    log_fail "unsafe preview stdin" "one stdin case crossed a boundary or did not exit 2"
+fi
+
+# `-` must never turn an accidental interactive invocation into a blocking
+# read. A real pseudo-terminal proves the loader refuses before touching any
+# provider, estimator, PRD, or build seam.
+T47="$TMP/t47"; mkdir -p "$T47"
+make_harness "$T47" '_qs_selected_provider() { printf provider-called > "$PWD/provider-called"; printf codex; }
+show_prd_plan() { printf estimator-called > "$PWD/estimator-called"; return 1; }'
+python3 - "$T47" <<'PY'
+import os
+import pathlib
+import pty
+import subprocess
+import sys
+
+root = pathlib.Path(sys.argv[1])
+master, slave = pty.openpty()
+try:
+    result = subprocess.run(
+        ["bash", "-c", "source ./harness.sh; cmd_quickstart --from-preview - --yes"],
+        cwd=root,
+        stdin=slave,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=10,
+    )
+finally:
+    os.close(master)
+    os.close(slave)
+assert result.returncode == 2, result.returncode
+assert result.stdout == b"", result.stdout
+assert b"refusing to wait on a terminal" in result.stderr, result.stderr
+PY
+rc=$?
+if [ "$rc" -eq 0 ] && [ ! -e "$T47/provider-called" ] && [ ! -e "$T47/estimator-called" ] && [ ! -e "$T47/prd.md" ] && [ ! -e "$T47/cmd_start.log" ]; then
+    log_pass "terminal preview stdin refuses immediately with zero execution side effects"
+else
+    log_fail "terminal preview stdin" "PTY refusal or zero-side-effect contract missing"
+fi
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

@@ -509,21 +509,29 @@ json.dump(payload, sys.stdout, separators=(",", ":"), sort_keys=True)
 # cmd_quickstart always recomputes and displays the current estimator result.
 _qs_load_preview() {
     local preview_path="$1"
-    if [ ! -f "$preview_path" ] || [ ! -r "$preview_path" ] || [ -L "$preview_path" ]; then
-        printf 'Preview path is not a readable regular non-symlink file: %s\n' "$preview_path" >&2
-        return 2
-    fi
-    local preview_size
-    preview_size=$(wc -c < "$preview_path" 2>/dev/null | tr -d '[:space:]') || return 2
-    case "$preview_size" in
-        ""|*[!0-9]*) return 2;;
-    esac
-    if [ "$preview_size" -eq 0 ] || [ "$preview_size" -gt 1048576 ]; then
-        printf 'Preview JSON must be between 1 byte and 1 MiB.\n' >&2
-        return 2
+    if [ "$preview_path" = "-" ]; then
+        if [ -t 0 ]; then
+            printf 'Preview stdin must be piped; refusing to wait on a terminal.\n' >&2
+            return 2
+        fi
+    else
+        if [ ! -f "$preview_path" ] || [ ! -r "$preview_path" ] || [ -L "$preview_path" ]; then
+            printf 'Preview path is not a readable regular non-symlink file: %s\n' "$preview_path" >&2
+            return 2
+        fi
+        local preview_size
+        preview_size=$(wc -c < "$preview_path" 2>/dev/null | tr -d '[:space:]') || return 2
+        case "$preview_size" in
+            ""|*[!0-9]*) return 2;;
+        esac
+        if [ "$preview_size" -eq 0 ] || [ "$preview_size" -gt 1048576 ]; then
+            printf 'Preview JSON must be between 1 byte and 1 MiB.\n' >&2
+            return 2
+        fi
     fi
 
-    python3 - "$preview_path" <<'PY'
+    local validator_code=""
+    validator_code=$(cat <<'PY'
 import base64
 import json
 import os
@@ -533,15 +541,20 @@ import sys
 
 path = sys.argv[1]
 try:
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags)
-    try:
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size < 1 or metadata.st_size > 1048576:
-            raise ValueError("unsafe preview")
-        raw = os.read(descriptor, 1048577)
-    finally:
-        os.close(descriptor)
+    if path == "-":
+        raw = sys.stdin.buffer.read(1048577)
+        if len(raw) < 1 or len(raw) > 1048576:
+            raise ValueError("unsafe preview stdin")
+    else:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size < 1 or metadata.st_size > 1048576:
+                raise ValueError("unsafe preview")
+            raw = os.read(descriptor, 1048577)
+        finally:
+            os.close(descriptor)
     if len(raw) > 1048576:
         raise ValueError("oversized")
     def reject_duplicate_keys(pairs):
@@ -606,6 +619,8 @@ elif kind == "prd":
 else:
     sys.exit(2)
 PY
+)
+    python3 -c "$validator_code" "$preview_path"
 }
 
 # _qs_help: concise usage for `loki quickstart --help`.
@@ -625,7 +640,7 @@ _qs_help() {
     printf '  --yes, -y     Auto-confirm the final build prompt (still shows the plan)\n'
     printf '  --dry-run     Preview the selected template and plan; write/start nothing\n'
     printf '  --json        With --dry-run, emit one machine-readable JSON object\n'
-    printf '  --from-preview F  Continue a saved JSON preview; requires explicit --yes\n'
+    printf '  --from-preview F  Continue saved JSON from file F (or - for piped stdin); requires --yes\n'
     printf '  --template N  Use the exact shipped template N for an IDEA\n'
     printf '  --list-templates  List every shipped template and its purpose\n'
     printf '  --help, -h    Show this help and exit\n'
@@ -644,6 +659,7 @@ _qs_help() {
     printf '  no file is written, and no build is started. Do not combine with --yes.\n'
     printf '  Add --json for versioned JSON only; --json requires --dry-run.\n'
     printf '  Save that JSON, then continue it with --from-preview FILE --yes.\n'
+    printf '  Or pipe it with --from-preview - --yes; terminal stdin is refused.\n'
     printf '\n'
     printf 'Steps:\n'
     printf '  1. Setup      Check for an AI provider for execution (skipped in preview)\n'
