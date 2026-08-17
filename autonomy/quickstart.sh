@@ -623,6 +623,86 @@ PY
     python3 -c "$validator_code" "$preview_path"
 }
 
+# _qs_verify_preview <path> <json>: prove that one bounded schema-v1 preview is
+# still actionable without crossing provider, estimator, PRD-write, or build
+# boundaries. Idea previews must name a currently shipped template. PRD
+# previews must still resolve to the exact readable non-symlink file digest.
+# Output deliberately excludes the idea and PRD path.
+_qs_verify_preview() {
+    local preview_path="$1" json_output="${2:-false}"
+    local fields="" kind="" template="" encoded="" digest="" value=""
+    fields=$(_qs_load_preview "$preview_path") || {
+        printf 'Preview JSON is malformed or incompatible.\n' >&2
+        return 2
+    }
+    IFS='|' read -r kind template encoded digest <<< "$fields"
+    value=$(python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.argv[1], validate=True))' "$encoded" 2>/dev/null) || {
+        printf 'Preview JSON continuation is invalid.\n' >&2
+        return 2
+    }
+    [ -n "$value" ] || {
+        printf 'Preview JSON continuation is empty.\n' >&2
+        return 2
+    }
+
+    local verdict=""
+    if [ "$kind" = "idea" ]; then
+        if ! _qs_template_exists "$template"; then
+            printf 'Preview template is not currently shipped: %s\n' "$template" >&2
+            return 2
+        fi
+        verdict="SHIPPED_TEMPLATE_MATCH"
+    elif [ "$kind" = "prd" ]; then
+        if [ ! -f "$value" ] || [ ! -r "$value" ] || [ -L "$value" ]; then
+            printf 'Preview PRD is not a readable regular non-symlink file.\n' >&2
+            return 2
+        fi
+        local current_digest=""
+        current_digest=$(shasum -a 256 "$value" 2>/dev/null | awk '{print $1}') || current_digest=""
+        if [ -z "$current_digest" ] || [ "$current_digest" != "$digest" ]; then
+            printf 'Preview PRD has changed since the saved preview; run --dry-run --json again.\n' >&2
+            return 2
+        fi
+        verdict="EXACT_PRD_MATCH"
+    else
+        printf 'Preview JSON continuation kind is unsupported.\n' >&2
+        return 2
+    fi
+
+    if [ "$json_output" = true ]; then
+        python3 - "$kind" "$template" "$digest" "$verdict" <<'PY'
+import json
+import sys
+
+kind, template, digest, verdict = sys.argv[1:5]
+json.dump(
+    {
+        "command": "loki quickstart",
+        "input_kind": kind,
+        "mode": "verify-preview",
+        "prd_sha256": digest if kind == "prd" else None,
+        "schema_version": 1,
+        "selected_template": template if kind == "idea" else None,
+        "valid": True,
+        "verdict": verdict,
+    },
+    sys.stdout,
+    separators=(",", ":"),
+    sort_keys=True,
+)
+sys.stdout.write("\n")
+PY
+        return $?
+    fi
+
+    if [ "$kind" = "idea" ]; then
+        printf 'VERIFIED / %s / template=%s\n' "$verdict" "$template"
+    else
+        printf 'VERIFIED / %s / sha256=%s\n' "$verdict" "$digest"
+    fi
+    return 0
+}
+
 # _qs_help: concise usage for `loki quickstart --help`.
 _qs_help() {
     printf '%sloki quickstart%s - guided first build (setup, idea, template, plan, go)\n' "$_QS_BOLD" "$_QS_NC"
@@ -639,8 +719,9 @@ _qs_help() {
     printf 'Options:\n'
     printf '  --yes, -y     Auto-confirm the final build prompt (still shows the plan)\n'
     printf '  --dry-run     Preview the selected template and plan; write/start nothing\n'
-    printf '  --json        With --dry-run, emit one machine-readable JSON object\n'
+    printf '  --json        Emit machine-readable output for a read-only command\n'
     printf '  --from-preview F  Continue saved JSON from file F (or - for piped stdin); requires --yes\n'
+    printf '  --verify-preview F  Verify saved JSON from file F (or - for piped stdin); executes nothing\n'
     printf '  --template N  Use the exact shipped template N for an IDEA\n'
     printf '  --list-templates  List every shipped template and its purpose\n'
     printf '  --help, -h    Show this help and exit\n'
@@ -660,6 +741,7 @@ _qs_help() {
     printf '  Add --json for versioned JSON only; --json requires --dry-run.\n'
     printf '  Save that JSON, then continue it with --from-preview FILE --yes.\n'
     printf '  Or pipe it with --from-preview - --yes; terminal stdin is refused.\n'
+    printf '  Verify it without execution using --verify-preview FILE (and optional --json).\n'
     printf '\n'
     printf 'Steps:\n'
     printf '  1. Setup      Check for an AI provider for execution (skipped in preview)\n'
@@ -697,6 +779,8 @@ cmd_quickstart() {
     local list_templates_flag_seen=false
     local from_preview=""
     local from_preview_flag_seen=false
+    local verify_preview=""
+    local verify_preview_flag_seen=false
     local preview_prd_digest=""
     if _qs_assume_yes; then assume_yes=true; fi
 
@@ -765,6 +849,19 @@ cmd_quickstart() {
                 from_preview="$2"
                 shift 2
                 ;;
+            --verify-preview)
+                if [ "$verify_preview_flag_seen" = true ]; then
+                    printf '%s--verify-preview may be specified only once.%s\n' "$_QS_RED" "$_QS_NC" >&2
+                    exit 2
+                fi
+                verify_preview_flag_seen=true
+                if [ $# -lt 2 ] || [ -z "${2:-}" ] || [[ "${2:-}" == --* ]]; then
+                    printf '%s--verify-preview requires a preview JSON path.%s\n' "$_QS_RED" "$_QS_NC" >&2
+                    exit 2
+                fi
+                verify_preview="$2"
+                shift 2
+                ;;
             --*)
                 printf '%sUnknown option: %s%s\n' "$_QS_RED" "$1" "$_QS_NC" >&2
                 printf "Run 'loki quickstart --help' for usage.\n" >&2
@@ -782,6 +879,18 @@ cmd_quickstart() {
                 ;;
         esac
     done
+
+    # Verification is a standalone read-only shape. It accepts only optional
+    # JSON formatting, validates the full current continuation boundary, and
+    # returns before terminal, provider, estimator, PRD-write, and build seams.
+    if [ "$verify_preview_flag_seen" = true ]; then
+        if [ -n "$positional" ] || [ "$yes_flag" = true ] || [ "$dry_run" = true ] || [ "$template_flag_seen" = true ] || [ "$list_templates" = true ] || [ "$from_preview_flag_seen" = true ]; then
+            printf '%s--verify-preview accepts only a preview JSON path and optional --json.%s\n' "$_QS_RED" "$_QS_NC" >&2
+            exit 2
+        fi
+        _qs_verify_preview "$verify_preview" "$json_output"
+        return $?
+    fi
 
     # Continuation is a standalone execution shape. Explicit argv consent is
     # mandatory, and no caller-supplied input or selector may compete with the

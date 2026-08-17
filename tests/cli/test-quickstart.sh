@@ -1073,6 +1073,104 @@ else
     log_fail "terminal preview stdin" "PTY refusal or zero-side-effect contract missing"
 fi
 
+# ===========================================================================
+# Provider-free preview verification (LOKI-QUICKSTART-PREVIEW-VERIFY-62).
+# ===========================================================================
+
+# A valid idea preview verifies against the currently shipped template without
+# exposing the idea or crossing provider, estimator, write, or build seams.
+T48="$TMP/t48"; mkdir -p "$T48"
+make_harness "$T48" "$PREVIEW_NONINT"
+(cd "$T48" && run_to 15 bash -c 'source ./harness.sh; cmd_quickstart "private reporting workspace" --template dashboard --dry-run --json </dev/null' >preview.json 2>/dev/null); rc=$?
+make_harness "$T48" '_qs_selected_provider() { printf provider-called > "$PWD/provider-called"; printf codex; }
+show_prd_plan() { printf estimator-called > "$PWD/estimator-called"; return 1; }'
+(cd "$T48" && run_to 15 bash -c 'source ./harness.sh; cmd_quickstart --verify-preview preview.json </dev/null' >stdout 2>stderr); rc=$?
+if [ "$rc" -eq 0 ] && grep -q '^VERIFIED / SHIPPED_TEMPLATE_MATCH / template=dashboard$' "$T48/stdout" && ! grep -q 'private reporting workspace' "$T48/stdout" && [ ! -s "$T48/stderr" ] && [ ! -e "$T48/provider-called" ] && [ ! -e "$T48/estimator-called" ] && [ ! -e "$T48/prd.md" ] && [ ! -e "$T48/cmd_start.log" ]; then
+    log_pass "idea preview verification: shipped template match with privacy-safe output and zero execution"
+else
+    log_fail "idea preview verification" "rc=$rc, output leaked input, or an execution seam was crossed"
+fi
+
+# JSON verification is one stable schema-v1 object derived from the same
+# validation result, with no idea value or path.
+T49="$TMP/t49"; mkdir -p "$T49"
+cp "$T48/preview.json" "$T49/preview.json"
+make_harness "$T49" '_qs_selected_provider() { printf provider-called > "$PWD/provider-called"; printf codex; }
+show_prd_plan() { printf estimator-called > "$PWD/estimator-called"; return 1; }'
+(cd "$T49" && run_to 15 bash -c 'source ./harness.sh; cmd_quickstart --verify-preview preview.json --json </dev/null' >stdout 2>stderr); rc=$?
+if [ "$rc" -eq 0 ] && python3 - "$T49/stdout" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert payload == {
+    "command": "loki quickstart",
+    "input_kind": "idea",
+    "mode": "verify-preview",
+    "prd_sha256": None,
+    "schema_version": 1,
+    "selected_template": "dashboard",
+    "valid": True,
+    "verdict": "SHIPPED_TEMPLATE_MATCH",
+}
+PY
+then
+    if [ ! -s "$T49/stderr" ] && [ ! -e "$T49/provider-called" ] && [ ! -e "$T49/estimator-called" ] && [ ! -e "$T49/prd.md" ] && [ ! -e "$T49/cmd_start.log" ]; then
+        log_pass "idea preview JSON verification: stable privacy-safe schema and zero execution"
+    else
+        log_fail "idea preview JSON verification" "an execution seam was crossed"
+    fi
+else
+    log_fail "idea preview JSON verification" "rc=$rc or schema mismatch"
+fi
+
+# A PRD preview verifies only while the digest-bound readable non-symlink source
+# remains exact, and reports no source path.
+T50="$TMP/t50"; mkdir -p "$T50"
+printf '# Private customer PRD\n' > "$T50/customer-secret-name.md"
+make_harness "$T50" "$PREVIEW_NONINT"
+(cd "$T50" && run_to 15 bash -c 'source ./harness.sh; cmd_quickstart "$PWD/customer-secret-name.md" --dry-run --json </dev/null' >preview.json 2>/dev/null); rc=$?
+expected_digest=$(shasum -a 256 "$T50/customer-secret-name.md" | awk '{print $1}')
+make_harness "$T50" '_qs_selected_provider() { printf provider-called > "$PWD/provider-called"; printf codex; }
+show_prd_plan() { printf estimator-called > "$PWD/estimator-called"; return 1; }'
+(cd "$T50" && run_to 15 bash -c 'source ./harness.sh; cmd_quickstart --verify-preview preview.json </dev/null' >stdout 2>stderr); rc=$?
+if [ "$rc" -eq 0 ] && grep -q "^VERIFIED / EXACT_PRD_MATCH / sha256=$expected_digest$" "$T50/stdout" && ! grep -q 'customer-secret-name' "$T50/stdout" && [ ! -s "$T50/stderr" ] && [ ! -e "$T50/provider-called" ] && [ ! -e "$T50/estimator-called" ] && [ ! -e "$T50/prd.md" ] && [ ! -e "$T50/cmd_start.log" ]; then
+    log_pass "PRD preview verification: exact digest match without path disclosure or execution"
+else
+    log_fail "PRD preview verification" "rc=$rc, path leaked, or exact no-execution contract missing"
+fi
+
+# Stale PRD evidence refuses before every execution seam and emits no success
+# metadata.
+printf '# Changed customer PRD\n' > "$T50/customer-secret-name.md"
+(cd "$T50" && run_to 15 bash -c 'source ./harness.sh; cmd_quickstart --verify-preview preview.json --json </dev/null' >stale.stdout 2>stale.stderr); rc=$?
+if [ "$rc" -eq 2 ] && [ ! -s "$T50/stale.stdout" ] && grep -q 'has changed since the saved preview' "$T50/stale.stderr" && [ ! -e "$T50/provider-called" ] && [ ! -e "$T50/estimator-called" ] && [ ! -e "$T50/prd.md" ] && [ ! -e "$T50/cmd_start.log" ]; then
+    log_pass "stale PRD preview verification refuses with zero success output or execution"
+else
+    log_fail "stale PRD preview verification" "rc=$rc or refusal boundary missing"
+fi
+
+# File-free verification accepts one bounded pipe. Parser conflicts remain
+# explicit, and never fall through to provider or write/build behavior.
+T51="$TMP/t51"; mkdir -p "$T51"
+cp "$T48/preview.json" "$T51/preview.json"
+make_harness "$T51" '_qs_selected_provider() { printf provider-called > "$PWD/provider-called"; printf codex; }
+show_prd_plan() { printf estimator-called > "$PWD/estimator-called"; return 1; }'
+(cd "$T51" && run_to 15 bash -c 'source ./harness.sh; cat preview.json | cmd_quickstart --verify-preview - --json' >stdout 2>stderr); rc=$?
+ok=true
+[ "$rc" -eq 0 ] || ok=false
+grep -q '"verdict":"SHIPPED_TEMPLATE_MATCH"' "$T51/stdout" || ok=false
+for args in '--verify-preview preview.json --yes' '--verify-preview preview.json --dry-run' '--verify-preview preview.json --from-preview preview.json --yes' '--verify-preview preview.json competing-input'; do
+    (cd "$T51" && run_to 15 bash -c "source ./harness.sh; cmd_quickstart $args </dev/null" >"conflict-${args// /_}.stdout" 2>"conflict-${args// /_}.stderr"); rc=$?
+    [ "$rc" -eq 2 ] || ok=false
+done
+if [ "$ok" = true ] && [ ! -e "$T51/provider-called" ] && [ ! -e "$T51/estimator-called" ] && [ ! -e "$T51/prd.md" ] && [ ! -e "$T51/cmd_start.log" ]; then
+    log_pass "piped preview verification succeeds while conflicting shapes refuse before execution"
+else
+    log_fail "piped preview verification and conflicts" "a pipe/conflict result or no-execution boundary failed"
+fi
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

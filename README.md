@@ -101,12 +101,17 @@ object instead of terminal text:
 
 ```bash
 loki quickstart "a todo app with user accounts" --dry-run --json > preview.json
+loki quickstart --verify-preview preview.json --json
 loki quickstart --from-preview preview.json --yes
 ```
 
 The object contains the input kind, deterministic selected template (or `null`
 for an existing PRD), the exact estimator response under `plan`, and a bounded
 continuation containing the exact idea/template or the PRD path and SHA-256.
+`--verify-preview` validates the same bounded duplicate-key-rejecting schema and
+requires either a currently shipped idea template or the unchanged digest-bound
+PRD, while emitting no idea or PRD path. It accepts a file or piped stdin and
+returns before provider discovery, estimation, writes, or build execution.
 `--from-preview` requires explicit argv `--yes`, rejects malformed, conflicting,
 symlinked, or changed inputs before provider and build boundaries, then uses the
 existing no-clobber quickstart path. The saved plan is evidence rather than
