@@ -31,6 +31,12 @@ afterEach(() => {
 });
 
 describe("v7.5.2 concurrency fixes (B1 + B4)", () => {
+  // This is an exact persistence assertion over 200 fsync-heavy appends. On
+  // pinned Bun 1.3.13 under a loaded Ubuntu runner it can exceed Bun's 5s
+  // default without any lost update (two consecutive exact-SHA runs reached
+  // the timeout after the other 1,562 tests passed). Keep the assertion exact
+  // and give the filesystem workload the same bounded budget as its 100-way
+  // concurrent sibling below.
   it("B1: 200 sequential appends do not throw and persist all unique entries", async () => {
     // The pre-fix bug was a leak (Map grew unbounded); a soft proof is that
     // many sequential appends complete without OOM/deadlock and the on-disk
@@ -54,7 +60,7 @@ describe("v7.5.2 concurrency fixes (B1 + B4)", () => {
     // Spot-check first + last entries.
     const ids = new Set(file.learnings.map((l) => l.id));
     expect(ids.size).toBe(200);
-  });
+  }, 30_000);
 
   // Timeout raised from bun's 5s default. This test does 100 lock-serialized
   // filesystem appends, so its wall time tracks RUNNER DISK SPEED, not code
