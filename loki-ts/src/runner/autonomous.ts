@@ -30,6 +30,10 @@ import { maybeGenerateProof } from "./proof.ts";
 import { cavemanCaptureUserMode } from "../providers/claude_flags.ts";
 import { resolvePrdForRun } from "./prd_reuse.ts";
 import { decideRecovery } from "./recovery_policy.ts";
+import { routeTaskClass, type TaskClass } from "./capability_router.ts";
+// Type-only: erased at build, so the runtime module stays behind the existing
+// graceful dynamic import below.
+import type { RarvPhase } from "./rarv.ts";
 
 // ---------------------------------------------------------------------------
 // Graceful dynamic imports.
@@ -398,6 +402,32 @@ const fileSignals: SignalSource = {
   },
 };
 
+// Derive the task class for an iteration from REAL request context.
+//
+// Deterministic and table-driven on purpose: the RARV cycle phase is already
+// computed each iteration (getRarvPhaseName), is independent of session pinning
+// so a pinned run still rotates through phases, and is a pure function of the
+// iteration counter. That makes every routing decision predictable from the
+// iteration number alone -- no classifier, no scoring, no regex over agent prose.
+//
+// A retry short-circuits to "recovery": re-attempting work that already failed
+// is exactly the case the router refuses to route below development strength.
+export function taskClassForIteration(phase: RarvPhase, retryCount: number): TaskClass {
+  if (retryCount > 0) return "recovery";
+  switch (phase) {
+    case "REASON":
+      return "planning";
+    case "ACT":
+      return "implementation";
+    case "REFLECT":
+      return "review";
+    case "VERIFY":
+      return "verification";
+    default:
+      return "implementation";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public entrypoint.
 // ---------------------------------------------------------------------------
@@ -696,6 +726,52 @@ async function runAutonomousCore(
       });
       log(`[runner] RARV Phase: ${phase} -> Tier: ${tier}`);
       ctx.currentTier = tier;
+
+      // Harness intelligence (feature 5): activate capability/task-class routing.
+      // The router module existed with zero production callers -- every routing
+      // decision it documented was reachable only from a unit test.
+      //
+      // We route the TIER, never the model. providers.ts:314-319 resolves
+      // tier -> claudeTierToModel -> tierRouteModel -> applyMaxTierCeiling;
+      // injecting a model here would bypass the LOKI_MAX_TIER ceiling and
+      // diverge Bun from the bash resolver. Handing over a tier keeps
+      // providers.ts the sole owner of model identity.
+      //
+      // ponytail: `fable` is not a CapabilityTier and sessionCeiling() maps it
+      // to null, so routing a fable-pinned session would silently discard the
+      // pin. Skipping is the smallest correct fix; extend sessionCeiling() if
+      // fable ever needs real routing.
+      if (tier !== "fable") {
+        const decision = routeTaskClass(
+          taskClassForIteration(phase, ctx.retryCount),
+          String(ctx.currentTier),
+          {
+            iteration: ctx.iterationCount,
+            // Thread the SESSION model the runner actually resolved. The router
+            // reads LOKI_SESSION_MODEL for its ceiling, but the line above uses
+            // ctx.sessionModel -- leaving it to process.env would give the two
+            // different answers, and a caller that passes sessionModel through
+            // opts without exporting the env var would lose the ceiling entirely.
+            env: { ...process.env, LOKI_SESSION_MODEL: String(ctx.sessionModel) },
+          },
+        );
+        // Only a decision the router actually MADE may move the tier.
+        // routeTaskClass returns tier:"development" for BOTH "router_off" and
+        // "unknown_task_class"; assigning unconditionally would clobber an
+        // opus- or haiku-pinned session down to development with the flag OFF.
+        if (
+          decision.reason === "task_class" ||
+          decision.reason === "session_ceiling" ||
+          decision.reason === "explicit_override"
+        ) {
+          if (decision.tier !== ctx.currentTier) {
+            log(
+              `[runner] capability router: ${ctx.currentTier} -> ${decision.tier} (${decision.reason})`,
+            );
+          }
+          ctx.currentTier = decision.tier;
+        }
+      }
 
       // v7.5.10 (L5 BUG-9): persist the RARV phase so the dashboard's
       // 2s poll of `.loki/state/orchestrator.json` reflects the live phase

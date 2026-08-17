@@ -26,7 +26,8 @@ setDefaultTimeout(30_000);
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { runAutonomous } from "../../src/runner/autonomous.ts";
+import { runAutonomous, taskClassForIteration } from "../../src/runner/autonomous.ts";
+import { routeTaskClass } from "../../src/runner/capability_router.ts";
 import { buildPrompt } from "../../src/runner/build_prompt.ts";
 import { buildProfile } from "../../src/runner/repo_profile.ts";
 import { decideRecovery } from "../../src/runner/recovery_policy.ts";
@@ -109,6 +110,11 @@ const OWNED = [
   "LOKI_REPO_PROFILE",
   "LOKI_REPO_PROFILE_TTL_SECONDS",
   "LOKI_DIR",
+  "LOKI_CAPABILITY_ROUTER",
+  "LOKI_SESSION_MODEL",
+  "LOKI_MODEL_DEVELOPMENT",
+  "LOKI_CLAUDE_MODEL_DEVELOPMENT",
+  "LOKI_LEGACY_TIER_SWITCHING",
 ];
 function clearOwned(): void {
   for (const k of OWNED) delete process.env[k];
@@ -378,5 +384,211 @@ describe("repo profile reaches the prompt, not just the disk", () => {
       baseOpts({ maxIterations: 2, providerOverride: provider, gatesOverride: gates([]) }),
     );
     expect(logLines.some((l) => l.includes("repo profile derived:"))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Feature 5: capability/task-class routing is active in the runner.
+//
+// capability_router.ts had zero production callers. harness_intelligence.test.ts
+// asserted its semantics directly, and every one of those assertions stayed
+// green while the runner never once called routeTaskClass -- the same failure
+// mode features 6 and 8 had above.
+//
+// So these drive the REAL loop and observe the tier that actually reached
+// provider.invoke(). The primary assertion is a DIFFERENTIAL: the same scenario
+// run flag-off and flag-on must dispatch DIFFERENT tier sequences. A test that
+// only asserts the flag-on shape would still pass against a hardcoded tier.
+// ---------------------------------------------------------------------------
+
+// Drive the loop and return the tier handed to the provider each iteration.
+async function tierSequence(overrides: Partial<RunnerOpts> = {}): Promise<string[]> {
+  const provider = new FakeProvider(0, "done");
+  await runAutonomous(
+    // maxIterations 6 -> the cap check fires after the increment and before the
+    // provider call, so iterations 1..5 dispatch: 5 calls, one more than the 4
+    // the assertions index. Not sitting on the boundary.
+    baseOpts({ maxIterations: 6, providerOverride: provider, gatesOverride: gates([]), ...overrides }),
+  );
+  const seq = provider.calls.map((c) => String(c.tier));
+  // A short loop must fail LOUDLY here rather than producing `undefined`
+  // comparisons downstream. A differential over two length-1 arrays looks like
+  // a broken feature when the feature is fine.
+  expect(seq.length).toBeGreaterThanOrEqual(4);
+  return seq;
+}
+
+describe("capability router is active in the runner, not dormant", () => {
+  it("DIFFERENTIAL: the dispatched tier sequence changes when the flag flips", async () => {
+    // Legacy tier switching makes the RARV cycle rotate the phase, which is
+    // what the task class is derived from. Without it a pinned session reports
+    // one tier for every iteration and there is nothing to route.
+    process.env["LOKI_LEGACY_TIER_SWITCHING"] = "true";
+
+    const off = await tierSequence();
+    process.env["LOKI_CAPABILITY_ROUTER"] = "1";
+    const on = await tierSequence();
+
+    // The claim: routing changed what the runner actually dispatched.
+    expect(on).not.toEqual(off);
+    expect(on.length).toBe(off.length);
+    expect(on.length).toBeGreaterThan(0);
+  });
+
+  it("routes clean RARV phases to the tier their task class needs", async () => {
+    process.env["LOKI_LEGACY_TIER_SWITCHING"] = "true";
+    process.env["LOKI_CAPABILITY_ROUTER"] = "1";
+
+    const seq = await tierSequence();
+
+    // iteration 1 = ACT (implementation -> development)
+    // iteration 2 = REFLECT (review -> development)
+    // iteration 3 = VERIFY (verification -> fast)
+    // At the cycle boundary the harness has accumulated a retry, so iteration
+    // 4 is correctly short-circuited to recovery rather than planning.
+    expect(seq[0]).toBe("development");
+    expect(seq[1]).toBe("development");
+    expect(seq[2]).toBe("fast");
+    expect(seq[3]).toBe("development");
+  });
+
+  it("routing reclassifies a SESSION-PINNED run the RARV cycle would have frozen", async () => {
+    // The sharpest evidence that routing is real. With a sonnet-pinned session
+    // and legacy switching OFF (the shipping default), getRarvTier returns
+    // "development" for EVERY iteration -- the un-routed loop dispatches one
+    // frozen tier forever. Only the router can vary it by the work being done.
+    //
+    // This also isolates routing from the RARV cycle: under legacy switching
+    // the cycle tier and the routed tier coincide, so that path cannot tell a
+    // real router apart from a passthrough.
+    //
+    // LOKI_SESSION_MODEL is intentionally left unset: the ceiling must be
+    // threaded from ctx.sessionModel, not read from the ambient environment.
+    const off = await tierSequence({ sessionModel: "sonnet" });
+    expect(new Set(off).size).toBe(1);
+    expect(off[0]).toBe("development");
+
+    process.env["LOKI_CAPABILITY_ROUTER"] = "1";
+    const on = await tierSequence({ sessionModel: "sonnet" });
+
+    // Verification work now routes DOWN to fast instead of burning sonnet.
+    expect(new Set(on).size).toBeGreaterThan(1);
+    expect(on).not.toEqual(off);
+    // iteration 3 = VERIFY -> verification -> fast. A mutation collapsing the
+    // task-class table to a single tier fails right here.
+    expect(on[2]).toBe("fast");
+  });
+
+  it("a haiku-pinned session is never routed ABOVE its ceiling", async () => {
+    // The session ceiling is the operator's cost guarantee. Routing may go
+    // DOWN from it, never UP. Without the clamp, planning work on a haiku
+    // session would silently dispatch opus.
+    process.env["LOKI_CAPABILITY_ROUTER"] = "1";
+    process.env["LOKI_LEGACY_TIER_SWITCHING"] = "true";
+    // Deliberately NOT setting LOKI_SESSION_MODEL: the ceiling must come from
+    // the sessionModel the runner resolved. This fails if the runner leaves the
+    // router reading process.env instead of threading ctx.sessionModel.
+    const seq = await tierSequence({ sessionModel: "haiku" });
+
+    expect(seq.length).toBeGreaterThan(0);
+    for (const t of seq) expect(t).toBe("fast");
+  });
+
+  it("an explicit tier pin survives routing and reaches dispatch", async () => {
+    // Explicit override outranks the task-class table. The router resolves the
+    // tier, then the pin names the model for it -- so the TIER we dispatch must
+    // still be the routed one (providers.ts owns model identity).
+    process.env["LOKI_CAPABILITY_ROUTER"] = "1";
+    process.env["LOKI_MODEL_DEVELOPMENT"] = "pinned-dev-model";
+    process.env["LOKI_LEGACY_TIER_SWITCHING"] = "true";
+
+    const seq = await tierSequence();
+
+    // ACT/REFLECT still route to development; the pin does not move the tier.
+    expect(seq[0]).toBe("development");
+    expect(seq[1]).toBe("development");
+  });
+
+  it("a retry routes as recovery and never below development", async () => {
+    // Recovery re-attempts work that already failed. Routing it to `fast`
+    // is how a build burns its remaining attempts without progressing.
+    process.env["LOKI_CAPABILITY_ROUTER"] = "1";
+    process.env["LOKI_LEGACY_TIER_SWITCHING"] = "true";
+
+    // Fail the provider so the loop retries; retryCount > 0 forces "recovery".
+    const provider = new FakeProvider(1, "transient blip");
+    await runAutonomous(
+      baseOpts({
+        maxIterations: 3,
+        maxRetries: 3,
+        baseWaitSeconds: 0,
+        providerOverride: provider,
+        gatesOverride: gates([]),
+      }),
+    );
+
+    const tiers = provider.calls.map((c) => String(c.tier));
+    expect(tiers.length).toBeGreaterThan(1);
+    // Retries must never dispatch below development.
+    for (const t of tiers.slice(1)) expect(t).toBe("development");
+  });
+
+  it("the recovery short-circuit is what keeps a retried VERIFY off the fast tier", async () => {
+    // The discriminating case, asserted on the derivation directly.
+    //
+    // The loop test above cannot prove this: `implementation` and `recovery`
+    // BOTH map to development, so it passes with or without the short-circuit.
+    // The two classes only diverge on a VERIFY iteration, where a first attempt
+    // is verification (-> fast) and a retry must be recovery (-> development).
+    expect(taskClassForIteration("VERIFY", 0)).toBe("verification");
+    expect(taskClassForIteration("VERIFY", 1)).toBe("recovery");
+
+    // And that difference is consequential at the tier level.
+    const env = { LOKI_CAPABILITY_ROUTER: "1" };
+    expect(routeTaskClass("verification", "sonnet", { env }).tier).toBe("fast");
+    expect(routeTaskClass("recovery", "sonnet", { env }).tier).toBe("development");
+  });
+
+  // --- flag-off must be a byte-exact no-op ---------------------------------
+  //
+  // This is the one case unit tests cannot see, and the only way this
+  // activation can regress a shipping default. routeTaskClass() returns
+  // tier:"development" for BOTH "router_off" and "unknown_task_class", so an
+  // unconditional assignment silently clobbers a pinned session.
+
+  it("flag OFF leaves an opus-pinned session untouched", async () => {
+    process.env["LOKI_SESSION_MODEL"] = "opus";
+    const seq = await tierSequence({ sessionModel: "opus" });
+
+    expect(seq.length).toBeGreaterThan(0);
+    // Would be "development" if the router_off decision were assigned.
+    for (const t of seq) expect(t).toBe("planning");
+  });
+
+  it("flag OFF leaves a fable-pinned session untouched", async () => {
+    // fable is not a CapabilityTier and sessionCeiling() maps it to null, so
+    // it is the pin most easily lost. Must survive both flag states.
+    process.env["LOKI_SESSION_MODEL"] = "fable";
+    const seq = await tierSequence({ sessionModel: "fable" });
+
+    expect(seq.length).toBeGreaterThan(0);
+    for (const t of seq) expect(t).toBe("fable");
+  });
+
+  it("flag ON also leaves a fable-pinned session untouched", async () => {
+    // The router has no fable ceiling, so the runner skips routing entirely
+    // rather than discarding the pin.
+    process.env["LOKI_CAPABILITY_ROUTER"] = "1";
+    process.env["LOKI_SESSION_MODEL"] = "fable";
+    const seq = await tierSequence({ sessionModel: "fable" });
+
+    expect(seq.length).toBeGreaterThan(0);
+    for (const t of seq) expect(t).toBe("fable");
+  });
+
+  it("flag OFF logs no routing decision at all", async () => {
+    process.env["LOKI_LEGACY_TIER_SWITCHING"] = "true";
+    await tierSequence();
+    expect(logLines.some((l) => l.includes("capability router:"))).toBe(false);
   });
 });
