@@ -187,7 +187,14 @@ export function decideRecovery(sig: RecoverySignals, opts: DecideOpts = {}): Rec
 
   // (2) Positively-identified permanent failure. Retrying is guaranteed-identical
   // failure; stopping saves the budget for real work.
-  if (classified.klass === "non_retryable") {
+  //
+  // LOKI_SMART_RETRY=0 is the documented escape hatch for "retry regardless",
+  // and the runner's own log line advertises it by name. Honored here as well as
+  // on the flag-off path: previously it was read only inside shouldStopRetrying,
+  // so turning the recovery policy ON silently disabled the operator's opt-out
+  // while the log still told them to use it. An escape hatch that stops working
+  // when you enable the feature it guards is worse than not having one.
+  if (classified.klass === "non_retryable" && env["LOKI_SMART_RETRY"] !== "0") {
     return { action: "stop", reason: `permanent:${classified.reason}` };
   }
 

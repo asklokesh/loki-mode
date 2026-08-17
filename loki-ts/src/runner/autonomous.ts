@@ -565,6 +565,43 @@ async function runAutonomousCore(
     return 1;
   }
 
+  // Harness intelligence (feature 6): derive the repository profile ONCE per
+  // run, before the loop, so buildPrompt has a fresh profile to inject.
+  //
+  // Without this trigger the feature is inert even with LOKI_REPO_PROFILE=1:
+  // profileFragment() returns "" for any status other than "fresh", and the
+  // status is "absent" until something calls buildProfile. Nothing did.
+  //
+  // Once per run, not per iteration: the profile is hash-invalidated and
+  // TTL-bounded, so re-deriving it every iteration would re-stat the manifest
+  // files for a value that cannot have changed, and would rewrite the artifact
+  // the prompt prefix depends on being stable.
+  //
+  // Gated + best-effort: with the flag unset nothing is read or written, and a
+  // failure here must never abort a run that would otherwise succeed.
+  if (process.env["LOKI_REPO_PROFILE"] === "1") {
+    try {
+      const profileMod = await tryImport<{
+        buildProfile(o: { repoRoot: string; lokiDirOverride?: string }): { facts: unknown[] };
+      }>("./repo_profile.ts", ["buildProfile"]);
+      if (profileMod) {
+        // Address the SAME file the reader will open. build_prompt resolves the
+        // profile via LOKI_DIR (falling back to repo_profile's cwd default), so
+        // the writer must resolve it identically -- passing ctx.lokiDir here
+        // would write a file buildPrompt never reads whenever the two differ,
+        // leaving the fragment permanently empty with the flag ON.
+        const override = process.env["LOKI_DIR"];
+        const p = profileMod.buildProfile({
+          repoRoot: ctx.cwd,
+          lokiDirOverride: override !== undefined && override !== "" ? override : undefined,
+        });
+        log(`[runner] repo profile derived: ${p.facts.length} evidence-backed facts`);
+      }
+    } catch (err) {
+      log(`[runner] repo profile build failed (non-fatal): ${(err as Error).message}`);
+    }
+  }
+
   // -- Main loop (run.sh:10308-11099) --------------------------------------
   while (ctx.retryCount < ctx.maxRetries) {
     // BUG-ST-010: pause/stop check BEFORE incrementing iteration count.
@@ -875,10 +912,24 @@ async function runAutonomousCore(
       // LOKI_RECOVERY_POLICY unset it delegates to shouldStopRetrying and
       // reproduces the behavior described above verbatim.
       if (txt) {
+        // BUILD SIGNAL. decideRecovery's compile rule accepts an EXIT CODE only,
+        // never a regex over agent prose (recovery_policy.ts:17-28). The honest
+        // exit-code-derived signal in scope here is the test_coverage gate, which
+        // reads .loki/quality/test-results.json or runs the project's test
+        // command (quality_gates.ts:439-467).
+        //
+        // NOT outcome.exitCode: that is the PROVIDER's exit code. Passing it
+        // would classify every provider failure as build_failed and route it to
+        // `revise`, which is precisely the misclassification the compile-hazard
+        // comment exists to prevent. `undefined` means "no build signal", which
+        // is not a pass and not a failure -- the rule simply does not fire.
+        const buildExitCode = gateOutcome.failed.includes("test_coverage") ? 1 : undefined;
+
         const recovery = decideRecovery(
-          { output: txt, attempts: ctx.retryCount },
+          { output: txt, attempts: ctx.retryCount, buildExitCode },
           { env: process.env as NodeJS.ProcessEnv },
         );
+
         if (recovery.action === "stop" || recovery.action === "escalate") {
           log(
             `[runner] recovery decision '${recovery.action}' (${recovery.reason}); stopping early ` +
@@ -887,6 +938,22 @@ async function runAutonomousCore(
           );
           await persistState(stateMod, ctx, "failed", 1);
           return ent3ExitCode("failed", 1);
+        }
+
+        // `revise` -- the work was wrong, not the transport. Re-attempting after
+        // an exponential backoff wastes the wait: nothing about the tree changes
+        // while we sleep, and the next iteration rebuilds its prompt with the
+        // failing gate in scope. Skip the backoff and re-attempt immediately.
+        //
+        // Previously `revise` fell through to generic backoff-retry, making the
+        // decision observationally identical to `retry` -- the rule the module
+        // documents most carefully was wired to no behavior at all.
+        if (recovery.action === "revise") {
+          log(
+            `[runner] recovery decision 'revise' (${recovery.reason}); re-attempting ` +
+              `without backoff -- the build signal is actionable, not transient.`,
+          );
+          wait = 0;
         }
       }
 

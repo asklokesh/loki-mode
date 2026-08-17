@@ -40,6 +40,7 @@ import { resolve, dirname } from "node:path";
 import { runInline } from "../util/python.ts";
 import { detectComplexity } from "./rarv.ts";
 import { goalSharpeningInstruction } from "./goal_score.ts";
+import { profileFragment } from "./repo_profile.ts";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -1640,6 +1641,31 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
   // against the mode the user explicitly chose.
   const goalSharpening = perpetual ? "" : goalSharpeningInstruction(completionPromise, env);
   if (goalSharpening.length > 0) lines.push(goalSharpening);
+
+  // Harness intelligence (feature 6): evidence-backed repository profile.
+  // Cache-stable for the same reason as the goal advisory above -- the profile
+  // is derived from repo manifest files, hash-invalidated and TTL-bounded, so it
+  // does not change between iterations. It therefore belongs in the prefix, NOT
+  // in <dynamic_context> where it would bust the prompt cache every iteration.
+  //
+  // DEFAULT OFF (LOKI_REPO_PROFILE): profileFragment returns "" with the flag
+  // unset, and also whenever the profile is anything other than fresh. That
+  // empty-string default is what keeps the 60 byte-exact parity fixtures green,
+  // since they build with an injected env object carrying no such flag.
+  //
+  // Not added to the DEGRADED path below, matching goalSharpening: that path
+  // carries a minimal instruction set by design.
+  // lokiDirOverride is threaded explicitly: the writer (autonomous.ts, once per
+  // run) passes ctx.lokiDir, while repo_profile's default resolves from
+  // process.cwd()/LOKI_DIR. When those differ the write and the read address
+  // different files, and the fragment would silently stay empty forever -- a
+  // false-green that no flag-off test could ever catch. Same value, both sides.
+  const repoProfile = profileFragment({
+    repoRoot: ctx.cwd,
+    lokiDirOverride: envStr(env, "LOKI_DIR", "") || undefined,
+    env,
+  });
+  if (repoProfile.length > 0) lines.push(repoProfile);
   if (prd === null || prd.length === 0) {
     // v7.40.0 (#584): emit the autonomous-decision cost disclosure once per run
     // BEFORE pushing the (possibly workflow-prefixed) analysis instruction. The
