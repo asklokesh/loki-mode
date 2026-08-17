@@ -220,7 +220,12 @@ def main():
 
         ttfr = journey.get("time_to_first_result_sec")
         if isinstance(ttfr, int):
-            _line("| Time to first result | " + str(ttfr) + "s |")
+            first_kind = str(journey.get("first_result_kind") or "").strip()
+            if first_kind == "proposed_solution_plan":
+                _line("| First useful result | proposed plan in " + str(ttfr)
+                      + "s (not a verified patch) |")
+            else:
+                _line("| Time to first result | " + str(ttfr) + "s |")
 
         ivs = journey.get("interventions")
         if isinstance(ivs, int):

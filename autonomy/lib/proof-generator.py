@@ -1031,13 +1031,24 @@ def _collect_journey(loki_dir):
         },
     }
 
-    # Time to first useful result. Reuses the number run.sh already writes; we
-    # do not add a second writer and we never synthesize the value.
+    # Time to first useful result. Prefer the first verified code artifact when
+    # one exists. Before that, issue mode can truthfully report its acceptance-
+    # bound proposed plan, explicitly labelled as NOT a verified patch.
     fa = _read_json(os.path.join(state, "first-artifact.json"), default=None)
     if isinstance(fa, dict):
         v = fa.get("seconds_to_first_artifact")
         if isinstance(v, (int, float)) and v >= 0:
             out["time_to_first_result_sec"] = int(v)
+            out["first_result_kind"] = "code_change"
+            out["first_result_verified_patch"] = True
+    else:
+        fr = _read_json(os.path.join(state, "first-useful-result.json"), default=None)
+        if isinstance(fr, dict):
+            v = fr.get("seconds_to_first_result")
+            if isinstance(v, (int, float)) and v >= 0:
+                out["time_to_first_result_sec"] = int(v)
+                out["first_result_kind"] = str(fr.get("kind") or "")
+                out["first_result_verified_patch"] = bool(fr.get("verified_patch") is True)
 
     # Human interventions. Fills the socket trust_trajectory.py:145 already
     # reads and documents as "no per-run counter persisted today". Absent file

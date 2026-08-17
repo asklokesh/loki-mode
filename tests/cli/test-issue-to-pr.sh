@@ -143,11 +143,12 @@ mkdir -p "$CTX_DIR"
     export LOKI_DIR="$CTX_DIR/.loki"
     acc=$(extract_acceptance_criteria "$FIXTURE_BODY")
     write_journey_context octocat hello 42 "Fix 404 on missing user" \
-        "https://github.com/octocat/hello/issues/42" "$acc" "" bug high
+        "https://github.com/octocat/hello/issues/42" "$acc" "" bug high "$(date +%s)"
 ) >/dev/null 2>&1
 
 CTX="$CTX_DIR/.loki/state/issue-context.json"
 PLAN="$CTX_DIR/.loki/state/journey-plan.json"
+FIRST="$CTX_DIR/.loki/state/first-useful-result.json"
 
 if [ -f "$CTX" ] && python3 - "$CTX" <<'PY'
 import json, sys
@@ -166,6 +167,21 @@ then
     log_pass "acceptance criteria imported verbatim (prose excluded)"
 else
     log_fail "acceptance import" "issue-context.json missing or criteria wrong"
+fi
+
+if [ -f "$FIRST" ] && python3 - "$FIRST" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["kind"] == "proposed_solution_plan", r
+assert r["verified_patch"] is False, r
+assert isinstance(r["seconds_to_first_result"], int), r
+assert r["under_60_seconds"] == (r["seconds_to_first_result"] < 60), r
+assert r["artifact"] == ".loki/state/journey-plan.json", r
+PY
+then
+    log_pass "first useful result is timed and explicitly not a verified patch"
+else
+    log_fail "first useful result" "missing, unmeasured, or overstated"
 fi
 
 if [ -f "$PLAN" ] && python3 - "$PLAN" <<'PY'
@@ -332,7 +348,9 @@ assert m._collect_journey(tempfile.mkdtemp()) == {}, "empty dir must yield {}"
 j = m._collect_journey(sys.argv[2])
 assert j["acceptance"]["stated_count"] == 3, j
 assert j["acceptance"]["addressed_count"] is None, j
-assert "time_to_first_result_sec" not in j, j
+assert j["time_to_first_result_sec"] >= 0, j
+assert j["first_result_kind"] == "proposed_solution_plan", j
+assert j["first_result_verified_patch"] is False, j
 sys.exit(0)
 PY
 then

@@ -265,7 +265,7 @@ _gp_criteria_lines() {
 }
 
 # write_journey_context <owner> <repo> <number> <title> <url> <acceptance>
-#                       <files> <type> <priority>
+#                       <files> <type> <priority> [journey-start-epoch]
 #
 # Writes .loki/state/issue-context.json (feature 2: the exact acceptance context)
 # and .loki/state/journey-plan.json (feature 3: the early machine-readable
@@ -277,6 +277,7 @@ _gp_criteria_lines() {
 write_journey_context() {
     local owner="$1" repo="$2" number="$3" title="$4" url="$5"
     local acceptance="$6" files="$7" issue_type="$8" priority="$9"
+    local journey_started_epoch="${10:-}"
 
     local state_dir="${LOKI_DIR:-.loki}/state"
     mkdir -p "$state_dir" 2>/dev/null || return 0
@@ -347,6 +348,34 @@ write_journey_context() {
     else
         rm -f "$plan_tmp" 2>/dev/null || true
     fi
+
+    # The parsed, acceptance-bound plan is the first useful result: it tells the
+    # user what Loki understood and what it will attempt before provider latency
+    # begins. Measure it honestly from command entry when the caller supplied a
+    # valid epoch. This is explicitly a proposed plan, never represented as a
+    # verified patch. Later first-artifact evidence supersedes it in receipts.
+    case "$journey_started_epoch" in
+        ''|*[!0-9]*) ;;
+        *)
+            local now_epoch elapsed first_tmp
+            now_epoch="$(date +%s)"
+            elapsed=$((now_epoch >= journey_started_epoch ? now_epoch - journey_started_epoch : 0))
+            first_tmp="$state_dir/.first-useful-result.$$.json"
+            if jq -n --argjson seconds "$elapsed" \
+                --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                '{schema_version:"1.0", kind:"proposed_solution_plan",
+                  seconds_to_first_result:$seconds,
+                  under_60_seconds:($seconds < 60),
+                  verified_patch:false, generated_at:$generated_at,
+                  artifact:".loki/state/journey-plan.json"}' \
+                > "$first_tmp" 2>/dev/null; then
+                mv -f "$first_tmp" "$state_dir/first-useful-result.json" 2>/dev/null \
+                    || rm -f "$first_tmp"
+            else
+                rm -f "$first_tmp" 2>/dev/null || true
+            fi
+            ;;
+    esac
 
     return 0
 }

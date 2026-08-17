@@ -9694,6 +9694,12 @@ cmd_issue_view() {
 #===============================================================================
 
 cmd_run() {
+    # Wall-clock anchor for the issue journey. Captured before argument parsing,
+    # auth, or issue fetch so the first-result measurement includes the wait the
+    # user actually experiences. Exported only through the explicit writer call
+    # below; it does not alter runner/provider behavior.
+    local _issue_journey_started_epoch
+    _issue_journey_started_epoch="$(date +%s)"
     # v6.84.0: `loki run` is now a deprecated alias for `loki start <issue-ref>`.
     # When invoked directly (not via the unified start dispatcher), emit a
     # deprecation notice and a telemetry event so we can track adoption of the
@@ -10060,7 +10066,8 @@ cmd_run() {
             _gp_acc=$(extract_acceptance_criteria "$_gp_body" 2>/dev/null || true)
         fi
         write_journey_context "$_gp_owner" "$_gp_repo" "${number:-}" "$title" \
-            "$url" "$_gp_acc" "" "${issue_provider:-github}" "" 2>/dev/null || true
+            "$url" "$_gp_acc" "" "${issue_provider:-github}" "" \
+            "$_issue_journey_started_epoch" 2>/dev/null || true
     fi
 
     # Per-session locking (v6.4.0): export session ID so run.sh uses
