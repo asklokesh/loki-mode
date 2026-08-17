@@ -30,6 +30,11 @@ import { maybeGenerateProof } from "./proof.ts";
 import { cavemanCaptureUserMode } from "../providers/claude_flags.ts";
 import { resolvePrdForRun } from "./prd_reuse.ts";
 import { decideRecovery } from "./recovery_policy.ts";
+import {
+  checkpointedStateCorrupt,
+  providerUnavailableFromThrow,
+  rollbackLatestCheckpoint,
+} from "./recovery_runtime.ts";
 import { routeTaskClass, type TaskClass } from "./capability_router.ts";
 // Type-only: erased at build, so the runtime module stays behind the existing
 // graceful dynamic import below.
@@ -633,6 +638,9 @@ async function runAutonomousCore(
   }
 
   // -- Main loop (run.sh:10308-11099) --------------------------------------
+  // One-shot tier requested by recovery. Applied after the normal RARV/router
+  // calculation on the next attempt so that calculation cannot erase failover.
+  let recoveryTierOverride: SessionTier | undefined;
   while (ctx.retryCount < ctx.maxRetries) {
     // BUG-ST-010: pause/stop check BEFORE incrementing iteration count.
     const intervention = await signals.checkHumanIntervention(ctx);
@@ -772,6 +780,10 @@ async function runAutonomousCore(
           ctx.currentTier = decision.tier;
         }
       }
+      if (recoveryTierOverride !== undefined) {
+        ctx.currentTier = recoveryTierOverride;
+        recoveryTierOverride = undefined;
+      }
 
       // v7.5.10 (L5 BUG-9): persist the RARV phase so the dashboard's
       // 2s poll of `.loki/state/orchestrator.json` reflects the live phase
@@ -798,6 +810,7 @@ async function runAutonomousCore(
     const startedAt = clock.now();
     const iterOutputPath = makeIterationOutputPath(ctx);
     let result: ProviderResult;
+    let providerUnavailable = false;
     try {
       result = await provider.invoke({
         provider: ctx.provider,
@@ -809,6 +822,7 @@ async function runAutonomousCore(
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      providerUnavailable = providerUnavailableFromThrow(msg);
       log(`[runner] provider invocation threw: ${msg}`);
       result = { exitCode: 1, capturedOutputPath: iterOutputPath };
     }
@@ -836,6 +850,7 @@ async function runAutonomousCore(
             taskId: string;
             taskDescription?: string;
             forceCreate?: boolean;
+            lokiDirOverride?: string;
           }): Promise<unknown>;
         }>("./checkpoint.ts", ["createCheckpoint"]);
         if (ckptMod) {
@@ -844,6 +859,7 @@ async function runAutonomousCore(
             taskId: ctx.prdPath ?? "codebase-analysis",
             taskDescription: `iteration ${ctx.iterationCount} success`,
             forceCreate: true,
+            lokiDirOverride: ctx.lokiDir,
           });
         }
       } catch (err) {
@@ -987,7 +1003,7 @@ async function runAutonomousCore(
       // repeated-signature circuit breaker. It is DEFAULT OFF: with
       // LOKI_RECOVERY_POLICY unset it delegates to shouldStopRetrying and
       // reproduces the behavior described above verbatim.
-      if (txt) {
+      if (txt || providerUnavailable || checkpointedStateCorrupt(ctx.lokiDir)) {
         // BUILD SIGNAL. decideRecovery's compile rule accepts an EXIT CODE only,
         // never a regex over agent prose (recovery_policy.ts:17-28). The honest
         // exit-code-derived signal in scope here is the test_coverage gate, which
@@ -1002,7 +1018,13 @@ async function runAutonomousCore(
         const buildExitCode = gateOutcome.failed.includes("test_coverage") ? 1 : undefined;
 
         const recovery = decideRecovery(
-          { output: txt, attempts: ctx.retryCount, buildExitCode },
+          {
+            output: txt,
+            attempts: ctx.retryCount,
+            buildExitCode,
+            treeCorrupt: checkpointedStateCorrupt(ctx.lokiDir),
+            providerUnavailable,
+          },
           { env: process.env as NodeJS.ProcessEnv },
         );
 
@@ -1030,6 +1052,37 @@ async function runAutonomousCore(
               `without backoff -- the build signal is actionable, not transient.`,
           );
           wait = 0;
+        }
+
+        if (recovery.action === "failover") {
+          if (!recovery.requestTier) {
+            log("[runner] recovery failover omitted a tier; refusing unsafe retry");
+            await persistState(stateMod, ctx, "failed", 1);
+            return ent3ExitCode("failed", 1);
+          }
+          recoveryTierOverride = recovery.requestTier;
+          wait = 0;
+          log(
+            `[runner] recovery decision 'failover' (${recovery.reason}); ` +
+              `requesting ${recovery.requestTier} tier without backoff`,
+          );
+        }
+
+        if (recovery.action === "checkpoint_rollback") {
+          try {
+            const restored = await rollbackLatestCheckpoint(ctx.lokiDir);
+            wait = 0;
+            log(
+              `[runner] recovery decision 'checkpoint_rollback' (${recovery.reason}); ` +
+                `restored ${restored.restored} files from ${restored.checkpointId}`,
+            );
+          } catch (err) {
+            log(
+              `[runner] checkpoint rollback failed closed: ${(err as Error).message}; stopping`,
+            );
+            await persistState(stateMod, ctx, "failed", 1);
+            return ent3ExitCode("failed", 1);
+          }
         }
       }
 

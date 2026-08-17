@@ -158,6 +158,69 @@ function baseOpts(overrides: Partial<RunnerOpts> = {}): RunnerOpts {
 // ---------------------------------------------------------------------------
 
 describe("recovery policy is active in the runner, not dormant", () => {
+  it("a confirmed provider outage fails over to the requested tier without backoff", async () => {
+    process.env["LOKI_RECOVERY_POLICY"] = "1";
+    const clock = new RecordingClock();
+    const calls: ProviderInvocation[] = [];
+    const provider: ProviderInvoker = {
+      async invoke(call) {
+        calls.push(call);
+        if (calls.length === 1) throw new Error("connect ECONNREFUSED 127.0.0.1");
+        mkdirSync(resolve(call.iterationOutputPath, ".."), { recursive: true });
+        writeFileSync(call.iterationOutputPath, "ordinary transient failure");
+        return { exitCode: 1, capturedOutputPath: call.iterationOutputPath };
+      },
+    };
+
+    await runAutonomous(
+      baseOpts({
+        clock,
+        sessionModel: "fast",
+        providerOverride: provider,
+        gatesOverride: gates([]),
+      }),
+    );
+
+    expect(calls.length).toBeGreaterThan(1);
+    expect(calls[0]?.tier).toBe("fast");
+    expect(calls[1]?.tier).toBe("development");
+    expect(logLines.some((l) => l.includes("recovery decision 'failover'"))).toBe(true);
+    expect(clock.sleeps[0]).toBe(0);
+  });
+
+  it("malformed checkpointed state is restored in-loop before retry", async () => {
+    process.env["LOKI_RECOVERY_POLICY"] = "1";
+    const statePath = resolve(tmpRoot, ".loki/queue/current-task.json");
+    mkdirSync(resolve(statePath, ".."), { recursive: true });
+    writeFileSync(statePath, '{"task":"known-good"}');
+    let calls = 0;
+    let stateSeenOnRetry: unknown;
+    const provider: ProviderInvoker = {
+      async invoke(call) {
+        calls += 1;
+        mkdirSync(resolve(call.iterationOutputPath, ".."), { recursive: true });
+        writeFileSync(call.iterationOutputPath, "ordinary output");
+        if (calls === 1) return { exitCode: 0, capturedOutputPath: call.iterationOutputPath };
+        if (calls === 2) writeFileSync(statePath, "{truncated");
+        else stateSeenOnRetry = JSON.parse(await Bun.file(statePath).text());
+        return { exitCode: 1, capturedOutputPath: call.iterationOutputPath };
+      },
+    };
+
+    await runAutonomous(
+      baseOpts({
+        maxIterations: 4,
+        providerOverride: provider,
+        gatesOverride: gates([]),
+        council: { async shouldStop() { return false; } },
+      }),
+    );
+
+    expect(JSON.parse(await Bun.file(statePath).text())).toEqual({ task: "known-good" });
+    expect(stateSeenOnRetry).toEqual({ task: "known-good" });
+    expect(logLines.some((l) => l.includes("recovery decision 'checkpoint_rollback'"))).toBe(true);
+  });
+
   it("a failing test_coverage gate produces `revise`, and revise skips the backoff", async () => {
     process.env["LOKI_RECOVERY_POLICY"] = "1";
     const clock = new RecordingClock();
