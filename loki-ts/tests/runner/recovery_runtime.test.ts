@@ -46,10 +46,12 @@ describe("recovery runtime signals", () => {
     const cp = await createCheckpoint({
       iteration: 1,
       taskId: "recovery-test",
+      taskDescription: "restore a known-good checkpoint",
       forceCreate: true,
       lokiDirOverride: r,
     });
     expect(cp.created).toBe(true);
+    if (!cp.created) throw new Error(`checkpoint creation failed: ${cp.reason}`);
     writeFileSync(state, "{truncated");
 
     const restored = await rollbackLatestCheckpoint(r);
