@@ -131,6 +131,8 @@ else
     bad "provider documentation is missing required MiniMax configuration"
 fi
 
+# The quoted script is expanded by the nested shell, not this test process.
+# shellcheck disable=SC2016
 anthropic_model="$({
     env -i HOME="$HOME" PATH="$PATH" \
         ANTHROPIC_BASE_URL="https://api.minimax.io/anthropic" \
@@ -143,6 +145,8 @@ else
     bad "Anthropic-compatible adapter resolved '$anthropic_model'"
 fi
 
+# The quoted script is expanded by the nested shell, not this test process.
+# shellcheck disable=SC2016
 aider_model="$({
     env -i HOME="$HOME" PATH="$PATH" \
         OPENAI_API_BASE="https://api.minimax.io/v1" \
