@@ -5,6 +5,15 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.22.11
+
+### Added
+
+- **MiniMax model catalog support:** local operators can select MiniMax-M3 or
+  MiniMax-M2.7 through Loki's existing Anthropic-compatible or OpenAI-compatible
+  adapters, with documented global and China endpoints plus explicit context,
+  capability, pricing, and experimental-route metadata.
+
 ## v9.22.10
 
 ### Added

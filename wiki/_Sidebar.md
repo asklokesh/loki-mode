@@ -43,6 +43,6 @@
 
 ---
 
-**Version:** 9.22.10
+**Version:** 9.22.11
 
 [Autonomi](https://www.autonomi.dev/) | [GitHub](https://github.com/asklokesh/loki-mode) | [npm](https://www.npmjs.com/package/loki-mode)
