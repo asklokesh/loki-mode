@@ -5,6 +5,26 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.22.10
+
+### Added
+
+- **Honest first useful result timing:** issue runs now record the measured
+  command-entry-to-plan latency, whether it beat 60 seconds, and explicitly
+  distinguish a proposed plan from a verified patch. Later verified patch
+  evidence supersedes the plan measurement without manufacturing a success.
+- **Executable recovery:** real provider outages can trigger bounded tier
+  failover, while validated Loki-state corruption can restore the newest valid
+  checkpoint through a mandatory pre-rollback safety snapshot. Unsafe or
+  incomplete recovery fails closed.
+- **Explicit prepared-PR publishing:** `loki ship --publish` is the deliberate
+  GitHub mutation boundary. It publishes the exact prepared title and evidence
+  body, reuses an existing open PR idempotently, preserves artifacts on
+  failure, and provides exact branch rollback guidance.
+- **Issue-to-PR cockpit:** the dashboard now shows live phase, measured first
+  result, evidence headline, recorded uncertainty, and PR state from real
+  receipts. Cold, unavailable, unmeasured, and non-issue states remain distinct.
+
 ## v9.22.9
 
 ### Added
