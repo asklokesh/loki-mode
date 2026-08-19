@@ -6,7 +6,7 @@
 // - buildMcpConfigArgv emits single --mcp-config <path> when user file absent
 // - buildMcpConfigArgv emits both paths when user file present (variadic)
 // - No env-var-shaped string (${...}) appears in the written file (no shell expansion)
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { mkdtempSync, rmSync, statSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -109,11 +109,26 @@ describe("mcp_config.buildMcpConfigArgv", () => {
     expect(argv).toEqual(["--mcp-config", join(td, ".loki", "mcp-config.json")]);
   });
 
-  it("emits both paths when user overlay present (variadic)", () => {
+  it("ignores a legacy servers overlay instead of making Claude refuse", () => {
     const userCfgDir = join(homeDir, ".claude");
     const userCfg = join(userCfgDir, "mcp.json");
     mkdirSync(userCfgDir, { recursive: true });
     writeFileSync(userCfg, JSON.stringify({ servers: { custom: { command: "foo" } } }));
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    expect(userMcpConfigPath()).toBeNull();
+    expect(buildMcpConfigArgv(td)).toEqual([
+      "--mcp-config",
+      join(td, ".loki", "mcp-config.json"),
+    ]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('top-level "mcpServers" object'));
+    warn.mockRestore();
+  });
+
+  it("emits both paths when a current mcpServers overlay is present", () => {
+    const userCfgDir = join(homeDir, ".claude");
+    const userCfg = join(userCfgDir, "mcp.json");
+    mkdirSync(userCfgDir, { recursive: true });
+    writeFileSync(userCfg, JSON.stringify({ mcpServers: { custom: { command: "foo" } } }));
     expect(userMcpConfigPath()).toBe(userCfg);
     const argv = buildMcpConfigArgv(td);
     expect(argv).toEqual([
@@ -121,6 +136,17 @@ describe("mcp_config.buildMcpConfigArgv", () => {
       join(td, ".loki", "mcp-config.json"),
       userCfg,
     ]);
+  });
+
+  it("ignores an oversized overlay without reading it", () => {
+    const userCfgDir = join(homeDir, ".claude");
+    const userCfg = join(userCfgDir, "mcp.json");
+    mkdirSync(userCfgDir, { recursive: true });
+    writeFileSync(userCfg, JSON.stringify({ mcpServers: {}, padding: "x".repeat(1024 * 1024) }));
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    expect(userMcpConfigPath()).toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("1 MiB safety limit"));
+    warn.mockRestore();
   });
 
   it("userMcpConfigPath returns null when HOME unset", () => {

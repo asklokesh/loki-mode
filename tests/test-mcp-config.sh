@@ -7,7 +7,8 @@
 #     server entry; the emitted JSON contains no env-var-shaped strings.
 #   - Re-call is idempotent (mtime stable within a 1s window).
 #   - loki_mcp_config_argv emits only the Loki bundle when ~/.claude/mcp.json
-#     is absent, and both paths (space-joined) when present.
+#     is absent/invalid/legacy, and both paths when the current `mcpServers`
+#     schema is present.
 #   - Phase D auto-flags include --mcp-config <path> when the cached claude
 #     --help text advertises the flag.
 #   - Phase D auto-flags include --include-hook-events when supported AND
@@ -145,16 +146,45 @@ case "$v" in
         ;;
 esac
 
-# ---------- loki_mcp_config_argv: with user overlay ----------
+# ---------- loki_mcp_config_argv: legacy user overlay is recoverable ----------
 mkdir -p "$TMPHOME/.claude"
 user_cfg="$TMPHOME/.claude/mcp.json"
 printf '{"servers":{"custom":{"command":"foo"}}}\n' > "$user_cfg"
 
+legacy_warning="$TMPROOT/legacy-warning.txt"
+v=$(HOME="$TMPHOME" TARGET_DIR="$TMPROOT" loki_mcp_config_argv 2>"$legacy_warning")
+if [ "$v" = "$p" ]; then
+    ok "mcp_config_argv: legacy servers overlay ignored; Loki bundle preserved"
+else
+    bad "mcp_config_argv: legacy overlay should be ignored, got [$v]"
+fi
+if grep -q 'requires a top-level "mcpServers" object' "$legacy_warning"; then
+    ok "mcp_config_argv: legacy overlay prints actionable recovery"
+else
+    bad "mcp_config_argv: legacy overlay warning missing"
+fi
+
+# ---------- loki_mcp_config_argv: oversized overlay is bounded ----------
+python3 - "$user_cfg" <<'PY'
+import json, sys
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump({"mcpServers": {}, "padding": "x" * (1024 * 1024)}, handle)
+PY
+oversized_warning="$TMPROOT/oversized-warning.txt"
+v=$(HOME="$TMPHOME" TARGET_DIR="$TMPROOT" loki_mcp_config_argv 2>"$oversized_warning")
+if [ "$v" = "$p" ]; then
+    ok "mcp_config_argv: oversized overlay ignored; Loki bundle preserved"
+else
+    bad "mcp_config_argv: oversized overlay should be ignored, got [$v]"
+fi
+
+# ---------- loki_mcp_config_argv: current user overlay ----------
+printf '{"mcpServers":{"custom":{"command":"foo"}}}\n' > "$user_cfg"
 v=$(HOME="$TMPHOME" TARGET_DIR="$TMPROOT" loki_mcp_config_argv)
 # Expect "<loki> <user>" -- exactly two whitespace-separated paths.
 expected="$p $user_cfg"
 if [ "$v" = "$expected" ]; then
-    ok "mcp_config_argv: overlay present -> Loki bundle + user path"
+    ok "mcp_config_argv: current overlay -> Loki bundle + user path"
 else
     bad "mcp_config_argv: expected [$expected], got [$v]"
 fi

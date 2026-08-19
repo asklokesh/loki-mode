@@ -81,10 +81,10 @@ else
     bad "parity A (no overlay): bash=$bash_count_A bun=$bun_count_A (expected 1 each)"
 fi
 
-# ---------- Case B: with user overlay ----------
+# ---------- Case B: with current-schema user overlay ----------
 mkdir -p "$TMP_HOME/.claude"
 user_cfg="$TMP_HOME/.claude/mcp.json"
-printf '{"servers":{"custom":{"command":"foo"}}}\n' > "$user_cfg"
+printf '{"mcpServers":{"custom":{"command":"foo"}}}\n' > "$user_cfg"
 
 bash_paths_B=$(HOME="$TMP_HOME" TARGET_DIR="$TMP_BASH" loki_mcp_config_argv)
 bash_count_B=$(_S="$bash_paths_B" python3 -c "

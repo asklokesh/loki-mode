@@ -101,10 +101,10 @@ export function mcpConfigPath(targetDir: string): string {
   return cfgPath;
 }
 
-// Returns ~/.claude/mcp.json when the file exists and is readable, else null.
-// Reads HOME via process.env so tests can stub it. No parsing of the file --
-// we pass through unchanged to Claude (the user overlay may use `servers` or
-// `mcpServers` key; both are valid per Claude Code docs).
+// Returns ~/.claude/mcp.json only when it contains the current Claude Code
+// `mcpServers` object and is at most 1 MiB. A legacy `servers` file makes
+// `claude --mcp-config` refuse before the first provider turn, so ignore it
+// with recovery guidance and preserve Loki's own valid bundle.
 export function userMcpConfigPath(): string | null {
   const home = process.env["HOME"];
   if (!home) return null;
@@ -114,10 +114,29 @@ export function userMcpConfigPath(): string | null {
     // Stat probe ensures readability without slurping the whole file.
     const s = statSync(p);
     if (!s.isFile()) return null;
-    // Best-effort readability check.
-    readFileSync(p, "utf8");
+    if (s.size > 1024 * 1024) {
+      console.warn("[mcp_config] ignoring ~/.claude/mcp.json: file exceeds the 1 MiB safety limit.");
+      return null;
+    }
+    const parsed: unknown = JSON.parse(readFileSync(p, "utf8"));
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      !("mcpServers" in parsed) ||
+      typeof (parsed as { mcpServers?: unknown }).mcpServers !== "object" ||
+      (parsed as { mcpServers?: unknown }).mcpServers === null ||
+      Array.isArray((parsed as { mcpServers?: unknown }).mcpServers)
+    ) {
+      console.warn(
+        '[mcp_config] ignoring ~/.claude/mcp.json: Claude Code requires a top-level "mcpServers" object; update or remove the legacy/invalid file.',
+      );
+      return null;
+    }
     return p;
   } catch {
+    console.warn(
+      '[mcp_config] ignoring ~/.claude/mcp.json: Claude Code requires valid JSON with a top-level "mcpServers" object.',
+    );
     return null;
   }
 }

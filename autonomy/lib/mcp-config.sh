@@ -17,7 +17,7 @@
 #                                  Returns 0 on success, 1 only if the dir
 #                                  cannot be created or the file cannot be
 #                                  written.
-#   loki_user_mcp_config_path   -- emit absolute path to ~/.claude/mcp.json
+#   loki_user_mcp_config_path   -- emit a bounded, current-schema ~/.claude/mcp.json
 #                                  if present + readable, else empty. Always
 #                                  returns 0.
 #   loki_mcp_config_argv        -- emit one space-separated string of paths
@@ -127,12 +127,35 @@ print(os.path.abspath(os.environ['_MCP_OUT']))
 }
 
 # ---------- User overlay path ----------
-# Echoes ~/.claude/mcp.json if it exists and is readable, else empty.
-# Always returns 0 -- a missing overlay is a normal state, not an error.
+# Echoes ~/.claude/mcp.json only when it is valid JSON with the current Claude
+# Code top-level `mcpServers` object. Older files using `servers` are not valid
+# inputs to `claude --mcp-config`: passing one makes Claude refuse before the
+# first provider turn. Ignore those files with an actionable warning so Loki's
+# own valid bundle can still start the run.
+# The 1 MiB bound prevents a local overlay from turning provider startup into an
+# unbounded read. Always returns 0 -- a missing/invalid overlay is recoverable,
+# not fatal.
 loki_user_mcp_config_path() {
     local user_path="${HOME}/.claude/mcp.json"
     if [ -f "$user_path" ] && [ -r "$user_path" ]; then
-        printf '%s' "$user_path"
+        if _LOKI_USER_MCP="$user_path" python3 -c "
+import json, os, sys
+try:
+    path = os.environ['_LOKI_USER_MCP']
+    if os.path.getsize(path) > 1024 * 1024:
+        sys.exit(1)
+    with open(path, encoding='utf-8') as handle:
+        value = json.load(handle)
+except (OSError, ValueError):
+    sys.exit(1)
+sys.exit(0 if isinstance(value, dict) and isinstance(value.get('mcpServers'), dict) else 1)
+" 2>/dev/null; then
+            printf '%s' "$user_path"
+        else
+            printf '%s\n' \
+                'loki: ignoring ~/.claude/mcp.json: Claude Code requires a top-level "mcpServers" object; update or remove the legacy/invalid file.' \
+                >&2
+        fi
     fi
     return 0
 }
