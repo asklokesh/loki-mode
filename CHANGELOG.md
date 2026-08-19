@@ -5,6 +5,15 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.22.12
+
+### Fixed
+
+- **Recoverable Claude MCP configuration:** Loki now ignores legacy, malformed,
+  or oversized user MCP overlays that Claude Code cannot accept, emits clear
+  recovery guidance, and continues with Loki's valid bounded MCP bundle instead
+  of failing before the first provider turn.
+
 ## v9.22.11
 
 ### Added
