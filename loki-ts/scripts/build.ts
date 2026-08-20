@@ -17,7 +17,8 @@
  */
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { rm, stat, readFile } from "node:fs/promises";
+import { rm, stat, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(HERE, "..");
@@ -45,6 +46,63 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MiB`;
 }
 
+/**
+ * Build with module identities rooted at the package instead of the checkout.
+ * Bun includes resolved module identities in its debugId. An explicit root
+ * keeps source-map identities stable when the same tree is built in another
+ * worktree, provided dependencies live beneath that root as they do in a
+ * normal install. Bun's generated debugId still includes checkout entropy, so
+ * the bundle/map pair is assigned a content-derived replacement below.
+ */
+const BUNDLE_DEBUG_ID_RE = /\/\/# debugId=([A-F0-9]{32})/;
+const MAP_DEBUG_ID_RE = /(\"debugId\"\s*:\s*\")([A-F0-9]{32})(\")/;
+
+async function writeDeterministicDebugId(outfile: string): Promise<void> {
+  const mapfile = `${outfile}.map`;
+  const [bundle, map] = await Promise.all([
+    readFile(outfile, "utf8"),
+    readFile(mapfile, "utf8"),
+  ]);
+  if (!BUNDLE_DEBUG_ID_RE.test(bundle) || !MAP_DEBUG_ID_RE.test(map)) {
+    throw new Error(`build output is missing a debugId: ${outfile}`);
+  }
+
+  const zeroId = "0".repeat(32);
+  const neutralBundle = bundle.replace(BUNDLE_DEBUG_ID_RE, `//# debugId=${zeroId}`);
+  const neutralMap = map.replace(
+    MAP_DEBUG_ID_RE,
+    (_match, prefix: string, _id: string, suffix: string) => `${prefix}${zeroId}${suffix}`,
+  );
+  const debugId = createHash("sha256")
+    .update(neutralBundle)
+    .update("\0")
+    .update(neutralMap)
+    .digest("hex")
+    .slice(0, 32)
+    .toUpperCase();
+
+  await Promise.all([
+    writeFile(outfile, neutralBundle.replace(BUNDLE_DEBUG_ID_RE, `//# debugId=${debugId}`)),
+    writeFile(
+      mapfile,
+      neutralMap.replace(
+        MAP_DEBUG_ID_RE,
+        (_match, prefix: string, _id: string, suffix: string) => `${prefix}${debugId}${suffix}`,
+      ),
+    ),
+  ]);
+}
+
+export async function buildWithDeterministicRoot(
+  root: string,
+  outfile: string,
+  config: Omit<Bun.BuildConfig, "root">,
+) {
+  const result = await Bun.build({ ...config, root });
+  if (result.success) await writeDeterministicDebugId(outfile);
+  return result;
+}
+
 async function main(): Promise<number> {
   // Clean prior artifacts so a failed/partial build cannot masquerade as a
   // good one. Bun.build with `outdir` overwrites individual files but does
@@ -54,7 +112,7 @@ async function main(): Promise<number> {
   const t0 = performance.now();
   const version = await readVersion();
 
-  const result = await Bun.build({
+  const result = await buildWithDeterministicRoot(PKG_ROOT, OUTFILE, {
     entrypoints: [ENTRY],
     outdir: OUTDIR,
     naming: "loki.js",
@@ -98,7 +156,7 @@ async function main(): Promise<number> {
   // silently fall back on every install.
   const cockpitEntry = resolve(PKG_ROOT, "src", "cockpit", "cli.ts");
   const cockpitOut = resolve(OUTDIR, "cockpit.js");
-  const cockpitResult = await Bun.build({
+  const cockpitResult = await buildWithDeterministicRoot(PKG_ROOT, cockpitOut, {
     entrypoints: [cockpitEntry],
     outdir: OUTDIR,
     naming: "cockpit.js",
@@ -121,5 +179,7 @@ async function main(): Promise<number> {
   return 0;
 }
 
-const code = await main();
-process.exit(code);
+if (import.meta.main) {
+  const code = await main();
+  process.exit(code);
+}

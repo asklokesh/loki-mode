@@ -267,18 +267,60 @@ When enterprise features are active, background processes consume resources:
 
 ### Cleanup
 
-Enterprise processes are cleaned up on session termination:
+Keep cleanup scoped to the processes and paths created by the current invocation. Record the exact
+child process IDs when starting background services and stop only those verified processes. Do not
+kill by a shared port or process-name pattern.
+
+Create one run-owned temporary directory before writing any temporary package, log, PID, or test
+artifact. Run the creation and cleanup blocks in the same shell so `run_tmp` retains the exact path:
 
 ```bash
-# Kill dashboard server
-lsof -ti:57374 | xargs kill -9 2>/dev/null || true
+# Create the only temporary directory this invocation may remove.
+temp_root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || exit 1
+run_tmp="$(mktemp -d "${temp_root}/loki-run.XXXXXXXX")" || exit 1
+chmod 700 "$run_tmp" || exit 1
+run_marker="${run_tmp}/.loki-run-owned"
+printf '%s\n' "$run_tmp" >"$run_marker" || exit 1
+chmod 600 "$run_marker" || exit 1
 
-# Kill background enterprise processes
-pkill -f "loki-run-" 2>/dev/null || true
+# Put this invocation's temporary artifacts under "$run_tmp" and retain exact child PIDs there.
 
-# Clean temp files
-rm -rf /tmp/loki-* /tmp/test-* 2>/dev/null || true
+# Immediately before removal, fail closed unless every ownership boundary still holds.
+cleanup_target="$run_tmp"
+cleanup_root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || exit 64
+case "$cleanup_target" in
+    "${cleanup_root}"/loki-run.*) ;;
+    *) printf '%s\n' "Refusing cleanup outside the run-owned namespace" >&2; exit 64 ;;
+esac
+[ "$(dirname "$cleanup_target")" = "$cleanup_root" ] || exit 64
+[ -d "$cleanup_target" ] && [ ! -L "$cleanup_target" ] || exit 64
+
+cleanup_marker="${cleanup_target}/.loki-run-owned"
+[ -f "$cleanup_marker" ] && [ ! -L "$cleanup_marker" ] || exit 64
+IFS= read -r marker_value <"$cleanup_marker" || exit 64
+[ "$marker_value" = "$cleanup_target" ] || exit 64
+
+target_uid="$(stat -f '%u' "$cleanup_target" 2>/dev/null || stat -c '%u' "$cleanup_target")" || exit 64
+marker_uid="$(stat -f '%u' "$cleanup_marker" 2>/dev/null || stat -c '%u' "$cleanup_marker")" || exit 64
+[ "$target_uid" = "$(id -u)" ] && [ "$marker_uid" = "$(id -u)" ] || exit 64
+
+target_real="$(cd "$cleanup_target" 2>/dev/null && pwd -P)" || exit 64
+[ "$target_real" = "$cleanup_target" ] || exit 64
+[ "$(dirname "$target_real")" = "$cleanup_root" ] || exit 64
+
+# Refuse primary worktrees, linked worktrees, and a broken .git symlink.
+if [ -e "${cleanup_target}/.git" ] || [ -L "${cleanup_target}/.git" ]; then
+    printf '%s\n' "Refusing to remove a Git worktree" >&2
+    exit 64
+fi
+
+rm -rf -- "$cleanup_target"
+[ ! -e "$cleanup_target" ] || exit 1
 ```
+
+These are operator-side shell commands, not a Loki cleanup helper. Never replace the exact target
+with a wildcard under `/tmp` or `$TMPDIR`, and never remove a path whose marker, UID ownership,
+canonical location, symlink status, or worktree status cannot be verified.
 
 ## Performance Monitoring Checklist
 

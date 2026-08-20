@@ -299,24 +299,102 @@ Prompt: "Review the following claims for factual accuracy.
 
 **Before reporting ANY task as done, run ALL cleanup steps below. No exceptions.**
 
-1. **Kill spawned processes** (dashboard servers, test runners, etc.):
-   ```bash
-   lsof -ti:57374 | xargs kill -9 2>/dev/null || true
-   pkill -f "loki-run-" 2>/dev/null || true
-   ```
+1. **Create one run-owned temp directory before the first temp write.** Keep
+   every archive, package extraction, log, PID file, and test fixture for the
+   task below this directory. Never use fixed names or shared globs under
+   `/tmp`.
 
-2. **Remove temp files**:
-   ```bash
-   rm -rf /tmp/loki-* /tmp/test-* /tmp/package /tmp/*.tgz 2>/dev/null || true
-   ```
+2. **Stop only processes started by the current task.** Retain their exact PIDs
+   below `$LOKI_RUN_TMP` and signal those PIDs individually. Do not use
+   `pkill`, a shared-port sweep, or a name-pattern kill as cleanup.
 
-3. **Verify cleanup** (MUST run, not optional):
-   ```bash
-   ps -ef | grep -E "(loki|test)" | grep -v grep || echo "Clean"
-   ls /tmp/loki-* /tmp/test-* 2>&1 | grep -v "No such file" || echo "Clean"
-   ```
+3. **Remove only the validated run-owned directory.** Use the helpers below.
+   Cleanup fails closed unless the target is a direct child of the canonical
+   temp root, has the exact ownership marker created with it, is owned by the
+   current UID, is not a symlink, and is not a Git worktree. Never replace this
+   with a wildcard deletion under `/tmp` or `$TMPDIR`.
 
-4. **Report cleanup status** to user in task completion message
+<!-- BEGIN LOKI_RUN_TMP_HELPERS -->
+```bash
+loki_run_tmp_create() {
+    local temp_root marker
+
+    if [ -n "${LOKI_RUN_TMP:-}" ]; then
+        printf '%s\n' "LOKI_RUN_TMP is already set; refusing to replace it" >&2
+        return 64
+    fi
+
+    temp_root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || {
+        printf '%s\n' "Cannot resolve the temp root" >&2
+        return 64
+    }
+    LOKI_RUN_TMP="$(mktemp -d "${temp_root}/loki-run.XXXXXXXX")" || return 1
+    marker="${LOKI_RUN_TMP}/.loki-run-owned"
+
+    chmod 700 "$LOKI_RUN_TMP" || {
+        rmdir "$LOKI_RUN_TMP" 2>/dev/null || true
+        unset LOKI_RUN_TMP
+        return 1
+    }
+    if ! printf '%s\n' "$LOKI_RUN_TMP" >"$marker" || ! chmod 600 "$marker"; then
+        rm -f -- "$marker"
+        rmdir "$LOKI_RUN_TMP" 2>/dev/null || true
+        unset LOKI_RUN_TMP
+        return 1
+    fi
+    export LOKI_RUN_TMP
+}
+
+loki_run_tmp_cleanup() {
+    local target temp_root marker marker_value target_uid marker_uid target_real
+
+    target="${LOKI_RUN_TMP:-}"
+    [ -n "$target" ] || return 0
+    temp_root="$(cd "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)" || return 64
+
+    case "$target" in
+        "${temp_root}"/loki-run.*) ;;
+        *)
+            printf '%s\n' "Refusing cleanup outside the run-owned temp namespace: $target" >&2
+            return 64
+            ;;
+    esac
+    [ "$(dirname -- "$target")" = "$temp_root" ] || return 64
+    [ -d "$target" ] && [ ! -L "$target" ] || return 64
+
+    marker="${target}/.loki-run-owned"
+    [ -f "$marker" ] && [ ! -L "$marker" ] || return 64
+    IFS= read -r marker_value <"$marker" || return 64
+    [ "$marker_value" = "$target" ] || return 64
+
+    target_uid="$(stat -f '%u' "$target" 2>/dev/null || stat -c '%u' "$target" 2>/dev/null)" || return 64
+    marker_uid="$(stat -f '%u' "$marker" 2>/dev/null || stat -c '%u' "$marker" 2>/dev/null)" || return 64
+    [ "$target_uid" = "$(id -u)" ] && [ "$marker_uid" = "$(id -u)" ] || return 64
+
+    target_real="$(cd "$target" 2>/dev/null && pwd -P)" || return 64
+    [ "$target_real" = "$target" ] || return 64
+    [ "$(dirname -- "$target_real")" = "$temp_root" ] || return 64
+
+    # A linked worktree has a .git file; a primary worktree has a .git
+    # directory. Refuse both, including a broken .git symlink.
+    if [ -e "${target}/.git" ] || [ -L "${target}/.git" ]; then
+        printf '%s\n' "Refusing to remove a Git worktree: $target" >&2
+        return 64
+    fi
+
+    rm -rf -- "$target"
+    [ ! -e "$target" ] || return 1
+    unset LOKI_RUN_TMP
+}
+```
+<!-- END LOKI_RUN_TMP_HELPERS -->
+
+4. **Verify exact cleanup.** Confirm each recorded PID is gone and the saved
+   `$LOKI_RUN_TMP` path no longer exists. Do not scan or delete other users'
+   or runs' temp paths.
+
+5. **Report cleanup status** to the user in the task completion message,
+   including only the explicit run-owned path and process IDs handled.
 
 ### Git Commit Workflow (MANDATORY - FOLLOWS GLOBAL CLAUDE.md)
 
@@ -417,11 +495,12 @@ After a release ships, run the post-release distribution validation:
 - Brew: WebFetch the live formula, verify version + sha256
 - Both routes (Bun + LOKI_LEGACY_BASH=1) on each channel
 
-Cleanup after every local-ci run AND post-release validation:
-```bash
-lsof -ti:57374 | xargs kill -9 2>/dev/null || true
-rm -rf /tmp/loki-* /tmp/test-* /tmp/package /tmp/*.tgz 2>/dev/null || true
-```
+Cleanup after every local-ci run AND post-release validation must use
+`loki_run_tmp_cleanup` from **Test and Resource Cleanup** above. The run must
+place its package extraction, tarballs, logs, and recorded child PIDs under the
+single directory created by `loki_run_tmp_create`. Stop only those recorded
+PIDs, then remove only that validated directory. Never sweep shared ports,
+process names, `/tmp`, or `$TMPDIR`.
 
 ## Release Workflow (CRITICAL - Follow Every Step)
 

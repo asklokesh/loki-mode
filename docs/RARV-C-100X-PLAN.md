@@ -220,7 +220,15 @@ Every commit proven on BOTH routes (`bin/loki` + `LOKI_LEGACY_BASH=1 bin/loki`).
 - **Post-release smoke from SHIPPED artifacts on BOTH routes**: `npm pack loki-mode@8.0.0` + `bun run bin/loki
   version` and `LOKI_LEGACY_BASH=1 ... version`; `docker run --rm asklokesh/loki-mode:8.0.0 doctor --json`;
   WebFetch brew formula version+sha.
-- **Cleanup after every local-ci/validation**: `lsof -ti:57374 | xargs kill -9; rm -rf /tmp/loki-* /tmp/test-* /tmp/package /tmp/*.tgz`.
+- **Cleanup after every local-ci/validation**: create one exact run-owned directory with `mktemp -d`
+  under the canonical `${TMPDIR:-/tmp}` root and keep all validation artifacts and recorded child
+  PIDs inside it. Use the executable operator-side sequence in
+  [`enterprise/performance.md`](enterprise/performance.md#cleanup); it does not depend on a shipped
+  cleanup helper. Stop only the exact verified child PIDs. Before removing the exact saved path,
+  require its `.loki-run-owned` marker to contain that path, require the target and marker to belong
+  to the current UID, require the target to be a canonical direct child of the temp root, refuse
+  symlinks, and refuse any target with `.git` worktree metadata. A failed guard leaves the path in
+  place for inspection.
 
 ---
 
