@@ -4065,6 +4065,136 @@ PYDASH
     fi
 }
 
+# Classify one current-project PID registry entry without signalling anything.
+#
+# A numeric PID alone is not process identity because the OS reuses PIDs. The registry's
+# UTC `started` field is the available launch token: the live process must have started
+# within a bounded window AROUND the recorded registration, and that registration must
+# itself be corroborated by the entry's st_ctime, which unprivileged userspace cannot
+# backdate. The file and its parent must also remain current-UID-owned, non-linked,
+# canonical local state. Any missing validation fails closed.
+#
+# Prints exactly one of: OWNED, STALE, REFUSED, UNAVAILABLE.
+_cleanup_registry_entry_state() {
+    local entry_file="$1" expected_pid="$2"
+    command -v python3 >/dev/null 2>&1 || {
+        printf '%s\n' "UNAVAILABLE"
+        return 0
+    }
+    python3 - "$entry_file" "$expected_pid" <<'PY' 2>/dev/null || printf '%s\n' "REFUSED"
+import calendar
+import json
+import os
+from pathlib import Path
+import stat
+import subprocess
+import sys
+import time
+
+
+def verdict(value: str) -> None:
+    print(value)
+    raise SystemExit(0)
+
+
+try:
+    entry = Path(sys.argv[1])
+    expected_pid = int(sys.argv[2])
+    parent = entry.parent
+    parent_info = os.lstat(parent)
+    entry_info = os.lstat(entry)
+    if (
+        expected_pid <= 1
+        or entry.name != f"{expected_pid}.json"
+        or not stat.S_ISDIR(parent_info.st_mode)
+        or stat.S_ISLNK(parent_info.st_mode)
+        or parent_info.st_uid != os.getuid()
+        or stat.S_IMODE(parent_info.st_mode) & 0o022
+        or os.path.realpath(parent) != os.path.abspath(parent)
+        or not stat.S_ISREG(entry_info.st_mode)
+        or stat.S_ISLNK(entry_info.st_mode)
+        or entry_info.st_uid != os.getuid()
+        or entry_info.st_nlink != 1
+        or stat.S_IMODE(entry_info.st_mode) & 0o022
+    ):
+        verdict("REFUSED")
+
+    record = json.loads(entry.read_text(encoding="utf-8"))
+    pid = record.get("pid")
+    ppid = record.get("ppid")
+    label = record.get("label")
+    started = record.get("started")
+    if (
+        isinstance(pid, bool)
+        or not isinstance(pid, int)
+        or pid != expected_pid
+        or isinstance(ppid, bool)
+        or not isinstance(ppid, int)
+        or ppid <= 0
+        or not isinstance(label, str)
+        or not label
+        or not isinstance(started, str)
+    ):
+        verdict("REFUSED")
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        verdict("STALE")
+    except (PermissionError, OSError):
+        verdict("REFUSED")
+
+    # register_pid() (autonomy/run.sh) writes `started` on the line right after the
+    # `&` that spawned the pid, so for a genuine child entry the process launch and
+    # the recorded registration are seconds apart in BOTH directions.
+    #
+    # `kind":"wrapper"` entries are NOT this shape: register_self_wrapper() records
+    # the wrapper's OWN pid deep in main() startup, so the honest gap is unbounded
+    # and no tight window fits. They are also not cmd_cleanup's to reap -- run.sh's
+    # cleanup_orphan_pids owns them behind a parent-dead AND idle AND no-live-child
+    # predicate, because cmd_cleanup's parent-death-only rule is wrong for a
+    # wrapper. Refuse them here rather than widen the window for every entry: a
+    # window wide enough for a wrapper is wide enough to forge a child.
+    if record.get("kind") is not None:
+        verdict("REFUSED")
+
+    SLACK = 10
+    registered_at = calendar.timegm(time.strptime(started, "%Y-%m-%dT%H:%M:%SZ"))
+    if registered_at > time.time() + 5:
+        verdict("REFUSED")
+
+    # `started` is attacker-writable, so it cannot vouch for itself. st_ctime is
+    # the one field in this registry that unprivileged userspace cannot backdate
+    # (utimes moves atime/mtime only), so it pins WHEN the entry was really made.
+    # Without this an attacker just backdates `started` to an old victim's real
+    # launch time and satisfies the window below.
+    if abs(entry_info.st_ctime - registered_at) > SLACK:
+        verdict("REFUSED")
+
+    observed = subprocess.run(
+        ["ps", "-o", "uid=", "-o", "lstart=", "-p", str(pid)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+    fields = observed.stdout.strip().split(maxsplit=1)
+    if observed.returncode != 0 or len(fields) != 2 or int(fields[0]) != os.getuid():
+        verdict("REFUSED")
+    process_started_at = int(time.mktime(time.strptime(fields[1], "%a %b %d %H:%M:%S %Y")))
+    # Upper bound rejects a pid reused AFTER registration. Lower bound rejects a
+    # forged entry aimed at an unrelated process that was already running when
+    # the entry was written. Both halves are required: with only the upper bound
+    # any live same-uid pid older than `started` is signalable.
+    if not (registered_at - SLACK <= process_started_at <= registered_at + 1):
+        verdict("REFUSED")
+except (OSError, ValueError, TypeError, json.JSONDecodeError, subprocess.SubprocessError):
+    verdict("REFUSED")
+
+verdict("OWNED")
+PY
+}
+
 # Kill orphaned processes from crashed sessions
 cmd_cleanup() {
     # v7.6.2 B-13 fix: --help must print help, not run cleanup as a side effect.
@@ -4087,6 +4217,7 @@ cmd_cleanup() {
     local pids_dir="$LOKI_DIR/pids"
     local killed=0
     local stale=0
+    local refused=0
 
     if [ ! -d "$pids_dir" ]; then
         echo "No PID registry found. Nothing to clean up."
@@ -4103,6 +4234,27 @@ cmd_cleanup() {
             ''|*[!0-9]*) continue ;;
         esac
 
+        local registry_state
+        registry_state=$(_cleanup_registry_entry_state "$entry_file" "$pid")
+        case "$registry_state" in
+            STALE)
+                rm -f "$entry_file"
+                stale=$((stale + 1))
+                continue
+                ;;
+            OWNED) ;;
+            UNAVAILABLE)
+                echo -e "  ${YELLOW}Refusing${NC} PID=$pid (python3 unavailable: ownership cannot be verified)"
+                refused=$((refused + 1))
+                continue
+                ;;
+            *)
+                echo -e "  ${YELLOW}Refusing${NC} PID=$pid (registry ownership or launch identity is not valid)"
+                refused=$((refused + 1))
+                continue
+                ;;
+        esac
+
         local label=""
         local ppid_val=""
         # Parse JSON fields (python3 with shell fallback)
@@ -4114,50 +4266,61 @@ cmd_cleanup() {
             ppid_val=$(sed 's/.*"ppid"://' "$entry_file" 2>/dev/null | sed 's/[,}].*//' | head -1) || true
         fi
 
-        if kill -0 "$pid" 2>/dev/null; then
-            # Process is alive - check if parent is dead (orphan)
-            local is_orphan=false
-            # Validate ppid_val is numeric before using with kill
-            case "$ppid_val" in ''|*[!0-9]*) ppid_val="" ;; esac
-            if [ -n "$ppid_val" ] && ! kill -0 "$ppid_val" 2>/dev/null; then
-                is_orphan=true
-            fi
+        # The ownership gate above proved this exact live process matches the
+        # current-project registry launch token. Check only whether its exact
+        # recorded parent is gone before normal orphan cleanup.
+        local is_orphan=false
+        case "$ppid_val" in ''|*[!0-9]*) ppid_val="" ;; esac
+        if [ -n "$ppid_val" ] && ! kill -0 "$ppid_val" 2>/dev/null; then
+            is_orphan=true
+        fi
 
-            if [ "$is_orphan" = true ] || [ "${1:-}" = "--force" ]; then
-                echo -e "  ${RED}Killing${NC} PID=$pid label=$label (parent $ppid_val dead)"
-                kill "$pid" 2>/dev/null || true
-                sleep 0.5
-                if kill -0 "$pid" 2>/dev/null; then
-                    kill -9 "$pid" 2>/dev/null || true
-                fi
-                rm -f "$entry_file"
-                killed=$((killed + 1))
-            else
-                echo -e "  ${GREEN}Alive${NC}  PID=$pid label=$label (parent $ppid_val alive)"
+        if [ "$is_orphan" = true ] || [ "${1:-}" = "--force" ]; then
+            # Close the validation-to-signal window as far as this portable PID
+            # registry permits. Re-check again after TERM before any KILL so a
+            # rapidly reused PID is never escalated under the old identity.
+            registry_state=$(_cleanup_registry_entry_state "$entry_file" "$pid")
+            if [ "$registry_state" != "OWNED" ]; then
+                echo -e "  ${YELLOW}Refusing${NC} PID=$pid (launch identity changed before signalling)"
+                refused=$((refused + 1))
+                continue
             fi
+            echo -e "  ${RED}Killing${NC} PID=$pid label=$label (parent $ppid_val dead)"
+            if ! kill "$pid" 2>/dev/null; then
+                echo -e "  ${YELLOW}Refusing${NC} PID=$pid (TERM could not be delivered)"
+                refused=$((refused + 1))
+                continue
+            fi
+            sleep 0.5
+            registry_state=$(_cleanup_registry_entry_state "$entry_file" "$pid")
+            case "$registry_state" in
+                STALE)
+                    rm -f "$entry_file"
+                    killed=$((killed + 1))
+                    ;;
+                OWNED)
+                    if kill -9 "$pid" 2>/dev/null; then
+                        rm -f "$entry_file"
+                        killed=$((killed + 1))
+                    else
+                        echo -e "  ${YELLOW}Refusing${NC} PID=$pid (KILL could not be delivered)"
+                        refused=$((refused + 1))
+                    fi
+                    ;;
+                *)
+                    echo -e "  ${YELLOW}Refusing${NC} PID=$pid (launch identity changed before escalation)"
+                    refused=$((refused + 1))
+                    ;;
+            esac
         else
-            # Process is dead - clean up stale entry
-            rm -f "$entry_file"
-            stale=$((stale + 1))
+            echo -e "  ${GREEN}Alive${NC}  PID=$pid label=$label (parent $ppid_val alive)"
         fi
     done
 
     echo ""
-    echo "Results: $killed orphan(s) killed, $stale stale entries cleaned"
+    echo "Results: $killed orphan(s) killed, $stale stale entries cleaned, $refused entry(s) refused"
 
-    # Also kill orphaned loki-run temp scripts
-    local temp_killed=0
-    if pgrep -f "loki-run-" >/dev/null 2>&1; then
-        if ! is_session_running; then
-            echo "Killing orphaned loki-run temp scripts..."
-            pkill -f "loki-run-" 2>/dev/null || true
-            sleep 0.5
-            pkill -9 -f "loki-run-" 2>/dev/null || true
-            temp_killed=1
-        fi
-    fi
-
-    if [ $killed -eq 0 ] && [ $stale -eq 0 ] && [ $temp_killed -eq 0 ]; then
+    if [ $killed -eq 0 ] && [ $stale -eq 0 ] && [ $refused -eq 0 ]; then
         echo -e "${GREEN}System is clean. No orphans found.${NC}"
     fi
 }

@@ -112,6 +112,237 @@ PYEOF
 )
 [ "$RESULT" = "MP_OK" ] && ok "/api/running-projects live status + /api/focus switch (realpath-safe)" || bad "multi-project endpoint: $RESULT"
 
+# --- functional: cleanup is exact-registry and launch-token scoped ----------
+CLEAN_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/loki-cleanup-owner-XXXXXX")
+OWNED_PID=""; REUSED_PID=""; RACE_PID=""; UNRELATED_PID=""
+FORGED_PID=""; FORGED_WRAPPER_PID=""; FORGED_MATCHED_PID=""; FRESH_WRAPPER_PID=""; LATE_SPAWN_PID=""
+cleanup_owner_fixture() {
+    local fixture_pid
+    for fixture_pid in "$OWNED_PID" "$REUSED_PID" "$RACE_PID" "$UNRELATED_PID" \
+                       "$FORGED_PID" "$FORGED_WRAPPER_PID" "$FORGED_MATCHED_PID" \
+                       "$FRESH_WRAPPER_PID" "$LATE_SPAWN_PID"; do
+        case "$fixture_pid" in ''|*[!0-9]*) continue ;; esac
+        command kill "$fixture_pid" 2>/dev/null || true
+        wait "$fixture_pid" 2>/dev/null || true
+    done
+    case "$CLEAN_ROOT" in
+        "${TMPDIR:-/tmp}"/loki-cleanup-owner-*) rm -rf -- "$CLEAN_ROOT" ;;
+    esac
+}
+trap cleanup_owner_fixture EXIT
+
+mkdir -p "$CLEAN_ROOT/project/.loki/pids"
+
+# Victims for the forgery cases are spawned FIRST and must age past the launch
+# window before their entries are written, because the forgery under test is
+# exactly "a live process that already existed when the entry was created".
+/bin/bash -c 'exec -a loki-run-unrelated-205 sleep 120' & UNRELATED_PID=$!
+sleep 120 & FORGED_PID=$!
+sleep 120 & FORGED_WRAPPER_PID=$!
+sleep 120 & FORGED_MATCHED_PID=$!
+# Captured at spawn so the entry below can claim this victim's REAL launch time.
+FORGED_MATCHED_STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+DEAD_PID=4000000
+while command kill -0 "$DEAD_PID" 2>/dev/null; do DEAD_PID=$((DEAD_PID + 1)); done
+
+# The refusal window in _cleanup_registry_entry_state is 10s; age well past it so
+# no case sits on the boundary. This is the only sleep in the fixture and it is
+# what makes the forgeries below forgeries.
+sleep 25
+
+# A genuine entry is written on the line after the spawn (see register_pid in
+# autonomy/run.sh), so spawn and register each of these as a pair.
+sleep 120 & OWNED_PID=$!
+printf '{"pid":%s,"label":"owned-cleanup-fixture","started":"%s","ppid":%s,"extra":""}\n' \
+    "$OWNED_PID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$DEAD_PID" \
+    >"$CLEAN_ROOT/project/.loki/pids/${OWNED_PID}.json"
+sleep 120 & RACE_PID=$!
+printf '{"pid":%s,"label":"reuse-race-fixture","started":"%s","ppid":%s,"extra":""}\n' \
+    "$RACE_PID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$DEAD_PID" \
+    >"$CLEAN_ROOT/project/.loki/pids/${RACE_PID}.json"
+
+# A wrapper entry that is otherwise perfectly well-formed: spawned and registered
+# as a pair, so every launch-token check passes and ONLY the "kind" routing rule
+# refuses it. cmd_cleanup must never reap wrappers; run.sh's cleanup_orphan_pids
+# owns them behind its parent-dead AND idle AND no-live-child predicate.
+sleep 120 & FRESH_WRAPPER_PID=$!
+printf '{"pid":%s,"label":"loki-wrapper","started":"%s","ppid":%s,"kind":"wrapper","extra":""}\n' \
+    "$FRESH_WRAPPER_PID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$DEAD_PID" \
+    >"$CLEAN_ROOT/project/.loki/pids/${FRESH_WRAPPER_PID}.json"
+
+# Isolates the UPPER launch bound: `started` is backdated only 5s, so the ctime
+# anchor (10s window) still passes, but the pid is spawned AFTER that instant, so
+# process_started_at > registered_at + 1. This is the pid-reuse-after-registration
+# shape; the lower bound cannot see it because the process is NEWER, not older.
+sleep 120 & LATE_SPAWN_PID=$!
+printf '{"pid":%s,"label":"late-spawn-fixture","started":"%s","ppid":%s,"extra":""}\n' \
+    "$LATE_SPAWN_PID" \
+    "$(date -u -r "$(( $(date +%s) - 5 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+      || date -u -d '5 seconds ago' +%Y-%m-%dT%H:%M:%SZ)" \
+    "$DEAD_PID" \
+    >"$CLEAN_ROOT/project/.loki/pids/${LATE_SPAWN_PID}.json"
+
+# Reused pid: entry long predates the live process now holding that pid.
+sleep 120 & REUSED_PID=$!
+printf '{"pid":%s,"label":"reused-pid-fixture","started":"2000-01-01T00:00:00Z","ppid":%s,"extra":""}\n' \
+    "$REUSED_PID" "$DEAD_PID" \
+    >"$CLEAN_ROOT/project/.loki/pids/${REUSED_PID}.json"
+
+# THE REGRESSION (loki-cleanup-process-ownership-205): a same-UID forged entry
+# naming an unrelated live pid with a CURRENT started timestamp and a dead ppid.
+# Before the bidirectional launch-token bound this was classified OWNED and the
+# unrelated process was signalled TERM+KILL on the dead-parent path.
+printf '{"pid":%s,"label":"forged-current-token","started":"%s","ppid":%s,"extra":""}\n' \
+    "$FORGED_PID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$DEAD_PID" \
+    >"$CLEAN_ROOT/project/.loki/pids/${FORGED_PID}.json"
+
+# Same forgery tagged as a wrapper: wrappers are reaped by run.sh's
+# cleanup_orphan_pids behind its own predicate, never by cmd_cleanup, so the
+# attacker-writable "kind" field must not buy a wider launch window here.
+printf '{"pid":%s,"label":"loki-wrapper","started":"%s","ppid":%s,"kind":"wrapper","extra":""}\n' \
+    "$FORGED_WRAPPER_PID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$DEAD_PID" \
+    >"$CLEAN_ROOT/project/.loki/pids/${FORGED_WRAPPER_PID}.json"
+
+# Informed variant of the same forgery: `started` is backdated to the victim's
+# ACTUAL launch time, so the process-start bound alone is satisfied. Only the
+# st_ctime corroboration refuses this, since userspace can rewrite the entry's
+# contents and its mtime but cannot backdate ctime.
+printf '{"pid":%s,"label":"forged-matched-token","started":"%s","ppid":%s,"extra":""}\n' \
+    "$FORGED_MATCHED_PID" "$FORGED_MATCHED_STARTED" "$DEAD_PID" \
+    >"$CLEAN_ROOT/project/.loki/pids/${FORGED_MATCHED_PID}.json"
+touch -t "$(date -u -r "$(( $(date +%s) - 25 ))" +%Y%m%d%H%M.%S 2>/dev/null \
+    || date -u -d '25 seconds ago' +%Y%m%d%H%M.%S)" \
+    "$CLEAN_ROOT/project/.loki/pids/${FORGED_MATCHED_PID}.json" 2>/dev/null || true
+
+printf '{"pid":%s,"label":"dead-pid-fixture","started":"2000-01-01T00:00:00Z","ppid":1,"extra":""}\n' \
+    "$DEAD_PID" >"$CLEAN_ROOT/project/.loki/pids/${DEAD_PID}.json"
+
+SIGNAL_LOG="$CLEAN_ROOT/signals.log"
+CLEAN_OUTPUT="$CLEAN_ROOT/cleanup.out"
+LOKI_CLI="$LOKI" LOKI_FIXTURE_DIR="$CLEAN_ROOT/project/.loki" \
+    LOKI_SIGNAL_LOG="$SIGNAL_LOG" LOKI_RACE_PID="$RACE_PID" bash -c '
+kill() {
+    case "${1:-}" in
+        -0) command kill -0 "$2" ;;
+        -9) printf "KILL %s\n" "$2" >>"$LOKI_SIGNAL_LOG" ;;
+        *)
+            printf "TERM %s\n" "$1" >>"$LOKI_SIGNAL_LOG"
+            if [ "$1" = "$LOKI_RACE_PID" ]; then
+                printf "{\"pid\":%s,\"label\":\"reuse-race-fixture\",\"started\":\"2000-01-01T00:00:00Z\",\"ppid\":1,\"extra\":\"\"}\n" \
+                    "$1" >"$LOKI_FIXTURE_DIR/pids/${1}.json"
+            fi
+            ;;
+    esac
+}
+pkill() {
+    printf "NAME_SWEEP %s\n" "$*" >>"$LOKI_SIGNAL_LOG"
+    return 0
+}
+sleep() { :; }
+export -f kill pkill sleep
+LOKI_DIR="$LOKI_FIXTURE_DIR" bash "$LOKI_CLI" cleanup
+' >"$CLEAN_OUTPUT" 2>&1
+CLEAN_RC=$?
+
+if [ "$CLEAN_RC" -eq 0 ] \
+   && grep -qx "TERM $OWNED_PID" "$SIGNAL_LOG" \
+   && grep -qx "KILL $OWNED_PID" "$SIGNAL_LOG" \
+   && grep -qx "TERM $RACE_PID" "$SIGNAL_LOG" \
+   && ! grep -qx "KILL $RACE_PID" "$SIGNAL_LOG" \
+   && [ "$(wc -l <"$SIGNAL_LOG" | tr -d ' ')" -eq 3 ] \
+   && ! grep -q 'NAME_SWEEP' "$SIGNAL_LOG"; then
+    ok "cleanup signals only the exact launch-token-bound PID and never uses a name sweep"
+else
+    bad "cleanup exact PID signalling" "rc=$CLEAN_RC signals=$(tr '\n' ' ' <"$SIGNAL_LOG" 2>/dev/null)"
+fi
+
+if command kill -0 "$RACE_PID" 2>/dev/null \
+   && [ -f "$CLEAN_ROOT/project/.loki/pids/${RACE_PID}.json" ] \
+   && grep -q "Refusing.*PID=$RACE_PID.*changed before escalation" "$CLEAN_OUTPUT"; then
+    ok "PID identity is revalidated before TERM-to-KILL escalation"
+else
+    bad "PID reuse during escalation did not fail closed"
+fi
+
+if command kill -0 "$UNRELATED_PID" 2>/dev/null \
+   && ps -o command= -p "$UNRELATED_PID" | grep -q 'loki-run-unrelated-205'; then
+    ok "unregistered unrelated loki-run process survives cleanup"
+else
+    bad "unregistered unrelated loki-run process was affected"
+fi
+
+if command kill -0 "$REUSED_PID" 2>/dev/null \
+   && [ -f "$CLEAN_ROOT/project/.loki/pids/${REUSED_PID}.json" ] \
+   && grep -q "Refusing.*PID=$REUSED_PID" "$CLEAN_OUTPUT"; then
+    ok "reused PID with stale launch token fails closed and remains for inspection"
+else
+    bad "reused PID launch-token refusal failed"
+fi
+
+# Regression: the forged-current-token entry must be refused and its unrelated
+# victim left completely unsignalled.
+if command kill -0 "$FORGED_PID" 2>/dev/null \
+   && ! grep -qx "TERM $FORGED_PID" "$SIGNAL_LOG" \
+   && ! grep -qx "KILL $FORGED_PID" "$SIGNAL_LOG" \
+   && grep -q "Refusing.*PID=$FORGED_PID" "$CLEAN_OUTPUT"; then
+    ok "forged entry with a current launch token over an unrelated live PID is refused"
+else
+    bad "forged current-token entry was accepted" \
+        "signals=$(tr '\n' ' ' <"$SIGNAL_LOG" 2>/dev/null)"
+fi
+
+if command kill -0 "$FORGED_WRAPPER_PID" 2>/dev/null \
+   && ! grep -qx "TERM $FORGED_WRAPPER_PID" "$SIGNAL_LOG" \
+   && ! grep -qx "KILL $FORGED_WRAPPER_PID" "$SIGNAL_LOG" \
+   && grep -q "Refusing.*PID=$FORGED_WRAPPER_PID" "$CLEAN_OUTPUT"; then
+    ok "kind:wrapper does not widen the launch window in cmd_cleanup"
+else
+    bad "forged wrapper-kind entry was accepted" \
+        "signals=$(tr '\n' ' ' <"$SIGNAL_LOG" 2>/dev/null)"
+fi
+
+if command kill -0 "$FORGED_MATCHED_PID" 2>/dev/null \
+   && ! grep -qx "TERM $FORGED_MATCHED_PID" "$SIGNAL_LOG" \
+   && ! grep -qx "KILL $FORGED_MATCHED_PID" "$SIGNAL_LOG" \
+   && grep -q "Refusing.*PID=$FORGED_MATCHED_PID" "$CLEAN_OUTPUT"; then
+    ok "launch token backdated to the victim's real start is refused by the ctime anchor"
+else
+    bad "backdated-to-match forgery was accepted" \
+        "signals=$(tr '\n' ' ' <"$SIGNAL_LOG" 2>/dev/null)"
+fi
+
+if command kill -0 "$FRESH_WRAPPER_PID" 2>/dev/null \
+   && ! grep -qx "TERM $FRESH_WRAPPER_PID" "$SIGNAL_LOG" \
+   && ! grep -qx "KILL $FRESH_WRAPPER_PID" "$SIGNAL_LOG" \
+   && grep -q "Refusing.*PID=$FRESH_WRAPPER_PID" "$CLEAN_OUTPUT"; then
+    ok "a well-formed wrapper entry is left to run.sh, never reaped by cmd_cleanup"
+else
+    bad "cmd_cleanup reaped a wrapper entry it does not own" \
+        "signals=$(tr '\n' ' ' <"$SIGNAL_LOG" 2>/dev/null)"
+fi
+
+if command kill -0 "$LATE_SPAWN_PID" 2>/dev/null \
+   && ! grep -qx "TERM $LATE_SPAWN_PID" "$SIGNAL_LOG" \
+   && ! grep -qx "KILL $LATE_SPAWN_PID" "$SIGNAL_LOG" \
+   && grep -q "Refusing.*PID=$LATE_SPAWN_PID" "$CLEAN_OUTPUT"; then
+    ok "a pid that came to life after its entry was written is refused (reuse shape)"
+else
+    bad "pid-reuse-after-registration was accepted" \
+        "signals=$(tr '\n' ' ' <"$SIGNAL_LOG" 2>/dev/null)"
+fi
+
+if [ ! -e "$CLEAN_ROOT/project/.loki/pids/${OWNED_PID}.json" ] \
+   && [ ! -e "$CLEAN_ROOT/project/.loki/pids/${DEAD_PID}.json" ] \
+   && grep -q 'Results: 1 orphan(s) killed, 1 stale entries cleaned, 7 entry(s) refused' "$CLEAN_OUTPUT"; then
+    ok "owned and stale registry entries are handled with honest counts"
+else
+    bad "cleanup registry result accounting is incorrect" "$(tail -3 "$CLEAN_OUTPUT" | tr '\n' ' ')"
+fi
+
+cleanup_owner_fixture
+trap - EXIT
+
 # --- no em dashes in changed files ----------------------------------------
 if grep -lP '\xe2\x80\x94' "$LOKI" "$REPO_ROOT/autonomy/run.sh" "$REPO_ROOT/dashboard/server.py" tests/test-dashboard-multiproject.sh >/dev/null 2>&1; then
     bad "em dash found in changed files"
