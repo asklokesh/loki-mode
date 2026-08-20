@@ -39,6 +39,7 @@ echo "TEST: shared-dashboard teardown refuses an unidentifiable pid"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/loki-dashpid-test.XXXXXX")"
 cleanup_work() {
   [ -n "${SLEEPER_PID:-}" ] && kill -9 "$SLEEPER_PID" 2>/dev/null
+  [ -n "${DASHBOARD_PID:-}" ] && kill -9 "$DASHBOARD_PID" 2>/dev/null
   rm -rf "$WORK"
 }
 trap cleanup_work EXIT
@@ -92,15 +93,30 @@ else
   bad "probe process died early -- test 2 proved nothing"
 fi
 
-# --- 3. POSITIVE CONTROL: a dashboard-looking pid IS accepted ----------------
+# --- 3. POSITIVE CONTROL: the exact owned dashboard command IS accepted ------
 # Without this, a guard that refuses everything passes 1-2 while silently
-# disabling teardown and leaking a dashboard per run. $$ is this bash process;
-# its command line contains the test path, which contains "loki", matching the
-# same token the real dashboard command carries.
-if _loki_pid_looks_like_dashboard "$$"; then
-  ok "a pid whose command matches the dashboard pattern IS accepted"
+# disabling teardown and leaking a dashboard per run. Launch a dependency-free
+# fixture under the exact `python -m dashboard.server` command production owns;
+# a generic test-process name is not ownership evidence.
+mkdir -p "$WORK/dashboard"
+printf '%s\n' 'import time' 'time.sleep(300)' > "$WORK/dashboard/server.py"
+PYTHONPATH="$WORK" python3 -m dashboard.server & DASHBOARD_PID=$!
+_dashboard_ready=0
+_dashboard_attempt=0
+while [ "$_dashboard_attempt" -lt 50 ]; do
+  _fixture_cmd=$(ps -o command= -p "$DASHBOARD_PID" 2>/dev/null)
+  case "$_fixture_cmd" in
+    *' -m dashboard.server'*) _dashboard_ready=1; break ;;
+  esac
+  sleep 0.02
+  _dashboard_attempt=$((_dashboard_attempt+1))
+done
+if [ "$_dashboard_ready" -ne 1 ]; then
+  bad "could not start the exact dashboard identity fixture"
+elif _loki_pid_looks_like_dashboard "$DASHBOARD_PID"; then
+  ok "the exact python -m dashboard.server command IS accepted"
 else
-  bad "a matching pid was refused -- teardown is dead, dashboards leak"
+  bad "the owned dashboard command was refused -- teardown is dead, dashboards leak"
 fi
 
 # --- 4. pid 0/1 and malformed input are refused (never signal init) ---------

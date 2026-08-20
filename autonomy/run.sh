@@ -1549,20 +1549,20 @@ PYREG
 # if any other project is still running (KEEP) it is left up. NEVER uses a
 # blanket pkill and NEVER touches another folder's pids. Best-effort and
 # failure-swallowed: teardown bookkeeping must never block a clean exit.
-# Is this pid plausibly OUR dashboard, or a recycled number now naming something
-# else? Fails OPEN (returns 0) whenever ps cannot tell us, so the only behavior
-# change is refusing to kill a process that is positively identified as NOT a
-# dashboard. See the call site for the measured stale-file evidence.
+# Is this pid positively identified as our dashboard, rather than a recycled
+# number now naming something else? Ownership-sensitive cleanup must fail closed:
+# an absent `ps` result is not evidence, and a generic python/loki substring is
+# not specific enough to authorize a signal.
 _loki_pid_looks_like_dashboard() {
     local _p="$1" _cmd
     case "$_p" in ''|*[!0-9]*) return 1 ;; esac
     [ "$_p" -gt 1 ] 2>/dev/null || return 1     # never signal pid 0/1
     _cmd="$(ps -o command= -p "$_p" 2>/dev/null)"
-    [ -n "$_cmd" ] || return 0                   # ps unavailable: behave as before
-    case "$_cmd" in
-        *dashboard*|*uvicorn*|*loki*) return 0 ;;
-    esac
-    return 1
+    [ -n "$_cmd" ] || return 1
+    # run.sh and `loki dashboard start` both launch this exact module form.
+    # Anchor the interpreter and module tokens so an unrelated command merely
+    # mentioning "dashboard.server" in an argument cannot forge identity.
+    [[ "$_cmd" =~ ^[[:space:]]*([^[:space:]]*/)?[Pp]ython([0-9]+([.][0-9]+)*)?[[:space:]]+-m[[:space:]]+dashboard[.]server([[:space:]]|$) ]]
 }
 
 loki_mark_project_stopped_and_maybe_kill_shared_dashboard() {
@@ -1621,9 +1621,10 @@ PYCHECK
             #
             # kill -0 is NOT sufficient: a recycled pid is alive by definition,
             # which is exactly the insufficiency the loki.pgid self-check had.
-            # Mirrors _app_runner_pid_is_ours (app-runner.sh:242) and fails OPEN
-            # the same way -- if `ps` says nothing we signal as before, so a
-            # legitimate dashboard is never left running by this check.
+            # This guard fails CLOSED: if `ps` says nothing, or says something
+            # that is not the dashboard's own command, we do not signal. The
+            # cost of failing closed is a leaked dashboard the next explicit
+            # stop reaps; the cost of failing open was signalling a stranger.
             if [ -n "$_shared_pid" ] && _loki_pid_looks_like_dashboard "$_shared_pid"; then
                 kill "$_shared_pid" 2>/dev/null || true
                 sleep 0.5
@@ -1631,27 +1632,11 @@ PYCHECK
             fi
             rm -f "$_shared_pidfile" 2>/dev/null || true
         fi
-        # (d) Defense-in-depth: reclaim the dashboard port only in the CLEAR
-        # case, so we never kill a shared dashboard another project owns.
-        # BUT never kill a HEALTHY dashboard already serving on the port: that is
-        # almost always the user's own live dashboard (open in their browser), and
-        # killing it mid-use drops their session (ERR_CONNECTION_REFUSED, WS fail).
-        # A healthy server is reusable by every project, so probe /api/status first
-        # and only reclaim the port when nothing is answering (a genuinely stale
-        # listener). Opt out of the probe with LOKI_DASHBOARD_FORCE_RECLAIM=1.
-        if command -v lsof >/dev/null 2>&1; then
-            local _dash_port="${DASHBOARD_PORT:-57374}"
-            local _dash_alive=""
-            if [ "${LOKI_DASHBOARD_FORCE_RECLAIM:-}" != "1" ] && command -v curl >/dev/null 2>&1; then
-                _dash_alive=$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 \
-                    "http://127.0.0.1:${_dash_port}/api/status" 2>/dev/null || true)
-            fi
-            if [ "$_dash_alive" = "200" ]; then
-                log_info "Reusing the healthy dashboard already serving on port ${_dash_port} (not reclaiming)."
-            else
-                lsof -ti:"${_dash_port}" -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null || true
-            fi
-        fi
+        # A port number and an HTTP response are not ownership evidence. In
+        # particular, a 404 can be an unrelated healthy service. The shared PID
+        # file plus positive command identity above is the only authority to
+        # signal a process; absent or forged ownership leaves every port holder
+        # untouched.
     fi
 }
 # Register as running now. We deliberately do NOT install an EXIT trap to
@@ -16587,9 +16572,16 @@ start_dashboard() {
         # Check if it's our own dashboard
         local existing_pid=$(lsof -ti :$DASHBOARD_PORT 2>/dev/null | head -1)
         if [ -n "$existing_pid" ]; then
-            # Only kill if it's a Python/uvicorn dashboard process
+            # Only kill a process positively identified as OUR dashboard.
+            # `-o comm=` yields just the executable name ("python3"), so the old
+            # *python*/*uvicorn* test matched ANY python process that happened to
+            # hold this port -- an unrelated http.server answering 404 was killed
+            # as a "stuck dashboard". Reuse the same full-command-line guard the
+            # teardown path uses: it fails closed on an unreadable or foreign
+            # command, so a stranger on this port is stepped over (port++) rather
+            # than signalled.
             local proc_cmd=$(ps -p "$existing_pid" -o comm= 2>/dev/null || true)
-            if [[ "$proc_cmd" == *python* ]] || [[ "$proc_cmd" == *uvicorn* ]]; then
+            if _loki_pid_looks_like_dashboard "$existing_pid"; then
                 # Never kill a HEALTHY dashboard already serving here: it is almost
                 # always the user's own live dashboard (open in their browser), and
                 # killing it on `loki start` drops their session mid-use. A healthy
