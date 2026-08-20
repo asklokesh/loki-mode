@@ -74,7 +74,7 @@ loki_mark_project_stopped_and_maybe_kill_shared_dashboard
 # case goes red if identity is ever widened back to a substring match.
 reset_case
 printf '7777\n' >"$HOME/.loki/dashboard/dashboard.pid"
-PS_COMMAND="uvicorn otherapp:app --port 59999 --note /home/loki/dashboard.server"
+PS_COMMAND="uvicorn otherapp:app --port 59999 --note loki-dashboard.server-note"
 loki_mark_project_stopped_and_maybe_kill_shared_dashboard
 [ ! -s "$CALL_LOG" ] || fail "forged non-dashboard PID ownership was signalled"
 

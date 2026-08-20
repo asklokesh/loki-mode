@@ -57,7 +57,7 @@ function formatBytes(bytes: number): string {
 const BUNDLE_DEBUG_ID_RE = /\/\/# debugId=([A-F0-9]{32})/;
 const MAP_DEBUG_ID_RE = /(\"debugId\"\s*:\s*\")([A-F0-9]{32})(\")/;
 
-async function writeDeterministicDebugId(outfile: string): Promise<void> {
+export async function writeDeterministicDebugId(outfile: string): Promise<void> {
   const mapfile = `${outfile}.map`;
   const [bundle, map] = await Promise.all([
     readFile(outfile, "utf8"),

@@ -4172,16 +4172,52 @@ try:
         verdict("REFUSED")
 
     observed = subprocess.run(
-        ["ps", "-o", "uid=", "-o", "lstart=", "-p", str(pid)],
+        ["ps", "-o", "uid=", "-o", "ppid=", "-o", "lstart=", "-p", str(pid)],
         check=False,
         capture_output=True,
         text=True,
         timeout=2,
     )
-    fields = observed.stdout.strip().split(maxsplit=1)
-    if observed.returncode != 0 or len(fields) != 2 or int(fields[0]) != os.getuid():
+    # lstart contains spaces, so split off uid and ppid only; the remainder is lstart.
+    fields = observed.stdout.strip().split(maxsplit=2)
+    if observed.returncode != 0 or len(fields) != 3 or int(fields[0]) != os.getuid():
         verdict("REFUSED")
-    process_started_at = int(time.mktime(time.strptime(fields[1], "%a %b %d %H:%M:%S %Y")))
+
+    # The recorded `ppid` is not decoration: register_pid() (autonomy/run.sh) writes
+    # `"ppid":$$`, so for a genuine entry the registering shell IS the live process's
+    # real parent. Nothing above binds the entry to that parentage, which is the whole
+    # forgery: a fresh, same-uid, correctly-ctime'd entry naming an UNRELATED live pid
+    # with an arbitrary dead `ppid` satisfies every other check and gets TERM then KILL.
+    #
+    # Two honest shapes, and only two:
+    #   recorded parent alive -> it must still BE the live parent.
+    #   recorded parent dead  -> the child was reparented to init (pid 1), which is the
+    #                            genuine orphan case cmd_cleanup exists to reap.
+    # A forged entry aimed at an unrelated process fails both: that process's real
+    # parent is the attacker's own live shell, which is neither the recorded ppid nor 1.
+    # Both ceilings below fail CLOSED (a genuine entry is skipped and left for
+    # inspection, never an unrelated process signalled), so neither can turn into
+    # the forgery this guard exists to stop:
+    #   - if the recorded ppid died and the OS reused that number for an unrelated
+    #     live process, this reads "parent alive" and refuses a real orphan;
+    #   - on Linux under a PR_SET_CHILD_SUBREAPER ancestor (systemd user scope) an
+    #     orphan reparents to the subreaper rather than to 1 and is refused.
+    # Widening either one means accepting an arbitrary live pid as the parent, which
+    # is exactly the hole above, so the strict form stays until a portable way to
+    # identify the real reaper exists. Reparent-to-init matches what the rest of the
+    # runtime already assumes (see run.sh's detached getppid()==1 note).
+    observed_ppid = int(fields[1])
+    recorded_parent_alive = True
+    try:
+        os.kill(ppid, 0)
+    except ProcessLookupError:
+        recorded_parent_alive = False
+    except (PermissionError, OSError):
+        verdict("REFUSED")
+    if observed_ppid != (ppid if recorded_parent_alive else 1):
+        verdict("REFUSED")
+
+    process_started_at = int(time.mktime(time.strptime(fields[2], "%a %b %d %H:%M:%S %Y")))
     # Upper bound rejects a pid reused AFTER registration. Lower bound rejects a
     # forged entry aimed at an unrelated process that was already running when
     # the entry was written. Both halves are required: with only the upper bound

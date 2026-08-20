@@ -116,11 +116,13 @@ PYEOF
 CLEAN_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/loki-cleanup-owner-XXXXXX")
 OWNED_PID=""; REUSED_PID=""; RACE_PID=""; UNRELATED_PID=""
 FORGED_PID=""; FORGED_WRAPPER_PID=""; FORGED_MATCHED_PID=""; FRESH_WRAPPER_PID=""; LATE_SPAWN_PID=""
+LIVE_PARENT_FORGED_PID=""; WRONG_LIVE_PARENT_PID=""
 cleanup_owner_fixture() {
     local fixture_pid
     for fixture_pid in "$OWNED_PID" "$REUSED_PID" "$RACE_PID" "$UNRELATED_PID" \
                        "$FORGED_PID" "$FORGED_WRAPPER_PID" "$FORGED_MATCHED_PID" \
-                       "$FRESH_WRAPPER_PID" "$LATE_SPAWN_PID"; do
+                       "$FRESH_WRAPPER_PID" "$LATE_SPAWN_PID" \
+                       "$LIVE_PARENT_FORGED_PID" "$WRONG_LIVE_PARENT_PID"; do
         case "$fixture_pid" in ''|*[!0-9]*) continue ;; esac
         command kill "$fixture_pid" 2>/dev/null || true
         wait "$fixture_pid" 2>/dev/null || true
@@ -153,11 +155,33 @@ sleep 25
 
 # A genuine entry is written on the line after the spawn (see register_pid in
 # autonomy/run.sh), so spawn and register each of these as a pair.
-sleep 120 & OWNED_PID=$!
+#
+# A REAL orphan is spawned by a shell that then dies, so the kernel reparents it
+# to init. Spawning the victim from this still-live test shell while claiming a
+# dead ppid is not an orphan at all, it is the forgery shape: recorded parent dead,
+# real parent a live unrelated shell. Use a genuine orphan so this positive case
+# proves cleanup still reaps what it owns rather than passing on a dishonest fixture.
+spawn_orphan() {
+    local pidfile="$CLEAN_ROOT/$1.pid" child waited=0
+    # Redirect the child's stdio: a backgrounded process inherits this function's
+    # command-substitution pipe as stdout, and $( ) blocks until that pipe closes,
+    # which would hang the fixture for the sleep's full duration.
+    /bin/bash -c 'sleep 120 >/dev/null 2>&1 </dev/null & echo $! >"'"$pidfile"'"'
+    child=$(cat "$pidfile")
+    # Poll the child's OWN parentage rather than the spawner's liveness: reparenting
+    # to init is the observable that matters, and a reaped spawner pid can be reused.
+    while [ "$(ps -o ppid= -p "$child" 2>/dev/null | tr -d ' ')" != "1" ]; do
+        waited=$((waited + 1))
+        [ "$waited" -gt 50 ] && break
+        sleep 0.1
+    done
+    printf '%s\n' "$child"
+}
+OWNED_PID=$(spawn_orphan owned)
 printf '{"pid":%s,"label":"owned-cleanup-fixture","started":"%s","ppid":%s,"extra":""}\n' \
     "$OWNED_PID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$DEAD_PID" \
     >"$CLEAN_ROOT/project/.loki/pids/${OWNED_PID}.json"
-sleep 120 & RACE_PID=$!
+RACE_PID=$(spawn_orphan race)
 printf '{"pid":%s,"label":"reuse-race-fixture","started":"%s","ppid":%s,"extra":""}\n' \
     "$RACE_PID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$DEAD_PID" \
     >"$CLEAN_ROOT/project/.loki/pids/${RACE_PID}.json"
@@ -166,7 +190,7 @@ printf '{"pid":%s,"label":"reuse-race-fixture","started":"%s","ppid":%s,"extra":
 # as a pair, so every launch-token check passes and ONLY the "kind" routing rule
 # refuses it. cmd_cleanup must never reap wrappers; run.sh's cleanup_orphan_pids
 # owns them behind its parent-dead AND idle AND no-live-child predicate.
-sleep 120 & FRESH_WRAPPER_PID=$!
+FRESH_WRAPPER_PID=$(spawn_orphan fresh-wrapper)
 printf '{"pid":%s,"label":"loki-wrapper","started":"%s","ppid":%s,"kind":"wrapper","extra":""}\n' \
     "$FRESH_WRAPPER_PID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$DEAD_PID" \
     >"$CLEAN_ROOT/project/.loki/pids/${FRESH_WRAPPER_PID}.json"
@@ -175,7 +199,7 @@ printf '{"pid":%s,"label":"loki-wrapper","started":"%s","ppid":%s,"kind":"wrappe
 # anchor (10s window) still passes, but the pid is spawned AFTER that instant, so
 # process_started_at > registered_at + 1. This is the pid-reuse-after-registration
 # shape; the lower bound cannot see it because the process is NEWER, not older.
-sleep 120 & LATE_SPAWN_PID=$!
+LATE_SPAWN_PID=$(spawn_orphan late-spawn)
 printf '{"pid":%s,"label":"late-spawn-fixture","started":"%s","ppid":%s,"extra":""}\n' \
     "$LATE_SPAWN_PID" \
     "$(date -u -r "$(( $(date +%s) - 5 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
@@ -184,7 +208,7 @@ printf '{"pid":%s,"label":"late-spawn-fixture","started":"%s","ppid":%s,"extra":
     >"$CLEAN_ROOT/project/.loki/pids/${LATE_SPAWN_PID}.json"
 
 # Reused pid: entry long predates the live process now holding that pid.
-sleep 120 & REUSED_PID=$!
+REUSED_PID=$(spawn_orphan reused)
 printf '{"pid":%s,"label":"reused-pid-fixture","started":"2000-01-01T00:00:00Z","ppid":%s,"extra":""}\n' \
     "$REUSED_PID" "$DEAD_PID" \
     >"$CLEAN_ROOT/project/.loki/pids/${REUSED_PID}.json"
@@ -214,6 +238,28 @@ printf '{"pid":%s,"label":"forged-matched-token","started":"%s","ppid":%s,"extra
 touch -t "$(date -u -r "$(( $(date +%s) - 25 ))" +%Y%m%d%H%M.%S 2>/dev/null \
     || date -u -d '25 seconds ago' +%Y%m%d%H%M.%S)" \
     "$CLEAN_ROOT/project/.loki/pids/${FORGED_MATCHED_PID}.json" 2>/dev/null || true
+
+# THE REGRESSION (loki-cleanup-process-forgery-224): every launch-token check
+# above is satisfied HONESTLY here, so this is not caught by any of them. The
+# victim is spawned and registered as a genuine pair, so `started`, the ctime
+# anchor, and both process-start bounds all pass; the entry is fresh, same-UID
+# and correctly permissioned. The single lie is `ppid`: it names a dead pid the
+# victim was never a child of, while the victim's REAL parent is this live test
+# shell. That lie alone put the entry on cmd_cleanup's dead-parent path and got
+# an unrelated live process TERM+KILLed. Refusal must come from binding the
+# entry to the victim's actual parentage, not from any timing bound.
+sleep 120 & LIVE_PARENT_FORGED_PID=$!
+printf '{"pid":%s,"label":"forged-live-parent","started":"%s","ppid":%s,"extra":""}\n' \
+    "$LIVE_PARENT_FORGED_PID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$DEAD_PID" \
+    >"$CLEAN_ROOT/project/.loki/pids/${LIVE_PARENT_FORGED_PID}.json"
+
+# The same lie told the other way: the recorded ppid is ALIVE but is not the
+# victim's parent. Without a liveness-aware comparison a check that only expects
+# "reparented to 1" would accept this, so both branches are pinned.
+sleep 120 & WRONG_LIVE_PARENT_PID=$!
+printf '{"pid":%s,"label":"forged-wrong-live-parent","started":"%s","ppid":1,"extra":""}\n' \
+    "$WRONG_LIVE_PARENT_PID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    >"$CLEAN_ROOT/project/.loki/pids/${WRONG_LIVE_PARENT_PID}.json"
 
 printf '{"pid":%s,"label":"dead-pid-fixture","started":"2000-01-01T00:00:00Z","ppid":1,"extra":""}\n' \
     "$DEAD_PID" >"$CLEAN_ROOT/project/.loki/pids/${DEAD_PID}.json"
@@ -332,9 +378,40 @@ else
         "signals=$(tr '\n' ' ' <"$SIGNAL_LOG" 2>/dev/null)"
 fi
 
+if command kill -0 "$LIVE_PARENT_FORGED_PID" 2>/dev/null \
+   && ! grep -qx "TERM $LIVE_PARENT_FORGED_PID" "$SIGNAL_LOG" \
+   && ! grep -qx "KILL $LIVE_PARENT_FORGED_PID" "$SIGNAL_LOG" \
+   && grep -q "Refusing.*PID=$LIVE_PARENT_FORGED_PID" "$CLEAN_OUTPUT"; then
+    ok "an entry whose dead ppid is not the victim's real parent is refused"
+else
+    bad "forged parentage over an unrelated live process was accepted" \
+        "signals=$(tr '\n' ' ' <"$SIGNAL_LOG" 2>/dev/null)"
+fi
+
+if command kill -0 "$WRONG_LIVE_PARENT_PID" 2>/dev/null \
+   && ! grep -qx "TERM $WRONG_LIVE_PARENT_PID" "$SIGNAL_LOG" \
+   && ! grep -qx "KILL $WRONG_LIVE_PARENT_PID" "$SIGNAL_LOG" \
+   && grep -q "Refusing.*PID=$WRONG_LIVE_PARENT_PID" "$CLEAN_OUTPUT"; then
+    ok "an entry whose live ppid is not the victim's real parent is refused"
+else
+    bad "forged live parentage was accepted" \
+        "signals=$(tr '\n' ' ' <"$SIGNAL_LOG" 2>/dev/null)"
+fi
+
+# The positive control: a GENUINE orphan (spawner dead, reparented to init) is
+# still reaped. Without this the parentage binding could pass every case above
+# by refusing everything, which would silently disable cleanup altogether.
+if grep -qx "TERM $OWNED_PID" "$SIGNAL_LOG" \
+   && [ ! -e "$CLEAN_ROOT/project/.loki/pids/${OWNED_PID}.json" ]; then
+    ok "a genuinely registered run-owned orphan is still reaped"
+else
+    bad "parentage binding broke genuine orphan cleanup" \
+        "signals=$(tr '\n' ' ' <"$SIGNAL_LOG" 2>/dev/null)"
+fi
+
 if [ ! -e "$CLEAN_ROOT/project/.loki/pids/${OWNED_PID}.json" ] \
    && [ ! -e "$CLEAN_ROOT/project/.loki/pids/${DEAD_PID}.json" ] \
-   && grep -q 'Results: 1 orphan(s) killed, 1 stale entries cleaned, 7 entry(s) refused' "$CLEAN_OUTPUT"; then
+   && grep -q 'Results: 1 orphan(s) killed, 1 stale entries cleaned, 9 entry(s) refused' "$CLEAN_OUTPUT"; then
     ok "owned and stale registry entries are handled with honest counts"
 else
     bad "cleanup registry result accounting is incorrect" "$(tail -3 "$CLEAN_OUTPUT" | tr '\n' ' ')"

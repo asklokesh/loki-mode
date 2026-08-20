@@ -13440,6 +13440,43 @@ _loki_requirements_contract_emit() {
         "${LOKI_REVIEW_REQUIREMENTS_IDENTITY:-}"
 }
 
+# A reviewer dispatch can die BEFORE the provider is ever invoked -- the
+# prompt rematerialization or the shard-identity lookup below both exit 125
+# while LOKI_REVIEW_STDERR_FILE is still unset and no timing sidecar exists
+# yet. That left a lost shard structurally invisible: the logical aggregation
+# (REQUIREMENTS_LOGICAL_TIMING) substituted an anonymous placeholder and the
+# only symptom was a bare call count that could not name WHICH shard vanished.
+# Emit the same sidecar the completed path emits, plus one bounded stderr
+# line, so the existing aggregation carries a shard-identifying cause.
+# ponytail: fixed-format single line, no truncation helper needed.
+_dispatch_reviewer_prestub_failure() {
+    local review_output="$1" stderr_output="$2" stage="$3" shard_index="${4:-0}"
+    printf 'loki-review-prestub-failure stage=%s shard_index=%s reviewer=%s\n' \
+        "$stage" "$shard_index" "${5:-unknown}" >> "$stderr_output" 2>/dev/null || true
+    chmod 600 "$stderr_output" 2>/dev/null || true
+    _LOKI_RDT_PATH="${review_output%.txt}-timing.json" \
+    _LOKI_RDT_STAGE="$stage" _LOKI_RDT_SHARD="$shard_index" \
+    _LOKI_RDT_STDERR="$stderr_output" \
+    _LOKI_RDT_BUDGET="${LOKI_REVIEW_CALL_TIMEOUT:-0}" python3 - <<'REVIEW_PRESTUB_TIMING' 2>/dev/null || true
+import json
+import os
+
+record = {
+    "schema": "loki-review-dispatch/v1",
+    "budget_seconds": int(os.environ.get("_LOKI_RDT_BUDGET", "0") or 0),
+    "elapsed_ms": 0,
+    "exit_code": 125,
+    "outcome": "prestub_error",
+    "deadline_scope": "pre_dispatch",
+    "stage": os.environ.get("_LOKI_RDT_STAGE", "unknown"),
+    "shard_index": int(os.environ.get("_LOKI_RDT_SHARD", "0") or 0),
+    "stderr_bytes": os.path.getsize(os.environ["_LOKI_RDT_STDERR"]),
+}
+with open(os.environ["_LOKI_RDT_PATH"], "w", encoding="utf-8") as handle:
+    json.dump(record, handle, sort_keys=True)
+REVIEW_PRESTUB_TIMING
+}
+
 # Persist one compact record per provider review. The sidecar is written by the
 # same process that owns the dispatch, so parallel reviewer timings do not get
 # distorted by the parent's ordered wait loop.
@@ -15388,7 +15425,13 @@ BUILD_PROMPT
             prompt_text=$(python3 "$requirements_helper" read-bound \
                 "$review_prompt_file" "$prompt_sha" \
                 "$_review_max_prompt_bytes" "$prompt_identity" 2>/dev/null) \
-                || exit 125
+                || {
+                    _dispatch_reviewer_prestub_failure \
+                        "$review_stage_file" \
+                        "$review_dir/$review_id/${reviewer_name}-stderr.log" \
+                        prompt_read_bound "$reviewer_shard_index" "$reviewer_name"
+                    exit 125
+                }
             if [ "$reviewer_logical_name" = "requirements-verifier" ]; then
                 local shard_label shard_identity
                 printf -v shard_label '%03d' "$reviewer_shard_index"
@@ -15396,7 +15439,13 @@ BUILD_PROMPT
                     _LOKI_REVIEW_SHARD_INDEX="$reviewer_shard_index" python3 -c '
 import json, os
 print(json.loads(os.environ["_LOKI_REVIEW_SHARD_IDENTITIES"])[int(os.environ["_LOKI_REVIEW_SHARD_INDEX"]) - 1])
-') || exit 125
+') || {
+                    _dispatch_reviewer_prestub_failure \
+                        "$review_stage_file" \
+                        "$review_dir/$review_id/${reviewer_name}-stderr.log" \
+                        shard_identity "$reviewer_shard_index" "$reviewer_name"
+                    exit 125
+                }
                 LOKI_REVIEW_REQUIREMENTS_HELPER="$requirements_helper" \
                 LOKI_REVIEW_REQUIREMENTS_SOURCE="$requirements_source" \
                 LOKI_REVIEW_REQUIREMENTS_SNAPSHOT="$requirements_file" \

@@ -1525,6 +1525,116 @@ else
     bad "malformed shard coverage was accepted or hidden by completed siblings"
 fi
 
+# A shard can die BEFORE its provider call -- prompt rematerialization or the
+# shard-identity lookup fails and the dispatch subshell exits 125 while
+# LOKI_REVIEW_STDERR_FILE is still unset. That path used to leave NO artifact
+# at all: the logical aggregation substituted an anonymous placeholder, so the
+# only symptom was a short call count that could not name which shard vanished.
+# This is exactly the hosted shard-2 signature (calls=3, no forensic trace).
+#
+# The fault is injected through a python3 shim that fails ONLY `read-bound` for
+# ONE shard's prompt and execs the real interpreter for everything else. It is
+# gated on LOKI_PROBE_DROP_SHARD and its PATH entry is removed immediately
+# after the case, so no other case pays a process-spawn indirection.
+PRESTUB_REPO="$TMPROOT/prestub-drop-repo"
+PRESTUB_STATE="$TMPROOT/prestub-drop-state"
+setup_repo "$PRESTUB_REPO"
+# The three surviving shards must not block forever on a fourth that will
+# never reach the stub, so the started-barrier expects the survivors only.
+REVIEW_TEST_SHARD_EXPECTED=3
+REVIEW_TEST_SHARD_STATE="$PRESTUB_STATE"
+export REVIEW_TEST_SHARD_EXPECTED REVIEW_TEST_SHARD_STATE
+_prestub_real_python="$(command -v python3)"
+_prestub_bin="$TMPROOT/prestub-bin"
+mkdir -p "$_prestub_bin"
+cat > "$_prestub_bin/python3" <<PRESTUB_SHIM
+#!/usr/bin/env bash
+if [ -n "\${LOKI_PROBE_DROP_SHARD:-}" ]; then
+    _prestub_read_bound=0
+    for _prestub_arg in "\$@"; do
+        [ "\$_prestub_arg" = "read-bound" ] && _prestub_read_bound=1
+    done
+    if [ "\$_prestub_read_bound" = "1" ]; then
+        for _prestub_arg in "\$@"; do
+            case "\$_prestub_arg" in
+                *requirements-verifier-shard-\${LOKI_PROBE_DROP_SHARD}-prompt.txt)
+                    exit 9
+                    ;;
+            esac
+        done
+    fi
+fi
+exec "$_prestub_real_python" "\$@"
+PRESTUB_SHIM
+chmod +x "$_prestub_bin/python3"
+_prestub_saved_path="$PATH"
+PATH="$_prestub_bin:$PATH"
+export PATH LOKI_PROBE_DROP_SHARD=002
+prestub_rc=$(run_review_case \
+    "$PRESTUB_REPO" 1 requirements-shards-parallel "$SHARD_SPEC" auto 64000 \
+    "$(review_budget 12)" 1)
+unset LOKI_PROBE_DROP_SHARD
+PATH="$_prestub_saved_path"
+export PATH
+prestub_review=$(find "$PRESTUB_REPO/.loki/quality/reviews" \
+    -mindepth 1 -maxdepth 1 -type d | head -1)
+prestub_timing="$prestub_review/requirements-shards/result-002-timing.json"
+prestub_stderr="$prestub_review/requirements-verifier-shard-002-stderr.log"
+# Each clause reports SEPARATELY so a red names the missing evidence rather
+# than restating the whole conjunction.
+_prestub_why=""
+[ "$prestub_rc" -ne 0 ] || _prestub_why="$_prestub_why rc=0(expected nonzero);"
+[ -s "$prestub_timing" ] \
+  || _prestub_why="$_prestub_why no shard-002 timing sidecar (the pre-stub death is still invisible);"
+[ -s "$prestub_stderr" ] \
+  || _prestub_why="$_prestub_why no shard-002 stderr record;"
+grep -q 'loki-review-prestub-failure .*shard_index=2' "$prestub_stderr" 2>/dev/null \
+  || _prestub_why="$_prestub_why stderr record does not identify shard 2;"
+if [ -z "$_prestub_why" ] \
+   && python3 - "$prestub_review" <<'PY'
+import json
+import pathlib
+import sys
+
+review = pathlib.Path(sys.argv[1])
+shard = json.loads(
+    (review / "requirements-shards" / "result-002-timing.json").read_text()
+)
+# The sidecar must name the shard AND the stage, so a repeat occurrence is
+# diagnosable from the artifact alone.
+assert shard["shard_index"] == 2
+assert shard["stage"] == "prompt_read_bound"
+assert shard["outcome"] == "prestub_error"
+assert shard["exit_code"] == 125
+assert shard["deadline_scope"] == "pre_dispatch"
+assert shard["stderr_bytes"] > 0
+# The EXISTING logical aggregation must carry it: before this, shards[1] was
+# an anonymous {"elapsed_ms": 0, "exit_code": 125, "outcome": "error"} with no
+# schema and no shard index.
+logical = json.loads(
+    (review / "requirements-verifier-timing.json").read_text()
+)
+assert logical["shard_count"] == 4
+lost = logical["shards"][1]
+assert lost["shard_index"] == 2
+assert lost["stage"] == "prompt_read_bound"
+assert lost["outcome"] == "prestub_error"
+# The failure is still a failure: no PASS may be manufactured from survivors.
+aggregate = json.loads((review / "aggregate.json").read_text())
+assert aggregate["inconclusive"] is True
+assert aggregate["pass_count"] == 0
+assert aggregate["real_verdict_count"] == 0
+PY
+then
+    ok "a shard lost before its provider call leaves a shard-identifying forensic record"
+else
+    bad "pre-stub shard loss:${_prestub_why:- aggregation/forensic shape assertion failed (see python AssertionError above)}"
+fi
+unset _prestub_why _prestub_real_python _prestub_bin _prestub_saved_path
+unset prestub_timing prestub_stderr
+REVIEW_TEST_SHARD_EXPECTED=4
+export REVIEW_TEST_SHARD_EXPECTED
+
 # A valid shard FAIL is sufficient negative evidence. Its exact rematerialized
 # result is published as the one logical vote, while only sibling shard
 # deadline controllers are cancelled and prove descendant quiescence.
