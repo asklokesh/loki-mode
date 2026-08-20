@@ -967,6 +967,36 @@ _loki_provider_pipeline_exit_code() {
     fi
 }
 
+# Invoke through a provider's argv-builder seam while preserving the main
+# loop's deadline, fan-out logging, and provider-stage exit status.
+_loki_invoke_argv_provider() {
+    local tier="${1:-development}"
+    local prompt="${2:-}"
+    local log_file="${3:-}"
+    local agent_log="${4:-}"
+    local iter_output="${5:-}"
+    local -a _loki_argv_pipe_status=()
+
+    if ! type provider_invoke_argv >/dev/null 2>&1; then
+        log_error "Provider ${PROVIDER_NAME:-unknown} does not implement provider_invoke_argv"
+        return 125
+    fi
+    if ! provider_invoke_argv "$tier" "$prompt" \
+        || [ "${#_LOKI_INVOKE_ARGV[@]}" -eq 0 ]; then
+        log_error "Provider ${PROVIDER_NAME:-unknown} failed to build invocation argv"
+        return 125
+    fi
+
+    LOKI_DEADLINE_IDLE_TIMEOUT="${LOKI_PROVIDER_IDLE_TIMEOUT:-0}" \
+    _loki_with_deadline "${LOKI_PROVIDER_CALL_TIMEOUT:-0}" \
+        "${_LOKI_INVOKE_ARGV[@]}" 2>&1 \
+        | tee -a "$log_file" "$agent_log" "$iter_output"
+    _loki_argv_pipe_status=("${PIPESTATUS[@]}")
+    return "$(_loki_provider_pipeline_exit_code \
+        "${_loki_argv_pipe_status[0]:-125}" \
+        "${_loki_argv_pipe_status[1]:-125}" 0)"
+}
+
 _LOKI_DEPENDENCY_SETUP_LIB="${SCRIPT_DIR}/lib/dependency-setup.sh"
 if [ -r "$_LOKI_DEPENDENCY_SETUP_LIB" ]; then
     # shellcheck source=lib/dependency-setup.sh
@@ -3207,7 +3237,7 @@ validate_api_keys() {
         # "loggedin" or "unknown" -> proceed (fail open on uncertainty).
     fi
 
-    # CLI tools (claude, codex, cline, aider) use their own login sessions.
+    # CLI tools (claude, codex, cline, aider, opencode) use their own login sessions.
     # Only require API keys inside Docker/K8s where CLI login isn't available.
     if [[ ! -f "/.dockerenv" ]] && [[ -z "${KUBERNETES_SERVICE_HOST:-}" ]]; then
         return 0
@@ -23266,6 +23296,16 @@ if __name__ == "__main__":
                 } && exit_code=0 || exit_code=$?
                 ;;
 
+            opencode)
+                # Keep argv construction provider-owned: its prompt is
+                # positional, --auto is mandatory, and the model is provider
+                # scoped. The wrapper preserves the main-loop deadline/tee
+                # contract and returns the provider stage's nonzero status.
+                _loki_invoke_argv_provider "$CURRENT_TIER" "$prompt" \
+                    "$log_file" "$agent_log" "$iter_output"
+                exit_code=$?
+                ;;
+
             *)
                 log_error "Unknown provider: ${PROVIDER_NAME:-unknown}"
                 local exit_code=1
@@ -25745,7 +25785,7 @@ main() {
                     fi
                     shift 2
                 else
-                    log_error "--provider requires a value (claude, codex, cline, aider)"
+                    log_error "--provider requires a value (claude, codex, cline, aider, opencode)"
                     exit 1
                 fi
                 ;;

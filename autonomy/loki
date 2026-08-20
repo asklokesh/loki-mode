@@ -1456,7 +1456,7 @@ show_help() {
     echo "list with 'loki help aliases'."
     echo ""
     echo "Options for 'start':"
-    echo "  --provider NAME  AI provider: claude (default), codex, cline, aider"
+    echo "  --provider NAME  AI provider: claude (default), codex, cline, aider, opencode"
     echo "  --parallel       Enable parallel mode with git worktrees"
     echo "  --bg, --background  Run in background mode"
     echo "  --simple         Force simple complexity tier (3 phases)"
@@ -1502,7 +1502,7 @@ show_help() {
     echo "  loki cleanup                  # Kill orphaned processes"
     echo ""
     echo "  # Providers + model routing"
-    echo "  loki provider list            # Show 4 providers (claude/codex/cline/aider)"
+    echo "  loki provider list            # Show available providers, including opencode"
     echo "  loki provider set codex       # Switch active provider"
     echo "  # Cheap / open models (DeepSeek, GLM, MiniMax, Kimi) via OpenRouter:"
     echo "  loki provider set aider       # aider + cline reach any OpenRouter model"
@@ -2067,7 +2067,7 @@ cmd_start() {
                 echo "                        building locally; polls until the job finishes."
                 echo "                        Token from LOKI_REMOTE_TOKEN / LOKI_REMOTE_TOKEN_FILE"
                 echo "                        (never an argument). Env: LOKI_REMOTE_URL."
-                echo "  --provider NAME       AI provider: claude (default), codex, cline, aider"
+                echo "  --provider NAME       AI provider: claude (default), codex, cline, aider, opencode"
                 echo "  --parallel            Enable parallel mode with git worktrees"
                 echo "  --allow-haiku         Enable Haiku model for the fast tier (default: disabled)"
                 echo "  --bg, --background    Run in background mode"
@@ -2161,7 +2161,7 @@ cmd_start() {
                     args+=("--provider" "$provider")
                     shift 2
                 else
-                    echo -e "${RED}--provider requires a value (claude, codex, cline, aider)${NC}"
+                    echo -e "${RED}--provider requires a value (claude, codex, cline, aider, opencode)${NC}"
                     exit 1
                 fi
                 ;;
@@ -3367,7 +3367,7 @@ cmd_start() {
     # can drop the marker when the originating process is no longer alive
     # (SIGKILL / crash paths that skip our cleanup hooks).
     case "$provider" in
-        claude|codex|cline|aider)
+        claude|codex|cline|aider|opencode)
             mkdir -p "$LOKI_DIR/state" 2>/dev/null || true
             printf '%s:%s:%s\n' "$provider" "$(date +%s)" "$$" \
                 > "$LOKI_DIR/state/.cli-provider.tmp" 2>/dev/null \
@@ -3409,6 +3409,7 @@ cmd_start() {
             codex)  echo "  npm install -g @openai/codex" ;;
             cline)  echo "  npm install -g cline" ;;
             aider)  echo "  pip install aider-chat" ;;
+            opencode) echo "  npm install -g opencode-ai" ;;
             *)      echo "  Check the provider documentation for installation." ;;
         esac
         echo ""
@@ -5476,9 +5477,12 @@ cmd_status() {
         cline)
             capability="near-full mode"
             ;;
+        opencode)
+            capability="model-agnostic mode"
+            ;;
     esac
     echo -e "${CYAN}Provider:${NC} $current_provider ($capability)"
-    echo -e "${DIM}  Switch with: loki provider set <claude|codex|cline|aider>${NC}"
+    echo -e "${DIM}  Switch with: loki provider set <claude|codex|cline|aider|opencode>${NC}"
     echo ""
 
     # Show running sessions (v6.4.0 - concurrent session support)
@@ -5679,7 +5683,7 @@ def _read_cli_provider(loki_dir):
             return None, False
         prov = parts[0]
         ts = int(parts[1])
-        if prov not in ('claude', 'codex', 'cline', 'aider'):
+        if prov not in ('claude', 'codex', 'cline', 'aider', 'opencode'):
             return None, False
         if time.time() - ts > 86400:
             return None, False
@@ -6338,6 +6342,9 @@ cmd_provider_show() {
         codex|aider)
             echo -e "${YELLOW}Status:${NC}   Degraded mode (sequential only)"
             ;;
+        opencode)
+            echo -e "${GREEN}Status:${NC}   Model-agnostic mode (75+ providers, MCP)"
+            ;;
     esac
 
     if [ -n "$saved_provider" ]; then
@@ -6356,7 +6363,7 @@ cmd_provider_set() {
 
     if [ -z "$new_provider" ]; then
         echo -e "${RED}Error: Provider name required${NC}"
-        echo "Usage: loki provider set <claude|codex|cline|aider>"
+        echo "Usage: loki provider set <claude|codex|cline|aider|opencode>"
         exit 2
     fi
 
@@ -6364,14 +6371,14 @@ cmd_provider_set() {
     case "$new_provider" in
         gemini)
             echo -e "${RED}Error: Provider 'gemini' is deprecated as of v7.5.18 and has been removed.${NC}"
-            echo "Active providers: claude, codex, cline, aider"
+            echo "Active providers: claude, codex, cline, aider, opencode"
             exit 1
             ;;
-        claude|codex|cline|aider)
+        claude|codex|cline|aider|opencode)
             ;;
         *)
             echo -e "${RED}Error: Invalid provider '$new_provider'${NC}"
-            echo "Valid providers: claude, codex, cline, aider"
+            echo "Valid providers: claude, codex, cline, aider, opencode"
             exit 1
             ;;
     esac
@@ -6392,6 +6399,9 @@ cmd_provider_set() {
                 ;;
             aider)
                 echo "Install: pip install aider-chat"
+                ;;
+            opencode)
+                echo "Install: npm install -g opencode-ai"
                 ;;
         esac
         echo ""
@@ -6530,6 +6540,20 @@ cmd_provider_info() {
             echo "  - Built-in lint/test integration"
             echo ""
             echo "Status:      Degraded mode (Tier 3)"
+            ;;
+        opencode)
+            echo "Name:        opencode (75+ Providers)"
+            echo "Vendor:      opencode (model-agnostic registry)"
+            echo "CLI:         opencode"
+            echo "Flag:        run --auto"
+            echo ""
+            echo "Features:"
+            echo "  - Autonomous mode"
+            echo "  - 75+ model providers and custom endpoints"
+            echo "  - Local model support"
+            echo "  - MCP server support"
+            echo ""
+            echo "Status:      Model-agnostic mode"
             ;;
         *)
             echo -e "${RED}Unknown provider: $provider${NC}"
@@ -9871,7 +9895,7 @@ cmd_run() {
                 echo "  --dry-run          Preview generated PRD without starting"
                 echo "  --no-start         Generate PRD but don't start execution"
                 echo "  --output FILE      Save PRD to custom path"
-                echo "  --provider NAME    AI provider: claude (default), codex, cline, aider"
+                echo "  --provider NAME    AI provider: claude (default), codex, cline, aider, opencode"
                 echo "  --parallel         Enable parallel mode with git worktrees"
                 echo "  --bg, --background Run in background mode"
                 echo "  --simple           Force simple complexity tier"
@@ -9946,7 +9970,7 @@ cmd_run() {
                     # v7.7.11 (council fix): validate against canonical set; include
                     # PID so reader can drop the marker when originating process is gone.
                     case "$2" in
-                        claude|codex|cline|aider)
+                        claude|codex|cline|aider|opencode)
                             mkdir -p "${LOKI_DIR:-.loki}/state" 2>/dev/null || true
                             printf '%s:%s:%s\n' "$2" "$(date +%s)" "$$" \
                                 > "${LOKI_DIR:-.loki}/state/.cli-provider.tmp" 2>/dev/null \
@@ -9966,7 +9990,7 @@ cmd_run() {
                 # UT2-13: Record CLI provider at parse time (atomic write).
                 # v7.7.11 (council fix): validate + include PID.
                 case "$provider_override" in
-                    claude|codex|cline|aider)
+                    claude|codex|cline|aider|opencode)
                         mkdir -p "${LOKI_DIR:-.loki}/state" 2>/dev/null || true
                         printf '%s:%s:%s\n' "$provider_override" "$(date +%s)" "$$" \
                             > "${LOKI_DIR:-.loki}/state/.cli-provider.tmp" 2>/dev/null \
@@ -10597,7 +10621,7 @@ cmd_issue() {
                 echo "  --output FILE      Save PRD to custom path (default: .loki/prd-issue-N.md)"
                 echo ""
                 echo "Options passed to 'start' (when --start is used):"
-                echo "  --provider NAME    AI provider: claude (default), codex, cline, aider"
+                echo "  --provider NAME    AI provider: claude (default), codex, cline, aider, opencode"
                 echo "  --parallel         Enable parallel mode with git worktrees"
                 echo "  --bg, --background Run in background mode"
                 echo ""
@@ -11994,7 +12018,7 @@ cmd_config() {
             echo "  model.planning       Model for planning tier"
             echo "  model.development    Model for development tier"
             echo "  model.fast           Model for fast tier"
-            echo "  provider             Default AI provider: claude, codex, cline, aider"
+            echo "  provider             Default AI provider: claude, codex, cline, aider, opencode"
             echo "  issue.provider       Default issue provider: github, gitlab, jira, azure_devops"
             echo "  blind_validation     Blind validation mode: true, false (default: true)"
             echo "  adversarial_testing  Adversarial testing: true, false (default: true)"
@@ -12055,11 +12079,11 @@ cmd_config_set() {
         provider)
             case "$value" in
                 gemini)
-                    echo -e "${RED}Invalid provider: 'gemini' is deprecated as of v7.5.18. Active providers: claude, codex, cline, aider${NC}"
+                    echo -e "${RED}Invalid provider: 'gemini' is deprecated as of v7.5.18. Active providers: claude, codex, cline, aider, opencode${NC}"
                     return 1
                     ;;
-                claude|codex|cline|aider) ;;
-                *) echo -e "${RED}Invalid provider: $value (expected: claude, codex, cline, aider)${NC}"; return 1 ;;
+                claude|codex|cline|aider|opencode) ;;
+                *) echo -e "${RED}Invalid provider: $value (expected: claude, codex, cline, aider, opencode)${NC}"; return 1 ;;
             esac
             ;;
         issue.provider)
@@ -12870,7 +12894,7 @@ cmd_doctor() {
                 echo "            required egress remains."
                 echo ""
                 echo "Checks: node, python3, jq, git, curl, bash version,"
-                echo "        claude/codex CLIs, disk space, and cockpit render capability."
+                echo "        provider CLIs, disk space, and cockpit render capability."
                 return 0
                 ;;
             *)
@@ -12970,6 +12994,9 @@ cmd_doctor() {
             aider)
                 version=$(aider --version 2>/dev/null | head -1 | sed 's/[^0-9.]//g' | head -1)
                 ;;
+            opencode)
+                version=$(opencode --version 2>/dev/null | head -1 | sed 's/[^0-9.]//g' | head -1)
+                ;;
         esac
 
         local version_display=""
@@ -13025,6 +13052,7 @@ cmd_doctor() {
             codex)  echo "npm install -g @openai/codex" ;;
             cline)  echo "npm install -g cline" ;;
             aider)  echo "pip install aider-chat" ;;
+            opencode) echo "npm install -g opencode-ai" ;;
             *)      echo "" ;;
         esac
     }
@@ -13046,6 +13074,7 @@ cmd_doctor() {
     doctor_check_provider "Codex CLI"   codex  || true
     doctor_check_provider "Cline CLI"   cline  || true
     doctor_check_provider "Aider CLI"   aider  || true
+    doctor_check_provider "opencode CLI" opencode || true
 
     # Check if at least one provider is installed (detect_any_provider is the
     # shared helper from provider-offer.sh, extracted from this exact loop).
@@ -13681,6 +13710,7 @@ checks.append(check_tool('Claude CLI', 'claude', 'optional'))
 checks.append(check_tool('Codex CLI', 'codex', 'optional'))
 checks.append(check_tool('Cline CLI', 'cline', 'optional'))
 checks.append(check_tool('Aider CLI', 'aider', 'optional'))
+checks.append(check_tool('opencode CLI', 'opencode', 'optional'))
 
 # Disk space
 disk_gb = None
@@ -13824,7 +13854,7 @@ elif disk_status == 'fail': fail_count += 1
 elif disk_status == 'warn': warn_count += 1
 
 # AGGREGATE PROVIDER CHECK. Each provider CLI is individually optional --
-# you need Claude OR Codex OR Cline OR Aider, not all four -- so no single
+# you need one of Claude, Codex, Cline, Aider, or opencode -- so no single
 # one can be marked required. But having NONE is a blocker, and the text
 # path reports it as one (the No-AI-provider branch near autonomy/loki:11000).
 #
@@ -17268,8 +17298,11 @@ except Exception: pass
                     # shellcheck disable=SC2086
                     (cd "$codebase_path" && aider --message "$phase_prompt" --yes-always --no-auto-commits --model "$aider_model" $aider_flags 2>&1) || phase_exit=$?
                     ;;
+                opencode)
+                    (cd "$codebase_path" && source "$_LOKI_SCRIPT_DIR/../providers/opencode.sh" && provider_invoke "$phase_prompt" 2>&1) || phase_exit=$?
+                    ;;
                 *)
-                    echo -e "${RED}Error: Unknown provider '${provider_name}'. Supported: claude, codex, cline, aider${NC}"
+                    echo -e "${RED}Error: Unknown provider '${provider_name}'. Supported: claude, codex, cline, aider, opencode${NC}"
                     phase_exit=1
                     ;;
             esac
@@ -18477,10 +18510,13 @@ except Exception: pass
             # shellcheck disable=SC2086
             (cd "$codebase_path" && aider --message "$heal_prompt" --yes-always --no-auto-commits --model "$aider_model" $aider_flags 2>&1) || heal_exit=$?
             ;;
+        opencode)
+            (cd "$codebase_path" && source "$_LOKI_SCRIPT_DIR/../providers/opencode.sh" && provider_invoke "$heal_prompt" 2>&1) || heal_exit=$?
+            ;;
         # BUG-HEAL-003: Unknown provider should error, not silently succeed
         *)
             echo -e "${RED}Error: Unknown provider: $provider${NC}"
-            echo "Supported providers: claude, codex, cline, aider"
+            echo "Supported providers: claude, codex, cline, aider, opencode"
             return 1
             ;;
     esac
@@ -19318,7 +19354,7 @@ with open(failover_file, 'w') as f: json.dump(d, f, indent=2)
                 local IFS=','
                 for p in $new_chain; do
                     case "$p" in
-                        claude|codex|cline|aider) ;;
+                        claude|codex|cline|aider|opencode) ;;
                         *) echo -e "${RED}Error: invalid provider '$p' in chain${NC}"; return 1 ;;
                     esac
                 done
@@ -20517,7 +20553,7 @@ main() {
     # v7.5.18: early guard -- LOKI_PROVIDER=gemini is no longer supported.
     if [ "${LOKI_PROVIDER:-}" = "gemini" ]; then
         echo -e "${RED}Error: Provider 'gemini' is deprecated as of v7.5.18 and has been removed.${NC}" >&2
-        echo "Active providers: claude, codex, cline, aider" >&2
+        echo "Active providers: claude, codex, cline, aider, opencode" >&2
         echo "Unset LOKI_PROVIDER or use: LOKI_PROVIDER=claude" >&2
         exit 1
     fi

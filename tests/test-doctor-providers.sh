@@ -224,6 +224,15 @@ else
     log_fail "doctor did not render the section"
 fi
 
+# The primary AI Providers block must enumerate the same active route. The
+# availability section already knew opencode; omitting it here made doctor
+# contradict itself in one screen.
+if printf '%s' "$DOC_OUT" | grep -qE '^  (PASS|WARN)  opencode CLI'; then
+    log_pass "doctor AI Providers block includes opencode"
+else
+    log_fail "doctor AI Providers block omits opencode"
+fi
+
 # The sections after it must still print: an informational block must never
 # truncate the report.
 if printf '%s' "$DOC_OUT" | grep -q "API Keys:"; then
@@ -298,6 +307,12 @@ if printf '%s' "$JSON_OUT" | python3 -c "import json,sys; json.load(sys.stdin)" 
     log_pass "doctor --json is valid JSON"
 else
     log_fail "doctor --json did not parse; the added key may have broken the program"
+fi
+
+if printf '%s' "$JSON_OUT" | python3 -c "import json,sys; assert 'opencode' in [c.get('command') for c in json.load(sys.stdin).get('checks', [])]" >/dev/null 2>&1; then
+    log_pass "doctor --json tool checks include opencode"
+else
+    log_fail "doctor --json tool checks omit opencode"
 fi
 
 JSON_KEYS="$(printf '%s' "$JSON_OUT" | python3 -c "

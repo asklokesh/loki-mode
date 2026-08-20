@@ -44,7 +44,7 @@ loki_tier_alias() {
 }
 
 # Return the "latest_<tier>" id for a provider from the catalog.
-# Args: $1 provider (claude|codex|cline|aider)
+# Args: $1 provider (claude|codex|cline|aider|opencode)
 #       $2 tier     (planning|development|fast, or small|medium|high)
 loki_latest_model() {
     local provider="${1:-claude}"

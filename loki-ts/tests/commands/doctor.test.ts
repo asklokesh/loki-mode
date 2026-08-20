@@ -246,10 +246,11 @@ describe("doctor.buildDoctorJson", () => {
     expect(typeof json.summary.ok).toBe("boolean");
   });
 
-  it("contains all 11 expected tool checks in order", () => {
+  it("contains all 12 expected tool checks in order", () => {
     // v7.4.9: added "bun" probe (recommended) so users can see whether the
     // ported-command speedup is available on their system.
     // v7.5.18: gemini probe removed.
+    // v9.22.13: opencode is an active provider route and must be observable.
     const expected = [
       "node",
       "python3",
@@ -262,6 +263,7 @@ describe("doctor.buildDoctorJson", () => {
       "codex",
       "cline",
       "aider",
+      "opencode",
     ];
     expect(json.checks.map((c) => c.command)).toEqual(expected);
   });
@@ -290,7 +292,7 @@ describe("doctor.buildDoctorJson", () => {
     else if (json.disk.status === "fail") fail++;
     else warn++;
     // ai_provider is an AGGREGATE over the individually-optional provider CLIs
-    // (Claude OR Codex OR Cline OR Aider). It is counted in the tally because
+    // (Claude, Codex, Cline, Aider, or opencode). It is counted in the tally because
     // having none is a genuine blocker -- without it, --json reported zero
     // failures and ok true on a host that cannot run a build, contradicting
     // the same command's own exit code.
@@ -330,7 +332,8 @@ describe("doctor.runDoctor (end-to-end)", () => {
     expect(result).toBe(0);
     const parsed = JSON.parse(cap.out) as DoctorJson;
     // v7.4.9: 11 -> 12 with the new "bun" probe. v7.5.18: 12 -> 11 (gemini removed).
-    expect(parsed.checks.length).toBe(11);
+    // v9.22.13: 11 -> 12 when opencode became observable as an active route.
+    expect(parsed.checks.length).toBe(12);
     expect(parsed.summary).toBeDefined();
   });
 

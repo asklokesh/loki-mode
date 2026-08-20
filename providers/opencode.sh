@@ -9,7 +9,7 @@
 #   llama.cpp). Users can add providers that are NOT in its built-in list -- it
 #   is a registry, not a hardcoded table.
 #
-#   That matters because our own catalog is a fixed four-key file. Driving
+#   That matters because our own catalog is a fixed provider table. Driving
 #   opencode gives users every cheap open model without us maintaining a model
 #   list per vendor.
 #

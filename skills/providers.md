@@ -1,6 +1,6 @@
 # Multi-Provider Support
 
-Loki Mode supports four AI providers for autonomous execution.
+Loki Mode supports five AI providers for autonomous execution.
 
 ## Provider Comparison
 
@@ -8,17 +8,17 @@ Loki Mode supports four AI providers for autonomous execution.
 > - Claude: `--dangerously-skip-permissions` (verified)
 > - Codex: `exec --sandbox workspace-write --skip-git-repo-check` (the harness invocation; --skip-git-repo-check required on fresh non-git dirs; --full-auto deprecated in codex 0.125+, workspace-write is the documented replacement) or `exec --dangerously-bypass-approvals-and-sandbox` (legacy)
 
-| Feature | Claude Code | OpenAI Codex | Cline CLI | Aider |
-|---------|-------------|--------------|-----------|-------|
-| **Full Features** | Yes | No (Degraded) | Near-Full (Tier 2) | No (Degraded) |
-| **Task Tool (Subagents)** | Yes | No | Yes (Subagents) | No |
-| **Parallel Agents** | Yes (10+) | No | No | No |
-| **MCP Integration** | Yes | Yes (basic) | Yes | No |
-| **Context Window** | 200K | 400K | Varies by provider | Varies by provider |
-| **Max Output Tokens** | 128K | 32K | Varies by provider | Varies by provider |
-| **Model Tiers** | 3 (opus/sonnet/haiku) | 1 (effort param) | 1 (external) | 1 (external) |
-| **Multi-Provider** | Claude only | OpenAI only | 12+ providers | 18+ providers |
-| **Skill Directory** | ~/.claude/skills | None | None | None |
+| Feature | Claude Code | OpenAI Codex | Cline CLI | Aider | opencode |
+|---------|-------------|--------------|-----------|-------|----------|
+| **Full Features** | Yes | No (Degraded) | Near-Full (Tier 2) | No (Degraded) | Model-agnostic |
+| **Task Tool (Subagents)** | Yes | No | Yes (Subagents) | No | No |
+| **Parallel Agents** | Yes (10+) | No | No | No | No |
+| **MCP Integration** | Yes | Yes (basic) | Yes | No | Yes |
+| **Context Window** | 200K | 400K | Varies by provider | Varies by provider | Varies by provider |
+| **Max Output Tokens** | 128K | 32K | Varies by provider | Varies by provider | Varies by provider |
+| **Model Tiers** | 3 (opus/sonnet/haiku) | 1 (effort param) | 1 (external) | 1 (external) | 1 (external) |
+| **Multi-Provider** | Claude only | OpenAI only | 12+ providers | 18+ providers | 75+ providers + custom endpoints |
+| **Skill Directory** | ~/.claude/skills | None | None | None | ~/.config/opencode |
 
 ## Provider Selection
 
@@ -57,7 +57,7 @@ auto-selected.
 
 ## Any Model, Any Provider (ANTHROPIC_BASE_URL)
 
-Independent of the four CLI providers below. Loki speaks the Anthropic Messages
+Independent of the five CLI providers below. Loki speaks the Anthropic Messages
 API, so ANY endpoint that implements it works: OpenRouter, Ollama, LiteLLM,
 vLLM, or a self-hosted gateway. Nothing needs installing.
 
@@ -309,6 +309,32 @@ aider --message "$prompt" --yes-always --no-auto-commits --model model_name
 
 ---
 
+## opencode (Model-Agnostic, 75+ Providers)
+
+**Best for:** OpenRouter, local models, and custom OpenAI-compatible endpoints without maintaining a fixed Loki vendor catalog.
+
+**Capabilities:**
+- 75+ registered model providers plus custom endpoints
+- Local-model support through Ollama, LM Studio, and llama.cpp
+- MCP server support
+- Autonomous `opencode run --auto` execution
+
+**Limitations:**
+- Sequential Loki execution only
+- No Claude-style Task tool or Loki parallel-agent worktrees
+
+**Setup and selection:**
+```bash
+npm install -g opencode-ai
+opencode auth login
+loki provider set opencode
+loki start ./prd.md
+```
+
+Set `LOKI_OPENCODE_MODEL` to an exact `provider/model` identity when the configured opencode default is not desired.
+
+---
+
 ## Degraded Mode Behavior
 
 When running with Codex or Aider (Tier 3):
@@ -341,6 +367,7 @@ providers/
   codex.sh    # Degraded mode, effort parameter (Tier 3)
   cline.sh    # Near-full mode, 12+ providers (Tier 2)
   aider.sh    # Degraded mode, 18+ providers (Tier 3)
+  opencode.sh # Model-agnostic mode, 75+ providers and custom endpoints
   loader.sh   # Provider loader utility
 ```
 
@@ -365,6 +392,7 @@ PROVIDER_DEGRADED=false
 | Subagents without Claude subscription | Cline |
 | OpenAI ecosystem compatibility | Codex |
 | Maximum provider flexibility (18+) | Aider |
-| Local models (Ollama, free) | Aider or Cline |
+| Provider registry or custom endpoint | opencode |
+| Local models (Ollama, free) | opencode, Aider, or Cline |
 | Architect mode (dual model) | Aider |
 | Sequential-only is acceptable | Codex or Aider |

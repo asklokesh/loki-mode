@@ -185,8 +185,8 @@ print_capability_matrix() {
 }
 
 # Auto-detect best available provider
-# BUG-PROV-007 fix: includes all 4 supported providers in priority order
-# Priority: Claude (Tier 1, full) > Cline (Tier 2, near-full) > Codex/Aider (Tier 3, degraded)
+# BUG-PROV-007 fix: includes every supported provider in priority order
+# Priority: Claude (Tier 1, full) > Cline (Tier 2, near-full) > Codex/Aider (Tier 3, degraded) > opencode
 auto_detect_provider() {
     for p in claude cline codex aider opencode; do
         if check_provider_installed "$p"; then

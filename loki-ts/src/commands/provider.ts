@@ -49,6 +49,9 @@ export function runProviderShow(positional?: string): number {
     case "aider":
       process.stdout.write(`${YELLOW}Status:${NC}   Degraded mode (sequential only)\n`);
       break;
+    case "opencode":
+      process.stdout.write(`${GREEN}Status:${NC}   Model-agnostic mode (75+ providers, MCP)\n`);
+      break;
     default:
       // Match bash: no status line for unknown providers.
       break;

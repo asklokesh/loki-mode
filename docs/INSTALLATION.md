@@ -343,7 +343,7 @@ The `HUMAN_INPUT.md` file has security controls:
 
 ## Multi-Provider Support
 
-Loki Mode supports four active providers across three tiers, plus historical/upcoming entries. Pick by capability + cost.
+Loki Mode supports five active providers across three capability modes, plus historical/upcoming entries. Pick by capability + cost.
 
 ### Supported Providers
 

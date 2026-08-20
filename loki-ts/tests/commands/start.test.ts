@@ -128,6 +128,13 @@ describe("parseStartArgs (Bun start flag subset)", () => {
     expect(errs.join("")).toContain("unknown --provider");
   });
 
+  it("direct Bun start refuses opencode so the shim can route it to the supported bash adapter", () => {
+    const errors: string[] = [];
+    const parsed = parseStartArgs(["spec.md", "--provider", "opencode"], (s) => errors.push(s));
+    expect(parsed).toBe(2);
+    expect(errors.join("")).toContain("unknown --provider 'opencode'");
+  });
+
   it("unknown --session-model -> exit 2", () => {
     errs.length = 0;
     expect(parseStartArgs(["./prd.md", "--session-model", "turbo"], collect)).toBe(2);

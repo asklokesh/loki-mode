@@ -105,7 +105,7 @@ const START_USAGE =
   "                        [--prd FILE | --brief TEXT] [--simple|--complex] [--allow-haiku]\n" +
   "                        [--regen-prd] [--skip-memory]\n" +
   "  <spec> = a PRD path, or a one-line brief. (Issue refs / --github / --parallel /\n" +
-  "  --sandbox and other orchestration flags run on the bash route automatically.)\n";
+  "  --sandbox, opencode, and other shell-adapter paths run on the bash route automatically.)\n";
 
 // Parse the reconciled flag surface into RunnerOpts (+ apply env-mapping flags to
 // process.env), or return an error/terminal exit code. Value 0 = handled+exit

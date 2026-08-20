@@ -371,6 +371,7 @@ const TOOL_SPECS: readonly ToolSpec[] = [
   { displayName: "Codex CLI", jsonName: "Codex CLI", cmd: "codex", required: "optional" },
   { displayName: "Cline CLI", jsonName: "Cline CLI", cmd: "cline", required: "optional" },
   { displayName: "Aider CLI", jsonName: "Aider CLI", cmd: "aider", required: "optional" },
+  { displayName: "opencode CLI", jsonName: "opencode CLI", cmd: "opencode", required: "optional" },
 ];
 
 // Internal record carries both names; callers pick which one to render.
@@ -587,13 +588,13 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
   else warnings++;
 
   // AGGREGATE PROVIDER CHECK, mirroring autonomy/loki:cmd_doctor_json. Each
-  // provider CLI is individually optional -- Claude OR Codex OR Cline OR Aider
+  // provider CLI is individually optional -- Claude, Codex, Cline, Aider, or opencode
   // -- so none can be marked required on its own. Having NONE is a blocker,
   // and the text path on both routes reports it as one.
   //
   // Without this, --json reported zero failures and ok true on a host that
   // cannot run a build, disagreeing with the same command's own exit code.
-  const anyProviderFound = ["claude", "codex", "cline", "aider"].some(
+  const anyProviderFound = ["claude", "codex", "cline", "aider", "opencode"].some(
     (p) => checks.find((c) => c.command === p)?.found === true,
   );
   const aiProvider: AiProviderCheck = {
@@ -765,7 +766,7 @@ async function runText(): Promise<number> {
 
   // AI Providers
   process.stdout.write(`${CYAN}AI Providers:${NC}\n`);
-  const providerCmds = ["claude", "codex", "cline", "aider"];
+  const providerCmds = ["claude", "codex", "cline", "aider", "opencode"];
   // Per-provider install hint, byte-matching the bash route's
   // doctor_provider_install_cmd (autonomy/loki:8128). The bash route writes this
   // hint to STDERR (run.sh doctor_check_provider, `>&2`), so it must go to STDERR
@@ -779,6 +780,7 @@ async function runText(): Promise<number> {
     codex: "npm install -g @openai/codex",
     cline: "npm install -g cline",
     aider: "pip install aider-chat",
+    opencode: "npm install -g opencode-ai",
   };
   let anyProvider = false;
   for (const cmd of providerCmds) {

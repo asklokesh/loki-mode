@@ -34,8 +34,8 @@ echo ""
 # ===========================================
 log_test "validate_provider() with valid providers"
 valid_count=0
-# v7.5.18: gemini removed from provider set.
-for provider in claude codex cline aider; do
+# v7.5.18: gemini removed from provider set. v8.2.0 added opencode.
+for provider in "${SUPPORTED_PROVIDERS[@]}"; do
     if validate_provider "$provider"; then
         ((valid_count++))
     else
@@ -43,8 +43,8 @@ for provider in claude codex cline aider; do
     fi
 done
 
-if [ $valid_count -eq 4 ]; then
-    log_pass "validate_provider() accepts all valid providers (claude, codex, cline, aider)"
+if [ $valid_count -eq ${#SUPPORTED_PROVIDERS[@]} ]; then
+    log_pass "validate_provider() accepts every supported provider"
 fi
 
 # ===========================================
@@ -140,7 +140,7 @@ log_test "auto_detect_provider() priority order"
 # Get installed providers list
 installed_list=$(get_installed_providers)
 
-# Check priority order is correct (claude > codex > cline > aider). v7.5.18: gemini removed.
+# Check priority order is correct (claude > cline > codex > aider > opencode).
 detected=$(auto_detect_provider)
 
 if [ -n "$detected" ]; then
@@ -187,7 +187,7 @@ fi
 # Test 6: SUPPORTED_PROVIDERS array
 # ===========================================
 log_test "SUPPORTED_PROVIDERS array contents"
-# v7.5.18: gemini removed (4 providers).
+# v7.5.18: gemini removed. v8.2.0 added opencode.
 # v8.2.0: opencode added as the model-agnostic route -- it reaches 75+ providers
 # via the AI SDK + Models.dev registry plus any OpenAI-compatible endpoint, so a
 # user can run cheap open models without us maintaining a per-vendor model list.

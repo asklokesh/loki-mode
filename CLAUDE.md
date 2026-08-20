@@ -20,11 +20,12 @@ loki start owner/repo#123        # issue-mode (GitHub issue)
 
 ```
 SKILL.md                    # Slim core skill (~410 lines) - progressive disclosure
-providers/                  # Multi-provider support (4 providers)
+providers/                  # Multi-provider support (5 providers)
   claude.sh                 # Claude Code - full features (Tier 1)
   cline.sh                  # Cline - Tier 2
   codex.sh                  # OpenAI Codex CLI - degraded mode (Tier 3)
   aider.sh                  # Aider - degraded mode (Tier 3)
+  opencode.sh               # opencode - model-agnostic mode
   loader.sh                 # Provider loader utility
   models.sh                 # Model name registry
 memory/                     # Memory system (core v5.15.0; cross-project + RAG injector v7.1.0+; 15 modules)
@@ -95,11 +96,12 @@ Every iteration follows: **R**eason -> **A**ct -> **R**eflect -> **V**erify
 - **Sonnet**: Development and functional testing (implementation, integration tests)
 - **Haiku**: Unit tests, monitoring, and simple tasks - use extensively for parallelization
 
-### Multi-Provider Support (4 active providers, see `providers/*.sh`)
+### Multi-Provider Support (5 active providers, see `providers/*.sh`)
 - **Claude Code** (Tier 1): Full features (subagents, parallel, Task tool, MCP)
 - **Cline** (Tier 2): Reduced parallelism
 - **OpenAI Codex CLI** (Tier 3): Degraded mode (sequential only, no Task tool)
 - **Aider** (Tier 3): Degraded mode
+- **opencode** (model-agnostic): Sequential execution across 75+ providers, local models, custom endpoints, and MCP
 - **Google Gemini CLI**: DEPRECATED starting v7.5.18 (upstream deprecated; runtime removed). `LOKI_PROVIDER=gemini` exits with a migration message.
 
 ```bash

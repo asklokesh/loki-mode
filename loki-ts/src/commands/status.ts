@@ -182,7 +182,7 @@ def _read_cli_provider_bun(loki_dir):
             return None
         prov = parts[0]
         ts = int(parts[1])
-        if prov not in ('claude', 'codex', 'cline', 'aider'):
+        if prov not in ('claude', 'codex', 'cline', 'aider', 'opencode'):
             return None
         if time.time() - ts > 86400:
             return None
@@ -556,12 +556,15 @@ async function runStatusText(): Promise<number> {
     case "cline":
       capability = "near-full mode";
       break;
+    case "opencode":
+      capability = "model-agnostic mode";
+      break;
     default:
       capability = "full features";
       break;
   }
   process.stdout.write(`${CYAN}Provider:${NC} ${currentProvider} (${capability})\n`);
-  process.stdout.write(`${DIM}  Switch with: loki provider set <claude|codex|cline|aider>${NC}\n`);
+  process.stdout.write(`${DIM}  Switch with: loki provider set <claude|codex|cline|aider|opencode>${NC}\n`);
   process.stdout.write(`\n`);
 
   // Running sessions

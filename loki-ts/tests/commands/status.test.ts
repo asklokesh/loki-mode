@@ -193,6 +193,21 @@ describe("status: text mode -- minimal .loki present", () => {
     }
   });
 
+  it("renders a saved opencode selection with truthful capability", async () => {
+    const root = mkTmp();
+    try {
+      const lokiDir = join(root, ".loki");
+      mkdirSync(join(lokiDir, "state"), { recursive: true });
+      writeFileSync(join(lokiDir, "state", "provider"), "opencode\n");
+      process.env["LOKI_DIR"] = lokiDir;
+      const r = await runWithCapture([]);
+      expect(r.exitCode).toBe(0);
+      expect(stripAnsi(r.stdout)).toContain("Provider: opencode (model-agnostic mode)");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("shows PAUSED when PAUSE signal file exists", async () => {
     const root = mkTmp();
     try {

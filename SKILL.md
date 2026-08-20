@@ -434,7 +434,7 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.13] for the per-fix list and r
 
 | Feature | Added | Notes |
 |---------|-------|-------|
-| Multi-provider support (4 providers) | v5.0.0 | claude, codex, cline, aider -- see `providers/` |
+| Multi-provider support (5 providers) | v5.0.0 | claude, codex, cline, aider, opencode -- see `providers/` |
 | CONTINUITY.md working memory | v5.35.0 | Auto-managed by run.sh, updated each iteration |
 | Quality gates 3-reviewer system | v5.35.0 | 5 specialist reviewers in `skills/quality-gates.md`; execution in run.sh |
 | Memory System (episodic/semantic/procedural) | v5.15.0 | Full implementation in `memory/` |

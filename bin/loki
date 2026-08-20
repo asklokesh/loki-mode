@@ -188,7 +188,7 @@ fi
 # error regardless of which subcommand they invoke.
 if [ "${LOKI_PROVIDER:-}" = "gemini" ]; then
     echo "Error: Provider 'gemini' is deprecated as of v7.5.18 and has been removed." >&2
-    echo "Active providers: claude, codex, cline, aider" >&2
+    echo "Active providers: claude, codex, cline, aider, opencode" >&2
     echo "Unset LOKI_PROVIDER or use: LOKI_PROVIDER=claude" >&2
     exit 1
 fi
@@ -273,8 +273,19 @@ _loki_start_needs_bash() {
     # $@ = the start args (already know $1 = start). Return 0 (divert to bash) if
     # any bash-only orchestration flag or an issue-ref spec is present.
     local a
+    local explicit_provider=""
+    local provider_value_next=0
     for a in "$@"; do
+        if [ "$provider_value_next" = "1" ]; then
+            explicit_provider="$a"
+            provider_value_next=0
+            continue
+        fi
         case "$a" in
+            --provider)
+                provider_value_next=1 ;;
+            --provider=*)
+                explicit_provider="${a#--provider=}" ;;
             --parallel|--bg|--background|--github|--api|--sandbox \
             |--fast|--repo-fast|--full|--repo-full \
             |--bmad-project|--openspec \
@@ -296,6 +307,19 @@ _loki_start_needs_bash() {
         esac
     done
     unset _loki_iso_next
+
+    # The Bun RARV loop has not ported the opencode invoker yet. Keep the
+    # released, autonomous shell adapter reachable when SDK mode is enabled
+    # instead of accepting the selection and then failing after intake. CLI
+    # selection wins over env, which wins over the project-level saved choice.
+    local effective_provider="$explicit_provider"
+    if [ -z "$effective_provider" ] && [ -n "${LOKI_PROVIDER:-}" ]; then
+        effective_provider="$LOKI_PROVIDER"
+    fi
+    if [ -z "$effective_provider" ] && [ -f "${PWD}/.loki/state/provider" ]; then
+        effective_provider="$(sed -n '1p' "${PWD}/.loki/state/provider" 2>/dev/null || true)"
+    fi
+    [ "$effective_provider" = "opencode" ] && return 0
     return 1
 }
 if [ "${1:-}" = "start" ] && { [ "${LOKI_SDK_LOOP:-}" = "1" ] || [ "${LOKI_SDK_LOOP:-}" = "true" ]; }; then

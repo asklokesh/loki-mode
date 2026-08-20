@@ -3,7 +3,7 @@
 # Tests --provider flag, LOKI_PROVIDER env var, default provider, and precedence
 #
 # This file tests the CLI interface for provider selection without invoking
-# actual provider CLIs (claude, codex, cline, aider). v7.5.18: gemini removed.
+# actual provider CLIs (claude, codex, cline, aider, opencode). v7.5.18: gemini removed.
 
 set -uo pipefail
 # Note: Not using -e to allow collecting all test results
@@ -83,7 +83,7 @@ fi
 # ===========================================
 log_test "LOKI_PROVIDER env var overrides default"
 
-for provider in claude codex cline aider; do
+for provider in "${SUPPORTED_PROVIDERS[@]}"; do
     result=$(
         export LOKI_PROVIDER="$provider"
         LOKI_PROVIDER=${LOKI_PROVIDER:-claude}
@@ -104,7 +104,7 @@ log_test "validate_provider() accepts all valid providers"
 valid_count=0
 
 # v7.5.18: gemini removed from provider set.
-for provider in claude codex cline aider; do
+for provider in "${SUPPORTED_PROVIDERS[@]}"; do
     if validate_provider "$provider"; then
         ((valid_count++))
     else
@@ -112,8 +112,8 @@ for provider in claude codex cline aider; do
     fi
 done
 
-if [ $valid_count -eq 4 ]; then
-    log_pass "validate_provider() accepts claude, codex, cline, aider"
+if [ $valid_count -eq ${#SUPPORTED_PROVIDERS[@]} ]; then
+    log_pass "validate_provider() accepts every supported provider"
 fi
 
 # ===========================================
@@ -141,7 +141,7 @@ fi
 log_test "load_provider() loads correct configuration for each provider"
 
 # v7.5.18: gemini removed from provider set.
-for provider in claude codex cline aider; do
+for provider in "${SUPPORTED_PROVIDERS[@]}"; do
     # Reset provider variables
     unset PROVIDER_NAME PROVIDER_DISPLAY_NAME PROVIDER_CLI PROVIDER_DEGRADED 2>/dev/null || true
 
@@ -193,7 +193,7 @@ test_provider_flag_space() {
     echo "$provider"
 }
 
-for provider in claude codex cline aider; do
+for provider in "${SUPPORTED_PROVIDERS[@]}"; do
     result=$(test_provider_flag_space "--provider" "$provider" "./prd.md")
     if [ "$result" = "$provider" ]; then
         log_pass "--provider $provider correctly parsed"
@@ -223,7 +223,7 @@ test_provider_flag_equals() {
     echo "$provider"
 }
 
-for provider in claude codex cline aider; do
+for provider in "${SUPPORTED_PROVIDERS[@]}"; do
     result=$(test_provider_flag_equals "--provider=$provider" "./prd.md")
     if [ "$result" = "$provider" ]; then
         log_pass "--provider=$provider correctly parsed"
@@ -379,12 +379,12 @@ if [ ${#SUPPORTED_PROVIDERS[@]} -eq ${#expected_providers[@]} ]; then
     done
 
     if $all_match; then
-        log_pass "SUPPORTED_PROVIDERS contains (claude, codex, cline, aider) in order"
+        log_pass "SUPPORTED_PROVIDERS contains (claude, codex, cline, aider, opencode) in order"
     else
         log_fail "SUPPORTED_PROVIDERS has incorrect values"
     fi
 else
-    log_fail "SUPPORTED_PROVIDERS should have 4 entries (got: ${#SUPPORTED_PROVIDERS[@]})"
+    log_fail "SUPPORTED_PROVIDERS should have 5 entries (got: ${#SUPPORTED_PROVIDERS[@]})"
 fi
 
 # ===========================================
@@ -464,7 +464,7 @@ log_test "Provider config files exist for all supported providers"
 
 # v7.5.18: gemini.sh removed.
 all_exist=true
-for provider in claude codex cline aider; do
+for provider in "${SUPPORTED_PROVIDERS[@]}"; do
     config_file="$PROVIDERS_DIR/${provider}.sh"
     if [ ! -f "$config_file" ]; then
         log_fail "Missing provider config: $config_file"
@@ -473,7 +473,7 @@ for provider in claude codex cline aider; do
 done
 
 if $all_exist; then
-    log_pass "All provider config files exist (claude.sh, codex.sh, cline.sh, aider.sh)"
+    log_pass "All supported provider config files exist"
 fi
 
 # ===========================================
@@ -483,7 +483,7 @@ log_test "Provider config files have valid bash syntax"
 
 syntax_ok=true
 # v7.5.18: gemini removed from provider set.
-for provider in claude codex cline aider; do
+for provider in "${SUPPORTED_PROVIDERS[@]}"; do
     config_file="$PROVIDERS_DIR/${provider}.sh"
     if ! bash -n "$config_file" 2>/dev/null; then
         log_fail "Syntax error in $config_file"
@@ -492,7 +492,7 @@ for provider in claude codex cline aider; do
 done
 
 if $syntax_ok; then
-    log_pass "All provider config files have valid bash syntax (claude, codex, cline, aider)"
+    log_pass "All supported provider config files have valid bash syntax"
 fi
 
 # ===========================================
@@ -501,7 +501,7 @@ fi
 log_test "Provider names are case-sensitive (must be lowercase)"
 
 # v7.5.18: GEMINI/Gemini removed (gemini provider removed).
-uppercase_variants=("CLAUDE" "Claude" "CODEX" "Codex" "CLINE" "Cline" "AIDER" "Aider")
+uppercase_variants=("CLAUDE" "Claude" "CODEX" "Codex" "CLINE" "Cline" "AIDER" "Aider" "OPENCODE" "Opencode")
 all_rejected=true
 
 for variant in "${uppercase_variants[@]}"; do
