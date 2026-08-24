@@ -65,12 +65,17 @@ grep -q "^${VICTIM}$" "$REPO_ROOT/$GUARD" \
 # mutant tree obviously isolated from the working tree.
 seed_tree() {  # $1 = destination
     local d="$1"
-    mkdir -p "$d/mcp" "$d/tests" "$d/docs/walkthrough" "$d/wiki" || return 1
+    mkdir -p "$d/mcp" "$d/tests" "$d/tools" "$d/docs/walkthrough" "$d/wiki" || return 1
     cp "$REPO_ROOT/mcp/server.py" "$REPO_ROOT/mcp/magic_tools.py" \
        "$REPO_ROOT/mcp/managed_tools.py" "$d/mcp/" || return 1
     cp "$REPO_ROOT/$GUARD" "$d/tests/" || return 1
-    # package.json so npm pack has something to chew on if a mutant reaches it
-    [ -f "$REPO_ROOT/package.json" ] && cp "$REPO_ROOT/package.json" "$d/"
+    # package.json and every helper its prepack lifecycle invokes. PACKET-376
+    # added an exact-inventory permission normalizer to prepack. Copying the
+    # manifest without that shipped helper makes npm pack die before the four
+    # MCP-prerequisite mutants reach the diagnostics they exist to discriminate.
+    # Keep this sparse fixture packable without weakening or bypassing prepack.
+    [ -f "$REPO_ROOT/package.json" ] && cp "$REPO_ROOT/package.json" "$d/" || return 1
+    cp "$REPO_ROOT/tools/normalize-package-permissions.mjs" "$d/tools/" || return 1
     return 0
 }
 
