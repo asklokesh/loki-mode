@@ -137,7 +137,7 @@ cat > "$OUT/tsconfig.json" <<'JSON'
   "compilerOptions": {
     "strict": true, "noEmit": true, "jsx": "react-jsx",
     "module": "ESNext", "moduleResolution": "Bundler",
-    "target": "ES2022", "lib": ["ES2022", "DOM"], "skipLibCheck": true
+    "target": "ES2022", "lib": ["ES2022", "DOM", "DOM.Iterable"], "skipLibCheck": true
   },
   "include": ["src"]
 }
