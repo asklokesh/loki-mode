@@ -5,6 +5,26 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.22.13
+
+### Added
+
+- **OpenCode provider completion:** local OpenCode runs now use the same bounded
+  provider inventory, startup, trust, and recovery contracts as the other
+  supported local providers.
+
+### Fixed
+
+- **Gateable machine-readable readiness:** `loki doctor --json` still emits its
+  complete parseable report, but now exits nonzero whenever required checks
+  fail on both the Bash and Bun routes. Optional warnings remain non-blocking.
+- **Portable generated web contracts:** generated React/API scaffolds include
+  iterable DOM declarations, so strict consumers can compile generated Fetch,
+  `Headers`, `URLSearchParams`, and `FormData` paths without local overrides.
+- **Reproducible builds and owned cleanup:** cross-root Bun builds are stable,
+  cleanup/extraction fails closed outside bounded roots, and dashboard/process
+  cleanup only signals Loki-owned processes with deterministic recovery detail.
+
 ## v9.22.12
 
 ### Fixed

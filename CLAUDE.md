@@ -453,7 +453,7 @@ loki_run_tmp_cleanup() {
 
 ### Version Numbering
 Follows semantic versioning: MAJOR.MINOR.PATCH
-- Current: v9.22.12 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
+- Current: v9.22.13 (see [CHANGELOG.md](./CHANGELOG.md) for release history)
 - MAJOR bump for architecture changes (v6.0.0 = dual-mode architecture, loki run)
 - MINOR bump for new features (v5.23.0 = Dashboard File-Based API)
 - PATCH bump for fixes (v5.22.1 = session.json phantom state)
