@@ -1,7 +1,14 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, sep } from "node:path";
 import { buildWithDeterministicRoot, writeDeterministicDebugId } from "../scripts/build.ts";
 
 const fixtureParent = mkdtempSync(join(tmpdir(), "loki-build-roots-"));
@@ -50,12 +57,10 @@ describe("buildWithDeterministicRoot", () => {
   });
 });
 
-// The checkout-root instability this pipeline removes lives ENTIRELY in Bun's
-// generated debugId; `sources[]` is emitted relative to the outdir, which moves
-// with the package, so module identities are already root- and depth-invariant.
-// A structured canonicalizer that rewrites `sources[]` is therefore not a
-// repair but a regression: it destroys identities the pipeline never made
-// unstable. These tests pin that boundary.
+// Build-owned source identities must be relative to the output map. Bun 1.3.13
+// on macOS instead emits cwd-relative identities when TMPDIR is outside the
+// checkout, so the rewrite canonicalizes only paths beneath the explicit build
+// root. Foreign URL and outside-root identities remain caller-owned.
 
 // Bun does not chain input source maps, so a URL identity cannot be driven
 // through Bun.build. It CAN reach the rewrite step, which is the layer this
@@ -93,7 +98,7 @@ describe("writeDeterministicDebugId source identities", () => {
     const dir = join(fixtureParent, "foreign-identities");
     const outfile = writePair(dir, FOREIGN_IDENTITIES);
 
-    await writeDeterministicDebugId(outfile);
+    await writeDeterministicDebugId(outfile, dir);
 
     const map = JSON.parse(readFileSync(`${outfile}.map`, "utf8"));
 
@@ -113,7 +118,7 @@ describe("writeDeterministicDebugId source identities", () => {
     const outfile = writePair(dir, FOREIGN_IDENTITIES);
     const before = JSON.parse(readFileSync(`${outfile}.map`, "utf8"));
 
-    await writeDeterministicDebugId(outfile);
+    await writeDeterministicDebugId(outfile, dir);
 
     const raw = readFileSync(`${outfile}.map`, "utf8");
     const after = JSON.parse(raw); // throws if the rewrite corrupted the JSON
@@ -126,23 +131,41 @@ describe("writeDeterministicDebugId source identities", () => {
       expect(after[key]).toEqual(before[key]);
     }
   });
+
+  it("preserves an absolute outside-root identity containing the root substring", async () => {
+    const dir = join(fixtureParent, "embedded-root-foreign");
+    mkdirSync(dir, { recursive: true });
+    const canonicalDir = realpathSync(dir);
+    const outside = `${fixtureParent}${sep}foreign-prefix${canonicalDir}${sep}vendor.ts`;
+    const outfile = writePair(dir, [outside]);
+
+    // Non-vacuity: this is an absolute path outside dir, but its later path
+    // text contains the exact root substring that macOS cwd-relative output
+    // recovery recognizes.
+    expect(isAbsolute(outside)).toBe(true);
+    expect(outside.startsWith(`${canonicalDir}${sep}`)).toBe(false);
+    expect(outside).toContain(`${canonicalDir}${sep}`);
+
+    await writeDeterministicDebugId(outfile, dir);
+
+    const map = JSON.parse(readFileSync(`${outfile}.map`, "utf8"));
+    expect(map.sources).toEqual([outside]);
+  });
 });
 
 describe("module identities are checkout-root invariant", () => {
-  it("is unchanged by checkout name AND depth, including an outside-root source", async () => {
-    // The outside-root source is the case a canonicalizer would rewrite to a
-    // relative path; it must survive as an escaping `../..` identity instead.
+  it("is unchanged by checkout name and depth for build-root sources", async () => {
     async function buildAtDepth(...segments: string[]) {
       const checkout = join(fixtureParent, ...segments);
       const pkg = join(checkout, "pkg");
       const src = join(pkg, "src");
-      const shared = join(checkout, "shared");
+      const shared = join(pkg, "shared");
       mkdirSync(src, { recursive: true });
       mkdirSync(shared, { recursive: true });
       writeFileSync(join(shared, "dep.ts"), "export const dep = 1;\n");
       writeFileSync(
         join(src, "index.ts"),
-        "import { dep } from '../../shared/dep.ts';\nexport const answer = dep + 41;\n",
+        "import { dep } from '../shared/dep.ts';\nexport const answer = dep + 41;\n",
       );
 
       const outdir = join(pkg, "dist");
@@ -167,10 +190,12 @@ describe("module identities are checkout-root invariant", () => {
     const shallow = await buildAtDepth("shallow-co");
     const deep = await buildAtDepth("deep", "x", "y", "z", "co");
 
-    // Non-vacuity: the outside-root identity must actually be present, or the
-    // equality below would hold trivially over two maps that never had one.
-    expect(shallow.map.sources).toContain("../../shared/dep.ts");
-    expect(deep.map.sources).toContain("../../shared/dep.ts");
+    // Non-vacuity: assert each build-root identity individually, including the
+    // dependency outside src/. A missing module cannot green-wash equality.
+    expect(shallow.map.sources).toContain("../shared/dep.ts");
+    expect(shallow.map.sources).toContain("../src/index.ts");
+    expect(deep.map.sources).toContain("../shared/dep.ts");
+    expect(deep.map.sources).toContain("../src/index.ts");
 
     expect(shallow.map.sources).toEqual(deep.map.sources);
     expect(shallow.bytes).toBe(deep.bytes);

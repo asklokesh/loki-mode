@@ -15,9 +15,9 @@
  *
  * Run: bun run scripts/build.ts
  */
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, isAbsolute, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { rm, stat, readFile, writeFile } from "node:fs/promises";
+import { rm, stat, readFile, writeFile, realpath } from "node:fs/promises";
 import { createHash } from "node:crypto";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -56,13 +56,56 @@ function formatBytes(bytes: number): string {
  */
 const BUNDLE_DEBUG_ID_RE = /\/\/# debugId=([A-F0-9]{32})/;
 const MAP_DEBUG_ID_RE = /(\"debugId\"\s*:\s*\")([A-F0-9]{32})(\")/;
+const URL_SCHEME_RE = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 
-export async function writeDeterministicDebugId(outfile: string): Promise<void> {
+function isWithin(root: string, candidate: string): boolean {
+  const fromRoot = relative(root, candidate);
+  return (
+    fromRoot === "" ||
+    (fromRoot !== ".." && !fromRoot.startsWith(`..${sep}`) && !isAbsolute(fromRoot))
+  );
+}
+
+function normalizeBuildSourceIdentities(mapdir: string, map: string, root?: string): string {
+  if (!root) return map;
+
+  const parsed = JSON.parse(map) as { sources?: unknown };
+  if (!Array.isArray(parsed.sources)) return map;
+
+  parsed.sources = parsed.sources.map((source) => {
+    if (typeof source !== "string") return source;
+    if (!isAbsolute(source) && URL_SCHEME_RE.test(source)) return source;
+
+    // Bun 1.3.13 on macOS emits paths relative to the process cwd when TMPDIR
+    // is outside the checkout. Newer Bun emits paths relative to the map. Try
+    // both interpretations and canonicalize only identities beneath the build
+    // root. URL and outside-root identities remain byte-for-byte untouched.
+    const candidates = isAbsolute(source)
+      ? [source]
+      : [resolve(mapdir, source), resolve(source)];
+    const embeddedRoot = isAbsolute(source) ? -1 : source.indexOf(`${root}${sep}`);
+    if (embeddedRoot >= 0) candidates.push(source.slice(embeddedRoot));
+    const withinRoot = candidates.find((candidate) => isWithin(root, candidate));
+    if (!withinRoot) return source;
+
+    return relative(mapdir, withinRoot).split(sep).join("/");
+  });
+  return JSON.stringify(parsed);
+}
+
+export async function writeDeterministicDebugId(outfile: string, root?: string): Promise<void> {
   const mapfile = `${outfile}.map`;
-  const [bundle, map] = await Promise.all([
+  const [bundle, rawMap] = await Promise.all([
     readFile(outfile, "utf8"),
     readFile(mapfile, "utf8"),
   ]);
+  const [identityRoot, identityMapdir] = root
+    ? await Promise.all([
+        realpath(root).catch(() => resolve(root)),
+        realpath(dirname(mapfile)).catch(() => resolve(dirname(mapfile))),
+      ])
+    : [undefined, dirname(mapfile)];
+  const map = normalizeBuildSourceIdentities(identityMapdir, rawMap, identityRoot);
   if (!BUNDLE_DEBUG_ID_RE.test(bundle) || !MAP_DEBUG_ID_RE.test(map)) {
     throw new Error(`build output is missing a debugId: ${outfile}`);
   }
@@ -99,7 +142,7 @@ export async function buildWithDeterministicRoot(
   config: Omit<Bun.BuildConfig, "root">,
 ) {
   const result = await Bun.build({ ...config, root });
-  if (result.success) await writeDeterministicDebugId(outfile);
+  if (result.success) await writeDeterministicDebugId(outfile, root);
   return result;
 }
 

@@ -49,17 +49,23 @@ fi
 
 HARNESS_DIR="$(mktemp -d "${TEMP_ROOT}/loki-cleanup-scope-188.XXXXXXXX")"
 HELPERS="${HARNESS_DIR}/helpers.sh"
-awk '
-    /^<!-- BEGIN LOKI_RUN_TMP_HELPERS -->$/ { capture = 1; next }
-    /^<!-- END LOKI_RUN_TMP_HELPERS -->$/ { exit }
-    capture && $0 !~ /^\`\`\`/ { print }
-' "$CLAUDE_FILE" >"$HELPERS" && AWK_STATUS=0 || AWK_STATUS=$?
+IN_HELPERS=0
+while IFS= read -r line; do
+    case "$line" in
+        '<!-- BEGIN LOKI_RUN_TMP_HELPERS -->') IN_HELPERS=1; continue ;;
+        '<!-- END LOKI_RUN_TMP_HELPERS -->') break ;;
+    esac
+    if [ "$IN_HELPERS" = "1" ]; then
+        case "$line" in '```' | '```bash') continue ;; esac
+        printf '%s\n' "$line"
+    fi
+done <"$CLAUDE_FILE" >"$HELPERS"
 if [ ! -s "$HELPERS" ]; then
     # Diagnostics only: the extraction message alone cannot say WHICH step
     # failed. Same test path, no semantic change to the assertion above it.
     printf 'extraction produced %s bytes from %s\n' \
         "$(wc -c <"$HELPERS" | tr -d ' ')" "$CLAUDE_FILE" >&2
-    printf 'awk exit status was %s; marker lines present in source:\n' "$AWK_STATUS" >&2
+    printf 'marker lines present in source:\n' >&2
     grep -n 'LOKI_RUN_TMP_HELPERS' "$CLAUDE_FILE" >&2 || printf '  (no marker lines found)\n' >&2
     fail "safe cleanup helper block was not extracted"
 fi
