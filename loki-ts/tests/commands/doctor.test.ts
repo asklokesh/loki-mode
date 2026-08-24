@@ -327,10 +327,10 @@ describe("doctor.runDoctor (end-to-end)", () => {
   beforeEach(stubPythonImportOk);
   afterEach(restorePythonImportOk);
 
-  it("--json emits parseable JSON and exits 0", async () => {
+  it("--json emits parseable JSON and exits according to summary.ok", async () => {
     const { result, cap } = await captureStdio(() => runDoctor(["--json"]));
-    expect(result).toBe(0);
     const parsed = JSON.parse(cap.out) as DoctorJson;
+    expect(result).toBe(parsed.summary.ok ? 0 : 1);
     // v7.4.9: 11 -> 12 with the new "bun" probe. v7.5.18: 12 -> 11 (gemini removed).
     // v9.22.13: 11 -> 12 when opencode became observable as an active route.
     expect(parsed.checks.length).toBe(12);
@@ -383,11 +383,8 @@ describe("doctor.runDoctor (end-to-end)", () => {
 // ---- exit-code parity --------------------------------------------------------
 
 describe("doctor exit-code parity", () => {
-  // Bash parity: text mode includes skill + integration counts in the
-  // pass/fail/warn tallies (cmd_doctor lines 6398-6483); JSON mode does not
-  // (cmd_doctor_json only checks tools + disk, line 6534+). So the two exit
-  // semantics are necessarily decoupled. We assert each one's invariant
-  // independently rather than tying them together.
+  // Text and JSON may tally different advisory surfaces, but each mode must
+  // bind its exit code to its own required-failure verdict.
   beforeEach(stubPythonImportOk);
   afterEach(restorePythonImportOk);
 
@@ -396,9 +393,10 @@ describe("doctor exit-code parity", () => {
     expect([0, 1]).toContain(result);
   }, 30_000);
 
-  it("json mode always exits 0 regardless of failures", async () => {
-    const { result } = await captureStdio(() => runDoctor(["--json"]));
-    expect(result).toBe(0);
+  it("json mode exit code mirrors summary.ok", async () => {
+    const { result, cap } = await captureStdio(() => runDoctor(["--json"]));
+    const parsed = JSON.parse(cap.out) as DoctorJson;
+    expect(result).toBe(parsed.summary.ok ? 0 : 1);
   }, 30_000);
 
   it("json mode summary.ok mirrors summary.failed === 0", async () => {

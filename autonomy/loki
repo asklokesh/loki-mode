@@ -14144,6 +14144,7 @@ result = {
 }
 
 print(json.dumps(result, indent=2))
+sys.exit(0 if result['summary']['ok'] else 1)
 "
 }
 

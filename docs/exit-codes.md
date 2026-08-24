@@ -84,6 +84,10 @@ Machine-readable output is `--format json` here, not `--json`.
 | 0 | Every required check passed. Optional warnings do not fail the command. |
 | nonzero | At least one required check failed; the output names which |
 
+The contract is identical for human-readable output and `--json`. JSON is
+still emitted in full before the command exits nonzero, so automation can save
+or parse the report while also using the process status as a readiness gate.
+
 Safe as a preflight gate in an init container or pipeline step:
 
 ```sh

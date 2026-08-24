@@ -76,6 +76,44 @@ case "$host_failed" in
         ;;
 esac
 
+# The machine-readable route is itself a readiness gate, not a report-only
+# escape hatch. Capture stdout separately so the nonzero status cannot prevent
+# parsing the complete JSON report. Exercise both runtime routes.
+for route in bash bun; do
+    if [ "$route" = "bash" ]; then
+        json_output="$(LOKI_LEGACY_BASH=1 bash "$LOKI" doctor --json 2>/dev/null)"
+    else
+        json_output="$(bash "$LOKI" doctor --json 2>/dev/null)"
+    fi
+    json_rc=$?
+    json_failed="$(printf '%s' "$json_output" | python3 -c '
+import json, sys
+try:
+    print(json.load(sys.stdin).get("summary", {}).get("failed", "UNKNOWN"))
+except Exception:
+    print("UNKNOWN")
+' 2>/dev/null)"
+    case "$json_failed" in
+        UNKNOWN|'')
+            bad "$route JSON route did not emit a complete parseable report"
+            ;;
+        0)
+            if [ "$json_rc" -eq 0 ]; then
+                ok "$route JSON route emitted a healthy report and exited 0"
+            else
+                bad "$route JSON route emitted a healthy report but exited ${json_rc}"
+            fi
+            ;;
+        *)
+            if [ "$json_rc" -ne 0 ]; then
+                ok "$route JSON route emitted ${json_failed} required failure(s) and exited ${json_rc}"
+            else
+                bad "$route JSON route emitted ${json_failed} required failure(s) but exited 0"
+            fi
+            ;;
+    esac
+done
+
 # Optional-only warnings must NOT be escalated to a blocking exit. Asserted via
 # --json so it reads the structured verdict rather than scraping colored text.
 warn_check="$("$LOKI" doctor --json 2>/dev/null | python3 -c '

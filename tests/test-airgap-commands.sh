@@ -38,15 +38,31 @@ blocked() {
         "$@" </dev/null
 }
 
-# 1. Core read-only commands must succeed with egress severed.
-for cmd in version "doctor --json"; do
-    # shellcheck disable=SC2086
-    if blocked "$LOKI" $cmd >/dev/null 2>&1; then
-        ok "loki ${cmd} works with no egress"
-    else
-        bad "loki ${cmd} FAILED with no egress -- the air-gapped claim is broken"
-    fi
-done
+# 1. Core read-only commands must complete without egress. Doctor is a
+# readiness gate, so a disconnected host may legitimately exit nonzero while
+# still emitting its complete local report.
+if blocked "$LOKI" version >/dev/null 2>&1; then
+    ok "loki version works with no egress"
+else
+    bad "loki version FAILED with no egress -- the air-gapped claim is broken"
+fi
+
+doctor_json="$(blocked "$LOKI" doctor --json 2>/dev/null)"
+doctor_rc=$?
+doctor_verdict="$(printf '%s' "$doctor_json" | python3 -c '
+import json, sys
+try:
+    summary = json.load(sys.stdin)["summary"]
+    expected = 0 if summary["ok"] else 1
+    print("OK" if expected == int(sys.argv[1]) else "BAD_EXIT")
+except Exception:
+    print("UNPARSEABLE")
+' "$doctor_rc" 2>/dev/null)"
+case "$doctor_verdict" in
+    OK) ok "loki doctor --json emits a truthful local readiness report with no egress" ;;
+    BAD_EXIT) bad "loki doctor --json report and exit code disagree with no egress" ;;
+    *) bad "loki doctor --json did not emit a complete report with no egress" ;;
+esac
 
 # 2. `plan` is the one that matters for evaluation: a buyer estimates cost
 #    before spending anything, and that must not require a network call.

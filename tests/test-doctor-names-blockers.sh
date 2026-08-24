@@ -122,9 +122,11 @@ fi
 echo
 echo "T3 -- machine-readable output is unaffected"
 
-# The funnel change is presentation only. Anything parsing doctor --json (CI,
-# the dashboard, enterprise tooling) must not notice it at all.
-if bash "$LOKI" doctor --json 2>/dev/null | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null; then
+# The funnel change remains presentation-only for the JSON payload. Capture it
+# before parsing because doctor now intentionally returns the readiness verdict
+# as its process status too.
+doctor_json="$(bash "$LOKI" doctor --json 2>/dev/null)"
+if printf '%s' "$doctor_json" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null; then
     ok "doctor --json still emits valid JSON"
 else
     bad "doctor --json broken by the funnel change"

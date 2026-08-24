@@ -4,8 +4,8 @@
 //   - Text mode: sectioned PASS/FAIL/WARN output, summary footer, exit 1 on
 //     any FAIL (warnings ok).
 //   - JSON mode: emit the structure documented in the migration inventory and
-//     produced by python3 in cmd_doctor_json. Always exits 0 in JSON mode so
-//     scripts can parse the result regardless of system health.
+//     produced by python3 in cmd_doctor_json. Exit 1 when summary.ok is false,
+//     matching text mode and the documented CI/init-container gate contract.
 //
 // Network probes (ChromaDB, MiroFish) use AbortSignal.timeout(2000) so a slow
 // probe never hangs the CLI. Secret env vars are checked for presence only --
@@ -1316,7 +1316,7 @@ export async function runDoctor(argv: readonly string[]): Promise<number> {
   if (json) {
     const result = await buildDoctorJson();
     process.stdout.write(JSON.stringify(result, null, 2) + "\n");
-    return 0; // JSON mode always exits 0 (parity with bash cmd_doctor_json).
+    return result.summary.ok ? 0 : 1;
   }
   return runText();
 }
