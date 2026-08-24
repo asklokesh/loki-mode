@@ -466,6 +466,14 @@ OpenRouter serves **only** the OpenAI-shaped `/v1/chat/completions`; it has no
 Anthropic `/v1/messages` endpoint. Pointing `ANTHROPIC_BASE_URL` at it does not
 work, which earlier versions of this README incorrectly suggested.
 
+[OrcaRouter](https://www.orcarouter.ai) is an OpenAI-compatible gateway like
+OpenRouter, so it also works through Route 1 with aider/cline. Unlike OpenRouter
+it additionally serves the Anthropic `/v1/messages` API, so the same key works
+through Route 2 below — one endpoint, both protocols. It also runs
+gateway-level, zero-trust security for AI agents on the same endpoint —
+screening every prompt/response and governing every tool call on a default-deny
+basis, with no application code changes.
+
 *Route 2 -- Anthropic-protocol gateways.* `ANTHROPIC_BASE_URL` routes Claude
 Code itself, so the endpoint must speak the Anthropic Messages API. LiteLLM,
 Bedrock proxies, and self-hosted gateways can:
@@ -480,6 +488,12 @@ loki start prd.md
 export ANTHROPIC_BASE_URL=https://your-gateway.internal/v1
 export ANTHROPIC_API_KEY=...
 export LOKI_MODEL_OVERRIDE=<whatever your gateway calls the model>
+loki start prd.md
+
+# OrcaRouter (same key works for both routes; namespaced model ids required)
+export ANTHROPIC_BASE_URL=https://api.orcarouter.ai
+export ANTHROPIC_API_KEY=sk-orca-...
+export LOKI_MODEL_OVERRIDE=<namespaced id from OrcaRouter's model list, e.g. anthropic/claude-sonnet-5>
 loki start prd.md
 ```
 
