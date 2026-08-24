@@ -6,11 +6,13 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist/",
+    "scripts/normalize-package-permissions.mjs",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsc",
+    "prepack": "node scripts/normalize-package-permissions.mjs .",
     "prepublishOnly": "npm run build",
     "test": "node --test tests/client.test.js"
   },

@@ -799,6 +799,7 @@ run_test "time-to-first-artifact is recorded and rendered" "$SCRIPT_DIR/test-fir
 run_test "council cap binds on the REAL selector" "$SCRIPT_DIR/test-review-cap-real-selector.sh"
 run_test "gate detectors ship in the npm package" "$SCRIPT_DIR/test-detectors-are-packaged.sh"
 run_test "runtime python libs ship in the npm package" "$SCRIPT_DIR/test-runtime-libs-are-packaged.sh"
+run_test "npm artifacts have portable permissions" "$SCRIPT_DIR/test-package-permissions.sh"
 run_test "packaged MCP server exposes the exact tool surface" "$SCRIPT_DIR/test-mcp-tool-surface-packaged.sh"
 run_test "MCP contract guard rejects rename/deletion/missing prereqs" "$SCRIPT_DIR/test-mcp-tool-surface-guard-rejects.sh"
 run_test "npm SBOM is attached to the GitHub Release" "$SCRIPT_DIR/test-release-sbom-attached.sh"
