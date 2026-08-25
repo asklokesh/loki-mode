@@ -34,6 +34,8 @@ from datetime import datetime
 from fastapi import Body, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
+from starlette.formparsers import MultiPartException, MultiPartParser
+from starlette.requests import ClientDisconnect
 from starlette.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import shlex
@@ -5686,7 +5688,42 @@ async def git_create_pr(session_id: str, req: dict = Body(...)) -> JSONResponse:
 
 _CHAT_IMAGE_MAX_BYTES = 10 * 1024 * 1024
 _CHAT_IMAGE_READ_BYTES = 1024 * 1024
+_CHAT_IMAGE_MULTIPART_OVERHEAD_BYTES = 64 * 1024
+_CHAT_IMAGE_MAX_REQUEST_BYTES = _CHAT_IMAGE_MAX_BYTES + _CHAT_IMAGE_MULTIPART_OVERHEAD_BYTES
 _CHAT_IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
+
+
+class _ChatImageBodyTooLarge(Exception):
+    pass
+
+
+async def _parse_bounded_chat_image_form(request: Request):
+    """Parse one multipart upload while bounding bytes and owning temp cleanup."""
+    received = 0
+
+    async def bounded_stream():
+        nonlocal received
+        async for chunk in request.stream():
+            received += len(chunk)
+            if received > _CHAT_IMAGE_MAX_REQUEST_BYTES:
+                raise _ChatImageBodyTooLarge
+            yield chunk
+
+    parser = MultiPartParser(
+        headers=request.headers,
+        stream=bounded_stream(),
+        max_files=1,
+        max_fields=1000,
+    )
+    try:
+        return await parser.parse()
+    except BaseException:
+        # Starlette closes these files for MultiPartException only. Transport
+        # disconnects and receive errors must have the same deterministic
+        # cleanup rather than relying on interpreter-specific destruction.
+        for upload_temp in parser._files_to_close_on_error:
+            upload_temp.close()
+        raise
 
 
 def _chat_image_matches_type(content: bytes, content_type: str) -> bool:
@@ -5730,6 +5767,54 @@ def _chat_image_matches_type(content: bytes, content_type: str) -> bool:
     return False
 
 
+async def _store_chat_image(target: Path, image_file) -> JSONResponse:
+    content_type = (getattr(image_file, "content_type", "") or "").lower()
+    if content_type not in _CHAT_IMAGE_TYPES:
+        return JSONResponse(
+            status_code=415,
+            content={"error": "Unsupported image type. Use PNG, JPEG, GIF, or WebP"},
+        )
+
+    chunks = []
+    total_bytes = 0
+    while True:
+        chunk = await image_file.read(_CHAT_IMAGE_READ_BYTES)
+        if not chunk:
+            break
+        total_bytes += len(chunk)
+        if total_bytes > _CHAT_IMAGE_MAX_BYTES:
+            return JSONResponse(
+                status_code=413,
+                content={"error": "Image too large (max 10MB)"},
+            )
+        chunks.append(chunk)
+    content = b"".join(chunks)
+    if not _chat_image_matches_type(content, content_type):
+        return JSONResponse(
+            status_code=415,
+            content={"error": "Image content is invalid, incomplete, or does not match its declared type"},
+        )
+
+    images_dir = target / ".loki" / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    image_id = str(uuid.uuid4())[:8]
+    original_name = getattr(image_file, "filename", "image.png") or "image.png"
+    safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", original_name)
+    saved_name = f"{image_id}_{safe_name}"
+    saved_path = images_dir / saved_name
+
+    with open(saved_path, "wb") as output:
+        output.write(content)
+
+    return JSONResponse(content={
+        "image_id": image_id,
+        "filename": safe_name,
+        "path": str(saved_path.relative_to(target)),
+        "size": len(content),
+    })
+
+
 @app.post("/api/sessions/{session_id}/chat/image")
 async def chat_image_upload(session_id: str, request: Request) -> JSONResponse:
     """Upload an image for screenshot-to-change in AI chat."""
@@ -5739,63 +5824,40 @@ async def chat_image_upload(session_id: str, request: Request) -> JSONResponse:
     if target is None:
         return JSONResponse(status_code=404, content={"error": "Session not found"})
 
-    # Parse multipart form data
+    raw_content_length = request.headers.get("content-length")
+    if raw_content_length is not None:
+        try:
+            declared_bytes = int(raw_content_length, 10)
+        except (TypeError, ValueError):
+            return JSONResponse(status_code=400, content={"error": "Invalid Content-Length"})
+        if declared_bytes <= 0:
+            return JSONResponse(status_code=400, content={"error": "Invalid Content-Length"})
+        if declared_bytes > _CHAT_IMAGE_MAX_REQUEST_BYTES:
+            return JSONResponse(status_code=413, content={"error": "Image too large (max 10MB)"})
+
+    form = None
     try:
-        form = await request.form()
+        form = await _parse_bounded_chat_image_form(request)
         image_file = form.get("image")
         if image_file is None:
             return JSONResponse(status_code=400, content={"error": "No image file provided"})
-
-        content_type = (getattr(image_file, "content_type", "") or "").lower()
-        if content_type not in _CHAT_IMAGE_TYPES:
-            return JSONResponse(
-                status_code=415,
-                content={"error": "Unsupported image type. Use PNG, JPEG, GIF, or WebP"},
-            )
-
-        chunks = []
-        total_bytes = 0
-        while True:
-            chunk = await image_file.read(_CHAT_IMAGE_READ_BYTES)
-            if not chunk:
-                break
-            total_bytes += len(chunk)
-            if total_bytes > _CHAT_IMAGE_MAX_BYTES:
-                return JSONResponse(
-                    status_code=413,
-                    content={"error": "Image too large (max 10MB)"},
-                )
-            chunks.append(chunk)
-        content = b"".join(chunks)
-        if not _chat_image_matches_type(content, content_type):
-            return JSONResponse(
-                status_code=415,
-                content={"error": "Image content is invalid, incomplete, or does not match its declared type"},
-            )
-
-        # Save to session's .loki/images/ directory
-        images_dir = target / ".loki" / "images"
-        images_dir.mkdir(parents=True, exist_ok=True)
-
-        image_id = str(uuid.uuid4())[:8]
-        # Sanitize filename
-        original_name = getattr(image_file, 'filename', 'image.png') or 'image.png'
-        safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', original_name)
-        saved_name = f"{image_id}_{safe_name}"
-        saved_path = images_dir / saved_name
-
-        with open(saved_path, "wb") as f:
-            f.write(content)
-
-        return JSONResponse(content={
-            "image_id": image_id,
-            "filename": safe_name,
-            "path": str(saved_path.relative_to(target)),
-            "size": len(content),
-        })
-    except Exception as exc:
-        logger.error("Image upload failed: %s", exc, exc_info=True)
-        return JSONResponse(status_code=500, content={"error": f"Upload failed: {exc}"})
+        return await _store_chat_image(target, image_file)
+    except _ChatImageBodyTooLarge:
+        return JSONResponse(status_code=413, content={"error": "Image too large (max 10MB)"})
+    except (ClientDisconnect, OSError):
+        logger.info("Image upload transport ended before completion")
+        return JSONResponse(status_code=400, content={"error": "Image upload was interrupted"})
+    except MultiPartException:
+        return JSONResponse(status_code=400, content={"error": "Invalid multipart image upload"})
+    except Exception:
+        logger.error("Image upload failed", exc_info=True)
+        return JSONResponse(status_code=500, content={"error": "Image upload failed"})
+    finally:
+        if form is not None:
+            try:
+                await form.close()
+            except Exception:
+                logger.warning("Image upload temporary-file cleanup failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------

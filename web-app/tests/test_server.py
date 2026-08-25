@@ -580,20 +580,13 @@ class TestChatImageUploadBounds:
         "image/webp": b"RIFF\x0c\x00\x00\x00WEBPVP8 \x00\x00\x00\x00",
     }
 
-    @staticmethod
-    def _request(upload):
-        request = MagicMock()
-        request.form = AsyncMock(return_value={"image": upload})
-        return request
-
     @pytest.mark.asyncio
     async def test_large_image_refuses_with_bounded_reads(self, tmp_path):
-        from server import chat_image_upload
+        from server import _store_chat_image
 
         megabyte = b"x" * (1024 * 1024)
         upload = _BoundedImageUpload([megabyte] * 11)
-        with patch("server._find_session_dir", return_value=tmp_path):
-            response = await chat_image_upload("session-1", self._request(upload))
+        response = await _store_chat_image(tmp_path, upload)
 
         assert response.status_code == 413
         assert all(0 < size <= 1024 * 1024 for size in upload.read_sizes)
@@ -601,11 +594,10 @@ class TestChatImageUploadBounds:
 
     @pytest.mark.asyncio
     async def test_unsupported_type_refuses_before_read(self, tmp_path):
-        from server import chat_image_upload
+        from server import _store_chat_image
 
         upload = _BoundedImageUpload([b"not an image"], content_type="text/plain")
-        with patch("server._find_session_dir", return_value=tmp_path):
-            response = await chat_image_upload("session-1", self._request(upload))
+        response = await _store_chat_image(tmp_path, upload)
 
         assert response.status_code == 415
         assert upload.read_sizes == []
@@ -613,11 +605,10 @@ class TestChatImageUploadBounds:
 
     @pytest.mark.asyncio
     async def test_malformed_supported_type_refuses_without_persistence(self, tmp_path):
-        from server import chat_image_upload
+        from server import _store_chat_image
 
         upload = _BoundedImageUpload([b"not a png"], content_type="image/png")
-        with patch("server._find_session_dir", return_value=tmp_path):
-            response = await chat_image_upload("session-1", self._request(upload))
+        response = await _store_chat_image(tmp_path, upload)
 
         assert response.status_code == 415
         assert not (tmp_path / ".loki" / "images").exists()
@@ -635,11 +626,10 @@ class TestChatImageUploadBounds:
     async def test_truncated_supported_type_refuses_without_persistence(
         self, tmp_path, content_type, content
     ):
-        from server import chat_image_upload
+        from server import _store_chat_image
 
         upload = _BoundedImageUpload([content], content_type=content_type)
-        with patch("server._find_session_dir", return_value=tmp_path):
-            response = await chat_image_upload("session-1", self._request(upload))
+        response = await _store_chat_image(tmp_path, upload)
 
         assert response.status_code == 415
         assert not (tmp_path / ".loki" / "images").exists()
@@ -647,12 +637,11 @@ class TestChatImageUploadBounds:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("content_type", COMPLETE_IMAGES)
     async def test_complete_supported_type_remains_persistable(self, tmp_path, content_type):
-        from server import chat_image_upload
+        from server import _store_chat_image
 
         content = self.COMPLETE_IMAGES[content_type]
         upload = _BoundedImageUpload([content], content_type=content_type)
-        with patch("server._find_session_dir", return_value=tmp_path):
-            response = await chat_image_upload("session-1", self._request(upload))
+        response = await _store_chat_image(tmp_path, upload)
 
         assert response.status_code == 200
         body = json.loads(response.body)
@@ -676,12 +665,11 @@ class TestChatImageUploadBounds:
 
     @pytest.mark.asyncio
     async def test_small_png_remains_supported(self, tmp_path):
-        from server import chat_image_upload
+        from server import _store_chat_image
 
         png = self.COMPLETE_IMAGES["image/png"]
         upload = _BoundedImageUpload([png])
-        with patch("server._find_session_dir", return_value=tmp_path):
-            response = await chat_image_upload("session-1", self._request(upload))
+        response = await _store_chat_image(tmp_path, upload)
 
         assert response.status_code == 200
         body = json.loads(response.body)
