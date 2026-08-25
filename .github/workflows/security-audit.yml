@@ -3,11 +3,14 @@ name: Security Audit
 # Runs `npm audit` (and `bun audit` if available) on every PR and weekly.
 # Fails the workflow on high or critical vulnerabilities.
 #
-# Also runs `pip-audit` over every Python requirements file, `gitleaks` over the
-# working tree, and CodeQL SAST over the Python and JavaScript/TypeScript source
-# surfaces. Python dependencies and sub-critical SAST remain REPORTING ONLY
-# today -- see each job's posture note for its measured baseline or promotion
-# path. Secret scanning blocks every finding outside the exact reviewed-
+# Also runs `pip-audit` over every product/test Python dependency manifest,
+# including the independently published Python SDK's pyproject.toml, `gitleaks`
+# over the working tree, and CodeQL SAST over the Python and
+# JavaScript/TypeScript source surfaces. Known-dirty requirements dependencies
+# and sub-critical SAST remain REPORTING ONLY today; the clean Python SDK
+# baseline blocks new advisories. See each job's posture note for its measured
+# baseline or promotion path. Secret scanning blocks every finding outside the
+# exact reviewed-
 # fingerprint baseline. CodeQL findings with a security severity of 9.0 or
 # greater fail after the first exact-SHA critical baseline was triaged.
 #
@@ -70,9 +73,13 @@ jobs:
         run: bash scripts/audit-check.sh
 
   python-audit:
-    name: pip-audit (Python deps, reporting)
+    name: pip-audit (requirements reporting, SDK new-findings-blocking)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # This job only reads the checked-out manifests. Do not inherit the
+    # workflow-level security-events write used by the CodeQL upload job.
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -117,10 +124,12 @@ jobs:
         # looks strict and silently never fires. "Any advisory, waivable by ID"
         # is the honest translation and is what the promotion path uses.
         #
-        # SHIPPED vs TEST-ONLY is recorded per file below and carried into the
-        # JSON filenames, so the promotion above can flip the two sets
-        # independently. Membership is from package.json files[]: dashboard/,
-        # mcp/ and web-app/requirements.txt ship; the two *-test.txt do not.
+        # SHIPPED vs TEST-ONLY is recorded per manifest below and carried into
+        # the JSON filenames, so the promotion above can flip the two sets
+        # independently. Membership is from package.json files[] for
+        # dashboard/, mcp/ and web-app/requirements.txt. The two *-test.txt do
+        # not ship. The independently published Python SDK is audited in the
+        # blocking step below because it has a clean measured baseline.
         continue-on-error: true
         run: |
           set -uo pipefail
@@ -144,7 +153,7 @@ jobs:
           # SHIPPED (in package.json files[], reaches every install):
           for f in dashboard/requirements.txt mcp/requirements.txt web-app/requirements.txt; do
             echo "::group::pip-audit (shipped) $f"
-            pip-audit -r "$f" --format json \
+            pip-audit --strict -r "$f" --format json \
               --output "/tmp/pip-audit/shipped-$(echo "$f" | tr '/' '_').json" \
               --progress-spinner off || true
             echo "::endgroup::"
@@ -152,19 +161,37 @@ jobs:
           # TEST-ONLY (not in files[], does not reach users):
           for f in requirements-test.txt web-app/requirements-test.txt; do
             echo "::group::pip-audit (test-only) $f"
-            pip-audit -r "$f" --format json \
+            pip-audit --strict -r "$f" --format json \
               --output "/tmp/pip-audit/testonly-$(echo "$f" | tr '/' '_').json" \
               --progress-spinner off || true
             echo "::endgroup::"
           done
 
+      - name: pip-audit published Python SDK
+        # POSTURE: NEW FINDINGS BLOCK. sdk/python/pyproject.toml is built and
+        # uploaded to PyPI by release.yml. A pinned pip-audit 2.9.0 scan on
+        # 2026-08-25 resolved its complete dependency graph with --strict and
+        # found zero advisories, so any advisory in that shipped surface is new
+        # and actionable. Unlike the known-dirty requirements baseline above,
+        # there is no reviewed finding to waive or reason to suppress exit 1.
+        run: |
+          set -euo pipefail
+          if ! command -v pip-audit >/dev/null 2>&1; then
+            echo "FAIL: pip-audit is not installed -- SDK audit did NOT run"
+            exit 1
+          fi
+          pip-audit --strict sdk/python --format json \
+            --output "/tmp/pip-audit/shipped-sdk_python_pyproject.toml.json" \
+            --progress-spinner off
+
       - name: Assert the audit actually produced a report for every file
-        # THE FAIL-CLOSED GATE. The step above is continue-on-error so that
-        # FINDINGS report instead of blocking. That alone would also swallow a
-        # crashed or missing scanner, which is the exact sbom.yml failure mode.
-        # So correctness is asserted on the ARTIFACT, never on an exit code:
-        # each expected JSON must exist AND parse. An empty result is not
-        # evidence of a clean tree, it is an absent measurement.
+        # THE FAIL-CLOSED GATE. The requirements step is continue-on-error so
+        # that its known findings report instead of blocking. That alone would
+        # also swallow a crashed or missing scanner, which is the exact
+        # sbom.yml failure mode. So correctness is asserted on the ARTIFACT,
+        # never on an exit code: each expected JSON must exist AND parse. An
+        # empty result is not evidence of a clean tree, it is an absent
+        # measurement. The clean SDK step additionally blocks on exit 1.
         run: |
           set -euo pipefail
           missing=0
@@ -174,6 +201,7 @@ jobs:
             shipped-dashboard_requirements.txt.json \
             shipped-mcp_requirements.txt.json \
             shipped-web-app_requirements.txt.json \
+            shipped-sdk_python_pyproject.toml.json \
             testonly-requirements-test.txt.json \
             testonly-web-app_requirements-test.txt.json ; do
             p="/tmp/pip-audit/$want"
@@ -188,7 +216,7 @@ jobs:
             }
           done
           [ "$missing" -eq 0 ] || exit 1
-          echo "all five requirements files produced a parseable pip-audit report"
+          echo "all six Python dependency manifests produced a parseable pip-audit report"
 
       - name: Summarise findings (reporting)
         if: always()

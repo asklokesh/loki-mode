@@ -3,9 +3,10 @@
 #
 # THE GAP. `grep -rlE "codeql|semgrep|bandit|gitleaks|trufflehog|pip-audit|safety"
 # .github/workflows/*.yml` returned NOTHING. security-audit.yml audited npm
-# dependencies only, while FIVE Python requirements files went unscanned -- three
-# of which (dashboard/, mcp/, web-app/requirements.txt) are in package.json
-# files[] and therefore ship to every install. A vulnerable Python dep there
+# dependencies only, while SIX product/test Python dependency manifests went
+# unscanned: five requirements files plus the independently published Python
+# SDK's sdk/python/pyproject.toml. Three requirements files ship in the npm
+# package and the SDK ships on PyPI. A vulnerable Python dependency there
 # reaches users, and nothing in CI would have said so.
 #
 # WHAT THIS TEST IS. A STATIC check of the WORKFLOW DEFINITION. It reads
@@ -89,7 +90,10 @@ for step in job.get('steps') or []:
 
 # The step that actually invokes the scanner, as opposed to the ones that
 # summarise or upload its output.
-_PY_SCAN_STEP="$(_step python-audit 'pip-audit every requirements file')"
+_PY_REQ_SCAN_STEP="$(_step python-audit 'pip-audit every requirements file')"
+_PY_SDK_SCAN_STEP="$(_step python-audit 'pip-audit published Python SDK')"
+_PY_SCAN_STEP="$_PY_REQ_SCAN_STEP
+$_PY_SDK_SCAN_STEP"
 _PY_ASSERT_STEP="$(_step python-audit 'Assert the audit actually produced')"
 _SECRET_INSTALL_STEP="$(_step secret-scan 'Install gitleaks')"
 _SECRET_SCAN_STEP="$(_step secret-scan 'gitleaks scan')"
@@ -101,8 +105,19 @@ d = yaml.safe_load(open(os.environ['_LOKI_WF']))
 steps = ((d.get('jobs') or {}).get('sast') or {}).get('steps') or []
 print('\\n'.join(step.get('uses', '') for step in steps if step.get('uses')))
 " 2>/dev/null )"
+_PY_PERMISSIONS="$( _LOKI_WF="$WF" python3 -c "
+import json, os, yaml
+d = yaml.safe_load(open(os.environ['_LOKI_WF']))
+job = ((d.get('jobs') or {}).get('python-audit') or {})
+print(json.dumps(job.get('permissions') or {}, sort_keys=True))
+" 2>/dev/null )"
+_PY_JOB_NAME="$( _LOKI_WF="$WF" python3 -c "
+import os, yaml
+d = yaml.safe_load(open(os.environ['_LOKI_WF']))
+print((((d.get('jobs') or {}).get('python-audit') or {}).get('name') or ''))
+" 2>/dev/null )"
 
-# --- 1. Every requirements file is covered, ENUMERATED INDIVIDUALLY ---------
+# --- 1. Every Python dependency manifest is covered INDIVIDUALLY ------------
 # Deliberately NOT a count. A count cannot say WHICH file was dropped, and
 # tolerates losing one as long as another is added.
 if [ -z "$_PY_RUNS" ]; then
@@ -118,6 +133,27 @@ else
   done
 fi
 
+if printf '%s' "$_PY_SDK_SCAN_STEP" | grep -qE 'pip-audit --strict sdk/python' \
+   && printf '%s' "$_PY_SDK_SCAN_STEP" | grep -q 'set -euo pipefail' \
+   && ! printf '%s' "$_PY_SDK_SCAN_STEP" | grep -q '|| true' \
+   && printf '%s' "$_PY_ASSERT_STEP" | grep -q 'shipped-sdk_python_pyproject.toml.json'; then
+  ok "audited and new-findings-blocking: sdk/python/pyproject.toml (published Python SDK)"
+else
+  bad "NOT BLOCKING: sdk/python/pyproject.toml -- published Python SDK dependencies can ship unscanned"
+fi
+
+if [ "$_PY_PERMISSIONS" = '{"contents": "read"}' ]; then
+  ok "pip-audit has read-only least privilege"
+else
+  bad "pip-audit permissions are not contents:read only ($_PY_PERMISSIONS)"
+fi
+
+if printf '%s' "$_PY_JOB_NAME" | grep -qi 'SDK new-findings-blocking'; then
+  ok "pip-audit job identity names the clean SDK baseline's blocking posture"
+else
+  bad "pip-audit job identity does not disclose the SDK blocking threshold"
+fi
+
 # --- 2. The secret scan runs over the tree ----------------------------------
 if printf '%s' "$_SECRET_RUNS" | grep -qE 'gitleaks (dir|detect)'; then
   ok "gitleaks scans the working tree"
@@ -131,11 +167,16 @@ fi
 # absent or crashed binary, turning "the scan never ran" into a green check that
 # implies coverage. sbom.yml:7-23 records this exact failure mode in this repo:
 # a workflow green for months on a dead trigger.
-if printf '%s' "$_PY_SCAN_STEP" | grep -q 'command -v pip-audit' \
-   && printf '%s' "$_PY_SCAN_STEP" | grep -qE 'exit 1'; then
-  ok "pip-audit fails closed when the tool is missing"
+_py_invocations="$(printf '%s\n' "$_PY_SCAN_STEP" | grep -cE '^[[:space:]]*pip-audit ' || true)"
+_py_strict_invocations="$(printf '%s\n' "$_PY_SCAN_STEP" | grep -cE '^[[:space:]]*pip-audit --strict ' || true)"
+if printf '%s' "$_PY_REQ_SCAN_STEP" | grep -q 'command -v pip-audit' \
+   && printf '%s' "$_PY_SDK_SCAN_STEP" | grep -q 'command -v pip-audit' \
+   && printf '%s' "$_PY_SCAN_STEP" | grep -qE 'exit 1' \
+   && [ "$_py_invocations" -eq 3 ] \
+   && [ "$_py_strict_invocations" -eq 3 ]; then
+  ok "pip-audit fails closed on tool absence and strict dependency collection across all manifests"
 else
-  bad "pip-audit does NOT fail closed -- a missing binary would report green"
+  bad "pip-audit does NOT fail closed -- tool absence or incomplete project dependency collection could report green"
 fi
 
 if printf '%s' "$_SECRET_RUNS" | grep -qE '\-x /tmp/gitleaks|command -v gitleaks' \
@@ -168,8 +209,9 @@ fi
 
 # --- 5. Shipped vs test-only requirements are distinguished -----------------
 # Membership is from package.json files[]: dashboard/, mcp/ and
-# web-app/requirements.txt ship to users; the two *-test.txt do not. The split
-# is recorded so the two sets can be promoted to blocking independently.
+# web-app/requirements.txt ship to npm users, sdk/python/pyproject.toml ships to
+# PyPI users, and the two *-test.txt do not. The split is recorded so the two
+# sets can be promoted to blocking independently.
 # NOTE: this asserts the DISTINCTION EXISTS, not that shipped files block --
 # they do not today, by measured decision (see the workflow posture comment).
 # Scoped to the SCAN step: the labels have to be applied where the reports are
@@ -194,10 +236,24 @@ print('ok' if ships('dashboard/requirements.txt') and ships('mcp/')
       and not ships('requirements-test.txt')
       and not ships('web-app/requirements-test.txt') else 'drift')
 " 2>/dev/null || echo error)"
-if [ "$_ships" = "ok" ]; then
-  ok "fixture intact: 3 requirements files ship via files[], the 2 test ones do not"
+_sdk_ships="$(python3 -c "
+import pathlib, tomllib, yaml
+root = pathlib.Path('$REPO_ROOT')
+project = tomllib.loads((root / 'sdk/python/pyproject.toml').read_text()).get('project') or {}
+workflow = yaml.safe_load((root / '.github/workflows/release.yml').read_text())
+job = (workflow.get('jobs') or {}).get('publish-python-sdk') or {}
+steps = job.get('steps') or []
+print('ok' if project.get('name') == 'loki-mode-sdk'
+      and any(step.get('working-directory') == 'sdk/python'
+              and 'python -m build' in (step.get('run') or '') for step in steps)
+      and any(step.get('working-directory') == 'sdk/python'
+              and 'twine upload' in (step.get('run') or '') for step in steps)
+      else 'drift')
+" 2>/dev/null || echo error)"
+if [ "$_ships" = "ok" ] && [ "$_sdk_ships" = "ok" ]; then
+  ok "fixture intact: 3 requirements files ship via npm, Python SDK ships via PyPI, 2 test files do not"
 else
-  bad "FIXTURE DRIFT ($_ships): files[] membership changed, shipped/test labels are now wrong"
+  bad "FIXTURE DRIFT (npm=$_ships sdk=$_sdk_ships): shipped/test labels are now wrong"
 fi
 
 # --- 6. POSITIVE CONTROL: the existing npm audit still runs -----------------
