@@ -42,3 +42,18 @@ tests/test-secure-scan.sh:aws-access-token:124
 tests/test-secure-scan.sh:aws-access-token:140
 tests/test-secure-scan.sh:aws-access-token:376
 tests/test_proof_redaction.py:private-key:66
+
+# Reviewed historical findings. Commit-qualified fingerprints preserve full-
+# history coverage without suppressing a similar finding in another commit.
+# The first four are scanner/static-analysis test fixtures, the next three are
+# the same public PostHog ingestion key already reviewed above, and the final
+# two are removed SDK guardrail examples with deliberately secret-shaped data.
+814ca022112c37421438b6caa4504fb101b16b95:.github/workflows/security-audit.yml:aws-access-token:291
+7aef191c46db5750233257cb9a0df207e55d13e5:tests/test-branch-lifecycle.sh:generic-api-key:558
+7aef191c46db5750233257cb9a0df207e55d13e5:tests/test-branch-lifecycle.sh:generic-api-key:882
+7108c7a49ca3c5a808778bb82e1b4d4600ae972b:loki-ts/tests/runner/quality_gates.test.ts:aws-access-token:1094
+59f613f682392a570ffec8022d4de74952bdafc3:autonomy/telemetry.sh:generic-api-key:7
+59f613f682392a570ffec8022d4de74952bdafc3:bin/postinstall.js:generic-api-key:107
+59f613f682392a570ffec8022d4de74952bdafc3:dashboard/telemetry.py:generic-api-key:18
+8fcf54725743dc9d18aed64db7d3701c1eb8a4ef:the_app/sdk/examples/03_guardrails.py:generic-api-key:68
+8fcf54725743dc9d18aed64db7d3701c1eb8a4ef:the_app/sdk/tests/test_guardrails.py:generic-api-key:129

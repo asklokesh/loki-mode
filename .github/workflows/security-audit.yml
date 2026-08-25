@@ -249,9 +249,15 @@ jobs:
     name: gitleaks (secrets, new-findings-blocking)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        # Full history is required: gitleaks `git` scans commit patches, and a
+        # shallow checkout would silently turn this into a tip-only gate.
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
 
       - name: Install gitleaks (pinned)
         run: |
@@ -267,14 +273,11 @@ jobs:
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           /tmp/gitleaks version
 
-      - name: gitleaks scan (working tree)
-        # POSTURE: NEW FINDINGS BLOCK. A fresh pinned v8.30.0 scan on 2026-08-17
-        # found 35 current-tree hits: three copies of the same public PostHog
-        # ingestion key, two configuration/prose false positives, and 30
-        # intentionally secret-shaped scanner/redaction test fixtures. Every hit
-        # received an exact file/rule/line fingerprint in .gitleaksignore. There
-        # are no blanket path or rule suppressions, so moving or changing one of
-        # those lines, or adding any other finding, returns the scanner's default
+      - name: gitleaks scan (all reachable history)
+        # POSTURE: NEW FINDINGS BLOCK. The reviewed baseline contains 35
+        # current-tree fingerprints and nine commit-qualified historical
+        # fingerprints. There are no blanket path or rule suppressions, so a
+        # similar finding in any other commit returns the scanner's default
         # nonzero exit and blocks this workflow and the release gate.
         #
         # `dir` is the working-tree subcommand in v8.30.0; the older
@@ -286,7 +289,8 @@ jobs:
             echo "FAIL: gitleaks is not installed -- secret scan did NOT run"
             exit 1
           fi
-          /tmp/gitleaks dir . \
+          /tmp/gitleaks git . \
+            --log-opts="--all" \
             --gitleaks-ignore-path .gitleaksignore \
             --report-format json \
             --report-path /tmp/gitleaks-report.json \
@@ -312,7 +316,7 @@ jobs:
 
       - name: Upload gitleaks report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gitleaks-report
           path: /tmp/gitleaks-report.json

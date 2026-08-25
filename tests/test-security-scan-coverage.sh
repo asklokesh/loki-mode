@@ -116,6 +116,17 @@ import os, yaml
 d = yaml.safe_load(open(os.environ['_LOKI_WF']))
 print((((d.get('jobs') or {}).get('python-audit') or {}).get('name') or ''))
 " 2>/dev/null )"
+_SECRET_CUSTODY="$( _LOKI_WF="$WF" python3 -c "
+import json, os, yaml
+d = yaml.safe_load(open(os.environ['_LOKI_WF']))
+job = ((d.get('jobs') or {}).get('secret-scan') or {})
+checkout = next((s for s in (job.get('steps') or [])
+                 if (s.get('name') or '') == 'Checkout'), {})
+print(json.dumps({'permissions': job.get('permissions') or {},
+                  'checkout_uses': checkout.get('uses') or '',
+                  'fetch_depth': (checkout.get('with') or {}).get('fetch-depth')},
+                 sort_keys=True))
+" 2>/dev/null )"
 
 # --- 1. Every Python dependency manifest is covered INDIVIDUALLY ------------
 # Deliberately NOT a count. A count cannot say WHICH file was dropped, and
@@ -154,11 +165,14 @@ else
   bad "pip-audit job identity does not disclose the SDK blocking threshold"
 fi
 
-# --- 2. The secret scan runs over the tree ----------------------------------
-if printf '%s' "$_SECRET_RUNS" | grep -qE 'gitleaks (dir|detect)'; then
-  ok "gitleaks scans the working tree"
+# --- 2. The secret scan runs over every reachable commit --------------------
+_secret_expected_custody='{"checkout_uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262", "fetch_depth": 0, "permissions": {"contents": "read"}}'
+if printf '%s' "$_SECRET_SCAN_STEP" | grep -qE 'gitleaks git( |$)' \
+   && printf '%s' "$_SECRET_SCAN_STEP" | grep -q -- '--log-opts="--all"' \
+   && [ "$_SECRET_CUSTODY" = "$_secret_expected_custody" ]; then
+  ok "gitleaks scans all reachable history from a full, read-only pinned checkout"
 else
-  bad "no gitleaks tree scan -- secrets are unscanned"
+  bad "gitleaks history custody is incomplete -- checkout, permissions, git mode, or --all regressed"
 fi
 
 # --- 3. FAIL CLOSED: a missing tool must fail, not silently pass ------------
@@ -316,50 +330,106 @@ else
   bad "gitleaks findings are non-blocking or the exact baseline is not selected"
 fi
 
-_ignore="$REPO_ROOT/.gitleaksignore"
-_ignore_count="$(awk 'NF && $1 !~ /^#/ {n++} END {print n+0}' "$_ignore" 2>/dev/null)"
-_ignore_unique="$(awk 'NF && $1 !~ /^#/ {print}' "$_ignore" 2>/dev/null | sort -u | wc -l | tr -d ' ')"
-_ignore_malformed="$(awk 'NF && $1 !~ /^#/ && $0 !~ /^[^:]+:[a-z0-9-]+:[1-9][0-9]*$/ {n++} END {print n+0}' "$_ignore" 2>/dev/null)"
-if [ "$_ignore_count" -eq 35 ] && [ "$_ignore_unique" -eq 35 ] \
-   && [ "$_ignore_malformed" -eq 0 ]; then
-  ok "gitleaks baseline contains 35 unique exact file/rule/line fingerprints"
+# Override only a disposable copy when mutation-verifying the baseline shape.
+_ignore="${LOKI_GITLEAKS_IGNORE:-$REPO_ROOT/.gitleaksignore}"
+_ignore_shape="$(python3 - "$_ignore" <<'PY'
+import re, sys
+entries = [line.strip() for line in open(sys.argv[1])
+           if line.strip() and not line.lstrip().startswith('#')]
+current = re.compile(r'^[^:]+:[a-z0-9-]+:[1-9][0-9]*$')
+historical = re.compile(r'^[0-9a-f]{40}:[^:]+:[a-z0-9-]+:[1-9][0-9]*$')
+print(len(entries), len(set(entries)),
+      sum(bool(current.fullmatch(e)) for e in entries),
+      sum(bool(historical.fullmatch(e)) for e in entries),
+      sum(not current.fullmatch(e) and not historical.fullmatch(e) for e in entries))
+PY
+)"
+if [ "$_ignore_shape" = "44 44 35 9 0" ]; then
+  ok "gitleaks baseline contains 35 current and 9 commit-qualified historical fingerprints"
 else
-  bad "gitleaks baseline is not the reviewed 35-entry exact-fingerprint set"
+  bad "gitleaks baseline shape drifted ($_ignore_shape; expected 44 44 35 9 0)"
 fi
 
 # Optional live mutation proof. Exact-SHA acceptance supplies the same pinned
 # v8.30.0 binary as the workflow. Ordinary repository tests retain their static
-# coverage when that binary is unavailable.
+# coverage when that binary is unavailable. Both live rungs call this helper so
+# the acceptance test exercises the production git-history mode, not dir mode.
+_run_live_gitleaks_history() {
+  local scan_root="$1" report="$2" ignore="$3"
+  (cd "$scan_root" && "$LOKI_GITLEAKS_BIN" git . \
+    --log-opts="--all" \
+    --gitleaks-ignore-path "$ignore" --report-format json \
+    --report-path "$report" --redact --no-banner >/dev/null 2>&1)
+}
+
+_live_history_helper="$(declare -f _run_live_gitleaks_history)"
+if printf '%s' "$_live_history_helper" | grep -qE 'GITLEAKS_BIN.* git \.' \
+   && printf '%s' "$_live_history_helper" | grep -q -- '--log-opts="--all"'; then
+  ok "live gitleaks oracle is bound to git mode over all reachable history"
+else
+  bad "live gitleaks oracle regressed from git mode or omitted --all"
+fi
+
 if [ -n "${LOKI_GITLEAKS_BIN:-}" ]; then
   if [ ! -x "$LOKI_GITLEAKS_BIN" ]; then
     bad "LOKI_GITLEAKS_BIN is set but is not executable"
   else
-    _clean_report="$(mktemp "${TMPDIR:-/tmp}/loki-gitleaks-clean.XXXXXX")"
-    if (cd "$REPO_ROOT" && "$LOKI_GITLEAKS_BIN" dir . \
-         --gitleaks-ignore-path .gitleaksignore --report-format json \
-         --report-path "$_clean_report" --redact --no-banner >/dev/null 2>&1) \
+    _live_clean_root=''
+    _live_mutation_root=''
+    _cleanup_live_gitleaks() {
+      local path
+      for path in "$_live_clean_root" "$_live_mutation_root"; do
+        [ -n "$path" ] || continue
+        case "$path" in
+          "${TMPDIR:-/tmp}"/loki-gitleaks-*) rm -rf -- "$path" ;;
+          *) return 64 ;;
+        esac
+      done
+    }
+    trap _cleanup_live_gitleaks EXIT
+
+    _live_clean_root="$(mktemp -d "${TMPDIR:-/tmp}/loki-gitleaks-clean.XXXXXX")"
+    _clean_report="$_live_clean_root/report.json"
+    if _run_live_gitleaks_history "$REPO_ROOT" "$_clean_report" ".gitleaksignore" \
        && python3 -c 'import json,sys; assert json.load(open(sys.argv[1])) == []' \
             "$_clean_report"; then
-      ok "live gitleaks accepts the exact reviewed fingerprint baseline"
+      ok "live gitleaks accepts the exact reviewed baseline across repository history"
     else
-      bad "live gitleaks rejects the exact reviewed baseline or emits findings"
+      bad "live gitleaks rejects the reviewed history baseline or emits findings"
     fi
 
-    _mutation_root="$(mktemp -d "${TMPDIR:-/tmp}/loki-gitleaks-mutation.XXXXXX")"
-    _mutation_report="$_mutation_root/report.json"
+    _live_mutation_root="$(mktemp -d "${TMPDIR:-/tmp}/loki-gitleaks-mutation.XXXXXX")"
+    _mutation_repo="$_live_mutation_root/repo"
+    _mutation_report="$_live_mutation_root/report.json"
+    git init -q "$_mutation_repo"
+    git -C "$_mutation_repo" config user.email "gitleaks-test@loki.local"
+    git -C "$_mutation_repo" config user.name "gitleaks test"
+    git -C "$_mutation_repo" config commit.gpgsign false
+    git -C "$_mutation_repo" config core.hooksPath /dev/null
+    cp "$_ignore" "$_mutation_repo/.gitleaksignore"
+    git -C "$_mutation_repo" add .gitleaksignore
+    git -C "$_mutation_repo" commit -qm "baseline" --no-gpg-sign --no-verify
     # Keep the detector literal split in this source file; only the disposable
-    # mutation receives the contiguous, intentionally synthetic token.
+    # committed history receives the contiguous, intentionally synthetic token.
     printf '%s%s\n' 'const key = "AKIA' 'ABCDEFGHIJKLMNOP";' \
-      > "$_mutation_root/novel-secret.js"
-    if "$LOKI_GITLEAKS_BIN" dir "$_mutation_root" \
-         --gitleaks-ignore-path "$_ignore" --report-format json \
-         --report-path "$_mutation_report" --redact --no-banner >/dev/null 2>&1; then
-      bad "live gitleaks accepted a novel unmatched synthetic secret"
+      > "$_mutation_repo/novel-secret.js"
+    git -C "$_mutation_repo" add novel-secret.js
+    git -C "$_mutation_repo" commit -qm "novel secret mutation" --no-gpg-sign --no-verify
+    if _run_live_gitleaks_history "$_mutation_repo" "$_mutation_report" ".gitleaksignore"; then
+      bad "live git-history scan accepted a committed unmatched synthetic secret"
     elif python3 -c 'import json,sys; assert len(json.load(open(sys.argv[1]))) == 1' \
            "$_mutation_report"; then
-      ok "live gitleaks blocks a novel unmatched synthetic secret"
+      ok "live git-history scan blocks one committed unmatched synthetic secret"
     else
-      bad "live gitleaks failed without one parseable novel-finding report"
+      bad "live git-history scan failed without one parseable novel-finding report"
+    fi
+
+    _cleanup_live_gitleaks
+    trap - EXIT
+    if [ ! -e "$_live_clean_root" ] && [ ! -e "$_live_mutation_root" ]; then
+      ok "live gitleaks fixtures are fully cleaned"
+    else
+      bad "live gitleaks fixtures were not fully cleaned"
     fi
   fi
 else
