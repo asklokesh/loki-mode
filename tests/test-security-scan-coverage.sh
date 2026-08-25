@@ -91,6 +91,7 @@ for step in job.get('steps') or []:
 # summarise or upload its output.
 _PY_SCAN_STEP="$(_step python-audit 'pip-audit every requirements file')"
 _PY_ASSERT_STEP="$(_step python-audit 'Assert the audit actually produced')"
+_SECRET_INSTALL_STEP="$(_step secret-scan 'Install gitleaks')"
 _SECRET_SCAN_STEP="$(_step secret-scan 'gitleaks scan')"
 _SECRET_ASSERT_STEP="$(_step secret-scan 'Assert the secret scan completed cleanly')"
 _SAST_ASSERT_STEP="$(_step sast 'Assert CodeQL SARIF and reject unreviewed critical findings')"
@@ -217,6 +218,27 @@ printf '%s' "$_PY_RUNS" | grep -qE "pip-audit==[0-9]" \
 printf '%s' "$_SECRET_RUNS" | grep -qE "gitleaks/releases/download/v[0-9]" \
   && ok "gitleaks version is pinned" \
   || bad "gitleaks is unpinned -- the baseline can move without a commit"
+
+# Pinning the URL is not enough: a replaced or corrupted release asset would
+# otherwise be extracted and executed with no byte-level provenance check. The
+# digest is the official v8.30.0 linux_x64 release checksum, and verification
+# must happen before extraction so no unauthenticated binary reaches /tmp.
+_gitleaks_linux_x64_sha="79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e"
+_gitleaks_checksum_order="$( _LOKI_BODY="$_SECRET_INSTALL_STEP" \
+  _LOKI_SHA="$_gitleaks_linux_x64_sha" python3 -c "
+import os
+body = os.environ['_LOKI_BODY']
+sha = os.environ['_LOKI_SHA']
+verify = body.find(sha)
+extract = body.find('tar -xzf /tmp/gitleaks.tar.gz')
+print('ok' if verify >= 0 and 'sha256sum -c' in body[verify:extract]
+      and extract > verify else 'missing')
+" 2>/dev/null )"
+if [ "$_gitleaks_checksum_order" = "ok" ]; then
+  ok "gitleaks archive matches the pinned official SHA-256 before extraction"
+else
+  bad "gitleaks archive is executed without the pinned official pre-extraction checksum"
+fi
 
 # --- 8. Secret findings block outside an exact reviewed baseline ------------
 _secret_name="$( _LOKI_WF="$WF" python3 -c "

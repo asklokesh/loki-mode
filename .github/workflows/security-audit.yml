@@ -230,6 +230,12 @@ jobs:
           set -euo pipefail
           curl -sSfL -o /tmp/gitleaks.tar.gz \
             https://github.com/gitleaks/gitleaks/releases/download/v8.30.0/gitleaks_8.30.0_linux_x64.tar.gz
+          # Official v8.30.0 release checksum. Verify before extracting or
+          # executing any downloaded byte; a version-pinned URL alone does not
+          # authenticate an asset that was replaced or corrupted in transit.
+          printf '%s  %s\n' \
+            '79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e' \
+            /tmp/gitleaks.tar.gz | sha256sum -c -
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           /tmp/gitleaks version
 
