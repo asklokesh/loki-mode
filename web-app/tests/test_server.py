@@ -569,6 +569,17 @@ class _BoundedImageUpload:
 
 
 class TestChatImageUploadBounds:
+    COMPLETE_IMAGES = {
+        "image/png": (
+            b"\x89PNG\r\n\x1a\n"
+            b"\x00\x00\x00\x0dIHDR" + b"\x00" * 13 + b"\x00" * 4
+            + b"\x00\x00\x00\x00IEND" + b"\x00" * 4
+        ),
+        "image/jpeg": b"\xff\xd8\xff\xe0complete\xff\xd9",
+        "image/gif": b"GIF89a" + b"\x00" * 7 + b"\x3b",
+        "image/webp": b"RIFF\x0c\x00\x00\x00WEBPVP8 \x00\x00\x00\x00",
+    }
+
     @staticmethod
     def _request(upload):
         request = MagicMock()
@@ -612,6 +623,42 @@ class TestChatImageUploadBounds:
         assert not (tmp_path / ".loki" / "images").exists()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("content_type", "content"),
+        [
+            ("image/png", b"\x89PNG\r\n\x1a\n"),
+            ("image/jpeg", b"\xff\xd8\xff"),
+            ("image/gif", b"GIF89a"),
+            ("image/webp", b"RIFF\x04\x00\x00\x00WEBP"),
+        ],
+    )
+    async def test_truncated_supported_type_refuses_without_persistence(
+        self, tmp_path, content_type, content
+    ):
+        from server import chat_image_upload
+
+        upload = _BoundedImageUpload([content], content_type=content_type)
+        with patch("server._find_session_dir", return_value=tmp_path):
+            response = await chat_image_upload("session-1", self._request(upload))
+
+        assert response.status_code == 415
+        assert not (tmp_path / ".loki" / "images").exists()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("content_type", COMPLETE_IMAGES)
+    async def test_complete_supported_type_remains_persistable(self, tmp_path, content_type):
+        from server import chat_image_upload
+
+        content = self.COMPLETE_IMAGES[content_type]
+        upload = _BoundedImageUpload([content], content_type=content_type)
+        with patch("server._find_session_dir", return_value=tmp_path):
+            response = await chat_image_upload("session-1", self._request(upload))
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert (tmp_path / body["path"]).read_bytes() == content
+
+    @pytest.mark.asyncio
     async def test_real_multipart_bypass_is_independently_refused(self, tmp_path):
         import httpx
         from server import app
@@ -631,7 +678,7 @@ class TestChatImageUploadBounds:
     async def test_small_png_remains_supported(self, tmp_path):
         from server import chat_image_upload
 
-        png = b"\x89PNG\r\n\x1a\n" + b"safe image bytes"
+        png = self.COMPLETE_IMAGES["image/png"]
         upload = _BoundedImageUpload([png])
         with patch("server._find_session_dir", return_value=tmp_path):
             response = await chat_image_upload("session-1", self._request(upload))

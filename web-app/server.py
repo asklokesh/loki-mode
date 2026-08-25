@@ -5691,13 +5691,42 @@ _CHAT_IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/we
 
 def _chat_image_matches_type(content: bytes, content_type: str) -> bool:
     if content_type == "image/png":
-        return content.startswith(b"\x89PNG\r\n\x1a\n")
+        if not content.startswith(b"\x89PNG\r\n\x1a\n"):
+            return False
+        offset = 8
+        first_chunk = True
+        while offset + 12 <= len(content):
+            chunk_size = int.from_bytes(content[offset:offset + 4], "big")
+            chunk_type = content[offset + 4:offset + 8]
+            chunk_end = offset + 12 + chunk_size
+            if chunk_end > len(content):
+                return False
+            if first_chunk and chunk_type != b"IHDR":
+                return False
+            first_chunk = False
+            if chunk_type == b"IEND":
+                return chunk_size == 0 and chunk_end == len(content)
+            offset = chunk_end
+        return False
     if content_type == "image/jpeg":
-        return content.startswith(b"\xff\xd8\xff")
+        return (
+            len(content) >= 5
+            and content.startswith(b"\xff\xd8\xff")
+            and content.endswith(b"\xff\xd9")
+        )
     if content_type == "image/gif":
-        return content.startswith((b"GIF87a", b"GIF89a"))
+        return (
+            len(content) >= 14
+            and content.startswith((b"GIF87a", b"GIF89a"))
+            and content.endswith(b"\x3b")
+        )
     if content_type == "image/webp":
-        return len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP"
+        return (
+            len(content) >= 20
+            and content[:4] == b"RIFF"
+            and content[8:12] == b"WEBP"
+            and int.from_bytes(content[4:8], "little") == len(content) - 8
+        )
     return False
 
 
@@ -5741,7 +5770,7 @@ async def chat_image_upload(session_id: str, request: Request) -> JSONResponse:
         if not _chat_image_matches_type(content, content_type):
             return JSONResponse(
                 status_code=415,
-                content={"error": "Image content does not match its declared type"},
+                content={"error": "Image content is invalid, incomplete, or does not match its declared type"},
             )
 
         # Save to session's .loki/images/ directory
