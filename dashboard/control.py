@@ -5,8 +5,7 @@ FastAPI-based session control endpoints for the Loki Mode dashboard.
 Provides start/stop/pause/resume functionality and real-time status updates.
 
 Usage:
-    LOKI_DASHBOARD_HOST=127.0.0.1 \
-        uvicorn dashboard.control:app --host 127.0.0.1 --port 57374
+    uvicorn dashboard.control:app --host 0.0.0.0 --port 57374
     # Or run with the CLI:
     loki dashboard start
 """
@@ -44,12 +43,6 @@ from pydantic import BaseModel
 # defensive: if the package context is unavailable (e.g. the file is run from a
 # path where the relative import fails) we fall back to a gate that always
 # allows, preserving the prior behavior rather than crashing import.
-try:
-    from .bind_policy import require_safe_dashboard_bind
-except ImportError:  # Support ``python dashboard/control.py``.
-    from bind_policy import require_safe_dashboard_bind
-
-
 try:
     from . import auth as _auth
 
@@ -808,18 +801,8 @@ async def asyncio_sleep(seconds: float):
 
 
 # Run with uvicorn if executed directly
-async def _enforce_safe_bind_at_startup() -> None:
-    require_safe_dashboard_bind(
-        os.environ.get("LOKI_DASHBOARD_HOST", "127.0.0.1")
-    )
-
-
-app.add_event_handler("startup", _enforce_safe_bind_at_startup)
-
-
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("LOKI_DASHBOARD_PORT", "57374"))
     host = os.environ.get("LOKI_DASHBOARD_HOST", "127.0.0.1")
-    require_safe_dashboard_bind(host)
     uvicorn.run(app, host=host, port=port)

@@ -472,8 +472,7 @@ config:
   maxWorkers: "4"
   # Provider (claude, codex, gemini)
   provider: "claude"
-  # Dashboard bind address. Non-loopback requires LOKI_ENTERPRISE_AUTH=true
-  # or fully configured signature-verifying OIDC via controlplane.extraEnv.
+  # Dashboard bind address
   dashboardHost: "0.0.0.0"
   dashboardPort: "57374"
 

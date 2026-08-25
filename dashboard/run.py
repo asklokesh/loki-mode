@@ -11,11 +11,6 @@ import argparse
 import os
 import sys
 
-try:
-    from .bind_policy import require_safe_dashboard_bind
-except ImportError:  # Support ``python dashboard/run.py``.
-    from bind_policy import require_safe_dashboard_bind
-
 
 def main():
     parser = argparse.ArgumentParser(description="Loki Mode Dashboard Server")
@@ -46,8 +41,6 @@ def main():
         help="Enable auto-reload for development",
     )
     args = parser.parse_args()
-
-    require_safe_dashboard_bind(args.host)
 
     try:
         import uvicorn

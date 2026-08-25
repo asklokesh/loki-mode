@@ -29,7 +29,6 @@ services:
       # Enterprise features (all opt-in via .env)
       - LOKI_OTEL_ENDPOINT=${LOKI_OTEL_ENDPOINT:-}
       - LOKI_AUDIT_ENABLED=${LOKI_AUDIT_ENABLED:-true}
-      # A non-loopback dashboard refuses startup while auth remains false.
       - LOKI_ENTERPRISE_AUTH=${LOKI_ENTERPRISE_AUTH:-false}
       # Slack integration
       - LOKI_SLACK_BOT_TOKEN=${LOKI_SLACK_BOT_TOKEN:-}

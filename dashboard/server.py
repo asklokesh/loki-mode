@@ -58,7 +58,6 @@ from . import audit
 from . import app_secrets as secrets_mod
 from . import telemetry as _telemetry
 from . import build_supervisor as _build_execution
-from .bind_policy import require_safe_dashboard_bind
 from .control import (
     atomic_write_json,
     browser_mutation_origin_allowed,
@@ -1080,9 +1079,6 @@ async def _push_loki_state_loop() -> None:
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     # Startup
-    require_safe_dashboard_bind(
-        os.environ.get("LOKI_DASHBOARD_HOST", "127.0.0.1")
-    )
     try:
         await init_db()
         app.state.db_available = True
@@ -12897,8 +12893,6 @@ def run_server(host: str = None, port: int = None) -> None:
         host = os.environ.get("LOKI_DASHBOARD_HOST", "127.0.0.1")
     if port is None:
         port = _safe_int_env("LOKI_DASHBOARD_PORT", 57374)
-
-    require_safe_dashboard_bind(host)
 
     uvicorn_kwargs = {
         "host": host,

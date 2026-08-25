@@ -4,9 +4,8 @@
 # Build:
 #   docker build -t loki-dashboard ./dashboard
 #
-# Run with authentication because the image listens beyond loopback:
-#   docker run -p 57374:57374 -e LOKI_ENTERPRISE_AUTH=true \
-#     -v ~/.loki:/home/appuser/.loki loki-dashboard
+# Run:
+#   docker run -p 57374:57374 -v ~/.loki:/home/appuser/.loki loki-dashboard
 #
 # Enterprise mode:
 #   docker run -p 57374:57374 \
@@ -54,7 +53,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend code as a package (dashboard/)
 # This preserves the package structure for relative imports
-COPY __init__.py database.py models.py server.py registry.py auth.py audit.py secrets.py control.py run.py bind_policy.py build_supervisor.py ./dashboard/
+COPY __init__.py database.py models.py server.py registry.py auth.py audit.py secrets.py control.py run.py build_supervisor.py ./dashboard/
 
 # Copy built frontend to static directory inside package
 COPY --from=frontend-builder /app/frontend/dist ./dashboard/static
