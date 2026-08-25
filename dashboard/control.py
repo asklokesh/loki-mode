@@ -20,10 +20,11 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 # Auth gating for the standalone control app.
@@ -55,6 +56,63 @@ except Exception:  # pragma: no cover - defensive fallback for non-package runs
         return Depends(_noop)
 
 _CONTROL_DEP = _require_control_scope()
+
+
+def _normalized_http_origin(value: str) -> tuple[str, str, int] | None:
+    """Return a comparable browser origin, or ``None`` when malformed.
+
+    Origin is scheme + host + effective port. Paths, credentials, queries and
+    fragments are never valid in an Origin header. Normalising default ports
+    makes ``https://host`` and ``https://host:443`` equivalent without doing
+    loose prefix/suffix matching on attacker-controlled text.
+    """
+    try:
+        parsed = urlsplit(value.strip())
+        if (
+            parsed.scheme.lower() not in ("http", "https")
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in ("", "/")
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        port = parsed.port
+    except (TypeError, ValueError):
+        return None
+    if port is None:
+        port = 443 if parsed.scheme.lower() == "https" else 80
+    return parsed.scheme.lower(), parsed.hostname.lower(), port
+
+
+def browser_mutation_origin_allowed(
+    request: Request, allowed_origins: list[str]
+) -> bool:
+    """Allow non-browser clients, same-origin pages and explicit CORS origins.
+
+    CORS controls whether a browser may *read* a response; it does not stop a
+    simple cross-origin POST from being sent. State-changing routes therefore
+    need their own check. Browsers always attach Origin to cross-origin fetches,
+    while CLI/SDK/local health clients commonly omit it, so absence preserves
+    the existing local-first API. A present malformed or unrelated origin is
+    refused before route code can touch disk or processes.
+    """
+    supplied = request.headers.get("origin")
+    if supplied is None:
+        return True
+    if "*" in allowed_origins:
+        return True
+    supplied_origin = _normalized_http_origin(supplied)
+    if supplied_origin is None:
+        return False
+    request_origin = _normalized_http_origin(str(request.base_url))
+    if supplied_origin == request_origin:
+        return True
+    return any(
+        supplied_origin == _normalized_http_origin(candidate)
+        for candidate in allowed_origins
+    )
 
 # Configuration
 LOKI_DIR = Path(os.environ.get("LOKI_DIR", ".loki"))
@@ -210,6 +268,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def browser_mutation_boundary(request: Request, call_next):
+    """Refuse cross-origin browser mutations before control side effects."""
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        if not browser_mutation_origin_allowed(request, _cors_origins):
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "cross-origin mutation refused"},
+            )
+    return await call_next(request)
 
 
 # Request/Response models

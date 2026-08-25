@@ -58,7 +58,12 @@ from . import audit
 from . import app_secrets as secrets_mod
 from . import telemetry as _telemetry
 from . import build_supervisor as _build_execution
-from .control import atomic_write_json, find_skill_dir, is_process_running
+from .control import (
+    atomic_write_json,
+    browser_mutation_origin_allowed,
+    find_skill_dir,
+    is_process_running,
+)
 from .activity_logger import get_activity_logger
 from .api_v2 import (
     TenantContext,
@@ -1263,6 +1268,11 @@ async def dashboard_control_boundary(request: Request, call_next):
     # /health and /metrics are intentionally NOT in the sensitive list, so a
     # container health probe and a Prometheus scrape keep working unconfigured.
     gated = request.method in ("POST", "PUT", "PATCH", "DELETE")
+    if gated and not browser_mutation_origin_allowed(request, _cors_origins):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "cross-origin mutation refused"},
+        )
     if not gated:
         path = request.url.path
         gated = any(path.startswith(pfx) for pfx in _SENSITIVE_READ_PREFIXES)

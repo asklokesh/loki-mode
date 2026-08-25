@@ -44,6 +44,7 @@ PROVEN ON A REAL SOCKET, not only through TestClient. With the server bound to
 import os
 import pathlib
 import sys
+import tempfile
 import unittest
 
 sys.dont_write_bytecode = True
@@ -174,6 +175,77 @@ class ARemoteRequestIsRefusedEndToEnd(unittest.TestCase):
         finally:
             auth.ENTERPRISE_AUTH_ENABLED = ent
             auth.OIDC_ENABLED = oidc
+
+
+class BrowserOriginsCannotDriveLocalMutations(unittest.TestCase):
+    """CORS alone does not stop a simple cross-origin POST from being sent."""
+
+    def setUp(self):
+        try:
+            from starlette.testclient import TestClient  # noqa: PLC0415
+            from dashboard import server, auth  # noqa: PLC0415
+        except Exception as exc:  # pragma: no cover
+            self.skipTest("dashboard/starlette not importable: %s" % exc)
+        self.TestClient, self.server, self.auth = TestClient, server, auth
+        self._tmp = tempfile.TemporaryDirectory(prefix="loki-origin-")
+        self._old_loki_dir = os.environ.get("LOKI_DIR")
+        self._old_active = server._active_project_dir
+        self._old_origins = list(server._cors_origins)
+        self._ent, self._oidc = auth.ENTERPRISE_AUTH_ENABLED, auth.OIDC_ENABLED
+        self.loki_dir = pathlib.Path(self._tmp.name) / ".loki"
+        os.environ["LOKI_DIR"] = str(self.loki_dir)
+        server._active_project_dir = None
+        auth.ENTERPRISE_AUTH_ENABLED = False
+        auth.OIDC_ENABLED = False
+        with server._control_limiter._lock:
+            server._control_limiter._calls.clear()
+
+    def tearDown(self):
+        self.server._active_project_dir = self._old_active
+        self.server._cors_origins[:] = self._old_origins
+        self.auth.ENTERPRISE_AUTH_ENABLED = self._ent
+        self.auth.OIDC_ENABLED = self._oidc
+        if self._old_loki_dir is None:
+            os.environ.pop("LOKI_DIR", None)
+        else:
+            os.environ["LOKI_DIR"] = self._old_loki_dir
+        self._tmp.cleanup()
+
+    def _client(self, port=57374):
+        return self.TestClient(
+            self.server.app,
+            raise_server_exceptions=False,
+            client=("127.0.0.1", 5555),
+            base_url="http://127.0.0.1:%d" % port,
+        )
+
+    def test_unrelated_present_origin_is_refused_without_mutation(self):
+        response = self._client().post(
+            "/api/control/pause", headers={"Origin": "https://evil.example"})
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse((self.loki_dir / "PAUSE").exists())
+
+    def test_same_origin_custom_port_is_preserved(self):
+        response = self._client(61234).post(
+            "/api/control/pause",
+            headers={"Origin": "http://127.0.0.1:61234"},
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertTrue((self.loki_dir / "PAUSE").exists())
+
+    def test_explicit_allowlist_origin_is_preserved(self):
+        self.server._cors_origins.append("https://operator.example")
+        response = self._client().post(
+            "/api/control/pause",
+            headers={"Origin": "https://operator.example"},
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertTrue((self.loki_dir / "PAUSE").exists())
+
+    def test_originless_local_client_is_preserved(self):
+        response = self._client().post("/api/control/pause")
+        self.assertEqual(response.status_code, 503)
+        self.assertTrue((self.loki_dir / "PAUSE").exists())
 
 
 from starlette.testclient import TestClient  # noqa: E402
