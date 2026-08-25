@@ -5684,6 +5684,22 @@ async def git_create_pr(session_id: str, req: dict = Body(...)) -> JSONResponse:
 # Image upload for AI chat (screenshot-to-change)
 # ---------------------------------------------------------------------------
 
+_CHAT_IMAGE_MAX_BYTES = 10 * 1024 * 1024
+_CHAT_IMAGE_READ_BYTES = 1024 * 1024
+_CHAT_IMAGE_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
+
+
+def _chat_image_matches_type(content: bytes, content_type: str) -> bool:
+    if content_type == "image/png":
+        return content.startswith(b"\x89PNG\r\n\x1a\n")
+    if content_type == "image/jpeg":
+        return content.startswith(b"\xff\xd8\xff")
+    if content_type == "image/gif":
+        return content.startswith((b"GIF87a", b"GIF89a"))
+    if content_type == "image/webp":
+        return len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP"
+    return False
+
 
 @app.post("/api/sessions/{session_id}/chat/image")
 async def chat_image_upload(session_id: str, request: Request) -> JSONResponse:
@@ -5701,10 +5717,32 @@ async def chat_image_upload(session_id: str, request: Request) -> JSONResponse:
         if image_file is None:
             return JSONResponse(status_code=400, content={"error": "No image file provided"})
 
-        # Read file content
-        content = await image_file.read()
-        if len(content) > 10 * 1024 * 1024:  # 10MB limit
-            return JSONResponse(status_code=400, content={"error": "Image too large (max 10MB)"})
+        content_type = (getattr(image_file, "content_type", "") or "").lower()
+        if content_type not in _CHAT_IMAGE_TYPES:
+            return JSONResponse(
+                status_code=415,
+                content={"error": "Unsupported image type. Use PNG, JPEG, GIF, or WebP"},
+            )
+
+        chunks = []
+        total_bytes = 0
+        while True:
+            chunk = await image_file.read(_CHAT_IMAGE_READ_BYTES)
+            if not chunk:
+                break
+            total_bytes += len(chunk)
+            if total_bytes > _CHAT_IMAGE_MAX_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={"error": "Image too large (max 10MB)"},
+                )
+            chunks.append(chunk)
+        content = b"".join(chunks)
+        if not _chat_image_matches_type(content, content_type):
+            return JSONResponse(
+                status_code=415,
+                content={"error": "Image content does not match its declared type"},
+            )
 
         # Save to session's .loki/images/ directory
         images_dir = target / ".loki" / "images"

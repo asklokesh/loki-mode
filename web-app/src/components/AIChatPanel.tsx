@@ -312,6 +312,19 @@ const modeDescriptions: Record<string, string> = {
   max: 'Max: Full autonomous build from your description',
 };
 
+const CHAT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+const CHAT_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+function attachmentRefusal(file: File): string | null {
+  if (!CHAT_IMAGE_TYPES.has(file.type.toLowerCase())) {
+    return 'This attachment was not added. Use a PNG, JPEG, GIF, or WebP image.';
+  }
+  if (file.size > CHAT_IMAGE_MAX_BYTES) {
+    return 'This attachment was not added because it exceeds the 10 MB limit.';
+  }
+  return null;
+}
+
 export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }: AIChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -320,12 +333,14 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
   const [streaming, setStreaming] = useState(false);
   const [pendingImage, setPendingImage] = useState<{ file: File; previewUrl: string } | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const activeTaskRef = useRef<string | null>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
+  const previewUrlsRef = useRef(new Set<string>());
 
   // UX-001: Restore chat history from sessionStorage on mount
   useEffect(() => {
@@ -351,34 +366,43 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
 
   // Cleanup on unmount
   useEffect(() => {
+    const previewUrls = previewUrlsRef.current;
     return () => {
       if (abortRef.current) {
         abortRef.current.abort();
       }
-      // Revoke object URL to prevent memory leaks
-      if (pendingImage?.previewUrl) {
-        URL.revokeObjectURL(pendingImage.previewUrl);
+      for (const previewUrl of previewUrls) {
+        URL.revokeObjectURL(previewUrl);
       }
+      previewUrls.clear();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Handle image file selection
   const handleImageFile = useCallback((file: File) => {
-    if (!file.type.startsWith('image/')) return;
+    const refusal = attachmentRefusal(file);
+    if (refusal) {
+      setAttachmentError(refusal);
+      return;
+    }
+    setAttachmentError(null);
     // Revoke previous preview URL
     if (pendingImage?.previewUrl) {
       URL.revokeObjectURL(pendingImage.previewUrl);
+      previewUrlsRef.current.delete(pendingImage.previewUrl);
     }
     const previewUrl = URL.createObjectURL(file);
+    previewUrlsRef.current.add(previewUrl);
     setPendingImage({ file, previewUrl });
   }, [pendingImage?.previewUrl]);
 
   const clearPendingImage = useCallback(() => {
     if (pendingImage?.previewUrl) {
       URL.revokeObjectURL(pendingImage.previewUrl);
+      previewUrlsRef.current.delete(pendingImage.previewUrl);
     }
     setPendingImage(null);
+    setAttachmentError(null);
   }, [pendingImage?.previewUrl]);
 
   // Clipboard paste handler (Ctrl+V for images)
@@ -619,6 +643,8 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
   const handleSend = async () => {
     const trimmed = input.trim();
     if ((!trimmed && !pendingImage) || sending) return;
+    setSending(true);
+    setAttachmentError(null);
 
     // Upload image first if present
     let imageUrl: string | undefined;
@@ -633,7 +659,12 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
         imageName = result.filename;
         imageContext = `[Attached image: ${result.filename} (id: ${result.image_id})] Make it look like this. `;
       } catch {
-        // Continue without image if upload fails
+        setAttachmentError(
+          'The attachment was refused and no message was sent. Use a valid PNG, JPEG, GIF, or WebP image up to 10 MB.',
+        );
+        setUploadingImage(false);
+        setSending(false);
+        return;
       }
       setUploadingImage(false);
     }
@@ -659,7 +690,6 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
     setMessages(prev => [...prev, userMsg, streamingMsg]);
     setInput('');
     setPendingImage(null);
-    setSending(true);
 
     try {
       // BUG-E2E-004: Send recent conversation history for context continuity.
@@ -783,6 +813,7 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
                 onClick={clearPendingImage}
                 className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600"
                 title="Remove image"
+                aria-label="Remove attachment"
               >
                 <X size={10} />
               </button>
@@ -790,6 +821,11 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
             <span className="text-[10px] text-muted truncate max-w-[150px]">{pendingImage.file.name}</span>
             {uploadingImage && <span className="text-[10px] text-primary animate-pulse">Uploading...</span>}
           </div>
+        )}
+        {attachmentError && (
+          <p role="alert" className="mb-2 px-1 text-[11px] text-red-400">
+            {attachmentError}
+          </p>
         )}
         {/* Smart suggestions */}
         {!streaming && (
@@ -806,7 +842,7 @@ export function AIChatPanel({ sessionId, defaultMode, onFilesChanged, services }
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept="image/png,image/jpeg,image/gif,image/webp"
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
