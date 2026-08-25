@@ -260,10 +260,24 @@ app = FastAPI(
 # CORS middleware for dashboard frontend - restricted to localhost by default.
 # Set LOKI_DASHBOARD_CORS to override (comma-separated origins).
 _cors_default = "http://localhost:57374,http://127.0.0.1:57374"
-_cors_origins = os.environ.get("LOKI_DASHBOARD_CORS", _cors_default).split(",")
+_cors_raw = os.environ.get("LOKI_DASHBOARD_CORS", _cors_default)
+_cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
+if "*" in _cors_origins or _cors_raw.strip() == "*":
+    if os.environ.get("LOKI_ENV") == "production":
+        raise RuntimeError(
+            "Wildcard CORS ('*') is not allowed in production. "
+            "Set LOKI_DASHBOARD_CORS to a specific origin list, "
+            "or set LOKI_ENV != production."
+        )
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "LOKI_DASHBOARD_CORS is set to '*' -- all origins are allowed. "
+        "This is insecure for production deployments."
+    )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in _cors_origins if o.strip()],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
