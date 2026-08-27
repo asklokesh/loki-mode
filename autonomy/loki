@@ -12706,9 +12706,18 @@ cmd_setup_skill() {
             continue
         fi
 
-        # Remove broken symlink
-        if [ -L "$target_dir" ]; then
+        # A dangling link is safe to repair. Any live path without SKILL.md is
+        # operator-owned: `ln -sf SOURCE DIRECTORY` would otherwise create a
+        # nested link and report success, while a regular file could be
+        # replaced outright. Refuse both cases without changing the path.
+        if [ -L "$target_dir" ] && [ ! -e "$target_dir" ]; then
             rm -f "$target_dir"
+        fi
+
+        if [ -e "$target_dir" ] || [ -L "$target_dir" ]; then
+            echo -e "  ${RED}FAIL${NC}  $target_name  ${DIM}($short_path exists without SKILL.md; move it aside and re-run)${NC}"
+            failed=$((failed + 1))
+            continue
         fi
 
         # Create parent directory
