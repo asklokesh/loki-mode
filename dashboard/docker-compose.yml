@@ -16,8 +16,10 @@
 services:
   dashboard:
     build:
-      context: .
-      dockerfile: Dockerfile
+      # The standalone image imports autonomy/lib/deadline.py through the
+      # dashboard build supervisor, so its build context is the repository root.
+      context: ..
+      dockerfile: dashboard/Dockerfile
     image: loki-dashboard:latest
     container_name: loki-dashboard
     ports:

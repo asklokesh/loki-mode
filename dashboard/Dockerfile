@@ -1,8 +1,8 @@
 # Loki Mode Dashboard - Docker Image
-# Multi-stage build: frontend build + Python backend
+# Python backend with the repository-tracked/npm-shipped static frontend
 #
 # Build:
-#   docker build -t loki-dashboard ./dashboard
+#   docker build -f dashboard/Dockerfile -t loki-dashboard .
 #
 # Run:
 #   docker run -p 57374:57374 -v ~/.loki:/home/appuser/.loki loki-dashboard
@@ -14,20 +14,6 @@
 #     -v ~/.loki:/home/appuser/.loki \
 #     loki-dashboard
 
-# Stage 1: Build frontend
-FROM node:22-alpine AS frontend-builder
-
-WORKDIR /app/frontend
-
-# Install dependencies
-COPY frontend/package*.json ./
-RUN npm ci --ignore-scripts
-
-# Build frontend
-COPY frontend/ ./
-RUN npm run build
-
-# Stage 2: Python backend with built frontend
 FROM python:3.11-slim-bookworm
 
 # Set labels
@@ -48,15 +34,26 @@ RUN useradd --create-home --shell /bin/bash appuser
 WORKDIR /app
 
 # Install Python dependencies
-COPY requirements.txt ./
+COPY dashboard/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend code as a package (dashboard/)
-# This preserves the package structure for relative imports
-COPY __init__.py database.py models.py server.py registry.py auth.py audit.py secrets.py control.py run.py build_supervisor.py ./dashboard/
+# Copy the complete backend package.  dashboard.server imports several sibling
+# modules at import time, and some route modules import further siblings.  A
+# hand-maintained filename list drifted from that graph (and even named the
+# removed secrets.py), producing an image whose configured ASGI app could not
+# import.  Keeping every tracked package module in custody makes the standalone
+# image layout match the package we test and ship.
+COPY dashboard/*.py ./dashboard/
 
-# Copy built frontend to static directory inside package
-COPY --from=frontend-builder /app/frontend/dist ./dashboard/static
+# dashboard.build_supervisor imports the shared deadline runner at module load.
+# Keep this one proven external dependency in its real package path rather than
+# stubbing or duplicating it inside the dashboard package.
+COPY autonomy/lib/deadline.py ./autonomy/lib/
+
+# Copy the same repository-tracked static frontend shipped by the npm package.
+# This standalone image is therefore deterministic and does not depend on the
+# separate legacy frontend source tree or a registry-backed build at image time.
+COPY dashboard/static/ ./dashboard/static/
 
 # Create data directories with correct ownership
 RUN mkdir -p /home/appuser/.loki/dashboard/audit && \
