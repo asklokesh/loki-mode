@@ -5,12 +5,16 @@ family added later: context, notifications, agents, usage, PRD observations,
 v2 tenants and v2 audit all reached their handlers from a routable address
 when auth was off. The tests below enumerate the live route tables and drive
 the app as raw ASGI without lifespan startup, so a handler cannot hide a
-missing boundary behind database, filesystem or startup failures.
+missing boundary behind database, filesystem or startup failures. The one
+loopback v2 reachability probe substitutes a sentinel database dependency: it
+proves the request crossed the boundary and reached the intended handler
+without depending on a developer's durable database or lifespan side effects.
 """
 
 from __future__ import annotations
 
 import asyncio
+import importlib
 import os
 import pathlib
 import re
@@ -94,7 +98,23 @@ async def _raw_get(app, path: str, host: str = "203.0.113.7"):
 def _dashboard_get_inventory(server):
     """Return every registered state-bearing GET, including the mounted lab."""
     paths = set()
-    for route in server.app.routes:
+
+    def walk(routes):
+        """Yield declared routes across eager and lazy FastAPI versions.
+
+        FastAPI <= 0.128 copies included routes into ``app.routes``. FastAPI
+        >= 0.141 stores one lazy ``_IncludedRouter`` whose ``original_router``
+        owns the declarations. A set at the caller deduplicates the eager
+        representation while this recursion makes the lazy one visible.
+        """
+        for route in routes:
+            yield route
+            original_router = getattr(route, "original_router", None)
+            original_routes = getattr(original_router, "routes", None)
+            if original_routes:
+                yield from walk(original_routes)
+
+    for route in walk(server.app.routes):
         methods = getattr(route, "methods", None) or set()
         path = getattr(route, "path", None)
         if path and "GET" in methods and server._is_state_bearing_get(path):
@@ -122,10 +142,25 @@ def _dashboard_get_inventory(server):
 class RemoteAuthOffReadBoundary(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._auth_env = {
+            name: os.environ.get(name)
+            for name in (
+                "LOKI_ENTERPRISE_AUTH",
+                "LOKI_OIDC_ISSUER",
+                "LOKI_OIDC_CLIENT_ID",
+            )
+        }
         os.environ.pop("LOKI_ENTERPRISE_AUTH", None)
         os.environ.pop("LOKI_OIDC_ISSUER", None)
         os.environ.pop("LOKI_OIDC_CLIENT_ID", None)
-        from dashboard import auth, server  # noqa: PLC0415
+
+        # Import explicitly, then reload the server under the controlled env.
+        # Other full-suite files deliberately evict/re-import dashboard.server;
+        # a package attribute can therefore point at an app created under a
+        # sibling test's environment. Reloading creates the exact app and route
+        # table this boundary test intends to exercise.
+        auth = importlib.import_module("dashboard.auth")
+        server = importlib.reload(importlib.import_module("dashboard.server"))
 
         cls.auth, cls.server = auth, server
         cls._enterprise = auth.ENTERPRISE_AUTH_ENABLED
@@ -137,6 +172,11 @@ class RemoteAuthOffReadBoundary(unittest.TestCase):
     def tearDownClass(cls):
         cls.auth.ENTERPRISE_AUTH_ENABLED = cls._enterprise
         cls.auth.OIDC_ENABLED = cls._oidc
+        for name, value in cls._auth_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
     def test_public_api_allowlist_is_exact_and_complete(self):
         self.assertEqual(self.server._PUBLIC_API_GET_PATHS, _PUBLIC_API_GETS)
@@ -157,7 +197,7 @@ class RemoteAuthOffReadBoundary(unittest.TestCase):
     def test_every_state_bearing_get_is_403_before_a_handler_can_leak(self):
         inventory = _dashboard_get_inventory(self.server)
         self.assertGreaterEqual(
-            len(inventory), 150,
+            len(inventory), 190,
             "route inventory unexpectedly shrank; mounted or dashboard reads "
             "may have escaped enumeration",
         )
@@ -198,11 +238,43 @@ class RemoteAuthOffReadBoundary(unittest.TestCase):
             self.assertEqual(results[path][0], 200, path)
 
     def test_loopback_state_reads_keep_zero_config_behavior(self):
-        for path in ("/api/context", "/api/usage", "/api/v2/tenants"):
+        for path in ("/api/context", "/api/usage"):
             status, _body = asyncio.run(
                 _raw_get(self.server.app, path, host="127.0.0.1")
             )
             self.assertNotEqual(status, 403, path)
+
+        # /api/v2/tenants is database-backed. Raw ASGI deliberately does not
+        # run lifespan, so executing its real database dependency makes this
+        # test depend on whether ~/.loki/dashboard.db happens to have tables.
+        # Substitute only the DB session and raise from execute(): reaching the
+        # sentinel proves the lazy/eager router matched the v2 handler and that
+        # the loopback request crossed the boundary. A missing route returns
+        # 404; an incorrectly gated request returns 403; neither can raise it.
+        from dashboard import api_v2  # noqa: PLC0415
+
+        class V2HandlerReached(Exception):
+            pass
+
+        class NoDurableDatabase:
+            async def execute(self, *_args, **_kwargs):
+                raise V2HandlerReached
+
+        async def override_get_db():
+            yield NoDurableDatabase()
+
+        self.server.app.dependency_overrides[api_v2.get_db] = override_get_db
+        try:
+            with self.assertRaises(V2HandlerReached):
+                asyncio.run(
+                    _raw_get(
+                        self.server.app,
+                        "/api/v2/tenants",
+                        host="127.0.0.1",
+                    )
+                )
+        finally:
+            self.server.app.dependency_overrides.pop(api_v2.get_db, None)
 
 
 if __name__ == "__main__":
