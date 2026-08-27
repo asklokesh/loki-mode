@@ -430,6 +430,40 @@ else
     _no "G: node-test branch wrong: empty=$G_NE (want zero), real=$G_NR (want has)"
 fi
 
+# verify.sh owns a separate copy of the detector. Node 26's default spec
+# reporter has no TAP ok-lines; absence of those lines must not be interpreted
+# as positive evidence that zero tests ran.
+VERIFY_HELPER="$TMP_ROOT/verify-zero-helper.sh"
+sed -n '/^_verify_zero_tests_executed() {/,/^}/p' "$VERIFY_SH" > "$VERIFY_HELPER"
+(
+    # shellcheck source=/dev/null
+    source "$VERIFY_HELPER"
+    if _verify_zero_tests_executed node-test "✔ adds (0.3ms)
+ℹ tests 1
+ℹ pass 1"; then
+        echo "GV-SPEC:zero"
+    else
+        echo "GV-SPEC:has"
+    fi
+    if _verify_zero_tests_executed node-test "TAP version 13
+# Subtest: /abs/empty.test.js
+ok 1 - /abs/empty.test.js
+1..1
+# tests 1
+# pass 1" "/abs/empty.test.js"; then
+        echo "GV-TAP-EMPTY:zero"
+    else
+        echo "GV-TAP-EMPTY:has"
+    fi
+) > "$TMP_ROOT/GV.out" 2>/dev/null
+G_VS="$(grep '^GV-SPEC:' "$TMP_ROOT/GV.out" | cut -d: -f2)"
+G_VE="$(grep '^GV-TAP-EMPTY:' "$TMP_ROOT/GV.out" | cut -d: -f2)"
+if [ "$G_VS" = "has" ] && [ "$G_VE" = "zero" ]; then
+    _ok "G: verify helper keeps Node spec output passing and TAP wrapper-only output inconclusive"
+else
+    _no "G: verify helper reporter discrimination wrong: spec=$G_VS (want has), tap-empty=$G_VE (want zero)"
+fi
+
 # ---- Case H: _loki_zero_tests_executed go-test branch (#89, durable) --------
 # go test ./... on a package with no *_test.go EXITS 0 (unlike vitest/pytest/
 # mocha, which exit non-zero on zero tests -> already not-pass), so it is the one

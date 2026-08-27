@@ -368,15 +368,28 @@ _verify_zero_tests_executed() {
                 [ -n "$_zt_f" ] || continue
                 _zt_bases="${_zt_bases}${_zt_f}"$'\n'"$(basename "$_zt_f")"$'\n'
             done
-            local _zt_real=0 _zt_line _zt_label
+            local _zt_real=0 _zt_line _zt_label _zt_matches
+            _zt_matches=$(printf '%s\n' "$_zt_out" | grep -E '^(ok|not ok) [0-9]+ - ' 2>/dev/null || true)
             while IFS= read -r _zt_line; do
+                [ -n "$_zt_line" ] || continue
                 _zt_label="${_zt_line#* - }"
                 case "$_zt_bases" in
                     *$'\n'"$_zt_label"$'\n'*) continue ;;
                 esac
                 _zt_real=$((_zt_real + 1))
-            done < <(printf '%s\n' "$_zt_out" | grep -E '^(ok|not ok) [0-9]+ - ' 2>/dev/null)
-            [ "$_zt_real" -eq 0 ] && return 0
+            done << ZT_MATCHES_EOF
+$_zt_matches
+ZT_MATCHES_EOF
+            [ "$_zt_real" -gt 0 ] && return 1
+
+            # Node 26 defaults to the human-readable spec reporter under npm
+            # scripts. It has no TAP ok-lines, so an absent match is not proof
+            # that zero tests ran. Only classify zero tests when the output is
+            # positively identifiable as TAP; unknown/custom reporter shapes
+            # remain a passing run instead of becoming a false CONCERN.
+            case "$_zt_out" in
+                *"TAP version"*|*$'\n# tests '*|"# tests "*) return 0 ;;
+            esac
             return 1
             ;;
         jest)
