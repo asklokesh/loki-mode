@@ -5040,7 +5040,14 @@ cmd_ship() {
     echo -e "${BOLD}Running quality gates on the diff (loki review)...${NC}"
     echo ""
     local rc=0
-    cmd_review "${review_args[@]}" || rc=$?
+    # Bash 3.2 treats an empty-array expansion as an unbound variable under
+    # `set -u`. macOS still ships that shell, so the documented zero-option
+    # `loki ship` path must call review without expanding an empty array.
+    if [ "${#review_args[@]}" -gt 0 ]; then
+        cmd_review "${review_args[@]}" || rc=$?
+    else
+        cmd_review || rc=$?
+    fi
 
     if [ "$rc" -ge 1 ]; then
         echo ""

@@ -27,6 +27,27 @@ mk(){ # build a clean loki/* branch repo with committed work + gitignored .loki
   echo "$d"
 }
 
+# Use the platform shell when available. macOS /bin/bash is 3.2, where an
+# empty-array expansion under `set -u` is an error; that is the installed
+# default journey which originally exposed this regression. Other platforms
+# still exercise the zero-option behavior with their available bash.
+ship_bash="$(command -v bash)"
+if [ -x /bin/bash ]; then
+  ship_bash=/bin/bash
+fi
+
+# 0. zero-option ship on an ordinary clean repository must reach review and PR
+# advice instead of crashing while expanding an empty review-argument array.
+d=$(mktemp -d)
+git -C "$d" init -q; git -C "$d" config user.email a@b.c; git -C "$d" config user.name a
+echo init > "$d/r.txt"; git -C "$d" add r.txt; git -C "$d" commit -qm init
+out=$(cd "$d" && LOKI_DIR=.loki "$ship_bash" "$LOKI" ship 2>&1)
+rc=$?
+printf '%s' "$out" | grep -q 'unbound variable' && bad "zero-option ship crashed on empty review args" || ok "zero-option ship is nounset-safe"
+[ "$rc" -eq 0 ] && ok "zero-option ship reaches the clean finish path" || bad "zero-option ship exited $rc"
+printf '%s' "$out" | grep -qiE 'does not push or deploy|run the command above' && ok "zero-option ship remains print-only" || bad "zero-option ship omitted PR advice"
+rm -rf "$d"
+
 # 1. clean loki/* branch: ship scopes review to the branch range (not empty)
 d=$(mk)
 out=$(cd "$d" && LOKI_DIR=.loki timeout 90 bash "$LOKI" ship 2>&1)
