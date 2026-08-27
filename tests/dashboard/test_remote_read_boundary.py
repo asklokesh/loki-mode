@@ -6,9 +6,8 @@ v2 tenants and v2 audit all reached their handlers from a routable address
 when auth was off. The tests below enumerate the live route tables and drive
 the app as raw ASGI without lifespan startup, so a handler cannot hide a
 missing boundary behind database, filesystem or startup failures. The one
-loopback v2 reachability probe substitutes a sentinel database dependency: it
-proves the request crossed the boundary and reached the intended handler
-without depending on a developer's durable database or lifespan side effects.
+loopback probe calls the boundary with a sentinel downstream response, proving
+that local reads remain allowed without entering any state-bearing handler.
 """
 
 from __future__ import annotations
@@ -95,30 +94,19 @@ async def _raw_get(app, path: str, host: str = "203.0.113.7"):
     return status, body
 
 
-def _dashboard_get_inventory(server):
-    """Return every registered state-bearing GET, including the mounted lab."""
-    paths = set()
+def _effective_routes(router, prefix=""):
+    """Yield paths through eager routes and FastAPI 0.141 lazy includes."""
+    for route in getattr(router, "routes", ()):  # pragma: no branch
+        included = getattr(route, "original_router", None)
+        if included is not None:
+            context = getattr(route, "include_context", None)
+            included_prefix = getattr(context, "prefix", "") or ""
+            yield from _effective_routes(included, prefix + included_prefix)
+            continue
 
-    def walk(routes):
-        """Yield declared routes across eager and lazy FastAPI versions.
-
-        FastAPI <= 0.128 copies included routes into ``app.routes``. FastAPI
-        >= 0.141 stores one lazy ``_IncludedRouter`` whose ``original_router``
-        owns the declarations. A set at the caller deduplicates the eager
-        representation while this recursion makes the lazy one visible.
-        """
-        for route in routes:
-            yield route
-            original_router = getattr(route, "original_router", None)
-            original_routes = getattr(original_router, "routes", None)
-            if original_routes:
-                yield from walk(original_routes)
-
-    for route in walk(server.app.routes):
-        methods = getattr(route, "methods", None) or set()
         path = getattr(route, "path", None)
-        if path and "GET" in methods and server._is_state_bearing_get(path):
-            paths.add(path)
+        if path is not None:
+            yield prefix + path, getattr(route, "methods", None) or set()
 
         # Mounts have no methods at the parent table. Enumerate the mounted
         # Purple Lab app too, while testing the full path seen by the parent
@@ -127,16 +115,87 @@ def _dashboard_get_inventory(server):
         # /lab is wrapped by _MountAuthGuard; unwrap only that transparent
         # boundary adapter to reach the mounted FastAPI route table.
         child = getattr(child, "_app", child)
-        child_routes = getattr(child, "routes", None)
-        if path == "/lab" and child_routes:
-            for child_route in child_routes:
-                child_methods = getattr(child_route, "methods", None) or set()
-                child_path = getattr(child_route, "path", None)
-                if child_path and "GET" in child_methods:
-                    full_path = path + child_path
-                    if server._is_state_bearing_get(full_path):
-                        paths.add(full_path)
+        if path == "/lab" and getattr(child, "routes", None):
+            yield from _effective_routes(child, prefix + path)
+
+
+def _dashboard_get_inventory(server):
+    """Return every registered state-bearing GET, including lazy routers."""
+    paths = set()
+    for path, methods in _effective_routes(server.app):
+        if path and "GET" in methods and server._is_state_bearing_get(path):
+            paths.add(path)
     return sorted(paths)
+
+
+async def _boundary_only_get(server, path: str, host: str):
+    """Exercise the HTTP boundary without entering a stateful route handler."""
+    from starlette.requests import Request
+    from starlette.responses import Response
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode("utf-8"),
+        "query_string": b"",
+        "headers": [(b"host", b"dashboard.example")],
+        "client": (host, 5555),
+        "server": ("dashboard.example", 80),
+        "root_path": "",
+    }
+
+    async def call_next(_request):
+        return Response(status_code=204)
+
+    response = await server.dashboard_control_boundary(Request(scope), call_next)
+    return response.status_code
+
+
+class RouteInventoryCompatibility(unittest.TestCase):
+    @staticmethod
+    def _server(app, predicate):
+        class InventoryServer:
+            _is_state_bearing_get = staticmethod(predicate)
+
+        InventoryServer.app = app
+        return InventoryServer
+
+    def test_prefixed_included_router_keeps_its_effective_prefix(self):
+        from fastapi import APIRouter, FastAPI
+
+        router = APIRouter()
+        router.add_api_route("/state", lambda: None, methods=["GET"])
+        app = FastAPI()
+        app.include_router(router, prefix="/api/prefixed")
+
+        inventory = _dashboard_get_inventory(
+            self._server(app, lambda path: path.startswith("/api/"))
+        )
+        self.assertIn("/api/prefixed/state", inventory)
+        self.assertNotIn("/state", inventory)
+
+    def test_lazy_included_router_inside_lab_is_enumerated(self):
+        from fastapi import APIRouter, FastAPI
+
+        router = APIRouter()
+        router.add_api_route("/api/state", lambda: None, methods=["GET"])
+        lab = FastAPI()
+        lab.include_router(router)
+
+        class MountGuard:
+            def __init__(self, app):
+                self._app = app
+
+        app = FastAPI()
+        app.mount("/lab", MountGuard(lab))
+        inventory = _dashboard_get_inventory(
+            self._server(app, lambda path: path.startswith("/lab/api/"))
+        )
+        self.assertIn("/lab/api/state", inventory)
 
 
 class RemoteAuthOffReadBoundary(unittest.TestCase):
@@ -238,43 +297,11 @@ class RemoteAuthOffReadBoundary(unittest.TestCase):
             self.assertEqual(results[path][0], 200, path)
 
     def test_loopback_state_reads_keep_zero_config_behavior(self):
-        for path in ("/api/context", "/api/usage"):
-            status, _body = asyncio.run(
-                _raw_get(self.server.app, path, host="127.0.0.1")
+        for path in ("/api/context", "/api/usage", "/api/v2/tenants"):
+            status = asyncio.run(
+                _boundary_only_get(self.server, path, host="127.0.0.1")
             )
-            self.assertNotEqual(status, 403, path)
-
-        # /api/v2/tenants is database-backed. Raw ASGI deliberately does not
-        # run lifespan, so executing its real database dependency makes this
-        # test depend on whether ~/.loki/dashboard.db happens to have tables.
-        # Substitute only the DB session and raise from execute(): reaching the
-        # sentinel proves the lazy/eager router matched the v2 handler and that
-        # the loopback request crossed the boundary. A missing route returns
-        # 404; an incorrectly gated request returns 403; neither can raise it.
-        from dashboard import api_v2  # noqa: PLC0415
-
-        class V2HandlerReached(Exception):
-            pass
-
-        class NoDurableDatabase:
-            async def execute(self, *_args, **_kwargs):
-                raise V2HandlerReached
-
-        async def override_get_db():
-            yield NoDurableDatabase()
-
-        self.server.app.dependency_overrides[api_v2.get_db] = override_get_db
-        try:
-            with self.assertRaises(V2HandlerReached):
-                asyncio.run(
-                    _raw_get(
-                        self.server.app,
-                        "/api/v2/tenants",
-                        host="127.0.0.1",
-                    )
-                )
-        finally:
-            self.server.app.dependency_overrides.pop(api_v2.get_db, None)
+            self.assertEqual(status, 204, path)
 
 
 if __name__ == "__main__":
