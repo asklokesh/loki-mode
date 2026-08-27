@@ -762,10 +762,12 @@ loki_caveman_suppress_env() {
 # this so the operator is never surprised.
 #
 # HARDENING: the npx call is forced non-interactive (--non-interactive, plus
-# </dev/null so no stdin read can ever block) and time-bounded (timeout when
-# available) so a stalled network or an unexpected prompt can never hang a user's
-# first `loki start`. caveman's installer is already auto-non-interactive without
-# a TTY, but we belt-and-suspenders it.
+# </dev/null so no stdin read can ever block), time-bounded, and run from a
+# disposable directory. The upstream installer may create project-local agent
+# files while wiring its global Claude hook; isolating its cwd prevents those
+# files, lockfiles, or compiled Python cache entries from polluting the user's
+# feature branch and proof diff. caveman's installer is already auto-
+# non-interactive without a TTY, but we belt-and-suspenders it.
 loki_caveman_bootstrap() {
     [ "${LOKI_CAVEMAN:-1}" = "0" ] && return 1
     [ "${LOKI_CAVEMAN_AUTO_BOOTSTRAP:-1}" = "0" ] && return 1
@@ -796,7 +798,19 @@ loki_caveman_bootstrap() {
     if command -v timeout >/dev/null 2>&1; then
         _cm_runner="timeout 120 npx"
     fi
-    if CAVEMAN_REF="v${ver}" $_cm_runner -y "github:JuliusBrussee/caveman#v${ver}" -- --non-interactive >/dev/null 2>&1 </dev/null; then
+    local bootstrap_tmp=""
+    bootstrap_tmp="$(mktemp -d "${TMPDIR:-/tmp}/loki-caveman-bootstrap.XXXXXX")" || {
+        printf '%s\n' "[caveman] could not allocate an isolated bootstrap directory; run proceeds uncompressed." >&2
+        mkdir -p "$marker_dir" 2>/dev/null && : > "$marker" 2>/dev/null || true
+        return 1
+    }
+    local bootstrap_rc=1
+    (
+        cd "$bootstrap_tmp" || exit 1
+        CAVEMAN_REF="v${ver}" $_cm_runner -y "github:JuliusBrussee/caveman#v${ver}" -- --non-interactive >/dev/null 2>&1 </dev/null
+    ) && bootstrap_rc=0
+    rm -rf -- "$bootstrap_tmp" 2>/dev/null || true
+    if [ "$bootstrap_rc" -eq 0 ]; then
         mkdir -p "$marker_dir" 2>/dev/null && : > "$marker" 2>/dev/null || true
         if _loki_caveman_installed; then
             printf '%s\n' "[caveman] installed v${ver}." >&2

@@ -213,7 +213,61 @@ av="$(_cm_no_raise bogus full)"
   || bad "no-raise malformed" "expected full, got [$av]"
 
 # ---------------------------------------------------------------------------
-# 5c. #593 INTELLIGENT AUTO-SELECTION: with LOKI_CAVEMAN_LEVEL UNSET, the level
+# 5c. Bootstrap custody: upstream project-local writes stay out of the user's
+#      repository even when its installer creates agent files and lockfiles.
+# ---------------------------------------------------------------------------
+BOOT_TARGET="$TMP/bootstrap-target"
+BOOT_TMP="$TMP/bootstrap-tmp"
+BOOT_CWD="$TMP/bootstrap-cwd.txt"
+mkdir -p "$BOOT_TARGET" "$BOOT_TMP"
+rm -f "$CLAUDE_DIR/hooks/caveman-activate.js" "$CLAUDE_DIR/.caveman-active"
+cat > "$STUB_BIN/npx" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$PWD" > "$CAVEMAN_NPX_CWD_FILE"
+mkdir -p .agents/skills/caveman-compress/scripts/__pycache__
+: > .agents/skills/caveman-compress/SKILL.md
+: > .agents/skills/caveman-compress/scripts/__pycache__/fixture.pyc
+: > package-lock.json
+: > skills-lock.json
+mkdir -p "$CLAUDE_CONFIG_DIR/hooks"
+: > "$CLAUDE_CONFIG_DIR/hooks/caveman-activate.js"
+exit 0
+STUB
+chmod +x "$STUB_BIN/npx"
+
+(
+  cd "$BOOT_TARGET" || exit 1
+  TMPDIR="$BOOT_TMP" CAVEMAN_NPX_CWD_FILE="$BOOT_CWD" \
+    LOKI_CAVEMAN=1 LOKI_CAVEMAN_AUTO_BOOTSTRAP=1 LOKI_PROVIDER=claude \
+    loki_caveman_bootstrap
+)
+bootstrap_code=$?
+bootstrap_cwd="$(cat "$BOOT_CWD" 2>/dev/null || true)"
+bootstrap_cwd_isolated=0
+case "$bootstrap_cwd" in
+  "$BOOT_TMP"/loki-caveman-bootstrap.*) bootstrap_cwd_isolated=1 ;;
+esac
+
+if [ "$bootstrap_code" -eq 0 ] \
+   && [ -s "$BOOT_CWD" ] \
+   && [ "$bootstrap_cwd_isolated" -eq 1 ] \
+   && [ ! -e "$BOOT_TARGET/.agents" ] \
+   && [ ! -e "$BOOT_TARGET/package-lock.json" ] \
+   && [ ! -e "$BOOT_TARGET/skills-lock.json" ]; then
+  ok "bootstrap isolates upstream project-local writes from the target repository"
+else
+  bad "bootstrap cwd custody" "exit=$bootstrap_code cwd=${bootstrap_cwd:-missing}"
+fi
+
+if [ -f "$CLAUDE_DIR/hooks/caveman-activate.js" ] \
+   && ! find "$BOOT_TMP" -mindepth 1 -print -quit | grep -q .; then
+  ok "bootstrap preserves global hook result and removes disposable workspace"
+else
+  bad "bootstrap cleanup" "hook or temporary workspace custody failed"
+fi
+
+# ---------------------------------------------------------------------------
+# 5d. #593 INTELLIGENT AUTO-SELECTION: with LOKI_CAVEMAN_LEVEL UNSET, the level
 #     is INFERRED from the RARV tier (LOKI_CURRENT_TIER). Explicit
 #     LOKI_CAVEMAN_LEVEL overrides inference. Inference is deterministic +
 #     conservative (auto ceiling = full; ultra only via explicit override).
