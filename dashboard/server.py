@@ -192,53 +192,46 @@ def _rate_key(base: str, request: Optional[Request]) -> str:
 logger = logging.getLogger(__name__)
 
 
-# Reads that expose operational or credential-adjacent state. These stay open
-# to a LOCAL caller (zero-config use is the point) but must not be readable by
-# an anonymous remote caller when the dashboard is bound to 0.0.0.0.
+# Public API metadata needed before a caller can authenticate or before the UI
+# can choose a provider. Everything else under an API namespace is
+# state-bearing unless it is explicitly admitted here.
 #
-# Measured before this list existed, from a routable remote address with auth
-# off: /api/logs, /api/secrets/status, /api/github/status, /api/tasks,
-# /api/council/transcripts and /api/proofs all returned 200.
+# This is deliberately an ALLOWLIST, not the old list of sensitive prefixes.
+# That list silently started every new read family public. Measured from a
+# routable remote address with auth off, routes added after the list --
+# /api/context, /api/notifications, /api/agents, /api/usage,
+# /api/prd-observations and every /api/v2/* read -- all reached their handlers
+# and returned project, tenant or audit state.
 #
-# /health and /metrics are deliberately ABSENT: a container health probe and a
-# Prometheus scrape must keep working with no configuration, and neither
-# carries workspace content.
-_SENSITIVE_READ_PREFIXES = (
-    "/api/logs",
-    "/api/secrets",
-    "/api/github",
-    "/api/tasks",
-    "/api/projects",
-    "/api/council",
-    "/api/proofs",
-    "/api/phases",
-    "/api/memory",
-    "/api/learnings",
-    "/api/learning",
-    "/api/escalations",
-    "/api/spec",
-    "/api/checkpoints",
-    "/api/enterprise",
-    "/api/collab",
-    "/api/cost",
-    "/api/budget",
-    "/api/findings",
-    "/api/operator",
-    "/api/fleet",
-    "/api/registry",
-    "/api/wiki",
-    "/api/activity",
-    "/api/session",
-    "/api/failures",
-    "/api/prompt",
-    "/api/quality",
-    "/api/migration",
-    "/api/managed",
-    "/api/app-runner",
-    "/api/playwright",
-    "/api/checklist",
-    "/api/control",
-)
+# /health, /metrics, /.well-known/*, docs and static/UI routes are outside the
+# API namespaces and remain public. The three entries below contain only
+# capability/auth bootstrap metadata and are already pinned as public by the
+# dashboard auth inventory tests.
+_PUBLIC_API_GET_PATHS = frozenset({
+    "/api/auth/info",
+    "/api/enterprise/status",
+    "/api/providers/models",
+})
+
+
+def _is_state_bearing_get(path: str) -> bool:
+    """Classify dashboard reads at the namespace boundary.
+
+    A future GET under /api or the mounted Purple Lab's /lab/api namespace is
+    private by default. Exact public metadata is admitted above; probes,
+    discovery documents and UI/static files live outside these namespaces.
+    Normalize one trailing slash so FastAPI's redirect spelling cannot turn a
+    public metadata request into a remote-only failure.
+    """
+    normalized = path.rstrip("/") or "/"
+    if normalized in _PUBLIC_API_GET_PATHS:
+        return False
+    return (
+        normalized == "/api"
+        or normalized.startswith("/api/")
+        or normalized == "/lab/api"
+        or normalized.startswith("/lab/api/")
+    )
 
 
 def _trusted_proxies() -> frozenset:
@@ -1274,8 +1267,7 @@ async def dashboard_control_boundary(request: Request, call_next):
             content={"detail": "cross-origin mutation refused"},
         )
     if not gated:
-        path = request.url.path
-        gated = any(path.startswith(pfx) for pfx in _SENSITIVE_READ_PREFIXES)
+        gated = _is_state_bearing_get(request.url.path)
     if gated:
         try:
             require_local_or_authenticated(request)
