@@ -135,6 +135,7 @@ declare -a _FAST_KEEP=(
   "no unescaped \$<digit>"
   "shell completions cover every dispatch command"
   "local-ci tiering"
+  "local-ci parent-check exit isolation"
   # dist freshness. CLAUDE.md names this the SHARPEST reason the fast tier
   # exists -- "CI never validates that the committed loki-ts/dist/loki.js
   # matches src, and when that slipped we shipped THREE releases reporting the
@@ -351,7 +352,10 @@ run_check() {
   echo "${DIM}$cmd${NC}"
   local out
   if [ "$VERBOSE" = "1" ]; then
-    if eval "$cmd"; then
+    # A check body may deliberately use `exit` for an early success/failure
+    # branch. Keep that exit inside the check: evaluating in this main shell
+    # would terminate local-ci before result bookkeeping and every later gate.
+    if ( eval "$cmd" ); then
       PASSED+=("$label"); echo "${GREEN}PASS:${NC} $label"
     else
       FAILED+=("$label"); echo "${RED}FAIL:${NC} $label"
@@ -688,6 +692,7 @@ run_check_bg 'shell completions cover every dispatch command (no drift)' 'bash t
 # suite. Static assertions, sub-second, so it runs in the fast tier too --
 # a tier guard that only ran in the slow tier would be useless.
 run_check_bg 'local-ci tiering (fast is not push authorization; trust core kept)' 'bash tests/test-local-ci-tiers.sh'
+run_check_bg 'local-ci parent-check exit isolation' 'bash tests/test-local-ci-parent-exit-isolation.sh'
 
 # ---------------------------------------------------------------------------
 # Harvest the read-only parallel pool BEFORE the serial-sensitive spine. The
