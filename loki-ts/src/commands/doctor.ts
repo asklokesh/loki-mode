@@ -331,13 +331,17 @@ export type SkillJson = {
 export function skillsForJson(): SkillJson[] {
   return checkSkills().map((s) => ({
     name: s.name,
-    path: s.path,
+    // JSON may be persisted or forwarded by automation. Preserve the useful
+    // user-relative location without exposing a machine-specific home path.
+    path: s.path.startsWith(`${homedir()}/`) ? `~/${s.path.slice(homedir().length + 1)}` : s.path,
     status: s.status,
     detail:
       s.status === "pass"
         ? null
         : s.status === "fail"
-          ? `${s.detail.replace(/^\(|\)$/g, "")}. Fix: loki setup-skill`
+          // The text view can show the target interactively, but persisted JSON
+          // must not disclose an absolute run root or target-derived secret.
+          ? "broken symlink. Fix: loki setup-skill"
           : "not found - run loki setup-skill",
     required: "required" as const,
   }));

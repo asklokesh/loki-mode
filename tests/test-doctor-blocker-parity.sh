@@ -25,7 +25,6 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOKI="$REPO_ROOT/autonomy/loki"
 
 PASS=0
 FAIL=0
@@ -119,6 +118,48 @@ for route in bash bun; do
         bad "the ${route} route leaves a first-run user with no way forward"
     fi
 done
+
+# Machine-readable doctor output is routinely archived by CI and MCP clients.
+# Skill locations must remain actionable without exposing an absolute HOME.
+mkdir -p "$SHIM/home"
+mkdir -p "$SHIM/home/.claude/skills"
+ln -s "$SHIM/home/private/PACKET744_SECRET_VALUE" \
+    "$SHIM/home/.claude/skills/loki-mode"
+env HOME="$SHIM/home" PATH="$SHIM" LOKI_LEGACY_BASH=1 \
+    "$REPO_ROOT/bin/loki" doctor --json >"$SHIM/bash.json" 2>/dev/null
+bash_json_rc=$?
+env HOME="$SHIM/home" PATH="$SHIM" BUN_FROM_SOURCE=1 \
+    "$REPO_ROOT/bin/loki" doctor --json >"$SHIM/bun.json" 2>/dev/null
+bun_json_rc=$?
+if [ "$bash_json_rc" -ne 0 ] && [ "$bun_json_rc" -ne 0 ] \
+   && jq -e --arg root "$SHIM" '
+        (.skills | length == 4)
+        and ([.skills[].path] == [
+          "~/.claude/skills/loki-mode",
+          "~/.codex/skills/loki-mode",
+          "~/.cline/skills/loki-mode",
+          "~/.aider/skills/loki-mode"
+        ])
+        and ((.skills | tostring | contains($root)) | not)
+        and ((.skills | tostring | contains("PACKET744_SECRET_VALUE")) | not)
+        and (.skills[0].detail == "broken symlink. Fix: loki setup-skill")
+      ' "$SHIM/bash.json" >/dev/null \
+   && jq -e --arg root "$SHIM" '
+        (.skills | length == 4)
+        and ([.skills[].path] == [
+          "~/.claude/skills/loki-mode",
+          "~/.codex/skills/loki-mode",
+          "~/.cline/skills/loki-mode",
+          "~/.aider/skills/loki-mode"
+        ])
+        and ((.skills | tostring | contains($root)) | not)
+        and ((.skills | tostring | contains("PACKET744_SECRET_VALUE")) | not)
+        and (.skills[0].detail == "broken symlink. Fix: loki setup-skill")
+      ' "$SHIM/bun.json" >/dev/null; then
+    ok "doctor JSON keeps skill paths user-relative on both routes"
+else
+    bad "doctor JSON leaked an absolute HOME path or changed the skill-path contract"
+fi
 
 # Blockers must be NAMED. "Some prerequisites are missing" is the failure mode
 # this replaced: it tells the user something is wrong but not what.

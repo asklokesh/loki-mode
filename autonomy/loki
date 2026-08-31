@@ -14033,22 +14033,20 @@ _SKILL_ENTRIES = (
 skills = []
 for _sk_name, _sk_rel in _SKILL_ENTRIES:
     _sk_dir = os.path.join(os.path.expanduser('~'), _sk_rel)
+    # JSON is commonly archived or forwarded to automation. Keep the useful
+    # user-relative location without exposing the machine-specific home path.
+    _sk_json_path = '~/' + _sk_rel
     if os.path.isfile(os.path.join(_sk_dir, 'SKILL.md')):
-        skills.append({'name': _sk_name, 'path': _sk_dir, 'status': 'pass',
+        skills.append({'name': _sk_name, 'path': _sk_json_path, 'status': 'pass',
                        'detail': None, 'required': 'required'})
     elif os.path.islink(_sk_dir):
         # islink is true for a DANGLING link (lstat-based), which is exactly
         # the broken case the text path reports as FAIL.
-        try:
-            _sk_target = os.readlink(_sk_dir)
-        except OSError:
-            _sk_target = 'unknown'
-        skills.append({'name': _sk_name, 'path': _sk_dir, 'status': 'fail',
-                       'detail': 'broken symlink -> ' + _sk_target
-                                 + '. Fix: loki setup-skill',
+        skills.append({'name': _sk_name, 'path': _sk_json_path, 'status': 'fail',
+                       'detail': 'broken symlink. Fix: loki setup-skill',
                        'required': 'required'})
     else:
-        skills.append({'name': _sk_name, 'path': _sk_dir, 'status': 'warn',
+        skills.append({'name': _sk_name, 'path': _sk_json_path, 'status': 'warn',
                        'detail': 'not found - run loki setup-skill',
                        'required': 'required'})
 
