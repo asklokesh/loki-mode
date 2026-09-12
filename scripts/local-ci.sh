@@ -126,6 +126,30 @@ fi
 # Matching is substring-against-LABEL, consulted ONLY when TIER=fast. The full
 # tier never consults this array and is byte-for-byte its pre-tiering self.
 declare -a _FAST_KEEP=(
+  # THE RELEASE GATE'S FIRST JOB IS A TYPECHECK, AND THE FAST TIER WAS BLIND TO
+  # IT. release.yml's `gate` job runs "Bun typecheck + test (protect published
+  # loki-ts dist)" before required-ci and before every publish job, so a tsc
+  # error blocks the whole release. These two checks existed here but sat
+  # outside _FAST_KEEP, so `local-ci.sh` reported green on a tree whose
+  # typecheck was broken, and the failure only surfaced a full release cycle
+  # later. Measured 2026-09-12: v9.49.0 died on doctor.ts(300,3) TS2322 with
+  # every publish job skipped. Deferring the exact check that gates the release
+  # is the blind spot this file's own mandate exists to prevent.
+  # Measured on this machine 2026-09-12: typecheck 6s, bun test 112.67s
+  # (1602 tests across 113 files). That is a real addition to a gate whose
+  # whole point is speed, and it is accepted deliberately: the alternative
+  # is what just happened, where a tsc error passed local-ci and cost a
+  # full release cycle. If the cost becomes intolerable, shard bun test --
+  # do NOT re-defer it.
+  # Their prerequisite MUST share this tier. loki-ts/node_modules is
+  # gitignored, so on a fresh worktree the two checks below fail for a
+  # reason that has nothing to do with the code (measured 2026-08-06:
+  # `Script not found "tsc"`, and 49 of 50 bun-test failures were the
+  # missing toolchain). Promoting the dependents alone would trade a
+  # blind spot for a false red on every clean checkout.
+  "loki-ts dependencies installed"
+  "bun run typecheck"
+  "bun test"
   # Guards the founder-reported quickstart defect: typing a brief in an EMPTY
   # directory and answering "none" produced a spec asserting "This is an
   # EXISTING codebase... Do NOT scaffold a new project" -- telling the build not

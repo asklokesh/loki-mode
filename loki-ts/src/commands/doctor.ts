@@ -306,7 +306,7 @@ export function checkSkills(selected?: string | null): SkillStatus[] {
     const skillFile = resolve(sdir, "SKILL.md");
 
     if (existsSync(skillFile)) {
-      return { name, path: shortPath, status: "pass" as const, detail: "" };
+      return { name, path: shortPath, status: "pass" as const, detail: "", dangling: false };
     }
     // Detect broken symlink: lstat succeeds but stat target is missing.
     try {
@@ -324,6 +324,7 @@ export function checkSkills(selected?: string | null): SkillStatus[] {
           path: shortPath,
           status: "fail" as const,
           detail: `(broken symlink -> ${target})`,
+          dangling: true,
         };
       }
     } catch {
@@ -334,6 +335,7 @@ export function checkSkills(selected?: string | null): SkillStatus[] {
       path: shortPath,
       status: "warn" as const,
       detail: "(not found - run 'loki setup-skill')",
+      dangling: false,
     };
   });
 }
