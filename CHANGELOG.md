@@ -5,6 +5,42 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.49.2
+
+v9.49.0 and v9.49.1 both failed CI and published nothing: no tag, no npm
+release. This is that release, with both causes fixed.
+
+### Fixed
+
+- **v9.49.0 died on a TypeScript error.** `SkillStatus` requires
+  `dangling: boolean` and none of the three `checkSkills` return arms set it.
+  Fixed with the value the type's own comment calls for: pass false,
+  broken-symlink true, not-found false.
+
+- **v9.49.1 died on two tests that asserted host state.** The doctor suite
+  asserted `doctor --json` exits 0, which is true on a machine with a provider
+  CLI installed and false on a CI runner, where the `ai_provider` check
+  correctly fails. And `tests/test-e2e-features.sh` piped stderr into a JSON
+  parser, so it failed on any warning; every other `doctor --json` assertion in
+  the repo already discards stderr. Neither was a product defect.
+
+- **The gate blind spot behind all of it.** `bun run typecheck`, `bun test` and
+  two suites added this session ran in CI but not in the fast tier, so the local
+  gate reported green on trees that CI rejected. All are now registered and in
+  `_FAST_KEEP` -- allowlist membership alone does nothing, since it only
+  controls deferral of checks that are already registered.
+
+### Known issue
+
+`doctor --json` writes 108 bytes to stderr on a provider-less host while stdout
+is 5176 bytes of valid JSON. Non-blocking. `docs/KNOWN-ISSUES.md` records six
+tested and refuted hypotheses plus the strongest remaining lead.
+
+Everything else is v9.49.0's content unchanged: ten corrected client paths, a
+deploy-status route that no longer returns null, an API catch-all that returns
+JSON 404, two deleted surfaces that fabricated data, and the client/server
+route contract guard.
+
 ## v9.49.1
 
 v9.49.0 never published. Its Release workflow died in the `gate` job on a
