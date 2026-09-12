@@ -5,6 +5,46 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.48.2
+
+A flag that announced work it never did.
+
+### Fixed
+
+- **`loki migrate --multi-repo` stops claiming to migrate repositories it never
+  touches.** Reproduced: `loki migrate <alpha> --multi-repo './services/*'`
+  printed **"Multi-repo migration (3 repositories)"**, listed all three, then
+  created a single migration scoped to alpha. beta and gamma were never touched.
+
+  The discovery block populates `repos[]` and never references it again.
+  Measured with a positive control: `repos[]` / `repo_count` appear four times
+  inside that block and **zero times after it**; every downstream step operates
+  on the single `$codebase_path`.
+
+  A user reading "Multi-repo migration (3 repositories)" reasonably believes
+  three repositories were migrated. One was.
+
+  The output now names the repository actually migrating, says plainly that
+  `--multi-repo` discovers rather than orchestrates, and hands over runnable
+  commands covering the rest.
+
+  Guarded by `tests/test-multi-repo-claims-honest.sh` (9 assertions,
+  source-level plus end-to-end against the real CLI).
+
+### What this does NOT do
+
+This does not implement multi-repo orchestration, and the fix is careful not to
+imply otherwise. Real orchestration needs dependency ordering, per-repo gates,
+per-repo receipts, and a decision about partial failure (repo 2 of 5 fails:
+stop, or continue and report?). That work is tracked separately.
+
+**No behaviour changed.** The migration that ran before is the migration that
+runs now. Only the claim about it is corrected.
+
+The guard asserts the output is HONEST, not that orchestration works. If
+orchestration is built later, those assertions should be REPLACED by ones
+verifying every repository was migrated -- not deleted to make room.
+
 ## v9.48.1
 
 Hand Loki a GitHub issue and get a pull request, with nothing installed. And
