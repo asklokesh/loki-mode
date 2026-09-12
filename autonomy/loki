@@ -4565,16 +4565,27 @@ print('\t'.join([
     # move the contradiction rather than close it.
     case "$status" in
         max_iterations_reached)
-            echo -e "${YELLOW}Iteration limit reached.${NC} Stopped at iteration ${BOLD}${iteration}${NC} (last activity: ${last_run})."
-            echo "Saved progress is intact, but resuming as-is hits the same limit."
-            echo "Raise the cap (or narrow the spec), then continue:"
+            # Deliberately does NOT print the iteration it reached.
+            # `load_state` resets ITERATION_COUNT=0 for this terminal status
+            # (autonomy/run.sh, the failure-terminals case arm), so a fresh
+            # `loki start` is a NEW session from iteration 0. Advertising the
+            # old number would promise a continuation the runtime will not
+            # honour -- the exact false claim tests/test-resume-discoverability.sh
+            # guards, and it caught this in CI.
+            echo -e "${YELLOW}Iteration limit reached.${NC} (last activity: ${last_run})."
+            echo "The committed work is intact, but this starts a NEW session from"
+            echo "iteration 0 -- it does not continue the old count."
+            echo "Raise the cap (or narrow the spec), then run:"
             echo ""
             echo -e "  ${BOLD}LOKI_MAX_ITERATIONS=<higher> ${resume_cmd}${NC}"
             ;;
         budget_exceeded)
-            echo -e "${YELLOW}Budget limit reached.${NC} Stopped at iteration ${BOLD}${iteration}${NC} (last activity: ${last_run})."
-            echo "Saved progress is intact, but resuming as-is hits the same limit."
-            echo "Raise the budget (or narrow the spec), then continue:"
+            # Same reasoning as max_iterations_reached: this terminal status is
+            # in load_state's reset list, so the prior iteration count is gone.
+            echo -e "${YELLOW}Budget limit reached.${NC} (last activity: ${last_run})."
+            echo "The committed work is intact, but this starts a NEW session from"
+            echo "iteration 0 -- it does not continue the old count."
+            echo "Raise the budget (or narrow the spec), then run:"
             echo ""
             echo -e "  ${BOLD}LOKI_BUDGET_LIMIT=<higher> ${resume_cmd}${NC}"
             ;;
@@ -4586,7 +4597,14 @@ print('\t'.join([
             ;;
     esac
     echo ""
-    echo -e "${DIM}It picks up from iteration ${iteration}; verification re-runs, so nothing inherits a stale PASS.${NC}"
+    # Only an INTERRUPTED run actually resumes its iteration count. The capped
+    # terminals above are reset to 0 by load_state, so the pick-up sentence must
+    # not be printed for them.
+    if [ "$status" = "interrupted" ]; then
+        echo -e "${DIM}It picks up from iteration ${iteration}; verification re-runs, so nothing inherits a stale PASS.${NC}"
+    else
+        echo -e "${DIM}Verification re-runs from scratch, so nothing inherits a stale PASS.${NC}"
+    fi
     return 0
 }
 

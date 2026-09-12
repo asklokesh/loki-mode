@@ -114,6 +114,37 @@ else
     fail "budget run advice omits the budget; resuming as-is hits the same limit"
 fi
 
+# --- A CAPPED RUN MUST NOT PROMISE A RESUMED ITERATION ------------------------
+# My first version of this fix printed "Stopped at iteration N ... It picks up
+# from iteration N" for capped runs. That is FALSE: load_state resets
+# ITERATION_COUNT=0 for max_iterations_reached and budget_exceeded (the
+# failure-terminals case arm in autonomy/run.sh), so a fresh `loki start` is a
+# NEW session from 0. The number promised a continuation the runtime does not
+# honour. tests/test-resume-discoverability.sh caught it in CI, not here --
+# this suite passed the wrong implementation, so the assertion is added now.
+#
+# Only `interrupted` genuinely resumes its count.
+for status in max_iterations_reached budget_exceeded; do
+    dir="$(mk_state "noiter_$status" "$status")"
+    out="$(cd "$dir" && LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" resume 2>&1)"
+    # mk_state writes iteration 9; it must not appear as a promised pick-up.
+    if printf '%s' "$out" | grep -q 'picks up from iteration'; then
+        fail "$status: promises to pick up from an iteration that load_state resets to 0"
+    else
+        pass "$status: does not promise a resumed iteration count"
+    fi
+done
+
+# Positive control: `interrupted` MUST still promise the pick-up, or the
+# assertion above would pass on an implementation that dropped it everywhere.
+dir="$(mk_state "iter_interrupted" "interrupted")"
+out="$(cd "$dir" && LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" resume 2>&1)"
+if printf '%s' "$out" | grep -q 'picks up from iteration'; then
+    pass "interrupted: still promises the pick-up (it genuinely resumes)"
+else
+    fail "interrupted lost its pick-up line; the assertion above was vacuous"
+fi
+
 # --- THE OVER-CORRECTION: a VERDICT status must still refuse ------------------
 # council_approved routes to `loki ship`. If the hint helper ever accepts it,
 # an approved build gets invited back into the iteration loop.

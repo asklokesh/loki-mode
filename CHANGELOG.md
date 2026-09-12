@@ -5,7 +5,7 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v9.48.0
+## v9.48.1
 
 Hand Loki a GitHub issue and get a pull request, with nothing installed. And
 two commands that used to contradict each other now agree.
@@ -53,6 +53,29 @@ two commands that used to contradict each other now agree.
   Guarded by `tests/test-next-resume-agree.sh` (16 assertions). It reads the
   command `loki next` actually announces and then RUNS it, so the agreement is
   the property under test rather than either command alone.
+
+### A correction caught by CI, before anyone saw it
+
+v9.48.0 was tagged in this repo's history but **never published** -- its
+`required-ci` job went red, so every publish job was skipped. The cause was
+mine, and it is worth naming.
+
+The first version of the resume fix printed "Stopped at iteration 47 ... It
+picks up from iteration 47" for a capped run. That is false.
+`load_state` resets `ITERATION_COUNT=0` for `max_iterations_reached` and
+`budget_exceeded`, so a fresh `loki start` after a capped run is a NEW session
+from iteration 0. The message promised a continuation the runtime does not
+honour -- the exact false-claim class this project exists to prevent.
+
+`tests/test-resume-discoverability.sh` had guarded that direction since before
+this change and failed the build. It was in the deferred tier, so the local
+fast gate did not run it.
+
+Capped runs now say plainly that they start a new session from iteration 0, and
+the "picks up from iteration N" line is printed only for a genuinely
+`interrupted` run, which is the one status that really does resume its count.
+The guard that let the wrong version through now asserts this too, with a
+positive control so it cannot pass vacuously (19 assertions, up from 16).
 
 ### Honest limits
 
