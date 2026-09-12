@@ -126,6 +126,14 @@ fi
 # Matching is substring-against-LABEL, consulted ONLY when TIER=fast. The full
 # tier never consults this array and is byte-for-byte its pre-tiering self.
 declare -a _FAST_KEEP=(
+  # Proves every web-app client path resolves to a real FastAPI route. Ten
+  # client calls had drifted onto URLs no route served (/github/runs against a
+  # server serving /github/actions/runs), so the CI/CD and deploy panels were
+  # dead with complete backends behind them. Dead GETs fell through the SPA
+  # catch-all as 200 + text/html, so the user was told to restart the server
+  # for what was a client typo. No GitHub CI job inspects this contract.
+  # Measured ~4s (one TypeScript AST walk plus one in-process route-table read).
+  "tests/test-verify-client-routes.sh"
   # 1. syntax + structure (cheap, already background lanes)
   "bash -n "
   "JSON validation"
@@ -250,6 +258,19 @@ declare -a _FAST_KEEP=(
   #    about being slow-only. Times measured by name on this Mac (2026-07-30);
   #    a suite whose cost was NOT measured is deliberately left deferred rather
   #    than guessed into the fast tier.
+  # Guards the CI security scanners (pip-audit / gitleaks / CodeQL) in
+  # security-audit.yml, which release.yml's required-ci job waits on by name.
+  # Same class as the packaged-artifact checks above: it asserts a SHIPPED
+  # release gate is still wired and still fail-closed, and no GitHub CI job
+  # inspects that wiring. Deferring it would mean a scanner could be deleted or
+  # quietly turned into a no-op and nothing would say so before the push.
+  # Measured 1098ms (static YAML parse only; no network, no scanner run).
+  "tests/test-security-scan-coverage.sh"
+  # The reachability guard for the line above. A registration gate that is
+  # itself unregistered (or deferred) is self-refuting: it would stop enforcing
+  # the moment it stopped running, and nothing would say so. Measured 1.2-1.5s
+  # (it executes the coverage suite once to prove that suite is not vacuous).
+  "tests/test-security-scan-registered.sh"
   "tests/test-bench-honest-degrade.sh"        # 100ms
   "tests/test-build-home-isolation.sh"        # 107ms
   "tests/test-codex-model-trusted.sh"         # 134ms
@@ -870,6 +891,19 @@ run_check "tests/test-sentrux-gate.sh (unit, fake binary)" "bash tests/test-sent
 # run_secure_scan wiring (advisory default / LOKI_SECURE_GATE=block / waiver), and
 # the `loki secure` waiver CLI shape. Fast, no network, throwaway temp fixtures.
 run_check "tests/test-secure-scan.sh (secure-by-default gate)" "bash tests/test-secure-scan.sh 2>&1 | tail -3"
+
+# CI security scanners (issue #189): pip-audit over every Python dependency
+# manifest, gitleaks over all reachable history, CodeQL over the supported
+# source surfaces. This suite existed and passed but was wired into NO runner,
+# so it never executed -- the same orphan class that let a hardcoded Codex
+# model ship. security-audit.yml is a required-ci gate, so an unguarded edit
+# there can silently weaken a release gate.
+run_check "tests/test-security-scan-coverage.sh (CI security scanners wired, fail-closed)" "bash tests/test-security-scan-coverage.sh 2>&1 | tail -3"
+
+# The reachability half: the guard above must actually RUN (registered, not
+# deferred by the fast-tier allowlist) and must not report success from its
+# pyyaml-missing skip path, which exits 0 having asserted nothing.
+run_check "tests/test-security-scan-registered.sh (that guard runs and is not vacuous)" "bash tests/test-security-scan-registered.sh 2>&1 | tail -3"
 run_check "tests/test-build-home-isolation.sh (in-build app exec sandbox)" "bash tests/test-build-home-isolation.sh 2>&1 | tail -3"
 run_check "tests/test-proven-pr-receipt.sh (PR-body honesty + no false green)" "bash tests/test-proven-pr-receipt.sh 2>&1 | tail -3"
 run_check "tests/test-proven-pr-check.sh (advisory check-run, cannot block merge)" "bash tests/test-proven-pr-check.sh 2>&1 | tail -3"
@@ -1280,7 +1314,19 @@ run_check "tests/test-bundled-sdk-provider.sh (bundled SDK provider, fail-closed
 # Enter x4 flow writes ./prd.md and invokes cmd_start --yes --no-plan, the
 # deterministic template scorer (run1==run2, design top-3, empty default), and
 # the existing-prd.md fallback to prd-quickstart.md.
+# The client/server route contract. A drifted path is invisible to every other
+# gate: the server still starts, the bundle still builds, and the panel simply
+# returns nothing.
+run_check "tests/test-verify-client-routes.sh (web-app client paths resolve to real routes)" "bash tests/test-verify-client-routes.sh 2>&1 | tail -4"
+
 run_check "tests/cli/test-quickstart.sh (guided interview composition)" "bash tests/cli/test-quickstart.sh 2>&1 | tail -3"
+
+# Guards the inverse-of-intent defects: a rejection ("none") must not become a
+# template selection, a change request inside an existing project must not build
+# a new app, and the generated spec's framing must MATCH the situation -- a new
+# build must never be told "Do NOT scaffold a new project". Same stub harness as
+# the suite above: ZERO spend, ZERO real build.
+run_check "tests/cli/test-quickstart-brownfield.sh (rejection + brownfield framing)" "bash tests/cli/test-quickstart-brownfield.sh 2>&1 | tail -3"
 
 # v7.28.0: held-out spec evals. Deterministic ~25% checklist reservation,
 # exclusion from the build prompt feed, and the completion council held-out gate.

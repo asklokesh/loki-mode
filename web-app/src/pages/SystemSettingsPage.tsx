@@ -15,7 +15,6 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
-import { APIKeyManager } from '../components/APIKeyManager';
 import { useAuth } from '../hooks/useAuth';
 
 // ---------------------------------------------------------------------------
@@ -621,13 +620,12 @@ function DataRetentionSection() {
 // Section config
 // ---------------------------------------------------------------------------
 
-type SettingsSection = 'providers' | 'builds' | 'security' | 'api-keys' | 'notifications' | 'retention';
+type SettingsSection = 'providers' | 'builds' | 'security' | 'notifications' | 'retention';
 
 const SECTIONS: { id: SettingsSection; label: string; icon: React.ComponentType<{ size?: number; className?: string }> }[] = [
   { id: 'providers', label: 'Providers', icon: Server },
   { id: 'builds', label: 'Build Defaults', icon: Hammer },
   { id: 'security', label: 'Security', icon: Shield },
-  { id: 'api-keys', label: 'API Keys', icon: Shield },
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'retention', label: 'Data Retention', icon: Database },
 ];
@@ -708,7 +706,6 @@ export default function SystemSettingsPage() {
             {activeSection === 'providers' && <ProviderSection />}
             {activeSection === 'builds' && <BuildDefaultsSection />}
             {activeSection === 'security' && <SecuritySection />}
-            {activeSection === 'api-keys' && <APIKeyManager />}
             {activeSection === 'notifications' && <NotificationSection />}
             {activeSection === 'retention' && <DataRetentionSection />}
           </div>

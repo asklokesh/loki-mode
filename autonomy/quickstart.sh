@@ -703,6 +703,175 @@ PY
     return 0
 }
 
+# _qs_is_rejection <answer>: true when the user explicitly declined the offered
+# templates. Before this existed the picker's `*)` arm mapped ANY unrecognized
+# answer -- "none", "no", "skip", "q" -- onto top3[0], so an explicit rejection
+# was silently converted into a selection and quickstart built a todo app for a
+# user who had just said none of them fit. An explicit no must never become a
+# yes; these answers route to the brief-as-spec path instead.
+_qs_is_rejection() {
+    local a
+    a=$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')
+    case "$a" in
+        none|no|n|skip|q|quit|neither|nope|"none of these"|"none of them") return 0;;
+    esac
+    return 1
+}
+
+# _qs_detect_brownfield: print a short human reason when the CWD is an existing
+# project, and return 0. Return 1 (printing nothing) for a greenfield directory.
+#
+# Signals are EXPLICIT MANIFESTS plus a git repo with at least one commit. A
+# loose "any source file present" check was deliberately rejected: the test
+# harnesses write helper scripts and stray .md files into their working
+# directories, so a broad check would classify an empty scratch dir as an
+# existing project and silently reroute the greenfield flow. A manifest or a
+# commit is a deliberate artifact of a real project, which is the claim being
+# made on screen.
+#
+# bash 3.2 safe: no associative arrays, no mapfile.
+_qs_detect_brownfield() {
+    local reasons="" m
+    for m in package.json pyproject.toml go.mod Cargo.toml pom.xml Gemfile composer.json build.gradle setup.py; do
+        if [ -f "./$m" ]; then
+            if [ -z "$reasons" ]; then reasons="$m"; else reasons="$reasons, $m"; fi
+        fi
+    done
+    # A git repo counts only WITH a commit: `git init` alone in an empty folder
+    # is where a brand-new greenfield build legitimately starts, and treating
+    # that as "existing code" would break the first-run flow.
+    if git rev-parse --git-dir >/dev/null 2>&1 && git rev-parse HEAD >/dev/null 2>&1; then
+        if [ -z "$reasons" ]; then reasons="git repo"; else reasons="$reasons, git repo"; fi
+    fi
+    [ -n "$reasons" ] || return 1
+    printf '%s' "$reasons"
+    return 0
+}
+
+# _qs_classify_invoke <prompt>: the single model-call primitive for intent
+# classification. Its own function so tests can override it, mirroring
+# _loki_prd_enrich_invoke (autonomy/lib/prd-enrich.sh:43).
+#
+# Calls `claude -p` directly rather than the provider_invoke shell function
+# because `timeout` execs a real command, not a function -- the same documented
+# reason prd-enrich gives. No HTTP: this repo is provider-agnostic over CLIs and
+# has zero chat/completions calls in source.
+#
+# The timeout is deliberately short. Quickstart is the first thing a new user
+# runs, so a stalled provider must degrade to the offline scorer in seconds
+# rather than inherit prd-enrich's 120s budget.
+: "${LOKI_QUICKSTART_CLASSIFY_TIMEOUT:=15}"
+_qs_classify_invoke() {
+    local prompt="$1"
+    command -v claude >/dev/null 2>&1 || return 1
+    local rc=0 out=""
+    local to=""
+    if command -v timeout >/dev/null 2>&1; then to="timeout"
+    elif command -v gtimeout >/dev/null 2>&1; then to="gtimeout"; fi
+    if [ -n "$to" ]; then
+        out=$(CAVEMAN_DEFAULT_MODE=off "$to" "${LOKI_QUICKSTART_CLASSIFY_TIMEOUT}" \
+                  claude --dangerously-skip-permissions -p "$prompt" 2>/dev/null) || rc=$?
+    else
+        out=$(CAVEMAN_DEFAULT_MODE=off \
+                  claude --dangerously-skip-permissions -p "$prompt" 2>/dev/null) || rc=$?
+    fi
+    [ "$rc" -ne 0 ] && return 1
+    [ -z "$out" ] && return 1
+    printf '%s' "$out"
+    return 0
+}
+
+# _qs_classify_intent <brief>: print new_project | change_to_existing_code when
+# the model answers cleanly, and return 0. Return 1 on ANY miss.
+#
+# FAIL-CLOSED IS LOAD-BEARING. No provider, no network, a slow call, a non-zero
+# exit, an empty body, or an unrecognized word all return 1, and every caller
+# falls back to the offline keyword ranking that shipped before this existed.
+# Quickstart must never hang or hard-fail on the model path.
+_qs_classify_intent() {
+    local brief="$1"
+    [ -n "$brief" ] || return 1
+    local out=""
+    out=$(_qs_classify_invoke "Classify this software request as exactly one word.
+
+Answer new_project if the user wants a brand-new application built from scratch.
+Answer change_to_existing_code if the user wants to modify, update, fix, restyle,
+refactor, or add to code that already exists.
+Answer unclear if you genuinely cannot tell.
+
+Reply with ONE word and nothing else: new_project, change_to_existing_code, or unclear.
+
+Request: $brief") || return 1
+    # Take the first bare word; a chatty model must not defeat the match.
+    out=$(printf '%s' "$out" | tr -d '\r' | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z_' ' ')
+    case " $out " in
+        *" change_to_existing_code "*) printf 'change_to_existing_code'; return 0;;
+        *" new_project "*)             printf 'new_project'; return 0;;
+    esac
+    return 1
+}
+
+# _qs_write_change_prd <path> <brief> <mode>: render a spec from the user's own
+# brief. <mode> is "change" (a change against an existing codebase) or "new" (a
+# brand-new project).
+#
+# The mode argument is load-bearing and must never be inferred from
+# $brownfield_reason. That variable stays populated after the classifier flips a
+# brownfield verdict back to a new build, so a user in an existing repo who asks
+# for "a brand new X" and then rejects the template would be handed
+# existing-codebase framing for a project that does not exist yet. Both callers
+# set the mode explicitly at the point they decide what the spec IS.
+#
+# Why not reuse cmd_start's existing seams: `--brief` runs synthesize_brief_prd
+# (loki:15759), which says "Build the smallest working version of the above" and
+# stamps "Mode: Brief (zero-config first run)" -- greenfield framing that would
+# reproduce the original bug one layer down. `loki start <dir>` runs
+# synthesize_repo_prd (loki:15802), a quoted heredoc carrying NO caller text: it
+# tells the agent to pick its own improvement and would discard what the user
+# actually asked for. Neither carries a user-specified change against existing
+# code, so this writes that spec and hands it to the normal PRD path.
+#
+# The brief is written via printf argument, never expanded into the heredoc, so
+# no shell metacharacter in user input is interpreted.
+_qs_write_change_prd() {
+    local out_file="$1" brief="$2" mode="${3:-change}"
+    {
+        if [ "$mode" = "new" ]; then
+            printf '# Build Request\n\n'
+            printf '## Goal\n'
+            printf '%s\n\n' "$brief"
+            printf '## Context\n'
+            printf 'This is a NEW project. Build it from scratch in the working directory.\n'
+            printf 'No starting template was chosen, so the Goal above is the whole spec.\n\n'
+            printf '## Requirements\n'
+            printf -- '- Scaffold the new application described in the Goal above.\n'
+            printf -- '- Build the smallest version that genuinely works end to end.\n'
+            printf -- '- Choose a conventional, well-supported stack for this kind of app.\n\n'
+            printf '## Success Criteria\n'
+            printf -- '- The application described in the Goal runs and is usable.\n'
+            printf -- '- Everything the Goal explicitly asks for is present.\n\n'
+        else
+            printf '# Change Request\n\n'
+            printf '## Goal\n'
+            printf '%s\n\n' "$brief"
+            printf '## Context\n'
+            printf 'This is an EXISTING codebase, not a new project. The working directory\n'
+            printf 'already contains the application this change applies to.\n\n'
+            printf '## Requirements\n'
+            printf -- '- Read the existing code first and follow its established conventions.\n'
+            printf -- '- Make the change described in the Goal above, and only that change.\n'
+            printf -- '- Do NOT scaffold a new project, and do NOT replace the existing app.\n'
+            printf -- '- Preserve all unrelated existing behavior and files.\n\n'
+            printf '## Success Criteria\n'
+            printf -- '- The change described in the Goal is visible when the app runs.\n'
+            printf -- '- Existing functionality still works; nothing unrelated regressed.\n\n'
+        fi
+        printf '## Constraints\n'
+        printf -- '- Keep the diff bounded and easy to review.\n'
+        printf -- '- No emojis, no em dashes in code, comments, or docs.\n'
+    } > "$out_file"
+}
+
 # _qs_help: concise usage for `loki quickstart --help`.
 _qs_help() {
     printf '%sloki quickstart%s - guided first build (setup, idea, template, plan, go)\n' "$_QS_BOLD" "$_QS_NC"
@@ -749,8 +918,18 @@ _qs_help() {
     printf '  3. Template   Pick the closest starting template (offline keyword match)\n'
     printf '  4. Plan       Review the honest cost/time estimate, then confirm\n'
     printf '\n'
+    printf 'Existing projects:\n'
+    printf '  If the current directory is already a project (package.json,\n'
+    printf '  pyproject.toml, go.mod, Cargo.toml, a git repo with commits, and\n'
+    printf '  similar), quickstart treats your description as a CHANGE to that\n'
+    printf '  code instead of a new build. No template is offered and no file is\n'
+    printf '  written into your project directory.\n'
+    printf '  At the template prompt you can always answer "none" (or skip/no/q)\n'
+    printf '  to use your description directly as the spec.\n'
+    printf '\n'
     printf 'The PRD is written to ./prd.md in the current directory (or the next\n'
     printf 'free prd-quickstart*.md name if that exists), then the build starts.\n'
+    printf 'The change-request path above writes no PRD into your project.\n'
     return 0
 }
 
@@ -1122,7 +1301,50 @@ cmd_quickstart() {
     fi
 
     # ----- Step 3 of 4: Pick a template (skipped if a PRD path was given) ----
-    if [ -z "$prd_source" ]; then
+    #
+    # BROWNFIELD FIRST. Offering greenfield templates inside an existing project
+    # is how "update the color theme of this app" became a brand-new todo app.
+    # When the CWD is already a project, a brief is a CHANGE REQUEST against the
+    # code that is here, so the template picker is skipped entirely.
+    #
+    # Gating:
+    #   - dry_run is excluded: preview must stay the deterministic template/plan
+    #     preview its JSON schema promises, and must run no provider code.
+    #   - an explicit --template is excluded: the user was specific, and an
+    #     explicit choice outranks detection.
+    # spec_mode records WHY the brief became the spec, decided at each site that
+    # decides it. It is not derived from $brownfield_reason: that stays set
+    # after the classifier flip below, and reusing it would frame a brand-new
+    # build as a change to code that does not exist.
+    local brownfield_reason="" use_brief_as_spec=false spec_mode="change"
+    if [ -z "$prd_source" ] && [ -z "$template_override" ] && [ "$dry_run" != true ] && [ -n "$brief" ]; then
+        brownfield_reason="$(_qs_detect_brownfield)" || brownfield_reason=""
+        if [ -n "$brownfield_reason" ]; then
+            use_brief_as_spec=true
+            spec_mode="change"
+            # The model gets the final say when a provider CLI is available, so
+            # "build me a brand new dashboard" typed inside an existing repo is
+            # still treated as a new build. Fail-closed: any miss keeps the
+            # filesystem verdict, which is deterministic and offline.
+            local _qs_intent=""
+            _qs_intent="$(_qs_classify_intent "$brief")" || _qs_intent=""
+            if [ "$_qs_intent" = "new_project" ]; then
+                use_brief_as_spec=false
+                # This path falls through to the template picker and can reach
+                # the rejection arm below, so the mode must not stay "change".
+                spec_mode="new"
+            fi
+        fi
+    fi
+
+    if [ "$use_brief_as_spec" = true ]; then
+        printf '%sStep 3 of 4: Existing project detected%s\n' "$_QS_BOLD" "$_QS_NC"
+        printf '  Detected an existing project (%s). Treating this as a change\n' "$brownfield_reason"
+        printf '  to your code, not a new build.\n'
+        printf '  No starting template is being used.\n\n'
+        input_kind="change"
+        template_name="change-request"
+    elif [ -z "$prd_source" ]; then
         if [ -n "$template_override" ]; then
             template_name="$template_override"
             printf '%sStep 3 of 4: Template%s\n' "$_QS_BOLD" "$_QS_NC"
@@ -1174,23 +1396,83 @@ cmd_quickstart() {
             printf '  Selected %s (top match) for "%s".\n\n' "${top3[0]}" "$brief"
         fi
 
+        # An explicit rejection is honored, never converted into a selection.
+        # This arm used to be absent, so "none" fell through to `*)` and became
+        # top3[0] -- the founder-reported bug where typing "none" still built a
+        # todo app. With no template, the user's own brief becomes the spec.
+        if _qs_is_rejection "$pick"; then
+            if [ -z "$brief" ]; then
+                # Nothing to build from: no template AND no description. Refuse
+                # rather than invent a spec or silently fall back to a template.
+                printf '%sNo template selected and no description given; nothing to build.%s\n' "$_QS_RED" "$_QS_NC" >&2
+                printf 'Re-run: loki quickstart "<what you want>"\n' >&2
+                exit 2
+            fi
+            use_brief_as_spec=true
+            # Reaching the picker at all means this is NOT an existing codebase
+            # being changed: the brownfield arm skips the picker entirely, and
+            # the classifier-override arm above already set "new". Rejecting a
+            # template asks for a new project with no starting template.
+            spec_mode="new"
+            input_kind="change"
+            template_name="no-template"
+            printf '  No template. Using your description as the spec.\n\n'
+        else
         case "$pick" in
             ""|1) template_name="${top3[0]}";;
             2) template_name="${top3[1]:-${top3[0]}}";;
             3) template_name="${top3[2]:-${top3[0]}}";;
-            *) template_name="${top3[0]}";;  # any unexpected input -> the default
+            *) template_name="${top3[0]}";;  # any unrecognized NON-rejection input
         esac
+        fi
 
         fi
 
-        local tdir; tdir="$(_qs_templates_dir)"
-        prd_source="$tdir/$template_name.md"
-        if [ ! -f "$prd_source" ]; then
-            printf '%sTemplate file not found: %s%s\n' "$_QS_RED" "$prd_source" "$_QS_NC" >&2
-            exit 1
+        if [ "$use_brief_as_spec" != true ]; then
+            local tdir; tdir="$(_qs_templates_dir)"
+            prd_source="$tdir/$template_name.md"
+            if [ ! -f "$prd_source" ]; then
+                printf '%sTemplate file not found: %s%s\n' "$_QS_RED" "$prd_source" "$_QS_NC" >&2
+                exit 1
+            fi
         fi
     else
         template_name="$(basename "$prd_source")"
+    fi
+
+    # The change-request spec is staged OUTSIDE the working tree. It is derived
+    # from what the user typed, not authored by them, so landing it in the CWD
+    # would drop an unrequested file into an existing project -- and the ./prd.md
+    # overwrite prompt below exists precisely to keep quickstart from writing
+    # over a file the user already has. Staging in a temp file keeps the
+    # brownfield path write-free in the user's directory.
+    if [ "$use_brief_as_spec" = true ]; then
+        # The .md suffix is load-bearing, not cosmetic. cmd_start classifies a
+        # positional via detect_arg_type (loki:1675): an extensionless path is
+        # only reached by the late `[ -e "$arg" ]` branch, and BOTH PRD
+        # existence guards (loki:2962, loki:2985) are `case` arms matching
+        # *.md|*.json|*.txt|*.yaml|*.yml, so an extensionless spec silently
+        # skips the fail-fast checks. Naming it .md puts classification on the
+        # explicit extension branch and under those guards.
+        # BSD mktemp (stock macOS) does NOT substitute the X-run when a suffix
+        # follows it: `mktemp foo.XXXXXX.md` creates the LITERAL file
+        # "foo.XXXXXX.md". That is a fixed name, so a second concurrent
+        # quickstart would fail to create it and the build would never start.
+        # Create with a bare X-run (portable, unique), then rename to add .md.
+        local _qs_stage=""
+        _qs_stage="$(mktemp "${TMPDIR:-/tmp}/loki-quickstart-change.XXXXXX")" || {
+            printf '%sCould not stage the change request.%s\n' "$_QS_RED" "$_QS_NC" >&2
+            exit 1
+        }
+        if mv "$_qs_stage" "$_qs_stage.md" 2>/dev/null; then
+            prd_source="$_qs_stage.md"
+        else
+            prd_source="$_qs_stage"
+        fi
+        # Not trap-cleaned on purpose: cmd_start EXECS the runner and never
+        # returns here, and the runner must still be able to read this spec.
+        # It lives in TMPDIR under a mktemp name, so the OS reaps it.
+        _qs_write_change_prd "$prd_source" "$brief" "$spec_mode"
     fi
 
     # ----- Step 4 of 4: Review the plan (reuse the slice-A estimator) --------
@@ -1280,8 +1562,14 @@ cmd_quickstart() {
     fi
 
     # ----- Land the PRD at ./prd.md (design 3.6) ----------------------------
+    # The change-request path deliberately lands NOTHING in the working tree.
+    # The user asked for a change to code that already exists; dropping a
+    # generated prd.md into their project is the unrequested write that made the
+    # original bug worse. The staged spec is handed to cmd_start directly.
     local target="./prd.md"
-    if [ -e "$target" ]; then
+    if [ "$use_brief_as_spec" = true ]; then
+        target="$prd_source"
+    elif [ -e "$target" ]; then
         local overwrite=""
         # Non-interactive never asks and never overwrites. Leaving $overwrite
         # empty falls into the existing suffix walk below, which is already the
@@ -1338,6 +1626,10 @@ cmd_quickstart() {
             return 2
         fi
         rm -f "$preview_stage"
+    elif [ "$use_brief_as_spec" = true ]; then
+        # $target IS $prd_source here (the staged change request); copying a
+        # file onto itself would truncate it.
+        :
     elif ! cp "$prd_source" "$target" 2>/dev/null; then
         printf '%sCould not write the PRD to the current directory. Try a writable directory.%s\n' "$_QS_RED" "$_QS_NC" >&2
         exit 1
@@ -1345,7 +1637,12 @@ cmd_quickstart() {
 
     printf '\n'
     printf 'Starting your build. Progress streams here in the terminal.\n'
-    printf '  PRD saved to: %s\n' "$target"
+    if [ "$use_brief_as_spec" = true ]; then
+        printf '  Change request: %s\n' "$brief"
+        printf '  No file was written to your project directory.\n'
+    else
+        printf '  PRD saved to: %s\n' "$target"
+    fi
     # `loki dashboard` with no subcommand prints help and exits -- it does not
     # start. Naming the bare command here sent every first-run user to a help
     # screen at the exact moment they wanted to watch their build.

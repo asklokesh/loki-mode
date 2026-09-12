@@ -13538,10 +13538,34 @@ except Exception:
         "$HOME/.cline/skills/loki-mode:Cline CLI"
         "$HOME/.aider/skills/loki-mode:Aider CLI"
     )
+    # SEVERITY DEPENDS ON WHOSE SKILL IT IS (v9.48.x). A dangling skill symlink
+    # used to block unconditionally, so a stale link left by an old checkout
+    # path exited 1 on a HEALTHY machine -- while the Provider Availability
+    # section three lines above said that same provider was "not installed".
+    # Doctor contradicted itself on one screen and told the user to fix a tool
+    # they do not have.
+    #
+    # The link only blocks when it belongs to the provider a build would
+    # actually launch. Anything else is inert state: still reported, with the
+    # dangling target and the fix, but not a reason to refuse to start.
+    #
+    # `|| true` is mandatory under `set -euo pipefail`: the accessor returns
+    # non-zero when no provider resolves (a bare call would abort doctor), and
+    # an empty id then makes every entry non-blocking -- the same direction the
+    # No-AI-provider blocker above already covers.
+    local _selected_provider=""
+    if declare -f effective_provider_id >/dev/null 2>&1; then
+        _selected_provider="$(effective_provider_id 2>/dev/null || true)"
+    fi
     for entry in "${skill_dirs[@]}"; do
         local sdir="${entry%%:*}"
         local sname="${entry#*:}"
         local short_path="${sdir/$HOME/~}"
+        # Provider id from the directory, never a parallel list: `.claude` ->
+        # `claude`. A fifth hand-maintained list is how the lists in this repo
+        # have drifted from auto_detect_provider before (v8.76.0, v8.82.0).
+        local _sid="${sdir#"$HOME"/.}"
+        _sid="${_sid%%/*}"
         if [ -f "$sdir/SKILL.md" ]; then
             echo -e "  ${GREEN}PASS${NC}  $sname  ${DIM}$short_path${NC}"
             pass_count=$((pass_count + 1))
@@ -13560,10 +13584,22 @@ except Exception:
                 _target=$(ls -ld "$sdir" 2>/dev/null | sed -e 's/^[^>]*-> //')
                 [ -n "$_target" ] || _target="unknown"
             fi
-            echo -e "  ${RED}FAIL${NC}  $sname  ${DIM}(broken symlink -> $_target)${NC}"
-            echo -e "         ${YELLOW}Fix: loki setup-skill${NC}"
-            _doctor_block "$sname is a broken symlink. Fix: loki setup-skill"
-            fail_count=$((fail_count + 1))
+            # Blocking ONLY for the provider a build would actually use. The
+            # non-blocking arm is a WARN rather than a non-counted FAIL on
+            # purpose: a red FAIL badge that never reaches `N failed` or the
+            # `Blocking (N)` list makes the summary disagree with the screen.
+            # Either way the dangling target and the fix are still printed --
+            # the stale link is reported, never silently swallowed.
+            if [ -n "$_selected_provider" ] && [ "$_sid" = "$_selected_provider" ]; then
+                echo -e "  ${RED}FAIL${NC}  $sname  ${DIM}(broken symlink -> $_target)${NC}"
+                echo -e "         ${YELLOW}Fix: loki setup-skill${NC}"
+                _doctor_block "$sname is a broken symlink. Fix: loki setup-skill"
+                fail_count=$((fail_count + 1))
+            else
+                echo -e "  ${YELLOW}WARN${NC}  $sname  ${DIM}(broken symlink -> $_target)${NC}"
+                echo -e "         ${YELLOW}Fix: loki setup-skill${NC}"
+                warn_count=$((warn_count + 1))
+            fi
         else
             echo -e "  ${YELLOW}WARN${NC}  $sname  ${DIM}(not found - run 'loki setup-skill')${NC}"
             warn_count=$((warn_count + 1))
@@ -14183,14 +14219,26 @@ memory = {
 #
 # CAUTION: this block lives inside a DOUBLE-QUOTED python3 -c program, so no
 # apostrophes and no double quotes anywhere here, comments included.
+#
+# SEVERITY MIRRORS THE TEXT PATH: a dangling link is a failure only for the
+# provider a build would actually use. Read from the SAME payload the text
+# route uses (LOKI_PROVIDER_AVAILABILITY, set by cmd_doctor_json), parsed here
+# rather than via a second env var so the two cannot disagree. LOKI_PROVIDER
+# wins for the same reason effective_provider_id honors it.
 _SKILL_ENTRIES = (
-    ('Claude Code', '.claude/skills/loki-mode'),
-    ('Codex CLI', '.codex/skills/loki-mode'),
-    ('Cline CLI', '.cline/skills/loki-mode'),
-    ('Aider CLI', '.aider/skills/loki-mode'),
+    ('Claude Code', '.claude/skills/loki-mode', 'claude'),
+    ('Codex CLI', '.codex/skills/loki-mode', 'codex'),
+    ('Cline CLI', '.cline/skills/loki-mode', 'cline'),
+    ('Aider CLI', '.aider/skills/loki-mode', 'aider'),
 )
+try:
+    _sk_pa = os.environ.get('LOKI_PROVIDER_AVAILABILITY', '').strip()
+    _sk_selected = (json.loads(_sk_pa).get('selected') or '') if _sk_pa else ''
+except Exception:
+    _sk_selected = ''
+_sk_selected = os.environ.get('LOKI_PROVIDER', '') or _sk_selected
 skills = []
-for _sk_name, _sk_rel in _SKILL_ENTRIES:
+for _sk_name, _sk_rel, _sk_id in _SKILL_ENTRIES:
     _sk_dir = os.path.join(os.path.expanduser('~'), _sk_rel)
     # JSON is commonly archived or forwarded to automation. Keep the useful
     # user-relative location without exposing the machine-specific home path.
@@ -14200,8 +14248,14 @@ for _sk_name, _sk_rel in _SKILL_ENTRIES:
                        'detail': None, 'required': 'required'})
     elif os.path.islink(_sk_dir):
         # islink is true for a DANGLING link (lstat-based), which is exactly
-        # the broken case the text path reports as FAIL.
-        skills.append({'name': _sk_name, 'path': _sk_json_path, 'status': 'fail',
+        # the broken case the text path reports. fail only for the effective
+        # provider; otherwise warn, matching the text path badge for badge.
+        # `required` stays 'required' in both arms: an absent link has always
+        # been warn+required, so the warn arm introduces no new shape, and a
+        # consumer keys on `status`.
+        _sk_blocking = bool(_sk_selected) and _sk_id == _sk_selected
+        skills.append({'name': _sk_name, 'path': _sk_json_path,
+                       'status': 'fail' if _sk_blocking else 'warn',
                        'detail': 'broken symlink. Fix: loki setup-skill',
                        'required': 'required'})
     else:
@@ -17358,7 +17412,78 @@ if manifests:
             echo -e "${RED}Error: No repositories found matching: ${multi_repo}${NC}"
             return 1
         fi
-        # HONESTY: this flag DISCOVERS repositories; it does not migrate them.
+        # ORCHESTRATION (v9.49.0): --multi-repo now MIGRATES each discovered
+        # repository, one at a time, instead of only listing them.
+        #
+        # WHY A WRAPPER AND NOT SURGERY INSIDE THIS FUNCTION: cmd_migrate_start
+        # is self-contained per codebase_path (manifest, secret scan, phases)
+        # and was measured to have 20 `return`s and ZERO `exit`s, so it is
+        # safe to call in a loop -- a failing repo returns a code instead of
+        # killing the run. Recursing once per repo reuses every existing gate
+        # rather than reimplementing the pipeline.
+        #
+        # PARTIAL-FAILURE SEMANTICS: continue-and-report, decided on the
+        # codebase's own precedent, not preference:
+        #   - the task schema already has `blocked` as a first-class state
+        #     alongside `completed` (mcp/server.py:888), so "some units did not
+        #     finish" is already expressible
+        #   - run.sh carries 562 best-effort sites: the house style is degrade
+        #     honestly, do not abort
+        #   - fail-closed is reserved for DEPENDENCY violations (a migrate phase
+        #     refusing to run without its predecessor's artifacts, :17575), and
+        #     independent repositories have no such dependency on each other
+        # One repo failing therefore must not deny the other four their result.
+        # The per-repo status table plus a non-zero aggregate exit code is what
+        # makes that honest rather than silent.
+        #
+        # LOKI_MULTI_REPO_SEQUENTIAL=0 is NOT offered: these share a migrations
+        # dir and a dashboard port, and parallel runs would interleave output
+        # into an unreadable report.
+        if [ "$repo_count" -gt 1 ] && [ "${_LOKI_MR_CHILD:-0}" != "1" ]; then
+            echo -e "${BOLD}Multi-repo migration${NC} ($repo_count repositories, sequential)"
+            echo "---"
+            for repo in "${repos[@]}"; do echo "  - $repo"; done
+            echo ""
+
+            local _mr_ok=0 _mr_bad=0
+            local _mr_rows=""
+            local _mr_repo _mr_rc
+            for _mr_repo in "${repos[@]}"; do
+                echo ""
+                echo -e "${CYAN}=== [$((_mr_ok + _mr_bad + 1))/$repo_count] $_mr_repo ===${NC}"
+                _mr_rc=0
+                # _LOKI_MR_CHILD guards the recursion: the child sees the same
+                # --multi-repo argument and must NOT re-enter this block.
+                _LOKI_MR_CHILD=1 cmd_migrate_start \
+                    "$_mr_repo" "$target" "$plan_only" "$phase" "$parallel" \
+                    "$compliance" "$dry_run" "$resume" "" "$export_report" \
+                    "$no_dashboard" "$no_docs" || _mr_rc=$?
+                if [ "$_mr_rc" -eq 0 ]; then
+                    _mr_ok=$((_mr_ok + 1))
+                    _mr_rows="${_mr_rows}  OK       ${_mr_repo}"$'\n'
+                else
+                    _mr_bad=$((_mr_bad + 1))
+                    _mr_rows="${_mr_rows}  BLOCKED  ${_mr_repo} (exit ${_mr_rc})"$'\n'
+                fi
+            done
+
+            echo ""
+            echo -e "${BOLD}Multi-repo result${NC}"
+            echo "---"
+            printf '%s' "$_mr_rows"
+            echo ""
+            echo "  ${_mr_ok} of ${repo_count} migrated, ${_mr_bad} blocked."
+            if [ "$_mr_bad" -gt 0 ]; then
+                # A non-zero exit is what keeps "continue" from becoming
+                # "silently tolerate": CI and `loki next` both branch on it.
+                echo -e "${YELLOW}Some repositories did not complete. Re-run just those, or inspect them with 'loki why'.${NC}"
+                return 1
+            fi
+            return 0
+        fi
+
+        # HONESTY (single-repo, or a --multi-repo glob that matched exactly one):
+        # this flag DISCOVERS repositories; it does not migrate them.
         # `repos[]` is populated here and never referenced again -- everything
         # below operates on the single "$codebase_path". The old message said
         # "Multi-repo migration (3 repositories)" and listed all three, then

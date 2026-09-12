@@ -447,13 +447,59 @@ export const api = {
     }),
 
   // Audit log
+  // --- Cost -----------------------------------------------------------
+  // Shapes mirror the dashboard readers these delegate to. Every total is
+  // NULLABLE on purpose: when nothing was recorded the API returns null with
+  // cost_recorded=false rather than a misleading 0. The UI must render
+  // "not recorded" for null, never "$0.00".
+  getCost: () =>
+    fetchJSON<{
+      total_input_tokens: number | null;
+      total_output_tokens: number | null;
+      total_cache_read_tokens: number | null;
+      total_cache_creation_tokens: number | null;
+      total_tokens: number | null;
+      cache_hit_ratio: number | null;
+      estimated_cost_usd: number | null;
+      cost_recorded: boolean;
+      by_phase: Record<string, number>;
+      by_model: Record<string, number>;
+      budget_limit: number | null;
+      budget_used: number | null;
+      budget_remaining: number | null;
+    }>('/cost'),
+
+  getCostTimeline: () =>
+    fetchJSON<{
+      current_run: {
+        iterations: Array<{ iteration?: number; cost_usd?: number | null; cumulative_usd?: number | null }>;
+        total_usd: number | null;
+        cost_recorded: boolean;
+      };
+      runs: Array<{ run_id?: string; cost_usd?: number | null; timestamp?: string | null }>;
+      runs_count: number;
+      project_total_usd: number;
+      budget: {
+        limit: number | null;
+        used: number;
+        remaining: number | null;
+        percent_used: number | null;
+        status: string;
+        warn_threshold_percent: number;
+        exceeded: boolean;
+      };
+    }>('/cost/timeline'),
+
   getAuditLog: () =>
     fetchJSON<import('../components/RBACPanel').AuditEntry[]>('/audit-log'),
 
   // Docker service logs
   getServiceLogs: (sessionId: string, service?: string, tail: number = 50) =>
     fetchJSON<{ logs: string[]; service?: string }>(
-      `/sessions/${encodeURIComponent(sessionId)}/devserver/logs${service ? `?service=${encodeURIComponent(service)}&tail=${tail}` : `?tail=${tail}`}`
+      `/sessions/${encodeURIComponent(sessionId)}/devserver/logs?${new URLSearchParams({
+        ...(service ? { service } : {}),
+        tail: String(tail),
+      }).toString()}`
     ),
 
   // Checkpoints
@@ -556,41 +602,41 @@ export const api = {
   // GitHub Actions
   getWorkflowRuns: (sessionId: string, limit?: number) =>
     fetchJSON<import('../types/api').WorkflowRun[]>(
-      `/sessions/${encodeURIComponent(sessionId)}/github/runs?${new URLSearchParams({
+      `/sessions/${encodeURIComponent(sessionId)}/github/actions/runs?${new URLSearchParams({
         ...(limit ? { limit: String(limit) } : {}),
       }).toString()}`
     ),
 
   getWorkflowRunDetail: (sessionId: string, runId: number) =>
     fetchJSON<import('../types/api').WorkflowRun>(
-      `/sessions/${encodeURIComponent(sessionId)}/github/runs/${runId}`
+      `/sessions/${encodeURIComponent(sessionId)}/github/actions/runs/${runId}`
     ),
 
   getWorkflowRunLogs: (sessionId: string, runId: number) =>
     fetchJSON<string>(
-      `/sessions/${encodeURIComponent(sessionId)}/github/runs/${runId}/logs`
+      `/sessions/${encodeURIComponent(sessionId)}/github/actions/runs/${runId}/logs`
     ),
 
   getWorkflows: (sessionId: string) =>
     fetchJSON<import('../types/api').Workflow[]>(
-      `/sessions/${encodeURIComponent(sessionId)}/github/workflows`
+      `/sessions/${encodeURIComponent(sessionId)}/github/actions/workflows`
     ),
 
   dispatchWorkflow: (sessionId: string, workflow: string, ref: string) =>
     fetchJSON<void>(
-      `/sessions/${encodeURIComponent(sessionId)}/github/workflows/dispatch`,
+      `/sessions/${encodeURIComponent(sessionId)}/github/actions/dispatch`,
       { method: 'POST', body: JSON.stringify({ workflow, ref }) }
     ),
 
   rerunWorkflow: (sessionId: string, runId: number) =>
     fetchJSON<void>(
-      `/sessions/${encodeURIComponent(sessionId)}/github/runs/${runId}/rerun`,
+      `/sessions/${encodeURIComponent(sessionId)}/github/actions/runs/${runId}/rerun`,
       { method: 'POST' }
     ),
 
   cancelWorkflow: (sessionId: string, runId: number) =>
     fetchJSON<void>(
-      `/sessions/${encodeURIComponent(sessionId)}/github/runs/${runId}/cancel`,
+      `/sessions/${encodeURIComponent(sessionId)}/github/actions/runs/${runId}/cancel`,
       { method: 'POST' }
     ),
 
@@ -606,13 +652,13 @@ export const api = {
     fetchJSON<import('../types/api').DeployStatus>('/deploy/status'),
 
   connectVercel: (token: string) =>
-    fetchJSON<{ success: boolean; user: string }>('/deploy/vercel/connect', {
+    fetchJSON<{ success: boolean; user: string }>('/deploy/vercel/token', {
       method: 'POST',
       body: JSON.stringify({ token }),
     }),
 
   connectNetlify: (token: string) =>
-    fetchJSON<{ success: boolean; user: string }>('/deploy/netlify/connect', {
+    fetchJSON<{ success: boolean; user: string }>('/deploy/netlify/token', {
       method: 'POST',
       body: JSON.stringify({ token }),
     }),

@@ -8304,6 +8304,68 @@ async def get_all_deploy_status() -> JSONResponse:
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
             return {"connected": True, "user": data.get("user", "unknown"), "warning": "Could not re-verify"}
 
+    # THE DEFECT this closes: the two coroutines above were defined and then
+    # never awaited. The function body ended here with no gather and no return,
+    # so FastAPI serialized None. A null body is the worst failure shape
+    # available: res.ok is true and the content-type is JSON, so the client
+    # raises nothing, renders every platform as disconnected, and re-polls
+    # every 30s forever with no error to diagnose.
+    #
+    # THREE keys, not two: types/api.ts:232 declares github alongside vercel
+    # and netlify. Returning only the two that had local coroutines would leave
+    # statuses.github undefined in a UI that reads it. get_github_status
+    # (defined below) is the ready-made third.
+    vercel, netlify = await asyncio.gather(_check_vercel(), _check_netlify())
+    try:
+        github_resp = await get_github_status()
+        github = json.loads(bytes(github_resp.body).decode("utf-8"))
+    except Exception:
+        # Never let the third checker take down the two that succeeded. An
+        # honest "unknown" beats a 500 that hides working platforms.
+        github = {"connected": False, "error": "Could not determine GitHub status"}
+
+    return JSONResponse(content={
+        "vercel": vercel,
+        "netlify": netlify,
+        "github": github,
+    })
+
+
+@app.post("/api/deploy/{platform}/disconnect")
+async def disconnect_platform(platform: str) -> JSONResponse:
+    """Remove a stored platform token.
+
+    SECURITY: _token_path interpolates `platform` directly into a filename
+    (f"{platform}.json"), so an unvalidated value here is a file-delete
+    primitive -- "../../something" would escape _TOKENS_DIR. The whitelist is
+    the control, applied BEFORE the path is ever constructed.
+
+    `github` is deliberately refused rather than silently accepted: it holds no
+    token file, so reporting success would tell the user we disconnected
+    something we never touched.
+    """
+    if platform not in ("vercel", "netlify"):
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Unknown platform '{platform}'. Expected vercel or netlify."},
+        )
+
+    path = _token_path(platform)
+    existed = path.exists()
+    if existed:
+        try:
+            path.unlink()
+        except OSError as exc:
+            return JSONResponse(
+                status_code=500,
+                content={"error": f"Could not remove the stored {platform} token: {exc}"},
+            )
+
+    # `existed` is reported rather than swallowed so a no-op disconnect is
+    # distinguishable from a real one.
+    return JSONResponse(content={"disconnected": True, "platform": platform, "had_token": existed})
+
+
 # ---------------------------------------------------------------------------
 # GitHub Actions endpoints (CI/CD panel)
 # ---------------------------------------------------------------------------
@@ -8853,6 +8915,47 @@ def _dashboard_proofs_module():
         return None
 
 
+# ---------------------------------------------------------------------------
+# Cost readers, delegated for the same reason as the proof readers above.
+#
+# MetricsPage rendered SEVEN hardcoded arrays (cost trend, token split, builds
+# per day, radar axes/datasets, timeline phases, KPIs) with zero fetch calls --
+# invented numbers presented as measurement. The dashboard already computes the
+# real series at /api/cost and /api/cost/timeline, and its implementation is
+# explicit that "Cost is never fabricated: when nothing was recorded,
+# cost_recorded is False and totals are honestly null rather than a misleading
+# $0.00." Delegating keeps that honesty rather than forking it.
+# ---------------------------------------------------------------------------
+@app.get("/api/cost")
+async def webapp_cost() -> Response:
+    """Current cost totals. Mirrors the dashboard's /api/cost exactly."""
+    dash = _dashboard_proofs_module()
+    if dash is None:
+        # Honest "unmeasured", never a fabricated zero. A partial install
+        # cannot read cost; saying $0.00 would be a lie the UI would render.
+        return JSONResponse(content={"cost_recorded": False, "total_usd": None})
+    try:
+        return JSONResponse(content=await dash.get_cost())
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/cost/timeline")
+async def webapp_cost_timeline() -> Response:
+    """Cost over time. Mirrors the dashboard's /api/cost/timeline exactly."""
+    dash = _dashboard_proofs_module()
+    if dash is None:
+        return JSONResponse(content={
+            "current_run": {"iterations": [], "total_usd": None,
+                            "cost_recorded": False},
+            "runs": [],
+        })
+    try:
+        return JSONResponse(content=await dash.get_cost_timeline())
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 @app.get("/api/proofs")
 async def webapp_list_proofs() -> Response:
     """List Evidence Receipts. Mirrors the dashboard's /api/proofs exactly."""
@@ -8911,8 +9014,19 @@ async def webapp_get_proof(run_id: str) -> Response:
 # ---------------------------------------------------------------------------
 
 @app.get("/{full_path:path}")
-async def serve_spa(full_path: str) -> FileResponse:
+async def serve_spa(full_path: str):
     """Serve the React SPA and static assets from dist/.
+
+    AN /api/ PATH NEVER REACHES THE SPA. Before this guard, a dead API GET fell
+    through here and returned 200 + text/html. The client (client.ts:45-47)
+    saw a non-JSON content-type and told the user "API endpoint not available.
+    Please restart the server with the latest version." Restarting can never
+    fix a client-side path typo, so the one actionable-looking message the user
+    got was a lie, and it pointed away from the real cause.
+
+    The comment below records that this same catch-all once swallowed 22 API
+    routes in v7.6.0. That fix moved the route; it did not remove the hazard.
+    This returns the hazard to a loud, honest 404.
 
     The Vite build is configured with base: '/lab/' (Phase Merge-3), so the
     bundled HTML references assets at '/lab/assets/...'. Under the canonical
@@ -8922,6 +9036,12 @@ async def serve_spa(full_path: str) -> FileResponse:
     retained as defense-in-depth for direct-`app` invocations (e.g. tests or
     operators running `uvicorn server:app` instead of `server:standalone_app`).
     """
+    if full_path.startswith("api/") or full_path == "api":
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"No such API endpoint: /{full_path}"},
+        )
+
     index = DIST_DIR / "index.html"
     if not index.exists():
         return JSONResponse(

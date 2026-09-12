@@ -257,13 +257,13 @@ export function _setPythonImportOkForTest(fn: PythonImportOk | null): void {
 
 // ---------- Skills check ------------------------------------------------------
 
-type SkillEntry = { name: string; dir: string };
+type SkillEntry = { name: string; dir: string; id: string };
 
 const SKILL_ENTRIES: readonly SkillEntry[] = [
-  { name: "Claude Code", dir: ".claude/skills/loki-mode" },
-  { name: "Codex CLI", dir: ".codex/skills/loki-mode" },
-  { name: "Cline CLI", dir: ".cline/skills/loki-mode" },
-  { name: "Aider CLI", dir: ".aider/skills/loki-mode" },
+  { name: "Claude Code", dir: ".claude/skills/loki-mode", id: "claude" },
+  { name: "Codex CLI", dir: ".codex/skills/loki-mode", id: "codex" },
+  { name: "Cline CLI", dir: ".cline/skills/loki-mode", id: "cline" },
+  { name: "Aider CLI", dir: ".aider/skills/loki-mode", id: "aider" },
 ];
 
 type SkillStatus = {
@@ -271,11 +271,33 @@ type SkillStatus = {
   path: string;
   status: Status;
   detail: string;
+  // True only for a dangling link, on either severity arm. The text renderer
+  // uses it to print the Fix line for a broken link but not for an absent one.
+  dangling: boolean;
 };
 
-export function checkSkills(): SkillStatus[] {
+// The provider id a build would actually use. Read from provider-offer.sh --
+// the SAME helper the bash route calls -- rather than re-deriving the priority
+// list here, which is how the provider lists in this repo have drifted before.
+// Null when nothing resolves, which makes every dangling link non-blocking.
+export function readEffectiveProvider(): string | null {
+  const script = providerOfferScript();
+  if (!script) return null;
+  try {
+    const r = spawnSync("bash", [script, "effective-provider"], { encoding: "utf8" });
+    if (r.status !== 0 || !r.stdout) return null;
+    const id = r.stdout.trim();
+    return id === "" ? null : id;
+  } catch {
+    return null;
+  }
+}
+
+export function checkSkills(selected?: string | null): SkillStatus[] {
+  // Resolved once per call, not per entry: the accessor spawns bash.
+  const effective = selected === undefined ? readEffectiveProvider() : selected;
   const home = homedir();
-  return SKILL_ENTRIES.map(({ name, dir }) => {
+  return SKILL_ENTRIES.map(({ name, dir, id }) => {
     const sdir = resolve(home, dir);
     // Match bash autonomy/loki:6410 behavior under `set -euo pipefail`:
     // ${sdir/$HOME/~} does NOT substitute when set -e is active (bash quirk),

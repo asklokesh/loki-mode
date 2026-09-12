@@ -464,6 +464,49 @@ render_provider_availability() {
     ) || return 1
 }
 
+# effective_provider_id: print the provider id a build would ACTUALLY use, or
+# nothing when none is resolvable. Exit status is 0 only when an id was printed.
+#
+# WHY IT EXISTS. Doctor grades a dangling skill symlink, and the severity of
+# that depends on WHOSE skill it is. A stale link for a provider the user does
+# not use is inert state; the same link for the provider a build will launch is
+# a real blocker. Both the text route and the Bun route need that one id, and
+# both previously re-derived it inside their own subshells (the two callers
+# below). Deriving it a third and fourth time is exactly the drift this file's
+# header exists to prevent, so it is extracted here once.
+#
+# LOKI_PROVIDER WINS. render_provider_availability prints "override with
+# LOKI_PROVIDER" two lines above, so honoring auto-detection alone would grade
+# a skill link against a provider the very same screen says is not in use.
+# The override is NOT validated against installed state on purpose: an explicit
+# LOKI_PROVIDER is the user's stated intent, and a build would carry it through.
+#
+# DEGRADES SILENTLY, like its two siblings: a missing or unsourceable loader
+# prints nothing and returns non-zero, and the caller falls back to treating
+# every entry as non-blocking rather than erroring.
+effective_provider_id() {
+    if [ -n "${LOKI_PROVIDER:-}" ]; then
+        printf '%s\n' "$LOKI_PROVIDER"
+        return 0
+    fi
+
+    local _po_here
+    _po_here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" || return 1
+    local _loader="$_po_here/providers/loader.sh"
+    [ -f "$_loader" ] || return 1
+
+    local _sel
+    _sel="$(
+        # shellcheck source=/dev/null
+        source "$_loader" >/dev/null 2>&1 || exit 1
+        declare -f auto_detect_provider >/dev/null 2>&1 || exit 1
+        auto_detect_provider 2>/dev/null
+    )" || return 1
+
+    [ -n "$_sel" ] || return 1
+    printf '%s\n' "$_sel"
+}
+
 # provider_availability_json: the same data as one JSON object, for doctor --json.
 # Separate from the renderer so neither format has to parse the other. Same
 # degrade rule: no loader means no output and a non-zero status.
@@ -517,6 +560,10 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
         # routes call these so the two renderings cannot drift apart.
         providers)      render_provider_availability ;;
         providers-json) provider_availability_json ;;
+        # The provider id a build would actually use, for the Bun doctor's
+        # skill-severity decision. Same one-implementation rule as the two
+        # above: doctor.ts reads this instead of re-deriving the priority list.
+        effective-provider) effective_provider_id ;;
         *)            offer_provider_install report ;;
     esac
 fi

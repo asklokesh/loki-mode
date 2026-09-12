@@ -196,7 +196,12 @@ describe("doctor.checkSkills", () => {
       const skills = checkSkills();
       expect(skills.length).toBe(4);
       for (const s of skills) {
-        expect(s.status).toBe("fail");
+        // Severity now depends on WHICH provider a build would use: the
+        // effective provider's dangling link is a blocking "fail", every other
+        // one is an advisory "warn" (and on a host where no provider resolves,
+        // all four are "warn"). Both arms render the same detail, which is what
+        // this test actually guards -- see the `target` assertions below.
+        expect(["fail", "warn"]).toContain(s.status);
         expect(s.detail).toContain("broken symlink");
         // The crucial assertion: `target` is initialized BEFORE readlinkSync
         // and never undefined.

@@ -1,234 +1,250 @@
-import { useState, useMemo } from 'react';
-import {
-  Layers,
-  CheckCircle2,
-  Clock,
-  DollarSign,
-  TrendingUp,
-  TrendingDown,
-} from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { DollarSign, Coins, Layers, TrendingUp, TrendingDown } from 'lucide-react';
 import { LineChart } from '../components/charts/LineChart';
 import { DonutChart } from '../components/charts/DonutChart';
-import { BarChart } from '../components/charts/BarChart';
-import { GaugeChart } from '../components/charts/GaugeChart';
-import { Sparkline } from '../components/charts/Sparkline';
-import { HeatMap } from '../components/charts/HeatMap';
-import { RadarChart } from '../components/charts/RadarChart';
-import { Timeline } from '../components/charts/Timeline';
-import { CodeTimeline } from '../components/CodeTimeline';
 import { EvidenceReceiptPanel } from '../components/EvidenceReceiptPanel';
-import { ProviderRace } from '../components/ProviderRace';
+import { api } from '../api/client';
 
-// --------------------------------------------------------------------------
-// Sample data -- in production these would come from API
-// --------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// THIS PAGE RENDERS ONLY MEASURED VALUES.
+//
+// It previously shipped seven hardcoded arrays and zero fetch calls: a cost
+// trend, a token split, builds-per-day, a 28-day activity heatmap built from
+// Math.random(), a provider-comparison radar, a pipeline timeline, four KPI
+// cards with invented sparklines, a GaugeChart pinned to 87, and a CodeTimeline
+// listing three fabricated iterations with made-up file paths and line counts.
+// All of it looked like measurement and none of it was.
+//
+// Everything below now comes from /api/cost and /api/cost/timeline. Surfaces
+// with no backing field in either payload were DELETED rather than re-fed from
+// a new source of invented numbers -- there is no builds-per-day series, no
+// per-provider quality score, and no pipeline-phase series in the API, so those
+// charts do not appear.
+//
+// The honesty contract is inherited from the readers these delegate to: when
+// nothing was recorded, the API returns null with cost_recorded=false. Null
+// renders as "Not recorded", NEVER as $0.00 or 0 -- a zero is a measurement,
+// and claiming one we do not have is the defect this page used to be.
+// ---------------------------------------------------------------------------
 
-const costTrendData = [
-  { label: 'Mon', value: 12.5 },
-  { label: 'Tue', value: 18.3 },
-  { label: 'Wed', value: 14.7 },
-  { label: 'Thu', value: 22.1 },
-  { label: 'Fri', value: 19.8 },
-  { label: 'Sat', value: 8.4 },
-  { label: 'Sun', value: 15.6 },
-];
+type CostSummary = Awaited<ReturnType<typeof api.getCost>>;
+type CostTimeline = Awaited<ReturnType<typeof api.getCostTimeline>>;
 
-const tokenSegments = [
-  { label: 'Input', value: 245000, color: '#553DE9' },
-  { label: 'Output', value: 128000, color: '#1FC5A8' },
-  { label: 'Cached', value: 89000, color: '#6B8AFD' },
-  { label: 'System', value: 42000, color: '#D4A843' },
-];
+const ACCENT = '#553DE9';
+const TEAL = '#1FC5A8';
+const BLUE = '#6B8AFD';
+const GOLD = '#D4A843';
 
-const buildsPerDay = [
-  { label: 'Mon', value: 8 },
-  { label: 'Tue', value: 12 },
-  { label: 'Wed', value: 6 },
-  { label: 'Thu', value: 15 },
-  { label: 'Fri', value: 11 },
-  { label: 'Sat', value: 3 },
-  { label: 'Sun', value: 5 },
-];
+function formatUsd(v: number | null | undefined): string {
+  if (v === null || v === undefined) return 'Not recorded';
+  return `$${v.toFixed(2)}`;
+}
 
-const heatmapData = Array.from({ length: 28 }, (_, i) => ({
-  date: `Mar ${i + 1}`,
-  count: Math.floor(Math.random() * 12),
-}));
+function formatCount(v: number | null | undefined): string {
+  if (v === null || v === undefined) return 'Not recorded';
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
+  return String(v);
+}
 
-const radarAxes = [
-  { label: 'Speed' },
-  { label: 'Quality' },
-  { label: 'Cost' },
-  { label: 'Reliability' },
-  { label: 'Coverage' },
-];
-
-const radarDatasets = [
-  { label: 'Claude', values: [85, 92, 65, 88, 78], color: '#553DE9' },
-  { label: 'Codex', values: [78, 70, 80, 72, 60], color: '#1FC5A8' },
-];
-
-const timelinePhases = [
-  { name: 'Plan', duration: 12, color: '#6B8AFD', status: 'completed' as const },
-  { name: 'Build', duration: 45, color: '#553DE9', status: 'completed' as const },
-  { name: 'Test', duration: 18, color: '#1FC5A8', status: 'active' as const },
-  { name: 'Deploy', duration: 8, color: '#D4A843', status: 'pending' as const },
-];
-
-// KPI definitions
-const kpiData = [
-  {
-    label: 'Total Builds',
-    value: 142,
-    trend: 12.4,
-    sparkline: [8, 12, 6, 15, 11, 3, 5, 9, 14, 7],
-    icon: Layers,
-    color: '#553DE9',
-  },
-  {
-    label: 'Success Rate',
-    value: 94.2,
-    suffix: '%',
-    trend: 2.1,
-    sparkline: [88, 91, 90, 93, 92, 95, 94, 96, 93, 94],
-    icon: CheckCircle2,
-    color: '#1FC5A8',
-  },
-  {
-    label: 'Avg Build Time',
-    value: 3.2,
-    suffix: 'min',
-    trend: -8.5,
-    sparkline: [4.1, 3.8, 3.5, 3.9, 3.4, 3.2, 3.6, 3.1, 3.3, 3.2],
-    icon: Clock,
-    color: '#6B8AFD',
-  },
-  {
-    label: 'Total Cost',
-    value: 84.30,
-    prefix: '$',
-    trend: 15.2,
-    sparkline: [12, 18, 14, 22, 19, 8, 15, 10, 16, 13],
-    icon: DollarSign,
-    color: '#D4A843',
-  },
-];
-
-// --------------------------------------------------------------------------
-// KPI Card sub-component
-// --------------------------------------------------------------------------
-
-// Map color hex to tailwind-compatible class for lucide icons
+// ---------------------------------------------------------------------------
+// KPI card. `value` is a pre-formatted string so an unmeasured metric can say
+// "Not recorded" instead of being coerced through a number formatter.
+// ---------------------------------------------------------------------------
 const colorClassMap: Record<string, string> = {
-  '#553DE9': 'text-[#553DE9]',
-  '#1FC5A8': 'text-[#1FC5A8]',
-  '#6B8AFD': 'text-[#6B8AFD]',
-  '#D4A843': 'text-[#D4A843]',
+  [ACCENT]: 'text-[#553DE9]',
+  [TEAL]: 'text-[#1FC5A8]',
+  [BLUE]: 'text-[#6B8AFD]',
+  [GOLD]: 'text-[#D4A843]',
 };
 
 interface KPICardProps {
   label: string;
-  value: number;
-  prefix?: string;
-  suffix?: string;
-  trend: number;
-  sparkline: number[];
-  icon: React.ComponentType<{ size?: number; className?: string }>;
+  value: string;
+  detail?: string;
+  trend?: number | null;
+  icon: React.ComponentType<{ className?: string; size?: number }>;
   color: string;
 }
 
-function KPICard({ label, value, prefix, suffix, trend, sparkline, icon: Icon, color }: KPICardProps) {
-  const trendUp = trend >= 0;
-  // For build time, negative trend is good
-  const isGoodTrend = label === 'Avg Build Time' ? trend < 0 : trend > 0;
-  const TrendIcon = trendUp ? TrendingUp : TrendingDown;
-  const iconClass = colorClassMap[color] || 'text-[#553DE9]';
-
+function KPICard({ label, value, detail, trend, icon: Icon, color }: KPICardProps) {
+  const TrendIcon = trend != null && trend < 0 ? TrendingDown : TrendingUp;
   return (
-    <div className="card p-4 flex flex-col gap-2">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center"
-            style={{ backgroundColor: `${color}14` }}
-          >
-            <Icon size={16} className={iconClass} />
-          </div>
-          <span className="text-xs text-[#6B6960] dark:text-[#8A8880] font-medium">{label}</span>
-        </div>
-        <Sparkline data={sparkline} color={color} />
+    <div className="rounded-card border border-[#ECEAE3] dark:border-[#2A2A2E] bg-white dark:bg-[#18181B] p-4">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-medium text-[#6B6960] dark:text-[#A8A69E]">{label}</span>
+        <Icon className={colorClassMap[color] ?? ''} size={16} />
       </div>
-
-      <div className="flex items-end justify-between">
-        <span className="text-2xl font-bold text-[#36342E] dark:text-[#E8E6E3]">
-          {prefix}{typeof value === 'number' && value % 1 !== 0 ? value.toFixed(1) : value}
-          {suffix && <span className="text-sm font-normal text-[#939084] ml-1">{suffix}</span>}
-        </span>
-        <div className={`flex items-center gap-1 text-xs font-medium ${
-          isGoodTrend ? 'text-[#1FC5A8]' : 'text-[#C07A5E]'
-        }`}>
+      <div className="text-xl font-semibold text-[#36342E] dark:text-[#E8E6E3] tabular-nums">
+        {value}
+      </div>
+      {detail && (
+        <div className="mt-1 text-xs text-[#6B6960] dark:text-[#A8A69E]">{detail}</div>
+      )}
+      {trend != null && (
+        <div className="mt-1 flex items-center gap-1 text-xs text-[#6B6960] dark:text-[#A8A69E]">
           <TrendIcon size={12} />
-          <span>{Math.abs(trend).toFixed(1)}%</span>
+          <span className="tabular-nums">{Math.abs(trend).toFixed(1)}%</span>
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
-// --------------------------------------------------------------------------
-// Chart wrapper with title
-// --------------------------------------------------------------------------
-
-function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+function ChartCard({ title, subtitle, children }: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="card p-5">
-      <h3 className="text-sm font-semibold text-[#36342E] dark:text-[#E8E6E3] mb-4">{title}</h3>
-      <div className="flex items-center justify-center">
-        {children}
-      </div>
+    <div className="rounded-card border border-[#ECEAE3] dark:border-[#2A2A2E] bg-white dark:bg-[#18181B] p-4">
+      <h3 className="text-sm font-semibold text-[#36342E] dark:text-[#E8E6E3] mb-1">{title}</h3>
+      {subtitle && (
+        <p className="text-xs text-[#6B6960] dark:text-[#A8A69E] mb-3">{subtitle}</p>
+      )}
+      {children}
     </div>
   );
 }
 
-// --------------------------------------------------------------------------
-// MetricsPage
-// --------------------------------------------------------------------------
+// An explicit empty state. A chart with no series must say so rather than draw
+// empty axes that read as "zero spend".
+function NoData({ what }: { what: string }) {
+  return (
+    <div className="flex h-[200px] items-center justify-center text-center">
+      <p className="max-w-[26ch] text-xs text-[#6B6960] dark:text-[#A8A69E]">
+        No {what} recorded yet. This fills in once a build writes cost data.
+      </p>
+    </div>
+  );
+}
 
 export function MetricsPage() {
-  // Track chart container widths for responsive sizing
-  const [containerWidth, setContainerWidth] = useState(380);
+  const [cost, setCost] = useState<CostSummary | null>(null);
+  const [timeline, setTimeline] = useState<CostTimeline | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [containerWidth, setContainerWidth] = useState(560);
 
-  const chartWidth = useMemo(() => Math.min(containerWidth - 40, 420), [containerWidth]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [c, t] = await Promise.all([api.getCost(), api.getCostTimeline()]);
+        if (cancelled) return;
+        setCost(c);
+        setTimeline(t);
+        setError(null);
+      } catch (e) {
+        if (cancelled) return;
+        // Surface the real message. The previous page could not fail at all,
+        // because it never called anything.
+        setError(e instanceof Error ? e.message : 'Could not load cost data');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const chartWidth = Math.max(280, containerWidth - 48);
+
+  // Per-run cost history. `runs` is the persistent per-run series; an entry
+  // with a null cost is dropped rather than plotted as 0.
+  const costTrend = useMemo(() => {
+    const runs = timeline?.runs ?? [];
+    return runs
+      .filter((r) => typeof r.cost_usd === 'number')
+      .map((r, i) => ({
+        label: r.run_id ? r.run_id.slice(-6) : `run ${i + 1}`,
+        value: r.cost_usd as number,
+      }));
+  }, [timeline]);
+
+  // Token split. Only non-null counts become segments, so a partially recorded
+  // run shows the parts it has rather than implying zeros for the rest.
+  const tokenSegments = useMemo(() => {
+    if (!cost) return [];
+    const parts: Array<[string, number | null, string]> = [
+      ['Input', cost.total_input_tokens, ACCENT],
+      ['Output', cost.total_output_tokens, TEAL],
+      ['Cache read', cost.total_cache_read_tokens, BLUE],
+      ['Cache write', cost.total_cache_creation_tokens, GOLD],
+    ];
+    return parts
+      .filter(([, v]) => typeof v === 'number' && v > 0)
+      .map(([label, v, color]) => ({ label, value: v as number, color }));
+  }, [cost]);
+
+  const budget = timeline?.budget;
+
+  if (loading) {
+    return (
+      <div className="p-6">
+        <p className="text-sm text-[#6B6960] dark:text-[#A8A69E]">Loading cost data...</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-[#FAF9F6] dark:bg-[#0F0F11] p-6">
-      {/* Page header */}
-      <div className="mb-6">
-        <h1 className="text-xl font-bold text-[#36342E] dark:text-[#E8E6E3]">Metrics</h1>
-        <p className="text-sm text-[#6B6960] dark:text-[#8A8880] mt-1">
-          Build performance, cost tracking, and system health
-        </p>
-      </div>
+    <div className="p-6">
+      <h1 className="text-lg font-semibold text-[#36342E] dark:text-[#E8E6E3] mb-1">Metrics</h1>
+      <p className="text-xs text-[#6B6960] dark:text-[#A8A69E] mb-6">
+        Measured cost and token usage. Values read &quot;Not recorded&quot; when no build has
+        written them.
+      </p>
 
-      {/* Evidence Receipts.
-          Mounted HERE as well as on HomePage because HomePage renders its
-          dashboard column only while a build isRunning (HomePage:260) -- so a
-          receipt, which is a DURABLE record of a build that already finished,
-          was visible only during a run and never afterwards. This route needs
-          no running session, which is the state a user is in when they come
-          looking for what a past build actually proved. */}
+      {error && (
+        <div className="mb-6 rounded-card border border-[#C45B5B]/30 bg-[#C45B5B]/5 p-4">
+          <p className="text-xs text-[#C45B5B]">{error}</p>
+        </div>
+      )}
+
+      {/* The Evidence Receipt is the durable record of what a past build proved,
+          and this route needs no running session -- which is the state a user is
+          in when they come looking for it. */}
       <div className="mb-6 rounded-card border border-[#ECEAE3] dark:border-[#2A2A2E] bg-white dark:bg-[#18181B] p-4">
         <EvidenceReceiptPanel />
       </div>
 
-      {/* KPI cards - 4 column grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        {kpiData.map((kpi) => (
-          <KPICard key={kpi.label} {...kpi} />
-        ))}
+        <KPICard
+          label="Total cost"
+          value={formatUsd(cost?.estimated_cost_usd)}
+          detail={cost?.cost_recorded === false ? 'No cost recorded yet' : undefined}
+          icon={DollarSign}
+          color={GOLD}
+        />
+        <KPICard
+          label="Total tokens"
+          value={formatCount(cost?.total_tokens)}
+          icon={Coins}
+          color={ACCENT}
+        />
+        <KPICard
+          label="Runs with cost"
+          value={String(timeline?.runs_count ?? 0)}
+          detail="Runs that wrote a receipt"
+          icon={Layers}
+          color={BLUE}
+        />
+        <KPICard
+          label="Budget used"
+          value={
+            budget?.percent_used == null
+              ? 'No budget set'
+              : `${budget.percent_used.toFixed(0)}%`
+          }
+          detail={
+            budget?.limit == null
+              ? undefined
+              : `${formatUsd(budget.used)} of ${formatUsd(budget.limit)}`
+          }
+          icon={TrendingUp}
+          color={budget?.exceeded ? '#C45B5B' : TEAL}
+        />
       </div>
 
-      {/* Main charts - 2x2 grid */}
       <div
         className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6"
         ref={(el) => {
@@ -244,75 +260,21 @@ export function MetricsPage() {
           }
         }}
       >
-        <ChartCard title="Cost Trend (7 days)">
-          <LineChart data={costTrendData} width={chartWidth} height={220} color="#553DE9" />
+        <ChartCard title="Cost per run" subtitle="From each run's Evidence Receipt">
+          {costTrend.length > 0 ? (
+            <LineChart data={costTrend} width={chartWidth} height={220} color={ACCENT} />
+          ) : (
+            <NoData what="per-run cost" />
+          )}
         </ChartCard>
 
-        <ChartCard title="Token Usage">
-          <DonutChart segments={tokenSegments} size={190} thickness={28} />
+        <ChartCard title="Token usage" subtitle="Input, output and cache totals">
+          {tokenSegments.length > 0 ? (
+            <DonutChart segments={tokenSegments} size={190} thickness={28} />
+          ) : (
+            <NoData what="token usage" />
+          )}
         </ChartCard>
-
-        <ChartCard title="Builds Per Day">
-          <BarChart data={buildsPerDay} width={chartWidth} height={220} color="#6B8AFD" />
-        </ChartCard>
-
-        <ChartCard title="Quality Score">
-          <GaugeChart value={87} label="Overall Quality" size={200} />
-        </ChartCard>
-      </div>
-
-      {/* Secondary charts row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-        <ChartCard title="Agent Activity (28 days)">
-          <HeatMap data={heatmapData} columns={7} rows={4} color="#553DE9" />
-        </ChartCard>
-
-        <ChartCard title="Provider Comparison">
-          <RadarChart axes={radarAxes} datasets={radarDatasets} size={240} />
-        </ChartCard>
-
-        <ChartCard title="Current Pipeline">
-          <Timeline phases={timelinePhases} width={Math.min(chartWidth, 360)} height={72} />
-        </ChartCard>
-      </div>
-      {/* Code Evolution section */}
-      <div className="mb-6">
-        <h2 className="text-base font-semibold text-[#36342E] dark:text-[#E8E6E3] mb-3">Code Evolution</h2>
-        <CodeTimeline
-          filePath=""
-          iterations={[
-            {
-              iteration: 1,
-              description: 'Initial scaffolding',
-              files: [
-                { path: 'src/index.ts', additions: 120, deletions: 0, action: 'add' },
-                { path: 'package.json', additions: 35, deletions: 0, action: 'add' },
-              ],
-            },
-            {
-              iteration: 2,
-              description: 'Add API routes',
-              files: [
-                { path: 'src/routes.ts', additions: 85, deletions: 0, action: 'add' },
-                { path: 'src/index.ts', additions: 12, deletions: 3, action: 'modify' },
-              ],
-            },
-            {
-              iteration: 3,
-              description: 'Fix validation and add tests',
-              files: [
-                { path: 'src/routes.ts', additions: 15, deletions: 8, action: 'modify' },
-                { path: 'tests/routes.test.ts', additions: 64, deletions: 0, action: 'add' },
-              ],
-            },
-          ]}
-        />
-      </div>
-
-      {/* Provider Comparison section */}
-      <div className="mb-6">
-        <h2 className="text-base font-semibold text-[#36342E] dark:text-[#E8E6E3] mb-3">Provider Comparison</h2>
-        <ProviderRace active={false} />
       </div>
     </div>
   );

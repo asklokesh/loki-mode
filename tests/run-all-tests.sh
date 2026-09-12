@@ -870,6 +870,7 @@ run_test "install integrity is checked on both doctor routes" "$SCRIPT_DIR/test-
 run_test "model catalog: no tier points at a superseded flagship" "$SCRIPT_DIR/test-model-catalog-current-flagship.sh"
 run_test "model catalog staleness is advisory in doctor" "$SCRIPT_DIR/test-model-catalog-staleness.sh"
 run_test "doctor blocker parity (both routes name blockers + offer loki tour)" "$SCRIPT_DIR/test-doctor-blocker-parity.sh"
+run_test "stale skill link for an optional provider does not block doctor" "$SCRIPT_DIR/test-doctor-optional-skill-not-blocking.sh"
 run_test "first_run_blocked signal (opt-out silent, enum-clamped)" "$SCRIPT_DIR/test-first-run-blocked-signal.sh"
 run_test "a green doctor never recommends a command that exits 2" "$SCRIPT_DIR/test-doctor-next-recommendation.sh"
 run_test "analytics opt-in has a writer (the funnel can fire)" "$SCRIPT_DIR/test-telemetry-analytics-toggle.sh"
