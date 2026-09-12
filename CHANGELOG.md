@@ -5,6 +5,88 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.49.0
+
+Every integration reaches real data, and the client can no longer drift away
+from the server.
+
+### Fixed
+
+- **Ten client paths pointed at working backends by the wrong URL.**
+  `client.ts` called `/sessions/{id}/github/runs` while the server served
+  `/sessions/{id}/github/actions/runs`. The same drift hit run detail, logs,
+  workflows, dispatch, rerun and cancel, plus two deploy calls asking for
+  `/connect` where the server serves `/token`. The entire CI/CD panel and the
+  entire deploy-connections panel were dead, with complete backends behind
+  them. All nine drifted paths corrected; the missing `disconnect` route added.
+
+- **A route that returned `None`.** `get_all_deploy_status` defined its two
+  platform checkers and then the function body simply ended: no `asyncio.gather`,
+  no return. Because `res.ok` was true and the content-type was JSON, no error
+  ever fired. The panel showed every platform as permanently disconnected and
+  re-polled every 30 seconds forever. It now gathers all three checkers.
+
+- **The catch-all told users to restart the server for a client typo.** The SPA
+  route did not exclude `/api/`, so a dead API GET returned 200 with
+  `text/html`, which the client reported as "API endpoint not available. Please
+  restart the server with the latest version." Restarting could never fix it.
+  `/api/*` now returns a JSON 404 while the SPA still serves HTML.
+
+- **A worktree-detection regression.** `run.sh` had replaced
+  `git rev-parse --is-inside-work-tree` with `[ -d .git ]`, which is false for
+  every git worktree (measured: a worktree's `.git` is a 63-byte file). That
+  silently disabled scoped-change detection for the parallel worktree runs this
+  project uses by default.
+
+### Removed
+
+- **A UI that minted fake credentials.** `APIKeyManager` generated
+  `pk_live_${Math.random()...}` client-side with zero backend calls. Deleted; a
+  real audit-logged implementation already ships at `/api/v2/api-keys`.
+
+- **321 lines of invented metrics.** `MetricsPage` rendered a cost trend, token
+  split, builds-per-day, a `Math.random()` activity heatmap, a provider radar, a
+  pipeline timeline, a quality gauge pinned to 87, invented sparklines and a
+  code timeline of three fabricated iterations. None of it was measured. It is
+  now backed by `/api/cost` and `/api/cost/timeline`, and surfaces with no
+  backing field were deleted rather than re-fed from a new source of invented
+  numbers. Unrecorded values render "Not recorded", never `$0.00`.
+
+- **A third, dead frontend.** `dashboard/frontend/` had no `dist/`, had not been
+  touched since 2026-02-13, and had zero live references against a positive
+  control of 23.
+
+### Added
+
+- **`tests/test-verify-client-routes.sh`** proves every web-app client path
+  resolves to a real FastAPI route. It reads the actual route table via
+  `server.app.routes` and walks `client.ts` with the TypeScript AST -- no regex
+  on either side, because a regex differ produced both a false positive
+  (reporting `/sessions` missing while 58 such routes exist) and a false
+  negative (missing the `/github/runs` drift entirely). Four rules exit 2 rather
+  than under-report: zero captures, an unresolvable path, a partially
+  interpolated segment, and a non-literal HTTP method.
+
+- `/api/cost` and `/api/cost/timeline` in web-app, delegating to the dashboard
+  readers using the pattern already established for `/api/proofs`, so the two
+  surfaces cannot drift into disagreeing about what a build cost.
+
+### Verification
+
+The guard went RED first on all ten drift lines, then GREEN. A positive control
+reintroduced one drift and confirmed it went RED again, because a zero that
+cannot go non-zero proves nothing. Two mutations failed on different
+assertions. The deploy status and disconnect routes were driven live, including
+a path-traversal refusal. The catch-all was driven with both an SPA control and
+a real-route control. 157 server tests pass, and `pk_live_` is confirmed absent
+from the rebuilt bundle.
+
+### Honest limit
+
+The quickstart greenfield-rejection path could not be driven end to end:
+`quickstart` refuses non-TTY stdin, so its suite assertion and a mutation are
+the evidence there, not a live drive. That is stated rather than papered over.
+
 ## v9.48.2
 
 A flag that announced work it never did.
