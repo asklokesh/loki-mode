@@ -1,0 +1,84 @@
+# Hand Loki an issue, get a pull request.
+#
+# Label an issue `loki` (or comment `/loki`) and this opens a PR with an
+# evidence receipt. Copy this file into .github/workflows/ of any repository.
+#
+# REQUIRED: set ANTHROPIC_API_KEY in repository secrets. Without it the run
+# cannot call a model and fails fast rather than burning minutes.
+name: Loki - Issue to PR
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: 'Issue number to resolve'
+        required: true
+
+# Serialize per issue. Two agents racing on one issue would open two PRs from
+# two branches and neither would see the other's work.
+concurrency:
+  group: loki-issue-${{ github.event.issue.number || inputs.issue }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write        # push the agent branch
+  pull-requests: write   # open the PR
+  issues: read
+
+jobs:
+  resolve:
+    # Gate on an explicit signal so the agent never fires on unrelated activity.
+    if: >-
+      (github.event_name == 'issues' && github.event.label.name == 'loki') ||
+      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/loki')) ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the agent branches and diffs; a shallow clone breaks both
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Fail fast without a model key
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "::error::ANTHROPIC_API_KEY is not set in repository secrets. Add it under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+      - name: Resolve the issue
+        id: loki
+        uses: asklokesh/loki-mode/.github/actions/issue-to-pr@main
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        with:
+          issue: ${{ github.event.issue.number || inputs.issue }}
+          budget_limit: '10.00'
+
+      - name: Report back on the issue
+        if: always() && steps.loki.outputs.pr_url != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ steps.loki.outputs.pr_url }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+        run: |
+          # Build the body in a file: a blank line inside an inline YAML string
+          # terminates the block scalar and breaks the workflow parse.
+          {
+            echo "Loki opened a pull request: $PR_URL"
+            echo ""
+            echo "The PR body carries an evidence receipt stating what was verified,"
+            echo "what was skipped, and what is degraded. Check it rather than taking"
+            echo "the result on trust."
+          } > /tmp/loki-issue-comment.md
+          gh issue comment "$ISSUE" --body-file /tmp/loki-issue-comment.md || true

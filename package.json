@@ -69,6 +69,8 @@
     "tools/",
     "plugins/",
     ".claude-plugin/marketplace.json",
+    ".github/workflows/loki-issue-to-pr.yml",
+    ".github/actions/issue-to-pr/",
     "claude/hooks/",
     "autonomy/",
     "providers/",

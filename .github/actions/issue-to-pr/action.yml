@@ -1,0 +1,105 @@
+name: 'Loki Issue to PR'
+description: 'Hand Loki Mode a GitHub issue; it opens a pull request with a verifiable evidence receipt.'
+author: 'asklokesh'
+
+branding:
+  icon: 'git-pull-request'
+  color: 'purple'
+
+inputs:
+  issue:
+    description: 'Issue reference. Defaults to the issue that triggered this workflow.'
+    required: false
+    default: ''
+  provider:
+    description: 'AI provider: claude, codex, cline, aider, or opencode'
+    required: false
+    default: 'claude'
+  budget_limit:
+    description: 'Max spend in USD before the run pauses. Breaching PAUSES; it never discards work.'
+    required: false
+    default: '10.00'
+  max_iterations:
+    description: 'Hard ceiling on RARV iterations.'
+    required: false
+    default: '20'
+  version:
+    description: 'loki-mode version to install. Pin this for reproducible runs.'
+    required: false
+    default: 'latest'
+
+outputs:
+  pr_url:
+    description: 'URL of the pull request Loki opened, empty if none was opened.'
+    value: ${{ steps.run.outputs.pr_url }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install Loki Mode
+      shell: bash
+      run: npm install -g loki-mode@${{ inputs.version }}
+
+    - name: Resolve the issue reference
+      id: ref
+      shell: bash
+      run: |
+        # Prefer the explicit input; otherwise use the triggering issue. Failing
+        # CLOSED here is deliberate: a run with no issue would otherwise start
+        # from the repository's own state and produce an unrelated PR.
+        REF="${{ inputs.issue }}"
+        if [ -z "$REF" ]; then
+          NUM="${{ github.event.issue.number }}"
+          if [ -z "$NUM" ]; then
+            echo "::error::No issue to work on. Pass the 'issue' input, or trigger this action from an issue event."
+            exit 1
+          fi
+          REF="${{ github.repository }}#${NUM}"
+        fi
+        echo "ref=$REF" >> "$GITHUB_OUTPUT"
+        echo "Resolved issue reference: $REF"
+
+    - name: Resolve the issue to a pull request
+      id: run
+      shell: bash
+      env:
+        # gh is what opens the PR. Without a token the run still builds and the
+        # PR step no-ops, so this is not fatal, but it IS the common misconfig.
+        GH_TOKEN: ${{ github.token }}
+        LOKI_PROVIDER: ${{ inputs.provider }}
+        LOKI_BUDGET_LIMIT: ${{ inputs.budget_limit }}
+        LOKI_MAX_ITERATIONS: ${{ inputs.max_iterations }}
+        # The PR is the deliverable, so the PR path is on. Default-on since
+        # v9.43.0; set explicitly here so the action does not depend on the
+        # installed version's default.
+        LOKI_DELEGATE_PR: '1'
+      run: |
+        set -uo pipefail
+
+        # git identity: gh pr create needs commits to have an author.
+        git config user.name  "${GITHUB_ACTOR:-loki-mode}"
+        git config user.email "${GITHUB_ACTOR:-loki-mode}@users.noreply.github.com"
+
+        loki start "${{ steps.ref.outputs.ref }}" || RC=$?
+        RC="${RC:-0}"
+
+        # Report the PR if one was opened. Read it from the state Loki writes
+        # rather than re-deriving it, so this reports what ACTUALLY happened.
+        PR_URL=""
+        if [ -f .loki/state/pr-url.txt ]; then
+          PR_URL="$(cat .loki/state/pr-url.txt 2>/dev/null || true)"
+        fi
+        echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+
+        if [ -n "$PR_URL" ]; then
+          echo "Pull request: $PR_URL"
+        else
+          echo "::warning::No pull request was opened. Check that gh is authenticated, the branch is not a default branch, and the run produced changes."
+        fi
+
+        # Surface the receipt path so a reviewer can check the evidence.
+        if [ -d .loki/proofs ]; then
+          echo "Evidence receipts under .loki/proofs/"
+        fi
+
+        exit "$RC"

@@ -5223,6 +5223,24 @@ except Exception:
 # is already true we DEFER to that path and do nothing here, so a user who set
 # both knobs never gets a double PR.
 #===============================================================================
+# Write the PR url where an OUT-OF-PROCESS caller can read it.
+#
+# _LOKI_DELEGATE_PR_URL is exported, which reaches children but NOT a sibling
+# step. A GitHub composite action runs `loki start` in one step and reports the
+# result in the next, so an exported variable is invisible to it and the action
+# would have to re-derive the url and could get it wrong. Persisting it means a
+# caller reports what ACTUALLY happened.
+#
+# Best-effort by construction: a failure here must never affect a run whose PR
+# was already opened successfully.
+_loki_persist_pr_url() {
+    local _u="${1:-}"
+    [ -n "$_u" ] || return 0
+    mkdir -p ".loki/state" 2>/dev/null || return 0
+    printf '%s\n' "$_u" > ".loki/state/pr-url.txt" 2>/dev/null || true
+    return 0
+}
+
 on_run_complete() {
     # DEFAULT ON as of v9.43.0.
     #
@@ -5290,6 +5308,7 @@ on_run_complete() {
     if [ -n "$existing_pr" ]; then
         _LOKI_DELEGATE_PR_URL="$existing_pr"
         export _LOKI_DELEGATE_PR_URL
+        _loki_persist_pr_url "$existing_pr"
         log_info "LOKI_DELEGATE_PR=1: PR already exists for branch '$branch': $existing_pr (skipping create)."
         return 0
     fi
@@ -5321,6 +5340,7 @@ ${_del_receipt}"
         # Export so build_completion_summary folds the url into the summary.
         _LOKI_DELEGATE_PR_URL="$pr_url"
         export _LOKI_DELEGATE_PR_URL
+        _loki_persist_pr_url "$pr_url"
         log_info "Pull request opened: $pr_url"
     else
         log_warn "LOKI_DELEGATE_PR=1: gh pr create did not return a URL (a PR may already exist for this branch)."
