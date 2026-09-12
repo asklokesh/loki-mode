@@ -150,6 +150,12 @@ declare -a _FAST_KEEP=(
   "loki-ts dependencies installed"
   "bun run typecheck"
   "bun test"
+  # Two suites added this session that CI runs and the fast tier did not, which
+  # is exactly how v9.49.0 and v9.49.1 both reached CI carrying a failure I had
+  # never executed locally. Same blind spot as the typecheck promotion above:
+  # the gate cannot catch what it does not run.
+  "tests/test-doctor-optional-skill-not-blocking.sh"
+  "tests/test-multi-repo-orchestrates.sh"
   # Guards the founder-reported quickstart defect: typing a brief in an EMPTY
   # directory and answering "none" produced a spec asserting "This is an
   # EXISTING codebase... Do NOT scaffold a new project" -- telling the build not
@@ -1350,6 +1356,11 @@ run_check "tests/test-bundled-sdk-provider.sh (bundled SDK provider, fail-closed
 # gate: the server still starts, the bundle still builds, and the panel simply
 # returns nothing.
 run_check "tests/test-verify-client-routes.sh (web-app client paths resolve to real routes)" "bash tests/test-verify-client-routes.sh 2>&1 | tail -4"
+
+# Both added this session and run by CI but not by this gate, which is how two
+# releases reached CI carrying a failure never executed locally.
+run_check "tests/test-doctor-optional-skill-not-blocking.sh (optional-provider skill severity)" "bash tests/test-doctor-optional-skill-not-blocking.sh 2>&1 | tail -4"
+run_check "tests/test-multi-repo-orchestrates.sh (--multi-repo visits every repo)" "bash tests/test-multi-repo-orchestrates.sh 2>&1 | tail -4"
 
 run_check "tests/cli/test-quickstart.sh (guided interview composition)" "bash tests/cli/test-quickstart.sh 2>&1 | tail -3"
 
