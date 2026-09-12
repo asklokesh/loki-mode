@@ -5,6 +5,66 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.48.0
+
+Hand Loki a GitHub issue and get a pull request, with nothing installed. And
+two commands that used to contradict each other now agree.
+
+### Added
+
+- **An issue-to-PR GitHub Action.** The headline use case had no entry point:
+  the only Action in the repo was `Loki Mode Code Review`, and NO workflow or
+  action was listed in `package.json` `files[]`, so npm users got no GitHub
+  trigger at all.
+
+  Ships `.github/actions/issue-to-pr/` (a composite action) and
+  `.github/workflows/loki-issue-to-pr.yml` (a gated workflow). Label an issue
+  `loki`, or comment `/loki`, and the run opens a pull request. It fails fast
+  with a clear message when `ANTHROPIC_API_KEY` is absent rather than burning a
+  runner, holds a `concurrency` group per issue so double-labelling cannot race
+  itself, and checks out with `fetch-depth: 0` so the agent can read history.
+
+  Both are in `files[]`. The packaged-artifact blind spot has cost four
+  releases; a shipped entry point that is not actually packaged is the same
+  bug.
+
+  Guarded by `tests/test-issue-to-pr-action.sh` (8 assertions).
+
+### Fixed
+
+- **`loki next` and `loki resume` no longer contradict each other.** Reproduced:
+  `cmd_next` maps `max_iterations_reached` and `budget_exceeded` to
+  "Will run: loki resume", but the resume hint accepted only status
+  `interrupted`. So `loki next` told you to run `loki resume`, and `loki resume`
+  answered "No session to resume. Start a session with: loki start" -- and
+  exited 0, so nothing went red. The two commands whose entire job is "do the
+  right next thing" disagreed on every run that stopped at a limit.
+
+  The hint now covers the three statuses that stop WITHOUT a verdict, and a
+  capped run is told to raise `LOKI_MAX_ITERATIONS` or `LOKI_BUDGET_LIMIT`
+  first, because resuming it unchanged hits the same wall on the next
+  iteration.
+
+  Deliberately unchanged: `council_approved`, `council_force_approved` and
+  `completion_promise_fulfilled` still decline to resume. Those carry a verdict
+  and route to `loki ship`; inviting an approved build back into the iteration
+  loop would be worse than the silence this replaces.
+
+  Guarded by `tests/test-next-resume-agree.sh` (16 assertions). It reads the
+  command `loki next` actually announces and then RUNS it, so the agreement is
+  the property under test rather than either command alone.
+
+### Honest limits
+
+- The issue-to-PR action is a real entry point, not a managed service. It runs
+  in the user's own Actions minutes with the user's own API key, and it is
+  gated on an explicit label or comment so it cannot fire on every issue.
+- The resume fix does NOT address changing one thing about a FINISHED build.
+  A `council_approved` run still has no delta path and still cannot be resumed;
+  that work is open. Resuming a capped run and revising a finished one are
+  different problems, and conflating them is how the first would get called
+  done.
+
 ## v9.47.0
 
 A second repository the agent can actually read, plans that arrive whole, and

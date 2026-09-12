@@ -58,7 +58,10 @@ jobs:
 
       - name: Resolve the issue
         id: loki
-        uses: asklokesh/loki-mode/.github/actions/issue-to-pr@main
+        # Pinned to a TAG, not @main. A moving ref would hand every user
+        # whatever main holds at the moment their issue is labeled, including a
+        # half-landed release. Bump this line deliberately.
+        uses: asklokesh/loki-mode/.github/actions/issue-to-pr@v9.48.0
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
