@@ -4502,10 +4502,27 @@ cmd_steer() {
 # duplicating them here would contradict it.
 #
 # Read-only: reads state, writes nothing, spends nothing.
+# Print the "you can pick this up" hint for a run that STOPPED WITHOUT A VERDICT.
+#
+# THE DEFECT this widening fixes, reproduced: cmd_next maps
+# max_iterations_reached and budget_exceeded to `loki resume`, but this helper
+# accepted ONLY "interrupted", so cmd_resume fell through to "No session to
+# resume. Start a session with: loki start" -- rc=0. The two commands whose
+# whole job is "do the right next thing" contradicted each other on every run
+# that hit a limit.
+#
+# WHAT MUST NOT BE ADDED HERE: council_approved, council_force_approved and
+# completion_promise_fulfilled. Those carry a VERDICT and route to `loki ship`.
+# Accepting them would send an approved build back into the loop.
+# failed / policy_blocked / force_stopped route to `loki why` and stay out too.
+# The set below is exactly "stopped on a limit, no verdict reached".
 _loki_print_interrupted_resume_hint() {
     local status
     status="$(_loki_resolve_run_status 2>/dev/null)" || return 1
-    [ "$status" = "interrupted" ] || return 1
+    case "$status" in
+        interrupted|max_iterations_reached|budget_exceeded) ;;
+        *) return 1 ;;
+    esac
 
     local state_file="$LOKI_DIR/autonomy-state.json"
     if [ -n "${LOKI_SESSION_ID:-}" ] && [ -f "$LOKI_DIR/sessions/${LOKI_SESSION_ID}/autonomy-state.json" ]; then
@@ -4542,10 +4559,32 @@ print('\t'.join([
         resume_cmd="loki start \"$prd_path\""
     fi
 
-    echo -e "${YELLOW}Interrupted run found.${NC} Stopped at iteration ${BOLD}${iteration}${NC} (last activity: ${last_run})."
-    echo "Saved progress is intact. Resume it with:"
-    echo ""
-    echo -e "  ${BOLD}${resume_cmd}${NC}"
+    # A capped run needs DIFFERENT advice than an interrupted one: re-running it
+    # unchanged hits the very same limit on the next iteration. cmd_next's
+    # action_text already says to raise the cap first; saying less here would
+    # move the contradiction rather than close it.
+    case "$status" in
+        max_iterations_reached)
+            echo -e "${YELLOW}Iteration limit reached.${NC} Stopped at iteration ${BOLD}${iteration}${NC} (last activity: ${last_run})."
+            echo "Saved progress is intact, but resuming as-is hits the same limit."
+            echo "Raise the cap (or narrow the spec), then continue:"
+            echo ""
+            echo -e "  ${BOLD}LOKI_MAX_ITERATIONS=<higher> ${resume_cmd}${NC}"
+            ;;
+        budget_exceeded)
+            echo -e "${YELLOW}Budget limit reached.${NC} Stopped at iteration ${BOLD}${iteration}${NC} (last activity: ${last_run})."
+            echo "Saved progress is intact, but resuming as-is hits the same limit."
+            echo "Raise the budget (or narrow the spec), then continue:"
+            echo ""
+            echo -e "  ${BOLD}LOKI_BUDGET_LIMIT=<higher> ${resume_cmd}${NC}"
+            ;;
+        *)
+            echo -e "${YELLOW}Interrupted run found.${NC} Stopped at iteration ${BOLD}${iteration}${NC} (last activity: ${last_run})."
+            echo "Saved progress is intact. Resume it with:"
+            echo ""
+            echo -e "  ${BOLD}${resume_cmd}${NC}"
+            ;;
+    esac
     echo ""
     echo -e "${DIM}It picks up from iteration ${iteration}; verification re-runs, so nothing inherits a stale PASS.${NC}"
     return 0
