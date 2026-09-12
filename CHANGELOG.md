@@ -5,6 +5,35 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.49.1
+
+v9.49.0 never published. Its Release workflow died in the `gate` job on a
+TypeScript error, so `required-ci` and every publish job were skipped: no tag,
+no npm release, nothing shipped. This is that release, corrected.
+
+### Fixed
+
+- **The type error that blocked it.** `SkillStatus` requires `dangling: boolean`
+  and none of the three `checkSkills` return arms set it. Fixed with the value
+  the type's own comment calls for, since the text renderer uses it to print the
+  Fix line for a BROKEN link but not an ABSENT one: pass false, broken-symlink
+  true, not-found false. Defaulting all three to false would have satisfied the
+  compiler while silently changing doctor output.
+
+- **The gate blind spot that let it through.** `bun run typecheck` and `bun test`
+  were deferred in the fast tier, while the release workflow runs that exact
+  typecheck first, ahead of every publish job. The local gate reported green on
+  a tree whose typecheck was broken. All three checks, including their
+  dependency-install prerequisite, now run in the fast tier. The promotion
+  earned itself immediately: the next gate run caught a stale bundle before a
+  push, a class that previously reached CI.
+
+Everything else in this release is v9.49.0's content unchanged: ten corrected
+client paths, a deploy-status route that no longer returns null, an API
+catch-all that returns JSON 404 instead of telling users to restart the server,
+two deleted surfaces that fabricated data, and the client/server route contract
+guard.
+
 ## v9.49.0
 
 Every integration reaches real data, and the client can no longer drift away
