@@ -126,6 +126,14 @@ fi
 # Matching is substring-against-LABEL, consulted ONLY when TIER=fast. The full
 # tier never consults this array and is byte-for-byte its pre-tiering self.
 declare -a _FAST_KEEP=(
+  # Guards the founder-reported quickstart defect: typing a brief in an EMPTY
+  # directory and answering "none" produced a spec asserting "This is an
+  # EXISTING codebase... Do NOT scaffold a new project" -- telling the build not
+  # to create the app the user had just asked for, on a path the help text
+  # advertises. Deferring this would leave the release gate blind to the exact
+  # class of bug that prompted the fix. Measured 2s (no provider call: the
+  # suite stubs the classifier and pins the non-interactive path).
+  "tests/cli/test-quickstart-brownfield.sh"
   # Proves every web-app client path resolves to a real FastAPI route. Ten
   # client calls had drifted onto URLs no route served (/github/runs against a
   # server serving /github/actions/runs), so the CI/CD and deploy panels were
