@@ -89,6 +89,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # The doctor assertion lives in .github/scripts/, so this job needs the
+      # repo on disk. Pinned to the SAME commit the release came from (as the
+      # resolve job does) so the assertion matches the artifact under test
+      # rather than whatever main holds now.
+      - name: Checkout (for the doctor assertion script)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -132,23 +141,31 @@ jobs:
           # `loki doctor --json` that exits non-zero aborts the step BEFORE
           # `RC=$?` is read, and the handler below never runs. The job then
           # fails with no diagnostic at all, which is exactly what happened.
+          # A CI runner has NO provider CLI, so doctor correctly reports
+          # ai_provider fail and correctly exits 1. Asserting rc=0 here encoded
+          # an assumption about host state the host never satisfied, and this
+          # workflow failed on SEVEN consecutive non-skipped runs because of it.
+          # The exit code is therefore captured but not itself the verdict; the
+          # assertion script decides, and still goes red on ANY other failure.
           RC=0
           loki doctor --json > /tmp/doctor.json || RC=$?
-          if [ "$RC" -ne 0 ]; then
-            echo "FATAL: loki doctor --json exited with $RC"
-            echo "--- doctor output (what actually failed) ---"
-            grep -B3 '"status": "fail"' /tmp/doctor.json 2>/dev/null | head -30 || true
-            grep -A5 '"summary"' /tmp/doctor.json 2>/dev/null | head -10 || true
-            head -5 /tmp/doctor.json 2>/dev/null || echo "(no output captured)"
-            exit 1
-          fi
-          python3 -c "import json,sys; json.load(open('/tmp/doctor.json')); print('doctor --json is valid JSON')"
+          echo "loki doctor --json exited with $RC (a provider-less runner is expected to exit 1)"
+          python3 .github/scripts/assert-doctor-json.py /tmp/doctor.json npm-smoke
 
   docker-smoke:
     needs: resolve
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      # The doctor assertion lives in .github/scripts/, so this job needs the
+      # repo on disk. Pinned to the SAME commit the release came from (as the
+      # resolve job does) so the assertion matches the artifact under test
+      # rather than whatever main holds now.
+      - name: Checkout (for the doctor assertion script)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
       - name: Pull image from Docker Hub (retry on propagation lag)
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
@@ -188,17 +205,14 @@ jobs:
           IMG="asklokesh/loki-mode:${VERSION}"
           # See the npm-smoke step: GitHub runs with `bash -e {0}`, so a bare
           # non-zero exit aborts before RC is read and the handler never runs.
+          # Same reasoning as npm-smoke: the container ships no provider CLI,
+          # so ai_provider fail + exit 1 is CORRECT. Measured on the v9.46.0
+          # image: passed=9 failed=1 warnings=8, the single failure being
+          # ai_provider. Any other failure is a real defect and still goes red.
           RC=0
           docker run --rm "$IMG" doctor --json > /tmp/docker-doctor.json || RC=$?
-          if [ "$RC" -ne 0 ]; then
-            echo "FATAL: docker doctor --json exited with $RC"
-            echo "--- doctor output (what actually failed) ---"
-            grep -B3 '"status": "fail"' /tmp/docker-doctor.json 2>/dev/null | head -30 || true
-            grep -A5 '"summary"' /tmp/docker-doctor.json 2>/dev/null | head -10 || true
-            head -5 /tmp/docker-doctor.json 2>/dev/null || echo "(no output captured)"
-            exit 1
-          fi
-          python3 -c "import json,sys; json.load(open('/tmp/docker-doctor.json')); print('docker doctor --json is valid JSON')"
+          echo "docker doctor --json exited with $RC (a provider-less image is expected to exit 1)"
+          python3 .github/scripts/assert-doctor-json.py /tmp/docker-doctor.json docker-smoke
 
       - name: Assert status --json (valid JSON)
         env:
