@@ -430,6 +430,29 @@ export class LokiOverview extends LokiElement {
     `;
   }
 
+  /** One honest line for a dead API, instead of a cockpit of nulls.
+   *
+   * THE DEFECT this fixes, from a real user screenshot: with the API
+   * unreachable the page still painted fourteen stat cards reading "--",
+   * "0", "Not run", "Not started" and "Not evaluated", plus a RARV timeline
+   * and a Start Build form. None of those values were measured; they are the
+   * `|| '--'` fallbacks in render(). A wall of nulls is indistinguishable
+   * from a real build that has produced nothing, so the page asserted state
+   * it could not know.
+   *
+   * The component already TRACKS this: the DISCONNECTED handler sets
+   * _data.connected = false and status 'offline'. It just never reached the
+   * render. This is the same pattern _renderJourney already uses when
+   * evidence is unavailable -- say one true sentence, show no numbers.
+   */
+  _renderDisconnected() {
+    return `<div class="journey-state" role="status">
+      Not connected to the Loki API. No session numbers can be shown until it
+      reconnects. Start it with <code>loki dashboard start</code>, or check the
+      API URL in Settings.
+    </div>`;
+  }
+
   _renderJourney() {
     if (this._journeyState === 'unavailable') {
       return `<div class="journey-state" role="status">Issue-to-PR evidence is unavailable. No readiness claim can be made.</div>`;
@@ -689,6 +712,7 @@ export class LokiOverview extends LokiElement {
           <span class="overview-title">Overview</span>
         </div>
 
+        ${!this._data.connected ? this._renderDisconnected() : `
         ${this._renderJourney()}
 
         <div class="overview-grid">
@@ -743,6 +767,7 @@ export class LokiOverview extends LokiElement {
             <div class="card-value small-text">${complexity}</div>
           </div>
         </div>
+        `}
       </div>
     `;
   }
