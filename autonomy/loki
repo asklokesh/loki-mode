@@ -17358,12 +17358,40 @@ if manifests:
             echo -e "${RED}Error: No repositories found matching: ${multi_repo}${NC}"
             return 1
         fi
-        echo -e "${BOLD}Multi-repo migration${NC} ($repo_count repositories)"
+        # HONESTY: this flag DISCOVERS repositories; it does not migrate them.
+        # `repos[]` is populated here and never referenced again -- everything
+        # below operates on the single "$codebase_path". The old message said
+        # "Multi-repo migration (3 repositories)" and listed all three, then
+        # created one migration scoped to the first. A user reading that
+        # believed three repos were migrated when one was.
+        #
+        # Orchestrating a real migration across repositories is a separate piece
+        # of work (dependency order, per-repo gates, per-repo receipts). Until
+        # that exists, this says exactly what it does and hands the user the
+        # commands that cover the rest, rather than implying coverage it has not
+        # delivered.
+        local _mr_others=$((repo_count - 1))
+        echo -e "${BOLD}Repositories found${NC} ($repo_count)"
         echo "---"
         for repo in "${repos[@]}"; do
-            echo "  - $repo"
+            if [ "$repo" = "$codebase_path" ]; then
+                echo "  - $repo  (migrating now)"
+            else
+                echo "  - $repo"
+            fi
         done
         echo ""
+        if [ "$_mr_others" -gt 0 ]; then
+            echo -e "${YELLOW}--multi-repo discovers repositories; it does not migrate them together.${NC}"
+            echo "This run migrates only: $codebase_path"
+            echo ""
+            echo "To cover the others, run each one:"
+            for repo in "${repos[@]}"; do
+                [ "$repo" = "$codebase_path" ] && continue
+                echo "  loki modernize migrate \"$repo\" --target \"$target\""
+            done
+            echo ""
+        fi
     fi
 
     local migration_dir
