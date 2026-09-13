@@ -5,6 +5,80 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.49.3
+
+Six fixes, four of them the same defect class: a READER reading a key or file
+that no WRITER produces. Each was invisible because the tests that should have
+caught it were written against the shape the reader wanted rather than the
+shape production writes.
+
+### Fixed
+
+- **Budget spend readers read a key nothing writes.** `loki_remaining_budget`
+  (`autonomy/lib/claude-flags.sh`) and its byte-mirror `remainingBudget`
+  (`loki-ts/src/providers/claude_flags.ts`) read `current_spend`. All six
+  production writers of `.loki/metrics/budget.json` write `budget_used`, so
+  spend resolved to 0 forever and `--max-budget-usd` received the FULL cap on
+  every call instead of the remainder -- the per-call backstop never tightened
+  as spend accumulated. Reachable only for users who set `LOKI_BUDGET_LIMIT`
+  explicitly, i.e. exactly the cost-conscious users who asked for a cap. Both
+  readers are fixed together (they are byte-mirrors; fixing one alone would
+  make the two routes disagree), with the legacy key kept as a fallback.
+
+- **The 80% budget notification never fired.** `check_budget_threshold` read
+  `used` from a sub-dict whose key is `budget_used`. Verified: 0 notifications
+  at 85% of cap against the exact state `run.sh` writes. The in-loop 80%
+  `log_warn` was unaffected, so terminal users did still get a warning; the
+  notification half had simply never worked.
+
+- **The quality-gate notification read a file nothing writes.**
+  `check_quality_gate` read `.loki/state/quality-gates.json`; all seven repo
+  references to it are readers, and `proof-generator.py` already records this
+  as issue #125 and works around it. It now reads
+  `.loki/quality/gate-failures.txt`, the artifact `run.sh` actually writes.
+
+- **An expired deploy token rendered as "never connected".** The server has
+  always returned `{"connected": false, "error": "Token expired or revoked"}`;
+  the client had zero readers of that field, so a revoked token looked
+  identical to a platform never set up, with no way to fix it in place. The
+  blindness was structural: `ConnectionStatus` is declared twice and
+  `ConnectionCard` is typed against the component-local copy, so adding the
+  field to only one declaration compiles and changes nothing on screen. Both
+  declarations now carry it, and the card offers Reconnect.
+
+- **A comment quoting a call site broke two test shards.** A comment in
+  `run.sh` reproduced the literal call-site expression while explaining it. One
+  suite COUNTS that string and asserts exactly one occurrence; another MUTATES
+  it to prove a valve's guard goes red. Both broke. The comment now describes
+  the call site instead of reproducing it.
+
+### Added
+
+- **Live cost visibility.** `check_budget_limit` has always computed cumulative
+  spend every iteration and printed nothing below 80% of cap. It now reports
+  the running total each iteration, reusing the already-computed value rather
+  than adding a second reader. Unmeasured runs print nothing -- the zero test
+  is numeric, so a run with no recorded cost never claims `$0.0`.
+
+- **`tests/test-verify-budget-keys.sh`** (12 assertions) and
+  **`tests/test-verify-deploy-error-surfaced.sh`** (7 assertions), both in the
+  fast tier via `_FAST_KEEP` and `run_check`, both mutation-verified in both
+  directions. The budget suite also asserts that no production file writes the
+  orphan keys, so a future writer cannot silently resurrect either
+  contradiction.
+
+### Changed
+
+- **The release gate now runs its cheapest failing check first.** `release.yml`
+  ran `bun run typecheck` as the LAST step of the job that gates every publish.
+  v9.49.0 died on a one-line TS2322 after the job had already spent ~3m46s on
+  pip installs and pytest. Bash syntax validation and the Bun typecheck need no
+  Python, so they now run first. Nothing about what is verified changes.
+
+- Corrected four places claiming `LOKI_BUDGET_LIMIT` defaults to unset/no cap.
+  It has defaulted to `100.00` since v9.42.0, and breaching it PAUSES the run
+  rather than reporting a terminal failure.
+
 ## v9.49.2
 
 v9.49.0 and v9.49.1 both failed CI and published nothing: no tag, no npm
