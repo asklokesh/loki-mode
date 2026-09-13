@@ -249,24 +249,44 @@ def check_file_access(trigger, loki_dir, iteration, notifications):
 
 
 def check_quality_gate(trigger, loki_dir, iteration, notifications):
-    """Check for quality gate failures. Reports ALL failed gates, not just first."""
-    state_file = Path(loki_dir) / "dashboard-state.json"
-    if not state_file.exists():
-        return []
+    """Check for quality gate failures. Reports ALL failed gates, not just first.
 
+    Reads .loki/quality/gate-failures.txt, which is what run.sh actually writes
+    (:24100, :24142, :24553) as a comma-terminated list of failing gate names,
+    e.g. "mock_integrity,".
+
+    This previously read state["qualityGates"] out of dashboard-state.json,
+    sourced from .loki/state/quality-gates.json (run.sh:6972). NOTHING writes
+    that file: all seven repo references are readers, autonomy/hooks/
+    quality-gate.sh:12 guards on `[ ! -f ]`, and proof-generator.py:345 records
+    the same finding as issue #125 and already works around it by reading these
+    per-gate artifacts. The aggregate was therefore always absent, qualityGates
+    was always null, and this trigger could never fire -- the same dead-reader
+    defect as the budget key, in the same file.
+
+    gate-failures.txt is the canonical failure source used by
+    proof-generator.py:413 and loki-ts build_prompt_helpers.ts:250, so this
+    reuses a proven contract rather than introducing a second one.
+    """
+    failures_file = Path(loki_dir) / "quality" / "gate-failures.txt"
     results = []
     try:
-        state = json.loads(state_file.read_text())
-        gates = state.get("qualityGates", {})
-        if isinstance(gates, dict):
-            for gate_name, gate_data in gates.items():
-                if isinstance(gate_data, dict) and gate_data.get("status") == "failed":
-                    msg = trigger["message"].format(gate=gate_name)
-                    results.append(make_notification(
-                        trigger["id"], trigger["severity"], msg, iteration,
-                        {"gate": gate_name},
-                    ))
-    except (json.JSONDecodeError, OSError, KeyError):
+        if failures_file.exists():
+            # Cap the read: a pathological file must not be loaded whole
+            # (same reason as build_prompt.ts:707).
+            raw = failures_file.read_text(errors="replace")[:8000]
+            seen = set()
+            for name in raw.replace("\n", ",").split(","):
+                gate_name = name.strip()
+                if not gate_name or gate_name in seen:
+                    continue
+                seen.add(gate_name)
+                msg = trigger["message"].format(gate=gate_name)
+                results.append(make_notification(
+                    trigger["id"], trigger["severity"], msg, iteration,
+                    {"gate": gate_name},
+                ))
+    except (OSError, KeyError):
         pass
     return results if results else None
 

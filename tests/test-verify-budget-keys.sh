@@ -164,5 +164,71 @@ n="$(notif_fired '{"budget": {"limit": 100.00, "budget_limit": 100.00, "budget_u
     && ok "budget-80pct stays silent at 10% (negative control)" \
     || bad "budget-80pct fired $n times at 10% of cap, want 0"
 
+# ---------------------------------------------------------------------------
+# 4. quality-gate-fail fires from the artifact run.sh actually writes.
+#
+# Third instance of the same dead-reader class in this one file: the checker
+# read state["qualityGates"], sourced from .loki/state/quality-gates.json, which
+# NOTHING writes (all seven repo references are readers; the hook itself guards
+# on `[ ! -f ]`; proof-generator.py:345 records it as issue #125). run.sh writes
+# failing gate names to .loki/quality/gate-failures.txt instead.
+# ---------------------------------------------------------------------------
+gate_notif_count() {
+    local failures_content="$1"
+    local D; D="$(mktemp -d "$TMPROOT/gate.XXXXXX")"
+    mkdir -p "$D/.loki/notifications" "$D/.loki/quality"
+    if [ -n "$failures_content" ]; then
+        printf '%s\n' "$failures_content" > "$D/.loki/quality/gate-failures.txt"
+    fi
+    python3 autonomy/notification-checker.py --iteration 4 --loki-dir "$D/.loki" >/dev/null 2>&1
+    _LOKI_NOTIF_DIR="$D/.loki/notifications" python3 -c '
+import json, os, glob
+base = os.environ["_LOKI_NOTIF_DIR"]
+recs = []
+for p in glob.glob(os.path.join(base, "*.json")):
+    if os.path.basename(p) == "triggers.json":
+        continue
+    try:
+        d = json.load(open(p))
+    except Exception:
+        continue
+    items = d if isinstance(d, list) else d.get("notifications", d)
+    if isinstance(items, list):
+        recs.extend(items)
+    elif isinstance(items, dict):
+        recs.append(items)
+print(sum(1 for r in recs if isinstance(r, dict) and r.get("trigger_id") == "quality-gate-fail"))
+'
+}
+
+# The exact on-disk shape, verified with `cat -A`: a trailing comma.
+n="$(gate_notif_count 'mock_integrity,')"
+[ "$n" = "1" ] \
+    && ok "quality-gate-fail fires from gate-failures.txt (trailing comma handled)" \
+    || bad "quality-gate-fail on a real gate-failures.txt fired $n times, want 1"
+
+# Multiple failing gates must each produce their own notification, and the
+# trailing empty field must not become a phantom gate.
+n="$(gate_notif_count 'mock_integrity,code_review,doc_coverage,')"
+[ "$n" = "3" ] \
+    && ok "quality-gate-fail reports each failing gate individually (3 gates)" \
+    || bad "three failing gates produced $n notifications, want 3"
+
+# Negative control: no artifact means no failure, and must stay silent.
+n="$(gate_notif_count '')"
+[ "$n" = "0" ] \
+    && ok "quality-gate-fail stays silent with no gate-failures.txt (negative control)" \
+    || bad "quality-gate-fail fired $n times with no failures file, want 0"
+
+# The orphan aggregate must not be resurrected as a source: assert no
+# production file writes it, the same way rule 1 guards current_spend.
+qg_writers=$(git grep -lE '(cat >|printf .* >|echo .* >|tee |write_text|json\.dump).*state/quality-gates\.json' \
+             -- autonomy/ dashboard/ loki-ts/src/ 2>/dev/null || true)
+if [ -z "$qg_writers" ]; then
+    ok "no production file writes the orphan aggregate state/quality-gates.json"
+else
+    bad "something now writes state/quality-gates.json: $qg_writers (reconcile the reader)"
+fi
+
 printf '\nTotal: %d  Passed: %d  Failed: %d\n' "$((PASS + FAIL))" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
