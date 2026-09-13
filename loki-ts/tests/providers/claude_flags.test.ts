@@ -94,12 +94,12 @@ describe("claude_flags.remainingBudget", () => {
   });
   it("computes 50 - 12.34 = 37.66", () => {
     process.env["LOKI_BUDGET_LIMIT"] = "50";
-    writeFileSync(join(td, ".loki", "metrics", "budget.json"), JSON.stringify({ current_spend: 12.34 }));
+    writeFileSync(join(td, ".loki", "metrics", "budget.json"), JSON.stringify({ limit: 50, budget_limit: 50, budget_used: 12.34, exceeded: false }));
     expect(remainingBudget(td)).toBe("37.66");
   });
   it("returns null when overspent (never emits 0 or negative)", () => {
     process.env["LOKI_BUDGET_LIMIT"] = "50";
-    writeFileSync(join(td, ".loki", "metrics", "budget.json"), JSON.stringify({ current_spend: 60.0 }));
+    writeFileSync(join(td, ".loki", "metrics", "budget.json"), JSON.stringify({ limit: 50, budget_limit: 50, budget_used: 60.0, exceeded: true }));
     expect(remainingBudget(td)).toBeNull();
   });
   it("returns null on malformed budget.json (no throw)", () => {
@@ -208,7 +208,7 @@ describe("claude_flags.buildAutoFlags composition", () => {
     _resetClaudeHelpCacheForTest("  --effort\n  --max-budget-usd");
     process.env["LOKI_BUDGET_LIMIT"] = "10";
     mkdirSync(join(td, ".loki", "metrics"), { recursive: true });
-    writeFileSync(join(td, ".loki", "metrics", "budget.json"), JSON.stringify({ current_spend: 100 }));
+    writeFileSync(join(td, ".loki", "metrics", "budget.json"), JSON.stringify({ limit: 10, budget_limit: 10, budget_used: 100, exceeded: true }));
     const out = buildAutoFlags({ tier: "development", primary: "opus", targetDir: td });
     expect(out).toEqual(["--effort", "high"]);
     // Crucially: no "--max-budget-usd" in the output

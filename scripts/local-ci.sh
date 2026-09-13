@@ -172,6 +172,17 @@ declare -a _FAST_KEEP=(
   # for what was a client typo. No GitHub CI job inspects this contract.
   # Measured ~4s (one TypeScript AST walk plus one in-process route-table read).
   "tests/test-verify-client-routes.sh"
+  # Guards the budget spend-key contract: every READER must read the key the
+  # WRITERS emit. Two shipped defects of the same class motivated it, and both
+  # were invisible because every existing fixture wrote the key the reader
+  # wanted rather than the key production writes. loki_remaining_budget and its
+  # TS byte-mirror read "current_spend", which NO production writer has ever
+  # emitted, so spend read 0 forever and --max-budget-usd got the FULL cap on
+  # every call instead of the remainder. The budget-80pct notification read
+  # "used" from a sub-dict whose key is "budget_used", so it never fired at all.
+  # Both reproduced against the exact shapes run.sh writes, with controls.
+  # Measured 0.48s on this machine (no provider call, no network).
+  "tests/test-verify-budget-keys.sh"
   # 1. syntax + structure (cheap, already background lanes)
   "bash -n "
   "JSON validation"
@@ -907,6 +918,7 @@ run_check "tests/test-export-overwrite-noninteractive.sh (prompt never hangs)" "
 # real slow first preview with a fast one) and never invented from a missing or
 # absurd baseline.
 run_check "tests/test-first-preview-metric.sh (write-once, never invented)" "bash tests/test-first-preview-metric.sh 2>&1 | tail -3"
+run_check "tests/test-verify-budget-keys.sh (spend-key readers match writers)" "bash tests/test-verify-budget-keys.sh 2>&1 | tail -3"
 
 # The v8 SDK-default-flip audit concluded there is no cross-iteration context to
 # regress BECAUSE these knobs ship OFF. If anything ever turns one on, that

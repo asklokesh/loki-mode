@@ -124,7 +124,14 @@ export function remainingBudget(targetDir?: string): string | null {
   if (existsSync(budgetFile)) {
     try {
       const obj = JSON.parse(readFileSync(budgetFile, "utf8")) as Record<string, unknown>;
-      const v = obj["current_spend"];
+      // "budget_used" is the key every production writer emits. Read
+      // "current_spend" only as a fallback: it was the sole key read here
+      // until v9.50.0 and no writer has ever produced it, so spend always
+      // resolved to 0 and --max-budget-usd received the full cap instead of
+      // the remainder. Kept byte-parity with loki_remaining_budget in
+      // autonomy/lib/claude-flags.sh -- both readers must agree or the two
+      // routes compute different remaining budgets from the same file.
+      const v = obj["budget_used"] ?? obj["current_spend"];
       if (typeof v === "number" && Number.isFinite(v)) {
         spend = v;
       } else if (typeof v === "string") {

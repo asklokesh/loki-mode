@@ -165,7 +165,15 @@ def check_budget_threshold(trigger, loki_dir, iteration, notifications):
         state = json.loads(state_file.read_text())
         budget = state.get("budget", {})
         limit = budget.get("limit", 0)
-        used = budget.get("used", 0)
+        # run.sh:7084 nests .loki/metrics/budget.json verbatim under "budget",
+        # and that file's spend key is "budget_used". Reading only "used" meant
+        # this trigger never fired in production: verified against the exact
+        # state run.sh writes, 0 notifications were produced at 85% of cap.
+        # "used" stays as a fallback for the /api/cost-shaped payload
+        # (autonomy/loki:28122), which does write that key.
+        used = budget.get("budget_used")
+        if used is None:
+            used = budget.get("used", 0)
         if limit <= 0:
             return None
         pct = (used / limit) * 100

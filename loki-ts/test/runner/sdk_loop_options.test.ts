@@ -69,7 +69,7 @@ describe("buildSdkLoopOptions: USD budget backstop", () => {
     // limit 10, spent 3 -> remaining 7 (>0). remainingBudget reads .loki/metrics/budget.json.
     process.env["LOKI_BUDGET_LIMIT"] = "10";
     mkdirSync(join(scratch, ".loki", "metrics"), { recursive: true });
-    writeFileSync(join(scratch, ".loki", "metrics", "budget.json"), JSON.stringify({ current_spend: 3 }));
+    writeFileSync(join(scratch, ".loki", "metrics", "budget.json"), JSON.stringify({ limit: 10, budget_limit: 10, budget_used: 3, exceeded: false }));
     const o = buildSdkLoopOptions({ tier: "development", model: "claude-sonnet-5", cwd: scratch });
     // remaining is positive (7), so maxBudgetUsd MUST be set to a finite positive
     // number. Assert unconditionally: a guard (if defined) would let a
@@ -81,7 +81,7 @@ describe("buildSdkLoopOptions: USD budget backstop", () => {
   test("omitted when the budget is fully spent (remaining <= 0)", () => {
     process.env["LOKI_BUDGET_LIMIT"] = "5";
     mkdirSync(join(scratch, ".loki", "metrics"), { recursive: true });
-    writeFileSync(join(scratch, ".loki", "metrics", "budget.json"), JSON.stringify({ current_spend: 5 }));
+    writeFileSync(join(scratch, ".loki", "metrics", "budget.json"), JSON.stringify({ limit: 5, budget_limit: 5, budget_used: 5, exceeded: true }));
     const o = buildSdkLoopOptions({ tier: "development", model: "claude-sonnet-5", cwd: scratch });
     expect(o.maxBudgetUsd).toBeUndefined();
   });

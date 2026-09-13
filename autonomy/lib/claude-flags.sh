@@ -51,7 +51,21 @@ loki_effort_for_tier() {
 
 # ---------- Remaining budget ----------
 # Compute remaining budget = LOKI_BUDGET_LIMIT - cumulative spend so far.
-# Spend lives in .loki/metrics/budget.json under "current_spend" (per autonomy/run.sh:8167+).
+# Spend lives in .loki/metrics/budget.json under "budget_used".
+#
+# It was read as "current_spend" until v9.50.0, a key NO production writer has
+# ever emitted. All six writers of that file (run.sh:6581,17851,17869,
+# loki-ts/src/runner/budget.ts:267, dashboard/server.py:7953, autonomy/loki)
+# write "budget_used". The old citation pointed at run.sh:8167+, which is
+# per-iteration token parsing and writes no budget key at all.
+#
+# Effect of the bug: spend always read 0, so --max-budget-usd was handed the
+# FULL cap on every call instead of the remainder, and the per-call backstop
+# never tightened as spend accumulated. Only reachable for users who set
+# LOKI_BUDGET_LIMIT explicitly (run.sh sets BUDGET_LIMIT, not LOKI_*), i.e.
+# exactly the cost-conscious users who asked for the cap.
+# "current_spend" is still accepted as a fallback so a budget.json written by
+# an in-flight older run still parses.
 # Emit empty string when budget is unlimited (LOKI_BUDGET_LIMIT unset or 0).
 # Emit empty when remaining <= 0 (caller decides what to do; we never emit 0).
 loki_remaining_budget() {
@@ -71,7 +85,9 @@ import json, os, sys
 try:
     with open(os.environ["_LOKI_BUDGET_FILE"]) as f:
         d = json.load(f)
-    v = d.get("current_spend", 0)
+    v = d.get("budget_used")
+    if v is None:
+        v = d.get("current_spend", 0)
     print(float(v))
 except Exception:
     print(0)

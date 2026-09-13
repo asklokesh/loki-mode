@@ -87,12 +87,12 @@ v=$(LOKI_BUDGET_LIMIT="50" TARGET_DIR="$TMPROOT" loki_remaining_budget)
 [ "$v" = "50.00" ] && ok "remaining_budget: limit=50, no spend -> 50.00" || bad "remaining_budget no spend got [$v]"
 
 # Limit + budget.json with spend -> emit difference
-python3 -c "import json; open('$TMPROOT/.loki/metrics/budget.json','w').write(json.dumps({'current_spend': 12.34}))"
+python3 -c "import json; open('$TMPROOT/.loki/metrics/budget.json','w').write(json.dumps({'limit': 50, 'budget_limit': 50, 'budget_used': 12.34, 'exceeded': False}))"
 v=$(LOKI_BUDGET_LIMIT="50" TARGET_DIR="$TMPROOT" loki_remaining_budget)
 [ "$v" = "37.66" ] && ok "remaining_budget: 50 - 12.34 = 37.66" || bad "remaining_budget got [$v]"
 
 # Spend exceeds limit -> emit empty (never emit 0 or negative)
-python3 -c "import json; open('$TMPROOT/.loki/metrics/budget.json','w').write(json.dumps({'current_spend': 60.00}))"
+python3 -c "import json; open('$TMPROOT/.loki/metrics/budget.json','w').write(json.dumps({'limit': 50, 'budget_limit': 50, 'budget_used': 60.00, 'exceeded': True}))"
 v=$(LOKI_BUDGET_LIMIT="50" TARGET_DIR="$TMPROOT" loki_remaining_budget)
 [ -z "$v" ] && ok "remaining_budget: overspent -> empty (no 0 or negative)" || bad "remaining_budget overspent got [$v]"
 
