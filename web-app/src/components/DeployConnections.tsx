@@ -19,6 +19,12 @@ export interface ConnectionStatus {
   connected: boolean;
   user?: string;
   last_deployed?: string;
+  // Sent whenever a stored token fails re-verification: the platform CLI ran
+  // and rejected it (web-app/server.py:8164, 8231, 8288, 8303). The server has
+  // always returned this; the type just never declared it, so every consumer
+  // was structurally blind to it and rendered an EXPIRED token identically to
+  // one that was never connected.
+  error?: string;
 }
 
 export interface AllConnectionStatuses {
@@ -294,6 +300,16 @@ function ConnectionCard({
       ) : (
         <>
           {/* Not connected actions */}
+          {/* An expired token is NOT the same state as "never connected", and
+              until now both rendered identically. The server distinguishes them
+              with `error`; surfacing it here is what turns a dead tile into a
+              recoverable one, without leaving the screen. */}
+          {status.error && (
+            <div className="mt-3 flex items-start gap-2 bg-red-500/5 border border-red-500/15 rounded-lg px-3 py-2">
+              <AlertCircle size={14} className="text-red-500 flex-shrink-0 mt-0.5" />
+              <span className="text-xs text-red-600">{status.error}</span>
+            </div>
+          )}
           {platform.hasTokenAuth ? (
             <>
               {!showForm && (
@@ -304,7 +320,7 @@ function ConnectionCard({
                     onClick={() => setShowForm(true)}
                     className="w-full"
                   >
-                    Connect {platform.name}
+                    {status.error ? `Reconnect ${platform.name}` : `Connect ${platform.name}`}
                   </Button>
                 </div>
               )}

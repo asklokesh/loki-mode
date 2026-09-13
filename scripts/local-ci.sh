@@ -183,6 +183,20 @@ declare -a _FAST_KEEP=(
   # Both reproduced against the exact shapes run.sh writes, with controls.
   # Measured 0.48s on this machine (no provider call, no network).
   "tests/test-verify-budget-keys.sh"
+  # Pins the deploy `error` field from server to rendered UI. The server has
+  # always returned {"connected": false, "error": "Token expired or revoked"}
+  # when a stored token is rejected; the client had ZERO readers, so an EXPIRED
+  # token rendered identically to one never connected -- a dead tile with no
+  # path to fix it. The blindness was structural: ConnectionStatus is declared
+  # TWICE and ConnectionCard is typed against the component-local copy, so
+  # adding the field only to types/api.ts compiles and changes nothing on
+  # screen. Static, not Playwright, deliberately: the only reachable surface is
+  # behind an auth-guarded /lab mount AND a tab condition, so an e2e harness
+  # for a two-line conditional is more fragile than what it guards (three
+  # attempts each died on a different environmental gate, one of which made the
+  # NEGATIVE control pass). Also asserts web-app/dist carries the change, since
+  # dist is tracked and is what npm users receive. Measured 0.07s.
+  "tests/test-verify-deploy-error-surfaced.sh"
   # 1. syntax + structure (cheap, already background lanes)
   "bash -n "
   "JSON validation"
@@ -919,6 +933,7 @@ run_check "tests/test-export-overwrite-noninteractive.sh (prompt never hangs)" "
 # absurd baseline.
 run_check "tests/test-first-preview-metric.sh (write-once, never invented)" "bash tests/test-first-preview-metric.sh 2>&1 | tail -3"
 run_check "tests/test-verify-budget-keys.sh (spend-key readers match writers)" "bash tests/test-verify-budget-keys.sh 2>&1 | tail -3"
+run_check "tests/test-verify-deploy-error-surfaced.sh (expiry reaches the UI)" "bash tests/test-verify-deploy-error-surfaced.sh 2>&1 | tail -3"
 
 # The v8 SDK-default-flip audit concluded there is no cross-iteration context to
 # regress BECAUSE these knobs ship OFF. If anything ever turns one on, that

@@ -227,6 +227,12 @@ export interface Workflow {
 export interface ConnectionStatus {
   connected: boolean;
   user?: string;
+  // web-app/server.py returns this alongside connected:false when a stored
+  // token is rejected by the platform CLI (:8164, :8231, :8288, :8303).
+  // Kept in sync with the structurally-duplicated declaration in
+  // components/DeployConnections.tsx -- that one is what ConnectionCard is
+  // typed against, so both must carry the field.
+  error?: string;
 }
 
 export interface DeployStatus {
