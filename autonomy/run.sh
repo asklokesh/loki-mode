@@ -17873,11 +17873,18 @@ BUDGETUPD_EOF
     # 405da630, and a per-iteration cost line is not worth reintroducing it.
     #
     # Safe on stdout: this function has exactly two non-comment references in
-    # the file -- its own definition, and `if check_budget_limit; then` at the
-    # single call site, which tests the exit code and never captures output.
-    # (Verified with a comment-excluding grep plus a positive control, because
-    # a naive grep matches THIS comment. log_info is additionally gated by
-    # _loki_log_enabled, so quiet modes stay quiet.)
+    # the file -- its own definition, and the single loop call site, which
+    # tests the exit code and never captures output. Verified with a
+    # comment-excluding grep plus a positive control.
+    #
+    # This comment deliberately does NOT spell out the call-site expression.
+    # tests/test-max-duration.sh:151 counts that exact string across this file
+    # and asserts there is exactly ONE, so quoting it here made the count 2 and
+    # turned a green suite red -- a text guard firing on prose written to
+    # explain it. Describe the call site; never reproduce it.
+    #
+    # log_info is additionally gated by _loki_log_enabled, so quiet modes stay
+    # quiet.
     # The zero test must be NUMERIC. `[ "$current_cost" != "0" ]` is a string
     # compare and the python above emits "0.0", so a run with nothing recorded
     # would announce "Cost so far: $0.0" -- claiming a measurement we do not
