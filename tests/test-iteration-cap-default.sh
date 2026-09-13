@@ -8,7 +8,8 @@
 # an 8.3-DAY ceiling -- and it was the ONLY backstop, because the other two
 # valves ship disabled:
 #
-#   LOKI_BUDGET_LIMIT  defaults to ""  -> check_budget_limit returns immediately
+#   LOKI_BUDGET_LIMIT  defaulted to "" -> check_budget_limit returned at once
+#                          (no longer true: defaults to "100.00" since v9.42.0)
 #   LOKI_MAX_DURATION  defaults to 0   -> check_max_duration "never stop"
 #
 # It also contradicted our own docs: SETUP.md tells users to RAISE the budget

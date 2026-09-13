@@ -23,7 +23,7 @@ with nowhere to look them up.
 |---|---|---|
 | `LOKI_PRD_FILE` | none | Path to a spec file, as an alternative to the positional argument. |
 | `LOKI_MAX_ITERATIONS` | `1000` | Hard cap on iterations. Reaching it is a deterministic terminal failure, not a success. Also in `config schema`. |
-| `LOKI_BUDGET_LIMIT` | unset (no cap) | Spend cap in USD. On exhaustion the run stops and reports a terminal failure -- see [exit codes](./exit-codes.md). |
+| `LOKI_BUDGET_LIMIT` | `100.00` | Spend cap in USD. Breaching it **pauses** the run (writes `.loki/PAUSE` and saves state); it never kills work or discards a deliverable. Remove `.loki/PAUSE` to resume, or raise the cap. Set to `""` for no cap. A warning is logged at 80%. |
 | `LOKI_MAX_DURATION` | unset (no cap) | Wall-clock cap in seconds. Stops cleanly at the next iteration boundary with a `max_duration_reached` terminal status. `loki start --max-duration` also accepts `90m` / `2h`. |
 | `LOKI_AUTO_CONFIRM` | unset | `true`/`false` to control prompts. Takes precedence over `CI`. |
 | `LOKI_CONFIG_DUMP` | `0` | `1` prints the resolved configuration and exits **without starting a run or spending anything**. |

@@ -1181,10 +1181,12 @@ PERPETUAL_MODE=${LOKI_PERPETUAL_MODE:-false}
 #
 # MEASURED, not chosen. Real per-iteration wall clock across every recorded run
 # on this machine: median 718s, max 1746s. So the 1000 default is an 8.3-DAY
-# ceiling -- and it is the ONLY backstop, because the other two valves ship
-# disabled: LOKI_BUDGET_LIMIT defaults to "" (check_budget_limit returns
-# immediately) and LOKI_MAX_DURATION defaults to 0 (check_max_duration returns
-# "never stop").
+# ceiling. When this analysis was written it was also the ONLY backstop,
+# because the other two valves shipped disabled. That is no longer true of the
+# budget: since v9.42.0 LOKI_BUDGET_LIMIT defaults to "100.00" (see :527 --
+# note `-` not `:-`, so only an EXPLICIT "" means unlimited), and breaching it
+# pauses the run. LOKI_MAX_DURATION does still default to 0 (check_max_duration
+# returns "never stop" at :18278).
 #
 # It also contradicts our own documentation. SETUP.md tells users to RAISE the
 # budget for large work with LOKI_MAX_ITERATIONS=40, and the demo uses 10 -- so

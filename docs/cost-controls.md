@@ -25,7 +25,7 @@ They bound different things, and a run that stalls needs all three.
 
 | Cap | Bounds | Default |
 |---|---|---|
-| `LOKI_BUDGET_LIMIT` | Total spend, in USD | unset (no cap) |
+| `LOKI_BUDGET_LIMIT` | Total spend, in USD | `100.00` (breaching pauses the run) |
 | `LOKI_MAX_ITERATIONS` | Number of iterations | 1000 |
 | `LOKI_MAX_DURATION` | Wall-clock time | unset (no cap) |
 
