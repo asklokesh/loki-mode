@@ -17862,6 +17862,36 @@ BUDGETUPD_EOF
         return 0
     fi
 
+    # LIVE COST VISIBILITY. The loop has always computed cumulative spend here,
+    # every iteration, and printed NOTHING until 80% of the cap. That silence is
+    # the "predatory / un-capped" feeling users report about agentic tools: the
+    # enforcement was never missing (the cap pauses at 100.00 by default), only
+    # the visibility was, so spend was discoverable solely after the fact.
+    #
+    # Reuses the $current_cost computed above; deliberately NOT a second reader.
+    # Two readers of one number disagreeing is the exact defect class fixed in
+    # 405da630, and a per-iteration cost line is not worth reintroducing it.
+    #
+    # Safe on stdout: this function has exactly two non-comment references in
+    # the file -- its own definition, and `if check_budget_limit; then` at the
+    # single call site, which tests the exit code and never captures output.
+    # (Verified with a comment-excluding grep plus a positive control, because
+    # a naive grep matches THIS comment. log_info is additionally gated by
+    # _loki_log_enabled, so quiet modes stay quiet.)
+    # The zero test must be NUMERIC. `[ "$current_cost" != "0" ]` is a string
+    # compare and the python above emits "0.0", so a run with nothing recorded
+    # would announce "Cost so far: $0.0" -- claiming a measurement we do not
+    # have, which is the exact fabrication this codebase deletes on sight.
+    #
+    # No else-branch: BUDGET_LIMIT empty means unlimited, and check_budget_limit
+    # returns at its first line in that case, so any "no cap set" arm here would
+    # be unreachable code advertising a message that can never print. The
+    # no-cap disclosure already lives at run-start (show_run_start_estimate).
+    if [ -n "$current_cost" ] \
+       && awk -v c="$current_cost" 'BEGIN{exit !(c+0 > 0)}' 2>/dev/null; then
+        log_info "Cost so far: \$${current_cost} of \$${BUDGET_LIMIT} cap (iteration ${ITERATION_COUNT:-0})."
+    fi
+
     # Update budget.json with current usage (not exceeded)
     if [ -n "$current_cost" ] && [ "$current_cost" != "0" ]; then
         cat > ".loki/metrics/budget.json" << BUDGETUPD_EOF

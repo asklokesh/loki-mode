@@ -26,22 +26,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install minimal deps
-        # Mirror python-tests installs in test.yml exactly so the gate has the
-        # same import surface as the matrix jobs (httpx, sqlalchemy, etc.).
-        run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install pytest pytest-asyncio
-          python3 -m pip install fastapi httpx pydantic sqlalchemy[asyncio] aiosqlite uvicorn
+      # CHEAPEST FAILING CHECK FIRST. Step order here is not cosmetic: this job
+      # gates every publish job, so whatever it runs first is how fast a broken
+      # release finds out.
+      #
+      # v9.49.0 died on a one-line TS2322 in doctor.ts. The typecheck that
+      # caught it was the LAST step, so the job first spent ~3m46s on pip
+      # installs and the full pytest suite before tsc ran for 7 seconds and
+      # failed. Measured on run 34724377951: gate 4m03s total, pip started
+      # 23:03:29, pytest ended 23:07:15, Bun step 23:07:17 -> 23:07:24.
+      #
+      # Bash syntax validation and the Bun typecheck need no Python at all, so
+      # they now run before the pip installs. A tsc or bash error fails the
+      # release in well under a minute instead of four, and nothing about what
+      # is verified changes -- only the order in which it is verified.
       - name: Bash syntax validation
         run: |
           bash -n autonomy/run.sh
           bash -n autonomy/loki
-      - name: Python tests
-        run: python3 -m pytest -q
       - name: Setup Bun
         # publish-npm and publish-docker ship the loki-ts Bun dist. Gate the
         # release on a clean TS build + passing bun test so a broken Bun
@@ -55,6 +57,18 @@ jobs:
           bun install --frozen-lockfile
           bun run typecheck
           bun test
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install minimal deps
+        # Mirror python-tests installs in test.yml exactly so the gate has the
+        # same import surface as the matrix jobs (httpx, sqlalchemy, etc.).
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install pytest pytest-asyncio
+          python3 -m pip install fastapi httpx pydantic sqlalchemy[asyncio] aiosqlite uvicorn
+      - name: Python tests
+        run: python3 -m pytest -q
 
   # PROPORTIONAL CI AT THE EXACT RELEASE SHA.
   #
