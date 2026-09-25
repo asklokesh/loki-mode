@@ -13,3 +13,7 @@ uvicorn
 httpx
 sqlalchemy[asyncio]
 aiosqlite
+# Ed25519 receipt signing and JWKS verification. The signing suites print SKIP
+# and assert nothing when this module is absent, so an unlisted dependency is a
+# silently unmeasured trust core. Same floor as web-app/requirements.txt.
+cryptography>=41.0.0

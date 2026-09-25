@@ -1,0 +1,23 @@
+# tests/moat/pending.txt -- moat cases that are allowed to FAIL today.
+#
+# Format, one entry per line:
+#   <ID> <milestone> <reason...>
+#   e.g.  P1.example-case M2 signing is not wired on the bash route yet
+# <ID> is a case ID some tests/moat/p<N>-<slug>.sh script emits (P<N>.<kebab-slug>).
+# <milestone> is when it is due: M0 M2 M3 M5 M7 M9, or v10.0.0 for a breaking
+# change deferred to the major. Lines starting with # and blank lines are ignored.
+#
+# What tests/moat/run.sh enforces against this file:
+#   - a case that FAILs and is not listed here fails the suite (regression);
+#   - a case that PASSes and is still listed here fails the suite: delete its
+#     line (promote), so a proven property can never read as pending;
+#   - every ID listed here must still be emitted by some script;
+#   - THE RATCHET: this list may only shrink. Every ID here must also be in
+#     this file at the last release tag (git describe --tags --match 'v[0-9]*').
+#     A new entry fails the suite, so nothing can be parked here to buy a green
+#     run, and a case added after a release must PASS from the day it lands.
+#     While the last release tag has no copy of this file (the bootstrap), the
+#     list is accepted as it stands; the first release that ships it becomes
+#     the baseline.
+#
+# Entries:

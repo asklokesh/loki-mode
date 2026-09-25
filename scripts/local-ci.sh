@@ -425,6 +425,15 @@ declare -a _FAST_KEEP=(
   "tests/test-completion-council-affirmative-evidence.sh"
   "tests/test-mcp-tool-surface-packaged.sh"   # 2.9s
   "tests/test-mcp-tool-surface-guard-rejects.sh" # 8s, proves the guard rejects
+  # The moat suite IS the release gate for the nine product properties: a
+  # release that fails it does not ship, so a pre-push gate that deferred it
+  # would let a regressed or newly-parked property reach a release commit.
+  # Hermetic (no network, no model call); each property script targets <30s
+  # and they run in parallel. Both a keep entry and a call site are needed.
+  "moat suite"
+  # The runner's own self-test: proves every ratchet rule still fires, so the
+  # gate above cannot go green by checking nothing. Measured ~6s, own repos.
+  "tests/test-moat-runner.sh"
   # CLAUDE.md cleanup mandate: sub-second, and the whole point is that it runs
   # on every invocation, not only the slow one.
   "no leftovers from this run"
@@ -1601,6 +1610,15 @@ run_check "tests/test-cli-embeds-v733.sh (strict-mcp + bare-subcalls + review-to
 # DISTINCT --session-id (no continuity leak), main-loop-only (never on subcalls),
 # bash<->Bun uuid parity, and FIX D --no-session-persistence opt-in.
 run_check "tests/test-cli-session-v734.sh (session stamp + uuid parity + FIX D)" "bash tests/test-cli-session-v734.sh 2>&1 | tail -3"
+
+# The moat suite: the nine product properties, each proven or honestly NOT
+# PROVEN, with a shrink-only pending list ratcheted against the last release
+# tag. Serial spine, not a lane: the property scripts spawn loki processes.
+# tail -60, not -3: the rule failures print before the summary block, so a
+# 3-line capture would show only "moat: X of 9" and hide which rule fired.
+# Exit 2 (no release tag reachable, so the ratchet did not run) is a FAIL here.
+run_check "moat suite (tests/moat/run.sh: nine properties + pending ratchet)" "bash tests/moat/run.sh 2>&1 | tail -60"
+run_check "tests/test-moat-runner.sh (every moat runner rule fires)" "bash tests/test-moat-runner.sh 2>&1 | tail -25"
 
 # ---------------------------------------------------------------------------
 # 9. bun-parity local equivalent (mirrors bun-parity.yml matrix)

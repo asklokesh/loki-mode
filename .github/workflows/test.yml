@@ -149,6 +149,53 @@ jobs:
           LOKI_TEST_SHARD: ${{ matrix.shard }}/4
         run: bash tests/run-all-tests.sh
 
+  # The moat suite: nine product properties, each PROVEN or honestly NOT
+  # PROVEN. A release that fails it does not ship (release.yml required-ci
+  # waits for this whole workflow). Its own job, not a shard: the pending list
+  # is ratcheted against the last release tag, and the shards' depth-1 checkout
+  # has no tags, so the runner would exit 2 ("could not check") there by design.
+  # The toolchain mirrors shell-tests because the property scripts drive loki
+  # on both routes (Bun and bash) and the signing checks import cryptography.
+  moat-suite:
+    name: Moat suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout (full history, so release tags exist for the ratchet)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements-test.txt
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Node.js dependencies
+        run: npm install --no-package-lock
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install loki-ts dependencies
+        working-directory: loki-ts
+        run: bun install
+
+      - name: Run the moat suite
+        run: bash tests/moat/run.sh
+
   helm-lint:
     name: Helm lint
     runs-on: ubuntu-latest

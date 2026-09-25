@@ -921,6 +921,11 @@ run_test "proof md (paste-able receipt, one renderer)" "$SCRIPT_DIR/test-proof-m
 run_test "air-gapped read-only path (egress severed)" "$SCRIPT_DIR/test-airgap-commands.sh"
 run_test "proof phases CLI/API parity (one reader, two surfaces)" "$SCRIPT_DIR/test_cli_phases_parity.sh"
 run_test "web-app has no orphaned modules (reachable from main.tsx)" "$SCRIPT_DIR/test-web-app-no-orphan-components.sh"
+# The moat runner's self-test builds and tags its own throwaway repos, so it is
+# safe in a depth-1 shard. The runner itself (tests/moat/run.sh) is NOT
+# registered here: it ratchets against the last release tag, which a depth-1
+# shard checkout does not have. It runs in its own "Moat suite" job instead.
+run_test "the moat runner enforces every ratchet rule" "$SCRIPT_DIR/test-moat-runner.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 
 # Summary
