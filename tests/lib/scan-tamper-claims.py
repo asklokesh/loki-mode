@@ -24,8 +24,14 @@ import sys
 # user runtime state fires on whatever the user happened to type.
 SKIP_DIRS = {".git", "node_modules", ".loki", "__pycache__", "dist",
              "coverage", ".venv", "venv", "build", ".pytest_cache"}
+# LOKI-10-BUILD-PROMPT.md is the internal operating prompt. Its only mention
+# is inside a "Never do any of these" list that forbids claiming tamper-proof,
+# i.e. the same rule this scanner enforces, phrased as a list item the
+# denial window cannot see ("claim a certification (SOC 2, ...), "tamper-proof",
+# or ..."). It is not a buyer-facing surface.
 SKIP_FILES = {"CHANGELOG.md", "AUDIT-CHAIN-THREAT-MODEL.md",
-              "test-audit-chain-honesty.sh", "scan-tamper-claims.py"}
+              "test-audit-chain-honesty.sh", "scan-tamper-claims.py",
+              "LOKI-10-BUILD-PROMPT.md"}
 
 CLAIM = re.compile(r"tamper[- ]?proof", re.I)
 
