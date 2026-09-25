@@ -615,9 +615,9 @@ ${q1}Secrets, API keys, tokens, env values, and absolute paths have already been
 `),process.stderr.write(`${N.stdout}${N.stderr}
 `),1;let M=N.stdout.trim();return process.stdout.write(`${$5}Shared: ${M}${r}
 `),XB(X,M),0}async function L50($){if(!$)return process.stderr.write(`${p0}Missing proof id.${r} Use 'loki proof list'.
-`),2;let X=e7(E9(),$,"proof.json");if(!J2(X))return process.stderr.write(`${p0}Proof not found: ${$}${r}
+`),64;let X=e7(E9(),$,"proof.json");if(!J2(X))return process.stderr.write(`${p0}Proof not found: ${$}${r}
 `),process.stderr.write(`Use 'loki proof list' to see available proofs.
-`),1;let Q=J50(L1,"autonomy","lib","proof-verify.py");if(!J2(Q))return process.stderr.write(`${p0}Verifier not found (autonomy/lib/proof-verify.py).${r}
+`),66;let Q=J50(L1,"autonomy","lib","proof-verify.py");if(!J2(Q))return process.stderr.write(`${p0}Verifier not found (autonomy/lib/proof-verify.py).${r}
 `),2;let z=process.env.TARGET_DIR||".",Z=await $1(["python3",Q,X,z],{timeoutMs:30000});if(Z.stdout)process.stdout.write(Z.stdout);if(Z.stderr)process.stderr.write(Z.stderr);return Z.exitCode}async function A50($){let X=$[0],Q=$.slice(1);if(X===void 0||X==="help"||X==="--help"||X==="-h")return process.stdout.write(U50),X===void 0?1:0;switch(X){case"list":return H50();case"show":return W50(Q[0]);case"verify":if(Q.some((z)=>z.startsWith("-")))return Xw(X,Q);return L50(Q[0]);case"open":return G50(Q[0]);case"share":return j50(Q);case"badge":return O50(Q[0]);case"md":return M50(Q[0]);default:return Xw(X,Q)}}function Xw($,X){let z=new URL(".",import.meta.url).pathname,Z="";for(let J=0;J<6;J++){let q=`${z}/../autonomy/loki`.replace(/\/+/g,"/");try{if(w5("fs").existsSync(q)){Z=q;break}}catch{}z=`${z}/..`}if(!Z)return process.stderr.write(`${p0}Unknown subcommand: ${$}${r}
 `),process.stderr.write(`Run 'loki proof --help' for usage.
 `),1;let K=zw("bash",[Z,"proof",$,...X],{stdio:"inherit",env:process.env});return typeof K.status==="number"?K.status:1}var U50;var Jw=s(()=>{k1();y8();t7();$w();U50=`${f1}loki proof${r} - inspect and share proof-of-run artifacts
@@ -1338,4 +1338,4 @@ Set LOKI_LEGACY_BASH=1 to force the bash CLI for every command.
 `),2}case"start":{let{runStart:z}=await Promise.resolve().then(() => (_t(),ft));return z(Q)}default:return process.stderr.write(`Unknown command: ${X}
 `),process.stderr.write(vt),2}}PR();process.on("SIGINT",()=>process.exit(130));process.on("SIGTERM",()=>process.exit(143));var J61=await K61(Bun.argv.slice(2));process.exit(J61);
 
-//# debugId=AC927045F41AFFF4B49FE6E10AC82B55
+//# debugId=3C931A7308BCF493875281493EA7283A

@@ -564,17 +564,17 @@ async function shareProof(argv: readonly string[]): Promise<number> {
 // rewrite facts and re-hash); neutral non-forgeability needs the signed record.
 // It is the command `loki own` tells users to run, so it MUST exist on the
 // default (Bun) route, not only the bash fallback.
-// Exit 0 = clean, 1 = tamper/drift, 2 = unusable input.
+// Exit 0 = clean, 1 = tamper/drift, 2 = unusable input, 64 = no id, 66 = not found.
 async function verifyProof(id: string | undefined): Promise<number> {
   if (!id) {
     process.stderr.write(`${RED}Missing proof id.${NC} Use 'loki proof list'.\n`);
-    return 2;
+    return 64; // usage (docs/exit-codes.md); 2 means "could not check"
   }
   const pj = join(proofsDir(), id, "proof.json");
   if (!existsSync(pj)) {
     process.stderr.write(`${RED}Proof not found: ${id}${NC}\n`);
     process.stderr.write("Use 'loki proof list' to see available proofs.\n");
-    return 1;
+    return 66; // input missing; 1 is reserved for tamper/drift
   }
   const verifier = resolve(REPO_ROOT, "autonomy", "lib", "proof-verify.py");
   if (!existsSync(verifier)) {

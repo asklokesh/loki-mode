@@ -104,6 +104,41 @@ case "$(cat "$DOC")" in
     *) bad "the document does not cover budget exhaustion" ;;
 esac
 
+# 7. `loki proof verify`: 64 for a missing id, 66 for an unknown id, on BOTH
+#    routes. Read from the verify arm of cmd_proof and from verifyProof, never
+#    a file-wide grep: the open/share/md arms print the same "Missing proof id"
+#    message with their own codes. The code is the first exit/return after
+#    each message.
+_first_code_after() { # <text> <message> <keyword exit|return>
+    printf '%s\n' "$1" | awk -v m="$2" -v k="$3" '
+        index($0, m) { f = 1; next }
+        f && $1 == k { gsub(/[^0-9].*$/, "", $2); print $2; exit }'
+}
+pv_bash="$(awk '/^cmd_proof\(\) \{/{p=1} p&&/^        verify\)$/{f=1} f{print} f&&/^            ;;$/{exit}' "$LOKI")"
+pv_ts="$(awk '/^async function verifyProof\(/{f=1} f{print} f&&/^}$/{exit}' "$REPO_ROOT/loki-ts/src/commands/proof.ts")"
+_check_proof_verify_codes() { # <route> <body> <keyword>
+    local route="$1" body="$2" kw="$3" got
+    if [ -z "$body" ]; then
+        bad "proof verify ($route): could not locate the verify code path -- it may have moved"
+        return
+    fi
+    got="$(_first_code_after "$body" "Missing proof id" "$kw")"
+    if [ "$got" = "64" ]; then ok "proof verify ($route): missing id exits 64 (usage)"
+    else bad "proof verify ($route): missing id exits '${got}', documented as 64"; fi
+    got="$(_first_code_after "$body" "Proof not found" "$kw")"
+    if [ "$got" = "66" ]; then ok "proof verify ($route): unknown id exits 66 (input missing)"
+    else bad "proof verify ($route): unknown id exits '${got}', documented as 66"; fi
+}
+_check_proof_verify_codes bash "$pv_bash" exit
+_check_proof_verify_codes bun "$pv_ts" return
+# The section alone, so the proof chain table's own 64/66 rows cannot satisfy it.
+pv_doc="$(awk '/^## / { f = (index($0, "loki proof verify") > 0); next } f' "$DOC")"
+if printf '%s\n' "$pv_doc" | grep -q '^| 64 |' && printf '%s\n' "$pv_doc" | grep -q '^| 66 |'; then
+    ok "the document lists 64 and 66 under proof verify"
+else
+    bad "the document does not list 64/66 under proof verify"
+fi
+
 # 6. doctor's measured behavior, restated in the doc, must still hold. Asserted
 #    here too because the doc now tells operators to gate CI on it.
 "$LOKI" doctor >/dev/null 2>&1

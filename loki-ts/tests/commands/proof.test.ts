@@ -245,18 +245,20 @@ describe("loki proof: verify is routed on Bun + parity with bash (F47)", () => {
     expect(help.stdout).toContain("verify");
   });
 
-  it("missing id: both routes exit 2 with the same message", async () => {
+  // Exit contract (docs/exit-codes.md): 64 usage, 66 input missing. These were
+  // 2 and 1, which collided with "could not check" and "tamper/drift".
+  it("missing id: both routes exit 64 (usage) with the same message", async () => {
     const a = await bunRoute(["proof", "verify"]);
     const b = await bashRoute(["proof", "verify"]);
-    expect(a.exitCode).toBe(2);
-    expect(b.exitCode).toBe(2);
+    expect(a.exitCode).toBe(64);
+    expect(b.exitCode).toBe(64);
   });
 
-  it("unknown proof id: both routes exit 1 (not 'Unknown subcommand')", async () => {
+  it("unknown proof id: both routes exit 66 (input missing, not 'Unknown subcommand')", async () => {
     const a = await bunRoute(["proof", "verify", "does-not-exist"]);
     const b = await bashRoute(["proof", "verify", "does-not-exist"]);
-    expect(a.exitCode).toBe(1);
-    expect(b.exitCode).toBe(1);
+    expect(a.exitCode).toBe(66);
+    expect(b.exitCode).toBe(66);
     expect(a.stderr).not.toContain("Unknown subcommand");
     expect(a.stderr).toContain("not found");
   });

@@ -67,6 +67,38 @@ An early draft spec listed `1=BLOCKED, 2=CONCERNS`. That ordering was rejected:
 it is not used anywhere, it has no consumers, and it inverts the
 severity-rises-with-the-code rule that every other command follows.
 
+## `loki proof verify <id>`
+
+Re-checks one Evidence Receipt against the repo (tamper and drift). The same
+codes on the Bun route and the bash route (`LOKI_LEGACY_BASH=1`).
+
+| Code | Meaning |
+|---|---|
+| 0 | Clean: the integrity hash matches and the recorded diff still matches the repo |
+| 1 | Tampered or drifted |
+| 2 | Could not check: the receipt is present but unreadable (malformed JSON), or the verifier itself is missing |
+| 64 | Usage error: no proof id given |
+| 66 | Input missing: no `.loki/proofs/<id>/proof.json` for that id |
+
+64 and 66 are not verdicts. They say the question was never asked, so neither
+one is a pass, and neither one accuses the receipt the way 1 does. Before this
+contract a missing id exited 2 and an unknown id exited 1, which made a typo
+look like "could not check" and a wrong id look like a tampered receipt.
+
+## `loki proof chain [workspace]`
+
+Runs the whole verification chain (`tools/verify-chain.py`) and passes its exit
+code through unchanged.
+
+| Code | Meaning |
+|---|---|
+| 0 | Every stage was checked and passed |
+| 1 | A stage FAILED |
+| 2 | A stage could not be evaluated (UNAVAILABLE outranks FAILED) |
+| 3 | Nothing to check anywhere: zero receipts is not a pass |
+| 64 | Usage error (unknown flag) |
+| 66 | The workspace does not exist |
+
 ## `loki ci`
 
 | Code | Meaning |

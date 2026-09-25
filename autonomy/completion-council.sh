@@ -1937,7 +1937,9 @@ except (json.JSONDecodeError, IOError, KeyError, ValueError):
     print('INCONCLUSIVE:none:true')
     sys.exit(0)
 runner = d.get('runner', 'none')
-passed = d.get('pass', True)
+# No default of True: a results file with no "pass" key recorded no outcome, and
+# an unrecorded outcome is not a pass. None falls to INCONCLUSIVE below.
+passed = d.get('pass')
 status = d.get('status', '')
 #82 (zero-test-file hardening): a runner that ran but executed ZERO real tests
 # (node --test on a *.test.js with no test() calls; jest --passWithNoTests with

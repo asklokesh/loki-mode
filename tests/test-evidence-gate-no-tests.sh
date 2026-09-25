@@ -338,6 +338,27 @@ v="$(jget "$GATE_DETAILS_FILE" tests ok)"
 v="$(jget "$GATE_DETAILS_FILE" tests runner)"
 [ "$v" = "node-test" ] && ok "case8 tests.runner=node-test (real runner label preserved)" || bad "case8 tests.runner=node-test" "got [$v]"
 
+# ===========================================================================
+# Case 9: a real runner label with NO "pass" key at all. The gate used to read
+# d.get('pass', True), so {"runner":"jest"} counted as affirmative green: an
+# unrecorded outcome read as a pass. It must be INCONCLUSIVE (pass-through, not
+# affirmative). Case 2 is the positive control: the same runner WITH pass:true
+# stays affirmative (tests.inconclusive=false), so this probe is not vacuous.
+# ===========================================================================
+echo "Case 9: real runner, missing pass key -> INCONCLUSIVE (unrecorded outcome is not a pass)"
+repo="$(new_repo case9)"
+base="$(grepo "$repo" rev-parse HEAD)"
+add_real_diff "$repo" feature.txt
+mkdir -p "$repo/.loki/quality"
+printf '%s\n' '{"timestamp":"2026-06-16T00:00:00Z","runner":"jest","summary":"no pass key recorded"}' \
+    > "$repo/.loki/quality/test-results.json"
+LOKI_TEST_PROVENANCE=0 run_gate "$repo" "$base"
+if [ "$GATE_RC" -eq 0 ]; then ok "case9 rc=0 (missing key is inconclusive, not a block)"; else bad "case9 rc=0" "got rc=$GATE_RC"; fi
+v="$(jget "$GATE_DETAILS_FILE" tests inconclusive)"
+if [ "$v" = "true" ]; then ok "case9 tests.inconclusive=true (missing pass key is NOT affirmative)"; else bad "case9 tests.inconclusive=true" "got [$v]"; fi
+v="$(jget "$GATE_DETAILS_FILE" tests runner)"
+if [ "$v" = "jest" ]; then ok "case9 tests.runner=jest (the runner label did not route through runner==none)"; else bad "case9 tests.runner=jest" "got [$v]"; fi
+
 # ---------------------------------------------------------------------------
 echo
 echo "Total: $((PASS + FAIL))  Passed: $PASS  Failed: $FAIL"

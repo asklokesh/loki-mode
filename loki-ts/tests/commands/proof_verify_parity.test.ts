@@ -31,8 +31,8 @@
 //       hash mismatch alone, not drift -- the cleanest 1-case to attribute.
 //   2 = UNUSABLE: a malformed-but-PRESENT proof.json (invalid JSON). It must be
 //       present-on-disk: the Bun wrapper has its OWN guard (proof.ts:435-438)
-//       that returns 1 for a TRULY-MISSING proof BEFORE it ever shells to
-//       python. So a missing file gives 1 from the wrapper (proves nothing about
+//       that returns 66 for a TRULY-MISSING proof BEFORE it ever shells to
+//       python. So a missing file gives 66 from the wrapper (proves nothing about
 //       the verifier); only a present-but-malformed file reaches python and
 //       returns 2 (ProofLoadError -> _cli returns 2). This divergence is the
 //       finding documented in the slice return notes.
@@ -244,8 +244,8 @@ describe("loki proof verify: Bun-route exit-code parity (Slice C / C2)", () => {
   });
 
   it("UNUSABLE input (malformed-but-present proof.json) -> exit 2", async () => {
-    // The Bun wrapper guards a TRULY-MISSING proof with its own `return 1`
-    // (proof.ts:435-438) BEFORE shelling to python, so a missing file gives 1,
+    // The Bun wrapper guards a TRULY-MISSING proof with its own `return 66`
+    // (proof.ts:435-438) BEFORE shelling to python, so a missing file gives 66,
     // not 2. To exercise the verifier's 2 (ProofLoadError on malformed JSON) we
     // must write a present-but-invalid proof.json. This is the documented
     // wrapper-vs-verifier divergence for the missing-file case.
@@ -259,15 +259,20 @@ describe("loki proof verify: Bun-route exit-code parity (Slice C / C2)", () => {
     expect(code).toBe(2);
   });
 
-  it("missing proof -> exit 1 from the Bun wrapper (documented divergence)", async () => {
+  it("missing proof -> exit 66 from the Bun wrapper (input missing)", async () => {
     // Pins the wrapper-level behavior that forces the malformed-file choice for
-    // the 2-case above: a truly-missing proof short-circuits to 1 in the Bun
-    // wrapper and never reaches the python verifier (which would say 2). This is
-    // a real parity finding, not a bug -- both the bash and Bun front-ends treat
-    // "no such proof id" as a user-facing not-found (1), reserving 2 for an
-    // input that is present but unusable.
+    // the 2-case above: a truly-missing proof short-circuits in the Bun wrapper
+    // and never reaches the python verifier (which would say 2). Both the bash
+    // and Bun front-ends report "no such proof id" as 66 (input missing, per
+    // docs/exit-codes.md), keeping 1 for tamper/drift and 2 for an input that is
+    // present but unusable. It was 1, which read as a tampered receipt.
     const code = await runProof(["verify", "run-parity-does-not-exist"]);
-    expect(code).toBe(1);
+    expect(code).toBe(66);
+  });
+
+  it("missing proof id -> exit 64 (usage)", async () => {
+    const code = await runProof(["verify"]);
+    expect(code).toBe(64);
   });
 });
 

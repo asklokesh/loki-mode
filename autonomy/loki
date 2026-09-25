@@ -36534,13 +36534,13 @@ PYEOF
             local id="${1:-}"
             if [ -z "$id" ]; then
                 echo -e "${RED}Missing proof id.${NC} Use 'loki proof list'."
-                exit 2
+                exit 64  # usage (docs/exit-codes.md); 2 means "could not check"
             fi
             local pj="${proofs_dir}/${id}/proof.json"
             if [ ! -f "$pj" ]; then
                 echo -e "${RED}Proof not found: ${id}${NC}"
                 echo "Use 'loki proof list' to see available proofs."
-                exit 1
+                exit 66  # input missing; 1 is reserved for tamper/drift
             fi
             # The verifier ships beside the generator under autonomy/lib/ (same
             # dir resolution run.sh uses for proof-generator.py).
