@@ -829,7 +829,7 @@ loki_remote_attestation_status() {
 import json, sys, hashlib, urllib.request
 sys.path.insert(0, sys.argv[3])
 try:
-    from receipt_jwt import verify_attestation
+    from receipt_jwt import verify_attestation, _CRYPTO_AVAILABLE
 except ImportError:
     sys.exit(1)          # -> "" : cannot check, never a verdict
 proof = json.load(open(sys.argv[1]))
@@ -842,6 +842,11 @@ try:
         jwks = json.loads(r.read())
 except Exception:
     sys.exit(1)          # unreachable JWKS is UNCHECKED, not a failure
+# Without `cryptography`, verify_attestation returns False and this would print
+# "bad" -- a TAMPERED accusation for a check that never ran. A missing verifier
+# dependency is UNCHECKED. Same guard in loki_proof_attestation_check below.
+if not _CRYPTO_AVAILABLE:
+    sys.exit(1)
 ok, claims = verify_attestation(tok, jwks)
 if not ok:
     print("bad"); sys.exit(0)
@@ -884,7 +889,7 @@ loki_proof_attestation_check() {
 import json, sys, os, hashlib, urllib.request
 sys.path.insert(0, sys.argv[3])
 try:
-    from receipt_jwt import verify_attestation
+    from receipt_jwt import verify_attestation, _CRYPTO_AVAILABLE
 except ImportError:
     sys.exit(1)                      # "" : cannot check
 try:
@@ -907,6 +912,12 @@ try:
             jwks = json.loads(r.read())
 except Exception:
     sys.exit(1)                      # "" : unreachable/unreadable, no verdict
+# receipt_jwt imports without `cryptography`, and verify_attestation then
+# returns False, which would print "bad": a FAILED verdict for a check that
+# never ran. A missing verifier dependency is NOT CHECKED. Same guard in
+# loki_remote_attestation_status above -- change both.
+if not _CRYPTO_AVAILABLE:
+    sys.exit(1)                      # "" : cannot check
 ok, claims = verify_attestation(tok, jwks)
 if not ok:
     print("bad"); sys.exit(0)
@@ -36208,7 +36219,9 @@ cmd_proof() {
             echo "  --jwks <url|file>    Also check the receipt's attestation against a published"
             echo "                       key set. Accepts a server URL or a local jwks.json, so a"
             echo "                       third party can check WHO produced a receipt with no API"
-            echo "                       token, no gpg key import, and no network."
+            echo "                       token, no gpg key import, and no network. Exit 1 if the"
+            echo "                       token fails or the receipt is unsigned; 2 if it could"
+            echo "                       not be checked (unreadable key set, missing dependency)."
             echo "  md <id>              Paste-able Markdown for a PR comment or Slack
   open <id>            Open .loki/proofs/<id>/index.html in a browser"
             echo "  share <id>           Publish the proof page as a GitHub Gist (opt-in)"
@@ -36569,16 +36582,25 @@ PYEOF
                         _pv_rc=1
                         ;;
                     none)
+                        # Exit 1: the caller supplied a key set and asked who
+                        # signed this receipt; it is unsigned, so it is NOT
+                        # verified. Exiting 0 here let a stripped signature pass
+                        # any CI step that asked for provenance.
                         echo -e "${YELLOW}attestation: ABSENT -- this receipt carries no attestation.${NC}" >&2
                         echo "  Nothing was checked against ${_pv_jwks}. The receipt may still be" >&2
                         echo "  gpg-signed; this says only that it has no JWKS attestation." >&2
+                        echo "  Not verified: a key set was supplied, but the receipt is unsigned (exit 1)." >&2
+                        _pv_rc=1
                         ;;
                     *)
                         # Unreachable key set, unreadable file, missing python
                         # deps. NOT a verdict: an absent measurement must never
-                        # read as either a pass or an accusation.
-                        echo -e "${YELLOW}attestation: NOT CHECKED -- could not read a key set from ${_pv_jwks}.${NC}" >&2
-                        echo "  This is not a failure of the receipt. Nothing was proven either way." >&2
+                        # read as either a pass or an accusation, so it exits 2
+                        # (could not check). A tamper/drift 1 from the base
+                        # verifier is a finding and is never softened to 2.
+                        echo -e "${YELLOW}attestation: NOT CHECKED -- could not check against ${_pv_jwks} (key set unreadable, or verifier dependency missing).${NC}" >&2
+                        echo "  This is not a failure of the receipt. Nothing was proven either way (exit 2)." >&2
+                        if [ "$_pv_rc" -eq 0 ]; then _pv_rc=2; fi
                         ;;
                 esac
             fi

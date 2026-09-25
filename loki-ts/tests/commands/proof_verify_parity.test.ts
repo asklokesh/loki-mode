@@ -270,3 +270,109 @@ describe("loki proof verify: Bun-route exit-code parity (Slice C / C2)", () => {
     expect(code).toBe(1);
   });
 });
+
+// --- Flags on the Bun route (--jwks, --human) --------------------------------
+// runProof used to hand verifyProof only rest[0], so "verify <id> --jwks f"
+// silently dropped the key set and exited 0, and "verify --jwks f <id>" read the
+// flag as the proof id. Flagged invocations now delegate to the bash CLI, which
+// owns flag parsing and the attestation check, so both routes give one answer.
+
+const BUN_CLI = resolve(REPO_ROOT, "loki-ts", "src", "cli.ts");
+const HAS_CRYPTO =
+  Bun.spawnSync(["python3", "-c", "import cryptography"]).exitCode === 0;
+
+async function cleanProof(id: string): Promise<string> {
+  const setup = await run(["sh", "-c", gitCommitEmptyRepo(repoScratch)], {
+    timeoutMs: 30000,
+  });
+  expect(setup.exitCode).toBe(0);
+  const head = (
+    await run(["git", "-C", repoScratch, "rev-parse", "HEAD"], { timeoutMs: 30000 })
+  ).stdout.trim();
+  const dir = join(lokiScratch, "proofs", id);
+  mkdirSync(dir, { recursive: true });
+  const pj = join(dir, "proof.json");
+  await writeProofWithHash(pj, head, head);
+  return pj;
+}
+
+// Attest proof.json with a fresh Ed25519 key over its recorded integrity hash,
+// as proof-generator.py does, and write the matching key set plus an
+// attacker's key set next to the proof store.
+async function signProof(pj: string): Promise<{ good: string; evil: string }> {
+  const good = join(lokiScratch, "jwks.json");
+  const evil = join(lokiScratch, "evil-jwks.json");
+  const py = `
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import receipt_jwt as rj
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+pj, good, evil = sys.argv[2], sys.argv[3], sys.argv[4]
+k = Ed25519PrivateKey.generate()
+kid = rj.compute_kid(k.public_key())
+p = json.load(open(pj))
+p["verification"]["attestation"] = rj.sign_attestation(
+    k, kid, job_id="j", run_id=p["run_id"], receipt_hash=p["verification"]["hash"])
+p["verification"]["attestation_kid"] = kid
+json.dump(p, open(pj, "w"), indent=2)
+json.dump(rj.build_jwks(private_key=k), open(good, "w"))
+json.dump(rj.build_jwks(private_key=Ed25519PrivateKey.generate()), open(evil, "w"))
+`;
+  const r = await run(
+    ["python3", "-c", py, resolve(REPO_ROOT, "autonomy"), pj, good, evil],
+    { timeoutMs: 30000 },
+  );
+  if (r.exitCode !== 0) throw new Error(`signProof failed: ${r.stderr}`);
+  return { good, evil };
+}
+
+function bunCli(argv: string[]) {
+  return run(["bun", BUN_CLI, ...argv], {
+    env: { LOKI_DIR: lokiScratch, TARGET_DIR: repoScratch, NO_COLOR: "1" },
+    timeoutMs: 30000,
+  });
+}
+
+describe("loki proof verify: flags reach the verifier on the Bun route", () => {
+  it("--human is honored before or after the id (was: flag read as the id -> 1)", async () => {
+    await cleanProof("run-flag-human");
+    expect(await runProof(["verify", "--human", "run-flag-human"])).toBe(0);
+    expect(await runProof(["verify", "run-flag-human", "--human"])).toBe(0);
+  });
+
+  it("an unsigned proof with --jwks exits 1 in any order (was: key set dropped -> 0)", async () => {
+    // ABSENT is decided from the receipt before the key set is read, so this
+    // needs no key set on disk and no cryptography module.
+    await cleanProof("run-flag-unsigned");
+    const ks = join(lokiScratch, "no-such-jwks.json");
+    expect(await runProof(["verify", "run-flag-unsigned", "--jwks", ks])).toBe(1);
+    expect(await runProof(["verify", "--jwks", ks, "run-flag-unsigned"])).toBe(1);
+    expect(await runProof(["verify", `--jwks=${ks}`, "run-flag-unsigned"])).toBe(1);
+    // The 1 must come from the attestation rule, not from a not-found id.
+    const r = await bunCli(["proof", "verify", "--jwks", ks, "run-flag-unsigned"]);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain("attestation: ABSENT");
+  });
+
+  it.skipIf(!HAS_CRYPTO)("a signed proof verifies against its key set in either order", async () => {
+    const pj = await cleanProof("run-flag-signed");
+    const { good } = await signProof(pj);
+    for (const argv of [
+      ["proof", "verify", "run-flag-signed", "--jwks", good],
+      ["proof", "verify", "--jwks", good, "run-flag-signed"],
+    ]) {
+      const r = await bunCli(argv);
+      expect(r.exitCode).toBe(0);
+      expect(r.stderr).toContain("attestation: VERIFIED");
+    }
+  });
+
+  it.skipIf(!HAS_CRYPTO)("a signed proof checked against an attacker key set exits 1, never VERIFIED", async () => {
+    const pj = await cleanProof("run-flag-evil");
+    const { evil } = await signProof(pj);
+    const r = await bunCli(["proof", "verify", "run-flag-evil", "--jwks", evil]);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toContain("attestation: FAILED");
+    expect(r.stderr).not.toContain("attestation: VERIFIED");
+  });
+});

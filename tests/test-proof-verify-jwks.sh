@@ -172,6 +172,112 @@ else
   bad "the attestation verdict contaminated stdout -- machine consumers would break"
 fi
 
+# --- 8. EXIT CODES ------------------------------------------------------------
+# Every call above ends in `|| true`, so no exit code was pinned. The rule:
+# VERIFIED 0 (only if the base verifier passed too), FAILED 1, ABSENT 1 (a key
+# set was supplied and the receipt is unsigned: a stripped signature must not
+# pass a CI step that asked for provenance; it used to exit 0), NOT CHECKED 2
+# (could not check; it used to exit 0), and NOT CHECKED never softens a
+# drift 1. These need a receipt the base verifier ACCEPTS, so the attestation
+# rule is the only thing that can move the code: a real generator run in a
+# real repo, with TARGET_DIR explicit.
+R="$W/repo"
+g() { git -C "$R" -c user.email=t@example.invalid -c user.name=t \
+        -c commit.gpgsign=false -c core.hooksPath=/dev/null "$@"; }
+mkdir -p "$R"
+python3 - "$W" <<'PY'
+import sys
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives import serialization
+open(sys.argv[1] + "/s.pem", "wb").write(Ed25519PrivateKey.generate().private_bytes(
+    encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.PKCS8,
+    encryption_algorithm=serialization.NoEncryption()))
+PY
+python3 - "$W" "$REPO_ROOT" <<'PY'
+import sys, json
+w, root = sys.argv[1], sys.argv[2]
+sys.path.insert(0, root + "/autonomy")
+import receipt_jwt as rj
+from cryptography.hazmat.primitives import serialization
+k = serialization.load_pem_private_key(open(w + "/s.pem", "rb").read(), password=None)
+json.dump(rj.build_jwks(private_key=k), open(w + "/gjwks.json", "w"))
+PY
+{
+  g init -q && printf 'one\n' >"$R/a.txt" && g add a.txt && g commit -qm base \
+    && _base="$(g rev-parse HEAD)" && printf 'two\n' >>"$R/a.txt" \
+    && g add a.txt && g commit -qm change && mkdir -p "$R/.loki"
+} >/dev/null 2>&1
+(cd "$R" && _LOKI_RUN_START_SHA="${_base:-}" LOKI_RECEIPT_SIGNING_KEY_FILE="$W/s.pem" \
+  python3 "$REPO_ROOT/autonomy/lib/proof-generator.py" --loki-dir "$R/.loki" \
+  --out-dir "$R/.loki/proofs/g1" --run-id g1 --quiet) >/dev/null 2>&1
+mkdir -p "$R/.loki/proofs/g1strip"
+python3 -c "
+import json; p=json.load(open('$R/.loki/proofs/g1/proof.json'))
+p['verification'].pop('attestation', None)
+json.dump(p, open('$R/.loki/proofs/g1strip/proof.json', 'w'))" 2>/dev/null
+
+# _rc <repo> <args...>: exit code of `loki proof verify`, stderr in $W/rc.err
+_rc() {
+  local repo="$1"; shift
+  LOKI_DIR="$repo/.loki" TARGET_DIR="$repo" bash "$LOKI_BIN" proof verify "$@" \
+    >/dev/null 2>"$W/rc.err"
+  echo "$?"
+}
+_expect() {  # <want> <got> <label>
+  if [ "$2" = "$1" ]; then ok "$3 (exit $2)"; else bad "$3: exit $2, want $1"; fi
+}
+
+# The control that makes every code below attributable to the attestation rule.
+_expect 0 "$(_rc "$R" g1)" "control: the base verifier accepts the fixture receipt"
+_expect 0 "$(_rc "$R" g1 --jwks "$W/gjwks.json")" "VERIFIED exits 0"
+_expect 1 "$(_rc "$R" g1 --jwks "$W/evil.json")" "FAILED (wrong key set) exits 1"
+_expect 1 "$(_rc "$R" g1strip --jwks "$W/gjwks.json")" "ABSENT (stripped signature) exits 1"
+grep -q "attestation: ABSENT" "$W/rc.err" \
+  || bad "the ABSENT exit was not produced by the ABSENT branch"
+_expect 2 "$(_rc "$R" g1 --jwks "$W/missing.json")" "NOT CHECKED (missing key set) exits 2"
+
+# A missing verifier dependency must be NOT CHECKED, not FAILED. receipt_jwt
+# imports without `cryptography` and verify_attestation then returns False,
+# which read as FAILED (an accusation for a check that never ran). A shadow
+# package that raises ImportError simulates the missing dependency.
+mkdir -p "$W/shadow/cryptography"
+echo 'raise ImportError("shadowed by test-proof-verify-jwks.sh")' \
+  >"$W/shadow/cryptography/__init__.py"
+if PYTHONPATH="$W/shadow" python3 -c "import cryptography" 2>/dev/null; then
+  bad "harness: the shadow did not hide cryptography; dependency case inconclusive"
+else
+  _expect 2 "$(PYTHONPATH="$W/shadow" _rc "$R" g1 --jwks "$W/gjwks.json")" \
+    "NOT CHECKED (verifier dependency missing) exits 2"
+  if grep -q "attestation: FAILED" "$W/rc.err"; then
+    bad "a missing dependency was reported as FAILED"
+  fi
+fi
+
+# NOT CHECKED must never soften a drift finding into 'could not check'.
+cp -R "$R" "$W/drifted" && printf 'edited after sealing\n' >>"$W/drifted/a.txt"
+_expect 1 "$(_rc "$W/drifted" g1 --jwks "$W/missing.json")" "drift + NOT CHECKED keeps the drift exit"
+
+# The remote copy of the check carries the same dependency guard (the two copies
+# must not diverge). file:// reaches its "<url>/.well-known/jwks.json" fetch
+# with no server.
+if command -v jq >/dev/null 2>&1; then
+  mkdir -p "$W/srv/.well-known" && cp "$W/gjwks.json" "$W/srv/.well-known/jwks.json"
+  sed -n '/^loki_remote_attestation_status() {/,/^}/p' "$LOKI_BIN" >"$W/remote.sh"
+  _remote() {
+    _LOKI_SCRIPT_DIR="$REPO_ROOT/autonomy" bash -c "
+      source '$W/remote.sh'; loki_remote_attestation_status '$R/.loki/proofs/g1/proof.json' 'file://$W/srv'"
+  }
+  _r_ok="$(_remote)"
+  _r_dep="$(PYTHONPATH="$W/shadow" _remote)"
+  if [ "$_r_ok" = "ok" ] && [ -z "$_r_dep" ]; then
+    ok "remote check: 'ok' with cryptography, no verdict without it (not TAMPERED)"
+  else
+    bad "remote check: got '$_r_ok' with cryptography and '$_r_dep' without (want 'ok' and '')"
+  fi
+else
+  echo "  SKIP: jq not installed -- remote dependency guard not measured"
+fi
+
 echo ""
 echo "  Passed: $PASS   Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

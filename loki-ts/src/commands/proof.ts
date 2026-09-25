@@ -41,6 +41,7 @@ Subcommands:
   list                 List proof-of-run artifacts in .loki/proofs/
   show <id>            Pretty-print .loki/proofs/<id>/proof.json
   verify <id>          Re-check a receipt against your code (tamper + drift)
+                       [--jwks <url|file>] also checks its attestation; [--human]
   open <id>            Open .loki/proofs/<id>/index.html in a browser
   share <id>           Publish the proof page as a GitHub Gist (opt-in)
   md <id>              Paste-able Markdown for a PR comment or Slack
@@ -605,6 +606,11 @@ export async function runProof(argv: readonly string[]): Promise<number> {
     case "show":
       return showProof(rest[0]);
     case "verify":
+      // Any flag (--jwks, --human, in any position) goes to the bash CLI,
+      // which owns flag parsing and the attestation check. verifyProof takes
+      // only an id: before this, "verify <id> --jwks f" silently dropped the
+      // key set and exited 0, and "verify --jwks f <id>" read the flag as the id.
+      if (rest.some((a) => a.startsWith("-"))) return proofFallthroughToBash(sub, rest);
       return verifyProof(rest[0]);
     case "open":
       return openProof(rest[0]);
@@ -649,8 +655,11 @@ function proofFallthroughToBash(sub: string, rest: string[]): number {
     process.stderr.write("Run 'loki proof --help' for usage.\n");
     return 1;
   }
+  // env is explicit: Bun's spawnSync does not pass on runtime edits to
+  // process.env (LOKI_DIR / TARGET_DIR set in-process would be lost).
   const r = spawnSync("bash", [bashCli, "proof", sub, ...rest], {
     stdio: "inherit",
+    env: process.env,
   });
   return typeof r.status === "number" ? r.status : 1;
 }
