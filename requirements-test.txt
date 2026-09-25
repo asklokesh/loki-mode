@@ -17,3 +17,8 @@ aiosqlite
 # and assert nothing when this module is absent, so an unlisted dependency is a
 # silently unmeasured trust core. Same floor as web-app/requirements.txt.
 cryptography>=41.0.0
+# The moat suite's Rule of Two scanner (tests/moat/p9-rule-of-two.sh) parses the
+# workflow YAML with PyYAML. Measured 2026-09-25 in a clean venv built from this
+# file alone: without it three P9 cases FAIL as "prerequisite missing" instead
+# of measuring the workflows.
+pyyaml

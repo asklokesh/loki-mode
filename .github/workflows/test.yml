@@ -152,7 +152,8 @@ jobs:
   # The moat suite: nine product properties, each PROVEN or honestly NOT
   # PROVEN. A release that fails it does not ship (release.yml required-ci
   # waits for this whole workflow). Its own job, not a shard: the pending list
-  # is ratcheted against the last release tag, and the shards' depth-1 checkout
+  # and the case registry are ratcheted against the last release tag, and the
+  # shards' depth-1 checkout
   # has no tags, so the runner would exit 2 ("could not check") there by design.
   # The toolchain mirrors shell-tests because the property scripts drive loki
   # on both routes (Bun and bash) and the signing checks import cryptography.
@@ -192,6 +193,14 @@ jobs:
       - name: Install loki-ts dependencies
         working-directory: loki-ts
         run: bun install
+
+      # P7's two route cases parse client paths with the TypeScript AST from
+      # web-app/node_modules/typescript. Without it they FAIL as "prerequisite
+      # missing" and never measure the routes. Measured 2026-09-25: 2s with a
+      # cold npm cache (254 packages).
+      - name: Install web-app dependencies (TypeScript for P7)
+        working-directory: web-app
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Run the moat suite
         run: bash tests/moat/run.sh

@@ -5,16 +5,25 @@
 # Runs every property script tests/moat/p<N>-<slug>.sh (exactly one for each of
 # P1..P9), parses their "CASE <ID> PASS|FAIL <description>" lines, and fails
 # the suite on anything that could let a skipped or regressed check read as a
-# pass: a crash, a script with zero cases, a malformed or duplicate case, a case
-# filed under the wrong property, a FAIL that is not pending, a PASS that still
-# is, or a pending ID nobody emits.
+# pass: a crash, a hang, a script with zero cases, a malformed or duplicate
+# case, a case filed under the wrong property, a FAIL that is not pending, a
+# PASS that still is, a pending ID nobody emits, a registered ID nobody emits,
+# or an emitted ID nobody registered.
 #
-# tests/moat/pending.txt lists the cases allowed to FAIL today. THE RATCHET: it
-# may only shrink relative to the last release tag, so nothing can be parked
-# there to buy a green run.
+# tests/moat/cases.txt registers every case ID the suite must emit. A case that
+# stops being emitted as a valid stdout CASE line (deleted, renamed, indented,
+# sent to stderr) fails as UNEMITTED, and a new case must be registered.
+# tests/moat/pending.txt lists the cases allowed to FAIL today.
+#
+# THE RATCHETS, both against the newest release tag reachable from HEAD that
+# does not point at HEAD itself: pending.txt may only shrink and cases.txt may
+# only grow, so nothing can be parked as pending, and no case can be deleted,
+# to buy a green run. Baselines are always read from tests/moat/pending.txt and
+# tests/moat/cases.txt at the tag, so moving this directory cannot reset them.
 #
 # Exit: 0 no rule failed, 1 a rule failed, 2 could not check (no release tag
-# reachable). A definite failure (1) wins over could-not-check (2).
+# reachable). A definite failure (1) wins over could-not-check (2). Exit 0 is
+# not "the moat is proven": only 9 of 9 properties proven is.
 # Self-test: tests/test-moat-runner.sh.
 #
 # Written for bash 3.2 (macOS /bin/bash): no associative arrays, no mapfile,
@@ -26,9 +35,25 @@ export LC_ALL=C
 # still cannot phone home or wait on an update check under the gate.
 export LOKI_TELEMETRY_DISABLED=true DO_NOT_TRACK=1 LOKI_NO_UPDATE_CHECK=1 CI=true \
   LOKI_DELEGATE_PR=0 LOKI_DASHBOARD=false
+# Route and fallback selectors inherited from the caller's shell would silently
+# move every unmarked call onto one route. A script that needs a route sets it
+# per call.
+unset LOKI_LEGACY_BASH LOKI_SDK_MODE LOKI_SDK_LOOP P1_FORCE_EGRESS_FALLBACK
+# A git hook exports GIT_DIR (local-ci runs from pre-push). Inherited, it makes
+# git take the current directory as the work tree top, so the ratchets would
+# look for their baselines in the wrong place, and property scripts' git calls
+# would land in the caller's repo. git finds the repo from this file instead.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES
 
-MOAT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Seconds one property script may run before it is killed and fails as TIMEOUT.
+# Measured 2026-09-25: each script takes 1-13s. No env override on purpose.
+MOAT_SCRIPT_TIMEOUT=300
+
+# pwd -P: git reports physical paths, and macOS $TMPDIR sits behind a symlink.
+MOAT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 PENDING="$MOAT_DIR/pending.txt"
+CASES="$MOAT_DIR/cases.txt"
 W="$(mktemp -d "${TMPDIR:-/tmp}/moat-run.XXXXXX")" || { echo "moat: cannot create a temp dir" >&2; exit 2; }
 trap 'rm -rf "$W"' EXIT
 
@@ -45,6 +70,22 @@ fail() {
 }
 # prop_of ID: the property number an ID belongs to (P3.foo -> 3), 0 if none.
 prop_of() { case "$1" in P[1-9].*) echo "${1:1:1}" ;; *) echo 0 ;; esac; }
+# list_ids FILE: the IDs of a pending or registry file (comments and blank
+# lines skipped), sorted and unique.
+list_ids() { awk '/^[ \t]*#/ || NF == 0 {next} {print $1}' "$1" | sort -u; }
+
+# kill_tree PID SIG: freeze PID so it cannot fork, signal its descendants
+# depth-first, then PID, then thaw it so a pending TERM is delivered (a killed
+# property script still runs its EXIT trap and removes its temp dir).
+# ponytail: follows live parent links, so a child that already re-parented
+# (daemonized) escapes; without pgrep only PID itself is signalled.
+kill_tree() {
+  local kid
+  kill -STOP "$1" 2> /dev/null || return 0
+  for kid in $(pgrep -P "$1" 2> /dev/null); do kill_tree "$kid" "$2"; done
+  kill "-$2" "$1" 2> /dev/null
+  kill -CONT "$1" 2> /dev/null
+}
 
 # --- 1. discover: exactly one script per property -----------------------------
 for f in "$MOAT_DIR"/p[0-9]*-*.sh; do
@@ -71,8 +112,23 @@ for n in 1 2 3 4 5 6 7 8 9; do
   # property script owns its own temp dir by contract.
   (
     s=$(date +%s)
-    bash "$MOAT_DIR/$(cat "$W/p$n.file")" > "$W/p$n.out" 2> "$W/p$n.err" < /dev/null
+    bash "$MOAT_DIR/$(cat "$W/p$n.file")" > "$W/p$n.out" 2> "$W/p$n.err" < /dev/null &
+    pid=$!
+    # Watchdog: a hung script must not hang the suite. It polls in 1s steps
+    # and is killed as soon as the script ends, and it writes to /dev/null, so
+    # it never outlives the script holding the caller's output pipe open.
+    (
+      while [ $(( $(date +%s) - s )) -lt "$MOAT_SCRIPT_TIMEOUT" ]; do sleep 1; done
+      : > "$W/p$n.timeout"
+      kill_tree "$pid" TERM
+      sleep 5
+      kill_tree "$pid" KILL
+    ) > /dev/null 2>&1 < /dev/null &
+    wd=$!
+    wait "$pid" 2> /dev/null
     rc=$?
+    kill "$wd" 2> /dev/null
+    wait "$wd" 2> /dev/null
     echo "$rc $(( $(date +%s) - s ))" > "$W/p$n.rc"
   ) &
 done
@@ -106,7 +162,13 @@ for n in 1 2 3 4 5 6 7 8 9; do
     echo "$id $status" >> "$W/cases"
   done < "$W/p$n.valid"
 
-  [ "$rc" = 0 ] || fail "$n" "CRASH $base: exited $rc (a property script exits 0 whatever its cases say)"
+  # The lines a hung script printed before it was killed still count above;
+  # the cases it never reached fail as UNEMITTED below.
+  if [ -e "$W/p$n.timeout" ]; then
+    fail "$n" "TIMEOUT $base: still running after ${MOAT_SCRIPT_TIMEOUT}s, killed (a hung check is not a pass)"
+  elif [ "$rc" != 0 ]; then
+    fail "$n" "CRASH $base: exited $rc (a property script exits 0 whatever its cases say)"
+  fi
   [ "$count" -gt 0 ] || fail "$n" "VACUOUS $base: emitted zero CASE lines"
 
   # Diagnostics only where there is something to diagnose, and never on stdout.
@@ -125,9 +187,6 @@ awk '$2 == "PASS" {print $1}' "$W/cases" | sort -u > "$W/pass.ids"
 awk '{print $1}' "$W/cases" | sort -u > "$W/all.ids"
 
 # --- 3. pending list ----------------------------------------------------------
-# pending_ids FILE: the IDs of a pending file (comments and blank lines skipped).
-pending_ids() { awk '/^[ \t]*#/ || NF == 0 {next} {print $1}' "$1" | sort -u; }
-
 if [ -f "$PENDING" ]; then
   awk -v re="^$ID_RE\$" '
     /^[ \t]*#/ || NF == 0 {next}
@@ -136,7 +195,7 @@ if [ -f "$PENDING" ]; then
   while IFS= read -r line; do
     fail 0 "MALFORMED PENDING line $line (want: <ID> <milestone> <reason...>)"
   done < "$W/pending.bad"
-  pending_ids "$PENDING" > "$W/pending.ids"
+  list_ids "$PENDING" > "$W/pending.ids"
   awk '/^[ \t]*#/ || NF == 0 {next} {print $1}' "$PENDING" | sort | uniq -d > "$W/pending.dups"
   while read -r id; do
     fail "$(prop_of "$id")" "DUPLICATE PENDING $id: listed more than once in tests/moat/pending.txt"
@@ -156,36 +215,111 @@ while read -r id; do
   fail "$(prop_of "$id")" "VANISHED $id: listed in tests/moat/pending.txt but no script emitted it"
 done < <(comm -23 "$W/pending.ids" "$W/all.ids")
 
-# --- 4. the ratchet: the pending list may only shrink --------------------------
+# --- 4. the case registry -------------------------------------------------------
+if [ -f "$CASES" ]; then
+  awk -v re="^$ID_RE\$" '/^[ \t]*#/ || NF == 0 {next} !($1 ~ re && NF == 1) {print NR ": " $0}' \
+    "$CASES" > "$W/registry.bad"
+  while IFS= read -r line; do
+    fail 0 "MALFORMED REGISTRY line $line (want: one case ID per line)"
+  done < "$W/registry.bad"
+  list_ids "$CASES" > "$W/registry.ids"
+  awk '/^[ \t]*#/ || NF == 0 {next} {print $1}' "$CASES" | sort | uniq -d > "$W/registry.dups"
+  while read -r id; do
+    fail "$(prop_of "$id")" "DUPLICATE REGISTRY $id: listed more than once in tests/moat/cases.txt"
+  done < "$W/registry.dups"
+else
+  fail 0 "MISSING tests/moat/cases.txt (the registry of case IDs the suite must emit; create it)"
+  : > "$W/registry.ids"
+fi
+
+while read -r id; do
+  fail "$(prop_of "$id")" "UNEMITTED $id: registered in tests/moat/cases.txt but no script printed a valid CASE line for it on stdout"
+done < <(comm -23 "$W/registry.ids" "$W/all.ids")
+while read -r id; do
+  fail "$(prop_of "$id")" "UNREGISTERED $id: emitted but not in tests/moat/cases.txt (register it)"
+done < <(comm -13 "$W/registry.ids" "$W/all.ids")
+
+# --- 5. the ratchets: pending may only shrink, the registry may only grow --------
+# The baseline tag excludes tags that point at HEAD: a tagged release commit is
+# checked against the release before it, never against its own lists (which
+# would always pass). Excluding HEAD's tags, rather than describing HEAD^, keeps
+# the same ancestor walk (every parent of a merge), and a lone tagged root
+# commit lands in could-not-check with no special case.
+# ponytail: a dirty tree on a tagged HEAD is also checked against the previous
+# release, so an uncommitted re-park there is caught once it is committed.
 # git runs against the repo holding THIS file, so a copy of run.sh in another
 # repo (the self-test) ratchets against that repo's tags.
 COULD_NOT_CHECK=0
-if ! tag="$(git -C "$MOAT_DIR" describe --tags --abbrev=0 --match 'v[0-9]*' HEAD 2> "$W/git.err")"; then
+could_not_check() {
   COULD_NOT_CHECK=1
-  echo "could not check: no release tag reachable; fetch tags"
+  echo "could not check: $1"
   sed 's/^/[git] /' "$W/git.err" >&2
-# ls-tree, not cat-file -e: an empty listing means the file is absent at the
-# tag (bootstrap), while a failed command means the tree could not be read,
-# which must never be mistaken for a bootstrap.
-elif ! at_tag="$(git -C "$MOAT_DIR" ls-tree --name-only "$tag" -- pending.txt 2> "$W/git.err")"; then
-  COULD_NOT_CHECK=1
-  echo "could not check: cannot read the tree at $tag"
-  sed 's/^/[git] /' "$W/git.err" >&2
-elif [ -z "$at_tag" ]; then
-  echo "ratchet: bootstrap, no baseline at $tag"
-elif ! git -C "$MOAT_DIR" show "$tag:./pending.txt" > "$W/baseline.txt" 2> "$W/git.err"; then
-  COULD_NOT_CHECK=1
-  echo "could not check: cannot read tests/moat/pending.txt at $tag"
-  sed 's/^/[git] /' "$W/git.err" >&2
+}
+
+# baseline_ids NAME: the IDs of tests/moat/NAME at $tag, into $W/NAME.base.
+# Returns 0 read, 1 bootstrap (absent at the tag), 2 could not check.
+baseline_ids() {
+  local at
+  # ls-tree, not cat-file -e: an empty listing means the file is absent at the
+  # tag (bootstrap), while a failed command means the tree could not be read,
+  # which must never be mistaken for a bootstrap.
+  if ! at="$(git -C "$top" ls-tree --name-only "$tag" -- "tests/moat/$1" 2> "$W/git.err")"; then
+    could_not_check "cannot read the tree at $tag for tests/moat/$1"
+    return 2
+  fi
+  [ -n "$at" ] || return 1
+  if ! git -C "$top" show "$tag:tests/moat/$1" > "$W/$1.base.txt" 2> "$W/git.err"; then
+    could_not_check "cannot read tests/moat/$1 at $tag"
+    return 2
+  fi
+  list_ids "$W/$1.base.txt" > "$W/$1.base"
+  return 0
+}
+
+tag=""
+if top="$(git -C "$MOAT_DIR" rev-parse --show-toplevel 2> "$W/git.err")" \
+  && prefix="$(git -C "$MOAT_DIR" rev-parse --show-prefix 2> "$W/git.err")"; then
+  [ "$prefix" = "tests/moat/" ] || fail 0 "MISPLACED RUNNER: run.sh is at ${prefix}run.sh in its repo; it must live at tests/moat/run.sh (the ratchets read their baselines from tests/moat/ at the release tag)"
+  if ! head_tags="$(git -C "$top" tag --points-at HEAD --list 'v[0-9]*' 2> "$W/git.err")"; then
+    could_not_check "cannot list the tags at HEAD"
+  else
+    excl=()
+    for t in $head_tags; do excl+=(--exclude "$t"); done
+    head_list="$(printf '%s' "$head_tags" | tr '\n' ' ')"
+    # ${excl[@]+...}: an empty array is "unbound" under set -u before bash 4.4.
+    if ! tag="$(git -C "$top" describe --tags --abbrev=0 --match 'v[0-9]*' ${excl[@]+"${excl[@]}"} HEAD 2> "$W/git.err")"; then
+      tag=""
+      could_not_check "no release tag reachable; fetch tags${head_list:+ (tags at HEAD are not a baseline: $head_list)}"
+    fi
+  fi
 else
-  pending_ids "$W/baseline.txt" > "$W/baseline.ids"
-  while read -r id; do
-    fail "$(prop_of "$id")" "pending list may only shrink: $id was not pending at $tag"
-  done < <(comm -23 "$W/pending.ids" "$W/baseline.ids")
-  echo "ratchet: checked against $tag ($(wc -l < "$W/pending.ids" | tr -d ' ') pending now, $(wc -l < "$W/baseline.ids" | tr -d ' ') at $tag)"
+  could_not_check "no release tag reachable; fetch tags"
 fi
 
-# --- 5. summary -----------------------------------------------------------------
+if [ -n "$tag" ]; then
+  baseline_ids pending.txt
+  case $? in
+    0)
+      while read -r id; do
+        fail "$(prop_of "$id")" "pending list may only shrink: $id was not pending at $tag"
+      done < <(comm -23 "$W/pending.ids" "$W/pending.txt.base")
+      echo "ratchet: checked against $tag ($(wc -l < "$W/pending.ids" | tr -d ' ') pending now, $(wc -l < "$W/pending.txt.base" | tr -d ' ') at $tag)"
+      ;;
+    1) echo "ratchet: bootstrap, no baseline at $tag" ;;
+  esac
+  baseline_ids cases.txt
+  case $? in
+    0)
+      while read -r id; do
+        fail "$(prop_of "$id")" "case registry may only grow: $id was registered at $tag (case IDs are permanent)"
+      done < <(comm -13 "$W/registry.ids" "$W/cases.txt.base")
+      echo "registry: checked against $tag ($(wc -l < "$W/registry.ids" | tr -d ' ') registered now, $(wc -l < "$W/cases.txt.base" | tr -d ' ') at $tag)"
+      ;;
+    1) echo "registry: bootstrap, no baseline at $tag" ;;
+  esac
+fi
+
+# --- 6. summary -----------------------------------------------------------------
 proven=0
 for n in 1 2 3 4 5 6 7 8 9; do
   grep "^P$n\." "$W/pending.ids" > "$W/p$n.pending"
@@ -212,8 +346,13 @@ if [ "$ERRORS" -gt 0 ]; then
   exit 1
 fi
 if [ "$COULD_NOT_CHECK" = 1 ]; then
-  echo "moat suite: COULD NOT CHECK (the ratchet did not run; this is not a pass)"
+  echo "moat suite: COULD NOT CHECK (the ratchets did not run; this is not a pass)"
   exit 2
 fi
-echo "moat suite: OK"
+# Decision D2: nothing may call the moat green below 9 of 9.
+if [ "$proven" = 9 ]; then
+  echo "moat suite: all 9 properties proven"
+else
+  echo "moat suite: no rule failed ($proven of 9 proven; the moat is NOT proven)"
+fi
 exit 0

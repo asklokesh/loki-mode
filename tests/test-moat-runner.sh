@@ -64,10 +64,18 @@ pending() {
   { echo '# fixture pending list'; for line in "$@"; do echo "$line"; done; } > "$d/tests/moat/pending.txt"
 }
 
-# baseline DIR: the known-good tree, committed and tagged v1.0.0.
+# cases DIR ID...: write tests/moat/cases.txt with a comment header.
+REGISTERED="P1.works P2.works P2.later P3.works P4.works P5.works P6.works P7.works P8.works P9.works P9.later"
+cases() {
+  local d="$1" line
+  shift
+  { echo '# fixture case registry'; for line in "$@"; do echo "$line"; done; } > "$d/tests/moat/cases.txt"
+}
+
+# seed DIR: the known-good tree, committed as the ROOT commit and tagged v1.0.0.
 #   P1, P3..P8: one PASS case each.
 #   P2: P2.works PASS, P2.later FAIL (pending).  P9: P9.works PASS, P9.later FAIL (pending).
-baseline() {
+seed() {
   local d="$1" n
   mkdir -p "$d/tests/moat"
   g -C "$d" init -q
@@ -76,29 +84,42 @@ baseline() {
   prop "$d" 2 "CASE P2.works PASS holds" "CASE P2.later FAIL not built yet"
   prop "$d" 9 "CASE P9.works PASS holds" "CASE P9.later FAIL not built yet"
   pending "$d" "P2.later M2 not built yet" "P9.later M9 not built yet"
+  # shellcheck disable=SC2086
+  cases "$d" $REGISTERED
   g -C "$d" add tests
   g -C "$d" commit -qm baseline
   g -C "$d" tag v1.0.0
 }
 
-# run_in DIR: run the copied runner from OUTSIDE the repo, so it must find its
-# repo from its own location. Sets RC; output goes to $T/out.
+# baseline DIR: seed plus one commit after the release, so HEAD is not the
+# tagged commit (the runner never uses a tag at HEAD as the baseline).
+baseline() {
+  seed "$1"
+  g -C "$1" commit -q --allow-empty -m after-release
+}
+
+# run_in DIR [RUNNER_PATH]: run the copied runner from OUTSIDE the repo, so it
+# must find its repo from its own location. Sets RC; output goes to $T/out.
 run_in() {
-  (cd "$T" && bash "$1/tests/moat/run.sh") > "$T/out" 2>&1
+  (cd "$T" && bash "$1/${2:-tests/moat/run.sh}") > "$T/out" 2>&1
   RC=$?
 }
 
 # expect ID WANT_RC MESSAGE...: assert the exit code and each literal message.
+# A message starting with ! must NOT appear.
 expect() {
-  local id="$1" want="$2" msg missing=""
+  local id="$1" want="$2" msg missing="" present=""
   shift 2
   for msg in "$@"; do
-    grep -qF -- "$msg" "$T/out" || missing="$missing [$msg]"
+    case "$msg" in
+      '!'*) ! grep -qF -- "${msg#!}" "$T/out" || present="$present [${msg#!}]" ;;
+      *) grep -qF -- "$msg" "$T/out" || missing="$missing [$msg]" ;;
+    esac
   done
-  if [ "$RC" = "$want" ] && [ -z "$missing" ]; then
+  if [ "$RC" = "$want" ] && [ -z "$missing" ] && [ -z "$present" ]; then
     ok "$id"
   else
-    bad "$id (exit $RC, want $want; missing:${missing:- none})"
+    bad "$id (exit $RC, want $want; missing:${missing:- none}; unexpected:${present:- none})"
     sed 's/^/    | /' "$T/out" | tail -n 25
   fi
 }
@@ -117,14 +138,55 @@ expect RUNNER.clean-tree-passes 0 \
   "P8 load-bearing proof: PROVEN" \
   "P9 Rule of Two: NOT PROVEN (1 pending: P9.later)" \
   "moat: 7 of 9 properties proven" \
-  "ratchet: checked against v1.0.0" "moat suite: OK"
+  "ratchet: checked against v1.0.0" \
+  "registry: checked against v1.0.0 (11 registered now, 11 at v1.0.0)" \
+  "moat suite: no rule failed (7 of 9 proven; the moat is NOT proven)" \
+  "!moat suite: OK" "!all 9 properties proven"
 
 # Shrinking is allowed: P2.later now passes and its line is gone; P9.later stays.
 fresh
 prop "$D" 2 "CASE P2.works PASS holds" "CASE P2.later PASS built now"
 pending "$D" "P9.later M9 not built yet"
 run_in "$D"
-expect RUNNER.shrink-allowed 0 "P2 honest verdict: PROVEN" "moat: 8 of 9 properties proven" "moat suite: OK"
+expect RUNNER.shrink-allowed 0 "P2 honest verdict: PROVEN" "moat: 8 of 9 properties proven" \
+  "moat suite: no rule failed (8 of 9 proven; the moat is NOT proven)"
+
+# Only 9 of 9 may be called proven (decision D2).
+fresh
+prop "$D" 2 "CASE P2.works PASS holds" "CASE P2.later PASS built now"
+prop "$D" 9 "CASE P9.works PASS holds" "CASE P9.later PASS built now"
+pending "$D"
+run_in "$D"
+expect RUNNER.all-nine-proven 0 "moat: 9 of 9 properties proven" "moat suite: all 9 properties proven" \
+  "!the moat is NOT proven"
+
+# The registry may grow: a new case that is registered and passes is accepted.
+fresh
+prop "$D" 3 "CASE P3.works PASS holds" "CASE P3.extra PASS a new case"
+# shellcheck disable=SC2086
+cases "$D" $REGISTERED P3.extra
+run_in "$D"
+expect RUNNER.registry-growth-allowed 0 "registry: checked against v1.0.0 (12 registered now, 11 at v1.0.0)"
+
+# Route selectors from the caller's shell never reach a property script. The
+# fake reports FAIL if it sees any of them; first prove the fake can see them.
+fresh
+# shellcheck disable=SC2016  # the fake expands these, not this script
+{
+  echo '#!/usr/bin/env bash'
+  echo 'if [ -n "${LOKI_LEGACY_BASH+x}${LOKI_SDK_MODE+x}${LOKI_SDK_LOOP+x}${P1_FORCE_EGRESS_FALLBACK+x}" ]; then'
+  echo '  echo "CASE P1.works FAIL a route selector leaked into the property script"'
+  echo 'else'
+  echo '  echo "CASE P1.works PASS holds"'
+  echo 'fi'
+} > "$D/tests/moat/p1-fake.sh"
+if LOKI_SDK_LOOP=1 bash "$D/tests/moat/p1-fake.sh" | grep -q 'P1.works FAIL'; then
+  (export LOKI_LEGACY_BASH=1 LOKI_SDK_MODE=full LOKI_SDK_LOOP=1 P1_FORCE_EGRESS_FALLBACK=1; run_in "$D"; exit "$RC")
+  RC=$?
+  expect RUNNER.route-env-scrubbed 0 "P1 portable proof: PROVEN"
+else
+  bad "RUNNER.route-env-scrubbed control: the fake did not detect LOKI_SDK_LOOP=1"
+fi
 
 # --- step 2 rules ---------------------------------------------------------------
 fresh
@@ -192,15 +254,179 @@ rm "$D/tests/moat/pending.txt"
 run_in "$D"
 expect RUNNER.missing-pending-file 1 "MISSING tests/moat/pending.txt"
 
-# --- step 4: the ratchet --------------------------------------------------------
-# Without the ratchet this tree would PASS: the new FAIL is listed as pending.
+# A property script that hangs is killed and fails as TIMEOUT, together with
+# everything it spawned. The copy's constant is lowered so the scenario takes
+# seconds; if that substitution ever stops matching, the scenario says so
+# instead of silently waiting the real 300s.
+fresh
+sed 's/^MOAT_SCRIPT_TIMEOUT=300$/MOAT_SCRIPT_TIMEOUT=2/' "$RUNNER" > "$D/tests/moat/run.sh"
+if ! grep -qx 'MOAT_SCRIPT_TIMEOUT=2' "$D/tests/moat/run.sh"; then
+  bad "RUNNER.timeout harness: MOAT_SCRIPT_TIMEOUT=300 not found in run.sh, cannot shorten the timeout"
+else
+  {
+    echo '#!/usr/bin/env bash'
+    echo 'echo "CASE P5.works PASS holds"'
+    printf 'sh -c %q\n' "echo \$\$ > '$D/grandchild.pid'; exec sleep 60"
+  } > "$D/tests/moat/p5-fake.sh"
+  t0=$(date +%s)
+  run_in "$D"
+  took=$(( $(date +%s) - t0 ))
+  expect RUNNER.timeout 1 "TIMEOUT p5-fake.sh: still running after 2s, killed" \
+    "!UNEMITTED" "!CRASH p5-fake.sh"
+  gc="$(cat "$D/grandchild.pid" 2> /dev/null)"
+  case "$gc" in
+    '' | *[!0-9]*) bad "RUNNER.timeout-kills-tree control: the hanging fake never recorded its child PID" ;;
+    *)
+      if kill -0 "$gc" 2> /dev/null; then
+        bad "RUNNER.timeout-kills-tree: the hung script's child $gc is still running"
+        kill -9 "$gc" 2> /dev/null
+      else
+        ok "RUNNER.timeout-kills-tree"
+      fi
+      ;;
+  esac
+  if [ "$took" -lt 20 ]; then ok "RUNNER.timeout-bounded (${took}s)"; else bad "RUNNER.timeout-bounded: took ${took}s"; fi
+fi
+
+# --- the case registry ------------------------------------------------------------
+# A case deleted from its script (the registry still lists it).
+fresh
+prop "$D" 2 "CASE P2.later FAIL not built yet"
+run_in "$D"
+expect RUNNER.unemitted-deleted-case 1 \
+  "UNEMITTED P2.works: registered in tests/moat/cases.txt but no script printed a valid CASE line for it on stdout" \
+  "!VANISHED" "!VACUOUS"
+
+# An indented FAIL line is not a CASE line: without the registry it would be
+# ignored and the suite would pass.
+fresh
+prop "$D" 9 "CASE P9.later FAIL not built yet" "  CASE P9.works FAIL broke"
+run_in "$D"
+expect RUNNER.unemitted-indented-fail 1 "UNEMITTED P9.works" "P9 Rule of Two: NOT PROVEN" "!REGRESSION"
+
+# A CASE line on stderr is not a verdict either.
+fresh
+{
+  echo '#!/usr/bin/env bash'
+  echo 'echo "CASE P9.later FAIL not built yet"'
+  echo 'echo "CASE P9.works FAIL broke" >&2'
+} > "$D/tests/moat/p9-fake.sh"
+run_in "$D"
+expect RUNNER.unemitted-stderr-case 1 "UNEMITTED P9.works" "!REGRESSION"
+
+fresh
+prop "$D" 3 "CASE P3.works PASS holds" "CASE P3.extra PASS a new case"
+run_in "$D"
+expect RUNNER.unregistered 1 "UNREGISTERED P3.extra: emitted but not in tests/moat/cases.txt (register it)" \
+  "P3 the Wall: NOT PROVEN"
+
+fresh
+rm "$D/tests/moat/cases.txt"
+run_in "$D"
+expect RUNNER.missing-registry 1 "MISSING tests/moat/cases.txt"
+
+fresh
+# shellcheck disable=SC2086
+cases "$D" $REGISTERED "P3.works extra words"
+run_in "$D"
+expect RUNNER.malformed-registry 1 "MALFORMED REGISTRY line 13: P3.works extra words"
+
+fresh
+# shellcheck disable=SC2086
+cases "$D" $REGISTERED P3.works
+run_in "$D"
+expect RUNNER.duplicate-registry 1 "DUPLICATE REGISTRY P3.works: listed more than once in tests/moat/cases.txt"
+
+# --- the ratchets ---------------------------------------------------------------
+# Without the ratchet this tree would PASS: the new FAIL is registered and
+# listed as pending.
 fresh
 prop "$D" 3 "CASE P3.works PASS holds" "CASE P3.new FAIL not built yet"
 pending "$D" "P2.later M2 not built yet" "P9.later M9 not built yet" "P3.new M3 parked after the release"
+# shellcheck disable=SC2086
+cases "$D" $REGISTERED P3.new
 run_in "$D"
-expect RUNNER.ratchet-new-pending 1 "pending list may only shrink: P3.new was not pending at v1.0.0"
+expect RUNNER.ratchet-new-pending 1 "pending list may only shrink: P3.new was not pending at v1.0.0" \
+  "!UNREGISTERED"
 
-# Bootstrap: the tag predates pending.txt, so the current list is accepted.
+# Deleting a case together with its registration is the attack the registry
+# ratchet exists for: nothing else notices.
+fresh
+prop "$D" 2 "CASE P2.later FAIL not built yet"
+cases "$D" P1.works P2.later P3.works P4.works P5.works P6.works P7.works P8.works P9.works P9.later
+run_in "$D"
+expect RUNNER.registry-shrink 1 "case registry may only grow: P2.works was registered at v1.0.0" \
+  "!UNEMITTED"
+
+# A tagged HEAD is checked against the release before it, never against itself:
+# here the tagged commit itself parked P3.new, so comparing with its own tag
+# would pass.
+fresh
+prop "$D" 3 "CASE P3.works PASS holds" "CASE P3.new FAIL not built yet"
+pending "$D" "P2.later M2 not built yet" "P9.later M9 not built yet" "P3.new M3 parked in the release commit"
+# shellcheck disable=SC2086
+cases "$D" $REGISTERED P3.new
+g -C "$D" add tests
+g -C "$D" commit -qm "release 1.1.0"
+g -C "$D" tag v1.1.0
+run_in "$D"
+expect RUNNER.tagged-head-not-own-baseline 1 "pending list may only shrink: P3.new was not pending at v1.0.0" \
+  "!checked against v1.1.0"
+
+fresh
+echo notes > "$D/README"
+g -C "$D" add README
+g -C "$D" commit -qm "release 1.1.0"
+g -C "$D" tag v1.1.0
+run_in "$D"
+expect RUNNER.tagged-head-uses-previous-release 0 "ratchet: checked against v1.0.0" \
+  "registry: checked against v1.0.0" "!checked against v1.1.0"
+
+# A git hook (local-ci runs from pre-push) exports GIT_DIR. Inherited, it moved
+# git's idea of the work tree top: an absolute one reset the ratchets to a
+# bootstrap, a relative one made them could-not-check.
+fresh
+(export GIT_DIR="$D/.git"; run_in "$D"; exit "$RC")
+RC=$?
+expect RUNNER.inherited-git-dir-absolute 0 "ratchet: checked against v1.0.0" \
+  "registry: checked against v1.0.0" "!bootstrap" "!MISPLACED"
+(cd "$D" && GIT_DIR=.git bash tests/moat/run.sh) > "$T/out" 2>&1
+RC=$?
+expect RUNNER.inherited-git-dir-relative 0 "ratchet: checked against v1.0.0" \
+  "registry: checked against v1.0.0" "!could not check"
+
+# A tagged root commit has no earlier release: could-not-check, never a pass.
+N=$((N + 1)); D="$T/r$N"
+seed "$D"
+run_in "$D"
+expect RUNNER.tagged-root-exit-2 2 \
+  "could not check: no release tag reachable; fetch tags (tags at HEAD are not a baseline: v1.0.0)" \
+  "moat suite: COULD NOT CHECK"
+
+# Moving the directory must not reset the ratchets to a bootstrap: the
+# baseline is still read from tests/moat/ at the tag, and the move itself fails.
+fresh
+mv "$D/tests/moat" "$D/tests/gate"
+{
+  echo '#!/usr/bin/env bash'
+  echo 'echo "CASE P3.works PASS holds"'
+  echo 'echo "CASE P3.new FAIL not built yet"'
+} > "$D/tests/gate/p3-fake.sh"
+{
+  echo '# fixture pending list'
+  echo 'P2.later M2 not built yet'
+  echo 'P9.later M9 not built yet'
+  echo 'P3.new M3 parked after the move'
+} > "$D/tests/gate/pending.txt"
+echo P3.new >> "$D/tests/gate/cases.txt"
+run_in "$D" tests/gate/run.sh
+expect RUNNER.moved-directory 1 \
+  "MISPLACED RUNNER: run.sh is at tests/gate/run.sh in its repo; it must live at tests/moat/run.sh" \
+  "pending list may only shrink: P3.new was not pending at v1.0.0" \
+  "registry: checked against v1.0.0" "!bootstrap"
+
+# Bootstrap: the tag predates pending.txt and cases.txt, so the current lists
+# are accepted.
 N=$((N + 1)); D="$T/r$N"
 mkdir -p "$D"
 g -C "$D" init -q
@@ -208,17 +434,20 @@ echo seed > "$D/README"
 g -C "$D" add README
 g -C "$D" commit -qm seed
 g -C "$D" tag v1.0.0
+g -C "$D" commit -q --allow-empty -m after-release
 mkdir -p "$D/tests/moat"
 cp "$RUNNER" "$D/tests/moat/run.sh"
 for n in 1 2 3 4 5 6 7 8; do prop "$D" "$n" "CASE P$n.works PASS holds"; done
 prop "$D" 9 "CASE P9.works PASS holds" "CASE P9.later FAIL not built yet"
 pending "$D" "P9.later M9 not built yet"
+cases "$D" P1.works P2.works P3.works P4.works P5.works P6.works P7.works P8.works P9.works P9.later
 run_in "$D"
-expect RUNNER.bootstrap-allowed 0 "ratchet: bootstrap, no baseline at v1.0.0" "moat suite: OK"
+expect RUNNER.bootstrap-allowed 0 "ratchet: bootstrap, no baseline at v1.0.0" \
+  "registry: bootstrap, no baseline at v1.0.0" \
+  "moat suite: no rule failed (8 of 9 proven; the moat is NOT proven)"
 
 # A tag that does not look like a release (--match 'v[0-9]*') is not a baseline.
-N=$((N + 1)); D="$T/r$N"
-baseline "$D"
+fresh
 g -C "$D" tag -d v1.0.0 > /dev/null
 g -C "$D" tag nightly
 run_in "$D"
@@ -226,25 +455,22 @@ expect RUNNER.no-tag-exit-2 2 "could not check: no release tag reachable; fetch 
   "moat suite: COULD NOT CHECK"
 
 # Not a git checkout at all (an unpacked tarball): still could-not-check.
-N=$((N + 1)); D="$T/r$N"
-baseline "$D"
+fresh
 rm -rf "$D/.git"
 run_in "$D"
 expect RUNNER.not-a-repo-exit-2 2 "could not check: no release tag reachable; fetch tags"
 
 # The tag is reachable but its tree cannot be read (a partial or damaged clone).
 # That is could-not-check, never a bootstrap: a bootstrap would accept any list.
-N=$((N + 1)); D="$T/r$N"
-baseline "$D"
+fresh
 sub="$(g -C "$D" rev-parse 'v1.0.0:tests/moat')"
 rm -f "$D/.git/objects/${sub:0:2}/${sub:2}"
 run_in "$D"
 expect RUNNER.unreadable-baseline-exit-2 2 "could not check: cannot read the tree at v1.0.0" \
-  "moat suite: COULD NOT CHECK"
+  "moat suite: COULD NOT CHECK" "!bootstrap"
 
 # A definite failure outranks could-not-check.
-N=$((N + 1)); D="$T/r$N"
-baseline "$D"
+fresh
 g -C "$D" tag -d v1.0.0 > /dev/null
 prop "$D" 3 "CASE P3.works FAIL broke"
 run_in "$D"

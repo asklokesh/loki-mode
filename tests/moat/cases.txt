@@ -1,0 +1,63 @@
+# tests/moat/cases.txt -- the registry of every case ID the moat suite must emit.
+#
+# Format: one case ID per line (P<N>.<lowercase-kebab>). Lines starting with #
+# and blank lines are ignored.
+#
+# What tests/moat/run.sh enforces against this file:
+#   - every ID listed here must be printed by its property script as a valid
+#     "CASE <ID> PASS|FAIL <description>" line at the start of a stdout line.
+#     A deleted or renamed case, a CASE line that is indented, and one sent to
+#     stderr all fail the suite as UNEMITTED;
+#   - every ID a script emits must be listed here (UNREGISTERED: register it);
+#   - THE RATCHET: this list may only grow. Every ID in this file at the last
+#     release tag before HEAD must still be here, because case IDs are
+#     permanent: a case is fixed or listed in pending.txt, never deleted to buy
+#     a green run. While that tag has no copy of this file (the bootstrap), the
+#     list is accepted as it stands.
+#
+# Entries:
+P1.signed-proof-carries-attestation
+P1.offline-verify-bash
+P1.offline-verify-bun
+P1.different-tree-fails
+P1.modified-field-fails
+P1.wrong-key-fails
+P1.stripped-signature-fails
+P1.empty-jwks-value-fails
+P1.verification-metadata-signed
+P2.advisory-only-never-verified
+P2.unknown-gate-fails-closed
+P2.model-looks-good-cannot-pass
+P2.missing-pass-key-not-pass
+P2.proof-verify-exit-contract
+P2.proof-chain-exit-contract
+P2.verify-exit-contract
+P2.fast-verify-inconclusive-not-zero
+P2.council-inconclusive-cannot-exit-zero
+P3.implementer-prompt-has-no-check-authoring
+P3.check-author-context-excludes-implementation
+P3.checks-frozen-before-eval
+P4.catalog-has-top-model
+P4.three-setups-resolve
+P4.seeded-defect-corpus-present
+P4.floor-does-not-raise-wrong-pass
+P5.egress-blocked-start-seal-verify
+P5.airgap-audit-honest
+P5.airgap-audit-default-route
+P5.airgap-audit-per-provider-model
+P6.same-path-and-history
+P6.user-files-intact
+P6.change-landed-in-place
+P6.proof-produced-and-verifies
+P6.untracked-not-swept
+P7.webapp-client-routes-exist
+P7.dashboard-client-routes-exist
+P7.no-sample-data-panels
+P7.unmeasured-cost-never-zero
+P8.ablation-runtime-change-load-bearing
+P8.ablation-dead-code-not-sealed
+P8.ablation-na-docs-only
+P9.issue-workflows-separate-untrusted-from-push
+P9.comment-trigger-author-gate
+P9.injection-cannot-reach-token
+P9.checkout-no-persisted-credentials

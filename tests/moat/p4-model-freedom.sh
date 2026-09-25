@@ -16,8 +16,11 @@
 #                                      dispatch the intended model id at every
 #                                      RARV step, on the bash and Bun routes
 #   P4.seeded-defect-corpus-present    >= 100 seeded defects across the five
-#                                      categories exist at the agreed path
-#   P4.floor-does-not-raise-wrong-pass a recorded measurement on that corpus
+#                                      categories exist at the agreed path, each
+#                                      a runnable fixture (real files plus a
+#                                      check command or expected verdict)
+#   P4.floor-does-not-raise-wrong-pass a recorded measurement on that corpus,
+#                                      with an outcome for every defect id,
 #                                      shows wrong-pass(floor) <= wrong-pass(top)
 #
 # ---------------------------------------------------------------------------
@@ -60,24 +63,40 @@
 # ASSUMED CORPUS CONTRACT (P4.seeded-defect-corpus-present)
 # ---------------------------------------------------------------------------
 # Path: benchmarks/seeded-defects/manifest.json
-#   {"schema": "loki.seeded-defects/v1",
+#   {"schema": "loki.seeded-defects/v2",
 #    "defects": [{"id": "SD-0001",
 #                 "category": "logic-bug|spec-miss|test-fitting|mock-abuse|security",
-#                 "dir": "cases/SD-0001",            (relative to the corpus dir, must exist)
+#                 "dir": "cases/SD-0001",            (relative, inside the corpus dir)
+#                 "files": ["src/calc.py", "tests/test_calc.py"],
+#                                                    (relative to dir, the fixture itself)
 #                 "expected_verdict": "NOT_SEALED",  (a seeded defect must never seal)
-#                 "verdict_path": "deterministic|model"}]}
+#                 "verdict_path": "deterministic|model",
+#                 "check": "python3 -m pytest -q tests"}]}
+#                                                    (required for deterministic)
 # Rules: >= 100 defects, unique ids, every category present (each checked by
-# name), every dir present, expected_verdict NOT_SEALED.
+# name), expected_verdict NOT_SEALED, and every defect a runnable fixture: its
+# dir exists inside the corpus, it names at least one file, every named file is
+# a non-empty regular file whose real path stays inside its dir (no absolute
+# path, no "..", no symlink out), a deterministic defect names its check
+# command, and no two defects have byte-identical fixtures (one defect filed
+# under two ids). An empty case dir is not a seeded defect.
 #
 # ASSUMED RESULTS CONTRACT (P4.floor-does-not-raise-wrong-pass)
 # Path: benchmarks/seeded-defects/results/wrong-pass.json
-#   {"schema": "loki.seeded-defects.results/v1",
+#   {"schema": "loki.seeded-defects.results/v2",
 #    "manifest_sha256": "<sha256 of the manifest bytes that were measured>",
-#    "runs": [{"setup": "top",   "model": "claude-opus-5-5",  "n": 100, "wrong_pass": 0},
-#             {"setup": "floor", "model": "claude-haiku-4-5", "n": 100, "wrong_pass": 0}]}
+#    "runs": [{"setup": "top",   "model": "claude-opus-5-5",
+#              "outcomes": {"SD-0001": "NOT_SEALED", "SD-0002": "SEALED", ...}},
+#             {"setup": "floor", "model": "claude-haiku-4-5",
+#              "outcomes": {"SD-0001": "NOT_SEALED", ...}}]}
 # Rules: the corpus is valid, the sha matches the CURRENT manifest (a stale
-# measurement is not evidence), exactly one top and one floor run, n equals the
-# manifest's defect count, 0 <= wrong_pass <= n, and floor rate <= top rate.
+# measurement is not evidence), exactly one top and one floor run, each naming
+# its model and carrying an outcome for EVERY defect id in the manifest and no
+# other id, each outcome SEALED or NOT_SEALED. wrong_pass is derived as the
+# count of SEALED outcomes (a seeded defect that seals is a wrong pass), never
+# read from a summary; a run that also states n or wrong_pass must agree with
+# its outcomes. Pass bar: floor wrong-pass <= top wrong-pass. A bare summary
+# such as {"top": 0, "floor": 0} is not a measurement and fails.
 #
 # Contract (tests/moat): one "CASE <ID> PASS|FAIL <text>" stdout line per case,
 # diagnostics on stderr, exit 0 whenever the script ran to completion. Hermetic:
@@ -360,6 +379,43 @@ setups_without_spelling() {  # $1 space-separated failing spelling names
 cat > "$MOAT_TMP/corpus.py" <<'PY'
 import hashlib, json, os, sys
 CATS = ["logic-bug", "spec-miss", "test-fitting", "mock-abuse", "security"]
+MANIFEST_SCHEMA = "loki.seeded-defects/v2"
+RESULTS_SCHEMA = "loki.seeded-defects.results/v2"
+OUTCOMES = ("SEALED", "NOT_SEALED")
+
+def inside(path, root):
+    path, root = os.path.realpath(path), os.path.realpath(root)
+    return path != root and os.path.commonpath([path, root]) == root
+
+def fixture(root, x):
+    """Validate one defect's fixture. Returns (reason, None) or (None, fingerprint)."""
+    did, rel = x["id"], x.get("dir")
+    if not isinstance(rel, str) or not rel or os.path.isabs(rel):
+        return f"{did}: dir must be a relative path inside the corpus", None
+    case = os.path.join(root, rel)
+    if not inside(case, root) or not os.path.isdir(case):
+        return f"{did}: case dir {rel!r} missing or outside the corpus", None
+    files = x.get("files")
+    if not isinstance(files, list) or not files:
+        return f"{did}: names no fixture files (an empty case dir is not a seeded defect)", None
+    for f in files:
+        if not isinstance(f, str) or not f or os.path.isabs(f) or ".." in f.replace("\\", "/").split("/"):
+            return f"{did}: fixture path must be relative to its case dir, without dot-dot segments: {f}", None
+        p = os.path.join(case, f)
+        if not inside(p, case):
+            return f"{did}: fixture {f!r} resolves outside its case dir", None
+        if not os.path.isfile(p):
+            return f"{did}: fixture file {f!r} is not a regular file", None
+        if os.path.getsize(p) == 0:
+            return f"{did}: fixture file {f!r} is empty", None
+    h = hashlib.sha256()
+    for f in sorted(set(files)):
+        h.update(f.encode() + b"\0" + hashlib.sha256(open(os.path.join(case, f), "rb").read()).digest())
+    return None, h.hexdigest()
+
+def load_defects(manifest):
+    d = json.load(open(manifest))
+    return d.get("defects") if isinstance(d, dict) else None
 
 def corpus(manifest):
     if not os.path.isfile(manifest):
@@ -368,24 +424,38 @@ def corpus(manifest):
         d = json.load(open(manifest))
     except Exception as e:
         return f"manifest unreadable: {e}"
-    if d.get("schema") != "loki.seeded-defects/v1":
-        return f"manifest schema is {d.get('schema')!r}, want 'loki.seeded-defects/v1'"
-    defects = d.get("defects") or []
+    if not isinstance(d, dict) or d.get("schema") != MANIFEST_SCHEMA:
+        return f"manifest schema is {d.get('schema') if isinstance(d, dict) else None!r}, want {MANIFEST_SCHEMA!r}"
+    defects = d.get("defects")
+    if not isinstance(defects, list) or not all(isinstance(x, dict) for x in defects):
+        return "defects must be a list of objects"
     ids = [x.get("id") for x in defects]
-    if len(set(ids)) != len(ids) or None in ids:
+    if any(not isinstance(i, str) or not i for i in ids) or len(set(ids)) != len(ids):
         return "defect ids missing or not unique"
-    root = os.path.dirname(manifest)
+    root = os.path.dirname(os.path.abspath(manifest))
     counts = {c: 0 for c in CATS}
+    seen = {}
     for x in defects:
+        did = x["id"]
         if x.get("category") not in counts:
-            return f"{x.get('id')}: unknown category {x.get('category')!r}"
+            return f"{did}: unknown category {x.get('category')!r}"
         counts[x["category"]] += 1
         if x.get("expected_verdict") != "NOT_SEALED":
-            return f"{x.get('id')}: expected_verdict must be NOT_SEALED"
-        if x.get("verdict_path") not in ("deterministic", "model"):
-            return f"{x.get('id')}: verdict_path must be deterministic or model"
-        if not x.get("dir") or not os.path.isdir(os.path.join(root, x["dir"])):
-            return f"{x.get('id')}: case dir {x.get('dir')!r} missing"
+            return f"{did}: expected_verdict must be NOT_SEALED"
+        path = x.get("verdict_path")
+        if path not in ("deterministic", "model"):
+            return f"{did}: verdict_path must be deterministic or model"
+        check = x.get("check")
+        if check is not None and not (isinstance(check, str) and check.strip()):
+            return f"{did}: check must be a non-empty command string"
+        if path == "deterministic" and check is None:
+            return f"{did}: a deterministic defect must name its check command"
+        why, fp = fixture(root, x)
+        if why:
+            return why
+        if fp in seen:
+            return f"{did}: fixture is byte-identical to {seen[fp]} (one defect filed under two ids)"
+        seen[fp] = did
     empty = [c for c in CATS if counts[c] == 0]
     if empty:
         return "categories with no defects: " + ", ".join(empty)
@@ -403,14 +473,17 @@ def results(manifest, res):
         r = json.load(open(res))
     except Exception as e:
         return f"results unreadable: {e}"
-    if r.get("schema") != "loki.seeded-defects.results/v1":
-        return f"results schema is {r.get('schema')!r}"
+    if not isinstance(r, dict) or r.get("schema") != RESULTS_SCHEMA:
+        return f"results schema is {r.get('schema') if isinstance(r, dict) else None!r}, want {RESULTS_SCHEMA!r}"
     sha = hashlib.sha256(open(manifest, "rb").read()).hexdigest()
     if r.get("manifest_sha256") != sha:
         return "results were measured on a different manifest (sha mismatch); stale measurement"
-    n = len(json.load(open(manifest))["defects"])
+    ids = {x["id"] for x in load_defects(manifest)}
+    n = len(ids)
     runs = {}
-    for run in r.get("runs") or []:
+    if not isinstance(r.get("runs"), list) or not all(isinstance(x, dict) for x in r["runs"]):
+        return "runs must be a list of objects"
+    for run in r["runs"]:
         runs.setdefault(run.get("setup"), []).append(run)
     got = {}
     for setup in ("top", "floor"):
@@ -418,9 +491,23 @@ def results(manifest, res):
         if len(rs) != 1:
             return f"need exactly one {setup} run, found {len(rs)}"
         run = rs[0]
-        wp = run.get("wrong_pass")
-        if run.get("n") != n or not isinstance(wp, int) or not (0 <= wp <= n) or not run.get("model"):
-            return f"{setup} run malformed or not over the full corpus (n={run.get('n')}, want {n})"
+        if not (isinstance(run.get("model"), str) and run["model"].strip()):
+            return f"{setup} run names no model"
+        oc = run.get("outcomes")
+        if not isinstance(oc, dict) or not oc:
+            return f"{setup} run has no per-defect outcomes keyed by defect id (a summary count is not a measurement)"
+        missing, extra = sorted(ids - set(oc)), sorted(set(oc) - ids)
+        if missing:
+            return f"{setup} run has no outcome for {len(missing)} defect(s), first {missing[0]}"
+        if extra:
+            return f"{setup} run has outcomes for {len(extra)} id(s) not in the manifest, first {extra[0]}"
+        odd = sorted(k for k, v in oc.items() if v not in OUTCOMES)
+        if odd:
+            return f"{setup} run outcome for {odd[0]} is {oc[odd[0]]!r}, want SEALED or NOT_SEALED"
+        wp = sum(1 for v in oc.values() if v == "SEALED")
+        for key, want in (("n", n), ("wrong_pass", wp)):
+            if key in run and run[key] != want:
+                return f"{setup} run states {key}={run[key]!r} but its outcomes give {want}"
         got[setup] = wp
     if got["floor"] > got["top"]:
         return f"floor wrong-pass {got['floor']}/{n} exceeds top {got['top']}/{n}"
@@ -433,44 +520,143 @@ if __name__ == "__main__":
     print(out); sys.exit(1)
 PY
 
-# Synthetic corpus for the positive controls. $1 dir  $2 count  $3 categories
-make_corpus() {
-    python3 - "$1" "$2" "$3" <<'PY'
-import json, os, sys
-d, n, cats = sys.argv[1], int(sys.argv[2]), sys.argv[3].split(",")
-os.makedirs(d, exist_ok=True)
-defects = []
-for i in range(n):
-    rel = f"cases/SD-{i:04d}"
-    os.makedirs(os.path.join(d, rel), exist_ok=True)
-    defects.append({"id": f"SD-{i:04d}", "category": cats[i % len(cats)], "dir": rel,
-                    "expected_verdict": "NOT_SEALED", "verdict_path": "deterministic"})
-json.dump({"schema": "loki.seeded-defects/v1", "defects": defects}, open(os.path.join(d, "manifest.json"), "w"))
+# Synthetic corpora and results for the positive controls: one valid corpus
+# ("good") plus one variant per rejection rule, and one valid results file
+# ("ok") plus one variant per results rule. Every variant differs from the
+# valid one by a single mutation, so it can only be rejected by its own rule.
+cat > "$MOAT_TMP/controls.py" <<'PY'
+import hashlib, json, os, shutil, sys
+CATS = ["logic-bug", "spec-miss", "test-fitting", "mock-abuse", "security"]
+
+def corpus(d, n=100, cats=CATS, mutate=None):
+    os.makedirs(d)
+    defects = []
+    for i in range(n):
+        did, rel = f"SD-{i:04d}", f"cases/SD-{i:04d}"
+        case = os.path.join(d, rel)
+        os.makedirs(case)
+        open(os.path.join(case, "calc.py"), "w").write(f"def add(a, b):\n    return a - b + {i}  # seeded {did}\n")
+        open(os.path.join(case, "check.sh"), "w").write("python3 -c 'import calc; assert calc.add(2, 2) == 4'\n")
+        defects.append({"id": did, "category": cats[i % len(cats)], "dir": rel, "files": ["calc.py", "check.sh"],
+                        "expected_verdict": "NOT_SEALED", "verdict_path": "deterministic", "check": "sh check.sh"})
+    if mutate:
+        mutate(d, defects)
+    json.dump({"schema": "loki.seeded-defects/v2", "defects": defects}, open(os.path.join(d, "manifest.json"), "w"))
+
+def empty_dirs(d, ds):
+    for x in ds:
+        shutil.rmtree(os.path.join(d, x["dir"])); os.makedirs(os.path.join(d, x["dir"])); del x["files"]
+def missing_file(d, ds): ds[0]["files"].append("absent.py")
+def empty_file(d, ds): open(os.path.join(d, ds[0]["dir"], "calc.py"), "w").close()
+def dotdot(d, ds): ds[0]["files"] = ["../../manifest.json"]
+def absolute(d, ds): ds[0]["files"] = [os.path.join(os.path.abspath(d), "manifest.json")]
+def symlink(d, ds):
+    os.symlink("../../manifest.json", os.path.join(d, ds[0]["dir"], "link.txt")); ds[0]["files"] = ["link.txt"]
+def no_check(d, ds): del ds[0]["check"]
+def dup_fixture(d, ds):
+    shutil.copy(os.path.join(d, ds[0]["dir"], "calc.py"), os.path.join(d, ds[1]["dir"], "calc.py"))
+def dir_escape(d, ds):
+    out = d + "-outside"
+    shutil.copytree(os.path.join(d, ds[0]["dir"]), out); ds[0]["dir"] = "../" + os.path.basename(out)
+def bad_category(d, ds): ds[0]["category"] = "style-nit"
+
+def results(manifest, out):
+    raw = open(manifest, "rb").read()
+    sha, ids = hashlib.sha256(raw).hexdigest(), [x["id"] for x in json.loads(raw)["defects"]]
+    def run(setup, sealed, **kw):
+        r = {"setup": setup, "model": setup + "-model",
+             "outcomes": {i: ("SEALED" if k < sealed else "NOT_SEALED") for k, i in enumerate(ids)}}
+        r.update(kw)
+        return r
+    def doc(runs, digest=sha):
+        return {"schema": "loki.seeded-defects.results/v2", "manifest_sha256": digest, "runs": runs}
+    missing = run("top", 1); del missing["outcomes"][ids[0]]
+    extra = run("floor", 0); extra["outcomes"]["SD-9999"] = "NOT_SEALED"
+    odd = run("floor", 0); odd["outcomes"][ids[-1]] = "ERROR"
+    variants = {
+        "ok": doc([run("top", 1), run("floor", 0)]),
+        "worse": doc([run("top", 1), run("floor", 2)]),
+        "stale": doc([run("top", 0), run("floor", 0)], "0" * 64),
+        "bare": {"top": 0, "floor": 0},
+        "summary-only": doc([{"setup": "top", "model": "t", "n": len(ids), "wrong_pass": 0},
+                             {"setup": "floor", "model": "f", "n": len(ids), "wrong_pass": 0}]),
+        "missing-id": doc([missing, run("floor", 0)]),
+        "extra-id": doc([run("top", 1), extra]),
+        "bad-value": doc([run("top", 1), odd]),
+        "disagree": doc([run("top", 2), run("floor", 1, wrong_pass=0)]),
+        "one-run": doc([run("top", 0)]),
+        "no-model": doc([run("top", 1), run("floor", 0, model="")]),
+    }
+    os.makedirs(out)
+    for name, body in variants.items():
+        json.dump(body, open(os.path.join(out, name + ".json"), "w"))
+
+if __name__ == "__main__":
+    c = sys.argv[1]
+    corpus(f"{c}/good")
+    corpus(f"{c}/small", n=99)
+    corpus(f"{c}/nocat", cats=CATS[:4])
+    for name, fn in (("empty-dirs", empty_dirs), ("missing-file", missing_file), ("empty-file", empty_file),
+                     ("dotdot", dotdot), ("absolute", absolute), ("symlink", symlink), ("no-check", no_check),
+                     ("dup-fixture", dup_fixture), ("dir-escape", dir_escape), ("bad-category", bad_category)):
+        corpus(f"{c}/{name}", mutate=fn)
+    results(f"{c}/good/manifest.json", f"{c}/results")
 PY
+
+# name|substring the rejection reason must contain. Checking the reason, not
+# only the exit code, keeps a control from passing because some OTHER rule
+# happened to reject its variant.
+CORPUS_REJECTS='small|only 99 defects
+nocat|categories with no defects: security
+empty-dirs|names no fixture files
+missing-file|is not a regular file
+empty-file|is empty
+dotdot|without dot-dot segments: ../../manifest.json
+absolute|without dot-dot segments: /
+symlink|resolves outside its case dir
+no-check|must name its check command
+dup-fixture|byte-identical to SD-0000
+dir-escape|outside the corpus
+bad-category|unknown category'
+RESULTS_REJECTS='worse|exceeds top
+stale|stale measurement
+bare|results schema is None
+summary-only|no per-defect outcomes
+missing-id|no outcome for 1 defect
+extra-id|not in the manifest, first SD-9999
+bad-value|want SEALED or NOT_SEALED
+disagree|states wrong_pass=0 but its outcomes give 1
+one-run|need exactly one floor run
+no-model|floor run names no model'
+
+build_controls() {
+    local c="$MOAT_TMP/ctl"
+    [ -e "$c/.built" ] && return 0
+    rm -rf "$c" && mkdir -p "$c" && python3 "$MOAT_TMP/controls.py" "$c" && : > "$c/.built"
 }
-make_results() {  # $1 manifest  $2 out  $3 top_wp  $4 floor_wp  $5 sha-override
-    python3 - "$@" <<'PY'
-import hashlib, json, sys
-m, out, top, floor = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
-sha = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else hashlib.sha256(open(m, "rb").read()).hexdigest()
-n = len(json.load(open(m))["defects"])
-json.dump({"schema": "loki.seeded-defects.results/v1", "manifest_sha256": sha,
-           "runs": [{"setup": "top", "model": "t", "n": n, "wrong_pass": top},
-                    {"setup": "floor", "model": "f", "n": n, "wrong_pass": floor}]}, open(out, "w"))
-PY
+
+# check_rejects MODE TABLE [RESULTS_DIR]: every variant in TABLE must be
+# rejected, for its own reason. Echo the first control that misbehaved.
+check_rejects() {
+    local mode="$1" table="$2" c="$MOAT_TMP/ctl" name want why
+    while IFS='|' read -r name want; do
+        [ -n "$name" ] || continue
+        if [ "$mode" = corpus ]; then
+            why="$(python3 "$MOAT_TMP/corpus.py" corpus "$c/$name/manifest.json")"
+        else
+            why="$(python3 "$MOAT_TMP/corpus.py" results "$c/good/manifest.json" "$c/results/$name.json")"
+        fi && { echo "control $mode '$name' was accepted"; return 1; }
+        case "$why" in *"$want"*) ;; *) echo "control $mode '$name' was rejected for the wrong reason: $why"; return 1 ;; esac
+    done <<< "$table"
+    return 0
 }
-ALL_CATS="logic-bug,spec-miss,test-fitting,mock-abuse,security"
 
 corpus_controls() {
-    local c="$MOAT_TMP/ctl-corpus"
-    if ! { make_corpus "$c/good" 100 "$ALL_CATS" && make_corpus "$c/small" 99 "$ALL_CATS" \
-        && make_corpus "$c/nocat" 100 "logic-bug,spec-miss,test-fitting,mock-abuse"; }; then
-        echo "could not build control corpora"; return 1
-    fi
-    python3 "$MOAT_TMP/corpus.py" corpus "$c/good/manifest.json" >/dev/null || { echo "a valid 100-defect corpus was rejected"; return 1; }
-    python3 "$MOAT_TMP/corpus.py" corpus "$c/small/manifest.json" >/dev/null && { echo "a 99-defect corpus was accepted"; return 1; }
-    python3 "$MOAT_TMP/corpus.py" corpus "$c/nocat/manifest.json" >/dev/null && { echo "a corpus missing the security category was accepted"; return 1; }
-    return 0
+    local why
+    build_controls || { echo "could not build control corpora"; return 1; }
+    why="$(python3 "$MOAT_TMP/corpus.py" corpus "$MOAT_TMP/ctl/good/manifest.json")" \
+        || { echo "a valid 100-defect corpus was rejected: $why"; return 1; }
+    check_rejects corpus "$CORPUS_REJECTS"
 }
 
 case_corpus() {
@@ -478,20 +664,16 @@ case_corpus() {
     local why
     why="$(corpus_controls)" || { echo "FAIL|positive control failed: $why"; return 0; }
     why="$(python3 "$MOAT_TMP/corpus.py" corpus "$MANIFEST")" || { echo "FAIL|$(rel "$why")"; return 0; }
-    echo "PASS|$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["defects"]))' "$MANIFEST") seeded defects across all five categories"
+    echo "PASS|$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["defects"]))' "$MANIFEST") runnable seeded defects across all five categories"
 }
 
 case_floor_wrong_pass() {
     command -v python3 >/dev/null 2>&1 || { echo "FAIL|prerequisite missing: python3"; return 0; }
-    local why c="$MOAT_TMP/ctl-corpus"
+    local why
     why="$(corpus_controls)" || { echo "FAIL|positive control failed: $why"; return 0; }
-    if ! { make_results "$c/good/manifest.json" "$c/ok.json" 1 0 && make_results "$c/good/manifest.json" "$c/worse.json" 1 2 \
-        && make_results "$c/good/manifest.json" "$c/stale.json" 0 0 "0000"; }; then
-        echo "FAIL|could not build control results"; return 0
-    fi
-    python3 "$MOAT_TMP/corpus.py" results "$c/good/manifest.json" "$c/ok.json" >/dev/null || { echo "FAIL|control: floor <= top was rejected"; return 0; }
-    python3 "$MOAT_TMP/corpus.py" results "$c/good/manifest.json" "$c/worse.json" >/dev/null && { echo "FAIL|control: floor > top was accepted"; return 0; }
-    python3 "$MOAT_TMP/corpus.py" results "$c/good/manifest.json" "$c/stale.json" >/dev/null && { echo "FAIL|control: a stale measurement was accepted"; return 0; }
+    why="$(python3 "$MOAT_TMP/corpus.py" results "$MOAT_TMP/ctl/good/manifest.json" "$MOAT_TMP/ctl/results/ok.json")" \
+        || { echo "FAIL|control: valid per-defect results with floor <= top were rejected: $why"; return 0; }
+    why="$(check_rejects results "$RESULTS_REJECTS")" || { echo "FAIL|positive control failed: $why"; return 0; }
     why="$(python3 "$MOAT_TMP/corpus.py" results "$MANIFEST" "$RESULTS")" || { echo "FAIL|$(rel "$why")"; return 0; }
     echo "PASS|$why"
 }
@@ -523,8 +705,8 @@ run_case() {
 START_S=$SECONDS
 run_case P4.catalog-has-top-model "catalog lists $TOP_ID and the top tier resolves to it" case_top_model
 run_case P4.three-setups-resolve "top-only, floor-only and routed setups dispatch the intended ids per step" case_three_setups
-run_case P4.seeded-defect-corpus-present "seeded-defect corpus of >= 100 defects in five categories" case_corpus
-run_case P4.floor-does-not-raise-wrong-pass "measured wrong-pass rate at floor <= top on the corpus" case_floor_wrong_pass
+run_case P4.seeded-defect-corpus-present "seeded-defect corpus of >= 100 runnable defects in five categories" case_corpus
+run_case P4.floor-does-not-raise-wrong-pass "per-defect measured wrong-pass rate at floor <= top on the corpus" case_floor_wrong_pass
 
 for id in P4.catalog-has-top-model P4.three-setups-resolve P4.seeded-defect-corpus-present P4.floor-does-not-raise-wrong-pass; do
     case " $EMITTED " in *" $id "*) ;; *) printf 'CASE %s FAIL runner did not emit this case\n' "$id" ;; esac
