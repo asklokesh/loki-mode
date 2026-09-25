@@ -13097,11 +13097,15 @@ _loki_airgap_audit() {
             ;;
         opencode|cline|aider)
             model_host="${OPENAI_BASE_URL:-${OPENROUTER_API_KEY:+https://openrouter.ai}}"
-            if [ -z "$model_host" ] || printf '%s' "${LOKI_OPENCODE_MODEL:-}${LOKI_AIDER_MODEL:-}" | grep -qiE 'ollama|localhost|127\.0\.0\.1|lmstudio'; then
+            # Local ONLY on positive evidence: a model id naming a local runtime.
+            # An unset endpoint is not that evidence -- the opencode catalog
+            # default is an openrouter/ model, so inference still leaves the host.
+            if printf '%s' "${LOKI_OPENCODE_MODEL:-}${LOKI_AIDER_MODEL:-}" | grep -qiE 'ollama|localhost|127\.0\.0\.1|lmstudio'; then
                 model_host="local weights"
                 model_required="no"
                 model_note="Local model runtime (Ollama / LM Studio / llama.cpp). No inference egress."
             else
+                [ -n "$model_host" ] || model_host="remote model provider (no local model configured)"
                 model_note="Remote model gateway. Use an ollama/ model id for zero-egress inference."
             fi
             ;;
