@@ -359,6 +359,67 @@ if [ "$v" = "true" ]; then ok "case9 tests.inconclusive=true (missing pass key i
 v="$(jget "$GATE_DETAILS_FILE" tests runner)"
 if [ "$v" = "jest" ]; then ok "case9 tests.runner=jest (the runner label did not route through runner==none)"; else bad "case9 tests.runner=jest" "got [$v]"; fi
 
+# ===========================================================================
+# Cases 10-11: the sibling readers must agree with the gate on the pass key.
+# _council_convergence_evidence_green read `passed is not False` and the member
+# vote read d.get('pass', True), so {"runner":"jest"} (no pass key) and
+# pass:"inconclusive" read as green there while the gate called them
+# INCONCLUSIVE. Each negative is paired with a pass:true positive control in
+# the same clean project, so a reader that is simply broken cannot pass.
+# ===========================================================================
+# write_tr_raw <dir> <json>: a results file with an arbitrary body.
+write_tr_raw() {
+    mkdir -p "$1/.loki/quality" "$1/.loki/logs" "$1/.loki/queue"
+    printf '%s\n' "$2" > "$1/.loki/quality/test-results.json"
+}
+NOKEY='{"timestamp":"2026-06-16T00:00:00Z","runner":"jest","summary":"no pass key recorded"}'
+GREEN='{"timestamp":"2026-06-16T00:00:00Z","runner":"jest","pass":true,"summary":"42 passed"}'
+INCONC='{"timestamp":"2026-06-16T00:00:00Z","runner":"node-test","pass":"inconclusive","status":"no_tests_run"}'
+
+# converge_rc <dir>: 0 when the convergence probe calls the evidence green.
+converge_rc() {
+    ( cd "$1" || exit 99; TARGET_DIR="$1" _council_convergence_evidence_green )
+    echo $?
+}
+# member_vote <dir> <role>: the first token of the member's vote, evaluated
+# from inside the clean project (the TODO scan reads CWD).
+member_vote() {
+    ( cd "$1" || exit 99
+      TARGET_DIR="$1" ITERATION_COUNT=5 COUNCIL_CONSECUTIVE_NO_CHANGE=0 COUNCIL_MIN_ITERATIONS=3 \
+          council_evaluate_member "$2" "test" | cut -d' ' -f1 )
+}
+
+echo "Case 10: convergence probe -- only a boolean pass:true is green"
+proj="$TMP_ROOT/case10"
+write_tr_raw "$proj" "$GREEN"
+r="$(converge_rc "$proj")"
+if [ "$r" = "0" ]; then ok "case10 control: jest pass:true is convergence-green"; else bad "case10 control green" "got rc=$r"; fi
+write_tr_raw "$proj" "$NOKEY"
+r="$(converge_rc "$proj")"
+if [ "$r" = "1" ]; then ok "case10 missing pass key is NOT convergence-green"; else bad "case10 missing key not green" "got rc=$r"; fi
+write_tr_raw "$proj" "$INCONC"
+r="$(converge_rc "$proj")"
+if [ "$r" = "1" ]; then ok "case10 pass:\"inconclusive\" (zero tests run) is NOT convergence-green"; else bad "case10 inconclusive not green" "got rc=$r"; fi
+
+echo "Case 11: member vote -- a missing pass key is not positive test evidence"
+proj="$TMP_ROOT/case11"
+write_tr_raw "$proj" "$GREEN"
+for role in requirements_verifier test_auditor devils_advocate; do
+    v="$(member_vote "$proj" "$role")"
+    if [ "$v" = "COMPLETE" ]; then ok "case11 control: jest pass:true -> $role COMPLETE"; else bad "case11 control $role" "got [$v]"; fi
+done
+write_tr_raw "$proj" "$NOKEY"
+for role in requirements_verifier test_auditor devils_advocate; do
+    v="$(member_vote "$proj" "$role")"
+    if [ "$v" = "CONTINUE" ]; then ok "case11 missing pass key -> $role CONTINUE"; else bad "case11 missing key $role" "got [$v]"; fi
+done
+reason="$( cd "$proj" && TARGET_DIR="$proj" ITERATION_COUNT=5 COUNCIL_CONSECUTIVE_NO_CHANGE=0 \
+    council_evaluate_member test_auditor "test" )"
+case "$reason" in
+    *inconclusive*) ok "case11 test_auditor names the inconclusive results as the reason" ;;
+    *) bad "case11 test_auditor reason" "got [$reason]" ;;
+esac
+
 # ---------------------------------------------------------------------------
 echo
 echo "Total: $((PASS + FAIL))  Passed: $PASS  Failed: $FAIL"

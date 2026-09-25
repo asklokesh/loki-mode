@@ -9,7 +9,11 @@ set -uo pipefail
 #   P5.egress-blocked-start-seal-verify
 #       Hermetic stub pipeline (fixture repo + PRD, stub `claude` provider on
 #       PATH): `loki start ./prd.md` -> proof-of-run -> `loki proof verify` on
-#       BOTH routes, all inside a REAL egress block that still allows loopback:
+#       BOTH routes, all inside a REAL egress block that still allows loopback.
+#       The stub completes through .loki/signals/COMPLETION_REQUESTED (the
+#       channel the product honors); start must exit 0, the sealed headline
+#       must not be NOT VERIFIED, and verify must say ok:true on both routes.
+#       Block mechanisms:
 #         macOS: sandbox-exec profile (deny network-outbound, allow localhost
 #                and local unix sockets, deny the mDNSResponder socket so system
 #                DNS cannot carry data off the host either)
@@ -34,6 +38,13 @@ set -uo pipefail
 #       (bin/loki routes `doctor` to Bun when bun is installed) and be honest
 #       there too.
 #
+#   P5.airgap-audit-per-provider-model
+#       Bash route, for each of opencode, cline and aider: a local (ollama/)
+#       model set only in ANOTHER provider's variable must not make the active
+#       provider air-gap ready. Positive control: the active provider's own
+#       variable (LOKI_OPENCODE_MODEL, LOKI_CLINE_MODEL, LOKI_AIDER_MODEL, the
+#       names providers/<p>.sh read) set to an ollama/ model IS reported ready.
+#
 # Contract: one "CASE <ID> PASS|FAIL <desc>" stdout line per case; diagnostics
 # on stderr; exit 0 when the script ran to completion. No network, no spend.
 #===============================================================================
@@ -48,7 +59,7 @@ export LOKI_TELEMETRY_DISABLED=true DO_NOT_TRACK=1 LOKI_NO_UPDATE_CHECK=1 CI=tru
 MOAT_START=$(date +%s)
 MOAT_MAIN_PID=$$
 MOAT_TMP="$(mktemp -d "${TMPDIR:-/tmp}/moat-p5.XXXXXX")" || { echo "p5: mktemp failed" >&2; exit 1; }
-MOAT_IDS="P5.egress-blocked-start-seal-verify P5.airgap-audit-honest P5.airgap-audit-default-route"
+MOAT_IDS="P5.egress-blocked-start-seal-verify P5.airgap-audit-honest P5.airgap-audit-default-route P5.airgap-audit-per-provider-model"
 MOAT_EMITTED=" "
 MOAT_PGIDS=""
 
@@ -260,14 +271,30 @@ PY
     # --- fixture repo + stub provider ----------------------------------------
     local W="$MOAT_TMP/work" B="$MOAT_TMP/bin"
     mkdir -p "$W" "$B" "$MOAT_TMP/home"
+    # The product ignores a completion promise echoed in prose; a real agent
+    # completes through .loki/signals/COMPLETION_REQUESTED (run.sh build_prompt
+    # FALLBACK instruction), so the stub does exactly that, and only on the
+    # build prompt (other provider calls, e.g. doc generation, get inert text).
     cat > "$B/claude" <<'STUB'
 #!/usr/bin/env bash
-# Stub provider: writes a tiny implementation and emits the completion promise.
-if [ ! -f greeter.py ]; then
-    printf 'def greet(name):\n    return "hello " + name\n' > greeter.py
-    printf 'from greeter import greet\n\n\ndef test_greet():\n    assert greet("ada") == "hello ada"\n' > test_greeter.py
-fi
-echo "stub provider done. MOAT_P5_COMPLETE"
+# Moat P5 stub provider: tiny implementation + the signal-file completion.
+prompt="" prev=""
+for a in "$@"; do
+    [ "$prev" = "-p" ] && prompt="$a"
+    prev="$a"
+done
+[ "$prompt" = "-" ] && cat >/dev/null
+case "$prompt" in
+    *"<loki_system>"*)
+        if [ ! -f greeter.py ]; then
+            printf 'def greet(name):\n    return "hello " + name\n' > greeter.py
+            printf 'from greeter import greet\n\n\ndef test_greet():\n    assert greet("ada") == "hello ada"\n' > test_greeter.py
+        fi
+        mkdir -p .loki/signals
+        printf 'greet(name) implemented in greeter.py\n' > .loki/signals/COMPLETION_REQUESTED
+        ;;
+esac
+echo "stub provider done."
 exit 0
 STUB
     chmod +x "$B/claude"
@@ -309,12 +336,26 @@ STUB
         "") nok "loki start never ran under the block ($(head -c 200 "$MOAT_TMP/pipeline.err" | tr '\n' ' '))"; return ;;
         124|137|142) nok "loki start hit its deadline under the block (rc=$src; last: $(tail -1 "$MOAT_TMP/start.out"))"; return ;;
     esac
+    # A run that ended any way but a clean completion is not a pipeline that
+    # works under the block, whatever it sealed afterwards.
+    if [ "$src" != "0" ]; then
+        local cause
+        cause="$(grep -m1 -E 'Max iterations \([0-9]+\) reached' "$MOAT_TMP/start.out")"
+        [ -n "$cause" ] || cause="$(tail -1 "$MOAT_TMP/start.out")"
+        nok "loki start exited rc=$src under the block, not 0 ($cause)"
+    fi
     sid="$(cat "$MOAT_TMP/proof.id" 2>/dev/null)"
     pj="$W/.loki/proofs/$sid/proof.json"
     if [ -z "$sid" ] || [ ! -f "$pj" ]; then
         nok "no proof-of-run sealed under the block (start rc=$src, proof id='$sid'; $(tail -1 "$MOAT_TMP/start.err"))"
         return
     fi
+    local headline
+    headline="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("honesty",{}).get("headline"))' "$pj" 2>/dev/null)"
+    case "$headline" in
+        "VERIFIED"|"VERIFIED WITH GAPS") ;;
+        *) nok "sealed headline under the block is '${headline:-unreadable}', not VERIFIED or VERIFIED WITH GAPS" ;;
+    esac
     local route
     for route in bun bash; do
         if [ "$route" = "bun" ] && ! command -v bun >/dev/null 2>&1; then
@@ -329,23 +370,25 @@ STUB
             nok "$route route: verify exited 0 without an ok:true verdict"
         fi
     done
-    log "start rc=$src proof=$sid headline=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("honesty",{}).get("headline"))' "$pj" 2>/dev/null)"
+    log "start rc=$src proof=$sid headline=$headline"
     log "$(grep -m1 -o 'exited with code [0-9]* after [0-9]*s' "$MOAT_TMP/start.out" 2>/dev/null)"
 }
 
 #-------------------------------------------------------------------------------
 # doctor --airgap audit. <route>: bash (LOKI_LEGACY_BASH=1) or default.
 #-------------------------------------------------------------------------------
+# Later VAR=value arguments override the LOKI_PROVIDER=opencode default (env
+# applies assignments in order).
 airgap() {  # <route> <out> [VAR=value ...]
     local route="$1" out="$2" legacy=""
     shift 2
     [ "$route" = "bash" ] && legacy="LOKI_LEGACY_BASH=1"
-    env -u OPENAI_BASE_URL -u OPENROUTER_API_KEY -u LOKI_OPENCODE_MODEL -u LOKI_AIDER_MODEL \
+    env -u OPENAI_BASE_URL -u OPENROUTER_API_KEY -u LOKI_OPENCODE_MODEL -u LOKI_AIDER_MODEL -u LOKI_CLINE_MODEL \
         -u ANTHROPIC_BASE_URL -u LOKI_LEGACY_BASH -u LOKI_TELEMETRY \
         HOME="$MOAT_TMP/home" LOKI_PROVIDER=opencode ${legacy:+"$legacy"} "$@" \
         "$LOKI_BIN" doctor --airgap --json >"$out" 2>"$out.err"
     printf '%s' "$?" > "$out.rc"
-    env -u OPENAI_BASE_URL -u OPENROUTER_API_KEY -u LOKI_OPENCODE_MODEL -u LOKI_AIDER_MODEL \
+    env -u OPENAI_BASE_URL -u OPENROUTER_API_KEY -u LOKI_OPENCODE_MODEL -u LOKI_AIDER_MODEL -u LOKI_CLINE_MODEL \
         -u ANTHROPIC_BASE_URL -u LOKI_LEGACY_BASH -u LOKI_TELEMETRY \
         HOME="$MOAT_TMP/home" LOKI_PROVIDER=opencode ${legacy:+"$legacy"} "$@" \
         "$LOKI_BIN" doctor --airgap >"$out.txt" 2>&1
@@ -390,6 +433,38 @@ case_airgap_default() {
     check_airgap_route default
 }
 
+# For each provider with a model variable: another provider's local model must
+# not make it ready; its own local model must.
+case_airgap_per_provider() {
+    local p own other v out o
+    local assigns
+    for p in opencode cline aider; do
+        case "$p" in
+            opencode) own=LOKI_OPENCODE_MODEL other="LOKI_CLINE_MODEL LOKI_AIDER_MODEL" ;;
+            cline)    own=LOKI_CLINE_MODEL    other="LOKI_OPENCODE_MODEL LOKI_AIDER_MODEL" ;;
+            aider)    own=LOKI_AIDER_MODEL    other="LOKI_OPENCODE_MODEL LOKI_CLINE_MODEL" ;;
+        esac
+        # Positive control first: without it a "not ready" below proves nothing.
+        out="$MOAT_TMP/ag-pp-$p-own"
+        airgap bash "$out" LOKI_PROVIDER="$p" "$own=ollama/qwen2.5-coder"
+        v="$(airgap_ready "$out")"
+        if [ "$v" != "true" ]; then
+            nok "$p: own $own=ollama/... not reported ready (airgap_ready=$v, rc=$(cat "$out.rc"))"
+            continue
+        fi
+        grep -q 'Air-gap ready' "$out.txt" || nok "$p: text audit does not report its own local model ready"
+        out="$MOAT_TMP/ag-pp-$p-other"
+        assigns=()
+        for o in $other; do assigns+=("$o=ollama/qwen2.5-coder"); done
+        airgap bash "$out" LOKI_PROVIDER="$p" "${assigns[@]}"
+        v="$(airgap_ready "$out")"
+        [ "$v" = "false" ] || nok "$p: another provider's local model ($other) makes it airgap_ready=$v"
+        [ "$(cat "$out.rc")" != "0" ] || nok "$p: audit exits 0 with only another provider's local model set"
+        ! grep -q 'Air-gap ready' "$out.txt" || nok "$p: text audit claims 'Air-gap ready' from another provider's model"
+        grep -q "\"provider\": \"$p\"" "$out" || nok "$p: audit did not report the active provider as $p"
+    done
+}
+
 moat_run "P5.egress-blocked-start-seal-verify" \
     "start -> proof -> proof verify (both routes) completes with remote egress really blocked" \
     case_egress_pipeline
@@ -399,4 +474,7 @@ moat_run "P5.airgap-audit-honest" \
 moat_run "P5.airgap-audit-default-route" \
     "doctor --airgap is available and honest on the default (Bun) route" \
     case_airgap_default
+moat_run "P5.airgap-audit-per-provider-model" \
+    "bash doctor --airgap judges local inference only from the active provider's model variable (opencode, cline, aider)" \
+    case_airgap_per_provider
 exit 0

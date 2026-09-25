@@ -3560,9 +3560,11 @@ council_evaluate_member() {
     # the member stays CONTINUE.
     #
     # Parse verdict mirrors council_evidence_gate: runner=="none" => PASS,
-    # pass is False => FAIL, else PASS. Unparseable/missing => not present.
+    # pass is False => FAIL, only a boolean True (and not status no_tests_run)
+    # => PASS; a missing, null or non-boolean pass key recorded no outcome =>
+    # INCONCLUSIVE (not red, not positive). Unparseable/missing file => absent.
     local tr_file="$loki_dir/quality/test-results.json"
-    local test_evidence="absent"   # absent | pass | fail
+    local test_evidence="absent"   # absent | pass | fail | inconclusive
     local test_runner_seen="none"
     if [ -f "$tr_file" ]; then
         local _tr_status
@@ -3575,11 +3577,13 @@ except (json.JSONDecodeError, IOError, KeyError, ValueError):
     print('absent:none')
     sys.exit(0)
 runner = d.get('runner', 'none')
-passed = d.get('pass', True)
+passed = d.get('pass')
 if runner == 'none':
     print('pass:none')
 elif passed is False:
     print('fail:%s' % runner)
+elif passed is not True or d.get('status') == 'no_tests_run':
+    print('inconclusive:%s' % runner)
 else:
     print('pass:%s' % runner)
 " 2>/dev/null || echo "absent:none")
@@ -3644,6 +3648,8 @@ print(len(d.get('tasks', d) if isinstance(d, dict) else d))" 2>/dev/null || echo
             # a no-tests / greenfield project leaves test_auditor at CONTINUE.
             if [ "$test_evidence" = "absent" ]; then
                 reasons="${reasons}no structured test results found; "
+            elif [ "$test_evidence" = "inconclusive" ]; then
+                reasons="${reasons}structured test results inconclusive (runner '$test_runner_seen' recorded no boolean pass); "
             elif [ "$test_runner_seen" = "none" ]; then
                 reasons="${reasons}no real test suite ran (runner none); "
             elif [ "$test_evidence" = "pass" ]; then
@@ -3848,7 +3854,12 @@ council_devils_advocate_review() {
     # (.loki/quality/test-results.json, written by run.sh:ensure_completion_test
     # _evidence; parsed the same way as council_evaluate_member ~2414-2438 and the
     # evidence gate). Parse verdict: runner=="none" => PASS (no real suite to
-    # contradict completion), pass is False => FAIL, else PASS. The legacy log
+    # contradict completion), pass is False => FAIL, a boolean True => PASS,
+    # anything else (missing/null/non-boolean pass, status no_tests_run) =>
+    # INCONCLUSIVE. Only FAIL is an issue here: inconclusive does not contradict
+    # completion, exactly as council_evidence_gate lets it through, and vetoing
+    # it would stall a zero-test run (#82) that is meant to reach this vote.
+    # The legacy log
     # glob is kept ONLY as an ADDITIONAL red signal -- its absence is NOT an issue
     # (nothing writes .loki/logs/test-*.log, so an empty glob is the normal case
     # and must never veto a unanimous COMPLETE on its own).
@@ -3864,11 +3875,13 @@ except (json.JSONDecodeError, IOError, KeyError, ValueError):
     print('absent')
     sys.exit(0)
 runner = d.get('runner', 'none')
-passed = d.get('pass', True)
+passed = d.get('pass')
 if runner == 'none':
     print('pass')
 elif passed is False:
     print('fail')
+elif passed is not True or d.get('status') == 'no_tests_run':
+    print('inconclusive')
 else:
     print('pass')
 " 2>/dev/null || echo "absent")
@@ -4378,9 +4391,12 @@ try:
 except (json.JSONDecodeError, IOError, KeyError, ValueError):
     print('no'); sys.exit(0)
 runner = d.get('runner', 'none')
-passed = d.get('pass', True)
-# Affirmative green requires a REAL suite (runner != none) that did not fail.
-print('yes' if (runner != 'none' and passed is not False) else 'no')
+passed = d.get('pass')
+# Affirmative green requires a REAL suite (runner != none) that recorded a
+# boolean True pass. A missing/null/non-boolean pass key or a zero-test run
+# (status no_tests_run) is inconclusive, which is not green.
+print('yes' if (runner != 'none' and passed is True
+                and d.get('status') != 'no_tests_run') else 'no')
 " 2>/dev/null || echo "no")
     [ "$tr_state" = "yes" ] || return 1
 

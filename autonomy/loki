@@ -13111,13 +13111,22 @@ _loki_airgap_audit() {
             # Local ONLY on positive evidence: a model id naming a local runtime.
             # An unset endpoint is not that evidence -- the opencode catalog
             # default is an openrouter/ model, so inference still leaves the host.
-            if printf '%s' "${LOKI_OPENCODE_MODEL:-}${LOKI_AIDER_MODEL:-}" | grep -qiE 'ollama|localhost|127\.0\.0\.1|lmstudio'; then
+            # Judge only the ACTIVE provider's model variable (the one
+            # providers/<provider>.sh reads): another provider's local model
+            # says nothing about where this provider sends inference.
+            local model_var model_id
+            case "$provider" in
+                opencode) model_var="LOKI_OPENCODE_MODEL" model_id="${LOKI_OPENCODE_MODEL:-}" ;;
+                cline)    model_var="LOKI_CLINE_MODEL"    model_id="${LOKI_CLINE_MODEL:-}" ;;
+                aider)    model_var="LOKI_AIDER_MODEL"    model_id="${LOKI_AIDER_MODEL:-}" ;;
+            esac
+            if printf '%s' "$model_id" | grep -qiE 'ollama|localhost|127\.0\.0\.1|lmstudio'; then
                 model_host="local weights"
                 model_required="no"
                 model_note="Local model runtime (Ollama / LM Studio / llama.cpp). No inference egress."
             else
                 [ -n "$model_host" ] || model_host="remote model provider (no local model configured)"
-                model_note="Remote model gateway. Use an ollama/ model id for zero-egress inference."
+                model_note="Remote model gateway. Set $model_var to an ollama/ model id for zero-egress inference."
             fi
             ;;
         *)
