@@ -45,6 +45,10 @@ Status values: todo, in progress, shipped (version), parked (reason).
 23. **`tests/lib-extract-client-paths.mjs` / `lib-match-client-routes.py` hardcode the main checkout path**, so `tests/test-verify-client-routes.sh` checks the wrong tree from a worktree or CI.
 24. **Bun route: `doctor --airgap` rejected** (case `P5.airgap-audit-default-route`), **`--session-model opus` rejected and per-tier `LOKI_CLAUDE_MODEL_*` ignored** (case `P4.three-setups-resolve`).
 
+25. **`loki ci --report` crashes on large diffs** with "Argument list too long" (`autonomy/loki:33811` passes the diff to python3 as argv; exit 126). Seen on PR #216 and a 2026-08-30 PR via the "Loki CI Quality Gate" workflow, which runs the published package. Pass the diff on stdin or a file.
+26. **Bun Parity `doctor-json` flake:** `disk.available_gb` read 94 vs 95 between the two routes on macOS (PR #216). Normalize or drop the value in the parity comparison.
+27. **Dashboard routes vanish on newer FastAPI:** a clean `requirements-test.txt` install resolves FastAPI 0.141.1 / Starlette 1.7.0, where `dashboard.server.app.routes` has 191 routes and zero `/api/v2` paths, against 218 and 24 on FastAPI 0.128.0 (slice Z measurement). Users installing today may get a dashboard missing its v2 API. Pin or fix.
+
 ## Later milestones
 
 M1 one command, M2 Seal and Wall, M3 assign like a teammate, M4 system map, M5 the line, M6 ship and operate, M7 one screen, M8 legacy lane, M9 enterprise readiness, M10 simplify and ship v10.0.0. Items get broken out here when their milestone comes up.

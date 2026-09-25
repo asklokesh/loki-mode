@@ -289,7 +289,15 @@ STUB="$TMP/stubbin"; mkdir -p "$STUB"
 for b in bash cat awk sed grep basename dirname ls tr sort head cut mktemp shasum rm cp git python3 date wc find chmod sleep uname id; do
     src=""
     for d in /bin /usr/bin /usr/local/bin /opt/homebrew/bin; do
-        if [ -x "$d/$b" ]; then src="$d/$b"; break; fi
+        [ -x "$d/$b" ] || continue
+        # On macOS /usr/bin/git and /usr/bin/python3 are Xcode shims that exit
+        # 69 until the Xcode license is accepted. Linking a shim that cannot run
+        # makes the offline flow fail for a host reason, not a product one, so
+        # take the first candidate that actually executes.
+        case "$b" in
+            git|python3) "$d/$b" --version >/dev/null 2>&1 || continue ;;
+        esac
+        src="$d/$b"; break
     done
     [ -n "$src" ] && ln -sf "$src" "$STUB/$b" 2>/dev/null
 done
