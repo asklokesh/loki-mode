@@ -260,11 +260,13 @@ else:
         bad.append("namespace has interfaces beyond lo (%s)" % r.get("ifaces"))
     if r.get("remote") == "connected":
         bad.append("remote connect succeeded")
-print("; ".join(bad))
+print("; ".join(bad) if bad else "EGRESS_BLOCK_PROVEN")
 PY
 )"
-    if [ -n "$ctl" ]; then
-        nok "egress block not proven ($EGRESS_MECH): $ctl"
+    # An explicit sentinel, not empty output: a crash of the validator itself
+    # must never read as a proven block.
+    if [ "$ctl" != "EGRESS_BLOCK_PROVEN" ]; then
+        nok "egress block not proven ($EGRESS_MECH): ${ctl:-validator produced no verdict}"
         return
     fi
 
@@ -314,6 +316,11 @@ STUB
         printf 'export LOKI_PROVIDER=claude LOKI_MAX_ITERATIONS=2 LOKI_COMPLETION_PROMISE=MOAT_P5_COMPLETE LOKI_AUTO_CONFIRM=true\n'
         printf 'export LOKI_SKIP_PREREQS=true LOKI_PHASE_CODE_REVIEW=false LOKI_COUNCIL_ENABLED=false LOKI_APP_RUNNER=false\n'
         printf 'export LOKI_NO_NEW_SESSION=1 LOKI_SKIP_NET_PREFLIGHT=1 LOKI_SKIP_AUTH_PREFLIGHT=1 LOKI_RESOURCE_CHECK_INTERVAL=2\n'
+        # Loopback stays open under the block (the product needs it), so a
+        # proxy listening on localhost and exported in the caller's env would
+        # let proxy-aware clients tunnel out. Point every proxy at a dead port.
+        # Limit: a local DNS forwarder or relay on loopback is not covered.
+        printf 'export HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9 http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 all_proxy=http://127.0.0.1:9 NO_PROXY= no_proxy=\n'
         printf 'unset LOKI_LEGACY_BASH LOKI_SDK_LOOP LOKI_SDK_MODE\n'
         printf 'cd %q || exit 41\n' "$W"
         printf '%s 150 %q start ./prd.md >%q 2>%q\n' "$DEADLINE_CMD" "$LOKI_BIN" "$MOAT_TMP/start.out" "$MOAT_TMP/start.err"

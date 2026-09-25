@@ -277,17 +277,18 @@ baseline_ids() {
 }
 
 tag=""
+BOOTSTRAP=""
 if top="$(git -C "$MOAT_DIR" rev-parse --show-toplevel 2> "$W/git.err")" \
   && prefix="$(git -C "$MOAT_DIR" rev-parse --show-prefix 2> "$W/git.err")"; then
   [ "$prefix" = "tests/moat/" ] || fail 0 "MISPLACED RUNNER: run.sh is at ${prefix}run.sh in its repo; it must live at tests/moat/run.sh (the ratchets read their baselines from tests/moat/ at the release tag)"
-  if ! head_tags="$(git -C "$top" tag --points-at HEAD --list 'v[0-9]*' 2> "$W/git.err")"; then
+  if ! head_tags="$(git -C "$top" tag --points-at HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' 2> "$W/git.err")"; then
     could_not_check "cannot list the tags at HEAD"
   else
     excl=()
     for t in $head_tags; do excl+=(--exclude "$t"); done
     head_list="$(printf '%s' "$head_tags" | tr '\n' ' ')"
     # ${excl[@]+...}: an empty array is "unbound" under set -u before bash 4.4.
-    if ! tag="$(git -C "$top" describe --tags --abbrev=0 --match 'v[0-9]*' ${excl[@]+"${excl[@]}"} HEAD 2> "$W/git.err")"; then
+    if ! tag="$(git -C "$top" describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' ${excl[@]+"${excl[@]}"} HEAD 2> "$W/git.err")"; then
       tag=""
       could_not_check "no release tag reachable; fetch tags${head_list:+ (tags at HEAD are not a baseline: $head_list)}"
     fi
@@ -305,7 +306,7 @@ if [ -n "$tag" ]; then
       done < <(comm -23 "$W/pending.ids" "$W/pending.txt.base")
       echo "ratchet: checked against $tag ($(wc -l < "$W/pending.ids" | tr -d ' ') pending now, $(wc -l < "$W/pending.txt.base" | tr -d ' ') at $tag)"
       ;;
-    1) echo "ratchet: bootstrap, no baseline at $tag" ;;
+    1) echo "ratchet: bootstrap, no baseline at $tag"; BOOTSTRAP=1 ;;
   esac
   baseline_ids cases.txt
   case $? in
@@ -315,7 +316,7 @@ if [ -n "$tag" ]; then
       done < <(comm -13 "$W/registry.ids" "$W/cases.txt.base")
       echo "registry: checked against $tag ($(wc -l < "$W/registry.ids" | tr -d ' ') registered now, $(wc -l < "$W/cases.txt.base" | tr -d ' ') at $tag)"
       ;;
-    1) echo "registry: bootstrap, no baseline at $tag" ;;
+    1) echo "registry: bootstrap, no baseline at $tag"; BOOTSTRAP=1 ;;
   esac
 fi
 
@@ -351,8 +352,8 @@ if [ "$COULD_NOT_CHECK" = 1 ]; then
 fi
 # Decision D2: nothing may call the moat green below 9 of 9.
 if [ "$proven" = 9 ]; then
-  echo "moat suite: all 9 properties proven"
+  echo "moat suite: all 9 properties proven${BOOTSTRAP:+ [ratchet in bootstrap: no baseline yet]}"
 else
-  echo "moat suite: no rule failed ($proven of 9 proven; the moat is NOT proven)"
+  echo "moat suite: no rule failed ($proven of 9 proven; the moat is NOT proven)${BOOTSTRAP:+ [ratchet in bootstrap: no baseline yet]}"
 fi
 exit 0

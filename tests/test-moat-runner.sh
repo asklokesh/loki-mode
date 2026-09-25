@@ -444,15 +444,25 @@ cases "$D" P1.works P2.works P3.works P4.works P5.works P6.works P7.works P8.wor
 run_in "$D"
 expect RUNNER.bootstrap-allowed 0 "ratchet: bootstrap, no baseline at v1.0.0" \
   "registry: bootstrap, no baseline at v1.0.0" \
-  "moat suite: no rule failed (8 of 9 proven; the moat is NOT proven)"
+  "moat suite: no rule failed (8 of 9 proven; the moat is NOT proven) [ratchet in bootstrap: no baseline yet]"
 
-# A tag that does not look like a release (--match 'v[0-9]*') is not a baseline.
+# A tag that does not look like a release (--match 'v[0-9]*.[0-9]*.[0-9]*') is
+# not a baseline.
 fresh
 g -C "$D" tag -d v1.0.0 > /dev/null
 g -C "$D" tag nightly
 run_in "$D"
 expect RUNNER.no-tag-exit-2 2 "could not check: no release tag reachable; fetch tags" \
   "moat suite: COULD NOT CHECK"
+
+# A v-prefixed ad-hoc tag (v1-scratch) is not a release either: were it read as
+# the baseline, a pending entry it carried would be grandfathered in.
+fresh
+g -C "$D" tag -d v1.0.0 > /dev/null
+g -C "$D" tag v1-scratch HEAD~1
+run_in "$D"
+expect RUNNER.adhoc-v-tag-not-baseline 2 "could not check: no release tag reachable; fetch tags" \
+  "!checked against v1-scratch" "!tags at HEAD"
 
 # Not a git checkout at all (an unpacked tarball): still could-not-check.
 fresh

@@ -290,6 +290,23 @@ if command -v jq >/dev/null 2>&1; then
   else
     bad "remote check: got '$_r_ok' with cryptography and '$_r_dep' without (want 'ok' and '')"
   fi
+  # Render the CONSUMER, not only the helper: a signed receipt whose attestation
+  # could not be checked must read NOT CHECKED, never UNSIGNED (which would
+  # mislabel a signed build and point at the wrong fix) and never TAMPERED.
+  sed -n '/^loki_remote_verify_receipt() {/,/^}/p' "$LOKI_BIN" >>"$W/remote.sh"
+  _render() {
+    _LOKI_SCRIPT_DIR="$REPO_ROOT/autonomy" bash -c "
+      source '$W/remote.sh'; loki_remote_verify_receipt '$R/.loki/proofs/g1/proof.json' 'file://$W/srv'"
+  }
+  _v_ok="$(_render 2>&1)"
+  _v_dep="$(PYTHONPATH="$W/shadow" _render 2>&1)"
+  if printf '%s' "$_v_ok" | grep -q "VERIFIED" \
+     && printf '%s' "$_v_dep" | grep -q "NOT CHECKED" \
+     && ! printf '%s' "$_v_dep" | grep -qE "UNSIGNED|TAMPERED"; then
+    ok "remote render: VERIFIED with cryptography, NOT CHECKED without it (not UNSIGNED)"
+  else
+    bad "remote render: with cryptography '$(printf '%s' "$_v_ok" | head -1)', without '$(printf '%s' "$_v_dep" | head -1)' (want VERIFIED, then NOT CHECKED)"
+  fi
 else
   echo "  SKIP: jq not installed -- remote dependency guard not measured"
 fi

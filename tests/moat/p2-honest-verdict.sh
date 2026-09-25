@@ -231,7 +231,7 @@ case_unknown_gate() {
 }
 
 case_model_looks_good() {
-    need python3 git npm bash || return
+    need python3 git npm bash bun || return
     local d="$RUN/verify-llm" route rc v llm tg bad=""
     new_repo "$d" >/dev/null 2>&1 || { _why="fixture repo could not be created"; return; }
     g "$d" branch -M main
@@ -303,7 +303,7 @@ PY
 }
 
 case_proof_chain_contract() {
-    need python3 git || return
+    need python3 git bun || return
     local route rc want ws bad=""
     chain_ws "$RUN/ch-ok" '{"max_usd": 5.0}' >/dev/null 2>&1 || { _why="fixture ch-ok failed"; return; }
     chain_ws "$RUN/ch-over" '{"max_usd": 0.01}' >/dev/null 2>&1 || { _why="fixture ch-over failed"; return; }
@@ -390,12 +390,12 @@ case_council_inconclusive() {
 # --- run ----------------------------------------------------------------------
 run_case P2.advisory-only-never-verified "advisory/model-only gate passes never yield a VERIFIED headline (generator + verifier)" case_advisory_only
 run_case P2.unknown-gate-fails-closed "an unrecognized gate name or status cannot read green (generator + verifier)" case_unknown_gate
-run_case P2.model-looks-good-cannot-pass "loki verify: a stub reviewer saying 'looks good' over red tests is not VERIFIED/0 (both routes)" case_model_looks_good
+run_case P2.model-looks-good-cannot-pass "loki verify: a stub reviewer saying 'looks good' over red tests is not VERIFIED/0 (verify is bash-only: bin/loki execs autonomy/loki on both entry points)" case_model_looks_good
 run_case P2.missing-pass-key-not-pass "evidence gate: test-results with no pass key is inconclusive, not affirmative" case_missing_pass_key
 run_case P2.proof-verify-exit-contract "loki proof verify exits 0 clean, 1 tampered, 64 no id, 66 unknown id (both routes)" case_proof_verify_contract
-run_case P2.proof-chain-exit-contract "loki proof chain exits 0/1/2/3/64/66 (both routes)" case_proof_chain_contract
-run_case P2.verify-exit-contract "loki verify maps nothing-to-check to 3, could-not-check to 2, usage to 64 (both routes)" case_verify_contract
-run_case P2.fast-verify-inconclusive-not-zero "loki verify --fast with nothing scanned, a nonexistent root or an unknown flag does not exit 0 (both routes)" case_fast_verify
+run_case P2.proof-chain-exit-contract "loki proof chain exits 0/1/2/3/64/66 (both entry points)" case_proof_chain_contract
+run_case P2.verify-exit-contract "loki verify maps nothing-to-check to 3, could-not-check to 2, usage to 64 (bash-only command, both entry points)" case_verify_contract
+run_case P2.fast-verify-inconclusive-not-zero "loki verify --fast with nothing scanned, a nonexistent root or an unknown flag does not exit 0 (bash-only command, both entry points)" case_fast_verify
 run_case P2.council-inconclusive-cannot-exit-zero "inconclusive evidence plus a council vote alone cannot approve completion" case_council_inconclusive
 
 printf 'moat-p2: finished in %ss\n' "$(( $(date +%s) - T_START ))" >&2
