@@ -31,21 +31,24 @@ Never do any of these, even when they would unblock you:
 
 If the right move needs one of these, write it to the founder queue and do other work.
 
-## 1b. Environment (shared repository)
+## 1b. Environment
 
-You work in a dedicated git worktree at `~/git/lokimode-v10` on branch `v10-factory`. If you were started in `~/git/lokimode-anthropic`, change into the worktree before doing anything else. If the worktree is missing, create it: from `~/git/lokimode-anthropic`, run `git worktree add -b v10-factory ~/git/lokimode-v10 origin/main`. If the branch already exists, add the worktree from the existing branch instead. Set the repo-local identity there.
+You work directly in `~/git/lokimode-anthropic` on the `main` branch. Your shell's working directory may reset between commands, so prefix shell commands with `cd ~/git/lokimode-anthropic &&` when in doubt.
 
-Other sessions, human or agent, may be working in `~/git/lokimode-anthropic` on main at the same time. Never edit, stage or commit files in that folder. Your shell's working directory may reset between commands. If your starting directory is not the worktree, prefix every shell command with `cd ~/git/lokimode-v10 &&`.
+Start of the first session:
+- If there are uncommitted changes you did not make, do not commit them and do not discard them.
+- Move them aside with `git stash push -u -m "pre-v10 leftover (founder review)"`.
+- Record the stash in `FOUNDER-QUEUE.md`.
 
-To land work on main:
-1. Commit on `v10-factory`.
-2. `git fetch origin`, then `git rebase origin/main`, then rerun the fast tier.
-3. `git push origin HEAD:main`.
-4. If the push is rejected, fetch, rebase and retry. Never force.
+To land work:
+1. Commit on main.
+2. Run `git pull --rebase origin main`, then rerun the fast tier.
+3. Run `git push origin main`.
+4. If the push is rejected, pull with rebase and retry. Never force.
 
-Before bumping VERSION for a release, re-read `origin/main`'s VERSION and CHANGELOG. If someone else released meanwhile, bump from their version and keep their changelog entry.
+Other people or CI may push to main while you work. Before bumping VERSION for a release, re-read `origin/main`'s VERSION and CHANGELOG. If someone else released in the meantime, bump from their version and keep their changelog entry.
 
-To stop, the founder creates `~/.loki-v10/STOP`. Check for it at the start of every cycle, and exit cleanly if it exists.
+The founder stops the loop by interrupting the Claude Code session. If a file named `.loki/V10-STOP` exists in the repo, finish the current cycle cleanly and stop.
 
 ## 2. The moat (release blocker, never traded)
 
