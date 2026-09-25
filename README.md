@@ -282,7 +282,8 @@ loki proof show <id>       # the facts, the assessments, and the headline
 loki proof verify <id>     # re-hash the receipt and re-derive the diff
 ```
 
-`loki proof verify` exits 0 clean, 1 on tamper or drift. Receipts are attached
+`loki proof verify` exits 0 clean, 1 on tamper or drift, 2 when it could not check
+(full table: [docs/exit-codes.md](docs/exit-codes.md)). Receipts are attached
 to pull requests automatically (`LOKI_PROVEN_PR=0` to opt out), so a reviewer
 sees the evidence next to the code.
 
@@ -368,7 +369,7 @@ Receipts are written to `.loki/proofs/<run_id>/` automatically at run completion
 ```bash
 loki proof list              # every receipt: run id, time, council verdict, cost, files
 loki proof show <id>         # the full proof.json (facts, assessments, honesty)
-loki proof verify <id>       # re-check the receipt against the repo (exit 0 clean, 1 tamper/drift)
+loki proof verify <id>       # re-check the receipt against the repo (exit 0 clean, 1 tamper/drift, 2 could not check)
 ```
 
 `loki proof verify` does two independent checks and prints the result as JSON:

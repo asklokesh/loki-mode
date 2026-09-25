@@ -74,16 +74,25 @@ codes on the Bun route and the bash route (`LOKI_LEGACY_BASH=1`).
 
 | Code | Meaning |
 |---|---|
-| 0 | Clean: the integrity hash matches and the recorded diff still matches the repo |
-| 1 | Tampered or drifted |
-| 2 | Could not check: the receipt is present but unreadable (malformed JSON), or the verifier itself is missing |
-| 64 | Usage error: no proof id given |
+| 0 | Clean: the integrity hash matches and the recorded diff still matches the repo (and, with `--jwks`, the attestation is VERIFIED) |
+| 1 | Tampered or drifted; or, with `--jwks`, the attestation FAILED, or is ABSENT (the receipt is unsigned while a key set was supplied) |
+| 2 | Could not check: the receipt is present but unusable (malformed JSON), the verifier itself is missing, or, with `--jwks`, the attestation is NOT CHECKED (key set unreadable, or a verifier dependency missing) |
+| 64 | Usage error: no proof id given, or `--jwks` with no value or an empty one |
 | 66 | Input missing: no `.loki/proofs/<id>/proof.json` for that id |
 
 64 and 66 are not verdicts. They say the question was never asked, so neither
 one is a pass, and neither one accuses the receipt the way 1 does. Before this
 contract a missing id exited 2 and an unknown id exited 1, which made a typo
-look like "could not check" and a wrong id look like a tampered receipt.
+look like "could not check" and a wrong id look like a tampered receipt. An
+empty `--jwks` value used to skip the attestation check and exit 0.
+
+`proof verify` ranks 1 above 2: when the receipt fails one check and another
+could not run (a drift finding plus an unreadable `--jwks` key set, say), it
+exits 1, because a definite failure of this one receipt is never softened into
+"could not check". `proof chain` ranks 2 above 1 on
+purpose: it rolls up many stages, and an operator who fixes the named FAILED
+stage and re-runs would see green while still blind on the stage that never
+ran (`tools/verify-chain.py`, rule 4).
 
 ## `loki proof chain [workspace]`
 

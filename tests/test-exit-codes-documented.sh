@@ -138,6 +138,18 @@ if printf '%s\n' "$pv_doc" | grep -q '^| 64 |' && printf '%s\n' "$pv_doc" | grep
 else
     bad "the document does not list 64/66 under proof verify"
 fi
+# --jwks with no value or an empty one is a usage error (64). An empty value
+# used to skip the attestation check and exit 0; a dangling --jwks exited 2.
+for _msg in "--jwks needs a URL or file path" "--jwks was given an empty value"; do
+    got="$(_first_code_after "$pv_bash" "$_msg" exit)"
+    if [ "$got" = "64" ]; then ok "proof verify (bash): '$_msg' exits 64 (usage)"
+    else bad "proof verify (bash): '$_msg' exits '${got}', documented as 64"; fi
+done
+if printf '%s\n' "$pv_doc" | grep '^| 64 |' | grep -q -- '--jwks'; then
+    ok "the document lists an empty or missing --jwks value under 64"
+else
+    bad "the document's proof verify 64 row does not cover --jwks"
+fi
 
 # 6. doctor's measured behavior, restated in the doc, must still hold. Asserted
 #    here too because the doc now tells operators to gate CI on it.

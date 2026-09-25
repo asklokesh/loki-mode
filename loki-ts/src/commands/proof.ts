@@ -42,6 +42,8 @@ Subcommands:
   show <id>            Pretty-print .loki/proofs/<id>/proof.json
   verify <id>          Re-check a receipt against your code (tamper + drift)
                        [--jwks <url|file>] also checks its attestation; [--human]
+                       Exit 0 clean, 1 tamper/drift or attestation FAILED/ABSENT,
+                       2 could not check, 64 usage, 66 unknown id
   open <id>            Open .loki/proofs/<id>/index.html in a browser
   share <id>           Publish the proof page as a GitHub Gist (opt-in)
   md <id>              Paste-able Markdown for a PR comment or Slack
@@ -585,7 +587,17 @@ async function verifyProof(id: string | undefined): Promise<number> {
   // Shell out to the verifier and pass its report + exit code through verbatim
   // (0 clean / 1 tamper-drift / 2 unusable). run() captures, so we write the
   // captured streams back out; the verifier prints a JSON report on stdout.
-  const r = await run(["python3", verifier, pj, target], { timeoutMs: 30000 });
+  let r: Awaited<ReturnType<typeof run>>;
+  try {
+    r = await run(["python3", verifier, pj, target], { timeoutMs: 30000 });
+  } catch (e) {
+    // python3 missing or unspawnable: nothing was checked, so 2, not the
+    // uncaught-exception 1 that reads as "tampered".
+    process.stderr.write(
+      `${YELLOW}NOT CHECKED: could not run the verifier (${String((e as Error).message || e)}).${NC}\n`,
+    );
+    return 2;
+  }
   if (r.stdout) process.stdout.write(r.stdout);
   if (r.stderr) process.stderr.write(r.stderr);
   return r.exitCode;
@@ -634,6 +646,13 @@ export async function runProof(argv: readonly string[]): Promise<number> {
   }
 }
 
+// Exit code when the bash CLI never gave one (not found, spawn failed, killed
+// by a signal). For verify, 1 means "tampered", so an unmeasured result is 2
+// (could not check); other subcommands have no tamper meaning and keep 1.
+export function noBashResultCode(sub: string): number {
+  return sub === "verify" ? 2 : 1;
+}
+
 // Delegate an unrecognised `loki proof` subcommand to the bash CLI, which owns
 // the full surface. Returns the child's exit code so a real failure stays a
 // real failure rather than being flattened to 0.
@@ -651,9 +670,15 @@ function proofFallthroughToBash(sub: string, rest: string[]): number {
     dir = `${dir}/..`;
   }
   if (!bashCli) {
-    process.stderr.write(`${RED}Unknown subcommand: ${sub}${NC}\n`);
-    process.stderr.write("Run 'loki proof --help' for usage.\n");
-    return 1;
+    if (sub === "verify") {
+      process.stderr.write(
+        `${YELLOW}NOT CHECKED: verify flags need the bash CLI (autonomy/loki), which was not found.${NC}\n`,
+      );
+    } else {
+      process.stderr.write(`${RED}Unknown subcommand: ${sub}${NC}\n`);
+      process.stderr.write("Run 'loki proof --help' for usage.\n");
+    }
+    return noBashResultCode(sub);
   }
   // env is explicit: Bun's spawnSync does not pass on runtime edits to
   // process.env (LOKI_DIR / TARGET_DIR set in-process would be lost).
@@ -661,5 +686,11 @@ function proofFallthroughToBash(sub: string, rest: string[]): number {
     stdio: "inherit",
     env: process.env,
   });
-  return typeof r.status === "number" ? r.status : 1;
+  if (typeof r.status === "number") return r.status;
+  if (sub === "verify") {
+    process.stderr.write(
+      `${YELLOW}NOT CHECKED: the verifier ended without an exit code (${r.signal ?? r.error?.message ?? "unknown"}).${NC}\n`,
+    );
+  }
+  return noBashResultCode(sub);
 }

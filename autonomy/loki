@@ -36217,8 +36217,9 @@ cmd_proof() {
             echo "  phases [--json]      Measured phase history from real phase_change"
             echo "                       events; unrecorded boundaries read UNKNOWN"
             echo "  show <id>            Pretty-print .loki/proofs/<id>/proof.json"
-            echo "  verify <id>          Re-check a receipt against the repo (tamper + drift);"
-            echo "                       exit 0 clean, 1 tamper/drift. Verify it yourself."
+            echo "  verify <id>          Re-check a receipt against the repo (tamper + drift)."
+            echo "                       Exit 0 clean, 1 tamper/drift, 2 could not check,"
+            echo "                       64 usage, 66 unknown id. Verify it yourself."
             echo "  passport <contract> <id|proof.json> <output.json>"
             echo "                       Bind work from any agent to a portable Outcome Contract"
             echo "                       and independently rechecked Evidence Receipt"
@@ -36229,10 +36230,14 @@ cmd_proof() {
             echo "                       key set. Accepts a server URL or a local jwks.json, so a"
             echo "                       third party can check WHO produced a receipt with no API"
             echo "                       token, no gpg key import, and no network. Exit 1 if the"
-            echo "                       token fails or the receipt is unsigned; 2 if it could"
-            echo "                       not be checked (unreadable key set, missing dependency)."
-            echo "  md <id>              Paste-able Markdown for a PR comment or Slack
-  open <id>            Open .loki/proofs/<id>/index.html in a browser"
+            echo "                       token FAILED or the receipt is unsigned (ABSENT); 2 if"
+            echo "                       NOT CHECKED (key set unreadable or verifier dependency"
+            echo "                       missing); 64 if --jwks has no value or an empty one."
+            echo "                       A 1 is never softened to 2."
+            echo ""
+            echo "More subcommands:"
+            echo "  md <id>              Paste-able Markdown for a PR comment or Slack"
+            echo "  open <id>            Open .loki/proofs/<id>/index.html in a browser"
             echo "  share <id>           Publish the proof page as a GitHub Gist (opt-in)"
             echo ""
             echo "Options for 'share':"
@@ -36521,22 +36526,36 @@ PYEOF
             # so an air-gapped reviewer, handed the receipt and the key set on
             # disk, can still verify -- requiring the network would exclude
             # exactly the reviewer who most needs this.
-            local _pv_human=0 _pv_jwks="" _pv_args=()
+            # An EMPTY --jwks value ("--jwks ''", "--jwks=") is a usage error,
+            # sticky across every occurrence. It used to skip the attestation
+            # check and exit 0 on an unsigned receipt, and a later empty
+            # --jwks cancelled an earlier real one.
+            local _pv_human=0 _pv_jwks="" _pv_jwks_empty=0 _pv_args=()
             local _pv_a _pv_want_jwks=0
             for _pv_a in "$@"; do
                 if [ "$_pv_want_jwks" -eq 1 ]; then
-                    _pv_jwks="$_pv_a"; _pv_want_jwks=0; continue
+                    _pv_jwks="$_pv_a"; _pv_want_jwks=0
+                    [ -n "$_pv_jwks" ] || _pv_jwks_empty=1
+                    continue
                 fi
                 case "$_pv_a" in
                     --human) _pv_human=1 ;;
                     --jwks) _pv_want_jwks=1 ;;
-                    --jwks=*) _pv_jwks="${_pv_a#--jwks=}" ;;
+                    --jwks=*)
+                        _pv_jwks="${_pv_a#--jwks=}"
+                        [ -n "$_pv_jwks" ] || _pv_jwks_empty=1
+                        ;;
                     *) _pv_args+=("$_pv_a") ;;
                 esac
             done
             if [ "$_pv_want_jwks" -eq 1 ]; then
                 echo -e "${RED}--jwks needs a URL or file path.${NC}" >&2
-                exit 2
+                exit 64  # usage (docs/exit-codes.md)
+            fi
+            if [ "$_pv_jwks_empty" -eq 1 ]; then
+                echo -e "${RED}--jwks was given an empty value; pass a URL or file path.${NC}" >&2
+                echo "  Nothing was checked: an empty key set must not read as a skipped check." >&2
+                exit 64  # usage (docs/exit-codes.md)
             fi
             set -- "${_pv_args[@]+"${_pv_args[@]}"}"
 

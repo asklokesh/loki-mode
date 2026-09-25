@@ -7,11 +7,15 @@
 #
 # Contract (tests/moat): exactly one "CASE <ID> PASS|FAIL <desc>" stdout line
 # per case, exit 0 whenever the script ran to completion. A missing
-# prerequisite is a FAIL with "prerequisite missing: X", never a skip. Every
-# verify runs with network egress blocked, so an accidental network dependency
-# shows up here as a failure rather than as a pass on a connected laptop.
-# P1_FORCE_EGRESS_FALLBACK=1 skips the kernel mechanisms to exercise the
-# proxy fallback (labelled as such in the case description).
+# prerequisite is a FAIL with "prerequisite missing: X", never a skip. When a
+# real kernel or sandbox egress block is available (proven by a positive
+# control), every verify runs under it, so an accidental network dependency
+# shows up here as a failure rather than as a pass on a connected laptop. With
+# none available the offline cases FAIL with "prerequisite missing: egress
+# sandbox" and the refusal cases still run, unblocked. A proxy environment is
+# set as defense in depth but can never produce a PASS by itself.
+# P1_FORCE_EGRESS_FALLBACK=1 skips the mechanisms, so it can only force that
+# FAIL path (for manual testing).
 set -uo pipefail
 
 T0=$(date +%s)
@@ -22,7 +26,7 @@ GEN="$ROOT/autonomy/lib/proof-generator.py"
 export LOKI_TELEMETRY_DISABLED=true DO_NOT_TRACK=1 LOKI_NO_UPDATE_CHECK=1 \
     CI=true LOKI_DELEGATE_PR=0 LOKI_DASHBOARD=false
 
-IDS="P1.signed-proof-carries-attestation P1.offline-verify-bash P1.offline-verify-bun P1.different-tree-fails P1.modified-field-fails P1.wrong-key-fails P1.stripped-signature-fails"
+IDS="P1.signed-proof-carries-attestation P1.offline-verify-bash P1.offline-verify-bun P1.different-tree-fails P1.modified-field-fails P1.wrong-key-fails P1.stripped-signature-fails P1.empty-jwks-value-fails P1.verification-metadata-signed"
 
 # Newlines in a reason (a python traceback, say) are folded so every case stays
 # exactly one stdout line.
@@ -72,6 +76,7 @@ def load(name):
 victim, attacker = load("victim.pem"), load("attacker.pem")
 vkid = rj.compute_kid(victim.public_key())
 open(k + "/victim.kid", "w").write(vkid)
+open(k + "/attacker.kid", "w").write(rj.compute_kid(attacker.public_key()))
 json.dump(rj.build_jwks(private_key=victim), open(k + "/jwks.json", "w"))
 json.dump(rj.build_jwks(private_key=attacker), open(k + "/attacker-jwks.json", "w"))
 # The victim's kid over the attacker's key bytes: key selection by kid succeeds,
@@ -111,7 +116,10 @@ PJ="$R/.loki/proofs/p1/proof.json"
 # Every verify below runs as: "${OFFLINE[@]}" VAR=... bin/loki proof verify ...
 # OFFLINE = [egress prefix] env -i <explicit environment>.
 EGRESS=()
-PROXY=()
+# Defense in depth only: proxy-honouring clients are pointed at a dead port.
+# This is not a block, so it never counts toward EGRESS_OK.
+PROXY=(HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9
+    http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 all_proxy=http://127.0.0.1:9)
 EXTRA=()
 [ -n "${PYTHONPATH:-}" ] && EXTRA+=("PYTHONPATH=$PYTHONPATH")
 [ -n "${LOKI_TS_ENTRY:-}" ] && EXTRA+=("LOKI_TS_ENTRY=$LOKI_TS_ENTRY")
@@ -127,28 +135,29 @@ build_offline() {
 
 # Positive control for the block itself: a live loopback listener must be
 # reachable WITHOUT the prefix and unreachable WITH it. Reachability is read on
-# the listener side (a queued connection), so a probe that errors for some
-# unrelated reason cannot pass as "blocked" unless the control also connected.
+# the listener side (a queued connection). The probe prints a marker and must
+# exit 0, so a prefix that could not launch it (or that ignores its arguments)
+# is "not measured", never "blocked".
 egress_probe() {
-    python3 - "$1" "${OFFLINE[@]}" <<'PY'
+    python3 - "${OFFLINE[@]}" <<'PY'
 import socket, subprocess, sys
-kind, prefix = sys.argv[1], sys.argv[2:]
+prefix = sys.argv[1:]
+MARK = "P1-EGRESS-PROBE-RAN"
 srv = socket.socket()
 srv.bind(("127.0.0.1", 0))
 srv.listen(8)
 port = srv.getsockname()[1]
-if kind == "socket":
-    probe = ("import socket\ntry:\n    socket.create_connection(('127.0.0.1', %d), timeout=3)\n"
-             "except OSError:\n    pass\n" % port)
-else:
-    probe = ("import urllib.request\ntry:\n    urllib.request.urlopen('http://127.0.0.1:%d/', timeout=1)\n"
-             "except Exception:\n    pass\n" % port)
+probe = ("import socket\ntry:\n    socket.create_connection(('127.0.0.1', %d), timeout=3)\n"
+         "except OSError:\n    pass\nprint(%r)\n" % (port, MARK))
 
 def reached(cmd):
+    # True / False when the probe ran, None when it did not run at all.
     try:
-        subprocess.run(cmd + [sys.executable, "-c", probe], capture_output=True, timeout=30)
+        r = subprocess.run(cmd + [sys.executable, "-c", probe], capture_output=True, timeout=30)
     except Exception:
-        pass
+        return None
+    if r.returncode != 0 or MARK not in r.stdout.decode("utf-8", "replace"):
+        return None
     srv.settimeout(0.5)
     try:
         c, _ = srv.accept()
@@ -158,42 +167,51 @@ def reached(cmd):
         return False
 
 control = reached([])
-blocked = not reached(prefix)
-print("egress probe (%s): control reached=%s, blocked under prefix=%s" % (kind, control, blocked),
-      file=sys.stderr)
-sys.exit(0 if control and blocked else 1)
+under = reached(prefix)
+print("egress probe: control reached=%s, under prefix reached=%s (None = probe did not run)"
+      % (control, under), file=sys.stderr)
+sys.exit(0 if control is True and under is False else 1)
 PY
 }
 
+# try_egress <label> <prefix...>: the mechanism must launch "true" (exit 0,
+# mirroring detect_egress_block in p5-sovereignty.sh) before its block is
+# probed; a mechanism that cannot even start is never trusted.
 EGRESS_OK=0
 EGRESS_MECH="none"
-if [ -z "${P1_FORCE_EGRESS_FALLBACK:-}" ]; then
-    if command -v sandbox-exec >/dev/null 2>&1; then
-        EGRESS=(sandbox-exec -p '(version 1)(allow default)(deny network*)')
+try_egress() {
+    local label="$1"
+    shift
+    EGRESS=("$@")
+    if "${EGRESS[@]}" true >/dev/null 2>&1; then
         build_offline
-        egress_probe socket && { EGRESS_OK=1; EGRESS_MECH="sandbox-exec deny network*"; }
-    fi
-    if [ "$EGRESS_OK" -eq 0 ] && command -v unshare >/dev/null 2>&1; then
-        EGRESS=(unshare -rn)
-        build_offline
-        egress_probe socket && { EGRESS_OK=1; EGRESS_MECH="unshare -rn"; }
-        if [ "$EGRESS_OK" -eq 0 ] && command -v setpriv >/dev/null 2>&1 \
-            && sudo -n true >/dev/null 2>&1; then
-            EGRESS=(sudo -n unshare -n -- setpriv "--reuid=$(id -u)" "--regid=$(id -g)" --clear-groups --)
-            build_offline
-            egress_probe socket && { EGRESS_OK=1; EGRESS_MECH="sudo unshare -n, setpriv back to uid $(id -u)"; }
+        if egress_probe; then
+            EGRESS_OK=1
+            EGRESS_MECH="$label"
+            return 0
         fi
     fi
-fi
-if [ "$EGRESS_OK" -eq 0 ]; then
-    # Not a kernel block: only proxy-honouring clients are redirected. Stated
-    # in the case description so it is never mistaken for a real block.
+    echo "p1: egress mechanism not usable here: $label" >&2
     EGRESS=()
-    PROXY=(HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9
-        http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 all_proxy=http://127.0.0.1:9)
-    build_offline
-    egress_probe http && { EGRESS_OK=1; EGRESS_MECH="FALLBACK env -i + proxy 127.0.0.1:9 (not a kernel block)"; }
+    return 1
+}
+if [ -n "${P1_FORCE_EGRESS_FALLBACK:-}" ]; then
+    echo "p1: P1_FORCE_EGRESS_FALLBACK set: no egress mechanism tried" >&2
+else
+    if command -v sandbox-exec >/dev/null 2>&1; then
+        try_egress "sandbox-exec deny network*" sandbox-exec -p '(version 1)(allow default)(deny network*)'
+    fi
+    if [ "$EGRESS_OK" -eq 0 ] && command -v unshare >/dev/null 2>&1; then
+        try_egress "unshare -rn" unshare -rn \
+            || { command -v setpriv >/dev/null 2>&1 \
+                && try_egress "sudo unshare -n, setpriv back to uid $(id -u)" \
+                    sudo -n unshare -n -- setpriv "--reuid=$(id -u)" "--regid=$(id -g)" --clear-groups --; }
+    fi
 fi
+# With no proven block, OFFLINE runs without a prefix: the negative cases are
+# still measured, and the offline cases FAIL on the missing prerequisite.
+[ "$EGRESS_OK" -eq 1 ] || EGRESS=()
+build_offline
 echo "p1: egress mechanism: $EGRESS_MECH (active=$EGRESS_OK)" >&2
 
 # --- verify runner ----------------------------------------------------------------
@@ -254,7 +272,7 @@ for route in bash bun; do
     if ! route_ok "$route"; then
         report "$id" FAIL "$desc - prerequisite missing: bun"
     elif [ "$EGRESS_OK" -ne 1 ]; then
-        report "$id" FAIL "$desc - no egress block could be established and proven"
+        report "$id" FAIL "$desc - prerequisite missing: egress sandbox (no sandbox-exec, unshare -rn, or sudo -n unshare -n with setpriv proven on $(uname -s))"
     elif ! good "$route"; then
         _rc=$GOOD_RC_BASH
         [ "$route" = bun ] && _rc=$GOOD_RC_BUN
@@ -363,6 +381,72 @@ else
 fi
 finish P1.stripped-signature-fails "verification.attestation deleted, verify --jwks exits non-zero (bash + bun)"
 
-echo "p1: NOT PROVEN: verification.* fields other than the attestation (scope, algo, attestation_kid, gpg_signature) are outside the signed digest; editing them is not detected by the signature." >&2
+# --- P1.empty-jwks-value-fails -------------------------------------------------------
+# An empty --jwks value ("--jwks ''", "--jwks=") used to skip the attestation
+# check and exit 0 on an unsigned receipt, and a later empty --jwks cancelled an
+# earlier real one. The receipt is the generator's own unkeyed control run.
+if ! { mkdir -p "$R/.loki/proofs/p0" && cp "$W/control/p0/proof.json" "$R/.loki/proofs/p0/proof.json"; } 2>/dev/null; then
+    why=" fixture: no unsigned control proof (see gen-control.log);"
+else
+    for route in bash bun; do
+        if ! route_ok "$route"; then why="$why $route: prerequisite missing: bun;"; continue; fi
+        # Positive control: the unsigned receipt verifies clean with no --jwks,
+        # so a non-zero exit below comes from the flag rule, not a bad id or tree.
+        verify "$route" "empty-ctl-$route" "$R" p0
+        if [ "$RC" -ne 0 ]; then why="$why $route: control (no --jwks) exited $RC, expected 0;"; continue; fi
+        refuse "$route" "empty-sep-$route" "$R" p0 --jwks ''
+        refuse "$route" "empty-eq-$route" "$R" p0 --jwks=
+        refuse "$route" "empty-late-$route" "$R" p0 --jwks "$W/keys/jwks.json" --jwks ''
+    done
+fi
+finish P1.empty-jwks-value-fails "--jwks '', --jwks=, and --jwks <real> --jwks '' on an unsigned receipt each exit non-zero without VERIFIED (bash + bun)"
+
+# --- P1.verification-metadata-signed ------------------------------------------------
+# verification.* metadata beside the attestation must be covered by the
+# signature: a forger who rewrites scope, algo or attestation_kid on a genuine
+# signed proof must be refused. Each forged proof differs from the genuine one
+# in exactly one field (checked below, so no edit is a no-op).
+_meta="$(python3 - "$PJ" "$R/.loki/proofs" "$(cat "$W/keys/attacker.kid")" "$W/out/meta.list" <<'PY' 2>&1
+import json, os, sys
+src, proofs, attacker_kid, listing = sys.argv[1:5]
+p = json.load(open(src))
+v = p.get("verification") or {}
+edits = [("scope", "integrity+provenance"), ("algo", "sha512"), ("attestation_kid", attacker_kid)]
+if v.get("gpg_signature"):
+    edits.append(("gpg_signature", v["gpg_signature"].replace("A", "B", 1)))
+names = []
+for field, val in edits:
+    if field not in v or v[field] == val:
+        print("genuine proof has no verification.%s to change" % field); sys.exit(1)
+    q = json.loads(json.dumps(p))
+    q["verification"][field] = val
+    name = "p1meta-" + field.replace("_", "-")
+    os.makedirs(os.path.join(proofs, name), exist_ok=True)
+    out = os.path.join(proofs, name, "proof.json")
+    json.dump(q, open(out, "w"), indent=2)
+    r = json.load(open(out))
+    diff = [k for k in set(r) | set(p) if r.get(k) != p.get(k)]
+    vdiff = [k for k in set(r["verification"]) | set(v) if r["verification"].get(k) != v.get(k)]
+    if diff != ["verification"] or vdiff != [field]:
+        print("forged %s differs in %s / verification.%s, not exactly that field" % (name, diff, vdiff)); sys.exit(1)
+    names.append(name)
+open(listing, "w").write(" ".join(names))
+PY
+)"
+_meta_desc="verification.scope, .algo and .attestation_kid each edited on a signed proof make verify --jwks exit non-zero (bash + bun)"
+if [ -n "$_meta" ] || [ ! -s "$W/out/meta.list" ]; then
+    why=" fixture: ${_meta:-no forged proofs written};"
+else
+    grep -q gpg "$W/out/meta.list" \
+        || _meta_desc="$_meta_desc; gpg_signature absent from this fixture, not probed"
+    for route in bash bun; do
+        precheck "$route" || continue
+        for _m in $(cat "$W/out/meta.list"); do
+            refuse "$route" "${_m#p1}-$route" "$R" "$_m" --jwks "$W/keys/jwks.json"
+        done
+    done
+fi
+finish P1.verification-metadata-signed "$_meta_desc"
+
 echo "p1: runtime $(( $(date +%s) - T0 ))s" >&2
 exit 0

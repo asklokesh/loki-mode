@@ -49,10 +49,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { run } from "../../src/util/shell.ts";
-import { runProof } from "../../src/commands/proof.ts";
+import { noBashResultCode, runProof } from "../../src/commands/proof.ts";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
 const VERIFIER = resolve(REPO_ROOT, "autonomy", "lib", "proof-verify.py");
@@ -379,5 +379,63 @@ describe("loki proof verify: flags reach the verifier on the Bun route", () => {
     expect(r.exitCode).toBe(1);
     expect(r.stderr).toContain("attestation: FAILED");
     expect(r.stderr).not.toContain("attestation: VERIFIED");
+  });
+});
+
+// --- An empty or missing --jwks value is a usage error (64) -----------------
+// "--jwks ''" and "--jwks=" used to skip the attestation check and exit 0 on an
+// unsigned receipt, and a later empty --jwks cancelled an earlier real one. A
+// dangling "--jwks" exited 2 ("could not check"), which is not what it is.
+const BASH_CLI = resolve(REPO_ROOT, "autonomy", "loki");
+
+function bashCli(argv: string[]) {
+  return run(["bash", BASH_CLI, ...argv], {
+    env: { LOKI_DIR: lokiScratch, TARGET_DIR: repoScratch, NO_COLOR: "1" },
+    timeoutMs: 30000,
+  });
+}
+
+describe("loki proof verify: empty or missing --jwks value exits 64 on both routes", () => {
+  it("every empty-value form exits 64 with the empty-value message", async () => {
+    await cleanProof("run-flag-empty");
+    const ks = join(lokiScratch, "no-such-jwks.json");
+    // Control: without --jwks the receipt verifies clean, so 64 comes from the flag.
+    expect(await runProof(["verify", "run-flag-empty"])).toBe(0);
+    const forms = [["--jwks", ""], ["--jwks="], ["--jwks", ks, "--jwks", ""], ["--jwks", "", "--jwks", ks]];
+    for (const flags of forms) {
+      for (const cli of [bunCli, bashCli]) {
+        const r = await cli(["proof", "verify", "run-flag-empty", ...flags]);
+        expect(r.exitCode).toBe(64);
+        expect(r.stderr).toContain("empty value");
+        expect(r.stderr).not.toContain("attestation: VERIFIED");
+      }
+    }
+  });
+
+  it("a dangling --jwks exits 64 (was 2)", async () => {
+    await cleanProof("run-flag-dangling");
+    for (const cli of [bunCli, bashCli]) {
+      const r = await cli(["proof", "verify", "run-flag-dangling", "--jwks"]);
+      expect(r.exitCode).toBe(64);
+      expect(r.stderr).toContain("--jwks needs a URL or file path");
+    }
+  });
+});
+
+describe("proofFallthroughToBash: no exit code from bash is never a tamper verdict", () => {
+  it("verify maps to 2 (could not check); other subcommands keep 1", () => {
+    expect(noBashResultCode("verify")).toBe(2);
+    expect(noBashResultCode("phases")).toBe(1);
+    expect(noBashResultCode("releases")).toBe(1);
+  });
+
+  it("no python3 on PATH: verify exits 2 NOT CHECKED (was: uncaught spawn error -> 1)", async () => {
+    await cleanProof("run-no-python");
+    const r = await run([process.execPath, BUN_CLI, "proof", "verify", "run-no-python"], {
+      env: { PATH: dirname(process.execPath), LOKI_DIR: lokiScratch, NO_COLOR: "1" },
+      timeoutMs: 30000,
+    });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("NOT CHECKED");
   });
 });

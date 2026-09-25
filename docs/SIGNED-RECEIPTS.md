@@ -116,12 +116,15 @@ loki proof verify <id> --jwks https://loki.example.com
 
 Four outcomes, deliberately kept distinct:
 
-| Verdict | Meaning |
-|---|---|
-| `VERIFIED` | The token is valid **and** covers these exact bytes. |
-| `FAILED` | The token does not cover these bytes: altered after signing, or lifted from another run. |
-| `ABSENT` | This receipt carries no attestation. A fact about the receipt. |
-| `NOT CHECKED` | The key set could not be read. **Not** a verdict, in either direction. |
+| Verdict | Exit | Meaning |
+|---|---|---|
+| `VERIFIED` | 0 | The token is valid **and** covers these exact bytes (a tamper or drift finding still exits 1). |
+| `FAILED` | 1 | The token does not cover these bytes: altered after signing, or lifted from another run. |
+| `ABSENT` | 1 | This receipt carries no attestation. A fact about the receipt; a key set was supplied, so it is not verified. |
+| `NOT CHECKED` | 2 | The key set could not be read, or a verifier dependency (such as `cryptography`) is missing. **Not** a verdict, in either direction, and it never softens a tamper or drift 1. |
+
+`--jwks` with no value, or an empty one (`--jwks ''`, `--jwks=`), is a usage
+error and exits 64; it never skips the check. Full table: `docs/exit-codes.md`.
 
 `ABSENT` and `NOT CHECKED` are never collapsed. One is a property of the
 receipt; the other is an absent measurement, and reporting an unchecked receipt

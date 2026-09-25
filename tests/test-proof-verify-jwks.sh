@@ -155,11 +155,27 @@ else
 fi
 
 # --- 6. A malformed flag is an error, not a silent no-op --------------------
-if LOKI_DIR="$W/.loki" bash "$LOKI_BIN" proof verify r1 --jwks >/dev/null 2>&1; then
-  bad "--jwks with no value exited 0 -- a typo would look like a successful check"
-else
-  ok "--jwks with no value exits non-zero"
-fi
+# Exit 64 (usage), pinned exactly. A dangling --jwks used to exit 2, which
+# claims "could not check" for a question that was never asked. An EMPTY value
+# ("--jwks ''", "--jwks=") used to skip the attestation check entirely and exit
+# 0 on an unsigned receipt, and a later empty --jwks cancelled an earlier real
+# one; each form is a usage error now, in any order.
+# "plain" is the unsigned receipt from test 3.
+_m6() {  # <label> <args...>
+  local label="$1" rc; shift
+  LOKI_DIR="$W/.loki" bash "$LOKI_BIN" proof verify plain "$@" >/dev/null 2>"$W/e6.txt"
+  rc=$?
+  if [ "$rc" = 64 ] && ! grep -q "attestation: VERIFIED" "$W/e6.txt"; then
+    ok "$label exits 64 (usage)"
+  else
+    bad "$label exited $rc, want 64 -- a typo would look like a check"
+  fi
+}
+_m6 "--jwks with no value" --jwks
+_m6 "--jwks ''" --jwks ''
+_m6 "--jwks=" --jwks=
+_m6 "--jwks <real> --jwks ''" --jwks "$W/jwks.json" --jwks ''
+_m6 "--jwks '' --jwks <real>" --jwks '' --jwks "$W/jwks.json"
 
 # --- 7. stdout stays machine-readable ---------------------------------------
 # Machine consumers pipe this verbatim. A verdict leaking into stdout would
