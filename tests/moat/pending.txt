@@ -21,3 +21,26 @@
 #     the baseline.
 #
 # Entries:
+P2.council-inconclusive-cannot-exit-zero M2 council_evidence_gate lets inconclusive evidence through (return 0), and council_evaluate then returns 0 on the council vote alone, which becomes council_approved and exit 0.
+P2.fast-verify-inconclusive-not-zero v10.0.0 autonomy/lib/fast_verify.py main() returns 0 on INCONCLUSIVE (nothing scanned, nonexistent root) and silently ignores unknown flags.
+P2.verify-exit-contract v10.0.0 autonomy/verify.sh uses 0 VERIFIED/1 CONCERNS/2 BLOCKED/3 ERROR: empty diff exits 1 (want 3), non-git directory exits 1 (want 2), unknown flag exits 3 (want 64). Breaking change, pinned by tests/test-verify.sh, tests/test-exit-codes-documented.sh and docs/exit-codes.md.
+P3.check-author-context-excludes-implementation M2 build autonomy/lib/check_author.py context per interface A in the script header
+P3.checks-frozen-before-eval M2 add checklist-verify.py --freeze plus a definition digest check that rejects edits with 'hash mismatch' (interface B)
+P3.implementer-prompt-has-no-check-authoring M2 remove PRD_CHECKLIST_INIT from both builders (run.sh build_prompt, build_prompt.ts buildChecklistStatus) and move check authoring to a walled step
+P4.catalog-has-top-model M0 claude-opus-5-5 is absent from models[] and not mapped by cli_aliases.opus
+P4.floor-does-not-raise-wrong-pass M0 no corpus and no recorded top or floor wrong-pass run
+P4.seeded-defect-corpus-present M0 no corpus manifest at benchmarks/seeded-defects/manifest.json
+P4.three-setups-resolve M0 the Bun route has no working top or routed setting: it rejects --session-model opus and ignores the per-tier LOKI_CLAUDE_MODEL_* variables; high and small resolve to sonnet on both routes
+P5.airgap-audit-default-route M9 Bun doctor rejects --airgap; either route doctor --airgap to bash in bin/loki or port _loki_airgap_audit to loki-ts doctor.ts
+P6.untracked-not-swept M2 commit_session_changes (autonomy/run.sh:9207) runs git add -A, which puts the user's pre-existing untracked files into the session commit that the Seal covers. Fix: snapshot untracked files at session start and exclude them. Not a breaking change; the T-greenfield case in tests/test-branch-lifecycle.sh (agent-created untracked files are committed) stays green.
+P7.dashboard-client-routes-exist M7 9 dashboard-ui endpoints have no route in dashboard/server.py (7 under /api/v2, /api/tools, /api/metrics/tools, notifications unacknowledge)
+P7.no-sample-data-panels M7 AdminPage mounts 5 panels that fall back to sample data (including UserManagement and ProjectGovernance) and 3 files show Math.random metrics
+P7.unmeasured-cost-never-zero M7 10 places turn unmeasured cost into 0 or $0.00 in dashboard-ui, web-app and cost.html
+P7.webapp-client-routes-exist M7 the MagicComponentCard 'View code' link opens /api/magic/components/{name}/code, which has no route in web-app/server.py
+P8.ablation-dead-code-not-sealed M2 record not_load_bearing and have _compute_headline refuse VERIFIED when it is set
+P8.ablation-na-docs-only M2 record not_applicable with a non-empty reason when no code changed
+P8.ablation-runtime-change-load-bearing M2 build autonomy/lib/ablation.py and copy its output into facts.ablation in proof-generator
+P9.checkout-no-persisted-credentials M3 set persist-credentials: false in loki-issue-to-pr.yml, claude.yml and both loki-enterprise.yml jobs
+P9.comment-trigger-author-gate M3 add an author_association gate to the /loki comment trigger and a visible gate to claude.yml
+P9.injection-cannot-reach-token M3 strip GH_TOKEN/GITHUB_TOKEN from the provider environment and push only from a trusted post-session step
+P9.issue-workflows-separate-untrusted-from-push M3 split the issue-to-pr resolve job into an agent job (LOKI_DELEGATE_PR=0, no write token) and a publish job; claude.yml and loki-enterprise.yml loki-run need separate fixes
