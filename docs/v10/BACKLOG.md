@@ -49,6 +49,13 @@ Status values: todo, in progress, shipped (version), parked (reason).
 26. **Bun Parity `doctor-json` flake:** `disk.available_gb` read 94 vs 95 between the two routes on macOS (PR #216). Normalize or drop the value in the parity comparison.
 27. **Dashboard routes vanish on newer FastAPI:** a clean `requirements-test.txt` install resolves FastAPI 0.141.1 / Starlette 1.7.0, where `dashboard.server.app.routes` has 191 routes and zero `/api/v2` paths, against 218 and 24 on FastAPI 0.128.0 (slice Z measurement). Users installing today may get a dashboard missing its v2 API. Pin or fix.
 
+28. **Moat: pending-failure fingerprints.** A pending case that starts failing for a different reason (for example its own positive control broke) stays green. Give each pending entry an expected failure reason and fail on a mismatch (council round 2).
+29. **P7 route count depends on the host** (9 missing on macOS, 21 on Linux CI) because optional routers do not mount there; tied to item 27.
+30. **P4 results need provenance.** Once the corpus exists, a hand-written per-defect outcomes file could still pass; require a verifiable receipt per outcome.
+31. **`proof-verify.py` reads "drift unverifiable" (not a git tree, no base_sha) as 1 (tampered)**; it should be 2 (could not check). A Bun verifier timeout returns 143, not 2.
+32. **Docs tell npm users to run `doctor --airgap`** (`docs/air-gapped.md:48`, `deploy/helm/README.md:413`), which the default route rejects. Note `LOKI_LEGACY_BASH=1` until `P5.airgap-audit-default-route` is fixed.
+33. **Council member vote: `runner=none` counts as a positive signal while a suite that ran zero tests does not.** Decide one rule.
+
 ## Later milestones
 
 M1 one command, M2 Seal and Wall, M3 assign like a teammate, M4 system map, M5 the line, M6 ship and operate, M7 one screen, M8 legacy lane, M9 enterprise readiness, M10 simplify and ship v10.0.0. Items get broken out here when their milestone comes up.
