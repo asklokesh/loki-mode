@@ -85,6 +85,11 @@ Status values: todo, in progress, shipped (version), parked (reason).
 55. **Zero-test honesty on bash:** `enforce_test_coverage`'s #82 zero-test branch downgrades only the JSON record; `test_passed` stays true, so `run.sh` (~12533) still touches `quality/unit-tests.pass` and logs "passed". `evidence-gate-details.json` records `tests.pass: true` for every inconclusive outcome.
 56. **Bun npm-test fallback has no zero-test detection**, and the Bun reader uses `passed`/`failed` while the bash writer emits `passed_count`/`failed_count` (the detail shows an unmeasured failed=0).
 
+57. **Resume must re-snapshot untracked files (data risk).** The snapshot is taken only when a session branch is minted; on the resume and already-on-loki paths (`run.sh` ~9100-9119) a file the user created between sessions is swept into the commit and removed from disk on checkout of the base. Add the current untracked list to the snapshot on both reuse paths (cycle-2 council).
+58. **Gitignored user files are swept when the agent rewrites `.gitignore` (data risk).** Also snapshot `git ls-files -z --others --ignored --exclude-standard --directory` and prefix-match directory entries in `workspace_diff` (cycle-2 council).
+59. **Agent edits to pre-existing untracked files are omitted from the receipt (new in v9.53.0).** Store a blob hash per snapshot entry; list a path whose hash changed (for example `preexisting_modified`) while still never committing the user's file (cycle-2 council). Not a false pass: no verdict reads the list.
+60. **Bun `runTestCoverage` accepts a stale `test-results.json`** (no freshness check against `.loki/quality/.test-results.iter`), and an inconclusive coverage still lands in `GateOutcome.passed[]` with an "(gate did not run)" log line.
+
 ## Later milestones
 
 M1 one command, M2 Seal and Wall, M3 assign like a teammate, M4 system map, M5 the line, M6 ship and operate, M7 one screen, M8 legacy lane, M9 enterprise readiness, M10 simplify and ship v10.0.0. Items get broken out here when their milestone comes up.

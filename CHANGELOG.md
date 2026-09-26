@@ -5,6 +5,51 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.53.0
+
+**P6 in-place brownfield is proven: the moat now reads 1 of 9.** A Loki
+session no longer sweeps the user's pre-existing untracked files into its
+session commit. The session branch records a snapshot of the untracked,
+non-ignored files at the moment it is created
+(`.loki/state/preexisting-untracked.z`), and the session commit unstages
+exactly those paths, so agent-created files are still committed while the
+user's own files stay untracked and untouched on disk. Before this, those
+files landed on the Loki branch and a later checkout of the base removed them
+from the working tree. The receipt no longer lists them as changed by the run.
+Filenames with spaces, newlines and glob characters are handled; if the
+unstage cannot run (git older than 2.25) the session commits nothing rather
+than sweeping. The static-analysis Python syntax check also stops writing
+`__pycache__/*.pyc` into the user's repo, which the session commit used to
+pick up. `P6.untracked-not-swept` is promoted and a new case,
+`P6.no-gate-artifacts-committed`, passes. The ratchet checked both against
+the v9.52.0 baseline: 23 cases pending (was 24), 48 registered (was 45).
+
+**An inconclusive test result is no longer a pass on the default route's Bun
+gate.** `runTestCoverage` counts only `pass: true` as a pass; a missing,
+null, `"inconclusive"` or non-boolean value reads inconclusive, which is
+logged and recorded as such and never counted as affirmative (a zero-test
+project still reaches the council, per the #82 design). The bash council now
+names an unrecorded pass `no_pass_recorded` instead of `no_tests_executed`.
+New case `P2.bun-inconclusive-not-pass`.
+
+**The agent's repo cannot supply modules to the council's verdict.** The
+council and the runner run inline Python from inside the agent's repo, where
+a committed `json.py` (or a `sitecustomize.py` with an empty `PYTHONPATH`
+component) could print the verdict. All 43 inline Python sites in
+`completion-council.sh` and 27 verdict-bearing sites in `run.sh` now run
+`python3 -E` with the cwd removed from `sys.path` first (decision D7, which
+v9.52.0 applied to the verifiers). New case `P2.council-readers-not-shadowed`
+drives the real evidence gate and convergence reader over a failing result in
+a repo that commits both shadows.
+
+**Known gaps, next in line (`docs/v10/BACKLOG.md` 53-60):** resuming a
+session does not re-snapshot, so a file the user creates between sessions can
+still be swept; gitignored user files can be swept when the agent rewrites
+`.gitignore`; an agent edit to an already-untracked user file is now neither
+committed nor listed in the receipt (before, the whole user file was
+committed); checklist verification and several council helper scripts still
+run unguarded inline Python.
+
 ## v9.52.0
 
 **The moat is now an executable suite, and it says 0 of 9 proven.** Loki's

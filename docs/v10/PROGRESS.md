@@ -27,9 +27,23 @@
 
 ## Shipped in v10 program
 
+- **v9.53.0** (2026-09-26): P6 in-place brownfield proven (moat 1 of 9); user untracked files never swept into session commits; no bytecode from the syntax gate; Bun gate never passes an inconclusive result; council and runner verdict paths cannot import from the agent repo.
 - **v9.52.0** (2026-09-25): moat suite `tests/moat/` (45 cases, 0 of 9 properties proven, 24 pending with milestones, ratchet baseline set by this release); verifier fixes (Bun `--jwks`, stripped signature, malformed tokens, strict flags and help, `python3 -E` on every verify path, exit contract 64/66); council `pass` readers fail closed; honest `doctor --airgap`; main-red fix.
 
-## Next
+### Cycle 2 (2026-09-26)
 
-1. Cycle 2 (in progress): BACKLOG 15 (untracked files swept into the session commit: data risk), 37 (Bun passes an inconclusive test result) and 43 (inline Python on council verdict paths importable from the agent repo): honest-verdict and data-risk items first.
+- Dev fleet (3 worktree slices): untracked-file sweep and bytecode (BACKLOG 15, 16), Bun inconclusive pass and council reason naming (37, 38), cwd shadowing on council and runner verdict paths (43). Integrated plus the D7 guard on the new syntax check.
+- Moat: **1 of 9 proven** (P6); ratchet live against v9.52.0 (23 pending, 48 registered).
+- Council: 3 of 3 APPROVE on the first round. Non-blocking data-safety findings recorded as BACKLOG 57-60.
+- Released as v9.53.0.
+
+## Next (after cycle 2)
+
+1. Brownfield data safety: BACKLOG 57, 58, 59 (resume re-snapshot, gitignored files, receipt omission).
+2. Honest verdict: BACKLOG 53-56, 60 (checklist verification and council helpers under D7; zero-test record; stale results).
+3. Then P7 (no fabricated data), P9 (Rule of Two), M0 measurement.
+
+## Next (before cycle 2, kept for history)
+
+1. Cycle 2: BACKLOG 15 (untracked files swept into the session commit: data risk), 37 (Bun passes an inconclusive test result) and 43 (inline Python on council verdict paths importable from the agent repo): honest-verdict and data-risk items first.
 2. Then P7 (no fabricated data) and P9 (Rule of Two), the moat gaps with the smallest fix, and M0 measurement (catalog + seeded-defect corpus).
