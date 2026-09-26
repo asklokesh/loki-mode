@@ -257,15 +257,20 @@ _expect 2 "$(_rc "$R" g1 --jwks "$W/missing.json")" "NOT CHECKED (missing key se
 
 # A missing verifier dependency must be NOT CHECKED, not FAILED. receipt_jwt
 # imports without `cryptography` and verify_attestation then returns False,
-# which read as FAILED (an accusation for a check that never ran). A shadow
-# package that raises ImportError simulates the missing dependency.
-mkdir -p "$W/shadow/cryptography"
-echo 'raise ImportError("shadowed by test-proof-verify-jwks.sh")' \
-  >"$W/shadow/cryptography/__init__.py"
-if PYTHONPATH="$W/shadow" python3 -c "import cryptography" 2>/dev/null; then
-  bad "harness: the shadow did not hide cryptography; dependency case inconclusive"
+# which read as FAILED (an accusation for a check that never ran). The
+# verifiers run with python3 -E, which ignores PYTHONPATH, so the missing
+# dependency is simulated by a python3 shim on PATH that runs the real
+# interpreter with -S (no site-packages, where cryptography lives).
+_real_py="$(command -v python3)"
+mkdir -p "$W/nocrypto"
+printf '#!/bin/sh\nexec "%s" -S "$@"\n' "$_real_py" >"$W/nocrypto/python3"
+chmod +x "$W/nocrypto/python3"
+NOCRYPTO_PATH="$W/nocrypto:$PATH"
+if PATH="$NOCRYPTO_PATH" python3 -E -c "import cryptography" 2>/dev/null \
+   || ! PATH="$NOCRYPTO_PATH" python3 -E -c "import json" 2>/dev/null; then
+  bad "harness: the shim did not hide cryptography (or broke python); dependency case inconclusive"
 else
-  _expect 2 "$(PYTHONPATH="$W/shadow" _rc "$R" g1 --jwks "$W/gjwks.json")" \
+  _expect 2 "$(PATH="$NOCRYPTO_PATH" _rc "$R" g1 --jwks "$W/gjwks.json")" \
     "NOT CHECKED (verifier dependency missing) exits 2"
   if grep -q "attestation: FAILED" "$W/rc.err"; then
     bad "a missing dependency was reported as FAILED"
@@ -315,9 +320,9 @@ _refused "a token whose header decodes to [1]" g1hdr
 _refused "a dict attestation" g1dict
 _refused "a numeric attestation" g1num
 # A non-string attestation is malformed on inspection, so it stays FAILED even
-# with the verifier dependency missing ($W/shadow hides cryptography).
-if ! PYTHONPATH="$W/shadow" python3 -c "import cryptography" 2>/dev/null; then
-  _rcs="$(PYTHONPATH="$W/shadow" _rc "$R" g1dict --jwks "$W/gjwks.json")"
+# with the verifier dependency missing (the $W/nocrypto shim hides cryptography).
+if ! PATH="$NOCRYPTO_PATH" python3 -E -c "import cryptography" 2>/dev/null; then
+  _rcs="$(PATH="$NOCRYPTO_PATH" _rc "$R" g1dict --jwks "$W/gjwks.json")"
   if [ "$_rcs" = 1 ] && grep -q "attestation: FAILED" "$W/rc.err"; then
     ok "a dict attestation is FAILED without cryptography too (no crypto needed to refuse it)"
   else
@@ -454,6 +459,65 @@ else
   [ ! -d "$S/__pycache__" ] || bad "shadow checkout gained __pycache__/: a shadow module was imported"
 fi
 
+# Same attack through the ENVIRONMENT: an empty PYTHONPATH component (what
+# "export PYTHONPATH=x:$PYTHONPATH" leaves when it was unset) puts the cwd on
+# sys.path as an absolute path, and a committed sitecustomize.py runs during
+# site import, before any in-script guard. The verifiers run with python3 -E.
+# The smart json.py answers for both the attestation heredoc and the base
+# verifier, so only -E stands between it and a false pass.
+S2="$W/shadowrepo2"
+gs2() { git -C "$S2" -c user.email=t@example.invalid -c user.name=t \
+        -c commit.gpgsign=false -c core.hooksPath=/dev/null "$@"; }
+mkdir -p "$S2"
+{
+  gs2 init -q && printf 'one\n' >"$S2/a.txt" && gs2 add a.txt && gs2 commit -qm base \
+    && _s2base="$(gs2 rev-parse HEAD)" \
+    && cat >"$S2/json.py" <<'SHADOW'
+import sys, os
+if sys.argv[:1] == ['-']:
+    print("ok"); sys.exit(0)
+if sys.argv[0].endswith('proof-verify.py'):
+    sys.stdout.write('{"ok": true, "hash_ok": true}\n'); sys.exit(0)
+here = os.path.dirname(os.path.abspath(__file__))
+sys.path[:] = [p for p in sys.path if os.path.abspath(p or '.') != here]
+del sys.modules['json']
+import json as _real
+sys.modules['json'] = _real
+SHADOW
+  printf 'import os\nopen(os.environ.get("MARK_FILE", "/dev/null"), "a").write("ran\\n")\n' >"$S2/sitecustomize.py" \
+    && printf '__pycache__/\n.loki/\n' >"$S2/.gitignore" \
+    && gs2 add json.py sitecustomize.py .gitignore && gs2 commit -qm "shadow via env" && mkdir -p "$S2/.loki"
+} >/dev/null 2>&1
+(cd "$S2" && _LOKI_RUN_START_SHA="${_s2base:-}" LOKI_RECEIPT_SIGNING_KEY_FILE="$W/s.pem" \
+  python3 "$REPO_ROOT/autonomy/lib/proof-generator.py" --loki-dir "$S2/.loki" \
+  --out-dir "$S2/.loki/proofs/e1" --run-id e1 --quiet) >/dev/null 2>&1
+mkdir -p "$S2/.loki/proofs/e1strip" "$S2/.loki/proofs/e1tamper"
+python3 -c "
+import json; p=json.load(open('$S2/.loki/proofs/e1/proof.json'))
+p['verification'].pop('attestation', None)
+json.dump(p, open('$S2/.loki/proofs/e1strip/proof.json', 'w'))
+t=json.load(open('$S2/.loki/proofs/e1/proof.json'))
+t['facts']['git']['head_sha']='0'*40
+json.dump(t, open('$S2/.loki/proofs/e1tamper/proof.json', 'w'))" 2>/dev/null
+_rc_env() {  # <runner-cmd...>: inside the checkout, hostile PYTHONPATH, marker for sitecustomize
+  (cd "$S2" && PYTHONPATH=":/nonexistent" MARK_FILE="$W/sitecustomize.ran" \
+     LOKI_DIR="$S2/.loki" TARGET_DIR="$S2" "$@" >/dev/null 2>"$W/rc.err"); echo "$?"
+}
+if [ ! -f "$S2/.loki/proofs/e1/proof.json" ]; then
+  bad "harness: the env-shadow fixture produced no receipt; env leg inconclusive"
+else
+  rm -f "$W/sitecustomize.ran"
+  _expect 1 "$(_rc_env bash "$LOKI_BIN" proof verify e1strip --jwks "$W/gjwks.json")" "PYTHONPATH=':...' + shadow json/sitecustomize: unsigned is ABSENT (1), not VERIFIED"
+  grep -q "attestation: ABSENT" "$W/rc.err" || bad "env leg: the exit did not come from the ABSENT branch"
+  _expect 1 "$(_rc_env bash "$LOKI_BIN" proof verify e1tamper)" "PYTHONPATH=':...' + shadow json: a tampered receipt still exits 1"
+  _expect 0 "$(_rc_env bash "$LOKI_BIN" proof verify e1 --jwks "$W/gjwks.json")" "PYTHONPATH=':...': a genuinely signed receipt still verifies (0)"
+  if [ "$HAVE_BUN" -eq 1 ]; then
+    _expect 1 "$(_rc_env "$REPO_ROOT/bin/loki" proof verify e1strip --jwks "$W/gjwks.json")" "bun entry point, hostile PYTHONPATH: unsigned is ABSENT (1)"
+    _expect 1 "$(_rc_env "$REPO_ROOT/bin/loki" proof verify e1tamper)" "bun entry point, hostile PYTHONPATH: tampered exits 1 (unflagged Bun verifier)"
+  fi
+  [ ! -s "$W/sitecustomize.ran" ] || bad "a committed sitecustomize.py ran inside a verifier"
+fi
+
 # The remote copy of the check carries the same dependency guard (the two copies
 # must not diverge). file:// reaches its "<url>/.well-known/jwks.json" fetch
 # with no server.
@@ -465,7 +529,7 @@ if command -v jq >/dev/null 2>&1; then
       source '$W/remote.sh'; loki_remote_attestation_status '$R/.loki/proofs/g1/proof.json' 'file://$W/srv'"
   }
   _r_ok="$(_remote)"
-  _r_dep="$(PYTHONPATH="$W/shadow" _remote)"
+  _r_dep="$(PATH="$NOCRYPTO_PATH" _remote)"
   if [ "$_r_ok" = "ok" ] && [ -z "$_r_dep" ]; then
     ok "remote check: 'ok' with cryptography, no verdict without it (not TAMPERED)"
   else
@@ -480,7 +544,7 @@ if command -v jq >/dev/null 2>&1; then
       source '$W/remote.sh'; loki_remote_verify_receipt '$R/.loki/proofs/g1/proof.json' 'file://$W/srv'"
   }
   _v_ok="$(_render 2>&1)"
-  _v_dep="$(PYTHONPATH="$W/shadow" _render 2>&1)"
+  _v_dep="$(PATH="$NOCRYPTO_PATH" _render 2>&1)"
   # Anchored to the exact verified line (a bare "VERIFIED" also matches "NOT
   # VERIFIED"). Here-strings, not `printf | grep -q`: under pipefail grep -q
   # can close the pipe early and SIGPIPE inverts the assertion.
@@ -511,7 +575,7 @@ if command -v jq >/dev/null 2>&1; then
   done
   # Malformed on inspection, so TAMPERED needs no crypto: with cryptography
   # hidden it must not fall back to "install python3 cryptography".
-  _rr="$(PYTHONPATH="$W/shadow" _render_id g1dict)"
+  _rr="$(PATH="$NOCRYPTO_PATH" _render_id g1dict)"
   if [ "$_rr" = 1 ] && grep -q "TAMPERED: the receipt's attestation does not verify" "$W/render.out"; then
     ok "remote render: a dict attestation is TAMPERED without cryptography too"
   else

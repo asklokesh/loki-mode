@@ -380,6 +380,12 @@ for n in 1 2 3 4 5 6 7 8 9; do
   bad=0
   [ -s "$W/p$n.bad" ] && bad=$(wc -l < "$W/p$n.bad" | tr -d ' ')
   if [ "$k" = 0 ] && [ "$bad" = 0 ]; then
+    # Without the ratchets (could not check) a case could have been deleted
+    # or parked unnoticed, so nothing reads PROVEN.
+    if [ "$COULD_NOT_CHECK" = 1 ]; then
+      echo "P$n ${NAMES[$n]}: NOT PROVEN (ratchet did not run)"
+      continue
+    fi
     proven=$((proven + 1))
     echo "P$n ${NAMES[$n]}: PROVEN"
     continue

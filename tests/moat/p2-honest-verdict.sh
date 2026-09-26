@@ -321,7 +321,7 @@ case_proof_chain_contract() {
             [ "$rc" = "${want%% *}" ] || bad="$bad [$route ${want#* }: got $rc want ${want%% *}]"
         done
         # A verifier never exits 0 without a verdict: help is a usage error.
-        for _h in -h --help; do
+        for _h in -h --help --he -hq; do
             rc=0; loki_route "$route" proof chain "$RUN/ch-ok" "$_h" >/dev/null 2>&1 || rc=$?
             [ "$rc" = 64 ] || bad="$bad [$route chain $_h: got $rc want 64]"
         done

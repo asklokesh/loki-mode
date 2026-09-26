@@ -414,10 +414,14 @@ static_case() {  # <check>
     scan "$SYN_BAD" "$check" "$MOAT_TMP/$check.bad"
     scan "$SYN_SPLIT" "$check" "$MOAT_TMP/$check.split"
     scan "$REPO_ROOT" "$check" "$MOAT_TMP/$check.repo"
-    if grep -q '^ERROR' "$MOAT_TMP/$check.bad" "$MOAT_TMP/$check.repo"; then
-        nok "$(grep -h -m1 '^ERROR' "$MOAT_TMP/$check.bad" "$MOAT_TMP/$check.repo" | head -1 | sed 's/^ERROR //')"
+    if grep -q '^ERROR' "$MOAT_TMP/$check.bad" "$MOAT_TMP/$check.split" "$MOAT_TMP/$check.repo"; then
+        nok "$(grep -h -m1 '^ERROR' "$MOAT_TMP/$check.bad" "$MOAT_TMP/$check.split" "$MOAT_TMP/$check.repo" | head -1 | sed 's/^ERROR //')"
         return
     fi
+    # The split control is a negative one: it only means something if the scan
+    # of it actually completed (a crash prints no VIOLATION either).
+    grep -q '^SCANNED [1-9]' "$MOAT_TMP/$check.split" \
+        || nok "positive control: the synthetic split workflow scan did not complete"
     grep -q '^VIOLATION bad.yml:agent' "$MOAT_TMP/$check.bad" \
         || nok "positive control: the synthetic all-three workflow was not flagged"
     if grep -q '^VIOLATION' "$MOAT_TMP/$check.split"; then

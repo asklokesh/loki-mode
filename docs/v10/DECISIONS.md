@@ -36,3 +36,17 @@ One entry per decision: context, choice, why, how to reverse. Newest last.
 - Choice: ran the full suite with only that test deselected (3403 passed, 12 skipped), then pushed the one-file fix `35c0daaa` with `PRE_PUSH_SKIP=1`. CI runs the Python suite independently.
 - Why: fixing main is the only job when it is red; the one failure is host-specific, predates the change, and is tracked (BACKLOG, founder queue for the Xcode license).
 - Reverse: nothing to reverse; the skip applied to one push. Future pushes use the hook normally once the host test is resolved.
+
+## D6. 2026-09-25: a gap found after a release goes to the backlog; its case lands with the fix
+
+- Context: once a release carries `tests/moat/pending.txt`, the ratchet refuses new pending entries (D2). A newly discovered gap therefore cannot be filed as a failing moat case (council round 7).
+- Choice: keep the rule. A gap found after a release is recorded in `docs/v10/BACKLOG.md` with its evidence; the moat case that pins it lands in the same change as the fix, passing from day one. No exception path for "pending but ahead of the current milestone".
+- Why: any exception path is a way to re-park a regression under a new ID. The backlog keeps the gap visible without weakening the gate.
+- Reverse: add a reviewed exception list to `tests/moat/run.sh` for new pending IDs whose milestone is later than the current release.
+
+## D7. 2026-09-25: verifiers run Python with -E and never import from the checkout
+
+- Context: council rounds 6 and 7 showed the checkout under verification could supply the verifier's modules: `python3 -` puts the cwd on `sys.path`, an empty `PYTHONPATH` component adds it as an absolute path, and a committed `sitecustomize.py` runs before any in-script guard.
+- Choice: every Python invocation on a verify path (`proof verify`, `proof chain`, the remote and deploy verifiers, the Bun verifier) runs `python3 -E`, and the inline heredocs also drop `''` and `'.'` from `sys.path` first. `-I` was rejected: it drops the user site, so a user-site `cryptography` would degrade every check to NOT CHECKED.
+- Why: an in-script guard cannot stop code that runs during interpreter start-up; `-E` ignores `PYTHON*` variables, so the environment cannot re-add the cwd.
+- Reverse: remove `-E` from those calls (tests in `tests/test-proof-verify-jwks.sh` section 13 go red).

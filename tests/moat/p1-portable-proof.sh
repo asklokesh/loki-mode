@@ -257,9 +257,12 @@ if v.get("attestation_kid") != kid:
     print("attestation_kid %r is not the signing key's kid %r" % (v.get("attestation_kid"), kid)); sys.exit(1)
 if "attestation" in cv:
     print("control: an unkeyed generator run also carries an attestation, so the probe is vacuous"); sys.exit(1)
+print("ATTESTATION_PRESENT")
 PY
 )"
-if [ -z "$_att" ]; then
+# An explicit sentinel, not empty output: a killed or crashed checker must
+# never read as a pass.
+if [ "$_att" = "ATTESTATION_PRESENT" ]; then
     report P1.signed-proof-carries-attestation PASS "generator with a signing key writes verification.attestation (kid matches the key); unkeyed control writes none"
 else
     report P1.signed-proof-carries-attestation FAIL "generator did not attest the proof: $_att"

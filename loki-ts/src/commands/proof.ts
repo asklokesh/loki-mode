@@ -589,7 +589,9 @@ async function verifyProof(id: string | undefined): Promise<number> {
   // captured streams back out; the verifier prints a JSON report on stdout.
   let r: Awaited<ReturnType<typeof run>>;
   try {
-    r = await run(["python3", verifier, pj, target], { timeoutMs: 30000 });
+    // -E: PYTHONPATH (an empty component adds the cwd, the checkout under
+    // verification) and a committed sitecustomize.py must not load code here.
+    r = await run(["python3", "-E", verifier, pj, target], { timeoutMs: 30000 });
   } catch (e) {
     // python3 missing or unspawnable: nothing was checked, so 2, not the
     // uncaught-exception 1 that reads as "tampered".
@@ -665,7 +667,9 @@ export async function runProof(argv: readonly string[]): Promise<number> {
 // by a signal). For verify, 1 means "tampered", so an unmeasured result is 2
 // (could not check); other subcommands have no tamper meaning and keep 1.
 export function noBashResultCode(sub: string): number {
-  return sub === "verify" ? 2 : 1;
+  // verify and chain are verifiers: no result means could not check (2),
+  // never 1 (tampered / a stage failed).
+  return sub === "verify" || sub === "chain" ? 2 : 1;
 }
 
 // Delegate an unrecognised `loki proof` subcommand to the bash CLI, which owns

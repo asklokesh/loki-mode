@@ -482,6 +482,7 @@ describe("loki proof verify: malformed attestation is refused on both entry poin
 describe("proofFallthroughToBash: no exit code from bash is never a tamper verdict", () => {
   it("verify maps to 2 (could not check); other subcommands keep 1", () => {
     expect(noBashResultCode("verify")).toBe(2);
+    expect(noBashResultCode("chain")).toBe(2);
     expect(noBashResultCode("phases")).toBe(1);
     expect(noBashResultCode("releases")).toBe(1);
   });

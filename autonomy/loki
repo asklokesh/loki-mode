@@ -786,9 +786,12 @@ loki_remote_gpg_status() {
     local pj="$1"
     local d="${TMPDIR:-/tmp}/loki-sigcheck.$$"
     mkdir -p "$d" || return 0
-    python3 - "$pj" "$d" <<'PY' 2>/dev/null || { rm -rf "$d"; return 0; }
+    python3 -E - "$pj" "$d" <<'PY' 2>/dev/null || { rm -rf "$d"; return 0; }
 # The cwd is the checkout being verified: drop it from sys.path before any
 # other import, or a committed hashlib.py/json.py could print the verdict.
+# The interpreter runs with -E so PYTHONPATH (an empty component would add
+# the cwd as an absolute path) and a committed sitecustomize.py cannot act
+# before this line.
 import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, sys, os
 proof = json.load(open(sys.argv[1]))
@@ -828,9 +831,12 @@ loki_remote_attestation_status() {
     local tok
     tok="$(jq -r '.verification.attestation // empty' "$pj" 2>/dev/null)"
     [ -n "$tok" ] || { printf ''; return 0; }
-    python3 - "$pj" "$url" "${_LOKI_SCRIPT_DIR}" <<'PY' 2>/dev/null || printf ''
+    python3 -E - "$pj" "$url" "${_LOKI_SCRIPT_DIR}" <<'PY' 2>/dev/null || printf ''
 # The cwd is the checkout being verified: drop it from sys.path before any
 # other import, or a committed hashlib.py/json.py could print the verdict.
+# The interpreter runs with -E so PYTHONPATH (an empty component would add
+# the cwd as an absolute path) and a committed sitecustomize.py cannot act
+# before this line.
 import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, sys, hashlib, urllib.request
 sys.path.insert(0, sys.argv[3])
@@ -907,9 +913,12 @@ loki_proof_attestation_check() {
     local pj="$1" src="$2"
     [ -n "$src" ] || { printf ''; return 0; }
     command -v python3 >/dev/null 2>&1 || { printf ''; return 0; }
-    python3 - "$pj" "$src" "${_LOKI_SCRIPT_DIR}" <<'PY' 2>/dev/null || printf ''
+    python3 -E - "$pj" "$src" "${_LOKI_SCRIPT_DIR}" <<'PY' 2>/dev/null || printf ''
 # The cwd is the checkout being verified: drop it from sys.path before any
 # other import, or a committed hashlib.py/json.py could print the verdict.
+# The interpreter runs with -E so PYTHONPATH (an empty component would add
+# the cwd as an absolute path) and a committed sitecustomize.py cannot act
+# before this line.
 import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, sys, os, hashlib, urllib.request
 sys.path.insert(0, sys.argv[3])
@@ -1004,7 +1013,7 @@ loki_remote_verify_receipt() {
     # empty for a local receipt, which simply means no attestation is checked.
     local _attest_url="${2:-}" _attest=""
     _attest="$(loki_remote_attestation_status "$pj" "$_attest_url")"
-    out="$(python3 "$verifier" "$pj" "${TARGET_DIR:-.}" 2>/dev/null)"
+    out="$(python3 -E "$verifier" "$pj" "${TARGET_DIR:-.}" 2>/dev/null)"
     hash_ok="$(printf '%s' "$out" | jq -r '.hash_ok // false' 2>/dev/null)"
     gpg_ok="$(printf '%s' "$out" | jq -r '.gpg_ok | tostring' 2>/dev/null)"
 
@@ -9084,7 +9093,7 @@ _deploy_receipt_verdict() {
     fi
 
     local out hash_ok gpg_ok signed=0
-    out="$(python3 "$verifier" "$pj" "${TARGET_DIR:-.}" 2>/dev/null || true)"
+    out="$(python3 -E "$verifier" "$pj" "${TARGET_DIR:-.}" 2>/dev/null || true)"
 
     # "The verifier did not RUN" and "the verifier says the hash is bad" are
     # different facts and must not collapse. If they do, a broken python3
@@ -36529,9 +36538,11 @@ PYEOF
             local _ca
             for _ca in "$@"; do
                 [ "$_ca" = "--" ] && break
+                # argparse also treats --h/--he/--hel and any short-option
+                # cluster containing h (-hq) as help.
                 case "$_ca" in
-                    -h|--help)
-                        python3 "$chain_tool" --help >&2 || true
+                    -h*|--h|--he|--hel|--help|-[!-]*h*)
+                        python3 -E "$chain_tool" --help >&2 || true
                         echo "Nothing was checked (exit 64). Full help: loki proof help" >&2
                         exit 64
                         ;;
@@ -36540,7 +36551,7 @@ PYEOF
             # `set -e` is active (loki:22) and a FAILED verdict is a NORMAL
             # result here, so a bare call would abort before the status is read.
             local _chain_rc=0
-            python3 "$chain_tool" "$@" || _chain_rc=$?
+            python3 -E "$chain_tool" "$@" || _chain_rc=$?
             exit $_chain_rc
             ;;
         md)
@@ -36696,9 +36707,9 @@ PYEOF
             fi
             local _pv_rc=0
             if [ "$_pv_human" -eq 1 ]; then
-                python3 "$verifier" --human "$pj" "${TARGET_DIR:-.}" || _pv_rc=$?
+                python3 -E "$verifier" --human "$pj" "${TARGET_DIR:-.}" || _pv_rc=$?
             else
-                python3 "$verifier" "$pj" "${TARGET_DIR:-.}" || _pv_rc=$?
+                python3 -E "$verifier" "$pj" "${TARGET_DIR:-.}" || _pv_rc=$?
             fi
 
             # The attestation check runs AFTER, and can only make the verdict
