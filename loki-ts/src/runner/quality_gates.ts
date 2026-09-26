@@ -417,7 +417,9 @@ export async function runStaticAnalysis(ctx?: RunnerContext): Promise<GateResult
 // already present we trust it -- this lets the bash gate (still running in
 // production) hand off to the TS orchestrator without re-running the suite.
 type TestResultsArtifact = {
-  pass?: boolean;
+  // Only the boolean true is a recorded pass. The bash gate also writes the
+  // string "inconclusive" (no runner, or a runner that executed zero tests).
+  pass?: unknown;
   passed?: number;
   failed?: number;
   runner?: string;
@@ -450,21 +452,33 @@ export async function runTestCoverage(ctx?: RunnerContext): Promise<GateResult> 
   const base = ctx?.lokiDir ?? lokiDir();
   const artifact = readTestResultsArtifact(base);
   if (artifact !== null) {
-    // Treat explicit pass=false or any failed>0 as a failure. When pass is
-    // missing we infer from failed count (defaulting to 0 -> pass).
+    // Explicit pass=false or any recorded failed>0 is a failure. Only the
+    // boolean pass=true is a pass, as in the bash council evidence gate. Any
+    // other pass value (missing, null, "inconclusive", non-boolean) recorded
+    // no outcome: it stays non-blocking, so a zero-test project is not
+    // hard-failed (#82, bash enforce_test_coverage returns 0 there too), but it
+    // is flagged inconclusive and can never read as a clean pass.
     const failed = typeof artifact.failed === "number" ? artifact.failed : 0;
     const passed = typeof artifact.passed === "number" ? artifact.passed : 0;
-    const explicitPass = artifact.pass === true;
-    const explicitFail = artifact.pass === false;
-    const ok = explicitFail ? false : explicitPass || failed === 0;
     const detail = `test_coverage(artifact:${artifact.runner ?? "unknown"}): passed=${passed} failed=${failed}`;
-    return { passed: ok, detail };
+    if (artifact.pass === false || failed > 0) return { passed: false, detail };
+    if (artifact.pass === true) return { passed: true, detail };
+    return {
+      passed: true,
+      inconclusive: true,
+      detail: `${detail} -- INCONCLUSIVE: no recorded pass (pass=${JSON.stringify(artifact.pass) ?? "missing"}; only boolean true passes)`,
+    };
   }
 
-  // No artifact -- fall back to running `npm test --silent` if package.json exists.
+  // No artifact (or an unreadable one) -- fall back to running `npm test
+  // --silent` if package.json exists. With neither, nothing was measured.
   const cwd = ctx?.cwd ?? process.cwd();
   if (!existsSync(join(cwd, "package.json"))) {
-    return { passed: true, detail: "test_coverage: no test-results.json and no package.json -- skipping" };
+    return {
+      passed: true,
+      inconclusive: true,
+      detail: "test_coverage: no readable test-results.json and no package.json -- skipping, nothing measured",
+    };
   }
 
   const r = await run(["npm", "test", "--silent"], { cwd, timeoutMs: 300_000 });

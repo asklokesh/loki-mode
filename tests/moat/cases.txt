@@ -63,3 +63,4 @@ P9.comment-trigger-author-gate
 P9.injection-cannot-reach-token
 P9.checkout-no-persisted-credentials
 P6.no-gate-artifacts-committed
+P2.bun-inconclusive-not-pass

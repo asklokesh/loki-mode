@@ -358,6 +358,34 @@ v="$(jget "$GATE_DETAILS_FILE" tests inconclusive)"
 if [ "$v" = "true" ]; then ok "case9 tests.inconclusive=true (missing pass key is NOT affirmative)"; else bad "case9 tests.inconclusive=true" "got [$v]"; fi
 v="$(jget "$GATE_DETAILS_FILE" tests runner)"
 if [ "$v" = "jest" ]; then ok "case9 tests.runner=jest (the runner label did not route through runner==none)"; else bad "case9 tests.runner=jest" "got [$v]"; fi
+# BACKLOG 38: an unrecorded outcome is not a zero-test run. Case 8 is the
+# control: the #82 zero-test record keeps reason no_tests_executed.
+r="$(jget "$GATE_DETAILS_FILE" tests inconclusive_reason)"
+if [ "$r" = "no_pass_recorded" ]; then ok "case9 tests.inconclusive_reason=no_pass_recorded (not misnamed no_tests_executed)"; else bad "case9 reason=no_pass_recorded" "got [$r]"; fi
+
+# ===========================================================================
+# Case 9b: every other non-boolean pass value (null, the string "true", and
+# "inconclusive" WITHOUT the #82 status:no_tests_run) is the same unrecorded
+# outcome: INCONCLUSIVE with reason no_pass_recorded, never affirmative.
+# ===========================================================================
+echo "Case 9b: non-boolean pass values -> INCONCLUSIVE, reason no_pass_recorded"
+n9b=0
+for pv in 'null' '"true"' '"inconclusive"'; do
+    n9b=$((n9b + 1))
+    repo="$(new_repo "case9b-$n9b")"
+    base="$(grepo "$repo" rev-parse HEAD)"
+    add_real_diff "$repo" feature.txt
+    mkdir -p "$repo/.loki/quality"
+    printf '{"runner":"jest","pass":%s,"summary":"non-boolean pass"}\n' "$pv" > "$repo/.loki/quality/test-results.json"
+    LOKI_TEST_PROVENANCE=0 run_gate "$repo" "$base"
+    v="$(jget "$GATE_DETAILS_FILE" tests inconclusive)"
+    r="$(jget "$GATE_DETAILS_FILE" tests inconclusive_reason)"
+    if [ "$GATE_RC" -eq 0 ] && [ "$v" = "true" ] && [ "$r" = "no_pass_recorded" ]; then
+        ok "case9b pass:$pv -> rc=0, inconclusive, reason no_pass_recorded"
+    else
+        bad "case9b pass:$pv" "rc=$GATE_RC inconclusive=[$v] reason=[$r]"
+    fi
+done
 
 # ===========================================================================
 # Cases 10-11: the sibling readers must agree with the gate on the pass key.

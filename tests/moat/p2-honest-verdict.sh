@@ -276,6 +276,50 @@ case_missing_pass_key() {
     fi
 }
 
+# The Bun route's test gate (runTestCoverage, the real loki-ts source) reads
+# .loki/quality/test-results.json. "Reads as passed" means an affirmative pass:
+# passed === true and not inconclusive. Anything else from the artifact must be
+# a failure or an explicit inconclusive.
+case_bun_inconclusive() {
+    need bun || return
+    local d="$RUN/bun-tc" out
+    mkdir -p "$d/work"
+    cat > "$d/probe.ts" <<'TS'
+import * as fs from "node:fs";
+const repo = process.env.MOAT_REPO!, root = process.env.MOAT_WORK!;
+const { runTestCoverage } = await import(`${repo}/loki-ts/src/runner/quality_gates.ts`);
+const shapes: Record<string, string> = {
+  control_true: '{"runner":"jest","pass":true}',
+  control_false: '{"runner":"jest","pass":false}',
+  inconclusive: '{"runner":"node-test","pass":"inconclusive","status":"no_tests_run","exit_code":0,"passed_count":null,"failed_count":null}',
+  no_pass_key: '{"runner":"jest","summary":"no pass key"}',
+};
+const out: string[] = [];
+for (const [name, body] of Object.entries(shapes)) {
+  const lokiDir = `${root}/${name}/.loki`, cwd = `${root}/${name}`;
+  fs.mkdirSync(`${lokiDir}/quality`, { recursive: true });
+  fs.writeFileSync(`${lokiDir}/quality/test-results.json`, body);
+  // cwd has no package.json, so the gate can never fall back to `npm test`.
+  const r = await runTestCoverage({ lokiDir, cwd, log: () => {} } as never);
+  out.push(`${name}=${r.passed === true && r.inconclusive !== true ? "PASSED" : r.passed === false ? "FAILED" : r.inconclusive === true ? "INCONCLUSIVE" : "OTHER"}`);
+}
+console.log(out.join(" "));
+TS
+    out="$(cd "$d/work" && env -u LOKI_STUB_GATE_TEST_COVERAGE MOAT_REPO="$REPO_ROOT" MOAT_WORK="$d/work" \
+        bun run "$d/probe.ts" 2> "$d/err")"
+    if [ -z "$out" ]; then
+        _why="the Bun probe produced no verdicts (loki-ts/node_modules missing? run bun install in loki-ts): $(head -c 300 "$d/err" | tr '\n' ' ')"
+        return
+    fi
+    case "$out" in *control_true=PASSED*control_false=FAILED*) ;; *)
+        _why="controls broken: want control_true=PASSED and control_false=FAILED, got ($out)"; return ;;
+    esac
+    case "$out" in
+        *" inconclusive=INCONCLUSIVE no_pass_key=INCONCLUSIVE") _st="PASS" ;;
+        *) _why="the Bun test gate read an unrecorded outcome as something other than inconclusive ($out)" ;;
+    esac
+}
+
 case_proof_verify_contract() {
     need python3 git bun || return
     local ws="$RUN/pv-ws" route rc want bad=""
@@ -409,6 +453,7 @@ run_case P2.advisory-only-never-verified "advisory/model-only gate passes never 
 run_case P2.unknown-gate-fails-closed "an unrecognized gate name or status cannot read green (generator + verifier)" case_unknown_gate
 run_case P2.model-looks-good-cannot-pass "loki verify: a stub reviewer saying 'looks good' over red tests is not VERIFIED/0 (verify is bash-only: bin/loki execs autonomy/loki on both entry points)" case_model_looks_good
 run_case P2.missing-pass-key-not-pass "evidence gate: test-results with no pass key is inconclusive, not affirmative" case_missing_pass_key
+run_case P2.bun-inconclusive-not-pass "Bun test gate (runTestCoverage): pass:\"inconclusive\" and a missing pass key read as inconclusive, never an affirmative pass (passed && !inconclusive); pass:true does" case_bun_inconclusive
 run_case P2.proof-verify-exit-contract "loki proof verify exits 0 clean, 1 tampered, 64 no id, 66 unknown id (both routes)" case_proof_verify_contract
 run_case P2.proof-chain-exit-contract "loki proof chain exits 0/1/2/3/64/66, -h/--help is 64 not 0, and a hostile PYTHONPATH cannot shadow a stage (both entry points)" case_proof_chain_contract
 run_case P2.verify-exit-contract "loki verify maps nothing-to-check to 3, could-not-check to 2, usage to 64 (bash-only command, both entry points)" case_verify_contract

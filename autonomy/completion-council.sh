@@ -1954,7 +1954,10 @@ if runner == 'none':
 elif passed is False:
     print('FAIL:%s:false' % runner)
 elif status == 'no_tests_run' or passed is not True:
-    print('INCONCLUSIVE:%s:true' % runner)
+    # Both are INCONCLUSIVE; NO_PASS names the second: no boolean pass was
+    # recorded at all (missing, null, or a non-boolean value), which is not a
+    # zero-test run.
+    print('%s:%s:true' % ('INCONCLUSIVE' if status == 'no_tests_run' else 'NO_PASS', runner))
 else:
     print('PASS:%s:true' % runner)
 PYEOF
@@ -1984,6 +1987,13 @@ PYEOF
         if [ "$_verdict" = "INCONCLUSIVE" ] && [ "$test_runner" != "none" ]; then
             test_inconclusive="true"
             test_inconclusive_reason="no_tests_executed"
+        fi
+        # A real runner label but no boolean pass recorded: the same
+        # pass-through INCONCLUSIVE, named for what it is. Not gated by the
+        # opt-out either: an unrecorded outcome is never affirmative.
+        if [ "$_verdict" = "NO_PASS" ]; then
+            test_inconclusive="true"
+            test_inconclusive_reason="no_pass_recorded"
         fi
     else
         # Missing test-results.json: no suite was recorded at all. Like the

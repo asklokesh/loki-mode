@@ -661,6 +661,88 @@ describe("runTestCoverage (real Phase 5 implementation)", () => {
     expect(r.passed).toBe(true);
     expect(r.detail ?? "").toContain("skipping");
   });
+
+  // BACKLOG 37: only a boolean pass:true is an affirmative pass, matching the
+  // bash council (completion-council.sh). Any other recorded pass value is an
+  // unrecorded outcome: non-blocking (passed stays true, so a zero-test project
+  // is not hard-failed, #82) but explicitly inconclusive, never a clean pass.
+  function writeArtifact(body: unknown): void {
+    mkdirSync(join(scratch, "quality"), { recursive: true });
+    writeFileSync(join(scratch, "quality", "test-results.json"), typeof body === "string" ? body : JSON.stringify(body));
+  }
+
+  it("pass:true is an affirmative pass (not inconclusive)", async () => {
+    writeArtifact({ runner: "jest", pass: true });
+    const r = await runTestCoverage(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.inconclusive).toBeFalsy();
+  });
+
+  it("the bash zero-test record (pass:\"inconclusive\", status:no_tests_run) is inconclusive, not a pass", async () => {
+    // Exact shape enforce_test_coverage writes (run.sh): passed_count/failed_count
+    // are null, so the old failed==0 inference read it as green.
+    writeArtifact({
+      runner: "node-test",
+      pass: "inconclusive",
+      status: "no_tests_run",
+      exit_code: 0,
+      passed_count: null,
+      failed_count: null,
+      verification_gap: "source_without_runnable_tests",
+    });
+    const r = await runTestCoverage(makeCtx());
+    expect(r.inconclusive).toBe(true);
+    expect(r.passed).toBe(true); // non-blocking (#82), never affirmative
+    expect(r.detail ?? "").toContain("no recorded pass");
+  });
+
+  for (const [label, body] of [
+    ["a missing pass key", { runner: "jest", passed: 0, failed: 0 }],
+    ["pass:null", { runner: "jest", pass: null }],
+    ["pass:\"true\" (a string)", { runner: "jest", pass: "true" }],
+    ["pass:1 (a number)", { runner: "jest", pass: 1 }],
+    ["the bash no-runner record (runner:none, pass:\"inconclusive\")", { runner: "none", pass: "inconclusive", status: "not_run" }],
+  ] as const) {
+    it(`${label} is inconclusive, not a pass`, async () => {
+      writeArtifact(body);
+      const r = await runTestCoverage(makeCtx());
+      expect(r.inconclusive).toBe(true);
+      expect(r.passed).toBe(true);
+    });
+  }
+
+  it("an unreadable test-results.json (no package.json to rerun) is inconclusive, not a pass", async () => {
+    writeArtifact("{not json");
+    const r = await runTestCoverage(makeCtx());
+    expect(r.inconclusive).toBe(true);
+  });
+
+  it("pass:false is a failure", async () => {
+    writeArtifact({ runner: "jest", pass: false });
+    const r = await runTestCoverage(makeCtx());
+    expect(r.passed).toBe(false);
+  });
+
+  it("a recorded failed>0 is a failure even beside pass:true", async () => {
+    writeArtifact({ runner: "jest", pass: true, passed: 5, failed: 2 });
+    const r = await runTestCoverage(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("failed=2");
+  });
+
+  it("an inconclusive artifact does not block the gate battery, and is surfaced as INCONCLUSIVE (#82)", async () => {
+    for (const k of ["LOKI_GATE_SEMANTIC_TESTS", "LOKI_GATE_INVARIANTS", "LOKI_GATE_LSP_DIAGNOSTICS"]) {
+      process.env[k] = "false";
+    }
+    process.env["LOKI_STUB_GATE_STATIC_ANALYSIS"] = "pass";
+    process.env["LOKI_STUB_GATE_CODE_REVIEW"] = "pass";
+    process.env["LOKI_STUB_GATE_DOC_COVERAGE"] = "pass";
+    writeArtifact({ runner: "node-test", pass: "inconclusive", status: "no_tests_run" });
+    const r = await runQualityGates(makeCtx());
+    expect(r.failed).not.toContain("test_coverage");
+    expect(r.blocked).toBe(false);
+    expect(existsSync(join(scratch, "quality", "inconclusive-test_coverage.json"))).toBe(true);
+  });
 });
 
 // --- Doc quality gate (real Phase 5 implementation) -----------------------
