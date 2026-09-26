@@ -36264,7 +36264,8 @@ cmd_proof() {
             echo "  show <id>            Pretty-print .loki/proofs/<id>/proof.json"
             echo "  verify <id>          Re-check a receipt against the repo (tamper + drift)."
             echo "                       Exit 0 clean, 1 tamper/drift, 2 could not check,"
-            echo "                       64 usage, 66 unknown id. Verify it yourself."
+            echo "                       64 usage (no id, more than one id, unknown option),"
+            echo "                       66 unknown id. Verify it yourself."
             echo "  passport <contract> <id|proof.json> <output.json>"
             echo "                       Bind work from any agent to a portable Outcome Contract"
             echo "                       and independently rechecked Evidence Receipt"
@@ -36589,6 +36590,13 @@ PYEOF
                 fi
                 case "$_pv_a" in
                     --human) _pv_human=1 ;;
+                    -h|--help)
+                        echo "Usage: loki proof verify <id> [--human] [--jwks <url|file>]"
+                        echo "  Exit 0 clean, 1 tamper/drift (or --jwks FAILED/ABSENT), 2 could not check,"
+                        echo "  64 usage (no id, more than one id, unknown option, empty --jwks), 66 unknown id."
+                        echo "  Full options: loki proof help"
+                        exit 0
+                        ;;
                     --jwks) _pv_want_jwks=1 ;;
                     --jwks=*)
                         _pv_jwks="${_pv_a#--jwks=}"

@@ -15,7 +15,11 @@
 - Decisions D2 (pending ratchet), D3 (exit contract scope), D4 (unsigned proof with key fails).
 - Dev fleet (6 slices, worktree-isolated) built the suite and the P1/P2 fixes; integrated as 7 commits. Suite: 13.5s, "moat: 1 of 9 properties proven", 23 pending.
 - Main was red since `87ec48dc` (tamper-claim scanner flagged the build prompt's own prohibition line). Fixed in `35c0daaa`; Tests green there (D5 covers the local pre-push skip).
-- Council round 1: 3 of 3 CONCERN. Blocking: empty `--jwks` skipped the signature check; air-gap audit read other providers' model vars; P1 metadata fields unsigned while P1 read PROVEN; P5 passed on a failed start; P1 Linux egress detection could not tell "blocked" from "never launched". Fix round 1 in progress (3 slices), plus a grow-only case registry, PyYAML in CI deps, and the three sibling council `pass` readers.
+- Council round 1: 3 of 3 CONCERN. Blocking: empty `--jwks` skipped the signature check; air-gap audit read other providers' model vars; P1 metadata fields unsigned while P1 read PROVEN; P5 passed on a failed start; P1 Linux egress detection could not tell "blocked" from "never launched". Fix round 1 landed (3 slices), plus a grow-only case registry, PyYAML in CI deps, and the three sibling council `pass` readers. Suite now reads "0 of 9 proven" (P1 lost its PROVEN when its unsigned metadata got a real case).
+- Linux CI validation via PR #216: Moat suite job green on ubuntu with a real kernel block (`sudo unshare -n` + `setpriv`); identical results to macOS.
+- Council round 2: APPROVE, CONCERN, APPROVE. Blocker: an attested remote receipt checked without python cryptography read UNSIGNED. Fixed in `50bbea5c` (plus bash `proof verify` exits 2 without python3, semver-only baselines, bootstrap marker, P2 route labels, P5 proxy scrub).
+- Local fast tier green (106 passed, 0 failed) after fixing the quickstart fixture's Xcode-shim host issue (`682f6635`).
+- Council round 3: CONCERN, CONCERN, APPROVE. Blockers: the ratchet baseline was the nearest tag by depth (a merged hotfix tag could reset or loosen it); a crafted malformed attestation token turned FAILED into NOT CHECKED. Fix round 2 in progress (ratchet over all reachable release tags; malformed tokens refused; unknown `proof verify` flags exit 64; P1 refusal cases pinned to exact codes).
 
 ## Shipped in v10 program
 
