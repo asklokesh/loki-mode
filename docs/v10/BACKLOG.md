@@ -123,6 +123,10 @@ Status values: todo, in progress, shipped (version), parked (reason).
 85. **The test gate's pytest writes `__pycache__/*.pyc` into the user's repo**, and the session commit includes them when the repo does not ignore `__pycache__` (seen in a receipt: `__pycache__/helper.cpython-313.pyc`). `P6.no-gate-artifacts-committed` covers only the static-analysis gate; run tests with `PYTHONDONTWRITEBYTECODE=1` or a pycache prefix under `.loki` (cycle-3 interrupt fix).
 86. **Session-created record limits:** the provider turn in flight when the process dies is not recorded (SIGHUP is not trapped, like SIGKILL), so those files are treated as the user's (kept, never committed); a refused resume starts an empty record (warns by name); a path created then deleted by the agent and later re-created by the user is committed as the session's; the snapshot now requires python3 (fails closed without it).
 
+87. **Resume rehash hides earlier edits:** the union deletes and rehashes `.sha.z`, so after a SIGKILL or pod loss (no session-1 receipt) session 1's edit to a pre-existing untracked file never appears as `preexisting_modified`. Keep existing hashes for entries already in the base list; hash only new paths.
+88. **Old git (< 2.18) receipt attribution:** a failed mint snapshot deletes the list, so the receipt names every user untracked file as the run's work (names and counts only; the commit path fails closed). Keep an `ls-files --others --exclude-standard` fallback list for the receipt.
+89. **Bash and Bun read `failed_count` differently:** the bash evidence gate reads `pass: true` as PASS whatever `failed_count` says; Bun now fails it.
+
 ## Later milestones
 
 M1 one command, M2 Seal and Wall, M3 assign like a teammate, M4 system map, M5 the line, M6 ship and operate, M7 one screen, M8 legacy lane, M9 enterprise readiness, M10 simplify and ship v10.0.0. Items get broken out here when their milestone comes up.

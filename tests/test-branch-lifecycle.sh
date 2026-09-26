@@ -881,6 +881,47 @@ else
 fi
 
 # =============================================================================
+# Test T-interrupt-ignored-dir-user-file (council round 5): session 1's agent
+# ignores the user's logs/ directory and is interrupted. The session-created
+# record must not hold the directory entry logs/, or the resume union would
+# refuse to adopt a file the user then creates inside it, and session 2's
+# .gitignore rewrite would sweep that file into the commit (and off the disk
+# on checkout of the base).
+# =============================================================================
+echo "Test T-interrupt-ignored-dir-user-file: a user file made inside an agent-ignored directory survives the resume"
+RID="$(make_repo tintignored)"
+outid="$(
+    cd "$RID" || exit 1
+    source "$PREAMBLE"
+    printf '*.log\n' >> .gitignore
+    git add .gitignore && git commit -qm "ignore logs"
+    mkdir -p logs
+    printf 'readme\n' > logs/readme.txt
+    printf 'log\n' > logs/a.log
+    ITERATION_COUNT=1
+    result=0
+    setup_agent_branch >/dev/null 2>&1
+    printf 'logs/\n' >> .gitignore
+    _loki_record_session_created >/dev/null 2>&1
+    _loki_record_session_created >/dev/null 2>&1
+    nodir="$(tr '\000' '\n' < .loki/state/session-created.z 2>/dev/null | grep -qx 'logs/' && echo no || echo yes)"
+    printf 'my notes\n' > logs/notes-2026.txt
+    setup_agent_branch >/dev/null 2>&1
+    printf 'node_modules/\n' > .gitignore
+    commit_session_changes >/dev/null 2>&1
+    inhead="$(git ls-tree -r --name-only HEAD | grep -q '^logs/notes-2026.txt$' && echo yes || echo no)"
+    git checkout -q develop
+    intact="$( [ "$(cat logs/notes-2026.txt 2>/dev/null)" = 'my notes' ] \
+        && [ "$(cat logs/readme.txt 2>/dev/null)" = 'readme' ] && echo yes || echo no )"
+    printf 'NODIR=%s INHEAD=%s INTACT=%s' "$nodir" "$inhead" "$intact"
+)"
+if [ "$outid" = "NODIR=yes INHEAD=no INTACT=yes" ]; then
+    pass "interrupted session's ignore of logs/ does not stop the resume from protecting a user file made inside it"
+else
+    fail "a user file made inside an agent-ignored directory was swept after the resume" "got: $outid"
+fi
+
+# =============================================================================
 # Test T-ignored-not-swept (BACKLOG 58): the agent rewrites .gitignore, exposing
 # the user's ignored files to `git add -A`. None may be committed. The snapshot
 # stays compact (node_modules/ and dist/ are one entry each) and a directory

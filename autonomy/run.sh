@@ -9180,18 +9180,6 @@ setup_agent_branch() {
     echo "$branch_name"
 }
 
-# _loki_snapshot_preexisting [union]
-# Write .loki/state/preexisting-untracked.z: every path git does not track,
-# untracked and gitignored, repo-wide, NUL-delimited, relative to the repo top.
-# commit_session_changes unstages these and the receipt
-# (autonomy/lib/workspace_diff.py) does not claim them. --ignored=matching lists
-# a directory only when an ignore pattern matches it, so node_modules/ is one
-# "dir/" entry covering its subtree, while logs/ holding only *.log files is
-# listed file by file (a new logs/app.json is still the agent's). "union" keeps
-# the paths already recorded. The sibling .sha.z (content hash per file entry)
-# lets the receipt list a pre-existing file the run changed; it is removed
-# first, so a failed hash step means no detection, never stale hashes. Returns
-# non-zero, leaving any earlier list in place, when git cannot list.
 # Snapshot, or fail closed. Any snapshot failure (for example git older than
 # 2.18, whose status lacks --no-renames / --ignored=matching) leaves a marker
 # that makes commit_session_changes commit nothing: a missing snapshot must
@@ -9206,6 +9194,18 @@ _loki_snapshot_or_fail_closed() {
     return 1
 }
 
+# _loki_snapshot_preexisting [union]
+# Write .loki/state/preexisting-untracked.z: every path git does not track,
+# untracked and gitignored, repo-wide, NUL-delimited, relative to the repo top.
+# commit_session_changes unstages these and the receipt
+# (autonomy/lib/workspace_diff.py) does not claim them. --ignored=matching lists
+# a directory only when an ignore pattern matches it, so node_modules/ is one
+# "dir/" entry covering its subtree, while logs/ holding only *.log files is
+# listed file by file (a new logs/app.json is still the agent's). "union" keeps
+# the paths already recorded. The sibling .sha.z (content hash per file entry)
+# lets the receipt list a pre-existing file the run changed; it is removed
+# first, so a failed hash step means no detection, never stale hashes. Returns
+# non-zero, leaving any earlier list in place, when git cannot list.
 _loki_snapshot_preexisting() {
     local snap=".loki/state/preexisting-untracked.z" top="" base="" exclude=""
     rm -f "${snap%.z}.sha.z" 2>/dev/null
@@ -9282,6 +9282,13 @@ def covered(path):
     return False
 paths = set(entries(base)) if base else set()
 for rec in entries(status, missing_ok=False):
+    # The session-created record ("cover" mode) never holds a directory entry:
+    # a whole-directory entry (logs/, out/) would stop the resume union from
+    # adopting a file the user later creates inside it, and a .gitignore
+    # rewrite would then sweep that file. Adopting such a directory as
+    # pre-existing fails safe (the agent files inside stay uncommitted).
+    if mode == "cover" and rec.endswith(b"/"):
+        continue
     if rec[:3] in (b"?? ", b"!! ") and not covered(rec[3:]):
         paths.add(rec[3:])
 with open(out + ".tmp", "wb") as fh:
