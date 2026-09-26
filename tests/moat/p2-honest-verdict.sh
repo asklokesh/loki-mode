@@ -320,6 +320,11 @@ case_proof_chain_contract() {
             fi
             [ "$rc" = "${want%% *}" ] || bad="$bad [$route ${want#* }: got $rc want ${want%% *}]"
         done
+        # A verifier never exits 0 without a verdict: help is a usage error.
+        for _h in -h --help; do
+            rc=0; loki_route "$route" proof chain "$RUN/ch-ok" "$_h" >/dev/null 2>&1 || rc=$?
+            [ "$rc" = 64 ] || bad="$bad [$route chain $_h: got $rc want 64]"
+        done
     done
     if [ -z "$bad" ]; then _st="PASS"; else _why="${bad# }"; fi
 }
@@ -393,7 +398,7 @@ run_case P2.unknown-gate-fails-closed "an unrecognized gate name or status canno
 run_case P2.model-looks-good-cannot-pass "loki verify: a stub reviewer saying 'looks good' over red tests is not VERIFIED/0 (verify is bash-only: bin/loki execs autonomy/loki on both entry points)" case_model_looks_good
 run_case P2.missing-pass-key-not-pass "evidence gate: test-results with no pass key is inconclusive, not affirmative" case_missing_pass_key
 run_case P2.proof-verify-exit-contract "loki proof verify exits 0 clean, 1 tampered, 64 no id, 66 unknown id (both routes)" case_proof_verify_contract
-run_case P2.proof-chain-exit-contract "loki proof chain exits 0/1/2/3/64/66 (both entry points)" case_proof_chain_contract
+run_case P2.proof-chain-exit-contract "loki proof chain exits 0/1/2/3/64/66, and -h/--help is 64 not 0 (both entry points)" case_proof_chain_contract
 run_case P2.verify-exit-contract "loki verify maps nothing-to-check to 3, could-not-check to 2, usage to 64 (bash-only command, both entry points)" case_verify_contract
 run_case P2.fast-verify-inconclusive-not-zero "loki verify --fast with nothing scanned, a nonexistent root or an unknown flag does not exit 0 (bash-only command, both entry points)" case_fast_verify
 run_case P2.council-inconclusive-cannot-exit-zero "inconclusive evidence plus a council vote alone cannot approve completion" case_council_inconclusive

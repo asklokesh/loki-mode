@@ -204,8 +204,20 @@ jobs:
         working-directory: web-app
         run: npm ci --ignore-scripts --no-audit --no-fund
 
+      # The job's green check means "no rule failed", not "moat proven". The
+      # step summary carries the real count so a reader of the check sees it.
       - name: Run the moat suite
-        run: bash tests/moat/run.sh
+        run: |
+          rc=0
+          bash tests/moat/run.sh > "$RUNNER_TEMP/moat.out" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/moat.out"
+          {
+            echo '### Moat suite'
+            echo '```'
+            grep -E '^(P[1-9] |moat:|moat suite:|ratchet:|registry:)' "$RUNNER_TEMP/moat.out" || echo "no summary lines (exit $rc)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
 
   helm-lint:
     name: Helm lint

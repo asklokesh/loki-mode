@@ -787,6 +787,9 @@ loki_remote_gpg_status() {
     local d="${TMPDIR:-/tmp}/loki-sigcheck.$$"
     mkdir -p "$d" || return 0
     python3 - "$pj" "$d" <<'PY' 2>/dev/null || { rm -rf "$d"; return 0; }
+# The cwd is the checkout being verified: drop it from sys.path before any
+# other import, or a committed hashlib.py/json.py could print the verdict.
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, sys, os
 proof = json.load(open(sys.argv[1]))
 d = sys.argv[2]
@@ -826,6 +829,9 @@ loki_remote_attestation_status() {
     tok="$(jq -r '.verification.attestation // empty' "$pj" 2>/dev/null)"
     [ -n "$tok" ] || { printf ''; return 0; }
     python3 - "$pj" "$url" "${_LOKI_SCRIPT_DIR}" <<'PY' 2>/dev/null || printf ''
+# The cwd is the checkout being verified: drop it from sys.path before any
+# other import, or a committed hashlib.py/json.py could print the verdict.
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, sys, hashlib, urllib.request
 sys.path.insert(0, sys.argv[3])
 try:
@@ -902,6 +908,9 @@ loki_proof_attestation_check() {
     [ -n "$src" ] || { printf ''; return 0; }
     command -v python3 >/dev/null 2>&1 || { printf ''; return 0; }
     python3 - "$pj" "$src" "${_LOKI_SCRIPT_DIR}" <<'PY' 2>/dev/null || printf ''
+# The cwd is the checkout being verified: drop it from sys.path before any
+# other import, or a committed hashlib.py/json.py could print the verdict.
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, sys, os, hashlib, urllib.request
 sys.path.insert(0, sys.argv[3])
 try:
@@ -36513,6 +36522,21 @@ PYEOF
                 echo -e "${RED}python3 unavailable: the chain could not be verified (UNAVAILABLE, not a pass)${NC}" >&2
                 exit 2
             fi
+            # A verifier never exits 0 without a verdict: -h/--help (before any
+            # "--") shows usage on stderr and exits 64, where argparse would
+            # exit 0 with nothing checked. The tool itself keeps its exit-0
+            # --help for direct use (tests/test_tool_exit_contract.py).
+            local _ca
+            for _ca in "$@"; do
+                [ "$_ca" = "--" ] && break
+                case "$_ca" in
+                    -h|--help)
+                        python3 "$chain_tool" --help >&2 || true
+                        echo "Nothing was checked (exit 64). Full help: loki proof help" >&2
+                        exit 64
+                        ;;
+                esac
+            done
             # `set -e` is active (loki:22) and a FAILED verdict is a NORMAL
             # result here, so a bare call would abort before the status is read.
             local _chain_rc=0

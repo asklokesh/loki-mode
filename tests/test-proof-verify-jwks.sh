@@ -410,6 +410,50 @@ fi
 _expect 66 "$(_rc "$R" -- -h)" "'-- -h' treats -h as a proof id (unknown, 66)"
 _expect 1 "$(_rc "$R" --jwks "$W/gjwks.json" -- g1strip)" "'--jwks k -- id' still checks the attestation (ABSENT, 1)"
 
+# --- 13. The checkout being verified cannot supply the verifier's modules --------
+# The attestation check runs "python3 -" from inside the checkout, which put the
+# cwd first on sys.path: a PR that commits hashlib.py or json.py printed
+# "attestation: VERIFIED" for an unsigned receipt. The receipt is generated AFTER
+# the shadow modules are committed, so the base verifier sees no drift and only
+# the attestation rule decides.
+S="$W/shadowrepo"
+gs() { git -C "$S" -c user.email=t@example.invalid -c user.name=t \
+        -c commit.gpgsign=false -c core.hooksPath=/dev/null "$@"; }
+mkdir -p "$S"
+{
+  gs init -q && printf 'one\n' >"$S/a.txt" && gs add a.txt && gs commit -qm base \
+    && _sbase="$(gs rev-parse HEAD)" \
+    && printf 'import sys\nprint("ok")\nsys.exit(0)\n' >"$S/hashlib.py" \
+    && printf 'import sys\nprint("ok")\nsys.exit(0)\n' >"$S/json.py" \
+    && gs add hashlib.py json.py && gs commit -qm "shadow the verifier" && mkdir -p "$S/.loki"
+} >/dev/null 2>&1
+(cd "$S" && _LOKI_RUN_START_SHA="${_sbase:-}" LOKI_RECEIPT_SIGNING_KEY_FILE="$W/s.pem" \
+  python3 "$REPO_ROOT/autonomy/lib/proof-generator.py" --loki-dir "$S/.loki" \
+  --out-dir "$S/.loki/proofs/s1" --run-id s1 --quiet) >/dev/null 2>&1
+mkdir -p "$S/.loki/proofs/s1strip"
+python3 -c "
+import json; p=json.load(open('$S/.loki/proofs/s1/proof.json'))
+p['verification'].pop('attestation', None)
+json.dump(p, open('$S/.loki/proofs/s1strip/proof.json', 'w'))" 2>/dev/null
+_rc_in() {  # <runner-cmd...>: run from INSIDE the shadow checkout
+  # No bytecode: a shadow import writing __pycache__/ would drift the tree and
+  # produce a 1 for the wrong reason, masking the attestation verdict.
+  (cd "$S" && PYTHONDONTWRITEBYTECODE=1 LOKI_DIR="$S/.loki" TARGET_DIR="$S" "$@" >/dev/null 2>"$W/rc.err"); echo "$?"
+}
+if [ ! -f "$S/.loki/proofs/s1/proof.json" ]; then
+  bad "harness: the shadow fixture produced no receipt; section 13 inconclusive"
+else
+  _expect 0 "$(_rc_in bash "$LOKI_BIN" proof verify s1strip)" "control: shadow-checkout unsigned receipt passes the base verifier"
+  _expect 1 "$(_rc_in bash "$LOKI_BIN" proof verify s1strip --jwks "$W/gjwks.json")" "shadow hashlib.py/json.py in the cwd: unsigned receipt is ABSENT (1), not VERIFIED"
+  grep -q "attestation: ABSENT" "$W/rc.err" || bad "shadow checkout: the ABSENT exit did not come from the ABSENT branch"
+  _expect 0 "$(_rc_in bash "$LOKI_BIN" proof verify s1 --jwks "$W/gjwks.json")" "shadow checkout: a genuinely signed receipt still verifies (0)"
+  if [ "$HAVE_BUN" -eq 1 ]; then
+    _expect 1 "$(_rc_in "$REPO_ROOT/bin/loki" proof verify s1strip --jwks "$W/gjwks.json")" "bun entry point, shadow checkout: unsigned is ABSENT (1)"
+    grep -q "attestation: ABSENT" "$W/rc.err" || bad "bun entry point, shadow checkout: the exit did not come from the ABSENT branch"
+  fi
+  [ ! -d "$S/__pycache__" ] || bad "shadow checkout gained __pycache__/: a shadow module was imported"
+fi
+
 # The remote copy of the check carries the same dependency guard (the two copies
 # must not diverge). file:// reaches its "<url>/.well-known/jwks.json" fetch
 # with no server.

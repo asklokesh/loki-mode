@@ -105,7 +105,7 @@ code through unchanged.
 | 1 | A stage FAILED |
 | 2 | A stage could not be evaluated (UNAVAILABLE outranks FAILED) |
 | 3 | Nothing to check anywhere: zero receipts is not a pass |
-| 64 | Usage error (unknown flag) |
+| 64 | Usage error: an unknown flag, or `-h`/`--help` (a verifier never exits 0 without a verdict; full help is `loki proof help`) |
 | 66 | The workspace does not exist |
 
 ## `loki ci`

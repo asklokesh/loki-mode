@@ -67,6 +67,10 @@ Status values: todo, in progress, shipped (version), parked (reason).
 41. **P1.different-tree-fails lacks an in-script no-edit control** (checked by hand: unedited copy verifies 0).
 42. **`doctor --airgap` "local" is a substring match** (`ollama|localhost|127.0.0.1|lmstudio`) and ignores a remote `OLLAMA_HOST`.
 
+43. **Audit every `python3 -c` / `python3 -` on a verdict path for cwd module shadowing (high, honest verdict).** Council round 6 proved a committed `hashlib.py` could print "attestation: VERIFIED" through the attestation heredocs (fixed in v9.52.0). The same class likely exists wherever the runner or council runs inline Python with the cwd inside the agent's repo (the evidence gate reading test results, checklist verification), where the agent under test can write `json.py`. Guard with `sys.path[:] = [p for p in sys.path if p not in ("", ".")]` or run from a neutral cwd, and add a shadow-module moat case.
+44. **P9 injection case: also grep the run HOME and provider-visible files for the canaries** (credential helpers, `~/.config/gh/hosts.yml`), not only env and argv, before promoting.
+45. **P4.three-setups-resolve pass bar:** a documented spelling that silently dispatches another model (for example `--session-model high` sending sonnet) must fail the case, not appear as a note.
+
 ## Later milestones
 
 M1 one command, M2 Seal and Wall, M3 assign like a teammate, M4 system map, M5 the line, M6 ship and operate, M7 one screen, M8 legacy lane, M9 enterprise readiness, M10 simplify and ship v10.0.0. Items get broken out here when their milestone comes up.
