@@ -360,7 +360,7 @@ else
             || why="$why $route/rehash: signature did not report attestation: FAILED;"
     done
 fi
-finish P1.modified-field-fails "facts.git.head_sha forged (stale hash, and recomputed hash) makes verify exit non-zero ($ROUTES)"
+finish P1.modified-field-fails "facts.git.head_sha forged (stale hash, and recomputed hash) makes verify exit 1 ($ROUTES)"
 
 # --- P1.wrong-key-fails -------------------------------------------------------------
 for route in bash bun; do
@@ -449,7 +449,7 @@ for field, val in edits:
 open(listing, "w").write(" ".join(names))
 PY
 )"
-_meta_desc="verification.scope, .algo and .attestation_kid each edited on a signed proof make verify --jwks exit non-zero ($ROUTES)"
+_meta_desc="verification.scope, .algo and .attestation_kid each edited on a signed proof make verify --jwks exit 1 ($ROUTES)"
 if [ -n "$_meta" ] || [ ! -s "$W/out/meta.list" ]; then
     why=" fixture: ${_meta:-no forged proofs written};"
 else

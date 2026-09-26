@@ -697,6 +697,8 @@ run_case() {
         PASS|FAIL) ;;
         *) status=FAIL; reason="case crashed (rc=$rc, last output: ${out:0:120})" ;;
     esac
+    # A function that printed PASS and then failed has not passed.
+    if [ "$status" = PASS ] && [ "$rc" -ne 0 ]; then status=FAIL; reason="printed PASS but exited $rc: $reason"; fi
     reason="$(printf '%s' "$reason" | tr '\n\r' '  ')"
     if [ "$status" = PASS ]; then
         printf 'CASE %s PASS %s (%s)\n' "$id" "$desc" "$reason"

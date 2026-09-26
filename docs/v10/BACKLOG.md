@@ -60,6 +60,13 @@ Status values: todo, in progress, shipped (version), parked (reason).
 35. **Moat runner self-test: 0-byte baseline file.** Dropping the `git grep -L` empty-file listing leaves the self-test green; the code path was checked by hand. Add a case.
 36. **P7 scanners: refuse a zero-file scan** (`SCANNED>0`), so a moved directory cannot read PASS.
 
+37. **Bun route passes an inconclusive test result (high, honest verdict).** `loki-ts/src/runner/quality_gates.ts:451-458` `runTestCoverage` returns `passed: true` for `pass: "inconclusive"` on the default route (council round 5). Same class as the council `pass` readers fixed in v9.52.0.
+38. **Council: a missing `pass` key is labelled `no_tests_executed`**; use a distinct reason such as `no_pass_recorded` (`autonomy/completion-council.sh` ~1985).
+39. **Attestation edge labels:** `{"keys": []}` reads FAILED (exit 1) rather than NOT CHECKED; `attestation: false` reads UNSIGNED on the remote render but FAILED locally. Neither is a false pass.
+40. **P3 prompt case is phrase-based.** `P3.implementer-prompt-has-no-check-authoring` passes on the absence of phrases; pair it with a behavioral assertion (the implementer session does not write the checklist) before promoting.
+41. **P1.different-tree-fails lacks an in-script no-edit control** (checked by hand: unedited copy verifies 0).
+42. **`doctor --airgap` "local" is a substring match** (`ollama|localhost|127.0.0.1|lmstudio`) and ignores a remote `OLLAMA_HOST`.
+
 ## Later milestones
 
 M1 one command, M2 Seal and Wall, M3 assign like a teammate, M4 system map, M5 the line, M6 ship and operate, M7 one screen, M8 legacy lane, M9 enterprise readiness, M10 simplify and ship v10.0.0. Items get broken out here when their milestone comes up.
