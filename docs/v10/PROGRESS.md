@@ -37,6 +37,13 @@
 - Council: 3 of 3 APPROVE on the first round. Non-blocking data-safety findings recorded as BACKLOG 57-60.
 - Released as v9.53.0.
 
+### Cycle 3 (2026-09-26)
+
+- v9.53.0 verified on all channels (npm latest + gitHead `d7fb8674`, tag, GitHub release, Docker amd64/arm64, Homebrew sha256).
+- Dev fleet (3 worktree slices): resume re-snapshot, gitignored files, receipt discloses edits to user files (BACKLOG 57-59); D7 on checklist verification and council helpers (53, 54 partly); zero-test and stale results never affirmative on either route (55, 56, 60).
+- Moat: still 1 of 9 proven (P6); 53 cases, 30 pass, 23 pending; ratchet against v9.52.0 and v9.53.0. New cases: P6.resume-does-not-sweep, P6.ignored-files-not-swept, P6.preexisting-edit-disclosed, P2.checklist-verify-not-shadowed, P2.zero-test-never-affirmative.
+- Open items the slices found: BACKLOG 61-65.
+
 ## Next (after cycle 2)
 
 1. Brownfield data safety: BACKLOG 57, 58, 59 (resume re-snapshot, gitignored files, receipt omission).

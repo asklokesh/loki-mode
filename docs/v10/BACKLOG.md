@@ -90,6 +90,12 @@ Status values: todo, in progress, shipped (version), parked (reason).
 59. **Agent edits to pre-existing untracked files are omitted from the receipt (new in v9.53.0).** Store a blob hash per snapshot entry; list a path whose hash changed (for example `preexisting_modified`) while still never committing the user's file (cycle-2 council). Not a false pass: no verdict reads the list.
 60. **Bun `runTestCoverage` accepts a stale `test-results.json`** (no freshness check against `.loki/quality/.test-results.iter`), and an inconclusive coverage still lands in `GateOutcome.passed[]` with an "(gate did not run)" log line.
 
+61. **`evidence-block.json` still writes the raw `$test_pass`** (`completion-council.sh` ~2792, block path), so `tests.pass` can read true for an inconclusive test axis when another axis blocks.
+62. **`enforce_test_coverage` monorepo-custom-rejected path** records `pass: true` / `verified` and touches `unit-tests.pass` when `LOKI_MONOREPO_TEST_CMD` is rejected and the gate is skipped.
+63. **`council_augment_from_managed_memory`** (`completion-council.sh` ~228) runs `cd "${PROJECT_DIR:-$(pwd)}"` then `python3 -m memory.managed_memory.retrieve`; with `PROJECT_DIR` unset it can run the agent repo's own `memory/` package into the council prompt.
+64. **A test script like `exit 0` still reads as a pass on both routes** (the zero-test detector acts only on positive evidence of zero tests); `node --test` behind an npm script is not detected. The Bun freshness marker is agent-writable.
+65. **Previous-session leftovers become "pre-existing" after a crash** (cycle-3 disclosure): files left uncommitted by a crashed or secret-scan-aborted session are recorded as pre-existing on the next run and stay on disk, uncommitted.
+
 ## Later milestones
 
 M1 one command, M2 Seal and Wall, M3 assign like a teammate, M4 system map, M5 the line, M6 ship and operate, M7 one screen, M8 legacy lane, M9 enterprise readiness, M10 simplify and ship v10.0.0. Items get broken out here when their milestone comes up.
