@@ -2116,6 +2116,16 @@ INCONCLUSIVE_EOF
         local _diff_ok _tests_ok
         if [ "$diff_fails" = "true" ]; then _diff_ok="false"; else _diff_ok="true"; fi
         if [ "$test_fails" = "true" ]; then _tests_ok="false"; else _tests_ok="true"; fi
+        # BACKLOG 55: tests.pass is true only for affirmative evidence (a real
+        # runner recorded a boolean pass and nothing downgraded it). $test_pass
+        # itself is "true" for every inconclusive outcome (no runner, no results,
+        # zero tests, no pass recorded, tautological), so it is not written raw.
+        local _tests_pass_json='"inconclusive"'
+        if [ "$test_fails" = "true" ]; then
+            _tests_pass_json="false"
+        elif [ "$test_inconclusive" != "true" ] && [ "$test_runner" != "none" ] && [ "$test_pass" = "true" ]; then
+            _tests_pass_json="true"
+        fi
         # Proof-of-Function axes (nomock/persistence/auth) are declared later in
         # the gate; default to "true"/"" when this helper runs before they are
         # set (it never does in practice, but keep the write robust).
@@ -2139,7 +2149,7 @@ INCONCLUSIVE_EOF
     "tests": {
         "ok": $_tests_ok,
         "runner": "$test_runner",
-        "pass": $test_pass,
+        "pass": $_tests_pass_json,
         "inconclusive": $test_inconclusive,
         "inconclusive_reason": "$test_inconclusive_reason"
     },

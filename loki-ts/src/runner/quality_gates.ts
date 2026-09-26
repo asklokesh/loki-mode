@@ -420,11 +420,24 @@ type TestResultsArtifact = {
   // Only the boolean true is a recorded pass. The bash gate also writes the
   // string "inconclusive" (no runner, or a runner that executed zero tests).
   pass?: unknown;
-  passed?: number;
-  failed?: number;
+  // The bash writer emits passed_count/failed_count (null when unparsed);
+  // passed/failed is the older spelling. See artifactCount.
+  passed_count?: unknown;
+  failed_count?: unknown;
+  passed?: unknown;
+  failed?: unknown;
   runner?: string;
   summary?: string;
 };
+
+// BACKLOG 56: *_count wins when it is a number; null (unparsed) is unmeasured,
+// never 0.
+function artifactCount(a: TestResultsArtifact, key: "passed" | "failed"): number | null {
+  const v = a[`${key}_count`];
+  if (typeof v === "number") return v;
+  const legacy = a[key];
+  return typeof legacy === "number" ? legacy : null;
+}
 
 function readTestResultsArtifact(base: string): TestResultsArtifact | null {
   const p = join(base, "quality", "test-results.json");
@@ -435,6 +448,63 @@ function readTestResultsArtifact(base: string): TestResultsArtifact | null {
     return parsed as TestResultsArtifact;
   } catch {
     return null;
+  }
+}
+
+// BACKLOG 60: the bash freshness rule (ensure_completion_test_evidence and
+// _loki_supervised_completion_gates_pass in run.sh): test-results.json is this
+// iteration's evidence only when .loki/quality/.test-results.iter holds this
+// iteration's number. Anything else (no marker, another iteration, no known
+// iteration) is stale and is not evidence.
+function testResultsFresh(base: string, iteration: number | undefined): boolean {
+  if (typeof iteration !== "number") return false;
+  try {
+    return readFileSync(join(base, "quality", ".test-results.iter"), "utf-8").trim() === String(iteration);
+  } catch {
+    return false;
+  }
+}
+
+// Runner label for the project's declared test script, the same case arms as
+// bash enforce_test_coverage uses to pick the zero-test detector arm.
+function declaredTestRunner(cwd: string): string {
+  let script = "";
+  try {
+    const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf-8")) as { scripts?: { test?: unknown } };
+    if (typeof pkg?.scripts?.test === "string") script = pkg.scripts.test;
+  } catch {
+    // unreadable package.json -> generic label, which the detector never downgrades
+  }
+  if (script.includes("node --test") || script.includes("node:test")) return "node-test";
+  if (script.includes("vitest")) return "vitest";
+  if (script.includes("jest")) return "jest";
+  if (script.includes("mocha")) return "mocha";
+  return "npm-test";
+}
+
+// BACKLOG 56: reuse the one zero-test detector (#82, run.sh
+// _loki_zero_tests_executed) instead of a second copy that could drift.
+// Returns "zero" (it positively saw zero tests), "has" (no zero-test evidence;
+// the detector's own no-opinion answer), or "unknown" (the detector could not
+// run). The output goes over stdin: argv and env are bounded by ARG_MAX.
+export async function zeroTestsExecuted(runner: string, output: string): Promise<"zero" | "has" | "unknown"> {
+  const runSh = join(REPO_ROOT, "autonomy", "run.sh");
+  if (!existsSync(runSh)) return "unknown";
+  const script =
+    'eval "$(sed -n \'/^_loki_zero_tests_executed() {/,/^}/p\' "$1")" || exit 3; ' +
+    'type _loki_zero_tests_executed >/dev/null 2>&1 || exit 3; ' +
+    '_loki_zero_tests_executed "$2" "$(cat)"';
+  try {
+    const proc = Bun.spawn({
+      cmd: ["bash", "-c", script, "bash", runSh, runner],
+      stdin: new TextEncoder().encode(output),
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const code = await proc.exited;
+    return code === 0 ? "zero" : code === 1 ? "has" : "unknown";
+  } catch {
+    return "unknown";
   }
 }
 
@@ -450,7 +520,10 @@ export async function runTestCoverage(ctx?: RunnerContext): Promise<GateResult> 
   if (stubVal === "fail" || stubVal === "pass") return stubResult("test_coverage");
 
   const base = ctx?.lokiDir ?? lokiDir();
-  const artifact = readTestResultsArtifact(base);
+  const found = readTestResultsArtifact(base);
+  // A stale artifact is not evidence: treat it as absent (re-run or inconclusive).
+  const stale = found !== null && !testResultsFresh(base, ctx?.iterationCount);
+  const artifact = stale ? null : found;
   if (artifact !== null) {
     // Explicit pass=false or any recorded failed>0 is a failure. Only the
     // boolean pass=true is a pass, as in the bash council evidence gate. Any
@@ -458,10 +531,10 @@ export async function runTestCoverage(ctx?: RunnerContext): Promise<GateResult> 
     // no outcome: it stays non-blocking, so a zero-test project is not
     // hard-failed (#82, bash enforce_test_coverage returns 0 there too), but it
     // is flagged inconclusive and can never read as a clean pass.
-    const failed = typeof artifact.failed === "number" ? artifact.failed : 0;
-    const passed = typeof artifact.passed === "number" ? artifact.passed : 0;
-    const detail = `test_coverage(artifact:${artifact.runner ?? "unknown"}): passed=${passed} failed=${failed}`;
-    if (artifact.pass === false || failed > 0) return { passed: false, detail };
+    const failed = artifactCount(artifact, "failed");
+    const passed = artifactCount(artifact, "passed");
+    const detail = `test_coverage(artifact:${artifact.runner ?? "unknown"}): passed=${passed ?? "unmeasured"} failed=${failed ?? "unmeasured"}`;
+    if (artifact.pass === false || (failed ?? 0) > 0) return { passed: false, detail };
     if (artifact.pass === true) return { passed: true, detail };
     return {
       passed: true,
@@ -470,19 +543,35 @@ export async function runTestCoverage(ctx?: RunnerContext): Promise<GateResult> 
     };
   }
 
-  // No artifact (or an unreadable one) -- fall back to running `npm test
-  // --silent` if package.json exists. With neither, nothing was measured.
+  // No fresh artifact -- fall back to running `npm test --silent` if
+  // package.json exists. With neither, nothing was measured.
+  const why = stale
+    ? `stale test-results.json (.test-results.iter is not iteration ${ctx?.iterationCount ?? "unknown"})`
+    : "no readable test-results.json";
   const cwd = ctx?.cwd ?? process.cwd();
   if (!existsSync(join(cwd, "package.json"))) {
     return {
       passed: true,
       inconclusive: true,
-      detail: "test_coverage: no readable test-results.json and no package.json -- skipping, nothing measured",
+      detail: `test_coverage: ${why} and no package.json -- skipping, nothing measured`,
     };
   }
 
   const r = await run(["npm", "test", "--silent"], { cwd, timeoutMs: 300_000 });
   if (r.exitCode === 0) {
+    // #82 parity: exit 0 with zero tests executed proved nothing. jest prints
+    // "No tests found" on stderr, so the detector sees both streams.
+    const zero = await zeroTestsExecuted(declaredTestRunner(cwd), `${r.stdout}\n${r.stderr}`);
+    if (zero !== "has") {
+      return {
+        passed: true,
+        inconclusive: true,
+        detail:
+          zero === "zero"
+            ? "test_coverage: npm test exit 0 but ran zero tests -- INCONCLUSIVE, not a pass"
+            : "test_coverage: npm test exit 0 but the zero-test detector could not run -- INCONCLUSIVE, not a pass",
+      };
+    }
     return { passed: true, detail: "test_coverage: npm test exit 0" };
   }
   const tail = (r.stderr || r.stdout || "").trim().split(/\r?\n/).slice(-3).join(" | ");
@@ -3047,7 +3136,11 @@ export async function runQualityGates(ctx: RunnerContext): Promise<GateOutcome> 
       // count) so an operator or a future escalation policy can see a gate going
       // dark across iterations. Does not change the pass decision.
       if (result.inconclusive) {
-        ctx.log(`quality-gate ${gate.name}: INCONCLUSIVE (gate did not run) -- ${result.detail ?? ""}`);
+        // BACKLOG 60: "gate did not run" was false for a gate that read an
+        // artifact or ran a suite and still reached no verdict. passed[] is
+        // not read by any consumer (autonomous.ts reads only failed[] and
+        // blocked), so only the wording changes here.
+        ctx.log(`quality-gate ${gate.name}: INCONCLUSIVE (no verdict; non-blocking, not a pass) -- ${result.detail ?? ""}`);
         try {
           const qDir = join(base, "quality");
           mkdirSync(qDir, { recursive: true });

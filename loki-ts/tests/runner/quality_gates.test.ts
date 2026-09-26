@@ -39,6 +39,7 @@ import {
   countNonBlockingFindings,
   parseVerdict,
   matchesSeverityAnyForm,
+  zeroTestsExecuted,
 } from "../../src/runner/quality_gates.ts";
 import type { ReviewerFn } from "../../src/runner/quality_gates.ts";
 import type { RunnerContext } from "../../src/runner/types.ts";
@@ -618,12 +619,20 @@ describe("runStaticAnalysis (real Phase 5 implementation)", () => {
 });
 
 describe("runTestCoverage (real Phase 5 implementation)", () => {
-  it("parses an existing .loki/quality/test-results.json (pass case)", async () => {
+  // BACKLOG 60: an artifact is evidence only when .test-results.iter names this
+  // iteration (makeCtx uses iterationCount 1), the bash freshness rule. The
+  // helper writes a fresh marker by default; pass fresh=false (or a different
+  // iteration) to write a stale one.
+  function writeArtifact(body: unknown, marker: string | null = "1"): void {
     mkdirSync(join(scratch, "quality"), { recursive: true });
-    writeFileSync(
-      join(scratch, "quality", "test-results.json"),
-      JSON.stringify({ pass: true, runner: "vitest", passed: 42, failed: 0 }),
-    );
+    writeFileSync(join(scratch, "quality", "test-results.json"), typeof body === "string" ? body : JSON.stringify(body));
+    const iterPath = join(scratch, "quality", ".test-results.iter");
+    if (marker === null) rmSync(iterPath, { force: true });
+    else writeFileSync(iterPath, `${marker}\n`);
+  }
+
+  it("parses an existing .loki/quality/test-results.json (pass case)", async () => {
+    writeArtifact({ pass: true, runner: "vitest", passed: 42, failed: 0 });
     const r = await runTestCoverage(makeCtx());
     expect(r.passed).toBe(true);
     expect(r.detail ?? "").toContain("vitest");
@@ -631,11 +640,7 @@ describe("runTestCoverage (real Phase 5 implementation)", () => {
   });
 
   it("parses an existing test-results.json (fail case via failed>0)", async () => {
-    mkdirSync(join(scratch, "quality"), { recursive: true });
-    writeFileSync(
-      join(scratch, "quality", "test-results.json"),
-      JSON.stringify({ runner: "jest", passed: 10, failed: 3 }),
-    );
+    writeArtifact({ runner: "jest", passed: 10, failed: 3 });
     const r = await runTestCoverage(makeCtx());
     expect(r.passed).toBe(false);
     expect(r.detail ?? "").toContain("failed=3");
@@ -666,11 +671,6 @@ describe("runTestCoverage (real Phase 5 implementation)", () => {
   // bash council (completion-council.sh). Any other recorded pass value is an
   // unrecorded outcome: non-blocking (passed stays true, so a zero-test project
   // is not hard-failed, #82) but explicitly inconclusive, never a clean pass.
-  function writeArtifact(body: unknown): void {
-    mkdirSync(join(scratch, "quality"), { recursive: true });
-    writeFileSync(join(scratch, "quality", "test-results.json"), typeof body === "string" ? body : JSON.stringify(body));
-  }
-
   it("pass:true is an affirmative pass (not inconclusive)", async () => {
     writeArtifact({ runner: "jest", pass: true });
     const r = await runTestCoverage(makeCtx());
@@ -738,11 +738,106 @@ describe("runTestCoverage (real Phase 5 implementation)", () => {
     process.env["LOKI_STUB_GATE_CODE_REVIEW"] = "pass";
     process.env["LOKI_STUB_GATE_DOC_COVERAGE"] = "pass";
     writeArtifact({ runner: "node-test", pass: "inconclusive", status: "no_tests_run" });
-    const r = await runQualityGates(makeCtx());
+    const logs: string[] = [];
+    const r = await runQualityGates(makeCtx({ log: (l: string) => logs.push(l) }));
     expect(r.failed).not.toContain("test_coverage");
     expect(r.blocked).toBe(false);
     expect(existsSync(join(scratch, "quality", "inconclusive-test_coverage.json"))).toBe(true);
+    // BACKLOG 60: the gate read an artifact, so "gate did not run" was false.
+    const line = logs.find((l) => l.includes("quality-gate test_coverage: INCONCLUSIVE")) ?? "";
+    expect(line).toContain("no verdict");
+    expect(line).not.toContain("gate did not run");
   });
+
+  // BACKLOG 60: a stale artifact (another iteration's, or one with no marker)
+  // is not evidence. With no package.json to re-run, nothing was measured.
+  for (const [label, marker] of [
+    ["no .test-results.iter marker", null],
+    ["a marker from an earlier iteration", "0"],
+  ] as const) {
+    it(`a pass:true artifact with ${label} is stale: inconclusive, never a pass`, async () => {
+      writeArtifact({ runner: "jest", pass: true, passed_count: 5, failed_count: 0 }, marker);
+      const r = await runTestCoverage(makeCtx());
+      expect(r.inconclusive).toBe(true);
+      expect(r.detail ?? "").toContain("stale");
+    });
+  }
+
+  it("a stale failing artifact is not trusted either (unmeasured, not a verdict)", async () => {
+    writeArtifact({ runner: "jest", pass: false }, "0");
+    const r = await runTestCoverage(makeCtx());
+    expect(r.inconclusive).toBe(true);
+  });
+
+  it("with no known iteration every artifact is stale", async () => {
+    writeArtifact({ runner: "jest", pass: true });
+    const ctx = makeCtx();
+    const r = await runTestCoverage({ ...ctx, iterationCount: undefined } as unknown as RunnerContext);
+    expect(r.inconclusive).toBe(true);
+  });
+
+  it("a stale artifact with a package.json re-runs the suite instead of trusting the file", async () => {
+    writeArtifact({ runner: "jest", pass: true }, "0");
+    writeFileSync(join(scratch, "package.json"), JSON.stringify({ name: "p", version: "1.0.0", scripts: { test: "exit 3" } }));
+    const r = await runTestCoverage(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("npm test exit");
+  }, 60_000);
+
+  // BACKLOG 56: the bash writer emits passed_count/failed_count.
+  it("failed_count>0 is a failure even beside pass:true", async () => {
+    writeArtifact({ runner: "jest", pass: true, passed_count: 5, failed_count: 2 });
+    const r = await runTestCoverage(makeCtx());
+    expect(r.passed).toBe(false);
+    expect(r.detail ?? "").toContain("failed=2");
+  });
+
+  it("failed_count wins over the legacy failed key", async () => {
+    writeArtifact({ runner: "jest", pass: true, failed_count: 1, failed: 0 });
+    const r = await runTestCoverage(makeCtx());
+    expect(r.passed).toBe(false);
+  });
+
+  it("null counts are shown as unmeasured, never as 0", async () => {
+    writeArtifact({ runner: "jest", pass: true, passed_count: null, failed_count: null });
+    const r = await runTestCoverage(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.detail ?? "").toContain("passed=unmeasured failed=unmeasured");
+  });
+});
+
+// BACKLOG 56: the npm test fallback reuses run.sh's #82 zero-test detector.
+describe("runTestCoverage npm-test fallback zero-test detection", () => {
+  // A stub jest under node_modules/.bin so `npm test` runs offline and fast.
+  function stubJest(stderrText: string): void {
+    writeFileSync(
+      join(scratch, "package.json"),
+      JSON.stringify({ name: "p", version: "1.0.0", scripts: { test: "jest --passWithNoTests" } }),
+    );
+    mkdirSync(join(scratch, "node_modules", ".bin"), { recursive: true });
+    const bin = join(scratch, "node_modules", ".bin", "jest");
+    writeFileSync(bin, `#!/bin/sh\nprintf '%s\\n' '${stderrText}' >&2\nexit 0\n`, { mode: 0o755 });
+  }
+
+  it("the shared detector resolves from the install root and reads canned jest output", async () => {
+    expect(await zeroTestsExecuted("jest", "No tests found, exiting with code 0")).toBe("zero");
+    expect(await zeroTestsExecuted("jest", "Test Suites: 1 passed, 1 total\nTests:       3 passed, 3 total")).toBe("has");
+  });
+
+  it("npm test exit 0 with zero tests executed is inconclusive, not a pass", async () => {
+    stubJest("No tests found, exiting with code 0");
+    const r = await runTestCoverage(makeCtx());
+    expect(r.passed).toBe(true); // non-blocking (#82)
+    expect(r.inconclusive).toBe(true);
+    expect(r.detail ?? "").toContain("zero tests");
+  }, 60_000);
+
+  it("positive control: npm test exit 0 with tests executed is an affirmative pass", async () => {
+    stubJest("Tests:       1 passed, 1 total");
+    const r = await runTestCoverage(makeCtx());
+    expect(r.passed).toBe(true);
+    expect(r.inconclusive).toBeFalsy();
+  }, 60_000);
 });
 
 // --- Doc quality gate (real Phase 5 implementation) -----------------------

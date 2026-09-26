@@ -299,8 +299,11 @@ for (const [name, body] of Object.entries(shapes)) {
   const lokiDir = `${root}/${name}/.loki`, cwd = `${root}/${name}`;
   fs.mkdirSync(`${lokiDir}/quality`, { recursive: true });
   fs.writeFileSync(`${lokiDir}/quality/test-results.json`, body);
+  // Fresh for iteration 1, so each shape is judged on its pass value and not
+  // turned inconclusive by staleness (P2.zero-test-never-affirmative covers that).
+  fs.writeFileSync(`${lokiDir}/quality/.test-results.iter`, "1\n");
   // cwd has no package.json, so the gate can never fall back to `npm test`.
-  const r = await runTestCoverage({ lokiDir, cwd, log: () => {} } as never);
+  const r = await runTestCoverage({ lokiDir, cwd, iterationCount: 1, log: () => {} } as never);
   out.push(`${name}=${r.passed === true && r.inconclusive !== true ? "PASSED" : r.passed === false ? "FAILED" : r.inconclusive === true ? "INCONCLUSIVE" : "OTHER"}`);
 }
 console.log(out.join(" "));
@@ -318,6 +321,103 @@ TS
         *" inconclusive=INCONCLUSIVE no_pass_key=INCONCLUSIVE") _st="PASS" ;;
         *) _why="the Bun test gate read an unrecorded outcome as something other than inconclusive ($out)" ;;
     esac
+}
+
+# A runner that exits 0 having executed zero tests proved nothing, and a
+# results file from another iteration is not this iteration's evidence. The
+# fixture's `npm test` is a stub jest under node_modules/.bin that prints jest's
+# own zero-test line ("No tests found") or, for the positive control, a real
+# summary line; both exit 0, so only the output tells them apart.
+zt_fixture() { # <dir> <jest-stderr-line> : package.json + stub jest in <dir>
+    mkdir -p "$1/node_modules/.bin" || return 1
+    printf '%s\n' '{"name":"moat-zt","version":"1.0.0","private":true,"scripts":{"test":"jest --passWithNoTests"}}' > "$1/package.json"
+    printf '#!/bin/sh\nprintf "%%s\\n" "%s" >&2\nexit 0\n' "$2" > "$1/node_modules/.bin/jest"
+    chmod +x "$1/node_modules/.bin/jest"
+}
+# The real enforce_test_coverage (plus the zero-test detector it calls, which
+# sits directly above it) cut out of run.sh, with only the log helpers stubbed.
+zt_harness() { # <out file>
+    local rs="$REPO_ROOT/autonomy/run.sh" s e n
+    s="$(grep -n '^_loki_zero_tests_executed() {' "$rs" | head -1 | cut -d: -f1)"
+    e="$(grep -n '^enforce_test_coverage() {' "$rs" | head -1 | cut -d: -f1)"
+    n="$(awk -v s="$e" 'NR>s && /^[a-zA-Z_][a-zA-Z0-9_]*\(\) \{/ {print NR; exit}' "$rs")"
+    [ -n "$s" ] && [ -n "$e" ] && [ -n "$n" ] || return 1
+    e="$(awk -v s="$e" -v n="$n" 'NR>s && NR<n && /^}[[:space:]]*$/ {last=NR} END {print last}' "$rs")"
+    { printf '%s\n' 'log_info() { :; }' 'log_warn() { :; }' 'log_error() { :; }'
+      awk -v s="$s" -v e="$e" 'NR>=s && NR<=e' "$rs"; } > "$1"
+    bash -n "$1" 2>/dev/null
+}
+
+case_zero_test_never_affirmative() {
+    need python3 git node npm bash bun timeout || return
+    local h="$RUN/zt-harness.sh" leg d b marker tpass dpass out bad=""
+    zt_harness "$h" || { _why="could not cut enforce_test_coverage out of run.sh"; return; }
+    # Bash route: the real gate writes the marker and results, then the real
+    # council evidence gate writes evidence-gate-details.json from them.
+    for leg in zero green; do
+        d="$RUN/zt-bash-$leg"
+        b="$(council_repo "$d" "")" || { _why="fixture $leg failed"; return; }
+        if [ "$leg" = zero ]; then zt_fixture "$d" "No tests found, exiting with code 0"
+        else zt_fixture "$d" "Tests:       1 passed, 1 total"; fi || { _why="fixture $leg failed"; return; }
+        # A marker left by an earlier iteration: a zero-test run must not keep it.
+        mkdir -p "$d/.loki/quality" && : > "$d/.loki/quality/unit-tests.pass"
+        (cd "$d" && TARGET_DIR="$d" LOKI_GATE_TIMEOUT=60 bash -c ". '$h'; enforce_test_coverage") >/dev/null 2>&1
+        council_call "$d" "$b" council_evidence_gate >/dev/null
+        if [ -e "$d/.loki/quality/unit-tests.pass" ]; then marker=present; else marker=absent; fi
+        tpass="$(jfield "$d/.loki/quality/test-results.json" "json.dumps(d.get('pass'))")"
+        dpass="$(jfield "$d/.loki/council/evidence-gate-details.json" "json.dumps(d['tests']['pass'])")"
+        if [ "$leg" = green ]; then
+            # Positive control: a real pass is affirmative everywhere, so the
+            # negatives below are measurements, not absences.
+            [ "$marker" = present ] && [ "$tpass" = true ] && [ "$dpass" = true ] \
+                || { _why="control broken: a real passing run gave marker=$marker results.pass=$tpass details.tests.pass=$dpass"; return; }
+        else
+            [ "$tpass" = '"inconclusive"' ] || bad="$bad [bash: zero-test results.pass=$tpass, want \"inconclusive\" (detector did not fire?)]"
+            [ "$marker" = absent ] || bad="$bad [bash: zero-test run left unit-tests.pass]"
+            [ -n "$dpass" ] && [ "$dpass" != true ] || bad="$bad [bash: evidence-gate-details tests.pass=${dpass:-missing} for a zero-test run]"
+        fi
+    done
+    # Bun route: runTestCoverage (the real loki-ts source) on a stale artifact
+    # and on a zero-test `npm test`, each with a positive control.
+    mkdir -p "$RUN/zt-bun/work"
+    zt_fixture "$RUN/zt-bun/npm-zero" "No tests found, exiting with code 0" || { _why="bun fixture failed"; return; }
+    zt_fixture "$RUN/zt-bun/npm-green" "Tests:       1 passed, 1 total" || { _why="bun fixture failed"; return; }
+    cat > "$RUN/zt-bun/probe.ts" <<'TS'
+import * as fs from "node:fs";
+const repo = process.env.MOAT_REPO!, root = process.env.MOAT_ROOT!;
+const { runTestCoverage } = await import(`${repo}/loki-ts/src/runner/quality_gates.ts`);
+// [leg, marker]: a string or null writes a pass:true artifact (null = no
+// freshness marker); undefined writes no artifact (the npm legs).
+const legs: Array<[string, string | null | undefined]> = [
+  ["fresh", "1"],        // control: this iteration's pass:true artifact
+  ["no_marker", null],   // stale: no .test-results.iter
+  ["old_marker", "0"],   // stale: an earlier iteration's marker
+  ["npm-green", undefined], // control: npm test ran a test
+  ["npm-zero", undefined],  // npm test exit 0, zero tests executed
+];
+const out: string[] = [];
+for (const [name, marker] of legs) {
+  const cwd = `${root}/${name}`, lokiDir = `${cwd}/.loki`;
+  fs.mkdirSync(`${lokiDir}/quality`, { recursive: true });
+  if (marker !== undefined) {
+    fs.writeFileSync(`${lokiDir}/quality/test-results.json`, '{"runner":"jest","pass":true,"passed_count":3,"failed_count":0}');
+    if (marker !== null) fs.writeFileSync(`${lokiDir}/quality/.test-results.iter`, `${marker}\n`);
+  }
+  const r = await runTestCoverage({ lokiDir, cwd, iterationCount: 1, log: () => {} } as never);
+  out.push(`${name}=${r.passed === true && r.inconclusive !== true ? "PASSED" : r.passed === false ? "FAILED" : "INCONCLUSIVE"}`);
+}
+console.log(out.join(" "));
+TS
+    out="$(cd "$RUN/zt-bun/work" && env -u LOKI_STUB_GATE_TEST_COVERAGE MOAT_REPO="$REPO_ROOT" MOAT_ROOT="$RUN/zt-bun" \
+        bun run "$RUN/zt-bun/probe.ts" 2> "$RUN/zt-bun/err")"
+    case "$out" in
+        *fresh=PASSED*npm-green=PASSED*) ;;
+        *) _why="bun controls broken (a fresh pass:true artifact and a real npm test must pass): got '${out:-<none>}' $(head -c 300 "$RUN/zt-bun/err" | tr '\n' ' ')"; return ;;
+    esac
+    case "$out" in *no_marker=PASSED*) bad="$bad [bun: a pass:true artifact with no freshness marker read as passed]" ;; esac
+    case "$out" in *old_marker=PASSED*) bad="$bad [bun: an earlier iteration's pass:true artifact read as passed]" ;; esac
+    case "$out" in *npm-zero=PASSED*) bad="$bad [bun: npm test exit 0 with zero tests executed read as passed]" ;; esac
+    if [ -z "$bad" ]; then _st="PASS"; else _why="${bad# }"; fi
 }
 
 case_proof_verify_contract() {
@@ -614,6 +714,7 @@ run_case P2.unknown-gate-fails-closed "an unrecognized gate name or status canno
 run_case P2.model-looks-good-cannot-pass "loki verify: a stub reviewer saying 'looks good' over red tests is not VERIFIED/0 (verify is bash-only: bin/loki execs autonomy/loki on both entry points)" case_model_looks_good
 run_case P2.missing-pass-key-not-pass "evidence gate: test-results with no pass key is inconclusive, not affirmative" case_missing_pass_key
 run_case P2.bun-inconclusive-not-pass "Bun test gate (runTestCoverage): pass:\"inconclusive\" and a missing pass key read as inconclusive, never an affirmative pass (passed && !inconclusive); pass:true does" case_bun_inconclusive
+run_case P2.zero-test-never-affirmative "a zero-test run leaves no unit-tests.pass and no evidence-gate tests.pass:true (bash), and neither a stale test-results.json nor a zero-test npm test reads as passed (Bun); real passes do on both" case_zero_test_never_affirmative
 run_case P2.proof-verify-exit-contract "loki proof verify exits 0 clean, 1 tampered, 64 no id, 66 unknown id (both routes)" case_proof_verify_contract
 run_case P2.proof-chain-exit-contract "loki proof chain exits 0/1/2/3/64/66, -h/--help is 64 not 0, and a hostile PYTHONPATH cannot shadow a stage (both entry points)" case_proof_chain_contract
 run_case P2.verify-exit-contract "loki verify maps nothing-to-check to 3, could-not-check to 2, usage to 64 (bash-only command, both entry points)" case_verify_contract

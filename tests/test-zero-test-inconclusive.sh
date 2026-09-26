@@ -248,9 +248,14 @@ else
 fi
 
 # GREEN: fixed body records INCONCLUSIVE (pass:"inconclusive"/no_tests_run/gap).
+# A pass marker left by an earlier iteration is seeded first: the zero-test run
+# must remove it, not keep or re-create it (BACKLOG 55).
 B_GREEN="$TMP_ROOT/B_green"
 write_zero_test_repo "$B_GREEN"
-( cd "$B_GREEN"; TARGET_DIR="$B_GREEN" bash -c "source '$HARNESS'; enforce_test_coverage" >/dev/null 2>&1 )
+mkdir -p "$B_GREEN/.loki/quality"
+: > "$B_GREEN/.loki/quality/unit-tests.pass"
+BG_RC=0
+( cd "$B_GREEN"; TARGET_DIR="$B_GREEN" bash -c "source '$HARNESS'; enforce_test_coverage" >/dev/null 2>&1 ) || BG_RC=$?
 BG_RUNNER="$(tr_field "$B_GREEN" runner)"; BG_PASS="$(tr_field "$B_GREEN" pass)"
 BG_STATUS="$(tr_field "$B_GREEN" status)"; BG_GAP="$(tr_field "$B_GREEN" verification_gap)"
 printf '  [B-GREEN fixed] runner=%s pass=%s status=%s gap=%s\n' "$BG_RUNNER" "$BG_PASS" "$BG_STATUS" "$BG_GAP"
@@ -259,6 +264,24 @@ if [ "$BG_RUNNER" = "node-test" ] && [ "$BG_PASS" = "inconclusive" ] \
     _ok "B-GREEN: fixed records zero-test file as inconclusive/no_tests_run/source_without_runnable_tests"
 else
     _no "B-GREEN: expected node-test/inconclusive/no_tests_run/source_without_runnable_tests, got $BG_RUNNER/$BG_PASS/$BG_STATUS/$BG_GAP"
+fi
+# BACKLOG 55: the JSON record alone was downgraded; the tail still touched
+# unit-tests.pass (which the receipt reads as "unit_tests passed"). Case A is
+# the positive control: a real pass still writes the marker.
+if [ ! -e "$B_GREEN/.loki/quality/unit-tests.pass" ]; then
+    _ok "B-GREEN: a zero-test run leaves no unit-tests.pass marker (inconclusive is not a pass)"
+else
+    _no "B-GREEN: a zero-test run left unit-tests.pass behind; the receipt reads it as a passing unit_tests gate"
+fi
+if [ "$BG_RC" -eq 0 ] && [ ! -e "$B_GREEN/.loki/signals/TESTS_FAILED" ]; then
+    _ok "B-GREEN: the zero-test run is not a failure (rc=0, no TESTS_FAILED), so it still reaches the council"
+else
+    _no "B-GREEN: the zero-test run was turned into a failure (rc=$BG_RC, TESTS_FAILED present: $([ -e "$B_GREEN/.loki/signals/TESTS_FAILED" ] && echo yes || echo no))"
+fi
+if [ -e "$A_REPO/.loki/quality/unit-tests.pass" ]; then
+    _ok "A: control: a real passing suite still writes unit-tests.pass"
+else
+    _no "A: control broken: a real passing suite wrote no unit-tests.pass"
 fi
 
 # ---- Case C: run.sh unchanged-fail (failing test) --------------------------

@@ -12614,9 +12614,19 @@ os.replace(tmp, out)
     fi
 
     if [ "$test_passed" = "true" ]; then
-        touch "$quality_dir/unit-tests.pass"
         rm -f "$loki_dir/signals/TESTS_FAILED" 2>/dev/null || true
-        log_info "Test suite gate: $test_runner passed"
+        # BACKLOG 55: the #82 zero-test run exited 0 but proved nothing. It is
+        # inconclusive, so it must not leave the pass marker the receipt reads
+        # as "unit_tests passed" (proof-generator.py _collect_quality_gates).
+        # Still non-blocking (return 0 below) and still not a failure (no
+        # TESTS_FAILED), so the council decides it, per the #82 design.
+        if [ "$_tr_zero_tests" = "true" ]; then
+            rm -f "$quality_dir/unit-tests.pass" 2>/dev/null || true
+            log_warn "Test suite gate: $test_runner ran zero tests -- inconclusive (not passed, not failed)"
+        else
+            touch "$quality_dir/unit-tests.pass"
+            log_info "Test suite gate: $test_runner passed"
+        fi
         # Coverage block is distinct from tests-red: tests passed, but enforced
         # coverage is below threshold. Return nonzero to gate WITHOUT writing the
         # TESTS_FAILED signal or removing unit-tests.pass.

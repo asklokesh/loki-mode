@@ -201,6 +201,9 @@ r="$(jget "$GATE_DETAILS_FILE" tests inconclusive_reason)"
 # turn no-tests into a block, while recording it as not-affirmative.
 vd="$(jget "$GATE_DETAILS_FILE" verdict)"
 [ "$vd" = "pass" ] && ok "case1 verdict=pass (gate pass-through preserved; not recorded as affirmative)" || bad "case1 verdict=pass" "got [$vd]"
+# BACKLOG 55: the detail field must not claim a pass the gate did not see.
+v="$(jget "$GATE_DETAILS_FILE" tests pass)"
+[ -n "$v" ] && [ "$v" != "true" ] && ok "case1 tests.pass=[$v], not true (no test runner is not a pass)" || bad "case1 tests.pass not true" "got [$v]"
 
 # ===========================================================================
 # Case 2: real runner (jest) + passing tests + real diff -> rc=0 AND details
@@ -219,6 +222,9 @@ v="$(jget "$GATE_DETAILS_FILE" tests ok)"
 [ "$v" = "true" ] && ok "case2 tests.ok=true" || bad "case2 tests.ok=true" "got [$v]"
 v="$(jget "$GATE_DETAILS_FILE" tests runner)"
 [ "$v" = "jest" ] && ok "case2 tests.runner=jest" || bad "case2 tests.runner=jest" "got [$v]"
+# BACKLOG 55 positive control: affirmative evidence still records pass:true.
+v="$(jget "$GATE_DETAILS_FILE" tests pass)"
+[ "$v" = "true" ] && ok "case2 tests.pass=true (control: a real green suite)" || bad "case2 tests.pass=true" "got [$v]"
 
 # ===========================================================================
 # Case 3: evidence-gate-details.json is written on a PASS run (audit every run).
@@ -254,6 +260,9 @@ LOKI_EVIDENCE_NO_TESTS_AFFIRMATIVE=1 run_gate "$repo" "$base"
 if [ "$GATE_RC" -eq 0 ]; then ok "case5 rc=0 (still allowed)"; else bad "case5 rc=0" "got rc=$GATE_RC"; fi
 v="$(jget "$GATE_DETAILS_FILE" tests inconclusive)"
 [ "$v" = "false" ] && ok "case5 tests.inconclusive=false (opt-out reverts to affirmative)" || bad "case5 opt-out reverts" "got [$v]"
+# The opt-out changes the gate, not the fact: no runner ran, so no pass.
+v="$(jget "$GATE_DETAILS_FILE" tests pass)"
+[ -n "$v" ] && [ "$v" != "true" ] && ok "case5 tests.pass=[$v], not true (opt-out does not invent a test pass)" || bad "case5 tests.pass not true" "got [$v]"
 
 # ===========================================================================
 # Case 6: missing test-results.json -> rc=0 (pass-through preserved) AND details
@@ -271,6 +280,8 @@ v="$(jget "$GATE_DETAILS_FILE" tests inconclusive)"
 [ "$v" = "true" ] && ok "case6 tests.inconclusive=true" || bad "case6 tests.inconclusive=true" "got [$v]"
 r="$(jget "$GATE_DETAILS_FILE" tests inconclusive_reason)"
 [ "$r" = "no_test_results" ] && ok "case6 tests.inconclusive_reason=no_test_results" || bad "case6 reason=no_test_results" "got [$r]"
+v="$(jget "$GATE_DETAILS_FILE" tests pass)"
+[ -n "$v" ] && [ "$v" != "true" ] && ok "case6 tests.pass=[$v], not true (no results file is not a pass)" || bad "case6 tests.pass not true" "got [$v]"
 
 # ===========================================================================
 # Case 7: regression guard -- no-tests must NOT be classified as a FAIL. A real
@@ -294,6 +305,8 @@ run_gate "$repo" "$base"
 if [ "$GATE_RC" -eq 1 ]; then ok "case7b rc=1 (genuine red suite still blocks)"; else bad "case7b rc=1" "got rc=$GATE_RC"; fi
 v="$(jget "$GATE_DETAILS_FILE" tests ok)"
 [ "$v" = "false" ] && ok "case7b tests.ok=false (red suite is a fail, distinct from no-tests)" || bad "case7b red is fail" "got [$v]"
+v="$(jget "$GATE_DETAILS_FILE" tests pass)"
+[ "$v" = "false" ] && ok "case7b tests.pass=false (a red suite)" || bad "case7b tests.pass=false" "got [$v]"
 
 # ===========================================================================
 # Case 8 (#82): a REAL runner that executed ZERO tests -- node --test on a
@@ -337,6 +350,8 @@ v="$(jget "$GATE_DETAILS_FILE" tests ok)"
 [ "$v" = "true" ] && ok "case8 tests.ok=true (inconclusive != fail; the run is not red)" || bad "case8 tests.ok=true" "got [$v]"
 v="$(jget "$GATE_DETAILS_FILE" tests runner)"
 [ "$v" = "node-test" ] && ok "case8 tests.runner=node-test (real runner label preserved)" || bad "case8 tests.runner=node-test" "got [$v]"
+v="$(jget "$GATE_DETAILS_FILE" tests pass)"
+[ -n "$v" ] && [ "$v" != "true" ] && ok "case8 tests.pass=[$v], not true (zero tests executed is not a pass)" || bad "case8 tests.pass not true" "got [$v]"
 
 # ===========================================================================
 # Case 9: a real runner label with NO "pass" key at all. The gate used to read
@@ -362,6 +377,8 @@ if [ "$v" = "jest" ]; then ok "case9 tests.runner=jest (the runner label did not
 # control: the #82 zero-test record keeps reason no_tests_executed.
 r="$(jget "$GATE_DETAILS_FILE" tests inconclusive_reason)"
 if [ "$r" = "no_pass_recorded" ]; then ok "case9 tests.inconclusive_reason=no_pass_recorded (not misnamed no_tests_executed)"; else bad "case9 reason=no_pass_recorded" "got [$r]"; fi
+v="$(jget "$GATE_DETAILS_FILE" tests pass)"
+[ -n "$v" ] && [ "$v" != "true" ] && ok "case9 tests.pass=[$v], not true (no pass recorded is not a pass)" || bad "case9 tests.pass not true" "got [$v]"
 
 # ===========================================================================
 # Case 9b: every other non-boolean pass value (null, the string "true", and
