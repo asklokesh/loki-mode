@@ -31,7 +31,7 @@ pass() { printf 'CASE %s PASS %s\n' "$1" "$2"; }
 fail() { printf 'CASE %s FAIL %s\n' "$1" "$2"; }
 note() { printf '%s\n' "$*" >&2; }
 
-ALL_CASES="P6.same-path-and-history P6.user-files-intact P6.change-landed-in-place P6.proof-produced-and-verifies P6.no-gate-artifacts-committed P6.untracked-not-swept P6.resume-does-not-sweep P6.ignored-files-not-swept P6.preexisting-edit-disclosed"
+ALL_CASES="P6.same-path-and-history P6.user-files-intact P6.change-landed-in-place P6.proof-produced-and-verifies P6.no-gate-artifacts-committed P6.untracked-not-swept P6.resume-does-not-sweep P6.ignored-files-not-swept P6.preexisting-edit-disclosed P6.resume-keeps-ignored-user-file"
 
 # Caller-inherited knobs that would test something other than the default a
 # user gets. Unset so the run exercises the shipped defaults.
@@ -176,6 +176,21 @@ if [ "$kind" = build ] && [ "${MOAT_STUB_MODE:-}" = session2 ]; then
         || printf 'agent was here\n' >> NOTES.local.txt
     mkdir -p .loki/signals
     printf 'added div() to calc.py\n' > .loki/signals/COMPLETION_REQUESTED
+elif [ "$kind" = build ] && [ "${MOAT_STUB_MODE:-}" = cfg1 ]; then
+    # Second fixture, session 1: un-ignore config.local.json and commit a copy.
+    printf 'build/\n' > .gitignore
+    printf '{"agent":1}\n' > config.local.json
+    printf 'print(1)\n' > app.py
+    mkdir -p .loki/signals
+    printf 'added app.py\n' > .loki/signals/COMPLETION_REQUESTED
+elif [ "$kind" = build ] && [ "${MOAT_STUB_MODE:-}" = cfg2 ]; then
+    # Second fixture, session 2: record the user's config.local.json as the
+    # agent sees it mid-session, then un-ignore it again and make an edit.
+    cat config.local.json > "$MOAT_STUB_SEEN" 2>/dev/null || printf 'MISSING\n' > "$MOAT_STUB_SEEN"
+    printf 'build/\n' > .gitignore
+    printf 'print(2)\n' > app2.py
+    mkdir -p .loki/signals
+    printf 'added app2.py\n' > .loki/signals/COMPLETION_REQUESTED
 elif [ "$kind" = build ]; then
     grep -q 'def mul' calc.py 2>/dev/null \
         || printf 'def mul(a, b):\n    return a * b\n' >> calc.py
@@ -200,12 +215,15 @@ done
 # --- run the pipeline in place -----------------------------------------------
 TO=""
 command -v timeout >/dev/null 2>&1 && TO="timeout 240"
-# run_pipeline <output tag> <stub log> <stub mode>: one full run.sh loop in
-# place; output in $T/log/<tag>.out and .err; returns run.sh's exit code.
+# run_pipeline <output tag> <stub log> <stub mode> [repo]: one full run.sh loop
+# in place (repo defaults to $W); output in $T/log/<tag>.out and .err; returns
+# run.sh's exit code.
 run_pipeline() {
+    local repo="${4:-$W}"
     # shellcheck disable=SC2086  # $TO is intentionally word-split (empty or "timeout 240")
-    ( cd "$W" && PATH="$T/bin:$PATH" MOAT_STUB_LOG="$2" MOAT_STUB_MODE="$3" \
-        LOKI_TARGET_DIR="$W" LOKI_PROVIDER=claude LOKI_MAX_ITERATIONS=2 \
+    ( cd "$repo" && PATH="$T/bin:$PATH" MOAT_STUB_LOG="$2" MOAT_STUB_MODE="$3" \
+        MOAT_STUB_SEEN="$T/log/cfg-seen.txt" \
+        LOKI_TARGET_DIR="$repo" LOKI_PROVIDER=claude LOKI_MAX_ITERATIONS=2 \
         LOKI_COMPLETION_PROMISE=MOAT_P6_COMPLETE LOKI_AUTO_CONFIRM=true \
         LOKI_SKIP_PREREQS=true LOKI_PHASE_CODE_REVIEW=false LOKI_COUNCIL_ENABLED=false \
         LOKI_APP_RUNNER=false LOKI_NO_NEW_SESSION=1 LOKI_SKIP_AUTH_PREFLIGHT=1 \
@@ -684,6 +702,99 @@ if [ -z "$S2_BASE_WHY" ]; then
 fi
 if [ -z "$why" ]; then
     pass "$id" "the agent's edit to the user's untracked NOTES.local.txt was not committed, is listed in the receipt as preexisting_modified, and that receipt verifies on bun and bash routes"
+else
+    fail "$id" "$why"
+fi
+
+# ============================================================================
+# P6.resume-keeps-ignored-user-file (second fixture, two more sessions)
+# ============================================================================
+# main ignores config.local.json. Session 1 un-ignores it and commits its own
+# copy on the session branch. Back on main, the user writes their real
+# config.local.json (ignored there). Resuming that branch would let git
+# overwrite the user's file, and the next checkout of main would delete it. The
+# resume must be refused and a new session branch minted; the user's file stays
+# intact during and after session 2 and after checkout of main, never committed.
+id=P6.resume-keeps-ignored-user-file
+why=""
+C="$T/cfg/repo"
+USER_CFG='{"user":"my real settings"}'
+gc() { git -C "$C" "$@"; }
+{
+    mkdir -p "$C" && git init -q "$C" \
+    && gc symbolic-ref HEAD refs/heads/main \
+    && gc config user.email moat@example.invalid \
+    && gc config user.name "moat p6" \
+    && gc config commit.gpgsign false \
+    && printf 'def hello():\n    return "hi"\n' > "$C/main.py" \
+    && printf 'config.local.json\n' > "$C/.gitignore" \
+    && gc add main.py .gitignore && gc commit -qm "c1: app, ignore local config"
+} >"$T/log/cfg-fixture.log" 2>&1 || why="second fixture setup failed: $(tr '\n' ' ' < "$T/log/cfg-fixture.log" | cut -c1-200); "
+CFG_LOG1="$T/log/cfg-stub1.log"
+CFG_LOG2="$T/log/cfg-stub2.log"
+: > "$CFG_LOG1"
+: > "$CFG_LOG2"
+if [ -z "$why" ]; then
+    run_pipeline cfg1 "$CFG_LOG1" cfg1 "$C"
+    rc=$?
+    echo "INFO P6 cfg session-1 run.sh rc=$rc"
+    kill_leftovers
+    [ "$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$CFG_LOG1")" -ge 1 ] \
+        || why="${why}vacuous: cfg session 1 never reached the provider build step (run.sh rc=$rc); "
+    C1_BRANCH="$(gc symbolic-ref --short -q HEAD 2>/dev/null || echo DETACHED)"
+    case "$C1_BRANCH" in loki/session-*) ;; *) why="${why}cfg session 1 is not on a minted session branch ($C1_BRANCH); " ;; esac
+    C1_HEAD="$(gc rev-parse HEAD 2>/dev/null)"
+    # Vacuity guard: the session-1 branch really tracks config.local.json.
+    [ "$(gc show "$C1_BRANCH:config.local.json" 2>/dev/null)" = '{"agent":1}' ] \
+        || why="${why}vacuous: $C1_BRANCH does not track the agent's config.local.json; "
+    if gc checkout -q main 2>"$T/log/cfg-checkout1.err"; then
+        printf '%s\n' "$USER_CFG" > "$C/config.local.json"
+        gc check-ignore -q config.local.json \
+            || why="${why}vacuous: the user's config.local.json is not ignored on main; "
+    else
+        why="${why}could not switch to main before cfg session 2: $(head -c 160 "$T/log/cfg-checkout1.err" | tr '\n' ' '); "
+    fi
+fi
+if [ -z "$why" ]; then
+    run_pipeline cfg2 "$CFG_LOG2" cfg2 "$C"
+    rc=$?
+    echo "INFO P6 cfg session-2 run.sh rc=$rc"
+    kill_leftovers
+    # Vacuity guard: session 2 really ran and committed its own edit.
+    [ "$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$CFG_LOG2")" -ge 1 ] \
+        || why="${why}vacuous: cfg session 2 never reached the provider build step (run.sh rc=$rc); "
+    C2_BRANCH="$(gc symbolic-ref --short -q HEAD 2>/dev/null || echo DETACHED)"
+    gc cat-file -e HEAD:app2.py 2>/dev/null \
+        || why="${why}vacuous: cfg session 2 committed no edit on $C2_BRANCH; "
+    case "$C2_BRANCH" in
+        loki/session-*) [ "$C2_BRANCH" != "$C1_BRANCH" ] \
+            || why="${why}session 2 resumed $C1_BRANCH instead of minting a new branch; " ;;
+        *) why="${why}cfg session 2 is not on a session branch ($C2_BRANCH); " ;;
+    esac
+    n_loki="$(gc branch --list 'loki/*' | grep -c .)"
+    [ "$n_loki" = "2" ] || why="${why}$n_loki loki branches after cfg session 2 (expected 2); "
+    [ "$(cat "$C/.loki/state/agent-branch.txt" 2>/dev/null)" = "$C2_BRANCH" ] \
+        || why="${why}agent-branch.txt does not name $C2_BRANCH; "
+    [ "$(gc rev-parse "$C1_BRANCH" 2>/dev/null)" = "$C1_HEAD" ] \
+        || why="${why}$C1_BRANCH moved during session 2; "
+    [ "$(cat "$T/log/cfg-seen.txt" 2>/dev/null)" = "$USER_CFG" ] \
+        || why="${why}during session 2 config.local.json was '$(head -c 80 "$T/log/cfg-seen.txt" 2>/dev/null)'; "
+    [ "$(cat "$C/config.local.json" 2>/dev/null)" = "$USER_CFG" ] \
+        || why="${why}after session 2 config.local.json is '$(head -c 80 "$C/config.local.json" 2>/dev/null)'; "
+    # Positive control: session 2's rewrite exposed the file to git add -A.
+    { [ "$(gc show HEAD:.gitignore 2>/dev/null)" = "build/" ] && ! gc check-ignore -q config.local.json; } \
+        || why="${why}positive control failed: config.local.json is still ignored on $C2_BRANCH; "
+    gc ls-tree -r --name-only HEAD 2>/dev/null | grep -qx 'config.local.json' \
+        && why="${why}config.local.json was committed onto $C2_BRANCH; "
+    if gc checkout -q main 2>"$T/log/cfg-checkout2.err"; then
+        [ "$(cat "$C/config.local.json" 2>/dev/null)" = "$USER_CFG" ] \
+            || why="${why}after checkout of main config.local.json is '$(head -c 80 "$C/config.local.json" 2>/dev/null || echo MISSING)'; "
+    else
+        why="${why}could not switch back to main after cfg session 2: $(head -c 160 "$T/log/cfg-checkout2.err" | tr '\n' ' '); "
+    fi
+fi
+if [ -z "$why" ]; then
+    pass "$id" "resuming $C1_BRANCH (which tracks config.local.json) was refused and $C2_BRANCH minted; the user's gitignored config.local.json was intact during and after session 2 and after checkout of main, and never committed"
 else
     fail "$id" "$why"
 fi

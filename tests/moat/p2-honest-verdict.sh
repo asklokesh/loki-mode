@@ -417,7 +417,85 @@ TS
     case "$out" in *no_marker=PASSED*) bad="$bad [bun: a pass:true artifact with no freshness marker read as passed]" ;; esac
     case "$out" in *old_marker=PASSED*) bad="$bad [bun: an earlier iteration's pass:true artifact read as passed]" ;; esac
     case "$out" in *npm-zero=PASSED*) bad="$bad [bun: npm test exit 0 with zero tests executed read as passed]" ;; esac
+    zt_stale_session || return
     if [ -z "$bad" ]; then _st="PASS"; else _why="${bad# }"; fi
+}
+
+# Stale-session leg (both routes): a previous session left .test-results.iter
+# "1", a pass:true test-results.json and unit-tests.pass. The next session
+# restarts at iteration 0, so its iteration 1 would read that pass as fresh.
+# Starting at 0 (terminal or corrupt previous state) must drop the marker and
+# unit-tests.pass: bash load_state (cut out of run.sh) and Bun
+# loadStateForRunner, then the Bun gate at iteration 1 must not read passed.
+# Appends to the caller's $bad; returns 1 with _why set when a control breaks.
+zt_stale_session() {
+    local ss="$RUN/zt-session" lsh="$RUN/zt-load-state.sh" leg d it args pre post
+    { printf '%s\n' 'log_info() { :; }' 'log_warn() { :; }' 'log_error() { :; }'
+      sed -n '/^_loki_state_file() {/,/^}/p; /^load_state() {/,/^}/p' "$REPO_ROOT/autonomy/run.sh"; } > "$lsh"
+    grep -q '^load_state() {' "$lsh" && grep -q '^_loki_state_file() {' "$lsh" && bash -n "$lsh" 2>/dev/null \
+        || { _why="could not cut load_state out of run.sh"; return 1; }
+    for leg in bash-terminal bash-corrupt bun-terminal bun-corrupt; do
+        d="$ss/$leg"
+        mkdir -p "$d/.loki/quality" || { _why="stale-session fixture $leg failed"; return 1; }
+        case "$leg" in
+            *terminal) printf '%s\n' '{"retryCount":0,"iterationCount":1,"status":"council_approved"}' > "$d/.loki/autonomy-state.json" ;;
+            *corrupt) printf '%s\n' '{not json' > "$d/.loki/autonomy-state.json" ;;
+        esac
+        printf '%s\n' '{"runner":"jest","pass":true,"passed_count":3,"failed_count":0}' > "$d/.loki/quality/test-results.json"
+        printf '1\n' > "$d/.loki/quality/.test-results.iter"
+        : > "$d/.loki/quality/unit-tests.pass"
+    done
+    cat > "$ss/probe.ts" <<'TS'
+const repo = process.env.MOAT_REPO!;
+const { runTestCoverage } = await import(`${repo}/loki-ts/src/runner/quality_gates.ts`);
+const { loadStateForRunner } = await import(`${repo}/loki-ts/src/runner/state.ts`);
+// argv: <name> <dir> <load 0|1> triples. load=1 runs loadStateForRunner first
+// and gates at its iteration + 1 (the loop increments before the gates run);
+// load=0 gates at iteration 1.
+const a = process.argv.slice(2), out: string[] = [];
+for (let i = 0; i + 2 < a.length; i += 3) {
+  const [name, dir, load] = [a[i], a[i + 1], a[i + 2]];
+  const ctx = { lokiDir: `${dir}/.loki`, cwd: dir, iterationCount: 7, retryCount: 0, log: () => {} };
+  if (load === "1") {
+    await loadStateForRunner(ctx as never);
+    out.push(`${name}.iter=${ctx.iterationCount}`);
+    ctx.iterationCount += 1;
+  } else {
+    ctx.iterationCount = 1;
+  }
+  const r = await runTestCoverage(ctx as never);
+  out.push(`${name}=${r.passed === true && r.inconclusive !== true ? "PASSED" : r.passed === false ? "FAILED" : "INCONCLUSIVE"}`);
+}
+console.log(out.join(" "));
+TS
+    zt_probe() { (cd "$ss" && env -u LOKI_STUB_GATE_TEST_COVERAGE MOAT_REPO="$REPO_ROOT" bun run "$ss/probe.ts" "$@" 2> "$ss/err"); }
+    # Control: before any load, each leftover reads as passed at iteration 1.
+    args=""
+    for leg in bash-terminal bash-corrupt bun-terminal bun-corrupt; do args="$args $leg $ss/$leg 0"; done
+    # shellcheck disable=SC2086  # $args is word-split into triples on purpose (no spaces in $RUN paths)
+    pre="$(zt_probe $args)"
+    case "$pre" in "bash-terminal=PASSED bash-corrupt=PASSED bun-terminal=PASSED bun-corrupt=PASSED") ;;
+        *) _why="stale-session control broken (each leftover must read passed before a load): got '${pre:-<none>}' $(head -c 300 "$ss/err" | tr '\n' ' ')"; return 1 ;;
+    esac
+    # Bash route: the real load_state. The env never reaches a real repo's .loki.
+    for leg in bash-terminal bash-corrupt; do
+        d="$ss/$leg"
+        it="$(cd "$d" && env -u LOKI_DIR -u LOKI_SESSION_ID -u LOKI_DURABLE_STATE TARGET_DIR="$d" ITERATION_COUNT=5 \
+            bash -c '. "$1"; load_state; printf "%s" "$ITERATION_COUNT"' _ "$lsh" 2>/dev/null)"
+        [ "$it" = 0 ] || { _why="stale-session control broken: bash load_state left ITERATION_COUNT='$it' for $leg, want 0"; return 1; }
+    done
+    post="$(zt_probe bash-terminal "$ss/bash-terminal" 0 bash-corrupt "$ss/bash-corrupt" 0 \
+        bun-terminal "$ss/bun-terminal" 1 bun-corrupt "$ss/bun-corrupt" 1)"
+    case "$post" in *"bun-terminal.iter=0 "*"bun-corrupt.iter=0 "*) ;;
+        *) _why="stale-session control broken: loadStateForRunner did not start at iteration 0: got '${post:-<none>}' $(head -c 300 "$ss/err" | tr '\n' ' ')"; return 1 ;;
+    esac
+    for leg in bash-terminal bash-corrupt bun-terminal bun-corrupt; do
+        d="$ss/$leg/.loki/quality"
+        [ -e "$d/.test-results.iter" ] && bad="$bad [${leg%%-*}: a new session at iteration 0 kept the previous session's .test-results.iter (${leg#*-} state)]"
+        [ -e "$d/unit-tests.pass" ] && bad="$bad [${leg%%-*}: a new session at iteration 0 kept the previous session's unit-tests.pass (${leg#*-} state)]"
+        case " $post " in *" $leg=PASSED "*) bad="$bad [${leg%%-*}: after a ${leg#*-} previous state the Bun gate read the previous session's pass:true as passed at iteration 1]" ;; esac
+    done
+    return 0
 }
 
 case_proof_verify_contract() {
@@ -714,7 +792,7 @@ run_case P2.unknown-gate-fails-closed "an unrecognized gate name or status canno
 run_case P2.model-looks-good-cannot-pass "loki verify: a stub reviewer saying 'looks good' over red tests is not VERIFIED/0 (verify is bash-only: bin/loki execs autonomy/loki on both entry points)" case_model_looks_good
 run_case P2.missing-pass-key-not-pass "evidence gate: test-results with no pass key is inconclusive, not affirmative" case_missing_pass_key
 run_case P2.bun-inconclusive-not-pass "Bun test gate (runTestCoverage): pass:\"inconclusive\" and a missing pass key read as inconclusive, never an affirmative pass (passed && !inconclusive); pass:true does" case_bun_inconclusive
-run_case P2.zero-test-never-affirmative "a zero-test run leaves no unit-tests.pass and no evidence-gate tests.pass:true (bash), and neither a stale test-results.json nor a zero-test npm test reads as passed (Bun); real passes do on both" case_zero_test_never_affirmative
+run_case P2.zero-test-never-affirmative "a zero-test run leaves no unit-tests.pass and no evidence-gate tests.pass:true (bash), and neither a stale test-results.json nor a zero-test npm test reads as passed (Bun); real passes do on both; a new session at iteration 0 drops the previous session's freshness marker and unit-tests.pass (both routes)" case_zero_test_never_affirmative
 run_case P2.proof-verify-exit-contract "loki proof verify exits 0 clean, 1 tampered, 64 no id, 66 unknown id (both routes)" case_proof_verify_contract
 run_case P2.proof-chain-exit-contract "loki proof chain exits 0/1/2/3/64/66, -h/--help is 64 not 0, and a hostile PYTHONPATH cannot shadow a stage (both entry points)" case_proof_chain_contract
 run_case P2.verify-exit-contract "loki verify maps nothing-to-check to 3, could-not-check to 2, usage to 64 (bash-only command, both entry points)" case_verify_contract

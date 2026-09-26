@@ -4237,6 +4237,7 @@ except Exception:
     _CC_VERDICTS_DIR="$verdicts_dir" \
     _CC_LOKI_DIR="$loki_dir" \
     LOKI_TARGET_DIR="${TARGET_DIR:-$(pwd)}" \
+    PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)}" \
     python3 -E - <<'PYEOF' 2>/dev/null || exit_code=$?
 import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os, sys, pathlib

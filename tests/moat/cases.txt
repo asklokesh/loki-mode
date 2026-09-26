@@ -70,3 +70,4 @@ P6.ignored-files-not-swept
 P6.preexisting-edit-disclosed
 P2.checklist-verify-not-shadowed
 P2.zero-test-never-affirmative
+P6.resume-keeps-ignored-user-file

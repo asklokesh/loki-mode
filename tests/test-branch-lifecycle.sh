@@ -699,6 +699,60 @@ else
 fi
 
 # =============================================================================
+# Test T-resume-no-overwrite-ignored: the base ignores config.local.json; session
+# 1 un-ignores it and commits its own copy on the session branch. Back on the
+# base, the user writes their real config.local.json (ignored there). Resuming
+# would let git overwrite it (checkout treats ignored files as expendable) and
+# a later checkout of the base would delete it. The resume must be refused, a
+# new session branch minted, and the user's file kept and never committed.
+# Session 2's setup runs in its own bash process: the minted name is
+# loki/session-<epoch>-$$ and $$ is constant inside this subshell.
+# =============================================================================
+echo "Test T-resume-no-overwrite-ignored: a resume never overwrites a gitignored user file"
+RNO="$(make_repo tresumeignored)"
+outno="$(
+    cd "$RNO" || exit 1
+    source "$PREAMBLE"
+    printf 'config.local.json\n' >> .gitignore
+    git add .gitignore && git commit -qm "ignore local config"
+    ITERATION_COUNT=1
+    result=0
+    setup_agent_branch >/dev/null 2>&1
+    s1="$(git rev-parse --abbrev-ref HEAD)"
+    printf 'build/\n' > .gitignore
+    printf '{"agent":1}\n' > config.local.json
+    printf 'print(1)\n' > app.py
+    commit_session_changes >/dev/null 2>&1
+    s1_tracks="$( [ "$(git show "$s1:config.local.json" 2>/dev/null)" = '{"agent":1}' ] && echo yes || echo no )"
+    s1_head="$(git rev-parse "$s1")"
+    git checkout -q develop
+    printf '{"user":"my real settings"}\n' > config.local.json
+    base_ignores="$(git check-ignore -q config.local.json && echo yes || echo no)"
+    bash -c '. "$1"; setup_agent_branch' _ "$PREAMBLE" >/dev/null 2>&1
+    s2="$(git rev-parse --abbrev-ref HEAD)"
+    if [[ "$s2" == loki/session-* ]] && [ "$s2" != "$s1" ]; then new=yes; else new=no; fi
+    recorded="$( [ "$(cat .loki/state/agent-branch.txt 2>/dev/null)" = "$s2" ] && echo yes || echo no )"
+    during="$(cat config.local.json 2>/dev/null)"
+    # Session 2 un-ignores it too, so only the snapshot keeps it out of the commit.
+    printf 'build/\n' > .gitignore
+    exposed="$(git check-ignore -q config.local.json && echo no || echo yes)"
+    printf 'print(2)\n' > app2.py
+    commit_session_changes >/dev/null 2>&1
+    in_head="$(git cat-file -e HEAD:config.local.json 2>/dev/null && echo yes || echo no)"
+    agent="$(git cat-file -e HEAD:app2.py 2>/dev/null && echo yes || echo no)"
+    s1_same="$( [ "$(git rev-parse "$s1")" = "$s1_head" ] && echo yes || echo no )"
+    git checkout -q develop
+    after="$(cat config.local.json 2>/dev/null || echo MISSING)"
+    printf 'S1TRACKS=%s BASEIGN=%s NEW=%s RECORDED=%s DURING=%s EXPOSED=%s INHEAD=%s AGENT=%s S1SAME=%s AFTER=%s' \
+        "$s1_tracks" "$base_ignores" "$new" "$recorded" "$during" "$exposed" "$in_head" "$agent" "$s1_same" "$after"
+)"
+if [ "$outno" = 'S1TRACKS=yes BASEIGN=yes NEW=yes RECORDED=yes DURING={"user":"my real settings"} EXPOSED=yes INHEAD=no AGENT=yes S1SAME=yes AFTER={"user":"my real settings"}' ]; then
+    pass "resume refused, new session branch minted; the user's ignored config.local.json intact during and after, never committed; session 2's own work committed"
+else
+    fail "a resume overwrote (or lost, or committed) a gitignored user file" "got: $outno"
+fi
+
+# =============================================================================
 # Test T-already-on-loki-resnapshot (BACKLOG 57): the user stays on the session
 # branch, makes a file, and runs again (the already-on-loki path).
 # =============================================================================

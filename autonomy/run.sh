@@ -9118,7 +9118,12 @@ setup_agent_branch() {
     if [ -s .loki/state/agent-branch.txt ]; then
         recorded="$(cat .loki/state/agent-branch.txt 2>/dev/null || true)"
         if [ -n "$recorded" ] && git rev-parse --verify "$recorded" >/dev/null 2>&1; then
-            if git checkout "$recorded" >/dev/null 2>&1; then
+            # --no-overwrite-ignore: git's default checkout silently replaces a
+            # gitignored user file at a path the session branch tracks, and the
+            # file is gone when the user switches back. On conflict the resume
+            # is refused and a fresh session branch (with a fresh snapshot) is
+            # minted below.
+            if git checkout --no-overwrite-ignore "$recorded" >/dev/null 2>&1; then
                 log_info "Resuming on recorded agent branch: ${recorded}"
                 _loki_snapshot_preexisting union || log_warn "$reuse_warn"
                 return 0
@@ -19660,6 +19665,10 @@ except (json.JSONDecodeError, KeyError, TypeError, OSError):
                 ITERATION_COUNT=0
                 # Back up corrupted state file for diagnosis
                 mv "$state_file" "${state_file}.corrupt.$(date +%s)" 2>/dev/null || true
+                # Starts at iteration 0: drop the previous session's test
+                # evidence, as the iteration-0 block at the end does.
+                rm -f "${TARGET_DIR:-.}/.loki/quality/.test-results.iter" \
+                      "${TARGET_DIR:-.}/.loki/quality/unit-tests.pass" 2>/dev/null || true
                 return
             fi
 
@@ -19728,6 +19737,16 @@ except (json.JSONDecodeError, KeyError, TypeError, OSError):
         fi
     else
         RETRY_COUNT=0
+    fi
+    # A session that starts at iteration 0 has run nothing yet, so a leftover
+    # freshness marker or unit-tests.pass is a previous session's evidence.
+    # Iterations restart at 0, so keeping them would let an old pass:true read
+    # as this iteration's result.
+    if [ "${ITERATION_COUNT:-0}" = "0" ]; then
+        # Same path the writer (enforce_test_coverage) and the freshness
+        # readers use.
+        local _q="${TARGET_DIR:-.}/.loki/quality"
+        rm -f "$_q/.test-results.iter" "$_q/unit-tests.pass" 2>/dev/null || true
     fi
 }
 

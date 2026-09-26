@@ -96,6 +96,15 @@ Status values: todo, in progress, shipped (version), parked (reason).
 64. **A test script like `exit 0` still reads as a pass on both routes** (the zero-test detector acts only on positive evidence of zero tests); `node --test` behind an npm script is not detected. The Bun freshness marker is agent-writable.
 65. **Previous-session leftovers become "pre-existing" after a crash** (cycle-3 disclosure): files left uncommitted by a crashed or secret-scan-aborted session are recorded as pre-existing on the next run and stay on disk, uncommitted.
 
+66. **Ignored `dir/` snapshot entries hide agent files under them.** If the agent un-ignores `build/` and creates `build/agent.js`, the literal `build/` reset unstages it and the receipt's coverage check hides it; an agent edit to a user file under that entry is not disclosed (no per-file hash for dir entries). At least report new or changed paths covered only by a dir entry (cycle-3 council).
+67. **Deletions and ignored edits are not disclosed.** An agent `rm` of a pre-existing untracked user file, or an edit to a still-ignored pre-existing file (`.env.local`), leaves the receipt silent; iterate the recorded hash map (missing = deleted, changed = modified), with care for gate-regenerated noise (cycle-3 council).
+68. **The resume union never prunes entries that became tracked**: a file the user committed between sessions is still unstaged by the session commit while the receipt lists it as modified. Drop union entries present in `git ls-files -z --cached`.
+69. **Snapshot hashing cost on large untracked data trees**: every file entry is sha256'd at every session start (30k small files: 1.9s; tens of GB of untracked parquet or weights would stall for minutes). Add a size cap or a size+mtime+inode fingerprint.
+70. **Snapshot and hash files live in agent-writable `.loki/state`**: an agent can add entries (hide or uncommit files) or delete the hash file (suppress `preexisting_modified`). Predates cycle 3; matters for adversarial agents.
+71. **`evidence-gate-details` `tests.ok` stays true for an inconclusive test axis**; `surface_evidence_gate_details` prints `tests_ok=True` next to `tests_inconclusive`.
+
+72. **Refused resume keeps the old `base-branch.txt` and says too little.** Now that `--no-overwrite-ignore` makes the mint fallback a normal path, session 2 keeps session 1's recorded base (wrong PR `--base` advice if it started elsewhere), and the warning does not name the ignored file or where session 1's commits live.
+
 ## Later milestones
 
 M1 one command, M2 Seal and Wall, M3 assign like a teammate, M4 system map, M5 the line, M6 ship and operate, M7 one screen, M8 legacy lane, M9 enterprise readiness, M10 simplify and ship v10.0.0. Items get broken out here when their milestone comes up.
