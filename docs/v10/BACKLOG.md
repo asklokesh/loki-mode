@@ -127,6 +127,10 @@ Status values: todo, in progress, shipped (version), parked (reason).
 88. **Old git (< 2.18) receipt attribution:** a failed mint snapshot deletes the list, so the receipt names every user untracked file as the run's work (names and counts only; the commit path fails closed). Keep an `ls-files --others --exclude-standard` fallback list for the receipt.
 89. **Bash and Bun read `failed_count` differently:** the bash evidence gate reads `pass: true` as PASS whatever `failed_count` says; Bun now fails it.
 
+90. **Data risk, next in line: `LOKI_BRANCH_PROTECTION=false` on a leftover `loki/session-*` branch** returns before any snapshot (`run.sh` ~9073), and `commit_session_changes` then commits with the earlier session's stale snapshot, so a file the user made since is committed and lost from disk on checkout of the base (also in v9.53.0; breaks the LOCK A1 opt-out promise). One guard: commit nothing unless this run took a snapshot, or skip the session commit when branch protection is off (cycle-3 council round 6).
+91. **Zero-test stage events:** a zero-test run still returns 0 from `enforce_test_coverage`, so the loop emits `stage_complete test_suite pass` (~24590) although the result is inconclusive.
+92. **Receipt path bases mix under a subdirectory `TARGET_DIR`:** tracked entries are repo-top-relative, untracked and `preexisting_modified` entries are cwd-relative.
+
 ## Later milestones
 
 M1 one command, M2 Seal and Wall, M3 assign like a teammate, M4 system map, M5 the line, M6 ship and operate, M7 one screen, M8 legacy lane, M9 enterprise readiness, M10 simplify and ship v10.0.0. Items get broken out here when their milestone comes up.

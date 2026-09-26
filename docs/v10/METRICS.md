@@ -42,6 +42,7 @@ produced it. "Not measured" is a real value here: nothing is estimated.
 
 | Property | Status | Command |
 |---|---|---|
-| all 9 | 1 of 9 proven (P6); 48 cases, 25 pass, 23 pending with milestones (2026-09-26, v9.53.0) | `bash tests/moat/run.sh` |
+| all 9 | 1 of 9 proven (P6); 55 cases, 32 pass, 23 pending with milestones (2026-09-26, v9.54.0) | `bash tests/moat/run.sh` |
+| history | v9.53.0: 1 of 9, 48 cases, 25 pass, 23 pending | - |
 | history | v9.52.0: 0 of 9, 45 cases, 21 pass, 24 pending | - |
 | runtime | about 15s locally (9 scripts in parallel), about 1m15s CI job | `time bash tests/moat/run.sh` |

@@ -5,6 +5,63 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.54.0
+
+**Resuming a session no longer endangers the user's files.** Six council
+rounds on this cycle's brownfield work found and closed these paths, each
+pinned by a test that fails on the code before its fix:
+- A file the user creates between two sessions is added to the protected
+  list on resume, so the resumed session never sweeps it.
+- Gitignored user files are snapshotted too, so an agent that rewrites
+  `.gitignore` cannot expose them to the session commit. A directory is
+  listed only when a pattern matches it, so a new agent file under a
+  directory that merely holds ignored files is still committed.
+- The resume checkout uses `--no-overwrite-ignore`: git's default silently
+  replaced a gitignored user file at a path the session branch tracks. On a
+  conflict a fresh session branch is minted instead.
+- An interrupted session's own new files (Ctrl-C, SIGTERM, pod loss) are
+  recorded after every provider turn and committed by the session that
+  finishes, instead of being taken for the user's and silently left out of
+  the commit and the receipt. The record never holds a directory entry, so a
+  user file made inside a directory the agent ignored stays protected.
+- An agent edit to a file the user already had untracked is disclosed in the
+  receipt as `preexisting_modified` (path only, never content) and still
+  never committed.
+- On git older than 2.18, where the snapshot cannot be taken, the session now
+  commits nothing and says why, instead of falling back to sweeping
+  everything.
+New moat cases: `P6.resume-does-not-sweep`, `P6.ignored-files-not-swept`,
+`P6.preexisting-edit-disclosed`, `P6.resume-keeps-ignored-user-file`,
+`P6.resume-after-interrupt-commits-agent-files`. P6 stays proven.
+
+**Test evidence from an earlier session is never this session's.** A new
+session restarts at iteration 0, so on both routes it now drops the previous
+session's freshness marker, `unit-tests.pass` and `test-results.json`; before,
+a previous run's pass could read as fresh on the Bun gate and be reported by
+the receipt. A zero-test bash run no longer leaves `unit-tests.pass` or
+`tests.pass: true` in the evidence detail (the latter is now the string
+`"inconclusive"` for non-affirmative outcomes, a type change for external
+readers). The Bun npm-test fallback detects zero tests, honours
+`failed_count`, and treats a stale `test-results.json` as no evidence. New
+case `P2.zero-test-never-affirmative`.
+
+**More verdict paths cannot import from the agent's repo (D7).** Checklist
+verification (`prd-checklist.sh`), the council helpers (`voter-agents.sh`,
+`council-v2.sh`, `done-recognition.sh`, `proof-check.sh`) and `load_state`
+run their inline Python with `python3 -E` and the cwd removed from
+`sys.path`; the managed council imports from the Loki install, never the cwd.
+New case `P2.checklist-verify-not-shadowed`.
+
+**Moat:** 1 of 9 proven; 55 cases registered, 32 pass, 23 pending; the
+ratchet checks v9.52.0 and v9.53.0.
+
+**Known gaps (`docs/v10/BACKLOG.md` 61-89):** with `LOKI_BRANCH_PROTECTION=false`
+on a leftover session branch a stale snapshot is used (also in v9.53.0; next
+in line); agent files under an adopted ignored directory are neither
+committed nor listed; deletions and still-ignored edits are not disclosed;
+the in-flight provider turn at a SIGKILL or SIGHUP is not recorded;
+`__pycache__` from the test gate can reach the commit when not ignored.
+
 ## v9.53.0
 
 **P6 in-place brownfield is proven: the moat now reads 1 of 9.** A Loki

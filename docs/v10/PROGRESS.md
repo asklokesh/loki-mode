@@ -27,6 +27,7 @@
 
 ## Shipped in v10 program
 
+- **v9.54.0** (2026-09-26): resume never sweeps, overwrites or loses user files (between-session files, gitignored files, interrupted sessions, old git); previous-session test evidence never read as this session's; D7 on checklist verification, council helpers and load_state.
 - **v9.53.0** (2026-09-26): P6 in-place brownfield proven (moat 1 of 9); user untracked files never swept into session commits; no bytecode from the syntax gate; Bun gate never passes an inconclusive result; council and runner verdict paths cannot import from the agent repo.
 - **v9.52.0** (2026-09-25): moat suite `tests/moat/` (45 cases, 0 of 9 properties proven, 24 pending with milestones, ratchet baseline set by this release); verifier fixes (Bun `--jwks`, stripped signature, malformed tokens, strict flags and help, `python3 -E` on every verify path, exit contract 64/66); council `pass` readers fail closed; honest `doctor --airgap`; main-red fix.
 
@@ -42,8 +43,16 @@
 - v9.53.0 verified on all channels (npm latest + gitHead `d7fb8674`, tag, GitHub release, Docker amd64/arm64, Homebrew sha256).
 - Dev fleet (3 worktree slices): resume re-snapshot, gitignored files, receipt discloses edits to user files (BACKLOG 57-59); D7 on checklist verification and council helpers (53, 54 partly); zero-test and stale results never affirmative on either route (55, 56, 60).
 - Moat: still 1 of 9 proven (P6); 54 cases registered (48 in the release-tag union), 23 pending; ratchet against v9.52.0 and v9.53.0. New cases: P6.resume-does-not-sweep, P6.ignored-files-not-swept, P6.preexisting-edit-disclosed, P6.resume-keeps-ignored-user-file, P2.checklist-verify-not-shadowed, P2.zero-test-never-affirmative.
-- Council rounds: r1 CONCERN x2 (resume overwrote ignored user files; stale Bun pass) -> fixed 55ee9747; r2 CONCERN (previous test-results.json still reported) -> fixed d55b13f4; r3 CONCERN (snapshot on git < 2.18 fell back to sweeping everything) -> fixed with a fail-closed marker.
+- Council rounds: r1 CONCERN x2 (resume overwrote ignored user files; stale Bun pass) -> fixed 55ee9747; r2 CONCERN (previous test-results.json still reported) -> fixed d55b13f4; r3 CONCERN (snapshot on git < 2.18 fell back to sweeping everything) -> fixed f71ab6a1; r4 3 of 3 APPROVE but an interrupt regression found -> fixed 5faa666e; r5 CONCERN (session-created record held directory entries) -> fixed 32d3831a; r6 **3 of 3 APPROVE**.
+- Moat at release: 1 of 9 proven; 55 registered, 32 pass, 23 pending.
+- Released as v9.54.0.
 - Open items the slices found: BACKLOG 61-65.
+
+## Next (after cycle 3)
+
+1. BACKLOG 90 (branch-protection-off stale snapshot: data risk), then 74 (agent self-commits bypass the snapshot), 85 (test-gate `__pycache__`), 73 (exit-0 runs with failures).
+2. Honest verdict: 81, 82, 89, 91; council helper D7 remainder (54).
+3. Then P7 (no fabricated data), P9 (Rule of Two), M0 measurement.
 
 ## Next (after cycle 2)
 
