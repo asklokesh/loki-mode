@@ -36508,7 +36508,7 @@ PYEOF
                 echo -e "${RED}Proof Passport tool not found: ${passport_tool}${NC}" >&2
                 exit 3
             fi
-            python3 "$passport_tool" "$contract" "$receipt_path" "$output" "$@"
+            python3 -E "$passport_tool" "$contract" "$receipt_path" "$output" "$@"
             exit $?
             ;;
         chain)

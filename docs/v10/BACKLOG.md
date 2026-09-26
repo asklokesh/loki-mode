@@ -52,7 +52,7 @@ Status values: todo, in progress, shipped (version), parked (reason).
 28. **Moat: pending-failure fingerprints.** A pending case that starts failing for a different reason (for example its own positive control broke) stays green. Give each pending entry an expected failure reason and fail on a mismatch (council round 2).
 29. **P7 route count depends on the host** (9 missing on macOS, 21 on Linux CI) because optional routers do not mount there; tied to item 27.
 30. **P4 results need provenance.** Once the corpus exists, a hand-written per-defect outcomes file could still pass; require a verifiable receipt per outcome.
-31. **`proof-verify.py` reads "drift unverifiable" (not a git tree, no base_sha) as 1 (tampered)**; it should be 2 (could not check). A Bun verifier timeout returns 143, not 2.
+31. **`proof-verify.py` reads "drift unverifiable" (not a git tree, no base_sha) as 1 (tampered)**; it should be 2 (could not check). (The Bun timeout part is fixed: exits above 128 map to 2.)
 32. **Docs tell npm users to run `doctor --airgap`** (`docs/air-gapped.md:48`, `deploy/helm/README.md:413`), which the default route rejects. Note `LOKI_LEGACY_BASH=1` until `P5.airgap-audit-default-route` is fixed.
 33. **Council member vote: `runner=none` counts as a positive signal while a suite that ran zero tests does not.** Decide one rule.
 
@@ -73,6 +73,12 @@ Status values: todo, in progress, shipped (version), parked (reason).
 
 46. **P2 advisory-only case: match the control.** Its positive control differs from the probe in two variables (gate type and tests yes/no); use an exogenous gate with no tests expecting VERIFIED WITH GAPS.
 47. **Refuse bootstrap on release commits once any moat release exists on origin** (a hotfix branch cut before the first moat release has no carrying tag and runs in bootstrap; labelled, but unratcheted).
+
+48. **Same-class hardening beyond D7:** `loki outcomes canary verify` and inline `python3 -` heredocs for `proof share`/`show` still run with the cwd importable; a PATH with an empty component lets a committed `gpg`/`git`/`python3` in the checkout answer (absolute tool paths or scrub empty PATH components on verify paths).
+49. **Verifier stdout vs exit code:** on ABSENT / NOT CHECKED the base verifier's JSON (`ok: true`) is still printed while the exit is 1/2; a stdout-only consumer reads a pass. Emit the final verdict in the JSON too.
+50. **Remote NOT CHECKED returns 0; local returns 2.** Align or document.
+51. **With `-E`, cryptography supplied via `PYTHONPATH`/`PYTHONUSERBASE` reads NOT CHECKED**; say so in the NOT CHECKED message.
+52. **CI check name:** "Moat suite" shows green at 0 of 9; consider a name that says "no rule failed" so the check mark is not read as "moat proven" (the step summary already carries the count).
 
 ## Later milestones
 

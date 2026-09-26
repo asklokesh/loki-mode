@@ -150,7 +150,10 @@ def _run(name, argv):
                       "stage tool is missing from disk: %s -- this link of "
                       "the chain never ran, so it is not a pass" % tool)
     try:
-        proc = subprocess.run([sys.executable] + argv, capture_output=True,
+        # -E: the stages run with the cwd inside the checkout being verified.
+        # PYTHONPATH (an empty component adds the cwd) or a committed
+        # sitecustomize.py must not supply a stage's modules (D7).
+        proc = subprocess.run([sys.executable, "-E"] + argv, capture_output=True,
                               text=True)
     except OSError as exc:
         return _stage(name, UNAVAILABLE, "could not run %s: %s" % (tool, exc))
