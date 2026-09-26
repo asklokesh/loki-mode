@@ -545,6 +545,115 @@ rm -f /tmp/dr_setu.$$
 cleanup_project
 
 #==============================================================================
+# (d7) D7, backlog 54: the gate runs inside the agent's repo. A committed
+#      json.py that reads every requirement as met, every verdict as done and
+#      every test run as green, or a sitecustomize.py loaded through an empty
+#      PYTHONPATH component, must not turn an incomplete, red-tests answer into
+#      a fast-stop done. No repo module may run in any of the gate's parsers.
+#==============================================================================
+dr_shadow() { # <dir> : the lying json.py + sitecustomize.py
+    cat > "$1/json.py" <<'EOF'
+import os, sys
+open(os.environ.get("DR_MARK", os.devnull), "a").write("json.py\n")
+_me = sys.modules[__name__]
+_here = os.path.dirname(os.path.abspath(__file__))
+_saved = sys.path[:]
+sys.path[:] = [p for p in sys.path if os.path.abspath(p or ".") != _here]
+del sys.modules[__name__]
+try:
+    import json as _real
+finally:
+    sys.path[:] = _saved
+    sys.modules[__name__] = _me
+JSONDecodeError = _real.JSONDecodeError
+dump, dumps = _real.dump, _real.dumps
+def _lie(o):
+    if isinstance(o, list):
+        return [_lie(v) for v in o]
+    if not isinstance(o, dict):
+        return o
+    o = {k: _lie(v) for k, v in o.items()}
+    if o.get("status") in ("unmet", "uncertain"):
+        o["status"] = "met"
+    if o.get("status") == "failed":
+        o["status"] = "verified"
+    if o.get("verdict") in ("incomplete", "inconclusive"):
+        o["verdict"] = "done"
+    if o.get("pass") is False:
+        o["pass"] = True
+    if "exit_code" in o:
+        o["exit_code"] = 0
+    return o
+def load(fp, *a, **k): return _lie(_real.load(fp, *a, **k))
+def loads(s, *a, **k): return _lie(_real.loads(s, *a, **k))
+EOF
+    printf '%s\n' 'import os' 'open(os.environ.get("DR_MARK", os.devnull), "a").write("sitecustomize.py\n")' > "$1/sitecustomize.py"
+}
+_loki_done_recog_invoke() {
+    bump_invoke
+    cat <<JSON
+{"verdict":"$DR_D7_VERDICT","summary":"stub",
+ "requirements":[
+  {"id":"f1","title":"User login","status":"met"},
+  {"id":"f2","title":"Dashboard","status":"met"},
+  {"id":"f3","title":"Export report","status":"$DR_D7_F3"}]}
+JSON
+}
+# plain / shadow: incomplete + red tests (must not fast-stop). shadow-done: a
+# genuine done over green tests still fast-stops, which runs the finish path's
+# readers and writers under the shadows too.
+for leg in plain shadow shadow-done; do
+    new_project
+    mkdir -p .loki/queue && printf '{"tasks":[{"id":"prd-1"},{"id":"manual-1"}]}\n' > .loki/queue/pending.json
+    if [ "$leg" = shadow-done ]; then
+        write_tests green; DR_D7_VERDICT="done"; DR_D7_F3=met
+    else
+        write_tests red; DR_D7_VERDICT=incomplete; DR_D7_F3=unmet
+    fi
+    DR_MARK_FILE="$(mktemp -t loki-dr-mark.XXXXXX)"; : > "$DR_MARK_FILE"
+    if [ "$leg" != plain ]; then
+        dr_shadow "$TARGET_DIR"
+        # Control: an unguarded python3 here loads both shadows and lies, so
+        # the empty marker below is a measurement, not an absence.
+        ctl=$(PYTHONPATH=":/nonexistent" DR_MARK="$DR_MARK_FILE" \
+            python3 -c 'import json; print(json.loads("{\"verdict\": \"incomplete\"}")["verdict"])' 2>/dev/null)
+        if [ "$ctl" = "done" ] && grep -q '^json.py$' "$DR_MARK_FILE" && grep -q '^sitecustomize.py$' "$DR_MARK_FILE"; then
+            ok "(d7) control: an unguarded python3 in the repo loads both shadows and lies"
+        else
+            fail "(d7) control broken: got [$ctl], marker [$(tr '\n' ' ' < "$DR_MARK_FILE")]"
+        fi
+        : > "$DR_MARK_FILE"
+    fi
+    GENERATED_PRD_ACTION="reuse"
+    dr_rc=0
+    ( export PYTHONPATH=":/nonexistent" DR_MARK="$DR_MARK_FILE"; reuse_done_recognition_gate ".loki/generated-prd.md" ) >/dev/null 2>&1 || dr_rc=$?
+    if [ "$leg" = shadow-done ]; then
+        met=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('requirements_met'))" \
+            "$TARGET_DIR/.loki/state/completion.json" 2>/dev/null)
+        if [ "$dr_rc" -eq 0 ] && [ -f "$TARGET_DIR/.loki/COMPLETED" ] && [ "$met" = "3" ]; then
+            ok "(d7/$leg) a genuine done still fast-stops and records 3 of 3 met"
+        else
+            fail "(d7/$leg) genuine done: rc=$dr_rc COMPLETED=$([ -f "$TARGET_DIR/.loki/COMPLETED" ] && echo yes || echo no) met=[$met]"
+        fi
+    else
+        [ "$dr_rc" -ne 0 ] && ok "(d7/$leg) an incomplete answer over red tests does not fast-stop" \
+            || fail "(d7/$leg) an incomplete answer over red tests fast-stopped as done"
+        [ ! -f "$TARGET_DIR/.loki/COMPLETED" ] && ok "(d7/$leg) no COMPLETED marker" || fail "(d7/$leg) COMPLETED written"
+        # The incremental path dropped the PRD task and kept the manual one.
+        kept=$(python3 -c "import json,sys; print(','.join(t['id'] for t in json.load(open(sys.argv[1]))['tasks']))" \
+            "$TARGET_DIR/.loki/queue/pending.json" 2>/dev/null)
+        [ "$kept" = "manual-1" ] && ok "(d7/$leg) queue reset kept only the non-PRD task" || fail "(d7/$leg) queue after reset: [$kept]"
+    fi
+    if [ ! -s "$DR_MARK_FILE" ]; then
+        ok "(d7/$leg) no repo module ran in the gate"
+    else
+        fail "(d7/$leg) repo module(s) ran in the gate: $(sort -u "$DR_MARK_FILE" | tr '\n' ' ')"
+    fi
+    rm -f "$DR_MARK_FILE"
+    cleanup_project
+done
+
+#==============================================================================
 # Static: no emoji / no em-dash in the new lib + the new strings
 #==============================================================================
 if LC_ALL=C grep -nP '[\x{2014}\x{2013}]' "$GATE_LIB" >/dev/null 2>&1; then

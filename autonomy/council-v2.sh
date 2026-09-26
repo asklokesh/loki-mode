@@ -19,6 +19,12 @@
 #   - swarm/sycophancy.py (sycophancy detection)
 #   - swarm/calibration.py (reviewer calibration)
 #
+# Inline Python (D7): the council runs with the cwd inside the agent's repo, so
+# every python3 here runs -E and drops '' and '.' from sys.path before any other
+# import (the swarm dir is inserted after that); a committed json.py or
+# sitecustomize.py cannot read the votes. Pinned by
+# tests/test-council-no-fabricated-verdict.sh (D7 section).
+#
 #===============================================================================
 
 COUNCIL_V2_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -97,7 +103,7 @@ council_v2_vote() {
             votes_json="$votes_json$vote_content"
 
             local verdict
-            verdict=$(echo "$vote_content" | python3 -c "import sys,json; print(json.load(sys.stdin).get('verdict','').upper())" 2>/dev/null || echo "UNKNOWN")
+            verdict=$(echo "$vote_content" | python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json; print(json.load(sys.stdin).get('verdict','').upper())" 2>/dev/null || echo "UNKNOWN")
             # TRUST: a reviewer that could not be REACHED did not vote REJECT.
             #
             # Every provider arm below used to substitute a literal
@@ -135,7 +141,7 @@ council_v2_vote() {
 
     # Step 4: Sycophancy detection
     local sycophancy_score
-    sycophancy_score=$(python3 -c "
+    sycophancy_score=$(python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import sys
 sys.path.insert(0, '${COUNCIL_V2_DIR}/../swarm')
 from sycophancy import detect_sycophancy
@@ -150,7 +156,7 @@ print('{:.3f}'.format(detect_sycophancy(votes)))
     if [ "$approve_count" -eq "$council_size" ]; then
         local threshold="${LOKI_COUNCIL_SYCOPHANCY_THRESHOLD:-0.6}"
         local should_challenge
-        should_challenge=$(python3 -c "print('yes' if float('$sycophancy_score') >= float('$threshold') else 'no')" 2>/dev/null || echo "no")
+        should_challenge=$(python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; print('yes' if float('$sycophancy_score') >= float('$threshold') else 'no')" 2>/dev/null || echo "no")
 
         if [ "$should_challenge" = "yes" ]; then
             log_warn "Sycophancy score $sycophancy_score >= $threshold -- adding devil's advocate"
@@ -167,7 +173,7 @@ print('{:.3f}'.format(detect_sycophancy(votes)))
                 # Same trust rule as the main tally: an unparseable devil's
                 # advocate did not vote REJECT. Defaulting to REJECT here would
                 # silently overturn a unanimous APPROVE on a transient failure.
-                da_verdict=$(cat "$da_vote" | python3 -c "import sys,json; print(json.load(sys.stdin).get('verdict','').upper())" 2>/dev/null || echo "INCONCLUSIVE")
+                da_verdict=$(cat "$da_vote" | python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json; print(json.load(sys.stdin).get('verdict','').upper())" 2>/dev/null || echo "INCONCLUSIVE")
                 if [ "$da_verdict" = "INCONCLUSIVE" ]; then
                     log_warn "Devil's advocate produced no verdict -- unanimous approval left UNCHANGED (not overturned)"
                 elif [ "$da_verdict" = "REJECT" ]; then
@@ -201,7 +207,7 @@ print('{:.3f}'.format(detect_sycophancy(votes)))
         final_decision="reject"
     fi
 
-    python3 -c "
+    python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import sys
 sys.path.insert(0, '${COUNCIL_V2_DIR}/../swarm')
 from calibration import CalibrationTracker
@@ -388,7 +394,7 @@ Respond ONLY with a valid JSON object. No markdown fencing."
                             --json-schema "$_c2_schema_content" --output-format json 2>/dev/null)" || _c2_json=""
                         if [ -n "$_c2_json" ]; then
                             # Pull the schema-validated object out of the envelope.
-                            result="$(printf '%s' "$_c2_json" | python3 -c 'import sys,json
+                            result="$(printf '%s' "$_c2_json" | python3 -E -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]; import json
 try:
     e=json.load(sys.stdin)
     p=e.get("structured_output")
@@ -490,7 +496,7 @@ except Exception:
     # or neither, stays INCONCLUSIVE -- never guessed.
     if [ -z "$extracted" ] && [ -n "${result:-}" ]; then
         local _recovered
-        _recovered="$(printf '%s' "$result" | _LOKI_RAW="$result" python3 -c '
+        _recovered="$(printf '%s' "$result" | _LOKI_RAW="$result" python3 -E -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import os, re, sys, json
 raw = os.environ.get("_LOKI_RAW", "")
 # Standalone words only: "APPROVE" not "approved-by", and not inside a URL.

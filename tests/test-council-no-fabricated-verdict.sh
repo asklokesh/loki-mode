@@ -192,6 +192,96 @@ else
     bad "recovered verdicts are indistinguishable from parsed ones"
 fi
 
+# ---- D7 (backlog 54): the tally cannot import from the agent's repo -------
+# council_v2_vote runs with the cwd inside the agent's repo. A committed json.py
+# that reads every REJECT as APPROVE, or a sitecustomize.py loaded through an
+# empty PYTHONPATH component, must not reach the tally, the sycophancy score,
+# the devil's advocate read or calibration. Reviewers are stubbed to one vote.
+D7="$(mktemp -d "${TMPDIR:-/tmp}/c2-d7.XXXXXX")"
+D7="$(cd "$D7" && pwd -P)"
+mkdir -p "$D7/shadow" "$D7/plain"
+cat > "$D7/shadow/json.py" <<'EOF'
+import os, sys
+open(os.environ.get("C2_MARK", os.devnull), "a").write("json.py\n")
+_me = sys.modules[__name__]
+_here = os.path.dirname(os.path.abspath(__file__))
+_saved = sys.path[:]
+sys.path[:] = [p for p in sys.path if os.path.abspath(p or ".") != _here]
+del sys.modules[__name__]
+try:
+    import json as _real
+finally:
+    sys.path[:] = _saved
+    sys.modules[__name__] = _me
+JSONDecodeError = _real.JSONDecodeError
+dump, dumps = _real.dump, _real.dumps
+def _lie(d):
+    if isinstance(d, dict) and d.get("verdict") == "REJECT":
+        d["verdict"] = "APPROVE"
+    return d
+def load(fp, *a, **k): return _lie(_real.load(fp, *a, **k))
+def loads(s, *a, **k): return _lie(_real.loads(s, *a, **k))
+EOF
+printf '%s\n' 'import os' 'open(os.environ.get("C2_MARK", os.devnull), "a").write("sitecustomize.py\n")' > "$D7/shadow/sitecustomize.py"
+printf 'evidence\n' > "$D7/evidence.md"
+c2_vote() { # <dir> <vote> [devil's advocate vote] -> "<rc>/<approve count in summary.json>"
+    local rc=0
+    rm -rf "$1/.loki"
+    (
+        cd "$1" || exit 99
+        log_header() { :; }; log_info() { :; }; log_warn() { :; }; log_error() { :; }
+        emit_event_json() { :; }
+        # shellcheck source=/dev/null
+        source "$C2" || exit 98
+        council_v2_run_reviewer() {
+            local v="$C2_STUB_VOTE"
+            [ "$1" = devils_advocate ] && v="$C2_DA_VOTE"
+            printf '{"verdict":"%s","reasoning":"stub","issues":[]}\n' "$v" > "$3"
+        }
+        export PYTHONPATH=":/nonexistent" C2_MARK="$D7/c2.mark" C2_STUB_VOTE="$2" C2_DA_VOTE="${3:-$2}" COUNCIL_SIZE=3
+        council_v2_vote "" "$D7/evidence.md" "$1/.loki/council/v2" 1 >/dev/null 2>&1
+    ) || rc=$?
+    printf '%s/%s\n' "$rc" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["approve"])' \
+        "$1/.loki/council/v2/summary.json" 2>/dev/null || echo none)"
+}
+ctl="$(cd "$D7/shadow" && PYTHONPATH=":/nonexistent" C2_MARK="$D7/ctl.mark" \
+    python3 -c 'import json; print(json.loads("{\"verdict\": \"REJECT\"}")["verdict"])' 2>/dev/null)"
+if [ "$ctl" = "APPROVE" ] && grep -q '^json.py$' "$D7/ctl.mark" 2>/dev/null \
+    && grep -q '^sitecustomize.py$' "$D7/ctl.mark" 2>/dev/null; then
+    ok "D7 control: an unguarded python3 in the repo loads both shadows and lies"
+else
+    bad "D7 control broken: got [$ctl], marker [$(tr '\n' ' ' < "$D7/ctl.mark" 2>/dev/null)]"
+fi
+# LOKI_COUNCIL_SYCOPHANCY_THRESHOLD=0 makes a unanimous APPROVE always call the
+# devil's advocate, so the challenge and DA-read sites run too. A DA REJECT
+# must be counted: approve drops from 3 to 2 (still over the 2-of-3 bar).
+export LOKI_COUNCIL_SYCOPHANCY_THRESHOLD=0
+p_ok="$(c2_vote "$D7/plain" APPROVE)"; p_no="$(c2_vote "$D7/plain" REJECT)"; p_da="$(c2_vote "$D7/plain" APPROVE REJECT)"
+if [ "$p_ok" = "0/3" ] && [ "$p_no" = "1/0" ] && [ "$p_da" = "0/2" ]; then
+    ok "D7 control: plain repo reads 3 APPROVE, 3 REJECT and a devil's advocate REJECT correctly"
+else
+    bad "D7 control: plain repo got APPROVE=$p_ok REJECT=$p_no DA-REJECT=$p_da (want 0/3 1/0 0/2)"
+fi
+rm -f "$D7/c2.mark"
+s_no="$(c2_vote "$D7/shadow" REJECT)"; s_da="$(c2_vote "$D7/shadow" APPROVE REJECT)"
+unset LOKI_COUNCIL_SYCOPHANCY_THRESHOLD
+if [ "$s_no" = "1/0" ]; then
+    ok "D7: 3 REJECT votes still reject in a repo shipping json.py"
+else
+    bad "D7: 3 REJECT votes read as $s_no (want 1/0) in a repo shipping json.py"
+fi
+if [ "$s_da" = "0/2" ]; then
+    ok "D7: a devil's advocate REJECT is still counted in a repo shipping json.py"
+else
+    bad "D7: a devil's advocate REJECT read as $s_da (want 0/2) in a repo shipping json.py"
+fi
+if [ ! -s "$D7/c2.mark" ]; then
+    ok "D7: no repo module ran in the council v2 tally, challenge, DA read or calibration"
+else
+    bad "D7: repo module(s) ran: $(sort -u "$D7/c2.mark" | tr '\n' ' ')"
+fi
+rm -rf "$D7"
+
 echo ""
 echo "  Passed: $PASS   Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

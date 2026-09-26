@@ -18,6 +18,13 @@
 #   LOKI_CHECKLIST_TIMEOUT      - Timeout per check in seconds (default: 30)
 #   LOKI_CHECKLIST_ENABLED      - Enable/disable checklist (default: true)
 #
+# Inline Python (D7): verification runs with the cwd inside the agent's repo,
+# so every python3 here runs -E (an empty PYTHONPATH component would load a
+# committed sitecustomize.py) and every -c / - body drops '' and '.' from
+# sys.path before any other import (a committed json.py would print the
+# verdict). Pinned by tests/moat/p2-honest-verdict.sh
+# P2.checklist-verify-not-shadowed.
+#
 # Data:
 #   .loki/checklist/checklist.json          - Full checklist with verification
 #   .loki/checklist/verification-results.json - Summary of last verification
@@ -198,7 +205,8 @@ checklist_oracle_triangulate() {
            _ORACLE_OUT="$findings_file" \
            _ORACLE_PROJECT="$project_dir" \
            _ORACLE_INSTALL_DIR="$oracle_install_dir" \
-           python3 - > "$status_file" 2>/dev/null <<'ORACLE_PY'
+           python3 -E - > "$status_file" 2>/dev/null <<'ORACLE_PY'
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os, re, sys, tempfile, glob
 
 spec_path = os.environ["_ORACLE_SPEC"]
@@ -693,7 +701,7 @@ checklist_oracle_evidence() {
     if [ ! -f "$findings_file" ]; then
         return 0
     fi
-    _ORACLE_OUT="$findings_file" python3 -c '
+    _ORACLE_OUT="$findings_file" python3 -E -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os
 try:
     with open(os.environ["_ORACLE_OUT"]) as f:
@@ -797,7 +805,7 @@ checklist_select_heldout() {
     # items the build loop already saw in earlier prompts (the hidden-from-loop
     # guarantee is best-effort once the checklist ids change mid-run).
     local status_token
-    status_token=$(_CHECKLIST_FILE="$CHECKLIST_FILE" _HELDOUT_FILE="$heldout_file" python3 -c "
+    status_token=$(_CHECKLIST_FILE="$CHECKLIST_FILE" _HELDOUT_FILE="$heldout_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, sys, hashlib, tempfile
 
 cl_path = os.environ['_CHECKLIST_FILE']
@@ -945,7 +953,7 @@ checklist_heldout_ids() {
     if [ ! -f "$heldout_file" ]; then
         return 0
     fi
-    _HELDOUT_FILE="$heldout_file" python3 -c "
+    _HELDOUT_FILE="$heldout_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 try:
     with open(os.environ['_HELDOUT_FILE']) as f:
@@ -991,7 +999,7 @@ checklist_verify() {
 
     log_step "Running PRD checklist verification..."
 
-    python3 "$verify_script" \
+    python3 -E "$verify_script" \
         --checklist "$CHECKLIST_FILE" \
         --timeout "$CHECKLIST_TIMEOUT" 2>/dev/null || true
 
@@ -1023,7 +1031,7 @@ checklist_summary() {
     _CHECKLIST_RESULTS="$CHECKLIST_RESULTS_FILE" \
     _CHECKLIST_WAIVERS="${CHECKLIST_DIR:-".loki/checklist"}/waivers.json" \
     _CHECKLIST_HELDOUT="${CHECKLIST_DIR:-".loki/checklist"}/held-out.json" \
-    python3 -c "
+    python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, sys, os
 try:
     fpath = os.environ.get('_CHECKLIST_RESULTS', '')
@@ -1126,7 +1134,7 @@ checklist_as_evidence() {
         echo "## PRD Checklist Verification"
         echo ""
 
-        _CHECKLIST_RESULTS="$CHECKLIST_RESULTS_FILE" python3 -c "
+        _CHECKLIST_RESULTS="$CHECKLIST_RESULTS_FILE" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 try:
     data = json.load(open(os.environ['_CHECKLIST_RESULTS']))
@@ -1162,7 +1170,7 @@ checklist_waiver_load() {
     if [ ! -f "$waivers_file" ]; then
         return 0
     fi
-    _WAIVERS_FILE="$waivers_file" python3 -c "
+    _WAIVERS_FILE="$waivers_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, sys, os
 try:
     waivers_file = os.environ['_WAIVERS_FILE']
@@ -1186,7 +1194,7 @@ checklist_waiver_add() {
     local timestamp
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-    _WAIVERS_FILE="$waivers_file" python3 -c "
+    _WAIVERS_FILE="$waivers_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, sys
 
 waivers_file = os.environ['_WAIVERS_FILE']
@@ -1239,7 +1247,7 @@ checklist_waiver_remove() {
         return 1
     fi
 
-    _WAIVERS_FILE="$waivers_file" python3 -c "
+    _WAIVERS_FILE="$waivers_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, sys
 
 waivers_file = os.environ['_WAIVERS_FILE']
@@ -1275,7 +1283,7 @@ checklist_waiver_list() {
         return 0
     fi
 
-    _WAIVERS_FILE="$waivers_file" python3 -c "
+    _WAIVERS_FILE="$waivers_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 waivers_file = os.environ['_WAIVERS_FILE']
 with open(waivers_file) as f:

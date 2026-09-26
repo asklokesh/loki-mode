@@ -26,6 +26,11 @@
 #
 # This function is only ever called when the operator opted in (the call site
 # guards on LOKI_PROVEN_PR_CHECK=1). It is also safe if called directly.
+#
+# Inline Python (D7): the call site's cwd is the agent's repo, so the proof
+# readers run python3 -E and drop '' and '.' from sys.path first; a committed
+# json.py or sitecustomize.py cannot change the headline. Pinned by
+# tests/test-proven-pr-check.sh (D7 section).
 
 # Double-source guard.
 [ -n "${_PROOF_CHECK_SH:-}" ] && return 0
@@ -53,7 +58,8 @@ _proof_check_headline() {
     command -v python3 >/dev/null 2>&1 || { printf '%s' ""; return 0; }
 
     local headline=""
-    headline="$(python3 - "$proof_path" <<'PY' 2>/dev/null || true
+    headline="$(python3 -E - "$proof_path" <<'PY' 2>/dev/null || true
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, sys
 try:
     with open(sys.argv[1], "r", encoding="utf-8") as fh:
@@ -84,7 +90,8 @@ _proof_check_proof_head_sha() {
     command -v python3 >/dev/null 2>&1 || { printf '%s' ""; return 0; }
 
     local sha=""
-    sha="$(python3 - "$proof_path" <<'PY' 2>/dev/null || true
+    sha="$(python3 -E - "$proof_path" <<'PY' 2>/dev/null || true
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, sys
 try:
     with open(sys.argv[1], "r", encoding="utf-8") as fh:
@@ -118,7 +125,8 @@ _proof_check_run_id() {
     command -v python3 >/dev/null 2>&1 || { printf '%s' ""; return 0; }
 
     local rid=""
-    rid="$(python3 - "$proof_path" <<'PY' 2>/dev/null || true
+    rid="$(python3 -E - "$proof_path" <<'PY' 2>/dev/null || true
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, sys
 try:
     with open(sys.argv[1], "r", encoding="utf-8") as fh:

@@ -68,3 +68,4 @@ P2.council-readers-not-shadowed
 P6.resume-does-not-sweep
 P6.ignored-files-not-swept
 P6.preexisting-edit-disclosed
+P2.checklist-verify-not-shadowed

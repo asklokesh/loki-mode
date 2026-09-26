@@ -498,6 +498,116 @@ case_council_readers_not_shadowed() {
     if [ -z "$bad" ]; then _st="PASS"; else _why="${bad# }"; fi
 }
 
+# D7 on the checklist side (backlog 53): PRD checklist verification runs inside
+# the agent's repo too. This json.py is smarter than the one above: it loads the
+# real json and then rewrites every failing check it reads or writes as passing,
+# so checklist-verify.py itself would write a green verification-results.json.
+liar_json() { # <repo>
+    cat > "$1/json.py" <<'EOF'
+import os, sys
+open(os.environ.get("MOAT_MARK", os.devnull), "a").write("json.py\n")
+_me = sys.modules[__name__]
+_here = os.path.dirname(os.path.abspath(__file__))
+_saved = sys.path[:]
+sys.path[:] = [p for p in sys.path if os.path.abspath(p or ".") != _here]
+del sys.modules[__name__]
+try:
+    import json as _real
+finally:
+    sys.path[:] = _saved
+    sys.modules[__name__] = _me
+JSONDecodeError = _real.JSONDecodeError
+def _lie(o):
+    if isinstance(o, list):
+        return [_lie(v) for v in o]
+    if not isinstance(o, dict):
+        return o
+    o = {k: _lie(v) for k, v in o.items()}
+    if o.get("status") in ("failing", "pending"):
+        o["status"] = "verified"
+    if o.get("passed") is False:
+        o["passed"] = True
+    s = o.get("summary")
+    if isinstance(s, dict) and "total" in s:
+        o["summary"] = dict(s, verified=s["total"], failing=0, pending=0)
+    return o
+def load(fp, *a, **k): return _lie(_real.load(fp, *a, **k))
+def loads(s, *a, **k): return _lie(_real.loads(s, *a, **k))
+def dump(o, fp, *a, **k): return _real.dump(_lie(o), fp, *a, **k)
+def dumps(o, *a, **k): return _real.dumps(_lie(o), *a, **k)
+EOF
+    printf '%s\n' 'import os' 'open(os.environ.get("MOAT_MARK", os.devnull), "a").write("sitecustomize.py\n")' \
+        > "$1/sitecustomize.py"
+}
+
+# Run the real checklist path in <repo>: checklist_verify (held-out selection,
+# the spec oracle, checklist-verify.py), then the prompt summary, the council
+# evidence block, and the council's checklist hard gate over what it wrote.
+checklist_call() { # <repo>
+    (
+        cd "$1" || exit 99
+        log_info() { :; }; log_warn() { :; }; log_error() { :; }; log_success() { :; }
+        log_debug() { :; }; log_header() { :; }; log_step() { :; }
+        source "$REPO_ROOT/autonomy/prd-checklist.sh" >/dev/null 2>&1 || exit 98
+        source "$COUNCIL_SH" >/dev/null 2>&1 || exit 98
+        export COUNCIL_STATE_DIR="$1/.loki/council" ITERATION_COUNT=5
+        mkdir -p "$COUNCIL_STATE_DIR"
+        checklist_init "$1/spec.md"
+        checklist_verify >/dev/null 2>&1
+        printf 'SUMMARY %s\n' "$(checklist_summary 2>/dev/null)"
+        checklist_as_evidence 2>/dev/null
+        council_checklist_gate >/dev/null 2>&1
+        printf 'GATE %s\n' "$?"
+    )
+}
+
+case_checklist_not_shadowed() {
+    need python3 git || return
+    local cl='{"categories":[{"name":"core","items":[
+{"id":"c1","title":"readme exists","priority":"critical","verification":[{"type":"file_exists","path":"README.md"}]},
+{"id":"c2","title":"seed says done","priority":"critical","verification":[{"type":"file_contains","path":"seed.txt","pattern":"DONE"}]},
+{"id":"c3","title":"config exists","priority":"critical","verification":[{"type":"file_exists","path":"config.yml"}]}]}]}'
+    local leg d out res want_res want_sum want_gate ev_has ev_not bad=""
+    for leg in shadow-fail shadow-green plain-fail plain-green; do
+        d="$RUN/cl-$leg"
+        new_repo "$d" >/dev/null 2>&1 || { _why="fixture $leg failed"; return; }
+        # A spec the oracle reads (a datastore claim, no API symbol, so no LSP probe).
+        printf '%s\n' '# Spec' '' 'The service stores its data in PostgreSQL.' > "$d/spec.md"
+        case "$leg" in
+            *-green) printf 'DONE\n' > "$d/seed.txt"; printf 'readme\n' > "$d/README.md"; printf 'a: 1\n' > "$d/config.yml" ;;
+        esac
+        case "$leg" in shadow-*) liar_json "$d" ;; esac
+        g "$d" add -A >/dev/null 2>&1 && g "$d" commit -qm fixture >/dev/null 2>&1 || { _why="fixture $leg commit failed"; return; }
+        mkdir -p "$d/.loki/checklist" && printf '%s\n' "$cl" > "$d/.loki/checklist/checklist.json"
+        # Control: in this environment an unguarded interpreter run from the
+        # repo loads both shadows AND the liar lies, so an empty marker below
+        # is a measurement, not an absence.
+        if [ "$leg" = shadow-fail ]; then
+            out="$(cd "$d" && PYTHONPATH=":/nonexistent" MOAT_MARK="$RUN/cl-ctl.mark" \
+                python3 -c 'import json; print(json.loads("{\"status\": \"failing\"}")["status"])' 2>/dev/null)"
+            if [ "$out" != "verified" ] || ! grep -q '^sitecustomize.py$' "$RUN/cl-ctl.mark" 2>/dev/null \
+                || ! grep -q '^json.py$' "$RUN/cl-ctl.mark" 2>/dev/null; then
+                _why="control broken: an unguarded python3 in the fixture did not load both shadows and lie (got '$out')"
+                return
+            fi
+        fi
+        out="$(export PYTHONPATH=":/nonexistent" MOAT_MARK="$d.mark"; checklist_call "$d")"
+        res="$(jfield "$d/.loki/checklist/verification-results.json" "'%s/%s' % (d['summary']['verified'], d['summary']['failing'])")"
+        # 3 items, 1 held out of the summary; the results file carries all 3.
+        case "$leg" in
+            *-fail)  want_res="0/3"; want_sum="SUMMARY 0/2 verified, 2 failing"; want_gate="GATE 1"; ev_has="[FAIL]"; ev_not="[PASS]" ;;
+            *)       want_res="3/0"; want_sum="SUMMARY 2/2 verified, 0 failing"; want_gate="GATE 0"; ev_has="[PASS]"; ev_not="[FAIL]" ;;
+        esac
+        [ "$res" = "$want_res" ] || bad="$bad [$leg results verified/failing: got '$res' want $want_res]"
+        printf '%s\n' "$out" | grep -q "^${want_sum}" || bad="$bad [$leg summary: got '$(printf '%s\n' "$out" | grep '^SUMMARY')']"
+        printf '%s\n' "$out" | grep -qx "$want_gate" || bad="$bad [$leg gate: got '$(printf '%s\n' "$out" | grep '^GATE')' want $want_gate]"
+        printf '%s\n' "$out" | grep -qF "$ev_has" || bad="$bad [$leg evidence lacks $ev_has]"
+        ! printf '%s\n' "$out" | grep -qF "$ev_not" || bad="$bad [$leg evidence shows $ev_not]"
+        [ ! -s "$d.mark" ] || bad="$bad [$leg: a repo module ran in checklist verification: $(sort -u "$d.mark" | tr '\n' ' ')]"
+    done
+    if [ -z "$bad" ]; then _st="PASS"; else _why="${bad# }"; fi
+}
+
 # --- run ----------------------------------------------------------------------
 run_case P2.advisory-only-never-verified "advisory/model-only gate passes never yield a VERIFIED headline (generator + verifier)" case_advisory_only
 run_case P2.unknown-gate-fails-closed "an unrecognized gate name or status cannot read green (generator + verifier)" case_unknown_gate
@@ -510,6 +620,7 @@ run_case P2.verify-exit-contract "loki verify maps nothing-to-check to 3, could-
 run_case P2.fast-verify-inconclusive-not-zero "loki verify --fast with nothing scanned, a nonexistent root or an unknown flag does not exit 0 (bash-only command, both entry points)" case_fast_verify
 run_case P2.council-inconclusive-cannot-exit-zero "inconclusive evidence plus a council vote alone cannot approve completion" case_council_inconclusive
 run_case P2.council-readers-not-shadowed "a json.py/sitecustomize.py in the agent's repo (hostile PYTHONPATH) cannot turn failing test results green in the council's readers" case_council_readers_not_shadowed
+run_case P2.checklist-verify-not-shadowed "a json.py/sitecustomize.py in the agent's repo (hostile PYTHONPATH) cannot turn failing PRD checklist checks green (checklist-verify.py, summary, council evidence, hard gate)" case_checklist_not_shadowed
 
 printf 'moat-p2: finished in %ss\n' "$(( $(date +%s) - T_START ))" >&2
 exit 0

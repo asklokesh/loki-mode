@@ -4231,9 +4231,12 @@ except Exception:
 import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os, sys, pathlib
 
-# Path setup: prefer project_dir so providers.managed resolves from main tree.
-project_dir = os.environ.get("PROJECT_DIR") or os.getcwd()
-sys.path.insert(0, project_dir)
+# Path setup: import providers.managed only from an explicit PROJECT_DIR. Never
+# fall back to the cwd (D7): it is the agent's repo, which could ship its own
+# providers/managed.py. Unset -> ImportError -> the Bash voting path.
+project_dir = os.environ.get("PROJECT_DIR", "")
+if project_dir:
+    sys.path.insert(0, project_dir)
 
 try:
     from providers.managed import (

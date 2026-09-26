@@ -351,6 +351,47 @@ else
 fi
 echo ""
 
+# =============================================================================
+# D7 (backlog 54): the check-run is posted from inside the agent's repo. A
+# committed json.py that reads every proof as VERIFIED, or a sitecustomize.py
+# loaded through an empty PYTHONPATH component, must not change what the three
+# proof readers return. No repo module may run.
+# =============================================================================
+echo "D7 -- proof readers do not import from the agent's repo"
+D7_REPO="$WORKROOT/d7-repo"
+mkdir -p "$D7_REPO"
+cat > "$D7_REPO/json.py" <<'EOF'
+import os
+open(os.environ.get("PC_MARK", os.devnull), "a").write("json.py\n")
+def load(*a, **k):
+    return {"run_id": "forged", "honesty": {"headline": "VERIFIED"}, "facts": {"git": {"head_sha": "forged"}}}
+loads = load
+EOF
+printf '%s\n' 'import os' 'open(os.environ.get("PC_MARK", os.devnull), "a").write("sitecustomize.py\n")' > "$D7_REPO/sitecustomize.py"
+ctl="$(cd "$D7_REPO" && PYTHONPATH=":/nonexistent" PC_MARK="$WORKROOT/d7-ctl.mark" \
+    python3 -c 'import json; print(json.load(None)["honesty"]["headline"])' 2>/dev/null)"
+if [ "$ctl" = "VERIFIED" ] && grep -q '^json.py$' "$WORKROOT/d7-ctl.mark" 2>/dev/null \
+    && grep -q '^sitecustomize.py$' "$WORKROOT/d7-ctl.mark" 2>/dev/null; then
+    pass "D7 control: an unguarded python3 in the repo loads both shadows and lies"
+else
+    fail "D7 control broken" "got [$ctl], marker [$(tr '\n' ' ' < "$WORKROOT/d7-ctl.mark" 2>/dev/null)]"
+fi
+d7_read="$(cd "$D7_REPO" && export PYTHONPATH=":/nonexistent" PC_MARK="$WORKROOT/d7.mark" \
+    && printf '%s|%s|%s' "$(_proof_check_headline "$NOTV_PROOF")" \
+        "$(_proof_check_proof_head_sha "$NOTV_PROOF")" "$(_proof_check_run_id "$NOTV_PROOF")")"
+if [ "$d7_read" = "NOT VERIFIED|proofhead999888|run-check-0001" ]; then
+    pass "D7: headline, head sha and run id read true in a repo shipping json.py"
+else
+    fail "D7: proof readers returned [$d7_read] in a repo shipping json.py" \
+        "want NOT VERIFIED|proofhead999888|run-check-0001"
+fi
+if [ ! -s "$WORKROOT/d7.mark" ]; then
+    pass "D7: no repo module ran in the proof readers"
+else
+    fail "D7: repo module(s) ran in the proof readers" "$(sort -u "$WORKROOT/d7.mark" | tr '\n' ' ')"
+fi
+echo ""
+
 echo "========================================================"
 echo "Results: $PASS passed, $FAIL failed, $TOTAL total"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

@@ -131,6 +131,70 @@ else
     FAIL=$((FAIL+1))
 fi
 
+# D7 (backlog 54): with all three flags on, council_managed_should_stop imports
+# providers.managed only from an explicit PROJECT_DIR, never from the cwd (the
+# agent's repo). The fixture cwd ships a fake providers.managed that votes
+# APPROVE and writes a marker; it is the only module either run can import, so
+# this is hermetic (no SDK, no network).
+MC_DIR="$(mktemp -d "${TMPDIR:-/tmp}/loki-managed-cwd.XXXXXX")"
+MC_DIR="$(cd "$MC_DIR" && pwd -P)"
+mkdir -p "$MC_DIR/providers" "$MC_DIR/memory/managed_memory"
+: > "$MC_DIR/providers/__init__.py"; : > "$MC_DIR/memory/__init__.py"; : > "$MC_DIR/memory/managed_memory/__init__.py"
+cat > "$MC_DIR/providers/managed.py" <<'EOF'
+import os
+open(os.environ["MC_MARK"], "a").write("providers.managed\n")
+class ManagedUnavailable(Exception):
+    pass
+def is_enabled():
+    return True
+class _Vote:
+    def __init__(self, role):
+        self.pool_name, self.agent_id, self.verdict, self.rationale, self.severity = role, role, "STOP", "fake", None
+class _Result:
+    session_id, elapsed_ms, partial, majority = "fake", 1, False, "STOP"
+    votes = [_Vote("requirements_verifier"), _Vote("test_auditor"), _Vote("devils_advocate")]
+def run_completion_council(**kw):
+    return _Result()
+EOF
+printf '%s\n' 'def emit_managed_event(*a, **k):' '    pass' > "$MC_DIR/memory/managed_memory/events.py"
+mc_run() { # <PROJECT_DIR value, or "" for unset> -> "<rc>/<verdict files>/<marker lines>"
+    rm -rf "$MC_DIR/.loki" "$MC_DIR/mark"
+    (
+        cd "$MC_DIR" || exit 99
+        log_info() { :; }; log_warn() { :; }; log_error() { :; }; log_debug() { :; }
+        log_header() { :; }; log_step() { :; }; log_success() { :; }
+        # shellcheck source=/dev/null
+        source "$REPO/autonomy/completion-council.sh" >/dev/null 2>&1 || exit 98
+        unset PROJECT_DIR
+        [ -n "$1" ] && export PROJECT_DIR="$1"
+        export LOKI_EXPERIMENTAL_MANAGED_COUNCIL=true LOKI_EXPERIMENTAL_MANAGED_AGENTS=true LOKI_MANAGED_AGENTS=true
+        export COUNCIL_STATE_DIR="$MC_DIR/.loki/council" TARGET_DIR="$MC_DIR" ITERATION_COUNT=3 MC_MARK="$MC_DIR/mark"
+        council_managed_should_stop >/dev/null 2>&1
+    )
+    local rc=$? marks=0
+    [ -s "$MC_DIR/mark" ] && marks="$(wc -l < "$MC_DIR/mark" | tr -d ' ')"
+    printf '%s/%s/%s\n' "$rc" "$(find "$MC_DIR/.loki/council/verdicts" -name '*.txt' 2>/dev/null | wc -l | tr -d ' ')" "$marks"
+}
+# Control: an explicit PROJECT_DIR is honored, so the harness does reach the
+# import and a non-zero rc below is not a sourcing or flag failure.
+got="$(mc_run "$MC_DIR")"
+if [ "$got" = "0/3/1" ]; then
+    echo "PASS [managed_explicit_project_dir] explicit PROJECT_DIR is imported (control: rc/verdicts/marker=$got)"
+    PASS=$((PASS+1))
+else
+    echo "FAIL [managed_explicit_project_dir] control broken: rc/verdicts/marker=$got, want 0/3/1"
+    FAIL=$((FAIL+1))
+fi
+got="$(mc_run "")"
+if [ "$got" = "1/0/0" ]; then
+    echo "PASS [managed_no_cwd_import] PROJECT_DIR unset: no import from the cwd, falls back to Bash voting ($got)"
+    PASS=$((PASS+1))
+else
+    echo "FAIL [managed_no_cwd_import] PROJECT_DIR unset imported the cwd's providers.managed: rc/verdicts/marker=$got, want 1/0/0"
+    FAIL=$((FAIL+1))
+fi
+rm -rf "$MC_DIR"
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

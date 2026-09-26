@@ -26,6 +26,11 @@
 #                                             on success, 1 on any fallback
 #                                             condition (caller falls through
 #                                             to existing heuristic dispatch).
+#
+# Inline Python (D7): the dispatch runs with the cwd inside the agent's repo, so
+# every python3 here runs -E and drops '' and '.' from sys.path before any other
+# import; a committed json.py or sitecustomize.py cannot read the votes.
+# Pinned by tests/test-voter-agents-json.sh (Case D).
 
 # Guard against double-source.
 if [ "${__LOKI_VOTER_AGENTS_SH_LOADED:-0}" = "1" ]; then
@@ -59,7 +64,7 @@ loki_voter_agents_json() {
     _VA_PRD="$prd" \
     _VA_TIER="$tier" \
     _VA_COMPLEXITY="${LOKI_COMPLEXITY:-standard}" \
-    python3 -c '
+    python3 -E -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os
 iter_n = os.environ.get("_VA_ITER", "0")
 prd = os.environ.get("_VA_PRD", "")
@@ -128,7 +133,7 @@ print(json.dumps(agents, separators=(",", ":")))
 # Arg $1: terse base findings summary used to brief the DA prompt.
 loki_devils_advocate_json() {
     local summary="${1:-}"
-    _VA_SUMMARY="$summary" python3 -c '
+    _VA_SUMMARY="$summary" python3 -E -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os
 summary = os.environ.get("_VA_SUMMARY", "")[:1000]
 agents = {
@@ -349,7 +354,7 @@ loki_council_dispatch_agents() {
     _VA_VDIR="$verdicts_dir" \
     _VA_RFILE="$votes_dir/round-${iteration}.json" \
     _VA_EXPECTED="${COUNCIL_SIZE:-3}" \
-    python3 -c '
+    python3 -E -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os, sys
 from datetime import datetime, timezone
 
