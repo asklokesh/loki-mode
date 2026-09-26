@@ -9132,6 +9132,21 @@ setup_agent_branch() {
 
     log_info "Branch protection enabled - creating agent branch: $branch_name (base: $cur)"
 
+    # Record the user's own untracked (not ignored) files, repo-wide,
+    # NUL-delimited and relative to the repo top, so commit_session_changes
+    # and the receipt (autonomy/lib/workspace_diff.py) leave them alone. Taken
+    # only when a branch is minted: on resume, untracked files can be the
+    # agent's own uncommitted work. .loki/ is self-ignored above.
+    local top="" snap=".loki/state/preexisting-untracked.z"
+    if top="$(git rev-parse --show-toplevel 2>/dev/null)" \
+       && git -C "$top" ls-files -z --others --exclude-standard > "$snap.tmp" 2>/dev/null \
+       && mv -f "$snap.tmp" "$snap" 2>/dev/null; then
+        :
+    else
+        rm -f "$snap.tmp" "$snap" 2>/dev/null
+        log_warn "Could not record pre-existing untracked files; the session commit may include them"
+    fi
+
     # Create and checkout the feature branch
     if ! git checkout -b "$branch_name" 2>/dev/null; then
         log_error "Failed to create agent branch: $branch_name"
@@ -9209,6 +9224,24 @@ commit_session_changes() {
         ':!.env' ':!.env.*' ':!*.env' \
         ':!*.key' ':!*.pem' ':!*.p12' ':!*.keystore' \
         ':!id_rsa*' ':!*.token' ':!credentials*' 2>/dev/null || true
+
+    # Unstage exactly the files that were untracked when the branch was minted
+    # (setup_agent_branch): they are the user's, not this session's work, and
+    # committing them here would delete them from disk on a later checkout of
+    # the base. Agent-created files stay staged. Skip an empty snapshot: an
+    # empty --pathspec-from-file resets the WHOLE index. No snapshot (older
+    # session): behave as before. If the unstage fails (git < 2.25), commit
+    # nothing rather than sweep the user's files in.
+    local preexisting="$PWD/.loki/state/preexisting-untracked.z" top=""
+    if [ -s "$preexisting" ]; then
+        if ! { top="$(git rev-parse --show-toplevel 2>/dev/null)" \
+               && git -C "$top" --literal-pathspecs reset -q \
+                      --pathspec-from-file="$preexisting" --pathspec-file-nul >/dev/null 2>&1; }; then
+            git reset -q >/dev/null 2>&1 || true
+            log_warn "Left uncommitted: could not exclude your pre-existing untracked files from the session commit (needs git 2.25+). Review and commit manually."
+            return 0
+        fi
+    fi
 
     # Nothing staged = clean no-op, never an error.
     if git diff --cached --quiet 2>/dev/null; then
@@ -10778,8 +10811,13 @@ PYEOF
             [ -f "${TARGET_DIR:-.}/$f" ] || continue
             total_checked=$((total_checked + 1))
             local _py_compile_rc=0
+            # Same check as `python3 -m py_compile` (importlib's source_to_code
+            # is compile(bytes, path, "exec", dont_inherit=True)), but it
+            # writes no __pycache__/*.pyc into the user's repo, where the
+            # session commit would pick it up.
             LOKI_DEADLINE_IDLE_TIMEOUT=0 _loki_with_deadline "$gate_timeout" \
-                python3 -m py_compile "${TARGET_DIR:-.}/$f" 2>&1 || _py_compile_rc=$?
+                python3 -c 'import sys; compile(open(sys.argv[1], "rb").read(), sys.argv[1], "exec", dont_inherit=True)' \
+                "${TARGET_DIR:-.}/$f" 2>&1 || _py_compile_rc=$?
             if [ "$_py_compile_rc" -ne 0 ]; then
                 findings=$((findings + 1))
                 if [ "$_py_compile_rc" -eq 124 ]; then

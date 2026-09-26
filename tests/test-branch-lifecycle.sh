@@ -549,6 +549,121 @@ else
 fi
 
 # =============================================================================
+# Test T-preexisting-untracked (HEADLINE, BACKLOG 15): the user's own untracked
+# files that existed when the branch was minted stay untracked and untouched;
+# only the files the session created are committed. Names carry a space, a
+# newline and a glob character, and the agent creates x.glob, which the
+# pre-existing '*.glob' would match if it were read as a pattern.
+# =============================================================================
+echo "Test T-preexisting-untracked (HEADLINE): user's untracked files not swept into the session commit"
+RPU="$(make_repo tpreuntracked)"
+NLNAME="$(printf 'nl\nname.txt')"
+outpu="$(
+    cd "$RPU" || exit 1
+    source "$PREAMBLE"
+    printf 'mine 1\n' > 'my notes.txt'
+    printf 'mine 2\n' > "$NLNAME"
+    printf 'mine 3\n' > '*.glob'
+    mkdir -p 'dir with space' && printf 'mine 4\n' > 'dir with space/deep.txt'
+    setup_agent_branch >/dev/null 2>&1
+    snap="$( [ -s .loki/state/preexisting-untracked.z ] && echo yes || echo no )"
+    printf 'agent\n' > agent.js
+    printf 'agent glob\n' > x.glob
+    ITERATION_COUNT=1
+    result=0
+    commit_session_changes >/dev/null 2>&1
+    rc=$?
+    in_head=""
+    for p in 'my notes.txt' "$NLNAME" '*.glob' 'dir with space/deep.txt'; do
+        git cat-file -e "HEAD:$p" 2>/dev/null && in_head="${in_head}[$p]"
+    done
+    agent_in=0
+    git cat-file -e HEAD:agent.js 2>/dev/null && agent_in=$((agent_in + 1))
+    git cat-file -e HEAD:x.glob 2>/dev/null && agent_in=$((agent_in + 1))
+    ncommitted="$(git diff --name-only -z HEAD~1 HEAD | tr -cd '\000' | wc -c | tr -d ' ')"
+    nuntracked="$(git ls-files -z --others --exclude-standard | tr -cd '\000' | wc -c | tr -d ' ')"
+    base="$(cat .loki/state/base-branch.txt)"
+    git checkout -q "$base" 2>/dev/null
+    intact=yes
+    [ "$(cat 'my notes.txt' 2>/dev/null)" = "mine 1" ] || intact=no
+    [ "$(cat "$NLNAME" 2>/dev/null)" = "mine 2" ] || intact=no
+    [ "$(cat '*.glob' 2>/dev/null)" = "mine 3" ] || intact=no
+    [ "$(cat 'dir with space/deep.txt' 2>/dev/null)" = "mine 4" ] || intact=no
+    printf 'SNAP=%s RC=%s INHEAD=[%s] AGENT=%s NCOMMITTED=%s NUNTRACKED=%s INTACT=%s' \
+        "$snap" "$rc" "$in_head" "$agent_in" "$ncommitted" "$nuntracked" "$intact"
+)"
+if [ "$outpu" = "SNAP=yes RC=0 INHEAD=[] AGENT=2 NCOMMITTED=2 NUNTRACKED=4 INTACT=yes" ]; then
+    pass "pre-existing untracked files (space, newline, glob char) stay untracked and intact after switching back; only agent.js and x.glob committed"
+else
+    fail "pre-existing untracked files swept into the session commit (or agent work lost)" "got: $outpu"
+fi
+
+# =============================================================================
+# Test T-no-snapshot: a session minted before the snapshot existed has no
+# .loki/state/preexisting-untracked.z. Behave as before (commit the work),
+# never crash.
+# =============================================================================
+echo "Test T-no-snapshot: missing snapshot (older session) -> commit as before, no crash"
+RNSN="$(make_repo tnosnapshot)"
+outnsn="$(
+    set -u -o pipefail
+    cd "$RNSN" || exit 1
+    source "$PREAMBLE"
+    setup_agent_branch >/dev/null 2>&1
+    rm -f .loki/state/preexisting-untracked.z
+    printf 'agent\n' > work.js
+    ITERATION_COUNT=1
+    result=0
+    commit_session_changes >/dev/null 2>&1
+    rc=$?
+    in_head="$(git cat-file -e HEAD:work.js 2>/dev/null && echo yes || echo no)"
+    printf 'RC=%s INHEAD=%s ALIVE' "$rc" "$in_head"
+)"
+if [ "$outnsn" = "RC=0 INHEAD=yes ALIVE" ]; then
+    pass "no snapshot: work committed as before, returned 0"
+else
+    fail "missing snapshot broke the session commit" "got: $outnsn"
+fi
+
+# =============================================================================
+# Test T-exclude-fails-closed: if the unstage of the pre-existing files fails
+# (git < 2.25 has no --pathspec-from-file), commit NOTHING rather than sweep
+# the user's files in; the work stays on disk and the message says why.
+# =============================================================================
+echo "Test T-exclude-fails-closed: unstage failure -> no commit, work preserved, honest message"
+REFC="$(make_repo texcludefails)"
+outefc="$(
+    cd "$REFC" || exit 1
+    source "$PREAMBLE"
+    printf 'mine\n' > usernotes.txt
+    setup_agent_branch >/dev/null 2>&1
+    before="$(git rev-list --count HEAD)"
+    printf 'agent\n' > work.js
+    # Leading '(' on the case pattern: bash 3.2 misparses a bare pattern ')'
+    # inside $( ... ).
+    git() {
+        case " $* " in (*" --pathspec-from-file="*) return 129 ;; esac
+        command git "$@"
+    }
+    ITERATION_COUNT=1
+    result=0
+    msg="$(commit_session_changes 2>&1)"
+    rc=$?
+    unset -f git
+    after="$(git rev-list --count HEAD)"
+    staged="$(git diff --cached --name-only | tr '\n' ' ')"
+    work="$( [ -f work.js ] && [ -f usernotes.txt ] && echo yes || echo no )"
+    honest="$(printf '%s' "$msg" | grep -q 'could not exclude your pre-existing untracked files' && echo yes || echo no)"
+    printf 'RC=%s SAME=%s STAGED=[%s] WORK=%s HONEST=%s' \
+        "$rc" "$( [ "$before" = "$after" ] && echo yes || echo no )" "$staged" "$work" "$honest"
+)"
+if [ "$outefc" = "RC=0 SAME=yes STAGED=[] WORK=yes HONEST=yes" ]; then
+    pass "unstage failure: no commit, index clean, work preserved, honest message"
+else
+    fail "unstage failure did not fail closed" "got: $outefc"
+fi
+
+# =============================================================================
 # Test T-secret-abort (HEADLINE): brownfield repo with an UN-gitignored secret
 # in an INNOCUOUSLY-NAMED file (config.js -- the path globs do NOT match it, so
 # the SCAN is provably the only thing that can catch it) + a normal source

@@ -502,6 +502,54 @@ else
 fi
 
 #-------------------------------------------------------------------------------
+# Python: the syntax check writes no bytecode into the user's repo (the session
+# commit would pick up __pycache__/*.pyc), and a syntax error still blocks. A
+# fake ruff that always passes is first on PATH so only the compile check can
+# report the error.
+#-------------------------------------------------------------------------------
+if command -v python3 >/dev/null 2>&1; then
+    FAKE_RUFF="$TMPROOT/fake-ruff-bin"
+    mkdir -p "$FAKE_RUFF"
+    printf '#!/bin/sh\nexit 0\n' > "$FAKE_RUFF/ruff"
+    chmod +x "$FAKE_RUFF/ruff"
+    run_py_gate() {
+        (
+            load_fn
+            TARGET_DIR="$1"
+            PATH="$FAKE_RUFF:$PATH"
+            enforce_static_analysis >/dev/null 2>&1
+            echo "rc=$?"
+        )
+    }
+    bytecode_in() {
+        find "$1" -path "$1/.git" -prune -o \( -name __pycache__ -o -name '*.py[co]' \) -print
+    }
+    P=$(make_fixture py-clean "src/ok.py" 'def add(a, b):
+    return a + b
+')
+    r="$(run_py_gate "$P")"
+    bc="$(bytecode_in "$P")"
+    if [ "$r" = "rc=0" ] && [ -z "$bc" ]; then
+        ok "Python: clean .py passes (rc=0) and no bytecode is written into the repo"
+    else
+        bad "Python: clean .py gave $r, bytecode in repo: [$bc]"
+    fi
+    P=$(make_fixture py-bad "src/bad.py" 'def broken(:
+    return 1
+')
+    r="$(run_py_gate "$P")"
+    bc="$(bytecode_in "$P")"
+    if [ "$r" = "rc=1" ] && [ -z "$bc" ] \
+       && grep -q 'py_compile failed: src/bad.py' "$P/.loki/quality/static-analysis.json" 2>/dev/null; then
+        ok "Python: syntax error still blocks (rc=1, py_compile failed: src/bad.py) with no bytecode written"
+    else
+        bad "Python: syntax error gave $r, bytecode in repo: [$bc], summary: $(cat "$P/.loki/quality/static-analysis.json" 2>/dev/null)"
+    fi
+else
+    skip "python3 not on PATH; Python syntax check not measured"
+fi
+
+#-------------------------------------------------------------------------------
 echo
 echo "=========================================="
 echo "Total: $((PASS+FAIL+SKIP))  Passed: $PASS  Failed: $FAIL  Skipped: $SKIP"

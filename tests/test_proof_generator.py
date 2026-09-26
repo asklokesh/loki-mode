@@ -352,6 +352,45 @@ class FinalWorkspaceDiffTests(unittest.TestCase):
         }))
         self.assertEqual(proof["files_changed"]["count"], 5)
 
+    def write_snapshot(self, loki_parent, paths):
+        # run.sh setup_agent_branch format: NUL-delimited, repo-top-relative.
+        state = os.path.join(self.proj, loki_parent, ".loki", "state")
+        os.makedirs(state, exist_ok=True)
+        with open(os.path.join(state, "preexisting-untracked.z"), "wb") as handle:
+            handle.write(b"".join(p.encode() + b"\0" for p in paths))
+
+    def test_preexisting_untracked_files_are_not_listed_as_run_changes(self):
+        self.write("tracked.txt", "base\n")
+        self.git("add", "tracked.txt")
+        self.git("commit", "-m", "baseline")
+        base = self.git("rev-parse", "HEAD").stdout.strip()
+        self.write("my notes.txt", "mine\n")
+        self.write("new.txt", "agent\n")
+        self.write_snapshot("", ["my notes.txt"])
+
+        proof = self.generate(base)
+        self.assertEqual(
+            [item["path"] for item in proof["files_changed"]["files"]], ["new.txt"])
+
+    def test_preexisting_untracked_exclusion_from_a_subdirectory(self):
+        # repo_dir inside the repo: git lists untracked paths relative to it,
+        # the snapshot holds repo-top-relative paths.
+        sys.path.insert(0, os.path.join(_REPO, "autonomy", "lib"))
+        try:
+            from workspace_diff import collect_workspace_diff
+        finally:
+            sys.path.pop(0)
+        self.write("sub/tracked.txt", "base\n")
+        self.git("add", "sub/tracked.txt")
+        self.git("commit", "-m", "baseline")
+        base = self.git("rev-parse", "HEAD").stdout.strip()
+        self.write("sub/old.txt", "mine\n")
+        self.write("sub/new.txt", "agent\n")
+        self.write_snapshot("sub", ["sub/old.txt"])
+
+        stat, _ = collect_workspace_diff(os.path.join(self.proj, "sub"), base)
+        self.assertEqual([item["path"] for item in stat["files"]], ["new.txt"])
+
 
 class GracefulDegradationTests(unittest.TestCase):
     def setUp(self):

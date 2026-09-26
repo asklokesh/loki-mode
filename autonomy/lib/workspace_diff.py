@@ -29,6 +29,21 @@ def _excluded(path):
     return path == ".loki" or path.startswith(".loki/")
 
 
+def _preexisting_untracked(repo_dir):
+    """Paths the user already had untracked when the Loki session branch was
+    minted (run.sh setup_agent_branch writes .loki/state/preexisting-untracked.z,
+    NUL-delimited, relative to the repo top). They are not this run's work, so
+    the receipt does not list them; tree_sha256 still binds their bytes. Returns
+    (prefix of repo_dir inside the repo, set of paths); empty when absent."""
+    try:
+        with open(os.path.join(repo_dir, ".loki", "state", "preexisting-untracked.z"), "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return "", frozenset()
+    paths = frozenset(p.decode("utf-8", "surrogateescape") for p in raw.split(b"\0") if p)
+    return (_git(repo_dir, ["rev-parse", "--show-prefix"]) or "").strip(), paths
+
+
 def _parse_numstat(raw):
     files = []
     for record in (raw or "").split("\0"):
@@ -107,7 +122,9 @@ def collect_workspace_diff(repo_dir, base, include_diffs=False):
                 diffs.append({"path": path, "patch": chunk})
 
     untracked = _git(repo_dir, ["ls-files", "--others", "--exclude-standard", "-z"])
-    for path in sorted(p for p in (untracked or "").split("\0") if p and not _excluded(p)):
+    prefix, preexisting = _preexisting_untracked(repo_dir)
+    for path in sorted(p for p in (untracked or "").split("\0")
+                       if p and not _excluded(p) and prefix + p not in preexisting):
         stat = _git(
             repo_dir,
             ["diff", "--no-index", "--no-renames", "--numstat", "-z", "--", "/dev/null", path],

@@ -35,7 +35,6 @@ P4.floor-does-not-raise-wrong-pass M0 no corpus and no recorded top or floor wro
 P4.seeded-defect-corpus-present M0 no corpus manifest at benchmarks/seeded-defects/manifest.json
 P4.three-setups-resolve M0 the Bun route has no working top or routed setting: it rejects --session-model opus and ignores the per-tier LOKI_CLAUDE_MODEL_* variables; high and small resolve to sonnet on both routes
 P5.airgap-audit-default-route M9 Bun doctor rejects --airgap; either route doctor --airgap to bash in bin/loki or port _loki_airgap_audit to loki-ts doctor.ts
-P6.untracked-not-swept M2 commit_session_changes (autonomy/run.sh:9207) runs git add -A, which puts the user's pre-existing untracked files into the session commit that the Seal covers. Fix: snapshot untracked files at session start and exclude them. Not a breaking change; the T-greenfield case in tests/test-branch-lifecycle.sh (agent-created untracked files are committed) stays green.
 P7.dashboard-client-routes-exist M7 9 dashboard-ui endpoints have no route in dashboard/server.py (7 under /api/v2, /api/tools, /api/metrics/tools, notifications unacknowledge)
 P7.no-sample-data-panels M7 AdminPage mounts 5 panels that fall back to sample data (including UserManagement and ProjectGovernance) and 3 files show Math.random metrics
 P7.unmeasured-cost-never-zero M7 10 places turn unmeasured cost into 0 or $0.00 in dashboard-ui, web-app and cost.html

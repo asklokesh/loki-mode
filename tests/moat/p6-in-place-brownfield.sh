@@ -31,7 +31,7 @@ pass() { printf 'CASE %s PASS %s\n' "$1" "$2"; }
 fail() { printf 'CASE %s FAIL %s\n' "$1" "$2"; }
 note() { printf '%s\n' "$*" >&2; }
 
-ALL_CASES="P6.same-path-and-history P6.user-files-intact P6.change-landed-in-place P6.proof-produced-and-verifies P6.untracked-not-swept"
+ALL_CASES="P6.same-path-and-history P6.user-files-intact P6.change-landed-in-place P6.proof-produced-and-verifies P6.no-gate-artifacts-committed P6.untracked-not-swept"
 
 # Caller-inherited knobs that would test something other than the default a
 # user gets. Unset so the run exercises the shipped defaults.
@@ -415,6 +415,29 @@ PY
 fi
 if [ -z "$why" ]; then
     pass "$id" "proof $PROOF_ID spans original HEAD to session commit and lists calc.py; loki proof verify exits 0 with ok and hash_ok on bun and bash routes; an in-place edit is rejected as an integrity mismatch on both"
+else
+    fail "$id" "$why"
+fi
+
+# ============================================================================
+# P6.no-gate-artifacts-committed
+# ============================================================================
+# The static-analysis gate syntax-checks the changed calc.py inside the user's
+# repo. It must leave no bytecode there, so none can land in the session commit.
+id=P6.no-gate-artifacts-committed
+why="$VACUOUS"
+# Positive control: the gate ran and checked at least one file this run.
+grep -Eq 'Static analysis: ([1-9][0-9]* files checked|[0-9]+ issue\(s\) in [1-9][0-9]* files)' "$T/log/run.out" \
+    || why="${why}vacuous: the static-analysis gate never checked a file (no 'Static analysis: N files' line with N >= 1); "
+g ls-tree -r --name-only HEAD > "$T/log/head-tree-gate.txt" 2>/dev/null
+grep -qx 'calc.py' "$T/log/head-tree-gate.txt" \
+    || why="${why}positive control failed: HEAD tree listing does not show calc.py; "
+committed_bc="$(grep -E '(^|/)__pycache__/|\.py[co]$' "$T/log/head-tree-gate.txt" | tr '\n' ' ')"
+[ -z "$committed_bc" ] || why="${why}bytecode committed on $CUR_BRANCH: $committed_bc; "
+disk_bc="$(cd "$W" && find . \( -path ./.git -o -path ./.loki \) -prune -o \( -name __pycache__ -o -name '*.py[co]' \) -print | tr '\n' ' ')"
+[ -z "$disk_bc" ] || why="${why}bytecode written into the repo: $disk_bc; "
+if [ -z "$why" ]; then
+    pass "$id" "the static-analysis gate checked the changed files and left no __pycache__ or .pyc in the repo or in the commit on $CUR_BRANCH"
 else
     fail "$id" "$why"
 fi
