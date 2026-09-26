@@ -23,6 +23,7 @@
 - Council rounds 4-8 each found one more real verifier hole, all fixed with red-then-green tests: `--help` skipped the check (rounds 4-5: verify now never exits 0 without a verdict); the checkout could supply the verifier's Python modules through `python3 -` (round 6), through `PYTHONPATH`/`sitecustomize.py` (round 7: `python3 -E`, D7), and through chain stage subprocesses (round 8).
 - Council round 9: **3 of 3 APPROVE** at `5119f897`. One unreproduced observation (P1.modified-field-fails failed once in 7 local runs; 60 further runs under load passed).
 - Release v9.52.0 cut: version bump, CHANGELOG, dashboard rebuild (no diff), dist rebuild, tarball smoke-tested from a fresh PATH.
+- **v9.52.0 verified on all channels (2026-09-26):** Release run green (required-ci: Tests, Bun Parity, Security Audit at `7c280ead`); npm `latest` 9.52.0 with `gitHead` `7c280ead`; tag `v9.52.0^{}` = `7c280ead`; GitHub release published; Docker Hub `9.52.0` amd64 + arm64; Homebrew formula sha256 equals the downloaded release tarball. Published package smoke-tested on both routes from a fresh PATH (reports 9.52.0; `verify -h` 64). Validation PR #216 auto-merged by GitHub; its branch is gone.
 
 ## Shipped in v10 program
 
@@ -30,6 +31,5 @@
 
 ## Next
 
-1. Verify v9.52.0 on npm, Docker, Homebrew and the GitHub release; close validation PR #216.
-2. BACKLOG 15 (untracked files swept into the session commit: data risk), 37 (Bun passes an inconclusive test result) and 43 (inline Python on council verdict paths importable from the agent repo): honest-verdict and data-risk items first.
-3. Then P7 (no fabricated data) and P9 (Rule of Two), the moat gaps with the smallest fix, and M0 measurement (catalog + seeded-defect corpus).
+1. Cycle 2 (in progress): BACKLOG 15 (untracked files swept into the session commit: data risk), 37 (Bun passes an inconclusive test result) and 43 (inline Python on council verdict paths importable from the agent repo): honest-verdict and data-risk items first.
+2. Then P7 (no fabricated data) and P9 (Rule of Two), the moat gaps with the smallest fix, and M0 measurement (catalog + seeded-defect corpus).

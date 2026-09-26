@@ -10817,9 +10817,10 @@ PYEOF
             # Same check as `python3 -m py_compile` (importlib's source_to_code
             # is compile(bytes, path, "exec", dont_inherit=True)), but it
             # writes no __pycache__/*.pyc into the user's repo, where the
-            # session commit would pick it up.
+            # session commit would pick it up. -E and the sys.path filter
+            # (D7): the repo under check must not supply modules to the gate.
             LOKI_DEADLINE_IDLE_TIMEOUT=0 _loki_with_deadline "$gate_timeout" \
-                python3 -c 'import sys; compile(open(sys.argv[1], "rb").read(), sys.argv[1], "exec", dont_inherit=True)' \
+                python3 -E -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]; compile(open(sys.argv[1], "rb").read(), sys.argv[1], "exec", dont_inherit=True)' \
                 "${TARGET_DIR:-.}/$f" 2>&1 || _py_compile_rc=$?
             if [ "$_py_compile_rc" -ne 0 ]; then
                 findings=$((findings + 1))

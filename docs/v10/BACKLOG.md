@@ -80,6 +80,11 @@ Status values: todo, in progress, shipped (version), parked (reason).
 51. **With `-E`, cryptography supplied via `PYTHONPATH`/`PYTHONUSERBASE` reads NOT CHECKED**; say so in the NOT CHECKED message.
 52. **CI check name:** "Moat suite" shows green at 0 of 9; consider a name that says "no rule failed" so the check mark is not read as "moat proven" (the step summary already carries the count).
 
+53. **Checklist verification still imports from the agent repo:** `autonomy/prd-checklist.sh` (a script call near 994 and about 9 inline `python3 -c` sites) is outside the cycle-2 fix; apply D7 there next (cycle-2 slice S).
+54. **Council helpers still unguarded:** `autonomy/lib/voter-agents.sh` (3 sites parse voter output), `autonomy/council-v2.sh` (7), `autonomy/lib/done-recognition.sh` (16), `autonomy/lib/proof-check.sh` (3); about 217 non-verdict inline sites in `run.sh`; script-form calls (claim_grounding, requirements helper, deadline.py) inherit `PYTHONPATH`. Managed council inserts `PROJECT_DIR or os.getcwd()` on `sys.path` behind experimental flags.
+55. **Zero-test honesty on bash:** `enforce_test_coverage`'s #82 zero-test branch downgrades only the JSON record; `test_passed` stays true, so `run.sh` (~12533) still touches `quality/unit-tests.pass` and logs "passed". `evidence-gate-details.json` records `tests.pass: true` for every inconclusive outcome.
+56. **Bun npm-test fallback has no zero-test detection**, and the Bun reader uses `passed`/`failed` while the bash writer emits `passed_count`/`failed_count` (the detail shows an unmeasured failed=0).
+
 ## Later milestones
 
 M1 one command, M2 Seal and Wall, M3 assign like a teammate, M4 system map, M5 the line, M6 ship and operate, M7 one screen, M8 legacy lane, M9 enterprise readiness, M10 simplify and ship v10.0.0. Items get broken out here when their milestone comes up.
