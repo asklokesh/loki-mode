@@ -112,7 +112,7 @@ _extract_ok=true
 # name so a future move out of range fails loudly here instead of vacuously
 # (an out-of-range _commit_path_looks_secret would be command-not-found at
 # commit time, which the `if` silently treats as "not a secret").
-for fn in setup_agent_branch _commit_scan_secret_file _commit_path_looks_secret commit_session_changes create_session_pr; do
+for fn in setup_agent_branch _loki_snapshot_preexisting _commit_scan_secret_file _commit_path_looks_secret commit_session_changes create_session_pr; do
     grep -q "^${fn}() {" "$BRANCH_LIB" || _extract_ok=false
 done
 if [ "$_extract_ok" = true ]; then
@@ -661,6 +661,147 @@ if [ "$outefc" = "RC=0 SAME=yes STAGED=[] WORK=yes HONEST=yes" ]; then
     pass "unstage failure: no commit, index clean, work preserved, honest message"
 else
     fail "unstage failure did not fail closed" "got: $outefc"
+fi
+
+# =============================================================================
+# Test T-resume-resnapshot (BACKLOG 57): the user returns to the base branch,
+# makes a file, and resumes. setup_agent_branch checks out the recorded branch;
+# the new file must not be swept into the resumed session's commit (and then
+# deleted from disk by a checkout of the base).
+# =============================================================================
+echo "Test T-resume-resnapshot: a file made between sessions is not swept on the resume path"
+RRS="$(make_repo tresume)"
+outrs="$(
+    cd "$RRS" || exit 1
+    source "$PREAMBLE"
+    ITERATION_COUNT=1
+    result=0
+    setup_agent_branch >/dev/null 2>&1
+    session="$(git rev-parse --abbrev-ref HEAD)"
+    printf 'agent 1\n' > work1.js
+    commit_session_changes >/dev/null 2>&1
+    git checkout -q develop
+    printf 'mine, between sessions\n' > 'between notes.txt'
+    setup_agent_branch >/dev/null 2>&1
+    resumed="$( [ "$(git rev-parse --abbrev-ref HEAD)" = "$session" ] && echo yes || echo no )"
+    printf 'agent 2\n' > work2.js
+    commit_session_changes >/dev/null 2>&1
+    in_head="$(git cat-file -e 'HEAD:between notes.txt' 2>/dev/null && echo yes || echo no)"
+    agent="$(git cat-file -e HEAD:work2.js 2>/dev/null && echo yes || echo no)"
+    git checkout -q develop
+    intact="$( [ "$(cat 'between notes.txt' 2>/dev/null)" = 'mine, between sessions' ] && echo yes || echo no )"
+    printf 'RESUMED=%s INHEAD=%s AGENT=%s INTACT=%s' "$resumed" "$in_head" "$agent" "$intact"
+)"
+if [ "$outrs" = "RESUMED=yes INHEAD=no AGENT=yes INTACT=yes" ]; then
+    pass "resume path: file made between sessions not committed, intact on the base; the session's own work committed"
+else
+    fail "resume path swept a file made between sessions (or lost agent work)" "got: $outrs"
+fi
+
+# =============================================================================
+# Test T-already-on-loki-resnapshot (BACKLOG 57): the user stays on the session
+# branch, makes a file, and runs again (the already-on-loki path).
+# =============================================================================
+echo "Test T-already-on-loki-resnapshot: a file made between sessions is not swept on the already-on-loki path"
+RAL="$(make_repo talreadyloki)"
+outal="$(
+    cd "$RAL" || exit 1
+    source "$PREAMBLE"
+    ITERATION_COUNT=1
+    result=0
+    setup_agent_branch >/dev/null 2>&1
+    printf 'agent 1\n' > work1.js
+    commit_session_changes >/dev/null 2>&1
+    printf 'mine, between sessions\n' > between.txt
+    setup_agent_branch >/dev/null 2>&1
+    printf 'agent 2\n' > work2.js
+    commit_session_changes >/dev/null 2>&1
+    in_head="$(git cat-file -e HEAD:between.txt 2>/dev/null && echo yes || echo no)"
+    agent="$(git cat-file -e HEAD:work2.js 2>/dev/null && echo yes || echo no)"
+    git checkout -q develop
+    intact="$( [ "$(cat between.txt 2>/dev/null)" = 'mine, between sessions' ] && echo yes || echo no )"
+    printf 'INHEAD=%s AGENT=%s INTACT=%s' "$in_head" "$agent" "$intact"
+)"
+if [ "$outal" = "INHEAD=no AGENT=yes INTACT=yes" ]; then
+    pass "already-on-loki path: file made between sessions not committed, intact on the base; the session's own work committed"
+else
+    fail "already-on-loki path swept a file made between sessions (or lost agent work)" "got: $outal"
+fi
+
+# =============================================================================
+# Test T-ignored-not-swept (BACKLOG 58): the agent rewrites .gitignore, exposing
+# the user's ignored files to `git add -A`. None may be committed. The snapshot
+# stays compact (node_modules/ and dist/ are one entry each) and a directory
+# that merely holds ignored files (logs/) is listed file by file, so the
+# agent's new logs/app.json is still committed.
+# =============================================================================
+echo "Test T-ignored-not-swept: gitignored user files survive an agent .gitignore rewrite"
+RIG="$(make_repo tignored)"
+outig="$(
+    cd "$RIG" || exit 1
+    source "$PREAMBLE"
+    mkdir -p node_modules/pkg dist logs
+    printf 'module\n' > node_modules/pkg/index.js
+    printf 'bin\n' > dist/out.bin
+    printf 'log\n' > debug.log
+    printf 'old log\n' > logs/old.log
+    setup_agent_branch >/dev/null 2>&1
+    snap="$(tr '\000' '|' < .loki/state/preexisting-untracked.z 2>/dev/null)"
+    printf 'tmp/\n' > .gitignore
+    printf 'agent\n' > agent.js
+    printf '{}\n' > logs/app.json
+    ITERATION_COUNT=1
+    result=0
+    commit_session_changes >/dev/null 2>&1
+    committed="$(git diff --name-only HEAD~1 HEAD | tr '\n' ' ')"
+    git checkout -q develop
+    intact=yes
+    [ "$(cat node_modules/pkg/index.js 2>/dev/null)" = module ] || intact=no
+    [ "$(cat dist/out.bin 2>/dev/null)" = bin ] || intact=no
+    [ "$(cat debug.log 2>/dev/null)" = log ] || intact=no
+    [ "$(cat logs/old.log 2>/dev/null)" = "old log" ] || intact=no
+    printf 'SNAP=[%s] COMMITTED=[%s] INTACT=%s' "$snap" "$committed" "$intact"
+)"
+if [ "$outig" = "SNAP=[debug.log|dist/|logs/old.log|node_modules/|] COMMITTED=[.gitignore agent.js logs/app.json ] INTACT=yes" ]; then
+    pass "ignored files not committed after a .gitignore rewrite and intact on the base; snapshot has 4 compact entries; agent's logs/app.json committed"
+else
+    fail "gitignored user files swept (or snapshot not compact, or agent work lost)" "got: $outig"
+fi
+
+# =============================================================================
+# Test T-preexisting-modified-listed (BACKLOG 59): the agent edits a file that
+# was already untracked. It is still never committed, but the receipt's diff
+# (workspace_diff) lists it as preexisting_modified; an untouched one stays
+# unlisted. SCRIPT_DIR points at autonomy/ so the hash step finds its helper.
+# =============================================================================
+echo "Test T-preexisting-modified-listed: an agent edit to a pre-existing untracked file is disclosed, not committed"
+RPM="$(make_repo tpremodified)"
+outpm="$(
+    cd "$RPM" || exit 1
+    source "$PREAMBLE"
+    SCRIPT_DIR="$PROJECT_DIR/autonomy"
+    printf 'mine\n' > notes.txt
+    printf 'keep\n' > keep.txt
+    base="$(git rev-parse HEAD)"
+    setup_agent_branch >/dev/null 2>&1
+    hashes="$( [ -s .loki/state/preexisting-untracked.sha.z ] && echo yes || echo no )"
+    printf 'agent edit\n' >> notes.txt
+    printf 'agent\n' > work.js
+    ITERATION_COUNT=1
+    result=0
+    commit_session_changes >/dev/null 2>&1
+    in_head="$(git cat-file -e HEAD:notes.txt 2>/dev/null && echo yes || echo no)"
+    listed="$(python3 -E -c 'import sys
+sys.path.insert(0, sys.argv[1])
+from workspace_diff import collect_workspace_diff
+stat, _ = collect_workspace_diff(".", sys.argv[2])
+print(",".join("%s:%s" % (f["status"], f["path"]) for f in stat["files"]))' "$PROJECT_DIR/autonomy/lib" "$base" 2>&1)"
+    printf 'HASHES=%s INHEAD=%s LISTED=[%s]' "$hashes" "$in_head" "$listed"
+)"
+if [ "$outpm" = "HASHES=yes INHEAD=no LISTED=[preexisting_modified:notes.txt,modified:work.js]" ]; then
+    pass "edited pre-existing notes.txt not committed but listed as preexisting_modified; untouched keep.txt unlisted"
+else
+    fail "agent edit to a pre-existing untracked file not disclosed (or committed)" "got: $outpm"
 fi
 
 # =============================================================================

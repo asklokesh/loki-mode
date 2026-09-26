@@ -9098,11 +9098,16 @@ setup_agent_branch() {
 
     # Already on a loki branch (session-* or delegate-*): idempotent reuse, do
     # not nest a branch off a loki branch (LOCK A5/A7).
+    # Both reuse paths add what is untracked now to the pre-existing list: a
+    # file the user made between sessions is theirs. A previous session's
+    # uncommitted leftover is added too; it stays on disk, uncommitted.
+    local reuse_warn="Could not add your current untracked files to the pre-existing list; the session commit may include files made since the last session"
     case "$cur" in
         loki/*)
             log_info "Already on loki branch ${cur}"
             mkdir -p .loki/state 2>/dev/null || true
             printf '%s\n' "$cur" > .loki/state/agent-branch.txt 2>/dev/null || true
+            _loki_snapshot_preexisting union || log_warn "$reuse_warn"
             return 0
             ;;
     esac
@@ -9115,6 +9120,7 @@ setup_agent_branch() {
         if [ -n "$recorded" ] && git rev-parse --verify "$recorded" >/dev/null 2>&1; then
             if git checkout "$recorded" >/dev/null 2>&1; then
                 log_info "Resuming on recorded agent branch: ${recorded}"
+                _loki_snapshot_preexisting union || log_warn "$reuse_warn"
                 return 0
             fi
             log_warn "Recorded agent branch ${recorded} could not be checked out - creating a new one"
@@ -9133,18 +9139,10 @@ setup_agent_branch() {
 
     log_info "Branch protection enabled - creating agent branch: $branch_name (base: $cur)"
 
-    # Record the user's own untracked (not ignored) files, repo-wide,
-    # NUL-delimited and relative to the repo top, so commit_session_changes
-    # and the receipt (autonomy/lib/workspace_diff.py) leave them alone. Taken
-    # only when a branch is minted: on resume, untracked files can be the
-    # agent's own uncommitted work. .loki/ is self-ignored above.
-    local top="" snap=".loki/state/preexisting-untracked.z"
-    if top="$(git rev-parse --show-toplevel 2>/dev/null)" \
-       && git -C "$top" ls-files -z --others --exclude-standard > "$snap.tmp" 2>/dev/null \
-       && mv -f "$snap.tmp" "$snap" 2>/dev/null; then
-        :
-    else
-        rm -f "$snap.tmp" "$snap" 2>/dev/null
+    # Record the user's own untracked and gitignored files so
+    # commit_session_changes and the receipt leave them alone.
+    if ! _loki_snapshot_preexisting; then
+        rm -f .loki/state/preexisting-untracked.z .loki/state/preexisting-untracked.sha.z 2>/dev/null
         log_warn "Could not record pre-existing untracked files; the session commit may include them"
     fi
 
@@ -9160,6 +9158,47 @@ setup_agent_branch() {
     log_info "Agent branch created: $branch_name"
     audit_log "BRANCH_PROTECTION" "branch=$branch_name"
     echo "$branch_name"
+}
+
+# _loki_snapshot_preexisting [union]
+# Write .loki/state/preexisting-untracked.z: every path git does not track,
+# untracked and gitignored, repo-wide, NUL-delimited, relative to the repo top.
+# commit_session_changes unstages these and the receipt
+# (autonomy/lib/workspace_diff.py) does not claim them. --ignored=matching lists
+# a directory only when an ignore pattern matches it, so node_modules/ is one
+# "dir/" entry covering its subtree, while logs/ holding only *.log files is
+# listed file by file (a new logs/app.json is still the agent's). "union" keeps
+# the paths already recorded. The sibling .sha.z (content hash per file entry)
+# lets the receipt list a pre-existing file the run changed; it is removed
+# first, so a failed hash step means no detection, never stale hashes. Returns
+# non-zero, leaving any earlier list in place, when git cannot list.
+_loki_snapshot_preexisting() {
+    local snap=".loki/state/preexisting-untracked.z" top="" prefix="" rec
+    rm -f "${snap%.z}.sha.z" 2>/dev/null
+    top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
+    prefix="$(git rev-parse --show-prefix 2>/dev/null)" || return 1
+    mkdir -p .loki/state 2>/dev/null || return 1
+    # Exit status checked on its own, not through a pipeline (a caller may
+    # not set pipefail).
+    if ! git -C "$top" --no-optional-locks status --porcelain -z --no-renames -uall \
+            --ignored=matching --ignore-submodules=all -- ":(exclude,literal)${prefix}.loki" \
+            > "$snap.status" 2>/dev/null; then
+        rm -f "$snap.status"
+        return 1
+    fi
+    if ! {
+            if [ "${1:-}" = union ] && [ -f "$snap" ]; then cat "$snap"; fi
+            while IFS= read -r -d '' rec; do
+                case "$rec" in '?? '* | '!! '*) printf '%s\0' "${rec#???}" ;; esac
+            done < "$snap.status"
+        } | LC_ALL=C sort -z -u > "$snap.tmp" || ! mv -f "$snap.tmp" "$snap"; then
+        rm -f "$snap.status" "$snap.tmp"
+        return 1
+    fi
+    rm -f "$snap.status"
+    python3 -E "$SCRIPT_DIR/lib/workspace_diff.py" hash-snapshot "$top" "$snap" >/dev/null 2>&1 \
+        || log_warn "Could not hash your pre-existing untracked files; the receipt cannot list the ones this run changes"
+    return 0
 }
 
 # RUN-25 iter 21 (Wave D #2): the two secret matchers now live in one sourceable
@@ -9226,10 +9265,12 @@ commit_session_changes() {
         ':!*.key' ':!*.pem' ':!*.p12' ':!*.keystore' \
         ':!id_rsa*' ':!*.token' ':!credentials*' 2>/dev/null || true
 
-    # Unstage exactly the files that were untracked when the branch was minted
-    # (setup_agent_branch): they are the user's, not this session's work, and
-    # committing them here would delete them from disk on a later checkout of
-    # the base. Agent-created files stay staged. Skip an empty snapshot: an
+    # Unstage exactly the paths recorded as untracked or gitignored when the
+    # session started (setup_agent_branch; a "dir/" entry covers its subtree):
+    # they are the user's, not this session's work, and committing them here
+    # would delete them from disk on a later checkout of the base (an agent
+    # rewrite of .gitignore can expose ignored files to `git add -A`).
+    # Agent-created files stay staged. Skip an empty snapshot: an
     # empty --pathspec-from-file resets the WHOLE index. No snapshot (older
     # session): behave as before. If the unstage fails (git < 2.25), commit
     # nothing rather than sweep the user's files in.

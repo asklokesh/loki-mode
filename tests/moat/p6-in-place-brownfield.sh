@@ -31,7 +31,7 @@ pass() { printf 'CASE %s PASS %s\n' "$1" "$2"; }
 fail() { printf 'CASE %s FAIL %s\n' "$1" "$2"; }
 note() { printf '%s\n' "$*" >&2; }
 
-ALL_CASES="P6.same-path-and-history P6.user-files-intact P6.change-landed-in-place P6.proof-produced-and-verifies P6.no-gate-artifacts-committed P6.untracked-not-swept"
+ALL_CASES="P6.same-path-and-history P6.user-files-intact P6.change-landed-in-place P6.proof-produced-and-verifies P6.no-gate-artifacts-committed P6.untracked-not-swept P6.resume-does-not-sweep P6.ignored-files-not-swept P6.preexisting-edit-disclosed"
 
 # Caller-inherited knobs that would test something other than the default a
 # user gets. Unset so the run exercises the shipped defaults.
@@ -166,7 +166,17 @@ done
 kind=other
 case "$prompt" in *"<loki_system>"*) kind=build ;; esac
 printf '%s\t%s\t%s\n' "$kind" "$(pwd -P)" "${1:-}" >> "$MOAT_STUB_LOG"
-if [ "$kind" = build ]; then
+if [ "$kind" = build ] && [ "${MOAT_STUB_MODE:-}" = session2 ]; then
+    # Session 2: a real edit, a .gitignore rewrite that un-ignores the user's
+    # build/ and *.log files, and an edit to the user's untracked notes.
+    grep -q 'def div' calc.py 2>/dev/null \
+        || printf 'def div(a, b):\n    return a / b\n' >> calc.py
+    printf 'node_modules/\n' > .gitignore
+    grep -q 'agent was here' NOTES.local.txt 2>/dev/null \
+        || printf 'agent was here\n' >> NOTES.local.txt
+    mkdir -p .loki/signals
+    printf 'added div() to calc.py\n' > .loki/signals/COMPLETION_REQUESTED
+elif [ "$kind" = build ]; then
     grep -q 'def mul' calc.py 2>/dev/null \
         || printf 'def mul(a, b):\n    return a * b\n' >> calc.py
     mkdir -p .loki/signals
@@ -190,22 +200,31 @@ done
 # --- run the pipeline in place -----------------------------------------------
 TO=""
 command -v timeout >/dev/null 2>&1 && TO="timeout 240"
+# run_pipeline <output tag> <stub log> <stub mode>: one full run.sh loop in
+# place; output in $T/log/<tag>.out and .err; returns run.sh's exit code.
+run_pipeline() {
+    # shellcheck disable=SC2086  # $TO is intentionally word-split (empty or "timeout 240")
+    ( cd "$W" && PATH="$T/bin:$PATH" MOAT_STUB_LOG="$2" MOAT_STUB_MODE="$3" \
+        LOKI_TARGET_DIR="$W" LOKI_PROVIDER=claude LOKI_MAX_ITERATIONS=2 \
+        LOKI_COMPLETION_PROMISE=MOAT_P6_COMPLETE LOKI_AUTO_CONFIRM=true \
+        LOKI_SKIP_PREREQS=true LOKI_PHASE_CODE_REVIEW=false LOKI_COUNCIL_ENABLED=false \
+        LOKI_APP_RUNNER=false LOKI_NO_NEW_SESSION=1 LOKI_SKIP_AUTH_PREFLIGHT=1 \
+        $TO bash "$RUN_SH" </dev/null >"$T/log/$1.out" 2>"$T/log/$1.err" )
+}
+kill_leftovers() {
+    local leftover p
+    leftover="$(pgrep -f "$T" 2>/dev/null | tr '\n' ' ')"
+    if [ -n "$leftover" ]; then
+        note "P6: killing processes left behind by the run: $leftover"
+        for p in $leftover; do kill "$p" 2>/dev/null || true; done
+    fi
+}
 RUN_T0=$(date +%s)
-# shellcheck disable=SC2086  # $TO is intentionally word-split (empty or "timeout 240")
-( cd "$W" && PATH="$T/bin:$PATH" MOAT_STUB_LOG="$STUB_LOG" \
-    LOKI_TARGET_DIR="$W" LOKI_PROVIDER=claude LOKI_MAX_ITERATIONS=2 \
-    LOKI_COMPLETION_PROMISE=MOAT_P6_COMPLETE LOKI_AUTO_CONFIRM=true \
-    LOKI_SKIP_PREREQS=true LOKI_PHASE_CODE_REVIEW=false LOKI_COUNCIL_ENABLED=false \
-    LOKI_APP_RUNNER=false LOKI_NO_NEW_SESSION=1 LOKI_SKIP_AUTH_PREFLIGHT=1 \
-    $TO bash "$RUN_SH" </dev/null >"$T/log/run.out" 2>"$T/log/run.err" )
+run_pipeline run "$STUB_LOG" session1
 RUN_RC=$?
 RUN_SECS=$(( $(date +%s) - RUN_T0 ))
 echo "INFO P6 pipeline run.sh rc=$RUN_RC seconds=$RUN_SECS"
-leftover="$(pgrep -f "$T" 2>/dev/null | tr '\n' ' ')"
-if [ -n "$leftover" ]; then
-    note "P6: killing processes left behind by the run: $leftover"
-    for p in $leftover; do kill "$p" 2>/dev/null || true; done
-fi
+kill_leftovers
 if [ -d "$T/home" ]; then
     note "P6: files the run wrote under the isolated HOME:"
     (cd "$T/home" && find . -type f | LC_ALL=C sort | sed 's/^/  /' | head -20) >&2
@@ -443,7 +462,7 @@ else
 fi
 
 # ============================================================================
-# P6.untracked-not-swept (runs LAST: it switches branches and back)
+# P6.untracked-not-swept (last session-1 case: it switches branches and back)
 # ============================================================================
 # A pre-existing untracked user file must stay the user's: not committed onto
 # the agent branch, and still on disk after the user returns to their branch.
@@ -482,6 +501,189 @@ else
 fi
 if [ -z "$why" ]; then
     pass "$id" "pre-existing untracked file not committed on $CUR_BRANCH and survives switching back to main"
+else
+    fail "$id" "$why"
+fi
+
+# ============================================================================
+# Session 2: the user goes back to main, makes a file, and runs Loki again.
+# ============================================================================
+# The recorded session branch is resumed (setup_agent_branch's resume path).
+# The fake provider now edits calc.py, rewrites .gitignore so the user's
+# build/out.bin and debug.log are no longer ignored, and appends to the user's
+# untracked NOTES.local.txt. Three cases read this one run.
+S1_BRANCH="$CUR_BRANCH"
+S1_HEAD="$(g rev-parse HEAD 2>/dev/null)"
+SENTINEL2="moat-p6-between-$$-${RANDOM}${RANDOM}"
+S2_WHY=""
+if g checkout -q main 2>"$T/log/s2-checkout.err"; then
+    printf 'made between sessions\n%s\n' "$SENTINEL2" > "$W/BETWEEN.local.txt" \
+        || S2_WHY="could not create BETWEEN.local.txt; "
+else
+    S2_WHY="could not switch to main before session 2: $(head -c 160 "$T/log/s2-checkout.err" | tr '\n' ' '); "
+fi
+STUB_LOG2="$T/log/stub2.log"
+: > "$STUB_LOG2"
+RUN2_RC=-1
+if [ -z "$S2_WHY" ]; then
+    RUN2_T0=$(date +%s)
+    run_pipeline run2 "$STUB_LOG2" session2
+    RUN2_RC=$?
+    echo "INFO P6 session-2 run.sh rc=$RUN2_RC seconds=$(( $(date +%s) - RUN2_T0 ))"
+    kill_leftovers
+    if [ "$RUN2_RC" -ne 0 ]; then
+        note "P6: session-2 run.sh exited $RUN2_RC; last lines of its output:"
+        tail -n 15 "$T/log/run2.out" >&2
+        tail -n 15 "$T/log/run2.err" >&2
+    fi
+fi
+BUILD_CALLS2=$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$STUB_LOG2")
+note "P6: session-2 provider calls: $(grep -c . "$STUB_LOG2") total, $BUILD_CALLS2 build"
+# Vacuity gate: session 2 must have reached the provider, resumed the SAME
+# branch (no second loki branch), and committed its own edit there.
+[ "$BUILD_CALLS2" -ge 1 ] \
+    || S2_WHY="${S2_WHY}vacuous: session 2 never reached the provider build step (run.sh rc=$RUN2_RC); "
+S2_BRANCH="$(g symbolic-ref --short -q HEAD 2>/dev/null || echo DETACHED)"
+[ "$S2_BRANCH" = "$S1_BRANCH" ] \
+    || S2_WHY="${S2_WHY}session 2 is on $S2_BRANCH, not the resumed $S1_BRANCH; "
+n_loki="$(g branch --list 'loki/*' | grep -c .)"
+[ "$n_loki" = "1" ] || S2_WHY="${S2_WHY}$n_loki loki branches after session 2 (expected the one resumed); "
+g show HEAD:calc.py > "$T/log/s2-head-calc.py" 2>/dev/null
+grep -q '^def div' "$T/log/s2-head-calc.py" \
+    || S2_WHY="${S2_WHY}vacuous: session 2 committed no edit on $S2_BRANCH (HEAD:calc.py lacks div); "
+[ "$(g rev-parse HEAD 2>/dev/null)" != "$S1_HEAD" ] \
+    || S2_WHY="${S2_WHY}vacuous: HEAD did not move in session 2; "
+
+# Everything read from the session branch, before switching away from it.
+g ls-tree -r --name-only HEAD > "$T/log/s2-head-tree.txt" 2>/dev/null
+g show HEAD:.gitignore > "$T/log/s2-head-gitignore" 2>/dev/null
+# Exposed: no longer ignored on the session branch once the rewrite landed.
+S2_EXPOSED=""
+for p in build/out.bin debug.log; do
+    [ -f "$W/$p" ] && ! g check-ignore -q "$p" 2>/dev/null && S2_EXPOSED="$S2_EXPOSED $p"
+done
+PROOF_ID2=""
+[ -s "$ID_FILE" ] && PROOF_ID2="$(cat "$ID_FILE")"
+PJ2="$W/.loki/proofs/$PROOF_ID2/proof.json"
+: > "$T/log/s2-receipt.txt"
+if [ -n "$PROOF_ID2" ] && [ -f "$PJ2" ]; then
+    # "<status> <path>" per receipt entry.
+    python3 -c 'import json, sys
+d = json.load(open(sys.argv[1]))
+for f in (d.get("files_changed") or {}).get("files") or []:
+    print("%s %s" % (f.get("status"), f.get("path")))' "$PJ2" > "$T/log/s2-receipt.txt" 2>/dev/null
+fi
+note "P6: session-2 receipt entries: $(tr '\n' ',' < "$T/log/s2-receipt.txt")"
+S2_RECEIPT_WHY=""
+if [ -z "$PROOF_ID2" ] || [ ! -f "$PJ2" ]; then
+    S2_RECEIPT_WHY="no session-2 receipt (last-proof-id.txt='$PROOF_ID2'); "
+else
+    grep -q ' calc\.py$' "$T/log/s2-receipt.txt" \
+        || S2_RECEIPT_WHY="positive control failed: session-2 receipt does not list calc.py; "
+fi
+# receipt_lists <path>: true when the session-2 receipt names <path>.
+receipt_lists() { awk -v p="$1" '{ s = $0; sub(/^[^ ]* /, "", s); if (s == p) f = 1 } END { exit !f }' "$T/log/s2-receipt.txt"; }
+S2_VERIFY_WHY=""
+if [ -z "$S2_RECEIPT_WHY" ]; then
+    PROOF_ID_SAVED="$PROOF_ID"
+    PROOF_ID="$PROOF_ID2"
+    s2_routes="bash"
+    if command -v bun >/dev/null 2>&1; then
+        s2_routes="bun bash"
+    else
+        S2_VERIFY_WHY="prerequisite missing: bun (Bun route not verified); "
+    fi
+    for r in $s2_routes; do
+        run_verify "$r" "$r-s2"; rc=$?
+        f="$(report_fields "$T/log/verify-$r-s2.out")"
+        [ "$rc" -eq 0 ] && [ "$f" = "True True" ] \
+            || S2_VERIFY_WHY="${S2_VERIFY_WHY}$r route: proof verify $PROOF_ID2 rc=$rc report=[$f]; "
+    done
+    PROOF_ID="$PROOF_ID_SAVED"
+fi
+grep -q 'agent was here' "$W/NOTES.local.txt" 2>/dev/null && NOTES_EDITED=1 || NOTES_EDITED=0
+
+# Back on the base branch: the user's files must all still be on disk.
+S2_BASE_WHY=""
+: > "$T/log/manifest.s2-main"
+: > "$T/log/s2-main-untracked.txt"
+: > "$T/log/s2-main-between.txt"
+: > "$T/log/s2-main-notes.txt"
+if g checkout -q main 2>"$T/log/s2-checkout-main.err"; then
+    manifest "$W" | LC_ALL=C sort > "$T/log/manifest.s2-main"
+    g ls-files --others --exclude-standard > "$T/log/s2-main-untracked.txt" 2>/dev/null
+    cat "$W/BETWEEN.local.txt" > "$T/log/s2-main-between.txt" 2>/dev/null
+    cat "$W/NOTES.local.txt" > "$T/log/s2-main-notes.txt" 2>/dev/null
+    g checkout -q "$S2_BRANCH" 2>/dev/null || note "P6: could not return to $S2_BRANCH"
+else
+    S2_BASE_WHY="could not switch back to main after session 2: $(head -c 160 "$T/log/s2-checkout-main.err" | tr '\n' ' '); "
+fi
+
+# ============================================================================
+# P6.resume-does-not-sweep
+# ============================================================================
+id=P6.resume-does-not-sweep
+why="$S2_WHY$S2_BASE_WHY"
+grep -qx 'BETWEEN.local.txt' "$T/log/s2-head-tree.txt" \
+    && why="${why}BETWEEN.local.txt (made between sessions) was committed onto $S2_BRANCH; "
+receipt_lists BETWEEN.local.txt \
+    && why="${why}session-2 receipt lists BETWEEN.local.txt as changed by the run; "
+if [ -z "$S2_BASE_WHY" ]; then
+    grep -qF "$SENTINEL2" "$T/log/s2-main-between.txt" \
+        || why="${why}BETWEEN.local.txt is gone or changed after switching back to main; "
+    grep -qx 'BETWEEN.local.txt' "$T/log/s2-main-untracked.txt" \
+        || why="${why}BETWEEN.local.txt is not an untracked file on main; "
+fi
+if [ -z "$why" ]; then
+    pass "$id" "a file made between sessions stayed untracked through the resumed session on $S2_BRANCH (which committed its own edit) and is intact after switching back to main"
+else
+    fail "$id" "$why"
+fi
+
+# ============================================================================
+# P6.ignored-files-not-swept
+# ============================================================================
+id=P6.ignored-files-not-swept
+why="$S2_WHY$S2_BASE_WHY"
+# Positive control: the rewrite landed and really exposed the files to git add.
+[ "$(cat "$T/log/s2-head-gitignore" 2>/dev/null)" = "node_modules/" ] \
+    || why="${why}positive control failed: HEAD:.gitignore is not the agent's rewrite; "
+for p in build/out.bin debug.log; do
+    case " $S2_EXPOSED " in *" $p "*) ;;
+        *) why="${why}positive control failed: $p is still ignored (or missing) on $S2_BRANCH after the rewrite; " ;;
+    esac
+    grep -qx "$p" "$T/log/s2-head-tree.txt" && why="${why}gitignored $p was committed onto $S2_BRANCH; "
+    receipt_lists "$p" && why="${why}session-2 receipt lists gitignored $p as changed by the run; "
+    if [ -z "$S2_BASE_WHY" ]; then
+        orig="$(grep " ${p}\$" "$T/log/manifest.before")"
+        [ -n "$orig" ] || why="${why}probe did not record $p before the run; "
+        grep -qxF "$orig" "$T/log/manifest.s2-main" \
+            || why="${why}$p is gone or changed after switching back to main; "
+    fi
+done
+if [ -z "$why" ]; then
+    pass "$id" "the agent's .gitignore rewrite exposed build/out.bin and debug.log, neither was committed or claimed, and both are byte-identical on main"
+else
+    fail "$id" "$why"
+fi
+
+# ============================================================================
+# P6.preexisting-edit-disclosed
+# ============================================================================
+id=P6.preexisting-edit-disclosed
+why="$S2_WHY$S2_BASE_WHY$S2_RECEIPT_WHY$S2_VERIFY_WHY"
+[ "$NOTES_EDITED" = 1 ] \
+    || why="${why}positive control failed: the agent's edit is not in NOTES.local.txt; "
+grep -qx 'NOTES.local.txt' "$T/log/s2-head-tree.txt" \
+    && why="${why}pre-existing NOTES.local.txt was committed onto $S2_BRANCH; "
+grep -qx 'preexisting_modified NOTES.local.txt' "$T/log/s2-receipt.txt" \
+    || why="${why}session-2 receipt does not list NOTES.local.txt as preexisting_modified ($(tr '\n' ',' < "$T/log/s2-receipt.txt")); "
+if [ -z "$S2_BASE_WHY" ]; then
+    { grep -qF "$SENTINEL" "$T/log/s2-main-notes.txt" && grep -q 'agent was here' "$T/log/s2-main-notes.txt"; } \
+        || why="${why}NOTES.local.txt is gone or lost content after switching back to main; "
+fi
+if [ -z "$why" ]; then
+    pass "$id" "the agent's edit to the user's untracked NOTES.local.txt was not committed, is listed in the receipt as preexisting_modified, and that receipt verifies on bun and bash routes"
 else
     fail "$id" "$why"
 fi

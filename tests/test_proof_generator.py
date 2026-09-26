@@ -391,6 +391,101 @@ class FinalWorkspaceDiffTests(unittest.TestCase):
         stat, _ = collect_workspace_diff(os.path.join(self.proj, "sub"), base)
         self.assertEqual([item["path"] for item in stat["files"]], ["new.txt"])
 
+    def _workspace_diff(self):
+        sys.path.insert(0, os.path.join(_REPO, "autonomy", "lib"))
+        try:
+            import workspace_diff
+        finally:
+            sys.path.pop(0)
+        return workspace_diff
+
+    def _baseline(self):
+        self.write("tracked.txt", "base\n")
+        self.git("add", "tracked.txt")
+        self.git("commit", "-m", "baseline")
+        return self.git("rev-parse", "HEAD").stdout.strip()
+
+    def test_preexisting_directory_entry_covers_its_subtree(self):
+        # BACKLOG 58: an ignored directory is one "dir/" entry; after the agent
+        # un-ignores it, nothing below it is claimed as the run's work.
+        base = self._baseline()
+        self.write("node_modules/pkg/lib/index.js", "module\n")
+        self.write("node_modules/top.js", "module\n")
+        self.write("node_modules_extra.txt", "agent\n")
+        self.write("new.txt", "agent\n")
+        self.write_snapshot("", ["node_modules/"])
+
+        proof = self.generate(base)
+        self.assertEqual(
+            [item["path"] for item in proof["files_changed"]["files"]],
+            ["new.txt", "node_modules_extra.txt"])
+
+    def test_preexisting_file_the_run_changed_is_listed_without_content(self):
+        # BACKLOG 59: listed with its own status, no counts and no patch (the
+        # user's bytes stay out of the receipt); an unchanged one stays unlisted.
+        wd = self._workspace_diff()
+        base = self._baseline()
+        self.write("my notes.txt", "mine\nSECRET-USER-LINE\n")
+        self.write("same.txt", "untouched\n")
+        self.write_snapshot("", ["my notes.txt", "same.txt"])
+        snap = os.path.join(self.proj, ".loki", "state", "preexisting-untracked.z")
+        wd.write_snapshot_hashes(self.proj, snap)
+        self.write("my notes.txt", "mine\nSECRET-USER-LINE\nagent line\n")
+        self.write("new.txt", "agent\n")
+
+        proof = self.generate(base, include_diffs=True)
+        files = {item["path"]: item for item in proof["files_changed"]["files"]}
+        self.assertEqual(sorted(files), ["my notes.txt", "new.txt"])
+        self.assertEqual(files["my notes.txt"], {
+            "path": "my notes.txt", "insertions": 0, "deletions": 0,
+            "status": "preexisting_modified"})
+        self.assertEqual(files["new.txt"]["status"], "untracked")
+        self.assertNotIn("my notes.txt", {d["path"] for d in proof["diffs"]})
+        self.assertNotIn("SECRET-USER-LINE", json.dumps(proof))
+
+        # proof-verify re-derives the same stat, so the untampered receipt
+        # still verifies with the new status in it.
+        proof_path = os.path.join(self.proj, ".loki", "proofs", "final-tree", "proof.json")
+        r = subprocess.run(
+            [sys.executable, "-E", os.path.join(_REPO, "autonomy", "lib", "proof-verify.py"),
+             proof_path, self.proj],
+            capture_output=True, text=True, timeout=60)
+        result = json.loads(r.stdout)
+        self.assertEqual((r.returncode, result.get("ok"), result.get("hash_ok")),
+                         (0, True, True), r.stdout + r.stderr)
+
+    def test_preexisting_modified_from_a_subdirectory(self):
+        # Hashes are keyed repo-top-relative; the file is read relative to
+        # repo_dir.
+        wd = self._workspace_diff()
+        self.write("sub/tracked.txt", "base\n")
+        self.git("add", "sub/tracked.txt")
+        self.git("commit", "-m", "baseline")
+        base = self.git("rev-parse", "HEAD").stdout.strip()
+        self.write("sub/old.txt", "mine\n")
+        self.write_snapshot("sub", ["sub/old.txt"])
+        wd.write_snapshot_hashes(
+            self.proj, os.path.join(self.proj, "sub", ".loki", "state", "preexisting-untracked.z"))
+        self.write("sub/old.txt", "mine\nedited\n")
+
+        stat, _ = wd.collect_workspace_diff(os.path.join(self.proj, "sub"), base)
+        self.assertEqual([(i["path"], i["status"]) for i in stat["files"]],
+                         [("old.txt", "preexisting_modified")])
+
+    def test_snapshot_hashes_skip_directories_and_missing_paths(self):
+        wd = self._workspace_diff()
+        self.write("a.txt", "a\n")
+        os.symlink("a.txt", os.path.join(self.proj, "link"))
+        self.write_snapshot("", ["a.txt", "gone.txt", "node_modules/", "link"])
+        state = os.path.join(self.proj, ".loki", "state")
+        wd.write_snapshot_hashes(self.proj, os.path.join(state, "preexisting-untracked.z"))
+        with open(os.path.join(state, "preexisting-untracked.sha.z"), "rb") as handle:
+            records = [r for r in handle.read().split(b"\0") if r]
+        self.assertEqual(sorted(r.split(b" ", 1)[1] for r in records), [b"a.txt", b"link"])
+        digest = dict(r.split(b" ", 1)[::-1] for r in records)
+        self.assertEqual(digest[b"a.txt"].decode(), hashlib.sha256(b"a\n").hexdigest())
+        self.assertNotEqual(digest[b"link"], digest[b"a.txt"])
+
 
 class GracefulDegradationTests(unittest.TestCase):
     def setUp(self):
