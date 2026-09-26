@@ -2678,7 +2678,7 @@ _advance_current_phase() {
     [ -f "$orch" ] || return 0
     # Values are passed via argv (not interpolated into the source) so a phase or
     # path containing quotes can never break or inject into the python.
-    python3 -c "
+    python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, sys
 f, phase = sys.argv[1], sys.argv[2]
 try:
@@ -4377,7 +4377,7 @@ _loki_receipt_facts() {
     local pj="$loki_dir/proofs/$rid/proof.json"
     [ -f "$pj" ] || return 0
     local headline=""
-    headline="$(python3 -c "
+    headline="$(python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, sys
 try:
     d = json.load(open(sys.argv[1]))
@@ -4999,7 +4999,7 @@ except Exception:
     _LOKI_CS_ASSUMPTIONS_HIGH="$assumptions_high" \
     _LOKI_CS_OUT_FILE="$loki_dir/state/completion.json" \
     _LOKI_CS_LAST_ERROR="$loki_dir/state/LAST_ERROR.json" \
-    python3 -c "
+    python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, tempfile
 out = os.environ['_LOKI_CS_OUT_FILE']
 def i(v):
@@ -5219,7 +5219,7 @@ print_completion_card() {
     # split would collapse adjacent empties). Any failure leaves the card
     # unrendered. Trailing-newline guard: NUL-free, fields are single-line.
     local _fields
-    _fields="$(python3 -c "
+    _fields="$(python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json,sys
 try:
     d=json.load(open(sys.argv[1]))
@@ -5541,7 +5541,8 @@ validate_exec_manifest_result() {
     result_file=$(mktemp "${TARGET_DIR}/.loki/.exec-manifest-result.XXXXXX") || return 1
     LOKI_RESULT_FILE="$result_file" LOKI_RESULT_STREAM="$stream_name" \
       LOKI_RESULT_BASE="$base_sha" LOKI_RESULT_BRANCH="$branch" \
-      LOKI_RESULT_REPO="$TARGET_DIR" python3 <<'PY'
+      LOKI_RESULT_REPO="$TARGET_DIR" python3 -E - <<'PY'
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os, subprocess
 paths = subprocess.check_output(
     ["git", "-C", os.environ["LOKI_RESULT_REPO"], "diff", "--name-only",
@@ -8098,7 +8099,7 @@ generate_proof_of_run() {
         ITERATION_COUNT="${ITERATION_COUNT:-0}" \
         PROVIDER_NAME="$provider" \
         PRD_PATH="${prd_path:-}" \
-        python3 "$gen" \
+        python3 -E "$gen" \
             --loki-dir "$loki_dir" \
             --loki-version "$ver" \
             --provider "$provider" \
@@ -8125,7 +8126,7 @@ generate_proof_of_run() {
     ITERATION_COUNT="${ITERATION_COUNT:-0}" \
     PROVIDER_NAME="$provider" \
     PRD_PATH="${prd_path:-}" \
-    python3 "$gen" \
+    python3 -E "$gen" \
         --loki-dir "$loki_dir" \
         --loki-version "$ver" \
         --provider "$provider" \
@@ -10260,7 +10261,8 @@ _loki_supervised_build_result_passes() {
     local result_file="$1"
     ! loki_is_supervised_simple_web && return 0
     [ -s "$result_file" ] || return 1
-    python3 - "$result_file" <<'PYEOF' 2>/dev/null
+    python3 -E - "$result_file" <<'PYEOF' 2>/dev/null
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json
 import sys
 
@@ -10745,7 +10747,8 @@ SAEMPTYEOF
     # not product-specific copy or design opinions.
     local _ui_contract_out="" _ui_contract_rc=0
     _ui_contract_out=$(
-        _LOKI_CHANGED_FILES="$changed_files" python3 - "${TARGET_DIR:-.}" <<'PYEOF' 2>/dev/null
+        _LOKI_CHANGED_FILES="$changed_files" python3 -E - "${TARGET_DIR:-.}" <<'PYEOF' 2>/dev/null
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import os
 import re
 import sys
@@ -11134,7 +11137,7 @@ SECEMPTY
 
     # Run the scanner. exit 0 = no findings, 1 = findings, 2 = bad input.
     local raw rc=0
-    raw=$(python3 "$scanner" "${TARGET_DIR:-.}" --json 2>/dev/null) || rc=$?
+    raw=$(python3 -E "$scanner" "${TARGET_DIR:-.}" --json 2>/dev/null) || rc=$?
     if [ "$rc" -eq 2 ] || [ -z "$raw" ]; then
         cat > "$out_file" << 'SECEMPTY'
 {"rules_version":null,"findings":[],"summary":{"total":0,"by_severity":{}},"skipped":"scanner-error"}
@@ -11148,7 +11151,7 @@ SECEMPTY
     # It prints a final line: ACTIVE_HIGH=<n>\tACTIVE_TOTAL=<n>\tWAIVED=<n>
     # and writes the enriched receipt (findings carry a "waived" bool).
     local verdict
-    verdict=$(_SEC_RAW="$raw" _SEC_WAIVERS="$waivers_file" _SEC_OUT="$out_file" python3 -c '
+    verdict=$(_SEC_RAW="$raw" _SEC_WAIVERS="$waivers_file" _SEC_OUT="$out_file" python3 -E -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os, sys
 raw = os.environ.get("_SEC_RAW", "")
 waivers_file = os.environ.get("_SEC_WAIVERS", "")
@@ -11648,7 +11651,7 @@ measure_test_coverage() {
                   --coverage.reportsDirectory=.loki/quality/vitest-cov >/dev/null 2>&1) || true
             local f="$target_dir/.loki/quality/vitest-cov/coverage-summary.json"
             if [ -f "$f" ]; then
-                COVERAGE_PCT=$(_LOKI_COV_F="$f" python3 -c "
+                COVERAGE_PCT=$(_LOKI_COV_F="$f" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, sys
 try:
     d=json.load(open(os.environ['_LOKI_COV_F']))
@@ -11667,7 +11670,7 @@ except Exception:
                   --coverageDirectory=.loki/quality/jest-cov --passWithNoTests >/dev/null 2>&1) || true
             local f="$target_dir/.loki/quality/jest-cov/coverage-summary.json"
             if [ -f "$f" ]; then
-                COVERAGE_PCT=$(_LOKI_COV_F="$f" python3 -c "
+                COVERAGE_PCT=$(_LOKI_COV_F="$f" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, sys
 try:
     d=json.load(open(os.environ['_LOKI_COV_F']))
@@ -11687,7 +11690,7 @@ except Exception:
                 _loki_run_pytest_with_timeout "$target_dir" \
                     --cov --cov-report="json:$pyc_json" -q >/dev/null 2>&1 || true
                 if [ -f "$pyc_json" ]; then
-                    COVERAGE_PCT=$(_LOKI_COV_F="$pyc_json" python3 -c "
+                    COVERAGE_PCT=$(_LOKI_COV_F="$pyc_json" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, sys
 try:
     d=json.load(open(os.environ['_LOKI_COV_F']))
@@ -11727,7 +11730,7 @@ except Exception:
                 local out
                 out=$(cd "$target_dir" && timeout "$gate_timeout" cargo llvm-cov --json 2>/dev/null) || true
                 if [ -n "$out" ]; then
-                    COVERAGE_PCT=$(_LOKI_COV_JSON="$out" python3 -c "
+                    COVERAGE_PCT=$(_LOKI_COV_JSON="$out" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, sys
 try:
     d=json.loads(os.environ['_LOKI_COV_JSON'])
@@ -12450,7 +12453,7 @@ TREOF
         local cov_below=false
         if [ "$COVERAGE_MEASURED" = "true" ] && [ -n "$COVERAGE_PCT" ]; then
             # Float-safe compare via python3 (pct may be e.g. 87.5).
-            if _LOKI_COV_PCT="$COVERAGE_PCT" _LOKI_COV_MIN="$min_coverage" python3 -c "
+            if _LOKI_COV_PCT="$COVERAGE_PCT" _LOKI_COV_MIN="$min_coverage" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import os, sys
 try:
     pct=float(os.environ['_LOKI_COV_PCT']); mn=float(os.environ['_LOKI_COV_MIN'])
@@ -12475,7 +12478,7 @@ sys.exit(0 if pct < mn else 1)
         _LOKI_COV_BLOCKED="$coverage_block" \
         _LOKI_COV_RUNNER="$test_runner" \
         _LOKI_COV_OUT="$quality_dir/coverage.json" \
-        python3 -c "
+        python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, tempfile
 out=os.environ['_LOKI_COV_OUT']
 measured = os.environ.get('_LOKI_COV_MEASURED','false') == 'true'
@@ -12536,7 +12539,7 @@ os.replace(tmp, out)
         _LOKI_COV_BLOCKED="false" \
         _LOKI_COV_RUNNER="$test_runner" \
         _LOKI_COV_OUT="$quality_dir/coverage.json" \
-        python3 -c "
+        python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, tempfile
 out=os.environ['_LOKI_COV_OUT']
 measured = os.environ.get('_LOKI_COV_MEASURED','false') == 'true'
@@ -12805,7 +12808,7 @@ run_doc_quality_gate() {
     local manifest="$project_dir/.loki/docs/docs-manifest.json"
     if [ -f "$manifest" ]; then
         local doc_sha
-        doc_sha=$(python3 -c "import json; print(json.load(open('$manifest')).get('git_sha', ''))" 2>/dev/null)
+        doc_sha=$(python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json; print(json.load(open('$manifest')).get('git_sha', ''))" 2>/dev/null)
         if [ -n "$doc_sha" ]; then
             local behind
             behind=$(git -C "$project_dir" rev-list --count "$doc_sha..HEAD" 2>/dev/null || echo "0")
@@ -13236,7 +13239,7 @@ enforce_lsp_diagnostics() {
     fi
 
     if [ -f "$lsp_file" ]; then
-        verdict=$(_LOKI_LSP_FILE="$lsp_file" python3 -c '
+        verdict=$(_LOKI_LSP_FILE="$lsp_file" python3 -E -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os, sys
 try:
     with open(os.environ["_LOKI_LSP_FILE"], encoding="utf-8") as handle:
@@ -13575,7 +13578,8 @@ council_verdicts_to_txt_files() {
     local out_dir_env="$review_dir"
     export LOKI_COUNCIL_OUT_DIR="$out_dir_env"
     export LOKI_COUNCIL_VERDICTS_JSON="$verdicts_json"
-    python3 << 'COUNCIL_WRITE'
+    python3 -E - << 'COUNCIL_WRITE'
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json
 import os
 import re
@@ -13664,6 +13668,9 @@ _run_managed_review_council() {
 
     local result_json
     result_json=$(python3 << 'MANAGED_REVIEW' 2>&1
+# Drops the cwd (the agent's repo) from sys.path. No -E here: the
+# LOKI_MANAGED_REVIEW_FAKE_MODULE test hook below is found through PYTHONPATH.
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json
 import os
 import sys
@@ -13762,7 +13769,7 @@ MANAGED_REVIEW
     fi
 
     local status
-    status=$(printf '%s' "$result_json" | python3 -c "import json,sys; d=json.loads(sys.stdin.read() or '{}'); print(d.get('status',''))" 2>/dev/null || echo "")
+    status=$(printf '%s' "$result_json" | python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json,sys; d=json.loads(sys.stdin.read() or '{}'); print(d.get('status',''))" 2>/dev/null || echo "")
 
     if [ "$status" != "ok" ]; then
         local reason
@@ -16422,7 +16429,8 @@ REVIEW_WAVE_TIMING
     export LOKI_REVIEW_AGG_QSCORE="$quality_score"
     export LOKI_REVIEW_AGG_QMED="$nonblocking_medium"
     export LOKI_REVIEW_AGG_QLOW="$nonblocking_low"
-    python3 << 'AGG_SCRIPT'
+    python3 -E - << 'AGG_SCRIPT'
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os
 result = {
     "review_id": os.environ["LOKI_REVIEW_AGG_ID"],
@@ -16565,7 +16573,8 @@ AGG_SCRIPT
 
         _LOKI_DA_AGG_FILE="$review_dir/$review_id/aggregate.json" \
             _LOKI_DA_STATUS="$da_status" _LOKI_DA_RC="$da_dispatch_rc" \
-            _LOKI_DA_SPECULATIVE="$da_speculative" python3 <<'DA_AGG_PATCH' 2>/dev/null || true
+            _LOKI_DA_SPECULATIVE="$da_speculative" python3 -E - <<'DA_AGG_PATCH' 2>/dev/null || true
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json
 import os
 
@@ -17933,7 +17942,7 @@ is_completed() {
     # Check orchestrator state
     if [ -f ".loki/state/orchestrator.json" ]; then
         if command -v python3 &> /dev/null; then
-            local phase=$(python3 -c "import json; print(json.load(open('.loki/state/orchestrator.json')).get('currentPhase', ''))" 2>/dev/null || echo "")
+            local phase=$(python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json; print(json.load(open('.loki/state/orchestrator.json')).get('currentPhase', ''))" 2>/dev/null || echo "")
             # Accept various completion states
             if [ "$phase" = "COMPLETED" ] || [ "$phase" = "complete" ] || [ "$phase" = "finalized" ] || [ "$phase" = "growth-loop" ]; then
                 return 0
@@ -21947,7 +21956,8 @@ _loki_supervised_completion_gates_pass() {
     local test_iteration="$quality_dir/.test-results.iter"
     if [ ! -s "$test_results" ] || [ ! -s "$test_iteration" ] \
        || [ "$(tr -d '[:space:]' < "$test_iteration" 2>/dev/null)" != "${ITERATION_COUNT:-0}" ] \
-       || ! python3 - "$test_results" <<'PYEOF' 2>/dev/null
+       || ! python3 -E - "$test_results" <<'PYEOF' 2>/dev/null
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json
 import sys
 
@@ -27140,7 +27150,7 @@ main() {
     local _terminal_status=""
     local _terminal_state_file
     _terminal_state_file="$(_loki_state_file)"
-    _terminal_status=$(LOKI_STATE_FILE="$_terminal_state_file" python3 -c "import json, os; print(json.load(open(os.environ['LOKI_STATE_FILE'])).get('status',''))" 2>/dev/null || true)
+    _terminal_status=$(LOKI_STATE_FILE="$_terminal_state_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json, os; print(json.load(open(os.environ['LOKI_STATE_FILE'])).get('status',''))" 2>/dev/null || true)
     case "$_terminal_status" in
         deterministic_gates_passed|council_approved|council_force_approved|completion_promise_fulfilled|reuse_already_satisfied)
             if [ "$result" = "0" ]; then
@@ -27201,7 +27211,7 @@ main() {
     # Refresh its durable files against the final HEAD without notifying twice.
     local _completion_file="${TARGET_DIR:-.}/.loki/state/completion.json"
     local _completion_outcome=""
-    _completion_outcome=$(LOKI_COMPLETION_FILE="$_completion_file" python3 -c '
+    _completion_outcome=$(LOKI_COMPLETION_FILE="$_completion_file" python3 -E -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os
 try:
     value = json.load(open(os.environ["LOKI_COMPLETION_FILE"], encoding="utf-8")).get("outcome", "")
@@ -27326,7 +27336,7 @@ except Exception:
     if [ "${LOKI_DURABLE_STATE:-0}" = "1" ]; then
         local _final_status _final_state_file
         _final_state_file="$(_loki_state_file)"
-        _final_status=$(LOKI_STATE_FILE="$_final_state_file" python3 -c "import json, os; print(json.load(open(os.environ['LOKI_STATE_FILE'])).get('status','unknown'))" 2>/dev/null || echo "unknown")
+        _final_status=$(LOKI_STATE_FILE="$_final_state_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json, os; print(json.load(open(os.environ['LOKI_STATE_FILE'])).get('status','unknown'))" 2>/dev/null || echo "unknown")
         case "$_final_status" in
             council_approved|council_force_approved|deterministic_gates_passed|completion_promise_fulfilled|paused|interrupted|stopped)
                 result=0 ;;

@@ -448,6 +448,56 @@ case_council_inconclusive() {
     fi
 }
 
+# D7 on the council side: the council runs inside the agent's own repo, so a
+# committed json.py (reads every file as a green run) or sitecustomize.py
+# (loaded through an empty PYTHONPATH component) must never become the verdict.
+# Both write MOAT_MARK when imported.
+shadow_modules() { # <repo> : commit the shadow modules into the run's diff
+    cat > "$1/json.py" <<'EOF'
+import os
+open(os.environ.get("MOAT_MARK", os.devnull), "a").write("json.py\n")
+class JSONDecodeError(ValueError): pass
+def load(*a, **k): return {"runner": "jest", "pass": True, "status": "passed"}
+def loads(*a, **k): return load()
+def dump(*a, **k): pass
+def dumps(*a, **k): return "{}"
+EOF
+    printf '%s\n' 'import os' 'open(os.environ.get("MOAT_MARK", os.devnull), "a").write("sitecustomize.py\n")' \
+        > "$1/sitecustomize.py"
+    g "$1" add json.py sitecustomize.py && g "$1" commit -qm "shadow modules"
+}
+
+case_council_readers_not_shadowed() {
+    need python3 git || return
+    local fail='{"runner":"jest","pass":false,"summary":"1 failed"}'
+    local green='{"runner":"jest","pass":true,"summary":"green"}'
+    local leg d b fn rc want bad=""
+    for leg in shadow-fail shadow-green plain-fail plain-green; do
+        d="$RUN/shadow-$leg"
+        case "$leg" in *-fail) b="$(council_repo "$d" "$fail")" ;; *) b="$(council_repo "$d" "$green")" ;; esac \
+            || { _why="fixture $leg failed"; return; }
+        case "$leg" in shadow-*) shadow_modules "$d" >/dev/null 2>&1 || { _why="fixture $leg commit failed"; return; } ;; esac
+        case "$leg" in *-fail) want=1 ;; *) want=0 ;; esac
+        # Control: this environment really does load both shadows into an
+        # unguarded interpreter run from the repo, so "the marker stayed
+        # empty" below is a measurement, not an absence.
+        if [ "$leg" = shadow-fail ]; then
+            (cd "$d" && PYTHONPATH=":/nonexistent" MOAT_MARK="$RUN/shadow-ctl.mark" python3 -c 'import json') >/dev/null 2>&1
+            if ! grep -q '^sitecustomize.py$' "$RUN/shadow-ctl.mark" 2>/dev/null \
+                || ! grep -q '^json.py$' "$RUN/shadow-ctl.mark" 2>/dev/null; then
+                _why="control broken: an unguarded python3 in the fixture did not load both shadows"
+                return
+            fi
+        fi
+        for fn in council_evidence_gate _council_convergence_evidence_green; do
+            rc="$(export PYTHONPATH=":/nonexistent" MOAT_MARK="$d.mark"; council_call "$d" "$b" "$fn")"
+            [ "$rc" = "$want" ] || bad="$bad [$leg $fn: got $rc want $want]"
+        done
+        [ ! -s "$d.mark" ] || bad="$bad [$leg: a repo module ran in the council: $(sort -u "$d.mark" | tr '\n' ' ')]"
+    done
+    if [ -z "$bad" ]; then _st="PASS"; else _why="${bad# }"; fi
+}
+
 # --- run ----------------------------------------------------------------------
 run_case P2.advisory-only-never-verified "advisory/model-only gate passes never yield a VERIFIED headline (generator + verifier)" case_advisory_only
 run_case P2.unknown-gate-fails-closed "an unrecognized gate name or status cannot read green (generator + verifier)" case_unknown_gate
@@ -459,6 +509,7 @@ run_case P2.proof-chain-exit-contract "loki proof chain exits 0/1/2/3/64/66, -h/
 run_case P2.verify-exit-contract "loki verify maps nothing-to-check to 3, could-not-check to 2, usage to 64 (bash-only command, both entry points)" case_verify_contract
 run_case P2.fast-verify-inconclusive-not-zero "loki verify --fast with nothing scanned, a nonexistent root or an unknown flag does not exit 0 (bash-only command, both entry points)" case_fast_verify
 run_case P2.council-inconclusive-cannot-exit-zero "inconclusive evidence plus a council vote alone cannot approve completion" case_council_inconclusive
+run_case P2.council-readers-not-shadowed "a json.py/sitecustomize.py in the agent's repo (hostile PYTHONPATH) cannot turn failing test results green in the council's readers" case_council_readers_not_shadowed
 
 printf 'moat-p2: finished in %ss\n' "$(( $(date +%s) - T_START ))" >&2
 exit 0

@@ -19,6 +19,12 @@
 #   - Multi-agent debate: Voting beats unanimous (+13.2%), KS adaptive stopping
 #   - NVIDIA ToolOrchestra: Efficiency metrics for agent tool use
 #
+# Inline Python (D7): the council runs with the cwd inside the agent's repo, so
+# every "python3 -c" / "python3 -" here runs -E (a PYTHONPATH empty component
+# would load a committed sitecustomize.py) and drops '' and '.' from sys.path
+# before any other import (a committed json.py would print the verdict).
+# Pinned by tests/moat/p2-honest-verdict.sh P2.council-readers-not-shadowed.
+#
 # Environment Variables:
 #   LOKI_COUNCIL_ENABLED          - Enable completion council (default: true)
 #   LOKI_COUNCIL_SIZE             - Number of council members (default: 3)
@@ -371,7 +377,7 @@ council_track_iteration() {
     _COUNCIL_ITERATION="${ITERATION_COUNT:-0}" \
     _COUNCIL_FILES_CHANGED="$files_changed" \
     _COUNCIL_DIFF_HASH="$combined_hash" \
-    python3 -c "
+    python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 state_file = os.environ['_COUNCIL_STATE_FILE']
 try:
@@ -453,7 +459,7 @@ _uncertainty_state_path() {
 # Read uncertainty.json (or emit a default object if missing/corrupt) to stdout.
 _uncertainty_read_state() {
     local file="$1"
-    _UNC_FILE="$file" python3 -c "
+    _UNC_FILE="$file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 f = os.environ['_UNC_FILE']
 default = {
@@ -487,7 +493,7 @@ _uncertainty_write_state() {
     dir="$(dirname "$file")"
     mkdir -p "$dir" 2>/dev/null || true
     tmp="${file}.tmp.$$"
-    if _UNC_PAYLOAD="$payload" _UNC_TMP="$tmp" python3 -c "
+    if _UNC_PAYLOAD="$payload" _UNC_TMP="$tmp" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 payload = os.environ['_UNC_PAYLOAD']
 tmp = os.environ['_UNC_TMP']
@@ -539,7 +545,7 @@ uncertainty_should_escalate() {
              _UNC_SPLIT_ROUNDS="$split_rounds" \
              _UNC_NOCHANGE_MIN="$nochange_min" \
              _UNC_RING_SIZE="$ring_size" \
-             python3 -c "
+             python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 
 prior = json.loads(os.environ['_UNC_PRIOR'])
@@ -826,7 +832,7 @@ council_vote() {
                 local budget_exceeded=false
                 if [ "$total_issue_count" -gt 0 ] && [ "$COUNCIL_ERROR_BUDGET" != "0.0" ] && [ "$COUNCIL_ERROR_BUDGET" != "0" ]; then
                     # Check if non-blocking issue ratio exceeds the error budget
-                    budget_exceeded=$(_NB="$non_blocking_count" _TOTAL="$total_issue_count" _BUDGET="$COUNCIL_ERROR_BUDGET" python3 -c "
+                    budget_exceeded=$(_NB="$non_blocking_count" _TOTAL="$total_issue_count" _BUDGET="$COUNCIL_ERROR_BUDGET" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import os
 nb = int(os.environ['_NB'])
 total = int(os.environ['_TOTAL'])
@@ -918,7 +924,7 @@ print('true' if ratio > budget else 'false')
     _COUNCIL_REJECT="$reject_count" \
     _COUNCIL_ITERATION="${ITERATION_COUNT:-0}" \
     _COUNCIL_THRESHOLD="$effective_threshold" \
-    python3 -c "
+    python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 from datetime import datetime, timezone
 state_file = os.environ['_COUNCIL_STATE_FILE']
@@ -1036,7 +1042,7 @@ council_write_transcript() {
     _MEMBERS_DIR="$COUNCIL_STATE_DIR/votes/iteration-${iteration}" \
     _THRESHOLD="$effective_threshold" \
     _OUT="$transcript_file" \
-    python3 -c "
+    python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, pathlib, re
 
 iteration_id = os.environ['_IID']
@@ -1214,7 +1220,7 @@ EVIDENCE_SECTION
         local queue_file=".loki/queue/${queue}.json"
         if [ -f "$queue_file" ]; then
             local count
-            count=$(_QUEUE_FILE="$queue_file" python3 -c "import json, os; print(len(json.load(open(os.environ['_QUEUE_FILE']))))" 2>/dev/null || echo "?")
+            count=$(_QUEUE_FILE="$queue_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json, os; print(len(json.load(open(os.environ['_QUEUE_FILE']))))" 2>/dev/null || echo "?")
             echo "- ${queue}: $count tasks" >> "$evidence_file"
         fi
     done
@@ -1287,7 +1293,7 @@ EVIDENCE_SECTION
     elif [ -f ".loki/verification/playwright-results.json" ]; then
         echo "" >> "$evidence_file"
         echo "## Playwright Smoke Test Results" >> "$evidence_file"
-        _PW_RESULTS=".loki/verification/playwright-results.json" python3 -c "
+        _PW_RESULTS=".loki/verification/playwright-results.json" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 try:
     d = json.load(open(os.environ['_PW_RESULTS']))
@@ -1375,7 +1381,7 @@ council_checklist_gate() {
     # council_heldout_gate at the ship gate, and surfacing them in this gate's
     # block report would leak their identity back into the build loop.
     local gate_result
-    gate_result=$(_RESULTS_FILE="$results_file" _WAIVERS_FILE="$waivers_file" _HELDOUT_FILE="$heldout_file" python3 -c "
+    gate_result=$(_RESULTS_FILE="$results_file" _WAIVERS_FILE="$waivers_file" _HELDOUT_FILE="$heldout_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, sys, os
 
 results_file = os.environ['_RESULTS_FILE']
@@ -1438,13 +1444,13 @@ else:
         local timestamp
         timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
         local failures_json
-        failures_json=$(_FAILURES="$failures" python3 -c "
+        failures_json=$(_FAILURES="$failures" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 items = os.environ['_FAILURES'].split('|')
 print(json.dumps(items))
 " 2>/dev/null || echo '[]')
         local critical_count
-        critical_count=$(_FAILURES="$failures" python3 -c "
+        critical_count=$(_FAILURES="$failures" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import os
 print(len(os.environ['_FAILURES'].split('|')))
 " 2>/dev/null || echo '0')
@@ -1514,7 +1520,7 @@ council_heldout_gate() {
     # contain ':' or '|'); they are read separately from the held-out JSON block
     # below in the BLOCK branch.
     local gate_result
-    gate_result=$(_RESULTS_FILE="$results_file" _HELDOUT_FILE="$heldout_file" _WAIVERS_FILE="$waivers_file" python3 -c "
+    gate_result=$(_RESULTS_FILE="$results_file" _HELDOUT_FILE="$heldout_file" _WAIVERS_FILE="$waivers_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, sys, os
 
 results_file = os.environ['_RESULTS_FILE']
@@ -1634,7 +1640,7 @@ print('%s %d %d' % (verdict, passed, failed))
     if [ "$verdict" = "BLOCK" ]; then
         # Read failing held-out titles directly from the data (colon/pipe-safe).
         local titles_json titles_display
-        titles_json=$(_RESULTS_FILE="$results_file" _HELDOUT_FILE="$heldout_file" _WAIVERS_FILE="$waivers_file" python3 -c "
+        titles_json=$(_RESULTS_FILE="$results_file" _HELDOUT_FILE="$heldout_file" _WAIVERS_FILE="$waivers_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 results = json.load(open(os.environ['_RESULTS_FILE']))
 heldout_ids = set(json.load(open(os.environ['_HELDOUT_FILE'])).get('held_out', []))
@@ -1653,7 +1659,7 @@ for cat in results.get('categories', []):
             titles.append(item.get('title', iid))
 print(json.dumps(titles[:5]))
 " 2>/dev/null || echo '[]')
-        titles_display=$(_T="$titles_json" python3 -c "
+        titles_display=$(_T="$titles_json" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 try:
     print(', '.join(json.loads(os.environ['_T'])))
@@ -1927,7 +1933,8 @@ council_evidence_gate() {
     local test_inconclusive_reason=""
     if [ -f "$tr_file" ]; then
         local test_status
-        test_status=$(_TR_FILE="$tr_file" python3 <<'PYEOF' 2>/dev/null || echo "INCONCLUSIVE:none:true"
+        test_status=$(_TR_FILE="$tr_file" python3 -E -s - <<'PYEOF' 2>/dev/null || echo "INCONCLUSIVE:none:true"
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os, sys
 tr_file = os.environ['_TR_FILE']
 try:
@@ -2185,7 +2192,8 @@ DETAILS_EOF
         boot_inconclusive_reason="no_app_runner"
     elif command -v python3 >/dev/null 2>&1; then
         local _boot_status
-        _boot_status=$(_HEALTH="$_health_file" _STATE="$_state_file" python3 <<'PYEOF' 2>/dev/null || echo "INCONCLUSIVE:parse_error"
+        _boot_status=$(_HEALTH="$_health_file" _STATE="$_state_file" python3 -E -s - <<'PYEOF' 2>/dev/null || echo "INCONCLUSIVE:parse_error"
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os
 health_file = os.environ.get('_HEALTH', '')
 state_file = os.environ.get('_STATE', '')
@@ -2348,7 +2356,8 @@ PYEOF
         persist_inconclusive="true"; persist_inconclusive_reason="not_serveable"
     elif command -v python3 >/dev/null 2>&1; then
         local _p_status
-        _p_status=$(_PF="$_proof_file" _ITER="${ITERATION_COUNT:-0}" python3 <<'PYEOF' 2>/dev/null || echo "MISSING"
+        _p_status=$(_PF="$_proof_file" _ITER="${ITERATION_COUNT:-0}" python3 -E -s - <<'PYEOF' 2>/dev/null || echo "MISSING"
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os
 p = os.environ['_PF']
 if not os.path.isfile(p):
@@ -2411,7 +2420,8 @@ PYEOF
         auth_inconclusive="true"; auth_inconclusive_reason="not_serveable"
     elif command -v python3 >/dev/null 2>&1; then
         local _a_status
-        _a_status=$(_PF="$_proof_file" _STRICT="${LOKI_PROOF_AUTH_STRICT:-1}" _ITER="${ITERATION_COUNT:-0}" python3 <<'PYEOF' 2>/dev/null || echo "MISSING"
+        _a_status=$(_PF="$_proof_file" _STRICT="${LOKI_PROOF_AUTH_STRICT:-1}" _ITER="${ITERATION_COUNT:-0}" python3 -E -s - <<'PYEOF' 2>/dev/null || echo "MISSING"
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os
 p = os.environ['_PF']
 strict = os.environ.get('_STRICT', '1') != '0'
@@ -2489,7 +2499,8 @@ PYEOF
         authz_inconclusive="true"; authz_inconclusive_reason="not_serveable"
     elif command -v python3 >/dev/null 2>&1; then
         local _authz_status
-        _authz_status=$(_PF="$_proof_file" _ITER="${ITERATION_COUNT:-0}" python3 <<'PYEOF' 2>/dev/null || echo "MISSING"
+        _authz_status=$(_PF="$_proof_file" _ITER="${ITERATION_COUNT:-0}" python3 -E -s - <<'PYEOF' 2>/dev/null || echo "MISSING"
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os
 p = os.environ['_PF']
 if not os.path.isfile(p):
@@ -2746,7 +2757,7 @@ PYEOF
     local timestamp
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     local failures_json diff_ok tests_ok base_for_json
-    failures_json=$(_FAILURES="$failures" python3 -c "
+    failures_json=$(_FAILURES="$failures" python3 -E -s -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 items = [s for s in os.environ['_FAILURES'].split('|') if s]
 print(json.dumps(items[:5]))
@@ -2763,11 +2774,11 @@ print(json.dumps(items[:5]))
     if [ "$authz_fails" = "true" ]; then authz_ok="false"; else authz_ok="true"; fi
     # Record WHY boot was inconclusive (no_app_runner / not_serveable / etc.) so a
     # consumer of the block report can tell a genuine boot pass from a pass-through.
-    boot_reason_json=$(_R="${boot_inconclusive_reason:-}" python3 -c "import json,os; print(json.dumps(os.environ['_R']))" 2>/dev/null || echo '""')
-    nomock_reason_json=$(_R="${nomock_inconclusive_reason:-}" python3 -c "import json,os; print(json.dumps(os.environ['_R']))" 2>/dev/null || echo '""')
-    persist_reason_json=$(_R="${persist_inconclusive_reason:-}" python3 -c "import json,os; print(json.dumps(os.environ['_R']))" 2>/dev/null || echo '""')
-    auth_reason_json=$(_R="${auth_inconclusive_reason:-}" python3 -c "import json,os; print(json.dumps(os.environ['_R']))" 2>/dev/null || echo '""')
-    authz_reason_json=$(_R="${authz_inconclusive_reason:-}" python3 -c "import json,os; print(json.dumps(os.environ['_R']))" 2>/dev/null || echo '""')
+    boot_reason_json=$(_R="${boot_inconclusive_reason:-}" python3 -E -s -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json,os; print(json.dumps(os.environ['_R']))" 2>/dev/null || echo '""')
+    nomock_reason_json=$(_R="${nomock_inconclusive_reason:-}" python3 -E -s -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json,os; print(json.dumps(os.environ['_R']))" 2>/dev/null || echo '""')
+    persist_reason_json=$(_R="${persist_inconclusive_reason:-}" python3 -E -s -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json,os; print(json.dumps(os.environ['_R']))" 2>/dev/null || echo '""')
+    auth_reason_json=$(_R="${auth_inconclusive_reason:-}" python3 -E -s -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json,os; print(json.dumps(os.environ['_R']))" 2>/dev/null || echo '""')
+    authz_reason_json=$(_R="${authz_inconclusive_reason:-}" python3 -E -s -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json,os; print(json.dumps(os.environ['_R']))" 2>/dev/null || echo '""')
     base_for_json="${base_sha:-}"
     cat > "$ev_tmp" << EVIDENCE_EOF
 {
@@ -3405,7 +3416,7 @@ council_heuristic_review() {
             local _tr_file=".loki/quality/test-results.json"
             local _tests_ok=0
             if [ -f "$_tr_file" ] && command -v python3 >/dev/null 2>&1; then
-                _tests_ok=$(_TR="$_tr_file" python3 -c "
+                _tests_ok=$(_TR="$_tr_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 try:
     with open(os.environ['_TR']) as f:
@@ -3578,7 +3589,7 @@ council_evaluate_member() {
     local test_runner_seen="none"
     if [ -f "$tr_file" ]; then
         local _tr_status
-        _tr_status=$(_TR_FILE="$tr_file" python3 -c "
+        _tr_status=$(_TR_FILE="$tr_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, sys
 try:
     with open(os.environ['_TR_FILE']) as f:
@@ -3635,7 +3646,7 @@ else:
             local _q _qcount
             for _q in pending in-progress blocked; do
                 [ -f "$loki_dir/queue/${_q}.json" ] || continue
-                _qcount=$(_QUEUE_FILE="$loki_dir/queue/${_q}.json" python3 -c "import json, os
+                _qcount=$(_QUEUE_FILE="$loki_dir/queue/${_q}.json" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json, os
 d = json.load(open(os.environ['_QUEUE_FILE']))
 print(len(d.get('tasks', d) if isinstance(d, dict) else d))" 2>/dev/null || echo "0")
                 # Guard against a non-numeric read (malformed file, python absent).
@@ -3772,7 +3783,7 @@ council_aggregate_votes() {
     # Serialize the votes array with json.dumps so backslashes/control chars are
     # escaped correctly (BUG fix: sed-only escaping produced invalid JSON).
     local votes_json
-    votes_json=$(_MEMBERS="$_members" _ROLES="$_roles" _VOTEVALS="$_vote_values" _REASONS="$_reasons" python3 -c "
+    votes_json=$(_MEMBERS="$_members" _ROLES="$_roles" _VOTEVALS="$_vote_values" _REASONS="$_reasons" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 def lines(name):
     v = os.environ.get(name, '')
@@ -3815,7 +3826,7 @@ print(json.dumps(out))
     _VERDICT="$verdict" \
     _VOTES="$votes_json" \
     _ROUND_FILE="$round_file" \
-    python3 -c "
+    python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 from datetime import datetime, timezone
 round_data = {
@@ -3876,7 +3887,7 @@ council_devils_advocate_review() {
     local tr_file="$loki_dir/quality/test-results.json"
     if [ -f "$tr_file" ]; then
         local _tr_status
-        _tr_status=$(_TR_FILE="$tr_file" python3 -c "
+        _tr_status=$(_TR_FILE="$tr_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, sys
 try:
     with open(os.environ['_TR_FILE']) as f:
@@ -3914,7 +3925,7 @@ else:
     # Skeptical check 2: Are there still failing tasks in the queue?
     if [ -f "$loki_dir/queue/failed.json" ]; then
         local failed_count
-        failed_count=$(_QUEUE_FILE="$loki_dir/queue/failed.json" python3 -c "import json, os; print(len(json.load(open(os.environ['_QUEUE_FILE']))))" 2>/dev/null || echo "0")
+        failed_count=$(_QUEUE_FILE="$loki_dir/queue/failed.json" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json, os; print(len(json.load(open(os.environ['_QUEUE_FILE']))))" 2>/dev/null || echo "0")
         if [ "$failed_count" -gt 0 ]; then
             ((issues_found++))
             issue_details="${issue_details}$failed_count tasks in failed queue; "
@@ -3960,7 +3971,7 @@ else:
     _ISSUES="$issues_found" \
     _DETAILS="${issue_details:-none}" \
     _DA_FILE="$da_file" \
-    python3 -c "
+    python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 from datetime import datetime, timezone
 da_result = {
@@ -4056,7 +4067,7 @@ council_evaluate() {
             if loki_council_dispatch_agents "$ITERATION_COUNT" "${COUNCIL_PRD_PATH:-}"; then
                 local _va_round_file="$COUNCIL_STATE_DIR/votes/round-${ITERATION_COUNT}.json"
                 if [ -f "$_va_round_file" ]; then
-                    aggregate_result=$(_RF="$_va_round_file" python3 -c "import json, os; print(json.load(open(os.environ['_RF'])).get('verdict', 'CONTINUE'))" 2>/dev/null || echo "")
+                    aggregate_result=$(_RF="$_va_round_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json, os; print(json.load(open(os.environ['_RF'])).get('verdict', 'CONTINUE'))" 2>/dev/null || echo "")
                 fi
             fi
         fi
@@ -4078,7 +4089,7 @@ council_evaluate() {
         local complete_count=0
         local members_present=0
         if [ -f "$round_file" ]; then
-            complete_count=$(_RF="$round_file" python3 -c "import json, os; print(json.load(open(os.environ['_RF'])).get('complete_votes', 0))" 2>/dev/null || echo "0")
+            complete_count=$(_RF="$round_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json, os; print(json.load(open(os.environ['_RF'])).get('complete_votes', 0))" 2>/dev/null || echo "0")
             # WAVE13 CRITICAL quorum gate: how many voters actually responded
             # (total_members records the ACTUAL returned count -- see
             # voter-agents.sh). A degraded/partial dispatch response must never
@@ -4086,7 +4097,7 @@ council_evaluate() {
             # somehow read COMPLETE. This is defense-in-depth: the parser
             # already forces CONTINUE on undercount, but the completion-detection
             # trust core must independently assert full quorum before stopping.
-            members_present=$(_RF="$round_file" python3 -c "import json, os; print(json.load(open(os.environ['_RF'])).get('total_members', 0))" 2>/dev/null || echo "0")
+            members_present=$(_RF="$round_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json, os; print(json.load(open(os.environ['_RF'])).get('total_members', 0))" 2>/dev/null || echo "0")
         fi
         # Normalize to integers (guard against empty/non-numeric on read failure)
         case "$complete_count" in (''|*[!0-9]*) complete_count=0 ;; esac
@@ -4182,7 +4193,7 @@ council_managed_should_stop() {
     diff_summary=$(cd "$project_dir" 2>/dev/null && git diff --stat 2>/dev/null | tail -20 | tr '\n' ' ' || echo "")
     local test_summary=""
     if [ -f "$loki_dir/quality/test-results.json" ]; then
-        test_summary=$(_TRF="$loki_dir/quality/test-results.json" python3 -c "
+        test_summary=$(_TRF="$loki_dir/quality/test-results.json" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 try:
     d = json.load(open(os.environ['_TRF']))
@@ -4193,7 +4204,7 @@ except Exception:
     fi
     local pending_tasks="[]"
     if [ -f "$loki_dir/queue/pending.json" ]; then
-        pending_tasks=$(_QF="$loki_dir/queue/pending.json" python3 -c "
+        pending_tasks=$(_QF="$loki_dir/queue/pending.json" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 try:
     d = json.load(open(os.environ['_QF']))
@@ -4216,7 +4227,8 @@ except Exception:
     _CC_VERDICTS_DIR="$verdicts_dir" \
     _CC_LOKI_DIR="$loki_dir" \
     LOKI_TARGET_DIR="${TARGET_DIR:-$(pwd)}" \
-    python3 - <<'PYEOF' 2>/dev/null || exit_code=$?
+    python3 -E - <<'PYEOF' 2>/dev/null || exit_code=$?
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os, sys, pathlib
 
 # Path setup: prefer project_dir so providers.managed resolves from main tree.
@@ -4393,7 +4405,7 @@ _council_convergence_evidence_green() {
     # file or runner=="none" (no suite) is NOT affirmative evidence -> not green.
     [ -f "$tr_file" ] || return 1
     local tr_state
-    tr_state=$(_TR_FILE="$tr_file" python3 -c "
+    tr_state=$(_TR_FILE="$tr_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, sys
 try:
     with open(os.environ['_TR_FILE']) as f:
@@ -4416,7 +4428,7 @@ print('yes' if (runner != 'none' and passed is True
     local results_file="${TARGET_DIR:-.}/.loki/checklist/verification-results.json"
     if [ -f "$results_file" ]; then
         local cl_state
-        cl_state=$(_RESULTS_FILE="$results_file" python3 -c "
+        cl_state=$(_RESULTS_FILE="$results_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, sys
 try:
     with open(os.environ['_RESULTS_FILE']) as f:
@@ -4665,7 +4677,7 @@ council_write_report() {
 REPORT_HEADER
 
     # Append vote history from state
-    _COUNCIL_STATE_FILE="$COUNCIL_STATE_DIR/state.json" python3 -c "
+    _COUNCIL_STATE_FILE="$COUNCIL_STATE_DIR/state.json" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 try:
     with open(os.environ['_COUNCIL_STATE_FILE']) as f:

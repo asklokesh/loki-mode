@@ -1238,6 +1238,75 @@ assert h.strip()==h, 'control chars are at the edges -- .strip() alone would rem
     fi
 fi
 
+# ===========================================================================
+# BACKLOG 43 / D7: the headline reader runs from the agent's repo. A committed
+# json.py that says VERIFIED, or a sitecustomize.py loaded through an empty
+# PYTHONPATH component, must not replace the receipt's own headline.
+# ===========================================================================
+echo ""
+echo "--- D7: a json.py/sitecustomize.py in the cwd cannot forge the headline ---"
+
+if [ -s "$HELPER" ]; then
+    H5="$TMP/shadow/.loki"
+    mkdir -p "$H5/proofs/run-shadow" "$H5/state"
+    printf '%s\n' '{"run_id":"run-shadow","honesty":{"headline":"NOT VERIFIED"}}' > "$H5/proofs/run-shadow/proof.json"
+    printf 'run-shadow' > "$H5/state/last-proof-id.txt"
+    _sh_plain="$(_drive_helper "$H5" | awk -F'\t' '{print $3}')"
+    cat > "$TMP/shadow/json.py" <<'EOF'
+import os
+open(os.environ.get("D7_MARK", os.devnull), "a").write("json.py\n")
+def load(*a, **k): return {"honesty": {"headline": "VERIFIED"}}
+EOF
+    printf '%s\n' 'import os' 'open(os.environ.get("D7_MARK", os.devnull), "a").write("sitecustomize.py\n")' \
+        > "$TMP/shadow/sitecustomize.py"
+    # Control: an unguarded interpreter in this cwd and environment does load
+    # both shadows, so an empty marker below is a measurement.
+    (cd "$TMP/shadow" && PYTHONPATH=":/nonexistent" D7_MARK="$TMP/shadow-ctl.mark" python3 -c 'import json') >/dev/null 2>&1
+    _sh_head="$(cd "$TMP/shadow" && PYTHONPATH=":/nonexistent" D7_MARK="$TMP/shadow.mark" _drive_helper "$H5" | awk -F'\t' '{print $3}')"
+    if [ "$_sh_plain" != "NOT VERIFIED" ]; then
+        bad "shadow control: the plain read returns the receipt's headline" "got '$_sh_plain'"
+    elif ! grep -q '^sitecustomize.py$' "$TMP/shadow-ctl.mark" 2>/dev/null || ! grep -q '^json.py$' "$TMP/shadow-ctl.mark" 2>/dev/null; then
+        bad "shadow control: an unguarded python3 in the fixture loads both shadows" "the marker assertions would be vacuous"
+    elif [ "$_sh_head" = "NOT VERIFIED" ] && [ ! -s "$TMP/shadow.mark" ]; then
+        ok "the headline comes from proof.json, not a json.py/sitecustomize.py in the cwd"
+    else
+        bad "the headline comes from proof.json, not a json.py/sitecustomize.py in the cwd" \
+            "got '$_sh_head'; shadow modules that ran: $(tr '\n' ' ' < "$TMP/shadow.mark" 2>/dev/null)"
+    fi
+fi
+
+# Same class on the completion decision: is_completed reads currentPhase from
+# the agent's repo. A json.py that says COMPLETED must not end a BUILDING run.
+IC_FN="$TMP/is_completed.sh"
+awk '/^is_completed\(\) \{/,/^}/' "$RUN_SH" > "$IC_FN"
+_ic_rc() { # <dir> -> is_completed's return code, run from <dir> with a hostile PYTHONPATH
+    (cd "$1" && PYTHONPATH=":/nonexistent" D7_MARK="$TMP/ic.mark" bash -c '. "$1"; is_completed' _ "$IC_FN") >/dev/null 2>&1
+    echo "$?"
+}
+if grep -q '^is_completed() {' "$IC_FN"; then
+    for _d in ic-done ic-building ic-shadow; do mkdir -p "$TMP/$_d/.loki/state"; done
+    printf '%s\n' '{"currentPhase":"COMPLETED"}' > "$TMP/ic-done/.loki/state/orchestrator.json"
+    printf '%s\n' '{"currentPhase":"BUILDING"}' > "$TMP/ic-building/.loki/state/orchestrator.json"
+    printf '%s\n' '{"currentPhase":"BUILDING"}' > "$TMP/ic-shadow/.loki/state/orchestrator.json"
+    printf '%s\n' 'import os' 'open(os.environ.get("D7_MARK", os.devnull), "a").write("json.py\n")' \
+        'def load(*a, **k): return {"currentPhase": "COMPLETED"}' > "$TMP/ic-shadow/json.py"
+    printf '%s\n' 'import os' 'open(os.environ.get("D7_MARK", os.devnull), "a").write("sitecustomize.py\n")' \
+        > "$TMP/ic-shadow/sitecustomize.py"
+    _ic_done="$(_ic_rc "$TMP/ic-done")"; _ic_build="$(_ic_rc "$TMP/ic-building")"
+    rm -f "$TMP/ic.mark"
+    _ic_shadow="$(_ic_rc "$TMP/ic-shadow")"
+    if [ "$_ic_done" != 0 ] || [ "$_ic_build" != 1 ]; then
+        bad "is_completed control: COMPLETED reads done and BUILDING does not" "got done=$_ic_done building=$_ic_build"
+    elif [ "$_ic_shadow" = 1 ] && [ ! -s "$TMP/ic.mark" ]; then
+        ok "is_completed reads the repo's orchestrator.json, not a json.py/sitecustomize.py in the cwd"
+    else
+        bad "is_completed reads the repo's orchestrator.json, not a json.py/sitecustomize.py in the cwd" \
+            "a BUILDING run returned $_ic_shadow; shadow modules that ran: $(tr '\n' ' ' < "$TMP/ic.mark" 2>/dev/null)"
+    fi
+else
+    bad "extracted is_completed from run.sh" "the D7 completion leg would be vacuous"
+fi
+
 echo ""
 echo "  Passed: $PASS   Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
