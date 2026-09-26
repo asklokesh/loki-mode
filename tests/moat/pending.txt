@@ -12,13 +12,13 @@
 #   - a case that PASSes and is still listed here fails the suite: delete its
 #     line (promote), so a proven property can never read as pending;
 #   - every ID listed here must still be emitted by some script;
-#   - THE RATCHET: this list may only shrink. Every ID here must also be in
-#     this file at the newest release tag reachable from HEAD that does not
-#     point at HEAD itself (a tagged release commit is checked against the
-#     release before it).
+#   - THE RATCHET: this list may only shrink. Every ID here must also be
+#     pending at EVERY exact vX.Y.Z release tag reachable from HEAD that
+#     carries this file (the intersection), tags at HEAD excluded, so a merged
+#     hotfix tag can neither reset nor loosen it.
 #     A new entry fails the suite, so nothing can be parked here to buy a green
 #     run, and a case added after a release must PASS from the day it lands.
-#     While the last release tag has no copy of this file (the bootstrap), the
+#     While no reachable release tag carries this file (the bootstrap), the
 #     list is accepted as it stands; the first release that ships it becomes
 #     the baseline.
 #

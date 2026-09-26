@@ -36581,8 +36581,13 @@ PYEOF
             # positionals and ignored, so an unsigned receipt exited 0 as if a
             # signature had been checked.
             local _pv_human=0 _pv_jwks="" _pv_jwks_empty=0 _pv_args=()
-            local _pv_a _pv_want_jwks=0 _pv_npos=0
+            local _pv_a _pv_want_jwks=0 _pv_npos=0 _pv_end_opts=0 _pv_argc=$#
             for _pv_a in "$@"; do
+                # After "--" everything is a proof id, so a caller can pass an
+                # id that begins with "-" without it being read as an option.
+                if [ "$_pv_end_opts" -eq 1 ]; then
+                    _pv_args+=("$_pv_a"); _pv_npos=$((_pv_npos + 1)); continue
+                fi
                 if [ "$_pv_want_jwks" -eq 1 ]; then
                     _pv_jwks="$_pv_a"; _pv_want_jwks=0
                     [ -n "$_pv_jwks" ] || _pv_jwks_empty=1
@@ -36590,8 +36595,18 @@ PYEOF
                 fi
                 case "$_pv_a" in
                     --human) _pv_human=1 ;;
+                    --) _pv_end_opts=1 ;;
                     -h|--help)
-                        echo "Usage: loki proof verify <id> [--human] [--jwks <url|file>]"
+                        # Help only when it is the SOLE argument. Combined with an
+                        # id or --jwks it must not exit 0 with nothing checked: an
+                        # id taken from untrusted content could be "-h", turning a
+                        # provenance gate into a pass.
+                        if [ "$_pv_argc" -ne 1 ]; then
+                            echo -e "${RED}'${_pv_a}' cannot be combined with other arguments to 'loki proof verify'. Nothing was checked.${NC}" >&2
+                            echo "  To verify an id that starts with '-', use: loki proof verify -- <id>" >&2
+                            exit 64  # usage (docs/exit-codes.md)
+                        fi
+                        echo "Usage: loki proof verify [--human] [--jwks <url|file>] [--] <id>"
                         echo "  Exit 0 clean, 1 tamper/drift (or --jwks FAILED/ABSENT), 2 could not check,"
                         echo "  64 usage (no id, more than one id, unknown option, empty --jwks), 66 unknown id."
                         echo "  Full options: loki proof help"

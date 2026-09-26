@@ -56,6 +56,10 @@ Status values: todo, in progress, shipped (version), parked (reason).
 32. **Docs tell npm users to run `doctor --airgap`** (`docs/air-gapped.md:48`, `deploy/helm/README.md:413`), which the default route rejects. Note `LOKI_LEGACY_BASH=1` until `P5.airgap-audit-default-route` is fixed.
 33. **Council member vote: `runner=none` counts as a positive signal while a suite that ran zero tests does not.** Decide one rule.
 
+34. **M2 builders: P3 and P8 must be wired, not just present.** `P8` drives `autonomy/lib/ablation.py` directly and `P3.check-author-context-excludes-implementation` drives `check_author.py` directly. Before promoting either, add an assertion that a stub-provider `run.sh` session (as P5/P6 drive one) records `facts.ablation` and invokes the check-author step (council round 4).
+35. **Moat runner self-test: 0-byte baseline file.** Dropping the `git grep -L` empty-file listing leaves the self-test green; the code path was checked by hand. Add a case.
+36. **P7 scanners: refuse a zero-file scan** (`SCANNED>0`), so a moved directory cannot read PASS.
+
 ## Later milestones
 
 M1 one command, M2 Seal and Wall, M3 assign like a teammate, M4 system map, M5 the line, M6 ship and operate, M7 one screen, M8 legacy lane, M9 enterprise readiness, M10 simplify and ship v10.0.0. Items get broken out here when their milestone comes up.

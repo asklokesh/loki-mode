@@ -9,11 +9,12 @@
 #     A deleted or renamed case, a CASE line that is indented, and one sent to
 #     stderr all fail the suite as UNEMITTED;
 #   - every ID a script emits must be listed here (UNREGISTERED: register it);
-#   - THE RATCHET: this list may only grow. Every ID in this file at the last
-#     release tag before HEAD must still be here, because case IDs are
-#     permanent: a case is fixed or listed in pending.txt, never deleted to buy
-#     a green run. While that tag has no copy of this file (the bootstrap), the
-#     list is accepted as it stands.
+#   - THE RATCHET: this list may only grow. Every ID registered here at ANY
+#     exact vX.Y.Z release tag reachable from HEAD (tags at HEAD excluded) must
+#     still be here: the registry must cover the union of those releases,
+#     because case IDs are permanent: a case is fixed or listed in pending.txt,
+#     never deleted to buy a green run. While no reachable release tag carries
+#     this file (the bootstrap), the list is accepted as it stands.
 #
 # Entries:
 P1.signed-proof-carries-attestation

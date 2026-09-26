@@ -288,18 +288,9 @@ for route in bash bun; do
 done
 
 # Each negative case: the genuine proof must verify on the route (control), the
-# forged input must exit non-zero AND must not print "attestation: VERIFIED".
-# refuse <route> <tag> <repo> <proof-id> [args...] -> appends to $why on failure
+# forged input must exit with the EXACT expected code AND must not print
+# "attestation: VERIFIED" (refuse_exact, below).
 why=""
-refuse() {
-    local route="$1" tag="$2"
-    verify "$@"
-    if [ "$RC" -eq 0 ]; then
-        why="$why $route/$tag: exit 0;"
-    elif verified "$tag"; then
-        why="$why $route/$tag: printed attestation: VERIFIED;"
-    fi
-}
 # refuse_exact <rc> <stderr-text|""> <route> <tag> <repo> <proof-id> [args...]: the EXACT
 # exit code, so a FAILED/ABSENT (1) softened into NOT CHECKED (2), or a crash,
 # no longer passes as "non-zero"; the verdict text when given; and never
@@ -363,8 +354,8 @@ if [ -n "$_mut" ]; then
 else
     for route in bash bun; do
         precheck "$route" || continue
-        refuse "$route" "stale-$route" "$R" p1stale --jwks "$W/keys/jwks.json"
-        refuse "$route" "rehash-$route" "$R" p1rehash --jwks "$W/keys/jwks.json"
+        refuse_exact 1 "" "$route" "stale-$route" "$R" p1stale --jwks "$W/keys/jwks.json"
+        refuse_exact 1 "" "$route" "rehash-$route" "$R" p1rehash --jwks "$W/keys/jwks.json"
         grep -q "attestation: FAILED" "$W/out/rehash-$route.err" \
             || why="$why $route/rehash: signature did not report attestation: FAILED;"
     done
@@ -467,7 +458,8 @@ else
     for route in bash bun; do
         precheck "$route" || continue
         for _m in $(cat "$W/out/meta.list"); do
-            refuse "$route" "${_m#p1}-$route" "$R" "$_m" --jwks "$W/keys/jwks.json"
+            # Exact 1: a future "no key for kid" NOT CHECKED (2) must not promote this case.
+            refuse_exact 1 "" "$route" "${_m#p1}-$route" "$R" "$_m" --jwks "$W/keys/jwks.json"
         done
     done
 fi

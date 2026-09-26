@@ -42,4 +42,4 @@ produced it. "Not measured" is a real value here: nothing is estimated.
 
 | Property | Status | Command |
 |---|---|---|
-| all 9 | suite not built yet | `bash tests/moat/run.sh` (planned) |
+| all 9 | 0 of 9 proven; 45 cases, 21 pass, 24 pending with milestones (2026-09-25, macOS and ubuntu CI) | `bash tests/moat/run.sh` |

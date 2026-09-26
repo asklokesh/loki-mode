@@ -389,6 +389,24 @@ if [ "$HAVE_BUN" -eq 1 ]; then
   _usage "bun entry point: two proof ids" "one proof id" _rc_bun g1strip g1
 fi
 
+# --- 12. Help never skips a check -----------------------------------------------
+# -h/--help exits 0 only as the SOLE argument. Combined with an id or --jwks it
+# is a usage error: an id taken from untrusted content could be "-h", and a
+# help exit 0 would pass a forged receipt through a provenance gate. g1strip is
+# unsigned, so with --jwks the honest answer is 1 (ABSENT), never 0.
+_expect 1 "$(_rc "$R" g1strip --jwks "$W/gjwks.json")" "control: unsigned + --jwks is ABSENT (1)"
+_expect 0 "$(_rc "$R" --help)" "bare --help prints usage and exits 0"
+_usage "id plus --help" "cannot be combined" _rc g1strip --jwks "$W/gjwks.json" --help
+_usage "-h before the id" "cannot be combined" _rc -h g1strip --jwks "$W/gjwks.json"
+_usage "id plus -h" "cannot be combined" _rc g1strip -h
+if [ "$HAVE_BUN" -eq 1 ]; then
+  _usage "bun entry point: id plus --help" "cannot be combined" _rc_bun g1strip --jwks "$W/gjwks.json" --help
+fi
+# "--" ends option parsing, so an id that is literally "-h" is looked up as an
+# id (66 unknown), not taken as help, and a real id after "--" is verified.
+_expect 66 "$(_rc "$R" -- -h)" "'-- -h' treats -h as a proof id (unknown, 66)"
+_expect 1 "$(_rc "$R" --jwks "$W/gjwks.json" -- g1strip)" "'--jwks k -- id' still checks the attestation (ABSENT, 1)"
+
 # The remote copy of the check carries the same dependency guard (the two copies
 # must not diverge). file:// reaches its "<url>/.well-known/jwks.json" fetch
 # with no server.

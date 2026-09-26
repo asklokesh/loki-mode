@@ -1612,8 +1612,8 @@ run_check "tests/test-cli-embeds-v733.sh (strict-mcp + bare-subcalls + review-to
 run_check "tests/test-cli-session-v734.sh (session stamp + uuid parity + FIX D)" "bash tests/test-cli-session-v734.sh 2>&1 | tail -3"
 
 # The moat suite: the nine product properties, each proven or honestly NOT
-# PROVEN, with a shrink-only pending list ratcheted against the last release
-# tag. Serial spine, not a lane: the property scripts spawn loki processes.
+# PROVEN, with a shrink-only pending list and a grow-only case registry,
+# ratcheted against every reachable release tag. Serial spine, not a lane: the property scripts spawn loki processes.
 # tail -60, not -3: the rule failures print before the summary block, so a
 # 3-line capture would show only "moat: X of 9" and hide which rule fired.
 # Exit 2 (no release tag reachable, so the ratchet did not run) is a FAIL here.
