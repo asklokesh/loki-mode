@@ -827,6 +827,60 @@ else
 fi
 
 # =============================================================================
+# Test T-interrupt-resume-commits-agent-files (council regression of 4fdf673e):
+# session 1 creates helper.py and test_helper.py and is interrupted, so no
+# session commit runs. The resume union must not adopt those files as the
+# user's: the resumed session, which makes app.py import helper, commits them
+# (the committed tree runs). A file the user made between sessions is still
+# not committed and survives checkout of the base. The two record calls model
+# the post-provider record and cleanup()'s record on the interrupt. The first
+# call runs before any setup, over a leftover snapshot: it must record nothing.
+# =============================================================================
+echo "Test T-interrupt-resume-commits-agent-files: an interrupted session's own files are committed after the resume"
+RIR="$(make_repo tinterrupt)"
+outir="$(
+    cd "$RIR" || exit 1
+    source "$PREAMBLE"
+    printf 'print("app")\n' > app.py
+    git add app.py && git commit -qm "app"
+    printf 'mine, before\n' > before.txt
+    # A snapshot left by an older session; this process has not taken one.
+    mkdir -p .loki/state && : > .loki/state/preexisting-untracked.z
+    _loki_record_session_created >/dev/null 2>&1
+    gated="$( [ -e .loki/state/session-created.z ] && echo no || echo yes )"
+    ITERATION_COUNT=1
+    result=0
+    setup_agent_branch >/dev/null 2>&1
+    s1_head="$(git rev-parse HEAD)"
+    printf 'def greet():\n    return "hi"\n' > helper.py
+    _loki_record_session_created >/dev/null 2>&1
+    printf 'import helper\nassert helper.greet() == "hi"\n' > test_helper.py
+    _loki_record_session_created >/dev/null 2>&1
+    record="$(tr '\000' '|' < .loki/state/session-created.z 2>/dev/null)"
+    nocommit="$( [ "$(git rev-parse HEAD)" = "$s1_head" ] && echo yes || echo no )"
+    printf 'mine, between sessions\n' > 'user notes.txt'
+    resume_log="$(setup_agent_branch 2>&1)"
+    carried="$(printf '%s' "$resume_log" | grep -q 'Carried over.*helper.py, test_helper.py' && echo yes || echo no)"
+    printf 'import helper\nprint(helper.greet())\n' > app.py
+    commit_session_changes >/dev/null 2>&1
+    tree="$(git ls-tree -r --name-only HEAD | tr '\n' ' ')"
+    cleared="$( [ -e .loki/state/session-created.z ] && echo no || echo yes )"
+    mkdir -p "$WORKROOT/tinterrupt-tree"
+    runs="$(git archive HEAD | tar -x -C "$WORKROOT/tinterrupt-tree" \
+        && (cd "$WORKROOT/tinterrupt-tree" && python3 -E app.py 2>&1))"
+    git checkout -q develop
+    intact="$( [ "$(cat 'user notes.txt' 2>/dev/null)" = 'mine, between sessions' ] \
+        && [ "$(cat before.txt 2>/dev/null)" = 'mine, before' ] && echo yes || echo no )"
+    printf 'GATED=%s RECORD=[%s] NOCOMMIT=%s CARRIED=%s TREE=[%s] CLEARED=%s RUNS=%s INTACT=%s' \
+        "$gated" "$record" "$nocommit" "$carried" "$tree" "$cleared" "$runs" "$intact"
+)"
+if [ "$outir" = "GATED=yes RECORD=[helper.py|test_helper.py|] NOCOMMIT=yes CARRIED=yes TREE=[.gitignore app.py helper.py seed.txt test_helper.py ] CLEARED=yes RUNS=hi INTACT=yes" ]; then
+    pass "interrupted session's helper.py and test_helper.py committed by the resumed session (the tree runs); user files before and between sessions not committed and intact on the base; record gated, then cleared"
+else
+    fail "an interrupted session's own files were adopted as the user's (or a user file was swept)" "got: $outir"
+fi
+
+# =============================================================================
 # Test T-ignored-not-swept (BACKLOG 58): the agent rewrites .gitignore, exposing
 # the user's ignored files to `git add -A`. None may be committed. The snapshot
 # stays compact (node_modules/ and dist/ are one entry each) and a directory

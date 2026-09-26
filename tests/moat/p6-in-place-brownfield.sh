@@ -31,7 +31,7 @@ pass() { printf 'CASE %s PASS %s\n' "$1" "$2"; }
 fail() { printf 'CASE %s FAIL %s\n' "$1" "$2"; }
 note() { printf '%s\n' "$*" >&2; }
 
-ALL_CASES="P6.same-path-and-history P6.user-files-intact P6.change-landed-in-place P6.proof-produced-and-verifies P6.no-gate-artifacts-committed P6.untracked-not-swept P6.resume-does-not-sweep P6.ignored-files-not-swept P6.preexisting-edit-disclosed P6.resume-keeps-ignored-user-file"
+ALL_CASES="P6.same-path-and-history P6.user-files-intact P6.change-landed-in-place P6.proof-produced-and-verifies P6.no-gate-artifacts-committed P6.untracked-not-swept P6.resume-does-not-sweep P6.ignored-files-not-swept P6.preexisting-edit-disclosed P6.resume-keeps-ignored-user-file P6.resume-after-interrupt-commits-agent-files"
 
 # Caller-inherited knobs that would test something other than the default a
 # user gets. Unset so the run exercises the shipped defaults.
@@ -191,6 +191,31 @@ elif [ "$kind" = build ] && [ "${MOAT_STUB_MODE:-}" = cfg2 ]; then
     printf 'print(2)\n' > app2.py
     mkdir -p .loki/signals
     printf 'added app2.py\n' > .loki/signals/COMPLETION_REQUESTED
+elif [ "$kind" = build ] && [ "${MOAT_STUB_MODE:-}" = intr1 ]; then
+    # Third fixture, session 1: turn 1 makes helper.py and does not finish;
+    # turn 2 saves the session-created record as the post-provider hook left
+    # it, makes test_helper.py, and stops the runner the way a supervisor does
+    # (one SIGTERM under LOKI_SUPERVISED_BUILD=1), so no session commit runs.
+    if [ "$(grep -c '^build' "$MOAT_STUB_LOG")" -le 1 ]; then
+        printf 'def greet():\n    return "hi"\n' > helper.py
+    else
+        cp .loki/state/session-created.z "${MOAT_STUB_LOG%.log}.record" 2>/dev/null \
+            || printf 'MISSING' > "${MOAT_STUB_LOG%.log}.record"
+        printf 'from helper import greet\n\n\ndef test_greet():\n    assert greet() == "hi"\n' > test_helper.py
+        # run.sh execs a temp copy of itself (LOKI_TEMP_SCRIPT_PATH, exported).
+        pid="$(cat .loki/loki.pid 2>/dev/null)"
+        case "$(ps -o command= -p "$pid" 2>/dev/null)" in
+            *"${LOKI_TEMP_SCRIPT_PATH:-autonomy/run.sh}"*) kill -TERM "$pid" ;;
+            *) printf 'no run.sh at pid [%s]\n' "$pid" > "${MOAT_STUB_LOG%.log}.kill-error" ;;
+        esac
+    fi
+    echo "moat stub provider turn done"
+    exit 0
+elif [ "$kind" = build ] && [ "${MOAT_STUB_MODE:-}" = intr2 ]; then
+    # Third fixture, session 2: finish the work by making app.py use helper.
+    printf 'import helper\nprint(helper.greet())\n' > app.py
+    mkdir -p .loki/signals
+    printf 'app.py uses helper\n' > .loki/signals/COMPLETION_REQUESTED
 elif [ "$kind" = build ]; then
     grep -q 'def mul' calc.py 2>/dev/null \
         || printf 'def mul(a, b):\n    return a * b\n' >> calc.py
@@ -216,14 +241,14 @@ done
 TO=""
 command -v timeout >/dev/null 2>&1 && TO="timeout 240"
 # run_pipeline <output tag> <stub log> <stub mode> [repo]: one full run.sh loop
-# in place (repo defaults to $W); output in $T/log/<tag>.out and .err; returns
-# run.sh's exit code.
+# in place (repo defaults to $W, iteration cap to $MOAT_MAX_ITER or 2); output
+# in $T/log/<tag>.out and .err; returns run.sh's exit code.
 run_pipeline() {
     local repo="${4:-$W}"
     # shellcheck disable=SC2086  # $TO is intentionally word-split (empty or "timeout 240")
     ( cd "$repo" && PATH="$T/bin:$PATH" MOAT_STUB_LOG="$2" MOAT_STUB_MODE="$3" \
         MOAT_STUB_SEEN="$T/log/cfg-seen.txt" \
-        LOKI_TARGET_DIR="$repo" LOKI_PROVIDER=claude LOKI_MAX_ITERATIONS=2 \
+        LOKI_TARGET_DIR="$repo" LOKI_PROVIDER=claude LOKI_MAX_ITERATIONS="${MOAT_MAX_ITER:-2}" \
         LOKI_COMPLETION_PROMISE=MOAT_P6_COMPLETE LOKI_AUTO_CONFIRM=true \
         LOKI_SKIP_PREREQS=true LOKI_PHASE_CODE_REVIEW=false LOKI_COUNCIL_ENABLED=false \
         LOKI_APP_RUNNER=false LOKI_NO_NEW_SESSION=1 LOKI_SKIP_AUTH_PREFLIGHT=1 \
@@ -372,12 +397,12 @@ PJ="$W/.loki/proofs/$PROOF_ID/proof.json"
 # Run `loki proof verify $PROOF_ID` on one route (bin/loki execs autonomy/loki
 # when LOKI_LEGACY_BASH=1, so the two routes are distinct entry points). The
 # verifier JSON report lands in $T/log/verify-<tag>.out; returns the exit code.
-run_verify() {  # $1 = route (bun|bash), $2 = log tag
-    local out="$T/log/verify-$2"
+run_verify() {  # $1 = route (bun|bash), $2 = log tag, [$3 = repo, default $W]
+    local out="$T/log/verify-$2" repo="${3:-$W}"
     if [ "$1" = bun ]; then
-        (cd "$W" && "$LOKI_BIN" proof verify "$PROOF_ID") >"$out.out" 2>"$out.err"
+        (cd "$repo" && "$LOKI_BIN" proof verify "$PROOF_ID") >"$out.out" 2>"$out.err"
     else
-        (cd "$W" && LOKI_LEGACY_BASH=1 "$LOKI_BIN" proof verify "$PROOF_ID") >"$out.out" 2>"$out.err"
+        (cd "$repo" && LOKI_LEGACY_BASH=1 "$LOKI_BIN" proof verify "$PROOF_ID") >"$out.out" 2>"$out.err"
     fi
 }
 # "<ok> <hash_ok>" from a verifier report, e.g. "True True", or "unparsed".
@@ -795,6 +820,139 @@ if [ -z "$why" ]; then
 fi
 if [ -z "$why" ]; then
     pass "$id" "resuming $C1_BRANCH (which tracks config.local.json) was refused and $C2_BRANCH minted; the user's gitignored config.local.json was intact during and after session 2 and after checkout of main, and never committed"
+else
+    fail "$id" "$why"
+fi
+
+# ============================================================================
+# P6.resume-after-interrupt-commits-agent-files (third fixture, two sessions)
+# ============================================================================
+# Session 1 makes helper.py (turn 1) and test_helper.py (turn 2) and is stopped
+# by a supervisor SIGTERM: state "interrupted", no session commit. Back on main
+# the user makes a file, then runs again; the recorded branch is resumed and
+# session 2 makes app.py import helper and finishes normally. The interrupted
+# session's files must be committed (the committed tree runs) and listed in the
+# receipt; the user's file must not be committed and must survive checkout of
+# main; the receipt must verify on both routes.
+id=P6.resume-after-interrupt-commits-agent-files
+why=""
+I="$T/intr/repo"
+gi() { git -C "$I" "$@"; }
+{
+    mkdir -p "$I" && git init -q "$I" \
+    && gi symbolic-ref HEAD refs/heads/main \
+    && gi config user.email moat@example.invalid \
+    && gi config user.name "moat p6" \
+    && gi config commit.gpgsign false \
+    && printf 'print("app")\n' > "$I/app.py" \
+    && printf 'build/\n__pycache__/\n' > "$I/.gitignore" \
+    && gi add app.py .gitignore && gi commit -qm "c1: app"
+} >"$T/log/intr-fixture.log" 2>&1 || why="third fixture setup failed: $(tr '\n' ' ' < "$T/log/intr-fixture.log" | cut -c1-200); "
+I_ORIG="$(gi rev-parse HEAD 2>/dev/null)"
+INTR_LOG1="$T/log/intr-stub1.log"
+INTR_LOG2="$T/log/intr-stub2.log"
+: > "$INTR_LOG1"
+: > "$INTR_LOG2"
+SENTINEL3="moat-p6-after-interrupt-$$-${RANDOM}${RANDOM}"
+if [ -z "$why" ]; then
+    LOKI_SUPERVISED_BUILD=1 run_pipeline intr1 "$INTR_LOG1" intr1 "$I"
+    rc=$?
+    echo "INFO P6 interrupted session-1 run.sh rc=$rc"
+    kill_leftovers
+    # Vacuity guards: session 1 really made both files over two provider
+    # turns, was interrupted (not finished), and made no commit.
+    n="$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$INTR_LOG1")"
+    [ "$n" = 2 ] || why="${why}vacuous: interrupted session 1 made $n build calls (expected 2; run.sh rc=$rc); "
+    [ -s "$T/log/intr-stub1.kill-error" ] && why="${why}the stub could not signal run.sh: $(cat "$T/log/intr-stub1.kill-error"); "
+    [ "$rc" = 143 ] || why="${why}interrupted session 1 exited $rc (expected 143, SIGTERM); "
+    I1_STATUS="$(python3 -E -c 'import json, sys; print(json.load(open(sys.argv[1])).get("status"))' "$I/.loki/autonomy-state.json" 2>/dev/null)"
+    [ "$I1_STATUS" = interrupted ] || why="${why}state after session 1 is '$I1_STATUS', not interrupted; "
+    for f in helper.py test_helper.py; do
+        [ -f "$I/$f" ] || why="${why}vacuous: session 1 did not leave $f on disk; "
+    done
+    I1_BRANCH="$(gi symbolic-ref --short -q HEAD 2>/dev/null || echo DETACHED)"
+    case "$I1_BRANCH" in loki/session-*) ;; *) why="${why}interrupted session 1 is not on a minted session branch ($I1_BRANCH); " ;; esac
+    [ "$(gi rev-parse HEAD 2>/dev/null)" = "$I_ORIG" ] \
+        || why="${why}vacuous: interrupted session 1 made a commit; "
+    # Only the post-provider record could have listed helper.py before turn 2.
+    # Not a vacuity guard, so session 2 still runs when it fails.
+    I_REC_WHY=""
+    tr '\000' '\n' < "$T/log/intr-stub1.record" 2>/dev/null | grep -qx 'helper.py' \
+        || I_REC_WHY="the post-provider record did not list helper.py before the interrupt ($(tr '\000' ',' < "$T/log/intr-stub1.record" 2>/dev/null)); "
+    if gi checkout -q main 2>"$T/log/intr-checkout1.err"; then
+        printf 'made after the interrupt\n%s\n' "$SENTINEL3" > "$I/AFTER.local.txt"
+    else
+        why="${why}could not switch to main before session 2: $(head -c 160 "$T/log/intr-checkout1.err" | tr '\n' ' '); "
+    fi
+fi
+if [ -z "$why" ]; then
+    # Session 1's iteration count is restored on an interrupted resume.
+    MOAT_MAX_ITER=5 run_pipeline intr2 "$INTR_LOG2" intr2 "$I"
+    rc=$?
+    echo "INFO P6 resumed session-2 run.sh rc=$rc"
+    kill_leftovers
+    [ "$(awk -F'\t' '$1 == "build" {n++} END {print n + 0}' "$INTR_LOG2")" -ge 1 ] \
+        || why="${why}vacuous: resumed session 2 never reached the provider build step (run.sh rc=$rc); "
+    [ "$rc" = 0 ] || why="${why}resumed session 2 exited $rc; "
+    I2_BRANCH="$(gi symbolic-ref --short -q HEAD 2>/dev/null || echo DETACHED)"
+    [ "$I2_BRANCH" = "$I1_BRANCH" ] || why="${why}session 2 is on $I2_BRANCH, not the resumed $I1_BRANCH; "
+    gi show HEAD:app.py 2>/dev/null | grep -q '^import helper' \
+        || why="${why}vacuous: session 2 committed no edit (HEAD:app.py does not import helper); "
+    grep -q 'Carried over.*helper\.py' "$T/log/intr2.out" "$T/log/intr2.err" 2>/dev/null \
+        || why="${why}the resume did not name helper.py as carried over; "
+    gi ls-tree -r --name-only HEAD > "$T/log/intr-head-tree.txt" 2>/dev/null
+    for f in helper.py test_helper.py; do
+        grep -qx "$f" "$T/log/intr-head-tree.txt" || why="${why}$f (made by the interrupted session) is not committed on $I2_BRANCH; "
+    done
+    grep -qx 'AFTER.local.txt' "$T/log/intr-head-tree.txt" \
+        && why="${why}AFTER.local.txt (made by the user after the interrupt) was committed; "
+    # The committed tree alone must run: app.py imports the committed helper.
+    mkdir -p "$T/intr/tree"
+    ran="$(gi archive HEAD | tar -x -C "$T/intr/tree" && (cd "$T/intr/tree" && python3 -E app.py 2>&1))"
+    [ "$ran" = hi ] || why="${why}the committed tree does not run: $(printf '%s' "$ran" | tail -n 1); "
+    PROOF_ID_SAVED="$PROOF_ID"
+    PROOF_ID="$(cat "$I/.loki/state/last-proof-id.txt" 2>/dev/null)"
+    IPJ="$I/.loki/proofs/$PROOF_ID/proof.json"
+    if [ -z "$PROOF_ID" ] || [ ! -f "$IPJ" ]; then
+        why="${why}no session-2 receipt (last-proof-id.txt='$PROOF_ID'); "
+    else
+        # A resume keeps the run id, so bind the receipt by its head commit.
+        python3 -E -c 'import json, sys
+d = json.load(open(sys.argv[1]))
+print("head_sha", ((d.get("facts") or {}).get("git") or {}).get("head_sha"))
+for f in (d.get("files_changed") or {}).get("files") or []:
+    print(f.get("path"))' "$IPJ" > "$T/log/intr-receipt.txt" 2>/dev/null
+        grep -qx "head_sha $(gi rev-parse HEAD 2>/dev/null)" "$T/log/intr-receipt.txt" \
+            || why="${why}the receipt is not bound to session 2's commit ($(head -n 1 "$T/log/intr-receipt.txt")); "
+        for f in helper.py test_helper.py app.py; do
+            grep -qx "$f" "$T/log/intr-receipt.txt" || why="${why}the receipt does not list $f ($(tr '\n' ',' < "$T/log/intr-receipt.txt")); "
+        done
+        grep -qx 'AFTER.local.txt' "$T/log/intr-receipt.txt" \
+            && why="${why}the receipt lists the user's AFTER.local.txt; "
+        i_routes="bash"
+        if command -v bun >/dev/null 2>&1; then
+            i_routes="bun bash"
+        else
+            why="${why}prerequisite missing: bun (Bun route not verified); "
+        fi
+        for r in $i_routes; do
+            run_verify "$r" "$r-intr" "$I"; rc=$?
+            f="$(report_fields "$T/log/verify-$r-intr.out")"
+            [ "$rc" -eq 0 ] && [ "$f" = "True True" ] \
+                || why="${why}$r route: proof verify $PROOF_ID rc=$rc report=[$f]; "
+        done
+    fi
+    PROOF_ID="$PROOF_ID_SAVED"
+    if gi checkout -q main 2>"$T/log/intr-checkout2.err"; then
+        grep -qF "$SENTINEL3" "$I/AFTER.local.txt" 2>/dev/null \
+            || why="${why}AFTER.local.txt is gone or changed after checkout of main; "
+    else
+        why="${why}could not switch back to main after session 2: $(head -c 160 "$T/log/intr-checkout2.err" | tr '\n' ' '); "
+    fi
+fi
+why="${why}${I_REC_WHY:-}"
+if [ -z "$why" ]; then
+    pass "$id" "an interrupted session's helper.py and test_helper.py were committed on $I2_BRANCH by the resumed session (the committed tree runs) and listed in its receipt, which verifies on bun and bash routes; the user's file made after the interrupt was not committed and survives checkout of main"
 else
     fail "$id" "$why"
 fi

@@ -71,3 +71,4 @@ P6.preexisting-edit-disclosed
 P2.checklist-verify-not-shadowed
 P2.zero-test-never-affirmative
 P6.resume-keeps-ignored-user-file
+P6.resume-after-interrupt-commits-agent-files

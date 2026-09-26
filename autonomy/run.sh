@@ -9064,6 +9064,10 @@ setup_agent_branch() {
     # Controlled by LOKI_BRANCH_PROTECTION env var (default: true). Set it to
     # "false" to opt out fully and work on the current branch (back-compat).
     local branch_protection="${LOKI_BRANCH_PROTECTION:-true}"
+    # Set to 1 only once THIS run has a current snapshot (mint or resume
+    # union); _loki_record_session_created records nothing otherwise, since a
+    # leftover or stale snapshot would make it claim a user's file.
+    _LOKI_SNAPSHOT_THIS_RUN=0
 
     if [ "$branch_protection" != "true" ]; then
         log_info "Branch protection disabled (LOKI_BRANCH_PROTECTION=${branch_protection})"
@@ -9098,16 +9102,15 @@ setup_agent_branch() {
 
     # Already on a loki branch (session-* or delegate-*): idempotent reuse, do
     # not nest a branch off a loki branch (LOCK A5/A7).
-    # Both reuse paths add what is untracked now to the pre-existing list: a
-    # file the user made between sessions is theirs. A previous session's
-    # uncommitted leftover is added too; it stays on disk, uncommitted.
-    local reuse_warn="Could not add your current untracked files to the pre-existing list; this session will commit nothing (review and commit manually)"
+    # Both reuse paths add what is untracked now to the pre-existing list (a
+    # file the user made between sessions is theirs), except the files an
+    # unfinished previous session created (_loki_resume_snapshot).
     case "$cur" in
         loki/*)
             log_info "Already on loki branch ${cur}"
             mkdir -p .loki/state 2>/dev/null || true
             printf '%s\n' "$cur" > .loki/state/agent-branch.txt 2>/dev/null || true
-            _loki_snapshot_or_fail_closed union || log_warn "$reuse_warn"
+            _loki_resume_snapshot
             return 0
             ;;
     esac
@@ -9125,7 +9128,7 @@ setup_agent_branch() {
             # minted below.
             if git checkout --no-overwrite-ignore "$recorded" >/dev/null 2>&1; then
                 log_info "Resuming on recorded agent branch: ${recorded}"
-                _loki_snapshot_or_fail_closed union || log_warn "$reuse_warn"
+                _loki_resume_snapshot
                 return 0
             fi
             log_warn "Recorded agent branch ${recorded} could not be checked out - creating a new one"
@@ -9146,7 +9149,9 @@ setup_agent_branch() {
 
     # Record the user's own untracked and gitignored files so
     # commit_session_changes and the receipt leave them alone.
+    local snap_ok=1 leftover=""
     if ! _loki_snapshot_or_fail_closed; then
+        snap_ok=0
         rm -f .loki/state/preexisting-untracked.z .loki/state/preexisting-untracked.sha.z 2>/dev/null
         log_warn "Could not record pre-existing untracked files; this session will commit nothing (review and commit manually)"
     fi
@@ -9156,6 +9161,16 @@ setup_agent_branch() {
         log_error "Failed to create agent branch: $branch_name"
         return 1
     fi
+
+    # A new session branch starts with an empty session-created record. Files
+    # an unfinished earlier session left (reached here after a refused resume)
+    # were just snapshotted as pre-existing: kept on disk, never committed.
+    leftover="$(_loki_nul_names .loki/state/session-created.z)"
+    if [ -n "$leftover" ]; then
+        log_warn "Left uncommitted from an earlier unfinished session, now treated as your files: $leftover"
+    fi
+    rm -f .loki/state/session-created.z 2>/dev/null
+    if [ "$snap_ok" = 1 ]; then _LOKI_SNAPSHOT_THIS_RUN=1; fi
 
     # Store the branch name for later use (PR creation, cleanup)
     printf '%s\n' "$branch_name" > .loki/state/agent-branch.txt 2>/dev/null
@@ -9192,25 +9207,22 @@ _loki_snapshot_or_fail_closed() {
 }
 
 _loki_snapshot_preexisting() {
-    local snap=".loki/state/preexisting-untracked.z" top="" prefix="" rec
+    local snap=".loki/state/preexisting-untracked.z" top="" base="" exclude=""
     rm -f "${snap%.z}.sha.z" 2>/dev/null
     top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
-    prefix="$(git rev-parse --show-prefix 2>/dev/null)" || return 1
     mkdir -p .loki/state 2>/dev/null || return 1
-    # Exit status checked on its own, not through a pipeline (a caller may
-    # not set pipefail).
-    if ! git -C "$top" --no-optional-locks status --porcelain -z --no-renames -uall \
-            --ignored=matching --ignore-submodules=all -- ":(exclude,literal)${prefix}.loki" \
-            > "$snap.status" 2>/dev/null; then
-        rm -f "$snap.status"
-        return 1
+    # "union" never adds a path listed in session-created.z: those files were
+    # made by a session that did not finish (interrupt, pod loss), so the
+    # session that finishes the work commits them. If the user edits one of
+    # them between sessions it is still the session's file and is committed
+    # with the edit. Recorded entries only block additions; they never remove
+    # a path already in the list.
+    if [ "${1:-}" = union ]; then
+        base="$snap"
+        exclude=".loki/state/session-created.z"
     fi
-    if ! {
-            if [ "${1:-}" = union ] && [ -f "$snap" ]; then cat "$snap"; fi
-            while IFS= read -r -d '' rec; do
-                case "$rec" in '?? '* | '!! '*) printf '%s\0' "${rec#???}" ;; esac
-            done < "$snap.status"
-        } | LC_ALL=C sort -z -u > "$snap.tmp" || ! mv -f "$snap.tmp" "$snap"; then
+    if ! _loki_untracked_status "$snap.status" \
+       || ! _loki_untracked_merge "$snap.status" "$base" "$exclude" exact "$snap"; then
         rm -f "$snap.status" "$snap.tmp"
         return 1
     fi
@@ -9218,6 +9230,121 @@ _loki_snapshot_preexisting() {
     python3 -E "$SCRIPT_DIR/lib/workspace_diff.py" hash-snapshot "$top" "$snap" >/dev/null 2>&1 \
         || log_warn "Could not hash your pre-existing untracked files; the receipt cannot list the ones this run changes"
     return 0
+}
+
+# _loki_untracked_status <out>: the one enumeration behind both the snapshot
+# and the session-created record, so the two always agree: raw
+# `git status --porcelain -z` records for the whole repo, .loki excluded.
+# Non-zero, writing nothing, when git cannot list.
+_loki_untracked_status() {
+    local top="" prefix=""
+    top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
+    prefix="$(git rev-parse --show-prefix 2>/dev/null)" || return 1
+    git -C "$top" --no-optional-locks status --porcelain -z --no-renames -uall \
+        --ignored=matching --ignore-submodules=all -- ":(exclude,literal)${prefix}.loki" \
+        > "$1" 2>/dev/null && return 0
+    rm -f "$1"
+    return 1
+}
+
+# _loki_untracked_merge <status> <base> <exclude> exact|cover <out>
+# Atomically write <out>: the NUL-delimited paths of <base>, plus every
+# untracked ("??") or ignored ("!!") path in <status> that <exclude> does not
+# hold. With "cover", an <exclude> entry ending in "/" also holds every path
+# below it (workspace_diff._covered). An empty or missing <base> or <exclude>
+# is an empty list; any other read or write failure is non-zero and leaves
+# <out> as it was. Sorted bytewise, like `LC_ALL=C sort -z -u`. One python
+# process: bash 3.2 has no associative arrays, and a bash loop cost 300ms per
+# 6,000 entries on /bin/bash. -E and no cwd on sys.path (D7): the cwd is the
+# agent's repo.
+_loki_untracked_merge() {
+    python3 -E -c 'import sys
+sys.path[:] = [p for p in sys.path if p not in ("", ".")]
+import os
+status, base, exclude, mode, out = sys.argv[1:6]
+def entries(path, missing_ok=True):
+    try:
+        with open(path, "rb") as fh:
+            return [p for p in fh.read().split(b"\0") if p]
+    except FileNotFoundError:
+        if missing_ok:
+            return []
+        raise
+held = set(entries(exclude)) if exclude else set()
+def covered(path):
+    if path in held:
+        return True
+    cut = path.find(b"/") if mode == "cover" else -1
+    while cut != -1:
+        if path[:cut + 1] in held:
+            return True
+        cut = path.find(b"/", cut + 1)
+    return False
+paths = set(entries(base)) if base else set()
+for rec in entries(status, missing_ok=False):
+    if rec[:3] in (b"?? ", b"!! ") and not covered(rec[3:]):
+        paths.add(rec[3:])
+with open(out + ".tmp", "wb") as fh:
+    fh.write(b"".join(p + b"\0" for p in sorted(paths)))
+os.replace(out + ".tmp", out)' "$@" 2>/dev/null
+}
+
+# _loki_record_session_created
+# Union into .loki/state/session-created.z (NUL-delimited, repo-top-relative,
+# atomic) the paths git does not track now that the pre-existing snapshot does
+# not cover: the files this session created. The resume union never adds these
+# to the snapshot, so a session that is interrupted (cleanup) or killed (pod
+# loss: no trap runs, hence the call after every provider turn) still has its
+# own files committed by the session that finishes. commit_session_changes
+# clears the record after a normal commit; a new session branch starts empty.
+# Records nothing unless this run took a current snapshot (a leftover or stale
+# one would make it claim a user's file). On a failure the record is left as it
+# was, never partial, and preexisting-untracked.failed is never touched; the
+# next successful call recomputes everything, so only a failure on the final
+# call before a kill loses paths (those are then treated as the user's: kept on
+# disk, not committed).
+_loki_record_session_created() {
+    local snap=".loki/state/preexisting-untracked.z" out=".loki/state/session-created.z"
+    [ "${_LOKI_SNAPSHOT_THIS_RUN:-0}" = 1 ] || return 0
+    if [ -f "$snap" ] && _loki_untracked_status "$out.status" \
+       && _loki_untracked_merge "$out.status" "$out" "$snap" cover "$out"; then
+        rm -f "$out.status"
+        return 0
+    fi
+    rm -f "$out.status" "$out.tmp" 2>/dev/null
+    log_warn "Could not record the files this session created; if the run stops before the next record, they are treated as yours and left uncommitted"
+    return 1
+}
+
+# _loki_resume_snapshot: the resume paths' union, naming the files carried over
+# from an unfinished previous session (this session's commit includes them).
+_loki_resume_snapshot() {
+    local carried=""
+    if ! _loki_snapshot_or_fail_closed union; then
+        log_warn "Could not add your current untracked files to the pre-existing list; this session will commit nothing (review and commit manually)"
+        return 0
+    fi
+    _LOKI_SNAPSHOT_THIS_RUN=1
+    carried="$(_loki_nul_names .loki/state/session-created.z)"
+    if [ -n "$carried" ]; then
+        log_info "Carried over as this session's work, not adopted as your files (created by the unfinished previous session): $carried"
+    fi
+}
+
+# _loki_nul_names <file>: the entries of a NUL-delimited repo-top-relative list
+# that exist now, comma-separated, the first 20 then "(and N more)".
+_loki_nul_names() {
+    local p top="" n=0 out=""
+    [ -s "$1" ] || return 0
+    top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+    while IFS= read -r -d '' p; do
+        if [ -e "$top/$p" ] || [ -L "$top/$p" ]; then
+            n=$((n + 1))
+            if [ "$n" -le 20 ]; then out="${out}${out:+, }${p}"; fi
+        fi
+    done < "$1"
+    if [ "$n" -gt 20 ]; then out="${out} (and $((n - 20)) more)"; fi
+    printf '%s' "$out"
 }
 
 # RUN-25 iter 21 (Wave D #2): the two secret matchers now live in one sourceable
@@ -9309,8 +9436,12 @@ commit_session_changes() {
         fi
     fi
 
-    # Nothing staged = clean no-op, never an error.
+    # Nothing staged = clean no-op, never an error. A session that ends here or
+    # commits below ended normally: its session-created record is spent (what
+    # it listed is committed, or was never committable), so the next session
+    # starts clean.
     if git diff --cached --quiet 2>/dev/null; then
+        rm -f .loki/state/session-created.z 2>/dev/null
         return 0
     fi
 
@@ -9352,7 +9483,9 @@ commit_session_changes() {
         return 0
     fi
 
-    git commit -m "Loki Mode session changes (${ITERATION_COUNT:-0} iterations, result=${result:-0})" 2>/dev/null || true
+    if git commit -m "Loki Mode session changes (${ITERATION_COUNT:-0} iterations, result=${result:-0})" 2>/dev/null; then
+        rm -f .loki/state/session-created.z 2>/dev/null
+    fi
     audit_agent_action "git_commit" "Committed session changes" "iterations=${ITERATION_COUNT:-0},result=${result:-0}" || true
     return 0
 }
@@ -24004,6 +24137,12 @@ if __name__ == "__main__":
         # v7.5.12: Provider invocation finished (or was killed by trap).
         LOKI_PROVIDER_ACTIVE=0
 
+        # Record the files this session has created so far. A pod loss is a
+        # SIGKILL (no trap runs), so this per-turn record is what lets the
+        # resumed session commit them. One git status; no-op without a
+        # session snapshot.
+        _loki_record_session_created || true
+
         echo ""
         echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo ""
@@ -26304,6 +26443,10 @@ cleanup() {
         fi
         # v7.5.12: Kill any running provider pipeline first, before slow cleanup.
         kill_provider_child 2>/dev/null || true
+        # This exit makes no session commit: record the files this session
+        # created (after the provider is gone, so none are added later), so a
+        # resume commits them instead of adopting them as the user's.
+        _loki_record_session_created || true
         rm -f "$loki_dir/STOP" "$loki_dir/PAUSE" "$loki_dir/PAUSED.md" 2>/dev/null
         # UT2-13: Clear cli-provider marker on session end.
         rm -f "$loki_dir/state/cli-provider" 2>/dev/null || true
@@ -26378,6 +26521,8 @@ except (json.JSONDecodeError, OSError): pass
         log_warn "Loki Mode interrupted -- shutting down (double Ctrl+C)"
         # v7.5.12: Kill provider pipeline immediately so we don't wait on it.
         kill_provider_child 2>/dev/null || true
+        # No session commit on this exit either (see the branch above).
+        _loki_record_session_created || true
         # Write STOP signal so any peer processes (dashboard, etc.) also stop.
         mkdir -p "$loki_dir" 2>/dev/null && touch "$loki_dir/STOP" 2>/dev/null || true
         if type app_runner_cleanup &>/dev/null; then
