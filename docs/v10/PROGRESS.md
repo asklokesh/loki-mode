@@ -41,7 +41,8 @@
 
 - v9.53.0 verified on all channels (npm latest + gitHead `d7fb8674`, tag, GitHub release, Docker amd64/arm64, Homebrew sha256).
 - Dev fleet (3 worktree slices): resume re-snapshot, gitignored files, receipt discloses edits to user files (BACKLOG 57-59); D7 on checklist verification and council helpers (53, 54 partly); zero-test and stale results never affirmative on either route (55, 56, 60).
-- Moat: still 1 of 9 proven (P6); 53 cases, 30 pass, 23 pending; ratchet against v9.52.0 and v9.53.0. New cases: P6.resume-does-not-sweep, P6.ignored-files-not-swept, P6.preexisting-edit-disclosed, P2.checklist-verify-not-shadowed, P2.zero-test-never-affirmative.
+- Moat: still 1 of 9 proven (P6); 54 cases registered (48 in the release-tag union), 23 pending; ratchet against v9.52.0 and v9.53.0. New cases: P6.resume-does-not-sweep, P6.ignored-files-not-swept, P6.preexisting-edit-disclosed, P6.resume-keeps-ignored-user-file, P2.checklist-verify-not-shadowed, P2.zero-test-never-affirmative.
+- Council rounds: r1 CONCERN x2 (resume overwrote ignored user files; stale Bun pass) -> fixed 55ee9747; r2 CONCERN (previous test-results.json still reported) -> fixed d55b13f4; r3 CONCERN (snapshot on git < 2.18 fell back to sweeping everything) -> fixed with a fail-closed marker.
 - Open items the slices found: BACKLOG 61-65.
 
 ## Next (after cycle 2)

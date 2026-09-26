@@ -664,6 +664,50 @@ else
 fi
 
 # =============================================================================
+# Test T-old-git-fails-closed: on git older than 2.18, status rejects
+# --no-renames / --ignored=matching and there is no --pathspec-from-file.
+# The snapshot fails; the session must commit NOTHING (a missing snapshot must
+# not fall back to "sweep everything"), and the user's file must survive a
+# checkout of the base.
+# =============================================================================
+echo "Test T-old-git-fails-closed: snapshot unsupported by git -> no commit, user file survives"
+ROG="$(make_repo toldgit)"
+outog="$(
+    cd "$ROG" || exit 1
+    source "$PREAMBLE"
+    base="$(command git rev-parse --abbrev-ref HEAD)"
+    printf 'my private notes\n' > usernotes.txt
+    # Model git 2.17 for the whole session (leading '(' on case patterns for
+    # bash 3.2 inside $( ... )).
+    git() {
+        case " $* " in
+            (*" status "*"--no-renames"*|*" status "*"--ignored=matching"*) return 129 ;;
+            (*" --pathspec-from-file="*) return 129 ;;
+        esac
+        command git "$@"
+    }
+    setup_agent_branch >/dev/null 2>&1
+    marker="$( [ -f .loki/state/preexisting-untracked.failed ] && echo yes || echo no )"
+    before="$(command git rev-list --count HEAD)"
+    printf 'agent\n' > work.js
+    ITERATION_COUNT=1
+    result=0
+    msg="$(commit_session_changes 2>&1)"
+    unset -f git
+    after="$(git rev-list --count HEAD)"
+    git checkout -q "$base" 2>/dev/null
+    intact="$( [ "$(cat usernotes.txt 2>/dev/null)" = "my private notes" ] && echo yes || echo no )"
+    honest="$(printf '%s' "$msg" | grep -q 'could not record your pre-existing untracked files' && echo yes || echo no)"
+    printf 'MARKER=%s SAME=%s INTACT=%s HONEST=%s' "$marker" \
+        "$( [ "$before" = "$after" ] && echo yes || echo no )" "$intact" "$honest"
+)"
+if [ "$outog" = "MARKER=yes SAME=yes INTACT=yes HONEST=yes" ]; then
+    pass "old git: snapshot failure fails closed, no commit, user file survives the base checkout"
+else
+    fail "old git did not fail closed" "got: $outog"
+fi
+
+# =============================================================================
 # Test T-resume-resnapshot (BACKLOG 57): the user returns to the base branch,
 # makes a file, and resumes. setup_agent_branch checks out the recorded branch;
 # the new file must not be swept into the resumed session's commit (and then

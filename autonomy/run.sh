@@ -9101,13 +9101,13 @@ setup_agent_branch() {
     # Both reuse paths add what is untracked now to the pre-existing list: a
     # file the user made between sessions is theirs. A previous session's
     # uncommitted leftover is added too; it stays on disk, uncommitted.
-    local reuse_warn="Could not add your current untracked files to the pre-existing list; the session commit may include files made since the last session"
+    local reuse_warn="Could not add your current untracked files to the pre-existing list; this session will commit nothing (review and commit manually)"
     case "$cur" in
         loki/*)
             log_info "Already on loki branch ${cur}"
             mkdir -p .loki/state 2>/dev/null || true
             printf '%s\n' "$cur" > .loki/state/agent-branch.txt 2>/dev/null || true
-            _loki_snapshot_preexisting union || log_warn "$reuse_warn"
+            _loki_snapshot_or_fail_closed union || log_warn "$reuse_warn"
             return 0
             ;;
     esac
@@ -9125,7 +9125,7 @@ setup_agent_branch() {
             # minted below.
             if git checkout --no-overwrite-ignore "$recorded" >/dev/null 2>&1; then
                 log_info "Resuming on recorded agent branch: ${recorded}"
-                _loki_snapshot_preexisting union || log_warn "$reuse_warn"
+                _loki_snapshot_or_fail_closed union || log_warn "$reuse_warn"
                 return 0
             fi
             log_warn "Recorded agent branch ${recorded} could not be checked out - creating a new one"
@@ -9146,9 +9146,9 @@ setup_agent_branch() {
 
     # Record the user's own untracked and gitignored files so
     # commit_session_changes and the receipt leave them alone.
-    if ! _loki_snapshot_preexisting; then
+    if ! _loki_snapshot_or_fail_closed; then
         rm -f .loki/state/preexisting-untracked.z .loki/state/preexisting-untracked.sha.z 2>/dev/null
-        log_warn "Could not record pre-existing untracked files; the session commit may include them"
+        log_warn "Could not record pre-existing untracked files; this session will commit nothing (review and commit manually)"
     fi
 
     # Create and checkout the feature branch
@@ -9177,6 +9177,20 @@ setup_agent_branch() {
 # lets the receipt list a pre-existing file the run changed; it is removed
 # first, so a failed hash step means no detection, never stale hashes. Returns
 # non-zero, leaving any earlier list in place, when git cannot list.
+# Snapshot, or fail closed. Any snapshot failure (for example git older than
+# 2.18, whose status lacks --no-renames / --ignored=matching) leaves a marker
+# that makes commit_session_changes commit nothing: a missing snapshot must
+# only ever mean an older session, never "sweep everything".
+_loki_snapshot_or_fail_closed() {
+    if _loki_snapshot_preexisting "$@"; then
+        rm -f .loki/state/preexisting-untracked.failed 2>/dev/null
+        return 0
+    fi
+    mkdir -p .loki/state 2>/dev/null
+    : > .loki/state/preexisting-untracked.failed 2>/dev/null
+    return 1
+}
+
 _loki_snapshot_preexisting() {
     local snap=".loki/state/preexisting-untracked.z" top="" prefix="" rec
     rm -f "${snap%.z}.sha.z" 2>/dev/null
@@ -9279,6 +9293,11 @@ commit_session_changes() {
     # empty --pathspec-from-file resets the WHOLE index. No snapshot (older
     # session): behave as before. If the unstage fails (git < 2.25), commit
     # nothing rather than sweep the user's files in.
+    if [ -f "$PWD/.loki/state/preexisting-untracked.failed" ]; then
+        git reset -q >/dev/null 2>&1 || true
+        log_warn "Left uncommitted: could not record your pre-existing untracked files at session start (the snapshot needs git 2.18+, excluding them needs 2.25+). Review and commit manually."
+        return 0
+    fi
     local preexisting="$PWD/.loki/state/preexisting-untracked.z" top=""
     if [ -s "$preexisting" ]; then
         if ! { top="$(git rev-parse --show-toplevel 2>/dev/null)" \

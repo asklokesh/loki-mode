@@ -107,7 +107,13 @@ Status values: todo, in progress, shipped (version), parked (reason).
 
 73. **Bash records a test run that exits 0 but reports failures as a pass** (a jest printing "Tests: 1 failed, 2 passed" with exit 0 wrote `pass: true`, `verified`). Parse the runner's own summary for failures (cycle-3 council round 2).
 74. **Agent self-commits bypass the snapshot (data risk).** The snapshot guards only Loki's session commit: an agent that rewrites `.gitignore` and runs `git add -A && git commit` itself puts the user's untracked and ignored files on the session branch, and a base checkout removes them from disk. The RARV prompt tells every provider to checkpoint-commit; only `providers/claude.sh` (and the Bun override) forbids `git add -A`. Intersect `git diff --diff-filter=A <base>..HEAD` with the snapshot in `commit_session_changes`, `git rm --cached` hits, warn, and add the hygiene line to codex/cline/opencode/aider prompts. Also: an agent moving a user file to a new path gets the user's bytes committed under an agent-created name.
-75. **Unregistered suites:** `tests/council/test_managed_completion_flag.sh`, `tests/council/test_managed_review*` and `tests/test-voter-agents-json.sh` are never run by `tests/run-all-tests.sh` (named only in comments).
+75. **Unregistered suites:** `tests/council/test_managed_completion_flag.sh`, `tests/council/test_managed_review*`, `tests/test-voter-agents-json.sh` and `tests/test-evidence-gate-no-tests.sh` are never run by `tests/run-all-tests.sh` (named only in comments).
+
+76. **`done-recognition.sh` tests_axis (434-479): a zero-test record falls through** to an affirmative branch (predates cycle 3; council round 3).
+77. **Every Bun test-results.json is stale by construction:** only bash `enforce_test_coverage` writes `.test-results.iter`, so the Bun gate always re-runs `npm test` or reports inconclusive, and an unknown zero-test detector result makes every exit-0 npm run inconclusive. Fails safe; decide whether Bun should write its own marker.
+78. **Leading-directory pathspec mismatch:** a pre-existing untracked file `a` also matches `a/b` in the literal reset, but `workspace_diff._covered` only treats `a/` entries as covering children, so the commit omits `a/b` while the receipt lists it (the receipt is the honest side).
+79. **A previous session's `static-analysis.pass` survives iteration 0** and reads as a pass of the exogenous static_analysis gate when the new session never runs static analysis (cannot produce VERIFIED alone). Add it to the iteration-0 drop.
+80. **Refused resume on a paused or interrupted state keeps session 1's `start-sha`** while the new branch is minted from the current base, so base commits made between sessions can appear in the receipt diff (extends 72).
 
 ## Later milestones
 
