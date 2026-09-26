@@ -94,7 +94,7 @@ Status values: todo, in progress, shipped (version), parked (reason).
 62. **`enforce_test_coverage` monorepo-custom-rejected path** records `pass: true` / `verified` and touches `unit-tests.pass` when `LOKI_MONOREPO_TEST_CMD` is rejected and the gate is skipped.
 63. **`council_augment_from_managed_memory`** (`completion-council.sh` ~228) runs `cd "${PROJECT_DIR:-$(pwd)}"` then `python3 -m memory.managed_memory.retrieve`; with `PROJECT_DIR` unset it can run the agent repo's own `memory/` package into the council prompt.
 64. **A test script like `exit 0` still reads as a pass on both routes** (the zero-test detector acts only on positive evidence of zero tests); `node --test` behind an npm script is not detected. The Bun freshness marker is agent-writable.
-65. **Previous-session leftovers become "pre-existing" after a crash** (cycle-3 disclosure): files left uncommitted by a crashed or secret-scan-aborted session are recorded as pre-existing on the next run and stay on disk, uncommitted.
+65. **(Fixed for interrupt and kill in cycle 3 via `.loki/state/session-created.z`; see 86 for limits.) Previous-session leftovers become "pre-existing" after a crash** (cycle-3 disclosure): files left uncommitted by a crashed or secret-scan-aborted session are recorded as pre-existing on the next run and stay on disk, uncommitted.
 
 66. **Ignored `dir/` snapshot entries hide agent files under them.** If the agent un-ignores `build/` and creates `build/agent.js`, the literal `build/` reset unstages it and the receipt's coverage check hides it; an agent edit to a user file under that entry is not disclosed (no per-file hash for dir entries). At least report new or changed paths covered only by a dir entry (cycle-3 council).
 67. **Deletions and ignored edits are not disclosed.** An agent `rm` of a pre-existing untracked user file, or an edit to a still-ignored pre-existing file (`.env.local`), leaves the receipt silent; iterate the recorded hash map (missing = deleted, changed = modified), with care for gate-regenerated noise (cycle-3 council).
@@ -114,6 +114,14 @@ Status values: todo, in progress, shipped (version), parked (reason).
 78. **Leading-directory pathspec mismatch:** a pre-existing untracked file `a` also matches `a/b` in the literal reset, but `workspace_diff._covered` only treats `a/` entries as covering children, so the commit omits `a/b` while the receipt lists it (the receipt is the honest side).
 79. **A previous session's `static-analysis.pass` survives iteration 0** and reads as a pass of the exogenous static_analysis gate when the new session never runs static analysis (cannot produce VERIFIED alone). Add it to the iteration-0 drop.
 80. **Refused resume on a paused or interrupted state keeps session 1's `start-sha`** while the new branch is minted from the current base, so base commits made between sessions can appear in the receipt diff (extends 72).
+
+81. **Two more verdict-relevant inline Python sites without D7:** `run.sh` `_declared_test_script` (~11981) and `_ws_script` (~12101) run plain `python3 -c` with the cwd in the agent repo (extends 54).
+82. **`proof-generator._collect_quality_gates` reads `test-results.json` status with no freshness check** against `.test-results.iter` (the iteration-0 drop covers the new-session case; a stale file mid-session is still read).
+83. **An embedded git repo with no commits under an un-ignored directory makes `git add -A` fail as a whole**; `commit_session_changes` then silently commits nothing with no "Left uncommitted" warning (fails safe, predates cycle 3).
+84. **`-E` also drops `PYTHONDONTWRITEBYTECODE`/`PYTHONIOENCODING`/`PYTHONUTF8`** for the guarded helpers; the council-v2 swarm imports may write `__pycache__` into the install dir (cosmetic).
+
+85. **The test gate's pytest writes `__pycache__/*.pyc` into the user's repo**, and the session commit includes them when the repo does not ignore `__pycache__` (seen in a receipt: `__pycache__/helper.cpython-313.pyc`). `P6.no-gate-artifacts-committed` covers only the static-analysis gate; run tests with `PYTHONDONTWRITEBYTECODE=1` or a pycache prefix under `.loki` (cycle-3 interrupt fix).
+86. **Session-created record limits:** the provider turn in flight when the process dies is not recorded (SIGHUP is not trapped, like SIGKILL), so those files are treated as the user's (kept, never committed); a refused resume starts an empty record (warns by name); a path created then deleted by the agent and later re-created by the user is committed as the session's; the snapshot now requires python3 (fails closed without it).
 
 ## Later milestones
 
