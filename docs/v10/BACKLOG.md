@@ -105,6 +105,10 @@ Status values: todo, in progress, shipped (version), parked (reason).
 
 72. **Refused resume keeps the old `base-branch.txt` and says too little.** Now that `--no-overwrite-ignore` makes the mint fallback a normal path, session 2 keeps session 1's recorded base (wrong PR `--base` advice if it started elsewhere), and the warning does not name the ignored file or where session 1's commits live.
 
+73. **Bash records a test run that exits 0 but reports failures as a pass** (a jest printing "Tests: 1 failed, 2 passed" with exit 0 wrote `pass: true`, `verified`). Parse the runner's own summary for failures (cycle-3 council round 2).
+74. **Agent self-commits bypass the snapshot (data risk).** The snapshot guards only Loki's session commit: an agent that rewrites `.gitignore` and runs `git add -A && git commit` itself puts the user's untracked and ignored files on the session branch, and a base checkout removes them from disk. The RARV prompt tells every provider to checkpoint-commit; only `providers/claude.sh` (and the Bun override) forbids `git add -A`. Intersect `git diff --diff-filter=A <base>..HEAD` with the snapshot in `commit_session_changes`, `git rm --cached` hits, warn, and add the hygiene line to codex/cline/opencode/aider prompts. Also: an agent moving a user file to a new path gets the user's bytes committed under an agent-created name.
+75. **Unregistered suites:** `tests/council/test_managed_completion_flag.sh`, `tests/council/test_managed_review*` and `tests/test-voter-agents-json.sh` are never run by `tests/run-all-tests.sh` (named only in comments).
+
 ## Later milestones
 
 M1 one command, M2 Seal and Wall, M3 assign like a teammate, M4 system map, M5 the line, M6 ship and operate, M7 one screen, M8 legacy lane, M9 enterprise readiness, M10 simplify and ship v10.0.0. Items get broken out here when their milestone comes up.

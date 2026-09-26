@@ -369,7 +369,9 @@ export async function loadStateForRunner(ctx: LoopRunnerContext): Promise<void> 
   // this iteration's result (mirrors bash load_state).
   if (result.iterationCount === 0) {
     const quality = join(resolveLokiDir(ctx.lokiDir), "quality");
-    for (const f of [".test-results.iter", "unit-tests.pass"]) {
+    // test-results.json too: with the marker gone the receipt falls back to its
+    // status and would report a previous session's run as this one.
+    for (const f of [".test-results.iter", "unit-tests.pass", "test-results.json"]) {
       try {
         unlinkSync(join(quality, f));
       } catch {

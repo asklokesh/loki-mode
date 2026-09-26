@@ -493,6 +493,7 @@ TS
         d="$ss/$leg/.loki/quality"
         [ -e "$d/.test-results.iter" ] && bad="$bad [${leg%%-*}: a new session at iteration 0 kept the previous session's .test-results.iter (${leg#*-} state)]"
         [ -e "$d/unit-tests.pass" ] && bad="$bad [${leg%%-*}: a new session at iteration 0 kept the previous session's unit-tests.pass (${leg#*-} state)]"
+        [ -e "$d/test-results.json" ] && bad="$bad [${leg%%-*}: a new session at iteration 0 kept the previous session's test-results.json, which the receipt would report as this run (${leg#*-} state)]"
         case " $post " in *" $leg=PASSED "*) bad="$bad [${leg%%-*}: after a ${leg#*-} previous state the Bun gate read the previous session's pass:true as passed at iteration 1]" ;; esac
     done
     return 0
@@ -792,7 +793,7 @@ run_case P2.unknown-gate-fails-closed "an unrecognized gate name or status canno
 run_case P2.model-looks-good-cannot-pass "loki verify: a stub reviewer saying 'looks good' over red tests is not VERIFIED/0 (verify is bash-only: bin/loki execs autonomy/loki on both entry points)" case_model_looks_good
 run_case P2.missing-pass-key-not-pass "evidence gate: test-results with no pass key is inconclusive, not affirmative" case_missing_pass_key
 run_case P2.bun-inconclusive-not-pass "Bun test gate (runTestCoverage): pass:\"inconclusive\" and a missing pass key read as inconclusive, never an affirmative pass (passed && !inconclusive); pass:true does" case_bun_inconclusive
-run_case P2.zero-test-never-affirmative "a zero-test run leaves no unit-tests.pass and no evidence-gate tests.pass:true (bash), and neither a stale test-results.json nor a zero-test npm test reads as passed (Bun); real passes do on both; a new session at iteration 0 drops the previous session's freshness marker and unit-tests.pass (both routes)" case_zero_test_never_affirmative
+run_case P2.zero-test-never-affirmative "a zero-test run leaves no unit-tests.pass and no evidence-gate tests.pass:true (bash), and neither a stale test-results.json nor a zero-test npm test reads as passed (Bun); real passes do on both; a new session at iteration 0 drops the previous session's freshness marker, unit-tests.pass and test-results.json (both routes)" case_zero_test_never_affirmative
 run_case P2.proof-verify-exit-contract "loki proof verify exits 0 clean, 1 tampered, 64 no id, 66 unknown id (both routes)" case_proof_verify_contract
 run_case P2.proof-chain-exit-contract "loki proof chain exits 0/1/2/3/64/66, -h/--help is 64 not 0, and a hostile PYTHONPATH cannot shadow a stage (both entry points)" case_proof_chain_contract
 run_case P2.verify-exit-contract "loki verify maps nothing-to-check to 3, could-not-check to 2, usage to 64 (bash-only command, both entry points)" case_verify_contract

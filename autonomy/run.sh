@@ -19639,7 +19639,11 @@ load_state() {
         if command -v python3 &> /dev/null; then
             # BUG-ST-006: Validate checkpoint integrity before loading state
             local state_valid
-            state_valid=$(LOKI_STATE_FILE="$state_file" python3 -c "
+            # -E and the sys.path filter (D7): the cwd is the target repo, and a
+            # committed json.py must not decide the loaded iteration count
+            # (a fake non-zero count would skip the iteration-0 evidence drop).
+            state_valid=$(LOKI_STATE_FILE="$state_file" python3 -E -c "
+import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, sys
 try:
     with open(os.environ['LOKI_STATE_FILE']) as f:
@@ -19668,16 +19672,17 @@ except (json.JSONDecodeError, KeyError, TypeError, OSError):
                 # Starts at iteration 0: drop the previous session's test
                 # evidence, as the iteration-0 block at the end does.
                 rm -f "${TARGET_DIR:-.}/.loki/quality/.test-results.iter" \
-                      "${TARGET_DIR:-.}/.loki/quality/unit-tests.pass" 2>/dev/null || true
+                      "${TARGET_DIR:-.}/.loki/quality/unit-tests.pass" \
+                      "${TARGET_DIR:-.}/.loki/quality/test-results.json" 2>/dev/null || true
                 return
             fi
 
             # Load retry count, iteration count, and status from previous session
             local prev_status
-            prev_status=$(LOKI_STATE_FILE="$state_file" python3 -c "import json, os; print(json.load(open(os.environ['LOKI_STATE_FILE'])).get('status', 'unknown'))" 2>/dev/null || echo "unknown")
-            RETRY_COUNT=$(LOKI_STATE_FILE="$state_file" python3 -c "import json, os; print(json.load(open(os.environ['LOKI_STATE_FILE'])).get('retryCount', 0))" 2>/dev/null || echo "0")
+            prev_status=$(LOKI_STATE_FILE="$state_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json, os; print(json.load(open(os.environ['LOKI_STATE_FILE'])).get('status', 'unknown'))" 2>/dev/null || echo "unknown")
+            RETRY_COUNT=$(LOKI_STATE_FILE="$state_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json, os; print(json.load(open(os.environ['LOKI_STATE_FILE'])).get('retryCount', 0))" 2>/dev/null || echo "0")
             # BUG-RUN-003: Restore ITERATION_COUNT from persisted state
-            ITERATION_COUNT=$(LOKI_STATE_FILE="$state_file" python3 -c "import json, os; print(json.load(open(os.environ['LOKI_STATE_FILE'])).get('iterationCount', 0))" 2>/dev/null || echo "0")
+            ITERATION_COUNT=$(LOKI_STATE_FILE="$state_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json, os; print(json.load(open(os.environ['LOKI_STATE_FILE'])).get('iterationCount', 0))" 2>/dev/null || echo "0")
 
             # Reset retry count + iteration count if previous session ended in a
             # terminal state. A fresh `loki start` after a terminal run is a NEW
@@ -19746,7 +19751,9 @@ except (json.JSONDecodeError, KeyError, TypeError, OSError):
         # Same path the writer (enforce_test_coverage) and the freshness
         # readers use.
         local _q="${TARGET_DIR:-.}/.loki/quality"
-        rm -f "$_q/.test-results.iter" "$_q/unit-tests.pass" 2>/dev/null || true
+        # test-results.json too: with the marker gone the receipt's quality
+        # gates fall back to its status, reporting a previous session's run.
+        rm -f "$_q/.test-results.iter" "$_q/unit-tests.pass" "$_q/test-results.json" 2>/dev/null || true
     fi
 }
 

@@ -92,14 +92,17 @@ describe("loadStateForRunner: a previous session's test evidence", () => {
       expect(ctx.iterationCount).toBe(0);
       expect(existsSync(join(quality, ".test-results.iter"))).toBe(false);
       expect(existsSync(join(quality, "unit-tests.pass"))).toBe(false);
+      // The previous session's results file goes too: with the marker gone the
+      // receipt's quality gates would otherwise fall back to its status.
+      expect(existsSync(join(quality, "test-results.json"))).toBe(false);
 
       ctx.iterationCount += 1; // the loop increments before the gates run
       const r = await runTestCoverage(ctx);
       expect(r.passed === true && r.inconclusive !== true).toBe(false);
       expect(r.inconclusive).toBe(true);
-      expect(r.detail ?? "").toContain("stale test-results.json");
 
       // Positive control: this session's own fresh artifact still passes.
+      writeFileSync(join(quality, "test-results.json"), '{"runner":"jest","pass":true,"passed_count":3,"failed_count":0}');
       writeFileSync(join(quality, ".test-results.iter"), "1\n");
       expect(await readsPassed(ctx)).toBe(true);
     });
