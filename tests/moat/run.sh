@@ -15,15 +15,19 @@
 # sent to stderr) fails as UNEMITTED, and a new case must be registered.
 # tests/moat/pending.txt lists the cases allowed to FAIL today.
 #
-# THE RATCHETS, both against the newest release tag reachable from HEAD that
-# does not point at HEAD itself: pending.txt may only shrink and cases.txt may
-# only grow, so nothing can be parked as pending, and no case can be deleted,
-# to buy a green run. Baselines are always read from tests/moat/pending.txt and
-# tests/moat/cases.txt at the tag, so moving this directory cannot reset them.
+# THE RATCHETS, against EVERY release tag (vX.Y.Z, nothing else) reachable
+# from HEAD that does not point at HEAD itself: a pending ID must be pending at
+# every such tag that has a pending.txt, and every ID registered at any such
+# tag must still be registered, so nothing can be parked as pending, and no
+# case can be deleted, to buy a green run, not even through a merged side
+# branch's older release tag. Baselines are always read from
+# tests/moat/pending.txt and tests/moat/cases.txt at the tags, so moving this
+# directory cannot reset them.
 #
 # Exit: 0 no rule failed, 1 a rule failed, 2 could not check (no release tag
-# reachable). A definite failure (1) wins over could-not-check (2). Exit 0 is
-# not "the moat is proven": only 9 of 9 properties proven is.
+# reachable, or a baseline unreadable). A definite failure (1) wins over
+# could-not-check (2). Exit 0 is not "the moat is proven": only 9 of 9
+# properties proven is.
 # Self-test: tests/test-moat-runner.sh.
 #
 # Written for bash 3.2 (macOS /bin/bash): no associative arrays, no mapfile,
@@ -240,13 +244,17 @@ while read -r id; do
 done < <(comm -13 "$W/registry.ids" "$W/all.ids")
 
 # --- 5. the ratchets: pending may only shrink, the registry may only grow --------
-# The baseline tag excludes tags that point at HEAD: a tagged release commit is
-# checked against the release before it, never against its own lists (which
-# would always pass). Excluding HEAD's tags, rather than describing HEAD^, keeps
-# the same ancestor walk (every parent of a merge), and a lone tagged root
-# commit lands in could-not-check with no special case.
+# The baselines are EVERY release tag reachable from HEAD, not the nearest one:
+# git describe picks the tag nearest by commit count, so a side branch's older
+# release tag merged into main (a hotfix cut before the moat existed, or one
+# cut before a case was promoted) became the baseline and reset the ratchet.
+# Only exact vX.Y.Z tags count: a v1.1.1-scratch tag would grandfather in
+# whatever it parked. Tags that point at HEAD are excluded: a tagged release
+# commit is checked against the releases before it, never against its own
+# lists (which would always pass), and a lone tagged root commit lands in
+# could-not-check with no special case.
 # ponytail: a dirty tree on a tagged HEAD is also checked against the previous
-# release, so an uncommitted re-park there is caught once it is committed.
+# releases, so an uncommitted re-park there is caught once it is committed.
 # git runs against the repo holding THIS file, so a copy of run.sh in another
 # repo (the self-test) ratchets against that repo's tags.
 COULD_NOT_CHECK=0
@@ -255,69 +263,113 @@ could_not_check() {
   echo "could not check: $1"
   sed 's/^/[git] /' "$W/git.err" >&2
 }
+RELEASE_RE='^v[0-9]+[.][0-9]+[.][0-9]+$'
+BOOTSTRAP=""
 
-# baseline_ids NAME: the IDs of tests/moat/NAME at $tag, into $W/NAME.base.
-# Returns 0 read, 1 bootstrap (absent at the tag), 2 could not check.
-baseline_ids() {
-  local at
-  # ls-tree, not cat-file -e: an empty listing means the file is absent at the
-  # tag (bootstrap), while a failed command means the tree could not be read,
-  # which must never be mistaken for a bootstrap.
-  if ! at="$(git -C "$top" ls-tree --name-only "$tag" -- "tests/moat/$1" 2> "$W/git.err")"; then
-    could_not_check "cannot read the tree at $tag for tests/moat/$1"
-    return 2
-  fi
-  [ -n "$at" ] || return 1
-  if ! git -C "$top" show "$tag:tests/moat/$1" > "$W/$1.base.txt" 2> "$W/git.err"; then
-    could_not_check "cannot read tests/moat/$1 at $tag"
-    return 2
-  fi
-  list_ids "$W/$1.base.txt" > "$W/$1.base"
-  return 0
+# read_baselines: tests/moat/pending.txt and cases.txt at every tag in
+# $W/cands (newest first), in two git calls. Per-tag git calls took 6.5s over
+# the repo's 842 tags. Writes $W/NAME.tags (the tags carrying NAME, newest
+# first), $W/NAME.pairs ("<tag> <id>" for each ID NAME lists at that tag) and
+# $W/NAME.viol ("<id> <tag>" per ratchet violation, naming the newest tag).
+# Returns 1 when any tree or file could not be read, or a step failed: that
+# must never be taken for an absent file or a check that found nothing (a
+# bootstrap, or an empty violation list, would accept any list).
+read_baselines() {
+  local refs rc_lines rc_empty
+  refs="$(sed 's|^|refs/tags/|' "$W/cands")"
+  # -F -e '' matches every line whatever grep.patternType says; -L lists the
+  # empty (0-byte) files the first call cannot see. The explicit --no-* flags
+  # keep a user's grep config from reshaping the "ref:path:line" output.
+  # shellcheck disable=SC2086  # one ref per word; release tags have no spaces
+  git -C "$top" grep --no-color --no-line-number --no-column -a -F -e '' $refs \
+    -- tests/moat/pending.txt tests/moat/cases.txt > "$W/base.lines" 2> "$W/git.err"
+  rc_lines=$?
+  # shellcheck disable=SC2086
+  git -C "$top" grep -L --no-color -a -F -e '' $refs \
+    -- tests/moat/pending.txt tests/moat/cases.txt > "$W/base.empty" 2>> "$W/git.err"
+  rc_empty=$?
+  # Exit 1 is "no match". An unreadable tree is fatal (128), but an unreadable
+  # blob only prints an error and still exits 0 or 1, so any stderr counts too.
+  [ "$rc_lines" -le 1 ] && [ "$rc_empty" -le 1 ] && [ ! -s "$W/git.err" ] || return 1
+  : > "$W/pending.txt.pairs"
+  : > "$W/cases.txt.pairs"
+  awk -v W="$W" '
+    FILENAME == ARGV[1] { order[++n] = $1; next }
+    {
+      i = index($0, ":"); ref = substr($0, 1, i - 1); rest = substr($0, i + 1)
+      j = index(rest, ":"); if (j == 0) j = length(rest) + 1
+      path = substr(rest, 1, j - 1); line = substr(rest, j + 1)
+      sub(/^refs\/tags\//, "", ref); sub(/^tests\/moat\//, "", path)
+      carry[path, ref] = 1
+      if (FILENAME == ARGV[3] || line ~ /^[ \t]*#/ || split(line, f) == 0) next
+      print ref, f[1] > (W "/" path ".pairs")
+    }
+    END {
+      for (k = 1; k <= n; k++) {
+        if (("pending.txt", order[k]) in carry) print order[k] > (W "/pending.txt.tags")
+        if (("cases.txt", order[k]) in carry) print order[k] > (W "/cases.txt.tags")
+      }
+      printf "" > (W "/pending.txt.tags"); printf "" > (W "/cases.txt.tags")
+    }' "$W/cands" "$W/base.lines" "$W/base.empty" 2>> "$W/git.err" || return 1
+  # pending: each current ID against the newest carrying tag it was not
+  # pending at (the baseline is the intersection of every carrying tag).
+  awk 'FILENAME == ARGV[1] { order[++n] = $1; next }
+    FILENAME == ARGV[2] { was[$1 " " $2] = 1; next }
+    { for (k = 1; k <= n; k++) if (!((order[k] " " $1) in was)) { print $1, order[k]; next } }' \
+    "$W/pending.txt.tags" "$W/pending.txt.pairs" "$W/pending.ids" \
+    > "$W/pending.txt.viol" 2>> "$W/git.err" || return 1
+  # registry: each ID registered at any carrying tag (the union) and missing
+  # now, named with the newest tag that registered it.
+  awk 'FILENAME == ARGV[1] { rank[$1] = FNR; next }
+    FILENAME == ARGV[2] { now[$1] = 1; next }
+    !($2 in now) && (!($2 in at) || rank[$1] < rank[at[$2]]) { at[$2] = $1 }
+    END { for (id in at) print id, at[id] }' \
+    "$W/cases.txt.tags" "$W/registry.ids" "$W/cases.txt.pairs" 2>> "$W/git.err" \
+    | sort > "$W/cases.txt.viol"
 }
 
-tag=""
-BOOTSTRAP=""
+# ratchet_summary NAME: "N release tag(s), newest vX" for the tags carrying NAME.
+ratchet_summary() {
+  echo "$(wc -l < "$W/$1.tags" | tr -d ' ') release tag(s), newest $(head -n 1 "$W/$1.tags")"
+}
+
 if top="$(git -C "$MOAT_DIR" rev-parse --show-toplevel 2> "$W/git.err")" \
   && prefix="$(git -C "$MOAT_DIR" rev-parse --show-prefix 2> "$W/git.err")"; then
-  [ "$prefix" = "tests/moat/" ] || fail 0 "MISPLACED RUNNER: run.sh is at ${prefix}run.sh in its repo; it must live at tests/moat/run.sh (the ratchets read their baselines from tests/moat/ at the release tag)"
-  if ! head_tags="$(git -C "$top" tag --points-at HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' 2> "$W/git.err")"; then
-    could_not_check "cannot list the tags at HEAD"
+  [ "$prefix" = "tests/moat/" ] || fail 0 "MISPLACED RUNNER: run.sh is at ${prefix}run.sh in its repo; it must live at tests/moat/run.sh (the ratchets read their baselines from tests/moat/ at the release tags)"
+  # --no-contains HEAD: of the tags reachable from HEAD, only those pointing
+  # at HEAD contain it. -v:refname sorts vX.Y.Z numerically, newest first.
+  if ! git -C "$top" tag --no-column --merged HEAD --no-contains HEAD --sort=-v:refname \
+    > "$W/tags.all" 2> "$W/git.err"; then
+    could_not_check "cannot list the release tags reachable from HEAD"
+  elif ! grep -E "$RELEASE_RE" "$W/tags.all" > "$W/cands"; then
+    head_list="$(git -C "$top" tag --no-column --points-at HEAD 2> /dev/null | grep -E "$RELEASE_RE" | tr '\n' ' ')"
+    head_list="${head_list% }"
+    could_not_check "no release tag reachable; fetch tags${head_list:+ (tags at HEAD are not a baseline: $head_list)}"
+  elif ! read_baselines; then
+    could_not_check "cannot read tests/moat at the $(wc -l < "$W/cands" | tr -d ' ') reachable release tag(s) (newest $(head -n 1 "$W/cands"))"
   else
-    excl=()
-    for t in $head_tags; do excl+=(--exclude "$t"); done
-    head_list="$(printf '%s' "$head_tags" | tr '\n' ' ')"
-    # ${excl[@]+...}: an empty array is "unbound" under set -u before bash 4.4.
-    if ! tag="$(git -C "$top" describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' ${excl[@]+"${excl[@]}"} HEAD 2> "$W/git.err")"; then
-      tag=""
-      could_not_check "no release tag reachable; fetch tags${head_list:+ (tags at HEAD are not a baseline: $head_list)}"
+    ncands="$(wc -l < "$W/cands" | tr -d ' ') release tag(s), newest $(head -n 1 "$W/cands")"
+    if [ -s "$W/pending.txt.tags" ]; then
+      while read -r id at; do
+        fail "$(prop_of "$id")" "pending list may only shrink: $id was not pending at $at"
+      done < "$W/pending.txt.viol"
+      echo "ratchet: checked against $(ratchet_summary pending.txt) ($(wc -l < "$W/pending.ids" | tr -d ' ') pending now)"
+    else
+      echo "ratchet: bootstrap, no baseline at any of $ncands"
+      BOOTSTRAP=1
+    fi
+    if [ -s "$W/cases.txt.tags" ]; then
+      while read -r id at; do
+        fail "$(prop_of "$id")" "case registry may only grow: $id was registered at $at (case IDs are permanent)"
+      done < "$W/cases.txt.viol"
+      echo "registry: checked against $(ratchet_summary cases.txt) ($(wc -l < "$W/registry.ids" | tr -d ' ') registered now, $(awk '{print $2}' "$W/cases.txt.pairs" | sort -u | wc -l | tr -d ' ') in their union)"
+    else
+      echo "registry: bootstrap, no baseline at any of $ncands"
+      BOOTSTRAP=1
     fi
   fi
 else
   could_not_check "no release tag reachable; fetch tags"
-fi
-
-if [ -n "$tag" ]; then
-  baseline_ids pending.txt
-  case $? in
-    0)
-      while read -r id; do
-        fail "$(prop_of "$id")" "pending list may only shrink: $id was not pending at $tag"
-      done < <(comm -23 "$W/pending.ids" "$W/pending.txt.base")
-      echo "ratchet: checked against $tag ($(wc -l < "$W/pending.ids" | tr -d ' ') pending now, $(wc -l < "$W/pending.txt.base" | tr -d ' ') at $tag)"
-      ;;
-    1) echo "ratchet: bootstrap, no baseline at $tag"; BOOTSTRAP=1 ;;
-  esac
-  baseline_ids cases.txt
-  case $? in
-    0)
-      while read -r id; do
-        fail "$(prop_of "$id")" "case registry may only grow: $id was registered at $tag (case IDs are permanent)"
-      done < <(comm -13 "$W/registry.ids" "$W/cases.txt.base")
-      echo "registry: checked against $tag ($(wc -l < "$W/registry.ids" | tr -d ' ') registered now, $(wc -l < "$W/cases.txt.base" | tr -d ' ') at $tag)"
-      ;;
-    1) echo "registry: bootstrap, no baseline at $tag"; BOOTSTRAP=1 ;;
-  esac
 fi
 
 # --- 6. summary -----------------------------------------------------------------

@@ -44,8 +44,16 @@ echo "=== moat runner self-test ==="
 command -v git > /dev/null 2>&1 || { bad "RUNNER.prerequisites prerequisite missing: git"; exit 1; }
 [ -f "$RUNNER" ] || { bad "RUNNER.prerequisites tests/moat/run.sh is missing"; exit 1; }
 
-g() { git -c user.name=moat -c user.email=moat@example.invalid -c commit.gpgsign=false \
-  -c tag.gpgSign=false -c init.defaultBranch=main -c core.hooksPath=/dev/null "$@"; }
+# Every git call is one second later than the last, like real history: with
+# same-second commits, date-ordered walks (git describe) pick arbitrarily, and
+# the merged-side-branch scenarios below would not model what they claim.
+TICK=1700000000
+g() {
+  TICK=$((TICK + 1))
+  GIT_AUTHOR_DATE="$TICK +0000" GIT_COMMITTER_DATE="$TICK +0000" \
+    git -c user.name=moat -c user.email=moat@example.invalid -c commit.gpgsign=false \
+    -c tag.gpgSign=false -c init.defaultBranch=main -c core.hooksPath=/dev/null "$@"
+}
 
 # prop DIR N LINE...: write tests/moat/p<N>-fake.sh printing each LINE, exit 0.
 prop() {
@@ -72,13 +80,12 @@ cases() {
   { echo '# fixture case registry'; for line in "$@"; do echo "$line"; done; } > "$d/tests/moat/cases.txt"
 }
 
-# seed DIR: the known-good tree, committed as the ROOT commit and tagged v1.0.0.
+# known_good DIR: write the known-good tests/moat tree (no git).
 #   P1, P3..P8: one PASS case each.
 #   P2: P2.works PASS, P2.later FAIL (pending).  P9: P9.works PASS, P9.later FAIL (pending).
-seed() {
+known_good() {
   local d="$1" n
   mkdir -p "$d/tests/moat"
-  g -C "$d" init -q
   cp "$RUNNER" "$d/tests/moat/run.sh"
   for n in 1 3 4 5 6 7 8; do prop "$d" "$n" "CASE P$n.works PASS property $n holds"; done
   prop "$d" 2 "CASE P2.works PASS holds" "CASE P2.later FAIL not built yet"
@@ -86,9 +93,16 @@ seed() {
   pending "$d" "P2.later M2 not built yet" "P9.later M9 not built yet"
   # shellcheck disable=SC2086
   cases "$d" $REGISTERED
-  g -C "$d" add tests
-  g -C "$d" commit -qm baseline
-  g -C "$d" tag v1.0.0
+}
+
+# seed DIR: the known-good tree, committed as the ROOT commit and tagged v1.0.0.
+seed() {
+  mkdir -p "$1"
+  g -C "$1" init -q
+  known_good "$1"
+  g -C "$1" add tests
+  g -C "$1" commit -qm baseline
+  g -C "$1" tag v1.0.0
 }
 
 # baseline DIR: seed plus one commit after the release, so HEAD is not the
@@ -138,8 +152,8 @@ expect RUNNER.clean-tree-passes 0 \
   "P8 load-bearing proof: PROVEN" \
   "P9 Rule of Two: NOT PROVEN (1 pending: P9.later)" \
   "moat: 7 of 9 properties proven" \
-  "ratchet: checked against v1.0.0" \
-  "registry: checked against v1.0.0 (11 registered now, 11 at v1.0.0)" \
+  "ratchet: checked against 1 release tag(s), newest v1.0.0 (2 pending now)" \
+  "registry: checked against 1 release tag(s), newest v1.0.0 (11 registered now, 11 in their union)" \
   "moat suite: no rule failed (7 of 9 proven; the moat is NOT proven)" \
   "!moat suite: OK" "!all 9 properties proven"
 
@@ -166,7 +180,7 @@ prop "$D" 3 "CASE P3.works PASS holds" "CASE P3.extra PASS a new case"
 # shellcheck disable=SC2086
 cases "$D" $REGISTERED P3.extra
 run_in "$D"
-expect RUNNER.registry-growth-allowed 0 "registry: checked against v1.0.0 (12 registered now, 11 at v1.0.0)"
+expect RUNNER.registry-growth-allowed 0 "registry: checked against 1 release tag(s), newest v1.0.0 (12 registered now, 11 in their union)"
 
 # Route selectors from the caller's shell never reach a property script. The
 # fake reports FAIL if it sees any of them; first prove the fake can see them.
@@ -371,7 +385,7 @@ g -C "$D" commit -qm "release 1.1.0"
 g -C "$D" tag v1.1.0
 run_in "$D"
 expect RUNNER.tagged-head-not-own-baseline 1 "pending list may only shrink: P3.new was not pending at v1.0.0" \
-  "!checked against v1.1.0"
+  "ratchet: checked against 1 release tag(s), newest v1.0.0" "!newest v1.1.0"
 
 fresh
 echo notes > "$D/README"
@@ -379,8 +393,123 @@ g -C "$D" add README
 g -C "$D" commit -qm "release 1.1.0"
 g -C "$D" tag v1.1.0
 run_in "$D"
-expect RUNNER.tagged-head-uses-previous-release 0 "ratchet: checked against v1.0.0" \
-  "registry: checked against v1.0.0" "!checked against v1.1.0"
+expect RUNNER.tagged-head-uses-previous-release 0 "ratchet: checked against 1 release tag(s), newest v1.0.0" \
+  "registry: checked against 1 release tag(s), newest v1.0.0" "!newest v1.1.0"
+
+# The baselines are every reachable release tag, not the one nearest by commit
+# count. In the next three scenarios the side branch has more commits than the
+# main line past the fork, so git describe would pick the side branch's older
+# tag; the release tags are annotated, like the real repo's.
+
+# (a) A hotfix cut from a release that predates the moat, merged after the
+# moat's first release, must not turn the ratchet into a bootstrap.
+N=$((N + 1)); D="$T/r$N"
+mkdir -p "$D"
+g -C "$D" init -q
+echo seed > "$D/README"
+g -C "$D" add README
+g -C "$D" commit -qm seed
+g -C "$D" tag -a -m v0.9.0 v0.9.0
+g -C "$D" checkout -qb hotfix
+echo fix1 >> "$D/README"; g -C "$D" commit -qam fix1
+echo fix2 >> "$D/README"; g -C "$D" commit -qam fix2
+g -C "$D" tag -a -m v0.9.1 v0.9.1
+g -C "$D" checkout -q main
+known_good "$D"
+g -C "$D" add tests
+g -C "$D" commit -qm "moat arrives"
+g -C "$D" tag -a -m v1.0.0 v1.0.0
+g -C "$D" merge -q --no-ff --no-edit hotfix
+prop "$D" 3 "CASE P3.works PASS holds" "CASE P3.new FAIL not built yet"
+pending "$D" "P2.later M2 not built yet" "P9.later M9 not built yet" "P3.new M3 parked after the merge"
+# shellcheck disable=SC2086
+cases "$D" $REGISTERED P3.new
+run_in "$D"
+expect RUNNER.merged-premoat-tag-not-bootstrap 1 \
+  "pending list may only shrink: P3.new was not pending at v1.0.0" \
+  "ratchet: checked against 1 release tag(s), newest v1.0.0 (3 pending now)" \
+  "!bootstrap"
+
+# (b) A hotfix cut from v1.0.0, merged after v1.1.0 promoted P9.later, must
+# not let P9.later be parked again: it was not pending at v1.1.0.
+fresh
+g -C "$D" checkout -qb hotfix v1.0.0
+echo fix1 > "$D/README"; g -C "$D" add README; g -C "$D" commit -qm fix1
+echo fix2 >> "$D/README"; g -C "$D" commit -qam fix2
+echo fix3 >> "$D/README"; g -C "$D" commit -qam fix3
+g -C "$D" tag -a -m v1.0.1 v1.0.1
+g -C "$D" checkout -q main
+prop "$D" 9 "CASE P9.works PASS holds" "CASE P9.later PASS built now"
+pending "$D" "P2.later M2 not built yet"
+g -C "$D" add tests
+g -C "$D" commit -qm "promote P9.later"
+g -C "$D" tag -a -m v1.1.0 v1.1.0
+g -C "$D" merge -q --no-ff --no-edit hotfix
+prop "$D" 9 "CASE P9.works PASS holds" "CASE P9.later FAIL broke again"
+pending "$D" "P2.later M2 not built yet" "P9.later M9 parked again"
+run_in "$D"
+expect RUNNER.merged-older-release-cannot-repark 1 \
+  "pending list may only shrink: P9.later was not pending at v1.1.0" \
+  "ratchet: checked against 3 release tag(s), newest v1.1.0 (2 pending now)" \
+  "!newest v1.0.1"
+
+# Pending is checked against the intersection: a park that slipped into one
+# release (v1.1.0) is still not pending at v1.0.0, so it cannot stay parked.
+fresh
+prop "$D" 3 "CASE P3.works PASS holds" "CASE P3.new FAIL not built yet"
+pending "$D" "P2.later M2 not built yet" "P9.later M9 not built yet" "P3.new M3 slipped into v1.1.0"
+# shellcheck disable=SC2086
+cases "$D" $REGISTERED P3.new
+g -C "$D" add tests
+g -C "$D" commit -qm "release 1.1.0"
+g -C "$D" tag -a -m v1.1.0 v1.1.0
+g -C "$D" commit -q --allow-empty -m after-release
+run_in "$D"
+expect RUNNER.pending-intersection-of-releases 1 \
+  "pending list may only shrink: P3.new was not pending at v1.0.0" \
+  "ratchet: checked against 2 release tag(s), newest v1.1.0 (3 pending now)"
+
+# (c) Only an exact vX.Y.Z tag is a release: a v1.1.1-scratch tag on HEAD^ that
+# carried a parked entry must not grandfather it in.
+fresh
+prop "$D" 3 "CASE P3.works PASS holds" "CASE P3.new FAIL not built yet"
+pending "$D" "P2.later M2 not built yet" "P9.later M9 not built yet" "P3.new M3 parked on a scratch tag"
+# shellcheck disable=SC2086
+cases "$D" $REGISTERED P3.new
+g -C "$D" add tests
+g -C "$D" commit -qm "park P3.new"
+g -C "$D" tag -a -m scratch v1.1.1-scratch
+g -C "$D" commit -q --allow-empty -m after-scratch
+run_in "$D"
+expect RUNNER.suffixed-tag-not-baseline 1 \
+  "pending list may only shrink: P3.new was not pending at v1.0.0" \
+  "ratchet: checked against 1 release tag(s), newest v1.0.0" \
+  "!v1.1.1-scratch"
+
+# (d) The registry is checked against the union: an ID registered only at an
+# older merged release tag, then deleted, still fails. Here the main line has
+# more commits past the fork, so git describe would pick v1.1.0, which never
+# registered it.
+fresh
+g -C "$D" checkout -qb hotfix v1.0.0
+prop "$D" 3 "CASE P3.works PASS holds" "CASE P3.hot PASS added in the hotfix"
+# shellcheck disable=SC2086
+cases "$D" $REGISTERED P3.hot
+g -C "$D" add tests
+g -C "$D" commit -qm "hotfix registers P3.hot"
+g -C "$D" tag -a -m v1.0.1 v1.0.1
+g -C "$D" checkout -q main
+echo notes > "$D/README"; g -C "$D" add README; g -C "$D" commit -qm notes
+g -C "$D" tag -a -m v1.1.0 v1.1.0
+g -C "$D" merge -q --no-ff --no-edit hotfix
+prop "$D" 3 "CASE P3.works PASS property 3 holds"
+# shellcheck disable=SC2086
+cases "$D" $REGISTERED
+run_in "$D"
+expect RUNNER.registry-union-of-releases 1 \
+  "case registry may only grow: P3.hot was registered at v1.0.1 (case IDs are permanent)" \
+  "registry: checked against 3 release tag(s), newest v1.1.0 (11 registered now, 12 in their union)" \
+  "!UNEMITTED"
 
 # A git hook (local-ci runs from pre-push) exports GIT_DIR. Inherited, it moved
 # git's idea of the work tree top: an absolute one reset the ratchets to a
@@ -388,12 +517,12 @@ expect RUNNER.tagged-head-uses-previous-release 0 "ratchet: checked against v1.0
 fresh
 (export GIT_DIR="$D/.git"; run_in "$D"; exit "$RC")
 RC=$?
-expect RUNNER.inherited-git-dir-absolute 0 "ratchet: checked against v1.0.0" \
-  "registry: checked against v1.0.0" "!bootstrap" "!MISPLACED"
+expect RUNNER.inherited-git-dir-absolute 0 "ratchet: checked against 1 release tag(s), newest v1.0.0" \
+  "registry: checked against 1 release tag(s), newest v1.0.0" "!bootstrap" "!MISPLACED"
 (cd "$D" && GIT_DIR=.git bash tests/moat/run.sh) > "$T/out" 2>&1
 RC=$?
-expect RUNNER.inherited-git-dir-relative 0 "ratchet: checked against v1.0.0" \
-  "registry: checked against v1.0.0" "!could not check"
+expect RUNNER.inherited-git-dir-relative 0 "ratchet: checked against 1 release tag(s), newest v1.0.0" \
+  "registry: checked against 1 release tag(s), newest v1.0.0" "!could not check"
 
 # A tagged root commit has no earlier release: could-not-check, never a pass.
 N=$((N + 1)); D="$T/r$N"
@@ -423,7 +552,7 @@ run_in "$D" tests/gate/run.sh
 expect RUNNER.moved-directory 1 \
   "MISPLACED RUNNER: run.sh is at tests/gate/run.sh in its repo; it must live at tests/moat/run.sh" \
   "pending list may only shrink: P3.new was not pending at v1.0.0" \
-  "registry: checked against v1.0.0" "!bootstrap"
+  "registry: checked against 1 release tag(s), newest v1.0.0" "!bootstrap"
 
 # Bootstrap: the tag predates pending.txt and cases.txt, so the current lists
 # are accepted.
@@ -442,12 +571,12 @@ prop "$D" 9 "CASE P9.works PASS holds" "CASE P9.later FAIL not built yet"
 pending "$D" "P9.later M9 not built yet"
 cases "$D" P1.works P2.works P3.works P4.works P5.works P6.works P7.works P8.works P9.works P9.later
 run_in "$D"
-expect RUNNER.bootstrap-allowed 0 "ratchet: bootstrap, no baseline at v1.0.0" \
-  "registry: bootstrap, no baseline at v1.0.0" \
+expect RUNNER.bootstrap-allowed 0 "ratchet: bootstrap, no baseline at any of 1 release tag(s), newest v1.0.0" \
+  "registry: bootstrap, no baseline at any of 1 release tag(s), newest v1.0.0" \
   "moat suite: no rule failed (8 of 9 proven; the moat is NOT proven) [ratchet in bootstrap: no baseline yet]"
 
-# A tag that does not look like a release (--match 'v[0-9]*.[0-9]*.[0-9]*') is
-# not a baseline.
+# A tag that is not an exact release (^v[0-9]+.[0-9]+.[0-9]+$) is not a
+# baseline.
 fresh
 g -C "$D" tag -d v1.0.0 > /dev/null
 g -C "$D" tag nightly
@@ -462,7 +591,7 @@ g -C "$D" tag -d v1.0.0 > /dev/null
 g -C "$D" tag v1-scratch HEAD~1
 run_in "$D"
 expect RUNNER.adhoc-v-tag-not-baseline 2 "could not check: no release tag reachable; fetch tags" \
-  "!checked against v1-scratch" "!tags at HEAD"
+  "!newest v1-scratch" "!tags at HEAD"
 
 # Not a git checkout at all (an unpacked tarball): still could-not-check.
 fresh
@@ -476,8 +605,38 @@ fresh
 sub="$(g -C "$D" rev-parse 'v1.0.0:tests/moat')"
 rm -f "$D/.git/objects/${sub:0:2}/${sub:2}"
 run_in "$D"
-expect RUNNER.unreadable-baseline-exit-2 2 "could not check: cannot read the tree at v1.0.0" \
+expect RUNNER.unreadable-baseline-exit-2 2 "could not check: cannot read tests/moat at the 1 reachable release tag(s) (newest v1.0.0)" \
   "moat suite: COULD NOT CHECK" "!bootstrap"
+
+# The tree is readable but the pending.txt blob is not. git grep only prints an
+# error for that and does not fail, so the runner must still refuse.
+fresh
+blob="$(g -C "$D" rev-parse 'v1.0.0:tests/moat/pending.txt')"
+rm -f "$D/.git/objects/${blob:0:2}/${blob:2}"
+run_in "$D"
+expect RUNNER.unreadable-baseline-blob-exit-2 2 "could not check: cannot read tests/moat at the 1 reachable release tag(s)" \
+  "moat suite: COULD NOT CHECK" "!bootstrap"
+
+# An unreadable tree at an older release that predates the moat is still
+# could-not-check: nothing shows that tag lacks the files, so it is not a pass.
+N=$((N + 1)); D="$T/r$N"
+mkdir -p "$D/tests/other"
+g -C "$D" init -q
+echo other > "$D/tests/other/f"
+g -C "$D" add tests
+g -C "$D" commit -qm "before the moat"
+g -C "$D" tag -a -m v0.9.0 v0.9.0
+known_good "$D"
+g -C "$D" add tests
+g -C "$D" commit -qm "moat arrives"
+g -C "$D" tag -a -m v1.0.0 v1.0.0
+g -C "$D" commit -q --allow-empty -m after-release
+sub="$(g -C "$D" rev-parse 'v0.9.0:tests')"
+rm -f "$D/.git/objects/${sub:0:2}/${sub:2}"
+run_in "$D"
+expect RUNNER.unreadable-premoat-tree-exit-2 2 \
+  "could not check: cannot read tests/moat at the 2 reachable release tag(s) (newest v1.0.0)" \
+  "moat suite: COULD NOT CHECK" "!bootstrap" "!checked against"
 
 # A definite failure outranks could-not-check.
 fresh

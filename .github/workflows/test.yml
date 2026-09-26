@@ -152,8 +152,8 @@ jobs:
   # The moat suite: nine product properties, each PROVEN or honestly NOT
   # PROVEN. A release that fails it does not ship (release.yml required-ci
   # waits for this whole workflow). Its own job, not a shard: the pending list
-  # and the case registry are ratcheted against the last release tag, and the
-  # shards' depth-1 checkout
+  # and the case registry are ratcheted against the reachable release tags, and
+  # the shards' depth-1 checkout
   # has no tags, so the runner would exit 2 ("could not check") there by design.
   # The toolchain mirrors shell-tests because the property scripts drive loki
   # on both routes (Bun and bash) and the signing checks import cryptography.
@@ -185,10 +185,12 @@ jobs:
       - name: Install Node.js dependencies
         run: npm install --no-package-lock
 
+      # Pinned to what release.yml's gate uses, so a Bun release cannot flip
+      # this job alone.
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.13
 
       - name: Install loki-ts dependencies
         working-directory: loki-ts
