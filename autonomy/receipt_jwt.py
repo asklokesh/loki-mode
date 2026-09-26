@@ -277,6 +277,11 @@ def verify_attestation(token: str, jwks: dict):
     """
     if not _CRYPTO_AVAILABLE:
         return False, "cryptography is not installed"
+    # The token comes from the receipt, which its builder controls. Anything
+    # that is not the expected shape is REFUSED here rather than raising, so a
+    # caller can never mistake a crash for "could not check".
+    if not isinstance(token, str):
+        return False, "token is not a string"
     parts = token.split(".")
     if len(parts) != 3:
         return False, "malformed token"
@@ -286,6 +291,8 @@ def verify_attestation(token: str, jwks: dict):
         sig = _b64url_decode(parts[2])
     except (ValueError, json.JSONDecodeError):
         return False, "malformed token"
+    if not isinstance(header, dict) or not isinstance(payload, dict):
+        return False, "malformed token: header and payload must be JSON objects"
     if header.get("alg") != "EdDSA":
         # Refusing an unexpected alg is what blocks the classic "alg: none" and
         # algorithm-substitution attacks.

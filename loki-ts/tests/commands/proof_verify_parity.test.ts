@@ -422,6 +422,63 @@ describe("loki proof verify: empty or missing --jwks value exits 64 on both rout
   });
 });
 
+// --- A mistyped flag or a second id is a usage error (64) --------------------
+// "--jwk f" and "-jwks f" were kept as extra positionals and ignored, so an
+// unsigned receipt exited 0 on both routes as if its signature were checked.
+// A second id was silently dropped by verifyProof (Bun) and by bash.
+describe("loki proof verify: unknown option or extra id exits 64 on both routes", () => {
+  it("--jwk, -jwks and a second id each exit 64 and name the problem", async () => {
+    await cleanProof("run-flag-typo");
+    const ks = join(lokiScratch, "no-such-jwks.json");
+    // Control: the unsigned receipt verifies clean with no flags, so 64 below
+    // comes from the parser, not the receipt.
+    expect(await runProof(["verify", "run-flag-typo"])).toBe(0);
+    const cases: Array<[string[], string]> = [
+      [["run-flag-typo", "--jwk", ks], "'--jwk'"],
+      [["run-flag-typo", "-jwks", ks], "'-jwks'"],
+      [["--jwk", ks, "run-flag-typo"], "'--jwk'"],
+      [["run-flag-typo", "run-flag-typo"], "one proof id"],
+    ];
+    for (const [args, named] of cases) {
+      for (const cli of [bunCli, bashCli]) {
+        const r = await cli(["proof", "verify", ...args]);
+        expect(r.exitCode).toBe(64);
+        expect(r.stderr).toContain(named);
+      }
+    }
+    // In-process too: runProof must not hand only rest[0] to verifyProof.
+    expect(await runProof(["verify", "run-flag-typo", "run-flag-typo"])).toBe(64);
+  });
+});
+
+// --- A malformed attestation is FAILED, never NOT CHECKED --------------------
+// The receipt's builder controls verification.attestation. A token whose header
+// decodes to [1], or a non-string attestation, crashed the check and read as
+// NOT CHECKED (2), turning FAILED into "could not check". The Bun entry point
+// delegates --jwks to the bash verifier, so both entry points are measured.
+describe("loki proof verify: malformed attestation is refused on both entry points", () => {
+  it.skipIf(!HAS_CRYPTO)("header [1] and a dict attestation exit 1 with attestation: FAILED", async () => {
+    const pj = await cleanProof("run-att-bad");
+    const { good } = await signProof(pj);
+    const b = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const forged: unknown[] = [`${b([1])}.${b({ receipt_sha256: "x" })}.${b("sig")}`, { alg: "EdDSA" }];
+    for (const att of forged) {
+      const p = JSON.parse(await Bun.file(pj).text()) as { verification: Record<string, unknown> };
+      p.verification["attestation"] = att;
+      writeFileSync(pj, JSON.stringify(p, null, 2));
+      // Control: the integrity hash excludes verification.*, so the base
+      // verifier still accepts the receipt; only the attestation rule decides.
+      expect(await runProof(["verify", "run-att-bad"])).toBe(0);
+      for (const cli of [bunCli, bashCli]) {
+        const r = await cli(["proof", "verify", "run-att-bad", "--jwks", good]);
+        expect(r.exitCode).toBe(1);
+        expect(r.stderr).toContain("attestation: FAILED");
+        expect(r.stderr).not.toContain("NOT CHECKED");
+      }
+    }
+  });
+});
+
 describe("proofFallthroughToBash: no exit code from bash is never a tamper verdict", () => {
   it("verify maps to 2 (could not check); other subcommands keep 1", () => {
     expect(noBashResultCode("verify")).toBe(2);
@@ -437,5 +494,22 @@ describe("proofFallthroughToBash: no exit code from bash is never a tamper verdi
     });
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toContain("NOT CHECKED");
+  });
+
+  it("a verifier killed by a signal exits 2 NOT CHECKED (was: raw 143)", async () => {
+    // The 30s timeout in verifyProof ends the verifier with SIGTERM, which
+    // surfaced as 143. A python3 that SIGTERMs itself reaches the same branch
+    // without waiting 30s.
+    await cleanProof("run-killed");
+    const shim = join(lokiScratch, "shim");
+    mkdirSync(shim, { recursive: true });
+    writeFileSync(join(shim, "python3"), "#!/bin/sh\nkill -TERM $$\n", { mode: 0o755 });
+    const r = await run([process.execPath, BUN_CLI, "proof", "verify", "run-killed"], {
+      env: { PATH: `${shim}:${dirname(process.execPath)}:/usr/bin:/bin`, LOKI_DIR: lokiScratch, NO_COLOR: "1" },
+      timeoutMs: 30000,
+    });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("NOT CHECKED");
+    expect(r.stdout).toBe("");
   });
 });

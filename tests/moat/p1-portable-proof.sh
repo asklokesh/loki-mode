@@ -266,9 +266,14 @@ else
 fi
 
 # --- P1.offline-verify-bash / P1.offline-verify-bun ---------------------------------
+# There is ONE verifier. The "bun" leg runs the default bin/loki entry point,
+# which hands any flagged verify (every --jwks call here) to the bash verifier;
+# it proves the delegation keeps the verdict, not that a second verifier agrees.
+ROUTES="bash, and the bun entry point delegating to the bash verifier"
 for route in bash bun; do
     id="P1.offline-verify-$route"
     desc="signed proof verifies with only jwks.json, exit 0 + attestation: VERIFIED, egress: $EGRESS_MECH"
+    [ "$route" = bun ] && desc="$desc (bun entry point delegates --jwks to the bash verifier)"
     if ! route_ok "$route"; then
         report "$id" FAIL "$desc - prerequisite missing: bun"
     elif [ "$EGRESS_OK" -ne 1 ]; then
@@ -295,6 +300,22 @@ refuse() {
         why="$why $route/$tag: printed attestation: VERIFIED;"
     fi
 }
+# refuse_exact <rc> <stderr-text|""> <route> <tag> <repo> <proof-id> [args...]: the EXACT
+# exit code, so a FAILED/ABSENT (1) softened into NOT CHECKED (2), or a crash,
+# no longer passes as "non-zero"; the verdict text when given; and never
+# "attestation: VERIFIED".
+refuse_exact() {
+    local want="$1" text="$2"
+    shift 2
+    local route="$1" tag="$2"
+    verify "$@"
+    if [ "$RC" -ne "$want" ]; then
+        why="$why $route/$tag: exit $RC, expected $want;"
+    elif [ -n "$text" ] && ! grep -qF -- "$text" "$W/out/$tag.err"; then
+        why="$why $route/$tag: stderr lacks '$text';"
+    fi
+    if verified "$tag"; then why="$why $route/$tag: printed attestation: VERIFIED;"; fi
+}
 precheck() {
     if ! route_ok "$1"; then why="$why $1: prerequisite missing: bun;"; return 1; fi
     if ! good "$1"; then why="$why $1: positive control failed (genuine proof did not verify);"; return 1; fi
@@ -315,7 +336,7 @@ for route in bash bun; do
     verify "$route" "drift-$route" "$W/drift" p1 --jwks "$W/keys/jwks.json"
     [ "$RC" -eq 1 ] || why="$why $route: exit $RC, expected 1 (tree drift);"
 done
-finish P1.different-tree-fails "a tracked file edited after sealing makes verify exit 1 (bash + bun)"
+finish P1.different-tree-fails "a tracked file edited after sealing makes verify exit 1 ($ROUTES)"
 
 # --- P1.modified-field-fails ----------------------------------------------------------
 # Two forgeries of facts.git.head_sha: one leaves verification.hash stale (the
@@ -348,15 +369,15 @@ else
             || why="$why $route/rehash: signature did not report attestation: FAILED;"
     done
 fi
-finish P1.modified-field-fails "facts.git.head_sha forged (stale hash, and recomputed hash) makes verify exit non-zero (bash + bun)"
+finish P1.modified-field-fails "facts.git.head_sha forged (stale hash, and recomputed hash) makes verify exit non-zero ($ROUTES)"
 
 # --- P1.wrong-key-fails -------------------------------------------------------------
 for route in bash bun; do
     precheck "$route" || continue
-    refuse "$route" "kidswap-$route" "$R" p1 --jwks "$W/keys/kidswap-jwks.json"
-    refuse "$route" "attacker-$route" "$R" p1 --jwks "$W/keys/attacker-jwks.json"
+    refuse_exact 1 "attestation: FAILED" "$route" "kidswap-$route" "$R" p1 --jwks "$W/keys/kidswap-jwks.json"
+    refuse_exact 1 "attestation: FAILED" "$route" "attacker-$route" "$R" p1 --jwks "$W/keys/attacker-jwks.json"
 done
-finish P1.wrong-key-fails "victim kid over different key bytes, and an attacker key set, both exit non-zero without VERIFIED (bash + bun)"
+finish P1.wrong-key-fails "victim kid over different key bytes, and an attacker key set, both exit 1 with attestation: FAILED, never VERIFIED ($ROUTES)"
 
 # --- P1.stripped-signature-fails --------------------------------------------------------
 _strip="$(python3 - "$PJ" "$R/.loki/proofs/p1strip" <<'PY' 2>&1
@@ -376,30 +397,34 @@ else
         # proof alone verifies clean; only the --jwks rule can refuse it.
         verify "$route" "strip-nojwks-$route" "$R" p1strip
         [ "$RC" -eq 0 ] || why="$why $route: control (no --jwks) exited $RC, expected 0;"
-        refuse "$route" "strip-$route" "$R" p1strip --jwks "$W/keys/jwks.json"
+        refuse_exact 1 "attestation: ABSENT" "$route" "strip-$route" "$R" p1strip --jwks "$W/keys/jwks.json"
     done
 fi
-finish P1.stripped-signature-fails "verification.attestation deleted, verify --jwks exits non-zero (bash + bun)"
+finish P1.stripped-signature-fails "verification.attestation deleted, verify --jwks exits 1 with attestation: ABSENT ($ROUTES)"
 
 # --- P1.empty-jwks-value-fails -------------------------------------------------------
 # An empty --jwks value ("--jwks ''", "--jwks=") used to skip the attestation
 # check and exit 0 on an unsigned receipt, and a later empty --jwks cancelled an
-# earlier real one. The receipt is the generator's own unkeyed control run.
+# earlier real one. A mistyped flag ("--jwk f", "-jwks f") was ignored the same
+# way. Each is a usage error, exit 64 exactly. The receipt is the generator's
+# own unkeyed control run.
 if ! { mkdir -p "$R/.loki/proofs/p0" && cp "$W/control/p0/proof.json" "$R/.loki/proofs/p0/proof.json"; } 2>/dev/null; then
     why=" fixture: no unsigned control proof (see gen-control.log);"
 else
     for route in bash bun; do
         if ! route_ok "$route"; then why="$why $route: prerequisite missing: bun;"; continue; fi
         # Positive control: the unsigned receipt verifies clean with no --jwks,
-        # so a non-zero exit below comes from the flag rule, not a bad id or tree.
+        # so the 64 below comes from the flag rule, not a bad id or tree.
         verify "$route" "empty-ctl-$route" "$R" p0
         if [ "$RC" -ne 0 ]; then why="$why $route: control (no --jwks) exited $RC, expected 0;"; continue; fi
-        refuse "$route" "empty-sep-$route" "$R" p0 --jwks ''
-        refuse "$route" "empty-eq-$route" "$R" p0 --jwks=
-        refuse "$route" "empty-late-$route" "$R" p0 --jwks "$W/keys/jwks.json" --jwks ''
+        refuse_exact 64 "empty value" "$route" "empty-sep-$route" "$R" p0 --jwks ''
+        refuse_exact 64 "empty value" "$route" "empty-eq-$route" "$R" p0 --jwks=
+        refuse_exact 64 "empty value" "$route" "empty-late-$route" "$R" p0 --jwks "$W/keys/jwks.json" --jwks ''
+        refuse_exact 64 "Unknown option" "$route" "typo-jwk-$route" "$R" p0 --jwk "$W/keys/jwks.json"
+        refuse_exact 64 "Unknown option" "$route" "typo-dash-$route" "$R" p0 -jwks "$W/keys/jwks.json"
     done
 fi
-finish P1.empty-jwks-value-fails "--jwks '', --jwks=, and --jwks <real> --jwks '' on an unsigned receipt each exit non-zero without VERIFIED (bash + bun)"
+finish P1.empty-jwks-value-fails "--jwks '', --jwks=, --jwks <real> --jwks '', and the mistyped --jwk <file> and -jwks <file> on an unsigned receipt each exit 64 (usage), never VERIFIED ($ROUTES)"
 
 # --- P1.verification-metadata-signed ------------------------------------------------
 # verification.* metadata beside the attestation must be covered by the
@@ -433,7 +458,7 @@ for field, val in edits:
 open(listing, "w").write(" ".join(names))
 PY
 )"
-_meta_desc="verification.scope, .algo and .attestation_kid each edited on a signed proof make verify --jwks exit non-zero (bash + bun)"
+_meta_desc="verification.scope, .algo and .attestation_kid each edited on a signed proof make verify --jwks exit non-zero ($ROUTES)"
 if [ -n "$_meta" ] || [ ! -s "$W/out/meta.list" ]; then
     why=" fixture: ${_meta:-no forged proofs written};"
 else

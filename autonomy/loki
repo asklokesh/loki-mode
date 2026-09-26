@@ -833,8 +833,8 @@ try:
 except ImportError:
     sys.exit(1)          # -> "" : cannot check, never a verdict
 proof = json.load(open(sys.argv[1]))
-tok = (proof.get("verification") or {}).get("attestation") or ""
-if not tok:
+tok = (proof.get("verification") or {}).get("attestation")
+if tok is None or tok == "":
     sys.exit(1)
 try:
     with urllib.request.urlopen(
@@ -842,12 +842,28 @@ try:
         jwks = json.loads(r.read())
 except Exception:
     sys.exit(1)          # unreachable JWKS is UNCHECKED, not a failure
+# A key set that is not {"keys": [{...}, ...]} is a key-set problem: UNCHECKED,
+# never an accusation against the receipt. Checked BEFORE anything below can
+# print "bad", so a bad key set can never read as TAMPERED.
+_keys = jwks.get("keys") if isinstance(jwks, dict) else None
+if not isinstance(_keys, list) or not all(isinstance(k, dict) for k in _keys):
+    sys.exit(1)
+# The receipt's builder controls the token. An attestation that is not a JWT
+# string is a malformed receipt: TAMPERED, decided without any crypto.
+if not isinstance(tok, str):
+    print("bad"); sys.exit(0)
 # Without `cryptography`, verify_attestation returns False and this would print
 # "bad" -- a TAMPERED accusation for a check that never ran. A missing verifier
 # dependency is UNCHECKED. Same guard in loki_proof_attestation_check below.
 if not _CRYPTO_AVAILABLE:
     sys.exit(1)
-ok, claims = verify_attestation(tok, jwks)
+# The key set is known-good here, so any crash inside verification comes from
+# the token: refuse it. Letting it propagate read as UNCHECKED, which let a
+# forger turn TAMPERED into "install python3 cryptography".
+try:
+    ok, claims = verify_attestation(tok, jwks)
+except Exception:
+    print("bad"); sys.exit(0)
 if not ok:
     print("bad"); sys.exit(0)
 # The signature verifying is not enough on its own: it must attest to THIS
@@ -896,8 +912,8 @@ try:
     proof = json.load(open(sys.argv[1]))
 except Exception:
     sys.exit(1)
-tok = (proof.get("verification") or {}).get("attestation") or ""
-if not tok:
+tok = (proof.get("verification") or {}).get("attestation")
+if tok is None or tok == "":
     print("none"); sys.exit(0)       # a FACT about the receipt, not an error
 src = sys.argv[2]
 try:
@@ -912,13 +928,30 @@ try:
             jwks = json.loads(r.read())
 except Exception:
     sys.exit(1)                      # "" : unreachable/unreadable, no verdict
+# A key set that is not {"keys": [{...}, ...]} is a key-set problem: NOT
+# CHECKED, never an accusation. Checked BEFORE anything below can print "bad",
+# so a bad key set can never read as FAILED. Same order in
+# loki_remote_attestation_status above -- change both.
+_keys = jwks.get("keys") if isinstance(jwks, dict) else None
+if not isinstance(_keys, list) or not all(isinstance(k, dict) for k in _keys):
+    sys.exit(1)                      # "" : cannot check
+# The receipt's builder controls the token. An attestation that is not a JWT
+# string is a malformed receipt: FAILED, decided without any crypto.
+if not isinstance(tok, str):
+    print("bad"); sys.exit(0)
 # receipt_jwt imports without `cryptography`, and verify_attestation then
 # returns False, which would print "bad": a FAILED verdict for a check that
 # never ran. A missing verifier dependency is NOT CHECKED. Same guard in
 # loki_remote_attestation_status above -- change both.
 if not _CRYPTO_AVAILABLE:
     sys.exit(1)                      # "" : cannot check
-ok, claims = verify_attestation(tok, jwks)
+# The key set is known-good here, so any crash inside verification comes from
+# the token: refuse it. Letting it propagate read as NOT CHECKED (exit 2), which
+# let a forger turn FAILED into "could not check".
+try:
+    ok, claims = verify_attestation(tok, jwks)
+except Exception:
+    print("bad"); sys.exit(0)
 if not ok:
     print("bad"); sys.exit(0)
 # A verifying signature is not enough: it must attest to THESE bytes. Recompute
@@ -36542,8 +36575,12 @@ PYEOF
             # sticky across every occurrence. It used to skip the attestation
             # check and exit 0 on an unsigned receipt, and a later empty
             # --jwks cancelled an earlier real one.
+            # An UNKNOWN option, or a second positional, is a usage error too:
+            # "--jwk keys.json" and "-jwks keys.json" used to be kept as extra
+            # positionals and ignored, so an unsigned receipt exited 0 as if a
+            # signature had been checked.
             local _pv_human=0 _pv_jwks="" _pv_jwks_empty=0 _pv_args=()
-            local _pv_a _pv_want_jwks=0
+            local _pv_a _pv_want_jwks=0 _pv_npos=0
             for _pv_a in "$@"; do
                 if [ "$_pv_want_jwks" -eq 1 ]; then
                     _pv_jwks="$_pv_a"; _pv_want_jwks=0
@@ -36557,9 +36594,19 @@ PYEOF
                         _pv_jwks="${_pv_a#--jwks=}"
                         [ -n "$_pv_jwks" ] || _pv_jwks_empty=1
                         ;;
-                    *) _pv_args+=("$_pv_a") ;;
+                    -*)
+                        echo -e "${RED}Unknown option for 'loki proof verify': '${_pv_a}'.${NC}" >&2
+                        echo "  Valid options: --human, --jwks <url|file>. Nothing was checked." >&2
+                        exit 64  # usage (docs/exit-codes.md)
+                        ;;
+                    *) _pv_args+=("$_pv_a"); _pv_npos=$((_pv_npos + 1)) ;;
                 esac
             done
+            if [ "$_pv_npos" -gt 1 ]; then
+                echo -e "${RED}'loki proof verify' takes one proof id; got ${_pv_npos}: ${_pv_args[*]}${NC}" >&2
+                echo "  Nothing was checked." >&2
+                exit 64  # usage (docs/exit-codes.md)
+            fi
             if [ "$_pv_want_jwks" -eq 1 ]; then
                 echo -e "${RED}--jwks needs a URL or file path.${NC}" >&2
                 exit 64  # usage (docs/exit-codes.md)

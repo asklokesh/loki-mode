@@ -198,13 +198,26 @@ print(json.dumps({
 PY
 }
 
-field() {  # <kind> <python expr over r> -> value
+field() {  # <kind> <query name> -> value
+    # A fixed table of named reads, never a caller-supplied expression: each
+    # entry is exactly what a case used to read, so the assertions are unchanged.
     python3 - "$MOAT_TMP/$1.result" "$2" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
 ab = r.get("ablation") if isinstance(r.get("ablation"), dict) else {}
+QUERIES = {
+    "diff_count": lambda: r.get("diff_count"),
+    "headline": lambda: r.get("headline"),
+    "status": lambda: ab.get("status"),
+    "ablated_exit_code": lambda: ab.get("ablated_exit_code"),
+    "ablated_files": lambda: ",".join(ab.get("ablated_files") or []),
+    "reason": lambda: (ab.get("reason") or "").strip(),
+    }
+if sys.argv[2] not in QUERIES:
+    print("field: unknown query %r" % sys.argv[2], file=sys.stderr)
+    sys.exit(2)
 try:
-    v = eval(sys.argv[2], {"r": r, "ab": ab})
+    v = QUERIES[sys.argv[2]]()
 except Exception:
     v = None
 print("" if v is None else v)
@@ -220,7 +233,7 @@ ready() {  # <kind>
         return 1
     fi
     # Vacuity guard: the proof must describe a real, non-empty change.
-    if [ "$(field "$1" 'r.get("diff_count")')" = "0" ] || [ -z "$(field "$1" 'r.get("diff_count")')" ]; then
+    if [ "$(field "$1" diff_count)" = "0" ] || [ -z "$(field "$1" diff_count)" ]; then
         nok "proof recorded an empty diff; the fixture change did not reach the proof"
         return 1
     fi
@@ -247,33 +260,33 @@ case_runtime() {
     local st
     [ "$(cat "$MOAT_TMP/runtime.tree")" = "restored" ] \
         || nok "working tree NOT restored after ablation (the no-oped code was left behind)"
-    st="$(field runtime 'ab.get("status")')"
+    st="$(field runtime status)"
     if [ -z "$st" ]; then
-        nok "$(ablation_absent_reason runtime) (headline today: $(field runtime 'r.get("headline")'))"
+        nok "$(ablation_absent_reason runtime) (headline today: $(field runtime headline))"
         return
     fi
     [ "$st" = "load_bearing" ] || nok "ablation status=$st, expected load_bearing"
-    case "$(field runtime 'ab.get("ablated_exit_code")')" in
-        ""|0) nok "ablated re-run did not record a failing exit code ($(field runtime 'ab.get("ablated_exit_code")'))" ;;
+    case "$(field runtime ablated_exit_code)" in
+        ""|0) nok "ablated re-run did not record a failing exit code ($(field runtime ablated_exit_code))" ;;
     esac
-    case "$(field runtime '",".join(ab.get("ablated_files") or [])')" in
+    case "$(field runtime ablated_files)" in
         *calc.py*) ;;
         *) nok "ablated_files does not name the changed file calc.py" ;;
     esac
-    [ -n "$(field runtime '(ab.get("reason") or "").strip()')" ] || nok "empty ablation reason"
+    [ -n "$(field runtime reason)" ] || nok "empty ablation reason"
 }
 
 case_dead() {
     ready dead || return
     local st head ctl
-    head="$(field dead 'r.get("headline")')"
+    head="$(field dead headline)"
     # Positive control: the same fixture shape reaches VERIFIED when the change
     # is load-bearing, so a non-VERIFIED here is caused by the ablation.
-    ctl="$(field runtime 'r.get("headline")' 2>/dev/null)"
+    ctl="$(field runtime headline 2>/dev/null)"
     [ "$ctl" = "VERIFIED" ] || nok "positive control: load-bearing fixture headline=$ctl, expected VERIFIED"
     [ "$(cat "$MOAT_TMP/dead.tree")" = "restored" ] \
         || nok "working tree NOT restored after ablation"
-    st="$(field dead 'ab.get("status")')"
+    st="$(field dead status)"
     if [ -z "$st" ]; then
         nok "$(ablation_absent_reason dead); today the proof reads headline=$head for a change no check exercises"
         return
@@ -285,13 +298,13 @@ case_dead() {
 case_docs() {
     ready docs || return
     local st
-    st="$(field docs 'ab.get("status")')"
+    st="$(field docs status)"
     if [ -z "$st" ]; then
         nok "$(ablation_absent_reason docs)"
         return
     fi
     [ "$st" = "not_applicable" ] || nok "ablation status=$st, expected not_applicable for a docs-only change"
-    [ -n "$(field docs '(ab.get("reason") or "").strip()')" ] || nok "not_applicable recorded with an empty reason"
+    [ -n "$(field docs reason)" ] || nok "not_applicable recorded with an empty reason"
 }
 
 moat_run "P8.ablation-runtime-change-load-bearing" \

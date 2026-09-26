@@ -151,6 +151,28 @@ emit("no key configured yields an empty token (receipt stays UNSIGNED)",
      rj.sign_attestation(None, "", job_id="j", run_id="r", receipt_hash="h") == "")
 emit("an empty JWKS verifies nothing", not rj.verify_attestation(tok, {"keys": []})[0])
 emit("a malformed token is refused", not rj.verify_attestation("not.a.jwt", jwks1)[0])
+
+# --- 7. MALFORMED SHAPES ARE REFUSED, NEVER RAISED --------------------------
+# The token comes from the receipt, which its builder controls. A raise here
+# reached callers as "could not check" instead of a refusal, so each shape must
+# come back as (False, reason).
+def refused(tok):
+    try:
+        r = rj.verify_attestation(tok, jwks1)
+    except Exception as e:
+        print("raised %s for %r" % (type(e).__name__, tok))
+        return False
+    return r[0] is False and isinstance(r[1], str)
+b = lambda o: rj._b64url(json.dumps(o).encode())
+emit("a header that decodes to [1] is refused, not raised",
+     refused(b([1]) + "." + b({"receipt_sha256": "x"}) + "." + b("s")))
+# Validly SIGNED over a list payload, so only the shape check can refuse it:
+# accepted, it hands callers a list where they call claims.get(...).
+_si = b({"alg": "EdDSA", "typ": "JWT", "kid": kid1}) + "." + b([1])
+emit("a validly signed payload that decodes to [1] is refused",
+     refused(_si + "." + rj._b64url(k1.sign(_si.encode("ascii")))))
+emit("a dict token is refused, not raised", refused({"alg": "EdDSA"}))
+emit("a numeric token is refused, not raised", refused(7))
 PY
 )"
 
@@ -169,8 +191,8 @@ FAIL="$(printf '%s\n' "$OUT" | grep -c '^NO ')"
 
 # Guard against a vacuous run: a python traceback produces neither OK nor NO,
 # and 0/0 would otherwise read as success.
-if [ "$((PASS + FAIL))" -lt 17 ]; then
-  echo "  FAIL: harness produced $((PASS + FAIL)) assertions, expected 17 -- python likely errored"
+if [ "$((PASS + FAIL))" -lt 21 ]; then
+  echo "  FAIL: harness produced $((PASS + FAIL)) assertions, expected 21 -- python likely errored"
   FAIL=$((FAIL + 1))
 fi
 

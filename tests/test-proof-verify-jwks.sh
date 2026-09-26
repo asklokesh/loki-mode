@@ -75,7 +75,10 @@ _verdict() {
 }
 
 # --- 1. THE CAPABILITY: offline, file-based, no network ---------------------
-if _verdict r1 "$W/jwks.json" | grep -q "VERIFIED"; then
+# Anchored to the exact verified line: a bare "VERIFIED" also matches
+# "NOT VERIFIED", so an unanchored grep could pass on the opposite verdict.
+_v1="$(_verdict r1 "$W/jwks.json")"
+if grep -qxF "attestation: VERIFIED against $W/jwks.json" <<<"$_v1"; then
   ok "an auditor verifies provenance from a local jwks.json (no network, no token)"
 else
   bad "offline verification failed -- the third-party claim does not hold"
@@ -273,6 +276,119 @@ fi
 cp -R "$R" "$W/drifted" && printf 'edited after sealing\n' >>"$W/drifted/a.txt"
 _expect 1 "$(_rc "$W/drifted" g1 --jwks "$W/missing.json")" "drift + NOT CHECKED keeps the drift exit"
 
+# --- 9. A malformed attestation is REFUSED, never "could not check" ----------
+# Whoever builds the receipt controls verification.attestation. A token whose
+# header decodes to a non-object, or an attestation that is not a string at
+# all, used to crash the check after the key set had loaded; the crash read as
+# NOT CHECKED (exit 2), so a forger could turn FAILED into "could not check".
+# The integrity hash excludes verification.*, so each forged receipt still
+# passes the base verifier and only the attestation rule can decide the code.
+python3 - "$R/.loki/proofs" <<'PY'
+import base64, json, os, sys
+d = sys.argv[1]
+p = json.load(open(os.path.join(d, "g1", "proof.json")))
+b = lambda o: base64.urlsafe_b64encode(json.dumps(o).encode()).decode().rstrip("=")
+forms = {
+    "g1hdr": b([1]) + "." + b({"receipt_sha256": "x"}) + "." + b("sig"),
+    "g1dict": {"alg": "EdDSA", "kid": "k"},
+    "g1num": 7,
+}
+for name, att in forms.items():
+    q = json.loads(json.dumps(p))
+    q["verification"]["attestation"] = att
+    os.makedirs(os.path.join(d, name), exist_ok=True)
+    json.dump(q, open(os.path.join(d, name, "proof.json"), "w"))
+PY
+# _refused <label> <id>: exit 1 and the FAILED line, never NOT CHECKED.
+_refused() {
+  local label="$1" id="$2" rc
+  rc="$(_rc "$R" "$id" --jwks "$W/gjwks.json")"
+  if [ "$rc" = 1 ] && grep -q "attestation: FAILED" "$W/rc.err" \
+     && ! grep -q "NOT CHECKED" "$W/rc.err"; then
+    ok "$label: FAILED, exit 1"
+  else
+    bad "$label: exit $rc, want 1 with attestation: FAILED ($(grep "attestation:" "$W/rc.err" | head -1))"
+  fi
+}
+_expect 0 "$(_rc "$R" g1hdr)" "control: the header-[1] receipt passes the base verifier without --jwks"
+_refused "a token whose header decodes to [1]" g1hdr
+_refused "a dict attestation" g1dict
+_refused "a numeric attestation" g1num
+# A non-string attestation is malformed on inspection, so it stays FAILED even
+# with the verifier dependency missing ($W/shadow hides cryptography).
+if ! PYTHONPATH="$W/shadow" python3 -c "import cryptography" 2>/dev/null; then
+  _rcs="$(PYTHONPATH="$W/shadow" _rc "$R" g1dict --jwks "$W/gjwks.json")"
+  if [ "$_rcs" = 1 ] && grep -q "attestation: FAILED" "$W/rc.err"; then
+    ok "a dict attestation is FAILED without cryptography too (no crypto needed to refuse it)"
+  else
+    bad "a dict attestation without cryptography: exit $_rcs, want 1 with attestation: FAILED"
+  fi
+fi
+
+# The Bun entry point (bin/loki) delegates any flagged verify to this bash
+# verifier. Measured through it too, so the delegation cannot drop the verdict.
+HAVE_BUN=0
+command -v bun >/dev/null 2>&1 && HAVE_BUN=1
+_rc_bun() {
+  local repo="$1"; shift
+  LOKI_DIR="$repo/.loki" TARGET_DIR="$repo" "$REPO_ROOT/bin/loki" proof verify "$@" \
+    >/dev/null 2>"$W/rc.err"
+  echo "$?"
+}
+if [ "$HAVE_BUN" -eq 1 ]; then
+  for _id in g1hdr g1dict; do
+    _rcb="$(_rc_bun "$R" "$_id" --jwks "$W/gjwks.json")"
+    if [ "$_rcb" = 1 ] && grep -q "attestation: FAILED" "$W/rc.err"; then
+      ok "bun entry point delegating to the bash verifier: $_id FAILED, exit 1"
+    else
+      bad "bun entry point delegating to the bash verifier: $_id exit $_rcb, want 1 with attestation: FAILED"
+    fi
+  done
+else
+  echo "  SKIP: bun not installed -- Bun delegation not measured"
+fi
+
+# --- 10. A malformed KEY SET is NOT CHECKED, never an accusation -------------
+# The key set is the auditor's own input. If it is not {"keys": [{...}, ...]}
+# nothing can be said about the receipt, so the answer is NOT CHECKED (2) on a
+# receipt the base verifier accepts. {"keys": {}} used to read FAILED; [1] and
+# {"keys": [1]} pin that the malformed-token catch-all runs only AFTER the
+# shape check, so it can never turn a bad key set into FAILED.
+printf '%s' '{"keys": {}}' >"$W/ks-dict.json"
+printf '%s' '[1]' >"$W/ks-list.json"
+printf '%s' '{"keys": [1]}' >"$W/ks-entry.json"
+for _ks in ks-dict ks-list ks-entry; do
+  _expect 2 "$(_rc "$R" g1 --jwks "$W/$_ks.json")" "a malformed key set ($_ks) is NOT CHECKED"
+  if grep -q "attestation: FAILED" "$W/rc.err"; then
+    bad "a malformed key set ($_ks) was reported as FAILED"
+  fi
+done
+
+# --- 11. A mistyped flag is a usage error, not a skipped check ---------------
+# "--jwk keys.json" and "-jwks keys.json" used to be read as extra positionals
+# and ignored, so an unsigned receipt exited 0 as if its signature had been
+# checked. An unknown option, or a second proof id, exits 64 and names it.
+# g1strip is unsigned and passes the base verifier, so 0 was the old answer.
+_expect 0 "$(_rc "$R" g1strip)" "control: the unsigned receipt passes with no flags"
+_usage() {  # <label> <want-in-stderr> <runner> <args...>
+  local label="$1" want="$2" runner="$3" rc; shift 3
+  rc="$("$runner" "$R" "$@")"
+  if [ "$rc" = 64 ] && grep -qF -- "$want" "$W/rc.err"; then
+    ok "$label exits 64 and names it"
+  else
+    bad "$label: exit $rc, want 64 naming $want"
+  fi
+}
+_usage "--jwk <file>" "'--jwk'" _rc g1strip --jwk "$W/gjwks.json"
+_usage "-jwks <file>" "'-jwks'" _rc g1strip -jwks "$W/gjwks.json"
+_usage "--jwk before the id" "'--jwk'" _rc --jwk "$W/gjwks.json" g1strip
+_usage "two proof ids" "one proof id" _rc g1strip g1
+if [ "$HAVE_BUN" -eq 1 ]; then
+  _usage "bun entry point delegating to the bash verifier: --jwk <file>" "'--jwk'" _rc_bun g1strip --jwk "$W/gjwks.json"
+  _usage "bun entry point delegating to the bash verifier: -jwks <file>" "'-jwks'" _rc_bun g1strip -jwks "$W/gjwks.json"
+  _usage "bun entry point: two proof ids" "one proof id" _rc_bun g1strip g1
+fi
+
 # The remote copy of the check carries the same dependency guard (the two copies
 # must not diverge). file:// reaches its "<url>/.well-known/jwks.json" fetch
 # with no server.
@@ -300,12 +416,41 @@ if command -v jq >/dev/null 2>&1; then
   }
   _v_ok="$(_render 2>&1)"
   _v_dep="$(PYTHONPATH="$W/shadow" _render 2>&1)"
-  if printf '%s' "$_v_ok" | grep -q "VERIFIED" \
-     && printf '%s' "$_v_dep" | grep -q "NOT CHECKED" \
-     && ! printf '%s' "$_v_dep" | grep -qE "UNSIGNED|TAMPERED"; then
+  # Anchored to the exact verified line (a bare "VERIFIED" also matches "NOT
+  # VERIFIED"). Here-strings, not `printf | grep -q`: under pipefail grep -q
+  # can close the pipe early and SIGPIPE inverts the assertion.
+  if grep -qxF "  VERIFIED: integrity hash matches and the receipt's attestation is valid." <<<"$_v_ok" \
+     && grep -q "NOT CHECKED" <<<"$_v_dep" \
+     && ! grep -qE "UNSIGNED|TAMPERED" <<<"$_v_dep"; then
     ok "remote render: VERIFIED with cryptography, NOT CHECKED without it (not UNSIGNED)"
   else
     bad "remote render: with cryptography '$(printf '%s' "$_v_ok" | head -1)', without '$(printf '%s' "$_v_dep" | head -1)' (want VERIFIED, then NOT CHECKED)"
+  fi
+  # The forged receipts from test 9 on the remote render: a malformed
+  # attestation is TAMPERED (return 1). It used to crash the helper, which read
+  # as NOT CHECKED with "install python3 cryptography" (return 0).
+  _render_id() {  # <id> -> return code; output in $W/render.out
+    _LOKI_SCRIPT_DIR="$REPO_ROOT/autonomy" bash -c "
+      source '$W/remote.sh'; loki_remote_verify_receipt '$R/.loki/proofs/$1/proof.json' 'file://$W/srv'" \
+      >"$W/render.out" 2>&1
+    echo "$?"
+  }
+  for _id in g1hdr g1dict g1num; do
+    _rr="$(_render_id "$_id")"
+    if [ "$_rr" = 1 ] && grep -q "TAMPERED: the receipt's attestation does not verify" "$W/render.out" \
+       && ! grep -q "NOT CHECKED" "$W/render.out"; then
+      ok "remote render: $_id is TAMPERED (return 1)"
+    else
+      bad "remote render: $_id returned $_rr, want 1 TAMPERED ($(head -1 "$W/render.out"))"
+    fi
+  done
+  # Malformed on inspection, so TAMPERED needs no crypto: with cryptography
+  # hidden it must not fall back to "install python3 cryptography".
+  _rr="$(PYTHONPATH="$W/shadow" _render_id g1dict)"
+  if [ "$_rr" = 1 ] && grep -q "TAMPERED: the receipt's attestation does not verify" "$W/render.out"; then
+    ok "remote render: a dict attestation is TAMPERED without cryptography too"
+  else
+    bad "remote render: dict attestation without cryptography returned $_rr, want 1 TAMPERED ($(head -1 "$W/render.out"))"
   fi
 else
   echo "  SKIP: jq not installed -- remote dependency guard not measured"

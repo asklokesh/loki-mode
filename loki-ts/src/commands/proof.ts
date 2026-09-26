@@ -598,6 +598,17 @@ async function verifyProof(id: string | undefined): Promise<number> {
     );
     return 2;
   }
+  // Killed by a signal (the 30s timeout sends SIGTERM, then SIGKILL): the
+  // verifier never reached a verdict, so this is NOT CHECKED (2). Passing the
+  // raw 128+N through (143, 137) left the result unclassified. Partial stdout
+  // is dropped so a machine consumer never parses a truncated report.
+  if (r.exitCode > 128) {
+    if (r.stderr) process.stderr.write(r.stderr);
+    process.stderr.write(
+      `${YELLOW}NOT CHECKED: the verifier was killed (exit ${r.exitCode}; timed out after 30s or signalled). Nothing was verified (exit 2).${NC}\n`,
+    );
+    return 2;
+  }
   if (r.stdout) process.stdout.write(r.stdout);
   if (r.stderr) process.stderr.write(r.stderr);
   return r.exitCode;
@@ -622,7 +633,11 @@ export async function runProof(argv: readonly string[]): Promise<number> {
       // which owns flag parsing and the attestation check. verifyProof takes
       // only an id: before this, "verify <id> --jwks f" silently dropped the
       // key set and exited 0, and "verify --jwks f <id>" read the flag as the id.
-      if (rest.some((a) => a.startsWith("-"))) return proofFallthroughToBash(sub, rest);
+      // A second positional goes there too, so bash rejects it (64) instead of
+      // verifyProof silently checking only the first.
+      if (rest.length > 1 || rest.some((a) => a.startsWith("-"))) {
+        return proofFallthroughToBash(sub, rest);
+      }
       return verifyProof(rest[0]);
     case "open":
       return openProof(rest[0]);
