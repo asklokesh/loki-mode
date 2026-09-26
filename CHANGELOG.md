@@ -5,6 +5,93 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.52.0
+
+**The moat is now an executable suite, and it says 0 of 9 proven.** Loki's
+v10 plan (`docs/V10-VISION.md`) rests on nine properties: portable proof, an
+honest verdict, the Wall, model freedom, sovereignty, in-place brownfield, no
+fabricated data, load-bearing proof and the Rule of Two. `tests/moat/` turns
+each into cases that actually run, and `bash tests/moat/run.sh` reports the
+result. Today that is 45 cases, 21 passing and 24 failing, and **0 of the 9
+properties fully proven.** Nothing here claims otherwise.
+
+A failing case is allowed only if it sits in `tests/moat/pending.txt` with the
+milestone that builds it. That list can only shrink: the runner reads it at
+every release tag reachable from HEAD and fails on any entry that was not
+pending at all of them, so parking a red case can never buy a green run. A
+second list, `tests/moat/cases.txt`, can only grow, so deleting a case is not
+a way out either. The suite also fails on a crash, a timeout, a script that
+emits nothing, a malformed or unregistered case, and a pending case that
+starts passing but was not promoted. It runs in the local fast tier and in a
+new "Moat suite" job in the Tests workflow, on macOS and Linux, with network
+egress blocked by the kernel (`sandbox-exec` on macOS, `sudo unshare -n` on
+the Linux runner) for the cases that claim offline behavior. Without a real
+block those cases fail; a proxy setting does not count. This release is the
+first to carry the lists, so it sets the ratchet's baseline.
+
+What is proven today, case by case: a signed receipt verifies offline with
+only a public key and fails on a different tree, an edited verdict field, a
+wrong key (including the victim's key id over attacker key bytes), a stripped
+signature, and an empty or mistyped key argument, on both CLI routes; a
+model's "looks good" cannot turn a failing check into a pass; unknown gates
+fail closed; the factory runs in an existing repo without moving it and
+produces a proof that verifies; and `start`, seal and verify complete with
+remote egress blocked.
+
+What is not, with its milestone: signed verification metadata (M2), the Wall
+(M2), load-bearing ablation (M2), council approval on inconclusive evidence
+(M2), `loki verify` exit codes (v10.0.0, breaking), the model catalog, routing
+and seeded-defect corpus (M0), fabricated console data (M7), the Rule of Two
+(M3), `doctor --airgap` on the default route (M9), and pre-existing untracked
+files swept into the session commit (M2).
+
+**Verifier fixes found by building the suite and by nine review rounds.**
+- `loki proof verify --jwks` was silently ignored on the default (Bun) route,
+  so no signature was ever checked there. Flagged calls now reach the verifier
+  that checks it.
+- A receipt with its signature deleted verified with exit 0 when a key set was
+  supplied. It now exits 1 (ABSENT). An empty, dangling or mistyped key
+  argument (`--jwks ''`, `--jwk`), an unknown option, a second proof id, or
+  `-h`/`--help` exits 64 with "Nothing was checked"; `loki proof verify` never
+  exits 0 without a verdict. `--` ends options. Full help is `loki proof help`.
+- A crafted malformed attestation token turned FAILED into NOT CHECKED. It is
+  now refused as FAILED (exit 1) locally and TAMPERED remotely; a malformed
+  key set reads NOT CHECKED, never an accusation.
+- The checkout under verification could supply the verifier's own Python
+  modules: a committed `hashlib.py` or `json.py`, or a `sitecustomize.py`
+  combined with an empty `PYTHONPATH` component, printed VERIFIED for an
+  unsigned receipt and passed tampered receipts and over-budget chains. Every
+  verify-path interpreter (`proof verify` on both routes, the remote and
+  deploy verifiers, `proof passport`, `proof chain` and each chain stage) now
+  runs `python3 -E` and never imports from the checkout.
+- `loki proof verify` follows the verifier exit contract: 64 usage, 66 unknown
+  id (they were 2 and 1, and 1 meant "tampered"); no python3 or a killed
+  verifier is 2 on both routes. `loki proof chain -h` (and argparse
+  abbreviations) exits 64 instead of 0. `docs/exit-codes.md` and
+  `docs/SIGNED-RECEIPTS.md` list every outcome.
+- A signed remote receipt checked without python `cryptography` was labelled
+  UNSIGNED with advice to set a gpg key; it now reads NOT CHECKED.
+- The completion council read a test-results file with no `pass` key as a
+  pass in four places. Only a boolean `true` counts now.
+- `loki doctor --airgap` reported "air-gap ready" for opencode, cline and
+  aider with no local model configured, and read another provider's model
+  variable to decide. It now judges only the active provider's own variable.
+
+**Also:** the tamper-claim scanner flagged the v10 build prompt's own rule
+against that claim, which kept main red since the vision docs landed; the
+quickstart degradation test linked macOS Xcode shims that cannot run before
+the license is accepted; `docs/INSTALLATION.md` pinned the Docker example to
+8.0.0 for about 150 releases and now uses `:latest`. `requirements-test.txt`
+gains `cryptography` and `pyyaml`: the Ed25519 signing tests skipped in CI
+without the first, and the Rule of Two workflow scan needs the second.
+
+**Open risks, recorded in `docs/v10/BACKLOG.md`:** inline Python on runner
+and council verdict paths still runs with the agent's repo importable (item
+43); the Bun route passes a test result marked inconclusive (item 37); a PATH
+with an empty component lets a committed tool answer (item 48); one reviewer
+saw `P1.modified-field-fails` fail once in seven local runs, which 60 further
+runs under load did not reproduce. The v10 program state lives in `docs/v10/`.
+
 ## v9.51.1
 
 **A completion member could vote COMPLETE with work still in flight.** The
