@@ -345,8 +345,15 @@ cd "$TMPROOT" || exit 1
 # shellcheck source=/dev/null
 source "$RUN_SH" 2>/dev/null || true
 # run.sh installs production signal traps while sourcing. Restore this test's
-# private cleanup trap before any case starts.
+# private cleanup trap before any case starts. INT and TERM exit through it
+# too, so a killed run (for example under `timeout`) stops its case groups and
+# removes TMPROOT instead of leaving them behind. Each handler ignores further
+# INT/TERM first: GNU timeout signals the child and then its whole process
+# group, so a second TERM can land during cleanup. Measured under `timeout 20`:
+# without the ignore, TMPROOT was left behind (3/3); with it, removed.
 trap test_cleanup EXIT
+trap 'trap "" INT TERM; exit 130' INT
+trap 'trap "" INT TERM; exit 143' TERM
 log_header() { :; }
 log_step() { :; }
 log_info() { :; }
@@ -406,8 +413,8 @@ review_budget() {
     printf '%s' "$scaled"
 }
 
-# Independent cases run as concurrent groups (S-191: the serial suite took
-# ~116s idle). Each group is a forked subshell with its own scratch directory
+# Independent cases run as concurrent groups when budgets are scaled (S-191:
+# the serial suite took ~116s idle; see group_started). Each group is a forked subshell with its own scratch directory
 # as TMPROOT and CWD, so per-case files (requirements-prompt, da-started,
 # requirements-argv.json, repos) never collide. Budgets and assertions are
 # unchanged. A group writes its PASS/FAIL counts on a clean finish; a group
@@ -428,6 +435,11 @@ group_leave() {
 group_started() {
     GROUP_LIST="$GROUP_LIST $1:$2"
     GROUP_PIDS="$GROUP_PIDS $2"
+    # Concurrency only where the budgets were scaled for contention. At scale
+    # 1 (the tight local budgets) groups run one at a time, as before: measured
+    # at load ~21 on 14 cores, concurrent groups at scale 1 went red on three
+    # timing bounds while the serial suite passed 46/0 under the same load.
+    [ "$REVIEW_TIMEOUT_SCALE" -gt 1 ] 2>/dev/null || wait "$2" 2>/dev/null || true
 }
 group_collect() {
     local entry name pid counts group_pass group_fail
@@ -1224,13 +1236,10 @@ PY
         bad "$forged_mode escaped parent-bound result publication"
     fi
 done
-group_leave ) > "$TMPROOT/g05-tamper.log" 2>&1 &
-group_started g05-tamper "$!"
 
 # A provider may mutate writable review artifacts after receiving an immutable
 # prompt and schema. Post-call rederivation must still reject the response after
 # exactly one invocation, with no text or second-provider fallback.
-( group_enter g06-invalid
 for post_tamper_mode in \
     requirements-post-manifest-tamper \
     requirements-post-symlink-tamper; do
@@ -1257,10 +1266,13 @@ PY
         bad "$post_tamper_mode escaped post-provider contract validation"
     fi
 done
+group_leave ) > "$TMPROOT/g05-tamper.log" 2>&1 &
+group_started g05-tamper "$!"
 
 # Every malformed contract is terminal. A rematerialization miss, malformed
 # JSON, duplicate, missing, extra, or reordered IDs, empty evidence, and empty
 # model output all block after exactly one structured invocation.
+( group_enter g06-invalid
 for invalid_mode in \
     requirements-rematerialize-failure \
     requirements-malformed-json \
