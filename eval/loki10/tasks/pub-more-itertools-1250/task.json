@@ -1,0 +1,18 @@
+{
+  "id": "pub-more-itertools-1250",
+  "kind": "public",
+  "prompt": "value_chain swallows a TypeError raised while iterating an argument\n\n`value_chain` treats a `TypeError` raised *while consuming* an argument as evidence that the argument is not iterable. The exception is swallowed, and the partially-consumed object is emitted into the output stream after the items it already produced.\n\n### Reproduction\n\n```python\n>>> from more_itertools import value_chain\n>>> list(value_chain(map(len, ['ab', 'cde', 5])))\n[2, 3, <map object at 0x104c6e530>]\n```\n\nThe `TypeError: object of type 'int' has no len()` never reaches the caller. The trailing item is the exhausted `map` object itself, so it carries no data:\n\n```python\n>>> out = list(value_chain(map(len, ['ab', 'cde', 5])))\n>>> list(out[-1])\n[]\n```\n\n`itertools.chain` and more-itertools' own `always_iterable` both propagate on the same input:\n\n```python\n>>> list(chain(map(len, ['ab', 'cde', 5])))\nTypeError: object of type 'int' has no len()\n>>> list(always_iterable(map(len, ['ab', 'cde', 5])))\nTypeError: object of type 'int' has no len()\n```\n\nAny lazy argument can trigger this \u2014 a generator, a `map`, a file-backed iterator \u2014 so a genuine bug in caller code is reported as a stray object in the output rather than as an exception.\n\n### Cause\n\n[`more.py` L4416](https://github.com/more-itertools/more-itertools/blob/bc8be10/more_itertools/more.py#L4416):\n\n```python\n        try:\n            yield from value\n        except TypeError:\n            yield value\n```\n\n`yield from` consumes lazily, so the guard stays active for the entire consumption of `value` instead of only classifying it. The `except` branch is meant to catch the classification failure \u2014 an object that cannot be iterated \u2014 but it also catches every `TypeError` produced downstream while iterating.\n\nPresent since `8dbf8ae` (2020-12-01), the commit that added `value_chain`. Reproduces on released 11.1.0.\n\n### Suggested fix\n\nClassify with `iter()`, then consume outside the guard:\n\n```python\n        try:\n            it = iter(value)\n        except TypeError:\n            yield value\n        else:\n            yield from it\n```\n\nThis is what the sibling `always_iterable` already does. Objects that cannot be iterated at all \u2014 including those whose `__iter__` raises `TypeError` \u2014 are still emitted as-is, so the documented behaviour is unchanged.\n\nI have a branch with this fix and regression tests ready and will open a PR against this issue.\n",
+  "issue_ref": "more-itertools/more-itertools#1250",
+  "repo": {
+    "source": "https://github.com/more-itertools/more-itertools.git",
+    "ref": "a826a4e09e3f2782822c71da6670e9275735ad3e"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . pytest",
+  "hidden": {
+    "files": [
+      "tests/test_more.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -p no:cacheprovider tests/test_more.py -k \"ValueChainTests and test_type_error\""
+  },
+  "timeout_s": 900
+}

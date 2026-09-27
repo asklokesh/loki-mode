@@ -1,0 +1,7 @@
+commit: 5d946b3590bfe92f1465c1b9b9830dd434745c84 (repo.ref, merge^1)
+setup: python3 -m venv .venv && .venv/bin/pip install -q -e . pytest
+command: .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_more.py -k "InterleaveEvenlyTests and test_no_iterables"
+rc=1 seconds=0
+summary: 1 failed, 585 deselected in 0.19s
+key: E       IndexError: list index out of range
+key: FAILED tests/test_more.py::InterleaveEvenlyTests::test_no_iterables - IndexEr...

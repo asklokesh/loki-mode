@@ -2,7 +2,7 @@
 
 Format: id | kind | repo @ ref | issue | why chosen | red/green evidence
 
-Counts: augmentiq 1, public 10, quickstart 14 (total 25)
+Counts: augmentiq 1, public 14, quickstart 14 (total 29)
 
 Notes:
 - task.json holds only contract keys. Provenance (fix PR, merge sha, template, ref deviations, test edits) lives in each task's NOTES.md, outside hidden/, and must not be shown to arms.
@@ -22,6 +22,10 @@ Notes:
 - pub-humanize-333 | public | python-humanize/humanize @ 08cf2c3026cf | python-humanize/humanize#333 | merged fix python-humanize/humanize#334 added/changed tests; issue states expected behavior; fast suite | hidden/RED.txt + hidden/GREEN.txt
 - pub-jsonschema-1389 | public | python-jsonschema/jsonschema @ 11455212a0ee | python-jsonschema/jsonschema#1389 | merged fix python-jsonschema/jsonschema#1390 added/changed tests; issue states expected behavior; fast suite | hidden/RED.txt + hidden/GREEN.txt
 - pub-markupsafe-417 | public | pallets/markupsafe @ 73e6a4886564 | pallets/markupsafe#417 | merged fix pallets/markupsafe#418 added/changed tests; issue states expected behavior; fast suite | hidden/RED.txt + hidden/GREEN.txt
+- pub-more-itertools-1192 | public | more-itertools/more-itertools @ 5d946b3590bf | more-itertools/more-itertools#1192 | merged fix more-itertools/more-itertools#1193 added/changed tests; issue states expected behavior; fast suite | hidden/RED.txt + hidden/GREEN.txt
+- pub-more-itertools-1250 | public | more-itertools/more-itertools @ a826a4e09e3f | more-itertools/more-itertools#1250 | merged fix more-itertools/more-itertools#1251 added/changed tests; issue states expected behavior; fast suite | hidden/RED.txt + hidden/GREEN.txt
+- pub-more-itertools-1252 | public | more-itertools/more-itertools @ d92f081a0897 | more-itertools/more-itertools#1252 | merged fix more-itertools/more-itertools#1253 added/changed tests; issue states expected behavior; fast suite | hidden/RED.txt + hidden/GREEN.txt
+- pub-more-itertools-1277 | public | more-itertools/more-itertools @ 9ed3dbb0ae52 | more-itertools/more-itertools#1277 | merged fix more-itertools/more-itertools#1278 added/changed tests; issue states expected behavior; fast suite | hidden/RED.txt + hidden/GREEN.txt
 - pub-packaging-1315 | public | pypa/packaging @ c4fb81ff6eba | pypa/packaging#1315 | merged fix pypa/packaging#1316 added/changed tests; issue states expected behavior; fast suite | hidden/RED.txt + hidden/GREEN.txt
 - qs-api-only | quickstart | fixtures/empty-repo/empty-repo.bundle @ a49d132f67fd | none | quickstart brief from templates/api-only.md; interface pinned in the prompt; stdlib behavioral test | hidden/RED.txt + hidden/GREEN.txt
 - qs-blog-platform | quickstart | fixtures/empty-repo/empty-repo.bundle @ a49d132f67fd | none | quickstart brief from templates/blog-platform.md; interface pinned in the prompt; stdlib behavioral test | hidden/RED.txt + hidden/GREEN.txt

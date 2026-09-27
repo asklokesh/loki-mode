@@ -1,0 +1,11 @@
+commit: d92f081a089714e0aa92434c797fdd1a06da1290 (repo.ref, merge^1)
+setup: python3 -m venv .venv && .venv/bin/pip install -q -e . pytest
+command: .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_more.py -k "(SplitBeforeTest and test_empty_collection) or (SplitAfterTest and test_empty_collection) or (SplitWhenTests and test_empty_iterable) or (SplitAtTests and test_maxsplit)"
+rc=1 seconds=0
+summary: 3 failed, 4 passed, 594 deselected, 22 subtests passed in 0.33s
+key: E               AssertionError: Lists differ: [[]] != []
+key: E               
+key: E               First list contains 1 additional elements.
+key: E               First extra element 0:
+key: E               []
+key: E               

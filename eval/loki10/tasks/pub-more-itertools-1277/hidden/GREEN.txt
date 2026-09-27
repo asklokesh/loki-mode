@@ -1,0 +1,5 @@
+commit: 4ebeea3e569388911a0bec740092f3cf996d79f3 (fix PR merge commit)
+setup: python3 -m venv .venv && .venv/bin/pip install -q -e . pytest
+command: .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_more.py -k "ZipBroadcastTests and test_single_use_iterable"
+rc=0 seconds=0
+summary: 1 passed, 604 deselected, 4 subtests passed in 0.12s

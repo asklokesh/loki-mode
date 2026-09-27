@@ -1,0 +1,7 @@
+commit: a826a4e09e3f2782822c71da6670e9275735ad3e (repo.ref, merge^1)
+setup: python3 -m venv .venv && .venv/bin/pip install -q -e . pytest
+command: .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_more.py -k "ValueChainTests and test_type_error"
+rc=1 seconds=0
+summary: 1 failed, 1 passed, 595 deselected in 0.18s
+key: E       AssertionError: TypeError not raised
+key: FAILED tests/test_more.py::ValueChainTests::test_type_error_while_iterating
