@@ -24523,7 +24523,8 @@ except Exception:
     fi
 
     # Notify dashboard of active project directory (for AI Chat cross-directory usage)
-    if command -v curl &>/dev/null; then
+    # S-195: skip when the dashboard is off (runtime flag, not LOKI_DASHBOARD).
+    if [[ "${ENABLE_DASHBOARD:-true}" == "true" ]] && command -v curl &>/dev/null; then
         local project_cwd
         project_cwd="$(pwd)"
         curl -sf -X POST "http://127.0.0.1:${DASHBOARD_PORT}/api/focus" \
