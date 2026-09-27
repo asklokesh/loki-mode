@@ -75,7 +75,7 @@ never a pass.
 Each results JSONL row has these fields: `task`, `arm`, `status`, `started`,
 `ended`, `wall_s`, `time_to_pr_s` (first push to the PR branch minus arm start,
 null if none), `pr_opened`, `hidden_pass`, `completed`, `cost_usd`,
-`cost_source`, `exit_code`, `capped`, `logs`.
+`cost_source`, `exit_code`, `capped`, `logs`, `auth_source`.
 
 - `completed` = `pr_opened` and `hidden_pass` and not `capped`.
 - `cost_usd` is taken only from the provider: claude's `total_cost_usd`, or
@@ -92,20 +92,74 @@ null if none), `pr_opened`, `hidden_pass`, `completed`, `cost_usd`,
   - the number of runs with a measured cost, capped runs and unavailable runs.
   - with `--markdown`, a list of misses with the reason for each.
 
-## Known limitation
+## Config isolation (EV-3)
 
-Real `claude` and `loki` arms still read the operator's user-level Claude
-configuration (`~/.claude`: global CLAUDE.md, plugins, hooks). An instruction
-there such as "never commit without approval" can stop an arm from pushing,
-and it makes results depend on the machine. The gate owner must choose an
-isolation method, for example a clean `CLAUDE_CONFIG_DIR`. They must verify
-it by hand and apply it the same way to all three arms before trusting a
-gate run. The harness does not do this yet, because it cannot be verified
-without running the real CLI.
+Without isolation, every real arm reads the operator's `~/.claude`: global
+CLAUDE.md, settings, hooks, plugins, MCP servers and memory. An instruction
+there such as "never commit without approval" can stop every arm from pushing,
+and results then depend on the machine.
+
+Method: `arm_env` gives every arm (raw-claude, v10, legacy alike) an empty
+per-run `CLAUDE_CONFIG_DIR=<rundir>/claude-config` (mode 700). It overrides any
+operator value. The loki arms pass it on to the claude processes they spawn.
+
+Auth. An empty config dir is also logged out. On macOS the login lives in the
+keychain entry `Claude Code-credentials`, keyed to the default config dir. A
+fresh `CLAUDE_CONFIG_DIR` or a fresh `HOME` both reported `loggedIn: false`.
+`arm_auth` therefore gives the arm one env credential, in this order:
+
+1. operator `ANTHROPIC_API_KEY`
+2. operator `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`; use this on
+   CI and Linux)
+3. on macOS only, the OAuth access token `claudeAiOauth.accessToken`, read from
+   that keychain entry and passed as `CLAUDE_CODE_OAUTH_TOKEN`. The refresh
+   token and the MCP tokens are never passed, so an arm cannot rotate the
+   operator's login. The token is re-read on each run and must stay valid for
+   the run's cap plus 120s.
+
+The credential is added only to the arm process. prepare, setup and grade never
+see it, and it is never written to a row, manifest or log. Rows record only
+`auth_source`, for example `keychain:claudeAiOauth.accessToken`. With no
+credential, `run` exits 2 before cloning anything. A run whose token would
+expire mid-run is recorded as `auth_unavailable`, counted as infrastructure,
+and is never a miss. `--out` defaults to `results/`, which is gitignored. An
+arm can still print its own env into `arm_stdout.log`, so treat `--out` as
+sensitive.
+
+Evidence (2026-09-27, claude 2.1.283, Max OAuth login, cwd an empty dir with no
+CLAUDE.md in it or any parent, env built by `harness.arm_env` + `arm_auth`):
+
+- Before the change: `claude auth status` under a fresh `CLAUDE_CONFIG_DIR`
+  gave `loggedIn: false`, and under a fresh `HOME` it also gave
+  `loggedIn: false`. With a fresh `CLAUDE_CONFIG_DIR` plus the env token it
+  gave `loggedIn: true, authMethod: oauth_token`.
+- `claude -p "Reply with the single word OK" --output-format json` gave
+  `{'result': 'OK', 'is_error': False, 'total_cost_usd': 0.0402238}`.
+- `claude -p "What global instructions do you have about committing? Answer in one line." --output-format json`
+  - isolated: "Commit messages should end with: `Co-Authored-By: Claude ...`".
+    That is Claude Code's built-in default. None of the global CLAUDE.md
+    markers appear (`git diff --stat`, `disney`, `asklokesh`, "stop and wait").
+  - not isolated: "Never commit without explicit approval (show
+    `git diff --stat`, ... then wait), stage files by name, use the repo-local
+    asklokesh identity ..., never push to github.disney.com ...". The markers
+    are present.
+- Harness env per arm (redacted): `CLAUDE_CONFIG_DIR=<rundir>/claude-config`
+  (empty), `CLAUDE_CODE_OAUTH_TOKEN=<redacted len=108>`, `ANTHROPIC_API_KEY`,
+  `GH_TOKEN` and `GH_CONFIG_DIR` handled as above, and `LOKI_ENGINE=v10` only on
+  the v10 arm. `HOME` is unchanged.
+- After a real run, none of the files in the run dir contained the token.
+
+An isolated arm also runs without the operator's default-model setting (the
+fresh config picked a Sonnet model). The arms are pinned by `--model` and
+`LOKI_MODEL_OVERRIDE`, so this does not change the eval.
 
 ## Tests
 
 `bash eval/loki10/test-harness.sh` uses `fixtures/stub-arm.sh` in place of
 claude and loki, with the two fixture tasks in `fixtures/`. Their `task.json`
 files carry `@SEED_REPO@`/`@SEED_REF@` placeholders, and the test fills them in
-after seeding a repo from `seed/`.
+after seeding a repo from `seed/`. The test exports a fake
+`CLAUDE_CODE_OAUTH_TOKEN`, so it never reads the keychain. Leg 12 runs all three
+arms with an operator `CLAUDE_CONFIG_DIR` that holds a CLAUDE.md. It asserts
+that each arm sees its own empty `<rundir>/claude-config` with no CLAUDE.md and
+an auth token, and that the token value appears in no log.

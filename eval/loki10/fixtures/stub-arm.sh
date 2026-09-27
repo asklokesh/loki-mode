@@ -20,6 +20,13 @@ if [ -n "$leak" ]; then
 fi
 echo "HIDDEN-CHECK: absent"
 echo "ENV-CHECK: run_tmp=${LOKI_RUN_TMP:-unset} sentinel=${LOKI_SENTINEL_X:-unset} gh_token=${GH_TOKEN:-unset}" >&2
+# Config isolation (EV-3). Values are reported as set/unset, never printed.
+cfg="${CLAUDE_CONFIG_DIR:-unset}"
+[ "$cfg" = "$(dirname "$PWD")/claude-config" ] && cfg=rundir/claude-config
+cmd=absent; [ -e "${CLAUDE_CONFIG_DIR:-/nonexistent}/CLAUDE.md" ] && cmd=present
+oauth="unset"; [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && oauth="set"
+api_key="unset"; [ -n "${ANTHROPIC_API_KEY:-}" ] && api_key="set"
+echo "ENV-CHECK2: config=$cfg claude_md=$cmd oauth=$oauth api_key=$api_key engine=${LOKI_ENGINE:-unset}" >&2
 
 if [ "${STUB_V10_MARKER:-0}" = "1" ]; then
     mkdir -p .loki && printf '{"engine": "v10"}\n' > .loki/engine.json

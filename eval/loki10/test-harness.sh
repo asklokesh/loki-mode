@@ -20,6 +20,8 @@
 #   9. --all --parallel 2 records both tasks; run tmp removed after each run
 #  10. SIGTERM to run.sh kills only its children, removes its tmp, no ok row
 #  11. summarize: rates, n/a handling, interrupted excluded, Markdown misses
+#  12. config isolation: all three arms get a fresh empty CLAUDE_CONFIG_DIR
+#      (operator's overridden) and env auth; the token value is in no log
 # Also: arm env drops LOKI_RUN_TMP/LOKI_*/GH_TOKEN; cost parsed from a
 # pretty-printed message array.
 #===============================================================================
@@ -29,7 +31,11 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib-tmp.sh
 . "$HERE/lib-tmp.sh"
 export LOKI_NO_BROWSER=1 LOKI_EVAL_MAX_LOAD=1000
-unset LOKI_EVAL_MODEL
+unset LOKI_EVAL_MODEL ANTHROPIC_API_KEY
+# A fake operator token: the harness passes it through and never reads the
+# keychain, so these legs are hermetic on macOS and Linux alike.
+FAKE_OAUTH="fake-oauth-ev3-$$"
+export CLAUDE_CODE_OAUTH_TOKEN="$FAKE_OAUTH"
 
 PASS=0
 FAIL=0
@@ -209,6 +215,21 @@ chk "all-unavailable arm rate is n/a, not 0" "s['v10']['completion_rate'] is Non
 md="$(bash "$HERE/summarize" "$T/all.jsonl" --markdown)"
 printf '%s' "$md" | grep -q "| raw-claude | 2/5 | 40.0% |" && printf '%s' "$md" | grep -q "fx-greet / raw-claude: no branch pushed" \
     && printf '%s' "$md" | grep -q "fx-cap / raw-claude: capped" && pass "Markdown table and misses" || fail "markdown: $md"
+
+# ---- 12. config isolation (EV-3): every arm gets a fresh empty
+# CLAUDE_CONFIG_DIR under its rundir (overriding the operator's), plus auth.
+mkdir -p "$T/operator-cfg" && echo "never commit without approval" > "$T/operator-cfg/CLAUDE.md"
+for arm in raw-claude v10 legacy; do
+    R="$T/out-iso-$arm"
+    STUB_MODE=noop STUB_V10_MARKER=1 CLAUDE_CONFIG_DIR="$T/operator-cfg" RUN --arm "$arm" --task fx-greet --out "$R" >/dev/null 2>&1
+    eng="unset"; [ "$arm" = v10 ] && eng=v10
+    want="ENV-CHECK2: config=rundir/claude-config claude_md=absent oauth=set api_key=unset engine=$eng"
+    got="$(grep -h '^ENV-CHECK2:' "$R"/logs/*/arm_stderr.log)"
+    [ "$got" = "$want" ] && pass "$arm arm env carries the config isolation" || fail "$arm isolation: got '$got'"
+    [ "$(row "$R/results.jsonl" auth_source)" = '"env:CLAUDE_CODE_OAUTH_TOKEN"' ] \
+        && pass "$arm auth source recorded" || fail "$arm auth_source=$(row "$R/results.jsonl" auth_source)"
+done
+if grep -rqF "$FAKE_OAUTH" "$T"/out-*; then fail "auth token value written to a log"; else pass "auth token value appears in no log"; fi
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
