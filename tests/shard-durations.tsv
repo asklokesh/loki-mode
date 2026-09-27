@@ -624,3 +624,4 @@ dashboard migration view shows a failed load, not an empty state (node --test)	0
 dashboard managed memory events error payload hides the empty state (node --test)	0
 dashboard learning metrics and trends show a failed read, not no data (node --test)	0
 done-recognition readers ignore user-site .pth (-I -S, S-200)	2
+web-app cockpit actions say not loaded after a failed fetch (S-206)	1

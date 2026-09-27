@@ -37,6 +37,46 @@ interface Props {
   onChanged: () => void;
 }
 
+/**
+ * Disabled reason per action key (null = enabled). A failed fetch leaves
+ * status or git null; that must read as "not loaded", never as a clean tree
+ * or an idle run.
+ */
+export function disabledReasons({
+  isLive,
+  status,
+  git,
+  changedFiles,
+  prTitle,
+}: {
+  isLive: boolean;
+  status: StatusResponse | null;
+  git: GitStatus | null;
+  changedFiles: ChangedFile[];
+  prTitle: string;
+}): Record<'pause' | 'resume' | 'stop' | 'commit' | 'push' | 'pr', string | null> {
+  const noStatus = status === null ? 'Run status not loaded' : null;
+  const noRun = !isLive ? 'No run in progress for this session' : null;
+  const noGit = git === null ? 'Working tree status not loaded' : null;
+  const paused = Boolean(status?.paused);
+  const hasChanges = changedFiles.length > 0;
+  const ahead = git?.ahead ?? 0;
+  return {
+    pause: noStatus ?? noRun ?? (paused ? 'Already paused' : null),
+    resume: noStatus ?? noRun ?? (!paused ? 'The run is not paused' : null),
+    stop: noStatus ?? noRun,
+    commit: noGit ?? (!hasChanges ? 'The working tree is clean' : null),
+    push: noGit ?? (ahead <= 0 ? 'Nothing to push: no commits ahead of the remote' : null),
+    pr:
+      noGit ??
+      (!hasChanges && ahead <= 0
+        ? 'Nothing to open a pull request for'
+        : !prTitle.trim()
+          ? 'Enter a title first'
+          : null),
+  };
+}
+
 export function FinalActions({
   sessionId,
   isLive,
@@ -51,31 +91,21 @@ export function FinalActions({
   const [preview, setPreview] = useState<string | null>(null);
   const [previewText, setPreviewText] = useState('');
 
-  const paused = Boolean(status?.paused);
-  const hasChanges = changedFiles.length > 0;
-  const ahead = git?.ahead ?? 0;
+  const reasons = disabledReasons({ isLive, status, git, changedFiles, prTitle });
 
   const actions: ActionSpec[] = [
     {
       key: 'pause',
       label: 'Pause',
       icon: Pause,
-      disabledReason: !isLive
-        ? 'No run in progress for this session'
-        : paused
-          ? 'Already paused'
-          : null,
+      disabledReason: reasons.pause,
       onRun: () => api.pauseSession().then((r) => r.message ?? 'Paused'),
     },
     {
       key: 'resume',
       label: 'Resume',
       icon: Play,
-      disabledReason: !isLive
-        ? 'No run in progress for this session'
-        : !paused
-          ? 'The run is not paused'
-          : null,
+      disabledReason: reasons.resume,
       onRun: () => api.resumeSession().then((r) => r.message ?? 'Resumed'),
     },
     {
@@ -83,14 +113,14 @@ export function FinalActions({
       label: 'Stop run',
       icon: Square,
       danger: true,
-      disabledReason: !isLive ? 'No run in progress for this session' : null,
+      disabledReason: reasons.stop,
       onRun: () => api.stopSession().then((r) => r.message ?? 'Stopped'),
     },
     {
       key: 'commit',
       label: 'Commit',
       icon: GitCommitHorizontal,
-      disabledReason: !hasChanges ? 'The working tree is clean' : null,
+      disabledReason: reasons.commit,
       onRun: () =>
         api
           .git.commit(sessionId, prTitle.trim() || 'Loki: apply changes')
@@ -100,18 +130,14 @@ export function FinalActions({
       key: 'push',
       label: 'Push',
       icon: Upload,
-      disabledReason: ahead <= 0 ? 'Nothing to push: no commits ahead of the remote' : null,
+      disabledReason: reasons.push,
       onRun: () => api.git.push(sessionId).then((r) => r.message ?? 'Pushed'),
     },
     {
       key: 'pr',
       label: 'Open pull request',
       icon: GitPullRequest,
-      disabledReason: !hasChanges && ahead <= 0
-        ? 'Nothing to open a pull request for'
-        : !prTitle.trim()
-          ? 'Enter a title first'
-          : null,
+      disabledReason: reasons.pr,
       onRun: () =>
         api
           .git.pr(sessionId, prTitle.trim(), '')
