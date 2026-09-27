@@ -1504,6 +1504,7 @@ run_test "proof headline ignores a stale test-results.json (S-176)" "python3 -m 
 run_test "Managed completion council flag (BACKLOG 75, S-211)" "$SCRIPT_DIR/council/test_managed_completion_flag.sh"
 run_test "Managed review flag (BACKLOG 75, S-211)" "$SCRIPT_DIR/council/test_managed_review_flag.sh"
 run_test "Evidence gate with no tests (BACKLOG 75, S-211)" "$SCRIPT_DIR/test-evidence-gate-no-tests.sh"
+run_test "LOKI_AUTO_PR refuses a branch whose history holds user files (S-194)" "$SCRIPT_DIR/test-auto-pr-agent-committed-refuse.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 
 # Summary

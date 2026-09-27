@@ -633,3 +633,4 @@ Managed review flag (BACKLOG 75, S-211)	3
 Evidence gate with no tests (BACKLOG 75, S-211)	13
 proof-check readers ignore user-site .pth (-I -S, S-203)	1
 council_managed_should_stop diffs the target project, not the install tree (S-196)	1
+LOKI_AUTO_PR refuses a branch whose history holds user files (S-194)	1

@@ -11198,6 +11198,24 @@ create_session_pr() {
         return 0
     fi
 
+    # BACKLOG 108: _loki_untrack_agent_committed_user_files removed the user's
+    # pre-existing files from the branch tip, but the commit that added them is
+    # still in the branch history, so a push publishes them. Print the cleanup
+    # before any push advice, and refuse the LOKI_AUTO_PR push. The fork is the
+    # merge base with the recorded base, as that helper computes it; its
+    # session-start-sha fallback cannot apply here, because without a merge
+    # base commit_count is 0 and this function already returned.
+    if [ -s .loki/state/agent-committed-user-files.z ]; then
+        local _uc_fork="" _uc_names=""
+        _uc_fork="$(git merge-base HEAD "$base" 2>/dev/null)" || _uc_fork=""
+        _uc_names="$(_loki_nul_names .loki/state/agent-committed-user-files.z)"
+        log_warn "The history of ${branch_name} still holds your pre-existing files the agent committed: ${_uc_names:-see .loki/state/agent-committed-user-files.z}. Before pushing, drop them from its history: git reset --soft ${_uc_fork:-<fork commit>} && git commit"
+        if [ "${LOKI_AUTO_PR:-0}" = "1" ]; then
+            log_warn "LOKI_AUTO_PR: not pushing ${branch_name}; its history holds your pre-existing files."
+            return 1
+        fi
+    fi
+
     # DEFAULT: advisory only. Print the exact commands; never push, never PR.
     if [ "${LOKI_AUTO_PR:-0}" != "1" ]; then
         if declare -f print_pr_advice >/dev/null 2>&1; then
