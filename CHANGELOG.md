@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.77.0
+
+**The dashboard focus notification respects a disabled dashboard.** Released from green tree a4aad86c (Tests run 36352563585 and Bun Parity run 36352563557 both success before the bump).
+
+- With the dashboard disabled, a run no longer POSTs its project directory to `/api/focus` (S-195).
+
 ## v9.76.0
 
 **Council, checklist and proof readers are immune to user-site .pth files; auto-PR refuses a branch that still holds user files.** Released from green tree 800ac46e (Tests run 36351690452 and Bun Parity run 36351690372 both success before the bump).
