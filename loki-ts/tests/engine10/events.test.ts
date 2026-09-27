@@ -171,6 +171,12 @@ describe("fold", () => {
 });
 
 describe("tail", () => {
+  // Poll instead of a fixed sleep so a loaded host cannot flake the test.
+  async function waitFor(cond: () => boolean, ms = 2000): Promise<void> {
+    const end = Date.now() + ms;
+    while (!cond() && Date.now() < end) await Bun.sleep(5);
+  }
+
   it("replays existing events then streams appended ones; torn lines wait", async () => {
     const log = new EventLog(path, RUN);
     log.append("run.started", null, {});
@@ -178,13 +184,13 @@ describe("tail", () => {
     const stop = tail(path, (e) => seen.push(e.seq), { intervalMs: 10 });
     try {
       expect(seen).toEqual([0]);
-      log.append("stage.started", "intake", {});
+      // One write carries a complete line plus a torn one, so any poll that sees seq 1 also saw the torn bytes.
       const partial = JSON.stringify(makeEvent(RUN, 2, "heartbeat", "intake", {}));
-      appendFileSync(path, partial.slice(0, 10));
-      await Bun.sleep(60);
+      appendFileSync(path, JSON.stringify(makeEvent(RUN, 1, "stage.started", "intake", {})) + "\n" + partial.slice(0, 10));
+      await waitFor(() => seen.length >= 2);
       expect(seen).toEqual([0, 1]);
       appendFileSync(path, partial.slice(10) + "\n");
-      await Bun.sleep(60);
+      await waitFor(() => seen.length >= 3);
       expect(seen).toEqual([0, 1, 2]);
     } finally {
       stop();
@@ -196,7 +202,7 @@ describe("tail", () => {
     const stop = tail(path, (e) => seen.push(e.seq), { intervalMs: 10 });
     try {
       new EventLog(path, RUN).append("run.started", null, {});
-      await Bun.sleep(60);
+      await waitFor(() => seen.length >= 1);
       expect(seen).toEqual([0]);
     } finally {
       stop();

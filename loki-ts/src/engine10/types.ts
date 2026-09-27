@@ -7,17 +7,17 @@ export type StageName =
   | "intake" | "plan" | "wall" | "implement" | "verify" | "fix"
   | "commit" | "seal" | "pr" | "deep";
 
-export const STAGE_BUDGETS: Readonly<Record<StageName, { targetS: number; limitS: number }>> = {
+export const STAGE_BUDGETS: Readonly<Record<StageName, { targetS: number | null; limitS: number }>> = {
   intake: { targetS: 15, limitS: 60 },
   plan: { targetS: 45, limitS: 90 },
   wall: { targetS: 45, limitS: 90 },
   implement: { targetS: 180, limitS: 480 }, // LOKI_E10_IMPLEMENT_KILL_S; 900 when deep
   verify: { targetS: 60, limitS: 120 },
   fix: { targetS: 90, limitS: 180 },
-  commit: { targetS: 5, limitS: 30 },
+  commit: { targetS: 5, limitS: 30 }, // not in the ENGINE.md table; engine-chosen placeholder
   seal: { targetS: 15, limitS: 60 },
   pr: { targetS: 15, limitS: 60 },
-  deep: { targetS: 1800, limitS: 1800 }, // target is unbounded in ENGINE.md; limit 30 min
+  deep: { targetS: null, limitS: 1800 }, // target unbounded (null means unknown, never 0); limit 30 min
 };
 export const DEFAULT_CAP_S = 900;
 export const DEEP_CAP_S = 2700;
@@ -59,7 +59,7 @@ export interface StageResult {
 
 export interface Stage {
   name: StageName;
-  targetS: number;
+  targetS: number | null;
   limitS: number;
   run(ctx: RunContext, signal: AbortSignal): Promise<StageResult>;
 }
@@ -94,15 +94,21 @@ export interface SessionRunner {
 
 export type RunnerName = "pytest" | "vitest" | "jest" | "npm" | "bun" | "go" | "cargo";
 
+/** A test file and the runner that executes it (mixed repos run each runner separately). */
+export interface TestRef {
+  runner: RunnerName;
+  path: string; // relative to repoDir
+}
+
 export interface TestMap {
   runners: RunnerName[];
-  testFiles: string[];
+  tests: TestRef[];
 }
 
 /** Implemented by testmap.ts (E-05). */
 export interface TestMapProvider {
   detect(repoDir: string): Promise<TestMap>;
-  impacted(map: TestMap, changedFiles: string[]): string[];
+  impacted(map: TestMap, changedFiles: string[]): TestRef[];
 }
 
 export interface CostTotals {
@@ -136,6 +142,11 @@ export interface RunContext {
   tests: TestMapProvider;
   cost: CostReader;
   clock: Clock;
+  /** Read-only view of earlier stages' stage.completed data plus key artifacts
+   *  (for example wall.sealed files), filled by the machine (E-02) in memory.
+   *  Stages never read events.jsonl: the worker is not its writer, so the file
+   *  can lag behind what the worker has emitted. */
+  outputs(): Partial<Record<StageName, Record<string, unknown>>>;
 }
 
 export interface ReceiptCheck {
