@@ -1271,6 +1271,8 @@ loki_remote_verify_receipt() {
         echo "    the JWKS URL is not https -- only loopback is allowed over plain http)."
         echo "    Its integrity hash matches. Provenance is unproven here, not disproven."
         echo "    Install python3 cryptography, or re-run where the build server is reachable."
+        echo "    The verifier runs python3 -E, so cryptography supplied through PYTHONPATH or"
+        echo "    PYTHONUSERBASE is not seen; install it where the base interpreter finds it."
         return 0
     fi
 
@@ -37143,6 +37145,7 @@ print(json.dumps(json.load(open(os.environ['LOKI_PROOF_JSON'])), indent=2))
                         # verifier is a finding and is never softened to 2.
                         echo -e "${YELLOW}attestation: NOT CHECKED -- could not check against ${_pv_jwks} (key set unreadable,${NC}" >&2
                         echo -e "${YELLOW}  verifier dependency missing, or the JWKS URL is not https -- only loopback is allowed over plain http).${NC}" >&2
+                        echo "  The verifier runs python3 -E, so cryptography supplied through PYTHONPATH or PYTHONUSERBASE is not seen." >&2
                         echo "  This is not a failure of the receipt. Nothing was proven either way (exit 2)." >&2
                         if [ "$_pv_rc" -eq 0 ]; then _pv_rc=2; fi
                         _pv_attestation_field="NOT CHECKED"

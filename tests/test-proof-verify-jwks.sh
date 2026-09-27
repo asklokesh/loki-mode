@@ -131,6 +131,15 @@ if _verdict r1 "$W/missing.json" | grep -q "NOT CHECKED"; then
 else
   bad "an absent measurement was reported as a fact about the receipt"
 fi
+# BACKLOG 51: the verifier runs python3 -E, so a cryptography install reachable
+# only through PYTHONPATH or PYTHONUSERBASE is invisible. The NOT CHECKED text
+# must say so, or the user "installs cryptography" and sees the same verdict.
+if grep -q "python3 -E" "$W/err.txt" && grep -q "PYTHONPATH" "$W/err.txt" \
+   && grep -q "PYTHONUSERBASE" "$W/err.txt"; then
+  ok "NOT CHECKED names python3 -E, PYTHONPATH and PYTHONUSERBASE"
+else
+  bad "NOT CHECKED does not explain that PYTHONPATH/PYTHONUSERBASE are ignored"
+fi
 
 # A key set that EXISTS but does not parse takes a different branch than a
 # missing path -- it fails inside the read, not the path test. Mutation testing
