@@ -7,7 +7,7 @@
 // pass by agreeing with itself.
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { commitStage, DEEP_NOT_PROVEN, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
@@ -93,7 +93,9 @@ beforeAll(() => {
   root = mkdtempSync(join(tmpdir(), "loki-seal-test."));
   for (const c of ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3",
     ...(process.env["PATH"] ?? "").split(":").filter((d) => d.startsWith("/")).map((d) => `${d}/python3`)]) {
-    const p = Bun.spawnSync({ cmd: [c, "-I", "-c", "import cryptography"], stdout: "ignore", stderr: "ignore" });
+    // Bun.spawnSync throws ENOENT on Linux for a missing path (macOS returns non-zero), so skip absent candidates.
+    if (!existsSync(c)) continue;
+    const p = Bun.spawnSync({ cmd: [c, "-I", "-c", "import cryptography"], stdout: "ignore", stderr: "ignore", env: process.env });
     if (p.exitCode === 0) { cryptoPy = c; break; }
   }
 });

@@ -1256,3 +1256,7 @@ sample.
 - Incidents fixed forward: two orphan loki test runs over 24 hours (stopped by PID; E-00 guard merged); main CI red on Coverage from engine spawns without env (72423684, 19128f6b).
 - ETA for v10.0.0: first real v10 task within the next hour; gate decision at 03:00 UTC.
 - Top blocker: E-14 integration (first time the modules run together).
+
+## 2026-09-27T23:03Z: first real eval numbers
+- Raw claude -p arm, 3 public tasks: 3/3 completed, p50 34s, p90 45s, $0.1944 per completed task (docs/v10/METRICS.md). Legacy arm and v10 arm not yet measured.
+- Implication for the gate: v10 must match raw completion and cost per completed task. Any extra model call (planner, Wall author, fix round) adds cost against a $0.19 baseline, so the fast lane must skip stages a small task does not need.

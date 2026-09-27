@@ -217,3 +217,15 @@ remains the only cap on this step. Guarded by
 ## Over-budget stops
 
 - 2026-09-27T21:33Z: batch 8 workflow wf_ff8d537c-40e stopped. Its last two reviewers (S-191, S-195) ran about 55 minutes against the 30-minute reviewer budget with no verdict (pulse AGENT_OVER_BUDGET at 21:31Z: "S-191 building MEDIUM (55.9 min, budget 30 min)"). Re-dispatched as two standalone reviewers with 20 and 25 minute scopes. Load average was 15 to 17 during the stall.
+
+## Loki 10 eval: first real arm numbers (2026-09-27, smoke, not the gate)
+
+Raw `claude -p` arm (EV-4), model claude-opus-5-5, 900s cap, 3 public tasks, harness from the EV-1 branch with EV-3 isolation (auth via keychain access token; no credential in any result file):
+
+| task | completed | time to PR | cost (provider-reported) |
+|---|---|---|---|
+| pub-more-itertools-1192 | yes | 20s | $0.1266 |
+| pub-click-2877 | yes | 34s | $0.1861 |
+| pub-humanize-152 | yes | 45s | $0.2704 |
+
+`summarize --markdown`: 3/3 completed, p50 34s, p90 45s, $0.1944 per completed task, 0 capped. This is a 3-task smoke, not the 29-task gate. It sets the bar the v10 fast lane must meet on completion and cost per completed task (D29), which is far tighter than the 5-minute p50 target.
