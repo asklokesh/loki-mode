@@ -124,7 +124,18 @@ credential, `run` exits 2 before cloning anything. A run whose token would
 expire mid-run is recorded as `auth_unavailable`, counted as infrastructure,
 and is never a miss. `--out` defaults to `results/`, which is gitignored. An
 arm can still print its own env into `arm_stdout.log`, so treat `--out` as
-sensitive.
+sensitive. The keychain is read only through `/usr/bin/security`, an absolute
+path with no PATH lookup. A keychain token whose `expiresAt` is missing or not
+a number is treated as unusable, so the check fails closed.
+
+This is not a sandbox. The env scrub and the fresh config dir only change what
+the arm loads by default. Every arm, setup command and hidden test runs as the
+same OS user as the operator. Any of them can still read `~/.claude`, the
+keychain item and every other file that user can read. The isolation only
+removes the operator's global CLAUDE.md, settings, plugins and hooks from what
+the arm loads. It does not stop a hostile arm or task from reaching the
+operator's credentials. Run untrusted tasks inside a separate OS user or a
+container.
 
 Evidence (2026-09-27, claude 2.1.283, Max OAuth login, cwd an empty dir with no
 CLAUDE.md in it or any parent, env built by `harness.arm_env` + `arm_auth`):
@@ -183,6 +194,12 @@ claude and loki, with the two fixture tasks in `fixtures/`. Their `task.json`
 files carry `@SEED_REPO@`/`@SEED_REF@` placeholders, and the test fills them in
 after seeding a repo from `seed/`. The test exports a fake
 `CLAUDE_CODE_OAUTH_TOKEN`, so it never reads the keychain. Leg 12 runs all three
-arms with an operator `CLAUDE_CONFIG_DIR` that holds a CLAUDE.md. It asserts
-that each arm sees its own empty `<rundir>/claude-config` with no CLAUDE.md and
-an auth token, and that the token value appears in no log.
+arms with an operator `CLAUDE_CONFIG_DIR` that holds a CLAUDE.md. It checks
+that each arm sees its own empty `<rundir>/claude-config` with no CLAUDE.md
+and an auth token. Its task's setup and hidden test print whether the auth
+vars are set, and the leg requires both to be empty in `setup.log` and
+`grade.log`. The stub prints its argv, which must not contain the token. The
+leg repeats all of this for an operator `ANTHROPIC_API_KEY`, and finally checks
+that no token value appears in any log. Three mutations each turn it red: auth
+passed to `hidden.run`, `CLAUDE_CODE_` dropped from the scrub, and the token
+appended to the arm argv.

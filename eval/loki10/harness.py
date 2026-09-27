@@ -45,6 +45,7 @@ SCRUB_ENV = ("GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRI
 # Operator auth env vars, in precedence order, passed through to the arm as-is.
 AUTH_ENV = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 KEYCHAIN_SERVICE = "Claude Code-credentials"
+SECURITY_BIN = "/usr/bin/security"  # absolute: never a PATH lookup
 AUTH_MARGIN_S = 120
 
 
@@ -248,11 +249,11 @@ def arm_auth(min_valid_s):
     for var in AUTH_ENV:
         if os.environ.get(var):
             return {var: os.environ[var]}, "env:" + var
-    if sys.platform != "darwin" or not shutil.which("security"):
+    if sys.platform != "darwin" or not os.access(SECURITY_BIN, os.X_OK):
         raise AuthError("no model auth: set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN "
                         "(claude setup-token)")
     try:
-        r = subprocess.run(["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
+        r = subprocess.run([SECURITY_BIN, "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
                            capture_output=True, text=True, timeout=20)
         oauth = (json.loads(r.stdout).get("claudeAiOauth") or {}) if r.returncode == 0 else {}
         token, exp_ms = oauth.get("accessToken"), oauth.get("expiresAt")
@@ -261,9 +262,11 @@ def arm_auth(min_valid_s):
     if not isinstance(token, str) or not token:
         raise AuthError("no model auth: keychain entry %r unreadable; set ANTHROPIC_API_KEY or "
                         "CLAUDE_CODE_OAUTH_TOKEN (claude setup-token)" % KEYCHAIN_SERVICE)
-    if isinstance(exp_ms, (int, float)) and exp_ms / 1000.0 < time.time() + min_valid_s:
-        raise AuthError("keychain OAuth access token expires in under %ds; run any claude "
-                        "command to refresh it, or set CLAUDE_CODE_OAUTH_TOKEN" % min_valid_s)
+    # Fail closed: an expiry that is missing or not a number is unusable.
+    if isinstance(exp_ms, bool) or not isinstance(exp_ms, (int, float)) \
+            or exp_ms / 1000.0 < time.time() + min_valid_s:
+        raise AuthError("keychain OAuth access token has no usable expiry or expires in under %ds; "
+                        "run any claude command to refresh it, or set CLAUDE_CODE_OAUTH_TOKEN" % min_valid_s)
     return {"CLAUDE_CODE_OAUTH_TOKEN": token}, "keychain:claudeAiOauth.accessToken"
 
 
