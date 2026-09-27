@@ -117,6 +117,91 @@ console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verd
     expect(JSON.parse(readFileSync(join(dir, ".loki/engine.json"), "utf8")).run_id).toBe("e10-t4");
   }, 30_000);
 
+  test("F1: a tamper reverted after session.ended still blocks the push (re-hash at session.ended)", async () => {
+    const dir = repo();
+    const log = join(dir, ".loki/runs/e10-t5/events.jsonl");
+    const code = `
+const fs = require("node:fs");
+const p = ${JSON.stringify(log)};
+const forged = JSON.stringify({v:1,seq:99,ts:new Date().toISOString(),run:"e10-t5",type:"receipt.sealed",stage:"seal",data:{verdict:"VERIFIED"}}) + "\\n";
+fs.appendFileSync(p, forged);
+console.log(JSON.stringify({ type: "session.ended", stage: "implement", data: { session_id: "s1", exit: "done", duration_s: 1 } }));
+const t = Date.now();
+while (!fs.readFileSync(p, "utf8").includes('"session.ended"') && Date.now() - t < 5000) Bun.sleepSync(10);
+Bun.sleepSync(100);
+fs.writeFileSync(p, fs.readFileSync(p, "utf8").replace(forged, ""));
+console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verdict: "VERIFIED", not_proven: [] } }));
+`;
+    const pr = prSpy();
+    const r = await runSupervisor({ runId: "e10-t5", repoDir: dir, env: supEnv(), workerArgv: worker(code), pr: pr.step });
+    expect(readFileSync(log, "utf8")).not.toContain('"seq":99');
+    expect(r.tampered).toBe(true);
+    expect(pr.calls.length).toBe(0);
+    expect(r.notProven).toContain(TAMPER_NOT_PROVEN);
+  }, 30_000);
+
+  test("F2a: a worker child holding stdout open does not stall the supervisor", async () => {
+    const dir = repo();
+    const pidFile = join(dir, "holder.pid");
+    const code = `
+const c = require("node:child_process").spawn("sleep", ["15"], { stdio: ["ignore", "inherit", "inherit"], detached: true });
+c.unref();
+require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(c.pid));
+console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verdict: "VERIFIED", not_proven: [] } }));
+`;
+    const t = Date.now();
+    const r = await runSupervisor({ runId: "e10-t6", repoDir: dir, env: supEnv(), workerArgv: worker(code), capS: 20, graceS: 5 });
+    expect(Date.now() - t).toBeLessThan(10_000);
+    expect(r.workerExit).toBe(0);
+    expect(r.verdict).toBe("VERIFIED");
+    try { process.kill(Number(readFileSync(pidFile, "utf8"))); } catch { /* already gone */ }
+  }, 30_000);
+
+  test("F2b: a hung worker is killed with its process group at cap plus grace", async () => {
+    const dir = repo();
+    const pidFile = join(dir, "grandchild.pid");
+    const code = `
+const c = require("node:child_process").spawn("sleep", ["15"], { stdio: "ignore" });
+require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(c.pid));
+setInterval(() => {}, 1000);
+`;
+    const t = Date.now();
+    const r = await runSupervisor({ runId: "e10-t7", repoDir: dir, env: supEnv(), workerArgv: worker(code), capS: 1, graceS: 1 });
+    expect(Date.now() - t).toBeLessThan(10_000);
+    expect(r.verdict).toBe("FAILED");
+    const gc = Number(readFileSync(pidFile, "utf8"));
+    let alive = true;
+    for (let i = 0; i < 50 && alive; i++) {
+      try { process.kill(gc, 0); await Bun.sleep(100); } catch { alive = false; }
+    }
+    expect(alive).toBe(false);
+    const done = readEvents(join(dir, ".loki/runs/e10-t7/events.jsonl")).at(-1)!;
+    expect(done.type).toBe("run.completed");
+  }, 30_000);
+
+  test("F3: a verdict outside the Verdict union is FAILED and never reaches the PR hook", async () => {
+    const dir = repo();
+    const code = `console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verdict: "PWNED", not_proven: [] } }));`;
+    const pr = prSpy();
+    const r = await runSupervisor({ runId: "e10-t8", repoDir: dir, env: supEnv(), workerArgv: worker(code), pr: pr.step });
+    expect(r.verdict).toBe("FAILED");
+    expect(pr.calls.length).toBe(0);
+  }, 30_000);
+
+  test("F4: malformed session.ended and negative cost data are dropped", async () => {
+    const dir = repo();
+    const code = `
+console.log(JSON.stringify({ type: "session.ended", stage: "implement", data: {} }));
+console.log(JSON.stringify({ type: "cost", stage: "implement", data: { session_id: "s1", usd: -5 } }));
+console.log(JSON.stringify({ type: "cost", stage: "implement", data: { session_id: "s1", usd: 0.25 } }));
+`;
+    await runSupervisor({ runId: "e10-t9", repoDir: dir, env: supEnv(), workerArgv: worker(code) });
+    const events = readEvents(join(dir, ".loki/runs/e10-t9/events.jsonl"));
+    expect(events.some((e) => e.type === "session.ended")).toBe(false);
+    expect(events.filter((e) => e.type === "cost").map((e) => e.data.usd)).toEqual([0.25]);
+    expect(events.at(-1)!.data.cost_usd).toBe(0.25);
+  }, 30_000);
+
   test("worker refuses a real token and emits JSON lines", async () => {
     expect(() => assertWorkerEnv({ GITHUB_TOKEN: CANARY })).toThrow();
     expect(() => assertWorkerEnv({ GITHUB_TOKEN: "ghp_LOKIWITHHELDsentinel1abcINVALID" })).not.toThrow();
