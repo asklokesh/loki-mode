@@ -1,0 +1,11 @@
+checkout: 0a85b41e24c9b55b83f05ae696d73e8294a5b094^1 (ref)
+command: .venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider tests/test_markers.py -k test_str_preserves_nested_group_precedence
+exit: 1
+seconds: 0.9
+summary: 1 failed, 2280 deselected in 0.66s
+E           assert True == False
+E            +  where True = evaluate({'python_version': '3.12', 'sys_platform': 'darwin'})
+E            +    where evaluate = <Marker('python_version < "3.10" and sys_platform == "linux" or sys_platform == "darwin"')>.evaluate
+E            +  and   False = evaluate({'python_version': '3.12', 'sys_platform': 'darwin'})
+E            +    where evaluate = <Marker('python_version < "3.10" and sys_platform == "linux" or sys_platform == "darwin"')>.evaluate
+FAILED tests/test_markers.py::test_str_preserves_nested_group_precedence - as...

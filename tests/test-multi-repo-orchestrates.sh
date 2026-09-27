@@ -68,7 +68,7 @@ fi
 mkdir -p "$WORK/s/alpha" "$WORK/s/beta" "$WORK/s/gamma"
 for d in alpha beta gamma; do printf 'x\n' > "$WORK/s/$d/main.py"; done
 
-OUT="$( cd "$WORK/s" && LOKI_LEGACY_BASH=1 timeout 180 bash "$LOKI_BIN" migrate \
+OUT="$( cd "$WORK/s" && LOKI_LEGACY_BASH=1 timeout -k 10 180 bash "$LOKI_BIN" migrate \
         "$WORK/s/alpha" --target typescript \
         --multi-repo "$WORK/s/*" --plan-only 2>&1 )" || true
 
@@ -121,7 +121,7 @@ printf 'x\n' > "$WORK/f/one/main.py"
 printf 'x\n' > "$WORK/f/three/main.py"
 ln -s "$WORK/f/nonexistent-target" "$WORK/f/two" 2>/dev/null || true
 
-OUT2="$( cd "$WORK/f" && LOKI_LEGACY_BASH=1 timeout 180 bash "$LOKI_BIN" migrate \
+OUT2="$( cd "$WORK/f" && LOKI_LEGACY_BASH=1 timeout -k 10 180 bash "$LOKI_BIN" migrate \
          "$WORK/f/one" --target typescript \
          --multi-repo "$WORK/f/*" --plan-only 2>&1 )" || true
 

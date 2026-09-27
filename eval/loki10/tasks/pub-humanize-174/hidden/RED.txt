@@ -1,0 +1,7 @@
+repo: python-humanize/humanize @ 6ab21b6fb2ceb774bafaeea5a15dec7582bba187 (repo.ref = merge^1 of fix PR)
+hidden file: tests/test_time.py (post-fix content, minus 3 ties-to-even rows; see NOTES.md)
+command: .venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider tests/test_time.py -k "test_naturaldelta or test_naturaltime"
+exit: 1
+output: FAILED tests/test_time.py::test_naturaldelta[test_input6-2 minutes] - AssertionError
+output: FAILED tests/test_time.py::test_naturaldelta[test_input12-2 hours] - AssertionError
+output: 35 failed, 208 passed, 136 deselected in 0.71s

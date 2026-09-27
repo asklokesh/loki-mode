@@ -1,0 +1,18 @@
+{
+  "id": "pub-jsonschema-1389",
+  "kind": "public",
+  "prompt": "`_Error.json_path` produces invalid or questionable JSON paths\n\nThe `json_path` property on the `_Error` class does not escape or otherwise account for property names that are either blank or have non-alphanumeric characters.\n\nFor example, a property named `.` currently renders to JSON path as `$..`. It should instead be `$['.']`.\n\nHere is a script that demonstrates the `json_path` rendering of various valid property names, which result in invalid or questionable JSON paths:\n\n\n```python\nimport jsonschema\n\n\n# Keys that currently produce invalid or questionable JSON paths.\nkeys = [\"\", \"[\", \".\", \"\\\\\", \"'\", \" \", \"\\\"\", \"a[0]\"]\n\nschema = {\n    # Require that each key be a string.\n    \"properties\": {key: {\"type\": \"string\"} for key in keys},\n}\n\ninstance = {\n    # Set each key to a non-string value.\n    key: None for key in keys\n}\n\nvalidator = jsonschema.Draft7Validator(schema)\nfor error in validator.iter_errors(instance):\n    print(f\"property={error.path[-1]!r}\\t\\tjson_path={error.json_path!r}\")\n```\n\nAnd the output:\n\n```shell\n$ python demo.py \nproperty=''             json_path='$.'\nproperty='['            json_path='$.['\nproperty='.'            json_path='$..'\nproperty='\\\\'           json_path='$.\\\\'\nproperty=\"'\"            json_path=\"$.'\"\nproperty=' '            json_path='$. '\nproperty='\"'            json_path='$.\"'\nproperty='a[0]'         json_path='$.a[0]'\n```",
+  "issue_ref": "python-jsonschema/jsonschema#1389",
+  "repo": {
+    "source": "https://github.com/python-jsonschema/jsonschema.git",
+    "ref": "11455212a0ee246163b68aba586a865bda75142d"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . 'pytest<9' jsonpath-ng",
+  "hidden": {
+    "files": [
+      "jsonschema/tests/test_exceptions.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -p no:cacheprovider jsonschema/tests/test_exceptions.py -k 'TestJsonPathRendering and (test_basic or test_empty or test_period or test_space or test_double_quote or test_json_path_injection or test_open_bracket or test_single_quote or test_backslash)'"
+  },
+  "timeout_s": 900
+}

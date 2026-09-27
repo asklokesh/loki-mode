@@ -1,0 +1,10 @@
+checkout: a47a89ea9111a5eaba138c391e8a564134a15c60^1 (ref)
+command: .venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider tests/test_time.py -k test_naturaldate_tz_aware
+exit: 1
+seconds: 0.2
+summary: 1 failed, 382 deselected in 0.07s
+E       AssertionError: assert 'tomorrow' == 'today'
+E         
+E         - today
+E         + tomorrow
+FAILED tests/test_time.py::test_naturaldate_tz_aware - AssertionError: assert...

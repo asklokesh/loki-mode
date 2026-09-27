@@ -1,0 +1,8 @@
+phase: green
+checkout: 16fc00e2f4a2717a521084f193709a6058afc693 (merge commit)
+command: .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_types.py -k test_path_dash_no_byteswarning
+exit: 0
+seconds: 0.2
+summary: 1 passed, 42 deselected in 0.05s
+key lines:
+  1 passed, 42 deselected in 0.05s

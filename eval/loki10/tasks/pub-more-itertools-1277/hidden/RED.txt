@@ -1,0 +1,9 @@
+commit: 9ed3dbb0ae527230cd156d91d0af305478558fba (repo.ref, merge^1)
+setup: python3 -m venv .venv && .venv/bin/pip install -q -e . pytest
+command: .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_more.py -k "ZipBroadcastTests and test_single_use_iterable"
+rc=1 seconds=0
+summary: 4 failed, 1 passed, 604 deselected in 0.54s
+key: E           RuntimeError: input already opened
+key: E           RuntimeError: input already opened
+key: E           RuntimeError: input already opened
+key: E           RuntimeError: input already opened

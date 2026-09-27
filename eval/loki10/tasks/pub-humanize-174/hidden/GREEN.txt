@@ -1,0 +1,14 @@
+repo: python-humanize/humanize @ 3dca143f7884b928632f68449423d914531ca267 (fix PR merge commit)
+command: .venv/bin/python -m pytest -q --color=no -p no:cacheprovider tests/test_time.py -k "test_naturaldelta or test_naturaltime"
+exit: 0
+output: 243 passed, 136 deselected in 0.37s
+
+Tie-convention neutrality check: same merge commit with every round() in
+src/humanize/time.py replaced by round-half-up (floor(x + 0.5)):
+output: 243 passed, 136 deselected in 0.34s
+Control: the unedited upstream test file under that half-up source fails exactly
+the 3 removed rows:
+  FAILED test_naturaldelta[test_input13-2 hours]
+  FAILED test_naturaltime[22.5-22 seconds ago]
+  FAILED test_naturaltime_nomonths[22.5-22 seconds ago]
+  3 failed, 243 passed

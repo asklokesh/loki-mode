@@ -1,0 +1,18 @@
+{
+  "id": "pub-click-3487",
+  "kind": "public",
+  "prompt": "Echoing empty bytes or bytearray raises TypeError\n\nHopefully this isn't too frivolous but I think it's an easy fix: echoing an empty byte string will cause a crash if `nl=True`.\n\nTo replicate:\n\n```shell\n$ python -c \"import io; import click; click.echo(b'', io.BytesIO(), nl=True)\"\n\nTraceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n  File \"/myproject/click/src/click/utils.py\", line 337, in echo\n    file.write(out)  # type: ignore\n    ^^^^^^^^^^^^^^^\nTypeError: a bytes-like object is required, not 'str'\n```\n\nExpected behaviour:\n\nWe expect `b\"\\n\"` to be written to the stream and for `TypeError` not to be thrown.\n\nEnvironment:\n\n- Python version: 3.11.2\n- Click version: 8.5.0.dev0\n\nSuggested fix:\n\nChange https://github.com/pallets/click/blob/dbf4d14c712750c31e15916b659925683150533b/src/click/utils.py#L297\n\n```diff\n    if nl:\n-      out = out or \"\"\n+      out = \"\" if out is None else out \n       if isinstance(out, str):\n            out += \"\\n\"\n        else:\n            out += b\"\\n\"\n```\n",
+  "issue_ref": "pallets/click#3487",
+  "repo": {
+    "source": "https://github.com/pallets/click.git",
+    "ref": "d42f15b71757de791a5781fb179fd972da9169f5"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . 'pytest<9'",
+  "hidden": {
+    "files": [
+      "tests/test_utils.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -p no:cacheprovider tests/test_utils.py -k test_echo_custom_file"
+  },
+  "timeout_s": 900
+}

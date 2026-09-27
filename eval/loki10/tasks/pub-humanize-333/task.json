@@ -1,0 +1,18 @@
+{
+  "id": "pub-humanize-333",
+  "kind": "public",
+  "prompt": "naturaldelta() raises OverflowError on float('inf') instead of returning it unchanged\n\n### Summary\n`naturaldelta()` documents that a non-finite float value is \"returned unchanged.\" `nan` is handled (its `int()` raises `ValueError`, which is caught), but `float('inf')`/`float('-inf')` raise an uncaught `OverflowError` from `int(value)`, because the `except (ValueError, TypeError)` clause omits `OverflowError`. The behavior is asymmetric and contradicts the docstring.\n\n### Reproduction\n```python\nimport humanize\nprint(humanize.naturaldelta(float(\"nan\")))   # 'nan'   (handled)\nprint(humanize.naturaldelta(float(\"inf\")))   # OverflowError: cannot convert float infinity to integer\n```\n\n### Expected\n`naturaldelta(float(\"inf\"))` returns the value unchanged (symmetric with `nan`), per the docstring.\n\n### Actual\nUncaught `OverflowError`.\n\n### Fix sketch\nInclude `OverflowError` in the caught exceptions around the `int(value)` guard (time.py ~L149).\n\n### Environment\nhumanize 4.15.1.dev (main @ c2c410c), Python 3.12.",
+  "issue_ref": "python-humanize/humanize#333",
+  "repo": {
+    "source": "https://github.com/python-humanize/humanize.git",
+    "ref": "08cf2c3026cfd7c553e397e1d91ea069eb2a4978"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . freezegun pytest",
+  "hidden": {
+    "files": [
+      "tests/test_time.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider tests/test_time.py -k \"naturaldelta_non_finite or naturaldelta_too_large_value_raises\""
+  },
+  "timeout_s": 900
+}

@@ -1,0 +1,18 @@
+{
+  "id": "pub-humanize-174",
+  "kind": "public",
+  "prompt": "`humanize.naturaldelta()` always rounds down\n\n### What did you do?\n```py\nimport humanize\nhumanize.naturaldelta(10799)\n```\nNote that this is exactly one second below 3 hours.\n\n### What did you expect to happen?\nIt should say 3 hours.\n\n### What actually happened?\nIt says 2 hours.\n\n### What versions are you using?\n\n* OS: Debian 12\n* Python: 3.11.2\n* Humanize: 4.9.0\n\nPlease include **code** that reproduces the issue.\n\nThe [best reproductions](https://stackoverflow.com/help/minimal-reproducible-example)\nare\n[self-contained scripts](https://ericlippert.com/2014/03/05/how-to-debug-small-programs/)\nwith minimal dependencies.\n\n```python\nimport humanize\nprint(humanize.naturaldelta(10800))  # \"3 hours\"\nprint(humanize.naturaldelta(10799))  # \"2 hours\"\n```",
+  "issue_ref": "python-humanize/humanize#174",
+  "repo": {
+    "source": "https://github.com/python-humanize/humanize.git",
+    "ref": "6ab21b6fb2ceb774bafaeea5a15dec7582bba187"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . freezegun pytest",
+  "hidden": {
+    "files": [
+      "tests/test_time.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider tests/test_time.py -k \"test_naturaldelta or test_naturaltime\""
+  },
+  "timeout_s": 900
+}

@@ -1,0 +1,19 @@
+{
+  "id": "qs-e-commerce",
+  "kind": "quickstart",
+  "prompt": "Build the backend of a tiny shop with a single shopping cart. Provide an executable start.sh at the repository root that starts the server listening on the port given by the PORT environment variable (bind 127.0.0.1 or 0.0.0.0). Keep all state in memory; no external database or network service. If dependencies are needed, provide a setup.sh at the root that installs them. Request and response bodies are JSON unless stated otherwise. Fixed catalog: mug 1200 cents, shirt 2000 cents, sticker 150 cents. GET /api/products returns [{\"id\",\"price_cents\"}] with ids mug, shirt, sticker. POST /api/cart/items with {\"product_id\",\"qty\"} returns 201 and adds to the cart, merging quantities for the same product; an unknown product returns 404 and a qty that is not a positive integer returns 400. GET /api/cart returns {\"items\":[{\"product_id\",\"qty\"}],\"subtotal_cents\",\"discount_cents\",\"total_cents\"}; when the subtotal is 10000 cents or more, the discount is 10 percent (integer cents, rounded down), otherwise 0.",
+  "issue_ref": null,
+  "repo": {
+    "source": "/Users/lokesh/git/lokimode-anthropic/eval/loki10/fixtures/empty-repo/empty-repo.bundle",
+    "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
+  },
+  "setup": "",
+  "hidden": {
+    "files": [
+      "tests_hidden/_h.py",
+      "tests_hidden/test_qs.py"
+    ],
+    "run": "if [ -f setup.sh ]; then sh setup.sh; fi; python3 tests_hidden/test_qs.py"
+  },
+  "timeout_s": 900
+}

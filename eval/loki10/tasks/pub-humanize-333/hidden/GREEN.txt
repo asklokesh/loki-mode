@@ -1,0 +1,5 @@
+checkout: b48b37b187682ccc55b28ed1b7cfaa853dbca72f (merge)
+command: .venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider tests/test_time.py -k "naturaldelta_non_finite or naturaldelta_too_large_value_raises"
+exit: 0
+seconds: 0.4
+summary: 4 passed, 383 deselected in 0.09s

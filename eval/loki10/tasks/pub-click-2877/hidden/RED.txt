@@ -1,0 +1,15 @@
+phase: red
+checkout: fe3ad76e5807e7a401ed7520f051071c6ae1fa6e (repo.ref)
+command: .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_types.py -k test_path_dash_no_byteswarning
+exit: 1
+seconds: 0.2
+summary: 1 failed, 42 deselected in 0.06s
+key lines:
+  E       AssertionError: Traceback (most recent call last):
+  E           File "<string>", line 4, in <module>
+  E             convert(value, None, None)
+  E             ~~~~~~~^^^^^^^^^^^^^^^^^^^
+  E           File "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-run.k0hCsMQW/pubB/click/src/click/types.py", line 1107, in convert
+  E             is_dash = self.file_okay and self.allow_dash and rv in (b"-", "-")
+  E                                                              ^^^^^^^^^^^^^^^^^
+  E         BytesWarning: Comparison between bytes and string

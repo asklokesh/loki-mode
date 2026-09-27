@@ -1,0 +1,6 @@
+There is no merged PR for #52. Positive control only: the owner's own direct-commit implementation.
+repo: /Users/lokesh/git/augmentiq @ b65b07521f7f53e7fe22211c39394dc375d5758b (feat: Add global search with Cmd+K), after npm install
+command: cd frontend && npx vitest run src/__hidden__/search-bar.test.tsx
+output: Tests  3 passed (3)
+Also green at default-branch head d0a685f6808b7e5e425691a61adc288d168833ae: Tests  3 passed (3)
+(that is why repo.ref is the pre-implementation parent, not head)

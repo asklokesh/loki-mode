@@ -87,9 +87,9 @@ awk -v start="$DISPATCH_START" '
 #    pass while checking less. It is recorded as a FAILURE with the culprit.
 PROBE_TIMEOUT=""
 if command -v timeout >/dev/null 2>&1; then
-    PROBE_TIMEOUT="timeout 15"
+    PROBE_TIMEOUT="timeout -k 10 15"
 elif command -v gtimeout >/dev/null 2>&1; then
-    PROBE_TIMEOUT="gtimeout 15"
+    PROBE_TIMEOUT="gtimeout -k 10 15"
 fi
 
 # PARALLEL (S-210): probes run 8 at a time via xargs, each in its own scratch

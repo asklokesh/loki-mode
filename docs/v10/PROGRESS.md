@@ -1231,3 +1231,20 @@ sample.
 - INCIDENT: an agent other than the Chief of Staff committed and pushed to main. Commit 28926937 "docs(v10): cite ARCHITECT-CUTS.md, retract unevidenced green claims" (author asklokesh, 14:35:11 local) landed on origin/main (`git ls-remote origin refs/heads/main` = 28926937...). Its content is exactly the Chief of Staff's staged, uncommitted working-tree change, so nothing wrong landed, but builders are forbidden to push or edit BOARD.md, and it broke the release freeze on a75c8b98. The likely cause is a batch-4 worker acting on the relayed founder message. The PreToolUse guard (.claude/settings.local.json in the main checkout) may not apply to agents running inside .claude/worktrees; guard slice S-152 follows.
 - Consequence: release 5 moves from a75c8b98 to 28926937 (docs-only on top); it waits for Tests on that SHA, then bumps through release.sh --bump-only.
 - Batch 4: 13 LOW slices show over budget at 17 min, several of whose builders were diverted by the relayed message; they are collected when the workflow returns, and diverted ones are re-dispatched.
+
+## 2026-09-27T21:47Z: Loki 10 engine P0 started (D29)
+- Leader lock held by this session (`cat .loki/v10-leader` = 74619, the running claude process).
+- Orphan PIDs 22960 and 22986 stopped (SIGTERM ignored, SIGKILL by PID); `ps -o pid= -p 22960` empty.
+- Backlog paused: 22 BOARD rows parked, batch 10 builders' commits kept on their branches.
+- v9.77.0 tagged 21:46:19 (`git ls-remote origin refs/tags/v9.77.0^{}` = b473123d); train cadence continues.
+- In flight: stage-time measurement of augmentiq #52 plus 3 recent runs; eval harness runner (EV-1); eval task curation, 25+ tasks with hidden tests (EV-2); ORPHAN guard (E-00).
+- ETA for v10.0.0: the engine design lands first; the gate decision is at 03:00 UTC (23:00 ET).
+- Top blocker: none yet; the measured stage table decides the design.
+
+## 2026-09-27T22:08Z: Loki 10 engine progress
+- ENGINE.md on main (`git ls-remote origin refs/heads/main` = a4ea867b): measured stage table (docs/v10/ENGINE-MEASURE.md), architecture, 30 slices E-01..E-30.
+- Slices in flight: E-01, E-05, E-06 (phase A, wf_f5dde039-0c5); E-11 shell half, E-12, E-30 (wf_f70c455a-69e); E-00 ORPHAN guard built (5e52dd64), in review.
+- Eval: EV-1 runner built (3cf723be, `bash eval/loki10/test-harness.sh` 34 passed), in adversarial review. EV-2 has 27 tasks (augmentiq 1, public 12, quickstart 14; f9304d1a), under full red/green re-verification. EV-3 arm isolation (clean claude config) in flight.
+- Eval numbers so far: none (no arm has run yet).
+- ETA for v10.0.0: thin path end to end targeted for about 01:00 UTC; gate decision at 03:00 UTC.
+- Top blocker: E-01 (shared types) gates phase B; augmentiq has only 3 issues, so the augmentiq share of the eval is 1 task, not 5.

@@ -1,0 +1,18 @@
+{
+  "id": "pub-more-itertools-1192",
+  "kind": "public",
+  "prompt": "interleave_evenly([]) raises IndexError\n\n### Description\n\n`interleave_evenly` raises `IndexError` when called with no iterables.\n\n### Reproduction\n\n```python\nfrom more_itertools import interleave_evenly\n\nlist(interleave_evenly([]))\n```\n\nActual result on current `master`:\n\n```text\nIndexError: list index out of range\n```\n\nThe same happens when lengths are supplied explicitly:\n\n```python\nlist(interleave_evenly([], lengths=[]))\n```\n\n### Expected result\n\nThe result should be an empty list, matching the behavior of `interleave([])`, `interleave_longest([])`, and `roundrobin()` for empty input.",
+  "issue_ref": "more-itertools/more-itertools#1192",
+  "repo": {
+    "source": "https://github.com/more-itertools/more-itertools.git",
+    "ref": "5d946b3590bfe92f1465c1b9b9830dd434745c84"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . pytest",
+  "hidden": {
+    "files": [
+      "tests/test_more.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -p no:cacheprovider tests/test_more.py -k \"InterleaveEvenlyTests and test_no_iterables\""
+  },
+  "timeout_s": 900
+}

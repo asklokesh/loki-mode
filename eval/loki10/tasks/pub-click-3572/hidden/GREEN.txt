@@ -1,0 +1,8 @@
+phase: green
+checkout: fe3ad76e5807e7a401ed7520f051071c6ae1fa6e (merge commit)
+command: .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_termui.py -k test_prompt_and_confirm_ansi_respects_color
+exit: 0
+seconds: 0.2
+summary: 4 passed, 240 deselected in 0.05s
+key lines:
+  4 passed, 240 deselected in 0.05s

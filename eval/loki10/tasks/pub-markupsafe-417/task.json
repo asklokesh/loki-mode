@@ -1,0 +1,18 @@
+{
+  "id": "pub-markupsafe-417",
+  "kind": "public",
+  "prompt": "Markup.striptags: comments now get replaced with a space\n\nIn 2.1.4, if `Markup.striptags` is called, the comment gets replaced by a space. In versions before that it's completely removed from the output.\r\n\r\nTest case to reproduce:\r\n\r\n```\r\nimport unittest\r\n\r\nfrom markupsafe import Markup\r\n\r\nclass MarkupSafeTest(unittest.TestCase):\r\n    def test_striptags(self):\r\n        value = 'x <!-- comment -->'\r\n        self.assertEqual(Markup(value).striptags(), 'x')\r\n\r\n\r\nif __name__ == '__main__':\r\n    unittest.main()\r\n```\r\n\r\nWith markupsafe 2.1.4 it fails, with 2.1.3 - it passes.\r\n\r\nI'm running with Python 3.11\r\n\r\nThe issue was originally found by running the `test_striptags` jinja test case with markupsafe 2.1.4:\r\n\r\nhttps://github.com/pallets/jinja/blob/3fd91e4d11bdd131d8c12805177dbe74d85e7b82/tests/test_filters.py#L94\r\n",
+  "issue_ref": "pallets/markupsafe#417",
+  "repo": {
+    "source": "https://github.com/pallets/markupsafe.git",
+    "ref": "73e6a4886564a554c4a19983d29c97f9fc95457d"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . 'pytest<9'",
+  "hidden": {
+    "files": [
+      "tests/test_markupsafe.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -p no:cacheprovider tests/test_markupsafe.py -k test_escaping"
+  },
+  "timeout_s": 900
+}

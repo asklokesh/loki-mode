@@ -1,0 +1,4 @@
+repo: empty-repo.bundle @ a49d132f67fd193a89e55363dc8c8a8933a1304e (no implementation)
+command: if [ -f setup.sh ]; then sh setup.sh; fi; python3 tests_hidden/test_qs.py
+exit: 1
+last output line: FAIL: pipeline.sh exit 127 stderr 'sh: pipeline.sh: No such file or directory\n'

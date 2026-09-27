@@ -251,13 +251,13 @@ done
 
 # --- run the pipeline in place -----------------------------------------------
 TO=""
-command -v timeout >/dev/null 2>&1 && TO="timeout 240"
+command -v timeout >/dev/null 2>&1 && TO="timeout -k 10 240"
 # run_pipeline <output tag> <stub log> <stub mode> [repo]: one full run.sh loop
 # in place (repo defaults to $W, iteration cap to $MOAT_MAX_ITER or 2); output
 # in $T/log/<tag>.out and .err; returns run.sh's exit code.
 run_pipeline() {
     local repo="${4:-$W}"
-    # shellcheck disable=SC2086  # $TO is intentionally word-split (empty or "timeout 240")
+    # shellcheck disable=SC2086  # $TO is intentionally word-split (empty or "timeout -k 10 240")
     ( cd "$repo" && PATH="$T/bin:$PATH" MOAT_STUB_LOG="$2" MOAT_STUB_MODE="$3" \
         MOAT_STUB_SEEN="$T/log/cfg-seen.txt" \
         LOKI_TARGET_DIR="$repo" LOKI_PROVIDER=claude LOKI_MAX_ITERATIONS="${MOAT_MAX_ITER:-2}" \

@@ -15033,7 +15033,7 @@ run_magic_debate_gate() {
     log_info "Magic Modules: running debate on '$latest_name'"
     local debate_out debate_rc
     debate_out=$(cd "$TARGET_DIR" && PYTHONPATH="$PROJECT_DIR" LOKI_PROVIDER="${PROVIDER_NAME:-claude}" \
-        timeout 300 "$PROJECT_DIR/autonomy/loki" magic debate "$latest_name" --rounds 2 2>&1) \
+        timeout -k 10 300 "$PROJECT_DIR/autonomy/loki" magic debate "$latest_name" --rounds 2 2>&1) \
         && debate_rc=0 || debate_rc=$?
 
     # A debate that could not RUN is not a debate that found nothing. The old
@@ -24120,7 +24120,7 @@ show_run_start_estimate() {
     [ -x "$loki_bin" ] || { command -v loki >/dev/null 2>&1 && loki_bin="loki" || return 0; }
 
     local plan_json=""
-    plan_json=$(timeout 30 "$loki_bin" plan "$prd_path" --json 2>/dev/null) || plan_json=""
+    plan_json=$(timeout -k 10 30 "$loki_bin" plan "$prd_path" --json 2>/dev/null) || plan_json=""
     [ -n "$plan_json" ] || { log_info "Estimate: unavailable (estimator did not return a result); the run continues."; return 0; }
 
     # Parse REAL numbers only. argv keeps the JSON out of the script body so

@@ -1,0 +1,5 @@
+positive control: throwaway stdlib reference implementation (not committed) on the same fixture
+command: if [ -f setup.sh ]; then sh setup.sh; fi; python3 tests_hidden/test_qs.py
+exit: 0
+last output line: PASS
+seconds: 0.2

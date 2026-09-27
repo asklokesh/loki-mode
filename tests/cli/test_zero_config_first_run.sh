@@ -162,7 +162,7 @@ echo -e "${YELLOW}=== loki start \"<brief>\" enters BRIEF mode ===${NC}"
 # Run inside a throwaway dir so the brief PRD lands in an isolated .loki/.
 BRIEF_RUN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/loki-r7-brief-XXXXXX")
 TOTAL=$((TOTAL+1))
-brief_out=$(cd "$BRIEF_RUN_DIR" && timeout 20 "$LOKI" start "build a todo app" \
+brief_out=$(cd "$BRIEF_RUN_DIR" && timeout -k 10 20 "$LOKI" start "build a todo app" \
     --provider nonexistent-provider 2>&1 || true)
 # Must show the zero-config first-run framing, NOT "PRD file not found".
 if echo "$brief_out" | grep -qi "Zero-config first run" \
@@ -197,7 +197,7 @@ echo -e "${YELLOW}=== loki start --brief \"<word>\" escape hatch ===${NC}"
 
 BRIEF_RUN_DIR2=$(mktemp -d "${TMPDIR:-/tmp}/loki-r7-brief2-XXXXXX")
 TOTAL=$((TOTAL+1))
-brief2_out=$(cd "$BRIEF_RUN_DIR2" && timeout 20 "$LOKI" start --brief "snake" \
+brief2_out=$(cd "$BRIEF_RUN_DIR2" && timeout -k 10 20 "$LOKI" start --brief "snake" \
     --provider nonexistent-provider 2>&1 || true)
 if echo "$brief2_out" | grep -qi "Zero-config first run" \
    && echo "$brief2_out" | grep -qi "snake"; then
@@ -209,7 +209,7 @@ rm -rf "$BRIEF_RUN_DIR2"
 
 # --brief with no value must error
 TOTAL=$((TOTAL+1))
-brief3_out=$(timeout 10 "$LOKI" start --brief 2>&1 || true)
+brief3_out=$(timeout -k 10 10 "$LOKI" start --brief 2>&1 || true)
 if echo "$brief3_out" | grep -qi "requires a one-line description"; then
     log_pass "loki start --brief (no value) errors clearly"
 else
@@ -231,7 +231,7 @@ NOT misclassified as a brief.
 PRD
 
 TOTAL=$((TOTAL+1))
-prd_out=$(timeout 10 "$LOKI" start "$TEST_PRD" --provider nonexistent-provider 2>&1 || true)
+prd_out=$(timeout -k 10 10 "$LOKI" start "$TEST_PRD" --provider nonexistent-provider 2>&1 || true)
 # PRD mode must NOT show the brief framing.
 if echo "$prd_out" | grep -qi "Zero-config first run"; then
     log_fail "loki start <PRD>" "PRD misclassified as brief"

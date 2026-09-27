@@ -175,7 +175,7 @@ TOTAL=$((TOTAL+1))
 # Use --dry-run so we exit after PRD generation; also --no-start to prevent
 # actually launching anything. Network-dependent -- we check for the "Issue
 # provider:" prefix which comes from cmd_run, proving dispatch happened.
-start_url_out=$(timeout 30 "$LOKI" start https://github.com/asklokesh/loki-mode/issues/1 --dry-run 2>&1 || true)
+start_url_out=$(timeout -k 10 30 "$LOKI" start https://github.com/asklokesh/loki-mode/issues/1 --dry-run 2>&1 || true)
 if echo "$start_url_out" | grep -qi "Issue provider:"; then
     log_pass "loki start <URL> dispatches to issue-fetch code path"
 else
@@ -221,7 +221,7 @@ PRD
 # Actually easiest: check that "Issue provider:" text does NOT appear. If it
 # enters PRD mode, the output contains "Starting Loki Mode..." or requires a
 # provider check. If it entered issue mode, it would say "Issue provider:".
-prd_out=$(timeout 5 "$LOKI" start "$TEST_PRD" --provider nonexistent-provider 2>&1 || true)
+prd_out=$(timeout -k 10 5 "$LOKI" start "$TEST_PRD" --provider nonexistent-provider 2>&1 || true)
 if echo "$prd_out" | grep -qi "Issue provider:"; then
     log_fail "loki start <PRD>" "routed to issue mode instead of PRD mode"
 else
@@ -239,7 +239,7 @@ TOTAL=$((TOTAL+1))
 # --prd forces PRD mode even if positional arg looks like issue
 TEST_PRD2="/tmp/loki-unified-test-prd2.md"
 echo "# explicit prd test" > "$TEST_PRD2"
-prd_explicit_out=$(timeout 5 "$LOKI" start --prd "$TEST_PRD2" --provider nonexistent-provider 2>&1 || true)
+prd_explicit_out=$(timeout -k 10 5 "$LOKI" start --prd "$TEST_PRD2" --provider nonexistent-provider 2>&1 || true)
 if echo "$prd_explicit_out" | grep -qi "Issue provider:"; then
     log_fail "loki start --prd" "routed to issue mode despite explicit --prd"
 else

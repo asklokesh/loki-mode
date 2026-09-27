@@ -1,0 +1,18 @@
+{
+  "id": "pub-more-itertools-1252",
+  "kind": "public",
+  "prompt": "split_before/split_after/split_when disagree with themselves on an empty iterable when maxsplit=0\n\n`split_before`, `split_after` and `split_when` return a different result for an empty iterable when `maxsplit=0` than they do for any other `maxsplit`, even though no split can occur either way.\n\n```python\n>>> import more_itertools as mi\n>>> pred = lambda x: x == 0\n>>> {ms: list(mi.split_before([], pred, maxsplit=ms)) for ms in (-1, 0, 1, 2)}\n{-1: [], 0: [[]], 1: [], 2: []}\n```\n\n`split_after` and `split_when` behave the same way. `split_at` is consistent (`[[]]` at every `maxsplit`, matching `''.split(',', 0) == ['']`).\n\nThe `[]` answer is the one the library already pins: `tests/test_more.py:1548` asserts `list(mi.split_before([], ...)) == []` and `tests/test_more.py:1689` asserts the same for `split_when`. Neither test passes `maxsplit`, so neither reaches the fast path that produces `[[]]`.\n\nThe fast path is:\n\n```python\nif maxsplit == 0:\n    yield list(iterable)\n    return\n```\n\nadded to all four functions in f77823f (2020) as a speed shortcut, when `split_before` still ended with a bare `yield buf` and `[[]]` was its correct empty-input answer. 2e81a56 (2021) later changed the terminal yield to `if buf: yield buf` and added `test_empty_collection`, but did not reach behind the fast path.\n\nHappy to open a PR guarding the fast path the same way the slow path already is, leaving `split_at` alone.\n",
+  "issue_ref": "more-itertools/more-itertools#1252",
+  "repo": {
+    "source": "https://github.com/more-itertools/more-itertools.git",
+    "ref": "d92f081a089714e0aa92434c797fdd1a06da1290"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . pytest",
+  "hidden": {
+    "files": [
+      "tests/test_more.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -p no:cacheprovider tests/test_more.py -k \"(SplitBeforeTest and test_empty_collection) or (SplitAfterTest and test_empty_collection) or (SplitWhenTests and test_empty_iterable) or (SplitAtTests and test_maxsplit)\""
+  },
+  "timeout_s": 900
+}

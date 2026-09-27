@@ -1709,6 +1709,62 @@ else
     printf '%s\n' "$OUT"
 fi
 
+echo "T35c -- E-00: ORPHAN_WORKTREE fires on a 24h .claude/worktrees/ run.sh and a 35-minute /tmp/loki-run-*.sh, both from the SAME ps listing as ORPHAN_TEST"
+ORPHAN_WT_PS_FIRE="  PID  PPID     ELAPSED COMMAND
+  500  6789   1-00:00:00 bash /repo/.claude/worktrees/agent-afe77b46/autonomy/run.sh
+  600  6789      00:35:00 bash /tmp/loki-run-e6I21L.sh"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_PS_OUTPUT=$ORPHAN_WT_PS_FIRE" "PULSE_PROC_CWD_JSON={\"600\": \"/tmp/loki-moat-p6.X/intr/repo\"}"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: ORPHAN_WORKTREE: pid 500 etime 1-00:00:00: bash /repo/.claude/worktrees/agent-afe77b46/autonomy/run.sh" \
+    && printf '%s\n' "$OUT" | grep -qF "VIOLATION: ORPHAN_WORKTREE: pid 600 etime 00:35:00: bash /tmp/loki-run-e6I21L.sh"; then
+    ok "a 24h .claude/worktrees/ run.sh and a 35-minute /tmp/loki-run-*.sh both fire ORPHAN_WORKTREE, PID/etime/command reported, never killed"
+else
+    bad "T35c ORPHAN_WORKTREE-fires case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T35f -- a backgrounded user 'loki start' (/tmp/loki-run-*.sh, cwd in a project checkout) is not an orphan; the same script with a temp-root cwd is"
+ORPHAN_WT_PS_USER="  PID  PPID     ELAPSED COMMAND
+  610     1      01:53:00 bash /tmp/loki-run-kf6HzN.sh .loki/prd-issue-52.md --provider claude
+  620     1      01:30:00 bash /tmp/loki-run-9xdJsg.sh"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_PS_OUTPUT=$ORPHAN_WT_PS_USER" "PULSE_PROC_CWD_JSON={\"610\": \"/Users/someone/git/augmentiq\", \"620\": \"/tmp/loki-moat-p6.Y/intr/repo\"}"; then rc=0; else rc=$?; fi
+if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: ORPHAN_WORKTREE: pid 610 " \
+    && printf '%s\n' "$OUT" | grep -qF "VIOLATION: ORPHAN_WORKTREE: pid 620 etime 01:30:00: bash /tmp/loki-run-9xdJsg.sh"; then
+    ok "a live user run in a project checkout is not flagged; a temp-root fixture run is"
+else
+    bad "T35f user-run vs fixture-run case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T35d -- ORPHAN_WORKTREE does not fire on a 5-minute worktree process, or an unrelated long-running process"
+ORPHAN_WT_PS_CLEAN="  PID  PPID     ELAPSED COMMAND
+  700  6789      00:05:00 bash /repo/.claude/worktrees/agent-fresh/autonomy/run.sh
+  800  6789      01:30:00 some-other-daemon --arg"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}")" "PULSE_PS_OUTPUT=$ORPHAN_WT_PS_CLEAN"; then rc=0; else rc=$?; fi
+if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: ORPHAN_WORKTREE"; then
+    ok "a 5-minute-old worktree process, and an unrelated long-running non-worktree process, neither fires ORPHAN_WORKTREE"
+else
+    bad "T35d ORPHAN_WORKTREE-no-fire case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T35e -- PULSE_ORPHAN_WORKTREE_MAX_MIN overrides the default 30-minute threshold"
+ORPHAN_WT_PS_15MIN="  PID  PPID     ELAPSED COMMAND
+  900  6789      00:15:00 bash /repo/.claude/worktrees/agent-x/autonomy/run.sh"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_PS_OUTPUT=$ORPHAN_WT_PS_15MIN"; then rc=0; else rc=$?; fi
+if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: ORPHAN_WORKTREE"; then
+    ok "a 15-minute worktree process does not fire under the default 30-minute threshold"
+else
+    bad "T35e default-threshold case unexpectedly fired: output follows"
+    printf '%s\n' "$OUT"
+fi
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_PS_OUTPUT=$ORPHAN_WT_PS_15MIN" "PULSE_ORPHAN_WORKTREE_MAX_MIN=10"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: ORPHAN_WORKTREE: pid 900 etime 00:15:00: bash /repo/.claude/worktrees/agent-x/autonomy/run.sh"; then
+    ok "PULSE_ORPHAN_WORKTREE_MAX_MIN=10 makes the same 15-minute process fire"
+else
+    bad "T35e override case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
 echo "T36 -- D28 rule 3: STRAY_CONTAINER fires on a swarm container over 1h old, or with a non-'no' restart policy"
 DOCKER_PS_FIRE="abc123456789	loki-build-9	90		no
 def456789abc	s1-worker	5		always"

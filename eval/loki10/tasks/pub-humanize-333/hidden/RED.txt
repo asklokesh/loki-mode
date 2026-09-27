@@ -1,0 +1,9 @@
+checkout: b48b37b187682ccc55b28ed1b7cfaa853dbca72f^1 (ref)
+command: .venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider tests/test_time.py -k "naturaldelta_non_finite or naturaldelta_too_large_value_raises"
+exit: 1
+seconds: 0.3
+summary: 2 failed, 2 passed, 383 deselected in 0.09s
+E               OverflowError: cannot convert float infinity to integer
+E               OverflowError: cannot convert float infinity to integer
+FAILED tests/test_time.py::test_naturaldelta_non_finite[inf-inf] - OverflowEr...
+FAILED tests/test_time.py::test_naturaldelta_non_finite[-inf--inf] - Overflow...

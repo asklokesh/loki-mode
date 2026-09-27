@@ -1,0 +1,5 @@
+commit: 3e87c08ac878f4bb79349d38ac69ba75c45dc5bf (fix PR merge commit)
+setup: python3 -m venv .venv && .venv/bin/pip install -q -e . pytest
+command: .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_more.py -k "(SplitBeforeTest and test_empty_collection) or (SplitAfterTest and test_empty_collection) or (SplitWhenTests and test_empty_iterable) or (SplitAtTests and test_maxsplit)"
+rc=0 seconds=0
+summary: 4 passed, 594 deselected, 25 subtests passed in 0.11s

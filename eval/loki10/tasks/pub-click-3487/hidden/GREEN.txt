@@ -1,0 +1,8 @@
+phase: green
+checkout: a5f5aa6d4012d256ccca24638f2642fc371e9f77 (merge commit)
+command: .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_utils.py -k test_echo_custom_file
+exit: 0
+seconds: 0.2
+summary: 1 passed, 146 deselected in 0.04s
+key lines:
+  1 passed, 146 deselected in 0.04s

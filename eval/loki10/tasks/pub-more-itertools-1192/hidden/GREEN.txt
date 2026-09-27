@@ -1,0 +1,5 @@
+commit: b363d6b82c7082db647bd350560fca5e1d724a16 (fix PR merge commit)
+setup: python3 -m venv .venv && .venv/bin/pip install -q -e . pytest
+command: .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_more.py -k "InterleaveEvenlyTests and test_no_iterables"
+rc=0 seconds=0
+summary: 1 passed, 585 deselected in 0.11s

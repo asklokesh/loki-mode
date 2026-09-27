@@ -1,0 +1,5 @@
+commit: d92f081a089714e0aa92434c797fdd1a06da1290 (fix PR merge commit)
+setup: python3 -m venv .venv && .venv/bin/pip install -q -e . pytest
+command: .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_more.py -k "ValueChainTests and test_type_error"
+rc=0 seconds=1
+summary: 2 passed, 595 deselected in 0.11s

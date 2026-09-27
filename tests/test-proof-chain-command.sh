@@ -63,7 +63,7 @@ fi
 #    This is the vacuity case and the one most likely to be got wrong: a
 #    verifier that reports success over zero receipts is worse than no verifier.
 mkdir -p "$WORK/empty/.loki"
-timeout 60 bash autonomy/loki proof chain "$WORK/empty" >/dev/null 2>&1
+timeout -k 10 60 bash autonomy/loki proof chain "$WORK/empty" >/dev/null 2>&1
 rc=$?
 case "$rc" in
     3) pass "empty workspace exits 3 NOTHING (zero receipts is not a pass)" ;;
@@ -73,7 +73,7 @@ esac
 
 # 4. The human output must SAY so, not only encode it in an exit code. An
 #    operator reading the terminal must not see something that looks like a pass.
-out="$(timeout 60 bash autonomy/loki proof chain "$WORK/empty" 2>&1)"
+out="$(timeout -k 10 60 bash autonomy/loki proof chain "$WORK/empty" 2>&1)"
 if printf '%s' "$out" | grep -qi 'not a passing audit\|NOTHING'; then
     pass "the human output states that nothing was audited"
 else
@@ -81,7 +81,7 @@ else
 fi
 
 # 5. --json must pass through, since automation gates on it.
-jout="$(timeout 60 bash autonomy/loki proof chain "$WORK/empty" --json 2>&1)"
+jout="$(timeout -k 10 60 bash autonomy/loki proof chain "$WORK/empty" --json 2>&1)"
 if printf '%s' "$jout" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -103,7 +103,7 @@ mkdir -p "$NODELESS"
 for b in sh bash cat grep sed awk timeout dirname basename uname tr head; do
     src="$(command -v "$b" 2>/dev/null)" && ln -sf "$src" "$NODELESS/$b" 2>/dev/null
 done
-PATH="$NODELESS" timeout 60 bash autonomy/loki proof chain "$WORK/empty" >/dev/null 2>&1
+PATH="$NODELESS" timeout -k 10 60 bash autonomy/loki proof chain "$WORK/empty" >/dev/null 2>&1
 rc=$?
 case "$rc" in
     2) pass "no python3 exits 2 UNAVAILABLE (could not check, not a failure)" ;;

@@ -1,0 +1,15 @@
+phase: red
+checkout: 6ec99f89261b32f8a50848786eca055e1967659f (repo.ref)
+command: .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_termui.py -k test_prompt_and_confirm_ansi_respects_color
+exit: 1
+seconds: 0.3
+summary: 2 failed, 2 passed, 240 deselected in 0.07s
+key lines:
+  E       AssertionError: assert '\x1b[32mHell...0m [y/N]: y\n' == 'Hello World! [y/N]: y\n'
+  E         
+  E         - Hello World! [y/N]: y
+  E         + [32mHello World![0m [y/N]: y
+  E         ? +++++            ++++
+  tests/test_termui.py:1072: AssertionError
+  E       AssertionError: assert '\x1b[32mName\x1b[0m: Bob\n' == 'Name: Bob\n'
+  E         

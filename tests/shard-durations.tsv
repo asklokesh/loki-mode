@@ -538,6 +538,7 @@ proof phases CLI/API parity (one reader, two surfaces)	4
 web-app has no orphaned modules (reachable from main.tsx)	0
 the moat runner enforces every ratchet rule	13
 v10-pulse anti-drift status/violation reporter	14
+timeout launches of run.sh/autonomy/loki escalate with -k (E-00)	1
 v10 drift-audit turn counter (every-6th-turn signal)	0
 v10 slice-card template (fields, budget, dispatch rule)	0
 Add-dir reaches provider	1
@@ -637,3 +638,6 @@ LOKI_AUTO_PR refuses a branch whose history holds user files (S-194)	1
 prd-checklist readers ignore user-site .pth (-I -S, S-204)	3
 focus POST skipped when the dashboard is disabled (S-195)	1
 Loki 10 eval harness runner and scorer (EV-1)	31
+Loki 10 engine trusted push and PR (E-11)	2
+Loki 10 engine dispatch hook (E-12)	2
+Loki 10 legacy route contract golden rows (E-30)	1

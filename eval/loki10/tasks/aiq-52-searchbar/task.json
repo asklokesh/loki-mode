@@ -1,0 +1,18 @@
+{
+  "id": "aiq-52-searchbar",
+  "kind": "augmentiq",
+  "prompt": "[Feature]: add searchbar\n\n### Problem Statement\n\nthere is no searchbar to find things\n\n### Proposed Solution\n\nadd searchbar to the application\n\n### Alternatives Considered\n\n_No response_\n\n### Component\n\nFrontend Dashboard\n\n### Priority\n\nImportant\n\n### Additional Context\n\n_No response_",
+  "issue_ref": "asklokesh/augmentiq#52",
+  "repo": {
+    "source": "/Users/lokesh/git/augmentiq",
+    "ref": "b9796de68d30f76912d38acd1352e6e0202b991f"
+  },
+  "setup": "cd frontend && npm ci --no-audit --no-fund --loglevel=error",
+  "hidden": {
+    "files": [
+      "frontend/src/__hidden__/search-bar.test.tsx"
+    ],
+    "run": "cd frontend && npm install --no-audit --no-fund --loglevel=error && npx vitest run src/__hidden__/search-bar.test.tsx"
+  },
+  "timeout_s": 900
+}

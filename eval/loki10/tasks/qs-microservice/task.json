@@ -1,0 +1,19 @@
+{
+  "id": "qs-microservice",
+  "kind": "quickstart",
+  "prompt": "Build a currency conversion microservice with fixed rates relative to USD: USD 1.0, EUR 0.92, GBP 0.78. Provide an executable start.sh at the repository root that starts the server listening on the port given by the PORT environment variable (bind 127.0.0.1 or 0.0.0.0). Keep all state in memory; no external database or network service. If dependencies are needed, provide a setup.sh at the root that installs them. Request and response bodies are JSON unless stated otherwise. GET /health returns {\"status\":\"ok\"}. GET /convert?from=USD&to=EUR&amount=10 returns {\"result\":9.2}: convert via USD and round to 2 decimals. Unknown currency or non-numeric amount returns 400. GET /metrics returns plain text in Prometheus format that includes a line `convert_requests_total <n>` counting every request to /convert, including rejected ones.",
+  "issue_ref": null,
+  "repo": {
+    "source": "/Users/lokesh/git/lokimode-anthropic/eval/loki10/fixtures/empty-repo/empty-repo.bundle",
+    "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
+  },
+  "setup": "",
+  "hidden": {
+    "files": [
+      "tests_hidden/_h.py",
+      "tests_hidden/test_qs.py"
+    ],
+    "run": "if [ -f setup.sh ]; then sh setup.sh; fi; python3 tests_hidden/test_qs.py"
+  },
+  "timeout_s": 900
+}

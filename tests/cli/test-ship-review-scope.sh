@@ -50,14 +50,14 @@ rm -rf "$d"
 
 # 1. clean loki/* branch: ship scopes review to the branch range (not empty)
 d=$(mk)
-out=$(cd "$d" && LOKI_DIR=.loki timeout 90 bash "$LOKI" ship 2>&1)
+out=$(cd "$d" && LOKI_DIR=.loki timeout -k 10 90 bash "$LOKI" ship 2>&1)
 printf '%s' "$out" | grep -qi 'reviewing the branch range vs main' && ok "clean loki branch -> reviews branch range" || bad "did not scope to branch range"
 printf '%s' "$out" | grep -qi 'No changes to review' && bad "still reviewed empty uncommitted diff (the bug)" || ok "did NOT fall back to empty uncommitted diff"
 rm -rf "$d"
 
 # 2. explicit scope arg is respected (not overridden)
 d=$(mk)
-out=$(cd "$d" && LOKI_DIR=.loki timeout 90 bash "$LOKI" ship --staged 2>&1)
+out=$(cd "$d" && LOKI_DIR=.loki timeout -k 10 90 bash "$LOKI" ship --staged 2>&1)
 printf '%s' "$out" | grep -qi 'reviewing the branch range' && bad "overrode explicit --staged" || ok "explicit scope arg respected"
 rm -rf "$d"
 
@@ -65,7 +65,7 @@ rm -rf "$d"
 #     auto-scope to the branch range (regression: --yes used to count as a scope
 #     arg and skip the scoping -> empty-diff false "clean").
 d=$(mk)
-out=$(cd "$d" && LOKI_DIR=.loki timeout 90 bash "$LOKI" ship --yes 2>&1)
+out=$(cd "$d" && LOKI_DIR=.loki timeout -k 10 90 bash "$LOKI" ship --yes 2>&1)
 printf '%s' "$out" | grep -qi 'reviewing the branch range vs main' && ok "ship --yes still auto-scopes" || bad "ship --yes skipped scoping (the --yes regression)"
 printf '%s' "$out" | grep -qi 'No changes to review' && bad "ship --yes reviewed empty diff" || ok "ship --yes did not review empty diff"
 rm -rf "$d"
@@ -73,7 +73,7 @@ rm -rf "$d"
 # 2c. a positional <file> IS explicit scope: ship work.py must NOT be overridden
 #     by the branch-range auto-scope (it should review just that file/path).
 d=$(mk)
-out=$(cd "$d" && LOKI_DIR=.loki timeout 90 bash "$LOKI" ship work.py 2>&1)
+out=$(cd "$d" && LOKI_DIR=.loki timeout -k 10 90 bash "$LOKI" ship work.py 2>&1)
 printf '%s' "$out" | grep -qi 'reviewing the branch range' && bad "positional file overridden by auto-scope" || ok "positional file scope respected"
 rm -rf "$d"
 
@@ -82,16 +82,16 @@ rm -rf "$d"
 #     'high' must not fall through and wrongly mark explicit scope (that would
 #     re-introduce the empty-diff false-clean bug).
 d=$(mk)
-out=$(cd "$d" && LOKI_DIR=.loki timeout 90 bash "$LOKI" ship --severity high 2>&1)
+out=$(cd "$d" && LOKI_DIR=.loki timeout -k 10 90 bash "$LOKI" ship --severity high 2>&1)
 printf '%s' "$out" | grep -qi 'reviewing the branch range vs main' && ok "ship --severity high (two-token) still auto-scopes" || bad "ship --severity high skipped scoping"
 printf '%s' "$out" | grep -qi 'No changes to review' && bad "ship --severity high reviewed empty diff" || ok "ship --severity high did not review empty diff"
-out=$(cd "$d" && LOKI_DIR=.loki timeout 90 bash "$LOKI" ship --severity=high 2>&1)
+out=$(cd "$d" && LOKI_DIR=.loki timeout -k 10 90 bash "$LOKI" ship --severity=high 2>&1)
 printf '%s' "$out" | grep -qi 'reviewing the branch range vs main' && ok "ship --severity=high (one-token) still auto-scopes" || bad "ship --severity=high skipped scoping"
 rm -rf "$d"
 
 # 3. ship never pushes/PRs (print-only safety preserved)
 d=$(mk)
-out=$(cd "$d" && LOKI_DIR=.loki timeout 90 bash "$LOKI" ship 2>&1)
+out=$(cd "$d" && LOKI_DIR=.loki timeout -k 10 90 bash "$LOKI" ship 2>&1)
 printf '%s' "$out" | grep -qiE 'does not push or deploy|run the command above' && ok "ship is print-only" || bad "ship print-only notice missing"
 rm -rf "$d"
 

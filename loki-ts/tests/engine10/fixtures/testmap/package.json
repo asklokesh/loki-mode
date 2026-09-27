@@ -1,0 +1,10 @@
+{
+  "name": "mixed-repo-fixture",
+  "private": true,
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^2.0.0"
+  }
+}

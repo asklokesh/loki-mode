@@ -1,0 +1,18 @@
+{
+  "id": "pub-click-3572",
+  "kind": "public",
+  "prompt": "ANSI codes not stripped from click.confirm after upgrading to click 8.4\n\n<!--\nThis issue tracker is a tool to address bugs in Click itself. Please use\nGitHub Discussions or the Pallets Discord for questions about your own code.\n\nReplace this comment with a clear outline of what the bug is.\n-->\nI had failing unit tests after upgrading to click 8.4.1. I was able to address some \nby using `runner.invoke(cmd, color=False)`, but that didn't help for commands\nthat use `click.confirm()`\n\n<!--\nDescribe how to replicate the bug.\n\nInclude a minimal reproducible example that demonstrates the bug.\nInclude the full traceback if there was an exception.\n-->\n\nThis test script `test_repro.py` replicates the issue.\n```\nimport click\nfrom click.testing import CliRunner\n\n\n@click.command()\ndef cmd():\n    click.echo(click.style('Hello World!', fg='green'))\n\n\n@click.command()\ndef cmd_confirm():\n    click.confirm(click.style('Hello World!', fg='green'), abort=True)\n\n\ndef test_echo_strips_ansi_with_color_false():\n    runner = CliRunner()\n    result = runner.invoke(cmd, color=False)\n    assert result.output == \"Hello World!\\n\"\n\n\ndef test_confirm_strips_ansi_with_color_false():\n    runner = CliRunner()\n    result = runner.invoke(cmd_confirm, input=\"Y\", color=False)\n    assert result.output == \"Hello World! [y/N]: Y\\n\"  # FAILS: ANSI codes present\n```\n\nWith click 8.3.3 both tests pass. With click 8.4.0 and 8.4.1, the `test_confirm_strips_ansi_with_color_false` test fails:\n\n```\nuvx --with click==8.4 pytest test_repro.py\n...\n================================================ FAILURES ================================================\n_______________________________ test_confirm_strips_ansi_with_color_false ________________________________\n\n    def test_confirm_strips_ansi_with_color_false():\n        runner = CliRunner()\n        result = runner.invoke(cmd_confirm, input=\"Y\", color=False)\n>       assert result.output == \"Hello World! [y/N]: Y\\n\"  # FAILS: ANSI codes present\n```\n\n<!--\nDescribe the expected behavior that should have happened but didn't.\n-->\nThe ansi codes should be stripped when running click.confirm, as they are for click.echo.\n\nEnvironment:\n\n- Python version: 3.13\n- Click version: 8.4.1\n- MacOS\n\n",
+  "issue_ref": "pallets/click#3572",
+  "repo": {
+    "source": "https://github.com/pallets/click.git",
+    "ref": "6ec99f89261b32f8a50848786eca055e1967659f"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . 'pytest<9'",
+  "hidden": {
+    "files": [
+      "tests/test_termui.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -p no:cacheprovider tests/test_termui.py -k test_prompt_and_confirm_ansi_respects_color"
+  },
+  "timeout_s": 900
+}

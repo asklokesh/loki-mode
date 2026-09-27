@@ -1,0 +1,18 @@
+{
+  "id": "pub-more-itertools-1277",
+  "kind": "public",
+  "prompt": "zip_broadcast opens input iterables twice\n\n`zip_broadcast()` calls `iter(obj)` to decide whether an argument is a scalar, discards that iterator, then calls `iter(obj)` again to consume the input. This opens an iterable twice. An input that permits only one opening works with `zip()` but fails with `zip_broadcast()`:\n\n```python\nfrom more_itertools import zip_broadcast\n\nclass SingleUseIterable:\n    def __init__(self):\n        self.opened = False\n\n    def __iter__(self):\n        if self.opened:\n            raise RuntimeError('input already opened')\n        self.opened = True\n        return iter([1, 2])\n\nprint(list(zip(SingleUseIterable(), ['label', 'label'])))\n# [(1, 'label'), (2, 'label')]\n\nprint(list(zip_broadcast(SingleUseIterable(), 'label')))\n# RuntimeError: input already opened\n```\n\nExpected: `[(1, 'label'), (2, 'label')]`, without reopening the source. This also happens with empty inputs and with `strict=True`.\n\nReproduced on Linux with CPython 3.14.2 at commit `9ed3dbb0ae527230cd156d91d0af305478558fba`. Retaining the iterator obtained during scalar detection fixes the reproduction while preserving the configured scalar types and strict length checks. A patch with regression coverage is ready.\n",
+  "issue_ref": "more-itertools/more-itertools#1277",
+  "repo": {
+    "source": "https://github.com/more-itertools/more-itertools.git",
+    "ref": "9ed3dbb0ae527230cd156d91d0af305478558fba"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . pytest",
+  "hidden": {
+    "files": [
+      "tests/test_more.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -p no:cacheprovider tests/test_more.py -k \"ZipBroadcastTests and test_single_use_iterable\""
+  },
+  "timeout_s": 900
+}

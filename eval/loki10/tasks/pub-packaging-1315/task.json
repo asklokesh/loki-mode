@@ -1,0 +1,18 @@
+{
+  "id": "pub-packaging-1315",
+  "kind": "public",
+  "prompt": "`str(Marker(...))` drops parentheses of a nested group and changes evaluation\n\n`str(Marker(...))` can drop the parentheses around a parenthesized sub-group when it is nested inside a larger `and`/`or` expression. The string then reparses with different precedence and can evaluate to the opposite result.\n\nMRE (packaging 26.2):\n\n```python\nfrom packaging.markers import Marker\n\nm = Marker('python_version < \"3.10\" and ((sys_platform == \"linux\" or sys_platform == \"darwin\"))')\nenv = {\"python_version\": \"3.12\", \"sys_platform\": \"darwin\"}\n\nprint(str(m))\n# python_version < \"3.10\" and sys_platform == \"linux\" or sys_platform == \"darwin\"\nprint(m.evaluate(env))               # False\nprint(Marker(str(m)).evaluate(env))  # True\n```\n\nThe original means `A and (B or C)`. The serialized string drops the inner parentheses and reparses as `(A and B) or C`, which flips the result. Expected: `str(Marker(x))` reparses to a marker that evaluates the same as `x` in every environment.",
+  "issue_ref": "pypa/packaging#1315",
+  "repo": {
+    "source": "https://github.com/pypa/packaging.git",
+    "ref": "c4fb81ff6eba16fdd24d50e9d9d002fdbece6dd4"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . pytest pretend hypothesis tomli_w pip",
+  "hidden": {
+    "files": [
+      "tests/test_markers.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider tests/test_markers.py -k test_str_preserves_nested_group_precedence"
+  },
+  "timeout_s": 900
+}

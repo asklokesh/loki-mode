@@ -5,6 +5,20 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.78.0
+
+**First Loki 10 engine code, opt-in behind LOKI_ENGINE=v10; an ORPHAN guard for stuck runs.** Released from green tree 4aa09e07 (Tests run 36355193993 and Bun Parity run 36355193981 both success before the bump).
+
+- Loki 10 engine groundwork (CEO directive D29; design and measured stage times in docs/v10/ENGINE.md and docs/v10/ENGINE-MEASURE.md): the append-only run event log and shared engine types (E-01), provider cost capture where unknown cost stays null (E-06), the trusted push child for the engine's PR step (E-11, shell half), and the `LOKI_ENGINE=v10` entry point (E-12). With LOKI_ENGINE unset, every command routes exactly as before; with v10, multi-word tasks, issue refs, status, verify and dashboard reach the new engine, which is not complete yet in this release.
+- The pulse flags a long-running process under an agent worktree or a temp-root loki run script, and about 50 test launches of run.sh and loki now use `timeout -k 10`, so a script that ignores SIGTERM is killed (E-00). Two such orphans had been running for over 24 hours.
+- The pulse counts engine slices on the BOARD, and its unevidenced-claim check ignores a slice's Wall-check spec text.
+
+## v9.77.0
+
+**The dashboard focus notification respects a disabled dashboard.** Released from green tree a4aad86c (Tests run 36352563585 and Bun Parity run 36352563557 both success before the bump).
+
+- With the dashboard disabled, a run no longer POSTs its project directory to `/api/focus` (S-195).
+
 ## v9.76.0
 
 **Council, checklist and proof readers are immune to user-site .pth files; auto-PR refuses a branch that still holds user files.** Released from green tree 800ac46e (Tests run 36351690452 and Bun Parity run 36351690372 both success before the bump).
