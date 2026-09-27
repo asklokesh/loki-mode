@@ -2,14 +2,12 @@
 // 8 relevant files chosen by keyword overlap with the repo map, and writes at
 // most 10 lines to <runDir>/plan-output.txt; the engine reads and truncates it
 // (missing or unreadable means an empty plan, never a crash).
-//
-// The "Plan and Wall start times differ by less than 1s" Wall check names a
-// machine-level property (running planStage and wallStage via Promise.all);
-// it is exercised once machine.ts (E-02) and wall.ts (E-15) land, not here.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RepoMap } from "../repomap.ts";
-import type { RunContext, Stage, StageResult } from "../types.ts";
+import { planMode, sizeTask, wallEnabled, wallModel } from "../sizing.ts";
+import type { RunContext, Stage, StageResult, TestMap } from "../types.ts";
+import { loadTaskText } from "./wall.ts";
 
 const MAX_RELEVANT_FILES = 8;
 const MAX_PLAN_LINES = 10;
@@ -78,11 +76,17 @@ export const planStage: Stage = {
 
   async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
     const prior = ctx.outputs();
-    const task = (prior.intake?.task as string | undefined) ?? "";
+    const task = loadTaskText(ctx, prior.intake?.task as string | undefined);
     const repomapRef = prior.intake?.repomap_ref as string | undefined;
-    const repoMap: RepoMap = repomapRef && existsSync(repomapRef)
-      ? (JSON.parse(readFileSync(repomapRef, "utf8")) as RepoMap)
-      : { files: [], entries: [], truncated: false };
+    const loaded = repomapRef && existsSync(repomapRef) ? (JSON.parse(readFileSync(repomapRef, "utf8")) as RepoMap) : null;
+    const repoMap: RepoMap = loaded ?? { files: [], entries: [], truncated: false };
+
+    // E-45: record the cost variant; a small task skips this session and the implementer plans.
+    const sz = sizeTask(task, loaded, (prior.intake?.testmap as TestMap | undefined) ?? null);
+    const mode = planMode();
+    const skip = mode === "never" || (mode === "auto" && sz.size === "small");
+    ctx.emit("variant", null, { size: sz.size, reasons: sz.reasons, plan_mode: mode, plan_skipped: skip, wall_model: wallEnabled() ? wallModel() : null });
+    if (skip) return { status: "skipped", data: { size: sz.size }, reason: mode === "never" ? "LOKI_E10_PLAN=0" : "small task: implementer plans" };
 
     const relevantFiles = selectRelevantFiles(task, repoMap);
     const outputPath = planOutputPath(ctx.runDir);

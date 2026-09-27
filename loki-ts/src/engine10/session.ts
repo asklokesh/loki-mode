@@ -55,6 +55,11 @@ function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): NodeJS.Pro
       env["LOKI_CLAUDE_MODEL_FAST"] = override;
     }
   }
+  if (opts.model) {
+    const t = String(opts.tier).toUpperCase(); // E-45: pin wins over any inherited tier model
+    env[`LOKI_CLAUDE_MODEL_${t}`] = opts.model;
+    env[`LOKI_MODEL_${t}`] = opts.model;
+  }
   return env;
 }
 
@@ -130,7 +135,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       let stdout = "";
       child.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
       let killed = false;
-      cfg.emit?.("session.started", opts.stage, { session_id: sessionId, provider: cfg.provider, model: cfg.model ?? null, pgid: pgid ?? null });
+      cfg.emit?.("session.started", opts.stage, { session_id: sessionId, provider: cfg.provider, model: opts.model ?? cfg.model ?? null, pgid: pgid ?? null });
       const onAbort = () => { killed = true; killGroupWithGrace(pgid); };
       const limitTimer = setTimeout(onAbort, opts.limitS * 1000);
       const heartbeatTimer = setInterval(() => {

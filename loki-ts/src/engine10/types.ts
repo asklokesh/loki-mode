@@ -29,7 +29,7 @@ export const EVENT_TYPES = [
   "heartbeat", "session.started", "session.ended", "cost", "wall.sealed",
   "tests.restored", "test.result", "fix.round", "already.satisfied", "spec.conflict",
   "escalated", "cap.hit", "tamper.detected", "receipt.sealed", "pr.opened",
-  "deep.started", "deep.completed", "receipt.addendum", "run.completed",
+  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "variant",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
@@ -78,6 +78,8 @@ export interface SessionRunOptions {
   limitS: number;
   signal: AbortSignal;
   cwd?: string;
+  /** Pins this session's model for its tier (E-45 Wall on sonnet); unset inherits the run model. */
+  model?: string;
 }
 
 export interface SessionResult {

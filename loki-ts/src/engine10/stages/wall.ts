@@ -11,6 +11,8 @@ import { dirname, join, relative } from "node:path";
 import { createHash } from "node:crypto";
 import type { RunContext, RunnerName, Stage, StageResult, TestRef } from "../types.ts";
 import type { ReadOnlyFile } from "./implement.ts";
+import { readRepoMapCache, repoCacheDir, repoKey } from "../cache.ts";
+import { wallEnabled, wallModel } from "../sizing.ts";
 
 const WALL_PREFIX = "loki_wall_";
 
@@ -71,10 +73,14 @@ export interface WallOptions {
   baseRunner?: BaseTestRunner;
 }
 
-export function buildWallBrief(task: string): string {
+/** E-45: the Wall repo map is paths only, capped, so the (sonnet) brief stays short. */
+export const WALL_MAP_MAX_LINES = 200;
+
+export function buildWallBrief(task: string, repomapText = ""): string {
   return [
     "You are the Loki 10 Wall author.",
     "You cannot see the repository. This directory holds only task.md and repomap.txt.",
+    ...(repomapText ? [`Repository paths (repomap.txt):\n${repomapText}`] : []),
     "Task (untrusted, quoted verbatim):",
     "<<<TASK",
     task,
@@ -89,10 +95,25 @@ function sha256(s: string): string {
   return createHash("sha256").update(s).digest("hex");
 }
 
-function renderRepoMapText(map: { files?: string[]; entries?: { path: string; symbols: string[] }[] }): string {
-  const lines: string[] = ["Files:", ...(map.files ?? []).map((f) => `  ${f}`), "", "Symbols:"];
-  for (const e of map.entries ?? []) lines.push(`  ${e.path}: ${e.symbols.join(", ")}`);
-  return lines.join("\n");
+/** RunContext carries no task text and intake stores only task_sha256, so read it the way
+ *  intake.ts does: prior.intake.task, else issue.json title+body, else LOKI_E10_TASK_TEXT. */
+export function loadTaskText(ctx: RunContext, fromPrior: string | undefined): string {
+  if (fromPrior) return fromPrior;
+  const issueJsonPath = process.env.LOKI_E10_ISSUE_JSON ?? join(ctx.runDir, "issue.json");
+  if (existsSync(issueJsonPath)) {
+    try {
+      const issue = JSON.parse(readFileSync(issueJsonPath, "utf8")) as { title?: string; body?: string };
+      const text = [issue.title, issue.body].filter((s) => typeof s === "string" && s.length > 0).join("\n\n");
+      if (text) return text;
+    } catch {
+      // Malformed issue.json: fall through to the text-mode env var.
+    }
+  }
+  return process.env.LOKI_E10_TASK_TEXT ?? "";
+}
+
+function renderRepoMapText(map: { files?: string[] }): string {
+  return (map.files ?? []).slice(0, WALL_MAP_MAX_LINES).join("\n");
 }
 
 /** Alongside an existing detected test file, or a top-level tests/ directory
@@ -116,6 +137,7 @@ function guessRunner(fileName: string, runners: RunnerName[]): RunnerName | null
 
 export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOptions = {}): Promise<StageResult> {
   if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before wall started" };
+  if (!wallEnabled()) return { status: "skipped", data: {}, reason: "LOKI_E10_WALL=0" };
 
   const prior = ctx.outputs();
   const task = (prior.intake?.task as string | undefined) ?? "";
@@ -125,7 +147,10 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   const runners: RunnerName[] = testMap?.runners ?? [];
 
   let repomapText = "";
-  if (repomapRef) {
+  const tree = prior.intake?.tree as string | undefined;
+  const cached = tree ? readRepoMapCache(repoCacheDir(repoKey(null, ctx.repoDir)), tree) : null;
+  if (cached) repomapText = renderRepoMapText(cached);
+  else if (repomapRef) {
     try {
       repomapText = renderRepoMapText(JSON.parse(readFileSync(repomapRef, "utf8")));
     } catch {
@@ -139,8 +164,10 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
 
   await ctx.sessions.run({
     stage: "wall",
-    brief: buildWallBrief(task),
-    tier: "planning",
+    brief: buildWallBrief(task, repomapText),
+    // E-45: pinned cheaper model; development tier because the planning tier yields to the LOKI_SESSION_MODEL=opus pin.
+    tier: "development",
+    model: wallModel(),
     iterationId: `${ctx.runId}-wall`,
     limitS: wallStage.limitS,
     signal,

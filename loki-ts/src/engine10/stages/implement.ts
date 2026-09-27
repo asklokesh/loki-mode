@@ -33,7 +33,7 @@ export function buildImplementBrief(
     "<<<TASK",
     task,
     "TASK",
-    plan ? `Follow this plan:\n${plan}` : "No plan was produced; use your own judgement.",
+    plan ? `Follow this plan:\n${plan}` : "No separate plan was made: plan the change yourself in this session, then implement it.",
     "Rules:",
     "- The Wall tests and any existing test files are read-only. Do not edit or delete them.",
     `- Run only these impacted tests: ${impactedTests.length ? impactedTests.join(", ") : "(none known)"}.`,
