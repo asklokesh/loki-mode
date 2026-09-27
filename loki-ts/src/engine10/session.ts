@@ -60,7 +60,7 @@ function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): NodeJS.Pro
 
 function diffShortstat(cwd: string | undefined): { files: number; insertions: number; deletions: number } {
   try {
-    const out = execFileSync("git", ["diff", "--shortstat"], { cwd, encoding: "utf8", env: process.env }).trim();
+    const out = execFileSync("git", ["diff", "--shortstat"], { cwd, encoding: "utf8", env: process.env, stdio: ["ignore", "pipe", "ignore"] }).trim();
     const files = /(\d+) files? changed/.exec(out);
     const ins = /(\d+) insertions?\(\+\)/.exec(out);
     const del = /(\d+) deletions?\(-\)/.exec(out);
