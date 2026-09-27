@@ -902,6 +902,74 @@ else
     bad "ci-status fake-gh-exit4 case: rc=$rc out=$out"
 fi
 
+# --- worktree-budget: scratch repo with linked worktrees -------------------
+
+echo "== worktree-budget: cap minus .claude/worktrees entries =="
+WTB="$WORK/wtb"
+mkdir -p "$WTB/scripts"
+cp "$OPS_SH" "$WTB/scripts/v10-ops.sh"
+(
+    cd "$WTB" || exit 1
+    git init -q .
+    git config user.name "test"
+    git config user.email "test@example.com"
+    git add scripts/v10-ops.sh
+    git commit -q -m "init"
+    git worktree add -q .claude/worktrees/a -b wa
+    git worktree add -q .claude/worktrees/b -b wb
+    # Not under .claude/worktrees/: must not count.
+    git worktree add -q "$WORK/wtb-elsewhere" -b wc
+)
+wtb_n="$(git -C "$WTB" worktree list --porcelain | grep -c '^worktree ')"
+if [ "$wtb_n" -eq 4 ]; then
+    ok "fixture has 4 worktrees (main, 2 under .claude/worktrees, 1 elsewhere)"
+else
+    bad "fixture worktree count: $wtb_n"
+fi
+
+out="$(bash "$WTB/scripts/v10-ops.sh" worktree-budget 15 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "13" ]; then
+    ok "worktree-budget 15 prints 13 with 2 .claude/worktrees entries"
+else
+    bad "worktree-budget 15: rc=$rc out=$out"
+fi
+
+out="$(bash "$WTB/scripts/v10-ops.sh" worktree-budget 3 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "1" ]; then
+    ok "worktree-budget 3 prints 1 (the elsewhere worktree is not counted)"
+else
+    bad "worktree-budget 3: rc=$rc out=$out"
+fi
+
+out="$(bash "$WTB/scripts/v10-ops.sh" worktree-budget 2 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && [ "$out" = "0" ]; then
+    ok "worktree-budget at the cap prints 0 and exits 1"
+else
+    bad "worktree-budget at cap: rc=$rc out=$out"
+fi
+
+out="$(bash "$WTB/scripts/v10-ops.sh" worktree-budget 1 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && [ "$out" = "0" ]; then
+    ok "worktree-budget over the cap prints 0 and exits 1"
+else
+    bad "worktree-budget over cap: rc=$rc out=$out"
+fi
+
+out="$(bash "$WTB/scripts/v10-ops.sh" worktree-budget 2>&1)"; rc=$?
+rc2=0; bash "$WTB/scripts/v10-ops.sh" worktree-budget abc >/dev/null 2>&1 || rc2=$?
+if [ "$rc" -eq 2 ] && [ "$rc2" -eq 2 ]; then
+    ok "worktree-budget with a missing or non-integer cap exits 2"
+else
+    bad "worktree-budget bad cap: rc=$rc rc2=$rc2 out=$out"
+fi
+
+out="$(bash "$NOGIT/scripts/v10-ops.sh" worktree-budget 15 2>&1)"; rc=$?
+if [ "$rc" -eq 2 ]; then
+    ok "worktree-budget exits 2 (never a budget) when git fails"
+else
+    bad "worktree-budget git-failure case: rc=$rc out=$out"
+fi
+
 # --- usage / unknown subcommand --------------------------------------------
 
 echo "== usage: unknown subcommand =="

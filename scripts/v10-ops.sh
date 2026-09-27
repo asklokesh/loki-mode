@@ -97,6 +97,12 @@ Subcommands:
   ci-status [workflow-name]
       gh run list --branch main --workflow <name> --limit 1, formatted.
       Defaults to "Tests" if no workflow name given.
+
+  worktree-budget <cap>
+      Prints how many more worktrees a batch may open before dispatch: <cap>
+      minus the entries under .claude/worktrees/ in `git worktree list
+      --porcelain`. Exit 0 when that is above 0. At or over the cap prints 0
+      and exits 1. A non-integer cap or a git failure exits 2.
 EOF
 }
 
@@ -472,6 +478,25 @@ cmd_ci_status() {
 {{end}}'
 }
 
+cmd_worktree_budget() {
+    local cap="${1:-}" list used
+    if ! [[ "$cap" =~ ^[0-9]+$ ]]; then
+        echo "usage: v10-ops.sh worktree-budget <cap> (non-negative integer)" >&2
+        return 2
+    fi
+    # Captured first (no pipe) so a git failure is exit 2, never a budget.
+    if ! list="$(git -C "$REPO_ROOT" worktree list --porcelain 2>&1)"; then
+        echo "worktree-budget: git worktree list failed: $list" >&2
+        return 2
+    fi
+    used="$(printf '%s\n' "$list" | awk '/^worktree .*\/\.claude\/worktrees\//{n++} END{print n+0}')"
+    if [ "$used" -ge "$((10#$cap))" ]; then
+        echo 0
+        return 1
+    fi
+    echo "$((10#$cap - used))"
+}
+
 main() {
     local sub="${1:-}"
     [ -n "$sub" ] && shift
@@ -483,6 +508,7 @@ main() {
         push-main)              cmd_push_main "$@" ;;
         version-check)          cmd_version_check "$@" ;;
         ci-status)              cmd_ci_status "$@" ;;
+        worktree-budget)        cmd_worktree_budget "$@" ;;
         -h|--help|help|"")      usage ;;
         *)
             echo "v10-ops.sh: unknown subcommand '$sub'" >&2
