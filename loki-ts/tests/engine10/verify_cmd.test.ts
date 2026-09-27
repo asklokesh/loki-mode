@@ -24,8 +24,13 @@ const AUTONOMY_DIR = join(REPO_ROOT, "autonomy");
 const CRYPTO_PY_CANDIDATES = ["python3", "/opt/homebrew/bin/python3", "/usr/bin/python3", "/usr/local/bin/python3"];
 function findPythonWithCrypto(): string | null {
   for (const c of CRYPTO_PY_CANDIDATES) {
-    const r = Bun.spawnSync([c, "-I", "-c", "import cryptography"]);
-    if (r.exitCode === 0) return c;
+    // Bun.spawnSync throws ENOENT on Linux for a missing path (macOS returns non-zero).
+    try {
+      const r = Bun.spawnSync([c, "-I", "-c", "import cryptography"], { env: process.env });
+      if (r.exitCode === 0) return c;
+    } catch {
+      continue;
+    }
   }
   return null;
 }

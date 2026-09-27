@@ -1761,7 +1761,7 @@ def check_unevidenced_claims():
             # a claim; only its status and notes cells (the last two) can claim.
             text = added
             cells = added.split("|")
-            if added.startswith("| S-") and len(cells) >= 9:
+            if re.match(r"\| (?:S|E|EV)-\d+ \|", added) and len(cells) >= 9:
                 text = "|".join(cells[-3:-1])
             if _CLAIM_RE.search(text) and not _EVIDENCE_RE.search(text):
                 if current and added.strip() not in current:

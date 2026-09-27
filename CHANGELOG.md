@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Deprecated
+- `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
+
 ## v9.79.0
 
 **Loki 10 engine wave 1 and the release-gate eval harness land (still opt-in behind LOKI_ENGINE=v10).** Released from green tree e86e846a (Tests run 36357562143 and Bun Parity run 36357562160 both success before the bump).

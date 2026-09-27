@@ -1263,7 +1263,7 @@ sample.
 
 ## 2026-09-27T23:27Z: Loki 10 progress
 - Raw claude -p full arm: 27/29 (93.1%), p50 39s, p90 68s, $0.2363 per completed task (docs/v10/METRICS.md).
-- v10 first real task (E-14 glue entry): fixed in 30s, hidden test passes, $0.45 (plan $0.23 plus implement $0.22) against raw $0.13 on the same task.
+- v10 first real task (E-14 glue entry, commit 9d9ff7d2): fixed in 30s, hidden test result "1 passed, exit 0", $0.45 (plan $0.23 plus implement $0.22; `cost-summary.py --json` fully_measured true) against raw $0.13 on the same task.
 - On main (`git ls-remote origin refs/heads/main` = 44731e0f): every engine slice except E-14's glue, plus E-41 local-origin push; v9.79.0 tagged 23:12:55.
 - In flight: E-42 (real entry end to end, Rule of Two for the pr stage, harness v10 arm on one task), E-43 cost knobs, E-44 output fixes, E-33..E-35, EV-5 legacy full arm.
 - ETA: first harness-scored v10 task by about 00:15Z; full v10 arm by about 01:30Z; gate decision 03:00Z.

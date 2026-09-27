@@ -642,3 +642,4 @@ Loki 10 engine trusted push and PR (E-11)	2
 Loki 10 engine dispatch hook (E-12)	2
 Loki 10 legacy route contract golden rows (E-30)	1
 run-owned temp cleanup works when sourced under zsh	1
+Loki 10 legacy deprecation notice (E-35)	1
