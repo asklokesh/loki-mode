@@ -1,0 +1,13 @@
+{
+  "provider": "github",
+  "number": 42,
+  "title": "Add widget",
+  "body": "please add a widget",
+  "labels": [],
+  "author": "octocat",
+  "url": "https://github.com/acme/widgets/issues/42",
+  "created_at": "2026-01-01T00:00:00Z",
+  "repo": "acme/widgets",
+  "state": "closed",
+  "closed_by_merged_pr": false
+}

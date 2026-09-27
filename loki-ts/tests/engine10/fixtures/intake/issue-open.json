@@ -1,0 +1,13 @@
+{
+  "provider": "github",
+  "number": 9,
+  "title": "Still open",
+  "body": "not done yet",
+  "labels": [],
+  "author": "octocat",
+  "url": "https://github.com/acme/widgets/issues/9",
+  "created_at": "2026-01-01T00:00:00Z",
+  "repo": "acme/widgets",
+  "state": "open",
+  "closed_by_merged_pr": false
+}
