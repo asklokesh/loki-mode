@@ -229,3 +229,17 @@ Raw `claude -p` arm (EV-4), model claude-opus-5-5, 900s cap, 3 public tasks, har
 | pub-humanize-152 | yes | 45s | $0.2704 |
 
 `summarize --markdown`: 3/3 completed, p50 34s, p90 45s, $0.1944 per completed task, 0 capped. This is a 3-task smoke, not the 29-task gate. It sets the bar the v10 fast lane must meet on completion and cost per completed task (D29), which is far tighter than the 5-minute p50 target.
+
+## Loki 10 eval: raw claude -p arm, full 29 tasks (2026-09-27 23:05-23:16Z)
+
+Model claude-opus-5-5, harness 84c22568, 900s cap, --parallel 3, EV-3 isolation. Results: ~/loki-ci-logs/eval-raw-claude-20260927T231653Z/.
+
+| Arm | Completed | Rate | p50 time to PR | p90 time to PR | Cost per completed | Cost measured | Capped |
+|---|---|---|---|---|---|---|---|
+| raw-claude | 27/29 | 93.1% | 39s | 68s | $0.2363 | 29/29 | 0 |
+
+Misses: pub-click-3059 (hidden tests failed: wrong metavar bracketing), pub-humanize-174 (hidden tests failed: rounding boundary cases). Total provider-reported spend $6.38.
+
+## Loki 10 engine: first real run (E-14 smoke, not the gate)
+
+pub-more-itertools-1192 through the E-14 glue entry, real claude, --no-pr: 30s wall (intake 0s, plan 16s, implement 12s, verify 3s, commit and seal under 1s), hidden test passes, $0.4486 over 2 sessions (plan $0.2264, implement $0.2223), verdict PARTIAL only because ruff is not installed. Raw claude on the same task: 15s, $0.1290. The planner session costs as much as the implement session.
