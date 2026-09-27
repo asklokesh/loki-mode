@@ -1,0 +1,11 @@
+{
+  "number": 101,
+  "title": "Add subtract function to calc.ts",
+  "body": "We need a subtract(a, b) helper. See ISSUE-BODY-MARKER-9f3a for context.",
+  "labels": [{ "name": "enhancement" }],
+  "author": { "login": "octocat" },
+  "createdAt": "2026-01-01T00:00:00Z",
+  "url": "https://github.com/acme/widgets/issues/101",
+  "state": "open",
+  "closedByPullRequestsReferences": []
+}

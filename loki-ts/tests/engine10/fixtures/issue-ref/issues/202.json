@@ -1,0 +1,11 @@
+{
+  "number": 202,
+  "title": "Old bug already fixed upstream",
+  "body": "This was fixed in a previous release. Closing.",
+  "labels": [],
+  "author": { "login": "octocat" },
+  "createdAt": "2025-06-01T00:00:00Z",
+  "url": "https://github.com/acme/widgets/issues/202",
+  "state": "closed",
+  "closedByPullRequestsReferences": []
+}

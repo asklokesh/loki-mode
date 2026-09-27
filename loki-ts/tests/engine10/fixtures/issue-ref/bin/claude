@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Stub claude CLI for the issue-ref e2e test (E-47). The implement session
+# adds subtract() to calc.ts and reports done. Every -p call appends its stage
+# name and, for implement, whether the brief carried the issue title/body and
+# GH_TOKEN, to log files (kept outside the repo).
+set -u
+if [ "${1:-}" = "--help" ]; then
+  echo "Usage: claude [options] -p <prompt>"
+  echo "  --dangerously-skip-permissions --model <m> --settings <json> -p, --print"
+  exit 0
+fi
+prompt=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-p" ]; then prompt="${2:-}"; shift; fi
+  shift
+done
+case "$prompt" in
+  *"Loki 10 plan stage"*) stage=plan ;;
+  *"Loki 10 implement stage"*) stage=implement ;;
+  *) stage=other ;;
+esac
+if [ -n "${ISSUE_REF_STUB_LOG:-}" ]; then echo "$stage" >> "$ISSUE_REF_STUB_LOG"; fi
+if [ -n "${ISSUE_REF_STUB_ENV_LOG:-}" ]; then
+  echo "$stage GH_TOKEN=${GH_TOKEN:-}" >> "$ISSUE_REF_STUB_ENV_LOG"
+fi
+if [ "$stage" = "implement" ]; then
+  if [ -n "${ISSUE_REF_STUB_BRIEF_LOG:-}" ]; then printf '%s' "$prompt" > "$ISSUE_REF_STUB_BRIEF_LOG"; fi
+  printf '\nexport function subtract(a: number, b: number): number {\n  return a - b;\n}\n' >> calc.ts
+  echo "LOKI_DONE"
+fi
+exit 0

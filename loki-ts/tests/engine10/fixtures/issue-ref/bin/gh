@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Stub gh CLI for the issue-ref e2e test (E-47). Serves fixture issue JSON so
+# the run needs no network. Every invocation is logged (args plus GH_TOKEN) to
+# ISSUE_REF_GH_LOG, so the test can assert the fetch child ran with real
+# credentials while the worker session never sees them.
+set -u
+FIXTURES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../issues" && pwd)"
+
+if [ -n "${ISSUE_REF_GH_LOG:-}" ]; then
+  printf 'gh %s GH_TOKEN=%s\n' "$*" "${GH_TOKEN:-}" >> "${ISSUE_REF_GH_LOG}"
+fi
+
+case "${1:-}" in
+  auth)
+    # `gh auth status` (check_issue_provider_cli): always authenticated.
+    exit 0
+    ;;
+  issue)
+    if [ "${2:-}" = "view" ]; then
+      number="${3:-}"
+      fields=""
+      prev=""
+      for a in "$@"; do
+        if [ "$prev" = "--json" ]; then fields="$a"; fi
+        prev="$a"
+      done
+      fixture="${FIXTURES_DIR}/${number}.json"
+      if [ ! -f "$fixture" ]; then
+        echo "stub gh: no fixture for issue ${number}" >&2
+        exit 1
+      fi
+      FIELDS="$fields" python3 -c "
+import json, os
+fields = [f for f in os.environ['FIELDS'].split(',') if f]
+with open('${fixture}') as fh:
+    data = json.load(fh)
+print(json.dumps({k: data[k] for k in fields if k in data}))
+"
+      exit 0
+    fi
+    echo "stub gh: unsupported issue subcommand: $*" >&2
+    exit 1
+    ;;
+  *)
+    echo "stub gh: unsupported invocation: $*" >&2
+    exit 1
+    ;;
+esac
