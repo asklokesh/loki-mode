@@ -19,7 +19,7 @@
 // through the Stage/RunContext/SessionRunner interfaces in types.ts, so this
 // is unit tested with fakes and needs none of those siblings to exist yet.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { createHash } from "node:crypto";
@@ -71,7 +71,7 @@ export class RealBaseTestRunner implements BaseTestRunner {
       }
       const cmd = shape.replace("<files>", paths.map((p) => JSON.stringify(p)).join(" "));
       try {
-        execFileSync("/bin/sh", ["-c", cmd], { cwd: repoDir, stdio: "pipe" });
+        execFileSync("/bin/sh", ["-c", cmd], { cwd: repoDir, stdio: "pipe", env: process.env });
         pass += paths.length;
       } catch {
         fail += paths.length;
@@ -103,6 +103,31 @@ function sha256(s: string): string {
   return createHash("sha256").update(s).digest("hex");
 }
 
+/** Contract-gap workaround: RunContext (types.ts, E-01) carries no task
+ *  field, so intake.ts's (E-04, out of scope here) stage.completed.data
+ *  never puts the raw task text on prior.intake either, only task_sha256 -
+ *  see intake.ts's own "Contract-gap note". Real Wall runs would otherwise
+ *  always brief the author with an empty task. Falls back to the exact
+ *  convention intake.ts documents as the source of truth: literal text via
+ *  LOKI_E10_TASK_TEXT, or title+body from the issue.json path it reads
+ *  (LOKI_E10_ISSUE_JSON, default <runDir>/issue.json). `prior.intake?.task`
+ *  is checked first only so a caller that already has the text (tests, or a
+ *  future intake.ts fix) is not made to re-read the file. */
+function loadTaskText(ctx: RunContext, fromPrior: string | undefined): string {
+  if (fromPrior) return fromPrior;
+  const issueJsonPath = process.env.LOKI_E10_ISSUE_JSON ?? join(ctx.runDir, "issue.json");
+  if (existsSync(issueJsonPath)) {
+    try {
+      const issue = JSON.parse(readFileSync(issueJsonPath, "utf8")) as { title?: string; body?: string };
+      const text = [issue.title, issue.body].filter((s) => typeof s === "string" && s.length > 0).join("\n\n");
+      if (text) return text;
+    } catch {
+      // Malformed issue.json: fall through to the text-mode env var.
+    }
+  }
+  return process.env.LOKI_E10_TASK_TEXT ?? "";
+}
+
 function renderRepoMapText(map: { files?: string[]; entries?: { path: string; symbols: string[] }[] }): string {
   const lines: string[] = ["Files:", ...(map.files ?? []).map((f) => `  ${f}`), "", "Symbols:"];
   for (const e of map.entries ?? []) lines.push(`  ${e.path}: ${e.symbols.join(", ")}`);
@@ -132,7 +157,7 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before wall started" };
 
   const prior = ctx.outputs();
-  const task = (prior.intake?.task as string | undefined) ?? "";
+  const task = loadTaskText(ctx, prior.intake?.task as string | undefined);
   const repomapRef = prior.intake?.repomap_ref as string | undefined;
   const testMap = prior.intake?.testmap as { runners?: RunnerName[]; tests?: TestRef[] } | undefined;
   const existingTests: TestRef[] = testMap?.tests ?? [];
@@ -189,7 +214,14 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
 
   const baseRunner = opts.baseRunner ?? new RealBaseTestRunner();
   const baseRun = wallTests.length > 0 ? baseRunner.run(ctx.repoDir, wallTests) : { pass: 0, fail: 0 };
-  const alreadySatisfied = wallTests.length > 0 && baseRun.fail === 0 && baseRun.pass === wallTests.length;
+  // guessRunner() can return null (unknown extension, no matching runner
+  // detected): that file is still sealed but never handed to the base
+  // runner. Gate on generated.length, not wallTests.length, so a sealed file
+  // that was never actually run can never be silently missing from the
+  // count that already_satisfied requires.
+  const unselectable = generated.length - wallTests.length;
+  const alreadySatisfied =
+    generated.length > 0 && unselectable === 0 && baseRun.fail === 0 && baseRun.pass === generated.length;
 
   return {
     status: "completed",

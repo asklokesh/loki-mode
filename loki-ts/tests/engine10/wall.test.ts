@@ -203,6 +203,87 @@ describe("engine10 wall stage", () => {
     rmSync(repoDir, { recursive: true, force: true });
   });
 
+  test("real intake output has no prior.intake.task (only task_sha256): falls back to LOKI_E10_TASK_TEXT", async () => {
+    const { repoDir, runDir, testmap: tm } = setup({ runners: ["vitest"], tests: [] });
+    const events: string[] = [];
+    let seenTaskMd = "";
+    const sessions = new FakeSessionRunner((opts) => {
+      seenTaskMd = readFileSync(join(opts.cwd!, "task.md"), "utf8");
+    });
+    // Mirrors intake.ts's real stage.completed.data shape: no `task` key.
+    const ctx = fakeCtx(repoDir, runDir, sessions, { intake: { task_sha256: "abc", testmap: tm, repomap_ref: join(runDir, "repomap.json") } }, events);
+
+    const prevEnv = process.env.LOKI_E10_TASK_TEXT;
+    process.env.LOKI_E10_TASK_TEXT = "add a search bar";
+    try {
+      await wallStage.run(ctx, new AbortController().signal);
+    } finally {
+      if (prevEnv === undefined) delete process.env.LOKI_E10_TASK_TEXT;
+      else process.env.LOKI_E10_TASK_TEXT = prevEnv;
+    }
+
+    expect(seenTaskMd).toBe("add a search bar");
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  test("real intake output with an issue.json: falls back to its title+body", async () => {
+    const { repoDir, runDir, testmap: tm } = setup({ runners: ["vitest"], tests: [] });
+    const events: string[] = [];
+    let seenTaskMd = "";
+    const sessions = new FakeSessionRunner((opts) => {
+      seenTaskMd = readFileSync(join(opts.cwd!, "task.md"), "utf8");
+    });
+    writeFileSync(join(runDir, "issue.json"), JSON.stringify({ title: "Add search", body: "Users need a search bar." }), "utf8");
+    const ctx = fakeCtx(repoDir, runDir, sessions, { intake: { task_sha256: "abc", testmap: tm, repomap_ref: join(runDir, "repomap.json") } }, events);
+
+    await wallStage.run(ctx, new AbortController().signal);
+
+    expect(seenTaskMd).toBe("Add search\n\nUsers need a search bar.");
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  test("a sealed file whose runner cannot be guessed never counts toward already_satisfied, even if every executed test passes", async () => {
+    const { repoDir, runDir, testmap: tm } = setup({ runners: [], tests: [] });
+    const events: string[] = [];
+    const sessions = new FakeSessionRunner((opts) => {
+      // .py always resolves to pytest regardless of the detected runners;
+      // the second file's extension matches no runner and none of
+      // vitest/jest/bun are detected, so guessRunner() returns null for it.
+      writeFileSync(join(opts.cwd!, "loki_wall_a.py"), "def test_a(): assert True", "utf8");
+      writeFileSync(join(opts.cwd!, "loki_wall_b.rb"), "# unselectable", "utf8");
+    });
+    // Only the one selectable (pytest) file is ever handed to the runner,
+    // and it "passes" - the old bug reported already_satisfied: true here.
+    const baseRunner = new FakeBaseTestRunner({ pass: 1, fail: 0 });
+    const ctx = fakeCtx(repoDir, runDir, sessions, { intake: { task: "add x", testmap: tm, repomap_ref: join(runDir, "repomap.json") } }, events);
+
+    const result = await runWall(ctx, new AbortController().signal, { baseRunner });
+
+    expect((result.data.files as unknown[]).length).toBe(2); // both sealed
+    expect(baseRunner.calls[0]).toHaveLength(1); // only one ever executed
+    expect(result.data.already_satisfied).toBe(false);
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  test("places generated files alongside an existing detected test file, not tests/", async () => {
+    const { repoDir, runDir, testmap: tm } = setup({
+      runners: ["vitest"],
+      tests: [{ runner: "vitest", path: "src/foo.test.ts" }],
+    });
+    const events: string[] = [];
+    const sessions = new FakeSessionRunner((opts) => {
+      writeFileSync(join(opts.cwd!, "loki_wall_sample.test.ts"), SAMPLE, "utf8");
+    });
+    const baseRunner = new FakeBaseTestRunner({ pass: 1, fail: 0 });
+    const ctx = fakeCtx(repoDir, runDir, sessions, { intake: { task: "add x", testmap: tm, repomap_ref: join(runDir, "repomap.json") } }, events);
+
+    const result = await runWall(ctx, new AbortController().signal, { baseRunner });
+
+    const files = result.data.files as { path: string }[];
+    expect(files[0]!.path).toBe(join(repoDir, "src", "loki_wall_sample.test.ts"));
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
   test("readOnlyFiles carries {path, content} for implement.ts to enforce", async () => {
     const { repoDir, runDir, testmap: tm } = setup({ runners: ["vitest"], tests: [] });
     const events: string[] = [];
