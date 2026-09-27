@@ -891,12 +891,15 @@ def rule4_glob_in_shared_root(targets, cwd_now):
     for t in targets:
         if not any(ch in t for ch in GLOB_CHARS):
             continue
-        parent = os.path.dirname(t) or "."
+        # Literal prefix before the first globbed component, so a trailing
+        # slash (/tmp/loki-*/) or a mid-path glob (/tmp/*/x.log) still
+        # resolves to the shared root it fans out across.
+        parts = t.rstrip("/").split("/")
+        first_glob = next(i for i, p in enumerate(parts) if any(ch in p for ch in GLOB_CHARS))
+        parent = "/".join(parts[:first_glob]) or ("/" if t.startswith("/") else ".")
         # ponytail: an unexpanded variable parent ("$TMPDIR"/*, $D/*) is allowed
         # because its value is unknown here; resolve env vars if that gap bites.
-        if "$" in parent:
-            continue
-        if parent.startswith("~") or any(ch in parent for ch in GLOB_CHARS):
+        if "$" in parent or parent.startswith("~"):
             continue
         resolved = parent if parent.startswith("/") else os.path.join(cwd_now, parent)
         if is_shared_root(resolved):

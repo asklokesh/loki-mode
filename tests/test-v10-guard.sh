@@ -449,6 +449,10 @@ assert_blocked "R4 glob blocked: rm <literal \$TMPDIR>/*.txt (no -f)" \
     "rm ${TMPDIR:-/tmp}/*.txt" "$SCRIPT_DIR" "glob rm in a shared root"
 assert_blocked "R4 glob blocked: cwd-relative rm -f *.log with cwd=/tmp" \
     "rm -f *.log" "/tmp" "glob rm in a shared root"
+assert_blocked "R4 glob blocked: rm -r /tmp/loki-*/ (trailing slash)" \
+    "rm -r /tmp/loki-*/" "$SCRIPT_DIR" "glob rm in a shared root"
+assert_blocked "R4 glob blocked: rm -f /tmp/*/x.log (glob in a middle component)" \
+    "rm -f /tmp/*/x.log" "$SCRIPT_DIR" "glob rm in a shared root"
 assert_allowed "R4 glob allowed: rm -f /tmp/run-1/*.log (one level below)" \
     "rm -f /tmp/run-1/*.log" "$SCRIPT_DIR"
 assert_allowed "R4 glob allowed: rm -f <scratchpad>/run-1/* (one level below)" \

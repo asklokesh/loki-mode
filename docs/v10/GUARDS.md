@@ -378,15 +378,17 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   this incident.
 - **The guard:** `scripts/v10-guard.sh` Rule 4, `rule4_glob_in_shared_root`
   (S-181). Any `rm` (with or without `-rf`) whose glob target has a literal
-  parent that is exactly `/tmp`, `/private/tmp`, `$TMPDIR`, or a directory
-  named `scratchpad` is blocked with exit 2. A glob one level below such a
-  root (`/tmp/run-1/*.log`) is allowed. Known limit: a parent that is an
+  prefix (the path before its first globbed component) that is exactly
+  `/tmp`, `/private/tmp`, `$TMPDIR`, or a directory named `scratchpad` is
+  blocked with exit 2, including `/tmp/loki-*/` and `/tmp/*/x.log`. A glob
+  under a literal subdirectory of such a root (`/tmp/run-1/*.log`) is
+  allowed. Known limit: a parent that is an
   unexpanded variable (`"$TMPDIR"/*`) is allowed, since the hook cannot see
   its value.
 - **The test that proves it fires:** `bash tests/test-v10-guard.sh`, section
   "Rule 4: glob rm directly in a shared root": `rm -f /tmp/*.log` and
   `rm -f <scratchpad>/*` blocked, `rm -f /tmp/run-1/*.log` allowed. Removing
-  the `rule4_glob_in_shared_root` call fails the 5 blocked cases.
+  the `rule4_glob_in_shared_root` call fails the 7 blocked cases.
 
 ## 12. A test fixture wrote synthetic `insteadOf` lines to the real `~/.gitconfig` (S-18)
 
