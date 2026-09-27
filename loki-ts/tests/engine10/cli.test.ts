@@ -71,7 +71,7 @@ describe("runEngine10", () => {
   });
 
   test("dispatches to the export with the remaining args and returns its code", async () => {
-    let seen: { spec: string; args: string[] } | null = null;
+    let seen = null as { spec: string; args: string[] } | null;
     const load = async (spec: string) => ({
       deepWorker: (args: string[]) => {
         seen = { spec, args };

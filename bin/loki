@@ -252,8 +252,11 @@ if [ "${LOKI_ENGINE:-}" = "v10" ]; then
         # http*://*/issues/* also covers GitLab's /-/issues/ URLs.
         */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*) _e10=1 ;;
         *" "*) _e10=1 ;;
-        *) if declare -F _loki_known_command >/dev/null 2>&1 \
-               && [ "$(_loki_known_command "$1")" = "other" ] && [ ! -e "$1" ]; then _e10=1; fi ;;
+        # ponytail: a one-word argument stays on the legacy CLI. The telemetry
+        # allowlist is not a command registry (estimate, intent, outcomes are
+        # missing from it), so it cannot decide routing. Multi-word tasks and
+        # issue refs reach v10.
+        *) _e10=0 ;;
     esac
     if [ "$_e10" = "1" ]; then
         command -v bun >/dev/null 2>&1 || { echo "Error: LOKI_ENGINE=v10 needs bun. Unset LOKI_ENGINE to use the current engine." >&2; exit 1; }

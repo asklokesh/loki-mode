@@ -64,10 +64,13 @@ for a in "fix x" "owner/repo#12" "https://github.com/o/r/issues/7" \
 done
 expect "[v10] status run-1 keeps args" "BUN $ENTRY engine10 status run-1" \
     "$(run_loki "$WITH_BUN" LOKI_ENGINE=v10 -- status run-1)"
-expect "[v10] single unknown word -> engine10" "BUN $ENTRY engine10 refactorize" \
+expect "[v10] single word stays legacy" "BASH refactorize" \
     "$(run_loki "$WITH_BUN" LOKI_ENGINE=v10 -- refactorize)"
 
 # Legacy commands and existing paths fall through unchanged under v10.
+for w in estimate intent outcomes; do
+    expect "[v10] legacy $w stays legacy" "BASH $w" "$(run_loki "$WITH_BUN" LOKI_ENGINE=v10 -- "$w")"
+done
 expect "[v10] start -> bash" "BASH start" "$(run_loki "$WITH_BUN" LOKI_ENGINE=v10 -- start)"
 expect "[v10] --help -> bash" "BASH --help" "$(run_loki "$WITH_BUN" LOKI_ENGINE=v10 -- --help)"
 : >"$T/cwd/prd.md"
