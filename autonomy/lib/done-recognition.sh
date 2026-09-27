@@ -38,9 +38,42 @@
 # No emojis. No em dashes. bash 3.2 safe. Honors `set -uo pipefail`.
 #
 # Inline Python (D7): the gate runs with the cwd inside the agent's repo, so
-# every python3 here runs -E and drops '' and '.' from sys.path before any other
-# import; a committed json.py or sitecustomize.py cannot turn the verdict done.
-# Pinned by tests/test-reuse-done-recognition.sh case (d7).
+# every python3 here drops '' and '.' from sys.path before any other import; a
+# committed json.py or sitecustomize.py cannot turn the verdict done. Pinned by
+# tests/test-reuse-done-recognition.sh case (d7).
+#
+# S-200 (BACKLOG 54): -E alone still loads the user site-packages, whose .pth
+# "import" lines run before that scrub and can forge json.load (a forged verdict
+# read fast-stopped an incomplete project as done). Every call site resolves
+# its interpreter through _loki_snapshot_py_tool and runs it -I -S; when none
+# resolves, nothing reads as done or met (the gate builds, the writers write
+# nothing). See that function's comment in run.sh for the rationale and accepted
+# gaps. run.sh sources this file AFTER it defines _loki_snapshot_py_tool, so in
+# production run.sh's definition is kept; the copy below only serves callers
+# that source this file on its own (tests). run.sh is the source of truth: keep
+# this copy byte-identical to it. Pinned by
+# tests/test-done-recognition-no-user-site-pth.sh.
+declare -F _loki_snapshot_py_tool >/dev/null 2>&1 || \
+_loki_snapshot_py_tool() {
+    local c
+    for c in /usr/bin/python3 /bin/python3; do
+        [ -x "$c" ] && [ ! -d "$c" ] && "$c" -I -S -c '' >/dev/null 2>&1 && { printf '%s\n' "$c"; return 0; }
+    done
+    local dir
+    local IFS=:
+    for dir in $PATH; do
+        case "$dir" in
+            /*) ;;
+            *) continue ;;
+        esac
+        if [ -x "$dir/python3" ] && [ ! -d "$dir/python3" ] \
+           && "$dir/python3" -I -S -c '' >/dev/null 2>&1; then
+            printf '%s\n' "$dir/python3"
+            return 0
+        fi
+    done
+    return 1
+}
 
 # Bound the single model call so a huge PRD or test log cannot run away.
 : "${LOKI_DONE_RECOG_TIMEOUT:=180}"           # seconds for the single model call
@@ -133,8 +166,9 @@ _loki_done_recog_invoke() {
                     claude --dangerously-skip-permissions -p "$prompt" \
                     --json-schema "$_dr_schema_content" --output-format json 2>/dev/null) || _dr_json=""
             fi
-            if [ -n "$_dr_json" ]; then
-                _dr_obj=$(printf '%s' "$_dr_json" | python3 -E -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]; import json
+            local _dr_py
+            if [ -n "$_dr_json" ] && _dr_py="$(_loki_snapshot_py_tool)"; then
+                _dr_obj=$(printf '%s' "$_dr_json" | "$_dr_py" -I -S -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]; import json
 try:
     e=json.load(sys.stdin)
     p=e.get("structured_output")
@@ -206,7 +240,9 @@ _loki_done_recog_prd_sha() {
         sha256sum "$prd_file" 2>/dev/null | awk '{print $1}'
     else
         # Last-resort: a python hash, still deterministic over the same bytes.
-        LOKI_DR_PRD="$prd_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
+        local _dr_py
+        _dr_py="$(_loki_snapshot_py_tool)" || { printf ''; return 0; }
+        LOKI_DR_PRD="$prd_file" "$_dr_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import hashlib, os
 p = os.environ.get('LOKI_DR_PRD','')
 try:
@@ -278,6 +314,13 @@ reuse_done_recognition_gate() {
     fi
     local _test_results="$loki_dir/quality/test-results.json"
 
+    # --- Resolve the -I -S interpreter (S-200); none -> inconclusive -> build.
+    local _dr_py
+    if ! _dr_py="$(_loki_snapshot_py_tool)"; then
+        log_info "Done-recognition: no isolated python3 interpreter resolved; proceeding to build."
+        return 1
+    fi
+
     # --- Build the model prompt payload (python: bounded, defensive) ---------
     local prompt
     prompt=$(LOKI_DR_PRD="$prd_path" \
@@ -287,7 +330,7 @@ reuse_done_recognition_gate() {
              LOKI_DR_CHECKLIST="$loki_dir/checklist/checklist.json" \
              LOKI_DR_MAX_PRD="${LOKI_DONE_RECOG_MAX_PRD_CHARS}" \
              LOKI_DR_MAX_TEST="${LOKI_DONE_RECOG_MAX_TEST_CHARS}" \
-             python3 -E << 'DR_PROMPT_EOF'
+             "$_dr_py" -I -S << 'DR_PROMPT_EOF'
 import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os, sys
 
@@ -389,7 +432,7 @@ DR_PROMPT_EOF
              LOKI_DR_TESTS="$_test_results" \
              LOKI_DR_ACTION="$action" \
              LOKI_DR_PRD="$prd_path" \
-             python3 -E << 'DR_PARSE_EOF'
+             "$_dr_py" -I -S << 'DR_PARSE_EOF'
 import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os, re, sys
 
@@ -700,11 +743,11 @@ DR_PARSE_EOF
     fi
 
     local verdict
-    verdict=$(printf '%s' "$parsed" | python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json;print(json.load(sys.stdin).get('verdict',''))" 2>/dev/null)
+    verdict=$(printf '%s' "$parsed" | "$_dr_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json;print(json.load(sys.stdin).get('verdict',''))" 2>/dev/null)
 
     case "$verdict" in
         done)
-            _loki_done_recog_finish "$prd_path" "$parsed"
+            _loki_done_recog_finish "$prd_path" "$parsed" || return 1
             return 0
             ;;
         incomplete)
@@ -713,7 +756,7 @@ DR_PARSE_EOF
             ;;
         *)
             local _reason
-            _reason=$(printf '%s' "$parsed" | python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json;print(json.load(sys.stdin).get('reason','') or 'unverifiable')" 2>/dev/null)
+            _reason=$(printf '%s' "$parsed" | "$_dr_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json;print(json.load(sys.stdin).get('reason','') or 'unverifiable')" 2>/dev/null)
             log_info "Done-recognition: could not confirm the existing code already satisfies the reused spec (${_reason}). Proceeding to build to be safe."
             return 1
             ;;
@@ -728,6 +771,10 @@ _loki_done_recog_finish() {
     local prd_path="$1"
     local parsed="$2"
     local loki_dir="${TARGET_DIR:-.}/.loki"
+
+    # S-200: no -I -S interpreter -> write no done record (the gate then builds).
+    local _dr_py
+    _dr_py="$(_loki_snapshot_py_tool)" || return 1
 
     # The gate runs EARLY in run_autonomous, before the run normally mints these
     # run-scoped ids/baselines (run.sh sets them just after this call site). The
@@ -749,10 +796,10 @@ _loki_done_recog_finish() {
     mkdir -p "$loki_dir/state" 2>/dev/null || true
 
     local summary met total axis
-    summary=$(printf '%s' "$parsed" | python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json;print(json.load(sys.stdin).get('summary','') or 'Project already satisfies its spec.')" 2>/dev/null)
-    met=$(printf '%s' "$parsed" | python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json;print(json.load(sys.stdin).get('met_count',0))" 2>/dev/null)
-    total=$(printf '%s' "$parsed" | python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json;print(json.load(sys.stdin).get('total_count',0))" 2>/dev/null)
-    axis=$(printf '%s' "$parsed" | python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json;print(json.load(sys.stdin).get('tests_axis','unknown'))" 2>/dev/null)
+    summary=$(printf '%s' "$parsed" | "$_dr_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json;print(json.load(sys.stdin).get('summary','') or 'Project already satisfies its spec.')" 2>/dev/null)
+    met=$(printf '%s' "$parsed" | "$_dr_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json;print(json.load(sys.stdin).get('met_count',0))" 2>/dev/null)
+    total=$(printf '%s' "$parsed" | "$_dr_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json;print(json.load(sys.stdin).get('total_count',0))" 2>/dev/null)
+    axis=$(printf '%s' "$parsed" | "$_dr_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json;print(json.load(sys.stdin).get('tests_axis','unknown'))" 2>/dev/null)
     [ -n "$met" ] || met=0
     [ -n "$total" ] || total=0
     [ -n "$axis" ] || axis="unknown"
@@ -792,7 +839,7 @@ _loki_done_recog_finish() {
         echo ""
         echo "## Per-requirement evidence"
         echo ""
-        printf '%s' "$parsed" | python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
+        printf '%s' "$parsed" | "$_dr_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, sys
 try:
     d = json.load(sys.stdin)
@@ -811,7 +858,7 @@ for t in d.get('satisfied', []):
     LOKI_DR_MET="$met" \
     LOKI_DR_TOTAL="$total" \
     LOKI_DR_TS="$ts" \
-    python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
+    "$_dr_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, tempfile
 out = os.environ['LOKI_DR_OUT']
 def i(v):
@@ -861,6 +908,7 @@ except Exception:
         log_info "Verified ${met}/${total} requirements met by code inspection (no passing test run was available to confirm). ${summary}"
     fi
     log_info "To rebuild from scratch run 'loki start --fresh-prd'; to extend it, edit the spec or pass a new/changed PRD."
+    return 0
 }
 
 # incomplete path: write the satisfied-requirements manifest so
@@ -870,6 +918,10 @@ _loki_done_recog_write_manifest() {
     local prd_path="$1"
     local parsed="$2"
     local loki_dir="${TARGET_DIR:-.}/.loki"
+
+    # S-200: no -I -S interpreter -> record nothing as met (full build).
+    local _dr_py
+    _dr_py="$(_loki_snapshot_py_tool)" || return 1
 
     mkdir -p "$loki_dir/state" 2>/dev/null || true
 
@@ -882,7 +934,7 @@ _loki_done_recog_write_manifest() {
     LOKI_DR_PARSED="$parsed" \
     LOKI_DR_SHA="$prd_sha" \
     LOKI_DR_TS="$ts" \
-    python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
+    "$_dr_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, sys, tempfile
 out = os.environ['LOKI_DR_OUT']
 try:
@@ -923,7 +975,7 @@ except Exception:
     if [ -f "$loki_dir/queue/pending.json" ]; then
         # Drop prior PRD-sourced tasks so the incremental pass is the source of
         # truth; non-PRD tasks (if any) are preserved.
-        LOKI_DR_PENDING="$loki_dir/queue/pending.json" python3 -E - <<'RESET_EOF' 2>/dev/null || true
+        LOKI_DR_PENDING="$loki_dir/queue/pending.json" "$_dr_py" -I -S - <<'RESET_EOF' 2>/dev/null || true
 import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os, tempfile
 p = os.environ.get("LOKI_DR_PENDING", ".loki/queue/pending.json")
@@ -948,8 +1000,8 @@ RESET_EOF
     fi
 
     local met total
-    met=$(printf '%s' "$parsed" | python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json;print(json.load(sys.stdin).get('met_count',0))" 2>/dev/null)
-    total=$(printf '%s' "$parsed" | python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json;print(json.load(sys.stdin).get('total_count',0))" 2>/dev/null)
+    met=$(printf '%s' "$parsed" | "$_dr_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json;print(json.load(sys.stdin).get('met_count',0))" 2>/dev/null)
+    total=$(printf '%s' "$parsed" | "$_dr_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json;print(json.load(sys.stdin).get('total_count',0))" 2>/dev/null)
     local unmet=$(( ${total:-0} - ${met:-0} ))
     log_info "Done-recognition: ${met:-0} of ${total:-0} requirements already satisfied; building only the ${unmet} unmet. Pass --fresh-prd to rebuild from scratch."
 }
