@@ -37,6 +37,8 @@ export interface CockpitState {
   isLive: boolean;
   phase: MappedPhase;
   checklist: ChecklistSummary | null;
+  /** Set only when the checklist fetch itself failed; null on a genuine empty result. */
+  checklistError: string | null;
   changedFiles: ChangedFile[];
   git: GitStatus | null;
   /** Set only when the git-status fetch itself failed; null on a genuine empty result. */
@@ -144,6 +146,7 @@ export function useCockpitState(sessionId: string | undefined): CockpitState {
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [status, setStatus] = useState<StatusWithExit | null>(null);
   const [checklist, setChecklist] = useState<ChecklistSummary | null>(null);
+  const [checklistError, setChecklistError] = useState<string | null>(null);
   const [git, setGit] = useState<GitStatus | null>(null);
   const [gitError, setGitError] = useState<string | null>(null);
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
@@ -201,7 +204,13 @@ export function useCockpitState(sessionId: string | undefined): CockpitState {
       })
       .catch(() => undefined);
 
-    api.getChecklist().then((c) => !cancelled && setChecklist(c)).catch(() => undefined);
+    settle(api.getChecklist(), null, 'request failed').then(
+      ({ data, error: clErr }) => {
+        if (cancelled) return;
+        setChecklist(data);
+        setChecklistError(clErr);
+      },
+    );
 
     settle(api.git.status(sessionId), null, 'Could not load working tree status').then(
       ({ data, error: gErr }) => {
@@ -326,6 +335,7 @@ export function useCockpitState(sessionId: string | undefined): CockpitState {
     isLive,
     phase: phase ?? NO_PHASE,
     checklist: scopeChecklistToLive(checklist, isLive),
+    checklistError: scopeChecklistToLive(checklistError, isLive),
     changedFiles,
     git,
     gitError,

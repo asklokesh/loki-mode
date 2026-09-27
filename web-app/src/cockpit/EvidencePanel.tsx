@@ -27,9 +27,21 @@ const IDLE_RUN: CheckRunState = {
 interface Props {
   sessionId: string;
   checklist: ChecklistSummary | null;
+  /** Set only when the checklist request failed; null on a genuine empty result. */
+  checklistError?: string | null;
 }
 
-export function EvidencePanel({ sessionId, checklist }: Props) {
+/**
+ * Empty-branch copy. A failed request and an absent checklist.json both leave
+ * no items, but only the second means nothing was recorded. Pure so it is
+ * testable: see EvidencePanel.state.test.mjs.
+ */
+export function gateResultsEmptyText(checklistError: string | null | undefined): string {
+  if (checklistError) return `Could not load gate results: ${checklistError}`;
+  return 'No gate results recorded. The engine writes these during a run; an empty file is not the same as a clean pass.';
+}
+
+export function EvidencePanel({ sessionId, checklist, checklistError }: Props) {
   const [tests, setTests] = useState<CheckRunState>(IDLE_RUN);
   const [review, setReview] = useState<CheckRunState>(IDLE_RUN);
 
@@ -103,8 +115,7 @@ export function EvidencePanel({ sessionId, checklist }: Props) {
           </>
         ) : (
           <p className="mt-1 text-caption text-muted-accessible dark:text-dark-muted">
-            No gate results recorded. The engine writes these during a run; an
-            empty file is not the same as a clean pass.
+            {gateResultsEmptyText(checklistError)}
           </p>
         )}
       </div>

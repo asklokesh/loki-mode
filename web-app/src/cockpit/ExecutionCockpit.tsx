@@ -236,7 +236,11 @@ export function ExecutionCockpit({ sessionId, onClose }: Props) {
               </div>
               <div className="grid gap-4 lg:grid-cols-2">
                 <div id="region-evidence" tabIndex={-1} className={`${panel} min-w-0`}>
-                  <EvidencePanel sessionId={sessionId} checklist={s.checklist} />
+                  <EvidencePanel
+                    sessionId={sessionId}
+                    checklist={s.checklist}
+                    checklistError={s.checklistError}
+                  />
                 </div>
                 <div id="region-actions" tabIndex={-1} className={`${panel} min-w-0`}>
                   <FinalActions
