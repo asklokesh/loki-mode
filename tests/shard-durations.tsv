@@ -639,3 +639,4 @@ prd-checklist readers ignore user-site .pth (-I -S, S-204)	3
 focus POST skipped when the dashboard is disabled (S-195)	1
 Loki 10 engine trusted push and PR (E-11)	2
 Loki 10 engine dispatch hook (E-12)	2
+Loki 10 legacy route contract golden rows (E-30)	1

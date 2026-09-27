@@ -1510,6 +1510,7 @@ run_test "LOKI_AUTO_PR refuses a branch whose history holds user files (S-194)" 
 run_test "focus POST skipped when the dashboard is disabled (S-195)" "$SCRIPT_DIR/test-focus-post-dashboard-off.sh"
 run_test "Loki 10 engine trusted push and PR (E-11)" "$SCRIPT_DIR/test-engine10-push.sh"
 run_test "Loki 10 engine dispatch hook (E-12)" "$SCRIPT_DIR/test-engine10-dispatch.sh"
+run_test "Loki 10 legacy route contract golden rows (E-30)" "$SCRIPT_DIR/test-engine10-legacy-contract.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 
 # Summary
