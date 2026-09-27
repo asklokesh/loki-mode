@@ -100,15 +100,20 @@ export const commitStage: Stage = {
   },
 };
 
-// Stage outputs read by seal. These keys are E-10's reading of the section 4
-// table plus a few seal-specific hints; types.ts types outputs() loosely.
-function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[]): Verdict {
+// Stage outputs read by seal. Only keys in the ENGINE.md section 4 table (plus
+// duration_s from section 5) are trusted; any other key seal reads puts a
+// "not recorded" entry on NOT PROVEN when it is absent, so a producer that
+// omits it cannot silently shape the receipt.
+function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean): Verdict {
   const exit = o.implement?.exit;
-  if (o.intake?.already_satisfied === true || o.wall?.already_satisfied === true || exit === "already_done") return "ALREADY_SATISFIED";
+  const base = (o.wall?.base_run ?? {}) as Obj;
+  const wallGreenOnBase = typeof base.pass === "number" && base.pass > 0 && base.fail === 0;
+  if (o.intake?.already_satisfied === true || wallGreenOnBase || exit === "already_done") return "ALREADY_SATISFIED";
   if (exit === "spec_conflict") return "SPEC_CONFLICT";
+  // Section 2: an empty diff without the LOKI_ALREADY_DONE marker is FAILED, never VERIFIED.
+  if (emptyDiff) return "FAILED";
   if (checks.some((c) => c.result === "fail")) return "FAILED";
-  const killed = exit === "killed" || Object.values(o).some((d) => d?.killed === true || d?.cap_hit === true);
-  if (killed || checks.length === 0 || checks.some((c) => c.result !== "pass")) return "PARTIAL";
+  if (exit === "killed" || checks.length === 0 || checks.some((c) => c.result !== "pass")) return "PARTIAL";
   return "VERIFIED";
 }
 
@@ -150,34 +155,51 @@ export const sealStage: Stage = {
     const o = ctx.outputs();
     const head = (await git(ctx, ["rev-parse", "HEAD"])).out.trim();
     const tree = (await git(ctx, ["rev-parse", "HEAD^{tree}"])).out.trim();
-    const diff = await run(["git", "diff", "--binary", ctx.baseSha, head, "--", ".", EXCLUDE_LOKI], { cwd: ctx.repoDir, timeoutMs: 20000 });
+    // Plumbing, so repo/global config (diff.noprefix, color, textconv, ext diff,
+    // quotepath) cannot change the hash. A verifier recomputes it with exactly:
+    //   git diff-tree -r -z --raw --no-renames --no-abbrev -O/dev/null <base> <head> -- . ':(exclude).loki'
+    const diff = await run(["git", "diff-tree", "-r", "-z", "--raw", "--no-renames", "--no-abbrev", "-O/dev/null", ctx.baseSha, head, "--", ".", EXCLUDE_LOKI], { cwd: ctx.repoDir, timeoutMs: 20000 });
+    const diffOk = diff.exitCode === 0 && /^[0-9a-f]{40,64}$/.test(head);
     const checks = checksOf(o.verify?.checks);
-    const verdict = verdictOf(o, checks);
+    // An uncomputable diff is treated like an empty one: nothing is proven changed.
+    const verdict = verdictOf(o, checks, !diffOk || diff.stdout === "");
 
-    const notProven = new Set<string>([...DEEP_NOT_PROVEN, ...strs(o.verify?.not_proven)]);
+    const notProven = new Set<string>(DEEP_NOT_PROVEN);
+    if (!diffOk) notProven.add("diff not computed (git diff-tree failed)");
+    for (const c of checks) if (c.result === "not_run") notProven.add(`not run: ${c.name}`);
     for (const f of strs(o.verify?.flaky)) notProven.add(`flaky test: ${f}`);
     for (const t of strs(o.implement?.tests_reverted)) notProven.add(`reverted test edit: ${t}`);
     if (ctx.provider !== "claude") notProven.add("kill blocking not enforced");
-    if (o.implement?.model_override_applied === false) notProven.add("model override not applied");
+    // Section 7: model_override_applied lives on run.started, which outputs() never carries.
+    if (process.env["LOKI_MODEL_OVERRIDE"]?.trim() && ctx.provider !== "claude") notProven.add("model override not applied");
+    const source = o.intake?.source;
+    if (source !== "text" && source !== "issue") notProven.add("task source not recorded by intake");
+    // Keys below are outside the section 4 table: absent means NOT PROVEN, never a default claim.
+    const repo = str(o.intake?.repo);
+    if (repo === null) notProven.add("repo not recorded by intake");
+    if (typeof o.intake?.resumed !== "boolean") notProven.add("resume state not recorded by intake");
 
     const stages: Partial<Record<StageName, number>> = {};
     for (const [s, d] of Object.entries(o)) if (typeof d?.duration_s === "number") stages[s as StageName] = d.duration_s;
     const iterIds = Object.values(o).flatMap((d) => [...strs(d?.iteration_ids), ...strs([d?.iteration_id])]);
+    if (iterIds.length === 0) notProven.add("cost not measured (no iteration ids recorded)");
     const cost = ctx.cost.read(ctx.repoDir, iterIds);
     // ponytail: events.jsonl is supervisor-written and may lag the worker; the supervisor re-hashes at receipt.sealed if exactness matters
     const eventsPath = join(ctx.runDir, "events.jsonl");
     const wallFiles = Array.isArray(o.wall?.files) ? (o.wall.files as { path: string; sha256: string }[]) : [];
+    const wallPassed = typeof o.verify?.wall_passed === "boolean" ? o.verify.wall_passed : null;
+    if (wallFiles.length > 0 && wallPassed === null) notProven.add("wall result not recorded by verify");
 
     const body: Omit<Receipt, "receipt_sha256" | "verification"> = {
       schema: "loki.v10.receipt/1",
       run_id: ctx.runId,
-      task: { source: o.intake?.task_source === "issue" ? "issue" : "text", sha256: str(o.intake?.task_sha256) ?? "" },
-      repo: str(o.intake?.repo) ?? "",
+      task: { source: source === "issue" ? "issue" : "text", sha256: str(o.intake?.task_sha256) ?? "" },
+      repo: repo ?? "",
       base_sha: ctx.baseSha,
       head_sha: head,
       tree,
-      diff_sha256: sha256(diff.stdout),
-      wall: { files: wallFiles.map((f) => ({ path: String(f.path), sha256: String(f.sha256) })), passed: typeof o.verify?.wall_passed === "boolean" ? o.verify.wall_passed : null },
+      diff_sha256: sha256(diffOk ? diff.stdout : ""),
+      wall: { files: wallFiles.map((f) => ({ path: String(f.path), sha256: String(f.sha256) })), passed: wallPassed },
       checks,
       not_proven: [],
       verdict,

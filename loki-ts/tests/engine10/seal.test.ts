@@ -7,10 +7,10 @@
 // pass by agreeing with itself.
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { commitStage, DEEP_NOT_PROVEN, sealStage } from "../../src/engine10/stages/seal.ts";
+import { commitStage, DEEP_NOT_PROVEN, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
 import { REPO_ROOT } from "../../src/util/paths.ts";
@@ -41,16 +41,17 @@ function makeRepo(name: string): { repo: string; base: string } {
   return { repo, base };
 }
 
-function ctxFor(repo: string, base: string, provider = "claude") {
+function ctxFor(repo: string, base: string, provider = "claude", over: Partial<Record<StageName, Record<string, unknown>>> = {}) {
   const events: { type: string; data: Record<string, unknown> }[] = [];
   const outputs: Partial<Record<StageName, Record<string, unknown>>> = {
-    intake: { task_source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "fix café bug" },
+    intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "fix café bug", resumed: false },
     wall: { files: [{ path: "tests/loki_wall_café.py", sha256: "cd".repeat(32) }] },
-    implement: { exit: "done", tests_reverted: [], duration_s: 3 },
+    implement: { exit: "done", tests_reverted: [], duration_s: 3, iteration_id: "e10-r1-impl" },
     verify: {
       checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", duration_s: 1.5 }],
-      flaky: [], not_proven: ["ruff not installed"], wall_passed: true, duration_s: 2,
+      flaky: [], wall_passed: true, duration_s: 2,
     },
+    ...over,
   };
   const ctx: RunContext = {
     runId: "r1", repoDir: repo, runDir: join(repo, ".loki/runs/r1"), baseSha: base, branch: "loki/r1",
@@ -64,6 +65,15 @@ function ctxFor(repo: string, base: string, provider = "claude") {
   };
   return { ctx, events };
 }
+
+const noKey = () => { process.env["LOKI_RECEIPT_SIGNING_KEY"] = ""; process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = ""; };
+const receiptOf = (s: { data: Record<string, unknown> }) => JSON.parse(readFileSync(s.data.receipt_path as string, "utf8")) as Receipt;
+const PY_HASH = `
+import sys, json, hashlib
+r = json.load(open(sys.argv[1]))
+body = {k: v for k, v in r.items() if k not in ("verification", "receipt_sha256")}
+print(hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest())
+`;
 
 // Python recompute of receipt_sha256 plus JWT verification against the public JWK.
 const VERIFY_PY = `
@@ -149,11 +159,92 @@ describe("engine10 seal", () => {
     const r = JSON.parse(readFileSync(s.data.receipt_path as string, "utf8")) as Receipt;
     expect(r.verification).toEqual({ jwt: null, kid: null });
     for (const d of DEEP_NOT_PROVEN) expect(r.not_proven).toContain(d);
-    expect(r.not_proven).toContain("ruff not installed");
     expect(r.not_proven).toContain("kill blocking not enforced");
     expect(r.cost.usd).toBeNull();
     const md = readFileSync(join(ctx.runDir, "receipt.md"), "utf8");
     expect(md).toContain("UNSIGNED");
     expect(events.find((e) => e.type === "receipt.sealed")?.data.signed).toBe(false);
+  }, 30000);
+
+  test("empty diff without the already-done marker seals FAILED, never VERIFIED", async () => {
+    noKey();
+    const { repo, base } = makeRepo("empty");
+    sh(["git", "checkout", "-q", "--", "a.txt"], repo);
+    const { ctx } = ctxFor(repo, base);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    expect(s.data.verdict).toBe("FAILED");
+    // A commit that only touches .loki/ is still an empty diff.
+    sh(["git", "add", "-f", ".loki/runs/r1/events.jsonl"], repo);
+    sh(["git", "commit", "-q", "-m", "loki only"], repo);
+    expect(sh(["git", "rev-parse", "HEAD"], repo).trim()).not.toBe(base);
+    expect((await sealStage.run(ctx, new AbortController().signal)).data.verdict).toBe("FAILED");
+    // The LOKI_ALREADY_DONE marker (exit already_done) is the only way an empty diff is not FAILED.
+    const done = ctxFor(repo, base, "claude", { implement: { exit: "already_done", tests_reverted: [], duration_s: 1 } });
+    expect((await sealStage.run(done.ctx, new AbortController().signal)).data.verdict).toBe("ALREADY_SATISFIED");
+  }, 30000);
+
+  test("diff_sha256 does not depend on repo diff or color config", async () => {
+    noKey();
+    const { repo, base } = makeRepo("cfg");
+    writeFileSync(join(repo, "zé.txt"), "new\n");
+    writeFileSync(join(repo, "b.bin"), Buffer.from([0, 1, 2, 255]));
+    const { ctx } = ctxFor(repo, base);
+    await commitStage.run(ctx, new AbortController().signal);
+    const h1 = receiptOf(await sealStage.run(ctx, new AbortController().signal)).diff_sha256;
+    writeFileSync(join(root, "order.txt"), "zé.txt\nb.bin\na.txt\n");
+    for (const [k, v] of [["diff.noprefix", "true"], ["color.ui", "always"], ["color.diff", "always"], ["core.quotepath", "true"],
+      ["diff.renames", "copies"], ["core.abbrev", "7"], ["diff.orderFile", join(root, "order.txt")], ["diff.mnemonicPrefix", "true"]]) {
+      sh(["git", "config", k!, v!], repo);
+    }
+    const h2 = receiptOf(await sealStage.run(ctx, new AbortController().signal)).diff_sha256;
+    expect(h2).toBe(h1);
+  }, 30000);
+
+  test("only section 4 keys are trusted; off-table keys go on NOT PROVEN when absent", async () => {
+    noKey();
+    const { repo, base } = makeRepo("keys");
+    const { ctx } = ctxFor(repo, base, "claude", {
+      intake: { source: "issue", task_sha256: "ab".repeat(32) },
+      implement: { exit: "done", tests_reverted: [] },
+      verify: {
+        checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", duration_s: 1 }, { name: "ruff", cmd: "ruff check", result: "not_run", duration_s: 0 }],
+        flaky: [], not_proven: ["stray off-table entry"],
+      },
+    });
+    await commitStage.run(ctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    expect(r.task.source).toBe("issue");
+    expect(r.not_proven).toContain("not run: ruff");
+    expect(r.not_proven).not.toContain("stray off-table entry");
+    for (const n of ["repo not recorded by intake", "resume state not recorded by intake", "wall result not recorded by verify",
+      "cost not measured (no iteration ids recorded)"]) expect(r.not_proven).toContain(n);
+    expect(r.verdict).toBe("PARTIAL");
+    const noSrc = ctxFor(repo, base, "claude", { intake: { task_sha256: "ab".repeat(32) } });
+    expect(receiptOf(await sealStage.run(noSrc.ctx, new AbortController().signal)).not_proven).toContain("task source not recorded by intake");
+  }, 30000);
+
+  test("key configured but no token: signed false, SIGNING_UNAVAILABLE on NOT PROVEN", async () => {
+    // A python3 that passes the isolation probe but cannot sign (like /usr/bin/python3 without cryptography).
+    const stub = join(root, "py-nocrypto");
+    writeFileSync(stub, "#!/bin/sh\nexit 0\n");
+    chmodSync(stub, 0o755);
+    _setIsolatedPythonFixedForTests([stub]);
+    const keyFile = join(root, "k2.pem");
+    writeFileSync(keyFile, generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }) as string, { mode: 0o600 });
+    process.env["LOKI_RECEIPT_SIGNING_KEY"] = "";
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = keyFile;
+    const { repo, base } = makeRepo("nosign");
+    const { ctx, events } = ctxFor(repo, base);
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    expect(s.data.signed).toBe(false);
+    expect(String(s.data.summary)).toContain("UNSIGNED");
+    const r = receiptOf(s);
+    expect(r.verification).toEqual({ jwt: null, kid: null });
+    expect(r.not_proven).toContain(SIGNING_UNAVAILABLE);
+    expect(readFileSync(join(ctx.runDir, "receipt.md"), "utf8")).toContain("UNSIGNED");
+    expect(events.find((e) => e.type === "receipt.sealed")?.data.signed).toBe(false);
+    const py = cryptoPy || "python3";
+    expect(sh([py, "-I", "-c", PY_HASH, s.data.receipt_path as string], root).trim()).toBe(r.receipt_sha256);
   }, 30000);
 });
