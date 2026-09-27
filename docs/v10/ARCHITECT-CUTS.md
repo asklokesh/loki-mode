@@ -1,277 +1,403 @@
 
 
-## 19:57Z cut (S-174..S-193)
+## 20:12Z cut (S-194..S-213)
 
-**Checked before cutting.**
-- **P2.verify-exit-contract and P2.fast-verify-inconclusive-not-zero.** Both are already listed in `tests/moat/pending.txt` with milestone v10.0.0. `tests/moat/run.sh` accepts them as FAIL, so they are not a regression on main.
-  - The fix is the breaking renumber of verify exit codes (BACKLOG 4). The 19:10Z cut held that for the CEO, and this cut does not undo that.
-  - When the renumber lands, the Captain promotes each case by deleting its pending.txt line.
-  - S-182 does the part that breaks nothing: it documents the current codes, so users stop reading exit 0 from `--fast` as a pass.
-- **The run-all-tests missing-argument gap is real.** Probe: `bash -c 'set -euo pipefail; f(){ local a="$1"; local b="$2"; }; f x; echo after'` printed `$2: unbound variable` and exited 1 without printing `after`.
-  - The missing-script branch's `return 1` also stops the whole runner under `set -e`. That is the same "later suites silently skipped" problem.
+**Checked before cutting.** All reads are on main at 8ba7024d (v9.73.0).
+- **Alternates re-read against the code.**
+  - **A1 (BACKLOG 108) is real.** `create_session_pr`'s `LOKI_AUTO_PR=1` branch calls `_loki_trusted_push` and never reads `.loki/state/agent-committed-user-files.z`. The only references to that file are the writer comment and the writer itself, inside `_loki_untrack_agent_committed_user_files`.
+  - **A2 (BACKLOG 17) is real.** The "Notify dashboard of active project directory" block, about 24477 today, posts to `/api/focus` behind `command -v curl` only. It has no `ENABLE_DASHBOARD` check.
+  - **A3 is real and larger than the card says.** run.sh 211 and 239 always set PROJECT_DIR to the Loki install root. So the BACKLOG 127 "guard when unset" would do nothing. The actual defect is that `council_managed_should_stop` runs `git diff --stat` in Loki's own tree, not the target project. Its three readers are still bare `python3 -E`, and p2-honest-verdict.sh (about 858) says so.
+  - **A4 (BACKLOG 51) is real.** `grep -c PYTHONUSERBASE autonomy/loki` prints 0. The NOT CHECKED text says "Install python3 cryptography" even to a user who installed it through PYTHONPATH or PYTHONUSERBASE, which `-E` ignores.
+  - **A5 is split.**
+    - BACKLOG 145 sits in the Array.from generator arm, about 1934-1994. That does not overlap S-180's helper-return arm (about 2081-2170).
+    - BACKLOG 147 edits `HELPER_LOCAL_DECL_TMPL`, which is in S-180's region, so it is held.
+- **New class found: every `-E`-only verdict reader outside completion-council.sh (BACKLOG 53 and 54).** These are:
+  - autonomy/lib/done-recognition.sh: 16 sites.
+  - autonomy/council-v2.sh: 7 sites.
+  - autonomy/lib/voter-agents.sh: 3 sites.
+  - autonomy/lib/proof-check.sh: 3 sites.
+  - autonomy/prd-checklist.sh: about 11 sites.
+  - loki-ts/src/commands/proof.ts:606, the Bun `loki proof verify` path.
+
+  All of them run PATH `python3 -E`. BACKLOG 134 showed that a user-site `.pth` still loads under `-E`.
+
+  On `-S` compatibility:
+  - The imports I read are stdlib only: swarm/sycophancy.py, autonomy/checklist-verify.py, and autonomy/lib/proof-verify.py (which adds its own directory to sys.path at line 76). So `-I -S` should hold for those.
+  - Each builder still audits the imports of the rest of its sites, including the prd-checklist oracle heredoc.
+
+  Existing tests source each of these files on their own, so each file needs the guarded helper copy. For voter-agents.sh, `.` at completion-council.sh 4245 sources it into the parent shell.
+- **council-v2 fails open on sycophancy.** A detector crash yields `0.000`, then `should_challenge=no`. A unanimous approve then skips the devil's advocate.
+- **Cockpit remainder (BACKLOG 114).**
+  - `FinalActions` receives `git=null` after a failed status fetch (the `settle` fallback) and still says "The working tree is clean" and "Nothing to push".
+  - A failed `getStatus` (the swallow at useCockpitState.ts:202) makes Pause, Resume and Stop read "No run in progress".
+  - A failed `getChecklist` (the swallow at 204) renders "No gate results recorded."
 - **Already handled, so dropped:**
-  - BACKLOG 35 (0-byte baseline test in tests/test-moat-runner.sh).
-  - BACKLOG 60 wording.
-  - BACKLOG 91 (stage status not_run).
-  - BACKLOG 116 Close button.
-  - Standalone VERIFIED WITH GAPS colour and receipt ordering.
-  - memory-browser null handling.
-  - learning-dashboard signals.
-  - GUARDS 13, whose mechanical check is S-139 (released). The PENDING text in GUARDS.md is out of date.
-- **A `.catch(() => null)` lint was considered and dropped.** 16 sites match, and most of them already render "Could not load". It would pin nothing.
+  - BACKLOG 31: proof-verify maps unverifiable drift to 2.
+  - BACKLOG 38: `no_pass_recorded`.
+  - BACKLOG 49: the `--jwks` output is patched.
+  - BACKLOG 16 and 85: `PYTHONDONTWRITEBYTECODE` in `enforce_test_coverage`, plus the py_compile rewrite.
+  - BACKLOG 133: `PULSE_MOAT_RESULT` carries a `.sha` sidecar.
+  - BACKLOG 140: the environment-variables.md row names all four tokens and both routes.
+  - BACKLOG 13: release.sh bumps INSTALLATION.md at 320.
+  - BACKLOG 22: the resource monitor backgrounds its sleep.
+  - BACKLOG 26: test-bun-parity-disk-tolerance.sh.
+  - The unreadable-waivers banner in loki-checklist-viewer is already pinned in loki-unmeasured-panels-honesty.node.test.mjs:319.
+  - The GitPanel badge on a null fetch renders nothing.
+  - PhaseVisualizer: its only caller passes 'idle'.
+- **Dropped on merit: BACKLOG 69 (snapshot hash size cap).**
+  - A size-plus-mtime fingerprint is spoofable, which weakens `preexisting_modified`.
+  - It changes the sealed `.sha.z` entries.
+  - Nobody has measured the stall.
 
-### S-174: run_test with a missing or empty argument stops run-all-tests.sh with no summary
-- Files: tests/run-all-tests.sh (the run_test guard and the missing-script return only), tests/test-run-all-missing-arg.sh (new)
-- Tier: MEDIUM. **Captain-built**, because tests/run-all-tests.sh is a hot file. The Captain also registers the new test.
+### S-194: LOKI_AUTO_PR pushes a branch whose history still holds user files (BACKLOG 108, A1)
+- Files:
+  - autonomy/run.sh: `create_session_pr` only, from its head to the `_loki_trusted_push` call. Anchor on the function name, because S-175 shifts line numbers when it merges.
+  - tests/test-auto-pr-agent-committed-refuse.sh (new)
+- Tier: HIGH (secret exposure)
+- Region: this does not overlap S-175 (`enforce_test_coverage`) or S-195 (the focus notify block).
 - Red:
-  - `run_test "X"` stops the runner with `$2: unbound variable`. There is no summary and every later suite is skipped.
-  - `run_test "X" ""` passes today: `bash -c ""` exits 0.
-  - A missing script returns 1, and under `set -e` that stops the run.
+  - With a non-empty agent-committed-user-files.z and `LOKI_AUTO_PR=1`, the stubbed `_loki_trusted_push` gets called.
+  - The advisory path prints `git push -u` advice with no cleanup step.
 - Green:
-  - Guard on `$# -lt 2` or an empty `$2`.
-    - Place it after `_shard_index` increments and before the shard skip, so LPT slots do not shift and every shard reports the fault.
-    - Print the name and the line number from `${BASH_LINENO[0]}` to stderr. The line must contain the word FAILED, so the LOKI_TEST_LIST output stays clean and the local-ci scraper still matches.
-    - Increment TOTAL_FAILED and return 0.
-  - Change the missing-script branch to count the failure and return 0.
-  - The test pulls the real run_test out of run-all-tests.sh with sed; it does not copy it. It drives three legs: one argument, an empty argument, and a missing script. A stub registered after each bad line must still run.
-- Wall: `bash tests/test-run-all-missing-arg.sh` exits 0.
-  - Each leg prints Failed: 1, and the stub's PASSED line appears after the bad line.
-  - A scratch copy with the guard removed exits 1.
-  - `bash tests/test-run-all-dispatch.sh` and `LOKI_TEST_LIST=1 bash tests/test-shard-coverage.sh` both exit 0.
+  - When the record is non-empty:
+    - Recompute the fork the way `_loki_untrack_agent_committed_user_files` does: the merge base with base-branch.txt, else session-start-sha.
+    - Print `git reset --soft <fork> && git commit` before any push advice.
+    - Under `LOKI_AUTO_PR=1`, refuse the push: `log_warn` naming the files, and return 1.
+  - An empty or absent record leaves both paths byte-identical to today.
+- Gate: the builder first reproduces the stub push call on main. If it does not reproduce, the slice closes as handled.
+- Test rule: `cd` to scratch before sourcing run.sh, and assert that no `.loki/state/provider` appears in the repo (BACKLOG 126).
+- Wall: `bash tests/test-auto-pr-agent-committed-refuse.sh` exits 0. Its legs:
+  - Auto path with a record: no push, rc 1, and the cleanup line printed.
+  - Advisory path with a record: the cleanup line appears before `git push -u`.
+  - Empty record: the push happens.
+  - Removing the record read in a scratch copy fails the first leg.
+  - `bash tests/test-trusted-push-agent-config.sh` exits 0.
 
-### S-175: a LOKI_MONOREPO_TEST_CMD rejected by the whitelist records pass true (BACKLOG 62)
-- Files: autonomy/run.sh (the enforce_test_coverage `monorepo-custom-rejected` branch, ~13877, only), tests/test-monorepo-rejected-cmd-inconclusive.sh (new)
-- Tier: HIGH
-- Red: the rejected branch sets `test_runner=monorepo-custom-rejected` but leaves `test_passed=true`. It skips the `none` path at ~14140, so the record reads pass true and unit-tests.pass is touched.
-  - **Gate:** the builder must first reproduce pass true plus unit-tests.pass. If that does not reproduce, close the slice as already handled.
-- Green: route the rejected command through the same no-runner record as the `none` path.
-  - `pass:"inconclusive"`, `status:"not_run"`, no unit-tests.pass, `.test-results.iter` stamped, and `_LOKI_TEST_SUITE_STATUS=not_run`.
-- Wall: `bash tests/test-monorepo-rejected-cmd-inconclusive.sh` exits 0.
-  - Fixture: a workspaces monorepo with `LOKI_MONOREPO_TEST_CMD='npm test; true'`.
-  - Reverting the branch exits 1.
-  - `bash tests/test-trust-core-tests-detect.sh` exits 0.
-- This is the only run.sh row in this cut.
-
-### S-176: the proof headline reads a stale test-results.json (BACKLOG 98, headline half)
-- Files: autonomy/lib/proof-generator.py (`_collect_tests` only), tests/test_proof_tests_freshness.py (new)
-- Tier: HIGH
-- Red: `_test_results_fresh` (322) gates only `_collect_quality_gates` (381). `_collect_tests` (893) feeds facts.tests and the headline, and has no freshness check.
-- Green: when the file is stale, `_collect_tests` returns status not_run. `ITERATION_COUNT` unset keeps the existing reading, matching the helper's ponytail note.
-- Wall: `python3 -m pytest -q tests/test_proof_tests_freshness.py` passes.
-  - ITERATION_COUNT=5 with marker 4: facts.tests.status is not_run, and honesty.headline differs from what the fresh case produces.
-  - Marker 5 keeps status verified.
-  - Removing the check fails the stale case.
-
-### S-177: the Bun npm fallback reads an exit-0 run that prints failures as passed (BACKLOG 98, Bun half)
-- Files: loki-ts/src/runner/quality_gates.ts (the `runTestCoverage` npm fallback, ~561-576, only), loki-ts/tests/runner/npm_fallback_summary_failures.test.ts (new)
-- Tier: HIGH
-- Red: `npm test` exits 0 while printing "Tests: 1 failed, 2 passed", and the fallback returns `passed: true`.
-- Green: mirror the bash summary parser (run.sh `_tr_failed_n` awk, ~14268): jest Tests and Test Suites lines, the vitest Test Files line, pytest failed plus errors, mocha failing, and node TAP. Any count above 0 returns passed false.
-- Wall: `cd loki-ts && bun test tests/runner/npm_fallback_summary_failures.test.ts` exits 0.
-  - The three failure shapes (jest, vitest, pytest "1 passed, 1 error") return passed false.
-  - "Tests: 3 passed" returns passed true.
-  - Removing the parse fails the three failure legs.
-- The Captain rebuilds loki-ts/dist/loki.js.
-
-### S-178: `/api/cost` treats context-tracker tokens without a USD figure as a measured $0 (BACKLOG 112)
-- Files: dashboard/server.py (the get_cost context-tracker fallback, ~7925-7950, only), tests/dashboard/test_cost_tracker_fallback_unmeasured.py (new)
+### S-195: the /api/focus POST fires with the dashboard disabled (BACKLOG 17, A2)
+- Files:
+  - autonomy/run.sh: the "Notify dashboard of active project directory" block only.
+  - tests/test-focus-post-dashboard-off.sh (new)
 - Tier: MEDIUM
-- Red: tokens greater than 0 set `cost_recorded = True` and `estimated_cost = totals.get("total_cost_usd", 0.0)`. The model defaults to "sonnet" when the provider is absent.
+- Region: this does not overlap S-175 or S-194.
+- Red: with `ENABLE_DASHBOARD=false`, a curl shim on PATH records one POST to `/api/focus`.
 - Green:
-  - Tokens count as measured, and cost is null unless total_cost_usd is a number. A recorded 0.0 stays 0.0.
-  - The model is `unknown` when there is no provider.
-- Wall: `python3 -m pytest -q tests/dashboard/test_cost_tracker_fallback_unmeasured.py` passes, and reverting fails the first case.
-  - `bash tests/moat/p7-no-fabricated-data.sh` prints `CASE P7.unmeasured-cost-never-zero PASS`.
-- This is the only dashboard/server.py row.
+  - Guard on the runtime `ENABLE_DASHBOARD`, which run.sh sets false at about 19288. Do not guard on `LOKI_DASHBOARD`.
+- Test: extract the block by its comment anchor, as test-autocapture-shadow-write-guard.sh does. No full run.sh source.
+- Wall: `bash tests/test-focus-post-dashboard-off.sh` exits 0.
+  - false: the shim log is empty.
+  - true: exactly one POST.
+  - Removing the guard in a scratch copy fails the false leg.
 
-### S-179: `loki cost` puts 0.0 in place of unknown spend (BACKLOG 106, bash half)
-- Files: autonomy/loki (`cmd_cost`, 28196, only), tests/test-loki-cost-unmeasured.sh (new)
-- Tier: MEDIUM
-- Red:
-  - `else: budget_used = 0.0` (~28452) contradicts its own comment.
-  - budget.json always carries `budget_used`, because run.sh check_budget_limit writes it, so a recorded 0 carries no "measured" signal.
-- Green: used and percent are null, and the text reads "not recorded", when no efficiency record is measured. Mirror the dashboard's `_record_is_measured` (server.py 7768) or S-131's Bun rule; the builder names which.
-- Wall: `bash tests/test-loki-cost-unmeasured.sh` exits 0.
-  - A cap of 10 with no measured records: `--json` budget used null, percent null.
-  - Measured 2.50: 2.5 and 25.0.
-  - Reverting fails the first leg.
-- This is the only autonomy/loki row.
-
-### S-180: the P7 helper-return arm misses class methods (BACKLOG 144)
-- Files: tests/moat/p7-no-fabricated-data.sh (the helper-return arm only)
+### S-196: council_managed_should_stop reads Loki's install tree for its diff and runs -E readers (A3)
+- Files:
+  - autonomy/completion-council.sh: `council_managed_should_stop` only.
+  - tests/moat/p2-honest-verdict.sh: `case_council_readers_no_user_site_pth`, plus the about-858 comment in `case_council_readers_not_shadowed`.
+  - tests/test-council-managed-diff-target.sh (new)
 - Tier: HIGH (moat)
-- Red: `_getRows() { return [{id:1,user:'Admin'}]; } ... this._rows = this._getRows();` is caught by no rule.
-- **Branch:** run the widened arm against main first.
-  - On any live hit in dashboard-ui or web-app, the slice becomes report-only. List the hits and let the Captain decide. Never add an allowlist to make it pass.
-  - cases.txt stays unchanged: no new case ID.
-- Wall: `bash tests/moat/p7-no-fabricated-data.sh` prints PASS for every P7 case.
-  - An in-script planted class-method fixture is flagged.
-  - Removing the method-head pattern lets that fixture through.
-
-### S-181: GUARDS 11, glob rm in a shared root
-- Files: scripts/v10-guard.sh (the Rule 4 region only), tests/test-v10-guard.sh, docs/v10/GUARDS.md (section 11 guard and test lines only)
-- Tier: MEDIUM
-- Red: Rule 4 checks only recursive plus force rm. `rm -f /tmp/*.log` and an `rm -f` glob in the scratchpad root both go through.
-- Green:
-  - Block any rm with a glob target whose literal parent is exactly /tmp, /private/tmp, $TMPDIR, or a directory named `scratchpad`.
-  - Allow globs one level below such a root.
-  - Where the parent is an unexpanded variable, allow it, and leave a ponytail comment that names this limit.
-- Wall: `bash tests/test-v10-guard.sh` exits 0.
-  - New cases: `rm -f /tmp/*.log` blocked, `rm -f <scratchpad>/*` blocked, `rm -f /tmp/run-1/*.log` allowed.
-  - Dropping the new rule fails the blocked cases.
-
-### S-182: docs/exit-codes.md does not mention the verify codes that are pending
-- Files: docs/exit-codes.md (the `loki verify` section only)
-- Tier: LOW
 - Red:
-  - The section says code 3 "never silently passes".
-  - `loki verify --fast` (autonomy/loki 18513, which calls fast_verify.py) exits 0 on INCONCLUSIVE and ignores unknown flags.
-  - Both cases are pending at v10.0.0.
+  - A stub `providers.managed` records `_CC_DIFF`. It shows install-tree paths, not the target project's change.
+  - A planted user-site `.pth` forges the test_summary read.
 - Green:
-  - Add a "Known gaps until v10.0.0" note. It gives the codes the builder measures on this checkout for four inputs: an empty diff, a non-git directory, an unknown flag, and `--fast` with nothing scanned.
-  - It names both pending case IDs, and tells users to check stdout for INCONCLUSIVE under `--fast`.
-- Wall: `bash tests/test-exit-codes-documented.sh` exits 0.
-  - `grep -n 'P2.fast-verify-inconclusive-not-zero' docs/exit-codes.md` prints one line.
-  - The four measured codes are in the builder's report, each with its command.
+  - `diff_summary` comes from `${TARGET_DIR:-.}`, the same root as `loki_dir` and `LOKI_TARGET_DIR`.
+  - The two inline readers and the heredoc run through `_loki_snapshot_py_tool -I -S`.
+  - If no interpreter resolves, test_summary is empty, pending is `[]`, and the function returns 1 (the Bash voting fallback). It never returns 0.
+  - The new leg lands in the same commit as the fix, because the case is already proven.
+- Gate: reproduce the install-tree diff with the stub first. Reuse S-173's stub.
+- Wall:
+  - `bash tests/moat/p2-honest-verdict.sh` prints `CASE P2.council-readers-no-user-site-pth PASS` and `CASE P2.council-readers-not-shadowed PASS`.
+  - `bash tests/test-council-managed-diff-target.sh` exits 0: a file changed only in the target appears in `_CC_DIFF`.
+  - Reverting the readers to `python3 -E` in a scratch copy makes the pth case FAIL.
+  - `bash tests/moat/run.sh` reports no rule failed.
 
-### S-183: the migration dashboard renders a failed load as "No migration data available" (BACKLOG 114)
-- Files: dashboard-ui/components/loki-migration-dashboard.js (the error render branch, ~599-610, only), dashboard-ui/tests/loki-migration-dashboard-fetch-error.node.test.mjs (new)
+### S-197: the NOT CHECKED text should name PYTHONPATH and PYTHONUSERBASE (BACKLOG 51, A4)
+- Files:
+  - autonomy/loki:
+    - `loki_remote_verify_receipt`'s attestation NOT CHECKED branch only.
+    - `cmd_proof verify`'s `--jwks` NOT CHECKED echo only.
+  - tests/test-proof-verify-jwks.sh (case 4 only)
 - Tier: LOW
-- Wall: `node --test dashboard-ui/tests/loki-migration-dashboard-fetch-error.node.test.mjs` passes.
-  - A rejected fetch renders "Could not load migrations" plus the message, and not the empty-state sentence.
-  - A real empty list still renders "No migrations found".
-- The Captain rebuilds dashboard/static/index.html.
+- Region: this does not overlap S-179 (`cmd_cost`).
+- Green:
+  - Both messages add that the verifier runs `python3 -E`, so cryptography supplied through PYTHONPATH or PYTHONUSERBASE is not seen.
+  - Exit codes are unchanged.
+- Wall:
+  - `bash tests/test-proof-verify-jwks.sh` exits 0, and case 4 asserts that the NOT CHECKED output names PYTHONUSERBASE.
+  - `grep -c PYTHONUSERBASE autonomy/loki` prints 2 or more (0 today).
+  - `bash tests/test-remote-attestation-verdict.sh` exits 0.
 
-### S-184: the managed memory panel ignores a 200 response carrying an error (BACKLOG 114)
-- Files: dashboard-ui/components/loki-managed-memory-panel.js (the events load only), dashboard-ui/tests/loki-managed-memory-events-error.node.test.mjs (new)
+### S-198: the P7 Array.from arm loses an outer generator's index when generators nest (BACKLOG 145, A5)
+- Files: tests/moat/p7-no-fabricated-data.sh. Only two regions:
+  - the Array.from generator arm, about 1934-1994;
+  - one fixture beside the B-8 fixture, about 3301.
+- Tier: HIGH (moat)
+- Region: this does not overlap S-180's helper-return arm. Do not append fixtures at the file tail.
+- Red: `Array.from({length:2}, (_, r) => Array.from({length:2}, (_, c) => ({ id: r, user: 'Admin' })))` goes through.
+- Green: substitute the enclosing generator's params as well as the inner ones.
+- Branch: run the widened arm on main first.
+  - On any live hit in dashboard-ui or web-app, the slice becomes report-only.
+  - Never add an allowlist.
+  - cases.txt stays unchanged.
+- Wall:
+  - `bash tests/moat/p7-no-fabricated-data.sh` prints PASS for every P7 case, and the nested fixture is flagged.
+  - Removing the outer substitution lets the fixture through.
+
+### S-199: the py-tool identity test covers every guarded copy
+- Files: tests/test-council-py-tool-identity.sh
 - Tier: LOW
-- Red: server.py ~12145 returns `{"events": [], "count": 0, "error": ...}`, and the panel renders "No managed memory events recorded yet."
-- Wall: `node --test dashboard-ui/tests/loki-managed-memory-events-error.node.test.mjs` passes.
-  - The error payload renders the error line, and not the empty sentence.
-  - `{events:[],count:0}` still renders the empty sentence.
-- The Captain rebuilds dashboard/static/index.html.
+- Green:
+  - Compare every `^_loki_snapshot_py_tool() {` body found by `git grep -l` under autonomy/ against run.sh's.
+  - Vacuity guard: at least one copy besides run.sh, and each body at least 10 lines.
+  - This is the only row that edits this file. S-200 to S-204 add copies and rely on it.
+- Wall:
+  - `bash tests/test-council-py-tool-identity.sh` exits 0 and prints the number of copies compared.
+  - A one-byte change to completion-council.sh's copy in a scratch tree exits 1.
 
-### S-185: DeployConnections shows "Not connected" rows under its own load error (BACKLOG 114, rendering only)
-- Files: web-app/src/components/DeployConnections.tsx (the row status render only), web-app/src/components/DeployConnections.state.test.mjs (new)
-- Tier: LOW
-- Scope: after a failed fetch, the rows read unknown instead of "Not connected", the same shape as S-170.
-  - The upward onStatusChange push of the defaults is BACKLOG 121 and stays held.
-- Wall: `node --test web-app/src/components/DeployConnections.state.test.mjs` passes.
-  - After a failed fetch, no row reads "Not connected".
-  - A real `{connected:false}` still does.
-  - `cd web-app && npx tsc -b` exits 0.
-- The Captain rebuilds web-app/dist.
+### S-200: done-recognition readers load user-site .pth (BACKLOG 54)
+- Files:
+  - autonomy/lib/done-recognition.sh: every python3 site, plus a guarded helper copy.
+  - tests/test-done-recognition-no-user-site-pth.sh (new)
+- Tier: HIGH
+- Red: a user-site `.pth` under a scratch HOME changes the verdict read (the about-703 site).
+- Green:
+  - All sites run through `_loki_snapshot_py_tool -I -S`.
+  - The builder lists each site's result when no interpreter resolves. None of them may read as done or met.
+  - Add a byte-identical guarded copy.
+- Gate: reproduce the forged read on main first.
+- Wall:
+  - `bash tests/test-done-recognition-no-user-site-pth.sh` exits 0.
+  - Reverting one site to `-E` in a scratch copy fails it.
+  - `bash tests/test-done-recognition-tests-axis.sh` and `bash tests/test-reuse-done-recognition.sh` exit 0.
 
-### S-186: the issue list's comment count never shows (BACKLOG 116)
-- Files: web-app/src/components/GitHubIssuesPanel.tsx (the list comment badge only), web-app/src/types/api.ts (GitHubIssue.comments only), web-app/src/components/GitHubIssuesPanel.comments.test.mjs (new)
-- Tier: LOW
-- Red: web-app/server.py 7297 asks gh for `comments`, which gh returns as an array. `issue.comments > 0` is then always false.
-- Wall: `node --test web-app/src/components/GitHubIssuesPanel.comments.test.mjs` passes.
-  - An array of 2 renders 2, and a number 3 renders 3.
-  - `cd web-app && npx tsc -b` exits 0.
-- The Captain rebuilds web-app/dist.
+### S-201: council-v2 readers load .pth, and a crashed sycophancy check skips the devil's advocate (BACKLOG 54)
+- Files:
+  - autonomy/council-v2.sh: its 7 python3 sites and the Step 4 and 5 fallbacks, plus a guarded helper copy.
+  - tests/test-council-v2-no-user-site-pth.sh (new)
+- Tier: MEDIUM. The path is opt-in through `LOKI_COUNCIL_VERSION=2`.
+- Red:
+  - A `.pth` forges a vote read.
+  - A detector failure yields `0.000`, so a unanimous approve never challenges.
+- Green:
+  - `-I -S` on every site.
+  - An unmeasured sycophancy score on a unanimous approve runs the devil's advocate. A resolver failure never yields "no challenge".
+- Gate: reproduce both on main first.
+- Wall:
+  - `bash tests/test-council-v2-no-user-site-pth.sh` exits 0, covering the `.pth` leg and the detector-failure leg.
+  - Reverting either change fails its leg.
+  - `bash tests/test-council-v2-quorum.sh` exits 0.
 
-### S-187: CostEstimator uses the whole iteration cap as its estimate (BACKLOG 118)
-- Files: web-app/src/components/ProjectWorkspace.tsx (the CostEstimator props, ~2482, only), web-app/src/components/CostEstimator.tsx (export estimateCosts only if needed), web-app/src/components/CostEstimator.estimate.test.mjs (new)
-- Tier: LOW
-- Red: `estimatedIterations={buildStatus.maxIterations ?? 0}`, so a cap of 1000 is priced as 1000 iterations.
-- Wall: `node --test web-app/src/components/CostEstimator.estimate.test.mjs` passes.
-  - A cap of 1000 does not change the estimate from the complexity default.
-  - `grep -n 'estimatedIterations={buildStatus.maxIterations' web-app/src/components/ProjectWorkspace.tsx` exits 1.
-  - `cd web-app && npx tsc -b` exits 0.
-- The Captain rebuilds web-app/dist.
+### S-202: voter-agents readers load user-site .pth (BACKLOG 54)
+- Files:
+  - autonomy/lib/voter-agents.sh: its 3 python3 sites, plus a guarded helper copy.
+  - tests/test-voter-agents-no-user-site-pth.sh (new)
+- Tier: HIGH
+- Red: a `.pth` changes a parsed voter verdict.
+- Green: `-I -S`. With no interpreter, the dispatch fails, so completion-council's existing fail-closed CONTINUE applies.
+- Gate: reproduce the changed verdict on main first.
+- Wall:
+  - `bash tests/test-voter-agents-no-user-site-pth.sh` exits 0, and reverting fails it.
+  - `bash tests/test-voter-agents-json.sh` and `bash tests/test-sdk-voter-agents.sh` exit 0.
 
-### S-188: no test of its own covers the overview proof card's verdict wording (BACKLOG 123, tests only)
-- Files: dashboard-ui/tests/loki-overview-proof-card.node.test.mjs (new)
-- Tier: LOW
-- Pins loki-overview.js 486-489:
-  - With no proof, the card reads "Not evaluated".
-  - With a headline, the meta starts with "Recorded, not re-verified here;".
-  - gaps null reads "uncertainty not measured".
-- Wall: `node --test dashboard-ui/tests/loki-overview-proof-card.node.test.mjs` passes.
-  - Deleting the recorded-copy prefix in a scratch copy fails it.
-
-### S-189: the learning dashboard renders failed metrics and trends reads as no data (BACKLOG 114)
-- Files: dashboard-ui/components/loki-learning-dashboard.js (the metrics and trends load plus `_renderSummaryCards` and `_renderTrendChart` empty branches only), dashboard-ui/tests/loki-learning-dashboard-fetch-error.node.test.mjs (new)
-- Tier: LOW
-- Red: `.catch(() => null)` at 132 and 133 feeds "No metrics available" and "No trend data available".
-- Wall: `node --test dashboard-ui/tests/loki-learning-dashboard-fetch-error.node.test.mjs` passes.
-  - Rejected metrics and trends render "Could not load".
-  - A real empty trends response still renders "No trend data available".
-  - `loki-learning-dashboard.test.js` is unaffected.
-- The Captain rebuilds dashboard/static/index.html.
-
-### S-190: the R3 design doc describes project_total_usd as a plain sum (BACKLOG 112 remainder)
-- Files: docs/R3-COST-OBSERVABILITY-DESIGN.md
-- Tier: LOW
-- Wall: `grep -n 'sum of per-run proof costs' docs/R3-COST-OBSERVABILITY-DESIGN.md` exits 1.
-  - `grep -n 'project_total_partial' docs/R3-COST-OBSERVABILITY-DESIGN.md` prints at least one line.
-  - The doc states null when no run is measured, citing dashboard/server.py 8384-8385.
-
-### S-191: speed up test-review-assurance-tail.sh (116s in shard-durations.tsv)
-- Files: tests/test-review-assurance-tail.sh
+### S-203: proof-check readers load user-site .pth (BACKLOG 54)
+- Files:
+  - autonomy/lib/proof-check.sh: its 3 heredoc readers, plus a guarded helper copy.
+  - tests/test-proof-check-no-user-site-pth.sh (new)
 - Tier: MEDIUM
-- The builder captures the pre-change wall time and pass count under `LOKI_TEST_SHARD=0/8` first.
-  - Then run independent cases concurrently, each in its own TMPROOT subdirectory.
-  - Review budgets and timeout values stay unchanged.
-- Wall: `time LOKI_TEST_SHARD=0/8 bash tests/test-review-assurance-tail.sh` exits 0 with real time under 60s.
-  - The pass-count line matches the pre-change capture.
+- Red: a `.pth` forges the headline read.
+- Green: `-I -S`. With no interpreter, the readers print empty, as they do today when python3 is absent.
+- Gate: reproduce the forged headline on main first.
+- Wall:
+  - `bash tests/test-proof-check-no-user-site-pth.sh` exits 0, and reverting fails it.
+  - `bash tests/test-proven-pr-check.sh` exits 0.
+
+### S-204: checklist verification loads user-site .pth (BACKLOG 53)
+- Files:
+  - autonomy/prd-checklist.sh: every python3 site, including the checklist-verify.py call and the oracle heredoc, plus a guarded helper copy.
+  - tests/test-prd-checklist-no-user-site-pth.sh (new)
+- Tier: HIGH
+- Red: a `.pth` changes the status_token or the waiver read.
+- Green:
+  - `-I -S`. The builder audits the oracle heredoc's imports first.
+  - Any site that needs a non-stdlib module stays `-E` with a ponytail note.
+  - Resolver failure: the builder lists each site's result. None reads as verified.
+- Gate: reproduce the changed read on main first.
+- Wall:
+  - `bash tests/test-prd-checklist-no-user-site-pth.sh` exits 0, and reverting fails it.
+  - `bash tests/moat/p2-honest-verdict.sh` prints `CASE P2.checklist-verify-not-shadowed PASS`.
+  - `bash tests/test-prd-checklist-interval-w4.sh` exits 0.
+
+### S-205: Bun loki proof verify runs a PATH python3 -E (BACKLOG 48 class, Bun half)
+- Files:
+  - loki-ts/src/commands/proof.ts: the verifier spawn only.
+  - loki-ts/src/util/python.ts, only to extend the helper that already exists there.
+  - loki-ts/tests/commands/proof_verify_interpreter.test.ts (new)
+- Tier: HIGH
+- Red: a user-site `.pth` under a scratch HOME changes verify output, or writes a marker.
+- Green:
+  - Resolve like `_loki_snapshot_py_tool`: /usr/bin/python3 and /bin/python3 first, then absolute PATH dirs, each probed with `-I -S -c ''`. Run with `-I -S`.
+  - If none resolves, exit 2 as NOT CHECKED.
+- Gate: reproduce the `.pth` effect on main first.
+- Wall:
+  - `cd loki-ts && bun test tests/commands/proof_verify_interpreter.test.ts tests/commands/proof_verify_parity.test.ts` exits 0.
+  - Reverting to `["python3","-E"]` fails the new test.
+- The Captain rebuilds loki-ts/dist.
+
+### S-206: cockpit actions say "working tree is clean" and "no run in progress" after a failed fetch (BACKLOG 114)
+- Files:
+  - web-app/src/cockpit/FinalActions.tsx (disabled reasons only)
+  - web-app/src/cockpit/FinalActions.reasons.test.mjs (new)
+- Tier: LOW
+- Green:
+  - Export a pure reasons function.
+  - `git === null`: commit, push and PR read "Working tree status not loaded".
+  - `status === null`: pause, resume and stop read "Run status not loaded".
+  - Real data keeps today's copy.
+- Wall:
+  - `node --test web-app/src/cockpit/FinalActions.reasons.test.mjs` passes:
+    - git null lacks "The working tree is clean" and "Nothing to push";
+    - status null lacks "No run in progress";
+    - `{ahead:0}` with no files keeps both sentences.
+  - `cd web-app && npx tsc -b` exits 0.
+- The Captain rebuilds web-app/dist.
+
+### S-207: cockpit evidence says "No gate results recorded" when the checklist request failed (BACKLOG 114)
+- Files:
+  - web-app/src/cockpit/useCockpitState.ts: `getChecklist` through `settle`, plus a `checklistError` field.
+  - web-app/src/cockpit/EvidencePanel.tsx (empty branch only)
+  - web-app/src/cockpit/ExecutionCockpit.tsx (EvidencePanel props only)
+  - web-app/src/cockpit/EvidencePanel.state.test.mjs (new)
+- Tier: LOW
+- Wall:
+  - `node --test web-app/src/cockpit/EvidencePanel.state.test.mjs` passes:
+    - an error renders "Could not load gate results" and not "No gate results recorded";
+    - `items:[]` with no error keeps that sentence.
+  - `node web-app/src/cockpit/run-derive-view-test.mjs` exits 0.
+  - `cd web-app && npx tsc -b` exits 0.
+- The Captain rebuilds web-app/dist.
+
+### S-208: trust trajectory reads any non-pass council verdict as a failure (BACKLOG 118)
+- Files:
+  - autonomy/lib/trust_trajectory.py (`_verdict_is_pass` only)
+  - tests/test_trust_trajectory_unknown_verdict.py (new)
+- Tier: MEDIUM
+- Red: a verdict such as "UNKNOWN" or "INCONCLUSIVE" maps to 0.0.
+- Green:
+  - Only explicit fail tokens map to False. The builder enumerates them from completion-council.sh and proof-generator's writers.
+  - Anything else maps to None, meaning the axis has no data point.
+- Gate: find a writer string that is neither pass nor fail. If none exists, close the slice as handled.
+- Wall:
+  - `python3 -m pytest -q tests/test_trust_trajectory_unknown_verdict.py tests/test_trust_trajectory.py tests/dashboard/test_trust_trajectory_endpoint.py` passes.
+  - An unknown verdict adds no data point, and REJECTED still reads 0.0.
+  - Reverting fails the first case.
+
+### S-209: Bun codex, cline and aider get the raw prompt without the commit-hygiene line (BACKLOG 99, Bun half)
+- Files:
+  - loki-ts/src/runner/providers.ts: the codex, cline and aider invokers only.
+  - loki-ts/tests/runner/provider_commit_hygiene.test.ts (new)
+  - loki-ts/tests/runner/providers.test.ts, only where exact-argv assertions move.
+- Tier: MEDIUM
+- Green:
+  - Prefix the prompt with the hygiene line plus a blank line, matching the bash `"$PROVIDER_COMMIT_HYGIENE"$'\n\n'"$prompt"`.
+  - The test reads the literal from providers/codex.sh; it does not copy it.
+- Wall:
+  - `cd loki-ts && bun test tests/runner/provider_commit_hygiene.test.ts tests/runner/providers.test.ts` exits 0.
+  - All three argvs carry the bash literal.
+  - Claude's prompt is not double-prefixed.
+  - Removing the prefix fails the three legs.
+- The Captain rebuilds loki-ts/dist.
+
+### S-210: speed up the two command-probe suites (29s and 30s in shard-durations.tsv)
+- Files: tests/test-help-discoverability.sh, tests/test-completion-coverage.sh (the probe loops only)
+- Tier: LOW
+- Change:
+  - The builder captures `real_count` and the pass and fail lines first.
+  - Then probe with `xargs -P 8`, each probe in its own scratch cwd, writing one result file per command.
+  - Keep the captured-output (never piped) rule noted in the file.
+- Wall:
+  - `time bash tests/test-help-discoverability.sh` and `time bash tests/test-completion-coverage.sh` each exit 0 with real time under 10s.
+  - `real_count` and the pass counts match the pre-change capture.
   - The builder reports both timings.
 
-### S-192: no test drives the web-app WebSocket status push payload (BACKLOG 112)
-- Files: web-app/tests/test_status_push_unmeasured.py (new), web-app/server.py (lift the nested status reader, ~6360-6425, to module level only if TestClient cannot drive it)
-- Tier: MEDIUM
-- Wall: `python3 -m pytest -q web-app/tests/test_status_push_unmeasured.py` passes.
-  - dashboard-state.json with no tokens: the push has cost null and max_iterations null.
-  - Priced tokens: cost is a number.
-  - Forcing the reader to 0.0 in a scratch copy fails the first case.
+### S-211: register the four suites BACKLOG 75 still leaves unrun (after S-174 merges)
+- Files: tests/run-all-tests.sh (four `run_test` lines only), tests/shard-durations.tsv (four lines)
+- Tier: LOW. **Captain-built after S-174 merges.**
+- Suites: tests/council/test_managed_completion_flag.sh, tests/council/test_managed_review_flag.sh, tests/test-evidence-gate-no-tests.sh, tests/test-voter-agents-json.sh.
+  - All four appear only in comments in run-all-tests.sh, so no runner executes them.
+  - The evidence-gate suite also appears in scripts/local-ci.sh, which is retired.
+- Gate:
+  - Each suite passes 3 of 3 from a scratch cwd and leaves no `.loki/state/provider` in the repo.
+  - A suite that fails is reported, not registered, and becomes its own fix slice (the S-110 lesson).
+- Wall:
+  - `grep -c -e test_managed_completion_flag -e test_managed_review_flag -e test-evidence-gate-no-tests -e test-voter-agents-json tests/run-all-tests.sh` prints 8 (4 before registration).
+  - `bash tests/test-shard-coverage.sh` exits 0.
 
-### S-193: let a batch know its worktree budget before dispatch (TODO item 8)
-- Files: scripts/v10-ops.sh (a new worktree-budget subcommand), tests/test-v10-ops.sh
+### S-212: GUARDS 5, 12 and 13 still read PENDING after S-138, S-139 and S-154 landed (after S-181 merges)
+- Files: docs/v10/GUARDS.md (sections 5, 12 and 13 only). This does not overlap S-181's section 11.
 - Tier: LOW
-- Wall: `bash tests/test-v10-ops.sh` exits 0.
-  - `scripts/v10-ops.sh worktree-budget 15` prints 15 minus the count of `.claude/worktrees` entries in `git worktree list --porcelain`.
-  - At or over the cap it prints 0 and exits 1.
-  - Fixtures use a scratch repo only.
+- Green:
+  - Section 12 names tests/test-no-ambient-gitconfig-writes.sh (S-138).
+  - Section 13 names the RELEASED_AHEAD_OF_NPM case in tests/test-v10-pulse.sh (S-139). It states that this is a flag, not a refusal.
+  - Section 5 names tests/test-prune-worktrees.sh only if that test asserts the no-mtime rule. Otherwise it stays PENDING and says what would close it.
+- Wall:
+  - `awk '/^## 12\./,0' docs/v10/GUARDS.md | grep -c 'PENDING, no slice cut'` prints 0.
+  - `bash tests/test-no-ambient-gitconfig-writes.sh` and `bash tests/test-v10-pulse.sh` exit 0.
+
+### S-213: no test of their own covers the council-vote labels on cost.html and proofs.html (BACKLOG 123, tests only)
+- Files: dashboard-ui/tests/static-council-vote-label.node.test.mjs (new)
+- Tier: LOW
+- It pins:
+  - proofs.html: the badge reads "council " plus the verdict, with the title "Recorded council vote, not a verification result".
+  - cost.html: the runs header reads "Council vote".
+- Wall:
+  - `node --test dashboard-ui/tests/static-council-vote-label.node.test.mjs` passes.
+  - Renaming the header, or dropping the title, in a scratch copy fails it.
 
 **Registration and rebuilds (Captain).**
 - New tests to register:
-  - S-175, S-176, S-178, S-179, S-183 to S-189, S-192.
-  - S-174 is registered by the Captain as part of building it.
+  - S-194 to S-198.
+  - S-200 to S-209.
+  - S-213.
 - Bundle rebuilds:
-  - S-177: loki-ts/dist.
-  - S-183, S-184, S-189: dashboard/static/index.html.
-  - S-185 to S-187: web-app/dist.
+  - S-205 and S-209: loki-ts/dist.
+  - S-206 and S-207: web-app/dist.
+- Sequencing:
+  - S-211 builds after S-174 merges.
+  - S-212 builds after S-181 merges.
+  - S-194 and S-195 are the only run.sh rows. They name regions that do not overlap each other or S-175, and merge one at a time.
 
-**Held, not in the 20 (alternates):**
-- **A1: BACKLOG 108**, HIGH. `create_session_pr` never reads agent-committed-user-files.z before a LOKI_AUTO_PR push. Its only reference is the writer at run.sh 10914. Cut it the moment S-175 merges, since it is also a run.sh change.
-- **A2: BACKLOG 17**, the `/api/focus` POST that fires with LOKI_DASHBOARD=false (run.sh 24481). After S-175.
-- **A3: council_managed_should_stop** `-I -S` plus the PROJECT_DIR guard, followed by S-173's `.pth` leg. After S-157.
-- **A4: BACKLOG 51**, the NOT CHECKED message should name PYTHONPATH and PYTHONUSERBASE (autonomy/loki ~1270). After S-179.
-- **A5: BACKLOG 145 and 147**, P7 arms. After S-180.
-- **Too large or held:**
-  - P1.verification-metadata-signed (a seal.v1 format change).
-  - The P2 verify renumber (CEO, v10.0.0).
-  - BACKLOG 18, 52, 121, 123 (audit.py half).
-  - S-112, S-114, S-115, S-117 to S-122.
+**Held, not in the 20:**
+- BACKLOG 147 (P7 useMemo composed form): wait for S-180.
+- BACKLOG 36 (P7 zero-file scan): wait for S-180 and S-198.
+- BACKLOG 19 (a stripped remote attestation reads UNSIGNED exit 0): same function as S-197, so wait for S-197.
+- The bash `loki proof verify` interpreter (autonomy/loki `cmd_proof`, `python3 -E`): wait for S-179 and S-197.
+- BACKLOG 99, bash half (run.sh main loop): wait for S-175, S-194 and S-195.
+- workspace_diff reports count 0 in a non-git directory: needs a design, because the value lands in the receipt.
+- dashboard/server.py items from BACKLOG 118: wait for S-178. They are:
+  - `/cost` pricing at Sonnet rates with no estimate label;
+  - council-state `total_votes: 0`;
+  - notifications zero summary;
+  - `StatusResponse` defaults;
+  - skill-session `running_agents: 0`.
+- ProjectWorkspace phase labels and Replay Build: wait for S-187.
+- Speeding up test-autocapture-shadow-write-guard.sh: its negative legs wait on a disowned process and need a design.
+- Carried over: P1.verification-metadata-signed; the P2 verify renumber (CEO); BACKLOG 18, 28, 52, 121, and 123 (the audit.py half); S-112, S-114, S-115, S-117 to S-122.
 
-| S-174 | Guard: run_test with a missing or empty argument stops run-all-tests.sh with no summary and skips later suites | tests/run-all-tests.sh (run_test guard and missing-script return only), tests/test-run-all-missing-arg.sh (new) | MEDIUM | bash tests/test-run-all-missing-arg.sh exits 0 with Failed: 1 per leg (one-arg, empty-arg, missing-script) and the later stub's PASSED line printed; guard removed in a scratch copy exits 1; bash tests/test-run-all-dispatch.sh and LOKI_TEST_LIST=1 bash tests/test-shard-coverage.sh exit 0 | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
-| S-175 | BACKLOG 62: a whitelist-rejected LOKI_MONOREPO_TEST_CMD records pass true and touches unit-tests.pass | autonomy/run.sh (enforce_test_coverage monorepo-custom-rejected branch only), tests/test-monorepo-rejected-cmd-inconclusive.sh (new) | HIGH | bash tests/test-monorepo-rejected-cmd-inconclusive.sh exits 0: pass is "inconclusive", status not_run, no unit-tests.pass; reverting the branch exits 1; bash tests/test-trust-core-tests-detect.sh exits 0 | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
-| S-176 | BACKLOG 98: proof headline reads a stale test-results.json (_collect_tests has no .test-results.iter check) | autonomy/lib/proof-generator.py (_collect_tests only), tests/test_proof_tests_freshness.py (new) | HIGH | python3 -m pytest -q tests/test_proof_tests_freshness.py passes: ITERATION_COUNT=5 with marker 4 gives facts.tests.status not_run and a headline unlike the fresh case; marker 5 keeps the prior status; removing the check fails the stale case | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
-| S-177 | BACKLOG 98: Bun npm-test fallback reads an exit-0 run that prints failures as passed | loki-ts/src/runner/quality_gates.ts (runTestCoverage npm fallback only), loki-ts/tests/runner/npm_fallback_summary_failures.test.ts (new) | HIGH | cd loki-ts && bun test tests/runner/npm_fallback_summary_failures.test.ts exits 0: jest Tests 1 failed, vitest Test Files 1 failed and pytest 1 passed 1 error all return passed false; Tests 3 passed returns passed true; removing the parse fails the first three | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
-| S-178 | BACKLOG 112: /api/cost reads tracker tokens without a USD total as a measured $0 and labels the model sonnet | dashboard/server.py (get_cost context-tracker fallback only), tests/dashboard/test_cost_tracker_fallback_unmeasured.py (new) | MEDIUM | python3 -m pytest -q tests/dashboard/test_cost_tracker_fallback_unmeasured.py passes (tokens without total_cost_usd give cost null; recorded 0.0 stays 0.0; no provider gives model unknown); reverting fails case 1; bash tests/moat/p7-no-fabricated-data.sh prints CASE P7.unmeasured-cost-never-zero PASS | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
-| S-179 | BACKLOG 106: loki cost puts 0.0 in place of unknown spend | autonomy/loki (cmd_cost only), tests/test-loki-cost-unmeasured.sh (new) | MEDIUM | bash tests/test-loki-cost-unmeasured.sh exits 0: cap 10 with no measured records gives --json used null and percent null; measured 2.50 gives 2.5 and 25.0; reverting fails the first leg | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
-| S-180 | BACKLOG 144: P7 helper-return arm misses class-method helpers | tests/moat/p7-no-fabricated-data.sh (helper-return arm only) | HIGH | bash tests/moat/p7-no-fabricated-data.sh prints PASS for every P7 case and flags the in-script class-method fixture; removing the method-head pattern lets the fixture through; tests/moat/cases.txt unchanged | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
-| S-181 | GUARDS 11: v10-guard blocks a glob rm whose parent is a shared root (/tmp, TMPDIR, scratchpad) | scripts/v10-guard.sh (Rule 4 region only), tests/test-v10-guard.sh, docs/v10/GUARDS.md (section 11 only) | MEDIUM | bash tests/test-v10-guard.sh exits 0 with rm -f /tmp/*.log and rm -f scratchpad/* blocked and rm -f /tmp/run-1/*.log allowed; dropping the new rule fails the blocked cases | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
-| S-182 | docs/exit-codes.md omits the pending loki verify codes (verify --fast exits 0 on INCONCLUSIVE until v10.0.0) | docs/exit-codes.md (loki verify section only) | LOW | bash tests/test-exit-codes-documented.sh exits 0; grep -n P2.fast-verify-inconclusive-not-zero docs/exit-codes.md prints one line; the four measured codes appear in the report with their commands | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
-| S-183 | BACKLOG 114: migration dashboard renders a failed load as No migration data available | dashboard-ui/components/loki-migration-dashboard.js (error render branch only), dashboard-ui/tests/loki-migration-dashboard-fetch-error.node.test.mjs (new) | LOW | node --test dashboard-ui/tests/loki-migration-dashboard-fetch-error.node.test.mjs passes: a rejected fetch renders Could not load and lacks the empty-state sentence; an empty list still renders No migrations found | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
-| S-184 | BACKLOG 114: managed memory panel ignores a 200 events payload carrying error | dashboard-ui/components/loki-managed-memory-panel.js (events load only), dashboard-ui/tests/loki-managed-memory-events-error.node.test.mjs (new) | LOW | node --test dashboard-ui/tests/loki-managed-memory-events-error.node.test.mjs passes: the error payload renders the error line and not the empty sentence; events [] with no error still renders the empty sentence | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
-| S-185 | BACKLOG 114: DeployConnections rows read Not connected under their own load error | web-app/src/components/DeployConnections.tsx (row status render only), web-app/src/components/DeployConnections.state.test.mjs (new) | LOW | node --test web-app/src/components/DeployConnections.state.test.mjs passes: no row reads Not connected after a failed fetch; a real connected false still does; cd web-app && npx tsc -b exits 0 | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
-| S-186 | BACKLOG 116: issue list comment count never shows (gh sends comments as an array) | web-app/src/components/GitHubIssuesPanel.tsx (list comment badge only), web-app/src/types/api.ts (GitHubIssue.comments only), web-app/src/components/GitHubIssuesPanel.comments.test.mjs (new) | LOW | node --test web-app/src/components/GitHubIssuesPanel.comments.test.mjs passes: array of 2 renders 2, number 3 renders 3; cd web-app && npx tsc -b exits 0 | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
-| S-187 | BACKLOG 118: CostEstimator prices the whole iteration cap as the estimate | web-app/src/components/ProjectWorkspace.tsx (CostEstimator props only), web-app/src/components/CostEstimator.tsx (export only if needed), web-app/src/components/CostEstimator.estimate.test.mjs (new) | LOW | node --test web-app/src/components/CostEstimator.estimate.test.mjs passes; grep -n 'estimatedIterations={buildStatus.maxIterations' web-app/src/components/ProjectWorkspace.tsx exits 1; cd web-app && npx tsc -b exits 0 | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
-| S-188 | BACKLOG 123: overview proof card wording has no test of its own | dashboard-ui/tests/loki-overview-proof-card.node.test.mjs (new) | LOW | node --test dashboard-ui/tests/loki-overview-proof-card.node.test.mjs passes: no proof reads Not evaluated, a headline carries the recorded-copy prefix, gaps null reads uncertainty not measured; deleting the prefix in a scratch copy fails it | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
-| S-189 | BACKLOG 114: learning dashboard renders failed metrics and trends reads as no data | dashboard-ui/components/loki-learning-dashboard.js (metrics and trends load plus their two empty branches only), dashboard-ui/tests/loki-learning-dashboard-fetch-error.node.test.mjs (new) | LOW | node --test dashboard-ui/tests/loki-learning-dashboard-fetch-error.node.test.mjs passes: rejected metrics and trends render Could not load; an empty trends response still renders No trend data available | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
-| S-190 | BACKLOG 112: R3 design doc describes project_total_usd as a plain sum | docs/R3-COST-OBSERVABILITY-DESIGN.md | LOW | grep -n 'sum of per-run proof costs' docs/R3-COST-OBSERVABILITY-DESIGN.md exits 1; grep -n project_total_partial docs/R3-COST-OBSERVABILITY-DESIGN.md prints at least one line | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
-| S-191 | Velocity: test-review-assurance-tail.sh (116s) under 60s by running independent cases concurrently, budgets unchanged | tests/test-review-assurance-tail.sh | MEDIUM | time LOKI_TEST_SHARD=0/8 bash tests/test-review-assurance-tail.sh exits 0 with real under 60s and the same pass-count line as the pre-change capture; both timings reported | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
-| S-192 | BACKLOG 112: no test drives the web-app WebSocket status push payload for unmeasured cost | web-app/tests/test_status_push_unmeasured.py (new), web-app/server.py (lift the nested status reader only if needed) | MEDIUM | python3 -m pytest -q web-app/tests/test_status_push_unmeasured.py passes: no tokens gives cost null and max_iterations null, priced tokens give a number; forcing 0.0 in a scratch copy fails case 1 | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
-| S-193 | Velocity: v10-ops worktree-budget prints how many worktrees a batch may open before dispatch | scripts/v10-ops.sh (new worktree-budget subcommand), tests/test-v10-ops.sh | LOW | bash tests/test-v10-ops.sh exits 0; scripts/v10-ops.sh worktree-budget 15 prints 15 minus the .claude/worktrees entries in git worktree list --porcelain, and at or over the cap prints 0 and exits 1 | ready@2026-09-27T19:57Z | Source: 19:57Z cut. |
+| S-194 | BACKLOG 108: LOKI_AUTO_PR pushes a branch whose history still holds user files | autonomy/run.sh (create_session_pr only; does not overlap S-175 or S-195), tests/test-auto-pr-agent-committed-refuse.sh (new) | HIGH | bash tests/test-auto-pr-agent-committed-refuse.sh exits 0: auto path with a record makes no push, returns 1 and prints git reset --soft; advisory path prints the cleanup before git push -u; empty record pushes; removing the record read in a scratch copy fails leg 1; bash tests/test-trusted-push-agent-config.sh exits 0 | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
+| S-195 | BACKLOG 17: /api/focus POST fires with the dashboard disabled | autonomy/run.sh (dashboard focus notify block only; does not overlap S-175 or S-194), tests/test-focus-post-dashboard-off.sh (new) | MEDIUM | bash tests/test-focus-post-dashboard-off.sh exits 0: ENABLE_DASHBOARD=false leaves the curl shim log empty, true records one POST; removing the guard in a scratch copy fails the false leg | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
+| S-196 | council_managed_should_stop diffs Loki's install tree and runs -E readers | autonomy/completion-council.sh (council_managed_should_stop only), tests/moat/p2-honest-verdict.sh (case_council_readers_no_user_site_pth plus the ~858 comment), tests/test-council-managed-diff-target.sh (new) | HIGH | bash tests/moat/p2-honest-verdict.sh prints CASE P2.council-readers-no-user-site-pth PASS and CASE P2.council-readers-not-shadowed PASS; bash tests/test-council-managed-diff-target.sh exits 0 with the target-only file in _CC_DIFF; reverting the readers to -E makes the pth case FAIL; bash tests/moat/run.sh reports no rule failed | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
+| S-197 | BACKLOG 51: NOT CHECKED text should name PYTHONPATH and PYTHONUSERBASE | autonomy/loki (loki_remote_verify_receipt attestation NOT CHECKED branch and cmd_proof --jwks NOT CHECKED echo only; does not overlap S-179), tests/test-proof-verify-jwks.sh (case 4 only) | LOW | bash tests/test-proof-verify-jwks.sh exits 0 with case 4 asserting PYTHONUSERBASE in the NOT CHECKED output; grep -c PYTHONUSERBASE autonomy/loki prints 2 or more; bash tests/test-remote-attestation-verdict.sh exits 0 | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
+| S-198 | BACKLOG 145: P7 Array.from arm loses an outer generator's index when generators nest | tests/moat/p7-no-fabricated-data.sh (Array.from generator arm ~1934-1994 and one fixture beside the B-8 fixture ~3301 only; does not overlap S-180) | HIGH | bash tests/moat/p7-no-fabricated-data.sh prints PASS for every P7 case and flags the nested fixture; removing the outer substitution lets it through; tests/moat/cases.txt unchanged | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
+| S-199 | py-tool identity test covers every guarded _loki_snapshot_py_tool copy under autonomy/ | tests/test-council-py-tool-identity.sh | LOW | bash tests/test-council-py-tool-identity.sh exits 0 and prints the number of copies compared (at least 1 besides run.sh); a one-byte change to completion-council.sh's copy in a scratch tree exits 1 | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
+| S-200 | BACKLOG 54: done-recognition readers load user-site .pth (-E only) | autonomy/lib/done-recognition.sh (python3 sites plus guarded helper copy), tests/test-done-recognition-no-user-site-pth.sh (new) | HIGH | bash tests/test-done-recognition-no-user-site-pth.sh exits 0 and reverting one site to -E in a scratch copy fails it; bash tests/test-done-recognition-tests-axis.sh and bash tests/test-reuse-done-recognition.sh exit 0 | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
+| S-201 | BACKLOG 54: council-v2 readers load .pth; a crashed sycophancy check skips the devil's advocate | autonomy/council-v2.sh (python3 sites, Step 4 and 5 fallbacks, guarded helper copy), tests/test-council-v2-no-user-site-pth.sh (new) | MEDIUM | bash tests/test-council-v2-no-user-site-pth.sh exits 0 (pth leg and detector-failure leg run the devil's advocate on a unanimous approve); reverting either change fails its leg; bash tests/test-council-v2-quorum.sh exits 0 | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
+| S-202 | BACKLOG 54: voter-agents readers load user-site .pth (-E only) | autonomy/lib/voter-agents.sh (3 python3 sites plus guarded helper copy), tests/test-voter-agents-no-user-site-pth.sh (new) | HIGH | bash tests/test-voter-agents-no-user-site-pth.sh exits 0 and reverting fails it; bash tests/test-voter-agents-json.sh and bash tests/test-sdk-voter-agents.sh exit 0 | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
+| S-203 | BACKLOG 54: proof-check readers load user-site .pth (-E only) | autonomy/lib/proof-check.sh (3 heredoc readers plus guarded helper copy), tests/test-proof-check-no-user-site-pth.sh (new) | MEDIUM | bash tests/test-proof-check-no-user-site-pth.sh exits 0 and reverting fails it; bash tests/test-proven-pr-check.sh exits 0 | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
+| S-204 | BACKLOG 53: checklist verification loads user-site .pth (-E only) | autonomy/prd-checklist.sh (python3 sites incl. checklist-verify.py call and oracle heredoc, plus guarded helper copy), tests/test-prd-checklist-no-user-site-pth.sh (new) | HIGH | bash tests/test-prd-checklist-no-user-site-pth.sh exits 0 and reverting fails it; bash tests/moat/p2-honest-verdict.sh prints CASE P2.checklist-verify-not-shadowed PASS; bash tests/test-prd-checklist-interval-w4.sh exits 0 | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
+| S-205 | Bun loki proof verify runs a PATH python3 -E (user-site .pth reaches the verdict) | loki-ts/src/commands/proof.ts (verifier spawn only), loki-ts/src/util/python.ts (extend existing helper only if used), loki-ts/tests/commands/proof_verify_interpreter.test.ts (new) | HIGH | cd loki-ts && bun test tests/commands/proof_verify_interpreter.test.ts tests/commands/proof_verify_parity.test.ts exits 0; reverting to python3 -E fails the new test; no resolvable interpreter exits 2 | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
+| S-206 | BACKLOG 114: cockpit actions say working tree is clean and no run in progress after a failed fetch | web-app/src/cockpit/FinalActions.tsx (disabled reasons only), web-app/src/cockpit/FinalActions.reasons.test.mjs (new) | LOW | node --test web-app/src/cockpit/FinalActions.reasons.test.mjs passes: git null lacks The working tree is clean and Nothing to push, status null lacks No run in progress, real data keeps both; cd web-app && npx tsc -b exits 0 | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
+| S-207 | BACKLOG 114: cockpit evidence says No gate results recorded when the checklist request failed | web-app/src/cockpit/useCockpitState.ts (getChecklist via settle only), web-app/src/cockpit/EvidencePanel.tsx (empty branch only), web-app/src/cockpit/ExecutionCockpit.tsx (EvidencePanel props only), web-app/src/cockpit/EvidencePanel.state.test.mjs (new) | LOW | node --test web-app/src/cockpit/EvidencePanel.state.test.mjs passes: an error renders Could not load gate results, items [] keeps No gate results recorded; node web-app/src/cockpit/run-derive-view-test.mjs exits 0; cd web-app && npx tsc -b exits 0 | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
+| S-208 | BACKLOG 118: trust trajectory reads any non-pass council verdict as a failure | autonomy/lib/trust_trajectory.py (_verdict_is_pass only), tests/test_trust_trajectory_unknown_verdict.py (new) | MEDIUM | python3 -m pytest -q tests/test_trust_trajectory_unknown_verdict.py tests/test_trust_trajectory.py tests/dashboard/test_trust_trajectory_endpoint.py passes: an unknown verdict adds no data point, REJECTED stays 0.0; reverting fails case 1 | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
+| S-209 | BACKLOG 99 (Bun): codex, cline and aider get the prompt without the commit-hygiene line | loki-ts/src/runner/providers.ts (codex, cline, aider invokers only), loki-ts/tests/runner/provider_commit_hygiene.test.ts (new), loki-ts/tests/runner/providers.test.ts (argv asserts only if moved) | MEDIUM | cd loki-ts && bun test tests/runner/provider_commit_hygiene.test.ts tests/runner/providers.test.ts exits 0: all three argvs carry the providers/codex.sh literal, claude not double-prefixed; removing the prefix fails the three legs | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
+| S-210 | Velocity: help-discoverability (29s) and completion-coverage (30s) probe loops under 10s each | tests/test-help-discoverability.sh, tests/test-completion-coverage.sh (probe loops only) | LOW | time bash tests/test-help-discoverability.sh and time bash tests/test-completion-coverage.sh each exit 0 with real under 10s; real_count and pass counts match the pre-change capture; both timings reported | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
+| S-211 | BACKLOG 75: register the four suites no runner executes (Captain, after S-174 merges) | tests/run-all-tests.sh (four run_test lines only, after S-174 merges), tests/shard-durations.tsv (four lines) | LOW | grep -c -e test_managed_completion_flag -e test_managed_review_flag -e test-evidence-gate-no-tests -e test-voter-agents-json tests/run-all-tests.sh prints 8; bash tests/test-shard-coverage.sh exits 0; each suite ran 3 of 3 from a scratch cwd with no .loki/state/provider left | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
+| S-212 | GUARDS 5, 12 and 13 still read PENDING after S-138, S-139 and S-154 landed (after S-181 merges) | docs/v10/GUARDS.md (sections 5, 12, 13 only; does not overlap S-181 section 11) | LOW | awk '/^## 12\./,0' docs/v10/GUARDS.md piped to grep -c 'PENDING, no slice cut' prints 0; bash tests/test-no-ambient-gitconfig-writes.sh and bash tests/test-v10-pulse.sh exit 0 | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
+| S-213 | BACKLOG 123: cost.html and proofs.html council-vote labels have no test of their own | dashboard-ui/tests/static-council-vote-label.node.test.mjs (new) | LOW | node --test dashboard-ui/tests/static-council-vote-label.node.test.mjs passes (proofs.html council prefix and title, cost.html Council vote header); renaming the header or dropping the title in a scratch copy fails it | ready@2026-09-27T20:12Z | Source: 20:12Z cut. |
