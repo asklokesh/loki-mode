@@ -10949,9 +10949,26 @@ _loki_untrack_agent_committed_user_files() {
     fi
     rm -f "$rec.added"
     if [ ! -s "$rec.new" ]; then
-        # BACKLOG 102: zero hits this session -- clear a stale record left by
-        # an earlier session, or it persists forever with nothing to read it.
-        rm -f "$rec.new" "$rec"
+        rm -f "$rec.new"
+        # S-194: the tree diff above cannot see a file an earlier (resumed)
+        # session added and then untracked, but the branch history still
+        # holds it and create_session_pr gates the push on this record. Keep
+        # the record while that history holds any recorded path; on a failed
+        # check, keep it too (fail closed).
+        if [ -s "$rec" ]; then
+            local range="${fork}..HEAD" held_paths=() p="" hist=""
+            [ "$(git cat-file -t "$fork" 2>/dev/null)" = tree ] && range="HEAD"
+            while IFS= read -r -d '' p; do held_paths+=("$p"); done < "$rec"
+            if [ "${#held_paths[@]}" -eq 0 ] \
+               || ! hist="$(git -C "$top" --literal-pathspecs log -1 --format=%H --no-renames --diff-filter=A "$range" -- "${held_paths[@]}" 2>/dev/null)" \
+               || [ -n "$hist" ]; then
+                return 0
+            fi
+        fi
+        # BACKLOG 102: zero hits this session and no recorded path left in the
+        # branch history -- clear a stale record left by an earlier session,
+        # or it persists forever with nothing to read it.
+        rm -f "$rec"
         return 0
     fi
     mv -f "$rec.new" "$rec"

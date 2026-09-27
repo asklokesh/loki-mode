@@ -1970,14 +1970,14 @@ else
 fi
 
 # =============================================================================
-# Test T102-later-session-no-hits (BACKLOG 102): agent-committed-user-files.z
-# has no reader outside this lifecycle test and was never cleared by a later
-# _loki_untrack_agent_committed_user_files call that finds ZERO covered hits.
-# A prior session's self-commit writes the record (BACKLOG 74 disclosure); a
-# later commit_session_changes call whose own added-files diff turns up no
-# hits must clear the now-stale record, not leave it to persist forever.
+# Test T102-later-session-no-hits (BACKLOG 102, S-194): a later
+# _loki_untrack_agent_committed_user_files call that finds ZERO covered hits
+# must clear a stale agent-committed-user-files.z, not leave it forever. The
+# record is stale only once no recorded path is left in the branch history:
+# create_session_pr gates the push on it (S-194), and a resumed session on the
+# same branch still holds the user's file in history, so it must keep it.
 # =============================================================================
-echo "Test T102-later-session-no-hits (BACKLOG 102): a stale agent-committed-user-files.z is cleared by a later no-hit session"
+echo "Test T102-later-session-no-hits (BACKLOG 102, S-194): agent-committed-user-files.z is kept while history holds the file, cleared after"
 R102="$(make_repo t102staleclear)"
 out102="$(
     cd "$R102" || exit 1
@@ -1995,13 +1995,20 @@ out102="$(
     printf 'more work\n' > work2.py
     git add work2.py && git commit -qm "second checkpoint"
     commit_session_changes >/dev/null 2>&1
-    exists2="$( [ -e .loki/state/agent-committed-user-files.z ] && echo yes || echo no )"
-    printf 'REC1=[%s] EXISTS2=%s' "$rec1" "$exists2"
+    exists2="$( [ -s .loki/state/agent-committed-user-files.z ] && echo yes || echo no )"
+    # The user drops the file from the branch history; the next no-hit
+    # session must now clear the record.
+    git reset -q --soft "$(git merge-base HEAD develop)" && git commit -qm "squash"
+    printf 'third\n' > work3.py
+    git add work3.py && git commit -qm "third checkpoint"
+    commit_session_changes >/dev/null 2>&1
+    exists3="$( [ -e .loki/state/agent-committed-user-files.z ] && echo yes || echo no )"
+    printf 'REC1=[%s] EXISTS2=%s EXISTS3=%s' "$rec1" "$exists2" "$exists3"
 )"
-if [ "$out102" = "REC1=[usernotes.txt ] EXISTS2=no" ]; then
-    pass "a later no-hit session clears the stale agent-committed-user-files.z record"
+if [ "$out102" = "REC1=[usernotes.txt ] EXISTS2=yes EXISTS3=no" ]; then
+    pass "a later no-hit session keeps the record while history holds the file, clears it once history no longer does"
 else
-    fail "BACKLOG 102: agent-committed-user-files.z persisted across a later session with no hits" "got: $out102"
+    fail "BACKLOG 102/S-194: agent-committed-user-files.z cleared while history held the file, or kept after it no longer did" "got: $out102"
 fi
 
 # =============================================================================
