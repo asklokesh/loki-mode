@@ -5,6 +5,7 @@
 #   cost        same as pass, and report total_cost_usd like claude -p json does
 #   costpretty  same, as a pretty-printed multi-line JSON message array
 #   nofix       push a branch that does not fix anything
+#   emptypush   push a branch holding one empty commit (the no-op baseline)
 #   noop        do nothing
 #   sleep       sleep far past any cap (records PIDs in STUB_PID_FILE)
 #   orphan      leave a background sleeper behind and exit 0 (PID in STUB_PID_FILE)
@@ -107,6 +108,10 @@ case "${STUB_MODE:-noop}" in
         fix_greet
         echo "not a directory" > tests
         push_branch fix-greet greet.sh tests || exit 1
+        ;;
+    emptypush)
+        git checkout -q -b noop-baseline && git commit -q --allow-empty -m "stub: empty" \
+            && git push -q origin noop-baseline || exit 1
         ;;
     nofix)
         echo "notes" > notes.txt
