@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -77,6 +77,32 @@ describe("repomap/testmap cache, keyed by tree hash", () => {
     require("node:fs").writeFileSync(resolve(dir, "repomap-tree1.json"), "{not json");
     expect(readRepoMapCache(dir, "tree1")).toBeNull();
   });
+
+  // Valid JSON of the wrong shape is a different failure mode from
+  // unparseable text: JSON.parse succeeds, so a shape check is the only
+  // thing standing between this and a runtime crash in the caller.
+  test("valid JSON of the wrong shape is a miss, not a crash", () => {
+    const dir = repoCacheDir("k", tmpRoot());
+    require("node:fs").mkdirSync(dir, { recursive: true });
+    require("node:fs").writeFileSync(resolve(dir, "repomap-tree1.json"), "42");
+    require("node:fs").writeFileSync(resolve(dir, "testmap-tree1.json"), "null");
+    expect(readRepoMapCache(dir, "tree1")).toBeNull();
+    expect(readTestMapCache(dir, "tree1")).toBeNull();
+  });
+
+  // ENGINE.md:631 "the first run performs no cache write before pr.opened":
+  // a miss read must never create the cache file or directory as a side
+  // effect, or a read-only intake would start writing to disk.
+  test("a miss read writes nothing to disk", () => {
+    const root = tmpRoot();
+    const dir = repoCacheDir(repoKey(null, "/nonexistent"), root);
+    readRepoMapCache(dir, "tree1");
+    readTestMapCache(dir, "tree1");
+    readFlaky(dir);
+    topFailures(dir);
+    expect(existsSync(dir)).toBe(false);
+    expect(readdirSync(root)).toEqual([]);
+  });
 });
 
 describe("flaky list (per repo, not per tree)", () => {
@@ -89,6 +115,19 @@ describe("flaky list (per repo, not per tree)", () => {
     recordFlaky(dir, ["b/x.test.ts"]);
     recordFlaky(dir, ["a/y.test.ts", "b/x.test.ts"]);
     expect(readFlaky(dir)).toEqual(["a/y.test.ts", "b/x.test.ts"]);
+  });
+
+  // A partially-written cache file (`{}`) parses fine but is not an array:
+  // the same "corrupt is a miss" invariant as a parse failure.
+  test("valid JSON that is not an array is a miss, not a crash", () => {
+    const dir = repoCacheDir("k", tmpRoot());
+    require("node:fs").mkdirSync(dir, { recursive: true });
+    require("node:fs").writeFileSync(resolve(dir, "flaky.json"), "{}");
+    expect(readFlaky(dir)).toEqual([]);
+    // recordFlaky spreads readFlaky()'s result; it must not throw on the
+    // same wrong-shape file, and must recover by overwriting it.
+    recordFlaky(dir, ["x.test.ts"]);
+    expect(readFlaky(dir)).toEqual(["x.test.ts"]);
   });
 });
 
@@ -128,5 +167,28 @@ describe("failure signatures (top 3 for the implementer brief)", () => {
     require("node:fs").appendFileSync(join(dir, "failures.jsonl"), "not json\n");
     recordFailures(dir, [{ signature: "b", count: 1, sample: "s" }]);
     expect(topFailures(dir).map((f) => f.signature).sort()).toEqual(["a", "b"]);
+  });
+
+  // Lines that parse fine but are the wrong shape (null, a bare number, a
+  // string, a record missing count, a record with a string count) must be
+  // skipped exactly like unparseable text -- never a throw, never NaN
+  // corrupting the sum for a signature that does have valid lines.
+  test("valid JSON of the wrong shape is skipped, not fatal, and never poisons the sum", () => {
+    const dir = repoCacheDir("k", tmpRoot());
+    recordFailures(dir, [{ signature: "sig-a", count: 1, sample: "s1" }]);
+    require("node:fs").appendFileSync(
+      join(dir, "failures.jsonl"),
+      [
+        "null",
+        "42",
+        '"a string"',
+        JSON.stringify({ signature: "sig-a", sample: "no-count" }),
+        JSON.stringify({ signature: "sig-a", count: "3", sample: "string-count" }),
+      ].join("\n") + "\n",
+    );
+    recordFailures(dir, [{ signature: "sig-a", count: 2, sample: "s2" }]);
+    const top = topFailures(dir);
+    expect(top).toEqual([{ signature: "sig-a", count: 3, sample: "s2" }]);
+    expect(Number.isFinite(top[0]?.count)).toBe(true);
   });
 });
