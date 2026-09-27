@@ -41,19 +41,21 @@ cat > "$W/bin/gh" <<EOF
 #!/bin/sh
 echo "cwd=\$PWD GH_REPO=\${GH_REPO:-} token=\${GH_TOKEN:-none} \$*" >> "$GHLOG"
 case "\$1 \$2" in
-    "repo view") echo main ;;
+    "repo view") cat "$W/default" ;;
     "pr list") [ -f "$W/pr.url" ] && cat "$W/pr.url" ;;
     "pr create") echo "$PRURL" > "$W/pr.url"; echo "Creating pull request"; echo "$PRURL" ;;
 esac
 exit 0
 EOF
 chmod +x "$W/bin/gh"
+echo main > "$W/default"
 
 A="$W/agent"
 git init -q "$A"
 git -C "$A" commit -q --allow-empty -m init
 git -C "$A" branch loki/e10-fix
 git -C "$A" branch loki/e10-ctl
+git -C "$A" branch trunk
 git -C "$A" remote add origin "$URL"
 REC="$W/hook.rec"
 printf '#!/bin/sh\necho "hook token=${GH_TOKEN:-none}" >> "%s"\n' "$REC" > "$A/.git/hooks/pre-push"
@@ -89,20 +91,30 @@ out="$(p4 "$LIB" push-pr "$A" loki/e10-fix "E10 title" "$W/body.md" 2>/dev/null)
 [ "$rc" -eq 0 ] && [ "$out" = "$PRURL" ] && [ "$(creates)" = "1" ] && ok "second call reuses the existing PR URL" \
     || bad "second call rc=$rc out=$out creates=$(creates)"
 
-# Default branch refused.
-: > "$W/remote.log"
-p4 "$LIB" push-pr "$A" main "t" "$W/body.md" >/dev/null 2>&1 && bad "push to main accepted" \
-    || { [ ! -s "$W/remote.log" ] && [ "$(creates)" = "1" ] && ok "push to the default branch is refused, nothing sent" \
-        || bad "main refused but something was sent"; }
-
-# Pin checks: missing pin and a pin that disagrees with the repo's origin.
-GH_TOKEN="$CANARY" bash "$LIB" push-pr "$A" loki/e10-fix t "$W/body.md" >/dev/null 2>&1 \
-    && bad "ran without a pinned origin" || ok "refuses without _LOKI_ORIGIN_PINNED=1"
-: > "$W/remote.log"
-GH_TOKEN="$CANARY" _LOKI_ORIGIN_PINNED=1 _LOKI_PINNED_ORIGIN="https://github.com/octocat/other.git" \
-    bash "$LIB" push-pr "$A" loki/e10-fix t "$W/body.md" >/dev/null 2>&1 \
-    && bad "pushed although origin differs from the pin" \
-    || { [ ! -s "$W/remote.log" ] && ok "origin differing from the pin is refused" || bad "pin mismatch still pushed"; }
+# refused <label> <stderr-substring> <cmd...>: rc 2, the reason on stderr,
+# nothing reached the remote and no PR was created.
+refused() {
+    local label="$1" want="$2" rc n0
+    shift 2
+    : > "$W/remote.log"; n0="$(creates)"
+    "$@" >/dev/null 2>"$W/err"; rc=$?
+    if [ "$rc" -eq 2 ] && grep -qF "$want" "$W/err" && [ ! -s "$W/remote.log" ] && [ "$(creates)" = "$n0" ]; then
+        ok "$label"
+    else
+        bad "$label (rc=$rc err=$(tr '\n' ' ' < "$W/err"))"
+    fi
+}
+refused "push to main is refused, nothing sent" "Not pushing branch 'main'" \
+    p4 "$LIB" push-pr "$A" main t "$W/body.md"
+echo trunk > "$W/default"
+refused "push to the gh-resolved default branch (trunk) is refused, nothing sent" "it is the default branch of octocat/hello" \
+    p4 "$LIB" push-pr "$A" trunk t "$W/body.md"
+echo main > "$W/default"
+refused "refuses without _LOKI_ORIGIN_PINNED=1" "origin not pinned" \
+    env GH_TOKEN="$CANARY" bash "$LIB" push-pr "$A" loki/e10-fix t "$W/body.md"
+refused "origin differing from the pin is refused" "origin changed during the run" \
+    env GH_TOKEN="$CANARY" _LOKI_ORIGIN_PINNED=1 _LOKI_PINNED_ORIGIN="https://github.com/octocat/other.git" \
+    bash "$LIB" push-pr "$A" loki/e10-fix t "$W/body.md"
 
 # comment and status.
 : > "$GHLOG"
@@ -112,7 +124,7 @@ p4 "$LIB" comment 7 "$W/body.md" >/dev/null 2>&1 \
 p4 "$LIB" status "$SHA" pending "deep verify running" >/dev/null 2>&1 \
     && grep -q "^cwd=/ .* api repos/octocat/hello/statuses/$SHA -f state=pending -f context=loki/deep-verify -f description=deep verify running$" "$GHLOG" \
     && ok "status mode posts a pending loki/deep-verify status" || bad "status mode ($(tr '\n' '|' < "$GHLOG"))"
-p4 "$LIB" status "$SHA" bogus d >/dev/null 2>&1 && bad "status accepted a bad state" || ok "status rejects a bad state"
+refused "status rejects a bad state" "bad state" p4 "$LIB" status "$SHA" bogus d
 
 # Missing anchors fail closed: same lib, run.sh without the start anchor.
 mkdir -p "$W/fake/autonomy/lib"
