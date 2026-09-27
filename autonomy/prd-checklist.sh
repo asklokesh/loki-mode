@@ -1037,10 +1037,12 @@ checklist_verify() {
         return 0
     fi
 
+    # Non-zero so council_reverify_checklist replaces any stale green results
+    # with its fail-closed sentinel (run.sh's interval call ignores the status).
     local _cl_py
     if ! _cl_py="$(_loki_snapshot_py_tool)"; then
         log_warn "checklist verification skipped: no isolated python3 interpreter resolved"
-        return 0
+        return 1
     fi
 
     log_step "Running PRD checklist verification..."

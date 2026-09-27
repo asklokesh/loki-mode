@@ -94,6 +94,7 @@ run_all() {
         [ "${1:-}" = nopy ] && _loki_snapshot_py_tool() { return 1; }
         checklist_init "$WORK/proj/spec.md"
         checklist_verify >/dev/null 2>&1
+        printf 'VERIFY_RC %s\n' "$?"
         printf 'SUMMARY %s\n' "$(checklist_summary 2>/dev/null)"
         printf 'HELDOUT %s\n' "$(checklist_heldout_ids 2>/dev/null | tr '\n' ' ')"
         checklist_as_evidence 2>/dev/null
@@ -149,6 +150,9 @@ printf '%s\n' "$out" | grep -q '^SUMMARY 2/2 verified, 0 failing' && ok "control
 new_proj fail
 out="$(run_all nopy)"
 [ ! -f "$RES" ] && ok "no interpreter: no results file written" || bad "no interpreter: results file written ($(jget "$RES" "$SUMEXPR"))"
+# Non-zero lets council_reverify_checklist replace stale green results.
+! printf '%s\n' "$out" | grep -qx 'VERIFY_RC 0' && ok "no interpreter: checklist_verify returns non-zero" \
+    || bad "no interpreter: checklist_verify returned 0 (stale results would survive a council re-verify)"
 printf '%s\n' "$out" | grep -qx 'SUMMARY ' && ok "no interpreter: empty summary" || bad "no interpreter: $(printf '%s\n' "$out" | grep '^SUMMARY')"
 ! printf '%s\n' "$out" | grep -qx 'WAIVER_ADD 0' && [ ! -f "$WORK/proj/.loki/checklist/waivers.json" ] \
     && ok "no interpreter: waiver add fails and writes nothing" || bad "no interpreter: waiver add succeeded"
