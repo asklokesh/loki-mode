@@ -5,6 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.74.0
+
+**Unmeasured reads as unmeasured: tests, cost and dashboards.** Released from green tree 28e62e44 (Tests run 36348570005 and Bun Parity run 36348570021 both success before the bump).
+
+- A whitelist-rejected LOKI_MONOREPO_TEST_CMD records the test run as inconclusive and not run, instead of pass true (S-175).
+- The proof headline no longer reads a stale test-results.json from an earlier iteration (S-176).
+- The Bun npm-test fallback reads jest, vitest and pytest summary failures as failed even when npm exits 0 (S-177).
+- `/api/cost` reports tokens without a USD figure as unmeasured cost, not $0, and an unknown model as unknown (S-178); `loki cost` shows unknown spend as not recorded instead of 0.0 (S-179).
+- The P7 moat check follows class-method helpers (S-180).
+- Dashboard: the migration dashboard, managed memory panel and learning dashboard surface failed loads instead of "no data"; the overview proof card wording is pinned by its own test (S-183, S-184, S-188, S-189).
+- Web app: DeployConnections rows no longer read "Not connected" under their own load error; the issue list shows comment counts; the cost estimate no longer prices the whole iteration cap (S-185..S-187).
+- run-all-tests.sh counts a malformed run_test registration as one failure and keeps running every later suite (S-174).
+
 ## v9.73.0
 
 **Council votes honor failed counts; the log stream says when its API is down.** Released from green tree ec01d54b (Tests run 36346770258 and Bun Parity run 36346770129 both success before the bump).
