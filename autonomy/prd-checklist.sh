@@ -19,11 +19,22 @@
 #   LOKI_CHECKLIST_ENABLED      - Enable/disable checklist (default: true)
 #
 # Inline Python (D7): verification runs with the cwd inside the agent's repo,
-# so every python3 here runs -E (an empty PYTHONPATH component would load a
-# committed sitecustomize.py) and every -c / - body drops '' and '.' from
-# sys.path before any other import (a committed json.py would print the
-# verdict). Pinned by tests/moat/p2-honest-verdict.sh
+# so every python3 here ignores PYTHON* env vars (an empty PYTHONPATH component
+# would load a committed sitecustomize.py) and every -c / - body drops '' and
+# '.' from sys.path before any other import (a committed json.py would print
+# the verdict). Pinned by tests/moat/p2-honest-verdict.sh
 # P2.checklist-verify-not-shadowed.
+#
+# S-204 (BACKLOG 53): -E alone still loads the user site-packages, whose .pth
+# "import" lines run at startup and can patch json.dump, so checklist-verify.py
+# wrote failing checks as verified into the results file the council hard gate
+# trusts. Every call site resolves its interpreter through
+# _loki_snapshot_py_tool and runs it -I -S; when none resolves, nothing is
+# verified or summarized (the hard gate then blocks fail-closed). See that
+# function's comment in run.sh for the rationale and accepted gaps. The copy
+# below only serves callers that source this file before or without run.sh
+# (tests); run.sh is the source of truth, keep it byte-identical. Pinned by
+# tests/test-prd-checklist-no-user-site-pth.sh.
 #
 # Data:
 #   .loki/checklist/checklist.json          - Full checklist with verification
@@ -36,6 +47,28 @@
 #   checklist_summary
 #
 #===============================================================================
+
+declare -F _loki_snapshot_py_tool >/dev/null 2>&1 || \
+_loki_snapshot_py_tool() {
+    local c
+    for c in /usr/bin/python3 /bin/python3; do
+        [ -x "$c" ] && [ ! -d "$c" ] && "$c" -I -S -c '' >/dev/null 2>&1 && { printf '%s\n' "$c"; return 0; }
+    done
+    local dir
+    local IFS=:
+    for dir in $PATH; do
+        case "$dir" in
+            /*) ;;
+            *) continue ;;
+        esac
+        if [ -x "$dir/python3" ] && [ ! -d "$dir/python3" ] \
+           && "$dir/python3" -I -S -c '' >/dev/null 2>&1; then
+            printf '%s\n' "$dir/python3"
+            return 0
+        fi
+    done
+    return 1
+}
 
 # Configuration
 CHECKLIST_ENABLED=${LOKI_CHECKLIST_ENABLED:-true}
@@ -200,12 +233,14 @@ checklist_oracle_triangulate() {
     local status_token="NOOP"
     local status_file=""
     local status_tmp_root="${TMPDIR:-/tmp}"
+    local _cl_py
+    _cl_py="$(_loki_snapshot_py_tool)" || return 0
     if status_file="$(mktemp "${status_tmp_root%/}/loki-oracle-status.XXXXXX" 2>/dev/null)"; then
         if _ORACLE_SPEC="$CHECKLIST_PRD_PATH" \
            _ORACLE_OUT="$findings_file" \
            _ORACLE_PROJECT="$project_dir" \
            _ORACLE_INSTALL_DIR="$oracle_install_dir" \
-           python3 -E - > "$status_file" 2>/dev/null <<'ORACLE_PY'
+           "$_cl_py" -I -S - > "$status_file" 2>/dev/null <<'ORACLE_PY'
 import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os, re, sys, tempfile, glob
 
@@ -701,7 +736,9 @@ checklist_oracle_evidence() {
     if [ ! -f "$findings_file" ]; then
         return 0
     fi
-    _ORACLE_OUT="$findings_file" python3 -E -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
+    local _cl_py
+    _cl_py="$(_loki_snapshot_py_tool)" || return 0
+    _ORACLE_OUT="$findings_file" "$_cl_py" -I -S -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os
 try:
     with open(os.environ["_ORACLE_OUT"]) as f:
@@ -804,8 +841,9 @@ checklist_select_heldout() {
     # Honest caveat: re-selection or partial-survival after a regen can reserve
     # items the build loop already saw in earlier prompts (the hidden-from-loop
     # guarantee is best-effort once the checklist ids change mid-run).
-    local status_token
-    status_token=$(_CHECKLIST_FILE="$CHECKLIST_FILE" _HELDOUT_FILE="$heldout_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
+    local status_token _cl_py
+    _cl_py="$(_loki_snapshot_py_tool)" || return 0
+    status_token=$(_CHECKLIST_FILE="$CHECKLIST_FILE" _HELDOUT_FILE="$heldout_file" "$_cl_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, sys, hashlib, tempfile
 
 cl_path = os.environ['_CHECKLIST_FILE']
@@ -953,7 +991,9 @@ checklist_heldout_ids() {
     if [ ! -f "$heldout_file" ]; then
         return 0
     fi
-    _HELDOUT_FILE="$heldout_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
+    local _cl_py
+    _cl_py="$(_loki_snapshot_py_tool)" || return 0
+    _HELDOUT_FILE="$heldout_file" "$_cl_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 try:
     with open(os.environ['_HELDOUT_FILE']) as f:
@@ -997,9 +1037,15 @@ checklist_verify() {
         return 0
     fi
 
+    local _cl_py
+    if ! _cl_py="$(_loki_snapshot_py_tool)"; then
+        log_warn "checklist verification skipped: no isolated python3 interpreter resolved"
+        return 0
+    fi
+
     log_step "Running PRD checklist verification..."
 
-    python3 -E "$verify_script" \
+    "$_cl_py" -I -S "$verify_script" \
         --checklist "$CHECKLIST_FILE" \
         --timeout "$CHECKLIST_TIMEOUT" 2>/dev/null || true
 
@@ -1027,11 +1073,13 @@ checklist_summary() {
         echo ""
         return 0
     fi
+    local _cl_py
+    _cl_py="$(_loki_snapshot_py_tool)" || { echo ""; return 0; }
 
     _CHECKLIST_RESULTS="$CHECKLIST_RESULTS_FILE" \
     _CHECKLIST_WAIVERS="${CHECKLIST_DIR:-".loki/checklist"}/waivers.json" \
     _CHECKLIST_HELDOUT="${CHECKLIST_DIR:-".loki/checklist"}/held-out.json" \
-    python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
+    "$_cl_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, sys, os
 try:
     fpath = os.environ.get('_CHECKLIST_RESULTS', '')
@@ -1128,13 +1176,16 @@ checklist_as_evidence() {
     if [ ! -f "$CHECKLIST_RESULTS_FILE" ]; then
         return 0
     fi
+    local _cl_py
+    # No interpreter: the failed exec falls to "Checklist data unavailable" below.
+    _cl_py="$(_loki_snapshot_py_tool)" || _cl_py="/nonexistent/python3"
 
     {
         echo ""
         echo "## PRD Checklist Verification"
         echo ""
 
-        _CHECKLIST_RESULTS="$CHECKLIST_RESULTS_FILE" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
+        _CHECKLIST_RESULTS="$CHECKLIST_RESULTS_FILE" "$_cl_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 try:
     data = json.load(open(os.environ['_CHECKLIST_RESULTS']))
@@ -1170,7 +1221,9 @@ checklist_waiver_load() {
     if [ ! -f "$waivers_file" ]; then
         return 0
     fi
-    _WAIVERS_FILE="$waivers_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
+    local _cl_py
+    _cl_py="$(_loki_snapshot_py_tool)" || return 0
+    _WAIVERS_FILE="$waivers_file" "$_cl_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, sys, os
 try:
     waivers_file = os.environ['_WAIVERS_FILE']
@@ -1193,8 +1246,10 @@ checklist_waiver_add() {
     local waivers_file="${CHECKLIST_DIR:-".loki/checklist"}/waivers.json"
     local timestamp
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local _cl_py
+    _cl_py="$(_loki_snapshot_py_tool)" || return 1
 
-    _WAIVERS_FILE="$waivers_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
+    _WAIVERS_FILE="$waivers_file" "$_cl_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, sys
 
 waivers_file = os.environ['_WAIVERS_FILE']
@@ -1246,8 +1301,10 @@ checklist_waiver_remove() {
         echo "No waivers file found"
         return 1
     fi
+    local _cl_py
+    _cl_py="$(_loki_snapshot_py_tool)" || return 1
 
-    _WAIVERS_FILE="$waivers_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
+    _WAIVERS_FILE="$waivers_file" "$_cl_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os, sys
 
 waivers_file = os.environ['_WAIVERS_FILE']
@@ -1282,8 +1339,10 @@ checklist_waiver_list() {
         echo "No waivers configured"
         return 0
     fi
+    local _cl_py
+    _cl_py="$(_loki_snapshot_py_tool)" || return 1
 
-    _WAIVERS_FILE="$waivers_file" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
+    _WAIVERS_FILE="$waivers_file" "$_cl_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 waivers_file = os.environ['_WAIVERS_FILE']
 with open(waivers_file) as f:
