@@ -20,7 +20,8 @@ trap 'rm -rf "$W" "$ISOLATED_GIT_HOME"' EXIT
 CANARY="glpat-ENGINE10GITLABCANARY0000"
 URL="https://gitlab.com/grp/sub/proj.git"
 MRURL="https://gitlab.com/grp/sub/proj/-/merge_requests/7"
-export GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 LOKI_NO_BROWSER=1
+# file only: a push that escapes the insteadOf rewrite fails before any network.
+export GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 LOKI_NO_BROWSER=1 GIT_ALLOW_PROTOCOL=file
 unset GIT_SSH_COMMAND GITLAB_TOKEN GITLAB_HOST GL_HOST SSH_AUTH_SOCK GIT_CONFIG_COUNT
 mkdir -p "$W/bin" "$W/gl/grp/sub"
 export PATH="$W/bin:$PATH"
@@ -122,9 +123,10 @@ for u in "https://gitlab.example.com/grp/sub/proj.git" "https://gitlab.com.evil.
     refused "non-gitlab.com origin refused: $u" "pinned origin refused" pin "$u" push-mr "$A" loki/e10-fix t "$W/body.md"
 done
 git -C "$A" remote set-url origin "$URL"
+: > "$W/default"
 refused "unresolvable default branch fails closed" "could not resolve the default branch" \
-    env PATH="$W/nobin:/usr/bin:/bin" GITLAB_TOKEN="$CANARY" _LOKI_ORIGIN_PINNED=1 _LOKI_PINNED_ORIGIN="$URL" \
-    bash "$LIB" push-mr "$A" loki/e10-fix t "$W/body.md"
+    p4 push-mr "$A" loki/e10-fix t "$W/body.md"
+echo main > "$W/default"
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

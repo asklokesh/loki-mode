@@ -41,7 +41,7 @@ _e10_gitlab_project_from_url() {
 _e10_glab() {
     (
         cd / || exit 1
-        unset GIT_DIR GIT_WORK_TREE GL_HOST
+        unset GIT_DIR GIT_WORK_TREE GL_HOST GITLAB_API_HOST
         export GITLAB_HOST=gitlab.com
         command glab "$@"
     )
