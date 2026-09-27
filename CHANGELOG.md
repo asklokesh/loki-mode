@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.76.0
+
+**Council, checklist and proof readers are immune to user-site .pth files; auto-PR refuses a branch that still holds user files.** Released from green tree 800ac46e (Tests run 36351690452 and Bun Parity run 36351690372 both success before the bump).
+
+- The managed council diffs the target project instead of Loki's install tree and reads verdicts with `-I -S`; voter agents, proof-check, PRD checklist verification and Bun `loki proof verify` run the resolved isolated interpreter, so a user-site `.pth` file cannot change a verdict (S-196, S-202, S-203, S-204, S-205).
+- `LOKI_AUTO_PR` refuses to push a branch whose history still holds user files an agent committed, and the advisory path prints the cleanup step first; the record survives until the history no longer holds those files (S-194).
+- The NOT CHECKED message says the verifier runs `python3 -E`, so cryptography supplied through PYTHONPATH is not seen (S-197).
+- The cockpit evidence panel says "Could not load gate results" when the checklist request failed (S-207).
+- Bun codex, cline and aider prompts carry the commit-hygiene line, matching the bash route (S-209).
+- The P7 moat check follows nested Array.from generators (S-198); three suites that no runner executed are registered (S-211); the help-discoverability and completion-coverage probes run 8-way in parallel (S-210); GUARDS 5, 12 and 13 name their tests (S-212).
+
 ## v9.75.0
 
 **Verdict readers ignore user-site .pth files; the cockpit says "not loaded".** Released from green tree 04af133a (Tests run 36349960792 and Bun Parity run 36349960827 both success before the bump).
