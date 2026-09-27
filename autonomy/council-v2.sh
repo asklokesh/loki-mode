@@ -20,14 +20,42 @@
 #   - swarm/calibration.py (reviewer calibration)
 #
 # Inline Python (D7): the council runs with the cwd inside the agent's repo, so
-# every python3 here runs -E and drops '' and '.' from sys.path before any other
-# import (the swarm dir is inserted after that); a committed json.py or
-# sitecustomize.py cannot read the votes. Pinned by
-# tests/test-council-no-fabricated-verdict.sh (D7 section).
+# every python here drops '' and '.' from sys.path before any other import (the
+# swarm dir is inserted after that); a committed json.py or sitecustomize.py
+# cannot read the votes. Pinned by tests/test-council-no-fabricated-verdict.sh
+# (D7 section). S-201: -E alone still loads user site-packages, whose .pth
+# "import" lines run before that scrub and can forge json.load, so every site
+# runs the _loki_snapshot_py_tool interpreter -I -S. Pinned by
+# tests/test-council-v2-no-user-site-pth.sh.
 #
 #===============================================================================
 
 COUNCIL_V2_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Guarded copy for callers that source this file on its own (tests). In
+# production completion-council.sh (or run.sh) has already defined it. run.sh
+# is the source of truth: keep this copy byte-identical to it.
+declare -F _loki_snapshot_py_tool >/dev/null 2>&1 || \
+_loki_snapshot_py_tool() {
+    local c
+    for c in /usr/bin/python3 /bin/python3; do
+        [ -x "$c" ] && [ ! -d "$c" ] && "$c" -I -S -c '' >/dev/null 2>&1 && { printf '%s\n' "$c"; return 0; }
+    done
+    local dir
+    local IFS=:
+    for dir in $PATH; do
+        case "$dir" in
+            /*) ;;
+            *) continue ;;
+        esac
+        if [ -x "$dir/python3" ] && [ ! -d "$dir/python3" ] \
+           && "$dir/python3" -I -S -c '' >/dev/null 2>&1; then
+            printf '%s\n' "$dir/python3"
+            return 0
+        fi
+    done
+    return 1
+}
 
 #===============================================================================
 # council_v2_vote() -- Main entry point for v2 voting
@@ -48,6 +76,9 @@ council_v2_vote() {
     local iteration="${4:-0}"
 
     local council_size="${COUNCIL_SIZE:-3}"
+    # S-201: none resolvable -> every read below takes its fail-safe fallback.
+    local _c2_py
+    _c2_py="$(_loki_snapshot_py_tool)" || _c2_py=""
 
     log_header "COMPLETION COUNCIL v2 - Iteration $iteration"
     log_info "Convening ${council_size}-member blind review council..."
@@ -103,7 +134,7 @@ council_v2_vote() {
             votes_json="$votes_json$vote_content"
 
             local verdict
-            verdict=$(echo "$vote_content" | python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json; print(json.load(sys.stdin).get('verdict','').upper())" 2>/dev/null || echo "UNKNOWN")
+            verdict=$(echo "$vote_content" | "$_c2_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json; print(json.load(sys.stdin).get('verdict','').upper())" 2>/dev/null || echo "UNKNOWN")
             # TRUST: a reviewer that could not be REACHED did not vote REJECT.
             #
             # Every provider arm below used to substitute a literal
@@ -141,14 +172,21 @@ council_v2_vote() {
 
     # Step 4: Sycophancy detection
     local sycophancy_score
-    sycophancy_score=$(python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
+    sycophancy_score=$("$_c2_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import sys
 sys.path.insert(0, '${COUNCIL_V2_DIR}/../swarm')
 from sycophancy import detect_sycophancy
 import json
 votes = json.loads(sys.argv[1])
 print('{:.3f}'.format(detect_sycophancy(votes)))
-" "$votes_json" 2>/dev/null || echo "0.000")
+" "$votes_json" 2>/dev/null) || sycophancy_score=""
+    # S-201: a crashed or missing detector did not measure 0.000. Record the
+    # score as unmeasured (null keeps summary.json valid JSON) so Step 5
+    # challenges instead of reading "independent".
+    case "$sycophancy_score" in
+        [0-9]*.[0-9][0-9][0-9]) ;;
+        *) sycophancy_score="null" ;;
+    esac
 
     log_info "Sycophancy score: $sycophancy_score"
 
@@ -156,10 +194,17 @@ print('{:.3f}'.format(detect_sycophancy(votes)))
     if [ "$approve_count" -eq "$council_size" ]; then
         local threshold="${LOKI_COUNCIL_SYCOPHANCY_THRESHOLD:-0.6}"
         local should_challenge
-        should_challenge=$(python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; print('yes' if float('$sycophancy_score') >= float('$threshold') else 'no')" 2>/dev/null || echo "no")
+        # S-201: an unmeasured score, or a compare that cannot run, challenges.
+        # Only a measured score below the threshold skips the devil's advocate.
+        if [ "$sycophancy_score" = "null" ]; then
+            should_challenge="yes"
+        else
+            should_challenge=$("$_c2_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; print('no' if float(sys.argv[1]) < float(sys.argv[2]) else 'yes')" "$sycophancy_score" "$threshold" 2>/dev/null) || should_challenge="yes"
+            [ "$should_challenge" = "no" ] || should_challenge="yes"
+        fi
 
         if [ "$should_challenge" = "yes" ]; then
-            log_warn "Sycophancy score $sycophancy_score >= $threshold -- adding devil's advocate"
+            log_warn "Sycophancy score $sycophancy_score (threshold $threshold, null = unmeasured) -- adding devil's advocate"
             # Run devil's advocate with fresh evidence (no visibility of other votes)
             local da_dir
             da_dir=$(mktemp -d)
@@ -173,7 +218,7 @@ print('{:.3f}'.format(detect_sycophancy(votes)))
                 # Same trust rule as the main tally: an unparseable devil's
                 # advocate did not vote REJECT. Defaulting to REJECT here would
                 # silently overturn a unanimous APPROVE on a transient failure.
-                da_verdict=$(cat "$da_vote" | python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json; print(json.load(sys.stdin).get('verdict','').upper())" 2>/dev/null || echo "INCONCLUSIVE")
+                da_verdict=$(cat "$da_vote" | "$_c2_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; import json; print(json.load(sys.stdin).get('verdict','').upper())" 2>/dev/null || echo "INCONCLUSIVE")
                 if [ "$da_verdict" = "INCONCLUSIVE" ]; then
                     log_warn "Devil's advocate produced no verdict -- unanimous approval left UNCHANGED (not overturned)"
                 elif [ "$da_verdict" = "REJECT" ]; then
@@ -207,7 +252,7 @@ print('{:.3f}'.format(detect_sycophancy(votes)))
         final_decision="reject"
     fi
 
-    python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
+    "$_c2_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import sys
 sys.path.insert(0, '${COUNCIL_V2_DIR}/../swarm')
 from calibration import CalibrationTracker
@@ -271,6 +316,8 @@ council_v2_run_reviewer() {
     local role="$1"
     local review_dir="$2"
     local output_file="$3"
+    local _c2_py
+    _c2_py="$(_loki_snapshot_py_tool)" || _c2_py=""
 
     # Build review prompt based on role
     local prompt
@@ -394,7 +441,7 @@ Respond ONLY with a valid JSON object. No markdown fencing."
                             --json-schema "$_c2_schema_content" --output-format json 2>/dev/null)" || _c2_json=""
                         if [ -n "$_c2_json" ]; then
                             # Pull the schema-validated object out of the envelope.
-                            result="$(printf '%s' "$_c2_json" | python3 -E -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]; import json
+                            result="$(printf '%s' "$_c2_json" | "$_c2_py" -I -S -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]; import json
 try:
     e=json.load(sys.stdin)
     p=e.get("structured_output")
@@ -496,7 +543,7 @@ except Exception:
     # or neither, stays INCONCLUSIVE -- never guessed.
     if [ -z "$extracted" ] && [ -n "${result:-}" ]; then
         local _recovered
-        _recovered="$(printf '%s' "$result" | _LOKI_RAW="$result" python3 -E -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
+        _recovered="$(printf '%s' "$result" | _LOKI_RAW="$result" "$_c2_py" -I -S -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import os, re, sys, json
 raw = os.environ.get("_LOKI_RAW", "")
 # Standalone words only: "APPROVE" not "approved-by", and not inside a URL.

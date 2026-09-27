@@ -1177,6 +1177,7 @@ run_test "Council Member Timeout Wave10" "$SCRIPT_DIR/test-council-member-timeou
 run_test "Council Scope Honesty" "$SCRIPT_DIR/test-council-scope-honesty.sh"
 run_test "Council Transcripts Api" "$SCRIPT_DIR/test-council-transcripts-api.sh"
 run_test "Council V2 Quorum" "$SCRIPT_DIR/test-council-v2-quorum.sh"
+run_test "council-v2 readers run -I -S and challenge an unmeasured score (S-201)" "$SCRIPT_DIR/test-council-v2-no-user-site-pth.sh"
 run_test "Council Vote Parse" "$SCRIPT_DIR/test-council-vote-parse.sh"
 run_test "Council Write Transcript Threshold" "$SCRIPT_DIR/test-council-write-transcript-threshold.sh"
 run_test "Cross Project Lift" "$SCRIPT_DIR/test-cross-project-lift.sh"
