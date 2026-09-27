@@ -1,0 +1,10 @@
+{
+  "iid": 42,
+  "title": "Fix the flaky parser",
+  "description": "The parser drops the last token.\n\nSteps: run parse.",
+  "labels": ["bug", "parser"],
+  "author": { "username": "octo" },
+  "web_url": "https://gitlab.com/grp/sub/proj/-/issues/42",
+  "created_at": "2026-09-01T10:00:00Z",
+  "state": "opened"
+}
