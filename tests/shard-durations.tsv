@@ -636,3 +636,4 @@ council_managed_should_stop diffs the target project, not the install tree (S-19
 LOKI_AUTO_PR refuses a branch whose history holds user files (S-194)	1
 prd-checklist readers ignore user-site .pth (-I -S, S-204)	3
 focus POST skipped when the dashboard is disabled (S-195)	1
+Loki 10 engine trusted push and PR (E-11)	2
