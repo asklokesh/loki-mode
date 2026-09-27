@@ -63,9 +63,11 @@ describe("runEngine10", () => {
 
   test("a missing import inside an existing module is rethrown", async () => {
     const load = async () => {
-      throw Object.assign(new Error("Cannot find module './types.ts' from 'status.ts'"), { code: "ERR_MODULE_NOT_FOUND" });
+      throw Object.assign(new Error(`Cannot find module './types.ts' from '${SRC}/engine10/status.ts'`), {
+        code: "ERR_MODULE_NOT_FOUND",
+      });
     };
-    await expect(runEngine10(["verify"], load)).rejects.toThrow("types.ts");
+    await expect(runEngine10(["status"], load)).rejects.toThrow("types.ts");
   });
 
   test("dispatches to the export with the remaining args and returns its code", async () => {

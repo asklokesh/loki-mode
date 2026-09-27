@@ -53,16 +53,17 @@ export type Loader = (specifier: string) => Promise<Record<string, unknown>>;
 // imports when every target module has landed.
 const defaultLoader: Loader = (spec) => import(spec);
 
-function isMissing(err: unknown, module: string): boolean {
+function isMissing(err: unknown, spec: string): boolean {
   const e = err as { code?: string; message?: string } | null;
   const msg = String(e?.message ?? "");
   const notFound =
     e?.code === "ERR_MODULE_NOT_FOUND" ||
     e?.code === "MODULE_NOT_FOUND" ||
     /Cannot find module|Module not found/i.test(msg);
-  // Only the target itself counts; a missing import inside it is a real error.
-  const base = module.split("/").pop() as string;
-  return notFound && msg.includes(base);
+  // Only the target itself counts: Bun names the specifier ("./status.ts"),
+  // while a missing import inside it names that import plus the importer's
+  // absolute path, which never contains "./<module>".
+  return notFound && msg.includes(spec);
 }
 
 export async function runEngine10(args: string[], load: Loader = defaultLoader): Promise<number> {
@@ -72,11 +73,12 @@ export async function runEngine10(args: string[], load: Loader = defaultLoader):
     (help ? process.stdout : process.stderr).write(USAGE);
     return help ? 0 : 2;
   }
+  const spec = `./${r.module}`;
   let mod: Record<string, unknown>;
   try {
-    mod = await load(`./${r.module}`);
+    mod = await load(spec);
   } catch (err) {
-    if (!isMissing(err, r.module)) throw err;
+    if (!isMissing(err, spec)) throw err;
     process.stderr.write(`engine10: ${r.module} not built yet\n`);
     return 2;
   }
