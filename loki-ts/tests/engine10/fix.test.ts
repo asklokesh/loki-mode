@@ -71,8 +71,14 @@ const groups: FailureGroup[] = [
 ];
 
 describe("buildFixBrief", () => {
-  test("carries the task, plan, impacted tests and the grouped failures", () => {
-    const brief = buildFixBrief("fix the bug", "1. patch X", ["tests/x.test.ts"], groups);
+  test("carries the task, plan, impacted tests, the grouped failures and the diff stat", () => {
+    const brief = buildFixBrief(
+      "fix the bug",
+      "1. patch X",
+      ["tests/x.test.ts"],
+      groups,
+      "1 file changed, +3 -1",
+    );
     expect(brief).toContain("fix the bug");
     expect(brief).toContain("1. patch X");
     expect(brief).toContain("tests/x.test.ts");
@@ -80,11 +86,17 @@ describe("buildFixBrief", () => {
     expect(brief).toContain("Fast verify run failed");
     expect(brief).toContain("AssertionError: expected # to equal #");
     expect(brief).toContain("AssertionError: expected 1 to equal 2");
+    expect(brief).toContain("1 file changed, +3 -1");
   });
 
   test("says so plainly when no groups were fed", () => {
-    const brief = buildFixBrief("fix it", null, [], []);
+    const brief = buildFixBrief("fix it", null, [], [], null);
     expect(brief).toContain("no grouped failures were provided");
+  });
+
+  test("says so plainly when the diff stat is not available", () => {
+    const brief = buildFixBrief("fix it", null, [], [], null);
+    expect(brief.toLowerCase()).toContain("diff stat is not available");
   });
 });
 
@@ -110,6 +122,7 @@ describe("fix stage", () => {
     expect(result.data.diff_stat).toBe("1 file changed, +3 -1");
     expect(sessions.calls).toHaveLength(1);
     expect(sessions.calls[0]!.brief).toContain("AssertionError: expected 1 to equal 2");
+    expect(sessions.calls[0]!.brief).toContain("1 file changed, +3 -1");
     expect(sessions.calls[0]!.iterationId).toBe("e10-test-1-fix1");
     expect(emitted).toHaveLength(1);
     expect(emitted[0]).toMatchObject({ type: "fix.round", stage: "fix" });
@@ -161,5 +174,14 @@ describe("fix stage", () => {
 
     expect(result.status).toBe("completed");
     expect(result.data.groups_fed).toBe(0);
+  });
+
+  test("with no implement output yet, diff_stat is null, not an empty string", async () => {
+    const sessions = new FakeSessionRunner(doneResult);
+    const ctx = fakeCtx(sessions, {});
+
+    const result = await fixStage.run(ctx, new AbortController().signal);
+
+    expect(result.data.diff_stat).toBeNull();
   });
 });

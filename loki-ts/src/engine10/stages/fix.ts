@@ -20,12 +20,19 @@ export function buildFixBrief(
   plan: string | null,
   impactedTests: string[],
   groups: FailureGroup[],
+  diffStat: string | null,
 ): string {
   const base = buildImplementBrief(task, plan, impactedTests);
   const groupsText = groups.length
     ? groups.map((g, i) => `${i + 1}. (${g.count}x) ${g.signature}\n   sample: ${g.sample}`).join("\n")
     : "(no grouped failures were provided)";
-  return [base, "The previous Fast verify run failed. Fix these grouped failures:", groupsText].join("\n\n");
+  const diffText = diffStat ?? "(diff stat is not available)";
+  return [
+    base,
+    "The previous Fast verify run failed. Fix these grouped failures:",
+    groupsText,
+    `Diff so far:\n${diffText}`,
+  ].join("\n\n");
 }
 
 export const fixStage: Stage = {
@@ -45,11 +52,11 @@ export const fixStage: Stage = {
     const plan = (prior.plan?.plan as string | undefined) ?? null;
     const impactedTests = (prior.intake?.impacted_tests as string[] | undefined) ?? [];
     const groups = (prior.verify?.failures_grouped as FailureGroup[] | undefined) ?? [];
-    const diffStat = (prior.implement?.diff_stat as string | undefined) ?? "";
+    const diffStat = (prior.implement?.diff_stat as string | undefined) ?? null;
 
     const session = await ctx.sessions.run({
       stage: "fix",
-      brief: buildFixBrief(task, plan, impactedTests, groups),
+      brief: buildFixBrief(task, plan, impactedTests, groups, diffStat),
       tier: "development",
       iterationId: `${ctx.runId}-fix${round}`,
       limitS: fixStage.limitS,
