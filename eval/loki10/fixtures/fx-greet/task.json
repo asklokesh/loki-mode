@@ -1,0 +1,10 @@
+{
+  "id": "fx-greet",
+  "kind": "quickstart",
+  "prompt": "The greet function in greet.sh prints nothing. Make it print exactly: hello",
+  "issue_ref": null,
+  "repo": {"source": "@SEED_REPO@", "ref": "@SEED_REF@"},
+  "setup": null,
+  "hidden": {"files": ["hidden_test.sh"], "run": "bash hidden_test.sh"},
+  "timeout_s": 60
+}

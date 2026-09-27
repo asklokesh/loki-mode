@@ -94,3 +94,5 @@ def run(check):
     finally:
         _stop(p)
     print("PASS")
+    # Last stdout line, only reached when check() passed.
+    print(os.environ.get("LOKI_EVAL_NONCE", ""))

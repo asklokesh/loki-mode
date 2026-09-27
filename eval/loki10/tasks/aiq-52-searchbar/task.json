@@ -7,12 +7,12 @@
     "source": "/Users/lokesh/git/augmentiq",
     "ref": "b9796de68d30f76912d38acd1352e6e0202b991f"
   },
-  "setup": "cd frontend && npm ci --no-audit --no-fund --loglevel=error",
+  "setup": "cd frontend && npm install --no-audit --no-fund --loglevel=error",
   "hidden": {
     "files": [
       "frontend/src/__hidden__/search-bar.test.tsx"
     ],
-    "run": "cd frontend && npm install --no-audit --no-fund --loglevel=error && npx vitest run src/__hidden__/search-bar.test.tsx"
+    "run": "frontend/node_modules/.bin/vitest run --root frontend src/__hidden__/search-bar.test.tsx"
   },
   "timeout_s": 900
 }

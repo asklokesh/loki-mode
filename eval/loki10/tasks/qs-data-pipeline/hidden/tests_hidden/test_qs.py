@@ -48,3 +48,5 @@ with tempfile.TemporaryDirectory() as d:
     if r.returncode == 0:
         fail("missing input file should exit non-zero")
 print("PASS")
+# Last stdout line, only reached when every check passed.
+print(os.environ.get("LOKI_EVAL_NONCE", ""))
