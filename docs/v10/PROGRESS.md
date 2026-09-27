@@ -1248,3 +1248,11 @@ sample.
 - Eval numbers so far: none (no arm has run yet).
 - ETA for v10.0.0: thin path end to end targeted for about 01:00 UTC; gate decision at 03:00 UTC.
 - Top blocker: E-01 (shared types) gates phase B; augmentiq has only 3 issues, so the augmentiq share of the eval is 1 task, not 5.
+
+## 2026-09-27T22:57Z: Loki 10 engine progress
+- On main (`git ls-remote origin refs/heads/main` = 694866fc): engine wave 1 E-01..E-13 except E-14, plus E-11 (both halves), E-16, E-20; the eval harness EV-1 with EV-3 isolation and the 29 EV-2 tasks (EV-7 nonce fixes). tests/engine10 plus spawn guard 185 pass, 0 fail; eval/loki10/test-harness.sh 77 passed.
+- Eval baseline: a no-op arm over all 29 tasks graded every task not completed, none task_invalid (108s). No real arm numbers yet: EV-4 (raw claude -p, 3 tasks) and EV-5 (legacy, 1 task) are running.
+- In flight: E-14 end to end plus the first real v10 run on pub-more-itertools-1192; reworks E-15, E-17, E-18, E-21, E-22; E-19, E-23, E-TG.
+- Incidents fixed forward: two orphan loki test runs over 24 hours (stopped by PID; E-00 guard merged); main CI red on Coverage from engine spawns without env (72423684, 19128f6b).
+- ETA for v10.0.0: first real v10 task within the next hour; gate decision at 03:00 UTC.
+- Top blocker: E-14 integration (first time the modules run together).
