@@ -85,38 +85,53 @@ awk -v start="$DISPATCH_START" '
 #    A timed-out probe is NOT treated as "Unknown command": that would
 #    silently drop a real command from the coverage set and the gate would
 #    pass while checking less. It is recorded as a FAILURE with the culprit.
-_probe() {
-    if command -v timeout >/dev/null 2>&1; then
-        timeout 15 "$@"
-    elif command -v gtimeout >/dev/null 2>&1; then
-        gtimeout 15 "$@"
+PROBE_TIMEOUT=""
+if command -v timeout >/dev/null 2>&1; then
+    PROBE_TIMEOUT="timeout 15"
+elif command -v gtimeout >/dev/null 2>&1; then
+    PROBE_TIMEOUT="gtimeout 15"
+fi
+
+# PARALLEL (S-210): probes run 8 at a time via xargs, each in its own scratch
+# cwd so concurrent probes never share a working directory, and each writes one
+# result file (real, unknown or hung). The worker always exits 0 (BSD xargs
+# aborts on 255), so xargs's status is never the verdict: a candidate with NO
+# result file is a FAILURE, otherwise a dead worker would shrink the coverage
+# set while the gate passed.
+export LOKI WORK PROBE_TIMEOUT
+mkdir -p "$WORK/res" "$WORK/cwd"
+grep -v -e '^-' -e '^$' "$WORK/candidates.txt" | xargs -P 8 -n 1 bash -c '
+    c="$1"
+    mkdir -p "$WORK/cwd/$c" && cd "$WORK/cwd/$c" || exit 0
+    # Capture the status of the PROBE, not of the assignment. `x="$(cmd || true)"`
+    # always yields 0, so every timeout would be invisible. The `|| true` is
+    # therefore dropped here and the status taken directly.
+    _prc=0
+    # PROBE_TIMEOUT is intentionally unquoted: it is a command plus its bound.
+    probe_out="$($PROBE_TIMEOUT "$LOKI" "$c" --help </dev/null 2>&1)" || _prc=$?
+    # 124 = timeout(1) killed it; 137 = SIGKILL after a stuck TERM.
+    if [ "$_prc" = "124" ] || [ "$_prc" = "137" ]; then
+        r=hung
     else
-        "$@"
+        case "$probe_out" in
+            *"Unknown command"*) r=unknown ;;
+            *) r=real ;;
+        esac
     fi
-}
+    printf "%s\n" "$r" > "$WORK/res/$c"
+    exit 0
+' _
 
 : > "$WORK/real.txt"
 : > "$WORK/hung.txt"
 while read -r c; do
     case "$c" in -*|'') continue ;; esac
-    # Reset per iteration. `_prc` persists once set, so without this a single
-    # timeout would mark every LATER command as hung too -- one real culprit
-    # rendered as dozens, which is worse than none.
-    _prc=0
-    # Capture the status of the PROBE, not of the assignment. `x="$(cmd || true)"`
-    # always yields 0, so `$?` afterwards reads the assignment and every timeout
-    # would be invisible. The `|| true` is therefore dropped here and the status
-    # taken directly.
-    probe_out="$(_probe "$LOKI" "$c" --help </dev/null 2>&1)" || _prc=$?
-    _prc="${_prc:-0}"
-    # 124 = timeout(1) killed it; 137 = SIGKILL after a stuck TERM.
-    if [ "$_prc" = "124" ] || [ "$_prc" = "137" ]; then
-        printf '%s\n' "$c" >> "$WORK/hung.txt"
-        continue
-    fi
-    case "$probe_out" in
-        *"Unknown command"*) ;;
-        *) printf '%s\n' "$c" >> "$WORK/real.txt" ;;
+    r="$(cat "$WORK/res/$c" 2>/dev/null || true)"
+    case "$r" in
+        real) printf '%s\n' "$c" >> "$WORK/real.txt" ;;
+        unknown) ;;
+        hung) printf '%s\n' "$c" >> "$WORK/hung.txt" ;;
+        *) bad "probe of 'loki $c --help' left no result; the worker died" ;;
     esac
 done < "$WORK/candidates.txt"
 

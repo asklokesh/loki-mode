@@ -54,13 +54,34 @@ awk -v start="$DISPATCH_START" '
 # never piped into a matcher -- under `set -o pipefail` a `| head` closes the
 # pipe, the CLI dies of SIGPIPE, and the pipeline reports nonzero regardless of
 # the match, which silently marks every candidate real.
+#
+# PARALLEL (S-210): probes run 8 at a time via xargs, each in its own scratch
+# cwd so concurrent probes never share a working directory, and each writes one
+# result file. The worker always exits 0 (BSD xargs aborts on 255), so xargs's
+# status is never the verdict: a candidate with NO result file is a FAILURE,
+# otherwise a dead worker would shrink the coverage set while the gate passed.
+export LOKI WORK
+mkdir -p "$WORK/res" "$WORK/cwd"
+grep -v -e '^-' -e '^$' "$WORK/candidates.txt" | xargs -P 8 -n 1 bash -c '
+    c="$1"
+    mkdir -p "$WORK/cwd/$c" && cd "$WORK/cwd/$c" || exit 0
+    probe="$("$LOKI" "$c" --help </dev/null 2>&1 || true)"
+    case "$probe" in
+        *"Unknown command"*) r=unknown ;;
+        *) r=real ;;
+    esac
+    printf "%s\n" "$r" > "$WORK/res/$c"
+    exit 0
+' _
+
 : > "$WORK/real.txt"
 while read -r c; do
     case "$c" in -*|'') continue ;; esac
-    probe="$("$LOKI" "$c" --help </dev/null 2>&1 || true)"
-    case "$probe" in
-        *"Unknown command"*) ;;
-        *) printf '%s\n' "$c" >> "$WORK/real.txt" ;;
+    r="$(cat "$WORK/res/$c" 2>/dev/null || true)"
+    case "$r" in
+        real) printf '%s\n' "$c" >> "$WORK/real.txt" ;;
+        unknown) ;;
+        *) bad "probe of 'loki $c --help' left no result; the worker died" ;;
     esac
 done < "$WORK/candidates.txt"
 
