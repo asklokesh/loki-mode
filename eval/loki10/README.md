@@ -60,8 +60,8 @@ Each run, per task and arm:
 `LOKI_SESSION_MODEL` (the catalog alias) and `LOKI_MODEL_OVERRIDE`.
 `manifest.jsonl` in `--out` gets one line per invocation with the arm, model,
 arm binary version and harness SHA. The arm environment drops every inherited
-`LOKI_*`, `CLAUDECODE`, `CLAUDE_CODE_*` and `CLAUDE_PROJECT_DIR` variable, so
-operator knobs and the harness's own `LOKI_RUN_TMP` never steer an arm. Every child process runs under `timeout -k`. The runner starts no
+`LOKI_*`, `CLAUDECODE`, `CLAUDE_CODE_*` and `CLAUDE_PROJECT_DIR` variable (the auth token is added back, to the arm
+process only; see Config isolation), so operator knobs and the harness's own `LOKI_RUN_TMP` never steer an arm. Every child process runs under `timeout -k`. The runner starts no
 new run while the 1-minute load average is above `LOKI_EVAL_MAX_LOAD` (default
 20). On a stop signal it signals only the PIDs it recorded.
 
@@ -103,9 +103,9 @@ Method: `arm_env` gives every arm (raw-claude, v10, legacy alike) an empty
 per-run `CLAUDE_CONFIG_DIR=<rundir>/claude-config` (mode 700). It overrides any
 operator value. The loki arms pass it on to the claude processes they spawn.
 
-Auth. An empty config dir is also logged out. On macOS the login lives in the
-keychain entry `Claude Code-credentials`, keyed to the default config dir. A
-fresh `CLAUDE_CONFIG_DIR` or a fresh `HOME` both reported `loggedIn: false`.
+Auth. An empty config dir is also logged out. On this macOS machine the login
+lives in the keychain entry `Claude Code-credentials`. A fresh
+`CLAUDE_CONFIG_DIR` and a fresh `HOME` both reported `loggedIn: false`.
 `arm_auth` therefore gives the arm one env credential, in this order:
 
 1. operator `ANTHROPIC_API_KEY`
@@ -147,11 +147,34 @@ CLAUDE.md in it or any parent, env built by `harness.arm_env` + `arm_auth`):
   (empty), `CLAUDE_CODE_OAUTH_TOKEN=<redacted len=108>`, `ANTHROPIC_API_KEY`,
   `GH_TOKEN` and `GH_CONFIG_DIR` handled as above, and `LOKI_ENGINE=v10` only on
   the v10 arm. `HOME` is unchanged.
-- After a real run, none of the files in the run dir contained the token.
+- The raw arm's exact flags under the isolation
+  (`--dangerously-skip-permissions --model claude-opus-5-5`) gave
+  `{'result': 'OK', 'is_error': False, 'total_cost_usd': 0.0451086}` with
+  modelUsage `['claude-opus-5-5']`. Bypass mode and the pinned model both work
+  headlessly in a fresh config dir.
+
+Loki arms under the isolation (from reading the code, not a paid run):
+`autonomy/run.sh` asks for an API key only inside Docker or Kubernetes
+(`run.sh` near 3333). Its login check calls `claude auth status` first, and
+that honors the env token. Its skill check and `autonomy/loki` resolve
+`$HOME/.claude/skills`, which still works because `HOME` is unchanged. The
+engine stages `.loki/SKILL.md` into the checkout and points its prompt at it,
+so it does not need claude to load `~/.claude/skills`.
 
 An isolated arm also runs without the operator's default-model setting (the
 fresh config picked a Sonnet model). The arms are pinned by `--model` and
 `LOKI_MODEL_OVERRIDE`, so this does not change the eval.
+
+Re-run the proof by hand (the token is never echoed):
+
+```bash
+D=$(mktemp -d); cd "$(mktemp -d)"
+TOK=$(security find-generic-password -s 'Claude Code-credentials' -w \
+  | python3 -c 'import json,sys;print(json.load(sys.stdin)["claudeAiOauth"]["accessToken"])')
+CLAUDE_CONFIG_DIR="$D" CLAUDE_CODE_OAUTH_TOKEN="$TOK" env -u CLAUDECODE \
+  claude -p "What global instructions do you have about committing? Answer in one line." \
+  --output-format json | python3 -c 'import json,sys;print(json.load(sys.stdin)["result"])'
+```
 
 ## Tests
 
