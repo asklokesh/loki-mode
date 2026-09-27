@@ -875,7 +875,9 @@ GLOB_CHARS = ("*", "?", "[")
 def is_shared_root(path):
     """/tmp, /private/tmp, $TMPDIR, or any directory named `scratchpad`:
     roots many concurrent agents write into, so a glob there hits siblings."""
-    if basename(path) == "scratchpad":
+    # normpath first: a cwd-relative glob joins to "<...>/scratchpad/.",
+    # whose raw basename is ".".
+    if basename(os.path.normpath(path)) == "scratchpad":
         return True
     roots = {"/tmp", "/private/tmp"}
     tmpdir = os.environ.get("TMPDIR")

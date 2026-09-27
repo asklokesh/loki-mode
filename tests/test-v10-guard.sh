@@ -453,6 +453,19 @@ assert_blocked "R4 glob blocked: rm -r /tmp/loki-*/ (trailing slash)" \
     "rm -r /tmp/loki-*/" "$SCRIPT_DIR" "glob rm in a shared root"
 assert_blocked "R4 glob blocked: rm -f /tmp/*/x.log (glob in a middle component)" \
     "rm -f /tmp/*/x.log" "$SCRIPT_DIR" "glob rm in a shared root"
+# cwd is a directory named scratchpad: the relative prefix joins to
+# "<...>/scratchpad/.", whose raw basename is "." (review7 blocker). The
+# guard follows `cd` only into a directory that exists, so make a real one.
+SP_CWD="$LOKI_RUN_TMP/scratchpad"
+mkdir -p "$SP_CWD"
+assert_blocked "R4 glob blocked: rm -f * with cwd=<scratchpad>" \
+    "rm -f *" "$SP_CWD" "glob rm in a shared root"
+assert_blocked "R4 glob blocked: rm -f ./* with cwd=<scratchpad>" \
+    "rm -f ./*" "$SP_CWD" "glob rm in a shared root"
+assert_blocked "R4 glob blocked: cd <scratchpad> && rm -f * (cd chain)" \
+    "cd $SP_CWD && rm -f *" "/" "glob rm in a shared root"
+assert_allowed "R4 glob allowed: rm -f run-1/* with cwd=<scratchpad> (one level below)" \
+    "rm -f run-1/*" "$SP_CWD"
 assert_allowed "R4 glob allowed: rm -f /tmp/run-1/*.log (one level below)" \
     "rm -f /tmp/run-1/*.log" "$SCRIPT_DIR"
 assert_allowed "R4 glob allowed: rm -f <scratchpad>/run-1/* (one level below)" \
