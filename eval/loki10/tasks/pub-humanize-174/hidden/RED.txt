@@ -1,11 +1,7 @@
-checkout: 3dca143f7884b928632f68449423d914531ca267^1 (ref)
+repo: python-humanize/humanize @ 6ab21b6fb2ceb774bafaeea5a15dec7582bba187 (repo.ref = merge^1 of fix PR)
+hidden file: tests/test_time.py (post-fix content, minus 3 ties-to-even rows; see NOTES.md)
 command: .venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider tests/test_time.py -k "test_naturaldelta or test_naturaltime"
 exit: 1
-seconds: 0.8
-summary: 35 failed, 211 passed, 136 deselected in 0.63s
-E       AssertionError: assert 'a minute' == '2 minutes'
-E         
-E         - 2 minutes
-E         ? ^       -
-E         + a minute
-E         ? ^
+output: FAILED tests/test_time.py::test_naturaldelta[test_input6-2 minutes] - AssertionError
+output: FAILED tests/test_time.py::test_naturaldelta[test_input12-2 hours] - AssertionError
+output: 35 failed, 208 passed, 136 deselected in 0.71s

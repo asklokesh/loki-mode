@@ -14,7 +14,5 @@
     ],
     "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider tests/test_time.py -k \"naturaldelta_non_finite or naturaldelta_too_large_value_raises\""
   },
-  "timeout_s": 900,
-  "fix_pr": "python-humanize/humanize#334",
-  "merge_sha": "b48b37b187682ccc55b28ed1b7cfaa853dbca72f"
+  "timeout_s": 900
 }

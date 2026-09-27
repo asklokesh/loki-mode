@@ -14,7 +14,5 @@
     ],
     "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider tests/test_time.py -k test_naturaldate_tz_aware"
   },
-  "timeout_s": 900,
-  "fix_pr": "python-humanize/humanize#297",
-  "merge_sha": "a47a89ea9111a5eaba138c391e8a564134a15c60"
+  "timeout_s": 900
 }

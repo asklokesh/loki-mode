@@ -1,7 +1,6 @@
 {
   "id": "qs-api-only",
   "kind": "quickstart",
-  "template": "templates/api-only.md",
   "prompt": "Build a URL shortener API. Provide an executable start.sh at the repository root that starts the server listening on the port given by the PORT environment variable (bind 127.0.0.1 or 0.0.0.0). Keep all state in memory; no external database or network service. If dependencies are needed, provide a setup.sh at the root that installs them. Request and response bodies are JSON unless stated otherwise. POST /shorten with {\"url\"} returns 201 and {\"code\"} where code is 4 to 10 alphanumeric characters; a url that is not an absolute http or https URL returns 400. GET /{code} responds 302 with a Location header of the original URL and counts a hit. GET /stats/{code} returns {\"url\",\"hits\"}. Unknown codes return 404.",
   "issue_ref": null,
   "repo": {

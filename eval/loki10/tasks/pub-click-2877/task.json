@@ -14,7 +14,5 @@
     ],
     "run": ".venv/bin/python -m pytest -q -p no:cacheprovider tests/test_types.py -k test_path_dash_no_byteswarning"
   },
-  "timeout_s": 900,
-  "fix_pr": "pallets/click#3642",
-  "merge_sha": "16fc00e2f4a2717a521084f193709a6058afc693"
+  "timeout_s": 900
 }

@@ -1,7 +1,6 @@
 {
   "id": "qs-npm-library",
   "kind": "quickstart",
-  "template": "templates/npm-library.md",
   "prompt": "Build a zero-dependency npm library named tiny-slug. `require('tiny-slug')` (CommonJS, main entry in package.json) exports slugify(input, options). It lowercases, strips diacritics (Creme brulee from the accented form), replaces every run of non-alphanumeric characters with the separator, and trims separators at both ends. options.separator defaults to -. options.maxLength truncates the result and then removes any trailing separator. A non-string input throws TypeError. Include tests and a README.",
   "issue_ref": null,
   "repo": {

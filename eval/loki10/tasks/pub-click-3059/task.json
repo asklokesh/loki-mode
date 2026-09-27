@@ -15,7 +15,5 @@
     ],
     "run": ".venv/bin/python -m pytest -q -p no:cacheprovider tests/test_arguments.py tests/test_commands.py -k 'argument_metavar_marks_optional or subcommand_metavar_marks_optional'"
   },
-  "timeout_s": 900,
-  "fix_pr": "pallets/click#3507",
-  "merge_sha": "97210f24eb22399eb6db87d01bfef14f78862d01"
+  "timeout_s": 900
 }

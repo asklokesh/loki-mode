@@ -1,7 +1,6 @@
 {
   "id": "qs-simple-todo-app",
   "kind": "quickstart",
-  "template": "templates/simple-todo-app.md",
   "prompt": "Build a simple todo web app: a single page with an input to add todos, a list where each todo can be checked off and deleted, backed by a JSON API. Provide an executable start.sh at the repository root that starts the server listening on the port given by the PORT environment variable (bind 127.0.0.1 or 0.0.0.0). Keep all state in memory; no external database or network service. If dependencies are needed, provide a setup.sh at the root that installs them. Request and response bodies are JSON unless stated otherwise. GET / serves the HTML page (Content-Type text/html). API: GET /api/todos returns an array (empty at start). POST /api/todos with {\"text\"} returns 201 and {\"id\",\"text\",\"done\":false}; blank or whitespace-only text returns 400. PATCH /api/todos/{id} with {\"done\":true|false} returns 200 and the updated todo. DELETE /api/todos/{id} returns 204.",
   "issue_ref": null,
   "repo": {

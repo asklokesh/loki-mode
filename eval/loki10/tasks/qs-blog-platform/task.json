@@ -1,7 +1,6 @@
 {
   "id": "qs-blog-platform",
   "kind": "quickstart",
-  "template": "templates/blog-platform.md",
   "prompt": "Build a minimal blog platform with Markdown posts. Provide an executable start.sh at the repository root that starts the server listening on the port given by the PORT environment variable (bind 127.0.0.1 or 0.0.0.0). Keep all state in memory; no external database or network service. If dependencies are needed, provide a setup.sh at the root that installs them. Request and response bodies are JSON unless stated otherwise. POST /api/posts with {\"title\",\"body_markdown\"} returns 201 and {\"slug\"}: the slug is the lowercased title with runs of non-alphanumeric characters replaced by a single hyphen, trimmed of hyphens; if taken, append -2, -3 and so on. An empty title returns 400. GET /api/posts returns [{\"slug\",\"title\"}] newest first. GET /posts/{slug} returns an HTML page (text/html) containing <h1>{title}</h1> followed by the Markdown body rendered to HTML (at least **bold** as <strong>); unknown slugs return 404.",
   "issue_ref": null,
   "repo": {

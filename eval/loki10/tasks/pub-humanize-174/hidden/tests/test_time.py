@@ -104,10 +104,10 @@ def test_naturaldelta_nomonths(test_input: dt.timedelta, expected: str) -> None:
         (dt.timedelta(minutes=59), "59 minutes"),
         (dt.timedelta(minutes=59, seconds=30), "an hour"),
         (dt.timedelta(hours=1, minutes=29), "an hour"),
-        # Round to nearest, ties to even.
-        # See https://en.wikipedia.org/wiki/IEEE_754#Rounding_rules
+        # Round to nearest. EV-2: the upstream ties-to-even row
+        # (2h30m -> "2 hours") is removed because issue #174 does not state a
+        # tie convention.
         (dt.timedelta(hours=1, minutes=30), "2 hours"),
-        (dt.timedelta(hours=2, minutes=30), "2 hours"),
         (dt.timedelta(hours=3, minutes=30), "4 hours"),
         (dt.timedelta(hours=23, minutes=50, seconds=50), "a day"),
         (dt.timedelta(days=1), "a day"),
@@ -172,7 +172,6 @@ def test_naturaldelta(test_input: float | dt.timedelta, expected: str) -> None:
         (NOW - dt.timedelta(days=365 + 35), "1 year, 1 month ago"),
         (dt.timedelta(days=-10000), "27 years from now"),
         (dt.timedelta(days=365 + 35), "1 year, 1 month ago"),
-        (22.5, "22 seconds ago"),
         (23.5, "24 seconds ago"),
         (23.9, "24 seconds ago"),
         (30, "30 seconds ago"),
@@ -222,7 +221,6 @@ def test_naturaltime(
         (NOW - dt.timedelta(days=365 + 35), "1 year, 35 days ago"),
         (dt.timedelta(days=-10000), "27 years from now"),
         (dt.timedelta(days=365 + 35), "1 year, 35 days ago"),
-        (22.5, "22 seconds ago"),
         (23.5, "24 seconds ago"),
         (30, "30 seconds ago"),
         (NOW - dt.timedelta(days=365 * 2 + 65), "2 years ago"),

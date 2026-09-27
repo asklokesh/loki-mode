@@ -14,7 +14,5 @@
     ],
     "run": ".venv/bin/python -m pytest -q -p no:cacheprovider tests/test_markupsafe.py -k test_escaping"
   },
-  "timeout_s": 900,
-  "fix_pr": "pallets/markupsafe#418",
-  "merge_sha": "60a6512315d0ce05e6788808f80be526f2084b3f"
+  "timeout_s": 900
 }

@@ -1,5 +1,0 @@
-checkout: 823ad6096e1e5ba82ea876ce761fc2efebd76157 (merge)
-command: .venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider tests/test_filesize.py -k test_naturalsize
-exit: 0
-seconds: 0.2
-summary: 76 passed in 0.03s

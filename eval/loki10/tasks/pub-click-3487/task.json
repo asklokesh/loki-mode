@@ -14,7 +14,5 @@
     ],
     "run": ".venv/bin/python -m pytest -q -p no:cacheprovider tests/test_utils.py -k test_echo_custom_file"
   },
-  "timeout_s": 900,
-  "fix_pr": "pallets/click#3493",
-  "merge_sha": "a5f5aa6d4012d256ccca24638f2642fc371e9f77"
+  "timeout_s": 900
 }

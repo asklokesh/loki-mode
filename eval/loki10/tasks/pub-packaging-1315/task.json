@@ -14,7 +14,5 @@
     ],
     "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider tests/test_markers.py -k test_str_preserves_nested_group_precedence"
   },
-  "timeout_s": 900,
-  "fix_pr": "pypa/packaging#1316",
-  "merge_sha": "0a85b41e24c9b55b83f05ae696d73e8294a5b094"
+  "timeout_s": 900
 }

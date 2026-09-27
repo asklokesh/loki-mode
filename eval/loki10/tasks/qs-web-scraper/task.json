@@ -1,7 +1,6 @@
 {
   "id": "qs-web-scraper",
   "kind": "quickstart",
-  "template": "templates/web-scraper.md",
   "prompt": "Build a product listing scraper, run as `sh scrape.sh URL`. If dependencies are needed, provide a setup.sh at the root that installs them. Each page lists products as elements with class product, each containing an element with class name and one with class price formatted like $12.00. Follow the pagination link a[rel=next] (relative URLs allowed) until there is none. Print to stdout one JSON array of {\"name\",\"price_cents\"} in page order, with HTML entities in names decoded.",
   "issue_ref": null,
   "repo": {

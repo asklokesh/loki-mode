@@ -1,7 +1,6 @@
 {
   "id": "qs-data-pipeline",
   "kind": "quickstart",
-  "template": "templates/data-pipeline.md",
   "prompt": "Build a small batch data pipeline, run as `sh pipeline.sh INPUT.csv OUTPUT.json`. If dependencies are needed, provide a setup.sh at the root that installs them. The input CSV has a header row date,region,amount. Normalize region to lowercase and trimmed, parse amount as a number, and skip rows with missing fields or a non-numeric amount. Write OUTPUT.json as {\"regions\":[{\"region\",\"total\",\"count\"}],\"rows_ok\",\"rows_skipped\"} with regions sorted by total descending and totals rounded to 2 decimals. If the input file does not exist, exit non-zero.",
   "issue_ref": null,
   "repo": {

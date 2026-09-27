@@ -14,7 +14,5 @@
     ],
     "run": ".venv/bin/python -m pytest -q -p no:cacheprovider jsonschema/tests/test_exceptions.py -k 'TestJsonPathRendering and (test_basic or test_empty or test_period or test_space or test_double_quote or test_json_path_injection or test_open_bracket or test_single_quote or test_backslash)'"
   },
-  "timeout_s": 900,
-  "fix_pr": "python-jsonschema/jsonschema#1390",
-  "merge_sha": "b5572c9971358be547bbcf614a304f85886c1627"
+  "timeout_s": 900
 }

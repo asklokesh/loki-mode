@@ -1,8 +1,7 @@
 {
   "id": "qs-static-landing-page",
   "kind": "quickstart",
-  "template": "templates/static-landing-page.md",
-  "prompt": "Build a static landing page for Brightline, a solar battery startup, as index.html at the repository root (CSS and JS inline or in sibling files; no build step). Requirements: the <title> and the <h1> contain Brightline; a responsive viewport meta tag; sections with ids features, pricing and signup; the pricing section holds exactly 3 plan cards, each with class plan; the signup section has a form with an <input type=\"email\">; every <img> has alt text.",
+  "prompt": "Build a static landing page for Brightline, a solar battery startup, as index.html at the repository root (CSS and JS inline or in sibling files; no build step). Requirements: the <title> and the <h1> contain Brightline; a responsive viewport meta tag; sections with ids features, pricing and signup; the pricing section holds exactly 3 plan cards, each with class plan; the signup section has a form with an <input type=\"email\">; every <img> has alt text. All of these elements (title, h1, sections, the 3 plan cards, the form and its email input) must be present in the static index.html markup itself, not inserted by JavaScript at runtime.",
   "issue_ref": null,
   "repo": {
     "source": "/Users/lokesh/git/lokimode-anthropic/eval/loki10/fixtures/empty-repo/empty-repo.bundle",

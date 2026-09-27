@@ -1,7 +1,6 @@
 {
   "id": "qs-cli-tool",
   "kind": "quickstart",
-  "template": "templates/cli-tool.md",
   "prompt": "Build a command-line tool named textstat, invoked as the executable bin/textstat at the repo root (any language, with a shebang). If dependencies are needed, provide a setup.sh at the root that installs them. `bin/textstat FILE` prints one JSON object {\"lines\",\"words\",\"chars\",\"top_word\"}: lines is the count of newline characters, words are whitespace-separated tokens, chars is the character count, and top_word is the most frequent word compared case-insensitively and printed lowercased (ties broken alphabetically; null for empty input). FILE may be - to read stdin. A missing file prints an error to stderr, nothing to stdout, and exits with code 2.",
   "issue_ref": null,
   "repo": {
