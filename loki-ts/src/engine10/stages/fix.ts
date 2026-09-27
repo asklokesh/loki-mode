@@ -10,7 +10,7 @@
 // records PARTIAL. Depends on E-07 (session.ts) and E-09 (verify.ts) only
 // through their types.ts interfaces/output shapes: both are in rework and not
 // imported here.
-import { buildImplementBrief } from "./implement.ts";
+import { buildImplementBrief, impactedTests } from "./implement.ts";
 import { MAX_FIX_ROUNDS } from "../types.ts";
 import type { RunContext, Stage, StageResult } from "../types.ts";
 import type { FailureGroup } from "../failures.ts";
@@ -50,13 +50,12 @@ export const fixStage: Stage = {
 
     const task = (prior.intake?.task as string | undefined) ?? "";
     const plan = (prior.plan?.plan as string | undefined) ?? null;
-    const impactedTests = (prior.intake?.impacted_tests as string[] | undefined) ?? [];
     const groups = (prior.verify?.failures_grouped as FailureGroup[] | undefined) ?? [];
     const diffStat = (prior.implement?.diff_stat as string | undefined) ?? null;
 
     const session = await ctx.sessions.run({
       stage: "fix",
-      brief: buildFixBrief(task, plan, impactedTests, groups, diffStat),
+      brief: buildFixBrief(task, plan, impactedTests(ctx), groups, diffStat),
       tier: "development",
       iterationId: `${ctx.runId}-fix${round}`,
       limitS: fixStage.limitS,
@@ -71,7 +70,10 @@ export const fixStage: Stage = {
 
     return {
       status: "completed",
-      data: { round, groups_fed: groups.length, diff_stat: diffStat, killed: session.killed },
+      // Every round's session id, since each round replaces this stage's output.
+      data: { round, groups_fed: groups.length, diff_stat: diffStat, killed: session.killed,
+        iteration_ids: [...((prior.fix?.iteration_ids as string[] | undefined) ?? []), `${ctx.runId}-fix${round}`] },
     };
   },
 };
+export const stage = fixStage;

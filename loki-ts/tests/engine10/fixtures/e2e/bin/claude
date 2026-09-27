@@ -20,6 +20,8 @@ case "$prompt" in
   *) stage=other ;;
 esac
 if [ -n "${E2E_STUB_LOG:-}" ]; then echo "$stage" >> "$E2E_STUB_LOG"; fi
+# What the session can see: the canary test asserts no GitHub token and no LOKI_LEGACY_BASH.
+if [ -n "${E2E_STUB_ENV_LOG:-}" ]; then echo "$stage GH_TOKEN=${GH_TOKEN:-} LOKI_LEGACY_BASH=${LOKI_LEGACY_BASH:-}" >> "$E2E_STUB_ENV_LOG"; fi
 if [ "$stage" = "implement" ]; then
   if [ "${E2E_STUB_MODE:-done}" = "already" ]; then
     echo "LOKI_ALREADY_DONE: calc.ts:1 add already exists"

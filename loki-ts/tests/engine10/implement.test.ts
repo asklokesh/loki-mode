@@ -178,4 +178,20 @@ describe("engine10 implement stage", () => {
 
     expect(result.data.exit).toBe("killed");
   });
+
+  test("E-42: impacted tests come from the intake test map (plan's files) and the Wall's readOnlyFiles", async () => {
+    const sessions = new FakeSessionRunner({ exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 1, killed: false });
+    const ctx = fakeCtx(sessions, {
+      intake: { task: "t", testmap: { runners: ["bun"], tests: [{ runner: "bun", path: "calc.test.ts" }] } },
+      plan: { plan: "p", relevant_files: ["calc.ts"] },
+      wall: { readOnlyFiles: [] },
+    });
+    let asked: string[] = [];
+    ctx.tests.impacted = (map, changed) => { asked = changed; return map.tests; };
+    const r = await implementStage.run(ctx, new AbortController().signal);
+    expect(asked).toEqual(["calc.ts"]);
+    expect(r.data.impacted_tests).toEqual(["calc.test.ts"]);
+    expect(r.data.iteration_ids).toEqual(["e10-test-1-impl"]);
+    expect(sessions.lastOpts?.brief).toContain("Run only these impacted tests: calc.test.ts.");
+  });
 });

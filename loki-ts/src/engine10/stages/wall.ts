@@ -1,25 +1,11 @@
-// loki-ts/src/engine10/stages/wall.ts
-//
-// E-15: Wall author (docs/v10/ENGINE.md section 4 "Plan + Wall (parallel)").
-// Runs exactly one provider session whose cwd is a fresh temp dir holding
-// only task.md and repomap.txt: it never sees the repo, which enforces
-// "never the code" physically. The session writes behavioral acceptance
-// tests named loki_wall_*. The engine then:
-//   1. copies them into the repo's test directory and a sealed copy under
-//      <runDir>/wall/, hashing each file (sha256);
-//   2. emits wall.sealed (always before Implement's session can start, since
-//      Implement is a later stage the machine only runs after this one
-//      returns);
-//   3. runs the sealed tests on the current (base) tree; a clean pass with
-//      at least one test short-circuits the run to already_satisfied, read
-//      by the (not-yet-built) machine the same way intake.ts's own
-//      already_satisfied field is.
-//
-// Depends on machine.ts (E-02), intake.ts (E-04) and session.ts (E-07) only
-// through the Stage/RunContext/SessionRunner interfaces in types.ts, so this
-// is unit tested with fakes and needs none of those siblings to exist yet.
+// E-15: Wall author (ENGINE.md section 4). One provider session whose cwd is a
+// fresh temp dir holding only task.md and repomap.txt, so it never sees the
+// code, writes loki_wall_* acceptance tests. The engine copies them into the
+// repo and a sealed copy under <runDir>/wall/ (sha256 each), emits wall.sealed
+// before Implement can start, and runs them on the base tree: a clean pass
+// short-circuits the run to already_satisfied.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { createHash } from "node:crypto";
@@ -103,31 +89,6 @@ function sha256(s: string): string {
   return createHash("sha256").update(s).digest("hex");
 }
 
-/** Contract-gap workaround: RunContext (types.ts, E-01) carries no task
- *  field, so intake.ts's (E-04, out of scope here) stage.completed.data
- *  never puts the raw task text on prior.intake either, only task_sha256 -
- *  see intake.ts's own "Contract-gap note". Real Wall runs would otherwise
- *  always brief the author with an empty task. Falls back to the exact
- *  convention intake.ts documents as the source of truth: literal text via
- *  LOKI_E10_TASK_TEXT, or title+body from the issue.json path it reads
- *  (LOKI_E10_ISSUE_JSON, default <runDir>/issue.json). `prior.intake?.task`
- *  is checked first only so a caller that already has the text (tests, or a
- *  future intake.ts fix) is not made to re-read the file. */
-function loadTaskText(ctx: RunContext, fromPrior: string | undefined): string {
-  if (fromPrior) return fromPrior;
-  const issueJsonPath = process.env.LOKI_E10_ISSUE_JSON ?? join(ctx.runDir, "issue.json");
-  if (existsSync(issueJsonPath)) {
-    try {
-      const issue = JSON.parse(readFileSync(issueJsonPath, "utf8")) as { title?: string; body?: string };
-      const text = [issue.title, issue.body].filter((s) => typeof s === "string" && s.length > 0).join("\n\n");
-      if (text) return text;
-    } catch {
-      // Malformed issue.json: fall through to the text-mode env var.
-    }
-  }
-  return process.env.LOKI_E10_TASK_TEXT ?? "";
-}
-
 function renderRepoMapText(map: { files?: string[]; entries?: { path: string; symbols: string[] }[] }): string {
   const lines: string[] = ["Files:", ...(map.files ?? []).map((f) => `  ${f}`), "", "Symbols:"];
   for (const e of map.entries ?? []) lines.push(`  ${e.path}: ${e.symbols.join(", ")}`);
@@ -157,7 +118,7 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before wall started" };
 
   const prior = ctx.outputs();
-  const task = loadTaskText(ctx, prior.intake?.task as string | undefined);
+  const task = (prior.intake?.task as string | undefined) ?? "";
   const repomapRef = prior.intake?.repomap_ref as string | undefined;
   const testMap = prior.intake?.testmap as { runners?: RunnerName[]; tests?: TestRef[] } | undefined;
   const existingTests: TestRef[] = testMap?.tests ?? [];
@@ -229,6 +190,7 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
       files: sealedFiles,
       readOnlyFiles,
       base_run: baseRun,
+      iteration_ids: [`${ctx.runId}-wall`],
       already_satisfied: alreadySatisfied,
     },
   };
@@ -240,3 +202,4 @@ export const wallStage: Stage = {
   limitS: 90,
   run: (ctx, signal) => runWall(ctx, signal),
 };
+export const stage = wallStage;

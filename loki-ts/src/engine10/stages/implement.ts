@@ -1,23 +1,25 @@
-// loki-ts/src/engine10/stages/implement.ts
-//
-// E-08: Implement stage (docs/v10/ENGINE.md sections 4 and 16).
-// Runs exactly one provider session through the injected SessionRunner
-// (session.ts, E-07, not imported here: only its types.ts interface). The
-// brief tells the session the Wall/existing test files are read-only, to run
-// only the impacted tests, never the full suite, never kill processes, and
-// write no docs unless asked. After the session the stage restores any
-// read-only file that was modified or deleted and lists it in
-// tests_reverted, then classifies the exit from the session's markers.
+// E-08: Implement (ENGINE.md sections 4 and 16). One provider session; the brief
+// marks Wall tests read-only and names only the impacted tests. Afterwards any
+// changed read-only file is restored (tests_reverted) and the exit is classified.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import type { ImplementExit, RunContext, Stage, StageResult } from "../types.ts";
+import { relative } from "node:path";
+import type { ImplementExit, RunContext, Stage, StageResult, TestMap } from "../types.ts";
 
-/** A pre-existing test file (repo test or sealed Wall test) that the
- *  implement session must not change. Local to this slice: types.ts has no
- *  shared shape for it yet, so E-08 defines its own until wall.ts (E-?) or
- *  types.ts grows one. */
+/** A test file (a sealed Wall test) the implement session must not change. */
 export interface ReadOnlyFile {
   path: string; // absolute path in the repo working tree
   content: string; // the content to restore if it no longer matches
+}
+
+/** Impacted tests as produced upstream: the intake test map narrowed to plan's
+ *  relevant files, plus the sealed Wall tests (read-only files). */
+export function impactedTests(ctx: RunContext): string[] {
+  const o = ctx.outputs();
+  const map = o.intake?.testmap as TestMap | undefined;
+  const relevant = (o.plan?.relevant_files as string[] | undefined) ?? [];
+  const fromMap = map ? ctx.tests.impacted(map, relevant).map((t) => t.path) : [];
+  const wall = ((o.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? []).map((f) => relative(ctx.repoDir, f.path));
+  return [...new Set([...fromMap, ...wall])];
 }
 
 export function buildImplementBrief(
@@ -67,12 +69,12 @@ export const implementStage: Stage = {
     const prior = ctx.outputs();
     const task = (prior.intake?.task as string | undefined) ?? "";
     const plan = (prior.plan?.plan as string | undefined) ?? null;
-    const impactedTests = (prior.intake?.impacted_tests as string[] | undefined) ?? [];
+    const impacted = impactedTests(ctx);
     const readOnly = (prior.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [];
 
     const session = await ctx.sessions.run({
       stage: "implement",
-      brief: buildImplementBrief(task, plan, impactedTests),
+      brief: buildImplementBrief(task, plan, impacted),
       tier: "development",
       iterationId: `${ctx.runId}-impl`,
       limitS: implementStage.limitS,
@@ -100,8 +102,11 @@ export const implementStage: Stage = {
         already_done_evidence: session.markers.alreadyDone,
         spec_conflict_reason: session.markers.specConflict,
         tests_reverted: testsReverted,
+        impacted_tests: impacted,
+        iteration_ids: [`${ctx.runId}-impl`],
         duration_s: session.durationS,
       },
     };
   },
 };
+export const stage = implementStage;

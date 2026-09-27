@@ -203,42 +203,23 @@ describe("engine10 wall stage", () => {
     rmSync(repoDir, { recursive: true, force: true });
   });
 
-  test("real intake output has no prior.intake.task (only task_sha256): falls back to LOKI_E10_TASK_TEXT", async () => {
+  test("briefs the author with intake's task (E-42: intake outputs it), never an env fallback", async () => {
     const { repoDir, runDir, testmap: tm } = setup({ runners: ["vitest"], tests: [] });
-    const events: string[] = [];
     let seenTaskMd = "";
     const sessions = new FakeSessionRunner((opts) => {
       seenTaskMd = readFileSync(join(opts.cwd!, "task.md"), "utf8");
     });
-    // Mirrors intake.ts's real stage.completed.data shape: no `task` key.
-    const ctx = fakeCtx(repoDir, runDir, sessions, { intake: { task_sha256: "abc", testmap: tm, repomap_ref: join(runDir, "repomap.json") } }, events);
-
+    const ctx = fakeCtx(repoDir, runDir, sessions, { intake: { task: "add a search bar", testmap: tm, repomap_ref: join(runDir, "repomap.json") } }, []);
     const prevEnv = process.env.LOKI_E10_TASK_TEXT;
-    process.env.LOKI_E10_TASK_TEXT = "add a search bar";
+    process.env.LOKI_E10_TASK_TEXT = "not this";
     try {
-      await wallStage.run(ctx, new AbortController().signal);
+      const r = await wallStage.run(ctx, new AbortController().signal);
+      expect(r.data.iteration_ids).toEqual([`${ctx.runId}-wall`]);
     } finally {
       if (prevEnv === undefined) delete process.env.LOKI_E10_TASK_TEXT;
       else process.env.LOKI_E10_TASK_TEXT = prevEnv;
     }
-
     expect(seenTaskMd).toBe("add a search bar");
-    rmSync(repoDir, { recursive: true, force: true });
-  });
-
-  test("real intake output with an issue.json: falls back to its title+body", async () => {
-    const { repoDir, runDir, testmap: tm } = setup({ runners: ["vitest"], tests: [] });
-    const events: string[] = [];
-    let seenTaskMd = "";
-    const sessions = new FakeSessionRunner((opts) => {
-      seenTaskMd = readFileSync(join(opts.cwd!, "task.md"), "utf8");
-    });
-    writeFileSync(join(runDir, "issue.json"), JSON.stringify({ title: "Add search", body: "Users need a search bar." }), "utf8");
-    const ctx = fakeCtx(repoDir, runDir, sessions, { intake: { task_sha256: "abc", testmap: tm, repomap_ref: join(runDir, "repomap.json") } }, events);
-
-    await wallStage.run(ctx, new AbortController().signal);
-
-    expect(seenTaskMd).toBe("Add search\n\nUsers need a search bar.");
     rmSync(repoDir, { recursive: true, force: true });
   });
 

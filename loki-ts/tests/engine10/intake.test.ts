@@ -123,6 +123,8 @@ describe("engine10 intake", () => {
     expect(repomap.entries.some((e: { symbols: string[] }) => e.symbols.includes("widget"))).toBe(true);
 
     expect(result.data.testmap).toEqual({ runners: ["pytest", "vitest"], tests: [] });
+    // E-42: what plan, implement, commit and seal read from intake.
+    expect(result.data).toMatchObject({ task: "add a widget", title: "add a widget", repo: null, resumed: false });
   });
 
   test("a closed-issue fixture gives ALREADY_SATISFIED, no LLM call, no test-map build", async () => {
@@ -153,6 +155,16 @@ describe("engine10 intake", () => {
     const result = await runIntake(ctx, new AbortController().signal, { issueJsonPath: join(FIX, "issue-open.json") });
     expect(result.data.already_satisfied).toBe(false);
     expect(result.data.source).toBe("issue");
+    expect(result.data).toMatchObject({ task: "Still open\n\nnot done yet", title: "Still open" });
+  });
+
+  test("repo comes from remote.origin.url: owner/name for GitHub, the path for a local bare origin", async () => {
+    git(repoDir, ["remote", "add", "origin", "git@github.com:acme/widgets.git"]);
+    const r1 = await runIntake(makeCtx(repoDir, runDir, fakeTests()), new AbortController().signal, { taskText: "x" });
+    expect(r1.data.repo).toBe("acme/widgets");
+    git(repoDir, ["remote", "set-url", "origin", "/srv/origin.git"]);
+    const r2 = await runIntake(makeCtx(repoDir, runDir, fakeTests()), new AbortController().signal, { taskText: "x" });
+    expect(r2.data.repo).toBe("/srv/origin.git");
   });
 
   test("an already-aborted signal fails before touching git", async () => {

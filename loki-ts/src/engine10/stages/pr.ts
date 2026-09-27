@@ -6,34 +6,18 @@
 // child autonomy/lib/engine10-push.sh (P4, the bash half of E-11, already on
 // main). No LLM, no untrusted text is read here.
 //
-// Contract-gap notes (RunContext/types.ts, E-01, does not yet carry these;
-// their real owners -- supervisor.ts/E-03 and machine.ts/E-02 -- are in
-// rework and not on main):
-//  - the pinned origin (section 6 "Origin pin") and the cap-hit signal
-//    (section 4 "Hard cap") are read through the optional PrContext
-//    companion shape below, the same local-extension pattern intake.ts
-//    (IntakeOptions) already uses for its own contract gap;
-//  - pushArgv's push-pr shape (types.ts) ends in a literal "1"/"0", but
-//    engine10-push.sh's real usage accepts only 4 args plus an optional
-//    literal "--draft" (`[ "$5" = "--draft" ] || die "unknown flag: $5"`).
-//    This stage still builds argv with pushArgv, per the slice card, then
-//    translates that trailing flag rather than editing either file.
-//  - engine10-push.sh has no way to say whether push-pr created a new PR or
-//    reused an open one (confirmed by tests/test-engine10-push.sh: the
-//    "second call reuses the existing PR URL" case is only visible to that
-//    test because it counts `gh pr create` calls out of band; the script's
-//    own stdout is identical either way). Reporting `existing` as a
-//    fabricated true/false would violate "unknown is never 0" (section 5),
-//    so this stage reports it as null and records the gap for whoever next
-//    touches the bash half to add a real signal.
+// The supervisor calls runPr after the worker exits, passing the origin it
+// pinned in memory before any provider ran as pinnedOrigin (section 6).
+// Contract gaps: pushArgv ends push-pr in "1"/"0" while engine10-push.sh takes
+// an optional literal "--draft" (translated below), and push-pr cannot say
+// whether the PR already existed, so `existing` is null, never fabricated.
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PushArgs, RunContext, Stage, StageResult, Verdict } from "../types.ts";
 import { pushArgv } from "../types.ts";
 
-/** RunContext plus the two values this stage needs that E-03/E-02 will
- *  eventually inject; see the contract-gap note above. */
+/** RunContext plus the pinned origin and the cap signal from the supervisor. */
 export type PrContext = RunContext & {
   /** remote.origin.url, read once by the supervisor before any provider ran. */
   pinnedOrigin?: string;

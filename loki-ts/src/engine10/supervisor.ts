@@ -8,13 +8,17 @@
 //   tamper.detected and the push is refused.
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, type Hash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { withholdGithubTokens } from "../runner/github_token.ts";
-import { EventLog, fold, readEvents } from "./events.ts";
+import { EventLog, fold, readEvents, tail } from "./events.ts";
+import { fetchIssueToFile } from "./fetch_issue.ts";
+import { formatHeartbeatLine, formatStageLine, formatSummary } from "./output.ts";
+import { resolveModel } from "./session.ts";
+import type { PrContext } from "./stages/pr.ts";
 import type { EventEnvelope, PushEnv, StageName, Verdict } from "./types.ts";
-import { DEFAULT_CAP_S, STAGE_BUDGETS } from "./types.ts";
+import { DEEP_CAP_S, DEFAULT_CAP_S, STAGE_BUDGETS } from "./types.ts";
 
 export const TAMPER_NOT_PROVEN = "event log modified outside the engine";
 /** Types only the supervisor may write; the same types arriving from the worker are dropped. */
@@ -38,7 +42,7 @@ function dataOk(type: string, d: Record<string, unknown>): boolean {
 }
 
 // Local types (not in types.ts): the PR hook E-11 (stages/pr.ts) plugs into, and the result.
-export interface PrOutcome { url: string; draft: boolean; existing: boolean }
+export interface PrOutcome { url: string | null; draft: boolean; existing: boolean | null; notProven?: string[] }
 export type PrStep = (p: {
   env: NodeJS.ProcessEnv; // the supervisor's own credentialed env (read-only by contract)
   pushEnv: PushEnv; // origin pin from memory, never from the log
@@ -229,7 +233,8 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   if (opts.pr && intact && origin && verdict !== "FAILED") {
     const pushEnv: PushEnv = { _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin };
     const out = await opts.pr({ env, pushEnv, runId: opts.runId, repoDir: opts.repoDir, verdict });
-    if (out) {
+    notProven.push(...(out?.notProven ?? []));
+    if (out?.url) {
       prUrl = out.url;
       log.append("pr.opened", "pr", { url: out.url, draft: out.draft, existing: out.existing });
     }
@@ -241,4 +246,98 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
     verdict, pr_url: prUrl, not_proven: notProven, cost_usd: costUsd, wall_s: (Date.now() - t0) / 1000,
   });
   return { verdict, tampered: log.tampered, notProven, prUrl, workerExit };
+}
+
+const ISSUE_RE = /^(?:[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+\/(?:-\/)?issues\/\d+)$/;
+
+/** `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary. */
+export async function main(args: string[]): Promise<number> {
+  const words: string[] = [];
+  let noPr = false, deep = false, provider = process.env.LOKI_PROVIDER || "claude";
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--no-pr") noPr = true;
+    else if (a === "--deep") deep = true;
+    else if (a === "--provider") provider = args[++i] ?? provider;
+    else if (a === "--resume") { process.stderr.write("engine10: --resume is not wired yet\n"); return 2; }
+    else words.push(a);
+  }
+  const task = words.join(" ").trim();
+  if (!task) { process.stderr.write("engine10: no task given\n"); return 2; }
+  let repoDir: string;
+  try {
+    repoDir = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", env: process.env, stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch { process.stderr.write("engine10: not inside a git repository\n"); return 2; }
+  const runId = `e10-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}-${Math.random().toString(16).slice(2, 6)}`;
+  const runDir = join(repoDir, ".loki", "runs", runId);
+  const isIssue = ISSUE_RE.test(task);
+  const model = resolveModel(provider);
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  if (!isIssue) env.LOKI_E10_TASK_TEXT = task;
+  else {
+    try { fetchIssueToFile(task, join(runDir, "issue.json")); } catch (err) { // P1: deterministic, before any LLM
+      process.stderr.write(`engine10: issue fetch failed: ${(err as Error).message.split("\n")[0]}\n`);
+      return 2;
+    }
+  }
+
+  const t0 = Date.now();
+  const eventsPath = join(repoDir, eventsRelPath(runId));
+  const live = (e: EventEnvelope): void => {
+    const clockS = (Date.parse(e.ts) - t0) / 1000;
+    const d = e.data;
+    if (e.type.startsWith("stage.") && e.type !== "stage.started") {
+      const status = e.type === "stage.completed" ? "done" : e.type === "stage.failed" ? "failed" : "skipped";
+      const detail = String(d.reason ?? d.summary ?? "");
+      process.stdout.write(formatStageLine({ clockS, name: String(e.stage), status, durationS: Number(d.duration_s ?? 0), detail }) + "\n");
+    } else if (e.type === "heartbeat") {
+      const diff = d.diff as { files: number; insertions: number; deletions: number } | null;
+      process.stdout.write(formatHeartbeatLine({ clockS, stage: String(e.stage), waitingOn: `${provider} session`, elapsedS: Number(d.elapsed_s ?? 0), diff }) + "\n");
+    }
+  };
+  let stopTail = (): void => {};
+  const tailTimer = setInterval(() => {
+    if (existsSync(eventsPath)) { clearInterval(tailTimer); stopTail = tail(eventsPath, live, { intervalMs: 250 }); }
+  }, 100);
+
+  const capS = deep ? DEEP_CAP_S : Number(env.LOKI_E10_CAP_S) || DEFAULT_CAP_S;
+  const res = await runSupervisor({
+    runId, repoDir, env, capS,
+    workerArgv: [process.execPath, resolve(process.argv[1]!), "engine10", "worker", runId, provider, model, deep ? "deep" : "fast"],
+    started: {
+      task_source: isIssue ? "issue" : "text", issue_ref: isIssue ? task : null, provider, model, deep, cap_s: capS,
+      model_override_applied: !!process.env.LOKI_MODEL_OVERRIDE && provider === "claude", branch: `loki/${runId}`,
+    },
+    pr: noPr ? undefined : async ({ pushEnv, verdict }) => {
+      const { runPr } = await import("./stages/pr.ts"); // supervisor-only: the worker never loads pr.ts
+      const events = readEvents(eventsPath);
+      const sealed = events.findLast((e) => e.type === "receipt.sealed")?.data ?? {};
+      const r = await runPr({
+        runId, repoDir, runDir, branch: `loki/${runId}`, pinnedOrigin: pushEnv._LOKI_PINNED_ORIGIN,
+        outputs: () => ({ seal: { ...sealed, verdict, receipt_path: sealed.path } }),
+        capHit: () => events.some((e) => e.type === "cap.hit"),
+        emit: () => {}, // pr.opened is appended by runSupervisor from the outcome
+      } as unknown as PrContext, new AbortController().signal);
+      const d = r.data as { pr_url?: string; draft?: boolean; existing?: boolean | null; not_proven?: string[] };
+      if (r.status !== "completed") return { url: null, draft: false, existing: null, notProven: [`PR not opened: ${r.reason}`] };
+      return { url: d.pr_url ?? null, draft: d.draft === true, existing: d.existing ?? null, notProven: d.not_proven };
+    },
+  });
+  clearInterval(tailTimer);
+  await new Promise((r) => setTimeout(r, 300)); // let the tail flush the last lines
+  stopTail();
+
+  const events = readEvents(eventsPath);
+  const f = fold(events);
+  const sawCost = events.some((e) => e.type === "cost");
+  const cli = process.env.LOKI_E10_INVOKER === "cli";
+  process.stdout.write(formatSummary({
+    pr: res.prUrl ? { url: res.prUrl, draft: res.verdict !== "VERIFIED" } : null,
+    verdict: res.verdict, notProven: res.notProven, flaky: [],
+    cost: { usd: f.cost.usd, provider, tokens: sawCost ? f.cost.inputTokens + f.cost.outputTokens : null, note: f.cost.usd === null && cli ? "CLI invoker records no cost" : null },
+    wallS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000),
+    stages: events.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number")
+      .map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })),
+  }) + `\nRun:        ${runId} (${eventsRelPath(runId)})\nModel:      ${model}\n`);
+  return res.verdict === "FAILED" ? 1 : 0;
 }

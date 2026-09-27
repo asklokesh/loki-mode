@@ -25,6 +25,8 @@ export interface MachineOptions {
   /** Resolves a stage; default imports <stagesDir>/<name>.ts and takes its `stage` (or default) export. */
   load?: (name: StageName) => Promise<Stage | null>;
   stagesDir?: string;
+  /** Run order override; the worker passes FLOW without "pr" (Rule of Two: pr runs in the supervisor). */
+  flow?: typeof FLOW;
   /** Events of an earlier attempt of this run (resume). */
   prior?: EventEnvelope[];
   /** Run start in epoch ms; the cap counts from here. Defaults to run.started ts of prior, else now. */
@@ -157,7 +159,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
 
   try {
     let jumped = false;
-    for (const step of FLOW) {
+    for (const step of opts.flow ?? FLOW) {
       const group = (typeof step === "string" ? [step] : [...step]) as StageName[];
       const todo = group.filter((n) => !done.has(n));
       if (todo.length === 0) continue;

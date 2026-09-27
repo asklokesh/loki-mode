@@ -1,23 +1,7 @@
-// loki-ts/src/engine10/stages/plan.ts
-//
-// E-16: Plan (docs/v10/ENGINE.md section 4 "Plan + Wall (parallel,
-// Promise.all)" planner bullet, and section 16 / section 17 BOARD E-16 card).
-// A fast-tier session sees the task and up to 8 relevant files chosen by
-// keyword overlap between the task and the repo map's paths/symbols. It
-// writes at most 10 lines; the engine truncates, never trusting the session
-// to obey the limit on its own.
-//
-// Depends on machine.ts (E-02), session.ts (E-07) and intake.ts's repo map
-// (E-04) ONLY through the RunContext/SessionRunner interfaces in types.ts
-// (E-01), so this is unit tested with fakes and needs none of those siblings
-// to exist yet (same pattern as implement.ts, E-08).
-//
-// Contract-gap note: SessionResult (types.ts) carries markers and an exit
-// code, not raw text, so there is no shared shape yet for a session's free-
-// form output. Local convention, mirroring intake.ts's issue.json and
-// wall.ts's sealed-file pattern: the brief tells the session to write its
-// plan to <runDir>/plan-output.txt, and this stage reads that file after the
-// session ends (missing or unreadable means an empty plan, never a crash).
+// E-16: Plan (ENGINE.md section 4). A fast-tier session sees the task and up to
+// 8 relevant files chosen by keyword overlap with the repo map, and writes at
+// most 10 lines to <runDir>/plan-output.txt; the engine reads and truncates it
+// (missing or unreadable means an empty plan, never a crash).
 //
 // The "Plan and Wall start times differ by less than 1s" Wall check names a
 // machine-level property (running planStage and wallStage via Promise.all);
@@ -121,8 +105,10 @@ export const planStage: Stage = {
       data: {
         plan,
         relevant_files: relevantFiles,
+        iteration_ids: [`${ctx.runId}-plan`],
         duration_s: session.durationS,
       },
     };
   },
 };
+export const stage = planStage;

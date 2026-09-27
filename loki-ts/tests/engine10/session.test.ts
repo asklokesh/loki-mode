@@ -8,7 +8,7 @@
 // SessionRunOptions fields -- the same shape E-08 (Implement) will call --
 // with the provider/model/emit bound on the factory instead.
 import { describe, expect, test } from "bun:test";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createSessionRunner } from "../../src/engine10/session.ts";
@@ -211,4 +211,49 @@ describe("engine10 session", () => {
     expect(await runEngine10(["session", "--x"], probeLoad)).toBe(0);
     expect(state.calledWith).toEqual(["--x"]);
   });
+
+  test("E-42: markers from the iteration log, real session.ended exit, cost priced into lokiRoot", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "loki-e10-session-cwd-"));
+    const root = join(mkdtempSync(join(tmpdir(), "loki-e10-session-root-")), ".loki");
+    const script = [
+      "mkdir -p .loki/metrics",
+      "echo 'Finish with one line: LOKI_ALREADY_DONE: <evidence>' > .loki/iteration-$LOKI_ITERATION.log",
+      "echo 'LOKI_ALREADY_DONE: from the log' >> .loki/iteration-$LOKI_ITERATION.log",
+      "echo '{\"total_cost_usd\":0.5,\"input_tokens\":3,\"output_tokens\":4}' > .loki/metrics/result-cost-$LOKI_ITERATION.json",
+    ].join("; ");
+    const events: { type: string; data: Record<string, unknown> }[] = [];
+    const runner = createSessionRunner({
+      provider: "claude", model: "m-1", lokiRoot: root, childCommand: ["bash", ["-c", script]],
+      emit: (type, _s, data) => events.push({ type, data }),
+    });
+    const r = await runner.run(baseOpts({ limitS: 30, cwd }));
+    expect(r.markers.alreadyDone).toBe("from the log");
+    expect(events.find((e) => e.type === "session.ended")?.data.exit).toBe("already_done");
+    expect(events.find((e) => e.type === "cost")?.data).toMatchObject({ session_id: "e10-test-1", usd: 0.5, input_tokens: 3 });
+    const eff = JSON.parse(readFileSync(join(root, "metrics", "efficiency", "iteration-1.json"), "utf8"));
+    expect(eff).toMatchObject({ cost_usd: 0.5, cost_source: "provider", model: "m-1", status: "completed" });
+    expect(existsSync(join(root, "metrics", "result-cost-e10-test-1.json"))).toBe(true);
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(dirname(root), { recursive: true, force: true });
+  }, 10_000);
+
+  test("E-42: LOKI_E10_INVOKER=cli drops LOKI_SDK_LOOP and never sets LOKI_LEGACY_BASH", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-e10-session-"));
+    const envFile = join(dir, "env.txt");
+    const saved = { inv: process.env.LOKI_E10_INVOKER, sdk: process.env.LOKI_SDK_LOOP };
+    process.env.LOKI_E10_INVOKER = "cli";
+    process.env.LOKI_SDK_LOOP = "1";
+    try {
+      const runner = createSessionRunner({ provider: "claude", childCommand: ["bash", ["-c", `env > ${envFile}`]] });
+      await runner.run(baseOpts({ limitS: 30 }));
+    } finally {
+      if (saved.inv === undefined) delete process.env.LOKI_E10_INVOKER; else process.env.LOKI_E10_INVOKER = saved.inv;
+      if (saved.sdk === undefined) delete process.env.LOKI_SDK_LOOP; else process.env.LOKI_SDK_LOOP = saved.sdk;
+    }
+    const dumped = readFileSync(envFile, "utf8");
+    expect(dumped).not.toMatch(/^LOKI_SDK_LOOP=/m);
+    expect(dumped).not.toMatch(/^LOKI_LEGACY_BASH=/m);
+    expect(dumped).toContain("LOKI_HOST_GUARD=1");
+    rmSync(dir, { recursive: true, force: true });
+  }, 10_000);
 });

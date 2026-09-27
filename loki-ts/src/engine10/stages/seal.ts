@@ -82,14 +82,17 @@ async function git(ctx: RunContext, args: string[]): Promise<{ out: string; code
   return { out: r.stdout, code: r.exitCode };
 }
 
-/** Section 4 Commit: `git add -A` excluding .loki/, commit `loki: <title>` with a
+/** Section 4 Commit: `git add -A` minus .loki/, commit `loki: <title>` with a
  *  Loki-Run trailer. An empty diff commits nothing (head stays at base). */
 export const commitStage: Stage = {
   name: "commit",
   ...STAGE_BUDGETS.commit,
   async run(ctx: RunContext): Promise<StageResult> {
-    const add = await git(ctx, ["add", "-A", "--", ".", EXCLUDE_LOKI]);
+    // A ':(exclude).loki' pathspec makes git add exit 1 once .loki/ is in
+    // .git/info/exclude (intake puts it there), so add plainly, then unstage .loki.
+    const add = await git(ctx, ["add", "-A", "--", "."]);
     if (add.code !== 0) return { status: "failed", data: {}, reason: "git add failed" };
+    if ((await git(ctx, ["diff", "--cached", "--name-only", "--", ".loki"])).out.trim() !== "") await git(ctx, ["reset", "-q", "--", ".loki"]);
     if ((await git(ctx, ["diff", "--cached", "--quiet"])).code === 0) {
       return { status: "completed", data: { committed: false } };
     }
@@ -233,3 +236,4 @@ export const sealStage: Stage = {
     return { status: "completed", data: { ...data, summary: `${verdict} receipt ${hash.slice(0, 12)} ${signed ? `SIGNED kid ${sig.kid}` : "UNSIGNED"}` } };
   },
 };
+export const stage = sealStage;

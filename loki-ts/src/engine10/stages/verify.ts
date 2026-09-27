@@ -240,3 +240,4 @@ export const verifyStage: Stage = {
     return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed } };
   },
 };
+export const stage = verifyStage;

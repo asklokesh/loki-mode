@@ -4,21 +4,16 @@
 // dirty-tree refusal, branch creation, .git/info/exclude, the issue already-
 // done check, and the repo map / test map build. No LLM call, no PRD.
 //
-// Depends on machine.ts (E-02) and testmap.ts (E-05) ONLY through the
-// RunContext/TestMapProvider interfaces in types.ts (E-01), so this is unit
-// tested with fakes and needs neither sibling to exist yet.
-//
-// Contract-gap note: RunContext (types.ts) carries no task/issue field, so
-// where the task comes from is a local convention here, documented in the
-// report: literal text via IntakeOptions.taskText (or LOKI_E10_TASK_TEXT),
-// or an issue.json path via IntakeOptions.issueJsonPath (or
-// LOKI_E10_ISSUE_JSON, default "<runDir>/issue.json" per section 4 step 5).
+// The task arrives as literal text (LOKI_E10_TASK_TEXT) or an issue.json
+// (LOKI_E10_ISSUE_JSON, default <runDir>/issue.json, section 4 step 5). Intake
+// outputs the task text, a title, the repo and resumed for later stages.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import type { RunContext, Stage, StageResult } from "../types.ts";
 import { buildRepoMap } from "../repomap.ts";
+import { githubRepoFromUrl, readOriginUrl } from "../supervisor.ts";
 
 export interface IntakeOptions {
   taskText?: string;
@@ -95,11 +90,14 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
 
   let source: "text" | "issue";
   let taskSha256: string;
+  let task = taskText ?? "";
   let alreadySatisfied = false;
   if (existsSync(issueJsonPath)) {
     source = "issue";
     const raw = readFileSync(issueJsonPath, "utf8");
     taskSha256 = sha256(raw);
+    const i = JSON.parse(raw) as { title?: unknown; body?: unknown };
+    task = [i.title, i.body].filter((x) => typeof x === "string" && x !== "").join("\n\n");
     alreadySatisfied = isAlreadyDone(loadIssue(issueJsonPath));
   } else if (taskText !== undefined) {
     source = "text";
@@ -108,11 +106,14 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
     return { status: "failed", data: {}, reason: "no task text and no issue.json: nothing to intake" };
   }
 
+  const origin = readOriginUrl(ctx.repoDir);
+  // resumed is false: the supervisor refuses --resume until resume is wired.
+  const common = { task, title: task.split("\n")[0]!.slice(0, 72), repo: githubRepoFromUrl(origin) ?? origin, resumed: false };
   if (alreadySatisfied) {
     // Deterministic exit: no repo/test map needed, and never a session/LLM call.
     return {
       status: "completed",
-      data: { task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, already_satisfied: true },
+      data: { ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, already_satisfied: true },
     };
   }
 
@@ -124,6 +125,7 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
   return {
     status: "completed",
     data: {
+      ...common,
       task_sha256: taskSha256,
       source,
       base_sha: baseSha,
@@ -142,3 +144,4 @@ export const intakeStage: Stage = {
   limitS: 60,
   run: (ctx, signal) => runIntake(ctx, signal),
 };
+export const stage = intakeStage;
