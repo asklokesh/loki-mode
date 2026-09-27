@@ -113,6 +113,17 @@ if [ "${FAKE_PYTEST:-}" = skip ]; then echo "1 skipped in 0.01s"; exit 0; fi
 if bash hidden_test.sh >/dev/null 2>&1; then echo "1 passed in 0.01s"; else echo "1 failed in 0.01s"; exit 1; fi
 EOF
 chmod +x "$T/fakebin/pytest"
+# A venv-style interpreter: `.venv/bin/python -m pytest ...` (the EV-2 public
+# task shape) forwards to the fake pytest.
+cat > "$T/fakebin/fakepy" <<EOF
+#!/usr/bin/env bash
+[ "\$1 \$2" = "-m pytest" ] || exit 2
+shift 2
+exec "$T/fakebin/pytest" "\$@"
+EOF
+chmod +x "$T/fakebin/fakepy"
+seed_task v-venv-pytest fx-greet \
+    "t['setup'] = 'mkdir -p .venv/bin && ln -sf $T/fakebin/fakepy .venv/bin/python'; t['hidden']['run'] = '.venv/bin/python -m pytest -q -p no:cacheprovider -k \"(greet or hello)\"'" ":"
 
 H() { python3 "$HERE/harness.py" "$@"; }
 # run.sh owns its own run tmp, so it must not inherit ours. The tasks dir goes
@@ -278,6 +289,14 @@ R="$T/out-pypass"
 PATH="$T/fakebin:$PATH" STUB_MODE=pass RUN --arm raw-claude --task v-pytest --out "$R" >/dev/null 2>&1
 [ "$(row "$R/results.jsonl" completed)" = true ] && pass "Ra: pytest with passed tests and no failures completes" \
     || fail "Ra: pytest pass row: $(tail -1 "$R/results.jsonl")"
+R="$T/out-venvpass"
+STUB_MODE=pass RUN --arm raw-claude --task v-venv-pytest --out "$R" >/dev/null 2>&1
+[ "$(row "$R/results.jsonl" completed)" = true ] && pass "Ra: .venv/bin/python -m pytest -k \"(...)\" is summary-verified and completes" \
+    || fail "Ra: venv pytest pass row: $(tail -1 "$R/results.jsonl")"
+R="$T/out-venvskip"
+FAKE_PYTEST=skip STUB_MODE=pass RUN --arm raw-claude --task v-venv-pytest --out "$R" >/dev/null 2>&1
+[ "$(row "$R/results.jsonl" hidden_pass)" = false ] && pass "Ra: venv pytest reporting only skips does not pass" \
+    || fail "Ra: venv pytest skip row: $(tail -1 "$R/results.jsonl")"
 
 # ---- Rc. symlinked or blocked hidden paths in the PR tree grade as fail
 echo ORIGINAL > "$T/symlink-target"

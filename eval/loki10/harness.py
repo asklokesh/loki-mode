@@ -24,6 +24,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import shutil
 import signal
 import subprocess
@@ -51,8 +52,6 @@ V10_MARKER = os.path.join(".loki", "engine.json")
 PRE_ARM_FORBIDDEN = (V10_MARKER, os.path.join(".loki", "metrics"))
 EFFICIENCY_DIR = os.path.join(".loki", "metrics", "efficiency")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-PYTEST_RE = re.compile(r"^\s*(python3?\s+-m\s+)?pytest(\s|$)")
-VITEST_RE = re.compile(r"^\s*((npx|bunx|pnpm\s+exec|pnpm|yarn)\s+)?vitest(\s|$)")
 PUSH_INSTRUCTION = ("\n\nImplement this in the current repository. Create a new git "
                     "branch, commit your changes on it, and push that branch to origin.")
 SCRUB_ENV = ("GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
@@ -387,12 +386,28 @@ def provider_cost(arm, stdout_path, work):
 # ---------------------------------------------------------------- one run
 
 def runner_kind(cmd):
-    """'pytest' or 'vitest' for a plain runner command, else None."""
-    if re.search(r"[;&|`$()<>\n]", cmd):
+    """'pytest' or 'vitest' for a plain runner command, else None.
+
+    Plain = one simple command: no shell operators outside quotes, no
+    expansion. Accepted heads: pytest, <any path>/python[N[.N]] -m pytest,
+    vitest, npx|bunx|yarn vitest, pnpm [exec] vitest. Quoted arguments such
+    as -k "(a or b)" are fine.
+    """
+    if "`" in cmd or "$" in cmd or "\n" in cmd:
         return None
-    if PYTEST_RE.match(cmd):
+    try:
+        lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        toks = list(lex)
+    except ValueError:
+        return None
+    if not toks or any(t and set(t) <= set(";&|()<>") for t in toks):
+        return None
+    head = os.path.basename(toks[0])
+    if head == "pytest" or (re.fullmatch(r"python(\d+(\.\d+)?)?", head) and toks[1:3] == ["-m", "pytest"]):
         return "pytest"
-    if VITEST_RE.match(cmd):
+    if head == "vitest" or (head in ("npx", "bunx", "yarn") and toks[1:2] == ["vitest"]) \
+            or (head == "pnpm" and (toks[1:2] == ["vitest"] or toks[1:3] == ["exec", "vitest"])):
         return "vitest"
     return None
 

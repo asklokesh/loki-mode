@@ -25,11 +25,13 @@ repo and are copied into the graded checkout after the arm has finished.
 
 How a hidden run passes. The run gets a fresh random nonce in
 `LOKI_EVAL_NONCE`, created after the arm has finished.
-- If `hidden.run` is a plain `pytest` or `vitest` command (for example
-  `pytest -q tests/test_x.py`, `python -m pytest ...` or `npx vitest run`,
-  with no shell operators), it passes when it exits 0 and the runner's own
-  summary shows at least one passed test and zero failures or errors. A
-  conftest that skips everything therefore fails.
+- If `hidden.run` is a plain `pytest` or `vitest` command, it passes when it
+  exits 0 and the runner's own summary shows at least one passed test and
+  zero failures or errors. A conftest that skips everything therefore fails.
+  "Plain" means one command with no shell operators outside quotes and no
+  `$` or backticks. Examples: `pytest -q tests/test_x.py`,
+  `.venv/bin/python -m pytest -q -k "(a or b)"` (any interpreter path),
+  `npx vitest run` or `pnpm exec vitest`.
 - Any other command must exit 0, and its last stdout line must be the nonce.
   Print it only after every assertion, for example
   `... || exit 1; echo "$LOKI_EVAL_NONCE"`. A test that exits 0 early then
