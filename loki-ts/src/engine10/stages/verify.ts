@@ -75,7 +75,7 @@ function dedupeTests(tests: TestRef[]): TestRef[] {
  *  "nothing changed", which would masquerade as ALREADY_SATISFIED. */
 export function changedFiles(repoDir: string, baseSha: string): string[] {
   const run = (args: string[]): string[] =>
-    execFileSync("git", args, { cwd: repoDir, encoding: "utf8" })
+    execFileSync("git", args, { cwd: repoDir, encoding: "utf8", env: process.env })
       .split("\n").map((l) => l.trim()).filter(Boolean);
   const tracked = run(["diff", "--name-only", baseSha]);
   const untracked = run(["ls-files", "--others", "--exclude-standard"]);

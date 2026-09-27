@@ -83,7 +83,7 @@ export function writeEngineMarker(repoDir: string, runId: string): void {
 
 export function readOriginUrl(repoDir: string): string | null {
   try {
-    const url = execFileSync("git", ["-C", repoDir, "config", "--get", "remote.origin.url"], { encoding: "utf8" }).trim();
+    const url = execFileSync("git", ["-C", repoDir, "config", "--get", "remote.origin.url"], { encoding: "utf8", env: process.env }).trim();
     return url || null;
   } catch {
     return null;
