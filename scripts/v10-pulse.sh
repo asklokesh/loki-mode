@@ -835,7 +835,7 @@ STATUS_TOKEN_RE = re.compile(
     r"^(ready|building|review|review-blocked|blocked|approved|merged|released|rejected|parked)"
     r"@(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?Z)$"
 )
-ID_RE = re.compile(r"^(GF|PF|S|E)-\d+$")
+ID_RE = re.compile(r"^(GF|PF|S|E|EV)-\d+$")
 TIER_CELL_RE = re.compile(r"^(LOW|MEDIUM|HIGH)$")
 
 
