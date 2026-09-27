@@ -1,0 +1,8 @@
+phase: green
+checkout: 97210f24eb22399eb6db87d01bfef14f78862d01 (merge commit)
+command: .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_arguments.py tests/test_commands.py -k 'argument_metavar_marks_optional or subcommand_metavar_marks_optional'
+exit: 0
+seconds: 0.2
+summary: 12 passed, 177 deselected in 0.06s
+key lines:
+  12 passed, 177 deselected in 0.06s

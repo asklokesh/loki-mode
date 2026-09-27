@@ -1,0 +1,20 @@
+{
+  "id": "pub-humanize-205",
+  "kind": "public",
+  "prompt": "Decimal filesize YB to ZB rollover doesn't happen where expected\n\nFor all smaller units, we never see 1000, it always rolls over to the next. \r\n\r\n### What did you do?\r\n```python\r\nIn [5]: from humanize import filesize\r\nIn [6]: filesize.naturalsize(100_000_000_000_000_000_000_000)\r\nOut[6]: '100.0 ZB'\r\n\r\nIn [7]: filesize.naturalsize(1_000_000_000_000_000_000_000_000)\r\nOut[7]: '1000.0 ZB'\r\n\r\nIn [8]: filesize.naturalsize(10_000_000_000_000_000_000_000_000)\r\nOut[8]: '10.0 YB'\r\n```\r\n\r\nThe exact rollover happens here:\r\n\r\n```python\r\nIn [66]: filesize.naturalsize(1_000_000_000_000_000_050_331_648)\r\nOut[66]: '1000.0 ZB'\r\n\r\nIn [67]: filesize.naturalsize(1_000_000_000_000_000_050_331_649)\r\nOut[67]: '1.0 YB'\r\n```\r\n\r\n### What did you expect to happen?\r\n\r\nId expect to see 1 YB rather than 1000 ZB.\r\n\r\n### What versions are you using?\r\n\r\n* OS: 6.10.9-200.fc40.x86_64 (Fedora 40)\r\n* Python: 3.11.5\r\n* Humanize:  4.10.0\r\n\r\nI assume this is just a floating point precision limitation, so probably no fix is needed.",
+  "issue_ref": "python-humanize/humanize#205",
+  "repo": {
+    "source": "https://github.com/python-humanize/humanize.git",
+    "ref": "7574e0cc377d80db0d2756fc2c5e0b8799a6f8b4"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . freezegun pytest",
+  "hidden": {
+    "files": [
+      "tests/test_filesize.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider tests/test_filesize.py -k test_naturalsize"
+  },
+  "timeout_s": 900,
+  "fix_pr": "python-humanize/humanize#329",
+  "merge_sha": "823ad6096e1e5ba82ea876ce761fc2efebd76157"
+}

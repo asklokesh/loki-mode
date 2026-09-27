@@ -1,0 +1,20 @@
+{
+  "id": "pub-humanize-152",
+  "kind": "public",
+  "prompt": "naturaldate() gives the wrong answer for tz-aware datetimes\n\nThe calculation in `naturaldate()` of how many days ahead or behind a date is, is incorrect for tz-aware datetimes.\r\n\r\nConsider when the current time is 2023-10-15 23:00:00+00:00 (UTC). In various other timezones this is:\r\n\r\n```\r\nAEDT: 2023-10-16 10:00:00+11:00\r\nCEST: 2023-10-16 01:00:00+02:00\r\nEDT: 2023-10-15 19:00:00-04:00\r\nPDT: 2023-10-15 16:00:00-07:00\r\n```\r\n\r\nNow consider a time 7 hours in the future. Will that be \"today\" or \"tomorrow\"? Relative to UTC this should be \"tomorrow\", but for the other timezones we would expect:\r\n\r\n- AEDT: today\r\n- CEST: today\r\n- EDT: tomorrow\r\n- PDT: today\r\n\r\nSo all the following test cases should pass, but the test cases for AEDT and CEST currently fail:\r\n\r\n```python\r\ndef test_naturaldate_tz_aware():\r\n    utc = dt.timezone.utc\r\n    aedt = dt.timezone(dt.timedelta(hours=11))\r\n    cest = dt.timezone(dt.timedelta(hours=2))\r\n    edt = dt.timezone(dt.timedelta(hours=-4))\r\n    pdt = dt.timezone(dt.timedelta(hours=-7))\r\n    future = dt.datetime(2023, 10, 16, hour=6, tzinfo=utc)\r\n\r\n    with freeze_time('2023-10-15 23:00:00+00:00'):\r\n        # We want to know whether 7 hours in the future is \"today\" or\r\n        # \"tomorrow\":\r\n        # Now in UTC:     2023-10-15 23:00:00+00:00\r\n        # Future in UTC:  2023-10-16 06:00:00+00:00\r\n        assert humanize.naturaldate(future) == \"tomorrow\"\r\n\r\n        # Now in AEDT:    2023-10-16 10:00:00+11:00\r\n        # Future in AEDT: 2023-10-16 17:00:00+11:00\r\n        assert humanize.naturaldate(future.astimezone(aedt)) == \"today\"  # FAILS\r\n\r\n        # Now in CEST:    2023-10-16 01:00:00+02:00\r\n        # Future in CEST: 2023-10-16 08:00:00+02:00\r\n        assert humanize.naturaldate(future.astimezone(cest)) == \"today\"  # FAILS\r\n\r\n        # Now in EDT:     2023-10-15 19:00:00-04:00\r\n        # Future in EDT:  2023-10-16 02:00:00-04:00\r\n        assert humanize.naturaldate(future.astimezone(edt)) == \"tomorrow\"\r\n\r\n        # Now in PDT:     2023-10-15 16:00:00-07:00\r\n        # Future in PDT:  2023-10-15 23:00:00-07:00\r\n        assert humanize.naturaldate(future.astimezone(pdt)) == \"today\"\r\n```",
+  "issue_ref": "python-humanize/humanize#152",
+  "repo": {
+    "source": "https://github.com/python-humanize/humanize.git",
+    "ref": "b172d67eac6a623db14020653cb311d29338d01f"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . freezegun pytest",
+  "hidden": {
+    "files": [
+      "tests/test_time.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider tests/test_time.py -k test_naturaldate_tz_aware"
+  },
+  "timeout_s": 900,
+  "fix_pr": "python-humanize/humanize#297",
+  "merge_sha": "a47a89ea9111a5eaba138c391e8a564134a15c60"
+}

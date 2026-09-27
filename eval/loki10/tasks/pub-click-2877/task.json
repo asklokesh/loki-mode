@@ -1,0 +1,20 @@
+{
+  "id": "pub-click-2877",
+  "kind": "public",
+  "prompt": "[Python forward compat] click.types.Path.covert: BytesWarning: Comparison between bytes and string\n\nSo I've hit this through pip-tools' `pip-compile` executable some time ago but forgot to report immediately.\n\nI tend to run Python with strictness like `python -I -s -E -bb -Werror -m piptools compile --some --args`. And that's how I've found this warning. I imagine, it's easy to address by changing the check here: https://github.com/pallets/click/blob/c9f7d9d/src/click/types.py#L929C64-L929C75. Perhaps, by converting the data type.\n\nHere's a minimal repro. In needs a modern enough Python for `-bb` IIRC.\n```console\n$ python -Im pip install Click\n$ python -bb -Werror\nPython 3.12.9 (main, Feb 22 2025, 21:46:24) [GCC 14.2.1 20241221] on linux\nType \"help\", \"copyright\", \"credits\" or \"license\" for more information.\n>>> from click.types import Path\n>>> Path(allow_dash=True).convert('', '', '')\nTraceback (most recent call last):\n  File \"<stdin>\", line 1, in <module>\n  File \"/path/to/venv/lib/python3.12/site-packages/click/types.py\", line 865, in convert\n    is_dash = self.file_okay and self.allow_dash and rv in (b\"-\", \"-\")\n                                                     ^^^^^^^^^^^^^^^^^\nBytesWarning: Comparison between bytes and string\n```\n\nEnvironment:\n\n- Python version: 3.12.9\n- Click version: 8.1.8\n",
+  "issue_ref": "pallets/click#2877",
+  "repo": {
+    "source": "https://github.com/pallets/click.git",
+    "ref": "fe3ad76e5807e7a401ed7520f051071c6ae1fa6e"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . 'pytest<9'",
+  "hidden": {
+    "files": [
+      "tests/test_types.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -p no:cacheprovider tests/test_types.py -k test_path_dash_no_byteswarning"
+  },
+  "timeout_s": 900,
+  "fix_pr": "pallets/click#3642",
+  "merge_sha": "16fc00e2f4a2717a521084f193709a6058afc693"
+}

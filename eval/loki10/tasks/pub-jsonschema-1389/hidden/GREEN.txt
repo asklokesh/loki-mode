@@ -1,0 +1,8 @@
+phase: green
+checkout: b5572c9971358be547bbcf614a304f85886c1627 (merge commit)
+command: .venv/bin/python -m pytest -q -p no:cacheprovider jsonschema/tests/test_exceptions.py -k 'TestJsonPathRendering and (test_basic or test_empty or test_period or test_space or test_double_quote or test_json_path_injection or test_open_bracket or test_single_quote or test_backslash)'
+exit: 0
+seconds: 0.2
+summary: 10 passed, 49 deselected in 0.07s
+key lines:
+  10 passed, 49 deselected in 0.07s

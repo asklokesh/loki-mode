@@ -1,0 +1,5 @@
+checkout: 3dca143f7884b928632f68449423d914531ca267 (merge)
+command: .venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider tests/test_time.py -k "test_naturaldelta or test_naturaltime"
+exit: 0
+seconds: 0.5
+summary: 246 passed, 136 deselected in 0.37s

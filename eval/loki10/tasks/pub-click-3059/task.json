@@ -1,0 +1,21 @@
+{
+  "id": "pub-click-3059",
+  "kind": "public",
+  "prompt": "With `invoke_without_command` set, commands are not marked as optional\n\nHaving\n\n```python\n@click.group(invoke_without_command=True)\ndef main():\n    if ctx.invoked_subcommand is not None:\n        return\n    # do something by default\n```\n\nI expect `--help` to output:\n\n```\nUsage: app.py [OPTIONS] [COMMAND] [ARGS]...\n```\n\nBut it outputs:\n\n```\nUsage: app.py [OPTIONS] COMMAND [ARGS]...\n```\n\nEnvironment:\n\n- Python version: 3.11.8\n- Click version: 8.2.0\n",
+  "issue_ref": "pallets/click#3059",
+  "repo": {
+    "source": "https://github.com/pallets/click.git",
+    "ref": "8240d25bdbb8c081b745199620b8f2fe03b10579"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . 'pytest<9'",
+  "hidden": {
+    "files": [
+      "tests/test_arguments.py",
+      "tests/test_commands.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -p no:cacheprovider tests/test_arguments.py tests/test_commands.py -k 'argument_metavar_marks_optional or subcommand_metavar_marks_optional'"
+  },
+  "timeout_s": 900,
+  "fix_pr": "pallets/click#3507",
+  "merge_sha": "97210f24eb22399eb6db87d01bfef14f78862d01"
+}

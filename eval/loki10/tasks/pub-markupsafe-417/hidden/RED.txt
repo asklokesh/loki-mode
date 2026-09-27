@@ -1,0 +1,15 @@
+phase: red
+checkout: 73e6a4886564a554c4a19983d29c97f9fc95457d (repo.ref)
+command: .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_markupsafe.py -k test_escaping
+exit: 1
+seconds: 0.2
+summary: 2 failed, 28 deselected in 0.03s
+key lines:
+  E       AssertionError: assert 'Foo & Bar  ' == 'Foo & Bar'
+  E         
+  E         - Foo & Bar
+  E         + Foo & Bar  
+  E         ?          ++
+  tests/test_markupsafe.py:72: AssertionError
+  E       AssertionError: assert 'Foo & Bar  ' == 'Foo & Bar'
+  E         

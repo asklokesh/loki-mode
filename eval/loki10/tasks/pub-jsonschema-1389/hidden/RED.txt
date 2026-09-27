@@ -1,0 +1,15 @@
+phase: red
+checkout: 11455212a0ee246163b68aba586a865bda75142d (repo.ref)
+command: .venv/bin/python -m pytest -q -p no:cacheprovider jsonschema/tests/test_exceptions.py -k 'TestJsonPathRendering and (test_basic or test_empty or test_period or test_space or test_double_quote or test_json_path_injection or test_open_bracket or test_single_quote or test_backslash)'
+exit: 1
+seconds: 0.3
+summary: 9 failed, 1 passed, 49 deselected in 0.12s
+key lines:
+  E   AssertionError: '$.\\' != "$['\\\\']"
+  E   - $.\
+  E   + $['\\']
+  E   AssertionError: "$.\\'" != "$['\\\\\\'']"
+  E   - $.\'
+  E   + $['\\\'']
+  E   AssertionError: '$."' != '$[\'"\']'
+  E   - $."

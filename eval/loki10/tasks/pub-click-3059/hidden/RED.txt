@@ -1,0 +1,15 @@
+phase: red
+checkout: 8240d25bdbb8c081b745199620b8f2fe03b10579 (repo.ref)
+command: .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_arguments.py tests/test_commands.py -k 'argument_metavar_marks_optional or subcommand_metavar_marks_optional'
+exit: 1
+seconds: 0.3
+summary: 2 failed, 10 passed, 177 deselected in 0.07s
+key lines:
+  E       AssertionError: assert 'Usage: cli [...AND [ARGS]...' == 'Usage: cli [...ND] [ARGS]...'
+  E         
+  E         - Usage: cli [OPTIONS] [COMMAND] [ARGS]...
+  E         ?                      -       -
+  E         + Usage: cli [OPTIONS] COMMAND [ARGS]...
+  tests/test_commands.py:326: AssertionError
+  E       AssertionError: assert 'Usage: cli [...[ARGS]...]...' == 'Usage: cli [...[ARGS]...]...'
+  E         

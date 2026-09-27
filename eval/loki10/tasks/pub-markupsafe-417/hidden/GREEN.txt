@@ -1,0 +1,8 @@
+phase: green
+checkout: 60a6512315d0ce05e6788808f80be526f2084b3f (merge commit)
+command: .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_markupsafe.py -k test_escaping
+exit: 0
+seconds: 0.2
+summary: 2 passed, 28 deselected in 0.02s
+key lines:
+  2 passed, 28 deselected in 0.02s

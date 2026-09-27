@@ -1,0 +1,5 @@
+checkout: d3e7f5d96da0c27103324cb9fb349b54e753a877 (merge)
+command: .venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider tests/test_version.py tests/test_specifiers.py -k "test_non_string_versions_raise_invalid_version or test_filter_keyed_none_version_is_skipped"
+exit: 0
+seconds: 2.5
+summary: 6 passed, 53414 deselected in 1.53s

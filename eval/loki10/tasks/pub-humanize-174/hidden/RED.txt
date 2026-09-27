@@ -1,0 +1,11 @@
+checkout: 3dca143f7884b928632f68449423d914531ca267^1 (ref)
+command: .venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider tests/test_time.py -k "test_naturaldelta or test_naturaltime"
+exit: 1
+seconds: 0.8
+summary: 35 failed, 211 passed, 136 deselected in 0.63s
+E       AssertionError: assert 'a minute' == '2 minutes'
+E         
+E         - 2 minutes
+E         ? ^       -
+E         + a minute
+E         ? ^

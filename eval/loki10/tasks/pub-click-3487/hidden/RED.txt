@@ -1,0 +1,11 @@
+phase: red
+checkout: d42f15b71757de791a5781fb179fd972da9169f5 (repo.ref)
+command: .venv/bin/python -m pytest -q -p no:cacheprovider tests/test_utils.py -k test_echo_custom_file
+exit: 1
+seconds: 0.2
+summary: 1 failed, 146 deselected in 0.05s
+key lines:
+  E       TypeError: a bytes-like object is required, not 'str'
+  src/click/utils.py:333: TypeError
+  FAILED tests/test_utils.py::test_echo_custom_file - TypeError: a bytes-like o...
+  1 failed, 146 deselected in 0.05s
