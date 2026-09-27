@@ -67,6 +67,27 @@ An early draft spec listed `1=BLOCKED, 2=CONCERNS`. That ordering was rejected:
 it is not used anywhere, it has no consumers, and it inverts the
 severity-rises-with-the-code rule that every other command follows.
 
+### Known gaps until v10.0.0
+
+The table above is the target. On the current release, four inputs do not
+return what it implies. Measured on this checkout:
+
+| Input | Command | Exit today | Target |
+|---|---|---|---|
+| Empty diff (a git repo with no changes vs base) | `loki verify` | 1 (CONCERNS) | 3 |
+| Not a git directory | `loki verify` | 1 (CONCERNS) | 2 |
+| Unknown flag | `loki verify --no-such-flag` | 3 | 64 |
+| `--fast` with nothing scanned (0 files) | `loki verify --fast <empty-dir> --no-cache` | 0 | nonzero |
+
+`loki verify --fast` (`autonomy/lib/fast_verify.py`) also exits 0 for a
+nonexistent root and silently ignores unknown flags. Until v10.0.0, do not
+trust exit 0 from `--fast` alone: check stdout for `INCONCLUSIVE`, which it
+prints when nothing was scanned.
+
+Both gaps are tracked as pending moat cases, milestone v10.0.0, in
+`tests/moat/pending.txt`: P2.verify-exit-contract (the first three rows)
+and P2.fast-verify-inconclusive-not-zero (the `--fast` row).
+
 ## `loki proof verify <id>`
 
 Re-checks one Evidence Receipt against the repo (tamper and drift). The same
