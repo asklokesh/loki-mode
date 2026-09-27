@@ -163,13 +163,17 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
 - **The guard:** applied ad hoc, in the moment, during that same S-72
   cleanup pass: an explicit exclusion list of live and approved-unmerged
   worktrees, plus `.git` file birth time (`stat -f %B`) in place of mtime as
-  the recency signal (PROGRESS.md, turn 180). This is a one-time operational
-  fix, not a standing, checked-in guard -- no code in this repo enforces
-  "never use mtime as a worktree-liveness signal" today. A real
-  worktree-cleanup tool that takes the live-agent list as input and
-  structurally cannot use mtime is cut as the follow-up, **PENDING (S-94)**
-  (commit `e80819d5`).
-- **The test that proves it fires:** none checked in. **PENDING (S-94).**
+  the recency signal (PROGRESS.md, turn 180). That was a one-time operational
+  fix. The standing guard is `scripts/prune-worktrees.sh` (S-154, commit
+  `e57262cf`): it decides removal only from structural state (branch merged
+  into main by ancestry or `git cherry`, worktree not locked, working tree
+  clean, path under `.claude/worktrees/`) and never from a file-age signal.
+  A live agent marks its worktree with `git worktree lock`, which the script
+  always skips.
+- **The test that proves it fires:** `tests/test-prune-worktrees.sh`
+  (S-154). Its GUARDS 5 assertion greps the script for `stat`, `mtime`,
+  `-mmin` and `-newer` and fails on any hit ("script uses a file-age signal
+  (GUARDS 5)"); the same suite proves locked and dirty worktrees survive.
 
 ## 6. Over-budget trivial agents, no violation surfaced it (S-75, AGENT_OVER_BUDGET, `c16d875f`)
 
@@ -406,12 +410,16 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   `~/.gitconfig`; scratch files only in your own subdirectory"), confirming
   this is a known, recurring risk class for any test that touches git
   config, not a one-off.
-- **The guard:** none yet. No slice has been cut to enforce, mechanically,
-  that a test writing git config (`insteadOf`, `url.*.insteadOf`,
-  credential helpers, or similar) must set `GIT_CONFIG_GLOBAL`/`HOME` to a
-  scratch path before writing rather than touching the ambient one. **NO
-  GUARD.**
-- **The test that proves it fires:** none. **PENDING, no slice cut.**
+- **The guard:** S-138 (commits `cd661f3e` through `82b4aec1`). A lint
+  refuses any test file that runs `git config --global` (any unambiguous
+  prefix of `--global`) or writes the ambient `~/.gitconfig` unless the file
+  first sources `tests/lib/isolated-git-home.sh` at top level, before any
+  code that could save the real HOME. The helper points HOME and
+  `GIT_CONFIG_GLOBAL` at a scratch path. The lint's own header lists its
+  known ceiling (a home copied into another variable, obfuscated calls).
+- **The test that proves it fires:** `tests/test-no-ambient-gitconfig-writes.sh`
+  (S-138), registered in `tests/run-all-tests.sh`. It scans every test file
+  and fails on an offending line without the isolation prelude.
 
 ## 13. Slices marked released before `publish-npm` had actually succeeded (D27)
 
@@ -431,11 +439,14 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   definition. Nothing mechanically checked `publish-npm`'s CI conclusion
   before the BOARD.md write, so a human (or agent) stamping the row could
   and did jump the gun on all 11 rows in the same train.
-- **The guard:** D27's own definition is the standing rule; enforcing it
-  mechanically (for example, a `board-row-status` precondition, or a pulse
-  check, that refuses/flags a `released` write unless the corresponding
-  `publish-npm` GitHub Actions run for that train's SHA has `conclusion:
-  success`) has not been built. **PENDING, no slice cut** for the
-  mechanical check; the manual self-correction on all 11 rows is the only
-  remediation applied so far.
-- **The test that proves it fires:** none. **PENDING, no slice cut.**
+- **The guard:** D27's own definition is the standing rule. S-139 (commit
+  `bd6ffdee`) adds the pulse check `RELEASED_AHEAD_OF_NPM` in
+  `scripts/v10-pulse.sh`: a BOARD row whose `released@` timestamp is later
+  than npm's newest publish time raises a VIOLATION line in the pulse block.
+  This is a flag, not a refusal: nothing blocks the BOARD write itself, so a
+  premature `released` stamp still lands and is surfaced on the next pulse.
+  A released row with no parseable timestamp reads UNKNOWN instead.
+- **The test that proves it fires:** `tests/test-v10-pulse.sh` case T39
+  (S-139) asserts the VIOLATION fires for a `released@` row stamped after
+  npm's newest publish; T39b asserts it stays silent for a row stamped
+  before it.
