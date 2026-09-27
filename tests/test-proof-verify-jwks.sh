@@ -132,13 +132,15 @@ else
   bad "an absent measurement was reported as a fact about the receipt"
 fi
 # BACKLOG 51: the verifier runs python3 -E, so a cryptography install reachable
-# only through PYTHONPATH or PYTHONUSERBASE is invisible. The NOT CHECKED text
-# must say so, or the user "installs cryptography" and sees the same verdict.
+# only through PYTHONPATH is invisible. The NOT CHECKED text must say so, or the
+# user "installs cryptography" and sees the same verdict. -E does NOT hide the
+# user site (site.py reads PYTHONUSERBASE from os.environ), so the text must not
+# claim PYTHONUSERBASE is ignored.
 if grep -q "python3 -E" "$W/err.txt" && grep -q "PYTHONPATH" "$W/err.txt" \
-   && grep -q "PYTHONUSERBASE" "$W/err.txt"; then
-  ok "NOT CHECKED names python3 -E, PYTHONPATH and PYTHONUSERBASE"
+   && ! grep -q "PYTHONUSERBASE" "$W/err.txt"; then
+  ok "NOT CHECKED names python3 -E and PYTHONPATH, and does not blame PYTHONUSERBASE"
 else
-  bad "NOT CHECKED does not explain that PYTHONPATH/PYTHONUSERBASE are ignored"
+  bad "NOT CHECKED misstates which environment the python3 -E verifier ignores"
 fi
 
 # A key set that EXISTS but does not parse takes a different branch than a
