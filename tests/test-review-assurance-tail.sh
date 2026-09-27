@@ -16,6 +16,8 @@ test_cleanup() {
     # Stop only the case groups this run launched (recorded PIDs), then any
     # deadline descendant a group recorded under its own directory.
     for pid in $GROUP_PIDS; do
+        # A reaped group's PID may have been reused; signal only our child.
+        [ "$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')" = "$$" ] || continue
         kill "$pid" 2>/dev/null || true
     done
     for pid_file in "$TMPROOT"/deadline-child.pid "$TMPROOT"/*/deadline-child.pid; do
@@ -435,11 +437,14 @@ group_leave() {
 group_started() {
     GROUP_LIST="$GROUP_LIST $1:$2"
     GROUP_PIDS="$GROUP_PIDS $2"
-    # Concurrency only where the budgets were scaled for contention. At scale
-    # 1 (the tight local budgets) groups run one at a time, as before: measured
+    # Concurrency only where every budget was scaled for contention: the
+    # sharded run (run_review_case's default also keys on LOKI_TEST_SHARD) at
+    # a scale above 1. Otherwise groups run one at a time, as before: measured
     # at load ~21 on 14 cores, concurrent groups at scale 1 went red on three
     # timing bounds while the serial suite passed 46/0 under the same load.
-    [ "$REVIEW_TIMEOUT_SCALE" -gt 1 ] 2>/dev/null || wait "$2" 2>/dev/null || true
+    if [ -z "${LOKI_TEST_SHARD:-}" ] || ! [ "$REVIEW_TIMEOUT_SCALE" -gt 1 ] 2>/dev/null; then
+        wait "$2" 2>/dev/null || true
+    fi
 }
 group_collect() {
     local entry name pid counts group_pass group_fail
