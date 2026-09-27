@@ -5,6 +5,16 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.75.0
+
+**Verdict readers ignore user-site .pth files; the cockpit says "not loaded".** Released from green tree 04af133a (Tests run 36349960792 and Bun Parity run 36349960827 both success before the bump).
+
+- done-recognition and council-v2 read verdicts through the resolved isolated interpreter (`-I -S`), so a user-site `.pth` file can no longer change them; an unmeasured sycophancy score on a unanimous approve now runs the devil's advocate (S-200, S-201).
+- A test compares every guarded `_loki_snapshot_py_tool` copy under autonomy/ against run.sh's (S-199).
+- The cockpit's commit, push, PR, pause, resume and stop actions say "not loaded" after a failed fetch instead of "working tree is clean" or "no run in progress" (S-206).
+- docs/exit-codes.md lists the `loki verify` codes that stay pending until v10.0.0 (S-182); the R3 cost design doc describes project totals as partial-aware (S-190).
+- The web-app status push has a test for unmeasured cost (S-192); `v10-ops worktree-budget` prints how many worktrees a batch may open (S-193); the guard blocks a glob rm in a shared temp or scratchpad root, relative paths included (S-181).
+
 ## v9.74.0
 
 **Unmeasured reads as unmeasured: tests, cost and dashboards.** Released from green tree 28e62e44 (Tests run 36348570005 and Bun Parity run 36348570021 both success before the bump).
