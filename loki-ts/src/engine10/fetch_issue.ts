@@ -32,7 +32,7 @@ export type Execer = (cmd: string, args: string[]) => string;
 const ISSUE_PROVIDERS_SH = new URL("../../../autonomy/issue-providers.sh", import.meta.url).pathname;
 
 function defaultExec(cmd: string, args: string[]): string {
-  return execFileSync(cmd, args, { encoding: "utf8" });
+  return execFileSync(cmd, args, { encoding: "utf8", env: process.env });
 }
 
 interface GithubExtra {
@@ -43,8 +43,8 @@ interface GithubExtra {
 /** Fetches and normalizes one issue. Never runs an LLM; a failed GitHub
  *  extra-fields lookup leaves state null (NOT PROVEN), never a false
  *  already-done. */
-export function fetchIssue(ref: string, exec: Execer = defaultExec): NormalizedIssue {
-  const raw = exec("bash", ["-c", `source "${ISSUE_PROVIDERS_SH}" && fetch_issue "$1"`, "--", ref]);
+export function fetchIssue(ref: string, execer: Execer = defaultExec): NormalizedIssue {
+  const raw = execer("bash", ["-c", `source "${ISSUE_PROVIDERS_SH}" && fetch_issue "$1"`, "--", ref]);
   const base = JSON.parse(raw) as Omit<NormalizedIssue, "state" | "closed_by_merged_pr">;
 
   let state: string | null = null;
@@ -52,7 +52,7 @@ export function fetchIssue(ref: string, exec: Execer = defaultExec): NormalizedI
   if (base.provider === "github" && base.repo && base.number) {
     try {
       const extra = JSON.parse(
-        exec("gh", ["issue", "view", String(base.number), "--repo", base.repo, "--json", "state,closedByPullRequestsReferences"]),
+        execer("gh", ["issue", "view", String(base.number), "--repo", base.repo, "--json", "state,closedByPullRequestsReferences"]),
       ) as GithubExtra;
       state = typeof extra.state === "string" ? extra.state.toLowerCase() : null;
       closedByMergedPr = Array.isArray(extra.closedByPullRequestsReferences)

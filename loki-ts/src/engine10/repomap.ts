@@ -29,7 +29,7 @@ const SYMBOL_RE = /^export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const
 export function listRepoFiles(repoDir: string, maxFiles: number = MAX_FILES): { files: string[]; truncated: boolean } {
   let out: string;
   try {
-    out = execFileSync("git", ["ls-files"], { cwd: repoDir, encoding: "utf8" });
+    out = execFileSync("git", ["ls-files"], { cwd: repoDir, encoding: "utf8", env: process.env });
   } catch {
     return { files: [], truncated: false };
   }

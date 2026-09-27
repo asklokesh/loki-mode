@@ -35,7 +35,7 @@ function sha256(s: string): string {
 }
 
 function git(repoDir: string, args: string[]): string {
-  return execFileSync("git", args, { cwd: repoDir, encoding: "utf8" }).trim();
+  return execFileSync("git", args, { cwd: repoDir, encoding: "utf8", env: process.env }).trim();
 }
 
 /** Tracked-only dirty check: untracked files never block Intake. */
@@ -46,10 +46,10 @@ function dirtyTrackedFiles(repoDir: string): string[] {
 
 function ensureBranch(repoDir: string, branch: string): void {
   try {
-    execFileSync("git", ["checkout", "-b", branch], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["checkout", "-b", branch], { cwd: repoDir, stdio: "pipe", env: process.env });
   } catch {
     // Resume, or the branch already exists for another reason: reuse it.
-    execFileSync("git", ["checkout", branch], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["checkout", branch], { cwd: repoDir, stdio: "pipe", env: process.env });
   }
 }
 
