@@ -29,3 +29,5 @@ try {
   process.exit(1);
 }
 console.log('PASS');
+// Last stdout line, only reached when every assertion passed.
+console.log(process.env.LOKI_EVAL_NONCE || '');

@@ -1,4 +1,5 @@
 import http.server
+import os
 import json
 import subprocess
 import sys
@@ -56,3 +57,5 @@ try:
 finally:
     srv.shutdown()
 print("PASS")
+# Last stdout line, only reached when every check passed.
+print(os.environ.get("LOKI_EVAL_NONCE", ""))

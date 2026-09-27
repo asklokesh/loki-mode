@@ -1,4 +1,5 @@
 import subprocess
+import os
 import sys
 
 
@@ -35,3 +36,5 @@ for bad in ("XXXX.....", "XO", "XOZ......", "OO.......", ""):
     if r.returncode != 1:
         fail("invalid board %r should exit 1, got %s" % (bad, r.returncode))
 print("PASS")
+# Last stdout line, only reached when every check passed.
+print(os.environ.get("LOKI_EVAL_NONCE", ""))

@@ -38,3 +38,5 @@ with tempfile.TemporaryDirectory() as d:
     if r.returncode != 2 or r.stdout.strip() or not r.stderr.strip():
         fail("missing file should exit 2 with stderr only; got %s %r %r" % (r.returncode, r.stdout, r.stderr))
 print("PASS")
+# Last stdout line, only reached when every check passed.
+print(os.environ.get("LOKI_EVAL_NONCE", ""))
