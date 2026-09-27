@@ -1962,6 +1962,13 @@ def whole_file_findings(s):
     # is_literal's backtick-`${` check). Upgrade only if review finds a real
     # instance.
     ARROW_HEAD = re.compile(r'^\(?\s*([\w$,\s]*)\s*\)?\s*=>\s*')
+    # BACKLOG 145 (S-198): a nested generator's row can use an OUTER
+    # generator's index (`(_, r) => Array.from({length:2}, (_, c) => ({ id: r,
+    # user: 'Admin' }))`), so every enclosing {length} generator's params are
+    # counters too. First pass records each generator's (open, close, params,
+    # body); the second checks each body with its own AND every enclosing
+    # generator's params substituted.
+    gens = []
     for m in ARRAY_OF.finditer(s):
         if m.group(1) != 'from':
             continue
@@ -1979,13 +1986,18 @@ def whole_file_findings(s):
         head = ARROW_HEAD.match(arg1)
         if not head:
             continue
-        body = arg1[head.end():].strip()
+        gens.append((p, j, {pn.strip() for pn in head.group(1).split(',') if pn.strip()},
+                     arg1[head.end():].strip()))
+    for p, j, own, body in gens:
         if not (body.startswith('(') and close_of(body, 0) == len(body) - 1):
             continue
         inner = body[1:-1].strip()
         if not inner.startswith('{'):
             continue
-        params = {pn.strip() for pn in head.group(1).split(',') if pn.strip()}
+        params = set(own)
+        for gp, gj, gparams, _ in gens:
+            if gp < p and j <= gj:
+                params |= gparams
         subbed = inner
         for pname in params:
             subbed = re.sub(r'(?<![\w$])' + re.escape(pname) + r'(?![\w$])', '0', subbed)
@@ -3370,6 +3382,16 @@ export function AH({ items, data }) {
   return ids.length + idOnly.length + tagged.length + fromData.length;
 }
 TSX
+    # BACKLOG 145 (S-198): the inner row uses the OUTER generator's index, so
+    # the arm must substitute enclosing params too. Line 2 is flagged; line 3
+    # (both indices, no static string) stays clean, so the file has exactly 1.
+    cat > "$d/src/components/ArrayFromGenNested.tsx" <<'TSX'
+export function AN() {
+  const grid = Array.from({ length: 2 }, (_, r) => Array.from({ length: 2 }, (_, c) => ({ id: r, user: 'Admin' })));
+  const cells = Array.from({ length: 2 }, (_, r) => Array.from({ length: 2 }, (_, c) => ({ row: r, col: c })));
+  return grid.length + cells.length;
+}
+TSX
     # BACKLOG 125 B-5 negative controls: a real named module-level table used
     # to pick how much of ITSELF to show (real shape at
     # web-app/src/components/ChangelogWidget.tsx:43) is UI truncation, not a
@@ -3879,7 +3901,9 @@ EOF
     # function concurrently.
     grep -q "^FINDING [a-z/]*ArrayFromGenFabricated.tsx:2 fabricated static fields via Array.from() generator callback" <<<"$out" \
         || { echo "missed ArrayFromGenFabricated.tsx:2 fabricated static fields via Array.from() generator callback: $(grep '^FINDING.*ArrayFromGenFabricated' <<<"$out" | tr '\n' ' ' | head -c 200)"; return 1; }
-    for want in ArrayFromGenFabricated.tsx:1 ArrayFromGenHonest.tsx:0; do
+    grep -q "^FINDING [a-z/]*ArrayFromGenNested.tsx:2 fabricated static fields via Array.from() generator callback" <<<"$out" \
+        || { echo "missed ArrayFromGenNested.tsx:2 (BACKLOG 145 nested generator): $(grep '^FINDING.*ArrayFromGenNested' <<<"$out" | tr '\n' ' ' | head -c 200)"; return 1; }
+    for want in ArrayFromGenFabricated.tsx:1 ArrayFromGenHonest.tsx:0 ArrayFromGenNested.tsx:1; do
         f="${want%%:*}"
         got="$(grep -c "^FINDING [a-z/]*$f:" <<<"$out")"
         [ "$got" = "${want##*:}" ] \
