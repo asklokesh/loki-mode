@@ -4371,8 +4371,16 @@ council_managed_should_stop() {
     # S-196: every reader and the session heredoc run on the resolved -I -S
     # interpreter (see _loki_snapshot_py_tool); -E still loads user-site .pth
     # files. None resolvable -> never start the managed session: Bash fallback.
+    # Deliberate consequence: -S hides site-packages, so the anthropic SDK is
+    # never importable and is_enabled() is always False. The managed council
+    # therefore always falls back to Bash voting (warned below). Reviving it
+    # needs a pinned interpreter plus an SDK path that loads no .pth file;
+    # a PATH or venv python3 without -S would let the agent forge the verdict.
     local _ms_py
-    _ms_py="$(_loki_snapshot_py_tool)" || return 1
+    _ms_py="$(_loki_snapshot_py_tool)" || {
+        log_warn "[Council] Managed completion council unavailable: no isolated -I -S interpreter; falling back to Bash voting"
+        return 1
+    }
 
     local loki_dir="${TARGET_DIR:-.}/.loki"
     local round="${ITERATION_COUNT:-0}"
@@ -4560,7 +4568,10 @@ PYEOF
         return 0
     fi
 
-    log_warn "[Council] Managed completion council unavailable (exit=$exit_code); falling back to Bash voting"
+    case "$exit_code" in
+        2|3) log_warn "[Council] Managed completion council unavailable (exit=$exit_code): SDK not importable under the isolated -I -S interpreter; falling back to Bash voting" ;;
+        *) log_warn "[Council] Managed completion council unavailable (exit=$exit_code); falling back to Bash voting" ;;
+    esac
     return 1
 }
 

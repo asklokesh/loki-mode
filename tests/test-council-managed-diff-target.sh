@@ -11,6 +11,8 @@
 # is_enabled() and declines, so the call stays hermetic (rc 1, Bash fallback).
 #   1. The target-only change appears in _CC_DIFF; the install-only one does not.
 #   2. No isolated interpreter resolves -> rc 1 and the stub is never reached.
+# Both fallbacks must log_warn why: under -I -S the SDK is not importable, so
+# the managed council always falls back, and that must not be silent.
 
 set -uo pipefail
 
@@ -57,15 +59,16 @@ printf 'seed\n' > "$TARGET/target-only.txt"
 git init -q "$TARGET" && g "$TARGET" add target-only.txt && g "$TARGET" commit -qm seed
 printf 'changed\n' >> "$TARGET/target-only.txt"
 
-run_managed() { # <capture-file> [nopy] -> echoes rc
+run_managed() { # <capture-file> <warn-file> [nopy] -> echoes rc
     (
         cd "$TARGET" || exit 99
-        log_info() { :; }; log_warn() { :; }; log_error() { :; }; log_debug() { :; }
         # shellcheck source=/dev/null
         source "$COUNCIL_SH" >/dev/null 2>&1 || exit 98
-        [ "${2:-}" = nopy ] && _loki_snapshot_py_tool() { return 1; }
+        log_info() { :; }; log_error() { :; }; log_debug() { :; }
+        log_warn() { printf '%s\n' "$*" >> "$S196_WARN"; }
+        [ "${3:-}" = nopy ] && _loki_snapshot_py_tool() { return 1; }
         export COUNCIL_STATE_DIR="$TARGET/.loki/council" TARGET_DIR="$TARGET" ITERATION_COUNT=3
-        export PROJECT_DIR="$INSTALL" S196_CAPTURE="$1" LOKI_NO_BROWSER=1
+        export PROJECT_DIR="$INSTALL" S196_CAPTURE="$1" S196_WARN="$2" LOKI_NO_BROWSER=1
         export LOKI_EXPERIMENTAL_MANAGED_COUNCIL=true LOKI_EXPERIMENTAL_MANAGED_AGENTS=true LOKI_MANAGED_AGENTS=true
         council_managed_should_stop >/dev/null 2>&1
     )
@@ -74,7 +77,8 @@ run_managed() { # <capture-file> [nopy] -> echoes rc
 
 # Leg 1: diff comes from the target.
 cap="$WORK/diff.cap"
-rc="$(run_managed "$cap")"
+warn="$WORK/diff.warn"
+rc="$(run_managed "$cap" "$warn")"
 if [ ! -f "$cap" ]; then
     bad "stub never reached (rc $rc)"
 else
@@ -88,13 +92,20 @@ else
         *) ok "_CC_DIFF does not name the install-tree change" ;;
     esac
     [ "$rc" = 1 ] && ok "declining stub -> rc 1 (Bash fallback)" || bad "declining stub rc $rc, want 1"
+    grep -q 'SDK not importable under the isolated -I -S interpreter' "$warn" 2>/dev/null \
+        && ok "declined managed session logs the isolated-interpreter fallback" \
+        || bad "declined managed session fell back without naming the -I -S reason: '$(cat "$warn" 2>/dev/null)'"
 fi
 
 # Leg 2: no isolated interpreter -> rc 1, never reaches the managed session.
 cap2="$WORK/nopy.cap"
-rc="$(run_managed "$cap2" nopy)"
+warn2="$WORK/nopy.warn"
+rc="$(run_managed "$cap2" "$warn2" nopy)"
 [ "$rc" = 1 ] && ok "no interpreter -> rc 1" || bad "no interpreter rc $rc, want 1"
 [ ! -e "$cap2" ] && ok "no interpreter -> managed session never started" || bad "no interpreter still ran the managed session"
+grep -q 'no isolated -I -S interpreter' "$warn2" 2>/dev/null \
+    && ok "no interpreter -> fallback is logged" \
+    || bad "no interpreter fell back silently: '$(cat "$warn2" 2>/dev/null)'"
 
 provider_after="$([ -e "$REPO_ROOT/.loki/state/provider" ] && echo y || echo n)"
 [ "$provider_before" = "$provider_after" ] && ok "no .loki/state/provider written into the repo" \
