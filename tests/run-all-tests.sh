@@ -1263,6 +1263,7 @@ run_test "Secure-by-Default Gate (engine precision + wiring + waiver CLI)" "$SCR
 # capture argv/body -- they NEVER open a real PR or post a real check.
 run_test "Proven PR Receipt (PR-body honesty + no false green)" "$SCRIPT_DIR/test-proven-pr-receipt.sh"
 run_test "Proven PR Check-Run (advisory, opt-in, cannot block merge)" "$SCRIPT_DIR/test-proven-pr-check.sh"
+run_test "proof-check readers ignore user-site .pth (-I -S, S-203)" "$SCRIPT_DIR/test-proof-check-no-user-site-pth.sh"
 run_test "Proven PR Installed-Layout (verify-yourself works on shipped routes)" "$SCRIPT_DIR/test-proven-pr-installed-layout.sh"
 run_test "Proven PR Detached Path (cmd_run --pr/--ship -d carries receipt)" "$SCRIPT_DIR/test-proven-pr-detached.sh"
 

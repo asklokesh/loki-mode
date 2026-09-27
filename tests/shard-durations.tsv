@@ -630,3 +630,4 @@ web-app status push sends null for unmeasured cost (S-192)	1
 Managed completion council flag (BACKLOG 75, S-211)	1
 Managed review flag (BACKLOG 75, S-211)	3
 Evidence gate with no tests (BACKLOG 75, S-211)	13
+proof-check readers ignore user-site .pth (-I -S, S-203)	1

@@ -28,9 +28,41 @@
 # guards on LOKI_PROVEN_PR_CHECK=1). It is also safe if called directly.
 #
 # Inline Python (D7): the call site's cwd is the agent's repo, so the proof
-# readers run python3 -E and drop '' and '.' from sys.path first; a committed
-# json.py or sitecustomize.py cannot change the headline. Pinned by
+# readers drop '' and '.' from sys.path first; a committed json.py or
+# sitecustomize.py cannot change the headline. Pinned by
 # tests/test-proven-pr-check.sh (D7 section).
+#
+# BACKLOG 54 / S-203: python3 -E still loaded the user site-packages, where a
+# .pth "import" line runs before any sys.path scrub and could forge json.load
+# (a NOT VERIFIED proof read as VERIFIED). The readers resolve their
+# interpreter through _loki_snapshot_py_tool and run it -I -S; when none
+# resolves they print empty, as they do when python3 is absent. run.sh sources
+# this file before it defines _loki_snapshot_py_tool, and its later definition
+# replaces this copy, so the copy below only serves callers that source this
+# file on its own (tests). run.sh is the source of truth: keep this copy
+# byte-identical to it. Pinned by tests/test-proof-check-no-user-site-pth.sh
+# and tests/test-council-py-tool-identity.sh.
+declare -F _loki_snapshot_py_tool >/dev/null 2>&1 || \
+_loki_snapshot_py_tool() {
+    local c
+    for c in /usr/bin/python3 /bin/python3; do
+        [ -x "$c" ] && [ ! -d "$c" ] && "$c" -I -S -c '' >/dev/null 2>&1 && { printf '%s\n' "$c"; return 0; }
+    done
+    local dir
+    local IFS=:
+    for dir in $PATH; do
+        case "$dir" in
+            /*) ;;
+            *) continue ;;
+        esac
+        if [ -x "$dir/python3" ] && [ ! -d "$dir/python3" ] \
+           && "$dir/python3" -I -S -c '' >/dev/null 2>&1; then
+            printf '%s\n' "$dir/python3"
+            return 0
+        fi
+    done
+    return 1
+}
 
 # Double-source guard.
 [ -n "${_PROOF_CHECK_SH:-}" ] && return 0
@@ -71,10 +103,11 @@ _proof_check_headline() {
     local proof_path="${1:-}"
     [ -n "$proof_path" ] || { printf '%s' ""; return 0; }
     [ -f "$proof_path" ] || { printf '%s' ""; return 0; }
-    command -v python3 >/dev/null 2>&1 || { printf '%s' ""; return 0; }
+    local _pc_py=""
+    _pc_py="$(_loki_snapshot_py_tool)" || { printf '%s' ""; return 0; }
 
     local headline=""
-    headline="$(python3 -E - "$proof_path" <<'PY' 2>/dev/null || true
+    headline="$("$_pc_py" -I -S - "$proof_path" <<'PY' 2>/dev/null || true
 import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, sys
 try:
@@ -103,10 +136,11 @@ _proof_check_proof_head_sha() {
     local proof_path="${1:-}"
     [ -n "$proof_path" ] || { printf '%s' ""; return 0; }
     [ -f "$proof_path" ] || { printf '%s' ""; return 0; }
-    command -v python3 >/dev/null 2>&1 || { printf '%s' ""; return 0; }
+    local _pc_py=""
+    _pc_py="$(_loki_snapshot_py_tool)" || { printf '%s' ""; return 0; }
 
     local sha=""
-    sha="$(python3 -E - "$proof_path" <<'PY' 2>/dev/null || true
+    sha="$("$_pc_py" -I -S - "$proof_path" <<'PY' 2>/dev/null || true
 import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, sys
 try:
@@ -138,10 +172,11 @@ _proof_check_run_id() {
     local proof_path="${1:-}"
     [ -n "$proof_path" ] || { printf '%s' ""; return 0; }
     [ -f "$proof_path" ] || { printf '%s' ""; return 0; }
-    command -v python3 >/dev/null 2>&1 || { printf '%s' ""; return 0; }
+    local _pc_py=""
+    _pc_py="$(_loki_snapshot_py_tool)" || { printf '%s' ""; return 0; }
 
     local rid=""
-    rid="$(python3 -E - "$proof_path" <<'PY' 2>/dev/null || true
+    rid="$("$_pc_py" -I -S - "$proof_path" <<'PY' 2>/dev/null || true
 import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, sys
 try:
