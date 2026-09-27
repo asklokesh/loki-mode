@@ -35,6 +35,9 @@
 #  Rg summarize dedupes by (task, arm) and groups by model and harness_sha
 #  Rh push time before the run start is flagged, not clamped
 #  Ri harness_sha carries -dirty exactly when the repo has local changes
+#  12. (EV-3) config isolation: all three arms get a fresh empty
+#      CLAUDE_CONFIG_DIR (operator's overridden) and env auth; auth reaches
+#      only the arm (never setup, baseline or grade); the token is in no log
 #===============================================================================
 set -u
 
@@ -43,7 +46,11 @@ REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 # shellcheck source=lib-tmp.sh
 . "$HERE/lib-tmp.sh"
 export LOKI_NO_BROWSER=1 LOKI_EVAL_MAX_LOAD=1000
-unset LOKI_EVAL_MODEL
+unset LOKI_EVAL_MODEL ANTHROPIC_API_KEY
+# A fake operator token: the harness passes it through and never reads the
+# keychain, so these legs are hermetic on macOS and Linux alike.
+FAKE_OAUTH="fake-oauth-ev3-$$"
+export CLAUDE_CODE_OAUTH_TOKEN="$FAKE_OAUTH"
 
 PASS=0
 FAIL=0
@@ -175,7 +182,8 @@ cat > "$T/bin/probe-stub" <<'EOF'
 #!/usr/bin/env bash
 git cat-file -e "$(cat "$PROBE_FUTURE_SHA")" 2>/dev/null && echo "FUTURE VISIBLE" || echo "FUTURE ABSENT"
 echo "ARGS: $*"
-env
+# The arm's own auth is expected in its env; keep its value out of the log.
+env | grep -v -e '^CLAUDE_CODE_OAUTH_TOKEN=' -e '^ANTHROPIC_API_KEY='
 cat .git/logs/HEAD 2>/dev/null
 cat .git/config
 echo "GLOBAL-NAME: [$(git config --global user.name 2>/dev/null)]"
@@ -438,6 +446,59 @@ md="$(bash "$HERE/summarize" "$S_IN" --markdown)"
 printf '%s' "$md" | grep -q "| raw-claude | 1/4 | 25.0% |" && printf '%s' "$md" | grep -q "t2 / raw-claude: no branch pushed" \
     && printf '%s' "$md" | grep -q "t4: hidden tests already pass at repo.ref" && printf '%s' "$md" | grep -q "harness s2" \
     && pass "Rg: Markdown groups, invalid tasks and misses" || fail "Rg: markdown: $md"
+
+# ---- 12. config isolation (EV-3): every arm gets a fresh empty
+# CLAUDE_CONFIG_DIR under its rundir (overriding the operator's), plus auth,
+# and the auth reaches ONLY the arm process: never setup, grade or argv.
+mkdir -p "$T/operator-cfg" && echo "never commit without approval" > "$T/operator-cfg/CLAUDE.md"
+mkdir -p "$TASKS/fx-iso" && cp -R "$TASKS/fx-greet/hidden" "$TASKS/fx-iso/hidden"
+python3 - "$TASKS/fx-greet/task.json" "$TASKS/fx-iso/task.json" <<'EOF'
+import json, sys
+t = json.load(open(sys.argv[1]))
+probe = 'oauth=${CLAUDE_CODE_OAUTH_TOKEN:+set} key=${ANTHROPIC_API_KEY:+set}'
+t.update(id="fx-iso", setup='echo "AUTH-PROBE: %s"' % probe)
+t["hidden"]["run"] = 'echo "AUTH-PROBE: %s"; bash hidden_test.sh' % probe
+json.dump(t, open(sys.argv[2], "w"))
+EOF
+FAKE_KEY="fake-apikey-ev3-$$"
+# no_auth_outside_arm <outdir> <label>: the setup, baseline (hidden run at
+# repo.ref) and grade hidden-run logs each hold at least one probe line
+# (positive control), and no probe line in any log carries auth.
+no_auth_outside_arm() {
+    local lg n bad ok=1
+    for lg in setup baseline.stdout grade_hidden.stdout; do
+        n="$(cat "$1"/logs/*/"$lg".log 2>/dev/null | grep -c '^AUTH-PROBE:')"
+        [ "${n:-0}" -ge 1 ] || { ok=0; echo "  $2 $lg.log: no probe line"; }
+    done
+    bad="$(cat "$1"/logs/*/*.log 2>/dev/null | grep '^AUTH-PROBE:' | grep -vx 'AUTH-PROBE: oauth= key=')"
+    [ -z "$bad" ] || { ok=0; echo "  $2: bad='$bad'"; }
+    [ "$ok" = 1 ] && pass "$2: no auth in setup, baseline or grade env" || fail "$2: auth leaked outside the arm"
+    if grep -h '^ARGV:' "$1"/logs/*/arm_stderr.log | grep -qF -e "$FAKE_OAUTH" -e "$FAKE_KEY"; then
+        fail "$2: auth token in the arm argv"
+    else
+        pass "$2: no auth token in the arm argv"
+    fi
+}
+for arm in raw-claude v10 legacy; do
+    R="$T/out-iso-$arm"
+    STUB_MODE=noop STUB_V10_MARKER=1 CLAUDE_CONFIG_DIR="$T/operator-cfg" RUN --arm "$arm" --task fx-iso --out "$R" >/dev/null 2>&1
+    eng="unset"; [ "$arm" = v10 ] && eng=v10
+    want="ENV-CHECK2: config=rundir/claude-config claude_md=absent oauth=set api_key=unset engine=$eng"
+    got="$(grep -h '^ENV-CHECK2:' "$R"/logs/*/arm_stderr.log)"
+    [ "$got" = "$want" ] && pass "$arm arm env carries the config isolation" || fail "$arm isolation: got '$got'"
+    [ "$(row "$R/results.jsonl" auth_source)" = '"env:CLAUDE_CODE_OAUTH_TOKEN"' ] \
+        && pass "$arm auth source recorded" || fail "$arm auth_source=$(row "$R/results.jsonl" auth_source)"
+    no_auth_outside_arm "$R" "$arm"
+done
+# An operator API key wins, reaches only the arm (setup AND the PR-branch
+# grade run), and the OAuth token is not also passed.
+R="$T/out-iso-apikey"
+STUB_MODE=pass ANTHROPIC_API_KEY="$FAKE_KEY" RUN --arm raw-claude --task fx-iso --out "$R" >/dev/null 2>&1
+got="$(grep -h '^ENV-CHECK2:' "$R"/logs/*/arm_stderr.log)"
+[ "$got" = "ENV-CHECK2: config=rundir/claude-config claude_md=absent oauth=unset api_key=set engine=unset" ] \
+    && pass "operator API key passed to the arm alone" || fail "api key isolation: got '$got'"
+no_auth_outside_arm "$R" "api-key"
+if grep -rqF -e "$FAKE_OAUTH" -e "$FAKE_KEY" "$T"/out-*; then fail "auth token value written to a log"; else pass "auth token value appears in no log"; fi
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

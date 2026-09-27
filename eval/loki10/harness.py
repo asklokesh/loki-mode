@@ -54,7 +54,14 @@ EFFICIENCY_DIR = os.path.join(".loki", "metrics", "efficiency")
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 PUSH_INSTRUCTION = ("\n\nImplement this in the current repository. Create a new git "
                     "branch, commit your changes on it, and push that branch to origin.")
-SCRUB_ENV = ("GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN")
+SCRUB_ENV = ("GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+             # Model auth never reaches prepare/setup/grade; only the arm gets it (arm_auth).
+             "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CONFIG_DIR")
+# Operator auth env vars, in precedence order, passed through to the arm as-is.
+AUTH_ENV = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
+KEYCHAIN_SERVICE = "Claude Code-credentials"
+SECURITY_BIN = "/usr/bin/security"  # absolute: never a PATH lookup
+AUTH_MARGIN_S = 120
 
 
 # ---------------------------------------------------------------- validate
@@ -239,7 +246,13 @@ def arm_env(rundir, model, alias):
            and not k.startswith(("LOKI_", "CLAUDE_CODE_"))}
     gh = os.path.join(rundir, "gh-config")
     os.makedirs(gh, exist_ok=True)
+    # Config isolation (EV-3): an empty per-run Claude config dir, so the
+    # operator's global CLAUDE.md, settings, hooks, plugins, MCP servers and
+    # memory never steer any arm. Auth comes from arm_auth, not from this dir.
+    cc = os.path.join(rundir, "claude-config")
+    os.makedirs(cc, mode=0o700, exist_ok=True)
     env.update({
+        "CLAUDE_CONFIG_DIR": cc,
         "GH_CONFIG_DIR": gh,            # gh keyring login is invisible to the arm
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_SSH_COMMAND": "false",     # origin is a local bare repo; no ssh ever
@@ -262,6 +275,42 @@ def apply_git_isolation(env):
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["GIT_CONFIG_GLOBAL"] = os.devnull
     return env
+class AuthError(Exception):
+    """Messages never contain a credential value."""
+
+
+def arm_auth(min_valid_s):
+    """({VAR: secret}, source) for the arm under an empty CLAUDE_CONFIG_DIR.
+
+    The empty config dir hides the operator's login (on macOS the keychain
+    entry is keyed to the default config dir), so auth is handed over as env:
+    an operator ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN if set, else on
+    macOS the short-lived OAuth ACCESS token from the operator's keychain
+    login. The refresh token is never passed, so an arm cannot rotate the
+    operator's login. Raises AuthError (token-free message) otherwise.
+    """
+    for var in AUTH_ENV:
+        if os.environ.get(var):
+            return {var: os.environ[var]}, "env:" + var
+    if sys.platform != "darwin" or not os.access(SECURITY_BIN, os.X_OK):
+        raise AuthError("no model auth: set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN "
+                        "(claude setup-token)")
+    try:
+        r = subprocess.run([SECURITY_BIN, "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
+                           capture_output=True, text=True, timeout=20)
+        oauth = (json.loads(r.stdout).get("claudeAiOauth") or {}) if r.returncode == 0 else {}
+        token, exp_ms = oauth.get("accessToken"), oauth.get("expiresAt")
+    except Exception:  # noqa: BLE001 - never surface the keychain payload
+        token = exp_ms = None
+    if not isinstance(token, str) or not token:
+        raise AuthError("no model auth: keychain entry %r unreadable; set ANTHROPIC_API_KEY or "
+                        "CLAUDE_CODE_OAUTH_TOKEN (claude setup-token)" % KEYCHAIN_SERVICE)
+    # Fail closed: an expiry that is missing or not a number is unusable.
+    if isinstance(exp_ms, bool) or not isinstance(exp_ms, (int, float)) \
+            or exp_ms / 1000.0 < time.time() + min_valid_s:
+        raise AuthError("keychain OAuth access token has no usable expiry or expires in under %ds; "
+                        "run any claude command to refresh it, or set CLAUDE_CODE_OAUTH_TOKEN" % min_valid_s)
+    return {"CLAUDE_CODE_OAUTH_TOKEN": token}, "keychain:claudeAiOauth.accessToken"
 
 
 def prepare_checkout(task, rundir, env, log):
@@ -583,8 +632,14 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
             f.write(prompt + PUSH_INSTRUCTION + "\n")
         argv = [binary, "start", pfile]
 
+    # Resolved per run: a keychain access token must outlive this run's cap.
+    try:
+        auth, row["auth_source"] = arm_auth(cap + AUTH_MARGIN_S)
+    except AuthError as e:
+        row.update(status="auth_unavailable", unavailable_reason=str(e))
+        return row
     started = time.time()
-    rc, wall, capped = capped_run(argv, work, env, cap, L["arm_stderr"], L["arm_stdout"])
+    rc, wall, capped = capped_run(argv, work, dict(env, **auth), cap, L["arm_stderr"], L["arm_stdout"])
     row.update(started=iso(started), ended=iso(time.time()), wall_s=wall, exit_code=rc, capped=capped)
     row["cost_usd"], row["cost_source"] = provider_cost(arm, L["arm_stdout"], work)
 
@@ -652,6 +707,11 @@ def cmd_run(args):
     if not alias:
         print("error: model %s has no claude cli alias; loki arms cannot be pinned to it" % model, file=sys.stderr)
         return 2
+    try:  # fail fast before any clone when there is no model auth at all
+        _, auth_source = arm_auth(0)
+    except AuthError as e:
+        print("error: %s" % e, file=sys.stderr)
+        return 2
     out = os.path.abspath(args.out)
     os.makedirs(out, exist_ok=True)
     CHILDREN = Children(os.path.join(tmp, "child-pids"))
@@ -672,6 +732,7 @@ def cmd_run(args):
     with open(os.path.join(out, "manifest.jsonl"), "a") as f:
         f.write(json.dumps({"arm": args.arm, "model": model, "arm_binary": binary,
                             "arm_version": version, "harness_sha": cfg["harness_sha"],
+                            "isolation": "fresh CLAUDE_CONFIG_DIR per run", "auth_source": auth_source,
                             "tasks": [t["id"] for t, _ in tasks], "started": iso(time.time())}) + "\n")
 
     def on_signal(signum, _frame):
