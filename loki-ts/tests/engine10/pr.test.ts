@@ -30,7 +30,7 @@ function freshRepo(): string {
 /** Writes a fake engine10-push.sh: logs every call (mode, args, the two pin
  *  env vars) to logPath, then prints PR_URL for push-pr and exits 0 for
  *  status. failOn makes one mode exit 2 with a stderr message instead. */
-function writeStub(dir: string, logPath: string, failOn?: "push-pr" | "status"): string {
+function writeStub(dir: string, logPath: string, failOn?: "push-pr" | "status", printUrl: string = PR_URL): string {
   const scriptPath = join(dir, "push-stub.sh");
   const content = `#!/bin/sh
 mode="$1"; shift
@@ -38,7 +38,7 @@ printf 'CALL mode=%s args=%s\\n' "$mode" "$*" >> "${logPath}"
 printf 'ENV pinned=%s origin=%s\\n' "\${_LOKI_ORIGIN_PINNED:-}" "\${_LOKI_PINNED_ORIGIN:-}" >> "${logPath}"
 if [ "$mode" = "${failOn ?? ""}" ]; then echo "stub: refused" >&2; exit 2; fi
 case "$mode" in
-  push-pr) echo "${PR_URL}" ;;
+  push-pr) echo "${printUrl}" ;;
   status) exit 0 ;;
 esac
 exit 0
@@ -211,6 +211,37 @@ describe("engine10 pr stage", () => {
     const result = await runPr(ctx, controller.signal, { pushScriptPath: script });
     expect(result.status).toBe("failed");
     expect(readLog()).toBe("");
+    expect(emitted).toHaveLength(0);
+  });
+
+  test("E-41: a local bare origin's local://<origin>#<branch> line is accepted and emitted as pr.opened", async () => {
+    const origin = "/srv/eval/run1/remote.git";
+    const url = `local://${origin}#loki/e10-test-run`;
+    const script = writeStub(stubDir, logPath, undefined, url);
+    const { ctx, emitted } = makeCtx(repoDir, runDir, { pinnedOrigin: origin });
+    const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
+    expect(result.status).toBe("completed");
+    expect(result.data.pr_url).toBe(url);
+    expect(result.data.not_proven).toBeUndefined();
+    expect(emitted[0]).toEqual({ type: "pr.opened", stage: "pr", data: { url, draft: false, existing: null } });
+  });
+
+  test("E-41: a local:// line naming another origin or branch is refused, no pr.opened", async () => {
+    const origin = "/srv/eval/run1/remote.git";
+    for (const bad of [`local:///srv/eval/other.git#loki/e10-test-run`, `local://${origin}#loki/other`, `local://${origin}`]) {
+      const script = writeStub(stubDir, logPath, undefined, bad);
+      const { ctx, emitted } = makeCtx(repoDir, runDir, { pinnedOrigin: origin });
+      const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
+      expect(result.status).toBe("failed");
+      expect(emitted.find((e) => e.type === "pr.opened")).toBeUndefined();
+    }
+  });
+
+  test("E-41: a local:// line is refused when the pinned origin is a GitHub URL", async () => {
+    const script = writeStub(stubDir, logPath, undefined, "local://https://github.com/octocat/hello.git#loki/e10-test-run");
+    const { ctx, emitted } = makeCtx(repoDir, runDir);
+    const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
+    expect(result.status).toBe("failed");
     expect(emitted).toHaveLength(0);
   });
 

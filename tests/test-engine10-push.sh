@@ -126,6 +126,105 @@ p4 "$LIB" status "$SHA" pending "deep verify running" >/dev/null 2>&1 \
     && ok "status mode posts a pending loki/deep-verify status" || bad "status mode ($(tr '\n' '|' < "$GHLOG"))"
 refused "status rejects a bad state" "bad state" p4 "$LIB" status "$SHA" bogus d
 
+# E-41: a local bare origin (the eval/loki10/harness.py shape, including its
+# post-receive hook, which is how the harness scores "PR opened").
+LB="$W/local/remote.git"
+DECOY="$W/local/decoy.git"
+git init -q --bare "$LB"
+git init -q --bare "$DECOY"
+printf '#!/bin/sh\nnow=$(date +%%s)\nwhile read -r old new ref; do\n  echo "$now $old $new $ref gh=${GH_TOKEN:-none} github=${GITHUB_TOKEN:-none} ghe=${GH_ENTERPRISE_TOKEN:-none}" >> "$GIT_DIR/pushes.log"\ndone\n' \
+    > "$LB/hooks/post-receive"
+chmod +x "$LB/hooks/post-receive"
+printf '#!/bin/sh\nenv >> "%s"\n' "$W/lenv.dump" > "$LB/hooks/pre-receive"
+chmod +x "$LB/hooks/pre-receive"
+: > "$LB/pushes.log"
+LA="$W/lagent"
+git init -q "$LA"
+git -C "$LA" commit -q --allow-empty -m init
+git -C "$LA" commit -q --allow-empty -m fix
+git -C "$LA" branch loki/e10-local
+git -C "$LA" branch loki/e10-lctl
+git -C "$LA" branch master
+git -C "$LA" branch trunk
+git -C "$LA" remote add origin "$LB"
+LREC="$W/lhook.rec"
+printf '#!/bin/sh\necho "hook token=${GH_TOKEN:-none}" >> "%s"\n' "$LREC" > "$LA/.git/hooks/pre-push"
+chmod +x "$LA/.git/hooks/pre-push"
+# Agent-written config redirecting any push to the pinned path into a decoy:
+# the vector core.hooksPath=/dev/null does not stop on a push run in the agent repo.
+git -C "$LA" config url."$DECOY".pushInsteadOf "$LB"
+lp() { GH_TOKEN="$CANARY" GITHUB_TOKEN="$CANARY" GH_ENTERPRISE_TOKEN="$CANARY" GITHUB_ENTERPRISE_TOKEN="$CANARY" \
+    SSH_AUTH_SOCK="$W/$CANARY.sock" GIT_ASKPASS="$W/$CANARY.askpass" GH_CONFIG_DIR="$W/$CANARY.gh" \
+    _LOKI_ORIGIN_PINNED=1 _LOKI_PINNED_ORIGIN="$1" bash "$LIB" "${@:2}"; }
+lref() { git -C "$1" rev-parse -q --verify "refs/heads/$2" 2>/dev/null; }
+
+# Control: in the agent repo, a push to the pinned path lands in the decoy and
+# fires the planted hook (both plants are live).
+: > "$LREC"
+( cd "$LA" && GH_TOKEN="$CANARY" git push -q "$LB" loki/e10-lctl ) >/dev/null 2>&1
+[ -n "$(lref "$DECOY" loki/e10-lctl)" ] && [ -z "$(lref "$LB" loki/e10-lctl)" ] && grep -q "token=$CANARY" "$LREC" \
+    && ok "control: agent pushInsteadOf and pre-push hook are live on an in-repo push" \
+    || bad "control: local plants not live"
+
+: > "$LREC"; : > "$GHLOG"
+out="$(lp "$LB" push-pr "$LA" loki/e10-local "E41 title" "$W/body.md" --draft 2>"$W/err")"; rc=$?
+[ "$rc" -eq 0 ] && [ "$out" = "local://$LB#loki/e10-local" ] && ok "local push-pr prints local://<origin>#<branch>" \
+    || bad "local push-pr rc=$rc out=$out err=$(tr '\n' ' ' < "$W/err")"
+[ "$(lref "$LB" loki/e10-local)" = "$(git -C "$LA" rev-parse loki/e10-local)" ] \
+    && ok "local push landed the branch on the pinned bare repo" || bad "local push did not land"
+[ -z "$(lref "$DECOY" loki/e10-local)" ] && ok "agent pushInsteadOf did not redirect the push" \
+    || bad "push was redirected to the decoy"
+grep -q " refs/heads/loki/e10-local gh=none github=none ghe=none$" "$LB/pushes.log" 2>/dev/null \
+    && ok "harness post-receive hook recorded the branch, with no token visible" \
+    || bad "post-receive log wrong ($(tr '\n' '|' < "$LB/pushes.log" 2>/dev/null))"
+[ -s "$W/lenv.dump" ] && ! grep -q "$CANARY" "$W/lenv.dump" \
+    && ok "bare repo pre-receive hook saw no canary in its env (tokens, SSH agent, askpass, gh config)" \
+    || bad "canary reached the bare repo hook env: $(grep "$CANARY" "$W/lenv.dump" 2>/dev/null | tr '\n' ' ')"
+[ ! -s "$LREC" ] && ok "planted pre-push hook in the agent repo recorded nothing" || bad "planted hook ran: $(cat "$LREC")"
+[ ! -s "$GHLOG" ] && ok "local push-pr never called gh" || bad "gh was called ($(tr '\n' '|' < "$GHLOG"))"
+
+# lrefused <label> <stderr-substring> <cmd...>: rc 2, reason on stderr, no
+# new post-receive line, no local:// on stdout, no gh call.
+lrefused() {
+    local label="$1" want="$2" rc n0 o
+    shift 2
+    n0="$(wc -l < "$LB/pushes.log")"; : > "$GHLOG"
+    o="$("$@" 2>"$W/err")"; rc=$?
+    if [ "$rc" -eq 2 ] && grep -qF "$want" "$W/err" && [ "$(wc -l < "$LB/pushes.log")" = "$n0" ] \
+        && [ "${o#*local://}" = "$o" ] && [ ! -s "$GHLOG" ]; then
+        ok "$label"
+    else
+        bad "$label (rc=$rc out=$o err=$(tr '\n' ' ' < "$W/err"))"
+    fi
+}
+lrefused "local: main is refused" "Not pushing branch 'main'" lp "$LB" push-pr "$LA" main t "$W/body.md"
+lrefused "local: master is refused" "Not pushing branch 'master'" lp "$LB" push-pr "$LA" master t "$W/body.md"
+git -C "$LB" symbolic-ref HEAD refs/heads/trunk
+lrefused "local: the bare repo's own default branch (trunk) is refused" "default branch" \
+    lp "$LB" push-pr "$LA" trunk t "$W/body.md"
+git -C "$LB" symbolic-ref HEAD refs/heads/main
+[ -z "$(lref "$LB" trunk)" ] && [ -z "$(lref "$LB" master)" ] && ok "local: no refused branch reached the bare repo" \
+    || bad "a refused branch reached the bare repo"
+
+: > "$GHLOG"
+lp "$LB" status "$SHA" pending "deep verify running" >/dev/null 2>"$W/err" && grep -q "local origin" "$W/err" && [ ! -s "$GHLOG" ] \
+    && ok "local: status is a no-op notice, rc 0, no gh" || bad "local status ($(tr '\n' ' ' < "$W/err"))"
+lp "$LB" comment 7 "$W/body.md" >/dev/null 2>"$W/err" && grep -q "local origin" "$W/err" && [ ! -s "$GHLOG" ] \
+    && ok "local: comment is a no-op notice, rc 0, no gh" || bad "local comment ($(tr '\n' ' ' < "$W/err"))"
+
+# Not a local bare origin: never the local branch, always today's refusal.
+NB="$W/local/nonbare"
+git init -q "$NB"
+git -C "$NB" commit -q --allow-empty -m init
+lrefused "non-bare directory is refused (old path)" "pinned origin refused" lp "$NB" push-pr "$LA" loki/e10-local t "$W/body.md"
+[ -z "$(lref "$NB" loki/e10-local)" ] && ok "non-bare directory received no branch" || bad "non-bare directory received the branch"
+lp_rel() { ( cd "$W/local" && lp remote.git "$@" ); }
+lrefused "relative path is refused (old path)" "pinned origin refused" lp_rel push-pr "$LA" loki/e10-local t "$W/body.md"
+lrefused "scp-style host:path is refused (old path)" "pinned origin refused" lp "localhost:$LB" push-pr "$LA" loki/e10-local t "$W/body.md"
+lrefused "file:// URL is refused (old path)" "pinned origin refused" lp "file://$LB" push-pr "$LA" loki/e10-local t "$W/body.md"
+lrefused "a subdirectory of a bare repo is refused" "pinned origin refused" lp "$LB/objects" push-pr "$LA" loki/e10-local t "$W/body.md"
+lrefused "a missing path is refused" "pinned origin refused" lp "$W/local/nope.git" push-pr "$LA" loki/e10-local t "$W/body.md"
+
 # Missing anchors fail closed: same lib, run.sh without the start anchor.
 mkdir -p "$W/fake/autonomy/lib"
 cp "$LIB" "$W/fake/autonomy/lib/"

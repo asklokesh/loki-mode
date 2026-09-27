@@ -41,8 +41,64 @@ _LOKI_ORIGIN_PINNED="$_e10_pinned"
 _LOKI_PINNED_ORIGIN="$_e10_origin"
 
 [ "$_LOKI_ORIGIN_PINNED" = "1" ] || die "origin not pinned (_LOKI_ORIGIN_PINNED=1 required)"
-_e10_repo="$(_loki_github_repo_from_url "$_LOKI_PINNED_ORIGIN")" \
-    || die "pinned origin refused: $(_loki_origin_refusal "$_LOKI_PINNED_ORIGIN")"
+
+# E-41: the eval harness (eval/loki10/harness.py) pins origin to a local bare
+# repo and scores "PR opened" as a branch landing there. Only an absolute,
+# colon-free path whose own git dir is itself a bare repo qualifies; anything
+# else (URL, scp host:path, relative, non-bare, a subdirectory) takes the
+# GitHub path below and its refusal.
+_e10_local_bare() {
+    local p="$1" abs
+    case "$p" in /*) ;; *) return 1 ;; esac
+    case "$p" in *:*) return 1 ;; esac
+    abs="$(cd "$p" 2>/dev/null && pwd -P)" || return 1
+    [ "$(git -C "$abs" rev-parse --is-bare-repository 2>/dev/null)" = "true" ] || return 1
+    [ "$(git -C "$abs" rev-parse --absolute-git-dir 2>/dev/null)" = "$abs" ]
+}
+_e10_local=""
+_e10_git_env="GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT"
+# shellcheck disable=SC2086 # word-split list of variable names
+if (unset $_e10_git_env; _e10_local_bare "$_LOKI_PINNED_ORIGIN"); then
+    _e10_local=1
+else
+    _e10_repo="$(_loki_github_repo_from_url "$_LOKI_PINNED_ORIGIN")" \
+        || die "pinned origin refused: $(_loki_origin_refusal "$_LOKI_PINNED_ORIGIN")"
+fi
+
+# Local push: like _loki_trusted_push, the branch is fetched into a fresh
+# template-less repo and pushed from there, so the agent repo's config
+# (pushInsteadOf, remote.<url>.receivepack) and hooks never apply. Every git
+# call runs under an allowlisted env: the bare repo's own hooks inherit the
+# push env, so no token, SSH agent or askpass may reach them.
+_e10_git() {
+    env -i PATH="$PATH" HOME=/dev/null TMPDIR="${TMPDIR:-/tmp}" GIT_CONFIG_NOSYSTEM=1 \
+        GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 git -c core.hooksPath=/dev/null "$@"
+}
+_e10_local_push() {
+    local dir="$1" branch="$2" origin="$_LOKI_PINNED_ORIGIN" def tmp rc=1
+    dir="$(cd "$dir" 2>/dev/null && pwd -P)" || return 1
+    git check-ref-format --branch "$branch" >/dev/null 2>&1 || return 1
+    case "$branch" in
+        main | master | HEAD)
+            log_warn "Not pushing branch '$branch': Loki never pushes directly to a default branch."
+            return 2 ;;
+    esac
+    def="$(_e10_git -C "$origin" symbolic-ref --short HEAD 2>/dev/null)" || def=""
+    if [ -z "$def" ] || [ "$branch" = "$def" ]; then
+        log_warn "Not pushing branch '$branch': it is (or may be) the default branch of $origin."
+        return 2
+    fi
+    tmp="$(mktemp -d "${TMPDIR:-/tmp}/loki-push.XXXXXX")" || return 1
+    if _e10_git init -q --template= "$tmp" >/dev/null 2>&1 \
+        && _e10_git -C "$tmp" fetch -q --no-tags --update-shallow "$dir" \
+            "+refs/heads/$branch:refs/heads/$branch" >/dev/null 2>&1 \
+        && _e10_git -C "$tmp" rev-parse -q --verify "refs/heads/$branch" >/dev/null 2>&1; then
+        rc=0
+        _e10_git -C "$tmp" push -q "$origin" "refs/heads/$branch:refs/heads/$branch" || rc=$?
+    fi
+    rm -rf "$tmp"
+    return "$rc"
+}
 
 _e10_gh() { _loki_with_github_tokens _loki_run_neutral "$_e10_repo" command gh "$@"; }
 
@@ -57,6 +113,11 @@ case "$mode" in
             draft=(--draft)
         fi
         [ -f "$body" ] || die "body file not found: $body"
+        if [ -n "$_e10_local" ]; then
+            _e10_local_push "$dir" "$branch" || die "push refused or failed (rc=$?)"
+            printf 'local://%s#%s\n' "$_LOKI_PINNED_ORIGIN" "$branch"
+            exit 0
+        fi
         _loki_trusted_push _loki_with_github_tokens "$dir" "$branch" || die "push refused or failed (rc=$?)"
         url="$(_e10_gh pr list --repo "$_e10_repo" --head "$branch" --state open --json url --jq '.[0].url')" \
             || die "gh pr list failed"
@@ -71,12 +132,14 @@ case "$mode" in
         [ "$#" -eq 2 ] || die "usage: comment <pr-number> <body-file>"
         case "$1" in '' | *[!0-9]*) die "pr number must be digits" ;; esac
         [ -f "$2" ] || die "body file not found: $2"
+        [ -z "$_e10_local" ] || { log_info "local origin: no PR to comment on (no-op)"; exit 0; }
         _e10_gh pr comment "$1" --repo "$_e10_repo" --body-file "$2" || die "gh pr comment failed"
         ;;
     status)
         [ "$#" -eq 3 ] || die "usage: status <sha> <state> <description>"
         [[ "$1" =~ ^[0-9a-f]{40}$ ]] || die "sha must be 40 lowercase hex characters"
         case "$2" in pending | success | failure | error) ;; *) die "bad state: $2" ;; esac
+        [ -z "$_e10_local" ] || { log_info "local origin: no commit status to set (no-op)"; exit 0; }
         _e10_gh api "repos/$_e10_repo/statuses/$1" -f "state=$2" -f context=loki/deep-verify \
             -f "description=$3" >/dev/null || die "gh api status failed"
         ;;

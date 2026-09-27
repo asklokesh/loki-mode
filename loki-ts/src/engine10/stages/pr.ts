@@ -106,7 +106,10 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
     };
   }
   const url = lastNonEmptyLine(pushResult.stdout ?? "");
-  if (!PR_URL_RE.test(url)) {
+  // E-41: for a local bare origin (the eval harness) push-pr prints exactly
+  // local://<pinned origin>#<branch>; accepted only for an absolute, colon-free pin.
+  const localOk = pinnedOrigin.startsWith("/") && !pinnedOrigin.includes(":") && url === `local://${pinnedOrigin}#${ctx.branch}`;
+  if (!localOk && !PR_URL_RE.test(url)) {
     return { status: "failed", data: {}, reason: `engine10-push.sh push-pr printed no valid PR URL (got: ${url || "(empty)"})` };
   }
 
