@@ -27,10 +27,11 @@
 #  Ra hidden test that exits 0 before its assertions -> not passed;
 #     pytest that only skips -> not passed; real pytest pass -> completed
 #  Rb arm sees no repo.source path, no global/system git config, no seed copy
-#  Rc hidden path that is a symlink or blocked by a file -> graded fail
+#  Rc hidden path that is a symlink or blocked by a file -> graded fail;
+#     a hardlink in the arm's own tree is never written through
 #  Rd harness_error after a push keeps pr_opened
 #  Re orphan left by the arm is killed
-#  Rf hidden tests that already pass at repo.ref -> task_invalid
+#  Rf hidden tests that already pass (or cannot be placed) at repo.ref -> task_invalid
 #  Rg summarize dedupes by (task, arm) and groups by model and harness_sha
 #  Rh push time before the run start is flagged, not clamped
 #  Ri harness_sha carries -dirty exactly when the repo has local changes
@@ -98,6 +99,9 @@ seed_task v-committed-metrics fx-greet "" \
 seed_task v-pytest fx-greet "t['hidden']['run'] = 'pytest -q'" ":"
 seed_task v-blocker fx-greet "t['hidden']['files'] = ['tests/hidden_test.sh']; t['hidden']['run'] = 'bash tests/hidden_test.sh'" ":"
 mkdir -p "$TASKS/v-blocker/hidden/tests" && mv "$TASKS/v-blocker/hidden/hidden_test.sh" "$TASKS/v-blocker/hidden/tests/"
+seed_task v-blocked-base fx-greet "t['hidden']['files'] = ['tests/hidden_test.sh']; t['hidden']['run'] = 'bash tests/hidden_test.sh'" \
+    'echo "a file where the hidden dir must go" > tests'
+mkdir -p "$TASKS/v-blocked-base/hidden/tests" && mv "$TASKS/v-blocked-base/hidden/hidden_test.sh" "$TASKS/v-blocked-base/hidden/tests/"
 seed_task v-chmod fx-greet "" ":"
 seed_task v-baseline-pass fx-greet "t['hidden']['run'] = 'echo \"\$LOKI_EVAL_NONCE\"'" ":"
 
@@ -111,8 +115,9 @@ EOF
 chmod +x "$T/fakebin/pytest"
 
 H() { python3 "$HERE/harness.py" "$@"; }
-# run.sh owns its own run tmp, so it must not inherit ours.
-RUN() { env -u LOKI_RUN_TMP bash "$HERE/run.sh" --tasks-dir "$TASKS" "$@"; }
+# run.sh owns its own run tmp, so it must not inherit ours. The tasks dir goes
+# through env, never argv (argv is visible to the arm in ps).
+RUN() { env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$TASKS" bash "$HERE/run.sh" "$@"; }
 row() { python3 -c 'import json,sys; r=[json.loads(l) for l in open(sys.argv[1])][-1]; print(json.dumps(r.get(sys.argv[2])))' "$1" "$2"; }
 
 # ---- 1. validator
@@ -164,6 +169,7 @@ cat .git/logs/HEAD 2>/dev/null
 cat .git/config
 echo "GLOBAL-NAME: [$(git config --global user.name 2>/dev/null)]"
 echo "SIBLINGS: $(ls ..)"
+echo "PS: $(ps -ww -ax -o args=)"
 EOF
 chmod +x "$T/bin/probe-stub"
 git -C "$T/seed-fx-greet" rev-parse HEAD > "$T/future-sha"
@@ -181,6 +187,10 @@ printf '%s' "$PL" | grep -qx "GIT_CONFIG_GLOBAL=/dev/null" && printf '%s' "$PL" 
     || fail "Rb: arm git config not isolated: $(printf '%s' "$PL" | grep -E 'GIT_CONFIG|GLOBAL-NAME')"
 printf '%s' "$PL" | grep "^SIBLINGS:" | grep -q "seed" && fail "Rb: private seed copy left beside the checkout" \
     || pass "Rb: no seed copy beside the checkout during the arm"
+PSL="$(printf '%s\n' "$PL" | sed -n '/^PS: /,$p')"
+if printf '%s' "$PSL" | grep -qF "$TASKS"; then fail "Rb: tasks dir visible in the process list during the arm"
+elif printf '%s' "$PSL" | grep -qF "$T/seed-"; then fail "Rb: repo.source visible in the process list during the arm"
+else pass "Rb: neither tasks dir nor repo.source in the process list during the arm"; fi
 
 # ---- 4. cost
 R="$T/out-cost"
@@ -234,7 +244,7 @@ for v in v-committed-marker v-setup-marker; do
         && pass "R1: $v -> task_invalid" || fail "R1: $v row: $(tail -1 "$R/results.jsonl")"
 done
 # ---- R1b. marker must point at an events file written during this run
-for m in noevents stale; do
+for m in noevents stale oldpath badfield; do
     R="$T/out-v10-$m"
     STUB_MODE=pass STUB_V10_MARKER="$m" RUN --arm v10 --task fx-greet --out "$R" >/dev/null 2>&1
     [ "$(row "$R/results.jsonl" status)" = '"arm_unavailable"' ] && pass "R1b: v10 marker with $m events -> arm_unavailable" \
@@ -277,6 +287,12 @@ STUB_MODE=symlink STUB_SYMLINK_TARGET="$T/symlink-target" RUN --arm raw-claude -
     && [ "$(row "$R/results.jsonl" hidden_pass)" = false ] && [ "$(row "$R/results.jsonl" grade_refused)" != null ] \
     && pass "Rc: symlinked hidden path refused, target untouched" \
     || fail "Rc: symlink target=$(cat "$T/symlink-target") row: $(tail -1 "$R/results.jsonl")"
+echo ORIGINAL > "$T/hardlink-target"
+R="$T/out-hardlink"
+STUB_MODE=hardlink STUB_HARDLINK_TARGET="$T/hardlink-target" RUN --arm raw-claude --task fx-greet --out "$R" >/dev/null 2>&1
+[ "$(cat "$T/hardlink-target")" = ORIGINAL ] && [ "$(row "$R/results.jsonl" pr_opened)" = false ] \
+    && pass "Rc: hardlinked hidden path in the arm's tree does not write through" \
+    || fail "Rc: hardlink target=$(head -1 "$T/hardlink-target") row: $(tail -1 "$R/results.jsonl")"
 R="$T/out-blocker"
 STUB_MODE=blocker RUN --arm raw-claude --task v-blocker --out "$R" >/dev/null 2>&1
 [ "$(row "$R/results.jsonl" status)" = '"ok"' ] && [ "$(row "$R/results.jsonl" hidden_pass)" = false ] \
@@ -304,6 +320,10 @@ R="$T/out-baseline"
 STUB_MODE=noop RUN --arm raw-claude --task v-baseline-pass --out "$R" >/dev/null 2>&1
 [ "$(row "$R/results.jsonl" status)" = '"task_invalid"' ] && pass "Rf: hidden tests passing at repo.ref -> task_invalid" \
     || fail "Rf: row: $(tail -1 "$R/results.jsonl")"
+R="$T/out-blocked-base"
+STUB_MODE=pass RUN --arm raw-claude --task v-blocked-base --out "$R" >/dev/null 2>&1
+[ "$(row "$R/results.jsonl" status)" = '"task_invalid"' ] && pass "Rf: hidden files unplaceable at repo.ref -> task_invalid" \
+    || fail "Rf: blocked-base row: $(tail -1 "$R/results.jsonl")"
 
 # ---- Rh. push time before the run start is flagged
 R="$T/out-backdate"
@@ -312,24 +332,35 @@ STUB_MODE=backdate RUN --arm raw-claude --task fx-greet --out "$R" >/dev/null 2>
     && [ "$(row "$R/results.jsonl" completed)" = false ] && pass "Rh: backdated push flagged, not clamped to 0" \
     || fail "Rh: row: $(tail -1 "$R/results.jsonl")"
 
-# ---- Ri. harness_sha marks a dirty tree
-sha="$(row "$T/out-pass/results.jsonl" harness_sha)"
-if [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]; then want=dirty; else want=clean; fi
-case "$sha" in *-dirty\") got=dirty ;; *) got=clean ;; esac
-[ "$want" = "$got" ] && pass "Ri: harness_sha is $got for a $want tree ($sha)" || fail "Ri: tree $want but harness_sha $sha"
+# ---- Ri. harness_sha marks a dirty tree (deterministic: a private mini repo
+# holding a copy of the harness, run clean and then with an untracked file)
+M="$T/minirepo"
+mkdir -p "$M/eval/loki10" "$M/providers"
+cp "$HERE/harness.py" "$HERE/run.sh" "$HERE/lib-tmp.sh" "$M/eval/loki10/"
+cp "$REPO_ROOT/providers/model_catalog.json" "$M/providers/"
+git -C "$M" init -q && git -C "$M" add -A && git -C "$M" -c user.name=t -c user.email=t@localhost commit -q -m mini
+MRUN() { env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$TASKS" bash "$M/eval/loki10/run.sh" "$@"; }
+STUB_MODE=noop MRUN --arm raw-claude --task fx-greet --out "$T/out-mini-clean" >/dev/null 2>&1
+touch "$M/untracked.txt"
+STUB_MODE=noop MRUN --arm raw-claude --task fx-greet --out "$T/out-mini-dirty" >/dev/null 2>&1
+c="$(row "$T/out-mini-clean/results.jsonl" harness_sha)"
+d="$(row "$T/out-mini-dirty/results.jsonl" harness_sha)"
+case "$c" in *-dirty\" | null | "") cok=0 ;; *) cok=1 ;; esac
+case "$d" in *-dirty\") dok=1 ;; *) dok=0 ;; esac
+[ "$cok" = 1 ] && [ "$dok" = 1 ] && pass "Ri: harness_sha clean=$c dirty=$d" || fail "Ri: clean=$c dirty=$d"
 
 # ---- 9. --all --parallel
 R="$T/out-all"
 mkdir -p "$T/tasks-all"
 cp -R "$TASKS/fx-greet" "$TASKS/fx-cap" "$T/tasks-all/"
-STUB_MODE=noop env -u LOKI_RUN_TMP bash "$HERE/run.sh" --tasks-dir "$T/tasks-all" --arm raw-claude --all --parallel 2 --out "$R" >/dev/null 2>&1
+STUB_MODE=noop env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$T/tasks-all" bash "$HERE/run.sh" --arm raw-claude --all --parallel 2 --out "$R" >/dev/null 2>&1
 n="$(grep -c . "$R/results.jsonl" 2>/dev/null)"
 [ "$n" = 2 ] && pass "--all --parallel 2 records both tasks" || fail "--all rows=$n"
 
 # ---- 10. SIGTERM to run.sh stops only its children and records no verdict
 R="$T/out-stop"
 rm -f "$T/stop.pids"
-STUB_MODE=sleep STUB_PID_FILE="$T/stop.pids" env -u LOKI_RUN_TMP bash "$HERE/run.sh" --tasks-dir "$TASKS" \
+STUB_MODE=sleep STUB_PID_FILE="$T/stop.pids" env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$TASKS" bash "$HERE/run.sh" \
     --arm raw-claude --task fx-greet --out "$R" >"$T/stop.log" 2>&1 &
 rpid=$!
 for _ in $(seq 1 100); do [ -s "$T/stop.pids" ] && break; sleep 0.2; done
@@ -365,6 +396,7 @@ rows = [
     r("a6", "t4", "v10", completed=True, pr_opened=True, hidden_pass=True, time_to_pr_s=5),
     r("a7", "t1", "v10", "arm_unavailable"),
     r("a8", "t5", "raw-claude", "interrupted"),
+    r("a9", "t6", "raw-claude", "harness_error", started="2026-01-01T00:00:05"),
     r("b1", "t1", "raw-claude", sha="s2", completed=True, pr_opened=True, hidden_pass=True, time_to_pr_s=7),
 ]
 with open(sys.argv[1], "w") as f:
@@ -374,8 +406,8 @@ PY
 S="$(bash "$HERE/summarize" "$S_IN" --json)"
 chk() { python3 -c "import json,sys; s=json.loads(sys.argv[1]); g={x['harness_sha']: x for x in s}; assert $2, s" "$S" 2>/dev/null && pass "$1" || fail "$1: $S"; }
 chk "Rg: two groups by model and harness_sha" "len(s) == 2 and set(g) == {'s1', 's2'}"
-chk "Rg: dedupe keeps the newest row per (task, arm); harness_error after push counts" \
-    "g['s1']['arms']['raw-claude']['evaluated'] == 3 and g['s1']['arms']['raw-claude']['completed'] == 1"
+chk "Rg: dedupe keeps the newest row per (task, arm); harness_error after the arm ran counts" \
+    "g['s1']['arms']['raw-claude']['evaluated'] == 4 and g['s1']['arms']['raw-claude']['completed'] == 1"
 chk "Rg: invalid task excluded from every arm and listed" \
     "[x['task'] for x in g['s1']['invalid_tasks']] == ['t4'] and g['s1']['arms']['v10']['evaluated'] == 0 and g['s1']['arms']['v10']['completion_rate'] is None"
 chk "Rg: unavailable and interrupted counted separately" \
@@ -384,7 +416,7 @@ chk "Rg: cost n/a when some evaluated runs unmeasured" \
     "g['s1']['arms']['raw-claude']['cost_per_completed_usd'] is None and g['s1']['arms']['raw-claude']['cost_measured_runs'] == 1"
 chk "Rg: second group scored on its own" "g['s2']['arms']['raw-claude']['completion_rate'] == 1.0"
 md="$(bash "$HERE/summarize" "$S_IN" --markdown)"
-printf '%s' "$md" | grep -q "| raw-claude | 1/3 | 33.3% |" && printf '%s' "$md" | grep -q "t2 / raw-claude: no branch pushed" \
+printf '%s' "$md" | grep -q "| raw-claude | 1/4 | 25.0% |" && printf '%s' "$md" | grep -q "t2 / raw-claude: no branch pushed" \
     && printf '%s' "$md" | grep -q "t4: hidden tests already pass at repo.ref" && printf '%s' "$md" | grep -q "harness s2" \
     && pass "Rg: Markdown groups, invalid tasks and misses" || fail "Rg: markdown: $md"
 

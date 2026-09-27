@@ -10,11 +10,15 @@
 #   orphan      leave a background sleeper behind and exit 0 (PID in STUB_PID_FILE)
 #   exit0       push a greet.sh that exits 0 when sourced (skips the assertions)
 #   symlink     pass, plus hidden_test.sh as a symlink to STUB_SYMLINK_TARGET
+#   hardlink    no push; hidden_test.sh in the working tree is a hardlink to
+#               STUB_HARDLINK_TARGET (the no-PR diagnostic grade copies there)
 #   blocker     pass, plus a regular file named tests (blocks tests/hidden_test.sh)
 #   chmodafter  pass, then make STUB_CHMOD_FILE unreadable
 #   backdate    pass, then rewrite the remote push log to a time before the run
 #   check       only run the hidden-file leak check
-# STUB_V10_MARKER=1|noevents|stale writes the v10 engine marker (and events).
+# STUB_V10_MARKER=1|noevents|stale|oldpath|badfield writes the v10 engine
+# marker (and events): oldpath uses the superseded .loki/events/<id>.jsonl,
+# badfield points the marker's events field outside the contract path.
 # STUB_LOKI_COST=estimate|provider writes one loki efficiency record.
 # Every mode first fails loudly if any hidden test file is visible.
 set -uo pipefail
@@ -30,14 +34,19 @@ echo "HIDDEN-CHECK: absent"
 echo "ENV-CHECK: run_tmp=${LOKI_RUN_TMP:-unset} sentinel=${LOKI_SENTINEL_X:-unset} gh_token=${GH_TOKEN:-unset}" >&2
 
 case "${STUB_V10_MARKER:-0}" in
-    1 | noevents | stale)
-        mkdir -p .loki/events
-        printf '{"engine": "v10", "run_id": "stub-run"}\n' > .loki/engine.json
-        if [ "$STUB_V10_MARKER" != noevents ]; then
-            echo '{"event": "start"}' > .loki/events/stub-run.jsonl
-        fi
+    1 | noevents | stale | oldpath | badfield)
+        # ENGINE.md sections 5 and 10: events at .loki/runs/<id>/events.jsonl.
+        mkdir -p .loki/runs/stub-run
+        ev='.loki/runs/stub-run/events.jsonl'
+        [ "$STUB_V10_MARKER" = badfield ] && ev='../outside.jsonl'
+        printf '{"engine": "v10", "run_id": "stub-run", "events": "%s"}\n' "$ev" > .loki/engine.json
+        case "$STUB_V10_MARKER" in
+            noevents) ;;
+            oldpath) mkdir -p .loki/events && echo '{"event": "start"}' > .loki/events/stub-run.jsonl ;;
+            *) echo '{"event": "start"}' > .loki/runs/stub-run/events.jsonl ;;
+        esac
         if [ "$STUB_V10_MARKER" = stale ]; then
-            touch -t 200001010000 .loki/events/stub-run.jsonl
+            touch -t 200001010000 .loki/runs/stub-run/events.jsonl
         fi
         ;;
 esac
@@ -81,6 +90,9 @@ case "${STUB_MODE:-noop}" in
         fix_greet
         ln -s "$STUB_SYMLINK_TARGET" hidden_test.sh
         push_branch fix-greet greet.sh hidden_test.sh || exit 1
+        ;;
+    hardlink)
+        ln "$STUB_HARDLINK_TARGET" hidden_test.sh
         ;;
     blocker)
         fix_greet

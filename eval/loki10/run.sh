@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Loki 10 eval runner. Usage:
-#   eval/loki10/run.sh --arm <v10|raw-claude|legacy> --task <id>|--all [--parallel N] [--out DIR] [--tasks-dir DIR]
+#   eval/loki10/run.sh --arm <v10|raw-claude|legacy> --task <id>|--all [--parallel N] [--out DIR]
+# Tasks come from eval/loki10/tasks, or LOKI_EVAL_TASKS_DIR (preferred over
+# --tasks-dir, which puts the path in argv where the arm can see it via ps).
 # All temp (clones, bare remotes) lives in one run-owned dir removed at exit.
 # Results and logs go to --out (default eval/loki10/results), outside that dir.
 set -uo pipefail

@@ -40,11 +40,12 @@ DEFAULT_TIMEOUT_S = 900
 GIT_TIMEOUT_S = 600
 ZERO_SHA = "0" * 40
 BASE_BRANCH = "main"
-# Positive signal that the v10 engine (not a legacy fallback) ran. The v10
-# engine must write {"engine": "v10", "run_id": "<id>"} here AND the events
-# file .loki/events/<id>.jsonl during the run (mtime at or after the start).
+# Positive signal that the v10 engine (not a legacy fallback) ran. Per
+# ENGINE.md sections 5 and 10 the engine writes
+#   .loki/engine.json = {"engine": "v10", "run_id": "<id>", "events": ".loki/runs/<id>/events.jsonl"}
+# and the event log .loki/runs/<id>/events.jsonl during the run (mtime at or
+# after the arm start).
 V10_MARKER = os.path.join(".loki", "engine.json")
-V10_EVENTS_DIR = os.path.join(".loki", "events")
 # Engine state that must not exist before the arm: its presence would let a
 # committed or setup-created file stand in for this run's own output.
 PRE_ARM_FORBIDDEN = (V10_MARKER, os.path.join(".loki", "metrics"))
@@ -449,6 +450,10 @@ def run_hidden(task, task_dir, grade_dir, env, log_prefix, cap):
     for rel in task["hidden"]["files"]:
         dst = os.path.join(grade_dir, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
+        # Unlink first: in the no-PR diagnostic path dst is in the arm's own
+        # tree, where it may be a hardlink to a file outside the checkout.
+        if os.path.lexists(dst):
+            os.unlink(dst)
         shutil.copy2(os.path.join(task_dir, "hidden", rel), dst, follow_symlinks=False)
     # The nonce is minted after the arm has finished, so no arm can know it.
     nonce = secrets.token_hex(16)
@@ -481,15 +486,22 @@ def v10_marker_problem(work, started):
     if not isinstance(m, dict) or m.get("engine") != "v10":
         return "marker does not name engine v10"
     rid = m.get("run_id")
-    if not isinstance(rid, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", rid):
+    if not isinstance(rid, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", rid) or rid in (".", ".."):
         return "marker has no valid run_id"
-    ev = os.path.join(work, V10_EVENTS_DIR, rid + ".jsonl")
+    rel = ".loki/runs/%s/events.jsonl" % rid
+    # The events field is honored only when it is exactly the contract path;
+    # anything else (another file, a path outside .loki) is refused.
+    if "events" in m and m["events"] != rel:
+        return "marker events field %r is not %s" % (m.get("events"), rel)
+    ev = os.path.join(work, *rel.split("/"))
+    if os.path.islink(ev):
+        return "events file %s is a symlink" % rel
     try:
         mtime = os.stat(ev).st_mtime
     except OSError:
-        return "no events file %s" % os.path.relpath(ev, work)
+        return "no events file %s" % rel
     if mtime < int(started):
-        return "events file %s predates the run start" % os.path.relpath(ev, work)
+        return "events file %s predates the run start" % rel
     return None
 
 
@@ -535,11 +547,12 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
             or (task.get("setup") and sh(task["setup"], base_dir, env, L["setup"], cap) != 0):
         row["status"] = "prepare_failed"
         return row
-    base_pass, _ = run_hidden(task, task_dir, base_dir, env, os.path.join(logdir, "baseline"), cap)
+    base_pass, base_refused = run_hidden(task, task_dir, base_dir, env, os.path.join(logdir, "baseline"), cap)
     shutil.rmtree(base_dir)  # hidden files must be gone before the arm starts
-    if base_pass:
+    if base_pass or base_refused:
         row["status"] = "task_invalid"
-        row["invalid_reason"] = "hidden tests already pass at repo.ref"
+        row["invalid_reason"] = "hidden tests already pass at repo.ref" if base_pass \
+            else "hidden files cannot be placed at repo.ref: " + base_refused
         return row
 
     prompt = task["prompt"]
@@ -705,10 +718,11 @@ def nearest_rank(values, pct):
 def is_evaluated(r):
     """The arm ran, so the row counts toward its rate.
 
-    A harness_error after the arm pushed still counts (as not completed):
+    A harness_error after the arm started still counts (as not completed):
     the arm did work, and dropping the row would flatter it.
     """
-    return r.get("status") == "ok" or (r.get("status") == "harness_error" and r.get("pr_opened"))
+    return r.get("status") == "ok" or (
+        r.get("status") == "harness_error" and bool(r.get("pr_opened") or r.get("started")))
 
 
 def dedupe(rows):
@@ -853,7 +867,9 @@ def main(argv=None):
     g.add_argument("--all", action="store_true")
     r.add_argument("--parallel", type=int, default=3)
     r.add_argument("--out", default=os.path.join(HERE, "results"))
-    r.add_argument("--tasks-dir", default=os.path.join(HERE, "tasks"))
+    # LOKI_EVAL_TASKS_DIR keeps the tasks path out of argv (visible in ps to
+    # the arm); arm_env drops LOKI_* so the arm never inherits it.
+    r.add_argument("--tasks-dir", default=os.environ.get("LOKI_EVAL_TASKS_DIR") or os.path.join(HERE, "tasks"))
     s = sub.add_parser("summarize")
     s.add_argument("results")
     s.add_argument("--markdown", action="store_true")

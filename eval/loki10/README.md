@@ -36,7 +36,8 @@ How a hidden run passes. The run gets a fresh random nonce in
   fails.
 
 A task is `task_invalid` (for every arm) when either of these holds:
-- its hidden tests already pass at `repo.ref`, checked before the arm;
+- its hidden tests already pass at `repo.ref`, or its hidden files cannot be
+  placed there (checked before the arm);
 - its checkout holds `.loki/engine.json` or `.loki/metrics` after `setup` and
   before the arm.
 
@@ -84,7 +85,9 @@ Each run, per task and arm:
    - legacy: `loki start <prompt file>`. The prompt file includes the push instruction.
 5. **Grading.** If a non-`main` branch was pushed, the runner writes a PR record
    (`pr.json`). It then clones that branch fresh, runs `setup` again, copies the
-   hidden files in (without following symlinks) and runs `hidden.run`. If a
+   hidden files in and runs `hidden.run`. The copy never follows symlinks, and
+   any existing file at a hidden path is unlinked first, so a hardlink cannot
+   be written through. If a
    hidden path in the PR tree is a symlink, or a non-directory blocks one of
    its parent paths, the run is graded as a fail, with `grade_refused` saying
    why. With no PR, the hidden tests run in the arm's checkout for diagnostics
@@ -101,13 +104,21 @@ process runs under `timeout -k`. The runner starts no new run while the
 1-minute load average is above `LOKI_EVAL_MAX_LOAD` (default 20). On a stop
 signal it signals only the PIDs it recorded.
 
-v10 availability contract. After the run, the checkout must hold both of these:
-- `.loki/engine.json` containing `{"engine": "v10", "run_id": "<id>"}`, where
-  `<id>` matches `[A-Za-z0-9._-]+`
-- `.loki/events/<id>.jsonl`, with an mtime at or after the arm's start
+v10 availability contract (ENGINE.md sections 5 and 10). After the run, the
+checkout must hold both of these:
+- `.loki/engine.json` containing
+  `{"engine": "v10", "run_id": "<id>", "events": ".loki/runs/<id>/events.jsonl"}`,
+  where `<id>` matches `[A-Za-z0-9._-]+`. If the `events` field is present, it
+  must be exactly that path.
+- the event log `.loki/runs/<id>/events.jsonl`: a regular file, not a
+  symlink, with an mtime at or after the arm's start
 
 Otherwise, or without the `loki` binary, the run is `arm_unavailable`, never a
 pass.
+
+The tasks dir defaults to `eval/loki10/tasks`. Set `LOKI_EVAL_TASKS_DIR` to
+use another one. Prefer it over `--tasks-dir`, which puts the path in argv,
+where the arm can read it with `ps`.
 
 Loki-arm cost contract. Every `.loki/metrics/efficiency/iteration-N.json`
 record must carry `"cost_source": "provider"` and a positive `cost_usd`.
@@ -131,7 +142,7 @@ arm start, null if none), `pr_opened`, `hidden_pass`, `grade_refused`,
   reports, per group:
   - invalid tasks, with the reason for each. They are excluded from every arm.
   - per arm, the completion rate over runs where the arm ran. That means
-    status ok, or a `harness_error` after the arm pushed, which counts as
+    status ok, or a `harness_error` after the arm started, which counts as
     not completed. Unavailable, infrastructure and interrupted runs are
     counted separately, and an arm with no evaluated runs shows n/a.
   - p50 and p90 time to PR over completed runs, using the nearest-rank method.
@@ -148,7 +159,14 @@ arm start, null if none), `pr_opened`, `hidden_pass`, `grade_refused`,
   flight. The harness hides the hidden tests from the checkout, its history,
   argv and env, but it cannot stop a determined arm from searching the disk.
   This applies to every arm equally. Closing it needs a separate OS user or a
-  container per arm.
+  container per arm. The harness's own argv (`python3 .../harness.py run`)
+  also reveals where this repo is.
+- **A hostile PR can forge a pass.** The nonce and the pytest/vitest summary
+  are both visible to the code under test, which runs in the same process
+  and env as the hidden test. PR code that echoes `LOKI_EVAL_NONCE`, or
+  prints a fake `1 passed in` line, can make a failing run look like a pass.
+  The nonce defeats hidden tests that exit early. It does not defeat PR code
+  written to cheat, so a completed run still needs a review of the diff.
 - **Arms read `~/.claude`.** Real `claude` and `loki` arms still read the
   operator's user-level Claude configuration (global CLAUDE.md, plugins,
   hooks). An instruction there such as "never commit without approval" can
