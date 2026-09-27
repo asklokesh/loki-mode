@@ -37,7 +37,9 @@
 #  Ri harness_sha carries -dirty exactly when the repo has local changes
 #  12. (EV-3) config isolation: all three arms get a fresh empty
 #      CLAUDE_CONFIG_DIR (operator's overridden) and env auth; auth reaches
-#      only the arm (never setup, baseline or grade); the token is in no log
+#      only the arm (never setup, baseline or grade); the token is in no log;
+#      (E-38) LOKI_ENGINE=legacy on the legacy arm, v10 on the v10 arm
+#  13. (E-38) --tasks a,b runs exactly those ids; an unknown id exits 2
 #===============================================================================
 set -u
 
@@ -482,7 +484,8 @@ no_auth_outside_arm() {
 for arm in raw-claude v10 legacy; do
     R="$T/out-iso-$arm"
     STUB_MODE=noop STUB_V10_MARKER=1 CLAUDE_CONFIG_DIR="$T/operator-cfg" RUN --arm "$arm" --task fx-iso --out "$R" >/dev/null 2>&1
-    eng="unset"; [ "$arm" = v10 ] && eng=v10
+    # E-38: the engine is pinned per loki arm, so the default flip cannot move EV-5.
+    eng="$arm"; [ "$arm" = raw-claude ] && eng="unset"
     want="ENV-CHECK2: config=rundir/claude-config claude_md=absent oauth=set api_key=unset engine=$eng"
     got="$(grep -h '^ENV-CHECK2:' "$R"/logs/*/arm_stderr.log)"
     [ "$got" = "$want" ] && pass "$arm arm env carries the config isolation" || fail "$arm isolation: got '$got'"
@@ -499,6 +502,18 @@ got="$(grep -h '^ENV-CHECK2:' "$R"/logs/*/arm_stderr.log)"
     && pass "operator API key passed to the arm alone" || fail "api key isolation: got '$got'"
 no_auth_outside_arm "$R" "api-key"
 if grep -rqF -e "$FAKE_OAUTH" -e "$FAKE_KEY" "$T"/out-*; then fail "auth token value written to a log"; else pass "auth token value appears in no log"; fi
+
+# ---- 13. (E-38) --tasks runs exactly the listed ids; an unknown id is
+# refused before any run, so a 5-task measurement never silently shrinks.
+R="$T/out-tasks"
+STUB_MODE=noop RUN --arm raw-claude --tasks "fx-iso, fx-greet" --out "$R" >/dev/null 2>&1
+got="$(python3 -c 'import json,sys; print(",".join(sorted(json.loads(l)["task"] for l in open(sys.argv[1]))))' "$R/results.jsonl" 2>/dev/null)"
+[ "$got" = "fx-greet,fx-iso" ] && pass "E-38: --tasks runs exactly the listed tasks" || fail "E-38: --tasks rows='$got'"
+R="$T/out-tasks-bad"
+STUB_MODE=noop RUN --arm raw-claude --tasks fx-greet,no-such-task --out "$R" >/dev/null 2>&1
+rc=$?
+[ "$rc" = 2 ] && [ ! -s "$R/results.jsonl" ] && pass "E-38: --tasks with an unknown id exits 2 with no rows" \
+    || fail "E-38: bad --tasks rc=$rc rows=$(wc -l < "$R/results.jsonl" 2>/dev/null)"
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

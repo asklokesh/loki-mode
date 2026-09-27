@@ -3,7 +3,7 @@
 
 Subcommands (run.sh and summarize are thin wrappers around these):
   validate <task_dir>...
-  run --arm <v10|raw-claude|legacy> (--task ID | --all) [--parallel N] [--out DIR] [--tasks-dir DIR]
+  run --arm <v10|raw-claude|legacy> (--task ID | --tasks A,B | --all) [--parallel N] [--out DIR] [--tasks-dir DIR]
   summarize <results.jsonl> [--markdown]
 
 Honesty rules (the v10.0.0 release gate depends on them):
@@ -627,6 +627,8 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
         env["LOKI_ENGINE"] = "v10"
         argv = [binary, prompt]
     else:
+        # Pinned so the v10 default flip (E-31) cannot change what EV-5 measures.
+        env["LOKI_ENGINE"] = "legacy"
         pfile = os.path.join(rundir, "prompt.md")
         with open(pfile, "w", encoding="utf-8") as f:
             f.write(prompt + PUSH_INSTRUCTION + "\n")
@@ -687,8 +689,12 @@ def cmd_run(args):
         print("error: run through run.sh (needs a run-owned LOKI_RUN_TMP)", file=sys.stderr)
         return 2
     tasks_dir = os.path.abspath(args.tasks_dir)
-    ids = sorted(d for d in os.listdir(tasks_dir) if os.path.isfile(os.path.join(tasks_dir, d, "task.json"))) \
-        if args.all else [args.task]
+    if args.all:
+        ids = sorted(d for d in os.listdir(tasks_dir) if os.path.isfile(os.path.join(tasks_dir, d, "task.json")))
+    elif args.tasks:
+        ids = sorted({t.strip() for t in args.tasks.split(",") if t.strip()})
+    else:
+        ids = [args.task]
     tasks, bad = [], False
     for tid in ids:
         t, errs = validate_task(os.path.join(tasks_dir, tid))
@@ -940,6 +946,7 @@ def main(argv=None):
     r.add_argument("--arm", required=True, choices=ARMS)
     g = r.add_mutually_exclusive_group(required=True)
     g.add_argument("--task")
+    g.add_argument("--tasks", help="comma-separated task ids (e.g. a 5-task measurement)")
     g.add_argument("--all", action="store_true")
     r.add_argument("--parallel", type=int, default=3)
     r.add_argument("--out", default=os.path.join(HERE, "results"))
