@@ -1240,3 +1240,11 @@ sample.
 - In flight: stage-time measurement of augmentiq #52 plus 3 recent runs; eval harness runner (EV-1); eval task curation, 25+ tasks with hidden tests (EV-2); ORPHAN guard (E-00).
 - ETA for v10.0.0: the engine design lands first; the gate decision is at 03:00 UTC (23:00 ET).
 - Top blocker: none yet; the measured stage table decides the design.
+
+## 2026-09-27T22:08Z: Loki 10 engine progress
+- ENGINE.md on main (`git ls-remote origin refs/heads/main` = a4ea867b): measured stage table (docs/v10/ENGINE-MEASURE.md), architecture, 30 slices E-01..E-30.
+- Slices in flight: E-01, E-05, E-06 (phase A, wf_f5dde039-0c5); E-11 shell half, E-12, E-30 (wf_f70c455a-69e); E-00 ORPHAN guard built (5e52dd64), in review.
+- Eval: EV-1 runner built (3cf723be, `bash eval/loki10/test-harness.sh` 34 passed), in adversarial review. EV-2 has 27 tasks (augmentiq 1, public 12, quickstart 14; f9304d1a), under full red/green re-verification. EV-3 arm isolation (clean claude config) in flight.
+- Eval numbers so far: none (no arm has run yet).
+- ETA for v10.0.0: thin path end to end targeted for about 01:00 UTC; gate decision at 03:00 UTC.
+- Top blocker: E-01 (shared types) gates phase B; augmentiq has only 3 issues, so the augmentiq share of the eval is 1 task, not 5.
