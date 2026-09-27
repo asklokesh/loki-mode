@@ -213,3 +213,7 @@ looser purpose-built budget as the commit claimed, and was never checked
 against a real R0 `--run`. Removed; the job-level `timeout-minutes: 25`
 remains the only cap on this step. Guarded by
 `tests/test-tier-a-r0-timeout-budget.sh` (S-96 rework).
+
+## Over-budget stops
+
+- 2026-09-27T21:33Z: batch 8 workflow wf_ff8d537c-40e stopped. Its last two reviewers (S-191, S-195) ran about 55 minutes against the 30-minute reviewer budget with no verdict (pulse AGENT_OVER_BUDGET at 21:31Z: "S-191 building MEDIUM (55.9 min, budget 30 min)"). Re-dispatched as two standalone reviewers with 20 and 25 minute scopes. Load average was 15 to 17 during the stall.
