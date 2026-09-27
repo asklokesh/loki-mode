@@ -120,6 +120,18 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
   return {
     run(opts: SessionRunOptions): Promise<SessionResult> {
       const start = Date.now();
+      // A signal that aborted before run() was even called (a cap-hit or
+      // cancel racing the stage boundary) never fires the "abort" listener
+      // below -- addEventListener only sees events after it attaches. Honor
+      // it up front so a pre-aborted signal never spawns a session at all.
+      if (opts.signal.aborted) {
+        return Promise.resolve({
+          exit: null,
+          markers: { done: false, alreadyDone: null, specConflict: null },
+          durationS: (Date.now() - start) / 1000,
+          killed: true,
+        });
+      }
       const env = childEnv(opts, cfg);
       const [cmd, args] = cfg.childCommand ?? [
         process.execPath,
@@ -190,9 +202,8 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
 
 // Child role: reuses resolveProvider (runner/providers.ts) to make the real
 // provider call from inside the spawned, own-process-group child. Exported
-// as a function rather than run unconditionally so E-12 (cli.ts, not yet on
-// main) can dispatch `engine10 session` to it later without this slice
-// wiring cli.ts itself.
+// as a function rather than run unconditionally so cli.ts's `engine10
+// session` dispatch (E-12) can reach it too, via the `main` alias below.
 //
 // Known gap, left for whoever wires this in: if a provider's invoke() only
 // writes markers to call.iterationOutputPath and never tees to stdout, this
@@ -214,6 +225,11 @@ export async function sessionChildMain(): Promise<never> {
   });
   process.exit(result.exitCode);
 }
+
+// cli.ts's TABLE routes "session" to {module: "session.ts", fn: "main"}
+// (ENGINE.md section 11). Same body as sessionChildMain: it calls
+// process.exit itself, so runEngine10 never sees this return.
+export const main = sessionChildMain;
 
 if (import.meta.main && process.argv.includes("--engine10-session-child")) {
   void sessionChildMain();
