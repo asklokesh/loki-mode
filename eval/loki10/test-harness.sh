@@ -3,29 +3,42 @@
 # eval/loki10/test-harness.sh
 #
 # EV-1: the Loki 10 eval harness (run.sh, harness.py, summarize) against two
-# self-made fixture tasks with a stub arm. Never runs the real claude or loki.
+# self-made fixture tasks (plus variants built from them) with a stub arm.
+# Never runs the real claude or loki.
 # Legs:
 #   1. validator accepts the fixtures and rejects '..', absolute hidden paths,
 #      id/dir mismatch and a missing hidden.run
-#   2. leak-check positive control: the stub fails loudly when a hidden file
-#      is visible
-#   3. pass stub -> completed, hidden absent during the arm and from the PR
-#      branch, cost null when not reported
-#   4. cost stub -> provider-reported cost recorded
+#   2. leak-check positive control: the stub fails loudly on a visible hidden file
+#   3. pass stub -> completed; hidden absent during the arm; env scrubbed;
+#      cost null when not reported; later upstream commits pruned
+#   4. cost stub -> provider-reported cost recorded (single line and pretty)
 #   5. nofix stub -> pr_opened but hidden fails, not completed
 #   6. noop stub -> no PR, not completed, time_to_pr null
 #   7. sleep stub on a 3s cap -> capped, not completed, sleeper killed
-#   8. v10 arm: missing binary and missing engine marker -> arm_unavailable;
-#      marker present -> completed
+#   8. v10 arm: missing binary / missing marker -> arm_unavailable; marker with
+#      a fresh run_id events file -> completed
 #   9. --all --parallel 2 records both tasks; run tmp removed after each run
 #  10. SIGTERM to run.sh kills only its children, removes its tmp, no ok row
-#  11. summarize: rates, n/a handling, interrupted excluded, Markdown misses
-# Also: arm env drops LOKI_RUN_TMP/LOKI_*/GH_TOKEN; cost parsed from a
-# pretty-printed message array.
+#  Review legs (each red before its fix):
+#  R1 committed or setup-created .loki/engine.json -> task_invalid
+#  R1b marker without events file, or with a stale one -> arm_unavailable
+#  R2 committed .loki/metrics -> task_invalid; estimate cost -> null;
+#     provider-sourced cost -> recorded
+#  Ra hidden test that exits 0 before its assertions -> not passed;
+#     pytest that only skips -> not passed; real pytest pass -> completed
+#  Rb arm sees no repo.source path, no global/system git config, no seed copy
+#  Rc hidden path that is a symlink or blocked by a file -> graded fail
+#  Rd harness_error after a push keeps pr_opened
+#  Re orphan left by the arm is killed
+#  Rf hidden tests that already pass at repo.ref -> task_invalid
+#  Rg summarize dedupes by (task, arm) and groups by model and harness_sha
+#  Rh push time before the run start is flagged, not clamped
+#  Ri harness_sha carries -dirty exactly when the repo has local changes
 #===============================================================================
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 # shellcheck source=lib-tmp.sh
 . "$HERE/lib-tmp.sh"
 export LOKI_NO_BROWSER=1 LOKI_EVAL_MAX_LOAD=1000
@@ -39,30 +52,63 @@ fail() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 loki_run_tmp_create || { echo "FAIL: cannot create run tmp"; exit 1; }
 T="$LOKI_RUN_TMP"
 echo "test tmp: $T"
-trap 'loki_run_tmp_cleanup || echo "WARN: test tmp cleanup refused: $T"' EXIT
+trap 'chmod -R u+rw "$T" 2>/dev/null; loki_run_tmp_cleanup || echo "WARN: test tmp cleanup refused: $T"' EXIT
 
 STUB="$HERE/fixtures/stub-arm.sh"
 TASKS="$T/tasks"
-mkdir -p "$TASKS" "$T/bin"
+mkdir -p "$TASKS" "$T/bin" "$T/fakebin"
 ln -s "$STUB" "$T/bin/claude-stub"
 ln -s "$STUB" "$T/bin/loki-stub"
 
-# Seed each fixture's repo and write a runnable task dir with real source/ref.
-for fx in fx-greet fx-cap; do
-    seed="$T/seed-$fx"
-    cp -R "$HERE/fixtures/$fx/seed" "$seed"
+# seed_task NAME BASE PY_EXPR PRE_CMD: seed a repo from fixtures/BASE/seed
+# (PRE_CMD runs in it before the first commit), add a later "future" commit
+# the arm must never see, and write a runnable task dir. PY_EXPR edits the
+# task dict `t`.
+seed_task() {
+    local name="$1" base="$2" expr="$3" pre="$4" seed="$T/seed-$1" ref
+    cp -R "$HERE/fixtures/$base/seed" "$seed"
+    (cd "$seed" && bash -c "$pre") || return 1
     git -C "$seed" init -q
-    git -C "$seed" add -A
+    git -C "$seed" add -A -f .
     git -C "$seed" -c user.name=t -c user.email=t@localhost commit -q -m seed
-    # A later commit that must NOT be visible to the arm (fixture future).
     echo future > "$seed/future.txt"
     git -C "$seed" add future.txt
     git -C "$seed" -c user.name=t -c user.email=t@localhost commit -q -m future
     ref="$(git -C "$seed" rev-parse HEAD~1)"
-    mkdir -p "$TASKS/$fx"
-    cp -R "$HERE/fixtures/$fx/hidden" "$TASKS/$fx/hidden"
-    sed -e "s|@SEED_REPO@|$seed|" -e "s|@SEED_REF@|$ref|" "$HERE/fixtures/$fx/task.json" > "$TASKS/$fx/task.json"
-done
+    mkdir -p "$TASKS/$name"
+    cp -R "$HERE/fixtures/$base/hidden" "$TASKS/$name/hidden"
+    python3 - "$HERE/fixtures/$base/task.json" "$TASKS/$name/task.json" "$name" "$seed" "$ref" "$expr" <<'PY'
+import json, sys
+src, dst, name, seed, ref, expr = sys.argv[1:]
+t = json.load(open(src))
+t["id"] = name
+t["repo"] = {"source": seed, "ref": ref}
+exec(expr)
+json.dump(t, open(dst, "w"), indent=2)
+PY
+}
+seed_task fx-greet fx-greet "" ":"
+seed_task fx-cap fx-cap "" ":"
+seed_task v-committed-marker fx-greet "" \
+    'mkdir -p .loki/events && echo "{\"engine\": \"v10\", \"run_id\": \"old\"}" > .loki/engine.json && touch .loki/events/old.jsonl'
+seed_task v-setup-marker fx-greet \
+    "t['setup'] = 'mkdir -p .loki && echo {\\\"engine\\\": \\\"v10\\\"} > .loki/engine.json'" ":"
+seed_task v-committed-metrics fx-greet "" \
+    'mkdir -p .loki/metrics/efficiency && echo "{\"iteration\": 1, \"cost_usd\": 9.99}" > .loki/metrics/efficiency/iteration-1.json'
+seed_task v-pytest fx-greet "t['hidden']['run'] = 'pytest -q'" ":"
+seed_task v-blocker fx-greet "t['hidden']['files'] = ['tests/hidden_test.sh']; t['hidden']['run'] = 'bash tests/hidden_test.sh'" ":"
+mkdir -p "$TASKS/v-blocker/hidden/tests" && mv "$TASKS/v-blocker/hidden/hidden_test.sh" "$TASKS/v-blocker/hidden/tests/"
+seed_task v-chmod fx-greet "" ":"
+seed_task v-baseline-pass fx-greet "t['hidden']['run'] = 'echo \"\$LOKI_EVAL_NONCE\"'" ":"
+
+# A pytest stand-in: "skip" mode reports only skips with exit 0 (a conftest
+# that skips everything); otherwise it runs the real hidden script.
+cat > "$T/fakebin/pytest" <<'EOF'
+#!/usr/bin/env bash
+if [ "${FAKE_PYTEST:-}" = skip ]; then echo "1 skipped in 0.01s"; exit 0; fi
+if bash hidden_test.sh >/dev/null 2>&1; then echo "1 passed in 0.01s"; else echo "1 failed in 0.01s"; exit 1; fi
+EOF
+chmod +x "$T/fakebin/pytest"
 
 H() { python3 "$HERE/harness.py" "$@"; }
 # run.sh owns its own run tmp, so it must not inherit ours.
@@ -108,19 +154,33 @@ prj="$R/logs/$(ls "$R/logs")/pr.json"
 rtmp="$(sed -n 's/^run tmp: //p' "$T/pass.log")"
 [ -n "$rtmp" ] && [ ! -e "$rtmp" ] && pass "run tmp removed after the run" || fail "run tmp left behind: $rtmp"
 
-# The PR branch never contains the hidden file, and the future commit was pruned.
-PROBE="$T/probe"
-mkdir -p "$PROBE"
+# Probe arm: dumps what it can see (Rb) and checks the future commit.
 cat > "$T/bin/probe-stub" <<'EOF'
 #!/usr/bin/env bash
 git cat-file -e "$(cat "$PROBE_FUTURE_SHA")" 2>/dev/null && echo "FUTURE VISIBLE" || echo "FUTURE ABSENT"
+echo "ARGS: $*"
+env
+cat .git/logs/HEAD 2>/dev/null
+cat .git/config
+echo "GLOBAL-NAME: [$(git config --global user.name 2>/dev/null)]"
+echo "SIBLINGS: $(ls ..)"
 EOF
 chmod +x "$T/bin/probe-stub"
-git -C "$T/seed-fx-greet" rev-parse HEAD > "$PROBE/future-sha"
-PROBE_FUTURE_SHA="$PROBE/future-sha" LOKI_EVAL_CLAUDE_BIN="$T/bin/probe-stub" \
+git -C "$T/seed-fx-greet" rev-parse HEAD > "$T/future-sha"
+PROBE_FUTURE_SHA="$T/future-sha" LOKI_EVAL_CLAUDE_BIN="$T/bin/probe-stub" \
     RUN --arm raw-claude --task fx-greet --out "$T/out-probe" >/dev/null 2>&1
-grep -q "FUTURE ABSENT" "$T/out-probe"/logs/*/arm_stdout.log && pass "later upstream commits pruned from the arm checkout" \
-    || fail "future commit visible to the arm: $(cat "$T/out-probe"/logs/*/arm_stdout.log)"
+PL="$(cat "$T/out-probe"/logs/*/arm_stdout.log)"
+printf '%s' "$PL" | grep -q "FUTURE ABSENT" && pass "later upstream commits pruned from the arm checkout" \
+    || fail "future commit visible to the arm: $PL"
+
+# ---- Rb. arm cannot reach repo.source or the operator's git config
+printf '%s' "$PL" | grep -qF "$T/seed-fx-greet" && fail "Rb: repo.source path visible to the arm" \
+    || pass "Rb: repo.source path not visible to the arm (argv, env, .git)"
+printf '%s' "$PL" | grep -qx "GIT_CONFIG_GLOBAL=/dev/null" && printf '%s' "$PL" | grep -qx "GIT_CONFIG_NOSYSTEM=1" \
+    && printf '%s' "$PL" | grep -qx "GLOBAL-NAME: \[\]" && pass "Rb: arm git ignores global and system config" \
+    || fail "Rb: arm git config not isolated: $(printf '%s' "$PL" | grep -E 'GIT_CONFIG|GLOBAL-NAME')"
+printf '%s' "$PL" | grep "^SIBLINGS:" | grep -q "seed" && fail "Rb: private seed copy left beside the checkout" \
+    || pass "Rb: no seed copy beside the checkout during the arm"
 
 # ---- 4. cost
 R="$T/out-cost"
@@ -164,11 +224,105 @@ STUB_MODE=pass RUN --arm v10 --task fx-greet --out "$R" >/dev/null 2>&1
 [ "$(row "$R/results.jsonl" status)" = '"arm_unavailable"' ] && [ "$(row "$R/results.jsonl" completed)" = false ] \
     && pass "v10 without engine marker -> arm_unavailable, not a pass" || fail "v10 no marker: $(tail -1 "$R/results.jsonl")"
 STUB_MODE=pass STUB_V10_MARKER=1 RUN --arm v10 --task fx-greet --out "$R" >/dev/null 2>&1
-[ "$(row "$R/results.jsonl" completed)" = true ] && pass "v10 with engine marker -> completed" || fail "v10 marker: $(tail -1 "$R/results.jsonl")"
+[ "$(row "$R/results.jsonl" completed)" = true ] && pass "v10 with marker and fresh events -> completed" || fail "v10 marker: $(tail -1 "$R/results.jsonl")"
+
+# ---- R1. a pre-existing marker makes the task invalid, never a v10 pass
+for v in v-committed-marker v-setup-marker; do
+    R="$T/out-$v"
+    STUB_MODE=pass RUN --arm v10 --task "$v" --out "$R" >/dev/null 2>&1
+    [ "$(row "$R/results.jsonl" status)" = '"task_invalid"' ] && [ "$(row "$R/results.jsonl" completed)" = false ] \
+        && pass "R1: $v -> task_invalid" || fail "R1: $v row: $(tail -1 "$R/results.jsonl")"
+done
+# ---- R1b. marker must point at an events file written during this run
+for m in noevents stale; do
+    R="$T/out-v10-$m"
+    STUB_MODE=pass STUB_V10_MARKER="$m" RUN --arm v10 --task fx-greet --out "$R" >/dev/null 2>&1
+    [ "$(row "$R/results.jsonl" status)" = '"arm_unavailable"' ] && pass "R1b: v10 marker with $m events -> arm_unavailable" \
+        || fail "R1b: $m row: $(tail -1 "$R/results.jsonl")"
+done
+
+# ---- R2. loki-arm cost only from provider-sourced records
+R="$T/out-metrics"
+STUB_MODE=pass RUN --arm legacy --task v-committed-metrics --out "$R" >/dev/null 2>&1
+[ "$(row "$R/results.jsonl" status)" = '"task_invalid"' ] && [ "$(row "$R/results.jsonl" cost_usd)" = null ] \
+    && pass "R2: committed .loki/metrics -> task_invalid, no cost" || fail "R2: metrics row: $(tail -1 "$R/results.jsonl")"
+R="$T/out-estimate"
+STUB_MODE=pass STUB_LOKI_COST=estimate RUN --arm legacy --task fx-greet --out "$R" >/dev/null 2>&1
+[ "$(row "$R/results.jsonl" cost_usd)" = null ] && pass "R2: record without provider cost_source -> cost null" \
+    || fail "R2: estimate cost=$(row "$R/results.jsonl" cost_usd)"
+R="$T/out-provider"
+STUB_MODE=pass STUB_LOKI_COST=provider RUN --arm legacy --task fx-greet --out "$R" >/dev/null 2>&1
+[ "$(row "$R/results.jsonl" cost_usd)" = 0.5 ] && pass "R2: provider-sourced record -> cost recorded" \
+    || fail "R2: provider cost=$(row "$R/results.jsonl" cost_usd)"
+
+# ---- Ra. nonce: early exit 0 and skip-only pytest cannot pass
+R="$T/out-exit0"
+STUB_MODE=exit0 RUN --arm raw-claude --task fx-greet --out "$R" >/dev/null 2>&1
+[ "$(row "$R/results.jsonl" pr_opened)" = true ] && [ "$(row "$R/results.jsonl" hidden_pass)" = false ] \
+    && pass "Ra: hidden test exiting 0 before its assertions does not pass" || fail "Ra: exit0 row: $(tail -1 "$R/results.jsonl")"
+R="$T/out-pyskip"
+PATH="$T/fakebin:$PATH" FAKE_PYTEST=skip STUB_MODE=pass RUN --arm raw-claude --task v-pytest --out "$R" >/dev/null 2>&1
+[ "$(row "$R/results.jsonl" hidden_pass)" = false ] && [ "$(row "$R/results.jsonl" completed)" = false ] \
+    && pass "Ra: pytest reporting only skips does not pass" || fail "Ra: skip row: $(tail -1 "$R/results.jsonl")"
+R="$T/out-pypass"
+PATH="$T/fakebin:$PATH" STUB_MODE=pass RUN --arm raw-claude --task v-pytest --out "$R" >/dev/null 2>&1
+[ "$(row "$R/results.jsonl" completed)" = true ] && pass "Ra: pytest with passed tests and no failures completes" \
+    || fail "Ra: pytest pass row: $(tail -1 "$R/results.jsonl")"
+
+# ---- Rc. symlinked or blocked hidden paths in the PR tree grade as fail
+echo ORIGINAL > "$T/symlink-target"
+R="$T/out-symlink"
+STUB_MODE=symlink STUB_SYMLINK_TARGET="$T/symlink-target" RUN --arm raw-claude --task fx-greet --out "$R" >/dev/null 2>&1
+[ "$(cat "$T/symlink-target")" = ORIGINAL ] && [ "$(row "$R/results.jsonl" status)" = '"ok"' ] \
+    && [ "$(row "$R/results.jsonl" hidden_pass)" = false ] && [ "$(row "$R/results.jsonl" grade_refused)" != null ] \
+    && pass "Rc: symlinked hidden path refused, target untouched" \
+    || fail "Rc: symlink target=$(cat "$T/symlink-target") row: $(tail -1 "$R/results.jsonl")"
+R="$T/out-blocker"
+STUB_MODE=blocker RUN --arm raw-claude --task v-blocker --out "$R" >/dev/null 2>&1
+[ "$(row "$R/results.jsonl" status)" = '"ok"' ] && [ "$(row "$R/results.jsonl" hidden_pass)" = false ] \
+    && pass "Rc: file blocking a hidden parent dir -> graded fail, not harness_error" \
+    || fail "Rc: blocker row: $(tail -1 "$R/results.jsonl")"
+
+# ---- Rd. harness_error after the push keeps pr_opened
+R="$T/out-chmod"
+STUB_MODE=chmodafter STUB_CHMOD_FILE="$TASKS/v-chmod/hidden/hidden_test.sh" RUN --arm raw-claude --task v-chmod --out "$R" >/dev/null 2>&1
+chmod 644 "$TASKS/v-chmod/hidden/hidden_test.sh"
+[ "$(row "$R/results.jsonl" status)" = '"harness_error"' ] && [ "$(row "$R/results.jsonl" pr_opened)" = true ] \
+    && [ "$(row "$R/results.jsonl" completed)" = false ] && pass "Rd: harness_error after push keeps pr_opened" \
+    || fail "Rd: row: $(tail -1 "$R/results.jsonl")"
+
+# ---- Re. orphans left by the arm die with its process group
+R="$T/out-orphan"
+rm -f "$T/orphan.pids"
+STUB_MODE=orphan STUB_PID_FILE="$T/orphan.pids" RUN --arm raw-claude --task fx-greet --out "$R" >/dev/null 2>&1
+op="$(cat "$T/orphan.pids" 2>/dev/null)"
+if [ -n "$op" ] && ! kill -0 "$op" 2>/dev/null; then pass "Re: orphan sleeper killed after the arm exits"; else
+    fail "Re: orphan $op still alive"; [ -n "$op" ] && kill "$op" 2>/dev/null; fi
+
+# ---- Rf. hidden tests that pass before the arm make the task invalid
+R="$T/out-baseline"
+STUB_MODE=noop RUN --arm raw-claude --task v-baseline-pass --out "$R" >/dev/null 2>&1
+[ "$(row "$R/results.jsonl" status)" = '"task_invalid"' ] && pass "Rf: hidden tests passing at repo.ref -> task_invalid" \
+    || fail "Rf: row: $(tail -1 "$R/results.jsonl")"
+
+# ---- Rh. push time before the run start is flagged
+R="$T/out-backdate"
+STUB_MODE=backdate RUN --arm raw-claude --task fx-greet --out "$R" >/dev/null 2>&1
+[ "$(row "$R/results.jsonl" push_time_anomaly)" = true ] && [ "$(row "$R/results.jsonl" time_to_pr_s)" = null ] \
+    && [ "$(row "$R/results.jsonl" completed)" = false ] && pass "Rh: backdated push flagged, not clamped to 0" \
+    || fail "Rh: row: $(tail -1 "$R/results.jsonl")"
+
+# ---- Ri. harness_sha marks a dirty tree
+sha="$(row "$T/out-pass/results.jsonl" harness_sha)"
+if [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]; then want=dirty; else want=clean; fi
+case "$sha" in *-dirty\") got=dirty ;; *) got=clean ;; esac
+[ "$want" = "$got" ] && pass "Ri: harness_sha is $got for a $want tree ($sha)" || fail "Ri: tree $want but harness_sha $sha"
 
 # ---- 9. --all --parallel
 R="$T/out-all"
-STUB_MODE=noop RUN --arm raw-claude --all --parallel 2 --out "$R" >/dev/null 2>&1
+mkdir -p "$T/tasks-all"
+cp -R "$TASKS/fx-greet" "$TASKS/fx-cap" "$T/tasks-all/"
+STUB_MODE=noop env -u LOKI_RUN_TMP bash "$HERE/run.sh" --tasks-dir "$T/tasks-all" --arm raw-claude --all --parallel 2 --out "$R" >/dev/null 2>&1
 n="$(grep -c . "$R/results.jsonl" 2>/dev/null)"
 [ "$n" = 2 ] && pass "--all --parallel 2 records both tasks" || fail "--all rows=$n"
 
@@ -191,24 +345,48 @@ rtmp="$(sed -n 's/^run tmp: //p' "$T/stop.log")"
 st="$(row "$R/results.jsonl" status 2>/dev/null)"
 [ -z "$st" ] || [ "$st" = '"interrupted"' ] && pass "interrupted run is not recorded as ok ($st)" || fail "stop row status=$st"
 
-# ---- 11. summarize
-cat "$T/out-pass/results.jsonl" "$T/out-cost/results.jsonl" "$T/out-nofix/results.jsonl" \
-    "$T/out-noop/results.jsonl" "$T/out-cap/results.jsonl" "$T/out-v10/results.jsonl" > "$T/all.jsonl"
-# An interrupted row must not enter the denominator.
-echo '{"task":"fx-greet","arm":"raw-claude","status":"interrupted","completed":false,"capped":false,"cost_usd":null,"time_to_pr_s":null}' >> "$T/all.jsonl"
-S="$(bash "$HERE/summarize" "$T/all.jsonl" --json)"
-chk() { python3 -c "import json,sys; s=json.loads(sys.argv[1]); assert $2, s" "$S" 2>/dev/null && pass "$1" || fail "$1: $S"; }
-chk "raw-claude 2 of 5 completed" "s['raw-claude']['completed']==2 and s['raw-claude']['evaluated']==5"
-chk "raw-claude cost n/a when some runs unmeasured" "s['raw-claude']['cost_per_completed_usd'] is None and s['raw-claude']['cost_measured_runs']==1"
-chk "raw-claude capped count 1" "s['raw-claude']['capped']==1"
-chk "interrupted run counted separately, not as a miss" "s['raw-claude']['infra_or_interrupted']==1"
-chk "v10 unavailable runs excluded from the rate" "s['v10']['unavailable']==2 and s['v10']['evaluated']==1 and s['v10']['completion_rate']==1.0"
-head -2 "$T/out-v10/results.jsonl" > "$T/unavail.jsonl"
-S="$(bash "$HERE/summarize" "$T/unavail.jsonl" --json)"
-chk "all-unavailable arm rate is n/a, not 0" "s['v10']['completion_rate'] is None"
-md="$(bash "$HERE/summarize" "$T/all.jsonl" --markdown)"
-printf '%s' "$md" | grep -q "| raw-claude | 2/5 | 40.0% |" && printf '%s' "$md" | grep -q "fx-greet / raw-claude: no branch pushed" \
-    && printf '%s' "$md" | grep -q "fx-cap / raw-claude: capped" && pass "Markdown table and misses" || fail "markdown: $md"
+# ---- Rg. summarize: dedupe, grouping, denominators (synthetic rows)
+S_IN="$T/synthetic.jsonl"
+python3 - "$S_IN" <<'PY'
+import json, sys
+def r(run_id, task, arm, status="ok", sha="s1", ended="2026-01-01T00:00:00", **kw):
+    d = {"run_id": run_id, "task": task, "arm": arm, "status": status, "model": "m1",
+         "harness_sha": sha, "ended": ended, "completed": False, "pr_opened": False,
+         "hidden_pass": False, "capped": False, "cost_usd": None, "time_to_pr_s": None}
+    d.update(kw)
+    return d
+rows = [
+    r("a1", "t1", "raw-claude", ended="2026-01-01T00:00:01", completed=True, pr_opened=True, hidden_pass=True, time_to_pr_s=10, cost_usd=1.0),
+    r("a1", "t1", "raw-claude", ended="2026-01-01T00:00:01", completed=True, pr_opened=True, hidden_pass=True, time_to_pr_s=10, cost_usd=1.0),
+    r("a2", "t2", "raw-claude", ended="2026-01-01T00:00:02", completed=True, pr_opened=True, hidden_pass=True, time_to_pr_s=20, cost_usd=1.0),
+    r("a3", "t2", "raw-claude", ended="2026-01-01T00:00:03"),
+    r("a4", "t3", "raw-claude", "harness_error", ended="2026-01-01T00:00:04", pr_opened=True),
+    r("a5", "t4", "raw-claude", "task_invalid", invalid_reason="hidden tests already pass at repo.ref"),
+    r("a6", "t4", "v10", completed=True, pr_opened=True, hidden_pass=True, time_to_pr_s=5),
+    r("a7", "t1", "v10", "arm_unavailable"),
+    r("a8", "t5", "raw-claude", "interrupted"),
+    r("b1", "t1", "raw-claude", sha="s2", completed=True, pr_opened=True, hidden_pass=True, time_to_pr_s=7),
+]
+with open(sys.argv[1], "w") as f:
+    for x in rows:
+        f.write(json.dumps(x) + "\n")
+PY
+S="$(bash "$HERE/summarize" "$S_IN" --json)"
+chk() { python3 -c "import json,sys; s=json.loads(sys.argv[1]); g={x['harness_sha']: x for x in s}; assert $2, s" "$S" 2>/dev/null && pass "$1" || fail "$1: $S"; }
+chk "Rg: two groups by model and harness_sha" "len(s) == 2 and set(g) == {'s1', 's2'}"
+chk "Rg: dedupe keeps the newest row per (task, arm); harness_error after push counts" \
+    "g['s1']['arms']['raw-claude']['evaluated'] == 3 and g['s1']['arms']['raw-claude']['completed'] == 1"
+chk "Rg: invalid task excluded from every arm and listed" \
+    "[x['task'] for x in g['s1']['invalid_tasks']] == ['t4'] and g['s1']['arms']['v10']['evaluated'] == 0 and g['s1']['arms']['v10']['completion_rate'] is None"
+chk "Rg: unavailable and interrupted counted separately" \
+    "g['s1']['arms']['v10']['unavailable'] == 1 and g['s1']['arms']['raw-claude']['infra_or_interrupted'] == 1"
+chk "Rg: cost n/a when some evaluated runs unmeasured" \
+    "g['s1']['arms']['raw-claude']['cost_per_completed_usd'] is None and g['s1']['arms']['raw-claude']['cost_measured_runs'] == 1"
+chk "Rg: second group scored on its own" "g['s2']['arms']['raw-claude']['completion_rate'] == 1.0"
+md="$(bash "$HERE/summarize" "$S_IN" --markdown)"
+printf '%s' "$md" | grep -q "| raw-claude | 1/3 | 33.3% |" && printf '%s' "$md" | grep -q "t2 / raw-claude: no branch pushed" \
+    && printf '%s' "$md" | grep -q "t4: hidden tests already pass at repo.ref" && printf '%s' "$md" | grep -q "harness s2" \
+    && pass "Rg: Markdown groups, invalid tasks and misses" || fail "Rg: markdown: $md"
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
