@@ -26,7 +26,8 @@ cfg="${CLAUDE_CONFIG_DIR:-unset}"
 cmd=absent; [ -e "${CLAUDE_CONFIG_DIR:-/nonexistent}/CLAUDE.md" ] && cmd=present
 oauth="unset"; [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && oauth="set"
 api_key="unset"; [ -n "${ANTHROPIC_API_KEY:-}" ] && api_key="set"
-echo "ARGV: $*" >&2
+# One line even when the prompt has newlines (%q escapes them).
+{ printf 'ARGV:'; printf ' %q' "$@"; echo; } >&2
 echo "ENV-CHECK2: config=$cfg claude_md=$cmd oauth=$oauth api_key=$api_key engine=${LOKI_ENGINE:-unset}" >&2
 
 if [ "${STUB_V10_MARKER:-0}" = "1" ]; then
