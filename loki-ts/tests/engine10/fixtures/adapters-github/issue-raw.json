@@ -1,0 +1,11 @@
+{
+  "provider": "github",
+  "number": 52,
+  "title": "add a search bar",
+  "body": "Add a search bar to the header nav.",
+  "labels": ["enhancement"],
+  "author": "octocat",
+  "url": "https://github.com/acme/widgets/issues/52",
+  "created_at": "2026-01-15T10:00:00Z",
+  "repo": "acme/widgets"
+}
