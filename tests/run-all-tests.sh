@@ -1509,6 +1509,7 @@ run_test "Evidence gate with no tests (BACKLOG 75, S-211)" "$SCRIPT_DIR/test-evi
 run_test "LOKI_AUTO_PR refuses a branch whose history holds user files (S-194)" "$SCRIPT_DIR/test-auto-pr-agent-committed-refuse.sh"
 run_test "focus POST skipped when the dashboard is disabled (S-195)" "$SCRIPT_DIR/test-focus-post-dashboard-off.sh"
 run_test "Loki 10 eval harness runner and scorer (EV-1)" "$SCRIPT_DIR/../eval/loki10/test-harness.sh"
+run_test "Loki 10 gate report generator (E-33)" "$SCRIPT_DIR/../eval/loki10/test-gate-report.sh"
 run_test "Loki 10 engine trusted push and PR (E-11)" "$SCRIPT_DIR/test-engine10-push.sh"
 run_test "Loki 10 engine dispatch hook (E-12)" "$SCRIPT_DIR/test-engine10-dispatch.sh"
 run_test "Loki 10 legacy route contract golden rows (E-30)" "$SCRIPT_DIR/test-engine10-legacy-contract.sh"
