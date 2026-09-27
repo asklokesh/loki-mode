@@ -30,6 +30,7 @@ import { createInterface } from "node:readline";
 import { readFile } from "node:fs/promises";
 import { lokiDir, REPO_ROOT } from "../util/paths.ts";
 import { run } from "../util/shell.ts";
+import { findIsolatedPython3 } from "../util/python.ts";
 import { BOLD, CYAN, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
 import { tierGate } from "../util/tier.ts";
 
@@ -599,11 +600,18 @@ async function verifyProof(id: string | undefined): Promise<number> {
   // Shell out to the verifier and pass its report + exit code through verbatim
   // (0 clean / 1 tamper-drift / 2 unusable). run() captures, so we write the
   // captured streams back out; the verifier prints a JSON report on stdout.
+  // -I -S: PYTHON* env, the cwd (the checkout under verification), a committed
+  // sitecustomize.py and a user-site .pth must not load code here (S-205).
+  const py = await findIsolatedPython3();
+  if (!py) {
+    process.stderr.write(
+      `${YELLOW}NOT CHECKED: no python3 passed the isolation probe (-I -S). Nothing was verified (exit 2).${NC}\n`,
+    );
+    return 2;
+  }
   let r: Awaited<ReturnType<typeof run>>;
   try {
-    // -E: PYTHONPATH (an empty component adds the cwd, the checkout under
-    // verification) and a committed sitecustomize.py must not load code here.
-    r = await run(["python3", "-E", verifier, pj, target], { timeoutMs: 30000 });
+    r = await run([py, "-I", "-S", verifier, pj, target], { timeoutMs: 30000 });
   } catch (e) {
     // python3 missing or unspawnable: nothing was checked, so 2, not the
     // uncaught-exception 1 that reads as "tampered".

@@ -53,6 +53,7 @@ import { dirname, join, resolve } from "node:path";
 
 import { run } from "../../src/util/shell.ts";
 import { noBashResultCode, runProof } from "../../src/commands/proof.ts";
+import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
 
 const REPO_ROOT = resolve(import.meta.dir, "..", "..", "..");
 const VERIFIER = resolve(REPO_ROOT, "autonomy", "lib", "proof-verify.py");
@@ -487,12 +488,32 @@ describe("proofFallthroughToBash: no exit code from bash is never a tamper verdi
     expect(noBashResultCode("releases")).toBe(1);
   });
 
+  // S-205: the verifier interpreter is resolved /usr/bin/python3 first, so a
+  // PATH shim no longer steers a child CLI. These two run in-process with the
+  // fixed candidates emptied, leaving PATH as the only source.
+  async function verifyWithPath(id: string, path: string): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    const savedPath = process.env["PATH"];
+    const ow = process.stdout.write.bind(process.stdout);
+    const ew = process.stderr.write.bind(process.stderr);
+    let stdout = "";
+    let stderr = "";
+    process.stdout.write = ((c: string | Uint8Array) => ((stdout += String(c)), true)) as typeof process.stdout.write;
+    process.stderr.write = ((c: string | Uint8Array) => ((stderr += String(c)), true)) as typeof process.stderr.write;
+    _setIsolatedPythonFixedForTests([]);
+    process.env["PATH"] = path;
+    try {
+      return { exitCode: await runProof(["verify", id]), stdout, stderr };
+    } finally {
+      process.env["PATH"] = savedPath;
+      _setIsolatedPythonFixedForTests(null);
+      process.stdout.write = ow;
+      process.stderr.write = ew;
+    }
+  }
+
   it("no python3 on PATH: verify exits 2 NOT CHECKED (was: uncaught spawn error -> 1)", async () => {
     await cleanProof("run-no-python");
-    const r = await run([process.execPath, BUN_CLI, "proof", "verify", "run-no-python"], {
-      env: { PATH: dirname(process.execPath), LOKI_DIR: lokiScratch, NO_COLOR: "1" },
-      timeoutMs: 30000,
-    });
+    const r = await verifyWithPath("run-no-python", dirname(process.execPath));
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toContain("NOT CHECKED");
   });
@@ -504,11 +525,9 @@ describe("proofFallthroughToBash: no exit code from bash is never a tamper verdi
     await cleanProof("run-killed");
     const shim = join(lokiScratch, "shim");
     mkdirSync(shim, { recursive: true });
-    writeFileSync(join(shim, "python3"), "#!/bin/sh\nkill -TERM $$\n", { mode: 0o755 });
-    const r = await run([process.execPath, BUN_CLI, "proof", "verify", "run-killed"], {
-      env: { PATH: `${shim}:${dirname(process.execPath)}:/usr/bin:/bin`, LOKI_DIR: lokiScratch, NO_COLOR: "1" },
-      timeoutMs: 30000,
-    });
+    // Pass the `-I -S -c ''` isolation probe, then die on the real run.
+    writeFileSync(join(shim, "python3"), "#!/bin/sh\n[ \"$3\" = -c ] && exit 0\nkill -TERM $$\n", { mode: 0o755 });
+    const r = await verifyWithPath("run-killed", `${shim}:${dirname(process.execPath)}`);
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toContain("NOT CHECKED");
     expect(r.stdout).toBe("");

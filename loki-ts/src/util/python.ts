@@ -8,7 +8,7 @@
 //   3. python3 on PATH (fallback for distros where 3.12 is the system default)
 import { commandExists, run } from "./shell.ts";
 import type { ShellResult } from "./shell.ts";
-import { existsSync } from "node:fs";
+import { accessSync, constants, existsSync, statSync } from "node:fs";
 
 let _pythonCache: string | null | undefined;
 
@@ -69,6 +69,34 @@ export async function runInline(
     };
   }
   return run([py, "-c", source], opts);
+}
+
+// Resolve an interpreter the way autonomy/run.sh _loki_snapshot_py_tool does:
+// /usr/bin/python3 and /bin/python3 first, then python3 in each ABSOLUTE PATH
+// dir, each probed with `-I -S -c ''`. Callers run it with -I -S so neither
+// PYTHON* env, the cwd, nor a user-site .pth can load code. Not cached: the
+// answer depends on PATH at call time.
+const ISOLATED_FIXED = ["/usr/bin/python3", "/bin/python3"];
+let _isolatedFixed: readonly string[] = ISOLATED_FIXED;
+
+export async function findIsolatedPython3(): Promise<string | null> {
+  const dirs = (process.env["PATH"] ?? "").split(":").filter((d) => d.startsWith("/"));
+  for (const c of [..._isolatedFixed, ...dirs.map((d) => `${d}/python3`)]) {
+    try {
+      if (!statSync(c).isFile()) continue;
+      accessSync(c, constants.X_OK);
+      const r = await run([c, "-I", "-S", "-c", ""], { timeoutMs: 10000 });
+      if (r.exitCode === 0) return c;
+    } catch {
+      /* missing, not executable, or unspawnable: try the next one */
+    }
+  }
+  return null;
+}
+
+// Test-only override of the fixed candidates (null restores the default).
+export function _setIsolatedPythonFixedForTests(c: readonly string[] | null): void {
+  _isolatedFixed = c ?? ISOLATED_FIXED;
 }
 
 // Test-only reset for the cache. Used by python.test.ts.
