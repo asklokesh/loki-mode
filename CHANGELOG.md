@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v9.79.0
+
+**Loki 10 engine wave 1 and the release-gate eval harness land (still opt-in behind LOKI_ENGINE=v10).** Released from green tree e86e846a (Tests run 36357562143 and Bun Parity run 36357562160 both success before the bump).
+
+- Loki 10 engine (docs/v10/ENGINE.md): the state machine with a 15-minute cap and resume (E-02), the supervisor/worker split so the process reading issue text never holds a push token, with a tamper check and a wall-clock backstop (E-03), intake with already-done detection and no PRD (E-04), real test-runner detection (E-05), the provider session in its own process group with a heartbeat (E-07), the implement brief that forbids full-suite runs and process kills (E-08), fast verify with lint and typecheck of changed files (E-09), the signed receipt with a NOT PROVEN list where an empty diff seals FAILED (E-10), the PR step (E-11), planner (E-16), ETA (E-20), live output (E-13) and cost records the eval can read (E-06). The engine is not yet runnable end to end; with LOKI_ENGINE unset nothing changes.
+- Eval harness for the v10.0.0 gate (eval/loki10/): 29 tasks with hidden tests (1 augmentiq, 14 public issues with merged-fix tests, 14 quickstart briefs), fresh clone per run, hidden tests applied only after the arm, nonce-verified grading, pre-run invalid-task checks, provider-reported cost only, and a clean Claude config per arm.
+- Every engine spawn passes an explicit environment (spawn env guard), and the seal test no longer assumes a macOS interpreter path.
+
 ## v9.78.0
 
 **First Loki 10 engine code, opt-in behind LOKI_ENGINE=v10; an ORPHAN guard for stuck runs.** Released from green tree 4aa09e07 (Tests run 36355193993 and Bun Parity run 36355193981 both success before the bump).
