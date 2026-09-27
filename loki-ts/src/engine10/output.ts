@@ -10,7 +10,10 @@
 import type { Verdict } from "./types.ts";
 
 const NAME_WIDTH = 12; // fits "implement" + padding to align the next column
-const STATUS_WIDTH = 7; // fits "skipped", the longest stage status word
+// E-44 (found by E-14): "skipped" is 7 chars, so a width of 7 left no
+// separating space and the duration ran straight into it ("skipped0s").
+// +1 guarantees at least one space after the longest status word.
+const STATUS_WIDTH = 8; // fits "skipped" plus a required separating space
 const LABEL_WIDTH = 12; // fits "NOT PROVEN:" + one space
 
 export function formatClock(elapsedS: number): string {
@@ -73,6 +76,26 @@ export function formatHeartbeatLine(h: HeartbeatLine): string {
   if (h.etaS != null) bits.push(`ETA ${formatDuration(h.etaS)}`);
   if (h.diff) bits.push(`(${h.diff.files} files, +${h.diff.insertions} -${h.diff.deletions})`);
   return `[${formatClock(h.clockS)}] ${h.stage.padEnd(NAME_WIDTH)}${bits.join("  ")}`;
+}
+
+/** E-44 (found by E-14): sum every `cost` event's token fields, including
+ *  cache read and cache creation tokens (cost.ts already tracks these;
+ *  events.ts's fold() summed only input/output). Feeds SummaryInput.cost.tokens.
+ *  Null, never 0, when no cost event carried any token field. */
+export function foldCostTokens(events: { type: string; data: Record<string, unknown> }[]): number | null {
+  let total = 0;
+  let saw = false;
+  for (const e of events) {
+    if (e.type !== "cost") continue;
+    for (const key of ["input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"]) {
+      const v = e.data[key];
+      if (typeof v === "number" && Number.isFinite(v)) {
+        total += v;
+        saw = true;
+      }
+    }
+  }
+  return saw ? total : null;
 }
 
 export interface SummaryInput {

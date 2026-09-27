@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import {
   estimateEtaS,
+  foldCostTokens,
   formatClock,
   formatDuration,
   formatHeartbeatLine,
@@ -51,15 +52,25 @@ describe("formatTokens", () => {
 describe("formatStageLine (golden, ENGINE.md section 11)", () => {
   test("intake done", () => {
     expect(formatStageLine({ clockS: 11, name: "intake", status: "done", durationS: 11, detail: "repo map cached, runners: pytest, vitest" }))
-      .toBe("[00:11] intake      done   11s   repo map cached, runners: pytest, vitest");
+      .toBe("[00:11] intake      done    11s   repo map cached, runners: pytest, vitest");
   });
   test("plan+wall done", () => {
     expect(formatStageLine({ clockS: 49, name: "plan+wall", status: "done", durationS: 38, detail: "plan 7 lines, 4 wall tests sealed" }))
-      .toBe("[00:49] plan+wall   done   38s   plan 7 lines, 4 wall tests sealed");
+      .toBe("[00:49] plan+wall   done    38s   plan 7 lines, 4 wall tests sealed");
   });
   test("a null duration renders as not measured, never 0s (section 5)", () => {
     expect(formatStageLine({ clockS: 0, name: "plan", status: "skipped", durationS: null, detail: "module not present" }))
-      .toBe("[00:00] plan        skippednot measured   module not present");
+      .toBe("[00:00] plan        skipped not measured   module not present");
+  });
+
+  // E-44 (found by E-14): "skipped" is exactly STATUS_WIDTH-1 chars wide, so
+  // padEnd left zero separating spaces and any duration glued straight onto
+  // it ("skipped0s"). STATUS_WIDTH must leave room for at least one space
+  // after the longest status word, whatever duration follows it.
+  test("skipped never runs into the duration, even when one is present", () => {
+    const line = formatStageLine({ clockS: 0, name: "plan", status: "skipped", durationS: 0, detail: "x" });
+    expect(line).not.toContain("skipped0s");
+    expect(line).toContain("skipped 0s");
   });
 });
 
@@ -166,6 +177,38 @@ describe("formatSummary (golden, ENGINE.md section 11)", () => {
     expect(out).not.toContain("$0.00");
     expect(out).not.toContain("$0");
     expect(out).toContain("PR:         none");
+  });
+});
+
+// E-44 (found by E-14): the summary's token count must fold cache read and
+// cache creation tokens from cost events, not just input/output.
+describe("foldCostTokens", () => {
+  test("sums input, output, cache read and cache creation tokens", () => {
+    const events = [
+      { type: "cost", data: { input_tokens: 1000, output_tokens: 500, cache_read_tokens: 200, cache_creation_tokens: 50 } },
+    ];
+    expect(foldCostTokens(events)).toBe(1750);
+  });
+
+  test("sums across multiple cost events", () => {
+    const events = [
+      { type: "cost", data: { input_tokens: 100, cache_read_tokens: 10 } },
+      { type: "cost", data: { output_tokens: 200, cache_creation_tokens: 20 } },
+    ];
+    expect(foldCostTokens(events)).toBe(330);
+  });
+
+  test("ignores non-cost events", () => {
+    const events = [
+      { type: "run.started", data: { input_tokens: 999 } },
+      { type: "cost", data: { input_tokens: 5 } },
+    ];
+    expect(foldCostTokens(events)).toBe(5);
+  });
+
+  test("returns null, never 0, when no cost event carries a token field", () => {
+    expect(foldCostTokens([])).toBeNull();
+    expect(foldCostTokens([{ type: "cost", data: { usd: 0.5 } }])).toBeNull();
   });
 });
 
