@@ -18,7 +18,10 @@
 #   8. v10 arm: missing binary and missing engine marker -> arm_unavailable;
 #      marker present -> completed
 #   9. --all --parallel 2 records both tasks; run tmp removed after each run
-#  10. summarize: rates, n/a handling and Markdown misses
+#  10. SIGTERM to run.sh kills only its children, removes its tmp, no ok row
+#  11. summarize: rates, n/a handling, interrupted excluded, Markdown misses
+# Also: arm env drops LOKI_RUN_TMP/LOKI_*/GH_TOKEN; cost parsed from a
+# pretty-printed message array.
 #===============================================================================
 set -u
 
@@ -35,7 +38,8 @@ fail() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 loki_run_tmp_create || { echo "FAIL: cannot create run tmp"; exit 1; }
 T="$LOKI_RUN_TMP"
-trap 'loki_run_tmp_cleanup' EXIT
+echo "test tmp: $T"
+trap 'loki_run_tmp_cleanup || echo "WARN: test tmp cleanup refused: $T"' EXIT
 
 STUB="$HERE/fixtures/stub-arm.sh"
 TASKS="$T/tasks"
@@ -89,8 +93,10 @@ export LOKI_EVAL_CLAUDE_BIN="$T/bin/claude-stub" LOKI_EVAL_LOKI_BIN="$T/bin/loki
 
 # ---- 3. pass
 R="$T/out-pass"
-STUB_MODE=pass RUN --arm raw-claude --task fx-greet --out "$R" >"$T/pass.log" 2>&1
+STUB_MODE=pass LOKI_SENTINEL_X=1 GH_TOKEN=fake-token RUN --arm raw-claude --task fx-greet --out "$R" >"$T/pass.log" 2>&1
 J="$R/results.jsonl"
+grep -q "ENV-CHECK: run_tmp=unset sentinel=unset gh_token=unset" "$R"/logs/*/arm_stderr.log \
+    && pass "arm env drops LOKI_RUN_TMP, operator LOKI_* knobs and GH_TOKEN" || fail "arm env leak: $(grep ENV-CHECK "$R"/logs/*/arm_stderr.log)"
 [ "$(row "$J" completed)" = true ] && [ "$(row "$J" hidden_pass)" = true ] && [ "$(row "$J" pr_opened)" = true ] \
     && pass "pass stub recorded as completed" || fail "pass stub not completed: $(tail -1 "$J" 2>/dev/null) $(cat "$T/pass.log")"
 [ "$(row "$J" cost_usd)" = null ] && pass "cost null when not reported" || fail "cost not null: $(row "$J" cost_usd)"
@@ -120,6 +126,9 @@ grep -q "FUTURE ABSENT" "$T/out-probe"/logs/*/arm_stdout.log && pass "later upst
 R="$T/out-cost"
 STUB_MODE=cost RUN --arm raw-claude --task fx-greet --out "$R" >/dev/null 2>&1
 [ "$(row "$R/results.jsonl" cost_usd)" = 0.25 ] && pass "provider-reported cost recorded" || fail "cost=$(row "$R/results.jsonl" cost_usd)"
+R2="$T/out-costpretty"
+STUB_MODE=costpretty RUN --arm raw-claude --task fx-greet --out "$R2" >/dev/null 2>&1
+[ "$(row "$R2/results.jsonl" cost_usd)" = 0.25 ] && pass "cost parsed from pretty-printed message array" || fail "pretty cost=$(row "$R2/results.jsonl" cost_usd)"
 
 # ---- 5. nofix
 R="$T/out-nofix"
@@ -163,14 +172,36 @@ STUB_MODE=noop RUN --arm raw-claude --all --parallel 2 --out "$R" >/dev/null 2>&
 n="$(grep -c . "$R/results.jsonl" 2>/dev/null)"
 [ "$n" = 2 ] && pass "--all --parallel 2 records both tasks" || fail "--all rows=$n"
 
-# ---- 10. summarize
+# ---- 10. SIGTERM to run.sh stops only its children and records no verdict
+R="$T/out-stop"
+rm -f "$T/stop.pids"
+STUB_MODE=sleep STUB_PID_FILE="$T/stop.pids" env -u LOKI_RUN_TMP bash "$HERE/run.sh" --tasks-dir "$TASKS" \
+    --arm raw-claude --task fx-greet --out "$R" >"$T/stop.log" 2>&1 &
+rpid=$!
+for _ in $(seq 1 100); do [ -s "$T/stop.pids" ] && break; sleep 0.2; done
+kill -TERM "$rpid" 2>/dev/null
+for _ in $(seq 1 150); do kill -0 "$rpid" 2>/dev/null || break; sleep 0.2; done
+if kill -0 "$rpid" 2>/dev/null; then fail "run.sh still running 30s after SIGTERM"; kill -KILL "$rpid" 2>/dev/null; fi
+wait "$rpid" 2>/dev/null
+alive=0
+while read -r p; do kill -0 "$p" 2>/dev/null && alive=1; done < "$T/stop.pids"
+[ -s "$T/stop.pids" ] && [ "$alive" = 0 ] && pass "SIGTERM kills the arm and its child" || fail "sleeper survived SIGTERM"
+rtmp="$(sed -n 's/^run tmp: //p' "$T/stop.log")"
+[ -n "$rtmp" ] && [ ! -e "$rtmp" ] && pass "run tmp removed after SIGTERM" || fail "run tmp left after SIGTERM: $rtmp"
+st="$(row "$R/results.jsonl" status 2>/dev/null)"
+[ -z "$st" ] || [ "$st" = '"interrupted"' ] && pass "interrupted run is not recorded as ok ($st)" || fail "stop row status=$st"
+
+# ---- 11. summarize
 cat "$T/out-pass/results.jsonl" "$T/out-cost/results.jsonl" "$T/out-nofix/results.jsonl" \
     "$T/out-noop/results.jsonl" "$T/out-cap/results.jsonl" "$T/out-v10/results.jsonl" > "$T/all.jsonl"
+# An interrupted row must not enter the denominator.
+echo '{"task":"fx-greet","arm":"raw-claude","status":"interrupted","completed":false,"capped":false,"cost_usd":null,"time_to_pr_s":null}' >> "$T/all.jsonl"
 S="$(bash "$HERE/summarize" "$T/all.jsonl" --json)"
 chk() { python3 -c "import json,sys; s=json.loads(sys.argv[1]); assert $2, s" "$S" 2>/dev/null && pass "$1" || fail "$1: $S"; }
 chk "raw-claude 2 of 5 completed" "s['raw-claude']['completed']==2 and s['raw-claude']['evaluated']==5"
 chk "raw-claude cost n/a when some runs unmeasured" "s['raw-claude']['cost_per_completed_usd'] is None and s['raw-claude']['cost_measured_runs']==1"
 chk "raw-claude capped count 1" "s['raw-claude']['capped']==1"
+chk "interrupted run counted separately, not as a miss" "s['raw-claude']['infra_or_interrupted']==1"
 chk "v10 unavailable runs excluded from the rate" "s['v10']['unavailable']==2 and s['v10']['evaluated']==1 and s['v10']['completion_rate']==1.0"
 head -2 "$T/out-v10/results.jsonl" > "$T/unavail.jsonl"
 S="$(bash "$HERE/summarize" "$T/unavail.jsonl" --json)"

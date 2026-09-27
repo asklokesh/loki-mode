@@ -162,7 +162,7 @@ def capped_run(argv, cwd, env, cap_s, log_path, stdout_path=None):
     t0 = time.time()
     with open(log_path, "ab") as err, open(stdout_path or log_path, "ab") as out:
         p = subprocess.Popen([TIMEOUT_BIN, "-k", "10", str(int(cap_s))] + argv,
-                             cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=err)
+                             cwd=cwd, env=dict(env, PWD=cwd), stdin=subprocess.DEVNULL, stdout=out, stderr=err)
         CHILDREN.add(p)
         try:
             rc = p.wait()
@@ -198,9 +198,12 @@ def default_model():
 
 
 def arm_env(rundir, model, alias):
-    env = dict(os.environ)
-    for k in SCRUB_ENV:
-        env.pop(k, None)
+    # Operator and harness state must not steer the arm: inherited LOKI_* knobs
+    # (including LOKI_RUN_TMP, the harness's own tmp), nested-Claude-session
+    # vars, and tokens are all dropped. Only what is set below reaches it.
+    env = {k: v for k, v in os.environ.items()
+           if k not in SCRUB_ENV and k not in ("CLAUDECODE", "CLAUDE_PROJECT_DIR", "OLDPWD")
+           and not k.startswith(("LOKI_", "CLAUDE_CODE_"))}
     gh = os.path.join(rundir, "gh-config")
     os.makedirs(gh, exist_ok=True)
     env.update({
@@ -280,12 +283,24 @@ def provider_cost(arm, stdout_path, work):
     if arm == "raw-claude":
         try:
             with open(stdout_path, encoding="utf-8", errors="replace") as f:
-                data = json.loads(f.read().strip().splitlines()[-1])
-            v = data.get("total_cost_usd")
-            if isinstance(v, (int, float)) and not isinstance(v, bool):
-                return float(v), "claude total_cost_usd"
-        except (OSError, ValueError, IndexError, AttributeError):
-            pass
+                text = f.read().strip()
+        except OSError:
+            return None, "not reported"
+        # Decode a JSON document starting at every line that opens one, so a
+        # single-line object, a pretty-printed message array, and stray
+        # output before either all parse. The last document wins.
+        dec, docs = json.JSONDecoder(), []
+        for m in re.finditer(r"(?m)^[\[{]", text):
+            try:
+                docs.append(dec.raw_decode(text, m.start())[0])
+            except ValueError:
+                continue
+        for d in reversed(docs):
+            items = d if isinstance(d, list) else [d]
+            for it in reversed(items):
+                v = it.get("total_cost_usd") if isinstance(it, dict) else None
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    return float(v), "claude total_cost_usd"
         return None, "not reported"
     r = subprocess.run([sys.executable, os.path.join(REPO, "autonomy", "lib", "cost-summary.py"),
                         work, "--json"], capture_output=True, text=True, timeout=120)
@@ -430,10 +445,11 @@ def cmd_run(args):
         r = subprocess.run([TIMEOUT_BIN, "-k", "5", "30", binary, "--version"],
                            capture_output=True, text=True)
         version = (r.stdout or r.stderr).strip()[:200]
-    with open(os.path.join(out, "manifest.json"), "w") as f:
-        json.dump({"arm": args.arm, "model": model, "arm_binary": binary, "arm_version": version,
-                   "harness_sha": cfg["harness_sha"], "tasks": [t["id"] for t, _ in tasks],
-                   "started": iso(time.time())}, f, indent=2)
+    # One line per invocation, so several arms can share one --out.
+    with open(os.path.join(out, "manifest.jsonl"), "a") as f:
+        f.write(json.dumps({"arm": args.arm, "model": model, "arm_binary": binary,
+                            "arm_version": version, "harness_sha": cfg["harness_sha"],
+                            "tasks": [t["id"] for t, _ in tasks], "started": iso(time.time())}) + "\n")
 
     def on_signal(signum, _frame):
         CHILDREN.stop_all()
@@ -448,15 +464,19 @@ def cmd_run(args):
 
     def job(item):
         with start_lock:  # refuse to START a run while the box is overloaded
-            while os.getloadavg()[0] > max_load:
+            while os.getloadavg()[0] > max_load and not CHILDREN.stopping:
                 print("load %.1f > %.0f; waiting" % (os.getloadavg()[0], max_load), file=sys.stderr)
                 time.sleep(10)
+        if CHILDREN.stopping:  # queued behind a stop: never started, no row
+            return
         try:
             row = run_one(item[0], item[1], args.arm, cfg)
         except Exception as e:  # a harness crash is recorded, never a pass
             row = {"task": item[0]["id"], "arm": args.arm, "status": "harness_error",
                    "error": repr(e), "completed": False, "pr_opened": False,
                    "hidden_pass": False, "capped": False, "cost_usd": None, "time_to_pr_s": None}
+        if CHILDREN.stopping:  # in flight at the stop: not a verdict on the arm
+            row.update(status="interrupted", completed=False)
         with write_lock:
             with open(results, "a") as f:
                 f.write(json.dumps(row) + "\n")
@@ -484,7 +504,11 @@ def summarize_rows(rows):
     for arm in sorted({r["arm"] for r in rows}):
         rs = [r for r in rows if r["arm"] == arm]
         unavailable = [r for r in rs if r.get("status") == "arm_unavailable"]
-        evaluated = [r for r in rs if r.get("status") != "arm_unavailable"]
+        # Only runs where the arm actually ran count toward its rate. Harness
+        # or task infrastructure failures (prepare/setup/harness_error) and
+        # interrupted runs are reported separately, never as arm misses.
+        evaluated = [r for r in rs if r.get("status") == "ok"]
+        infra = [r for r in rs if r.get("status") not in ("ok", "arm_unavailable")]
         done = [r for r in evaluated if r.get("completed")]
         ttp = [r["time_to_pr_s"] for r in done if r.get("time_to_pr_s") is not None]
         costed = [r for r in evaluated if r.get("cost_usd") is not None]
@@ -498,6 +522,7 @@ def summarize_rows(rows):
             "cost_per_completed_usd": cost_per,
             "cost_measured_runs": len(costed),
             "capped": sum(1 for r in rs if r.get("capped")), "unavailable": len(unavailable),
+            "infra_or_interrupted": len(infra),
         }
     return out
 
@@ -527,25 +552,27 @@ def cmd_summarize(args):
     if not args.markdown:
         for arm, a in s.items():
             print("%s: completion %s (%d/%d evaluated), p50 ttPR %s, p90 ttPR %s, cost/completed %s "
-                  "(cost measured %d/%d), capped %d, unavailable %d" % (
+                  "(cost measured %d/%d), capped %d, unavailable %d, infra/interrupted %d" % (
                       arm, fmt(a["completion_rate"]), a["completed"], a["evaluated"],
                       fmt(a["p50_time_to_pr_s"], "s"), fmt(a["p90_time_to_pr_s"], "s"),
                       fmt(a["cost_per_completed_usd"]), a["cost_measured_runs"], a["evaluated"],
-                      a["capped"], a["unavailable"]))
+                      a["capped"], a["unavailable"], a["infra_or_interrupted"]))
         return 0
     print("### Loki 10 eval results\n")
     print("Completion = branch pushed to the local remote AND hidden tests pass AND not capped. "
-          "Rate denominator excludes unavailable runs. Time to PR percentiles are nearest-rank over "
+          "Rate denominator counts only runs where the arm ran (excludes unavailable, infrastructure "
+          "failures and interrupted runs). Time to PR percentiles are nearest-rank over "
           "completed runs. Cost is provider-reported only; n/a when any evaluated run lacks a figure.\n")
-    print("| Arm | Completed | Rate | p50 time to PR | p90 time to PR | Cost per completed | Cost measured | Capped | Unavailable |")
-    print("|---|---|---|---|---|---|---|---|---|")
+    print("| Arm | Completed | Rate | p50 time to PR | p90 time to PR | Cost per completed | Cost measured "
+          "| Capped | Unavailable | Infra/interrupted |")
+    print("|---|---|---|---|---|---|---|---|---|---|")
     for arm, a in s.items():
         rate = "n/a" if a["completion_rate"] is None else "%.1f%%" % (100 * a["completion_rate"])
         cost = "n/a" if a["cost_per_completed_usd"] is None else "$%.4f" % a["cost_per_completed_usd"]
-        print("| %s | %d/%d | %s | %s | %s | %s | %d/%d | %d | %d |" % (
+        print("| %s | %d/%d | %s | %s | %s | %s | %d/%d | %d | %d | %d |" % (
             arm, a["completed"], a["evaluated"], rate, fmt(a["p50_time_to_pr_s"], "s"),
             fmt(a["p90_time_to_pr_s"], "s"), cost, a["cost_measured_runs"], a["evaluated"],
-            a["capped"], a["unavailable"]))
+            a["capped"], a["unavailable"], a["infra_or_interrupted"]))
     misses = [r for r in rows if not r.get("completed")]
     print("\n#### Misses (%d)\n" % len(misses))
     for r in misses:

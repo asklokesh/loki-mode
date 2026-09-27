@@ -58,8 +58,10 @@ Each run, per task and arm:
 `LOKI_EVAL_MODEL` defaults to the first planning-tier claude model in
 `providers/model_catalog.json`. The loki arms receive the same model through
 `LOKI_SESSION_MODEL` (the catalog alias) and `LOKI_MODEL_OVERRIDE`.
-`manifest.json` in `--out` records the model, the arm binary version and the
-harness SHA. Every child process runs under `timeout -k`. The runner starts no
+`manifest.jsonl` in `--out` gets one line per invocation with the arm, model,
+arm binary version and harness SHA. The arm environment drops every inherited
+`LOKI_*`, `CLAUDECODE`, `CLAUDE_CODE_*` and `CLAUDE_PROJECT_DIR` variable, so
+operator knobs and the harness's own `LOKI_RUN_TMP` never steer an arm. Every child process runs under `timeout -k`. The runner starts no
 new run while the 1-minute load average is above `LOKI_EVAL_MAX_LOAD` (default
 20). On a stop signal it signals only the PIDs it recorded.
 
@@ -80,13 +82,26 @@ null if none), `pr_opened`, `hidden_pass`, `completed`, `cost_usd`,
   `autonomy/lib/cost-summary.py` for the loki arms, and only when every
   iteration was measured. Otherwise it is null. It is never estimated.
 - summarize reports, per arm:
-  - completion rate, over runs that were not unavailable. An arm whose runs
-    were all unavailable shows n/a.
+  - completion rate, over runs where the arm actually ran (`status` ok).
+    Unavailable runs, infrastructure failures (prepare, setup, harness
+    error) and runs interrupted by a stop signal are counted separately. An
+    arm with no evaluated runs shows n/a.
   - p50 and p90 time to PR over completed runs, using the nearest-rank method.
   - cost per completed task: the total cost of evaluated runs divided by the
     number completed. It shows n/a unless every evaluated run has a cost.
   - the number of runs with a measured cost, capped runs and unavailable runs.
   - with `--markdown`, a list of misses with the reason for each.
+
+## Known limitation
+
+Real `claude` and `loki` arms still read the operator's user-level Claude
+configuration (`~/.claude`: global CLAUDE.md, plugins, hooks). An instruction
+there such as "never commit without approval" can stop an arm from pushing,
+and it makes results depend on the machine. The gate owner must choose an
+isolation method, for example a clean `CLAUDE_CONFIG_DIR`. They must verify
+it by hand and apply it the same way to all three arms before trusting a
+gate run. The harness does not do this yet, because it cannot be verified
+without running the real CLI.
 
 ## Tests
 
