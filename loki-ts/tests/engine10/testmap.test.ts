@@ -31,6 +31,7 @@ describe("mixed pytest plus vitest repo", () => {
 
   test("changed src/search.ts maps to src/search.test.ts", () => {
     expect(impactedTests(map, ["src/search.ts"])).toEqual({ "src/search.ts": ["src/search.test.ts"] });
+    expect(buildTestMap(MIXED, ["src/search.ts"]).impacted).toEqual({ "src/search.ts": ["src/search.test.ts"] });
   });
 
   test("changed python module maps to its test_ file", () => {

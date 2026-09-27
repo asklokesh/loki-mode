@@ -12,15 +12,17 @@ import { basename, extname, join, relative, sep } from "node:path";
 
 export type Runner = "pytest" | "vitest" | "jest" | "bun" | "npm" | "go" | "cargo";
 
+/** changed file (repo-relative) -> impacted test files (repo-relative). */
+export type ImpactedTests = Record<string, string[]>;
+
 export interface TestMap {
   /** Detected runners in a stable order. Empty means none were found. */
   readonly runners: Runner[];
   /** Repo-relative test files, sorted, forward slashes. */
   readonly tests: string[];
+  /** Impacted tests for the changed files passed to buildTestMap. */
+  readonly impacted: ImpactedTests;
 }
-
-/** changed file (repo-relative) -> impacted test files (repo-relative). */
-export type ImpactedTests = Record<string, string[]>;
 
 const RUNNER_ORDER: readonly Runner[] = ["pytest", "vitest", "jest", "bun", "npm", "go", "cargo"];
 const SKIP_DIRS = new Set([
@@ -96,7 +98,7 @@ function detectFromPackageJson(text: string, found: Set<Runner>): void {
   }
 }
 
-export function buildTestMap(root: string): TestMap {
+export function buildTestMap(root: string, changed: readonly string[] = []): TestMap {
   const files = walk(root);
   const found = new Set<Runner>();
   for (const rel of files) {
@@ -113,9 +115,11 @@ export function buildTestMap(root: string): TestMap {
     else if (name === "go.mod" || GO_TEST_RE.test(name)) found.add("go");
     else if (name === "Cargo.toml") found.add("cargo");
   }
+  const tests = files.filter(isTestFile);
   return {
     runners: RUNNER_ORDER.filter((r) => found.has(r)),
-    tests: files.filter(isTestFile),
+    tests,
+    impacted: impactedTests({ tests }, changed),
   };
 }
 
@@ -130,7 +134,7 @@ function coveredStem(testRel: string): string {
 
 // ponytail: stem match across the repo; same-named modules in different
 // dirs over-select (safe for verify). Add import-graph tracing if too broad.
-export function impactedTests(map: TestMap, changed: readonly string[]): ImpactedTests {
+export function impactedTests(map: Pick<TestMap, "tests">, changed: readonly string[]): ImpactedTests {
   const out: ImpactedTests = {};
   for (const raw of changed) {
     const rel = raw.split(sep).join("/").replace(/^\.\//, "");
