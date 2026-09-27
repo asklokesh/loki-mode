@@ -1713,12 +1713,25 @@ echo "T35c -- E-00: ORPHAN_WORKTREE fires on a 24h .claude/worktrees/ run.sh and
 ORPHAN_WT_PS_FIRE="  PID  PPID     ELAPSED COMMAND
   500  6789   1-00:00:00 bash /repo/.claude/worktrees/agent-afe77b46/autonomy/run.sh
   600  6789      00:35:00 bash /tmp/loki-run-e6I21L.sh"
-if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_PS_OUTPUT=$ORPHAN_WT_PS_FIRE"; then rc=0; else rc=$?; fi
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_PS_OUTPUT=$ORPHAN_WT_PS_FIRE" "PULSE_PROC_CWD_JSON={\"600\": \"/tmp/loki-moat-p6.X/intr/repo\"}"; then rc=0; else rc=$?; fi
 if printf '%s\n' "$OUT" | grep -qF "VIOLATION: ORPHAN_WORKTREE: pid 500 etime 1-00:00:00: bash /repo/.claude/worktrees/agent-afe77b46/autonomy/run.sh" \
     && printf '%s\n' "$OUT" | grep -qF "VIOLATION: ORPHAN_WORKTREE: pid 600 etime 00:35:00: bash /tmp/loki-run-e6I21L.sh"; then
     ok "a 24h .claude/worktrees/ run.sh and a 35-minute /tmp/loki-run-*.sh both fire ORPHAN_WORKTREE, PID/etime/command reported, never killed"
 else
     bad "T35c ORPHAN_WORKTREE-fires case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T35f -- a backgrounded user 'loki start' (/tmp/loki-run-*.sh, cwd in a project checkout) is not an orphan; the same script with a temp-root cwd is"
+ORPHAN_WT_PS_USER="  PID  PPID     ELAPSED COMMAND
+  610     1      01:53:00 bash /tmp/loki-run-kf6HzN.sh .loki/prd-issue-52.md --provider claude
+  620     1      01:30:00 bash /tmp/loki-run-9xdJsg.sh"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_PS_OUTPUT=$ORPHAN_WT_PS_USER" "PULSE_PROC_CWD_JSON={\"610\": \"/Users/someone/git/augmentiq\", \"620\": \"/tmp/loki-moat-p6.Y/intr/repo\"}"; then rc=0; else rc=$?; fi
+if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: ORPHAN_WORKTREE: pid 610 " \
+    && printf '%s\n' "$OUT" | grep -qF "VIOLATION: ORPHAN_WORKTREE: pid 620 etime 01:30:00: bash /tmp/loki-run-9xdJsg.sh"; then
+    ok "a live user run in a project checkout is not flagged; a temp-root fixture run is"
+else
+    bad "T35f user-run vs fixture-run case: rc=$rc output follows"
     printf '%s\n' "$OUT"
 fi
 

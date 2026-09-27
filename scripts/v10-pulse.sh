@@ -1914,6 +1914,33 @@ def check_orphan_tests(ps_text):
     return orphans
 
 
+_TEMP_ROOTS = tuple(os.path.realpath(r) for r in {os.environ.get("TMPDIR") or "/tmp", "/tmp", "/private/tmp"})
+
+
+def _cwd_under_temp_root(pid):
+    """True when process PID's working directory is under a temp root.
+    PULSE_PROC_CWD_JSON (a JSON object pid -> cwd) replaces the real lookup in
+    tests; otherwise `lsof -a -p PID -d cwd -Fn`. An unknown cwd counts as
+    not-temp, so a live user run is never flagged on a failed lookup."""
+    override = os.environ.get("PULSE_PROC_CWD_JSON")
+    if override is not None:
+        try:
+            cwd = json.loads(override).get(str(pid))
+        except Exception:
+            cwd = None
+    else:
+        try:
+            out = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+                                 capture_output=True, text=True, timeout=5).stdout
+            cwd = next((l[1:] for l in out.splitlines() if l.startswith("n")), None)
+        except Exception:
+            cwd = None
+    if not cwd:
+        return False
+    real = os.path.realpath(cwd)
+    return any(real == r or real.startswith(r + os.sep) for r in _TEMP_ROOTS)
+
+
 def check_orphan_worktree_procs(ps_text):
     """Returns a list of (pid, etime, command) for any process older than
     PULSE_ORPHAN_WORKTREE_MAX_MIN (default 30) whose command line references
@@ -1931,6 +1958,11 @@ def check_orphan_worktree_procs(ps_text):
             continue
         pid, _ppid, etime, command = parts
         if not _ORPHAN_WORKTREE_RE.search(command):
+            continue
+        # A backgrounded `loki start` also runs as /tmp/loki-run-*.sh (PPID 1,
+        # long-lived) from the user's project checkout; only a copy whose cwd is
+        # under the temp root (a test fixture repo) is an orphan candidate.
+        if ".claude/worktrees/" not in command and not _cwd_under_temp_root(pid):
             continue
         age_min = parse_etime_minutes(etime)
         if age_min is not None and age_min > _ORPHAN_WORKTREE_MAX_MIN:
