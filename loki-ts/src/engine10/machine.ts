@@ -57,6 +57,8 @@ function defaultLoader(dir: string) {
 
 const hasFailures = (d: Obj | undefined): boolean => Array.isArray(d?.failures_grouped) && d.failures_grouped.length > 0;
 const earlyExit = (d: Obj): boolean => d.already_satisfied === true || d.exit === "spec_conflict";
+/** After a cap or limit kill, how long the machine waits for the aborted stage to settle before moving on. */
+const KILL_GRACE_MS = 2000;
 
 export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Promise<MachineResult> {
   const load = opts.load ?? defaultLoader(opts.stagesDir ?? join(import.meta.dir, "stages"));
@@ -77,6 +79,14 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
 
   const sctx: MachineRunContext = { ...ctx, outputs: () => ({ ...outputs }), capHit: () => capHit };
   const elapsedS = (): number => (ctx.clock.now() - startMs) / 1000;
+  // The timer alone misses a cap already past on resume (it fires a tick later), so check the clock too.
+  const capReached = (): boolean => capCtl.signal.aborted || ctx.clock.now() >= capAtMs;
+  /** Marks the cap; emits cap.hit once per run even when a parallel group is killed. */
+  const markCap = (name: StageName): void => {
+    if (capHit) return;
+    capHit = true;
+    ctx.emit("cap.hit", name, { elapsed_s: elapsedS() });
+  };
 
   /** Runs one stage; returns its result, or null when it was skipped. */
   const runStage = async (name: StageName, underCap: boolean): Promise<StageResult | null> => {
@@ -85,6 +95,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       ctx.emit("stage.skipped", name, { reason: "module not present" });
       return null;
     }
+    if (underCap && capReached()) { markCap(name); return null; }
     const limitS = name === "implement" && ctx.deep ? DEEP_IMPLEMENT_LIMIT_S : st.limitS;
     ctx.emit("stage.started", name, { target_s: st.targetS, limit_s: limitS });
     const t0 = ctx.clock.now();
@@ -100,8 +111,9 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     }
     const aborted = new Promise<null>((res) => ctl.signal.addEventListener("abort", () => res(null)));
     let r: StageResult | null;
+    let p: Promise<StageResult> | undefined;
     try {
-      const p = st.run(sctx, ctl.signal);
+      p = st.run(sctx, ctl.signal);
       p.catch(() => {}); // a stage that rejects after being aborted is ignored
       r = ctl.signal.aborted ? null : await Promise.race([p, aborted]);
     } catch (err) {
@@ -111,9 +123,15 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       capCtl.signal.removeEventListener("abort", onCap);
     }
     if (why) {
-      if (why === "cap") {
-        capHit = true;
-        ctx.emit("cap.hit", name, { elapsed_s: elapsedS() });
+      // Bounded grace so a killed stage is not still running when commit starts.
+      if (why === "cap") markCap(name);
+      if (p) {
+        let graceTimer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          p.then(() => {}, () => {}),
+          new Promise<void>((res) => { graceTimer = setTimeout(res, KILL_GRACE_MS); }),
+        ]);
+        clearTimeout(graceTimer);
       }
       r = { status: "failed", data: {}, reason: why, killed: true };
     }
@@ -145,10 +163,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (todo.length === 0) continue;
       const isTail = todo.every((n) => TAIL.includes(n));
       if (jumped && !isTail) continue;
-      if (!isTail && capCtl.signal.aborted && !capHit) {
-        capHit = true;
-        ctx.emit("cap.hit", todo[0] as StageName, { elapsed_s: elapsedS() });
-      }
+      if (!isTail && capReached()) markCap(todo[0] as StageName);
       if (capHit && !isTail) { jumped = true; continue; }
 
       const results = await Promise.all(todo.map((n) => runStage(n, !isTail)));

@@ -210,6 +210,96 @@ describe("engine10 machine", () => {
     ]);
   });
 
+  it("a resume after the cap has passed starts no non-tail stage", async () => {
+    const { ctx, events } = fakeCtx();
+    const prior: EventEnvelope[] = [
+      makeEvent("e10-test", 0, "run.started", null, {}, new Date(Date.now() - 20 * 60_000).toISOString()),
+      makeEvent("e10-test", 1, "stage.completed", "intake", { duration_s: 1 }),
+      makeEvent("e10-test", 2, "stage.completed", "plan", { duration_s: 1 }),
+      makeEvent("e10-test", 3, "stage.completed", "wall", { duration_s: 1 }),
+    ];
+    let implRan = false;
+    const r = await runMachine(ctx, {
+      load: loaderOf(all({ implement: stage("implement", async () => { implRan = true; return { status: "completed", data: {} }; }) })),
+      prior,
+    });
+    expect(implRan).toBe(false);
+    expect(r.capHit).toBe(true);
+    expect(of(events, "cap.hit")).toEqual(["implement"]);
+    expect(of(events, "stage.started")).toEqual(["commit", "seal", "pr"]);
+  });
+
+  it("the fix loop checks the clock before starting a stage past the cap", async () => {
+    // A fake clock jumps past the cap inside verify; the real-time cap timer has not fired yet.
+    const { ctx, events } = fakeCtx();
+    let now = Date.now();
+    ctx.clock = { now: () => now };
+    let fixRan = false;
+    const r = await runMachine(ctx, {
+      load: loaderOf(all({
+        verify: stage("verify", async () => { now += 20 * 60_000; return { status: "completed", data: { failures_grouped: [{}] } }; }),
+        fix: stage("fix", async () => { fixRan = true; return { status: "completed", data: {} }; }),
+      })),
+    });
+    expect(fixRan).toBe(false);
+    expect(r.capHit).toBe(true);
+    expect(of(events, "cap.hit")).toEqual(["fix"]);
+    expect(of(events, "stage.started").slice(-3)).toEqual(["commit", "seal", "pr"]);
+  });
+
+  it("the cap during the parallel plan and wall group emits exactly one cap.hit", async () => {
+    const { ctx, events } = fakeCtx(0.3);
+    const slow = (n: StageName) => stage(n, async (_c, signal) => { await sleep(5000, signal); return { status: "completed", data: {} }; });
+    const r = await runMachine(ctx, { load: loaderOf(all({ plan: slow("plan"), wall: slow("wall") })) });
+    expect(r.capHit).toBe(true);
+    expect(events.filter((e) => e.type === "cap.hit").length).toBe(1);
+    expect(events.filter((e) => e.type === "stage.failed").map((e) => e.data.reason)).toEqual(["cap", "cap"]);
+  });
+
+  it("the cap fires at 14:00 of a 15:00 cap (14/15 of capS)", async () => {
+    // Started 14:05 ago: past 14/15 of 900s, before the full cap.
+    const late = fakeCtx();
+    const r1 = await runMachine(late.ctx, { load: loaderOf(all()), startedAtMs: Date.now() - 845_000 });
+    expect(r1.capHit).toBe(true);
+    expect(of(late.events, "stage.started")).toEqual(["commit", "seal", "pr"]);
+    const hit = late.events.find((e) => e.type === "cap.hit");
+    expect(hit?.data.elapsed_s as number).toBeGreaterThanOrEqual(840);
+    // Started 13:55 ago: every fast stage runs and the cap does not fire.
+    const early = fakeCtx();
+    const r2 = await runMachine(early.ctx, { load: loaderOf(all()), startedAtMs: Date.now() - 835_000 });
+    expect(r2.capHit).toBe(false);
+    expect(of(early.events, "stage.completed")).toContain("verify");
+  });
+
+  it("after a kill, commit waits for the aborted stage to settle", async () => {
+    const { ctx, events } = fakeCtx();
+    let implDone = 0;
+    let commitStart = 0;
+    await runMachine(ctx, {
+      load: loaderOf(all({
+        // Ignores the signal and finishes 300ms after its 50ms limit.
+        implement: stage("implement", async () => { await sleep(350); implDone = Date.now(); return { status: "completed", data: {} }; }, 0.05),
+        commit: stage("commit", async () => { commitStart = Date.now(); return { status: "completed", data: {} }; }),
+      })),
+    });
+    expect(events.find((e) => e.type === "stage.failed" && e.stage === "implement")?.data.reason).toBe("limit");
+    expect(implDone).toBeGreaterThan(0);
+    expect(commitStart).toBeGreaterThanOrEqual(implDone);
+  });
+
+  it("the post-kill grace wait is bounded at about 2s", async () => {
+    const { ctx } = fakeCtx();
+    let commitStart = 0;
+    const t0 = Date.now();
+    await runMachine(ctx, {
+      load: loaderOf(all({
+        implement: stage("implement", async () => { await sleep(10_000); return { status: "completed", data: {} }; }, 0.05),
+        commit: stage("commit", async () => { commitStart = Date.now(); return { status: "completed", data: {} }; }),
+      })),
+    });
+    expect(commitStart - t0).toBeLessThan(3000);
+  });
+
   it("a green verify after one fix stops the loop", async () => {
     const { ctx, events } = fakeCtx();
     let n = 0;
