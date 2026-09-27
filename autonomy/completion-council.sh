@@ -4368,19 +4368,26 @@ council_managed_should_stop() {
         return 1
     fi
 
+    # S-196: every reader and the session heredoc run on the resolved -I -S
+    # interpreter (see _loki_snapshot_py_tool); -E still loads user-site .pth
+    # files. None resolvable -> never start the managed session: Bash fallback.
+    local _ms_py
+    _ms_py="$(_loki_snapshot_py_tool)" || return 1
+
     local loki_dir="${TARGET_DIR:-.}/.loki"
-    local project_dir="${PROJECT_DIR:-$(pwd)}"
     local round="${ITERATION_COUNT:-0}"
     local verdicts_dir="$COUNCIL_STATE_DIR/verdicts"
     mkdir -p "$verdicts_dir" 2>/dev/null || true
 
     # Build session context: diff_summary, test_summary, pending_tasks.
     # Kept deliberately small so we never choke the session budget.
+    # S-196: diff the target project (same root as loki_dir and
+    # LOKI_TARGET_DIR), never PROJECT_DIR, which is Loki's install tree.
     local diff_summary=""
-    diff_summary=$(cd "$project_dir" 2>/dev/null && git diff --stat 2>/dev/null | tail -20 | tr '\n' ' ' || echo "")
+    diff_summary=$(cd "${TARGET_DIR:-.}" 2>/dev/null && git diff --stat 2>/dev/null | tail -20 | tr '\n' ' ' || echo "")
     local test_summary=""
     if [ -f "$loki_dir/quality/test-results.json" ]; then
-        test_summary=$(_TRF="$loki_dir/quality/test-results.json" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
+        test_summary=$(_TRF="$loki_dir/quality/test-results.json" "$_ms_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 try:
     d = json.load(open(os.environ['_TRF']))
@@ -4391,7 +4398,7 @@ except Exception:
     fi
     local pending_tasks="[]"
     if [ -f "$loki_dir/queue/pending.json" ]; then
-        pending_tasks=$(_QF="$loki_dir/queue/pending.json" python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
+        pending_tasks=$(_QF="$loki_dir/queue/pending.json" "$_ms_py" -I -S -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json, os
 try:
     d = json.load(open(os.environ['_QF']))
@@ -4415,7 +4422,7 @@ except Exception:
     _CC_LOKI_DIR="$loki_dir" \
     LOKI_TARGET_DIR="${TARGET_DIR:-$(pwd)}" \
     PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)}" \
-    python3 -E - <<'PYEOF' 2>/dev/null || exit_code=$?
+    "$_ms_py" -I -S - <<'PYEOF' 2>/dev/null || exit_code=$?
 import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os, sys, pathlib
 

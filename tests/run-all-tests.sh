@@ -1138,6 +1138,7 @@ run_test "Runtime Gate port reclaims scoped to LISTEN + cwd ownership" "$SCRIPT_
 run_test "Bun Parity disk.available_gb tolerance (BACKLOG 26)" "$SCRIPT_DIR/test-bun-parity-disk-tolerance.sh"
 run_test "council_augment_from_managed_memory never falls back to cwd for PROJECT_DIR (BACKLOG 63)" "$SCRIPT_DIR/test-council-augment-managed-memory-project-dir.sh"
 run_test "council_should_stop's shadow-write never falls back to cwd for PROJECT_DIR (BACKLOG 63/127)" "$SCRIPT_DIR/test-council-shadow-write-project-dir.sh"
+run_test "council_managed_should_stop diffs the target project, not the install tree (S-196)" "$SCRIPT_DIR/test-council-managed-diff-target.sh"
 run_test "auto-capture shadow-write skips empty PROJECT_DIR and never splices importance (S-156)" "$SCRIPT_DIR/test-autocapture-shadow-write-guard.sh"
 run_test "Bench Haschanges" "$SCRIPT_DIR/test-bench-haschanges.sh"
 run_test "Benchmarks Resume Atomic" "$SCRIPT_DIR/test-benchmarks-resume-atomic.sh"

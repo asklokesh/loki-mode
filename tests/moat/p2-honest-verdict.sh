@@ -855,8 +855,8 @@ EOF
         # is_enabled() records the summary it was handed and declines, so the
         # call stays hermetic (rc 1, Bash fallback). The captured summary must
         # be the real file's; the shadow json.py would hand over '' and mark.
-        # cwd-shadow class only: this reader is still python3 -E, so a .pth leg
-        # would redden it until the production fix (alternate A2) lands.
+        # cwd-shadow class only here; the user-site .pth class for this reader
+        # is case_council_readers_no_user_site_pth (S-196, -I -S readers).
         rm -f "$d.cc-test"
         rc="$(export PYTHONPATH=":/nonexistent" MOAT_MARK="$d.mark" MOAT_CC_CAPTURE="$d.cc-test" \
             PROJECT_DIR="$managed_stub" LOKI_EXPERIMENTAL_MANAGED_COUNCIL=true \
@@ -975,6 +975,28 @@ EOF
             out="$(council_call "$d" "$b" _council_convergence_evidence_green)"
         fi
         [ "$out" = "$w" ] || bad="$bad [$leg _council_convergence_evidence_green: got rc '$out' want $w]"
+        # S-196: council_managed_should_stop's test_summary reader. A stub
+        # providers.managed records the summary it was handed and declines
+        # (rc 1, Bash fallback); a forged read would hand over '' and mark.
+        if [ "$leg" = pth-fail ]; then
+            local ms="$RUN/pth-managed-stub"
+            mkdir -p "$ms/providers" "$ms/memory/managed_memory"
+            : > "$ms/providers/__init__.py"; : > "$ms/memory/__init__.py"; : > "$ms/memory/managed_memory/__init__.py"
+            printf '%s\n' 'def emit_managed_event(*a, **k): pass' > "$ms/memory/managed_memory/events.py"
+            printf '%s\n' 'import os' 'class ManagedUnavailable(Exception): pass' \
+                'def run_completion_council(**k): raise ManagedUnavailable("stub")' \
+                'def is_enabled():' '    open(os.environ["MOAT_CC_CAPTURE"], "w").write(os.environ.get("_CC_TEST", ""))' \
+                '    return False' > "$ms/providers/managed.py"
+            rm -f "$d.cc-test"
+            out="$(export HOME="$home" MOAT_MARK="$mark" MOAT_CC_CAPTURE="$d.cc-test" PROJECT_DIR="$ms" \
+                LOKI_EXPERIMENTAL_MANAGED_COUNCIL=true LOKI_EXPERIMENTAL_MANAGED_AGENTS=true LOKI_MANAGED_AGENTS=true;
+                council_call "$d" "$b" council_managed_should_stop)"
+            if [ ! -f "$d.cc-test" ]; then
+                bad="$bad [$leg council_managed_should_stop: stub never reached (rc $out)]"
+            elif [ "$(cat "$d.cc-test")" != "1 failed" ] || [ "$out" != 1 ]; then
+                bad="$bad [$leg council_managed_should_stop: summary '$(cat "$d.cc-test")' rc $out, want '1 failed' rc 1]"
+            fi
+        fi
     done
     # Fail closed (no plant needed): a malformed queue file must block, not read
     # as 0, and no isolated interpreter must veto, not approve.
