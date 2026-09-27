@@ -1,0 +1,5 @@
+repo: /Users/lokesh/git/augmentiq @ b9796de68d30f76912d38acd1352e6e0202b991f (repo.ref), after npm ci
+command: cd frontend && npx vitest run src/__hidden__/search-bar.test.tsx
+exit: non-zero (1 test file failed)
+output: AssertionError: expected null not to be null   (no search control found in the dashboard shell)
+output: Tests  2 failed | 1 passed (3)   real 5.35s

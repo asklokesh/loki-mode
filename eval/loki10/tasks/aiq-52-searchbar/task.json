@@ -1,0 +1,19 @@
+{
+  "id": "aiq-52-searchbar",
+  "kind": "augmentiq",
+  "prompt": "[Feature]: add searchbar\n\n### Problem Statement\n\nthere is no searchbar to find things\n\n### Proposed Solution\n\nadd searchbar to the application\n\n### Alternatives Considered\n\n_No response_\n\n### Component\n\nFrontend Dashboard\n\n### Priority\n\nImportant\n\n### Additional Context\n\n_No response_",
+  "issue_ref": "asklokesh/augmentiq#52",
+  "repo": {
+    "source": "/Users/lokesh/git/augmentiq",
+    "ref": "b9796de68d30f76912d38acd1352e6e0202b991f"
+  },
+  "ref_note": "Deviation from contract: the default-branch head (d0a685f6808b7e5e425691a61adc288d168833ae) already contains a direct-commit implementation of this issue (b65b07521f7f53e7fe22211c39394dc375d5758b, 'feat: Add global search with Cmd+K command palette'), so the hidden test is green at head. repo.ref is that commit's parent. The repo is private, so source is the local clone path (no credentials needed).",
+  "setup": "cd frontend && npm ci --no-audit --no-fund --loglevel=error",
+  "hidden": {
+    "files": [
+      "frontend/src/__hidden__/search-bar.test.tsx"
+    ],
+    "run": "cd frontend && npm install --no-audit --no-fund --loglevel=error && npx vitest run src/__hidden__/search-bar.test.tsx"
+  },
+  "timeout_s": 900
+}
