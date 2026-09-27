@@ -1357,6 +1357,7 @@ run_test "startup is instrumented, never a silent gap" "$SCRIPT_DIR/test-startup
 run_test "every handled gate escalates its findings" "$SCRIPT_DIR/test-gate-escalation-coverage.sh"
 run_test "cost honesty holds across every surface" "python3 -m pytest -q $SCRIPT_DIR/test_cost_honesty_end_to_end.py"
 run_test "a partly priced run renders as at least, never a total" "python3 -m pytest -q $SCRIPT_DIR/dashboard/test_cost_partial_surfaced.py"
+run_test "web-app status push sends null for unmeasured cost (S-192)" "python3 -m pytest -q -p no:cacheprovider $SCRIPT_DIR/../web-app/tests/test_status_push_unmeasured.py"
 run_test "the agent call reports its own prompt size" "$SCRIPT_DIR/test-agent-prompt-size.sh"
 run_test "per-turn context growth is measured" "$SCRIPT_DIR/test-context-growth-instrumentation.sh"
 run_test "provider auto-detection is wired" "$SCRIPT_DIR/test-provider-autodetect.sh"
