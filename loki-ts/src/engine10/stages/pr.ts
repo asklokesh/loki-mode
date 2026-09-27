@@ -114,7 +114,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const existing: boolean | null = null;
   ctx.emit("pr.opened", "pr", { url, draft, existing });
 
-  const headSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ctx.repoDir, encoding: "utf8" }).trim();
+  const headSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ctx.repoDir, encoding: "utf8", env: process.env }).trim();
   const notProvenOut: string[] = [];
   if (SHA_RE.test(headSha)) {
     const statusShellArgs = pushArgv({ cmd: "status", sha: headSha, state: "pending", description: "Loki 10 deep verify pending" });
