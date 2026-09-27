@@ -243,6 +243,24 @@ if [ "${LOKI_LEGACY_BASH:-0}" = "1" ] || [ "${LOKI_LEGACY_BASH:-}" = "true" ]; t
     exec "$BASH_CLI" "$@"
 fi
 
+# Loki 10 engine (D29): additive; skipped entirely unless LOKI_ENGINE=v10.
+if [ "${LOKI_ENGINE:-}" = "v10" ]; then
+    _e10=0
+    case "${1:-}" in
+        status|verify|dashboard) _e10=1 ;;
+        ""|-*) _e10=0 ;;
+        # http*://*/issues/* also covers GitLab's /-/issues/ URLs.
+        */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*) _e10=1 ;;
+        *" "*) _e10=1 ;;
+        *) if declare -F _loki_known_command >/dev/null 2>&1 \
+               && [ "$(_loki_known_command "$1")" = "other" ] && [ ! -e "$1" ]; then _e10=1; fi ;;
+    esac
+    if [ "$_e10" = "1" ]; then
+        command -v bun >/dev/null 2>&1 || { echo "Error: LOKI_ENGINE=v10 needs bun. Unset LOKI_ENGINE to use the current engine." >&2; exit 1; }
+        exec bun "$BUN_CLI" engine10 "$@"
+    fi
+fi
+
 # Bun must be installed for the new path; if it isn't, fall through to bash
 # silently rather than fail. This keeps users on systems without Bun working.
 if ! command -v bun &>/dev/null; then

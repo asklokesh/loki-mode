@@ -1,0 +1,106 @@
+// E-12: engine10 router and the one cli.ts dispatch arm.
+import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { route, runEngine10 } from "../../src/engine10/cli.ts";
+
+const SRC = join(import.meta.dir, "..", "..", "src");
+
+function captureStderr<T>(fn: () => Promise<T>): Promise<{ value: T; err: string }> {
+  const orig = process.stderr.write.bind(process.stderr);
+  let err = "";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    err += String(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+  return fn()
+    .then((value) => ({ value, err }))
+    .finally(() => {
+      process.stderr.write = orig;
+    });
+}
+
+describe("route", () => {
+  test("named commands and hidden subcommands", () => {
+    expect(route(["status", "r1"])).toEqual({ module: "status.ts", fn: "main", args: ["r1"] });
+    expect(route(["verify"])?.module).toBe("verify_cmd.ts");
+    expect(route(["dashboard"])?.module).toBe("dashboard/server.ts");
+    expect(route(["worker", "x"])).toEqual({ module: "worker.ts", fn: "main", args: ["x"] });
+    expect(route(["session"])?.module).toBe("session.ts");
+    expect(route(["deep-supervise"])).toEqual({ module: "stages/deep.ts", fn: "deepSupervise", args: [] });
+    expect(route(["deep-worker"])?.fn).toBe("deepWorker");
+  });
+  test("tasks, issue refs and flags go to the supervisor with every arg", () => {
+    for (const a of [["fix x"], ["owner/repo#3"], ["https://github.com/o/r/issues/7"], ["--deep", "fix x"]]) {
+      expect(route(a)).toEqual({ module: "supervisor.ts", fn: "main", args: a });
+    }
+  });
+  test("empty and help invocations are not routed", () => {
+    expect(route([])).toBeNull();
+    expect(route(["--help"])).toBeNull();
+  });
+});
+
+describe("runEngine10", () => {
+  test("a missing module prints not built yet and exits 2", async () => {
+    const load = async (spec: string) => {
+      const e = new Error(`Cannot find module '${spec}' from '${SRC}/engine10/cli.ts'`) as Error & { code: string };
+      e.code = "ERR_MODULE_NOT_FOUND";
+      throw e;
+    };
+    const { value, err } = await captureStderr(() => runEngine10(["status"], load));
+    expect(value).toBe(2);
+    expect(err).toBe("engine10: status.ts not built yet\n");
+  });
+
+  test("the real loader reports a module that is absent on disk", async () => {
+    const { value, err } = await captureStderr(() =>
+      runEngine10(["status"], (s) => import(`${SRC}/engine10/__absent__/${s}`)),
+    );
+    expect(value).toBe(2);
+    expect(err).toContain("not built yet");
+  });
+
+  test("a missing import inside an existing module is rethrown", async () => {
+    const load = async () => {
+      throw Object.assign(new Error("Cannot find module './types.ts' from 'status.ts'"), { code: "ERR_MODULE_NOT_FOUND" });
+    };
+    await expect(runEngine10(["verify"], load)).rejects.toThrow("types.ts");
+  });
+
+  test("dispatches to the export with the remaining args and returns its code", async () => {
+    let seen: { spec: string; args: string[] } | null = null;
+    const load = async (spec: string) => ({
+      deepWorker: (args: string[]) => {
+        seen = { spec, args };
+        return 7;
+      },
+    });
+    expect(await runEngine10(["deep-worker", "--run", "r1"], load)).toBe(7);
+    expect(seen).toEqual({ spec: "./stages/deep.ts", args: ["--run", "r1"] });
+  });
+
+  test("a module without the export exits 2", async () => {
+    const { value, err } = await captureStderr(() => runEngine10(["fix x"], async () => ({})));
+    expect(value).toBe(2);
+    expect(err).toContain("supervisor.ts does not export main");
+  });
+});
+
+describe("static shape", () => {
+  test("the router imports no sibling module statically", () => {
+    const text = readFileSync(join(SRC, "engine10", "cli.ts"), "utf8");
+    expect(text).not.toMatch(/^\s*import\s[^(]/m);
+    expect(text).not.toMatch(/^\s*export\s.*\sfrom\s/m);
+  });
+
+  test("engine10 appears only in the one cli.ts arm", () => {
+    const lines = readFileSync(join(SRC, "cli.ts"), "utf8").split("\n");
+    const hits = lines.flatMap((l, i) => (l.includes("engine10") ? [i] : []));
+    expect(hits.length).toBe(2);
+    expect(lines[hits[0]!]!.trim()).toBe('case "engine10": {');
+    expect(lines[hits[1]!]!.trim()).toBe('const { runEngine10 } = await import("./engine10/cli.ts");');
+    expect(hits[1]).toBe(hits[0]! + 1);
+    expect(lines[hits[0]! + 2]!.trim()).toBe("return runEngine10(rest);");
+  });
+});
