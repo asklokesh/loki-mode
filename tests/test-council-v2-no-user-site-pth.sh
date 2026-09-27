@@ -39,7 +39,7 @@ set_detector() { # <python body of detect_sycophancy>
     printf 'def detect_sycophancy(votes):\n    %s\n' "$1" >"$WORK/swarm/sycophancy.py"
 }
 
-# run_vote <reviewer verdict> <devil's advocate verdict>: source the copy under
+# run_vote <reviewer verdict> <devil's advocate verdict> [nopy]: source the copy under
 # the scratch HOME, stub the reviewers, run council_v2_vote. Prints
 # "rc=<rc> da=<ran|skipped> score=<score>".
 run_vote() {
@@ -51,6 +51,7 @@ run_vote() {
         . "$WORK/autonomy/council-v2.sh" >/dev/null 2>&1
         log_header() { :; }; log_info() { :; }; log_warn() { :; }; log_error() { :; }
         emit_event_json() { :; }
+        [ "${3:-}" = nopy ] && _loki_snapshot_py_tool() { return 1; }
         council_v2_run_reviewer() {
             local v="$1"
             if [ "$1" = devils_advocate ]; then
@@ -69,6 +70,17 @@ run_vote() {
     ) 2>/dev/null | tail -n1
 }
 : >"$WORK/empty/evidence.md"
+
+# ------------------------------------------------ static: every site is -I -S
+# The runtime legs reach the Step 3 vote read; this pins the other six sites
+# (DA read, detector, compare, calibration, and both in the reviewer).
+n_fixed="$(grep -cF '"$_c2_py" -I -S -c' "$SRC")"
+n_bare="$(grep -cE '(^|[^/_A-Za-z0-9])python3 ' "$SRC")"
+if [ "$n_fixed" = 7 ] && [ "$n_bare" = 0 ]; then
+    ok "all 7 python sites run the resolved interpreter -I -S; no bare python3"
+else
+    bad "python sites: $n_fixed of 7 run \"\$_c2_py\" -I -S, $n_bare bare python3 call(s) remain"
+fi
 
 # ---------------------------------------------------------------- leg 1: .pth
 set_detector "return 0.1"
@@ -103,7 +115,7 @@ case "$out" in
     "rc=0 da=skipped score=0.100") ok "control: real unanimous APPROVE with a low measured score approves, no challenge" ;;
     *) bad "control: harness cannot reach APPROVE ($out); leg 1 is vacuous" ;;
 esac
-rm -rf "${HOME_S:?}"/* 2>/dev/null
+rm -rf -- "${HOME_S:?}" && mkdir -p "$HOME_S"
 
 # ------------------------------------------------------ leg 2: detector failure
 set_detector "raise RuntimeError('detector crashed')"
@@ -127,6 +139,22 @@ out="$(run_vote APPROVE APPROVE)"
 case "$out" in
     *"da=ran"*) ok "unparseable detector output runs the devil's advocate ($out)" ;;
     *) bad "unparseable detector output skipped the devil's advocate ($out)" ;;
+esac
+
+# Step 5 fallback: a measured low score whose threshold compare cannot run
+# (bogus threshold) must still challenge, never read as "no challenge".
+set_detector "return 0.1"
+out="$(LOKI_COUNCIL_SYCOPHANCY_THRESHOLD=bogus run_vote APPROVE APPROVE)"
+case "$out" in
+    *"da=ran"*) ok "failed threshold compare runs the devil's advocate ($out)" ;;
+    *) bad "failed threshold compare skipped the devil's advocate ($out)" ;;
+esac
+
+# No interpreter resolves: no vote can be read, so nothing is approved.
+out="$(run_vote APPROVE APPROVE nopy)"
+case "$out" in
+    rc=1*) ok "no resolvable interpreter -> not approved ($out)" ;;
+    *) bad "no resolvable interpreter still approved ($out)" ;;
 esac
 
 # Repo hygiene: sourcing must not write provider state into the checkout.
