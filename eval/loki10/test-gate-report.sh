@@ -12,6 +12,8 @@
 #   3. null v10 cost -> missed, cost "not measured"
 #   4. 24 evaluated tasks -> missed, "fewer than 25"
 #   5. a model mismatch -> missed; arms on different harness_sha -> still met
+#   5c. all-met plus one extra row on a second model, sample still 25/25 ->
+#       missed on the one-model line alone, not on sample size
 #   6. a file with no block gets one appended; a begin with no end is refused
 #      and the file is left untouched
 #===============================================================================
@@ -101,6 +103,14 @@ has n24 'fewer than 25' && pass "n=24 says fewer than 25" || fail "n=24 lacks 'f
 gen model-mismatch
 has model-mismatch '<!-- loki10-gate: missed ' && pass "model mismatch -> missed marker" || fail "model mismatch marker not missed"
 has model-mismatch 'claude-opus-4-6, claude-sonnet-4-6' && pass "model mismatch names both models" || fail "model mismatch models not named"
+
+# 5c. all-met plus one extra raw-claude row on claude-opus-4-6 (26 raw rows):
+# the picked group still has 25/25 evaluated per arm, so sample_ok alone
+# would read met; only the one-model check catches the second model.
+gen model-mismatch-n25
+has model-mismatch-n25 '<!-- loki10-gate: missed n=25 ' && pass "second model at n=25 -> missed marker" || fail "second model at n=25 marker not missed"
+has model-mismatch-n25 '- Sample: v10 25, raw-claude 25 evaluated (need 25 or more per arm): MET' && pass "second model at n=25 sample line MET" || fail "second model at n=25 sample line not MET"
+has model-mismatch-n25 '- One model across all rows: claude-opus-4-6, claude-sonnet-4-6: MISSED' && pass "second model at n=25 one-model line MISSED" || fail "second model at n=25 one-model line not MISSED"
 
 # 5b. the arms ran on different harness commits: informational, not a miss
 gen harness-sha-split
