@@ -222,7 +222,7 @@ describe("engine10 pr stage", () => {
     const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
     expect(result.status).toBe("completed");
     expect(result.data.pr_url).toBe(url);
-    expect(result.data.not_proven).toBeUndefined();
+    expect(result.data.not_proven).toEqual(["commit status loki/deep-verify not set (local origin)"]);
     expect(emitted[0]).toEqual({ type: "pr.opened", stage: "pr", data: { url, draft: false, existing: null } });
   });
 

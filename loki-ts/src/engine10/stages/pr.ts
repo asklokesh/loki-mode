@@ -119,7 +119,10 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
 
   const headSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ctx.repoDir, encoding: "utf8", env: process.env }).trim();
   const notProvenOut: string[] = [];
-  if (SHA_RE.test(headSha)) {
+  if (localOk) {
+    // A local bare origin (the eval harness) has no commit status API.
+    notProvenOut.push("commit status loki/deep-verify not set (local origin)");
+  } else if (SHA_RE.test(headSha)) {
     const statusShellArgs = pushArgv({ cmd: "status", sha: headSha, state: "pending", description: "Loki 10 deep verify pending" });
     const statusResult = spawnSync("bash", [scriptPath, ...statusShellArgs], { env, encoding: "utf8" });
     // Non-fatal: the PR is already open. A failed status call is recorded, not a red PR stage.

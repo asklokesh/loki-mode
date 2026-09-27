@@ -67,9 +67,11 @@ fi
 
 # Local push: like _loki_trusted_push, the branch is fetched into a fresh
 # template-less repo and pushed from there, so the agent repo's config
-# (pushInsteadOf, remote.<url>.receivepack) and hooks never apply. Every git
-# call runs under an allowlisted env: the bare repo's own hooks inherit the
-# push env, so no token, SSH agent or askpass may reach them.
+# (pushInsteadOf, remote.<url>.receivepack) and hooks never apply. The bare
+# repo's own receive-side hooks (and its core.hooksPath) DO run: git does not
+# pass -c core.hooksPath to the local receive-pack. What protects them is the
+# allowlisted env below: they inherit it, so no token, SSH agent or askpass
+# reaches them.
 _e10_git() {
     env -i PATH="$PATH" HOME=/dev/null TMPDIR="${TMPDIR:-/tmp}" GIT_CONFIG_NOSYSTEM=1 \
         GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 git -c core.hooksPath=/dev/null "$@"
