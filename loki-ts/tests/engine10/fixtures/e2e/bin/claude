@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Stub claude CLI for the engine10 e2e test. Modes via E2E_STUB_MODE:
+#   done (default): the implement session appends multiply() to calc.ts
+#   already: the implement session changes nothing and claims already-done
+# Every -p call appends its stage name to E2E_STUB_LOG (kept outside the repo).
+set -u
+if [ "${1:-}" = "--help" ]; then
+  echo "Usage: claude [options] -p <prompt>"
+  echo "  --dangerously-skip-permissions --model <m> --settings <json> -p, --print"
+  exit 0
+fi
+prompt=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-p" ]; then prompt="${2:-}"; shift; fi
+  shift
+done
+case "$prompt" in
+  *"Loki 10 plan stage"*) stage=plan ;;
+  *"Loki 10 implement stage"*) stage=implement ;;
+  *) stage=other ;;
+esac
+if [ -n "${E2E_STUB_LOG:-}" ]; then echo "$stage" >> "$E2E_STUB_LOG"; fi
+if [ "$stage" = "implement" ]; then
+  if [ "${E2E_STUB_MODE:-done}" = "already" ]; then
+    echo "LOKI_ALREADY_DONE: calc.ts:1 add already exists"
+  else
+    printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts
+    echo "LOKI_DONE"
+  fi
+fi
+exit 0
