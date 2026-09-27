@@ -169,7 +169,7 @@ mk_run() {
 
 json_field() {
     # $1=dir  $2=field
-    (cd "$1" && timeout 60 bash "$LOKI" why --json 2>/dev/null) \
+    (cd "$1" && timeout -k 10 60 bash "$LOKI" why --json 2>/dev/null) \
         | python3 -c "import json,sys
 try:
     print(json.load(sys.stdin).get(sys.argv[1]))

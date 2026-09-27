@@ -39,7 +39,7 @@ json_get() {
 
 run_metrics_json() {
     local loki_dir="$1"
-    LOKI_DIR="$loki_dir" timeout 30 "$LOKI" metrics --json 2>&1
+    LOKI_DIR="$loki_dir" timeout -k 10 30 "$LOKI" metrics --json 2>&1
 }
 
 # -------------------------------------------
@@ -83,7 +83,7 @@ fi
 # -------------------------------------------
 ((TOTAL++))
 actual_exit=0
-LOKI_DIR="$EMPTY_DIR" timeout 30 "$LOKI" metrics --json >/dev/null 2>&1 || actual_exit=$?
+LOKI_DIR="$EMPTY_DIR" timeout -k 10 30 "$LOKI" metrics --json >/dev/null 2>&1 || actual_exit=$?
 if [ "$actual_exit" -eq 0 ]; then
     log_pass "empty .loki: exit code 0"
 else
@@ -95,7 +95,7 @@ fi
 # -------------------------------------------
 ((TOTAL++))
 actual_exit=0
-text_output=$(LOKI_DIR="$EMPTY_DIR" timeout 30 "$LOKI" metrics 2>&1) || actual_exit=$?
+text_output=$(LOKI_DIR="$EMPTY_DIR" timeout -k 10 30 "$LOKI" metrics 2>&1) || actual_exit=$?
 if [ "$actual_exit" -eq 0 ] && echo "$text_output" | grep -qi "unknown"; then
     log_pass "empty .loki: text report shows unknown time saved, no crash"
 else

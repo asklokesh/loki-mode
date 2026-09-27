@@ -108,7 +108,7 @@ mkdir -p test-once && cd test-once || exit 1
 echo "# Test PRD for once mode" > prd.md
 # --once should attempt to run loki start, which will fail quickly (no session)
 # but should exit (not hang) -- we timeout after 5s to verify it doesn't hang
-output=$(timeout 10 "$LOKI" watch --once 2>&1) || actual_exit=$?
+output=$(timeout -k 10 10 "$LOKI" watch --once 2>&1) || actual_exit=$?
 actual_exit=${actual_exit:-0}
 # It should mention running loki start or the prd filename
 if echo "$output" | grep -qi "once\|start\|prd.md"; then

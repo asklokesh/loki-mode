@@ -1438,6 +1438,7 @@ run_test "web-app CommandPalette file-search failure is not no-results (node --t
 # shard checkout does not have. It runs in its own "Moat suite" job instead.
 run_test "the moat runner enforces every ratchet rule" "$SCRIPT_DIR/test-moat-runner.sh"
 run_test "v10-pulse anti-drift status/violation reporter" "$SCRIPT_DIR/test-v10-pulse.sh"
+run_test "timeout launches of run.sh/autonomy/loki escalate with -k (E-00)" "$SCRIPT_DIR/test-timeout-escalates.sh"
 run_test "v10 drift-audit turn counter (every-6th-turn signal)" "$SCRIPT_DIR/test-v10-drift-audit-counter.sh"
 run_test "v10 slice-card template (fields, budget, dispatch rule)" "$SCRIPT_DIR/test-v10-slice-card.sh"
 

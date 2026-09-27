@@ -58,7 +58,7 @@ cat > "$W/.loki/signals/GATE_ESCALATION.json" <<JSON
  "latest_artifact":"/nonexistent/machine/path/.loki/quality/reviews/review-X"}
 JSON
 
-out="$(cd "$W" && timeout 60 bash "$LOKI" why 2>&1 || true)"
+out="$(cd "$W" && timeout -k 10 60 bash "$LOKI" why 2>&1 || true)"
 
 # ---- REDERIVE ------------------------------------------------------------
 if printf '%s' "$out" | grep -qE 'Changes.*0 files \(\+0/-0\)'; then
@@ -96,7 +96,7 @@ mkdir -p "$C/.loki/state"
 git init -q "$C"
 printf '{"outcome":"inconclusive_spec_contradiction","files_changed":1}\n' \
     > "$C/.loki/state/completion.json"
-cout="$(cd "$C" && timeout 60 bash "$LOKI" why 2>&1 || true)"
+cout="$(cd "$C" && timeout -k 10 60 bash "$LOKI" why 2>&1 || true)"
 if printf '%s' "$cout" | grep -qi 'No diagnosis mapping'; then
     bad "inconclusive_spec_contradiction still has no GUIDE entry"
 else
@@ -116,7 +116,7 @@ mkdir -p "$G/.loki/state"
 git init -q "$G"
 printf '{"outcome":"complete","files_changed":3,"insertions":10,"deletions":0}\n' \
     > "$G/.loki/state/completion.json"
-gout="$(cd "$G" && timeout 60 bash "$LOKI" why 2>&1 || true)"
+gout="$(cd "$G" && timeout -k 10 60 bash "$LOKI" why 2>&1 || true)"
 if printf '%s' "$gout" | grep -qE 'Changes.*3 files \(\+10/-0\)'; then
     ok "a trustworthy non-zero record is printed unchanged (no added noise)"
 else

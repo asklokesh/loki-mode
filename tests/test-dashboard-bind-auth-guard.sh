@@ -34,7 +34,7 @@ echo "TEST: an exposed dashboard bind is refused without auth"
 # Counts the refusal, never starts a server: every invocation below either
 # refuses (and exits) or is stopped by the timeout before binding.
 _refused() {
-    timeout 25 env "$@" bash "$LOKI_BIN" dashboard start --host "$_HOST" 2>&1 \
+    timeout -k 10 25 env "$@" bash "$LOKI_BIN" dashboard start --host "$_HOST" 2>&1 \
         | grep -c "Refusing to start" | tr -d ' '
 }
 

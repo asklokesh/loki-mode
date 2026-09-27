@@ -71,7 +71,7 @@ if [ "$unified" = "true" ]; then
     # want to actually start a real run, pass a dummy github issue URL that
     # requires validation which will fail fast.
     set +e
-    start_out=$(timeout 5 "$LOKI_BIN" start "https://github.com/example/repo/issues/1" --help 2>&1 || true)
+    start_out=$(timeout -k 10 5 "$LOKI_BIN" start "https://github.com/example/repo/issues/1" --help 2>&1 || true)
     set -e
     if echo "$start_out" | grep -qi "unknown command"; then
         bad "unified_start_accepts_issue_url" "start rejected issue url: $start_out"
@@ -83,7 +83,7 @@ else
     # Fallback: both commands still exist separately. Test `loki run --help`
     # resolves a command (even if it prints a usage message).
     set +e
-    run_out=$(timeout 5 "$LOKI_BIN" run --help 2>&1 || true)
+    run_out=$(timeout -k 10 5 "$LOKI_BIN" run --help 2>&1 || true)
     set -e
     if echo "$run_out" | grep -qiE "usage|run|issue"; then
         ok "legacy_loki_run_help_works"

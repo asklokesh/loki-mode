@@ -448,7 +448,7 @@ mkdir -p "$E2E"
     cd "$E2E" || exit 1
     git init -q . >/dev/null 2>&1
     git commit -q --allow-empty -m init >/dev/null 2>&1
-    timeout 90 bash "$LOKI" run "octocat/hello#42" --no-start
+    timeout -k 10 90 bash "$LOKI" run "octocat/hello#42" --no-start
 ) >/dev/null 2>&1
 
 if [ -f "$E2E/.loki/state/journey-plan.json" ] && python3 - "$E2E/.loki/state" <<'PY'

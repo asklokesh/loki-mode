@@ -33,7 +33,7 @@ bad() { printf 'FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 echo "TEST: doctor detects an incomplete install"
 
 # --- healthy: the repo itself -------------------------------------------------
-_healthy="$(LOKI_NO_UPDATE_CHECK=1 timeout 120 bash "$LOKI" doctor 2>&1 || true)"
+_healthy="$(LOKI_NO_UPDATE_CHECK=1 timeout -k 10 120 bash "$LOKI" doctor 2>&1 || true)"
 case "$_healthy" in
     *"Install integrity"*) ok "doctor reports an install-integrity section" ;;
     *) bad "doctor has no install-integrity section" ;;
@@ -53,7 +53,7 @@ cp -R "$REPO_ROOT/autonomy" "$D/autonomy" 2>/dev/null
 mkdir -p "$D/tests"
 cp "$REPO_ROOT/VERSION" "$D/VERSION" 2>/dev/null || true
 
-_broken="$(LOKI_NO_UPDATE_CHECK=1 timeout 120 bash "$D/autonomy/loki" doctor 2>&1 || true)"
+_broken="$(LOKI_NO_UPDATE_CHECK=1 timeout -k 10 120 bash "$D/autonomy/loki" doctor 2>&1 || true)"
 
 case "$_broken" in
     *"detectors MISSING"*) ok "an empty tests/ dir is reported as MISSING" ;;

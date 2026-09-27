@@ -68,7 +68,7 @@ else
 fi
 
 # An unknown name must degrade, not recurse forever.
-unknown="$(timeout 15 bash "$LOKI" help zzznotacommand 2>&1)"
+unknown="$(timeout -k 10 15 bash "$LOKI" help zzznotacommand 2>&1)"
 urc=$?
 if [[ $urc -eq 124 ]]; then
     ko "loki help <unknown> terminates" "timed out -- likely infinite recursion"
@@ -81,7 +81,7 @@ fi
 # The help path must be incapable of executing, not merely observed not to.
 # LOKI_HELP_ONLY is set when `loki help <cmd>` re-enters dispatch; without a
 # --help in the argv the guard must refuse rather than run the command.
-guard_out="$(LOKI_HELP_ONLY=1 timeout 15 bash "$LOKI" stop 2>&1)"
+guard_out="$(LOKI_HELP_ONLY=1 timeout -k 10 15 bash "$LOKI" stop 2>&1)"
 if [[ "$guard_out" == *"refusing to run"* ]]; then
     ok "the help path refuses to execute a command without --help"
 else
@@ -90,7 +90,7 @@ else
 fi
 
 # ...and the guard must not leak into ordinary use.
-if timeout 20 bash "$LOKI" status --json >/dev/null 2>&1; then
+if timeout -k 10 20 bash "$LOKI" status --json >/dev/null 2>&1; then
     ok "ordinary command dispatch is unaffected by the guard"
 else
     ko "ordinary command dispatch is unaffected by the guard"

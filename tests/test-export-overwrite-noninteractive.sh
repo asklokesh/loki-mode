@@ -69,7 +69,7 @@ printf '%s\n' "$SENTINEL" > out.md
 # so inheriting CI here makes the suite contradict itself. GitHub Actions exports
 # CI=true for every step, which is exactly what happened: this case failed on the
 # runner while the CI=true case passed, for the same underlying behavior.
-timeout 15 env -u CI -u LOKI_AUTO_CONFIRM bash "$LOKI_BIN" export markdown out.md > t1.log 2>&1
+timeout -k 10 15 env -u CI -u LOKI_AUTO_CONFIRM bash "$LOKI_BIN" export markdown out.md > t1.log 2>&1
 rc=$?
 if [ "$rc" -eq 124 ]; then
     fail "non-interactive existing file terminates" "TIMED OUT (rc 124) -- the prompt is blocking again"
@@ -91,7 +91,7 @@ fi
 # 2. LOKI_AUTO_CONFIRM=true: overwrites, and says so audibly.
 # ---------------------------------------------------------------------------
 printf '%s\n' "$SENTINEL" > out2.md
-timeout 15 env LOKI_AUTO_CONFIRM=true bash "$LOKI_BIN" export markdown out2.md > t2.log 2>&1
+timeout -k 10 15 env LOKI_AUTO_CONFIRM=true bash "$LOKI_BIN" export markdown out2.md > t2.log 2>&1
 rc=$?
 if [ "$rc" -eq 124 ]; then
     fail "LOKI_AUTO_CONFIRM terminates" "TIMED OUT (rc 124)"
@@ -109,7 +109,7 @@ fi
 #    (see the env-var help: LOKI_AUTO_CONFIRM takes precedence over CI).
 # ---------------------------------------------------------------------------
 printf '%s\n' "$SENTINEL" > out3.md
-timeout 15 env CI=true bash "$LOKI_BIN" export markdown out3.md > t3.log 2>&1
+timeout -k 10 15 env CI=true bash "$LOKI_BIN" export markdown out3.md > t3.log 2>&1
 rc=$?
 if [ "$rc" -eq 124 ]; then
     fail "CI=true terminates" "TIMED OUT (rc 124)"
@@ -126,7 +126,7 @@ fi
 # 4. No pre-existing file: the guard must not fire at all.
 # ---------------------------------------------------------------------------
 rm -f fresh.md
-timeout 15 bash "$LOKI_BIN" export markdown fresh.md > t4.log 2>&1
+timeout -k 10 15 bash "$LOKI_BIN" export markdown fresh.md > t4.log 2>&1
 rc=$?
 if [ "$rc" -eq 124 ]; then
     fail "fresh output path terminates" "TIMED OUT (rc 124)"

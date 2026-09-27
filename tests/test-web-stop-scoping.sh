@@ -111,8 +111,8 @@ RUNNER
     # Run `loki web stop` against the sandboxed HOME from yet another CWD. Use a
     # short hard timeout as a guard; the code path is designed not to hang.
     TBIN=""
-    command -v timeout >/dev/null 2>&1 && TBIN="timeout 20"
-    command -v gtimeout >/dev/null 2>&1 && [ -z "$TBIN" ] && TBIN="gtimeout 20"
+    command -v timeout >/dev/null 2>&1 && TBIN="timeout -k 10 20"
+    command -v gtimeout >/dev/null 2>&1 && [ -z "$TBIN" ] && TBIN="gtimeout -k 10 20"
     # Council R2 (v7.30.0): isolate the dashboard port too. cmd_web_stop's
     # companion-dashboard kill targets LOKI_DASHBOARD_PORT (default 57374)
     # machine-wide; without this override, running the suite on a machine
@@ -236,8 +236,8 @@ PYEOF
     sleep 60 & DASH_PLACEHOLDER_PID=$!
     echo "$DASH_PLACEHOLDER_PID" > "$SBX_HOME/.loki/dashboard/dashboard.pid"
     TBIN=""
-    command -v timeout >/dev/null 2>&1 && TBIN="timeout 20"
-    command -v gtimeout >/dev/null 2>&1 && [ -z "$TBIN" ] && TBIN="gtimeout 20"
+    command -v timeout >/dev/null 2>&1 && TBIN="timeout -k 10 20"
+    command -v gtimeout >/dev/null 2>&1 && [ -z "$TBIN" ] && TBIN="gtimeout -k 10 20"
     # SKILL_DIR is THIS test's own repo root, deliberately different from
     # FOREIGN_SKILL_DIR where the decoy's server.py actually lives -- proving
     # the identity check is path-exact, not "any web-app/server.py".
@@ -303,8 +303,8 @@ T3B=$(
     sleep 60 & DASH_PLACEHOLDER_PID=$!
     echo "$DASH_PLACEHOLDER_PID" > "$SBX_HOME/.loki/dashboard/dashboard.pid"
     TBIN=""
-    command -v timeout >/dev/null 2>&1 && TBIN="timeout 20"
-    command -v gtimeout >/dev/null 2>&1 && [ -z "$TBIN" ] && TBIN="gtimeout 20"
+    command -v timeout >/dev/null 2>&1 && TBIN="timeout -k 10 20"
+    command -v gtimeout >/dev/null 2>&1 && [ -z "$TBIN" ] && TBIN="gtimeout -k 10 20"
     ( cd "$SBX_HOME" && HOME="$SBX_HOME" LOKI_DIR="$SBX_HOME/.loki" \
         SKILL_DIR="$REPO_ROOT" LOKI_DASHBOARD_PORT=59993 \
         $TBIN bash "$LOKI" web stop >/dev/null 2>&1 )

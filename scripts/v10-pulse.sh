@@ -102,7 +102,17 @@
 #   PULSE_LOAD_MAX      HIGH_LOAD threshold override (default: 28, 2x 14 cores).
 #   PULSE_LOADAVG       overrides the 1-minute load average reading (default:
 #                       `sysctl -n vm.loadavg` on macOS, /proc/loadavg on Linux).
-#   PULSE_PS_OUTPUT     overrides `ps -eo pid,ppid,etime,command` for ORPHAN_TEST.
+#   PULSE_PS_OUTPUT     overrides `ps -eo pid,ppid,etime,command` for
+#                       ORPHAN_TEST and ORPHAN_WORKTREE (same listing, both
+#                       checks scan it independently).
+#   PULSE_ORPHAN_WORKTREE_MAX_MIN
+#                       age threshold in minutes for ORPHAN_WORKTREE (default
+#                       30): a process older than this whose command line
+#                       references a .claude/worktrees/ path or a
+#                       /tmp/loki-run-*.sh script fires (E-00: a `timeout N
+#                       bash .../agent-<id>/autonomy/run.sh` that ignored
+#                       SIGTERM ran over 24h and ORPHAN_TEST's own tests/*
+#                       regex never saw it).
 #   PULSE_DOCKER_PS     overrides the docker container listing for
 #                       STRAY_CONTAINER (see that check's own docstring for
 #                       the tab-separated row shape).
@@ -400,7 +410,7 @@ VIOLATION_PRIORITY = [
     "CI_RED", "CI_CANCELLED_STREAK", "RELEASE_ON_RED", "HIGH_LOAD",
     "MOAT_REGRESSION", "UNRELEASED_MERGE", "TRAIN_LATE", "REVIEW_STALE",
     "AGENT_OVER_BUDGET", "UNEVIDENCED_CLAIM", "RELEASED_AHEAD_OF_NPM",
-    "ORPHAN_TEST", "STRAY_CONTAINER",
+    "ORPHAN_TEST", "ORPHAN_WORKTREE", "STRAY_CONTAINER",
     "WORKTREE_COUNT", "IDLE_BUILDERS", "LOW_READY", "NO_RECENT_RELEASE",
     "LOW_RELEASE_VOLUME", "CONTROL_OVERSIZE",
 ]
@@ -1840,9 +1850,20 @@ else:
         )
 
 
-# --- 11. ORPHAN_TEST: an orphaned or long-running tests/* process (D28) -----
+# --- 11. ORPHAN_TEST / ORPHAN_WORKTREE: an orphaned or long-running tests/*
+# process, or a stuck worktree run.sh / loki-run tmp script (D28, E-00) ------
+# E-00 incident: a `timeout 240 bash .../agent-<id>/autonomy/run.sh` process
+# (with a generated /tmp/loki-run-*.sh child) ran over 24 hours. It ignored
+# SIGTERM -- plain `timeout` never escalates to SIGKILL (see the timeout call
+# sites fixed alongside this, all now `timeout -k 10 N`) -- and this check's
+# own ORPHAN_TEST regex only ever matched tests/*.sh|py, never autonomy/run.sh
+# or a worktree path, so the incident process was invisible here the entire
+# time it ran ("Orphan test processes: 0"). ORPHAN_WORKTREE below is a second,
+# independent match against the SAME ps listing, never a new process fetch.
 _ORPHAN_TEST_RE = re.compile(r"tests/\S+\.(?:sh|py)\b")
 _ORPHAN_MAX_MIN = 30.0
+_ORPHAN_WORKTREE_RE = re.compile(r"\.claude/worktrees/|/tmp/loki-run-\S*\.sh\b")
+_ORPHAN_WORKTREE_MAX_MIN = float(os.environ.get("PULSE_ORPHAN_WORKTREE_MAX_MIN", "30") or "30")
 
 
 def parse_etime_minutes(etime):
@@ -1856,21 +1877,31 @@ def parse_etime_minutes(etime):
     return days * 1440.0 + hours * 60.0 + minutes + seconds / 60.0
 
 
-def check_orphan_tests():
+def read_ps_listing():
+    """The shared `ps -eo pid,ppid,etime,command` text both orphan checks
+    below scan -- one real `ps` call in production (matching this file's own
+    S-109 comment on HIGH_LOAD/ORPHAN_TEST/STRAY_CONTAINER host-state
+    isolation), one PULSE_PS_OUTPUT fixture in tests, so a test never has to
+    fake the listing twice to cover both checks. None means the real call
+    failed; every caller already treats None as UNKNOWN for its own metric."""
+    override = os.environ.get("PULSE_PS_OUTPUT")
+    if override is not None:
+        return override
+    rc, out, _ = run_capped(["ps", "-eo", "pid,ppid,etime,command"])
+    if rc != 0:
+        return None
+    return out
+
+
+def check_orphan_tests(ps_text):
     """Returns a list of (pid, etime, command) for a tests/*.sh or
     tests/*.py process that is either parentless (PPID 1) or has run past
     the 30-minute budget, or None if the process listing itself could not be
     read. Never kills anything -- reporting only."""
-    override = os.environ.get("PULSE_PS_OUTPUT")
-    if override is not None:
-        text = override
-    else:
-        rc, out, _ = run_capped(["ps", "-eo", "pid,ppid,etime,command"])
-        if rc != 0:
-            return None
-        text = out
+    if ps_text is None:
+        return None
     orphans = []
-    for line in text.splitlines()[1:]:  # skip the ps header line
+    for line in ps_text.splitlines()[1:]:  # skip the ps header line
         parts = line.split(None, 3)
         if len(parts) < 4:
             continue
@@ -1883,7 +1914,32 @@ def check_orphan_tests():
     return orphans
 
 
-orphan_tests = safe(check_orphan_tests)
+def check_orphan_worktree_procs(ps_text):
+    """Returns a list of (pid, etime, command) for any process older than
+    PULSE_ORPHAN_WORKTREE_MAX_MIN (default 30) whose command line references
+    a .claude/worktrees/ path or a /tmp/loki-run-*.sh script -- the exact
+    shape of the E-00 incident. Age-gated only, no PPID-1 rule: a worktree
+    agent's run.sh is legitimately still attached to its launching parent for
+    most of its life, unlike a stray test process, so parentlessness is not a
+    useful signal here. Never kills anything -- reporting only."""
+    if ps_text is None:
+        return None
+    hits = []
+    for line in ps_text.splitlines()[1:]:  # skip the ps header line
+        parts = line.split(None, 3)
+        if len(parts) < 4:
+            continue
+        pid, _ppid, etime, command = parts
+        if not _ORPHAN_WORKTREE_RE.search(command):
+            continue
+        age_min = parse_etime_minutes(etime)
+        if age_min is not None and age_min > _ORPHAN_WORKTREE_MAX_MIN:
+            hits.append((pid, etime, command.strip()))
+    return hits
+
+
+_ps_listing = safe(read_ps_listing)
+orphan_tests = safe(check_orphan_tests, _ps_listing)
 if orphan_tests is None:
     mark_unknown("orphan_tests")
     emit("Orphan test processes: UNKNOWN (ps check failed)")
@@ -1892,6 +1948,18 @@ else:
     for pid, etime, command in orphan_tests:
         add_violation(
             "ORPHAN_TEST",
+            "pid %s etime %s: %s" % (pid, etime, command),
+        )
+
+orphan_worktree_procs = safe(check_orphan_worktree_procs, _ps_listing)
+if orphan_worktree_procs is None:
+    mark_unknown("orphan_worktree_procs")
+    emit("Orphan worktree/run.sh processes: UNKNOWN (ps check failed)")
+else:
+    emit("Orphan worktree/run.sh processes: %d" % len(orphan_worktree_procs))
+    for pid, etime, command in orphan_worktree_procs:
+        add_violation(
+            "ORPHAN_WORKTREE",
             "pid %s etime %s: %s" % (pid, etime, command),
         )
 
@@ -2158,6 +2226,7 @@ _NEXT_ACTION_TEXT = {
     "UNEVIDENCED_CLAIM": "add a command/output citation to the named line(s) or retract the claim (D26 guard 4)",
     "RELEASED_AHEAD_OF_NPM": "verify the named release(s) actually reached npm, or fix the BOARD row's status/timestamp",
     "ORPHAN_TEST": "investigate the named orphaned/long-running test process; stop by exact PID only if confirmed stale, never by name or pattern",
+    "ORPHAN_WORKTREE": "investigate the named worktree/run.sh process; stop by exact PID only if confirmed stale, never by name or pattern",
     "STRAY_CONTAINER": "remove or fix the named swarm container: capped resources, restart policy 'no', removed when done (D28)",
     "WORKTREE_COUNT": "prune stale worktrees under .claude/worktrees (git worktree remove), it is over the 15 max",
     "IDLE_BUILDERS": "dispatch more builders against the named ready slice(s) in docs/v10/BOARD.md",
