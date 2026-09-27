@@ -110,6 +110,20 @@ describe("buildStatus (pure, folded events only)", () => {
     expect(view.lines[0]).toContain("skipped");
   });
 
+  // ENGINE.md section 5: "Unknown is never 0 ... every reader renders null
+  // as 'not measured'". stage.skipped carries only `reason`, never
+  // `duration_s`, so a skipped stage must never render a fabricated "0s".
+  test("a skipped stage's untimed duration renders as not measured, never 0s", () => {
+    const log = writeRun(runId);
+    log.append("run.started", null, {});
+    log.append("stage.started", "plan", {});
+    log.append("stage.skipped", "plan", { reason: "module not present" });
+    const events = readEvents(eventsPath(repoDir, runId));
+    const view = buildStatus(runId, events, fold(events), Date.now());
+    expect(view.lines[0]).not.toContain("0s");
+    expect(view.lines[0]).toContain("not measured");
+  });
+
   test("renderStatus names the run and shows Stage: while running, Verdict: once done", () => {
     const running = buildStatus(runId, [], fold([]), Date.now());
     expect(renderStatus({ ...running, currentStage: "intake", elapsedS: 5 })).toContain("Stage:      intake");

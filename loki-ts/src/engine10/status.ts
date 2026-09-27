@@ -67,7 +67,10 @@ export function buildStatus(runId: string, events: ReturnType<typeof readEvents>
     .filter((entry): entry is [string, NonNullable<(typeof entry)[1]>] => TERMINAL_TYPES.has(entry[1]?.type ?? ""))
     .sort(([, a], [, b]) => a.seq - b.seq)
     .map(([stage, ev]) => {
-      const durationS = typeof ev.data.duration_s === "number" ? ev.data.duration_s : 0;
+      // stage.skipped carries only `reason`, never `duration_s` (ENGINE.md
+      // section 5); null renders "not measured" via output.ts, never a
+      // fabricated 0s (section 5: "Unknown is never 0").
+      const durationS = typeof ev.data.duration_s === "number" ? ev.data.duration_s : null;
       const status = ev.type === "stage.failed" ? "failed" : ev.type === "stage.skipped" ? "skipped" : "done";
       const detail = typeof ev.data.reason === "string" ? ev.data.reason : "";
       const clockS = folded.run.started ? (Date.parse(ev.ts) - startMs) / 1000 : 0;

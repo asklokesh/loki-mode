@@ -57,6 +57,10 @@ describe("formatStageLine (golden, ENGINE.md section 11)", () => {
     expect(formatStageLine({ clockS: 49, name: "plan+wall", status: "done", durationS: 38, detail: "plan 7 lines, 4 wall tests sealed" }))
       .toBe("[00:49] plan+wall   done   38s   plan 7 lines, 4 wall tests sealed");
   });
+  test("a null duration renders as not measured, never 0s (section 5)", () => {
+    expect(formatStageLine({ clockS: 0, name: "plan", status: "skipped", durationS: null, detail: "module not present" }))
+      .toBe("[00:00] plan        skippednot measured   module not present");
+  });
 });
 
 describe("formatHeartbeatLine (golden, ENGINE.md section 11)", () => {

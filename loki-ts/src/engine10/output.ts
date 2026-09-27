@@ -40,7 +40,9 @@ export interface StageLine {
   /** Display name, e.g. "intake" or the combined "plan+wall". */
   name: string;
   status: "done" | "failed" | "skipped";
-  durationS: number;
+  /** null when the stage carries no duration_s (stage.skipped, section 5);
+   *  never fabricated as 0 (section 5: "Unknown is never 0"). */
+  durationS: number | null;
   detail: string;
 }
 
@@ -49,7 +51,7 @@ export function formatStageLine(line: StageLine): string {
   const clock = formatClock(line.clockS);
   const name = line.name.padEnd(NAME_WIDTH);
   const status = line.status.padEnd(STATUS_WIDTH);
-  const duration = formatDuration(line.durationS);
+  const duration = line.durationS == null ? "not measured" : formatDuration(line.durationS);
   return `[${clock}] ${name}${status}${duration}   ${line.detail}`;
 }
 
