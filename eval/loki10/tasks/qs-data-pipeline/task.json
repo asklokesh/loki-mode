@@ -1,0 +1,19 @@
+{
+  "id": "qs-data-pipeline",
+  "kind": "quickstart",
+  "template": "templates/data-pipeline.md",
+  "prompt": "Build a small batch data pipeline, run as `sh pipeline.sh INPUT.csv OUTPUT.json`. If dependencies are needed, provide a setup.sh at the root that installs them. The input CSV has a header row date,region,amount. Normalize region to lowercase and trimmed, parse amount as a number, and skip rows with missing fields or a non-numeric amount. Write OUTPUT.json as {\"regions\":[{\"region\",\"total\",\"count\"}],\"rows_ok\",\"rows_skipped\"} with regions sorted by total descending and totals rounded to 2 decimals. If the input file does not exist, exit non-zero.",
+  "issue_ref": null,
+  "repo": {
+    "source": "/Users/lokesh/git/lokimode-anthropic/eval/loki10/fixtures/empty-repo/empty-repo.bundle",
+    "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
+  },
+  "setup": "",
+  "hidden": {
+    "files": [
+      "tests_hidden/test_qs.py"
+    ],
+    "run": "if [ -f setup.sh ]; then sh setup.sh; fi; python3 tests_hidden/test_qs.py"
+  },
+  "timeout_s": 900
+}

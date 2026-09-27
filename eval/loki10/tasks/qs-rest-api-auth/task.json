@@ -1,0 +1,20 @@
+{
+  "id": "qs-rest-api-auth",
+  "kind": "quickstart",
+  "template": "templates/rest-api-auth.md",
+  "prompt": "Build a REST API with username and password authentication. Provide an executable start.sh at the repository root that starts the server listening on the port given by the PORT environment variable (bind 127.0.0.1 or 0.0.0.0). Keep all state in memory; no external database or network service. If dependencies are needed, provide a setup.sh at the root that installs them. Request and response bodies are JSON unless stated otherwise. POST /register with {\"username\",\"password\"} returns 201, or 409 if the username is taken. POST /login with the same fields returns 200 and {\"token\":\"...\"} on success, 401 on bad credentials. GET /me with header Authorization: Bearer <token> returns 200 and {\"username\":...}; a missing or invalid token returns 401. Never return or store the plain-text password (hash it).",
+  "issue_ref": null,
+  "repo": {
+    "source": "/Users/lokesh/git/lokimode-anthropic/eval/loki10/fixtures/empty-repo/empty-repo.bundle",
+    "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
+  },
+  "setup": "",
+  "hidden": {
+    "files": [
+      "tests_hidden/_h.py",
+      "tests_hidden/test_qs.py"
+    ],
+    "run": "if [ -f setup.sh ]; then sh setup.sh; fi; python3 tests_hidden/test_qs.py"
+  },
+  "timeout_s": 900
+}

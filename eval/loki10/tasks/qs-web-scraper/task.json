@@ -1,0 +1,19 @@
+{
+  "id": "qs-web-scraper",
+  "kind": "quickstart",
+  "template": "templates/web-scraper.md",
+  "prompt": "Build a product listing scraper, run as `sh scrape.sh URL`. If dependencies are needed, provide a setup.sh at the root that installs them. Each page lists products as elements with class product, each containing an element with class name and one with class price formatted like $12.00. Follow the pagination link a[rel=next] (relative URLs allowed) until there is none. Print to stdout one JSON array of {\"name\",\"price_cents\"} in page order, with HTML entities in names decoded.",
+  "issue_ref": null,
+  "repo": {
+    "source": "/Users/lokesh/git/lokimode-anthropic/eval/loki10/fixtures/empty-repo/empty-repo.bundle",
+    "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
+  },
+  "setup": "",
+  "hidden": {
+    "files": [
+      "tests_hidden/test_qs.py"
+    ],
+    "run": "if [ -f setup.sh ]; then sh setup.sh; fi; python3 tests_hidden/test_qs.py"
+  },
+  "timeout_s": 900
+}

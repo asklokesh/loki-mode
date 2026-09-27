@@ -1,0 +1,20 @@
+{
+  "id": "qs-rest-api",
+  "kind": "quickstart",
+  "template": "templates/rest-api.md",
+  "prompt": "Build a small notes REST API. Provide an executable start.sh at the repository root that starts the server listening on the port given by the PORT environment variable (bind 127.0.0.1 or 0.0.0.0). Keep all state in memory; no external database or network service. If dependencies are needed, provide a setup.sh at the root that installs them. Request and response bodies are JSON unless stated otherwise. Endpoints: GET /health returns {\"status\":\"ok\"}. POST /notes with {\"title\",\"body\"} creates a note and returns 201 with the note including an id field; a missing or empty title returns 400. GET /notes returns the list of notes. GET /notes/{id} returns one note or 404. PUT /notes/{id} with {\"title\",\"body\"} updates it and returns 200 with the updated note. DELETE /notes/{id} returns 204, after which the note is gone (404).",
+  "issue_ref": null,
+  "repo": {
+    "source": "/Users/lokesh/git/lokimode-anthropic/eval/loki10/fixtures/empty-repo/empty-repo.bundle",
+    "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
+  },
+  "setup": "",
+  "hidden": {
+    "files": [
+      "tests_hidden/_h.py",
+      "tests_hidden/test_qs.py"
+    ],
+    "run": "if [ -f setup.sh ]; then sh setup.sh; fi; python3 tests_hidden/test_qs.py"
+  },
+  "timeout_s": 900
+}

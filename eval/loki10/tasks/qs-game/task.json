@@ -1,0 +1,19 @@
+{
+  "id": "qs-game",
+  "kind": "quickstart",
+  "template": "templates/game.md",
+  "prompt": "Build a tic-tac-toe engine with a command-line interface, run as `sh game.sh COMMAND BOARD`. If dependencies are needed, provide a setup.sh at the root that installs them. BOARD is 9 characters, row by row, each X, O or . (empty); X moves first. A board is invalid (exit code 1) unless it has length 9, only those characters, and X count equals O count or O count plus one. Commands print one line: `winner` prints X, O, draw (full board, no winner) or none; `next` prints whose turn it is; `move` prints the index 0-8 for the player to move: the lowest index that wins immediately, else the lowest index that blocks the opponent's immediate win, else 4 if empty, else the lowest empty index.",
+  "issue_ref": null,
+  "repo": {
+    "source": "/Users/lokesh/git/lokimode-anthropic/eval/loki10/fixtures/empty-repo/empty-repo.bundle",
+    "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
+  },
+  "setup": "",
+  "hidden": {
+    "files": [
+      "tests_hidden/test_qs.py"
+    ],
+    "run": "if [ -f setup.sh ]; then sh setup.sh; fi; python3 tests_hidden/test_qs.py"
+  },
+  "timeout_s": 900
+}
