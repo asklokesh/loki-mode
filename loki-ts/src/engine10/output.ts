@@ -108,7 +108,7 @@ export function formatSummary(input: SummaryInput): string {
 
   const costLine =
     input.cost.usd != null
-      ? `${labelCol("Cost")}$${input.cost.usd.toFixed(2)} (${input.cost.provider}, ${formatTokens(input.cost.tokens ?? 0)} tokens)`
+      ? `${labelCol("Cost")}$${input.cost.usd.toFixed(2)} (${input.cost.provider}, ${input.cost.tokens != null ? `${formatTokens(input.cost.tokens)} tokens` : "tokens not measured"})`
       : `${labelCol("Cost")}not measured${input.cost.note ? ` (${input.cost.note})` : ""}`;
 
   const stagesStr = input.stages.map((s) => `${s.label} ${formatDuration(s.seconds)}`).join(", ");
@@ -130,8 +130,11 @@ export async function estimateEtaS(
   let mod: { estimate?: EtaEstimator };
   try {
     mod = (await import(modulePath)) as { estimate?: EtaEstimator };
-  } catch {
-    return null; // module not present yet: optional, not an error
+  } catch (err) {
+    // Only a missing module means "no ETA yet"; any other import error is a bug.
+    const e = err as { code?: string; message?: string };
+    if (e?.code === "ERR_MODULE_NOT_FOUND" || /Cannot find module|Module not found/i.test(String(e?.message ?? err))) return null;
+    throw err;
   }
   if (typeof mod.estimate !== "function") return null;
   try {

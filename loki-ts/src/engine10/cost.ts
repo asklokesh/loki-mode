@@ -120,7 +120,10 @@ export function writeEfficiencyRecord(lokiRoot: string, info: EfficiencySessionI
     duration_ms: info.durationMs,
     model: info.model,
   };
-  if (cost.usd !== null) rec.cost_usd = cost.usd;
+  if (cost.usd !== null) {
+    rec.cost_usd = cost.usd;
+    rec.cost_source = "provider"; // EV-1 gate reads only provider-sourced dollars
+  }
   rec.input_tokens = cost.input_tokens;
   rec.output_tokens = cost.output_tokens;
   rec.cache_read_tokens = cost.cache_read_tokens;

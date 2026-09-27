@@ -84,6 +84,15 @@ describe("formatHeartbeatLine (golden, ENGINE.md section 11)", () => {
 });
 
 describe("formatSummary (golden, ENGINE.md section 11)", () => {
+  test("known dollars with unknown tokens never prints 0 tokens", () => {
+    const out = formatSummary({
+      pr: null, verdict: "VERIFIED", notProven: [], flaky: [],
+      cost: { usd: 0.84, provider: "claude", tokens: null },
+      wallS: 60, stages: [],
+    } as never);
+    expect(out).not.toContain("0 tokens");
+    expect(out).toContain("tokens not measured");
+  });
   test("PARTIAL fixture reproduces the ENGINE.md example verbatim", () => {
     const out = formatSummary({
       pr: { url: "https://github.com/o/r/pull/12", draft: true, draftReason: "fix rounds exhausted" },
@@ -157,8 +166,8 @@ describe("formatSummary (golden, ENGINE.md section 11)", () => {
 });
 
 describe("estimateEtaS (optional module via dynamic import, section 3)", () => {
-  test("returns null when the eta module is not present (this slice ships without it)", async () => {
-    expect(await estimateEtaS(180, 60)).toBeNull();
+  test("returns null when the eta module is not present", async () => {
+    expect(await estimateEtaS(180, 60, "./fixtures/output/no-such-eta-module.ts")).toBeNull();
   });
 
   test("uses an injected eta module when one is present", async () => {
@@ -169,5 +178,12 @@ describe("estimateEtaS (optional module via dynamic import, section 3)", () => {
   test("a module with no estimate export is treated as absent", async () => {
     const modulePath = join(import.meta.dir, "..", "..", "src", "engine10", "types.ts");
     expect(await estimateEtaS(180, 60, modulePath)).toBeNull();
+  });
+});
+
+describe("estimateEtaS import errors", () => {
+  test("an eta module that throws on import is surfaced, not swallowed", async () => {
+    const p = join(import.meta.dir, "fixtures", "output", "throwing-eta.ts");
+    await expect(estimateEtaS(180, 60, p)).rejects.toThrow("eta boom");
   });
 });

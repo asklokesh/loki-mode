@@ -93,6 +93,7 @@ describe("engine10 efficiency writer (E-06b)", () => {
         iteration: 1, status: "completed", duration_ms: 12000, model: "claude-x",
         cost_usd: 0.125, input_tokens: 1000, output_tokens: 200, cache_read_tokens: 5000, cache_creation_tokens: 300,
       });
+      expect(rec1.cost_source).toBe("provider");
 
       // second session: no dollars reported -> cost_usd must be ABSENT, never 0.
       const unpriced = readResultCost(join(FIX, "bad"), "e10-r1-nousd");
@@ -100,6 +101,7 @@ describe("engine10 efficiency writer (E-06b)", () => {
       expect(n2).toBe(2);
       const rec2 = JSON.parse(readFileSync(join(lokiRoot, "metrics", "efficiency", "iteration-2.json"), "utf8"));
       expect("cost_usd" in rec2).toBe(false);
+      expect("cost_source" in rec2).toBe(false);
       expect(rec2.input_tokens).toBe(10);
       expect(rec2.output_tokens).toBe(2);
 
