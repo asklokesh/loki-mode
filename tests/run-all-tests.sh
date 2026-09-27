@@ -1275,6 +1275,7 @@ run_test "Build-time HOME isolation (in-build app exec sandbox)" "$SCRIPT_DIR/te
 # rebuilding finished work; never fake-green; build only the unsatisfied gap.
 run_test "Reuse done-recognition gate (no-PRD reuse: done/incomplete/inconclusive)" "$SCRIPT_DIR/test-reuse-done-recognition.sh"
 run_test "done-recognition readers ignore user-site .pth (-I -S, S-200)" "$SCRIPT_DIR/test-done-recognition-no-user-site-pth.sh"
+run_test "voter-agents readers ignore user-site .pth (-I -S, S-202)" "$SCRIPT_DIR/test-voter-agents-no-user-site-pth.sh"
 
 # Multi-provider issue backends (#7 team parity): detection, parse, normalize
 # for GitHub / GitLab / Jira / Azure DevOps -- network-free, mocked responses.

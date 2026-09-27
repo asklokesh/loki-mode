@@ -28,15 +28,46 @@
 #                                             to existing heuristic dispatch).
 #
 # Inline Python (D7): the dispatch runs with the cwd inside the agent's repo, so
-# every python3 here runs -E and drops '' and '.' from sys.path before any other
-# import; a committed json.py or sitecustomize.py cannot read the votes.
+# every python3 here drops '' and '.' from sys.path before any other import; a
+# committed json.py or sitecustomize.py cannot read the votes.
 # Pinned by tests/test-voter-agents-json.sh (Case D).
+#
+# S-202 (BACKLOG 54): -E alone still loads the user site-packages, whose .pth
+# "import" lines run before that scrub and can forge json.loads (3 REJECT
+# findings read as a COMPLETE round). Every call site resolves its interpreter
+# through _loki_snapshot_py_tool and runs it -I -S; when none resolves, the
+# dispatch returns 1 and completion-council's fail-closed path applies. run.sh
+# is the source of truth for the helper; the guarded copy below only serves
+# callers that source this file on its own. Keep it byte-identical to run.sh's.
+# Pinned by tests/test-voter-agents-no-user-site-pth.sh.
 
 # Guard against double-source.
 if [ "${__LOKI_VOTER_AGENTS_SH_LOADED:-0}" = "1" ]; then
     return 0 2>/dev/null || true
 fi
 __LOKI_VOTER_AGENTS_SH_LOADED=1
+
+declare -F _loki_snapshot_py_tool >/dev/null 2>&1 || \
+_loki_snapshot_py_tool() {
+    local c
+    for c in /usr/bin/python3 /bin/python3; do
+        [ -x "$c" ] && [ ! -d "$c" ] && "$c" -I -S -c '' >/dev/null 2>&1 && { printf '%s\n' "$c"; return 0; }
+    done
+    local dir
+    local IFS=:
+    for dir in $PATH; do
+        case "$dir" in
+            /*) ;;
+            *) continue ;;
+        esac
+        if [ -x "$dir/python3" ] && [ ! -d "$dir/python3" ] \
+           && "$dir/python3" -I -S -c '' >/dev/null 2>&1; then
+            printf '%s\n' "$dir/python3"
+            return 0
+        fi
+    done
+    return 1
+}
 
 # Resolve repo root once. This file lives at autonomy/lib/voter-agents.sh.
 __LOKI_VA_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
@@ -59,12 +90,14 @@ loki_voter_agents_json() {
     fi
     local prd="${LOKI_PRD_PATH:-}"
     local tier="${LOKI_RARV_TIER:-development}"
+    local _va_py
+    _va_py="$(_loki_snapshot_py_tool)" || { printf '%s' '{}'; return 0; }
 
     _VA_ITER="$iter" \
     _VA_PRD="$prd" \
     _VA_TIER="$tier" \
     _VA_COMPLEXITY="${LOKI_COMPLEXITY:-standard}" \
-    python3 -E -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
+    "$_va_py" -I -S -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os
 iter_n = os.environ.get("_VA_ITER", "0")
 prd = os.environ.get("_VA_PRD", "")
@@ -133,7 +166,9 @@ print(json.dumps(agents, separators=(",", ":")))
 # Arg $1: terse base findings summary used to brief the DA prompt.
 loki_devils_advocate_json() {
     local summary="${1:-}"
-    _VA_SUMMARY="$summary" python3 -E -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
+    local _va_py
+    _va_py="$(_loki_snapshot_py_tool)" || { printf '%s' '{}'; return 0; }
+    _VA_SUMMARY="$summary" "$_va_py" -I -S -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os
 summary = os.environ.get("_VA_SUMMARY", "")[:1000]
 agents = {
@@ -355,13 +390,15 @@ loki_council_dispatch_agents() {
     local verdicts_dir="$COUNCIL_STATE_DIR/verdicts"
     local votes_dir="$COUNCIL_STATE_DIR/votes"
     mkdir -p "$verdicts_dir" "$votes_dir" 2>/dev/null || return 1
+    local _va_py
+    _va_py="$(_loki_snapshot_py_tool)" || return 1
 
     _VA_RESP="$response" \
     _VA_ITER="$iteration" \
     _VA_VDIR="$verdicts_dir" \
     _VA_RFILE="$votes_dir/round-${iteration}.json" \
     _VA_EXPECTED="${COUNCIL_SIZE:-3}" \
-    python3 -E -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
+    "$_va_py" -I -S -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, os, sys
 from datetime import datetime, timezone
 
