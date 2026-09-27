@@ -11,17 +11,17 @@ export const STAGE_BUDGETS: Readonly<Record<StageName, { targetS: number | null;
   intake: { targetS: 15, limitS: 60 },
   plan: { targetS: 45, limitS: 90 },
   wall: { targetS: 45, limitS: 90 },
-  implement: { targetS: 180, limitS: 480 }, // LOKI_E10_IMPLEMENT_KILL_S; 900 when deep
+  implement: { targetS: 180, limitS: 480 }, // LOKI_E10_IMPLEMENT_KILL_S; 1800 when deep
   verify: { targetS: 60, limitS: 120 },
   fix: { targetS: 90, limitS: 180 },
   commit: { targetS: 5, limitS: 30 }, // not in the ENGINE.md table; engine-chosen placeholder
   seal: { targetS: 15, limitS: 60 },
   pr: { targetS: 15, limitS: 60 },
-  deep: { targetS: null, limitS: 1800 }, // target unbounded (null means unknown, never 0); limit 30 min
+  deep: { targetS: null, limitS: 2700 }, // target unbounded (null means unknown, never 0); limit 45 min (ENGINE.md section 4)
 };
 export const DEFAULT_CAP_S = 900;
 export const DEEP_CAP_S = 2700;
-export const DEEP_IMPLEMENT_LIMIT_S = 900;
+export const DEEP_IMPLEMENT_LIMIT_S = 1800; // ENGINE.md section 4: 480s, 1800s with --deep
 export const MAX_FIX_ROUNDS = 2;
 
 export const EVENT_TYPES = [
@@ -182,7 +182,7 @@ export interface Receipt {
 
 /** argv/env for autonomy/lib/engine10-push.sh (P4). Values come from supervisor memory only. */
 export type PushArgs =
-  | { cmd: "pr"; repoDir: string; branch: string; title: string; bodyFile: string; draft: boolean }
+  | { cmd: "push-pr"; repoDir: string; branch: string; title: string; bodyFile: string; draft: boolean }
   | { cmd: "comment"; runId: string; prUrl: string; file: string }
   | { cmd: "status"; sha: string; state: "pending" | "success" | "failure"; description: string };
 
@@ -193,7 +193,7 @@ export interface PushEnv {
 
 export function pushArgv(a: PushArgs): string[] {
   switch (a.cmd) {
-    case "pr": return ["pr", a.repoDir, a.branch, a.title, a.bodyFile, a.draft ? "1" : "0"];
+    case "push-pr": return ["push-pr", a.repoDir, a.branch, a.title, a.bodyFile, a.draft ? "1" : "0"];
     case "comment": return ["comment", a.runId, a.prUrl, a.file];
     case "status": return ["status", a.sha, a.state, a.description];
   }

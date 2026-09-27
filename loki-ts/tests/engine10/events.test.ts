@@ -215,12 +215,12 @@ describe("types contract", () => {
     expect(STAGE_BUDGETS.intake).toEqual({ targetS: 15, limitS: 60 });
     expect(STAGE_BUDGETS.implement).toEqual({ targetS: 180, limitS: 480 });
     expect(STAGE_BUDGETS.fix).toEqual({ targetS: 90, limitS: 180 });
-    expect(STAGE_BUDGETS.deep.limitS).toBe(1800);
+    expect(STAGE_BUDGETS.deep.limitS).toBe(2700);
   });
 
   it("push argv matches the engine10-push.sh contract", () => {
-    expect(pushArgv({ cmd: "pr", repoDir: "/r", branch: "loki/x", title: "t", bodyFile: "/b", draft: true }))
-      .toEqual(["pr", "/r", "loki/x", "t", "/b", "1"]);
+    expect(pushArgv({ cmd: "push-pr", repoDir: "/r", branch: "loki/x", title: "t", bodyFile: "/b", draft: true }))
+      .toEqual(["push-pr", "/r", "loki/x", "t", "/b", "1"]);
     expect(pushArgv({ cmd: "status", sha: "abc", state: "pending", description: "d" }))
       .toEqual(["status", "abc", "pending", "d"]);
     expect(pushArgv({ cmd: "comment", runId: RUN, prUrl: "u", file: "f" })).toEqual(["comment", RUN, "u", "f"]);
