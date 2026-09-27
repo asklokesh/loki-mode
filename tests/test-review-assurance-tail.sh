@@ -10,10 +10,18 @@ FAKE_BIN="$TMPROOT/bin"
 PASS=0
 FAIL=0
 
+GROUP_PIDS=""
 test_cleanup() {
-    if [ -f "$TMPROOT/deadline-child.pid" ]; then
-        kill -9 "$(cat "$TMPROOT/deadline-child.pid")" 2>/dev/null || true
-    fi
+    local pid_file pid
+    # Stop only the case groups this run launched (recorded PIDs), then any
+    # deadline descendant a group recorded under its own directory.
+    for pid in $GROUP_PIDS; do
+        kill "$pid" 2>/dev/null || true
+    done
+    for pid_file in "$TMPROOT"/deadline-child.pid "$TMPROOT"/*/deadline-child.pid; do
+        [ -f "$pid_file" ] || continue
+        kill -9 "$(cat "$pid_file")" 2>/dev/null || true
+    done
     rm -rf "$TMPROOT" 2>/dev/null || true
 }
 trap test_cleanup EXIT
@@ -398,6 +406,52 @@ review_budget() {
     printf '%s' "$scaled"
 }
 
+# Independent cases run as concurrent groups (S-191: the serial suite took
+# ~116s idle). Each group is a forked subshell with its own scratch directory
+# as TMPROOT and CWD, so per-case files (requirements-prompt, da-started,
+# requirements-argv.json, repos) never collide. Budgets and assertions are
+# unchanged. A group writes its PASS/FAIL counts on a clean finish; a group
+# that aborts before group_leave (no counts file) is reported as a failure.
+GROUP_LIST=""
+group_enter() {
+    trap - EXIT
+    PASS=0
+    FAIL=0
+    TMPROOT="$TMPROOT/$1"
+    mkdir -p "$TMPROOT" && cd "$TMPROOT" || exit 1
+    REVIEW_TEST_REQUIREMENTS_ARGV="$TMPROOT/requirements-argv.json"
+}
+group_leave() {
+    printf '%s %s\n' "$PASS" "$FAIL" > "$TMPROOT/group-counts"
+    exit 0
+}
+group_started() {
+    GROUP_LIST="$GROUP_LIST $1:$2"
+    GROUP_PIDS="$GROUP_PIDS $2"
+}
+group_collect() {
+    local entry name pid counts group_pass group_fail
+    for entry in $GROUP_LIST; do
+        name="${entry%%:*}"
+        pid="${entry#*:}"
+        # A group may already have been reaped by an earlier wait, so its exit
+        # status is not the completion proof: group-counts is written only by
+        # group_leave, which a group reaches only by running to its end.
+        wait "$pid" 2>/dev/null || true
+        cat "$TMPROOT/$name.log" 2>/dev/null
+        counts="$(cat "$TMPROOT/$name/group-counts" 2>/dev/null || true)"
+        if [ -z "$counts" ]; then
+            bad "case group $name aborted before finishing"
+            continue
+        fi
+        group_pass="${counts% *}"
+        group_fail="${counts#* }"
+        PASS=$((PASS + group_pass))
+        FAIL=$((FAIL + group_fail))
+    done
+    GROUP_PIDS=""
+}
+
 # Extraction is syntax-based, not a finite product-vocabulary guess. Headings
 # remain explicit structural units, list markers delimit units, indented lines
 # continue the active item, and ordinary prose is split only at sentence ends.
@@ -449,6 +503,7 @@ fi
 
 # A structured call that consumes the whole budget must not receive a fresh
 # text-fallback budget, and its TERM-ignoring descendant must be reconciled.
+( group_enter g01-deadline
 REVIEW_TEST_MODE=deadline
 REVIEW_TEST_CALLS="$TMPROOT/deadline-calls"
 REVIEW_TEST_CHILD_PID="$TMPROOT/deadline-child.pid"
@@ -540,6 +595,8 @@ if [ "$sdk_internal_rc" -eq 125 ] && [ "$sdk_calls" -eq 1 ] \
 else
     bad "internal review errors fell through (sdk_rc=$sdk_internal_rc sdk_calls=$sdk_calls structured_rc=$structured_internal_rc structured_calls=$structured_calls)"
 fi
+group_leave ) > "$TMPROOT/g01-deadline.log" 2>&1 &
+group_started g01-deadline "$!"
 
 setup_repo() {
     local directory="$1"
@@ -644,7 +701,21 @@ export REVIEW_TEST_REQUIREMENTS_ARGV
 printf '%s\n' \
     'Build a personal budget dashboard.' \
     'Show sample pricing clearly: Starter $9 and Pro $19.' > "$SPEC"
+retry_spec_sha=$(python3 - "$SPEC" <<'PY'
+import hashlib
+import sys
 
+print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+PY
+)
+
+( group_enter g02-retry
+# The general reviewers hit FAKE_CLAUDE's "deadline" branch, which records to
+# these files (serially they were inherited from the deadline case above).
+REVIEW_TEST_CALLS="$TMPROOT/deadline-calls"
+REVIEW_TEST_CHILD_PID="$TMPROOT/deadline-child.pid"
+export REVIEW_TEST_CALLS REVIEW_TEST_CHILD_PID
+: > "$REVIEW_TEST_CALLS"
 RETRY_REPO="$TMPROOT/review-only-retry-repo"
 setup_repo "$RETRY_REPO"
 REVIEW_TEST_MODE=deadline
@@ -656,13 +727,6 @@ REVIEW_TEST_TAMPER_REVIEW_ROOT="$RETRY_REPO/.loki/quality/reviews"
 : > "$REVIEW_TEST_REQUIREMENTS_CALLS"
 export REVIEW_TEST_MODE REVIEW_TEST_REQUIREMENTS_PROMPT REVIEW_TEST_REQUIREMENTS_CALLS
 export REVIEW_TEST_REQUIREMENTS_CHILD_PID REVIEW_TEST_DA_MARKER REVIEW_TEST_TAMPER_REVIEW_ROOT
-retry_spec_sha=$(python3 - "$SPEC" <<'PY'
-import hashlib
-import sys
-
-print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
-PY
-)
 retry_review_rc=0
 TARGET_DIR="$RETRY_REPO" PRD_PATH="$SPEC" ITERATION_COUNT=1 \
 _LOKI_RUN_START_SHA="$(git -C "$RETRY_REPO" rev-parse HEAD)" \
@@ -688,10 +752,13 @@ if [ "$retry_review_rc" -ne 0 ] \
 else
     bad "inconclusive review did not stay fail-closed within one review-only retry"
 fi
+group_leave ) > "$TMPROOT/g02-retry.log" 2>&1 &
+group_started g02-retry "$!"
 
 # Non-blocking reviewer advice cannot make a separate provider timeout look
 # like a code defect. The result stays fail-closed, but must not request another
 # implementation iteration.
+( group_enter g03-nonblocking
 MEDIUM_REPO="$TMPROOT/nonblocking-plus-timeout-repo"
 setup_repo "$MEDIUM_REPO"
 REVIEW_TEST_MODE=requirements-timeout-medium-fail
@@ -731,6 +798,13 @@ then
 else
     bad "non-blocking advice made a reviewer timeout look like a repairable code defect"
 fi
+group_leave ) > "$TMPROOT/g03-nonblocking.log" 2>&1 &
+group_started g03-nonblocking "$!"
+# This case needs a general reviewer to answer inside a 1s budget. At the
+# unsharded scale it loses that race when the heavy groups below run
+# alongside it (measured: 2/2 red), so they launch only after it finishes.
+# The deadline and retry groups above mostly sleep and do not disturb it.
+wait "$!" 2>/dev/null || true
 
 # These next cases (through the product-quality-spec case below) exercise the
 # requirements-verifier CONTRACT itself, not council interaction, so the
@@ -749,6 +823,7 @@ export REVIEW_TEST_REQUIREMENTS_ONLY
 
 # The hosted council must carry the exact immutable requirement and a supported
 # requirements miss must block even when the reviewer labels it Medium.
+( group_enter g04-requirements
 REQ_REPO="$TMPROOT/requirements-repo"
 setup_repo "$REQ_REPO"
 req_rc=$(run_review_case "$REQ_REPO" 1 requirements-miss "$SPEC" "$retry_spec_sha")
@@ -916,10 +991,104 @@ else
     bad "supervised reviewer retained a workspace or MCP tool path"
 fi
 
+# Runs in this group because it binds to the req_valid_review artifacts above.
+# A structured requirements timeout consumes the one end-to-end budget. The
+# TERM-ignoring child must be gone, and no free-form retry may start.
+REQ_TIMEOUT_CALLS="$TMPROOT/requirements-timeout-calls"
+REQ_TIMEOUT_CHILD_PID="$TMPROOT/requirements-timeout-child.pid"
+: > "$REQ_TIMEOUT_CALLS"
+REVIEW_TEST_MODE=requirements-timeout
+REVIEW_TEST_REQUIREMENTS_CALLS="$REQ_TIMEOUT_CALLS"
+REVIEW_TEST_REQUIREMENTS_CHILD_PID="$REQ_TIMEOUT_CHILD_PID"
+REVIEW_TEST_REQUIREMENTS_PROMPT="$TMPROOT/requirements-timeout-prompt"
+export REVIEW_TEST_MODE REVIEW_TEST_REQUIREMENTS_CALLS
+export REVIEW_TEST_REQUIREMENTS_CHILD_PID REVIEW_TEST_REQUIREMENTS_PROMPT
+req_timeout_sha=$(python3 - "$SPEC" <<'PY'
+import hashlib
+import sys
+
+print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+PY
+)
+req_timeout_identity=$(python3 "$ROOT/autonomy/lib/requirements_contract.py" bind \
+    "$SPEC" "$req_valid_review/requirements.txt" "$req_timeout_sha" \
+    64000 1048576 "$req_valid_review/requirements-manifest.json" \
+    "$req_valid_review/requirements-verdict-schema.json")
+req_timeout_started=$(monotonic_ms)
+req_timeout_rc=0
+PROVIDER_NAME=claude LOKI_SUPERVISED_BUILD=1 LOKI_BUILD_PROFILE=simple-web \
+LOKI_HOST_GUARD_SETTINGS_JSON='{"hooks":{}}' LOKI_REVIEW_JSON_SCHEMA=off \
+LOKI_REVIEW_CALL_TIMEOUT="$(review_budget 1)" LOKI_DEADLINE_KILL_GRACE="$(review_budget 1)" \
+LOKI_REVIEW_REQUIREMENTS_HELPER="$ROOT/autonomy/lib/requirements_contract.py" \
+LOKI_REVIEW_REQUIREMENTS_SOURCE="$SPEC" \
+LOKI_REVIEW_REQUIREMENTS_SNAPSHOT="$req_valid_review/requirements.txt" \
+LOKI_REVIEW_REQUIREMENTS_MANIFEST="$req_valid_review/requirements-manifest.json" \
+LOKI_REVIEW_REQUIREMENTS_SCHEMA="$req_valid_review/requirements-verdict-schema.json" \
+LOKI_REVIEW_REQUIREMENTS_EXPECTED_SHA="$req_timeout_sha" \
+LOKI_REVIEW_REQUIREMENTS_MAX_BYTES=64000 \
+LOKI_REVIEW_REQUIREMENTS_HARD_MAX_BYTES=1048576 \
+LOKI_REVIEW_REQUIREMENTS_IDENTITY="$req_timeout_identity" \
+    _dispatch_reviewer_recorded "You are requirements-verifier." \
+        "$TMPROOT/requirements-timeout.txt" || req_timeout_rc=$?
+req_timeout_ended=$(monotonic_ms)
+req_timeout_elapsed=$((req_timeout_ended - req_timeout_started))
+req_timeout_child="$(cat "$REQ_TIMEOUT_CHILD_PID" 2>/dev/null || true)"
+# Each clause reports separately -- the third instance of this flaw in this
+# file. CI printed "requirements timeout escaped its budget, containment, or
+# one-call contract (rc=124 elapsed_ms=8181)" and the elapsed figure in that
+# very message was INSIDE its bound (8181 < 14000), so the named cause was the
+# one thing that had not failed. A message that lists four causes and proves
+# none sends the reader to the wrong file.
+_req_why=""
+[ "$req_timeout_rc" -ne 0 ] || _req_why="$_req_why rc=0 (expected nonzero);"
+_req_bound=$(( 3500 * REVIEW_TIMEOUT_SCALE ))
+[ "$req_timeout_elapsed" -lt "$_req_bound" ] \
+  || _req_why="$_req_why elapsed ${req_timeout_elapsed}ms exceeds bound ${_req_bound}ms;"
+_req_calls="$(wc -l < "$REQ_TIMEOUT_CALLS" | tr -d ' ')"
+[ "$_req_calls" = "1" ] || _req_why="$_req_why calls=$_req_calls (expected exactly 1);"
+[ ! -s "$TMPROOT/requirements-timeout.txt" ] \
+  || _req_why="$_req_why a verdict was written despite the timeout;"
+[ -f "$TMPROOT/requirements-timeout-stderr.log" ] \
+  || _req_why="$_req_why stderr log absent (the call never reached dispatch);"
+if [ "$req_timeout_rc" -ne 0 ] \
+   && [ "$req_timeout_elapsed" -lt "$_req_bound" ] \
+   && [ "$(wc -l < "$REQ_TIMEOUT_CALLS" | tr -d ' ')" = "1" ] \
+   && [ ! -s "$TMPROOT/requirements-timeout.txt" ] \
+   && [ -f "$TMPROOT/requirements-timeout-stderr.log" ] \
+   && { [ -z "$req_timeout_child" ] || ! kill -0 "$req_timeout_child" 2>/dev/null; } \
+   && python3 - "$TMPROOT/requirements-timeout-timing.json" "$(review_budget 1)" <<'PY'
+import json
+import sys
+
+record = json.load(open(sys.argv[1], encoding="utf-8"))
+assert record["outcome"] == "deadline"
+assert record["exit_code"] == 124
+# The budget is SCALED on a contended runner (review_budget), so this must
+# compare against the value actually dispatched, not the literal 1. Hardcoding
+# it made my own timeout-scale change fail this assertion in CI: the record
+# correctly said 4, the test demanded 1, and the failure read as a containment
+# defect.
+expected = int(sys.argv[2])
+assert record["budget_seconds"] == expected, (
+    "budget_seconds %r != dispatched budget %r" % (record["budget_seconds"], expected)
+)
+PY
+then
+    ok "requirements timeout is bounded, contained, and has no text fallback"
+else
+    timeout_alive=false
+    [ -n "$req_timeout_child" ] && kill -0 "$req_timeout_child" 2>/dev/null && timeout_alive=true
+    bad "requirements timeout:${_req_why:- child containment or the stderr assertion below failed} (rc=$req_timeout_rc elapsed_ms=$req_timeout_elapsed bound_ms=$_req_bound child_alive=$timeout_alive)"
+fi
+rm -f "$REQ_TIMEOUT_CHILD_PID"
+group_leave ) > "$TMPROOT/g04-requirements.log" 2>&1 &
+group_started g04-requirements "$!"
+
 # The start-time specification SHA is the only semantic authority. Each case
 # begins with a valid two-requirement contract, then tampers a writable review
 # artifact without changing that source or SHA. Dispatch must stop before the
 # provider, including exact-content inode and directory replacements.
+( group_enter g05-tamper
 for tamper_mode in \
     manifest-only \
     schema-only \
@@ -1055,10 +1224,13 @@ PY
         bad "$forged_mode escaped parent-bound result publication"
     fi
 done
+group_leave ) > "$TMPROOT/g05-tamper.log" 2>&1 &
+group_started g05-tamper "$!"
 
 # A provider may mutate writable review artifacts after receiving an immutable
 # prompt and schema. Post-call rederivation must still reject the response after
 # exactly one invocation, with no text or second-provider fallback.
+( group_enter g06-invalid
 for post_tamper_mode in \
     requirements-post-manifest-tamper \
     requirements-post-symlink-tamper; do
@@ -1178,9 +1350,12 @@ PY
     fi
     unset _invalid_why _invalid_py _invalid_calls
 done
+group_leave ) > "$TMPROOT/g06-invalid.log" 2>&1 &
+group_started g06-invalid "$!"
 
 # Missing contract artifacts are internal assurance failures. They block before
 # any provider invocation, even when free-form review is globally enabled.
+( group_enter g07-contract
 CONTRACT_STUB_MANIFEST="$TMPROOT/contract-stub-manifest.json"
 CONTRACT_STUB_SCHEMA="$TMPROOT/contract-stub-schema.json"
 printf '{}\n' > "$CONTRACT_STUB_MANIFEST"
@@ -1242,96 +1417,6 @@ else
     bad "a non-Claude provider bypassed the exact structured requirements contract"
 fi
 
-# A structured requirements timeout consumes the one end-to-end budget. The
-# TERM-ignoring child must be gone, and no free-form retry may start.
-REQ_TIMEOUT_CALLS="$TMPROOT/requirements-timeout-calls"
-REQ_TIMEOUT_CHILD_PID="$TMPROOT/requirements-timeout-child.pid"
-: > "$REQ_TIMEOUT_CALLS"
-REVIEW_TEST_MODE=requirements-timeout
-REVIEW_TEST_REQUIREMENTS_CALLS="$REQ_TIMEOUT_CALLS"
-REVIEW_TEST_REQUIREMENTS_CHILD_PID="$REQ_TIMEOUT_CHILD_PID"
-REVIEW_TEST_REQUIREMENTS_PROMPT="$TMPROOT/requirements-timeout-prompt"
-export REVIEW_TEST_MODE REVIEW_TEST_REQUIREMENTS_CALLS
-export REVIEW_TEST_REQUIREMENTS_CHILD_PID REVIEW_TEST_REQUIREMENTS_PROMPT
-req_timeout_sha=$(python3 - "$SPEC" <<'PY'
-import hashlib
-import sys
-
-print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
-PY
-)
-req_timeout_identity=$(python3 "$ROOT/autonomy/lib/requirements_contract.py" bind \
-    "$SPEC" "$req_valid_review/requirements.txt" "$req_timeout_sha" \
-    64000 1048576 "$req_valid_review/requirements-manifest.json" \
-    "$req_valid_review/requirements-verdict-schema.json")
-req_timeout_started=$(monotonic_ms)
-req_timeout_rc=0
-PROVIDER_NAME=claude LOKI_SUPERVISED_BUILD=1 LOKI_BUILD_PROFILE=simple-web \
-LOKI_HOST_GUARD_SETTINGS_JSON='{"hooks":{}}' LOKI_REVIEW_JSON_SCHEMA=off \
-LOKI_REVIEW_CALL_TIMEOUT="$(review_budget 1)" LOKI_DEADLINE_KILL_GRACE="$(review_budget 1)" \
-LOKI_REVIEW_REQUIREMENTS_HELPER="$ROOT/autonomy/lib/requirements_contract.py" \
-LOKI_REVIEW_REQUIREMENTS_SOURCE="$SPEC" \
-LOKI_REVIEW_REQUIREMENTS_SNAPSHOT="$req_valid_review/requirements.txt" \
-LOKI_REVIEW_REQUIREMENTS_MANIFEST="$req_valid_review/requirements-manifest.json" \
-LOKI_REVIEW_REQUIREMENTS_SCHEMA="$req_valid_review/requirements-verdict-schema.json" \
-LOKI_REVIEW_REQUIREMENTS_EXPECTED_SHA="$req_timeout_sha" \
-LOKI_REVIEW_REQUIREMENTS_MAX_BYTES=64000 \
-LOKI_REVIEW_REQUIREMENTS_HARD_MAX_BYTES=1048576 \
-LOKI_REVIEW_REQUIREMENTS_IDENTITY="$req_timeout_identity" \
-    _dispatch_reviewer_recorded "You are requirements-verifier." \
-        "$TMPROOT/requirements-timeout.txt" || req_timeout_rc=$?
-req_timeout_ended=$(monotonic_ms)
-req_timeout_elapsed=$((req_timeout_ended - req_timeout_started))
-req_timeout_child="$(cat "$REQ_TIMEOUT_CHILD_PID" 2>/dev/null || true)"
-# Each clause reports separately -- the third instance of this flaw in this
-# file. CI printed "requirements timeout escaped its budget, containment, or
-# one-call contract (rc=124 elapsed_ms=8181)" and the elapsed figure in that
-# very message was INSIDE its bound (8181 < 14000), so the named cause was the
-# one thing that had not failed. A message that lists four causes and proves
-# none sends the reader to the wrong file.
-_req_why=""
-[ "$req_timeout_rc" -ne 0 ] || _req_why="$_req_why rc=0 (expected nonzero);"
-_req_bound=$(( 3500 * REVIEW_TIMEOUT_SCALE ))
-[ "$req_timeout_elapsed" -lt "$_req_bound" ] \
-  || _req_why="$_req_why elapsed ${req_timeout_elapsed}ms exceeds bound ${_req_bound}ms;"
-_req_calls="$(wc -l < "$REQ_TIMEOUT_CALLS" | tr -d ' ')"
-[ "$_req_calls" = "1" ] || _req_why="$_req_why calls=$_req_calls (expected exactly 1);"
-[ ! -s "$TMPROOT/requirements-timeout.txt" ] \
-  || _req_why="$_req_why a verdict was written despite the timeout;"
-[ -f "$TMPROOT/requirements-timeout-stderr.log" ] \
-  || _req_why="$_req_why stderr log absent (the call never reached dispatch);"
-if [ "$req_timeout_rc" -ne 0 ] \
-   && [ "$req_timeout_elapsed" -lt "$_req_bound" ] \
-   && [ "$(wc -l < "$REQ_TIMEOUT_CALLS" | tr -d ' ')" = "1" ] \
-   && [ ! -s "$TMPROOT/requirements-timeout.txt" ] \
-   && [ -f "$TMPROOT/requirements-timeout-stderr.log" ] \
-   && { [ -z "$req_timeout_child" ] || ! kill -0 "$req_timeout_child" 2>/dev/null; } \
-   && python3 - "$TMPROOT/requirements-timeout-timing.json" "$(review_budget 1)" <<'PY'
-import json
-import sys
-
-record = json.load(open(sys.argv[1], encoding="utf-8"))
-assert record["outcome"] == "deadline"
-assert record["exit_code"] == 124
-# The budget is SCALED on a contended runner (review_budget), so this must
-# compare against the value actually dispatched, not the literal 1. Hardcoding
-# it made my own timeout-scale change fail this assertion in CI: the record
-# correctly said 4, the test demanded 1, and the failure read as a containment
-# defect.
-expected = int(sys.argv[2])
-assert record["budget_seconds"] == expected, (
-    "budget_seconds %r != dispatched budget %r" % (record["budget_seconds"], expected)
-)
-PY
-then
-    ok "requirements timeout is bounded, contained, and has no text fallback"
-else
-    timeout_alive=false
-    [ -n "$req_timeout_child" ] && kill -0 "$req_timeout_child" 2>/dev/null && timeout_alive=true
-    bad "requirements timeout:${_req_why:- child containment or the stderr assertion below failed} (rc=$req_timeout_rc elapsed_ms=$req_timeout_elapsed bound_ms=$_req_bound child_alive=$timeout_alive)"
-fi
-rm -f "$REQ_TIMEOUT_CHILD_PID"
-
 # The build-start digest is mandatory, and the reviewer must never see bytes
 # mutated after that digest was minted.
 MUTATED_SPEC="$TMPROOT/mutated-spec.md"
@@ -1374,6 +1459,8 @@ if [ "$invalid_limit_rc" -ne 0 ] && [ "$oversized_limit_rc" -ne 0 ] \
 else
     bad "invalid requirements byte limits reached reviewer dispatch"
 fi
+group_leave ) > "$TMPROOT/g07-contract.log" 2>&1 &
+group_started g07-contract "$!"
 
 # Restores the default full council: every case from here on asserts on a
 # general reviewer's own verdict (architecture-strategist FAIL/PASS, DA
@@ -1382,6 +1469,7 @@ unset REVIEW_TEST_REQUIREMENTS_ONLY
 
 # The hosted DA is speculative: every council reviewer waits briefly for the
 # DA's start marker, and a real DA blocker still reaches the final aggregate.
+( group_enter g08-da
 DA_REPO="$TMPROOT/da-block-repo"
 setup_repo "$DA_REPO"
 da_started=$(monotonic_ms)
@@ -1523,10 +1611,13 @@ then
 else
     bad "valid nonunanimous DA PASS changed compatibility or was discarded"
 fi
+group_leave ) > "$TMPROOT/g08-da.log" 2>&1 &
+group_started g08-da "$!"
 
 # Large immutable contracts are split into one balanced physical wave while
 # preserving one logical requirements vote. The fake provider holds each shard
 # until all four have started, so this also proves launch-before-wait behavior.
+( group_enter g09-shards
 SHARD_SPEC="$TMPROOT/sharded-spec.md"
 : > "$SHARD_SPEC"
 for requirement_number in $(seq 1 29); do
@@ -1814,8 +1905,11 @@ fi
 unset _shard_why _shard_bound_ms _shard_timeout_ms
 unset REVIEW_TEST_REQUIREMENTS_ONLY REVIEW_TEST_DA REVIEW_TEST_SHARD_EXPECTED
 unset REVIEW_TEST_SHARD_STATE
+group_leave ) > "$TMPROOT/g09-shards.log" 2>&1 &
+group_started g09-shards "$!"
 
 # A unanimous council cannot turn an empty DA response into a fabricated pass.
+( group_enter g10-general
 EMPTY_REPO="$TMPROOT/da-empty-repo"
 setup_repo "$EMPTY_REPO"
 empty_rc=$(run_review_case "$EMPTY_REPO" 1 da-empty "$SPEC" auto 64000 "$(review_budget 12)")
@@ -1856,6 +1950,10 @@ then
 else
     bad "general review path changed or failed"
 fi
+group_leave ) > "$TMPROOT/g10-general.log" 2>&1 &
+group_started g10-general "$!"
+
+group_collect
 
 # --- isolation: sourcing run.sh must never touch the shared checkout -------
 # Positive control: TMPROOT must show its own provider file did get written.
