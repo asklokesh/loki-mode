@@ -60,6 +60,7 @@ Read-only. Returns two honest series plus a budget block:
      "cost_usd": 1.84, "files_changed": 3, "final_verdict": "APPROVE"}
   ],
   "project_total_usd": 1.89,
+  "project_total_partial": false,
   "runs_count": 1,
   "budget": {
     "limit": 50.0, "used": 1.89, "remaining": 48.11,
@@ -74,7 +75,12 @@ Read-only. Returns two honest series plus a budget block:
   prefer `cost_usd`; if null, price from tokens via the EXISTING
   `_calculate_model_cost` helper (do not add a new pricer).
 - `runs` from `.loki/proofs/*/proof.json` (reuse `_proofs_dir` + `_safe_json_read`).
-- `project_total_usd` = sum of per-run proof costs (the persistent history).
+- `project_total_usd` totals only the runs whose proof recorded a cost
+  (the persistent history). It is null when no run recorded a cost, since
+  runs that each read "not recorded" do not add up to a $0.00 project; a
+  measured $0.00 run still makes it 0.0.
+- `project_total_partial` is true when only some runs recorded a cost. The
+  total is then a lower bound, not the project's full spend.
 - `budget.status`: "ok" (<80%), "warn" (>=80% and <100%), "exceeded" (>=100%).
   Computed at read time. No budget.json schema change (avoids the
   byte-identical-JSON parity trap with run.sh heredoc / budget.ts).
