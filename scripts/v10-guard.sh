@@ -38,7 +38,9 @@
 #      need no special-casing.
 #   4. `rm -rf` (or equivalent) whose target does not resolve STRICTLY under
 #      .claude/worktrees, /tmp, or $TMPDIR (deleting one of those roots
-#      itself is not "strictly under" and is blocked too).
+#      itself is not "strictly under" and is blocked too). Also any `rm`
+#      (with or without -rf) whose glob target's literal parent is a shared
+#      root: /tmp, /private/tmp, $TMPDIR, or a directory named scratchpad.
 #   5. Any command that writes to a path basename VERSION, unless that
 #      specific segment is (or execs into) scripts/release.sh -- an
 #      unrelated segment in the same chained command is still checked.
@@ -867,10 +869,48 @@ def is_rm_recursive_force(words, idx):
     return has_r, has_f, targets
 
 
+GLOB_CHARS = ("*", "?", "[")
+
+
+def is_shared_root(path):
+    """/tmp, /private/tmp, $TMPDIR, or any directory named `scratchpad`:
+    roots many concurrent agents write into, so a glob there hits siblings."""
+    if basename(path) == "scratchpad":
+        return True
+    roots = {"/tmp", "/private/tmp"}
+    tmpdir = os.environ.get("TMPDIR")
+    if tmpdir:
+        roots.add(os.path.normpath(tmpdir))
+        roots.add(os.path.realpath(tmpdir))
+    return os.path.normpath(path) in roots or os.path.realpath(path) in roots
+
+
+def rule4_glob_in_shared_root(targets, cwd_now):
+    # GUARDS.md section 11: any rm (not only -rf) whose glob target's literal
+    # parent is a shared root. One level below (/tmp/run-1/*.log) is allowed.
+    for t in targets:
+        if not any(ch in t for ch in GLOB_CHARS):
+            continue
+        parent = os.path.dirname(t) or "."
+        # ponytail: an unexpanded variable parent ("$TMPDIR"/*, $D/*) is allowed
+        # because its value is unknown here; resolve env vars if that gap bites.
+        if "$" in parent:
+            continue
+        if parent.startswith("~") or any(ch in parent for ch in GLOB_CHARS):
+            continue
+        resolved = parent if parent.startswith("/") else os.path.join(cwd_now, parent)
+        if is_shared_root(resolved):
+            return "RULE4 (glob rm in a shared root): target '{}' globs directly in shared root '{}'; use a run-owned subdirectory".format(t, parent)
+    return None
+
+
 def rule4_rm_rf(words, name, idx, cwd_now):
     if name != "rm":
         return None
     has_r, has_f, targets = is_rm_recursive_force(words, idx)
+    r = rule4_glob_in_shared_root(targets, cwd_now)
+    if r:
+        return r
     if not (has_r and has_f):
         return None
     if not targets:

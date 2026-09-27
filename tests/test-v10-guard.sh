@@ -438,6 +438,27 @@ assert_blocked "R4 blocked: timeout N rm -rf <outside> (timeout wrapper)" \
     "timeout 10 rm -rf /nonexistent-v10-guard-test-target-$$" "$SCRIPT_DIR" "RULE4"
 
 echo ""
+echo "--- Rule 4: glob rm directly in a shared root (GUARDS.md section 11, S-181) ---"
+assert_blocked "R4 glob blocked: rm -f /tmp/*.log" \
+    "rm -f /tmp/*.log" "$SCRIPT_DIR" "glob rm in a shared root"
+assert_blocked "R4 glob blocked: rm -f /private/tmp/loki-*" \
+    "rm -f /private/tmp/loki-*" "$SCRIPT_DIR" "glob rm in a shared root"
+assert_blocked "R4 glob blocked: rm -f <scratchpad>/*" \
+    "rm -f /private/tmp/claude-501/proj/session/scratchpad/*" "$SCRIPT_DIR" "glob rm in a shared root"
+assert_blocked "R4 glob blocked: rm <literal \$TMPDIR>/*.txt (no -f)" \
+    "rm ${TMPDIR:-/tmp}/*.txt" "$SCRIPT_DIR" "glob rm in a shared root"
+assert_blocked "R4 glob blocked: cwd-relative rm -f *.log with cwd=/tmp" \
+    "rm -f *.log" "/tmp" "glob rm in a shared root"
+assert_allowed "R4 glob allowed: rm -f /tmp/run-1/*.log (one level below)" \
+    "rm -f /tmp/run-1/*.log" "$SCRIPT_DIR"
+assert_allowed "R4 glob allowed: rm -f <scratchpad>/run-1/* (one level below)" \
+    "rm -f /private/tmp/claude-501/proj/session/scratchpad/run-1/*" "$SCRIPT_DIR"
+assert_allowed "R4 glob allowed: unexpanded variable parent (documented limit)" \
+    'rm -f "$TMPDIR"/*.log' "$SCRIPT_DIR"
+assert_allowed "R4 glob allowed: rm -f /tmp/exact-file.log (no glob)" \
+    "rm -f /tmp/exact-file.log" "$SCRIPT_DIR"
+
+echo ""
 echo "--- Rule 5: writes to VERSION outside scripts/release.sh ---"
 assert_blocked "R5 blocked: echo redirected into VERSION" \
     "echo '9.9.9' > VERSION" "$SCRIPT_DIR" "RULE5"

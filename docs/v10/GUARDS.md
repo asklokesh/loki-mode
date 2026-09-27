@@ -376,13 +376,17 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   and Resource Cleanup") exists precisely to close this class for `/tmp`;
   the scratchpad root had no equivalent discipline applied at the time of
   this incident.
-- **The guard:** none yet. No slice has been cut to extend the
-  `loki_run_tmp_create`/`loki_run_tmp_cleanup` discipline (or an equivalent
-  per-agent-subdirectory convention) to the shared scratchpad root, and no
-  mechanical guard (for example, a `scripts/v10-guard.sh` PreToolUse rule
-  blocking an unscoped `rm -f`/`rm -rf` with a glob directly under a shared
-  root) exists today. **PENDING, no slice cut.**
-- **The test that proves it fires:** none. **PENDING, no slice cut.**
+- **The guard:** `scripts/v10-guard.sh` Rule 4, `rule4_glob_in_shared_root`
+  (S-181). Any `rm` (with or without `-rf`) whose glob target has a literal
+  parent that is exactly `/tmp`, `/private/tmp`, `$TMPDIR`, or a directory
+  named `scratchpad` is blocked with exit 2. A glob one level below such a
+  root (`/tmp/run-1/*.log`) is allowed. Known limit: a parent that is an
+  unexpanded variable (`"$TMPDIR"/*`) is allowed, since the hook cannot see
+  its value.
+- **The test that proves it fires:** `bash tests/test-v10-guard.sh`, section
+  "Rule 4: glob rm directly in a shared root": `rm -f /tmp/*.log` and
+  `rm -f <scratchpad>/*` blocked, `rm -f /tmp/run-1/*.log` allowed. Removing
+  the `rule4_glob_in_shared_root` call fails the 5 blocked cases.
 
 ## 12. A test fixture wrote synthetic `insteadOf` lines to the real `~/.gitconfig` (S-18)
 
