@@ -33,11 +33,11 @@ loki_run_tmp_create() {
 }
 
 loki_run_tmp_stat_field() {
-    local gnu_fmt="$1" bsd_fmt="$2" path="$3" value
+    local gnu_fmt="$1" bsd_fmt="$2" target_path="$3" value
 
-    value="$(stat -c "$gnu_fmt" -- "$path" 2>/dev/null)" || value=''
+    value="$(stat -c "$gnu_fmt" -- "$target_path" 2>/dev/null)" || value=''
     case "$value" in
-        '' | *[!0-9]*) value="$(stat -f "$bsd_fmt" -- "$path" 2>/dev/null)" || value='' ;;
+        '' | *[!0-9]*) value="$(stat -f "$bsd_fmt" -- "$target_path" 2>/dev/null)" || value='' ;;
     esac
     case "$value" in
         '' | *[!0-9]*) return 1 ;;
