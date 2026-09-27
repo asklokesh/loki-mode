@@ -85,6 +85,7 @@ export function changedFiles(repoDir: string, baseSha: string): string[] {
 interface RunOpts {
   path?: string; // PATH override, tests only, so "missing tool" never depends on the host
   stdin?: string;
+  timeoutMs?: number; // per-attempt timeout override, tests only; defaults to CHECK_TIMEOUT_MS
 }
 
 /** `cut` means the timeout or the stage's own AbortSignal killed the child:
@@ -92,7 +93,7 @@ interface RunOpts {
  *  never retried (a hung check must not burn 2x its timeout). */
 async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSignal, opts: RunOpts): Promise<{ ok: boolean; missing: boolean; cut: boolean }> {
   if (!Bun.which(cmd, opts.path ? { PATH: opts.path } : undefined)) return { ok: false, missing: true, cut: false };
-  const timeout = AbortSignal.timeout(CHECK_TIMEOUT_MS);
+  const timeout = AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS);
   const proc = Bun.spawn([cmd, ...args], {
     cwd,
     stdin: opts.stdin !== undefined ? Buffer.from(opts.stdin) : "ignore",
@@ -115,7 +116,7 @@ export async function runCheck(
 ): Promise<VerifyCheck> {
   const started = Date.now();
   const cmdStr = [cmd, ...args].join(" ");
-  const cutReason = () => (signal.aborted ? "aborted" : `timed out after ${CHECK_TIMEOUT_MS / 1000}s`);
+  const cutReason = () => (signal.aborted ? "aborted" : `timed out after ${(opts.timeoutMs ?? CHECK_TIMEOUT_MS) / 1000}s`);
   let attempt = await runOnce(cmd, args, ctx.repoDir, signal, opts);
   let result: VerifyCheck["result"];
   let reason: string | undefined;
@@ -146,6 +147,38 @@ export async function runCheck(
 // that repoDir IS the loki-mode repo; a build target repo will not carry it.
 function isLokiModeRepo(repoDir: string): boolean {
   return existsSync(join(repoDir, "scripts", "select-tests.sh"));
+}
+
+const ESLINT_CONFIGS = [".eslintrc", ".eslintrc.json", ".eslintrc.js", ".eslintrc.cjs", "eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"];
+
+/** ENGINE.md section 4's named tool per language: bash -n + shellcheck for
+ *  shell, tsc (project-scoped) + eslint (when configured) for TS/JS, ruff for
+ *  Python. Exported so a missing-tool scenario (e.g. no shellcheck on PATH)
+ *  can be exercised directly with a PATH override, the same pattern the
+ *  "missing tool" runCheck tests already use. Every named tool that applies
+ *  to the changed set gets a check entry: a missing tool is not_run, never a
+ *  silently absent entry (ENGINE.md section 9's NOT PROVEN requirement). */
+export async function runLintChecks(
+  ctx: RunContext, changed: string[], signal: AbortSignal, checks: VerifyCheck[], opts: RunOpts = {},
+): Promise<void> {
+  const py = changed.filter((f) => f.endsWith(".py"));
+  if (py.length) await runCheck(ctx, "lint:ruff", "ruff", ["check", ...py], signal, checks, opts);
+
+  const sh = changed.filter((f) => f.endsWith(".sh"));
+  if (sh.length) {
+    await runCheck(ctx, "lint:bash-n", "bash", ["-c", 'for f in "$@"; do bash -n "$f" || exit 1; done', "_", ...sh], signal, checks, opts);
+    await runCheck(ctx, "lint:shellcheck", "shellcheck", sh, signal, checks, opts);
+  }
+
+  const tsjs = changed.filter((f) => /\.(ts|tsx|js|jsx)$/.test(f));
+  if (tsjs.length) {
+    if (existsSync(join(ctx.repoDir, "tsconfig.json"))) {
+      await runCheck(ctx, "lint:tsc", "npx", ["tsc", "--noEmit", "-p", "."], signal, checks, opts);
+    }
+    if (ESLINT_CONFIGS.some((f) => existsSync(join(ctx.repoDir, f)))) {
+      await runCheck(ctx, "lint:eslint", "npx", ["eslint", ...tsjs], signal, checks, opts);
+    }
+  }
 }
 
 export const verifyStage: Stage = {
@@ -183,11 +216,9 @@ export const verifyStage: Stage = {
     }
 
     if (!signal.aborted) {
-      // Lint/typecheck of changed files only. A wider tool matrix (eslint,
-      // shellcheck, flake8) is a straight extension of this one line per
-      // language; ruff for Python is the one the card's green criteria cover.
-      const py = changed.filter((f) => f.endsWith(".py"));
-      if (py.length) await runCheck(ctx, "lint:ruff", "ruff", ["check", ...py], signal, checks);
+      // Lint/typecheck of changed files only, per ENGINE.md section 4's named
+      // tool per language.
+      await runLintChecks(ctx, changed, signal, checks);
 
       // Self-hosting only: also run the repo's own fast-gate selector
       // (ENGINE.md section 4, "the engine also runs scripts/select-tests.sh").

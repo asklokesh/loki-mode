@@ -8,7 +8,7 @@ import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeF
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EventType, RunContext, StageName, TestMap, TestRef } from "../../src/engine10/types.ts";
-import { changedFiles, runCheck, verifyStage, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
+import { changedFiles, runCheck, runLintChecks, verifyStage, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 
 const FIX = join(import.meta.dir, "fixtures", "verify");
 const cleanupDirs: string[] = [];
@@ -154,6 +154,29 @@ describe("engine10 verify: missing tool and flaky rerun", () => {
     expect(checks).toHaveLength(1); // exactly one attempt, no retry
     expect(emitted).toHaveLength(1);
   }, 10_000);
+
+  test("a check whose per-attempt timeout is injected short times out and is never retried", async () => {
+    const repoDir = mkRepo();
+    const counter = join(repoDir, "counter");
+    const script = join(repoDir, "slow.sh");
+    writeFileSync(counter, "0");
+    writeFileSync(script, [
+      "#!/usr/bin/env bash",
+      `n=$(cat "${counter}")`,
+      "n=$((n+1))",
+      `echo "$n" > "${counter}"`,
+      "sleep 5",
+    ].join("\n") + "\n");
+    chmodSync(script, 0o755);
+    const { ctx } = fakeCtx({ repoDir, baseSha: "HEAD" });
+    const checks: VerifyCheck[] = [];
+    // Real timeout path (AbortSignal.timeout), not the caller's own signal:
+    // proves the timeout itself is injectable and still never retries.
+    const check = await runCheck(ctx, "slow-timeout", "bash", [script], sig(), checks, { timeoutMs: 200 });
+    expect(check.result).toBe("not_run");
+    expect(check.reason).toMatch(/timed out after 0\.2s/);
+    expect(readFileSync(counter, "utf8").trim()).toBe("1"); // ran exactly once, never retried
+  }, 10_000);
 });
 
 describe("engine10 verify: test selection and select-tests.sh", () => {
@@ -202,6 +225,37 @@ describe("engine10 verify: test selection and select-tests.sh", () => {
     const result = await verifyStage.run(ctx, sig());
     const checks = result.data.checks as VerifyCheck[];
     expect(checks.some((c) => c.name === "select-tests")).toBe(false);
+  });
+});
+
+describe("engine10 verify: lint/typecheck matrix (ENGINE.md section 4)", () => {
+  test("a malformed .sh as the only changed file fails bash -n, never an empty check list", async () => {
+    const repoDir = mkRepo();
+    writeFileSync(join(repoDir, "broken.sh"), "if [ -z \"$x\" ]\n  echo unterminated\n");
+    const { ctx } = fakeCtx({ repoDir, baseSha: baseSha(repoDir) });
+    const result = await verifyStage.run(ctx, sig());
+    expect(result.status).toBe("completed");
+    const checks = result.data.checks as VerifyCheck[];
+    expect(checks.length).toBeGreaterThan(0); // never checks: [] for a changed shell file
+    const bashCheck = checks.find((c) => c.name === "lint:bash-n");
+    expect(bashCheck?.result).toBe("fail");
+  });
+
+  test("shellcheck missing from PATH is not_run, never a silently absent entry", async () => {
+    const repoDir = mkRepo();
+    writeFileSync(join(repoDir, "ok.sh"), "#!/usr/bin/env bash\necho ok\n");
+    const pathDir = mkdtempSync(join(tmpdir(), "e10-verify-path-"));
+    cleanupDirs.push(pathDir);
+    const bashReal = execFileSync("which", ["bash"], { encoding: "utf8" }).trim();
+    execFileSync("ln", ["-s", bashReal, join(pathDir, "bash")]);
+    const { ctx } = fakeCtx({ repoDir, baseSha: baseSha(repoDir) });
+    const checks: VerifyCheck[] = [];
+    await runLintChecks(ctx, ["ok.sh"], sig(), checks, { path: pathDir });
+    const shellcheckCheck = checks.find((c) => c.name === "lint:shellcheck");
+    expect(shellcheckCheck?.result).toBe("not_run");
+    expect(shellcheckCheck?.reason).toMatch(/not found on PATH/);
+    const bashCheck = checks.find((c) => c.name === "lint:bash-n");
+    expect(bashCheck?.result).toBe("pass");
   });
 });
 
