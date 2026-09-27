@@ -6,7 +6,7 @@
 bash
 bash|start|./prd.md
 bash|issue|owner/repo#123
-bun|status
+bun|status|--json
 bash|web
 bun|doctor
 bash|doctor|--airgap

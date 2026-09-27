@@ -98,17 +98,19 @@ while IFS= read -r line || [ -n "$line" ]; do
     esac
     want="$(expected_of "$route" ${args[@]+"${args[@]}"})"
     got="$(route_of ${args[@]+"${args[@]}"})"
-    if [ "$got" = "$want" ]; then
+    rc=$?
+    if [ "$got" = "$want" ] && [ "$rc" -eq 0 ]; then
         pass "$label"
     else
-        fail "$label (got '$got', want '$want')"
+        fail "$label (got '$got' rc=$rc, want '$want' rc=0)"
     fi
     if [ "$ALIAS_ACTIVE" = "1" ]; then
         got="$(route_of legacy ${args[@]+"${args[@]}"})"
-        if [ "$got" = "$want" ]; then
+        rc=$?
+        if [ "$got" = "$want" ] && [ "$rc" -eq 0 ]; then
             pass "legacy alias: $label"
         else
-            fail "legacy alias: $label (got '$got', want '$want')"
+            fail "legacy alias: $label (got '$got' rc=$rc, want '$want' rc=0)"
         fi
     else
         skip "legacy alias: $label (until LOKI_ENGINE defaults to v10)"
