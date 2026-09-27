@@ -13,6 +13,7 @@ import {
   codexProvider,
   clineProvider,
   aiderProvider,
+  PROVIDER_COMMIT_HYGIENE,
 } from "../../src/runner/providers.ts";
 import type { ProviderInvocation } from "../../src/runner/types.ts";
 import { _resetClaudeHelpCacheForTest } from "../../src/providers/claude_flags.ts";
@@ -712,7 +713,8 @@ describe("clineProvider invocation", () => {
     expect(r.exitCode).toBe(0);
     const argv = readArgv(clineArgvLog);
     // No LOKI_CLINE_MODEL -> no -m flag, prompt is positional.
-    expect(argv).toEqual(["-y", "do thing"]);
+    // S-209: the newline-framed stub splits the hygiene-prefixed prompt.
+    expect(argv).toEqual(["-y", PROVIDER_COMMIT_HYGIENE, "do thing"]);
     expect(argv).not.toContain("-m");
   });
 
@@ -724,7 +726,7 @@ describe("clineProvider invocation", () => {
     const argv = readArgv(clineArgvLog);
     // cline.sh:113-114: -m and model name appear as a separate pair before
     // the positional prompt.
-    expect(argv).toEqual(["-y", "-m", "anthropic/claude-opus-4-7", "build x"]);
+    expect(argv).toEqual(["-y", "-m", "anthropic/claude-opus-4-7", PROVIDER_COMMIT_HYGIENE, "build x"]);
   });
 
   it("propagates non-zero exit code", async () => {
@@ -818,6 +820,7 @@ describe("aiderProvider invocation", () => {
     // --no-auto-commits is non-negotiable (aider.sh:118: loki owns git).
     expect(argv).toEqual([
       "--message",
+      PROVIDER_COMMIT_HYGIENE,
       "fix bug",
       "--yes-always",
       "--no-auto-commits",

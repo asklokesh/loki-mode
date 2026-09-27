@@ -822,6 +822,18 @@ function applyCodexMaxTier(effort: string): string {
 //   codex exec resume --last (session continuity across iterations)
 //   codex mcp add/list (loki <-> codex MCP bridge)
 //   subagents parallelism
+// Commit hygiene for providers that take no system prompt (codex, cline,
+// aider). Byte-identical to PROVIDER_COMMIT_HYGIENE in providers/codex.sh,
+// cline.sh and aider.sh; claude carries it in AUTONOMY_OVERRIDE_TEXT instead,
+// so claudeProvider must NOT prefix (BACKLOG 74 and 99).
+export const PROVIDER_COMMIT_HYGIENE =
+  "Commit hygiene still applies: git checkpoints are LOCAL only. Never push or force-push. Stage files by explicit path, never `git add -A` or `git add .`, and never commit secrets, credentials, .env files, or untracked files you did not author this session.";
+
+// Mirrors bash: prompt="$PROVIDER_COMMIT_HYGIENE"$'\n\n'"$prompt".
+function withCommitHygiene(prompt: string): string {
+  return `${PROVIDER_COMMIT_HYGIENE}\n\n${prompt}`;
+}
+
 export function codexProvider(): ProviderInvoker {
   const cli = resolveCli("LOKI_CODEX_CLI", "codex");
   return {
@@ -854,7 +866,7 @@ export function codexProvider(): ProviderInvoker {
         argv.push("--output-last-message", lastMessagePath);
       }
 
-      argv.push(call.prompt);
+      argv.push(withCommitHygiene(call.prompt));
 
       // Both env vars: LOKI_-namespaced (canonical, v6.37.1+) and
       // CODEX_MODEL_REASONING_EFFORT (legacy, deprecated but supported).
@@ -907,7 +919,7 @@ export function clineProvider(): ProviderInvoker {
         argv.push("-m", model);
       }
       // cline.sh:35,114: PROVIDER_PROMPT_POSITIONAL=true -- prompt last.
-      argv.push(call.prompt);
+      argv.push(withCommitHygiene(call.prompt));
 
       const r = await shellRun(argv, { cwd: call.cwd });
       await writeCaptured(call.iterationOutputPath, r.stdout, r.stderr);
@@ -953,7 +965,7 @@ export function aiderProvider(): ProviderInvoker {
         cli,
         // aider.sh:34,116: PROVIDER_PROMPT_FLAG = --message (single-shot).
         "--message",
-        call.prompt,
+        withCommitHygiene(call.prompt),
         // aider.sh:33,117: PROVIDER_AUTONOMOUS_FLAG = --yes-always.
         "--yes-always",
         // aider.sh:118: loki owns git -- never let aider auto-commit.
