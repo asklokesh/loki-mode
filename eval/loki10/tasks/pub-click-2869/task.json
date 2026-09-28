@@ -12,7 +12,7 @@
     "files": [
       "tests/test_termui.py"
     ],
-    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_termui.py -k \"test_edit_pathlib and single\""
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_termui.py -k \"test_edit_pathlib\""
   },
   "timeout_s": 900,
   "tier": "medium"

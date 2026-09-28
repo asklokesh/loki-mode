@@ -58,6 +58,9 @@
 #      block completion, checked for v10, raw-claude and legacy; v10's own
 #      sealed Wall test file left in the tree never counts as that diff, but
 #      a real source change alongside it still does
+#  16. (D30) validate accepts tier:medium, rejects an unknown tier value; a
+#      task with no tier field defaults to small; --all --tier medium selects
+#      only the medium task
 #===============================================================================
 set -u
 
@@ -735,6 +738,35 @@ J="$R/results.jsonl"
 [ "$(row "$J" no_source_diff)" = false ] && [ "$(row "$J" completed)" = false ] \
     && pass "EV-13 v10: a receipt naming a real edit as a Wall file does not exclude it" \
     || fail "EV-13 v10 fakewall row: $(tail -1 "$J")"
+# ---- 16. (D30) tier field: validate + --tier selection
+bad_case tier_bogus "t['tier']='bogus'"
+seed_task fx-medium fx-greet "t['tier']='medium'" ":"
+if H validate "$TASKS/fx-medium" >/dev/null 2>&1; then pass "validator accepts tier:medium"; else fail "validator rejected tier:medium"; fi
+if H validate "$TASKS/fx-greet" >/dev/null 2>&1; then pass "validator accepts a task with no tier (defaults small)"; else fail "validator rejected a tierless task"; fi
+
+R="$T/out-tier"
+mkdir -p "$T/tasks-tier"
+cp -R "$TASKS/fx-greet" "$TASKS/fx-medium" "$T/tasks-tier/"
+STUB_MODE=noop env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$T/tasks-tier" bash "$HERE/run.sh" \
+    --arm raw-claude --all --tier medium --out "$R" >/dev/null 2>&1
+got="$(python3 -c 'import json,sys; print(",".join(sorted(json.loads(l)["task"] for l in open(sys.argv[1]))))' "$R/results.jsonl" 2>/dev/null)"
+[ "$got" = "fx-medium" ] && pass "D30: --all --tier medium selects only the medium task" || fail "D30: --tier rows='$got'"
+
+# An invalid tier value must fail loudly under --tier selection, never be
+# silently dropped and shrink the run (E-38 contract). A valid medium task
+# sits alongside fx-bad so a selection filter that drops fx-bad (tier=None
+# no longer matching) still has fx-good to run on and would exit 0, not 2:
+# without this second task, `not tasks` alone would return 2 and mask a
+# reverted fix (found in EV-11 review).
+mkdir -p "$T/tasks-tier-bad" && cp -R "$TASKS/fx-medium" "$T/tasks-tier-bad/fx-bad"
+python3 -c "import json; p='$T/tasks-tier-bad/fx-bad/task.json'; t=json.load(open(p)); t['id']='fx-bad'; t['tier']='Medium'; json.dump(t, open(p,'w'))"
+cp -R "$TASKS/fx-medium" "$T/tasks-tier-bad/fx-good"
+python3 -c "import json; p='$T/tasks-tier-bad/fx-good/task.json'; t=json.load(open(p)); t['id']='fx-good'; json.dump(t, open(p,'w'))"
+STUB_MODE=noop env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$T/tasks-tier-bad" bash "$HERE/run.sh" \
+    --arm raw-claude --all --tier medium --out "$T/out-tier-bad" >/dev/null 2>&1
+rc=$?
+[ "$rc" = 2 ] && pass "D30: --tier medium exits 2 on a task with an invalid tier value, not a silent drop" \
+    || fail "D30: bad-tier rc=$rc"
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

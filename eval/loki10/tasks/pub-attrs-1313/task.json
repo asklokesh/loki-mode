@@ -12,7 +12,7 @@
     "files": [
       "tests/test_functional.py"
     ],
-    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_functional.py -k \"((TestReplace and test_replaces))\""
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_functional.py -k \"TestReplace\""
   },
   "timeout_s": 900,
   "tier": "medium"

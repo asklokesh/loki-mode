@@ -1,9 +1,9 @@
-F                                                                        [100%]
+F.                                                                       [100%]
 =================================== FAILURES ===================================
 __________________________ test_edit_pathlib[single] ___________________________
 
-runner = <click.testing.CliRunner object at 0x106e9cad0>
-tmp_path = PosixPath('/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/pytest-of-lokesh/pytest-243/test_edit_pathlib_single_0')
+runner = <click.testing.CliRunner object at 0x106fc4ad0>
+tmp_path = PosixPath('/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/pytest-of-lokesh/pytest-269/test_edit_pathlib_single_0')
 use_iterable = False
 
     @pytest.mark.skipif(WIN, reason="No sed on Windows.")
@@ -23,8 +23,8 @@ src/click/termui.py:898: in edit
     ed.edit_files(filenames=filename)
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
-self = <click._termui_impl.Editor object at 0x10790c1a0>
-filenames = PosixPath('/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/pytest-of-lokesh/pytest-243/test_edit_pathlib_single_0/file.txt')
+self = <click._termui_impl.Editor object at 0x10701c1a0>
+filenames = PosixPath('/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/pytest-of-lokesh/pytest-269/test_edit_pathlib_single_0/file.txt')
 
     def edit_files(self, filenames: cabc.Iterable[str]) -> None:
         """Open files in the user's editor."""
@@ -52,4 +52,4 @@ E           TypeError: 'PosixPath' object is not iterable
 src/click/_termui_impl.py:730: TypeError
 =========================== short test summary info ============================
 FAILED tests/test_termui.py::test_edit_pathlib[single] - TypeError: 'PosixPat...
-1 failed, 281 deselected in 0.09s
+1 failed, 1 passed, 280 deselected in 0.10s

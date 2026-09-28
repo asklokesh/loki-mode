@@ -1,8 +1,8 @@
-F                                                                        [100%]
+.....F                                                                   [100%]
 =================================== FAILURES ===================================
 __________ TestUniquenessClass.test_complex_return_types_is_supported __________
 
-self = <tests.test_unique.TestUniquenessClass object at 0x107749480>
+self = <tests.test_unique.TestUniquenessClass object at 0x109191480>
 
     def test_complex_return_types_is_supported(self):
         """The unique decorator supports complex return types
@@ -36,4 +36,4 @@ E           TypeError: cannot use 'dict' as a set element (unhashable type: 'dic
 faker/proxy.py:337: TypeError
 =========================== short test summary info ============================
 FAILED tests/test_unique.py::TestUniquenessClass::test_complex_return_types_is_supported
-1 failed, 5 deselected in 0.09s
+1 failed, 5 passed in 0.08s

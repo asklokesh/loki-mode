@@ -12,7 +12,7 @@
     "files": [
       "tests/test_unique.py"
     ],
-    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_unique.py -k \"((TestUniquenessClass and test_complex_return_types_is_supported))\""
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_unique.py -k \"TestUniquenessClass\""
   },
   "timeout_s": 900,
   "tier": "medium"
