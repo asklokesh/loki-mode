@@ -140,24 +140,31 @@ fi
 # SAME mode CI uses, over EVERY path in the push, scoped to just the pushed
 # commits with --log-opts so it stays fast: measured on this repo, an
 # unscoped `gitleaks git` over the full history (~3,700 commits, ~1GB) takes
-# ~37s; scoped to a typical 5-commit range with --log-opts it takes ~230ms
-# (~160x faster), plus ~60ms for the bare clone below. Sits here, before
-# PRE_PUSH_SKIP (see the header comment), for the same reason E-88 does:
-# PRE_PUSH_SKIP=1 is the routine way trains push, and a train push is
-# exactly how bbe83c7a's planted secrets landed on main.
+# ~37s; scoped to a typical 5-commit range with --log-opts it takes ~240ms
+# median of 5 runs (~150x faster), plus ~70ms for the clone below. Sits
+# here, before PRE_PUSH_SKIP (see the header comment), for the same reason
+# E-88 does: trains routinely push with PRE_PUSH_SKIP=1 set
+# (docs/v10/DECISIONS.md), and a check placed after that line would never
+# run on exactly the pushes that matter most.
 #
-# Runs against a throwaway `--bare --shared` clone, not the working tree:
+# Runs against a throwaway `--mirror --shared` clone, not the working tree:
 # verified empirically that `gitleaks git <dir>` auto-loads a
 # `.gitleaksignore` / `.gitleaks.toml` sitting in that directory's own
 # working tree even when neither is passed explicitly -- which would let
 # whatever branch happens to be checked out locally silently gate the scan
 # instead of the PUSHED TIP's own files, the same class of bug E-99 fixed
-# for the eval scan below. A bare clone has no working tree, so only the
+# for the eval scan below. A mirror clone has no working tree, so only the
 # tip's own copies (fetched below with `git show`, same pattern as the eval
-# scan) can apply. `--shared` hardlinks the object store rather than
-# copying it, which is what keeps the clone itself cheap. `git -C "$_top"`
-# throughout: REPO_ROOT/cd have not run yet at this point (same reason E-88
-# uses it).
+# scan) can apply. `--mirror`, not `--bare`: `--bare` copies only
+# refs/heads and tags, so the empty-base fallback's `--not --remotes=...`
+# below would match NOTHING inside a `--bare` clone (verified empirically:
+# `git -C <bare-clone> for-each-ref refs/remotes` prints 0 lines) and
+# silently widen that one fallback case to an unscoped, full-history scan.
+# `--mirror` replicates the source's refs/remotes/* 1:1, so `--not
+# --remotes=...` bounds the walk there the same way it does in $_top.
+# `--shared` hardlinks the object store rather than copying it, which is
+# what keeps the clone itself cheap either way. `git -C "$_top"` throughout:
+# REPO_ROOT/cd have not run yet at this point (same reason E-88 uses it).
 GITLEAKS_VERSION="8.30.0"
 _gitleaks_bin=""
 _gitleaks_bin_checked=0
@@ -239,8 +246,9 @@ _cleanup_scan_roots() {
 }
 trap '_cleanup_scan_roots' EXIT
 
-# Memoized bare --shared clone: one per hook run, reused across every pushed
-# ref, cleaned up by the trap above since it lives under $_full_scan_root.
+# Memoized mirror --shared clone: one per hook run, reused across every
+# pushed ref, cleaned up by the trap above since it lives under
+# $_full_scan_root.
 _full_scan_clone=""
 _full_scan_failures=0
 while read -r _lref _lsha _rref _rsha; do
@@ -287,8 +295,8 @@ while read -r _lref _lsha _rref _rsha; do
             /*) : ;;
             *) _full_git_common_dir="$_top/$_full_git_common_dir" ;;
         esac
-        if ! git clone -q --bare --shared "$_full_git_common_dir" "$_full_scan_clone" 2>/dev/null; then
-            echo "[pre-push] FAIL: could not create the bare clone for the full-push secret scan" >&2
+        if ! git clone -q --mirror --shared "$_full_git_common_dir" "$_full_scan_clone" 2>/dev/null; then
+            echo "[pre-push] FAIL: could not create the scan clone for the full-push secret scan" >&2
             _full_scan_failures=$((_full_scan_failures + 1))
             _full_scan_clone="__failed__"
         fi

@@ -292,8 +292,18 @@ setup_push_clone() {
     git -C "$dir" branch -M main >/dev/null 2>&1
     git -C "$dir" remote add origin "$bare" >/dev/null 2>&1
     # Base push: no eval files yet, establishes the remote tip. Runs the real
-    # hook once already (clean), which is fine.
-    (cd "$dir" && PRE_PUSH_NO_CI_CHECK=1 LOKI_RELEASE_MANAGER=1 git push -q origin main) >/dev/null 2>&1
+    # hook once already (clean), which is fine. LOKI_ALLOW_UNSCANNED_PUSH=1:
+    # this base push is not itself under test, so it must not depend on
+    # whether the pinned gitleaks binary happens to be installed here (E-110's
+    # full-push scan now runs on every push, including this one). Checked
+    # loudly: a silently-swallowed failure here used to leave the remote
+    # empty, turning every later real_push in a no-binary environment into a
+    # confusing new-branch push (base commit + all) instead of an update.
+    local _base_push_log="${dir}.base-push.log"
+    if ! (cd "$dir" && PRE_PUSH_NO_CI_CHECK=1 LOKI_RELEASE_MANAGER=1 LOKI_ALLOW_UNSCANNED_PUSH=1 git push -q origin main) >"$_base_push_log" 2>&1; then
+        echo "  FATAL: setup_push_clone's base push failed for $dir: $(cat "$_base_push_log")" >&2
+        exit 1
+    fi
 }
 
 # Pushes the clone's current main to its bare remote for real. Extra env vars
@@ -1150,6 +1160,37 @@ else
     sk "the per-commit WARNING fires even though base..tip shows no net .gitleaksignore change (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
+# --- case 26b (E-110 restore): the per-commit WARNING fires even though -----
+# base..tip shows no net .gitleaksignore change, in a SECRET-FREE fixture.
+# Case 26 above can no longer observe this specific r4 property: its fixture
+# also carries a real secret, which the full-push scan (E-110, runs first)
+# refuses on before dir-mode's per-commit loop is ever reached. This fixture
+# has no secret anywhere -- an unrelated fake path in .gitleaksignore, added
+# in commit 1 and removed in commit 2 -- so the full-push scan passes
+# cleanly and dir-mode's own WARNING logic is exercised directly.
+# LOKI_ALLOW_UNSCANNED_PUSH=1: this is about the WARNING mechanism, not
+# about gitleaks binary availability (same reason as case 19).
+D="$SCRATCH/c26b"; BARE="$SCRATCH/c26b.git"; setup_bare "$BARE"; setup_push_clone "$D" "$BARE"
+printf '%s\n' "some/other/fake-path.json:generic-api-key:1" >> "$D/.gitleaksignore"
+g "$D" add .gitleaksignore >/dev/null 2>&1
+g "$D" commit -q -m "add a fake ignore line" --no-verify >/dev/null 2>&1
+_c26b_add_sha="$(g "$D" rev-parse --short=12 HEAD)"
+g "$D" checkout -q HEAD~1 -- .gitleaksignore >/dev/null 2>&1
+g "$D" add .gitleaksignore >/dev/null 2>&1
+g "$D" commit -q -m "remove it again" --no-verify >/dev/null 2>&1
+rc="$(real_push "$D" "LOKI_ALLOW_UNSCANNED_PUSH=1")"
+if [[ "$rc" != "RC=0" ]]; then
+    ko "case 26b: a secret-free add-then-remove .gitleaksignore push still succeeds" "$rc; out: $(cat "$D/push.out")"
+else
+    ok "case 26b: a secret-free add-then-remove .gitleaksignore push still succeeds"
+fi
+if grep -q "WARNING: .gitleaksignore gained line" "$D/push.out" && grep -qF "$_c26b_add_sha" "$D/push.out" \
+   && grep -qF "some/other/fake-path.json:generic-api-key:1" "$D/push.out"; then
+    ok "case 26b: the per-commit WARNING fires even though base..tip shows no net .gitleaksignore change"
+else
+    ko "case 26b: the per-commit WARNING fires even though base..tip shows no net .gitleaksignore change" "$(cat "$D/push.out")"
+fi
+
 # --- case 27 (r4 concern): a ref pointing at a TREE, not a commit, is refused
 # A lightweight tag can point straight at a tree object (no commit, nothing
 # to peel `^{commit}` to). Every commit-walking step downstream either errors
@@ -1336,6 +1377,67 @@ if [[ "$_have_real_gitleaks" == "1" ]]; then
     fi
 else
     sk "a clean, non-eval-touching push passes (no pinned gitleaks v${GITLEAKS_VERSION})"
+fi
+
+# --- case 33 (E-110): the full-push scan is NOT skippable by PRE_PUSH_SKIP --
+# The whole reason the E-110 block moved to run before the PRE_PUSH_SKIP
+# check (not after, where it first landed): PRE_PUSH_SKIP=1 is the routine
+# way release trains push (docs/v10/DECISIONS.md), so a check placed after
+# it would never fire on exactly the pushes it exists to catch. Nothing
+# above asserts this placement directly -- every other case pushes without
+# PRE_PUSH_SKIP=1 set.
+if [[ "$_have_real_gitleaks" == "1" ]]; then
+    D="$SCRATCH/c33a"; BARE="$SCRATCH/c33a.git"; setup_bare "$BARE"; setup_push_clone "$D" "$BARE"
+    mkdir -p "$D/tests"
+    printf '%s\n' "# fixture: $_akia_secret leaked" > "$D/tests/foo.sh"
+    g "$D" add tests/foo.sh >/dev/null 2>&1
+    g "$D" commit -q -m "add tests/foo.sh with a secret-shaped literal" --no-verify >/dev/null 2>&1
+    rc="$(real_push "$D" "PRE_PUSH_SKIP=1")"
+    if [[ "$rc" == "RC=0" ]]; then
+        ko "case 33a: PRE_PUSH_SKIP=1 does not bypass the full-push scan (real finding)" "push succeeded (fail-open); out: $(cat "$D/push.out")"
+    elif grep -q "aws-access-token" "$D/push.out" && grep -q "possible secret" "$D/push.out" && grep -q "tests/foo.sh" "$D/push.out"; then
+        ok "case 33a: PRE_PUSH_SKIP=1 does not bypass the full-push scan (real finding)"
+    else
+        ko "case 33a: PRE_PUSH_SKIP=1 does not bypass the full-push scan (real finding)" "refused but not on the finding: $(cat "$D/push.out")"
+    fi
+else
+    sk "case 33a: PRE_PUSH_SKIP=1 does not bypass the full-push scan (real finding) (no pinned gitleaks v${GITLEAKS_VERSION})"
+fi
+
+# No pinned binary, no override, PRE_PUSH_SKIP=1, a CLEAN non-eval push:
+# refused with the install hint, not silently let through. This is the only
+# version of the E-110 guard CI's own Tests job will ever exercise (it has
+# no pinned gitleaks -- see tests/test-release-notes.sh's header note).
+D="$SCRATCH/c33b"; setup_clone "$D"
+echo "unrelated change" >> "$D/autonomy/run.sh"
+g "$D" add autonomy/run.sh >/dev/null 2>&1
+g "$D" commit -q -m "unrelated change" --no-verify >/dev/null 2>&1
+rc="$(run_hook "$D" "HOME=$_fake_home" "PRE_PUSH_SKIP=1")"
+if [[ "$rc" == "RC=0" ]]; then
+    ko "case 33b: PRE_PUSH_SKIP=1 does not bypass the full-push scan (no binary)" "hook exited 0 (fail-open); out: $(cat "$D/hook.out")"
+elif grep -q "cannot run the full-push secret scan" "$D/hook.out" && grep -q "scripts/install-gitleaks.sh" "$D/hook.out"; then
+    ok "case 33b: PRE_PUSH_SKIP=1 does not bypass the full-push scan (no binary)"
+else
+    ko "case 33b: PRE_PUSH_SKIP=1 does not bypass the full-push scan (no binary)" "refused but wrong message: $(cat "$D/hook.out")"
+fi
+
+# --- case 33c (E-110): LOKI_ALLOW_UNSCANNED_PUSH=1 never covers the eval ----
+# scan's OWN missing-binary refusal. The override is read in exactly one
+# place (the full-push scan above); this proves dir-mode's separate,
+# override-less missing-binary check further down still fires on its own
+# terms once the full-push scan lets the push through.
+D="$SCRATCH/c33c"; setup_clone "$D"
+mkdir -p "$D/eval/loki10/tasks/fake-task"
+echo '{"id": "fake-task"}' > "$D/eval/loki10/tasks/fake-task/task.json"
+g "$D" add eval/loki10/tasks/fake-task/task.json >/dev/null 2>&1
+g "$D" commit -q -m "add fake task" --no-verify >/dev/null 2>&1
+rc="$(run_hook "$D" "HOME=$_fake_home" "LOKI_ALLOW_UNSCANNED_PUSH=1")"
+if [[ "$rc" == "RC=0" ]]; then
+    ko "case 33c: LOKI_ALLOW_UNSCANNED_PUSH=1 never covers the eval scan's own missing-binary refusal" "hook exited 0 (fail-open); out: $(cat "$D/hook.out")"
+elif grep -q "eval task fixtures changed but pinned gitleaks" "$D/hook.out"; then
+    ok "case 33c: LOKI_ALLOW_UNSCANNED_PUSH=1 never covers the eval scan's own missing-binary refusal"
+else
+    ko "case 33c: LOKI_ALLOW_UNSCANNED_PUSH=1 never covers the eval scan's own missing-binary refusal" "refused but wrong message (may be the full-push scan's own message, not dir-mode's): $(cat "$D/hook.out")"
 fi
 
 # --- timing report: no eval change / one eval file / 10-commit push ----------
