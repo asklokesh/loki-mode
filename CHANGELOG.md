@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v9.81.0 (2026-09-28)
+
+### Added
+- Loki 10 engine (opt-in, `LOKI_ENGINE=v10`): cost path for small tasks (plan call skipped, Wall on sonnet with a short brief, sized "normal" when the repo map is truncated) (E-45); first-run preflight with actionable refusals (E-36); runs from the npm package via a static module registry (E-32); `--resume` through the supervisor (E-46); detached deep verify after the PR and Slack notify (E-48); issue-ref runs create their run dir before the fetch (E-58).
+- Eval: the harness passes `LOKI_TS_ENTRY` and `LOKI_E10_*` knobs to the v10 arm (E-52) and reaps arm processes that escape the timeout group (EV-10).
+- `scripts/local-ci.sh` fast tier runs gitleaks over the push range when installed (E-60).
+
+### Fixed
+- Engine: pytest uses the repo's own virtualenv (E-53); Wall test paths normalized (E-56); a killed Wall session never copies its file (E-54); Seal flags any change to a pre-existing test file, including a symlink swap (E-55); receipts record the provider-reported model and the summary counts cache tokens once (E-59).
+- Engine preflight raises in-process and only the CLI entry exits 2, so the suites pass on hosts without the claude CLI, gh auth or a git identity.
+
+### Measured (not a release claim)
+- Small-tier eval, claude-opus-5-5: raw `claude -p` 27/29 (93.1%), $0.2363 per completed task, p50 39s; legacy 15/29 completed (26/29 hidden tests pass, no PR opened), cost not measured. v10 on 5 tasks: full design 4/5 at $0.595 per completed, Wall off 5/5 at $0.398. The v10 full arm has not run; the default stays legacy.
+
 ## v9.80.1 (2026-09-28)
 
 ### Fixed
