@@ -1896,6 +1896,19 @@ else:
     # on a violation that looks, from its own text, like it should not have
     # fired.
     _prog_age_min = int(round((NOW - progress_entry[0]) / 60.0))
+    # E-80: a clock-skewed or hand-typed heading ahead of PULSE_NOW produced
+    # a negative age ("PROGRESS.md last entry: -12 min ago"), which is
+    # nonsensical and (since a negative age can never exceed the budget)
+    # silently hid a real staleness signal behind a heading nobody should
+    # trust. Report it by name and clamp the printed/compared age at 0
+    # rather than either trusting the bogus future timestamp as fresh in
+    # spirit or letting a negative number reach the violation text.
+    if _prog_age_min < 0:
+        emit(
+            "PROGRESS.md last entry: FUTURE_TIMESTAMP (%s is %d min ahead of now)"
+            % (progress_entry[1], -_prog_age_min)
+        )
+        _prog_age_min = 0
     emit("PROGRESS.md last entry: %d min ago" % _prog_age_min)
     if _prog_age_min > _STALE_PROGRESS_BUDGET_MIN:
         add_violation(

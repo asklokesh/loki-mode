@@ -2297,6 +2297,20 @@ else
     printf '%s\n' "$OUT"
 fi
 
+echo "T43 -- E-80: PROGRESS.md age is never negative; a future entry heading reports FUTURE_TIMESTAMP"
+PROGRESS_FUTURE="$WORK/PROGRESS-future.md"
+printf '# Progress\n\n## 2026-09-27T03:30:00Z: future entry\n- clock skew or a mistyped heading\n' > "$PROGRESS_FUTURE"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_PROGRESS_MD=$PROGRESS_FUTURE"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "PROGRESS.md last entry: FUTURE_TIMESTAMP (2026-09-27T03:30:00Z is 90 min ahead of now)" \
+    && printf '%s\n' "$OUT" | grep -qF "PROGRESS.md last entry: 0 min ago" \
+    && ! printf '%s\n' "$OUT" | grep -Eq "PROGRESS\.md last entry: -[0-9]+ min ago" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: STALE_PROGRESS"; then
+    ok "a future PROGRESS.md heading reports FUTURE_TIMESTAMP, age clamped to 0, never negative"
+else
+    bad "T43 future-timestamp case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
 echo ""
 echo "=== bash 3.2 syntax + full-suite check (via /bin/sh, real bash 3.2.57 on macOS) ==="
 if command -v /bin/sh >/dev/null 2>&1 && /bin/sh -c 'case "$BASH_VERSION" in 3.2*) exit 0;; *) exit 1;; esac' 2>/dev/null; then
