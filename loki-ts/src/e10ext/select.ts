@@ -78,13 +78,17 @@ function rankTuple(a: AttemptCandidate, sNames: Set<string>, wallNames: Set<stri
       if (c.result === "fail") lintFails++;
       continue;
     }
-    const inS = sNames.has(c.name);
-    // Single gate for every count below, including wallPasses: an attempt-authored test (not in
-    // S) never counts anywhere, and neither does a `wall` entry that isn't part of S (the caller
-    // invariant is wall subset S; this enforces it defensively instead of trusting the caller).
-    if (!inS) continue;
+    // wallPasses (key 1) reads `wall` directly, independent of S: a sealed Wall file is written
+    // after baseSha and left uncommitted (wall.ts), so S's "exists at baseSha" filter can drop a
+    // Wall test out of S while it still must count at key 1 -- an attempt that fails the Wall
+    // must never win because the caller happened to build S without it (R1, reproduced: with the
+    // Wall test outside S, a Wall failure used to be invisible everywhere).
     const inWall = wallNames.has(c.name);
     if (inWall && c.result === "pass") wallPasses++;
+    // Every count below this line is an S-based count (keys 2-4): a check outside S -- whether
+    // attempt-authored or a Wall test the caller left out of S -- never feeds them; only wallPasses
+    // above sees it. This line is the sole S gate; do not also gate wallPasses on it.
+    if (!sNames.has(c.name)) continue;
     if (c.result === "pass" && c.interpreter === "project") passesInS++;
     if (c.result === "flaky") flakyInS++;
     if (

@@ -56,9 +56,11 @@ interface ImportRef {
 // namespace, mixed, or `import type ... from`), `export {..} from "x"` / `export type {..} from
 // "x"` (a re-export is never treated as the exempted `import type`), and dynamic `import("x")`.
 const RE_SIDE_EFFECT = /^import\s+["']([^"']+)["'];?/gm;
-const RE_IMPORT_FROM = /^import\s+(type\s+)?[^;\n]*?\bfrom\s+["']([^"']+)["'];?/gm;
-const RE_EXPORT_FROM = /^export\s+(?:type\s+)?[^;\n]*?\bfrom\s+["']([^"']+)["'];?/gm;
-const RE_DYNAMIC = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
+// [^;] (not [^;\n]) so a multi-line binding list (`import {\n  x,\n} from "x";`) is still matched:
+// a newline inside the braces must not let the specifier escape the fence.
+const RE_IMPORT_FROM = /^import\s+(type\s+)?[^;]*?\bfrom\s+["']([^"']+)["'];?/gm;
+const RE_EXPORT_FROM = /^export\s+(?:type\s+)?[^;]*?\bfrom\s+["']([^"']+)["'];?/gm;
+const RE_DYNAMIC = /\b(?:import|require)\s*\(\s*["']([^"']+)["']\s*\)/g;
 
 function findImports(src: string): ImportRef[] {
   const refs: ImportRef[] = [];
@@ -139,5 +141,21 @@ describe("e10ext import fence: findImports catches every import form (D42 (1) B3
   it("a whole-statement `import type ... from` of a banned stages/ file (not seal/verify/wall) is still a violation", () => {
     const src = `import type { PlanOutput } from "../engine10/stages/plan.ts";\n`;
     expect(importViolations("f.ts", src)).toEqual(["f.ts imports banned stages/ module: ../engine10/stages/plan.ts"]);
+  });
+
+  it("R3: a multi-line `import { .. } from \"x\"` does not escape the fence", () => {
+    const banned = "../engine10/stages/fix.ts";
+    const src = `import {\n  fix,\n} from "${banned}";\n`;
+    expect(importViolations("f.ts", src)).toEqual([`f.ts imports banned stages/ module: ${banned}`]);
+  });
+
+  it("R3: a multi-line `export { .. } from \"x\"` does not escape the fence", () => {
+    const src = `export {\n  VerifyCheck,\n} from "${BANNED}";\n`;
+    expect(importViolations("f.ts", src)).toEqual([`f.ts imports ${BANNED} without a whole-statement 'import type'`]);
+  });
+
+  it("dynamic `require(\"x\")` is caught and never exempted as type-only", () => {
+    const src = `const m = require("${BANNED}");\n`;
+    expect(importViolations("f.ts", src)).toEqual([`f.ts imports ${BANNED} without a whole-statement 'import type'`]);
   });
 });

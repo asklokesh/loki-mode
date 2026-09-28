@@ -152,6 +152,50 @@ describe("selectAttempt: rank key 4, flaky count", () => {
   });
 });
 
+describe("selectAttempt: R1, a Wall test outside S", () => {
+  it("reviewer probe: an attempt that fails the Wall must never win because S was built without that Wall test", () => {
+    // Wall files are written after baseSha and left uncommitted (wall.ts), and S is filtered to
+    // "tests that exist at baseSha" (section 4), so a real caller can build S without the Wall
+    // test in it. a fails the Wall test but passes both S tests; b passes the Wall test, passes
+    // one S test and fails the other. b must win on key 1 (Wall passes) before key 2 is even
+    // reached, regardless of a's cleaner S-based record.
+    const localS: TestRef[] = [
+      { runner: "pytest", path: "tests/test_b.py" },
+      { runner: "pytest", path: "tests/test_c.py" },
+    ];
+    const localWall: TestRef[] = [{ runner: "pytest", path: "tests/test_wall.py" }];
+    const a = attempt(0, [
+      check("pytest:tests/test_wall.py", "fail"),
+      check("pytest:tests/test_b.py", "pass"),
+      check("pytest:tests/test_c.py", "pass"),
+    ]);
+    const b = attempt(1, [
+      check("pytest:tests/test_wall.py", "pass"),
+      check("pytest:tests/test_b.py", "pass"),
+      check("pytest:tests/test_c.py", "fail"),
+    ]);
+    const r = selectAttempt([a, b], localS, localWall);
+    expect(r.index).toBe(1);
+    expect(r.reason).toBe("rank: wallPasses");
+  });
+
+  it("M1' does not leak a Wall-outside-S check into the S-based counts (keys 2-4)", () => {
+    // test_wall is in wall but not in S. a fails it, b leaves it not_run: under the fix, neither
+    // counts toward deterministicFails (only wallPasses would move, and here both wallPasses tie
+    // at 0 since neither passed it), so a and b tie on every S-based key too and the lower index
+    // (a) wins on the index tie-break. Mutation M1' (`if (!inS && !wallNames.has(c.name))
+    // continue`, replacing the sole S gate) would let a's test_wall "fail" leak into
+    // deterministicFails, giving a 1 fail versus b's 0 and flipping the winner to b.
+    const localS: TestRef[] = [{ runner: "pytest", path: "tests/test_b.py" }];
+    const localWall: TestRef[] = [{ runner: "pytest", path: "tests/test_wall.py" }];
+    const a = attempt(0, [check("pytest:tests/test_wall.py", "fail"), check("pytest:tests/test_b.py", "pass")]);
+    const b = attempt(1, [check("pytest:tests/test_wall.py", "not_run"), check("pytest:tests/test_b.py", "pass")]);
+    const r = selectAttempt([a, b], localS, localWall);
+    expect(r.index).toBe(0);
+    expect(r.reason).toBe("rank: index");
+  });
+});
+
 describe("selectAttempt: rank key adjacency (a swapped key order must flip the winner)", () => {
   it("M3: keys 1 and 2 are not interchangeable -- more Wall passes wins even with more deterministic fails", () => {
     // a: 1 Wall pass (via a system-interpreter check, so it can't also feed passesInS) and 1 real
@@ -186,6 +230,62 @@ describe("selectAttempt: rank key adjacency (a swapped key order must flip the w
       check("pytest:tests/test_c.py", "not_run"),
     ]);
     expect(selectAttempt([a, b], localS, []).index).toBe(0);
+  });
+
+  it("2-3: keys 2 and 3 are not interchangeable -- fewer deterministic fails wins even with fewer S passes", () => {
+    // a: 0 deterministic fails, 0 S passes. b: 1 deterministic fail, 2 S passes. No wall checks
+    // involved (wallPasses ties at 0 for both). Key 2 (fewer fails) is primary over key 3 (more
+    // passes), so a wins despite having fewer passes; swapping keys 2 and 3 would let b's larger
+    // pass count decide first and flip the winner to b.
+    const localS: TestRef[] = [
+      { runner: "pytest", path: "tests/test_a.py" },
+      { runner: "pytest", path: "tests/test_b.py" },
+      { runner: "pytest", path: "tests/test_c.py" },
+    ];
+    const a = attempt(0, [
+      check("pytest:tests/test_a.py", "not_run"),
+      check("pytest:tests/test_b.py", "not_run"),
+      check("pytest:tests/test_c.py", "not_run"),
+    ]);
+    const b = attempt(1, [
+      check("pytest:tests/test_a.py", "fail"),
+      check("pytest:tests/test_b.py", "pass"),
+      check("pytest:tests/test_c.py", "pass"),
+    ]);
+    expect(selectAttempt([a, b], localS, []).index).toBe(0);
+  });
+
+  it("4-5: keys 4 and 5 are not interchangeable -- fewer flaky checks wins even with more lint fails", () => {
+    // a: 0 flaky, 1 lint fail. b: 1 flaky, 0 lint fails. No S/wall checks differ (both not_run,
+    // tying keys 1-3 at 0). Key 4 (flaky) is primary over key 5 (lint), so a wins despite the lint
+    // fail; swapping keys 4 and 5 would let b's clean lint record decide first and flip the winner.
+    const localS: TestRef[] = [{ runner: "pytest", path: "tests/test_a.py" }];
+    const a = attempt(0, [check("pytest:tests/test_a.py", "not_run"), check("lint:ruff", "fail")]);
+    const b = attempt(1, [check("pytest:tests/test_a.py", "flaky"), check("lint:ruff", "pass")]);
+    expect(selectAttempt([a, b], localS, []).index).toBe(0);
+  });
+
+  it("5-6: keys 5 and 6 are not interchangeable -- fewer lint fails wins even with a larger diff", () => {
+    // a: 0 lint fails, a 3-line diff. b: 1 lint fail, a 1-line diff. Every check-based key ties
+    // (both have one not_run S check, no wall). Key 5 (lint) is primary over key 6 (diff size),
+    // so a wins despite the larger diff; swapping keys 5 and 6 would let b's smaller diff decide
+    // first and flip the winner to b.
+    const localS: TestRef[] = [{ runner: "pytest", path: "tests/test_a.py" }];
+    const checks = [check("pytest:tests/test_a.py", "not_run")];
+    const a = attempt(0, [...checks, check("lint:ruff", "pass")], { diff: "+1\n+2\n+3\n" });
+    const b = attempt(1, [...checks, check("lint:ruff", "fail")], { diff: "+1\n" });
+    expect(selectAttempt([a, b], localS, []).index).toBe(0);
+  });
+
+  it("6-7: keys 6 and 7 are not interchangeable -- a smaller diff wins even at a higher attempt index", () => {
+    // a (index 0): a 3-line diff. b (index 1): a 1-line diff. Every check-based key ties. Key 6
+    // (diff size) is primary over key 7 (index), so b wins despite the higher index; swapping
+    // keys 6 and 7 would let the lower index decide first and flip the winner to a.
+    const localS: TestRef[] = [{ runner: "pytest", path: "tests/test_a.py" }];
+    const checks = [check("pytest:tests/test_a.py", "not_run")];
+    const a = attempt(0, checks, { diff: "+1\n+2\n+3\n" });
+    const b = attempt(1, checks, { diff: "+1\n" });
+    expect(selectAttempt([a, b], localS, []).index).toBe(1);
   });
 });
 
@@ -309,6 +409,11 @@ describe("isEarlyAccept", () => {
   it("is false for an all-fail attempt (must go red against a stub that always returns true)", () => {
     const allFail = attempt(0, [check("pytest:tests/test_a.py", "fail"), check("pytest:tests/test_b.py", "fail")]);
     expect(isEarlyAccept(allFail, S, WALL)).toBe(false);
+  });
+
+  it("E3: is false when any S or Wall check is flaky, even though every other check passes", () => {
+    const flakyOne = attempt(0, [check("pytest:tests/test_a.py", "pass"), check("pytest:tests/test_b.py", "flaky")]);
+    expect(isEarlyAccept(flakyOne, S, WALL)).toBe(false);
   });
 });
 
