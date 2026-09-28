@@ -1,24 +1,21 @@
-// engine10/testmap.ts -- runner detection and the impacted-test map (E-05).
-// Runners come from real files only (ENGINE.md section 8). Each changed file
-// maps to tests that import/reference it, unioned with a same-stem floor so
-// Go or import-free tests never drop to zero (under-selecting is unsafe).
-// Pure read. EngineTestMap extends types.ts TestMap without editing it.
+// engine10/testmap.ts -- runner detection and the impacted-test map (E-05). Runners come from
+// real files only (ENGINE.md section 8). Each changed file maps to tests that import/reference
+// it, unioned with a same-stem floor so Go or import-free tests never drop to zero (under-selecting
+// is unsafe). Pure read. EngineTestMap extends types.ts TestMap without editing it.
 
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, extname, join, relative, sep } from "node:path";
 import type { RunnerName, TestMap, TestMapProvider, TestRef } from "./types.ts";
 
-/** One command shape per runner (ENGINE.md section 8 table). `<files>` is a
- *  placeholder the caller (E-09 verify) fills with the selected paths.
- *  `coarse: true` means the command always runs the whole suite: npm and
- *  cargo have no reliable per-file selection. */
+/** One command shape per runner (ENGINE.md section 8 table). `<files>` is a placeholder the
+ *  caller (E-09 verify) fills with the selected paths. `coarse: true` means the command always
+ *  runs the whole suite: npm and cargo have no reliable per-file selection. */
 export interface CommandSpec {
   cmd: string;
   coarse: boolean;
 }
 
-/** Extra fields beyond E-01's TestMap. `sourceRefs` is read back by
- *  `impacted()` and is not meant for callers outside this file. */
+/** Extra fields beyond E-01's TestMap. `sourceRefs` is read back by `impacted()` and is not meant for callers outside this file. */
 export interface EngineTestMap extends TestMap {
   /** Repo-relative file that proved each detected runner. */
   evidence: Partial<Record<RunnerName, string>>;
@@ -47,6 +44,16 @@ const COMMANDS: Record<RunnerName, CommandSpec> = {
   cargo: { cmd: "cargo test", coarse: true },
 };
 
+/** Repo's own interpreter first (E-53): `<root>/.venv/bin/python`, then
+ *  `<root>/venv/bin/python`, else bare `python` on PATH. */
+function pytestPython(root: string): string {
+  for (const venv of [".venv", "venv"]) {
+    const bin = join(root, venv, "bin", "python");
+    if (existsSync(bin)) return bin;
+  }
+  return "python";
+}
+
 function isTestFile(rel: string): boolean {
   const name = basename(rel);
   return JS_TEST_RE.test(name) || PY_TEST_RE.test(name) || GO_TEST_RE.test(name);
@@ -64,8 +71,7 @@ function normalizeRel(raw: string): string {
   return raw.split(sep).join("/").replace(/^\.\//, "");
 }
 
-// ponytail: full recursive walk minus SKIP_DIRS; add a file cap or
-// `git ls-files` if a huge monorepo makes this slow.
+// ponytail: full recursive walk minus SKIP_DIRS; add a file cap or `git ls-files` if a huge monorepo makes this slow.
 function walk(root: string): string[] {
   const out: string[] = [];
   const stack = [root];
@@ -107,18 +113,16 @@ function detectFromPackageJson(text: string, rel: string, mark: (r: RunnerName, 
   if ("vitest" in deps || inScripts(/\bvitest\b/)) mark("vitest", rel);
   if ("jest" in deps || inScripts(/\bjest\b/)) mark("jest", rel);
   if (inScripts(/\bbun\s+test\b/)) mark("bun", rel);
-  // ponytail: repo_profile.ts also reads scripts.test, but buildProfile
-  // persists a profile file as a side effect, so the one check is inlined here.
+  // ponytail: repo_profile.ts also reads scripts.test, but buildProfile persists a profile file as a side effect, so the one check is inlined here.
   const testScript = pkg.scripts?.test;
   if (typeof testScript === "string" && testScript.trim() !== "" && !NPM_DEFAULT_TEST.test(testScript)) {
     mark("npm", rel);
   }
 }
 
-// Import/reference specifiers a test file's text can carry, per language.
-// JS: `from "./search"` / `require("./search")`. Python: `from app.ranker
-// import x` / `import app.ranker`. Matched textually (grep), never resolved
-// against a module graph.
+// Import/reference specifiers a test file's text can carry, per language. JS: `from "./search"`
+// / `require("./search")`. Python: `from app.ranker import x` / `import app.ranker`. Matched
+// textually (grep), never resolved against a module graph.
 const JS_SPEC_RE = /(?:from\s+|require\(\s*)['"]([^'"]+)['"]/g;
 const PY_FROM_RE = /^\s*from\s+([\w.]+)\s+import\b/gm;
 const PY_IMPORT_RE = /^\s*import\s+([\w.]+)/gm;
@@ -152,15 +156,13 @@ function referencedBasenames(text: string): Set<string> {
   return out;
 }
 
-// Source stem a test file covers by naming alone: search.test.ts -> search,
-// test_ranker.py -> ranker, handler_test.go -> handler. This is the floor
-// the import/reference grep adds on top of, never a replacement for it: a
-// same-package Go test that imports nothing of its own (handler_test.go for
-// handler.go), or a fixture kept import-free on purpose (test_ranker.py, so
-// no collector hits an ImportError), would otherwise map to zero tests --
-// the unsafe direction for E-09 fast verify. `from pkg import mod` also
-// resolves to `pkg`, not `mod`, with grep alone; the naming floor covers
-// the common `test_mod.py` case regardless of exactly what the file imports.
+// Source stem a test file covers by naming alone: search.test.ts -> search, test_ranker.py ->
+// ranker, handler_test.go -> handler. This is the floor the import/reference grep adds on top
+// of, never a replacement for it: a same-package Go test that imports nothing of its own
+// (handler_test.go for handler.go), or a fixture kept import-free on purpose (test_ranker.py, so
+// no collector hits an ImportError), would otherwise map to zero tests -- the unsafe direction
+// for E-09 fast verify. `from pkg import mod` also resolves to `pkg`, not `mod`, with grep alone;
+// the naming floor covers the common `test_mod.py` case regardless of exactly what the file imports.
 function coveredStem(testPath: string): string {
   const name = basename(testPath);
   if (JS_TEST_RE.test(name)) return name.replace(JS_TEST_RE, "");
@@ -168,8 +170,7 @@ function coveredStem(testPath: string): string {
   return name.replace(/_test\.(py|go)$/, "");
 }
 
-/** Synchronous core: scans `root`, returns the full detected map. `detect()`
- *  on TestMapProviderImpl just wraps this in a Promise per the interface. */
+/** Synchronous core: scans `root`, returns the full detected map. `detect()` on TestMapProviderImpl just wraps this in a Promise per the interface. */
 export function buildTestMap(root: string): EngineTestMap {
   const files = walk(root);
   const found = new Set<RunnerName>();
@@ -221,16 +222,15 @@ export function buildTestMap(root: string): EngineTestMap {
   const runners = RUNNER_ORDER.filter((r) => found.has(r));
   const commands: Partial<Record<RunnerName, CommandSpec>> = {};
   for (const r of runners) commands[r] = COMMANDS[r];
+  if (commands.pytest) commands.pytest = { ...commands.pytest, cmd: `${pytestPython(root)} -m pytest -q <files>` };
 
   return { runners, tests, evidence, commands, sourceRefs };
 }
 
-/** Test refs impacted by `changedFiles`: a changed test maps to itself; a
- *  changed source maps to every test that imports/references its basename
- *  (built by `buildTestMap`'s grep, read back from `map.sourceRefs`). */
+/** Test refs impacted by `changedFiles`: a changed test maps to itself; a changed source maps
+ *  to every test that imports/references its basename (built by `buildTestMap`'s grep, read back from `map.sourceRefs`). */
 export function impactedRefs(map: TestMap, changedFiles: readonly string[]): TestRef[] {
-  // `map` is always what buildTestMap/detect() returned; sourceRefs is this
-  // file's own addition to the shared TestMap contract (see EngineTestMap).
+  // `map` is always what buildTestMap/detect() returned; sourceRefs is this file's own addition to the shared TestMap contract (see EngineTestMap).
   const sourceRefs = (map as EngineTestMap).sourceRefs ?? {};
   const out: TestRef[] = [];
   const seen = new Set<string>();

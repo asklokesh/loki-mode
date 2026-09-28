@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { buildTestMap, impactedRefs, RealTestMapProvider } from "../../src/engine10/testmap.ts";
@@ -100,6 +100,25 @@ describe("runner detection from real files", () => {
   test("pytest from conftest alone, or from a tests/test_*.py file alone", () => {
     expect(buildTestMap(repo({ "conftest.py": "" })).runners).toEqual(["pytest"]);
     expect(buildTestMap(repo({ "tests/test_a.py": "def test_a(): pass\n" })).runners).toEqual(["pytest"]);
+  });
+
+  test("pytest command uses the repo's own .venv interpreter when present (E-53)", () => {
+    const root = repo({ "conftest.py": "", ".venv/bin/python": "" });
+    chmodSync(join(root, ".venv/bin/python"), 0o755);
+    const map = buildTestMap(root);
+    expect(map.commands.pytest).toEqual({ cmd: `${join(root, ".venv/bin/python")} -m pytest -q <files>`, coarse: false });
+  });
+
+  test("pytest command falls back to venv/bin/python, then bare python, when .venv is absent", () => {
+    const withVenv = repo({ "conftest.py": "", "venv/bin/python": "" });
+    expect(buildTestMap(withVenv).commands.pytest?.cmd).toBe(`${join(withVenv, "venv/bin/python")} -m pytest -q <files>`);
+    const bare = repo({ "conftest.py": "" });
+    expect(buildTestMap(bare).commands.pytest?.cmd).toBe("python -m pytest -q <files>");
+  });
+
+  test(".venv wins over venv when both are present", () => {
+    const root = repo({ "conftest.py": "", ".venv/bin/python": "", "venv/bin/python": "" });
+    expect(buildTestMap(root).commands.pytest?.cmd).toBe(`${join(root, ".venv/bin/python")} -m pytest -q <files>`);
   });
 
   test("a same-package Go test with no imports of its own still maps by naming floor", () => {
