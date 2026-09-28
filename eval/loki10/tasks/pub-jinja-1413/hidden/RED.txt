@@ -1,9 +1,9 @@
-F                                                                        [100%]
+..........F...                                                           [100%]
 =================================== FAILURES ===================================
 _______________________ TestSet.test_namespace_set_tuple _______________________
 
-self = <test_core_tags.TestSet object at 0x107674500>
-env_trim = <jinja2.environment.Environment object at 0x107629a90>
+self = <test_core_tags.TestSet object at 0x10b388500>
+env_trim = <jinja2.environment.Environment object at 0x10b3549d0>
 
     def test_namespace_set_tuple(self, env_trim):
 >       tmpl = env_trim.from_string(
@@ -29,4 +29,4 @@ E   jinja2.exceptions.TemplateSyntaxError: expected token 'end of statement bloc
 <unknown>:1: TemplateSyntaxError
 =========================== short test summary info ============================
 FAILED tests/test_core_tags.py::TestSet::test_namespace_set_tuple - jinja2.ex...
-1 failed, 62 deselected in 0.06s
+1 failed, 13 passed, 49 deselected in 0.07s
