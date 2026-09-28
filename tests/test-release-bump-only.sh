@@ -124,6 +124,46 @@ else
     bad "new dist file was unexpectedly removed/altered"
 fi
 
+
+# E-74: prove run_bump_only() itself calls release_restore_debugid_only_dist,
+# not just that the helper works in isolation (the checks above call it
+# directly). Stub out the unrelated steps (version-file bumping, the real
+# `bun run build`) so this leg isolates the one call site at issue: if that
+# call is ever deleted from run_bump_only, MARKER is never written and this
+# leg alone goes red.
+MARKER="$WORK/.debugid-helper-called"
+rm -f "$MARKER"
+mkdir -p "$WORK/bin"
+cat >"$WORK/bin/bun" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$WORK/bin/bun"
+
+(
+    cd "$WORK" || exit 1
+    export PATH="$WORK/bin:$PATH"
+    export BUMP_TYPE="patch"
+    # shellcheck disable=SC1091
+    . ./scripts/release.sh
+    # Stub the steps around the call site under test so this leg exercises
+    # only "does run_bump_only invoke release_restore_debugid_only_dist",
+    # not version-file bumping or a real bun build.
+    get_current_version() { echo "1.0.1"; }
+    bump_version() { echo "1.0.2"; }
+    bump_all_version_files() { :; }
+    release_restore_debugid_only_dist() { : >"$MARKER"; }
+    echo "1.0.2" >"$ROOT_DIR/loki-ts/dist/loki.js"
+    run_bump_only >/dev/null
+)
+RC2=$?
+
+[ "$RC2" -eq 0 ] && ok "run_bump_only exits 0 (E-74)" || bad "run_bump_only exited $RC2 (E-74)"
+
+[ -f "$MARKER" ] \
+    && ok "run_bump_only calls release_restore_debugid_only_dist (E-74)" \
+    || bad "run_bump_only did NOT call release_restore_debugid_only_dist (E-74)"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
