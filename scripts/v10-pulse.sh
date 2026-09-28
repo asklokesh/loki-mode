@@ -2403,9 +2403,16 @@ def check_stray_worktrees():
     porcelain-listing shape), rather than a second env var or git call.
     `git worktree list --porcelain` always reports the primary/main worktree
     first (same fact metric 6's own check_worktrees relies on), so it is
-    skipped by position -- the repo root itself is never a stray entry.
-    Returns None only on a real listing failure; an empty override (or a
-    listing with no additional worktrees) is a real, reportable "0 stray"."""
+    skipped by position -- the repo root itself is never a stray entry. The
+    "repo root" for containment is THAT primary path (paths[0]), never
+    REPO_ROOT/PULSE_REPO_ROOT: this script is meant to run FROM a builder
+    worktree (metric 4b's own comment on the same fact), where REPO_ROOT is
+    that worktree's own path, not the primary one -- using it here would
+    make a real stray, sitting right next to the actual repo root, compare
+    against the wrong directory and never fire in the one place this check
+    is meant to run. Returns None only on a real listing failure; an empty
+    override (or a listing with no additional worktrees) is a real,
+    reportable "0 stray"."""
     override = os.environ.get("PULSE_WORKTREE_LIST")
     if override is not None:
         text = override
@@ -2420,7 +2427,7 @@ def check_stray_worktrees():
               if line.startswith("worktree ")]
     if not paths:
         return []
-    repo_root = os.path.normpath(REPO_ROOT)
+    repo_root = os.path.normpath(paths[0])
     stray = []
     for path in paths[1:]:
         norm = os.path.normpath(path)

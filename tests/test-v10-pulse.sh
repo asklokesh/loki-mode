@@ -2353,6 +2353,28 @@ else
     printf '%s\n' "$OUT"
 fi
 
+echo "T44c -- E-81: the repo root for containment is the listing's own primary worktree, never PULSE_REPO_ROOT (this script runs FROM a builder worktree, where those two differ)"
+OTHER_ROOT="$WORK/other-root"
+DIFFROOT_LIST="worktree $OTHER_ROOT
+HEAD dead
+branch refs/heads/main
+
+worktree $OTHER_ROOT/.claude/worktrees/wf-ok
+HEAD dead
+
+worktree $OTHER_ROOT/scratch-worktree
+HEAD dead
+
+"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_REPO_ROOT=$FAKE_REPO" "PULSE_WORKTREE_LIST=$DIFFROOT_LIST"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: STRAY_WORKTREE: worktree(s) registered inside the repo root but outside .claude/worktrees: $OTHER_ROOT/scratch-worktree" \
+    && printf '%s\n' "$OUT" | grep -qF "Stray worktrees (inside repo root, outside .claude/worktrees): 1"; then
+    ok "a stray under the listing's primary path fires even though PULSE_REPO_ROOT (this run's own worktree) points elsewhere"
+else
+    bad "T44c primary-vs-PULSE_REPO_ROOT case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
 echo ""
 echo "=== bash 3.2 syntax + full-suite check (via /bin/sh, real bash 3.2.57 on macOS) ==="
 if command -v /bin/sh >/dev/null 2>&1 && /bin/sh -c 'case "$BASH_VERSION" in 3.2*) exit 0;; *) exit 1;; esac' 2>/dev/null; then
