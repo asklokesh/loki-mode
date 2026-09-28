@@ -117,7 +117,7 @@ function importScanGraph(files: readonly JavaFile[]): { graph: DepGraph; unresol
     while ((m = IMPORT_RE.exec(f.src))) {
       const isStatic = Boolean(m[1]);
       const isWildcard = Boolean(m[3]);
-      const captured = m[2];
+      const captured = m[2]!; // group 2 is mandatory in IMPORT_RE (no trailing "?")
 
       if (isWildcard && !isStatic) {
         // `import pkg.*;` (package wildcard): an edge to every local file in that package.
@@ -152,7 +152,7 @@ function parseJdepsOutput(stdout: string, files: readonly JavaFile[]): DepGraph 
   const pairs: Array<readonly [string, string]> = [];
   for (const line of stdout.split("\n")) {
     const m = JDEPS_EDGE_RE.exec(line);
-    if (m) pairs.push([m[1], m[2]]);
+    if (m) pairs.push([m[1]!, m[2]!]); // both groups are mandatory in JDEPS_EDGE_RE
   }
   const nodes: GraphNode[] = files.map((f) => ({ id: f.rel, lines: f.lines }));
   return { nodes, edges: edgesFromFqcnPairs(files, pairs) };

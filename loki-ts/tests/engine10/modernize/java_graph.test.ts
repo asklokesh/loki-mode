@@ -100,6 +100,15 @@ describe("buildJavaGraph: fallback path (jdeps/javac absent)", () => {
     expect(result.graph.edges.some(([, to]) => to.includes("Ghost"))).toBe(false);
   });
 
+  it("a package wildcard with no local siblings and no class match is recorded as unresolved, not silently dropped", () => {
+    // Helper.java has `import java.util.*;` -- a real-world JDK package wildcard. byPkg has no
+    // "java.util" package (byPkg miss) and resolveImportTarget also finds no local fqcn named
+    // java.util (class-resolve miss), so this must land in unresolvedImports, not vanish.
+    const result = buildJavaGraph(FIX, FILES, { path: emptyPathDir() });
+    expect(result.unresolvedImports.some((u) => u.includes("com/example/util/Helper.java: unresolved wildcard import java.util.*"))).toBe(true);
+    expect(result.graph.edges.filter(([from]) => from === "com/example/util/Helper.java").length).toBe(0);
+  });
+
   it("a file with no local imports gets a node but no outgoing edge", () => {
     const result = buildJavaGraph(FIX, FILES, { path: emptyPathDir() });
     const outgoing = result.graph.edges.filter(([from]) => from === "com/example/util/Standalone.java");
