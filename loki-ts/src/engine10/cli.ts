@@ -16,7 +16,8 @@ export interface Route {
 const TABLE: Record<string, { module: string; fn: string }> = {
   status: { module: "status.ts", fn: "main" },
   verify: { module: "verify_cmd.ts", fn: "main" },
-  dashboard: { module: "dashboard/server.ts", fn: "main" }, modernize: { module: "modernize/cli.ts", fn: "main" },
+  dashboard: { module: "dashboard/server.ts", fn: "main" },
+  modernize: { module: "modernize/cli.ts", fn: "main" },
   // Hidden subcommands spawned by the supervisor.
   worker: { module: "worker.ts", fn: "main" },
   session: { module: "session.ts", fn: "main" },
