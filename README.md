@@ -909,6 +909,25 @@ See [benchmarks/](benchmarks/) for methodology.
 
 ---
 
+## Loki 10 engine (preview)
+
+Opt-in: set LOKI_ENGINE=v10 <!-- loki10-default -->
+
+A rewritten engine is under active development. Full guide, provider
+table and the 5-line summary format: [docs/v10/GUIDE.md](docs/v10/GUIDE.md).
+
+```
+LOKI_ENGINE=v10 loki "fix the login redirect loop" --no-pr
+```
+
+The router (bin/loki), the CLI surface (`--help`), and the run itself
+(intake, plan, wall, implement, verify, seal, PR) are on main, so the
+command above executes a real build end to end. `status`, `verify` and
+`dashboard` are also built. The guide says exactly what is still wired up
+(`--resume`, Slack) and what already runs.
+
+---
+
 ## Limitations
 
 | Area | What Works | What Doesn't (Yet) |

@@ -1517,6 +1517,7 @@ run_test "Loki 10 live PR smoke on a sandbox repo (E-40)" "$SCRIPT_DIR/test-engi
 run_test "run-owned temp cleanup works when sourced under zsh" "$SCRIPT_DIR/test-run-tmp-cleanup-zsh.sh"
 run_test "Loki 10 legacy deprecation notice (E-35)" "$SCRIPT_DIR/test-engine10-legacy-notice.sh"
 run_test "Loki 10 gate publish script (EV-6)" "$SCRIPT_DIR/../eval/loki10/test-publish-gate.sh"
+run_test "Loki 10 user docs match USAGE and the default marker (E-34)" "$SCRIPT_DIR/test-engine10-docs.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 
 # Summary
