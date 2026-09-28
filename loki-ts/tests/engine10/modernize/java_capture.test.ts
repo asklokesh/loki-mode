@@ -365,6 +365,30 @@ describe("captureJavaUnit", () => {
     expect(result.notProven).not.toContain("skipped: no JDK 8");
   });
 
+  // The literal round-3 review repro, end to end through captureJavaUnit with the real
+  // java_capture.sh subprocess (not a stub): the three-line JDK 8 `java -version` shim plus
+  // LOKI_MOD_JACOCO_AGENT carrying a raw 0x01 byte. Pre-fix, this made status.json invalid JSON,
+  // which captureJavaUnit read as a missing/unparseable file and reported "skipped: no JDK 8"
+  // even though JDK 8 was present the whole time.
+  it("end-to-end: a raw 0x01 in LOKI_MOD_JACOCO_AGENT never surfaces as 'skipped: no JDK 8' through captureJavaUnit", () => {
+    const out = tmp("e10-javacap-unit-e2e-");
+    const multiline = 'java version "1.8.0_412"\n' +
+      "Java(TM) SE Runtime Environment (build 1.8.0_412-b08)\n" +
+      "Java HotSpot(TM) 64-Bit Server VM (build 25.412-b08, mixed mode)";
+    const pathValue = shimJavaPathDir(multiline);
+    const runner: CommandRunner = (cmd, args, cwd) => {
+      const r = spawnSync(cmd, args, {
+        cwd, encoding: "utf8",
+        env: { ...process.env, PATH: pathValue, LOKI_MOD_JACOCO_AGENT: "/x\x01y" },
+      });
+      if (r.error && (r.error as NodeJS.ErrnoException).code === "ENOENT") return { found: false, code: null };
+      return { found: true, code: r.status };
+    };
+    const result = captureJavaUnit({ repoDir: FIX, outDir: out, unitDir: FIX, unitFiles: FILES, runner });
+    expect(result.notProven).not.toContain("skipped: no JDK 8");
+    expect(result.notProven.some((r) => r.startsWith("status.json malformed"))).toBe(false);
+  });
+
   it("is NOT PROVEN with the script's own reasons when JDK 8 is unavailable", () => {
     const out = tmp("e10-javacap-unit-");
     const runner = stubRunner({
