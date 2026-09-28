@@ -614,3 +614,45 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   (`git diff --quiet scripts/dep-inventory.py` exit 0, confirming an exact
   restore) and a clean rerun showed `Results: 6 passed, 0 failed`, exit 0.
   Run: `bash tests/test-dep-inventory.sh`.
+
+## 17. Hardcoded fixture ports raced concurrent runs of the same test (E-95)
+
+- **Incident:** commit `8f2179cd`, Tests run `36453069628`,
+  `tests/test-app-runner-watchdog-health.sh` failed with "healthy fixture
+  server never came up (cannot validate no-restart case)" and passed on an
+  unmodified rerun of the same SHA.
+- **Root cause with evidence:** the fixture hardcoded three TCP ports
+  (`CLOSED_PORT=59731`, `HEALTHY_PORT=59732`, `API_PORT=59733`) and polled
+  readiness for only ~3s (15 iterations of `sleep 0.2`). Any other process
+  bound to the same port at that moment -- another worktree running this
+  exact fixture concurrently (this swarm runs 12+ engineers in parallel
+  worktrees on one machine), or a leftover process from a prior killed
+  run -- makes the `python3 -m http.server "$HEALTHY_PORT"` bind fail (or,
+  on kernels where `SO_REUSEADDR` lets a second bind coexist with an active
+  listener, makes it non-deterministic which socket answers), so the fixed
+  3s readiness window times out with no HTTP server ever answering; a
+  rerun once the colliding process is gone passes with no code change.
+  Verified locally (Darwin): holding port 59732 with an `SO_REUSEADDR`
+  listener during a run did NOT reproduce a bind failure here -- macOS/BSD
+  `SO_REUSEADDR` allows a second bind to coexist with an active listener,
+  which Linux (the actual CI runner) does not; the hardcoded-port class is
+  confirmed by code inspection and by the incident report, not by a local
+  bind-conflict repro, which is honestly reported as platform-dependent
+  here.
+- **The guard:** `tests/test-app-runner-watchdog-health.sh` (this slice)
+  adds a `pick_free_port()` helper (binds `("127.0.0.1", 0)`, reads back the
+  OS-assigned port, closes the socket) and uses it for `CLOSED_PORT`,
+  `HEALTHY_PORT` and `API_PORT` instead of any fixed literal, so the fixture
+  can never collide with another instance of itself or a stale leftover
+  regardless of kernel `SO_REUSEADDR` semantics. Readiness polling was also
+  widened from ~3s to 10s (50 iterations), and both server fixtures now log
+  to a file (`healthy_server.log`, `api404_server.log`) whose tail is
+  included in the failure message alongside the actual port, so a genuine
+  future timeout is diagnosable instead of a bare "never came up".
+- **The test that proves it fires:** `tests/test-app-runner-watchdog-health.sh`
+  is itself the guard (fixed-port fixtures were the bug, not a separate
+  probe of them). Run 20 times back to back while 4 parallel copies of
+  `tests/test-v10-pulse.sh` provided CPU load: 20/20 passed
+  (`bash tests/test-app-runner-watchdog-health.sh`, run in a loop; all 4
+  concurrent `test-v10-pulse.sh` copies completed clean, exit 0, over the
+  same window). `bash -n` and `shellcheck` both clean on the file.
