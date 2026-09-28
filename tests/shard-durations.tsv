@@ -650,7 +650,7 @@ Loki 10 legacy deprecation notice (E-35)	1
 Loki 10 gate publish script (EV-6)	2
 Loki 10 user docs match USAGE and the default marker (E-34)	1
 release.sh --bump-only restores debugId-only dist churn (E-72)	1
-release-notes.sh extraction/validation + pre-push VERSION-bump gate (E-88)	4
+release-notes.sh extraction/validation + pre-push VERSION-bump gate (E-88)	9
 no hardcoded far-future latest a release can overtake (E-73)	1
 Loki modernize py2/3 capture tracer (M-09)	2
 Dependency inventory Latest/Bump self-consistency (DEP-01)	1

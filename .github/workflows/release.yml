@@ -622,6 +622,42 @@ jobs:
           test -s release/npm-sbom.cdx.json || { echo "FATAL: npm SBOM is empty"; exit 1; }
           echo "npm SBOM size: $(wc -c < release/npm-sbom.cdx.json) bytes"
 
+      # E-88 (rework, D36): this step used to run AFTER "Create Git Tag", so a
+      # bad or missing CHANGELOG section failed the job only once the tag was
+      # already pushed -- burning that version number (never force-move or
+      # delete a tag, so it cannot be reused). Extraction now runs first, so a
+      # notes failure aborts before anything irreversible happens.
+      - name: Extract changelog for this version
+        if: steps.check_release.outputs.release_exists == 'false'
+        run: |
+          set -uo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          # The carried-version auto-detect (E-88 B1) only carries a lower,
+          # contiguous, CONFIRMED-unpublished section forward -- it needs the
+          # real npm versions list to confirm "unpublished". Read it once;
+          # on failure (registry blip, new/unpublished package), continue
+          # with no list, which makes the script carry nothing automatically
+          # rather than guess (an explicit '## vX.Y.Z changes' --include is
+          # always available as a manual override).
+          NPM_ARGS=()
+          if npm view loki-mode versions --json > "$RUNNER_TEMP/npm-versions.json" 2>npm-versions-err.txt; then
+            NPM_ARGS=(--npm-versions-file "$RUNNER_TEMP/npm-versions.json")
+          else
+            echo "::warning::could not read npm view loki-mode versions --json; carried-version auto-detect is disabled for this release ($(cat npm-versions-err.txt))"
+          fi
+          # scripts/release-notes.sh (E-88) replaces the old inline awk here:
+          # that awk anchored `/^## v$VERSION$/` against headers written as
+          # `## vX.Y.Z (YYYY-MM-DD)`, so it never matched, and it spliced
+          # VERSION into an ERE unescaped, so its dots matched any character.
+          # Both bugs silently fell back to a one-line "Release vX.Y.Z" body;
+          # v9.80.1, v9.81.0, v10.0.1, v10.1.0, v10.1.1 and v10.2.1 shipped
+          # that way. The release now FAILS instead of falling back.
+          if ! bash scripts/release-notes.sh "$VERSION" "${NPM_ARGS[@]}" > changelog_body.txt; then
+            echo "ERROR: CHANGELOG.md has no fully-written release notes for v$VERSION." >&2
+            echo "Add a '## v$VERSION' section with '### ' subsections and '- ' bullets before releasing." >&2
+            exit 1
+          fi
+
       # S-105: a release that changes workflow files cannot have its tag pushed
       # by GITHUB_TOKEN ("refusing to allow a GitHub App to create or update
       # workflow ... without workflows permission"). The old step echoed
@@ -684,23 +720,6 @@ jobs:
           echo "  git tag -a ${TAG} -m 'Release ${TAG}' ${RELEASE_SHA} && git push origin refs/tags/${TAG}"
           exit 1
 
-      - name: Extract changelog for this version
-        if: steps.check_release.outputs.release_exists == 'false'
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          # scripts/release-notes.sh (E-88) replaces the old inline awk here:
-          # that awk anchored `/^## v$VERSION$/` against headers written as
-          # `## vX.Y.Z (YYYY-MM-DD)`, so it never matched, and it spliced
-          # VERSION into an ERE unescaped, so its dots matched any character.
-          # Both bugs silently fell back to a one-line "Release vX.Y.Z" body;
-          # v9.80.1, v9.81.0, v10.0.1, v10.1.0, v10.1.1 and v10.2.1 shipped
-          # that way. The release now FAILS instead of falling back.
-          if ! bash scripts/release-notes.sh "$VERSION" > changelog_body.txt; then
-            echo "ERROR: CHANGELOG.md has no fully-written release notes for v$VERSION." >&2
-            echo "Add a '## v$VERSION' section with '### ' subsections and '- ' bullets before releasing." >&2
-            exit 1
-          fi
-
       - name: Create GitHub Release
         if: steps.check_release.outputs.release_exists == 'false'
         env:
@@ -730,16 +749,19 @@ jobs:
             release/npm-sbom.cdx.json \
             --title "Loki Mode v${VERSION}" \
             --notes-file changelog_body.txt
-          # Post-create check (E-88): confirm the published release body is not
-          # the old one-line fallback -- belt-and-braces on top of the extract
-          # step's own failure, which already guarantees a fully-written body
-          # reaches --notes-file above. Because downstream jobs (npm, Docker,
-          # Homebrew) only run when THIS job succeeds, a hard failure here
-          # would orphan an already-created release exactly like the v10.2.0
-          # incident this slice exists to prevent -- so retry past a
-          # transient `gh` error (network blip, read-after-write lag) and
-          # only fail on a genuine placeholder match, never on gh itself
-          # being flaky.
+          # Post-create check (E-88, D36 rework): confirm the published release
+          # body is not the old one-line fallback -- belt-and-braces on top of
+          # the extract step's own failure, which already guarantees a
+          # fully-written body reached --notes-file above, now BEFORE the tag
+          # was even created. A hard failure here can only ever fire on a
+          # `gh`-side mangling of a body already proven good, yet it runs
+          # AFTER gh release create, when downstream jobs (npm, Docker,
+          # Homebrew) depend on this job succeeding -- so `exit 1` here
+          # orphans an already-created release exactly like the v10.2.0
+          # incident this slice exists to prevent. Downgraded to a warning
+          # annotation, never removed outright, because it is still real
+          # evidence if `gh` itself ever mangles a body: worth seeing in the
+          # run log, never worth failing a completed release over.
           BODY=""
           for _attempt in 1 2 3; do
             BODY="$(gh release view "v${VERSION}" --json body --jq .body 2>/dev/null)" && break
@@ -749,8 +771,7 @@ jobs:
           if [ -z "$BODY" ]; then
             echo "WARNING: could not read back v${VERSION}'s release body after 3 attempts; skipping the placeholder check (the extract step already validated it before --notes-file)." >&2
           elif [ "$BODY" = "Release v${VERSION}" ]; then
-            echo "ERROR: published release v${VERSION} body is the placeholder 'Release v${VERSION}'." >&2
-            exit 1
+            echo "::warning::published release v${VERSION} body is the placeholder 'Release v${VERSION}' -- the extract step should have caught this before tagging; investigate but the release stands."
           fi
 
       - name: Skip message
@@ -770,9 +791,15 @@ jobs:
         id: changelog
         run: |
           VERSION="${{ needs.release.outputs.version }}"
-          # Write awk output to file to avoid bash backtick interpretation in variables
-          awk "/^## v$VERSION\$/{flag=1; next} /^## v/{flag=0} flag" CHANGELOG.md > /tmp/changelog-body.txt
-          if [ ! -s /tmp/changelog-body.txt ]; then
+          # E-88 (rework, D36): this used to be the same buggy inline awk the
+          # release job's own extract step replaced (unanchored heading match,
+          # VERSION spliced into a regex unescaped). By the time this job
+          # runs, `release` has already succeeded, which means its own
+          # scripts/release-notes.sh call already validated this version's
+          # section -- so a failure here should never happen, but the
+          # fallback line stays as defense in depth for a Slack message,
+          # never a release gate.
+          if ! bash scripts/release-notes.sh "$VERSION" > /tmp/changelog-body.txt; then
             echo "Release v$VERSION" > /tmp/changelog-body.txt
           fi
           # Truncate to 2000 chars for Slack block limit
