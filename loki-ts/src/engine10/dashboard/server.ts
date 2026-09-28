@@ -2,8 +2,8 @@
 // 12). Binds 127.0.0.1 only, never opens a browser. Reuses events.ts fold()/tail(): runs are
 // folded read-only from .loki/runs/*/events.jsonl; the per-run stream is tail()'s replay-then-poll.
 import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import { fold, partialCost, readEvents, tail } from "../events.ts";
+import { eventsPath, runsDir } from "../status.ts";
 import type { EventEnvelope, Verdict } from "../types.ts";
 import { getVersion } from "../../version.ts";
 import { renderPage } from "./page.ts";
@@ -25,12 +25,6 @@ export interface RunSummary {
   measuredSessions: number;
   totalSessions: number;
   wallS: number | null;
-}
-function runsDir(repoDir: string): string {
-  return join(repoDir, ".loki", "runs");
-}
-export function eventsPath(repoDir: string, runId: string): string {
-  return join(runsDir(repoDir), runId, "events.jsonl");
 }
 export function listRunIds(repoDir: string): string[] {
   const dir = runsDir(repoDir);

@@ -5,9 +5,10 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readEvents } from "../../src/engine10/events.ts";
-import { partialCost, runSupervisor, TAMPER_NOT_PROVEN, type PrStep } from "../../src/engine10/supervisor.ts";
-import type { EventEnvelope } from "../../src/engine10/types.ts";
+import { alreadyDoneTextComment, partialCost, renderMainOutput, runSupervisor, TAMPER_NOT_PROVEN, type PrStep } from "../../src/engine10/supervisor.ts";
 import { assertWorkerEnv, runWorker } from "../../src/engine10/worker.ts";
+import type { EventEnvelope } from "../../src/engine10/types.ts";
+import type { SummaryInput } from "../../src/engine10/output.ts";
 
 const CANARY = "ghp_CANARYrealtoken0123456789abcdef";
 const roots: string[] = [];
@@ -233,6 +234,20 @@ setInterval(() => {}, 1000);
     expect(pr.calls.length).toBe(0);
   }, 30_000);
 
+  // E-66 review finding 1: an ALREADY_SATISFIED run (issue-closed, or the evidence-confirmed
+  // no-change path) has nothing to open a PR over -- opening one anyway would push an empty or
+  // stale branch. Reproduces the review's mutation: reverting the `verdict !== "ALREADY_SATISFIED"`
+  // guard in supervisor.ts would turn this green into a call to pr.step.
+  test("F5: an ALREADY_SATISFIED verdict never reaches the PR hook", async () => {
+    const dir = repo();
+    const code = `console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verdict: "ALREADY_SATISFIED", not_proven: [] } }));`;
+    const pr = prSpy();
+    const r = await runSupervisor({ runId: "e10-t10", repoDir: dir, env: supEnv(), workerArgv: worker(code), pr: pr.step });
+    expect(r.verdict).toBe("ALREADY_SATISFIED");
+    expect(pr.calls.length).toBe(0);
+    expect(r.prUrl).toBeNull();
+  }, 30_000);
+
   test("F4: malformed session.ended and negative cost data are dropped", async () => {
     const dir = repo();
     const code = `
@@ -246,6 +261,50 @@ console.log(JSON.stringify({ type: "cost", stage: "implement", data: { session_i
     expect(events.filter((e) => e.type === "cost").map((e) => e.data.usd)).toEqual([0.25]);
     expect(events.at(-1)!.data.cost_usd).toBe(0.25);
   }, 30_000);
+
+  // E-66 review finding 4: a text run has no issue to post the already-done comment to, so main()
+  // must print it directly instead of silently dropping it the way an issue run's unwired argv
+  // would otherwise mislead an operator into thinking nothing was decided.
+  test("alreadyDoneTextComment: a confirmed text run's comment is picked up for printing", () => {
+    const ev = (data: Record<string, unknown>): EventEnvelope => ({ v: 1, seq: 0, ts: "2026-01-01T00:00:00Z", run: "r1", type: "stage.completed", stage: "intake", data });
+    const events = [ev({ source: "text", already_satisfied: true, comment: "Loki 10: no change needed." })];
+    expect(alreadyDoneTextComment(events)).toBe("Loki 10: no change needed.");
+  });
+
+  test("alreadyDoneTextComment: null for an issue run (it has comment_argv instead)", () => {
+    const ev = (data: Record<string, unknown>): EventEnvelope => ({ v: 1, seq: 0, ts: "2026-01-01T00:00:00Z", run: "r1", type: "stage.completed", stage: "intake", data });
+    const events = [ev({ source: "issue", already_satisfied: true, comment: "Loki 10: no change needed.", comment_argv: ["comment"] })];
+    expect(alreadyDoneTextComment(events)).toBeNull();
+  });
+
+  test("alreadyDoneTextComment: null for a normal (not already-satisfied) run", () => {
+    const ev = (data: Record<string, unknown>): EventEnvelope => ({ v: 1, seq: 0, ts: "2026-01-01T00:00:00Z", run: "r1", type: "stage.completed", stage: "intake", data });
+    const events = [ev({ source: "text", already_satisfied: false })];
+    expect(alreadyDoneTextComment(events)).toBeNull();
+  });
+
+  const SUMMARY: SummaryInput = { pr: null, verdict: "ALREADY_SATISFIED", notProven: [], flaky: [], cost: { usd: null, provider: "claude", tokens: null }, wallS: 1, stages: [] };
+
+  // renderMainOutput is what main() actually writes to stdout (main() itself cannot be driven end
+  // to end from a test process: it re-spawns process.argv[1] as the worker, which is not cli.ts
+  // under a test runner). This is the real, red-then-green-verified proof that a text run's comment
+  // reaches the operator's terminal, not just intake's own stage data.
+  test("renderMainOutput: a confirmed text run prints the comment ahead of the summary", () => {
+    const ev = (data: Record<string, unknown>): EventEnvelope => ({ v: 1, seq: 0, ts: "2026-01-01T00:00:00Z", run: "r1", type: "stage.completed", stage: "intake", data });
+    const events = [ev({ source: "text", already_satisfied: true, comment: "Loki 10: no change needed.\n\nEvidence:\n- a.ts: foo" })];
+    const out = renderMainOutput(events, SUMMARY, "e10-t11", "sonnet");
+    expect(out.startsWith("\nLoki 10: no change needed.\n\nEvidence:\n- a.ts: foo\n")).toBe(true);
+    expect(out).toContain("Verdict:    ALREADY_SATISFIED");
+    expect(out).toContain("Run:        e10-t11");
+  });
+
+  test("renderMainOutput: an issue run (or any run with no text comment) prints only the summary", () => {
+    const ev = (data: Record<string, unknown>): EventEnvelope => ({ v: 1, seq: 0, ts: "2026-01-01T00:00:00Z", run: "r1", type: "stage.completed", stage: "intake", data });
+    const events = [ev({ source: "issue", already_satisfied: true, comment: "would post to the issue", comment_argv: ["comment"] })];
+    const out = renderMainOutput(events, SUMMARY, "e10-t12", "sonnet");
+    expect(out).not.toContain("would post to the issue");
+    expect(out.startsWith("PR:")).toBe(true);
+  });
 
   test("worker refuses a real token and emits JSON lines", async () => {
     expect(() => assertWorkerEnv({ GITHUB_TOKEN: CANARY })).toThrow();

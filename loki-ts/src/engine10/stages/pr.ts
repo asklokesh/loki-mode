@@ -103,4 +103,3 @@ export const stage: Stage = {
   limitS: 60,
   run: (ctx, signal) => runPr(ctx as PrContext, signal),
 };
-export const prStage = stage;

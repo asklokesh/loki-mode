@@ -9,7 +9,8 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
-import type { CostReader, RunContext, SessionRunner, TestMapProvider } from "../../src/engine10/types.ts";
+import { RealTestMapProvider } from "../../src/engine10/testmap.ts";
+import type { CostReader, RunContext, SessionResult, SessionRunner, TestMapProvider } from "../../src/engine10/types.ts";
 
 const FIX = join(import.meta.dir, "fixtures", "intake");
 
@@ -30,6 +31,18 @@ function freshRepo(): string {
   return dir;
 }
 
+/** Same as freshRepo, but from a named fixture dir under fixtures/intake/. */
+function freshRepoFrom(name: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "e10-intake-"));
+  cpSync(join(FIX, name), dir, { recursive: true });
+  git(dir, ["init", "-q"]);
+  git(dir, ["config", "user.email", "test@example.com"]);
+  git(dir, ["config", "user.name", "test"]);
+  git(dir, ["add", "-A"]);
+  git(dir, ["commit", "-q", "-m", "initial"]);
+  return dir;
+}
+
 /** A SessionRunner that fails the test if Intake ever calls it: Intake must
  *  never run an LLM session. */
 const noLlmSessions: SessionRunner = {
@@ -37,6 +50,21 @@ const noLlmSessions: SessionRunner = {
     throw new Error("intake must never start a provider session");
   },
 };
+
+/** A single-call SessionRunner double for the E-66 confirmation session: records the brief it was
+ *  given and returns a fixed marker parse (never spawns a real process). */
+function fakeConfirmSession(result: Pick<SessionResult, "markers">): { runner: SessionRunner; briefs: string[] } {
+  const briefs: string[] = [];
+  return {
+    briefs,
+    runner: {
+      async run(opts) {
+        briefs.push(opts.brief);
+        return { exit: 0, durationS: 0.1, killed: false, ...result };
+      },
+    },
+  };
+}
 
 const fakeCost: CostReader = { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) };
 
@@ -174,5 +202,91 @@ describe("engine10 intake", () => {
     controller.abort();
     const result = await runIntake(ctx, controller.signal, { taskText: "x" });
     expect(result.status).toBe("failed");
+  });
+});
+
+// E-66: "already implemented" as a first-class outcome. A deterministic evidence search (repo map
+// symbols, test file names, CHANGELOG headings) gates one short cheap-model confirmation session
+// that must cite files; only a confirmed candidate reaches ALREADY_SATISFIED with no PR.
+describe("engine10 intake: already-implemented (E-66)", () => {
+  const TASK = "Add global search (Cmd+K)";
+  const CONFIRMED = "search-command.ts:1 search already implemented, tests/search.test.ts covers it, CHANGELOG.md documents it";
+
+  test("code + test + CHANGELOG evidence, confirmed: no change needed, evidence listed, no repomap/testmap in output", async () => {
+    const dir = freshRepoFrom("already-done-repo");
+    const confirm = fakeConfirmSession({ markers: { done: false, alreadyDone: CONFIRMED, specConflict: null } });
+    const ctx = makeCtx(dir, runDir, new RealTestMapProvider());
+    ctx.sessions = confirm.runner;
+
+    const result = await runIntake(ctx, new AbortController().signal, { taskText: TASK });
+
+    expect(result.status).toBe("completed");
+    expect(result.data.already_satisfied).toBe(true);
+    expect(result.data.evidence).toContain(CONFIRMED);
+    expect((result.data.evidence as string[]).some((e) => e.includes("search-command.ts"))).toBe(true);
+    expect((result.data.evidence as string[]).some((e) => e.includes("search.test.ts"))).toBe(true);
+    expect((result.data.evidence as string[]).some((e) => e.includes("Global Search (Cmd+K)"))).toBe(true);
+    // No implement session ever runs from intake alone: this is the only session call.
+    expect(confirm.briefs).toHaveLength(1);
+    expect(confirm.briefs[0]).toContain("search-command.ts");
+    expect(result.data.repomap_ref).toBeUndefined();
+    expect(result.data.testmap).toBeUndefined();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("issue run, confirmed: a comment argv is built (no PR, no push script coupling)", async () => {
+    const dir = freshRepoFrom("already-done-repo");
+    const confirm = fakeConfirmSession({ markers: { done: false, alreadyDone: CONFIRMED, specConflict: null } });
+    const ctx = makeCtx(dir, runDir, new RealTestMapProvider());
+    ctx.sessions = confirm.runner;
+
+    const result = await runIntake(ctx, new AbortController().signal, { issueJsonPath: join(FIX, "issue-already-done.json") });
+
+    expect(result.data.already_satisfied).toBe(true);
+    expect(result.data.comment_argv).toEqual(["comment", "e10-test-run", "acme/widgets#303", join(runDir, "already-done-comment.md")]);
+    expect(readFileSync(join(runDir, "already-done-comment.md"), "utf8")).toContain(CONFIRMED);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // E-66 review finding 4: a text run has no issue to comment on, so it gets no comment_argv, but
+  // it must still carry the comment body -- main() prints it (supervisor.ts, alreadyDoneTextComment)
+  // instead of the decision going unrecorded anywhere the operator can see it.
+  test("text run, confirmed: comment body present for main() to print, no argv (no issue to post to)", async () => {
+    const dir = freshRepoFrom("already-done-repo");
+    const confirm = fakeConfirmSession({ markers: { done: false, alreadyDone: CONFIRMED, specConflict: null } });
+    const ctx = makeCtx(dir, runDir, new RealTestMapProvider());
+    ctx.sessions = confirm.runner;
+
+    const result = await runIntake(ctx, new AbortController().signal, { taskText: TASK });
+
+    expect(result.data.already_satisfied).toBe(true);
+    expect(result.data.comment_argv).toBeUndefined();
+    expect(typeof result.data.comment).toBe("string");
+    expect(result.data.comment as string).toContain(CONFIRMED);
+    expect(readFileSync(join(runDir, "already-done-comment.md"), "utf8")).toContain(CONFIRMED);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("candidate evidence but the model does not confirm: proceeds normally, no false positive", async () => {
+    const dir = freshRepoFrom("already-done-repo");
+    const decline = fakeConfirmSession({ markers: { done: true, alreadyDone: null, specConflict: null } });
+    const ctx = makeCtx(dir, runDir, new RealTestMapProvider());
+    ctx.sessions = decline.runner;
+
+    const result = await runIntake(ctx, new AbortController().signal, { taskText: TASK });
+
+    expect(decline.briefs).toHaveLength(1); // the deterministic search still ran the confirmation
+    expect(result.data.already_satisfied).toBe(false);
+    expect(result.data.repomap_ref).toBeDefined();
+    expect(result.data.testmap).toBeDefined();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a single weak keyword match (one source only) never calls the confirmation session", async () => {
+    // "widget" matches the sample repo's repo-map symbol only: one category, below MIN_CATEGORIES.
+    const ctx = makeCtx(repoDir, runDir, new RealTestMapProvider());
+    ctx.sessions = noLlmSessions;
+    const result = await runIntake(ctx, new AbortController().signal, { taskText: "add a widget" });
+    expect(result.data.already_satisfied).toBe(false);
   });
 });

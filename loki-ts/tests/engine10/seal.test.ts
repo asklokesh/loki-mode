@@ -198,6 +198,34 @@ describe("engine10 seal", () => {
     expect((await sealStage.run(done.ctx, new AbortController().signal)).data.verdict).toBe("ALREADY_SATISFIED");
   }, 30000);
 
+  // E-66 review finding 4: an ALREADY_SATISFIED (no-change) verdict must carry the evidence that
+  // justified it in the receipt itself, not just in intake's own stage output -- the receipt is
+  // what a reviewer or Seal check actually reads.
+  test("evidence-confirmed already-satisfied carries its evidence into the receipt", async () => {
+    noKey();
+    const { repo, base } = makeRepo("evidence");
+    const EVIDENCE = ["search-command.ts:1 already implemented", "src/search-command.ts: search", "CHANGELOG.md: Global Search"];
+    const { ctx } = ctxFor(repo, base, "claude", {
+      intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "add search", resumed: false, already_satisfied: true, evidence: EVIDENCE },
+    });
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    expect(s.status).toBe("completed");
+    expect(s.data.verdict).toBe("ALREADY_SATISFIED");
+    const r = receiptOf(s);
+    expect(r.evidence).toEqual(EVIDENCE);
+    const md = readFileSync(join(ctx.runDir, "receipt.md"), "utf8");
+    for (const e of EVIDENCE) expect(md).toContain(e);
+  }, 30000);
+
+  test("a normal VERIFIED run carries no evidence: the field is empty, not omitted", async () => {
+    noKey();
+    const { repo, base } = makeRepo("no-evidence");
+    const { ctx } = ctxFor(repo, base);
+    await commitStage.run(ctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    expect(r.evidence).toEqual([]);
+  }, 30000);
+
   test("diff_sha256 does not depend on repo diff or color config", async () => {
     noKey();
     const { repo, base } = makeRepo("cfg");
@@ -299,7 +327,7 @@ function receiptWithCost(cost: Receipt["cost"]): Receipt {
   return {
     schema: "loki.v10.receipt/1", run_id: "r1", task: { source: "text", sha256: "ab".repeat(32) }, repo: "o/r",
     base_sha: "b".repeat(40), head_sha: "h".repeat(40), tree: "t".repeat(40), diff_sha256: "d".repeat(64),
-    wall: { files: [], passed: null }, checks: [], not_proven: [], verdict: "PARTIAL", cost,
+    wall: { files: [], passed: null }, checks: [], not_proven: [], verdict: "PARTIAL", evidence: [], cost,
     time: { wall_s: 10, stages: {} }, provider: "claude", model: "sonnet", resumed: false,
     events_sha256: "e".repeat(64), receipt_sha256: "r".repeat(64), verification: { jwt: null, kid: null },
   };
