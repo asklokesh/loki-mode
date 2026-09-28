@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.3.1 (2026-09-28)
+
+A user guide for `loki modernize`, and a pre-push secret scan that can no longer be weakened by a pushed commit's own allowlist.
+
+### Added
+- User guide for `loki modernize` at docs/v10/GUIDE-MODERNIZE.md (M-30): what it does, every flag, a worked example and its current limits. A test keeps the guide in step with the CLI: it fails when the guide names a flag the CLI does not parse, omits one it does, or shows a modernization id the CLI would reject.
+
+### Fixed
+- Pre-push secret scan (E-99): every pushed commit is now scanned with the pushed tip's `.gitleaksignore`, the same way CI scans, so a push is no longer refused for an old finding that the tip already allowlists, and an earlier commit cannot carry its own allowlist past the scan. `GITLEAKS_CONFIG` from the environment is ignored, any change to `.gitleaks.toml` is refused unless `LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1` is set, and the pinned gitleaks binary is checked against a per-platform sha256.
+
 ## v10.3.0 (2026-09-28)
 
 Loki 10 engine (still opt-in: `LOKI_ENGINE=v10`): runs that cannot finish now end with a visible result instead of stalling, and the first `loki modernize` command entry point lands. Also a pre-push secret scan for eval fixtures and swarm tooling.
@@ -24207,11 +24217,11 @@ versions; the new shim auto-detects Bun and falls through to bash if missing.
 
 3 blind reviewers + Devil's Advocate per phase. Reviewer 1 (Phase 2) caught
 4 doctor text-mode bugs (min-version annotation, ~ substitution, extra Skill
-repo line, disk float) — all fixed. Reviewer 3 caught a doctor JSON regression
-caused by R1's text fix (TOOL_SPECS name conflated text + JSON) — decoupled
+repo line, disk float) - all fixed. Reviewer 3 caught a doctor JSON regression
+caused by R1's text fix (TOOL_SPECS name conflated text + JSON) - decoupled
 displayName from jsonName and float vs floor disk. Devil's Advocate caught
 cost_usd integer-vs-float JSON drift (10 vs 10.0) and SIGINT orphan processes
-in the Bun process — fixed by Python-style `.0` suffix substitution and
+in the Bun process - fixed by Python-style `.0` suffix substitution and
 explicit SIGINT handler in cli.ts. Phase 3 reviewers verified npm pack ships
 loki-ts/dist (no src/tests leakage), CI YAML valid, Dockerfiles install Bun
 pinned, dist preferred over source in shim.
@@ -24230,7 +24240,7 @@ pinned, dist preferred over source in shim.
   routes directly to bash; documented gap)
 - Homebrew formula update (release.yml installs a symlink to autonomy/loki
   rather than bin/loki; future formula edit needed for Bun routes via brew)
-- Phase 4 ports (run_autonomous, build_prompt, state, checkpoint) — research
+- Phase 4 ports (run_autonomous, build_prompt, state, checkpoint) - research
   done, implementation deferred to v7.4.0+
 
 ### Rollback
@@ -24688,18 +24698,18 @@ can be computed as cache_read / (cache_read + cache_creation).
 
 ## [6.81.0] - 2026-04-23
 
-### Tier 0 deletions — stop compensating for native Claude capabilities
+### Tier 0 deletions - stop compensating for native Claude capabilities
 
 First slice of the RARV-C lean-harness upgrade plan (see /Users/lokesh/.claude/plans/polished-waddling-stardust.md):
 
 - **S0.1 Session-pinned model (cache hygiene).** Added `LOKI_SESSION_MODEL` env var (default `sonnet`); main loop no longer switches models per-iteration. `get_rarv_tier` preserved for subagent dispatch (S1.3 scope). Rollback: `LOKI_LEGACY_TIER_SWITCHING=true`. Fixes prompt-cache invalidation on every 4-iteration RARV cycle.
 - **S0.3 Removed `CONTEXT_CLEAR_REQUESTED` signal.** Claude 4.6/4.7 manages its own context natively via compaction + context editing. Deleted `check_context_clear_signal()` and signal references across run.sh, SKILL.md, skills/troubleshooting.md, autonomy/CONSTITUTION.md.
-- **S0.4 Removed PRE-ACT goal-drift scaffolding.** Documented as "Planned" with no automated enforcement — phantom feature. Deleted from SKILL.md Planned Features table and references/core-workflow.md RARV diagram.
+- **S0.4 Removed PRE-ACT goal-drift scaffolding.** Documented as "Planned" with no automated enforcement - phantom feature. Deleted from SKILL.md Planned Features table and references/core-workflow.md RARV diagram.
 - **S0.5 Removed proactive compaction reminder.** Per-iteration "PROACTIVE_CONTEXT_CHECK" block and `COMPACTION_INTERVAL` variable deleted. Claude handles compaction natively.
 
 ### Notes
 
-Dead-weight deletion only — no functional additions. `skills/quality-gates.md`, completion council, RARV-C generator-verifier loop, and all existing safety gates preserved unchanged. Next release in the plan: S0.2 (completion-tool call) + S1.1 (prompt inversion) for prompt-cache recovery.
+Dead-weight deletion only - no functional additions. `skills/quality-gates.md`, completion council, RARV-C generator-verifier loop, and all existing safety gates preserved unchanged. Next release in the plan: S0.2 (completion-tool call) + S1.1 (prompt inversion) for prompt-cache recovery.
 
 ## [6.80.1] - Shellcheck fix for benchmarks/magic-ab/run.sh
 
@@ -24908,7 +24918,7 @@ stay consistent.
   trigger a clean reload.
 
 ### Added
-- `tests/test-openspec-sentinel.sh` — 10 focused integration tests covering
+- `tests/test-openspec-sentinel.sh` - 10 focused integration tests covering
   the six state transitions (fresh run, crash-restart, change switch,
   content edit, non-OpenSpec task preservation, legacy-sentinel upgrade).
   All 10 pass.
@@ -24919,9 +24929,9 @@ stay consistent.
   is identical on macOS and Linux (no `md5sum` vs `md5 -q` fork).
 
 ### Closed
-- PR #152 (@alilxxey) — `task_json` init. Rolled into this release.
-- PR #153 (@alilxxey) — Grep branch quoting. Rolled into this release.
-- PR #151 (@vishnujayvel) — OpenSpec sentinel scope. Rolled into this release.
+- PR #152 (@alilxxey) - `task_json` init. Rolled into this release.
+- PR #153 (@alilxxey) - Grep branch quoting. Rolled into this release.
+- PR #151 (@vishnujayvel) - OpenSpec sentinel scope. Rolled into this release.
 
 ## [6.77.0] - Claude Opus 4.7 + dynamic model catalog + magic extractor fixes
 
