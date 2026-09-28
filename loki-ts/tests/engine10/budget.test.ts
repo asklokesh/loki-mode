@@ -10,22 +10,29 @@ function count(list: string[]): number {
   return list.reduce((n, f) => n + readFileSync(join(ROOT, f), "utf8").split("\n").length, 0);
 }
 
-describe("engine10 size budget", () => {
+function splitFiles(): { core: string[]; mod: string[] } {
   const files = (readdirSync(ROOT, { recursive: true }) as string[]).filter((f) => f.endsWith(".ts"));
   expect(files).toContain("machine.ts");
-  const mod = files.filter((f) => f.startsWith("modernize/"));
-  const core = files.filter((f) => !f.startsWith("modernize/"));
+  return {
+    core: files.filter((f) => !f.startsWith("modernize/")),
+    mod: files.filter((f) => f.startsWith("modernize/")),
+  };
+}
 
+describe("engine10 size budget", () => {
   it("core engine stays under 5,000 lines (D29, D33)", () => {
+    const { core } = splitFiles();
     expect(count(core)).toBeLessThan(5000);
   });
 
   it("modernize stays under 4,000 lines (D33)", () => {
+    const { mod } = splitFiles();
     expect(mod.length).toBeGreaterThan(0);
     expect(count(mod)).toBeLessThan(4000);
   });
 
   it("core never imports modernize (D33)", () => {
+    const { core } = splitFiles();
     for (const f of core) {
       if (f === "cli.ts") continue;
       const src = readFileSync(join(ROOT, f), "utf8");
