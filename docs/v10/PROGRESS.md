@@ -1441,3 +1441,10 @@ sample.
 - P0 augmentiq #52 rework: E-68, E-69, EV-13 APPROVE; E-66 CONCERN; E-67 REJECT. E-64 (lean small path plus opus on failure) APPROVE on rework.
 - Part 2: 0 slices merged. M-01, M-02, M-05, M-06 built (CONCERN: recursive SCC); M-09 built (REJECT: unsupported types recorded as equal).
 - Top blocker: the 2 red Tests shards on 898fa081 block the v10.0.0 release.
+
+## 2026-09-28T22:21Z (Chief of Staff)
+- E-124 merged (8a99554c): opus r3 APPROVE at 2a3f992b; a missing normalizer hash on either side now fails verify, and a pre-D42 oracle is refused at seal (presealed_wall.ts:249, 355-356). modernize 229/0; dist loki.js unchanged (cockpit.js debugId-only noise discarded).
+- Staffed M-18 and E-125 (sonnet, worktrees); S41-05 and S41-12 corrected to building (29529670). Pruned 3 finished, merged, clean worktrees by agent state (lsof positive control read 0 on a live worktree, so lsof is not a liveness signal here).
+- S41-09 done (e5468d2c, flag-gated lean prefix, core unchanged at 4,982); sonnet TL review in flight. PO cutting 6 ready slices for LOW_READY.
+- v10.5.3 Release 36490908332 in progress (required-ci and gate success); watcher re-armed after a network error. Hourly usage snapshot 9522ae5e: governor still uncalibrated.
+- S41-01 at 37 min against a 30 min budget: stop and re-slice at 45 min if it has not committed.
