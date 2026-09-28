@@ -1460,3 +1460,31 @@ sample.
 - v10.5.3 verified: Release 36490908332 all jobs success; npm latest 10.5.3, gitHead 2e13fca3; body 12 lines. npm 404'd the version for about 7 min after publish-npm logged "+ loki-mode@10.5.3" (22:19:55Z); propagation, not a failed publish. 6 rows flipped released.
 - Train pushed 2e13fca3..04d3ac9c (41 commits: S41-16, M-14, E-118, E-122, E-123, E-124, S41-09, dist); Tests and Bun Parity watcher armed; 10.5.4 cut on green.
 - S41-09 merged (ebb16a62, TL APPROVE, 26/0). M-15 opus REJECT (B1 missing third-party package classified red; B2 PROVEN without conformance re-run or no-op ablation), back to engineer. M-18 done (a01c6fdb, 206/0 modernize), TL review. PO cut E-126 to E-131; staffing waits on worktree slots (15/15).
+
+## 2026-09-28T22:55Z HAND-OFF: PAUSED UNTIL WEDNESDAY 2026-09-30 13:00 ET (founder: weekly usage at 77%)
+
+The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the cadence, usage-snapshot and loop-resume crons are deleted. Nothing is building or in review. Do not restart before the weekly reset.
+
+### Shipped today (tail)
+- v10.5.3 (2e13fca3): npm latest 10.5.3, gitHead 2e13fca3, body 12 lines. Carried E-114, E-119, M-13, S41-02, S41-04, E-121.
+- v10.5.4 (8ee273f6): Wall classifies a runner that never started as not_run and Seal refuses not_run above 0 (S41-16); pre-sealed Wall in modernize (M-14) with the normalizer-hash check (E-124); strict-narrowing re-slice to depth 2 (M-18); LOKI_E10_PREFIX=lean flag (S41-09); governor fix (E-118); headline cost rule (E-122); arm runner and auth guard (S41-03); CI registration (E-123). npm and body verification recorded in the next entry.
+- Red main fixed forward twice: dc392119 (S41-09 moved the SDK systemPrompt, a source-reading test followed it; 948/0) and 32c66596 (the Bun and coverage CI jobs had no pytest; reproduced locally with a pytest-less venv, 18/2 then 20/0). CI green at 7f341027 (Tests, Bun Parity, Coverage).
+- Release note: release.sh in a worktree with a node_modules symlink writes absolute /Users paths into the dist maps (133 in loki.js.map, plus cockpit.js.map). For 10.5.4 they were rewritten to ../node_modules/ and cockpit maps restored from HEAD before commit. Guard slice needed (see E-102/E-103 history).
+
+### Ready, with work on a branch (each BOARD row carries where it stopped)
+- S41-01 cost capture, 68d1fc28: TL APPROVE on content; needs rebase (harness.py allowlist conflict with S41-09 and S41-11) and an opus review (card is HIGH).
+- S41-17 scorecard 95% CIs, f3f1d985: 43/43, red-first proven; needs opus review.
+- S41-18 scorecard resume, 66cc1882: 11/11; 4 gaps listed in the row; needs TL review.
+- S41-19 stage profile, e06fa612: implement is 72 to 86% of medium wall-clock; the Wall is 23 to 29% and times out at 90s in 9 to 11 of 21 runs, clearing D42's 15% bar to reopen S41-14; needs TL review.
+- S41-11 trim flag, 8aafe341: 35/0; needs TL review and a rebase.
+- S41-20a/b/c medium tasks: 6 built (flask-6093, click-3449, attrs-1327, packaging-1162, humanize-103, httpx-2536), none reviewed; the no-op baseline is missing on the 4 from b and c. Medium tier would be 13 of the 20 D43 requires.
+- E-126 to E-131 (PO cut, unstaffed), E-132 (missing pytest reads red at Wall, found fixing red main).
+
+### In rework (fix committed, needs a re-review)
+- M-15 03b35a69 (opus r2), E-125 845c9231 (opus r2, core 4,998 of 4,999; run full engine10 first), S41-05 34c44c99 (4 key-swap mutation proofs left, then opus r3), S41-12 7a3fbe53 (opus REJECT, 5 data-loss findings, not yet reworked).
+
+### Wednesday, exact next step
+1. Remove .loki/V10-STOP, run scripts/v10-pulse.sh, and confirm main CI is green.
+2. S41-01: rebase slice-S41-01 onto main, keep one LOKI_E10_PREFIX and one LOKI_E10_TRIM in V10_ENGINE_ENV_ALLOWLIST, rerun bash eval/loki10/test-harness.sh to 0 failures, send it to an opus reviewer, and merge on APPROVE. No scorecard counts until this is merged (D43 item 1).
+3. Then merge the eval prerequisites (S41-17 CIs, S41-18 resume) and bring the medium tier to 20 tasks (review S41-20a/b/c, run their no-op baselines, append their INDEX lines, and cut 7 more).
+4. Then run the medium-tier eval per D43: raw sonnet, raw opus and loki on sonnet, at least 3 reps each, back to back, with auth checked before every rep and resume on interrupt; decide only on differences whose 95% interval excludes 0.
