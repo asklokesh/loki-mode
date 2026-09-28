@@ -6,4 +6,7 @@ public class Helper {
     public static void greet() {
         System.out.println("hi");
     }
+
+    public static class Inner {
+    }
 }

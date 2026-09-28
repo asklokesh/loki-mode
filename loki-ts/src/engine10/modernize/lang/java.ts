@@ -17,9 +17,10 @@ export interface JavaGraphResult {
   method: JavaGraphMethod;
   /** Why jdeps was not used. Null when method is "jdeps", or when there were no .java files. */
   fallbackReason: string | null;
-  /** Wildcard/static imports (import-scan path only) that named no local file, so they got no
-   *  edge -- recorded here instead of silently vanishing. jdeps resolves fully itself, so this
-   *  is always [] when method is "jdeps". */
+  /** Imports (import-scan path only) that named no local file, so they got no edge -- recorded
+   *  here instead of silently vanishing. Always [] when method is "jdeps": that path never reads
+   *  the source-level import text, so there is nothing to record from it (its own dropped
+   *  external edges, e.g. java.lang.Object, are simply not tracked here). */
   unresolvedImports: string[];
 }
 
@@ -45,15 +46,37 @@ function scanJavaFiles(repoDir: string, files: readonly string[]): JavaFile[] {
   });
 }
 
+// jdeps reports inner/anonymous classes as "Outer$Inner" / "Outer$1"; neither is a file of its
+// own, so drop everything from "$" on to land back on the outer class jdeps compiled from.
+function stripNestedSuffix(fqcn: string): string {
+  const i = fqcn.indexOf("$");
+  return i < 0 ? fqcn : fqcn.slice(0, i);
+}
+
 function edgesFromFqcnPairs(files: readonly JavaFile[], pairs: Iterable<readonly [string, string]>): DepEdge[] {
   const byFqcn = new Map(files.map((f) => [f.fqcn, f.rel]));
   const edges: DepEdge[] = [];
   for (const [fromFqcn, toFqcn] of pairs) {
-    const from = byFqcn.get(fromFqcn);
-    const to = byFqcn.get(toFqcn);
+    const from = byFqcn.get(stripNestedSuffix(fromFqcn));
+    const to = byFqcn.get(stripNestedSuffix(toFqcn));
     if (from && to && from !== to) edges.push([from, to]);
   }
   return edges;
+}
+
+// A dotted import path may name a top-level class directly, a static member of one
+// (`pkg.Class.member`), or a nested class of one (`pkg.Outer.Inner`) -- none of which is
+// distinguishable from the text alone. Walk the path back one segment at a time until a local
+// file's fqcn matches; that is always the right owning class, however many segments follow it.
+function resolveImportTarget(captured: string, byFqcn: ReadonlyMap<string, string>): string | undefined {
+  let candidate = captured;
+  for (;;) {
+    const hit = byFqcn.get(candidate);
+    if (hit) return hit;
+    const dot = candidate.lastIndexOf(".");
+    if (dot < 0) return undefined;
+    candidate = candidate.slice(0, dot);
+  }
 }
 
 /** Source import scan (jdeps unavailable). Unlike jdeps -- which resolves every import via
@@ -91,14 +114,12 @@ function importScanGraph(files: readonly JavaFile[]): { graph: DepGraph; unresol
         continue;
       }
 
-      // `import static pkg.Class.member;` resolves to pkg.Class (strip the trailing member);
-      // `import static pkg.Class.*;` and a plain `import pkg.Class;` are already a class fqcn.
-      const targetFqcn = isStatic && !isWildcard ? captured.slice(0, captured.lastIndexOf(".")) : captured;
-      const to = targetFqcn && byFqcn.get(targetFqcn);
+      // A plain import, a static member import, and a static wildcard (`pkg.Class.*`) all
+      // resolve the same way: walk the dotted path back to whichever local file's fqcn it
+      // names or extends (member, nested class, or the class itself).
+      const to = resolveImportTarget(captured, byFqcn);
       if (to) addEdge(f.rel, to);
-      else if (isStatic) unresolvedImports.push(`${f.rel}: unresolved static import ${targetFqcn || captured}`);
-      // A plain, non-static, unresolved import is an external dependency (e.g. java.util.List)
-      // with no local file -- expected, and correctly dropped, not recorded.
+      else unresolvedImports.push(`${f.rel}: unresolved ${isStatic ? "static " : ""}import ${captured}`);
     }
   }
 
