@@ -1276,3 +1276,16 @@ sample.
 - In flight (wave E13, 12 builders): E-45 cost path rework, E-36 preflight (plus E-37), E-32 rebase, E-34 docs refresh, E-52..E-56, E-58 (makes E-47 green), E-59 (makes E-50 green), EV-10.
 - ETA: E-45 merge about 00:45Z, EV-8 5-task cost check right after, EV-9 full v10 arm about 01:00Z to 01:45Z, gate decision 03:00Z.
 - Top blocker: cost per completed task (raw $0.2363); E-45 plus the per-call overhead finding decide it.
+
+## 2026-09-28T01:51Z: Loki 10 progress (gate numbers, EV-8, MODERNIZE.md)
+- Gate numbers, small tier, claude-opus-5-5 (D30 targets: completion 96.5% or higher, cost per completed task $0.118 or lower, time to a correct result at most raw):
+  - raw claude -p, 29 tasks: 27/29 (93.1%), p50 39s, p90 68s, $0.2363 per completed task (~/loki-ci-logs/eval-raw-claude-20260927T231653Z/results.jsonl).
+  - legacy (EV-5, global loki v9.78.0, 29 tasks, finished): completed 15/29 (51.7%), hidden tests pass 26/29, p50 190s, p90 441s; cost not measured on any run (0/29 provider-sourced) (~/loki-ci-logs/ev5-legacy/results.jsonl). Legacy commits locally and opens no PR, which is why hidden-pass exceeds completed.
+  - v10: full arm not run yet. EV-8 (5 tasks, results below) is the only v10 measurement.
+- EV-8 status: first run invalid (harness ran the global loki v9.78.0, and the main checkout had agent SDK 0.3.267, which rejects claude-opus-5-5; every session exited in 1s with 0 tokens). Rerun from the repo's bin/loki after `bun install` (node_modules 0.3.283), same 5 tasks (raw on them: 5/5, $0.2161 per completed, p50 41s):
+  - A, full design (Wall on sonnet): 4/5, $0.5954 per completed (one run's cost unrecorded, so a floor), p50 116.5s, p90 322s.
+  - B, Wall off: 5/5, $0.3976 per completed, p50 65s, p90 115s (~/loki-ci-logs/ev8r-{A,B}/results.jsonl).
+  - Reading: v10 is 1.8x raw cost at best and 1.6x raw time; the D30 target is 0.5x cost. The Wall session alone was $0.119 in one run. Next lever: the cascade (sonnet first, opus only on a Wall or test failure), then per-call-type cost records.
+- MODERNIZE.md: CTO and Architect dispatched 01:52Z; ETA 02:45Z for the design doc, Part 2 slices cut by the PO right after.
+- CI: main red at d00c5ede and 7c3dea3d from train E13 (providers.test.ts dies where claude is absent because preflight exits in-process; test-engine10-dispatch.sh expected 2 cli.ts lines, E-32 made it 3). Both fixes are in train E14 (404 pass, 0 fail locally, plus a no-claude PATH run); push after the remaining no-claude check.
+- Top blocker: cost. v10 at $0.40 per completed task vs the $0.118 target.
