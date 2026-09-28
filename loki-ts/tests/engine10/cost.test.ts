@@ -76,6 +76,34 @@ describe("engine10 cost", () => {
     expect(readResultCost(join(FIX, "bad"), "e10-r1-nousd").usd).toBeNull();
     expect(readResultCost(join(FIX, "bad"), "e10-r1-trunc").usd).toBeNull();
   });
+
+  // E-69 (EV-8 failure mode: "Cost: $0.00 (claude, 0 tokens)"): a result-cost file
+  // reporting total_cost_usd 0 with zero usage on every token field is a session
+  // that never really ran; it must read as unmeasured, never a real $0.00.
+  test("total_cost_usd 0 with zero tokens on every field is unmeasured (EV-8)", () => {
+    const c = readResultCost(join(FIX, "zero"), "e10-r1-zero");
+    expect(c.usd).toBeNull();
+    expect(c.missing).toEqual(["e10-r1-zero"]);
+    expect(c.measuredCount).toBe(0);
+    expect(c.totalCount).toBe(1);
+    expect(c.partialUsd).toBe(0);
+  });
+
+  test("a real free session (nonzero tokens, total_cost_usd 0) still measures as $0.00", () => {
+    const c = readResultCost(join(FIX, "two"), "e10-r1-plan"); // 0.125, not free, but proves the branch
+    expect(c.measuredCount).toBe(1);
+    expect(c.totalCount).toBe(1);
+    expect(c.partialUsd).toBe(0.125);
+  });
+
+  test("one priced, one zero-usage session: usd null but partialUsd/measuredCount report what was measured", () => {
+    const c = sumResultCosts(join(FIX, "mixed"), ["e10-r1-plan", "e10-r1-zero"]);
+    expect(c.usd).toBeNull();
+    expect(c.missing).toEqual(["e10-r1-zero"]);
+    expect(c.measuredCount).toBe(1);
+    expect(c.totalCount).toBe(2);
+    expect(c.partialUsd).toBe(0.125);
+  });
 });
 
 describe("engine10 efficiency writer (E-06b)", () => {

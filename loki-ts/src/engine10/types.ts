@@ -97,6 +97,11 @@ export interface CostTotals {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
+  // E-69: optional so every existing CostReader test fake (only usd/tokens) still typechecks;
+  // seal.ts falls back to 0 when a fake omits them. See cost.ts's CostResult for the real ones.
+  measuredCount?: number;
+  totalCount?: number;
+  partialUsd?: number;
 }
 export interface CostReader { // implemented by cost.ts (E-06)
   read(repoDir: string, iterationIds: string[]): CostTotals;
@@ -140,7 +145,16 @@ export interface Receipt {
   checks: ReceiptCheck[];
   not_proven: string[];
   verdict: Verdict;
-  cost: { usd: number | null; input_tokens: number; output_tokens: number };
+  cost: {
+    usd: number | null;
+    input_tokens: number;
+    output_tokens: number;
+    // E-69: sessions with a provider-sourced dollar figure, out of the sessions this run recorded;
+    // partial_usd is their dollar sum even when usd above is null (some sessions unpriced).
+    measured_sessions: number;
+    total_sessions: number;
+    partial_usd: number;
+  };
   time: { wall_s: number; stages: Partial<Record<StageName, number>> };
   provider: string;
   model: string;

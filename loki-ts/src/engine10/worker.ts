@@ -54,7 +54,10 @@ export async function main(args: string[]): Promise<number> {
         // Union with every session started: a killed stage's output (and its ids) is dropped by the machine.
         read(dir, ids) {
           const c = sumResultCosts(join(dir, ".loki"), [...new Set([...ids, ...started])]);
-          return { usd: c.usd, inputTokens: c.input_tokens, outputTokens: c.output_tokens, cacheReadTokens: c.cache_read_tokens };
+          return {
+            usd: c.usd, inputTokens: c.input_tokens, outputTokens: c.output_tokens, cacheReadTokens: c.cache_read_tokens,
+            measuredCount: c.measuredCount, totalCount: c.totalCount, partialUsd: c.partialUsd,
+          };
         },
       },
       clock: { now: () => Date.now() },
