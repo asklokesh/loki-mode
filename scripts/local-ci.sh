@@ -158,6 +158,13 @@ declare -a _FAST_KEEP=(
   # missing toolchain). Promoting the dependents alone would trade a
   # blind spot for a false red on every clean checkout.
   "loki-ts dependencies installed"
+  # E-62 r2: this check refuses the release gate on node_modules/bun.lock
+  # drift, but sat outside _FAST_KEEP -- under the default fast tier
+  # (TIER=${LOCAL_CI_TIER:-fast}, the only pre-push/release gate) run_check
+  # routed it to skip_check and it never ran, so local-ci did not actually
+  # refuse on drift despite the check existing. Same blind spot as the
+  # typecheck promotion above.
+  "loki-ts node_modules matches bun.lock (E-62)"
   "bun run typecheck"
   "bun test"
   # Two suites added this session that CI runs and the fast tier did not, which
