@@ -1,0 +1,19 @@
+{
+  "id": "pub-werkzeug-3271",
+  "kind": "public",
+  "prompt": "Deprecate UserAgent\n\nUser agent parsing was removed in 2.0 in 2021 in #2078. The intention was that `Request.user_agent_class` could be set to a subclass of `UserAgent` that parsed and populated the other properties. The full string could be accessed with `request.user_agent.string`.\n\nThis never seems to have been adopted. There are no meaningful results in https://sourcegraph.com/search?q=context:global+lang:Python+%22user_agent_class%22+-file:site-packages/+-file:werkzeug/+-file:flask/+-repo:%5Egithub%5C.com/pallets/werkzeug%24+&patternType=keyword&sm=0 (and half of those are unrelated to Werkzeug). Searching for \"werkzeug user agent\" or \"werkzeug user_agent_class\" on search engines or PyPI brings up nothing.\n\nThis isn't particularly good for type checking, as `Request` would need to be generic on `user_agent_class` in order for a subclass to expose more properties. It saves approximately one line over parsing the user agent string directly, and requires implementing an interface that might not fit what you need anyway.\n\nDeprecate this and make `Request.user_agent` a string. `UserAgent` can subclass `str` during the deprecation, and warn when accessing `user_agent.string`.",
+  "issue_ref": "pallets/werkzeug#3271",
+  "repo": {
+    "source": "https://github.com/pallets/werkzeug.git",
+    "ref": "a33190bffb7f6dd4c7084c08257b4542689b8c66"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . pytest ephemeral-port-reserve",
+  "hidden": {
+    "files": [
+      "tests/test_wrappers.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_wrappers.py -k \"test_user_agent\""
+  },
+  "timeout_s": 900,
+  "tier": "medium"
+}

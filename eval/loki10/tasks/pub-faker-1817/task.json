@@ -1,0 +1,19 @@
+{
+  "id": "pub-faker-1817",
+  "kind": "public",
+  "prompt": "Unique profile\n\n* Faker version: 17.4.0\r\n* OS: Archlinux\r\n\r\nData unicity and profile are two great faker features, bun unfortunately they don't fit well together:\r\n\r\n```python\r\n>>> import faker\r\n>>> fake = faker.Faker()\r\n>>> fake.unique.profile()\r\nTraceback (most recent call last):\r\n  File \"<stdin>\", line 1, in <module>\r\n  File \".../site-packages/faker/proxy.py\", line 314, in wrapper\r\n    if retval not in generated:\r\nTypeError: unhashable type: 'dict'\r\n```\r\n\r\nI suggest implementing unique profile generation, where each value in the profile would be unique.",
+  "issue_ref": "joke2k/faker#1817",
+  "repo": {
+    "source": "https://github.com/joke2k/faker.git",
+    "ref": "c1f95c5b208adbcdba3a6e3c7350c5e98a7f01fa"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . pytest freezegun",
+  "hidden": {
+    "files": [
+      "tests/test_unique.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_unique.py -k \"TestUniquenessClass\""
+  },
+  "timeout_s": 900,
+  "tier": "medium"
+}

@@ -1,0 +1,19 @@
+{
+  "id": "pub-attrs-1313",
+  "kind": "public",
+  "prompt": "`copy.replace` support\n\nPython 3.13 introduced the `__replace__` dunder, exposed via [`copy.replace`](https://docs.python.org/3.13/library/copy.html#copy.replace), as a [generalised method](https://discuss.python.org/t/generalize-replace-function/28511) through which to replace fields in immutable dataclass-likes.  Would you be interested in supporting it in addition to attrs' own `evolve`?",
+  "issue_ref": "python-attrs/attrs#1313",
+  "repo": {
+    "source": "https://github.com/python-attrs/attrs.git",
+    "ref": "103d51f6efa36efcc7be4adecfd571da3f63291c"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . pytest hypothesis",
+  "hidden": {
+    "files": [
+      "tests/test_functional.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_functional.py -k \"TestReplace\""
+  },
+  "timeout_s": 900,
+  "tier": "medium"
+}
