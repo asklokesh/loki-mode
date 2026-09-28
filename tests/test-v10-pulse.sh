@@ -1561,6 +1561,38 @@ else
     printf '%s\n' "$OUT"
 fi
 
+echo "T30g -- D26 guard 4: an M row's title/Wall-check spec cells are not a claim; its notes cell still is"
+CLAIM_REPO_MROW="$WORK/claim-repo-mrow"
+mkdir -p "$CLAIM_REPO_MROW/docs/v10"
+(
+    cd "$CLAIM_REPO_MROW" || exit 1
+    git init -q -b main
+    git config user.email "test@example.com"
+    git config user.name "test"
+    printf '# Board\n' > docs/v10/BOARD.md
+    printf '# Progress\n' > docs/v10/PROGRESS.md
+    git add docs/v10/BOARD.md docs/v10/PROGRESS.md
+    GIT_AUTHOR_DATE="2026-09-27T00:00:00Z" GIT_COMMITTER_DATE="2026-09-27T00:00:00Z" git commit -q -m "seed docs"
+    printf '| M-01 | a green base is an error until proven | a.ts | LOW | bash a.sh passes | ready@2026-09-27T00:05Z | Source: cut. |\n' >> docs/v10/BOARD.md
+    printf '| M-02 | modernize step | b.ts | LOW | run b | merged@2026-09-27T00:05Z | Verified manually. |\n' >> docs/v10/BOARD.md
+    git add docs/v10/BOARD.md
+    GIT_AUTHOR_DATE="2026-09-27T00:05:00Z" GIT_COMMITTER_DATE="2026-09-27T00:05:00Z" git commit -q -m "rows"
+)
+if run_pulse "PULSE_REPO_ROOT=$CLAIM_REPO_MROW" "PULSE_MAIN_REF=main" \
+    "BOARD_MD=$BOARD_CLEAN" "CONTROL_MD=$CONTROL_OK" \
+    "PULSE_NPM_CMD=false" "PULSE_GH_CMD=false" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$CLAIM_REPO_MROW")" \
+    "PULSE_MOAT_RESULT=" \
+    "PULSE_SWARM_START=2026-09-26T23:00Z" "PULSE_NOW=2026-09-27T02:00:00Z"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -q "^VIOLATION: UNEVIDENCED_CLAIM:.*M-02" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: UNEVIDENCED_CLAIM:.*M-01" \
+    && printf '%s\n' "$OUT" | grep -qF "2 commit(s) scanned touching BOARD.md/PROGRESS.md, 1 flagged line(s)"; then
+    ok "an M row's title/Wall-check 'green' is not flagged; an uncited notes-cell 'verified' is"
+else
+    bad "T30g M-row case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
 echo "T31 -- D26 guard 4: a bare 'exit' with no number, and no other citation, is not evidence"
 CLAIM_REPO_EXIT="$WORK/claim-repo-exit"
 mkdir -p "$CLAIM_REPO_EXIT/docs/v10"
