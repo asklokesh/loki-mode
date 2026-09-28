@@ -2311,6 +2311,48 @@ else
     printf '%s\n' "$OUT"
 fi
 
+echo "T44 -- E-81: STRAY_WORKTREE fires on a worktree registered inside the repo root but outside .claude/worktrees"
+STRAY_LIST="worktree $FAKE_REPO
+HEAD dead
+branch refs/heads/main
+
+worktree $FAKE_REPO/.claude/worktrees/wf-ok
+HEAD dead
+
+worktree $FAKE_REPO/scratch-worktree
+HEAD dead
+
+"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_WORKTREE_LIST=$STRAY_LIST"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: STRAY_WORKTREE: worktree(s) registered inside the repo root but outside .claude/worktrees: $FAKE_REPO/scratch-worktree" \
+    && printf '%s\n' "$OUT" | grep -qF "Stray worktrees (inside repo root, outside .claude/worktrees): 1"; then
+    ok "a worktree inside the repo root but outside .claude/worktrees fires STRAY_WORKTREE, naming the path; the primary and the .claude/worktrees entry do not"
+else
+    bad "T44 STRAY_WORKTREE case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T44b -- E-81: STRAY_WORKTREE does not fire when every non-primary worktree is under .claude/worktrees, or entirely outside the repo root"
+CLEAN_LIST="worktree $FAKE_REPO
+HEAD dead
+branch refs/heads/main
+
+worktree $FAKE_REPO/.claude/worktrees/wf-ok
+HEAD dead
+
+worktree /tmp/an-unrelated-checkout-outside-the-repo
+HEAD dead
+
+"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_WORKTREE_LIST=$CLEAN_LIST"; then rc=0; else rc=$?; fi
+if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: STRAY_WORKTREE" \
+    && printf '%s\n' "$OUT" | grep -qF "Stray worktrees (inside repo root, outside .claude/worktrees): 0"; then
+    ok "a .claude/worktrees entry and one entirely outside the repo root both stay clean"
+else
+    bad "T44b STRAY_WORKTREE-clean case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
 echo ""
 echo "=== bash 3.2 syntax + full-suite check (via /bin/sh, real bash 3.2.57 on macOS) ==="
 if command -v /bin/sh >/dev/null 2>&1 && /bin/sh -c 'case "$BASH_VERSION" in 3.2*) exit 0;; *) exit 1;; esac' 2>/dev/null; then

@@ -117,8 +117,9 @@
 #                       STRAY_CONTAINER (see that check's own docstring for
 #                       the tab-separated row shape).
 #   PULSE_WORKTREE_LIST overrides `git worktree list --porcelain` for
-#                       WORKTREE_COUNT (a raw porcelain listing, same shape
-#                       as PULSE_WORKTREE_CMD's default output).
+#                       WORKTREE_COUNT and STRAY_WORKTREE (a raw porcelain
+#                       listing, same shape as PULSE_WORKTREE_CMD's default
+#                       output).
 #   PULSE_RELEASE_TESTS overrides the gh-run-list JSON RELEASE_ON_RED reads
 #                       for the newest VERSION-bump commit's Tests conclusion
 #                       (default: read from S-104's gh_ci cache).
@@ -441,7 +442,7 @@ VIOLATION_PRIORITY = [
     "SESSION_STALLED", "CI_RED", "CI_CANCELLED_STREAK", "RELEASE_ON_RED", "HIGH_LOAD",
     "MOAT_REGRESSION", "UNRELEASED_MERGE", "TRAIN_LATE", "REVIEW_STALE",
     "AGENT_OVER_BUDGET", "STALE_PROGRESS", "UNEVIDENCED_CLAIM", "RELEASED_AHEAD_OF_NPM",
-    "ORPHAN_TEST", "ORPHAN_WORKTREE", "STRAY_CONTAINER",
+    "ORPHAN_TEST", "ORPHAN_WORKTREE", "STRAY_CONTAINER", "STRAY_WORKTREE",
     "WORKTREE_COUNT", "IDLE_BUILDERS", "LOW_READY", "NO_RECENT_RELEASE",
     "LOW_RELEASE_VOLUME", "CONTROL_OVERSIZE",
 ]
@@ -2395,6 +2396,57 @@ else:
         )
 
 
+# --- 12c. STRAY_WORKTREE: a worktree registered inside the repo root but
+# outside .claude/worktrees (E-81) ------------------------------------------
+def check_stray_worktrees():
+    """Reuses WORKTREE_COUNT's own PULSE_WORKTREE_LIST override (same raw
+    porcelain-listing shape), rather than a second env var or git call.
+    `git worktree list --porcelain` always reports the primary/main worktree
+    first (same fact metric 6's own check_worktrees relies on), so it is
+    skipped by position -- the repo root itself is never a stray entry.
+    Returns None only on a real listing failure; an empty override (or a
+    listing with no additional worktrees) is a real, reportable "0 stray"."""
+    override = os.environ.get("PULSE_WORKTREE_LIST")
+    if override is not None:
+        text = override
+    else:
+        rc, out, _ = run_capped(
+            ["git", "worktree", "list", "--porcelain"], cwd=REPO_ROOT, env=_clean_env()
+        )
+        if rc != 0:
+            return None
+        text = out
+    paths = [line[len("worktree "):].strip() for line in text.splitlines()
+              if line.startswith("worktree ")]
+    if not paths:
+        return []
+    repo_root = os.path.normpath(REPO_ROOT)
+    stray = []
+    for path in paths[1:]:
+        norm = os.path.normpath(path)
+        inside_repo_root = norm == repo_root or norm.startswith(repo_root + os.sep)
+        if inside_repo_root and "/.claude/worktrees/" not in path:
+            stray.append(path)
+    return stray
+
+
+stray_worktrees = safe(check_stray_worktrees)
+if stray_worktrees is None:
+    mark_unknown("stray_worktrees")
+    emit("Stray worktrees (inside repo root, outside .claude/worktrees): UNKNOWN (git worktree list failed)")
+else:
+    emit(
+        "Stray worktrees (inside repo root, outside .claude/worktrees): %d"
+        % len(stray_worktrees)
+    )
+    if stray_worktrees:
+        add_violation(
+            "STRAY_WORKTREE",
+            "worktree(s) registered inside the repo root but outside .claude/worktrees: %s"
+            % ", ".join(sorted(stray_worktrees)),
+        )
+
+
 # --- 13. RELEASE_ON_RED: the newest VERSION bump on main has red Tests -----
 # (D28 rule 2 / S-108's own release-time guard; this is the pulse-side
 # early-warning companion.) Reuses S-104's gh_ci cache -- keyed by the SHA
@@ -2578,6 +2630,7 @@ _NEXT_ACTION_TEXT = {
     "ORPHAN_TEST": "investigate the named orphaned/long-running test process; stop by exact PID only if confirmed stale, never by name or pattern",
     "ORPHAN_WORKTREE": "investigate the named worktree/run.sh process; stop by exact PID only if confirmed stale, never by name or pattern",
     "STRAY_CONTAINER": "remove or fix the named swarm container: capped resources, restart policy 'no', removed when done (D28)",
+    "STRAY_WORKTREE": "move the named worktree(s) under .claude/worktrees or remove them (git worktree remove)",
     "WORKTREE_COUNT": "prune stale worktrees under .claude/worktrees (git worktree remove), it is over the 15 max",
     "IDLE_BUILDERS": "dispatch more builders against the named ready slice(s) in docs/v10/BOARD.md",
     "LOW_READY": "the Product Owner should cut the named number of additional slices onto the ready queue",
