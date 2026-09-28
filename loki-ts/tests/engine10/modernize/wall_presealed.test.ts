@@ -46,88 +46,134 @@ function sealValidOracle(unit: string) {
   return sealOracle(repoDir, mid, unit, log);
 }
 
+/** Creates `<repoDir>/<a>/<b>/.../<last>.py` so a dotted module name resolves inside repoDir. */
+function writeRepoModule(dir: string, dotted: string) {
+  const parts = dotted.split(".");
+  const last = parts.pop() as string;
+  const dirParts = parts;
+  const fileDir = dirParts.length ? join(dir, ...dirParts) : dir;
+  mkdirSync(fileDir, { recursive: true });
+  writeFileSync(join(fileDir, `${last}.py`), "# fixture\n");
+}
+
 describe("classifyBaseRun (D42 (3))", () => {
   it("classifies exit 0 as green", () => {
-    expect(classifyBaseRun({ runner: "pytest", exitCode: 0, timedOut: false })).toBe("green");
+    expect(classifyBaseRun({ runner: "pytest", exitCode: 0, timedOut: false }, repoDir)).toBe("green");
   });
 
   it("classifies the runner's own documented failure exit with a real failed count as red", () => {
-    expect(classifyBaseRun({ runner: "pytest", exitCode: 1, timedOut: false, failedCount: 3 })).toBe("red");
+    expect(classifyBaseRun({ runner: "pytest", exitCode: 1, timedOut: false, failedCount: 3 }, repoDir)).toBe("red");
   });
 
   it("classifies exit 126 and 127 as not_run, never red", () => {
-    expect(classifyBaseRun({ runner: "pytest", exitCode: 126, timedOut: false, failedCount: 5 })).toBe("not_run");
-    expect(classifyBaseRun({ runner: "pytest", exitCode: 127, timedOut: false, failedCount: 5 })).toBe("not_run");
+    expect(classifyBaseRun({ runner: "pytest", exitCode: 126, timedOut: false, failedCount: 5 }, repoDir)).toBe("not_run");
+    expect(classifyBaseRun({ runner: "pytest", exitCode: 127, timedOut: false, failedCount: 5 }, repoDir)).toBe("not_run");
   });
 
   it("classifies pytest exit 3, 4 and 5 as not_run", () => {
     for (const code of [3, 4, 5]) {
-      expect(classifyBaseRun({ runner: "pytest", exitCode: code, timedOut: false, failedCount: 2 })).toBe("not_run");
+      expect(classifyBaseRun({ runner: "pytest", exitCode: code, timedOut: false, failedCount: 2 }, repoDir)).toBe("not_run");
     }
   });
 
   it("classifies a timeout as not_run regardless of exit code", () => {
-    expect(classifyBaseRun({ runner: "pytest", exitCode: 1, timedOut: true, failedCount: 3 })).toBe("not_run");
+    expect(classifyBaseRun({ runner: "pytest", exitCode: 1, timedOut: true, failedCount: 3 }, repoDir)).toBe("not_run");
   });
 
   it("classifies a non-zero exit with no parsed failed count as not_run", () => {
-    expect(classifyBaseRun({ runner: "pytest", exitCode: 1, timedOut: false })).toBe("not_run");
+    expect(classifyBaseRun({ runner: "pytest", exitCode: 1, timedOut: false }, repoDir)).toBe("not_run");
   });
 
   it("classifies pytest exit 2 as red only for ImportError/AttributeError/NameError resolved inside the repo", () => {
+    writeRepoModule(repoDir, "unit_under_test");
+    writeRepoModule(repoDir, "unit_under_test_attr");
+    writeRepoModule(repoDir, "new_symbol");
     expect(classifyBaseRun({
       runner: "pytest", exitCode: 2, timedOut: false,
-      collectionError: { kind: "ImportError", name: "unit_under_test", inRepo: true },
-    })).toBe("red");
+      collectionError: { kind: "ImportError", name: "unit_under_test" },
+    }, repoDir)).toBe("red");
     expect(classifyBaseRun({
       runner: "pytest", exitCode: 2, timedOut: false,
-      collectionError: { kind: "AttributeError", name: "unit_under_test.new_fn", inRepo: true },
-    })).toBe("red");
+      collectionError: { kind: "AttributeError", name: "unit_under_test_attr" },
+    }, repoDir)).toBe("red");
     expect(classifyBaseRun({
       runner: "pytest", exitCode: 2, timedOut: false,
-      collectionError: { kind: "NameError", name: "new_symbol", inRepo: true },
-    })).toBe("red");
+      collectionError: { kind: "NameError", name: "new_symbol" },
+    }, repoDir)).toBe("red");
   });
 
   it("classifies pytest exit 2 as not_run for an unresolvable/other error", () => {
-    expect(classifyBaseRun({ runner: "pytest", exitCode: 2, timedOut: false, collectionError: { kind: "other", name: "x", inRepo: true } })).toBe("not_run");
-    expect(classifyBaseRun({ runner: "pytest", exitCode: 2, timedOut: false })).toBe("not_run");
+    expect(classifyBaseRun({ runner: "pytest", exitCode: 2, timedOut: false, collectionError: { kind: "other", name: "x" } }, repoDir)).toBe("not_run");
+    expect(classifyBaseRun({ runner: "pytest", exitCode: 2, timedOut: false }, repoDir)).toBe("not_run");
   });
 
   // B1 (reviewer repro): a crash, OOM or signal must never read as red just because a stale
   // failedCount happened to be nonzero.
   describe("B1: a crash, OOM kill or signal is never red, however failedCount looks", () => {
     it("exit 139 (SIGSEGV) with failedCount 1 is not_run, not red", () => {
-      expect(classifyBaseRun({ runner: "pytest", exitCode: 139, timedOut: false, failedCount: 1 })).toBe("not_run");
+      expect(classifyBaseRun({ runner: "pytest", exitCode: 139, timedOut: false, failedCount: 1 }, repoDir)).toBe("not_run");
     });
     it("exit 137 (SIGKILL/OOM) with failedCount 1 is not_run, not red", () => {
-      expect(classifyBaseRun({ runner: "pytest", exitCode: 137, timedOut: false, failedCount: 1 })).toBe("not_run");
+      expect(classifyBaseRun({ runner: "pytest", exitCode: 137, timedOut: false, failedCount: 1 }, repoDir)).toBe("not_run");
     });
     it("a null exitCode (signal-killed, no exit code at all) with failedCount 1 is not_run, not red", () => {
-      expect(classifyBaseRun({ runner: "pytest", exitCode: null, timedOut: false, failedCount: 1 })).toBe("not_run");
+      expect(classifyBaseRun({ runner: "pytest", exitCode: null, timedOut: false, failedCount: 1 }, repoDir)).toBe("not_run");
     });
     it("failedCount Infinity on the runner's own failure exit is not_run, not red", () => {
-      expect(classifyBaseRun({ runner: "pytest", exitCode: 1, timedOut: false, failedCount: Infinity })).toBe("not_run");
+      expect(classifyBaseRun({ runner: "pytest", exitCode: 1, timedOut: false, failedCount: Infinity }, repoDir)).toBe("not_run");
     });
     it("a non-integer failedCount is not_run, not red", () => {
-      expect(classifyBaseRun({ runner: "pytest", exitCode: 1, timedOut: false, failedCount: 1.5 })).toBe("not_run");
+      expect(classifyBaseRun({ runner: "pytest", exitCode: 1, timedOut: false, failedCount: 1.5 }, repoDir)).toBe("not_run");
     });
   });
 
-  // B2 (reviewer repro): a missing third-party package is a ModuleNotFoundError (an ImportError)
-  // too, and must not read as red just because the kind matches.
-  describe("B2: an unresolvable (third-party) collection error is never red", () => {
+  // B2, r2 (opus reject on 86d078eb): a caller-supplied `inRepo: true` must no longer be
+  // trusted at all -- classifyBaseRun now derives it itself from the filesystem, so the exact
+  // repro the reviewer gave (a real third-party name, flagged true by the caller) must come back
+  // not_run, and a genuine in-repo module must come back red without any caller flag at all.
+  describe("B2: inRepo is derived from the filesystem, never trusted from the caller", () => {
+    it("red on 86d078eb: a third-party name with a caller-supplied inRepo:true is now not_run", () => {
+      const outcome = {
+        runner: "pytest" as const, exitCode: 2, timedOut: false,
+        // `six` has no file anywhere under repoDir -- a real third-party package. The extra
+        // `inRepo: true` here is exactly the reviewer's repro payload; classifyBaseRun's own
+        // BaseRunOutcome/CollectionError types no longer even declare the field, so this is cast
+        // to demonstrate a stale or adversarial caller cannot smuggle it back in.
+        collectionError: { kind: "ImportError" as const, name: "six", inRepo: true } as unknown as { kind: "ImportError"; name: string },
+      };
+      expect(classifyBaseRun(outcome, repoDir)).toBe("not_run");
+    });
+
     it("an ImportError for a package with no file in the repo is not_run", () => {
       expect(classifyBaseRun({
         runner: "pytest", exitCode: 2, timedOut: false,
-        collectionError: { kind: "ImportError", name: "numpy", inRepo: false },
-      })).toBe("not_run");
+        collectionError: { kind: "ImportError", name: "numpy" },
+      }, repoDir)).toBe("not_run");
     });
-    it("an ImportError resolved to an actual file inside the repo is red", () => {
+
+    it("an ImportError resolved to a real file inside the repo is red", () => {
+      writeRepoModule(repoDir, "pkg.unit_under_test");
       expect(classifyBaseRun({
         runner: "pytest", exitCode: 2, timedOut: false,
-        collectionError: { kind: "ImportError", name: "pkg/unit_under_test.py", inRepo: true },
-      })).toBe("red");
+        collectionError: { kind: "ImportError", name: "pkg.unit_under_test" },
+      }, repoDir)).toBe("red");
+    });
+
+    it("a src/ layout module resolves inside the repo", () => {
+      mkdirSync(join(repoDir, "src", "pkg"), { recursive: true });
+      writeFileSync(join(repoDir, "src", "pkg", "unit.py"), "# fixture\n");
+      expect(classifyBaseRun({
+        runner: "pytest", exitCode: 2, timedOut: false,
+        collectionError: { kind: "ImportError", name: "pkg.unit" },
+      }, repoDir)).toBe("red");
+    });
+
+    it("a malformed name (empty segment, '..') never resolves, even if a same-named file exists", () => {
+      writeRepoModule(repoDir, "evil");
+      expect(classifyBaseRun({
+        runner: "pytest", exitCode: 2, timedOut: false,
+        collectionError: { kind: "ImportError", name: "..evil" },
+      }, repoDir)).toBe("not_run");
     });
   });
 });

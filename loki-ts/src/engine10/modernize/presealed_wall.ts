@@ -38,8 +38,8 @@
 // presealed_wall.json (target, failed_count, anything) after the fact is caught even though the
 // rewritten file is otherwise well-formed JSON.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { join, sep } from "node:path";
 import type { ModernizeLog } from "./log.ts";
 import { readModernizeEvents } from "./log.ts";
 import type { SealedOracle } from "./oracle/seal.ts";
@@ -61,15 +61,53 @@ const RUNNER_FAILURE_EXIT: Record<ConformanceRunnerName, number> = {
 };
 
 /** A pytest collection error (exit 2), pre-classified by the runner -- this module never parses
- *  a traceback itself. `inRepo` is true only when the runner resolved `name` to an actual file
- *  inside the repo under test; false (or omitted) covers an unresolvable third-party package, an
- *  environment problem rather than evidence the unit needs modernizing (r1's B2). */
+ *  a traceback itself, beyond `name`. r2's B2 (opus reject on 86d078eb): whether `name` is
+ *  actually inside the repo under test is NEVER taken from the caller -- a caller or a
+ *  compromised runner could set an `inRepo: true` flag on a genuine third-party import
+ *  (`{kind:"ImportError", name:"six", inRepo:true}` came back red). classifyBaseRun derives it
+ *  itself, from `name` and `repoDir`, with `resolvesInsideRepo` below. */
 export interface CollectionError {
   kind: "ImportError" | "AttributeError" | "NameError" | "other";
-  /** The failing module, attribute or name, exactly as reported -- carried through for the
-   *  event/seal record; classifyBaseRun only reads `kind` and `inRepo`. */
+  /** The failing module, attribute or name, exactly as reported (e.g. "pkg.unit" for Python's
+   *  `pkg.unit`). classifyBaseRun resolves this itself against repoDir; nothing else in this
+   *  field is trusted. */
   name: string;
-  inRepo: boolean;
+}
+
+/** Resolves a dotted module name (Python's own resolution: `a.b` -> `a/b.py` or
+ *  `a/b/__init__.py`) against the repo, including a `src/` layout, and requires the resolved
+ *  file's realpath to sit strictly under realpath(repoDir) -- never equal to it, never a symlink
+ *  escape out of it. Fails closed: a malformed name (empty segment, `.`, `..`), a repoDir that
+ *  does not exist, or no candidate file on disk all return false, never true by default. */
+function resolvesInsideRepo(repoDir: string, name: string): boolean {
+  const parts = name.split(".");
+  if (parts.length === 0 || parts.some((p) => p === "" || p === "." || p === "..")) return false;
+
+  let repoReal: string;
+  try {
+    repoReal = realpathSync(repoDir);
+  } catch {
+    return false;
+  }
+
+  const rel = join(...parts);
+  const candidates = [
+    join(repoDir, `${rel}.py`),
+    join(repoDir, rel, "__init__.py"),
+    join(repoDir, "src", `${rel}.py`),
+    join(repoDir, "src", rel, "__init__.py"),
+  ];
+  for (const c of candidates) {
+    if (!existsSync(c)) continue;
+    let real: string;
+    try {
+      real = realpathSync(c);
+    } catch {
+      continue;
+    }
+    if (real.startsWith(repoReal + sep)) return true;
+  }
+  return false;
 }
 
 /** One conformance run's raw result, as an injected runner reports it -- never wall-clock or
@@ -91,8 +129,11 @@ function isRealFailCount(n: unknown): n is number {
 }
 
 /** D42 (3)'s classification, duplicated here for modernize/ (see file header). Fails closed:
- *  anything not explicitly red or green is not_run, never inferred as a pass by omission. */
-export function classifyBaseRun(o: BaseRunOutcome): BaseRunClass {
+ *  anything not explicitly red or green is not_run, never inferred as a pass by omission.
+ *  `repoDir` is required (r2's B2): a pytest collection error's "is this really inside the repo
+ *  under test" question is answered here, from the filesystem, never from a caller-supplied
+ *  flag. */
+export function classifyBaseRun(o: BaseRunOutcome, repoDir: string): BaseRunClass {
   if (o.timedOut) return "not_run";
   if (o.exitCode === null) return "not_run"; // signal-killed: no documented exit code to trust
   if (o.exitCode === 126 || o.exitCode === 127) return "not_run"; // tool not found / not executable
@@ -100,7 +141,7 @@ export function classifyBaseRun(o: BaseRunOutcome): BaseRunClass {
   if (o.runner === "pytest" && o.exitCode === 2) {
     const ce = o.collectionError;
     const knownKind = ce !== undefined && (ce.kind === "ImportError" || ce.kind === "AttributeError" || ce.kind === "NameError");
-    return knownKind && ce.inRepo ? "red" : "not_run";
+    return knownKind && resolvesInsideRepo(repoDir, ce.name) ? "red" : "not_run";
   }
   if (o.exitCode === 0) return "green"; // conformance already passes on the unmodernized base
   if (o.exitCode === RUNNER_FAILURE_EXIT[o.runner] && isRealFailCount(o.failedCount)) return "red";
@@ -203,7 +244,7 @@ export function sealPreSealedWall(
   }
 
   const outcome = runConformance(unit, repoDir);
-  const classification = classifyBaseRun(outcome);
+  const classification = classifyBaseRun(outcome, repoDir);
 
   if (classification === "green") {
     log.append(ATTEMPT_EVENT, { unit, target, classification, exit_code: outcome.exitCode });
@@ -274,9 +315,29 @@ export function verifyPreSealedWall(repoDir: string, mid: string, unit: string):
   const expectedSha = event.data.sealed_sha256;
   if (typeof expectedSha !== "string") return { ok: false, reason: "sealing event has no sealed_sha256" };
 
-  const actualSha = sha256(readFileSync(sealedPath, "utf8"));
+  const sealedRaw = readFileSync(sealedPath, "utf8");
+  const actualSha = sha256(sealedRaw);
   if (actualSha !== expectedSha) {
     return { ok: false, reason: "presealed_wall.json does not match the sealing event's hash (tampered or rewritten)" };
   }
+
+  // Advisory (r2, opus review on 86d078eb): a presealed wall that still verifies against its own
+  // event says nothing about whether the oracle it was bound to at seal time is still valid or
+  // still the same oracle -- re-check both, so a consumer can never pair a still-verifying wall
+  // with an oracle that was since invalidated, or (impossible under write-once, but checked
+  // anyway) re-sealed with different hashes.
+  const oracleCheck = verifySeal(repoDir, mid, unit);
+  if (!oracleCheck.ok) {
+    return { ok: false, reason: `bound oracle seal is no longer valid: ${oracleCheck.reason ?? "unknown"}` };
+  }
+  const oracleSealed = JSON.parse(readFileSync(join(oracleDir(repoDir, mid, unit), "sealed.json"), "utf8")) as SealedOracle;
+  const carried = JSON.parse(sealedRaw) as PreSealedWallSeal;
+  if (
+    carried.oracle_cases_sha256 !== oracleSealed.cases_sha256 ||
+    carried.oracle_coverage_sha256 !== oracleSealed.coverage_sha256
+  ) {
+    return { ok: false, reason: "carried oracle hashes do not match the current oracle seal" };
+  }
+
   return { ok: true };
 }
