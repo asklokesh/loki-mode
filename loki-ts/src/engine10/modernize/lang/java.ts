@@ -53,13 +53,28 @@ function stripNestedSuffix(fqcn: string): string {
   return i < 0 ? fqcn : fqcn.slice(0, i);
 }
 
+// Collects deduplicated (from !== to) edges into `edges`, keyed on the pair so the same edge
+// reported twice (e.g. an outer class and its $N inner class both -> the same target, or a
+// wildcard and an explicit import of the same class) is recorded once.
+function makeEdgeCollector(edges: DepEdge[]) {
+  const seen = new Set<string>();
+  return (from: string, to: string) => {
+    if (from === to) return;
+    const key = `${from}\n${to}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    edges.push([from, to]);
+  };
+}
+
 function edgesFromFqcnPairs(files: readonly JavaFile[], pairs: Iterable<readonly [string, string]>): DepEdge[] {
   const byFqcn = new Map(files.map((f) => [f.fqcn, f.rel]));
   const edges: DepEdge[] = [];
+  const addEdge = makeEdgeCollector(edges);
   for (const [fromFqcn, toFqcn] of pairs) {
     const from = byFqcn.get(stripNestedSuffix(fromFqcn));
     const to = byFqcn.get(stripNestedSuffix(toFqcn));
-    if (from && to && from !== to) edges.push([from, to]);
+    if (from && to) addEdge(from, to);
   }
   return edges;
 }
@@ -94,9 +109,7 @@ function importScanGraph(files: readonly JavaFile[]): { graph: DepGraph; unresol
 
   const edges: DepEdge[] = [];
   const unresolvedImports: string[] = [];
-  const addEdge = (fromRel: string, toRel: string) => {
-    if (fromRel !== toRel) edges.push([fromRel, toRel]);
-  };
+  const addEdge = makeEdgeCollector(edges);
 
   for (const f of files) {
     IMPORT_RE.lastIndex = 0;
@@ -107,10 +120,18 @@ function importScanGraph(files: readonly JavaFile[]): { graph: DepGraph; unresol
       const captured = m[2];
 
       if (isWildcard && !isStatic) {
-        // `import pkg.*;`: an edge to every local file in that package.
+        // `import pkg.*;` (package wildcard): an edge to every local file in that package.
+        // `import pkg.Type.*;` (class wildcard, importing Type's nested types) names a class,
+        // not a package, so byPkg misses it -- fall back to resolving it as a class before
+        // giving up on it.
         const siblings = byPkg.get(captured);
-        if (siblings?.length) for (const to of siblings) addEdge(f.rel, to);
-        else unresolvedImports.push(`${f.rel}: unresolved wildcard import ${captured}.*`);
+        if (siblings?.length) {
+          for (const to of siblings) addEdge(f.rel, to);
+        } else {
+          const classTarget = resolveImportTarget(captured, byFqcn);
+          if (classTarget) addEdge(f.rel, classTarget);
+          else unresolvedImports.push(`${f.rel}: unresolved wildcard import ${captured}.*`);
+        }
         continue;
       }
 

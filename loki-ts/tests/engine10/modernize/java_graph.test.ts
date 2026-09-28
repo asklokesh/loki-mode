@@ -76,6 +76,24 @@ describe("buildJavaGraph: fallback path (jdeps/javac absent)", () => {
     expect(result.graph.edges).toContainEqual(["com/example/NestedUser.java", "com/example/util/Helper.java"]);
   });
 
+  it("a class-level wildcard import (Type.*) resolves to the owning class's file", () => {
+    // Formatter.java has `import com.example.util.Helper.*;` -- legal Java that imports
+    // Helper's nested types. byPkg has no "com.example.util.Helper" package, so this must fall
+    // back to resolving it as a class, not get recorded as unresolved.
+    const result = buildJavaGraph(FIX, FILES, { path: emptyPathDir() });
+    expect(result.graph.edges).toContainEqual(["com/example/other/Formatter.java", "com/example/util/Helper.java"]);
+  });
+
+  it("duplicate edges from overlapping imports are deduplicated", () => {
+    // Main.java has both `import com.example.util.*;` and `import com.example.util.Helper;`,
+    // both naming the same target file.
+    const result = buildJavaGraph(FIX, FILES, { path: emptyPathDir() });
+    const mainToHelper = result.graph.edges.filter(
+      ([from, to]) => from === "com/example/Main.java" && to === "com/example/util/Helper.java",
+    );
+    expect(mainToHelper.length).toBe(1);
+  });
+
   it("an import that resolves to no local file is recorded as unresolved, not silently dropped", () => {
     const result = buildJavaGraph(FIX, FILES, { path: emptyPathDir() });
     expect(result.unresolvedImports.some((u) => u.includes("com.example.missing.Ghost"))).toBe(true);
@@ -124,5 +142,14 @@ describe("buildJavaGraph: jdeps path (fake javac/jdeps present)", () => {
     ].join("\n");
     const result = buildJavaGraph(FIX, FILES, { path: fakeJdepsPathDir(jdepsOut) });
     expect(result.graph.edges).toContainEqual(["com/example/Main.java", "com/example/util/Helper.java"]);
+  });
+
+  it("an outer-class edge and its $N edge to the same target are deduplicated", () => {
+    const jdepsOut = [
+      "   com.example.Main -> com.example.util.Helper           classes",
+      "   com.example.Main$1 -> com.example.util.Helper           classes",
+    ].join("\n");
+    const result = buildJavaGraph(FIX, FILES, { path: fakeJdepsPathDir(jdepsOut) });
+    expect(result.graph.edges).toEqual([["com/example/Main.java", "com/example/util/Helper.java"]]);
   });
 });
