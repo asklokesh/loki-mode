@@ -24,6 +24,18 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve this file's own symlink chain (a test harness splices a fake
+# run.sh in by symlinking this script into a scratch dir, which would
+# otherwise put REPO_ROOT two levels above a tmp dir instead of the repo).
+_self="${BASH_SOURCE[0]}"
+while [ -L "$_self" ]; do
+    _link="$(readlink "$_self")"
+    case "$_link" in
+        /*) _self="$_link" ;;
+        *) _self="$(dirname "$_self")/$_link" ;;
+    esac
+done
+REPO_ROOT="$(cd "$(dirname "$_self")/../.." && pwd)"
 
 KEYCHAIN_SERVICE="Claude Code-credentials"
 SECURITY_BIN="${LOKI_EVAL_SECURITY_BIN:-/usr/bin/security}"
@@ -153,19 +165,77 @@ auth_guard() {
     return 0
 }
 
+# Same harness_sha a run.sh invocation right now would get (harness.py
+# cmd_run: HEAD, "-dirty" appended iff the tree -- eval/loki10/archive
+# excluded -- has local changes). Computed once: every rep/arm in this batch
+# runs against the same checkout.
+current_harness_sha() {
+    local sha
+    sha="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null)" || sha="unknown"
+    if [ -n "$(git -C "$REPO_ROOT" status --porcelain -- . ':(exclude)eval/loki10/archive' 2>/dev/null)" ]; then
+        sha="${sha}-dirty"
+    fi
+    printf '%s' "$sha"
+}
+
+# Resume (S41-18): task ids in this tier with no `status: ok` row in the
+# rep's results.jsonl for this exact (model, harness_sha, arm) -- the same
+# tuple harness.py's dedupe() keys on, minus status. A row from a different
+# model, a different code checkout, or a different arm never counts as done.
+# Comma-joined for harness.py's --tasks; empty when the rep is fully done.
+missing_tasks() {  # $1=results_file $2=model $3=harness_sha $4=arm_flag
+    python3 - "$TASKS_DIR_EFF" "$TIER" "$1" "$2" "$3" "$4" <<'PY'
+import json, os, sys
+tasks_dir, tier, results_file, model, harness_sha, arm = sys.argv[1:7]
+ids = []
+if os.path.isdir(tasks_dir):
+    for d in sorted(os.listdir(tasks_dir)):
+        p = os.path.join(tasks_dir, d, "task.json")
+        if not os.path.isfile(p):
+            continue
+        try:
+            with open(p, encoding="utf-8") as f:
+                t = (json.load(f).get("tier") or "small")
+        except (OSError, ValueError):
+            t = None
+        if t == tier or t is None:
+            ids.append(d)
+done = set()
+try:
+    with open(results_file, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if (r.get("status") == "ok" and r.get("model") == model
+                    and r.get("harness_sha") == harness_sha and r.get("arm") == arm):
+                done.add(r.get("task"))
+except OSError:
+    pass
+print(",".join(i for i in ids if i not in done))
+PY
+}
+
 IFS=',' read -r -a ARM_LIST <<<"$ARMS"
 for a in "${ARM_LIST[@]}"; do
     arm_model "$a" >/dev/null || { printf 'error: unknown arm %s (want raw-sonnet, raw-opus, loki-sonnet or loki-opus)\n' "$a" >&2; exit 2; }
 done
 
 tasks_n="$(count_tier_tasks)"
+harness_sha="$(current_harness_sha)"
 rc=0
 for rep in $(seq 1 "$N"); do
     for a in "${ARM_LIST[@]}"; do
         model="$(arm_model "$a")"
         flag="$(arm_flag "$a")"
         rep_out="$OUT/rep$rep/$a"
-        cmd=(env "LOKI_EVAL_MODEL=$model" "$HERE/run.sh" --arm "$flag" --all --tier "$TIER" --parallel "$PARALLEL" --out "$rep_out")
+        missing="$(missing_tasks "$rep_out/results.jsonl" "$model" "$harness_sha" "$flag")"
+        [ -n "$missing" ] || continue   # every task already has a status ok row: skip the rep
+        cmd=(env "LOKI_EVAL_MODEL=$model" "$HERE/run.sh" --arm "$flag" --tasks "$missing" --tier "$TIER" --parallel "$PARALLEL" --out "$rep_out")
         [ -n "$TASKS_DIR" ] && cmd+=(--tasks-dir "$TASKS_DIR")
         if [ "$DRY_RUN" -eq 1 ]; then
             printf '%q ' "${cmd[@]}"; printf '\n'
