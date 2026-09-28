@@ -1,5 +1,13 @@
 # Progress
 
+## 2026-09-28T19:42Z: 19:20 slot shipped (v10.3.1); medium failure explained; 7 builders on the fixes
+- 19:20 slot: v10.3.1 cut 19:22:09Z (d811e5c3: E-99, M-30); Release 36471746478 success, publish-npm 19:30:56Z (cut to publish 8m47s), npm latest 10.3.1 gitHead d811e5c3. GitHub body came out as the placeholder "Release v10.3.1" (2 lines); backfilled from CHANGELOG (9 lines). E-88a (the enforcement) is being rebased onto E-99 now.
+- Release blocker found at the cut: release.sh --bump-only in a fresh worktree deleted 4 tracked dist files when the build failed. Guard E-102 merged (c35d3fa7, test red 3/4 first, then 7/0) and E-103 for the build-ok-but-no-version branch (cd3d3d26, 10/0).
+- EV-15 (medium re-run, durable files in ~/loki-ci-logs/eval/ev15-*): raw 10/14, $0.5085, p50 56s; v10 9/14, at least $0.788 per completed (E-98 correction), p50 128s. No flip.
+- E-98 (docs/v10/MEDIUM-ANALYSIS.md, d496db89): v10's verify stage hard-codes `python`; this host has only `python3`, so 27/27 pytest and 9/9 ruff checks were not_run and no fix round fired in any of 14 runs. The only raw-won/v10-lost task (jinja-1413 x2) broke two existing tests a working verify would have caught. Other causes: spec_conflict skips verify (5/14), empty Python repo map (0 symbols, 9/14 implement runs had no tests to run), Wall killed at 90s (5/14, all 4 null-cost rows).
+- Dispatched 19:40Z (sonnet): E-98a (verify interpreter), E-98b (spec_conflict still verifies), E-98c (append-only tests, impacted-test fallback), E-98d (Python repo map), E-98e (killed-session cost), E-88a rebase, E-91 (pulse id regex: E-98a..e and G-02 were invisible to the building count). E-98f (A/B of Wall and cascade, n=3 per arm) follows as one combined re-run.
+- Merged locally for the 19:40 train: G-01 (governor, opus APPROVE r3 fa279532), M-08 (modernize dispatch, Tech Lead APPROVE r3 766a493b, alias-forwarding 213/0), E-102, E-103, E-101 (durable eval results plus safe prune, used to remove 6 finished worktrees). Fast tier: two failures, both pre-existing on origin/main and env-conditional (E-104 gitleaks allowlists the AWS example key; E-105 heredoc checker false positive at run.sh:5548).
+
 ## 2026-09-28T19:04Z: drift audit (turn 528)
 - M-08 (modernize arm in bin/loki) first build would have turned test-engine10-dispatch.sh red (it counted exactly 1 engine10 line). Fixed in-slice (7feff1f8): exactly 2 exec lines, one per named arm, red on a stray third; 35/0 and 13/0. Tech Lead review running.
 - M-30 guide: Tech Lead REJECT, the --resume example id failed MID_RE (exit 2 when copied). Rework adds a MID_RE check over every id in the guide.
