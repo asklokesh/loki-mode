@@ -1,5 +1,11 @@
 # Progress
 
+## 2026-09-28T19:00Z: 18:40 slot cut; E-99 merged; G-01 r2 rejected; drift audit (turn 522)
+- 18:40 slot: v10.3.0 cut 18:48:32Z (74821b73: E-67, M-07, M-11, E-86, E-94, E-95, E-100, E-89); Release run in progress, publish time and npm gitHead recorded when the watcher reports.
+- E-99 (pre-push scans every pushed commit with the tip's .gitleaksignore) merged locally 5ee5a630; conflict with E-100 case 20 resolved (binary guard kept, E-99 message taken). tests/test-pre-push-gitleaks.sh 43/0 with gitleaks, 19/0 plus 24 skipped without; test-pre-push-hook.sh 13/0. Held until 10.3.0 publish-npm (a push during a release cancels its Tests).
+- G-01 r2 (de8e1f76, pct 100x fix, reset-aligned window, fail-safe, projection to weekly reset, global max-per-message dedup): opus REJECT. The weekly reset is 1h off across DST, and fixes 2 and 4 have no regression test (reverting either still gives 20/0). r3 dispatched to the same engineer.
+- Drift audit: EV-12 umbrella was building for 127 min against D40 (large tier after medium); parked. E-96 duplicated E-101; parked. Headcount held per D40: 5 building (M-08, M-30 dispatched as low-risk modernize work) while EV-15/E-98 decide the medium fix. Load 3.2.
+
 ## 2026-09-28T18:25Z: 14:00 slot shipped; governor numbers corrected
 - 14:00 slot: v10.2.5 cut 18:06:00Z (b72c4f7e) after Tests went green on 1f955851 at 18:05:17Z; publish-npm 18:14:09Z; npm gitHead b72c4f7e; GitHub body backfilled (5 lines).
 - Burn accounting settled (three tries): rows sharing a message id are streaming snapshots (output_tokens grows, e.g. 5, 5, 467; cache fields repeat), so the right count is the maximum per message id. Last hour 1.79M output (sonnet 84%, opus 15%), 0.726B cache read; last 5h 6.43M output. G-01 now uses max-per-message (real run: 6.53M output in 5h, 37 active agents, 45.9K output per engineer-hour) and ships usage-statusline-logger.sh: Claude Code gives a statusLine command rate_limits.five_hour and seven_day used_percentage, which is the source of truth once wired. Still uncalibrated: no plan reading yet.
