@@ -569,3 +569,53 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   old `test-start-update-hint.sh`) reproduces the incident directly: exit 1,
   reporting both `9.99.0` lines by file:line. Run:
   `bash tests/test-no-stale-future-version.sh`.
+
+## 17. A local pass depended on `gh` being authenticated on the dev Mac (E-94)
+
+- **Incident:** `tests/test-dep-inventory.sh` passed locally and failed on
+  the CI runner. Root-caused to `scripts/dep-inventory.py`'s `self_test()`:
+  one resolver path (the `actions/setup-node@v4` floating-tag lookup) had no
+  fixture in its stub cache, so a cache miss fell through to a real `gh api`
+  call. That call succeeds silently wherever `gh` happens to be authenticated
+  (this Mac) and fails wherever it is not (the CI runner, which has neither
+  `gh` nor `GH_TOKEN`/`GITHUB_TOKEN`) -- so local-ci reported green on a test
+  that was never actually hermetic, and CI became the discovery channel
+  instead of push time.
+- **Root cause with evidence:** replaying the pre-fix file directly (`git
+  show 4f7f1487^1:scripts/dep-inventory.py` extracted to a temp path, then
+  `python3 <that path> --self-test`) passes on this machine (23/23 `[PASS]`
+  lines, real `gh api` reachable) and fails under a stripped environment
+  (`env -i HOME=<fresh dir> PATH=/usr/bin:/bin:<bun+python3 only>`) with
+  exactly one failure: `[FAIL]
+  actions: Bump is measured against the release lookup` -- the same
+  resolver path, the same missing fixture, now unable to reach `gh`. E-92
+  (`4f7f1487`) fixed this specific instance by adding the missing
+  `floating_tag` cache fixture; nothing stopped the next uncached fallthrough
+  in the next test file from shipping the same way.
+- **The guard:** `scripts/local-ci.sh`'s `_lci_hermetic_scan` (fast-tier
+  step `"hermetic changed-tests (no gh/network, E-94)"`, on `_FAST_KEEP`).
+  For every test file this branch changed vs `origin/main` (merge-base diff)
+  under `tests/` or `loki-ts/tests/` (`.sh`/`.py`/`.ts`), it runs the file
+  once normally and once under `env -i` with a fresh `HOME`, and `PATH`
+  limited to `/usr/bin:/bin` plus a private directory holding ONLY symlinks
+  to the `bun` and `python3` binaries -- never their real parent directory,
+  which on this class of machine is also where `gh` itself lives, so adding
+  that whole directory back would silently defeat the point. `env -i` alone
+  already drops every inherited variable, so `GH_TOKEN`/`GITHUB_TOKEN` need
+  no separate unset. A file that passes normally but fails stripped is
+  reported by name; a file already failing normally is left to whatever
+  other check owns it. Skipped (not silently passed) when the branch changed
+  no test file. Fails closed the other way too: this is a keep-list member,
+  so it cannot be silently deferred out of the fast (pre-push) tier.
+- **The test that proves it fires:** `tests/test-local-ci-hermetic.sh`
+  (registered in `tests/run-all-tests.sh` and `tests/shard-durations.tsv`).
+  Static assertions confirm the scope, the stripped-env shape, the
+  keep-list membership and the skip-when-clean path. The live half
+  awk-extracts the REAL `_lci_hermetic_scan` function body out of
+  `scripts/local-ci.sh` (never a mirrored reimplementation) and runs it
+  against disposable fixture repos: a new test that calls `gh` directly
+  passes normally and fails stripped, so the scan fails and names it; a
+  hermetic-clean new test passes both runs; and the actual pre-E-92
+  `scripts/dep-inventory.py` (`git show 4f7f1487^1:scripts/dep-inventory.py`)
+  wired in under a copy of the real test wrapper is caught the identical
+  way it caught the live incident. Run: `bash tests/test-local-ci-hermetic.sh`.

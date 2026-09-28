@@ -1298,6 +1298,14 @@ run_test "parent checkout core.bare detection self-heals without green-washing" 
 # always run.
 run_test "local-ci gitleaks fast-tier step (scoped scan, skip-not-pass, literal vs concatenated fixture)" "$SCRIPT_DIR/test-local-ci-gitleaks.sh"
 
+# E-94: local-ci fast-tier hermetic changed-tests scan (re-runs every changed
+# tests/*.sh, tests/*.py, loki-ts/tests/** under env -i with no gh/network,
+# fails naming any file that passes normally but fails stripped). Live temp-
+# repo scenarios (a gh-calling fixture, the real pre-E-92 dep-inventory.py
+# replay) run whenever python3 and gh are on PATH; static assertions always
+# run.
+run_test "local-ci hermetic changed-tests scan (no gh/network, catches pre-E-92 dep-inventory regression)" "$SCRIPT_DIR/test-local-ci-hermetic.sh"
+
 # Linting
 run_test "Export overwrite guard (non-interactive never hangs)" "$SCRIPT_DIR/test-export-overwrite-noninteractive.sh"
 run_test "Time-to-first-preview metric (write-once, never invented)" "$SCRIPT_DIR/test-first-preview-metric.sh"

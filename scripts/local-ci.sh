@@ -237,6 +237,11 @@ declare -a _FAST_KEEP=(
   # run above (measured ~118s), this walks a handful of commits, not the whole
   # repo's history, so it belongs with the other read-only structural lanes.
   "gitleaks (secrets, origin/main..HEAD)"
+  # E-94: same class as gitleaks above -- cheap, read-only-scoped to this
+  # branch's own changed test files, and it exists to catch a local-pass /
+  # CI-fail gap before push, so deferring it out of the fast tier would
+  # remove the only pre-push run it gets.
+  "hermetic changed-tests (no gh/network, E-94)"
   # dist freshness. CLAUDE.md names this the SHARPEST reason the fast tier
   # exists -- "CI never validates that the committed loki-ts/dist/loki.js
   # matches src, and when that slipped we shipped THREE releases reporting the
@@ -719,6 +724,89 @@ run_check_pyfile() {
   fi
 }
 
+# Hermetic changed-tests scan (E-94). A standalone function -- not inlined
+# into a run_check_bg command string -- so tests/test-local-ci-hermetic.sh
+# can awk-extract and exercise this REAL body (same technique as
+# tests/test-local-ci-parent-exit-isolation.sh), instead of maintaining a
+# second, mirrored copy that can drift out of sync with what actually runs.
+#
+# Guards the red-main class from df7dc134 day: tests/test-dep-inventory.sh
+# passed here because `gh` was authenticated on this Mac, then failed on the
+# CI runner, which has neither `gh` nor GH_TOKEN/GITHUB_TOKEN -- a local pass
+# that secretly depended on ambient credentials, discovered only at CI.
+#
+# Scope: every test file THIS branch changed under tests/ or loki-ts/tests/
+# (.sh, .py, .ts), diffed against the MERGE-BASE with origin/main (three
+# dots), not the tip-to-tip diff the gitleaks step above uses -- so a main
+# that has moved on since the branch was cut is never misread as "this
+# branch changed it".
+#
+# For each candidate: run it once normally, once under a stripped
+# environment (env -i: no inherited var survives, so GH_TOKEN, GITHUB_TOKEN,
+# and every other ambient credential are gone with nothing to unset by name;
+# a fresh HOME; and PATH limited to /usr/bin:/bin plus a PRIVATE directory
+# holding ONLY symlinks to the bun and python3 binaries -- never their real
+# parent directory, which on this class of machine is also where `gh` itself
+# lives, so adding that whole directory would silently defeat the point).
+# `timeout` wraps the OUTSIDE of the `env -i` call (resolved via the normal,
+# unstripped PATH) so the stripped PATH never has to contain it. A file that
+# passes normally but fails stripped depended on something ambient CI does
+# not have, and is named. A file that already fails normally is some other
+# check's business -- this scan is silent about it.
+_lci_hermetic_scan() {
+  local files f rc bindir home b failures="" ran=0
+
+  files="$(git diff --name-only --diff-filter=ACMR origin/main...HEAD -- tests loki-ts/tests 2>/dev/null | grep -E '\.(sh|py|ts)$')" || true
+  if [ -z "$files" ]; then
+    echo "no changed tests/*.sh, tests/*.py or loki-ts/tests/** vs origin/main"
+    return 0
+  fi
+
+  bindir="$(mktemp -d "${TMPDIR:-/tmp}/loki-hermetic-bin.XXXXXX")" || return 1
+  b="$(command -v bun 2>/dev/null)" && ln -sf "$b" "$bindir/bun"
+  b="$(command -v python3 2>/dev/null)" && ln -sf "$b" "$bindir/python3"
+
+  while IFS= read -r f; do
+    [ -n "$f" ] && [ -f "$f" ] || continue
+    ran=$((ran + 1))
+
+    case "$f" in
+      loki-ts/tests/*) ( cd loki-ts && timeout 30 bun test "${f#loki-ts/}" ) >/dev/null 2>&1 ;;
+      *.py)             timeout 30 python3 -m pytest -q "$f" >/dev/null 2>&1 ;;
+      *)                timeout 30 bash "$f" >/dev/null 2>&1 ;;
+    esac
+    rc=$?
+    # Only a NORMAL pass is interesting: a file already red is some other
+    # check's job to report, and re-flagging it here would just be noise.
+    [ "$rc" -eq 0 ] || continue
+
+    home="$(mktemp -d "${TMPDIR:-/tmp}/loki-hermetic-home.XXXXXX")" || continue
+    case "$f" in
+      loki-ts/tests/*)
+        ( cd loki-ts && timeout 30 env -i HOME="$home" PATH="/usr/bin:/bin:$bindir" \
+          bun test "${f#loki-ts/}" ) >/dev/null 2>&1 ;;
+      *.py)
+        timeout 30 env -i HOME="$home" PATH="/usr/bin:/bin:$bindir" \
+          python3 -m pytest -q "$f" >/dev/null 2>&1 ;;
+      *)
+        timeout 30 env -i HOME="$home" PATH="/usr/bin:/bin:$bindir" \
+          bash "$f" >/dev/null 2>&1 ;;
+    esac
+    rc=$?
+    rm -rf "$home"
+    [ "$rc" -eq 0 ] || failures="$failures $f"
+  done <<< "$files"
+
+  rm -rf "$bindir"
+  if [ -n "$failures" ]; then
+    echo "passes normally but fails hermetic (no gh, no GH_TOKEN/GITHUB_TOKEN, no network creds):"
+    for f in $failures; do echo "  $f"; done
+    return 1
+  fi
+  echo "$ran changed test file(s) hermetic-clean"
+  return 0
+}
+
 # Per-suite HOME hermeticity was prototyped here for the state-contending suites
 # (model-override, plan-command) but removed: serial pinning already eliminates
 # the only concurrency those suites could contend under (the read-only pool is
@@ -789,6 +877,21 @@ if command -v gitleaks >/dev/null 2>&1; then
     'gitleaks git . --log-opts="origin/main..HEAD" --gitleaks-ignore-path .gitleaksignore --no-banner --redact'
 else
   skip_check "gitleaks (secrets, origin/main..HEAD)" "gitleaks not installed (brew install gitleaks) -- this is a SKIP, not a pass"
+fi
+
+# ---------------------------------------------------------------------------
+# 2c. Hermetic changed-tests scan (E-94)
+# ---------------------------------------------------------------------------
+# See _lci_hermetic_scan above for the full incident/mechanism writeup.
+# Skipped entirely (not just deferred) when this branch changed no test file
+# under tests/ or loki-ts/tests/ vs origin/main -- the common case -- so the
+# cost this adds to a typical push is a single cheap `git diff`.
+# PARALLEL: reads .git objects and runs disposable subprocesses under a
+# private temp HOME; touches no shared repo state.
+if [ -n "$(git diff --name-only --diff-filter=ACMR origin/main...HEAD -- tests loki-ts/tests 2>/dev/null | grep -E '\.(sh|py|ts)$')" ]; then
+  run_check_bg "hermetic changed-tests (no gh/network, E-94)" '_lci_hermetic_scan'
+else
+  skip_check "hermetic changed-tests (no gh/network, E-94)" "no changed tests/*.sh, tests/*.py, or loki-ts/tests/** vs origin/main"
 fi
 
 # ---------------------------------------------------------------------------
