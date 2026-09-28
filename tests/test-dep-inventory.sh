@@ -84,5 +84,26 @@ else
 fi
 
 echo
+echo "T6 -- self-test survives an unauthenticated, gh-less environment (E-92 guard 17)"
+# E-92: main went red because --self-test made a real `gh api` call in CI
+# that passed locally only because a working, authenticated `gh` happened
+# to be on PATH there. Re-run under a stripped env (empty HOME so gh's own
+# ~/.config/gh auth store is gone, no GH_TOKEN/GITHUB_TOKEN, and gh itself
+# excluded from PATH wherever it lives outside /usr/bin:/bin) so a future
+# unstubbed floating_tag/gh_release cache bucket fails here, unauthenticated,
+# instead of on main. This does not block network access (npm/pypi/endoflife
+# fetchers still reach it); it only removes gh's ability to authenticate.
+t6_home="$(mktemp -d)"
+t6_out="$(mktemp)"
+if env -i HOME="$t6_home" PATH=/usr/bin:/bin python3 "$SCRIPT" --self-test >"$t6_out" 2>&1; then
+    ok "self-test passes with HOME=empty dir, PATH=/usr/bin:/bin, no GH_TOKEN/GITHUB_TOKEN, gh absent from PATH"
+else
+    bad "self-test failed unauthenticated/gh-less (see $t6_out)"
+    sed 's/^/    /' "$t6_out"
+fi
+rm -rf "$t6_home"
+rm -f "$t6_out"
+
+echo
 echo "Results: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

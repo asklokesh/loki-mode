@@ -569,3 +569,48 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   old `test-start-update-hint.sh`) reproduces the incident directly: exit 1,
   reporting both `9.99.0` lines by file:line. Run:
   `bash tests/test-no-stale-future-version.sh`.
+
+## 17. `--self-test` reached the network only in CI, not locally (E-92)
+
+- **Incident:** `scripts/dep-inventory.py --self-test` passed on the
+  engineer's machine but went red on main in CI. The fixture for
+  `actions/setup-node@v4` stubbed only the `gh_release` cache bucket; ref
+  `v4` also matches the bare-major-tag pattern in `collect_actions`, which
+  resolves it through `resolve_floating_tag()` and the `floating_tag` cache
+  bucket. With that bucket unstubbed, the resolver fell through to a real
+  `gh api` call. Locally that call succeeded (a working, authenticated `gh`
+  was on PATH), so the fixture's gap was invisible; in CI (no `gh`, no auth,
+  no network) it failed, `resolve_entry["ok"]` was `False`, and the row's
+  bump fell back to `"unknown"` instead of the expected `"MAJOR"`.
+- **Root cause with evidence:** commit `81cdba4d` ("stub the floating_tag
+  cache in --self-test for actions/setup-node@v4") states it directly: the
+  self-test "passed locally only because gh happened to be authenticated
+  there." No leg of `tests/test-dep-inventory.sh` ran the self-test with
+  `gh`/network absent, so the environment gap that separates "green
+  locally" from "green in CI" was never exercised before main did it for
+  real.
+- **The guard:** `tests/test-dep-inventory.sh` T6 runs
+  `python3 scripts/dep-inventory.py --self-test` under
+  `env -i HOME=<empty temp dir> PATH=/usr/bin:/bin`, which drops
+  `GH_TOKEN`/`GITHUB_TOKEN` and every other inherited variable and wipes
+  `gh`'s own `~/.config/gh` auth store by emptying `HOME`; it also excludes
+  `gh` from PATH wherever it is installed outside `/usr/bin:/bin` (true on
+  this machine: `/opt/homebrew/bin/gh`). Either way -- `gh` absent, or
+  present but with no credentials to present -- any cache bucket a fixture
+  forgets to stub hits a `gh api` call that fails the way it failed in CI,
+  instead of a developer's real, authenticated one. This does not block
+  outbound network access; the npm/PyPI/endoflife fetchers can still reach
+  it, so an unstubbed bucket for one of those is not caught by T6.
+- **The test that proves it fires:** reproduced the incident directly by
+  removing the `floating_tag` fixture E-92 added (the
+  `cache4.data["floating_tag"] = {...}` block for
+  `actions/setup-node@v4`, `scripts/dep-inventory.py` lines 1281-1286) and
+  running `bash tests/test-dep-inventory.sh`: T1 (the script's own
+  self-test, run with the developer's normal, authenticated `gh`) still
+  showed `[PASS] dep-inventory.py --self-test passed` -- proving the
+  existing leg is blind to this class -- while T6 showed `[FAIL]
+  self-test failed unauthenticated/gh-less`; overall `Results: 5 passed, 1
+  failed`, exit 1. The fixture was then restored from a backup
+  (`git diff --quiet scripts/dep-inventory.py` exit 0, confirming an exact
+  restore) and a clean rerun showed `Results: 6 passed, 0 failed`, exit 0.
+  Run: `bash tests/test-dep-inventory.sh`.
