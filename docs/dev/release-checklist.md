@@ -58,6 +58,15 @@ wiki/Home.md, wiki/_Sidebar.md, wiki/API-Reference.md
 README.md, docker-compose.yml            # Docker image tags (MAJOR/MINOR bumps)
 ```
 
+The CHANGELOG.md entry must be a full section, not a one-line placeholder
+(E-88): a summary line, one or more `### ` subsections (Added, Fixed, etc.)
+with a `- ` bullet for every user-visible change, and, if this version
+republishes a version that never reached npm, that version's own section
+carried forward too. `scripts/release-notes.sh <version>` extracts and
+validates this section the same way release.yml does; `.githooks/pre-push`
+runs it on any push that changes VERSION, and release.yml refuses to
+publish the release if the section is missing, empty, or not fully written.
+
 ### 2. Build Dashboard Frontend
 
 ```bash

@@ -1445,6 +1445,7 @@ run_test "web-app CommandPalette file-search failure is not no-results (node --t
 run_test "the moat runner enforces every ratchet rule" "$SCRIPT_DIR/test-moat-runner.sh"
 run_test "v10-pulse anti-drift status/violation reporter" "$SCRIPT_DIR/test-v10-pulse.sh"
 run_test "release.sh --bump-only restores debugId-only dist churn (E-72)" "$SCRIPT_DIR/test-release-bump-only.sh"
+run_test "release-notes.sh extraction/validation + pre-push VERSION-bump gate (E-88)" "$SCRIPT_DIR/test-release-notes.sh"
 run_test "no hardcoded far-future latest a release can overtake (E-73)" "$SCRIPT_DIR/test-no-stale-future-version.sh"
 run_test "timeout launches of run.sh/autonomy/loki escalate with -k (E-00)" "$SCRIPT_DIR/test-timeout-escalates.sh"
 run_test "v10 drift-audit turn counter (every-6th-turn signal)" "$SCRIPT_DIR/test-v10-drift-audit-counter.sh"

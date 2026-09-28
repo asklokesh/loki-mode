@@ -688,15 +688,17 @@ jobs:
         if: steps.check_release.outputs.release_exists == 'false'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          # Extract the section body for this version from CHANGELOG.md. The
-          # CHANGELOG uses unbracketed `## vX.Y.Z` headers (not `## [X.Y.Z]`), so
-          # match `## v$VERSION` and stop at the next `## v` header. The prior
-          # bracketed pattern never matched -> release notes were silently the
-          # generic fallback for every release. Write to file to avoid backtick
-          # interpretation.
-          awk "/^## v$VERSION\$/{flag=1; next} /^## v/{flag=0} flag" CHANGELOG.md > changelog_body.txt
-          if [ ! -s changelog_body.txt ]; then
-            echo "Release v$VERSION" > changelog_body.txt
+          # scripts/release-notes.sh (E-88) replaces the old inline awk here:
+          # that awk anchored `/^## v$VERSION$/` against headers written as
+          # `## vX.Y.Z (YYYY-MM-DD)`, so it never matched, and it spliced
+          # VERSION into an ERE unescaped, so its dots matched any character.
+          # Both bugs silently fell back to a one-line "Release vX.Y.Z" body;
+          # v9.80.1, v9.81.0, v10.0.1, v10.1.0, v10.1.1 and v10.2.1 shipped
+          # that way. The release now FAILS instead of falling back.
+          if ! bash scripts/release-notes.sh "$VERSION" > changelog_body.txt; then
+            echo "ERROR: CHANGELOG.md has no fully-written release notes for v$VERSION." >&2
+            echo "Add a '## v$VERSION' section with '### ' subsections and '- ' bullets before releasing." >&2
+            exit 1
           fi
 
       - name: Create GitHub Release
@@ -728,6 +730,28 @@ jobs:
             release/npm-sbom.cdx.json \
             --title "Loki Mode v${VERSION}" \
             --notes-file changelog_body.txt
+          # Post-create check (E-88): confirm the published release body is not
+          # the old one-line fallback -- belt-and-braces on top of the extract
+          # step's own failure, which already guarantees a fully-written body
+          # reaches --notes-file above. Because downstream jobs (npm, Docker,
+          # Homebrew) only run when THIS job succeeds, a hard failure here
+          # would orphan an already-created release exactly like the v10.2.0
+          # incident this slice exists to prevent -- so retry past a
+          # transient `gh` error (network blip, read-after-write lag) and
+          # only fail on a genuine placeholder match, never on gh itself
+          # being flaky.
+          BODY=""
+          for _attempt in 1 2 3; do
+            BODY="$(gh release view "v${VERSION}" --json body --jq .body 2>/dev/null)" && break
+            echo "WARNING: gh release view attempt ${_attempt} failed; retrying." >&2
+            sleep 2
+          done
+          if [ -z "$BODY" ]; then
+            echo "WARNING: could not read back v${VERSION}'s release body after 3 attempts; skipping the placeholder check (the extract step already validated it before --notes-file)." >&2
+          elif [ "$BODY" = "Release v${VERSION}" ]; then
+            echo "ERROR: published release v${VERSION} body is the placeholder 'Release v${VERSION}'." >&2
+            exit 1
+          fi
 
       - name: Skip message
         if: steps.check_release.outputs.release_exists == 'true'
