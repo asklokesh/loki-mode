@@ -145,6 +145,7 @@ export function renderReceiptMd(r: Receipt): string {
     "### Checks",
     ...(r.checks.length ? r.checks.map((c) => `- ${c.result}: ${c.name} (\`${c.cmd}\`, ${c.duration_s}s)`) : ["- none"]),
     "",
+    ...(r.evidence.length ? ["### Evidence (already-satisfied)", ...r.evidence.map((e) => `- ${e}`), ""] : []),
     "### NOT PROVEN",
     ...r.not_proven.map((n) => `- ${n}`),
     "",
@@ -211,6 +212,7 @@ export const sealStage: Stage = {
       checks,
       not_proven: [],
       verdict,
+      evidence: strs(o.intake?.evidence),
       cost: {
         usd: cost.usd, input_tokens: cost.inputTokens, output_tokens: cost.outputTokens,
         measured_sessions: cost.measuredCount ?? 0, total_sessions: cost.totalCount ?? 0, partial_usd: cost.partialUsd ?? 0,

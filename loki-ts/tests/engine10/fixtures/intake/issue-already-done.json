@@ -1,0 +1,13 @@
+{
+  "provider": "github",
+  "number": 303,
+  "title": "Add global search (Cmd+K)",
+  "body": "Users want a command palette for global search.",
+  "labels": [],
+  "author": "octocat",
+  "url": "https://github.com/acme/widgets/issues/303",
+  "created_at": "2026-01-01T00:00:00Z",
+  "repo": "acme/widgets",
+  "state": "open",
+  "closed_by_merged_pr": false
+}

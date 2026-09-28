@@ -145,6 +145,12 @@ export interface Receipt {
   checks: ReceiptCheck[];
   not_proven: string[];
   verdict: Verdict;
+  /** E-66: the deterministic search hits plus the model's own citation, carried into the receipt so
+   *  an evidence-confirmed ALREADY_SATISFIED verdict is not a bare claim. Empty on every other
+   *  verdict, and also empty on the OTHER ways a run seals ALREADY_SATISFIED (an issue already
+   *  closed, Wall already green on the base tree, or implement's own LOKI_ALREADY_DONE marker):
+   *  none of those goes through this search, so none of them has search hits to carry. */
+  evidence: string[];
   cost: {
     usd: number | null;
     input_tokens: number;
