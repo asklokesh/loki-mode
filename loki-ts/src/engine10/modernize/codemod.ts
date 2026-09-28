@@ -16,7 +16,7 @@ export type CommandRunner = (cmd: string, args: string[], cwd: string) => Comman
 
 /** Real runner: spawnSync, with a missing binary reported as found:false rather than thrown. */
 export const realCommandRunner: CommandRunner = (cmd, args, cwd) => {
-  const r = spawnSync(cmd, args, { cwd, encoding: "utf8" });
+  const r = spawnSync(cmd, args, { cwd, encoding: "utf8", env: process.env });
   if (r.error && (r.error as NodeJS.ErrnoException).code === "ENOENT") return { found: false, code: null };
   return { found: true, code: r.status };
 };
