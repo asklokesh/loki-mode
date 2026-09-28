@@ -125,6 +125,48 @@ def _task_tier(task_dir):
 
 # ---------------------------------------------------------------- validate
 
+def _validate_large_hidden(task_dir, hidden, files):
+    """D38 (docs/v10/DECISIONS.md): a tier=large task's hidden tests must
+    carry provenance, a frozen sha256 per hidden file (re-verified against
+    the file on disk, not just present), and a requirements map where every
+    requirement names at least one hidden test id. `files` is hidden.files
+    already known to be a list (empty if that check itself failed)."""
+    errs = []
+    provenance = hidden.get("provenance")
+    if not isinstance(provenance, dict) or not provenance:
+        errs.append("hidden.provenance is required for tier=large and must be a non-empty object")
+    sha256_map = hidden.get("sha256")
+    if not isinstance(sha256_map, dict) or not sha256_map:
+        errs.append("hidden.sha256 is required for tier=large and must be a non-empty object")
+    else:
+        for rel in files:
+            if not isinstance(rel, str):
+                continue
+            declared = sha256_map.get(rel)
+            if not isinstance(declared, str) or not declared:
+                errs.append("hidden.sha256 is missing an entry for hidden/%s" % rel)
+                continue
+            try:
+                with open(os.path.join(task_dir, "hidden", rel), "rb") as f:
+                    actual = hashlib.sha256(f.read()).hexdigest()
+            except OSError as e:
+                errs.append("hidden.sha256 could not read hidden/%s: %s" % (rel, e))
+                continue
+            if declared.lower() != actual:
+                errs.append("hidden.sha256 mismatch for hidden/%s: declared %s, actual %s"
+                             % (rel, declared, actual))
+    reqs = hidden.get("requirements")
+    if not isinstance(reqs, list) or not reqs:
+        errs.append("hidden.requirements is required for tier=large and must be a non-empty list")
+    else:
+        for i, r in enumerate(reqs):
+            tests = r.get("tests") if isinstance(r, dict) else None
+            if not isinstance(tests, list) or not any(isinstance(x, str) and x.strip() for x in tests):
+                rid = r.get("id") if isinstance(r, dict) else None
+                errs.append("hidden.requirements[%d] (id=%s) names no hidden test id" % (i, rid))
+    return errs
+
+
 def validate_task(task_dir):
     """Return (task_or_None, [errors]). Hidden paths are a trust boundary."""
     errs = []
@@ -181,6 +223,8 @@ def validate_task(task_dir):
                     errs.append("hidden file missing or a symlink: hidden/%s" % rel)
         if not isinstance(hidden.get("run"), str) or not hidden["run"].strip():
             errs.append("hidden.run must be a non-empty command")
+        if t.get("tier") == "large":
+            errs.extend(_validate_large_hidden(task_dir, hidden, files if isinstance(files, list) else []))
     ts = t.get("timeout_s", DEFAULT_TIMEOUT_S)
     if isinstance(ts, bool) or not isinstance(ts, int) or ts <= 0:
         errs.append("timeout_s must be a positive integer")

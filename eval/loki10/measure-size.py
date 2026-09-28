@@ -47,8 +47,11 @@ TIERED = ("medium", "large")
 GIT_TIMEOUT_S = 120
 
 # D34 exclusions: tests/, test_*, .pyi (not .py, excluded by the extension
-# check below), docs, changelog, CI, config.
-_EXCLUDE_DIR_PARTS = {"tests", "test", "docs", "doc", ".github", ".circleci", "changelog"}
+# check below), docs, changelog, CI, config. EV-12E adds typing-examples/ and
+# examples/ (attrs#602-shaped: sample/demo .py files ship beside the real
+# source change and are not delivered product code).
+_EXCLUDE_DIR_PARTS = {"tests", "test", "docs", "doc", ".github", ".circleci", "changelog",
+                      "typing-examples", "examples"}
 
 
 _EXCLUDE_NAMES = {"conftest.py", "setup.py", "noxfile.py"}
