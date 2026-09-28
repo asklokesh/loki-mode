@@ -28,7 +28,8 @@ const USAGE = `Usage (LOKI_ENGINE=v10):
   loki <issue-url|owner/repo#N>   run on an issue
   loki status [run-id]            latest run by default
   loki verify [run-id]            check receipt hashes and signature
-  loki dashboard                  serve the local dashboard (loki modernize <repo> --to <target> converts a codebase)
+  loki dashboard                  serve the local dashboard
+  loki modernize <repo> --to <target>  convert a codebase (loki modernize --help)
 Flags: --deep, --provider <name>, --resume <run-id>, --no-pr
 `;
 // Returns null for an empty or help invocation.
@@ -42,9 +43,7 @@ export function route(args: string[]): Route | null {
 }
 export type Loader = (specifier: string) => Promise<Record<string, unknown>>;
 // A non-literal specifier keeps `bun build` from trying to bundle modules
-// that do not exist yet.
-// ponytail: dist only reaches these once they are bundled; switch to literal
-// imports when every target module has landed.
+// that do not exist yet. Production already switched to literal imports (registry.ts, E-32).
 const defaultLoader: Loader = (spec) => import(spec);
 function isMissing(err: unknown, spec: string): boolean {
   const e = err as { code?: string; message?: string } | null;

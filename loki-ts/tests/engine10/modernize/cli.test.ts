@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { route } from "../../../src/engine10/cli.ts";
+import { route, runEngine10 } from "../../../src/engine10/cli.ts";
 import { main, parseArgs } from "../../../src/engine10/modernize/cli.ts";
 import { modernizeEventsPath } from "../../../src/engine10/modernize/types.ts";
 
@@ -28,6 +28,19 @@ describe("route", () => {
     expect(route(["modernize", "/tmp/repo", "--to", "python3"])).toEqual({
       module: "modernize/cli.ts", fn: "main", args: ["/tmp/repo", "--to", "python3"],
     });
+  });
+
+  it("top-level --help prints a dedicated modernize USAGE line", async () => {
+    const cap = captureStd();
+    try {
+      expect(await runEngine10(["--help"])).toBe(0);
+    } finally {
+      cap.restore();
+    }
+    const lines = cap.out.split("\n");
+    expect(lines).toContain(
+      "  loki modernize <repo> --to <target>  convert a codebase (loki modernize --help)",
+    );
   });
 });
 
