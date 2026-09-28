@@ -1,0 +1,19 @@
+{
+  "id": "pub-click-2869",
+  "kind": "public",
+  "prompt": "Support pathlib.Path in edit filename\n\nWould you welcome a PR to avoid this?\n\n```\nArgument of type \"Path\" cannot be assigned to parameter \"filename\" of type \"str | None\" in function \"edit\"\n  Type \"Path\" is not assignable to type \"str | None\"\n    \"Path\" is not assignable to \"str\"\n    \"Path\" is not assignable to \"None\"Pylance[reportArgumentType](https://github.com/microsoft/pyright/blob/main/docs/configuration.md#reportArgumentType)\n```\n\nEasy workaround with:\n```py\nclick.edit(filename=str(export_common.path))\n```\n\nbut would be nice if didn't need `str`.",
+  "issue_ref": "pallets/click#2869",
+  "repo": {
+    "source": "https://github.com/pallets/click.git",
+    "ref": "2103e157683c5e4cadc8ee1838df526a54bde9a4"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . pytest",
+  "hidden": {
+    "files": [
+      "tests/test_termui.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_termui.py -k \"test_edit_pathlib and single\""
+  },
+  "timeout_s": 900,
+  "tier": "medium"
+}
