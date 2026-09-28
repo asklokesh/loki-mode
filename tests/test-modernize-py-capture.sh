@@ -179,13 +179,33 @@ key_tags = [pair[0]["t"] for pair in mixed["v"]]
 report(key_tags == ["int", "text", "tuple"],
        "dict pairs sorted by the canonical JSON of the key across mixed key types")
 
+exotic = dict((pair[0]["v"], pair[1]) for pair in by_entry["exotic_values"][0]["return"]["v"])
+report(exotic["s"] == {"t": "set", "v": [{"t": "int", "v": "1"}, {"t": "int", "v": "2"}, {"t": "int", "v": "3"}]},
+       "set is tagged set, sorted by the canonical JSON of each element")
+report(exotic["fs"] == {"t": "frozenset", "v": [{"t": "int", "v": "4"}, {"t": "int", "v": "5"}]},
+       "frozenset is tagged frozenset, sorted the same way")
+report(exotic["d"] == {"t": "decimal", "v": "2.50"}, "Decimal is tagged decimal via str(), trailing zero preserved")
+report(exotic["dt"] == {"t": "datetime", "v": "2024-01-02T03:04:05.000006"}, "datetime is tagged datetime via isoformat")
+report(exotic["date"] == {"t": "date", "v": "2024-01-02"}, "date is tagged date via isoformat")
+report(exotic["time"] == {"t": "time", "v": "03:04:05.000006"}, "time is tagged time via isoformat")
+report(exotic["ba"] == {"t": "bytearray", "v": "6869"}, "bytearray is tagged bytearray via hex")
+report(by_entry["exotic_values"][0]["not_proven"] == ["boundary:return undeclared"],
+       "the new types are faithful (no unsupported not_proven); the plain-text dict keys "
+       "still trip the pre-existing undeclared text/bytes boundary check, same as any other entry")
+
+unsupported_rec = by_entry["unsupported_value"][0]
+report(unsupported_rec["return"] == {"t": "unsupported", "type": "_NotProvable"},
+       "a custom class instance is tagged unsupported with its type name, never repr()")
+report(unsupported_rec["not_proven"] == ["unsupported:_NotProvable at return"],
+       "an unsupported return value gets an explicit not_proven entry naming the type and call site")
+
 report(len(set(rec["case"] for rec in records)) == len(records), "every case id is unique")
 
 cov = json.load(open(cov_path))
 report(cov["branches_total"] == 4, "branch enumeration finds exactly 4 branch outcomes (two ifs)")
 report(cov["branches_taken"] == 3, "3 of 4 branch outcomes were exercised by the fixture's cases")
 report(cov["branch_pct"] == 75.0, "branch_pct computed exactly as 75.0")
-report(cov["missing"] == [{"line": 27, "outcome": "false"}],
+report(cov["missing"] == [{"line": 37, "outcome": "false"}],
        "the deliberately-uncovered branch is named by its exact line and outcome")
 PYEOF
 

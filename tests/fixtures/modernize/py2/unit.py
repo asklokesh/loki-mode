@@ -13,8 +13,18 @@ interpreter-agnostic). Exercises what py_capture.py must capture:
 - mixed_dict(): returns a dict with non-string keys, to exercise the
   type-tagged dict format's sorted-pairs encoding.
 - explode(): always raises, to exercise exception capture.
+- exotic_values(): one of each type py_capture can now type-tag faithfully
+  beyond the JSON-native ones (set, frozenset, Decimal, datetime, date,
+  time, bytearray), to exercise those tags round-trip.
+- unsupported_value(): returns a plain custom-class instance, which
+  py_capture cannot type-tag faithfully, to exercise the not_proven path
+  for unsupported types (docs/v10/MODERNIZE.md section 7 honest-verdict
+  rule).
 """
 from __future__ import print_function
+
+import datetime
+from decimal import Decimal
 
 
 def classify(n, label):
@@ -47,3 +57,28 @@ def mixed_dict():
 
 def explode(message):
     raise ValueError(message)
+
+
+def exotic_values():
+    return {
+        "s": set([3, 1, 2]),
+        "fs": frozenset([5, 4]),
+        "d": Decimal("2.50"),
+        "dt": datetime.datetime(2024, 1, 2, 3, 4, 5, 6),
+        "date": datetime.date(2024, 1, 2),
+        "time": datetime.time(3, 4, 5, 6),
+        "ba": bytearray(b"hi"),
+    }
+
+
+class _NotProvable(object):
+    """A plain custom class: py_capture has no faithful tag for an instance
+    of this, so it must surface as {"t": "unsupported", ...} and a
+    not_proven entry, never as silently-equal to another instance."""
+
+    def __init__(self, n):
+        self.n = n
+
+
+def unsupported_value():
+    return _NotProvable(7)
