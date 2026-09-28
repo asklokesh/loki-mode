@@ -156,7 +156,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (!isTail && capReached()) markCap(todo[0] as StageName);
       if (capHit && !isTail) { jumped = true; continue; }
       const results = await Promise.all(todo.map((n) => runStage(n, !isTail)));
-      if (todo[0] === "intake" && results[0]?.status === "failed") {
+      if (todo[0] === "intake" && results[0]?.status === "failed" && !capHit) {
         return { outputs, capHit, stopped: "intake failed", final: false };
       }
       if (todo.some((n, i) => mustJump(n, results[i] ?? null))) { jumped = true; continue; }
