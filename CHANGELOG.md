@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.3.0 (2026-09-28)
+
+Loki 10 engine (still opt-in: `LOKI_ENGINE=v10`): runs that cannot finish now end with a visible result instead of stalling, and the first `loki modernize` command entry point lands. Also a pre-push secret scan for eval fixtures and swarm tooling.
+
+### Added
+- No pause state (E-67): a run that cannot finish within its cap never waits for input and never ends silently. It ends as a draft PR or an issue comment that states the reason, and uncommitted or untracked work reaches that draft PR. The supervisor's backstop always leaves the worker time to seal its result, at every cap from a few seconds up to the default.
+- `loki modernize <repo> --to <target>` command and flag parsing on the v10 engine (M-07). It rejects a repo path that does not exist instead of reporting success. The conversion pipeline behind it is still being built; this release adds the entry point and its help text.
+- Java behaviour capture for modernize (M-11): JUnit under JDK 8 with JaCoCo and Randoop when available; every control character in its status output is escaped, and a missing JDK or a malformed status file is reported as not proven, never as a pass.
+- Pre-push secret scan for eval task fixtures (E-86): pushes that change `eval/loki10/tasks/` or `eval/loki10/refdiff/` run a checksum-pinned gitleaks v8.30.0 over every pushed commit and refuse on a finding, naming the file, line and rule but never the secret. Install it with `scripts/install-gitleaks.sh`.
+
+### Fixed
+- The engine's cap handling: the soft cap, backstop and kill escalation are consistent at small caps, so a run at a short cap is sealed instead of being killed before it can report (E-67).
+- Test and CI hygiene: a test for the new gitleaks step no longer assumes the scanner is installed (E-100); the app-runner watchdog test uses free ports and a readiness wait instead of fixed ports (E-95); local CI re-runs changed tests with no credentials so a test that only passes with a logged-in GitHub CLI fails before merge (E-94).
+- Swarm pulse (internal tooling): release-cadence and understaffing checks (E-89).
+
 ## v10.2.5 (2026-09-28)
 
 Test guard and planning docs. No change to how `loki` runs your builds.
