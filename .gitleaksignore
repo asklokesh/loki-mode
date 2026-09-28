@@ -62,3 +62,11 @@ tests/test_proof_redaction.py:private-key:66
 # credential; flagged by Security Audit on the v9.54.1 push (D15/D16/D17),
 # unrelated to that push's own content.
 d298ca60a17366ca3504262eaf60e107cd24b883:tests/test-branch-lifecycle.sh:generic-api-key:1392
+# Loki 10 engine test fixtures, flagged by Security Audit on the v9.79.0 and
+# v9.80.0 release SHAs. None is a real credential: a planted AWS-shaped string
+# the deep-verify secret scan must catch (deep.test.ts), and token canaries
+# marked CANARY and WITHHELD that prove credentials never reach a worker or a
+# push hook (test-engine10-push-gitlab.sh, rule_of_two.test.ts).
+854c93f9ec763861a7b5e8ee26c7bc7042eeb28a:loki-ts/tests/engine10/deep.test.ts:aws-access-token:132
+912509ced103effa63c3631889c0d7bc3ea43106:tests/test-engine10-push-gitlab.sh:gitlab-pat:20
+dbc2b6043698f815798f5898e3cb1eb289339592:loki-ts/tests/engine10/rule_of_two.test.ts:generic-api-key:122
