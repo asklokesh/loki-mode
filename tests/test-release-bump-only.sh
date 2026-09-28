@@ -133,7 +133,7 @@ fi
 # leg alone goes red.
 MARKER="$WORK/.debugid-helper-called"
 rm -f "$MARKER"
-mkdir -p "$WORK/bin"
+mkdir -p "$WORK/bin" "$WORK/loki-ts/node_modules"
 cat >"$WORK/bin/bun" <<'EOF'
 #!/usr/bin/env bash
 exit 0
