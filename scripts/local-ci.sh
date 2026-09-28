@@ -929,6 +929,24 @@ if command -v bun >/dev/null 2>&1; then
   # ONE real regression in noise and costing a full 26-minute cycle to diagnose.
   # --frozen-lockfile so the gate can never silently drift the lockfile.
   run_check "loki-ts dependencies installed" "(cd loki-ts && bun install --frozen-lockfile) 2>&1 | tail -3"
+  # E-62/EV-8 incident guard: the eval harness ran the global `loki` against a
+  # checkout whose node_modules had drifted behind bun.lock (an old
+  # @anthropic-ai/claude-agent-sdk), so every v10 session silently measured
+  # the wrong build. bun install above should already have fixed any drift;
+  # this is the same check eval/loki10/harness.py refuses on before a run,
+  # confirming install actually left node_modules matching bun.lock rather
+  # than exiting 0 on a partial or cache-corrupted install.
+  run_check "loki-ts node_modules matches bun.lock (E-62)" '
+    python3 -c "
+import sys
+sys.path.insert(0, \"$REPO_ROOT/eval/loki10\")
+import harness
+why = harness.lockfile_mismatch(\"$REPO_ROOT\")
+if why:
+    print(\"error: \" + why)
+    sys.exit(1)
+"
+  '
   run_check "bun run typecheck" "(cd loki-ts && bun run typecheck) 2>&1 | tail -5"
   run_check "bun test" "(cd loki-ts && bun test) 2>&1 | tail -5"
   # dist freshness: the committed loki-ts/dist/loki.js is the artifact npm/Docker
