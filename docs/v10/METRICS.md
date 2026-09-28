@@ -243,3 +243,20 @@ Misses: pub-click-3059 (hidden tests failed: wrong metavar bracketing), pub-huma
 ## Loki 10 engine: first real run (E-14 smoke, not the gate)
 
 pub-more-itertools-1192 through the E-14 glue entry, real claude, --no-pr: 30s wall (intake 0s, plan 16s, implement 12s, verify 3s, commit and seal under 1s), hidden test passes, $0.4486 over 2 sessions (plan $0.2264, implement $0.2223), verdict PARTIAL only because ruff is not installed. Raw claude on the same task: 15s, $0.1290. The planner session costs as much as the implement session.
+
+## Loki 10 gate report, small tier (2026-09-28, D30; v10.0.0 decision)
+
+All arms on claude-opus-5-5, 29 small tasks with hidden tests, fresh clone per run, provider-sourced cost only. D30 targets vs raw: completion 96.5% or higher, cost per completed task $0.118 or lower, time to a correct result at most raw.
+
+| arm | completed | cost per completed | p50 / p90 time to PR | source |
+|---|---|---|---|---|
+| raw `claude -p` | 27/29 (93.1%) | $0.2363 | 39s / 68s | ~/loki-ci-logs/eval-raw-claude-20260927T231653Z/results.jsonl |
+| legacy (global loki v9.78.0) | 15/29 (51.7%); hidden tests pass 26/29, no PR opened | not measured (0/29 provider-sourced) | 190s / 441s | ~/loki-ci-logs/ev5-legacy/results.jsonl |
+| v10 default knobs (main 8b76fd9a: E-45 cost path, E-65 lean sessions) | 26/29 (89.7%) | $0.3946 (2 runs unmeasured) | 85.5s / 133s | ~/loki-ci-logs/ev9-v10-small/results.jsonl |
+| v10 lean configuration, not the default (same build, LOKI_E10_PLAN=0 LOKI_E10_WALL=0) | 27/29 (93.1%) | $0.1616 (1 run unmeasured) | 40s / 67s | ~/loki-ci-logs/ev9-v10-small-lean/results.jsonl |
+
+- v10 misses: aiq-52-searchbar (the feature already exists; the no-change outcome is E-66/EV-13, in rework), pub-click-3059, pub-humanize-174 (raw missed the same two pub tasks).
+- Gate: NOT MET on any axis for the default configuration. Default stays legacy; v10 ships opt-in (LOKI_ENGINE=v10).
+- Lean configuration misses: aiq-52-searchbar, pub-humanize-174. It matches raw on completion and time and is 32% cheaper; it does not meet the 2x targets and is not the default until E-64 lands and is re-measured.
+- Lean-session evidence, 5 tasks (EV-8 D/E, not the full arm): opus lean 4/5 at $0.1571 per completed, p50 28s; sonnet lean 4/5 at $0.1519, p50 27.5s; raw opus on the same 5: 5/5, $0.2161, p50 41s (~/loki-ci-logs/ev8r-{D,E}/results.jsonl). The lean small path is not the default yet (E-64 in rework).
+- Medium and large tiers: not built (EV-11 3 of 15 verified, EV-12 in rework). No "2-5x" claim.

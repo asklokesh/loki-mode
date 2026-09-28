@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.0.0 (2026-09-28)
+
+Loki 10: a new engine (TypeScript/Bun, under 5,000 lines, one state machine: intake, plan, Wall, one implement session, fast verify with at most 2 fix rounds, Seal, PR, async deep verify; 15-minute cap; one append-only event log per run). It ships OPT-IN: run `LOKI_ENGINE=v10 loki "<task>"` or `LOKI_ENGINE=v10 loki owner/repo#N`. The default engine is still legacy, because the release gate below was not met. Legacy is unchanged and is removed only after v10 becomes the default.
+
+### Release gate (D30), small tier, 29 tasks with hidden tests, all arms claude-opus-5-5
+
+| arm | completed | cost per completed task | p50 / p90 time to PR |
+|---|---|---|---|
+| raw `claude -p` | 27/29 (93.1%) | $0.2363 | 39s / 68s |
+| v10, default settings | 26/29 (89.7%) | $0.3946 (2 runs unmeasured) | 85.5s / 133s |
+| v10, lean configuration (`LOKI_E10_PLAN=0 LOKI_E10_WALL=0`) | 27/29 (93.1%) | $0.1616 (1 run unmeasured) | 40s / 67s |
+| legacy | 15/29 (26/29 pass the hidden tests; legacy opens no PR) | not measured | 190s / 441s |
+
+- Targets were: at least 2x fewer failures than raw (96.5% or higher), at most half raw's cost per completed task ($0.118), and no slower than raw. Not met: the default v10 settings are worse than raw on all three; the lean configuration ties raw on completion and time and is 32% cheaper, short of 2x.
+- Misses: default v10 missed aiq-52-searchbar (the feature already exists; the "no change needed" outcome is in progress), pub-click-3059 and pub-humanize-174; raw missed pub-click-3059 and pub-humanize-174.
+- Medium and large tiers are not built yet, so no multi-tier claim is made. Full numbers and sources: docs/v10/METRICS.md.
+
+### Added in this release
+- Pulse STALE_PROGRESS check (E-63); dashboard shows its own and the CLI's version and replaces an older Loki dashboard on its port (E-70); engine sessions use a lean SDK shape (6 tools, no legacy prompt append, no MCP, project settings only), cutting a session's fixed prompt from about 20.4k to 7.1k tokens (E-65); docs/v10/MODERNIZE.md, the design for `loki modernize` (Part 2).
+
 ## v9.81.0 (2026-09-28)
 
 ### Added

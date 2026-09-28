@@ -1297,3 +1297,10 @@ sample.
 - Part 2: MODERNIZE.md in progress (CTO and Architect), ETA 02:45Z; 0 Part 2 slices done.
 - In flight: E-64, E-63 (STALE_PROGRESS), EV-11 (medium tier), EV-12 (large tier), E-66..E-70 and EV-13 (augmentiq #52 P0), E-65 rework.
 - Top blocker: v10 cost per completed task vs the $0.118 target, then the medium and large tiers (not built yet) for the accuracy claim.
+
+## 2026-09-28T02:57Z: Loki 10 progress
+- Part 1 gate numbers (small tier, claude-opus-5-5, 29 tasks): raw 27/29 (93.1%), $0.2363, p50 39s; v10 default knobs 26/29 (89.7%), $0.3946 (2 unmeasured), p50 85.5s (~/loki-ci-logs/ev9-v10-small/results.jsonl); legacy 15/29, cost not measured. Gate not met; v10.0.0 ships opt-in with these numbers; default stays legacy (D30).
+- Lean configuration (no plan, no Wall; not the default), full 29 tasks: 27/29 (93.1%), $0.1616 per completed (1 unmeasured), p50 40s, p90 67s (~/loki-ci-logs/ev9-v10-small-lean/results.jsonl). Matches raw on completion and time, 32% cheaper; short of the 2x targets.
+- Part 2: MODERNIZE.md merged in train E17 (8f4dc965, 399 lines, M-01..M-30 on the board); first builders on M-01/M-02/M-05/M-06 and M-09. 0 Part 2 slices merged.
+- Merged this half hour: E-65 lean engine sessions (8b76fd9a), E-63 STALE_PROGRESS pulse check, E-70 dashboard versions (train E17). Released v9.81.0 (npm 02:38:54Z).
+- Top blocker: default v10 is heavier than raw (plan and Wall on every normal task, $0.39 vs $0.24). E-64 (lean small path plus opus on failure) is the fix; it was rejected once and is in rework.
