@@ -531,3 +531,41 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   AKIA-shaped token fails the step, and a commit adding the identical
   characters via source-level concatenation (never contiguous in the
   committed bytes) passes it.
+
+## 16. A "far-future" `latest` version literal in a test went stale (E-73)
+
+- **Incident:** `tests/test-start-update-hint.sh` hardcoded `latest=9.99.0`
+  (two occurrences, lines 130 and 163 as of `306b6b0c`'s parent) as a value
+  meant to always read as "far in the future" so the update-available hint
+  would reliably fire. The v10.0.0 major release made `9.99.0` older than
+  the real `VERSION`, so the hint stopped firing and Tests shards 5/8 (this
+  test) and 1/8 (trust-core baseline, rc 67) went red on commit `898fa081`.
+- **Root cause with evidence:** commit `306b6b0c` (`fix(tests): stale-install
+  hint test used 9.99.0 as "far-future", older than 10.0.0`) states it
+  directly: "The 10.0.0 bump made latest=9.99.0 older than VERSION, so the
+  hint stayed silent." A literal future-version constant was compared only
+  against the `VERSION` at the time it was written, with nothing keeping it
+  ahead of later major bumps. The fix bumped the literal to `999.0.0`, but
+  nothing stopped a second copy of the same mistake from being added
+  elsewhere in tests/.
+- **The guard:** `tests/test-no-stale-future-version.sh` scans `tests/`
+  (`.sh`, `.py`, `.ts`) for literal `latest` version assignments
+  (`"latest":"X.Y.Z"`, `latest=X.Y.Z`, `latest: 'X.Y.Z'`) and fails, printing
+  `file:line`, whenever a found version's major component is not strictly
+  greater than the current `VERSION` major plus 10 -- so a planted
+  "far-future" literal must stay comfortably ahead of the next several major
+  releases, not just the one at the time it was written. Each `latest`
+  occurrence is scored on its own matched version text, so a sibling version
+  number elsewhere on the same line (a `"current"` or `"version"` key, say)
+  can never mask or fake a violation.
+- **The test that proves it fires:** `tests/test-no-stale-future-version.sh`
+  is itself the test: it runs its own scanner against the real `tests/` tree
+  (must be clean on main) and against a synthetic fixture directory planting
+  `latest="9.99.0"` alongside a `latest="999.0.0"` fixture and two
+  mixed-line fixtures pairing a stale/fresh `latest` with a fresher/staler
+  sibling number on the same line, asserting file:line for every case that
+  must be caught and silence for every case that must not. Replaying the
+  scanner against the actual pre-`306b6b0c` tree (`VERSION=10.0.0` plus the
+  old `test-start-update-hint.sh`) reproduces the incident directly: exit 1,
+  reporting both `9.99.0` lines by file:line. Run:
+  `bash tests/test-no-stale-future-version.sh`.
