@@ -5,7 +5,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import type { RunContext, RunnerName, Stage, StageResult, TestMap, TestRef } from "../types.ts";
 import { taskBlock } from "../types.ts";
 import type { ReadOnlyFile } from "./implement.ts";
@@ -21,18 +21,19 @@ export interface WallSealedFile { path: string; sha256: string; } // path: absol
 // not_run (D42 (3)): no real result; counts toward neither pass nor fail. Optional for pre-D42(3) fakes.
 export interface BaseTestRunner { run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run?: number }; }
 const BASE_RUN_TIMEOUT_MS = 60_000; // same per-check budget as verify.ts's CHECK_TIMEOUT_MS
-// B3 (r2): a pytest collection error is red only when the frame that raised it is under realpath(repoDir).
+// B3 (r2, E-125): red only when the frame that raised it is under realpath(repoDir); real pytest's OWN
+// frames read "path.py:N: in <scope>" (relative to repoDir), library frames "File \"path\", line N".
 function pytestCollectionIsRed(output: string, repoDir: string): boolean {
   if (/ModuleNotFoundError/.test(output)) return false;
-  const real = (p: string): string | null => { try { return realpathSync(p); } catch { return null; } };
+  const real = (p: string): string | null => { try { return realpathSync(isAbsolute(p) ? p : join(repoDir, p)); } catch { return null; } };
   const repoReal = real(repoDir);
   const under = (p: string): boolean => { const r = real(p); return !!repoReal && !!r && (r === repoReal || r.startsWith(`${repoReal}/`)); };
   const imp = /ImportError: cannot import name .* from ['"][\w.]+['"] \(([^)]+)\)/.exec(output); // pytest prints the module's own path here
   if (imp) return under(imp[1]!);
   const exc = /\b(?:AttributeError|NameError)\b/.exec(output);
   if (!exc) return false;
-  const frames = [...output.slice(0, exc.index).matchAll(/File "([^"]+)", line \d+/g)];
-  const last = frames.length ? frames[frames.length - 1]![1]! : null; // the frame right before the exception raised it
+  const frames = [...output.slice(0, exc.index).matchAll(/(?:File "([^"]+)", line \d+|^(\S+):\d+: in )/gm)];
+  const last = frames.length ? (frames[frames.length - 1]![1] ?? frames[frames.length - 1]![2] ?? null) : null; // the frame right before the exception raised it
   return !!last && under(last);
 }
 // B2 (r2): jest/vitest/bun red requires a parsed failed-test count above 0; unparseable output stays 0 (not_run).
@@ -94,9 +95,7 @@ export function loadTaskText(ctx: RunContext, fromPrior: string | undefined): st
       const issue = JSON.parse(readFileSync(issueJsonPath, "utf8")) as { title?: string; body?: string };
       const text = [issue.title, issue.body].filter((s) => typeof s === "string" && s.length > 0).join("\n\n");
       if (text) return text;
-    } catch {
-      /* malformed issue.json: fall through to the text-mode env var */
-    }
+    } catch { /* malformed issue.json: fall through to the text-mode env var */ }
   }
   return process.env.LOKI_E10_TASK_TEXT ?? "";
 }

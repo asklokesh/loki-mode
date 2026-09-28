@@ -449,20 +449,51 @@ describe("engine10 wall base run, D42 (3)", () => {
     rmSync(repoDir, { recursive: true, force: true });
   });
 
-  test("(B3) an AttributeError from a third-party conftest/plugin frame is not_run, not red", () => {
+  // E-125 (real fixtures, not synthetic strings): real pytest reports the frame it needs to read as
+  // "path.py:N: in <scope>" (relative to repoDir), not the plain-traceback "File \"path\", line N" the
+  // old B3 fixtures assumed -- that shape never appears for pytest's own collection frames, so the red
+  // class never fired. (3a)/(3b) above already prove the ImportError/third-party-module shapes for real.
+  test("(3c) AttributeError on a repo symbol at collection time: red", () => {
     const repoDir = repo();
-    const outsideDir = mkdtempSync(join(tmpdir(), "loki-s41-16-outside-"));
-    const pluginFile = join(outsideDir, "conftest.py");
-    writeFileSync(pluginFile, "# third-party plugin, not part of the repo under test\n", "utf8");
-    const outsideOutput = [`File "${pluginFile}", line 12, in some_hook`, "AttributeError: 'NoneType' object has no attribute 'foo'"].join("\n");
-    expect(classify({ runner: "pytest", path: "x" }, 2, outsideOutput, repoDir)).toBe("not_run");
+    venvShim(repoDir);
+    mkdirSync(join(repoDir, "mypkg"), { recursive: true });
+    writeFileSync(join(repoDir, "mypkg", "__init__.py"), "", "utf8");
+    writeFileSync(join(repoDir, "mypkg", "mymod.py"), "# the feature is not built yet\n", "utf8");
+    writeFileSync(join(repoDir, "loki_wall_attr.py"), "from mypkg import mymod\n\nVALUE = mymod.missing_attribute\n\ndef test_x():\n    pass\n", "utf8");
 
-    const repoFile = join(repoDir, "loki_wall_x.py");
-    writeFileSync(repoFile, "# real repo file\n", "utf8");
-    const repoOutput = [`File "${repoFile}", line 3, in test_x`, "AttributeError: 'NoneType' object has no attribute 'foo'"].join("\n");
-    expect(classify({ runner: "pytest", path: "x" }, 2, repoOutput, repoDir)).toBe("fail");
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_attr.py" }]);
+
+    expect(result).toEqual({ pass: 0, fail: 1, not_run: 0 });
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  test("(3d) AttributeError raised by an outside (non-repo) frame reached via a repo import: not_run, not red", () => {
+    const repoDir = repo();
+    venvShim(repoDir);
+    const outsideDir = mkdtempSync(join(tmpdir(), "loki-e125-outside-"));
+    writeFileSync(join(outsideDir, "thirdparty_plugin.py"), "VALUE = None.missing_attr\n", "utf8");
+    writeFileSync(
+      join(repoDir, "loki_wall_outside.py"),
+      `import sys\nsys.path.insert(0, ${JSON.stringify(outsideDir)})\nimport thirdparty_plugin\n\ndef test_x():\n    pass\n`,
+      "utf8",
+    );
+
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_outside.py" }]);
+
+    expect(result).toEqual({ pass: 0, fail: 0, not_run: 1 });
     rmSync(repoDir, { recursive: true, force: true });
     rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  test("(3e) a syntax error at collection: not_run (D42 names only ImportError/AttributeError/NameError)", () => {
+    const repoDir = repo();
+    venvShim(repoDir);
+    writeFileSync(join(repoDir, "loki_wall_syntax.py"), "def test_x(:\n    pass\n", "utf8");
+
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_syntax.py" }]);
+
+    expect(result).toEqual({ pass: 0, fail: 0, not_run: 1 });
+    rmSync(repoDir, { recursive: true, force: true });
   });
 
   test("(B4) any result on the system interpreter is not_run, even an apparent pass", () => {
