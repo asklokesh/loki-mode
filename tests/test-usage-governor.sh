@@ -33,15 +33,16 @@ d=json.load(sys.stdin)
 $2" 2>/dev/null; }
 
 # One assistant-message JSONL row. $1=file $2=timestamp(ISO) $3=model
-# $4=output_tokens $5=message id (blank => omitted) $6=requestId (blank => omitted)
+# $4=output_tokens $5=message id (blank => omitted) $6=requestId (blank =>
+# omitted) $7=cache_read_input_tokens (blank => 5)
 _row() {
-  local file="$1" ts="$2" model="$3" out="$4" mid="$5" rid="$6"
-  python3 - "$file" "$ts" "$model" "$out" "$mid" "$rid" <<'PYEOF'
+  local file="$1" ts="$2" model="$3" out="$4" mid="$5" rid="$6" cache_read="${7:-5}"
+  python3 - "$file" "$ts" "$model" "$out" "$mid" "$rid" "$cache_read" <<'PYEOF'
 import json, sys
-file, ts, model, out, mid, rid = sys.argv[1:7]
+file, ts, model, out, mid, rid, cache_read = sys.argv[1:8]
 msg = {"role": "assistant", "model": model,
        "usage": {"input_tokens": 10, "output_tokens": int(out),
-                  "cache_read_input_tokens": 5, "cache_creation_input_tokens": 1}}
+                  "cache_read_input_tokens": int(cache_read), "cache_creation_input_tokens": 1}}
 if mid:
     msg["id"] = mid
 rec = {"type": "assistant", "timestamp": ts, "message": msg}
@@ -212,37 +213,50 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# T7: two content-block rows sharing one message id count once
+# T7: rows sharing one message id are streaming snapshots, not duplicates.
+# output_tokens grows across them (e.g. 5, 5, 467); cache fields repeat; the
+# last row holds the final count. Must take the row with the MAX
+# output_tokens once (and that row's cache fields), never the first row
+# (undercounts) and never a naive sum of every row (overcounts).
 # ---------------------------------------------------------------------------
-echo "T7 -- dedup by message.id (repeated usage across content-block rows)"
+echo "T7 -- dedup by message.id keeps the max-output_tokens row"
 ROOT7="$FIXTURE_ROOT/t7/projects"
 PROJ7="$ROOT7/-Users-test-proj"
 mkdir -p "$PROJ7"
-# Same message id, same usage total repeated on two rows (as Claude Code does
-# per content block of one API response). Must count 500 once, not 1000.
-_row "$PROJ7/session-a.jsonl" "2026-09-28T15:30:00.000Z" "claude-sonnet-4-6" 500 "msg_shared" ""
-_row "$PROJ7/session-a.jsonl" "2026-09-28T15:30:01.000Z" "claude-sonnet-4-6" 500 "msg_shared" ""
+# Same message id, growing output_tokens (5 -> 467) as it streams; cache_read
+# repeats at 9 on every row. Must count 467 once (with cache_read=9), not
+# 5+467=472 and not just the first row's 5.
+_row "$PROJ7/session-a.jsonl" "2026-09-28T15:30:00.000Z" "claude-sonnet-4-6" 5 "msg_shared" "" 9
+_row "$PROJ7/session-a.jsonl" "2026-09-28T15:30:01.000Z" "claude-sonnet-4-6" 467 "msg_shared" "" 9
 # A distinct message must still count separately.
 _row "$PROJ7/session-a.jsonl" "2026-09-28T15:31:00.000Z" "claude-sonnet-4-6" 300 "msg_other" ""
 READINGS7="$FIXTURE_ROOT/t7/readings.tsv"
 printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS7"
 OUT7="$(python3 "$TOOL" --root "$ROOT7" --readings "$READINGS7" --now "2026-09-28T16:00:00Z" --json)"
 _out7="$(_q "$OUT7" "print(d['window']['current_tokens_output'])")"
-if [ "$_out7" = "800" ]; then
-  ok "shared message.id counted once (500) + distinct message (300) = 800, not 1300"
+if [ "$_out7" = "767" ]; then
+  ok "growing message.id rows keep the max (467) once + distinct message (300) = 767"
 else
-  bad "expected 800 (deduplicated), got '$_out7' -- rows are being double-counted"
+  bad "expected 767 (max-row dedup), got '$_out7' -- either undercounting the first row or double-counting"
+fi
+_cache7="$(_q "$OUT7" "print(d['totals']['by_model']['claude-sonnet-4-6']['cache_read_input_tokens'])")"
+# msg_shared's winning row contributes cache_read=9, msg_other contributes 5 (the _row default) -> 14.
+if [ "$_cache7" = "14" ]; then
+  ok "the winning row's own cache fields are kept (9 + 5 = 14), not the first row's"
+else
+  bad "expected cache_read_input_tokens=14 from the winning rows, got '$_cache7'"
 fi
 
-# requestId fallback: no message.id present, two rows share requestId.
-_row "$PROJ7/session-b.jsonl" "2026-09-28T15:30:00.000Z" "claude-sonnet-4-6" 700 "" "req_shared"
+# requestId fallback: no message.id present, two rows share requestId with
+# growing output_tokens (100 -> 700).
+_row "$PROJ7/session-b.jsonl" "2026-09-28T15:30:00.000Z" "claude-sonnet-4-6" 100 "" "req_shared"
 _row "$PROJ7/session-b.jsonl" "2026-09-28T15:30:01.000Z" "claude-sonnet-4-6" 700 "" "req_shared"
 OUT7B="$(python3 "$TOOL" --root "$ROOT7" --readings "$READINGS7" --now "2026-09-28T16:00:00Z" --json)"
 _out7b="$(_q "$OUT7B" "print(d['window']['current_tokens_output'])")"
-if [ "$_out7b" = "1500" ]; then
-  ok "requestId fallback dedups when message.id is absent (800 + 700 = 1500)"
+if [ "$_out7b" = "1467" ]; then
+  ok "requestId fallback keeps the max (700) once when message.id is absent (767 + 700 = 1467)"
 else
-  bad "expected 1500 with requestId dedup, got '$_out7b'"
+  bad "expected 1467 with requestId max-row dedup, got '$_out7b'"
 fi
 
 echo ""

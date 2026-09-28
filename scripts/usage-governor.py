@@ -121,15 +121,21 @@ def iter_jsonl_files(root: Path):
 def iter_records(root: Path):
     """Yield (path, role, timestamp, model, usage-dict) for assistant messages with usage.
 
-    Claude Code writes one JSONL row per content block and repeats the same
-    `message.usage` totals on every row of a given API response, so a file
-    is deduplicated by `message.id` (falling back to `requestId`, then to
-    row position when neither is present) before a row's usage counts.
-    Skips unreadable files and unparseable lines rather than failing.
+    Claude Code writes one JSONL row per content block, and each row is a
+    streaming snapshot of the same API response, not a duplicate: output_tokens
+    grows across rows sharing one message.id (e.g. 5, 5, 467) while cache
+    fields repeat, and the LAST row holds the final, complete usage. Taking
+    the first row (or naively summing every row) both undercount or
+    overcount, so a file is grouped by `message.id` (falling back to
+    `requestId`, then to row position when neither is present) and only the
+    row with the highest output_tokens in each group is kept, using that
+    row's full usage dict (its cache fields are the real, non-repeating
+    ones) and its own timestamp. Skips unreadable files and unparseable
+    lines rather than failing.
     """
     for path in iter_jsonl_files(root):
         role = classify_role(path)
-        seen_ids = set()
+        best = {}  # dedup_key -> (output_tokens, ts, model, usage)
         try:
             fh = open(path, "r", encoding="utf-8", errors="replace")
         except OSError:
@@ -153,11 +159,13 @@ def iter_records(root: Path):
                 if ts is None:
                     continue
                 dedup_key = msg.get("id") or rec.get("requestId") or ("__row__", line_no)
-                if dedup_key in seen_ids:
-                    continue
-                seen_ids.add(dedup_key)
                 model = msg.get("model") or "unknown"
-                yield path, role, ts, model, usage
+                out = output_tokens_of(usage)
+                prior = best.get(dedup_key)
+                if prior is None or out >= prior[0]:
+                    best[dedup_key] = (out, ts, model, usage)
+        for _out, ts, model, usage in best.values():
+            yield path, role, ts, model, usage
 
 
 def output_tokens_of(usage):
