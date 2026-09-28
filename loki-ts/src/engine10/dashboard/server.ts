@@ -120,10 +120,13 @@ export function startServer(repoDir: string, port: number = DEFAULT_PORT): Dashb
   const server = Bun.serve({
     hostname: HOSTNAME,
     port,
-    fetch(req) {
+    async fetch(req) {
       const url = new URL(req.url);
       if (url.pathname === "/") {
         return new Response(renderPage(), { headers: { "content-type": "text/html; charset=utf-8" } });
+      }
+      if (url.pathname === "/modernize") {
+        return (await import("../modernize/dashboard.ts")).modernizeRoute(repoDir);
       }
       if (url.pathname === "/version") {
         return Response.json({ dashboard: DASHBOARD_IDENT, version: getVersion(), cliVersion: getCliVersion(), pid: process.pid });
