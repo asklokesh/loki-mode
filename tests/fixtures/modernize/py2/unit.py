@@ -20,11 +20,37 @@ interpreter-agnostic). Exercises what py_capture.py must capture:
   py_capture cannot type-tag faithfully, to exercise the not_proven path
   for unsupported types (docs/v10/MODERNIZE.md section 7 honest-verdict
   rule).
+- subclass_values(): a namedtuple, an OrderedDict, a plain int subclass,
+  and (when the interpreter has one) an IntEnum member -- each is a
+  subclass of a type tag() supports (tuple, dict, int), but must still be
+  tagged unsupported naming its OWN type, never silently coerced to the
+  base type's tag. Without the exact-type gate, a subclass value on one
+  runtime (say, py2 returning enum34's Color.RED) and a plain base value
+  on the other (py3 returning a bare 1) would tag identically and read as
+  proven equal when they are not (M-09 rework: the exact-type gate this
+  fixture exercises).
 """
 from __future__ import print_function
 
+import collections
 import datetime
 from decimal import Decimal
+
+try:
+    import enum
+
+    class _Color(enum.IntEnum):
+        RED = 1
+except ImportError:  # py2.7 without the enum34 backport installed
+    enum = None
+    _Color = None
+
+_NT = collections.namedtuple("NT", ["a", "b"])
+
+
+class _IntSubclass(int):
+    """A plain int subclass, not an enum -- must still be tagged unsupported,
+    not silently coerced to int."""
 
 
 def classify(n, label):
@@ -82,3 +108,16 @@ class _NotProvable(object):
 
 def unsupported_value():
     return _NotProvable(7)
+
+
+def subclass_values():
+    values = {
+        "namedtuple": _NT(1, 2),
+        "ordereddict": collections.OrderedDict([("a", 1), ("b", 2)]),
+        "int_subclass": _IntSubclass(9),
+    }
+    # A ternary, not an `if` statement, deliberately -- this fixture's own
+    # branch coverage (classify()'s two ifs) must stay unchanged whether or
+    # not the interpreter has enum.
+    values.update({"intenum": _Color.RED} if _Color is not None else {})
+    return values

@@ -56,9 +56,13 @@ valid strict JSON):
     {"t": "unsupported", "type": "<type name>"}  -- anything else (a custom
         class instance, for example). Never repr(): an object's repr can
         embed a memory address, which is not deterministic across runs and
-        would poison the golden record. Capture is never skipped for these
-        either, but every occurrence -- at any nesting depth inside the
-        return value or a raised exception's args -- adds
+        would poison the golden record. Every tag above is gated on the
+        EXACT type of the value, never isinstance(): a subclass of a
+        supported type (a namedtuple, an OrderedDict, an IntEnum member, a
+        plain int subclass) is tagged unsupported under its own type name,
+        not silently coerced to the base type's tag. Capture is never
+        skipped for these either, but every occurrence -- at any nesting
+        depth inside the return value or a raised exception's args -- adds
         "unsupported:<type name> at <call site>" to "not_proven" (see
         below). This is what keeps the honest-verdict rule honest: two
         unsupported values of the same type, wherever they show up, must
@@ -211,37 +215,46 @@ def canon(obj):
 
 
 def tag(value):
+    # Gated on the EXACT type (type(value) is X / in {...}), never isinstance:
+    # a subclass of a supported type (namedtuple vs tuple, OrderedDict vs
+    # dict, IntEnum vs int, a plain int subclass, ...) must fall through to
+    # the "unsupported" catch-all below, naming its own type. isinstance()
+    # would silently tag it as its base type, so two values that are NOT the
+    # same type -- Color.RED vs plain 1, a namedtuple vs a plain tuple --
+    # would read as proven equal. bool/long/unicode/str (py2) are kept as
+    # named exact types, not collapsed by isinstance either.
+    vtype = type(value)
     if value is None:
         return {"t": "none"}
-    if isinstance(value, bool):
+    if vtype is bool:
         return {"t": "bool", "v": value}
-    if isinstance(value, INT_TYPES):
+    if vtype in INT_TYPES:
         return {"t": "int", "v": str(int(value))}
-    if isinstance(value, float):
+    if vtype is float:
         return _tag_float(value)
-    if isinstance(value, Decimal):
+    if vtype is Decimal:
         return {"t": "decimal", "v": str(value)}
-    if isinstance(value, bytearray):
+    if vtype is bytearray:
         return {"t": "bytearray", "v": _hexencode(value)}
-    if isinstance(value, BYTES_TYPES):
+    if vtype in BYTES_TYPES:
         return {"t": "bytes", "v": _b64encode(value)}
-    if isinstance(value, TEXT_TYPES):
+    if vtype in TEXT_TYPES:
         return {"t": "text", "v": value}
-    if isinstance(value, datetime.datetime):
+    if vtype is datetime.datetime:
         return {"t": "datetime", "v": value.isoformat()}
-    if isinstance(value, datetime.date):
+    if vtype is datetime.date:
         return {"t": "date", "v": value.isoformat()}
-    if isinstance(value, datetime.time):
+    if vtype is datetime.time:
         return {"t": "time", "v": value.isoformat()}
-    if isinstance(value, tuple):
+    if vtype is tuple:
         return {"t": "tuple", "v": [tag(x) for x in value]}
-    if isinstance(value, frozenset):
+    if vtype is frozenset:
         return {"t": "frozenset", "v": sorted((tag(x) for x in value), key=canon)}
-    if isinstance(value, set):
+    if vtype is set:
         return {"t": "set", "v": sorted((tag(x) for x in value), key=canon)}
-    if isinstance(value, list):
+    if vtype is list:
         return {"t": "list", "v": [tag(x) for x in value]}
-    if isinstance(value, dict):
+    if vtype is dict:
         pairs = [[tag(k), tag(v)] for k, v in value.items()]
         pairs.sort(key=lambda kv: canon(kv[0]))
         return {"t": "dict", "v": pairs}

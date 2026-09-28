@@ -4,3 +4,4 @@
 {"entry": "explode", "args": [{"t": "text", "v": "boom"}], "kwargs": {}}
 {"entry": "exotic_values", "args": [], "kwargs": {}}
 {"entry": "unsupported_value", "args": [], "kwargs": {}}
+{"entry": "subclass_values", "args": [], "kwargs": {}}

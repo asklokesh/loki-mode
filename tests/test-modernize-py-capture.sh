@@ -199,13 +199,37 @@ report(unsupported_rec["return"] == {"t": "unsupported", "type": "_NotProvable"}
 report(unsupported_rec["not_proven"] == ["unsupported:_NotProvable at return"],
        "an unsupported return value gets an explicit not_proven entry naming the type and call site")
 
+# Subclasses of a supported type (tuple/dict/int) must be tagged unsupported
+# naming their OWN type, never silently coerced to the base type's tag --
+# the exact-type gate this rework adds (E18 M-09 REJECT, blocking finding).
+subclass_rec = by_entry["subclass_values"][0]
+subclass = dict((pair[0]["v"], pair[1]) for pair in subclass_rec["return"]["v"])
+report(subclass["namedtuple"] == {"t": "unsupported", "type": "NT"},
+       "a namedtuple (subclass of tuple) is tagged unsupported naming its own type, never tuple")
+report(subclass["ordereddict"] == {"t": "unsupported", "type": "OrderedDict"},
+       "an OrderedDict (subclass of dict) is tagged unsupported naming its own type, never dict")
+report(subclass["int_subclass"] == {"t": "unsupported", "type": "_IntSubclass"},
+       "a plain int subclass is tagged unsupported naming its own type, never int")
+report("intenum" in subclass, "the fixture interpreter has enum.IntEnum available")
+if "intenum" in subclass:
+    report(subclass["intenum"] == {"t": "unsupported", "type": "_Color"},
+           "an IntEnum member (subclass of int) is tagged unsupported naming its own type, never int")
+report(subclass_rec["not_proven"] == [
+    "boundary:return undeclared",
+    "unsupported:_IntSubclass at return.value[0]",
+    "unsupported:_Color at return.value[1]",
+    "unsupported:NT at return.value[2]",
+    "unsupported:OrderedDict at return.value[3]",
+], "every subclass value gets its own not_proven entry naming its exact type, none silently proven "
+   "(plus the pre-existing undeclared-boundary flag from the dict's own plain-text keys)")
+
 report(len(set(rec["case"] for rec in records)) == len(records), "every case id is unique")
 
 cov = json.load(open(cov_path))
 report(cov["branches_total"] == 4, "branch enumeration finds exactly 4 branch outcomes (two ifs)")
 report(cov["branches_taken"] == 3, "3 of 4 branch outcomes were exercised by the fixture's cases")
 report(cov["branch_pct"] == 75.0, "branch_pct computed exactly as 75.0")
-report(cov["missing"] == [{"line": 37, "outcome": "false"}],
+report(cov["missing"] == [{"line": 61, "outcome": "false"}],
        "the deliberately-uncovered branch is named by its exact line and outcome")
 PYEOF
 
