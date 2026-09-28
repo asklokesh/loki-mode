@@ -10,7 +10,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { commitStage, DEEP_NOT_PROVEN, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
+import { commitStage, DEEP_NOT_PROVEN, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
 import { REPO_ROOT } from "../../src/util/paths.ts";
@@ -149,6 +149,19 @@ describe("engine10 seal", () => {
     expect(ev?.data.receipt_sha256).toBe(r.receipt_sha256);
   }, 30000);
 
+  test("E-69: a partial ctx.cost.read() reaches the receipt's measured/total/partial fields", async () => {
+    noKey();
+    const { repo, base } = makeRepo("partial-cost");
+    const { ctx } = ctxFor(repo, base);
+    ctx.cost = { read: () => ({ usd: null, inputTokens: 1200, outputTokens: 200, cacheReadTokens: 0, measuredCount: 1, totalCount: 2, partialUsd: 0.125 }) };
+    await commitStage.run(ctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    expect(r.cost.usd).toBeNull();
+    expect(r.cost.measured_sessions).toBe(1);
+    expect(r.cost.total_sessions).toBe(2);
+    expect(r.cost.partial_usd).toBe(0.125);
+  }, 30000);
+
   test("no key: signed false, summary UNSIGNED, deep checks in NOT PROVEN", async () => {
     process.env["LOKI_RECEIPT_SIGNING_KEY"] = "";
     process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = "";
@@ -278,4 +291,36 @@ describe("engine10 seal", () => {
     const py = cryptoPy || "python3";
     expect(sh([py, "-I", "-c", PY_HASH, s.data.receipt_path as string], root).trim()).toBe(r.receipt_sha256);
   }, 30000);
+});
+
+// E-69: renderReceiptMd is pure, so the three cost states are tested directly against a
+// fabricated receipt rather than driving the full git/signing pipeline for each one.
+function receiptWithCost(cost: Receipt["cost"]): Receipt {
+  return {
+    schema: "loki.v10.receipt/1", run_id: "r1", task: { source: "text", sha256: "ab".repeat(32) }, repo: "o/r",
+    base_sha: "b".repeat(40), head_sha: "h".repeat(40), tree: "t".repeat(40), diff_sha256: "d".repeat(64),
+    wall: { files: [], passed: null }, checks: [], not_proven: [], verdict: "PARTIAL", cost,
+    time: { wall_s: 10, stages: {} }, provider: "claude", model: "sonnet", resumed: false,
+    events_sha256: "e".repeat(64), receipt_sha256: "r".repeat(64), verification: { jwt: null, kid: null },
+  };
+}
+describe("engine10 receipt cost line (E-69)", () => {
+  test("fully measured renders the plain $X.XXXX line", () => {
+    const md = renderReceiptMd(receiptWithCost({ usd: 0.3, input_tokens: 1000, output_tokens: 200, measured_sessions: 2, total_sessions: 2, partial_usd: 0.3 }));
+    expect(md).toContain("Cost: $0.3000");
+    expect(md).not.toContain("partial");
+  });
+
+  test("not measured (zero sessions priced) renders \"not measured\", never $0.00", () => {
+    const md = renderReceiptMd(receiptWithCost({ usd: null, input_tokens: 0, output_tokens: 0, measured_sessions: 0, total_sessions: 2, partial_usd: 0 }));
+    expect(md).toContain("Cost: not measured");
+    expect(md).not.toContain("$0.00");
+    expect(md).not.toContain("partial");
+  });
+
+  test("partial (some sessions priced) renders \"partial: $X for N of M sessions\"", () => {
+    const md = renderReceiptMd(receiptWithCost({ usd: null, input_tokens: 1000, output_tokens: 200, measured_sessions: 1, total_sessions: 2, partial_usd: 0.125 }));
+    expect(md).toContain("Cost: partial: $0.1250 for 1 of 2 sessions");
+    expect(md).not.toContain("$0.00");
+  });
 });

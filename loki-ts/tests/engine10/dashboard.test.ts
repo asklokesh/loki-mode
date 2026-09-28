@@ -78,6 +78,35 @@ describe("summarizeRun / formatPanels", () => {
       { label: "Time", value: "4s" },
     ]);
   });
+
+  // E-69 rework: dashboard's Cost panel had only the $X.XX and "not measured" branches;
+  // a run with one priced session and one unpriced one fell straight to "not measured",
+  // losing the "partial: $X for N of M" detail output.ts already shows for the same case.
+  test("a partially priced run: Cost panel shows partial: $X for N of M sessions", () => {
+    repoDir = mkRepo();
+    writeRun(repoDir, "r1", [
+      ev(0, "run.started", null, {}),
+      ev(1, "cost", null, { session_id: "s1", usd: 0.2 }),
+      ev(2, "cost", null, { session_id: "s2" }), // no dollar figure: unpriced
+    ]);
+    const s = summarizeRun(repoDir, "r1");
+    expect(s.costUsd).toBeNull();
+    expect(formatPanels(s).find((p) => p.label === "Cost")).toEqual({
+      label: "Cost", value: "partial: $0.20 for 1 of 2 sessions",
+    });
+  });
+
+  test("a tampered run: Cost panel reads not measured, never a partial dollar figure", () => {
+    repoDir = mkRepo();
+    writeRun(repoDir, "r1", [
+      ev(0, "run.started", null, {}),
+      ev(1, "cost", null, { session_id: "s1", usd: 0.2 }),
+      ev(2, "tamper.detected", null, { expected_sha256: "a", actual_sha256: "b" }),
+    ]);
+    const s = summarizeRun(repoDir, "r1");
+    expect(s.costUsd).toBeNull();
+    expect(formatPanels(s).find((p) => p.label === "Cost")).toEqual({ label: "Cost", value: "not measured" });
+  });
 });
 
 describe("startServer", () => {
