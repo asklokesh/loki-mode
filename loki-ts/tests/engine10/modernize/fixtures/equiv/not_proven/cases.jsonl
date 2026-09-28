@@ -1,0 +1,2 @@
+{"format":1,"case":"c1","entry":"make","args":[],"kwargs":{},"return":{"t":"unsupported","type":"CustomThing"},"exc":null,"stdout":{"t":"text","v":""},"files":[],"not_proven":["unsupported:CustomThing at return"]}
+{"format":1,"case":"c2","entry":"make","args":[],"kwargs":{},"return":{"t":"int","v":"1"},"exc":null,"stdout":{"t":"text","v":""},"files":[],"not_proven":[]}
