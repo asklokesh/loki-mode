@@ -1,0 +1,4 @@
+{"entry": "classify", "args": [{"t": "int", "v": "5"}, {"t": "text", "v": "bytes"}], "kwargs": {}}
+{"entry": "classify", "args": [{"t": "int", "v": "-3"}, {"t": "text", "v": "bytes"}], "kwargs": {}}
+{"entry": "mixed_dict", "args": [], "kwargs": {}}
+{"entry": "explode", "args": [{"t": "text", "v": "boom"}], "kwargs": {}}

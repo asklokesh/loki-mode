@@ -1525,6 +1525,7 @@ run_test "run-owned temp cleanup works when sourced under zsh" "$SCRIPT_DIR/test
 run_test "Loki 10 legacy deprecation notice (E-35)" "$SCRIPT_DIR/test-engine10-legacy-notice.sh"
 run_test "Loki 10 gate publish script (EV-6)" "$SCRIPT_DIR/../eval/loki10/test-publish-gate.sh"
 run_test "Loki 10 user docs match USAGE and the default marker (E-34)" "$SCRIPT_DIR/test-engine10-docs.sh"
+run_test "Loki modernize py2/3 capture tracer (M-09)" "$SCRIPT_DIR/test-modernize-py-capture.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 
 # Summary
