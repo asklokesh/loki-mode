@@ -25,6 +25,29 @@ describe("tarjanSCC", () => {
   });
 });
 
+describe("tarjanSCC on large graphs (iterative: no recursion-depth overflow)", () => {
+  it("does not throw on a 100,000-node linear chain", () => {
+    const n = 100_000;
+    const nodes = Array.from({ length: n }, (_, i) => ({ id: `n${i}`, lines: 1 }));
+    const edges: [string, string][] = Array.from({ length: n - 1 }, (_, i) => [`n${i}`, `n${i + 1}`]);
+    const graph: DepGraph = { nodes, edges };
+    let sccs: string[][] = [];
+    expect(() => { sccs = tarjanSCC(graph); }).not.toThrow();
+    expect(sccs).toHaveLength(n); // acyclic chain: every node is its own component
+  });
+
+  it("does not throw on a 50,000-node single cycle", () => {
+    const n = 50_000;
+    const nodes = Array.from({ length: n }, (_, i) => ({ id: `n${i}`, lines: 1 }));
+    const edges: [string, string][] = Array.from({ length: n }, (_, i) => [`n${i}`, `n${(i + 1) % n}`]);
+    const graph: DepGraph = { nodes, edges };
+    let sccs: string[][] = [];
+    expect(() => { sccs = tarjanSCC(graph); }).not.toThrow();
+    expect(sccs).toHaveLength(1);
+    expect(sccs[0]).toHaveLength(n);
+  });
+});
+
 describe("clusterInventory", () => {
   it("builds one unit per SCC and a leaves-first wave plan for a diamond", () => {
     // a -> b -> d, a -> c -> d (d has no deps: it is a leaf and must ship first)
