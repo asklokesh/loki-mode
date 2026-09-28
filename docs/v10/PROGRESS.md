@@ -1455,3 +1455,8 @@ sample.
 - S41-05 opus REJECT (3 blocking: key-order mutations M1 to M4 survive 19/0, no early-accept predicate, import fence misses 4 forms); back to its engineer. M-15 done at a6d584fb (246/0), opus review in flight.
 - Worktree drift: removed 4 stale worktrees (E-106, E-98a, old M-14 wf, EV-12F-b) after saving their diffs and untracked files to the session scratchpad (wt-salvage/).
 - UNEVIDENCED_CLAIM on a9f74496 is the S41-17 card text defining marks ("green or red"), a spec, not a claim.
+
+## 2026-09-28T22:33Z (Chief of Staff / Release Manager)
+- v10.5.3 verified: Release 36490908332 all jobs success; npm latest 10.5.3, gitHead 2e13fca3; body 12 lines. npm 404'd the version for about 7 min after publish-npm logged "+ loki-mode@10.5.3" (22:19:55Z); propagation, not a failed publish. 6 rows flipped released.
+- Train pushed 2e13fca3..04d3ac9c (41 commits: S41-16, M-14, E-118, E-122, E-123, E-124, S41-09, dist); Tests and Bun Parity watcher armed; 10.5.4 cut on green.
+- S41-09 merged (ebb16a62, TL APPROVE, 26/0). M-15 opus REJECT (B1 missing third-party package classified red; B2 PROVEN without conformance re-run or no-op ablation), back to engineer. M-18 done (a01c6fdb, 206/0 modernize), TL review. PO cut E-126 to E-131; staffing waits on worktree slots (15/15).
