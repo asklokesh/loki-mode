@@ -153,12 +153,14 @@ export interface Receipt {
 export type PushArgs =
   | { cmd: "push-pr"; repoDir: string; branch: string; title: string; bodyFile: string; draft: boolean }
   | { cmd: "comment"; runId: string; prUrl: string; file: string }
-  | { cmd: "status"; sha: string; state: "pending" | "success" | "failure"; description: string };
+  | { cmd: "status"; sha: string; state: "pending" | "success" | "failure"; description: string }
+  | { cmd: "issue-comment"; issueRef: string; bodyFile: string };
 export interface PushEnv { _LOKI_ORIGIN_PINNED: "1"; _LOKI_PINNED_ORIGIN: string; }
 export function pushArgv(a: PushArgs): string[] {
   switch (a.cmd) {
     case "push-pr": return ["push-pr", a.repoDir, a.branch, a.title, a.bodyFile, a.draft ? "1" : "0"];
     case "comment": return ["comment", a.runId, a.prUrl, a.file];
     case "status": return ["status", a.sha, a.state, a.description];
+    case "issue-comment": return ["issue-comment", a.issueRef, a.bodyFile];
   }
 }

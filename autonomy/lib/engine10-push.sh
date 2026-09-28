@@ -3,6 +3,7 @@
 #
 #   engine10-push.sh push-pr <repo-dir> <branch> <title> <body-file> [--draft]
 #   engine10-push.sh comment <pr-number> <body-file>
+#   engine10-push.sh issue-comment <issue-ref> <body-file>
 #   engine10-push.sh status  <sha> <pending|success|failure|error> <description>
 #
 # Holds GitHub credentials, runs no LLM, reads no untrusted text. Inputs come
@@ -137,6 +138,16 @@ case "$mode" in
         [ -z "$_e10_local" ] || { log_info "local origin: no PR to comment on (no-op)"; exit 0; }
         _e10_gh pr comment "$1" --repo "$_e10_repo" --body-file "$2" || die "gh pr comment failed"
         ;;
+    issue-comment)
+        # E-67: a FAILED run with no diff (or no remote) has no PR to open; comment on the issue
+        # instead so the run's reason is never silently lost. <issue-ref> is owner/repo#N or #N.
+        [ "$#" -eq 2 ] || die "usage: issue-comment <issue-ref> <body-file>"
+        num="${1##*#}"
+        case "$num" in '' | *[!0-9]*) die "cannot extract issue number from: $1" ;; esac
+        [ -f "$2" ] || die "body file not found: $2"
+        [ -z "$_e10_local" ] || { log_info "local origin: no issue to comment on (no-op)"; exit 0; }
+        _e10_gh issue comment "$num" --repo "$_e10_repo" --body-file "$2" || die "gh issue comment failed"
+        ;;
     status)
         [ "$#" -eq 3 ] || die "usage: status <sha> <state> <description>"
         [[ "$1" =~ ^[0-9a-f]{40}$ ]] || die "sha must be 40 lowercase hex characters"
@@ -145,5 +156,5 @@ case "$mode" in
         _e10_gh api "repos/$_e10_repo/statuses/$1" -f "state=$2" -f context=loki/deep-verify \
             -f "description=$3" >/dev/null || die "gh api status failed"
         ;;
-    *) die "usage: engine10-push.sh push-pr|comment|status ..." ;;
+    *) die "usage: engine10-push.sh push-pr|comment|issue-comment|status ..." ;;
 esac
