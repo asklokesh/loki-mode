@@ -1,0 +1,264 @@
+#!/usr/bin/env bash
+# G-01: usage governor (D39). Fixture jsonl trees + founder readings drive
+# scripts/usage-governor.py through --json and assert on the parsed output.
+#
+# Coverage: uncalibrated path (zero readings), one-reading and two-reading
+# fits, the Wednesday 13:00 ET weekly reset across a DST boundary, a 429 line
+# detected in the last hour, malformed lines skipped without crashing, and
+# per-message-id deduplication (Claude Code repeats message.usage on every
+# content-block row of one API response; summing rows double-counts).
+
+set -uo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+TOOL="$REPO_ROOT/scripts/usage-governor.py"
+
+PASS=0; FAIL=0
+ok()  { echo "  [PASS] $1"; PASS=$((PASS+1)); }
+bad() { echo "  [FAIL] $1"; FAIL=$((FAIL+1)); }
+
+echo "TEST: usage-governor.py (D39)"
+
+[ -f "$TOOL" ] || { echo "  FAIL: $TOOL missing"; exit 1; }
+python3 -c "import json,zoneinfo" 2>/dev/null || {
+  echo "  SKIP: python3 stdlib (zoneinfo) unavailable"
+  echo ""; echo "  Passed: 0   Failed: 0 (skipped)"; exit 0; }
+
+FIXTURE_ROOT="$(mktemp -d)"
+trap 'rm -rf "$FIXTURE_ROOT"' EXIT
+
+_q() { printf '%s' "$1" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+$2" 2>/dev/null; }
+
+# One assistant-message JSONL row. $1=file $2=timestamp(ISO) $3=model
+# $4=output_tokens $5=message id (blank => omitted) $6=requestId (blank =>
+# omitted) $7=cache_read_input_tokens (blank => 5)
+_row() {
+  local file="$1" ts="$2" model="$3" out="$4" mid="$5" rid="$6" cache_read="${7:-5}"
+  python3 - "$file" "$ts" "$model" "$out" "$mid" "$rid" "$cache_read" <<'PYEOF'
+import json, sys
+file, ts, model, out, mid, rid, cache_read = sys.argv[1:8]
+msg = {"role": "assistant", "model": model,
+       "usage": {"input_tokens": 10, "output_tokens": int(out),
+                  "cache_read_input_tokens": int(cache_read), "cache_creation_input_tokens": 1}}
+if mid:
+    msg["id"] = mid
+rec = {"type": "assistant", "timestamp": ts, "message": msg}
+if rid:
+    rec["requestId"] = rid
+with open(file, "a") as fh:
+    fh.write(json.dumps(rec) + "\n")
+PYEOF
+}
+
+# ---------------------------------------------------------------------------
+# T1: uncalibrated path -- zero readings, must say so and print no percentage
+# ---------------------------------------------------------------------------
+echo "T1 -- uncalibrated with zero readings"
+ROOT1="$FIXTURE_ROOT/t1/projects"
+PROJ1="$ROOT1/-Users-test-proj"
+mkdir -p "$PROJ1"
+_row "$PROJ1/session-a.jsonl" "2026-09-28T16:00:00.000Z" "claude-sonnet-4-6" 1000 "msg_1" ""
+READINGS1="$FIXTURE_ROOT/t1/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS1"
+
+OUT1="$(python3 "$TOOL" --root "$ROOT1" --readings "$READINGS1" --now "2026-09-28T16:30:00Z" --json)"
+_st="$(_q "$OUT1" "print(d['window']['source'])")"
+_cal="$(_q "$OUT1" "print(d['calibration']['window']['status'])")"
+if [ "$_st" = "uncalibrated" ] && [ "$_cal" = "uncalibrated" ]; then
+  ok "zero readings -> window source and calibration status both 'uncalibrated'"
+else
+  bad "expected uncalibrated/uncalibrated, got source='$_st' status='$_cal'"
+fi
+_pct="$(_q "$OUT1" "print(d['window']['current_pct'])")"
+if [ "$_pct" = "None" ]; then
+  ok "no percentage printed when uncalibrated"
+else
+  bad "expected null current_pct, got '$_pct'"
+fi
+
+# ---------------------------------------------------------------------------
+# T2: one-reading fit
+# ---------------------------------------------------------------------------
+echo "T2 -- one-reading fit"
+ROOT2="$FIXTURE_ROOT/t2/projects"
+PROJ2="$ROOT2/-Users-test-proj"
+mkdir -p "$PROJ2"
+# 1000 output tokens inside the 5h window ending at the reading time.
+_row "$PROJ2/session-a.jsonl" "2026-09-28T15:00:00.000Z" "claude-sonnet-4-6" 1000 "msg_1" ""
+READINGS2="$FIXTURE_ROOT/t2/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n2026-09-28T16:00:00Z\t10\t5\n' > "$READINGS2"
+
+OUT2="$(python3 "$TOOL" --root "$ROOT2" --readings "$READINGS2" --now "2026-09-28T16:00:00Z" --json)"
+_rate="$(_q "$OUT2" "print(d['calibration']['window']['tokens_per_percent_output'])")"
+# 1000 tokens / 10 percent = 100 tokens per percent.
+if [ "$_rate" = "100.0" ]; then
+  ok "one reading fits tokens_per_percent_output = 100.0"
+else
+  bad "expected 100.0, got '$_rate'"
+fi
+_n="$(_q "$OUT2" "print(d['calibration']['readings_count'])")"
+[ "$_n" = "1" ] && ok "readings_count reports 1" || bad "expected readings_count=1, got '$_n'"
+_status="$(_q "$OUT2" "print(d['calibration']['window']['status'])")"
+case "$_status" in
+  *"n=1"*) ok "status labelled ESTIMATE (n=1 readings)" ;;
+  *) bad "expected an n=1 ESTIMATE label, got '$_status'" ;;
+esac
+
+# ---------------------------------------------------------------------------
+# T3: two-reading fit (least squares through the origin differs from either
+# single-reading ratio when the two readings disagree)
+# ---------------------------------------------------------------------------
+echo "T3 -- two-reading fit"
+ROOT3="$FIXTURE_ROOT/t3/projects"
+PROJ3="$ROOT3/-Users-test-proj"
+mkdir -p "$PROJ3"
+# Reading A: 1000 tokens by 2026-09-28T12:00:00Z at 10% -> ratio 100.
+_row "$PROJ3/session-a.jsonl" "2026-09-28T11:00:00.000Z" "claude-sonnet-4-6" 1000 "msg_a" ""
+# Reading B: cumulative 3000 tokens by 2026-09-28T16:00:00Z at 20% -> ratio 150.
+# (Within B's own trailing 5h window [11:00,16:00] both rows fall inside.)
+_row "$PROJ3/session-a.jsonl" "2026-09-28T15:00:00.000Z" "claude-sonnet-4-6" 2000 "msg_b" ""
+READINGS3="$FIXTURE_ROOT/t3/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n2026-09-28T12:00:00Z\t10\t5\n2026-09-28T16:00:00Z\t20\t8\n' > "$READINGS3"
+
+OUT3="$(python3 "$TOOL" --root "$ROOT3" --readings "$READINGS3" --now "2026-09-28T16:00:00Z" --json)"
+_rate3="$(_q "$OUT3" "print(d['calibration']['window']['tokens_per_percent_output'])")"
+_n3="$(_q "$OUT3" "print(d['calibration']['readings_count'])")"
+# least squares through origin: sum(pct*tokens)/sum(pct^2) = (10*1000+20*3000)/(100+400) = 70000/500 = 140
+if [ "$_n3" = "2" ] && [ "$_rate3" = "140.0" ]; then
+  ok "two readings fit via least-squares through the origin (140.0, n=2)"
+else
+  bad "expected n=2 rate=140.0, got n=$_n3 rate=$_rate3"
+fi
+
+# ---------------------------------------------------------------------------
+# T4: weekly reset across a DST boundary (America/New_York EST<->EDT)
+# ---------------------------------------------------------------------------
+echo "T4 -- weekly reset across a DST boundary"
+ROOT4="$FIXTURE_ROOT/t4/projects"
+PROJ4="$ROOT4/-Users-test-proj"
+mkdir -p "$PROJ4"
+_row "$PROJ4/session-a.jsonl" "2026-03-05T00:00:00.000Z" "claude-sonnet-4-6" 500 "msg_1" ""
+READINGS4="$FIXTURE_ROOT/t4/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS4"
+# 2026-03-11 is a Wednesday. US DST starts 2026-03-08 02:00 local (spring
+# forward). "now" is after the spring-forward Wednesday reset, so the reset
+# boundary must be computed in EDT (UTC-4), not EST (UTC-5).
+OUT4="$(python3 "$TOOL" --root "$ROOT4" --readings "$READINGS4" --now "2026-03-11T18:00:00Z" --json)"
+_wk_start="$(_q "$OUT4" "print(d['weekly']['start'])")"
+if [ "$_wk_start" = "2026-03-11T17:00:00+00:00" ]; then
+  ok "weekly reset resolves to 13:00 EDT = 17:00 UTC on the DST side ($_wk_start)"
+else
+  bad "expected 2026-03-11T17:00:00+00:00 (13:00 EDT), got '$_wk_start'"
+fi
+
+# ---------------------------------------------------------------------------
+# T5: a 429 in the last hour is detected with its timestamp
+# ---------------------------------------------------------------------------
+echo "T5 -- 429 detected in the last hour"
+ROOT5="$FIXTURE_ROOT/t5/projects"
+PROJ5="$ROOT5/-Users-test-proj"
+mkdir -p "$PROJ5"
+_row "$PROJ5/session-a.jsonl" "2026-09-28T15:59:00.000Z" "claude-sonnet-4-6" 100 "msg_1" ""
+python3 - "$PROJ5/session-a.jsonl" <<'PYEOF'
+import json, sys
+rec = {"type": "assistant", "timestamp": "2026-09-28T15:58:00.000Z",
+       "message": {"role": "assistant", "model": "claude-sonnet-4-6",
+                    "usage": {"output_tokens": 0}},
+       "error": "HTTP 429 Too Many Requests"}
+with open(sys.argv[1], "a") as fh:
+    fh.write(json.dumps(rec) + "\n")
+PYEOF
+READINGS5="$FIXTURE_ROOT/t5/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS5"
+OUT5="$(python3 "$TOOL" --root "$ROOT5" --readings "$READINGS5" --now "2026-09-28T16:00:00Z" --json)"
+_last="$(_q "$OUT5" "print(d['limit_events']['last_occurrence'])")"
+_cnt="$(_q "$OUT5" "print(d['limit_events']['count_last_hour'])")"
+if [ "$_last" = "2026-09-28T15:58:00+00:00" ] && [ "$_cnt" = "1" ]; then
+  ok "429 line detected at its own timestamp ($_last)"
+else
+  bad "expected last_occurrence=2026-09-28T15:58:00+00:00 count=1, got last='$_last' count='$_cnt'"
+fi
+
+# ---------------------------------------------------------------------------
+# T6: malformed lines are skipped, not fatal
+# ---------------------------------------------------------------------------
+echo "T6 -- malformed lines are skipped"
+ROOT6="$FIXTURE_ROOT/t6/projects"
+PROJ6="$ROOT6/-Users-test-proj"
+mkdir -p "$PROJ6"
+{
+  echo 'not json at all {{{'
+  echo ''
+  printf '%s\n' '{"type":"assistant","timestamp":"not-a-timestamp","message":{"role":"assistant","model":"x","usage":{"output_tokens":1}}}'
+} > "$PROJ6/session-a.jsonl"
+_row "$PROJ6/session-a.jsonl" "2026-09-28T15:30:00.000Z" "claude-sonnet-4-6" 42 "msg_ok" ""
+READINGS6="$FIXTURE_ROOT/t6/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS6"
+_rc=0
+OUT6="$(python3 "$TOOL" --root "$ROOT6" --readings "$READINGS6" --now "2026-09-28T16:00:00Z" --json 2>"$FIXTURE_ROOT/t6.err")" || _rc=$?
+if [ "$_rc" -eq 0 ]; then
+  ok "malformed/missing-timestamp lines do not crash the governor"
+else
+  bad "governor exited $_rc on malformed input"
+  sed 's/^/        /' "$FIXTURE_ROOT/t6.err"
+fi
+_out6="$(_q "$OUT6" "print(d['window']['current_tokens_output'])")"
+if [ "$_out6" = "42" ]; then
+  ok "only the one well-formed row (42 tokens) is counted"
+else
+  bad "expected 42 output tokens counted, got '$_out6'"
+fi
+
+# ---------------------------------------------------------------------------
+# T7: rows sharing one message id are streaming snapshots, not duplicates.
+# output_tokens grows across them (e.g. 5, 5, 467); cache fields repeat; the
+# last row holds the final count. Must take the row with the MAX
+# output_tokens once (and that row's cache fields), never the first row
+# (undercounts) and never a naive sum of every row (overcounts).
+# ---------------------------------------------------------------------------
+echo "T7 -- dedup by message.id keeps the max-output_tokens row"
+ROOT7="$FIXTURE_ROOT/t7/projects"
+PROJ7="$ROOT7/-Users-test-proj"
+mkdir -p "$PROJ7"
+# Same message id, growing output_tokens (5 -> 467) as it streams; cache_read
+# repeats at 9 on every row. Must count 467 once (with cache_read=9), not
+# 5+467=472 and not just the first row's 5.
+_row "$PROJ7/session-a.jsonl" "2026-09-28T15:30:00.000Z" "claude-sonnet-4-6" 5 "msg_shared" "" 9
+_row "$PROJ7/session-a.jsonl" "2026-09-28T15:30:01.000Z" "claude-sonnet-4-6" 467 "msg_shared" "" 9
+# A distinct message must still count separately.
+_row "$PROJ7/session-a.jsonl" "2026-09-28T15:31:00.000Z" "claude-sonnet-4-6" 300 "msg_other" ""
+READINGS7="$FIXTURE_ROOT/t7/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS7"
+OUT7="$(python3 "$TOOL" --root "$ROOT7" --readings "$READINGS7" --now "2026-09-28T16:00:00Z" --json)"
+_out7="$(_q "$OUT7" "print(d['window']['current_tokens_output'])")"
+if [ "$_out7" = "767" ]; then
+  ok "growing message.id rows keep the max (467) once + distinct message (300) = 767"
+else
+  bad "expected 767 (max-row dedup), got '$_out7' -- either undercounting the first row or double-counting"
+fi
+_cache7="$(_q "$OUT7" "print(d['totals']['by_model']['claude-sonnet-4-6']['cache_read_input_tokens'])")"
+# msg_shared's winning row contributes cache_read=9, msg_other contributes 5 (the _row default) -> 14.
+if [ "$_cache7" = "14" ]; then
+  ok "the winning row's own cache fields are kept (9 + 5 = 14), not the first row's"
+else
+  bad "expected cache_read_input_tokens=14 from the winning rows, got '$_cache7'"
+fi
+
+# requestId fallback: no message.id present, two rows share requestId with
+# growing output_tokens (100 -> 700).
+_row "$PROJ7/session-b.jsonl" "2026-09-28T15:30:00.000Z" "claude-sonnet-4-6" 100 "" "req_shared"
+_row "$PROJ7/session-b.jsonl" "2026-09-28T15:30:01.000Z" "claude-sonnet-4-6" 700 "" "req_shared"
+OUT7B="$(python3 "$TOOL" --root "$ROOT7" --readings "$READINGS7" --now "2026-09-28T16:00:00Z" --json)"
+_out7b="$(_q "$OUT7B" "print(d['window']['current_tokens_output'])")"
+if [ "$_out7b" = "1467" ]; then
+  ok "requestId fallback keeps the max (700) once when message.id is absent (767 + 700 = 1467)"
+else
+  bad "expected 1467 with requestId max-row dedup, got '$_out7b'"
+fi
+
+echo ""
+echo "  Passed: $PASS   Failed: $FAIL"
+[ "$FAIL" -eq 0 ]

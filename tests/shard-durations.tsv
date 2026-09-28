@@ -654,3 +654,5 @@ release.sh --bump-only restores debugId-only dist churn (E-72)	1
 no hardcoded far-future latest a release can overtake (E-73)	1
 Loki modernize py2/3 capture tracer (M-09)	2
 Dependency inventory Latest/Bump self-consistency (DEP-01)	1
+Usage governor calibration and dedup (G-01)	2
+Usage governor statusLine logger (G-01)	1
