@@ -72,10 +72,17 @@ DOLLAR_DIGIT = re.compile(r'(?<!\\)\$([1-9][0-9]*)')
 
 # A python3 -c " opener on a line. We only treat the double-quoted form (the
 # one bash expands). After the opener, if there is no closing double quote on
-# the same physical line, the body continues across lines until a line whose
-# first non-whitespace character is a closing double quote.
+# the same physical line, the body continues across lines until a line with an
+# unescaped closing double quote -- ANYWHERE on the line, not just as its
+# first character. Bash itself closes the string at the first unescaped `"`
+# it sees, regardless of column: a python source line ending
+# `print('')" "$var" 2>/dev/null)"` closes the bash string right after
+# print(''), with everything from there on being ordinary bash again. A
+# closer anchored to column 0 misses that shape, stays "in block" forever
+# (run.sh has real code after it), and starts flagging ordinary bash
+# positionals like `local x="$1"` as if they were python source.
 OPENER = re.compile(r'python3 -c "')
-CLOSER = re.compile(r'^\s*"')
+CLOSER = re.compile(r'(?<!\\)"')
 
 findings = []
 
@@ -102,7 +109,13 @@ for path in targets:
             if '"' not in rest:
                 in_block = True
         else:
-            if CLOSER.match(line):
+            m = CLOSER.search(line)
+            if m:
+                # Only the part before the closing quote is still python
+                # source; scan it, then drop back out of the block. Text
+                # after the quote is ordinary bash and out of scope here.
+                if DOLLAR_DIGIT.search(line[:m.start()]):
+                    findings.append((path, idx, line.strip()))
                 in_block = False
                 continue
             if DOLLAR_DIGIT.search(line):
