@@ -14,11 +14,21 @@
   characters, the hidden file is trimmed to just the single discriminating
   test, test_merge_slashes_match, copied verbatim (byte-for-byte body) from
   the upstream file at merge_sha with its imports (pytest,
-  werkzeug.routing as r) reduced to only what that function needs. No
-  assertion, input, or expected value inside the test was changed. This is
-  the same "trim to exercised tests" pattern already used by
-  pub-humanize-174 (NOTES.md there), and follows the INDEX.md D30 rework note
-  identifying this exact candidate group as revivable this way.
+  werkzeug.routing as r, werkzeug.exceptions.NotFound) reduced to only what
+  that function needs. No assertion, input, or expected value inside the
+  test was changed. This is the same "trim to exercised tests" pattern
+  already used by pub-humanize-174 (NOTES.md there), and follows the
+  INDEX.md D30 rework note identifying this exact candidate group as
+  revivable this way.
+- r2 fix (2026-09-28): the "byte-for-byte" claim above did not hold as
+  first committed -- the trimmed body was missing the upstream function's
+  last two lines (`assert adapter.match("/no/merging")[0] == "no_merging"`
+  and `pytest.raises(NotFound, lambda: adapter.match("/no//merging"))`, the
+  merge_slashes=False regression guards) and the `NotFound` import they
+  need. Restored both lines and the import verbatim from upstream at
+  merge_sha; an AST source-segment diff of the committed function against
+  `git show c328342ef9f7a6476b9e41565ad0a70ff10cfde6:tests/test_routing.py`
+  now reports no difference.
 - the added assertion in the fix PR (the only diff to this test function):
   `with pytest.raises(r.RequestRedirect): adapter.match("//yes///tail////")`
   -- 3+ leading/repeated slashes were not being merged into one at ref
@@ -36,3 +46,7 @@
 - RED/GREEN both re-verified through the exact hidden.run command above (not
   hand-simulated), private venvs at ref and at merge_sha, python3.14 /
   werkzeug repo checkouts under /tmp/wz (scratch clone, not committed).
+- deletion mutant (r2, at merge_sha): both `re.sub("/{2,}", ...)` call sites
+  (matcher.py, rules.py) gated behind `if False and ...` so merge-slashes is
+  a no-op -- hidden.run still fails (1 failed), mutant caught. Reverted
+  after the check; GREEN re-confirmed (1 passed).

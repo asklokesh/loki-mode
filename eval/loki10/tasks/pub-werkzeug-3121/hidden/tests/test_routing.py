@@ -1,6 +1,7 @@
 import pytest
 
 from werkzeug import routing as r
+from werkzeug.exceptions import NotFound
 
 
 def test_merge_slashes_match():
@@ -42,3 +43,6 @@ def test_merge_slashes_match():
     assert rv["path"] == "x//y"
 
     assert adapter.match("/no//merge")[0] == "no_merge"
+
+    assert adapter.match("/no/merging")[0] == "no_merging"
+    pytest.raises(NotFound, lambda: adapter.match("/no//merging"))

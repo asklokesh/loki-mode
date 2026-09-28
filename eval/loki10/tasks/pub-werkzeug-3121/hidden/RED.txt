@@ -32,10 +32,10 @@ ___________________________ test_merge_slashes_match ___________________________
         with pytest.raises(r.RequestRedirect):
 >           adapter.match("//yes///tail////")
 
-tests/test_routing.py:34: 
+tests/test_routing.py:35: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
-self = <werkzeug.routing.map.MapAdapter object at 0x108fe4830>
+self = <werkzeug.routing.map.MapAdapter object at 0x108e30440>
 path_info = '//yes///tail////', method = 'GET', return_rule = False
 query_args = {}, websocket = False
 

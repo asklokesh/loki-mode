@@ -12,7 +12,7 @@
     "files": [
       "tests/test_routing.py"
     ],
-    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_routing.py -k \"test_no_duplicates or test_no_duplicate_head_options\""
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_routing.py"
   },
   "timeout_s": 900,
   "tier": "medium"

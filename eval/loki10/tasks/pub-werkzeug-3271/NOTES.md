@@ -34,3 +34,10 @@
 - RED/GREEN both re-verified through the exact hidden.run command above (not
   hand-simulated), private venvs at ref and at merge_sha, under /tmp/wz
   (scratch clone, not committed).
+- deletion mutant (r2, at merge_sha): `Request.user_agent`'s
+  `return _UserAgent(value)` (src/werkzeug/sansio/request.py) replaced with
+  `return value` (a plain str, deleting the deprecated-wrapper class).
+  hidden.run still fails (1 failed: `to_header()` raises AttributeError on
+  a plain str, and the deprecated_call() block around it then fails with
+  "DID NOT WARN") -- mutant caught. Reverted after the check; GREEN
+  re-confirmed (1 passed).

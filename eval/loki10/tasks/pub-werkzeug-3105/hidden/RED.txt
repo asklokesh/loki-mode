@@ -1,4 +1,4 @@
-FF                                                                       [100%]
+F.F.                                                                     [100%]
 =================================== FAILURES ===================================
 ______________________________ test_no_duplicates ______________________________
 
@@ -22,7 +22,7 @@ src/werkzeug/routing/map.py:189: in add
     self._matcher.add(rule)
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
-self = <werkzeug.routing.matcher.StateMachineMatcher object at 0x109e30050>
+self = <werkzeug.routing.matcher.StateMachineMatcher object at 0x10b0c4ec0>
 rule = <Rule '/method' (POST) -> None>
 
     def add(self, rule: Rule) -> None:
@@ -66,8 +66,8 @@ src/werkzeug/routing/map.py:189: in add
     self._matcher.add(rule)
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
-self = <werkzeug.routing.matcher.StateMachineMatcher object at 0x109856d50>
-rule = <Rule '/' (OPTIONS, POST) -> b>
+self = <werkzeug.routing.matcher.StateMachineMatcher object at 0x10b07b610>
+rule = <Rule '/' (POST, OPTIONS) -> b>
 
     def add(self, rule: Rule) -> None:
         state = self._root
@@ -94,4 +94,4 @@ src/werkzeug/routing/matcher.py:57: DuplicateRuleError
 =========================== short test summary info ============================
 FAILED tests/test_routing.py::test_no_duplicates - werkzeug.routing.exception...
 FAILED tests/test_routing.py::test_no_duplicate_head_options - werkzeug.routi...
-2 failed, 2 deselected in 0.05s
+2 failed, 2 passed in 0.13s

@@ -15,16 +15,24 @@
   test_no_duplicate_head_options, test_duplicate_options_exact (all three
   new). Copied verbatim from the upstream file at merge_sha; imports reduced
   to pytest, werkzeug.routing as r, werkzeug.routing.exceptions.DuplicateRuleError.
-- hand-screened at ref before narrowing: of the 4 tests, only
-  test_no_duplicates and test_no_duplicate_head_options fail at ref (both
-  raise DuplicateRuleError when they should not, because at ref the
-  duplicate-rule check does not consider HTTP methods at all); the other two
-  (test_duplicate_method_overlap, test_duplicate_options_exact) already pass
-  at ref by accident (two rules sharing the same path with fully disjoint or
-  fully overlapping single methods already collide under the old check), so
-  they do not discriminate. hidden.run is narrowed with
-  -k "test_no_duplicates or test_no_duplicate_head_options" accordingly (the
-  same "keep the file, narrow -k" pattern as pub-click-2869).
+- hand-screened at ref: of the 4 tests, only test_no_duplicates and
+  test_no_duplicate_head_options fail at ref (both raise DuplicateRuleError
+  when they should not, because at ref the duplicate-rule check does not
+  consider HTTP methods at all); the other two (test_duplicate_method_overlap,
+  test_duplicate_options_exact) already pass at ref by accident (two rules
+  sharing the same path with fully disjoint or fully overlapping single
+  methods already collide under the old check), so they do not discriminate
+  RED from GREEN on their own. r2 fix (2026-09-28): hidden.run was
+  previously narrowed with -k to just the two discriminating tests; that
+  narrowing was reverted because a deletion mutant at merge_sha (replacing
+  `raise DuplicateRuleError(existing, rule)` with `pass` in
+  src/werkzeug/routing/matcher.py) made the narrowed run exit 0 (the -k
+  filter deselected the two tests that would have caught the deletion).
+  hidden.run now runs the whole file with no -k; full-file RED at ref is
+  "2 failed, 2 passed" (the same two tests above still fail; the other two
+  still pass by the accident described above), full-file GREEN at merge_sha
+  is "4 passed", and the same deletion mutant at merge_sha now fails
+  (2 failed, 2 passed) instead of exiting 0.
 - RED failure mode: werkzeug.routing.exceptions.DuplicateRuleError raised
   where the test expects no exception (real assertion-shaped failure, not a
   collection error). The captured RED.txt error message contains a
@@ -39,3 +47,10 @@
 - RED/GREEN both re-verified through the exact hidden.run command above (not
   hand-simulated), private venvs at ref and at merge_sha, under /tmp/wz
   (scratch clone, not committed).
+- deletion mutant (r2, at merge_sha): `raise DuplicateRuleError(existing,
+  rule)` in src/werkzeug/routing/matcher.py replaced with `pass`. With the
+  no-`-k` hidden.run (all 4 tests) this now fails (2 failed, 2 passed) --
+  mutant caught. Under the old, now-reverted `-k "test_no_duplicates or
+  test_no_duplicate_head_options"` narrowing the same mutant exited 0 (the
+  reviewer's reproduced blocking finding); dropping -k is the fix. Reverted
+  after the check; GREEN re-confirmed (4 passed).
