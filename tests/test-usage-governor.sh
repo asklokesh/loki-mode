@@ -613,6 +613,36 @@ else
   bad "cache changed the output (nocache vs cold vs warm differ)"
 fi
 
+# ---------------------------------------------------------------------------
+# T19 (E-109 Tech Lead reproduction, e07a9df1): min_mtime must be the
+# EARLIEST of window_start and weekly_start, not weekly_start alone. For up
+# to WINDOW_HOURS after a Wednesday reset, window_start (now-5h) falls
+# BEFORE weekly_start (the reset just happened), so a row inside the 5h
+# window but before the reset was wrongly skipped when min_mtime was
+# weekly_start alone.
+#
+# 2026-03-11 is a Wednesday in EDT (UTC-4): reset = 17:00:00Z. now =
+# 18:00:00Z, 1h after the reset -> weekly_start=17:00Z, window_start
+# (now-5h)=13:00Z. The row sits at 15:00Z: inside the 5h window
+# [13:00,18:00], but BEFORE weekly_start (17:00) -- exactly the exposure.
+# Its file's mtime (via _row) is 15:00Z, older than weekly_start alone.
+# ---------------------------------------------------------------------------
+echo "T19 -- 5h window before a just-happened weekly reset is not mtime-skipped"
+ROOT19="$FIXTURE_ROOT/t19/projects"
+PROJ19="$ROOT19/-Users-test-proj"
+mkdir -p "$PROJ19"
+READINGS19="$FIXTURE_ROOT/t19/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS19"
+_row "$PROJ19/session-a.jsonl" "2026-03-11T15:00:00.000Z" "claude-sonnet-4-6" 500 "msg_straddle" ""
+OUT19="$(python3 "$TOOL" --root "$ROOT19" --readings "$READINGS19" --now "2026-03-11T18:00:00Z" \
+  --live-log "$NOLIVE" --no-cache --json)"
+_out19="$(_q "$OUT19" "print(d['window']['current_tokens_output'])")"
+if [ "$_out19" = "500" ]; then
+  ok "row before this week's reset but inside the 5h window is counted (500)"
+else
+  bad "expected 500 output tokens (window straddling the reset), got '$_out19'"
+fi
+
 echo ""
 echo "  Passed: $PASS   Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

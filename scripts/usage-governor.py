@@ -63,6 +63,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -147,12 +148,21 @@ def _load_cache(cache_path: Path):
 
 
 def _save_cache(cache_path: Path, cache):
+    # A unique per-writer tmp name (tempfile.mkstemp in the same dir) so two
+    # overlapping pulse refreshes never share one ".tmp" path and interleave
+    # or truncate each other's write; os.replace is still the atomic swap.
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = cache_path.with_name(cache_path.name + ".tmp")
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(cache, fh)
-        tmp.replace(cache_path)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=cache_path.name + ".", suffix=".tmp", dir=str(cache_path.parent)
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(cache, fh)
+            os.replace(tmp_name, cache_path)
+        except OSError:
+            os.unlink(tmp_name)
+            raise
     except OSError:
         pass  # cache is a perf layer only; a failed write just costs speed next run
 
@@ -452,12 +462,25 @@ def read_live_rate_limits(now: datetime, live_log_path: Path):
 def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: Path, cache_path: Path | None = None):
     window_start = now - timedelta(hours=WINDOW_HOURS)
     weekly_start = last_wednesday_reset(now)
+    readings = load_readings(readings_path)
 
-    # Perf (E-109): weekly_start is the outer bound of every window this
-    # function reads from all_records below (the 5h window sits inside it).
-    # Calibration readings are assumed recent enough to fall inside it too
-    # (docs/v10/usage-readings.tsv is founder-maintained and short-lived).
-    all_records = list(iter_records(root, min_mtime=weekly_start.timestamp(), cache_path=cache_path))
+    # Perf (E-109): min_mtime must be the EARLIEST start of every window this
+    # function reads from all_records below, not just weekly_start. Bug found
+    # by Tech Lead review (e07a9df1): weekly_start is not always <= window_start
+    # -- for up to WINDOW_HOURS after a Wednesday reset, window_start (now-5h)
+    # falls BEFORE weekly_start, so a row inside the 5h window but before the
+    # reset was wrongly skipped (repro: row 15:00Z, now=18:00Z, 17:00Z reset ->
+    # window_start=13:00Z < weekly_start=17:00Z; using weekly_start alone
+    # dropped a file whose mtime was 15:00Z). Each reading's own window/weekly
+    # ranges (used by the calibration fit below) have the identical exposure,
+    # so they are folded into the same min() rather than left as a comment.
+    min_mtime_candidates = [window_start, weekly_start]
+    for reading_ts, _window_pct, _weekly_pct in readings:
+        min_mtime_candidates.append(reading_ts - timedelta(hours=WINDOW_HOURS))
+        min_mtime_candidates.append(last_wednesday_reset(reading_ts))
+    min_mtime = min(min_mtime_candidates)
+
+    all_records = list(iter_records(root, min_mtime=min_mtime.timestamp(), cache_path=cache_path))
 
     by_model = {}
     by_hour = {}
@@ -476,7 +499,6 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
             h[f] += v
             r[f] += v
 
-    readings = load_readings(readings_path)
     window_pairs = []
     weekly_pairs = []
     for ts, window_pct, weekly_pct in readings:
