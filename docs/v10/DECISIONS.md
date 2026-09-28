@@ -238,3 +238,21 @@ One entry per decision: context, choice, why, how to reverse. Newest last.
 - Deadline: if the gate is not met by 23:00 ET (03:00 UTC), release v10.0.0 with the default still legacy, v10 opt-in, and the measured gap stated plainly.
 - All non-P0 backlog paused at 21:43Z: batch 10 stopped with every builder's commit kept on its branch (list in ~/loki-ci-logs/paused-branches.txt and the BOARD rows); ready rows parked.
 - Orphan: `timeout 240 bash .../worktrees/agent-afe77b46fbe4962fa/autonomy/run.sh` (PID 22960, child 22986, running 1 day 00:17) ignored SIGTERM and was stopped with SIGKILL by PID at 21:42Z (`ps -o pid= -p 22960` and `-p 22986` both empty afterwards). ORPHAN guard slice E-00 in flight.
+
+## D30. 2026-09-28: Loki directive -- any size in one run; accuracy is the lever; 2x gate; modernization program
+
+- Supersedes the D29 gate and keeps everything in it. North star: Loki 10 completes work of any size in one autonomous run, from a one-line issue to a million-line modernization, with no back-and-forth. Moat order holds; nothing weakens the Seal, the Wall, Rule of Two or honest verdicts.
+- Part 1 gate (v10.0.0, small-task engine), against raw `claude -p`, same tasks and model family, all numbers published: at least 2x fewer failures (96.5% or higher vs raw 93.1%; stretch 98.6%); cost per completed task at least 2x lower ($0.118 or less vs $0.2363); time to a correct result at most 1x raw on small tasks and at least 2x faster on medium and large; never worse than raw on any axis in any tier.
+- Eval tiers: small (29 tasks, done), medium (15 multi-file, EV-11), large (10 feature or legacy, EV-12); arms raw, v10, legacy.
+- v10.0.0 ships tonight. The default flips only if v10 beats raw on the measured tiers; otherwise opt-in with the numbers. No public "2-5x" claim until all three tiers are measured.
+- Part 2 (v10.x): `loki modernize <repo> --to "<target>"`; design in docs/v10/MODERNIZE.md (CTO and Architect), Part 2 slices M-01.. cut from it; engineers take them when Part 1 slices stop filling the queue. PROGRESS.md every 30 minutes with Part 1 gate numbers, Part 2 slices done, top blocker; pulse enforces it (E-63 STALE_PROGRESS, over 35 minutes).
+
+## D31. 2026-09-28: small tasks must be leaner than raw
+
+- For tasks sizing.ts rates small: one sonnet implement session with the cached repo map, then impacted tests, then PR. No separate plan or Wall call; the Wall stays for medium and large tasks, or when the repo has no relevant tests. Escalate to opus only on a test failure (E-64).
+- Measured before this rule (EV-8, 5 tasks, raw opus 5/5 $0.2161 per completed, p50 41s): full design 4/5 $0.5954; Wall off 5/5 $0.3976; all-sonnet no plan no Wall 4/5 $0.294 p50 44s (~/loki-ci-logs/ev8r-{A,B,C}/results.jsonl). One sonnet session costing more than raw opus's whole task means the per-session overhead is the cost driver; E-65 measures and cuts it.
+
+## D32. 2026-09-28: augmentiq #52 user report fixed in v10 only
+
+- Built into the v10 engine, no legacy fixes: "already implemented" is a first-class outcome with evidence, receipt and issue comment, no PR (E-66; aiq-52 expected outcome in the eval, EV-13); no pause state, anything unfinishable ends as a draft PR or an issue comment with the reason within the 15-minute cap (E-67); per-call deadline, progress every 30s, every exit code classified including 125 and 143 (E-68); cost shows "not measured", never $0 when unmeasured (E-69); the dashboard shows its version and the CLI's, warns on mismatch, and replaces an older dashboard on its port (E-70).
+- Legacy stays as it is until v10 becomes the default; then legacy is deleted.
