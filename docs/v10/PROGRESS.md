@@ -1,6 +1,11 @@
 # Progress
 
-## 2026-09-28T14:58Z: main red on train E22, fixed forward (E-83)
+## 2026-09-28T15:20Z: v10.2.0 publish blocked by Security Audit (gitleaks false positive)
+- Release run 36440534050 failed at required-ci: Security Audit 36440534022 failed with 1 new gitleaks finding (report artifact gitleaks-report): rule sourcegraph-access-token at eval/loki10/tasks/pub-werkzeug-3271/task.json:8, commit 82e39c29 (EV-11a). The value is repo.ref, a 40-hex pallets/werkzeug commit (`gh api repos/pallets/werkzeug/commits/<ref>` resolves, dated 2026-09-13). Not a credential.
+- Fix: that exact commit-qualified fingerprint added to .gitleaksignore with a justification (no path or rule suppression). Nothing was tagged or published for 10.2.0; the Release workflow is re-dispatched on main once Tests, Bun Parity and Security Audit are green on the fix commit.
+- Recurrence risk: every pub-*/lg-* task pins a 40-hex SHA; E-85 asks the CTO for a narrowly scoped rule. TRAIN_LATE read 681 min because the pulse only reads ~/loki-ci-logs/push-*.log, which plain `git push` never writes; E-84 fixes it.
+
+## 2026-09-28T14:58Z: main red on train E22, E-83 fix-forward (c5ace6e1; Tests green on 378a2e13)
 - Tests red on 9d483688 (run 36438012977): spawn env guard (M-16 codemod.ts spawn with no env) and tests/test-engine10-dist.sh "bundle contains prStage" (E-66's offset deleted the alias the dist test greps for). Both passed review because reviewers and the Chief of Staff ran only `bun test tests/engine10/`.
 - Fixed in E-83 (c5ace6e1). Rule from now: every train touching loki-ts/src runs the full `cd loki-ts && bun test` and `bash tests/test-engine10-dist.sh` before push, and slice cards say so.
 - D34 (CTO) recorded: large tier from real upstream PRs, one size gate, legacy to M-27; EV-12S and EV-12A/B/C building (wf_6aea81c7-823).

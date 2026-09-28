@@ -70,3 +70,10 @@ d298ca60a17366ca3504262eaf60e107cd24b883:tests/test-branch-lifecycle.sh:generic-
 854c93f9ec763861a7b5e8ee26c7bc7042eeb28a:loki-ts/tests/engine10/deep.test.ts:aws-access-token:132
 912509ced103effa63c3631889c0d7bc3ea43106:tests/test-engine10-push-gitlab.sh:gitlab-pat:20
 dbc2b6043698f815798f5898e3cb1eb289339592:loki-ts/tests/engine10/rule_of_two.test.ts:generic-api-key:122
+
+# Eval task pin, flagged by Security Audit on the v10.2.0 release SHA as a
+# sourcegraph-access-token. Not a credential: the value is repo.ref in
+# eval/loki10/tasks/pub-werkzeug-3271/task.json, the 40-hex upstream
+# pallets/werkzeug commit the task checks out (gh api
+# repos/pallets/werkzeug/commits/<ref> resolves it, dated 2026-09-13).
+82e39c2920606475164bf2a8140b582ba7e7e7ae:eval/loki10/tasks/pub-werkzeug-3271/task.json:sourcegraph-access-token:8
