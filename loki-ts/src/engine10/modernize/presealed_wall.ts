@@ -334,7 +334,8 @@ export function verifyPreSealedWall(repoDir: string, mid: string, unit: string):
   const carried = JSON.parse(sealedRaw) as PreSealedWallSeal;
   if (
     carried.oracle_cases_sha256 !== oracleSealed.cases_sha256 ||
-    carried.oracle_coverage_sha256 !== oracleSealed.coverage_sha256
+    carried.oracle_coverage_sha256 !== oracleSealed.coverage_sha256 ||
+    carried.oracle_normalizers_sha256 !== oracleSealed.normalizers_sha256
   ) {
     return { ok: false, reason: "carried oracle hashes do not match the current oracle seal" };
   }

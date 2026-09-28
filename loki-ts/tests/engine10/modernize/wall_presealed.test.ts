@@ -2,6 +2,7 @@
 // DECISIONS.md D42 (3)). r2: reworked after an opus REJECT on r1 (867cffab) with four blockers,
 // B1-B4 below, plus the D42 (2) base-sha advisory.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,7 +14,7 @@ import {
   verifyPreSealedWall,
 } from "../../../src/engine10/modernize/presealed_wall.ts";
 import type { BaseConformanceRunner, BaseRunOutcome } from "../../../src/engine10/modernize/presealed_wall.ts";
-import { oracleDir } from "../../../src/engine10/modernize/types.ts";
+import { modernizeEventsPath, oracleDir } from "../../../src/engine10/modernize/types.ts";
 
 const mid = "mod-20260928T010203Z-ab12cd";
 
@@ -347,5 +348,46 @@ describe("verifyPreSealedWall (B3: tamper evidence)", () => {
     const verified = verifyPreSealedWall(repoDir, mid, "pyunit_h");
     expect(verified.ok).toBe(false);
     expect(verified.reason).toMatch(/does not match the sealing event's hash/);
+  });
+
+  // A carried oracle_normalizers_sha256 that no longer matches the current oracle seal must
+  // fail verify too, the same as a cases/coverage hash mismatch does -- D42 (4) binds
+  // normalizers to the oracle seal, and a presealed wall that stays silent about a normalizers
+  // change would let a run bound to one comparison policy pass under a different one. Patches
+  // only presealed_wall.json's oracle_normalizers_sha256 field (re-hashing the file and its
+  // sealing event's sealed_sha256 to match, so the pre-existing tamper check above does not
+  // fire first) and leaves the oracle's own sealed.json/log untouched, so this isolates the new
+  // check from the ones that already exist.
+  it("catches a carried oracle_normalizers_sha256 that no longer matches the current oracle seal", () => {
+    sealValidOracle("pyunit_i");
+    sealPreSealedWall(
+      repoDir, mid, "pyunit_i", "python3",
+      runnerReturning({ runner: "pytest", exitCode: 1, timedOut: false, failedCount: 1 }),
+      log,
+    );
+    const sealedPath = join(oracleDir(repoDir, mid, "pyunit_i"), "presealed_wall.json");
+    const sealed = JSON.parse(readFileSync(sealedPath, "utf8"));
+    expect(typeof sealed.oracle_normalizers_sha256).toBe("string");
+    sealed.oracle_normalizers_sha256 = "f".repeat(64); // any hash that differs from the real one
+    const newRaw = JSON.stringify(sealed, null, 2);
+    writeFileSync(sealedPath, newRaw);
+    const newSha256 = createHash("sha256").update(newRaw).digest("hex");
+
+    // Re-anchor the sealing event to the patched file's hash so the existing "does not match
+    // the sealing event's hash" check (above) does not mask the one this test targets.
+    const eventsPath = modernizeEventsPath(repoDir, mid);
+    const patchedLines = readFileSync(eventsPath, "utf8").split("\n").map((line) => {
+      if (line.trim() === "") return line;
+      const event = JSON.parse(line);
+      if (event.type === "wall.presealed.sealed" && event.data.unit === "pyunit_i") {
+        event.data.sealed_sha256 = newSha256;
+      }
+      return JSON.stringify(event);
+    });
+    writeFileSync(eventsPath, patchedLines.join("\n"));
+
+    const verified = verifyPreSealedWall(repoDir, mid, "pyunit_i");
+    expect(verified.ok).toBe(false);
+    expect(verified.reason).toMatch(/carried oracle hashes do not match the current oracle seal/);
   });
 });
