@@ -260,6 +260,43 @@ assert_blocked "R2 blocked: git --git-dir=/--work-tree= targets a repo on main" 
     "git --git-dir=$REPO2/.git --work-tree=$REPO2 reset --hard HEAD~1" "$SCRIPT_DIR" "RULE2"
 
 echo ""
+echo "--- Rule 2 continued: moving 'main' without ever checking it out ---"
+# REPO2_FEATURE is checked out on feature-branch, not main -- these all move
+# the LOCAL main ref while a different branch is current, which the plain
+# reset --hard-on-main check above cannot see (it only fires when main IS
+# the current branch).
+assert_blocked "R2 blocked: git branch -f main <ref> (current branch is feature-branch)" \
+    "git branch -f main HEAD" "$REPO2_FEATURE" "RULE2"
+assert_blocked "R2 blocked: git branch --force main <ref> (long flag)" \
+    "git branch --force main HEAD" "$REPO2_FEATURE" "RULE2"
+assert_blocked "R2 blocked: git update-ref refs/heads/main <ref>" \
+    "git update-ref refs/heads/main HEAD" "$REPO2_FEATURE" "RULE2"
+assert_blocked "R2 blocked: git update-ref -m <reason> refs/heads/main <ref> (value-flag before the ref)" \
+    "git update-ref -m reason refs/heads/main HEAD" "$REPO2_FEATURE" "RULE2"
+assert_blocked "R2 blocked: git checkout -B main <ref>" \
+    "git checkout -B main HEAD" "$REPO2_FEATURE" "RULE2"
+assert_blocked "R2 blocked: git switch -C main <ref>" \
+    "git switch -C main HEAD" "$REPO2_FEATURE" "RULE2"
+assert_blocked "R2 blocked: git switch --force-create main <ref> (long flag)" \
+    "git switch --force-create main HEAD" "$REPO2_FEATURE" "RULE2"
+assert_blocked "R2 blocked: git branch -f main <ref> (current branch IS main)" \
+    "git branch -f main HEAD~0" "$REPO2" "RULE2"
+assert_allowed "R2 allowed: git branch -f <other-branch> <ref>" \
+    "git branch -f other-branch HEAD" "$REPO2_FEATURE"
+assert_allowed "R2 allowed: git checkout -B <other-branch> <ref>" \
+    "git checkout -B other-branch HEAD" "$REPO2_FEATURE"
+assert_allowed "R2 allowed: git switch -C <other-branch> <ref>" \
+    "git switch -C other-branch HEAD" "$REPO2_FEATURE"
+assert_allowed "R2 allowed: git update-ref refs/heads/other-branch <ref>" \
+    "git update-ref refs/heads/other-branch HEAD" "$REPO2_FEATURE"
+assert_allowed "R2 allowed: git switch main (plain switch, no -C)" \
+    "git switch main" "$REPO2_FEATURE"
+assert_allowed "R2 allowed: git checkout main (plain checkout, no -B)" \
+    "git checkout main" "$REPO2_FEATURE"
+assert_allowed "R2 allowed: git branch main (no force flag)" \
+    "git branch main HEAD" "$REPO2_FEATURE"
+
+echo ""
 echo "--- Rule 3: git commit dropping a BOARD.md row (isolated: index only) ---"
 board_reset
 # Stage a BOARD.md that drops S-3, but restore the WORKING COPY to the full

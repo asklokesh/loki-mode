@@ -29,6 +29,11 @@
 #      and `--force-with-lease=...`), or `git reset --hard` specifically on
 #      branch `main`. `-C`/`--git-dir=`/`--work-tree=` on the invocation
 #      itself (not just a preceding `cd`) are resolved to the real repo root.
+#      Also blocked, regardless of which branch is currently checked out
+#      (these move `main` without ever checking it out): `git branch -f
+#      main <ref>` / `git branch --force main <ref>`, `git update-ref
+#      refs/heads/main <ref>`, `git checkout -B main <ref>`, `git switch -C
+#      main <ref>`. `git branch -f <other-branch> <ref>` stays allowed.
 #   3. `git commit` where the result would drop a slice row that HEAD
 #      already has, or where BOARD.md would be missing from the index
 #      (staged delete/rename, including one queued by a `git rm`/`git mv` in
@@ -683,6 +688,19 @@ def current_branch(repo_cwd):
 FORCE_PREFIX = "--force"
 
 
+def _is_force_flag(a):
+    if a in ("-f", "--force"):
+        return True
+    return a.startswith("-") and not a.startswith("--") and "f" in a[1:]
+
+
+def _first_nonflag(args):
+    for a in args:
+        if not a.startswith("-"):
+            return a
+    return None
+
+
 def rule2_git_force(words, name, idx, git_info):
     if name != "git" or git_info is None:
         return None
@@ -702,6 +720,28 @@ def rule2_git_force(words, name, idx, git_info):
         branch = current_branch(repo_root)
         if branch == "main":
             return "RULE2 (git reset --hard on main): current branch is 'main' (repo {})".format(repo_root)
+
+    # Moving `main` WITHOUT ever checking it out slips past the reset
+    # --hard check above (that one only fires when `main` IS the current
+    # branch). These forms move/replace the `main` ref directly, from any
+    # branch, and are refused unconditionally.
+    if sub == "branch" and any(_is_force_flag(a) for a in args) and _first_nonflag(args) == "main":
+        repo_root = resolve_repo_root(repo_cwd, git_dir_override)
+        return "RULE2 (git branch -f main): force-moves 'main' without a checkout (repo {})".format(repo_root)
+
+    if sub == "update-ref" and "refs/heads/main" in args:
+        # Membership, not "first non-flag arg": update-ref takes
+        # value-carrying flags before the ref (e.g. `-m <reason>`), so the
+        # first non-flag word is not reliably the ref itself.
+        repo_root = resolve_repo_root(repo_cwd, git_dir_override)
+        return "RULE2 (git update-ref refs/heads/main): moves 'main' without a checkout (repo {})".format(repo_root)
+
+    if sub in ("checkout", "switch"):
+        move_flags = ("-B",) if sub == "checkout" else ("-C", "--force-create")
+        for i, a in enumerate(args):
+            if a in move_flags and i + 1 < len(args) and args[i + 1] == "main":
+                repo_root = resolve_repo_root(repo_cwd, git_dir_override)
+                return "RULE2 (git {} {} main): force-resets 'main' without a review (repo {})".format(sub, a, repo_root)
     return None
 
 
