@@ -28,15 +28,24 @@ export interface VerifyCheck {
 }
 // Command shapes exactly as ENGINE.md section 8's table names them per runner (npm/cargo are
 // "coarse": no per-file selection; go runs per package dir, also coarse below that grain).
-function runnerCmd(t: TestRef): [string, string[]] {
+// E-98a: pytest prefers the repo's own interpreter (.venv, then venv, then $VIRTUAL_ENV) over a
+// bare "python", which is absent on hosts that only ship python3 (EV-15: 27/27 checks not_run).
+// The resolved path is the returned cmd, so it self-documents in VerifyCheck.cmd; the third
+// element flags a system interpreter, which never proved it ran against the repo's own sources.
+export function runnerCmd(t: TestRef, repoDir: string): [string, string[], boolean] {
   switch (t.runner) {
-    case "pytest": return ["python", ["-m", "pytest", "-q", t.path]];
-    case "vitest": return ["npx", ["vitest", "run", t.path]];
-    case "jest": return ["npx", ["jest", t.path]];
-    case "bun": return ["bun", ["test", t.path]];
-    case "npm": return ["npm", ["test", "--silent"]];
-    case "go": return ["go", ["test", `./${dirname(t.path)}`]];
-    case "cargo": return ["cargo", ["test"]];
+    case "pytest": {
+      const venvBin = process.env["VIRTUAL_ENV"] ? [join(process.env["VIRTUAL_ENV"], "bin", "python")] : [];
+      const venv = [join(repoDir, ".venv", "bin", "python"), join(repoDir, "venv", "bin", "python"), ...venvBin].find(existsSync);
+      if (venv) return [venv, ["-m", "pytest", "-q", t.path], false];
+      return [Bun.which("python3") ? "python3" : "python", ["-m", "pytest", "-q", t.path], true];
+    }
+    case "vitest": return ["npx", ["vitest", "run", t.path], false];
+    case "jest": return ["npx", ["jest", t.path], false];
+    case "bun": return ["bun", ["test", t.path], false];
+    case "npm": return ["npm", ["test", "--silent"], false];
+    case "go": return ["go", ["test", `./${dirname(t.path)}`], false];
+    case "cargo": return ["cargo", ["test"], false];
   }
 }
 function dedupeTests(tests: TestRef[]): TestRef[] {
@@ -176,10 +185,12 @@ export const verifyStage: Stage = {
     );
     const wallTests = map.tests.filter((t) => wallPaths.has(t.path));
     const tests = dedupeTests([...impacted, ...changedTestFiles, ...wallTests]);
+    let systemInterpreter = false; // E-98a: any check that ran pytest on a non-venv interpreter
     for (const t of tests) {
       if (signal.aborted) break;
-      const [cmd, args] = runnerCmd(t);
-      await runCheck(ctx, `${t.runner}:${t.path}`, cmd, args, signal, checks);
+      const [cmd, args, system] = runnerCmd(t, ctx.repoDir);
+      const check = await runCheck(ctx, `${t.runner}:${t.path}`, cmd, args, signal, checks);
+      if (system && check.result !== "not_run") systemInterpreter = true;
     }
     if (!signal.aborted) {
       // Lint/typecheck of changed files only (ENGINE.md section 4's named tool per language).
@@ -197,7 +208,8 @@ export const verifyStage: Stage = {
     const failuresGrouped = checks
       .filter((c) => c.result === "fail")
       .map((c) => ({ signature: c.name, count: 1, sample: c.cmd }));
-    return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed } };
+    const notProven = systemInterpreter ? ["tests ran on the system interpreter"] : [];
+    return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed, not_proven: notProven } };
   },
 };
 export const stage = verifyStage;

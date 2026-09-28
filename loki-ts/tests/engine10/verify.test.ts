@@ -8,7 +8,7 @@ import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeF
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EventType, RunContext, StageName, TestMap, TestRef } from "../../src/engine10/types.ts";
-import { changedFiles, runCheck, runLintChecks, verifyStage, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
+import { changedFiles, runCheck, runLintChecks, runnerCmd, verifyStage, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 
 const FIX = join(import.meta.dir, "fixtures", "verify");
 const cleanupDirs: string[] = [];
@@ -274,6 +274,58 @@ describe("engine10 verify: lint/typecheck matrix (ENGINE.md section 4)", () => {
     expect(shellcheckCheck?.reason).toMatch(/not found on PATH/);
     const bashCheck = checks.find((c) => c.name === "lint:bash-n");
     expect(bashCheck?.result).toBe("pass");
+  });
+});
+
+describe("engine10 verify: pytest interpreter resolution (E-98a)", () => {
+  test("a .venv/bin/python shim resolves and runs, even with no python on PATH", async () => {
+    const repoDir = mkRepo();
+    const venvBin = join(repoDir, ".venv", "bin");
+    mkdirSync(venvBin, { recursive: true });
+    const shim = join(venvBin, "python");
+    writeFileSync(shim, "#!/usr/bin/env bash\nexit 0\n");
+    chmodSync(shim, 0o755);
+    const [cmd, , system] = runnerCmd({ runner: "pytest", path: "tests/test_x.py" }, repoDir);
+    expect(cmd).toBe(shim); // resolved to the venv interpreter, not bare "python"
+    expect(system).toBe(false);
+
+    // Before E-98a, runnerCmd always returned bare "python": on a PATH with no python at
+    // all (only the venv shim, which a bare lookup never finds), that check was not_run.
+    // With the resolved absolute path, the same PATH still runs it and it passes.
+    const { ctx } = fakeCtx({ repoDir, baseSha: "HEAD" });
+    const checks: VerifyCheck[] = [];
+    const emptyPath = mkdtempSync(join(tmpdir(), "e10-verify-emptypath-"));
+    cleanupDirs.push(emptyPath);
+    const [rcmd, rargs] = runnerCmd({ runner: "pytest", path: "tests/test_x.py" }, repoDir);
+    const check = await runCheck(ctx, "pytest:tests/test_x.py", rcmd, rargs, sig(), checks, { path: emptyPath });
+    expect(["pass", "fail"]).toContain(check.result); // never not_run: "python not found on PATH"
+  });
+
+  test("no venv: falls back to a system interpreter, flagged in cmd and in not_proven", async () => {
+    const repoDir = mkRepo();
+    writeFileSync(join(repoDir, "changed.txt"), "x\n");
+    const shimDir = mkdtempSync(join(tmpdir(), "e10-verify-shim-"));
+    cleanupDirs.push(shimDir);
+    writeFileSync(join(shimDir, "python3"), "#!/usr/bin/env bash\nexit 0\n");
+    chmodSync(join(shimDir, "python3"), 0o755);
+    const map: TestMap = { runners: ["pytest"], tests: [{ runner: "pytest", path: "tests/test_x.py" }] };
+    const { ctx } = fakeCtx({
+      repoDir, baseSha: baseSha(repoDir),
+      detect: async () => map,
+      impacted: () => [{ runner: "pytest", path: "tests/test_x.py" }],
+    });
+    const savedPath = process.env["PATH"];
+    process.env["PATH"] = `${shimDir}:${savedPath ?? ""}`; // shim first: resolves before any real python3
+    try {
+      const result = await verifyStage.run(ctx, sig());
+      const checks = result.data.checks as VerifyCheck[];
+      const pyCheck = checks.find((c) => c.name === "pytest:tests/test_x.py");
+      expect(pyCheck?.result).toBe("pass");
+      expect(pyCheck?.cmd.startsWith("python3 ")).toBe(true); // records which interpreter it used
+      expect(result.data.not_proven).toEqual(["tests ran on the system interpreter"]);
+    } finally {
+      if (savedPath === undefined) delete process.env["PATH"]; else process.env["PATH"] = savedPath;
+    }
   });
 });
 
