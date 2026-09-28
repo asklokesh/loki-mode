@@ -1268,3 +1268,11 @@ sample.
 - In flight: E-42 (real entry end to end, Rule of Two for the pr stage, harness v10 arm on one task), E-43 cost knobs, E-44 output fixes, E-33..E-35, EV-5 legacy full arm.
 - ETA: first harness-scored v10 task by about 00:15Z; full v10 arm by about 01:30Z; gate decision 03:00Z.
 - Top blocker: cost. Plan plus implement is about 2x raw per task on this sample; the gate requires v10 cost per completed task at or below raw ($0.2363).
+
+## 2026-09-28T00:11Z: Loki 10 progress
+- On main (`git ls-remote origin refs/heads/main` = addda547): E-42 real entry end to end (run.ts glue deleted), E-44 output fixes, agent SDK 0.3.283 (9db2a4ed), E-51 eval PR path regression, and train E12 (23b20e6f): E-33 gate report, EV-6 publish script, E-38 legacy arm pin, E-39 interrupt/resume, E-40 live PR smoke. Train checks: engine10 349 pass 0 fail, tsc exit 0, test-harness 79/0, test-gate-report 34/0.
+- SDK route: claude-opus-5-5 now runs through the SDK (probe: `success OK`); 0.3.267 rejected it. The same probe cost $0.33 for a one-word reply, so fixed per-call overhead, not task work, drives v10 cost.
+- Legacy arm (EV-5): 3 results so far (2 hidden pass), each at the 900s cap; runner alive at parallel 3, ETA about 02:15Z. Incident: 6 then 2 legacy watchdog loops escaped the harness timeout group (ppid 1, 30 min); stopped by PID; guard slice EV-10.
+- In flight (wave E13, 12 builders): E-45 cost path rework, E-36 preflight (plus E-37), E-32 rebase, E-34 docs refresh, E-52..E-56, E-58 (makes E-47 green), E-59 (makes E-50 green), EV-10.
+- ETA: E-45 merge about 00:45Z, EV-8 5-task cost check right after, EV-9 full v10 arm about 01:00Z to 01:45Z, gate decision 03:00Z.
+- Top blocker: cost per completed task (raw $0.2363); E-45 plus the per-call overhead finding decide it.

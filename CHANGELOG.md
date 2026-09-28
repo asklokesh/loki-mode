@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v9.80.0 (2026-09-28)
+
+### Added
+- Loki 10 engine (opt-in, `LOKI_ENGINE=v10`): the real entry runs end to end (supervisor and worker, PR opened only by the supervisor with the pinned origin); the temporary run.ts glue is deleted (E-42).
+- Eval: gate report generator and publish script for the loki10-gate marker (E-33, EV-6); legacy arm pinned to `LOKI_ENGINE=legacy` with a `--tasks` subset (E-38); eval PR path regression test (E-51).
+- Engine tests: interrupt and resume end to end (E-39); live PR smoke on a sandbox repo, skipped without `LOKI_E10_LIVE_REPO` (E-40).
+
+### Fixed
+- Agent SDK 0.3.283, so claude-opus-5-5 runs on the SDK route (0.3.267 rejected it).
+- Engine output: status column spacing; token count includes cache tokens (E-44).
+
 ## v9.79.0
 
 **Loki 10 engine wave 1 and the release-gate eval harness land (still opt-in behind LOKI_ENGINE=v10).** Released from green tree e86e846a (Tests run 36357562143 and Bun Parity run 36357562160 both success before the bump).
