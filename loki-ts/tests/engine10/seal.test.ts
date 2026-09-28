@@ -243,7 +243,7 @@ describe("engine10 seal", () => {
     expect(h2).toBe(h1);
   }, 30000);
 
-  test("only section 4 keys are trusted; off-table keys go on NOT PROVEN when absent", async () => {
+  test("off-table intake keys go on NOT PROVEN when absent; verify's own not_proven is a trusted section 4 key (E-98a B1)", async () => {
     noKey();
     const { repo, base } = makeRepo("keys");
     const { ctx } = ctxFor(repo, base, "claude", {
@@ -251,19 +251,37 @@ describe("engine10 seal", () => {
       implement: { exit: "done", tests_reverted: [] },
       verify: {
         checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", duration_s: 1 }, { name: "ruff", cmd: "ruff check", result: "not_run", duration_s: 0 }],
-        flaky: [], not_proven: ["stray off-table entry"],
+        flaky: [], not_proven: ["tests ran on the system interpreter"],
       },
     });
     await commitStage.run(ctx, new AbortController().signal);
     const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
     expect(r.task.source).toBe("issue");
     expect(r.not_proven).toContain("not run: ruff");
-    expect(r.not_proven).not.toContain("stray off-table entry");
+    expect(r.not_proven).toContain("tests ran on the system interpreter");
     for (const n of ["repo not recorded by intake", "resume state not recorded by intake", "wall result not recorded by verify",
       "cost not measured (no iteration ids recorded)"]) expect(r.not_proven).toContain(n);
     expect(r.verdict).toBe("PARTIAL");
     const noSrc = ctxFor(repo, base, "claude", { intake: { task_sha256: "ab".repeat(32) } });
     expect(receiptOf(await sealStage.run(noSrc.ctx, new AbortController().signal)).not_proven).toContain("task source not recorded by intake");
+  }, 30000);
+
+  // E-98a B1: verify passing every check must not seal VERIFIED when verify itself flagged a
+  // system-interpreter run. Red on pre-B1 code: verdictOf never looked at o.verify.not_proven,
+  // so this sealed VERIFIED with no "tests ran on the system interpreter" line in the receipt.
+  test("E-98a B1: all checks pass but verify reports a system interpreter: never VERIFIED, line carried", async () => {
+    noKey();
+    const { repo, base } = makeRepo("system-interp");
+    const { ctx } = ctxFor(repo, base, "claude", {
+      verify: {
+        checks: [{ name: "pytest:tests/test_x.py", cmd: "python3 -m pytest -q tests/test_x.py", result: "pass", duration_s: 1, interpreter: "system" }],
+        flaky: [], wall_passed: true, not_proven: ["tests ran on the system interpreter"],
+      },
+    });
+    await commitStage.run(ctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    expect(r.not_proven).toContain("tests ran on the system interpreter");
+    expect(r.verdict).not.toBe("VERIFIED");
   }, 30000);
 
   test("E-55: a modified, deleted, or symlink-replaced base_sha test file lands on NOT PROVEN by name; a new test file does not", async () => {

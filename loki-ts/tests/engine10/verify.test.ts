@@ -285,9 +285,9 @@ describe("engine10 verify: pytest interpreter resolution (E-98a)", () => {
     const shim = join(venvBin, "python");
     writeFileSync(shim, "#!/usr/bin/env bash\nexit 0\n");
     chmodSync(shim, 0o755);
-    const [cmd, , system] = runnerCmd({ runner: "pytest", path: "tests/test_x.py" }, repoDir);
+    const [cmd, , interpreter] = runnerCmd({ runner: "pytest", path: "tests/test_x.py" }, repoDir);
     expect(cmd).toBe(shim); // resolved to the venv interpreter, not bare "python"
-    expect(system).toBe(false);
+    expect(interpreter).toBe("project");
 
     // Before E-98a, runnerCmd always returned bare "python": on a PATH with no python at
     // all (only the venv shim, which a bare lookup never finds), that check was not_run.
@@ -322,10 +322,89 @@ describe("engine10 verify: pytest interpreter resolution (E-98a)", () => {
       const pyCheck = checks.find((c) => c.name === "pytest:tests/test_x.py");
       expect(pyCheck?.result).toBe("pass");
       expect(pyCheck?.cmd.startsWith("python3 ")).toBe(true); // records which interpreter it used
+      expect(pyCheck?.interpreter).toBe("system");
       expect(result.data.not_proven).toEqual(["tests ran on the system interpreter"]);
     } finally {
       if (savedPath === undefined) delete process.env["PATH"]; else process.env["PATH"] = savedPath;
     }
+  });
+
+  // E-98a B2: $VIRTUAL_ENV is not trusted just because it's set -- only when it actually lives
+  // inside the repo. A venv anywhere else on disk (a common host setup: one shared venv for many
+  // checkouts) must still count as "system" and carry the not_proven line.
+  test("VIRTUAL_ENV outside the repo is never trusted as project: system=true, not_proven set", async () => {
+    const repoDir = mkRepo();
+    writeFileSync(join(repoDir, "changed.txt"), "x\n");
+    // A real, existing venv -- just not inside repoDir. resolveTool's candidate path is
+    // literally $VIRTUAL_ENV/bin/python, and this file genuinely exists there, so only the
+    // realpath-under-repoDir check (B2), not existsSync, is what must reject it.
+    const outsideVenv = mkdtempSync(join(tmpdir(), "e10-verify-outside-venv-"));
+    cleanupDirs.push(outsideVenv);
+    const outsideVenvBin = join(outsideVenv, "bin");
+    mkdirSync(outsideVenvBin, { recursive: true });
+    const outsideVenvPython = join(outsideVenvBin, "python");
+    writeFileSync(outsideVenvPython, "#!/usr/bin/env bash\nexit 0\n");
+    chmodSync(outsideVenvPython, 0o755);
+    const shimDir = mkdtempSync(join(tmpdir(), "e10-verify-shim-"));
+    cleanupDirs.push(shimDir);
+    writeFileSync(join(shimDir, "python3"), "#!/usr/bin/env bash\nexit 0\n"); // the correct PATH fallback
+    chmodSync(join(shimDir, "python3"), 0o755);
+    const savedVenv = process.env["VIRTUAL_ENV"];
+    const savedPath = process.env["PATH"];
+    process.env["VIRTUAL_ENV"] = outsideVenv;
+    process.env["PATH"] = `${shimDir}:${savedPath ?? ""}`;
+    try {
+      const [cmd, , interpreter] = runnerCmd({ runner: "pytest", path: "tests/test_x.py" }, repoDir);
+      expect(cmd).not.toBe(outsideVenvPython); // never the out-of-repo venv, even though it exists
+      expect(cmd).toBe("python3"); // fell through to PATH instead
+      expect(interpreter).toBe("system");
+
+      const map: TestMap = { runners: ["pytest"], tests: [{ runner: "pytest", path: "tests/test_x.py" }] };
+      const { ctx } = fakeCtx({
+        repoDir, baseSha: baseSha(repoDir),
+        detect: async () => map,
+        impacted: () => [{ runner: "pytest", path: "tests/test_x.py" }],
+      });
+      const result = await verifyStage.run(ctx, sig());
+      expect(result.data.not_proven).toEqual(["tests ran on the system interpreter"]);
+    } finally {
+      if (savedVenv === undefined) delete process.env["VIRTUAL_ENV"]; else process.env["VIRTUAL_ENV"] = savedVenv;
+      if (savedPath === undefined) delete process.env["PATH"]; else process.env["PATH"] = savedPath;
+    }
+  });
+
+  test("an in-repo VIRTUAL_ENV IS trusted as project", () => {
+    const repoDir = mkRepo();
+    const insideVenv = join(repoDir, ".custom-venv");
+    mkdirSync(join(insideVenv, "bin"), { recursive: true });
+    const shim = join(insideVenv, "bin", "python");
+    writeFileSync(shim, "#!/usr/bin/env bash\nexit 0\n");
+    chmodSync(shim, 0o755);
+    const savedVenv = process.env["VIRTUAL_ENV"];
+    process.env["VIRTUAL_ENV"] = insideVenv;
+    try {
+      const [cmd, , interpreter] = runnerCmd({ runner: "pytest", path: "tests/test_x.py" }, repoDir);
+      expect(cmd).toBe(shim);
+      expect(interpreter).toBe("project");
+    } finally {
+      if (savedVenv === undefined) delete process.env["VIRTUAL_ENV"]; else process.env["VIRTUAL_ENV"] = savedVenv;
+    }
+  });
+
+  test("ruff resolves the same way: project .venv/bin/ruff over a bare PATH ruff", async () => {
+    const repoDir = mkRepo();
+    const venvBin = join(repoDir, ".venv", "bin");
+    mkdirSync(venvBin, { recursive: true });
+    const shim = join(venvBin, "ruff");
+    writeFileSync(shim, "#!/usr/bin/env bash\nexit 0\n");
+    chmodSync(shim, 0o755);
+    const { ctx } = fakeCtx({ repoDir, baseSha: "HEAD" });
+    const checks: VerifyCheck[] = [];
+    await runLintChecks(ctx, ["changed.py"], sig(), checks);
+    const ruffCheck = checks.find((c) => c.name === "lint:ruff");
+    expect(ruffCheck?.cmd.startsWith(shim)).toBe(true);
+    expect(ruffCheck?.interpreter).toBe("project");
+    expect(ruffCheck?.result).toBe("pass");
   });
 });
 
