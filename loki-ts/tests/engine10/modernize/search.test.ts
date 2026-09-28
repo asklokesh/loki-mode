@@ -133,35 +133,105 @@ describe("search", () => {
     expect(seen[1]!.missing).toEqual([B10F, B20T, B20F]);
     expect(seen[2]!.missing).toEqual([B10F, B20T, B20F]);
   });
+
+  // Reviewer-reproduced blocking finding: a failed seed capture (py_capture.py's CAPTURE_FAILED
+  // shape -- branchesTotal/branchesTaken -1) must end the search as failed, never be reported as
+  // a plateau at a fabricated 0% that section 3.2's 80% coverage floor would then act on.
+  it("ends as capture_failed when the seed capture fails, never calls propose, never plateaus", () => {
+    let proposeCalls = 0;
+    const propose: ProposeInputs = () => {
+      proposeCalls++;
+      return [];
+    };
+    // A distinct, arbitrary cause -- never "old runtime unavailable" -- so this fails against any
+    // fix that just hardcodes that one message instead of passing the runner's actual cause through.
+    const failingCapture: CaptureRunner = () => ({
+      branchesTotal: -1, branchesTaken: -1, branchPct: 0,
+      missing: [{ line: -1, outcome: "true" }], error: "py_capture.py exit 2: SyntaxError",
+    });
+    const result = search(UNIT_SRC, [], propose, failingCapture);
+
+    expect(result.stoppedReason).toBe("capture_failed");
+    expect(result.reason).toBe("py_capture.py exit 2: SyntaxError");
+    expect(proposeCalls).toBe(0);
+    expect(result.rounds).toHaveLength(0);
+  });
 });
 
 const PYTHON3 = ["/opt/homebrew/bin/python3.12", "python3.12", "python3"].find(
   (cmd) => !spawnSync(cmd, ["--version"]).error,
 );
+// realCaptureRunner resolves the OLD runtime (section 3.2), never the new one: LOKI_MOD_OLD_RUNTIME,
+// else python2.7/python2 on PATH -- exactly tests/test-modernize-py-capture.sh section 12's gate.
+const OLD_RUNTIME =
+  process.env["LOKI_MOD_OLD_RUNTIME"] ||
+  ["python2.7", "python2"].find((cmd) => !spawnSync(cmd, ["--version"]).error);
 const FIXTURE_UNIT = join(import.meta.dir, "fixtures", "search", "branch.py");
 
-// M-09 integration: realCaptureRunner actually shells out to py_capture.py. Skipped (never
-// faked green) when no python3 is on PATH, per test-modernize-py-capture.sh's own pattern.
-describe.skipIf(!PYTHON3)("search with realCaptureRunner (py_capture.py, M-09)", () => {
+// Shared by both describes below: realCaptureRunner reaches full coverage on branch.py and drops
+// an untrusted bad-entry candidate without aborting the search.
+function expectFullCoverageOnBranchPy(): void {
   const trueCase: CaseSpec = { entry: "f", args: [{ t: "bool", v: true }], kwargs: {} };
   const falseCase: CaseSpec = { entry: "f", args: [{ t: "bool", v: false }], kwargs: {} };
   const badEntryCase: CaseSpec = { entry: "does_not_exist", args: [], kwargs: {} };
+  let round1 = true;
+  const propose: ProposeInputs = () => {
+    if (round1) {
+      round1 = false;
+      return [badEntryCase, falseCase]; // bad candidate first: must not abort the good one
+    }
+    return [];
+  };
+  const result = search(FIXTURE_UNIT, [trueCase], propose, realCaptureRunner);
 
+  expect(result.stoppedReason).toBe("full_coverage");
+  expect(result.coverage.missing).toHaveLength(0);
+  expect(result.coverage.branchesTaken).toBe(2);
+  // seed + falseCase kept; badEntryCase dropped (its trial capture exits 2, never crashes)
+  expect(result.cases).toEqual([trueCase, falseCase]);
+}
+
+// M-09 integration: realCaptureRunner actually shells out to py_capture.py under a REAL old
+// runtime. Skipped (never faked green) when no old runtime is available, per
+// test-modernize-py-capture.sh's own pattern -- this machine has no python2/python2.7.
+describe.skipIf(!OLD_RUNTIME)("search with realCaptureRunner (py_capture.py, M-09)", () => {
+  it("reaches full coverage on branch.py and drops an untrusted bad-entry candidate", expectFullCoverageOnBranchPy);
+});
+
+// Same path, exercised via an explicit LOKI_MOD_OLD_RUNTIME override instead of a real old
+// runtime -- so the py_capture.py shell-out and untrusted-candidate handling are actually run on
+// CI/dev machines with no python2/python2.7 (branch.py is 2/3-compatible and the assertions are
+// structural, so this is honest harness-mechanics coverage, not faked 2.7 semantics).
+describe.skipIf(!PYTHON3)("search with realCaptureRunner via LOKI_MOD_OLD_RUNTIME override (mechanics)", () => {
   it("reaches full coverage on branch.py and drops an untrusted bad-entry candidate", () => {
-    let round1 = true;
-    const propose: ProposeInputs = () => {
-      if (round1) {
-        round1 = false;
-        return [badEntryCase, falseCase]; // bad candidate first: must not abort the good one
-      }
-      return [];
-    };
-    const result = search(FIXTURE_UNIT, [trueCase], propose, realCaptureRunner);
+    const prev = process.env["LOKI_MOD_OLD_RUNTIME"];
+    process.env["LOKI_MOD_OLD_RUNTIME"] = PYTHON3;
+    try {
+      expectFullCoverageOnBranchPy();
+    } finally {
+      if (prev === undefined) delete process.env["LOKI_MOD_OLD_RUNTIME"];
+      else process.env["LOKI_MOD_OLD_RUNTIME"] = prev;
+    }
+  });
+});
 
-    expect(result.stoppedReason).toBe("full_coverage");
-    expect(result.coverage.missing).toHaveLength(0);
-    expect(result.coverage.branchesTaken).toBe(2);
-    // seed + falseCase kept; badEntryCase dropped (its trial capture exits 2, never crashes)
-    expect(result.cases).toEqual([trueCase, falseCase]);
+// Reviewer-reproduced blocking finding: realCaptureRunner hardcoded the NEW-runtime priority
+// (util/python.ts's homebrew python3.12/python3.12/python3), never consulting LOKI_MOD_OLD_RUNTIME
+// as section 3.2 requires -- so a 2/3-compatible unit silently got captured under the new
+// runtime instead of the old one. Proven with a bogus override: the OLD code ignores it and
+// still succeeds via homebrew python3.12 (present on this machine); the FIXED code must try only
+// the override, get a spawn failure, and never fall back to a python3 discovery of any kind.
+describe("realCaptureRunner honors LOKI_MOD_OLD_RUNTIME (section 3.2)", () => {
+  it("uses only the override, never a new-runtime fallback, when the override does not exist", () => {
+    const prev = process.env["LOKI_MOD_OLD_RUNTIME"];
+    process.env["LOKI_MOD_OLD_RUNTIME"] = "/no/such/interpreter-loki-m10-test";
+    try {
+      const result = realCaptureRunner(FIXTURE_UNIT, [{ entry: "f", args: [{ t: "bool", v: true }], kwargs: {} }]);
+      expect(result.branchesTotal).toBe(-1); // CAPTURE_FAILED: the override was consulted and honored
+      expect(result.error).toBe("old runtime unavailable"); // the specific cause, not a new-runtime one
+    } finally {
+      if (prev === undefined) delete process.env["LOKI_MOD_OLD_RUNTIME"];
+      else process.env["LOKI_MOD_OLD_RUNTIME"] = prev;
+    }
   });
 });
