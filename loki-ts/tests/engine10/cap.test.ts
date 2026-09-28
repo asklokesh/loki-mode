@@ -1,7 +1,7 @@
 // loki-ts/tests/engine10/cap.test.ts
 //
 // E-19 wall check (docs/v10/ENGINE.md section 4 "Hard cap"; section 16 slice
-// E-19). With LOKI_E10_CAP_S=20 -- the same "for tests only" knob
+// E-19). With LOKI_E10_CAP_S=30 -- the same "for tests only" knob
 // supervisor.ts (E-03, on main) already reads via Number(env.LOKI_E10_CAP_S)
 // -- and a sleeping stub session, the global cap fires mid-implement,
 // session.ts (E-07, on main) kills the whole process group (grandchild
@@ -70,7 +70,7 @@ describe("engine10 hard cap -> DRAFT PR body (E-19)", () => {
     const repoDir = mkdtempSync(join(tmpdir(), "loki-e10-cap-repo-"));
     const workDir = mkdtempSync(join(tmpdir(), "loki-e10-cap-work-")); // outside repoDir: never touched by `git add -A`
     const gcPidFile = join(workDir, "grandchild.pid");
-    process.env["LOKI_E10_CAP_S"] = "20";
+    process.env["LOKI_E10_CAP_S"] = "30";
     process.env["SESSION_TEST_GRANDCHILD_PID_FILE"] = gcPidFile;
     // seal.ts signs only when a key is configured; force the unsigned path (same convention as seal.test.ts).
     process.env["LOKI_RECEIPT_SIGNING_KEY"] = "";
@@ -142,13 +142,16 @@ describe("engine10 hard cap -> DRAFT PR body (E-19)", () => {
         return passthrough(name);
       };
 
-      // Cap fires at 14/15 of capS (ENGINE.md section 4): 20 * 14/15 = 18.667s.
-      // Backdating the start by 17s leaves about 1.67s of real wall time
+      // capS=30 is above the ~24.83s threshold below which softCapS(capS)'s
+      // commit+seal-tail budget goes negative (E-67 round 5), so softCapS(30)
+      // is the plain-point/budget value unaffected by that clamp: 5.0s exactly
+      // (backstopS(30)=29s minus the 24s commit+seal+grace+margin tail).
+      // Backdating the start by 3.33s leaves about 1.67s of real wall time
       // before it fires, so implement's session is genuinely mid-run (not
       // already past the cap) when the kill happens, with margin for the
       // near-instant intake/plan/wall stubs ahead of it -- without the test
-      // waiting out the full 17s.
-      const startedAtMs = Date.now() - 17_000;
+      // waiting out the full 3.33s.
+      const startedAtMs = Date.now() - 3_330;
       const result = await runMachine(ctx, { load, startedAtMs });
 
       expect(result.capHit).toBe(true);

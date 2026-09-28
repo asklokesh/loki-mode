@@ -121,6 +121,17 @@ refused "origin differing from the pin is refused" "origin changed during the ru
 p4 "$LIB" comment 7 "$W/body.md" >/dev/null 2>&1 \
     && grep -q '^cwd=/ .* pr comment 7 --repo octocat/hello --body-file ' "$GHLOG" \
     && ok "comment mode posts via gh pr comment" || bad "comment mode ($(tr '\n' '|' < "$GHLOG"))"
+
+# E-67: issue-comment (a FAILED, no-diff run with no PR to comment on) posts to the issue instead.
+: > "$GHLOG"
+p4 "$LIB" issue-comment "octocat/hello#9" "$W/body.md" >/dev/null 2>&1 \
+    && grep -q '^cwd=/ .* issue comment 9 --repo octocat/hello --body-file ' "$GHLOG" \
+    && ok "issue-comment mode posts via gh issue comment, extracting the number" || bad "issue-comment mode ($(tr '\n' '|' < "$GHLOG"))"
+: > "$GHLOG"
+p4 "$LIB" issue-comment "42" "$W/body.md" >/dev/null 2>&1 \
+    && grep -q '^cwd=/ .* issue comment 42 --repo octocat/hello --body-file ' "$GHLOG" \
+    && ok "issue-comment mode accepts a bare issue number" || bad "issue-comment bare number ($(tr '\n' '|' < "$GHLOG"))"
+refused "issue-comment rejects a ref with no number" "cannot extract issue number" p4 "$LIB" issue-comment "octocat/hello" "$W/body.md"
 p4 "$LIB" status "$SHA" pending "deep verify running" >/dev/null 2>&1 \
     && grep -q "^cwd=/ .* api repos/octocat/hello/statuses/$SHA -f state=pending -f context=loki/deep-verify -f description=deep verify running$" "$GHLOG" \
     && ok "status mode posts a pending loki/deep-verify status" || bad "status mode ($(tr '\n' '|' < "$GHLOG"))"
@@ -211,6 +222,8 @@ lp "$LB" status "$SHA" pending "deep verify running" >/dev/null 2>"$W/err" && gr
     && ok "local: status is a no-op notice, rc 0, no gh" || bad "local status ($(tr '\n' ' ' < "$W/err"))"
 lp "$LB" comment 7 "$W/body.md" >/dev/null 2>"$W/err" && grep -q "local origin" "$W/err" && [ ! -s "$GHLOG" ] \
     && ok "local: comment is a no-op notice, rc 0, no gh" || bad "local comment ($(tr '\n' ' ' < "$W/err"))"
+lp "$LB" issue-comment "octocat/hello#9" "$W/body.md" >/dev/null 2>"$W/err" && grep -q "local origin" "$W/err" && [ ! -s "$GHLOG" ] \
+    && ok "local: issue-comment is a no-op notice, rc 0, no gh" || bad "local issue-comment ($(tr '\n' ' ' < "$W/err"))"
 
 # Not a local bare origin: never the local branch, always today's refusal.
 NB="$W/local/nonbare"

@@ -203,7 +203,7 @@ console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verd
     try { process.kill(Number(readFileSync(pidFile, "utf8"))); } catch { /* already gone */ }
   }, 30_000);
 
-  test("F2b: a hung worker is killed with its process group at cap plus grace", async () => {
+  test("F2b: a hung worker is killed with its process group before the cap elapses (cap minus grace)", async () => {
     const dir = repo();
     const pidFile = join(dir, "grandchild.pid");
     const code = `
@@ -212,7 +212,7 @@ require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(c.pid));
 setInterval(() => {}, 1000);
 `;
     const t = Date.now();
-    const r = await runSupervisor({ runId: "e10-t7", repoDir: dir, env: supEnv(), workerArgv: worker(code), capS: 1, graceS: 1 });
+    const r = await runSupervisor({ runId: "e10-t7", repoDir: dir, env: supEnv(), workerArgv: worker(code), capS: 3, graceS: 1 });
     expect(Date.now() - t).toBeLessThan(10_000);
     expect(r.verdict).toBe("FAILED");
     const gc = Number(readFileSync(pidFile, "utf8"));
