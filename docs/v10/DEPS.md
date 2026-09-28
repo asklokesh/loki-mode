@@ -9,12 +9,12 @@ Inventory only. No dependency, lockfile, workflow or image was changed to produc
 | File | Name | Current | Latest stable | Bump | Note |
 |---|---|---|---|---|---|
 | `dashboard-ui/package.json` | `@playwright/test` | `^1.58.1` | `1.63.0` | minor |  |
-| `dashboard-ui/package.json` | `esbuild` | `^0.24.0` | `0.28.2` | minor |  |
+| `dashboard-ui/package.json` | `esbuild` | `^0.24.0` | `0.28.2` | 0.x breaking |  |
 | `dashboard-ui/package.json` | `jest` | `^29.7.0` | `30.5.2` | MAJOR |  |
 | `dashboard-ui/package.json` | `jest-environment-jsdom` | `^29.7.0` | `30.5.2` | MAJOR |  |
 | `dashboard-ui/package.json` | `jsdom` | `^24.0.0` | `30.1.1` | MAJOR |  |
 | `loki-ts/package.json` | `@anthropic-ai/claude-agent-sdk` | `0.3.283` | `0.3.283` | up-to-date |  |
-| `loki-ts/package.json` | `@anthropic-ai/sdk` | `^0.124.0` | `0.128.0` | minor |  |
+| `loki-ts/package.json` | `@anthropic-ai/sdk` | `^0.124.0` | `0.128.0` | 0.x breaking |  |
 | `loki-ts/package.json` | `@resvg/resvg-wasm` | `^2.6.2` | `2.6.2` | up-to-date |  |
 | `loki-ts/package.json` | `@types/bun` | `latest` | `1.4.2` | unknown | no numeric version in spec (unpinned or a dist-tag like 'latest'); cannot compute a bump class |
 | `loki-ts/package.json` | `typescript` | `^5.6.0` | `7.0.2` | MAJOR |  |
@@ -30,7 +30,7 @@ Inventory only. No dependency, lockfile, workflow or image was changed to produc
 | `vscode-extension/package.json` | `@typescript-eslint/eslint-plugin` | `^6.13.0` | `8.70.1` | MAJOR |  |
 | `vscode-extension/package.json` | `@typescript-eslint/parser` | `^6.13.0` | `8.70.1` | MAJOR |  |
 | `vscode-extension/package.json` | `@vscode/vsce` | `^2.22.0` | `4.0.0` | MAJOR |  |
-| `vscode-extension/package.json` | `esbuild` | `^0.19.8` | `0.28.2` | minor |  |
+| `vscode-extension/package.json` | `esbuild` | `^0.19.8` | `0.28.2` | 0.x breaking |  |
 | `vscode-extension/package.json` | `eslint` | `^8.55.0` | `10.11.0` | MAJOR |  |
 | `vscode-extension/package.json` | `typescript` | `^5.3.2` | `7.0.2` | MAJOR |  |
 | `web-app/package.json` | `@monaco-editor/react` | `^4.7.0` | `4.7.0` | up-to-date |  |
@@ -50,7 +50,7 @@ Inventory only. No dependency, lockfile, workflow or image was changed to produc
 | `web-app/package.json` | `autoprefixer` | `^10.4.20` | `10.6.1` | minor |  |
 | `web-app/package.json` | `eslint` | `^9.21.0` | `10.11.0` | MAJOR |  |
 | `web-app/package.json` | `eslint-plugin-react-hooks` | `^5.1.0` | `7.1.1` | MAJOR |  |
-| `web-app/package.json` | `eslint-plugin-react-refresh` | `^0.4.19` | `0.5.7` | minor |  |
+| `web-app/package.json` | `eslint-plugin-react-refresh` | `^0.4.19` | `0.5.7` | 0.x breaking |  |
 | `web-app/package.json` | `globals` | `^15.15.0` | `17.12.0` | MAJOR |  |
 | `web-app/package.json` | `postcss` | `^8.5.3` | `8.5.28` | patch |  |
 | `web-app/package.json` | `tailwindcss` | `^3.4.17` | `4.3.3` | MAJOR |  |
@@ -62,10 +62,10 @@ Inventory only. No dependency, lockfile, workflow or image was changed to produc
 
 | File | Name | Current | Latest stable | Bump | Note |
 |---|---|---|---|---|---|
-| `dashboard/requirements.txt` | `fastapi` | `>=0.100.0,<1.0.0` | `0.141.1` | minor |  |
-| `dashboard/requirements.txt` | `uvicorn` | `>=0.20.0,<1.0.0` | `0.54.0` | minor |  |
+| `dashboard/requirements.txt` | `fastapi` | `>=0.100.0,<1.0.0` | `0.141.1` | 0.x breaking |  |
+| `dashboard/requirements.txt` | `uvicorn` | `>=0.20.0,<1.0.0` | `0.54.0` | 0.x breaking |  |
 | `dashboard/requirements.txt` | `sqlalchemy` | `>=2.0.0,<3.0.0` | `2.1.1` | minor |  |
-| `dashboard/requirements.txt` | `aiosqlite` | `>=0.19.0,<1.0.0` | `0.22.1` | minor |  |
+| `dashboard/requirements.txt` | `aiosqlite` | `>=0.19.0,<1.0.0` | `0.22.1` | 0.x breaking |  |
 | `dashboard/requirements.txt` | `greenlet` | `>=3.0.0,<4.0.0` | `3.5.6` | minor |  |
 | `dashboard/requirements.txt` | `pydantic` | `>=2.0.0,<3.0.0` | `2.13.5` | minor |  |
 | `dashboard/requirements.txt` | `websockets` | `>=12.0,<16.0` | `17.1` | MAJOR |  |
@@ -88,17 +88,17 @@ Inventory only. No dependency, lockfile, workflow or image was changed to produc
 | `tests/fixtures/legacy-checkout-app/requirements.txt` | `stripe` | `==7.0.0` | `15.6.1` | MAJOR | test fixture, not a real dependency |
 | `web-app/requirements-test.txt` | `pytest` | `>=7.4.0` | `9.1.1` | MAJOR |  |
 | `web-app/requirements-test.txt` | `pytest-asyncio` | `>=0.21.0` | `1.4.0` | MAJOR |  |
-| `web-app/requirements-test.txt` | `httpx` | `>=0.24.0` | `0.28.1` | minor |  |
-| `web-app/requirements.txt` | `fastapi` | `>=0.100.0` | `0.141.1` | minor |  |
-| `web-app/requirements.txt` | `uvicorn` | `>=0.20.0` | `0.54.0` | minor |  |
+| `web-app/requirements-test.txt` | `httpx` | `>=0.24.0` | `0.28.1` | 0.x breaking |  |
+| `web-app/requirements.txt` | `fastapi` | `>=0.100.0` | `0.141.1` | 0.x breaking |  |
+| `web-app/requirements.txt` | `uvicorn` | `>=0.20.0` | `0.54.0` | 0.x breaking |  |
 | `web-app/requirements.txt` | `pydantic` | `>=2.0.0` | `2.13.5` | minor |  |
-| `web-app/requirements.txt` | `httpx` | `>=0.24.0` | `0.28.1` | minor |  |
-| `web-app/requirements.txt` | `python-multipart` | `>=0.0.9` | `0.0.32` | patch |  |
+| `web-app/requirements.txt` | `httpx` | `>=0.24.0` | `0.28.1` | 0.x breaking |  |
+| `web-app/requirements.txt` | `python-multipart` | `>=0.0.9` | `0.0.32` | 0.x breaking |  |
 | `web-app/requirements.txt` | `pexpect` | `>=4.8.0` | `4.9.0` | minor |  |
 | `web-app/requirements.txt` | `watchdog` | `>=3.0.0` | `6.0.0` | MAJOR |  |
 | `web-app/requirements.txt` | `sqlalchemy` | `>=2.0.0` | `2.1.1` | minor |  |
-| `web-app/requirements.txt` | `asyncpg` | `>=0.28.0` | `0.31.0` | minor |  |
-| `web-app/requirements.txt` | `aiosqlite` | `>=0.19.0` | `0.22.1` | minor |  |
+| `web-app/requirements.txt` | `asyncpg` | `>=0.28.0` | `0.31.0` | 0.x breaking |  |
+| `web-app/requirements.txt` | `aiosqlite` | `>=0.19.0` | `0.22.1` | 0.x breaking |  |
 | `web-app/requirements.txt` | `alembic` | `>=1.12.0` | `1.20.0` | minor |  |
 | `web-app/requirements.txt` | `python-jose` | `>=3.3.0` | `3.5.0` | minor |  |
 | `web-app/requirements.txt` | `passlib` | `>=1.7.4` | `1.7.4` | up-to-date |  |
@@ -111,7 +111,7 @@ Inventory only. No dependency, lockfile, workflow or image was changed to produc
 |---|---|---|---|---|---|
 | `loki-ts/tests/engine10/fixtures/testmap/pyproject.toml` | `(none declared)` | `` | `-` | n/a | test fixture, not a real dependency |
 | `loki-ts/tests/engine10/modernize/fixtures/inv/sample-repo/pyproject.toml` | `(none declared)` | `` | `-` | n/a | test fixture, not a real dependency |
-| `sdk/python/pyproject.toml` | `httpx` | `>=0.24.0` | `0.28.1` | minor |  |
+| `sdk/python/pyproject.toml` | `httpx` | `>=0.24.0` | `0.28.1` | 0.x breaking |  |
 | `sdk/python/pyproject.toml` | `pydantic` | `>=2.0.0` | `2.13.5` | minor |  |
 | `sdk/python/pyproject.toml` | `setuptools` | `>=68.0` | `84.0.0` | MAJOR |  |
 | `sdk/python/pyproject.toml` | `wheel` | `(unpinned)` | `0.48.0` | unknown | no numeric version in spec (unpinned or a dist-tag like 'latest'); cannot compute a bump class |
@@ -120,100 +120,100 @@ Inventory only. No dependency, lockfile, workflow or image was changed to produc
 
 | File | Name | Current | Latest stable | Bump | Note |
 |---|---|---|---|---|---|
-| `.github/workflows/arm64-runtime.yml` | `docker/setup-qemu-action@v3` | `v3` | `v4.4.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/bun-parity.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
+| `.github/workflows/arm64-runtime.yml` | `docker/setup-qemu-action@v3` | `v3` | `v4.4.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/bun-parity.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
 | `.github/workflows/bun-parity.yml` | `oven-sh/setup-bun@v2` | `v2` | `v2.2.0` | minor | tag-pinned (not SHA-pinned); floating major tag already tracks the latest release within that major |
-| `.github/workflows/bun-parity.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/check-phase6-ready.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
+| `.github/workflows/bun-parity.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/check-phase6-ready.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
 | `.github/workflows/check-phase6-ready.yml` | `oven-sh/setup-bun@v2` | `v2` | `v2.2.0` | minor | tag-pinned (not SHA-pinned); floating major tag already tracks the latest release within that major |
-| `.github/workflows/check-phase6-ready.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/cla.yml` | `contributor-assistant/github-action@v2.6.1` | `v2.6.1` | `v2.6.1` | up-to-date | tag-pinned (not SHA-pinned) |
-| `.github/workflows/claude-code-review.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
+| `.github/workflows/check-phase6-ready.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/cla.yml` | `contributor-assistant/github-action@v2.6.1` | `v2.6.1` | `v2.6.1` | up-to-date | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/claude-code-review.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
 | `.github/workflows/claude-code-review.yml` | `anthropics/claude-code-action@v1` | `v1` | `v1` | up-to-date | tag-pinned (not SHA-pinned) |
-| `.github/workflows/coverage.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
+| `.github/workflows/coverage.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
 | `.github/workflows/coverage.yml` | `oven-sh/setup-bun@v2` | `v2` | `v2.2.0` | minor | tag-pinned (not SHA-pinned); floating major tag already tracks the latest release within that major |
-| `.github/workflows/coverage.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/integrity-audit.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/integrity-audit.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/integrity-audit.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/integrity-audit.yml` | `azure/setup-helm@v4` | `v4` | `v5.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/loki-ci-example.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/loki-ci-example.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/loki-ci-example.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/loki-enterprise.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/loki-enterprise.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/loki-enterprise.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/loki-enterprise.yml` | `actions/download-artifact@v4` | `v4` | `v8.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/loki-issue-to-pr.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/loki-issue-to-pr.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/loki-issue-to-pr.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/loki-issue-to-pr.yml` | `actions/download-artifact@v4` | `v4` | `v8.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/model-catalog-probe.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/model-catalog-probe.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/mutation-testing.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/mutation-testing.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
+| `.github/workflows/coverage.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/integrity-audit.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/integrity-audit.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/integrity-audit.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/integrity-audit.yml` | `azure/setup-helm@v4` | `v4` | `v5.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/loki-ci-example.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/loki-ci-example.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/loki-ci-example.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/loki-enterprise.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/loki-enterprise.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/loki-enterprise.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/loki-enterprise.yml` | `actions/download-artifact@v4` | `v4` | `v8.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/loki-issue-to-pr.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/loki-issue-to-pr.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/loki-issue-to-pr.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/loki-issue-to-pr.yml` | `actions/download-artifact@v4` | `v4` | `v8.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/model-catalog-probe.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/model-catalog-probe.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/mutation-testing.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/mutation-testing.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
 | `.github/workflows/mutation-testing.yml` | `oven-sh/setup-bun@v2` | `v2` | `v2.2.0` | minor | tag-pinned (not SHA-pinned); floating major tag already tracks the latest release within that major |
-| `.github/workflows/mutation-testing.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/nightly.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
+| `.github/workflows/mutation-testing.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/nightly.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
 | `.github/workflows/nightly.yml` | `oven-sh/setup-bun@v2` | `v2` | `v2.2.0` | minor | tag-pinned (not SHA-pinned); floating major tag already tracks the latest release within that major |
-| `.github/workflows/nightly.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/nightly.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/parity-drift.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
+| `.github/workflows/nightly.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/nightly.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/parity-drift.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
 | `.github/workflows/parity-drift.yml` | `oven-sh/setup-bun@v2` | `v2` | `v2.2.0` | minor | tag-pinned (not SHA-pinned); floating major tag already tracks the latest release within that major |
-| `.github/workflows/parity-drift.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/parity-drift.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/post-release-smoke.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/post-release-smoke.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/post-release-smoke.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/provenance.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/provenance.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
+| `.github/workflows/parity-drift.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/parity-drift.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/post-release-smoke.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/post-release-smoke.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/post-release-smoke.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/provenance.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/provenance.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
 | `.github/workflows/provenance.yml` | `oven-sh/setup-bun@v2` | `v2` | `v2.2.0` | minor | tag-pinned (not SHA-pinned); floating major tag already tracks the latest release within that major |
 | `.github/workflows/provenance.yml` | `sigstore/cosign-installer@v3` | `v3` | `v4.1.2` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/provenance.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/provenance.yml` | `docker/login-action@v3` | `v3` | `v4.6.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/release.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
+| `.github/workflows/provenance.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/provenance.yml` | `docker/login-action@v3` | `v3` | `v4.6.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/release.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
 | `.github/workflows/release.yml` | `oven-sh/setup-bun@v2` | `v2` | `v2.2.0` | minor | tag-pinned (not SHA-pinned); floating major tag already tracks the latest release within that major |
-| `.github/workflows/release.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/release.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/release.yml` | `docker/setup-buildx-action@v3` | `v3` | `v4.4.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/release.yml` | `docker/login-action@v3` | `v3` | `v4.6.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/release.yml` | `docker/build-push-action@v5` | `v5` | `v7.4.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/release.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/release.yml` | `actions/download-artifact@v4` | `v4` | `v8.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
+| `.github/workflows/release.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/release.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/release.yml` | `docker/setup-buildx-action@v3` | `v3` | `v4.4.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/release.yml` | `docker/login-action@v3` | `v3` | `v4.6.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/release.yml` | `docker/build-push-action@v5` | `v5` | `v7.4.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/release.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/release.yml` | `actions/download-artifact@v4` | `v4` | `v8.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
 | `.github/workflows/release.yml` | `sigstore/cosign-installer@v3` | `v3` | `v4.1.2` | MAJOR | tag-pinned (not SHA-pinned) |
 | `.github/workflows/release.yml` | `anchore/sbom-action@v0` | `v0` | `v0.24.2` | minor | tag-pinned (not SHA-pinned); floating major tag already tracks the latest release within that major |
-| `.github/workflows/release.yml` | `peter-evans/dockerhub-description@v4` | `v4` | `v5.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/sbom.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/sbom.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/sbom.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/security-audit.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/security-audit.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/security-audit.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/security-audit.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/security-audit.yml` | `actions/checkout@11d5960a326750d5838078e36cf38b85af677262` | `11d5960a326750d5838078e36cf38b85af677262  # v4` | `v7.0.1` | MAJOR | SHA-pinned |
-| `.github/workflows/security-audit.yml` | `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02` | `ea165f8d65b6e75b540449e92b4886f43607fa02  # v4` | `v7.0.1` | MAJOR | SHA-pinned |
-| `.github/workflows/security-audit.yml` | `github/codeql-action/init@f3712979fa5f215279b101dd0a2e3bdfb4353324` | `f3712979fa5f215279b101dd0a2e3bdfb4353324` | `codeql-bundle-v2.27.1` | unknown | SHA-pinned, no version comment; latest release is codeql-bundle-v2.27.1 |
-| `.github/workflows/security-audit.yml` | `github/codeql-action/analyze@f3712979fa5f215279b101dd0a2e3bdfb4353324` | `f3712979fa5f215279b101dd0a2e3bdfb4353324` | `codeql-bundle-v2.27.1` | unknown | SHA-pinned, no version comment; latest release is codeql-bundle-v2.27.1 |
+| `.github/workflows/release.yml` | `peter-evans/dockerhub-description@v4` | `v4` | `v5.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/sbom.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/sbom.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/sbom.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/security-audit.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/security-audit.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/security-audit.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/security-audit.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/security-audit.yml` | `actions/checkout@11d5960a326750d5838078e36cf38b85af677262` | `11d5960a326750d5838078e36cf38b85af677262  # v4` | `v7.0.1` | MAJOR | SHA-pinned; action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/security-audit.yml` | `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02` | `ea165f8d65b6e75b540449e92b4886f43607fa02  # v4` | `v7.0.1` | MAJOR | SHA-pinned; action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/security-audit.yml` | `github/codeql-action/init@f3712979fa5f215279b101dd0a2e3bdfb4353324` | `f3712979fa5f215279b101dd0a2e3bdfb4353324` | `codeql-bundle-v2.27.1` | unknown | SHA-pinned, no version comment; latest release is codeql-bundle-v2.27.1; action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/security-audit.yml` | `github/codeql-action/analyze@f3712979fa5f215279b101dd0a2e3bdfb4353324` | `f3712979fa5f215279b101dd0a2e3bdfb4353324` | `codeql-bundle-v2.27.1` | unknown | SHA-pinned, no version comment; latest release is codeql-bundle-v2.27.1; action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
 | `.github/workflows/security-audit.yml` | `oven-sh/setup-bun@v2` | `v2` | `v2.2.0` | minor | tag-pinned (not SHA-pinned); floating major tag already tracks the latest release within that major |
-| `.github/workflows/sentrux-real.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/sentrux-real.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/sentrux-real.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/soak-monitor.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/soak-monitor.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/test.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/test.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/test.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
+| `.github/workflows/sentrux-real.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/sentrux-real.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/sentrux-real.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/soak-monitor.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/soak-monitor.yml` | `actions/upload-artifact@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/test.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/test.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/test.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
 | `.github/workflows/test.yml` | `oven-sh/setup-bun@v2` | `v2` | `v2.2.0` | minor | tag-pinned (not SHA-pinned); floating major tag already tracks the latest release within that major |
-| `.github/workflows/test.yml` | `actions/cache@v4` | `v4` | `v6.1.0` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/test.yml` | `azure/setup-helm@v4` | `v4` | `v5.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/tier-a.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned) |
-| `.github/workflows/tier-a.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
+| `.github/workflows/test.yml` | `actions/cache@v4` | `v4` | `v6.1.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/test.yml` | `azure/setup-helm@v4` | `v4` | `v5.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/tier-a.yml` | `actions/checkout@v4` | `v4` | `v7.0.1` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
+| `.github/workflows/tier-a.yml` | `actions/setup-python@v5` | `v5` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
 | `.github/workflows/tier-a.yml` | `oven-sh/setup-bun@v2` | `v2` | `v2.2.0` | minor | tag-pinned (not SHA-pinned); floating major tag already tracks the latest release within that major |
-| `.github/workflows/tier-a.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned) |
+| `.github/workflows/tier-a.yml` | `actions/setup-node@v4` | `v4` | `v7.0.0` | MAJOR | tag-pinned (not SHA-pinned); action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime |
 | `.github/actions/issue-to-pr/action.yml` | `(none found)` | `` | `-` | n/a | no `uses:` step found in this workflow/action file |
 | `.github/actions/review/action.yml` | `(none found)` | `` | `-` | n/a | no `uses:` step found in this workflow/action file |
 
-**Node 20 runtime deprecation:** GitHub-hosted `actions/checkout@v4` and `actions/setup-node@v4` themselves run fine on any runner, but upstream has named Node 20 runtime deprecation warnings in CI logs for actions still targeting `node-version: 20`. Files pinning Node 20: .github/workflows/test.yml.
+**Node 20 runtime deprecation:** GitHub's own Node 20 deprecation covers two distinct things and they must not be conflated. First, matrix jobs still targeting `node-version: 20` (files: .github/workflows/test.yml). Second, and separately: an action whose OWN `action.yml` declares `using: node20` IS the deprecated runtime itself, regardless of what version tag or SHA it is pinned to -- pinning to the latest release of such an action does not fix this until that action's maintainers migrate its action.yml to node22 or later. Every `uses:` target in this repo's workflows was checked at its pinned ref via the GitHub Contents API; action.yml itself declares node20 for: actions/cache, actions/checkout, actions/download-artifact, actions/setup-node, actions/setup-python, actions/upload-artifact, azure/setup-helm, contributor-assistant/github-action, docker/build-push-action, docker/login-action, docker/setup-buildx-action, docker/setup-qemu-action, github/codeql-action/analyze, github/codeql-action/init, peter-evans/dockerhub-description.
 
 ## Runtime matrices
 
@@ -223,13 +223,13 @@ Node.js current stable: 26.10.0 (cycle 26); Python current stable: 3.14.7 (cycle
 
 | File | Name | Current | Latest stable | Bump | Note |
 |---|---|---|---|---|---|
-| `.github/workflows/test.yml` | `Node.js` | `20` | `20.20.2` | EOL | EOL 2026-04-30 (past) |
-| `.github/workflows/integrity-audit.yml, .github/workflows/loki-ci-example.yml, .github/workflows/nightly.yml, .github/workflows/sentrux-real.yml, .github/workflows/test.yml, +1 more` | `Node.js` | `22` | `22.23.3` | MAJOR | EOL 2027-04-30 (not yet) |
-| `.github/workflows/test.yml` | `Node.js` | `24` | `24.21.0` | MAJOR | EOL 2028-04-30 (not yet) |
-| `.github/workflows/test.yml` | `Python` | `3.10` | `3.10.21` | minor | EOL 2026-10-31 (not yet) |
-| `.github/workflows/test.yml` | `Python` | `3.11` | `3.11.16` | minor | EOL 2027-10-31 (not yet) |
-| `.github/workflows/bun-parity.yml, .github/workflows/model-catalog-probe.yml, .github/workflows/nightly.yml, .github/workflows/parity-drift.yml, .github/workflows/test.yml, +1 more` | `Python` | `3.12` | `3.12.14` | minor | EOL 2028-10-31 (not yet) |
-| `.github/workflows/test.yml` | `Python` | `3.13` | `3.13.15` | minor | EOL 2029-10-31 (not yet) |
+| `.github/workflows/test.yml` | `Node.js` | `20` | `20.20.2 (newest line 26.10.0)` | EOL | EOL 2026-04-30 (past); EOL in current line; newest line is 26.10.0 |
+| `.github/workflows/integrity-audit.yml, .github/workflows/loki-ci-example.yml, .github/workflows/nightly.yml, .github/workflows/sentrux-real.yml, .github/workflows/test.yml, +1 more` | `Node.js` | `22` | `22.23.3 (newest line 26.10.0)` | MAJOR | EOL 2027-04-30 (not yet); minor in line; MAJOR to newest line |
+| `.github/workflows/test.yml` | `Node.js` | `24` | `24.21.0 (newest line 26.10.0)` | MAJOR | EOL 2028-04-30 (not yet); minor in line; MAJOR to newest line |
+| `.github/workflows/test.yml` | `Python` | `3.10` | `3.10.21 (newest line 3.14.7)` | minor | EOL 2026-10-31 (not yet); patch in line; minor to newest line |
+| `.github/workflows/test.yml` | `Python` | `3.11` | `3.11.16 (newest line 3.14.7)` | minor | EOL 2027-10-31 (not yet); patch in line; minor to newest line |
+| `.github/workflows/bun-parity.yml, .github/workflows/model-catalog-probe.yml, .github/workflows/nightly.yml, .github/workflows/parity-drift.yml, .github/workflows/test.yml, +1 more` | `Python` | `3.12` | `3.12.14 (newest line 3.14.7)` | minor | EOL 2028-10-31 (not yet); patch in line; minor to newest line |
+| `.github/workflows/test.yml` | `Python` | `3.13` | `3.13.15 (newest line 3.14.7)` | minor | EOL 2029-10-31 (not yet); patch in line; minor to newest line |
 | `.github/workflows/bun-parity.yml, .github/workflows/check-phase6-ready.yml, .github/workflows/coverage.yml, .github/workflows/mutation-testing.yml, .github/workflows/nightly.yml, +5 more` | `Bun` | `1.3.13` | `bun-v1.4.2` | minor |  |
 | `.github/workflows/nightly.yml, .github/workflows/test.yml` | `Bun` | `latest` | `-` | unknown | not a numeric version, skipped |
 
@@ -237,15 +237,15 @@ Node.js current stable: 26.10.0 (cycle 26); Python current stable: 3.14.7 (cycle
 
 | File | Name | Current | Latest stable | Bump | Note |
 |---|---|---|---|---|---|
-| `Dockerfile` | `ubuntu:24.04` | `ubuntu:24.04` | `24.04.5` | MAJOR | EOL 2029-05-31 (not yet) |
-| `Dockerfile.purplelab-test` | `node:22-slim` | `node:22-slim` | `22.23.3` | MAJOR | EOL 2027-04-30 (not yet) |
-| `Dockerfile.sandbox` | `debian:bookworm-slim` | `debian:bookworm-slim` | `12.15` | MAJOR | EOL 2028-06-30 (not yet) |
-| `Dockerfile.sandbox` | `debian:bookworm-slim` | `debian:bookworm-slim` | `12.15` | MAJOR | EOL 2028-06-30 (not yet) |
-| `Dockerfile.test-runner` | `python:3.12-slim` | `python:3.12-slim` | `3.12.14` | minor | EOL 2028-10-31 (not yet) |
-| `artifacts/observability/Dockerfile` | `nginx:1.27-alpine` | `nginx:1.27-alpine` | `1.27.5` | EOL | EOL 2025-06-24 (past) |
-| `dashboard/Dockerfile` | `python:3.11-slim-bookworm` | `python:3.11-slim-bookworm` | `3.11.16` | minor | EOL 2027-10-31 (not yet) |
-| `web-app/Dockerfile` | `node:22-alpine` | `node:22-alpine` | `22.23.3` | MAJOR | EOL 2027-04-30 (not yet) |
-| `web-app/Dockerfile` | `python:3.12-slim` | `python:3.12-slim` | `3.12.14` | minor | EOL 2028-10-31 (not yet) |
+| `Dockerfile` | `ubuntu:24.04` | `ubuntu:24.04` | `24.04.5 (newest line 26.04.1)` | MAJOR | EOL 2029-05-31 (not yet); patch in line; MAJOR to newest line |
+| `Dockerfile.purplelab-test` | `node:22-slim` | `node:22-slim` | `22.23.3 (newest line 26.10.0)` | MAJOR | EOL 2027-04-30 (not yet); minor in line; MAJOR to newest line |
+| `Dockerfile.sandbox` | `debian:bookworm-slim` | `debian:bookworm-slim` | `12.15 (newest line 13.7)` | MAJOR | EOL 2028-06-30 (not yet); minor in line; MAJOR to newest line |
+| `Dockerfile.sandbox` | `debian:bookworm-slim` | `debian:bookworm-slim` | `12.15 (newest line 13.7)` | MAJOR | EOL 2028-06-30 (not yet); minor in line; MAJOR to newest line |
+| `Dockerfile.test-runner` | `python:3.12-slim` | `python:3.12-slim` | `3.12.14 (newest line 3.14.7)` | minor | EOL 2028-10-31 (not yet); patch in line; minor to newest line |
+| `artifacts/observability/Dockerfile` | `nginx:1.27-alpine` | `nginx:1.27-alpine` | `1.27.5 (newest line 1.31.6)` | EOL | EOL 2025-06-24 (past); EOL in current line; newest line is 1.31.6 |
+| `dashboard/Dockerfile` | `python:3.11-slim-bookworm` | `python:3.11-slim-bookworm` | `3.11.16 (newest line 3.14.7)` | minor | EOL 2027-10-31 (not yet); patch in line; minor to newest line |
+| `web-app/Dockerfile` | `node:22-alpine` | `node:22-alpine` | `22.23.3 (newest line 26.10.0)` | MAJOR | EOL 2027-04-30 (not yet); minor in line; MAJOR to newest line |
+| `web-app/Dockerfile` | `python:3.12-slim` | `python:3.12-slim` | `3.12.14 (newest line 3.14.7)` | minor | EOL 2028-10-31 (not yet); patch in line; minor to newest line |
 | `dashboard/docker-compose.yml` | `loki-dashboard:latest` | `loki-dashboard:latest` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
 | `deploy/docker-compose/docker-compose.yml` | `asklokesh/loki-mode:latest` | `asklokesh/loki-mode:latest` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
 | `deploy/docker-compose/docker-compose.yml` | `otel/opentelemetry-collector-contrib:0.96.0` | `otel/opentelemetry-collector-contrib:0.96.0` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
@@ -254,16 +254,16 @@ Node.js current stable: 26.10.0 (cycle 26); Python current stable: 3.14.7 (cycle
 | `docker-compose.yml` | `chromadb/chroma:latest` | `chromadb/chroma:latest` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
 | `docker-compose.yml` | `loki-mode:latest` | `loki-mode:latest` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
 | `docker-compose.yml` | `loki-mode:latest` | `loki-mode:latest` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
-| `docker-compose.yml` | `redis:7-alpine` | `redis:7-alpine` | `7.4.11` | MAJOR | EOL 2029-12-01 (not yet); resolved floating tag '7' to cycle 7.4 |
-| `web-app/docker-compose.purple-lab.yml` | `postgres:16-alpine` | `postgres:16-alpine` | `16.15` | MAJOR | EOL 2028-11-09 (not yet) |
-| `web-app/docker-compose.purple-lab.yml` | `redis:7-alpine` | `redis:7-alpine` | `7.4.11` | MAJOR | EOL 2029-12-01 (not yet); resolved floating tag '7' to cycle 7.4 |
+| `docker-compose.yml` | `redis:7-alpine` | `redis:7-alpine` | `7.4.11 (newest line 8.10.2)` | MAJOR | EOL 2029-12-01 (not yet); resolved floating tag '7' to cycle 7.4; minor in line; MAJOR to newest line |
+| `web-app/docker-compose.purple-lab.yml` | `postgres:16-alpine` | `postgres:16-alpine` | `16.15 (newest line 18.6)` | MAJOR | EOL 2028-11-09 (not yet); minor in line; MAJOR to newest line |
+| `web-app/docker-compose.purple-lab.yml` | `redis:7-alpine` | `redis:7-alpine` | `7.4.11 (newest line 8.10.2)` | MAJOR | EOL 2029-12-01 (not yet); resolved floating tag '7' to cycle 7.4; minor in line; MAJOR to newest line |
 | `docker-compose.test.yml` | `(none found)` | `` | `-` | n/a | no `FROM` / `image:` line found (build-context-only service, or a multi-stage FROM this pass did not match) |
 
 ## Helm (`deploy/helm/`)
 
 | File | Name | Current | Latest stable | Bump | Note |
 |---|---|---|---|---|---|
-| `deploy/helm/autonomi/Chart.yaml` | `appVersion` | `7.93.0` | `-` | n/a | tracks the loki-mode product VERSION, not an external dep |
+| `deploy/helm/autonomi/Chart.yaml` | `appVersion` | `7.93.0` | `10.2.1` | drifted | DRIFTED: chart appVersion does not track the product VERSION file (10.2.1) |
 | `deploy/helm/autonomi/Chart.yaml` | `chart dependencies` | `(none declared)` | `-` | n/a |  |
 | `deploy/helm/autonomi/templates/tests/test-controlplane-health.yaml` | `curlimages/curl:8.11.1` | `curlimages/curl:8.11.1` | `-` | unknown | floating/arbitrary registry tag, see Docker section for endoflife-mapped images |
 | `deploy/helm/autonomi/tests/test-connection.yaml` | `curlimages/curl:8.5.0` | `curlimages/curl:8.5.0` | `-` | unknown | floating/arbitrary registry tag, see Docker section for endoflife-mapped images |
@@ -322,21 +322,23 @@ Formula lives in a separate repo: `asklokesh/homebrew-tap`, `Formula/loki-mode.r
 
 | File | Name | Current | Latest stable | Bump | Note |
 |---|---|---|---|---|---|
-| `asklokesh/homebrew-tap:Formula/loki-mode.rb` | `loki-mode` | `10.1.1` | `10.1.1` | up-to-date | repo VERSION file is 10.2.0 |
+| `asklokesh/homebrew-tap:Formula/loki-mode.rb` | `loki-mode` | `10.2.1` | `10.1.1` | ahead-of-latest | repo VERSION file is 10.2.1 |
 
 ## Summary
 
-| Ecosystem | patch | minor | MAJOR | EOL | unknown | up-to-date | other |
-|---|---|---|---|---|---|---|---|
-| npm/bun | 1 | 15 | 24 | 0 | 1 | 7 | 0 |
-| Python (requirements) | 2 | 18 | 9 | 0 | 10 | 1 | 0 |
-| Python (pyproject) | 0 | 2 | 1 | 0 | 1 | 0 | 0 |
-| GitHub Actions | 0 | 12 | 74 | 0 | 2 | 2 | 2 |
-| Runtimes | 0 | 5 | 2 | 1 | 1 | 0 | 0 |
-| Docker/Compose | 0 | 3 | 8 | 1 | 8 | 0 | 1 |
-| Helm | 0 | 0 | 0 | 0 | 4 | 0 | 24 |
-| Terraform | 0 | 0 | 4 | 0 | 0 | 0 | 15 |
-| Homebrew | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
+Counts are all from the single `Bump` column (current line vs newest line in the product; see the Latest column for the current-line patch when it differs from the newest line). `0.x breaking` and `drifted` are their own columns, not folded into MAJOR, since they are not the same computation.
+
+| Ecosystem | patch | minor | 0.x breaking | MAJOR | EOL | drifted | unknown | up-to-date | other |
+|---|---|---|---|---|---|---|---|---|---|
+| npm/bun | 1 | 11 | 4 | 24 | 0 | 0 | 1 | 7 | 0 |
+| Python (requirements) | 1 | 9 | 10 | 9 | 0 | 0 | 10 | 1 | 0 |
+| Python (pyproject) | 0 | 1 | 1 | 1 | 0 | 0 | 1 | 0 | 0 |
+| GitHub Actions | 0 | 12 | 0 | 74 | 0 | 0 | 2 | 2 | 2 |
+| Runtimes | 0 | 5 | 0 | 2 | 1 | 0 | 1 | 0 | 0 |
+| Docker/Compose | 0 | 3 | 0 | 8 | 1 | 0 | 8 | 0 | 1 |
+| Helm | 0 | 0 | 0 | 0 | 0 | 1 | 4 | 0 | 23 |
+| Terraform | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 15 |
+| Homebrew | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
 
 ## Proposed slice list (D35)
 
@@ -347,7 +349,7 @@ Formula lives in a separate repo: `asklokesh/homebrew-tap`, `Formula/loki-mode.r
 - **LOW - Python patch+minor batch** (one slice for the whole ecosystem, touching every file below; lockfiles regenerated and committed):
   - `dashboard/requirements.txt`: greenlet >=3.0.0,<4.0.0->3.5.6, pydantic >=2.0.0,<3.0.0->2.13.5, sqlalchemy >=2.0.0,<3.0.0->2.1.1
   - `mcp/requirements.txt`: chromadb >=1.0.0,<2.0.0->1.5.9
-  - `web-app/requirements.txt`: alembic >=1.12.0->1.20.0, pexpect >=4.8.0->4.9.0, pydantic >=2.0.0->2.13.5, python-jose >=3.3.0->3.5.0, python-multipart >=0.0.9->0.0.32, pyyaml >=6.0->6.0.3, sqlalchemy >=2.0.0->2.1.1
+  - `web-app/requirements.txt`: alembic >=1.12.0->1.20.0, pexpect >=4.8.0->4.9.0, pydantic >=2.0.0->2.13.5, python-jose >=3.3.0->3.5.0, pyyaml >=6.0->6.0.3, sqlalchemy >=2.0.0->2.1.1
 - **LOW - Python (pyproject) patch+minor batch** (one slice for the whole ecosystem, touching every file below; lockfiles regenerated and committed):
   - `sdk/python/pyproject.toml`: pydantic >=2.0.0->2.13.5
 - **MEDIUM - one slice per MAJOR (or 0.x-breaking) package**, deduped across manifests:
@@ -357,17 +359,17 @@ Formula lives in a separate repo: `asklokesh/homebrew-tap`, `Formula/loki-mode.r
   - `@typescript-eslint/parser` -> `8.70.1` (MAJOR): vscode-extension/package.json
   - `@vitejs/plugin-react` -> `6.1.1` (MAJOR): web-app/package.json
   - `@vscode/vsce` -> `4.0.0` (MAJOR): vscode-extension/package.json
-  - `aiosqlite` -> `0.22.1` (0.x semver-breaking): dashboard/requirements.txt, web-app/requirements.txt
+  - `aiosqlite` -> `0.22.1` (0.x breaking): dashboard/requirements.txt, web-app/requirements.txt
   - `anthropic` -> `1.8.0` (MAJOR): mcp/requirements.txt
-  - `asyncpg` -> `0.31.0` (0.x semver-breaking): web-app/requirements.txt
+  - `asyncpg` -> `0.31.0` (0.x breaking): web-app/requirements.txt
   - `cryptography` -> `50.0.1` (MAJOR): requirements-test.txt, web-app/requirements.txt
-  - `esbuild` -> `0.28.2` (0.x semver-breaking): dashboard-ui/package.json, vscode-extension/package.json
+  - `esbuild` -> `0.28.2` (0.x breaking): dashboard-ui/package.json, vscode-extension/package.json
   - `eslint` -> `10.11.0` (MAJOR): vscode-extension/package.json, web-app/package.json
   - `eslint-plugin-react-hooks` -> `7.1.1` (MAJOR): web-app/package.json
-  - `eslint-plugin-react-refresh` -> `0.5.7` (0.x semver-breaking): web-app/package.json
-  - `fastapi` -> `0.141.1` (0.x semver-breaking): dashboard/requirements.txt, web-app/requirements.txt
+  - `eslint-plugin-react-refresh` -> `0.5.7` (0.x breaking): web-app/package.json
+  - `fastapi` -> `0.141.1` (0.x breaking): dashboard/requirements.txt, web-app/requirements.txt
   - `globals` -> `17.12.0` (MAJOR): web-app/package.json
-  - `httpx` -> `0.28.1` (0.x semver-breaking): sdk/python/pyproject.toml, web-app/requirements-test.txt, web-app/requirements.txt
+  - `httpx` -> `0.28.1` (0.x breaking): sdk/python/pyproject.toml, web-app/requirements-test.txt, web-app/requirements.txt
   - `jest` -> `30.5.2` (MAJOR): dashboard-ui/package.json, package.json
   - `jest-environment-jsdom` -> `30.5.2` (MAJOR): dashboard-ui/package.json
   - `jsdom` -> `30.1.1` (MAJOR): dashboard-ui/package.json, package.json
@@ -375,10 +377,11 @@ Formula lives in a separate repo: `asklokesh/homebrew-tap`, `Formula/loki-mode.r
   - `mcp` -> `2.2.0` (MAJOR): mcp/requirements.txt, requirements-test.txt
   - `pytest` -> `9.1.1` (MAJOR): web-app/requirements-test.txt
   - `pytest-asyncio` -> `1.4.0` (MAJOR): web-app/requirements-test.txt
+  - `python-multipart` -> `0.0.32` (0.x breaking): web-app/requirements.txt
   - `setuptools` -> `84.0.0` (MAJOR): sdk/python/pyproject.toml
   - `tailwindcss` -> `4.3.3` (MAJOR): web-app/package.json
   - `typescript` -> `7.0.2` (MAJOR): loki-ts/package.json, package.json, sdk/typescript/package.json, vscode-extension/package.json, web-app/package.json
-  - `uvicorn` -> `0.54.0` (0.x semver-breaking): dashboard/requirements.txt, web-app/requirements.txt
+  - `uvicorn` -> `0.54.0` (0.x breaking): dashboard/requirements.txt, web-app/requirements.txt
   - `vite` -> `8.3.1` (MAJOR): web-app/package.json
   - `watchdog` -> `6.0.0` (MAJOR): web-app/requirements.txt
   - `websockets` -> `17.1` (MAJOR): dashboard/requirements.txt
@@ -407,9 +410,11 @@ Formula lives in a separate repo: `asklokesh/homebrew-tap`, `Formula/loki-mode.r
   - `deploy/terraform/modules/azure/versions.tf`: `azurerm (hashicorp/azurerm)` >= 3.0 -> 5.7.0
   - `deploy/terraform/modules/gcp/versions.tf`: `google (hashicorp/google)` >= 5.0 -> 8.4.0
 - **MEDIUM - runtime matrix refresh**:
-  - `Node.js` 20 is EOL (EOL 2026-04-30 (past)), pinned by: .github/workflows/test.yml
+  - `Node.js` 20 is EOL (EOL 2026-04-30 (past); EOL in current line; newest line is 26.10.0), pinned by: .github/workflows/test.yml
   - Node 20 is named in the upstream Actions runtime deprecation warnings even where not yet past its endoflife.date EOL; pinned by: .github/workflows/test.yml
-- **MEDIUM - SDKs with the 5-task eval**: `@anthropic-ai/claude-agent-sdk` 0.3.283 -> 0.3.283 (up-to-date, `loki-ts/package.json`); `@anthropic-ai/sdk` ^0.124.0 -> 0.128.0 (minor, `loki-ts/package.json`). Gated on the 5-task eval per D35, not the plain patch/minor batch.
+- **MEDIUM - SDKs with the 5-task eval**: `@anthropic-ai/claude-agent-sdk` 0.3.283 -> 0.3.283 (up-to-date, `loki-ts/package.json`); `@anthropic-ai/sdk` ^0.124.0 -> 0.128.0 (0.x breaking, `loki-ts/package.json`). Gated on the 5-task eval per D35, not the plain patch/minor batch.
 - **LOW - Docker/Helm digest pass**: pin every `FROM` / `image:` tag by digest instead of a mutable tag (own-product images and `:latest` floating tags are out of scope for a version bump and tracked via VERSION instead).
-  - EOL now: `nginx:1.27-alpine` in `artifacts/observability/Dockerfile` (EOL 2025-06-24 (past))
+  - EOL now: `nginx:1.27-alpine` in `artifacts/observability/Dockerfile` (EOL 2025-06-24 (past); EOL in current line; newest line is 1.31.6)
+- **FINDING - Helm chart appVersion has drifted from the product VERSION**:
+  - `deploy/helm/autonomi/Chart.yaml`: appVersion `7.93.0` vs VERSION `10.2.1`
 

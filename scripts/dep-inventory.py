@@ -131,6 +131,29 @@ def fetch_gh_release_latest(owner_repo: str) -> str:
         return _gh_api(f"repos/{owner_repo}/tags", ".[0].name")
 
 
+def fetch_action_runtime(owner_repo: str, subpath: str, ref: str) -> str:
+    """Read the `using:` line out of action.yml/action.yaml at the pinned
+    ref (a SHA when SHA-pinned, a tag otherwise) via the GitHub Contents API.
+    Returns the declared runtime ("node20", "node16", "composite", "docker",
+    ...) or "unknown" when no action.yml/action.yaml is found (nested
+    workflow-only repos, or a subpath dep-inventory did not resolve)."""
+    path_prefix = f"{subpath.strip('/')}/" if subpath else ""
+    for fname in ("action.yml", "action.yaml"):
+        try:
+            content_b64 = _gh_api(
+                f"repos/{owner_repo}/contents/{path_prefix}{fname}?ref={ref}", ".content"
+            )
+        except Exception:
+            continue
+        try:
+            text = base64.b64decode(content_b64).decode(errors="replace")
+        except Exception:
+            continue
+        m = re.search(r"^\s*using:\s*[\"']?([A-Za-z0-9_.\-]+)", text, re.M)
+        return m.group(1) if m else "unknown"
+    return "unknown"
+
+
 def fetch_endoflife(product: str) -> list:
     return _fetch_json(f"https://endoflife.date/api/{product}.json")
 
@@ -193,6 +216,31 @@ def bump_class(current: str, latest: str | None) -> str:
     return "patch" if lat[2] > cur[2] else "ahead-of-latest"
 
 
+def zero_x_override(current: str, latest: str | None) -> str | None:
+    """Under semver a 0.x release carries no stability guarantee: a 0.y.z ->
+    0.(y+1).z bump can break, and a 0.0.z package (still in initial
+    development) can break on any change, even a patch digit. bump_class's
+    plain "minor"/"patch" label under-states that, so a package whose
+    current version starts with 0 gets reclassified as MAJOR-equivalent
+    ("0.x breaking") here, overriding the plain bump label everywhere a row
+    carries it (table, summary, slice list all read the same Row.bump)."""
+    if latest is None:
+        return None
+    cur = version_tuple(current)
+    lat = version_tuple(latest)
+    # Only reclassify a 0.x -> 0.x move. A 0.x -> 1.x+ crossing (e.g.
+    # anthropic 0.40 -> 1.8.0) is already correctly "MAJOR" under bump_class
+    # (a real major-version crossing, arguably even more notable than a
+    # same-line 0.x break) and must not be downgraded to "0.x breaking".
+    if cur is None or lat is None or cur[0] != 0 or lat[0] != 0 or cur == lat:
+        return None
+    if cur[1] == 0:
+        return "0.x breaking"  # 0.0.z: any change is breaking-equivalent
+    if cur[1] != lat[1]:
+        return "0.x breaking"  # 0.y.z, y>0: a minor bump is breaking-equivalent
+    return None  # patch bump within the same 0.y line: leave as "patch"
+
+
 # --------------------------------------------------------------------------
 # Row model
 # --------------------------------------------------------------------------
@@ -232,7 +280,7 @@ def npm_row(cache: Cache, file: str, name: str, spec: str) -> Row:
     entry = cache.get("npm", name, lambda: fetch_npm_latest(name))
     if entry["ok"]:
         latest = entry["value"]
-        bump = bump_class(spec, latest)
+        bump = zero_x_override(spec, latest) or bump_class(spec, latest)
         note = NO_BASELINE_NOTE if bump == "unknown" else ""
         return Row(file, name, spec, latest, bump, note=note, fixture=is_fixture(file))
     return Row(file, name, spec, None, "unknown", note=entry["error"], fixture=is_fixture(file))
@@ -242,7 +290,7 @@ def pypi_row(cache: Cache, file: str, name: str, spec: str) -> Row:
     entry = cache.get("pypi", name, lambda: fetch_pypi_latest(name))
     if entry["ok"]:
         latest = entry["value"]
-        bump = bump_class(spec, latest)
+        bump = zero_x_override(spec, latest) or bump_class(spec, latest)
         note = NO_BASELINE_NOTE if bump == "unknown" else ""
         return Row(file, name, spec, latest, bump, note=note, fixture=is_fixture(file))
     return Row(file, name, spec, None, "unknown", note=entry["error"], fixture=is_fixture(file))
@@ -365,7 +413,7 @@ def collect_actions(repo_root: Path, files: list[str], cache: Cache) -> list[Row
             m = re.match(r"^([^/]+)/([^/@]+)(/[^@]*)?@(.+)$", target)
             if not m:
                 continue
-            owner, repo, _subpath, ref = m.groups()
+            owner, repo, subpath, ref = m.groups()
             owner_repo = f"{owner}/{repo}"
             key = (f, target)
             if key in seen_in_file:
@@ -398,6 +446,15 @@ def collect_actions(repo_root: Path, files: list[str], cache: Cache) -> list[Row
                 latest = None
                 bump = "unknown"
                 note = entry["error"]
+            # Flag every action whose OWN action.yml declares `using: node20`:
+            # that action IS the deprecated runtime, not just a consumer of a
+            # matrix `node-version: 20` pin (see the DEPS.md correction, D35).
+            runtime_entry = cache.get(
+                "action_runtime", f"{owner_repo}@{ref}:{subpath or ''}",
+                lambda owner_repo=owner_repo, ref=ref, subpath=subpath: fetch_action_runtime(owner_repo, subpath or "", ref),
+            )
+            if runtime_entry["ok"] and runtime_entry["value"] == "node20":
+                note += "; action.yml declares `using: node20` -- this action IS the deprecated Node 20 runtime"
             rows.append(Row(f, target, display_current, latest, bump, note=note, fixture=is_fixture(f)))
     return fill_missing_files(rows, files, "no `uses:` step found in this workflow/action file")
 
@@ -489,11 +546,40 @@ def eol_lookup(cache: Cache, run_date: str, product: str, cycle: str) -> dict:
 
 
 def eol_bump(info: dict, current: str) -> str:
+    """The canonical, counted bump class: current line vs the newest line in
+    the whole product (Node 22 vs Node 26, not Node 22 vs 22.23.3). This is
+    the single column summarize() and build_slice_list() read."""
     if not info["ok"]:
         return "unknown"
     if info["past"]:
         return "EOL"
     return bump_class(current, info["newest_latest"] or info["newest_cycle"])
+
+
+def latest_and_bump_detail(info: dict, current: str) -> tuple[str, str, str]:
+    """Self-consistent Latest/Bump for a row backed by endoflife.date data.
+
+    Returns (latest_display, bump, detail):
+    - latest_display shows the latest patch IN THE CURRENT LINE, plus the
+      newest line in the product when it differs, e.g.
+      "22.23.3 (newest line 26.10.0)" -- never a bare newest-line version
+      with no current-line context.
+    - bump is the canonical eol_bump() value (current vs newest line): the
+      one column summarize()/build_slice_list() count from.
+    - detail states the bump class against EACH line explicitly when they
+      disagree, e.g. "minor in line; MAJOR to newest line", so the row is
+      self-consistent even though Latest and Bump measure different things.
+    """
+    bump = eol_bump(info, current)
+    same_line = info.get("cycle") == info.get("newest_cycle")
+    if same_line:
+        return info["latest_in_cycle"], bump, bump
+    latest_display = f"{info['latest_in_cycle']} (newest line {info['newest_latest']})"
+    if info["past"]:
+        return latest_display, bump, f"EOL in current line; newest line is {info['newest_latest']}"
+    bump_in_line = bump_class(current, info["latest_in_cycle"])
+    detail = bump if bump_in_line == bump else f"{bump_in_line} in line; {bump} to newest line"
+    return latest_display, bump, detail
 
 
 def build_runtime_rows(cache: Cache, runtimes: dict[str, dict[str, set[str]]]) -> list[Row]:
@@ -511,11 +597,13 @@ def build_runtime_rows(cache: Cache, runtimes: dict[str, dict[str, set[str]]]) -
             if product:
                 info = eol_lookup(cache, cache.run_date, product, version)
                 if info["ok"]:
+                    latest_display, bump, detail = latest_and_bump_detail(info, version)
                     note = info["label"]
                     if info["resolved_note"]:
                         note += f"; {info['resolved_note']}"
-                    rows.append(Row(files_col, label, version, info["latest_in_cycle"],
-                                     eol_bump(info, version), note=note))
+                    if detail != bump:
+                        note += f"; {detail}"
+                    rows.append(Row(files_col, label, version, latest_display, bump, note=note))
                 else:
                     rows.append(Row(files_col, label, version, None, "unknown", note=info["error"]))
             else:
@@ -577,10 +665,13 @@ def docker_row(cache: Cache, file: str, image: str) -> Row:
     info = eol_lookup(cache, cache.run_date, product, cycle)
     if not info["ok"]:
         return Row(file, image, image, None, "unknown", note=info["error"])
+    latest_display, bump, detail = latest_and_bump_detail(info, cycle)
     note = info["label"]
     if info["resolved_note"]:
         note += f"; {info['resolved_note']}"
-    return Row(file, image, image, info["latest_in_cycle"], eol_bump(info, cycle), note=note)
+    if detail != bump:
+        note += f"; {detail}"
+    return Row(file, image, image, latest_display, bump, note=note)
 
 
 def collect_docker(repo_root: Path, dockerfiles: list[str], compose_files: list[str], cache: Cache) -> list[Row]:
@@ -604,14 +695,19 @@ def collect_docker(repo_root: Path, dockerfiles: list[str], compose_files: list[
 # Helm
 # --------------------------------------------------------------------------
 
-def collect_helm(repo_root: Path, helm_files: list[str]) -> list[Row]:
+def collect_helm(repo_root: Path, helm_files: list[str], repo_version: str | None) -> list[Row]:
     rows: list[Row] = []
     chart_yaml = next((f for f in helm_files if f.endswith("Chart.yaml")), None)
     if chart_yaml:
         text = (repo_root / chart_yaml).read_text()
         m = re.search(r'^appVersion:\s*"?([^"\n]+)"?', text, re.M)
         app_version = m.group(1).strip() if m else "(none)"
-        rows.append(Row(chart_yaml, "appVersion", app_version, None, "n/a", note="tracks the loki-mode product VERSION, not an external dep"))
+        if repo_version and app_version != repo_version:
+            rows.append(Row(chart_yaml, "appVersion", app_version, repo_version, "drifted",
+                             note=f"DRIFTED: chart appVersion does not track the product VERSION file ({repo_version})"))
+        else:
+            rows.append(Row(chart_yaml, "appVersion", app_version, repo_version, "n/a",
+                             note="tracks the loki-mode product VERSION file"))
         if "dependencies:" not in text:
             rows.append(Row(chart_yaml, "chart dependencies", "(none declared)", None, "n/a"))
     for f in helm_files:
@@ -705,8 +801,11 @@ def render_table(rows: list[Row]) -> str:
     return "\n".join(lines)
 
 
+SUMMARY_COLUMNS = ("patch", "minor", "0.x breaking", "MAJOR", "EOL", "drifted", "unknown", "up-to-date", "other")
+
+
 def summarize(rows: list[Row]) -> dict[str, int]:
-    counts = {"patch": 0, "minor": 0, "MAJOR": 0, "EOL": 0, "unknown": 0, "up-to-date": 0, "other": 0}
+    counts = {c: 0 for c in SUMMARY_COLUMNS}
     for r in rows:
         if r.fixture:
             continue
@@ -751,12 +850,24 @@ def build_report(cache: Cache, repo_root: Path, groups: dict) -> str:
     out.append(render_table(action_rows) + "\n")
 
     node20_files = groups["runtimes"]["node-version"].get("20", set())
-    if node20_files:
+    node20_actions = sorted({
+        r.name.split("@", 1)[0] for r in action_rows
+        if not r.fixture and "declares `using: node20`" in (r.note or "")
+    })
+    if node20_files or node20_actions:
         out.append(
-            "**Node 20 runtime deprecation:** GitHub-hosted `actions/checkout@v4` and "
-            "`actions/setup-node@v4` themselves run fine on any runner, but upstream has "
-            "named Node 20 runtime deprecation warnings in CI logs for actions still "
-            f"targeting `node-version: 20`. Files pinning Node 20: {format_files(node20_files, cap=99)}.\n"
+            "**Node 20 runtime deprecation:** GitHub's own Node 20 deprecation covers two "
+            "distinct things and they must not be conflated. First, matrix jobs still "
+            f"targeting `node-version: 20` (files: {format_files(node20_files, cap=99) if node20_files else 'none'}). "
+            "Second, and separately: an action whose OWN `action.yml` declares "
+            "`using: node20` IS the deprecated runtime itself, regardless of what version "
+            "tag or SHA it is pinned to -- pinning to the latest release of such an action "
+            "does not fix this until that action's maintainers migrate its action.yml to "
+            "node22 or later. Every `uses:` target in this repo's workflows was checked at "
+            "its pinned ref via the GitHub Contents API"
+            + (f"; action.yml itself declares node20 for: {', '.join(node20_actions)}.\n"
+               if node20_actions else
+               "; none of them currently declare node20 in their own action.yml.\n")
         )
 
     out.append("## Runtime matrices\n")
@@ -802,8 +913,14 @@ def build_report(cache: Cache, repo_root: Path, groups: dict) -> str:
     out.append(render_table(brew_rows) + "\n")
 
     out.append("## Summary\n")
-    out.append("| Ecosystem | patch | minor | MAJOR | EOL | unknown | up-to-date | other |")
-    out.append("|---|---|---|---|---|---|---|---|")
+    out.append(
+        "Counts are all from the single `Bump` column (current line vs newest line in the "
+        "product; see the Latest column for the current-line patch when it differs from the "
+        "newest line). `0.x breaking` and `drifted` are their own columns, not folded into "
+        "MAJOR, since they are not the same computation.\n"
+    )
+    out.append("| Ecosystem | " + " | ".join(SUMMARY_COLUMNS) + " |")
+    out.append("|---|" + "---|" * len(SUMMARY_COLUMNS))
     for label, key in (
         ("npm/bun", "npm"),
         ("Python (requirements)", "python-requirements"),
@@ -816,7 +933,7 @@ def build_report(cache: Cache, repo_root: Path, groups: dict) -> str:
         ("Homebrew", "homebrew"),
     ):
         c = summarize(all_rows[key])
-        out.append(f"| {label} | {c['patch']} | {c['minor']} | {c['MAJOR']} | {c['EOL']} | {c['unknown']} | {c['up-to-date']} | {c['other']} |")
+        out.append(f"| {label} | " + " | ".join(str(c[col]) for col in SUMMARY_COLUMNS) + " |")
     out.append("")
 
     out.append("## Proposed slice list (D35)\n")
@@ -826,26 +943,19 @@ def build_report(cache: Cache, repo_root: Path, groups: dict) -> str:
 
 
 SDK_PACKAGE_NAMES = {"@anthropic-ai/sdk", "@anthropic-ai/claude-agent-sdk"}
-
-
-def _is_zero_x_breaking(row: Row) -> bool:
-    """A 0.x -> 0.y caret bump is semver-breaking even though bump_class
-    calls it "minor" (0.x has no stability guarantee across minors)."""
-    if row.bump != "minor":
-        return False
-    cur = version_tuple(row.current)
-    return cur is not None and cur[0] == 0
+MAJOR_EQUIVALENT_BUMPS = ("MAJOR", "0.x breaking")
 
 
 def dedupe_by_name(rows: list[Row]) -> dict[tuple, set]:
-    """Group non-fixture MAJOR (or 0.x-breaking-minor) rows by (name, latest)
+    """Group non-fixture MAJOR (or 0.x-breaking) rows by (name, latest, bump)
     -> the set of files that pin them, so one slice covers one package
-    across every manifest that names it."""
+    across every manifest that names it. r.bump already carries the 0.x
+    override (see zero_x_override), so no separate re-classification here."""
     groups: dict[tuple, set] = {}
     for r in rows:
         if r.fixture or r.name in SDK_PACKAGE_NAMES:
             continue
-        if r.bump != "MAJOR" and not _is_zero_x_breaking(r):
+        if r.bump not in MAJOR_EQUIVALENT_BUMPS:
             continue
         groups.setdefault((r.name, r.latest, r.bump), set()).add(r.file)
     return groups
@@ -880,7 +990,10 @@ def build_slice_list(all_rows: dict[str, list[Row]], runtimes: dict, node20_file
     for label, key in (("npm/bun", "npm"), ("Python", "python-requirements"), ("Python (pyproject)", "python-pyproject")):
         by_file: dict[str, list[str]] = {}
         for r in all_rows[key]:
-            if r.fixture or r.bump not in ("patch", "minor") or _is_zero_x_breaking(r) or r.name in SDK_PACKAGE_NAMES:
+            # r.bump already carries the 0.x override, so "patch"/"minor" here
+            # never includes a 0.x-breaking row -- it is excluded from LOW by
+            # construction, not by a second check.
+            if r.fixture or r.bump not in ("patch", "minor") or r.name in SDK_PACKAGE_NAMES:
                 continue
             by_file.setdefault(r.file, []).append(f"{r.name} {r.current}->{r.latest}")
         if by_file:
@@ -897,8 +1010,7 @@ def build_slice_list(all_rows: dict[str, list[Row]], runtimes: dict, node20_file
     if combined_major:
         lines.append("- **MEDIUM - one slice per MAJOR (or 0.x-breaking) package**, deduped across manifests:")
         for (name, latest, bump), files in sorted(combined_major.items()):
-            tag = "0.x semver-breaking" if bump != "MAJOR" else "MAJOR"
-            lines.append(f"  - `{name}` -> `{latest}` ({tag}): {format_files(files)}")
+            lines.append(f"  - `{name}` -> `{latest}` ({bump}): {format_files(files)}")
 
     # MEDIUM: Actions MAJOR, deduped by owner/repo across workflow files. Per
     # D35 these move to the latest major AND get SHA-pinned (with a "# vN"
@@ -970,7 +1082,94 @@ def build_slice_list(all_rows: dict[str, list[Row]], runtimes: dict, node20_file
         for r in docker_eol:
             lines.append(f"  - EOL now: `{r.name}` in `{r.file}` ({r.note})")
 
+    # FINDING: Helm chart appVersion drift (not a version-bump slice --
+    # nothing external to bump -- but a finding the release process should see).
+    helm_drift = [r for r in all_rows["helm"] if r.bump == "drifted"]
+    if helm_drift:
+        lines.append("- **FINDING - Helm chart appVersion has drifted from the product VERSION**:")
+        for r in helm_drift:
+            lines.append(f"  - `{r.file}`: appVersion `{r.current}` vs VERSION `{r.latest}`")
+
     return "\n".join(lines) + "\n"
+
+
+# --------------------------------------------------------------------------
+# self-test (fixed fixture data, no network) -- proves Latest and Bump agree
+# for a runtime row, a Docker row, an npm row and an Actions row (Tech Lead
+# reject on 2cceecd2, item 1). Each fixture pre-populates the Cache buckets
+# the real fetchers would have filled, so no network call is ever made.
+# --------------------------------------------------------------------------
+
+def self_test() -> int:
+    failures: list[str] = []
+
+    def check(label: str, cond: bool) -> None:
+        print(f"[{'PASS' if cond else 'FAIL'}] {label}")
+        if not cond:
+            failures.append(label)
+
+    with tempfile.TemporaryDirectory(prefix="loki-dep-inventory-selftest-") as tmp_s:
+        tmp = Path(tmp_s)
+
+        # ---- runtime: Node 22 has a newer patch in its own line (22.23.3)
+        # AND a newer product line exists (26.10.0) -- the exact case the
+        # Tech Lead reported (Latest showed 22.23.3, Bump said MAJOR).
+        cache = Cache(tmp / "runtime-cache.json")
+        cache.data["endoflife"] = {"nodejs": {"ok": True, "value": [
+            {"cycle": "26", "latest": "26.10.0", "eol": "2029-04-30"},
+            {"cycle": "22", "latest": "22.23.3", "eol": "2027-04-30"},
+        ]}}
+        info = eol_lookup(cache, cache.run_date, "nodejs", "22")
+        latest_display, bump, detail = latest_and_bump_detail(info, "22")
+        check("runtime: Latest shows the current-line patch", latest_display.startswith("22.23.3"))
+        check("runtime: Latest also names the newest line", "26.10.0" in latest_display)
+        check("runtime: Bump is MAJOR (current line vs newest line, not vs its own patch)", bump == "MAJOR")
+        check("runtime: detail states the bump against both lines explicitly",
+              "in line" in detail and "to newest line" in detail)
+
+        # ---- docker: ubuntu:24.04, same self-consistency check through docker_row.
+        cache2 = Cache(tmp / "docker-cache.json")
+        cache2.data["endoflife"] = {"ubuntu": {"ok": True, "value": [
+            {"cycle": "25.10", "latest": "25.10.1", "eol": "2026-07-01"},
+            {"cycle": "24.04", "latest": "24.04.5", "eol": "2029-05-31"},
+        ]}}
+        drow = docker_row(cache2, "Dockerfile", "ubuntu:24.04")
+        check("docker: Latest shows the current-line patch", drow.latest.startswith("24.04.5"))
+        check("docker: Latest also names the newest line", "25.10.1" in drow.latest)
+        check("docker: Bump is measured current-line-vs-newest-line",
+              drow.bump == bump_class("24.04", "25.10.1"))
+
+        # ---- npm: a 0.x package must show "0.x breaking", never plain "minor".
+        cache3 = Cache(tmp / "npm-cache.json")
+        cache3.data["npm"] = {"esbuild": {"ok": True, "value": "0.28.2"}}
+        nrow = npm_row(cache3, "package.json", "esbuild", "^0.24.0")
+        check("npm: 0.x minor bump is classified 0.x breaking, not minor", nrow.bump == "0.x breaking")
+        check("npm: Latest still shows the real fetched version", nrow.latest == "0.28.2")
+
+        # ---- pypi: a 0.0.x patch bump (python-multipart) is ALSO breaking-equivalent.
+        cache3b = Cache(tmp / "pypi-cache.json")
+        cache3b.data["pypi"] = {"python-multipart": {"ok": True, "value": "0.0.32"}}
+        prow = pypi_row(cache3b, "requirements.txt", "python-multipart", ">=0.0.9")
+        check("pypi: 0.0.x patch bump is classified 0.x breaking", prow.bump == "0.x breaking")
+
+        # ---- Actions: tag-pinned action whose action.yml itself declares node20.
+        cache4 = Cache(tmp / "actions-cache.json")
+        cache4.data["gh_release"] = {"actions/setup-node": {"ok": True, "value": "v5.0.0"}}
+        cache4.data["action_runtime"] = {"actions/setup-node@v4:": {"ok": True, "value": "node20"}}
+        wf_dir = tmp / "repo" / ".github" / "workflows"
+        wf_dir.mkdir(parents=True)
+        (wf_dir / "ci.yml").write_text("jobs:\n  a:\n    steps:\n      - uses: actions/setup-node@v4\n")
+        arows = collect_actions(tmp / "repo", [".github/workflows/ci.yml"], cache4)
+        arow = next(r for r in arows if r.name == "actions/setup-node@v4")
+        check("actions: Bump is measured against the release lookup", arow.bump == "MAJOR")
+        check("actions: node20 action.yml is flagged in the note", "declares `using: node20`" in arow.note)
+
+    print()
+    if failures:
+        print(f"{len(failures)} check(s) FAILED: {failures}")
+        return 1
+    print("All self-test checks passed.")
+    return 0
 
 
 # --------------------------------------------------------------------------
@@ -982,7 +1181,12 @@ def main() -> int:
     parser.add_argument("--cache", default=None, help="Cache directory (default: a temp dir)")
     parser.add_argument("--repo-root", default=None, help="Repo root (default: two dirs up from this script)")
     parser.add_argument("--output", default=None, help="Output path (default: docs/v10/DEPS.md under repo root)")
+    parser.add_argument("--self-test", action="store_true",
+                         help="Run offline fixture checks (no network, no repo scan) and exit")
     args = parser.parse_args()
+
+    if args.self_test:
+        return self_test()
 
     repo_root = Path(args.repo_root) if args.repo_root else Path(__file__).resolve().parent.parent
     cache_dir = Path(args.cache) if args.cache else Path(tempfile.mkdtemp(prefix="loki-dep-inventory-"))
@@ -1015,7 +1219,7 @@ def main() -> int:
         "runtimes": runtimes,
         "runtime_rows": build_runtime_rows(cache, runtimes),
         "docker": collect_docker(repo_root, dockerfiles, compose_files, cache),
-        "helm": collect_helm(repo_root, helm_files),
+        "helm": collect_helm(repo_root, helm_files, repo_version),
         "terraform": collect_terraform(repo_root, tf_files, cache),
         "homebrew": collect_homebrew(cache, repo_version),
     }
