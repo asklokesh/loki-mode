@@ -1,4 +1,9 @@
-repo: /Users/lokesh/git/augmentiq @ b9796de68d30f76912d38acd1352e6e0202b991f (repo.ref), after npm ci
+Provenance only: this commit is no longer repo.ref (see NOTES.md). Kept as
+evidence that the hidden test is a real, sensitive check, not a vacuous pass.
+
+repo: /Users/lokesh/git/augmentiq @ b9796de68d30f76912d38acd1352e6e0202b991f
+(the feature commit's parent -- the old repo.ref, before this task was
+flipped to expected_outcome: no_change_needed), after npm ci
 command: cd frontend && npx vitest run src/__hidden__/search-bar.test.tsx
 exit: non-zero (1 test file failed)
 output: AssertionError: expected null not to be null   (no search control found in the dashboard shell)

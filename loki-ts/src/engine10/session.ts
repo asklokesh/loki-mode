@@ -1,20 +1,19 @@
-// E-07: SessionRunner. Runs one provider session in its own OS process group so the whole tree
-// can be killed together at limitS (ENGINE.md section 10). E-32: the child re-enters via cli.ts's
-// `engine10 session` route (main = sessionChildMain below), so the dist bundle reaches it too.
+// E-07: SessionRunner. Runs one provider session in its own OS process group so the whole tree can be
+// killed together at limitS (ENGINE.md 10). E-32: the child re-enters via cli.ts's `engine10 session` route.
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { recordSessionCost, resultCostPath } from "./cost.ts";
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
 const KILL_GRACE_MS = 2000; // ENGINE.md section 10: SIGKILL 2s after SIGTERM
-const HEARTBEAT_MS_DEFAULT = 60_000; // ENGINE.md section 5: heartbeat every 60s
+export const HEARTBEAT_MS_DEFAULT = 30_000; // E-68 (augmentiq #52 P0): a provider call emits progress at least every 30s
 export type EmitFn = (type: string, stage: string | null, data: Record<string, unknown>) => void;
 // provider, model and emit are bound per run on this factory config, since SessionRunOptions carries only per-call fields.
 export interface SessionRunnerConfig {
   provider: string; // "claude" is special-cased; anything else is generic
   model?: string;
   emit?: EmitFn; // ENGINE.md section 5: heartbeat, session.started, session.ended
-  heartbeatMs?: number; // default 60_000; tests use a smaller value
+  heartbeatMs?: number; // default 30_000 (E-68: at least every 30s); tests use a smaller value
   childCommand?: [string, string[]]; // test-only: replaces the self-respawn
   lokiRoot?: string; // where efficiency records and result-cost files live (the repo's .loki)
 }
@@ -78,6 +77,33 @@ function exitKind(exit: number | null, killed: boolean, markers: SessionMarkers)
   if (exit === 0) return "done";
   return "error";
 }
+// E-68 (augmentiq #52 P0): every exit code a provider call can produce, named. 125 and 143 are
+// explicitly in scope (a container runtime or the shell itself can emit either). A code outside
+// this table still names the number: classifyExitCause never falls back to an un-named string.
+const EXIT_CAUSES: Readonly<Record<number, string>> = {
+  0: "exit 0 (success)",
+  1: "exit 1 (general error)",
+  2: "exit 2 (misuse of shell command)",
+  124: "exit 124 (timeout)",
+  125: "exit 125 (timeout or container failure)",
+  126: "exit 126 (command not executable)",
+  127: "exit 127 (command not found)",
+  130: "exit 130 (SIGINT)",
+  137: "exit 137 (SIGKILL)",
+  143: "exit 143 (SIGTERM)",
+};
+// E-68 rework: a real session child (cli.ts:330) traps SIGTERM and exits 143
+// instead of dying by signal, so a limit kill can report a non-null code.
+// Classify from what the ENGINE knows -- it sent the kill -- never from the
+// child's self-reported code: killed always wins, before the code is even
+// looked at. killCause names which kill fired (the limitS timer vs. an
+// external opts.signal abort); omitted, it defaults to "limit" so existing
+// two-argument callers keep their prior behavior.
+export function classifyExitCause(exit: number | null, killed: boolean, killCause?: "limit" | "aborted"): string {
+  if (killed) return killCause ?? "limit";
+  if (exit === null) return "external kill";
+  return EXIT_CAUSES[exit] ?? `exit ${exit} (unrecognized code)`;
+}
 // SIGTERM now, SIGKILL after the grace, against the whole group; shared by the limit timeout and an external abort.
 function killGroupWithGrace(pgid: number | undefined): void {
   if (!pgid) return;
@@ -91,9 +117,10 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
   const own = resultCostPath(join(opts.cwd ?? process.cwd(), ".loki"), opts.iterationId);
   const dest = resultCostPath(cfg.lokiRoot, opts.iterationId);
   if (own !== dest && existsSync(own)) { mkdirSync(dirname(dest), { recursive: true }); copyFileSync(own, dest); }
-  const c = recordSessionCost(cfg.lokiRoot, opts.iterationId, { status, durationMs: Math.round(durationS * 1000), model: cfg.model ?? resolveModel(cfg.provider) });
+  const model = opts.model ?? cfg.model ?? resolveModel(cfg.provider); // opts.model (E-45/E-64 pin) wins, matching session.started's precedence
+  const c = recordSessionCost(cfg.lokiRoot, opts.iterationId, { status, durationMs: Math.round(durationS * 1000), model });
   cfg.emit?.("cost", opts.stage, {
-    session_id: opts.iterationId, usd: c.usd, input_tokens: c.input_tokens, output_tokens: c.output_tokens,
+    session_id: opts.iterationId, model, usd: c.usd, input_tokens: c.input_tokens, output_tokens: c.output_tokens,
     cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens, source: c.source || "not measured",
   });
 }
@@ -116,9 +143,19 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       let stdout = "";
       child.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
       let killed = false;
+      // Which kill fired, from the engine's own point of view -- never guessed from the
+      // child's exit code. First one wins: the limit timer and an external abort cannot
+      // both be the cause of the same kill.
+      let killCause: "limit" | "aborted" | null = null;
+      const kill = (cause: "limit" | "aborted") => {
+        if (killed) return;
+        killed = true;
+        killCause = cause;
+        killGroupWithGrace(pgid);
+      };
       cfg.emit?.("session.started", opts.stage, { session_id: sessionId, provider: cfg.provider, model: opts.model ?? cfg.model ?? null, pgid: pgid ?? null });
-      const onAbort = () => { killed = true; killGroupWithGrace(pgid); };
-      const limitTimer = setTimeout(onAbort, opts.limitS * 1000);
+      const onAbort = () => kill("aborted");
+      const limitTimer = setTimeout(() => kill("limit"), opts.limitS * 1000);
       const heartbeatTimer = setInterval(() => {
         cfg.emit?.("heartbeat", opts.stage, { waiting_on: opts.stage, elapsed_s: (Date.now() - start) / 1000, diff: diffShortstat(opts.cwd) });
       }, cfg.heartbeatMs ?? HEARTBEAT_MS_DEFAULT);
@@ -133,7 +170,9 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
           const log = join(opts.cwd ?? process.cwd(), ".loki", `iteration-${sessionId}.log`);
           const markers = parseMarkers(stdout + (existsSync(log) ? readFileSync(log, "utf8") : ""));
           const durationS = (Date.now() - start) / 1000;
-          cfg.emit?.("session.ended", opts.stage, { session_id: sessionId, exit: exitKind(code, killed, markers), duration_s: durationS });
+          cfg.emit?.("session.ended", opts.stage, {
+            session_id: sessionId, exit: exitKind(code, killed, markers), cause: classifyExitCause(code, killed, killCause ?? undefined), duration_s: durationS,
+          });
           recordCost(cfg, opts, killed ? "killed" : code === 0 ? "completed" : "failed", durationS);
           resolve({ exit: code, markers, durationS, killed });
         });

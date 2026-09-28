@@ -1,7 +1,8 @@
 // E-13: live stage lines, the 60s heartbeat line, and the 5-line final summary (ENGINE.md section
 // 11). Pure formatting: callers feed in already-folded numbers (events.ts fold(), section 5), this
 // module never reads events.jsonl itself. Null is never rendered as 0 (section 5, section 10): a
-// missing cost reads "not measured".
+// missing cost reads "not measured", a partially-priced run reads "partial: $X for N of M
+// sessions" (E-69), and a priced-but-zero-usage session is never shown as a real $0.00.
 import type { Verdict } from "./types.ts";
 import { registryLoader } from "./registry.ts";
 const NAME_WIDTH = 12; // fits "implement" + padding to align the next column
@@ -95,6 +96,12 @@ export interface SummaryInput {
     tokens: number | null;
     /** Shown in parens when usd is null, e.g. "codex reports tokens only". */
     note?: string | null;
+    /** E-69: some sessions priced, some not (usd above is null because the run isn't FULLY
+     *  measured). Renders "partial: $X for N of M sessions" instead of "not measured". Omit,
+     *  or leave measuredSessions 0, for a run with no priced sessions at all. */
+    partialUsd?: number;
+    measuredSessions?: number;
+    totalSessions?: number;
   };
   wallS: number;
   stages: { label: string; seconds: number }[];
@@ -113,7 +120,9 @@ export function formatSummary(input: SummaryInput): string {
   const costLine =
     input.cost.usd != null
       ? `${labelCol("Cost")}$${input.cost.usd.toFixed(2)} (${input.cost.provider}, ${input.cost.tokens != null ? `${formatTokens(input.cost.tokens)} tokens` : "tokens not measured"})`
-      : `${labelCol("Cost")}not measured${input.cost.note ? ` (${input.cost.note})` : ""}`;
+      : input.cost.measuredSessions
+        ? `${labelCol("Cost")}partial: $${(input.cost.partialUsd ?? 0).toFixed(2)} for ${input.cost.measuredSessions} of ${input.cost.totalSessions ?? input.cost.measuredSessions} sessions`
+        : `${labelCol("Cost")}not measured${input.cost.note ? ` (${input.cost.note})` : ""}`;
   const stagesStr = input.stages.map((s) => `${s.label} ${formatDuration(s.seconds)}`).join(", ");
   const timeLine = `${labelCol("Time")}${formatDuration(input.wallS)} (${stagesStr})`;
   return [prLine, verdictLine, notProvenLine, costLine, timeLine].join("\n");

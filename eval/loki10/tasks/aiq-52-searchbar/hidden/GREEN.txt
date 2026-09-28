@@ -1,6 +1,13 @@
-There is no merged PR for #52. Positive control only: the owner's own direct-commit implementation.
-repo: /Users/lokesh/git/augmentiq @ b65b07521f7f53e7fe22211c39394dc375d5758b (feat: Add global search with Cmd+K), after npm install
+This is now repo.ref (expected_outcome: no_change_needed), a positive control
+confirming the "already exists" claim, and the hidden test's role is a
+regression check (it must still pass after the arm runs, unchanged).
+
+repo: /Users/lokesh/git/augmentiq @ d0a685f6808b7e5e425691a61adc288d168833ae
+(default-branch head; "fix: Search polish, error handling, and test fixes
+from merge"), after npm install
 command: cd frontend && npx vitest run src/__hidden__/search-bar.test.tsx
 output: Tests  3 passed (3)
-Also green at default-branch head d0a685f6808b7e5e425691a61adc288d168833ae: Tests  3 passed (3)
-(that is why repo.ref is the pre-implementation parent, not head)
+
+Also green at b65b07521f7f53e7fe22211c39394dc375d5758b (the direct commit
+that introduced the feature, "feat: Add global search with Cmd+K command
+palette", a parent of d0a685f): Tests  3 passed (3)

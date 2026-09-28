@@ -16,10 +16,23 @@ Honesty rules (the v10.0.0 release gate depends on them):
     marker plus events file, is arm_unavailable, never a pass.
   - a task whose checkout already holds engine/metrics state, or whose hidden
     tests pass before the arm, is task_invalid for every arm.
+  - expected_outcome=no_change_needed (EV-13): the hidden test is a
+    regression check and must PASS at repo.ref instead (task_invalid if not).
+    completed = arm exit 0, no PR/branch pushed, no source diff (committed or
+    not, .loki/ excluded, and for v10 its own sealed Wall test files also
+    excluded -- wall_paths, engine run state written into the tracked tree)
+    versus repo.ref, the regression check still passes, and the arm itself
+    gives deterministic evidence the feature already exists: v10's own
+    receipt verdict ALREADY_SATISFIED, or for raw-claude/legacy a documented
+    textual claim in its final output (claims_no_change_needed). A PR, any
+    source diff, or a nonzero exit is never completed, whatever the arm
+    claims (its textual rule alone would also match ordinary error text such
+    as "branch already exists").
 """
 import argparse
 import concurrent.futures
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -37,7 +50,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 ARMS = ("v10", "raw-claude", "legacy")
 KINDS = ("augmentiq", "public", "quickstart")
-TASK_KEYS = {"id", "kind", "prompt", "issue_ref", "repo", "setup", "hidden", "timeout_s"}
+TASK_KEYS = {"id", "kind", "prompt", "issue_ref", "repo", "setup", "hidden", "timeout_s", "expected_outcome"}
+# EV-13: "already implemented" is a first-class outcome, never a pause or a
+# duplicate PR. The only value today; unknown values are rejected so a typo
+# fails validate_task instead of silently grading as a normal build task.
+EXPECTED_OUTCOMES = ("no_change_needed",)
 DEFAULT_TIMEOUT_S = 900
 GIT_TIMEOUT_S = 600
 ZERO_SHA = "0" * 40
@@ -48,6 +65,9 @@ BASE_BRANCH = "main"
 # and the event log .loki/runs/<id>/events.jsonl during the run (mtime at or
 # after the arm start).
 V10_MARKER = os.path.join(".loki", "engine.json")
+# loki-ts/src/engine10/stages/wall.ts WALL_PREFIX: the only name the v10
+# engine ever writes a Wall test file under, in or out of .loki/.
+WALL_PREFIX = "loki_wall_"
 # Engine state that must not exist before the arm: its presence would let a
 # committed or setup-created file stand in for this run's own output.
 PRE_ARM_FORBIDDEN = (V10_MARKER, os.path.join(".loki", "metrics"))
@@ -116,6 +136,9 @@ def validate_task(task_dir):
             errs.append("repo.ref must be a commit sha (7-40 lowercase hex)")
     if t.get("setup") is not None and not isinstance(t.get("setup"), str):
         errs.append("setup must be a string or null")
+    eo = t.get("expected_outcome")
+    if eo is not None and eo not in EXPECTED_OUTCOMES:
+        errs.append("expected_outcome must be null or one of %s" % "|".join(EXPECTED_OUTCOMES))
     hidden = t.get("hidden")
     if not isinstance(hidden, dict):
         errs.append("hidden must be an object")
@@ -731,9 +754,202 @@ def v10_marker_problem(work, started):
     return None
 
 
+# EV-13: "already implemented" grading. A documented deterministic textual
+# rule for raw-claude/legacy, which have no structured verdict: the arm's own
+# final output must say the feature already exists. Kept intentionally small
+# and literal (never inferred from an absence of a diff) so a run cannot be
+# graded completed just because it did nothing.
+NO_CHANGE_CLAIM_RE = re.compile(
+    r"already\s+(?:exist|exists|existed|implement(?:ed)?|satisfi(?:ed|es)|done|present|built|shipped)"
+    r"|no\s+changes?\s+(?:is\s+|are\s+)?needed"
+    r"|nothing\s+to\s+(?:do|implement|change|build)"
+    r"|feature\s+already", re.I)
+
+
+def claims_no_change_needed(arm, stdout_path):
+    """True iff the arm's own final output states the requested feature
+    already exists (NO_CHANGE_CLAIM_RE). raw-claude: searched in the
+    `result` field(s) of its JSON output (same decoder as provider_cost),
+    falling back to the raw text when no such field is found. legacy has no
+    structured output contract, so its whole stdout is searched.
+    """
+    try:
+        with open(stdout_path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return False
+    if arm == "raw-claude":
+        dec, results = json.JSONDecoder(), []
+        for m in re.finditer(r"(?m)^[\[{]", text):
+            try:
+                doc = dec.raw_decode(text, m.start())[0]
+            except ValueError:
+                continue
+            for it in (doc if isinstance(doc, list) else [doc]):
+                if isinstance(it, dict) and isinstance(it.get("result"), str):
+                    results.append(it["result"])
+        if results:
+            text = "\n".join(results)
+    return bool(NO_CHANGE_CLAIM_RE.search(text))
+
+
+def snapshot_tree(repo_dir, rundir, tag, exclude=()):
+    """Git tree-object hash of `repo_dir`'s whole working tree right now --
+    tracked, staged, unstaged and untracked, `.loki/` (the engine's own run
+    state) excluded by an explicit pathspec -- via a private temp index, so it
+    never touches HEAD or the real index. `exclude` adds further absolute
+    paths to leave out (v10's own Wall test files, per wall_paths: engine run
+    state the engine writes INTO the tracked tree, not under .loki/, so it
+    would otherwise misgrade a correct no-change run as a source change).
+    Each is resolved relative to repo_dir and dropped, never widened to a
+    directory or glob, if it would land outside repo_dir -- fails closed to
+    "not excluded" so a bad path can only ever make a run look MORE dirty,
+    never hide a real change. None on any git failure. A harness-side read,
+    like find_pr/git_out: the host's own git config, not the arm's isolated
+    env.
+    """
+    idx = os.path.join(rundir, "snapshot-%s.index" % tag)
+    env = dict(os.environ, GIT_INDEX_FILE=idx, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+    specs = [":(exclude).loki"]
+    for p in exclude:
+        rel = os.path.relpath(p, repo_dir)
+        if rel.startswith("..") or os.path.isabs(rel):
+            continue
+        specs.append(":(exclude)%s" % rel)
+    wt = None
+    try:
+        add = subprocess.run(["git", "add", "-A", "--", ".", *specs],
+                             cwd=repo_dir, env=env, capture_output=True, text=True, timeout=120)
+        if add.returncode == 0:
+            wt = subprocess.run(["git", "write-tree"], cwd=repo_dir, env=env,
+                                capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    finally:
+        try:
+            os.remove(idx)
+        except OSError:
+            pass
+    return wt.stdout.strip() if wt is not None and wt.returncode == 0 and wt.stdout.strip() else None
+
+
+def no_source_diff(pre_tree, post_tree):
+    """True iff two snapshot_tree() results are the same real tree. Compares
+    two snapshots of the SAME repo (before the arm ran, and at grading time)
+    rather than either against repo.ref, so setup's own drift is never
+    counted as a source change. Fails closed: either side missing (a git
+    failure) is never diff-free.
+    """
+    return pre_tree is not None and post_tree is not None and pre_tree == post_tree
+
+
+def _v10_run_id(work):
+    """This run's own run_id from the v10 engine marker, or None. Never a
+    caller-supplied value -- only what the marker itself names, restricted to
+    a bare path segment. Shared by v10_verdict and wall_paths so both trust
+    exactly the same resolution, and meaningful only once v10_marker_problem
+    has already confirmed a fresh marker for this run.
+    """
+    try:
+        with open(os.path.join(work, V10_MARKER), encoding="utf-8") as f:
+            m = json.load(f)
+    except (OSError, ValueError):
+        return None
+    rid = m.get("run_id") if isinstance(m, dict) else None
+    if not isinstance(rid, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", rid) or rid in (".", ".."):
+        return None
+    return rid
+
+
+def _v10_receipt(work, rid):
+    """This run's own receipt.json dict (docs/v10/ENGINE.md sections 4, 9:
+    seal always writes one, whatever the outcome) for the given run_id, or
+    None if it cannot be read.
+    """
+    if rid is None:
+        return None
+    path = os.path.join(work, ".loki", "runs", rid, "receipt.json")
+    if os.path.islink(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            r = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return r if isinstance(r, dict) else None
+
+
+def v10_verdict(work):
+    """The `verdict` in this run's own receipt.json, or None if it cannot be
+    read."""
+    r = _v10_receipt(work, _v10_run_id(work))
+    return r.get("verdict") if r else None
+
+
+def wall_paths(work):
+    """Absolute repo paths of this run's own sealed Wall test files: engine
+    run state the v10 engine writes INTO the tracked working tree, not under
+    .loki/ (loki-ts/src/engine10/stages/wall.ts, seal.ts), so a correct
+    no_change_needed run must never be graded on them (EV-13 review). Called
+    for every arm -- raw-claude/legacy never have a v10 marker in `work`, so
+    they always get []; the exclusion is decided by evidence, never by which
+    arm ran.
+
+    This is a grading safeguard against a stale or mismatched receipt entry,
+    not a sandbox: the v10 binary already has unrestricted write access to
+    the repo (including .loki/ itself), so it could always fabricate
+    evidence some other way if it were dishonest. What these checks actually
+    constrain is a receipt.wall.files entry that merely NAMES a path, by
+    requiring all of:
+      - its basename starts with WALL_PREFIX (wall.ts writes nothing else,
+        in or out of the repo);
+      - it resolves (os.path.realpath, so a symlink cannot point it outside)
+        inside this same run's repo root;
+      - this run's own sealed copy exists at .loki/runs/<rid>/wall/<name>
+        (seal.ts) and its sha256 matches the one the receipt claims for it.
+    Any failure of any check -- read error, missing sealed copy, hash
+    mismatch, wrong prefix, a path outside the repo -- drops that one entry
+    and leaves it counted as a real change: naming an arbitrary edited path
+    in wall.files is never, by itself, enough to exclude it.
+    """
+    rid = _v10_run_id(work)
+    r = _v10_receipt(work, rid)
+    wall = r.get("wall") if r else None
+    files = wall.get("files") if isinstance(wall, dict) else None
+    if rid is None or not isinstance(files, list):
+        return []
+    repo_root = os.path.realpath(work)
+    sealed_dir = os.path.join(work, ".loki", "runs", rid, "wall")
+    out = []
+    for f in files:
+        p = f.get("path") if isinstance(f, dict) else None
+        sha = f.get("sha256") if isinstance(f, dict) else None
+        if not isinstance(p, str) or not p or not isinstance(sha, str) or not sha:
+            continue
+        name = os.path.basename(p)
+        if not name.startswith(WALL_PREFIX):
+            continue
+        real_p = os.path.realpath(p)
+        if os.path.commonpath([real_p, repo_root]) != repo_root:
+            continue
+        sealed = os.path.join(sealed_dir, name)
+        if os.path.islink(sealed):
+            continue
+        try:
+            with open(sealed, "rb") as sf:
+                content = sf.read()
+        except OSError:
+            continue
+        if hashlib.sha256(content).hexdigest() != sha:
+            continue
+        out.append(p)
+    return out
+
+
 def new_row(task, arm, cfg, slot, logs):
     return {"run_id": slot, "task": task["id"], "arm": arm, "status": "ok", "model": cfg["model"],
             "repo_ref": task["repo"]["ref"], "harness_sha": cfg["harness_sha"],
+            "expected_outcome": task.get("expected_outcome"),
             "started": None, "ended": None, "wall_s": None, "time_to_pr_s": None,
             "pr_opened": False, "pr_branch": None, "hidden_pass": False, "completed": False,
             "cost_usd": None, "cost_source": "not reported", "exit_code": None,
@@ -744,6 +960,7 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
     """Fill `row` in place, so a crash part-way keeps what was already known."""
     tid = task["id"]
     cap = task.get("timeout_s", DEFAULT_TIMEOUT_S)
+    no_change = task.get("expected_outcome") == "no_change_needed"
     L = row["logs"]
     env = apply_git_isolation(arm_env(rundir, cfg["model"], cfg["alias"], arm))
 
@@ -761,13 +978,21 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
     if task.get("setup") and sh(task["setup"], work, env, L["setup"], cap) != 0:
         row["status"] = "setup_failed"
         return row
+    # Taken right after setup, before the arm runs: a no_change_needed task
+    # must be judged against what setup itself produced (e.g. `npm install`,
+    # not `npm ci`, can rewrite a tracked lockfile with nothing the arm did),
+    # never against the bare repo.ref commit.
+    presnap = snapshot_tree(work, rundir, "pre") if no_change else None
     pre = [p for p in PRE_ARM_FORBIDDEN if os.path.lexists(os.path.join(work, p))]
     if pre:
         # Delete nothing: the task itself is broken for scoring.
         row["status"] = "task_invalid"
         row["invalid_reason"] = "checkout holds %s before the arm" % ", ".join(pre)
         return row
-    # The hidden tests must FAIL at repo.ref, or passing them proves nothing.
+    # The hidden tests must FAIL at repo.ref, or passing them proves nothing --
+    # except for expected_outcome=no_change_needed, where the hidden test is a
+    # regression check of a feature the task claims already exists, so it must
+    # PASS at repo.ref instead (a positive control on that claim).
     base_dir = os.path.join(rundir, "baseline")
     if git(["clone", "-q", "--no-tags", "-b", BASE_BRANCH, remote, base_dir], rundir, env, L["prepare"]) != 0 \
             or (task.get("setup") and sh(task["setup"], base_dir, env, L["setup"], cap) != 0):
@@ -775,10 +1000,17 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
         return row
     base_pass, base_refused = run_hidden(task, task_dir, base_dir, env, os.path.join(logdir, "baseline"), cap)
     shutil.rmtree(base_dir)  # hidden files must be gone before the arm starts
-    if base_pass or base_refused:
+    if base_refused:
         row["status"] = "task_invalid"
-        row["invalid_reason"] = "hidden tests already pass at repo.ref" if base_pass \
-            else "hidden files cannot be placed at repo.ref: " + base_refused
+        row["invalid_reason"] = "hidden files cannot be placed at repo.ref: " + base_refused
+        return row
+    if no_change and not base_pass:
+        row["status"] = "task_invalid"
+        row["invalid_reason"] = "expected_outcome=no_change_needed but hidden tests fail at repo.ref"
+        return row
+    if not no_change and base_pass:
+        row["status"] = "task_invalid"
+        row["invalid_reason"] = "hidden tests already pass at repo.ref"
         return row
 
     prompt = task["prompt"]
@@ -834,10 +1066,39 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
         if git(["clone", "-q", "--no-tags", "-b", branch, remote, grade_dir], rundir, env, L["grade"]) != 0 \
                 or (task.get("setup") and sh(task["setup"], grade_dir, env, L["grade"], cap) != 0):
             return row
+    if no_change:
+        # Measured before run_hidden copies the hidden test file(s) in below,
+        # which would otherwise show up as an untracked source diff. Compared
+        # against presnap (post-setup, pre-arm), never repo.ref -- see
+        # snapshot_tree. Also exclude this run's own sealed Wall test files
+        # (wall_paths), the v10 engine's own run state written INTO the
+        # tracked tree rather than under .loki/, so a correct
+        # ALREADY_SATISFIED run is graded on the source it left, not on the
+        # engine's own side effect (EV-13 review). Called for every arm, not
+        # just v10: the evidence wall_paths demands (a v10 marker, receipt
+        # and sealed copy) is what decides the exclusion, never the arm name,
+        # so raw-claude/legacy are measured by the exact same rule -- it is
+        # just always empty for them, since they have no v10 run state.
+        wall_excl = wall_paths(work)
+        row["no_source_diff"] = no_source_diff(presnap, snapshot_tree(grade_dir, rundir, "post", exclude=wall_excl))
     row["hidden_pass"], row["grade_refused"] = run_hidden(
         task, task_dir, grade_dir, env, os.path.join(logdir, "grade_hidden"), cap)
-    row["completed"] = row["pr_opened"] and row["hidden_pass"] and not capped \
-        and not row.get("push_time_anomaly")
+    if no_change:
+        # EV-13: completed only if the arm made no source change, gave its own
+        # deterministic evidence the feature already exists, and (still) the
+        # regression check passes. A PR or any source diff is never completed,
+        # no matter what the arm's own output claims.
+        row["no_change_evidence"] = v10_verdict(work) == "ALREADY_SATISFIED" if arm == "v10" \
+            else claims_no_change_needed(arm, L["arm_stdout"])
+        # exit_code == 0 matters here specifically because NO_CHANGE_CLAIM_RE
+        # also matches ordinary error text ("branch already exists", "file
+        # already exists"): without this, a crashed run that never touched the
+        # tree could still read as a correct no_change_needed completion.
+        row["completed"] = (not row["pr_opened"]) and row["no_source_diff"] and row["no_change_evidence"] \
+            and row["hidden_pass"] and rc == 0 and not capped and not row.get("push_time_anomaly")
+    else:
+        row["completed"] = row["pr_opened"] and row["hidden_pass"] and not capped \
+            and not row.get("push_time_anomaly")
     return row
 
 
@@ -1036,6 +1297,20 @@ def miss_reason(r):
             (" (after a push)" if r.get("pr_opened") else "")
     if r.get("capped"):
         return "capped at wall limit"
+    if r.get("expected_outcome") == "no_change_needed":
+        # Never "no branch pushed" here: for this outcome, not pushing is
+        # correct, so it must never read as the reason a run missed.
+        if r.get("pr_opened"):
+            return "opened a PR (expected outcome: no_change_needed)"
+        if r.get("no_source_diff") is False:
+            return "made a source change (expected outcome: no_change_needed)"
+        if r.get("no_change_evidence") is False:
+            return "did not report that the feature already exists"
+        if r.get("exit_code") not in (0, None):
+            return "arm exited %s" % r.get("exit_code")
+        if not r.get("hidden_pass"):
+            return "regression: hidden tests failed after the run"
+        return "not completed (no_change_needed)"
     if not r.get("pr_opened"):
         return "no branch pushed"
     if r.get("push_time_anomaly"):
@@ -1071,7 +1346,9 @@ def cmd_summarize(args):
         return 0
     print("### Loki 10 eval results\n")
     print("Completion = branch pushed to the local remote AND hidden tests pass (nonce or runner "
-          "summary verified) AND not capped. One row per task and arm (newest). Rate denominator "
+          "summary verified) AND not capped (expected_outcome=no_change_needed tasks invert this: "
+          "completed = no branch pushed, no source diff and the arm's own evidence the feature "
+          "already exists). One row per task and arm (newest). Rate denominator "
           "counts runs where the arm ran; unavailable, infrastructure and interrupted runs are "
           "counted separately, and invalid tasks are excluded from every arm. Time to PR "
           "percentiles are nearest-rank over completed runs. Cost is provider-reported only; n/a "

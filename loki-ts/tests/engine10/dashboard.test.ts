@@ -3,7 +3,16 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { formatPanels, startServer, summarizeRun, type DashboardServer } from "../../src/engine10/dashboard/server.ts";
+import {
+  formatPanels,
+  getCliVersion,
+  looksLikeDashboardCommand,
+  startServer,
+  startServerReplacingOlder,
+  summarizeRun,
+  type DashboardServer,
+} from "../../src/engine10/dashboard/server.ts";
+import { getVersion } from "../../src/version.ts";
 
 function mkRepo(): string {
   return mkdtempSync(join(tmpdir(), "e10-dash-"));
@@ -69,6 +78,35 @@ describe("summarizeRun / formatPanels", () => {
       { label: "Time", value: "4s" },
     ]);
   });
+
+  // E-69 rework: dashboard's Cost panel had only the $X.XX and "not measured" branches;
+  // a run with one priced session and one unpriced one fell straight to "not measured",
+  // losing the "partial: $X for N of M" detail output.ts already shows for the same case.
+  test("a partially priced run: Cost panel shows partial: $X for N of M sessions", () => {
+    repoDir = mkRepo();
+    writeRun(repoDir, "r1", [
+      ev(0, "run.started", null, {}),
+      ev(1, "cost", null, { session_id: "s1", usd: 0.2 }),
+      ev(2, "cost", null, { session_id: "s2" }), // no dollar figure: unpriced
+    ]);
+    const s = summarizeRun(repoDir, "r1");
+    expect(s.costUsd).toBeNull();
+    expect(formatPanels(s).find((p) => p.label === "Cost")).toEqual({
+      label: "Cost", value: "partial: $0.20 for 1 of 2 sessions",
+    });
+  });
+
+  test("a tampered run: Cost panel reads not measured, never a partial dollar figure", () => {
+    repoDir = mkRepo();
+    writeRun(repoDir, "r1", [
+      ev(0, "run.started", null, {}),
+      ev(1, "cost", null, { session_id: "s1", usd: 0.2 }),
+      ev(2, "tamper.detected", null, { expected_sha256: "a", actual_sha256: "b" }),
+    ]);
+    const s = summarizeRun(repoDir, "r1");
+    expect(s.costUsd).toBeNull();
+    expect(formatPanels(s).find((p) => p.label === "Cost")).toEqual({ label: "Cost", value: "not measured" });
+  });
 });
 
 describe("startServer", () => {
@@ -117,4 +155,141 @@ describe("startServer", () => {
     expect(streamed).toContain('"type":"run.completed"');
     reader.cancel();
   });
+});
+
+describe("E-70: dashboard version + port replacement", () => {
+  const prevCliVersion = process.env["LOKI_CLI_VERSION"];
+  afterEach(() => {
+    if (prevCliVersion === undefined) delete process.env["LOKI_CLI_VERSION"];
+    else process.env["LOKI_CLI_VERSION"] = prevCliVersion;
+  });
+
+  test("GET /version reports the running code's version; the page wires up the warning", async () => {
+    delete process.env["LOKI_CLI_VERSION"];
+    repoDir = mkRepo();
+    server = startServer(repoDir, 0);
+    const v = (await (await fetch(`${server.url}version`)).json()) as {
+      dashboard: string;
+      version: string;
+      cliVersion: string | null;
+      pid: number;
+    };
+    expect(v.dashboard).toBe("loki-v10");
+    expect(v.version).toBe(getVersion());
+    expect(v.cliVersion).toBeNull();
+    expect(v.pid).toBe(process.pid);
+    expect(getCliVersion()).toBeNull();
+
+    const html = await (await fetch(server.url)).text();
+    expect(html).toContain('id="version"');
+    expect(html).toContain('id="version-warn"');
+    expect(html).toContain("/version");
+  });
+
+  test("a different LOKI_CLI_VERSION is reported as a mismatch against the running version", async () => {
+    process.env["LOKI_CLI_VERSION"] = "0.0.1-not-the-running-build";
+    repoDir = mkRepo();
+    server = startServer(repoDir, 0);
+    const v = (await (await fetch(`${server.url}version`)).json()) as { version: string; cliVersion: string | null };
+    expect(getCliVersion()).toBe("0.0.1-not-the-running-build");
+    expect(v.cliVersion).toBe("0.0.1-not-the-running-build");
+    expect(v.cliVersion).not.toBe(v.version);
+  });
+
+  test("looksLikeDashboardCommand: anchored on the entry, not a bare name", () => {
+    expect(looksLikeDashboardCommand("python3 -m dashboard.server")).toBe(true);
+    expect(looksLikeDashboardCommand("/usr/bin/python -m dashboard.server --port 9")).toBe(true);
+    expect(looksLikeDashboardCommand("bun /repo/loki-ts/src/cli.ts engine10 dashboard")).toBe(true);
+    expect(looksLikeDashboardCommand("bun /repo/loki-ts/src/cli.ts engine10 status")).toBe(false);
+    expect(looksLikeDashboardCommand("python3 -c \"print('dashboard.server')\"")).toBe(false);
+    expect(looksLikeDashboardCommand("node other-thing --note dashboard.server")).toBe(false);
+  });
+});
+
+describe("E-70: startServerReplacingOlder against a real occupant process", () => {
+  const temps: string[] = [];
+  const procs: Bun.Subprocess[] = [];
+
+  afterEach(async () => {
+    server?.stop();
+    server = null;
+    for (const p of procs.splice(0)) {
+      try {
+        p.kill(9);
+      } catch {
+        // Already gone.
+      }
+      await p.exited;
+    }
+    for (const t of temps.splice(0)) rmSync(t, { recursive: true, force: true });
+  });
+
+  function fixturePort(): number {
+    // A fixed, PID-derived port avoids colliding with other suites sharing the runner.
+    return 53000 + (process.pid % 4000);
+  }
+
+  async function waitForHttp(url: string, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        await fetch(url, { signal: AbortSignal.timeout(300) });
+        return true;
+      } catch {
+        await Bun.sleep(25);
+      }
+    }
+    return false;
+  }
+
+  test("an older v10 dashboard on the port is stopped and the port is reclaimed", async () => {
+    const port = fixturePort();
+    const dir = mkdtempSync(join(tmpdir(), "e10-dash-fixture-"));
+    temps.push(dir);
+    const script = join(dir, "fake-old-dashboard.ts");
+    // A standalone process, its own real pid: reports itself as a v10
+    // dashboard at an older version, exactly what an occupant would say.
+    writeFileSync(
+      script,
+      [
+        `Bun.serve({ hostname: "127.0.0.1", port: ${port}, fetch(req) {`,
+        `  const p = new URL(req.url).pathname;`,
+        `  if (p === "/version") return Response.json({ dashboard: "loki-v10", version: "0.0.1-old", pid: process.pid });`,
+        `  return new Response("old dashboard");`,
+        `} });`,
+      ].join("\n"),
+    );
+    const fake = Bun.spawn({ cmd: ["bun", script], env: process.env, stdout: "ignore", stderr: "ignore" });
+    procs.push(fake);
+    expect(await waitForHttp(`http://127.0.0.1:${port}/version`, 5000)).toBe(true);
+
+    repoDir = mkRepo();
+    server = await startServerReplacingOlder(repoDir, port);
+    expect(server.port).toBe(port);
+    const v = (await (await fetch(`${server.url}version`)).json()) as { version: string };
+    expect(v.version).toBe(getVersion());
+    const exitCode = await fake.exited;
+    expect(exitCode).not.toBe(0); // it was signalled, not a clean exit
+  }, 15_000);
+
+  test("a non-Loki listener on the port is left running; bind fails with a clear error", async () => {
+    const port = fixturePort() + 1;
+    const dir = mkdtempSync(join(tmpdir(), "e10-dash-fixture-"));
+    temps.push(dir);
+    const script = join(dir, "stranger.ts");
+    writeFileSync(
+      script,
+      `Bun.serve({ hostname: "127.0.0.1", port: ${port}, fetch: () => new Response("not a loki dashboard") });`,
+    );
+    const stranger = Bun.spawn({ cmd: ["bun", script], env: process.env, stdout: "ignore", stderr: "ignore" });
+    procs.push(stranger);
+    expect(await waitForHttp(`http://127.0.0.1:${port}/`, 5000)).toBe(true);
+
+    repoDir = mkRepo();
+    await expect(startServerReplacingOlder(repoDir, port)).rejects.toThrow(new RegExp(`${port}`));
+
+    // Left alone: still answering, never signalled.
+    const res = await fetch(`http://127.0.0.1:${port}/`);
+    expect(await res.text()).toBe("not a loki dashboard");
+  }, 15_000);
 });

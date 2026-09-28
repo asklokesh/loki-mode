@@ -107,4 +107,37 @@ describe("E-46 --resume through the supervisor", () => {
     expect(events.filter((e) => e.type === "run.started").length).toBe(2); // one per attempt, same seq space as E-39
     expect(events.filter((e) => e.type === "run.completed").length).toBe(1);
   });
+
+  // E-69 rework: the resume shortcut (runSupervisor's `done` check above) hardcoded
+  // `tampered: false` regardless of the log's real state, so a completed-and-TAMPERED run's
+  // resume would report itself as untampered -- exactly what partialCost()'s tamper guard
+  // (this same slice) is supposed to prevent from ever reaching a caller.
+  test("runSupervisor resuming a completed run whose log holds tamper.detected reports tampered:true", async () => {
+    const dir = repo();
+    const runId = "e10-resume-tampered";
+    const log = new EventLog(join(dir, eventsRelPath(runId)), runId);
+    log.append("cost", null, { session_id: "s1", usd: 0.2 });
+    log.append("tamper.detected", null, { expected_sha256: "a", actual_sha256: "b" });
+    seedCompleted(dir, runId, { verdict: "VERIFIED", pr_url: null, not_proven: [] });
+
+    const r = await runSupervisor({ runId, repoDir: dir, workerArgv: ["/nonexistent/loki-worker-should-not-run"] });
+    expect(r.tampered).toBe(true);
+  });
+
+  // Same bug, seen through main()'s 5-line CLI summary: a resumed, tampered, fully-priced run
+  // must print "not measured", never a dollar figure sourced from the untrustworthy log.
+  test("main() --resume of a tampered, fully-priced run prints Cost: not measured, never a dollar figure", async () => {
+    const dir = repo();
+    process.chdir(dir);
+    const runId = "e10-resume-tampered-cli";
+    const log = new EventLog(join(dir, eventsRelPath(runId)), runId);
+    log.append("cost", null, { session_id: "s1", usd: 0.5 });
+    log.append("tamper.detected", null, { expected_sha256: "a", actual_sha256: "b" });
+    seedCompleted(dir, runId, { verdict: "VERIFIED", pr_url: null, not_proven: [] });
+
+    const { out } = await capture("stdout", () => main(["--resume", runId]));
+    expect(out).toContain("not measured");
+    expect(out).not.toContain("$0.5");
+    expect(out).not.toContain("$0.50");
+  });
 });
