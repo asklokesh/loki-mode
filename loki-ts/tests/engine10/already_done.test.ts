@@ -12,9 +12,10 @@ import {
   findEvidence,
   renderAlreadyDoneComment,
 } from "../../src/engine10/already_done.ts";
-import { buildRepoMap } from "../../src/engine10/repomap.ts";
-import { buildTestMap } from "../../src/engine10/testmap.ts";
-import type { CostReader, RunContext, SessionRunner } from "../../src/engine10/types.ts";
+import { buildRepoMap, listRepoFiles } from "../../src/engine10/repomap.ts";
+import { buildTestMap, isTestFile } from "../../src/engine10/testmap.ts";
+import type { CostReader, RunContext, SessionRunner, TestMap } from "../../src/engine10/types.ts";
+import { REPO_ROOT } from "../../src/util/paths.ts";
 
 const FIX = join(import.meta.dir, "fixtures", "intake", "already-done-repo");
 
@@ -62,6 +63,50 @@ describe("findEvidence (deterministic search)", () => {
     expect(hits).toEqual([]);
     rmSync(dir, { recursive: true, force: true });
   });
+
+  // Two unrelated keywords each hitting a different source is not the same signal as one keyword
+  // naming the feature in two places (the fixture test above): "gizmo" is a real symbol name but
+  // has no test or changelog mention, "sprocket" is a test-name-only coincidence with no code or
+  // changelog mention. Neither says the task's actual feature already exists.
+  test("two different keywords each covering a different source alone are not enough", () => {
+    const dir = mkdtempSync(join(tmpdir(), "e10-already-done-crosscat-"));
+    const repoMap = { files: ["src/gizmo.ts"], entries: [{ path: "src/gizmo.ts", symbols: ["gizmo"] }], truncated: false };
+    const testMap = { runners: ["bun" as const], tests: [{ runner: "bun" as const, path: "tests/sprocket.test.ts" }] };
+    const hits = findEvidence("wire the gizmo into the sprocket pipeline", repoMap, testMap, dir);
+    expect(hits).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // E-66 review finding 2, reproduced on THIS repo (not a fixture): before the stop-word list and
+  // whole-token matching, these two tasks matched hundreds of unrelated lines (generic words like
+  // "add", "mode", "the", "files" hitting test names and old CHANGELOG headings) and would have
+  // spent a confirmation session on almost every real-world run. A genuinely already-built feature
+  // (the fixture case just above, and again below) must still clear the gate.
+  test("generic-word tasks give zero candidate evidence on a real, large repo", () => {
+    const repoMap = buildRepoMap(REPO_ROOT);
+    // Tracked test files only (git ls-files), never buildTestMap's raw fs walk: this checkout's
+    // .claude/worktrees/ holds a full repo copy per concurrent agent (excluded via
+    // .git/info/exclude, so `git ls-files` never sees it, but a plain readdirSync walk would),
+    // which made the earlier version of this test slow enough to risk the CI timeout.
+    const testMap: TestMap = { runners: ["bun"], tests: listRepoFiles(REPO_ROOT).files.filter(isTestFile).map((path) => ({ runner: "bun", path })) };
+    for (const task of ["Add a dark mode toggle to the settings page", "Support exporting invoices as PDF files"]) {
+      expect(findEvidence(task, repoMap, testMap, REPO_ROOT)).toEqual([]);
+    }
+  });
+
+  // A flat `slice(0, N)` after concatenating [...code, ...test, ...changelog] could let 30 code
+  // hits alone fill the cap and crowd the test category out entirely, even though both sources
+  // are what made this a candidate in the first place. The cap must be per source.
+  test("hit list is capped per source, so a noisy category never crowds another one out", () => {
+    const dir = mkdtempSync(join(tmpdir(), "e10-already-done-cap-"));
+    const entries = Array.from({ length: 30 }, (_, i) => ({ path: `src/f${i}.ts`, symbols: ["widget"] }));
+    const tests = [{ runner: "bun" as const, path: "tests/widget-x.test.ts" }];
+    const hits = findEvidence("ship the widget dashboard", { files: [], entries, truncated: false }, { runners: ["bun"], tests }, dir);
+    expect(hits.length).toBeLessThanOrEqual(10);
+    expect(new Set(hits.map((h) => h.source))).toEqual(new Set(["code", "test"]));
+    expect(hits.some((h) => h.source === "test")).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 describe("buildConfirmBrief", () => {
@@ -105,6 +150,49 @@ describe("checkAlreadyDone", () => {
   test("candidate evidence, not confirmed: null, never a false already-done", async () => {
     const dir = freshRepo();
     const sessions: SessionRunner = { run: async () => ({ exit: 0, durationS: 0.1, killed: false, markers: { done: true, alreadyDone: null, specConflict: null } }) };
+    const result = await checkAlreadyDone(ctxWith(sessions, dir), new AbortController().signal, TASK, buildRepoMap(dir), buildTestMap(dir));
+    expect(result).toBeNull();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // E-66 review finding 3: a marker with no real citation must never satisfy already-done, even
+  // though the marker string itself is non-empty (the old gate was `if (!alreadyDone) return
+  // null`, which "LOKI_ALREADY_DONE: yes" alone would pass).
+  test("confirmed marker names no file at all: rejected, not already-done", async () => {
+    const dir = freshRepo();
+    const sessions: SessionRunner = { run: async () => ({ exit: 0, durationS: 0.1, killed: false, markers: { done: false, alreadyDone: "yes, fully implemented", specConflict: null } }) };
+    const result = await checkAlreadyDone(ctxWith(sessions, dir), new AbortController().signal, TASK, buildRepoMap(dir), buildTestMap(dir));
+    expect(result).toBeNull();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // A citation must name one of THIS search's own hits, not merely an existing file: naming a real
+  // but unrelated path (package.json exists, but was never offered as evidence) must not count.
+  test("confirmed marker names a real file that is not in the hit list: rejected", async () => {
+    const dir = freshRepo();
+    const sessions: SessionRunner = { run: async () => ({ exit: 0, durationS: 0.1, killed: false, markers: { done: false, alreadyDone: "bunfig.toml proves it", specConflict: null } }) };
+    const result = await checkAlreadyDone(ctxWith(sessions, dir), new AbortController().signal, TASK, buildRepoMap(dir), buildTestMap(dir));
+    expect(result).toBeNull();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // E-66 review finding 5: a changelog heading says a feature was documented, not that working
+  // code for it exists today. A citation naming only the changelog entry (never the code or the
+  // test) must not be enough, even though CHANGELOG.md is a real hit in the hit list.
+  test("confirmed marker cites only the CHANGELOG.md hit: rejected, changelog alone is not code", async () => {
+    const dir = freshRepo();
+    const sessions: SessionRunner = { run: async () => ({ exit: 0, durationS: 0.1, killed: false, markers: { done: false, alreadyDone: "CHANGELOG.md documents this feature", specConflict: null } }) };
+    const result = await checkAlreadyDone(ctxWith(sessions, dir), new AbortController().signal, TASK, buildRepoMap(dir), buildTestMap(dir));
+    expect(result).toBeNull();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // E-66 review finding 5: substring citation must respect a word boundary, so a coincidental
+  // superstring of a hit's basename ("presearch-command.ts" contains the literal text
+  // "search-command.ts") is never mistaken for citing "search-command.ts".
+  test("a coincidental substring of a basename is not a citation of it", async () => {
+    const dir = freshRepo();
+    const sessions: SessionRunner = { run: async () => ({ exit: 0, durationS: 0.1, killed: false, markers: { done: false, alreadyDone: "see presearch-command.ts for background", specConflict: null } }) };
     const result = await checkAlreadyDone(ctxWith(sessions, dir), new AbortController().signal, TASK, buildRepoMap(dir), buildTestMap(dir));
     expect(result).toBeNull();
     rmSync(dir, { recursive: true, force: true });

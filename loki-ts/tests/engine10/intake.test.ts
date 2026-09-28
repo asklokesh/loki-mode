@@ -248,6 +248,25 @@ describe("engine10 intake: already-implemented (E-66)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  // E-66 review finding 4: a text run has no issue to comment on, so it gets no comment_argv, but
+  // it must still carry the comment body -- main() prints it (supervisor.ts, alreadyDoneTextComment)
+  // instead of the decision going unrecorded anywhere the operator can see it.
+  test("text run, confirmed: comment body present for main() to print, no argv (no issue to post to)", async () => {
+    const dir = freshRepoFrom("already-done-repo");
+    const confirm = fakeConfirmSession({ markers: { done: false, alreadyDone: CONFIRMED, specConflict: null } });
+    const ctx = makeCtx(dir, runDir, new RealTestMapProvider());
+    ctx.sessions = confirm.runner;
+
+    const result = await runIntake(ctx, new AbortController().signal, { taskText: TASK });
+
+    expect(result.data.already_satisfied).toBe(true);
+    expect(result.data.comment_argv).toBeUndefined();
+    expect(typeof result.data.comment).toBe("string");
+    expect(result.data.comment as string).toContain(CONFIRMED);
+    expect(readFileSync(join(runDir, "already-done-comment.md"), "utf8")).toContain(CONFIRMED);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   test("candidate evidence but the model does not confirm: proceeds normally, no false positive", async () => {
     const dir = freshRepoFrom("already-done-repo");
     const decline = fakeConfirmSession({ markers: { done: true, alreadyDone: null, specConflict: null } });

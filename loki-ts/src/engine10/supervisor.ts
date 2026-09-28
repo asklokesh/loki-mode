@@ -9,7 +9,7 @@ import { createInterface } from "node:readline";
 import { withholdGithubTokens } from "../runner/github_token.ts";
 import { EventLog, fold, readEvents, tail, type Folded } from "./events.ts";
 import { fetchIssueToFile } from "./fetch_issue.ts";
-import { formatHeartbeatLine, formatStageLine, formatSummary } from "./output.ts";
+import { formatHeartbeatLine, formatStageLine, formatSummary, type SummaryInput } from "./output.ts";
 import { assertPreflight, PreflightError } from "./preflight.ts";
 import { resolveModel } from "./session.ts";
 import type { PrContext } from "./stages/pr.ts";
@@ -219,6 +219,22 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   try { const { createSlackAdapter } = await import("./adapters/slack.ts"); await Promise.race([createSlackAdapter(env.LOKI_SLACK_WEBHOOK_URL).notify?.(summary) ?? Promise.resolve(), new Promise<void>((r) => setTimeout(r, Number(env.LOKI_E10_NOTIFY_TIMEOUT_MS) || 5000).unref())]); } catch { /* best-effort: a Slack failure or hang must never affect the verdict */ }
   return { verdict, tampered: log.tampered, notProven, prUrl, workerExit };
 }
+/** E-66: a text run confirmed already-done has no issue to comment on, so there is no
+ *  comment_argv (that only exists for an issue run: intake.ts, buildAlreadyDoneCommentArgv).
+ *  main() prints intake's comment body instead, so the evidence-based no-change decision is not
+ *  silently swallowed just because this run happened not to be linked to an issue. */
+export function alreadyDoneTextComment(events: EventEnvelope[]): string | null {
+  const d = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data;
+  return d?.source === "text" && d?.already_satisfied === true && typeof d.comment === "string" ? d.comment : null;
+}
+/** The exact block main() writes to stdout once a run finishes. Pulled out as a pure function
+ *  because main() cannot be driven end to end from a test process (it re-spawns process.argv[1] as
+ *  the worker, which under a test runner is not cli.ts) -- this is what is tested instead. */
+export function renderMainOutput(events: EventEnvelope[], summary: SummaryInput, runId: string, model: string): string {
+  const textComment = alreadyDoneTextComment(events);
+  const prefix = textComment ? `\n${textComment}\n` : "";
+  return `${prefix}${formatSummary(summary)}\nRun:        ${runId} (${eventsRelPath(runId)})\nModel:      ${model}\n`;
+}
 const ISSUE_RE = /^(?:[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+\/(?:-\/)?issues\/\d+)$/;
 // E-59: every token field the provider reported, cache included (E-50 found "1k shown for 372k used" when this summed only input+output). The sole place tokens are computed for the Cost line.
 export function summaryTokens(f: Folded, sawCost: boolean): number | null {
@@ -307,13 +323,13 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const f = fold(events);
   const sawCost = events.some((e) => e.type === "cost");
   const cli = process.env.LOKI_E10_INVOKER === "cli";
-  process.stdout.write(formatSummary({
+  process.stdout.write(renderMainOutput(events, {
     pr: res.prUrl ? { url: res.prUrl, draft: res.verdict !== "VERIFIED" } : null,
     verdict: res.verdict, notProven: res.notProven, flaky: [],
     cost: { usd: f.cost.usd, provider, tokens: summaryTokens(f, sawCost), note: f.cost.usd === null && cli ? "CLI invoker records no cost" : null },
     wallS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000),
     stages: events.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number")
       .map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })),
-  }) + `\nRun:        ${runId} (${eventsRelPath(runId)})\nModel:      ${model}\n`);
+  }, runId, model));
   return res.verdict === "FAILED" ? 1 : 0;
 }
