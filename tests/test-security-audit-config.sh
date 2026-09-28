@@ -260,6 +260,49 @@ else
   bad "r2 repro: no founder-review message on refusal"
 fi
 
+# --- Scenario F: r3 repro -- no release tag at all must NOT fall back ------
+# df88b43d (r2) fell back to `origin/main~1` when no `v*` tag was reachable.
+# That commit was never audited either, so trusting its .gitleaks.toml (or
+# diffing against it) is the SAME bug class and fails open. Repro: an
+# untagged repo, push A adds a zero-rule config (untagged, no audit), push B
+# adds a leak; origin/main~1 (df88b43d's fallback) resolves to push A's own
+# commit. No tag anywhere in this repo -- the fix must refuse outright, not
+# fall back to any commit.
+REPO_F="$TMP_ROOT/repo-no-tag-fallback"
+git init -q -b main "$REPO_F" >/dev/null
+git -C "$REPO_F" config user.email "e114-test@loki.local"
+git -C "$REPO_F" config user.name "e114 test"
+git -C "$REPO_F" config commit.gpgsign false
+git -C "$REPO_F" config core.hooksPath /dev/null
+: > "$REPO_F/.gitleaksignore"
+printf 'readme\n' > "$REPO_F/README.md"
+git -C "$REPO_F" add .gitleaksignore README.md
+git -C "$REPO_F" commit -qm "baseline, untagged repo (no release tag exists at all)" --no-gpg-sign --no-verify
+printf 'title = "x"\n' > "$REPO_F/.gitleaks.toml"
+git -C "$REPO_F" add .gitleaks.toml
+git -C "$REPO_F" commit -qm "push A: zero-rule config, no VERSION change, no audit" --no-gpg-sign --no-verify
+B1_F="$(git -C "$REPO_F" rev-parse HEAD)"
+printf '%s\n' "const key = \"${_akia_prefix}${_akia_rest}\";" > "$REPO_F/secret.js"
+git -C "$REPO_F" add secret.js
+git -C "$REPO_F" commit -qm "push B: VERSION bump plus a real secret" --no-gpg-sign --no-verify
+TIP_F="$(git -C "$REPO_F" rev-parse HEAD)"
+# origin/main~1 must resolve to push A's own commit for df88b43d's fallback
+# to be exploitable at all -- give the repo a real origin whose main tip is
+# this push's tip, exactly as a checkout's origin/main would be in CI.
+git clone -q --bare "$REPO_F" "$REPO_F.origin.git"
+git -C "$REPO_F" remote add origin "$REPO_F.origin.git"
+git -C "$REPO_F" fetch -q origin
+
+REPORT_F="$TMP_ROOT/report-f.json"
+_out_f="$(cd "$REPO_F" && GITLEAKS_BIN="$GITLEAKS_BIN" GITLEAKS_BEFORE="" \
+  GITLEAKS_TIP="$TIP_F" GITLEAKS_REPORT="$REPORT_F" "$SCRIPT" 2>&1)"
+_rc_f=$?
+if [ "$_rc_f" -ne 0 ]; then
+  ok "r3 repro: an untagged repo with no release tag is refused, not fell back to origin/main~1"
+else
+  bad "r3 repro: no release tag fell back to an unaudited commit and passed -- fails open (same bug class as r1/r2)"
+fi
+
 echo
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

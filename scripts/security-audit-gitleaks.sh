@@ -74,16 +74,21 @@ if ! _is_zero_sha "$GITLEAKS_BEFORE" && git cat-file -e "${GITLEAKS_BEFORE}^{com
 fi
 
 _base="$(git describe --tags --abbrev=0 --match 'v[0-9]*' "$_describe_from" 2>/dev/null || true)"
-if [ -z "$_base" ] || ! git cat-file -e "${_base}^{commit}" 2>/dev/null; then
-  _base="origin/main~1"
+_base_sha=""
+if [ -n "$_base" ] && git cat-file -e "${_base}^{commit}" 2>/dev/null; then
+  _base_sha="$(git rev-parse "${_base}^{commit}")"
 fi
-if ! git cat-file -e "${_base}^{commit}" 2>/dev/null; then
-  echo "FAIL: could not resolve a base commit for the pushed range -- refusing to scan with an unverified config" >&2
-  exit 1
-fi
-_base_sha="$(git rev-parse "${_base}^{commit}")"
 
-echo "gitleaks range: ${_base_sha} (base) .. ${_tip} (tip)"
+# r3 (opus REJECT of the r2 shape): a fallback to origin/main~1 when no
+# release tag exists is the SAME bug class -- that commit was never
+# audited either, and using its .gitleaks.toml (or trusting a diff against
+# it) can fail open exactly like trusting event.before did. There is no
+# fallback: with no release tag, there is no trusted base, full stop.
+if [ -z "$_base_sha" ]; then
+  echo "gitleaks range: no release tag found -- no trusted base; refusing any .gitleaks.toml on the tip and scanning with default rules only"
+else
+  echo "gitleaks range: ${_base_sha} (base) .. ${_tip} (tip)"
+fi
 
 # --- (1) detect a .gitleaks.toml change over the whole range -------------
 # r2 requirement 2: main carries no .gitleaks.toml today, so with the base
@@ -108,18 +113,27 @@ echo "gitleaks range: ${_base_sha} (base) .. ${_tip} (tip)"
 # independently of this gate (defense in depth: even if this detection had
 # a bug, (2) alone still never trusts the tip's config).
 _config_touched=0
-if ! git diff --quiet "${_base_sha}" "${_tip}" -- .gitleaks.toml 2>/dev/null; then
+if [ -z "$_base_sha" ]; then
+  # r3: NO fallback base -- refuse outright if the tip has ANY .gitleaks.toml
+  # at all, rather than diffing against something unaudited.
+  if git cat-file -e "${_tip}:.gitleaks.toml" 2>/dev/null; then
+    _config_touched=1
+    echo "::error::no release tag exists to trust as a base, and the tip has a .gitleaks.toml -- refusing rather than trusting it or an unaudited fallback commit" >&2
+  fi
+elif ! git diff --quiet "${_base_sha}" "${_tip}" -- .gitleaks.toml 2>/dev/null; then
   _config_touched=1
   echo "::error::.gitleaks.toml differs between ${_base_sha} and ${_tip} -- this can silently weaken or disable secret scanning" >&2
   git diff --no-color -U0 "${_base_sha}" "${_tip}" -- .gitleaks.toml 2>/dev/null | sed 's/^/  /' >&2 || true
 fi
 
 # --- (3) warn, never block, on every .gitleaksignore line added ----------
-git diff --no-color -U0 "${_base_sha}" "${_tip}" -- .gitleaksignore 2>/dev/null \
-  | sed -n 's/^+\([^+].*\)$/\1/p' \
-  | while IFS= read -r _line; do
-      echo "::warning::.gitleaksignore gained a line (${_base_sha:0:12}..${_tip:0:12}): ${_line}"
-    done
+if [ -n "$_base_sha" ]; then
+  git diff --no-color -U0 "${_base_sha}" "${_tip}" -- .gitleaksignore 2>/dev/null \
+    | sed -n 's/^+\([^+].*\)$/\1/p' \
+    | while IFS= read -r _line; do
+        echo "::warning::.gitleaksignore gained a line (${_base_sha:0:12}..${_tip:0:12}): ${_line}"
+      done
+fi
 
 # --- (2) scan with an explicit, TRUSTED config -- never the tip's --------
 # Precedence gitleaks documents: -c/--config, then env GITLEAKS_CONFIG, then
@@ -131,7 +145,7 @@ unset GITLEAKS_CONFIG GITLEAKS_CONFIG_TOML || true
 _config_tmp=""
 _tip_config_backup=""
 _config_arg=()
-if git cat-file -e "${_base_sha}:.gitleaks.toml" 2>/dev/null; then
+if [ -n "$_base_sha" ] && git cat-file -e "${_base_sha}:.gitleaks.toml" 2>/dev/null; then
   _config_tmp="$(mktemp "${TMPDIR:-/tmp}/loki-gitleaks-base-config.XXXXXX")"
   git show "${_base_sha}:.gitleaks.toml" > "$_config_tmp"
   _config_arg=(--config "$_config_tmp")
