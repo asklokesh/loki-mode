@@ -144,9 +144,10 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
     },
   };
 }
-export const stage: Stage = {
+export const intakeStage: Stage = {
   name: "intake",
   targetS: 15,
   limitS: 60,
   run: (ctx, signal) => runIntake(ctx, signal),
 };
+export const stage = intakeStage;
