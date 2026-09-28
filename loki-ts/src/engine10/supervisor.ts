@@ -1,5 +1,6 @@
-// Loki 10 supervisor (P0, docs/v10/ENGINE.md sections 5, 6 and 10): eval marker first, origin pinned before any
-// provider runs, worker env token-withheld, events.jsonl's single writer (seq, hash, tamper refusal); --resume reuses the run id, reporting a finished run's verdict or re-spawning an unfinished one onto the same log.
+// Loki 10 supervisor (P0, docs/v10/ENGINE.md sections 5, 6, 10): eval marker first, origin pinned once, worker
+// spawned with withheld tokens; single writer of events.jsonl (seq, hash, tamper refusal); --resume reuses the run
+// id; post-PR: detached deep verify, then Slack notify.
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, type Hash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -46,7 +47,7 @@ export interface SupervisorOptions {
   workerArgv: string[]; // argv of the worker process, e.g. [bun, cli, "engine10", "worker", ...] (wired by E-12)
   env?: NodeJS.ProcessEnv; // defaults to process.env; never mutated
   started?: Record<string, unknown>; // extra run.started data (task_source, provider, model, ...)
-  pr?: PrStep; // absent means no PR (for example --no-pr)
+  pr?: PrStep; deepArgv?: string[]; // pr absent means no PR; deepArgv absent means no detached deep verify after pr.opened
   capS?: number; // global cap in seconds (default LOKI_E10_CAP_S, else DEFAULT_CAP_S); the backstop fires at cap plus grace
   graceS?: number; // default BACKSTOP_GRACE_S
 }
@@ -126,8 +127,8 @@ function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
   try { process.kill(-pid, sig); } catch { /* group already gone */ }
 }
 
-// Spawns the worker in its own process group; resolves once it has exited and stdout has closed or DRAIN_MS has
-// passed (a surviving grandchild cannot stall P0); backstopMs sends SIGTERM then SIGKILL after 2s.
+// Spawns the worker in its own process group, waits for exit plus stdout drain (DRAIN_MS), and backstops at
+// backstopMs with SIGTERM then SIGKILL after 2s; exit is null if it never started or was killed by a signal.
 function spawnWorker(
   argv: string[], env: NodeJS.ProcessEnv, cwd: string, backstopMs: number, onLine: (l: string) => void,
 ): Promise<{ code: number | null; killed: boolean }> {
@@ -205,13 +206,16 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
     if (out?.url) {
       prUrl = out.url;
       log.append("pr.opened", "pr", { url: out.url, draft: out.draft, existing: out.existing });
+      // E-48: deep verify (stages/deep.ts) runs detached, never keeping the supervisor alive; deep.started records the pid so it is never orphaned untracked.
+      if (opts.deepArgv) { const [cmd, ...dArgs] = [...opts.deepArgv, origin], child = cmd ? spawn(cmd, dArgs, { cwd: opts.repoDir, env: workerEnv, stdio: "ignore", detached: true }) : null; child?.on("error", () => {}); if (child?.pid) { child.unref(); log.append("deep.started", "deep", { pid: child.pid }); } else notProven.push("deep verify not spawned"); }
     }
   }
 
-  const costUsd = log.tampered ? null : fold(readEvents(log.path)).cost.usd; // unknown cost stays null (fold returns null unless every session was measured)
-  log.append("run.completed", null, {
-    verdict, pr_url: prUrl, not_proven: notProven, cost_usd: costUsd, wall_s: (Date.now() - t0) / 1000,
-  });
+  const allEvents = readEvents(log.path), folded = fold(allEvents), costUsd = log.tampered ? null : folded.cost.usd, wallS = (Date.now() - t0) / 1000; // one read, reused for cost and the Slack summary; unknown cost stays null
+  log.append("run.completed", null, { verdict, pr_url: prUrl, not_proven: notProven, cost_usd: costUsd, wall_s: wallS });
+  const stages = allEvents.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number").map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })), // E-48 notify: Slack when configured, no-op otherwise
+    summary = { pr: prUrl ? { url: prUrl, draft: verdict !== "VERIFIED" } : null, verdict, notProven, flaky: [] as string[], wallS, stages, cost: { usd: costUsd, provider: String(opts.started?.provider ?? ""), tokens: allEvents.some((e) => e.type === "cost") ? folded.cost.inputTokens + folded.cost.outputTokens : null } };
+  try { const { createSlackAdapter } = await import("./adapters/slack.ts"); await Promise.race([createSlackAdapter(env.LOKI_SLACK_WEBHOOK_URL).notify?.(summary) ?? Promise.resolve(), new Promise<void>((r) => setTimeout(r, Number(env.LOKI_E10_NOTIFY_TIMEOUT_MS) || 5000).unref())]); } catch { /* best-effort: a Slack failure or hang must never affect the verdict */ }
   return { verdict, tampered: log.tampered, notProven, prUrl, workerExit };
 }
 const ISSUE_RE = /^(?:[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+\/(?:-\/)?issues\/\d+)$/;
@@ -273,7 +277,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const capS = deep ? DEEP_CAP_S : Number(env.LOKI_E10_CAP_S) || DEFAULT_CAP_S;
   const res = await runSupervisor({
     runId, repoDir, env, capS,
-    workerArgv: [process.execPath, resolve(process.argv[1]!), "engine10", "worker", runId, provider, model, deep ? "deep" : "fast"],
+    workerArgv: [process.execPath, resolve(process.argv[1]!), "engine10", "worker", runId, provider, model, deep ? "deep" : "fast"], deepArgv: noPr ? undefined : [process.execPath, resolve(process.argv[1]!), "engine10", "deep-worker", runId, provider, model],
     started: {
       task_source: isIssue ? "issue" : "text", issue_ref: isIssue ? task : null, provider, model, deep, cap_s: capS,
       model_override_applied: !!process.env.LOKI_MODEL_OVERRIDE && provider === "claude", branch: `loki/${runId}`,
