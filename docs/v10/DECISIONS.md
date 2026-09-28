@@ -256,3 +256,12 @@ One entry per decision: context, choice, why, how to reverse. Newest last.
 
 - Built into the v10 engine, no legacy fixes: "already implemented" is a first-class outcome with evidence, receipt and issue comment, no PR (E-66; aiq-52 expected outcome in the eval, EV-13); no pause state, anything unfinishable ends as a draft PR or an issue comment with the reason within the 15-minute cap (E-67); per-call deadline, progress every 30s, every exit code classified including 125 and 143 (E-68); cost shows "not measured", never $0 when unmeasured (E-69); the dashboard shows its version and the CLI's, warns on mismatch, and replaces an older dashboard on its port (E-70).
 - Legacy stays as it is until v10 becomes the default; then legacy is deleted.
+
+## D33. 2026-09-28: engine10 line budgets split, core cap held at 5,000
+
+- The E-02 budget test went red at 5,288 (Tests run 36377688703) because modernize/ (M-01, M-02, M-05, M-06) was counted inside the D29 "under 5K lines" core.
+- Core engine (engine10 minus modernize/) stays under 5,000 lines, counted as today (raw lines, blanks and comments included). Not raised, not recounted as SLOC: that would add about 920 lines by redefinition, and the cap is the auditability part of the moat.
+- Pending core slices (E-67, E-66, E-61, M-14) share the 92-line headroom (core 4,907 at 983dda58). Each card states its net core delta; anything over is offset by deleting dead or duplicated core code in the same slice. Deleting comments on Seal, Wall, verify or Rule of Two logic is not an offset.
+- modernize/ gets its own cap of 4,000 lines in the same test: 25 planned modules (MODERNIZE.md section 13) at about 150 lines each plus 15% slack. M-24's view moves to mod/dashboard.ts. M-14 stays under 20 lines in wall.ts and calls into mod/oracle/.
+- Core never imports modernize/ (the cli.ts TABLE string is exempt), so the split cannot hide core code.
+- Hitting either cap means re-slice or delete, never raise. Ruled by the CTO (opus) on the Chief of Staff's request; implemented by E-76.

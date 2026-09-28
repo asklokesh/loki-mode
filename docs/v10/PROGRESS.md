@@ -1,5 +1,13 @@
 # Progress
 
+## 2026-09-28T04:45Z: drift audit (turn 432, 6-hour window) and main red again
+- Releases in 6h: 6 (v9.79.0, v9.80.0, v9.80.1, v9.81.0, v10.0.0 tag only, v10.0.1), 151 commits on main. CONTROL "1 per 90 min" met; the 30/day pace is not (about 24/day).
+- Red main windows in 6h, from `gh run list --workflow Tests --branch main`: 898fa081 to d8774dd5 (about 1h, version-literal test, fixed 306b6b0c, guard E-73) and 5404b0c6 to 983dda58 (now). Cause of the second: M-05 merged after only `bun test tests/engine10/modernize/`; the full `tests/engine10/` includes the E-02 size budget, which went 5,288 against 5,000. The Chief of Staff's own merge, not a builder's.
+- Also red at 983dda58: shard-durations rows missing for the E-72/E-73 suites registered by the Chief of Staff (fixed 83cc5734, drift detector 6 passed 0 failed).
+- The pulse printed Main CI UNKNOWN for all three red pushes; slice E-75 makes it read the Tests run list.
+- Correction: the 04:25Z BOARD note "merged f4d98c0b, 28 pass 0 fail" covered only the modernize tests, not the engine10 suite.
+- Rule from now: every merge touching loki-ts/src runs the full `cd loki-ts && bun test tests/engine10/` before push; D33 (CTO) splits the budget, E-76 implements it.
+
 ## 2026-09-28T04:30Z: v10.0.1 SHIPPED -- read first on resume
 - v10.0.1 republishes v10.0.0 (tag v10.0.0 at 898fa081 never reached npm). Root cause: tests/test-start-update-hint.sh used latest=9.99.0 as "far-future", older than 10.0.0; fixed 306b6b0c (control: old test on the new tree fails "a stale install prints NO warning on start"; new test 10 passed 0 failed; trust-core 95 passed 0 failed). Tests green on 306b6b0c (run 36375975977).
 - Release run 36376357720 all jobs success; `npm view loki-mode dist-tags` latest 10.0.1, gitHead 76ec1c24 = tag v10.0.1^{}; GitHub release v10.0.1 published 04:14:03Z; `loki --version` from a fresh prefix prints "Loki Mode v10.0.1" (rc=0).
