@@ -2251,6 +2251,152 @@ else
     printf '%s\n' "$OUT"
 fi
 
+echo "T42 -- E-79: LOW_READY only counts a ready row toward the queue when its Depends-on slices are merged/released; blocked ready rows are named"
+BOARD_DEPS="$WORK/BOARD-deps.md"
+cat > "$BOARD_DEPS" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S-01 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-02 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-03 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-04 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-05 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| M-01 | modernize step | y | LOW | merged@2026-09-27T01:00Z | Depends on none. |
+| M-02 | modernize step | y | LOW | ready@2026-09-27T01:00Z | Depends on M-01. |
+| M-03 | modernize step | y | LOW | ready@2026-09-27T01:00Z | Depends on M-02. |
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_DEPS"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: LOW_READY: only 6 ready slice(s) on BOARD (want at least 8); cut 2 more; blocked by dependency: M-03 (needs M-02)" \
+    && printf '%s\n' "$OUT" | grep -qF "Ready rows blocked by dependency: M-03 (needs M-02)"; then
+    ok "M-02 (deps merged) counts as ready; M-03 (deps only ready) is named as blocked, not counted"
+else
+    bad "T42 dependency-gated LOW_READY case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T42b -- E-79: 'Depends on none.' and an already-merged dependency both count the row as ready (no blocked names)"
+BOARD_DEPS_MET="$WORK/BOARD-deps-met.md"
+cat > "$BOARD_DEPS_MET" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S-01 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-02 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-03 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-04 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-05 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-06 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| M-01 | modernize step | y | LOW | merged@2026-09-27T01:00Z | Depends on none. |
+| M-02 | modernize step | y | LOW | ready@2026-09-27T01:00Z | Depends on M-01. |
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_DEPS_MET"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qE "^VIOLATION: LOW_READY: only 7 ready slice\(s\) on BOARD \(want at least 8\); cut 1 more\$" \
+    && printf '%s\n' "$OUT" | grep -qF "Ready rows blocked by dependency: none"; then
+    ok "no unmet dependency: LOW_READY text has no blocked-by-dependency suffix, status line reads none"
+else
+    bad "T42b deps-met case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T42c -- E-79: a lowercase 'depends on' inside unrelated narrative prose is not read as a dependency clause"
+BOARD_DEPS_PROSE="$WORK/BOARD-deps-prose.md"
+cat > "$BOARD_DEPS_PROSE" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S-01 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-02 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-03 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-04 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-05 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-06 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-07 | a | x | LOW | ready@2026-09-27T01:00Z | Source: wave 1; depends on S-06 Phase A, build then review. |
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_DEPS_PROSE"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qE "^VIOLATION: LOW_READY: only 7 ready slice\(s\) on BOARD \(want at least 8\); cut 1 more\$" \
+    && printf '%s\n' "$OUT" | grep -qF "Ready rows blocked by dependency: none"; then
+    ok "lowercase 'depends on' narrative prose (not the capitalized BOARD.md convention) does not gate S-07"
+else
+    bad "T42c lowercase-prose case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T43 -- E-80: PROGRESS.md age is never negative; a future entry heading reports FUTURE_TIMESTAMP"
+PROGRESS_FUTURE="$WORK/PROGRESS-future.md"
+printf '# Progress\n\n## 2026-09-27T03:30:00Z: future entry\n- clock skew or a mistyped heading\n' > "$PROGRESS_FUTURE"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_PROGRESS_MD=$PROGRESS_FUTURE"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "PROGRESS.md last entry: FUTURE_TIMESTAMP (2026-09-27T03:30:00Z is 90 min ahead of now)" \
+    && printf '%s\n' "$OUT" | grep -qF "PROGRESS.md last entry: 0 min ago" \
+    && ! printf '%s\n' "$OUT" | grep -Eq "PROGRESS\.md last entry: -[0-9]+ min ago" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: STALE_PROGRESS"; then
+    ok "a future PROGRESS.md heading reports FUTURE_TIMESTAMP, age clamped to 0, never negative"
+else
+    bad "T43 future-timestamp case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T44 -- E-81: STRAY_WORKTREE fires on a worktree registered inside the repo root but outside .claude/worktrees"
+STRAY_LIST="worktree $FAKE_REPO
+HEAD dead
+branch refs/heads/main
+
+worktree $FAKE_REPO/.claude/worktrees/wf-ok
+HEAD dead
+
+worktree $FAKE_REPO/scratch-worktree
+HEAD dead
+
+"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_WORKTREE_LIST=$STRAY_LIST"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: STRAY_WORKTREE: worktree(s) registered inside the repo root but outside .claude/worktrees: $FAKE_REPO/scratch-worktree" \
+    && printf '%s\n' "$OUT" | grep -qF "Stray worktrees (inside repo root, outside .claude/worktrees): 1"; then
+    ok "a worktree inside the repo root but outside .claude/worktrees fires STRAY_WORKTREE, naming the path; the primary and the .claude/worktrees entry do not"
+else
+    bad "T44 STRAY_WORKTREE case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T44b -- E-81: STRAY_WORKTREE does not fire when every non-primary worktree is under .claude/worktrees, or entirely outside the repo root"
+CLEAN_LIST="worktree $FAKE_REPO
+HEAD dead
+branch refs/heads/main
+
+worktree $FAKE_REPO/.claude/worktrees/wf-ok
+HEAD dead
+
+worktree /tmp/an-unrelated-checkout-outside-the-repo
+HEAD dead
+
+"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_WORKTREE_LIST=$CLEAN_LIST"; then rc=0; else rc=$?; fi
+if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: STRAY_WORKTREE" \
+    && printf '%s\n' "$OUT" | grep -qF "Stray worktrees (inside repo root, outside .claude/worktrees): 0"; then
+    ok "a .claude/worktrees entry and one entirely outside the repo root both stay clean"
+else
+    bad "T44b STRAY_WORKTREE-clean case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T44c -- E-81: the repo root for containment is the listing's own primary worktree, never PULSE_REPO_ROOT (this script runs FROM a builder worktree, where those two differ)"
+OTHER_ROOT="$WORK/other-root"
+DIFFROOT_LIST="worktree $OTHER_ROOT
+HEAD dead
+branch refs/heads/main
+
+worktree $OTHER_ROOT/.claude/worktrees/wf-ok
+HEAD dead
+
+worktree $OTHER_ROOT/scratch-worktree
+HEAD dead
+
+"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_REPO_ROOT=$FAKE_REPO" "PULSE_WORKTREE_LIST=$DIFFROOT_LIST"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: STRAY_WORKTREE: worktree(s) registered inside the repo root but outside .claude/worktrees: $OTHER_ROOT/scratch-worktree" \
+    && printf '%s\n' "$OUT" | grep -qF "Stray worktrees (inside repo root, outside .claude/worktrees): 1"; then
+    ok "a stray under the listing's primary path fires even though PULSE_REPO_ROOT (this run's own worktree) points elsewhere"
+else
+    bad "T44c primary-vs-PULSE_REPO_ROOT case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
 echo ""
 echo "=== bash 3.2 syntax + full-suite check (via /bin/sh, real bash 3.2.57 on macOS) ==="
 if command -v /bin/sh >/dev/null 2>&1 && /bin/sh -c 'case "$BASH_VERSION" in 3.2*) exit 0;; *) exit 1;; esac' 2>/dev/null; then
