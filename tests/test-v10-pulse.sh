@@ -2729,6 +2729,84 @@ else
     printf '%s\n' "$OUT"
 fi
 
+echo "T43 -- MERGED_NOT_RELEASED_STALE (D37, E-90): a 'merged' BOARD row whose own merge"
+echo "      commit already reached the latest published tag over-reports the backlog"
+MNS_REPO="$WORK/mns-repo"
+mkdir -p "$MNS_REPO"
+(
+    cd "$MNS_REPO" || exit 1
+    git init -q -b main
+    git config user.email "test@example.com"
+    git config user.name "test"
+    echo "seed" > seed.txt
+    git add seed.txt
+    GIT_AUTHOR_DATE="2026-09-20T00:00:00Z" GIT_COMMITTER_DATE="2026-09-20T00:00:00Z" \
+        git commit -q -m "initial"
+    git checkout -q -b feature-s01
+    echo "s01" > s01.txt
+    git add s01.txt
+    GIT_AUTHOR_DATE="2026-09-20T00:05:00Z" GIT_COMMITTER_DATE="2026-09-20T00:05:00Z" \
+        git commit -q -m "S-01 work"
+    git checkout -q main
+    GIT_AUTHOR_DATE="2026-09-20T00:10:00Z" GIT_COMMITTER_DATE="2026-09-20T00:10:00Z" \
+        git merge -q --no-ff -m "merge slice-S-01" feature-s01
+    git tag v1.0.0
+    git checkout -q -b feature-s02
+    echo "s02" > s02.txt
+    git add s02.txt
+    GIT_AUTHOR_DATE="2026-09-27T01:00:00Z" GIT_COMMITTER_DATE="2026-09-27T01:00:00Z" \
+        git commit -q -m "S-02 work"
+    git checkout -q main
+    GIT_AUTHOR_DATE="2026-09-27T01:05:00Z" GIT_COMMITTER_DATE="2026-09-27T01:05:00Z" \
+        git merge -q --no-ff -m "merge slice-S-02" feature-s02
+)
+# S-01's merge commit is an ancestor of v1.0.0 (merged before the tag) --
+# its `merged@` row is stale and over-reports the backlog. S-02's merge
+# commit landed AFTER v1.0.0, so it is genuinely unreleased and must never
+# be named.
+BOARD_MNS="$WORK/BOARD-mns.md"
+cat > "$BOARD_MNS" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S-01 | a | x | LOW | merged@2026-09-20T00:10Z | |
+| S-02 | a | x | LOW | merged@2026-09-27T01:05Z | |
+EOF
+if run_pulse "PULSE_REPO_ROOT=$MNS_REPO" "PULSE_MAIN_REF=main" \
+    "BOARD_MD=$BOARD_MNS" "CONTROL_MD=$CONTROL_OK" "PULSE_PROGRESS_MD=$PROGRESS_FRESH" \
+    "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=false" "PULSE_GH_STREAK_CMD=false" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$MNS_REPO")" \
+    "PULSE_SWARM_START=2026-09-26T23:00Z" "PULSE_NOW=2026-09-27T02:00:00Z"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -q "^VIOLATION: MERGED_NOT_RELEASED_STALE: S-01 (merge " \
+    && ! printf '%s\n' "$OUT" | grep -q "S-02 (merge "; then
+    ok "MERGED_NOT_RELEASED_STALE names S-01 (merge commit already in v1.0.0), never S-02 (merged after the tag)"
+else
+    bad "T43 MERGED_NOT_RELEASED_STALE case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T44 -- MERGED_NOT_RELEASED_STALE reports UNKNOWN, never 'none', when a row's ID breaks the"
+echo "      underlying git lookup (a real git failure must never read as 'nothing to flag')"
+BOARD_MNS_BAD="$WORK/BOARD-mns-bad.md"
+cat > "$BOARD_MNS_BAD" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S-( | a | x | LOW | merged@2026-09-20T00:10Z | |
+EOF
+if run_pulse "PULSE_REPO_ROOT=$MNS_REPO" "PULSE_MAIN_REF=main" \
+    "BOARD_MD=$BOARD_MNS_BAD" "CONTROL_MD=$CONTROL_OK" "PULSE_PROGRESS_MD=$PROGRESS_FRESH" \
+    "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=false" "PULSE_GH_STREAK_CMD=false" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$MNS_REPO")" \
+    "PULSE_SWARM_START=2026-09-26T23:00Z" "PULSE_NOW=2026-09-27T02:00:00Z"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -q "^UNKNOWN metrics:.*merged_not_released_stale" \
+    && printf '%s\n' "$OUT" | grep -qF "Merged rows already released (D37/E-90): UNKNOWN (release tag, " \
+    && ! printf '%s\n' "$OUT" | grep -qF "Merged rows already released (D37/E-90): none" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: MERGED_NOT_RELEASED_STALE"; then
+    ok "an ID that breaks the git --grep pattern reports UNKNOWN, never a false 'none'"
+else
+    bad "T44 MERGED_NOT_RELEASED_STALE-git-failure case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
 echo ""
 echo "=== bash 3.2 syntax + full-suite check (via /bin/sh, real bash 3.2.57 on macOS) ==="
 if command -v /bin/sh >/dev/null 2>&1 && /bin/sh -c 'case "$BASH_VERSION" in 3.2*) exit 0;; *) exit 1;; esac' 2>/dev/null; then

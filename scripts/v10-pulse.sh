@@ -453,7 +453,7 @@ VIOLATION_PRIORITY = [
     "AGENT_OVER_BUDGET", "STALE_PROGRESS", "UNEVIDENCED_CLAIM", "RELEASED_AHEAD_OF_NPM",
     "ORPHAN_TEST", "ORPHAN_WORKTREE", "STRAY_CONTAINER", "STRAY_WORKTREE",
     "WORKTREE_COUNT", "IDLE_BUILDERS", "UNDERSTAFFED", "LOW_READY", "NO_RECENT_RELEASE",
-    "LOW_RELEASE_VOLUME", "CONTROL_OVERSIZE",
+    "LOW_RELEASE_VOLUME", "MERGED_NOT_RELEASED_STALE", "CONTROL_OVERSIZE",
 ]
 
 violations = []          # list of (code, text)
@@ -1573,6 +1573,121 @@ else:
             "commit and the release tag while main CI is green (D37 threshold %d)"
             % (_rc_count, release_cadence["tag"], _rc_age, _RELEASE_CADENCE_THRESHOLD_MIN),
         )
+
+
+# --- 4e. MERGED_NOT_RELEASED_STALE: a `merged` row already shipped (E-90) --
+# A BOARD row stuck at `merged@` after its own merge commit already reached
+# the latest published tag over-reports the backlog (the D37 "found at
+# 16:20Z" incident this slice exists to stop recurring). This is narrower
+# than the informational note inside check_unreleased_merge_age above (which
+# only fires when NOTHING at all is unreleased since the tag): a single
+# stale row can hide among other commits that are genuinely still
+# unreleased, so each `merged` row's OWN merge commit is checked for
+# ancestry independently. scripts/board-mark-released.sh carries its own
+# copy of this same merge-commit lookup (no shared importable module between
+# these two standalone bash-wrapped python programs, matching how this file
+# already relates to every other scripts/*.sh here) so it can actually flip
+# the row; this check only ever reports, never writes BOARD.md.
+_MERGE_SHA_TOKEN_RE = re.compile(r"\b[0-9a-f]{7,40}\b")
+
+
+def find_merge_commit_for_id(row_id):
+    # -E + a trailing "not another digit" boundary: a plain substring grep
+    # for "slice-S-1" also matches "slice-S-10", "slice-S-11", ... (BOARD ID
+    # numbers are not fixed-width), which would silently resolve the WRONG
+    # slice's merge commit. Pinned to MAIN_REF, not the caller's own HEAD,
+    # for the same reason check_unreleased_merge_age's git describe is
+    # above. `-n 1`: the grep-filtered walk stops at the first (newest)
+    # match instead of scanning the rest of history uselessly. row_id comes
+    # straight off a BOARD.md cell with no ID_RE filter here (this check
+    # scans every row, not just the known ID shapes), so an odd ID can make
+    # `-E`'s pattern itself invalid -- git then exits non-zero and this
+    # raises rather than silently returning "no match" (see below: that
+    # distinction is the whole point of raising here instead of just
+    # returning None on any non-zero rc, which would let a git failure --
+    # timeout, malformed pattern, anything -- read as "nothing to flag").
+    rc, out, err = git(
+        ["log", MAIN_REF, "--merges", "-n", "1", "--format=%H", "-E", "--grep", "slice-%s([^0-9]|$)" % row_id]
+    )
+    if rc != 0:
+        raise RuntimeError("git log --merges failed for row %r: rc=%s: %s" % (row_id, rc, err.strip()))
+    return out.strip() or None
+
+
+def find_cited_merge_sha(row_text):
+    for tok in _MERGE_SHA_TOKEN_RE.findall(row_text):
+        # A non-zero rc here just means "not a real commit" (an all-digit
+        # run ID is valid hex and legitimately fails to resolve) -- never
+        # the kind of git-itself-broke signal find_merge_commit_for_id
+        # raises on, so this keeps skipping rather than raising.
+        rc, out, _ = git(["rev-list", "--parents", "-n", "1", tok])
+        if rc != 0 or not out.strip():
+            continue
+        parts = out.strip().split()
+        if len(parts) >= 3:  # commit sha followed by >=2 parent shas
+            return parts[0]
+    return None
+
+
+def check_merged_not_released_stale():
+    if unreleased is None or _npm_tag_mismatch is not None:
+        return None
+    tag = unreleased["tag"]
+    try:
+        with open(BOARD_MD, "r", encoding="utf-8") as f:
+            board_text = f.read()
+    except OSError:
+        return None
+    stale = []
+    for line in board_text.splitlines():
+        s = line.strip()
+        if not s.startswith("|"):
+            continue
+        cells = [c.strip() for c in s.strip("|").split("|")]
+        if len(cells) < 2:
+            continue
+        row_id = cells[0]
+        status_token = None
+        for cell in cells[1:]:
+            m = STATUS_TOKEN_RE.match(cell)
+            if m:
+                status_token = m.group(1)
+                break
+        if status_token != "merged":
+            continue
+        merge_sha = find_merge_commit_for_id(row_id) or find_cited_merge_sha(line)
+        if merge_sha is None:
+            continue
+        # Only rc 0 (is an ancestor) or rc 1 (is not) are real answers;
+        # anything else (128: bad revision, a timeout under load, ...) is a
+        # git failure, not "not an ancestor", and must not be swallowed the
+        # same way -- same reasoning as find_merge_commit_for_id above.
+        rc, _, err = git(["merge-base", "--is-ancestor", merge_sha, tag])
+        if rc not in (0, 1):
+            raise RuntimeError("git merge-base --is-ancestor failed for %s (%s): rc=%s: %s"
+                                % (row_id, merge_sha, rc, err.strip()))
+        if rc == 0:
+            stale.append((row_id, merge_sha[:8]))
+    return {"tag": tag, "stale": stale}
+
+
+merged_stale = safe(check_merged_not_released_stale)
+if merged_stale is None:
+    mark_unknown("merged_not_released_stale")
+    emit(
+        "Merged rows already released (D37/E-90): UNKNOWN "
+        "(release tag, %s, or a git lookup could not be read)" % BOARD_MD
+    )
+elif not merged_stale["stale"]:
+    emit("Merged rows already released (D37/E-90): none")
+else:
+    _mns_names = ", ".join("%s (merge %s)" % (rid, sha) for rid, sha in merged_stale["stale"])
+    emit("Merged rows already released (D37/E-90): %s" % _mns_names)
+    add_violation(
+        "MERGED_NOT_RELEASED_STALE",
+        "%s marked 'merged' but its merge commit is already in %s (over-reports the backlog)"
+        % (_mns_names, merged_stale["tag"]),
+    )
 
 
 # --- 5. moat proven count vs last release ----------------------------------
@@ -2791,6 +2906,7 @@ _NEXT_ACTION_TEXT = {
     "LOW_READY": "the Product Owner should cut the named number of additional slices onto the ready queue",
     "NO_RECENT_RELEASE": "cut a release now, none has shipped in over 90 minutes",
     "LOW_RELEASE_VOLUME": "investigate why release throughput is below the 30/day target",
+    "MERGED_NOT_RELEASED_STALE": "run scripts/board-mark-released.sh <tag> to flip the named row(s), their merge commit already shipped",
     "CONTROL_OVERSIZE": "trim docs/v10/CONTROL.md back under its 40-line budget",
 }
 
