@@ -58,6 +58,30 @@ wiki/Home.md, wiki/_Sidebar.md, wiki/API-Reference.md
 README.md, docker-compose.yml            # Docker image tags (MAJOR/MINOR bumps)
 ```
 
+The CHANGELOG.md entry must be a full section, not a one-line placeholder
+(E-88): a summary line, one or more `### ` subsections (Added, Fixed, etc.)
+with a `- ` bullet for every user-visible change, and, if this version
+republishes a version that never reached npm, that version's own section
+carried forward too. `scripts/release-notes.sh <version>` extracts and
+validates this section the same way release.yml does; `.githooks/pre-push`
+runs it on any push whose remote ref is `refs/heads/main` and whose VERSION
+actually changes there, and release.yml refuses to publish the release if
+the section is missing, empty, or not fully written. release.yml runs this
+extraction BEFORE tagging (D36), so a notes failure never burns a version
+number.
+
+Carried-version auto-detect (E-88 B1, D36) only pulls forward a heading that
+is: strictly below VERSION, directly below VERSION's own heading with no
+gap (a contiguous run of lower versions), and confirmed NOT published on
+npm. release.yml passes that confirmation via `--npm-versions-file`, fed
+from one `npm view loki-mode versions --json` per release; with no such
+file (a registry blip, or a local run), nothing is auto-carried and
+`--include v1,v2,...` is required instead. This replaced a version that
+scanned the section's own prose for any `vX.Y.Z` mention, which could pull
+in a HIGHER, already-published version named only for context (the
+v9.22.13 bug: its body says "v9.24.0 is the next version on npm", and the
+old code appended v9.24.0's whole section).
+
 ### 2. Build Dashboard Frontend
 
 ```bash
