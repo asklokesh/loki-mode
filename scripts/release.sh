@@ -460,8 +460,18 @@ run_bump_only() {
     log_warn "Not bumped (intentionally, see script header): vscode-extension/package.json (deprecated)"
 
     if [ -d "$ROOT_DIR/loki-ts" ]; then
+        # E-102: fail fast on a missing node_modules instead of letting
+        # `bun run build` fail mid-bundle and delete tracked dist files.
+        if [ ! -d "$ROOT_DIR/loki-ts/node_modules" ]; then
+            log_error "loki-ts/node_modules missing -- run: cd loki-ts && bun install"
+            exit 1
+        fi
         log_step "Rebuilding loki-ts/dist..."
-        ( cd "$ROOT_DIR/loki-ts" && bun run build )
+        if ! ( cd "$ROOT_DIR/loki-ts" && bun run build ); then
+            log_error "loki-ts build failed -- restoring loki-ts/dist from HEAD"
+            git -C "$ROOT_DIR" checkout -- loki-ts/dist
+            exit 1
+        fi
         if [ -f "$dist_file" ] && grep -q "$new" "$dist_file"; then
             log_success "loki-ts/dist rebuilt with $new"
             release_restore_debugid_only_dist "$ROOT_DIR/loki-ts/dist"

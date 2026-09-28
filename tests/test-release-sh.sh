@@ -163,7 +163,8 @@ echo
 echo "T5-T11 -- RELEASE_ON_RED release gate + --bump-only (S-108)"
 echo "  founder rule: never bump a tree without a green Tests + Bun Parity"
 echo "  run at HEAD's exact SHA. Real gh is never called: a stub gh (and a"
-echo "  stub bun, so the loki-ts rebuild step needs no node_modules/network)"
+echo "  stub bun, plus a placeholder loki-ts/node_modules, so the rebuild"
+echo "  step needs no real install or network)"
 echo "  are put first on PATH for a throwaway git repo, never this repo."
 
 WORK2="$(mktemp -d "${TMPDIR:-/tmp}/test-release-sh-gate.XXXXXX")" || {
@@ -205,9 +206,11 @@ GHEOF
 chmod +x "$STUBBIN/gh"
 
 # Stub bun: only understands `bun run build`, invoked with cwd=loki-ts/. It
-# does not perform a real build (no network, no node_modules in the temp
-# repo) -- it models the one property run_bump_only actually checks: the
-# freshly-bumped VERSION ends up embedded in dist/loki.js.
+# does not perform a real build (no network calls) -- it models the one
+# property run_bump_only actually checks: the freshly-bumped VERSION ends
+# up embedded in dist/loki.js. run_bump_only now fails fast (E-102) unless
+# loki-ts/node_modules exists, so the fixture below creates a placeholder
+# directory for it even though this stub never reads it.
 cat > "$STUBBIN/bun" << 'BUNEOF'
 #!/usr/bin/env bash
 if [ "$1" = "run" ] && [ "$2" = "build" ]; then
@@ -224,7 +227,10 @@ chmod +x "$STUBBIN/bun"
 # real SHA, so "gh says green for STUB_SHA" and "HEAD is STUB_SHA" agree by
 # construction; the diffsha case deliberately breaks that agreement.
 REPO2="$WORK2/repo"
-mkdir -p "$REPO2/scripts" "$REPO2/loki-ts/dist"
+mkdir -p "$REPO2/scripts" "$REPO2/loki-ts/dist" "$REPO2/loki-ts/node_modules"
+# git tracks no empty dir; a placeholder file keeps node_modules present
+# across reset_repo2()'s `git checkout -- .` / `git clean -fd` below.
+: > "$REPO2/loki-ts/node_modules/.placeholder"
 cp "$REPO_ROOT/scripts/release.sh" "$REPO2/scripts/release.sh"
 for f in $FILES; do
     mkdir -p "$REPO2/$(dirname "$f")"
