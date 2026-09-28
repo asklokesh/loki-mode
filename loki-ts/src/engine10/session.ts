@@ -4,6 +4,7 @@ import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { recordSessionCost, resultCostPath } from "./cost.ts";
+import { partialUsagePath, recordPartialStreamCost } from "../runner/budget.ts";
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
 const KILL_GRACE_MS = 2000; // ENGINE.md section 10: SIGKILL 2s after SIGTERM
 const STDERR_TAIL_BYTES = 64 * 1024; // E-61: kept for stage.failed diagnostics, tail only
@@ -115,11 +116,15 @@ function killGroupWithGrace(pgid: number | undefined): void {
 /** Efficiency record plus cost event for one session; a run in another cwd (wall's temp dir) has its result-cost file copied into lokiRoot first, so seal can price it after that dir is gone. */
 function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: string, durationS: number): void {
   if (!cfg.lokiRoot) return;
-  const own = resultCostPath(join(opts.cwd ?? process.cwd(), ".loki"), opts.iterationId);
-  const dest = resultCostPath(cfg.lokiRoot, opts.iterationId);
+  const ownRoot = join(opts.cwd ?? process.cwd(), ".loki");
+  const own = resultCostPath(ownRoot, opts.iterationId), dest = resultCostPath(cfg.lokiRoot, opts.iterationId);
   if (own !== dest && existsSync(own)) { mkdirSync(dirname(dest), { recursive: true }); copyFileSync(own, dest); }
+  const ownPartial = partialUsagePath(ownRoot, opts.iterationId), destPartial = partialUsagePath(cfg.lokiRoot, opts.iterationId); // E-98e: killed session's partial-usage snapshot, same copy
+  if (ownPartial !== destPartial && existsSync(ownPartial)) { mkdirSync(dirname(destPartial), { recursive: true }); copyFileSync(ownPartial, destPartial); }
   const model = opts.model ?? cfg.model ?? resolveModel(cfg.provider); // opts.model (E-45/E-64 pin) wins, matching session.started's precedence
-  const c = recordSessionCost(cfg.lokiRoot, opts.iterationId, { status, durationMs: Math.round(durationS * 1000), model });
+  const info = { status, durationMs: Math.round(durationS * 1000), model };
+  // No `result` ever arrived: price streamed usage instead of leaving cost_usd null.
+  const c = status === "killed" && !existsSync(dest) ? recordPartialStreamCost(cfg.lokiRoot, opts.iterationId, info) : recordSessionCost(cfg.lokiRoot, opts.iterationId, info);
   cfg.emit?.("cost", opts.stage, {
     session_id: opts.iterationId, model, usd: c.usd, input_tokens: c.input_tokens, output_tokens: c.output_tokens,
     cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens, source: c.source || "not measured",

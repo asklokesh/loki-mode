@@ -1,28 +1,20 @@
 // loki-ts/src/engine10/cost.ts
 //
-// E-06: harvest result-cost side files into cost-event data. Reads
-// `<lokiRoot>/metrics/result-cost-<iter>.json`, the exact file writeResultCost
-// (src/runner/sdk_stream_parser.ts) writes: {total_cost_usd, input_tokens,
-// output_tokens, cache_read_tokens, cache_creation_tokens, model}.
-// writeResultCost skips the file when the provider reported no cost, so an
-// absent or unreadable file means UNKNOWN: usd is null, never 0. E-69: a file
-// present with a dollar figure but zero usage on every token field is also
-// UNKNOWN, never a real $0.00 (the EV-8 failure mode).
+// E-06: harvest result-cost side files (`<lokiRoot>/metrics/result-cost-<iter>.json`, the exact shape writeResultCost in
+// src/runner/sdk_stream_parser.ts writes: {total_cost_usd, input_tokens, output_tokens, cache_read_tokens,
+// cache_creation_tokens, model}) into cost-event data. Absent/unreadable/no-total_cost_usd, or a dollar figure with
+// all-zero usage (E-69, the EV-8 failure mode), all mean UNKNOWN: usd null, never 0.
 //
-// E-06b: also write `<lokiRoot>/metrics/efficiency/iteration-<N>.json`, the
-// shape ENGINE.md section 10 and autonomy/lib/cost-summary.py read (not ours
-// to change; the eval harness's only source for `fully_measured` / total
-// cost). Unlike the legacy bash writer (autonomy/run.sh), which always writes
-// cost_usd (defaulting to 0 when unknown -- the "unmeasured read as free"
-// bug section 10 exists to fix), this omits cost_usd when there is no dollar figure.
+// E-06b: also writes `<lokiRoot>/metrics/efficiency/iteration-<N>.json`, the shape ENGINE.md section 10 and
+// autonomy/lib/cost-summary.py read (not ours to change). Unlike the legacy bash writer (autonomy/run.sh), which
+// always writes cost_usd (defaulting to 0 when unknown), this omits cost_usd when there is no dollar figure.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export interface CostResult {
   usd: number | null;
-  // E-69: dollars actually reported by the measured sessions, even when usd above is null because
-  // some OTHER session in this same call wasn't priced. 0 when nothing was measured. Lets a caller
-  // render "partial: $X for N of M sessions" instead of collapsing straight to "not measured".
+  // E-69: dollars actually reported by the measured sessions even when usd above is null (some OTHER
+  // session in this call wasn't priced). Lets a caller render "partial: $X for N of M" instead of "not measured".
   partialUsd: number;
   measuredCount: number; // sessions with a provider-sourced dollar figure and real usage (see noUsage below)
   totalCount: number; // iterations.length, so a caller can report "N of M"
@@ -35,7 +27,7 @@ export interface CostResult {
   missing: string[]; // iterations with no dollar figure: no file, a file with no total_cost_usd, or all-zero usage (see noUsage below)
 }
 
-function num(v: unknown): number {
+export function num(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
@@ -62,10 +54,8 @@ export function sumResultCosts(lokiRoot: string, iterations: string[]): CostResu
       out.missing.push(iter); // no file at all: neither cost nor tokens are usable
       continue;
     }
-    // The file parsed, so its tokens are real even when total_cost_usd is
-    // absent (a codex/tokens-only session): capture them regardless of
-    // whether a dollar figure follows below. Dropping tokens here just
-    // because the session was unpriced was the E-06 bug this fixes.
+    // The file parsed, so its tokens are real even when total_cost_usd is absent (a codex/tokens-only
+    // session): capture them regardless of a dollar figure below (dropping them was the E-06 bug).
     const inTok = num(rec["input_tokens"]);
     const outTok = num(rec["output_tokens"]);
     const cacheR = num(rec["cache_read_tokens"]);
@@ -77,11 +67,8 @@ export function sumResultCosts(lokiRoot: string, iterations: string[]): CostResu
     if (typeof rec["model"] === "string" && rec["model"]) out.model = rec["model"];
     sources.push(path);
     const c = rec["total_cost_usd"];
-    // E-69 (EV-8 failure mode: "Cost: $0.00 (claude, 0 tokens)"): a result-cost file with a dollar
-    // figure but zero usage on every token field is a session that never really ran (e.g. errored
-    // before the provider billed anything, or a stale/garbage file). That is never a real $0.00,
-    // so it counts as unmeasured exactly like a missing file. A real free session (tokens > 0,
-    // total_cost_usd 0) still measures as $0.00.
+    // E-69 (EV-8 failure mode "Cost: $0.00 (claude, 0 tokens)"): a dollar figure with all-zero usage
+    // is a session that never really ran, so it's unmeasured like a missing file, never a real $0.00.
     const noUsage = inTok === 0 && outTok === 0 && cacheR === 0 && cacheC === 0;
     if (typeof c !== "number" || !Number.isFinite(c) || noUsage) {
       out.missing.push(iter); // dollars unknown for this session: the usd sum stays unknown too
@@ -130,11 +117,9 @@ export function nextEfficiencyIteration(lokiRoot: string): number {
   return max + 1;
 }
 
-/** Writes one efficiency record for a provider session and returns its N.
- *  cost_usd is omitted (never written as 0) when the session had no
- *  provider-reported dollars -- cost-summary.py then reads it as unmeasured,
- *  never as free. */
-export function writeEfficiencyRecord(lokiRoot: string, info: EfficiencySessionInfo, cost: CostResult): number {
+// Writes one efficiency record for a provider session and returns its N. cost_usd is omitted (never written as 0)
+// when the session had no provider-reported dollars -- cost-summary.py then reads it as unmeasured, never as free.
+export function writeEfficiencyRecord(lokiRoot: string, info: EfficiencySessionInfo, cost: CostResult, costSource = "provider"): number {
   const dir = efficiencyDir(lokiRoot);
   mkdirSync(dir, { recursive: true });
   const n = nextEfficiencyIteration(lokiRoot);
@@ -146,7 +131,7 @@ export function writeEfficiencyRecord(lokiRoot: string, info: EfficiencySessionI
   };
   if (cost.usd !== null) {
     rec.cost_usd = cost.usd;
-    rec.cost_source = "provider"; // EV-1 gate reads only provider-sourced dollars
+    rec.cost_source = costSource; // EV-1 gate reads only provider-sourced dollars ("partial-stream": E-98e, priced from streamed usage, never itself provider-reported)
   }
   rec.input_tokens = cost.input_tokens;
   rec.output_tokens = cost.output_tokens;
@@ -156,10 +141,8 @@ export function writeEfficiencyRecord(lokiRoot: string, info: EfficiencySessionI
   return n;
 }
 
-/** What a provider session calls once it ends: reads its own result-cost
- *  file and writes the derived efficiency record in the same step. Returns
- *  the CostResult so the caller can also emit the `cost` event (section 5)
- *  from the same numbers. */
+// What a provider session calls once it ends: reads its own result-cost file and writes the derived efficiency record
+// in the same step. Returns the CostResult so the caller can also emit the `cost` event (section 5) from the same numbers.
 export function recordSessionCost(lokiRoot: string, iterationId: string, info: EfficiencySessionInfo): CostResult {
   const cost = readResultCost(lokiRoot, iterationId);
   writeEfficiencyRecord(lokiRoot, info, cost);

@@ -4,7 +4,7 @@
 // shape writeResultCost (src/runner/sdk_stream_parser.ts) writes.
 // Unknown cost must be null, never 0.
 import { describe, expect, test } from "bun:test";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -14,6 +14,7 @@ import {
   sumResultCosts,
   writeEfficiencyRecord,
 } from "../../src/engine10/cost.ts";
+import { partialUsagePath, recordPartialStreamCost } from "../../src/runner/budget.ts";
 
 const FIX = join(import.meta.dir, "fixtures", "cost");
 const REPO_ROOT = join(import.meta.dir, "..", "..", "..");
@@ -192,6 +193,26 @@ describe("engine10 cost-summary.py integration (E-06b green criterion)", () => {
       expect(s.iterations_measured).toBe(1); // only the tokens-bearing session
       expect(s.fully_measured).toBe(false);
       expect(s.total_cost_usd).toBeNull();
+    } finally {
+      rmSync(checkout, { recursive: true, force: true });
+    }
+  });
+
+  // E-98e: an unrecognized model id must never silently price at pricingFor's
+  // sonnet fallback (budget.ts:170) -- the trap named in MEDIUM-ANALYSIS.md's
+  // resized card. Neither "opus"/"sonnet"/"haiku"/"fable" nor an exact
+  // data/model-pricing.json key appears in this id, so usd must stay null.
+  test("E-98e: an unrecognized model id in a partial-usage file prices as unmeasured, not a fallback", () => {
+    const checkout = tmpCheckout();
+    const lokiRoot = join(checkout, ".loki");
+    mkdirSync(join(lokiRoot, "metrics"), { recursive: true });
+    try {
+      writeFileSync(partialUsagePath(lokiRoot, "e10-r1-unknownmodel"), JSON.stringify({
+        input_tokens: 1_000_000, output_tokens: 1_000_000, cache_read_tokens: 0, cache_creation_tokens: 0, model: "future-model-9",
+      }));
+      const c = recordPartialStreamCost(lokiRoot, "e10-r1-unknownmodel", { status: "killed", durationMs: 90_000, model: "future-model-9" });
+      expect(c.usd).toBeNull();
+      expect(c.input_tokens).toBe(1_000_000); // tokens are still recorded even though price is unknown
     } finally {
       rmSync(checkout, { recursive: true, force: true });
     }
