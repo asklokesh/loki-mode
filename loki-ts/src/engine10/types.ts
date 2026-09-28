@@ -18,6 +18,8 @@ export const STAGE_BUDGETS: Readonly<Record<StageName, { targetS: number | null;
 };
 export const DEFAULT_CAP_S = 900;
 export const DEEP_CAP_S = 2700;
+export const BACKSTOP_GRACE_S = 30;
+export function backstopS(capS: number, graceS: number = BACKSTOP_GRACE_S): number { return capS - Math.min(graceS, capS / 30); } // supervisor.ts's backstop; machine.ts's soft cap stays under it
 export const DEEP_IMPLEMENT_LIMIT_S = 1800; // ENGINE.md section 4: 480s, 1800s with --deep
 export const MAX_FIX_ROUNDS = 2;
 export const EVENT_TYPES = [
