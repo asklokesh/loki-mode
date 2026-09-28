@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildWallBrief,
+  RealBaseTestRunner,
   runWall,
   wallStage,
   type BaseTestRunner,
@@ -341,6 +342,93 @@ describe("engine10 wall stage", () => {
     expect(result.data.files ?? []).toEqual([]);
     expect(baseRunner.calls).toHaveLength(0);
     expect(git("status", "--porcelain").trim()).toBe("");
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+});
+
+// D42 (3) / S41-16: RealBaseTestRunner must resolve the interpreter the way verify.ts does since
+// E-98a, and never read a launch failure as a failing test. Exercises the real subprocess path
+// (no fakes) so the classification is proven against an actual pytest, not a mocked exit code.
+describe("engine10 wall base run, D42 (3)", () => {
+  const PYTHON3 = Bun.which("python3");
+  if (!PYTHON3) throw new Error("python3 not found on PATH: required to exercise RealBaseTestRunner");
+
+  function repo(): string {
+    return mkdtempSync(join(tmpdir(), "loki-s41-16-"));
+  }
+
+  /** repoDir/.venv/bin/python execs the host's real python3, found via .venv (E-98a), never PATH. */
+  function venvShim(repoDir: string): void {
+    mkdirSync(join(repoDir, ".venv", "bin"), { recursive: true });
+    writeFileSync(join(repoDir, ".venv", "bin", "python"), `#!/bin/sh\nexec ${PYTHON3} "$@"\n`, { mode: 0o755 });
+  }
+
+  /** Overrides PATH to an empty dir for the duration of `fn`, so no `python`/`python3` resolves at all. */
+  function withNoInterpreterOnPath<T>(fn: () => T): T {
+    const emptyDir = mkdtempSync(join(tmpdir(), "loki-s41-16-empty-path-"));
+    const prevPath = process.env.PATH;
+    process.env.PATH = emptyDir;
+    try {
+      return fn();
+    } finally {
+      process.env.PATH = prevPath;
+      rmSync(emptyDir, { recursive: true, force: true });
+    }
+  }
+
+  test("(1) no `python` on PATH, a .venv shim, a genuinely failing test: red, and the seal proceeds", () => {
+    const repoDir = repo();
+    venvShim(repoDir);
+    writeFileSync(join(repoDir, "loki_wall_fail.py"), "def test_x():\n    assert False\n", "utf8");
+
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_fail.py" }]);
+
+    expect(result).toEqual({ pass: 0, fail: 1, not_run: 0 });
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  test("(2) no interpreter at all: not_run, and the seal is refused (never counted as red)", () => {
+    const repoDir = repo();
+    writeFileSync(join(repoDir, "loki_wall_fail.py"), "def test_x():\n    assert False\n", "utf8");
+
+    const result = withNoInterpreterOnPath(() =>
+      new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_fail.py" }]),
+    );
+
+    expect(result).toEqual({ pass: 0, fail: 0, not_run: 1 });
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  test("(3a) ImportError on a missing repo symbol: red", () => {
+    const repoDir = repo();
+    mkdirSync(join(repoDir, "mypkg"), { recursive: true });
+    writeFileSync(join(repoDir, "mypkg", "__init__.py"), "", "utf8");
+    writeFileSync(join(repoDir, "mypkg", "mymod.py"), "# the feature is not built yet\n", "utf8");
+    writeFileSync(join(repoDir, "loki_wall_import.py"), "from mypkg.mymod import missing_function\n\ndef test_x():\n    missing_function()\n", "utf8");
+
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_import.py" }]);
+
+    expect(result).toEqual({ pass: 0, fail: 1, not_run: 0 });
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  test("(3b) ImportError on a missing third-party package: not_run", () => {
+    const repoDir = repo();
+    writeFileSync(join(repoDir, "loki_wall_thirdparty.py"), "import loki_s41_16_never_installed_xyz\n\ndef test_x():\n    pass\n", "utf8");
+
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_thirdparty.py" }]);
+
+    expect(result).toEqual({ pass: 0, fail: 0, not_run: 1 });
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  test("(4) pytest exit 5, no tests collected: not_run", () => {
+    const repoDir = repo();
+    writeFileSync(join(repoDir, "loki_wall_empty.py"), "# no test_ functions in this file\nx = 1\n", "utf8");
+
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_empty.py" }]);
+
+    expect(result).toEqual({ pass: 0, fail: 0, not_run: 1 });
     rmSync(repoDir, { recursive: true, force: true });
   });
 });

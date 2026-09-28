@@ -2,7 +2,7 @@
 // (never sees the code), writes loki_wall_* tests, copied into the repo (never on abort/kill/timeout, E-54) and
 // sealed under <runDir>/wall/ (sha256 each); wall.sealed before Implement; clean base-tree pass short-circuits to
 // already_satisfied. E-64: skipped outright on the small-task lean path (plan.ts logs the same decision).
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
@@ -11,47 +11,60 @@ import { taskBlock } from "../types.ts";
 import type { ReadOnlyFile } from "./implement.ts";
 import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallModel } from "../sizing.ts";
 import { sha256 } from "./seal.ts";
+import { runnerCmd } from "./verify.ts";
 
 const WALL_PREFIX = "loki_wall_";
 
 export interface WallSealedFile { path: string; sha256: string; } // path: absolute, in the repo working tree
 
-/** Runs the sealed Wall tests on the base tree; local since types.ts has no shared "execute tests" contract yet. */
-export interface BaseTestRunner { run(repoDir: string, files: TestRef[]): { pass: number; fail: number }; }
+/** Runs the sealed Wall tests on the base tree; local since types.ts has no shared "execute tests" contract yet.
+ *  not_run (D42 (3)): no real result (missing tool/launch error/timeout/inconclusive pytest exit); counts
+ *  toward neither pass nor fail. Optional so existing fakes that predate D42 (3) still compile. */
+export interface BaseTestRunner { run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run?: number }; }
 
-// ponytail: per-file shell-out, one runner shape (ENGINE.md section 8); npm/go/cargo count as fail (never a false pass), add a real shape when Wall needs one.
-const RUNNER_CMD: Partial<Record<RunnerName, string>> = {
-  pytest: "python -m pytest -q <files>",
-  vitest: "npx vitest run <files>",
-  jest: "npx jest <files>",
-  bun: "bun test <files>",
-};
+const BASE_RUN_TIMEOUT_MS = 60_000; // same per-check budget as verify.ts's CHECK_TIMEOUT_MS
 
-/** Real base-tree runner: one shell command per runner, grouping files so a mixed repo runs each runner once. */
+/** D42 (3): a pytest collection error (exit 2) is red only when it names a symbol belonging to the repo under
+ *  test: ImportError "cannot import name" from a module that exists in repoDir, or a bare AttributeError/
+ *  NameError (only reachable once the repo module was imported). ModuleNotFoundError, or an ImportError naming
+ *  a module outside the repo, is a missing dependency, not proof the feature is unbuilt: not_run. */
+function pytestCollectionIsRed(output: string, repoDir: string): boolean {
+  if (/ModuleNotFoundError/.test(output)) return false;
+  const m = /ImportError: cannot import name .* from ['"]([\w.]+)['"]/.exec(output);
+  if (m) {
+    const rel = m[1]!.replace(/\./g, "/");
+    return existsSync(join(repoDir, `${rel}.py`)) || existsSync(join(repoDir, rel, "__init__.py"));
+  }
+  return /\b(AttributeError|NameError)\b/.test(output);
+}
+
+/** D42 (3) exit classification for one file. red only means the runner started and reported a real failure
+ *  (pytest exit 1, or a resolved exit 2; other runners: non-zero once the tool was found). Everything else,
+ *  missing tool, exit 126/127, a timeout (status null), pytest 3/4/5, is not_run. */
+function classify(runner: RunnerName, status: number | null, output: string, repoDir: string): "pass" | "fail" | "not_run" {
+  if (status === 0) return "pass";
+  if (status === null || status === 126 || status === 127) return "not_run";
+  if (runner !== "pytest") return "fail";
+  if (status === 1) return "fail";
+  if (status === 2) return pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run";
+  return "not_run"; // pytest 3 (internal error), 4 (usage error), 5 (no tests collected)
+}
+
+/** Real base-tree runner: one process per file, through verify's own interpreter resolution (E-98a: .venv,
+ *  venv, an in-repo VIRTUAL_ENV, then the fallback, then the last resort) so a missing `python` is never
+ *  misread as a failing test (D42 (3)). env is explicit, matching verify.ts's runOnce: spawnSync's own PATH
+ *  lookup can otherwise resolve a snapshot from process start, not the live env. */
 export class RealBaseTestRunner implements BaseTestRunner {
-  run(repoDir: string, files: TestRef[]): { pass: number; fail: number } {
-    const byRunner = new Map<RunnerName, string[]>();
+  run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run: number } {
+    let pass = 0, fail = 0, not_run = 0;
     for (const f of files) {
-      const list = byRunner.get(f.runner) ?? [];
-      list.push(f.path);
-      byRunner.set(f.runner, list);
+      const [cmd, args] = runnerCmd(f, repoDir);
+      const r = spawnSync(cmd, args, { cwd: repoDir, encoding: "utf8", timeout: BASE_RUN_TIMEOUT_MS, env: process.env });
+      const status = r.error ? null : r.status;
+      const result = classify(f.runner, status, `${r.stdout ?? ""}\n${r.stderr ?? ""}`, repoDir);
+      if (result === "pass") pass++; else if (result === "fail") fail++; else not_run++;
     }
-    let pass = 0, fail = 0;
-    for (const [runner, paths] of byRunner) {
-      const shape = RUNNER_CMD[runner];
-      if (!shape) {
-        fail += paths.length; // unsupported/coarse: never a false pass
-        continue;
-      }
-      const cmd = shape.replace("<files>", paths.map((p) => JSON.stringify(p)).join(" "));
-      try {
-        execFileSync("/bin/sh", ["-c", cmd], { cwd: repoDir, stdio: "pipe", env: process.env });
-        pass += paths.length;
-      } catch {
-        fail += paths.length;
-      }
-    }
-    return { pass, fail };
+    return { pass, fail, not_run };
   }
 }
 
@@ -168,11 +181,13 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   ctx.emit("wall.sealed", "wall", { files: sealedFiles });
 
   const baseRunner = opts.baseRunner ?? new RealBaseTestRunner();
-  const baseRun = wallTests.length > 0 ? baseRunner.run(ctx.repoDir, wallTests) : { pass: 0, fail: 0 };
+  const baseRun = wallTests.length > 0 ? baseRunner.run(ctx.repoDir, wallTests) : { pass: 0, fail: 0, not_run: 0 };
   // Gate on generated.length, not wallTests.length: an unselectable (guessRunner() null) file is sealed but never run, and must never be silently missing from the already_satisfied count.
   const unselectable = generated.length - wallTests.length;
+  // D42 (3): not_run refuses the seal too -- never short-circuit on a base run that never proved anything.
   const alreadySatisfied =
-    generated.length > 0 && unselectable === 0 && baseRun.fail === 0 && baseRun.pass === generated.length;
+    generated.length > 0 && unselectable === 0 && baseRun.fail === 0 && (baseRun.not_run ?? 0) === 0 &&
+    baseRun.pass === generated.length;
 
   return {
     status: "completed",
