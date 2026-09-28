@@ -2319,6 +2319,20 @@ else
     printf '%s\n' "$OUT"
 fi
 
+echo "T42d -- E-79-81-r2: IDLE_BUILDERS uses the same dependency-filtered ready set as LOW_READY, so it never names a dependency-blocked row as a dispatch target"
+# Reviewer's exact reproduction: M-01 merged, M-02 ready depends-on M-01
+# (deps met), M-03 ready depends-on M-02 (deps unmet). Before this fix,
+# IDLE_BUILDERS scanned raw board_rows and named M-03 too, contradicting
+# LOW_READY's own "blocked by dependency" line in the same run.
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_DEPS"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: IDLE_BUILDERS: only 0 active builder worktree(s) while 6 ready slice(s) exist on BOARD (S-01, S-02, S-03, S-04, S-05, M-02)" \
+    && ! printf '%s\n' "$OUT" | grep "^VIOLATION: IDLE_BUILDERS" | grep -qF "M-03"; then
+    ok "IDLE_BUILDERS names M-02 (deps met) but never M-03 (deps unmet, named by LOW_READY as blocked instead)"
+else
+    bad "T42d IDLE_BUILDERS dependency-filter case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
 echo "T43 -- E-80: PROGRESS.md age is never negative; a future entry heading reports FUTURE_TIMESTAMP"
 PROGRESS_FUTURE="$WORK/PROGRESS-future.md"
 printf '# Progress\n\n## 2026-09-27T03:30:00Z: future entry\n- clock skew or a mistyped heading\n' > "$PROGRESS_FUTURE"

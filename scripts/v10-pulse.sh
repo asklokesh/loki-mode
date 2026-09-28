@@ -1789,13 +1789,16 @@ else:
     # came back UNKNOWN, this violation simply does not fire (never a false
     # positive from a metric we could not measure).
     if board is not None:
-        ready_count = sum(1 for _rid, tok, _ts in board_rows if tok == "ready")
-        if worktrees["active"] < 6 and ready_count > 0:
-            ready_ids = [rid for rid, tok, _ts in board_rows if tok == "ready"]
+        # E-79-81-r2: reuse LOW_READY's dependency-filtered ready set
+        # (ready_deps_met) instead of a raw board_rows scan, so a
+        # dependency-blocked row (named by LOW_READY in the same run) is
+        # never also named here as a dispatch target.
+        idle_ready_count = len(ready_deps_met)
+        if worktrees["active"] < 6 and idle_ready_count > 0:
             add_violation(
                 "IDLE_BUILDERS",
                 "only %d active builder worktree(s) while %d ready slice(s) exist on BOARD (%s)"
-                % (worktrees["active"], ready_count, ", ".join(ready_ids)),
+                % (worktrees["active"], idle_ready_count, ", ".join(ready_deps_met)),
             )
 
 
