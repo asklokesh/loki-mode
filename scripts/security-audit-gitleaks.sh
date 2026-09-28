@@ -40,10 +40,27 @@ fi
 
 _tip="$(git rev-parse "$GITLEAKS_TIP")"
 
-# --- resolve the base of the pushed range ---------------------------------
-# github.event.before is 40 zeros on a new branch or a push with no common
-# history GitHub will disclose. Fall back to the most recent release tag
-# reachable from the tip's parent, then to origin/main~1.
+# --- resolve the TRUSTED base: the last released tag, NEVER event.before -
+# r2 (opus REJECT of the r1 shape): main is unprotected and this workflow
+# only runs on a VERSION push (a release). A push that does not touch
+# VERSION gets no audit at all, so github.event.before (or a PR's
+# base.sha) can name an UNAUDITED, attacker-controlled commit. r1 trusted
+# that commit's own tree directly: push A adds a zero-rule .gitleaks.toml
+# with no audit; push B (the VERSION bump, with a real secret) has
+# before = A, and reading A's own .gitleaks.toml scanned the range clean.
+# Reviewer's repro: tag v1.0.0; commit B1 = `title = "x"` .gitleaks.toml;
+# commit a leak; GITLEAKS_BEFORE=B1 printed "no leaks found", exit 0.
+#
+# The only commits this workflow has ever actually scanned are tagged
+# releases (vX.Y.Z, cut only after local-ci and this same audit pass) --
+# never a raw push. So the trusted base is ALWAYS the nearest release tag,
+# located by walking ancestry backward from an anchor. GITLEAKS_BEFORE's
+# OWN TREE IS NEVER READ: it is only a place to start that walk (needed so
+# a PR's base branch, not its unmerged head, is where the walk begins).
+# Neither A nor any other untagged commit matches `--match 'v[0-9]*'`, so
+# the walk always lands on the last real release no matter how many
+# unaudited interim pushes sit in between -- or how many hops back it
+# takes to find one, unlike a single `^` parent step.
 _is_zero_sha() {
   case "$1" in
     '' | 0000000000000000000000000000000000000000) return 0 ;;
@@ -51,14 +68,14 @@ _is_zero_sha() {
   esac
 }
 
-_base=""
+_describe_from="${_tip}^"
 if ! _is_zero_sha "$GITLEAKS_BEFORE" && git cat-file -e "${GITLEAKS_BEFORE}^{commit}" 2>/dev/null; then
-  _base="$GITLEAKS_BEFORE"
-else
-  _base="$(git describe --tags --abbrev=0 --match 'v[0-9]*' "${_tip}^" 2>/dev/null || true)"
-  if [ -z "$_base" ] || ! git cat-file -e "${_base}^{commit}" 2>/dev/null; then
-    _base="origin/main~1"
-  fi
+  _describe_from="$GITLEAKS_BEFORE"
+fi
+
+_base="$(git describe --tags --abbrev=0 --match 'v[0-9]*' "$_describe_from" 2>/dev/null || true)"
+if [ -z "$_base" ] || ! git cat-file -e "${_base}^{commit}" 2>/dev/null; then
+  _base="origin/main~1"
 fi
 if ! git cat-file -e "${_base}^{commit}" 2>/dev/null; then
   echo "FAIL: could not resolve a base commit for the pushed range -- refusing to scan with an unverified config" >&2
@@ -69,6 +86,12 @@ _base_sha="$(git rev-parse "${_base}^{commit}")"
 echo "gitleaks range: ${_base_sha} (base) .. ${_tip} (tip)"
 
 # --- (1) detect a .gitleaks.toml change over the whole range -------------
+# r2 requirement 2: main carries no .gitleaks.toml today, so with the base
+# now always resolved to a real release tag (above), this same byte-level
+# diff already IS "refuse any tip .gitleaks.toml unless byte-identical to
+# the file at the last release tag" -- today that file does not exist at
+# the base, so ANY .gitleaks.toml on the tip differs and is refused.
+#
 # A NET two-endpoint diff (base tree vs tip tree), not a per-commit walk. A
 # per-commit `diff-tree -m` walk over a MERGE commit compares the merge
 # result against EACH parent separately, so it flags .gitleaks.toml as

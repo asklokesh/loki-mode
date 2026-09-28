@@ -60,6 +60,10 @@ _new_repo() {
   printf 'readme\n' > "$repo/README.md"
   git -C "$repo" add .gitleaksignore README.md
   git -C "$repo" commit -qm "baseline" --no-gpg-sign --no-verify
+  # r2: the trusted base is now always the nearest release TAG, never a raw
+  # commit -- every scratch repo needs at least one so `git describe` has
+  # something to find (production main always has release tags too).
+  git -C "$repo" tag v1.0.0
 }
 
 # Built by concatenation so this file's own committed bytes never carry a
@@ -187,6 +191,10 @@ printf '[extend]\nuseDefault = true\n' > "$REPO_D/.gitleaks.toml"
 git -C "$REPO_D" add .gitleaks.toml
 git -C "$REPO_D" commit -qm "add real gitleaks config" --no-gpg-sign --no-verify
 BASE_D="$(git -C "$REPO_D" rev-parse HEAD)"
+# This IS the release the merge should be measured against, not the older
+# v1.0.0 baseline tag _new_repo already placed -- tag it v1.1.0 so
+# `--abbrev=0` (nearest tag) finds this one.
+git -C "$REPO_D" tag v1.1.0
 git -C "$REPO_D" checkout -q feature
 printf 'a harmless feature\n' > "$REPO_D/feature.txt"
 git -C "$REPO_D" add feature.txt
@@ -215,6 +223,41 @@ if [ -f "$REPORT_D" ]; then
     || bad "the merge range's report has $_n_d findings (expected 0)"
 else
   bad "no report was written for the merge range"
+fi
+
+# --- Scenario E: the r2 opus-reject repro (two-push bypass) ---------------
+# Main is unprotected and this workflow only runs on a VERSION push. Push A
+# (no VERSION change) adds a zero-rule .gitleaks.toml and gets no audit at
+# all. Push B (the VERSION bump, with a real secret) has before = A's own
+# sha. r1 trusted A's tree directly via GITLEAKS_BEFORE and scanned itself
+# clean -- reviewer's exact repro: tag v1.0.0, commit B1 = `title = "x"`
+# .gitleaks.toml (unaudited, untagged), commit a leak, GITLEAKS_BEFORE=B1.
+# This must now be REFUSED: GITLEAKS_BEFORE is only a search anchor, never
+# a trusted tree, so the walk lands on v1.0.0 (no .gitleaks.toml there).
+REPO_E="$TMP_ROOT/repo-r2-repro"
+_new_repo "$REPO_E"
+printf 'title = "x"\n' > "$REPO_E/.gitleaks.toml"
+git -C "$REPO_E" add .gitleaks.toml
+git -C "$REPO_E" commit -qm "push A: add zero-rule config, no VERSION change, no audit" --no-gpg-sign --no-verify
+B1_E="$(git -C "$REPO_E" rev-parse HEAD)"
+printf '%s\n' "const key = \"${_akia_prefix}${_akia_rest}\";" > "$REPO_E/secret.js"
+git -C "$REPO_E" add secret.js
+git -C "$REPO_E" commit -qm "push B: VERSION bump plus a real secret" --no-gpg-sign --no-verify
+TIP_E="$(git -C "$REPO_E" rev-parse HEAD)"
+
+REPORT_E="$TMP_ROOT/report-e.json"
+_out_e="$(cd "$REPO_E" && GITLEAKS_BIN="$GITLEAKS_BIN" GITLEAKS_BEFORE="$B1_E" \
+  GITLEAKS_TIP="$TIP_E" GITLEAKS_REPORT="$REPORT_E" "$SCRIPT" 2>&1)"
+_rc_e=$?
+if [ "$_rc_e" -ne 0 ]; then
+  ok "r2 repro: refused even though GITLEAKS_BEFORE names the attacker's own unaudited weakened-config commit"
+else
+  bad "r2 repro: GITLEAKS_BEFORE=<unaudited commit> was trusted directly -- the two-push bypass is NOT closed"
+fi
+if printf '%s' "$_out_e" | grep -q 'founder review'; then
+  ok "r2 repro: the refusal still names the founder-review path"
+else
+  bad "r2 repro: no founder-review message on refusal"
 fi
 
 echo

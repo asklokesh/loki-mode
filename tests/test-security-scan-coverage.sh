@@ -372,6 +372,12 @@ else
 fi
 
 # Override only a disposable copy when mutation-verifying the baseline shape.
+# 53 50 36 17 0: commit 6358e0a6 allowlisted 3 more commit-qualified
+# historical fingerprints (bbe83c7ad70132cfd77635eb019fd68db244ff13:
+# tests/test-eval-archive.sh, rules generic-api-key:35, aws-access-token:75,
+# aws-access-token:88 -- synthetic E-101 fixtures) without updating this
+# expectation, so it was red on main (14 -> 17 historical, 50 -> 53 total)
+# from that commit onward; not related to E-114.
 _ignore="${LOKI_GITLEAKS_IGNORE:-$REPO_ROOT/.gitleaksignore}"
 _ignore_shape="$(python3 - "$_ignore" <<'PY'
 import re, sys
@@ -385,10 +391,10 @@ print(len(entries), len(set(entries)),
       sum(not current.fullmatch(e) and not historical.fullmatch(e) for e in entries))
 PY
 )"
-if [ "$_ignore_shape" = "50 50 36 14 0" ]; then
-  ok "gitleaks baseline contains 36 current and 14 commit-qualified historical fingerprints"
+if [ "$_ignore_shape" = "53 53 36 17 0" ]; then
+  ok "gitleaks baseline contains 36 current and 17 commit-qualified historical fingerprints"
 else
-  bad "gitleaks baseline shape drifted ($_ignore_shape; expected 50 50 36 14 0)"
+  bad "gitleaks baseline shape drifted ($_ignore_shape; expected 53 53 36 17 0)"
 fi
 
 # Optional live mutation proof. Exact-SHA acceptance supplies the same pinned
