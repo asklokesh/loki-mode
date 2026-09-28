@@ -2,6 +2,7 @@
 // E-64: the small-task lean path (skip Plan+Wall) and the sonnet-then-escalate model cascade.
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { readRepoMapCache, repoCacheDir, repoKey } from "./cache.ts";
 import type { RepoMap } from "./repomap.ts";
 import type { TestMap, TestRef } from "./types.ts";
 
@@ -25,6 +26,12 @@ export function sizeTask(task: string, map: RepoMap | null, tests: TestMap | nul
 export function loadRepoMap(repomapRef: string | undefined): RepoMap | null {
   if (!repomapRef || !existsSync(repomapRef)) return null;
   try { return JSON.parse(readFileSync(repomapRef, "utf8")) as RepoMap; } catch { return null; }
+}
+
+/** E-64: <=maxLines paths from the tree-keyed cache, else intake's repomap_ref; Wall and implement share this. */
+export function repoMapText(repoDir: string, tree: string | undefined, repomapRef: string | undefined, maxLines = 200): string {
+  const cached = tree ? readRepoMapCache(repoCacheDir(repoKey(null, repoDir)), tree) : null;
+  return ((cached ?? loadRepoMap(repomapRef))?.files ?? []).slice(0, maxLines).join("\n");
 }
 
 /** E-64: a runner exists AND a named file has an impacted test; false (fail-safe: keep Wall) when nothing is nameable. */

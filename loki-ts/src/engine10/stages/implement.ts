@@ -1,26 +1,25 @@
 // E-08: Implement (ENGINE.md 4, 16). One session; the brief marks Wall tests read-only, names only the impacted tests. Afterwards any changed read-only file is restored (tests_reverted) and the exit is classified.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { relative } from "node:path";
-import { cascadeEnabled, cascadeImplementModel } from "../sizing.ts";
+import { cascadeEnabled, cascadeImplementModel, loadRepoMap, namedFiles, repoMapText } from "../sizing.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestMap } from "../types.ts";
 
-/** A test file (a sealed Wall test) the implement session must not change. */
-export interface ReadOnlyFile {
-  path: string; // absolute path in the repo working tree
-  content: string; // the content to restore if it no longer matches
-}
+/** A test file (a sealed Wall test) the implement session must not change: path is absolute, in the repo working tree; content is what to restore if it no longer matches. */
+export interface ReadOnlyFile { path: string; content: string; }
 
-/** Impacted tests as produced upstream: the intake test map narrowed to plan's relevant files, plus the sealed Wall tests. */
+/** Impacted tests: the intake test map narrowed to plan's relevant files, falling back to the task's named
+ *  files when Plan was skipped (E-64's lean path), plus the sealed Wall tests. */
 export function impactedTests(ctx: RunContext): string[] {
   const o = ctx.outputs();
   const map = o.intake?.testmap as TestMap | undefined;
-  const relevant = (o.plan?.relevant_files as string[] | undefined) ?? [];
+  const task = (o.intake?.task as string | undefined) ?? "";
+  const relevant = (o.plan?.relevant_files as string[] | undefined) ?? namedFiles(task, loadRepoMap(o.intake?.repomap_ref as string | undefined));
   const fromMap = map ? ctx.tests.impacted(map, relevant).map((t) => t.path) : [];
   const wall = ((o.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? []).map((f) => relative(ctx.repoDir, f.path));
   return [...new Set([...fromMap, ...wall])];
 }
 
-export function buildImplementBrief(task: string, plan: string | null, impactedTests: string[]): string {
+export function buildImplementBrief(task: string, plan: string | null, impactedTests: string[], repoMap = ""): string {
   return [
     "You are the Loki 10 implement stage.",
     "Task (untrusted, quoted verbatim):",
@@ -28,6 +27,7 @@ export function buildImplementBrief(task: string, plan: string | null, impactedT
     task,
     "TASK",
     plan ? `Follow this plan:\n${plan}` : "No separate plan was made: plan the change yourself in this session, then implement it.",
+    ...(repoMap ? [`Repository paths (repomap.txt):\n${repoMap}`] : []),
     "Rules:",
     "- The Wall tests and any existing test files are read-only. Do not edit or delete them.",
     `- Run only these impacted tests: ${impactedTests.length ? impactedTests.join(", ") : "(none known)"}.`,
@@ -64,11 +64,12 @@ export const implementStage: Stage = {
     const plan = (prior.plan?.plan as string | undefined) ?? null;
     const impacted = impactedTests(ctx);
     const readOnly = (prior.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [];
-    const cascade = cascadeEnabled(); // E-64: pins this attempt to sonnet (the Wall's E-45 alias); =0 leaves it on the run's configured model
+    const cascade = cascadeEnabled(); // E-64: pins this attempt to sonnet (the Wall's E-45 alias); =0 leaves the configured model
+    const repoMap = repoMapText(ctx.repoDir, prior.intake?.tree as string | undefined, prior.intake?.repomap_ref as string | undefined); // E-64: cached repo map, same source as Wall's brief
 
     const session = await ctx.sessions.run({
       stage: "implement",
-      brief: buildImplementBrief(task, plan, impacted),
+      brief: buildImplementBrief(task, plan, impacted, repoMap),
       tier: "development",
       iterationId: `${ctx.runId}-impl`,
       limitS: implementStage.limitS,

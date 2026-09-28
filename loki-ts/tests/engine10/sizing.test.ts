@@ -134,9 +134,12 @@ describe("engine10 E-45 sizing", () => {
     expect(calls.find((c) => c.stage === "wall")!.tier).toBe("development");
   });
 
-  it("session.ts pins the tier model env for a session that sets model", async () => {
+  it("session.ts pins the tier model env for a session that sets model, even under a run-wide LOKI_MODEL_OVERRIDE", async () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-e45-s-"));
     dirs.push(dir);
+    // E-64: EV-8 sets LOKI_MODEL_OVERRIDE to the run's top model (e.g. claude-opus-5-5); the per-call pin
+    // (implement's cascade, Wall's E-45 pin) must still win, since claudeTierToModel() reads the tier var first.
+    process.env.LOKI_MODEL_OVERRIDE = "claude-opus-5-5";
     const r = createSessionRunner({ provider: "claude", childCommand: ["/bin/sh", ["-c", 'printf %s "$LOKI_CLAUDE_MODEL_DEVELOPMENT" > out.txt']] });
     await r.run({ stage: "wall", brief: "b", tier: "development", model: "claude-sonnet-x", iterationId: "i", limitS: 10, signal: new AbortController().signal, cwd: dir });
     expect(readFileSync(join(dir, "out.txt"), "utf8")).toBe("claude-sonnet-x");
@@ -173,5 +176,86 @@ describe("engine10 E-45 sizing", () => {
     await fixStage.run(fixCtx(calls, events), new AbortController().signal);
     expect(calls[0]!.model).toBeUndefined();
     expect(events.find((e) => e.type === "fix.round")!.data.escalated).toBeUndefined();
+  });
+
+  it("E-64: a lint-only failure never escalates (verify failed, but not a test)", async () => {
+    const calls: SessionRunOptions[] = [];
+    const events: { type: string; stage: string | null; data: Record<string, unknown> }[] = [];
+    const ctx = fixCtx(calls, events);
+    ctx.outputs = () => ({ intake: { task: "t" }, verify: { failures_grouped: [{ signature: "lint:tsc", count: 1, sample: "npx tsc --noEmit" }] } });
+    const result = await fixStage.run(ctx, new AbortController().signal);
+    expect(calls[0]!.model).toBeUndefined();
+    expect(events.find((e) => e.type === "fix.round")!.data.escalated).toBeUndefined();
+    expect(result.data.cascade).toBe(false);
+  });
+
+  it("E-64: no phantom escalation when the run has no top model configured (ctx.model already equals the pin)", async () => {
+    const calls: SessionRunOptions[] = [];
+    const events: { type: string; stage: string | null; data: Record<string, unknown> }[] = [];
+    const ctx = fixCtx(calls, events);
+    ctx.model = cascadeImplementModel(); // no LOKI_MODEL_OVERRIDE: the run's model IS the cascade pin already
+    const result = await fixStage.run(ctx, new AbortController().signal);
+    expect(calls[0]!.model).toBeUndefined();
+    expect(events.find((e) => e.type === "fix.round")!.data.escalated).toBeUndefined();
+    expect(result.data.cascade).toBe(false);
+  });
+
+  it("E-64: the machine escalates fix only after a fast-verify failure; a pass-first run never escalates", async () => {
+    let verifyCalls = 0;
+    const verify: Stage = {
+      name: "verify", targetS: 1, limitS: 5,
+      run: async () => {
+        verifyCalls++;
+        const failures_grouped = verifyCalls === 1 ? [{ signature: "bun:a.test.ts", count: 1, sample: "bun test a.test.ts" }] : [];
+        return { status: "completed", data: { failures_grouped } };
+      },
+    };
+    const dir = mkdtempSync(join(tmpdir(), "loki-e64-fix-"));
+    dirs.push(dir);
+    const repomapRef = join(dir, "repomap.json");
+    writeFileSync(repomapRef, JSON.stringify({ files: files(10), entries: [], truncated: false }));
+    const calls: SessionRunOptions[] = [];
+    const events: { type: string; stage: string | null; data: Record<string, unknown> }[] = [];
+    const intake: Stage = { name: "intake", targetS: 1, limitS: 5, run: async () => ({ status: "completed", data: { task: "fix mod1.ts", repomap_ref: repomapRef, testmap: TM } }) };
+    const stages: Partial<Record<StageName, Stage>> = { intake, plan: planStage, wall: wallStage, implement: implementStage, verify, fix: fixStage };
+    const ctx: RunContext = {
+      runId: "e10-e64-fix", repoDir: dir, runDir: dir, baseSha: "abc", branch: "loki/e10-e64-fix", provider: "claude", model: "claude-opus-5-5",
+      deep: false, capS: 900,
+      emit: (type, stage, data) => { events.push({ type, stage, data }); },
+      sessions: { run: async (o) => { calls.push(o); return { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0, killed: false }; } },
+      tests: { detect: async () => TM, impacted: impactedOne },
+      cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) },
+      clock: { now: () => Date.now() },
+      outputs: () => ({}),
+    };
+    await runMachine(ctx, { load: async (n) => stages[n] ?? null });
+    expect(calls.find((c) => c.stage === "implement")!.model).toBe(cascadeImplementModel());
+    expect(calls.find((c) => c.stage === "fix")!.model).toBe("claude-opus-5-5");
+    expect(events.find((e) => e.type === "fix.round")!.data).toMatchObject({ escalated: true, escalation_reason: "bun:a.test.ts", escalation_model: "claude-opus-5-5" });
+  });
+
+  it("E-64: a pass-first run has zero fix sessions and no escalation event", async () => {
+    const verify: Stage = { name: "verify", targetS: 1, limitS: 5, run: async () => ({ status: "completed", data: { failures_grouped: [] } }) };
+    const dir = mkdtempSync(join(tmpdir(), "loki-e64-nofix-"));
+    dirs.push(dir);
+    const repomapRef = join(dir, "repomap.json");
+    writeFileSync(repomapRef, JSON.stringify({ files: files(10), entries: [], truncated: false }));
+    const calls: SessionRunOptions[] = [];
+    const events: { type: string; stage: string | null; data: Record<string, unknown> }[] = [];
+    const intake: Stage = { name: "intake", targetS: 1, limitS: 5, run: async () => ({ status: "completed", data: { task: "fix mod1.ts", repomap_ref: repomapRef, testmap: TM } }) };
+    const stages: Partial<Record<StageName, Stage>> = { intake, plan: planStage, wall: wallStage, implement: implementStage, verify, fix: fixStage };
+    const ctx: RunContext = {
+      runId: "e10-e64-nofix", repoDir: dir, runDir: dir, baseSha: "abc", branch: "loki/e10-e64-nofix", provider: "claude", model: "claude-opus-5-5",
+      deep: false, capS: 900,
+      emit: (type, stage, data) => { events.push({ type, stage, data }); },
+      sessions: { run: async (o) => { calls.push(o); return { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0, killed: false }; } },
+      tests: { detect: async () => TM, impacted: impactedOne },
+      cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) },
+      clock: { now: () => Date.now() },
+      outputs: () => ({}),
+    };
+    await runMachine(ctx, { load: async (n) => stages[n] ?? null });
+    expect(calls.some((c) => c.stage === "fix")).toBe(false);
+    expect(events.some((e) => e.type === "fix.round")).toBe(false);
   });
 });

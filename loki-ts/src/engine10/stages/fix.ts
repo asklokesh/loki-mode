@@ -3,10 +3,15 @@
 // calling this stage again after each failure; MAX_FIX_ROUNDS caps rounds itself (a 3rd call is a no-op
 // stage.skipped, moving to Seal/PARTIAL). Depends on session.ts/verify.ts only through types.ts shapes.
 import { buildImplementBrief, impactedTests } from "./implement.ts";
-import { cascadeEnabled } from "../sizing.ts";
+import { cascadeEnabled, cascadeImplementModel, repoMapText } from "../sizing.ts";
 import { MAX_FIX_ROUNDS } from "../types.ts";
 import type { RunContext, Stage, StageResult } from "../types.ts";
 import type { FailureGroup } from "../failures.ts";
+
+/** A wall/impacted-test signature, never lint/select-tests (verify.ts's names): E-64 escalates only "on a test failure". */
+function isTestFailure(g: FailureGroup): boolean {
+  return !g.signature.startsWith("lint:") && g.signature !== "select-tests";
+}
 
 export function buildFixBrief(
   task: string,
@@ -14,8 +19,9 @@ export function buildFixBrief(
   impactedTests: string[],
   groups: FailureGroup[],
   diffStat: string | null,
+  repoMap = "",
 ): string {
-  const base = buildImplementBrief(task, plan, impactedTests);
+  const base = buildImplementBrief(task, plan, impactedTests, repoMap);
   const groupsText = groups.length
     ? groups.map((g, i) => `${i + 1}. (${g.count}x) ${g.signature}\n   sample: ${g.sample}`).join("\n")
     : "(no grouped failures were provided)";
@@ -45,14 +51,15 @@ export const fixStage: Stage = {
     const plan = (prior.plan?.plan as string | undefined) ?? null;
     const groups = (prior.verify?.failures_grouped as FailureGroup[] | undefined) ?? [];
     const diffStat = (prior.implement?.diff_stat as string | undefined) ?? null;
-    // E-64: a fix round only runs after a fast-verify failure (machine.ts's loop gates on it), so cascade
-    // escalates every round to ctx.model (the run's configured model, e.g. LOKI_MODEL_OVERRIDE=claude-opus-5-5).
-    const cascade = cascadeEnabled();
-    const reason = groups.map((g) => g.signature).join(", ") || "verify failed";
+    const repoMap = repoMapText(ctx.repoDir, prior.intake?.tree as string | undefined, prior.intake?.repomap_ref as string | undefined);
+    // E-64: escalate only on a genuine test failure, and only when the run has a configured top model to escalate to (never a phantom "sonnet escalates to sonnet").
+    const testFailures = groups.filter(isTestFailure);
+    const cascade = cascadeEnabled() && testFailures.length > 0 && ctx.model !== cascadeImplementModel();
+    const reason = testFailures.map((g) => g.signature).join(", ");
 
     const session = await ctx.sessions.run({
       stage: "fix",
-      brief: buildFixBrief(task, plan, impactedTests(ctx), groups, diffStat),
+      brief: buildFixBrief(task, plan, impactedTests(ctx), groups, diffStat, repoMap),
       tier: "development",
       iterationId: `${ctx.runId}-fix${round}`,
       limitS: fixStage.limitS,
