@@ -1,9 +1,8 @@
 // Loki 10 event log (docs/v10/ENGINE.md "Event log"): append-only JSONL at <repo>/.loki/runs/<run-id>/events.jsonl, written only by the supervisor.
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
-import type { EventEnvelope, EventType, StageName, Verdict } from "./types.ts";
+import type { EventEnvelope, EventType, Obj, StageName, Verdict } from "./types.ts";
 
-type Obj = Record<string, unknown>;
 const isObj = (x: unknown): x is Obj => typeof x === "object" && x !== null && !Array.isArray(x);
 const ISO_TS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const KEYS = ["v", "seq", "ts", "run", "type", "stage", "data"] as const;

@@ -5,12 +5,12 @@
 // resumed for later stages.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import type { RunContext, Stage, StageResult } from "../types.ts";
 import { buildRepoMap } from "../repomap.ts";
 import { githubRepoFromUrl, readOriginUrl } from "../supervisor.ts";
 import { buildAlreadyDoneCommentArgv, checkAlreadyDone, renderAlreadyDoneComment } from "../already_done.ts";
+import { sha256 } from "./seal.ts";
 export interface IntakeOptions {
   taskText?: string;
   issueJsonPath?: string;
@@ -22,9 +22,6 @@ interface IssueFields {
 /** owner/repo#number, when the issue JSON carries both (GitHub); null for anything else, never guessed. */
 function issueRefOf(raw: { repo?: unknown; number?: unknown }): string | null {
   return typeof raw.repo === "string" && raw.repo && typeof raw.number === "number" ? `${raw.repo}#${raw.number}` : null;
-}
-function sha256(s: string): string {
-  return createHash("sha256").update(s).digest("hex");
 }
 function git(repoDir: string, args: string[]): string {
   return execFileSync("git", args, { cwd: repoDir, encoding: "utf8", env: process.env }).trim();

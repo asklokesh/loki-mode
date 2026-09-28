@@ -13,15 +13,14 @@ import { findIsolatedPython3 } from "../../util/python.ts";
 import { run } from "../../util/shell.ts";
 import { isTestFile } from "../testmap.ts";
 import { STAGE_BUDGETS } from "../types.ts";
-import type { Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
+import type { Obj, Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
 
 /** Deferred to deep verify, so always NOT PROVEN at seal time. */
 export const DEEP_NOT_PROVEN = ["full suite", "app boot", "council", "security scan"] as const;
 export const SIGNING_UNAVAILABLE = "receipt signing unavailable (key configured but no token: cryptography missing or key invalid)";
 
-type Obj = Record<string, unknown>;
 const EXCLUDE_LOKI = ":(exclude).loki";
-const sha256 = (s: string | Buffer): string => createHash("sha256").update(s).digest("hex");
+export const sha256 = (s: string | Buffer): string => createHash("sha256").update(s).digest("hex");
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x !== "") : []);
 

@@ -6,8 +6,7 @@ import { isAbsolute, join } from "node:path";
 import { fold } from "./events.ts";
 import { REGISTRY } from "./registry.ts";
 import { backstopS, DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS, STAGE_BUDGETS } from "./types.ts";
-import type { EventEnvelope, RunContext, Stage, StageName, StageResult } from "./types.ts";
-type Obj = Record<string, unknown>;
+import type { EventEnvelope, Obj, RunContext, Stage, StageName, StageResult } from "./types.ts";
 /** Run order. An array is a parallel group. fix is driven by the verify loop, deep is detached (supervisor). */
 export const FLOW: readonly (StageName | readonly StageName[])[] = [
   "intake", ["plan", "wall"], "implement", "verify", "commit", "seal", "pr",

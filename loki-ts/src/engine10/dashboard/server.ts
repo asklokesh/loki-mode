@@ -1,9 +1,8 @@
 // loki-ts/src/engine10/dashboard/server.ts -- E-24 local dashboard over SSE (ENGINE.md section
 // 12). Binds 127.0.0.1 only, never opens a browser. Reuses events.ts fold()/tail(): runs are
 // folded read-only from .loki/runs/*/events.jsonl; the per-run stream is tail()'s replay-then-poll.
-import { existsSync, readdirSync } from "node:fs";
 import { fold, partialCost, readEvents, tail } from "../events.ts";
-import { eventsPath, runsDir } from "../status.ts";
+import { eventsPath, listRunIds } from "../status.ts";
 import type { EventEnvelope, Verdict } from "../types.ts";
 import { getVersion } from "../../version.ts";
 import { renderPage } from "./page.ts";
@@ -25,14 +24,6 @@ export interface RunSummary {
   measuredSessions: number;
   totalSessions: number;
   wallS: number | null;
-}
-export function listRunIds(repoDir: string): string[] {
-  const dir = runsDir(repoDir);
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir, { withFileTypes: true })
-    .filter((d) => d.isDirectory())
-    .map((d) => d.name)
-    .sort();
 }
 /** Folds one run's events into the summary the dashboard renders. A field the
  *  run has not reached yet is left null (section 12: never a fake 0). */

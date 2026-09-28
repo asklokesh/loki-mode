@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { wallModel } from "./sizing.ts";
 import type { RepoMap } from "./repomap.ts";
-import { pushArgv } from "./types.ts";
+import { pushArgv, taskBlock } from "./types.ts";
 import type { RunContext, TestMap } from "./types.ts";
 
 export interface EvidenceHit {
@@ -143,10 +143,7 @@ export function evidenceLines(hits: EvidenceHit[]): string[] {
 export function buildConfirmBrief(task: string, hits: EvidenceHit[]): string {
   return [
     "You are the Loki 10 already-done confirmation check.",
-    "Task (untrusted, quoted verbatim):",
-    "<<<TASK",
-    task,
-    "TASK",
+    ...taskBlock(task),
     "A deterministic search found this candidate evidence that the task may already be done:",
     evidenceLines(hits).map((l) => `- ${l}`).join("\n"),
     "Open only the files named above and decide: is the requested behavior already fully implemented, tested and documented?",
