@@ -15,9 +15,19 @@
 #
 # Install:  ./scripts/install-hooks.sh
 # Skip once: PRE_PUSH_SKIP=1 git push   (use sparingly; CI will catch you)
-#   PRE_PUSH_SKIP never skips the push-authority guard (S-152) below.
+#   PRE_PUSH_SKIP never skips the push-authority guard (S-152) or the
+#   release-notes gate (E-88) below -- both run before the PRE_PUSH_SKIP
+#   check, deliberately: PRE_PUSH_SKIP=1 is the routine way trains push
+#   (see docs/v10/DECISIONS.md), so a check placed after it would never
+#   fire on the pushes it exists to catch.
 
 set -euo pipefail
+
+# git pipes "<local ref> <local sha> <remote ref> <remote sha>" (one line per
+# pushed ref) on stdin, and stdin is a one-shot pipe -- captured once here so
+# both the push-authority guard below and the release-notes gate further down
+# can each read it via <<<"$_stdin_lines" without the second reader seeing EOF.
+_stdin_lines="$(cat)"
 
 # --- Push-authority guard (S-152) -- runs BEFORE PRE_PUSH_SKIP, never skippable -
 # Incident 2026-09-27 18:35Z: an agent inside a .claude/worktrees/* worktree
@@ -38,7 +48,59 @@ while read -r _lref _lsha _rref _rsha; do
         echo "[pre-push]   Only the Chief of Staff / Release Manager pushes main. PRE_PUSH_SKIP does not bypass this." >&2
         exit 1
     fi
-done
+done <<<"$_stdin_lines"
+
+# --- Release-notes gate (E-88) -- also runs BEFORE PRE_PUSH_SKIP, never skippable -
+# release.yml refuses to publish a release whose CHANGELOG.md section for
+# VERSION is missing, empty, or not fully written (scripts/release-notes.sh).
+# That check is at release time, after the bump already landed on main; this
+# catches it earlier, at the push that carries the VERSION bump, using the
+# same script against the CHANGELOG.md content of the commit being pushed
+# (not the working tree, which may differ). It sits before PRE_PUSH_SKIP
+# on purpose (see the header comment): release/train pushes routinely set
+# PRE_PUSH_SKIP=1 to skip the retired pytest run, and a gate placed after
+# that check would never fire on exactly the pushes it exists to catch.
+# `git -C "$_top"` makes every call here independent of the hook's actual
+# cwd, since REPO_ROOT/cd below have not run yet at this point.
+# Skipped for a branch delete or a push that does not touch VERSION, so it
+# stays fast on ordinary pushes.
+echo "[pre-push] release-notes gate (VERSION-bump pushes only)"
+_zero_sha="0000000000000000000000000000000000000000"
+_notes_failures=0
+while read -r _lref _lsha _rref _rsha; do
+    [[ "$_lsha" != "$_zero_sha" ]] || continue          # branch delete: nothing pushed
+    [[ "$_rref" == refs/heads/* ]] || continue           # branches only, not tags
+
+    _new_version=""
+    if git -C "$_top" cat-file -e "${_lsha}:VERSION" 2>/dev/null; then
+        _new_version="$(git -C "$_top" show "${_lsha}:VERSION" 2>/dev/null | tr -d '[:space:]')"
+    fi
+    [ -n "$_new_version" ] || continue
+
+    _old_version=""
+    if [[ "$_rsha" != "$_zero_sha" ]] && git -C "$_top" cat-file -e "${_rsha}:VERSION" 2>/dev/null; then
+        _old_version="$(git -C "$_top" show "${_rsha}:VERSION" 2>/dev/null | tr -d '[:space:]')"
+    fi
+    [ "$_new_version" != "$_old_version" ] || continue    # VERSION unchanged by this push
+
+    if ! git -C "$_top" cat-file -e "${_lsha}:CHANGELOG.md" 2>/dev/null; then
+        echo "[pre-push] REFUSED: VERSION is ${_new_version} at ${_lsha} (${_lref}) but that commit has no CHANGELOG.md" >&2
+        _notes_failures=$((_notes_failures + 1))
+        continue
+    fi
+    _cl_tmp="$(mktemp "${TMPDIR:-/tmp}/pre-push-changelog.XXXXXX")"
+    git -C "$_top" show "${_lsha}:CHANGELOG.md" > "$_cl_tmp" 2>/dev/null
+    _cl_err="$(bash "$_top/scripts/release-notes.sh" "$_new_version" --file "$_cl_tmp" 2>&1 >/dev/null)" || {
+        echo "[pre-push] REFUSED: CHANGELOG.md at ${_lsha} (${_lref}) has no fully-written release notes for v${_new_version}" >&2
+        echo "[pre-push]   $_cl_err" >&2
+        _notes_failures=$((_notes_failures + 1))
+    }
+    rm -f "$_cl_tmp"
+done <<<"$_stdin_lines"
+if [[ $_notes_failures -gt 0 ]]; then
+    echo "[pre-push] $_notes_failures release-notes check(s) failed -- aborting push. PRE_PUSH_SKIP does not bypass this." >&2
+    exit 1
+fi
 
 if [[ "${PRE_PUSH_SKIP:-0}" == "1" ]]; then
     echo "[pre-push] PRE_PUSH_SKIP=1 set, skipping"
