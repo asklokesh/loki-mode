@@ -51,9 +51,9 @@ import json, sys
 T = sys.argv[1]
 MODEL = "claude-sonnet-4-6"
 
-def row(task, arm, harness_sha, completed, t2pr, cost, cost_source="provider"):
+def row(task, arm, harness_sha, completed, t2pr, cost, cost_source="provider", model=MODEL):
     return {"run_id": "%s.%s.%s.fx" % (task, arm, harness_sha), "task": task, "arm": arm,
-            "status": "ok", "model": MODEL, "harness_sha": harness_sha,
+            "status": "ok", "model": model, "harness_sha": harness_sha,
             "started": "2026-09-27T23:00:00Z", "ended": "2026-09-27T23:00:30Z",
             "completed": completed, "time_to_pr_s": t2pr, "cost_usd": cost,
             "cost_source": cost_source, "pr_opened": True, "hidden_pass": completed, "capped": False}
@@ -101,6 +101,26 @@ with open(T + "/loki-sha-b.jsonl", "w") as f:
     f.write(json.dumps(row("qs-dashboard", "v10", "sha-b", True, 10, 0.1)) + "\n")
 
 open(T + "/empty.jsonl", "w").close()
+
+# ---- D41 headline pair: loki-sonnet vs raw-opus, matched by arm+model
+# (section 3), cost green only at loki <= 0.5x raw. A non-headline pair
+# (raw-opus vs loki-opus) keeps the plain <= rule at the same 0.6x ratio.
+headline_raw = [row("qs-dashboard", "raw-claude", "sha-headline", True, 100, 1.00, model="claude-opus-5-5")]
+with open(T + "/headline-raw.jsonl", "w") as f:
+    f.write("\n".join(json.dumps(r) for r in headline_raw) + "\n")
+with open(T + "/headline-loki-0.6x.jsonl", "w") as f:
+    f.write(json.dumps(row("qs-dashboard", "v10", "sha-headline", True, 100, 0.60,
+                            model="claude-sonnet-5")) + "\n")
+with open(T + "/headline-loki-0.5x.jsonl", "w") as f:
+    f.write(json.dumps(row("qs-dashboard", "v10", "sha-headline", True, 100, 0.50,
+                            model="claude-sonnet-5")) + "\n")
+
+with open(T + "/nonheadline-raw.jsonl", "w") as f:
+    f.write(json.dumps(row("qs-blog-platform", "raw-claude", "sha-nonheadline", True, 100, 1.00,
+                            model="claude-opus-5-5")) + "\n")
+with open(T + "/nonheadline-loki-0.6x.jsonl", "w") as f:
+    f.write(json.dumps(row("qs-blog-platform", "v10", "sha-nonheadline", True, 100, 0.60,
+                            model="claude-opus-5-5")) + "\n")
 PYEOF
 
 run() { "$SCRIPT" "$@" >"$T/out.log" 2>"$T/err.log"; }
@@ -164,6 +184,28 @@ rc=0; run raw="$T/raw.jsonl" loki="$T/loki.jsonl" --append "$T/METRICS.md" || rc
 real_metrics_after="$(sha "$REAL_METRICS" 2>/dev/null || echo none)"
 [ "$real_metrics_before" = "$real_metrics_after" ] && pass "real docs/v10/METRICS.md untouched" \
     || fail "real docs/v10/METRICS.md CHANGED during this test"
+
+# ---- 7: D41 headline pair (loki-sonnet vs raw-opus), 0.6x raw cost is red
+rc=0; run raw="$T/headline-raw.jsonl" loki="$T/headline-loki-0.6x.jsonl" || rc=$?
+[ "$rc" = 0 ] && pass "headline pair at 0.6x exits 0" || fail "headline pair at 0.6x rc=$rc: $(cat "$T/err.log")"
+grep -qE '^\| Cost per completed \(headline: <=0\.5x raw\) \| .* \| red \|$' "$T/out.log" \
+    && pass "headline pair: 0.6x raw cost is red" \
+    || fail "headline pair: 0.6x raw cost mark wrong: $(cat "$T/out.log")"
+
+# ---- 8: D41 headline pair, exactly 0.5x raw cost is green
+rc=0; run raw="$T/headline-raw.jsonl" loki="$T/headline-loki-0.5x.jsonl" || rc=$?
+[ "$rc" = 0 ] && pass "headline pair at 0.5x exits 0" || fail "headline pair at 0.5x rc=$rc: $(cat "$T/err.log")"
+grep -qE '^\| Cost per completed \(headline: <=0\.5x raw\) \| .* \| green \|$' "$T/out.log" \
+    && pass "headline pair: 0.5x raw cost is green" \
+    || fail "headline pair: 0.5x raw cost mark wrong: $(cat "$T/out.log")"
+
+# ---- 9: non-headline pair (raw-opus vs loki-opus) at 0.6x raw cost stays
+# green under the plain <= rule.
+rc=0; run raw="$T/nonheadline-raw.jsonl" loki="$T/nonheadline-loki-0.6x.jsonl" || rc=$?
+[ "$rc" = 0 ] && pass "non-headline pair at 0.6x exits 0" || fail "non-headline pair at 0.6x rc=$rc: $(cat "$T/err.log")"
+grep -qE '^\| Cost per completed \| .* \| green \|$' "$T/out.log" \
+    && pass "non-headline pair: 0.6x raw cost stays green" \
+    || fail "non-headline pair: 0.6x raw cost mark wrong: $(cat "$T/out.log")"
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
