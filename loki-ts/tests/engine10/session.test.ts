@@ -9,9 +9,9 @@
 // with the provider/model/emit bound on the factory instead.
 import { describe, expect, test } from "bun:test";
 import { dirname, join } from "node:path";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { createSessionRunner } from "../../src/engine10/session.ts";
+import { classifyExitCause, createSessionRunner, HEARTBEAT_MS_DEFAULT } from "../../src/engine10/session.ts";
 import type { SessionRunOptions } from "../../src/engine10/types.ts";
 
 async function waitForFile(path: string, timeoutMs = 5000): Promise<void> {
@@ -82,7 +82,62 @@ describe("engine10 session", () => {
     expect(started?.data["provider"]).toBe("claude");
     expect(heartbeats.length).toBeGreaterThan(0);
     expect(heartbeats[0]?.data["waiting_on"]).toBe("implement");
+    // E-68: every heartbeat carries elapsed seconds and the diff stat, not just a "waiting" ping.
+    expect(typeof heartbeats[0]?.data["elapsed_s"]).toBe("number");
+    expect(heartbeats[0]?.data["elapsed_s"] as number).toBeGreaterThanOrEqual(0);
+    expect(heartbeats[0]?.data["diff"]).toMatchObject({ files: expect.any(Number), insertions: expect.any(Number), deletions: expect.any(Number) });
     expect(ended?.data["exit"]).toBe("already_done");
+    // E-68: exit is classified alongside the coarse ImplementExit, never left un-named.
+    expect(ended?.data["cause"]).toBe("exit 0 (success)");
+  }, 10_000);
+
+  test("E-68: the heartbeat default is at most 30s, so a stuck provider call never goes silent longer", () => {
+    expect(HEARTBEAT_MS_DEFAULT).toBeLessThanOrEqual(30_000);
+  });
+
+  test("E-68: classifyExitCause names every outcome; the string 'cause not classified' is never producible", () => {
+    expect(classifyExitCause(0, false)).toBe("exit 0 (success)");
+    expect(classifyExitCause(1, false)).toBe("exit 1 (general error)");
+    expect(classifyExitCause(2, false)).toBe("exit 2 (misuse of shell command)");
+    expect(classifyExitCause(124, false)).toBe("exit 124 (timeout)");
+    expect(classifyExitCause(125, false)).toBe("exit 125 (timeout or container failure)");
+    expect(classifyExitCause(126, false)).toBe("exit 126 (command not executable)");
+    expect(classifyExitCause(127, false)).toBe("exit 127 (command not found)");
+    expect(classifyExitCause(130, false)).toBe("exit 130 (SIGINT)");
+    expect(classifyExitCause(137, false)).toBe("exit 137 (SIGKILL)");
+    expect(classifyExitCause(143, false)).toBe("exit 143 (SIGTERM)");
+    expect(classifyExitCause(null, true)).toBe("limit");
+    expect(classifyExitCause(null, false)).toBe("external kill");
+    // A code with no table entry still names the number: never a bare fallback string.
+    expect(classifyExitCause(255, false)).toBe("exit 255 (unrecognized code)");
+    expect(classifyExitCause(17, false)).toBe("exit 17 (unrecognized code)");
+    for (const [exit, killed] of [
+      [0, false], [1, false], [2, false], [124, false], [125, false], [126, false], [127, false],
+      [130, false], [137, false], [143, false], [255, false], [null, true], [null, false],
+    ] as const) {
+      expect(classifyExitCause(exit, killed)).not.toBe("cause not classified");
+    }
+  });
+
+  test("E-68: 'cause not classified' does not appear anywhere in the engine10 source", () => {
+    const root = join(import.meta.dir, "..", "..", "src", "engine10");
+    const files = (readdirSync(root, { recursive: true }) as string[]).filter((f) => f.endsWith(".ts"));
+    for (const f of files) {
+      expect(readFileSync(join(root, f), "utf8")).not.toContain("cause not classified");
+    }
+  });
+
+  test("E-68: session.ended classifies the cause when the session is killed at the limit", async () => {
+    const events: { type: string; data: Record<string, unknown> }[] = [];
+    const runner = createSessionRunner({
+      provider: "claude", childCommand: ["bash", [STUB]],
+      emit: (type, _s, data) => events.push({ type, data }),
+    });
+    process.env["SESSION_TEST_GRANDCHILD_PID_FILE"] = join(mkdtempSync(join(tmpdir(), "loki-e10-session-")), "gc.pid");
+    await runner.run(baseOpts({ limitS: 1 }));
+    const ended = events.find((e) => e.type === "session.ended");
+    expect(ended?.data["cause"]).toBe("limit");
+    delete process.env["SESSION_TEST_GRANDCHILD_PID_FILE"];
   }, 10_000);
 
   test("parses LOKI_ALREADY_DONE from stdout", async () => {
