@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.1.1 (2026-09-28)
+
+### Added
+- `loki modernize` groundwork, not yet wired to the CLI: Python import graph that lexes py2 source, including bare relative imports (M-03); py2/3 capture tracer with type-tagged values, where anything it cannot tag faithfully, including subclasses of supported types, is recorded as not proven and never compares equal (M-09).
+
 ## v10.1.0 (2026-09-28)
 
 Loki 10 engine improvements (still opt-in: `LOKI_ENGINE=v10`; the default engine is unchanged).
