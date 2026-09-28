@@ -247,10 +247,7 @@ fi
 # Loki 10 (Bun) modernize CLI, regardless of LOKI_ENGINE or the default
 # engine flip. Ahead of the v10 block below so tonight's legacy default never
 # blocks it; $1 is already "modernize" so "$@" reproduces it as the router's
-# own first argument without a shift. Note for whoever owns
-# tests/test-engine10-dispatch.sh's single-exec-line assertion: this adds a
-# second, separate exec of the Bun v10 router by design (M-07/M-08 share
-# bin/loki per MODERNIZE.md section 13); that assertion needs bumping to 2.
+# own first argument without a shift.
 if [ "${1:-}" = "modernize" ]; then
     command -v bun >/dev/null 2>&1 || { echo "Error: loki modernize needs bun." >&2; exit 1; }
     exec bun "$BUN_CLI" engine10 "$@"
