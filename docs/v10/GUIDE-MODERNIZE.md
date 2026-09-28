@@ -72,7 +72,7 @@ loki modernize ./legacy-service --to python3 --budget 50 --no-pr
 If it is interrupted, resume it with the modernization id it printed:
 
 ```
-loki modernize ./legacy-service --to python3 --resume mod-20260928-ab12cd
+loki modernize ./legacy-service --to python3 --resume mod-20260928T143022Z-ab12cd
 ```
 
 ## Limits

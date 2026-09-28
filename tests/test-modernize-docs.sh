@@ -109,6 +109,35 @@ else
 fi
 
 echo
+echo "T6 -- every mod-... id in the guide matches MID_RE (types.ts)"
+TYPES="$REPO_ROOT/loki-ts/src/engine10/modernize/types.ts"
+MID_RE_LINE="$(grep -o 'const MID_RE = /.*/;' "$TYPES")"
+if [ -n "$MID_RE_LINE" ]; then
+    ok "read MID_RE from types.ts"
+else
+    bad "could not find MID_RE in types.ts; test is inert"
+fi
+GUIDE_IDS="$(grep -oE 'mod-[A-Za-z0-9]+(T[A-Za-z0-9]*)?(-[0-9a-f]+)?' "$GUIDE" | sort -u)"
+if [ -n "$GUIDE_IDS" ]; then
+    while IFS= read -r mid; do
+        [ -z "$mid" ] && continue
+        if MID_RE_LINE="$MID_RE_LINE" CANDIDATE="$mid" python3 -c "
+import os, re, sys
+line = os.environ['MID_RE_LINE']
+src = line[len('const MID_RE = /'):-len('/;')]
+pat = re.compile(src)
+sys.exit(0 if pat.match(os.environ['CANDIDATE']) else 1)
+"; then
+            ok "guide id $mid matches MID_RE"
+        else
+            bad "guide id $mid does not match MID_RE ($MID_RE_LINE)"
+        fi
+    done <<< "$GUIDE_IDS"
+else
+    bad "no mod-... id found in the guide; test is inert"
+fi
+
+echo
 echo "  Passed: $PASS"
 echo "  Failed: $FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
