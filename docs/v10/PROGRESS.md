@@ -1,6 +1,6 @@
 # Progress
 
-## 2026-09-28T17:10Z: v10.2.2 cut; main red twice and fixed; D38; drift audit (turn 486)
+## 2026-09-28T17:10Z: v10.2.2 cut (npm gitHead 9a59750d); two red mains handled (E-92 at 4f7f1487, flake rerun 36453069628 success); D38; drift audit (turn 486)
 - Main red at df7dc134 to 793870f3 (Tests run 36451439320): the DEP-01 self-test reached the real gh floating-tag resolver and read bump unknown on the CI runner. P0 fix E-92 (81cdba4d, TL APPROVE; stripped-env self-test rc=0 vs rc=1 on the old code), merged 4f7f1487. Guard E-93 (stripped-env leg) building.
 - 8f2179cd then failed once on "App Runner Watchdog Health" (healthy fixture server never came up); `gh run rerun 36453069628 --failed` concluded success on the same SHA, so it was a flake, not a code change.
 - v10.2.2 cut from 8f2179cd (9a59750d): DEP-01 inventory and E-92, full D36 notes; release watcher armed. The 3 E23 approvals (M-10, M-12, E-79..E-81; full `cd loki-ts && bun test` 2277 pass 0 fail, dist 18 passed, pulse 117 passed) are merged locally (dc827b80) and ride the next train.
