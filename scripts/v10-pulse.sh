@@ -158,7 +158,9 @@
 #   PULSE_TRANSCRIPT_DIR overrides the directory of session transcript files
 #                       scanned for SESSION_STALLED (default:
 #                       ~/.claude/projects/<project-slug>, Claude Code's own
-#                       session JSONL directory; slug = the cwd's realpath
+#                       session JSONL directory; slug = the MAIN repo root's
+#                       realpath (via `git rev-parse --git-common-dir`, so a
+#                       subdirectory or a linked worktree resolves the same)
 #                       with every non-alphanumeric character replaced by
 #                       '-', the same rule autonomy/context-tracker.py's
 #                       derive_project_slug uses). The newest *.jsonl mtime
@@ -2879,11 +2881,27 @@ def loop_marker_epoch():
         return None
 
 
+def _main_repo_root():
+    # Claude Code keys its transcript directory off the MAIN checkout, not
+    # any subdirectory or linked worktree the shell happens to sit in.
+    # `git rev-parse --git-common-dir` always resolves into the main repo's
+    # .git, from a subdirectory or from a linked worktree alike; REPO_ROOT
+    # is the fallback only if git cannot answer at all.
+    rc, out, _ = git(["rev-parse", "--git-common-dir"])
+    common_dir = out.strip() if rc == 0 else ""
+    if not common_dir:
+        return REPO_ROOT
+    if not os.path.isabs(common_dir):
+        common_dir = os.path.join(REPO_ROOT, common_dir)
+    return os.path.dirname(os.path.realpath(common_dir))
+
+
 def _default_transcript_dir():
     # Same sanitization rule as autonomy/context-tracker.py's
-    # derive_project_slug: every non-alphanumeric character in the cwd's
-    # realpath becomes '-', prefixed with '-' for the leading slash.
-    slug = "-" + re.sub(r"[^a-zA-Z0-9]", "-", os.path.realpath(os.getcwd()).lstrip("/"))
+    # derive_project_slug: every non-alphanumeric character in the main
+    # repo root's realpath becomes '-', prefixed with '-' for the leading
+    # slash.
+    slug = "-" + re.sub(r"[^a-zA-Z0-9]", "-", _main_repo_root().lstrip("/"))
     return os.path.join(os.path.expanduser("~"), ".claude", "projects", slug)
 
 

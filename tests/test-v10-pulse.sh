@@ -181,6 +181,19 @@ run_pulse() {
     return $rc
 }
 
+# run_pulse_from DIR ENV_ARGS... -- same as run_pulse, but runs with the
+# shell's cwd set to DIR first (E-107: proves SESSION_STALLED's transcript
+# dir no longer depends on the invoking shell's cwd).
+run_pulse_from() {
+    local dir="$1"; shift
+    local out="$WORK/out.$$"
+    (cd "$dir" && env "$@" "$TEST_SHELL" "$PULSE_SH") > "$out" 2>"$WORK/err.$$"
+    local rc=$?
+    OUT="$(cat "$out")"
+    rm -f "$out" "$WORK/err.$$"
+    return $rc
+}
+
 # A non-streak fixture for the CI_CANCELLED_STREAK check's default in
 # COMMON_ARGS below: a clean, completed, non-cancelled run. Using "false"
 # here (like PULSE_GH_CMD's own placeholder) would make ci_cancelled_streak
@@ -2996,6 +3009,53 @@ else
     bad "T48g growth-projection case: rc=$rc output follows"
     printf '%s\n' "$OUT"
 fi
+echo "T49 -- E-107: SESSION_STALLED resolves the transcript dir from the MAIN repo root (git rev-parse --git-common-dir), never the shell's cwd"
+SLUG49=$(python3 -c "
+import os, re
+root = os.path.realpath('$FAKE_REPO')
+print('-' + re.sub(r'[^a-zA-Z0-9]', '-', root.lstrip('/')))
+")
+HOME49="$WORK/home49"
+TRANSCRIPT49="$HOME49/.claude/projects/$SLUG49"
+mkdir -p "$TRANSCRIPT49"
+LOOP_MARKER49="$WORK/loop-active49"
+: > "$LOOP_MARKER49"
+: > "$TRANSCRIPT49/session.jsonl"
+python3 -c "
+import os
+now = 1790474400  # COMMON_ARGS' PULSE_NOW (2026-09-27T02:00:00Z)
+os.utime('$LOOP_MARKER49', (now - 60, now - 60))         # fresh: 1 min old
+os.utime('$TRANSCRIPT49/session.jsonl', (now - 300, now - 300))  # 5 min old
+"
+SESSION_ARGS49=("${COMMON_ARGS[@]}" "HOME=$HOME49" "PULSE_LOOP_MARKER=$LOOP_MARKER49")
+
+if run_pulse "${SESSION_ARGS49[@]}"; then rc=0; else rc=$?; fi
+ROOT_LINE49="$(printf '%s\n' "$OUT" | grep '^Minutes since last assistant turn:' || true)"
+
+SUBDIR49="$FAKE_REPO/loki-ts"
+mkdir -p "$SUBDIR49"
+if run_pulse_from "$SUBDIR49" "${SESSION_ARGS49[@]}"; then rc=0; else rc=$?; fi
+SUBDIR_LINE49="$(printf '%s\n' "$OUT" | grep '^Minutes since last assistant turn:' || true)"
+
+if [ -n "$ROOT_LINE49" ] && [ "$ROOT_LINE49" = "$SUBDIR_LINE49" ] \
+    && printf '%s\n' "$ROOT_LINE49" | grep -qF "Minutes since last assistant turn: 5.0 "; then
+    ok "T49a: running from a subdirectory reports the same minutes-since-last-turn as the repo root ($ROOT_LINE49)"
+else
+    bad "T49a subdirectory-vs-root case: root=[$ROOT_LINE49] subdir=[$SUBDIR_LINE49]"
+fi
+
+echo "T49b -- E-107: from a linked worktree, SESSION_STALLED resolves to the main checkout's transcript dir"
+WT49="$WORK/repo-wt49"
+git -C "$FAKE_REPO" worktree add -q --detach "$WT49" >/dev/null
+if run_pulse "${SESSION_ARGS49[@]}" "PULSE_REPO_ROOT=$WT49"; then rc=0; else rc=$?; fi
+WT_LINE49="$(printf '%s\n' "$OUT" | grep '^Minutes since last assistant turn:' || true)"
+if [ -n "$WT_LINE49" ] && [ "$WT_LINE49" = "$ROOT_LINE49" ]; then
+    ok "T49b: run from a linked worktree resolves the same transcript dir as the main checkout ($WT_LINE49)"
+else
+    bad "T49b linked-worktree case: rc=$rc expected=[$ROOT_LINE49] actual=[$WT_LINE49] output follows"
+    printf '%s\n' "$OUT"
+fi
+git -C "$FAKE_REPO" worktree remove --force "$WT49" >/dev/null 2>&1 || true
 
 echo ""
 echo "=== bash 3.2 syntax + full-suite check (via /bin/sh, real bash 3.2.57 on macOS) ==="
