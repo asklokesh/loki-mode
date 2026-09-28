@@ -133,9 +133,13 @@ def iter_records(root: Path):
     ones) and its own timestamp. Skips unreadable files and unparseable
     lines rather than failing.
     """
+    # Dedup key -> (output_tokens, path, role, ts, model, usage). Kept OUTSIDE
+    # the per-file loop: a main transcript and its subagent files can share a
+    # message.id (or requestId), and a per-file dict would double-count that
+    # message once per file instead of once overall.
+    best = {}
     for path in iter_jsonl_files(root):
         role = classify_role(path)
-        best = {}  # dedup_key -> (output_tokens, ts, model, usage)
         try:
             fh = open(path, "r", encoding="utf-8", errors="replace")
         except OSError:
@@ -158,14 +162,14 @@ def iter_records(root: Path):
                 ts = parse_ts(rec.get("timestamp"))
                 if ts is None:
                     continue
-                dedup_key = msg.get("id") or rec.get("requestId") or ("__row__", line_no)
+                dedup_key = msg.get("id") or rec.get("requestId") or (str(path), "__row__", line_no)
                 model = msg.get("model") or "unknown"
                 out = output_tokens_of(usage)
                 prior = best.get(dedup_key)
                 if prior is None or out >= prior[0]:
-                    best[dedup_key] = (out, ts, model, usage)
-        for _out, ts, model, usage in best.values():
-            yield path, role, ts, model, usage
+                    best[dedup_key] = (out, path, role, ts, model, usage)
+    for _out, path, role, ts, model, usage in best.values():
+        yield path, role, ts, model, usage
 
 
 def output_tokens_of(usage):
@@ -277,6 +281,11 @@ def last_wednesday_reset(ref_utc: datetime) -> datetime:
     if candidate > ref_local:
         candidate -= timedelta(days=7)
     return candidate.astimezone(timezone.utc)
+
+
+def next_wednesday_reset(ref_utc: datetime) -> datetime:
+    """Next Wednesday 13:00 America/New_York strictly after ref_utc, as UTC."""
+    return last_wednesday_reset(ref_utc) + timedelta(days=7)
 
 
 def fit_tokens_per_percent(pairs):
@@ -400,26 +409,58 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
         str(path) for path, role, ts, _model, _usage in all_records
         if role in ACTIVE_ROLES and ts >= last_hour_start
     })
-    burn_per_engineer_out = (last_hour_out / active_engineers) if active_engineers else None
-    burn_per_engineer_opus = (last_hour_opus / active_engineers) if active_engineers else None
+    engineer_last_hour_out, engineer_last_hour_opus = sum_usage([
+        rec for rec in all_records if rec[1] in ACTIVE_ROLES and rec[2] >= last_hour_start
+    ])
+    burn_per_engineer_out = (engineer_last_hour_out / active_engineers) if active_engineers else None
+    burn_per_engineer_opus = (engineer_last_hour_opus / active_engineers) if active_engineers else None
+
+    # The Chief of Staff's own main-session burn is a fixed load on the plan
+    # limits, independent of how many engineers are dispatched: it happens
+    # regardless of n, so it is added once per projected hour rather than
+    # divided across (or multiplied by) the engineer count.
+    cos_last_hour_out, _cos_last_hour_opus = sum_usage([
+        rec for rec in all_records if rec[1] == "chief-of-staff" and rec[2] >= last_hour_start
+    ])
 
     live = read_live_rate_limits(now, live_log_path)
+    live_five_hour = live.get("five_hour") if live else None
+    live_seven_day = live.get("seven_day") if live else None
 
+    # rate here is already tokens-PER-PERCENT (calibrated as tokens/pct), so
+    # recovering a percent from a token count is a plain division -- no *100.
     def pct(tokens, rate):
-        return (tokens / rate) * 100.0 if rate else None
+        return (tokens / rate) if rate else None
 
-    window_source = "live" if live and live.get("five_hour") else ("estimate" if window_n else "uncalibrated")
-    weekly_source = "live" if live and live.get("seven_day") else ("estimate" if weekly_n else "uncalibrated")
+    window_source = "live" if live_five_hour else ("estimate" if window_n else "uncalibrated")
+    weekly_source = "live" if live_seven_day else ("estimate" if weekly_n else "uncalibrated")
+
+    # For "live", count window tokens from the actual plan window start
+    # (resets_at - 5h) instead of the rolling now-5h hour buckets: those
+    # rolling buckets can include tokens from BEFORE the real window opened,
+    # which inflates the tokens side of (tokens / live_pct) and so inflates
+    # the derived rate -- silently under-restricting the governor. Falls back
+    # to the rolling window when resets_at is missing.
+    live_window_start = window_start
+    if live_five_hour and isinstance(live_five_hour.get("resets_at"), (int, float)):
+        resets_at = datetime.fromtimestamp(live_five_hour["resets_at"], tz=timezone.utc)
+        live_window_start = resets_at - timedelta(hours=WINDOW_HOURS)
+    live_window_out, live_window_opus = sum_usage(
+        [rec for rec in all_records if live_window_start <= rec[2] <= now]
+    )
+
+    report_window_out = live_window_out if window_source == "live" else current_window_out
+    report_window_opus = live_window_opus if window_source == "live" else current_window_opus
 
     current_window_pct = None
     if window_source == "live":
-        current_window_pct = live["five_hour"].get("used_percentage")
+        current_window_pct = live_five_hour.get("used_percentage")
     elif window_source == "estimate":
         current_window_pct = pct(current_window_out, window_rate_out)
 
     current_weekly_pct = None
     if weekly_source == "live":
-        current_weekly_pct = live["seven_day"].get("used_percentage")
+        current_weekly_pct = live_seven_day.get("used_percentage")
     elif weekly_source == "estimate":
         current_weekly_pct = pct(weekly_out, weekly_rate_out)
 
@@ -430,22 +471,42 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
     # reading is 0% (no ratio available yet).
     def effective_rate(source, current_tokens, current_pct, calibrated_rate):
         if source == "live" and current_pct:
-            return current_tokens / current_pct * 100.0
+            return current_tokens / current_pct
         if source in ("live", "estimate"):
             return calibrated_rate
         return None
 
-    window_rate_eff = effective_rate(window_source, current_window_out, current_window_pct, window_rate_out)
+    window_rate_eff = effective_rate(window_source, report_window_out, current_window_pct, window_rate_out)
     weekly_rate_eff = effective_rate(weekly_source, weekly_out, current_weekly_pct, weekly_rate_out)
 
+    hours_to_weekly_reset = max((next_wednesday_reset(now) - now).total_seconds() / 3600.0, 0.0)
+
+    # Fail-safe: a window or weekly usage already at/over its ceiling means
+    # zero headroom for new engineers, full stop -- independent of whether a
+    # burn rate or rate-eff is even available to run the projection loop
+    # below (e.g. no active engineers yet this hour).
     max_engineers_next_hour = None
-    if window_rate_eff and weekly_rate_eff and burn_per_engineer_out:
+    over_window = current_window_pct is not None and current_window_pct >= WINDOW_PCT_CEILING
+    over_weekly = current_weekly_pct is not None and current_weekly_pct >= WEEKLY_PCT_CEILING
+    if over_window or over_weekly:
+        max_engineers_next_hour = 0
+    elif window_rate_eff and weekly_rate_eff and burn_per_engineer_out:
         n = 0
         best = 0
         while n <= 500:
-            proj_next_hour = burn_per_engineer_out * n
-            proj_window_tokens = current_window_out - oldest_hour_out + proj_next_hour
-            proj_weekly_tokens = weekly_out + proj_next_hour
+            proj_next_hour = cos_last_hour_out + burn_per_engineer_out * n
+            if window_source == "live":
+                # The live window is fixed until its reset; nothing ages out
+                # of it mid-window, so next hour's burn simply adds on top.
+                proj_window_tokens = live_window_out + proj_next_hour
+            else:
+                # Rolling 5h estimate: the oldest hour bucket ages out as the
+                # next hour arrives.
+                proj_window_tokens = current_window_out - oldest_hour_out + proj_next_hour
+            # Gate against the projected usage AT the weekly reset, not just
+            # one hour out: sustaining this same burn rate until the reset
+            # must not cross the weekly ceiling either.
+            proj_weekly_tokens = weekly_out + proj_next_hour * hours_to_weekly_reset
             proj_window_pct = pct(proj_window_tokens, window_rate_eff)
             proj_weekly_pct = pct(proj_weekly_tokens, weekly_rate_eff)
             if proj_window_pct <= WINDOW_PCT_CEILING and proj_weekly_pct <= WEEKLY_PCT_CEILING:
@@ -481,9 +542,9 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
         },
         "window": {
             "source": window_source,
-            "start": window_start.isoformat(),
-            "current_tokens_output": current_window_out,
-            "current_tokens_opus_weighted": current_window_opus,
+            "start": (live_window_start if window_source == "live" else window_start).isoformat(),
+            "current_tokens_output": report_window_out,
+            "current_tokens_opus_weighted": report_window_opus,
             "current_pct": current_window_pct,
             "resets_at": live.get("five_hour", {}).get("resets_at") if live else None,
         },
@@ -499,7 +560,9 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
             "active_engineers_last_hour": active_engineers,
             "burn_per_engineer_output_last_hour": burn_per_engineer_out,
             "burn_per_engineer_opus_weighted_last_hour": burn_per_engineer_opus,
+            "chief_of_staff_burn_output_last_hour": cos_last_hour_out,
             "last_hour_output_tokens": last_hour_out,
+            "hours_to_weekly_reset": hours_to_weekly_reset,
             "max_engineers_next_hour": max_engineers_next_hour,
         },
         "limit_events": {

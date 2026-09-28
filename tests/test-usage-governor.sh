@@ -259,6 +259,136 @@ else
   bad "expected 1467 with requestId max-row dedup, got '$_out7b'"
 fi
 
+# ---------------------------------------------------------------------------
+# T8: fixture A (G-01 rework, D39) -- one reading (20% window / 10% weekly)
+# with 2000 window tokens split 1000 in the oldest hour bucket (chief-of-staff,
+# not last-hour, not an engineer) and 1000 in the last hour across 2 active
+# engineers at 500 each. pct() must not be 100x inflated (correct current
+# window pct is 20.0, not 2000.0), and max_engineers_next_hour must be
+# computed (the old suite never asserted it): headroom uses the calibrated
+# rate (2000/20=100 tokens/pct), the rolling-window projection drops the
+# oldest hour (1000 baseline, not 2000), giving (1000+500n)/100<=85 -> n=15.
+# ---------------------------------------------------------------------------
+echo "T8 -- fixture A: max_engineers_next_hour asserted (D39 G-01 rework)"
+ROOT8="$FIXTURE_ROOT/t8/projects"
+PROJ8="$ROOT8/-Users-test-proj"
+mkdir -p "$PROJ8/subagents"
+_row "$PROJ8/session-main.jsonl" "2026-12-02T12:30:00.000Z" "claude-sonnet-4-6" 1000 "msg_cos" ""
+_row "$PROJ8/subagents/agent1.jsonl" "2026-12-02T16:30:00.000Z" "claude-sonnet-4-6" 500 "msg_e1" ""
+_row "$PROJ8/subagents/agent2.jsonl" "2026-12-02T16:30:00.000Z" "claude-sonnet-4-6" 500 "msg_e2" ""
+READINGS8="$FIXTURE_ROOT/t8/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n2026-12-02T17:00:00Z\t20\t10\n' > "$READINGS8"
+
+OUT8="$(python3 "$TOOL" --root "$ROOT8" --readings "$READINGS8" --now "2026-12-02T17:00:00Z" --json)"
+_pct8="$(_q "$OUT8" "print(round(d['window']['current_pct'],1))")"
+if [ "$_pct8" = "20.0" ]; then
+  ok "fixture A current window pct is 20.0 (not 100x-inflated 2000.0)"
+else
+  bad "expected window current_pct=20.0, got '$_pct8'"
+fi
+_max8="$(_q "$OUT8" "print(d['governor']['max_engineers_next_hour'])")"
+if [ "$_max8" = "15" ]; then
+  ok "fixture A max_engineers_next_hour == 15"
+else
+  bad "expected max_engineers_next_hour=15, got '$_max8'"
+fi
+
+# ---------------------------------------------------------------------------
+# T9: fixture B -- same token fixture as A plus a second reading (5% window /
+# 3% weekly at now-4h, whose own 5h window only catches the oldest-bucket
+# 1000 tokens) so the least-squares fit differs from either single-reading
+# ratio: rate = (20*2000+5*1000)/(20^2+5^2) = 105.88, current pct = 2000/rate
+# = 18.89, and the window ceiling (85*rate=9000 tokens exactly) allows
+# (1000+500n)<=9000 -> n=16.
+# ---------------------------------------------------------------------------
+echo "T9 -- fixture B: two-reading fit, max_engineers_next_hour == 16"
+ROOT9="$FIXTURE_ROOT/t9/projects"
+PROJ9="$ROOT9/-Users-test-proj"
+mkdir -p "$PROJ9/subagents"
+_row "$PROJ9/session-main.jsonl" "2026-12-02T12:30:00.000Z" "claude-sonnet-4-6" 1000 "msg_cos" ""
+_row "$PROJ9/subagents/agent1.jsonl" "2026-12-02T16:30:00.000Z" "claude-sonnet-4-6" 500 "msg_e1" ""
+_row "$PROJ9/subagents/agent2.jsonl" "2026-12-02T16:30:00.000Z" "claude-sonnet-4-6" 500 "msg_e2" ""
+READINGS9="$FIXTURE_ROOT/t9/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n2026-12-02T17:00:00Z\t20\t10\n2026-12-02T13:00:00Z\t5\t3\n' > "$READINGS9"
+
+OUT9="$(python3 "$TOOL" --root "$ROOT9" --readings "$READINGS9" --now "2026-12-02T17:00:00Z" --json)"
+_pct9="$(_q "$OUT9" "print(round(d['window']['current_pct'],2))")"
+if [ "$_pct9" = "18.89" ]; then
+  ok "fixture B current window pct is 18.89 (two-reading least-squares fit)"
+else
+  bad "expected window current_pct=18.89, got '$_pct9'"
+fi
+_max9="$(_q "$OUT9" "print(d['governor']['max_engineers_next_hour'])")"
+if [ "$_max9" = "16" ]; then
+  ok "fixture B max_engineers_next_hour == 16"
+else
+  bad "expected max_engineers_next_hour=16, got '$_max9'"
+fi
+
+# ---------------------------------------------------------------------------
+# T10: window already at/over 85% (estimate source) must give max 0, even
+# with no active engineers/burn rate to feed the projection loop.
+# ---------------------------------------------------------------------------
+echo "T10 -- window over 85% (estimate) forces max_engineers_next_hour = 0"
+ROOT10="$FIXTURE_ROOT/t10/projects"
+PROJ10="$ROOT10/-Users-test-proj"
+mkdir -p "$PROJ10"
+_row "$PROJ10/session-main.jsonl" "2026-12-02T16:30:00.000Z" "claude-sonnet-4-6" 900 "msg_1" ""
+READINGS10="$FIXTURE_ROOT/t10/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n2026-12-02T17:00:00Z\t90\t5\n' > "$READINGS10"
+OUT10="$(python3 "$TOOL" --root "$ROOT10" --readings "$READINGS10" --now "2026-12-02T17:00:00Z" --json)"
+_max10="$(_q "$OUT10" "print(d['governor']['max_engineers_next_hour'])")"
+if [ "$_max10" = "0" ]; then
+  ok "window at 90%% (estimate) -> max_engineers_next_hour = 0"
+else
+  bad "expected max_engineers_next_hour=0, got '$_max10'"
+fi
+
+# ---------------------------------------------------------------------------
+# T11: live five_hour.used_percentage=90 must give max 0.
+# ---------------------------------------------------------------------------
+echo "T11 -- live window at 90%% forces max_engineers_next_hour = 0"
+ROOT11="$FIXTURE_ROOT/t11/projects"
+mkdir -p "$ROOT11/-Users-test-proj"
+READINGS11="$FIXTURE_ROOT/t11/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS11"
+LIVELOG11="$FIXTURE_ROOT/t11/statusline.jsonl"
+python3 - "$LIVELOG11" <<'PYEOF'
+import json, sys
+entry = {"ts": 1796230800, "rate_limits": {
+    "five_hour": {"used_percentage": 90, "resets_at": 1796250000},
+    "seven_day": {"used_percentage": 5, "resets_at": 1796800000},
+}}
+with open(sys.argv[1], "w") as fh:
+    fh.write(json.dumps(entry) + "\n")
+PYEOF
+OUT11="$(python3 "$TOOL" --root "$ROOT11" --readings "$READINGS11" --now "2026-12-02T17:00:00Z" --live-log "$LIVELOG11" --json)"
+_max11="$(_q "$OUT11" "print(d['governor']['max_engineers_next_hour'])")"
+if [ "$_max11" = "0" ]; then
+  ok "live five_hour used_percentage=90 -> max_engineers_next_hour = 0"
+else
+  bad "expected max_engineers_next_hour=0, got '$_max11'"
+fi
+
+# ---------------------------------------------------------------------------
+# T12: weekly at/over 90% (estimate) must give max 0 even though the window
+# itself is nowhere near its ceiling.
+# ---------------------------------------------------------------------------
+echo "T12 -- weekly at 92%% (estimate) forces max_engineers_next_hour = 0"
+ROOT12="$FIXTURE_ROOT/t12/projects"
+PROJ12="$ROOT12/-Users-test-proj"
+mkdir -p "$PROJ12"
+_row "$PROJ12/session-main.jsonl" "2026-12-02T16:30:00.000Z" "claude-sonnet-4-6" 100 "msg_1" ""
+READINGS12="$FIXTURE_ROOT/t12/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n2026-12-02T17:00:00Z\t5\t92\n' > "$READINGS12"
+OUT12="$(python3 "$TOOL" --root "$ROOT12" --readings "$READINGS12" --now "2026-12-02T17:00:00Z" --json)"
+_max12="$(_q "$OUT12" "print(d['governor']['max_engineers_next_hour'])")"
+if [ "$_max12" = "0" ]; then
+  ok "weekly at 92%% (estimate) -> max_engineers_next_hour = 0"
+else
+  bad "expected max_engineers_next_hour=0, got '$_max12'"
+fi
+
 echo ""
 echo "  Passed: $PASS   Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
