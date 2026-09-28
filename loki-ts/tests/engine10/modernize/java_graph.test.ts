@@ -12,6 +12,7 @@ const FILES = [
   "com/example/Main.java",
   "com/example/util/Helper.java",
   "com/example/util/Standalone.java",
+  "com/example/other/Formatter.java",
 ];
 
 const cleanupDirs: string[] = [];
@@ -44,13 +45,33 @@ describe("buildJavaGraph: fallback path (jdeps/javac absent)", () => {
     const result = buildJavaGraph(FIX, FILES, { path: emptyPathDir() });
     expect(result.method).toBe("import-scan");
     expect(result.fallbackReason).toMatch(/not found on PATH/);
-    expect(result.graph.nodes.length).toBe(3);
+    expect(result.graph.nodes.length).toBe(4);
   });
 
-  it("scans imports for the local Main -> Helper edge and drops the external java.util.List import", () => {
+  it("drops the external java.util.List import (no local file)", () => {
+    const result = buildJavaGraph(FIX, FILES, { path: emptyPathDir() });
+    const fromHelper = result.graph.edges.filter(([from]) => from === "com/example/util/Helper.java");
+    expect(fromHelper.length).toBe(0);
+  });
+
+  it("a wildcard import adds an edge to every file in that package", () => {
     const result = buildJavaGraph(FIX, FILES, { path: emptyPathDir() });
     expect(result.graph.edges).toContainEqual(["com/example/Main.java", "com/example/util/Helper.java"]);
-    expect(result.graph.edges.length).toBe(1); // only the local edge; java.util.List has no local file
+    expect(result.graph.edges).toContainEqual(["com/example/Main.java", "com/example/util/Standalone.java"]);
+  });
+
+  it("a static import resolves to its owning class, not the member itself", () => {
+    const result = buildJavaGraph(FIX, FILES, { path: emptyPathDir() });
+    expect(result.graph.edges).toContainEqual(["com/example/Main.java", "com/example/other/Formatter.java"]);
+    // Total: wildcard -> Helper, wildcard -> Standalone, static -> Formatter. The unresolved
+    // static import to com.example.missing.Ghost adds no edge (see next test).
+    expect(result.graph.edges.length).toBe(3);
+  });
+
+  it("an import that resolves to no local file is recorded as unresolved, not silently dropped", () => {
+    const result = buildJavaGraph(FIX, FILES, { path: emptyPathDir() });
+    expect(result.unresolvedImports.some((u) => u.includes("com.example.missing.Ghost"))).toBe(true);
+    expect(result.graph.edges.some(([, to]) => to.includes("Ghost"))).toBe(false);
   });
 
   it("a file with no local imports gets a node but no outgoing edge", () => {
@@ -62,7 +83,12 @@ describe("buildJavaGraph: fallback path (jdeps/javac absent)", () => {
 
   it("no .java files in the input yields an empty graph without touching PATH", () => {
     const result = buildJavaGraph(FIX, ["readme.md"], { path: emptyPathDir() });
-    expect(result).toEqual({ graph: { nodes: [], edges: [] }, method: "import-scan", fallbackReason: null });
+    expect(result).toEqual({
+      graph: { nodes: [], edges: [] },
+      method: "import-scan",
+      fallbackReason: null,
+      unresolvedImports: [],
+    });
   });
 });
 
@@ -78,6 +104,7 @@ describe("buildJavaGraph: jdeps path (fake javac/jdeps present)", () => {
     expect(result.fallbackReason).toBeNull();
     expect(result.graph.edges).toContainEqual(["com/example/Main.java", "com/example/util/Helper.java"]);
     expect(result.graph.edges.length).toBe(1); // edges to java.lang/java.io are external, dropped
-    expect(result.graph.nodes.length).toBe(3);
+    expect(result.graph.nodes.length).toBe(4);
+    expect(result.unresolvedImports).toEqual([]); // jdeps resolves fully itself; nothing to track
   });
 });
