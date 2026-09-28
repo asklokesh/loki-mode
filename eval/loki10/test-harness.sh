@@ -61,6 +61,11 @@
 #  16. (D30) validate accepts tier:medium, rejects an unknown tier value; a
 #      task with no tier field defaults to small; --all --tier medium selects
 #      only the medium task
+#  17. (D34) measure-size.py offline against the real tiered tasks -> rc=0;
+#      negative controls -> rc=1 each: a temp large fixture at 3 files / 149
+#      added lines (below both the 4-file and 150-line bars), a tiered task
+#      whose refdiff was removed (in a temp copy, real tasks untouched), and
+#      --online against an unreachable source
 #===============================================================================
 set -u
 
@@ -767,6 +772,80 @@ STUB_MODE=noop env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$T/tasks-tier-bad" bash 
 rc=$?
 [ "$rc" = 2 ] && pass "D30: --tier medium exits 2 on a task with an invalid tier value, not a silent drop" \
     || fail "D30: bad-tier rc=$rc"
+
+# ---- 17. (D34) measure-size.py: real-task offline pass + negative controls
+MS="$REPO_ROOT/eval/loki10/measure-size.py"
+
+python3 "$MS" >"$T/ms-real.out" 2>&1
+rc=$?
+[ "$rc" = 0 ] && pass "D34: measure-size.py offline passes on the real tiered tasks" \
+    || fail "D34: measure-size.py offline rc=$rc: $(cat "$T/ms-real.out")"
+grep -E -q "^pub-attrs-1313[[:space:]]+medium[[:space:]]+4[[:space:]]+74[[:space:]]+OK" "$T/ms-real.out" \
+    && pass "D34: pub-attrs-1313 reads 4 files, 74 lines, OK" \
+    || fail "D34: pub-attrs-1313 row missing/wrong: $(cat "$T/ms-real.out")"
+
+# fake_diff PATH N1 N2 [N3]: write a synthetic filtered diff with one block
+# per size, each block a single-file addition of that many '+' lines.
+fake_diff() {
+    local path="$1"; shift
+    python3 - "$path" "$@" <<'PY'
+import sys
+def block(idx, n):
+    p = "m%d.py" % idx
+    out = ["diff --git a/%s b/%s\n" % (p, p), "--- a/%s\n" % p, "+++ b/%s\n" % p,
+           "@@ -1,1 +1,%d @@\n" % (n + 1), " a\n"]
+    out += ["+x%d\n" % i for i in range(n)]
+    return "".join(out)
+out_path, sizes = sys.argv[1], [int(s) for s in sys.argv[2:]]
+with open(out_path, "w") as f:
+    for i, n in enumerate(sizes):
+        f.write(block(i, n))
+PY
+}
+
+# Negative control A: a large-tier fixture at 3 files / 149 added lines --
+# below both the >=4-file and >=150-line D34 bars, must MISS (rc=1).
+mkdir -p "$T/ms-large/tasks/fake-large" "$T/ms-large/refdiff"
+cat > "$T/ms-large/tasks/fake-large/task.json" <<'JSON'
+{"id": "fake-large", "tier": "large", "repo": {"source": "https://example.invalid/nope.git", "ref": "deadbeef"}}
+JSON
+fake_diff "$T/ms-large/refdiff/fake-large.diff" 50 50 49
+python3 "$MS" --tasks-dir "$T/ms-large/tasks" --refdiff-dir "$T/ms-large/refdiff" >"$T/ms-large.out" 2>&1
+rc=$?
+[ "$rc" = 1 ] && pass "D34: 3 files / 149 lines below the large bar -> rc=1" \
+    || fail "D34: large-fixture rc=$rc: $(cat "$T/ms-large.out")"
+
+# Negative control B: a tiered task with its refdiff removed, in a temp copy
+# (the real tasks/refdiff dirs are never touched).
+mkdir -p "$T/ms-norefdiff/tasks" "$T/ms-norefdiff/refdiff"
+cp -R "$REPO_ROOT/eval/loki10/tasks/pub-attrs-1313" "$T/ms-norefdiff/tasks/"
+python3 "$MS" --tasks-dir "$T/ms-norefdiff/tasks" --refdiff-dir "$T/ms-norefdiff/refdiff" >"$T/ms-norefdiff.out" 2>&1
+rc=$?
+[ "$rc" = 1 ] && grep -q "missing refdiff" "$T/ms-norefdiff.out" \
+    && pass "D34: tiered task with no refdiff -> rc=1" \
+    || fail "D34: no-refdiff rc=$rc: $(cat "$T/ms-norefdiff.out")"
+
+# Negative control C: --online against an unreachable source -> rc=1. A
+# nonexistent local path (never DNS) so this is hermetic and fast rather
+# than at the mercy of a resolver; measure-size.py's own GIT_TIMEOUT_S
+# bounds the git subprocess, so no bash-level timeout wrapper is needed
+# (and none is assumed installed). Two 1-line files so the task is
+# offline-OK on its own (files>=2); the only way this can miss is the
+# online fetch itself.
+mkdir -p "$T/ms-unreachable/tasks/fake-task" "$T/ms-unreachable/refdiff"
+cat > "$T/ms-unreachable/tasks/fake-task/task.json" <<JSON
+{"id": "fake-task", "tier": "medium", "repo": {"source": "$T/no-such-repo", "ref": "deadbeef"}}
+JSON
+cat > "$T/ms-unreachable/tasks/fake-task/NOTES.md" <<'NOTES'
+- merge_sha: cafef00d
+NOTES
+fake_diff "$T/ms-unreachable/refdiff/fake-task.diff" 1 1
+python3 "$MS" --online --tasks-dir "$T/ms-unreachable/tasks" --refdiff-dir "$T/ms-unreachable/refdiff" \
+    >"$T/ms-unreachable.out" 2>&1
+rc=$?
+[ "$rc" = 1 ] && grep -q "online fetch failed" "$T/ms-unreachable.out" \
+    && pass "D34: --online against an unreachable source -> rc=1" \
+    || fail "D34: unreachable-source rc=$rc: $(cat "$T/ms-unreachable.out")"
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
