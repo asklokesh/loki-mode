@@ -20,6 +20,11 @@
 #   check, deliberately: PRE_PUSH_SKIP=1 is the routine way trains push
 #   (see docs/v10/DECISIONS.md), so a check placed after it would never
 #   fire on the pushes it exists to catch.
+#   LOKI_ALLOW_UNSCANNED_PUSH=1: lets a push through when the pinned
+#   gitleaks binary is missing (E-110). Only covers the full-push scan
+#   below, never the eval-fixture scan, and never a real finding or a
+#   scanner error either way. Expected to be rare; prefer installing
+#   gitleaks (scripts/install-gitleaks.sh) over setting this.
 
 set -euo pipefail
 
@@ -298,6 +303,11 @@ _cleanup_eval_scan_root() {
 }
 trap '_cleanup_eval_scan_root' EXIT
 
+# Memoized bare --shared clone used by the full-push scan below (E-110): one
+# clone per hook run, reused across every pushed ref, cleaned up by the same
+# trap since it lives under $_eval_scan_root.
+_full_scan_clone=""
+
 _eval_ref_n=0
 while read -r _lref _lsha _rref _rsha; do
     [[ -n "${_lsha:-}" ]] || continue
@@ -568,6 +578,84 @@ while read -r _lref _lsha _rref _rsha; do
             failures=$((failures + 1))
         fi
     done
+
+    # --- Full-push secret scan (gitleaks git, E-110) ---------------------------
+    # The eval-fixture scan above (E-86/E-99) only ever covered
+    # eval/loki10/tasks and eval/loki10/refdiff, so it never saw the 3
+    # synthetic secret-shaped fixtures E-101 planted in
+    # tests/test-eval-archive.sh (commit bbe83c7a) -- CI's full-history
+    # `gitleaks git` gate caught them only after the push already landed,
+    # blocking the v10.4.0 release. This step runs the SAME mode CI uses,
+    # over every path this push touches (not just eval), scoped to just the
+    # pushed commits with --log-opts so it stays fast: measured on this repo,
+    # an unscoped `gitleaks git` over the full history (~3,700 commits, ~1GB)
+    # takes ~37s; scoped to a typical 5-commit range with --log-opts it takes
+    # ~230ms (~160x faster), and the throwaway bare clone below costs ~60ms.
+    # At this point $_commits is already known non-empty (checked above).
+    #
+    # Runs against a throwaway `--bare --shared` clone, not $REPO_ROOT
+    # directly: verified empirically that `gitleaks git <dir>` auto-loads a
+    # `.gitleaksignore` / `.gitleaks.toml` sitting in that directory's own
+    # working tree even when neither is passed explicitly -- which would let
+    # whatever branch happens to be checked out locally silently gate the
+    # scan instead of the PUSHED TIP's own files, the same class of bug E-99
+    # fixed for the eval scan above. A bare clone has no working tree, so
+    # only the tip's copies (fetched below with `git show`, same pattern as
+    # the eval scan) can apply. `--shared` hardlinks the object store rather
+    # than copying it, which is what keeps the clone itself cheap.
+    _full_log_opts="${_base}..${_lsha}"
+    [[ "$_base_is_empty_tree" == "1" ]] && _full_log_opts="$_lsha --not --remotes=${1:-origin}"
+
+    _resolve_gitleaks_bin
+    if [[ -z "$_gitleaks_bin" ]]; then
+        if [[ "${LOKI_ALLOW_UNSCANNED_PUSH:-0}" == "1" ]]; then
+            echo "[pre-push] WARNING: pinned gitleaks v${GITLEAKS_VERSION} not installed; LOKI_ALLOW_UNSCANNED_PUSH=1 set -- pushing $_lref WITHOUT the full-push secret scan." >&2
+            echo "[pre-push]   This never bypasses the eval-fixture scan above, which still fails closed." >&2
+        else
+            echo "[pre-push] FAIL: pinned gitleaks v${GITLEAKS_VERSION} is not installed -- cannot run the full-push secret scan for $_lref" >&2
+            echo "[pre-push]   install it: scripts/install-gitleaks.sh" >&2
+            echo "[pre-push]   or set LOKI_ALLOW_UNSCANNED_PUSH=1 to push anyway (rare; never bypasses the eval-fixture scan, which has no override)." >&2
+            failures=$((failures + 1))
+        fi
+    else
+        [[ -n "$_eval_scan_root" ]] || _eval_scan_root="$(mktemp -d "${TMPDIR:-/tmp}/loki-prepush-eval.XXXXXX")"
+        if [[ -z "$_full_scan_clone" ]]; then
+            _full_scan_clone="$_eval_scan_root/full-scan.git"
+            if ! git clone -q --bare --shared "$(git rev-parse --git-common-dir)" "$_full_scan_clone" 2>/dev/null; then
+                echo "[pre-push] FAIL: could not create the bare clone for the full-push secret scan" >&2
+                failures=$((failures + 1))
+                _full_scan_clone="__failed__"
+            fi
+        fi
+        if [[ "$_full_scan_clone" != "__failed__" ]]; then
+            _full_ignore_file="$_eval_scan_root/full-scan.gitleaksignore"
+            git show "$_lsha:.gitleaksignore" > "$_full_ignore_file" 2>/dev/null || : > "$_full_ignore_file"
+            _full_config_file="$_eval_scan_root/full-scan.gitleaks.toml"
+            _full_config_arg=()
+            if git show "$_lsha:.gitleaks.toml" > "$_full_config_file" 2>/dev/null; then
+                _full_config_arg=(--config "$_full_config_file")
+            fi
+
+            echo "[pre-push] gitleaks git --log-opts=\"$_full_log_opts\" ($_lref, every pushed path)"
+            if _full_out="$("$_gitleaks_bin" git "$_full_scan_clone" --log-opts="$_full_log_opts" \
+                    ${_full_config_arg[@]+"${_full_config_arg[@]}"} \
+                    --gitleaks-ignore-path "$_full_ignore_file" --redact --no-banner -v 2>&1)"; then
+                _full_gl_rc=0
+            else
+                _full_gl_rc=$?
+            fi
+            if [[ "$_full_gl_rc" == "1" ]]; then
+                printf '%s\n' "$_full_out" | grep -E '^(File|Line|RuleID|Fingerprint|Commit):' >&2 || true
+                echo "[pre-push] FAIL: gitleaks found a possible secret in the pushed commits (range $_full_log_opts, $_lref)" >&2
+                echo "[pre-push]   Verify the finding above. If it is a false positive, add its exact" >&2
+                echo "[pre-push]   Fingerprint (printed above) to .gitleaksignore with a one-line reason." >&2
+                failures=$((failures + 1))
+            elif [[ "$_full_gl_rc" != "0" ]]; then
+                echo "[pre-push] FAIL: gitleaks failed (exit $_full_gl_rc) scanning the pushed commits ($_lref)" >&2
+                failures=$((failures + 1))
+            fi
+        fi
+    fi
 done <<< "$_stdin_refs"
 
 # --- Red-main guard ----------------------------------------------------------

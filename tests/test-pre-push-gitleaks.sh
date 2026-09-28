@@ -362,32 +362,45 @@ else
     sk "same finding with its fingerprint in .gitleaksignore passes (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
-# --- case 3: a push touching no eval file skips without calling gitleaks -----
-# HOME points at the empty fake home (no pinned gitleaks) so this is
-# deterministic on every machine, including one with a real install: a hook
-# that refused whenever gitleaks was merely absent would still look like it
-# passed here if a real binary happened to be present locally.
+# --- case 3 (E-110 rework): a push touching no eval file skips the eval-only
+# `dir`-mode step, but IS covered by the broadened full-push `gitleaks git`
+# scan (E-110's whole point: the eval-only scan never saw the 3 planted
+# secrets in tests/test-eval-archive.sh, a non-eval path). HOME points at
+# the empty fake home (no pinned gitleaks) so this is deterministic on every
+# machine, including one with a real install: a hook that refused whenever
+# gitleaks was merely absent would still look like it passed here if a real
+# binary happened to be present locally. With no binary and no override, the
+# push is now refused (default fail-closed, matching the eval scan's own
+# missing-binary behavior); LOKI_ALLOW_UNSCANNED_PUSH=1 opts back in to the
+# pre-E-110 "let it through" behavior for this rare case.
 D="$SCRATCH/c3"; setup_clone "$D"
 echo "unrelated change" >> "$D/autonomy/run.sh"
 g "$D" add autonomy/run.sh >/dev/null 2>&1
 g "$D" commit -q -m "unrelated change" --no-verify >/dev/null 2>&1
-_t0=$(date +%s)
 rc="$(run_hook "$D" "HOME=$_fake_home")"
-_t1=$(date +%s)
-if [[ "$rc" != "RC=0" ]]; then
-    ko "push touching no eval file is allowed" "$rc; out: $(cat "$D/hook.out")"
+if [[ "$rc" == "RC=0" ]]; then
+    ko "push touching no eval file with no gitleaks binary is refused" "hook exited 0; out: $(cat "$D/hook.out")"
+elif grep -q "cannot run the full-push secret scan" "$D/hook.out" && grep -q "scripts/install-gitleaks.sh" "$D/hook.out"; then
+    ok "push touching no eval file with no gitleaks binary is refused"
 else
-    ok "push touching no eval file is allowed"
+    ko "push touching no eval file with no gitleaks binary is refused" "refused but wrong message: $(cat "$D/hook.out")"
 fi
 if grep -q "gitleaks dir" "$D/hook.out"; then
-    ko "push touching no eval file never invokes gitleaks" "hook.out: $(cat "$D/hook.out")"
+    ko "push touching no eval file never invokes the eval-only dir-mode step" "hook.out: $(cat "$D/hook.out")"
 else
-    ok "push touching no eval file never invokes gitleaks"
+    ok "push touching no eval file never invokes the eval-only dir-mode step"
+fi
+
+_t0=$(date +%s)
+rc="$(run_hook "$D" "HOME=$_fake_home" "LOKI_ALLOW_UNSCANNED_PUSH=1")"
+_t1=$(date +%s)
+if [[ "$rc" != "RC=0" ]]; then
+    ko "the same push passes with LOKI_ALLOW_UNSCANNED_PUSH=1" "$rc; out: $(cat "$D/hook.out")"
+else
+    ok "the same push passes with LOKI_ALLOW_UNSCANNED_PUSH=1"
 fi
 # `date +%s` has 1s resolution: `%N` is GNU-only and prints a literal "N" on
 # BSD/macOS date, so it is not a portable way to get sub-second timing here.
-# The whole hook (identity guard, two bash -n checks, this step) measures
-# ~100ms real time in manual testing; this asserts the coarse, portable bound.
 _elapsed=$((_t1 - _t0))
 if [[ $_elapsed -le 2 ]]; then
     ok "push touching no eval file completes fast (${_elapsed}s, 1s resolution)"
@@ -859,11 +872,16 @@ else
 fi
 
 # --- case 19: an added .gitleaksignore line prints a WARNING, not a refusal --
+# Not gated on $_have_real_gitleaks: this case is about the WARNING message,
+# not about a real finding. LOKI_ALLOW_UNSCANNED_PUSH=1 keeps it independent
+# of whether the pinned binary happens to be installed here (E-110's full-push
+# scan now runs on every push, including this eval-untouched one); on a
+# machine WITH the binary, the override is simply unused.
 D="$SCRATCH/c19"; BARE="$SCRATCH/c19.git"; setup_bare "$BARE"; setup_push_clone "$D" "$BARE"
 printf '%s\n' "some/fake/path.json:generic-api-key:1" >> "$D/.gitleaksignore"
 g "$D" add .gitleaksignore >/dev/null 2>&1
 g "$D" commit -q -m "add a gitleaksignore line" --no-verify >/dev/null 2>&1
-rc="$(real_push "$D")"
+rc="$(real_push "$D" "LOKI_ALLOW_UNSCANNED_PUSH=1")"
 if [[ "$rc" != "RC=0" ]]; then
     ko "an added .gitleaksignore line is a WARNING, not a refusal" "$rc; out: $(cat "$D/push.out")"
 else
@@ -942,7 +960,12 @@ elif grep -q "\.gitleaks\.toml changed" "$D/push.out" && grep -q "LOKI_ALLOW_GIT
 else
     ko "a .gitleaks.toml change in a push that never touches eval is refused too" "refused but wrong message: $(cat "$D/push.out")"
 fi
-rc="$(real_push "$D" "LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1")"
+# LOKI_ALLOW_UNSCANNED_PUSH=1 alongside the config override: this push never
+# touches eval, so once the config gate stops failing it, the ONLY other
+# thing that could still refuse it is E-110's full-push scan needing the
+# pinned binary -- unrelated to what this assertion is about. Unused when
+# the binary is present.
+rc="$(real_push "$D" "LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1" "LOKI_ALLOW_UNSCANNED_PUSH=1")"
 if [[ "$rc" == "RC=0" ]]; then
     ok "a .gitleaks.toml change in a push that never touches eval passes with the override"
 else
@@ -1226,6 +1249,56 @@ TOML
     fi
 else
     sk "GITLEAKS_CONFIG pointing at a permissive config is ignored (no pinned gitleaks v${GITLEAKS_VERSION})"
+fi
+
+# --- case 31 (E-110): a secret-shaped literal in a NON-eval path is refused --
+# The bug E-110 fixes: cases 1-30 above only ever prove the eval/loki10/tasks
+# and eval/loki10/refdiff dir-mode scan works. tests/test-eval-archive.sh
+# (commit bbe83c7a, E-101) planted 3 synthetic secrets in a path that scan
+# never covers, and they shipped clean locally, only to block the v10.4.0
+# release when CI's full-history scan caught them after the push landed.
+# This proves the NEW full-push `gitleaks git` step (added below the
+# eval-only loop) sees a secret-shaped literal anywhere in the push, not
+# just under eval/. Built from two adjacent string literals at runtime (same
+# trick as $_task_json_secret's $_fake_ref above), so THIS test file itself
+# never contains the contiguous AKIA-shaped run.
+_akia_secret="AKIA""ABCDEFGHIJKLMNOP"
+if [[ "$_have_real_gitleaks" == "1" ]]; then
+    D="$SCRATCH/c31"; BARE="$SCRATCH/c31.git"; setup_bare "$BARE"; setup_push_clone "$D" "$BARE"
+    mkdir -p "$D/tests"
+    printf '%s\n' "# fixture: $_akia_secret leaked" > "$D/tests/foo.sh"
+    g "$D" add tests/foo.sh >/dev/null 2>&1
+    g "$D" commit -q -m "add tests/foo.sh with a secret-shaped literal" --no-verify >/dev/null 2>&1
+    rc="$(real_push "$D")"
+    if [[ "$rc" == "RC=0" ]]; then
+        ko "a non-eval file (tests/foo.sh) with an AKIA-shaped literal is refused" "push succeeded; out: $(cat "$D/push.out")"
+    elif grep -q "aws-access-token" "$D/push.out" && grep -q "gitleaks found a possible secret in the pushed commits" "$D/push.out" \
+       && grep -q "tests/foo.sh" "$D/push.out"; then
+        ok "a non-eval file (tests/foo.sh) with an AKIA-shaped literal is refused"
+    else
+        ko "a non-eval file (tests/foo.sh) with an AKIA-shaped literal is refused" "refused but not on the finding: $(cat "$D/push.out")"
+    fi
+else
+    sk "a non-eval file (tests/foo.sh) with an AKIA-shaped literal is refused (no pinned gitleaks v${GITLEAKS_VERSION})"
+fi
+
+# --- case 32 (E-110): a clean, non-eval-touching push still passes -----------
+# Regression guard on case 31: the full-push scan must not refuse a push just
+# because it is not the eval scan's usual eval/loki10 shape.
+if [[ "$_have_real_gitleaks" == "1" ]]; then
+    D="$SCRATCH/c32"; BARE="$SCRATCH/c32.git"; setup_bare "$BARE"; setup_push_clone "$D" "$BARE"
+    mkdir -p "$D/tests"
+    echo "echo hello" > "$D/tests/foo.sh"
+    g "$D" add tests/foo.sh >/dev/null 2>&1
+    g "$D" commit -q -m "add a clean, non-eval tests/foo.sh" --no-verify >/dev/null 2>&1
+    rc="$(real_push "$D")"
+    if [[ "$rc" == "RC=0" ]]; then
+        ok "a clean, non-eval-touching push passes"
+    else
+        ko "a clean, non-eval-touching push passes" "$rc; out: $(cat "$D/push.out")"
+    fi
+else
+    sk "a clean, non-eval-touching push passes (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
 # --- timing report: no eval change / one eval file / 10-commit push ----------

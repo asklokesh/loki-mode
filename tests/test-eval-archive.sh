@@ -28,11 +28,19 @@ import json, sys
 sys.path.insert(0, sys.argv[1])
 import harness
 
+# Each planted secret is joined from parts at runtime so this file (and the
+# t1.py it writes) never contains a secret-shaped literal gitleaks can flag
+# (E-110: the 3 synthetic fixtures below were what tripped CI's full-history
+# gitleaks scan on commit bbe83c7a).
+_ghp = "ghp_" + "1234567890abcdefghij"
+_aws = "AWS_SECRET_ACCESS_KEY" + "=" + "shh"
+_ant = "sk-ant-" + "planted" + "TOKEN9999"
+
 planted = {
     "run_id": "task-a.v10.abc123", "task": "task-a", "arm": "v10",
     "harness_sha": "a" * 40, "status": "harness_error", "completed": False,
     "cost_usd": 0.12,
-    "error": "boom: token=ghp_1234567890abcdefghij key AWS_SECRET_ACCESS_KEY=shh sk-ant-plantedTOKEN9999",
+    "error": "boom: token=" + _ghp + " key " + _aws + " " + _ant,
     "logs": {"arm_stdout": "/some/worktree/eval/loki10/results/logs/x/arm_stdout.log",
              "arm_stderr": "/some/worktree/.../arm_stderr.log"},
 }
@@ -42,7 +50,7 @@ fails = []
 if "logs" in clean:
     fails.append("logs key survived")
 blob = json.dumps(clean)
-for secret in ("ghp_1234567890abcdefghij", "AWS_SECRET_ACCESS_KEY=shh", "sk-ant-plantedTOKEN9999"):
+for secret in (_ghp, _aws, _ant):
     if secret in blob:
         fails.append("planted secret survived: " + secret)
 for keep in ("task-a.v10.abc123", "task-a", "a" * 40, "harness_error"):
@@ -69,10 +77,13 @@ import json, sys
 sys.path.insert(0, sys.argv[1])
 import harness
 
+# Built from parts at runtime, same reason as t1.py's _ghp/_aws/_ant above.
+_akia = "AKIA" + "ABCDEFGHIJKLMNOP"
+
 rows = [
     {"run_id": "a1", "task": "a", "arm": "v10", "harness_sha": "b" * 40,
      "model": "claude-x", "status": "ok", "completed": True, "cost_usd": None,
-     "error": "AKIAABCDEFGHIJKLMNOP leaked", "logs": {"arm_stdout": "/x"}},
+     "error": _akia + " leaked", "logs": {"arm_stdout": "/x"}},
     {"run_id": "a2", "task": "a", "arm": "raw-claude", "harness_sha": "b" * 40,
      "model": "claude-x", "status": "ok", "completed": False, "cost_usd": None,
      "logs": {"arm_stdout": "/y"}},
@@ -85,7 +96,7 @@ with open(path, "w") as f:
 loaded = [json.loads(l) for l in open(path)]
 assert len(loaded) == 2, loaded
 assert all("logs" not in r for r in loaded)
-assert "AKIAABCDEFGHIJKLMNOP" not in open(path).read()
+assert _akia not in open(path).read()
 report = harness.summarize_rows(loaded)
 assert len(report) == 1, report
 assert report[0]["arms"]["v10"]["completed"] == 1, report
