@@ -24,9 +24,9 @@ describe("backstop clears the worker's own (real) soft cap (E-67 finding 1)", ()
     });
   }
 
-  // Finding 1 follow-up 2: below ~capS=21 the commit+seal tail (fixed cost, ~22s here) cannot fit
-  // inside the cap at all; softCapS falls back to the plain 14/15 point there instead of going
-  // negative. capS=5 is that disclosed residual, asserted separately below, not in this loop.
+  // Finding 1 follow-up 2: below ~capS=24.83 the commit+seal tail (fixed cost, 24s here) cannot fit
+  // inside the cap at all; softCapS clamps to 0 there instead of going negative. capS=5, 20, 24 are
+  // that disclosed residual, asserted separately below, not in this loop.
   for (const capS of [30, 31, 300, DEFAULT_CAP_S, DEEP_CAP_S]) {
     test(`capS=${capS}: the soft cap also leaves commit+seal's full target time before the backstop`, () => {
       expect(backstopS(capS, BACKSTOP_GRACE_S) - softCapS(capS)).toBeGreaterThanOrEqual(tailS);
@@ -39,10 +39,20 @@ describe("backstop clears the worker's own (real) soft cap (E-67 finding 1)", ()
     expect(DEFAULT_CAP_S - backstopS(DEFAULT_CAP_S, BACKSTOP_GRACE_S)).toBeGreaterThanOrEqual(STAGE_BUDGETS.pr.targetS ?? 0);
   });
 
-  test("capS=5: the tail cannot fit at all; the soft cap falls back to the plain 14/15 point (disclosed residual)", () => {
-    expect(softCapS(5)).toBeCloseTo(plainS(5), 6);
-    expect(backstopS(5) - softCapS(5)).toBeLessThan(tailS);
-  });
+  // Round 5 REJECT finding 1: below ~capS=24.83, softCapS used to fall back to the plain 14/15
+  // point (e.g. 22.4 at capS=24), leaving as little as 0.17-0.8s between the worker's own soft cap
+  // and the backstop -- not enough for commit+seal to actually seal. softCapS now clamps to 0
+  // instead: the tail still can't fully fit (gap stays under tailS), but the worker gets the whole
+  // backstop window to seal in, rather than a sliver of it.
+  for (const capS of [5, 20, 24]) {
+    test(`capS=${capS}: the tail cannot fully fit, but softCapS clamps to 0 (not the plain point), maximizing the gap to the backstop`, () => {
+      expect(softCapS(capS)).toBe(0);
+      const gap = backstopS(capS) - softCapS(capS);
+      expect(gap).toBeLessThan(tailS); // still a hard residual: the full tail genuinely doesn't fit
+      expect(gap).toBeCloseTo(backstopS(capS), 6); // but the gap is now the entire backstop window
+      expect(gap).toBeGreaterThan(1.5); // and comfortably clears a worst-case 0.3-1.5s seal
+    });
+  }
 
   test("a graceS override smaller than capS/30 is honored (test-only knob), still clears the soft cap", () => {
     const backstopS_ = backstopS(2, 1);

@@ -139,7 +139,11 @@ describe("engine10 machine", () => {
   });
 
   it("the global cap aborts the running stage and jumps to commit and seal", async () => {
-    const { ctx, events } = fakeCtx(0.3); // fires at 14/15 of the cap: 280ms
+    // capS=25 is just above the ~24.83s threshold below which softCapS's
+    // commit+seal-tail budget goes negative (E-67 round 5), so softCapS(25)
+    // stays the small budget value (167ms) rather than being clamped to 0 --
+    // still fast, but a real nonzero delay before the cap fires.
+    const { ctx, events } = fakeCtx(25); // softCapS(25) = 0.1667s = ~167ms
     let aborted = false;
     let sealCap: boolean | undefined;
     const r = await runMachine(ctx, {
@@ -267,7 +271,7 @@ describe("engine10 machine", () => {
   });
 
   it("the cap during the parallel plan and wall group emits exactly one cap.hit", async () => {
-    const { ctx, events } = fakeCtx(0.3);
+    const { ctx, events } = fakeCtx(25); // softCapS(25) = 0.1667s = ~167ms; see comment above
     const slow = (n: StageName) => stage(n, async (_c, signal) => { await sleep(5000, signal); return { status: "completed", data: {} }; });
     const r = await runMachine(ctx, { load: loaderOf(all({ plan: slow("plan"), wall: slow("wall") })) });
     expect(r.capHit).toBe(true);

@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { softCapS } from "../../src/engine10/machine.ts";
 import { runPr, type PrContext } from "../../src/engine10/stages/pr.ts";
 import { backstopS, BACKSTOP_NOT_PROVEN, runSupervisor, type CommentStep, type PrStep } from "../../src/engine10/supervisor.ts";
 
@@ -275,4 +276,22 @@ describe("E-67 rework: supervisor backstop", () => {
     expect(deathMs).toBeLessThan(6000); // green ~5.1s; the old fixed-2s-escalation red was ~6.9-7.0s (measured above)
     expect(r.verdict).toBe("FAILED");
   }, 15_000);
+
+  // E-67 round 5 REJECT finding 1: below ~capS=24.83 (24s tail vs a smaller backstop window),
+  // softCapS's fallback to the plain 14/15 point left as little as 0.17-0.8s between the worker's
+  // own soft cap and the backstop -- not enough for a real seal (0.3-1.5s). Reproduced here with a
+  // worker that waits until the real softCapS(capS) on its own clock, then takes a worst-case 1.5s
+  // to "seal" (its clean-exit stand-in). Red on the pre-fix formula at capS 5, 20 and 24
+  // (workerExit null, BACKSTOP_NOT_PROVEN); green once softCapS clamps to 0 instead of the plain
+  // point, since the worker then finishes its 1.5s seal immediately, long before any backstop.
+  for (const capS of [5, 20, 24]) {
+    test(`capS=${capS}, default grace: a worker that seals 1.5s after its own soft cap is not backstop-killed`, async () => {
+      const { dir } = repoWithCommit();
+      const waitMs = Math.round(softCapS(capS) * 1000);
+      const code = `setTimeout(() => process.exit(0), ${waitMs} + 1500);`;
+      const r = await runSupervisor({ runId: `e10-bs-softcap-${capS}`, repoDir: dir, env: ENV, workerArgv: worker(code), capS });
+      expect(r.workerExit).toBe(0);
+      expect(r.notProven).not.toContain(BACKSTOP_NOT_PROVEN);
+    }, 30_000);
+  }
 });

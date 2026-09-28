@@ -57,7 +57,7 @@ describe("engine10 never waits on a human (E-67)", () => {
     const repoDir = mkdtempSync(join(tmpdir(), "loki-e10-pause-repo-"));
     const workDir = mkdtempSync(join(tmpdir(), "loki-e10-pause-work-"));
     const stdinResultFile = join(workDir, "stdin-result.txt");
-    process.env["LOKI_E10_CAP_S"] = "20"; // same test-only knob as cap.test.ts
+    process.env["LOKI_E10_CAP_S"] = "30"; // same test-only knob as cap.test.ts
     process.env["ASK_STUB_STDIN_RESULT"] = stdinResultFile;
     process.env["LOKI_RECEIPT_SIGNING_KEY"] = "";
     process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = "";
@@ -118,11 +118,11 @@ describe("engine10 never waits on a human (E-67)", () => {
         return passthrough(name);
       };
 
-      // Same 14/15-of-capS backdating trick as cap.test.ts: the cap fires
+      // Same softCapS(30)=5.0s backdating trick as cap.test.ts: the cap fires
       // about 1.67s of real wall time in, so implement's session is
       // genuinely mid-run (already past its own question, sleeping) when
       // killed, without the test waiting out the full window.
-      const startedAtMs = Date.now() - 17_000;
+      const startedAtMs = Date.now() - 3_330;
       const t0 = Date.now();
       const result = await runMachine(ctx, { load, startedAtMs });
       const wallMs = Date.now() - t0;
