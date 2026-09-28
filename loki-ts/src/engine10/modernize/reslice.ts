@@ -69,8 +69,24 @@ function notProvenNode(unit: Unit, depth: number, reason: string, notProven: str
   return { unit: unit.id, depth, verdict: "NOT_PROVEN", reason, notProven, children: [] };
 }
 
+/** True only if `childNodes` is a strict (proper) subset of `parentNodes`: every child node
+ *  belongs to the parent, and the child is strictly smaller. TL reject (M-18 r1, reproduced): a
+ *  slicer returning the parent unchanged (`u => [u]`) was accepted as a "re-slice", so a flaky
+ *  checker that fails once and passes on retry turned the depth cap into a two-call retry
+ *  budget rather than a narrowing requirement. A child with the same nodes, a superset, or any
+ *  node outside the parent is rejected here, before check() ever runs on it. */
+function isStrictNarrowing(childNodes: readonly string[], parentNodes: readonly string[]): boolean {
+  const parentSet = new Set(parentNodes);
+  const childSet = new Set(childNodes);
+  if (childSet.size === 0 || childSet.size >= parentSet.size) return false;
+  for (const n of childSet) if (!parentSet.has(n)) return false;
+  return true;
+}
+
 /** Slices `unit` (at `depth`, its own depth) into children at `depth + 1` and evaluates each.
- *  PROVEN only if the re-slice produced at least one child and every child is PROVEN. */
+ *  PROVEN only if the re-slice produced at least one child, every child is a strict narrowing of
+ *  `unit` (never the parent unchanged, a superset, or a disjoint node set), and every such child
+ *  is PROVEN. */
 function resliceAt(unit: Unit, depth: number, slice: ResliceSlicer, check: ResliceChecker): ResliceUnitResult {
   let kids: Unit[];
   try {
@@ -80,6 +96,14 @@ function resliceAt(unit: Unit, depth: number, slice: ResliceSlicer, check: Resli
   }
   if (kids.length === 0) {
     return notProvenNode(unit, depth, "empty re-slice: slicer produced no child units", [`${unit.id}: empty re-slice`]);
+  }
+  const notNarrowed = kids.filter((k) => !isStrictNarrowing(k.nodes, unit.nodes));
+  if (notNarrowed.length > 0) {
+    const ids = notNarrowed.map((k) => k.id).join(", ");
+    return notProvenNode(
+      unit, depth, `re-slice did not narrow: [${ids}] not a strict subset of ${unit.id}'s nodes`,
+      notNarrowed.map((k) => `${unit.id}: re-slice child ${k.id} is not a strict subset of ${unit.id}`),
+    );
   }
 
   const children = kids.map((child) => evaluate(child, depth + 1, slice, check));

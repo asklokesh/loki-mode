@@ -13,7 +13,18 @@ import type { EquivResult } from "../../../src/engine10/modernize/equiv.ts";
 import type { ResliceChecker, ResliceSlicer } from "../../../src/engine10/modernize/reslice.ts";
 import { RESLICE_MAX_DEPTH, reslice } from "../../../src/engine10/modernize/reslice.ts";
 
-const unit = (id: string): Unit => ({ id, nodes: [id], lines: 10, highRisk: false });
+// `nodes` defaults to `[id]`, which is fine for a unit that is never itself re-sliced. Any test
+// that re-slices a unit into real children must pass a `nodes` set wide enough for those
+// children to be genuine strict subsets of it (the TL-reject fix below rejects a child whose
+// nodes are not a proper subset of its parent's, so a same-as-id node set can't be narrowed).
+const unit = (id: string, nodes: string[] = [id]): Unit => ({ id, nodes, lines: 10, highRisk: false });
+
+// A 3-level strict containment chain used by the depth-2 tests below: ROOT_NODES (3 nodes) ⊃
+// MID_NODES (2 nodes) ⊃ LEAF_NODES (1 node). Node names are synthetic and independent of any
+// unit id, so containment is real, not an accident of id-echoing.
+const ROOT_NODES = ["n0", "n1", "n2"];
+const MID_NODES = ["n1", "n2"];
+const LEAF_NODES = ["n2"];
 
 /** A fully-proven EquivResult (satisfies equiv.ts's modernizationVerified/isFullyProven: no
  *  not_proven, no failures, pass === cases > 0, at least one held-out case compared). */
@@ -53,10 +64,10 @@ describe("RESLICE_MAX_DEPTH", () => {
 describe("reslice", () => {
   it("proves a unit equivalent after one re-slice", () => {
     const { slice, check } = buildCallbacks(
-      { u0: [unit("c1"), unit("c2")] },
+      { u0: [unit("c1", ["n0"]), unit("c2", ["n1"])] },
       { c1: proven("c1"), c2: proven("c2") },
     );
-    const result = reslice(unit("u0"), slice, check);
+    const result = reslice(unit("u0", ["n0", "n1"]), slice, check);
     expect(result.verdict).toBe("PROVEN");
     expect(result.depth).toBe(0);
     expect(result.children).toHaveLength(2);
@@ -65,10 +76,10 @@ describe("reslice", () => {
 
   it("gives NOT PROVEN when a unit is still non-equivalent at depth 2", () => {
     const { slice, check } = buildCallbacks(
-      { u0: [unit("c1")], c1: [unit("g1")] },
+      { u0: [unit("c1", MID_NODES)], c1: [unit("g1", LEAF_NODES)] },
       { c1: failing("c1", "case-c1"), g1: failing("g1", "case-g1") },
     );
-    const result = reslice(unit("u0"), slice, check);
+    const result = reslice(unit("u0", ROOT_NODES), slice, check);
     expect(result.verdict).toBe("NOT_PROVEN");
     // g1 sits at depth 2 (u0=0, c1=1, g1=2): checked, but never sliced again.
     const g1 = result.children[0]?.children[0];
@@ -80,10 +91,10 @@ describe("reslice", () => {
 
   it("gives NOT PROVEN for the parent when one child fails (even if a sibling proves)", () => {
     const { slice, check } = buildCallbacks(
-      { u0: [unit("a"), unit("b")] }, // b has no re-slice entry -> empty re-slice
+      { u0: [unit("a", ["n0"]), unit("b", ["n1"])] }, // b has no re-slice entry -> empty re-slice
       { a: proven("a"), b: failing("b", "case-b") },
     );
-    const result = reslice(unit("u0"), slice, check);
+    const result = reslice(unit("u0", ["n0", "n1"]), slice, check);
     expect(result.verdict).toBe("NOT_PROVEN");
     const [a, b] = result.children;
     expect(a?.verdict).toBe("PROVEN");
@@ -103,10 +114,10 @@ describe("reslice", () => {
 
   it("proves a unit only resolved at depth 2 (cap is not off-by-one low)", () => {
     const { slice, check } = buildCallbacks(
-      { u0: [unit("c1")], c1: [unit("g1")] },
+      { u0: [unit("c1", MID_NODES)], c1: [unit("g1", LEAF_NODES)] },
       { c1: failing("c1", "case-c1"), g1: proven("g1") },
     );
-    const result = reslice(unit("u0"), slice, check);
+    const result = reslice(unit("u0", ROOT_NODES), slice, check);
     expect(result.verdict).toBe("PROVEN");
     const g1 = result.children[0]?.children[0];
     expect(g1?.depth).toBe(2);
@@ -115,10 +126,10 @@ describe("reslice", () => {
 
   it("never re-slices past depth 2, even if the unit would prove one level deeper (cap is not off-by-one high)", () => {
     const { slice, check } = buildCallbacks(
-      { u0: [unit("c1")], c1: [unit("g1")], g1: [unit("h1")] }, // h1 would be depth 3
+      { u0: [unit("c1", MID_NODES)], c1: [unit("g1", LEAF_NODES)], g1: [unit("h1")] }, // h1 would be depth 3
       { c1: failing("c1", "case-c1"), g1: failing("g1", "case-g1") },
     );
-    const result = reslice(unit("u0"), slice, check);
+    const result = reslice(unit("u0", ROOT_NODES), slice, check);
     expect(result.verdict).toBe("NOT_PROVEN");
     expect(slice).not.toHaveBeenCalledWith(expect.objectContaining({ id: "g1" }));
     expect(check).not.toHaveBeenCalledWith(expect.objectContaining({ id: "h1" }));
@@ -128,10 +139,10 @@ describe("reslice", () => {
     // g1 hits the depth-2 cap while still failing, so its EquivResult.failures (case-xyz) is
     // what leafNotProven reports -- not an empty re-slice reason from a shallower level.
     const { slice, check } = buildCallbacks(
-      { u0: [unit("c1")], c1: [unit("g1")] },
+      { u0: [unit("c1", MID_NODES)], c1: [unit("g1", LEAF_NODES)] },
       { c1: failing("c1", "case-c1"), g1: failing("g1", "case-xyz") },
     );
-    const result = reslice(unit("u0"), slice, check);
+    const result = reslice(unit("u0", ROOT_NODES), slice, check);
     expect(result.verdict).toBe("NOT_PROVEN");
     expect(result.notProven.some((r) => r.includes("case-xyz"))).toBe(true);
   });
@@ -146,12 +157,51 @@ describe("reslice", () => {
     expect(result.reason).toContain("slicer boom");
   });
 
+  it("rejects a re-slice that returns the parent unchanged, even with a flaky check (retry-budget bug, TL reject)", () => {
+    // Reproduction: slice(u) => [u] (no narrowing at all) with a check that fails once then
+    // passes would otherwise let the depth cap act as a retry budget instead of a narrowing
+    // requirement. A strict-subset check must reject the child before check() ever runs on it.
+    let calls = 0;
+    const u0 = unit("u0");
+    const slice: ResliceSlicer = mock((u: Unit) => [u]);
+    const check: ResliceChecker = mock((u: Unit) => {
+      calls++;
+      return calls === 1 ? failing(u.id, "case-1") : proven(u.id);
+    });
+    const result = reslice(u0, slice, check);
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(check).not.toHaveBeenCalled();
+    expect(calls).toBe(0);
+  });
+
+  it("rejects a re-slice child whose nodes are not a subset of the parent's", () => {
+    const u0: Unit = { id: "u0", nodes: ["n-a", "n-b"], lines: 10, highRisk: false };
+    const notASubset: Unit = { id: "c1", nodes: ["n-a", "n-outside"], lines: 5, highRisk: false };
+    const slice: ResliceSlicer = () => [notASubset];
+    const check: ResliceChecker = mock(() => proven("c1"));
+    const result = reslice(u0, slice, check);
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it("accepts a re-slice whose children are proper subsets of the parent's nodes", () => {
+    const u0: Unit = { id: "u0", nodes: ["n-a", "n-b"], lines: 10, highRisk: false };
+    const c1: Unit = { id: "c1", nodes: ["n-a"], lines: 5, highRisk: false };
+    const c2: Unit = { id: "c2", nodes: ["n-b"], lines: 5, highRisk: false };
+    const { slice, check } = buildCallbacks(
+      { u0: [c1, c2] },
+      { c1: proven("c1"), c2: proven("c2") },
+    );
+    const result = reslice(u0, slice, check);
+    expect(result.verdict).toBe("PROVEN");
+  });
+
   it("never throws when the injected checker throws; the unit is NOT PROVEN instead", () => {
-    const { slice } = buildCallbacks({ u0: [unit("c1")] }, {});
+    const { slice } = buildCallbacks({ u0: [unit("c1", ["n0"])] }, {});
     const check: ResliceChecker = () => {
       throw new Error("checker boom");
     };
-    const result = reslice(unit("u0"), slice, check);
+    const result = reslice(unit("u0", ["n0", "n1"]), slice, check);
     expect(result.verdict).toBe("NOT_PROVEN");
     const c1 = result.children[0];
     expect(c1?.reason).toContain("checker boom");
