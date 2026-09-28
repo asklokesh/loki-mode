@@ -1,5 +1,10 @@
 # Progress
 
+## 2026-09-28T14:58Z: main red on train E22, fixed forward (E-83)
+- Tests red on 9d483688 (run 36438012977): spawn env guard (M-16 codemod.ts spawn with no env) and tests/test-engine10-dist.sh "bundle contains prStage" (E-66's offset deleted the alias the dist test greps for). Both passed review because reviewers and the Chief of Staff ran only `bun test tests/engine10/`.
+- Fixed in E-83 (c5ace6e1). Rule from now: every train touching loki-ts/src runs the full `cd loki-ts && bun test` and `bash tests/test-engine10-dist.sh` before push, and slice cards say so.
+- D34 (CTO) recorded: large tier from real upstream PRs, one size gate, legacy to M-27; EV-12S and EV-12A/B/C building (wf_6aea81c7-823).
+
 ## 2026-09-28T14:50Z: train E22 and drift audit (turn 444)
 - Wave E21 (28 agents, ESTIMATE 3,652,703 subagent tokens) plus E21b: 13 of 16 slices approved. Train E22 (9042e964) merges E-66, E-61, M-24, M-16, M-19, M-04, E-74, E-75, E-77, EV-11a, E-82: `bun test tests/engine10/` 547 pass 0 fail, tsc 0, pulse 107 passed, eval harness 108 passed, shard drift 6 passed. Core engine 4,998 of 5,000 (D33).
 - Held: M-07 (core would read 5,000), EV-11b and E-62 (both conflict with EV-11a in the eval harness; serialized next), E-78 (TL CONCERN).
