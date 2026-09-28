@@ -1033,6 +1033,37 @@ def wall_paths(work):
     return out
 
 
+# E-101: results.jsonl lives under eval/loki10/results/ (gitignored) inside a
+# worktree, so a worktree removal loses it -- the EV-14 incident. Every row
+# also gets archived outside the worktree's gitignored tree. Archived rows
+# never carry the arm_stdout/arm_stderr/prepare/setup/grade log paths (those
+# point at raw, gitignored arm output that may itself contain secrets) or any
+# string that looks like a known secret/token shape.
+_SECRET_RE = re.compile(
+    r"sk-ant-[A-Za-z0-9_-]+"
+    r"|sk-[A-Za-z0-9]{16,}"
+    r"|gh[oprsu]?_[A-Za-z0-9]{20,}"
+    r"|AKIA[0-9A-Z]{12,}"
+    r"|xox[baprs]-[A-Za-z0-9-]+"
+    r"|Bearer\s+[A-Za-z0-9._-]+"
+    r"|\b[A-Z][A-Z0-9_]{2,}=\S+"  # KEY=VALUE-shaped env leakage
+)
+
+
+def redact_row(row):
+    """A copy of row safe to archive outside the repo/worktree: no log paths,
+    no secret-shaped strings."""
+    def scrub(v):
+        if isinstance(v, str):
+            return _SECRET_RE.sub("[REDACTED]", v)
+        if isinstance(v, dict):
+            return {k: scrub(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [scrub(x) for x in v]
+        return v
+    return scrub({k: v for k, v in row.items() if k != "logs"})
+
+
 def new_row(task, arm, cfg, slot, logs):
     return {"run_id": slot, "task": task["id"], "arm": arm, "status": "ok", "model": cfg["model"],
             "repo_ref": task["repo"]["ref"], "harness_sha": cfg["harness_sha"],
@@ -1246,7 +1277,11 @@ def cmd_run(args):
     os.makedirs(out, exist_ok=True)
     CHILDREN = Children(os.path.join(tmp, "child-pids"))
     harness_sha = git_out(["rev-parse", "HEAD"], HERE) or "unknown"
-    if git_out(["status", "--porcelain"], REPO):
+    # eval/loki10/archive/ is this run's own uncommitted output (E-101); it
+    # must not make an otherwise-clean tree read as "-dirty" for the next arm
+    # run in the same checkout, which would split raw/v10 rows onto different
+    # harness_sha values and corrupt the comparison in dedupe().
+    if git_out(["status", "--porcelain", "--", ".", ":(exclude)eval/loki10/archive"], REPO):
         harness_sha += "-dirty"  # results from uncommitted code are not reproducible
     cfg = {"tmp": tmp, "out": out, "model": model, "alias": alias,
            "harness_sha": harness_sha,
@@ -1280,6 +1315,25 @@ def cmd_run(args):
     write_lock = threading.Lock()
     results = os.path.join(out, "results.jsonl")
 
+    # E-101: durable archive, written per row (not just at the end) so a
+    # killed run still keeps what it has. run_name need only be unique enough
+    # to not collide within one --out; --apply of the archive dir is manual.
+    run_name = "%s-%s-%s" % (time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()), args.arm,
+                              os.path.basename(out.rstrip(os.sep)) or "results")
+    archive_ext_dir = os.path.join(
+        os.environ.get("LOKI_EVAL_ARCHIVE") or os.path.join(os.path.expanduser("~"), "loki-ci-logs", "eval"),
+        run_name)
+    # LOKI_EVAL_ARCHIVE_REPO_ROOT overrides the "in-repo" archive's root
+    # (default REPO itself) so a test suite can redirect it to a throwaway
+    # directory instead of writing real files into the repo it is testing.
+    archive_repo_dir = os.path.join(
+        os.environ.get("LOKI_EVAL_ARCHIVE_REPO_ROOT") or REPO, "eval", "loki10", "archive")
+    os.makedirs(archive_ext_dir, exist_ok=True)
+    os.makedirs(archive_repo_dir, exist_ok=True)
+    archive_ext_results = os.path.join(archive_ext_dir, "results.jsonl")
+    archive_ext_manifest = os.path.join(archive_ext_dir, "manifest.jsonl")
+    archive_repo_results = os.path.join(archive_repo_dir, run_name + ".results.jsonl")
+
     def job(item):
         with start_lock:  # refuse to START a run while the box is overloaded
             while os.getloadavg()[0] > max_load and not CHILDREN.stopping:
@@ -1306,6 +1360,18 @@ def cmd_run(args):
         with write_lock:
             with open(results, "a") as f:
                 f.write(json.dumps(row) + "\n")
+            archived = json.dumps(redact_row(row)) + "\n"
+            with open(archive_ext_results, "a") as f:
+                f.write(archived)
+            with open(archive_repo_results, "a") as f:
+                f.write(archived)
+            if args.arm == "v10":
+                work = os.path.join(rundir, "work")
+                rid = _v10_run_id(work)
+                events = os.path.join(work, ".loki", "runs", rid, "events.jsonl") if rid else None
+                with open(archive_ext_manifest, "a") as f:
+                    f.write(json.dumps({"run_id": slot, "task": task["id"], "rundir": rundir,
+                                        "work_dir": work, "engine_run_id": rid, "events_path": events}) + "\n")
         print("%s %s status=%s completed=%s" % (row["task"], args.arm, row["status"], row["completed"]))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.parallel)) as ex:

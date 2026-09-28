@@ -270,6 +270,16 @@ sensitive. The keychain is read only through `/usr/bin/security`, an absolute
 path with no PATH lookup. A keychain token whose `expiresAt` is missing or not
 a number is treated as unusable, so the check fails closed.
 
+Because `results/` is gitignored, it exists only inside whatever worktree ran
+the eval; a worktree removal loses it (E-101, GUARDS.md 18). Every row is
+also archived (via `redact_row`: no log paths, no secret-shaped string) to
+`${LOKI_EVAL_ARCHIVE:-$HOME/loki-ci-logs/eval}/<run-name>/results.jsonl`
+outside the repo, and to `eval/loki10/archive/<run-name>.results.jsonl`
+inside it. Unlike `results/`, `eval/loki10/archive/` is NOT gitignored: those
+files are meant to be committed, and `scripts/prune-worktrees.sh` treats a
+worktree's results as safe to lose only once every row's `run_id` is present
+in one of the two archive copies.
+
 This is not a sandbox. The env scrub and the fresh config dir only change what
 the arm loads by default. Every arm, setup command and hidden test runs as the
 same OS user as the operator. Any of them can still read `~/.claude`, the

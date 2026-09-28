@@ -1510,6 +1510,7 @@ run_test "Welcome opener (terminal + browser)" "$SCRIPT_DIR/test-welcome-opener.
 
 run_test "Browser-open guard (tests never open a browser, S-103)" "$SCRIPT_DIR/test-browser-open-guard.sh"
 run_test "prune-worktrees treats cherry-picked branches as merged (S-154)" "$SCRIPT_DIR/test-prune-worktrees.sh"
+run_test "Eval results archive: redaction and dirty-check exclude (E-101)" "$SCRIPT_DIR/test-eval-archive.sh"
 run_test "run_test missing or empty argument does not stop the runner (S-174)" "$SCRIPT_DIR/test-run-all-missing-arg.sh"
 run_test "proof headline ignores a stale test-results.json (S-176)" "python3 -m pytest -q $SCRIPT_DIR/test_proof_tests_freshness.py"
 run_test "Managed completion council flag (BACKLOG 75, S-211)" "$SCRIPT_DIR/council/test_managed_completion_flag.sh"
