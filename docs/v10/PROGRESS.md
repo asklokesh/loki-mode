@@ -1,5 +1,9 @@
 # Progress
 
+## 2026-09-28T16:05Z: v10.2.1 shipped (carries the unpublished 10.2.0)
+- Release run 36446416984 success; Security Audit 36446416943 success on 815640d9; `npm view loki-mode dist-tags` latest 10.2.1, gitHead 815640d9 = release commit; GitHub release v10.2.1 published 15:53:56Z; `loki --version` from a fresh prefix prints "Loki Mode v10.2.1" (rc=0).
+- In flight: wave E23 (M-07, M-10, M-11, M-12, E-67, E-79..E-81 reworks), wave E24 (EV-12S rebase, EV-12A/B/C large tasks; 2 of 5 needed large tasks passed review so far: lg-werkzeug-1513, lg-werkzeug-1680), E-86 rework (4 reproduced fail-opens in the pre-push gitleaks check), DEP-01 rework in review.
+
 ## 2026-09-28T15:45Z: 10.2.0 cannot publish by dispatch; re-release as 10.2.1; drift audit (turn 456)
 - Security Audit dispatched on 8e7d21f2 (run 36442754156) completed success, but Release dispatched on main (run 36443541666) sat in required-ci: release.yml counts only event=="push" runs, and Security Audit runs on push only when VERSION changes, so a dispatched audit is never counted. Cancelled before its 40-minute deadline. Re-release follows the 10.0.1 precedent: push the train, Tests and Bun Parity green, bump to 10.2.1 so the VERSION push runs Security Audit and Release. E-87 cut for the dispatch path.
 - Gitleaks root cause: the pub-werkzeug-3271 prompt (upstream issue text) contains a sourcegraph.com URL, which arms the sourcegraph-access-token rule, which then matches the 40-hex repo.ref. Local `gitleaks git` (8.30.0 and 8.30.1) does not reproduce it; `gitleaks dir eval/loki10/tasks` with v8.30.0 does (1 finding). E-86 (pre-push check) uses dir mode with the pinned v8.30.0.
@@ -8,7 +12,7 @@
 
 ## 2026-09-28T15:20Z: v10.2.0 publish blocked by Security Audit (gitleaks false positive)
 - Release run 36440534050 failed at required-ci: Security Audit 36440534022 failed with 1 new gitleaks finding (report artifact gitleaks-report): rule sourcegraph-access-token at eval/loki10/tasks/pub-werkzeug-3271/task.json:8, commit 82e39c29 (EV-11a). The value is repo.ref, a 40-hex pallets/werkzeug commit (`gh api repos/pallets/werkzeug/commits/<ref>` resolves, dated 2026-09-13). Not a credential.
-- Fix: that exact commit-qualified fingerprint added to .gitleaksignore with a justification (no path or rule suppression). Nothing was tagged or published for 10.2.0; the Release workflow is re-dispatched on main once Tests, Bun Parity and Security Audit are green on the fix commit.
+- Allowlist: that exact commit-qualified fingerprint added to .gitleaksignore in 8e7d21f2 with a justification (no path or rule suppression); Security Audit run 36446416943 on the 10.2.1 VERSION push reported zero unmatched findings. Nothing was tagged or published for 10.2.0.
 - Recurrence risk: every pub-*/lg-* task pins a 40-hex SHA; E-85 asks the CTO for a narrowly scoped rule. TRAIN_LATE read 681 min because the pulse only reads ~/loki-ci-logs/push-*.log, which plain `git push` never writes; E-84 fixes it.
 
 ## 2026-09-28T14:58Z: main red on train E22, E-83 fix-forward (c5ace6e1; Tests green on 378a2e13)
