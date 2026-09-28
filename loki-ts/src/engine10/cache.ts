@@ -1,20 +1,7 @@
-// loki-ts/src/engine10/cache.ts
-//
-// E-18: per-repo cache (docs/v10/ENGINE.md section 13 "Cache (cache.ts)").
-// Speeds up repeat runs on an unchanged tree: repomap/testmap keyed by
-// HEAD^{tree}, plus a per-repo flaky-test list and failure-signature history
-// for the implementer brief's "top 3 past failures".
-//
-// Reads are optional and O(1): a missing or corrupt file is a cache miss
-// (null / []), never a throw. Writes are the caller's job to time (ENGINE.md:
-// "writes happen after the PR, so nothing slows the first run") -- nothing in
-// this module writes as a side effect of a read, and nothing here is called
-// from intake/pr yet, so that ordering is enforced wherever a later slice
-// wires this in.
-//
-// Not wired into RunContext/types.ts by this slice: E-18 owns cache.ts only
-// (docs/v10/ENGINE.md section 16). A future slice adds a CacheProvider
-// interface to types.ts once intake.ts and pr.ts are ready to inject it.
+// loki-ts/src/engine10/cache.ts -- E-18 per-repo cache (ENGINE.md section 13): repomap/testmap keyed
+// by HEAD^{tree}, plus flaky tests and failure signatures for the brief's "top 3 past failures".
+// Reads are O(1) and never throw (missing or corrupt = miss); nothing writes as a side effect of a
+// read. Callers time writes after the PR. Not yet in RunContext (a later CacheProvider slice).
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
