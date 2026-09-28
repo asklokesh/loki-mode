@@ -92,6 +92,53 @@ else
   sed 's/^/        /' "$FIXTURE_ROOT/t3.err"
 fi
 
+echo "T5 -- five_hour: null does not crash (rate_limits key present, value null)"
+LOGDIR4="$FIXTURE_ROOT/t4"
+INPUT4='{"model":{"id":"x","display_name":"Haiku"},"rate_limits":{"five_hour":null,"seven_day":{"used_percentage":12}}}'
+_rc4=0
+OUT4="$(printf '%s' "$INPUT4" | LOKI_STATUSLINE_LOG_DIR="$LOGDIR4" bash "$TOOL" 2>"$FIXTURE_ROOT/t4.err")" || _rc4=$?
+if [ "$_rc4" -eq 0 ]; then
+  ok "five_hour: null does not crash the logger"
+else
+  bad "logger exited $_rc4 on five_hour: null"
+  sed 's/^/        /' "$FIXTURE_ROOT/t4.err"
+fi
+case "$OUT4" in
+  *Haiku*"wk 12%"*) ok "five_hour: null treated as no reading; seven_day still reported: $OUT4" ;;
+  *) bad "unexpected status line: '$OUT4'" ;;
+esac
+
+echo "T6 -- non-dict rate_limits does not crash"
+LOGDIR5="$FIXTURE_ROOT/t5"
+INPUT5='{"model":{"id":"x","display_name":"Sonnet"},"rate_limits":"not-a-dict"}'
+_rc5=0
+OUT5="$(printf '%s' "$INPUT5" | LOKI_STATUSLINE_LOG_DIR="$LOGDIR5" bash "$TOOL" 2>"$FIXTURE_ROOT/t5.err")" || _rc5=$?
+if [ "$_rc5" -eq 0 ]; then
+  ok "non-dict rate_limits does not crash the logger"
+else
+  bad "logger exited $_rc5 on non-dict rate_limits"
+  sed 's/^/        /' "$FIXTURE_ROOT/t5.err"
+fi
+[ "$OUT5" = "Sonnet" ] && ok "non-dict rate_limits treated as no reading" || bad "expected 'Sonnet', got '$OUT5'"
+[ ! -f "$LOGDIR5/statusline.jsonl" ] && ok "non-dict rate_limits logs nothing" || bad "a log file was written for non-dict rate_limits"
+
+echo "T7 -- non-numeric used_percentage does not crash"
+LOGDIR6="$FIXTURE_ROOT/t6"
+INPUT6='{"model":{"id":"x","display_name":"Opus"},"rate_limits":{"five_hour":{"used_percentage":"high"},"seven_day":{"used_percentage":30}}}'
+_rc6=0
+OUT6="$(printf '%s' "$INPUT6" | LOKI_STATUSLINE_LOG_DIR="$LOGDIR6" bash "$TOOL" 2>"$FIXTURE_ROOT/t6.err")" || _rc6=$?
+if [ "$_rc6" -eq 0 ]; then
+  ok "non-numeric used_percentage does not crash the logger"
+else
+  bad "logger exited $_rc6 on non-numeric used_percentage"
+  sed 's/^/        /' "$FIXTURE_ROOT/t6.err"
+fi
+case "$OUT6" in
+  *"5h"*) bad "non-numeric five_hour used_percentage should have been omitted: '$OUT6'" ;;
+  *Opus*"wk 30%"*) ok "non-numeric used_percentage omitted; numeric seven_day still reported: $OUT6" ;;
+  *) bad "unexpected status line: '$OUT6'" ;;
+esac
+
 echo ""
 echo "  Passed: $PASS   Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

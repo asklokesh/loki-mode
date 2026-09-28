@@ -38,11 +38,18 @@ if isinstance(rate_limits, dict):
 
 model = ((data.get("model") or {}).get("display_name")) or "?"
 parts = [model]
-five_h = (rate_limits or {}).get("five_hour", {}).get("used_percentage")
-week = (rate_limits or {}).get("seven_day", {}).get("used_percentage")
-if isinstance(five_h, (int, float)):
+rl = rate_limits if isinstance(rate_limits, dict) else {}
+five_hour = rl.get("five_hour")
+seven_day = rl.get("seven_day")
+five_h = five_hour.get("used_percentage") if isinstance(five_hour, dict) else None
+week = seven_day.get("used_percentage") if isinstance(seven_day, dict) else None
+# used_percentage can be non-numeric (or missing/null) in a malformed
+# reading; isinstance(..., (int, float)) rejects strings, None, etc. and
+# bool is intentionally excluded (True/False are not a percentage) even
+# though bool is technically an int subclass.
+if isinstance(five_h, (int, float)) and not isinstance(five_h, bool):
     parts.append("5h %.0f%%" % five_h)
-if isinstance(week, (int, float)):
+if isinstance(week, (int, float)) and not isinstance(week, bool):
     parts.append("wk %.0f%%" % week)
 print(" | ".join(parts))
 ' "$INPUT" "$LOG_FILE"

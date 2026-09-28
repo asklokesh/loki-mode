@@ -27,6 +27,11 @@ python3 -c "import json,zoneinfo" 2>/dev/null || {
 FIXTURE_ROOT="$(mktemp -d)"
 trap 'rm -rf "$FIXTURE_ROOT"' EXIT
 
+# A live-log path that never exists, passed to every invocation that doesn't
+# test live data on purpose, so no test ever reads the operator's real
+# ~/.claude/usage-governor/statusline.jsonl.
+NOLIVE="$FIXTURE_ROOT/no-such-live-log.jsonl"
+
 _q() { printf '%s' "$1" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -64,7 +69,7 @@ _row "$PROJ1/session-a.jsonl" "2026-09-28T16:00:00.000Z" "claude-sonnet-4-6" 100
 READINGS1="$FIXTURE_ROOT/t1/readings.tsv"
 printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS1"
 
-OUT1="$(python3 "$TOOL" --root "$ROOT1" --readings "$READINGS1" --now "2026-09-28T16:30:00Z" --json)"
+OUT1="$(python3 "$TOOL" --root "$ROOT1" --readings "$READINGS1" --now "2026-09-28T16:30:00Z" --live-log "$NOLIVE" --json)"
 _st="$(_q "$OUT1" "print(d['window']['source'])")"
 _cal="$(_q "$OUT1" "print(d['calibration']['window']['status'])")"
 if [ "$_st" = "uncalibrated" ] && [ "$_cal" = "uncalibrated" ]; then
@@ -91,7 +96,7 @@ _row "$PROJ2/session-a.jsonl" "2026-09-28T15:00:00.000Z" "claude-sonnet-4-6" 100
 READINGS2="$FIXTURE_ROOT/t2/readings.tsv"
 printf 'utc_time\twindow_percent\tweekly_percent\n2026-09-28T16:00:00Z\t10\t5\n' > "$READINGS2"
 
-OUT2="$(python3 "$TOOL" --root "$ROOT2" --readings "$READINGS2" --now "2026-09-28T16:00:00Z" --json)"
+OUT2="$(python3 "$TOOL" --root "$ROOT2" --readings "$READINGS2" --now "2026-09-28T16:00:00Z" --live-log "$NOLIVE" --json)"
 _rate="$(_q "$OUT2" "print(d['calibration']['window']['tokens_per_percent_output'])")"
 # 1000 tokens / 10 percent = 100 tokens per percent.
 if [ "$_rate" = "100.0" ]; then
@@ -123,7 +128,7 @@ _row "$PROJ3/session-a.jsonl" "2026-09-28T15:00:00.000Z" "claude-sonnet-4-6" 200
 READINGS3="$FIXTURE_ROOT/t3/readings.tsv"
 printf 'utc_time\twindow_percent\tweekly_percent\n2026-09-28T12:00:00Z\t10\t5\n2026-09-28T16:00:00Z\t20\t8\n' > "$READINGS3"
 
-OUT3="$(python3 "$TOOL" --root "$ROOT3" --readings "$READINGS3" --now "2026-09-28T16:00:00Z" --json)"
+OUT3="$(python3 "$TOOL" --root "$ROOT3" --readings "$READINGS3" --now "2026-09-28T16:00:00Z" --live-log "$NOLIVE" --json)"
 _rate3="$(_q "$OUT3" "print(d['calibration']['window']['tokens_per_percent_output'])")"
 _n3="$(_q "$OUT3" "print(d['calibration']['readings_count'])")"
 # least squares through origin: sum(pct*tokens)/sum(pct^2) = (10*1000+20*3000)/(100+400) = 70000/500 = 140
@@ -146,7 +151,7 @@ printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS4"
 # 2026-03-11 is a Wednesday. US DST starts 2026-03-08 02:00 local (spring
 # forward). "now" is after the spring-forward Wednesday reset, so the reset
 # boundary must be computed in EDT (UTC-4), not EST (UTC-5).
-OUT4="$(python3 "$TOOL" --root "$ROOT4" --readings "$READINGS4" --now "2026-03-11T18:00:00Z" --json)"
+OUT4="$(python3 "$TOOL" --root "$ROOT4" --readings "$READINGS4" --now "2026-03-11T18:00:00Z" --live-log "$NOLIVE" --json)"
 _wk_start="$(_q "$OUT4" "print(d['weekly']['start'])")"
 if [ "$_wk_start" = "2026-03-11T17:00:00+00:00" ]; then
   ok "weekly reset resolves to 13:00 EDT = 17:00 UTC on the DST side ($_wk_start)"
@@ -173,7 +178,7 @@ with open(sys.argv[1], "a") as fh:
 PYEOF
 READINGS5="$FIXTURE_ROOT/t5/readings.tsv"
 printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS5"
-OUT5="$(python3 "$TOOL" --root "$ROOT5" --readings "$READINGS5" --now "2026-09-28T16:00:00Z" --json)"
+OUT5="$(python3 "$TOOL" --root "$ROOT5" --readings "$READINGS5" --now "2026-09-28T16:00:00Z" --live-log "$NOLIVE" --json)"
 _last="$(_q "$OUT5" "print(d['limit_events']['last_occurrence'])")"
 _cnt="$(_q "$OUT5" "print(d['limit_events']['count_last_hour'])")"
 if [ "$_last" = "2026-09-28T15:58:00+00:00" ] && [ "$_cnt" = "1" ]; then
@@ -198,7 +203,7 @@ _row "$PROJ6/session-a.jsonl" "2026-09-28T15:30:00.000Z" "claude-sonnet-4-6" 42 
 READINGS6="$FIXTURE_ROOT/t6/readings.tsv"
 printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS6"
 _rc=0
-OUT6="$(python3 "$TOOL" --root "$ROOT6" --readings "$READINGS6" --now "2026-09-28T16:00:00Z" --json 2>"$FIXTURE_ROOT/t6.err")" || _rc=$?
+OUT6="$(python3 "$TOOL" --root "$ROOT6" --readings "$READINGS6" --now "2026-09-28T16:00:00Z" --live-log "$NOLIVE" --json 2>"$FIXTURE_ROOT/t6.err")" || _rc=$?
 if [ "$_rc" -eq 0 ]; then
   ok "malformed/missing-timestamp lines do not crash the governor"
 else
@@ -232,7 +237,7 @@ _row "$PROJ7/session-a.jsonl" "2026-09-28T15:30:01.000Z" "claude-sonnet-4-6" 467
 _row "$PROJ7/session-a.jsonl" "2026-09-28T15:31:00.000Z" "claude-sonnet-4-6" 300 "msg_other" ""
 READINGS7="$FIXTURE_ROOT/t7/readings.tsv"
 printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS7"
-OUT7="$(python3 "$TOOL" --root "$ROOT7" --readings "$READINGS7" --now "2026-09-28T16:00:00Z" --json)"
+OUT7="$(python3 "$TOOL" --root "$ROOT7" --readings "$READINGS7" --now "2026-09-28T16:00:00Z" --live-log "$NOLIVE" --json)"
 _out7="$(_q "$OUT7" "print(d['window']['current_tokens_output'])")"
 if [ "$_out7" = "767" ]; then
   ok "growing message.id rows keep the max (467) once + distinct message (300) = 767"
@@ -251,7 +256,7 @@ fi
 # growing output_tokens (100 -> 700).
 _row "$PROJ7/session-b.jsonl" "2026-09-28T15:30:00.000Z" "claude-sonnet-4-6" 100 "" "req_shared"
 _row "$PROJ7/session-b.jsonl" "2026-09-28T15:30:01.000Z" "claude-sonnet-4-6" 700 "" "req_shared"
-OUT7B="$(python3 "$TOOL" --root "$ROOT7" --readings "$READINGS7" --now "2026-09-28T16:00:00Z" --json)"
+OUT7B="$(python3 "$TOOL" --root "$ROOT7" --readings "$READINGS7" --now "2026-09-28T16:00:00Z" --live-log "$NOLIVE" --json)"
 _out7b="$(_q "$OUT7B" "print(d['window']['current_tokens_output'])")"
 if [ "$_out7b" = "1467" ]; then
   ok "requestId fallback keeps the max (700) once when message.id is absent (767 + 700 = 1467)"
@@ -279,7 +284,7 @@ _row "$PROJ8/subagents/agent2.jsonl" "2026-12-02T16:30:00.000Z" "claude-sonnet-4
 READINGS8="$FIXTURE_ROOT/t8/readings.tsv"
 printf 'utc_time\twindow_percent\tweekly_percent\n2026-12-02T17:00:00Z\t20\t10\n' > "$READINGS8"
 
-OUT8="$(python3 "$TOOL" --root "$ROOT8" --readings "$READINGS8" --now "2026-12-02T17:00:00Z" --json)"
+OUT8="$(python3 "$TOOL" --root "$ROOT8" --readings "$READINGS8" --now "2026-12-02T17:00:00Z" --live-log "$NOLIVE" --json)"
 _pct8="$(_q "$OUT8" "print(round(d['window']['current_pct'],1))")"
 if [ "$_pct8" = "20.0" ]; then
   ok "fixture A current window pct is 20.0 (not 100x-inflated 2000.0)"
@@ -311,7 +316,7 @@ _row "$PROJ9/subagents/agent2.jsonl" "2026-12-02T16:30:00.000Z" "claude-sonnet-4
 READINGS9="$FIXTURE_ROOT/t9/readings.tsv"
 printf 'utc_time\twindow_percent\tweekly_percent\n2026-12-02T17:00:00Z\t20\t10\n2026-12-02T13:00:00Z\t5\t3\n' > "$READINGS9"
 
-OUT9="$(python3 "$TOOL" --root "$ROOT9" --readings "$READINGS9" --now "2026-12-02T17:00:00Z" --json)"
+OUT9="$(python3 "$TOOL" --root "$ROOT9" --readings "$READINGS9" --now "2026-12-02T17:00:00Z" --live-log "$NOLIVE" --json)"
 _pct9="$(_q "$OUT9" "print(round(d['window']['current_pct'],2))")"
 if [ "$_pct9" = "18.89" ]; then
   ok "fixture B current window pct is 18.89 (two-reading least-squares fit)"
@@ -336,7 +341,7 @@ mkdir -p "$PROJ10"
 _row "$PROJ10/session-main.jsonl" "2026-12-02T16:30:00.000Z" "claude-sonnet-4-6" 900 "msg_1" ""
 READINGS10="$FIXTURE_ROOT/t10/readings.tsv"
 printf 'utc_time\twindow_percent\tweekly_percent\n2026-12-02T17:00:00Z\t90\t5\n' > "$READINGS10"
-OUT10="$(python3 "$TOOL" --root "$ROOT10" --readings "$READINGS10" --now "2026-12-02T17:00:00Z" --json)"
+OUT10="$(python3 "$TOOL" --root "$ROOT10" --readings "$READINGS10" --now "2026-12-02T17:00:00Z" --live-log "$NOLIVE" --json)"
 _max10="$(_q "$OUT10" "print(d['governor']['max_engineers_next_hour'])")"
 if [ "$_max10" = "0" ]; then
   ok "window at 90%% (estimate) -> max_engineers_next_hour = 0"
@@ -381,12 +386,123 @@ mkdir -p "$PROJ12"
 _row "$PROJ12/session-main.jsonl" "2026-12-02T16:30:00.000Z" "claude-sonnet-4-6" 100 "msg_1" ""
 READINGS12="$FIXTURE_ROOT/t12/readings.tsv"
 printf 'utc_time\twindow_percent\tweekly_percent\n2026-12-02T17:00:00Z\t5\t92\n' > "$READINGS12"
-OUT12="$(python3 "$TOOL" --root "$ROOT12" --readings "$READINGS12" --now "2026-12-02T17:00:00Z" --json)"
+OUT12="$(python3 "$TOOL" --root "$ROOT12" --readings "$READINGS12" --now "2026-12-02T17:00:00Z" --live-log "$NOLIVE" --json)"
 _max12="$(_q "$OUT12" "print(d['governor']['max_engineers_next_hour'])")"
 if [ "$_max12" = "0" ]; then
   ok "weekly at 92%% (estimate) -> max_engineers_next_hour = 0"
 else
   bad "expected max_engineers_next_hour=0, got '$_max12'"
+fi
+
+# ---------------------------------------------------------------------------
+# T13 (B1): next_wednesday_reset must add 7 days in America/New_York LOCAL
+# time, not UTC -- a UTC-side +7 days is a fixed 168h and lands an hour off
+# in any week that crosses a DST transition.
+# ---------------------------------------------------------------------------
+echo "T13 -- next_wednesday_reset stays correct across DST transitions"
+_next_reset_case() {
+  # $1=now(iso) $2=expected next reset(iso)
+  python3 - "$TOOL" "$1" "$2" <<'PYEOF'
+import importlib.util, sys
+from datetime import datetime, timezone
+tool_path, now_s, expected_s = sys.argv[1:4]
+spec = importlib.util.spec_from_file_location("usage_governor", tool_path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+now = datetime.fromisoformat(now_s.replace("Z", "+00:00"))
+expected = datetime.fromisoformat(expected_s.replace("Z", "+00:00"))
+got = mod.next_wednesday_reset(now)
+print("OK" if got == expected else f"MISMATCH got={got.isoformat()} expected={expected.isoformat()}")
+PYEOF
+}
+_r13a="$(_next_reset_case "2026-10-29T12:00:00Z" "2026-11-04T18:00:00Z")"
+[ "$_r13a" = "OK" ] && ok "fall-back week: now=2026-10-29T12:00Z -> next reset 2026-11-04T18:00Z" || bad "fall-back week: $_r13a"
+_r13b="$(_next_reset_case "2026-03-05T12:00:00Z" "2026-03-11T17:00:00Z")"
+[ "$_r13b" = "OK" ] && ok "spring-forward week: now=2026-03-05T12:00Z -> next reset 2026-03-11T17:00Z" || bad "spring-forward week: $_r13b"
+
+_r13c="$(python3 - "$TOOL" <<'PYEOF'
+import importlib.util, sys
+from datetime import datetime, timezone
+spec = importlib.util.spec_from_file_location("usage_governor", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+now = datetime.fromisoformat("2026-11-04T17:30:00+00:00")
+got = mod.next_wednesday_reset(now)
+hours = (got - now).total_seconds() / 3600.0
+print("OK" if (0.0 <= hours <= 0.6) else f"BAD hours={hours}")
+PYEOF
+)"
+[ "$_r13c" = "OK" ] && ok "30 min before reset: hours_to_reset ~0.5, never negative" || bad "hours_to_reset case: $_r13c"
+
+# ---------------------------------------------------------------------------
+# T14 (B2a): live window tokens must be counted from resets_at-5h, not a
+# rolling now-5h sum. A row sits BEFORE resets_at-5h (excluded from the real
+# live window, but inside now-5h) and a row sits AFTER it (an active
+# engineer's last-hour burn, inside both). If the window start reverts to
+# now-5h, the pre-window row inflates the token count, inflates the derived
+# rate, and changes max_engineers_next_hour.
+# ---------------------------------------------------------------------------
+echo "T14 -- live window start from resets_at-5h (B2a regression)"
+ROOT14="$FIXTURE_ROOT/t14/projects"
+PROJ14="$ROOT14/-Users-test-proj"
+mkdir -p "$PROJ14/subagents"
+# resets_at = 2026-12-02T18:00:00Z -> live window start = 13:00:00Z.
+# This row (12:30Z) is BEFORE that start: excluded under the fix, included
+# if reverted to now(17:00Z)-5h=12:00Z.
+_row "$PROJ14/session-main.jsonl" "2026-12-02T12:30:00.000Z" "claude-sonnet-4-6" 1000 "msg_before" ""
+# Active engineer's last-hour burn: after resets_at-5h, inside both ranges.
+_row "$PROJ14/subagents/agent1.jsonl" "2026-12-02T16:30:00.000Z" "claude-sonnet-4-6" 500 "msg_after" ""
+READINGS14="$FIXTURE_ROOT/t14/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS14"
+LIVELOG14="$FIXTURE_ROOT/t14/statusline.jsonl"
+python3 - "$LIVELOG14" <<'PYEOF'
+import json, sys
+entry = {"ts": 1796230800, "rate_limits": {
+    "five_hour": {"used_percentage": 30, "resets_at": 1796234400},
+    "seven_day": {"used_percentage": 10, "resets_at": 1796238000},
+}}
+with open(sys.argv[1], "w") as fh:
+    fh.write(json.dumps(entry) + "\n")
+PYEOF
+OUT14="$(python3 "$TOOL" --root "$ROOT14" --readings "$READINGS14" --now "2026-12-02T17:00:00Z" --live-log "$LIVELOG14" --json)"
+_max14="$(_q "$OUT14" "print(d['governor']['max_engineers_next_hour'])")"
+if [ "$_max14" = "1" ]; then
+  ok "live window from resets_at-5h excludes the pre-window row -> max_engineers_next_hour = 1"
+else
+  bad "expected max_engineers_next_hour=1 (window counted from resets_at-5h), got '$_max14'"
+fi
+
+# ---------------------------------------------------------------------------
+# T15 (B2b): weekly usage must be projected out to the actual reset, not
+# just one hour ahead. "now" sits right after this week's reset, so the next
+# reset is ~167.5h away. With that much runway, a 1-hour-ahead weekly
+# projection under-restricts badly versus projecting the same burn rate out
+# to the real reset.
+# ---------------------------------------------------------------------------
+# "now" sits 30 minutes after this week's Wednesday reset, so weekly_start
+# (this week's reset) is itself only 30 minutes before "now" -- the single
+# row below must land inside that 30-minute band to count toward both the
+# weekly reading's own tokens and the current weekly total, and it is also
+# the sole last-hour active-engineer row, so its tokens double as the
+# per-engineer burn rate. window_percent is set low (1%) purely so the 5h
+# window has ample headroom and never binds; only the weekly ceiling
+# matters here. weekly_percent=10% against 100 tokens gives a weekly rate
+# of 10 tokens/pct and a 900-token ceiling: burning 100 tokens/engineer/hour,
+# a 1-hour-ahead projection allows 8 engineers (900 headroom), but projecting
+# the same rate out across ~167.5h to the real reset allows 0.
+echo "T15 -- weekly projected to the actual reset, not just 1h ahead (B2b regression)"
+ROOT15="$FIXTURE_ROOT/t15/projects"
+PROJ15="$ROOT15/-Users-test-proj"
+mkdir -p "$PROJ15/subagents"
+_row "$PROJ15/subagents/agent1.jsonl" "2026-12-02T18:15:00.000Z" "claude-sonnet-4-6" 100 "msg_eng" ""
+READINGS15="$FIXTURE_ROOT/t15/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n2026-12-02T18:30:00Z\t1\t10\n' > "$READINGS15"
+OUT15="$(python3 "$TOOL" --root "$ROOT15" --readings "$READINGS15" --now "2026-12-02T18:30:00Z" --live-log "$NOLIVE" --json)"
+_max15="$(_q "$OUT15" "print(d['governor']['max_engineers_next_hour'])")"
+if [ "$_max15" = "0" ]; then
+  ok "weekly projected to the ~167.5h-away reset caps max_engineers_next_hour at 0"
+else
+  bad "expected max_engineers_next_hour=0 (reset-projected weekly), got '$_max15'"
 fi
 
 echo ""

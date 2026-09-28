@@ -272,20 +272,33 @@ def load_readings(path: Path):
     return readings
 
 
-def last_wednesday_reset(ref_utc: datetime) -> datetime:
-    """Most recent Wednesday 13:00 America/New_York at or before ref_utc, as UTC."""
+def _last_wednesday_reset_local(ref_utc: datetime) -> datetime:
+    """Most recent Wednesday 13:00 America/New_York at or before ref_utc, kept in local (aware) time."""
     tz = ZoneInfo("America/New_York")
     ref_local = ref_utc.astimezone(tz)
     days_since_wed = (ref_local.weekday() - 2) % 7  # Monday=0 .. Wednesday=2
     candidate = ref_local.replace(hour=13, minute=0, second=0, microsecond=0) - timedelta(days=days_since_wed)
     if candidate > ref_local:
         candidate -= timedelta(days=7)
-    return candidate.astimezone(timezone.utc)
+    return candidate
+
+
+def last_wednesday_reset(ref_utc: datetime) -> datetime:
+    """Most recent Wednesday 13:00 America/New_York at or before ref_utc, as UTC."""
+    return _last_wednesday_reset_local(ref_utc).astimezone(timezone.utc)
 
 
 def next_wednesday_reset(ref_utc: datetime) -> datetime:
-    """Next Wednesday 13:00 America/New_York strictly after ref_utc, as UTC."""
-    return last_wednesday_reset(ref_utc) + timedelta(days=7)
+    """Next Wednesday 13:00 America/New_York strictly after ref_utc, as UTC.
+
+    The +7 days is done on the LOCAL (zoneinfo-aware) datetime, not after
+    converting to UTC: zoneinfo preserves wall-clock time across a
+    timedelta add and re-derives the UTC offset for the new date, so 13:00
+    ET stays 13:00 ET even when the 7-day span crosses a DST transition. A
+    UTC-side +7 days instead adds a fixed 168 hours, landing an hour off in
+    any week that crosses DST.
+    """
+    return (_last_wednesday_reset_local(ref_utc) + timedelta(days=7)).astimezone(timezone.utc)
 
 
 def fit_tokens_per_percent(pairs):
@@ -479,7 +492,13 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
     window_rate_eff = effective_rate(window_source, report_window_out, current_window_pct, window_rate_out)
     weekly_rate_eff = effective_rate(weekly_source, weekly_out, current_weekly_pct, weekly_rate_out)
 
-    hours_to_weekly_reset = max((next_wednesday_reset(now) - now).total_seconds() / 3600.0, 0.0)
+    # Prefer the live seven_day.resets_at (ground truth from the API) over the
+    # computed ET-Wednesday estimate when it is present.
+    if live_seven_day and isinstance(live_seven_day.get("resets_at"), (int, float)):
+        weekly_reset_at = datetime.fromtimestamp(live_seven_day["resets_at"], tz=timezone.utc)
+    else:
+        weekly_reset_at = next_wednesday_reset(now)
+    hours_to_weekly_reset = max((weekly_reset_at - now).total_seconds() / 3600.0, 0.0)
 
     # Fail-safe: a window or weekly usage already at/over its ceiling means
     # zero headroom for new engineers, full stop -- independent of whether a
