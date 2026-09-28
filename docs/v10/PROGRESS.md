@@ -1,5 +1,10 @@
 # Progress
 
+## 2026-09-28T17:40Z: release slots measured; staffing; worktree incident
+- Slot log (cut = release commit pushed; publish = npm time). 13:00 local slot: skipped, main red (8f2179cd Tests failure, rerun success at 17:05Z). v10.2.2: cut 17:07Z (9a59750d), npm 17:16Z. 13:20 slot: cut late at 17:27:02Z as v10.2.3 (d366d9de) after Tests went green on 4f6b441d at 17:26Z; publish-npm success by 17:35Z. Next train pushed 17:35:35Z (1f04c040, EV-12S) for the 13:40 slot.
+- Staffing: founder 17:22Z (keep 12 or more building). The BOARD showed 5 because rows were not flipped when waves were dispatched; now 19 rows building. E-88 (70 min) and E-89/E-90 (58 min) stopped and re-sliced; the salvaged E-89 and E-90 commits are reviewed as their own slices. RELEASE_CADENCE and UNDERSTAFFED are in E-89 (wave E27). Guards for today's red mains: E-94 (changed tests re-run without credentials, pre-merge) and E-95 (watchdog fixture readiness).
+- Incident 17:36Z: pruning worktrees with `find -newermt "-25 minutes"` (unsupported on BSD find, matched nothing) force-removed 7 live builder worktrees (M-07 r4, M-11 r3, EV-14, EV-12F-a, EV-12G, E-95, E-87). Every branch had its work committed (`git log origin/main..<branch>` shows 1 to 9 commits, the latest 3 to 48 minutes old); edits after the last commit were lost. Guard E-96 (safe prune script); memory recorded.
+
 ## 2026-09-28T17:10Z: v10.2.2 cut (npm gitHead 9a59750d); two red mains handled (E-92 at 4f7f1487, flake rerun 36453069628 success); D38; drift audit (turn 486)
 - Main red at df7dc134 to 793870f3 (Tests run 36451439320): the DEP-01 self-test reached the real gh floating-tag resolver and read bump unknown on the CI runner. P0 fix E-92 (81cdba4d, TL APPROVE; stripped-env self-test rc=0 vs rc=1 on the old code), merged 4f7f1487. Guard E-93 (stripped-env leg) building.
 - 8f2179cd then failed once on "App Runner Watchdog Health" (healthy fixture server never came up); `gh run rerun 36453069628 --failed` concluded success on the same SHA, so it was a flake, not a code change.
