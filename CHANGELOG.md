@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.2.1 (2026-09-28)
+
+Publishes the v10.2.0 changes below. 10.2.0 was bumped but never reached npm: its release gate stopped on a secret-scan false positive (a pinned upstream werkzeug commit in an eval task, allowlisted by exact fingerprint), and a version that is already bumped cannot be re-released by dispatch.
+
+### Added
+- Eval: the second half of the medium tier (11 upstream tasks), each audited with deletion mutants (EV-11).
+- Eval harness: the v10 arm uses this repo's `bin/loki`, records its path and the agent SDK version, and refuses to run when `loki-ts/node_modules` does not match `bun.lock` (E-62).
+
+### Fixed
+- Internal tooling: the swarm pulse reads the last train push from the `origin/main` reflog, so a plain `git push` counts (E-84); the repo guard also refuses moving `main` without a checkout (E-78).
+
 ## v10.2.0 (2026-09-28)
 
 Loki 10 engine (still opt-in: `LOKI_ENGINE=v10`).
