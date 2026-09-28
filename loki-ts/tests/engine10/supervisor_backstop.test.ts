@@ -8,7 +8,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runPr, type PrContext } from "../../src/engine10/stages/pr.ts";
-import { BACKSTOP_NOT_PROVEN, runSupervisor, type CommentStep, type PrStep } from "../../src/engine10/supervisor.ts";
+import { backstopS, BACKSTOP_NOT_PROVEN, runSupervisor, type CommentStep, type PrStep } from "../../src/engine10/supervisor.ts";
 
 const roots: string[] = [];
 afterAll(() => { for (const r of roots) execFileSync("rm", ["-rf", r]); });
@@ -76,8 +76,11 @@ describe("E-67 rework: supervisor backstop", () => {
     const t0 = Date.now();
     const r = await runSupervisor({ runId: "e10-bs1", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 2, graceS: 1 });
     const wallMs = Date.now() - t0;
-    // Old behavior killed at (cap + grace) = 3000ms; the fix kills at (cap - grace) = 1000ms.
-    expect(wallMs).toBeLessThan(2000);
+    // Old behavior killed at (cap + grace) = 3000ms. r4 (E-67 finding 1): grace clamps to
+    // min(graceS, capS/30) so the backstop still clears the worker's own soft cap (1.867s here);
+    // that puts the kill at ~1.933s instead of the old, unclamped (cap - grace) = 1000ms. The bound
+    // below stays well under the old 3000ms while leaving slack for a loaded CI box.
+    expect(wallMs).toBeLessThan(2900);
     expect(r.verdict).toBe("FAILED");
     expect(r.notProven).toContain(BACKSTOP_NOT_PROVEN);
   }, 10_000);
@@ -199,5 +202,29 @@ describe("E-67 rework: supervisor backstop", () => {
     expect(r.prUrl).toBe("https://github.com/acme/widget/pull/9");
     const changed = execFileSync("git", ["diff", "--name-only", baseSha, "HEAD"], { cwd: dir, encoding: "utf8" }).trim().split("\n").sort();
     expect(changed).toEqual(["untracked.txt"]);
+  }, 10_000);
+
+  // E-67 finding 1, small non-default capS with the DEFAULT grace (no graceS override, unlike
+  // every test above): pre-fix, backstopMs = max(0, capS - 30) * 1000 was 0 at capS=5, so the
+  // worker got SIGTERM at spawn and a clean exit never had a chance to land. Red on the pre-fix
+  // formula (workerExit null, FAILED); green once the backstop clamps its grace for a small cap.
+  test("small capS, default grace: a worker that exits cleanly before its cap is not killed at spawn", async () => {
+    const { dir } = repoWithCommit();
+    const code = `setTimeout(() => process.exit(0), 200);`;
+    const r = await runSupervisor({ runId: "e10-bs8", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 5 });
+    expect(r.workerExit).toBe(0);
+    expect(r.notProven).not.toContain(BACKSTOP_NOT_PROVEN);
+  }, 10_000);
+
+  test("small capS, default grace: a hung worker is still killed before the cap elapses", async () => {
+    const { dir } = repoWithCommit();
+    const code = `setInterval(() => {}, 1000);`;
+    const t0 = Date.now();
+    const r = await runSupervisor({ runId: "e10-bs9", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 5 });
+    const wallMs = Date.now() - t0;
+    expect(wallMs).toBeLessThan(5000);
+    expect(wallMs).toBeGreaterThan(backstopS(5) * 1000 - 200); // fires near its computed instant, not at spawn
+    expect(r.verdict).toBe("FAILED");
+    expect(r.notProven).toContain(BACKSTOP_NOT_PROVEN);
   }, 10_000);
 });

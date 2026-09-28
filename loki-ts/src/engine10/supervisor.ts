@@ -21,10 +21,10 @@ const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detecte
 const VERDICTS = new Set<string>(["VERIFIED", "PARTIAL", "ALREADY_SATISFIED", "SPEC_CONFLICT", "FAILED"]);
 const SESSION_EXITS = new Set(["done", "already_done", "spec_conflict", "killed", "error"]);
 export const BACKSTOP_NOT_PROVEN = "worker killed by the supervisor backstop (cap minus grace)";
-// Seconds the backstop fires BEFORE the cap; held back for the supervisor's own post-kill work
-// (PR or comment). Must also clear the worker's own soft cap (14/15 of capS) plus commit+seal's
-// target time, or the kill preempts the wind-up before it can seal -- backstop_math.test.ts pins both.
-export const BACKSTOP_GRACE_S = 30;
+export const BACKSTOP_GRACE_S = 30; // default seconds held back from the cap for post-kill work (PR or comment)
+// Grace clamps to min(graceS, capS/30) so softCap (machine.ts, 14/15 of capS) < backstop < capS for
+// any capS > 0 -- a fixed 30s grace hit 0 below capS=30 and killed the worker at spawn (E-67 finding 1).
+export function backstopS(capS: number, graceS: number = BACKSTOP_GRACE_S): number { return capS - Math.min(graceS, capS / 30); }
 const DRAIN_MS = 2000; // after the worker exits, how long P0 waits for stdout to drain before closing it
 
 const nonNegNum = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v) && v >= 0;
@@ -204,7 +204,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   withholdGithubTokens(workerEnv);
   const envCap = Number(env.LOKI_E10_CAP_S);
   const capS = opts.capS ?? (envCap > 0 ? envCap : DEFAULT_CAP_S);
-  const backstopMs = Math.max(0, capS - (opts.graceS ?? BACKSTOP_GRACE_S)) * 1000; // hard SIGKILL safety net for a stage blocking past the worker's own soft cap (BACKSTOP_GRACE_S above)
+  const backstopMs = backstopS(capS, opts.graceS ?? BACKSTOP_GRACE_S) * 1000; // hard SIGKILL safety net for a stage blocking past the worker's own soft cap
   let sealed: Record<string, unknown> | null = null;
   const worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, (line) => {
     const e = log.ingest(line);
