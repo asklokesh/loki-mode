@@ -1,5 +1,10 @@
 # Progress
 
+## 2026-09-28T03:44Z: RELEASE BLOCKED -- read first on resume
+- v10.0.0 did NOT publish. The release commit 898fa081 (tag v10.0.0 pushed) failed Tests shards 1/8 and 5/8, so the Release workflow failed; `npm view loki-mode version` is still 9.81.0. Failing suites (gh run view 36372016155 --log-failed): "loki start surfaces a stale install" (line: "FAIL: a stale install prints NO warning on start") and "trust-core tests detect their regressions".
+- Next step: fix those 2 shards on main (likely the 10.0.0 major bump changes the version comparison the stale-install check uses; confirm from the test before editing), wait for Tests green on the fix SHA, then re-release v10.0.0 (the tag v10.0.0 already points at 898fa081: delete nothing; cut the re-release per docs/dev/release-checklist.md, bumping to 10.0.1 if the tag cannot be reused). Default stays legacy; v10 opt-in; gate numbers are in CHANGELOG v10.0.0 and docs/v10/METRICS.md.
+- Session hand-off: no workflows started after 03:11Z. Merge-ready (approved, not merged): E-68, E-69, EV-13 (branches worktree-wf_b707f4ab-24f-3/-4/-5), E-64 (worktree-wf_4601e7b3-4d8-1), E-70 already merged, E-31 held for the gate. Needs rework: E-66 (small test fixes), E-67 (backstop inside the cap), M-09, M-01/02/05/06 (iterative SCC), EV-11 (11 medium tasks missing); EV-12 review in flight.
+
 ## Current
 
 - Milestone: **M0 measure first**, item 1: the moat suite.
@@ -1304,3 +1309,9 @@ sample.
 - Part 2: MODERNIZE.md merged in train E17 (8f4dc965, 399 lines, M-01..M-30 on the board); first builders on M-01/M-02/M-05/M-06 and M-09. 0 Part 2 slices merged.
 - Merged this half hour: E-65 lean engine sessions (8b76fd9a), E-63 STALE_PROGRESS pulse check, E-70 dashboard versions (train E17). Released v9.81.0 (npm 02:38:54Z).
 - Top blocker: default v10 is heavier than raw (plan and Wall on every normal task, $0.39 vs $0.24). E-64 (lean small path plus opus on failure) is the fix; it was rejected once and is in rework.
+
+## 2026-09-28T03:44Z: Loki 10 progress
+- Part 1 gate numbers unchanged from 02:57Z (small tier, claude-opus-5-5): raw 27/29, $0.2363, p50 39s; v10 default 26/29, $0.3946, p50 85.5s; v10 lean configuration 27/29, $0.1616, p50 40s (~/loki-ci-logs/ev9-v10-small{,-lean}/results.jsonl). Gate not met; v10.0.0 release failed (see the top of this file).
+- P0 augmentiq #52 rework: E-68, E-69, EV-13 APPROVE; E-66 CONCERN; E-67 REJECT. E-64 (lean small path plus opus on failure) APPROVE on rework.
+- Part 2: 0 slices merged. M-01, M-02, M-05, M-06 built (CONCERN: recursive SCC); M-09 built (REJECT: unsupported types recorded as equal).
+- Top blocker: the 2 red Tests shards on 898fa081 block the v10.0.0 release.
