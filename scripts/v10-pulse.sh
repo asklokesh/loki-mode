@@ -488,12 +488,17 @@ _gh_streak_argv = shlex.split(os.environ["PULSE_GH_STREAK_CMD"]) if os.environ.g
 # -workflow, --json status,conclusion,workflowName) comes back inconclusive
 # -- gh itself failed/timed out, OR it succeeded but returned nothing
 # clean-red/clean-green (e.g. a cancelled-only run set). That read as a bare
-# UNKNOWN for 3 consecutive pushes while Tests was actually red (see PROGRESS
-# entry). Scoped to just the Tests workflow at this exact commit so a
-# same-shaped-but-different call has a real chance of resolving what the
-# first one could not. Always started alongside the others (same reasoning
-# as _gh_streak_proc: cheap, and only consulted if actually needed) so it
-# never costs a second sequential network round trip.
+# UNKNOWN for 3 consecutive pushes while Tests was actually red (see
+# docs/v10/PROGRESS.md). This rescues those two cases -- a bad/ambiguous
+# primary read -- not whatever upstream condition made the primary call
+# itself fail or time out in the first place. Scoped to just the Tests
+# workflow at this exact commit so a same-shaped-but-different call has a
+# real chance of resolving what the first one could not. Always started
+# alongside the others (same reasoning as _gh_streak_proc: cheap, and only
+# consulted if actually needed) so it never costs a second sequential
+# network round trip, and shares the same NETWORK_DEADLINE and SHA-keyed
+# cache/refresh path as the primary -- a shared-cause failure (e.g. gh
+# itself unreachable) takes both down together, by design.
 _gh_fallback_argv = None
 if main_sha is not None:
     if os.environ.get("PULSE_GH_FALLBACK_CMD"):

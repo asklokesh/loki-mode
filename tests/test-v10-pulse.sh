@@ -364,6 +364,55 @@ else
     printf '%s\n' "$OUT"
 fi
 
+echo "T3e -- E-75: primary fails, Tests-only fallback says success -> GREEN with the run id"
+GH_FALLBACK_GREEN_JSON="$WORK/gh-fallback-green.json"
+printf '[{"status":"completed","conclusion":"success","databaseId":7}]' > "$GH_FALLBACK_GREEN_JSON"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_ANY" "PULSE_GH_CMD=false" \
+    "PULSE_GH_FALLBACK_CMD=cat $GH_FALLBACK_GREEN_JSON"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -q "^Main CI (main @ $head_sha_short): GREEN .*fallback.*run 7" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: CI_RED"; then
+    ok "primary failed, Tests-only fallback resolved it to GREEN with the run id"
+else
+    bad "T3e fallback-green case: output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T3f -- E-75: primary fails, Tests-only fallback says still running -> PENDING with the run id"
+GH_FALLBACK_PENDING_JSON="$WORK/gh-fallback-pending.json"
+printf '[{"status":"in_progress","conclusion":null,"databaseId":9}]' > "$GH_FALLBACK_PENDING_JSON"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_ANY" "PULSE_GH_CMD=false" \
+    "PULSE_GH_FALLBACK_CMD=cat $GH_FALLBACK_PENDING_JSON"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -q "^Main CI (main @ $head_sha_short): PENDING .*fallback.*run 9" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: CI_RED"; then
+    ok "primary failed, Tests-only fallback resolved it to PENDING with the run id"
+else
+    bad "T3f fallback-pending case: output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T3g -- E-75: primary SUCCEEDS but is ambiguous (cancelled-only, rc=0), fallback says failure -> CI_RED"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_ANY" "PULSE_GH_CMD=cat $GH_CANCELLED_JSON" \
+    "PULSE_GH_FALLBACK_CMD=cat $GH_FALLBACK_RED_JSON"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -q "^Main CI (main @ $head_sha_short): RED .*fallback.*run 4242" \
+    && printf '%s\n' "$OUT" | grep -q "^VIOLATION: CI_RED: main CI is RED at $head_sha_short (Tests (fallback))"; then
+    ok "primary succeeded but ambiguous (cancelled-only): fallback still consulted and resolves to CI_RED"
+else
+    bad "T3g ambiguous-primary case: output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T3h -- E-75 precedence: primary resolves cleanly (GREEN); a failing fallback must never override it"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_ANY" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
+    "PULSE_GH_FALLBACK_CMD=cat $GH_FALLBACK_RED_JSON"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -q "^Main CI (main @ $head_sha_short): GREEN" \
+    && ! printf '%s\n' "$OUT" | grep -q "fallback" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: CI_RED"; then
+    ok "a conclusive primary result is never overridden by the fallback, whatever the fallback says"
+else
+    bad "T3h precedence case: output follows"
+    printf '%s\n' "$OUT"
+fi
+
 echo "T4 -- clean case: no violations, full status block still prints, exact ordering"
 BOARD_CLEAN="$WORK/BOARD-clean.md"
 {
