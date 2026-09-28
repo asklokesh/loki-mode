@@ -1,0 +1,36 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________________________ TestReplace.test_replaces ___________________________
+
+self = <tests.test_functional.TestReplace object at 0x109721950>
+
+    def test_replaces(self):
+        """
+        copy.replace() is added by default and works like `attrs.evolve`.
+        """
+        inst = C1(1, 2)
+    
+>       assert C1(1, 42) == copy.replace(inst, y=42)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_functional.py:781: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+obj = C1(x=1, y=2), changes = {'y': 42}
+
+    def replace(obj, /, **changes):
+        """Return a new object replacing specified fields with new values.
+    
+        This is especially useful for immutable objects, like named tuples or
+        frozen dataclasses.
+        """
+        cls = obj.__class__
+        func = getattr(cls, '__replace__', None)
+        if func is None:
+>           raise TypeError(f"replace() does not support {cls.__name__} objects")
+E           TypeError: replace() does not support C1 objects
+
+/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/copy.py:285: TypeError
+=========================== short test summary info ============================
+FAILED tests/test_functional.py::TestReplace::test_replaces - TypeError: repl...
+1 failed, 409 deselected in 0.10s

@@ -3,7 +3,7 @@
 
 Subcommands (run.sh and summarize are thin wrappers around these):
   validate <task_dir>...
-  run --arm <v10|raw-claude|legacy> (--task ID | --tasks A,B | --all) [--parallel N] [--out DIR] [--tasks-dir DIR]
+  run --arm <v10|raw-claude|legacy> (--task ID | --tasks A,B | --all) [--tier small|medium|large] [--parallel N] [--out DIR] [--tasks-dir DIR]
   summarize <results.jsonl> [--markdown]
 
 Honesty rules (the v10.0.0 release gate depends on them):
@@ -50,7 +50,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 ARMS = ("v10", "raw-claude", "legacy")
 KINDS = ("augmentiq", "public", "quickstart")
-TASK_KEYS = {"id", "kind", "prompt", "issue_ref", "repo", "setup", "hidden", "timeout_s", "expected_outcome"}
+TIERS = ("small", "medium", "large")
+DEFAULT_TIER = "small"
+TASK_KEYS = {"id", "kind", "prompt", "issue_ref", "repo", "setup", "hidden", "timeout_s", "expected_outcome", "tier"}
 # EV-13: "already implemented" is a first-class outcome, never a pause or a
 # duplicate PR. The only value today; unknown values are rejected so a typo
 # fails validate_task instead of silently grading as a normal build task.
@@ -96,6 +98,20 @@ V10_ENGINE_ENV_ALLOWLIST = (
 KEYCHAIN_SERVICE = "Claude Code-credentials"
 SECURITY_BIN = "/usr/bin/security"  # absolute: never a PATH lookup
 AUTH_MARGIN_S = 120
+
+
+def _task_tier(task_dir):
+    """Read task.json's tier for --tier filtering only. A missing tier
+    defaults to small. Unreadable json or a tier outside TIERS returns None
+    (never guessed as small), so --tier keeps the id instead of silently
+    shrinking the run; validate_task then reports the real error for it."""
+    try:
+        with open(os.path.join(task_dir, "task.json"), encoding="utf-8") as f:
+            t = json.load(f)
+        tier = t.get("tier", DEFAULT_TIER)
+        return tier if tier in TIERS else None
+    except (OSError, ValueError, AttributeError):
+        return None
 
 
 # ---------------------------------------------------------------- validate
@@ -159,6 +175,8 @@ def validate_task(task_dir):
     ts = t.get("timeout_s", DEFAULT_TIMEOUT_S)
     if isinstance(ts, bool) or not isinstance(ts, int) or ts <= 0:
         errs.append("timeout_s must be a positive integer")
+    if "tier" in t and t.get("tier") not in TIERS:
+        errs.append("tier must be one of %s" % "|".join(TIERS))
     return (None if errs else t), ["%s: %s" % (task_dir, e) for e in errs]
 
 
@@ -1114,6 +1132,12 @@ def cmd_run(args):
     tasks_dir = os.path.abspath(args.tasks_dir)
     if args.all:
         ids = sorted(d for d in os.listdir(tasks_dir) if os.path.isfile(os.path.join(tasks_dir, d, "task.json")))
+        if args.tier:
+            # None (unreadable json / invalid tier value) is kept, not
+            # dropped, so a bad task.json fails loudly in validate_task below
+            # instead of silently shrinking the selected set (E-38 contract).
+            ids = [d for d in ids
+                   if (tier := _task_tier(os.path.join(tasks_dir, d))) == args.tier or tier is None]
     elif args.tasks:
         ids = sorted({t.strip() for t in args.tasks.split(",") if t.strip()})
     else:
@@ -1387,6 +1411,7 @@ def main(argv=None):
     g.add_argument("--task")
     g.add_argument("--tasks", help="comma-separated task ids (e.g. a 5-task measurement)")
     g.add_argument("--all", action="store_true")
+    r.add_argument("--tier", choices=TIERS, help="with --all, run only tasks of this tier (default: all tiers)")
     r.add_argument("--parallel", type=int, default=3)
     r.add_argument("--out", default=os.path.join(HERE, "results"))
     # LOKI_EVAL_TASKS_DIR keeps the tasks path out of argv (visible in ps to
