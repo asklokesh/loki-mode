@@ -9,7 +9,7 @@ import { dirname, join, relative } from "node:path";
 import { createHash } from "node:crypto";
 import type { RunContext, RunnerName, Stage, StageResult, TestMap, TestRef } from "../types.ts";
 import type { ReadOnlyFile } from "./implement.ts";
-import { hasRelevantTests, loadRepoMap, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallModel } from "../sizing.ts";
+import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallModel } from "../sizing.ts";
 
 const WALL_PREFIX = "loki_wall_";
 
@@ -122,9 +122,11 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   const runners: RunnerName[] = testMap?.runners ?? [];
 
   // E-64: skip Wall too on the lean path (plan.ts, which always runs, logs this same decision on "variant").
+  // LOKI_E10_PLAN=always forces a plan even for a small task, so the lean path never applies: a forced plan
+  // still gets the Wall's independent acceptance tests.
   const repoMap = loadRepoMap(repomapRef);
   const sz = sizeTask(task, repoMap, testMap);
-  if (smallTaskPath(sz.size, hasRelevantTests(task, repoMap, testMap, ctx.tests.impacted)) === "lean") {
+  if (planMode() !== "always" && smallTaskPath(sz.size, hasRelevantTests(task, repoMap, testMap, ctx.tests.impacted)) === "lean") {
     return { status: "skipped", data: { size: sz.size }, reason: "small task with a relevant test: cascade skips Wall" };
   }
 

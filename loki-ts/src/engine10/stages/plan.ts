@@ -72,7 +72,8 @@ export const planStage: Stage = {
     const sz = sizeTask(task, loaded, testMap); // E-45: a small task skips this session and the implementer plans
     const mode = planMode();
     const skip = mode === "never" || (mode === "auto" && sz.size === "small");
-    const path = smallTaskPath(sz.size, hasRelevantTests(task, loaded, testMap, ctx.tests.impacted)); // E-64: wall.ts makes this same check to skip itself
+    // E-64: wall.ts makes this same check to skip itself; a forced plan (LOKI_E10_PLAN=always) also forces "wall", since it still gets its own Wall.
+    const path = mode === "always" ? "wall" : smallTaskPath(sz.size, hasRelevantTests(task, loaded, testMap, ctx.tests.impacted));
     ctx.emit("variant", null, { size: sz.size, reasons: sz.reasons, plan_mode: mode, plan_skipped: skip, wall_model: wallEnabled() ? wallModel() : null, small_task_path: path, cascade: cascadeEnabled() });
     if (skip) return { status: "skipped", data: { size: sz.size }, reason: mode === "never" ? "LOKI_E10_PLAN=0" : "small task: implementer plans" };
 

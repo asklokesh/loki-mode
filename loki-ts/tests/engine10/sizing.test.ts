@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { runMachine } from "../../src/engine10/machine.ts";
 import { createSessionRunner } from "../../src/engine10/session.ts";
 import { readFileSync } from "node:fs";
-import { cascadeImplementModel, planMode, sizeTask, wallModel } from "../../src/engine10/sizing.ts";
+import { cascadeImplementModel, planMode, resolveModelAlias, sizeTask, wallModel } from "../../src/engine10/sizing.ts";
 import { planStage } from "../../src/engine10/stages/plan.ts";
 import { wallStage, buildWallBrief, WALL_MAP_MAX_LINES } from "../../src/engine10/stages/wall.ts";
 import { implementStage } from "../../src/engine10/stages/implement.ts";
@@ -82,6 +82,13 @@ describe("engine10 E-45 sizing", () => {
   it("E-64: a small task with no impacted test for the named file keeps the Wall (fail-safe)", async () => {
     const { calls, events } = await run("fix the off-by-one in mod1.ts", files(10), { impacted: () => [] });
     expect(calls.map((c) => c.stage).sort()).toEqual(["implement", "wall"]);
+    expect(events.find((e) => e.type === "variant")!.data).toMatchObject({ small_task_path: "wall" });
+  });
+
+  it("minor: LOKI_E10_PLAN=always forces the plan on a lean-eligible small task, and Wall still runs too", async () => {
+    process.env.LOKI_E10_PLAN = "always";
+    const { calls, events } = await run("fix the off-by-one in mod1.ts", files(10), { impacted: impactedOne });
+    expect(calls.map((c) => c.stage).sort()).toEqual(["implement", "plan", "wall"]);
     expect(events.find((e) => e.type === "variant")!.data).toMatchObject({ small_task_path: "wall" });
   });
 
@@ -164,29 +171,40 @@ describe("engine10 E-45 sizing", () => {
     const result = await fixStage.run(fixCtx(calls, events), new AbortController().signal);
     expect(calls[0]!.model).toBe("claude-opus-5-5");
     expect(events.find((e) => e.type === "fix.round")!.data).toMatchObject({
-      escalated: true, escalation_reason: "bun:a.test.ts", escalation_model: "claude-opus-5-5",
+      escalated: true, model: "claude-opus-5-5", escalation_reason: "bun:a.test.ts", escalation_model: "claude-opus-5-5",
     });
     expect(result.data.cascade).toBe(true);
+    expect(result.data.model).toBe("claude-opus-5-5");
   });
 
-  it("E-64: LOKI_E10_CASCADE=0 leaves the fix round on the run's configured model with no escalation event", async () => {
+  it("D31/blocking: LOKI_E10_CASCADE=0 leaves the fix round on the run's configured model with no escalation event", async () => {
     process.env.LOKI_E10_CASCADE = "0";
     const calls: SessionRunOptions[] = [];
     const events: { type: string; stage: string | null; data: Record<string, unknown> }[] = [];
-    await fixStage.run(fixCtx(calls, events), new AbortController().signal);
-    expect(calls[0]!.model).toBeUndefined();
-    expect(events.find((e) => e.type === "fix.round")!.data.escalated).toBeUndefined();
+    const result = await fixStage.run(fixCtx(calls, events), new AbortController().signal);
+    expect(calls[0]!.model).toBeUndefined(); // cascade fully off: never pins, inherits the run's configured model
+    const round = events.find((e) => e.type === "fix.round")!.data;
+    expect(round.escalated).toBe(false);
+    // The event must truthfully report the model the session actually runs on (the run's model, since no pin).
+    expect(round.model).toBe("claude-opus-5-5");
+    expect(result.data.model).toBe("claude-opus-5-5");
   });
 
-  it("E-64: a lint-only failure never escalates (verify failed, but not a test)", async () => {
+  it("D31/blocking: a lint-only failure never escalates, and the round runs on the cheap model, never the run's top model", async () => {
     const calls: SessionRunOptions[] = [];
     const events: { type: string; stage: string | null; data: Record<string, unknown> }[] = [];
     const ctx = fixCtx(calls, events);
     ctx.outputs = () => ({ intake: { task: "t" }, verify: { failures_grouped: [{ signature: "lint:tsc", count: 1, sample: "npx tsc --noEmit" }] } });
     const result = await fixStage.run(ctx, new AbortController().signal);
-    expect(calls[0]!.model).toBeUndefined();
-    expect(events.find((e) => e.type === "fix.round")!.data.escalated).toBeUndefined();
+    // Blocking defect: a round that does not escalate must still run on the cheap model (never inherit
+    // ctx.model, "claude-opus-5-5" here, via LOKI_MODEL_OVERRIDE).
+    expect(calls[0]!.model).toBe(cascadeImplementModel());
+    const round = events.find((e) => e.type === "fix.round")!.data;
+    expect(round.escalated).toBe(false);
+    expect(round.model).toBe(cascadeImplementModel()); // truthfully the model the session was actually given
+    expect(round.escalation_reason).toBeUndefined();
     expect(result.data.cascade).toBe(false);
+    expect(result.data.model).toBe(cascadeImplementModel());
   });
 
   it("E-64: no phantom escalation when the run has no top model configured (ctx.model already equals the pin)", async () => {
@@ -195,8 +213,21 @@ describe("engine10 E-45 sizing", () => {
     const ctx = fixCtx(calls, events);
     ctx.model = cascadeImplementModel(); // no LOKI_MODEL_OVERRIDE: the run's model IS the cascade pin already
     const result = await fixStage.run(ctx, new AbortController().signal);
-    expect(calls[0]!.model).toBeUndefined();
-    expect(events.find((e) => e.type === "fix.round")!.data.escalated).toBeUndefined();
+    expect(calls[0]!.model).toBe(cascadeImplementModel());
+    const round = events.find((e) => e.type === "fix.round")!.data;
+    expect(round.escalated).toBe(false);
+    expect(round.model).toBe(cascadeImplementModel());
+    expect(result.data.cascade).toBe(false);
+  });
+
+  it("minor: no phantom escalation when ctx.model is an unresolved alias of the cascade pin (\"sonnet\" vs its resolved id)", async () => {
+    const calls: SessionRunOptions[] = [];
+    const events: { type: string; stage: string | null; data: Record<string, unknown> }[] = [];
+    const ctx = fixCtx(calls, events);
+    ctx.model = "sonnet"; // resolveModelAlias("sonnet") === cascadeImplementModel(); a bare string compare would wrongly escalate
+    expect(resolveModelAlias("sonnet")).toBe(cascadeImplementModel());
+    const result = await fixStage.run(ctx, new AbortController().signal);
+    expect(events.find((e) => e.type === "fix.round")!.data.escalated).toBe(false);
     expect(result.data.cascade).toBe(false);
   });
 

@@ -53,10 +53,11 @@ export const wallEnabled = (env = process.env): boolean => !knob(env.LOKI_E10_WA
 /** LOKI_E10_CASCADE=0/off/false: implement (and any fix round) stays on the run's configured model, as before E-64. */
 export const cascadeEnabled = (env = process.env): boolean => !knob(env.LOKI_E10_CASCADE, ["0", "off", "false"]);
 
-function resolveAlias(want: string): string {
+/** Resolves a cli_alias (e.g. "sonnet") to its catalog model id; an id already, or an unknown alias, passes through unchanged. */
+export function resolveModelAlias(want: string): string {
   try { return JSON.parse(readFileSync(join(import.meta.dir, "../../../providers/model_catalog.json"), "utf8")).providers?.claude?.cli_aliases?.[want] ?? want; } catch { return want; }
 }
 /** LOKI_E10_WALL_TIER (alias or id, default sonnet) resolved via providers/model_catalog.json cli_aliases. */
-export const wallModel = (env = process.env): string => resolveAlias(env.LOKI_E10_WALL_TIER || "sonnet");
+export const wallModel = (env = process.env): string => resolveModelAlias(env.LOKI_E10_WALL_TIER || "sonnet");
 /** E-64: the cascade's first implement call pins to the same sonnet alias Wall already uses (E-45). */
 export const cascadeImplementModel = wallModel;
