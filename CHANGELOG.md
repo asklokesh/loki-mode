@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.2.5 (2026-09-28)
+
+Test guard and planning docs. No change to how `loki` runs your builds.
+
+### Added
+- `tests/test-dep-inventory.sh` now also runs the dependency inventory's self-test with no GitHub credentials, no `gh` on the path and an empty home directory, so a self-test that quietly reaches the network fails on a developer machine the same way it would on a CI runner (E-93; guard for the main-branch failure fixed in v10.2.2).
+- `docs/v10/SCALE.md`: what the Claude Max plan sustains for the engineering swarm and what larger headcounts would cost on API billing, with every figure labelled as measured or estimated (G-03).
+- `docs/v10/METRICS.md`: the medium-tier gate result for the Loki 10 engine against raw `claude -p` (EV-14): raw completed 12 of 14 runs, the v10 engine 10 of 14, so the default engine stays legacy.
+
 ## v10.2.4 (2026-09-28)
 
 Eval tooling release: one size rule for the medium and large eval tiers. No change to how `loki` runs your builds.
