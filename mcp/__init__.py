@@ -75,4 +75,4 @@ try:
 except ImportError:
     __all__ = ['mcp']
 
-__version__ = '10.0.0'
+__version__ = '10.0.1'

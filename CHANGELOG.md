@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.0.1 (2026-09-28)
+
+Republishes v10.0.0, which was tagged but never reached npm: its release commit failed two Tests shards because a test used 9.99.0 as a "far-future" version, which is older than 10.0.0. No product change; the v10.0.0 notes below apply in full.
+
+### Fixed
+- `tests/test-start-update-hint.sh` uses 999.0.0 as the far-future latest, so the stale-install warning test (and the trust-core baseline that runs it) stays meaningful across major versions.
+
 ## v10.0.0 (2026-09-28)
 
 Loki 10: a new engine (TypeScript/Bun, under 5,000 lines, one state machine: intake, plan, Wall, one implement session, fast verify with at most 2 fix rounds, Seal, PR, async deep verify; 15-minute cap; one append-only event log per run). It ships OPT-IN: run `LOKI_ENGINE=v10 loki "<task>"` or `LOKI_ENGINE=v10 loki owner/repo#N`. The default engine is still legacy, because the release gate below was not met. Legacy is unchanged and is removed only after v10 becomes the default.
