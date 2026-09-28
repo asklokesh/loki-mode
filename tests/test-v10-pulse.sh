@@ -2581,6 +2581,30 @@ else
     printf '%s\n' "$OUT"
 fi
 
+echo "T42h -- E-117: a numeric range over the 50-id cap ('M-1..M-9999') is left as literal text, not expanded"
+BOARD_DEPS_RANGE_NUMERIC_HUGE="$WORK/BOARD-deps-range-numeric-huge.md"
+cat > "$BOARD_DEPS_RANGE_NUMERIC_HUGE" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S-01 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-02 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-03 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-04 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-05 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| M-1 | a | x | LOW | merged@2026-09-27T01:00Z | Depends on none. |
+| M-9999 | a | x | LOW | merged@2026-09-27T01:00Z | Depends on none. |
+| M-100 | modernize step | y | LOW | ready@2026-09-27T01:00Z | Depends on M-1..M-9999. |
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_DEPS_RANGE_NUMERIC_HUGE"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: LOW_READY: only 6 ready slice(s) on BOARD (want at least 8); cut 2 more" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: LOW_READY:.*blocked by dependency" \
+    && printf '%s\n' "$OUT" | grep -qF "Ready rows blocked by dependency: none"; then
+    ok "M-1..M-9999 (9999 ids, over the 50 cap) is left as literal M-1/M-9999 endpoints, not expanded; both merged so M-100 is not blocked"
+else
+    bad "T42h numeric-range-over-cap case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
 echo "T43 -- E-80: PROGRESS.md age is never negative; a future entry heading reports FUTURE_TIMESTAMP"
 PROGRESS_FUTURE="$WORK/PROGRESS-future.md"
 printf '# Progress\n\n## 2026-09-27T03:30:00Z: future entry\n- clock skew or a mistyped heading\n' > "$PROGRESS_FUTURE"

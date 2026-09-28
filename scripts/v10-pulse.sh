@@ -1177,7 +1177,11 @@ def _expand_depends_on_range(m):
     if num_end_prefix is not None and num_end_prefix != num_prefix:
         return m.group(0)
     start, end = int(num_start), int(num_end)
-    if start > end:
+    # Capped at 50 (Tech Lead REJECT on E-117): an unbounded numeric span
+    # ("M-1..M-9999") would expand to thousands of ids, all landing in the
+    # pulse block injected into every turn. A span over the cap is left as
+    # literal text, same as the reversed-range fallback above.
+    if start > end or (end - start + 1) > 50:
         return m.group(0)
     return " ".join("%s-%d" % (num_prefix, n) for n in range(start, end + 1))
 
