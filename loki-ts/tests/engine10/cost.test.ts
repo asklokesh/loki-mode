@@ -90,10 +90,16 @@ describe("engine10 cost", () => {
   });
 
   test("a real free session (nonzero tokens, total_cost_usd 0) still measures as $0.00", () => {
-    const c = readResultCost(join(FIX, "two"), "e10-r1-plan"); // 0.125, not free, but proves the branch
+    // Genuine EV-8 counter-case: the provider actually priced this session at $0, with real
+    // usage on both token fields, so it must NOT be swept into "unmeasured" by the zero-usage
+    // guard above. A `noUsage = c === 0` mutation (treating any exactly-zero cost as unmeasured,
+    // the exact regression that guard exists to prevent) turns this red: usd becomes null.
+    const c = readResultCost(join(FIX, "free"), "e10-r1-free");
+    expect(c.usd).toBe(0);
+    expect(c.missing).toEqual([]);
     expect(c.measuredCount).toBe(1);
     expect(c.totalCount).toBe(1);
-    expect(c.partialUsd).toBe(0.125);
+    expect(c.partialUsd).toBe(0);
   });
 
   test("one priced, one zero-usage session: usd null but partialUsd/measuredCount report what was measured", () => {

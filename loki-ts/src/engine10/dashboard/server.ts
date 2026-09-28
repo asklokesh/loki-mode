@@ -4,6 +4,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fold, readEvents, tail } from "../events.ts";
+import { partialCost } from "../supervisor.ts";
 import type { EventEnvelope, Verdict } from "../types.ts";
 import { renderPage } from "./page.ts";
 export const DEFAULT_PORT = 57375;
@@ -15,6 +16,13 @@ export interface RunSummary {
   pr: { url: string; draft: boolean } | null;
   notProven: string[] | null;
   costUsd: number | null;
+  // E-69: per-session measured/total counts and their dollar sum, for "partial: $X for N of M
+  // sessions" when costUsd is null because some but not all sessions priced. measuredSessions is
+  // 0 (never a partial line) on a run with no cost events yet, or a TAMPERED one (partialCost's
+  // own tamper guard).
+  partialUsd: number;
+  measuredSessions: number;
+  totalSessions: number;
   wallS: number | null;
 }
 function runsDir(repoDir: string): string {
@@ -46,13 +54,17 @@ export function summarizeRun(repoDir: string, runId: string): RunSummary {
   const wallS =
     folded.run.completed && startedMs != null ? (Date.parse(folded.run.completed.ts) - startedMs) / 1000 : null;
   const prUrl = prData?.url ?? prData?.pr_url ?? null;
+  const pc = partialCost(events, folded.run.tampered);
   return {
     runId,
     verdict: folded.run.verdict,
     currentStage: folded.run.completed ? null : (lastEvent?.stage ?? null),
     pr: prUrl ? { url: prUrl, draft: prData?.draft === true } : null,
     notProven: sealData?.not_proven ?? null,
-    costUsd: folded.cost.usd,
+    costUsd: folded.run.tampered ? null : folded.cost.usd,
+    partialUsd: pc.usd,
+    measuredSessions: pc.measured,
+    totalSessions: pc.total,
     wallS,
   };
 }
@@ -69,7 +81,14 @@ export function formatPanels(r: RunSummary): { label: string; value: string }[] 
   if (r.pr) panels.push({ label: "PR", value: r.pr.url + (r.pr.draft ? " (draft)" : "") });
   else if (r.verdict) panels.push({ label: "PR", value: "none" });
   if (r.notProven) panels.push({ label: "NOT PROVEN", value: r.notProven.length ? r.notProven.join(", ") : "none" });
-  panels.push({ label: "Cost", value: r.costUsd != null ? `$${r.costUsd.toFixed(2)}` : "not measured" });
+  panels.push({
+    label: "Cost",
+    value: r.costUsd != null
+      ? `$${r.costUsd.toFixed(2)}`
+      : r.measuredSessions
+        ? `partial: $${r.partialUsd.toFixed(2)} for ${r.measuredSessions} of ${r.totalSessions} sessions`
+        : "not measured",
+  });
   panels.push({ label: "Time", value: r.wallS != null ? `${Math.round(r.wallS)}s` : "not measured" });
   return panels;
 }

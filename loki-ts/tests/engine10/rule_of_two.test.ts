@@ -5,7 +5,8 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readEvents } from "../../src/engine10/events.ts";
-import { runSupervisor, TAMPER_NOT_PROVEN, type PrStep } from "../../src/engine10/supervisor.ts";
+import { partialCost, runSupervisor, TAMPER_NOT_PROVEN, type PrStep } from "../../src/engine10/supervisor.ts";
+import type { EventEnvelope } from "../../src/engine10/types.ts";
 import { assertWorkerEnv, runWorker } from "../../src/engine10/worker.ts";
 
 const CANARY = "ghp_CANARYrealtoken0123456789abcdef";
@@ -68,6 +69,30 @@ function prSpy(): { step: PrStep; calls: { env: NodeJS.ProcessEnv; origin: strin
     },
   };
 }
+
+// E-69 rework: partialCost() feeds the Slack notify's and the CLI print's "partial: $X for N of
+// M sessions" line. It must respect the same tamper guard runSupervisor already applies to `usd`
+// (costUsd = log.tampered ? null : folded.cost.usd), or a TAMPERED run prints a dollar figure
+// sourced from a log the engine has explicitly flagged as untrustworthy.
+const costEv = (seq: number, usd: number): EventEnvelope => ({
+  v: 1, seq, ts: "2026-09-27T00:00:00Z", run: "r1", type: "cost", stage: null, data: { session_id: `s${seq}`, usd },
+});
+describe("E-69 partialCost tamper guard", () => {
+  test("untampered: reports the real measured/total/usd", () => {
+    const events = [costEv(0, 0.1), costEv(1, 0.25)];
+    expect(partialCost(events, false)).toEqual({ measured: 2, total: 2, usd: 0.35 });
+  });
+
+  test("tampered: no trusted cost, regardless of what the events say", () => {
+    const events = [costEv(0, 0.1), costEv(1, 0.25)];
+    expect(partialCost(events, true)).toEqual({ measured: 0, total: 0, usd: 0 });
+  });
+
+  test("tampered defaults to false when omitted (existing callers keep their prior behavior)", () => {
+    const events = [costEv(0, 0.1)];
+    expect(partialCost(events)).toEqual({ measured: 1, total: 1, usd: 0.1 });
+  });
+});
 
 describe("E-03 rule of two", () => {
   test("worker env holds the sentinel, supervisor keeps the canary, clean log pushes", async () => {

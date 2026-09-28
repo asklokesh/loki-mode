@@ -214,7 +214,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const allEvents = readEvents(log.path), folded = fold(allEvents), costUsd = log.tampered ? null : folded.cost.usd, wallS = (Date.now() - t0) / 1000; // one read, reused for cost and the Slack summary; unknown cost stays null
   log.append("run.completed", null, { verdict, pr_url: prUrl, not_proven: notProven, cost_usd: costUsd, wall_s: wallS });
   const stages = allEvents.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number").map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })), // E-48 notify: Slack when configured, no-op otherwise
-    pc = partialCost(allEvents),
+    pc = partialCost(allEvents, log.tampered),
     summary = { pr: prUrl ? { url: prUrl, draft: verdict !== "VERIFIED" } : null, verdict, notProven, flaky: [] as string[], wallS, stages, cost: { usd: costUsd, provider: String(opts.started?.provider ?? ""), tokens: allEvents.some((e) => e.type === "cost") ? folded.cost.inputTokens + folded.cost.outputTokens : null, partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total } };
   try { const { createSlackAdapter } = await import("./adapters/slack.ts"); await Promise.race([createSlackAdapter(env.LOKI_SLACK_WEBHOOK_URL).notify?.(summary) ?? Promise.resolve(), new Promise<void>((r) => setTimeout(r, Number(env.LOKI_E10_NOTIFY_TIMEOUT_MS) || 5000).unref())]); } catch { /* best-effort: a Slack failure or hang must never affect the verdict */ }
   return { verdict, tampered: log.tampered, notProven, prUrl, workerExit };
@@ -227,7 +227,11 @@ export function summaryTokens(f: Folded, sawCost: boolean): number | null {
 // E-69: per-session measured/total counts and their dollar sum, straight from the raw cost
 // events -- not folded.cost.usd, which already collapses to null the moment any one session is
 // unpriced. Lets the summary say "partial: $X for N of M sessions" instead of just "not measured".
-export function partialCost(events: EventEnvelope[]): { measured: number; total: number; usd: number } {
+// `tampered` mirrors the guard runSupervisor already applies to `usd` (costUsd = log.tampered ?
+// null : folded.cost.usd): a TAMPERED log's cost events are as untrustworthy as everything else
+// in it, so this must report no measured cost too, never a dollar figure sourced from them.
+export function partialCost(events: EventEnvelope[], tampered = false): { measured: number; total: number; usd: number } {
+  if (tampered) return { measured: 0, total: 0, usd: 0 };
   let measured = 0, total = 0, usd = 0;
   for (const e of events) {
     if (e.type !== "cost") continue;
@@ -319,7 +323,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const f = fold(events);
   const sawCost = events.some((e) => e.type === "cost");
   const cli = process.env.LOKI_E10_INVOKER === "cli";
-  const pc = partialCost(events);
+  const pc = partialCost(events, res.tampered);
   process.stdout.write(formatSummary({
     pr: res.prUrl ? { url: res.prUrl, draft: res.verdict !== "VERIFIED" } : null,
     verdict: res.verdict, notProven: res.notProven, flaky: [],
