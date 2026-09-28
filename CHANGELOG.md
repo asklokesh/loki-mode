@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.2.2 (2026-09-28)
+
+Tooling release: a dependency inventory for the modernization workstream, plus the fix that restored the test suite after it landed. No change to how `loki` runs your builds.
+
+### Added
+- `scripts/dep-inventory.py` and `docs/v10/DEPS.md`: an inventory of every dependency Loki Mode uses (7 npm/bun manifests, Python requirements and pyproject files, 24 GitHub Actions workflows and 2 composite actions, the Node, Python and Bun CI matrices, Docker base images, both Helm charts, Terraform providers and the Homebrew formula), each with its current and latest stable version, the bump class (patch, minor, MAJOR, or 0.x breaking), runtime end-of-life dates, and floating action tags resolved to the release they actually point at. It drives the dependency upgrade slices (DEP-01, D35).
+- Findings it surfaced: Node 20 in the CI matrix is past end of life (2026-04-30); `actions/checkout@v4` and `actions/setup-node@v4` run on the deprecated Node 20 runtime; both Helm charts carry an appVersion that no longer matches the product version.
+
+### Fixed
+- The inventory's self-test no longer reaches the network or the GitHub CLI, so it gives the same result on a CI runner as on a developer machine (E-92).
+- Release notes on GitHub now carry the full CHANGELOG section for v9.80.1, v9.81.0, v10.0.1, v10.1.0, v10.1.1 and v10.2.1, which had been published with a one-line placeholder (D36).
+
 ## v10.2.1 (2026-09-28)
 
 Publishes the v10.2.0 changes below. 10.2.0 was bumped but never reached npm: its release gate stopped on a secret-scan false positive (a pinned upstream werkzeug commit in an eval task, allowlisted by exact fingerprint), and a version that is already bumped cannot be re-released by dispatch.
