@@ -93,8 +93,16 @@ const EXIT_CAUSES: Readonly<Record<number, string>> = {
   137: "exit 137 (SIGKILL)",
   143: "exit 143 (SIGTERM)",
 };
-export function classifyExitCause(exit: number | null, killed: boolean): string {
-  if (exit === null) return killed ? "limit" : "external kill";
+// E-68 rework: a real session child (cli.ts:330) traps SIGTERM and exits 143
+// instead of dying by signal, so a limit kill can report a non-null code.
+// Classify from what the ENGINE knows -- it sent the kill -- never from the
+// child's self-reported code: killed always wins, before the code is even
+// looked at. killCause names which kill fired (the limitS timer vs. an
+// external opts.signal abort); omitted, it defaults to "limit" so existing
+// two-argument callers keep their prior behavior.
+export function classifyExitCause(exit: number | null, killed: boolean, killCause?: "limit" | "aborted"): string {
+  if (killed) return killCause ?? "limit";
+  if (exit === null) return "external kill";
   return EXIT_CAUSES[exit] ?? `exit ${exit} (unrecognized code)`;
 }
 // SIGTERM now, SIGKILL after the grace, against the whole group; shared by the limit timeout and an external abort.
@@ -135,9 +143,19 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       let stdout = "";
       child.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
       let killed = false;
+      // Which kill fired, from the engine's own point of view -- never guessed from the
+      // child's exit code. First one wins: the limit timer and an external abort cannot
+      // both be the cause of the same kill.
+      let killCause: "limit" | "aborted" | null = null;
+      const kill = (cause: "limit" | "aborted") => {
+        if (killed) return;
+        killed = true;
+        killCause = cause;
+        killGroupWithGrace(pgid);
+      };
       cfg.emit?.("session.started", opts.stage, { session_id: sessionId, provider: cfg.provider, model: opts.model ?? cfg.model ?? null, pgid: pgid ?? null });
-      const onAbort = () => { killed = true; killGroupWithGrace(pgid); };
-      const limitTimer = setTimeout(onAbort, opts.limitS * 1000);
+      const onAbort = () => kill("aborted");
+      const limitTimer = setTimeout(() => kill("limit"), opts.limitS * 1000);
       const heartbeatTimer = setInterval(() => {
         cfg.emit?.("heartbeat", opts.stage, { waiting_on: opts.stage, elapsed_s: (Date.now() - start) / 1000, diff: diffShortstat(opts.cwd) });
       }, cfg.heartbeatMs ?? HEARTBEAT_MS_DEFAULT);
@@ -153,7 +171,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
           const markers = parseMarkers(stdout + (existsSync(log) ? readFileSync(log, "utf8") : ""));
           const durationS = (Date.now() - start) / 1000;
           cfg.emit?.("session.ended", opts.stage, {
-            session_id: sessionId, exit: exitKind(code, killed, markers), cause: classifyExitCause(code, killed), duration_s: durationS,
+            session_id: sessionId, exit: exitKind(code, killed, markers), cause: classifyExitCause(code, killed, killCause ?? undefined), duration_s: durationS,
           });
           recordCost(cfg, opts, killed ? "killed" : code === 0 ? "completed" : "failed", durationS);
           resolve({ exit: code, markers, durationS, killed });

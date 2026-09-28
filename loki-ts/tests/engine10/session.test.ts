@@ -24,6 +24,7 @@ async function waitForFile(path: string, timeoutMs = 5000): Promise<void> {
 
 const STUB = join(import.meta.dir, "fixtures", "session", "stub.sh");
 const STUB_MARKER = join(import.meta.dir, "fixtures", "session", "stub_marker.sh");
+const STUB_SIGTERM143 = join(import.meta.dir, "fixtures", "session", "stub_sigterm143.sh");
 
 function isAlive(pid: number): boolean {
   try {
@@ -111,6 +112,13 @@ describe("engine10 session", () => {
     // A code with no table entry still names the number: never a bare fallback string.
     expect(classifyExitCause(255, false)).toBe("exit 255 (unrecognized code)");
     expect(classifyExitCause(17, false)).toBe("exit 17 (unrecognized code)");
+    // E-68 rework: classify from what the ENGINE knows, not the child's self-reported
+    // code. A code the child made up (143, or anything else) while the engine itself
+    // did the killing is always "limit" or "aborted", per which one fired.
+    expect(classifyExitCause(143, true, "limit")).toBe("limit");
+    expect(classifyExitCause(143, true, "aborted")).toBe("aborted");
+    expect(classifyExitCause(0, true, "limit")).toBe("limit");
+    expect(classifyExitCause(null, true, "aborted")).toBe("aborted");
     for (const [exit, killed] of [
       [0, false], [1, false], [2, false], [124, false], [125, false], [126, false], [127, false],
       [130, false], [137, false], [143, false], [255, false], [null, true], [null, false],
@@ -133,11 +141,74 @@ describe("engine10 session", () => {
       provider: "claude", childCommand: ["bash", [STUB]],
       emit: (type, _s, data) => events.push({ type, data }),
     });
-    process.env["SESSION_TEST_GRANDCHILD_PID_FILE"] = join(mkdtempSync(join(tmpdir(), "loki-e10-session-")), "gc.pid");
-    await runner.run(baseOpts({ limitS: 1 }));
-    const ended = events.find((e) => e.type === "session.ended");
-    expect(ended?.data["cause"]).toBe("limit");
-    delete process.env["SESSION_TEST_GRANDCHILD_PID_FILE"];
+    const dir = mkdtempSync(join(tmpdir(), "loki-e10-session-"));
+    process.env["SESSION_TEST_GRANDCHILD_PID_FILE"] = join(dir, "gc.pid");
+    try {
+      await runner.run(baseOpts({ limitS: 1 }));
+      const ended = events.find((e) => e.type === "session.ended");
+      expect(ended?.data["cause"]).toBe("limit");
+    } finally {
+      delete process.env["SESSION_TEST_GRANDCHILD_PID_FILE"];
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  // Reviewer rejection on E-68's first pass: stub.sh dies BY SIGNAL (code
+  // null) on SIGTERM, but the real session child is `bun src/cli.ts engine10
+  // session`, which installs `process.on("SIGTERM", () => process.exit(143))`
+  // before it dispatches (cli.ts:330) -- so a real limit kill reports exit
+  // 143, not null. classifyExitCause must name that "limit" from what the
+  // engine itself knows (it sent the SIGTERM), never from the child's
+  // self-reported code. stub_sigterm143.sh traps TERM and exits 143 the same
+  // way, so this reproduces the real behavior instead of the signal-death
+  // shortcut the rejected test used.
+  test("E-68: a child that traps SIGTERM and exits 143 (the real session route's behavior) is still classified as limit, not exit 143", async () => {
+    const events: { type: string; data: Record<string, unknown> }[] = [];
+    const dir = mkdtempSync(join(tmpdir(), "loki-e10-session-"));
+    process.env["SESSION_TEST_GRANDCHILD_PID_FILE"] = join(dir, "gc.pid");
+    const runner = createSessionRunner({
+      provider: "claude", childCommand: ["bash", [STUB_SIGTERM143]],
+      emit: (type, _s, data) => events.push({ type, data }),
+    });
+    try {
+      const result = await runner.run(baseOpts({ limitS: 1 }));
+      expect(result.exit).toBe(143);
+      expect(result.killed).toBe(true);
+      const ended = events.find((e) => e.type === "session.ended");
+      expect(ended?.data["exit"]).toBe("killed");
+      expect(ended?.data["cause"]).toBe("limit");
+    } finally {
+      delete process.env["SESSION_TEST_GRANDCHILD_PID_FILE"];
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  // Reviewer's minor (non-blocking) finding on the same review: `killed` is
+  // set both by the limitS timer AND by an external abort (the machine's cap
+  // or a stage-limit AbortController on opts.signal), so a fix that just
+  // checks `killed` would also mislabel an external abort as "limit". The
+  // engine knows which one fired; classify each by its real source.
+  test("E-68: an external abort mid-session is classified as aborted, not limit", async () => {
+    const events: { type: string; data: Record<string, unknown> }[] = [];
+    const dir = mkdtempSync(join(tmpdir(), "loki-e10-session-"));
+    const gcPidFile = join(dir, "gc.pid");
+    process.env["SESSION_TEST_GRANDCHILD_PID_FILE"] = gcPidFile;
+    const controller = new AbortController();
+    const runner = createSessionRunner({
+      provider: "claude", childCommand: ["bash", [STUB]],
+      emit: (type, _s, data) => events.push({ type, data }),
+    });
+    try {
+      const runPromise = runner.run(baseOpts({ limitS: 30, signal: controller.signal }));
+      await waitForFile(gcPidFile);
+      controller.abort();
+      await runPromise;
+      const ended = events.find((e) => e.type === "session.ended");
+      expect(ended?.data["cause"]).toBe("aborted");
+    } finally {
+      delete process.env["SESSION_TEST_GRANDCHILD_PID_FILE"];
+      rmSync(dir, { recursive: true, force: true });
+    }
   }, 10_000);
 
   test("parses LOKI_ALREADY_DONE from stdout", async () => {
