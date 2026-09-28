@@ -449,10 +449,10 @@ NOW = now_epoch()
 # the TOP violation -- an accidental ordering-by-discovery would misrank it.
 VIOLATION_PRIORITY = [
     "SESSION_STALLED", "CI_RED", "CI_CANCELLED_STREAK", "RELEASE_ON_RED", "HIGH_LOAD",
-    "MOAT_REGRESSION", "UNRELEASED_MERGE", "TRAIN_LATE", "REVIEW_STALE",
+    "MOAT_REGRESSION", "UNRELEASED_MERGE", "RELEASE_CADENCE", "TRAIN_LATE", "REVIEW_STALE",
     "AGENT_OVER_BUDGET", "STALE_PROGRESS", "UNEVIDENCED_CLAIM", "RELEASED_AHEAD_OF_NPM",
     "ORPHAN_TEST", "ORPHAN_WORKTREE", "STRAY_CONTAINER", "STRAY_WORKTREE",
-    "WORKTREE_COUNT", "IDLE_BUILDERS", "LOW_READY", "NO_RECENT_RELEASE",
+    "WORKTREE_COUNT", "IDLE_BUILDERS", "UNDERSTAFFED", "LOW_READY", "NO_RECENT_RELEASE",
     "LOW_RELEASE_VOLUME", "CONTROL_OVERSIZE",
 ]
 
@@ -1251,6 +1251,31 @@ else:
             )
         add_violation("LOW_READY", _low_ready_text)
 
+    # UNDERSTAFFED (founder 17:22Z, exact wording: "ready of 8 or more with
+    # fewer than 8 building"): plenty of dependency-gated ready work (>= 8,
+    # same floor LOW_READY already enforces) but fewer than 8 BOARD rows
+    # are actually `building` is a dispatch failure distinct from
+    # IDLE_BUILDERS -- IDLE_BUILDERS keys on real worktree activity (a
+    # `building` cell can go stale between edits, per its own comment),
+    # while this reads BOARD's own staffing count directly, so a BOARD
+    # that claims plenty of builders while the ready queue still towers
+    # over 8 is caught even if the worktree signal is itself UNKNOWN.
+    # `review` deliberately does not count: a row under review is not
+    # being built, and counting it as staffing would mask exactly the
+    # ready-queue-vs-builders gap the founder is naming. Reuses
+    # ready_deps_met (LOW_READY's own dependency-filtered ready set)
+    # rather than a raw ready_ids scan, for the same reason IDLE_BUILDERS
+    # does (E-79-81-r2): a dependency-blocked row is not actionable, so it
+    # should never count as "ready work going unstaffed" either.
+    _understaffed_ready = len(ready_deps_met)
+    _understaffed_building = counts.get("building", 0)
+    if _understaffed_ready >= 8 and _understaffed_building < 8:
+        add_violation(
+            "UNDERSTAFFED",
+            "%d ready slice(s) on BOARD but only %d building (want at least 8 staffed)"
+            % (_understaffed_ready, _understaffed_building),
+        )
+
 
 # --- 5. IDLE_BUILDERS: fewer than 6 active builder worktrees while ready ----
 # active_worktrees is computed below (metric 6); this violation is added
@@ -1457,6 +1482,96 @@ else:
             "TRAIN_LATE",
             "%.1f minutes since the last train push while merged-but-unreleased commits exist (threshold %d)"
             % (_tl_age, _TRAIN_LATE_THRESHOLD_MIN),
+        )
+
+
+# --- 4d. RELEASE_CADENCE: D37 fixed cadence (E-89) --------------------------
+# D37: cut a release at :00/:20/:40 whenever main is green and at least one
+# merged-unreleased slice commit exists; never let more than 25 minutes pass
+# with both conditions true. Deliberately its own check rather than a
+# TRAIN_LATE rename: TRAIN_LATE clocks from the last actual `git push` (a
+# push-side signal, independent of CI), while RELEASE_CADENCE clocks from
+# the merged work itself (a release-readiness signal) and, per D37's own
+# text, requires CI green -- a red main with old merged commits is not a
+# cadence violation, it is CI_RED's problem (already highest priority).
+#
+# Definition of "merged-unreleased slice commit": one entry per node on
+# MAIN_REF's own --first-parent chain since the tag (same walk
+# check_unreleased_merge_age above already uses, and for the same reason --
+# without --first-parent this walks INTO a merged branch's own history and
+# picks up a side commit's pre-merge authorship time, not when it actually
+# landed on MAIN_REF; T47 reproduces the false-fire/false-n/a this caused).
+# A slice lands via a merge commit in this repo's trains workflow (D25), so
+# the merge commit itself IS the slice's landing event here, not a wrapper
+# to skip. Docs-only commits (touching only docs/, *.md, .gitleaksignore)
+# never count -- a docs commit sitting on main is not backlog pressure for
+# a release. Changed paths are read via `git diff --name-only <sha>^1
+# <sha>` (first-parent diff) rather than `git show --name-only`: for a
+# merge commit, `git show` prints a combined diff that comes back EMPTY for
+# a clean merge, which would silently misclassify a real (non-docs) slice
+# merge -- see T47b. `^1` diff works identically for an ordinary
+# non-merge commit (its only parent). Reuses `unreleased["tag"]` /
+# `_npm_tag_mismatch` (same "newest v* tag whose version equals npm's
+# latest dist-tag" definition, same npm lookup, no second network call)
+# and `ci_status` (same main-CI result, with its own Tests-run-list
+# fallback already built in) rather than re-deriving either.
+def _docs_only_path(path):
+    return path.startswith("docs/") or path.endswith(".md") or path == ".gitleaksignore"
+
+
+def check_release_cadence_d37():
+    if unreleased is None or npm_result is None or _npm_tag_mismatch is not None:
+        return None
+    tag = unreleased["tag"]
+    rc, out, _ = git(["log", "--first-parent", "--format=%H %ct", "%s..%s" % (tag, MAIN_REF)])
+    if rc != 0:
+        return None
+    commits = []
+    for line in out.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            commits.append((parts[0], float(parts[1])))
+    qualifying = []
+    for sha, ct in commits:
+        rc2, files_out, _ = git(["diff", "--name-only", "%s^1" % sha, sha])
+        if rc2 != 0:
+            return None
+        paths = [p for p in files_out.splitlines() if p.strip()]
+        if paths and all(_docs_only_path(p) for p in paths):
+            continue
+        qualifying.append((sha, ct))
+    rc3, tag_out, _ = git(["log", "-1", "--format=%ct", tag])
+    if rc3 != 0 or not tag_out.strip():
+        return None
+    return {"tag": tag, "tag_time": float(tag_out.strip()), "qualifying": qualifying}
+
+
+_RELEASE_CADENCE_THRESHOLD_MIN = 25
+
+release_cadence = safe(check_release_cadence_d37)
+if release_cadence is None:
+    mark_unknown("release_cadence")
+    emit("Release cadence (D37): UNKNOWN (release tag or commit history could not be read)")
+elif not release_cadence["qualifying"]:
+    emit("Release cadence (D37): n/a (no merged-unreleased slice commits since %s)" % release_cadence["tag"])
+else:
+    _rc_count = len(release_cadence["qualifying"])
+    _rc_oldest = min(ct for _, ct in release_cadence["qualifying"])
+    _rc_basis = max(_rc_oldest, release_cadence["tag_time"])
+    _rc_age = (NOW - _rc_basis) / 60.0
+    emit(
+        "Release cadence (D37): %.1f min, %d merged-unreleased slice commit(s) since %s"
+        % (_rc_age, _rc_count, release_cadence["tag"])
+    )
+    if ci_status is None:
+        mark_unknown("release_cadence")
+        emit("Release cadence (D37): CI status UNKNOWN, cannot evaluate the D37 cadence gate")
+    elif ci_status == "green" and _rc_age > _RELEASE_CADENCE_THRESHOLD_MIN:
+        add_violation(
+            "RELEASE_CADENCE",
+            "%d merged-unreleased slice commit(s) since %s, %.1f minutes since the later of the oldest "
+            "commit and the release tag while main CI is green (D37 threshold %d)"
+            % (_rc_count, release_cadence["tag"], _rc_age, _RELEASE_CADENCE_THRESHOLD_MIN),
         )
 
 
@@ -2659,6 +2774,7 @@ _NEXT_ACTION_TEXT = {
     "HIGH_LOAD": "reduce load now: stop non-essential agents/containers, the machine is over 2x its core count (D28)",
     "MOAT_REGRESSION": "identify which moat property regressed and revert or fix it before any further merge",
     "UNRELEASED_MERGE": "cut a release now, main has been unreleased past the 30-minute budget",
+    "RELEASE_CADENCE": "cut a release now (D37 cadence)",
     "TRAIN_LATE": "push a release train now, merged-unreleased commits exist and cadence has slipped past the 25-minute budget",
     "REVIEW_STALE": "escalate or finish review for the named slice(s), they have exceeded the 45-minute budget",
     "AGENT_OVER_BUDGET": "check in on the named agent(s), they have exceeded their role/tier time budget",
@@ -2671,6 +2787,7 @@ _NEXT_ACTION_TEXT = {
     "STRAY_WORKTREE": "move the named worktree(s) under .claude/worktrees or remove them (git worktree remove)",
     "WORKTREE_COUNT": "prune stale worktrees under .claude/worktrees (git worktree remove), it is over the 15 max",
     "IDLE_BUILDERS": "dispatch more builders against the named ready slice(s) in docs/v10/BOARD.md",
+    "UNDERSTAFFED": "staff more engineers now, the ready queue is deep and BOARD shows fewer than 8 rows building",
     "LOW_READY": "the Product Owner should cut the named number of additional slices onto the ready queue",
     "NO_RECENT_RELEASE": "cut a release now, none has shipped in over 90 minutes",
     "LOW_RELEASE_VOLUME": "investigate why release throughput is below the 30/day target",
