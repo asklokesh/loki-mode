@@ -1,18 +1,13 @@
-// loki-ts/src/engine10/output.ts
-//
-// E-13: live stage lines, the 60s heartbeat line, and the 5-line final
-// summary (docs/v10/ENGINE.md section 11). Pure formatting: callers feed in
-// already-folded numbers (events.ts fold(), section 5), this module never
-// reads events.jsonl itself.
-//
-// Null is never rendered as 0 (section 5, section 10): a missing cost reads
-// "not measured".
+// E-13: live stage lines, the 60s heartbeat line, and the 5-line final summary (ENGINE.md section
+// 11). Pure formatting: callers feed in already-folded numbers (events.ts fold(), section 5), this
+// module never reads events.jsonl itself. Null is never rendered as 0 (section 5, section 10): a
+// missing cost reads "not measured".
 import type { Verdict } from "./types.ts";
+import { registryLoader } from "./registry.ts";
 
 const NAME_WIDTH = 12; // fits "implement" + padding to align the next column
-// E-44 (found by E-14): "skipped" is 7 chars, so a width of 7 left no
-// separating space and the duration ran straight into it ("skipped0s").
-// +1 guarantees at least one space after the longest status word.
+// E-44 (found by E-14): 7 ("skipped") left no separating space, ran duration straight into it
+// ("skipped0s"); +1 guarantees at least one space after the longest status word.
 const STATUS_WIDTH = 8; // fits "skipped" plus a required separating space
 const LABEL_WIDTH = 12; // fits "NOT PROVEN:" + one space
 
@@ -43,8 +38,7 @@ export interface StageLine {
   /** Display name, e.g. "intake" or the combined "plan+wall". */
   name: string;
   status: "done" | "failed" | "skipped";
-  /** null when the stage carries no duration_s (stage.skipped, section 5);
-   *  never fabricated as 0 (section 5: "Unknown is never 0"). */
+  /** null when the stage carries no duration_s (stage.skipped, section 5); never fabricated as 0. */
   durationS: number | null;
   detail: string;
 }
@@ -154,7 +148,7 @@ export async function estimateEtaS(
 ): Promise<number | null> {
   let mod: { estimate?: EtaEstimator };
   try {
-    mod = (await import(modulePath)) as { estimate?: EtaEstimator };
+    mod = (await (modulePath === "./eta.ts" ? registryLoader(modulePath) : import(modulePath))) as { estimate?: EtaEstimator };
   } catch (err) {
     // Only a missing module means "no ETA yet"; any other import error is a bug.
     const e = err as { code?: string; message?: string };

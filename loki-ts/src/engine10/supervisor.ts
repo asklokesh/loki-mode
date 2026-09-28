@@ -240,6 +240,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const env: NodeJS.ProcessEnv = { ...process.env };
   if (!isIssue) env.LOKI_E10_TASK_TEXT = task;
   else {
+    mkdirSync(runDir, { recursive: true }); // runDir must exist before the fetch child writes issue.json
     try { fetchIssueToFile(task, join(runDir, "issue.json")); } catch (err) { // P1: deterministic, before any LLM
       process.stderr.write(`engine10: issue fetch failed: ${(err as Error).message.split("\n")[0]}\n`);
       return 2;

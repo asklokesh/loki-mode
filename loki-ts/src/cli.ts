@@ -302,7 +302,8 @@ async function dispatch(argv: readonly string[]): Promise<number> {
 
     case "engine10": {
       const { runEngine10 } = await import("./engine10/cli.ts");
-      return runEngine10(rest);
+      const { registryLoader } = await import("./engine10/registry.ts");
+      return runEngine10(rest, registryLoader);
     }
 
     default:

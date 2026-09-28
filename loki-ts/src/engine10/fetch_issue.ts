@@ -1,17 +1,12 @@
-// loki-ts/src/engine10/fetch_issue.ts
-//
-// E-04: the P1 fetch child (ENGINE.md section 6). Credentialed, deterministic,
-// no LLM: wraps autonomy/issue-providers.sh's `fetch_issue()` for the
-// normalized title/body/labels, then (GitHub only) reads `state` and
-// `closedByPullRequestsReferences` so Intake's already-done check (section 4
-// step 6) has real data to decide ALREADY_SATISFIED on.
-//
-// Contract-gap note: types.ts (E-01) declares no issue shape or Execer, so
-// NormalizedIssue and Execer are local to this file, per the slice card.
-//
-// exec is injected so tests run with no gh/bash/network dependency (fakes).
+// E-04: the P1 fetch child (ENGINE.md section 6). Credentialed, deterministic, no LLM: wraps
+// autonomy/issue-providers.sh's `fetch_issue()` for the normalized title/body/labels, then
+// (GitHub only) reads `state` and `closedByPullRequestsReferences` so Intake's already-done check
+// (section 4 step 6) has real data to decide ALREADY_SATISFIED on. NormalizedIssue and Execer are
+// local (types.ts declares neither); exec is injected so tests run with no gh/bash/network dependency.
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { REPO_ROOT } from "../util/paths.ts";
 
 export interface NormalizedIssue {
   provider: string;
@@ -29,7 +24,7 @@ export interface NormalizedIssue {
 
 export type Execer = (cmd: string, args: string[]) => string;
 
-const ISSUE_PROVIDERS_SH = new URL("../../../autonomy/issue-providers.sh", import.meta.url).pathname;
+const ISSUE_PROVIDERS_SH = join(REPO_ROOT, "autonomy/issue-providers.sh");
 
 function defaultExec(cmd: string, args: string[]): string {
   return execFileSync(cmd, args, { encoding: "utf8", env: process.env });
@@ -72,7 +67,7 @@ export function fetchIssueToFile(ref: string, outFile: string, exec: Execer = de
   return issue;
 }
 
-if (import.meta.main) {
+if (import.meta.main && import.meta.path.endsWith("fetch_issue.ts")) {
   const [ref, outFile] = process.argv.slice(2);
   if (!ref || !outFile) {
     console.error("usage: fetch_issue.ts <ref> <outFile>");

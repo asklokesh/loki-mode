@@ -1,9 +1,10 @@
-// Loki 10 state machine (docs/v10/ENGINE.md section 4): stage table, Plan || Wall,
-// optional() loader, stage limits, global cap, resume from the last completed stage.
-// Siblings arrive only through RunContext; stages come from ./stages/<name>.ts.
+// Loki 10 state machine (ENGINE.md section 4): stage table, Plan || Wall, optional() loader,
+// stage limits, global cap, resume from the last completed stage. Siblings arrive only through
+// RunContext; stages come from ./stages/<name>.ts.
 import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { fold } from "./events.ts";
+import { REGISTRY } from "./registry.ts";
 import { DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS } from "./types.ts";
 import type { EventEnvelope, RunContext, Stage, StageName, StageResult } from "./types.ts";
 
@@ -52,7 +53,8 @@ export async function optional<T = Record<string, unknown>>(path: string): Promi
 
 function defaultLoader(dir: string) {
   return async (name: StageName): Promise<Stage | null> => {
-    const mod = await optional<{ stage?: Stage; default?: Stage }>(join(dir, `${name}.ts`));
+    const reg = dir === join(import.meta.dir, "stages") ? REGISTRY[`./stages/${name}.ts`] : undefined;
+    const mod = (reg ? await reg() : await optional(join(dir, `${name}.ts`))) as { stage?: Stage; default?: Stage } | null;
     return mod ? (mod.stage ?? mod.default ?? null) : null;
   };
 }

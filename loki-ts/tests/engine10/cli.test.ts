@@ -99,10 +99,12 @@ describe("static shape", () => {
   test("engine10 appears only in the one cli.ts arm", () => {
     const lines = readFileSync(join(SRC, "cli.ts"), "utf8").split("\n");
     const hits = lines.flatMap((l, i) => (l.includes("engine10") ? [i] : []));
-    expect(hits.length).toBe(2);
+    // E-32: the arm also loads the static registry so dist can reach every module.
+    expect(hits.length).toBe(3);
     expect(lines[hits[0]!]!.trim()).toBe('case "engine10": {');
     expect(lines[hits[1]!]!.trim()).toBe('const { runEngine10 } = await import("./engine10/cli.ts");');
-    expect(hits[1]).toBe(hits[0]! + 1);
-    expect(lines[hits[0]! + 2]!.trim()).toBe("return runEngine10(rest);");
+    expect(lines[hits[2]!]!.trim()).toBe('const { registryLoader } = await import("./engine10/registry.ts");');
+    expect(hits).toEqual([hits[0]!, hits[0]! + 1, hits[0]! + 2]);
+    expect(lines[hits[0]! + 3]!.trim()).toBe("return runEngine10(rest, registryLoader);");
   });
 });

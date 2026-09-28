@@ -1,21 +1,15 @@
-// loki-ts/src/engine10/stages/pr.ts
-//
-// E-11 (TS half): PR stage (docs/v10/ENGINE.md sections 4, 6, 7). Runs in the
-// SUPERVISOR (P0), never the worker: this is the only stage that touches
-// GitHub credentials, and it does so only through the credentialed push
-// child autonomy/lib/engine10-push.sh (P4, the bash half of E-11, already on
-// main). No LLM, no untrusted text is read here.
-//
-// The supervisor calls runPr after the worker exits, passing the origin it
-// pinned in memory before any provider ran as pinnedOrigin (section 6).
-// Contract gaps: pushArgv ends push-pr in "1"/"0" while engine10-push.sh takes
-// an optional literal "--draft" (translated below), and push-pr cannot say
-// whether the PR already existed, so `existing` is null, never fabricated.
+// E-11 (TS half): PR stage (docs/v10/ENGINE.md sections 4, 6, 7). Runs in the SUPERVISOR (P0),
+// never the worker: the only stage touching GitHub credentials, and only through the credentialed
+// push child autonomy/lib/engine10-push.sh (P4, already on main); no LLM, no untrusted text read
+// here. The supervisor calls runPr after the worker exits, passing the origin it pinned in memory as
+// pinnedOrigin (section 6). Contract gaps: pushArgv ends push-pr in "1"/"0" while engine10-push.sh
+// takes an optional literal "--draft" (translated below); push-pr cannot say whether the PR already existed, so `existing` is null, never fabricated.
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PushArgs, RunContext, Stage, StageResult, Verdict } from "../types.ts";
 import { pushArgv } from "../types.ts";
+import { REPO_ROOT } from "../../util/paths.ts";
 
 /** RunContext plus the pinned origin and the cap signal from the supervisor. */
 export type PrContext = RunContext & {
@@ -30,7 +24,7 @@ export interface PrOptions {
   pushScriptPath?: string;
 }
 
-export const DEFAULT_PUSH_SH = new URL("../../../../autonomy/lib/engine10-push.sh", import.meta.url).pathname;
+export const DEFAULT_PUSH_SH = join(REPO_ROOT, "autonomy/lib/engine10-push.sh");
 
 const PR_URL_RE = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+$/;
 const SHA_RE = /^[0-9a-f]{40}$/;

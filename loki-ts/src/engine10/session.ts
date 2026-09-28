@@ -1,5 +1,6 @@
-// E-07: SessionRunner. Runs one provider session in its own OS process group so the whole tree can be killed together
-// at limitS (ENGINE.md section 10). The child re-invokes this file (--engine10-session-child), calling through runner/providers.ts resolveProvider().
+// E-07: SessionRunner. Runs one provider session in its own OS process group so the whole tree
+// can be killed together at limitS (ENGINE.md section 10). E-32: the child re-enters via cli.ts's
+// `engine10 session` route (main = sessionChildMain below), so the dist bundle reaches it too.
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -114,7 +115,11 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       // A signal aborted before run() never fires the listener below, so it never spawns.
       if (opts.signal.aborted) return Promise.resolve({ exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true });
       const env = childEnv(opts, cfg);
-      const [cmd, args] = cfg.childCommand ?? [process.execPath, [import.meta.path, "--engine10-session-child"]];
+      const [cmd, args] = cfg.childCommand ?? [
+        process.execPath,
+        // Through the cli `engine10 session` route: import.meta.path is dist/loki.js in a bundle, session.ts from source.
+        [import.meta.path.endsWith("session.ts") ? `${import.meta.dir}/../cli.ts` : import.meta.path, "engine10", "session"],
+      ];
       const sessionId = opts.iterationId;
       // stderr ignored: nothing reads markers there, and an unread pipe can stall.
       const child: ChildProcess = spawn(cmd, args, { cwd: opts.cwd, env, detached: true, stdio: ["ignore", "pipe", "ignore"] });
@@ -167,7 +172,3 @@ export async function sessionChildMain(): Promise<never> {
 
 // cli.ts routes `engine10 session` here (section 11); it exits the process itself.
 export const main = sessionChildMain;
-
-if (import.meta.main && process.argv.includes("--engine10-session-child")) {
-  void sessionChildMain();
-}
