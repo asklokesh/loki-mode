@@ -64,11 +64,25 @@ app_runner_start() { START_ATTEMPTS=$((START_ATTEMPTS+1)); return 0; }
 # Override sleep as a no-op shell function (skips real backoff waits).
 sleep() { :; }
 
-# Pick a high TCP port that is almost certainly closed (nothing listening) so
-# curl fails fast with connection-refused for the WEDGED case.
-CLOSED_PORT=59731
-# Find an actually-free port for the healthy server; fall back to a fixed one.
-HEALTHY_PORT=59732
+# Fixed ports (59731-59733) used to be hardcoded here. That races: any other
+# copy of this exact fixture (a second engineer's worktree, a leftover
+# process from a prior killed run) binding the same port made the "healthy"
+# and "404-backend" server fixtures fail to bind, so their readiness loop
+# timed out with "never came up" -- a real red main (8f2179cd, Tests run
+# 36453069628), gone on a same-SHA rerun once the port was free again. Pick
+# each port by binding to port 0 (OS-assigned free port) instead, so this
+# fixture never collides with another instance of itself or with a stale
+# leftover.
+pick_free_port() {
+    python3 - <<'PY'
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+}
+CLOSED_PORT="$(pick_free_port)"
 
 reset_state() {
     # Fresh per-case .loki dir + reset all circuit-breaker globals.
@@ -137,15 +151,17 @@ reset_state healthy
 if ! command -v python3 >/dev/null 2>&1; then
     echo "SKIP: python3 not available for healthy-server case"
 else
-    ( cd "$WORK" && exec python3 -m http.server "$HEALTHY_PORT" >/dev/null 2>&1 ) &
+    HEALTHY_PORT="$(pick_free_port)"
+    HEALTHY_LOG="$WORK/healthy_server.log"
+    ( cd "$WORK" && exec python3 -m http.server "$HEALTHY_PORT" >"$HEALTHY_LOG" 2>&1 ) &
     HELPER_SERVER_PID=$!
     _APP_RUNNER_PID="$HELPER_SERVER_PID"
     echo "$HELPER_SERVER_PID" > "$_APP_RUNNER_DIR/app.pid"
     _APP_RUNNER_PORT="$HEALTHY_PORT"
 
-    # Wait for the server to actually accept connections (up to ~3s).
+    # Wait for the server to actually accept connections (up to 10s).
     served=false
-    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    for _ in $(seq 1 50); do
         if curl -sf -o /dev/null -m 1 "http://localhost:${HEALTHY_PORT}/" 2>/dev/null; then
             served=true; break
         fi
@@ -171,7 +187,7 @@ else
             bad "health.json did not report ok:true for healthy app"
         fi
     else
-        bad "healthy fixture server never came up (cannot validate no-restart case)"
+        bad "healthy fixture server never came up on port $HEALTHY_PORT after 10s (log: $HEALTHY_LOG: $(cat "$HEALTHY_LOG" 2>/dev/null))"
     fi
     kill -9 "$HELPER_SERVER_PID" 2>/dev/null || true
     HELPER_SERVER_PID=""
@@ -189,7 +205,8 @@ reset_state api404
 if ! command -v python3 >/dev/null 2>&1; then
     echo "SKIP: python3 not available for 404-backend case"
 else
-    API_PORT=59733
+    API_PORT="$(pick_free_port)"
+    API_LOG="$WORK/api404_server.log"
     # Minimal HTTP server that returns 404 on every path (an API-only backend
     # with no root route). It is genuinely serving HTTP, just not 2xx on /.
     cat > "$WORK/api404_server.py" <<'PYEOF'
@@ -204,15 +221,15 @@ class H(BaseHTTPRequestHandler):
         pass
 HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 PYEOF
-    ( exec python3 "$WORK/api404_server.py" "$API_PORT" >/dev/null 2>&1 ) &
+    ( exec python3 "$WORK/api404_server.py" "$API_PORT" >"$API_LOG" 2>&1 ) &
     API_PID=$!
     _APP_RUNNER_PID="$API_PID"
     echo "$API_PID" > "$_APP_RUNNER_DIR/app.pid"
     _APP_RUNNER_PORT="$API_PORT"
 
-    # Wait until it actually answers (with a 404).
+    # Wait until it actually answers (with a 404), up to 10s.
     answered=false
-    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    for _ in $(seq 1 50); do
         code=$(curl -s -o /dev/null -m 1 -w '%{http_code}' "http://localhost:${API_PORT}/" 2>/dev/null || echo "000")
         if [ "$code" = "404" ]; then answered=true; break; fi
         command sleep 0.2
@@ -237,7 +254,7 @@ PYEOF
             bad "health.json did not report ok:true for serving 404-root backend"
         fi
     else
-        bad "404-backend fixture never came up (cannot validate)"
+        bad "404-backend fixture never came up on port $API_PORT after 10s (log: $API_LOG: $(cat "$API_LOG" 2>/dev/null))"
     fi
     kill -9 "$API_PID" 2>/dev/null || true
 fi
