@@ -210,10 +210,12 @@ describe("engine10 machine", () => {
   // once that check also excludes a cap-caused failure (!capHit).
   it("a cap that fires mid-intake at a small capS still reaches seal, not an early 'intake failed' stop", async () => {
     const { ctx, events } = fakeCtx(30);
-    const startedAtMs = Date.now() - 4800; // softCapS(30) ~= 5.0s: cap fires ~200ms after intake starts
+    const startedAtMs = Date.now() - 4000; // softCapS(30) ~= 5.0s: cap fires ~1s after intake starts (real margin under load)
     const intakeHang = stage("intake", async (_c, signal) => { await sleep(60_000, signal); return { status: "completed", data: {} }; });
     const r = await runMachine(ctx, { load: loaderOf(all({ intake: intakeHang })), startedAtMs });
     expect(r.capHit).toBe(true);
+    // Pins that intake was genuinely running (not skipped pre-start): the abort must be attributed to "cap".
+    expect(events.find((e) => e.type === "stage.failed" && e.stage === "intake")?.data.reason).toBe("cap");
     expect(r.stopped).toBeNull();
     expect(of(events, "stage.completed")).toContain("seal");
   }, 10_000);
