@@ -284,7 +284,10 @@ describe("E-67 rework: supervisor backstop", () => {
   // to "seal" (its clean-exit stand-in). Red on the pre-fix formula at capS 5, 20 and 24
   // (workerExit null, BACKSTOP_NOT_PROVEN); green once softCapS clamps to 0 instead of the plain
   // point, since the worker then finishes its 1.5s seal immediately, long before any backstop.
-  for (const capS of [5, 20, 24]) {
+  // 25 and 30 are above the ~24.83s threshold (already on the budget>=0 path, unaffected by the
+  // clamp): included as controls alongside the reds above, not as red-then-green themselves -- they
+  // were already green on the pre-fix formula too (backstop_math.test.ts pins that directly).
+  for (const capS of [5, 20, 24, 25, 30]) {
     test(`capS=${capS}, default grace: a worker that seals 1.5s after its own soft cap is not backstop-killed`, async () => {
       const { dir } = repoWithCommit();
       const waitMs = Math.round(softCapS(capS) * 1000);

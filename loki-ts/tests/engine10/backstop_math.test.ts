@@ -54,6 +54,16 @@ describe("backstop clears the worker's own (real) soft cap (E-67 finding 1)", ()
     });
   }
 
+  // The card's own cap list (5, 20, 24, 25, 30, default): a single sweep asserting the headline
+  // property -- the gap always comfortably clears a worst-case 1.5s seal. Red on the pre-fix formula
+  // at exactly 5, 20 and 24 (gap 0.17/0.67/0.80s); DEFAULT_CAP_S is covered here rather than via a
+  // live runSupervisor wait (softCapS(900) is 840s -- far past any reasonable command timeout).
+  for (const capS of [5, 20, 24, 25, 30, DEFAULT_CAP_S]) {
+    test(`capS=${capS}: the gap to the backstop clears a worst-case 1.5s seal`, () => {
+      expect(backstopS(capS) - softCapS(capS)).toBeGreaterThan(1.5);
+    });
+  }
+
   test("a graceS override smaller than capS/30 is honored (test-only knob), still clears the soft cap", () => {
     const backstopS_ = backstopS(2, 1);
     expect(backstopS_).toBeGreaterThan(softCapS(2));
