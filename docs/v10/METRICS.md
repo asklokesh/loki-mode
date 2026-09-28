@@ -263,6 +263,8 @@ All arms on claude-opus-5-5, 29 small tasks with hidden tests, fresh clone per r
 
 ## Loki 10 gate report, medium tier (upstream tests, deletion-mutant audited, not shortcut audited) (2026-09-28, D38; EV-14)
 
+Evidence note (Chief of Staff, 18:00Z): the per-run result files (eval/loki10/results/ev14-medium-{raw,v10}-r{1,2}/results.jsonl, gitignored) were lost when the EV-14 worktree was force-removed in the 17:36Z pruning incident (PROGRESS.md, E-96). The table below is the run agent's report from those files before removal (commit 0afef9e4); it cannot be re-audited. EV-15 re-runs the tier with results kept outside any worktree.
+
 D38 permits the flip decision on small plus medium; medium is explicitly "not
 shortcut audited" (no requirements map, no independent shortcut-attempt
 review, unlike the large tier's D38 criteria). All 7 medium tasks (`pub-*`
