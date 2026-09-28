@@ -152,9 +152,13 @@ describe("main", () => {
     expect(cap.err).toContain("missing --to");
   });
 
-  it("java21 reports the M-04 gap honestly and exits 2, no fabricated estimate", async () => {
+  it("an unbuilt language module reports its gap honestly and exits 2, no fabricated estimate", async () => {
+    // M-04 (lang/java.ts) has since landed for real, so this simulates the still-unbuilt
+    // case via deps.load rather than relying on java21 itself being unbuilt.
+    const missingLoad = async (spec: string) =>
+      Promise.reject(Object.assign(new Error(`Cannot find module '${spec}'`), { code: "ERR_MODULE_NOT_FOUND" }));
     const cap = captureStd();
-    const code = await main([repoDir, "--to", "java21"], { makeId: () => "mod-20260928T000000Z-000001" });
+    const code = await main([repoDir, "--to", "java21"], { makeId: () => "mod-20260928T000000Z-000001", load: missingLoad });
     cap.restore();
     expect(code).toBe(2);
     expect(cap.err).toContain("lang/java.ts");

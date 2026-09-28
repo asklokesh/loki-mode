@@ -16,8 +16,7 @@ export interface Route {
 const TABLE: Record<string, { module: string; fn: string }> = {
   status: { module: "status.ts", fn: "main" },
   verify: { module: "verify_cmd.ts", fn: "main" },
-  dashboard: { module: "dashboard/server.ts", fn: "main" },
-  modernize: { module: "modernize/cli.ts", fn: "main" },
+  dashboard: { module: "dashboard/server.ts", fn: "main" }, modernize: { module: "modernize/cli.ts", fn: "main" },
   // Hidden subcommands spawned by the supervisor.
   worker: { module: "worker.ts", fn: "main" },
   session: { module: "session.ts", fn: "main" },
@@ -29,8 +28,7 @@ const USAGE = `Usage (LOKI_ENGINE=v10):
   loki <issue-url|owner/repo#N>   run on an issue
   loki status [run-id]            latest run by default
   loki verify [run-id]            check receipt hashes and signature
-  loki dashboard                  serve the local dashboard
-  loki modernize <repo> --to <target>  convert a codebase (loki modernize --help)
+  loki dashboard                  serve the local dashboard (loki modernize <repo> --to <target> converts a codebase)
 Flags: --deep, --provider <name>, --resume <run-id>, --no-pr
 `;
 // Returns null for an empty or help invocation.
