@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.2.4 (2026-09-28)
+
+Eval tooling release: one size rule for the medium and large eval tiers. No change to how `loki` runs your builds.
+
+### Added
+- `eval/loki10/measure-size.py` (D34): measures every tiered eval task from its committed reference diff, counting only non-test Python product files and added non-blank lines (deletions never count), and exits 1 when a task misses its tier's bar (medium: at least 2 files; large: at least 4 files, at least 150 added lines and above the largest medium task), when a reference diff is missing, or, with `--online`, when the committed diff no longer matches upstream.
+- Reference diffs for the medium-tier tasks under `eval/loki10/refdiff/`, and a new `eval/loki10/test-harness.sh` section that runs the size gate with negative controls.
+
+### Changed
+- Medium task sizes are now reported on this rule: the largest medium task is 74 added lines across 4 files (the earlier figure of 137 counted CI and config files and deleted lines).
+
 ## v10.2.3 (2026-09-28)
 
 `loki modernize` oracle groundwork and swarm tooling fixes. The modernize modules are internal and not yet reachable from the CLI; nothing changes for existing `loki` users.
