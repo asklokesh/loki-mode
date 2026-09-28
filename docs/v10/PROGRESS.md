@@ -1289,3 +1289,11 @@ sample.
 - MODERNIZE.md: CTO and Architect dispatched 01:52Z; ETA 02:45Z for the design doc, Part 2 slices cut by the PO right after.
 - CI: main red at d00c5ede and 7c3dea3d from train E13 (providers.test.ts dies where claude is absent because preflight exits in-process; test-engine10-dispatch.sh expected 2 cli.ts lines, E-32 made it 3). Both fixes are in train E14 (404 pass, 0 fail locally, plus a no-claude PATH run); push after the remaining no-claude check.
 - Top blocker: cost. v10 at $0.40 per completed task vs the $0.118 target.
+
+## 2026-09-28T02:27Z: Loki 10 progress
+- Part 1 gate numbers (small tier). Raw claude -p, claude-opus-5-5, 29 tasks: 27/29 (93.1%), $0.2363 per completed, p50 39s. Legacy (finished): 15/29 completed, 26/29 hidden pass, p50 190s, cost not measured. v10 full arm: not run yet.
+- Cost root cause found (E-65, built 92e3c06c, in rework after an opus CONCERN): every v10 session carried a 20.4k-token fixed prefix (25 tools plus the legacy autonomy append; on real hosts also the operator's CLAUDE.md, memory and skills). Lean engine sessions: 7.1k. Same 5 tasks, claude-sonnet-5: v10 4/5 at $0.1523 per completed vs raw claude -p 4/5 at $0.2113; one v10 implement session $0.093 vs raw $0.167 to $0.180 on pub-more-itertools-1252. Target $0.118: not met yet; E-64 (lean small path plus opus-on-failure) is next.
+- CI: main green at 5815a2f0 (Tests, Coverage, Bun Parity success) after the preflight fix (5df685f4: preflight raises in-process; suites pass with no claude CLI, no gh auth, no git identity: engine10 402 pass 0 fail). v9.81.0 tagged at 028bd5dc and publishing.
+- Part 2: MODERNIZE.md in progress (CTO and Architect), ETA 02:45Z; 0 Part 2 slices done.
+- In flight: E-64, E-63 (STALE_PROGRESS), EV-11 (medium tier), EV-12 (large tier), E-66..E-70 and EV-13 (augmentiq #52 P0), E-65 rework.
+- Top blocker: v10 cost per completed task vs the $0.118 target, then the medium and large tiers (not built yet) for the accuracy claim.
