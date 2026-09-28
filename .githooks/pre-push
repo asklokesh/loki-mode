@@ -32,13 +32,16 @@ if [[ "$_gd" != "$_gcd" && "$_top/" == */.claude/worktrees/* ]]; then
     exit 1
 fi
 # stdin: "<local ref> <local sha> <remote ref> <remote sha>" per pushed ref.
+# Captured once into a variable: stdin is a pipe and can only be read once,
+# but both this guard and the eval-fixture secret scan below (E-86) need it.
+_stdin_refs="$(cat)"
 while read -r _lref _lsha _rref _rsha; do
     if [[ "$_rref" == "refs/heads/main" && "${LOKI_RELEASE_MANAGER:-}" != "1" ]]; then
         echo "[pre-push] REFUSED: push to refs/heads/main requires LOKI_RELEASE_MANAGER=1." >&2
         echo "[pre-push]   Only the Chief of Staff / Release Manager pushes main. PRE_PUSH_SKIP does not bypass this." >&2
         exit 1
     fi
-done
+done <<< "$_stdin_refs"
 
 if [[ "${PRE_PUSH_SKIP:-0}" == "1" ]]; then
     echo "[pre-push] PRE_PUSH_SKIP=1 set, skipping"
@@ -79,6 +82,387 @@ if ! bash -n autonomy/loki; then
     echo "[pre-push] FAIL: autonomy/loki has syntax errors" >&2
     failures=$((failures + 1))
 fi
+
+# --- Eval fixture secret scan (gitleaks, E-86) --------------------------------
+# CI's Security Audit gitleaks gate (git-log mode, full history) is the
+# release-blocking scan; it only runs on a workflow trigger AFTER the push
+# already landed. This step catches the same class of finding locally, before
+# the push, for the files most likely to carry one: eval task fixtures pull in
+# upstream issue text and repo refs verbatim, and a 40-hex commit SHA next to
+# a sourcegraph.com URL is exactly what armed the sourcegraph-access-token
+# rule on eval/loki10/tasks/pub-werkzeug-3271/task.json (v10.2.0, run
+# 36440534022) -- a false positive, fixed with a .gitleaksignore entry, not a
+# code change.
+#
+# `dir` mode is used, not `git`: a local `git log`-scoped scan of just the
+# pushed commits did not reproduce that finding at all (verified with both
+# v8.30.0 and v8.30.1), so git-log mode is not a reliable local check here.
+#
+# This scans the PUSHED COMMIT's committed blobs, not the working tree: each
+# ref's changed eval paths are extracted from `$_lsha` with `git archive` into
+# a throwaway directory and `gitleaks dir` runs there. That means: an
+# uncommitted working-tree edit can never mask a committed secret (r2 rework,
+# was: `dir` scanned the working tree, so committing a secret and then
+# locally overwriting the file without a new commit shipped it unscanned);
+# the pushed ref does not need to be checked out (r2 rework, was a hard
+# refusal -- extraction from the commit makes that refusal unnecessary, so it
+# is gone); and the ref's OWN `.gitleaksignore` (`git show "$_lsha:..."`) is
+# what gates it, not whatever happens to be on disk right now.
+_zero_sha="0000000000000000000000000000000000000000"
+# Computed, not hardcoded: git's well-known empty-tree object id is a 40-hex
+# string that, spelled out literally next to this file's own comments about
+# sourcegraph.com URLs and secret-scanning, arms gitleaks' sourcegraph-access-
+# token rule on this very file (reproduced: 9c8447b1:.githooks/pre-push:115).
+# `git hash-object -t tree /dev/null` derives the identical id without ever
+# writing the literal.
+_empty_tree="$(git hash-object -t tree /dev/null)"
+GITLEAKS_VERSION="8.30.0"
+
+# Resolved lazily (only once, only if an eval path actually changed) and
+# memoized: hashing a ~20MB binary on every push, even a no-op one, is wasted
+# work case 3 below exists to catch.
+_gitleaks_bin=""
+_gitleaks_bin_checked=0
+_resolve_gitleaks_bin() {
+    [[ "$_gitleaks_bin_checked" == "1" ]] && return 0
+    _gitleaks_bin_checked=1
+    local _bin="$HOME/.local/share/loki/bin/gitleaks-${GITLEAKS_VERSION}"
+    local _sidecar="${_bin}.sha256"
+    # No PATH fallback: a sidecar-verified pinned install is the only binary
+    # this hook trusts. A same-version PATH binary (e.g. Homebrew) is not
+    # byte-identical to the pinned release and `gitleaks version` alone
+    # cannot prove it is -- that gap is what let a swapped binary through
+    # in the installer before this rework (see scripts/install-gitleaks.sh).
+    [[ -x "$_bin" ]] || return 0
+    [[ -f "$_sidecar" ]] || return 0
+    local _recorded _actual
+    _recorded="$(cat "$_sidecar" 2>/dev/null || true)"
+    [[ -n "$_recorded" ]] || return 0
+    if command -v sha256sum >/dev/null 2>&1; then
+        _actual="$(sha256sum "$_bin" | awk '{print $1}')"
+    else
+        _actual="$(shasum -a 256 "$_bin" | awk '{print $1}')"
+    fi
+    [[ "$_actual" == "$_recorded" ]] || return 0
+    [[ "$("$_bin" version 2>/dev/null)" == "$GITLEAKS_VERSION" ]] || return 0
+    _gitleaks_bin="$_bin"
+}
+
+# B3 (r4, E-86 Opus REJECT on 40b2e228): two changed eval paths in one commit
+# that differ only in case ("A.json" vs "a.json"), or only in Unicode
+# normalization form, extract on top of each other via `git archive | tar -x`
+# on a case-insensitive filesystem (APFS). Prints colliding pairs, one per
+# line, or nothing if none collide. python3's `unicodedata` does the real
+# NFC-fold; without python3 (ponytail: a narrower fallback, not a missing
+# check) this falls back to ASCII case-folding only, which still catches the
+# A.json/a.json shape but misses a pure Unicode-normalization collision.
+_check_path_collisions() {
+    if command -v python3 >/dev/null 2>&1; then
+        printf '%s\0' "$@" | python3 -c '
+import sys, unicodedata
+paths = [p for p in sys.stdin.read().split("\0") if p]
+seen = {}
+for p in paths:
+    key = unicodedata.normalize("NFC", p).casefold()
+    if key in seen and seen[key] != p:
+        print(seen[key] + "\t" + p)
+    else:
+        seen.setdefault(key, p)
+'
+    else
+        printf '%s\n' "$@" | awk '{k=tolower($0); if (k in seen && seen[k] != $0) print seen[k]"\t"$0; else seen[k]=$0}'
+    fi
+}
+
+# One parent scratch dir for the whole hook run, created lazily on first use
+# and removed on exit. Never swept by path/name/pattern elsewhere -- this
+# trap is the only thing that ever removes it, and only after confirming it
+# is the exact directory this hook created.
+_eval_scan_root=""
+_cleanup_eval_scan_root() {
+    [[ -n "$_eval_scan_root" ]] || return 0
+    case "$_eval_scan_root" in
+        "${TMPDIR:-/tmp}"/loki-prepush-eval.*) rm -rf -- "$_eval_scan_root" ;;
+    esac
+}
+trap '_cleanup_eval_scan_root' EXIT
+
+_eval_ref_n=0
+while read -r _lref _lsha _rref _rsha; do
+    [[ -n "${_lsha:-}" ]] || continue
+    [[ "$_lsha" == "$_zero_sha" ]] && continue  # ref delete: nothing pushed
+
+    # A ref need not point at a commit: a lightweight tag can point straight
+    # at a tree (or a blob). `^{commit}` peels an annotated tag through to its
+    # commit fine, but a tree/blob has none to peel to -- and every commit-
+    # walking step below (`git rev-list`, `git diff-tree`) would then either
+    # error or silently walk nothing, shipping the ref's content unscanned.
+    # Refuse instead of guessing.
+    if ! git cat-file -e "${_lsha}^{commit}" 2>/dev/null; then
+        echo "[pre-push] FAIL: $_lref points at ${_lsha:0:12}, which is not a commit (a tree or blob ref?) -- refusing rather than skipping the scan" >&2
+        failures=$((failures + 1))
+        continue
+    fi
+
+    _base="$_rsha"
+    _base_is_empty_tree=0
+    # Only trust $_rsha as a diff base if it both looks non-zero AND actually
+    # resolves to a commit THIS repo has. A force-push (or any push where the
+    # remote's previous tip was never fetched here) can hand us a well-formed
+    # sha that `git diff` cannot read -- `git diff "$_rsha" "$_lsha" || true`
+    # then silently reads as "no changes" (r2 rework: that was the bug).
+    # Fall back exactly like the new-branch case: merge-base with the
+    # remote's main, then the empty tree.
+    if [[ "$_base" == "$_zero_sha" ]] || ! git cat-file -e "${_base}^{commit}" 2>/dev/null; then
+        _base="$(git merge-base "$_lsha" "refs/remotes/${1:-origin}/main" 2>/dev/null || true)"
+        if [[ -z "$_base" ]]; then
+            _base="$_empty_tree"
+            _base_is_empty_tree=1
+        fi
+    fi
+
+    # --- every commit in the pushed range, not just the tip (r3 rework) -------
+    # Opus re-review of 4e882432 (reproduced with real pushes): scanning only
+    # $_lsha's tip tree missed a secret added in one commit and removed again
+    # (file deleted, or edited clean) by a LATER commit of the SAME push --
+    # it never appears in the base..tip union diff, yet it lands in the
+    # remote's history, and CI's git-log-mode gitleaks flags it only
+    # afterward. Every commit is now archived and scanned from its own tree.
+    _commits_file="$(mktemp "${TMPDIR:-/tmp}/loki-prepush-commits.XXXXXX")"
+    _rev_list_rc=0
+    if [[ "$_base_is_empty_tree" == "1" ]]; then
+        # No usable merge-base: bound the walk to commits no remote-tracking
+        # ref already has, instead of the WHOLE history reachable from
+        # $_lsha against the empty tree (a normal branch push would then
+        # rescan its entire ancestry on every push).
+        git rev-list "$_lsha" --not --remotes="${1:-origin}" > "$_commits_file" 2>/dev/null || _rev_list_rc=$?
+    else
+        git rev-list "${_base}..${_lsha}" > "$_commits_file" 2>/dev/null || _rev_list_rc=$?
+    fi
+    # Fail closed (r4, E-86 Opus REJECT on 40b2e228): `|| true` here used to
+    # swallow a genuine `git rev-list` error (corrupt object, unreadable
+    # pack) as an empty commit list, which reads exactly like "nothing to
+    # scan" and lets the push through unscanned. A scanner that cannot run is
+    # a refusal, not a pass.
+    if [[ "$_rev_list_rc" != "0" ]]; then
+        echo "[pre-push] FAIL: could not list commits for $_lref (git rev-list exited $_rev_list_rc)" >&2
+        rm -f -- "$_commits_file"
+        failures=$((failures + 1))
+        continue
+    fi
+    _commits=()
+    while IFS= read -r _c; do
+        [[ -n "$_c" ]] && _commits+=("$_c")
+    done < "$_commits_file"
+    rm -f -- "$_commits_file"
+    [[ ${#_commits[@]} -gt 0 ]] || continue
+
+    # --- does this push touch eval anywhere, in any commit? (r4) --------------
+    # Gates the .gitleaks.toml refusal below. Deliberately NOT the cheap
+    # base..tip union diff: a file added in commit 1 and deleted again in
+    # commit 2 of the SAME push is absent from base and absent from tip, so
+    # that union diff shows no change at all -- the exact fail-open r3 fixed
+    # for the secret scan itself, so it cannot be reused here. No
+    # --diff-filter=d either: a commit that only DELETES an eval file still
+    # counts as "touches eval" for this gate (unlike the scan loop below,
+    # which has nothing left to scan in that case).
+    _ref_touches_eval=0
+    for _csha in "${_commits[@]}"; do
+        if [[ -n "$(git diff-tree -r --no-commit-id --name-only -m --root "$_csha" \
+                -- eval/loki10/tasks/ eval/loki10/refdiff/ 2>/dev/null)" ]]; then
+            _ref_touches_eval=1
+            break
+        fi
+    done
+
+    for _csha in "${_commits[@]}"; do
+        _eval_ref_n=$((_eval_ref_n + 1))
+
+        # --- .gitleaksignore / .gitleaks.toml drift, PER COMMIT (r4) ----------
+        # r3 checked only the push's base..tip union diff of these two files,
+        # which a config added in commit 1 and removed again in commit 2 of
+        # the SAME push never shows (same class of gap the secret scan itself
+        # had, fixed the same way: look at every commit's own change, not the
+        # net result). --root: a root commit has no parent to diff against;
+        # without it `git diff-tree` on a parentless commit prints nothing
+        # (this is also B1 -- see the --root on the scan's diff-tree below).
+        _ignore_added="$(git diff-tree -p -m --root -U0 "$_csha" -- .gitleaksignore 2>/dev/null \
+            | grep -E '^\+[^+]' | sed 's/^\+//' || true)"
+        if [[ -n "$_ignore_added" ]]; then
+            echo "[pre-push] WARNING: .gitleaksignore gained line(s) in commit ${_csha:0:12} ($_lref) -- a line here silences a real finding:" >&2
+            printf '%s\n' "$_ignore_added" | sed 's/^/[pre-push]   + /' >&2
+        fi
+
+        if [[ -n "$(git diff-tree --name-only -m --root "$_csha" -- .gitleaks.toml 2>/dev/null)" ]]; then
+            echo "[pre-push] WARNING: .gitleaks.toml added or changed in commit ${_csha:0:12} ($_lref) -- it can silently disable rules:" >&2
+            git diff-tree -p -m --root -U0 "$_csha" -- .gitleaks.toml 2>/dev/null | sed 's/^/[pre-push]   /' >&2 || true
+            # Any change, not a pattern match against known-bad shapes: a
+            # `.*` regex text search is trivially evaded (a title-only config
+            # ships zero rules and disables everything just as completely;
+            # `paths = [".*"]` excludes every path a different way; a triple-
+            # quoted `'''.+'''` regex carries no literal `.*` to grep for).
+            # Gitleaks config is small and rare to touch legitimately -- gate
+            # on the human, not on guessing which configs are dangerous.
+            if [[ "$_ref_touches_eval" == "1" ]]; then
+                if [[ "${LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE:-0}" != "1" ]]; then
+                    echo "[pre-push] FAIL: .gitleaks.toml changed in an eval-touching push (commit ${_csha:0:12}, $_lref) -- it can silently weaken or disable secret scanning" >&2
+                    echo "[pre-push]   Set LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1 to push this anyway." >&2
+                    failures=$((failures + 1))
+                else
+                    echo "[pre-push]   LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1 set -- allowing the config change." >&2
+                fi
+            fi
+        fi
+
+        _diff_file="$(mktemp "${TMPDIR:-/tmp}/loki-prepush-diff.XXXXXX")"
+        # -z: NUL-separated, unquoted output (non-ASCII path safe, r2). -m:
+        # show a merge commit's own diff like a regular commit (a no-op for a
+        # non-merge commit). --root (B1, r4): without it a PARENTLESS (root)
+        # commit prints no diff at all -- `git diff-tree` treats a root
+        # commit as changing nothing unless told to diff it against the
+        # empty tree, so an orphan branch or the first push to an empty
+        # remote shipped its secret unscanned. --diff-filter=d: a path
+        # DELETED by this commit is dropped -- it no longer exists in $_csha
+        # to scan, and the earlier commit that added it is its own, separate
+        # list entry that still is (this is also what makes a commit whose
+        # changed eval paths are ALL deletions fall through to the
+        # `[[ ! -s "$_diff_file" ]]` skip below without invoking gitleaks).
+        if ! git diff-tree -r --no-commit-id --name-only -z -m --root --diff-filter=d "$_csha" \
+                -- eval/loki10/tasks/ eval/loki10/refdiff/ > "$_diff_file" 2>/dev/null; then
+            echo "[pre-push] FAIL: could not compute the eval-fixture diff for $_lref (commit ${_csha:0:12})" >&2
+            rm -f -- "$_diff_file"
+            failures=$((failures + 1))
+            continue
+        fi
+        if [[ ! -s "$_diff_file" ]]; then
+            rm -f -- "$_diff_file"
+            continue  # skip commits with no eval changes without invoking gitleaks
+        fi
+
+        # bash 3.2 (macOS's /bin/bash) has no `mapfile -d`; read NUL-separated
+        # entries into an array by hand.
+        _eval_paths=()
+        while IFS= read -r -d '' _p; do
+            _eval_paths+=("$_p")
+        done < "$_diff_file"
+        rm -f -- "$_diff_file"
+        [[ ${#_eval_paths[@]} -gt 0 ]] || continue
+
+        # --- case/Unicode path collision (B3, r4) ------------------------------
+        # `git archive | tar -x` extracts by path; on a case-insensitive
+        # filesystem (APFS, the default on macOS) two changed paths that
+        # differ only in case, or only in Unicode normalization form, extract
+        # ON TOP OF each other -- whichever comes last in tar's iteration
+        # order wins, and the other is scanned as if it were never changed.
+        # Refuse instead of scanning less than what changed.
+        _collision="$(_check_path_collisions "${_eval_paths[@]}")"
+        if [[ -n "$_collision" ]]; then
+            echo "[pre-push] FAIL: commit ${_csha:0:12} ($_lref) changes two eval paths that collide case-insensitively or after Unicode NFC normalization -- extraction on a case-insensitive filesystem would silently overwrite one with the other:" >&2
+            printf '%s\n' "$_collision" | sed 's/^/[pre-push]   /' >&2
+            failures=$((failures + 1))
+            continue
+        fi
+
+        _resolve_gitleaks_bin
+        if [[ -z "$_gitleaks_bin" ]]; then
+            echo "[pre-push] FAIL: eval task fixtures changed but pinned gitleaks v${GITLEAKS_VERSION} is not installed" >&2
+            echo "[pre-push]   install it: scripts/install-gitleaks.sh" >&2
+            failures=$((failures + 1))
+            continue
+        fi
+
+        # Measured (r4, 10-commit timing case): archiving + spawning gitleaks
+        # for one commit that touches eval costs roughly 270ms. Commits with
+        # no eval changes never reach here (skipped above near-instantly),
+        # so this only scales with the number of eval-touching commits in a
+        # push, not the push's total commit count.
+        [[ -n "$_eval_scan_root" ]] || _eval_scan_root="$(mktemp -d "${TMPDIR:-/tmp}/loki-prepush-eval.XXXXXX")"
+        _ref_root="$_eval_scan_root/ref-$_eval_ref_n"
+        mkdir -p "$_ref_root/tree"
+
+        # Extract exactly the changed eval paths AS COMMITTED at $_csha, in
+        # chunks of 500: a single commit with ~20,000 changed eval files blew
+        # past the OS argv limit ("Argument list too long") as one `git
+        # archive` call. --literal-pathspecs: a filename containing `[` or
+        # `*` must not be treated as a glob by the pathspec matcher.
+        _archive_err="$_ref_root/archive.err"
+        _archive_failed=0
+        _i=0
+        _n=${#_eval_paths[@]}
+        while [[ $_i -lt $_n ]]; do
+            _chunk=("${_eval_paths[@]:$_i:500}")
+            if ! git --literal-pathspecs archive --format=tar "$_csha" -- "${_chunk[@]}" 2>>"$_archive_err" \
+                    | tar -x -C "$_ref_root/tree" 2>>"$_archive_err"; then
+                _archive_failed=1
+                break
+            fi
+            _i=$((_i + 500))
+        done
+        if [[ "$_archive_failed" == "1" ]]; then
+            echo "[pre-push] FAIL: could not extract commit ${_csha:0:12}'s eval fixtures for $_lref" >&2
+            sed 's/^/[pre-push]   /' "$_archive_err" >&2 2>/dev/null || true
+            failures=$((failures + 1))
+            continue
+        fi
+
+        # `git archive` applies `export-ignore` from the archived tree's own
+        # .gitattributes, so a changed path can be silently absent from the
+        # archive -- the same class of fail-open as the non-ASCII bug, by a
+        # different route. Refuse instead of scanning less than what changed.
+        _eval_missing=0
+        for _p in "${_eval_paths[@]}"; do
+            if [[ ! -e "$_ref_root/tree/$_p" && ! -L "$_ref_root/tree/$_p" ]]; then
+                echo "[pre-push] FAIL: $_p changed in commit ${_csha:0:12} ($_lref) but is missing from the archive (export-ignore?)" >&2
+                _eval_missing=1
+            fi
+        done
+        if [[ "$_eval_missing" == "1" ]]; then
+            failures=$((failures + 1))
+            continue
+        fi
+
+        # This COMMIT's own .gitleaksignore / .gitleaks.toml, not the tip's --
+        # kept outside $_ref_root/tree so neither is itself scanned. Absent
+        # on this commit: scan with an empty ignore file (errs strict, never
+        # open).
+        _ignore_file="$_ref_root/.gitleaksignore"
+        git show "$_csha:.gitleaksignore" > "$_ignore_file" 2>/dev/null || : > "$_ignore_file"
+
+        _config_file="$_ref_root/.gitleaks.toml"
+        _config_arg=()
+        if git show "$_csha:.gitleaks.toml" > "$_config_file" 2>/dev/null; then
+            _config_arg=(--config "$_config_file")
+        fi
+
+        echo "[pre-push] gitleaks dir (commit ${_csha:0:12}, $_lref)"
+        # bash 3.2 (macOS's /bin/bash): "${arr[@]}" on a genuinely empty array
+        # is an unbound-variable error under `set -u`. ${arr[@]+"${arr[@]}"}
+        # is the portable guard -- it expands to nothing when the array is
+        # empty instead of dereferencing it.
+        if _out="$(cd "$_ref_root/tree" && "$_gitleaks_bin" dir . ${_config_arg[@]+"${_config_arg[@]}"} \
+                --gitleaks-ignore-path "$_ignore_file" --redact --no-banner -v 2>&1)"; then
+            _gl_rc=0
+        else
+            _gl_rc=$?
+        fi
+        if [[ "$_gl_rc" == "1" ]]; then
+            # Never the secret: --redact already masks it, and this filter
+            # keeps only the location/rule lines even so.
+            printf '%s\n' "$_out" | grep -E '^(File|Line|RuleID|Fingerprint):' >&2 || true
+            echo "[pre-push] FAIL: gitleaks found a possible secret in a changed eval task fixture (commit ${_csha:0:12}, $_lref)" >&2
+            echo "[pre-push]   Verify the finding above. If it is a false positive, add its exact" >&2
+            echo "[pre-push]   Fingerprint (printed above) to .gitleaksignore with a one-line reason." >&2
+            failures=$((failures + 1))
+        elif [[ "$_gl_rc" != "0" ]]; then
+            # Exit codes other than 0 (clean) and 1 (leaks found) are a
+            # scanner failure (bad flags, crash, unreadable input), not a
+            # finding -- saying "found a possible secret" here would
+            # misreport a broken scan as a clean-looking refusal reason.
+            echo "[pre-push] FAIL: gitleaks failed (exit $_gl_rc) scanning eval fixtures for commit ${_csha:0:12} ($_lref)" >&2
+            failures=$((failures + 1))
+        fi
+    done
+done <<< "$_stdin_refs"
 
 # --- Red-main guard ----------------------------------------------------------
 # THE FAILURE THIS EXISTS FOR, measured 2026-07-30: main sat RED for THREE
