@@ -1,1 +1,1 @@
-from ...outside import nope
+from ....util import thing

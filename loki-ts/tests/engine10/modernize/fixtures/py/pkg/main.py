@@ -1,8 +1,8 @@
 import os
 import pkg.sub.helper as h
 from . import util
+from .. import unresolved_a, unresolved_b
 from .sub import helper
-from pkg.util import thing
 import numpy
 print "legacy"
 try:

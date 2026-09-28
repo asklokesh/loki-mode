@@ -72,9 +72,13 @@ def statements(source):
 
 
 def dotted(tokens, i):
-    """Read a NAME('.'NAME)* run starting at tokens[i]. Returns (parts, next_i)."""
+    """Read a NAME('.'NAME)* run starting at tokens[i]. Returns (parts, next_i).
+    'import' is a reserved word and can never be a real module/attr name, so it
+    stops the run here -- this is what lets a bare-dot relative import like
+    `from . import util` (module_parts empty, next token literally 'import')
+    resolve instead of swallowing 'import' itself as a fake first part."""
     parts = []
-    while i < len(tokens) and tokens[i][0] == tokenize.NAME:
+    while i < len(tokens) and tokens[i][0] == tokenize.NAME and tokens[i][1] != "import":
         parts.append(tokens[i][1])
         i += 1
         if i < len(tokens) and tokens[i][1] == ".":
@@ -188,12 +192,17 @@ def resolve(repo_dir, roots, level, module_parts, name, cur_rel):
 
 
 def spec_text(level, module_parts, name):
+    # A "." separates a module part from the following name, but the dots of a
+    # bare-dot relative import (`from . import x`, module_parts empty) already
+    # act as that separator -- adding another would misreport `from .. import x`
+    # (2 dots) as `...x` (3 dots) instead of the as-written `..x`.
     head = "." * level + ".".join(module_parts)
+    sep = "." if module_parts else ""
     if name is None:
         return head
     if name == "*":
-        return (head + ".*") if head else "*"
-    return f"{head}.{name}" if head else name
+        return f"{head}{sep}*" if head else "*"
+    return f"{head}{sep}{name}" if head else name
 
 
 def scan_file(repo_dir, roots, rel_path):
@@ -215,6 +224,10 @@ def scan_file(repo_dir, roots, rel_path):
             target = resolve(repo_dir, roots, level, module_parts, name, rel_path)
             if target and target != rel_path:
                 edges.add((rel_path, target))
+            # target == rel_path (a self-import) is intentionally neither an edge
+            # (a self-loop is useless to the dependency graph) nor unresolved
+            # (it did resolve); it is silently dropped, matching this scanner's
+            # best-effort contract.
             elif not target:
                 unresolved.append({"from": rel_path, "spec": spec_text(level, module_parts, name), "line": lineno})
     return node, edges, unresolved
