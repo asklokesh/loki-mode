@@ -1,5 +1,10 @@
 # Progress
 
+## 2026-09-28T21:18Z: founder 17:10 directives actioned
+- Usage in METRICS.md: scripts/metrics-usage-append.py (343c087b) renders scripts/usage-governor.py --json (4.6s) under "## Usage (hourly ...)"; first snapshot 21:15Z (5h window 5,183,443 output tokens, weekly 47,364,676, last hour 477,429 across 17 active engineers, 24,479 per engineer, Chief of Staff 61,285). Session cron 494e26d8 appends hourly at :07.
+- Staffing to 8: the governor cannot set a ceiling yet (max engineers "uncalibrated": no 5h or weekly plan reading on file), so the founder default of 8 applies. Building: E-98f, E-110 (r2 in opus re-review), E-114, E-90, plus DEP-05, DEP-06, DEP-07, M-13 r2 dispatched 21:18Z. Held with reasons: G-04 cloud fan-out (needs a calibrated governor), EV-9 (after E-98f), E-87 (release gate, rejected once), M-14+ (depend on M-13). E-85 parked (conflicts with fingerprint-only allowlisting).
+- E-98f: running since 20:20Z, most arms at run 3 (result files under ~/loki-ci-logs/eval/e98f-*); flip bar set to raw's best 12/14 (85.7%) and at or below $0.5085 per completed; results go to METRICS.md and MEDIUM-ANALYSIS.md.
+
 ## 2026-09-28T21:01Z: v10.4.1 (30afbd07) and v10.5.0 (6498effe) published; red main a4623675 fixed forward by 024b947c in 11 min
 - v10.4.1: cut 20:14:04Z (30afbd07), publish-npm 20:19:57Z, npm latest 10.4.1 gitHead 30afbd07; body was the placeholder (E-88 not yet on origin), backfilled from CHANGELOG (release-notes.sh rc=0, 10 lines).
 - Red main: train a4623675 (pushed 20:30:47Z) failed Tests shard 4/8, tests/test-release-notes.sh T9l/T9n fixtures 34 bytes on Linux (yes piped to head under pipefail; passes 41/0 on macOS). P0 E-113 dispatched 20:39Z, Tech Lead APPROVE (fixture bytes identical: 132034/98034/224089), pushed 20:42:15Z as 024b947c; Tests and Bun Parity success 20:48:31Z.
