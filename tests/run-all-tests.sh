@@ -1400,6 +1400,7 @@ run_test "model catalog is a single source of truth" "$SCRIPT_DIR/test-model-cat
 run_test "MiniMax model catalog and compatible endpoints" "$SCRIPT_DIR/test-minimax-model-catalog.sh"
 run_test "model catalog staleness is advisory and route-consistent" "$SCRIPT_DIR/test-model-catalog-staleness.sh"
 run_test "pre-push hook (post-D27: identity + syntax + no pytest + speed)" "$SCRIPT_DIR/test-pre-push-hook.sh"
+run_test "pre-push hook eval-fixture gitleaks step (E-86)" "$SCRIPT_DIR/test-pre-push-gitleaks.sh"
 run_test "loki help <command> and the daily log cap" "$SCRIPT_DIR/test-help-and-log-cap.sh"
 run_test "model picker is provider-aware (no claude models on codex)" "python3 $SCRIPT_DIR/test-provider-aware-model-picker.py"
 run_test "codex capability tiers resolve to distinct real models" "$SCRIPT_DIR/test-codex-tier-models.sh"

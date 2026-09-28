@@ -344,10 +344,10 @@ print(len(entries), len(set(entries)),
       sum(not current.fullmatch(e) and not historical.fullmatch(e) for e in entries))
 PY
 )"
-if [ "$_ignore_shape" = "45 45 35 10 0" ]; then
-  ok "gitleaks baseline contains 35 current and 10 commit-qualified historical fingerprints"
+if [ "$_ignore_shape" = "50 50 36 14 0" ]; then
+  ok "gitleaks baseline contains 36 current and 14 commit-qualified historical fingerprints"
 else
-  bad "gitleaks baseline shape drifted ($_ignore_shape; expected 45 45 35 10 0)"
+  bad "gitleaks baseline shape drifted ($_ignore_shape; expected 50 50 36 14 0)"
 fi
 
 # Optional live mutation proof. Exact-SHA acceptance supplies the same pinned

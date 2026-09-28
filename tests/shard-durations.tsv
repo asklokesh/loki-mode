@@ -503,6 +503,7 @@ model catalog is a single source of truth	2
 MiniMax model catalog and compatible endpoints	1
 model catalog staleness is advisory and route-consistent	2
 pre-push hook (post-D27: identity + syntax + no pytest + speed)	0
+pre-push hook eval-fixture gitleaks step (E-86)	69
 loki help <command> and the daily log cap	3
 model picker is provider-aware (no claude models on codex)	1
 codex capability tiers resolve to distinct real models	0
