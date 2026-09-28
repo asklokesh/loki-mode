@@ -272,4 +272,30 @@ describe("engine10 implement stage", () => {
     expect(r.data.iteration_ids).toEqual(["e10-test-1-impl"]);
     expect(sessions.lastOpts?.brief).toContain("Run only these impacted tests: calc.test.ts.");
   });
+
+  test("E-98c: an empty relevant_files (not missing) still falls back to the task's named files", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-e98c-"));
+    const repomapRef = join(dir, "repomap.json");
+    writeFileSync(repomapRef, JSON.stringify({ files: ["parser.py"], entries: [], truncated: false }), "utf8");
+
+    const sessions = new FakeSessionRunner(doneResult);
+    const ctx = fakeCtx(sessions, {
+      intake: {
+        task: "fix parser.py",
+        testmap: { runners: ["pytest"], tests: [{ runner: "pytest", path: "test_parser.py" }] },
+        repomap_ref: repomapRef,
+      },
+      plan: { plan: "p", relevant_files: [] },
+      wall: { readOnlyFiles: [] },
+    });
+    let asked: string[] = [];
+    ctx.tests.impacted = (map, changed) => { asked = changed; return map.tests; };
+
+    const result = await implementStage.run(ctx, new AbortController().signal);
+
+    expect(asked).toEqual(["parser.py"]);
+    expect(result.data.impacted_tests).toEqual(["test_parser.py"]);
+
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
