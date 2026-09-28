@@ -1,6 +1,6 @@
 # Progress
 
-## 2026-09-28T21:01Z: v10.4.1 and v10.5.0 shipped; red main fixed forward in 11 min
+## 2026-09-28T21:01Z: v10.4.1 (30afbd07) and v10.5.0 (6498effe) published; red main a4623675 fixed forward by 024b947c in 11 min
 - v10.4.1: cut 20:14:04Z (30afbd07), publish-npm 20:19:57Z, npm latest 10.4.1 gitHead 30afbd07; body was the placeholder (E-88 not yet on origin), backfilled from CHANGELOG (release-notes.sh rc=0, 10 lines).
 - Red main: train a4623675 (pushed 20:30:47Z) failed Tests shard 4/8, tests/test-release-notes.sh T9l/T9n fixtures 34 bytes on Linux (yes piped to head under pipefail; passes 41/0 on macOS). P0 E-113 dispatched 20:39Z, Tech Lead APPROVE (fixture bytes identical: 132034/98034/224089), pushed 20:42:15Z as 024b947c; Tests and Bun Parity success 20:48:31Z.
 - v10.5.0 (minor): cut 20:49:19Z (6498effe), Release 36481891650 success, publish-npm 20:55:23Z (cut to publish 6m04s). Contents: E-98a..e medium fixes (verify on the project interpreter, seal never VERIFIED on a system interpreter, spec_conflict verified, Python repo map, killed-session cost), E-106 SDK pin drift, E-88 release-notes gate, E-108 debugId, internal guards. First release with the release-notes gate on origin; body check pending in the watcher.
