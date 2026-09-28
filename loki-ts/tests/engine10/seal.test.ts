@@ -339,15 +339,12 @@ describe("engine10 seal", () => {
     expect(r.verdict).not.toBe("VERIFIED");
   }, 30000);
 
-  // E-116 gap (not fixed here; the file set for this slice is the test file only): implement.ts
-  // produces spec_conflict_reason (implement.test.ts:153), but seal.ts never reads
-  // o.implement?.spec_conflict_reason, and Receipt has no field for it. Confirmed here: a
-  // distinctive reason string put on implement's output reaches neither receipt.json nor
-  // receipt.md. This needs a seal.ts change (a receipt field plus a read), tracked as a
-  // follow-up, not asserted as passing behavior here.
-  test("E-116 gap: spec_conflict_reason does not currently reach receipt.json or receipt.md", async () => {
+  // E-120: implement.ts produces spec_conflict_reason (implement.test.ts:153); seal.ts now
+  // carries it into receipt.json (outputs.implement.spec_conflict_reason survives as-is) and
+  // renders it in receipt.md next to the verdict line.
+  test("E-120: spec_conflict_reason reaches receipt.json and receipt.md", async () => {
     noKey();
-    const { repo, base } = makeRepo("spec-conflict-reason-gap");
+    const { repo, base } = makeRepo("spec-conflict-reason-present");
     const REASON = "distinctive-reason-e116-marker: the task contradicts the Wall tests";
     const { ctx } = ctxFor(repo, base, "claude", {
       implement: { exit: "spec_conflict", spec_conflict_reason: REASON, tests_reverted: [], duration_s: 2 },
@@ -357,8 +354,27 @@ describe("engine10 seal", () => {
     const s = await sealStage.run(ctx, new AbortController().signal);
     const raw = readFileSync(s.data.receipt_path as string, "utf8");
     const md = readFileSync(join(ctx.runDir, "receipt.md"), "utf8");
-    expect(raw).not.toContain(REASON);
-    expect(md).not.toContain(REASON);
+    expect(raw).toContain(REASON);
+    expect(md).toContain(REASON);
+    expect(JSON.parse(raw).spec_conflict_reason).toBe(REASON);
+  }, 30000);
+
+  // E-120: a missing reason (any other verdict, or a spec_conflict with no reason recorded)
+  // must not break the receipt or leave a dangling "Reason:" label with nothing after it.
+  test("E-120: no spec_conflict_reason recorded: receipt builds clean, no dangling label", async () => {
+    noKey();
+    const { repo, base } = makeRepo("spec-conflict-no-reason");
+    const { ctx } = ctxFor(repo, base, "claude", {
+      implement: { exit: "spec_conflict", tests_reverted: [], duration_s: 2 },
+      verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", duration_s: 1 }], flaky: [], wall_passed: true, duration_s: 1 },
+    });
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    const raw = readFileSync(s.data.receipt_path as string, "utf8");
+    const md = readFileSync(join(ctx.runDir, "receipt.md"), "utf8");
+    expect(JSON.parse(raw).spec_conflict_reason).toBe(null);
+    expect(md).not.toContain("Reason:");
+    expect(s.data.verdict).toBe("SPEC_CONFLICT");
   }, 30000);
 
   test("E-55: a modified, deleted, or symlink-replaced base_sha test file lands on NOT PROVEN by name; a new test file does not", async () => {

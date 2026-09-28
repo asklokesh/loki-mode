@@ -136,6 +136,7 @@ export function renderReceiptMd(r: Receipt): string {
   return [
     `## Loki receipt: ${r.verdict}`,
     "",
+    ...(r.spec_conflict_reason !== null ? [`- Reason: ${r.spec_conflict_reason}`] : []),
     `- Run: ${r.run_id}`,
     `- Base: ${r.base_sha}  Head: ${r.head_sha}`,
     `- receipt_sha256: ${r.receipt_sha256}`,
@@ -214,6 +215,7 @@ export const sealStage: Stage = {
       checks,
       not_proven: [],
       verdict,
+      spec_conflict_reason: str(o.implement?.spec_conflict_reason),
       evidence: strs(o.intake?.evidence),
       cost: {
         usd: cost.usd, input_tokens: cost.inputTokens, output_tokens: cost.outputTokens,

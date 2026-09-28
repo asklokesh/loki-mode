@@ -148,6 +148,9 @@ export interface Receipt {
   checks: ReceiptCheck[];
   not_proven: string[];
   verdict: Verdict;
+  /** E-120: implement's reason for a SPEC_CONFLICT exit (outputs.implement.spec_conflict_reason
+   *  as-is). null when implement did not record one. */
+  spec_conflict_reason: string | null;
   /** E-66: the deterministic search hits plus the model's own citation, carried into the receipt so
    *  an evidence-confirmed ALREADY_SATISFIED verdict is not a bare claim. Empty on every other
    *  verdict, and also empty on the OTHER ways a run seals ALREADY_SATISFIED (an issue already
