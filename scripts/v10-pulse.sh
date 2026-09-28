@@ -959,8 +959,12 @@ TIER_CELL_RE = re.compile(r"^(LOW|MEDIUM|HIGH)$")
 # its Notes cell ("Depends on M-07, E-31 merged or parked."; "Depends on
 # none." means no deps). Only the ID-shaped tokens inside that clause are
 # pulled out -- trailing prose ("merged or parked") is condition text this
-# LOW-tier parse does not need to understand, not a second dependency.
-DEPENDS_ON_RE = re.compile(r"Depends on ([^.]*)\.", re.IGNORECASE)
+# LOW-tier parse does not need to understand, not a second dependency. Case
+# sensitive on purpose: BOARD.md's convention is always the capitalized
+# "Depends on"; several older rows' Notes cells contain unrelated lowercase
+# "depends on ... build then review." narrative prose from an earlier phase
+# writeup, which a case-insensitive match would misread as a live gate.
+DEPENDS_ON_RE = re.compile(r"Depends on ([^.]*)\.")
 DEPENDS_ON_ID_RE = re.compile(r"\b(?:GF|PF|S|E|EV|M)-\d+\b")
 
 

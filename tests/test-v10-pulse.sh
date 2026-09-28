@@ -2297,6 +2297,28 @@ else
     printf '%s\n' "$OUT"
 fi
 
+echo "T42c -- E-79: a lowercase 'depends on' inside unrelated narrative prose is not read as a dependency clause"
+BOARD_DEPS_PROSE="$WORK/BOARD-deps-prose.md"
+cat > "$BOARD_DEPS_PROSE" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S-01 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-02 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-03 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-04 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-05 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-06 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-07 | a | x | LOW | ready@2026-09-27T01:00Z | Source: wave 1; depends on S-06 Phase A, build then review. |
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_DEPS_PROSE"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qE "^VIOLATION: LOW_READY: only 7 ready slice\(s\) on BOARD \(want at least 8\); cut 1 more\$" \
+    && printf '%s\n' "$OUT" | grep -qF "Ready rows blocked by dependency: none"; then
+    ok "lowercase 'depends on' narrative prose (not the capitalized BOARD.md convention) does not gate S-07"
+else
+    bad "T42c lowercase-prose case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
 echo "T43 -- E-80: PROGRESS.md age is never negative; a future entry heading reports FUTURE_TIMESTAMP"
 PROGRESS_FUTURE="$WORK/PROGRESS-future.md"
 printf '# Progress\n\n## 2026-09-27T03:30:00Z: future entry\n- clock skew or a mistyped heading\n' > "$PROGRESS_FUTURE"
