@@ -260,3 +260,73 @@ All arms on claude-opus-5-5, 29 small tasks with hidden tests, fresh clone per r
 - Lean configuration misses: aiq-52-searchbar, pub-humanize-174. It matches raw on completion and time and is 32% cheaper; it does not meet the 2x targets and is not the default until E-64 lands and is re-measured.
 - Lean-session evidence, 5 tasks (EV-8 D/E, not the full arm): opus lean 4/5 at $0.1571 per completed, p50 28s; sonnet lean 4/5 at $0.1519, p50 27.5s; raw opus on the same 5: 5/5, $0.2161, p50 41s (~/loki-ci-logs/ev8r-{D,E}/results.jsonl). The lean small path is not the default yet (E-64 in rework).
 - Medium and large tiers: not built (EV-11 3 of 15 verified, EV-12 in rework). No "2-5x" claim.
+
+## Loki 10 gate report, medium tier (upstream tests, deletion-mutant audited, not shortcut audited) (2026-09-28, D38; EV-14)
+
+D38 permits the flip decision on small plus medium; medium is explicitly "not
+shortcut audited" (no requirements map, no independent shortcut-attempt
+review, unlike the large tier's D38 criteria). All 7 medium tasks (`pub-*`
+with `"tier": "medium"`) carry upstream-verbatim hidden tests with at least
+one deletion-mutant check recorded in their `NOTES.md` (see
+`eval/loki10/tasks/pub-attrs-1313/NOTES.md` for one worked example). Both
+arms on claude-opus-5-5 (same model as the small-tier gate), harness
+8f2179cdea1544f855eca0ec4c8a18b525cad152 (origin/main, not dirty), fresh
+clone per run, provider-sourced cost only, 2 runs per arm, `--parallel 3`,
+900s cap per task. `loki-ts/node_modules` reinstalled from `bun.lock`
+(`bun install --frozen-lockfile`) before the v10 runs per E-62.
+
+| arm | completed | rate | cost per completed | p50 / p90 time to PR | arm_unavailable | invalid |
+|---|---|---|---|---|---|---|
+| raw `claude -p` | 12/14 | 85.7% | $0.5119 | 70s / 239s | 0 | 0 |
+| v10 (default knobs, main 8f2179cd) | 10/14 | 71.4% | $0.5395 | 83s / 100s | 0 | 0 |
+
+Per-run breakdown (`eval/loki10/summarize <file> --markdown`, all under
+`eval/loki10/results/`, the harness's normal `--out` location; none of these
+are committed, see below):
+
+| run | file | completed | cost per completed | p50 / p90 |
+|---|---|---|---|---|
+| raw r1 | `eval/loki10/results/ev14-medium-raw-r1/results.jsonl` | 5/7 | $0.6194 | 102s / 149s |
+| raw r2 | `eval/loki10/results/ev14-medium-raw-r2/results.jsonl` | 7/7 | $0.4352 | 69s / 256s |
+| v10 r1 | `eval/loki10/results/ev14-medium-v10-r1/results.jsonl` | 5/7 | $0.5702 | 83s / 121s |
+| v10 r2 | `eval/loki10/results/ev14-medium-v10-r2/results.jsonl` | 5/7 | $0.5088 | 98s / 100s |
+
+The pooled row is not something `summarize` can produce directly: it dedupes
+to the newest row per `(task, arm)`, which would silently drop one of the two
+runs per task. The pooled numbers were computed by hand over the 14
+concatenated rows per arm (both runs, un-deduped), reimplementing
+`summarize`'s own rules: completion rate over evaluated runs; cost per
+completed = total `cost_usd` of every evaluated run in the pool divided by
+the number completed (this is "evaluated", not "completed only" -- confirmed
+by reproducing raw r1's own $0.6194 figure by hand); p50/p90 by nearest-rank
+over completed runs' `time_to_pr_s`. The pooling script reproduced all four
+single-run files' own `summarize --markdown` numbers exactly (completed
+count, cost per completed, p50 and p90) before its pooled output was
+trusted. All 28 task-runs (7 tasks x 2 arms x 2 runs) came back
+`status: ok`; none were `arm_unavailable`, `auth_unavailable`,
+`harness_error` or `task_invalid`.
+
+Misses: raw-claude missed `pub-faker-1817` and `pub-werkzeug-3271` (both
+hidden-test failures, r1 only; r2 was 7/7). v10 missed `pub-werkzeug-3105`
+and `pub-werkzeug-3271` in both runs (hidden-test failures both times).
+
+Verdict per axis, v10 vs raw on this tier:
+- Completions: v10 is WORSE (71.4% vs 85.7%; 10/14 vs 12/14).
+- Cost per completed task: v10 is WORSE (higher; $0.5395 vs $0.5119, about
+  5.4% more expensive).
+- p50 time to PR: v10 is WORSE (slower; 83s vs 70s, about 19% slower). v10's
+  p90 (100s) beats raw's p90 (239s, `pub-werkzeug-3271`); raw's single
+  slowest run was `pub-werkzeug-3105` r2 at 256s, rank 12 of 12, past the p90
+  cutoff so it does not set the p90 value. Neither changes the p50 verdict.
+
+v10 is not at or better than raw on any of the three axes on this tier. This
+does not by itself change the small-tier default decision (D30: default
+stays legacy, v10 opt-in); it is additional evidence for whoever rules on the
+flip under D38's small-plus-medium scope.
+
+No result file was committed: `eval/loki10/.gitignore` ignores the whole
+`results/` directory (the README also warns to treat `--out` as sensitive,
+since `arm_stdout.log` can hold env), so there are no harness result files
+tracked in git to commit, matching every earlier EV entry in this file. Only
+this METRICS.md section is committed. The raw result files above remain on
+disk in this worktree at `eval/loki10/results/ev14-medium-{raw,v10}-r{1,2}/`.
