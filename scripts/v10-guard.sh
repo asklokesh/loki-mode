@@ -729,12 +729,34 @@ def rule2_git_force(words, name, idx, git_info):
         repo_root = resolve_repo_root(repo_cwd, git_dir_override)
         return "RULE2 (git branch -f main): force-moves 'main' without a checkout (repo {})".format(repo_root)
 
-    if sub == "update-ref" and "refs/heads/main" in args:
-        # Membership, not "first non-flag arg": update-ref takes
-        # value-carrying flags before the ref (e.g. `-m <reason>`), so the
-        # first non-flag word is not reliably the ref itself.
-        repo_root = resolve_repo_root(repo_cwd, git_dir_override)
-        return "RULE2 (git update-ref refs/heads/main): moves 'main' without a checkout (repo {})".format(repo_root)
+    if sub == "update-ref":
+        # `--stdin` reads the actual ref updates from stdin, which this
+        # guard never sees -- the command line alone cannot tell us
+        # whether `refs/heads/main` is among them. Fail-safe: refuse
+        # rather than silently allow what can't be verified.
+        if "--stdin" in args:
+            repo_root = resolve_repo_root(repo_cwd, git_dir_override)
+            return "RULE2 (git update-ref --stdin): ref updates read from stdin can't be verified (repo {})".format(repo_root)
+        # Target ref is the first non-option arg, skipping `-m <reason>`'s
+        # value (the only update-ref flag that takes one) -- NOT a bare
+        # membership check: that wrongly matched `refs/heads/main` used as
+        # the SOURCE ref in `update-ref refs/heads/other refs/heads/main`,
+        # or as a `-m` reason string, neither of which moves main.
+        target = None
+        i = 0
+        while i < len(args):
+            a = args[i]
+            if a == "-m":
+                i += 2
+                continue
+            if a.startswith("-"):
+                i += 1
+                continue
+            target = a
+            break
+        if target == "refs/heads/main":
+            repo_root = resolve_repo_root(repo_cwd, git_dir_override)
+            return "RULE2 (git update-ref refs/heads/main): moves 'main' without a checkout (repo {})".format(repo_root)
 
     if sub in ("checkout", "switch"):
         move_flags = ("-B",) if sub == "checkout" else ("-C", "--force-create")

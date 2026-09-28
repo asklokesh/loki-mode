@@ -273,6 +273,10 @@ assert_blocked "R2 blocked: git update-ref refs/heads/main <ref>" \
     "git update-ref refs/heads/main HEAD" "$REPO2_FEATURE" "RULE2"
 assert_blocked "R2 blocked: git update-ref -m <reason> refs/heads/main <ref> (value-flag before the ref)" \
     "git update-ref -m reason refs/heads/main HEAD" "$REPO2_FEATURE" "RULE2"
+assert_blocked "R2 blocked: git update-ref -d refs/heads/main (delete)" \
+    "git update-ref -d refs/heads/main" "$REPO2_FEATURE" "RULE2"
+assert_blocked "R2 blocked: git update-ref --stdin (can't verify ref updates read from stdin)" \
+    "git update-ref --stdin" "$REPO2_FEATURE" "RULE2"
 assert_blocked "R2 blocked: git checkout -B main <ref>" \
     "git checkout -B main HEAD" "$REPO2_FEATURE" "RULE2"
 assert_blocked "R2 blocked: git switch -C main <ref>" \
@@ -289,6 +293,10 @@ assert_allowed "R2 allowed: git switch -C <other-branch> <ref>" \
     "git switch -C other-branch HEAD" "$REPO2_FEATURE"
 assert_allowed "R2 allowed: git update-ref refs/heads/other-branch <ref>" \
     "git update-ref refs/heads/other-branch HEAD" "$REPO2_FEATURE"
+assert_allowed "R2 allowed: git update-ref refs/heads/other-branch refs/heads/main (main only appears as the SOURCE value, not the target)" \
+    "git update-ref refs/heads/other-branch refs/heads/main" "$REPO2_FEATURE"
+assert_allowed "R2 allowed: git update-ref -m refs/heads/main refs/heads/other-branch HEAD (main only appears as the -m reason string)" \
+    "git update-ref -m refs/heads/main refs/heads/other-branch HEAD" "$REPO2_FEATURE"
 assert_allowed "R2 allowed: git switch main (plain switch, no -C)" \
     "git switch main" "$REPO2_FEATURE"
 assert_allowed "R2 allowed: git checkout main (plain checkout, no -B)" \
