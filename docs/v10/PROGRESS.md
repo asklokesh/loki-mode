@@ -1,5 +1,10 @@
 # Progress
 
+## 2026-09-28T18:25Z: 14:00 slot shipped; governor numbers corrected
+- 14:00 slot: v10.2.5 cut 18:06:00Z (b72c4f7e) after Tests went green on 1f955851 at 18:05:17Z; publish-npm 18:14:09Z; npm gitHead b72c4f7e; GitHub body backfilled (5 lines).
+- Burn accounting settled (three tries): rows sharing a message id are streaming snapshots (output_tokens grows, e.g. 5, 5, 467; cache fields repeat), so the right count is the maximum per message id. Last hour 1.79M output (sonnet 84%, opus 15%), 0.726B cache read; last 5h 6.43M output. G-01 now uses max-per-message (real run: 6.53M output in 5h, 37 active agents, 45.9K output per engineer-hour) and ships usage-statusline-logger.sh: Claude Code gives a statusLine command rate_limits.five_hour and seven_day used_percentage, which is the source of truth once wired. Still uncalibrated: no plan reading yet.
+- Merged locally for the next train: E-86 (pre-push gitleaks, opus APPROVE round 4), M-11, E-67 (core 4,976 after deleting escalate.ts), M-07 (fits at 4,977 once E-67 landed). Full-suite failures seen at load 48 were timeouts that pass alone.
+
 ## 2026-09-28T18:00Z: EV-14 says no flip; v10.2.4 out; governor first
 - EV-14 medium tier (7 tasks, 2 runs per arm, claude-opus-5-5, harness at 8f2179cd): raw 12/14 completed (85.7%), $0.5119 per completed, p50 70s; v10 10/14 (71.4%), $0.5395, p50 83s. v10 is worse on completions, cost and p50; the default stays legacy (D38). Per-run result files were lost in the 17:36Z worktree incident (numbers survive in METRICS.md from commit 0afef9e4); EV-15 re-runs with results kept outside worktrees and E-98 diagnoses the v10 losses.
 - EV-12 large retrofits (EV-12F-a, EV-12F-b, EV-12G): opus REJECT on every task; deprioritized behind EV-15 and E-98, since the flip is blocked by the medium result regardless of the large tier.
