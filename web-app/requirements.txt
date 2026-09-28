@@ -1,26 +1,26 @@
 # Core -- required for server.py to start
 fastapi>=0.100.0
 uvicorn[standard]>=0.20.0
-pydantic>=2.0.0
+pydantic>=2.13.5
 httpx>=0.24.0
 python-multipart>=0.0.9
 
 # Terminal -- PTY-based interactive terminal
-pexpect>=4.8.0
+pexpect>=4.9.0
 
 # File watcher -- live file-change notifications via WebSocket
 watchdog>=3.0.0
 
 # Database (optional) -- only needed for multi-user cloud deployment.
 # Without DATABASE_URL set, the server uses file-based storage.
-sqlalchemy[asyncio]>=2.0.0
+sqlalchemy[asyncio]>=2.1.1
 asyncpg>=0.28.0
 aiosqlite>=0.19.0
-alembic>=1.12.0
+alembic>=1.20.0
 
 # Auth (optional) -- only needed when DATABASE_URL is configured.
 # Imports are guarded by try/except so the server starts without them.
-python-jose[cryptography]>=3.3.0
+python-jose[cryptography]>=3.5.0
 passlib[bcrypt]>=1.7.4
 
 # Encryption (optional) -- Fernet encryption for user secrets.
@@ -28,4 +28,4 @@ passlib[bcrypt]>=1.7.4
 cryptography>=41.0.0
 
 # YAML parsing -- used by server.py for config loading
-pyyaml>=6.0
+pyyaml>=6.0.3
