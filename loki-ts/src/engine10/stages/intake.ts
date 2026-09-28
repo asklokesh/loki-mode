@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import type { RunContext, Stage, StageResult } from "../types.ts";
 import { buildRepoMap } from "../repomap.ts";
 import { githubRepoFromUrl, readOriginUrl } from "../supervisor.ts";
+import { buildAlreadyDoneCommentArgv, checkAlreadyDone, renderAlreadyDoneComment } from "../already_done.ts";
 export interface IntakeOptions {
   taskText?: string;
   issueJsonPath?: string;
@@ -17,6 +18,10 @@ export interface IntakeOptions {
 interface IssueFields {
   state: string | null;
   closed_by_merged_pr?: boolean;
+}
+/** owner/repo#number, when the issue JSON carries both (GitHub); null for anything else, never guessed. */
+function issueRefOf(raw: { repo?: unknown; number?: unknown }): string | null {
+  return typeof raw.repo === "string" && raw.repo && typeof raw.number === "number" ? `${raw.repo}#${raw.number}` : null;
 }
 function sha256(s: string): string {
   return createHash("sha256").update(s).digest("hex");
@@ -74,13 +79,15 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
   let taskSha256: string;
   let task = taskText ?? "";
   let alreadySatisfied = false;
+  let issueRef: string | null = null;
   if (existsSync(issueJsonPath)) {
     source = "issue";
     const raw = readFileSync(issueJsonPath, "utf8");
     taskSha256 = sha256(raw);
-    const i = JSON.parse(raw) as { title?: unknown; body?: unknown };
+    const i = JSON.parse(raw) as { title?: unknown; body?: unknown; repo?: unknown; number?: unknown };
     task = [i.title, i.body].filter((x) => typeof x === "string" && x !== "").join("\n\n");
     alreadySatisfied = isAlreadyDone(loadIssue(issueJsonPath));
+    issueRef = issueRefOf(i);
   } else if (taskText !== undefined) {
     source = "text";
     taskSha256 = sha256(taskText);
@@ -99,8 +106,29 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
   }
   mkdirSync(ctx.runDir, { recursive: true });
   const repomapRef = join(ctx.runDir, "repomap.json");
-  writeFileSync(repomapRef, JSON.stringify(buildRepoMap(ctx.repoDir)));
+  const repoMap = buildRepoMap(ctx.repoDir);
+  writeFileSync(repomapRef, JSON.stringify(repoMap));
   const testmap = await ctx.tests.detect(ctx.repoDir);
+  // E-66: "already implemented" as a first-class outcome. A deterministic evidence search over
+  // repoMap/testmap/CHANGELOG, confirmed by one short cheap-model session that must cite files;
+  // no candidate evidence means no session call (checkAlreadyDone's own gate).
+  const already = await checkAlreadyDone(ctx, signal, task, repoMap, testmap);
+  if (already) {
+    let commentArgv: string[] | undefined;
+    if (source === "issue" && issueRef) {
+      const bodyFile = join(ctx.runDir, "already-done-comment.md");
+      writeFileSync(bodyFile, renderAlreadyDoneComment(already.evidence), "utf8");
+      commentArgv = buildAlreadyDoneCommentArgv(ctx.runId, issueRef, bodyFile);
+    }
+    return {
+      status: "completed",
+      data: {
+        ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch,
+        already_satisfied: true, evidence: already.evidence, iteration_ids: [`${ctx.runId}-already-done`],
+        ...(commentArgv ? { comment_argv: commentArgv } : {}),
+      },
+    };
+  }
   return {
     status: "completed",
     data: {

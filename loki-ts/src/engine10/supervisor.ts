@@ -199,7 +199,8 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   let prUrl: string | null = null;
   const intact = log.verify(); // unconditional re-check before the PR
   if (!intact) notProven.push(TAMPER_NOT_PROVEN);
-  if (opts.pr && intact && origin && verdict !== "FAILED") {
+  // E-66: already-satisfied (no change needed) opens no PR, whether from the issue-closed check or the evidence-confirmed check.
+  if (opts.pr && intact && origin && verdict !== "FAILED" && verdict !== "ALREADY_SATISFIED") {
     const pushEnv: PushEnv = { _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin };
     const out = await opts.pr({ env, pushEnv, runId: opts.runId, repoDir: opts.repoDir, verdict });
     notProven.push(...(out?.notProven ?? []));
