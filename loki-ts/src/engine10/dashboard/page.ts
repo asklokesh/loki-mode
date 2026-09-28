@@ -22,10 +22,13 @@ export function renderPage(): string {
   .label { color: #888; display: inline-block; width: 110px; }
   #timeline { margin-top: 12px; }
   #timeline div { padding: 1px 0; }
+  #version { color: #888; font-weight: normal; font-size: 12px; }
+  #version-warn { display: none; color: #e8b339; border: 1px solid #5a4a1a; background: #2a220c; padding: 6px 8px; margin-bottom: 12px; }
 </style>
 </head>
 <body>
-<h1>Loki 10 dashboard</h1>
+<h1>Loki 10 dashboard <span id="version"></span></h1>
+<div id="version-warn"></div>
 <div id="layout">
   <ul id="runs"></ul>
   <div id="detail">
@@ -38,6 +41,19 @@ export function renderPage(): string {
   var es = null;
   function esc(s) {
     return String(s).replace(/[&<>]/g, function (c) { return c === "&" ? "&amp;" : c === "<" ? "&lt;" : "&gt;"; });
+  }
+  function loadVersion() {
+    fetch("/version").then(function (r) { return r.json(); }).then(function (v) {
+      document.getElementById("version").textContent =
+        v.version + (v.cliVersion ? " (CLI " + v.cliVersion + ")" : " (CLI unknown)");
+      var warn = document.getElementById("version-warn");
+      if (v.cliVersion && v.cliVersion !== v.version) {
+        warn.textContent = "Version mismatch: dashboard " + v.version + " vs CLI " + v.cliVersion + ".";
+        warn.style.display = "block";
+      } else {
+        warn.style.display = "none";
+      }
+    });
   }
   function loadRuns() {
     fetch("/api/runs").then(function (r) { return r.json(); }).then(function (runs) {
@@ -68,6 +84,7 @@ export function renderPage(): string {
       document.getElementById("timeline").appendChild(div);
     };
   }
+  loadVersion();
   loadRuns();
   setInterval(loadRuns, 5000);
 })();

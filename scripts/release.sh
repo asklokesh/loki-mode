@@ -419,6 +419,35 @@ require_green_release_gate() {
     log_success "Release gate: green Tests + Bun Parity run found at $sha"
 }
 
+# E-72: loki-ts/dist rebuilds are content-hashed (writeDeterministicDebugId
+# in loki-ts/scripts/build.ts) but the hash still shifts across checkouts
+# for bundles whose content never depends on VERSION (cockpit.js today).
+# On a version-only bump that leaves loki.js/loki.js.map genuinely diffing
+# (they embed the version) but cockpit.js/cockpit.js.map diffing in nothing
+# but the "//# debugId=" line / the map's "debugId" field -- pure git churn.
+# For each *.js/*.map under $1, restore it from HEAD when the ONLY diff is
+# that debugId text; files that changed for real (loki.js) are left alone.
+release_restore_debugid_only_dist() {
+    local dist_dir="$1" file rel head_txt work_txt head_norm work_norm
+    local sed_expr='s/(\/\/# debugId=)[0-9A-Fa-f]+/\1X/; s/("debugId"[[:space:]]*:[[:space:]]*")[0-9A-Fa-f]+(")/\1X\2/'
+
+    [ -d "$dist_dir" ] || return 0
+    for file in "$dist_dir"/*.js "$dist_dir"/*.map; do
+        [ -f "$file" ] || continue
+        rel="${file#"$ROOT_DIR"/}"
+        head_txt="$(git -C "$ROOT_DIR" show "HEAD:$rel" 2>/dev/null)" || continue
+        work_txt="$(cat "$file")"
+        [ "$head_txt" = "$work_txt" ] && continue
+
+        head_norm="$(printf '%s' "$head_txt" | sed -E "$sed_expr")"
+        work_norm="$(printf '%s' "$work_txt" | sed -E "$sed_expr")"
+        if [ "$head_norm" = "$work_norm" ]; then
+            git -C "$ROOT_DIR" checkout HEAD -- "$rel"
+            log_step "Restored $rel (debugId-only diff)"
+        fi
+    done
+}
+
 # --bump-only (S-108): version files + loki-ts/dist, no git side effects.
 run_bump_only() {
     local current new dist_file="$ROOT_DIR/loki-ts/dist/loki.js"
@@ -435,6 +464,7 @@ run_bump_only() {
         ( cd "$ROOT_DIR/loki-ts" && bun run build )
         if [ -f "$dist_file" ] && grep -q "$new" "$dist_file"; then
             log_success "loki-ts/dist rebuilt with $new"
+            release_restore_debugid_only_dist "$ROOT_DIR/loki-ts/dist"
         else
             log_error "loki-ts/dist rebuild did not embed $new in $dist_file"
             exit 1

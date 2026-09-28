@@ -127,7 +127,12 @@ function checksOf(v: unknown): ReceiptCheck[] {
 
 export function renderReceiptMd(r: Receipt): string {
   const sig = r.verification.jwt ? `SIGNED (kid ${r.verification.kid})` : "UNSIGNED";
-  const usd = r.cost.usd === null ? "not measured" : `$${r.cost.usd.toFixed(4)}`;
+  // E-69: never $0.00 for an unpriced run; "partial" when some but not all sessions were priced.
+  const usd = r.cost.usd !== null
+    ? `$${r.cost.usd.toFixed(4)}`
+    : r.cost.measured_sessions > 0
+      ? `partial: $${r.cost.partial_usd.toFixed(4)} for ${r.cost.measured_sessions} of ${r.cost.total_sessions} sessions`
+      : "not measured";
   return [
     `## Loki receipt: ${r.verdict}`,
     "",
@@ -208,7 +213,10 @@ export const sealStage: Stage = {
       not_proven: [],
       verdict,
       evidence: strs(o.intake?.evidence),
-      cost: { usd: cost.usd, input_tokens: cost.inputTokens, output_tokens: cost.outputTokens },
+      cost: {
+        usd: cost.usd, input_tokens: cost.inputTokens, output_tokens: cost.outputTokens,
+        measured_sessions: cost.measuredCount ?? 0, total_sessions: cost.totalCount ?? 0, partial_usd: cost.partialUsd ?? 0,
+      },
       time: { wall_s: Object.values(stages).reduce((a, b) => a + (b ?? 0), 0), stages },
       provider: ctx.provider,
       model: ctx.model,

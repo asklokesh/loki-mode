@@ -1,5 +1,16 @@
 # Progress
 
+## 2026-09-28T04:30Z: v10.0.1 SHIPPED -- read first on resume
+- v10.0.1 republishes v10.0.0 (tag v10.0.0 at 898fa081 never reached npm). Root cause: tests/test-start-update-hint.sh used latest=9.99.0 as "far-future", older than 10.0.0; fixed 306b6b0c (control: old test on the new tree fails "a stale install prints NO warning on start"; new test 10 passed 0 failed; trust-core 95 passed 0 failed). Tests green on 306b6b0c (run 36375975977).
+- Release run 36376357720 all jobs success; `npm view loki-mode dist-tags` latest 10.0.1, gitHead 76ec1c24 = tag v10.0.1^{}; GitHub release v10.0.1 published 04:14:03Z; `loki --version` from a fresh prefix prints "Loki Mode v10.0.1" (rc=0).
+- Train E18 on main (ea288330): E-68, E-69, EV-13, E-64 merged; M-01/02/05/06 merged f4d98c0b. Wave E18 rejects (M-03, M-04, M-09, EV-11, EV-12) and E-66 rebase, E-61, E-62 building in wave E19 (wf_bd919989-941); E-71..E-73 in wave E18b (wf_f55ed4cc-ca6). E-67 held (overlaps E-61 session.ts and E-66 supervisor.ts). EV-9 held until E-64 is re-measured.
+- Wave E18 spend ESTIMATE: 1,468,032 subagent tokens (14 agents, workflow usage block).
+
+## 2026-09-28T03:44Z: RELEASE BLOCKED (resolved by v10.0.1, see above)
+- v10.0.0 did NOT publish. The release commit 898fa081 (tag v10.0.0 pushed) failed Tests shards 1/8 and 5/8, so the Release workflow failed; `npm view loki-mode version` is still 9.81.0. Failing suites (gh run view 36372016155 --log-failed): "loki start surfaces a stale install" (line: "FAIL: a stale install prints NO warning on start") and "trust-core tests detect their regressions".
+- Next step: fix those 2 shards on main (likely the 10.0.0 major bump changes the version comparison the stale-install check uses; confirm from the test before editing), wait for Tests green on the fix SHA, then re-release v10.0.0 (the tag v10.0.0 already points at 898fa081: delete nothing; cut the re-release per docs/dev/release-checklist.md, bumping to 10.0.1 if the tag cannot be reused). Default stays legacy; v10 opt-in; gate numbers are in CHANGELOG v10.0.0 and docs/v10/METRICS.md.
+- Session hand-off: no workflows started after 03:11Z. Merge-ready (approved, not merged): E-68, E-69, EV-13 (branches worktree-wf_b707f4ab-24f-3/-4/-5), E-64 (worktree-wf_4601e7b3-4d8-1), E-70 already merged, E-31 held for the gate. Needs rework: E-66 (small test fixes), E-67 (backstop inside the cap), M-09, M-01/02/05/06 (iterative SCC), EV-11 (11 medium tasks missing), EV-12 (REJECT: large tasks smaller than medium). Both workflows (p0-rework, d30-rework-and-m1) finished; nothing running.
+
 ## Current
 
 - Milestone: **M0 measure first**, item 1: the moat suite.
@@ -1273,7 +1284,7 @@ sample.
 - On main (`git ls-remote origin refs/heads/main` = addda547): E-42 real entry end to end (run.ts glue deleted), E-44 output fixes, agent SDK 0.3.283 (9db2a4ed), E-51 eval PR path regression, and train E12 (23b20e6f): E-33 gate report, EV-6 publish script, E-38 legacy arm pin, E-39 interrupt/resume, E-40 live PR smoke. Train checks: engine10 349 pass 0 fail, tsc exit 0, test-harness 79/0, test-gate-report 34/0.
 - SDK route: claude-opus-5-5 now runs through the SDK (probe: `success OK`); 0.3.267 rejected it. The same probe cost $0.33 for a one-word reply, so fixed per-call overhead, not task work, drives v10 cost.
 - Legacy arm (EV-5): 3 results so far (2 hidden pass), each at the 900s cap; runner alive at parallel 3, ETA about 02:15Z. Incident: 6 then 2 legacy watchdog loops escaped the harness timeout group (ppid 1, 30 min); stopped by PID; guard slice EV-10.
-- In flight (wave E13, 12 builders): E-45 cost path rework, E-36 preflight (plus E-37), E-32 rebase, E-34 docs refresh, E-52..E-56, E-58 (makes E-47 green), E-59 (makes E-50 green), EV-10.
+- In flight (wave E13, 12 builders): E-45 cost path rework, E-36 preflight (plus E-37), E-32 rebase, E-34 docs refresh, E-52..E-56, E-58 (unblocks E-47), E-59 (unblocks E-50), EV-10.
 - ETA: E-45 merge about 00:45Z, EV-8 5-task cost check right after, EV-9 full v10 arm about 01:00Z to 01:45Z, gate decision 03:00Z.
 - Top blocker: cost per completed task (raw $0.2363); E-45 plus the per-call overhead finding decide it.
 
@@ -1297,3 +1308,16 @@ sample.
 - Part 2: MODERNIZE.md in progress (CTO and Architect), ETA 02:45Z; 0 Part 2 slices done.
 - In flight: E-64, E-63 (STALE_PROGRESS), EV-11 (medium tier), EV-12 (large tier), E-66..E-70 and EV-13 (augmentiq #52 P0), E-65 rework.
 - Top blocker: v10 cost per completed task vs the $0.118 target, then the medium and large tiers (not built yet) for the accuracy claim.
+
+## 2026-09-28T02:57Z: Loki 10 progress
+- Part 1 gate numbers (small tier, claude-opus-5-5, 29 tasks): raw 27/29 (93.1%), $0.2363, p50 39s; v10 default knobs 26/29 (89.7%), $0.3946 (2 unmeasured), p50 85.5s (~/loki-ci-logs/ev9-v10-small/results.jsonl); legacy 15/29, cost not measured. Gate not met; v10.0.0 ships opt-in with these numbers; default stays legacy (D30).
+- Lean configuration (no plan, no Wall; not the default), full 29 tasks: 27/29 (93.1%), $0.1616 per completed (1 unmeasured), p50 40s, p90 67s (~/loki-ci-logs/ev9-v10-small-lean/results.jsonl). Matches raw on completion and time, 32% cheaper; short of the 2x targets.
+- Part 2: MODERNIZE.md merged in train E17 (8f4dc965, 399 lines, M-01..M-30 on the board); first builders on M-01/M-02/M-05/M-06 and M-09. 0 Part 2 slices merged.
+- Merged this half hour: E-65 lean engine sessions (8b76fd9a), E-63 STALE_PROGRESS pulse check, E-70 dashboard versions (train E17). Released v9.81.0 (npm 02:38:54Z).
+- Top blocker: default v10 is heavier than raw (plan and Wall on every normal task, $0.39 vs $0.24). E-64 (lean small path plus opus on failure) is the fix; it was rejected once and is in rework.
+
+## 2026-09-28T03:44Z: Loki 10 progress
+- Part 1 gate numbers unchanged from 02:57Z (small tier, claude-opus-5-5): raw 27/29, $0.2363, p50 39s; v10 default 26/29, $0.3946, p50 85.5s; v10 lean configuration 27/29, $0.1616, p50 40s (~/loki-ci-logs/ev9-v10-small{,-lean}/results.jsonl). Gate not met; v10.0.0 release failed (see the top of this file).
+- P0 augmentiq #52 rework: E-68, E-69, EV-13 APPROVE; E-66 CONCERN; E-67 REJECT. E-64 (lean small path plus opus on failure) APPROVE on rework.
+- Part 2: 0 slices merged. M-01, M-02, M-05, M-06 built (CONCERN: recursive SCC); M-09 built (REJECT: unsupported types recorded as equal).
+- Top blocker: the 2 red Tests shards on 898fa081 block the v10.0.0 release.

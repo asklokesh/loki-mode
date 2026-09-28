@@ -139,6 +139,25 @@ export function fold(events: EventEnvelope[]): Folded {
   return f;
 }
 
+// E-69: per-session measured/total counts and their dollar sum, straight from the raw cost
+// events -- not fold()'s cost.usd, which already collapses to null the moment any one session is
+// unpriced. Lets a caller say "partial: $X for N of M sessions" instead of just "not measured".
+// Lives next to fold() (not in supervisor.ts) so a pure reader like the dashboard can reach it
+// without importing the process-spawning supervisor module. `tampered` mirrors the guard callers
+// already apply to fold()'s own cost.usd: a TAMPERED log's cost events are as untrustworthy as
+// everything else in it, so this reports no measured cost too, never a dollar figure sourced
+// from them.
+export function partialCost(events: EventEnvelope[], tampered = false): { measured: number; total: number; usd: number } {
+  if (tampered) return { measured: 0, total: 0, usd: 0 };
+  let measured = 0, total = 0, usd = 0;
+  for (const e of events) {
+    if (e.type !== "cost") continue;
+    total++;
+    if (typeof e.data.usd === "number") { measured++; usd += e.data.usd; }
+  }
+  return { measured, total, usd };
+}
+
 /** Replays existing events synchronously, then polls for appended ones. An incomplete trailing line is held until its newline arrives. Returns stop(). */
 export function tail(path: string, onEvent: (e: EventEnvelope) => void, opts: { intervalMs?: number } = {}): () => void {
   let offset = 0;

@@ -9,9 +9,9 @@
 // with the provider/model/emit bound on the factory instead.
 import { describe, expect, test } from "bun:test";
 import { dirname, join } from "node:path";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { createSessionRunner } from "../../src/engine10/session.ts";
+import { classifyExitCause, createSessionRunner, HEARTBEAT_MS_DEFAULT } from "../../src/engine10/session.ts";
 import type { SessionRunOptions } from "../../src/engine10/types.ts";
 
 async function waitForFile(path: string, timeoutMs = 5000): Promise<void> {
@@ -24,6 +24,7 @@ async function waitForFile(path: string, timeoutMs = 5000): Promise<void> {
 
 const STUB = join(import.meta.dir, "fixtures", "session", "stub.sh");
 const STUB_MARKER = join(import.meta.dir, "fixtures", "session", "stub_marker.sh");
+const STUB_SIGTERM143 = join(import.meta.dir, "fixtures", "session", "stub_sigterm143.sh");
 
 function isAlive(pid: number): boolean {
   try {
@@ -82,7 +83,132 @@ describe("engine10 session", () => {
     expect(started?.data["provider"]).toBe("claude");
     expect(heartbeats.length).toBeGreaterThan(0);
     expect(heartbeats[0]?.data["waiting_on"]).toBe("implement");
+    // E-68: every heartbeat carries elapsed seconds and the diff stat, not just a "waiting" ping.
+    expect(typeof heartbeats[0]?.data["elapsed_s"]).toBe("number");
+    expect(heartbeats[0]?.data["elapsed_s"] as number).toBeGreaterThanOrEqual(0);
+    expect(heartbeats[0]?.data["diff"]).toMatchObject({ files: expect.any(Number), insertions: expect.any(Number), deletions: expect.any(Number) });
     expect(ended?.data["exit"]).toBe("already_done");
+    // E-68: exit is classified alongside the coarse ImplementExit, never left un-named.
+    expect(ended?.data["cause"]).toBe("exit 0 (success)");
+  }, 10_000);
+
+  test("E-68: the heartbeat default is at most 30s, so a stuck provider call never goes silent longer", () => {
+    expect(HEARTBEAT_MS_DEFAULT).toBeLessThanOrEqual(30_000);
+  });
+
+  test("E-68: classifyExitCause names every outcome; the string 'cause not classified' is never producible", () => {
+    expect(classifyExitCause(0, false)).toBe("exit 0 (success)");
+    expect(classifyExitCause(1, false)).toBe("exit 1 (general error)");
+    expect(classifyExitCause(2, false)).toBe("exit 2 (misuse of shell command)");
+    expect(classifyExitCause(124, false)).toBe("exit 124 (timeout)");
+    expect(classifyExitCause(125, false)).toBe("exit 125 (timeout or container failure)");
+    expect(classifyExitCause(126, false)).toBe("exit 126 (command not executable)");
+    expect(classifyExitCause(127, false)).toBe("exit 127 (command not found)");
+    expect(classifyExitCause(130, false)).toBe("exit 130 (SIGINT)");
+    expect(classifyExitCause(137, false)).toBe("exit 137 (SIGKILL)");
+    expect(classifyExitCause(143, false)).toBe("exit 143 (SIGTERM)");
+    expect(classifyExitCause(null, true)).toBe("limit");
+    expect(classifyExitCause(null, false)).toBe("external kill");
+    // A code with no table entry still names the number: never a bare fallback string.
+    expect(classifyExitCause(255, false)).toBe("exit 255 (unrecognized code)");
+    expect(classifyExitCause(17, false)).toBe("exit 17 (unrecognized code)");
+    // E-68 rework: classify from what the ENGINE knows, not the child's self-reported
+    // code. A code the child made up (143, or anything else) while the engine itself
+    // did the killing is always "limit" or "aborted", per which one fired.
+    expect(classifyExitCause(143, true, "limit")).toBe("limit");
+    expect(classifyExitCause(143, true, "aborted")).toBe("aborted");
+    expect(classifyExitCause(0, true, "limit")).toBe("limit");
+    expect(classifyExitCause(null, true, "aborted")).toBe("aborted");
+    for (const [exit, killed] of [
+      [0, false], [1, false], [2, false], [124, false], [125, false], [126, false], [127, false],
+      [130, false], [137, false], [143, false], [255, false], [null, true], [null, false],
+    ] as const) {
+      expect(classifyExitCause(exit, killed)).not.toBe("cause not classified");
+    }
+  });
+
+  test("E-68: 'cause not classified' does not appear anywhere in the engine10 source", () => {
+    const root = join(import.meta.dir, "..", "..", "src", "engine10");
+    const files = (readdirSync(root, { recursive: true }) as string[]).filter((f) => f.endsWith(".ts"));
+    for (const f of files) {
+      expect(readFileSync(join(root, f), "utf8")).not.toContain("cause not classified");
+    }
+  });
+
+  test("E-68: session.ended classifies the cause when the session is killed at the limit", async () => {
+    const events: { type: string; data: Record<string, unknown> }[] = [];
+    const runner = createSessionRunner({
+      provider: "claude", childCommand: ["bash", [STUB]],
+      emit: (type, _s, data) => events.push({ type, data }),
+    });
+    const dir = mkdtempSync(join(tmpdir(), "loki-e10-session-"));
+    process.env["SESSION_TEST_GRANDCHILD_PID_FILE"] = join(dir, "gc.pid");
+    try {
+      await runner.run(baseOpts({ limitS: 1 }));
+      const ended = events.find((e) => e.type === "session.ended");
+      expect(ended?.data["cause"]).toBe("limit");
+    } finally {
+      delete process.env["SESSION_TEST_GRANDCHILD_PID_FILE"];
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  // Reviewer rejection on E-68's first pass: stub.sh dies BY SIGNAL (code
+  // null) on SIGTERM, but the real session child is `bun src/cli.ts engine10
+  // session`, which installs `process.on("SIGTERM", () => process.exit(143))`
+  // before it dispatches (cli.ts:330) -- so a real limit kill reports exit
+  // 143, not null. classifyExitCause must name that "limit" from what the
+  // engine itself knows (it sent the SIGTERM), never from the child's
+  // self-reported code. stub_sigterm143.sh traps TERM and exits 143 the same
+  // way, so this reproduces the real behavior instead of the signal-death
+  // shortcut the rejected test used.
+  test("E-68: a child that traps SIGTERM and exits 143 (the real session route's behavior) is still classified as limit, not exit 143", async () => {
+    const events: { type: string; data: Record<string, unknown> }[] = [];
+    const dir = mkdtempSync(join(tmpdir(), "loki-e10-session-"));
+    process.env["SESSION_TEST_GRANDCHILD_PID_FILE"] = join(dir, "gc.pid");
+    const runner = createSessionRunner({
+      provider: "claude", childCommand: ["bash", [STUB_SIGTERM143]],
+      emit: (type, _s, data) => events.push({ type, data }),
+    });
+    try {
+      const result = await runner.run(baseOpts({ limitS: 1 }));
+      expect(result.exit).toBe(143);
+      expect(result.killed).toBe(true);
+      const ended = events.find((e) => e.type === "session.ended");
+      expect(ended?.data["exit"]).toBe("killed");
+      expect(ended?.data["cause"]).toBe("limit");
+    } finally {
+      delete process.env["SESSION_TEST_GRANDCHILD_PID_FILE"];
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  // Reviewer's minor (non-blocking) finding on the same review: `killed` is
+  // set both by the limitS timer AND by an external abort (the machine's cap
+  // or a stage-limit AbortController on opts.signal), so a fix that just
+  // checks `killed` would also mislabel an external abort as "limit". The
+  // engine knows which one fired; classify each by its real source.
+  test("E-68: an external abort mid-session is classified as aborted, not limit", async () => {
+    const events: { type: string; data: Record<string, unknown> }[] = [];
+    const dir = mkdtempSync(join(tmpdir(), "loki-e10-session-"));
+    const gcPidFile = join(dir, "gc.pid");
+    process.env["SESSION_TEST_GRANDCHILD_PID_FILE"] = gcPidFile;
+    const controller = new AbortController();
+    const runner = createSessionRunner({
+      provider: "claude", childCommand: ["bash", [STUB]],
+      emit: (type, _s, data) => events.push({ type, data }),
+    });
+    try {
+      const runPromise = runner.run(baseOpts({ limitS: 30, signal: controller.signal }));
+      await waitForFile(gcPidFile);
+      controller.abort();
+      await runPromise;
+      const ended = events.find((e) => e.type === "session.ended");
+      expect(ended?.data["cause"]).toBe("aborted");
+    } finally {
+      delete process.env["SESSION_TEST_GRANDCHILD_PID_FILE"];
+      rmSync(dir, { recursive: true, force: true });
+    }
   }, 10_000);
 
   test("parses LOKI_ALREADY_DONE from stdout", async () => {

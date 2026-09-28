@@ -5,7 +5,9 @@
 // (src/runner/sdk_stream_parser.ts) writes: {total_cost_usd, input_tokens,
 // output_tokens, cache_read_tokens, cache_creation_tokens, model}.
 // writeResultCost skips the file when the provider reported no cost, so an
-// absent or unreadable file means UNKNOWN: usd is null, never 0.
+// absent or unreadable file means UNKNOWN: usd is null, never 0. E-69: a file
+// present with a dollar figure but zero usage on every token field is also
+// UNKNOWN, never a real $0.00 (the EV-8 failure mode).
 //
 // E-06b: also write `<lokiRoot>/metrics/efficiency/iteration-<N>.json`, the
 // shape ENGINE.md section 10 and autonomy/lib/cost-summary.py read (not ours
@@ -18,13 +20,19 @@ import { join } from "node:path";
 
 export interface CostResult {
   usd: number | null;
+  // E-69: dollars actually reported by the measured sessions, even when usd above is null because
+  // some OTHER session in this same call wasn't priced. 0 when nothing was measured. Lets a caller
+  // render "partial: $X for N of M sessions" instead of collapsing straight to "not measured".
+  partialUsd: number;
+  measuredCount: number; // sessions with a provider-sourced dollar figure and real usage (see noUsage below)
+  totalCount: number; // iterations.length, so a caller can report "N of M"
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens: number;
   cache_creation_tokens: number;
   model: string | null; // E-50: provider-reported model from the result-cost file itself, never a guess
   source: string; // comma-joined result-cost file paths that were read
-  missing: string[]; // iterations with no dollar figure: either no file at all, or a file with tokens but no total_cost_usd
+  missing: string[]; // iterations with no dollar figure: no file, a file with no total_cost_usd, or all-zero usage (see noUsage below)
 }
 
 function num(v: unknown): number {
@@ -38,7 +46,11 @@ export function resultCostPath(lokiRoot: string, iteration: string): string {
 // Sum across sessions. Any missing session makes usd null: a partial sum
 // would understate the run's cost. Tokens still sum what was measured.
 export function sumResultCosts(lokiRoot: string, iterations: string[]): CostResult {
-  const out: CostResult = { usd: null, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, model: null, source: "", missing: [] };
+  const out: CostResult = {
+    usd: null, partialUsd: 0, measuredCount: 0, totalCount: iterations.length,
+    input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0,
+    model: null, source: "", missing: [],
+  };
   const sources: string[] = [];
   let usd = 0;
   for (const iter of iterations) {
@@ -54,18 +66,30 @@ export function sumResultCosts(lokiRoot: string, iterations: string[]): CostResu
     // absent (a codex/tokens-only session): capture them regardless of
     // whether a dollar figure follows below. Dropping tokens here just
     // because the session was unpriced was the E-06 bug this fixes.
-    out.input_tokens += num(rec["input_tokens"]);
-    out.output_tokens += num(rec["output_tokens"]);
-    out.cache_read_tokens += num(rec["cache_read_tokens"]);
-    out.cache_creation_tokens += num(rec["cache_creation_tokens"]);
+    const inTok = num(rec["input_tokens"]);
+    const outTok = num(rec["output_tokens"]);
+    const cacheR = num(rec["cache_read_tokens"]);
+    const cacheC = num(rec["cache_creation_tokens"]);
+    out.input_tokens += inTok;
+    out.output_tokens += outTok;
+    out.cache_read_tokens += cacheR;
+    out.cache_creation_tokens += cacheC;
     if (typeof rec["model"] === "string" && rec["model"]) out.model = rec["model"];
     sources.push(path);
     const c = rec["total_cost_usd"];
-    if (typeof c !== "number" || !Number.isFinite(c)) {
+    // E-69 (EV-8 failure mode: "Cost: $0.00 (claude, 0 tokens)"): a result-cost file with a dollar
+    // figure but zero usage on every token field is a session that never really ran (e.g. errored
+    // before the provider billed anything, or a stale/garbage file). That is never a real $0.00,
+    // so it counts as unmeasured exactly like a missing file. A real free session (tokens > 0,
+    // total_cost_usd 0) still measures as $0.00.
+    const noUsage = inTok === 0 && outTok === 0 && cacheR === 0 && cacheC === 0;
+    if (typeof c !== "number" || !Number.isFinite(c) || noUsage) {
       out.missing.push(iter); // dollars unknown for this session: the usd sum stays unknown too
       continue;
     }
     usd += c;
+    out.partialUsd += c;
+    out.measuredCount++;
   }
   out.source = sources.join(",");
   if (iterations.length > 0 && out.missing.length === 0) out.usd = usd;

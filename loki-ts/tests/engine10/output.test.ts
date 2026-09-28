@@ -178,6 +178,39 @@ describe("formatSummary (golden, ENGINE.md section 11)", () => {
     expect(out).not.toContain("$0");
     expect(out).toContain("PR:         none");
   });
+
+  // E-69: the three cost states a run's Cost line can be in.
+  test("fully measured: every session priced renders the plain $X.XX line", () => {
+    const out = formatSummary({
+      pr: null, verdict: "VERIFIED", notProven: [], flaky: [],
+      cost: { usd: 0.30, provider: "claude", tokens: 1000, measuredSessions: 2, totalSessions: 2, partialUsd: 0.30 },
+      wallS: 10, stages: [],
+    } as never);
+    expect(out).toContain("Cost:       $0.30 (claude, 1k tokens)");
+    expect(out).not.toContain("partial");
+  });
+
+  test("not measured: zero sessions priced renders \"not measured\", never $0.00", () => {
+    const out = formatSummary({
+      pr: null, verdict: "FAILED", notProven: [], flaky: [],
+      cost: { usd: null, provider: "claude", tokens: null, measuredSessions: 0, totalSessions: 2, partialUsd: 0 },
+      wallS: 10, stages: [],
+    } as never);
+    expect(out).toContain("Cost:       not measured");
+    expect(out).not.toContain("$0.00");
+    expect(out).not.toContain("partial");
+  });
+
+  test("partial: some sessions priced renders \"partial: $X for N of M sessions\"", () => {
+    const out = formatSummary({
+      pr: null, verdict: "PARTIAL", notProven: [], flaky: [],
+      cost: { usd: null, provider: "claude", tokens: 1200, measuredSessions: 1, totalSessions: 2, partialUsd: 0.125 },
+      wallS: 10, stages: [],
+    } as never);
+    expect(out).toContain("Cost:       partial: $0.13 for 1 of 2 sessions");
+    expect(out).not.toContain("$0.00");
+    expect(out).not.toContain("not measured");
+  });
 });
 
 // E-44 (found by E-14): the summary's token count must fold cache read and
