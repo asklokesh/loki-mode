@@ -1144,8 +1144,46 @@ TIER_CELL_RE = re.compile(r"^(LOW|MEDIUM|HIGH)$")
 # "Depends on"; several older rows' Notes cells contain unrelated lowercase
 # "depends on ... build then review." narrative prose from an earlier phase
 # writeup, which a case-insensitive match would misread as a live gate.
-DEPENDS_ON_RE = re.compile(r"Depends on ([^.]*)\.")
+# The clause ends at a lone "." (the sentence terminator). A range shorthand
+# ("E-98a..c") also contains dots, so a bare `[^.]*` up to the first "."
+# truncated the clause right after "E-98a" and lost everything past it. ".."
+# is only ever a range separator (always followed by another id character),
+# never the terminator, so it is let through; a genuine single "." is not.
+DEPENDS_ON_RE = re.compile(r"Depends on ((?:[^.]|\.\.(?=[A-Za-z0-9]))*)\.")
 DEPENDS_ON_ID_RE = re.compile(r"\b[A-Z]+-\d+[a-z]?\b")
+# Range shorthand (E-117): "E-98a..e" or "M-20..M-23" or "M-20..23" names a
+# contiguous run of sibling slices without spelling out each id. Expanded
+# BEFORE DEPENDS_ON_ID_RE runs, so every id in the run is captured instead of
+# just the first (letter ranges) or just the two endpoints (numeric ranges,
+# dropping the ids between them). A malformed range (backwards direction,
+# mismatched prefix) is left as-is in the clause text, so DEPENDS_ON_ID_RE
+# still picks up whatever plain ids it contains -- never guessed at.
+DEPENDS_ON_RANGE_RE = re.compile(
+    r"\b([A-Z]+)-(\d+)([a-z])\.\.([a-z])\b"       # E-98a..e
+    r"|\b([A-Z]+)-(\d+)\.\.(?:([A-Z]+)-)?(\d+)\b"  # M-20..M-23 / M-20..23
+)
+
+
+def _expand_depends_on_range(m):
+    letter_prefix, letter_num, letter_start, letter_end, \
+        num_prefix, num_start, num_end_prefix, num_end = m.groups()
+    if letter_prefix is not None:
+        if letter_start > letter_end:
+            return m.group(0)
+        return " ".join(
+            "%s-%s%s" % (letter_prefix, letter_num, chr(c))
+            for c in range(ord(letter_start), ord(letter_end) + 1)
+        )
+    if num_end_prefix is not None and num_end_prefix != num_prefix:
+        return m.group(0)
+    start, end = int(num_start), int(num_end)
+    # Capped at 50 (Tech Lead REJECT on E-117): an unbounded numeric span
+    # ("M-1..M-9999") would expand to thousands of ids, all landing in the
+    # pulse block injected into every turn. A span over the cap is left as
+    # literal text, same as the reversed-range fallback above.
+    if start > end or (end - start + 1) > 50:
+        return m.group(0)
+    return " ".join("%s-%d" % (num_prefix, n) for n in range(start, end + 1))
 
 
 def parse_depends_on(notes):
@@ -1155,7 +1193,8 @@ def parse_depends_on(notes):
     m = DEPENDS_ON_RE.search(notes or "")
     if not m:
         return []
-    return DEPENDS_ON_ID_RE.findall(m.group(1))
+    clause = DEPENDS_ON_RANGE_RE.sub(_expand_depends_on_range, m.group(1))
+    return DEPENDS_ON_ID_RE.findall(clause)
 
 
 def parse_board(path):
