@@ -11,6 +11,12 @@
 # silently fell back to a one-line "Release vX.Y.Z" body. v9.80.1, v9.81.0,
 # v10.0.1, v10.1.0, v10.1.1 and v10.2.1 shipped with that placeholder and
 # were hand-fixed after the fact.
+#
+# LOKI_ALLOW_UNSCANNED_PUSH=1 on every real hook invocation below (E-110):
+# this suite is about the release-notes gate, not gitleaks, and CI's Tests
+# job (tests/run-all-tests.sh, which runs this file) does not install the
+# pinned gitleaks binary -- without the override, every push here would be
+# refused by the hook's (unrelated) full-push secret scan requiring it.
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -563,7 +569,7 @@ fixture "$WORK/base-changelog.md" <<'EOF'
 - initial release
 EOF
 commit_version "$PUSH_REPO" "1.0.0" "$WORK/base-changelog.md"
-( cd "$PUSH_REPO" && LOKI_RELEASE_MANAGER=1 PRE_PUSH_NO_CI_CHECK=1 git push -q origin HEAD:refs/heads/main ) >"$WORK/push0.log" 2>&1
+( cd "$PUSH_REPO" && LOKI_RELEASE_MANAGER=1 PRE_PUSH_NO_CI_CHECK=1 LOKI_ALLOW_UNSCANNED_PUSH=1 git push -q origin HEAD:refs/heads/main ) >"$WORK/push0.log" 2>&1
 rc0=$?
 if [ "$rc0" -ne 0 ]; then
     bad "baseline push (v1.0.0, valid section) failed unexpectedly: $(cat "$WORK/push0.log")"
@@ -579,7 +585,7 @@ fixture "$WORK/no-section-changelog.md" <<'EOF'
 - initial release
 EOF
 commit_version "$PUSH_REPO" "1.1.0" "$WORK/no-section-changelog.md"
-( cd "$PUSH_REPO" && LOKI_RELEASE_MANAGER=1 PRE_PUSH_NO_CI_CHECK=1 git push -q origin HEAD:refs/heads/main ) >"$WORK/push1.log" 2>&1
+( cd "$PUSH_REPO" && LOKI_RELEASE_MANAGER=1 PRE_PUSH_NO_CI_CHECK=1 LOKI_ALLOW_UNSCANNED_PUSH=1 git push -q origin HEAD:refs/heads/main ) >"$WORK/push1.log" 2>&1
 rc1=$?
 if [ "$rc1" -ne 0 ] && grep -q 'no fully-written release notes for v1.1.0' "$WORK/push1.log"; then
     ok "pre-push refuses a VERSION bump to v1.1.0 on main with no CHANGELOG section"
@@ -602,7 +608,7 @@ EOF
 cp "$WORK/full-section-changelog.md" "$PUSH_REPO/CHANGELOG.md"
 git -C "$PUSH_REPO" add CHANGELOG.md
 git -C "$PUSH_REPO" commit -q -m "changelog: add v1.1.0 section"
-( cd "$PUSH_REPO" && LOKI_RELEASE_MANAGER=1 PRE_PUSH_NO_CI_CHECK=1 git push -q origin HEAD:refs/heads/main ) >"$WORK/push2.log" 2>&1
+( cd "$PUSH_REPO" && LOKI_RELEASE_MANAGER=1 PRE_PUSH_NO_CI_CHECK=1 LOKI_ALLOW_UNSCANNED_PUSH=1 git push -q origin HEAD:refs/heads/main ) >"$WORK/push2.log" 2>&1
 rc2=$?
 remote_tip="$(git --git-dir="$PUSH_REMOTE" rev-parse refs/heads/main 2>/dev/null || echo "")"
 local_tip="$(git -C "$PUSH_REPO" rev-parse HEAD)"
@@ -621,9 +627,9 @@ SKIP_REPO="$WORK/skip-repo"
 SKIP_REMOTE="$WORK/skip-remote.git"
 setup_push_fixture "$SKIP_REPO" "$SKIP_REMOTE"
 commit_version "$SKIP_REPO" "1.0.0" "$WORK/base-changelog.md"
-( cd "$SKIP_REPO" && LOKI_RELEASE_MANAGER=1 PRE_PUSH_NO_CI_CHECK=1 git push -q origin HEAD:refs/heads/main ) >"$WORK/skip0.log" 2>&1
+( cd "$SKIP_REPO" && LOKI_RELEASE_MANAGER=1 PRE_PUSH_NO_CI_CHECK=1 LOKI_ALLOW_UNSCANNED_PUSH=1 git push -q origin HEAD:refs/heads/main ) >"$WORK/skip0.log" 2>&1
 commit_version "$SKIP_REPO" "1.1.0" "$WORK/no-section-changelog.md"
-( cd "$SKIP_REPO" && LOKI_RELEASE_MANAGER=1 PRE_PUSH_SKIP=1 PRE_PUSH_NO_CI_CHECK=1 git push -q origin HEAD:refs/heads/main ) >"$WORK/skip1.log" 2>&1
+( cd "$SKIP_REPO" && LOKI_RELEASE_MANAGER=1 PRE_PUSH_SKIP=1 PRE_PUSH_NO_CI_CHECK=1 LOKI_ALLOW_UNSCANNED_PUSH=1 git push -q origin HEAD:refs/heads/main ) >"$WORK/skip1.log" 2>&1
 rc_skip=$?
 if [ "$rc_skip" -ne 0 ] && grep -q 'no fully-written release notes for v1.1.0' "$WORK/skip1.log"; then
     ok "PRE_PUSH_SKIP=1 still refuses a sectionless VERSION bump on main"
@@ -648,7 +654,7 @@ fixture "$WORK/br-no-section.md" <<'EOF'
 - prior release
 EOF
 commit_version "$BR_REPO" "2.5.0" "$WORK/br-no-section.md"
-( cd "$BR_REPO" && PRE_PUSH_NO_CI_CHECK=1 git push -q origin HEAD:refs/heads/feature/no-notes ) >"$WORK/br0.log" 2>&1
+( cd "$BR_REPO" && PRE_PUSH_NO_CI_CHECK=1 LOKI_ALLOW_UNSCANNED_PUSH=1 git push -q origin HEAD:refs/heads/feature/no-notes ) >"$WORK/br0.log" 2>&1
 rc_br=$?
 if [ "$rc_br" -eq 0 ]; then
     ok "VERSION-bump push to a non-main branch with no CHANGELOG section still succeeds (gate is main-only)"
@@ -695,7 +701,7 @@ git -C "$NB_REPO" checkout -q -b feature/unrelated origin/main
 echo "unrelated change" > "$NB_REPO/notes.txt"
 git -C "$NB_REPO" add notes.txt
 git -C "$NB_REPO" commit -q -m "unrelated feature work, VERSION and CHANGELOG untouched"
-( cd "$NB_REPO" && PRE_PUSH_NO_CI_CHECK=1 git push -q origin HEAD:refs/heads/feature/unrelated ) >"$WORK/nb1.log" 2>&1
+( cd "$NB_REPO" && PRE_PUSH_NO_CI_CHECK=1 LOKI_ALLOW_UNSCANNED_PUSH=1 git push -q origin HEAD:refs/heads/feature/unrelated ) >"$WORK/nb1.log" 2>&1
 rc_nb=$?
 if [ "$rc_nb" -eq 0 ]; then
     ok "brand-new branch push succeeds even though main's own inherited notes are broken"
@@ -721,7 +727,7 @@ fixture "$WORK/fb-v1.md" <<'EOF'
 - initial release
 EOF
 commit_version "$FB_REPO" "3.0.0" "$WORK/fb-v1.md"
-( cd "$FB_REPO" && LOKI_RELEASE_MANAGER=1 PRE_PUSH_NO_CI_CHECK=1 git push -q origin HEAD:refs/heads/main ) >"$WORK/fb0.log" 2>&1
+( cd "$FB_REPO" && LOKI_RELEASE_MANAGER=1 PRE_PUSH_NO_CI_CHECK=1 LOKI_ALLOW_UNSCANNED_PUSH=1 git push -q origin HEAD:refs/heads/main ) >"$WORK/fb0.log" 2>&1
 git -C "$FB_REPO" fetch -q origin main
 
 # A second commit that does NOT change VERSION but DOES break the section.
@@ -738,7 +744,7 @@ git -C "$FB_REPO" commit -q -m "break the section, VERSION unchanged"
 _lsha_fb="$(git -C "$FB_REPO" rev-parse HEAD)"
 _unknown_sha="$(printf '%040d' 1)"
 printf 'refs/heads/main %s refs/heads/main %s\n' "$_lsha_fb" "$_unknown_sha" \
-    | ( cd "$FB_REPO" && LOKI_RELEASE_MANAGER=1 PRE_PUSH_NO_CI_CHECK=1 bash .githooks/pre-push origin "$FB_REMOTE" ) >"$WORK/fb1.log" 2>&1
+    | ( cd "$FB_REPO" && LOKI_RELEASE_MANAGER=1 PRE_PUSH_NO_CI_CHECK=1 LOKI_ALLOW_UNSCANNED_PUSH=1 bash .githooks/pre-push origin "$FB_REMOTE" ) >"$WORK/fb1.log" 2>&1
 rc_fb=$?
 if [ "$rc_fb" -eq 0 ]; then
     ok "unknown-locally remote sha falls back to refs/remotes/origin/main; VERSION read as unchanged"
