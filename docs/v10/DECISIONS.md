@@ -296,3 +296,12 @@ One entry per decision: context, choice, why, how to reverse. Newest last.
 - Anything blocking a release (security finding, gate refusal, dispatch problem) is a P0 with a 10-minute response, and its class gets a guard so it never blocks twice (so far: E-86 gitleaks pre-push, E-87 dispatch path, E-88 release notes).
 - The pulse raises RELEASE_CADENCE when more than 25 minutes pass with a green main and merged-unreleased work (E-89).
 - Found at 16:20Z: the "20 merged slices waiting" were stale BOARD cells, all already in v10.1.0 to v10.2.1 by git ancestry; flipped to released with the tag. E-90 makes the Release Manager flip rows automatically after each publish.
+
+## D38. 2026-09-28: large tier uses upstream-first hidden tests with a requirements map; the flip may proceed on small plus medium
+
+- Two D34 rounds: 0 large tasks passed; every candidate (werkzeug 1513/1680/1769, httpx 1522/1550/3319, attrs 660) fell to a 6 to 40 line reviewer shortcut, because upstream PR tests cover fragments of a feature.
+- Amends D34: hidden tests are upstream-first (verbatim PR tests, then later upstream tests of the feature, then authored public-API tests). Each non-verbatim test fails at ref by assertion and passes at merge; all hidden files are sha256-frozen before any arm run; authors never see arm output.
+- A shortcut is a patch that omits a requirement the prompt states. Each task lists R1..Rn covering its sized refdiff; each Ri names a test that fails on the refdiff-minus-Ri mutant; all known shortcuts are committed as must-fail fixtures; one 45-minute independent opus attempt must pass nothing. Prompt trimming to fit the tests is forbidden. No private names; -k only with a NOTES justification; touched upstream test files also run whole as a regression check.
+- Rejected: shortcut-size thresholds and deletion-only bars (they mismeasure delivered accuracy); an alternative oracle (only its regression part is kept).
+- Amends D34's EV-14 clause: EV-14 and the E-31 flip may proceed on small plus medium. The claim is limited to those tiers; medium is labelled "not shortcut audited"; no large, "any size" or 2-5x claim. The large re-check runs at 5 tasks and a loss on any axis reverts the default. Large completion is published on both the verbatim subset and the full set, and the stricter governs.
+- Cards: EV-12E (enforcement), EV-12F and EV-12G (retrofits, then new tasks to 10). Ruled by the CTO (opus) on the Chief of Staff's request.
