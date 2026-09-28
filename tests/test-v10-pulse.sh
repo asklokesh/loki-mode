@@ -2251,6 +2251,52 @@ else
     printf '%s\n' "$OUT"
 fi
 
+echo "T42 -- E-79: LOW_READY only counts a ready row toward the queue when its Depends-on slices are merged/released; blocked ready rows are named"
+BOARD_DEPS="$WORK/BOARD-deps.md"
+cat > "$BOARD_DEPS" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S-01 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-02 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-03 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-04 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-05 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| M-01 | modernize step | y | LOW | merged@2026-09-27T01:00Z | Depends on none. |
+| M-02 | modernize step | y | LOW | ready@2026-09-27T01:00Z | Depends on M-01. |
+| M-03 | modernize step | y | LOW | ready@2026-09-27T01:00Z | Depends on M-02. |
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_DEPS"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: LOW_READY: only 6 ready slice(s) on BOARD (want at least 8); cut 2 more; blocked by dependency: M-03 (needs M-02)" \
+    && printf '%s\n' "$OUT" | grep -qF "Ready rows blocked by dependency: M-03 (needs M-02)"; then
+    ok "M-02 (deps merged) counts as ready; M-03 (deps only ready) is named as blocked, not counted"
+else
+    bad "T42 dependency-gated LOW_READY case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T42b -- E-79: 'Depends on none.' and an already-merged dependency both count the row as ready (no blocked names)"
+BOARD_DEPS_MET="$WORK/BOARD-deps-met.md"
+cat > "$BOARD_DEPS_MET" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S-01 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-02 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-03 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-04 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-05 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-06 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| M-01 | modernize step | y | LOW | merged@2026-09-27T01:00Z | Depends on none. |
+| M-02 | modernize step | y | LOW | ready@2026-09-27T01:00Z | Depends on M-01. |
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_DEPS_MET"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qE "^VIOLATION: LOW_READY: only 7 ready slice\(s\) on BOARD \(want at least 8\); cut 1 more\$" \
+    && printf '%s\n' "$OUT" | grep -qF "Ready rows blocked by dependency: none"; then
+    ok "no unmet dependency: LOW_READY text has no blocked-by-dependency suffix, status line reads none"
+else
+    bad "T42b deps-met case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
 echo ""
 echo "=== bash 3.2 syntax + full-suite check (via /bin/sh, real bash 3.2.57 on macOS) ==="
 if command -v /bin/sh >/dev/null 2>&1 && /bin/sh -c 'case "$BASH_VERSION" in 3.2*) exit 0;; *) exit 1;; esac' 2>/dev/null; then

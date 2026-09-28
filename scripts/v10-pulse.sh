@@ -948,8 +948,29 @@ STATUS_TOKEN_RE = re.compile(
     r"^(ready|building|review|review-blocked|blocked|approved|merged|released|rejected|parked)"
     r"@(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?Z)$"
 )
-ID_RE = re.compile(r"^(GF|PF|S|E|EV)-\d+$")
+# "M" (Modernize-track slices, M-01..) belongs alongside the other ID
+# prefixes here (E-79): its absence meant every M-row was silently invisible
+# to parse_board -- never counted in "ready", never eligible for
+# REVIEW_STALE/AGENT_OVER_BUDGET, never checked against LOW_READY.
+ID_RE = re.compile(r"^(GF|PF|S|E|EV|M)-\d+$")
 TIER_CELL_RE = re.compile(r"^(LOW|MEDIUM|HIGH)$")
+# LOW_READY (E-79): a "ready" row can still name un-landed dependencies in
+# its Notes cell ("Depends on M-07, E-31 merged or parked."; "Depends on
+# none." means no deps). Only the ID-shaped tokens inside that clause are
+# pulled out -- trailing prose ("merged or parked") is condition text this
+# LOW-tier parse does not need to understand, not a second dependency.
+DEPENDS_ON_RE = re.compile(r"Depends on ([^.]*)\.", re.IGNORECASE)
+DEPENDS_ON_ID_RE = re.compile(r"\b(?:GF|PF|S|E|EV|M)-\d+\b")
+
+
+def parse_depends_on(notes):
+    """Returns the slice IDs named in a Notes cell's "Depends on ..."
+    clause, or [] when there is no such clause (including "Depends on
+    none.")."""
+    m = DEPENDS_ON_RE.search(notes or "")
+    if not m:
+        return []
+    return DEPENDS_ON_ID_RE.findall(m.group(1))
 
 
 def parse_board(path):
@@ -957,12 +978,14 @@ def parse_board(path):
     omit the Acceptance-checks column, and BOARD.md has used at least four
     different header layouts), so this finds the Status cell (and the Tier
     cell) by matching their normalized content rather than trusting a fixed
-    column index."""
+    column index. Notes is always the last cell in every layout this file
+    has used, so it is read positionally."""
     with open(path, "r", encoding="utf-8") as f:
         text = f.read()
     rows = []
     unparsed = []
     tiers = {}
+    notes = {}
     for line in text.splitlines():
         line = line.strip()
         if not line.startswith("|"):
@@ -983,12 +1006,13 @@ def parse_board(path):
             unparsed.append(row_id)
             continue
         rows.append((row_id, status_cell[0], status_cell[1]))
+        notes[row_id] = cells[-1]
         for cell in cells[1:]:
             tm = TIER_CELL_RE.match(cell)
             if tm:
                 tiers[row_id] = tm.group(1)
                 break
-    return {"rows": rows, "unparsed": unparsed, "tiers": tiers}
+    return {"rows": rows, "unparsed": unparsed, "tiers": tiers, "notes": notes}
 
 
 board = safe(parse_board, BOARD_MD)
@@ -1017,6 +1041,30 @@ else:
         ))
     if board["unparsed"]:
         emit("BOARD unparsed rows (no status token found): " + ", ".join(board["unparsed"]))
+
+    # LOW_READY dependency gate (E-79): a "ready" row whose Notes cell names
+    # a dependency that has not itself reached merged/released is not
+    # actually actionable yet, so it should not count toward the ready
+    # queue -- otherwise the swarm reads a full ready queue while every
+    # named engineer would immediately hit a real blocker. A dependency ID
+    # not found on the board at all is treated as unmet (never assumed
+    # done), same fail-safe default as every other UNKNOWN-leaning check in
+    # this file.
+    row_status = {row_id: token for row_id, token, _ts in board_rows}
+    board_notes = board["notes"]
+    ready_deps_met = []
+    ready_blocked_by_deps = []
+    for row_id in ready_ids:
+        deps = parse_depends_on(board_notes.get(row_id, ""))
+        unmet = [d for d in deps if row_status.get(d) not in ("merged", "released")]
+        if unmet:
+            ready_blocked_by_deps.append((row_id, unmet))
+        else:
+            ready_deps_met.append(row_id)
+    emit(
+        "Ready rows blocked by dependency: "
+        + (", ".join("%s (needs %s)" % (rid, "/".join(unmet)) for rid, unmet in ready_blocked_by_deps) or "none")
+    )
 
     # RELEASED_AHEAD_OF_NPM (S-139 / GUARDS 13 / BACKLOG 136): a `released@`
     # row stamped LATER than npm's own newest publish time claims a release
@@ -1177,13 +1225,17 @@ else:
             "agent(s) past their role/tier time budget: %s" % ids_desc,
         )
 
-    ready_count = counts.get("ready", 0)
+    ready_count = len(ready_deps_met)
     if ready_count < 8:
-        add_violation(
-            "LOW_READY",
+        _low_ready_text = (
             "only %d ready slice(s) on BOARD (want at least 8); cut %d more"
-            % (ready_count, 8 - ready_count),
+            % (ready_count, 8 - ready_count)
         )
+        if ready_blocked_by_deps:
+            _low_ready_text += "; blocked by dependency: " + ", ".join(
+                "%s (needs %s)" % (rid, "/".join(unmet)) for rid, unmet in ready_blocked_by_deps
+            )
+        add_violation("LOW_READY", _low_ready_text)
 
 
 # --- 5. IDLE_BUILDERS: fewer than 6 active builder worktrees while ready ----
