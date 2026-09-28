@@ -80,18 +80,24 @@
 #      arm_stdout usage
 #  19. (D38/EV-12E) measure-size.py excludes typing-examples/ and examples/
 #      from the file count: an attrs-602-shaped fixture (3 product files
-#      plus 2 typing-examples files, alongside a lower-lined decoy medium
-#      task so max_medium_lines cannot self-mask the bug) reads medium
+#      plus 2 typing-examples files) measures at exactly 3 files / 180
+#      lines -- pinned columns, since a self-referential max_medium_lines
+#      keeps this alone-in-its-set fixture's tier verdict "medium" either
+#      way and cannot itself expose the regression
 #  20. (D38/EV-12E) validate requires hidden.provenance, hidden.sha256 (every
 #      hidden file re-hashed and compared, not just present) and a non-empty
 #      hidden.requirements[] naming a hidden test id, on tier=large tasks
-#      only; a real lg-werkzeug-1513-shaped task (from slice-EV-12F-a)
-#      validates clean. check_lg_shortcuts walks tasks/lg-*/shortcuts/*.patch
+#      only; checked against a hand-built fixture (not a real task, so this
+#      leg needs no sibling branch) and 4 negative controls, each asserted
+#      by its rejection message, not just a nonzero exit (a traceback also
+#      exits nonzero). check_lg_shortcuts walks tasks/lg-*/shortcuts/*.patch
 #      (0 on this branch today): baseline at repo.ref must be RED by
-#      assertion, never collection-only; the patch must apply; applying it
-#      must never let the hidden run complete. 4 hermetic local-git fixtures
-#      prove the checker itself: a full-pass shortcut, a collection-only
-#      "RED", a patch that will not apply, and a genuine shortcut left red
+#      assertion, never collection-only; the patch must apply; the trusted
+#      hidden files are re-overlaid after the patch (never left to whatever
+#      the patch itself touched) and the hidden run must still not complete.
+#      4 hermetic local-git fixtures prove the checker itself: a full-pass
+#      shortcut, a collection-only "RED", a patch that will not apply, and a
+#      genuine shortcut left red
 #===============================================================================
 set -u
 
@@ -1113,16 +1119,15 @@ J="$R/results.jsonl"
     || fail "S41-01: tokens=$(row "$J" tokens)"
 
 # ---- 19. (D38/EV-12E) measure-size.py: typing-examples/ and examples/ are
-# excluded from the file count. Trap: max_medium_lines includes the fixture
-# itself when it is the only declared-medium task, so `lines >
-# max_medium_lines` is never true and the bug goes unseen; a lower-lined
-# decoy medium task alongside it closes that gap.
-mkdir -p "$T/ms-attrs602/tasks/attrs-602-shaped" "$T/ms-attrs602/tasks/decoy-medium" "$T/ms-attrs602/refdiff"
+# excluded from the file count. This fixture is alone in its own tasks-dir,
+# so max_medium_lines is self-referential (equals its own line count either
+# way) and its tier verdict alone ("medium") cannot expose the regression --
+# the assertion instead pins the exact (files, lines) columns: 5/220 before
+# the fix (2 typing-examples files and their lines still counted), 3/180
+# after.
+mkdir -p "$T/ms-attrs602/tasks/attrs-602-shaped" "$T/ms-attrs602/refdiff"
 cat > "$T/ms-attrs602/tasks/attrs-602-shaped/task.json" <<'JSON'
 {"id": "attrs-602-shaped", "tier": "medium", "repo": {"source": "https://example.invalid/nope.git", "ref": "deadbeef"}}
-JSON
-cat > "$T/ms-attrs602/tasks/decoy-medium/task.json" <<'JSON'
-{"id": "decoy-medium", "tier": "medium", "repo": {"source": "https://example.invalid/nope.git", "ref": "deadbeef"}}
 JSON
 fake_diff_paths() {  # fake_diff_paths OUT (PATH LINES)...
     local out="$1"; shift
@@ -1142,7 +1147,6 @@ PY
 fake_diff_paths "$T/ms-attrs602/refdiff/attrs-602-shaped.diff" \
     "src/attrs/_make.py" 80 "src/attrs/_funcs.py" 60 "src/attrs/converters.py" 40 \
     "typing-examples/example.py" 20 "typing-examples/example2.py" 20
-fake_diff_paths "$T/ms-attrs602/refdiff/decoy-medium.diff" "src/attrs/other.py" 5 "src/attrs/other2.py" 5
 python3 "$MS" --tasks-dir "$T/ms-attrs602/tasks" --refdiff-dir "$T/ms-attrs602/refdiff" >"$T/ms-attrs602.out" 2>&1
 rc=$?
 [ "$rc" = 0 ] && grep -E -q '^attrs-602-shaped[[:space:]]+medium[[:space:]]+3[[:space:]]+180[[:space:]]+OK' "$T/ms-attrs602.out" \
@@ -1174,18 +1178,25 @@ if H validate "$T/lg-schema" >/dev/null 2>&1
 then pass "D38: a well-formed tier=large task (provenance+sha256+requirements) validates"
 else fail "D38: well-formed tier=large task was rejected"
 fi
-lg_bad_case() {  # lg_bad_case NAME PY_MUTATION_OF_t (t = the parsed task dict)
-    local name="$1" expr="$2" d="$T/lg-bad/$1"
+lg_bad_case() {  # lg_bad_case NAME PY_MUTATION_OF_t WANT_MSG: rejected, and by
+                  # the right message -- a nonzero exit alone also matches an
+                  # unrelated crash/traceback (this repo's exit-code false-green trap)
+    local name="$1" expr="$2" want="$3" d="$T/lg-bad/$1"
     mkdir -p "$d/hidden"
     cp "$T/lg-schema/hidden/test_x.py" "$d/hidden/test_x.py"
     python3 -c "import json,sys; t=json.load(open(sys.argv[1])); t['id']=sys.argv[3]; $expr; json.dump(t, open(sys.argv[2],'w'))" \
         "$T/lg-schema/task.json" "$d/task.json" "$name"
-    if H validate "$d" >/dev/null 2>&1; then fail "D38: validator accepted $name"; else pass "D38: validator rejects $name"; fi
+    out="$(H validate "$d" 2>&1)"; rc=$?
+    if [ "$rc" != 0 ] && printf '%s\n' "$out" | grep -qF "$want"; then
+        pass "D38: validator rejects $name ($want)"
+    else
+        fail "D38: validator on $name: rc=$rc, expected a '$want' rejection: $out"
+    fi
 }
-lg_bad_case lg-wrong-sha "t['hidden']['sha256']['test_x.py']='0'*64"
-lg_bad_case lg-missing-provenance "del t['hidden']['provenance']"
-lg_bad_case lg-empty-requirement-tests "t['hidden']['requirements'][0]['tests']=[]"
-lg_bad_case lg-no-requirements "t['hidden']['requirements']=[]"
+lg_bad_case lg-wrong-sha "t['hidden']['sha256']['test_x.py']='0'*64" "sha256 mismatch"
+lg_bad_case lg-missing-provenance "del t['hidden']['provenance']" "hidden.provenance is required"
+lg_bad_case lg-empty-requirement-tests "t['hidden']['requirements'][0]['tests']=[]" "names no hidden test id"
+lg_bad_case lg-no-requirements "t['hidden']['requirements']=[]" "hidden.requirements is required"
 
 # ---- 20. (D38/EV-12E) tasks/lg-*/shortcuts/*.patch: applying a committed
 # shortcut at repo.ref must never let the hidden run complete, and the
@@ -1215,11 +1226,15 @@ check_lg_shortcuts() {
                 echo "FAIL(shortcut leg): $name: cannot check out repo.ref"; ok=1; continue
             fi
             [ -n "$setup" ] && (cd "$workdir" && bash -c "$setup") >/dev/null 2>&1
-            while IFS= read -r rel; do
-                [ -n "$rel" ] || continue
-                mkdir -p "$workdir/$(dirname "$rel")"
-                cp "$td/hidden/$rel" "$workdir/$rel"
-            done < <(python3 -c 'import json,sys; [print(p) for p in json.load(open(sys.argv[1]))["hidden"]["files"]]' "$td/task.json")
+            copy_hidden() {  # overlay the trusted hidden files, fresh, same as run_hidden -- a
+                              # shortcut patch touching one of these paths must never leak through
+                while IFS= read -r rel; do
+                    [ -n "$rel" ] || continue
+                    mkdir -p "$workdir/$(dirname "$rel")"
+                    cp "$td/hidden/$rel" "$workdir/$rel"
+                done < <(python3 -c 'import json,sys; [print(p) for p in json.load(open(sys.argv[1]))["hidden"]["files"]]' "$td/task.json")
+            }
+            copy_hidden
             out="$(cd "$workdir" && bash -c "$run" 2>&1)"; rc=$?
             if ! printf '%s\n' "$out" | grep -qE '[0-9]+ failed'; then
                 echo "FAIL(shortcut leg): $name: baseline at ref is not RED by assertion (rc=$rc): $out"; ok=1; continue
@@ -1228,6 +1243,7 @@ check_lg_shortcuts() {
                 echo "FAIL(shortcut leg): $name: shortcut patch does not apply at repo.ref"; ok=1; continue
             fi
             git -C "$workdir" apply "$patch"
+            copy_hidden
             out="$(cd "$workdir" && bash -c "$run" 2>&1)"; rc=$?
             if [ "$rc" = 0 ] || ! printf '%s\n' "$out" | grep -qE '[0-9]+ failed'; then
                 echo "FAIL(shortcut leg): $name: shortcut grades completed (hidden run did not stay red)"; ok=1; continue

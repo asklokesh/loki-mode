@@ -160,8 +160,14 @@ def _validate_large_hidden(task_dir, hidden, files):
         errs.append("hidden.requirements is required for tier=large and must be a non-empty list")
     else:
         for i, r in enumerate(reqs):
+            # Two shapes are in real use across the in-flight retrofit
+            # branches (EV-12F-a/b: "tests": [id, ...]; EV-12G: "test": id)
+            # -- both name at least one hidden test id, so both are accepted.
             tests = r.get("tests") if isinstance(r, dict) else None
-            if not isinstance(tests, list) or not any(isinstance(x, str) and x.strip() for x in tests):
+            test = r.get("test") if isinstance(r, dict) else None
+            named = (isinstance(tests, list) and any(isinstance(x, str) and x.strip() for x in tests)) \
+                or (isinstance(test, str) and test.strip())
+            if not named:
                 rid = r.get("id") if isinstance(r, dict) else None
                 errs.append("hidden.requirements[%d] (id=%s) names no hidden test id" % (i, rid))
     return errs
