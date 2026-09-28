@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.2.3 (2026-09-28)
+
+`loki modernize` oracle groundwork and swarm tooling fixes. The modernize modules are internal and not yet reachable from the CLI; nothing changes for existing `loki` users.
+
+### Added
+- Coverage-guided input search for the modernize oracle (M-10): generates inputs that reach uncovered branches of a legacy module, stops on a coverage plateau, and ends as "capture failed" with the real cause when the seed run cannot execute, instead of reporting a plateau. It resolves the old Python runtime the same way the capture tracer does and passes an explicit environment to every child process.
+- Oracle seal for modernize (M-12): the captured cases and a held-out split are hashed and recorded before any agent session, with an 80% branch-coverage floor that reports NOT PROVEN up front. The seal is anchored in the append-only modernize log, so deleting and re-sealing a unit is refused, and verification cross-checks the hashes, the split and the verdict against that record.
+
+### Fixed
+- Swarm pulse (internal tooling): ready-slice counts skip rows whose dependencies are not merged and name what they wait for, and the idle-builder check uses the same filtered set (E-79); the PROGRESS.md age is never negative (E-80); a git worktree created inside the repo root outside `.claude/worktrees` is flagged (E-81).
+
 ## v10.2.2 (2026-09-28)
 
 Tooling release: a dependency inventory for the modernization workstream, plus the fix that restored the test suite after it landed. No change to how `loki` runs your builds.
