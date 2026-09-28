@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.2 (2026-09-28)
+
+A SPEC_CONFLICT receipt now states why the run stopped, safely, and the dashboard, web app and Python services pick up current patch and minor dependency releases, including a fix for two high-severity advisories in the web app's router.
+
+### Changed
+- Loki 10 engine (`LOKI_ENGINE=v10`): when implement stops with a specification conflict, the receipt carries the reason in receipt.json and shows it on one line in receipt.md. The text is flattened to a single line, length-capped and rendered as inline code, so a model-written reason cannot add headings or a fake verdict to the receipt; receipts without a conflict are unchanged (E-120).
+
+### Security
+- web-app: react-router-dom 7.13 to 7.18, clearing two high-severity advisories reported by `npm audit` (DEP-05).
+- All remaining tag-pinned GitHub Actions are pinned to full commit SHAs with the tag noted beside each (DEP-07).
+
+### Dependencies
+- web-app: react and react-dom 19.3, react-resizable-panels 4.14, @playwright/test 1.63, typescript-eslint 8.70, autoprefixer 10.6, postcss 8.5.28 (DEP-05).
+- dashboard-ui: @playwright/test 1.63 (DEP-05).
+- Python (dashboard, mcp, web-app, sdk): sqlalchemy 2.1.1, pydantic 2.13.5, alembic 1.20, chromadb 1.5.9, python-jose 3.5, pexpect 4.9, pyyaml 6.0.3 (DEP-06).
+
+### Internal
+- Swarm tooling: `scripts/board-mark-released.sh` marks BOARD rows released once their merge is in a published tag (E-90); the pulse expands dependency ranges such as `E-98a..e` (capped at 50 ids) (E-117); real Seal tests for the SPEC_CONFLICT verdict (E-116).
+
 ## v10.5.1 (2026-09-28)
 
 A local pre-push secret scan that covers every pushed commit and file, so a secret can no longer reach the repository just because it sits outside the eval fixtures.
