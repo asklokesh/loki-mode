@@ -19,13 +19,19 @@
 //     runner's job (M-15)"). parsePytestOutput below parses real pytest stdout into a
 //     presealed_wall.ts BaseRunOutcome, failing closed (no summary line, no parsed integer) on
 //     garbled or truncated output rather than guessing.
-// (4) The failing module for a pytest collection error (exit 2) is derived from the traceback's
-//     own frame file paths, resolved against repoDir the same way presealed_wall.ts's
-//     resolvesInsideRepo does, and NEVER from the bare name in the error message: site-packages
-//     can shadow a repo-local package of the same name, so "ModuleNotFoundError: No module named
-//     'six'" must not be read as "six" without checking which file actually raised. This also
-//     covers AttributeError: the traceback's own frames name the module that raised, even though
-//     an AttributeError's message never names a module at all.
+// (4) The failing module for a pytest collection error (exit 2) is derived from the exception's
+//     OWN message ("No module named 'x'", "cannot import name 'y' from 'pkg.mod'") -- never from
+//     "the nearest traceback frame that happens to resolve inside the repo", which r1 (opus
+//     reproduced) showed is always the COLLECTING TEST FILE itself for a real ImportError (the
+//     frame that contains the `import x` statement, not the module that failed to exist): a
+//     missing third-party package (`import definitely_not_installed_pkg_xyz` in test_conf.py,
+//     real pytest 9.0.2) resolved test_conf.py -- which trivially exists in-repo -- and reported
+//     red for a package that is not in the repo at all. The message-derived name is what
+//     classifyBaseRun's own resolvesInsideRepo then checks; this file never re-implements that
+//     check, it only supplies the correct candidate. A raise-site traceback frame is still used as
+//     a fallback (AttributeError/NameError messages do not always name a module), but only when
+//     that frame is NOT the collecting test file itself -- the file r1 showed is always reachable
+//     and always a false positive on its own.
 import { spawnSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, sep } from "node:path";
@@ -34,7 +40,7 @@ import { readModernizeEvents } from "./log.ts";
 import type { EquivNormalizers, SealedOracle } from "./oracle/seal.ts";
 import { sealOracle, verifySeal } from "./oracle/seal.ts";
 import type { BaseConformanceRunner, BaseRunOutcome, CollectionError, PreSealedWallResult } from "./presealed_wall.ts";
-import { sealPreSealedWall, verifyPreSealedWall } from "./presealed_wall.ts";
+import { classifyBaseRun, sealPreSealedWall, verifyPreSealedWall } from "./presealed_wall.ts";
 import type { EquivResult, NewCaseRunner } from "./equiv.ts";
 import { checkEquivalence } from "./equiv.ts";
 import { oracleDir } from "./types.ts";
@@ -48,7 +54,7 @@ import type { ModernizeTarget } from "./types.ts";
  *  LAST such line in the output (pytest can print progress lines mid-run that are not the
  *  footer), and only "failed" is trusted -- any other shape (no footer at all, a footer with no
  *  "failed" clause) returns undefined rather than a guess, per D42 (3)'s fail-closed rule. */
-const SUMMARY_RE = /^=+\s(.*)\sin\s[\d.]+s\s=+$/;
+const SUMMARY_RE = /^=+\s(.*)\sin\s[\d.]+s(?:\s\(\d+:\d+:\d+\))?\s=+$/;
 
 function parseFailedCount(stdout: string): number | undefined {
   const lines = stdout.split("\n");
@@ -128,23 +134,71 @@ function moduleFromPath(repoDir: string, framePath: string): string | null {
   return parts.length > 0 ? parts.join(".") : null;
 }
 
-/** (4): builds a CollectionError from a pytest exit-2 collection error, never from the bare name
- *  in the error message. Walks the traceback's own frames, closest to the raise first, and takes
- *  the first one whose FILE resolves inside repoDir -- that file, converted to a dotted module
- *  name, is the module that genuinely raised, regardless of what the message text names. Returns
- *  undefined (not a guess) when no error line is found, the exception kind is unsupported, or no
- *  frame resolves inside the repo at all -- classifyBaseRun then reports not_run, never red. */
+/** pytest's own collection-error header, e.g. "________ ERROR collecting test_conf.py ________"
+ *  -- always present for an exit-2 collection error, and names the file being imported when the
+ *  error happened (r1's false positive: a traceback frame for THIS exact file, since it contains
+ *  the `import x` statement, is not evidence that `x` exists -- it is evidence that this file
+ *  tried to import something). Used only to EXCLUDE that file from the frame fallback below,
+ *  never to derive a module name from it. */
+function findCollectingFile(lines: string[]): string | null {
+  for (const line of lines) {
+    const m = /^_+\s*ERROR collecting (\S+)\s*_+$/.exec(line.trim());
+    if (m) return m[1] as string;
+  }
+  return null;
+}
+
+/** (4): the module name straight from the exception's own message -- the primary source, per r1's
+ *  fix. "No module named 'x'" (ImportError/ModuleNotFoundError) and "cannot import name 'y' from
+ *  'pkg.mod'" (ImportError) both name the module Python actually tried and failed to resolve;
+ *  "module 'pkg.mod' has no attribute 'y'" (AttributeError) names the module directly too. Never
+ *  a guess: returns null when the message does not match one of these exact Python-generated
+ *  forms (a NameError's message never names a module at all). */
+function extractModuleFromMessage(kind: CollectionError["kind"], message: string): string | null {
+  if (kind === "ImportError") {
+    const noModule = /No module named '([^']+)'/.exec(message);
+    if (noModule) return noModule[1] as string;
+    const cannotImport = /cannot import name '[^']*' from '([^']+)'/.exec(message);
+    if (cannotImport) return cannotImport[1] as string;
+  }
+  if (kind === "AttributeError") {
+    const m = /module '([^']+)' has no attribute '[^']*'/.exec(message);
+    if (m) return m[1] as string;
+  }
+  return null;
+}
+
+/** (4): builds a CollectionError from a pytest exit-2 collection error. Primary source is the
+ *  exception's own message (extractModuleFromMessage): that is what Python itself resolved the
+ *  failing name to, so it is trusted first, before this file's own weaker frame-walking ever
+ *  runs, and classifyBaseRun's resolvesInsideRepo is what actually decides red vs not_run from
+ *  it -- this function only supplies the candidate, never validates it itself. When the message
+ *  names nothing (AttributeError on a non-module object, or NameError, which never names a
+ *  module), falls back to the nearest traceback frame that is NOT the collecting test file
+ *  itself (r1: that file is always reachable and always a false positive on its own -- it is
+ *  where the reference sits, not evidence that the referenced name exists anywhere). Returns
+ *  undefined (never a guess) when no error line is found, the kind is unsupported, or neither
+ *  source yields a candidate -- classifyBaseRun then reports not_run, never red. */
 function parseCollectionError(repoDir: string, stdout: string): CollectionError | undefined {
   const lines = stdout.split("\n");
   const err = findLastErrorLine(lines);
   if (!err) return undefined;
   const kind = classifyExceptionKind(err.type);
   if (kind === "other") return undefined;
+
+  const message = (lines[err.index] ?? "").replace(/^E\s+/, "");
+  const fromMessage = extractModuleFromMessage(kind, message);
+  if (fromMessage !== null) return { kind, name: fromMessage };
+
+  const collecting = findCollectingFile(lines);
+  const collectingReal = collecting ? moduleFromPath(repoDir, collecting) : null;
   for (const framePath of frameCandidatesBeforeError(lines, err.index)) {
     const mod = moduleFromPath(repoDir, framePath);
-    if (mod !== null) return { kind, name: mod };
+    if (mod === null) continue;
+    if (collectingReal !== null && mod === collectingReal) continue; // r1: never trust the collecting file alone
+    return { kind, name: mod };
   }
-  return undefined; // no in-repo frame: an unresolvable third-party import, or garbled output
+  return undefined; // no message name, no usable in-repo frame: garbled, or nothing to report
 }
 
 /** Parses one pytest run's raw stdout into presealed_wall.ts's BaseRunOutcome. Pure and
@@ -182,8 +236,10 @@ export function makePytestBaseRunner(pythonBin = "python3", timeoutMs = 300_000)
   return (_unit: string, repoDir: string): BaseRunOutcome => {
     const res = spawnSync(pythonBin, ["-m", "pytest"], { cwd: repoDir, encoding: "utf8", timeout: timeoutMs });
     const timedOut = res.signal === "SIGTERM" && res.status === null;
-    const stdout = `${res.stdout ?? ""}${res.stderr ?? ""}`;
-    return parsePytestOutput(repoDir, stdout, res.status, timedOut);
+    // pytest's own report (the footer, the collection-error traceback) goes to stdout; stderr is
+    // never appended ahead of it -- an unrelated stderr line (a warning, a plugin's own output)
+    // must never shadow or precede the real footer this file's parser searches for.
+    return parsePytestOutput(repoDir, res.stdout ?? "", res.status, timedOut);
   };
 }
 
@@ -296,12 +352,54 @@ export function runUnit(
   if (!wallCheck.ok) {
     return notProvenUnitResult(unit, `presealed wall invalid: ${wallCheck.reason ?? "unknown"}`, oracle, null);
   }
-  const wall: PreSealedWallResult = { unit, classification: "red", sealed: true };
+  // Read the classification back from the sealing event itself ("wall.presealed.sealed",
+  // duplicated here the same way presealed_wall.ts's own file header duplicates D42 (3) from
+  // wall.ts, rather than importing an unexported constant) instead of assuming it. sealPreSealedWall
+  // only ever writes a seal on "red", so this is always "red" today, but the B2 ablation check
+  // below reads it explicitly rather than trusting that invariant silently across a refactor.
+  const sealedEvent = readModernizeEvents(repoDir, mid).find(
+    (e) => e.type === "wall.presealed.sealed" && e.data.unit === unit,
+  );
+  const wall: PreSealedWallResult = {
+    unit,
+    classification: sealedEvent?.data.classification === "red" ? "red" : "not_run",
+    sealed: true,
+  };
 
   // Only now: the actual code change.
   implement(card);
 
   const equiv = checkEquivalence(repoDir, mid, unit, newTreeDir, card.normalizers, runNew, log);
+  if (equiv.verdict !== "PROVEN") {
+    return { unit, verdict: equiv.verdict, oracle, wall, equiv, not_proven: equiv.not_proven };
+  }
 
-  return { unit, verdict: equiv.verdict, oracle, wall, equiv, not_proven: equiv.not_proven };
+  // B2 (opus reproduced on the r1 build): case-level equivalence alone is not "proven"
+  // (MODERNIZE.md section 7's contract: rate 100%, held-out 100%, branch_pct >= 80% -- all
+  // already forced by equiv.ts's own PROVEN verdict -- PLUS the no-op ablation and target
+  // conformance passing). Neither is equiv.ts's job (its own file header, lines 21-22: "It does
+  // not implement the no-op ablation or target conformance ... and takes no input for them");
+  // both are this file's.
+  //
+  // No-op ablation: the base tree's sealed Wall run really was red, read from the log above
+  // rather than assumed -- a unit can never be PROVEN off a Wall that (somehow) never proved the
+  // old code fails. Never PROVEN when this cannot be established.
+  if (wall.classification !== "red") {
+    return notProvenUnitResult(unit, "ablation not run: base conformance was not proven red", oracle, wall);
+  }
+  // Target conformance: the same check, re-run against the MODERNIZED tree, must now pass (exit
+  // 0 / green) -- a unit whose cases match the oracle but whose target-runtime conformance still
+  // fails (or cannot even run) has not actually been modernized.
+  const newOutcome = runConformance(unit, newTreeDir);
+  const newClassification = classifyBaseRun(newOutcome, newTreeDir);
+  if (newClassification !== "green") {
+    return notProvenUnitResult(
+      unit,
+      `target conformance did not pass on the modernized tree (classified ${newClassification})`,
+      oracle,
+      wall,
+    );
+  }
+
+  return { unit, verdict: "PROVEN", oracle, wall, equiv, not_proven: [] };
 }
