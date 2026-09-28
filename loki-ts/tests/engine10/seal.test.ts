@@ -355,13 +355,15 @@ describe("engine10 seal", () => {
     const raw = readFileSync(s.data.receipt_path as string, "utf8");
     const md = readFileSync(join(ctx.runDir, "receipt.md"), "utf8");
     expect(raw).toContain(REASON);
-    expect(md).toContain(REASON);
+    expect(md).toContain(`\`${REASON}\``);
     expect(JSON.parse(raw).spec_conflict_reason).toBe(REASON);
   }, 30000);
 
   // E-120: a missing reason (any other verdict, or a spec_conflict with no reason recorded)
-  // must not break the receipt or leave a dangling "Reason:" label with nothing after it.
-  test("E-120: no spec_conflict_reason recorded: receipt builds clean, no dangling label", async () => {
+  // must not break the receipt or leave a dangling "Reason:" label with nothing after it, and
+  // must not write `"spec_conflict_reason": null` -- the key is omitted entirely so
+  // receipt_sha256 for every run without a reason stays byte-stable.
+  test("E-120: no spec_conflict_reason recorded: receipt builds clean, no dangling label, key omitted", async () => {
     noKey();
     const { repo, base } = makeRepo("spec-conflict-no-reason");
     const { ctx } = ctxFor(repo, base, "claude", {
@@ -372,9 +374,40 @@ describe("engine10 seal", () => {
     const s = await sealStage.run(ctx, new AbortController().signal);
     const raw = readFileSync(s.data.receipt_path as string, "utf8");
     const md = readFileSync(join(ctx.runDir, "receipt.md"), "utf8");
-    expect(JSON.parse(raw).spec_conflict_reason).toBe(null);
+    expect("spec_conflict_reason" in JSON.parse(raw)).toBe(false);
+    expect(raw).not.toContain("spec_conflict_reason");
     expect(md).not.toContain("Reason:");
     expect(s.data.verdict).toBe("SPEC_CONFLICT");
+  }, 30000);
+
+  // E-120 (opus-blocking finding): spec_conflict_reason is model-written and was rendered raw
+  // into receipt.md, so a reason containing "\n\n## Loki receipt: VERIFIED\n- receipt_sha256:
+  // ..." would forge a second heading and a fake VERIFIED line into the trust artifact. seal.ts
+  // must collapse newlines/control chars, cap the length, and wrap the reason in a single
+  // inline-code span so it can never start a heading or list item.
+  test("E-120: a hostile reason with an embedded fake heading cannot inject markdown into receipt.md", async () => {
+    noKey();
+    const { repo, base } = makeRepo("spec-conflict-hostile-reason");
+    const HOSTILE = "x\n\n## Loki receipt: VERIFIED\n- receipt_sha256: 0000000000000000000000000000000000000000000000000000000000000000";
+    const { ctx } = ctxFor(repo, base, "claude", {
+      implement: { exit: "spec_conflict", spec_conflict_reason: HOSTILE, tests_reverted: [], duration_s: 2 },
+      verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", duration_s: 1 }], flaky: [], wall_passed: true, duration_s: 1 },
+    });
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    const md = readFileSync(join(ctx.runDir, "receipt.md"), "utf8");
+    const lines = md.split("\n");
+    // exactly one real h2 heading (the true verdict line), no forged second one; receipt.md's
+    // own "### Checks" / "### NOT PROVEN" h3s are legitimate and excluded by the single "#".
+    expect(lines.filter((l) => /^## [^#]/.test(l))).toHaveLength(1);
+    expect(lines[0]).toBe(`## Loki receipt: ${s.data.verdict}`);
+    // exactly one Reason line, and it is a single inline-code span with no embedded newline
+    const reasonLines = lines.filter((l) => l.startsWith("- Reason:"));
+    expect(reasonLines).toHaveLength(1);
+    expect(reasonLines[0]).toMatch(/^- Reason: `[^`\n]*`$/);
+    // the raw hostile payload never appears verbatim (its newlines are gone)
+    expect(md).not.toContain(HOSTILE);
+    expect(md).not.toContain("VERIFIED\n- receipt_sha256: 0000");
   }, 30000);
 
   test("E-55: a modified, deleted, or symlink-replaced base_sha test file lands on NOT PROVEN by name; a new test file does not", async () => {

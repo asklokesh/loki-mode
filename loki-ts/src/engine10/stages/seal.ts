@@ -24,6 +24,16 @@ export const sha256 = (s: string | Buffer): string => createHash("sha256").updat
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x !== "") : []);
 
+/** E-120: implement's spec_conflict_reason is model-written and lands verbatim in the receipt,
+ *  a trust artifact; a reason containing "\n\n## Loki receipt: VERIFIED" would otherwise forge a
+ *  second heading. Collapse all control chars (including newlines) to a single space, cap the
+ *  length, and strip backticks so the caller can safely wrap it in a single inline-code span. */
+function sanitizeReason(s: string): string {
+  const collapsed = s.replace(/[\x00-\x1f\x7f]+/g, " ").trim();
+  const capped = collapsed.length > 500 ? `${collapsed.slice(0, 500)}...` : collapsed;
+  return capped.replace(/`/g, "'");
+}
+
 /** Python json.dumps(obj, sort_keys=True, separators=(",", ":")), ensure_ascii=True
  *  default, the convention of proof-generator.py _canonical, so a Python verifier recomputes the same bytes. */
 export function canonicalJson(x: unknown): string {
@@ -136,7 +146,7 @@ export function renderReceiptMd(r: Receipt): string {
   return [
     `## Loki receipt: ${r.verdict}`,
     "",
-    ...(r.spec_conflict_reason !== null ? [`- Reason: ${r.spec_conflict_reason}`] : []),
+    ...(r.verdict === "SPEC_CONFLICT" && r.spec_conflict_reason ? [`- Reason: \`${r.spec_conflict_reason}\``] : []),
     `- Run: ${r.run_id}`,
     `- Base: ${r.base_sha}  Head: ${r.head_sha}`,
     `- receipt_sha256: ${r.receipt_sha256}`,
@@ -215,7 +225,9 @@ export const sealStage: Stage = {
       checks,
       not_proven: [],
       verdict,
-      spec_conflict_reason: str(o.implement?.spec_conflict_reason),
+      ...(str(o.implement?.spec_conflict_reason) !== null
+        ? { spec_conflict_reason: sanitizeReason(str(o.implement?.spec_conflict_reason)!) }
+        : {}),
       evidence: strs(o.intake?.evidence),
       cost: {
         usd: cost.usd, input_tokens: cost.inputTokens, output_tokens: cost.outputTokens,
