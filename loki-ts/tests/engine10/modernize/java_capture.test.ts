@@ -119,10 +119,14 @@ function shimJavaPathDir(versionLine: string): string {
   return `${dir}:${pathWithoutJava()}`;
 }
 
-function runScript(args: string[], pathValue: string): { status: number | null; stderr: string } {
+function runScript(
+  args: string[],
+  pathValue: string,
+  extraEnv: Record<string, string> = {},
+): { status: number | null; stderr: string } {
   const r = spawnSync("bash", [SCRIPT, ...args], {
     encoding: "utf8",
-    env: { ...process.env, PATH: pathValue },
+    env: { ...process.env, PATH: pathValue, ...extraEnv },
   });
   return { status: r.status, stderr: r.stderr };
 }
@@ -205,6 +209,36 @@ describe("java_capture.sh (real subprocess)", () => {
     expect(status["jdk8"]).toBe(true);
     expect(String(status["jdkVersionRaw"])).toContain("Java HotSpot");
     expect(String(status["jdkVersionRaw"])).toContain("\n");
+  });
+
+  // M-11 round 3 fix: json_escape previously handled only \, ", \n, \r and \t -- any other C0
+  // control character (0x00-0x1F) reached status.json raw and broke its JSON syntax, which
+  // then made captureJavaUnit misreport a present JDK 8 as "skipped: no JDK 8".
+  it("keeps status.json valid JSON when a raw 0x01 control character reaches it via LOKI_MOD_JACOCO_AGENT", () => {
+    const out = tmp("e10-javacap-out-");
+    const r = runScript(
+      ["--unit-dir", FIX, "--classes", "com.example.util.Standalone", "--out", out],
+      shimJavaPathDir('openjdk version "1.8.0_412"'),
+      { LOKI_MOD_JACOCO_AGENT: "/x\x01y" },
+    );
+    expect(r.status).toBe(0);
+    // readStatus() itself does JSON.parse -- a throw here IS the regression this guards against
+    const status = readStatus(out);
+    expect(status["jdk8"]).toBe(true);
+    expect(status["jacocoAgent"]).toBe("/x\x01y");
+  });
+
+  it("keeps status.json valid JSON when a raw 0x1B (ESC) control character reaches it via LOKI_MOD_JACOCO_AGENT", () => {
+    const out = tmp("e10-javacap-out-");
+    const r = runScript(
+      ["--unit-dir", FIX, "--classes", "com.example.util.Standalone", "--out", out],
+      shimJavaPathDir('openjdk version "1.8.0_412"'),
+      { LOKI_MOD_JACOCO_AGENT: "/x\x1by" },
+    );
+    expect(r.status).toBe(0);
+    const status = readStatus(out);
+    expect(status["jdk8"]).toBe(true);
+    expect(status["jacocoAgent"]).toBe("/x\x1by");
   });
 
   it("gives each same-arity overload its own case instead of colliding into one", () => {
@@ -312,6 +346,23 @@ describe("captureJavaUnit", () => {
     expect(result.notProven).toContain("skipped: no JDK 8");
     expect(result.caseCount).toBe(0);
     expect(result.coverage.branch_pct).toBeNull();
+  });
+
+  it("reports a malformed status.json as its own NOT PROVEN reason, never as 'no JDK 8'", () => {
+    const out = tmp("e10-javacap-unit-");
+    const runner: CommandRunner = (_cmd, args) => {
+      const outIdx = args.indexOf("--out");
+      const outDir = args[outIdx + 1]!;
+      mkdirSync(outDir, { recursive: true });
+      // A status.json that exists but fails to parse -- the exact shape the pre-fix json_escape
+      // bug produced (an unescaped raw control byte breaking JSON syntax mid-string).
+      writeFileSync(join(outDir, "status.json"), '{"jdk8":true,"jdkVersionRaw":"a\x01b"}');
+      return { found: true, code: 0 };
+    };
+    const result = captureJavaUnit({ repoDir: FIX, outDir: out, unitDir: FIX, unitFiles: FILES, runner });
+    expect(result.proven).toBe(false);
+    expect(result.notProven.some((r) => r.startsWith("status.json malformed"))).toBe(true);
+    expect(result.notProven).not.toContain("skipped: no JDK 8");
   });
 
   it("is NOT PROVEN with the script's own reasons when JDK 8 is unavailable", () => {

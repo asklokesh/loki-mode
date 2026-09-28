@@ -72,11 +72,11 @@ fi
 mkdir -p "$OUT_DIR" || { echo "java_capture.sh: cannot create --out $OUT_DIR" >&2; exit 2; }
 
 REASONS=()
-# JSON string escaping. Handles backslash, double quote, newline, CR and tab -- the control
-# characters a real multi-line `java -version` output (JDK 8 prints 3 lines) actually contains;
-# without this, jdkVersionRaw's embedded newlines broke status.json's own JSON syntax.
-# ponytail: other C0 control chars (0x00-0x1F minus \n\r\t) are not escaped; none appear in any
-# known `java -version` output, so this is not a general-purpose JSON string encoder.
+# JSON string escaping: backslash, double quote, then every C0 control character (0x00-0x1F).
+# \n \r \t get their short escapes; the rest (e.g. a stray 0x01 or 0x1B in a user-set
+# LOKI_MOD_JACOCO_AGENT/RANDOOP_JAR path, or an unusual `java -version` line) become \u00XX so
+# status.json is always valid JSON no matter what these values contain. 0x00 is not handled --
+# a bash/env-var string cannot carry a literal NUL byte, so it is unreachable here.
 json_escape() {
     local s="$1"
     s="${s//\\/\\\\}"
@@ -84,6 +84,13 @@ json_escape() {
     s="${s//$'\t'/\\t}"
     s="${s//$'\r'/\\r}"
     s="${s//$'\n'/\\n}"
+    local i c esc
+    for i in {1..31}; do
+        case "$i" in 9|10|13) continue ;; esac
+        c=$(printf '%b' "\\$(printf '%03o' "$i")")
+        esc=$(printf '\\u%04x' "$i")
+        s="${s//$c/$esc}"
+    done
     printf '%s' "$s"
 }
 

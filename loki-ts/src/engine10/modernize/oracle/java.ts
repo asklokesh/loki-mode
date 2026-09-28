@@ -196,12 +196,19 @@ export function captureJavaUnit(opts: JavaCaptureOpts): JavaCaptureResult {
     return { proven: false, notProven, caseCount: 0, nondeterministicCount: 0, coverage, casesPath, coveragePath };
   }
 
-  const status = readJson<Status>(join(opts.outDir, "status.json"));
+  const statusPath = join(opts.outDir, "status.json");
+  const status = readJson<Status>(statusPath);
   if (!status || !status.jdk8) {
-    // The script itself already records "skipped: no JDK 8" plus a fuller reason when it can
-    // exit early; a missing/unparseable status.json is the same honest outcome by another cause.
-    notProven.push(...(status?.reasons ?? ["skipped: no JDK 8", "old runtime unavailable"]));
-    if (!notProven.some((r) => r.startsWith("skipped: no JDK 8"))) notProven.unshift("skipped: no JDK 8");
+    if (status === null && existsSync(statusPath)) {
+      // The file is there but did not parse: a java_capture.sh bug, never "no JDK 8" (which the
+      // script itself already records honestly via reasons when it exits early on purpose).
+      notProven.push(`status.json malformed: could not parse ${statusPath}`);
+    } else {
+      // A missing status.json is the same honest "exited before writing one" outcome as the
+      // script's own recorded reasons -- just from a different cause (e.g. runner never ran it).
+      notProven.push(...(status?.reasons ?? ["skipped: no JDK 8", "old runtime unavailable"]));
+      if (!notProven.some((r) => r.startsWith("skipped: no JDK 8"))) notProven.unshift("skipped: no JDK 8");
+    }
     const coverage: CoverageResult = {
       unit: opts.unitDir, entries: classes, cases: 0,
       branches_total: 0, branches_taken: 0, branch_pct: null, missing: [],
