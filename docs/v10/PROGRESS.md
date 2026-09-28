@@ -1,6 +1,12 @@
 # Progress
 
-## 2026-09-28T03:44Z: RELEASE BLOCKED -- read first on resume
+## 2026-09-28T04:30Z: v10.0.1 SHIPPED -- read first on resume
+- v10.0.1 republishes v10.0.0 (tag v10.0.0 at 898fa081 never reached npm). Root cause: tests/test-start-update-hint.sh used latest=9.99.0 as "far-future", older than 10.0.0; fixed 306b6b0c (control: old test on the new tree fails "a stale install prints NO warning on start"; new test 10 passed 0 failed; trust-core 95 passed 0 failed). Tests green on 306b6b0c (run 36375975977).
+- Release run 36376357720 all jobs success; `npm view loki-mode dist-tags` latest 10.0.1, gitHead 76ec1c24 = tag v10.0.1^{}; GitHub release v10.0.1 published 04:14:03Z; `loki --version` from a fresh prefix prints "Loki Mode v10.0.1" (rc=0).
+- Train E18 on main (ea288330): E-68, E-69, EV-13, E-64 merged; M-01/02/05/06 merged f4d98c0b. Wave E18 rejects (M-03, M-04, M-09, EV-11, EV-12) and E-66 rebase, E-61, E-62 building in wave E19 (wf_bd919989-941); E-71..E-73 in wave E18b (wf_f55ed4cc-ca6). E-67 held (overlaps E-61 session.ts and E-66 supervisor.ts). EV-9 held until E-64 is re-measured.
+- Wave E18 spend ESTIMATE: 1,468,032 subagent tokens (14 agents, workflow usage block).
+
+## 2026-09-28T03:44Z: RELEASE BLOCKED (resolved by v10.0.1, see above)
 - v10.0.0 did NOT publish. The release commit 898fa081 (tag v10.0.0 pushed) failed Tests shards 1/8 and 5/8, so the Release workflow failed; `npm view loki-mode version` is still 9.81.0. Failing suites (gh run view 36372016155 --log-failed): "loki start surfaces a stale install" (line: "FAIL: a stale install prints NO warning on start") and "trust-core tests detect their regressions".
 - Next step: fix those 2 shards on main (likely the 10.0.0 major bump changes the version comparison the stale-install check uses; confirm from the test before editing), wait for Tests green on the fix SHA, then re-release v10.0.0 (the tag v10.0.0 already points at 898fa081: delete nothing; cut the re-release per docs/dev/release-checklist.md, bumping to 10.0.1 if the tag cannot be reused). Default stays legacy; v10 opt-in; gate numbers are in CHANGELOG v10.0.0 and docs/v10/METRICS.md.
 - Session hand-off: no workflows started after 03:11Z. Merge-ready (approved, not merged): E-68, E-69, EV-13 (branches worktree-wf_b707f4ab-24f-3/-4/-5), E-64 (worktree-wf_4601e7b3-4d8-1), E-70 already merged, E-31 held for the gate. Needs rework: E-66 (small test fixes), E-67 (backstop inside the cap), M-09, M-01/02/05/06 (iterative SCC), EV-11 (11 medium tasks missing), EV-12 (REJECT: large tasks smaller than medium). Both workflows (p0-rework, d30-rework-and-m1) finished; nothing running.
