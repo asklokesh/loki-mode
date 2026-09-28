@@ -1,4 +1,5 @@
-// Loki 10 supervisor (P0, docs/v10/ENGINE.md sections 5, 6 and 10): writes the eval marker first so a failing run still leaves it, pins remote.origin.url once in memory before any provider runs, spawns the worker with a copy of its env passed through withholdGithubTokens, and is events.jsonl's single writer -- validating stdout, stamping seq, keeping a running sha256, re-hashing after session.ended and before the PR, and refusing the push on tamper.
+// Loki 10 supervisor (P0, docs/v10/ENGINE.md sections 5, 6 and 10): eval marker first, origin pinned before any
+// provider runs, worker env token-withheld, events.jsonl's single writer (seq, hash, tamper refusal); --resume reuses the run id, reporting a finished run's verdict or re-spawning an unfinished one onto the same log.
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, type Hash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -125,7 +126,8 @@ function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
   try { process.kill(-pid, sig); } catch { /* group already gone */ }
 }
 
-// Spawns the worker in its own process group; resolves once it has exited and stdout has closed or DRAIN_MS has passed (a surviving grandchild holding the pipe cannot stall P0); at backstopMs the whole group gets SIGTERM then SIGKILL after 2s; exit is null when the worker could not start or was killed by a signal.
+// Spawns the worker in its own process group; resolves once it has exited and stdout has closed or DRAIN_MS has
+// passed (a surviving grandchild cannot stall P0); backstopMs sends SIGTERM then SIGKILL after 2s.
 function spawnWorker(
   argv: string[], env: NodeJS.ProcessEnv, cwd: string, backstopMs: number, onLine: (l: string) => void,
 ): Promise<{ code: number | null; killed: boolean }> {
@@ -168,6 +170,8 @@ function spawnWorker(
 
 export async function runSupervisor(opts: SupervisorOptions): Promise<SupervisorResult> {
   const t0 = Date.now();
+  const done = fold(readEvents(join(opts.repoDir, eventsRelPath(opts.runId)))).run.completed?.data; // --resume of a finished run: report it, never re-spawn
+  if (done) return { verdict: (done.verdict as Verdict) ?? "FAILED", tampered: false, workerExit: 0, prUrl: (done.pr_url as string | null) ?? null, notProven: Array.isArray(done.not_proven) ? (done.not_proven as string[]) : [] };
   const startedProvider = opts.started?.["provider"]; // E-36: provider read off opts.started, not a dedicated field (main(), below, is the only populater)
   const env = opts.env ?? process.env;
   await preflight({ repoDir: opts.repoDir, provider: typeof startedProvider === "string" ? startedProvider : "claude", pr: opts.pr !== undefined, env });
@@ -217,28 +221,29 @@ export function summaryTokens(f: Folded, sawCost: boolean): number | null {
 }
 export async function main(args: string[]): Promise<number> { // `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary
   const words: string[] = [];
-  let noPr = false, deep = false, provider = process.env.LOKI_PROVIDER || "claude";
+  let noPr = false, deep = false, resumeId: string | null = null, provider = process.env.LOKI_PROVIDER || "claude";
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--no-pr") noPr = true;
     else if (a === "--deep") deep = true;
     else if (a === "--provider") provider = args[++i] ?? provider;
-    else if (a === "--resume") { process.stderr.write("engine10: --resume is not wired yet\n"); return 2; }
+    else if (a === "--resume") resumeId = args[++i] ?? "";
     else words.push(a);
   }
   const task = words.join(" ").trim();
-  if (!task) { process.stderr.write("engine10: no task given\n"); return 2; }
+  if (!resumeId && !task) { process.stderr.write("engine10: no task given\n"); return 2; }
   let repoDir: string;
   try {
     repoDir = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", env: process.env, stdio: ["ignore", "pipe", "ignore"] }).trim();
   } catch { process.stderr.write("engine10: not inside a git repository\n"); return 2; }
-  const runId = `e10-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}-${Math.random().toString(16).slice(2, 6)}`;
+  if (resumeId && !existsSync(join(repoDir, eventsRelPath(resumeId)))) { process.stderr.write(`engine10: no run to resume: ${resumeId}\n`); return 2; }
+  const runId = resumeId || `e10-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}-${Math.random().toString(16).slice(2, 6)}`;
   const runDir = join(repoDir, ".loki", "runs", runId);
   const isIssue = ISSUE_RE.test(task);
   const model = resolveModel(provider);
   const env: NodeJS.ProcessEnv = { ...process.env };
-  if (!isIssue) env.LOKI_E10_TASK_TEXT = task;
-  else {
+  if (task && !isIssue) env.LOKI_E10_TASK_TEXT = task; // resume with no fresh task: intake falls back to runDir's issue.json, else its own "no task text" reason
+  else if (isIssue) {
     mkdirSync(runDir, { recursive: true }); // runDir must exist before the fetch child writes issue.json
     try { fetchIssueToFile(task, join(runDir, "issue.json")); } catch (err) { // P1: deterministic, before any LLM
       process.stderr.write(`engine10: issue fetch failed: ${(err as Error).message.split("\n")[0]}\n`);
