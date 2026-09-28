@@ -1,11 +1,7 @@
-// Loki 10 supervisor (P0, docs/v10/ENGINE.md sections 5, 6 and 10).
-// - Writes the eval marker .loki/engine.json first, so even a failing run leaves it.
-// - Pins remote.origin.url once, in memory, before any provider runs.
-// - Spawns the worker with a COPY of its env passed through withholdGithubTokens.
-// - Is the single writer of events.jsonl: validates worker stdout lines, stamps
-//   seq, and keeps a running sha256 of every byte it appended. After each
-//   session.ended and before the PR it re-hashes the file; a mismatch emits
-//   tamper.detected and the push is refused.
+// Loki 10 supervisor (P0, docs/v10/ENGINE.md sections 5, 6 and 10): writes the eval marker first so a failing run
+// still leaves it, pins remote.origin.url once in memory before any provider runs, spawns the worker with a copy of
+// its env passed through withholdGithubTokens, and is events.jsonl's single writer -- validating stdout, stamping
+// seq, keeping a running sha256, re-hashing after session.ended and before the PR, and refusing the push on tamper.
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, type Hash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -15,34 +11,29 @@ import { withholdGithubTokens } from "../runner/github_token.ts";
 import { EventLog, fold, readEvents, tail } from "./events.ts";
 import { fetchIssueToFile } from "./fetch_issue.ts";
 import { formatHeartbeatLine, formatStageLine, formatSummary } from "./output.ts";
+import { preflight } from "./preflight.ts";
 import { resolveModel } from "./session.ts";
 import type { PrContext } from "./stages/pr.ts";
 import type { EventEnvelope, PushEnv, StageName, Verdict } from "./types.ts";
 import { DEEP_CAP_S, DEFAULT_CAP_S, STAGE_BUDGETS } from "./types.ts";
 
 export const TAMPER_NOT_PROVEN = "event log modified outside the engine";
-/** Types only the supervisor may write; the same types arriving from the worker are dropped. */
-const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detected", "pr.opened"]);
+const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detected", "pr.opened"]); // types only the supervisor may write; same types from the worker are dropped
 const VERDICTS = new Set<string>(["VERIFIED", "PARTIAL", "ALREADY_SATISFIED", "SPEC_CONFLICT", "FAILED"]);
 const SESSION_EXITS = new Set(["done", "already_done", "spec_conflict", "killed", "error"]);
 export const BACKSTOP_NOT_PROVEN = "worker killed by the supervisor backstop (cap plus grace)";
-/** Seconds past the cap the worker gets to seal and exit before P0 kills its process group. */
-export const BACKSTOP_GRACE_S = 60;
-/** After the worker exits, how long P0 waits for stdout to drain before closing it. */
-const DRAIN_MS = 2000;
+export const BACKSTOP_GRACE_S = 60; // seconds past the cap the worker gets to seal and exit before P0 kills its process group
+const DRAIN_MS = 2000; // after the worker exits, how long P0 waits for stdout to drain before closing it
 
 const nonNegNum = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v) && v >= 0;
-/** Per-type data checks for the events the supervisor itself acts on (section 7 table). */
-function dataOk(type: string, d: Record<string, unknown>): boolean {
+function dataOk(type: string, d: Record<string, unknown>): boolean { // per-type data checks for events the supervisor itself acts on (section 7 table)
   if (type === "session.ended") {
     return typeof d.session_id === "string" && SESSION_EXITS.has(d.exit as string) && nonNegNum(d.duration_s);
   }
   if (type === "cost") return typeof d.session_id === "string" && (d.usd === null || nonNegNum(d.usd));
   return true;
 }
-
-// Local types (not in types.ts): the PR hook E-11 (stages/pr.ts) plugs into, and the result.
-export interface PrOutcome { url: string | null; draft: boolean; existing: boolean | null; notProven?: string[] }
+export interface PrOutcome { url: string | null; draft: boolean; existing: boolean | null; notProven?: string[] } // local types (not in types.ts): the PR hook E-11 (stages/pr.ts) plugs into, and the result
 export type PrStep = (p: {
   env: NodeJS.ProcessEnv; // the supervisor's own credentialed env (read-only by contract)
   pushEnv: PushEnv; // origin pin from memory, never from the log
@@ -54,16 +45,13 @@ export type PrStep = (p: {
 export interface SupervisorOptions {
   runId: string;
   repoDir: string;
-  /** argv of the worker process, e.g. [bun, cli, "engine10", "worker", ...] (wired by E-12). */
-  workerArgv: string[];
+  workerArgv: string[]; // argv of the worker process, e.g. [bun, cli, "engine10", "worker", ...] (wired by E-12)
   env?: NodeJS.ProcessEnv; // defaults to process.env; never mutated
   started?: Record<string, unknown>; // extra run.started data (task_source, provider, model, ...)
   pr?: PrStep; // absent means no PR (for example --no-pr)
-  /** Global cap in seconds (default LOKI_E10_CAP_S, else DEFAULT_CAP_S). The backstop fires at cap plus grace. */
-  capS?: number;
+  capS?: number; // global cap in seconds (default LOKI_E10_CAP_S, else DEFAULT_CAP_S); the backstop fires at cap plus grace
   graceS?: number; // default BACKSTOP_GRACE_S
 }
-
 export interface SupervisorResult {
   verdict: Verdict;
   tampered: boolean;
@@ -71,20 +59,16 @@ export interface SupervisorResult {
   prUrl: string | null;
   workerExit: number | null;
 }
-
 export function eventsRelPath(runId: string): string {
   return `.loki/runs/${runId}/events.jsonl`;
 }
-
-/** EV-1 marker, atomic (temp file in the same dir, then rename). */
-export function writeEngineMarker(repoDir: string, runId: string): void {
+export function writeEngineMarker(repoDir: string, runId: string): void { // EV-1 marker, atomic (temp file in the same dir, then rename)
   const dir = join(repoDir, ".loki");
   mkdirSync(dir, { recursive: true });
   const tmp = join(dir, `.engine.json.${process.pid}.tmp`);
   writeFileSync(tmp, JSON.stringify({ engine: "v10", run_id: runId, events: eventsRelPath(runId) }) + "\n");
   renameSync(tmp, join(dir, "engine.json"));
 }
-
 export function readOriginUrl(repoDir: string): string | null {
   try {
     const url = execFileSync("git", ["-C", repoDir, "config", "--get", "remote.origin.url"], { encoding: "utf8", env: process.env }).trim();
@@ -93,22 +77,18 @@ export function readOriginUrl(repoDir: string): string | null {
     return null;
   }
 }
-
 export function githubRepoFromUrl(url: string | null): string | null {
   const m = url?.match(/^(?:https:\/\/(?:[^@/]+@)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^/]+\/[^/]+?)(?:\.git)?\/?$/);
   return m?.[1] ?? null;
 }
-
-/** Single writer with a running sha256 of the bytes it appended. */
-export class SupervisorLog {
+export class SupervisorLog { // single writer with a running sha256 of the bytes it appended
   private readonly log: EventLog;
   private readonly hash: Hash;
   tampered = false;
 
   constructor(readonly path: string, runId: string) {
     this.log = new EventLog(path, runId);
-    // Seed AFTER construction: EventLog may terminate a torn last line.
-    this.hash = createHash("sha256");
+    this.hash = createHash("sha256"); // seed AFTER construction: EventLog may terminate a torn last line
     try { this.hash.update(readFileSync(path)); } catch { /* new file */ }
   }
 
@@ -118,8 +98,7 @@ export class SupervisorLog {
     return e;
   }
 
-  /** Validates one untrusted worker stdout line; returns the appended event or null when dropped. */
-  ingest(line: string): EventEnvelope | null {
+  ingest(line: string): EventEnvelope | null { // validates one untrusted worker stdout line; returns the appended event or null when dropped
     let x: unknown;
     try { x = JSON.parse(line); } catch { return null; }
     if (typeof x !== "object" || x === null || Array.isArray(x)) return null;
@@ -133,8 +112,7 @@ export class SupervisorLog {
     return e;
   }
 
-  /** Re-hashes the file. On mismatch (once) emits tamper.detected. Returns true when intact. */
-  verify(): boolean {
+  verify(): boolean { // re-hashes the file; on mismatch (once) emits tamper.detected; returns true when intact
     if (this.tampered) return false;
     const expected = this.hash.copy().digest("hex");
     let actual = "";
@@ -145,18 +123,14 @@ export class SupervisorLog {
     return false;
   }
 }
-
 function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
   if (!pid) return;
   try { process.kill(-pid, sig); } catch { /* group already gone */ }
 }
 
-/**
- * Spawns the worker in its own process group. Resolves once the worker has exited
- * and stdout has closed or DRAIN_MS has passed (a surviving grandchild holding the
- * pipe cannot stall P0). At backstopMs the whole group gets SIGTERM, then SIGKILL
- * after 2s. Exit is null when the worker could not start or was killed by a signal.
- */
+// Spawns the worker in its own process group; resolves once it has exited and stdout has closed or DRAIN_MS has
+// passed (a surviving grandchild holding the pipe cannot stall P0); at backstopMs the whole group gets SIGTERM then
+// SIGKILL after 2s; exit is null when the worker could not start or was killed by a signal.
 function spawnWorker(
   argv: string[], env: NodeJS.ProcessEnv, cwd: string, backstopMs: number, onLine: (l: string) => void,
 ): Promise<{ code: number | null; killed: boolean }> {
@@ -169,8 +143,7 @@ function spawnWorker(
     let killed = false;
     let settled = false;
     const timers: ReturnType<typeof setTimeout>[] = [];
-    // The worker no longer shares the terminal's group, so forward a stop to it.
-    const onStop = (sig: NodeJS.Signals) => { killGroup(child.pid, "SIGKILL"); process.exit(sig === "SIGINT" ? 130 : 143); };
+    const onStop = (sig: NodeJS.Signals) => { killGroup(child.pid, "SIGKILL"); process.exit(sig === "SIGINT" ? 130 : 143); }; // the worker no longer shares the terminal's group, so forward a stop to it
     process.once("SIGINT", onStop);
     process.once("SIGTERM", onStop);
     const finish = (code: number | null) => {
@@ -200,33 +173,29 @@ function spawnWorker(
 
 export async function runSupervisor(opts: SupervisorOptions): Promise<SupervisorResult> {
   const t0 = Date.now();
-  writeEngineMarker(opts.repoDir, opts.runId); // first: a failing run still leaves it
+  const startedProvider = opts.started?.["provider"]; // E-36: provider read off opts.started, not a dedicated field (main(), below, is the only populater)
   const env = opts.env ?? process.env;
+  await preflight({ repoDir: opts.repoDir, provider: typeof startedProvider === "string" ? startedProvider : "claude", pr: opts.pr !== undefined, env });
+  writeEngineMarker(opts.repoDir, opts.runId); // first: a failing run still leaves it
   const origin = readOriginUrl(opts.repoDir); // pinned once, before any provider runs
   const log = new SupervisorLog(join(opts.repoDir, eventsRelPath(opts.runId)), opts.runId);
   log.append("run.started", null, { ...opts.started, origin_repo: githubRepoFromUrl(origin) });
-
-  // withholdGithubTokens mutates its argument: always a copy, never env itself.
-  const workerEnv: NodeJS.ProcessEnv = { ...env };
+  const workerEnv: NodeJS.ProcessEnv = { ...env }; // withholdGithubTokens mutates its argument: always a copy, never env itself
   withholdGithubTokens(workerEnv);
-
   const envCap = Number(env.LOKI_E10_CAP_S);
   const capS = opts.capS ?? (envCap > 0 ? envCap : DEFAULT_CAP_S);
   const backstopMs = (capS + (opts.graceS ?? BACKSTOP_GRACE_S)) * 1000;
-
   let sealed: Record<string, unknown> | null = null;
   const worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, (line) => {
     const e = log.ingest(line);
     if (e?.type === "receipt.sealed") sealed = e.data;
   });
   const workerExit = worker.killed ? null : worker.code;
-
   const sealedData = sealed as Record<string, unknown> | null;
   const v = sealedData?.verdict;
   const verdict: Verdict = workerExit === 0 && typeof v === "string" && VERDICTS.has(v) ? (v as Verdict) : "FAILED";
   const notProven = Array.isArray(sealedData?.not_proven) ? (sealedData.not_proven as unknown[]).map(String) : [];
   if (worker.killed) notProven.push(BACKSTOP_NOT_PROVEN);
-
   let prUrl: string | null = null;
   const intact = log.verify(); // unconditional re-check before the PR
   if (!intact) notProven.push(TAMPER_NOT_PROVEN);
@@ -240,18 +209,14 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
     }
   }
 
-  // Unknown cost stays null (fold returns null unless every session was measured).
-  const costUsd = log.tampered ? null : fold(readEvents(log.path)).cost.usd;
+  const costUsd = log.tampered ? null : fold(readEvents(log.path)).cost.usd; // unknown cost stays null (fold returns null unless every session was measured)
   log.append("run.completed", null, {
     verdict, pr_url: prUrl, not_proven: notProven, cost_usd: costUsd, wall_s: (Date.now() - t0) / 1000,
   });
   return { verdict, tampered: log.tampered, notProven, prUrl, workerExit };
 }
-
 const ISSUE_RE = /^(?:[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+\/(?:-\/)?issues\/\d+)$/;
-
-/** `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary. */
-export async function main(args: string[]): Promise<number> {
+export async function main(args: string[]): Promise<number> { // `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary
   const words: string[] = [];
   let noPr = false, deep = false, provider = process.env.LOKI_PROVIDER || "claude";
   for (let i = 0; i < args.length; i++) {

@@ -1,7 +1,7 @@
 // E-03 Wall: supervisor/worker split, Rule of Two, tamper check, eval marker.
 import { afterAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readEvents } from "../../src/engine10/events.ts";
@@ -20,8 +20,26 @@ function repo(): string {
   return d;
 }
 
+// E-36 preflight() now runs first inside runSupervisor. A stub `gh` (ahead of
+// the real one on PATH) keeps CANARY -- deliberately a fake, invalid token --
+// from failing preflight's `gh auth status` check, and LOKI_CLAUDE_CLI keeps
+// the CLI-on-PATH check hermetic on a host with no real `claude` installed.
+function stubExe(dir: string, name: string): string {
+  const p = join(dir, name);
+  writeFileSync(p, "#!/bin/sh\nexit 0\n");
+  chmodSync(p, 0o755);
+  return p;
+}
+function stubBinDir(): { dir: string; claude: string } {
+  const d = mkdtempSync(join(tmpdir(), "e10-r2-bin-"));
+  roots.push(d);
+  stubExe(d, "gh");
+  return { dir: d, claude: stubExe(d, "claude") };
+}
+const STUB_BIN = stubBinDir();
+
 function supEnv(): NodeJS.ProcessEnv {
-  return { PATH: process.env.PATH, HOME: process.env.HOME, GITHUB_TOKEN: CANARY, GH_TOKEN: CANARY };
+  return { PATH: `${STUB_BIN.dir}:${process.env.PATH}`, HOME: process.env.HOME, GITHUB_TOKEN: CANARY, GH_TOKEN: CANARY, LOKI_CLAUDE_CLI: STUB_BIN.claude };
 }
 
 // A fake worker process: code runs with `bun -e`.
