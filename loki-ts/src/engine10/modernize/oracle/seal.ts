@@ -30,6 +30,43 @@ import { oracleDir } from "../types.ts";
 
 const sha256 = (s: string): string => createHash("sha256").update(s).digest("hex");
 
+// D42 (4), CTO ruling on the M-13 r3 reject: normalizers are bound to the ORACLE seal, not to a
+// separate log event equiv.ts writes on its own. sealOracle below takes the card's normalizers
+// (default: tolerance 0, empty skip_fields -- exact comparison, nothing skipped) and hashes them
+// into sealed.json and the oracle.captured/oracle.flagged event, the same write-once anchor
+// cases_sha256/coverage_sha256 already use. equiv.ts (checkEquivalence) then refuses PROVEN
+// whenever the normalizers it is given do not hash-match this seal, or the seal has no hash at
+// all (an old sealed.json from before this change). Fix (b) -- a separate sealNormalizers call
+// -- was rejected: "event order is not a binding," i.e. nothing stopped that second call from
+// running after the new tree already existed, which is the exact bug (a caller picking
+// tolerance 1e9 post-implementation and getting PROVEN). Binding the hash into the SAME sealing
+// call that produces cases_sha256/coverage_sha256 -- which is already required to run before any
+// implementation touches the unit -- closes that gap structurally instead of by convention.
+export interface EquivNormalizers {
+  /** Absolute tolerance for "float"/"decimal" tagged values. 0 means exact. */
+  float_tolerance: number;
+  /** Top-level fields whose "list"/"tuple" value is compared as a multiset instead of by
+   *  position. */
+  unordered_fields: Array<"return" | "stdout">;
+  /** Named fields declared nondeterministic: never compared, never counted as a failure. */
+  skip_fields: Array<"return" | "exc" | "stdout" | "files">;
+}
+
+/** The card's default when a unit declares no normalizers: exact comparison, nothing skipped
+ *  (D42 (4)). */
+export const DEFAULT_NORMALIZERS: EquivNormalizers = { float_tolerance: 0, unordered_fields: [], skip_fields: [] };
+
+/** Canonical hash of a normalizers object -- sorted arrays so key order in the source never
+ *  changes the hash, used both to seal (sealOracle) and to check a later call against that seal
+ *  (equiv.ts's checkEquivalence). */
+export function normalizersSha(n: EquivNormalizers): string {
+  return sha256(JSON.stringify({
+    float_tolerance: n.float_tolerance,
+    unordered_fields: [...n.unordered_fields].sort(),
+    skip_fields: [...n.skip_fields].sort(),
+  }));
+}
+
 const HELD_OUT_FRACTION = 0.2;
 const COVERAGE_FLOOR_PCT = 80;
 const MIN_CASES_FOR_HELD_OUT = 2; // below this, no held-out split can mean anything; NOT PROVEN
@@ -59,6 +96,11 @@ export interface SealedOracle {
   // some later stage must notice.
   verdict: "PROVEN_ORACLE" | "NOT_PROVEN";
   not_proven?: string; // set iff verdict is NOT_PROVEN; "; "-joined when more than one reason
+  // Optional, not required: an old sealed.json from before D42 (4) has no such field at all,
+  // and buildSealedOracle below only sets it when a hash was actually supplied (sealOracle
+  // always supplies one for a new seal; verifySeal supplies whatever the anchoring log event
+  // carries, which is nothing for an old event). equiv.ts treats a missing hash as NOT_PROVEN.
+  normalizers_sha256?: string;
 }
 
 /** Deterministic ~20% split, ranked by sha256(unit + ":" + case id) -- seeded only by the unit
@@ -124,8 +166,13 @@ function computeVerdict(caseCount: number, branchPct: unknown, duplicateIds: boo
 
 /** Builds the full sealed record from the raw file contents, with no disk I/O of its own, so
  * sealOracle (writing) and verifySeal (checking) run the identical construction and can never
- * silently diverge. */
-function buildSealedOracle(unit: string, casesRaw: string, coverageRaw: string): SealedOracle {
+ * silently diverge. `normalizersSha256` is not derived from casesRaw/coverageRaw (unlike every
+ * other field here) -- it is the caller's own external input, passed straight through: sealOracle
+ * passes the real hash of the normalizers it was given, verifySeal passes whatever the anchoring
+ * log event recorded (possibly nothing, for an old event). Omitted (not just undefined) when not
+ * supplied, so JSON.stringify drops the key entirely and an old sealed.json with no such key
+ * compares equal to a legacy event that also carries none. */
+function buildSealedOracle(unit: string, casesRaw: string, coverageRaw: string, normalizersSha256?: string): SealedOracle {
   const coverage = JSON.parse(coverageRaw) as OracleCoverage;
   const caseIds = parseCaseIds(casesRaw);
   const duplicateIds = new Set(caseIds).size !== caseIds.length;
@@ -142,6 +189,7 @@ function buildSealedOracle(unit: string, casesRaw: string, coverageRaw: string):
     branch_pct: coverage.branch_pct,
     verdict,
     ...(not_proven ? { not_proven } : {}),
+    ...(normalizersSha256 !== undefined ? { normalizers_sha256: normalizersSha256 } : {}),
   };
 }
 
@@ -160,8 +208,19 @@ function alreadySealedInLog(repoDir: string, mid: string, unit: string): boolean
  * for the same unit, checking the log first (survives a deleted sealed.json) and the file
  * second (belt and suspenders). The "one more capture round" for a below-floor unit (section
  * 3.2) happens before this is ever called, so write-once does not conflict with it. Throws if
- * either input is missing -- capture is never skipped. */
-export function sealOracle(repoDir: string, mid: string, unit: string, log: ModernizeLog): SealedOracle {
+ * either input is missing -- capture is never skipped.
+ *
+ * `normalizers` (D42 (4)): the unit card's declared normalizers, defaulting to
+ * DEFAULT_NORMALIZERS (exact comparison, nothing skipped) when the card declares none. Hashed
+ * into sealed.json and the sealing event, write-once along with everything else this function
+ * seals -- there is no later call that can change it (see file header on EquivNormalizers). */
+export function sealOracle(
+  repoDir: string,
+  mid: string,
+  unit: string,
+  log: ModernizeLog,
+  normalizers: EquivNormalizers = DEFAULT_NORMALIZERS,
+): SealedOracle {
   const dir = oracleDir(repoDir, mid, unit);
   const casesPath = join(dir, "cases.jsonl");
   const coveragePath = join(dir, "coverage.json");
@@ -177,7 +236,8 @@ export function sealOracle(repoDir: string, mid: string, unit: string, log: Mode
 
   const casesRaw = readFileSync(casesPath, "utf8");
   const coverageRaw = readFileSync(coveragePath, "utf8");
-  const sealed = buildSealedOracle(unit, casesRaw, coverageRaw);
+  const normalizersHash = normalizersSha(normalizers);
+  const sealed = buildSealedOracle(unit, casesRaw, coverageRaw, normalizersHash);
 
   mkdirSync(dir, { recursive: true });
   writeFileSync(sealedPath, JSON.stringify(sealed, null, 2));
@@ -190,6 +250,7 @@ export function sealOracle(repoDir: string, mid: string, unit: string, log: Mode
     coverage_sha256: sealed.coverage_sha256,
     held_out: sealed.held_out,
     branch_pct: sealed.branch_pct,
+    normalizers_sha256: normalizersHash,
     ...(sealed.not_proven ? { not_proven: sealed.not_proven } : {}),
   });
 
@@ -231,7 +292,12 @@ export function verifySeal(repoDir: string, mid: string, unit: string): { ok: bo
     return { ok: false, reason: "coverage.json does not match the sealing event's hash (tampered or re-captured)" };
   }
 
-  const recomputed = buildSealedOracle(unit, casesRaw, coverageRaw);
+  // The event's own normalizers_sha256 (possibly absent, for a pre-D42(4) event) is passed
+  // straight through, not recomputed -- it is external input the raw files can't derive, same
+  // as `unit`. The final field-by-field compare below still catches a hand-edited sealed.json
+  // whose normalizers_sha256 disagrees with what the log actually recorded.
+  const eventNormalizersSha = typeof sealEvent.data.normalizers_sha256 === "string" ? sealEvent.data.normalizers_sha256 : undefined;
+  const recomputed = buildSealedOracle(unit, casesRaw, coverageRaw, eventNormalizersSha);
   if (JSON.stringify(recomputed.held_out) !== JSON.stringify(sealEvent.data.held_out)) {
     return { ok: false, reason: "held-out split does not match the sealing event" };
   }

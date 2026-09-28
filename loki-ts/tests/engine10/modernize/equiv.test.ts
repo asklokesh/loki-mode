@@ -7,17 +7,21 @@
 // - slice-M-13-r2 @ b379c171 (reproduced, three blockers): B1 "files" `?? []` defaults swallowed
 //   a missing capture; B2 the default tag branch never checked shape, so a valueless tag counted
 //   as equal; B3 normalizers were sealed on first checkEquivalence call, letting whichever caller
-//   ran first (even after the new tree existed) pick the tolerance. Each has its own red-first
-//   test below, named "B1"/"B2"/"B3".
+//   ran first (even after the new tree existed) pick the tolerance. B1/B2 fixes kept as-is; B3's
+//   r3 fix (a separate sealNormalizers call) was ALSO rejected (D42 (4)): the caller still
+//   supplied the values, so nothing stopped a later call from picking a different tolerance.
+// - slice-M-13-r2 @ 89ea40ae, reject on B3 (D42 (4) ruling): normalizers are now bound into
+//   oracle/seal.ts's sealOracle itself (the single write-once call that already seals
+//   cases_sha256/coverage_sha256), never a second call equiv.ts controls. See "D42 (4)" tests.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ModernizeLog, readModernizeEvents } from "../../../src/engine10/modernize/log.ts";
-import { sealOracle } from "../../../src/engine10/modernize/oracle/seal.ts";
-import { oracleDir } from "../../../src/engine10/modernize/types.ts";
+import { DEFAULT_NORMALIZERS, sealOracle } from "../../../src/engine10/modernize/oracle/seal.ts";
+import { modernizeEventsPath, oracleDir } from "../../../src/engine10/modernize/types.ts";
 import type { CaseRecord, EquivNormalizers, EquivResult, NewCaseOutcome, NewCaseRunner } from "../../../src/engine10/modernize/equiv.ts";
-import { checkEquivalence, modernizationVerified, sealNormalizers } from "../../../src/engine10/modernize/equiv.ts";
+import { checkEquivalence, modernizationVerified } from "../../../src/engine10/modernize/equiv.ts";
 
 const mid = "mod-20260928T010203Z-ab12cd";
 const FIXTURES = join(import.meta.dir, "fixtures", "equiv");
@@ -30,30 +34,54 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(repoDir, { recursive: true, force: true }));
 
-const NO_NORMALIZERS: EquivNormalizers = { float_tolerance: 0, unordered_fields: [], skip_fields: [] };
+const NO_NORMALIZERS: EquivNormalizers = DEFAULT_NORMALIZERS;
 const IDENTITY_RUNNER: NewCaseRunner = (_unit, _tree, rec) => ({
   return: rec.return, exc: rec.exc, stdout: rec.stdout, files: rec.files,
 });
 
 /** Copies a fixture scenario's cases.jsonl/coverage.json into oracle/<unit>/ and seals it via
- *  M-12, mirroring the real oracle-capture-then-seal pipeline this checker consumes. */
-function sealFixture(unit: string, scenario: string) {
+ *  M-12, mirroring the real oracle-capture-then-seal pipeline this checker consumes. `normalizers`
+ *  (D42 (4)) is sealed WITH the oracle, in this same call -- there is no later sealing step. */
+function sealFixture(unit: string, scenario: string, normalizers?: EquivNormalizers) {
   const dir = oracleDir(repoDir, mid, unit);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "cases.jsonl"), readFileSync(join(FIXTURES, scenario, "cases.jsonl")));
   writeFileSync(join(dir, "coverage.json"), readFileSync(join(FIXTURES, scenario, "coverage.json")));
-  return sealOracle(repoDir, mid, unit, log);
+  return sealOracle(repoDir, mid, unit, log, normalizers);
 }
 
 /** Writes and seals a unit from raw case records and a coverage object, for scenarios not worth
  *  a fixture directory (a single case, a low branch_pct, ...). Accepts already-serialized lines
  *  too (a malformed record with no not_proven field, which CaseRecord's type would forbid). */
-function sealRaw(unit: string, cases: Array<CaseRecord | Record<string, unknown>>, coverage: Record<string, unknown>) {
+function sealRaw(unit: string, cases: Array<CaseRecord | Record<string, unknown>>, coverage: Record<string, unknown>, normalizers?: EquivNormalizers) {
   const dir = oracleDir(repoDir, mid, unit);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "cases.jsonl"), cases.map((c) => JSON.stringify(c)).join("\n") + (cases.length ? "\n" : ""));
   writeFileSync(join(dir, "coverage.json"), JSON.stringify(coverage));
-  return sealOracle(repoDir, mid, unit, log);
+  return sealOracle(repoDir, mid, unit, log, normalizers);
+}
+
+/** Simulates a pre-D42(4) oracle seal: strips normalizers_sha256 from both the sealing event
+ *  (the anchor verifySeal trusts) and sealed.json, consistently, so verifySeal still reports
+ *  "not tampered" -- it is genuinely old-format, not corrupted. */
+function stripNormalizersHash(unit: string) {
+  const eventsPath = modernizeEventsPath(repoDir, mid);
+  const rewritten = readFileSync(eventsPath, "utf8")
+    .split("\n")
+    .filter((l) => l.trim() !== "")
+    .map((line) => {
+      const evt = JSON.parse(line) as { type: string; data: Record<string, unknown> };
+      if ((evt.type === "oracle.captured" || evt.type === "oracle.flagged") && evt.data.unit === unit) {
+        delete evt.data.normalizers_sha256;
+      }
+      return JSON.stringify(evt);
+    });
+  writeFileSync(eventsPath, rewritten.join("\n") + "\n");
+
+  const sealedPath = join(oracleDir(repoDir, mid, unit), "sealed.json");
+  const sealed = JSON.parse(readFileSync(sealedPath, "utf8")) as Record<string, unknown>;
+  delete sealed.normalizers_sha256;
+  writeFileSync(sealedPath, JSON.stringify(sealed, null, 2));
 }
 
 function baseCase(overrides: Partial<CaseRecord>): CaseRecord {
@@ -64,12 +92,11 @@ function baseCase(overrides: Partial<CaseRecord>): CaseRecord {
   };
 }
 
-/** Seals `normalizers` for `unit` (the real-world order: before the new tree is ever run
- *  against, per section 7 and B3 below) and then runs the check. The one helper almost every
- *  test in this file wants; the handful of tests about sealing itself call sealNormalizers and
- *  checkEquivalence separately. */
+/** Thin wrapper over checkEquivalence: normalizers (D42 (4)) are already sealed by the time this
+ *  runs -- via sealFixture/sealRaw's own `normalizers` argument, the real-world order (before the
+ *  new tree is ever run against). `normalizers` here must be the SAME object the unit was sealed
+ *  with for a happy-path test; a test about a mismatch passes a deliberately different one. */
 function check(unit: string, tree: string, normalizers: EquivNormalizers, runNew: NewCaseRunner): EquivResult {
-  sealNormalizers(repoDir, mid, unit, normalizers, log);
   return checkEquivalence(repoDir, mid, unit, tree, normalizers, runNew, log);
 }
 
@@ -174,15 +201,17 @@ describe("checkEquivalence: each NOT_PROVEN cause gives NOT_PROVEN", () => {
   });
 
   it("NaN versus a real number is never equal, even with a wide tolerance", () => {
+    const wide: EquivNormalizers = { float_tolerance: 1e9, unordered_fields: [], skip_fields: [] };
     sealRaw(
       "nan_vs_num",
       [baseCase({ case: "c1", return: { t: "float", v: "nan" } }), baseCase({ case: "c2", return: { t: "float", v: 1.0 } })],
       { unit: "nan_vs_num", entries: ["f"], cases: 2, branches_total: 2, branches_taken: 2, branch_pct: 100, missing: [] },
+      wide,
     );
     const runNew: NewCaseRunner = (_u, _t, rec) => ({
       return: rec.case === "c1" ? { t: "float", v: 5 } : rec.return, exc: null, stdout: rec.stdout, files: [],
     });
-    const result = check("nan_vs_num", "/new-tree", { float_tolerance: 1e9, unordered_fields: [], skip_fields: [] }, runNew);
+    const result = check("nan_vs_num", "/new-tree", wide, runNew);
     expect(result.fail).toBeGreaterThan(0);
     expect(result.verdict).not.toBe("PROVEN");
   });
@@ -274,37 +303,44 @@ describe("opus reject on b379c171: B1, B2, B3", () => {
     expect(result.not_proven.some((n) => /c1: malformed int value/.test(n))).toBe(true);
   });
 
-  it("B3: normalizers sealed before implementation cannot be loosened by a later checkEquivalence caller", () => {
+});
+
+describe("D42 (4): normalizers are bound into the oracle seal itself, never a second call", () => {
+  it("the reviewer's repro: sealed with normal normalizers, then checkEquivalence tries tolerance 1e9 and skip_fields -- NOT_PROVEN (hash mismatch)", () => {
+    const normal: EquivNormalizers = { float_tolerance: 0, unordered_fields: [], skip_fields: [] };
+    // Sealed WITH the oracle, in the same call as cases_sha256/coverage_sha256 -- before any
+    // implementation, per D42 (4). There is no later sealNormalizers call left to race.
     sealRaw(
       "b3_tol",
       [baseCase({ case: "c1", return: { t: "float", v: 1.0 } }), baseCase({ case: "c2", return: { t: "float", v: 2.0 } })],
       { unit: "b3_tol", entries: ["f"], cases: 2, branches_total: 2, branches_taken: 2, branch_pct: 100, missing: [] },
+      normal,
     );
-    // Sealed BEFORE the new tree / implementer ever runs, per section 7 -- an exact tolerance.
-    const sealRes = sealNormalizers(repoDir, mid, "b3_tol", { float_tolerance: 0, unordered_fields: [], skip_fields: [] }, log);
-    expect(sealRes.ok).toBe(true);
 
-    // The reviewer's exact repro: an implementer (or a compromised caller) tries a huge
-    // tolerance after the fact -- 5e8 read as equal to 1.0.
+    // The reviewer's exact repro: a caller (an implementer, or one compromised) tries a huge
+    // tolerance plus skip_fields after the new tree exists -- 5e8 read as equal to 1.0.
     const runNew: NewCaseRunner = (_u, _t, rec) => ({
       return: rec.case === "c1" ? { t: "float", v: 5e8 } : rec.return, exc: null, stdout: rec.stdout, files: [],
     });
-    const result = checkEquivalence(repoDir, mid, "b3_tol", "/new-tree", { float_tolerance: 1e9, unordered_fields: [], skip_fields: [] }, runNew, log);
+    const loose: EquivNormalizers = { float_tolerance: 1e9, unordered_fields: [], skip_fields: ["exc"] };
+    const result = checkEquivalence(repoDir, mid, "b3_tol", "/new-tree", loose, runNew, log);
     expect(result.verdict).toBe("NOT_PROVEN");
-    expect(result.not_proven[0]).toMatch(/normalizers.*do not match the sealed copy/);
+    expect(result.not_proven[0]).toMatch(/normalizers.*do not match the sealed hash/);
     expect(modernizationVerified([result])).toBe(false);
 
-    // Calling checkEquivalence with the ORIGINAL, correctly-sealed tolerance still works.
-    const honest = checkEquivalence(repoDir, mid, "b3_tol", "/new-tree", { float_tolerance: 0, unordered_fields: [], skip_fields: [] },
+    // Calling checkEquivalence with the ORIGINAL, sealed normalizers still works.
+    const honest = checkEquivalence(repoDir, mid, "b3_tol", "/new-tree", normal,
       (_u, _t, rec) => ({ return: rec.return, exc: rec.exc, stdout: rec.stdout, files: rec.files }), log);
     expect(honest.verdict).toBe("PROVEN");
   });
 
-  it("B3: checkEquivalence called before anyone sealed normalizers refuses outright, it never seals on first use", () => {
-    sealFixture("b3_unsealed", "equal");
-    const result = checkEquivalence(repoDir, mid, "b3_unsealed", "/new-tree", NO_NORMALIZERS, IDENTITY_RUNNER, log);
+  it("a seal with no normalizer hash, as in old sealed.json files, gives NOT_PROVEN", () => {
+    sealFixture("legacy", "equal"); // seals normally (default normalizers), with a hash
+    stripNormalizersHash("legacy"); // then simulate a pre-D42(4) seal: strip it, event and file both
+    const result = checkEquivalence(repoDir, mid, "legacy", "/new-tree", NO_NORMALIZERS, IDENTITY_RUNNER, log);
     expect(result.verdict).toBe("NOT_PROVEN");
-    expect(result.not_proven[0]).toMatch(/normalizers not sealed/);
+    expect(result.not_proven[0]).toMatch(/no normalizer hash/);
+    expect(modernizationVerified([result])).toBe(false);
   });
 });
 
@@ -365,15 +401,14 @@ describe("modernizationVerified: a run with any NOT_PROVEN item can never report
 });
 
 describe("checkEquivalence: normalizer sealing, tolerance, and failure cap", () => {
-  it("seals normalizers write-once and refuses a re-seal with different normalizers", () => {
-    sealFixture("add", "equal");
-    expect(sealNormalizers(repoDir, mid, "add", { float_tolerance: 0.001, unordered_fields: [], skip_fields: [] }, log).ok).toBe(true);
-    expect(sealNormalizers(repoDir, mid, "add", { float_tolerance: 0.001, unordered_fields: [], skip_fields: [] }, log).ok).toBe(true);
-    const reseal = sealNormalizers(repoDir, mid, "add", { float_tolerance: 5, unordered_fields: [], skip_fields: [] }, log);
-    expect(reseal.ok).toBe(false);
-    expect(reseal.reason).toMatch(/normalizers changed after sealing/);
-    const result = checkEquivalence(repoDir, mid, "add", "/new-tree", { float_tolerance: 5, unordered_fields: [], skip_fields: [] }, IDENTITY_RUNNER, log);
-    expect(result.verdict).toBe("NOT_PROVEN");
+  it("normalizers are write-once with the oracle: a second sealOracle call for the same unit is refused, even with different normalizers", () => {
+    sealFixture("add", "equal", { float_tolerance: 0.001, unordered_fields: [], skip_fields: [] });
+    expect(() => sealFixture("add", "equal", { float_tolerance: 5, unordered_fields: [], skip_fields: [] })).toThrow(/already has a sealing event|already sealed/);
+    // The originally-sealed tolerance is what checkEquivalence honors.
+    const matching = check("add", "/new-tree", { float_tolerance: 0.001, unordered_fields: [], skip_fields: [] }, IDENTITY_RUNNER);
+    expect(matching.verdict).toBe("PROVEN");
+    const mismatched = checkEquivalence(repoDir, mid, "add", "/new-tree", { float_tolerance: 5, unordered_fields: [], skip_fields: [] }, IDENTITY_RUNNER, log);
+    expect(mismatched.verdict).toBe("NOT_PROVEN");
   });
 
   it("refuses invalid float_tolerance as NOT_PROVEN rather than comparing anything", () => {
@@ -395,23 +430,27 @@ describe("checkEquivalence: normalizer sealing, tolerance, and failure cap", () 
   });
 
   it("treats a float difference within tolerance as equal, and the same difference without tolerance as a failure", () => {
+    const tolerantNorm: EquivNormalizers = { float_tolerance: 1e-9, unordered_fields: [], skip_fields: [] };
     sealRaw(
       "avg",
       [baseCase({ case: "c1", return: { t: "float", v: 0.30000000000000004 } }), baseCase({ case: "c2", return: { t: "float", v: 1.0 } })],
       { unit: "avg", entries: ["f"], cases: 2, branches_total: 2, branches_taken: 2, branch_pct: 100, missing: [] },
+      tolerantNorm,
     );
     const runNew: NewCaseRunner = (_unit, _tree, rec) => ({
       return: { t: "float", v: rec.case === "c1" ? 0.3 : 1.0 }, exc: null, stdout: rec.stdout, files: [],
     });
-    const tolerant = check("avg", "/new-tree", { float_tolerance: 1e-9, unordered_fields: [], skip_fields: [] }, runNew);
+    const tolerant = check("avg", "/new-tree", tolerantNorm, runNew);
     expect(tolerant.verdict).toBe("PROVEN");
 
+    const exactNorm: EquivNormalizers = { float_tolerance: 0, unordered_fields: [], skip_fields: [] };
     sealRaw(
       "avg_exact",
       [baseCase({ case: "c1", return: { t: "float", v: 0.30000000000000004 } }), baseCase({ case: "c2", return: { t: "float", v: 1.0 } })],
       { unit: "avg_exact", entries: ["f"], cases: 2, branches_total: 2, branches_taken: 2, branch_pct: 100, missing: [] },
+      exactNorm,
     );
-    const exact = check("avg_exact", "/new-tree", { float_tolerance: 0, unordered_fields: [], skip_fields: [] }, runNew);
+    const exact = check("avg_exact", "/new-tree", exactNorm, runNew);
     expect(exact.verdict).toBe("NOT_EQUAL");
     expect(exact.pass).toBe(1); // c2 (1.0 === 1.0) still matches exactly
     expect(exact.fail).toBe(1); // c1's noise (0.30000000000000004 vs 0.3) is a real difference at tolerance 0

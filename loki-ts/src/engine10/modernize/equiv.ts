@@ -16,30 +16,34 @@
 // modernize event log (this unit's receipt) always carry the honest verdict, and a caller cannot
 // wrap a try/catch around a thrown error and silently carry on as if nothing happened.
 //
-// Scope: this file, its own tests, and its fixtures only (BOARD.md M-13 file set). It does not
-// implement the no-op ablation or target conformance (M-14/M-15's job) and takes no input for
-// them. Normalizers are declared per unit and sealed WITH the oracle (section 7): since M-12's
-// SealedOracle carries no normalizers field and no unit-card object exists yet in this slice's
-// scope, this file seals them itself into the same modernize event log M-12 anchors to
-// (log.ts's ModernizeLog, append-only, single-writer): the first equivalence check for a unit
-// writes an `equiv.normalizers_sealed` event with the normalizers' hash; every later check for
-// that unit must match it exactly or the check refuses -- a normalizer can never be loosened
-// after the fact to turn a real failure into a pass.
+// Scope: this file, its own tests, and its fixtures only (BOARD.md M-13 file set), except for
+// oracle/seal.ts's sealing code, which D42 (4) lets M-13 edit as the single writer for this one
+// change (see that file's header). It does not implement the no-op ablation or target
+// conformance (M-14/M-15's job) and takes no input for them.
+//
+// Normalizers (D42 (4), CTO ruling on the M-13 r3 reject): declared per unit and sealed WITH the
+// oracle, literally -- oracle/seal.ts's sealOracle takes them as an argument and hashes them into
+// sealed.json and the sealing event, the same write-once call that already seals
+// cases_sha256/coverage_sha256. checkEquivalence below only ever READS that hash and refuses
+// (NOT_PROVEN) when the normalizers it is given do not match it, or when the seal has none at
+// all. Fix (b) from r3 -- a separate sealNormalizers call, sealed independently of the oracle --
+// was rejected: nothing bound its event to run before implementation, so whichever caller ran it
+// first could still pick the tolerance. Binding the hash into sealOracle itself removes that
+// gap: sealOracle already has to run before capture is trusted, let alone before implementation.
 //
 // Input is the unit id, the sealed cases.jsonl (verified via M-12's verifySeal before any case
 // is trusted), the new tree, and an injected target runner -- same pattern as M-10's
 // oracle/search.ts CaptureRunner: the algorithm here is pure and testable with a stub, while
 // wiring the real python3/java21 runner under the new runtime is the unit runner's job (M-15).
 import type { ModernizeLog } from "./log.ts";
-import { readModernizeEvents } from "./log.ts";
-import type { SealedOracle } from "./oracle/seal.ts";
-import { verifySeal } from "./oracle/seal.ts";
+import type { EquivNormalizers, SealedOracle } from "./oracle/seal.ts";
+import { normalizersSha, verifySeal } from "./oracle/seal.ts";
 import { oracleDir } from "./types.ts";
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const sha256 = (s: string): string => createHash("sha256").update(s).digest("hex");
+export type { EquivNormalizers } from "./oracle/seal.ts";
+
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /** py_capture.py's type-tagged value (section 7: "type-tagged canonical JSON, never pickle").
@@ -87,19 +91,8 @@ export interface NewCaseOutcome {
  *  abort the whole unit or silently compare as unequal. */
 export type NewCaseRunner = (unitId: string, newTreeDir: string, rec: CaseRecord) => NewCaseOutcome;
 
-export interface EquivNormalizers {
-  /** Absolute tolerance for "float"/"decimal" tagged values. 0 means exact. Never applied to
-   *  "int": a near-miss integer is a real behavior change (section 7: "nothing is implicit"). */
-  float_tolerance: number;
-  /** Top-level fields whose "list"/"tuple" value is compared as a multiset instead of by
-   *  position. "files" is always compared by path regardless (see compareCase), "exc" never
-   *  reorders. ponytail: field-name granularity only, not a nested path. */
-  unordered_fields: Array<"return" | "stdout">;
-  /** Named fields declared nondeterministic: never compared, never counted as a failure either
-   *  way. Covering every one of the four checked fields leaves nothing provable, so
-   *  checkEquivalence refuses that as NOT_PROVEN up front. */
-  skip_fields: Array<"return" | "exc" | "stdout" | "files">;
-}
+// EquivNormalizers itself now lives in oracle/seal.ts (D42 (4)): sealOracle is what hashes and
+// seals it, so its shape belongs next to that seal, not duplicated here. Re-exported above.
 
 export interface EquivFailure {
   case: string;
@@ -131,7 +124,6 @@ export interface EquivResult {
 }
 
 const MAX_FAILURES = 20;
-const NORMALIZERS_EVENT = "equiv.normalizers_sealed";
 const CHECKED_FIELDS = ["return", "exc", "stdout", "files"] as const;
 
 function parseCases(raw: string): CaseRecord[] {
@@ -143,67 +135,22 @@ function parseCases(raw: string): CaseRecord[] {
   return out;
 }
 
-function normalizersSha(n: EquivNormalizers): string {
-  return sha256(JSON.stringify({
-    float_tolerance: n.float_tolerance,
-    unordered_fields: [...n.unordered_fields].sort(),
-    skip_fields: [...n.skip_fields].sort(),
-  }));
-}
-
-/** Seals normalizers into the modernize log, write-once per unit -- section 7: normalizers are
- *  "declared per unit and sealed WITH the oracle". The caller (the oracle-capture driver, M-15's
- *  job; a test seals it directly) MUST call this before the new tree is implemented against.
- *  B3 (opus reject on b379c171): checkEquivalence used to seal-on-first-use, which meant
- *  whichever normalizers the FIRST checkEquivalence call happened to pass -- possibly called
- *  after the new tree, and its tolerance, already existed -- became the seal. Splitting sealing
- *  into its own explicit step removes that: checkEquivalence below now only ever READS a seal
- *  that must already exist, it never creates one. Refuses (never throws) a re-seal with
- *  different normalizers, matching M-12's sealOracle write-once discipline. */
-export function sealNormalizers(
-  repoDir: string,
-  mid: string,
-  unit: string,
-  normalizers: EquivNormalizers,
-  log: ModernizeLog,
-): { ok: boolean; reason?: string } {
-  const sha = normalizersSha(normalizers);
-  const prior = readModernizeEvents(repoDir, mid).find(
-    (e) => e.type === NORMALIZERS_EVENT && e.data.unit === unit,
-  );
-  if (!prior) {
-    log.append(NORMALIZERS_EVENT, { unit, sha256: sha });
-    return { ok: true };
+/** Checks a checkEquivalence call's normalizers against the hash oracle/seal.ts's sealOracle
+ *  already bound into this unit's sealed oracle (D42 (4)) -- never writes anything, and never
+ *  trusts a hash equiv.ts computed or stored itself. Two refusals, both NOT_PROVEN, never a
+ *  silent pass: the seal has no hash at all (an old sealed.json, from before this field existed),
+ *  or the hash it has does not match the normalizers this call was given (loosened, tightened, or
+ *  just different, at any point after the oracle was sealed -- sealOracle's write-once contract
+ *  means there is no "later" sealing call left to race). */
+function verifyNormalizersAgainstSeal(sealed: SealedOracle, normalizers: EquivNormalizers): { ok: boolean; reason?: string } {
+  if (typeof sealed.normalizers_sha256 !== "string") {
+    return { ok: false, reason: `oracle seal for ${sealed.unit} has no normalizer hash (sealed before normalizers were bound to the oracle)` };
   }
-  if (prior.data.sha256 !== sha) {
+  const given = normalizersSha(normalizers);
+  if (sealed.normalizers_sha256 !== given) {
     return {
       ok: false,
-      reason: `normalizers changed after sealing for ${unit} (sealed ${String(prior.data.sha256)}, now ${sha})`,
-    };
-  }
-  return { ok: true };
-}
-
-/** Verifies a checkEquivalence call's normalizers against the seal sealNormalizers already wrote
- *  -- never writes one itself. Missing seal or a hash mismatch both refuse; either way the
- *  caller turns this into a NOT_PROVEN result, never an uncaught exception. */
-function verifyNormalizersSealed(
-  repoDir: string,
-  mid: string,
-  unit: string,
-  normalizers: EquivNormalizers,
-): { ok: boolean; reason?: string } {
-  const sha = normalizersSha(normalizers);
-  const prior = readModernizeEvents(repoDir, mid).find(
-    (e) => e.type === NORMALIZERS_EVENT && e.data.unit === unit,
-  );
-  if (!prior) {
-    return { ok: false, reason: `normalizers not sealed for ${unit}: call sealNormalizers before checking equivalence` };
-  }
-  if (prior.data.sha256 !== sha) {
-    return {
-      ok: false,
-      reason: `normalizers do not match the sealed copy for ${unit} (sealed ${String(prior.data.sha256)}, given ${sha})`,
+      reason: `normalizers do not match the sealed hash for ${sealed.unit} (sealed ${sealed.normalizers_sha256}, given ${given})`,
     };
   }
   return { ok: true };
@@ -402,11 +349,16 @@ export function checkEquivalence(
   if (CHECKED_FIELDS.every((f) => (normalizers.skip_fields as readonly string[]).includes(f))) {
     return notProvenResult(unit, "normalizers invalid: skip_fields covers every field, nothing would be compared", log);
   }
-  const normCheck = verifyNormalizersSealed(repoDir, mid, unit, normalizers);
-  if (!normCheck.ok) return notProvenResult(unit, `normalizers: ${normCheck.reason ?? "check failed"}`, log);
 
   const dir = oracleDir(repoDir, mid, unit);
   const sealed = JSON.parse(readFileSync(join(dir, "sealed.json"), "utf8")) as SealedOracle;
+
+  // D42 (4): the normalizers hash lives on the oracle seal itself, bound there by sealOracle --
+  // checked here, against the seal just read above, never against a second log event equiv.ts
+  // writes on its own (that was r3's rejected fix (b)).
+  const normCheck = verifyNormalizersAgainstSeal(sealed, normalizers);
+  if (!normCheck.ok) return notProvenResult(unit, `normalizers: ${normCheck.reason ?? "check failed"}`, log);
+
   const records = parseCases(readFileSync(join(dir, "cases.jsonl"), "utf8"));
   const heldOutSet = new Set(sealed.held_out);
 
