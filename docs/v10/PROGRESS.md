@@ -1,5 +1,11 @@
 # Progress
 
+## 2026-09-28T14:10Z: resumed after a 9-hour stall -- read first on resume
+- Shipped before the stall: v10.0.1 (npm gitHead 76ec1c24) and v10.1.0 (Release run for b60ca0ef all jobs success; `npm view loki-mode@10.1.0 gitHead` b60ca0ef; dist-tag latest 10.1.0).
+- Stall: every model call from 04:48Z failed with "Your organization has disabled Claude subscription access for Claude Code" (workflow failures in wf_bd919989-941 and wf_1efd6e89-1f3); nothing ran until about 14:00Z. The pulse raised no violation for it; E-77 adds SESSION_STALLED.
+- Salvage: all 15 builder worktrees were clean (work committed on branches); removed them, branches kept. Approved and merged: M-03 (c90d7924), M-09 (b8d40a34); `bun test tests/engine10/` 481 pass 0 fail. E-66 (Opus APPROVE) not merged: it takes core to 5,189 against the D33 cap; back to ready with an offset requirement. Built but unreviewed (reviews died in the outage): E-61, M-16, M-19, M-24, now in review. Rejected with reproduced findings: EV-11, EV-12, M-04, E-62, back to ready.
+- Founder priorities (14:00Z): EV-11 and EV-12 first, then the v10 default flip once v10 beats raw on the measured tiers (E-31 after EV-9 over all tiers), then loki modernize CLI wiring (M-07, M-08).
+
 ## 2026-09-28T04:45Z: drift audit (turn 432, 6-hour window) and main red again
 - Releases in 6h: 6 (v9.79.0, v9.80.0, v9.80.1, v9.81.0, v10.0.0 tag only, v10.0.1), 151 commits on main. CONTROL "1 per 90 min" met; the 30/day pace is not (about 24/day).
 - Red main windows in 6h, from `gh run list --workflow Tests --branch main`: 898fa081 to d8774dd5 (about 1h, version-literal test, fixed 306b6b0c, guard E-73) and 5404b0c6 to 983dda58 (now). Cause of the second: M-05 merged after only `bun test tests/engine10/modernize/`; the full `tests/engine10/` includes the E-02 size budget, which went 5,288 against 5,000. The Chief of Staff's own merge, not a builder's.
