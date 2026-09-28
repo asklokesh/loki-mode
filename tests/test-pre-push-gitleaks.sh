@@ -780,6 +780,14 @@ fi
 # remote's real history. failing-first evidence against 4e882432 itself
 # (manual real-push repro, not asserted here): that hook exits 0 on this
 # exact fixture; the current hook must exit 1 and name the ADD commit.
+#
+# E-110: the full-push scan (gitleaks git) now runs FIRST, before this
+# eval-only dir-mode scan, and refuses on the same secret before dir-mode
+# gets a chance to -- so the commit reference here may come from either
+# scan's own message ("commit <short>" from dir-mode, "Commit:  <full>"
+# from the full-push scan). $_add_sha (a `--short=12` abbreviation) is
+# always a PREFIX of the full 40-hex sha, so a plain substring check
+# (without requiring the literal word "commit" next to it) matches either.
 if [[ "$_have_real_gitleaks" == "1" ]]; then
     D="$SCRATCH/c15"; BARE="$SCRATCH/c15.git"; setup_bare "$BARE"; setup_push_clone "$D" "$BARE"
     mkdir -p "$D/eval/loki10/tasks/fake-task"
@@ -792,8 +800,8 @@ if [[ "$_have_real_gitleaks" == "1" ]]; then
     rc="$(real_push "$D")"
     if [[ "$rc" == "RC=0" ]]; then
         ko "N1a: secret added then deleted later in the same push is refused" "push succeeded (fail-open); out: $(cat "$D/push.out")"
-    elif grep -q "sourcegraph-access-token" "$D/push.out" && grep -q "gitleaks found a possible secret" "$D/push.out" \
-       && grep -qF "commit ${_add_sha}" "$D/push.out"; then
+    elif grep -q "sourcegraph-access-token" "$D/push.out" && grep -q "possible secret" "$D/push.out" \
+       && grep -qF "$_add_sha" "$D/push.out"; then
         ok "N1a: secret added then deleted later in the same push is refused"
     else
         ko "N1a: secret added then deleted later in the same push is refused" "refused but not on the finding/commit: $(cat "$D/push.out")"
@@ -816,8 +824,8 @@ if [[ "$_have_real_gitleaks" == "1" ]]; then
     rc="$(real_push "$D")"
     if [[ "$rc" == "RC=0" ]]; then
         ko "N1b: secret added then edited clean later in the same push is refused" "push succeeded (fail-open); out: $(cat "$D/push.out")"
-    elif grep -q "sourcegraph-access-token" "$D/push.out" && grep -q "gitleaks found a possible secret" "$D/push.out" \
-       && grep -qF "commit ${_add_sha}" "$D/push.out"; then
+    elif grep -q "sourcegraph-access-token" "$D/push.out" && grep -q "possible secret" "$D/push.out" \
+       && grep -qF "$_add_sha" "$D/push.out"; then
         ok "N1b: secret added then edited clean later in the same push is refused"
     else
         ko "N1b: secret added then edited clean later in the same push is refused" "refused but not on the finding/commit: $(cat "$D/push.out")"
@@ -952,7 +960,13 @@ title = "unrelated config change"
 TOML
 g "$D" add .gitleaks.toml >/dev/null 2>&1
 g "$D" commit -q -m "touch gitleaks config, no eval change" --no-verify >/dev/null 2>&1
-rc="$(real_push "$D")"
+# LOKI_ALLOW_UNSCANNED_PUSH=1: this assertion is about the .gitleaks.toml
+# config-change gate specifically, not about the full-push scan's own
+# missing-binary behavior (already covered elsewhere) -- without it, a
+# no-binary environment would refuse on E-110's full-push scan first and
+# never reach the config-change gate this checks for. Unused when the
+# binary is present.
+rc="$(real_push "$D" "LOKI_ALLOW_UNSCANNED_PUSH=1")"
 if [[ "$rc" == "RC=0" ]]; then
     ko "a .gitleaks.toml change in a push that never touches eval is refused too" "push succeeded; out: $(cat "$D/push.out")"
 elif grep -q "\.gitleaks\.toml changed" "$D/push.out" && grep -q "LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE" "$D/push.out"; then
@@ -982,7 +996,10 @@ mkdir -p "$D/eval/loki10/tasks/evade-task"
 echo '{"id": "evade-task", "prompt": "clean"}' > "$D/eval/loki10/tasks/evade-task/task.json"
 g "$D" add .gitleaks.toml eval/loki10/tasks/evade-task/task.json >/dev/null 2>&1
 g "$D" commit -q -m "title-only config (old rule evasion), eval touch" --no-verify >/dev/null 2>&1
-rc="$(real_push "$D")"
+# LOKI_ALLOW_UNSCANNED_PUSH=1: same reason as case 22 -- this checks the
+# config-change gate specifically, not the full-push scan's missing-binary
+# behavior. Unused when the binary is present.
+rc="$(real_push "$D" "LOKI_ALLOW_UNSCANNED_PUSH=1")"
 if [[ "$rc" == "RC=0" ]]; then
     ko "a title-only .gitleaks.toml in an eval-touching push is refused (evasion closed)" "push succeeded (old '.*' pattern match would have missed this); out: $(cat "$D/push.out")"
 elif grep -q "\.gitleaks\.toml changed" "$D/push.out"; then
@@ -1040,8 +1057,8 @@ if [[ "$_have_real_gitleaks" == "1" ]]; then
     PRE_PUSH_NO_CI_CHECK=1 LOKI_RELEASE_MANAGER=1 git push origin orph >"$D/push.out" 2>&1 || rc=$?
     if [[ "$rc" == "0" ]]; then
         ko "a ROOT commit with a secret is refused (B1)" "push succeeded (fail-open); out: $(cat "$D/push.out")"
-    elif grep -q "sourcegraph-access-token" "$D/push.out" && grep -q "gitleaks found a possible secret" "$D/push.out" \
-       && grep -qF "commit ${_root_sha}" "$D/push.out"; then
+    elif grep -q "sourcegraph-access-token" "$D/push.out" && grep -q "possible secret" "$D/push.out" \
+       && grep -qF "$_root_sha" "$D/push.out"; then
         ok "a ROOT commit with a secret is refused (B1)"
     else
         ko "a ROOT commit with a secret is refused (B1)" "refused but not on the finding/commit: $(cat "$D/push.out")"
@@ -1055,6 +1072,15 @@ fi
 # on top of each other on a case-insensitive filesystem (APFS), so only one
 # of them actually gets scanned -- the secret in whichever loses the
 # collision ships unscanned even though the scan itself reports success.
+#
+# E-110: the full-push scan (gitleaks git, on a bare clone) reads git blobs
+# directly by OID, never through a case-insensitive filesystem extraction --
+# it has no collision to have, by construction -- and now runs FIRST, so it
+# refuses this fixture on the plain secret in A.json before dir-mode's own
+# B3 defense is even reached. That is a strictly stronger outcome (one scan
+# path is now immune to the whole bug class), so this accepts either
+# message: dir-mode's specific collision refusal, or the full-push scan
+# catching the same secret first.
 if [[ "$_have_real_gitleaks" == "1" ]]; then
     D="$SCRATCH/c25"; BARE="$SCRATCH/c25.git"; setup_bare "$BARE"; setup_push_clone "$D" "$BARE"
     mkdir -p "$D/eval/loki10/tasks/collide"
@@ -1068,7 +1094,7 @@ if [[ "$_have_real_gitleaks" == "1" ]]; then
     rc="$(real_push "$D")"
     if [[ "$rc" == "RC=0" ]]; then
         ko "case-colliding eval paths in one commit are refused (B3)" "push succeeded (fail-open); out: $(cat "$D/push.out")"
-    elif grep -q "collide case-insensitively" "$D/push.out"; then
+    elif grep -q "collide case-insensitively" "$D/push.out" || grep -q "possible secret" "$D/push.out"; then
         ok "case-colliding eval paths in one commit are refused (B3)"
     else
         ko "case-colliding eval paths in one commit are refused (B3)" "refused but wrong message: $(cat "$D/push.out")"
@@ -1105,18 +1131,20 @@ if [[ "$_have_real_gitleaks" == "1" ]]; then
     rc="$(real_push "$D")"
     if [[ "$rc" == "RC=0" ]]; then
         ko "a self-suppressing .gitleaksignore line added and removed within one push is refused" "push succeeded (fail-open); out: $(cat "$D/push.out")"
-    elif grep -q "sourcegraph-access-token" "$D/push.out" && grep -q "gitleaks found a possible secret" "$D/push.out" \
-       && grep -qF "commit ${_add_sha}" "$D/push.out"; then
+    elif grep -q "sourcegraph-access-token" "$D/push.out" && grep -q "possible secret" "$D/push.out" \
+       && grep -qF "$_add_sha" "$D/push.out"; then
         ok "a self-suppressing .gitleaksignore line added and removed within one push is refused"
     else
         ko "a self-suppressing .gitleaksignore line added and removed within one push is refused" "refused but not on the finding/commit: $(cat "$D/push.out")"
     fi
-    if grep -q "WARNING: .gitleaksignore gained line" "$D/push.out" && grep -qF "commit ${_add_sha}" "$D/push.out" \
-       && grep -qF "sourcegraph-access-token:5" "$D/push.out"; then
-        ok "the per-commit WARNING fires even though base..tip shows no net .gitleaksignore change"
-    else
-        ko "the per-commit WARNING fires even though base..tip shows no net .gitleaksignore change" "$(cat "$D/push.out")"
-    fi
+    # E-110: the full-push scan now runs BEFORE the eval-only dir-mode loop
+    # and exits on its own finding first (asserted above), so dir-mode's
+    # per-commit .gitleaksignore-diff WARNING below it never runs for THIS
+    # fixture -- the push is refused before that code is reached at all. The
+    # WARNING mechanism itself is still covered (case 19, a fixture where no
+    # full-push finding exists to short-circuit it first, still asserts the
+    # WARNING fires with RC=0).
+    sk "the per-commit WARNING fires even though base..tip shows no net .gitleaksignore change (unreachable: E-110's full-push scan refuses this fixture first; mechanism covered by case 19)"
 else
     sk "a self-suppressing .gitleaksignore line added and removed within one push is refused (no pinned gitleaks v${GITLEAKS_VERSION})"
     sk "the per-commit WARNING fires even though base..tip shows no net .gitleaksignore change (no pinned gitleaks v${GITLEAKS_VERSION})"
@@ -1136,7 +1164,12 @@ _tree_oid="$(g "$D" rev-parse 'HEAD^{tree}')"
 g "$D" reset -q --hard HEAD~1
 g "$D" tag treetag "$_tree_oid" >/dev/null 2>&1
 rc=0
-(cd "$D" && PRE_PUSH_NO_CI_CHECK=1 LOKI_RELEASE_MANAGER=1 git push origin treetag) >"$D/push.out" 2>&1 || rc=$?
+# LOKI_ALLOW_UNSCANNED_PUSH=1: this checks dir-mode's specific "not a
+# commit" refusal, not the full-push scan's missing-binary behavior (already
+# covered by cases 3-4). Without a real gitleaks binary and no override, the
+# full-push scan itself would refuse first (also correctly, but on the wrong
+# message for this assertion). Unused when the binary is present.
+(cd "$D" && PRE_PUSH_NO_CI_CHECK=1 LOKI_RELEASE_MANAGER=1 LOKI_ALLOW_UNSCANNED_PUSH=1 git push origin treetag) >"$D/push.out" 2>&1 || rc=$?
 if [[ "$rc" == "0" ]]; then
     ko "a ref pointing at a tree (not a commit) is refused" "push succeeded (fail-open); out: $(cat "$D/push.out")"
 elif grep -q "which is not a commit" "$D/push.out"; then
@@ -1175,7 +1208,11 @@ if [[ -f "$_obj_path" ]]; then
     else
         ok "a git rev-list failure fails closed, not open (real push is refused)"
     fi
-    rc="$(run_hook_raw "$D" "refs/heads/main $_new_sha refs/heads/main $_old_sha")"
+    # LOKI_ALLOW_UNSCANNED_PUSH=1: this checks dir-mode's own `git rev-list`
+    # failure message specifically, not the full-push scan's missing-binary
+    # behavior (already covered by cases 3-4). Unused when the binary is
+    # present.
+    rc="$(run_hook_raw "$D" "refs/heads/main $_new_sha refs/heads/main $_old_sha" "LOKI_ALLOW_UNSCANNED_PUSH=1")"
     if [[ "$rc" == "RC=0" ]]; then
         ko "the hook's own message names the git rev-list failure (stdin-fed, isolated)" "hook exited 0; out: $(cat "$D/hook.out")"
     elif grep -q "could not list commits" "$D/hook.out"; then

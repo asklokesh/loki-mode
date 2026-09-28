@@ -15,11 +15,13 @@
 #
 # Install:  ./scripts/install-hooks.sh
 # Skip once: PRE_PUSH_SKIP=1 git push   (use sparingly; CI will catch you)
-#   PRE_PUSH_SKIP never skips the push-authority guard (S-152) or the
-#   release-notes gate (E-88) below -- both run before the PRE_PUSH_SKIP
-#   check, deliberately: PRE_PUSH_SKIP=1 is the routine way trains push
-#   (see docs/v10/DECISIONS.md), so a check placed after it would never
-#   fire on the pushes it exists to catch.
+#   PRE_PUSH_SKIP never skips the push-authority guard (S-152), the
+#   release-notes gate (E-88), or the full-push secret scan (E-110) below --
+#   all three run before the PRE_PUSH_SKIP check, deliberately:
+#   PRE_PUSH_SKIP=1 is the routine way trains push (see docs/v10/DECISIONS.md),
+#   so a check placed after it would never fire on the pushes it exists to
+#   catch, including exactly the release-train push that landed E-101's
+#   planted secrets (tests/test-eval-archive.sh, commit bbe83c7a).
 #   LOKI_ALLOW_UNSCANNED_PUSH=1: lets a push through when the pinned
 #   gitleaks binary is missing (E-110). Only covers the full-push scan
 #   below, never the eval-fixture scan, and never a real finding or a
@@ -129,6 +131,212 @@ if [[ $_notes_failures -gt 0 ]]; then
     exit 1
 fi
 
+# --- Full-push secret scan (gitleaks git, E-110) -- also runs BEFORE PRE_PUSH_SKIP, never skippable -
+# The eval-fixture scan further down (E-86/E-99) only ever covers
+# eval/loki10/tasks and eval/loki10/refdiff; it never saw the 3 synthetic
+# secret-shaped fixtures E-101 planted in tests/test-eval-archive.sh (commit
+# bbe83c7a) -- CI's full-history `gitleaks git` gate caught them only after
+# the push already landed, blocking the v10.4.0 release. This step runs the
+# SAME mode CI uses, over EVERY path in the push, scoped to just the pushed
+# commits with --log-opts so it stays fast: measured on this repo, an
+# unscoped `gitleaks git` over the full history (~3,700 commits, ~1GB) takes
+# ~37s; scoped to a typical 5-commit range with --log-opts it takes ~230ms
+# (~160x faster), plus ~60ms for the bare clone below. Sits here, before
+# PRE_PUSH_SKIP (see the header comment), for the same reason E-88 does:
+# PRE_PUSH_SKIP=1 is the routine way trains push, and a train push is
+# exactly how bbe83c7a's planted secrets landed on main.
+#
+# Runs against a throwaway `--bare --shared` clone, not the working tree:
+# verified empirically that `gitleaks git <dir>` auto-loads a
+# `.gitleaksignore` / `.gitleaks.toml` sitting in that directory's own
+# working tree even when neither is passed explicitly -- which would let
+# whatever branch happens to be checked out locally silently gate the scan
+# instead of the PUSHED TIP's own files, the same class of bug E-99 fixed
+# for the eval scan below. A bare clone has no working tree, so only the
+# tip's own copies (fetched below with `git show`, same pattern as the eval
+# scan) can apply. `--shared` hardlinks the object store rather than
+# copying it, which is what keeps the clone itself cheap. `git -C "$_top"`
+# throughout: REPO_ROOT/cd have not run yet at this point (same reason E-88
+# uses it).
+GITLEAKS_VERSION="8.30.0"
+_gitleaks_bin=""
+_gitleaks_bin_checked=0
+_resolve_gitleaks_bin() {
+    [[ "$_gitleaks_bin_checked" == "1" ]] && return 0
+    _gitleaks_bin_checked=1
+    local _bin="$HOME/.local/share/loki/bin/gitleaks-${GITLEAKS_VERSION}"
+    local _sidecar="${_bin}.sha256"
+    # No PATH fallback: a sidecar-verified pinned install is the only binary
+    # this hook trusts. A same-version PATH binary (e.g. Homebrew) is not
+    # byte-identical to the pinned release and `gitleaks version` alone
+    # cannot prove it is -- that gap is what let a swapped binary through
+    # in the installer before this rework (see scripts/install-gitleaks.sh).
+    [[ -x "$_bin" ]] || return 0
+    [[ -f "$_sidecar" ]] || return 0
+    local _recorded _actual
+    _recorded="$(cat "$_sidecar" 2>/dev/null || true)"
+    [[ -n "$_recorded" ]] || return 0
+    if command -v sha256sum >/dev/null 2>&1; then
+        _actual="$(sha256sum "$_bin" | awk '{print $1}')"
+    else
+        _actual="$(shasum -a 256 "$_bin" | awk '{print $1}')"
+    fi
+    [[ "$_actual" == "$_recorded" ]] || return 0
+
+    # Hardcoded per-platform sha256 of the gitleaks v8.30.0 binary ITSELF
+    # (not the release tarball -- scripts/install-gitleaks.sh already pins
+    # that, independently). A sidecar match alone is not proof: a sidecar is
+    # just a file next to the binary, and whatever can overwrite the binary
+    # can overwrite its sidecar to match (E-99). This value lives only in
+    # this hook's own git history, verified 2026-09-28 by downloading each
+    # official v8.30.0 release asset and hashing the extracted binary (not
+    # the tarball -- that hash is the one already pinned in
+    # scripts/install-gitleaks.sh and .github/workflows/security-audit.yml).
+    local _bin_os _bin_arch _expected_bin_sha256
+    case "$(uname -s)" in
+        Darwin) _bin_os="darwin" ;;
+        Linux) _bin_os="linux" ;;
+        *) return 0 ;;
+    esac
+    case "$(uname -m)" in
+        arm64 | aarch64) _bin_arch="arm64" ;;
+        x86_64 | amd64) _bin_arch="x64" ;;
+        *) return 0 ;;
+    esac
+    case "${_bin_os}_${_bin_arch}" in
+        darwin_arm64) _expected_bin_sha256="095bc4be1624239f52ebb90ff91668d1d3e78e0f8c5286e2d981887905c27561" ;;
+        darwin_x64) _expected_bin_sha256="f478677e8858ec3129153dec6e3f8dab5b5f674c120245e7878f89582444d06f" ;;
+        linux_arm64) _expected_bin_sha256="3957ad3e168b6633307c1d8ea43bffa17557f825027504b13b574899212e635a" ;;
+        linux_x64) _expected_bin_sha256="8b6fd684fcd5b4ebe39b68abb072ce59e1063ce7ed4abd556157697845f1f088" ;;
+        *) return 0 ;;
+    esac
+    [[ "$_actual" == "$_expected_bin_sha256" ]] || return 0
+
+    [[ "$("$_bin" version 2>/dev/null)" == "$GITLEAKS_VERSION" ]] || return 0
+    _gitleaks_bin="$_bin"
+}
+
+# Scratch dirs for this scan AND the eval-fixture scan further down, each
+# created lazily on first use and removed on exit. One trap covers both,
+# registered once, here: `trap ... EXIT` REPLACES any earlier registration
+# rather than chaining it, so a second `trap ... EXIT` in the eval-scan
+# section would silently drop this cleanup. Never swept by path/name/pattern
+# elsewhere -- this is the only thing that ever removes either directory,
+# and only after confirming each is the exact directory this hook created.
+_full_scan_root=""
+_eval_scan_root=""
+_cleanup_scan_roots() {
+    if [[ -n "$_full_scan_root" ]]; then
+        case "$_full_scan_root" in
+            "${TMPDIR:-/tmp}"/loki-prepush-full.*) rm -rf -- "$_full_scan_root" ;;
+        esac
+    fi
+    if [[ -n "$_eval_scan_root" ]]; then
+        case "$_eval_scan_root" in
+            "${TMPDIR:-/tmp}"/loki-prepush-eval.*) rm -rf -- "$_eval_scan_root" ;;
+        esac
+    fi
+}
+trap '_cleanup_scan_roots' EXIT
+
+# Memoized bare --shared clone: one per hook run, reused across every pushed
+# ref, cleaned up by the trap above since it lives under $_full_scan_root.
+_full_scan_clone=""
+_full_scan_failures=0
+while read -r _lref _lsha _rref _rsha; do
+    [[ -n "${_lsha:-}" ]] || continue
+    [[ "$_lsha" == "$_zero_sha" ]] && continue  # ref delete: nothing pushed
+
+    # Same base-resolution fallback as the eval scan below (own copy: this
+    # section runs first, before REPO_ROOT/cd, and duplicating ~10 lines here
+    # is safer than threading state across two separate `while read` loops).
+    _full_base="$_rsha"
+    _full_base_is_empty=0
+    if [[ "$_full_base" == "$_zero_sha" ]] || ! git -C "$_top" cat-file -e "${_full_base}^{commit}" 2>/dev/null; then
+        _full_base="$(git -C "$_top" merge-base "$_lsha" "refs/remotes/${1:-origin}/main" 2>/dev/null || true)"
+        if [[ -z "$_full_base" ]]; then
+            _full_base_is_empty=1
+        fi
+    fi
+    if [[ "$_full_base_is_empty" != "1" && "$_full_base" == "$_lsha" ]]; then
+        continue  # old tip == new tip: nothing new pushed on this ref
+    fi
+
+    _full_log_opts="${_full_base}..${_lsha}"
+    [[ "$_full_base_is_empty" == "1" ]] && _full_log_opts="$_lsha --not --remotes=${1:-origin}"
+
+    _resolve_gitleaks_bin
+    if [[ -z "$_gitleaks_bin" ]]; then
+        if [[ "${LOKI_ALLOW_UNSCANNED_PUSH:-0}" == "1" ]]; then
+            echo "[pre-push] WARNING: pinned gitleaks v${GITLEAKS_VERSION} not installed; LOKI_ALLOW_UNSCANNED_PUSH=1 set -- pushing $_lref WITHOUT the full-push secret scan." >&2
+            echo "[pre-push]   This never bypasses the eval-fixture scan further down, which still fails closed." >&2
+        else
+            echo "[pre-push] FAIL: pinned gitleaks v${GITLEAKS_VERSION} is not installed -- cannot run the full-push secret scan for $_lref" >&2
+            echo "[pre-push]   install it: scripts/install-gitleaks.sh" >&2
+            echo "[pre-push]   or set LOKI_ALLOW_UNSCANNED_PUSH=1 to push anyway (rare; never bypasses the eval-fixture scan, which has no override)." >&2
+            _full_scan_failures=$((_full_scan_failures + 1))
+        fi
+        continue
+    fi
+
+    [[ -n "$_full_scan_root" ]] || _full_scan_root="$(mktemp -d "${TMPDIR:-/tmp}/loki-prepush-full.XXXXXX")"
+    if [[ -z "$_full_scan_clone" ]]; then
+        _full_scan_clone="$_full_scan_root/full-scan.git"
+        _full_git_common_dir="$(cd "$_top" && git rev-parse --git-common-dir)"
+        case "$_full_git_common_dir" in
+            /*) : ;;
+            *) _full_git_common_dir="$_top/$_full_git_common_dir" ;;
+        esac
+        if ! git clone -q --bare --shared "$_full_git_common_dir" "$_full_scan_clone" 2>/dev/null; then
+            echo "[pre-push] FAIL: could not create the bare clone for the full-push secret scan" >&2
+            _full_scan_failures=$((_full_scan_failures + 1))
+            _full_scan_clone="__failed__"
+        fi
+    fi
+    [[ "$_full_scan_clone" != "__failed__" ]] || continue
+
+    # The PUSHED TIP's ($_lsha) .gitleaksignore / .gitleaks.toml, same E-99
+    # invariant as the eval scan: absent on the tip, scan with an empty
+    # ignore file (errs strict, never open).
+    _full_ignore_file="$_full_scan_root/full-scan.gitleaksignore"
+    git -C "$_top" show "$_lsha:.gitleaksignore" > "$_full_ignore_file" 2>/dev/null || : > "$_full_ignore_file"
+    _full_config_file="$_full_scan_root/full-scan.gitleaks.toml"
+    _full_config_arg=()
+    if git -C "$_top" show "$_lsha:.gitleaks.toml" > "$_full_config_file" 2>/dev/null; then
+        _full_config_arg=(--config "$_full_config_file")
+    fi
+
+    echo "[pre-push] gitleaks git --log-opts=\"$_full_log_opts\" ($_lref, every pushed path)"
+    # bash 3.2 (macOS's /bin/bash): "${arr[@]}" on a genuinely empty array is
+    # an unbound-variable error under `set -u`. ${arr[@]+"${arr[@]}"} is the
+    # portable guard.
+    if _full_out="$("$_gitleaks_bin" git "$_full_scan_clone" --log-opts="$_full_log_opts" \
+            ${_full_config_arg[@]+"${_full_config_arg[@]}"} \
+            --gitleaks-ignore-path "$_full_ignore_file" --redact --no-banner -v 2>&1)"; then
+        _full_gl_rc=0
+    else
+        _full_gl_rc=$?
+    fi
+    if [[ "$_full_gl_rc" == "1" ]]; then
+        # Never the secret: --redact already masks it, and this filter keeps
+        # only the location/rule lines even so.
+        printf '%s\n' "$_full_out" | grep -E '^(File|Line|RuleID|Fingerprint|Commit):' >&2 || true
+        echo "[pre-push] FAIL: gitleaks found a possible secret in the pushed commits (range $_full_log_opts, $_lref)" >&2
+        echo "[pre-push]   Verify the finding above. If it is a false positive, add its exact" >&2
+        echo "[pre-push]   Fingerprint (printed above) to .gitleaksignore with a one-line reason." >&2
+        _full_scan_failures=$((_full_scan_failures + 1))
+    elif [[ "$_full_gl_rc" != "0" ]]; then
+        # Exit codes other than 0 (clean) and 1 (leaks found) are a scanner
+        # failure, not a finding.
+        echo "[pre-push] FAIL: gitleaks failed (exit $_full_gl_rc) scanning the pushed commits ($_lref)" >&2
+        _full_scan_failures=$((_full_scan_failures + 1))
+    fi
+done <<< "$_stdin_refs"
+if [[ $_full_scan_failures -gt 0 ]]; then
+    echo "[pre-push] $_full_scan_failures full-push secret scan check(s) failed -- aborting push. PRE_PUSH_SKIP does not bypass this." >&2
+    exit 1
+fi
+
 if [[ "${PRE_PUSH_SKIP:-0}" == "1" ]]; then
     echo "[pre-push] PRE_PUSH_SKIP=1 set, skipping"
     exit 0
@@ -202,67 +410,9 @@ _zero_sha="0000000000000000000000000000000000000000"
 # `git hash-object -t tree /dev/null` derives the identical id without ever
 # writing the literal.
 _empty_tree="$(git hash-object -t tree /dev/null)"
-GITLEAKS_VERSION="8.30.0"
-
-# Resolved lazily (only once, only if an eval path actually changed) and
-# memoized: hashing a ~20MB binary on every push, even a no-op one, is wasted
-# work case 3 below exists to catch.
-_gitleaks_bin=""
-_gitleaks_bin_checked=0
-_resolve_gitleaks_bin() {
-    [[ "$_gitleaks_bin_checked" == "1" ]] && return 0
-    _gitleaks_bin_checked=1
-    local _bin="$HOME/.local/share/loki/bin/gitleaks-${GITLEAKS_VERSION}"
-    local _sidecar="${_bin}.sha256"
-    # No PATH fallback: a sidecar-verified pinned install is the only binary
-    # this hook trusts. A same-version PATH binary (e.g. Homebrew) is not
-    # byte-identical to the pinned release and `gitleaks version` alone
-    # cannot prove it is -- that gap is what let a swapped binary through
-    # in the installer before this rework (see scripts/install-gitleaks.sh).
-    [[ -x "$_bin" ]] || return 0
-    [[ -f "$_sidecar" ]] || return 0
-    local _recorded _actual
-    _recorded="$(cat "$_sidecar" 2>/dev/null || true)"
-    [[ -n "$_recorded" ]] || return 0
-    if command -v sha256sum >/dev/null 2>&1; then
-        _actual="$(sha256sum "$_bin" | awk '{print $1}')"
-    else
-        _actual="$(shasum -a 256 "$_bin" | awk '{print $1}')"
-    fi
-    [[ "$_actual" == "$_recorded" ]] || return 0
-
-    # Hardcoded per-platform sha256 of the gitleaks v8.30.0 binary ITSELF
-    # (not the release tarball -- scripts/install-gitleaks.sh already pins
-    # that, independently). A sidecar match alone is not proof: a sidecar is
-    # just a file next to the binary, and whatever can overwrite the binary
-    # can overwrite its sidecar to match (E-99). This value lives only in
-    # this hook's own git history, verified 2026-09-28 by downloading each
-    # official v8.30.0 release asset and hashing the extracted binary (not
-    # the tarball -- that hash is the one already pinned in
-    # scripts/install-gitleaks.sh and .github/workflows/security-audit.yml).
-    local _bin_os _bin_arch _expected_bin_sha256
-    case "$(uname -s)" in
-        Darwin) _bin_os="darwin" ;;
-        Linux) _bin_os="linux" ;;
-        *) return 0 ;;
-    esac
-    case "$(uname -m)" in
-        arm64 | aarch64) _bin_arch="arm64" ;;
-        x86_64 | amd64) _bin_arch="x64" ;;
-        *) return 0 ;;
-    esac
-    case "${_bin_os}_${_bin_arch}" in
-        darwin_arm64) _expected_bin_sha256="095bc4be1624239f52ebb90ff91668d1d3e78e0f8c5286e2d981887905c27561" ;;
-        darwin_x64) _expected_bin_sha256="f478677e8858ec3129153dec6e3f8dab5b5f674c120245e7878f89582444d06f" ;;
-        linux_arm64) _expected_bin_sha256="3957ad3e168b6633307c1d8ea43bffa17557f825027504b13b574899212e635a" ;;
-        linux_x64) _expected_bin_sha256="8b6fd684fcd5b4ebe39b68abb072ce59e1063ce7ed4abd556157697845f1f088" ;;
-        *) return 0 ;;
-    esac
-    [[ "$_actual" == "$_expected_bin_sha256" ]] || return 0
-
-    [[ "$("$_bin" version 2>/dev/null)" == "$GITLEAKS_VERSION" ]] || return 0
-    _gitleaks_bin="$_bin"
-}
+# GITLEAKS_VERSION and _resolve_gitleaks_bin are defined earlier, in the
+# full-push secret scan section above (E-110) -- both the eval scan below
+# and that section need them, and it runs first.
 
 # B3 (r4, E-86 Opus REJECT on 40b2e228): two changed eval paths in one commit
 # that differ only in case ("A.json" vs "a.json"), or only in Unicode
@@ -289,24 +439,6 @@ for p in paths:
         printf '%s\n' "$@" | awk '{k=tolower($0); if (k in seen && seen[k] != $0) print seen[k]"\t"$0; else seen[k]=$0}'
     fi
 }
-
-# One parent scratch dir for the whole hook run, created lazily on first use
-# and removed on exit. Never swept by path/name/pattern elsewhere -- this
-# trap is the only thing that ever removes it, and only after confirming it
-# is the exact directory this hook created.
-_eval_scan_root=""
-_cleanup_eval_scan_root() {
-    [[ -n "$_eval_scan_root" ]] || return 0
-    case "$_eval_scan_root" in
-        "${TMPDIR:-/tmp}"/loki-prepush-eval.*) rm -rf -- "$_eval_scan_root" ;;
-    esac
-}
-trap '_cleanup_eval_scan_root' EXIT
-
-# Memoized bare --shared clone used by the full-push scan below (E-110): one
-# clone per hook run, reused across every pushed ref, cleaned up by the same
-# trap since it lives under $_eval_scan_root.
-_full_scan_clone=""
 
 _eval_ref_n=0
 while read -r _lref _lsha _rref _rsha; do
@@ -578,84 +710,6 @@ while read -r _lref _lsha _rref _rsha; do
             failures=$((failures + 1))
         fi
     done
-
-    # --- Full-push secret scan (gitleaks git, E-110) ---------------------------
-    # The eval-fixture scan above (E-86/E-99) only ever covered
-    # eval/loki10/tasks and eval/loki10/refdiff, so it never saw the 3
-    # synthetic secret-shaped fixtures E-101 planted in
-    # tests/test-eval-archive.sh (commit bbe83c7a) -- CI's full-history
-    # `gitleaks git` gate caught them only after the push already landed,
-    # blocking the v10.4.0 release. This step runs the SAME mode CI uses,
-    # over every path this push touches (not just eval), scoped to just the
-    # pushed commits with --log-opts so it stays fast: measured on this repo,
-    # an unscoped `gitleaks git` over the full history (~3,700 commits, ~1GB)
-    # takes ~37s; scoped to a typical 5-commit range with --log-opts it takes
-    # ~230ms (~160x faster), and the throwaway bare clone below costs ~60ms.
-    # At this point $_commits is already known non-empty (checked above).
-    #
-    # Runs against a throwaway `--bare --shared` clone, not $REPO_ROOT
-    # directly: verified empirically that `gitleaks git <dir>` auto-loads a
-    # `.gitleaksignore` / `.gitleaks.toml` sitting in that directory's own
-    # working tree even when neither is passed explicitly -- which would let
-    # whatever branch happens to be checked out locally silently gate the
-    # scan instead of the PUSHED TIP's own files, the same class of bug E-99
-    # fixed for the eval scan above. A bare clone has no working tree, so
-    # only the tip's copies (fetched below with `git show`, same pattern as
-    # the eval scan) can apply. `--shared` hardlinks the object store rather
-    # than copying it, which is what keeps the clone itself cheap.
-    _full_log_opts="${_base}..${_lsha}"
-    [[ "$_base_is_empty_tree" == "1" ]] && _full_log_opts="$_lsha --not --remotes=${1:-origin}"
-
-    _resolve_gitleaks_bin
-    if [[ -z "$_gitleaks_bin" ]]; then
-        if [[ "${LOKI_ALLOW_UNSCANNED_PUSH:-0}" == "1" ]]; then
-            echo "[pre-push] WARNING: pinned gitleaks v${GITLEAKS_VERSION} not installed; LOKI_ALLOW_UNSCANNED_PUSH=1 set -- pushing $_lref WITHOUT the full-push secret scan." >&2
-            echo "[pre-push]   This never bypasses the eval-fixture scan above, which still fails closed." >&2
-        else
-            echo "[pre-push] FAIL: pinned gitleaks v${GITLEAKS_VERSION} is not installed -- cannot run the full-push secret scan for $_lref" >&2
-            echo "[pre-push]   install it: scripts/install-gitleaks.sh" >&2
-            echo "[pre-push]   or set LOKI_ALLOW_UNSCANNED_PUSH=1 to push anyway (rare; never bypasses the eval-fixture scan, which has no override)." >&2
-            failures=$((failures + 1))
-        fi
-    else
-        [[ -n "$_eval_scan_root" ]] || _eval_scan_root="$(mktemp -d "${TMPDIR:-/tmp}/loki-prepush-eval.XXXXXX")"
-        if [[ -z "$_full_scan_clone" ]]; then
-            _full_scan_clone="$_eval_scan_root/full-scan.git"
-            if ! git clone -q --bare --shared "$(git rev-parse --git-common-dir)" "$_full_scan_clone" 2>/dev/null; then
-                echo "[pre-push] FAIL: could not create the bare clone for the full-push secret scan" >&2
-                failures=$((failures + 1))
-                _full_scan_clone="__failed__"
-            fi
-        fi
-        if [[ "$_full_scan_clone" != "__failed__" ]]; then
-            _full_ignore_file="$_eval_scan_root/full-scan.gitleaksignore"
-            git show "$_lsha:.gitleaksignore" > "$_full_ignore_file" 2>/dev/null || : > "$_full_ignore_file"
-            _full_config_file="$_eval_scan_root/full-scan.gitleaks.toml"
-            _full_config_arg=()
-            if git show "$_lsha:.gitleaks.toml" > "$_full_config_file" 2>/dev/null; then
-                _full_config_arg=(--config "$_full_config_file")
-            fi
-
-            echo "[pre-push] gitleaks git --log-opts=\"$_full_log_opts\" ($_lref, every pushed path)"
-            if _full_out="$("$_gitleaks_bin" git "$_full_scan_clone" --log-opts="$_full_log_opts" \
-                    ${_full_config_arg[@]+"${_full_config_arg[@]}"} \
-                    --gitleaks-ignore-path "$_full_ignore_file" --redact --no-banner -v 2>&1)"; then
-                _full_gl_rc=0
-            else
-                _full_gl_rc=$?
-            fi
-            if [[ "$_full_gl_rc" == "1" ]]; then
-                printf '%s\n' "$_full_out" | grep -E '^(File|Line|RuleID|Fingerprint|Commit):' >&2 || true
-                echo "[pre-push] FAIL: gitleaks found a possible secret in the pushed commits (range $_full_log_opts, $_lref)" >&2
-                echo "[pre-push]   Verify the finding above. If it is a false positive, add its exact" >&2
-                echo "[pre-push]   Fingerprint (printed above) to .gitleaksignore with a one-line reason." >&2
-                failures=$((failures + 1))
-            elif [[ "$_full_gl_rc" != "0" ]]; then
-                echo "[pre-push] FAIL: gitleaks failed (exit $_full_gl_rc) scanning the pushed commits ($_lref)" >&2
-                failures=$((failures + 1))
-            fi
-        fi
-    fi
 done <<< "$_stdin_refs"
 
 # --- Red-main guard ----------------------------------------------------------
