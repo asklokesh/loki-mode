@@ -243,6 +243,34 @@ if [ "${LOKI_LEGACY_BASH:-0}" = "1" ] || [ "${LOKI_LEGACY_BASH:-}" = "true" ]; t
     exec "$BASH_CLI" "$@"
 fi
 
+# M-08 (docs/v10/MODERNIZE.md section 2): the NEW `loki modernize <repo> --to
+# <target>` form always reaches the Loki 10 (Bun) modernize CLI, regardless of
+# LOKI_ENGINE or the default engine flip. Ahead of the v10 block below so
+# tonight's legacy default never blocks it; $1 is already "modernize" so "$@"
+# reproduces it as the router's own first argument without a shift.
+#
+# `loki modernize` is ALSO an existing legacy noun (autonomy/loki cmd_modernize,
+# `heal`/`migrate` subcommands, documented in README.md and
+# wiki/CLI-Reference.md): a plain catch-all here broke `loki heal`/`loki
+# migrate` forwarding parity and `modernize bogus`'s error-channel contract
+# (tests/cli/test-alias-forwarding.sh). --to is the one flag every valid
+# engine10 invocation requires (modernize/cli.ts: "missing --to" otherwise), so
+# it is the routing signal: only args containing --to go to engine10; bare
+# `modernize`, `--help`/`-h`/`help`, `heal`, `migrate`, and any other token
+# fall through unchanged to the existing dispatch below, which already sends
+# them to the legacy CLI today. (`--help`'s own content -- whether it should
+# also mention heal/migrate -- is modernize/cli.ts's USAGE text, outside this
+# arm's file set; left unchanged.)
+if [ "${1:-}" = "modernize" ]; then
+    for _loki_mod_a in "$@"; do
+        if [ "$_loki_mod_a" = "--to" ]; then
+            command -v bun >/dev/null 2>&1 || { echo "Error: loki modernize needs bun." >&2; exit 1; }
+            exec bun "$BUN_CLI" engine10 "$@"
+        fi
+    done
+    unset _loki_mod_a
+fi
+
 # Loki 10 engine (D29): additive; skipped entirely unless LOKI_ENGINE=v10.
 if [ "${LOKI_ENGINE:-}" = "v10" ]; then
     _e10=0

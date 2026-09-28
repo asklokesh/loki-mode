@@ -109,8 +109,38 @@ if grep -q 'const { runEngine10 } = await import("./engine10/cli.ts");' "$cli"; 
 else
     bad "cli.ts arm lazy import missing"
 fi
-n="$(grep -c 'engine10' "$REPO/bin/loki")"
-expect "bin/loki: engine10 in the one exec line only" "1" "$n"
+# 6. bin/loki: engine10 is reached only through its two known exec arms --
+#    the modernize) arm (M-08) and the LOKI_ENGINE=v10 block (D29) -- never a
+#    stray third exec line anywhere else in the file. Anchored on the arms'
+#    own text, not line numbers, so edits elsewhere in the file don't rot it.
+BIN="$REPO/bin/loki"
+EXEC_PAT='exec bun "$BUN_CLI" engine10'
+# find_fi <start-line>: the depth-aware matching "fi" for the "if" at start-line.
+find_fi() {
+    awk -v s="$1" '
+        NR < s { next }
+        {
+            if ($0 ~ /^[[:space:]]*if[[:space:]]/) depth++
+            if ($0 ~ /^[[:space:]]*fi([[:space:]]|$)/) {
+                depth--
+                if (depth == 0) { print NR; exit }
+            }
+        }' "$BIN"
+}
+mod_start="$(grep -nF 'if [ "${1:-}" = "modernize" ]; then' "$BIN" | head -1 | cut -d: -f1)"
+v10_start="$(grep -nF 'if [ "${LOKI_ENGINE:-}" = "v10" ]; then' "$BIN" | head -1 | cut -d: -f1)"
+if [ -n "$mod_start" ] && [ -n "$v10_start" ]; then
+    mod_end="$(find_fi "$mod_start")"
+    v10_end="$(find_fi "$v10_start")"
+    total="$(grep -cF "$EXEC_PAT" "$BIN")"
+    mod_hits="$(sed -n "${mod_start},${mod_end}p" "$BIN" | grep -cF "$EXEC_PAT")"
+    v10_hits="$(sed -n "${v10_start},${v10_end}p" "$BIN" | grep -cF "$EXEC_PAT")"
+    expect "bin/loki: exactly 2 engine10 exec lines total" "2" "$total"
+    expect "bin/loki: modernize) arm has its own engine10 exec" "1" "$mod_hits"
+    expect "bin/loki: LOKI_ENGINE=v10 block has its own engine10 exec" "1" "$v10_hits"
+else
+    bad "bin/loki: could not locate the modernize) arm or the LOKI_ENGINE=v10 block"
+fi
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
