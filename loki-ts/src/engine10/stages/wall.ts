@@ -21,21 +21,23 @@ export interface WallSealedFile { path: string; sha256: string; } // path: absol
 // not_run (D42 (3)): no real result; counts toward neither pass nor fail. Optional for pre-D42(3) fakes.
 export interface BaseTestRunner { run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run?: number }; }
 const BASE_RUN_TIMEOUT_MS = 60_000; // same per-check budget as verify.ts's CHECK_TIMEOUT_MS
-// B3 (r2, E-125): red only when the frame that raised it is under realpath(repoDir); real pytest's OWN
-// frames read "path.py:N: in <scope>" (relative to repoDir), library frames "File \"path\", line N".
+// B1/B2/B3/B4 (r3, opus review of E-125): only the short-summary line names the FINAL exception -- immune to a captured stdout/stderr block forging an earlier frame (B3), or an earlier link in a chain (B4).
 function pytestCollectionIsRed(output: string, repoDir: string): boolean {
   if (/ModuleNotFoundError/.test(output)) return false;
   const real = (p: string): string | null => { try { return realpathSync(isAbsolute(p) ? p : join(repoDir, p)); } catch { return null; } };
   const repoReal = real(repoDir);
   const under = (p: string): boolean => { const r = real(p); return !!repoReal && !!r && (r === repoReal || r.startsWith(`${repoReal}/`)); };
-  const imp = /ImportError: cannot import name .* from ['"][\w.]+['"] \(([^)]+)\)/.exec(output); // pytest prints the module's own path here
-  if (imp) return under(imp[1]!);
-  const exc = /\b(?:AttributeError|NameError)\b/.exec(output);
-  if (!exc) return false;
-  const frames = [...output.slice(0, exc.index).matchAll(/(?:File "([^"]+)", line \d+|^(\S+):\d+: in )/gm)];
-  const last = frames.length ? (frames[frames.length - 1]![1] ?? frames[frames.length - 1]![2] ?? null) : null; // the frame right before the exception raised it
-  return !!last && under(last);
+  // pytest reports an ImportError from `from x import y` via its own (short-summary-less) path; the message always carries the module's own (absolute) file, so a direct scan is unambiguous.
+  const imp = /ImportError: cannot import name .* from ['"][\w.]+['"] \(([^)]+)\)/.exec(output); if (imp) return under(imp[1]!);
+  const cls = /^ERROR \S+ - (\w+Error): /m.exec(output)?.[1]; if (cls !== "AttributeError" && cls !== "NameError") return false;
+  const eLines = [...output.matchAll(new RegExp(`^E {3}${cls}: (.*)$`, "gm"))]; const eLine = eLines[eLines.length - 1]; if (!eLine) return false;
+  // B1 (r3): an AttributeError's frame is only where the dotted access sits, not who owns the missing attribute -- go by the message instead.
+  if (cls === "AttributeError") { const m = /^module ['"]([\w.]+)['"] has no attribute/.exec(eLine[1]!); return !!m && moduleUnderRepo(repoDir, m[1]!); }
+  // NameError: the raise site must be repo code, not merely an import line naming an outside module. B2 (r3): a frame path may contain a space.
+  const frames = [...output.slice(0, eLine.index).matchAll(/^(.+?):\d+: in \S+\n\s*(.*)$/gm)]; const last = frames[frames.length - 1];
+  return !!last && under(last[1]!) && !/^\s*(import\s|from\s\S+\s+import\b)/.test(last[2] ?? "");
 }
+function moduleUnderRepo(repoDir: string, name: string): boolean { const rel = name.replace(/\./g, "/"); return existsSync(join(repoDir, `${rel}.py`)) || existsSync(join(repoDir, rel, "__init__.py")); }
 // B2 (r2): jest/vitest/bun red requires a parsed failed-test count above 0; unparseable output stays 0 (not_run).
 function parsedFailCount(runner: RunnerName, output: string): number {
   const m = runner === "bun" ? /^\s*(\d+)\s+fail\s*$/m.exec(output)
