@@ -72,7 +72,20 @@ fi
 mkdir -p "$OUT_DIR" || { echo "java_capture.sh: cannot create --out $OUT_DIR" >&2; exit 2; }
 
 REASONS=()
-json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+# JSON string escaping. Handles backslash, double quote, newline, CR and tab -- the control
+# characters a real multi-line `java -version` output (JDK 8 prints 3 lines) actually contains;
+# without this, jdkVersionRaw's embedded newlines broke status.json's own JSON syntax.
+# ponytail: other C0 control chars (0x00-0x1F minus \n\r\t) are not escaped; none appear in any
+# known `java -version` output, so this is not a general-purpose JSON string encoder.
+json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\t'/\\t}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\n'/\\n}"
+    printf '%s' "$s"
+}
 
 write_status() {
     local jdk8="$1" jdk_raw="$2"
@@ -153,24 +166,37 @@ if ! javac -d "$CLASSES_DIR" -cp "$TEST_CLASSPATH" $JAVA_FILES > "$OUT_DIR/javac
 fi
 
 # --- 3. Existing JUnit suite under the JaCoCo agent (coverage only) -----
+# ponytail: not run. java_capture.sh only receives the unit's production FQCNs (--classes) --
+# never which of them are JUnit test classes, because M-04/M-05 do not yet tag test files
+# separately from production files in the unit graph. Running JUnitCore against the production
+# classes (the previous behaviour here) executed no actual tests and silently mislabeled
+# coverage as measuring the existing suite, so it is removed rather than kept wrong. Upgrade
+# path: once the unit graph distinguishes test files, thread their FQCNs through as their own
+# flag and run JUnitCore on those (not $CLASSES), under this same agent, before CaptureRunner.
 EXEC_FILE="$OUT_DIR/jacoco.exec"
-if [ -n "$JACOCO_AGENT" ] && [ -f "$JACOCO_AGENT" ]; then
-    if [ -n "$TEST_CLASSPATH" ]; then
-        # shellcheck disable=SC2086 # CLASSES is a comma list turned into separate class-name args on purpose
-        java "-javaagent:${JACOCO_AGENT}=destfile=${EXEC_FILE},append=true" \
-            -cp "$CLASSES_DIR:$TEST_CLASSPATH" org.junit.runner.JUnitCore \
-            ${CLASSES//,/ } > "$OUT_DIR/junit-existing.log" 2>&1 || true
-    fi
-else
+REASONS+=("existing JUnit suite not run: no test classes given to java_capture.sh")
+if [ -z "$JACOCO_AGENT" ] || [ ! -f "$JACOCO_AGENT" ]; then
     REASONS+=("jacoco agent not available: coverage not measured")
 fi
 
-# --- 4. Randoop regression tests, compiled and run under the same agent -
+# --- 4. Randoop regression tests: generated, compiled, smoke-run --------
+# Randoop's own generated tests are run to confirm they compile and pass, but NOT under the
+# jacoco agent: their branches are not yet turned into oracle cases (see the CaptureRunner
+# comment below), so counting their coverage into EXEC_FILE would let branch_pct clear the 80%
+# floor on branches cases.jsonl does not actually cover -- the exact failure this slice's review
+# reproduced. ponytail: parsing Randoop's generated call sequences into cases.jsonl via the
+# double replay (section 7) is not implemented; upgrade path is Randoop's library API
+# (randoop.sequence.Sequence) once a JDK 8 + Randoop jar host exists to build against.
 if [ -n "$RANDOOP_JAR" ] && [ -f "$RANDOOP_JAR" ]; then
     RANDOOP_OUT="$OUT_DIR/randoop-tests"
     mkdir -p "$RANDOOP_OUT"
+    RANDOOP_TESTCLASS_ARGS=()
+    IFS=',' read -ra RANDOOP_CLASS_LIST <<< "$CLASSES"
+    for rc in "${RANDOOP_CLASS_LIST[@]}"; do
+        RANDOOP_TESTCLASS_ARGS+=("--testclass=$rc")
+    done
     (cd "$RANDOOP_OUT" && java -cp "${RANDOOP_JAR}:${CLASSES_DIR}" randoop.main.Main gentests \
-        --testclass="${CLASSES//,/ --testclass=}" \
+        "${RANDOOP_TESTCLASS_ARGS[@]}" \
         --time-limit="$RANDOOP_TIME_LIMIT" \
         --junit-output-dir="$RANDOOP_OUT" \
         --regression-test-basename=RandoopRegression \
@@ -181,12 +207,10 @@ if [ -n "$RANDOOP_JAR" ] && [ -f "$RANDOOP_JAR" ]; then
         if javac -d "$CLASSES_DIR" -cp "${RANDOOP_JAR}:${CLASSES_DIR}" $RANDOOP_JAVA \
             > "$OUT_DIR/randoop-javac.log" 2>&1; then
             RANDOOP_CLASSES=$(cd "$RANDOOP_OUT" && find . -name '*.java' | sed 's#^\./##; s#\.java$##; s#/#.#g' | tr '\n' ' ')
-            if [ -n "$JACOCO_AGENT" ] && [ -f "$JACOCO_AGENT" ]; then
-                # shellcheck disable=SC2086
-                java "-javaagent:${JACOCO_AGENT}=destfile=${EXEC_FILE},append=true" \
-                    -cp "${CLASSES_DIR}:${RANDOOP_JAR}" org.junit.runner.JUnitCore \
-                    $RANDOOP_CLASSES > "$OUT_DIR/junit-randoop.log" 2>&1 || true
-            fi
+            # shellcheck disable=SC2086
+            java -cp "${CLASSES_DIR}:${RANDOOP_JAR}" org.junit.runner.JUnitCore \
+                $RANDOOP_CLASSES > "$OUT_DIR/junit-randoop.log" 2>&1 || true
+            REASONS+=("randoop tests generated and run but not yet added as oracle cases: double-replay of generated sequences not implemented")
         else
             REASONS+=("randoop-generated tests failed to compile: see randoop-javac.log")
         fi
@@ -197,18 +221,7 @@ else
     REASONS+=("randoop jar not available: no generated regression tests")
 fi
 
-# --- 5. JaCoCo XML report (raw, untouched -- java.ts parses it) ---------
-if [ -n "$JACOCO_CLI" ] && [ -f "$JACOCO_CLI" ] && [ -f "$EXEC_FILE" ]; then
-    java -jar "$JACOCO_CLI" report "$EXEC_FILE" \
-        --classfiles "$CLASSES_DIR" --sourcefiles "$UNIT_DIR" \
-        --xml "$OUT_DIR/jacoco.xml" > "$OUT_DIR/jacoco-report.log" 2>&1 \
-        || REASONS+=("jacococli report failed: see jacoco-report.log")
-else
-    REASONS+=("jacoco report not generated: agent, cli or exec data missing")
-    : > "$OUT_DIR/jacoco.xml"
-fi
-
-# --- 6. CaptureRunner: reflective double replay --------------------------
+# --- 5. CaptureRunner: reflective double replay (coverage source) -------
 RUNNER_SRC="$OUT_DIR/CaptureRunner.java"
 cat > "$RUNNER_SRC" <<'JAVA_EOF'
 import java.lang.reflect.*;
@@ -322,9 +335,18 @@ public final class CaptureRunner {
             }
             for (Method m : cls.getDeclaredMethods()) {
                 if (!Modifier.isPublic(m.getModifiers()) || m.isSynthetic() || m.isBridge()) continue;
-                String sig = fqcn + "#" + m.getName() + "(" + m.getParameterCount() + ")";
+                Class<?>[] ptypes = m.getParameterTypes();
+                // Signature includes each parameter's simple type name, not just the count --
+                // same-name overloads with equal arity (add(int,int) vs add(String,String))
+                // would otherwise collide into one downstream map key and silently drop a case.
+                StringBuilder sigParams = new StringBuilder();
+                for (int i = 0; i < ptypes.length; i++) {
+                    if (i > 0) sigParams.append(",");
+                    sigParams.append(ptypes[i].getSimpleName());
+                }
+                String sig = fqcn + "#" + m.getName() + "(" + sigParams + ")";
                 boolean okParams = true;
-                for (Class<?> p : m.getParameterTypes()) if (!capturable(p)) okParams = false;
+                for (Class<?> p : ptypes) if (!capturable(p)) okParams = false;
                 boolean okReturn = capturable(m.getReturnType());
                 boolean staticOk = Modifier.isStatic(m.getModifiers()) || hasCtor;
                 if (!okParams || !okReturn || !staticOk) {
@@ -332,7 +354,6 @@ public final class CaptureRunner {
                     out.println("{\"class\":\"" + esc(fqcn) + "\",\"method\":\"" + esc(sig) + "\",\"not_capturable\":[\"boundary:" + esc(reason) + "\"]}");
                     continue;
                 }
-                Class<?>[] ptypes = m.getParameterTypes();
                 Object[] callArgs = new Object[ptypes.length];
                 for (int i = 0; i < ptypes.length; i++) callArgs[i] = canned(ptypes[i]);
                 if (instance == null && !Modifier.isStatic(m.getModifiers())) {
@@ -379,14 +400,37 @@ public final class CaptureRunner {
 JAVA_EOF
 
 if javac -d "$OUT_DIR" "$RUNNER_SRC" > "$OUT_DIR/runner-javac.log" 2>&1; then
-    java -cp "${OUT_DIR}:${CLASSES_DIR}" CaptureRunner "$OUT_DIR/replay1.jsonl" "$CLASSES" \
-        > "$OUT_DIR/replay1.log" 2>&1 || REASONS+=("CaptureRunner replay 1 exited non-zero")
+    # Only replay1 carries the jacoco agent: branch_pct must measure exactly the run that
+    # produced cases.jsonl, never a second, redundant pass -- replay2 exists purely for the
+    # determinism check above, not for coverage.
+    if [ -n "$JACOCO_AGENT" ] && [ -f "$JACOCO_AGENT" ]; then
+        java "-javaagent:${JACOCO_AGENT}=destfile=${EXEC_FILE},append=true" \
+            -cp "${OUT_DIR}:${CLASSES_DIR}" CaptureRunner "$OUT_DIR/replay1.jsonl" "$CLASSES" \
+            > "$OUT_DIR/replay1.log" 2>&1 || REASONS+=("CaptureRunner replay 1 exited non-zero")
+    else
+        java -cp "${OUT_DIR}:${CLASSES_DIR}" CaptureRunner "$OUT_DIR/replay1.jsonl" "$CLASSES" \
+            > "$OUT_DIR/replay1.log" 2>&1 || REASONS+=("CaptureRunner replay 1 exited non-zero")
+    fi
     java -cp "${OUT_DIR}:${CLASSES_DIR}" CaptureRunner "$OUT_DIR/replay2.jsonl" "$CLASSES" \
         > "$OUT_DIR/replay2.log" 2>&1 || REASONS+=("CaptureRunner replay 2 exited non-zero")
 else
     REASONS+=("CaptureRunner failed to compile: see runner-javac.log")
     : > "$OUT_DIR/replay1.jsonl"
     : > "$OUT_DIR/replay2.jsonl"
+fi
+
+# --- 6. JaCoCo XML report (raw, untouched -- java.ts parses it) ---------
+# Runs after CaptureRunner so EXEC_FILE (written above, replay1 only) is complete before the
+# report is built from it -- generating the report before the coverage-producing run even
+# happened (the previous ordering here) always reported empty or stale coverage.
+if [ -n "$JACOCO_CLI" ] && [ -f "$JACOCO_CLI" ] && [ -f "$EXEC_FILE" ]; then
+    java -jar "$JACOCO_CLI" report "$EXEC_FILE" \
+        --classfiles "$CLASSES_DIR" --sourcefiles "$UNIT_DIR" \
+        --xml "$OUT_DIR/jacoco.xml" > "$OUT_DIR/jacoco-report.log" 2>&1 \
+        || REASONS+=("jacococli report failed: see jacoco-report.log")
+else
+    REASONS+=("jacoco report not generated: agent, cli or exec data missing")
+    : > "$OUT_DIR/jacoco.xml"
 fi
 
 write_status true "$JAVA_VER_OUT"

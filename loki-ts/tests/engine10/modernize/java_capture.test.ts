@@ -175,6 +175,9 @@ describe("java_capture.sh (real subprocess)", () => {
     // no jacoco/randoop jars configured -- recorded, never silently ignored
     expect((status["reasons"] as string[]).some((s) => s.includes("jacoco"))).toBe(true);
     expect((status["reasons"] as string[]).some((s) => s.includes("randoop"))).toBe(true);
+    // the existing JUnit suite is never given test classes to run, so it must say so honestly
+    // instead of the removed behaviour of running JUnitCore against production classes
+    expect((status["reasons"] as string[])).toContain("existing JUnit suite not run: no test classes given to java_capture.sh");
 
     const replay1 = readFileSync(join(out, "replay1.jsonl"), "utf8").trim().split("\n").filter(Boolean);
     const replay2 = readFileSync(join(out, "replay2.jsonl"), "utf8").trim().split("\n").filter(Boolean);
@@ -185,6 +188,88 @@ describe("java_capture.sh (real subprocess)", () => {
     expect(valueCase).toBeDefined();
     expect(valueCase.return).toEqual({ t: "int", v: "42" });
     expect(valueCase.exc).toBeNull();
+  });
+
+  it("keeps status.json valid JSON for the real three-line JDK 8 `java -version` output", () => {
+    const out = tmp("e10-javacap-out-");
+    const multiline = 'java version "1.8.0_412"\n' +
+      "Java(TM) SE Runtime Environment (build 1.8.0_412-b08)\n" +
+      "Java HotSpot(TM) 64-Bit Server VM (build 25.412-b08, mixed mode)";
+    const r = runScript(
+      ["--unit-dir", FIX, "--classes", "com.example.util.Standalone", "--out", out],
+      shimJavaPathDir(multiline),
+    );
+    expect(r.status).toBe(0);
+    // readStatus() itself does JSON.parse -- a throw here IS the regression this guards against
+    const status = readStatus(out);
+    expect(status["jdk8"]).toBe(true);
+    expect(String(status["jdkVersionRaw"])).toContain("Java HotSpot");
+    expect(String(status["jdkVersionRaw"])).toContain("\n");
+  });
+
+  it("gives each same-arity overload its own case instead of colliding into one", () => {
+    const dir = tmp("e10-javacap-overload-");
+    mkdirSync(join(dir, "com", "example"), { recursive: true });
+    writeFileSync(
+      join(dir, "com", "example", "Over.java"),
+      "package com.example;\n" +
+        "public class Over {\n" +
+        "    public static int add(int a, int b) { return a + b; }\n" +
+        "    public static String add(String a, String b) { return a + b; }\n" +
+        "}\n",
+    );
+    const out = tmp("e10-javacap-overload-out-");
+    const r = runScript(
+      ["--unit-dir", dir, "--classes", "com.example.Over", "--files", "com/example/Over.java", "--out", out],
+      shimJavaPathDir('openjdk version "1.8.0_412"'),
+    );
+    expect(r.status).toBe(0);
+    const cases = readFileSync(join(out, "replay1.jsonl"), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    const methods = cases.map((c) => c.method);
+    expect(new Set(methods).size).toBe(methods.length); // no two overloads collided into one key
+    expect(methods).toContain("com.example.Over#add(int,int)");
+    expect(methods).toContain("com.example.Over#add(String,String)");
+  });
+
+  it("passes each Randoop --testclass as its own argv entry, not one concatenated string", () => {
+    const out = tmp("e10-javacap-out-");
+    const argvFile = join(out, "randoop-argv.txt");
+    const fakeRandoopJar = join(out, "fake-randoop.jar");
+    writeFileSync(fakeRandoopJar, "");
+    const dir = tmp("e10-javacap-shim2-");
+    const realJava = spawnSync("/bin/sh", ["-c", "command -v java"], { encoding: "utf8" }).stdout.trim() || "/usr/bin/java";
+    const realJavac = spawnSync("/bin/sh", ["-c", "command -v javac"], { encoding: "utf8" }).stdout.trim() || "/usr/bin/javac";
+    writeFileSync(
+      join(dir, "java"),
+      `#!/bin/sh\n` +
+        `if [ "$1" = "-version" ]; then echo 'openjdk version "1.8.0_412"' >&2; exit 0; fi\n` +
+        `case " $* " in\n` +
+        `  *" randoop.main.Main "*)\n` +
+        `    : > "${argvFile}"\n` +
+        `    for a in "$@"; do printf '%s\\n' "$a" >> "${argvFile}"; done\n` +
+        `    exit 0\n` +
+        `    ;;\n` +
+        `esac\n` +
+        `exec "${realJava}" "$@"\n`,
+    );
+    chmodSync(join(dir, "java"), 0o755);
+    writeFileSync(join(dir, "javac"), `#!/bin/sh\nexec "${realJavac}" "$@"\n`);
+    chmodSync(join(dir, "javac"), 0o755);
+    const pathValue = `${dir}:${pathWithoutJava()}`;
+
+    const r = spawnSync("bash", [SCRIPT,
+      "--unit-dir", FIX, "--classes", "com.example.util.Standalone,com.example.util.Helper",
+      "--files", "com/example/util/Standalone.java,com/example/util/Helper.java",
+      "--out", out, "--randoop-jar", fakeRandoopJar], {
+      encoding: "utf8",
+      env: { ...process.env, PATH: pathValue },
+    });
+    expect(r.status).toBe(0);
+    const argv = readFileSync(argvFile, "utf8").trim().split("\n");
+    expect(argv).toContain("--testclass=com.example.util.Standalone");
+    expect(argv).toContain("--testclass=com.example.util.Helper");
+    // the pre-fix bug collapsed both classes into one argument -- guard against that regression
+    expect(argv.some((a) => a.includes("--testclass=com.example.util.Standalone --testclass="))).toBe(false);
   });
 });
 
@@ -294,6 +379,18 @@ describe("captureJavaUnit", () => {
     const result = captureJavaUnit({ repoDir: FIX, outDir: out, unitDir: FIX, unitFiles: FILES, runner });
     expect(result.coverage.branch_pct).toBe(50);
     expect(result.notProven.some((r) => r.includes("NOT PROVEN: coverage 50% below 80%"))).toBe(true);
+  });
+
+  it("never rounds branch_pct up past the 80% floor (79.996% stays NOT PROVEN)", () => {
+    const out = tmp("e10-javacap-unit-");
+    const xml = `<?xml version="1.0"?><report><counter type="BRANCH" missed="4001" covered="16000"/></report>`;
+    const runner = stubRunner({
+      status: { jdk8: true, jdkVersionRaw: "1.8.0", jacocoAgent: "/j.jar", jacocoCli: "/jc.jar", randoopJar: "/r.jar", reasons: [] },
+      replay1: [CASE_OK], replay2: [CASE_OK], jacocoXml: xml,
+    });
+    const result = captureJavaUnit({ repoDir: FIX, outDir: out, unitDir: FIX, unitFiles: FILES, runner });
+    expect(result.coverage.branch_pct).toBe(79.99);
+    expect(result.notProven.some((r) => r.includes("NOT PROVEN: coverage 79.99% below 80%"))).toBe(true);
   });
 
   it("is NOT PROVEN 'coverage not measured', never a fabricated 100%, when jacoco.xml is empty", () => {

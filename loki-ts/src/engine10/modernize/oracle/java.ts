@@ -41,7 +41,9 @@ export interface CommandResult {
 export type CommandRunner = (cmd: string, args: string[], cwd: string) => CommandResult;
 
 export const realCommandRunner: CommandRunner = (cmd, args, cwd) => {
-  const r = spawnSync(cmd, args, { cwd, encoding: "utf8" });
+  // env is explicit, never inherited bare -- see tests/runner/spawn_env_guard.test.ts
+  // (BACKLOG 149): a spawn with no env silently carries real GH_TOKEN/SSH_AUTH_SOCK through.
+  const r = spawnSync(cmd, args, { cwd, encoding: "utf8", env: process.env });
   if (r.error && (r.error as NodeJS.ErrnoException).code === "ENOENT") return { found: false, code: null };
   return { found: true, code: r.status };
 };
@@ -242,7 +244,9 @@ export function captureJavaUnit(opts: JavaCaptureOpts): JavaCaptureResult {
   const branches = xml.trim() ? parseJacocoBranches(xml) : null;
   let branchPct: number | null = null;
   if (branches && branches.total > 0) {
-    branchPct = Math.round((10000 * branches.taken) / branches.total) / 100;
+    // Floor, never round: MODERNIZE.md says the report never rounds up, and Math.round on
+    // 79.996% would land on 80, silently skipping the NOT PROVEN coverage flag it earned.
+    branchPct = Math.floor((10000 * branches.taken) / branches.total) / 100;
   } else {
     notProven.push("coverage not measured");
   }
