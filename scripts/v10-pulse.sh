@@ -1132,8 +1132,11 @@ STATUS_TOKEN_RE = re.compile(
 # DEP-02..07) was silently invisible to parse_board -- never counted in
 # "ready"/"building", never eligible for REVIEW_STALE/AGENT_OVER_BUDGET,
 # never checked against LOW_READY. The optional trailing lowercase letter
-# covers lettered sub-slices (E-98a..E-98f).
-ID_RE = re.compile(r"^[A-Z]+-\d+[a-z]?$")
+# covers lettered sub-slices (E-98a..E-98f). A trailing digit run in the
+# prefix (E-121: S41-01) is also allowed -- BOARD.md workstream ids are not
+# always pure letters, and a prefix-only pattern left every S41 row equally
+# invisible.
+ID_RE = re.compile(r"^[A-Z]+[0-9]*-\d+[a-z]?$")
 TIER_CELL_RE = re.compile(r"^(LOW|MEDIUM|HIGH)$")
 # LOW_READY (E-79): a "ready" row can still name un-landed dependencies in
 # its Notes cell ("Depends on M-07, E-31 merged or parked."; "Depends on
@@ -1150,7 +1153,7 @@ TIER_CELL_RE = re.compile(r"^(LOW|MEDIUM|HIGH)$")
 # is only ever a range separator (always followed by another id character),
 # never the terminator, so it is let through; a genuine single "." is not.
 DEPENDS_ON_RE = re.compile(r"Depends on ((?:[^.]|\.\.(?=[A-Za-z0-9]))*)\.")
-DEPENDS_ON_ID_RE = re.compile(r"\b[A-Z]+-\d+[a-z]?\b")
+DEPENDS_ON_ID_RE = re.compile(r"\b[A-Z]+[0-9]*-\d+[a-z]?\b")
 # Range shorthand (E-117): "E-98a..e" or "M-20..M-23" or "M-20..23" names a
 # contiguous run of sibling slices without spelling out each id. Expanded
 # BEFORE DEPENDS_ON_ID_RE runs, so every id in the run is captured instead of
@@ -1159,8 +1162,8 @@ DEPENDS_ON_ID_RE = re.compile(r"\b[A-Z]+-\d+[a-z]?\b")
 # mismatched prefix) is left as-is in the clause text, so DEPENDS_ON_ID_RE
 # still picks up whatever plain ids it contains -- never guessed at.
 DEPENDS_ON_RANGE_RE = re.compile(
-    r"\b([A-Z]+)-(\d+)([a-z])\.\.([a-z])\b"       # E-98a..e
-    r"|\b([A-Z]+)-(\d+)\.\.(?:([A-Z]+)-)?(\d+)\b"  # M-20..M-23 / M-20..23
+    r"\b([A-Z]+[0-9]*)-(\d+)([a-z])\.\.([a-z])\b"       # E-98a..e
+    r"|\b([A-Z]+[0-9]*)-(\d+)\.\.(?:([A-Z]+[0-9]*)-)?(\d+)\b"  # M-20..M-23 / S41-01..S41-04
 )
 
 
