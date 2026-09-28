@@ -80,21 +80,31 @@ if [[ -n "$RESOLVED_VER" && "$RESOLVED_VER" != "$SRC_VER" ]]; then
 fi
 
 # --- 4. every Dockerfile* install line that pins the package ---------------
+# Enumerate only GIT-TRACKED files. A plain filesystem walk (grep -r / find)
+# descends into untracked trees too -- including .claude/worktrees/* left by
+# other agent sessions, each with its own (possibly stale) Dockerfile -- and
+# CI, which never has those worktrees, would never catch that false positive.
 DOCKER_MISMATCH=0
-while IFS=: read -r file line; do
+FOUND_PIN=0
+while IFS= read -r -d '' file; do
   [[ -z "$file" ]] && continue
-  ver="$(sed -n "${line}p" "$file" | grep -oE "${PKG}@[0-9][0-9A-Za-z.\\-]*" | head -1 | sed "s|^${PKG}@||")"
-  [[ -z "$ver" ]] && continue
-  echo "  ${file}:${line}:        $ver"
-  if [[ "$ver" != "$SRC_VER" ]]; then
-    echo "  FAIL: ${file}:${line} pins $ver, loki-ts expects $SRC_VER"
-    FAILS=$((FAILS + 1))
-    DOCKER_MISMATCH=1
-  fi
-done < <(grep -rnE "${PKG}@[0-9]" --include="Dockerfile*" . 2>/dev/null | cut -d: -f1,2)
+  [[ -f "$REPO_ROOT/$file" ]] || continue
+  while IFS=: read -r lineno content; do
+    [[ -z "$lineno" ]] && continue
+    ver="$(printf '%s' "$content" | grep -oE "${PKG}@[0-9][0-9A-Za-z.\\-]*" | head -1 | sed "s|^${PKG}@||")"
+    [[ -z "$ver" ]] && continue
+    FOUND_PIN=1
+    echo "  ${file}:${lineno}:        $ver"
+    if [[ "$ver" != "$SRC_VER" ]]; then
+      echo "  FAIL: ${file}:${lineno} pins $ver, loki-ts expects $SRC_VER"
+      FAILS=$((FAILS + 1))
+      DOCKER_MISMATCH=1
+    fi
+  done < <(grep -nE "${PKG}@[0-9]" "$REPO_ROOT/$file" 2>/dev/null)
+done < <(git -C "$REPO_ROOT" ls-files -z -- 'Dockerfile*' '**/Dockerfile*' 2>/dev/null)
 
-if [[ "$DOCKER_MISMATCH" -eq 0 ]] && ! grep -rqE "${PKG}@[0-9]" --include="Dockerfile*" . 2>/dev/null; then
-  echo "  FAIL: no Dockerfile* pins a version for $PKG (expected at least one)"
+if [[ "$DOCKER_MISMATCH" -eq 0 && "$FOUND_PIN" -eq 0 ]]; then
+  echo "  FAIL: no tracked Dockerfile* pins a version for $PKG (expected at least one)"
   FAILS=$((FAILS + 1))
 fi
 
