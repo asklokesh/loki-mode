@@ -234,7 +234,8 @@ NETWORK_DEADLINE = T0 + _NET_SECS
 REFRESH_ONLY = os.environ.get("PULSE_REFRESH_ONLY") == "1"
 CACHE_MODE = (
     os.environ.get("PULSE_CACHE", "1") != "0"
-    and not any(os.environ.get(k) for k in ("PULSE_NPM_CMD", "PULSE_GH_CMD", "PULSE_GH_STREAK_CMD"))
+    and not any(os.environ.get(k) for k in (
+        "PULSE_NPM_CMD", "PULSE_GH_CMD", "PULSE_GH_STREAK_CMD", "PULSE_GH_FALLBACK_CMD"))
 )
 CACHE_DIR = os.environ.get("PULSE_CACHE_DIR") or os.path.join(REPO_ROOT, ".loki", "pulse-cache")
 CACHE_TTL = 90.0
@@ -483,8 +484,33 @@ _gh_streak_argv = shlex.split(os.environ["PULSE_GH_STREAK_CMD"]) if os.environ.g
     "--json", "status,conclusion", "--limit", "10",
 ]
 
+# E-75: a second, narrower gh call for when the main-CI lookup above (multi
+# -workflow, --json status,conclusion,workflowName) comes back inconclusive
+# -- gh itself failed/timed out, OR it succeeded but returned nothing
+# clean-red/clean-green (e.g. a cancelled-only run set). That read as a bare
+# UNKNOWN for 3 consecutive pushes while Tests was actually red (see
+# docs/v10/PROGRESS.md). This rescues those two cases -- a bad/ambiguous
+# primary read -- not whatever upstream condition made the primary call
+# itself fail or time out in the first place. Scoped to just the Tests
+# workflow at this exact commit so a same-shaped-but-different call has a
+# real chance of resolving what the first one could not. Always started
+# alongside the others (same reasoning as _gh_streak_proc: cheap, and only
+# consulted if actually needed) so it never costs a second sequential
+# network round trip, and shares the same NETWORK_DEADLINE and SHA-keyed
+# cache/refresh path as the primary -- a shared-cause failure (e.g. gh
+# itself unreachable) takes both down together, by design.
+_gh_fallback_argv = None
+if main_sha is not None:
+    if os.environ.get("PULSE_GH_FALLBACK_CMD"):
+        _gh_fallback_argv = shlex.split(os.environ["PULSE_GH_FALLBACK_CMD"])
+    else:
+        _gh_fallback_argv = [
+            "gh", "run", "list", "--commit", main_sha, "--workflow", "Tests",
+            "--json", "conclusion,status,databaseId", "--limit", "5",
+        ]
+
 def run_network():
-    """Start npm + both gh calls concurrently, finish them against the one
+    """Start npm + all gh calls concurrently, finish them against the one
     shared NETWORK_DEADLINE. Returns {name: (rc, out, err)}."""
     _npm_proc = safe(start_proc, _npm_argv, REPO_ROOT)
     # gh resolves its repo through git, so it must see the same scrubbed
@@ -496,6 +522,10 @@ def run_network():
     # cannot resolve a SHA and reads UNKNOWN -- that independence is the whole
     # point of this check (see finding 3).
     _gh_streak_proc = safe(start_proc, _gh_streak_argv, REPO_ROOT, _clean_env())
+    _gh_fallback_proc = (
+        safe(start_proc, _gh_fallback_argv, REPO_ROOT, _clean_env())
+        if _gh_fallback_argv is not None else None
+    )
     return {
         "npm": safe(finish_proc, _npm_proc, time_left(NETWORK_DEADLINE)) or (None, "", ""),
         "gh_ci": (
@@ -503,6 +533,10 @@ def run_network():
             if _gh_proc is not None else (None, "", "")
         ),
         "gh_streak": safe(finish_proc, _gh_streak_proc, time_left(NETWORK_DEADLINE)) or (None, "", ""),
+        "gh_fallback": (
+            safe(finish_proc, _gh_fallback_proc, time_left(NETWORK_DEADLINE)) or (None, "", "")
+            if _gh_fallback_proc is not None else (None, "", "")
+        ),
     }
 
 
@@ -606,6 +640,8 @@ if REFRESH_ONLY:
     if _gh_argv is not None:
         safe(cache_write, "gh_ci", _res["gh_ci"], main_sha)
     safe(cache_write, "gh_streak", _res["gh_streak"])
+    if _gh_fallback_argv is not None:
+        safe(cache_write, "gh_fallback", _res["gh_fallback"], main_sha)
     try:
         _pp = os.path.join(CACHE_DIR, "refresh.pid")
         with open(_pp, "r") as _f:
@@ -616,12 +652,13 @@ if REFRESH_ONLY:
     sys.exit(0)
 elif CACHE_MODE:
     _need_refresh = False
-    for _name in ("npm", "gh_ci", "gh_streak"):
+    for _name in ("npm", "gh_ci", "gh_streak", "gh_fallback"):
         _rec, _age = cache_read(_name)
         _usable = (
             _rec is not None and isinstance(_rec.get("out"), str)
             and -60 <= _age <= CACHE_MAX_AGE
-            and (_name != "gh_ci" or (main_sha is not None and _rec.get("sha") == main_sha))
+            and (_name not in ("gh_ci", "gh_fallback")
+                 or (main_sha is not None and _rec.get("sha") == main_sha))
         )
         if _usable:
             net[_name] = (0, _rec["out"], "")
@@ -658,6 +695,7 @@ def cache_note(name, metric=None):
 _npm_rc, _npm_out, _npm_err = net["npm"]
 _gh_rc, _gh_out, _gh_err = net["gh_ci"]
 _gh_streak_rc, _gh_streak_out, _gh_streak_err = net["gh_streak"]
+_gh_fallback_rc, _gh_fallback_out, _gh_fallback_err = net["gh_fallback"]
 
 
 # --- 1. releases in the last 24h / minutes since last release -------------
@@ -755,6 +793,35 @@ def parse_main_ci(rc, out):
     return None, None
 
 
+# E-75 fallback: same red-over-pending-over-green precedence as
+# parse_main_ci above, but scoped to just the Tests workflow (the --workflow
+# filter already did that) so it returns the run id (databaseId) that
+# decided the verdict instead of a workflow name list. (None, None) on any
+# failure -- the caller then has both lookups inconclusive and reports
+# UNKNOWN, same as before this existed.
+def parse_main_ci_fallback(rc, out):
+    if rc != 0 or not out.strip():
+        return None, None
+    try:
+        runs = json.loads(out)
+    except (ValueError, TypeError):
+        return None, None
+    if not isinstance(runs, list) or not runs:
+        return None, None
+    parsed = [r for r in runs if isinstance(r, dict)]
+    if not parsed:
+        return None, None
+    failing = [r for r in parsed if r.get("conclusion") in _CI_FAILURE_CONCLUSIONS]
+    if failing:
+        return "red", failing[0].get("databaseId")
+    pending = [r for r in parsed if r.get("status") not in ("completed",)]
+    if pending:
+        return "pending", pending[0].get("databaseId")
+    if all(r.get("conclusion") in _CI_OK_CONCLUSIONS for r in parsed):
+        return "green", parsed[0].get("databaseId")
+    return None, None
+
+
 ci_status = None
 if main_sha is None:
     mark_unknown("main_ci")
@@ -762,15 +829,31 @@ if main_sha is None:
 else:
     _ci_parsed = safe(parse_main_ci, _gh_rc, _gh_out)
     ci_status, ci_failing_workflows = _ci_parsed if _ci_parsed is not None else (None, None)
+    _ci_via_fallback = False
+    _fallback_run_id = None
+    if ci_status is None:
+        _fb_parsed = safe(parse_main_ci_fallback, _gh_fallback_rc, _gh_fallback_out)
+        _fb_status, _fallback_run_id = _fb_parsed if _fb_parsed is not None else (None, None)
+        if _fb_status is not None:
+            ci_status = _fb_status
+            _ci_via_fallback = True
     if ci_status is None:
         mark_unknown("main_ci")
         emit("Main CI (%s @ %s): UNKNOWN (gh check failed, timed out, or inconclusive)%s"
              % (MAIN_REF, main_sha[:8], cache_note("gh_ci")))
     else:
-        _ci_note = cache_note("gh_ci", "main_ci")
+        if _ci_via_fallback:
+            _run_label = ("run %d" % _fallback_run_id) if isinstance(_fallback_run_id, int) else "unknown run"
+            _ci_note = "%s [fallback: gh run list --commit %s --workflow Tests, %s]" % (
+                cache_note("gh_fallback", "main_ci"), main_sha[:8], _run_label)
+            _workflows_label = "Tests (fallback)"
+        else:
+            _ci_note = cache_note("gh_ci", "main_ci")
+            _workflows_label = None
         emit("Main CI (%s @ %s): %s%s" % (MAIN_REF, main_sha[:8], ci_status.upper(), _ci_note))
         if ci_status == "red":
-            workflows = ", ".join(sorted(set(ci_failing_workflows or []))) or "unknown workflow"
+            workflows = _workflows_label or (
+                ", ".join(sorted(set(ci_failing_workflows or []))) or "unknown workflow")
             add_violation("CI_RED", "main CI is RED at %s (%s)%s" % (main_sha[:8], workflows, _ci_note))
 
 
