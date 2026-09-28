@@ -1,30 +1,17 @@
-// loki-ts/src/engine10/escalate.ts
-//
-// E-29: Escalation (docs/v10/ENGINE.md section 13 "Escalation (escalate.ts)"
-// and section 16 / BOARD E-29 card). Decides whether a run needs --deep-level
-// resources, and logs it.
-//
-// Depends on machine.ts (E-02) for capS/deep on RunContext and plan.ts
-// (E-16) for the plan's relevant-file count, through the RunContext shape
-// (types.ts, E-01) only -- the same fake-friendly pattern eta.ts (E-20) and
-// plan.ts (E-16) themselves use.
-//
-// ponytail: no caller wires decide()/apply() in yet (the CLI building
-// RunContext is not this slice). The wiring point is after intake+plan
-// produce their stage data, before Implement runs: Implement is the first
-// stage whose limit already reads ctx.deep (machine.ts:99).
+// loki-ts/src/engine10/escalate.ts -- E-29 Escalation (ENGINE.md section 13): decides whether a
+// run needs --deep-level resources, and logs it. Depends on machine.ts/plan.ts only through the
+// RunContext shape (types.ts), the same fake-friendly pattern eta.ts uses.
+// ponytail: no caller wires decide()/apply() in yet; wiring point is after intake+plan, before
+// Implement (the first stage whose limit already reads ctx.deep, machine.ts:99).
 import { DEEP_CAP_S, DEEP_IMPLEMENT_LIMIT_S, DEFAULT_CAP_S, STAGE_BUDGETS } from "./types.ts";
 import type { RunContext } from "./types.ts";
-
 /** Section 13: "the repo has more than 20,000 tracked files". */
 export const REPO_FILE_TRIGGER = 20_000;
 /** Section 13: "the plan names more than 12 files". */
 export const PLAN_FILE_TRIGGER = 12;
 /** Section 13: "the issue carries an `epic` or `large` label". */
 export const ESCALATION_LABELS: readonly string[] = ["epic", "large"];
-
 export type EscalationReason = "deep-flag" | "repo-size" | "plan-files" | "issue-label";
-
 export interface EscalationInput {
   /** `--deep` on the CLI. */
   deepFlag: boolean;
@@ -35,7 +22,6 @@ export interface EscalationInput {
   /** Issue labels, when the run is issue-mode. */
   issueLabels?: readonly string[];
 }
-
 export interface EscalationDecision {
   escalate: boolean;
   reason: EscalationReason | null;
@@ -43,7 +29,6 @@ export interface EscalationDecision {
   implementLimitS: number;
   fullSuite: boolean;
 }
-
 /** Pure decision. Checked in this order so `reason` names the first trigger
  *  that held; section 13 does not rank its triggers, so first-match is as
  *  good as any and keeps the result deterministic. */
@@ -58,7 +43,6 @@ export function decide(input: EscalationInput): EscalationDecision {
         : labels.some((l) => ESCALATION_LABELS.includes(l.toLowerCase()))
           ? "issue-label"
           : null;
-
   const escalate = reason !== null;
   return {
     escalate,
@@ -68,7 +52,6 @@ export function decide(input: EscalationInput): EscalationDecision {
     fullSuite: escalate,
   };
 }
-
 /** Section 13: "always logged as an `escalated` event and shown in the
  *  summary". Emits only when decide() triggers; never mutates `ctx` --
  *  the (future) caller applies capS/deep to the RunContext it builds. */

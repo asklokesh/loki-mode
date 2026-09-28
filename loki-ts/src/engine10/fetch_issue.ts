@@ -7,7 +7,6 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { REPO_ROOT } from "../util/paths.ts";
-
 export interface NormalizedIssue {
   provider: string;
   number: number;
@@ -21,27 +20,21 @@ export interface NormalizedIssue {
   state: string | null; // lowercased; null when not determinable (non-GitHub, or the lookup failed)
   closed_by_merged_pr: boolean;
 }
-
 export type Execer = (cmd: string, args: string[]) => string;
-
 const ISSUE_PROVIDERS_SH = join(REPO_ROOT, "autonomy/issue-providers.sh");
-
 function defaultExec(cmd: string, args: string[]): string {
   return execFileSync(cmd, args, { encoding: "utf8", env: process.env });
 }
-
 interface GithubExtra {
   state?: string;
   closedByPullRequestsReferences?: { merged?: boolean }[];
 }
-
 /** Fetches and normalizes one issue. Never runs an LLM; a failed GitHub
  *  extra-fields lookup leaves state null (NOT PROVEN), never a false
  *  already-done. */
 export function fetchIssue(ref: string, execer: Execer = defaultExec): NormalizedIssue {
   const raw = execer("bash", ["-c", `source "${ISSUE_PROVIDERS_SH}" && fetch_issue "$1"`, "--", ref]);
   const base = JSON.parse(raw) as Omit<NormalizedIssue, "state" | "closed_by_merged_pr">;
-
   let state: string | null = null;
   let closedByMergedPr = false;
   if (base.provider === "github" && base.repo && base.number) {
@@ -58,7 +51,6 @@ export function fetchIssue(ref: string, execer: Execer = defaultExec): Normalize
   }
   return { ...base, state, closed_by_merged_pr: closedByMergedPr };
 }
-
 /** CLI/child-process entry point for the future P1 wiring (E-03/E-11): writes
  *  the normalized issue to `outFile` (Intake then reads it from `<runDir>/issue.json`). */
 export function fetchIssueToFile(ref: string, outFile: string, exec: Execer = defaultExec): NormalizedIssue {
@@ -66,7 +58,6 @@ export function fetchIssueToFile(ref: string, outFile: string, exec: Execer = de
   writeFileSync(outFile, JSON.stringify(issue));
   return issue;
 }
-
 if (import.meta.main && import.meta.path.endsWith("fetch_issue.ts")) {
   const [ref, outFile] = process.argv.slice(2);
   if (!ref || !outFile) {

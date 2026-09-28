@@ -6,12 +6,9 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { recordSessionCost, resultCostPath } from "./cost.ts";
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
-
 const KILL_GRACE_MS = 2000; // ENGINE.md section 10: SIGKILL 2s after SIGTERM
 const HEARTBEAT_MS_DEFAULT = 60_000; // ENGINE.md section 5: heartbeat every 60s
-
 export type EmitFn = (type: string, stage: string | null, data: Record<string, unknown>) => void;
-
 // provider, model and emit are bound per run on this factory config, since SessionRunOptions carries only per-call fields.
 export interface SessionRunnerConfig {
   provider: string; // "claude" is special-cased; anything else is generic
@@ -21,7 +18,6 @@ export interface SessionRunnerConfig {
   childCommand?: [string, string[]]; // test-only: replaces the self-respawn
   lokiRoot?: string; // where efficiency records and result-cost files live (the repo's .loki)
 }
-
 /** The model a session really runs: the override, else the provider's development pin. Never "default". */
 export function resolveModel(provider: string): string {
   const e = process.env;
@@ -29,7 +25,6 @@ export function resolveModel(provider: string): string {
   if (provider !== "claude") return `${provider} (model not recorded)`;
   return e.LOKI_CLAUDE_MODEL_DEVELOPMENT || e.LOKI_MODEL_DEVELOPMENT || "sonnet";
 }
-
 function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   env["LOKI_ITERATION"] = opts.iterationId;
@@ -57,7 +52,6 @@ function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): NodeJS.Pro
   }
   return env;
 }
-
 function diffShortstat(cwd: string | undefined): { files: number; insertions: number; deletions: number } {
   try {
     const out = execFileSync("git", ["diff", "--shortstat"], { cwd, encoding: "utf8", env: process.env, stdio: ["ignore", "pipe", "ignore"] }).trim();
@@ -67,7 +61,6 @@ function diffShortstat(cwd: string | undefined): { files: number; insertions: nu
     return { files: files ? Number(files[1]) : 0, insertions: ins ? Number(ins[1]) : 0, deletions: del ? Number(del[1]) : 0 };
   } catch { return { files: 0, insertions: 0, deletions: 0 }; }
 }
-
 function parseMarkers(stdout: string): SessionMarkers {
   // Line-anchored, so prose that merely names a marker (or an echoed brief) never counts.
   const doneMatch = /^\W*LOKI_ALREADY_DONE:\s*(.+)$/m.exec(stdout);
@@ -78,7 +71,6 @@ function parseMarkers(stdout: string): SessionMarkers {
     specConflict: conflictMatch ? conflictMatch[1]!.trim() : null,
   };
 }
-
 function exitKind(exit: number | null, killed: boolean, markers: SessionMarkers): ImplementExit | "error" {
   if (killed) return "killed";
   if (markers.specConflict) return "spec_conflict";
@@ -86,7 +78,6 @@ function exitKind(exit: number | null, killed: boolean, markers: SessionMarkers)
   if (exit === 0) return "done";
   return "error";
 }
-
 // SIGTERM now, SIGKILL after the grace, against the whole group; shared by the limit timeout and an external abort.
 function killGroupWithGrace(pgid: number | undefined): void {
   if (!pgid) return;
@@ -94,7 +85,6 @@ function killGroupWithGrace(pgid: number | undefined): void {
   send("SIGTERM");
   setTimeout(() => send("SIGKILL"), KILL_GRACE_MS);
 }
-
 /** Efficiency record plus cost event for one session; a run in another cwd (wall's temp dir) has its result-cost file copied into lokiRoot first, so seal can price it after that dir is gone. */
 function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: string, durationS: number): void {
   if (!cfg.lokiRoot) return;
@@ -107,7 +97,6 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
     cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens, source: c.source || "not measured",
   });
 }
-
 export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
   return {
     run(opts: SessionRunOptions): Promise<SessionResult> {
@@ -134,7 +123,6 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
         cfg.emit?.("heartbeat", opts.stage, { waiting_on: opts.stage, elapsed_s: (Date.now() - start) / 1000, diff: diffShortstat(opts.cwd) });
       }, cfg.heartbeatMs ?? HEARTBEAT_MS_DEFAULT);
       opts.signal.addEventListener("abort", onAbort, { once: true });
-
       return new Promise<SessionResult>((resolve) => {
         // "close", not "exit": stdout may still be draining, and the marker is usually last.
         child.on("close", (code) => {
@@ -153,7 +141,6 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
     },
   };
 }
-
 // Child role: the real provider call, inside the own-process-group child.
 export async function sessionChildMain(): Promise<never> {
   const { resolveProvider } = await import("../runner/providers.ts");
@@ -169,6 +156,5 @@ export async function sessionChildMain(): Promise<never> {
   });
   process.exit(result.exitCode);
 }
-
 // cli.ts routes `engine10 session` here (section 11); it exits the process itself.
 export const main = sessionChildMain;

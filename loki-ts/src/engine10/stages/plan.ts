@@ -6,42 +6,34 @@ import type { RepoMap } from "../repomap.ts";
 import { planMode, sizeTask, wallEnabled, wallModel } from "../sizing.ts";
 import type { RunContext, Stage, StageResult, TestMap } from "../types.ts";
 import { loadTaskText } from "./wall.ts";
-
 const MAX_RELEVANT_FILES = 8;
 const MAX_PLAN_LINES = 10;
 const PLAN_OUTPUT_FILENAME = "plan-output.txt";
-
 function planOutputPath(runDir: string): string { return join(runDir, PLAN_OUTPUT_FILENAME); }
-
 function keywords(task: string): string[] {
   const words = task.toLowerCase().match(/[a-z0-9_]+/g) ?? [];
   return Array.from(new Set(words.filter((w) => w.length > 2)));
 }
-
 /** Keyword overlap between task and repo map entry (path plus symbols); zero-score files are dropped, ties keep repo map order. */
 export function selectRelevantFiles(task: string, repoMap: RepoMap, max: number = MAX_RELEVANT_FILES): string[] {
   const words = keywords(task);
   if (words.length === 0) return [];
-
   const scored = repoMap.entries.map((entry, idx) => {
     const haystack = `${entry.path} ${entry.symbols.join(" ")}`.toLowerCase();
     const score = words.reduce((n, w) => n + (haystack.includes(w) ? 1 : 0), 0);
     return { path: entry.path, score, idx };
   });
-
   return scored
     .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score || a.idx - b.idx)
     .slice(0, max)
     .map((s) => s.path);
 }
-
 /** Truncates the planner's output to at most `max` non-empty lines: engine-side enforcement, since nothing stops a session from writing more. */
 export function truncatePlan(raw: string, max: number = MAX_PLAN_LINES): string {
   const lines = raw.split("\n").filter((l) => l.trim().length > 0);
   return lines.slice(0, max).join("\n");
 }
-
 export function buildPlanBrief(task: string, relevantFiles: string[], outputPath: string): string {
   return [
     "You are the Loki 10 plan stage.",
@@ -56,29 +48,24 @@ export function buildPlanBrief(task: string, relevantFiles: string[], outputPath
     "Do not edit any other file. Do not run tests. Do not commit.",
   ].join("\n\n");
 }
-
 export const planStage: Stage = {
   name: "plan",
   targetS: 45,
   limitS: 90,
-
   async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
     const prior = ctx.outputs();
     const task = loadTaskText(ctx, prior.intake?.task as string | undefined);
     const repomapRef = prior.intake?.repomap_ref as string | undefined;
     const loaded = repomapRef && existsSync(repomapRef) ? (JSON.parse(readFileSync(repomapRef, "utf8")) as RepoMap) : null;
     const repoMap: RepoMap = loaded ?? { files: [], entries: [], truncated: false };
-
     // E-45: record the cost variant; a small task skips this session and the implementer plans.
     const sz = sizeTask(task, loaded, (prior.intake?.testmap as TestMap | undefined) ?? null);
     const mode = planMode();
     const skip = mode === "never" || (mode === "auto" && sz.size === "small");
     ctx.emit("variant", null, { size: sz.size, reasons: sz.reasons, plan_mode: mode, plan_skipped: skip, wall_model: wallEnabled() ? wallModel() : null });
     if (skip) return { status: "skipped", data: { size: sz.size }, reason: mode === "never" ? "LOKI_E10_PLAN=0" : "small task: implementer plans" };
-
     const relevantFiles = selectRelevantFiles(task, repoMap);
     const outputPath = planOutputPath(ctx.runDir);
-
     const session = await ctx.sessions.run({
       stage: "plan",
       brief: buildPlanBrief(task, relevantFiles, outputPath),
@@ -88,10 +75,8 @@ export const planStage: Stage = {
       signal,
       cwd: ctx.repoDir,
     });
-
     const rawPlan = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "";
     const plan = truncatePlan(rawPlan);
-
     return {
       status: "completed",
       data: {

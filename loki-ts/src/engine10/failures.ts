@@ -6,25 +6,20 @@
 // test from that output and folds them into at most 5 signatures, so a fix
 // round (fix.ts) gets a short, deduplicated list instead of raw noise.
 import type { RunnerName } from "./types.ts";
-
 export interface RawFailure {
   runner: RunnerName;
   output: string; // raw stdout+stderr of one failing test-runner invocation
 }
-
 export interface Failure {
   testId: string; // e.g. "tests/test_x.py::test_y" or "src/x.test.ts > suite > case"
   reason: string; // the raw assertion/error text for that test
 }
-
 export interface FailureGroup {
   signature: string; // normalized reason: numbers and quoted values collapsed
   count: number;
   sample: string; // one raw (unnormalized) reason from the group
 }
-
 const MAX_GROUPS = 5;
-
 /** Collapses numbers and quoted values so "expected 1 to be 2" and
  *  "expected 3 to be 4" group together. Never used for display: `sample`
  *  keeps the original text. */
@@ -36,7 +31,6 @@ function normalize(reason: string): string {
     .replace(/\s+/g, " ")
     .trim();
 }
-
 function parsePytest(output: string): Failure[] {
   // pytest -q short summary info: "FAILED path::test - Reason text".
   const out: Failure[] = [];
@@ -46,7 +40,6 @@ function parsePytest(output: string): Failure[] {
   }
   return out;
 }
-
 /** Shared by vitest/jest: both mark a failing test with a one-line header
  *  (`marker` regex), then print the error a line or few below it. Takes the
  *  first non-empty, non-marker line as the reason. */
@@ -73,25 +66,21 @@ function parseMarkedBlocks(output: string, marker: RegExp, stopAt: RegExp): Fail
   }
   return out;
 }
-
 const VITEST_MARKER = /^\s*(?:FAIL|×)\s+(.+)$/;
 const VITEST_STOP = /^(?:FAIL|×|✓|❯)/;
 const JEST_MARKER = /^\s*●\s+(.+)$/;
 const JEST_STOP = /^●/;
-
 const PARSERS: Partial<Record<RunnerName, (output: string) => Failure[]>> = {
   pytest: parsePytest,
   vitest: (output) => parseMarkedBlocks(output, VITEST_MARKER, VITEST_STOP),
   jest: (output) => parseMarkedBlocks(output, JEST_MARKER, JEST_STOP),
 };
-
 /** Extracts one Failure per failing test from a runner's raw output. Returns
  *  [] for a runner with no parser (go/cargo/npm/bun: not required by E-17). */
 export function parseFailures(runner: RunnerName, output: string): Failure[] {
   const parser = PARSERS[runner];
   return parser ? parser(output) : [];
 }
-
 /** Groups failures by normalized reason, largest group first, capped at
  *  MAX_GROUPS (ties keep first-seen order: JS array sort is stable). */
 export function groupFailures(raw: RawFailure[]): FailureGroup[] {

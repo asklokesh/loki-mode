@@ -8,23 +8,19 @@
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-
 export interface RepoMapEntry {
   path: string;
   symbols: string[]; // top-level exported names, best effort
 }
-
 export interface RepoMap {
   files: string[];
   entries: RepoMapEntry[];
   truncated: boolean; // true when the file cap was hit
 }
-
 const MAX_FILES = 2000;
 const MAX_SCAN_BYTES = 20_000; // per file, for symbol extraction only
 const SOURCE_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|py)$/;
 const SYMBOL_RE = /^export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|interface|type|enum)\s+([A-Za-z0-9_$]+)/gm;
-
 /** git ls-files, capped. Returns [] (never throws) outside a git repo. */
 export function listRepoFiles(repoDir: string, maxFiles: number = MAX_FILES): { files: string[]; truncated: boolean } {
   let out: string;
@@ -36,7 +32,6 @@ export function listRepoFiles(repoDir: string, maxFiles: number = MAX_FILES): { 
   const all = out.split("\n").filter((l) => l.length > 0);
   return { files: all.slice(0, maxFiles), truncated: all.length > maxFiles };
 }
-
 function topLevelSymbols(absPath: string): string[] {
   let text: string;
   try {
@@ -51,7 +46,6 @@ function topLevelSymbols(absPath: string): string[] {
   }
   return names;
 }
-
 export function buildRepoMap(repoDir: string, maxFiles: number = MAX_FILES): RepoMap {
   const { files, truncated } = listRepoFiles(repoDir, maxFiles);
   const entries: RepoMapEntry[] = [];

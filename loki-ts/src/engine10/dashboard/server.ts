@@ -1,18 +1,13 @@
-// loki-ts/src/engine10/dashboard/server.ts
-//
-// E-24: local dashboard over SSE (docs/v10/ENGINE.md section 12). Binds
-// 127.0.0.1 only and never opens a browser. Reuses events.ts fold() and
-// tail() (E-01): runs are folded read-only from .loki/runs/*/events.jsonl,
-// and the per-run stream is tail()'s existing replay-then-poll, unchanged.
+// loki-ts/src/engine10/dashboard/server.ts -- E-24 local dashboard over SSE (ENGINE.md section
+// 12). Binds 127.0.0.1 only, never opens a browser. Reuses events.ts fold()/tail(): runs are
+// folded read-only from .loki/runs/*/events.jsonl; the per-run stream is tail()'s replay-then-poll.
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fold, readEvents, tail } from "../events.ts";
 import type { EventEnvelope, Verdict } from "../types.ts";
 import { renderPage } from "./page.ts";
-
 export const DEFAULT_PORT = 57375;
 const HOSTNAME = "127.0.0.1"; // section 12: localhost only; never configurable
-
 export interface RunSummary {
   runId: string;
   verdict: Verdict | null;
@@ -22,15 +17,12 @@ export interface RunSummary {
   costUsd: number | null;
   wallS: number | null;
 }
-
 function runsDir(repoDir: string): string {
   return join(repoDir, ".loki", "runs");
 }
-
 export function eventsPath(repoDir: string, runId: string): string {
   return join(runsDir(repoDir), runId, "events.jsonl");
 }
-
 export function listRunIds(repoDir: string): string[] {
   const dir = runsDir(repoDir);
   if (!existsSync(dir)) return [];
@@ -39,7 +31,6 @@ export function listRunIds(repoDir: string): string[] {
     .map((d) => d.name)
     .sort();
 }
-
 /** Folds one run's events into the summary the dashboard renders. A field the
  *  run has not reached yet is left null (section 12: never a fake 0). */
 export function summarizeRun(repoDir: string, runId: string): RunSummary {
@@ -65,11 +56,9 @@ export function summarizeRun(repoDir: string, runId: string): RunSummary {
     wallS,
   };
 }
-
 export function listRuns(repoDir: string): RunSummary[] {
   return listRunIds(repoDir).map((id) => summarizeRun(repoDir, id));
 }
-
 /** One screen's worth of labeled panels (section 12). A panel with no data
  *  yet is left out of the array entirely; cost/time always render, "not
  *  measured" when null (never 0, matching output.ts's summary convention). */
@@ -84,11 +73,9 @@ export function formatPanels(r: RunSummary): { label: string; value: string }[] 
   panels.push({ label: "Time", value: r.wallS != null ? `${Math.round(r.wallS)}s` : "not measured" });
   return panels;
 }
-
 function sseLine(e: EventEnvelope): Uint8Array {
   return new TextEncoder().encode(`data: ${JSON.stringify(e)}\n\n`);
 }
-
 /** Replays events.jsonl then tails it (events.ts tail(): fs poll, 250ms
  *  default), so a newly appended event reaches the client well inside the
  *  2s green criterion. */
@@ -109,14 +96,12 @@ function eventStream(repoDir: string, runId: string): ReadableStream<Uint8Array>
     },
   });
 }
-
 export interface DashboardServer {
   port: number;
   hostname: string;
   url: string;
   stop(): void;
 }
-
 export function startServer(repoDir: string, port: number = DEFAULT_PORT): DashboardServer {
   const server = Bun.serve({
     hostname: HOSTNAME,
@@ -148,7 +133,6 @@ export function startServer(repoDir: string, port: number = DEFAULT_PORT): Dashb
     stop: () => server.stop(true),
   };
 }
-
 /** CLI entry: cli.ts routes "dashboard" here (E-12). Prints the URL and never
  *  opens a browser (section 12); runs until SIGINT/SIGTERM. */
 export async function main(_args: string[]): Promise<number> {

@@ -11,13 +11,10 @@ import { createSessionRunner, resolveModel, type EmitFn } from "./session.ts";
 import { RealTestMapProvider } from "./testmap.ts";
 import { DEEP_CAP_S, DEFAULT_CAP_S } from "./types.ts";
 import type { EventType, RunContext, StageName } from "./types.ts";
-
 export type WorkerEmit = (type: EventType, stage: StageName | null, data: Record<string, unknown>) => void;
 /** The stage driver; `main` below passes machine.ts. */
 export type WorkerDrive = (emit: WorkerEmit) => Promise<void>;
-
 const SENTINEL_PREFIX = "ghp_LOKIWITHHELDsentinel";
-
 /** Fail closed: the worker refuses to start while it can see a real GitHub token. */
 export function assertWorkerEnv(env: NodeJS.ProcessEnv = process.env): void {
   if (env.LOKI_ALLOW_AGENT_GITHUB_TOKEN === "1") return; // operator opt-out, warned by withholdGithubTokens
@@ -28,7 +25,6 @@ export function assertWorkerEnv(env: NodeJS.ProcessEnv = process.env): void {
     }
   }
 }
-
 export async function runWorker(
   drive: WorkerDrive,
   opts: { env?: NodeJS.ProcessEnv; write?: (line: string) => void } = {},
@@ -37,7 +33,6 @@ export async function runWorker(
   const write = opts.write ?? ((line: string) => { process.stdout.write(line); });
   await drive((type, stage, data) => write(JSON.stringify({ type, stage, data }) + "\n"));
 }
-
 /** `engine10 worker <run-id> <provider> <model> <fast|deep>`, spawned by the supervisor through cli.ts. */
 export async function main(args: string[]): Promise<number> {
   const [runId, provider = "claude", model = resolveModel(provider), mode = "fast"] = args;

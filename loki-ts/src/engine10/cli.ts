@@ -8,13 +8,11 @@
 // Module contract: each target exports `main(args: string[])` returning an
 // exit code (or void for 0); stages/deep.ts exports `deepSupervise` and
 // `deepWorker` instead.
-
 export interface Route {
   module: string; // path relative to this directory
   fn: string; // exported function name
   args: string[];
 }
-
 const TABLE: Record<string, { module: string; fn: string }> = {
   status: { module: "status.ts", fn: "main" },
   verify: { module: "verify_cmd.ts", fn: "main" },
@@ -25,7 +23,6 @@ const TABLE: Record<string, { module: string; fn: string }> = {
   "deep-supervise": { module: "stages/deep.ts", fn: "deepSupervise" },
   "deep-worker": { module: "stages/deep.ts", fn: "deepWorker" },
 };
-
 const USAGE = `Usage (LOKI_ENGINE=v10):
   loki "<task>"                   run the engine on a free-text task
   loki <issue-url|owner/repo#N>   run on an issue
@@ -34,7 +31,6 @@ const USAGE = `Usage (LOKI_ENGINE=v10):
   loki dashboard                  serve the local dashboard
 Flags: --deep, --provider <name>, --resume <run-id>, --no-pr
 `;
-
 // Returns null for an empty or help invocation.
 export function route(args: string[]): Route | null {
   const [first, ...rest] = args;
@@ -44,15 +40,12 @@ export function route(args: string[]): Route | null {
   // Anything else is a run: a task, an issue ref, or flags plus either.
   return { module: "supervisor.ts", fn: "main", args };
 }
-
 export type Loader = (specifier: string) => Promise<Record<string, unknown>>;
-
 // A non-literal specifier keeps `bun build` from trying to bundle modules
 // that do not exist yet.
 // ponytail: dist only reaches these once they are bundled; switch to literal
 // imports when every target module has landed.
 const defaultLoader: Loader = (spec) => import(spec);
-
 function isMissing(err: unknown, spec: string): boolean {
   const e = err as { code?: string; message?: string } | null;
   const msg = String(e?.message ?? "");
@@ -65,7 +58,6 @@ function isMissing(err: unknown, spec: string): boolean {
   // absolute path, which never contains "./<module>".
   return notFound && msg.includes(spec);
 }
-
 export async function runEngine10(args: string[], load: Loader = defaultLoader): Promise<number> {
   const r = route(args);
   if (!r) {

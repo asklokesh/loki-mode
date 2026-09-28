@@ -11,22 +11,17 @@ import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
-
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
-
-/** implement.ts's (E-08) full stage.completed.data isn't in the shared contract
- *  yet; this is the one field verify.ts reads from it. ImplementExit itself
- *  IS a contract type (types.ts). */
+/** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one
+ *  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */
 interface ImplementOutput {
   exit?: ImplementExit;
 }
-
-/** wall.ts's (E-15) full output isn't in the contract either; verify.ts only
- *  needs the sealed file list, shaped like Receipt["wall"].files. */
+/** wall.ts's full output isn't in the contract either; only the sealed file list, shaped like
+ *  Receipt["wall"].files, is needed here. */
 interface WallOutput {
   files?: { path: string }[];
 }
-
 export interface VerifyCheck {
   name: string;
   cmd: string;
@@ -34,10 +29,8 @@ export interface VerifyCheck {
   duration_s: number;
   reason?: string;
 }
-
-// Command shapes exactly as ENGINE.md section 8's table names them per
-// runner. npm and cargo are documented "coarse" (no per-file selection);
-// go runs per package dir, also coarse below that grain.
+// Command shapes exactly as ENGINE.md section 8's table names them per runner (npm/cargo are
+// "coarse": no per-file selection; go runs per package dir, also coarse below that grain).
 function runnerCmd(t: TestRef): [string, string[]] {
   switch (t.runner) {
     case "pytest": return ["python", ["-m", "pytest", "-q", t.path]];
@@ -49,7 +42,6 @@ function runnerCmd(t: TestRef): [string, string[]] {
     case "cargo": return ["cargo", ["test"]];
   }
 }
-
 function dedupeTests(tests: TestRef[]): TestRef[] {
   const seen = new Set<string>();
   const out: TestRef[] = [];
@@ -61,13 +53,9 @@ function dedupeTests(tests: TestRef[]): TestRef[] {
   }
   return out;
 }
-
-/** Tracked changes against baseSha, plus untracked new files (the implementer
- *  has not committed yet: commit runs after verify). `.loki/` is filtered
- *  defensively even though intake also excludes it via .git/info/exclude,
- *  so a fixture repo that skips that step still gets a real empty diff.
- *  Throws if either git command fails: a broken baseSha must never read as
- *  "nothing changed", which would masquerade as ALREADY_SATISFIED. */
+/** Tracked changes against baseSha, plus untracked new files (commit runs after verify). `.loki/`
+ *  is filtered defensively even though intake also excludes it via .git/info/exclude. Throws if
+ *  either git command fails: a broken baseSha must never read as "nothing changed" (~ALREADY_SATISFIED). */
 export function changedFiles(repoDir: string, baseSha: string): string[] {
   const run = (args: string[]): string[] =>
     execFileSync("git", args, { cwd: repoDir, encoding: "utf8", env: process.env })
@@ -76,15 +64,12 @@ export function changedFiles(repoDir: string, baseSha: string): string[] {
   const untracked = run(["ls-files", "--others", "--exclude-standard"]);
   return [...new Set([...tracked, ...untracked])].filter((f) => !f.startsWith(".loki/"));
 }
-
 interface RunOpts {
   path?: string; // PATH override, tests only, so "missing tool" never depends on the host
   stdin?: string;
   timeoutMs?: number; // per-attempt timeout override, tests only; defaults to CHECK_TIMEOUT_MS
 }
-
-/** `cut` means the timeout or the stage's own AbortSignal killed the child:
- *  distinct from a genuine nonzero exit, so it is never read as "fail" and
+/** `cut` means the timeout or the stage's AbortSignal killed the child: never read as "fail" and
  *  never retried (a hung check must not burn 2x its timeout). */
 async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSignal, opts: RunOpts): Promise<{ ok: boolean; missing: boolean; cut: boolean }> {
   if (!Bun.which(cmd, opts.path ? { PATH: opts.path } : undefined)) return { ok: false, missing: true, cut: false };
@@ -101,10 +86,8 @@ async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSi
   const cut = timeout.aborted || signal.aborted;
   return { ok: exitCode === 0 && !cut, missing: false, cut };
 }
-
-/** Runs one check with a single retry: fail-then-pass is "flaky", not "fail".
- *  A missing tool, or a timed-out / aborted run, is recorded once and never
- *  retried. */
+/** Runs one check with a single retry: fail-then-pass is "flaky", not "fail". A missing tool, or a
+ *  timed-out/aborted run, is recorded once and never retried. */
 export async function runCheck(
   ctx: RunContext, name: string, cmd: string, args: string[], signal: AbortSignal,
   checks: VerifyCheck[], opts: RunOpts = {},
@@ -137,34 +120,25 @@ export async function runCheck(
   ctx.emit("test.result", "verify", { ...check });
   return check;
 }
-
 // ponytail: existence of our own selector script is a strong enough marker
 // that repoDir IS the loki-mode repo; a build target repo will not carry it.
 function isLokiModeRepo(repoDir: string): boolean {
   return existsSync(join(repoDir, "scripts", "select-tests.sh"));
 }
-
 const ESLINT_CONFIGS = [".eslintrc", ".eslintrc.json", ".eslintrc.js", ".eslintrc.cjs", "eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"];
-
-/** ENGINE.md section 4's named tool per language: bash -n + shellcheck for
- *  shell, tsc (project-scoped) + eslint (when configured) for TS/JS, ruff for
- *  Python. Exported so a missing-tool scenario (e.g. no shellcheck on PATH)
- *  can be exercised directly with a PATH override, the same pattern the
- *  "missing tool" runCheck tests already use. Every named tool that applies
- *  to the changed set gets a check entry: a missing tool is not_run, never a
- *  silently absent entry (ENGINE.md section 9's NOT PROVEN requirement). */
+/** ENGINE.md section 4's named tool per language: bash -n + shellcheck for shell, tsc + eslint
+ *  (when configured) for TS/JS, ruff for Python. Every named tool that applies to the changed set
+ *  gets a check entry: a missing tool is not_run, never silently absent (section 9 NOT PROVEN). */
 export async function runLintChecks(
   ctx: RunContext, changed: string[], signal: AbortSignal, checks: VerifyCheck[], opts: RunOpts = {},
 ): Promise<void> {
   const py = changed.filter((f) => f.endsWith(".py"));
   if (py.length) await runCheck(ctx, "lint:ruff", "ruff", ["check", ...py], signal, checks, opts);
-
   const sh = changed.filter((f) => f.endsWith(".sh"));
   if (sh.length) {
     await runCheck(ctx, "lint:bash-n", "bash", ["-c", 'for f in "$@"; do bash -n "$f" || exit 1; done', "_", ...sh], signal, checks, opts);
     await runCheck(ctx, "lint:shellcheck", "shellcheck", sh, signal, checks, opts);
   }
-
   const tsjs = changed.filter((f) => /\.(ts|tsx|js|jsx)$/.test(f));
   if (tsjs.length) {
     if (existsSync(join(ctx.repoDir, "tsconfig.json"))) {
@@ -175,7 +149,6 @@ export async function runLintChecks(
     }
   }
 }
-
 export const verifyStage: Stage = {
   name: "verify",
   targetS: STAGE_BUDGETS.verify.targetS,
@@ -194,49 +167,39 @@ export const verifyStage: Stage = {
       }
       return { status: "failed", data: { changed_files: [] }, reason: "empty diff without an already_done marker" };
     }
-
     const checks: VerifyCheck[] = [];
     const map = await ctx.tests.detect(ctx.repoDir);
     const impacted = ctx.tests.impacted(map, changed);
     const changedTestFiles = map.tests.filter((t) => changed.includes(t.path));
     const wall = (ctx.outputs().wall as WallOutput | undefined) ?? {};
-    // E-56: wall.ts (E-15) seals files under an absolute targetDir; normalize
-    // to repo-relative (map.tests paths are always relative to repoDir) so an
+    // E-56: wall.ts seals files under an absolute targetDir; normalize to repo-relative so an
     // absolute Wall path still matches and runs in fast verify.
     const wallPaths = new Set(
       (wall.files ?? []).map((f) => (isAbsolute(f.path) ? relative(ctx.repoDir, f.path) : f.path)),
     );
     const wallTests = map.tests.filter((t) => wallPaths.has(t.path));
     const tests = dedupeTests([...impacted, ...changedTestFiles, ...wallTests]);
-
     for (const t of tests) {
       if (signal.aborted) break;
       const [cmd, args] = runnerCmd(t);
       await runCheck(ctx, `${t.runner}:${t.path}`, cmd, args, signal, checks);
     }
-
     if (!signal.aborted) {
-      // Lint/typecheck of changed files only, per ENGINE.md section 4's named
-      // tool per language.
+      // Lint/typecheck of changed files only (ENGINE.md section 4's named tool per language).
       await runLintChecks(ctx, changed, signal, checks);
-
-      // Self-hosting only: also run the repo's own fast-gate selector
-      // (ENGINE.md section 4, "the engine also runs scripts/select-tests.sh").
+      // Self-hosting only: also run the repo's own fast-gate selector (section 4).
       if (isLokiModeRepo(ctx.repoDir)) {
         await runCheck(ctx, "select-tests", "bash", ["scripts/select-tests.sh", "--files", "-", "--run"], signal, checks, {
           stdin: changed.join("\n") + "\n",
         });
       }
     }
-
     const flaky = checks.filter((c) => c.result === "flaky").map((c) => c.name);
-    // ponytail: real signature clustering is failures.ts (E-17), which
-    // depends on this stage; a naive 1:1 placeholder keeps the required
-    // section-4 output key populated until that slice lands.
+    // ponytail: real clustering is failures.ts, which depends on this stage; a naive 1:1
+    // placeholder keeps the section-4 output key populated until that slice lands.
     const failuresGrouped = checks
       .filter((c) => c.result === "fail")
       .map((c) => ({ signature: c.name, count: 1, sample: c.cmd }));
-
     return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed } };
   },
 };

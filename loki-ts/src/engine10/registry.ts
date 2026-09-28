@@ -2,7 +2,6 @@
 // package ships no src) can load them. Keys are the specifiers callers use, relative to this
 // dir. A slice adding a module adds one line (registry.test.ts).
 type Mod = Record<string, unknown>;
-
 export const REGISTRY: Readonly<Record<string, () => Promise<Mod>>> = {
   "./stages/intake.ts": () => import("./stages/intake.ts"),
   "./stages/plan.ts": () => import("./stages/plan.ts"),
@@ -22,7 +21,6 @@ export const REGISTRY: Readonly<Record<string, () => Promise<Mod>>> = {
   "./supervisor.ts": () => import("./supervisor.ts"),
   "./eta.ts": () => import("./eta.ts"),
 };
-
 /** An unregistered specifier rejects like a missing file, so "not built yet" still works. */
 export function registryLoader(spec: string): Promise<Mod> {
   const hit = REGISTRY[spec];

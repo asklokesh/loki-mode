@@ -2,11 +2,9 @@
 // real files only (ENGINE.md section 8). Each changed file maps to tests that import/reference
 // it, unioned with a same-stem floor so Go or import-free tests never drop to zero (under-selecting
 // is unsafe). Pure read. EngineTestMap extends types.ts TestMap without editing it.
-
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, extname, join, relative, sep } from "node:path";
 import type { RunnerName, TestMap, TestMapProvider, TestRef } from "./types.ts";
-
 /** One command shape per runner (ENGINE.md section 8 table). `<files>` is a placeholder the
  *  caller (E-09 verify) fills with the selected paths. `coarse: true` means the command always
  *  runs the whole suite: npm and cargo have no reliable per-file selection. */
@@ -14,7 +12,6 @@ export interface CommandSpec {
   cmd: string;
   coarse: boolean;
 }
-
 /** Extra fields beyond E-01's TestMap. `sourceRefs` is read back by `impacted()` and is not meant for callers outside this file. */
 export interface EngineTestMap extends TestMap {
   /** Repo-relative file that proved each detected runner. */
@@ -23,7 +20,6 @@ export interface EngineTestMap extends TestMap {
   /** source basename -> repo-relative test paths that import/reference it. */
   readonly sourceRefs: Record<string, string[]>;
 }
-
 const RUNNER_ORDER: readonly RunnerName[] = ["pytest", "vitest", "jest", "bun", "npm", "go", "cargo"];
 const SKIP_DIRS = new Set([
   ".git", "node_modules", "dist", "build", "target", "coverage",
@@ -33,7 +29,6 @@ const NPM_DEFAULT_TEST = /no test specified/;
 const JS_TEST_RE = /\.(test|spec)\.[cm]?[jt]sx?$/;
 const PY_TEST_RE = /^(test_.+|.+_test)\.py$/;
 const GO_TEST_RE = /_test\.go$/;
-
 const COMMANDS: Record<RunnerName, CommandSpec> = {
   pytest: { cmd: "python -m pytest -q <files>", coarse: false },
   vitest: { cmd: "npx vitest run <files>", coarse: false },
@@ -43,7 +38,6 @@ const COMMANDS: Record<RunnerName, CommandSpec> = {
   go: { cmd: "go test ./<pkg dirs>", coarse: false },
   cargo: { cmd: "cargo test", coarse: true },
 };
-
 /** Repo's own interpreter first (E-53): `<root>/.venv/bin/python`, then
  *  `<root>/venv/bin/python`, else bare `python` on PATH. */
 function pytestPython(root: string): string {
@@ -53,12 +47,10 @@ function pytestPython(root: string): string {
   }
   return "python";
 }
-
 function isTestFile(rel: string): boolean {
   const name = basename(rel);
   return JS_TEST_RE.test(name) || PY_TEST_RE.test(name) || GO_TEST_RE.test(name);
 }
-
 function readText(p: string): string {
   try {
     return readFileSync(p, "utf8");
@@ -66,11 +58,9 @@ function readText(p: string): string {
     return "";
   }
 }
-
 function normalizeRel(raw: string): string {
   return raw.split(sep).join("/").replace(/^\.\//, "");
 }
-
 // ponytail: full recursive walk minus SKIP_DIRS; add a file cap or `git ls-files` if a huge monorepo makes this slow.
 function walk(root: string): string[] {
   const out: string[] = [];
@@ -94,7 +84,6 @@ function walk(root: string): string[] {
   }
   return out.sort();
 }
-
 function detectFromPackageJson(text: string, rel: string, mark: (r: RunnerName, file: string) => void): void {
   let pkg: {
     scripts?: Record<string, unknown>;
@@ -119,25 +108,21 @@ function detectFromPackageJson(text: string, rel: string, mark: (r: RunnerName, 
     mark("npm", rel);
   }
 }
-
 // Import/reference specifiers a test file's text can carry, per language. JS: `from "./search"`
 // / `require("./search")`. Python: `from app.ranker import x` / `import app.ranker`. Matched
 // textually (grep), never resolved against a module graph.
 const JS_SPEC_RE = /(?:from\s+|require\(\s*)['"]([^'"]+)['"]/g;
 const PY_FROM_RE = /^\s*from\s+([\w.]+)\s+import\b/gm;
 const PY_IMPORT_RE = /^\s*import\s+([\w.]+)/gm;
-
 function jsSpecToBasename(spec: string): string {
   const clean = spec.replace(/^\.*\/+/, "");
   const base = clean.split("/").pop() ?? clean;
   return base.replace(/\.[cm]?[jt]sx?$/, "");
 }
-
 function pySpecToBasename(spec: string): string {
   const parts = spec.split(".");
   return parts[parts.length - 1] ?? spec;
 }
-
 /** Source basenames a test file's text imports or references (section 8). */
 function referencedBasenames(text: string): Set<string> {
   const out = new Set<string>();
@@ -155,7 +140,6 @@ function referencedBasenames(text: string): Set<string> {
   }
   return out;
 }
-
 // Source stem a test file covers by naming alone: search.test.ts -> search, test_ranker.py ->
 // ranker, handler_test.go -> handler. This is the floor the import/reference grep adds on top
 // of, never a replacement for it: a same-package Go test that imports nothing of its own
@@ -169,7 +153,6 @@ function coveredStem(testPath: string): string {
   if (name.startsWith("test_")) return name.slice(5, -3);
   return name.replace(/_test\.(py|go)$/, "");
 }
-
 /** Synchronous core: scans `root`, returns the full detected map. `detect()` on TestMapProviderImpl just wraps this in a Promise per the interface. */
 export function buildTestMap(root: string): EngineTestMap {
   const files = walk(root);
@@ -179,7 +162,6 @@ export function buildTestMap(root: string): EngineTestMap {
     found.add(r);
     if (!(r in evidence)) evidence[r] = file;
   };
-
   for (const rel of files) {
     const name = basename(rel);
     const full = join(root, rel);
@@ -195,7 +177,6 @@ export function buildTestMap(root: string): EngineTestMap {
     else if (name === "go.mod" || GO_TEST_RE.test(name)) mark("go", rel);
     else if (name === "Cargo.toml") mark("cargo", rel);
   }
-
   // Per-file test entries exist only for narrowly-selectable runners: npm
   // and cargo run the whole suite (coarse), so no individual file earns a
   // TestRef for them.
@@ -207,7 +188,6 @@ export function buildTestMap(root: string): EngineTestMap {
     else if (PY_TEST_RE.test(name) && found.has("pytest")) tests.push({ runner: "pytest", path: rel });
     else if (GO_TEST_RE.test(name) && found.has("go")) tests.push({ runner: "go", path: rel });
   }
-
   // Object.create(null): keys come from grep'd file content, so a source
   // named e.g. "constructor" must not collide with Object.prototype.
   const sourceRefs: Record<string, string[]> = Object.create(null);
@@ -218,15 +198,12 @@ export function buildTestMap(root: string): EngineTestMap {
       (sourceRefs[n] ??= []).push(t.path);
     }
   }
-
   const runners = RUNNER_ORDER.filter((r) => found.has(r));
   const commands: Partial<Record<RunnerName, CommandSpec>> = {};
   for (const r of runners) commands[r] = COMMANDS[r];
   if (commands.pytest) commands.pytest = { ...commands.pytest, cmd: `${pytestPython(root)} -m pytest -q <files>` };
-
   return { runners, tests, evidence, commands, sourceRefs };
 }
-
 /** Test refs impacted by `changedFiles`: a changed test maps to itself; a changed source maps
  *  to every test that imports/references its basename (built by `buildTestMap`'s grep, read back from `map.sourceRefs`). */
 export function impactedRefs(map: TestMap, changedFiles: readonly string[]): TestRef[] {
@@ -254,7 +231,6 @@ export function impactedRefs(map: TestMap, changedFiles: readonly string[]): Tes
   }
   return out;
 }
-
 /** Implements the E-01 contract so RunContext can inject this as `tests`. */
 export class RealTestMapProvider implements TestMapProvider {
   async detect(repoDir: string): Promise<TestMap> {

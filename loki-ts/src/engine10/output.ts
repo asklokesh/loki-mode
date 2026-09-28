@@ -4,20 +4,17 @@
 // missing cost reads "not measured".
 import type { Verdict } from "./types.ts";
 import { registryLoader } from "./registry.ts";
-
 const NAME_WIDTH = 12; // fits "implement" + padding to align the next column
 // E-44 (found by E-14): 7 ("skipped") left no separating space, ran duration straight into it
 // ("skipped0s"); +1 guarantees at least one space after the longest status word.
 const STATUS_WIDTH = 8; // fits "skipped" plus a required separating space
 const LABEL_WIDTH = 12; // fits "NOT PROVEN:" + one space
-
 export function formatClock(elapsedS: number): string {
   const s = Math.max(0, Math.round(elapsedS));
   const m = Math.floor(s / 60);
   const rem = s % 60;
   return `${String(m).padStart(2, "0")}:${String(rem).padStart(2, "0")}`;
 }
-
 export function formatDuration(totalS: number): string {
   const s = Math.max(0, Math.round(totalS));
   if (s < 60) return `${s}s`;
@@ -25,13 +22,11 @@ export function formatDuration(totalS: number): string {
   const rem = s % 60;
   return `${m}m${String(rem).padStart(2, "0")}s`;
 }
-
 /** 212000 -> "212k"; under 1000 renders as-is. */
 export function formatTokens(n: number): string {
   const v = Math.max(0, Math.round(n));
   return v >= 1000 ? `${Math.round(v / 1000)}k` : `${v}`;
 }
-
 export interface StageLine {
   /** Elapsed run time (since run.started) when this line is printed. */
   clockS: number;
@@ -42,7 +37,6 @@ export interface StageLine {
   durationS: number | null;
   detail: string;
 }
-
 /** `[00:11] intake      done   11s   repo map cached, runners: pytest, vitest` */
 export function formatStageLine(line: StageLine): string {
   const clock = formatClock(line.clockS);
@@ -51,7 +45,6 @@ export function formatStageLine(line: StageLine): string {
   const duration = line.durationS == null ? "not measured" : formatDuration(line.durationS);
   return `[${clock}] ${name}${status}${duration}   ${line.detail}`;
 }
-
 export interface HeartbeatLine {
   /** Elapsed run time (since run.started) when this line is printed. */
   clockS: number;
@@ -63,7 +56,6 @@ export interface HeartbeatLine {
   etaS?: number | null;
   diff?: { files: number; insertions: number; deletions: number } | null;
 }
-
 /** `[01:05] implement   waiting on claude session  1m00s  ETA 2m00s  (3 files, +41 -2)` */
 export function formatHeartbeatLine(h: HeartbeatLine): string {
   const bits = [`waiting on ${h.waitingOn}`, formatDuration(h.elapsedS)];
@@ -71,7 +63,6 @@ export function formatHeartbeatLine(h: HeartbeatLine): string {
   if (h.diff) bits.push(`(${h.diff.files} files, +${h.diff.insertions} -${h.diff.deletions})`);
   return `[${formatClock(h.clockS)}] ${h.stage.padEnd(NAME_WIDTH)}${bits.join("  ")}`;
 }
-
 /** E-44 (found by E-14): sum every `cost` event's token fields, including
  *  cache read and cache creation tokens (cost.ts already tracks these;
  *  events.ts's fold() summed only input/output). Feeds SummaryInput.cost.tokens.
@@ -91,7 +82,6 @@ export function foldCostTokens(events: { type: string; data: Record<string, unkn
   }
   return saw ? total : null;
 }
-
 export interface SummaryInput {
   pr: { url: string; draft: boolean; draftReason?: string | null } | null;
   verdict: Verdict;
@@ -109,37 +99,28 @@ export interface SummaryInput {
   wallS: number;
   stages: { label: string; seconds: number }[];
 }
-
 function labelCol(text: string): string {
   return `${text}:`.padEnd(LABEL_WIDTH);
 }
-
 /** The 5-line final summary, section 11. Joined by "\n", no trailing newline. */
 export function formatSummary(input: SummaryInput): string {
   const prLine = input.pr
     ? `${labelCol("PR")}${input.pr.url}${input.pr.draft ? ` (draft: ${input.pr.draftReason ?? "draft"})` : ""}`
     : `${labelCol("PR")}none`;
-
   const verdictLine = `${labelCol("Verdict")}${input.verdict}`;
-
   let notProvenLine = `${labelCol("NOT PROVEN")}${input.notProven.join(", ")}`;
   if (input.flaky.length > 0) notProvenLine += `; flaky ${input.flaky.join(", ")}`;
-
   const costLine =
     input.cost.usd != null
       ? `${labelCol("Cost")}$${input.cost.usd.toFixed(2)} (${input.cost.provider}, ${input.cost.tokens != null ? `${formatTokens(input.cost.tokens)} tokens` : "tokens not measured"})`
       : `${labelCol("Cost")}not measured${input.cost.note ? ` (${input.cost.note})` : ""}`;
-
   const stagesStr = input.stages.map((s) => `${s.label} ${formatDuration(s.seconds)}`).join(", ");
   const timeLine = `${labelCol("Time")}${formatDuration(input.wallS)} (${stagesStr})`;
-
   return [prLine, verdictLine, notProvenLine, costLine, timeLine].join("\n");
 }
-
 /** Section 3: an optional module loaded only if present, never a hard dependency.
  *  eta.ts (E-20, wave 2) is not part of this slice; when absent, ETAs are omitted. */
 export type EtaEstimator = (targetS: number | null, elapsedS: number) => number | null;
-
 /** modulePath is injectable for tests; production callers omit it and get "./eta.ts". */
 export async function estimateEtaS(
   targetS: number | null,

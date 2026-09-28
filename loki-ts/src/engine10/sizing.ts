@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { RepoMap } from "./repomap.ts";
 import type { TestMap } from "./types.ts";
-
 // ponytail: "named" = repo paths whose basename appears in the task (no keyword scoring); tune from eval data.
 export function sizeTask(task: string, map: RepoMap | null, tests: TestMap | null): { size: "small" | "normal"; reasons: string[] } {
   const named = (map?.files ?? []).filter((f) => task.toLowerCase().includes(basename(f).toLowerCase())).length;
@@ -15,13 +14,11 @@ export function sizeTask(task: string, map: RepoMap | null, tests: TestMap | nul
   ].filter((w): w is string => typeof w === "string");
   return why.length ? { size: "normal", reasons: why } : { size: "small", reasons: [`task ${task.length} chars, names ${named} files`] };
 }
-
 const knob = (v: string | undefined, words: string[]): boolean => words.includes((v ?? "").toLowerCase());
 /** LOKI_E10_PLAN: 0/off/never skips, 1/on/always forces, anything else sizes. */
 export const planMode = (env = process.env): "auto" | "always" | "never" =>
   knob(env.LOKI_E10_PLAN, ["0", "off", "never", "false"]) ? "never" : knob(env.LOKI_E10_PLAN, ["1", "on", "always", "true"]) ? "always" : "auto";
 export const wallEnabled = (env = process.env): boolean => !knob(env.LOKI_E10_WALL, ["0", "off", "false"]);
-
 /** LOKI_E10_WALL_TIER (alias or id, default sonnet) resolved via providers/model_catalog.json cli_aliases. */
 export function wallModel(env = process.env): string {
   const want = env.LOKI_E10_WALL_TIER || "sonnet";
