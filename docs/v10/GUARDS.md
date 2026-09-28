@@ -615,7 +615,7 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   restore) and a clean rerun showed `Results: 6 passed, 0 failed`, exit 0.
   Run: `bash tests/test-dep-inventory.sh`.
 
-## 17. Hardcoded fixture ports raced concurrent runs of the same test (E-95)
+## 18. Hardcoded fixture ports raced concurrent runs of the same test (E-95)
 
 - **Incident:** commit `8f2179cd`, Tests run `36453069628`,
   `tests/test-app-runner-watchdog-health.sh` failed with "healthy fixture
@@ -657,7 +657,7 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   concurrent `test-v10-pulse.sh` copies completed clean, exit 0, over the
   same window). `bash -n` and `shellcheck` both clean on the file.
 
-## 17. A local pass depended on `gh` being authenticated on the dev Mac (E-94)
+## 19. A local pass depended on `gh` being authenticated on the dev Mac (E-94)
 
 - **Incident:** `tests/test-dep-inventory.sh` passed locally and failed on
   the CI runner. Root-caused to `scripts/dep-inventory.py`'s `self_test()`:
@@ -754,3 +754,46 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   directly against this worktree, found the one real in-scope change and
   returned `hermetic-clean` in 5.6s, well inside the 60s budget. Run:
   `bash tests/test-local-ci-hermetic.sh`.
+
+## 20. Eval results lost when a worktree was force-removed (E-96/EV-14, E-101)
+
+- **Incident:** `eval/loki10/results/*/results.jsonl` is gitignored
+  (`eval/loki10/.gitignore`), so it exists only inside the worktree that ran
+  the eval. The 17:36Z pruning incident (guard 5's family, PROGRESS.md)
+  force-removed 7 live builder worktrees including EV-14's; that eval's
+  per-run results were destroyed with it (METRICS.md 18:00Z note) and could
+  not be re-audited.
+- **Root cause with evidence:** nothing ever copied `results.jsonl` outside
+  the worktree that produced it, and no existing prune tool checked for
+  un-copied results before removing a worktree.
+- **The guard:** `eval/loki10/harness.py` `cmd_run` now writes a redacted
+  copy of every row (`redact_row`: drops the `arm_stdout`/`arm_stderr`/etc.
+  log paths and any secret-shaped string) to both
+  `${LOKI_EVAL_ARCHIVE:-$HOME/loki-ci-logs/eval}/<run-name>/results.jsonl`
+  (outside the repo) and the committed `eval/loki10/archive/<run-name>.results.jsonl`,
+  per row inside the same lock that writes the worktree-local copy, so a
+  killed run keeps what it already archived. `scripts/prune-worktrees.sh`
+  refuses to remove a worktree that has a `results.jsonl` whose `run_id`s
+  are not all present in an archived copy, and separately refuses to remove
+  one with a live process inside it (`lsof -d cwd -Fn`) or a branch commit
+  less than 30 minutes old (`git log -1 --format=%ct`) -- any check that
+  cannot run (lsof missing/broken, unparseable JSON) REFUSES rather than
+  guessing. No file-age signal (`stat`, `find -newermt`, etc.) is used
+  anywhere in it.
+- **The test that proves it fires:** `tests/test-prune-worktrees.sh` keeps a
+  worktree with a live process inside it, keeps one whose results are not
+  yet archived, removes one whose results ARE archived (positive control),
+  and refuses everything when `lsof` is stubbed to fail. Deleting any one of
+  the three new checks from `scripts/prune-worktrees.sh` (live-process,
+  30-minute, or archived-results) turns the corresponding case red: 24
+  passed / 2 failed each time, vs. 26 passed / 0 failed with the check in
+  place. `tests/test-eval-archive.sh` plants a token
+  (`sk-ant-plantedTOKEN9999`, a GitHub-token-shaped string, and a
+  `KEY=VALUE`-shaped one) in a synthetic row and asserts none of it survives
+  `redact_row`, that the log paths are gone, that real fields (`task`,
+  `run_id`, `harness_sha`, `cost_usd`) survive intact, and that the redacted
+  rows still `summarize_rows()` correctly (an empty/over-stripped archive
+  would otherwise pass the secret check too). Replacing `redact_row` with a
+  no-op (`return dict(row)`) reproduces the incident directly: the planted
+  secret and the log paths both survive.
+  Run: `bash tests/test-prune-worktrees.sh && bash tests/test-eval-archive.sh`.

@@ -613,7 +613,8 @@ dashboard API keys load error hides the empty state (node --test)	0
 a partly priced run renders as at least, never a total	1
 web-app CommandPalette file-search failure is not no-results (node --test)	1
 the Cost page budget banner has its own id	1
-prune-worktrees treats cherry-picked branches as merged (S-154)	2
+prune-worktrees treats cherry-picked branches as merged (S-154)	3
+Eval results archive: redaction and dirty-check exclude (E-101)	1
 auto-capture shadow-write skips empty PROJECT_DIR and never splices importance (S-156)	32
 web-app NLSearch failed request is not no-results (S-159)	1
 web-app DeployConnections failed load is not Not connected (S-185)	1

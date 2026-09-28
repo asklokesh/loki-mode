@@ -201,6 +201,9 @@ out="$(cd "$T/leak" && STUB_MODE=check bash "$STUB" 2>&1)"; rc=$?
 if [ "$rc" = 97 ] && printf '%s' "$out" | grep -q "HIDDEN LEAK"; then pass "stub fails loudly on a visible hidden file"; else fail "leak control rc=$rc out=$out"; fi
 
 export LOKI_EVAL_CLAUDE_BIN="$T/bin/claude-stub" LOKI_EVAL_LOKI_BIN="$T/bin/loki-stub"
+# E-101: keep the durable-archive writes this fixture triggers out of the
+# real repo and the operator's real $HOME/loki-ci-logs.
+export LOKI_EVAL_ARCHIVE_REPO_ROOT="$T/archive-repo-root" LOKI_EVAL_ARCHIVE="$T/archive-ext"
 
 # ---- 3. pass
 R="$T/out-pass"
