@@ -1,8 +1,10 @@
 // M-10: coverage-guided input search (docs/v10/MODERNIZE.md section 3.2). The provider (propose)
 // and the capture executor (runCapture) are both stubbed, per section 13 "Tests deterministic
 // with a stub provider" -- no python or py_capture.py dependency here.
+import { spawnSync } from "node:child_process";
+import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
-import { search } from "../../../src/engine10/modernize/oracle/search.ts";
+import { realCaptureRunner, search } from "../../../src/engine10/modernize/oracle/search.ts";
 import type { CaptureRunner, CaseSpec, CoverageMissing, ProposeInputs } from "../../../src/engine10/modernize/oracle/search.ts";
 
 const UNIT_SRC = "def f(x):\n    if x:\n        return 1\n    return 0\n";
@@ -114,5 +116,52 @@ describe("search", () => {
     const result = search(UNIT_SRC, [], propose, stubCapture(), { plateauRounds: 1 });
     expect(result.stoppedReason).toBe("plateau");
     expect(result.rounds).toHaveLength(1);
+  });
+
+  it("gives propose the unit source and exactly the current round's uncovered branches", () => {
+    const seen: { unitSource: string; missing: readonly CoverageMissing[]; round: number }[] = [];
+    const propose: ProposeInputs = (unitSource, missing, round) => {
+      seen.push({ unitSource, missing, round });
+      if (round === 1) return [caseFor(B10T)]; // covers B10T only
+      return []; // plateau from round 2
+    };
+    search(UNIT_SRC, [], propose, stubCapture());
+
+    expect(seen).toHaveLength(3); // round 1 (kept) + rounds 2-3 (no gain -> plateau)
+    expect(seen[0]).toEqual({ unitSource: UNIT_SRC, missing: ALL, round: 1 });
+    // round 2 must see the POST-round-1 missing list (B10T now covered), not the stale round-1 one
+    expect(seen[1]!.missing).toEqual([B10F, B20T, B20F]);
+    expect(seen[2]!.missing).toEqual([B10F, B20T, B20F]);
+  });
+});
+
+const PYTHON3 = ["/opt/homebrew/bin/python3.12", "python3.12", "python3"].find(
+  (cmd) => !spawnSync(cmd, ["--version"]).error,
+);
+const FIXTURE_UNIT = join(import.meta.dir, "fixtures", "search", "branch.py");
+
+// M-09 integration: realCaptureRunner actually shells out to py_capture.py. Skipped (never
+// faked green) when no python3 is on PATH, per test-modernize-py-capture.sh's own pattern.
+describe.skipIf(!PYTHON3)("search with realCaptureRunner (py_capture.py, M-09)", () => {
+  const trueCase: CaseSpec = { entry: "f", args: [{ t: "bool", v: true }], kwargs: {} };
+  const falseCase: CaseSpec = { entry: "f", args: [{ t: "bool", v: false }], kwargs: {} };
+  const badEntryCase: CaseSpec = { entry: "does_not_exist", args: [], kwargs: {} };
+
+  it("reaches full coverage on branch.py and drops an untrusted bad-entry candidate", () => {
+    let round1 = true;
+    const propose: ProposeInputs = () => {
+      if (round1) {
+        round1 = false;
+        return [badEntryCase, falseCase]; // bad candidate first: must not abort the good one
+      }
+      return [];
+    };
+    const result = search(FIXTURE_UNIT, [trueCase], propose, realCaptureRunner);
+
+    expect(result.stoppedReason).toBe("full_coverage");
+    expect(result.coverage.missing).toHaveLength(0);
+    expect(result.coverage.branchesTaken).toBe(2);
+    // seed + falseCase kept; badEntryCase dropped (its trial capture exits 2, never crashes)
+    expect(result.cases).toEqual([trueCase, falseCase]);
   });
 });
