@@ -39,6 +39,25 @@
 #                       PULSE_GH_CMD/main_sha on purpose -- it must still run
 #                       (and be able to fire) even when the main-CI-status
 #                       lookup above cannot resolve a SHA and reads UNKNOWN.
+#   PULSE_GOVERNOR_CMD  command producing scripts/usage-governor.py --json
+#                       output, for OPUS_SHARE/BUDGET_BURN (default: python3
+#                       scripts/usage-governor.py --json). Cached the same
+#                       90s way as PULSE_NPM_CMD/PULSE_GH_CMD below (S-104:
+#                       interactive pulse reads cache only, a stale/missing
+#                       entry starts the same detached background refresh).
+#   PULSE_GOVERNOR_DEADLINE_SECS  wall-clock cap on the governor's own call
+#                       inside that detached background refresh (default 45).
+#                       Independent of PULSE_DEADLINE_SECS/NETWORK_DEADLINE:
+#                       the governor scans every JSONL transcript under
+#                       ~/.claude/projects, which measured ~125s on this
+#                       repo's own real usage -- far slower than npm/gh, and
+#                       never awaited by the interactive hook, so it gets a
+#                       longer, separate ceiling instead of sharing npm/gh's
+#                       short one. A host slower than this ceiling reads
+#                       OPUS_SHARE/BUDGET_BURN as UNKNOWN until the governor
+#                       itself is optimized or scoped narrower (a finding for
+#                       G-01/usage-governor.py, not something this pulse
+#                       check can paper over).
 #   PULSE_WORKTREE_CMD  git worktree list command (default: git worktree list --porcelain)
 #   PULSE_MOAT_RESULT   path to a file holding the real captured stdout of a
 #                       `bash tests/moat/run.sh` run (its own summary lines
@@ -191,6 +210,7 @@ export PULSE_MAIN_REF="${PULSE_MAIN_REF:-main}"
 export PULSE_NPM_CMD="${PULSE_NPM_CMD:-}"
 export PULSE_GH_CMD="${PULSE_GH_CMD:-}"
 export PULSE_GH_STREAK_CMD="${PULSE_GH_STREAK_CMD:-}"
+export PULSE_GOVERNOR_CMD="${PULSE_GOVERNOR_CMD:-}"
 export PULSE_WORKTREE_CMD="${PULSE_WORKTREE_CMD:-}"
 export PULSE_MOAT_RESULT="${PULSE_MOAT_RESULT:-}"
 export PULSE_SWARM_START="${PULSE_SWARM_START:-}"
@@ -449,6 +469,7 @@ NOW = now_epoch()
 # the TOP violation -- an accidental ordering-by-discovery would misrank it.
 VIOLATION_PRIORITY = [
     "SESSION_STALLED", "CI_RED", "CI_CANCELLED_STREAK", "RELEASE_ON_RED", "HIGH_LOAD",
+    "BUDGET_BURN", "OPUS_SHARE",
     "MOAT_REGRESSION", "UNRELEASED_MERGE", "RELEASE_CADENCE", "TRAIN_LATE", "REVIEW_STALE",
     "AGENT_OVER_BUDGET", "STALE_PROGRESS", "UNEVIDENCED_CLAIM", "RELEASED_AHEAD_OF_NPM",
     "ORPHAN_TEST", "ORPHAN_WORKTREE", "STRAY_CONTAINER", "STRAY_WORKTREE",
@@ -542,6 +563,27 @@ if main_sha is not None:
             "--json", "conclusion,status,databaseId", "--limit", "5",
         ]
 
+# Usage governor (D13/D39, G-02): local, not network, but on a host with a
+# lot of session history it is FAR from instant -- measured ~125s wall clock
+# scanning ~/.claude/projects on this repo's own real usage. It gets exactly
+# npm/gh's cache/background-refresh treatment (S-104): the interactive pulse
+# never calls it directly, only cache_read (below); a stale/missing cache
+# starts the same detached spawn_refresh() background run as npm/gh. Its own
+# finish_proc call below uses GOVERNOR_DEADLINE, not npm/gh's short
+# NETWORK_DEADLINE -- that deadline only bounds the interactive hook's own
+# network wait, and the governor is never awaited interactively, so it gets a
+# realistic ceiling to actually finish inside the detached refresh run.
+# ponytail: still a bounded cap, not unlimited -- a host slower than this
+# ceiling reads UNKNOWN forever until the governor itself is optimized or
+# scoped narrower; that is a real finding for G-01/usage-governor.py, not
+# something this pulse check can paper over.
+GOVERNOR_DEADLINE_SECS = float(os.environ.get("PULSE_GOVERNOR_DEADLINE_SECS", "45") or "45")
+GOVERNOR_DEADLINE = T0 + GOVERNOR_DEADLINE_SECS
+_governor_argv = shlex.split(os.environ["PULSE_GOVERNOR_CMD"]) if os.environ.get("PULSE_GOVERNOR_CMD") else [
+    sys.executable, os.path.join(REPO_ROOT, "scripts", "usage-governor.py"), "--json",
+]
+
+
 def run_network():
     """Start npm + all gh calls concurrently, finish them against the one
     shared NETWORK_DEADLINE. Returns {name: (rc, out, err)}."""
@@ -559,6 +601,7 @@ def run_network():
         safe(start_proc, _gh_fallback_argv, REPO_ROOT, _clean_env())
         if _gh_fallback_argv is not None else None
     )
+    _governor_proc = safe(start_proc, _governor_argv, REPO_ROOT)
     return {
         "npm": safe(finish_proc, _npm_proc, time_left(NETWORK_DEADLINE)) or (None, "", ""),
         "gh_ci": (
@@ -570,6 +613,9 @@ def run_network():
             safe(finish_proc, _gh_fallback_proc, time_left(NETWORK_DEADLINE)) or (None, "", "")
             if _gh_fallback_proc is not None else (None, "", "")
         ),
+        # Its own deadline (GOVERNOR_DEADLINE), not NETWORK_DEADLINE -- see the
+        # comment above run_network's definition.
+        "governor": safe(finish_proc, _governor_proc, time_left(GOVERNOR_DEADLINE)) or (None, "", ""),
     }
 
 
@@ -675,6 +721,7 @@ if REFRESH_ONLY:
     safe(cache_write, "gh_streak", _res["gh_streak"])
     if _gh_fallback_argv is not None:
         safe(cache_write, "gh_fallback", _res["gh_fallback"], main_sha)
+    safe(cache_write, "governor", _res["governor"])
     try:
         _pp = os.path.join(CACHE_DIR, "refresh.pid")
         with open(_pp, "r") as _f:
@@ -685,7 +732,7 @@ if REFRESH_ONLY:
     sys.exit(0)
 elif CACHE_MODE:
     _need_refresh = False
-    for _name in ("npm", "gh_ci", "gh_streak", "gh_fallback"):
+    for _name in ("npm", "gh_ci", "gh_streak", "gh_fallback", "governor"):
         _rec, _age = cache_read(_name)
         _usable = (
             _rec is not None and isinstance(_rec.get("out"), str)
@@ -729,6 +776,7 @@ _npm_rc, _npm_out, _npm_err = net["npm"]
 _gh_rc, _gh_out, _gh_err = net["gh_ci"]
 _gh_streak_rc, _gh_streak_out, _gh_streak_err = net["gh_streak"]
 _gh_fallback_rc, _gh_fallback_out, _gh_fallback_err = net["gh_fallback"]
+_governor_rc, _governor_out, _governor_err = net["governor"]
 
 
 # --- 1. releases in the last 24h / minutes since last release -------------
@@ -950,6 +998,125 @@ else:
             "CI_CANCELLED_STREAK",
             "%d consecutive cancelled Tests runs on %s (threshold %d)%s"
             % (ci_streak, MAIN_REF, _CANCELLED_STREAK_THRESHOLD, _streak_note),
+        )
+
+
+# --- 2c. OPUS_SHARE / BUDGET_BURN: usage governor (D13, D39; G-02) ----------
+# Mirrors scripts/usage-governor.py's own WINDOW_PCT_CEILING/WEEKLY_PCT_CEILING
+# (85%/90%, D39) rather than importing the module -- the pulse only ever
+# reads the governor's --json output as an external data source, same as
+# npm/gh above.
+OPUS_SHARE_PCT_MAX = 30.0
+WINDOW_PCT_CEILING = 85.0
+WEEKLY_PCT_CEILING = 90.0
+
+
+def parse_governor(rc, out):
+    if rc != 0 or not out.strip():
+        return None
+    try:
+        data = json.loads(out)
+    except (ValueError, TypeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def compute_opus_share_pct(gov):
+    """Opus's share of active-engineer (subagent/workflow-agent) output
+    tokens in the last hour, as a percent, or None if there is no active-
+    engineer burn to measure. Derived, not read directly: the governor JSON
+    exposes a total burn and an opus-WEIGHTED burn per active engineer, not
+    a raw opus-only figure. Since opus_weighted = total + opus*(weight-1),
+    opus = (weighted - total) / (weight - 1) recovers the raw opus tokens.
+    """
+    g = gov.get("governor") or {}
+    weight = (gov.get("calibration") or {}).get("opus_weight_assumption")
+    active = g.get("active_engineers_last_hour")
+    burn_out = g.get("burn_per_engineer_output_last_hour")
+    burn_opus = g.get("burn_per_engineer_opus_weighted_last_hour")
+    if not active or not weight or weight <= 1 or burn_out is None or burn_opus is None:
+        return None
+    total_out = burn_out * active
+    if total_out <= 0:
+        return None
+    opus_out = (burn_opus * active - total_out) / (weight - 1)
+    return 100.0 * opus_out / total_out
+
+
+def project_pct(bucket, extra_tokens):
+    """D39: 'projected 5-hour window usage at or below 85% at window end;
+    weekly at or below 90% by the reset' -- projected, not merely current.
+    Scales current_pct by the token growth current_tokens_output ->
+    current_tokens_output + extra_tokens (extra_tokens being however many
+    more tokens this window/weekly total is expected to carry: last hour's
+    total burn for the window, that same rate sustained to the weekly reset
+    for weekly). Falls back to the current percent unscaled when tokens or
+    pct is missing/non-positive -- there is nothing to scale by."""
+    tokens = bucket.get("current_tokens_output")
+    pct = bucket.get("current_pct")
+    if tokens is None or pct is None or tokens <= 0 or pct <= 0 or extra_tokens is None:
+        return pct
+    return pct * (tokens + extra_tokens) / tokens
+
+
+governor_report = safe(parse_governor, _governor_rc, _governor_out)
+if governor_report is None:
+    mark_unknown("opus_share")
+    mark_unknown("budget_burn")
+    emit("Opus share (active engineers, last hour): UNKNOWN (usage governor check failed or timed out)%s"
+         % cache_note("governor"))
+    emit("Budget burn (5h window / weekly): UNKNOWN (usage governor check failed or timed out)")
+else:
+    _gov_note = cache_note("governor", "usage_governor")
+    opus_share_pct = safe(compute_opus_share_pct, governor_report)
+    if opus_share_pct is None:
+        emit("Opus share (active engineers, last hour): n/a (no active-engineer burn)%s" % _gov_note)
+    else:
+        emit("Opus share (active engineers, last hour): %.1f%%%s" % (opus_share_pct, _gov_note))
+        if opus_share_pct > OPUS_SHARE_PCT_MAX:
+            add_violation(
+                "OPUS_SHARE",
+                "opus is %.1f%% of active-engineer output tokens in the last hour "
+                "(budget %.0f%%, D13: opus is for planning/HIGH review only)"
+                % (opus_share_pct, OPUS_SHARE_PCT_MAX),
+            )
+
+    _gov_window = governor_report.get("window") or {}
+    _gov_weekly = governor_report.get("weekly") or {}
+    if _gov_window.get("source") == "uncalibrated" and _gov_weekly.get("source") == "uncalibrated":
+        mark_unknown("budget_burn")
+        emit("Budget burn (5h window / weekly): UNKNOWN (usage governor uncalibrated)%s" % _gov_note)
+    else:
+        _gov_g = governor_report.get("governor") or {}
+        _last_hour_out = _gov_g.get("last_hour_output_tokens")
+        _hours_to_weekly_reset = _gov_g.get("hours_to_weekly_reset")
+        window_pct = project_pct(_gov_window, _last_hour_out)
+        weekly_pct = project_pct(
+            _gov_weekly,
+            _last_hour_out * _hours_to_weekly_reset
+            if _last_hour_out is not None and _hours_to_weekly_reset is not None else None,
+        )
+        max_next = _gov_g.get("max_engineers_next_hour")
+        active_engineers = _gov_g.get("active_engineers_last_hour")
+        _burn_reasons = []
+        if window_pct is not None and window_pct >= WINDOW_PCT_CEILING:
+            _burn_reasons.append("5h window projected at %.1f%% (ceiling %.0f%%)" % (window_pct, WINDOW_PCT_CEILING))
+        if weekly_pct is not None and weekly_pct >= WEEKLY_PCT_CEILING:
+            _burn_reasons.append("weekly window projected at %.1f%% (ceiling %.0f%%)" % (weekly_pct, WEEKLY_PCT_CEILING))
+        if max_next is not None and active_engineers is not None and max_next < active_engineers:
+            _burn_reasons.append(
+                "max engineers for next hour (%d) is below the %d currently active" % (max_next, active_engineers)
+            )
+        if _burn_reasons:
+            add_violation("BUDGET_BURN", "; ".join(_burn_reasons) + " (D39)")
+        emit(
+            "Budget burn: 5h window projected %s, weekly projected %s, max engineers next hour %s%s"
+            % (
+                "%.1f%%" % window_pct if window_pct is not None else "uncalibrated",
+                "%.1f%%" % weekly_pct if weekly_pct is not None else "uncalibrated",
+                max_next if max_next is not None else "n/a",
+                _gov_note,
+            )
         )
 
 
@@ -2780,6 +2947,8 @@ _NEXT_ACTION_TEXT = {
     "CI_CANCELLED_STREAK": "investigate why Tests keeps getting cancelled on main before anything else",
     "RELEASE_ON_RED": "do not release from this VERSION-bump commit until its Tests run is green (D28 rule 2)",
     "HIGH_LOAD": "reduce load now: stop non-essential agents/containers, the machine is over 2x its core count (D28)",
+    "BUDGET_BURN": "cut active engineers now, the plan's 5h/weekly usage window or its next-hour headroom is at the D39 ceiling",
+    "OPUS_SHARE": "re-pin the named engineer(s) to sonnet, opus is over its D13 30% share of last-hour engineer output tokens",
     "MOAT_REGRESSION": "identify which moat property regressed and revert or fix it before any further merge",
     "UNRELEASED_MERGE": "cut a release now, main has been unreleased past the 30-minute budget",
     "RELEASE_CADENCE": "cut a release now (D37 cadence)",

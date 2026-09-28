@@ -3,7 +3,7 @@
 #
 # All external data sources are overridden via env vars (BOARD_MD,
 # CONTROL_MD, PULSE_REPO_ROOT, PULSE_MAIN_REF, PULSE_NPM_CMD, PULSE_GH_CMD,
-# PULSE_WORKTREE_CMD, PULSE_MOAT_RESULT, PULSE_SWARM_START, PULSE_NOW,
+# PULSE_GOVERNOR_CMD, PULSE_WORKTREE_CMD, PULSE_MOAT_RESULT, PULSE_SWARM_START, PULSE_NOW,
 # PULSE_LOOP_MARKER, PULSE_TRANSCRIPT_DIR). No test here makes a real npm/gh
 # network call or depends on real wall-clock time or the real
 # docs/v10/BOARD.md.
@@ -189,6 +189,27 @@ run_pulse() {
 GH_STREAK_OK_JSON="$WORK/gh-streak-ok.json"
 printf '[{"status":"completed","conclusion":"success"}]' > "$GH_STREAK_OK_JSON"
 
+# Same rationale as GH_STREAK_OK_JSON above, for the G-02 usage-governor
+# checks: fully calibrated, 10%% window/weekly, no opus share, plenty of
+# next-hour headroom -- so OPUS_SHARE/BUDGET_BURN stay silent (not UNKNOWN)
+# on every test below that does not explicitly override PULSE_GOVERNOR_CMD.
+GOVERNOR_OK_JSON="$WORK/governor-ok.json"
+cat > "$GOVERNOR_OK_JSON" <<'EOF'
+{
+  "calibration": {"opus_weight_assumption": 1.4},
+  "window": {"source": "estimate", "current_pct": 10.0, "current_tokens_output": 100},
+  "weekly": {"source": "estimate", "current_pct": 10.0, "current_tokens_output": 100},
+  "governor": {
+    "active_engineers_last_hour": 2,
+    "burn_per_engineer_output_last_hour": 1000.0,
+    "burn_per_engineer_opus_weighted_last_hour": 1000.0,
+    "max_engineers_next_hour": 10,
+    "last_hour_output_tokens": 0,
+    "hours_to_weekly_reset": 100.0
+  }
+}
+EOF
+
 COMMON_ARGS=(
     "PULSE_REPO_ROOT=$FAKE_REPO"
     "PULSE_MAIN_REF=main"
@@ -197,6 +218,7 @@ COMMON_ARGS=(
     "PULSE_NPM_CMD=false"
     "PULSE_GH_CMD=false"
     "PULSE_GH_FALLBACK_CMD=false"
+    "PULSE_GOVERNOR_CMD=cat $GOVERNOR_OK_JSON"
     "PULSE_GH_STREAK_CMD=cat $GH_STREAK_OK_JSON"
     "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO")"
     "PULSE_MOAT_RESULT="
@@ -1899,6 +1921,10 @@ recs = {
     # never consulted -- this entry only exists so a missing cache file for
     # it does not itself count as a cache miss and force a spurious refresh.
     "gh_fallback": '[{"status":"completed","conclusion":"success","databaseId":1}]',
+    # G-02: same reasoning -- without this entry, a governor cache miss alone
+    # would force a background refresh (and a real, ~125s usage-governor.py
+    # scan) even on the "everything else is fresh" T33a case.
+    "governor": '{"calibration":{"opus_weight_assumption":1.4},"window":{"source":"estimate","current_pct":10.0,"current_tokens_output":100},"weekly":{"source":"estimate","current_pct":10.0,"current_tokens_output":100},"governor":{"active_engineers_last_hour":1,"burn_per_engineer_output_last_hour":1000.0,"burn_per_engineer_opus_weighted_last_hour":1000.0,"max_engineers_next_hour":10,"last_hour_output_tokens":0,"hours_to_weekly_reset":100.0}}',
 }
 for name, out in recs.items():
     json.dump({"t": t, "out": out, "sha": sha if name in ("gh_ci", "gh_fallback") else None},
@@ -1909,6 +1935,13 @@ T33_ARGS=(
     "PATH=$STUB_BIN:$PATH"
     "PULSE_REPO_ROOT=$FAKE_REPO" "PULSE_MAIN_REF=main" "CONTROL_MD=$CONTROL_OK"
     "BOARD_MD=$BOARD_CLEAN" "PULSE_NPM_CMD=" "PULSE_GH_CMD=" "PULSE_GH_STREAK_CMD="
+    # Unlike npm/gh above (real binary names, intercepted via PATH stub),
+    # the governor's default argv is a real path under $PULSE_REPO_ROOT
+    # ($FAKE_REPO here, which has no scripts/usage-governor.py) -- it would
+    # fail every refresh forever and keep forcing a fresh npm/gh refresh
+    # alongside it too (one shared _need_refresh per run_network() call), so
+    # it gets its own working fixture instead, same as GH_STREAK_OK_JSON.
+    "PULSE_GOVERNOR_CMD=cat $GOVERNOR_OK_JSON"
     "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}")" "PULSE_MOAT_RESULT="
     "PULSE_SWARM_START=2026-09-26T23:00Z" "PULSE_NOW=2026-09-27T02:00:00Z"
     "PULSE_PUSH_LOG_DIR=$WORK/no-such-push-logs" "PULSE_CACHE_DIR=$CACHE"
@@ -2781,6 +2814,186 @@ if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: UNDERSTAFFED"; then
     ok "8 raw ready rows but M-03's dependency on M-02 is unmet: filtered count is 7, under the floor, no false UNDERSTAFFED"
 else
     bad "T46d UNDERSTAFFED-dependency-filtered case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T48 -- OPUS_SHARE / BUDGET_BURN (D13, D39; G-02): usage governor pulse checks"
+# 1 active engineer, burn_per_engineer_output_last_hour=1000, opus_weight=1.4.
+# opus_weighted = total + opus_share_frac * total * (weight-1), so 31%% share
+# -> weighted=1124, 29%% -> weighted=1116 (see scripts/v10-pulse.sh's
+# compute_opus_share_pct comment for the derivation this fixture proves).
+GOV_OPUS_31_JSON="$WORK/governor-opus31.json"
+cat > "$GOV_OPUS_31_JSON" <<'EOF'
+{
+  "calibration": {"opus_weight_assumption": 1.4},
+  "window": {"source": "estimate", "current_pct": 10.0, "current_tokens_output": 100},
+  "weekly": {"source": "estimate", "current_pct": 10.0, "current_tokens_output": 100},
+  "governor": {
+    "active_engineers_last_hour": 1,
+    "burn_per_engineer_output_last_hour": 1000.0,
+    "burn_per_engineer_opus_weighted_last_hour": 1124.0,
+    "max_engineers_next_hour": 10,
+    "last_hour_output_tokens": 0,
+    "hours_to_weekly_reset": 100.0
+  }
+}
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_GOVERNOR_CMD=cat $GOV_OPUS_31_JSON"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "Opus share (active engineers, last hour): 31.0%" \
+    && printf '%s\n' "$OUT" | grep -q "^VIOLATION: OPUS_SHARE: opus is 31.0% of active-engineer output tokens" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: BUDGET_BURN"; then
+    ok "T48a opus 31%% of last-hour active-engineer output tokens fires OPUS_SHARE"
+else
+    bad "T48a opus-31%% case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+GOV_OPUS_29_JSON="$WORK/governor-opus29.json"
+cat > "$GOV_OPUS_29_JSON" <<'EOF'
+{
+  "calibration": {"opus_weight_assumption": 1.4},
+  "window": {"source": "estimate", "current_pct": 10.0, "current_tokens_output": 100},
+  "weekly": {"source": "estimate", "current_pct": 10.0, "current_tokens_output": 100},
+  "governor": {
+    "active_engineers_last_hour": 1,
+    "burn_per_engineer_output_last_hour": 1000.0,
+    "burn_per_engineer_opus_weighted_last_hour": 1116.0,
+    "max_engineers_next_hour": 10,
+    "last_hour_output_tokens": 0,
+    "hours_to_weekly_reset": 100.0
+  }
+}
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_GOVERNOR_CMD=cat $GOV_OPUS_29_JSON"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "Opus share (active engineers, last hour): 29.0%" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: OPUS_SHARE"; then
+    ok "T48b opus 29%% of last-hour active-engineer output tokens does not fire OPUS_SHARE"
+else
+    bad "T48b opus-29%% case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+GOV_WINDOW_86_JSON="$WORK/governor-window86.json"
+cat > "$GOV_WINDOW_86_JSON" <<'EOF'
+{
+  "calibration": {"opus_weight_assumption": 1.4},
+  "window": {"source": "estimate", "current_pct": 86.0, "current_tokens_output": 100},
+  "weekly": {"source": "estimate", "current_pct": 10.0, "current_tokens_output": 100},
+  "governor": {
+    "active_engineers_last_hour": 1,
+    "burn_per_engineer_output_last_hour": 1000.0,
+    "burn_per_engineer_opus_weighted_last_hour": 1000.0,
+    "max_engineers_next_hour": 10,
+    "last_hour_output_tokens": 0,
+    "hours_to_weekly_reset": 100.0
+  }
+}
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_GOVERNOR_CMD=cat $GOV_WINDOW_86_JSON"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -q "^VIOLATION: BUDGET_BURN: 5h window projected at 86.0% (ceiling 85%)" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: OPUS_SHARE"; then
+    ok "T48c 5h window projection at 86%% fires BUDGET_BURN"
+else
+    bad "T48c window-86%% case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+GOV_WEEKLY_91_JSON="$WORK/governor-weekly91.json"
+cat > "$GOV_WEEKLY_91_JSON" <<'EOF'
+{
+  "calibration": {"opus_weight_assumption": 1.4},
+  "window": {"source": "estimate", "current_pct": 10.0, "current_tokens_output": 100},
+  "weekly": {"source": "estimate", "current_pct": 91.0, "current_tokens_output": 100},
+  "governor": {
+    "active_engineers_last_hour": 1,
+    "burn_per_engineer_output_last_hour": 1000.0,
+    "burn_per_engineer_opus_weighted_last_hour": 1000.0,
+    "max_engineers_next_hour": 10,
+    "last_hour_output_tokens": 0,
+    "hours_to_weekly_reset": 100.0
+  }
+}
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_GOVERNOR_CMD=cat $GOV_WEEKLY_91_JSON"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -q "^VIOLATION: BUDGET_BURN: weekly window projected at 91.0% (ceiling 90%)"; then
+    ok "T48d weekly projection at 91%% fires BUDGET_BURN"
+else
+    bad "T48d weekly-91%% case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+GOV_MAX_BELOW_ACTIVE_JSON="$WORK/governor-max-below-active.json"
+cat > "$GOV_MAX_BELOW_ACTIVE_JSON" <<'EOF'
+{
+  "calibration": {"opus_weight_assumption": 1.4},
+  "window": {"source": "estimate", "current_pct": 10.0, "current_tokens_output": 100},
+  "weekly": {"source": "estimate", "current_pct": 10.0, "current_tokens_output": 100},
+  "governor": {
+    "active_engineers_last_hour": 5,
+    "burn_per_engineer_output_last_hour": 1000.0,
+    "burn_per_engineer_opus_weighted_last_hour": 1000.0,
+    "max_engineers_next_hour": 3,
+    "last_hour_output_tokens": 0,
+    "hours_to_weekly_reset": 100.0
+  }
+}
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_GOVERNOR_CMD=cat $GOV_MAX_BELOW_ACTIVE_JSON"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -q "^VIOLATION: BUDGET_BURN: max engineers for next hour (3) is below the 5 currently active"; then
+    ok "T48e max_engineers_next_hour (3) below active engineers (5) fires BUDGET_BURN"
+else
+    bad "T48e max-below-active case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+GOV_UNCALIBRATED_JSON="$WORK/governor-uncalibrated.json"
+cat > "$GOV_UNCALIBRATED_JSON" <<'EOF'
+{
+  "calibration": {"opus_weight_assumption": 1.4},
+  "window": {"source": "uncalibrated", "current_pct": null},
+  "weekly": {"source": "uncalibrated", "current_pct": null},
+  "governor": {
+    "active_engineers_last_hour": 0,
+    "burn_per_engineer_output_last_hour": null,
+    "burn_per_engineer_opus_weighted_last_hour": null,
+    "max_engineers_next_hour": null
+  }
+}
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_GOVERNOR_CMD=cat $GOV_UNCALIBRATED_JSON"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "Budget burn (5h window / weekly): UNKNOWN (usage governor uncalibrated)" \
+    && printf '%s\n' "$OUT" | grep -q "UNKNOWN metrics:.*budget_burn" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: BUDGET_BURN" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: OPUS_SHARE"; then
+    ok "T48f uncalibrated governor: BUDGET_BURN reads UNKNOWN, raises no violation"
+else
+    bad "T48f uncalibrated case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T48g -- BUDGET_BURN projects forward (D39: 'projected... at window end'), not just current_pct: a"
+echo "        window at 50%% now that doubled in the last hour projects to 100%% and fires, though 50%% alone would not"
+GOV_WINDOW_GROWTH_JSON="$WORK/governor-window-growth.json"
+cat > "$GOV_WINDOW_GROWTH_JSON" <<'EOF'
+{
+  "calibration": {"opus_weight_assumption": 1.4},
+  "window": {"source": "estimate", "current_pct": 50.0, "current_tokens_output": 1000000},
+  "weekly": {"source": "estimate", "current_pct": 10.0, "current_tokens_output": 1000000},
+  "governor": {
+    "active_engineers_last_hour": 1,
+    "burn_per_engineer_output_last_hour": 1000.0,
+    "burn_per_engineer_opus_weighted_last_hour": 1000.0,
+    "max_engineers_next_hour": 10,
+    "last_hour_output_tokens": 1000000,
+    "hours_to_weekly_reset": 1.0
+  }
+}
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_GOVERNOR_CMD=cat $GOV_WINDOW_GROWTH_JSON"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -q "^VIOLATION: BUDGET_BURN: 5h window projected at 100.0% (ceiling 85%)"; then
+    ok "T48g current 50%% window that doubled last hour projects to 100%% and fires BUDGET_BURN (proves this is a projection, not current_pct)"
+else
+    bad "T48g growth-projection case: rc=$rc output follows"
     printf '%s\n' "$OUT"
 fi
 
