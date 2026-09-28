@@ -5,11 +5,11 @@
 // with -I ONLY, never -S: -S drops site-packages so `cryptography` never imports and every
 // receipt would misreport UNCHECKED regardless of whether it was actually signed.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { lokiDir, REPO_ROOT } from "../util/paths.ts";
 import { findIsolatedPython3 } from "../util/python.ts";
 import { run } from "../util/shell.ts";
+import { sha256 } from "./stages/seal.ts";
 import type { ShellResult } from "../util/shell.ts";
 export type Verdict = "VERIFIED" | "UNSIGNED" | "TAMPERED" | "UNCHECKED";
 export interface VerifyResult {
@@ -26,15 +26,12 @@ function canonicalJson(value: unknown): string {
   }
   return JSON.stringify(value);
 }
-function sha256Hex(s: string): string {
-  return createHash("sha256").update(s, "utf8").digest("hex");
-}
 /** The hash seal.ts (E-10) is specified to write into receipt.json:
  *  canonical JSON with `verification` removed. `receipt_sha256` itself is
  *  also removed: a field cannot record its own hash's input. */
 export function computeReceiptHash(receipt: Record<string, unknown>): string {
   const { verification: _verification, receipt_sha256: _hash, ...rest } = receipt;
-  return sha256Hex(canonicalJson(rest));
+  return sha256(canonicalJson(rest));
 }
 type PyRunner = (argv: readonly string[], opts?: { timeoutMs?: number }) => Promise<ShellResult>;
 export interface VerifyDeps {

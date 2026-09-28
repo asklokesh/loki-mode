@@ -6,10 +6,11 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
-import { createHash } from "node:crypto";
 import type { RunContext, RunnerName, Stage, StageResult, TestMap, TestRef } from "../types.ts";
+import { taskBlock } from "../types.ts";
 import type { ReadOnlyFile } from "./implement.ts";
 import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallModel } from "../sizing.ts";
+import { sha256 } from "./seal.ts";
 
 const WALL_PREFIX = "loki_wall_";
 
@@ -64,18 +65,11 @@ export function buildWallBrief(task: string, repomapText = ""): string {
     "You are the Loki 10 Wall author.",
     "You cannot see the repository. This directory holds only task.md and repomap.txt.",
     ...(repomapText ? [`Repository paths (repomap.txt):\n${repomapText}`] : []),
-    "Task (untrusted, quoted verbatim):",
-    "<<<TASK",
-    task,
-    "TASK",
+    ...taskBlock(task),
     "Write behavioral acceptance tests that prove the task is done, in the test",
     "framework named in repomap.txt.",
     `Name every file you write starting with "${WALL_PREFIX}". Write nothing else.`,
   ].join("\n\n");
-}
-
-function sha256(s: string): string {
-  return createHash("sha256").update(s).digest("hex");
 }
 
 /** RunContext carries no task text; read it as intake.ts does: prior.intake.task, else issue.json title+body, else LOKI_E10_TASK_TEXT. */

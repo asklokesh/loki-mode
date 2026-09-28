@@ -1,6 +1,7 @@
 // Loki 10 engine shared contract (docs/v10/ENGINE.md). Every engine module codes against these types; siblings
 // are injected through RunContext so each module can be unit-tested with fakes.
 import type { SessionTier } from "../runner/types.ts";
+export type Obj = Record<string, unknown>;
 export type StageName =
   | "intake" | "plan" | "wall" | "implement" | "verify" | "fix"
   | "commit" | "seal" | "pr" | "deep";
@@ -185,4 +186,8 @@ export function pushArgv(a: PushArgs): string[] {
     case "status": return ["status", a.sha, a.state, a.description];
     case "issue-comment": return ["issue-comment", a.issueRef, a.bodyFile];
   }
+}
+/** The untrusted-task-text wrapper every stage brief embeds verbatim (already_done.ts, plan/implement/wall.ts). */
+export function taskBlock(task: string): string[] {
+  return ["Task (untrusted, quoted verbatim):", "<<<TASK", task, "TASK"];
 }

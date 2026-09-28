@@ -9,11 +9,10 @@ import { join } from "node:path";
 import { discoverProjectGraph } from "../../project_graph.ts";
 import { run } from "../../util/shell.ts";
 import { assertWorkerEnv } from "../worker.ts";
-import { canonicalJson, signReceipt } from "./seal.ts";
+import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
 import type { PushArgs, ReceiptCheck, RunContext, RunnerName, Stage, StageResult } from "../types.ts";
 import { pushArgv, STAGE_BUDGETS } from "../types.ts";
-import { createHash } from "node:crypto";
 /** RunContext plus the value this stage needs that E-03 will eventually
  *  inject (same local-extension pattern pr.ts's PrContext already uses). */
 export type DeepContext = RunContext & {
@@ -65,9 +64,6 @@ const FULL_SUITE_CMD: Record<RunnerName, { cmd: string; args: string[] }> = {
   go: { cmd: "go", args: ["test", "./..."] },
   cargo: { cmd: "cargo", args: ["test"] },
 };
-function sha256(s: string): string {
-  return createHash("sha256").update(s).digest("hex");
-}
 /** One check per detected runner, run to completion (no retry: flaky-rerun
  *  is a fast-verify concept, ENGINE.md never asks for it in deep verify). */
 async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {

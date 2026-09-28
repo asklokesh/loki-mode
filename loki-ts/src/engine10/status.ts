@@ -13,15 +13,18 @@ export function runsDir(repoDir: string): string {
 export function eventsPath(repoDir: string, runId: string): string {
   return join(runsDir(repoDir), runId, "events.jsonl");
 }
-/** Run ids embed a sortable UTC timestamp (e10-<ISO-ish>-<rand>), so the
- *  lexicographically last directory name is the latest run. */
-export function findLatestRun(repoDir: string): string | null {
+export function listRunIds(repoDir: string): string[] {
   const dir = runsDir(repoDir);
-  if (!existsSync(dir)) return null;
-  const names = readdirSync(dir, { withFileTypes: true })
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
     .filter((d) => d.isDirectory())
     .map((d) => d.name)
     .sort();
+}
+/** Run ids embed a sortable UTC timestamp (e10-<ISO-ish>-<rand>), so the
+ *  lexicographically last directory name is the latest run. */
+export function findLatestRun(repoDir: string): string | null {
+  const names = listRunIds(repoDir);
   return names.length ? names[names.length - 1]! : null;
 }
 export interface StatusView {

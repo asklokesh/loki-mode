@@ -4,6 +4,7 @@ import { join, relative } from "node:path";
 import { cascadeEnabled, cascadeImplementModel, loadRepoMap, namedFiles, repoMapText } from "../sizing.ts";
 import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
 import type { ImplementExit, RunContext, Stage, StageResult, TestMap } from "../types.ts";
+import { taskBlock } from "../types.ts";
 
 /** A test file (a sealed Wall test) the implement session must not change: path is absolute, in the repo working tree; content is what to restore if it no longer matches. */
 export interface ReadOnlyFile { path: string; content: string; }
@@ -24,10 +25,7 @@ export function impactedTests(ctx: RunContext): string[] {
 export function buildImplementBrief(task: string, plan: string | null, impactedTests: string[], repoMap = ""): string {
   return [
     "You are the Loki 10 implement stage.",
-    "Task (untrusted, quoted verbatim):",
-    "<<<TASK",
-    task,
-    "TASK",
+    ...taskBlock(task),
     plan ? `Follow this plan:\n${plan}` : "No separate plan was made: plan the change yourself in this session, then implement it.",
     ...(repoMap ? [`Repository paths (repomap.txt):\n${repoMap}`] : []),
     "Rules:",
