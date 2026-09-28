@@ -1,0 +1,19 @@
+{
+  "id": "pub-werkzeug-3121",
+  "kind": "public",
+  "prompt": "Rule.compile uses non-greedy regex to merge slashes\n\nThe following 2 lines:\n\nhttps://github.com/pallets/werkzeug/blob/64b09e734b1db8afbf770f1feb8d3cb48de157d5/src/werkzeug/routing/rules.py#L725\n\nhttps://github.com/pallets/werkzeug/blob/64b09e734b1db8afbf770f1feb8d3cb48de157d5/src/werkzeug/routing/matcher.py#L181\n\nUses a non-greedy quantifier.  But `{2,}` suggests it wants to recognize 2 or more repetitions, but `{2,}?` will only match 2 repetitions.\n\nA small test script:\n\n```python\nimport re\n\ndef _merge_slashes(url:str, re_str:str):\n  print(f'    using {repr(re_str)}:', re.sub(re_str, \"/\", url))\n\ndef merge_slashes(url:str):\n  print(f'Merge: {url}')\n  _merge_slashes(url, \"/{2,}?\")\n  _merge_slashes(url, \"/{2,}\")\n\nmerge_slashes('/path/to/foo')\nmerge_slashes('//path//to//foo')\nmerge_slashes('///path///to///foo')\nmerge_slashes('////path////to////foo')\n```\n\nwith output:\n\n```none\nMerge: /path/to/foo\n    using '/{2,}?': /path/to/foo\n    using '/{2,}': /path/to/foo\nMerge: //path//to//foo\n    using '/{2,}?': /path/to/foo\n    using '/{2,}': /path/to/foo\nMerge: ///path///to///foo\n    using '/{2,}?': //path//to//foo\n    using '/{2,}': /path/to/foo\nMerge: ////path////to////foo\n    using '/{2,}?': //path//to//foo\n    using '/{2,}': /path/to/foo\n```",
+  "issue_ref": "pallets/werkzeug#3121",
+  "repo": {
+    "source": "https://github.com/pallets/werkzeug.git",
+    "ref": "b913d68db5898c8f3def3c09a653aaf95abe38e5"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . pytest ephemeral-port-reserve",
+  "hidden": {
+    "files": [
+      "tests/test_routing.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_routing.py -k \"test_merge_slashes_match\""
+  },
+  "timeout_s": 900,
+  "tier": "medium"
+}

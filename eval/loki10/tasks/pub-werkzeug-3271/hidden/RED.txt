@@ -1,0 +1,15 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_______________________________ test_user_agent ________________________________
+
+    def test_user_agent():
+        user_agent = "Mozilla/5.0 (X11; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0"
+        request = wrappers.Request({"HTTP_USER_AGENT": user_agent})
+>       assert request.user_agent == user_agent
+E       AssertionError: assert <UserAgent None/None> == 'Mozilla/5.0 (X11; Linux x86_64; rv:94.0) Gecko/20100101 Firefox/94.0'
+E        +  where <UserAgent None/None> = <Request 'http:///' [GET]>.user_agent
+
+tests/test_wrappers.py:9: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_wrappers.py::test_user_agent - AssertionError: assert <User...
+1 failed in 0.03s

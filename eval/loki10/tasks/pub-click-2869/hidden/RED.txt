@@ -1,0 +1,55 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________________________ test_edit_pathlib[single] ___________________________
+
+runner = <click.testing.CliRunner object at 0x106e9cad0>
+tmp_path = PosixPath('/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/pytest-of-lokesh/pytest-243/test_edit_pathlib_single_0')
+use_iterable = False
+
+    @pytest.mark.skipif(WIN, reason="No sed on Windows.")
+    @pytest.mark.parametrize("use_iterable", [False, True], ids=["single", "iterable"])
+    def test_edit_pathlib(runner, tmp_path, use_iterable):
+        """Issue #2869: ``filename`` accepts ``os.PathLike`` values."""
+        file_path = tmp_path / "file.txt"
+        file_path.write_text("a\nb\n", encoding="UTF-8")
+        filename = [file_path] if use_iterable else file_path
+    
+>       result = click.edit(filename=filename, editor="sed -i~ 's/$/Test/'")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_termui.py:459: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/click/termui.py:898: in edit
+    ed.edit_files(filenames=filename)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <click._termui_impl.Editor object at 0x10790c1a0>
+filenames = PosixPath('/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/pytest-of-lokesh/pytest-243/test_edit_pathlib_single_0/file.txt')
+
+    def edit_files(self, filenames: cabc.Iterable[str]) -> None:
+        """Open files in the user's editor."""
+        import shlex
+        import subprocess
+    
+        editor = self.get_editor()
+        environ: dict[str, str] | None = None
+    
+        if self.env:
+            environ = os.environ.copy()
+            environ.update(self.env)
+    
+        try:
+            # Split in POSIX mode (the default) for the same reasons as
+            # in pager(): strips quotes from tokens and preserves quoted
+            # Windows paths.
+            c = subprocess.Popen(
+>               args=shlex.split(editor) + list(filenames),
+                                           ^^^^^^^^^^^^^^^
+                env=environ,
+            )
+E           TypeError: 'PosixPath' object is not iterable
+
+src/click/_termui_impl.py:730: TypeError
+=========================== short test summary info ============================
+FAILED tests/test_termui.py::test_edit_pathlib[single] - TypeError: 'PosixPat...
+1 failed, 281 deselected in 0.09s

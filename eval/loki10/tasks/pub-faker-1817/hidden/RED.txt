@@ -1,0 +1,39 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+__________ TestUniquenessClass.test_complex_return_types_is_supported __________
+
+self = <tests.test_unique.TestUniquenessClass object at 0x107749480>
+
+    def test_complex_return_types_is_supported(self):
+        """The unique decorator supports complex return types
+        like the ones used in the profile provider."""
+    
+        fake = Faker()
+    
+        for i in range(10):
+>           fake.unique.pydict()
+
+tests/test_unique.py:71: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = (), kwargs = {}
+
+    @functools.wraps(function)
+    def wrapper(*args, **kwargs):
+        key = (name, args, tuple(sorted(kwargs.items())))
+    
+        generated = self._seen.setdefault(key, {self._sentinel})
+    
+        # With use of a sentinel value rather than None, we leave
+        # None open as a valid return value.
+        retval = self._sentinel
+    
+        for i in range(_UNIQUE_ATTEMPTS):
+>           if retval not in generated:
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E           TypeError: cannot use 'dict' as a set element (unhashable type: 'dict')
+
+faker/proxy.py:337: TypeError
+=========================== short test summary info ============================
+FAILED tests/test_unique.py::TestUniquenessClass::test_complex_return_types_is_supported
+1 failed, 5 deselected in 0.09s
