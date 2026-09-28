@@ -118,6 +118,42 @@ diff -q <(git -C "$WORK" show HEAD:loki-ts/dist/cockpit.js) "$WORK/loki-ts/dist/
     && ok "build failure: cockpit.js restored byte-identical to HEAD (case 2)" \
     || bad "build failure: cockpit.js NOT restored to HEAD (case 2)"
 
+# --- Case 3: node_modules present, build exits 0 and DOES write dist, but
+# never embeds the new version (a stale or silently-broken build -- the
+# version write is the part that broke). Must be treated like a build
+# failure: restore dist from HEAD, exit non-zero. The stub writes garbage
+# so a no-op restore would be caught by the diff below. ---
+cat >"$WORK/bin/bun" <<'EOF'
+#!/usr/bin/env bash
+echo 'let $="STALE-BUILD-NO-VERSION";' > dist/loki.js
+exit 0
+EOF
+chmod +x "$WORK/bin/bun"
+
+(
+    cd "$WORK" || exit 1
+    export PATH="$WORK/bin:$PATH"
+    export BUMP_TYPE="patch"
+    # shellcheck disable=SC1091
+    . ./scripts/release.sh
+    get_current_version() { echo "1.0.0"; }
+    bump_version() { echo "1.0.1"; }
+    bump_all_version_files() { :; }
+    run_bump_only >/dev/null 2>"$WORK/case3.err"
+)
+RC3=$?
+
+[ "$RC3" -ne 0 ] && ok "build exits 0 without new version: exits non-zero (case 3)" \
+    || bad "build exits 0 without new version: exited 0, should have failed (case 3)"
+
+diff -q <(git -C "$WORK" show HEAD:loki-ts/dist/loki.js) "$WORK/loki-ts/dist/loki.js" >/dev/null 2>&1 \
+    && ok "build exits 0 without new version: loki.js restored byte-identical to HEAD (case 3)" \
+    || bad "build exits 0 without new version: loki.js NOT restored to HEAD (case 3)"
+
+diff -q <(git -C "$WORK" show HEAD:loki-ts/dist/cockpit.js) "$WORK/loki-ts/dist/cockpit.js" >/dev/null 2>&1 \
+    && ok "build exits 0 without new version: cockpit.js restored byte-identical to HEAD (case 3)" \
+    || bad "build exits 0 without new version: cockpit.js NOT restored to HEAD (case 3)"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
