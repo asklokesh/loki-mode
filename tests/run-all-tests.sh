@@ -1299,6 +1299,13 @@ run_test "parent checkout core.bare detection self-heals without green-washing" 
 # always run.
 run_test "local-ci gitleaks fast-tier step (scoped scan, skip-not-pass, literal vs concatenated fixture)" "$SCRIPT_DIR/test-local-ci-gitleaks.sh"
 
+# E-114: security-audit.yml's gitleaks CI gate never trusts a pushed
+# .gitleaks.toml -- refuses the job when the range changes it (no automatic
+# bypass), scans with the base commit's config (or gitleaks' default rules),
+# and warns (never blocks) on a .gitleaksignore addition. SKIP not pass when
+# the binary is absent.
+run_test "security-audit.yml gitleaks config isolation (refuse config change, base-config scan, gitleaksignore warning)" "$SCRIPT_DIR/test-security-audit-config.sh"
+
 # E-94: local-ci fast-tier hermetic changed-tests scan (re-runs every changed
 # tests/*.sh, tests/*.py, loki-ts/tests/** under env -i with no gh/network,
 # fails naming any file that passes normally but fails stripped). Live temp-

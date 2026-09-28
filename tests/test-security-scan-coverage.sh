@@ -88,6 +88,29 @@ for step in job.get('steps') or []:
 " 2>/dev/null
 }
 
+# E-114: the gitleaks scan step's own command shape now lives in
+# scripts/security-audit-gitleaks.sh (so tests/test-security-audit-config.sh
+# can drive it locally with the real pinned binary). Append its comment-
+# stripped body wherever the step's `run:` text is checked below, so an
+# assertion that used to read the inline command still reads the same
+# logic -- just relocated, never unfalsifiable because the text moved.
+#
+# GATED on the step's OWN raw text actually calling the script: appending the
+# script body unconditionally would leave every assertion below green even if
+# the call were deleted from the step (the step would then invoke nothing,
+# and CI would scan nothing, while this file still saw the script's own
+# source and called it satisfied). _SECRET_SCAN_CALLS_SCRIPT is asserted on
+# its own, separately, below.
+_GITLEAKS_SCRIPT="$REPO_ROOT/scripts/security-audit-gitleaks.sh"
+_gitleaks_script_body() {
+  [ -f "$_GITLEAKS_SCRIPT" ] || return 0
+  grep -v '^[[:space:]]*#' "$_GITLEAKS_SCRIPT"
+}
+if printf '%s' "$_SECRET_RUNS" | grep -q 'security-audit-gitleaks.sh'; then
+  _SECRET_RUNS="$_SECRET_RUNS
+$(_gitleaks_script_body)"
+fi
+
 # The step that actually invokes the scanner, as opposed to the ones that
 # summarise or upload its output.
 _PY_REQ_SCAN_STEP="$(_step python-audit 'pip-audit every requirements file')"
@@ -96,7 +119,13 @@ _PY_SCAN_STEP="$_PY_REQ_SCAN_STEP
 $_PY_SDK_SCAN_STEP"
 _PY_ASSERT_STEP="$(_step python-audit 'Assert the audit actually produced')"
 _SECRET_INSTALL_STEP="$(_step secret-scan 'Install gitleaks')"
-_SECRET_SCAN_STEP="$(_step secret-scan 'gitleaks scan')"
+_SECRET_SCAN_STEP_RAW="$(_step secret-scan 'gitleaks scan')"
+if printf '%s' "$_SECRET_SCAN_STEP_RAW" | grep -q 'security-audit-gitleaks.sh'; then
+  _SECRET_SCAN_STEP="$_SECRET_SCAN_STEP_RAW
+$(_gitleaks_script_body)"
+else
+  _SECRET_SCAN_STEP="$_SECRET_SCAN_STEP_RAW"
+fi
 _SECRET_ASSERT_STEP="$(_step secret-scan 'Assert the secret scan completed cleanly')"
 _SAST_ASSERT_STEP="$(_step sast 'Assert CodeQL SARIF and reject unreviewed critical findings')"
 _SAST_USES="$( _LOKI_WF="$WF" python3 -c "
@@ -165,9 +194,21 @@ else
   bad "pip-audit job identity does not disclose the SDK blocking threshold"
 fi
 
+# --- 1b. E-114: the step actually calls its externalized script ------------
+# The load-bearing check for the append gate above: if this went red, every
+# assertion below that reads $_SECRET_SCAN_STEP or $_SECRET_RUNS would still
+# be reading the SCRIPT FILE'S content (unconditionally appended before this
+# guard existed), even though the workflow step calling it had been deleted
+# and CI would scan nothing.
+if printf '%s' "$_SECRET_SCAN_STEP_RAW" | grep -q 'bash scripts/security-audit-gitleaks.sh'; then
+  ok "the gitleaks scan step actually calls scripts/security-audit-gitleaks.sh"
+else
+  bad "the gitleaks scan step does not call scripts/security-audit-gitleaks.sh -- CI would scan nothing"
+fi
+
 # --- 2. The secret scan runs over every reachable commit --------------------
 _secret_expected_custody='{"checkout_uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262", "fetch_depth": 0, "permissions": {"contents": "read"}}'
-if printf '%s' "$_SECRET_SCAN_STEP" | grep -qE 'gitleaks git( |$)' \
+if printf '%s' "$_SECRET_SCAN_STEP" | grep -qE 'gitleaks git( |$)|"\$GITLEAKS_BIN" git( |$)' \
    && printf '%s' "$_SECRET_SCAN_STEP" | grep -q -- '--log-opts="--all"' \
    && [ "$_SECRET_CUSTODY" = "$_secret_expected_custody" ]; then
   ok "gitleaks scans all reachable history from a full, read-only pinned checkout"
@@ -193,7 +234,7 @@ else
   bad "pip-audit does NOT fail closed -- tool absence or incomplete project dependency collection could report green"
 fi
 
-if printf '%s' "$_SECRET_RUNS" | grep -qE '\-x /tmp/gitleaks|command -v gitleaks' \
+if printf '%s' "$_SECRET_RUNS" | grep -qE '\-x /tmp/gitleaks|command -v gitleaks|-x "\$GITLEAKS_BIN"' \
    && printf '%s' "$_SECRET_RUNS" | grep -qE 'exit 1'; then
   ok "gitleaks fails closed when the tool is missing"
 else

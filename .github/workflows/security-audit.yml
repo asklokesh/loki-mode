@@ -280,22 +280,30 @@ jobs:
         # similar finding in any other commit returns the scanner's default
         # nonzero exit and blocks this workflow and the release gate.
         #
+        # E-114: a pushed commit can ship a zero-rule .gitleaks.toml and
+        # disable this same scan for its own push (reproduced against the
+        # pre-push hook; the same mechanism applies here since the step used
+        # to run with no --config at all). The command shape -- refusing the
+        # job when the pushed range touches .gitleaks.toml, and scanning with
+        # the BASE commit's config (never the tip's) -- lives in
+        # scripts/security-audit-gitleaks.sh so
+        # tests/test-security-audit-config.sh can drive it locally against
+        # disposable scratch repos with the real pinned gitleaks binary.
+        #
         # `dir` is the working-tree subcommand in v8.30.0; the older
         # `detect --no-git` spelling no longer exists in this version.
+        env:
+          GITLEAKS_BIN: /tmp/gitleaks
+          # pull_request: the PR's base branch tip, not github.event.before --
+          # on a synchronize event `before` is the PREVIOUS PR push's head, so
+          # a zero-rule config from an earlier force-push in the same PR would
+          # otherwise become the trusted "base" config for this one.
+          GITLEAKS_BEFORE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          GITLEAKS_TIP: ${{ github.sha }}
+          GITLEAKS_REPORT: /tmp/gitleaks-report.json
         run: |
           set -euo pipefail
-          # FAIL CLOSED: an absent binary is not "no secrets found".
-          if [ ! -x /tmp/gitleaks ]; then
-            echo "FAIL: gitleaks is not installed -- secret scan did NOT run"
-            exit 1
-          fi
-          /tmp/gitleaks git . \
-            --log-opts="--all" \
-            --gitleaks-ignore-path .gitleaksignore \
-            --report-format json \
-            --report-path /tmp/gitleaks-report.json \
-            --redact \
-            --no-banner
+          bash scripts/security-audit-gitleaks.sh
 
       - name: Assert the secret scan completed cleanly
         # Defense in depth: the scanner already exits nonzero on an unmatched

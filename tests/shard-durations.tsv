@@ -663,3 +663,4 @@ loki modernize always routes to engine10 (M-08)	1
 Dependency inventory Latest/Bump self-consistency (DEP-01)	1
 Usage governor calibration and dedup (G-01)	2
 Usage governor statusLine logger (G-01)	1
+security-audit.yml gitleaks config isolation (refuse config change, base-config scan, gitleaksignore warning)	1
