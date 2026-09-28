@@ -19,6 +19,12 @@
 
 set -euo pipefail
 
+# GITLEAKS_CONFIG / GITLEAKS_CONFIG_TOML let gitleaks pick a config from the
+# environment, silently overriding the --config this hook computes from the
+# pushed tip's own .gitleaks.toml (E-99). A locally or CI-set value pointing
+# at a permissive config must never reach the scan.
+unset GITLEAKS_CONFIG GITLEAKS_CONFIG_TOML
+
 # --- Push-authority guard (S-152) -- runs BEFORE PRE_PUSH_SKIP, never skippable -
 # Incident 2026-09-27 18:35Z: an agent inside a .claude/worktrees/* worktree
 # committed and pushed 28926937 to origin main. Only the Release Manager / Chief
@@ -144,6 +150,36 @@ _resolve_gitleaks_bin() {
         _actual="$(shasum -a 256 "$_bin" | awk '{print $1}')"
     fi
     [[ "$_actual" == "$_recorded" ]] || return 0
+
+    # Hardcoded per-platform sha256 of the gitleaks v8.30.0 binary ITSELF
+    # (not the release tarball -- scripts/install-gitleaks.sh already pins
+    # that, independently). A sidecar match alone is not proof: a sidecar is
+    # just a file next to the binary, and whatever can overwrite the binary
+    # can overwrite its sidecar to match (E-99). This value lives only in
+    # this hook's own git history, verified 2026-09-28 by downloading each
+    # official v8.30.0 release asset and hashing the extracted binary (not
+    # the tarball -- that hash is the one already pinned in
+    # scripts/install-gitleaks.sh and .github/workflows/security-audit.yml).
+    local _bin_os _bin_arch _expected_bin_sha256
+    case "$(uname -s)" in
+        Darwin) _bin_os="darwin" ;;
+        Linux) _bin_os="linux" ;;
+        *) return 0 ;;
+    esac
+    case "$(uname -m)" in
+        arm64 | aarch64) _bin_arch="arm64" ;;
+        x86_64 | amd64) _bin_arch="x64" ;;
+        *) return 0 ;;
+    esac
+    case "${_bin_os}_${_bin_arch}" in
+        darwin_arm64) _expected_bin_sha256="095bc4be1624239f52ebb90ff91668d1d3e78e0f8c5286e2d981887905c27561" ;;
+        darwin_x64) _expected_bin_sha256="f478677e8858ec3129153dec6e3f8dab5b5f674c120245e7878f89582444d06f" ;;
+        linux_arm64) _expected_bin_sha256="3957ad3e168b6633307c1d8ea43bffa17557f825027504b13b574899212e635a" ;;
+        linux_x64) _expected_bin_sha256="8b6fd684fcd5b4ebe39b68abb072ce59e1063ce7ed4abd556157697845f1f088" ;;
+        *) return 0 ;;
+    esac
+    [[ "$_actual" == "$_expected_bin_sha256" ]] || return 0
+
     [[ "$("$_bin" version 2>/dev/null)" == "$GITLEAKS_VERSION" ]] || return 0
     _gitleaks_bin="$_bin"
 }
@@ -257,24 +293,6 @@ while read -r _lref _lsha _rref _rsha; do
     rm -f -- "$_commits_file"
     [[ ${#_commits[@]} -gt 0 ]] || continue
 
-    # --- does this push touch eval anywhere, in any commit? (r4) --------------
-    # Gates the .gitleaks.toml refusal below. Deliberately NOT the cheap
-    # base..tip union diff: a file added in commit 1 and deleted again in
-    # commit 2 of the SAME push is absent from base and absent from tip, so
-    # that union diff shows no change at all -- the exact fail-open r3 fixed
-    # for the secret scan itself, so it cannot be reused here. No
-    # --diff-filter=d either: a commit that only DELETES an eval file still
-    # counts as "touches eval" for this gate (unlike the scan loop below,
-    # which has nothing left to scan in that case).
-    _ref_touches_eval=0
-    for _csha in "${_commits[@]}"; do
-        if [[ -n "$(git diff-tree -r --no-commit-id --name-only -m --root "$_csha" \
-                -- eval/loki10/tasks/ eval/loki10/refdiff/ 2>/dev/null)" ]]; then
-            _ref_touches_eval=1
-            break
-        fi
-    done
-
     for _csha in "${_commits[@]}"; do
         _eval_ref_n=$((_eval_ref_n + 1))
 
@@ -302,15 +320,18 @@ while read -r _lref _lsha _rref _rsha; do
             # `paths = [".*"]` excludes every path a different way; a triple-
             # quoted `'''.+'''` regex carries no literal `.*` to grep for).
             # Gitleaks config is small and rare to touch legitimately -- gate
-            # on the human, not on guessing which configs are dangerous.
-            if [[ "$_ref_touches_eval" == "1" ]]; then
-                if [[ "${LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE:-0}" != "1" ]]; then
-                    echo "[pre-push] FAIL: .gitleaks.toml changed in an eval-touching push (commit ${_csha:0:12}, $_lref) -- it can silently weaken or disable secret scanning" >&2
-                    echo "[pre-push]   Set LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1 to push this anyway." >&2
-                    failures=$((failures + 1))
-                else
-                    echo "[pre-push]   LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1 set -- allowing the config change." >&2
-                fi
+            # on the human, not on guessing which configs are dangerous. Any
+            # push, not only one that also touches eval (E-99): a config
+            # change is dangerous on its own merits -- it changes what the
+            # NEXT eval-touching push, possibly weeks later, gets scanned
+            # with -- and gating it on this push's own eval diff let an
+            # eval-untouched push slip a weakened config in unreviewed.
+            if [[ "${LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE:-0}" != "1" ]]; then
+                echo "[pre-push] FAIL: .gitleaks.toml changed (commit ${_csha:0:12}, $_lref) -- it can silently weaken or disable secret scanning" >&2
+                echo "[pre-push]   Set LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1 to push this anyway." >&2
+                failures=$((failures + 1))
+            else
+                echo "[pre-push]   LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1 set -- allowing the config change." >&2
             fi
         fi
 
@@ -421,16 +442,26 @@ while read -r _lref _lsha _rref _rsha; do
             continue
         fi
 
-        # This COMMIT's own .gitleaksignore / .gitleaks.toml, not the tip's --
-        # kept outside $_ref_root/tree so neither is itself scanned. Absent
-        # on this commit: scan with an empty ignore file (errs strict, never
-        # open).
+        # The PUSHED TIP's ($_lsha) .gitleaksignore / .gitleaks.toml, not
+        # each commit's own (E-86 round-4 review C1, E-99 fix). CI's git-log
+        # gitleaks scan applies ONE ignore file -- the tip's -- to the whole
+        # pushed range; scanning each older commit with its OWN, possibly
+        # pre-dated, ignore file is a different (looser) check than CI's and
+        # can refuse a push CI would pass (an already-reviewed false
+        # positive whose .gitleaksignore entry landed after the flagged
+        # commit, carried in unchanged by a later merge) as well as pass a
+        # push CI would refuse (a secret + its own suppressing line added in
+        # commit 1 and the line removed again in commit 2 of the same push:
+        # scanning commit 1 with commit 1's own ignore file never sees that
+        # the line was self-suppressing and short-lived). Kept outside
+        # $_ref_root/tree so neither is itself scanned. Absent on the tip:
+        # scan with an empty ignore file (errs strict, never open).
         _ignore_file="$_ref_root/.gitleaksignore"
-        git show "$_csha:.gitleaksignore" > "$_ignore_file" 2>/dev/null || : > "$_ignore_file"
+        git show "$_lsha:.gitleaksignore" > "$_ignore_file" 2>/dev/null || : > "$_ignore_file"
 
         _config_file="$_ref_root/.gitleaks.toml"
         _config_arg=()
-        if git show "$_csha:.gitleaks.toml" > "$_config_file" 2>/dev/null; then
+        if git show "$_lsha:.gitleaks.toml" > "$_config_file" 2>/dev/null; then
             _config_arg=(--config "$_config_file")
         fi
 
