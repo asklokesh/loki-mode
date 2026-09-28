@@ -66,6 +66,15 @@ jobs:
           # Rule of Two: this job holds a write token or publish secret, so it
           # never restores a cache an issue-triggered job could have written.
           no-cache: true
+      # engine10 wall.test.ts runs real pytest through a .venv shim (S41-16,
+      # D42 (3)); the bare runner python3 has no pytest. No pip cache here
+      # (Rule of Two above). v10.5.4's gate went red on exactly this.
+      - name: Setup Python (pytest for the v10 Wall tests)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pytest
+        run: python3 -m pip install pytest
       - name: Bun typecheck + test (protect published loki-ts dist)
         working-directory: loki-ts
         run: |
