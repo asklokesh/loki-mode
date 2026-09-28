@@ -23,10 +23,17 @@
 #   blocker     pass, plus a regular file named tests (blocks tests/hidden_test.sh)
 #   chmodafter  pass, then make STUB_CHMOD_FILE unreadable
 #   backdate    pass, then rewrite the remote push log to a time before the run
+#   alreadydone (EV-13) print a claims_no_change_needed-matching line, no
+#               changes, no push -- what a correct expected_outcome:
+#               no_change_needed run looks like on raw-claude/legacy
+#   dirtynoop   (EV-13) fix greet.sh but never commit or push it: a source
+#               diff left in the working tree with no PR
 #   check       only run the hidden-file leak check
 # STUB_V10_MARKER=1|noevents|stale|oldpath|badfield writes the v10 engine
 # marker (and events): oldpath uses the superseded .loki/events/<id>.jsonl,
 # badfield points the marker's events field outside the contract path.
+# STUB_V10_VERDICT (EV-13, with STUB_V10_MARKER set): also writes this run's
+# receipt.json with the given "verdict" field.
 # STUB_LOKI_COST=estimate|provider writes one loki efficiency record.
 # Every mode first fails loudly if any hidden test file is visible.
 set -uo pipefail
@@ -64,6 +71,10 @@ case "${STUB_V10_MARKER:-0}" in
         esac
         if [ "$STUB_V10_MARKER" = stale ]; then
             touch -t 200001010000 .loki/runs/stub-run/events.jsonl
+        fi
+        if [ -n "${STUB_V10_VERDICT:-}" ]; then
+            printf '{"schema": "loki.v10.receipt/1", "verdict": "%s"}\n' "$STUB_V10_VERDICT" \
+                > .loki/runs/stub-run/receipt.json
         fi
         ;;
 esac
@@ -162,6 +173,14 @@ case "${STUB_MODE:-noop}" in
             printf '%s\n' "$sp" > "$STUB_ORPHAN_PIDFILE"
             [ -n "${STUB_ORPHAN_DECOY_PID:-}" ] && printf '%s\n-1\n' "$STUB_ORPHAN_DECOY_PID" >> "$STUB_ORPHAN_PIDFILE"
         fi
+        ;;
+    alreadydone)
+        echo "the requested feature already exists; no changes needed"
+        ;;
+    dirtynoop)
+        # An untracked file, not fix_greet: v-nochange's seed already has the
+        # fixed greet.sh, so re-writing the same bytes would leave no diff.
+        echo "todo: nothing to change" > .stub-scratch.txt
         ;;
     noop | check) ;;
     *) echo "unknown STUB_MODE" >&2; exit 2 ;;

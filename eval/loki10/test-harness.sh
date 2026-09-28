@@ -49,6 +49,13 @@
 #  14. (E-52) LOKI_TS_ENTRY and an allowlisted LOKI_E10_* knob reach the v10
 #      arm env; a non-allowlisted LOKI_E10_* knob and a GH_TOKEN canary do
 #      not; the legacy arm gets neither knob
+#  15. (EV-13) expected_outcome=no_change_needed: badoutcome value rejected
+#      by the validator; a hidden test failing at repo.ref -> task_invalid
+#      (inverted from the normal rule); completed only with no PR, no source
+#      diff and the arm's own evidence (v10 receipt verdict, or the
+#      raw-claude/legacy textual claim) -- a PR, a dirty diff, missing
+#      evidence, a wrong v10 verdict or a failed regression check each alone
+#      block completion, checked for v10, raw-claude and legacy
 #===============================================================================
 set -u
 
@@ -122,6 +129,13 @@ seed_task v-blocked-base fx-greet "t['hidden']['files'] = ['tests/hidden_test.sh
 mkdir -p "$TASKS/v-blocked-base/hidden/tests" && mv "$TASKS/v-blocked-base/hidden/hidden_test.sh" "$TASKS/v-blocked-base/hidden/tests/"
 seed_task v-chmod fx-greet "" ":"
 seed_task v-baseline-pass fx-greet "t['hidden']['run'] = 'echo \"\$LOKI_EVAL_NONCE\"'" ":"
+# EV-13: expected_outcome=no_change_needed. v-nochange's seed already has the
+# fix (greet.sh prints "hello"), so the hidden test is a regression check and
+# passes at repo.ref. v-nochange-badbase reuses fx-greet's unfixed seed, so
+# the hidden test fails at repo.ref -- invalid for this expected outcome.
+seed_task v-nochange fx-greet "t['expected_outcome'] = 'no_change_needed'" \
+    'printf "#!/usr/bin/env bash\ngreet() { echo hello; }\n" > greet.sh'
+seed_task v-nochange-badbase fx-greet "t['expected_outcome'] = 'no_change_needed'" ":"
 
 # A pytest stand-in: "skip" mode reports only skips with exit 0 (a conftest
 # that skips everything); otherwise it runs the real hidden script.
@@ -163,6 +177,7 @@ bad_case dotdot "t['hidden']['files']=['../../etc/passwd']"
 bad_case abspath "t['hidden']['files']=['/etc/passwd']"
 bad_case idmismatch "t['id']='other'"
 bad_case norun "del t['hidden']['run']"
+bad_case badoutcome "t['expected_outcome']='built_it'"
 
 # ---- 2. leak check positive control
 mkdir -p "$T/leak" && touch "$T/leak/hidden_test.sh"
@@ -622,6 +637,72 @@ LOKI_TS_ENTRY="/fake/dist/loki.js" LOKI_E10_PLAN="plan-value" GH_TOKEN="$GH_CANA
 got="$(grep -h '^ENV-CHECK3:' "$R"/logs/*/arm_stderr.log)"
 [ "$got" = "ENV-CHECK3: entry=unset plan=unset task_text=unset gh=" ] \
     && pass "E-52: legacy arm gets neither LOKI_TS_ENTRY nor LOKI_E10_PLAN" || fail "E-52: legacy ENV-CHECK3: got '$got'"
+
+# ---- 15. (EV-13) expected_outcome=no_change_needed
+R="$T/out-nc-badbase"
+STUB_MODE=noop RUN --arm raw-claude --task v-nochange-badbase --out "$R" >/dev/null 2>&1
+[ "$(row "$R/results.jsonl" status)" = '"task_invalid"' ] \
+    && pass "EV-13: hidden test failing at repo.ref -> task_invalid for no_change_needed" \
+    || fail "EV-13: badbase row: $(tail -1 "$R/results.jsonl")"
+
+# raw-claude and legacy: same textual-evidence rule, exercised on both arms.
+for arm in raw-claude legacy; do
+    R="$T/out-nc-$arm-pass"
+    STUB_MODE=alreadydone RUN --arm "$arm" --task v-nochange --out "$R" >/dev/null 2>&1
+    J="$R/results.jsonl"
+    [ "$(row "$J" completed)" = true ] && [ "$(row "$J" pr_opened)" = false ] \
+        && [ "$(row "$J" no_source_diff)" = true ] && [ "$(row "$J" no_change_evidence)" = true ] \
+        && [ "$(row "$J" hidden_pass)" = true ] \
+        && pass "EV-13 $arm: no diff + claim text + regression pass -> completed" \
+        || fail "EV-13 $arm pass row: $(tail -1 "$J")"
+
+    R="$T/out-nc-$arm-noevidence"
+    STUB_MODE=noop RUN --arm "$arm" --task v-nochange --out "$R" >/dev/null 2>&1
+    J="$R/results.jsonl"
+    [ "$(row "$J" no_change_evidence)" = false ] && [ "$(row "$J" completed)" = false ] \
+        && pass "EV-13 $arm: no claim text -> not completed" || fail "EV-13 $arm noevidence row: $(tail -1 "$J")"
+
+    R="$T/out-nc-$arm-dirty"
+    STUB_MODE=dirtynoop RUN --arm "$arm" --task v-nochange --out "$R" >/dev/null 2>&1
+    J="$R/results.jsonl"
+    [ "$(row "$J" no_source_diff)" = false ] && [ "$(row "$J" completed)" = false ] \
+        && pass "EV-13 $arm: uncommitted source diff, no push -> not completed" \
+        || fail "EV-13 $arm dirty row: $(tail -1 "$J")"
+
+    R="$T/out-nc-$arm-pr"
+    STUB_MODE=nofix RUN --arm "$arm" --task v-nochange --out "$R" >/dev/null 2>&1
+    J="$R/results.jsonl"
+    [ "$(row "$J" pr_opened)" = true ] && [ "$(row "$J" completed)" = false ] \
+        && pass "EV-13 $arm: a pushed branch is never completed for no_change_needed" \
+        || fail "EV-13 $arm pr row: $(tail -1 "$J")"
+done
+
+# v10: evidence comes from the receipt verdict, not text.
+R="$T/out-nc-v10-pass"
+STUB_MODE=noop STUB_V10_MARKER=1 STUB_V10_VERDICT=ALREADY_SATISFIED RUN --arm v10 --task v-nochange --out "$R" >/dev/null 2>&1
+J="$R/results.jsonl"
+[ "$(row "$J" completed)" = true ] && [ "$(row "$J" no_change_evidence)" = true ] \
+    && pass "EV-13 v10: ALREADY_SATISFIED receipt + no diff -> completed" || fail "EV-13 v10 pass row: $(tail -1 "$J")"
+
+R="$T/out-nc-v10-wrongverdict"
+STUB_MODE=noop STUB_V10_MARKER=1 STUB_V10_VERDICT=VERIFIED RUN --arm v10 --task v-nochange --out "$R" >/dev/null 2>&1
+J="$R/results.jsonl"
+[ "$(row "$J" no_change_evidence)" = false ] && [ "$(row "$J" completed)" = false ] \
+    && pass "EV-13 v10: a non-ALREADY_SATISFIED verdict -> not completed" || fail "EV-13 v10 wrongverdict row: $(tail -1 "$J")"
+
+R="$T/out-nc-v10-dirty"
+STUB_MODE=dirtynoop STUB_V10_MARKER=1 STUB_V10_VERDICT=ALREADY_SATISFIED RUN --arm v10 --task v-nochange --out "$R" >/dev/null 2>&1
+J="$R/results.jsonl"
+[ "$(row "$J" no_source_diff)" = false ] && [ "$(row "$J" completed)" = false ] \
+    && pass "EV-13 v10: ALREADY_SATISFIED verdict but a source diff -> not completed" \
+    || fail "EV-13 v10 dirty row: $(tail -1 "$J")"
+
+R="$T/out-nc-v10-pr"
+STUB_MODE=nofix STUB_V10_MARKER=1 STUB_V10_VERDICT=ALREADY_SATISFIED RUN --arm v10 --task v-nochange --out "$R" >/dev/null 2>&1
+J="$R/results.jsonl"
+[ "$(row "$J" pr_opened)" = true ] && [ "$(row "$J" completed)" = false ] \
+    && pass "EV-13 v10: a pushed branch is never completed even with ALREADY_SATISFIED" \
+    || fail "EV-13 v10 pr row: $(tail -1 "$J")"
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
