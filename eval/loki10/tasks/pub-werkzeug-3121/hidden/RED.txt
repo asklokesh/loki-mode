@@ -1,0 +1,185 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________________________ test_merge_slashes_match ___________________________
+
+    def test_merge_slashes_match():
+        url_map = r.Map(
+            [
+                r.Rule("/no/tail", endpoint="no_tail"),
+                r.Rule("/yes/tail/", endpoint="yes_tail"),
+                r.Rule("/with/<path:path>", endpoint="with_path"),
+                r.Rule("/no//merge", endpoint="no_merge", merge_slashes=False),
+                r.Rule("/no/merging", endpoint="no_merging", merge_slashes=False),
+            ]
+        )
+        adapter = url_map.bind("localhost", "/")
+    
+        with pytest.raises(r.RequestRedirect) as excinfo:
+            adapter.match("/no//tail")
+    
+        assert excinfo.value.new_url.endswith("/no/tail")
+    
+        with pytest.raises(r.RequestRedirect) as excinfo:
+            adapter.match("/yes//tail")
+    
+        assert excinfo.value.new_url.endswith("/yes/tail/")
+    
+        with pytest.raises(r.RequestRedirect) as excinfo:
+            adapter.match("/yes/tail//")
+    
+        assert excinfo.value.new_url.endswith("/yes/tail/")
+    
+        with pytest.raises(r.RequestRedirect):
+>           adapter.match("//yes///tail////")
+
+tests/test_routing.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <werkzeug.routing.map.MapAdapter object at 0x108fe4830>
+path_info = '//yes///tail////', method = 'GET', return_rule = False
+query_args = {}, websocket = False
+
+    def match(
+        self,
+        path_info: str | None = None,
+        method: str | None = None,
+        return_rule: bool = False,
+        query_args: t.Mapping[str, t.Any] | str | None = None,
+        websocket: bool | None = None,
+    ) -> tuple[t.Any | Rule, t.Mapping[str, t.Any]]:
+        """The usage is simple: you just pass the match method the current
+        path info as well as the method (which defaults to `GET`).  The
+        following things can then happen:
+    
+        - you receive a `NotFound` exception that indicates that no URL is
+          matching.  A `NotFound` exception is also a WSGI application you
+          can call to get a default page not found page (happens to be the
+          same object as `werkzeug.exceptions.NotFound`)
+    
+        - you receive a `MethodNotAllowed` exception that indicates that there
+          is a match for this URL but not for the current request method.
+          This is useful for RESTful applications.
+    
+        - you receive a `RequestRedirect` exception with a `new_url`
+          attribute.  This exception is used to notify you about a request
+          Werkzeug requests from your WSGI application.  This is for example the
+          case if you request ``/foo`` although the correct URL is ``/foo/``
+          You can use the `RequestRedirect` instance as response-like object
+          similar to all other subclasses of `HTTPException`.
+    
+        - you receive a ``WebsocketMismatch`` exception if the only
+          match is a WebSocket rule but the bind is an HTTP request, or
+          if the match is an HTTP rule but the bind is a WebSocket
+          request.
+    
+        - you get a tuple in the form ``(endpoint, arguments)`` if there is
+          a match (unless `return_rule` is True, in which case you get a tuple
+          in the form ``(rule, arguments)``)
+    
+        If the path info is not passed to the match method the default path
+        info of the map is used (defaults to the root URL if not defined
+        explicitly).
+    
+        All of the exceptions raised are subclasses of `HTTPException` so they
+        can be used as WSGI responses. They will all render generic error or
+        redirect pages.
+    
+        Here is a small example for matching:
+    
+        >>> m = Map([
+        ...     Rule('/', endpoint='index'),
+        ...     Rule('/downloads/', endpoint='downloads/index'),
+        ...     Rule('/downloads/<int:id>', endpoint='downloads/show')
+        ... ])
+        >>> urls = m.bind("example.com", "/")
+        >>> urls.match("/", "GET")
+        ('index', {})
+        >>> urls.match("/downloads/42")
+        ('downloads/show', {'id': 42})
+    
+        And here is what happens on redirect and missing URLs:
+    
+        >>> urls.match("/downloads")
+        Traceback (most recent call last):
+          ...
+        RequestRedirect: http://example.com/downloads/
+        >>> urls.match("/missing")
+        Traceback (most recent call last):
+          ...
+        NotFound: 404 Not Found
+    
+        :param path_info: the path info to use for matching.  Overrides the
+                          path info specified on binding.
+        :param method: the HTTP method used for matching.  Overrides the
+                       method specified on binding.
+        :param return_rule: return the rule that matched instead of just the
+                            endpoint (defaults to `False`).
+        :param query_args: optional query arguments that are used for
+                           automatic redirects as string or dictionary.  It's
+                           currently not possible to use the query arguments
+                           for URL matching.
+        :param websocket: Match WebSocket instead of HTTP requests. A
+            websocket request has a ``ws`` or ``wss``
+            :attr:`url_scheme`. This overrides that detection.
+    
+        .. versionadded:: 1.0
+            Added ``websocket``.
+    
+        .. versionchanged:: 0.8
+            ``query_args`` can be a string.
+    
+        .. versionadded:: 0.7
+            Added ``query_args``.
+    
+        .. versionadded:: 0.6
+            Added ``return_rule``.
+        """
+        self.map.update()
+        if path_info is None:
+            path_info = self.path_info
+        if query_args is None:
+            query_args = self.query_args or {}
+        method = (method or self.default_method).upper()
+    
+        if websocket is None:
+            websocket = self.websocket
+    
+        domain_part = self.server_name
+    
+        if not self.map.host_matching and self.subdomain is not None:
+            domain_part = self.subdomain
+    
+        path_part = f"/{path_info.lstrip('/')}" if path_info else ""
+    
+        try:
+            result = self.map._matcher.match(domain_part, path_part, method, websocket)
+        except RequestPath as e:
+            # safe = https://url.spec.whatwg.org/#url-path-segment-string
+            new_path = quote(e.path_info, safe="!$&'()*+,/:;=@")
+            raise RequestRedirect(
+                self.make_redirect_url(new_path, query_args)
+            ) from None
+        except RequestAliasRedirect as e:
+            raise RequestRedirect(
+                self.make_alias_redirect_url(
+                    f"{domain_part}|{path_part}",
+                    e.endpoint,
+                    e.matched_values,
+                    method,
+                    query_args,
+                )
+            ) from None
+        except NoMatch as e:
+            if e.have_match_for:
+                raise MethodNotAllowed(valid_methods=list(e.have_match_for)) from None
+    
+            if e.websocket_mismatch:
+                raise WebsocketMismatch() from None
+    
+>           raise NotFound() from None
+E           werkzeug.exceptions.NotFound: 404 Not Found: The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.
+
+src/werkzeug/routing/map.py:629: NotFound
+=========================== short test summary info ============================
+FAILED tests/test_routing.py::test_merge_slashes_match - werkzeug.exceptions....
+1 failed in 0.04s
