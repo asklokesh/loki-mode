@@ -1,7 +1,8 @@
 // E-16: Plan (ENGINE.md 4). A fast-tier session sees up to 8 relevant files (keyword overlap with the repo map) and writes at most 10 lines to <runDir>/plan-output.txt; the engine reads and truncates it (missing/unreadable is an empty plan, never a crash).
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RepoMap } from "../repomap.ts";
+import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
 import { cascadeEnabled, hasRelevantTests, loadRepoMap, planMode, sizeTask, smallTaskPath, wallEnabled, wallModel } from "../sizing.ts";
 import type { RunContext, Stage, StageResult, TestMap } from "../types.ts";
 import { loadTaskText } from "./wall.ts";
@@ -80,15 +81,31 @@ export const planStage: Stage = {
     const relevantFiles = selectRelevantFiles(task, repoMap);
     const outputPath = planOutputPath(ctx.runDir);
 
+    const iterationId = `${ctx.runId}-plan`;
     const session = await ctx.sessions.run({
       stage: "plan",
       brief: buildPlanBrief(task, relevantFiles, outputPath),
       tier: "fast",
-      iterationId: `${ctx.runId}-plan`,
+      iterationId,
       limitS: planStage.limitS,
       signal,
       cwd: ctx.repoDir,
     });
+
+    // E-61: a non-killed error exit fails this stage too (never silently read as an
+    // empty-but-successful plan). mustJump (machine.ts) still lets the flow continue
+    // past a failed plan: implement falls back to planning the change itself.
+    if (!session.killed && session.exit !== 0) {
+      const stderrTail = (session as unknown as { stderrTail?: string }).stderrTail ?? "";
+      mkdirSync(ctx.runDir, { recursive: true });
+      const stderrPath = join(ctx.runDir, `${iterationId}.stderr.log`);
+      writeFileSync(stderrPath, stderrTail, "utf8");
+      return {
+        status: "failed",
+        reason: classifyExitCause(session.exit, false),
+        data: { iteration_ids: [iterationId], duration_s: session.durationS, stderr_path: stderrPath },
+      };
+    }
 
     const rawPlan = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "";
     const plan = truncatePlan(rawPlan);
@@ -98,7 +115,7 @@ export const planStage: Stage = {
       data: {
         plan,
         relevant_files: relevantFiles,
-        iteration_ids: [`${ctx.runId}-plan`],
+        iteration_ids: [iterationId],
         duration_s: session.durationS,
       },
     };
