@@ -99,6 +99,35 @@
 #       LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1, and passes with it set
 #   21. a single commit with 2,000 changed eval files completes (chunked
 #       `git archive`, not one `Argument list too long` call)
+#
+# E-99 rework (E-86 round-4 review C1, real production incident: a release
+# train refused at 18:26Z on an already-reviewed false positive that a
+# MERGED OLDER branch commit's own, pre-dated .gitleaksignore did not yet
+# allowlist, while CI -- which scans the whole pushed range against ONE
+# ignore file, the tip's -- passed): every commit is now scanned against the
+# PUSHED TIP's .gitleaksignore / .gitleaks.toml (`git show "$_lsha:..."`),
+# not each commit's own. GITLEAKS_CONFIG / GITLEAKS_CONFIG_TOML are unset
+# before invoking gitleaks. The .gitleaks.toml refusal is no longer scoped
+# to an eval-touching push. The pinned binary is now also checked against a
+# sha256 hardcoded per-platform in this hook's own git history, not only its
+# sidecar. Cases 22, 23, 26 and 11 are updated to match (behavior legitimately
+# changed); 29 and 30 are new:
+#   22. a .gitleaks.toml-only change (no eval touch) is NOW refused too,
+#       same as a change that also touches eval (was: allowed -- r4 scoped
+#       the refusal to eval-touching pushes; a config change is dangerous on
+#       its own merits, independent of what else this push touches)
+#   26. a .gitleaksignore line added in commit 1 and removed again in commit
+#       2 of the SAME push is NOW refused (was: passed) -- commit 1's secret
+#       is scanned against the TIP's .gitleaksignore, which no longer has
+#       the suppressing line, matching what CI's git-log-mode scan would find
+#   11. repurposed: a binary whose sha256 differs from the hardcoded
+#       per-platform value never runs, even with a self-computed sidecar
+#       that matches it byte-for-byte (a sidecar match alone was the old bar)
+#   29. the production incident itself, reproduced: a merge bringing in an
+#       old branch commit whose own .gitleaksignore lacks an entry passes
+#       when the pushed TIP's .gitleaksignore has it
+#   30. GITLEAKS_CONFIG pointing at a permissive config (outside the repo)
+#       is ignored -- the hook unsets it before invoking gitleaks
 
 set -uo pipefail
 
@@ -570,18 +599,27 @@ else
     sk "the working-tree copy scanned was genuinely different from the pushed commit (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
-# --- case 11: a gitleaks exit code other than 0 or 1 reports as a scanner ----
-# failure, not a finding, and still refuses. Real remote push against a stub
-# HOME so the message logic is exercised without depending on the rule
-# engine.
+# --- case 11 (E-99): a binary whose sha256 differs from the hardcoded ------
+# per-platform value never runs, even with a SELF-COMPUTED sidecar that
+# matches it byte-for-byte. A sidecar is just a file sitting next to the
+# binary -- whatever can overwrite gitleaks-8.30.0 can overwrite
+# gitleaks-8.30.0.sha256 to match, so a sidecar match alone was never proof
+# of which binary is really there (this is what the pre-E-99 hook trusted:
+# case 11 used to be "a stub with a matching sidecar reports its own exit
+# code", which a swapped-binary attack would have exploited exactly the same
+# way). _resolve_gitleaks_bin now also checks the binary's own bytes against
+# a value hardcoded in this hook's git history. The stub writes a marker if
+# it is executed at all, proving "never runs", not merely "output ignored".
 D="$SCRATCH/c11"; BARE="$SCRATCH/c11.git"; setup_bare "$BARE"; setup_push_clone "$D" "$BARE"
 _stub_home="$SCRATCH/c11-home"
 _stub_bin_dir="$_stub_home/.local/share/loki/bin"
 mkdir -p "$_stub_bin_dir"
 _stub_bin="$_stub_bin_dir/gitleaks-${GITLEAKS_VERSION}"
-cat > "$_stub_bin" <<'STUB'
+_stub_marker="$SCRATCH/c11-executed.txt"
+cat > "$_stub_bin" <<STUB
 #!/usr/bin/env bash
-case "$1" in
+echo "EXECUTED" > "$_stub_marker"
+case "\$1" in
     version) echo "8.30.0" ;;
     *) exit 2 ;;
 esac
@@ -594,11 +632,13 @@ g "$D" add eval/loki10/tasks/fake-task/task.json >/dev/null 2>&1
 g "$D" commit -q -m "add fake task" --no-verify >/dev/null 2>&1
 rc="$(real_push "$D" "HOME=$_stub_home")"
 if [[ "$rc" == "RC=0" ]]; then
-    ko "gitleaks exit code other than 0/1 is reported as a scanner failure" "push succeeded; out: $(cat "$D/push.out")"
-elif grep -q "gitleaks failed (exit 2)" "$D/push.out" && ! grep -q "found a possible secret" "$D/push.out"; then
-    ok "gitleaks exit code other than 0/1 is reported as a scanner failure"
+    ko "a binary whose sha256 differs from the hardcoded value never runs" "push succeeded; out: $(cat "$D/push.out")"
+elif [[ -f "$_stub_marker" ]]; then
+    ko "a binary whose sha256 differs from the hardcoded value never runs" "stub EXECUTED despite the hash mismatch; out: $(cat "$D/push.out")"
+elif grep -q "gitleaks v${GITLEAKS_VERSION} is not installed" "$D/push.out"; then
+    ok "a binary whose sha256 differs from the hardcoded value never runs"
 else
-    ko "gitleaks exit code other than 0/1 is reported as a scanner failure" "refused but wrong message: $(cat "$D/push.out")"
+    ko "a binary whose sha256 differs from the hardcoded value never runs" "refused but wrong message: $(cat "$D/push.out")"
 fi
 
 # --- case 12: a mismatched sidecar checksum is treated as not installed -----
@@ -835,13 +875,11 @@ else
     ko "the WARNING lists the added .gitleaksignore line" "$(cat "$D/push.out")"
 fi
 
-# --- case 20: a .gitleaks.toml change in an eval-touching push is refused ----
-# unless overridden. r4: the gate is now "any change to .gitleaks.toml in a
-# push that touches eval", not a pattern match against known-bad config
-# shapes -- so this fixture's push must itself touch an eval fixture (a
-# push that ONLY changes .gitleaks.toml, touching no eval file, is case 22
-# below, and is allowed without the override: the scan that config could
-# have weakened does not even run on that push).
+# --- case 20: a .gitleaks.toml change is refused unless overridden -----------
+# E-99: the gate is now "any change to .gitleaks.toml, in any push", not
+# scoped to a push that also touches eval (r4's scoping let an eval-untouched
+# push slip a weakened config in unreviewed, to be inherited by a LATER
+# eval-touching push -- case 22 below now covers exactly that, flipped).
 #
 # The override sub-case needs the real pinned gitleaks v8.30.0: with
 # LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1 set, the config-change gate no longer
@@ -868,7 +906,7 @@ TOML
     rc="$(real_push "$D")"
     if [[ "$rc" == "RC=0" ]]; then
         ko ".gitleaks.toml global allowlist is refused without the override" "push succeeded; out: $(cat "$D/push.out")"
-    elif grep -q "changed in an eval-touching push" "$D/push.out" && grep -q "LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE" "$D/push.out"; then
+    elif grep -q "\.gitleaks\.toml changed" "$D/push.out" && grep -q "LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE" "$D/push.out"; then
         ok ".gitleaks.toml global allowlist is refused without the override"
     else
         ko ".gitleaks.toml global allowlist is refused without the override" "refused but wrong message: $(cat "$D/push.out")"
@@ -884,9 +922,12 @@ else
     sk ".gitleaks.toml global allowlist passes with LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1 (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
-# --- case 22 (r4): a .gitleaks.toml-only change (no eval touch) is allowed --
-# without the override -- proves the gate is scoped to eval-touching pushes,
-# not every .gitleaks.toml change ever.
+# --- case 22 (E-99): a .gitleaks.toml-only change (no eval touch) is --------
+# ALSO refused without the override. r4 scoped this refusal to a push that
+# also touches eval; that let a config change ride in on an eval-untouched
+# push, unreviewed, to be silently inherited by whatever eval-touching push
+# came next -- a config change is dangerous on its own merits, independent
+# of what else this particular push happens to touch.
 D="$SCRATCH/c22"; BARE="$SCRATCH/c22.git"; setup_bare "$BARE"; setup_push_clone "$D" "$BARE"
 cat > "$D/.gitleaks.toml" <<'TOML'
 title = "unrelated config change"
@@ -895,14 +936,21 @@ g "$D" add .gitleaks.toml >/dev/null 2>&1
 g "$D" commit -q -m "touch gitleaks config, no eval change" --no-verify >/dev/null 2>&1
 rc="$(real_push "$D")"
 if [[ "$rc" == "RC=0" ]]; then
-    ok "a .gitleaks.toml change in a push that never touches eval is allowed without the override"
+    ko "a .gitleaks.toml change in a push that never touches eval is refused too" "push succeeded; out: $(cat "$D/push.out")"
+elif grep -q "\.gitleaks\.toml changed" "$D/push.out" && grep -q "LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE" "$D/push.out"; then
+    ok "a .gitleaks.toml change in a push that never touches eval is refused too"
 else
-    ko "a .gitleaks.toml change in a push that never touches eval is allowed without the override" "$rc; out: $(cat "$D/push.out")"
+    ko "a .gitleaks.toml change in a push that never touches eval is refused too" "refused but wrong message: $(cat "$D/push.out")"
+fi
+rc="$(real_push "$D" "LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1")"
+if [[ "$rc" == "RC=0" ]]; then
+    ok "a .gitleaks.toml change in a push that never touches eval passes with the override"
+else
+    ko "a .gitleaks.toml change in a push that never touches eval passes with the override" "$rc; out: $(cat "$D/push.out")"
 fi
 
 # --- case 23 (r4): title-only / paths=[".*"] toml, PREVIOUSLY evaded the -----
-# old '.*' regexes pattern match, is now refused too (any change, eval-
-# touching push).
+# old '.*' regexes pattern match, is refused too (any change).
 D="$SCRATCH/c23"; BARE="$SCRATCH/c23.git"; setup_bare "$BARE"; setup_push_clone "$D" "$BARE"
 cat > "$D/.gitleaks.toml" <<'TOML'
 title = "no rules at all"
@@ -914,7 +962,7 @@ g "$D" commit -q -m "title-only config (old rule evasion), eval touch" --no-veri
 rc="$(real_push "$D")"
 if [[ "$rc" == "RC=0" ]]; then
     ko "a title-only .gitleaks.toml in an eval-touching push is refused (evasion closed)" "push succeeded (old '.*' pattern match would have missed this); out: $(cat "$D/push.out")"
-elif grep -q "changed in an eval-touching push" "$D/push.out"; then
+elif grep -q "\.gitleaks\.toml changed" "$D/push.out"; then
     ok "a title-only .gitleaks.toml in an eval-touching push is refused (evasion closed)"
 else
     ko "a title-only .gitleaks.toml in an eval-touching push is refused (evasion closed)" "refused but wrong message: $(cat "$D/push.out")"
@@ -1006,16 +1054,20 @@ else
     sk "case-colliding eval paths in one commit are refused (B3) (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
-# --- case 26 (r4 concern): a .gitleaksignore line added in commit 1 and -----
-# removed again in commit 2 of the SAME push still prints the WARNING. r3's
-# base..tip union diff of .gitleaksignore showed NO net change here (added
-# then removed cancels out), so a human reviewing the push output never saw
-# that a self-suppression briefly existed. The push itself correctly still
-# SUCCEEDS: commit 1 is scanned with commit 1's own .gitleaksignore (same
-# design as case 2 -- a pre-acknowledged finding co-committed with its
-# allowlist entry is not a fail-open, it is the documented way to land a
-# known false positive). What r3 actually missed is narrower: the WARNING
-# that lets a human notice the pattern at all.
+# --- case 26 (E-99): a .gitleaksignore line added in commit 1 and removed ---
+# again in commit 2 of the SAME push is now REFUSED, and still prints the
+# WARNING. r3's base..tip union diff of .gitleaksignore showed NO net change
+# here (added then removed cancels out), so a human reviewing the push
+# output never saw that a self-suppression briefly existed; r4 fixed the
+# WARNING but the push itself still SUCCEEDED (commit 1 was scanned with
+# commit 1's own .gitleaksignore, which still had the line at that point).
+# E-86 round-4 review C1: scanning every commit with the PUSHED TIP's
+# .gitleaksignore instead closes this too, for free -- the tip's
+# .gitleaksignore no longer has the line, so commit 1's secret is scanned
+# against an ignore file that does not suppress it, matching what CI's
+# git-log-mode scan (one ignore file, the tip's, for the whole push) would
+# find. This is also the CI-parity property E-99 exists for: a local push
+# that CI would flag must not go green locally.
 if [[ "$_have_real_gitleaks" == "1" ]]; then
     D="$SCRATCH/c26"; BARE="$SCRATCH/c26.git"; setup_bare "$BARE"; setup_push_clone "$D" "$BARE"
     mkdir -p "$D/eval/loki10/tasks/fake-task"
@@ -1028,10 +1080,13 @@ if [[ "$_have_real_gitleaks" == "1" ]]; then
     g "$D" add .gitleaksignore >/dev/null 2>&1
     g "$D" commit -q -m "remove the ignore line again" --no-verify >/dev/null 2>&1
     rc="$(real_push "$D")"
-    if [[ "$rc" != "RC=0" ]]; then
-        ko "a push adding then removing a .gitleaksignore line in the same push still passes" "$rc; out: $(cat "$D/push.out")"
+    if [[ "$rc" == "RC=0" ]]; then
+        ko "a self-suppressing .gitleaksignore line added and removed within one push is refused" "push succeeded (fail-open); out: $(cat "$D/push.out")"
+    elif grep -q "sourcegraph-access-token" "$D/push.out" && grep -q "gitleaks found a possible secret" "$D/push.out" \
+       && grep -qF "commit ${_add_sha}" "$D/push.out"; then
+        ok "a self-suppressing .gitleaksignore line added and removed within one push is refused"
     else
-        ok "a push adding then removing a .gitleaksignore line in the same push still passes"
+        ko "a self-suppressing .gitleaksignore line added and removed within one push is refused" "refused but not on the finding/commit: $(cat "$D/push.out")"
     fi
     if grep -q "WARNING: .gitleaksignore gained line" "$D/push.out" && grep -qF "commit ${_add_sha}" "$D/push.out" \
        && grep -qF "sourcegraph-access-token:5" "$D/push.out"; then
@@ -1040,7 +1095,7 @@ if [[ "$_have_real_gitleaks" == "1" ]]; then
         ko "the per-commit WARNING fires even though base..tip shows no net .gitleaksignore change" "$(cat "$D/push.out")"
     fi
 else
-    sk "a push adding then removing a .gitleaksignore line in the same push still passes (no pinned gitleaks v${GITLEAKS_VERSION})"
+    sk "a self-suppressing .gitleaksignore line added and removed within one push is refused (no pinned gitleaks v${GITLEAKS_VERSION})"
     sk "the per-commit WARNING fires even though base..tip shows no net .gitleaksignore change (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
@@ -1108,6 +1163,69 @@ if [[ -f "$_obj_path" ]]; then
 else
     sk "a git rev-list failure fails closed, not open (commit stored as a packed, not loose, object on this git version)"
     sk "the hook's own message names the git rev-list failure (commit stored as a packed, not loose, object on this git version)"
+fi
+
+# --- case 29 (E-99): the production incident, reproduced -- a merge bringing -
+# in an OLD branch commit whose OWN .gitleaksignore lacks an entry passes
+# when the PUSHED TIP's .gitleaksignore has it. This is the actual P0: a
+# release train merged older branch commits carrying
+# eval/loki10/tasks/pub-werkzeug-3271/task.json from before its
+# dir-mode-fingerprint .gitleaksignore entry existed, and was refused on an
+# already-reviewed false positive, while CI (which scans the whole pushed
+# range against ONE ignore file -- the tip's) passed. Before this fix: each
+# commit was scanned with ITS OWN .gitleaksignore (`git show "$_csha:..."`),
+# so the old commit -- whose own ignore file predates the entry -- was
+# refused even though the tip's ignore file the merge produces has it.
+if [[ "$_have_real_gitleaks" == "1" ]]; then
+    D="$SCRATCH/c29"; BARE="$SCRATCH/c29.git"; setup_bare "$BARE"; setup_push_clone "$D" "$BARE"
+    g "$D" checkout -q -b old-branch >/dev/null 2>&1
+    mkdir -p "$D/eval/loki10/tasks/fake-task"
+    printf '%s\n' "$_task_json_secret" > "$D/eval/loki10/tasks/fake-task/task.json"
+    g "$D" add eval/loki10/tasks/fake-task/task.json >/dev/null 2>&1
+    g "$D" commit -q -m "old branch: add task.json (predates the ignore entry)" --no-verify >/dev/null 2>&1
+    g "$D" checkout -q main >/dev/null 2>&1
+    printf '%s\n' "eval/loki10/tasks/fake-task/task.json:sourcegraph-access-token:5" >> "$D/.gitleaksignore"
+    g "$D" add .gitleaksignore >/dev/null 2>&1
+    g "$D" commit -q -m "main: allowlist the reviewed false positive" --no-verify >/dev/null 2>&1
+    g "$D" merge -q --no-ff -m "release train: merge old-branch" old-branch >/dev/null 2>&1
+    rc="$(real_push "$D")"
+    if [[ "$rc" == "RC=0" ]]; then
+        ok "a merge bringing an old commit whose own ignore file lacks the entry passes when the tip's has it"
+    else
+        ko "a merge bringing an old commit whose own ignore file lacks the entry passes when the tip's has it" "$rc; out: $(cat "$D/push.out")"
+    fi
+else
+    sk "a merge bringing an old commit whose own ignore file lacks the entry passes when the tip's has it (no pinned gitleaks v${GITLEAKS_VERSION})"
+fi
+
+# --- case 30 (E-99): GITLEAKS_CONFIG pointing at a permissive config is ------
+# ignored. gitleaks reads GITLEAKS_CONFIG (and GITLEAKS_CONFIG_TOML) from the
+# environment to pick a default config, which would silently override the
+# --config this hook computes from the pushed tip's own .gitleaks.toml (or,
+# as here, override the absence of one) if left set. The hook now unsets
+# both before invoking gitleaks.
+if [[ "$_have_real_gitleaks" == "1" ]]; then
+    D="$SCRATCH/c30"; BARE="$SCRATCH/c30.git"; setup_bare "$BARE"; setup_push_clone "$D" "$BARE"
+    mkdir -p "$D/eval/loki10/tasks/fake-task"
+    printf '%s\n' "$_task_json_secret" > "$D/eval/loki10/tasks/fake-task/task.json"
+    g "$D" add eval/loki10/tasks/fake-task/task.json >/dev/null 2>&1
+    g "$D" commit -q -m "add fake task with a secret-shaped fixture" --no-verify >/dev/null 2>&1
+    _permissive_config="$SCRATCH/c30-permissive.toml"
+    cat > "$_permissive_config" <<'TOML'
+title = "permissive (outside the repo)"
+[allowlist]
+regexes = ['.*']
+TOML
+    rc="$(real_push "$D" "GITLEAKS_CONFIG=$_permissive_config")"
+    if [[ "$rc" == "RC=0" ]]; then
+        ko "GITLEAKS_CONFIG pointing at a permissive config is ignored" "push succeeded (env config leaked through); out: $(cat "$D/push.out")"
+    elif grep -q "sourcegraph-access-token" "$D/push.out" && grep -q "gitleaks found a possible secret" "$D/push.out"; then
+        ok "GITLEAKS_CONFIG pointing at a permissive config is ignored"
+    else
+        ko "GITLEAKS_CONFIG pointing at a permissive config is ignored" "refused but not on the finding: $(cat "$D/push.out")"
+    fi
+else
+    sk "GITLEAKS_CONFIG pointing at a permissive config is ignored (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
 # --- timing report: no eval change / one eval file / 10-commit push ----------
