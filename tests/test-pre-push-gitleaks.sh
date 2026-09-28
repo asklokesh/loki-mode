@@ -842,29 +842,46 @@ fi
 # push that ONLY changes .gitleaks.toml, touching no eval file, is case 22
 # below, and is allowed without the override: the scan that config could
 # have weakened does not even run on that push).
-D="$SCRATCH/c20"; BARE="$SCRATCH/c20.git"; setup_bare "$BARE"; setup_push_clone "$D" "$BARE"
-cat > "$D/.gitleaks.toml" <<'TOML'
+#
+# The override sub-case needs the real pinned gitleaks v8.30.0: with
+# LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1 set, the config-change gate no longer
+# fails the push itself, so the push's outcome falls through to the actual
+# scan of toml-task/task.json -- if the pinned binary is absent, that scan
+# step is what refuses ("eval task fixtures changed but pinned gitleaks
+# v8.30.0 is not installed"), not the config gate, and the sub-case's RC=0
+# expectation would wrongly fail on a machine without it. The no-override
+# sub-case does not have this dependency (the config gate itself fails the
+# push regardless of whether the binary is installed), but it is gated here
+# too so the case behaves like its siblings: real gitleaks present or both
+# assertions run for real, absent or both are skipped, never a partial run.
+if [[ "$_have_real_gitleaks" == "1" ]]; then
+    D="$SCRATCH/c20"; BARE="$SCRATCH/c20.git"; setup_bare "$BARE"; setup_push_clone "$D" "$BARE"
+    cat > "$D/.gitleaks.toml" <<'TOML'
 title = "loki override"
 [allowlist]
 regexes = ['.*']
 TOML
-mkdir -p "$D/eval/loki10/tasks/toml-task"
-echo '{"id": "toml-task", "prompt": "clean"}' > "$D/eval/loki10/tasks/toml-task/task.json"
-g "$D" add .gitleaks.toml eval/loki10/tasks/toml-task/task.json >/dev/null 2>&1
-g "$D" commit -q -m "add global allowlist + touch eval" --no-verify >/dev/null 2>&1
-rc="$(real_push "$D")"
-if [[ "$rc" == "RC=0" ]]; then
-    ko ".gitleaks.toml global allowlist is refused without the override" "push succeeded; out: $(cat "$D/push.out")"
-elif grep -q "changed in an eval-touching push" "$D/push.out" && grep -q "LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE" "$D/push.out"; then
-    ok ".gitleaks.toml global allowlist is refused without the override"
+    mkdir -p "$D/eval/loki10/tasks/toml-task"
+    echo '{"id": "toml-task", "prompt": "clean"}' > "$D/eval/loki10/tasks/toml-task/task.json"
+    g "$D" add .gitleaks.toml eval/loki10/tasks/toml-task/task.json >/dev/null 2>&1
+    g "$D" commit -q -m "add global allowlist + touch eval" --no-verify >/dev/null 2>&1
+    rc="$(real_push "$D")"
+    if [[ "$rc" == "RC=0" ]]; then
+        ko ".gitleaks.toml global allowlist is refused without the override" "push succeeded; out: $(cat "$D/push.out")"
+    elif grep -q "changed in an eval-touching push" "$D/push.out" && grep -q "LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE" "$D/push.out"; then
+        ok ".gitleaks.toml global allowlist is refused without the override"
+    else
+        ko ".gitleaks.toml global allowlist is refused without the override" "refused but wrong message: $(cat "$D/push.out")"
+    fi
+    rc="$(real_push "$D" "LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1")"
+    if [[ "$rc" == "RC=0" ]]; then
+        ok ".gitleaks.toml global allowlist passes with LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1"
+    else
+        ko ".gitleaks.toml global allowlist passes with LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1" "$rc; out: $(cat "$D/push.out")"
+    fi
 else
-    ko ".gitleaks.toml global allowlist is refused without the override" "refused but wrong message: $(cat "$D/push.out")"
-fi
-rc="$(real_push "$D" "LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1")"
-if [[ "$rc" == "RC=0" ]]; then
-    ok ".gitleaks.toml global allowlist passes with LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1"
-else
-    ko ".gitleaks.toml global allowlist passes with LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1" "$rc; out: $(cat "$D/push.out")"
+    sk ".gitleaks.toml global allowlist is refused without the override (no pinned gitleaks v${GITLEAKS_VERSION})"
+    sk ".gitleaks.toml global allowlist passes with LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1 (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
 # --- case 22 (r4): a .gitleaks.toml-only change (no eval touch) is allowed --
