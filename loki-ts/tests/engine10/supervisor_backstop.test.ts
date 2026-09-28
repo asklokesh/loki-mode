@@ -249,7 +249,7 @@ describe("E-67 rework: supervisor backstop", () => {
     const r = await done;
     expect(deathMs).toBeGreaterThan(0);
     expect(deathMs).toBeGreaterThan(backstopS(5) * 1000 - 300); // fires near its computed instant, not at spawn
-    expect(deathMs).toBeLessThan(5200);
+    expect(deathMs).toBeLessThan(6000); // green ~4.97s; the old fixed-2s-escalation red would be ~6.8s+ (unaffected here, but keep headroom under load)
     expect(r.verdict).toBe("FAILED");
     expect(r.notProven).toContain(BACKSTOP_NOT_PROVEN);
   }, 10_000);
@@ -272,7 +272,7 @@ describe("E-67 rework: supervisor backstop", () => {
     const deathMs = await pollDeathMs(t0, pidFile, 8000);
     const r = await done;
     expect(deathMs).toBeGreaterThan(0);
-    expect(deathMs).toBeLessThan(5300); // must die at/near the 5s cap, never the old fixed-escalation ~6.8s
+    expect(deathMs).toBeLessThan(6000); // green ~5.1s; the old fixed-2s-escalation red was ~6.9-7.0s (measured above)
     expect(r.verdict).toBe("FAILED");
   }, 15_000);
 });

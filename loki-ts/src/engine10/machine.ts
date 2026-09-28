@@ -55,7 +55,7 @@ const hasFailures = (d: Obj | undefined): boolean => Array.isArray(d?.failures_g
 const earlyExit = (d: Obj): boolean => d.already_satisfied === true || d.exit === "spec_conflict";
 /** After a cap or limit kill, how long the machine waits for the aborted stage to settle before moving on. */
 const KILL_GRACE_MS = 2000;
-export function softCapS(capS: number): number { const plain = (capS * 14) / 15, budget = backstopS(capS) - ((STAGE_BUDGETS.commit.targetS ?? 0) + (STAGE_BUDGETS.seal.targetS ?? 0) + KILL_GRACE_MS / 1000); return budget >= 0 ? Math.min(plain, budget) : plain; } // tightens 14/15 of capS so commit+seal's tail fits before the backstop, else the plain point (E-67 finding 1 follow-up 2)
+export function softCapS(capS: number): number { const plain = (capS * 14) / 15, budget = backstopS(capS) - ((STAGE_BUDGETS.commit.targetS ?? 0) + (STAGE_BUDGETS.seal.targetS ?? 0) + KILL_GRACE_MS / 1000 + 2); return budget >= 0 ? Math.min(plain, budget) : plain; } // tightens 14/15 of capS so commit+seal's tail (plus a 2s margin: this clock starts after worker boot, the backstop's starts at spawn) fits before the backstop, else the plain point (E-67 finding 1 follow-up 2)
 export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Promise<MachineResult> {
   const load = opts.load ?? defaultLoader(opts.stagesDir ?? join(import.meta.dir, "stages"));
   const prior = opts.prior ?? [];

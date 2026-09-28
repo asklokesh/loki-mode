@@ -10,7 +10,8 @@ import { backstopS, BACKSTOP_GRACE_S } from "../../src/engine10/supervisor.ts";
 import { DEEP_CAP_S, DEFAULT_CAP_S, STAGE_BUDGETS } from "../../src/engine10/types.ts";
 
 const KILL_GRACE_S = 2; // machine.ts's KILL_GRACE_MS, mirrored here only as a plain number for the assertion
-const tailS = (STAGE_BUDGETS.commit.targetS ?? 0) + (STAGE_BUDGETS.seal.targetS ?? 0) + KILL_GRACE_S;
+const BOOT_MARGIN_S = 2; // machine.ts's softCapS: startMs is the worker's own clock (after boot), the backstop's starts at spawn
+const tailS = (STAGE_BUDGETS.commit.targetS ?? 0) + (STAGE_BUDGETS.seal.targetS ?? 0) + KILL_GRACE_S + BOOT_MARGIN_S;
 const plainS = (capS: number): number => (capS * 14) / 15;
 
 describe("backstop clears the worker's own (real) soft cap (E-67 finding 1)", () => {
