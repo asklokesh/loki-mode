@@ -1270,6 +1270,20 @@ def self_test() -> int:
         cache4 = Cache(tmp / "actions-cache.json")
         cache4.data["gh_release"] = {"actions/setup-node": {"ok": True, "value": "v5.0.0"}}
         cache4.data["action_runtime"] = {"actions/setup-node@v4:": {"ok": True, "value": "node20"}}
+        # ref "v4" matches the bare-major-tag pattern, so collect_actions
+        # resolves it through the floating_tag cache bucket too (Tech Lead
+        # reject B2 path). Without this fixture the resolver falls through
+        # to a real `gh api` / network call, which is unreachable in CI
+        # (no `gh`, no auth, no network) and turns the bump into "unknown"
+        # instead of "MAJOR" -- the self-test then only passes wherever a
+        # working `gh` happens to be on PATH. Fixture: v4 resolves to
+        # v4.2.0, behind the v5.0.0 latest release, same as the real repo.
+        cache4.data["floating_tag"] = {"actions/setup-node@v4": {"ok": True, "value": {
+            "floating_sha": "cccc4444four",
+            "latest_sha": "dddd5555five",
+            "resolved_version": "v4.2.0",
+            "tracks_latest": False,
+        }}}
         wf_dir = tmp / "repo" / ".github" / "workflows"
         wf_dir.mkdir(parents=True)
         (wf_dir / "ci.yml").write_text("jobs:\n  a:\n    steps:\n      - uses: actions/setup-node@v4\n")
