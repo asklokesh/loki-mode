@@ -16,6 +16,7 @@ export const REGISTRY: Readonly<Record<string, () => Promise<Mod>>> = {
   "./status.ts": () => import("./status.ts"),
   "./verify_cmd.ts": () => import("./verify_cmd.ts"),
   "./dashboard/server.ts": () => import("./dashboard/server.ts"),
+  "./modernize/cli.ts": () => import("./modernize/cli.ts"),
   "./worker.ts": () => import("./worker.ts"),
   "./session.ts": () => import("./session.ts"),
   "./supervisor.ts": () => import("./supervisor.ts"),
