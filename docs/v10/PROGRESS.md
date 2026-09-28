@@ -1,5 +1,11 @@
 # Progress
 
+## 2026-09-28T16:30Z: D37 release cadence in force; "20 waiting slices" were already shipped; drift audit (turn 468)
+- Founder directive 16:20Z (D37): cut at :00, :20, :40 whenever main is green and a merged-unreleased slice exists; trains overlap after publish-npm; release blockers are P0 with a guard. Session cron 0b6676af runs the Release Manager tick at :00/:20/:40.
+- Reconciliation: `git log v10.2.1..origin/main` showed only 2 docs commits (03911808, 4bbda895); every BOARD row marked merged had all its cited commits as ancestors of a published tag (`git merge-base --is-ancestor`), so the "20 merged slices waiting" were stale BOARD cells, not unreleased work. 27 rows flipped to released with their tag (E-71, E-73 corrected to v10.1.0 from their merge 172bec99). E-90 automates this after each publish; E-89 adds RELEASE_CADENCE to the pulse (building, wf_aa962a0e-002).
+- Release notes (D36): six GitHub releases (v9.80.1 to v10.2.1) had placeholder bodies because release.yml's awk never matched dated headings; backfilled from CHANGELOG with `gh release edit`; E-88 enforces it.
+- Drift audit: last 6h shipped v10.1.1 and v10.2.1 (2 releases; 10.2.0 blocked by a Security Audit false positive and a dispatch path the gate cannot count, both now guarded: E-86, E-87). Main red once in the window (9d483688, fixed by E-83). Throughput gap: releases waited on me reviewing and on hand-run bumps; the cadence cron and E-89 remove that.
+
 ## 2026-09-28T16:05Z: v10.2.1 shipped (carries the unpublished 10.2.0)
 - Release run 36446416984 success; Security Audit 36446416943 success on 815640d9; `npm view loki-mode dist-tags` latest 10.2.1, gitHead 815640d9 = release commit; GitHub release v10.2.1 published 15:53:56Z; `loki --version` from a fresh prefix prints "Loki Mode v10.2.1" (rc=0).
 - In flight: wave E23 (M-07, M-10, M-11, M-12, E-67, E-79..E-81 reworks), wave E24 (EV-12S rebase, EV-12A/B/C large tasks; 2 of 5 needed large tasks passed review so far: lg-werkzeug-1513, lg-werkzeug-1680), E-86 rework (4 reproduced fail-opens in the pre-push gitleaks check), DEP-01 rework in review.
