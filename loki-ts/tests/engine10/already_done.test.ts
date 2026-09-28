@@ -83,12 +83,16 @@ describe("findEvidence (deterministic search)", () => {
   // spent a confirmation session on almost every real-world run. A genuinely already-built feature
   // (the fixture case just above, and again below) must still clear the gate.
   test("generic-word tasks give zero candidate evidence on a real, large repo", () => {
-    const repoMap = buildRepoMap(REPO_ROOT);
+    // Uncapped: this repo has ~4700+ tracked files, well past listRepoFiles' default 2000-file
+    // cap. Capped, this test stayed green even with STOP_WORDS emptied out (the words that would
+    // have produced a false candidate live past file #2000), which made the test worthless as a
+    // guard. Number.MAX_SAFE_INTEGER as maxFiles turns the cap off for both repoMap and testMap.
+    const repoMap = buildRepoMap(REPO_ROOT, Number.MAX_SAFE_INTEGER);
     // Tracked test files only (git ls-files), never buildTestMap's raw fs walk: this checkout's
     // .claude/worktrees/ holds a full repo copy per concurrent agent (excluded via
     // .git/info/exclude, so `git ls-files` never sees it, but a plain readdirSync walk would),
     // which made the earlier version of this test slow enough to risk the CI timeout.
-    const testMap: TestMap = { runners: ["bun"], tests: listRepoFiles(REPO_ROOT).files.filter(isTestFile).map((path) => ({ runner: "bun", path })) };
+    const testMap: TestMap = { runners: ["bun"], tests: listRepoFiles(REPO_ROOT, Number.MAX_SAFE_INTEGER).files.filter(isTestFile).map((path) => ({ runner: "bun", path })) };
     for (const task of ["Add a dark mode toggle to the settings page", "Support exporting invoices as PDF files"]) {
       expect(findEvidence(task, repoMap, testMap, REPO_ROOT)).toEqual([]);
     }
@@ -195,6 +199,30 @@ describe("checkAlreadyDone", () => {
     const sessions: SessionRunner = { run: async () => ({ exit: 0, durationS: 0.1, killed: false, markers: { done: false, alreadyDone: "see presearch-command.ts for background", specConflict: null } }) };
     const result = await checkAlreadyDone(ctxWith(sessions, dir), new AbortController().signal, TASK, buildRepoMap(dir), buildTestMap(dir));
     expect(result).toBeNull();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // The citation gate requires the cited path to still exist on disk, not just to appear in the
+  // hit list findEvidence built a moment earlier (the repo can change between the search and the
+  // confirmation session). Same hit, both branches of that existsSync check.
+  test("confirmed marker cites a hit whose file no longer exists on disk: rejected", async () => {
+    const dir = freshRepo();
+    const repoMap = buildRepoMap(dir);
+    const testMap = buildTestMap(dir);
+    rmSync(join(dir, "src", "search-command.ts"));
+    const sessions: SessionRunner = { run: async () => ({ exit: 0, durationS: 0.1, killed: false, markers: { done: false, alreadyDone: "search-command.ts:1 already implemented", specConflict: null } }) };
+    const result = await checkAlreadyDone(ctxWith(sessions, dir), new AbortController().signal, TASK, repoMap, testMap);
+    expect(result).toBeNull();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("confirmed marker cites a hit whose file still exists on disk: accepted", async () => {
+    const dir = freshRepo();
+    const repoMap = buildRepoMap(dir);
+    const testMap = buildTestMap(dir);
+    const sessions: SessionRunner = { run: async () => ({ exit: 0, durationS: 0.1, killed: false, markers: { done: false, alreadyDone: "search-command.ts:1 already implemented", specConflict: null } }) };
+    const result = await checkAlreadyDone(ctxWith(sessions, dir), new AbortController().signal, TASK, repoMap, testMap);
+    expect(result?.satisfied).toBe(true);
     rmSync(dir, { recursive: true, force: true });
   });
 
