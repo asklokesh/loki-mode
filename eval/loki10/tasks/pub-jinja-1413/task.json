@@ -12,7 +12,7 @@
     "files": [
       "tests/test_core_tags.py"
     ],
-    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_core_tags.py -k \"((TestSet and test_namespace_set_tuple))\""
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_core_tags.py -k \"TestSet\""
   },
   "timeout_s": 900,
   "tier": "medium"
