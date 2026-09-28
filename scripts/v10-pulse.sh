@@ -85,12 +85,20 @@
 #                       never the release tag -- a release can lag a push by
 #                       minutes (see NO_RECENT_RELEASE's separate 90-minute
 #                       budget for that). With no override, falls back to the
-#                       mtime of the newest push-*.log file under
-#                       PULSE_PUSH_LOG_DIR.
-#   PULSE_PUSH_LOG_DIR  directory to look for push-*.log files in for the
+#                       reflog time of PULSE_TRAIN_PUSH_REF (a local `git
+#                       push` moves it, and so does a `git fetch` that pulls
+#                       in someone else's push -- the real meaning of "last
+#                       train push"), then to the mtime of the newest
+#                       push-*.log file under PULSE_PUSH_LOG_DIR.
+#   PULSE_TRAIN_PUSH_REF the ref whose reflog is read for the
 #                       PULSE_LAST_TRAIN_PUSH fallback above (default:
-#                       ~/loki-ci-logs, where scripts/v10-ops.sh push-main
-#                       and the swarm's train-push tooling write their logs).
+#                       refs/remotes/origin/main). Overridable for tests
+#                       only; production never needs to change it.
+#   PULSE_PUSH_LOG_DIR  directory to look for push-*.log files in for the
+#                       reflog-less fallback above (default: ~/loki-ci-logs,
+#                       where scripts/v10-ops.sh push-main and the swarm's
+#                       train-push tooling write their logs). Only reached
+#                       when PULSE_TRAIN_PUSH_REF has no reflog.
 #   PULSE_PYTHON        python3 interpreter to use (default: python3)
 #   PULSE_DEADLINE_SECS network-call time budget in seconds for npm+gh
 #                       together (default: 3; the calls run concurrently, so
@@ -188,6 +196,7 @@ export PULSE_SWARM_START="${PULSE_SWARM_START:-}"
 export PULSE_NOW="${PULSE_NOW:-}"
 export PULSE_LAST_TRAIN_PUSH="${PULSE_LAST_TRAIN_PUSH:-}"
 export PULSE_PUSH_LOG_DIR="${PULSE_PUSH_LOG_DIR:-}"
+export PULSE_TRAIN_PUSH_REF="${PULSE_TRAIN_PUSH_REF:-refs/remotes/origin/main}"
 export PULSE_DEADLINE_SECS="${PULSE_DEADLINE_SECS:-3}"
 export PULSE_CACHE="${PULSE_CACHE:-1}"
 export PULSE_CACHE_DIR="${PULSE_CACHE_DIR:-$PULSE_REPO_ROOT/.loki/pulse-cache}"
@@ -1311,17 +1320,28 @@ else:
 #   1. PULSE_LAST_TRAIN_PUSH override (epoch seconds or ISO8601) -- same
 #      override convention as PULSE_NOW/PULSE_SWARM_START, and what every
 #      test below uses.
-#   2. The mtime of the newest push-*.log file under PULSE_PUSH_LOG_DIR
-#      (default ~/loki-ci-logs). Simpler than resolving origin/main's real
-#      committer time, which would need this script to run its own `git
-#      fetch` -- a new, unbounded network call this script's fixed npm+gh
-#      NETWORK_DEADLINE was never sized for (see its header comment).
-# With neither source available, this reports UNKNOWN rather than silently
-# not firing, matching every other metric in this script.
+#   2. The reflog time of PULSE_TRAIN_PUSH_REF (default
+#      refs/remotes/origin/main), read with `git reflog show`. This ref
+#      moves on every plain `git push` to origin main -- how every train is
+#      actually pushed -- and on a `git fetch` that brings in someone else's
+#      push, with no network call of this script's own: reading an existing
+#      local reflog is a local git operation like every other `git()` call
+#      here, never a `git fetch`.
+#   3. The mtime of the newest push-*.log file under PULSE_PUSH_LOG_DIR
+#      (default ~/loki-ci-logs), for a repo with no such reflog (a fresh
+#      clone, a shallow checkout, or a pruned reflog).
+# With no source available, this reports UNKNOWN rather than silently not
+# firing, matching every other metric in this script.
 def last_train_push_epoch():
     override = parse_time_value(os.environ.get("PULSE_LAST_TRAIN_PUSH", ""))
     if override is not None:
         return override
+    ref = os.environ.get("PULSE_TRAIN_PUSH_REF", "") or "refs/remotes/origin/main"
+    rc, out, _ = git(["reflog", "show", "--date=unix", "--format=%gd", ref, "-n", "1"])
+    if rc == 0:
+        m = re.search(r"@\{(\d+)\}\s*$", out.strip())
+        if m:
+            return float(m.group(1))
     log_dir = os.environ.get("PULSE_PUSH_LOG_DIR", "") or os.path.expanduser("~/loki-ci-logs")
     try:
         names = os.listdir(log_dir)
@@ -1365,8 +1385,12 @@ elif not train_late["applicable"]:
 elif train_late["unknown"]:
     mark_unknown("train_late")
     emit(
-        "Train push cadence: UNKNOWN (no PULSE_LAST_TRAIN_PUSH override and no "
-        "push-*.log under %s)" % (os.environ.get("PULSE_PUSH_LOG_DIR", "") or os.path.expanduser("~/loki-ci-logs"))
+        "Train push cadence: UNKNOWN (no PULSE_LAST_TRAIN_PUSH override, no reflog "
+        "for %s, and no push-*.log under %s)"
+        % (
+            os.environ.get("PULSE_TRAIN_PUSH_REF", "") or "refs/remotes/origin/main",
+            os.environ.get("PULSE_PUSH_LOG_DIR", "") or os.path.expanduser("~/loki-ci-logs"),
+        )
     )
 else:
     _tl_age = train_late["age_min"]

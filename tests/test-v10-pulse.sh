@@ -1468,7 +1468,7 @@ fi
 echo "T29d -- UNKNOWN (never a false negative) with no override and no push-*.log directory"
 if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_TRAIN"; then rc=0; else rc=$?; fi
 if printf '%s\n' "$OUT" | grep -q "^UNKNOWN metrics:.*train_late" \
-    && printf '%s\n' "$OUT" | grep -qF "Train push cadence: UNKNOWN (no PULSE_LAST_TRAIN_PUSH override and no push-*.log under $WORK/no-such-push-logs)" \
+    && printf '%s\n' "$OUT" | grep -qF "Train push cadence: UNKNOWN (no PULSE_LAST_TRAIN_PUSH override, no reflog for refs/remotes/origin/main, and no push-*.log under $WORK/no-such-push-logs)" \
     && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: TRAIN_LATE"; then
     ok "TRAIN_LATE reports UNKNOWN, never fires, when neither source is available"
 else
@@ -1496,6 +1496,70 @@ else
     printf '%s\n' "$OUT"
 fi
 (cd "$FAKE_REPO" || exit 1; git reset -q --hard v1.0.0)
+
+echo "T29f -- reflog fallback: a real \`git push\` (how every train is actually pushed,"
+echo "      and writes no push-*.log) moves refs/remotes/origin/main's reflog, and that"
+echo "      reflog time is read directly, with no override and an empty log dir"
+TRAIN_REMOTE_REPO="$WORK/train-remote-repo"
+TRAIN_REMOTE_BARE="$WORK/train-remote-bare.git"
+mkdir -p "$TRAIN_REMOTE_REPO"
+(
+    cd "$TRAIN_REMOTE_REPO" || exit 1
+    git init -q -b main
+    git config user.email "test@example.com"
+    git config user.name "test"
+    echo init > f.txt
+    git add f.txt
+    GIT_AUTHOR_DATE="2026-09-20T00:00:00Z" GIT_COMMITTER_DATE="2026-09-20T00:00:00Z" \
+        git commit -q -m "initial"
+    git tag v1.0.0
+    echo train > train-file.txt
+    git add train-file.txt
+    GIT_AUTHOR_DATE="2026-09-27T01:00:00Z" GIT_COMMITTER_DATE="2026-09-27T01:00:00Z" \
+        git commit -q -m "unreleased train change"
+)
+git init -q --bare "$TRAIN_REMOTE_BARE"
+(
+    cd "$TRAIN_REMOTE_REPO" || exit 1
+    git remote add origin "$TRAIN_REMOTE_BARE"
+    # PULSE_NOW (COMMON_ARGS) = 2026-09-27T02:00:00Z = epoch 1790474400 (see
+    # T1/T29). Push 30 seconds before it: GIT_COMMITTER_DATE sets the actual
+    # push's reflog timestamp (git records the reflog "when" from the
+    # committer ident in effect at push time, not any commit's own date), so
+    # the resulting age is deterministic, never a real-wall-clock race.
+    GIT_COMMITTER_DATE="2026-09-27T01:59:30Z" git push -q origin main
+)
+
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_TRAIN" "PULSE_REPO_ROOT=$TRAIN_REMOTE_REPO"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -q "^Minutes since last train push: 0\.[0-9]" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: TRAIN_LATE"; then
+    ok "refs/remotes/origin/main's reflog (a real git push, no push-*.log written, PULSE_PUSH_LOG_DIR empty) reads under 1 minute"
+else
+    bad "T29f reflog-fallback case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T29g -- reflog wins over a stale push-*.log: an old log file must never shadow a fresh push"
+STALE_LOGDIR="$WORK/push-logs-stale"
+mkdir -p "$STALE_LOGDIR"
+: > "$STALE_LOGDIR/push-old.log"
+python3 -c "
+import os
+os.utime('$STALE_LOGDIR/push-old.log', (1790400000, 1790400000))
+"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_TRAIN" "PULSE_REPO_ROOT=$TRAIN_REMOTE_REPO" \
+    "PULSE_PUSH_LOG_DIR=$STALE_LOGDIR"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -q "^Minutes since last train push: 0\.[0-9]" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: TRAIN_LATE"; then
+    ok "a fresh reflog wins over a stale push-old.log (~20 hours old, would have fired TRAIN_LATE if used)"
+else
+    bad "T29g reflog-over-stale-log case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+# T29d above already covers "no reflog and empty log dir yields UNKNOWN": FAKE_REPO
+# never gets an origin remote in this suite, so its refs/remotes/origin/main reflog
+# lookup fails exactly like a fresh clone with no push history.
 
 echo "T30 -- D26 guard 4: UNEVIDENCED_CLAIM fires on an added claim line with no citation"
 # A dedicated, isolated repo (its own docs/v10/BOARD.md and PROGRESS.md, like
