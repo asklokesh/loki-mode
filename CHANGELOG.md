@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v9.80.1 (2026-09-28)
+
+### Fixed
+- Security Audit: three Loki 10 test fixtures (a planted AWS-shaped string for the deep-verify secret-scan test and two CANARY/WITHHELD token canaries) are baselined in `.gitleaksignore`; none is a real credential. The gitleaks step failed on the v9.79.0 and v9.80.0 release commits, so those two tags were never published to npm. This release carries their content (see the v9.80.0 and v9.79.0 entries below).
+
 ## v9.80.0 (2026-09-28)
 
 ### Added
