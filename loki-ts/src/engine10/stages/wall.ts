@@ -1,21 +1,20 @@
-// E-15: Wall author (ENGINE.md section 4). One provider session, cwd a fresh temp dir holding only task.md and repomap.txt
-// (never sees the code), writes loki_wall_* tests, copied into the repo (never on abort/kill/timeout, E-54) and sealed under <runDir>/wall/ (sha256 each); wall.sealed before Implement; clean base-tree pass short-circuits to already_satisfied.
+// E-15: Wall author (ENGINE.md 4). One provider session, cwd a fresh temp dir holding only task.md and repomap.txt
+// (never sees the code), writes loki_wall_* tests, copied into the repo (never on abort/kill/timeout, E-54) and
+// sealed under <runDir>/wall/ (sha256 each); wall.sealed before Implement; clean base-tree pass short-circuits to
+// already_satisfied. E-64: skipped outright on the small-task lean path (plan.ts logs the same decision).
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { createHash } from "node:crypto";
-import type { RunContext, RunnerName, Stage, StageResult, TestRef } from "../types.ts";
+import type { RunContext, RunnerName, Stage, StageResult, TestMap, TestRef } from "../types.ts";
 import type { ReadOnlyFile } from "./implement.ts";
 import { readRepoMapCache, repoCacheDir, repoKey } from "../cache.ts";
-import { wallEnabled, wallModel } from "../sizing.ts";
+import { hasRelevantTests, loadRepoMap, sizeTask, smallTaskPath, wallEnabled, wallModel } from "../sizing.ts";
 
 const WALL_PREFIX = "loki_wall_";
 
-export interface WallSealedFile {
-  path: string; // absolute path in the repo working tree
-  sha256: string;
-}
+export interface WallSealedFile { path: string; sha256: string; } // path: absolute, in the repo working tree
 
 /** Runs the sealed Wall tests on the base tree; local since types.ts has no shared "execute tests" contract yet. */
 export interface BaseTestRunner {
@@ -59,9 +58,7 @@ export class RealBaseTestRunner implements BaseTestRunner {
   }
 }
 
-export interface WallOptions {
-  baseRunner?: BaseTestRunner;
-}
+export interface WallOptions { baseRunner?: BaseTestRunner; }
 
 /** E-45: the Wall repo map is paths only, capped, so the (sonnet) brief stays short. */
 export const WALL_MAP_MAX_LINES = 200;
@@ -126,11 +123,18 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   if (!wallEnabled()) return { status: "skipped", data: {}, reason: "LOKI_E10_WALL=0" };
 
   const prior = ctx.outputs();
-  const task = (prior.intake?.task as string | undefined) ?? "";
+  const task = loadTaskText(ctx, prior.intake?.task as string | undefined);
   const repomapRef = prior.intake?.repomap_ref as string | undefined;
-  const testMap = prior.intake?.testmap as { runners?: RunnerName[]; tests?: TestRef[] } | undefined;
+  const testMap = (prior.intake?.testmap as TestMap | undefined) ?? null;
   const existingTests: TestRef[] = testMap?.tests ?? [];
   const runners: RunnerName[] = testMap?.runners ?? [];
+
+  // E-64: skip Wall too on the lean path (plan.ts, which always runs, logs this same decision on "variant").
+  const repoMap = loadRepoMap(repomapRef);
+  const sz = sizeTask(task, repoMap, testMap);
+  if (smallTaskPath(sz.size, hasRelevantTests(task, repoMap, testMap, ctx.tests.impacted)) === "lean") {
+    return { status: "skipped", data: { size: sz.size }, reason: "small task with a relevant test: cascade skips Wall" };
+  }
 
   let repomapText = "";
   const tree = prior.intake?.tree as string | undefined;

@@ -1,6 +1,5 @@
-// E-07: SessionRunner. Runs one provider session in its own OS process group so the whole tree
-// can be killed together at limitS (ENGINE.md section 10). E-32: the child re-enters via cli.ts's
-// `engine10 session` route (main = sessionChildMain below), so the dist bundle reaches it too.
+// E-07: SessionRunner. Runs one provider session in its own OS process group so the whole tree can be
+// killed together at limitS (ENGINE.md 10). E-32: the child re-enters via cli.ts's `engine10 session` route.
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -11,9 +10,7 @@ const HEARTBEAT_MS_DEFAULT = 60_000; // ENGINE.md section 5: heartbeat every 60s
 export type EmitFn = (type: string, stage: string | null, data: Record<string, unknown>) => void;
 // provider, model and emit are bound per run on this factory config, since SessionRunOptions carries only per-call fields.
 export interface SessionRunnerConfig {
-  provider: string; // "claude" is special-cased; anything else is generic
-  model?: string;
-  emit?: EmitFn; // ENGINE.md section 5: heartbeat, session.started, session.ended
+  provider: string; model?: string; emit?: EmitFn; // "claude" special-cased; emit: heartbeat/session.started/session.ended (ENGINE.md 5)
   heartbeatMs?: number; // default 60_000; tests use a smaller value
   childCommand?: [string, string[]]; // test-only: replaces the self-respawn
   lokiRoot?: string; // where efficiency records and result-cost files live (the repo's .loki)
@@ -91,9 +88,10 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
   const own = resultCostPath(join(opts.cwd ?? process.cwd(), ".loki"), opts.iterationId);
   const dest = resultCostPath(cfg.lokiRoot, opts.iterationId);
   if (own !== dest && existsSync(own)) { mkdirSync(dirname(dest), { recursive: true }); copyFileSync(own, dest); }
-  const c = recordSessionCost(cfg.lokiRoot, opts.iterationId, { status, durationMs: Math.round(durationS * 1000), model: cfg.model ?? resolveModel(cfg.provider) });
+  const model = opts.model ?? cfg.model ?? resolveModel(cfg.provider); // opts.model (E-45/E-64 pin) wins, matching session.started's precedence
+  const c = recordSessionCost(cfg.lokiRoot, opts.iterationId, { status, durationMs: Math.round(durationS * 1000), model });
   cfg.emit?.("cost", opts.stage, {
-    session_id: opts.iterationId, usd: c.usd, input_tokens: c.input_tokens, output_tokens: c.output_tokens,
+    session_id: opts.iterationId, model, usd: c.usd, input_tokens: c.input_tokens, output_tokens: c.output_tokens,
     cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens, source: c.source || "not measured",
   });
 }
