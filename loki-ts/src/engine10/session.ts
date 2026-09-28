@@ -3,7 +3,8 @@
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { partialUsagePath, recordPartialStreamCost, recordSessionCost, resultCostPath } from "./cost.ts";
+import { recordSessionCost, resultCostPath } from "./cost.ts";
+import { partialUsagePath, recordPartialStreamCost } from "../runner/budget.ts";
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
 const KILL_GRACE_MS = 2000; // ENGINE.md section 10: SIGKILL 2s after SIGTERM
 const STDERR_TAIL_BYTES = 64 * 1024; // E-61: kept for stage.failed diagnostics, tail only

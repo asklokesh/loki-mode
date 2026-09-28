@@ -9,13 +9,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   nextEfficiencyIteration,
-  partialUsagePath,
   readResultCost,
-  recordPartialStreamCost,
   recordSessionCost,
   sumResultCosts,
   writeEfficiencyRecord,
 } from "../../src/engine10/cost.ts";
+import { partialUsagePath, recordPartialStreamCost } from "../../src/runner/budget.ts";
 
 const FIX = join(import.meta.dir, "fixtures", "cost");
 const REPO_ROOT = join(import.meta.dir, "..", "..", "..");

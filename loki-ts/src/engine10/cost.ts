@@ -10,7 +10,6 @@
 // always writes cost_usd (defaulting to 0 when unknown), this omits cost_usd when there is no dollar figure.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { calculateCostFromRecords, PRICING } from "../runner/budget.ts";
 
 export interface CostResult {
   usd: number | null;
@@ -34,11 +33,6 @@ export function num(v: unknown): number {
 
 export function resultCostPath(lokiRoot: string, iteration: string): string {
   return join(lokiRoot, "metrics", `result-cost-${iteration}.json`);
-}
-
-// E-98e: streamed running usage total for a possibly-killed session; never `result-cost-*` (nothing globs that prefix).
-export function partialUsagePath(lokiRoot: string, iteration: string): string {
-  return join(lokiRoot, "metrics", `partial-usage-${iteration}.json`);
 }
 
 // Sum across sessions. Any missing session makes usd null: a partial sum
@@ -153,27 +147,4 @@ export function recordSessionCost(lokiRoot: string, iterationId: string, info: E
   const cost = readResultCost(lokiRoot, iterationId);
   writeEfficiencyRecord(lokiRoot, info, cost);
   return cost;
-}
-
-const PRICING_FAMILIES = ["fable", "opus", "sonnet", "haiku"] as const;
-
-// E-98e: prices a killed session's streamed usage, same table a normal record uses; an unmatched model id leaves usd null, never a guess.
-export function recordPartialStreamCost(lokiRoot: string, iterationId: string, info: EfficiencySessionInfo): CostResult {
-  const out: CostResult = { usd: null, partialUsd: 0, measuredCount: 0, totalCount: 1, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, model: null, source: "", missing: [iterationId] };
-  try {
-    const p = partialUsagePath(lokiRoot, iterationId);
-    const u = JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>;
-    out.input_tokens = num(u["input_tokens"]); out.output_tokens = num(u["output_tokens"]);
-    out.cache_read_tokens = num(u["cache_read_tokens"]); out.cache_creation_tokens = num(u["cache_creation_tokens"]);
-    out.model = typeof u["model"] === "string" ? u["model"] : null;
-    out.source = p; out.missing = [];
-    const m = out.model?.toLowerCase() ?? "";
-    const key = m in PRICING ? m : PRICING_FAMILIES.find((f) => m.includes(f));
-    if (key) {
-      out.usd = calculateCostFromRecords([{ model: key, input_tokens: out.input_tokens, output_tokens: out.output_tokens, cache_read_tokens: out.cache_read_tokens, cache_creation_tokens: out.cache_creation_tokens }]);
-      out.partialUsd = out.usd; out.measuredCount = 1;
-    }
-  } catch { /* no partial file, or unreadable: usd stays null (E-69 semantics) */ }
-  writeEfficiencyRecord(lokiRoot, info, out, "partial-stream");
-  return out;
 }

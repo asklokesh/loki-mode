@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { consumeSdkStream, type StreamMsg } from "../../src/runner/sdk_stream_parser.ts";
-import { partialUsagePath, recordPartialStreamCost } from "../../src/engine10/cost.ts";
+import { partialUsagePath, recordPartialStreamCost } from "../../src/runner/budget.ts";
 
 let scratch: string;
 const FIXED = "2026-07-13T00:00:00.000Z";

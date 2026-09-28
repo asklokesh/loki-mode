@@ -25,7 +25,8 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { num, partialUsagePath } from "../engine10/cost.ts";
+import { num } from "../engine10/cost.ts";
+import { partialUsagePath } from "./budget.ts";
 
 // A structural subset of the Agent SDK's SDKMessage union -- only the fields the
 // parser reads. Kept local (not imported from the SDK) so the parser is pure and
