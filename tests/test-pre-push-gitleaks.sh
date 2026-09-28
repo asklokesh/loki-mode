@@ -128,6 +128,15 @@
 #       when the pushed TIP's .gitleaksignore has it
 #   30. GITLEAKS_CONFIG pointing at a permissive config (outside the repo)
 #       is ignored -- the hook unsets it before invoking gitleaks
+#
+# E-119: case 35 covers the same fail-closed property as case 28, but for the
+# OTHER `git rev-list` call -- the one that decides whether .gitleaks.toml
+# changed in the pushed range (line ~319). It used `|| true`, so a rev-list
+# error read as "config unchanged" and fell back to trusting the pushed
+# tip's own (possibly weakened) config, instead of refusing:
+#   35. a `git` wrapper placed on PATH makes `rev-list ... -- .gitleaks.toml`
+#       exit non-zero; the push is refused with the hook's own message, not
+#       silently treated as no config change
 
 set -uo pipefail
 
@@ -1277,10 +1286,17 @@ if [[ -f "$_obj_path" ]]; then
     # failure message specifically, not the full-push scan's missing-binary
     # behavior (already covered by cases 3-4). Unused when the binary is
     # present.
+    #
+    # E-119: the .gitleaks.toml change gate's own `git rev-list` (line ~319,
+    # case 35) now also fails closed, and it runs FIRST over this same
+    # corrupted range -- so it reports the failure and the hook exits before
+    # dir-mode's own rev-list (further down) is ever reached. Both messages
+    # are legitimate fail-closed evidence for a corrupted range; only the
+    # first one this exact fixture reaches is asserted here.
     rc="$(run_hook_raw "$D" "refs/heads/main $_new_sha refs/heads/main $_old_sha" "LOKI_ALLOW_UNSCANNED_PUSH=1")"
     if [[ "$rc" == "RC=0" ]]; then
         ko "the hook's own message names the git rev-list failure (stdin-fed, isolated)" "hook exited 0; out: $(cat "$D/hook.out")"
-    elif grep -q "could not list commits" "$D/hook.out"; then
+    elif grep -q "could not check whether .gitleaks.toml changed" "$D/hook.out" || grep -q "could not list commits" "$D/hook.out"; then
         ok "the hook's own message names the git rev-list failure (stdin-fed, isolated)"
     else
         ko "the hook's own message names the git rev-list failure (stdin-fed, isolated)" "refused but wrong message: $(cat "$D/hook.out")"
@@ -1516,6 +1532,71 @@ TOML
 else
     sk "case 34a: zero-rule .gitleaks.toml + secret, pushed with PRE_PUSH_SKIP=1, is refused (no pinned gitleaks v${GITLEAKS_VERSION})"
     sk "case 34b: with the config override, the secret is still caught (scans with the pre-change config) (no pinned gitleaks v${GITLEAKS_VERSION})"
+fi
+
+# --- case 35 (E-119): the .gitleaks.toml change gate's own `git rev-list` ----
+# fails closed, not open. Reuses setup_clone and run_hook_raw's own stdin-fed
+# invocation style (a real `git push`'s hook cannot be used here: a real git
+# process prepends its own `--exec-path` libexec directory to the hook's
+# PATH, ahead of anything a test puts there first, so a PATH-only wrapper
+# never reaches a hook launched that way -- confirmed empirically, not just
+# reasoned; run_hook_raw's plain `bash .githooks/pre-push` invocation has no
+# such prepend). The wrapper exits non-zero for exactly the
+# `rev-list ... -- .gitleaks.toml` call the fixed gate makes (matched by
+# exact-arg, so it never touches the hook's other git calls), and execs the
+# real git binary for everything else. The wrapped PATH is confined to the
+# subshell below so it never leaks into the rest of this test file.
+D="$SCRATCH/c35"; setup_clone "$D"
+cat > "$D/.gitleaks.toml" <<'TOML'
+title = "x"
+TOML
+g "$D" add .gitleaks.toml >/dev/null 2>&1
+g "$D" commit -q -m "config change the forced rev-list failure must not let through unnoticed" --no-verify >/dev/null 2>&1
+
+_c35_real_git="$(command -v git)"
+_c35_bin="$SCRATCH/c35-bin"; mkdir -p "$_c35_bin"
+cat > "$_c35_bin/git" <<WRAP
+#!/usr/bin/env bash
+_is_rev_list=0
+_has_toml=0
+for _a in "\$@"; do
+    case "\$_a" in
+        rev-list) _is_rev_list=1 ;;
+        .gitleaks.toml) _has_toml=1 ;;
+    esac
+done
+if [[ "\$_is_rev_list" == "1" && "\$_has_toml" == "1" ]]; then
+    echo "c35 fixture: forced rev-list failure" >&2
+    exit 1
+fi
+exec "$_c35_real_git" "\$@"
+WRAP
+chmod +x "$_c35_bin/git"
+
+_c35_old_sha="$(git -C "$D" rev-parse refs/remotes/origin/main)"
+_c35_new_sha="$(git -C "$D" rev-parse HEAD)"
+# PRE_PUSH_SKIP=1: this gate runs before the PRE_PUSH_SKIP check (see the
+# hook's header comment), so it must still refuse here even though
+# PRE_PUSH_SKIP skips everything from that check onward -- including the
+# separate per-commit .gitleaks.toml drift gate further down, which would
+# otherwise also catch this same real config change and mask whether THIS
+# gate did its job.
+(
+    cd "$D" || exit 1
+    export PATH="$_c35_bin:$PATH"
+    hash -r  # this shell's `git` calls upstream of case 35 already hashed the
+             # real binary's location; PATH alone does not re-search until
+             # this clears bash's command-path cache
+    printf '%s\n' "refs/heads/main $_c35_new_sha refs/heads/main $_c35_old_sha" \
+        | PRE_PUSH_NO_CI_CHECK=1 LOKI_RELEASE_MANAGER=1 PRE_PUSH_SKIP=1 bash .githooks/pre-push origin https://github.com/asklokesh/loki-mode
+) >"$D/hook.out" 2>&1
+_c35_rc=$?
+if [[ $_c35_rc -eq 0 ]]; then
+    ko "case 35: a rev-list failure on the .gitleaks.toml change gate fails closed, not open" "push succeeded despite the forced rev-list failure; out: $(cat "$D/hook.out")"
+elif grep -q "could not check whether .gitleaks.toml changed" "$D/hook.out"; then
+    ok "case 35: a rev-list failure on the .gitleaks.toml change gate fails closed, not open"
+else
+    ko "case 35: a rev-list failure on the .gitleaks.toml change gate fails closed, not open" "refused but wrong message: $(cat "$D/hook.out")"
 fi
 
 # --- timing report: no eval change / one eval file / 10-commit push ----------
