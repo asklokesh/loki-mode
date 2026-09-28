@@ -178,4 +178,169 @@ Re-running the failed tasks uses `eval/loki10/run.sh` with a separate `--out` pe
   - The results are published in this file as the "after" table.
 - Budget: 60 min of eval, then a 15 min code change. Tier: HIGH (it changes the default flow).
 
+## After (E-98f)
+
+Eval run 2026-09-28, worktree `agent-a340b90dfe1a90ce0`, branch `slice-E-98f`,
+harness_sha `3abb3ac6b5cdcb84467f247c56f15eba964b5b77-dirty` (dirty only from
+`loki-ts/dist/cockpit.js`'s non-deterministic build output; source is
+`main` with E-98a..e merged, dist rebuilt in this branch). `bin/loki
+--version` = v10.4.1, `manifest.jsonl` `arm_binary` is this worktree's own
+`bin/loki` (the nocascade arm through a `LOKI_EVAL_LOKI_BIN` shim, see
+below), never a global install. Model `claude-opus-5-5`, the same 7 `pub-*`
+medium tasks, 900s cap, `--parallel 3`, fresh clone per run, n=3 per arm (21
+task-runs each). Raw is not re-run (per instruction); both prior raw
+measurements are carried forward for comparison.
+
+**nocascade note:** `LOKI_E10_CASCADE` is not in `eval/loki10/harness.py`'s
+`V10_ENGINE_ENV_ALLOWLIST` (only `LOKI_E10_PLAN/WALL/WALL_TIER/CAP_S/
+INVOKER/DASHBOARD_PORT` are listed), so it is dropped by `arm_env`'s blanket
+`LOKI_*` scrub before reaching the arm. Worked around without a harness code
+change: `LOKI_EVAL_LOKI_BIN` pointed at a one-line shim
+(`LOKI_E10_CASCADE=0 exec <worktree>/bin/loki "$@"`) that sets the var in
+the process `harness.py` execs, outside the scrub. Verified live: 21/21
+nocascade implement sessions ran `session.started` with
+`"model":"claude-opus-5-5"`; 21/21 default and nowall implement sessions ran
+on `"model":"sonnet"`. nowall verified live too: 21/21 nowall runs show a
+wall `stage.skipped` with `"reason":"LOKI_E10_WALL=0"`; 0/21 default or
+nocascade runs show that skip. This allowlist gap should be closed
+(`eval/loki10/harness.py`, add `LOKI_E10_CASCADE`) as a harness follow-up; it
+was not fixed here (eval-only, no code changes).
+
+**Auth incident, not concurrency.** r2 for all three arms was lost in full
+(21/21 rows `auth_unavailable`) and had to be re-run. Cause: `harness.py`'s
+per-row check, `arm_auth(cap + AUTH_MARGIN_S)` = `arm_auth(1020)`, refuses to
+start a row unless the keychain OAuth access token has at least 1020s (17
+min) left. Claude Code does not refresh that token until it is itself close
+to expiry (observed: still only ~415s left immediately after running
+`claude --print` as the operator, i.e. the refresh did not fire early), so
+across a batch of many-minute arm sessions the token's remaining lifetime
+can fall under 1020s well before it actually expires, and every row started
+after that point is refused until the operator's own use of `claude`
+eventually triggers a real refresh. The r1 `pub-werkzeug-3271` miss (last
+task started in each arm) had the same cause; it was retried once
+`arm_auth(1020)` and `arm_auth(3600)` both passed (`expiresAt` about 8h out
+by then). This is an auth-lifecycle fact of the harness/environment, not
+evidence of contention from running 3 arms concurrently (9-12 sessions at
+once, load 2.5-4.7 of a 14-core box throughout). No rate-limit signal (429/
+`rate_limit`/`overloaded`/529) was found in any arm's stdout/stderr logs, or
+in the one apparent hit inside an `arm_stdout.log` (a `seal` receipt hash
+substring, `5963429c...`, a false positive).
+
+**Dedupe rule.** Each result file can hold more than one attempt per task
+(an `auth_unavailable`/`interrupted` attempt from a lost run, followed by a
+real attempt after re-running that same r-file's `--out`). Rows are deduped
+to exactly one per (arm, run-file, task): the latest `status: ok` attempt if
+one exists in that run-file, else its latest attempt overall (by `started`,
+falling back to file order). This never collapses across r1/r2/r3, since
+those are separate files/reps, and it matches EV-15's own "pool the real
+rows, one per task per run" method, made explicit here because unlike EV-15
+this run needed retries. Rows dropped by this rule (superseded
+`auth_unavailable`/`interrupted` attempts, all from the r2 auth incident
+above, plus each arm's r1 werkzeug-3271 retry): 22 for default, 15 for
+nowall, 15 for nocascade. Each arm's final pooled table has exactly 21 rows,
+7 tasks times 3 runs, matching `--tasks` times n=3.
+
+### Before (raw, carried forward)
+
+| source | arm | completed | rate | cost per completed | p50 / p90 |
+|---|---|---|---|---|---|
+| EV-14 (docs/v10/METRICS.md; raw result files lost, METRICS.md entry is the record) | raw `claude -p` | 12/14 | 85.7% | $0.5119 | 70s / 239s |
+| EV-15 (this doc, section 1/4) | raw `claude -p` | 10/14 | 71.4% | $0.5085 | 56s / 104s |
+| EV-15 (this doc, section 1/4) | v10 default knobs | 9/14 | 64.3% | >= $0.788 (corrected lower bound, section 4) | 128s / 330s |
+
+### After (E-98f, n=3, 21 task-runs per arm)
+
+| arm | completed | rate | cost per completed | null-cost rows | p50 / p90 |
+|---|---|---|---|---|---|
+| default | 15/21 | 71.4% | n/a | 10/21 (lower bound $0.6958) | 209s / 457s |
+| `LOKI_E10_WALL=0` (nowall) | 16/21 | 76.2% | n/a | 2/21 (lower bound $0.786) | 214s / 500s |
+| `LOKI_E10_CASCADE=0` (nocascade) | 15/21 | 71.4% | n/a | 11/21 (lower bound $0.3233, unreliable at this null rate) | 138s / 218s |
+
+p50/p90 were measured at up to 12 concurrent arm sessions (3 arms times
+`--parallel 3`, plus single-task retries) against EV-15's 3; not apples to
+apples with the before rows. The decision rule below does not use latency.
+
+Null-cost rows persist well above zero in every arm despite E-98e's fix
+being present and firing correctly at the iteration level. Root cause,
+confirmed by reading both files for one null row
+(`e98f-engine/default-r1/pub-werkzeug-3121.../.loki/metrics/`): the killed
+wall iteration's `efficiency/iteration-2.json` does carry a real,
+non-zero `cost_usd` (`0.0628`) from E-98e, but with `"cost_source":
+"partial-stream"`. `eval/loki10/harness.py`'s `provider_cost()` (line
+~698) sums a row's cost only if every one of its iteration files has
+`cost_source == "provider"` exactly; `"partial-stream"` fails that check by
+design, so the entire row's `cost_usd` is `null` even though the money was
+correctly recorded. This is not a bug in E-98e or a bug in the harness
+reading the wrong field; it is the harness's deliberate "only trust a
+provider-reported number" policy colliding with E-98e's necessarily
+estimated number for a killed session, and it fires on any stage kill, not
+only Wall's: nowall's 2 null rows both trace to `implement` itself hitting
+its own stage limit (`stage.failed implement {"reason":"limit"}`), since
+Wall is skipped there and has nothing left to kill. This explains the
+per-arm null counts directionally: default and nocascade run Wall for real
+(more stage-limit kills, more nulls: 10/21 and 11/21) while nowall skips it
+(fewer kills, fewer nulls: 2/21). Cost per completed is therefore `n/a`
+under the harness's own rule (every evaluated row must have a cost) for all
+three arms; the lower bounds above sum only the rows with a `provider`
+cost and likely understate the true figure (see MEDIUM-ANALYSIS section 4's
+own correction of EV-15's lower bound for the same reason). A harness
+follow-up (not made here, eval-only): accept `cost_source in ("provider",
+"partial-stream")` in `provider_cost()`, or report the two sums separately.
+
+**Misses**, all three arms: only `pub-werkzeug-3105` (hidden tests failed
+in all 9 of 9 attempts across the three arms) and `pub-werkzeug-3271`
+(missed in 8 of 9: 7 hidden-tests-failed plus 1 no-branch-pushed, that one
+also `hidden_pass: false` so a genuine miss, not EV-15 raw r2's "correct fix
+never pushed" pattern; nowall r3 completed it) -- the same two
+task-difficulty misses EV-15 found shared with raw (section 1). Unlike
+EV-15, `pub-jinja-1413` completed in all 9 attempts across all three arms
+(0 misses): the E-98a/E-98b/E-98c fixes (project interpreter, spec_conflict
+still verifies, append-only existing tests) removed the jinja regression
+that was EV-15's only pure v10-side loss.
+
+**Fix-effect counts** (from `events.jsonl`, filtered to the engine slot of
+each `status: ok` row; 21 files per arm):
+
+| arm | pytest not_run / total | ruff not_run / total | fix rounds started | runs with >=1 fix round | spec_conflict runs | spec_conflict, verify started | spec_conflict, verify completed |
+|---|---|---|---|---|---|---|---|
+| default | 0/80 | 11/25 | 5 | 3 | 1 | 1 | 1 |
+| nowall | 0/72 | 16/24 | 6 | 5 | 2 | 2 | 1 (1 verify killed at its own limit) |
+| nocascade | 0/58 | 19/22 | 3 | 2 | 1 | 1 | 1 |
+
+pytest `not_run` is 0 of 80/72/58 in every arm, and every one of those
+checks ran on the `project` interpreter (0 on `system`): E-98a's interpreter
+resolution holds up at n=21 per arm, and this is the evidence the jinja
+regression's root cause (a test run against the installed package instead
+of `src/`) is closed. ruff `not_run` is high but not a resolution failure:
+every `not_run` reason is "ruff not found on PATH" (genuinely absent from
+that task's own venv, not a wrong-interpreter miss), and every ruff check
+that did find a binary resolved it to the `project` interpreter, same as
+pytest (14 of 25 for default, 8 of 24 nowall, 3 of 22 nocascade). E-98a's
+resolver (commit `cabf16ef`, verify.ts:148) does cover ruff; most task repos
+here simply do not ship ruff in their own environment. Every `spec_conflict`
+implement exit started a real `verify` stage in all three arms (E-98b;
+unlike EV-15's 0 of 5 verify starts). Of the 4 spec_conflict runs, verify
+itself then completed in 3; the 4th (nowall) had verify killed at its own
+limit (`stage.failed verify {"reason":"limit"}`), so "spec_conflict reaching
+verify" in the table below counts verify *starting*, and the completed/
+failed split is called out per arm.
+
+### Decision
+
+Rule (founder, 2026-09-28): the chosen arm must complete at or above raw's
+best measured medium rate, EV-14's 85.7% (12/14, 18/21 at this n), and its
+cost per completed must be at or below raw's EV-15 $0.5085.
+
+| arm | vs EV-14 85.7% (18/21) | vs EV-15 71.4% (15/21) | vs EV-15 $0.5085 |
+|---|---|---|---|
+| default | fails (15/21) | ties exactly (15/21) | fails on its own lower bound ($0.6958); true cost n/a |
+| nowall | fails (16/21) | passes (16/21) | fails on its own lower bound ($0.786); true cost n/a |
+| nocascade | fails (15/21) | ties exactly (15/21) | undetermined: lower bound $0.3233 is below the bar, but 11/21 rows (52%) are uncosted, too many to trust the bound |
+
+No arm reaches 18/21 (85.7%): nowall is highest at 16/21 (76.2%), default
+and nocascade both at 15/21 (71.4%, an exact tie with EV-15's raw rate). No
+arm's cost per completed is a clean number under the harness's own rule
+(`n/a` in all three; see the null-cost cause above). **No arm meets the
+founder's rule. `sizing.ts` is left unchanged.**
+
 Order: a, b, c, d and e in parallel (their file sets do not overlap), then f. The "after" table for the founder is the E-98f default arm next to section 1 above.

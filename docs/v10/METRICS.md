@@ -334,3 +334,37 @@ since `arm_stdout.log` can hold env), so there are no harness result files
 tracked in git to commit, matching every earlier EV entry in this file. Only
 this METRICS.md section is committed. The raw result files above remain on
 disk in this worktree at `eval/loki10/results/ev14-medium-{raw,v10}-r{1,2}/`.
+
+## Medium tier A/B (E-98f)
+
+E-98f (2026-09-28, branch `slice-E-98f`, harness_sha
+`3abb3ac6b5cdcb84467f247c56f15eba964b5b77-dirty`, v10.4.1, `claude-opus-5-5`,
+the same 7 `pub-*` medium tasks, 900s cap, `--parallel 3`, fresh clone per
+run) measured three knob arms at n=3 (21 task-runs each) against E-98a..e
+merged: default knobs, `LOKI_E10_WALL=0` (nowall) and `LOKI_E10_CASCADE=0`
+(nocascade, via a `LOKI_EVAL_LOKI_BIN` shim since that var is not in
+`harness.py`'s `V10_ENGINE_ENV_ALLOWLIST`; see `docs/v10/MEDIUM-ANALYSIS.md`
+"After (E-98f)" for the full method and the auth-lifecycle incident that
+lost and required re-running every arm's r2). Raw was not re-run; both
+prior raw measurements are carried forward. Dedupe rule: one row per (arm,
+run-file, task), the latest `status: ok` attempt if one exists else the
+latest attempt overall, never collapsing across the 3 reps (full rule and
+per-arm rationale in MEDIUM-ANALYSIS.md). Rows dropped by this rule: 22
+(default), 15 (nowall), 15 (nocascade), all superseded `auth_unavailable`/
+`interrupted` attempts from the auth incident; each arm's pooled table below
+has exactly 21 rows (7 tasks times 3 runs).
+
+| source | arm | completed | rate | cost per completed | p50 / p90 |
+|---|---|---|---|---|---|
+| EV-14 | raw `claude -p` | 12/14 | 85.7% | $0.5119 | 70s / 239s |
+| EV-15 | raw `claude -p` | 10/14 | 71.4% | $0.5085 | 56s / 104s |
+| EV-15 | v10 default knobs | 9/14 | 64.3% | >= $0.788 (corrected lower bound) | 128s / 330s |
+| E-98f | v10 default knobs | 15/21 | 71.4% | n/a (10/21 null-cost rows; lower bound $0.6958) | 209s / 457s |
+| E-98f | v10 `LOKI_E10_WALL=0` | 16/21 | 76.2% | n/a (2/21 null-cost rows; lower bound $0.786) | 214s / 500s |
+| E-98f | v10 `LOKI_E10_CASCADE=0` | 15/21 | 71.4% | n/a (11/21 null-cost rows; lower bound $0.3233, unreliable) | 138s / 218s |
+
+Decision rule (founder, 2026-09-28): the chosen arm must complete at or
+above EV-14's 85.7% and cost at or below EV-15's $0.5085 per completed. No
+E-98f arm reaches 85.7% (nowall highest at 76.2%), and no arm's cost per
+completed is a clean number (`n/a` in all three, see the null-cost note in
+MEDIUM-ANALYSIS.md). No arm meets the rule; `sizing.ts` is unchanged.
