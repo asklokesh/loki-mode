@@ -237,6 +237,11 @@ declare -a _FAST_KEEP=(
   # run above (measured ~118s), this walks a handful of commits, not the whole
   # repo's history, so it belongs with the other read-only structural lanes.
   "gitleaks (secrets, origin/main..HEAD)"
+  # E-94: same class as gitleaks above -- cheap, read-only-scoped to this
+  # branch's own changed test files, and it exists to catch a local-pass /
+  # CI-fail gap before push, so deferring it out of the fast tier would
+  # remove the only pre-push run it gets.
+  "hermetic changed-tests (no gh/network, E-94)"
   # dist freshness. CLAUDE.md names this the SHARPEST reason the fast tier
   # exists -- "CI never validates that the committed loki-ts/dist/loki.js
   # matches src, and when that slipped we shipped THREE releases reporting the
@@ -719,6 +724,153 @@ run_check_pyfile() {
   fi
 }
 
+# Hermetic changed-tests scan (E-94). A standalone function -- not inlined
+# into a run_check command string -- so tests/test-local-ci-hermetic.sh can
+# awk-extract and exercise this REAL body (same technique as
+# tests/test-local-ci-parent-exit-isolation.sh), instead of maintaining a
+# second, mirrored copy that can drift out of sync with what actually runs.
+#
+# Guards the red-main class from df7dc134 day: tests/test-dep-inventory.sh
+# passed here because `gh` was authenticated on this Mac, then failed on the
+# CI runner, which has neither `gh` nor GH_TOKEN/GITHUB_TOKEN -- a local pass
+# that secretly depended on ambient credentials, discovered only at CI.
+#
+# Scope: every ACTUAL test file THIS branch changed under tests/ or
+# loki-ts/tests/, diffed against the MERGE-BASE with origin/main (three
+# dots, not the tip-to-tip diff the gitleaks step above uses, so a main that
+# has moved on since the branch was cut is never misread as "this branch
+# changed it"). The filter is basename-anchored (test[-_]...\.(sh|py) under
+# tests/, *.test.ts under loki-ts/tests/), not a bare extension match:
+# tests/run-all-tests.sh and tests/run-shellcheck.sh are themselves .sh
+# files under tests/ that every test-adding branch edits, and sweeping them
+# in here would run the 282-suite runner (or a repo-wide lint) as if it were
+# a single hermetic test. Same reasoning excludes loki-ts/tests/**/fixtures
+# *.ts, which are fixture data, not runnable suites.
+#
+# For each candidate: run it once normally, once under a stripped
+# environment -- env -i (no inherited var survives, so GH_TOKEN,
+# GITHUB_TOKEN and every other ambient credential are gone with nothing to
+# unset by name), a fresh HOME, and PATH set to a PRIVATE directory (listed
+# FIRST) holding ONLY symlinks to a short, curated list of the real, ambient
+# interpreter/runtime binaries a test legitimately needs (bash, bun, python3,
+# node, timeout), then /usr/bin:/bin. `gh` is never in this list, on
+# purpose -- everything else is a version/toolchain dependency, `gh` is the
+# one PATH-reachable credential this scan exists to exclude (its token lives
+# in the OS keychain, not a HOME-relative dotfile or an env var, so `env -i`
+# alone cannot neutralize it the way it neutralizes GH_TOKEN or an `~/.npmrc`
+# token). ponytail: this list is short and hand-picked, not "every ambient
+# binary minus gh" (which would also work, since env -i + a fresh HOME
+# already strip file- and env-based credentials for anything else on it) --
+# widen it here, by name, the day a real in-scope test needs one more tool
+# this doesn't cover; do not widen it to a whole real bin/ directory, which
+# is also where `gh` itself lives on this class of machine.
+# Putting the private dir first, not last, matters: /usr/bin on this class
+# of machine ships its OWN python3 (an old Xcode stub with no third-party
+# packages), and any BARE `python3` (ours or one a test script calls
+# internally, like test-dep-inventory.sh's own
+# `python3 "$SCRIPT" --self-test`) would silently resolve to that stub
+# instead of the real interpreter if /usr/bin came first -- passing some
+# files by accident (pure-stdlib scripts) and false-failing others (anything
+# needing pytest) for a reason with nothing to do with credentials. Real
+# `bash` is symlinked in for the identical reason on the interpreter side:
+# /bin/bash on macOS is the ancient system 3.2 (no `mapfile`, no
+# `declare -A`), so a test written against the modern bash on PATH would
+# false-fail stripped purely on a version gap, not a credential leak. `node`
+# and `timeout` are symlinked in for the same reason again: neither is on
+# /usr/bin on this class of machine (unlike Linux, where both usually are),
+# so any in-scope test calling either directly (several do -- see
+# tests/test-multi-repo-orchestrates.sh's own `timeout 180` and the many
+# suites under tests/ that shell out to `node`) would false-fail stripped
+# purely on a missing-toolchain reason.
+# PYTHONUSERBASE is set to the REAL machine's user base (computed from the
+# symlinked python3 itself, never the caller's HOME) so pip packages
+# installed under `~/Library/Python/...` (fastapi among them -- see the
+# per-suite HOME hermeticity note below) stay importable under the fresh
+# HOME; it is a library search path, not a credential, so this costs nothing
+# on the hermeticity this scan actually exists to prove.
+# `timeout` (the outer wrapper call, not the symlinked one above) is
+# resolved via the normal, unstripped PATH before `env -i` ever runs, so the
+# stripped PATH never strictly needed it there either -- it is symlinked in
+# anyway because tests call it internally too, per the paragraph above.
+# GIT_CONFIG_NOSYSTEM=1 closes one more ambient-credential path a fresh HOME
+# does not: on macOS the Xcode CLT ships a SYSTEM gitconfig (fixed path,
+# unrelated to HOME) setting `credential.helper=osxkeychain`, so `git` run
+# under a stripped env would still authenticate a real network git operation
+# via the OS keychain without a HOME dotfile or env var in sight. This is
+# the identical class of leak as `gh` itself, just through a different
+# binary already present at /usr/bin/git.
+#
+# A file that passes normally but fails stripped depended on something
+# ambient CI does not have, and is named. A file that already fails or times
+# out normally is some other check's business -- it is counted separately
+# and never claimed as hermetic-clean, since it was never actually checked.
+_lci_hermetic_scan() {
+  local files f rc bindir home b tgt userbase spath failures="" ran=0 unchecked=0
+
+  files="$(git diff --name-only --diff-filter=ACMR origin/main...HEAD -- tests loki-ts/tests 2>/dev/null \
+    | grep -E '(^|/)test[-_][^/]+\.(sh|py)$|^loki-ts/tests/.*\.test\.ts$')" || true
+  if [ -z "$files" ]; then
+    echo "no changed test[-_]*.sh, test[-_]*.py under tests/, or *.test.ts under loki-ts/tests/, vs origin/main"
+    return 0
+  fi
+
+  bindir="$(mktemp -d "${TMPDIR:-/tmp}/loki-hermetic-bin.XXXXXX")" || return 1
+  for b in bash bun python3 node timeout; do
+    tgt="$(command -v "$b" 2>/dev/null)" && ln -sf "$tgt" "$bindir/$b"
+  done
+  userbase="$("$bindir/python3" -c 'import site; print(site.getuserbase())' 2>/dev/null)"
+  spath="$bindir:/usr/bin:/bin"
+
+  while IFS= read -r f; do
+    [ -n "$f" ] && [ -f "$f" ] || continue
+
+    case "$f" in
+      loki-ts/tests/*) ( cd loki-ts && timeout 30 bun test "${f#loki-ts/}" ) >/dev/null 2>&1 ;;
+      *.py)             timeout 30 python3 -m pytest -q "$f" >/dev/null 2>&1 ;;
+      *)                timeout 30 bash "$f" >/dev/null 2>&1 ;;
+    esac
+    rc=$?
+    # Only a NORMAL pass is interesting: a file already red (or too slow to
+    # finish within budget) is some other check's job to report, and
+    # re-flagging it here would just be noise -- but it was never actually
+    # verified hermetic either, so it is not folded into "ran" below.
+    if [ "$rc" -ne 0 ]; then
+      unchecked=$((unchecked + 1))
+      continue
+    fi
+    ran=$((ran + 1))
+
+    home="$(mktemp -d "${TMPDIR:-/tmp}/loki-hermetic-home.XXXXXX")" || { unchecked=$((unchecked + 1)); continue; }
+    case "$f" in
+      loki-ts/tests/*)
+        ( cd loki-ts && timeout 30 env -i HOME="$home" PYTHONUSERBASE="$userbase" GIT_CONFIG_NOSYSTEM=1 PATH="$spath" \
+          bun test "${f#loki-ts/}" ) >/dev/null 2>&1 ;;
+      *.py)
+        timeout 30 env -i HOME="$home" PYTHONUSERBASE="$userbase" GIT_CONFIG_NOSYSTEM=1 PATH="$spath" \
+          python3 -m pytest -q "$f" >/dev/null 2>&1 ;;
+      *)
+        timeout 30 env -i HOME="$home" PYTHONUSERBASE="$userbase" GIT_CONFIG_NOSYSTEM=1 PATH="$spath" \
+          bash "$f" >/dev/null 2>&1 ;;
+    esac
+    rc=$?
+    rm -rf "$home"
+    [ "$rc" -eq 0 ] || failures="$failures $f"
+  done <<< "$files"
+
+  rm -rf "$bindir"
+  if [ -n "$failures" ]; then
+    echo "passes normally but fails hermetic (no gh, no GH_TOKEN/GITHUB_TOKEN, no network creds):"
+    for f in $failures; do echo "  $f"; done
+    return 1
+  fi
+  if [ "$unchecked" -gt 0 ]; then
+    echo "$ran changed test file(s) hermetic-clean, $unchecked not verified (failed or timed out normally -- another check's business)"
+  else
+    echo "$ran changed test file(s) hermetic-clean"
+  fi
+  return 0
+}
+
 # Per-suite HOME hermeticity was prototyped here for the state-contending suites
 # (model-override, plan-command) but removed: serial pinning already eliminates
 # the only concurrency those suites could contend under (the read-only pool is
@@ -1052,6 +1204,36 @@ if why:
   '
 else
   skip_check "bun typecheck/test" "bun not installed"
+fi
+
+# ---------------------------------------------------------------------------
+# 7b. Hermetic changed-tests scan (E-94)
+# ---------------------------------------------------------------------------
+# See _lci_hermetic_scan above for the full incident/mechanism writeup. Runs
+# HERE, after section 7's `bun install`, not right after harvest_lanes: a
+# fresh worktree has no loki-ts/node_modules (section 7's own comment above),
+# so a loki-ts/tests/*.test.ts file's NORMAL `bun test` would fail for a
+# missing-toolchain reason before section 7 installs anything -- making this
+# scan silently "not verified" (never actually checked) on exactly the
+# worktrees this repo's engineers run it from. SERIAL, not a background
+# lane: it runs each changed test file's own NORMAL pass against real HOME
+# and real repo state (loki-ts/tests/* via `bun test`, tests/dashboard/*.py
+# potentially importing fastapi, tests/*.sh potentially shelling out) --
+# exactly the class of check section 3's own comment pins to the serial
+# spine, for the identical non-determinism reason (#588): concurrent CPU +
+# lane load previously flipped PASS/FAIL on suites like this.
+# Skipped entirely (not just deferred), fail-closed on a missing `timeout`
+# binary (a SKIP, never a silent pass -- matching the gitleaks/shellcheck
+# posture above), when this branch changed no in-scope test file -- the
+# common case -- so the cost this adds to a typical push is one cheap `git
+# diff`.
+if ! command -v timeout >/dev/null 2>&1; then
+  skip_check "hermetic changed-tests (no gh/network, E-94)" "timeout not installed (brew install coreutils) -- this is a SKIP, not a pass"
+elif [ -n "$(git diff --name-only --diff-filter=ACMR origin/main...HEAD -- tests loki-ts/tests 2>/dev/null \
+    | grep -E '(^|/)test[-_][^/]+\.(sh|py)$|^loki-ts/tests/.*\.test\.ts$')" ]; then
+  run_check "hermetic changed-tests (no gh/network, E-94)" '_lci_hermetic_scan'
+else
+  skip_check "hermetic changed-tests (no gh/network, E-94)" "no changed test[-_]*.sh, test[-_]*.py under tests/, or *.test.ts under loki-ts/tests/, vs origin/main"
 fi
 
 # ---------------------------------------------------------------------------

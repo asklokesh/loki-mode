@@ -656,3 +656,101 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   (`bash tests/test-app-runner-watchdog-health.sh`, run in a loop; all 4
   concurrent `test-v10-pulse.sh` copies completed clean, exit 0, over the
   same window). `bash -n` and `shellcheck` both clean on the file.
+
+## 17. A local pass depended on `gh` being authenticated on the dev Mac (E-94)
+
+- **Incident:** `tests/test-dep-inventory.sh` passed locally and failed on
+  the CI runner. Root-caused to `scripts/dep-inventory.py`'s `self_test()`:
+  one resolver path (the `actions/setup-node@v4` floating-tag lookup) had no
+  fixture in its stub cache, so a cache miss fell through to a real `gh api`
+  call. That call succeeds silently wherever `gh` happens to be authenticated
+  (this Mac) and fails wherever it is not (the CI runner, which has neither
+  `gh` nor `GH_TOKEN`/`GITHUB_TOKEN`) -- so local-ci reported green on a test
+  that was never actually hermetic, and CI became the discovery channel
+  instead of push time.
+- **Root cause with evidence:** replaying the pre-fix file directly (`git
+  show 4f7f1487^1:scripts/dep-inventory.py` extracted to a temp path, then
+  `python3 <that path> --self-test`) passes on this machine (23/23 `[PASS]`
+  lines, real `gh api` reachable) and fails under a stripped environment
+  (`env -i HOME=<fresh dir> PATH=/usr/bin:/bin:<bun+python3 only>`) with
+  exactly one failure: `[FAIL]
+  actions: Bump is measured against the release lookup` -- the same
+  resolver path, the same missing fixture, now unable to reach `gh`. E-92
+  (`4f7f1487`) fixed this specific instance by adding the missing
+  `floating_tag` cache fixture; nothing stopped the next uncached fallthrough
+  in the next test file from shipping the same way.
+- **The guard:** `scripts/local-ci.sh`'s `_lci_hermetic_scan` (fast-tier
+  step `"hermetic changed-tests (no gh/network, E-94)"`, on `_FAST_KEEP`,
+  called from the SERIAL spine AFTER section 7's `bun install` -- not right
+  after `harvest_lanes`: a fresh worktree has no `loki-ts/node_modules`
+  until section 7 installs it, so a changed `loki-ts/tests/*.test.ts` file's
+  normal `bun test` would fail for a missing-toolchain reason and the scan
+  would silently never actually check it. Like section 3's pytest gates, it
+  runs a NORMAL pass against real `HOME`/repo state, which is exactly the
+  class of check #588 pins off the concurrent background lanes). For every
+  real test file this branch changed vs `origin/main` (merge-base diff,
+  basename-anchored to `test[-_]*.sh`/`test[-_]*.py` under `tests/` or
+  `*.test.ts` under `loki-ts/tests/` -- NOT a bare extension match, so
+  `tests/run-all-tests.sh` and a `loki-ts/tests/**/fixtures/*.ts` data file
+  are never swept in as if they were runnable suites), it runs the file once
+  normally and once under `env -i` with a fresh `HOME`, and `PATH` set to a
+  private directory (listed FIRST, not last) holding ONLY symlinks to a
+  short, curated list of the real, ambient interpreter/runtime binaries a
+  test legitimately needs (`bash`, `bun`, `python3`, `node`, `timeout`) --
+  never `gh`, then `/usr/bin:/bin`. Measured, not assumed, on each point: a
+  bare-last-position PATH let `/usr/bin`'s own Xcode-stub `python3` shadow
+  the real one for any bare `python3` call (including a test's OWN internal
+  one, like `test-dep-inventory.sh`'s `python3 "$SCRIPT" --self-test`);
+  macOS's `/bin/bash` is 3.2 with no `mapfile`/`declare -A`, false-failing
+  any test written against a modern bash; `node` and `timeout` are not on
+  `/usr/bin` on this class of machine either, and real in-scope tests call
+  both directly; and a fresh `HOME` alone breaks any package installed under
+  `~/Library/Python/.../site-packages` (fastapi among them), so
+  `PYTHONUSERBASE` is preserved from the real machine to keep those
+  importable without reintroducing a credential -- all four false-positive
+  classes have nothing to do with credentials and would otherwise have
+  blocked a legitimate push. `env -i` alone already drops every inherited
+  variable, so `GH_TOKEN`/`GITHUB_TOKEN` need no separate unset;
+  `GIT_CONFIG_NOSYSTEM=1` additionally blocks the macOS system gitconfig's
+  `credential.helper=osxkeychain` (a fixed path, unrelated to `HOME`, that a
+  fresh `HOME` alone does not neutralize -- the identical leak class as
+  `gh`, just through `/usr/bin/git`). A file that passes normally but fails
+  stripped is reported by name; a file already failing (or timing out)
+  normally is counted separately and never claimed as hermetic-clean.
+  Skipped (not silently passed) when the branch changed no in-scope file, or
+  when no `timeout`
+  binary is on PATH (fail-closed, matching the gitleaks/shellcheck posture).
+  Fails closed the other way too: this is a keep-list member, so it cannot
+  be silently deferred out of the fast (pre-push) tier.
+- **The test that proves it fires:** `tests/test-local-ci-hermetic.sh`
+  (registered in `tests/run-all-tests.sh` and `tests/shard-durations.tsv`,
+  18 cases: 12 static + 6 live). Static assertions confirm the scope, the
+  stripped-env shape (bindir-first PATH, `PYTHONUSERBASE`,
+  `GIT_CONFIG_NOSYSTEM`, the curated `bash`/`bun`/`python3`/`node`/`timeout`
+  symlink list), the serial (not background-lane) call site, the keep-list
+  membership, and both skip paths. The live half awk-extracts the REAL
+  `_lci_hermetic_scan` function body out of `scripts/local-ci.sh` (never a
+  mirrored reimplementation) and runs it against disposable fixture repos: a
+  new test that calls `gh` directly passes normally and fails stripped, so
+  the scan fails and names it (gated on `gh` actually being reachable
+  normally and actually unreachable under a bare `/usr/bin:/bin`, not
+  assumed); a hermetic-clean new test, a `mapfile`/`declare -A` (bash4+-only)
+  test, and a test shelling out to `node`/`timeout` directly all pass both
+  runs; the actual pre-E-92 `scripts/dep-inventory.py` (`git show
+  4f7f1487^1:scripts/dep-inventory.py`), replayed through a copy of the real
+  test wrapper, is caught (gated on the old self-test actually passing
+  normally first); and the REAL, current (post-E-92) `dep-inventory.py` and
+  `test-dep-inventory.sh` from this repo, replayed verbatim, pass both runs
+  -- the must-not-regress case, since a scan that cannot survive the exact
+  file it was written to guard would block every future push that touches
+  it. Verified red-then-green by hand: pointed at `origin/main`'s
+  `scripts/local-ci.sh` (no `_lci_hermetic_scan` at all) the suite goes 0
+  passed / 12 failed; restored, it is 18/18 (16/16 before the node/timeout
+  scenario was added). A mutation that widens the stripped `PATH` back to
+  the ambient one (`PATH="$PATH:$spath"`) flips exactly the gh-calling
+  scenario to FAIL while every other case stays green, confirming the live
+  half is not vacuous. Dogfooded on this branch's own commit adding this
+  file: the real (non-test-harness) `_lci_hermetic_scan`, sourced and called
+  directly against this worktree, found the one real in-scope change and
+  returned `hermetic-clean` in 5.6s, well inside the 60s budget. Run:
+  `bash tests/test-local-ci-hermetic.sh`.
