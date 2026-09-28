@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+"""S41-02: eval/loki10/scorecard <label=results.jsonl>... [--append METRICS_PATH]
+
+Prints one table per task tier (small, medium, large): completion, cost per
+completed and p50 time, with two labels (conventionally raw= and loki=) side
+by side and a green/red mark per column under D41
+(docs/v10/SCORECARD-PLAN.md section 2). Reuses harness.dedupe,
+harness.nearest_rank, harness.is_evaluated and harness._task_tier; does not
+reimplement row parsing (eval/loki10/summarize wraps the same harness.py).
+
+Repeat a label for more rep files, e.g.:
+    scorecard raw=r1.jsonl raw=r2.jsonl loki=r1.jsonl loki=r2.jsonl
+
+Per section 2, each rep file is deduped on its own before concatenation: a
+dedupe over the concatenation would merge separate reps that share
+(model, harness_sha, task, arm).
+
+With exactly two labels, a tier is marked only when the task sets, n per
+task and harness_sha all match between them; any mismatch refuses the whole
+run (exit 2), nothing is printed. With any other label count (e.g. replaying
+one arm/variant alone) each tier prints per-label stats with no marks.
+
+Exit 2 on a comparability refusal, a missing/empty input file, or no rows.
+"""
+import collections
+import datetime
+import json
+import os
+import sys
+
+sys.dont_write_bytecode = True  # no __pycache__ next to the harness
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from harness import dedupe, is_evaluated, nearest_rank, _task_tier  # noqa: E402
+
+TASKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tasks")
+
+
+class Refused(Exception):
+    """A clean, printable refusal: bad args, unreadable/empty input, or an
+    incomparable pair. Always exit 2."""
+
+
+def parse_args(argv):
+    labels = collections.OrderedDict()
+    append = None
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--append":
+            i += 1
+            if i >= len(argv):
+                raise Refused("--append needs a path")
+            append = argv[i]
+        elif "=" in a and not a.startswith("-"):
+            label, path = a.split("=", 1)
+            if not label or not path:
+                raise Refused("bad argument %r, want label=path" % a)
+            labels.setdefault(label, []).append(path)
+        else:
+            raise Refused("bad argument %r, want label=path or --append PATH" % a)
+        i += 1
+    if not labels:
+        raise Refused("no result files given; usage: scorecard <label=results.jsonl>... [--append PATH]")
+    return labels, append
+
+
+def load_label_rows(paths):
+    """Section 2: dedupe each rep file on its own, then concatenate."""
+    rows = []
+    for p in paths:
+        try:
+            with open(p, encoding="utf-8") as f:
+                file_rows = [json.loads(ln) for ln in f if ln.strip()]
+        except (OSError, ValueError) as e:
+            raise Refused("cannot read %s: %s" % (p, e))
+        if not file_rows:
+            raise Refused("%s has no result rows" % p)
+        rows.extend(dedupe(file_rows))
+    return rows
+
+
+def tier_of(task_id):
+    return _task_tier(os.path.join(TASKS_DIR, task_id)) or "unknown"
+
+
+def group_by_tier(rows):
+    out = collections.defaultdict(list)
+    for r in rows:
+        out[tier_of(r["task"])].append(r)
+    return out
+
+
+def stats(rows):
+    """Completion, cost per completed and p50: section 2's definitions,
+    scoped to these rows (same shape as harness.arm_stats)."""
+    evaluated = [r for r in rows if is_evaluated(r)]
+    done = [r for r in evaluated if r.get("completed")]
+    n, completed = len(evaluated), len(done)
+    costed = [r for r in evaluated if r.get("cost_usd") is not None]
+    cost = None
+    if completed and len(costed) == len(evaluated):
+        cost = sum(r["cost_usd"] for r in costed) / completed
+    ttp = [r["time_to_pr_s"] for r in done if r.get("time_to_pr_s") is not None]
+    partial = [r for r in costed if r.get("cost_source") == "partial-stream"]
+    return {
+        "n": n, "completed": completed,
+        "completion": (completed / n) if n else None,
+        "cost": cost, "p50": nearest_rank(ttp, 50),
+        "partial_share": (len(partial) / len(costed)) if costed else None,
+        "harness_sha": sorted({r.get("harness_sha") or "unknown" for r in rows}),
+        "arm_model": sorted({"%s@%s" % (r.get("arm"), r.get("model")) for r in rows}),
+    }
+
+
+def comparable(raw_rows, loki_rows):
+    """Section 2's refusal conditions. Returns an error string, or None."""
+    raw_n = collections.Counter(r["task"] for r in raw_rows)
+    loki_n = collections.Counter(r["task"] for r in loki_rows)
+    if set(raw_n) != set(loki_n):
+        return "task sets differ: %s vs %s" % (sorted(raw_n), sorted(loki_n))
+    if raw_n != loki_n:
+        return "n per task differs: %s vs %s" % (dict(raw_n), dict(loki_n))
+    raw_sha = sorted({r.get("harness_sha") for r in raw_rows})
+    loki_sha = sorted({r.get("harness_sha") for r in loki_rows})
+    if raw_sha != loki_sha:
+        return "harness_sha differs: %s vs %s" % (raw_sha, loki_sha)
+    return None
+
+
+def mark(ok):
+    return "green" if ok else "red"
+
+
+def score(raw, loki):
+    """D41 marks (section 2): completion green if loki>=raw; cost and p50
+    green if loki<=raw. Either side null (n/a) is always red, never green."""
+    completion_ok = loki["completion"] is not None and raw["completion"] is not None \
+        and loki["completion"] >= raw["completion"]
+    cost_ok = loki["cost"] is not None and raw["cost"] is not None and loki["cost"] <= raw["cost"]
+    p50_ok = loki["p50"] is not None and raw["p50"] is not None and loki["p50"] <= raw["p50"]
+    marks = {"completion": mark(completion_ok), "cost": mark(cost_ok), "p50": mark(p50_ok)}
+    verdict = mark(all(v == "green" for v in marks.values()))
+    return marks, verdict
+
+
+def fmt_completion(s):
+    return "n/a" if s["n"] == 0 else "%d/%d (%.1f%%)" % (s["completed"], s["n"], 100 * s["completion"])
+
+
+def fmt_cost(s):
+    return "n/a" if s["cost"] is None else "$%.4f" % s["cost"]
+
+
+def fmt_p50(s):
+    return "n/a" if s["p50"] is None else "%ss" % s["p50"]
+
+
+def fmt_share(s):
+    return "n/a" if s["partial_share"] is None else "%.1f%%" % (100 * s["partial_share"])
+
+
+def render_pair(tier, raw_label, raw_s, loki_label, loki_s, marks, verdict, date, command):
+    return "\n".join([
+        "#### tier %s: %s vs %s" % (tier, raw_label, loki_label), "",
+        "| Metric | %s | %s | Mark |" % (raw_label, loki_label), "|---|---|---|---|",
+        "| Completion | %s | %s | %s |" % (fmt_completion(raw_s), fmt_completion(loki_s), marks["completion"]),
+        "| Cost per completed | %s | %s | %s |" % (fmt_cost(raw_s), fmt_cost(loki_s), marks["cost"]),
+        "| p50 time to PR | %s | %s | %s |" % (fmt_p50(raw_s), fmt_p50(loki_s), marks["p50"]), "",
+        "Verdict: %s. n: %s=%d, %s=%d. Pair: %s vs %s. Partial-stream share: %s=%s, %s=%s. "
+        "Harness sha: %s=%s, %s=%s. Date: %s. Command: `%s`" % (
+            verdict, raw_label, raw_s["n"], loki_label, loki_s["n"],
+            ", ".join(raw_s["arm_model"]) or "none", ", ".join(loki_s["arm_model"]) or "none",
+            raw_label, fmt_share(raw_s), loki_label, fmt_share(loki_s),
+            raw_label, ", ".join(raw_s["harness_sha"]), loki_label, ", ".join(loki_s["harness_sha"]),
+            date, command),
+    ])
+
+
+def render_solo(tier, per_label, date, command):
+    lines = ["#### tier %s" % tier, "",
+             "| Label | Completion | Cost per completed | p50 time to PR | n |", "|---|---|---|---|---|"]
+    for label, s in per_label:
+        lines.append("| %s | %s | %s | %s | %d |" % (label, fmt_completion(s), fmt_cost(s), fmt_p50(s), s["n"]))
+    lines += ["", "No mark: exactly two labels are required to compare under D41. "
+              "Date: %s. Command: `%s`" % (date, command)]
+    return "\n".join(lines)
+
+
+def build_tables(by_label, date, command):
+    by_label_tier = {label: group_by_tier(rows) for label, rows in by_label.items()}
+    tiers = sorted({t for g in by_label_tier.values() for t in g})
+    if not tiers:
+        raise Refused("no result rows across %d label(s)" % len(by_label))
+    tables = []
+    if len(by_label) == 2:
+        raw_label, loki_label = list(by_label)
+        for tier in tiers:
+            raw_rows = by_label_tier[raw_label].get(tier, [])
+            loki_rows = by_label_tier[loki_label].get(tier, [])
+            err = comparable(raw_rows, loki_rows)
+            if err:
+                raise Refused("tier %s: %s vs %s not comparable: %s" % (tier, raw_label, loki_label, err))
+            marks, verdict = score(stats(raw_rows), stats(loki_rows))
+            tables.append(render_pair(tier, raw_label, stats(raw_rows), loki_label, stats(loki_rows),
+                                       marks, verdict, date, command))
+    else:
+        for tier in tiers:
+            per_label = [(label, stats(by_label_tier[label].get(tier, []))) for label in by_label]
+            tables.append(render_solo(tier, per_label, date, command))
+    return tables
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else list(argv)
+    try:
+        labels, append = parse_args(argv)
+        by_label = collections.OrderedDict((label, load_label_rows(paths)) for label, paths in labels.items())
+        tables = build_tables(by_label, datetime.date.today().isoformat(), "scorecard " + " ".join(argv))
+    except Refused as e:
+        print("error: %s" % e, file=sys.stderr)
+        return 2
+    body = "\n\n".join(tables)
+    print(body)
+    if append:
+        with open(append, "a", encoding="utf-8") as f:
+            f.write("\n" + body + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
