@@ -151,11 +151,16 @@ function normalizersSha(n: EquivNormalizers): string {
   }));
 }
 
-/** Seals normalizers into the modernize log on first use for a unit, or verifies a later call
- *  still matches -- see file header. `log` is mandatory, same as M-12's sealOracle: a seal no one
- *  can later verify is not a seal. Never throws -- callers turn a failure into a NOT_PROVEN
- *  result, never an uncaught exception. */
-function sealOrVerifyNormalizers(
+/** Seals normalizers into the modernize log, write-once per unit -- section 7: normalizers are
+ *  "declared per unit and sealed WITH the oracle". The caller (the oracle-capture driver, M-15's
+ *  job; a test seals it directly) MUST call this before the new tree is implemented against.
+ *  B3 (opus reject on b379c171): checkEquivalence used to seal-on-first-use, which meant
+ *  whichever normalizers the FIRST checkEquivalence call happened to pass -- possibly called
+ *  after the new tree, and its tolerance, already existed -- became the seal. Splitting sealing
+ *  into its own explicit step removes that: checkEquivalence below now only ever READS a seal
+ *  that must already exist, it never creates one. Refuses (never throws) a re-seal with
+ *  different normalizers, matching M-12's sealOracle write-once discipline. */
+export function sealNormalizers(
   repoDir: string,
   mid: string,
   unit: string,
@@ -174,6 +179,31 @@ function sealOrVerifyNormalizers(
     return {
       ok: false,
       reason: `normalizers changed after sealing for ${unit} (sealed ${String(prior.data.sha256)}, now ${sha})`,
+    };
+  }
+  return { ok: true };
+}
+
+/** Verifies a checkEquivalence call's normalizers against the seal sealNormalizers already wrote
+ *  -- never writes one itself. Missing seal or a hash mismatch both refuse; either way the
+ *  caller turns this into a NOT_PROVEN result, never an uncaught exception. */
+function verifyNormalizersSealed(
+  repoDir: string,
+  mid: string,
+  unit: string,
+  normalizers: EquivNormalizers,
+): { ok: boolean; reason?: string } {
+  const sha = normalizersSha(normalizers);
+  const prior = readModernizeEvents(repoDir, mid).find(
+    (e) => e.type === NORMALIZERS_EVENT && e.data.unit === unit,
+  );
+  if (!prior) {
+    return { ok: false, reason: `normalizers not sealed for ${unit}: call sealNormalizers before checking equivalence` };
+  }
+  if (prior.data.sha256 !== sha) {
+    return {
+      ok: false,
+      reason: `normalizers do not match the sealed copy for ${unit} (sealed ${String(prior.data.sha256)}, given ${sha})`,
     };
   }
   return { ok: true };
@@ -285,9 +315,17 @@ function taggedEqual(a: unknown, b: unknown, tol: number, unordered: boolean): b
       if (ea.args.length !== eb.args.length) return false;
       return ea.args.every((x, i) => taggedEqual(x, eb.args[i] as Tagged, tol, false));
     }
-    default:
+    default: {
       // none/bool/int/text/bytes/bytearray/datetime/date/time: byte-for-byte tag equality.
+      // B2 (opus reject on b379c171): this branch used to compare with JSON.stringify alone,
+      // with no shape check, so two shapeless values of the same tag (e.g. {t:"int"} with no
+      // "v" on either side) counted as equal by accident. "none" is the one tag whose whole
+      // meaning is the absence of a value, so it alone is exempt from the "v" requirement.
+      if (ta.t !== "none" && (!("v" in ta) || !("v" in tb))) {
+        throw new Error(`malformed ${ta.t} value: missing "v"`);
+      }
       return JSON.stringify(a) === JSON.stringify(b);
+    }
   }
 }
 
@@ -314,7 +352,14 @@ function compareCase(rec: CaseRecord, outcome: NewCaseOutcome, n: EquivNormalize
     check("exc", rec.exc, outcome.exc, false);
     check("stdout", rec.stdout, outcome.stdout, n.unordered_fields.includes("stdout"));
     // files are always order-independent by path -- that is what "the files a call wrote" means,
-    // not a normalizer choice.
+    // not a normalizer choice. B1 (opus reject on b379c171): `?? []` here used to turn a missing
+    // files capture into "no files", which never triggers the undefined guard in `check` above
+    // (filesToTagged always returns a defined Tagged, even for []). Check for a missing files
+    // list on the raw value, before transforming it, so a genuinely missing capture is
+    // NOT_PROVEN instead of silently read as an empty (and therefore trivially matching) list.
+    if (!n.skip_fields.includes("files") && (rec.files === undefined || outcome.files === undefined)) {
+      throw new Error("missing capture: files");
+    }
     check("files", filesToTagged(rec.files ?? []), filesToTagged(outcome.files ?? []), false);
   } catch (e) {
     return { notProven: errMsg(e) };
@@ -357,7 +402,7 @@ export function checkEquivalence(
   if (CHECKED_FIELDS.every((f) => (normalizers.skip_fields as readonly string[]).includes(f))) {
     return notProvenResult(unit, "normalizers invalid: skip_fields covers every field, nothing would be compared", log);
   }
-  const normCheck = sealOrVerifyNormalizers(repoDir, mid, unit, normalizers, log);
+  const normCheck = verifyNormalizersSealed(repoDir, mid, unit, normalizers);
   if (!normCheck.ok) return notProvenResult(unit, `normalizers: ${normCheck.reason ?? "check failed"}`, log);
 
   const dir = oracleDir(repoDir, mid, unit);
@@ -375,6 +420,14 @@ export function checkEquivalence(
 
   for (const rec of records) {
     const isHeldOut = heldOutSet.has(rec.case);
+    // A record whose own not_proven field is missing or malformed (not an array) is a corrupt
+    // capture, not a clean case -- report it as NOT_PROVEN instead of throwing (rec.not_proven
+    // .length on a missing field used to crash the whole unit at this line, escaping as an
+    // uncaught exception nothing downstream could log).
+    if (!Array.isArray(rec.not_proven)) {
+      notProven.push(`${rec.case ?? "?"}: malformed case record: missing not_proven field`);
+      continue;
+    }
     if (rec.not_proven.length > 0) {
       notProven.push(`${rec.case}: ${rec.not_proven.join("; ")}`);
       continue;
@@ -408,8 +461,11 @@ export function checkEquivalence(
   if (oracleNotProven) {
     notProven.unshift(`oracle: ${sealed.not_proven ?? "oracle seal not proven"}`);
   }
-  if (heldOutSet.size > 0 && heldOutCompared === 0) {
-    notProven.push("unit: no held-out cases were compared (all excluded or not_proven)");
+  // Unconditional on heldOutSet.size (not just "> 0 and vacuous"): a sealed held_out of []
+  // cannot prove held-out equivalence either, however PROVEN_ORACLE the seal claims to be, so
+  // zero held-out cases compared is always NOT_PROVEN, never a silent PROVEN.
+  if (heldOutCompared === 0) {
+    notProven.push("unit: no held-out cases were compared (empty held-out set, all excluded, or all not_proven)");
   }
 
   const verdict: EquivResult["verdict"] =
