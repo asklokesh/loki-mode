@@ -1198,6 +1198,25 @@ lg_bad_case lg-missing-provenance "del t['hidden']['provenance']" "hidden.proven
 lg_bad_case lg-empty-requirement-tests "t['hidden']['requirements'][0]['tests']=[]" "names no hidden test id"
 lg_bad_case lg-no-requirements "t['hidden']['requirements']=[]" "hidden.requirements is required"
 
+# EV-12G's real tasks use singular hidden.requirements[].test (a plain
+# string) instead of EV-12F-a/b's plural .tests (a list) -- a positive case,
+# not just the 4 rejections above, so reverting validator support for this
+# shape (the only thing keeping EV-12G's 3 real tasks mergeable, since
+# validate is not wired into CI) would still be caught here.
+mkdir -p "$T/lg-singular-test/hidden"
+cp "$T/lg-schema/hidden/test_x.py" "$T/lg-singular-test/hidden/test_x.py"
+python3 -c "
+import json
+t = json.load(open('$T/lg-schema/task.json'))
+t['id'] = 'lg-singular-test'
+t['hidden']['requirements'] = [{'id': 'R1', 'test': 'test_x'}]
+json.dump(t, open('$T/lg-singular-test/task.json', 'w'))
+"
+if H validate "$T/lg-singular-test" >/dev/null 2>&1
+then pass "D38: requirements[].test (singular, EV-12G's shape) validates"
+else fail "D38: requirements[].test (singular, EV-12G's shape) was rejected"
+fi
+
 # ---- 20. (D38/EV-12E) tasks/lg-*/shortcuts/*.patch: applying a committed
 # shortcut at repo.ref must never let the hidden run complete, and the
 # baseline hidden run at repo.ref must be RED by assertion (an "N failed"
@@ -1239,6 +1258,11 @@ check_lg_shortcuts() {
             if ! printf '%s\n' "$out" | grep -qE '[0-9]+ failed'; then
                 echo "FAIL(shortcut leg): $name: baseline at ref is not RED by assertion (rc=$rc): $out"; ok=1; continue
             fi
+            # Reset tracked files to repo.ref before checking/applying the patch:
+            # it was authored against the pristine ref tree, not against whatever
+            # copy_hidden just overlaid on top of a hidden.files path that
+            # happens to be tracked (a real werkzeug/httpx test file, say).
+            git -C "$workdir" checkout -q -- .
             if ! git -C "$workdir" apply --check "$patch" >/dev/null 2>&1; then
                 echo "FAIL(shortcut leg): $name: shortcut patch does not apply at repo.ref"; ok=1; continue
             fi
