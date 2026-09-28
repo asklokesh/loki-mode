@@ -79,3 +79,12 @@ dbc2b6043698f815798f5898e3cb1eb289339592:loki-ts/tests/engine10/rule_of_two.test
 82e39c2920606475164bf2a8140b582ba7e7e7ae:eval/loki10/tasks/pub-werkzeug-3271/task.json:sourcegraph-access-token:8
 # Same finding, `dir`-mode fingerprint (E-86 pre-push hook uses `gitleaks dir`, not `git log`).
 eval/loki10/tasks/pub-werkzeug-3271/task.json:sourcegraph-access-token:8
+# E-101 test fixtures (tests/test-eval-archive.sh at bbe83c7a): synthetic values
+# planted on purpose to prove redact_row() strips them from archived eval rows
+# (an AKIA-shaped id padded with ABCD..., "sk-ant-planted...", a "token" string).
+# None is a real credential; verified 2026-09-28 by reading the redacted lines.
+# Guard E-110 moves these fixtures to runtime-built values and makes pre-push scan
+# every pushed file, so no new fingerprint is needed after this commit.
+bbe83c7ad70132cfd77635eb019fd68db244ff13:tests/test-eval-archive.sh:generic-api-key:35
+bbe83c7ad70132cfd77635eb019fd68db244ff13:tests/test-eval-archive.sh:aws-access-token:75
+bbe83c7ad70132cfd77635eb019fd68db244ff13:tests/test-eval-archive.sh:aws-access-token:88
