@@ -407,7 +407,7 @@ prepared PR publishes only with explicit consent, exact body, and rollback	1
 local-ci tiers (fast never green-washes full; trust core always kept)	0
 parent checkout core.bare detection self-heals without green-washing	0
 local-ci gitleaks fast-tier step (scoped scan, skip-not-pass, literal vs concatenated fixture)	1
-local-ci hermetic changed-tests scan (no gh/network, catches pre-E-92 dep-inventory regression)	9
+local-ci hermetic changed-tests scan (no gh/network, catches pre-E-92 dep-inventory regression)	5
 Export overwrite guard (non-interactive never hangs)	1
 Time-to-first-preview metric (write-once, never invented)	0
 Session knobs stay default-OFF (gates the v8 SDK-flip audit)	0
