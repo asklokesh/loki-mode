@@ -495,3 +495,39 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   pidfile path fails only Rk, and bypassing `_pid_is_ours` (checked offline
   against a throwaway copy of the module, never run against a live process)
   lets `-1` through, which Rl's assertion catches.
+## 15. Two releases pushed with unbaselined secret-shaped fixtures never reached npm (E-60)
+
+- **Incident:** Security Audit (the `secret-scan` job in
+  `.github/workflows/security-audit.yml`, a required-ci gate) failed on the
+  release SHAs for v9.79.0 (`9dc0b1d3`, 2026-09-27) and v9.80.0 (`085306ae`,
+  same day). Both pushes landed on main, but `publish-npm` never ran because
+  the required Security Audit conclusion was red, so npm latest stayed at
+  9.78.0 through both releases -- 00:45Z is when the fix (`5190756f`) landed
+  and unblocked v9.80.1.
+- **Root cause with evidence:** `5190756f`'s own commit message names the
+  findings exactly: "a planted AWS-shaped string for the deep-verify
+  secret-scan test and two CANARY/WITHHELD token canaries." Three new Loki 10
+  test fixtures were secret-shaped (matched gitleaks' built-in rules) and
+  landed on main across the two releases without a matching
+  `.gitleaksignore` entry, so gitleaks' full-history scan in CI reported
+  three new, unreviewed findings and blocked exactly as designed -- the gate
+  worked; nothing local had run the same scan before push to catch it there
+  instead of at CI, so two releases went out DOA on the fastest-available
+  feedback channel (CI, not a local gate).
+- **The guard:** E-60 adds a fast-tier gitleaks step to `scripts/local-ci.sh`
+  (`_FAST_KEEP` entry `"gitleaks (secrets, origin/main..HEAD)"`): when a
+  `gitleaks` binary is on PATH, every pre-push run scans just the commits the
+  branch adds on top of `origin/main` against the same reviewed
+  `.gitleaksignore` baseline CI uses, so an unbaselined secret-shaped fixture
+  is caught before push, not after a release SHA is already tagged. Fails
+  closed the other way too: an absent binary prints an explicit SKIP line
+  (never a silent PASS), matching this file's shellcheck-absent posture.
+- **The test that proves it fires:** `tests/test-local-ci-gitleaks.sh`
+  (registered in `tests/run-all-tests.sh` and `tests/shard-durations.tsv`).
+  Static assertions confirm the skip-not-pass path, the `.gitleaksignore`
+  baseline, the `origin/main..HEAD` scope, and `_FAST_KEEP` membership; when
+  a gitleaks binary is present, two live temp-repo scenarios drive the exact
+  command shape `scripts/local-ci.sh` runs: a commit adding a literal
+  AKIA-shaped token fails the step, and a commit adding the identical
+  characters via source-level concatenation (never contiguous in the
+  committed bytes) passes it.

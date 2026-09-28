@@ -1292,6 +1292,12 @@ run_test "prepared PR publishes only with explicit consent, exact body, and roll
 run_test "local-ci tiers (fast never green-washes full; trust core always kept)" "$SCRIPT_DIR/test-local-ci-tiers.sh"
 run_test "parent checkout core.bare detection self-heals without green-washing" "$SCRIPT_DIR/test-core-bare-selfheal.sh"
 
+# E-60: local-ci fast-tier gitleaks step (scoped to origin/main..HEAD, reviewed
+# .gitleaksignore baseline, SKIP not pass when the binary is absent). Live
+# temp-repo scenarios only run when gitleaks is on PATH; static assertions
+# always run.
+run_test "local-ci gitleaks fast-tier step (scoped scan, skip-not-pass, literal vs concatenated fixture)" "$SCRIPT_DIR/test-local-ci-gitleaks.sh"
+
 # Linting
 run_test "Export overwrite guard (non-interactive never hangs)" "$SCRIPT_DIR/test-export-overwrite-noninteractive.sh"
 run_test "Time-to-first-preview metric (write-once, never invented)" "$SCRIPT_DIR/test-first-preview-metric.sh"
