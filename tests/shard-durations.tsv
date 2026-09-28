@@ -654,6 +654,7 @@ Loki 10 gate publish script (EV-6)	2
 Loki 10 user docs match USAGE and the default marker (E-34)	1
 release.sh --bump-only restores debugId-only dist churn (E-72)	1
 release.sh --bump-only never leaves dist deleted on build failure (E-102)	1
+release-notes.sh extraction/validation + pre-push VERSION-bump gate (E-88)	9
 no hardcoded far-future latest a release can overtake (E-73)	1
 Loki modernize py2/3 capture tracer (M-09)	2
 Loki modernize user guide matches cli.ts flags (M-30)	1
