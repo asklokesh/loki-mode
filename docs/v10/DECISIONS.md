@@ -265,3 +265,12 @@ One entry per decision: context, choice, why, how to reverse. Newest last.
 - modernize/ gets its own cap of 4,000 lines in the same test: 25 planned modules (MODERNIZE.md section 13) at about 150 lines each plus 15% slack. M-24's view moves to mod/dashboard.ts. M-14 stays under 20 lines in wall.ts and calls into mod/oracle/.
 - Core never imports modernize/ (the cli.ts TABLE string is exempt), so the split cannot hide core code.
 - Hitting either cap means re-slice or delete, never raise. Ruled by the CTO (opus) on the Chief of Staff's request; implemented by E-76.
+
+## D34. 2026-09-28: large tier is real upstream PRs, one size gate, legacy moves to M-27
+
+- EV-12 failed 4 reviews: synthetic lg-* tasks met the size bar mainly by deleting starter docstrings (added lines 93-106), came from an uncommitted generator, had 0 legacy tasks, and their size script exited 0 on a miss. They are closed, not merged (branches slice-EV-12a/b/c kept).
+- Size is one command for every tier (eval/loki10/measure-size.py, run in test-harness.sh, exits 1 on any miss): files = touched non-test .py source files; lines = added non-blank lines; deletions never count. Medium: at least 2 files. Large: at least 4 files, at least 150 added lines, and above the largest medium task (74 today; the old "137" counted CI, config and deletions).
+- Large tasks use the medium pub-* pipeline: upstream repo, ref = merge^1, verbatim upstream hidden tests, RED/GREEN through run.sh, deletion mutants recorded.
+- Amends D30: legacy coverage leaves the large tier and lives in the modernize eval (M-27). The large tier is 10 feature tasks.
+- EV-14 may decide the default flip on 5 real large tasks, 2 runs per arm: v10 completions, cost per completed task and p50 time all at or better than raw. No large-tier speed claim until 10 tasks; at 10, EV-14 re-runs, and a loss on any axis reverts the default.
+- Ruled by the CTO (opus) on the Chief of Staff's request.
