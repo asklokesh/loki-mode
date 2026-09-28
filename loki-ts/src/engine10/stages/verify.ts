@@ -1,19 +1,14 @@
-// E-09 Fast verify (docs/v10/ENGINE.md section 4 "Fast verify", section 16 E-09).
-//
-// Runs impacted + changed test files + Wall tests, plus lint/typecheck of the
-// changed files, each under one per-check timeout. A missing tool is a
-// NOT PROVEN entry ("not_run"), never a failure. A failing check gets exactly
-// one rerun; fail-then-pass is recorded "flaky", not "fail". An empty diff
-// with the implementer's already_done marker seals ALREADY_SATISFIED with no
-// checks run; an empty diff without that marker is FAILED (ENGINE.md section
-// 2, "Feature already existed" row).
-//
-// testmap.ts (E-05) and machine.ts (E-02) are not on main: this stage talks
-// to them only through RunContext's `tests: TestMapProvider`, injected as a
-// fake in tests, and is never imported here.
+// E-09 Fast verify (docs/v10/ENGINE.md section 4 "Fast verify", section 16 E-09). Runs impacted +
+// changed test files + Wall tests, plus lint/typecheck of the changed files, each under one per-check
+// timeout. A missing tool is a NOT PROVEN entry ("not_run"), never a failure. A failing check gets
+// exactly one rerun; fail-then-pass is recorded "flaky", not "fail". An empty diff with the
+// implementer's already_done marker seals ALREADY_SATISFIED with no checks run; an empty diff without
+// that marker is FAILED (ENGINE.md section 2, "Feature already existed" row). testmap.ts (E-05) and
+// machine.ts (E-02) are not on main: this stage talks to them only through RunContext's `tests:
+// TestMapProvider`, injected as a fake in tests, and is never imported here.
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
 
@@ -205,7 +200,12 @@ export const verifyStage: Stage = {
     const impacted = ctx.tests.impacted(map, changed);
     const changedTestFiles = map.tests.filter((t) => changed.includes(t.path));
     const wall = (ctx.outputs().wall as WallOutput | undefined) ?? {};
-    const wallPaths = new Set((wall.files ?? []).map((f) => f.path));
+    // E-56: wall.ts (E-15) seals files under an absolute targetDir; normalize
+    // to repo-relative (map.tests paths are always relative to repoDir) so an
+    // absolute Wall path still matches and runs in fast verify.
+    const wallPaths = new Set(
+      (wall.files ?? []).map((f) => (isAbsolute(f.path) ? relative(ctx.repoDir, f.path) : f.path)),
+    );
     const wallTests = map.tests.filter((t) => wallPaths.has(t.path));
     const tests = dedupeTests([...impacted, ...changedTestFiles, ...wallTests]);
 

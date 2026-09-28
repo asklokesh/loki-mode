@@ -204,6 +204,24 @@ describe("engine10 verify: test selection and select-tests.sh", () => {
     expect(emitted.filter((e) => e.type === "test.result")).toHaveLength(1);
   }, 20_000);
 
+  test("an absolute Wall path is normalized to repo-relative and still selected", async () => {
+    const repoDir = mkRepo("bun-target");
+    const sha = baseSha(repoDir);
+    writeFileSync(join(repoDir, "src.txt"), "changed\n"); // untracked -> non-empty diff
+    const map: TestMap = { runners: ["bun"], tests: [{ runner: "bun", path: "sample.test.ts" }] };
+    const { ctx } = fakeCtx({
+      repoDir, baseSha: sha,
+      detect: async () => map,
+      impacted: () => [],
+      outputs: { wall: { files: [{ path: join(repoDir, "sample.test.ts") }] } }, // absolute, as wall.ts (E-15) emits
+    });
+    const result = await verifyStage.run(ctx, sig());
+    const checks = result.data.checks as VerifyCheck[];
+    const testChecks = checks.filter((c) => c.name.startsWith("bun:"));
+    expect(testChecks).toHaveLength(1);
+    expect(testChecks[0]?.result).toBe("pass");
+  }, 20_000);
+
   test("select-tests.sh runs when the target carries it (self-hosting)", async () => {
     const repoDir = mkRepo("loki-mode-repo");
     const sha = baseSha(repoDir);
