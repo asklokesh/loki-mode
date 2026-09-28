@@ -188,13 +188,32 @@ describe("engine10 machine", () => {
     expect(events.find((e) => e.type === "stage.started" && e.stage === "implement")?.data.limit_s).toBe(1800);
   });
 
-  it("already satisfied and spec conflict jump to commit and seal", async () => {
-    for (const [n, data] of [["intake", { already_satisfied: true }], ["implement", { exit: "spec_conflict" }]] as const) {
-      const { ctx, events } = fakeCtx();
-      await runMachine(ctx, { load: loaderOf(all({ [n]: stage(n, async () => ({ status: "completed", data })) })) });
-      expect(of(events, "stage.started")).not.toContain("verify");
-      expect(of(events, "stage.completed").slice(-3)).toEqual(["commit", "seal", "pr"]);
-    }
+  it("already satisfied jumps to commit and seal", async () => {
+    const { ctx, events } = fakeCtx();
+    await runMachine(ctx, { load: loaderOf(all({ intake: stage("intake", async () => ({ status: "completed", data: { already_satisfied: true } })) })) });
+    expect(of(events, "stage.started")).not.toContain("verify");
+    expect(of(events, "stage.completed").slice(-3)).toEqual(["commit", "seal", "pr"]);
+  });
+
+  it("spec_conflict still runs verify and the fix loop; seal still reports SPEC_CONFLICT (E-98b)", async () => {
+    const { ctx, events } = fakeCtx();
+    let fixRan = false;
+    await runMachine(ctx, {
+      load: loaderOf(all({
+        implement: stage("implement", async () => ({ status: "completed", data: { exit: "spec_conflict" } })),
+        verify: stage("verify", async () => ({ status: "completed", data: { failures_grouped: [{ signature: "x" }] } })),
+        fix: stage("fix", async () => { fixRan = true; return { status: "completed", data: {} }; }),
+        // Mirrors seal.ts:110 (spec_conflict checked before the checks/emptyDiff verdict logic).
+        seal: stage("seal", async (c) => {
+          const exit = (c.outputs().implement as { exit?: string } | undefined)?.exit;
+          return { status: "completed", data: { verdict: exit === "spec_conflict" ? "SPEC_CONFLICT" : "VERIFIED" } };
+        }),
+      })),
+    });
+    expect(of(events, "stage.started")).toContain("verify");
+    expect(fixRan).toBe(true);
+    const seal = events.find((e) => e.type === "stage.completed" && e.stage === "seal");
+    expect(seal?.data.verdict).toBe("SPEC_CONFLICT");
   });
 
   it("intake failure ends the run without sealing", async () => {
