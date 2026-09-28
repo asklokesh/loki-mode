@@ -800,6 +800,7 @@ if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_ALL" \
 UNRELEASED_ALL_SHA="$(cd "$FAKE_REPO" && git rev-parse --short=8 main)"
 EXPECTED_ALL="VIOLATION: MOAT_REGRESSION: measured moat suite reports FAIL (1 rule failure(s)) -- a live suite failure is always a regression regardless of the proven count (see $MOAT_RESULT_FAIL)
 VIOLATION: UNRELEASED_MERGE: 1 commit(s) merged but unreleased for 60.0 minutes since v1.0.0 (oldest $UNRELEASED_ALL_SHA) while CI is green
+VIOLATION: RELEASE_CADENCE: 1 merged-unreleased slice commit(s) since v1.0.0, 60.0 minutes since the later of the oldest commit and the release tag while main CI is green (D37 threshold 25)
 VIOLATION: REVIEW_STALE: review-pending past 45 minutes: S-01 (60.0 min)
 VIOLATION: AGENT_OVER_BUDGET: agent(s) past their role/tier time budget: S-01 review LOW (60.0 min, budget 30 min)
 VIOLATION: IDLE_BUILDERS: only 0 active builder worktree(s) while 1 ready slice(s) exist on BOARD (S-02)
@@ -809,6 +810,7 @@ VIOLATION: LOW_RELEASE_VOLUME: only 0 release(s) in the last 24h (want at least 
 assert_exact_violations "T11 all-except-CI_RED" "$EXPECTED_ALL"
 EXPECTED_NEXT_ALL="NEXT ACTION: MOAT_REGRESSION: identify which moat property regressed and revert or fix it before any further merge -- measured moat suite reports FAIL (1 rule failure(s)) -- a live suite failure is always a regression regardless of the proven count (see $MOAT_RESULT_FAIL)
 NEXT ACTION: UNRELEASED_MERGE: cut a release now, main has been unreleased past the 30-minute budget -- 1 commit(s) merged but unreleased for 60.0 minutes since v1.0.0 (oldest $UNRELEASED_ALL_SHA) while CI is green
+NEXT ACTION: RELEASE_CADENCE: cut a release now (D37 cadence) -- 1 merged-unreleased slice commit(s) since v1.0.0, 60.0 minutes since the later of the oldest commit and the release tag while main CI is green (D37 threshold 25)
 NEXT ACTION: REVIEW_STALE: escalate or finish review for the named slice(s), they have exceeded the 45-minute budget -- review-pending past 45 minutes: S-01 (60.0 min)
 NEXT ACTION: AGENT_OVER_BUDGET: check in on the named agent(s), they have exceeded their role/tier time budget -- agent(s) past their role/tier time budget: S-01 review LOW (60.0 min, budget 30 min)
 NEXT ACTION: IDLE_BUILDERS: dispatch more builders against the named ready slice(s) in docs/v10/BOARD.md -- only 0 active builder worktree(s) while 1 ready slice(s) exist on BOARD (S-02)
@@ -2472,6 +2474,110 @@ if printf '%s\n' "$OUT" | grep -qF "VIOLATION: STRAY_WORKTREE: worktree(s) regis
     ok "a stray under the listing's primary path fires even though PULSE_REPO_ROOT (this run's own worktree) points elsewhere"
 else
     bad "T44c primary-vs-PULSE_REPO_ROOT case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T45 -- RELEASE_CADENCE (D37, E-89): fires only with a merged-unreleased slice commit AND"
+echo "      main CI green AND more than 25 minutes since the later of its commit time / the release tag"
+# PULSE_NOW (COMMON_ARGS) = 2026-09-27T02:00:00Z = epoch 1790474400 (see T1).
+# 26 min before = 2026-09-27T01:34:00Z, 24 min before = 2026-09-27T01:36:00Z.
+# FAKE_REPO is still clean at v1.0.0 here: nothing between T41d and here adds
+# a commit or a tag.
+
+echo "T45a -- fires at 26 minutes with main CI green"
+(
+    cd "$FAKE_REPO" || exit 1
+    echo "cadence change" > cadence-file.txt
+    git add cadence-file.txt
+    GIT_AUTHOR_DATE="2026-09-27T01:34:00Z" GIT_COMMITTER_DATE="2026-09-27T01:34:00Z" \
+        git commit -q -m "unreleased cadence change"
+)
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" \
+    "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}" "$WT_CLEAN_STALE")"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "Release cadence (D37): 26.0 min, 1 merged-unreleased slice commit(s) since v1.0.0" \
+    && printf '%s\n' "$OUT" | grep -q "^VIOLATION: RELEASE_CADENCE: 1 merged-unreleased slice commit(s) since v1.0.0, 26.0 minutes" \
+    && printf '%s\n' "$OUT" | grep -qF "NEXT ACTION: RELEASE_CADENCE: cut a release now (D37 cadence) --"; then
+    ok "RELEASE_CADENCE fires at 26 minutes with main CI green"
+else
+    bad "T45a RELEASE_CADENCE-fires case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+(cd "$FAKE_REPO" || exit 1; git reset -q --hard v1.0.0)
+
+echo "T45b -- does not fire at 24 minutes (same shape, under the 25-minute threshold)"
+(
+    cd "$FAKE_REPO" || exit 1
+    echo "cadence change" > cadence-file.txt
+    git add cadence-file.txt
+    GIT_AUTHOR_DATE="2026-09-27T01:36:00Z" GIT_COMMITTER_DATE="2026-09-27T01:36:00Z" \
+        git commit -q -m "unreleased cadence change"
+)
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" \
+    "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}" "$WT_CLEAN_STALE")"; then rc=0; else rc=$?; fi
+if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: RELEASE_CADENCE" \
+    && printf '%s\n' "$OUT" | grep -qF "Release cadence (D37): 24.0 min, 1 merged-unreleased slice commit(s) since v1.0.0"; then
+    ok "RELEASE_CADENCE does not fire at 24 minutes"
+else
+    bad "T45b RELEASE_CADENCE-24min case: output follows"
+    printf '%s\n' "$OUT"
+fi
+(cd "$FAKE_REPO" || exit 1; git reset -q --hard v1.0.0)
+
+echo "T45c -- does not fire when main CI is red, even past the threshold"
+(
+    cd "$FAKE_REPO" || exit 1
+    echo "cadence change" > cadence-file.txt
+    git add cadence-file.txt
+    GIT_AUTHOR_DATE="2026-09-27T01:34:00Z" GIT_COMMITTER_DATE="2026-09-27T01:34:00Z" \
+        git commit -q -m "unreleased cadence change"
+)
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_ANY" \
+    "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=cat $GH_RED_JSON" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}" "$WT_CLEAN_STALE")"; then rc=0; else rc=$?; fi
+if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: RELEASE_CADENCE" \
+    && printf '%s\n' "$OUT" | grep -qF "Release cadence (D37): 26.0 min, 1 merged-unreleased slice commit(s) since v1.0.0"; then
+    ok "RELEASE_CADENCE does not fire when main CI is red (the count/age status line is still reported)"
+else
+    bad "T45c RELEASE_CADENCE-red-main case: output follows"
+    printf '%s\n' "$OUT"
+fi
+(cd "$FAKE_REPO" || exit 1; git reset -q --hard v1.0.0)
+
+echo "T45d -- a docs-only commit never counts as a merged-unreleased slice commit"
+(
+    cd "$FAKE_REPO" || exit 1
+    mkdir -p docs
+    echo "docs change" > docs/notes.md
+    git add docs/notes.md
+    GIT_AUTHOR_DATE="2026-09-27T01:34:00Z" GIT_COMMITTER_DATE="2026-09-27T01:34:00Z" \
+        git commit -q -m "docs-only change"
+)
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" \
+    "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}" "$WT_CLEAN_STALE")"; then rc=0; else rc=$?; fi
+if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: RELEASE_CADENCE" \
+    && printf '%s\n' "$OUT" | grep -qF "Release cadence (D37): n/a (no merged-unreleased slice commits since v1.0.0)"; then
+    ok "a docs-only commit is excluded, RELEASE_CADENCE reads n/a"
+else
+    bad "T45d RELEASE_CADENCE-docs-only case: output follows"
+    printf '%s\n' "$OUT"
+fi
+(cd "$FAKE_REPO" || exit 1; git reset -q --hard v1.0.0)
+
+echo "T45e -- UNKNOWN, never a silent pass, when the release tag cannot be read"
+if run_pulse "PULSE_REPO_ROOT=$NO_GIT_REPO" "PULSE_MAIN_REF=main" \
+    "BOARD_MD=$BOARD_CLEAN" "CONTROL_MD=$CONTROL_OK" \
+    "PULSE_NPM_CMD=false" "PULSE_GH_CMD=false" "PULSE_GH_STREAK_CMD=false" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO")" \
+    "PULSE_SWARM_START=2026-09-26T23:00Z" "PULSE_NOW=2026-09-27T02:00:00Z"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "Release cadence (D37): UNKNOWN (release tag or commit history could not be read)" \
+    && printf '%s\n' "$OUT" | grep -q "^UNKNOWN metrics:.*release_cadence" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: RELEASE_CADENCE"; then
+    ok "RELEASE_CADENCE reports UNKNOWN, never fires, when the release tag cannot be read"
+else
+    bad "T45e RELEASE_CADENCE-unknown-tag case: output follows"
     printf '%s\n' "$OUT"
 fi
 

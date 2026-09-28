@@ -449,7 +449,7 @@ NOW = now_epoch()
 # the TOP violation -- an accidental ordering-by-discovery would misrank it.
 VIOLATION_PRIORITY = [
     "SESSION_STALLED", "CI_RED", "CI_CANCELLED_STREAK", "RELEASE_ON_RED", "HIGH_LOAD",
-    "MOAT_REGRESSION", "UNRELEASED_MERGE", "TRAIN_LATE", "REVIEW_STALE",
+    "MOAT_REGRESSION", "UNRELEASED_MERGE", "RELEASE_CADENCE", "TRAIN_LATE", "REVIEW_STALE",
     "AGENT_OVER_BUDGET", "STALE_PROGRESS", "UNEVIDENCED_CLAIM", "RELEASED_AHEAD_OF_NPM",
     "ORPHAN_TEST", "ORPHAN_WORKTREE", "STRAY_CONTAINER", "STRAY_WORKTREE",
     "WORKTREE_COUNT", "IDLE_BUILDERS", "LOW_READY", "NO_RECENT_RELEASE",
@@ -1457,6 +1457,86 @@ else:
             "TRAIN_LATE",
             "%.1f minutes since the last train push while merged-but-unreleased commits exist (threshold %d)"
             % (_tl_age, _TRAIN_LATE_THRESHOLD_MIN),
+        )
+
+
+# --- 4d. RELEASE_CADENCE: D37 fixed cadence (E-89) --------------------------
+# D37: cut a release at :00/:20/:40 whenever main is green and at least one
+# merged-unreleased slice commit exists; never let more than 25 minutes pass
+# with both conditions true. Deliberately its own check rather than a
+# TRAIN_LATE rename: TRAIN_LATE clocks from the last actual `git push` (a
+# push-side signal, independent of CI), while RELEASE_CADENCE clocks from
+# the merged work itself (a release-readiness signal) and, per D37's own
+# text, requires CI green -- a red main with old merged commits is not a
+# cadence violation, it is CI_RED's problem (already highest priority).
+#
+# Definition of "merged-unreleased slice commit" is narrower than the
+# `unreleased` dict above: NON-merge commits only (--no-merges; a slice
+# lands via a merge commit, but the merge commit itself is not "a slice"),
+# and docs-only commits (touching only docs/, *.md, .gitleaksignore) never
+# count -- a docs commit sitting on main is not backlog pressure for a
+# release. Reuses `unreleased["tag"]` / `_npm_tag_mismatch` (same "newest
+# v* tag whose version equals npm's latest dist-tag" definition, same npm
+# lookup, no second network call) and `ci_status` (same main-CI result,
+# with its own Tests-run-list fallback already built in) rather than
+# re-deriving either.
+def _docs_only_path(path):
+    return path.startswith("docs/") or path.endswith(".md") or path == ".gitleaksignore"
+
+
+def check_release_cadence_d37():
+    if unreleased is None or npm_result is None or _npm_tag_mismatch is not None:
+        return None
+    tag = unreleased["tag"]
+    rc, out, _ = git(["log", "--no-merges", "--format=%H %ct", "%s..%s" % (tag, MAIN_REF)])
+    if rc != 0:
+        return None
+    commits = []
+    for line in out.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            commits.append((parts[0], float(parts[1])))
+    qualifying = []
+    for sha, ct in commits:
+        rc2, files_out, _ = git(["show", "--no-color", "--name-only", "--format=", sha])
+        if rc2 != 0:
+            return None
+        paths = [p for p in files_out.splitlines() if p.strip()]
+        if paths and all(_docs_only_path(p) for p in paths):
+            continue
+        qualifying.append((sha, ct))
+    rc3, tag_out, _ = git(["log", "-1", "--format=%ct", tag])
+    if rc3 != 0 or not tag_out.strip():
+        return None
+    return {"tag": tag, "tag_time": float(tag_out.strip()), "qualifying": qualifying}
+
+
+_RELEASE_CADENCE_THRESHOLD_MIN = 25
+
+release_cadence = safe(check_release_cadence_d37)
+if release_cadence is None:
+    mark_unknown("release_cadence")
+    emit("Release cadence (D37): UNKNOWN (release tag or commit history could not be read)")
+elif not release_cadence["qualifying"]:
+    emit("Release cadence (D37): n/a (no merged-unreleased slice commits since %s)" % release_cadence["tag"])
+else:
+    _rc_count = len(release_cadence["qualifying"])
+    _rc_oldest = min(ct for _, ct in release_cadence["qualifying"])
+    _rc_basis = max(_rc_oldest, release_cadence["tag_time"])
+    _rc_age = (NOW - _rc_basis) / 60.0
+    emit(
+        "Release cadence (D37): %.1f min, %d merged-unreleased slice commit(s) since %s"
+        % (_rc_age, _rc_count, release_cadence["tag"])
+    )
+    if ci_status is None:
+        mark_unknown("release_cadence")
+        emit("Release cadence (D37): CI status UNKNOWN, cannot evaluate the D37 cadence gate")
+    elif ci_status == "green" and _rc_age > _RELEASE_CADENCE_THRESHOLD_MIN:
+        add_violation(
+            "RELEASE_CADENCE",
+            "%d merged-unreleased slice commit(s) since %s, %.1f minutes since the later of the oldest "
+            "commit and the release tag while main CI is green (D37 threshold %d)"
+            % (_rc_count, release_cadence["tag"], _rc_age, _RELEASE_CADENCE_THRESHOLD_MIN),
         )
 
 
@@ -2659,6 +2739,7 @@ _NEXT_ACTION_TEXT = {
     "HIGH_LOAD": "reduce load now: stop non-essential agents/containers, the machine is over 2x its core count (D28)",
     "MOAT_REGRESSION": "identify which moat property regressed and revert or fix it before any further merge",
     "UNRELEASED_MERGE": "cut a release now, main has been unreleased past the 30-minute budget",
+    "RELEASE_CADENCE": "cut a release now (D37 cadence)",
     "TRAIN_LATE": "push a release train now, merged-unreleased commits exist and cadence has slipped past the 25-minute budget",
     "REVIEW_STALE": "escalate or finish review for the named slice(s), they have exceeded the 45-minute budget",
     "AGENT_OVER_BUDGET": "check in on the named agent(s), they have exceeded their role/tier time budget",
