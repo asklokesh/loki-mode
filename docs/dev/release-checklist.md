@@ -70,17 +70,17 @@ the section is missing, empty, or not fully written. release.yml runs this
 extraction BEFORE tagging (D36), so a notes failure never burns a version
 number.
 
-Carried-version auto-detect (E-88 B1, D36) only pulls forward a heading that
-is: strictly below VERSION, directly below VERSION's own heading with no
-gap (a contiguous run of lower versions), and confirmed NOT published on
-npm. release.yml passes that confirmation via `--npm-versions-file`, fed
-from one `npm view loki-mode versions --json` per release; with no such
-file (a registry blip, or a local run), nothing is auto-carried and
-`--include v1,v2,...` is required instead. This replaced a version that
-scanned the section's own prose for any `vX.Y.Z` mention, which could pull
-in a HIGHER, already-published version named only for context (the
-v9.22.13 bug: its body says "v9.24.0 is the next version on npm", and the
-old code appended v9.24.0's whole section).
+Carrying another version's notes forward (E-88a) is explicit only:
+`--include v1,v2,...` names the versions to append, each under its own
+"## vX.Y.Z changes (first published in vNEW)" heading; release.yml itself
+passes no `--include`, so a version that never reached npm gets its
+section written directly into the new CHANGELOG entry by hand (as done for
+10.0.1 and 10.2.1). An earlier revision auto-detected candidates from the
+section's own prose and an npm-published check; two rounds of review found
+it could still pull in a HIGHER, already-published version named only for
+context (the v9.22.13 bug: its body says "v9.24.0 is the next version on
+npm") or over-carry on a stale npm read, so auto-detect was removed
+entirely rather than patched again.
 
 ### 2. Build Dashboard Frontend
 

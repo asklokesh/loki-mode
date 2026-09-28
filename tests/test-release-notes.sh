@@ -144,7 +144,7 @@ fixture "$WORK/placeholder.md" <<'EOF'
 ## v1.2.3 (2026-01-01)
 
 ### Added
-- TODO fill this in
+- TODO: fill this in
 EOF
 if bash "$SCRIPT" 1.2.3 --file "$WORK/placeholder.md" >/dev/null 2>&1; then
     bad "TODO placeholder exited 0"
@@ -220,7 +220,7 @@ fixture "$WORK/lower-todo.md" <<'EOF'
 ## v1.2.3 (2026-01-01)
 
 ### Added
-- todo fill this in later
+- todo: fill this in later
 EOF
 if bash "$SCRIPT" 1.2.3 --file "$WORK/lower-todo.md" >/dev/null 2>&1; then
     bad "lowercase 'todo' placeholder exited 0"
@@ -229,47 +229,49 @@ else
 fi
 
 echo
-echo "T9d -- B1: a carried version must sort strictly below VERSION"
-# The trigger phrase fires (auto-carry is armed), the body mentions a HIGHER
-# version (already published) only for context, and a real npm-versions-file
-# is supplied so the carry step actually engages -- pinning that the walk's
-# directionality (never above VERSION's own heading) is what excludes it,
-# not merely a missing npm file.
-fixture "$WORK/higher-mention.md" <<'EOF'
-## v2.2.13
-
-Tagged but never published; v2.4.0 is the next version on npm.
-
-### Fixed
-- something
-EOF
-fixture "$WORK/npm-published.json" <<'EOF'
-["2.4.0"]
-EOF
-out="$(bash "$SCRIPT" 2.2.13 --file "$WORK/higher-mention.md" --npm-versions-file "$WORK/npm-published.json")"; rc=$?
-if [ "$rc" -eq 0 ] && ! printf '%s\n' "$out" | grep -q 'changes (first published'; then
-    ok "a higher version mentioned in prose is never carried (v9.22.13 bug, fixed)"
-else
-    bad "a higher/unrelated version leaked into the carried output (rc=$rc): $out"
-fi
-
-echo
-echo "T9d2 -- B1 real-file repro: v9.22.13 over the actual CHANGELOG.md, no fixtures"
-# The exact reported reproduction, driven straight against the real
-# CHANGELOG.md this repo ships (no --npm-versions-file needed: the old bug
-# fired purely off the trigger phrase in v9.22.13's own body, scanning ALL
-# of its prose for any "vX.Y.Z" token -- it never checked npm at all). The
-# old script appends the whole v9.24.0 section; the new one must not.
+echo "T9d -- E-88a real-file regression: v9.22.13 over the actual CHANGELOG.md, no --include"
+# The old auto-detected-carry bug reproduced: v9.22.13's own body says
+# "v9.24.0 is the next version on npm" (a HIGHER, already-published version
+# named only for context). Auto-detect is now gone entirely -- with no
+# --include, nothing is ever carried, so this can never happen again by
+# construction, not merely by a narrower heuristic.
 out="$(cd "$REPO_ROOT" && bash "$SCRIPT" 9.22.13)"
 if ! printf '%s\n' "$out" | grep -q '## v9.24.0'; then
-    ok "real CHANGELOG.md: v9.22.13 never carries v9.24.0's section (the reported bug)"
+    ok "real CHANGELOG.md: v9.22.13 never carries v9.24.0's section (no auto-detect, no --include)"
 else
     bad "real CHANGELOG.md: v9.22.13 output still contains a v9.24.0 section: $out"
 fi
 
 echo
-echo "T9e -- B1: carries the contiguous run of lower, unpublished headings below VERSION"
-fixture "$WORK/contiguous.md" <<'EOF'
+echo "T9e -- E-88a: no --include means nothing is carried, even when the body invites it"
+fixture "$WORK/cl-no-include.md" <<'EOF'
+## v2.0.0 (2026-01-03)
+
+Carries v1.9.0, never published.
+
+### Added
+- top level thing
+
+## v1.9.0
+
+### Fixed
+- old fix
+EOF
+out="$(bash "$SCRIPT" 2.0.0 --file "$WORK/cl-no-include.md")"
+if ! printf '%s\n' "$out" | grep -q 'changes (first published'; then
+    ok "with no --include, nothing is carried (auto-detect removed entirely)"
+else
+    bad "something was carried without --include: $out"
+fi
+
+echo
+echo "T9e2 -- E-88a: --npm-versions-file is gone; the flag is now a usage error"
+# r2's old contiguous-carry fixture, replayed with the flag that used to
+# arm auto-detect. Checking exit code alone would also pass if the script
+# merely crashed for some unrelated reason, so this asserts the SPECIFIC
+# reason: an unknown-argument usage error, not "ran fine and carried
+# nothing" and not "ran fine and carried it".
+fixture "$WORK/gone-npm-flag.md" <<'EOF'
 ## v3.0.0 (2026-01-05)
 
 Carries the versions below, never published.
@@ -292,56 +294,29 @@ Carries the versions below, never published.
 ### Fixed
 - must not carry, published
 EOF
-fixture "$WORK/contiguous-npm.json" <<'EOF'
+fixture "$WORK/gone-npm-flag.json" <<'EOF'
 ["2.7.0"]
 EOF
-out="$(bash "$SCRIPT" 3.0.0 --file "$WORK/contiguous.md" --npm-versions-file "$WORK/contiguous-npm.json")"
-if printf '%s\n' "$out" | grep -q 'carried 1' \
-    && printf '%s\n' "$out" | grep -q 'carried 2' \
-    && ! printf '%s\n' "$out" | grep -q 'must not carry'; then
-    ok "carries the contiguous unpublished run and stops at the first published heading"
+out="$(bash "$SCRIPT" 3.0.0 --file "$WORK/gone-npm-flag.md" --npm-versions-file "$WORK/gone-npm-flag.json" 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ] && printf '%s\n' "$out" | grep -q 'unknown argument'; then
+    ok "--npm-versions-file is now an unknown-argument usage error (auto-detect machinery is gone, not merely unreachable)"
 else
-    bad "contiguous-run carry did not match expectations: $out"
+    bad "--npm-versions-file did not fail as an unknown argument (rc=$rc): $out"
 fi
 
 echo
-echo "T9f -- B1: contiguity breaks the walk even for a later heading that would qualify alone"
-# v2.6.0 individually satisfies "below VERSION" and "unpublished", but the
-# walk must stop at v2.7.0 (published) and never skip past it to reach v2.6.0.
-fixture "$WORK/gap.md" <<'EOF'
-## v3.0.0 (2026-01-05)
-
-Carries the versions below, never published.
-
-### Added
-- top level thing
-
-## v2.7.0
-
-### Fixed
-- must not carry, published, breaks contiguity
-
-## v2.6.0
-
-### Fixed
-- must not carry, not contiguous with v3.0.0
-EOF
-fixture "$WORK/gap-npm.json" <<'EOF'
-["2.7.0"]
-EOF
-out="$(bash "$SCRIPT" 3.0.0 --file "$WORK/gap.md" --npm-versions-file "$WORK/gap-npm.json")"; rc=$?
-if [ "$rc" -eq 0 ] && ! printf '%s\n' "$out" | grep -q 'must not carry'; then
-    ok "the walk never skips past a published heading to reach a later unpublished one"
+echo "T9f -- E-88a: explicit --include still carries the named version's section"
+out="$(bash "$SCRIPT" 2.0.0 --file "$WORK/cl-no-include.md" --include 1.9.0)"
+if printf '%s\n' "$out" | grep -q 'old fix'; then
+    ok "explicit --include still carries the named version"
 else
-    bad "a non-contiguous heading was carried anyway (rc=$rc): $out"
+    bad "explicit --include stopped working: $out"
 fi
 
 echo
-echo "T9g -- B1: with no --npm-versions-file at all, nothing is auto-carried"
-fixture "$WORK/cl-no-npm.md" <<'EOF'
+echo "T9g -- E-88a: an --include body with placeholder text (TODO/TBD) fails extraction"
+fixture "$WORK/cl-include-todo.md" <<'EOF'
 ## v2.0.0 (2026-01-03)
-
-Carries v1.9.0, never published.
 
 ### Added
 - top level thing
@@ -349,48 +324,137 @@ Carries v1.9.0, never published.
 ## v1.9.0
 
 ### Fixed
-- old fix
+- TODO: write this up
 EOF
-out="$(bash "$SCRIPT" 2.0.0 --file "$WORK/cl-no-npm.md")"
-if ! printf '%s\n' "$out" | grep -q 'changes (first published'; then
-    ok "no --npm-versions-file means auto-carry adds nothing (require --include instead)"
+if bash "$SCRIPT" 2.0.0 --file "$WORK/cl-include-todo.md" --include 1.9.0 >/dev/null 2>&1; then
+    bad "--include body with a TODO placeholder exited 0"
 else
-    bad "auto-carry fired without any npm data: $out"
+    ok "--include body with a TODO placeholder exits 1 (--include bodies get the placeholder check too)"
 fi
 
 echo
-echo "T9g2 -- B1: no trigger phrase means auto-carry adds nothing, even with a real npm file"
-# The v9.80.0 / v9.23.1 shape from the real CHANGELOG: an unpublished,
-# contiguous heading sits directly below, but THIS section's own body never
-# says it carries anything -- auto-detect must stay off.
-fixture "$WORK/no-trigger.md" <<'EOF'
-## v4.0.0 (2026-01-05)
+echo "T9h -- new TODO/TBD regex: 'build a todo app' is a real change, not a placeholder"
+fixture "$WORK/todo-app.md" <<'EOF'
+## v1.2.3 (2026-01-01)
 
 ### Added
-- ordinary release, mentions nothing about carrying old content
-
-## v3.9.0
-
-### Fixed
-- an older, unpublished release that v4.0.0 does not claim to carry
+- build a todo app
 EOF
-fixture "$WORK/no-trigger-npm.json" <<'EOF'
-["3.8.0"]
+out="$(bash "$SCRIPT" 1.2.3 --file "$WORK/todo-app.md")"; rc=$?
+[ "$rc" -eq 0 ] && printf '%s\n' "$out" | grep -q 'build a todo app' \
+    && ok "'build a todo app' passes (not flagged as a TODO placeholder)" \
+    || bad "'build a todo app' was wrongly rejected (rc=$rc): $out"
+
+echo
+echo "T9i -- new TODO/TBD regex: a bare 'TBD' bullet still fails"
+fixture "$WORK/bare-tbd.md" <<'EOF'
+## v1.2.3 (2026-01-01)
+
+### Added
+- TBD
 EOF
-out="$(bash "$SCRIPT" 4.0.0 --file "$WORK/no-trigger.md" --npm-versions-file "$WORK/no-trigger-npm.json")"
-if ! printf '%s\n' "$out" | grep -q 'changes (first published'; then
-    ok "no trigger phrase in the body means nothing auto-carries, even though npm data is present"
+if bash "$SCRIPT" 1.2.3 --file "$WORK/bare-tbd.md" >/dev/null 2>&1; then
+    bad "bare 'TBD' bullet exited 0"
 else
-    bad "auto-carry fired without the body ever saying it carries anything: $out"
+    ok "bare 'TBD' bullet exits 1"
 fi
 
 echo
-echo "T9h -- B1: explicit --include still works and is unaffected by npm-versions data"
-out="$(bash "$SCRIPT" 2.0.0 --file "$WORK/cl-no-npm.md" --include 1.9.0)"
-if printf '%s\n' "$out" | grep -q 'old fix'; then
-    ok "explicit --include still carries the named version with no npm data at all"
+echo "T9j -- new TODO/TBD regex: an emphasized '*TODO*' bullet still fails"
+fixture "$WORK/emph-todo.md" <<'EOF'
+## v1.2.3 (2026-01-01)
+
+### Added
+- *TODO*
+EOF
+if bash "$SCRIPT" 1.2.3 --file "$WORK/emph-todo.md" >/dev/null 2>&1; then
+    bad "'*TODO*' bullet exited 0"
 else
-    bad "explicit --include stopped working: $out"
+    ok "'*TODO*' bullet exits 1"
+fi
+
+echo
+echo "T9k -- new TODO/TBD regex: zero hits across the real CHANGELOG.md"
+if ! grep -qiE '(^|[^A-Za-z])(TODO|TBD)(:|[[:space:]]*$)' "$REPO_ROOT/CHANGELOG.md" \
+    && ! grep -qiE '^[[:space:]]*(-[[:space:]]*)?[*_]*(todo|tbd)[*_]*\.?[[:space:]]*$' "$REPO_ROOT/CHANGELOG.md"; then
+    ok "the real CHANGELOG.md has zero hits for the new TODO/TBD placeholder regex"
+else
+    bad "the real CHANGELOG.md trips the new TODO/TBD placeholder regex"
+fi
+
+echo
+echo "T9l -- body over the 100,000 character cap exits 1 with the cap error"
+{
+    printf '## v1.2.3 (2026-01-01)\n\n### Added\n'
+    yes '- padding line to exceed the cap' | head -n 4000
+} > "$WORK/huge.md"
+if [ "$(wc -c < "$WORK/huge.md")" -le 100000 ]; then
+    bad "T9l fixture did not actually exceed 100,000 characters, test is not meaningful"
+else
+    err="$(bash "$SCRIPT" 1.2.3 --file "$WORK/huge.md" 2>&1 >/dev/null)"; rc=$?
+    # Checking exit code alone is not enough: r2's script also exits 1 on
+    # this exact fixture, but for the WRONG reason (a printf | grep -q pipe
+    # getting SIGPIPE under pipefail on large input -- see T9n below). This
+    # pins the error text to the cap check specifically.
+    if [ "$rc" -ne 0 ] && printf '%s\n' "$err" | grep -q 'exceeds the 100,000 character cap'; then
+        ok "a body over the 100,000 character cap exits 1 with the cap error message"
+    else
+        bad "wrong rejection reason or exit 0 (rc=$rc): $err"
+    fi
+fi
+
+echo
+echo "T9m -- a body under the 100,000 character cap still succeeds"
+out="$(bash "$SCRIPT" 1.2.3 --file "$WORK/dated.md")"; rc=$?
+[ "$rc" -eq 0 ] && ok "a normal, small body is unaffected by the cap" \
+    || bad "a normal, small body was rejected (rc=$rc): $out"
+
+echo
+echo "T9n -- large-but-under-cap body with an early match is not falsely rejected (SIGPIPE/pipefail)"
+# printf '%s\n' "\$body" | grep -q '^### ' used to be the '### '/'- '/TODO
+# checks' plumbing. grep -q exits the instant it matches; on a body bigger
+# than one pipe buffer with the match near the top, that closes the pipe
+# out from under a still-writing printf, which gets SIGPIPE -- and under
+# this script's `set -o pipefail`, that made the WHOLE PIPELINE look like a
+# failure even though grep found exactly what it was looking for. ~92KB,
+# comfortably under the 100,000 cap, with '### Added' as the very first
+# line of the body so a match happens almost immediately.
+{
+    printf '## v1.2.3 (2026-01-01)\n\n### Added\n'
+    yes '- padding line, well under the cap' | head -n 2800
+} > "$WORK/under-cap-early-match.md"
+_sz="$(wc -c < "$WORK/under-cap-early-match.md")"
+if [ "$_sz" -ge 100000 ] || [ "$_sz" -lt 65536 ]; then
+    bad "T9n fixture is not in the intended size band (>1 pipe buffer, <100000 cap): $_sz bytes"
+else
+    out="$(bash "$SCRIPT" 1.2.3 --file "$WORK/under-cap-early-match.md")"; rc=$?
+    # Herestring, not `printf | grep -q`: this test script also runs under
+    # `set -o pipefail` (line 14), and $out is itself large with an early
+    # match -- the exact SIGPIPE trap this test exists to catch would
+    # otherwise fire on the ASSERTION checking for it.
+    if [ "$rc" -eq 0 ] && grep -q 'padding line, well under the cap' <<<"$out"; then
+        ok "a large-but-under-cap body with an early '### ' match is not falsely rejected ($_sz bytes)"
+    else
+        bad "a large-but-under-cap body was falsely rejected (rc=$rc, ${_sz} bytes): $out"
+    fi
+fi
+
+echo
+echo "T9o -- --include pushing the COMBINED output over the cap exits 1"
+# The cap on \$body alone does not bound what --include appends; the combined
+# 'out' must be capped too, or an oversized combination reaches
+# 'gh release create' and fails there, after the tag already exists (the
+# same burned-version-number failure mode E-88's step-order fix prevents).
+{
+    printf '## v9.0.0 (2026-01-06)\n\n### Added\n- small new section\n\n'
+    printf '## v8.0.0 (2026-01-05)\n\n### Added\n'
+    yes '- padding line to push the combined output over the cap' | head -n 4000
+} > "$WORK/include-over-cap.md"
+err="$(bash "$SCRIPT" 9.0.0 --file "$WORK/include-over-cap.md" --include 8.0.0 2>&1 >/dev/null)"; rc=$?
+if [ "$rc" -ne 0 ] && printf '%s\n' "$err" | grep -q 'exceeds the 100,000 character cap'; then
+    ok "--include combined output over the cap exits 1 with the cap error"
+else
+    bad "--include combined output over the cap did not fail as expected (rc=$rc): $err"
 fi
 
 echo
@@ -404,16 +468,18 @@ else
 fi
 
 echo
-echo "T-YAML2 -- release.yml: the release-job extract step passes --npm-versions-file"
+echo "T-YAML2 -- release.yml: the release-job extract step passes no --npm-versions-file or --include (E-88a)"
 if [ -n "$_extract_line" ]; then
-    _extract_block="$(sed -n "${_extract_line},\$p" "$RELEASE_YML" | sed -n '1,40p')"
+    # Drop comment-only lines first -- a comment EXPLAINING why these flags
+    # are absent (this file has one) must not itself trip the check.
+    _extract_block="$(sed -n "${_extract_line},\$p" "$RELEASE_YML" | sed -n '1,40p' | grep -v '^ *#')"
 else
     _extract_block=""
 fi
-if printf '%s\n' "$_extract_block" | grep -q -- '--npm-versions-file'; then
-    ok "release-job extract step wires --npm-versions-file into the release-notes.sh call"
+if printf '%s\n' "$_extract_block" | grep -qE -- '--npm-versions-file|--include|npm view'; then
+    bad "release-job extract step still wires auto-carry machinery (--npm-versions-file/--include/npm view): $_extract_block"
 else
-    bad "release-job extract step never passes --npm-versions-file"
+    ok "release-job extract step calls release-notes.sh with no carry flags (explicit --include only, unused here)"
 fi
 
 echo

@@ -12,28 +12,34 @@
 # after the fact. This script uses literal string matching (no regex) and
 # refuses to emit an incomplete section instead of falling back.
 #
+# Carrying another version's notes forward (e.g. a version that never
+# reached npm) happens ONLY via an explicit "--include v1,v2,..." list
+# (E-88a). An earlier revision auto-detected candidates to carry from the
+# section's own prose; that guessed wrong in ways two rounds of review
+# caught (a higher, already-published version named only for context, and
+# an over-broad npm-confirmation check), so auto-detect is gone entirely.
+# release.yml passes no --include; the Release Manager writes any carried
+# section into the CHANGELOG entry by hand instead (as done for 10.0.1 and
+# 10.2.1).
+#
 # Usage: release-notes.sh <version> [--file CHANGELOG.md] [--include v1,v2,...]
-#                          [--npm-versions-file published-versions.json]
 set -uo pipefail
 
 VERSION="${1:-}"
 if [ -z "$VERSION" ]; then
-    echo "usage: release-notes.sh <version> [--file CHANGELOG.md] [--include v1,v2,...] [--npm-versions-file FILE]" >&2
+    echo "usage: release-notes.sh <version> [--file CHANGELOG.md] [--include v1,v2,...]" >&2
     exit 1
 fi
 shift
 
 FILE="CHANGELOG.md"
 INCLUDE=""
-NPM_VERSIONS_FILE=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --file) FILE="$2"; shift 2 ;;
         --file=*) FILE="${1#--file=}"; shift ;;
         --include) INCLUDE="$2"; shift 2 ;;
         --include=*) INCLUDE="${1#--include=}"; shift ;;
-        --npm-versions-file) NPM_VERSIONS_FILE="$2"; shift 2 ;;
-        --npm-versions-file=*) NPM_VERSIONS_FILE="${1#--npm-versions-file=}"; shift ;;
         *) echo "release-notes: unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -83,109 +89,31 @@ extract_section() {
     [ "$found" = 1 ]
 }
 
-# Every "## " heading, in file order (CRLF-safe, same strip as
-# extract_section). A "## vX.Y.Z..." heading is emitted as "v<token>"; any
-# OTHER "## " heading (e.g. "## Unreleased", or an old "## [X.Y.Z] - ..."
-# bracket-style heading from the pre-v7 era of this file) is emitted as a
-# bare empty line -- an opaque boundary auto_carry_candidates' walk breaks
-# on, the same rule extract_section uses to end a section. Without this, a
-# non-"## v" heading between two real version headings would be silently
-# invisible to the walk and could bridge over it as if the versions on
-# either side were still contiguous.
-list_heading_versions() {
-    local file="$1" line token
-    while IFS= read -r line || [ -n "$line" ]; do
-        line="${line%$'\r'}"
-        case "$line" in
-            "## v"[0-9]*)
-                token="${line#"## v"}"
-                token="${token%% *}"
-                printf 'v%s\n' "$token"
-                ;;
-            "## "*)
-                printf '\n'
-                ;;
-        esac
-    done < "$file"
-}
-
-# True (rc 0) if dotted-numeric version $1 sorts strictly below $2, padding
-# missing trailing components with 0. A non-numeric component loses the
-# compare (rc 1) rather than erroring -- CHANGELOG headings are X.Y.Z... in
-# practice, and this is only ever asked about heading tokens already matched
-# by list_heading_versions above.
-version_lt() {
-    local a="$1" b="$2"
-    [ "$a" != "$b" ] || return 1
-    local a_parts b_parts i n ai bi
-    IFS=. read -r -a a_parts <<<"$a"
-    IFS=. read -r -a b_parts <<<"$b"
-    n="${#a_parts[@]}"
-    [ "${#b_parts[@]}" -gt "$n" ] && n="${#b_parts[@]}"
-    for ((i = 0; i < n; i++)); do
-        ai="${a_parts[i]:-0}"
-        bi="${b_parts[i]:-0}"
-        case "$ai" in *[!0-9]*) return 1 ;; esac
-        case "$bi" in *[!0-9]*) return 1 ;; esac
-        [ "$ai" -lt "$bi" ] && return 0
-        [ "$ai" -gt "$bi" ] && return 1
-    done
-    return 1
-}
-
-# True (rc 0) if $1 is a quoted token in NPM_VERSIONS_FILE (the file is
-# whatever shape `npm view <pkg> versions --json` produces: a JSON array of
-# quoted version strings). Exact, quote-delimited match, so "9.1.0" cannot
-# false-match "19.1.0" or "9.1.0-beta". With no file at all, every version
-# is treated as NOT confirmed unpublished (see auto_carry_candidates).
-npm_has_version() {
-    [ -n "$NPM_VERSIONS_FILE" ] || return 1
-    grep -qF "\"$1\"" "$NPM_VERSIONS_FILE"
-}
-
-# Called only when $1's own body says outright that it carries a version
-# that never reached npm (the same trigger phrase the old code used) --
-# auto-detect stays opt-in on the release's own words, never a blanket scan
-# of "is there any unpublished version nearby". Once triggered, this is the
-# contiguous run of headings directly below $1's own heading that are each:
-# a real version heading (not "## Unreleased" or an old bracket-style
-# heading, which list_heading_versions turns into an opaque break), strictly
-# lower than the previous one in the run, and confirmed NOT published on
-# npm. Stops at the first heading that breaks any of those. With no
-# --npm-versions-file, nothing is confirmed unpublished, so this emits
-# nothing at all -- carry nothing automatically without real npm data;
-# --include is required instead (E-88 B1).
-#
-# This replaced a version that, once triggered, pulled every "vX.Y.Z" token
-# mentioned anywhere in $1's own prose as a candidate: v9.22.13's body says
-# "v9.24.0 is the next version on npm", a HIGHER version mentioned only for
-# context, and the old code appended v9.24.0's whole section to v9.22.13's
-# notes. Walking real headings below VERSION, in order, can never reach
-# v9.24.0 -- it is a newer release and its heading sits ABOVE v9.22.13's in
-# the file.
-auto_carry_candidates() {
-    local version="$1" file="$2" body="$3" floor="$1" seen=0 raw h
-    [ -n "$NPM_VERSIONS_FILE" ] || return 0
-    printf '%s\n' "$body" | grep -qE 'never (reached npm|published)' || return 0
-    while IFS= read -r raw; do
-        if [ "$seen" = 0 ]; then
-            [ "$raw" = "v$version" ] && seen=1
-            continue
-        fi
-        case "$raw" in
-            v*) h="${raw#v}" ;;
-            *) break ;;    # opaque non-version heading: contiguity broken
-        esac
-        version_lt "$h" "$floor" || break
-        npm_has_version "$h" && break
-        printf '%s\n' "$h"
-        floor="$h"
-    done < <(list_heading_versions "$file")
-}
-
 # Trim leading/trailing blank lines.
 trim_blank() {
     sed -e '/./,$!d' -e ':a' -e '/^\n*$/{$d;N;ba' -e '}'
+}
+
+# True (rc 0) if $1 contains placeholder text: a TODO/TBD used as a marker
+# (followed by ":" or end of line, e.g. "TODO: fill this in" or a bare
+# "TODO" line) or a line that is ONLY a todo/tbd bullet (optionally
+# wrapped in markdown emphasis, e.g. "- TODO" or "*TBD*"). Deliberately
+# narrower than a bare substring match: "build a todo app" is a real,
+# shippable changelog line and must pass.
+#
+# Uses a herestring, never `printf | grep -q`: grep -q exits the instant it
+# finds a match, and on input bigger than one pipe buffer that closes the
+# read end out from under a still-writing printf on the other end of a real
+# pipeline, which gets SIGPIPE (128+13=141). Under this script's
+# `set -o pipefail` that makes the WHOLE PIPELINE look like a failure even
+# though grep found exactly the match it was looking for -- inverting
+# "found it" into "not found" for large input. A herestring is not a
+# pipeline (there is no second process to signal), so this is immune.
+# Reproduced directly on a >100KB fixture body.
+has_placeholder() {
+    grep -qiE '(^|[^A-Za-z])(TODO|TBD)(:|[[:space:]]*$)' <<<"$1" && return 0
+    grep -qiE '^[[:space:]]*(-[[:space:]]*)?[*_]*(todo|tbd)[*_]*\.?[[:space:]]*$' <<<"$1" && return 0
+    return 1
 }
 
 body="$(extract_section "$VERSION" "$FILE")" || {
@@ -198,16 +126,19 @@ if [ -z "$body" ]; then
     echo "release-notes: section for v${VERSION} is empty" >&2
     exit 1
 fi
-
-if ! printf '%s\n' "$body" | grep -q '^### '; then
+if [ "${#body}" -gt 100000 ]; then
+    echo "release-notes: section for v${VERSION} exceeds the 100,000 character cap (${#body} chars)" >&2
+    exit 1
+fi
+if ! grep -q '^### ' <<<"$body"; then
     echo "release-notes: section for v${VERSION} is not fully written (no '### ' subsection)" >&2
     exit 1
 fi
-if ! printf '%s\n' "$body" | grep -q '^- '; then
+if ! grep -q '^- ' <<<"$body"; then
     echo "release-notes: section for v${VERSION} is not fully written (no '- ' bullet)" >&2
     exit 1
 fi
-if printf '%s\n' "$body" | grep -qiE '(^|[^A-Za-z])(TODO|TBD)([^A-Za-z]|$)'; then
+if has_placeholder "$body"; then
     echo "release-notes: section for v${VERSION} contains placeholder text (TODO/TBD)" >&2
     exit 1
 fi
@@ -221,18 +152,8 @@ out="$body"
 # --include: append the named versions' own sections, each under its own
 # "## vX.Y.Z changes (first published in <version>)" heading, so a release
 # that republishes prior unpublished versions carries their real notes
-# instead of just a one-line explanation.
-#
-# --include is explicit (a usage error on a bad name is fatal). Without it,
-# auto_carry_candidates fires only when the body itself says it carries a
-# never-published version, then walks the real CHANGELOG headings directly
-# below VERSION's own (see its comment for why that replaced prose-scanning).
-EXPLICIT_INCLUDE=1
-if [ -z "$INCLUDE" ]; then
-    EXPLICIT_INCLUDE=0
-    INCLUDE="$(auto_carry_candidates "$VERSION" "$FILE" "$body" | paste -sd, -)"
-fi
-
+# instead of just a one-line explanation. Explicit only -- a bad name is a
+# fatal usage error, never a silent skip.
 if [ -n "$INCLUDE" ]; then
     old_ifs="$IFS"
     IFS=','
@@ -241,18 +162,28 @@ if [ -n "$INCLUDE" ]; then
         [ -n "$v" ] || continue
         [ "$v" != "$VERSION" ] || continue
         if ! inc_body="$(extract_section "$v" "$FILE")"; then
-            if [ "$EXPLICIT_INCLUDE" = 1 ]; then
-                echo "release-notes: --include v${v} has no '## v${v}' heading in $FILE" >&2
-                exit 1
-            fi
-            echo "release-notes: WARNING: auto-detected mention of v${v} has no '## v${v}' heading; skipping it" >&2
-            continue
+            echo "release-notes: --include v${v} has no '## v${v}' heading in $FILE" >&2
+            exit 1
         fi
         inc_body="$(printf '%s\n' "$inc_body" | trim_blank)"
         [ -n "$inc_body" ] || continue
+        if has_placeholder "$inc_body"; then
+            echo "release-notes: --include v${v} contains placeholder text (TODO/TBD)" >&2
+            exit 1
+        fi
         out="$(printf '%s\n\n## v%s changes (first published in v%s)\n\n%s' "$out" "$v" "$VERSION" "$inc_body")"
     done
     IFS="$old_ifs"
+fi
+
+# The cap above only bounds VERSION's own section; --include can push the
+# combined, emitted notes back over it (GitHub's release-body limit is
+# ~125,000 chars). Checked here too so an oversized combination fails before
+# `gh release create`, not after -- the same "never burn a version number"
+# reasoning as the cap on body itself.
+if [ "${#out}" -gt 100000 ]; then
+    echo "release-notes: combined output for v${VERSION} (with --include) exceeds the 100,000 character cap (${#out} chars)" >&2
+    exit 1
 fi
 
 printf '%s\n' "$out"

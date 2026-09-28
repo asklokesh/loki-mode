@@ -632,19 +632,6 @@ jobs:
         run: |
           set -uo pipefail
           VERSION="${{ steps.version.outputs.version }}"
-          # The carried-version auto-detect (E-88 B1) only carries a lower,
-          # contiguous, CONFIRMED-unpublished section forward -- it needs the
-          # real npm versions list to confirm "unpublished". Read it once;
-          # on failure (registry blip, new/unpublished package), continue
-          # with no list, which makes the script carry nothing automatically
-          # rather than guess (an explicit '## vX.Y.Z changes' --include is
-          # always available as a manual override).
-          NPM_ARGS=()
-          if npm view loki-mode versions --json > "$RUNNER_TEMP/npm-versions.json" 2>npm-versions-err.txt; then
-            NPM_ARGS=(--npm-versions-file "$RUNNER_TEMP/npm-versions.json")
-          else
-            echo "::warning::could not read npm view loki-mode versions --json; carried-version auto-detect is disabled for this release ($(cat npm-versions-err.txt))"
-          fi
           # scripts/release-notes.sh (E-88) replaces the old inline awk here:
           # that awk anchored `/^## v$VERSION$/` against headers written as
           # `## vX.Y.Z (YYYY-MM-DD)`, so it never matched, and it spliced
@@ -652,7 +639,12 @@ jobs:
           # Both bugs silently fell back to a one-line "Release vX.Y.Z" body;
           # v9.80.1, v9.81.0, v10.0.1, v10.1.0, v10.1.1 and v10.2.1 shipped
           # that way. The release now FAILS instead of falling back.
-          if ! bash scripts/release-notes.sh "$VERSION" "${NPM_ARGS[@]}" > changelog_body.txt; then
+          #
+          # No --include here (E-88a): carrying another version's notes
+          # forward is a manual Release Manager decision written directly
+          # into the CHANGELOG entry (as done for 10.0.1 and 10.2.1), never
+          # auto-detected from prose or an npm lookup.
+          if ! bash scripts/release-notes.sh "$VERSION" > changelog_body.txt; then
             echo "ERROR: CHANGELOG.md has no fully-written release notes for v$VERSION." >&2
             echo "Add a '## v$VERSION' section with '### ' subsections and '- ' bullets before releasing." >&2
             exit 1
