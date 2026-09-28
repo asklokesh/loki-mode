@@ -15,7 +15,11 @@
 #
 # Install:  ./scripts/install-hooks.sh
 # Skip once: PRE_PUSH_SKIP=1 git push   (use sparingly; CI will catch you)
-#   PRE_PUSH_SKIP never skips the push-authority guard (S-152) below.
+#   PRE_PUSH_SKIP never skips the push-authority guard (S-152) or the
+#   release-notes gate (E-88) below -- both run before the PRE_PUSH_SKIP
+#   check, deliberately: PRE_PUSH_SKIP=1 is the routine way trains push
+#   (see docs/v10/DECISIONS.md), so a check placed after it would never
+#   fire on the pushes it exists to catch.
 
 set -euo pipefail
 
@@ -48,6 +52,77 @@ while read -r _lref _lsha _rref _rsha; do
         exit 1
     fi
 done <<< "$_stdin_refs"
+
+# --- Release-notes gate (E-88, D36 rework) -- also runs BEFORE PRE_PUSH_SKIP, never skippable -
+# release.yml refuses to publish a release whose CHANGELOG.md section for
+# VERSION is missing, empty, or not fully written (scripts/release-notes.sh).
+# That check is at release time, after the bump already landed on main; this
+# catches it earlier, at the push that carries the VERSION bump, using the
+# same script against the CHANGELOG.md content of the commit being pushed
+# (not the working tree, which may differ). It sits before PRE_PUSH_SKIP
+# on purpose (see the header comment): release/train pushes routinely set
+# PRE_PUSH_SKIP=1 to skip the retired pytest run, and a gate placed after
+# that check would never fire on exactly the pushes it exists to catch.
+# `git -C "$_top"` makes every call here independent of the hook's actual
+# cwd, since REPO_ROOT/cd below have not run yet at this point.
+# Skipped for a branch delete or a push whose remote ref is not
+# refs/heads/main -- only a landing on main is a release. Applying this to
+# every branch push was itself the bug: a brand-new branch sends an
+# all-zero remote sha (or one whose object this clone never fetched), so
+# the old code read "old VERSION" as empty, "$_new_version != ''" was
+# trivially true, and the push was gated as if it bumped VERSION even
+# though it never touched main at all -- refusing ordinary feature-branch
+# pushes whenever the branch's own CHANGELOG happened to lack a complete
+# section (which most branches never carry, main's is the only one that
+# matters).
+_remote_name="${1:-origin}"
+echo "[pre-push] release-notes gate (VERSION-bump pushes to refs/heads/main only)"
+_zero_sha="0000000000000000000000000000000000000000"
+_notes_failures=0
+while read -r _lref _lsha _rref _rsha; do
+    [[ "$_lsha" != "$_zero_sha" ]] || continue          # branch delete: nothing pushed
+    [[ "$_rref" == "refs/heads/main" ]] || continue      # only a push that lands on main is a release
+
+    _new_version=""
+    if git -C "$_top" cat-file -e "${_lsha}:VERSION" 2>/dev/null; then
+        _new_version="$(git -C "$_top" show "${_lsha}:VERSION" 2>/dev/null | tr -d '[:space:]')"
+    fi
+    [ -n "$_new_version" ] || continue
+
+    # The "old" VERSION to diff against: the remote sha this push claims to
+    # move from, if we actually have that object locally -- but a new ref
+    # (all-zero remote sha) or a remote sha this clone never fetched both
+    # fail that check, and treating "old" as empty in either case makes
+    # $_new_version look changed even when main's real content is
+    # unchanged. Fall back to this clone's own refs/remotes/<remote>/main,
+    # which is the last-known state of main regardless of what the push
+    # line says.
+    _old_version=""
+    if [[ "$_rsha" != "$_zero_sha" ]] && git -C "$_top" cat-file -e "${_rsha}:VERSION" 2>/dev/null; then
+        _old_version="$(git -C "$_top" show "${_rsha}:VERSION" 2>/dev/null | tr -d '[:space:]')"
+    elif git -C "$_top" cat-file -e "refs/remotes/${_remote_name}/main:VERSION" 2>/dev/null; then
+        _old_version="$(git -C "$_top" show "refs/remotes/${_remote_name}/main:VERSION" 2>/dev/null | tr -d '[:space:]')"
+    fi
+    [ "$_new_version" != "$_old_version" ] || continue    # VERSION unchanged by this push
+
+    if ! git -C "$_top" cat-file -e "${_lsha}:CHANGELOG.md" 2>/dev/null; then
+        echo "[pre-push] REFUSED: VERSION is ${_new_version} at ${_lsha} (${_lref}) but that commit has no CHANGELOG.md" >&2
+        _notes_failures=$((_notes_failures + 1))
+        continue
+    fi
+    _cl_tmp="$(mktemp "${TMPDIR:-/tmp}/pre-push-changelog.XXXXXX")"
+    git -C "$_top" show "${_lsha}:CHANGELOG.md" > "$_cl_tmp" 2>/dev/null
+    _cl_err="$(bash "$_top/scripts/release-notes.sh" "$_new_version" --file "$_cl_tmp" 2>&1 >/dev/null)" || {
+        echo "[pre-push] REFUSED: CHANGELOG.md at ${_lsha} (${_lref}) has no fully-written release notes for v${_new_version}" >&2
+        echo "[pre-push]   $_cl_err" >&2
+        _notes_failures=$((_notes_failures + 1))
+    }
+    rm -f "$_cl_tmp"
+done <<< "$_stdin_refs"
+if [[ $_notes_failures -gt 0 ]]; then
+    echo "[pre-push] $_notes_failures release-notes check(s) failed -- aborting push. PRE_PUSH_SKIP does not bypass this." >&2
+    exit 1
+fi
 
 if [[ "${PRE_PUSH_SKIP:-0}" == "1" ]]; then
     echo "[pre-push] PRE_PUSH_SKIP=1 set, skipping"
