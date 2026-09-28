@@ -138,6 +138,47 @@ describe("sdkQueryProvider (hermetic, stubbed query)", () => {
     }
   });
 
+  // S41-09: LOKI_E10_PREFIX=lean, default off (D41 item 2, D42 item 1).
+  it("engine10 session, LOKI_E10_PREFIX=lean: query() gets a fixed-string systemPrompt", async () => {
+    const prev = { stage: process.env["LOKI_E10_STAGE"], prefix: process.env["LOKI_E10_PREFIX"] };
+    process.env["LOKI_E10_STAGE"] = "implement";
+    process.env["LOKI_E10_PREFIX"] = "lean";
+    try {
+      stubQuery([{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {} }]);
+      const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
+      const { LEAN_PREFIX } = await import("../../src/e10ext/lean_prefix.ts");
+      await sdkQueryProvider().invoke(call());
+      const opts = lastQueryArgs?.options ?? {};
+      expect(typeof opts["systemPrompt"]).toBe("string");
+      expect(opts["systemPrompt"]).toBe(LEAN_PREFIX);
+      // the flag never touches the tool list (card: "The tool list is unchanged").
+      expect(opts["tools"]).toEqual(["Bash", "Read", "Edit", "Write", "Glob", "Grep"]);
+    } finally {
+      for (const [k, v] of [["LOKI_E10_STAGE", prev.stage], ["LOKI_E10_PREFIX", prev.prefix]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
+  it("engine10 session, LOKI_E10_PREFIX unset (default off): query() keeps the bare preset, byte-identical to main", async () => {
+    const prev = { stage: process.env["LOKI_E10_STAGE"], prefix: process.env["LOKI_E10_PREFIX"] };
+    process.env["LOKI_E10_STAGE"] = "implement";
+    delete process.env["LOKI_E10_PREFIX"];
+    try {
+      stubQuery([{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {} }]);
+      const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
+      await sdkQueryProvider().invoke(call());
+      const opts = lastQueryArgs?.options ?? {};
+      expect(opts["systemPrompt"]).toEqual({ type: "preset", preset: "claude_code" });
+    } finally {
+      for (const [k, v] of [["LOKI_E10_STAGE", prev.stage], ["LOKI_E10_PREFIX", prev.prefix]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
   it("legacy loop: query() keeps the full tool set and the autonomy append", async () => {
     const prev = process.env["LOKI_E10_STAGE"];
     delete process.env["LOKI_E10_STAGE"];
