@@ -113,6 +113,47 @@ describe("sdkQueryProvider (hermetic, stubbed query)", () => {
     expect(env!["PATH"]).toBe(process.env["PATH"]); // not stripped
   });
 
+  // E-65: what actually reaches query() for an engine10 session, not just what buildSdkLoopOptions returns.
+  it("engine10 session: query() gets the 6 engine tools, the bare preset, and no LOKI_E10_* in the session env", async () => {
+    const prev = { stage: process.env["LOKI_E10_STAGE"], brief: process.env["LOKI_E10_BRIEF"] };
+    process.env["LOKI_E10_STAGE"] = "implement";
+    process.env["LOKI_E10_BRIEF"] = "brief";
+    try {
+      stubQuery([{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {} }]);
+      const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
+      await sdkQueryProvider().invoke(call());
+      const opts = lastQueryArgs?.options ?? {};
+      expect(opts["tools"]).toEqual(["Bash", "Read", "Edit", "Write", "Glob", "Grep"]);
+      expect(opts["systemPrompt"]).toEqual({ type: "preset", preset: "claude_code" });
+      expect(opts["settingSources"]).toEqual(["project"]);
+      expect(opts["mcpServers"]).toBeUndefined();
+      const env = opts["env"] as Record<string, string>;
+      expect(Object.keys(env).filter((k) => k.startsWith("LOKI_E10_"))).toEqual([]);
+      expect(env["PATH"]).toBe(process.env["PATH"]);
+    } finally {
+      for (const [k, v] of [["LOKI_E10_STAGE", prev.stage], ["LOKI_E10_BRIEF", prev.brief]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
+  it("legacy loop: query() keeps the full tool set and the autonomy append", async () => {
+    const prev = process.env["LOKI_E10_STAGE"];
+    delete process.env["LOKI_E10_STAGE"];
+    try {
+      stubQuery([{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {} }]);
+      const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
+      await sdkQueryProvider().invoke(call());
+      const opts = lastQueryArgs?.options ?? {};
+      expect(opts["tools"]).toBeUndefined();
+      expect((opts["systemPrompt"] as { append?: string }).append).toContain("[LOKI-AUTONOMY-AGENT]");
+      expect(opts["settingSources"]).toEqual(["user", "project", "local"]);
+    } finally {
+      if (prev !== undefined) process.env["LOKI_E10_STAGE"] = prev;
+    }
+  });
+
   it("sets the fully-autonomous permission options (bypass + companion flag)", async () => {
     stubQuery([{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {} }]);
     const { sdkQueryProvider } = await import("../../src/runner/providers.ts");

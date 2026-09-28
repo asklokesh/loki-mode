@@ -620,6 +620,9 @@ export function sdkQueryProvider(): ProviderInvoker {
         // process.env or PATH/HOME/ANTHROPIC_API_KEY vanish and query() fails.
         const env: Record<string, string> = { ...(process.env as Record<string, string>) };
         if (cavemanLvl) env["CAVEMAN_DEFAULT_MODE"] = cavemanLvl;
+        // E-65: the session's own Bash tool inherits this env; a `loki start` run inside an engine session
+        // must not pick up the lean engine10 shape. The host-guard hook runs in this process, so it is unaffected.
+        for (const k of Object.keys(env)) if (k.startsWith("LOKI_E10_")) delete env[k];
 
         // T3(b): compose the MCP/effort/budget/fallback options the loop was
         // missing vs the shell route (see buildSdkLoopOptions). Only fields that
