@@ -542,6 +542,7 @@ proof phases CLI/API parity (one reader, two surfaces)	4
 web-app has no orphaned modules (reachable from main.tsx)	0
 the moat runner enforces every ratchet rule	13
 v10-pulse anti-drift status/violation reporter	14
+board-mark-released flips a slice's merged row once its tag ships (E-90)	2
 timeout launches of run.sh/autonomy/loki escalate with -k (E-00)	1
 v10 drift-audit turn counter (every-6th-turn signal)	0
 v10 slice-card template (fields, budget, dispatch rule)	0

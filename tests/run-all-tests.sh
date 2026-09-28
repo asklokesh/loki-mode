@@ -1454,6 +1454,7 @@ run_test "web-app CommandPalette file-search failure is not no-results (node --t
 # shard checkout does not have. It runs in its own "Moat suite" job instead.
 run_test "the moat runner enforces every ratchet rule" "$SCRIPT_DIR/test-moat-runner.sh"
 run_test "v10-pulse anti-drift status/violation reporter" "$SCRIPT_DIR/test-v10-pulse.sh"
+run_test "board-mark-released flips a slice's merged row once its tag ships (E-90)" "$SCRIPT_DIR/test-board-mark-released.sh"
 run_test "release.sh --bump-only restores debugId-only dist churn (E-72)" "$SCRIPT_DIR/test-release-bump-only.sh"
 run_test "release.sh --bump-only never leaves dist deleted on build failure (E-102)" "$SCRIPT_DIR/test-release-bump-dist.sh"
 run_test "release-notes.sh extraction/validation + pre-push VERSION-bump gate (E-88)" "$SCRIPT_DIR/test-release-notes.sh"
