@@ -51,6 +51,7 @@ v8 SDK text bridge (grill + prd-enrich)	0
 v8 SDK council VOTE (member + contrarian, trust core)	0
 v8 SDK voter-agents council (Epic C, finding schema)	0
 v8 SDK-loop start routing (LOKI_SDK_LOOP gate, default-off)	0
+SDK version sync (root package.json/lockfile/Dockerfile vs loki-ts, E-106)	0
 v8 Structured Review Self-Copy Asset Resolution	2
 Review deadline, requirements, and speculative assurance tail	116
 Council Threshold Tests	0
