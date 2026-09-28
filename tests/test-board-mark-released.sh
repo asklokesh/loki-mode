@@ -76,13 +76,25 @@ mkdir -p "$REPO"
 S01_MERGE_SHA="$(cd "$REPO" && git log --merges --format=%H --grep "slice-S-01" | head -1)"
 S04_MERGE_SHA="$(cd "$REPO" && git log --format=%H --grep "no slice ID" | head -1)"
 
-# run_bmr TAG BOARD_FILE -- runs the script under test with the fixture
-# repo, captures stdout into $OUT and stderr into $ERR, returns the real
-# exit code.
+# npm fixture: v1.0.0's own npm publish time, deliberately DIFFERENT from
+# any commit date above, so a test that asserted the WRONG source (run time
+# or a commit date) would fail rather than pass by coincidence.
+NPM_TIME_JSON="$WORK/npm-time.json"
+cat > "$NPM_TIME_JSON" <<'EOF'
+{"created": "2020-01-01T00:00:00.000Z", "modified": "2026-09-28T09:15:00.000Z", "1.0.0": "2026-09-28T09:00:00.000Z"}
+EOF
+NPM_TIME_STAMP="2026-09-28T09:00Z"
+NPM_CMD_OK="cat $NPM_TIME_JSON"
+NPM_CMD_NO_RECORD="echo {}"
+NPM_CMD_FAIL="false"
+
+# run_bmr TAG BOARD_FILE [NPM_CMD] -- runs the script under test with the
+# fixture repo, captures stdout into $OUT and stderr into $ERR, returns the
+# real exit code. NPM_CMD defaults to the fixture above.
 run_bmr() {
-    local tag="$1" board="$2"
+    local tag="$1" board="$2" npm_cmd="${3:-$NPM_CMD_OK}"
     local out_f="$WORK/out.$$" err_f="$WORK/err.$$"
-    BMR_REPO_ROOT="$REPO" BOARD_MD="$board" bash "$BMR_SH" "$tag" >"$out_f" 2>"$err_f"
+    BMR_REPO_ROOT="$REPO" BOARD_MD="$board" BMR_NPM_CMD="$npm_cmd" bash "$BMR_SH" "$tag" >"$out_f" 2>"$err_f"
     local rc=$?
     OUT="$(cat "$out_f")"
     ERR="$(cat "$err_f")"
@@ -106,12 +118,12 @@ S01_LINE="$(grep '^| S-01 ' "$BOARD1")"
 S02_LINE="$(grep '^| S-02 ' "$BOARD1")"
 if [ "$rc" = 0 ] \
     && [ "$LINES_BEFORE" = "$LINES_AFTER" ] \
-    && printf '%s' "$S01_LINE" | grep -qF "released@" \
+    && printf '%s' "$S01_LINE" | grep -qF "released@$NPM_TIME_STAMP" \
     && printf '%s' "$S01_LINE" | grep -qF "Released in v1.0.0 (merge ${S01_MERGE_SHA:0:8} is an ancestor of v1.0.0)." \
     && printf '%s' "$S02_LINE" | grep -qF "merged@2026-09-27T01:05Z" \
     && printf '%s' "$S02_LINE" | grep -qF "already had a note" \
     && printf '%s\n' "$OUT" | grep -q "^RELEASED S-01: merge ${S01_MERGE_SHA:0:8} is an ancestor of v1.0.0"; then
-    ok "S-01 flips to released@ with a note citing the merge SHA and the tag; S-02 (genuinely unreleased) is untouched; line count unchanged"
+    ok "S-01 flips to released@<npm's own v1.0.0 publish time> (not run time) with a note citing the merge SHA and the tag; S-02 (genuinely unreleased) is untouched; line count unchanged"
 else
     bad "T1: rc=$rc lines_before=$LINES_BEFORE lines_after=$LINES_AFTER"
     echo "  S-01: $S01_LINE"
@@ -132,7 +144,7 @@ LINES_AFTER2="$(wc -l < "$BOARD2" | tr -d ' ')"
 S04_LINE="$(grep '^| S-04 ' "$BOARD2")"
 if [ "$rc" = 0 ] \
     && [ "$LINES_BEFORE2" = "$LINES_AFTER2" ] \
-    && printf '%s' "$S04_LINE" | grep -qF "released@" \
+    && printf '%s' "$S04_LINE" | grep -qF "released@$NPM_TIME_STAMP" \
     && printf '%s' "$S04_LINE" | grep -qF "see $S04_MERGE_SHA" \
     && printf '%s' "$S04_LINE" | grep -qF "Released in v1.0.0 (merge ${S04_MERGE_SHA:0:8} is an ancestor of v1.0.0)."; then
     ok "S-04 resolves via a cited SHA (no ID in the merge message) and flips, preserving the original note text"
@@ -196,10 +208,13 @@ cat > "$BOARD4" <<'EOF'
 | S-07 | a | x | LOW | blocked@2026-09-27T01:00Z | needs a decision |
 EOF
 BOARD4_BEFORE="$(cat "$BOARD4")"
-if run_bmr v1.0.0 "$BOARD4"; then rc=0; else rc=$?; fi
+# NPM_CMD_FAIL: no row here can ever flip, so npm must never even be
+# consulted -- a board with nothing to flip has no business depending on
+# network/npm availability at all.
+if run_bmr v1.0.0 "$BOARD4" "$NPM_CMD_FAIL"; then rc=0; else rc=$?; fi
 BOARD4_AFTER="$(cat "$BOARD4")"
 if [ "$rc" = 0 ] && [ "$BOARD4_BEFORE" = "$BOARD4_AFTER" ]; then
-    ok "non-merged Status tokens (released/building/blocked) are never touched"
+    ok "non-merged Status tokens (released/building/blocked) are never touched; npm never consulted (rc=0 despite a failing npm command)"
 else
     bad "T4: non-merged rows were modified"
     echo "  before: $BOARD4_BEFORE"
@@ -214,7 +229,8 @@ cat > "$BOARD5" <<'EOF'
 | S-01 | a | x | LOW | merged@2026-09-20T00:10Z | |
 EOF
 BOARD5_BEFORE="$(cat "$BOARD5")"
-if run_bmr v99.99.99-does-not-exist "$BOARD5"; then rc=0; else rc=$?; fi
+# NPM_CMD_FAIL: tag resolution is checked before npm is ever touched.
+if run_bmr v99.99.99-does-not-exist "$BOARD5" "$NPM_CMD_FAIL"; then rc=0; else rc=$?; fi
 BOARD5_AFTER="$(cat "$BOARD5")"
 if [ "$rc" != 0 ] && [ "$BOARD5_BEFORE" = "$BOARD5_AFTER" ] \
     && printf '%s' "$ERR" | grep -qF "could not be resolved"; then
@@ -232,6 +248,44 @@ if [ "$rc" != 0 ] && printf '%s' "$ERR6" | grep -qF "usage:"; then
     ok "no tag argument exits non-zero with a 'usage:' message"
 else
     bad "T6: rc=$rc stderr='$ERR6'"
+fi
+
+echo "T7 -- npm has no publish time recorded for the tag's version: hard error, BOARD.md untouched"
+BOARD7="$WORK/BOARD7.md"
+cat > "$BOARD7" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S-01 | a | x | LOW | merged@2026-09-20T00:10Z | |
+EOF
+BOARD7_BEFORE="$(cat "$BOARD7")"
+if run_bmr v1.0.0 "$BOARD7" "$NPM_CMD_NO_RECORD"; then rc=0; else rc=$?; fi
+BOARD7_AFTER="$(cat "$BOARD7")"
+if [ "$rc" != 0 ] && [ "$BOARD7_BEFORE" = "$BOARD7_AFTER" ] \
+    && printf '%s' "$ERR" | grep -qF "no publish time recorded"; then
+    ok "npm's own record missing the tag's version is a hard error, never a fall-back to run time; BOARD.md untouched"
+else
+    bad "T7: rc=$rc stderr='$ERR'"
+    echo "  before: $BOARD7_BEFORE"
+    echo "  after:  $BOARD7_AFTER"
+fi
+
+echo "T8 -- the npm command itself fails: hard error, BOARD.md untouched"
+BOARD8="$WORK/BOARD8.md"
+cat > "$BOARD8" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S-01 | a | x | LOW | merged@2026-09-20T00:10Z | |
+EOF
+BOARD8_BEFORE="$(cat "$BOARD8")"
+if run_bmr v1.0.0 "$BOARD8" "$NPM_CMD_FAIL"; then rc=0; else rc=$?; fi
+BOARD8_AFTER="$(cat "$BOARD8")"
+if [ "$rc" != 0 ] && [ "$BOARD8_BEFORE" = "$BOARD8_AFTER" ] \
+    && printf '%s' "$ERR" | grep -qF "npm command exited"; then
+    ok "a failing npm command is a hard error, never a fall-back to run time; BOARD.md untouched"
+else
+    bad "T8: rc=$rc stderr='$ERR'"
+    echo "  before: $BOARD8_BEFORE"
+    echo "  after:  $BOARD8_AFTER"
 fi
 
 echo ""

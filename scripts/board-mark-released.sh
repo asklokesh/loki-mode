@@ -18,9 +18,15 @@
 # adds or removes one, so a mismatch means something went wrong and the
 # original file is left untouched rather than risking a truncated write.
 #
+# The released@ stamp is the TAG's own npm publish time (from `npm view
+# loki-mode time --json`), never the time this script happens to run: a
+# stamp later than npm's own record is exactly what the pulse's
+# RELEASED_AHEAD_OF_NPM check exists to flag (see scripts/v10-pulse.sh).
+#
 # Overridable like every other scripts/*.sh here:
 #   BMR_REPO_ROOT   repo root for git operations (default: this repo)
 #   BOARD_MD        path to BOARD.md (default: docs/v10/BOARD.md)
+#   BMR_NPM_CMD     npm command to run (default: npm view loki-mode time --json)
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -30,6 +36,7 @@ BOARD_MD="${BOARD_MD:-$DEFAULT_REPO_ROOT/docs/v10/BOARD.md}"
 export BMR_REPO_ROOT BOARD_MD
 BMR_TAG="${1:-}"
 export BMR_TAG
+export BMR_NPM_CMD="${BMR_NPM_CMD:-}"
 
 if [ -z "$BMR_TAG" ]; then
     printf 'usage: %s <tag>\n' "$0" >&2
@@ -37,8 +44,10 @@ if [ -z "$BMR_TAG" ]; then
 fi
 
 exec python3 -E - <<'BMR_PY'
+import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -46,6 +55,9 @@ import time
 REPO_ROOT = os.environ["BMR_REPO_ROOT"]
 BOARD_MD = os.environ["BOARD_MD"]
 TAG = os.environ["BMR_TAG"]
+NPM_ARGV = shlex.split(os.environ["BMR_NPM_CMD"]) if os.environ.get("BMR_NPM_CMD") else [
+    "npm", "view", "loki-mode", "time", "--json",
+]
 
 STATUS_TOKEN_RE = re.compile(
     r"^(ready|building|review|review-blocked|blocked|approved|merged|released|rejected|parked)"
@@ -98,10 +110,54 @@ def is_ancestor(sha, tag):
     return rc == 0
 
 
+def npm_publish_stamp(tag):
+    # npm's own version keys never carry the git tag's leading "v" (this
+    # repo tags v10.2.2, npm lists it under "10.2.2") -- strip exactly one.
+    version = tag[1:] if tag[:1] in ("v", "V") else tag
+    try:
+        p = subprocess.run(NPM_ARGV, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, "npm command failed to run: %s" % exc
+    if p.returncode != 0:
+        return None, "npm command exited %d: %s" % (p.returncode, p.stderr.strip())
+    try:
+        data = json.loads(p.stdout)
+    except (ValueError, TypeError):
+        return None, "npm command did not return valid JSON"
+    if not isinstance(data, dict) or version not in data:
+        return None, "npm has no publish time recorded for version %r" % version
+    raw = data[version]
+    if not isinstance(raw, str):
+        return None, "npm publish time for version %r is not a string" % version
+    # npm's ISO8601 is always UTC ('Z' suffix) with fractional seconds
+    # (e.g. "2026-09-27T01:50:00.000Z"); take the whole-second prefix.
+    try:
+        t = time.strptime(raw[:19], "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return None, "npm publish time %r for version %r could not be parsed" % (raw, version)
+    return time.strftime("%Y-%m-%dT%H:%MZ", t), None
+
+
 rc, _, err = git(["rev-parse", "--verify", "%s^{commit}" % TAG])
 if rc != 0:
     print("board-mark-released: tag %r could not be resolved: %s" % (TAG, err.strip()), file=sys.stderr)
     sys.exit(1)
+
+# Fetched lazily, at most once, only when a row is actually about to flip --
+# a board with no `merged@` rows (or none whose merge resolves to an
+# ancestor of TAG) never needs npm at all.
+_npm_stamp_cache = {}
+
+
+def release_stamp():
+    if "value" not in _npm_stamp_cache:
+        stamp, npm_err = npm_publish_stamp(TAG)
+        if stamp is None:
+            print("board-mark-released: cannot determine npm publish time for %r: %s" % (TAG, npm_err), file=sys.stderr)
+            sys.exit(1)
+        _npm_stamp_cache["value"] = stamp
+    return _npm_stamp_cache["value"]
+
 
 try:
     with open(BOARD_MD, "r", encoding="utf-8") as f:
@@ -114,7 +170,6 @@ except OSError as exc:
 # byte-for-byte apart from the cells this script deliberately edits --
 # no trailing-newline normalization, no CRLF/LF surprise.
 lines = original_text.splitlines(keepends=True)
-now_stamp = time.strftime("%Y-%m-%dT%H:%MZ", time.gmtime())
 flipped, left_not_found, left_not_ancestor = [], [], []
 
 for i, raw_line in enumerate(lines):
@@ -151,7 +206,7 @@ for i, raw_line in enumerate(lines):
         continue
 
     sha8 = merge_sha[:8]
-    cells[status_idx] = "released@%s" % now_stamp
+    cells[status_idx] = "released@%s" % release_stamp()
     note_text = "Released in %s (merge %s is an ancestor of %s)." % (TAG, sha8, TAG)
     cells[-1] = (cells[-1] + " " + note_text).strip() if cells[-1] else note_text
     new_line = "| " + " | ".join(cells) + " |"
@@ -187,6 +242,6 @@ with open(_tmp_path, "w", encoding="utf-8") as f:
     os.fsync(f.fileno())
 os.replace(_tmp_path, BOARD_MD)
 
-print("board-mark-released: %d row(s) flipped to released@%s in %s" % (len(flipped), now_stamp, BOARD_MD))
+print("board-mark-released: %d row(s) flipped to released@%s in %s" % (len(flipped), release_stamp(), BOARD_MD))
 sys.exit(0)
 BMR_PY
