@@ -43,7 +43,8 @@ $2" 2>/dev/null; }
 _row() {
   local file="$1" ts="$2" model="$3" out="$4" mid="$5" rid="$6" cache_read="${7:-5}"
   python3 - "$file" "$ts" "$model" "$out" "$mid" "$rid" "$cache_read" <<'PYEOF'
-import json, sys
+import json, os, sys
+from datetime import datetime
 file, ts, model, out, mid, rid, cache_read = sys.argv[1:8]
 msg = {"role": "assistant", "model": model,
        "usage": {"input_tokens": 10, "output_tokens": int(out),
@@ -55,6 +56,12 @@ if rid:
     rec["requestId"] = rid
 with open(file, "a") as fh:
     fh.write(json.dumps(rec) + "\n")
+# Set the file's mtime to this row's own timestamp so the mtime-based
+# skip (E-109) sees a realistic, content-matching mtime instead of the
+# real wall-clock time the test happened to run at -- production
+# transcripts are append-only, so mtime tracks the last row written.
+epoch = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+os.utime(file, (epoch, epoch))
 PYEOF
 }
 
@@ -503,6 +510,107 @@ if [ "$_max15" = "0" ]; then
   ok "weekly projected to the ~167.5h-away reset caps max_engineers_next_hour at 0"
 else
   bad "expected max_engineers_next_hour=0 (reset-projected weekly), got '$_max15'"
+fi
+
+# ---------------------------------------------------------------------------
+# T16 (E-109): a message id appearing in two files -- one served from cache,
+# one freshly parsed -- must still be counted once, at the max. This is the
+# G-01 cross-file dedup guarantee, now exercised across the cache boundary:
+# the cache stores PER-MESSAGE maxima per file, not per-file totals, so
+# merging a cached file's entries with a fresh file's entries must dedup
+# exactly like two freshly-parsed files would.
+# ---------------------------------------------------------------------------
+echo "T16 -- cache/fresh mix: shared message.id counted once, at the max"
+ROOT16="$FIXTURE_ROOT/t16/projects"
+PROJ16="$ROOT16/-Users-test-proj"
+mkdir -p "$PROJ16"
+CACHE16="$FIXTURE_ROOT/t16/cache.json"
+READINGS16="$FIXTURE_ROOT/t16/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS16"
+# File A: msg_dup at 100 tokens. Parsed + cached on the first run.
+_row "$PROJ16/session-a.jsonl" "2026-09-28T15:00:00.000Z" "claude-sonnet-4-6" 100 "msg_dup" ""
+python3 "$TOOL" --root "$ROOT16" --readings "$READINGS16" --now "2026-09-28T16:00:00Z" \
+  --live-log "$NOLIVE" --cache-path "$CACHE16" --json >/dev/null
+# File B: same msg_dup id, lower output_tokens (50), added AFTER the cache
+# warm-up, so it is fresh on the next run while file A is served from cache.
+_row "$PROJ16/session-b.jsonl" "2026-09-28T15:05:00.000Z" "claude-sonnet-4-6" 50 "msg_dup" ""
+OUT16="$(python3 "$TOOL" --root "$ROOT16" --readings "$READINGS16" --now "2026-09-28T16:00:00Z" \
+  --live-log "$NOLIVE" --cache-path "$CACHE16" --json)"
+_out16="$(_q "$OUT16" "print(d['window']['current_tokens_output'])")"
+if [ "$_out16" = "100" ]; then
+  ok "shared message.id across a cached file and a fresh file counted once at the max (100)"
+else
+  bad "expected 100 (max-dedup across cache boundary), got '$_out16'"
+fi
+
+# ---------------------------------------------------------------------------
+# T17 (E-109): a file whose mtime predates the weekly window start is
+# skipped entirely (never opened), and this does not change the result --
+# its row is also outside every window by timestamp, so it would have
+# contributed nothing anyway. Verified two ways: the cache written by this
+# run never gains an entry for the old file's path, and the reported totals
+# match the in-window file alone.
+# ---------------------------------------------------------------------------
+echo "T17 -- file older than the weekly window is skipped without changing the result"
+ROOT17="$FIXTURE_ROOT/t17/projects"
+PROJ17="$ROOT17/-Users-test-proj"
+mkdir -p "$PROJ17"
+CACHE17="$FIXTURE_ROOT/t17/cache.json"
+READINGS17="$FIXTURE_ROOT/t17/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS17"
+# Old file: 30 days before "now" -- its own row timestamp is also outside
+# every window, so _row's mtime-follows-timestamp gives it a genuinely old
+# mtime, matching how a real append-only transcript would look.
+_row "$PROJ17/old.jsonl" "2026-08-29T16:00:00.000Z" "claude-sonnet-4-6" 9999 "msg_old" ""
+# In-window file: inside the current 5h window.
+_row "$PROJ17/new.jsonl" "2026-09-28T15:30:00.000Z" "claude-sonnet-4-6" 77 "msg_new" ""
+OUT17="$(python3 "$TOOL" --root "$ROOT17" --readings "$READINGS17" --now "2026-09-28T16:00:00Z" \
+  --live-log "$NOLIVE" --cache-path "$CACHE17" --json)"
+_out17="$(_q "$OUT17" "print(d['window']['current_tokens_output'])")"
+if [ "$_out17" = "77" ]; then
+  ok "only the in-window file's tokens (77) are counted; the old file contributes nothing"
+else
+  bad "expected 77 output tokens, got '$_out17'"
+fi
+_cachekeys17="$(python3 -c "
+import json
+with open('$CACHE17') as fh:
+    cache = json.load(fh)
+keys = list(cache.keys())
+old_present = any('old.jsonl' in k for k in keys)
+new_present = any('new.jsonl' in k for k in keys)
+print('old_present=%s new_present=%s' % (old_present, new_present))
+")"
+if [ "$_cachekeys17" = "old_present=False new_present=True" ]; then
+  ok "the old file was never opened -- absent from the cache ($_cachekeys17)"
+else
+  bad "expected the old file skipped and the new file cached, got '$_cachekeys17'"
+fi
+
+# ---------------------------------------------------------------------------
+# T18 (E-109): a cached run (cold, then warm) must produce byte-identical
+# --json output to a --no-cache run, given the same fixture and the same
+# --now. The cache is purely a perf layer; it must never change the answer.
+# ---------------------------------------------------------------------------
+echo "T18 -- cached run output is identical to a --no-cache run"
+ROOT18="$FIXTURE_ROOT/t18/projects"
+PROJ18="$ROOT18/-Users-test-proj"
+mkdir -p "$PROJ18/subagents"
+CACHE18="$FIXTURE_ROOT/t18/cache.json"
+READINGS18="$FIXTURE_ROOT/t18/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n2026-09-28T16:00:00Z\t10\t5\n' > "$READINGS18"
+_row "$PROJ18/session-main.jsonl" "2026-09-28T12:00:00.000Z" "claude-sonnet-4-6" 400 "msg_cos" ""
+_row "$PROJ18/subagents/agent1.jsonl" "2026-09-28T15:30:00.000Z" "claude-sonnet-4-6" 200 "msg_e1" ""
+OUT18_NOCACHE="$(python3 "$TOOL" --root "$ROOT18" --readings "$READINGS18" --now "2026-09-28T16:00:00Z" \
+  --live-log "$NOLIVE" --no-cache --json)"
+OUT18_COLD="$(python3 "$TOOL" --root "$ROOT18" --readings "$READINGS18" --now "2026-09-28T16:00:00Z" \
+  --live-log "$NOLIVE" --cache-path "$CACHE18" --json)"
+OUT18_WARM="$(python3 "$TOOL" --root "$ROOT18" --readings "$READINGS18" --now "2026-09-28T16:00:00Z" \
+  --live-log "$NOLIVE" --cache-path "$CACHE18" --json)"
+if [ "$OUT18_NOCACHE" = "$OUT18_COLD" ] && [ "$OUT18_NOCACHE" = "$OUT18_WARM" ]; then
+  ok "cold-cache and warm-cache runs match a --no-cache run byte-for-byte"
+else
+  bad "cache changed the output (nocache vs cold vs warm differ)"
 fi
 
 echo ""

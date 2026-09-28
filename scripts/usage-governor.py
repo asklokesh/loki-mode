@@ -81,6 +81,11 @@ ACTIVE_ROLES = ("subagent", "workflow-agent")
 LIVE_LOG_PATH = Path.home() / ".claude" / "usage-governor" / "statusline.jsonl"
 LIVE_FRESHNESS_SECONDS = 30 * 60
 
+# Per-file transcript parse cache (E-109): keyed by (path, size, mtime), so
+# an unchanged file is read from cache on the next run instead of
+# re-parsed. See iter_records.
+CACHE_PATH = Path.home() / ".claude" / "usage-governor" / "transcript-cache.json"
+
 LIMIT_PATTERNS = [
     re.compile(r"limit reached", re.IGNORECASE),
     re.compile(r"organization has disabled", re.IGNORECASE),
@@ -114,11 +119,91 @@ def classify_role(path: Path):
     return "chief-of-staff"
 
 
-def iter_jsonl_files(root: Path):
-    yield from (Path(p) for p in glob.glob(str(root / "**" / "*.jsonl"), recursive=True))
+def iter_jsonl_files(root: Path, min_mtime: float | None = None):
+    """Yield transcript paths, skipping ones whose mtime is older than min_mtime.
+
+    Perf (E-109): a file untouched since before min_mtime cannot hold a row
+    inside a window that starts at min_mtime -- Claude Code transcripts are
+    append-only, so mtime tracks the last row written. Callers pass the
+    outermost window's start as min_mtime so no in-window row is ever lost.
+    """
+    for p in glob.glob(str(root / "**" / "*.jsonl"), recursive=True):
+        path = Path(p)
+        if min_mtime is not None:
+            try:
+                if path.stat().st_mtime < min_mtime:
+                    continue
+            except OSError:
+                continue
+        yield path
 
 
-def iter_records(root: Path):
+def _load_cache(cache_path: Path):
+    try:
+        with open(cache_path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_cache(cache_path: Path, cache):
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache_path.with_name(cache_path.name + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(cache, fh)
+        tmp.replace(cache_path)
+    except OSError:
+        pass  # cache is a perf layer only; a failed write just costs speed next run
+
+
+def _parse_file(path: Path):
+    """Parse one transcript file; return its per-message-id max-output_tokens rows.
+
+    Returns a list of [key, output_tokens, timestamp_iso, model, usage],
+    JSON-safe so it can be cached directly. `key` is message.id or
+    requestId (a string) when present, else ["__row__", line_no] -- unique
+    only within this file, made globally unique by the caller (which
+    already knows the file's path). See iter_records for why only the
+    max-output_tokens row per key is kept (G-01).
+    """
+    best = {}
+    try:
+        fh = open(path, "r", encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    with fh:
+        for line_no, line in enumerate(fh):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            msg = rec.get("message")
+            if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                continue
+            usage = msg.get("usage")
+            if not isinstance(usage, dict):
+                continue
+            ts = parse_ts(rec.get("timestamp"))
+            if ts is None:
+                continue
+            mid = msg.get("id") or rec.get("requestId")
+            key = mid if mid else ("__row__", line_no)
+            model = msg.get("model") or "unknown"
+            out = output_tokens_of(usage)
+            prior = best.get(key)
+            if prior is None or out >= prior[0]:
+                best[key] = (out, ts.isoformat(), model, usage)
+    return [
+        [list(key) if isinstance(key, tuple) else key, out, ts_iso, model, usage]
+        for key, (out, ts_iso, model, usage) in best.items()
+    ]
+
+
+def iter_records(root: Path, min_mtime=None, cache_path: Path | None = None):
     """Yield (path, role, timestamp, model, usage-dict) for assistant messages with usage.
 
     Claude Code writes one JSONL row per content block, and each row is a
@@ -132,42 +217,42 @@ def iter_records(root: Path):
     row's full usage dict (its cache fields are the real, non-repeating
     ones) and its own timestamp. Skips unreadable files and unparseable
     lines rather than failing.
+
+    Per-file results are cached by (path, size, mtime) under cache_path
+    (E-109) via _parse_file: an unchanged file is read from cache instead
+    of re-parsed. The cache stores PER-MESSAGE maxima for that file, never
+    a per-file total, so the cross-file dedup below (a message.id repeated
+    in two different files -- G-01) works identically whether either file
+    came from cache or a fresh parse: `best` merges by dedup key across
+    ALL files regardless of source, keeping the max output_tokens seen.
     """
-    # Dedup key -> (output_tokens, path, role, ts, model, usage). Kept OUTSIDE
-    # the per-file loop: a main transcript and its subagent files can share a
-    # message.id (or requestId), and a per-file dict would double-count that
-    # message once per file instead of once overall.
+    cache = _load_cache(cache_path) if cache_path is not None else {}
+    new_cache = {}
     best = {}
-    for path in iter_jsonl_files(root):
-        role = classify_role(path)
+    for path in iter_jsonl_files(root, min_mtime):
         try:
-            fh = open(path, "r", encoding="utf-8", errors="replace")
+            st = path.stat()
         except OSError:
             continue
-        with fh:
-            for line_no, line in enumerate(fh):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
-                    continue
-                msg = rec.get("message")
-                if not isinstance(msg, dict) or msg.get("role") != "assistant":
-                    continue
-                usage = msg.get("usage")
-                if not isinstance(usage, dict):
-                    continue
-                ts = parse_ts(rec.get("timestamp"))
-                if ts is None:
-                    continue
-                dedup_key = msg.get("id") or rec.get("requestId") or (str(path), "__row__", line_no)
-                model = msg.get("model") or "unknown"
-                out = output_tokens_of(usage)
-                prior = best.get(dedup_key)
-                if prior is None or out >= prior[0]:
-                    best[dedup_key] = (out, path, role, ts, model, usage)
+        cache_key = str(path)
+        cached = cache.get(cache_key)
+        if cached is not None and cached.get("size") == st.st_size and cached.get("mtime") == st.st_mtime:
+            entries = cached["entries"]
+        else:
+            entries = _parse_file(path)
+        if cache_path is not None:
+            new_cache[cache_key] = {"size": st.st_size, "mtime": st.st_mtime, "entries": entries}
+        role = classify_role(path)
+        for key, out, ts_iso, model, usage in entries:
+            ts = parse_ts(ts_iso)
+            if ts is None:
+                continue
+            dedup_key = (cache_key, key[0], key[1]) if isinstance(key, list) else key
+            prior = best.get(dedup_key)
+            if prior is None or out >= prior[0]:
+                best[dedup_key] = (out, path, role, ts, model, usage)
+    if cache_path is not None:
+        _save_cache(cache_path, new_cache)
     for _out, path, role, ts, model, usage in best.values():
         yield path, role, ts, model, usage
 
@@ -354,8 +439,15 @@ def read_live_rate_limits(now: datetime, live_log_path: Path):
     return entry.get("rate_limits")
 
 
-def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: Path):
-    all_records = list(iter_records(root))
+def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: Path, cache_path: Path | None = None):
+    window_start = now - timedelta(hours=WINDOW_HOURS)
+    weekly_start = last_wednesday_reset(now)
+
+    # Perf (E-109): weekly_start is the outer bound of every window this
+    # function reads from all_records below (the 5h window sits inside it).
+    # Calibration readings are assumed recent enough to fall inside it too
+    # (docs/v10/usage-readings.tsv is founder-maintained and short-lived).
+    all_records = list(iter_records(root, min_mtime=weekly_start.timestamp(), cache_path=cache_path))
 
     by_model = {}
     by_hour = {}
@@ -373,9 +465,6 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
             m[f] += v
             h[f] += v
             r[f] += v
-
-    window_start = now - timedelta(hours=WINDOW_HOURS)
-    weekly_start = last_wednesday_reset(now)
 
     readings = load_readings(readings_path)
     window_pairs = []
@@ -653,13 +742,22 @@ def main(argv=None):
         help="path to an opt-in statusLine logger's JSONL file",
     )
     parser.add_argument("--json", action="store_true", help="print JSON instead of a human summary")
+    parser.add_argument(
+        "--cache-path",
+        default=str(CACHE_PATH),
+        help="path to the per-file transcript parse cache (E-109)",
+    )
+    parser.add_argument(
+        "--no-cache", action="store_true", help="never read or write the transcript parse cache"
+    )
     args = parser.parse_args(argv)
 
     now = parse_ts(args.now) if args.now else datetime.now(timezone.utc)
     if now is None:
         parser.error("--now must be a parseable ISO8601 timestamp")
 
-    report = build_report(Path(args.root), Path(args.readings), now, Path(args.live_log))
+    cache_path = None if args.no_cache else Path(args.cache_path)
+    report = build_report(Path(args.root), Path(args.readings), now, Path(args.live_log), cache_path=cache_path)
 
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
