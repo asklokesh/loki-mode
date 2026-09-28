@@ -122,6 +122,11 @@
 #   PULSE_RELEASE_TESTS overrides the gh-run-list JSON RELEASE_ON_RED reads
 #                       for the newest VERSION-bump commit's Tests conclusion
 #                       (default: read from S-104's gh_ci cache).
+#   PULSE_PROGRESS_MD   path to PROGRESS.md for STALE_PROGRESS (default:
+#                       docs/v10/PROGRESS.md). Its newest "## <ISO
+#                       timestamp>Z" heading is the last-entry time; a
+#                       missing file or no parseable heading reports UNKNOWN,
+#                       never a false clean.
 #
 # Network cache (S-104: this runs as a UserPromptSubmit hook on every prompt,
 # on a machine with ~16 concurrent agents, and a 15s hook timeout was being
@@ -147,8 +152,9 @@ PULSE_PYTHON="${PULSE_PYTHON:-python3}"
 PULSE_REPO_ROOT="${PULSE_REPO_ROOT:-$DEFAULT_REPO_ROOT}"
 BOARD_MD="${BOARD_MD:-$DEFAULT_REPO_ROOT/docs/v10/BOARD.md}"
 CONTROL_MD="${CONTROL_MD:-$DEFAULT_REPO_ROOT/docs/v10/CONTROL.md}"
+PULSE_PROGRESS_MD="${PULSE_PROGRESS_MD:-$DEFAULT_REPO_ROOT/docs/v10/PROGRESS.md}"
 
-export PULSE_REPO_ROOT BOARD_MD CONTROL_MD
+export PULSE_REPO_ROOT BOARD_MD CONTROL_MD PULSE_PROGRESS_MD
 export PULSE_MAIN_REF="${PULSE_MAIN_REF:-main}"
 export PULSE_NPM_CMD="${PULSE_NPM_CMD:-}"
 export PULSE_GH_CMD="${PULSE_GH_CMD:-}"
@@ -204,6 +210,7 @@ import time
 REPO_ROOT = os.environ["PULSE_REPO_ROOT"]
 BOARD_MD = os.environ["BOARD_MD"]
 CONTROL_MD = os.environ["CONTROL_MD"]
+PROGRESS_MD = os.environ["PULSE_PROGRESS_MD"]
 MAIN_REF = os.environ.get("PULSE_MAIN_REF", "main") or "main"
 
 # Two deadlines, not one shared pool. A single pool meant a hung npm call
@@ -409,7 +416,7 @@ NOW = now_epoch()
 VIOLATION_PRIORITY = [
     "CI_RED", "CI_CANCELLED_STREAK", "RELEASE_ON_RED", "HIGH_LOAD",
     "MOAT_REGRESSION", "UNRELEASED_MERGE", "TRAIN_LATE", "REVIEW_STALE",
-    "AGENT_OVER_BUDGET", "UNEVIDENCED_CLAIM", "RELEASED_AHEAD_OF_NPM",
+    "AGENT_OVER_BUDGET", "STALE_PROGRESS", "UNEVIDENCED_CLAIM", "RELEASED_AHEAD_OF_NPM",
     "ORPHAN_TEST", "ORPHAN_WORKTREE", "STRAY_CONTAINER",
     "WORKTREE_COUNT", "IDLE_BUILDERS", "LOW_READY", "NO_RECENT_RELEASE",
     "LOW_RELEASE_VOLUME", "CONTROL_OVERSIZE",
@@ -1688,6 +1695,58 @@ else:
         )
 
 
+# --- 8b. STALE_PROGRESS: PROGRESS.md update cadence -------------------------
+# The newest "## <ISO timestamp>Z" heading in PROGRESS.md is the last time
+# anyone recorded progress. Scans every such heading rather than trusting the
+# LAST one in the file (a manual edit could append below an older heading, or
+# reorder sections) and keeps the max epoch found. A file with no such
+# heading at all, or one whose only headings fail the same calendar
+# validation parse_time_value already enforces elsewhere in this script (Feb
+# 30, hour 24, ...), returns None -- UNKNOWN, never a pass, matching every
+# other metric's contract here.
+_PROGRESS_HEADING_RE = re.compile(r"^## (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?Z)\b")
+_STALE_PROGRESS_BUDGET_MIN = 35
+
+
+def newest_progress_entry(path):
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read()
+    best = None  # (epoch, raw timestamp)
+    for line in text.splitlines():
+        m = _PROGRESS_HEADING_RE.match(line)
+        if not m:
+            continue
+        t = parse_time_value(m.group(1))
+        if t is None:
+            continue
+        if best is None or t > best[0]:
+            best = (t, m.group(1))
+    return best
+
+
+progress_entry = safe(newest_progress_entry, PROGRESS_MD)
+if progress_entry is None:
+    mark_unknown("progress_last_entry")
+    emit(
+        "PROGRESS.md last entry: UNKNOWN (missing %s or no parseable '## <timestamp>Z' heading)"
+        % PROGRESS_MD
+    )
+else:
+    # Round to whole minutes BEFORE comparing against the budget, not after:
+    # comparing the float age (e.g. 35.3) against an integer budget while
+    # printing the rounded minute count would print "35 min ago (budget 35)"
+    # on a violation that looks, from its own text, like it should not have
+    # fired.
+    _prog_age_min = int(round((NOW - progress_entry[0]) / 60.0))
+    emit("PROGRESS.md last entry: %d min ago" % _prog_age_min)
+    if _prog_age_min > _STALE_PROGRESS_BUDGET_MIN:
+        add_violation(
+            "STALE_PROGRESS",
+            "PROGRESS.md last updated %d min ago (budget %d)"
+            % (_prog_age_min, _STALE_PROGRESS_BUDGET_MIN),
+        )
+
+
 # --- 9. UNEVIDENCED_CLAIM: D26 guard 4 (evidence-or-it-didn't-happen) -------
 # Kept in its own function on purpose: a separate slice (S-94) adds its own
 # check elsewhere in this same file, and each check owning one function
@@ -2255,6 +2314,7 @@ _NEXT_ACTION_TEXT = {
     "TRAIN_LATE": "push a release train now, merged-unreleased commits exist and cadence has slipped past the 25-minute budget",
     "REVIEW_STALE": "escalate or finish review for the named slice(s), they have exceeded the 45-minute budget",
     "AGENT_OVER_BUDGET": "check in on the named agent(s), they have exceeded their role/tier time budget",
+    "STALE_PROGRESS": "append a PROGRESS.md entry: Part 1 gate numbers, Part 2 slices done, top blocker",
     "UNEVIDENCED_CLAIM": "add a command/output citation to the named line(s) or retract the claim (D26 guard 4)",
     "RELEASED_AHEAD_OF_NPM": "verify the named release(s) actually reached npm, or fix the BOARD row's status/timestamp",
     "ORPHAN_TEST": "investigate the named orphaned/long-running test process; stop by exact PID only if confirmed stale, never by name or pattern",

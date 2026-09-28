@@ -1,7 +1,6 @@
-// Loki 10 worker (P2, docs/v10/ENGINE.md section 6): the token-withheld process
-// that runs intake..seal. It never writes events.jsonl; each event is one JSON
-// line {type, stage, data} on stdout, and the supervisor validates, stamps seq
-// and appends. Its own diagnostics go to stderr.
+// Loki 10 worker (P2, ENGINE.md 6): the token-withheld process that runs intake..seal. It never writes
+// events.jsonl; each event is one JSON line {type, stage, data} on stdout, and the supervisor validates,
+// stamps seq and appends. Its own diagnostics go to stderr.
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { GITHUB_TOKEN_VARS } from "../runner/github_token.ts";
@@ -54,7 +53,10 @@ export async function main(args: string[]): Promise<number> {
         // Union with every session started: a killed stage's output (and its ids) is dropped by the machine.
         read(dir, ids) {
           const c = sumResultCosts(join(dir, ".loki"), [...new Set([...ids, ...started])]);
-          return { usd: c.usd, inputTokens: c.input_tokens, outputTokens: c.output_tokens, cacheReadTokens: c.cache_read_tokens };
+          return {
+            usd: c.usd, inputTokens: c.input_tokens, outputTokens: c.output_tokens, cacheReadTokens: c.cache_read_tokens,
+            measuredCount: c.measuredCount, totalCount: c.totalCount, partialUsd: c.partialUsd,
+          };
         },
       },
       clock: { now: () => Date.now() },

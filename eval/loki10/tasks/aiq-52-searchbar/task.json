@@ -5,7 +5,7 @@
   "issue_ref": "asklokesh/augmentiq#52",
   "repo": {
     "source": "/Users/lokesh/git/augmentiq",
-    "ref": "b9796de68d30f76912d38acd1352e6e0202b991f"
+    "ref": "d0a685f6808b7e5e425691a61adc288d168833ae"
   },
   "setup": "cd frontend && npm install --no-audit --no-fund --loglevel=error",
   "hidden": {
@@ -14,5 +14,6 @@
     ],
     "run": "frontend/node_modules/.bin/vitest run --root frontend src/__hidden__/search-bar.test.tsx"
   },
-  "timeout_s": 900
+  "timeout_s": 900,
+  "expected_outcome": "no_change_needed"
 }

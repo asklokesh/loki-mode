@@ -126,8 +126,9 @@ if [ -n "${_PTY_FORM:-}" ]; then
     mkdir -p "$D/.loki/cache"
     _cache="$D/.loki/cache/update-check-bash.json"
 
-    # A far-future latest must warn.
-    printf '{"checkedAt":%s,"latest":"9.99.0"}\n' "$(date +%s)" > "$_cache"
+    # A far-future latest must warn. Keep the major far above VERSION: 9.99.0
+    # silently became "older" at the 10.0.0 bump and turned this case red.
+    printf '{"checkedAt":%s,"latest":"999.0.0"}\n' "$(date +%s)" > "$_cache"
     # `start --help` still exercises cmd_start and the hint, then exits before
     # entering the interactive no-spec workflow. A bare `start` under the PTY
     # waits for operator input forever and can wedge the full pre-push gate.
@@ -160,7 +161,7 @@ if [ -n "${_PTY_FORM:-}" ]; then
     esac
 
     # Opt-out must win.
-    printf '{"checkedAt":%s,"latest":"9.99.0"}\n' "$(date +%s)" > "$_cache"
+    printf '{"checkedAt":%s,"latest":"999.0.0"}\n' "$(date +%s)" > "$_cache"
     _out="$(HOME="$D" LOKI_NO_UPDATE_CHECK=1 _under_pty bash "$LOKI" start --help 2>&1 || true)"
     case "$_out" in
         *"newer loki-mode is available"*) bad "LOKI_NO_UPDATE_CHECK=1 does not suppress the hint" ;;

@@ -91,10 +91,12 @@ describe("engine10 e2e (stub claude)", () => {
     expect(r.wallMs).toBeLessThan(60_000);
 
     const completed = r.events.filter((e) => e.type === "stage.completed").map((e) => e.stage);
-    // plan and wall run in parallel, so their order is free.
+    // plan is forced on (LOKI_E10_PLAN=1): the lean path never applies to a forced plan (minor fix), so
+    // Wall also runs here even though calc.test.ts is a relevant test for the calc.ts the task names.
     expect([...completed.slice(0, 3)].sort()).toEqual(["intake", "plan", "wall"]);
     expect(completed.slice(3)).toEqual(["implement", "verify", "commit", "seal"]);
-    expect(r.events.some((e) => e.type === "stage.skipped")).toBe(false);
+    const skipped = r.events.filter((e) => e.type === "stage.skipped");
+    expect(skipped).toEqual([]);
     const seqs = r.events.map((e) => e.seq);
     expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
     expect(r.events[0]!.type).toBe("run.started");

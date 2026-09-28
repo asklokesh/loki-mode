@@ -72,6 +72,22 @@ for i in range(50):
     print('line %d' % i)
 " > "$CONTROL_OVERSIZE"
 
+# PROGRESS.md fixtures for STALE_PROGRESS. COMMON_ARGS' PULSE_NOW is fixed at
+# 2026-09-27T02:00:00Z below; PROGRESS_FRESH's heading is 10 minutes before
+# that (well under the 35-minute budget) so every OTHER test in this suite
+# that does not override PULSE_PROGRESS_MD never sees a stray STALE_PROGRESS
+# violation from a fixture built for something else.
+PROGRESS_FRESH="$WORK/PROGRESS-fresh.md"
+printf '# Progress\n\n## 2026-09-27T01:50Z: fresh entry\n- on track\n' > "$PROGRESS_FRESH"
+
+PROGRESS_STALE="$WORK/PROGRESS-stale.md"
+printf '# Progress\n\n## 2026-09-27T01:24Z: old entry\n- 36 minutes before PULSE_NOW\n' > "$PROGRESS_STALE"
+
+PROGRESS_UNPARSEABLE="$WORK/PROGRESS-unparseable.md"
+printf '# Progress\n\n## Current\n- no ISO timestamp heading anywhere in this file\n\n## Cycle 1\n- still no timestamp\n' > "$PROGRESS_UNPARSEABLE"
+
+PROGRESS_MISSING="$WORK/no-such-progress.md"
+
 # Real tests/moat/run.sh summary-line fixtures (finding 3): a measured PASS
 # result (7 of 9, no rule failures) and a measured FAIL result (SAME count,
 # 7 of 9, with an unlisted REGRESSION line, so only the suite-failed check
@@ -176,6 +192,7 @@ COMMON_ARGS=(
     "PULSE_REPO_ROOT=$FAKE_REPO"
     "PULSE_MAIN_REF=main"
     "CONTROL_MD=$CONTROL_OK"
+    "PULSE_PROGRESS_MD=$PROGRESS_FRESH"
     "PULSE_NPM_CMD=false"
     "PULSE_GH_CMD=false"
     "PULSE_GH_STREAK_CMD=cat $GH_STREAK_OK_JSON"
@@ -437,6 +454,61 @@ if [ "$rc" = 1 ] && printf '%s\n' "$OUT" | grep -qF "VIOLATION: CONTROL_OVERSIZE
     ok "exact CONTROL_OVERSIZE violation line fires, exit 1"
 else
     bad "CONTROL_OVERSIZE case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T5b -- STALE_PROGRESS: a fresh PROGRESS.md entry (10 min old) does not fire"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" \
+    "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
+    "PULSE_MOAT_RESULT=$MOAT_RESULT_PASS" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}")"; then rc=0; else rc=$?; fi
+if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: STALE_PROGRESS" \
+    && printf '%s\n' "$OUT" | grep -qF "PROGRESS.md last entry: 10 min ago"; then
+    ok "fresh PROGRESS.md entry: no STALE_PROGRESS violation"
+else
+    bad "T5b fresh-entry case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T5c -- STALE_PROGRESS: a 36-minute-old entry (over the 35-minute budget) fires"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_PROGRESS_MD=$PROGRESS_STALE" \
+    "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
+    "PULSE_MOAT_RESULT=$MOAT_RESULT_PASS" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}")"; then rc=0; else rc=$?; fi
+if [ "$rc" = 1 ] \
+    && printf '%s\n' "$OUT" | grep -qF "VIOLATION: STALE_PROGRESS: PROGRESS.md last updated 36 min ago (budget 35)" \
+    && printf '%s\n' "$OUT" | grep -qF "NEXT ACTION: STALE_PROGRESS: append a PROGRESS.md entry: Part 1 gate numbers, Part 2 slices done, top blocker"; then
+    ok "36-minute-old PROGRESS.md entry fires STALE_PROGRESS with the matching NEXT ACTION"
+else
+    bad "T5c stale-entry case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T5d -- STALE_PROGRESS: a missing PROGRESS.md reports UNKNOWN, never a pass"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_PROGRESS_MD=$PROGRESS_MISSING" \
+    "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
+    "PULSE_MOAT_RESULT=$MOAT_RESULT_PASS" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}")"; then rc=0; else rc=$?; fi
+if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: STALE_PROGRESS" \
+    && printf '%s\n' "$OUT" | grep -q "^UNKNOWN metrics:.*progress_last_entry" \
+    && printf '%s\n' "$OUT" | grep -qF "PROGRESS.md last entry: UNKNOWN (missing $PROGRESS_MISSING or no parseable '## <timestamp>Z' heading)"; then
+    ok "missing PROGRESS.md: progress_last_entry reports UNKNOWN, never a false clean"
+else
+    bad "T5d missing-file case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T5e -- STALE_PROGRESS: a PROGRESS.md with no parseable '## <timestamp>Z' heading reports UNKNOWN"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_PROGRESS_MD=$PROGRESS_UNPARSEABLE" \
+    "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
+    "PULSE_MOAT_RESULT=$MOAT_RESULT_PASS" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}")"; then rc=0; else rc=$?; fi
+if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: STALE_PROGRESS" \
+    && printf '%s\n' "$OUT" | grep -q "^UNKNOWN metrics:.*progress_last_entry" \
+    && printf '%s\n' "$OUT" | grep -qF "PROGRESS.md last entry: UNKNOWN (missing $PROGRESS_UNPARSEABLE or no parseable '## <timestamp>Z' heading)"; then
+    ok "unparseable PROGRESS.md headings: progress_last_entry reports UNKNOWN, never a false clean"
+else
+    bad "T5e unparseable-headings case: rc=$rc output follows"
     printf '%s\n' "$OUT"
 fi
 

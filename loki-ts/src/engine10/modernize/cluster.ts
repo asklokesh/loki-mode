@@ -31,8 +31,12 @@ export interface ClusterResult {
 export const UNIT_LINE_CAP = 1500;
 export const UNIT_FILE_CAP = 40;
 
-/** Tarjan's SCC algorithm. Returns components in the order they are closed off
- *  (each component appears only after every component it depends on has already been emitted). */
+/** Tarjan's SCC algorithm, iterative (explicit work stack instead of recursion: a linear
+ *  dependency chain of tens of thousands of nodes would blow the JS call stack otherwise).
+ *  Returns components in the order they are closed off (each component appears only after
+ *  every component it depends on has already been emitted) -- identical output to the
+ *  recursive formulation, since each work-stack frame mirrors one strongconnect(v) call and
+ *  is popped at the same point that call would have returned. */
 export function tarjanSCC(graph: DepGraph): string[][] {
   const adj = new Map<string, string[]>();
   for (const n of graph.nodes) adj.set(n.id, []);
@@ -45,32 +49,56 @@ export function tarjanSCC(graph: DepGraph): string[][] {
   const stack: string[] = [];
   const out: string[][] = [];
 
-  const strongconnect = (v: string): void => {
-    indexOf.set(v, index);
-    lowlink.set(v, index);
-    index++;
-    stack.push(v);
-    onStack.add(v);
-    for (const w of adj.get(v) ?? []) {
-      if (!indexOf.has(w)) {
-        strongconnect(w);
-        lowlink.set(v, Math.min(lowlink.get(v)!, lowlink.get(w)!));
-      } else if (onStack.has(w)) {
-        lowlink.set(v, Math.min(lowlink.get(v)!, indexOf.get(w)!));
+  // One frame per in-flight strongconnect(v) call; `i` is how far we've walked v's adjacency
+  // list so far (the recursive version's implicit "resume point" after each recursive call).
+  interface Frame { v: string; i: number; }
+  const work: Frame[] = [];
+
+  for (const start of graph.nodes) {
+    if (indexOf.has(start.id)) continue;
+    work.push({ v: start.id, i: 0 });
+    while (work.length > 0) {
+      const frame = work[work.length - 1]!;
+      const v = frame.v;
+      if (frame.i === 0) {
+        indexOf.set(v, index);
+        lowlink.set(v, index);
+        index++;
+        stack.push(v);
+        onStack.add(v);
+      }
+      const neighbors = adj.get(v) ?? [];
+      let descended = false;
+      while (frame.i < neighbors.length) {
+        const w = neighbors[frame.i]!;
+        frame.i++;
+        if (!indexOf.has(w)) {
+          work.push({ v: w, i: 0 });
+          descended = true;
+          break;
+        } else if (onStack.has(w)) {
+          lowlink.set(v, Math.min(lowlink.get(v)!, indexOf.get(w)!));
+        }
+      }
+      if (descended) continue; // simulates strongconnect(w) running before v resumes
+
+      // v's adjacency list is exhausted: this is where strongconnect(v) would return.
+      work.pop();
+      const parent = work[work.length - 1];
+      if (parent) lowlink.set(parent.v, Math.min(lowlink.get(parent.v)!, lowlink.get(v)!));
+
+      if (lowlink.get(v) === indexOf.get(v)) {
+        const comp: string[] = [];
+        let w: string;
+        do {
+          w = stack.pop()!;
+          onStack.delete(w);
+          comp.push(w);
+        } while (w !== v);
+        out.push(comp);
       }
     }
-    if (lowlink.get(v) === indexOf.get(v)) {
-      const comp: string[] = [];
-      let w: string;
-      do {
-        w = stack.pop()!;
-        onStack.delete(w);
-        comp.push(w);
-      } while (w !== v);
-      out.push(comp);
-    }
-  };
-  for (const n of graph.nodes) if (!indexOf.has(n.id)) strongconnect(n.id);
+  }
   return out;
 }
 

@@ -107,6 +107,36 @@ describe("E-48 adapters notify", () => {
     }
   }, 10_000);
 
+  // E-69 rework wiring check: partialCost()'s tamper guard must actually reach the Slack summary,
+  // not just the pure function in isolation. Two real cost events are recorded, then the log is
+  // tampered (same forged-append technique as rule_of_two.test.ts's tamper tests) before
+  // session.ended, so the run ends VERIFIED but log.tampered is true. The posted text must read
+  // "not measured" and never leak the $0.40 those two sessions actually reported.
+  test("a tampered, fully-priced run posts Cost: not measured to Slack, never a dollar figure", async () => {
+    const dir = repo();
+    const log = join(dir, ".loki/runs/e10-dw6/events.jsonl");
+    const code = `
+console.log(JSON.stringify({ type: "cost", stage: null, data: { session_id: "s1", usd: 0.15 } }));
+console.log(JSON.stringify({ type: "cost", stage: null, data: { session_id: "s2", usd: 0.25 } }));
+const forged = JSON.stringify({v:1,seq:99,ts:new Date().toISOString(),run:"e10-dw6",type:"receipt.sealed",stage:"seal",data:{verdict:"VERIFIED"}}) + "\\n";
+require("node:fs").appendFileSync(${JSON.stringify(log)}, forged);
+console.log(JSON.stringify({ type: "session.ended", stage: "implement", data: { session_id: "s1", exit: "done", duration_s: 1 } }));
+console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verdict: "VERIFIED", not_proven: [] } }));
+`;
+    const posts: { text: string }[] = [];
+    const server = Bun.serve({ port: 0, fetch: async (req) => { posts.push((await req.json()) as { text: string }); return new Response("ok"); } });
+    try {
+      const r = await runSupervisor({ runId: "e10-dw6", repoDir: dir, env: supEnv({ LOKI_SLACK_WEBHOOK_URL: `http://127.0.0.1:${server.port}/` }), workerArgv: worker(code) });
+      expect(r.tampered).toBe(true);
+      expect(posts.length).toBe(1);
+      expect(posts[0]!.text).toContain("not measured");
+      expect(posts[0]!.text).not.toContain("$0.40");
+      expect(posts[0]!.text).not.toContain("partial: $");
+    } finally {
+      server.stop(true);
+    }
+  }, 10_000);
+
   test("makes no request when no webhook is configured", async () => {
     const dir = repo();
     const posts: unknown[] = [];
