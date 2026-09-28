@@ -9,6 +9,13 @@
 #   noop        do nothing
 #   sleep       sleep far past any cap (records PIDs in STUB_PID_FILE)
 #   orphan      leave a background sleeper behind and exit 0 (PID in STUB_PID_FILE)
+#   setsidorphan leave a setsid-detached sleeper (escapes the timeout process
+#               group) behind and exit 0. PID (then "escaped" once confirmed)
+#               in STUB_PID_FILE. STUB_ORPHAN_CHDIR: cd there first (default
+#               "." = the clone, for the cwd-reap leg). STUB_ORPHAN_PIDFILE:
+#               also record the sleeper's PID (and, with STUB_ORPHAN_DECOY_PID
+#               set, that decoy PID plus a "-1" line) there, for the pidfile
+#               reap leg and its negative controls.
 #   exit0       push a greet.sh that exits 0 when sourced (skips the assertions)
 #   symlink     pass, plus hidden_test.sh as a symlink to STUB_SYMLINK_TARGET
 #   hardlink    no push; hidden_test.sh in the working tree is a hardlink to
@@ -125,6 +132,36 @@ case "${STUB_MODE:-noop}" in
     orphan)
         sleep 600 >/dev/null 2>&1 &
         printf '%s\n' "$!" > "${STUB_PID_FILE:-/dev/null}"
+        ;;
+    setsidorphan)
+        chdir="${STUB_ORPHAN_CHDIR:-.}"
+        # `exec` inside the backgrounded subshell replaces its image, so $!
+        # (the subshell's own pid) stays the sleeper's pid throughout, with
+        # cwd wherever this subshell's own `cd` left it.
+        if command -v setsid >/dev/null 2>&1; then
+            ( cd "$chdir" && exec setsid sleep 600 ) >/dev/null 2>&1 &
+        else
+            ( cd "$chdir" && exec perl -e 'use POSIX qw(setsid); setsid(); exec @ARGV or exit 127;' sleep 600 ) >/dev/null 2>&1 &
+        fi
+        sp=$!
+        printf '%s\n' "$sp" > "${STUB_PID_FILE:-/dev/null}"
+        # Wait for the sleeper to actually finish escaping into its own
+        # process group (pgid == its own pid) before this script exits.
+        # Without this, the group KILL that follows this script's own exit
+        # races the child's setsid() call and can win on pure timing, which
+        # would make this leg pass or fail by luck instead of by the fix.
+        pgid=""
+        for _ in $(seq 1 50); do
+            pgid="$(ps -o pgid= -p "$sp" 2>/dev/null | tr -d ' ')"
+            [ "$pgid" = "$sp" ] && break
+            sleep 0.1
+        done
+        [ "$pgid" = "$sp" ] && printf 'escaped\n' >> "${STUB_PID_FILE:-/dev/null}"
+        if [ -n "${STUB_ORPHAN_PIDFILE:-}" ]; then
+            mkdir -p "$(dirname "$STUB_ORPHAN_PIDFILE")"
+            printf '%s\n' "$sp" > "$STUB_ORPHAN_PIDFILE"
+            [ -n "${STUB_ORPHAN_DECOY_PID:-}" ] && printf '%s\n-1\n' "$STUB_ORPHAN_DECOY_PID" >> "$STUB_ORPHAN_PIDFILE"
+        fi
         ;;
     noop | check) ;;
     *) echo "unknown STUB_MODE" >&2; exit 2 ;;

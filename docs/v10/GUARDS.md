@@ -450,3 +450,48 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   (S-139) asserts the VIOLATION fires for a `released@` row stamped after
   npm's newest publish; T39b asserts it stays silent for a row stamped
   before it.
+
+## 14. Eval harness orphans survived the arm's process-group KILL (EV-10)
+
+- **Incident:** 00:08Z, pulse ORPHAN_WORKTREE flagged 6 orphaned processes
+  left running after `eval/loki10/harness.py` runs against the legacy arm;
+  all 6 were stopped by PID once found. Each was a detached
+  `/tmp/loki-run-*.sh` loop legacy loki spawns via `setsid`, which had
+  reparented to launchd (ppid 1) once the arm process it came from exited.
+- **Root cause with evidence:** `kill_orphans()` only ever did
+  `os.killpg(timeout_pid, SIGKILL)` -- correct for anything still in the
+  `timeout` process group the arm ran under, but a `setsid`'d child
+  deliberately leaves that group and gets its own pgid, so the group KILL
+  can never reach it once the escape has completed. Reproduced locally: a
+  script that setsid-spawns a sleeper, confirms (by polling its pgid) that
+  the escape finished, then exits still leaves the sleeper running after
+  `capped_run()` returns and `kill_orphans()` has already run.
+- **The guard:** `kill_orphans()` now also reaps by two signals that are
+  never a process name or pattern: any PID recorded in a `*.pid` file under
+  the run's own clone (`<work>/.loki/**/*.pid`, one per line, never through
+  a symlinked `.loki/` or a non-regular/oversized file), and any process
+  anywhere on the box whose cwd (`/proc/<pid>/cwd` where present, else one
+  system-wide `lsof -a -d cwd -Fpn` call, resolved with `os.path.realpath`)
+  is that same clone directory or a path inside it. Both are scoped to
+  `cwd`, the exact per-run clone `capped_run()` was given. Every candidate
+  PID is vetted by `_pid_is_ours()` before it ever reaches `os.kill`: never
+  `<= 1` (kill(2) treats -1/0 as "every process the caller may signal," not
+  a single-PID cleanup), never this process or its parent, and never older
+  than the run's own start (a stale or forged `.pid` entry naming an
+  unrelated, longer-lived process is left alone).
+- **The test that proves it fires:** `eval/loki10/test-harness.sh`, EV-10.
+  Leg Rj: the `setsidorphan` stub-arm mode setsid-spawns a sleeper in its
+  own clone, polls until the sleeper's pgid equals its own pid and only
+  then records an "escaped" marker (ruling out a vacuous pass from a spawn
+  that never actually left the group), then exits; the leg asserts the
+  marker is present and the sleeper is dead once the harness run returns.
+  Leg Rk: the same escape, chdir'd out of the clone first so the cwd path
+  cannot see it, reaped instead from its own PID in a `.loki/*.pid` file; a
+  decoy PID that predates the run, planted in the same file (plus a literal
+  `-1`), is asserted to survive. Leg Rl exercises `_clone_orphan_pids`
+  directly to assert `-1`/`0`/`1` and a pre-run PID are filtered before any
+  kill is attempted, without ever risking a live `kill(-1, SIGKILL)`.
+  Mutation-tested: disabling the cwd path fails only Rj, disabling the
+  pidfile path fails only Rk, and bypassing `_pid_is_ours` (checked offline
+  against a throwaway copy of the module, never run against a live process)
+  lets `-1` through, which Rl's assertion catches.

@@ -31,6 +31,12 @@
 #     a hardlink in the arm's own tree is never written through
 #  Rd harness_error after a push keeps pr_opened
 #  Re orphan left by the arm is killed
+#  Rj (EV-10) a setsid-escaped orphan (own process group) in the clone is
+#     still killed, by cwd, not process-group signal
+#  Rk (EV-10) same, chdir'd out of the clone, reaped by its own .loki/*.pid
+#     entry instead; a decoy PID predating the run in the same file survives
+#  Rl (EV-10) pid-file candidates are filtered by pid<=1 and by age before
+#     any kill is attempted (direct filter check, no live kill(-1))
 #  Rf hidden tests that already pass (or cannot be placed) at repo.ref -> task_invalid
 #  Rg summarize dedupes by (task, arm) and groups by model and harness_sha
 #  Rh push time before the run start is flagged, not clamped
@@ -346,6 +352,82 @@ STUB_MODE=orphan STUB_PID_FILE="$T/orphan.pids" RUN --arm raw-claude --task fx-g
 op="$(cat "$T/orphan.pids" 2>/dev/null)"
 if [ -n "$op" ] && ! kill -0 "$op" 2>/dev/null; then pass "Re: orphan sleeper killed after the arm exits"; else
     fail "Re: orphan $op still alive"; [ -n "$op" ] && kill "$op" 2>/dev/null; fi
+
+# ---- Rj. (EV-10) a setsid-escaped orphan (own process group, own session,
+# same cwd as the clone -- what a legacy detached /tmp/loki-run-*.sh loop
+# looks like once it reparents to launchd) is still reaped by cwd, not by
+# the process-group KILL above. The "escaped" marker (only written once the
+# stub confirmed pgid==pid) rules out a vacuous pass from a spawn that never
+# actually left the group.
+R="$T/out-setsidorphan"
+rm -f "$T/setsidorphan.pids"
+STUB_MODE=setsidorphan STUB_PID_FILE="$T/setsidorphan.pids" RUN --arm raw-claude --task fx-greet --out "$R" >/dev/null 2>&1
+sp="$(sed -n '1p' "$T/setsidorphan.pids" 2>/dev/null)"
+esc="$(sed -n '2p' "$T/setsidorphan.pids" 2>/dev/null)"
+if [ "$esc" = escaped ] && [ -n "$sp" ] && ! kill -0 "$sp" 2>/dev/null; then
+    pass "Rj: setsid-escaped clone orphan reaped after the arm exits"
+else
+    fail "Rj: setsid orphan sp=$sp esc=$esc still alive"; [ -n "$sp" ] && kill -9 "$sp" 2>/dev/null
+fi
+
+# ---- Rk. (EV-10) a setsid orphan that chdir'd OUT of the clone before exec
+# (so the cwd reap above cannot see it) is still reaped, from its own PID
+# recorded in a *.pid file under the clone's .loki/ -- what legacy loki
+# itself records. A decoy PID that predates this run, planted in the same
+# pid file (plus a literal "-1"), must survive: the elapsed-time gate and the
+# pid<=1 refusal are the only things standing between a stray or forged
+# entry and os.kill.
+R="$T/out-setsidorphan-pidfile"
+rm -f "$T/setsidorphan-pidfile.pids"
+sleep 300 >/dev/null 2>&1 &
+DECOY=$!
+sleep 6  # older than the harness's own age-gate margin before the run even starts
+STUB_MODE=setsidorphan STUB_PID_FILE="$T/setsidorphan-pidfile.pids" STUB_ORPHAN_CHDIR=/tmp \
+    STUB_ORPHAN_PIDFILE=".loki/run.pid" STUB_ORPHAN_DECOY_PID="$DECOY" \
+    RUN --arm raw-claude --task fx-greet --out "$R" >/dev/null 2>&1
+sp="$(sed -n '1p' "$T/setsidorphan-pidfile.pids" 2>/dev/null)"
+esc="$(sed -n '2p' "$T/setsidorphan-pidfile.pids" 2>/dev/null)"
+if [ "$esc" = escaped ] && [ -n "$sp" ] && ! kill -0 "$sp" 2>/dev/null; then
+    pass "Rk: setsid orphan recorded in a .loki/*.pid file (cwd outside the clone) is reaped"
+else
+    fail "Rk: pidfile orphan sp=$sp esc=$esc still alive"; [ -n "$sp" ] && kill -9 "$sp" 2>/dev/null
+fi
+if kill -0 "$DECOY" 2>/dev/null; then pass "Rk: a decoy PID predating the run is not killed via a stray pid-file entry"
+else fail "Rk: decoy PID $DECOY (predates the run) was killed"; fi
+kill "$DECOY" 2>/dev/null; wait "$DECOY" 2>/dev/null
+
+# ---- Rl. (EV-10) pid-file candidates are filtered before any kill is even
+# attempted: pid<=1 (kill(2) treats -1/0 as "every process the caller may
+# signal", never a single-PID cleanup) and a PID older than the run's own
+# start are both refused. The age case uses a real spawned process, not
+# os.getpid(): the caller's own pid is already rejected by the identity
+# check in _pid_is_ours regardless of age, so testing with it would pass
+# vacuously without ever exercising the age filter. Exercises the filter
+# function directly so this never risks a real kill(-1, SIGKILL) in a
+# shared environment.
+sleep 300 >/dev/null 2>&1 &
+RL_OLD=$!
+sleep 6  # older than the harness's own age-gate margin before the run "starts"
+if python3 - "$HERE/harness.py" "$RL_OLD" <<'PY'
+import importlib.util, os, sys, tempfile, time
+spec = importlib.util.spec_from_file_location("harness", sys.argv[1])
+h = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(h)
+old_pid = int(sys.argv[2])
+d = tempfile.mkdtemp()
+os.makedirs(os.path.join(d, ".loki"))
+with open(os.path.join(d, ".loki", "run.pid"), "w") as f:
+    f.write("-1\n")
+pids = h._clone_orphan_pids(d, time.time() - 3600)
+assert -1 not in pids and 0 not in pids and 1 not in pids, ("pid<=1 not filtered", pids)
+with open(os.path.join(d, ".loki", "old.pid"), "w") as f:
+    f.write(str(old_pid) + "\n")  # a real process that predates `started` below
+pids = h._clone_orphan_pids(d, time.time())
+assert old_pid not in pids, ("pre-run pid not filtered by age", pids)
+PY
+then pass "Rl: pid-file candidates filtered by pid<=1 and by age before any kill"
+else fail "Rl: pid-file filter"; fi
+kill "$RL_OLD" 2>/dev/null; wait "$RL_OLD" 2>/dev/null
 
 # ---- Rf. hidden tests that pass before the arm make the task invalid
 R="$T/out-baseline"

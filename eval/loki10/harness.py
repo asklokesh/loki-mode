@@ -27,6 +27,7 @@ import secrets
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -191,20 +192,157 @@ CHILDREN = None
 TIMEOUT_BIN = shutil.which("timeout") or shutil.which("gtimeout")
 
 
-def kill_orphans(timeout_pid):
-    """KILL what is left in the process group of a `timeout` we started.
+def kill_orphans(timeout_pid, cwd, started):
+    """KILL what is left in the process group of a `timeout` we started, plus
+    any descendant that escaped it.
 
     GNU timeout (without --foreground) makes itself a process-group leader,
     so its pgid equals its pid and every child it spawned stays in that group
     unless it deliberately escaped (setsid). Once timeout has exited, anything
     still in the group is an orphan of this run. Our own group is never hit.
+
+    Legacy loki spawns a detached /tmp/loki-run-*.sh loop via setsid, which
+    escapes that group and reparents to launchd once the arm exits, so the
+    killpg above never reaches it. Reap it two ways instead, never by process
+    name or pattern: a PID the run itself recorded in a *.pid file under its
+    own clone's .loki/, and any process whose cwd resolves inside that same
+    clone directory. `started` (this capped_run's own t0) bounds both: a PID
+    is only ever killed if the process itself started at or after this run
+    began, so a stale or forged .pid entry naming an unrelated, longer-lived
+    process is never touched.
     """
-    if timeout_pid == os.getpgrp():
-        return
+    if timeout_pid != os.getpgrp():
+        try:
+            os.killpg(timeout_pid, signal.SIGKILL)
+        except OSError:
+            pass  # ESRCH: no group left, the normal case
+    for pid in _clone_orphan_pids(cwd, started):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def _process_age_s(pid):
+    """Seconds since `pid` started, or None if it cannot be read.
+
+    Never a directory's mtime (a filesystem attribute a mount option or
+    relabel can bump, not a kernel-tracked process attribute): `ps -o
+    etimes=` reports elapsed seconds directly and is what Linux is checked
+    with; `ps -o etime=` (the same probe tests/test-runtime-gate.sh uses for
+    cwd) is the fallback formatted-duration keyword macOS/BSD's ps accepts
+    instead (etimes there is an unknown keyword, so the run above returns no
+    digits and falls through).
+    """
     try:
-        os.killpg(timeout_pid, signal.SIGKILL)
-    except OSError:
-        pass  # ESRCH: no group left, the normal case
+        out = subprocess.run(["ps", "-o", "etimes=", "-p", str(pid)],
+                             capture_output=True, text=True, timeout=5).stdout.strip()
+        if out.isdigit():
+            return float(out)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        out = subprocess.run(["ps", "-o", "etime=", "-p", str(pid)],
+                             capture_output=True, text=True, timeout=5).stdout
+        m = re.fullmatch(r"\s*(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)\s*", out)
+        if m:
+            d, h, mi, s = (int(g or 0) for g in m.groups())
+            return float(d * 86400 + h * 3600 + mi * 60 + s)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def _pid_is_ours(pid, started):
+    """Vets every candidate before it ever reaches os.kill: not this process
+    or its parent, not <= 1 (pid -1/0 to kill(2) means "every process the
+    caller may signal" -- never a single-PID cleanup), and not older than
+    `started` (a PID this run could not itself have produced).
+    """
+    if pid <= 1 or pid in (os.getpid(), os.getppid()):
+        return False
+    age = _process_age_s(pid)
+    return age is not None and age <= (time.time() - started) + 5
+
+
+def _clone_pidfile_pids(cwd):
+    """PIDs recorded under cwd/.loki/**/*.pid, one per line (the same layout
+    Children._flush already writes for this harness's own child-pids file).
+    Never follows a symlinked .loki/ or subdirectory, and never reads a
+    non-regular or oversized file (a fifo would hang open(); a device or huge
+    file is never a real pidfile).
+    """
+    pids = set()
+    loki_dir = os.path.join(cwd, ".loki")
+    if os.path.islink(loki_dir):
+        return pids
+    for root, dirs, files in os.walk(loki_dir):
+        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
+        for fn in files:
+            if not fn.endswith(".pid"):
+                continue
+            p = os.path.join(root, fn)
+            try:
+                st = os.lstat(p)
+            except OSError:
+                continue
+            if not stat.S_ISREG(st.st_mode) or st.st_size > 256:
+                continue
+            try:
+                with open(p, encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            pids.add(int(line))
+            except (OSError, ValueError):
+                continue
+    return pids
+
+
+def _clone_cwd_pids(cwd):
+    """PIDs (system-wide) whose cwd resolves inside `cwd`, the run's own
+    private clone. /proc is used when present (one readlink per pid, no
+    subprocess); lsof's single system-wide call covers macOS.
+    """
+    real = os.path.realpath(cwd)
+    pids = set()
+    if os.path.isdir("/proc"):
+        for name in os.listdir("/proc"):
+            if not name.isdigit():
+                continue
+            try:
+                resolved = os.path.realpath(os.readlink("/proc/%s/cwd" % name))
+            except OSError:
+                continue
+            if resolved == real or resolved.startswith(real + os.sep):
+                pids.add(int(name))
+        return pids
+    try:
+        out = subprocess.run(["lsof", "-a", "-d", "cwd", "-Fpn"],
+                             capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        out = ""
+    pid = None
+    for line in out.splitlines():
+        if line.startswith("p"):
+            pid = line[1:]
+        elif line.startswith("n") and pid:
+            resolved = os.path.realpath(line[1:])
+            if resolved == real or resolved.startswith(real + os.sep):
+                try:
+                    pids.add(int(pid))
+                except ValueError:
+                    pass
+            pid = None
+    return pids
+
+
+def _clone_orphan_pids(cwd, started):
+    """Union of the two reap signals (pidfile, cwd), each vetted by
+    `_pid_is_ours` before it is ever returned to a caller that kills it.
+    """
+    candidates = _clone_pidfile_pids(cwd) | _clone_cwd_pids(cwd)
+    return {p for p in candidates if _pid_is_ours(p, started)}
 
 
 def capped_run(argv, cwd, env, cap_s, log_path, stdout_path=None):
@@ -220,7 +358,7 @@ def capped_run(argv, cwd, env, cap_s, log_path, stdout_path=None):
             rc = p.wait()
         finally:
             CHILDREN.remove(p)
-            kill_orphans(p.pid)
+            kill_orphans(p.pid, cwd, t0)
     wall = time.time() - t0
     # 124 = timeout sent TERM; 137 = the -k KILL followed.
     return rc, round(wall, 3), rc in (124, 137) and wall >= cap_s - 1
