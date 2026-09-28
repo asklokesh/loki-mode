@@ -125,8 +125,9 @@
 #                       STRAY_CONTAINER (see that check's own docstring for
 #                       the tab-separated row shape).
 #   PULSE_WORKTREE_LIST overrides `git worktree list --porcelain` for
-#                       WORKTREE_COUNT (a raw porcelain listing, same shape
-#                       as PULSE_WORKTREE_CMD's default output).
+#                       WORKTREE_COUNT and STRAY_WORKTREE (a raw porcelain
+#                       listing, same shape as PULSE_WORKTREE_CMD's default
+#                       output).
 #   PULSE_RELEASE_TESTS overrides the gh-run-list JSON RELEASE_ON_RED reads
 #                       for the newest VERSION-bump commit's Tests conclusion
 #                       (default: read from S-104's gh_ci cache).
@@ -450,7 +451,7 @@ VIOLATION_PRIORITY = [
     "SESSION_STALLED", "CI_RED", "CI_CANCELLED_STREAK", "RELEASE_ON_RED", "HIGH_LOAD",
     "MOAT_REGRESSION", "UNRELEASED_MERGE", "TRAIN_LATE", "REVIEW_STALE",
     "AGENT_OVER_BUDGET", "STALE_PROGRESS", "UNEVIDENCED_CLAIM", "RELEASED_AHEAD_OF_NPM",
-    "ORPHAN_TEST", "ORPHAN_WORKTREE", "STRAY_CONTAINER",
+    "ORPHAN_TEST", "ORPHAN_WORKTREE", "STRAY_CONTAINER", "STRAY_WORKTREE",
     "WORKTREE_COUNT", "IDLE_BUILDERS", "LOW_READY", "NO_RECENT_RELEASE",
     "LOW_RELEASE_VOLUME", "CONTROL_OVERSIZE",
 ]
@@ -957,8 +958,33 @@ STATUS_TOKEN_RE = re.compile(
     r"^(ready|building|review|review-blocked|blocked|approved|merged|released|rejected|parked)"
     r"@(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?Z)$"
 )
-ID_RE = re.compile(r"^(GF|PF|S|E|EV)-\d+$")
+# "M" (Modernize-track slices, M-01..) belongs alongside the other ID
+# prefixes here (E-79): its absence meant every M-row was silently invisible
+# to parse_board -- never counted in "ready", never eligible for
+# REVIEW_STALE/AGENT_OVER_BUDGET, never checked against LOW_READY.
+ID_RE = re.compile(r"^(GF|PF|S|E|EV|M)-\d+$")
 TIER_CELL_RE = re.compile(r"^(LOW|MEDIUM|HIGH)$")
+# LOW_READY (E-79): a "ready" row can still name un-landed dependencies in
+# its Notes cell ("Depends on M-07, E-31 merged or parked."; "Depends on
+# none." means no deps). Only the ID-shaped tokens inside that clause are
+# pulled out -- trailing prose ("merged or parked") is condition text this
+# LOW-tier parse does not need to understand, not a second dependency. Case
+# sensitive on purpose: BOARD.md's convention is always the capitalized
+# "Depends on"; several older rows' Notes cells contain unrelated lowercase
+# "depends on ... build then review." narrative prose from an earlier phase
+# writeup, which a case-insensitive match would misread as a live gate.
+DEPENDS_ON_RE = re.compile(r"Depends on ([^.]*)\.")
+DEPENDS_ON_ID_RE = re.compile(r"\b(?:GF|PF|S|E|EV|M)-\d+\b")
+
+
+def parse_depends_on(notes):
+    """Returns the slice IDs named in a Notes cell's "Depends on ..."
+    clause, or [] when there is no such clause (including "Depends on
+    none.")."""
+    m = DEPENDS_ON_RE.search(notes or "")
+    if not m:
+        return []
+    return DEPENDS_ON_ID_RE.findall(m.group(1))
 
 
 def parse_board(path):
@@ -966,12 +992,14 @@ def parse_board(path):
     omit the Acceptance-checks column, and BOARD.md has used at least four
     different header layouts), so this finds the Status cell (and the Tier
     cell) by matching their normalized content rather than trusting a fixed
-    column index."""
+    column index. Notes is always the last cell in every layout this file
+    has used, so it is read positionally."""
     with open(path, "r", encoding="utf-8") as f:
         text = f.read()
     rows = []
     unparsed = []
     tiers = {}
+    notes = {}
     for line in text.splitlines():
         line = line.strip()
         if not line.startswith("|"):
@@ -992,12 +1020,13 @@ def parse_board(path):
             unparsed.append(row_id)
             continue
         rows.append((row_id, status_cell[0], status_cell[1]))
+        notes[row_id] = cells[-1]
         for cell in cells[1:]:
             tm = TIER_CELL_RE.match(cell)
             if tm:
                 tiers[row_id] = tm.group(1)
                 break
-    return {"rows": rows, "unparsed": unparsed, "tiers": tiers}
+    return {"rows": rows, "unparsed": unparsed, "tiers": tiers, "notes": notes}
 
 
 board = safe(parse_board, BOARD_MD)
@@ -1026,6 +1055,30 @@ else:
         ))
     if board["unparsed"]:
         emit("BOARD unparsed rows (no status token found): " + ", ".join(board["unparsed"]))
+
+    # LOW_READY dependency gate (E-79): a "ready" row whose Notes cell names
+    # a dependency that has not itself reached merged/released is not
+    # actually actionable yet, so it should not count toward the ready
+    # queue -- otherwise the swarm reads a full ready queue while every
+    # named engineer would immediately hit a real blocker. A dependency ID
+    # not found on the board at all is treated as unmet (never assumed
+    # done), same fail-safe default as every other UNKNOWN-leaning check in
+    # this file.
+    row_status = {row_id: token for row_id, token, _ts in board_rows}
+    board_notes = board["notes"]
+    ready_deps_met = []
+    ready_blocked_by_deps = []
+    for row_id in ready_ids:
+        deps = parse_depends_on(board_notes.get(row_id, ""))
+        unmet = [d for d in deps if row_status.get(d) not in ("merged", "released")]
+        if unmet:
+            ready_blocked_by_deps.append((row_id, unmet))
+        else:
+            ready_deps_met.append(row_id)
+    emit(
+        "Ready rows blocked by dependency: "
+        + (", ".join("%s (needs %s)" % (rid, "/".join(unmet)) for rid, unmet in ready_blocked_by_deps) or "none")
+    )
 
     # RELEASED_AHEAD_OF_NPM (S-139 / GUARDS 13 / BACKLOG 136): a `released@`
     # row stamped LATER than npm's own newest publish time claims a release
@@ -1186,13 +1239,17 @@ else:
             "agent(s) past their role/tier time budget: %s" % ids_desc,
         )
 
-    ready_count = counts.get("ready", 0)
+    ready_count = len(ready_deps_met)
     if ready_count < 8:
-        add_violation(
-            "LOW_READY",
+        _low_ready_text = (
             "only %d ready slice(s) on BOARD (want at least 8); cut %d more"
-            % (ready_count, 8 - ready_count),
+            % (ready_count, 8 - ready_count)
         )
+        if ready_blocked_by_deps:
+            _low_ready_text += "; blocked by dependency: " + ", ".join(
+                "%s (needs %s)" % (rid, "/".join(unmet)) for rid, unmet in ready_blocked_by_deps
+            )
+        add_violation("LOW_READY", _low_ready_text)
 
 
 # --- 5. IDLE_BUILDERS: fewer than 6 active builder worktrees while ready ----
@@ -1756,13 +1813,16 @@ else:
     # came back UNKNOWN, this violation simply does not fire (never a false
     # positive from a metric we could not measure).
     if board is not None:
-        ready_count = sum(1 for _rid, tok, _ts in board_rows if tok == "ready")
-        if worktrees["active"] < 6 and ready_count > 0:
-            ready_ids = [rid for rid, tok, _ts in board_rows if tok == "ready"]
+        # E-79-81-r2: reuse LOW_READY's dependency-filtered ready set
+        # (ready_deps_met) instead of a raw board_rows scan, so a
+        # dependency-blocked row (named by LOW_READY in the same run) is
+        # never also named here as a dispatch target.
+        idle_ready_count = len(ready_deps_met)
+        if worktrees["active"] < 6 and idle_ready_count > 0:
             add_violation(
                 "IDLE_BUILDERS",
                 "only %d active builder worktree(s) while %d ready slice(s) exist on BOARD (%s)"
-                % (worktrees["active"], ready_count, ", ".join(ready_ids)),
+                % (worktrees["active"], idle_ready_count, ", ".join(ready_deps_met)),
             )
 
 
@@ -1868,6 +1928,19 @@ else:
     # on a violation that looks, from its own text, like it should not have
     # fired.
     _prog_age_min = int(round((NOW - progress_entry[0]) / 60.0))
+    # E-80: a clock-skewed or hand-typed heading ahead of PULSE_NOW produced
+    # a negative age ("PROGRESS.md last entry: -12 min ago"), which is
+    # nonsensical and (since a negative age can never exceed the budget)
+    # silently hid a real staleness signal behind a heading nobody should
+    # trust. Report it by name and clamp the printed/compared age at 0
+    # rather than either trusting the bogus future timestamp as fresh in
+    # spirit or letting a negative number reach the violation text.
+    if _prog_age_min < 0:
+        emit(
+            "PROGRESS.md last entry: FUTURE_TIMESTAMP (%s is %d min ahead of now)"
+            % (progress_entry[1], -_prog_age_min)
+        )
+        _prog_age_min = 0
     emit("PROGRESS.md last entry: %d min ago" % _prog_age_min)
     if _prog_age_min > _STALE_PROGRESS_BUDGET_MIN:
         add_violation(
@@ -2354,6 +2427,64 @@ else:
         )
 
 
+# --- 12c. STRAY_WORKTREE: a worktree registered inside the repo root but
+# outside .claude/worktrees (E-81) ------------------------------------------
+def check_stray_worktrees():
+    """Reuses WORKTREE_COUNT's own PULSE_WORKTREE_LIST override (same raw
+    porcelain-listing shape), rather than a second env var or git call.
+    `git worktree list --porcelain` always reports the primary/main worktree
+    first (same fact metric 6's own check_worktrees relies on), so it is
+    skipped by position -- the repo root itself is never a stray entry. The
+    "repo root" for containment is THAT primary path (paths[0]), never
+    REPO_ROOT/PULSE_REPO_ROOT: this script is meant to run FROM a builder
+    worktree (metric 4b's own comment on the same fact), where REPO_ROOT is
+    that worktree's own path, not the primary one -- using it here would
+    make a real stray, sitting right next to the actual repo root, compare
+    against the wrong directory and never fire in the one place this check
+    is meant to run. Returns None only on a real listing failure; an empty
+    override (or a listing with no additional worktrees) is a real,
+    reportable "0 stray"."""
+    override = os.environ.get("PULSE_WORKTREE_LIST")
+    if override is not None:
+        text = override
+    else:
+        rc, out, _ = run_capped(
+            ["git", "worktree", "list", "--porcelain"], cwd=REPO_ROOT, env=_clean_env()
+        )
+        if rc != 0:
+            return None
+        text = out
+    paths = [line[len("worktree "):].strip() for line in text.splitlines()
+              if line.startswith("worktree ")]
+    if not paths:
+        return []
+    repo_root = os.path.normpath(paths[0])
+    stray = []
+    for path in paths[1:]:
+        norm = os.path.normpath(path)
+        inside_repo_root = norm == repo_root or norm.startswith(repo_root + os.sep)
+        if inside_repo_root and "/.claude/worktrees/" not in path:
+            stray.append(path)
+    return stray
+
+
+stray_worktrees = safe(check_stray_worktrees)
+if stray_worktrees is None:
+    mark_unknown("stray_worktrees")
+    emit("Stray worktrees (inside repo root, outside .claude/worktrees): UNKNOWN (git worktree list failed)")
+else:
+    emit(
+        "Stray worktrees (inside repo root, outside .claude/worktrees): %d"
+        % len(stray_worktrees)
+    )
+    if stray_worktrees:
+        add_violation(
+            "STRAY_WORKTREE",
+            "worktree(s) registered inside the repo root but outside .claude/worktrees: %s"
+            % ", ".join(sorted(stray_worktrees)),
+        )
+
+
 # --- 13. RELEASE_ON_RED: the newest VERSION bump on main has red Tests -----
 # (D28 rule 2 / S-108's own release-time guard; this is the pulse-side
 # early-warning companion.) Reuses S-104's gh_ci cache -- keyed by the SHA
@@ -2537,6 +2668,7 @@ _NEXT_ACTION_TEXT = {
     "ORPHAN_TEST": "investigate the named orphaned/long-running test process; stop by exact PID only if confirmed stale, never by name or pattern",
     "ORPHAN_WORKTREE": "investigate the named worktree/run.sh process; stop by exact PID only if confirmed stale, never by name or pattern",
     "STRAY_CONTAINER": "remove or fix the named swarm container: capped resources, restart policy 'no', removed when done (D28)",
+    "STRAY_WORKTREE": "move the named worktree(s) under .claude/worktrees or remove them (git worktree remove)",
     "WORKTREE_COUNT": "prune stale worktrees under .claude/worktrees (git worktree remove), it is over the 15 max",
     "IDLE_BUILDERS": "dispatch more builders against the named ready slice(s) in docs/v10/BOARD.md",
     "LOW_READY": "the Product Owner should cut the named number of additional slices onto the ready queue",
