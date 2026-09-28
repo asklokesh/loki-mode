@@ -229,7 +229,7 @@ cov = json.load(open(cov_path))
 report(cov["branches_total"] == 4, "branch enumeration finds exactly 4 branch outcomes (two ifs)")
 report(cov["branches_taken"] == 3, "3 of 4 branch outcomes were exercised by the fixture's cases")
 report(cov["branch_pct"] == 75.0, "branch_pct computed exactly as 75.0")
-report(cov["missing"] == [{"line": 61, "outcome": "false"}],
+report(cov["missing"] == [{"line": 63, "outcome": "false"}],
        "the deliberately-uncovered branch is named by its exact line and outcome")
 PYEOF
 
