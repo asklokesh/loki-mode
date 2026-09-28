@@ -55,7 +55,9 @@
 #      diff and the arm's own evidence (v10 receipt verdict, or the
 #      raw-claude/legacy textual claim) -- a PR, a dirty diff, missing
 #      evidence, a wrong v10 verdict or a failed regression check each alone
-#      block completion, checked for v10, raw-claude and legacy
+#      block completion, checked for v10, raw-claude and legacy; v10's own
+#      sealed Wall test file left in the tree never counts as that diff, but
+#      a real source change alongside it still does
 #===============================================================================
 set -u
 
@@ -703,6 +705,36 @@ J="$R/results.jsonl"
 [ "$(row "$J" pr_opened)" = true ] && [ "$(row "$J" completed)" = false ] \
     && pass "EV-13 v10: a pushed branch is never completed even with ALREADY_SATISFIED" \
     || fail "EV-13 v10 pr row: $(tail -1 "$J")"
+
+# v10: the Wall stage's own side effect (a loki_wall_* file left in the
+# tracked tree, receipt.wall.files pointing at it) must never itself read as
+# a source change -- the exact repro from the EV-13 review.
+R="$T/out-nc-v10-wall"
+STUB_MODE=noop STUB_V10_MARKER=1 STUB_V10_VERDICT=ALREADY_SATISFIED STUB_V10_WALL=1 \
+    RUN --arm v10 --task v-nochange --out "$R" >/dev/null 2>&1
+J="$R/results.jsonl"
+[ "$(row "$J" no_source_diff)" = true ] && [ "$(row "$J" completed)" = true ] \
+    && pass "EV-13 v10: Wall's own sealed test file left in the tree -> still no_source_diff, completed" \
+    || fail "EV-13 v10 wall row: $(tail -1 "$J")"
+
+# v10: the Wall exclusion must not swallow a REAL source change alongside it.
+R="$T/out-nc-v10-wall-and-dirty"
+STUB_MODE=dirtynoop STUB_V10_MARKER=1 STUB_V10_VERDICT=ALREADY_SATISFIED STUB_V10_WALL=1 \
+    RUN --arm v10 --task v-nochange --out "$R" >/dev/null 2>&1
+J="$R/results.jsonl"
+[ "$(row "$J" no_source_diff)" = false ] && [ "$(row "$J" completed)" = false ] \
+    && pass "EV-13 v10: Wall's file excluded but a real source diff still blocks completion" \
+    || fail "EV-13 v10 wall+dirty row: $(tail -1 "$J")"
+
+# v10: a receipt cannot launder a real edit as a sealed Wall file by naming
+# it in wall.files alone -- no loki_wall_ prefix, no sealed copy backing it.
+R="$T/out-nc-v10-fakewall"
+STUB_MODE=dirtynoop STUB_V10_MARKER=1 STUB_V10_VERDICT=ALREADY_SATISFIED STUB_V10_WALL=fake \
+    RUN --arm v10 --task v-nochange --out "$R" >/dev/null 2>&1
+J="$R/results.jsonl"
+[ "$(row "$J" no_source_diff)" = false ] && [ "$(row "$J" completed)" = false ] \
+    && pass "EV-13 v10: a receipt naming a real edit as a Wall file does not exclude it" \
+    || fail "EV-13 v10 fakewall row: $(tail -1 "$J")"
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

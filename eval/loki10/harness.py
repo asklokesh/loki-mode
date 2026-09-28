@@ -19,17 +19,20 @@ Honesty rules (the v10.0.0 release gate depends on them):
   - expected_outcome=no_change_needed (EV-13): the hidden test is a
     regression check and must PASS at repo.ref instead (task_invalid if not).
     completed = arm exit 0, no PR/branch pushed, no source diff (committed or
-    not, .loki/ excluded) versus repo.ref, the regression check still passes,
-    and the arm itself gives deterministic evidence the feature already
-    exists: v10's own receipt verdict ALREADY_SATISFIED, or for
-    raw-claude/legacy a documented textual claim in its final output
-    (claims_no_change_needed). A PR, any source diff, or a nonzero exit is
-    never completed, whatever the arm claims (its textual rule alone would
-    also match ordinary error text such as "branch already exists").
+    not, .loki/ excluded, and for v10 its own sealed Wall test files also
+    excluded -- wall_paths, engine run state written into the tracked tree)
+    versus repo.ref, the regression check still passes, and the arm itself
+    gives deterministic evidence the feature already exists: v10's own
+    receipt verdict ALREADY_SATISFIED, or for raw-claude/legacy a documented
+    textual claim in its final output (claims_no_change_needed). A PR, any
+    source diff, or a nonzero exit is never completed, whatever the arm
+    claims (its textual rule alone would also match ordinary error text such
+    as "branch already exists").
 """
 import argparse
 import concurrent.futures
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -62,6 +65,9 @@ BASE_BRANCH = "main"
 # and the event log .loki/runs/<id>/events.jsonl during the run (mtime at or
 # after the arm start).
 V10_MARKER = os.path.join(".loki", "engine.json")
+# loki-ts/src/engine10/stages/wall.ts WALL_PREFIX: the only name the v10
+# engine ever writes a Wall test file under, in or out of .loki/.
+WALL_PREFIX = "loki_wall_"
 # Engine state that must not exist before the arm: its presence would let a
 # committed or setup-created file stand in for this run's own output.
 PRE_ARM_FORBIDDEN = (V10_MARKER, os.path.join(".loki", "metrics"))
@@ -787,19 +793,32 @@ def claims_no_change_needed(arm, stdout_path):
     return bool(NO_CHANGE_CLAIM_RE.search(text))
 
 
-def snapshot_tree(repo_dir, rundir, tag):
+def snapshot_tree(repo_dir, rundir, tag, exclude=()):
     """Git tree-object hash of `repo_dir`'s whole working tree right now --
     tracked, staged, unstaged and untracked, `.loki/` (the engine's own run
     state) excluded by an explicit pathspec -- via a private temp index, so it
-    never touches HEAD or the real index. None on any git failure. A
-    harness-side read, like find_pr/git_out: the host's own git config, not
-    the arm's isolated env.
+    never touches HEAD or the real index. `exclude` adds further absolute
+    paths to leave out (v10's own Wall test files, per wall_paths: engine run
+    state the engine writes INTO the tracked tree, not under .loki/, so it
+    would otherwise misgrade a correct no-change run as a source change).
+    Each is resolved relative to repo_dir and dropped, never widened to a
+    directory or glob, if it would land outside repo_dir -- fails closed to
+    "not excluded" so a bad path can only ever make a run look MORE dirty,
+    never hide a real change. None on any git failure. A harness-side read,
+    like find_pr/git_out: the host's own git config, not the arm's isolated
+    env.
     """
     idx = os.path.join(rundir, "snapshot-%s.index" % tag)
     env = dict(os.environ, GIT_INDEX_FILE=idx, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+    specs = [":(exclude).loki"]
+    for p in exclude:
+        rel = os.path.relpath(p, repo_dir)
+        if rel.startswith("..") or os.path.isabs(rel):
+            continue
+        specs.append(":(exclude)%s" % rel)
     wt = None
     try:
-        add = subprocess.run(["git", "add", "-A", "--", ".", ":(exclude).loki"],
+        add = subprocess.run(["git", "add", "-A", "--", ".", *specs],
                              cwd=repo_dir, env=env, capture_output=True, text=True, timeout=120)
         if add.returncode == 0:
             wt = subprocess.run(["git", "write-tree"], cwd=repo_dir, env=env,
@@ -824,12 +843,12 @@ def no_source_diff(pre_tree, post_tree):
     return pre_tree is not None and post_tree is not None and pre_tree == post_tree
 
 
-def v10_verdict(work):
-    """The `verdict` in this run's own receipt.json (docs/v10/ENGINE.md
-    sections 4, 9: seal always writes one, whatever the outcome), or None if
-    it cannot be read. Only meaningful once v10_marker_problem has already
-    confirmed a fresh engine marker for this run; run_id comes from that same
-    marker, never from a caller-supplied value.
+def _v10_run_id(work):
+    """This run's own run_id from the v10 engine marker, or None. Never a
+    caller-supplied value -- only what the marker itself names, restricted to
+    a bare path segment. Shared by v10_verdict and wall_paths so both trust
+    exactly the same resolution, and meaningful only once v10_marker_problem
+    has already confirmed a fresh marker for this run.
     """
     try:
         with open(os.path.join(work, V10_MARKER), encoding="utf-8") as f:
@@ -839,6 +858,16 @@ def v10_verdict(work):
     rid = m.get("run_id") if isinstance(m, dict) else None
     if not isinstance(rid, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", rid) or rid in (".", ".."):
         return None
+    return rid
+
+
+def _v10_receipt(work, rid):
+    """This run's own receipt.json dict (docs/v10/ENGINE.md sections 4, 9:
+    seal always writes one, whatever the outcome) for the given run_id, or
+    None if it cannot be read.
+    """
+    if rid is None:
+        return None
     path = os.path.join(work, ".loki", "runs", rid, "receipt.json")
     if os.path.islink(path):
         return None
@@ -847,7 +876,74 @@ def v10_verdict(work):
             r = json.load(f)
     except (OSError, ValueError):
         return None
-    return r.get("verdict") if isinstance(r, dict) else None
+    return r if isinstance(r, dict) else None
+
+
+def v10_verdict(work):
+    """The `verdict` in this run's own receipt.json, or None if it cannot be
+    read."""
+    r = _v10_receipt(work, _v10_run_id(work))
+    return r.get("verdict") if r else None
+
+
+def wall_paths(work):
+    """Absolute repo paths of this run's own sealed Wall test files: engine
+    run state the v10 engine writes INTO the tracked working tree, not under
+    .loki/ (loki-ts/src/engine10/stages/wall.ts, seal.ts), so a correct
+    no_change_needed run must never be graded on them (EV-13 review). Called
+    for every arm -- raw-claude/legacy never have a v10 marker in `work`, so
+    they always get []; the exclusion is decided by evidence, never by which
+    arm ran.
+
+    This is a grading safeguard against a stale or mismatched receipt entry,
+    not a sandbox: the v10 binary already has unrestricted write access to
+    the repo (including .loki/ itself), so it could always fabricate
+    evidence some other way if it were dishonest. What these checks actually
+    constrain is a receipt.wall.files entry that merely NAMES a path, by
+    requiring all of:
+      - its basename starts with WALL_PREFIX (wall.ts writes nothing else,
+        in or out of the repo);
+      - it resolves (os.path.realpath, so a symlink cannot point it outside)
+        inside this same run's repo root;
+      - this run's own sealed copy exists at .loki/runs/<rid>/wall/<name>
+        (seal.ts) and its sha256 matches the one the receipt claims for it.
+    Any failure of any check -- read error, missing sealed copy, hash
+    mismatch, wrong prefix, a path outside the repo -- drops that one entry
+    and leaves it counted as a real change: naming an arbitrary edited path
+    in wall.files is never, by itself, enough to exclude it.
+    """
+    rid = _v10_run_id(work)
+    r = _v10_receipt(work, rid)
+    wall = r.get("wall") if r else None
+    files = wall.get("files") if isinstance(wall, dict) else None
+    if rid is None or not isinstance(files, list):
+        return []
+    repo_root = os.path.realpath(work)
+    sealed_dir = os.path.join(work, ".loki", "runs", rid, "wall")
+    out = []
+    for f in files:
+        p = f.get("path") if isinstance(f, dict) else None
+        sha = f.get("sha256") if isinstance(f, dict) else None
+        if not isinstance(p, str) or not p or not isinstance(sha, str) or not sha:
+            continue
+        name = os.path.basename(p)
+        if not name.startswith(WALL_PREFIX):
+            continue
+        real_p = os.path.realpath(p)
+        if os.path.commonpath([real_p, repo_root]) != repo_root:
+            continue
+        sealed = os.path.join(sealed_dir, name)
+        if os.path.islink(sealed):
+            continue
+        try:
+            with open(sealed, "rb") as sf:
+                content = sf.read()
+        except OSError:
+            continue
+        if hashlib.sha256(content).hexdigest() != sha:
+            continue
+        out.append(p)
+    return out
 
 
 def new_row(task, arm, cfg, slot, logs):
@@ -974,8 +1070,17 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
         # Measured before run_hidden copies the hidden test file(s) in below,
         # which would otherwise show up as an untracked source diff. Compared
         # against presnap (post-setup, pre-arm), never repo.ref -- see
-        # snapshot_tree.
-        row["no_source_diff"] = no_source_diff(presnap, snapshot_tree(grade_dir, rundir, "post"))
+        # snapshot_tree. Also exclude this run's own sealed Wall test files
+        # (wall_paths), the v10 engine's own run state written INTO the
+        # tracked tree rather than under .loki/, so a correct
+        # ALREADY_SATISFIED run is graded on the source it left, not on the
+        # engine's own side effect (EV-13 review). Called for every arm, not
+        # just v10: the evidence wall_paths demands (a v10 marker, receipt
+        # and sealed copy) is what decides the exclusion, never the arm name,
+        # so raw-claude/legacy are measured by the exact same rule -- it is
+        # just always empty for them, since they have no v10 run state.
+        wall_excl = wall_paths(work)
+        row["no_source_diff"] = no_source_diff(presnap, snapshot_tree(grade_dir, rundir, "post", exclude=wall_excl))
     row["hidden_pass"], row["grade_refused"] = run_hidden(
         task, task_dir, grade_dir, env, os.path.join(logdir, "grade_hidden"), cap)
     if no_change:
