@@ -6,6 +6,7 @@
 // core never imports modernize/, and this file mirrors that discipline one level down for
 // its own not-yet-built sibling), so a java21 run reports the gap honestly instead of
 // clustering on a fabricated empty graph.
+import { existsSync, statSync } from "node:fs";
 import { buildInventory } from "./inventory.ts";
 import { buildPythonGraph } from "./lang/python.ts";
 import { clusterInventory } from "./cluster.ts";
@@ -190,6 +191,14 @@ export async function main(args: readonly string[], deps: ModernizeCliDeps = {})
     return 2;
   }
   const opts = parsed.opts;
+  // A typo'd or missing <repo> must not silently read as "nothing to convert": Inventory's
+  // git ls-files returns [] outside a repo, which would otherwise print a false "units: 0"
+  // dry-run and create .loki/ under a path that was never real (section 3.1's "undetectable
+  // build system stops the run" is the same honesty rule).
+  if (!existsSync(opts.repoDir) || !statSync(opts.repoDir).isDirectory()) {
+    process.stderr.write(`modernize: not a directory: ${opts.repoDir}\n`);
+    return 2;
+  }
   const mid = opts.resume ?? (deps.makeId ?? makeModernizeId)();
   const log = new ModernizeLog(opts.repoDir, mid, deps.now);
   log.append("modernize.started", {

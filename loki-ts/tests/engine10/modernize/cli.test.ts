@@ -119,7 +119,20 @@ describe("parseArgs", () => {
 describe("main", () => {
   let repoDir = "";
   beforeEach(() => { repoDir = mkdtempSync(join(tmpdir(), "e10-mod-cli-")); });
-  afterEach(() => rmSync(repoDir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(repoDir, { recursive: true, force: true });
+    // A failing assertion above must not leave .loki/ inside the committed py fixture.
+    rmSync(join(PY_FIXTURE, ".loki"), { recursive: true, force: true });
+  });
+
+  it("a nonexistent <repo> path exits 2 instead of a false 'units: 0' green", async () => {
+    const cap = captureStd();
+    const code = await main([join(repoDir, "does-not-exist"), "--to", "python3", "--dry-run"]);
+    cap.restore();
+    expect(code).toBe(2);
+    expect(cap.err).toContain("not a directory");
+    expect(cap.out).toBe("");
+  });
 
   it("--help prints usage and exits 0; no args prints usage and exits 2", async () => {
     const cap = captureStd();
@@ -163,7 +176,6 @@ describe("main", () => {
     expect(existsSync(eventsPath)).toBe(true);
     const types = readFileSync(eventsPath, "utf8").trim().split("\n").map((l) => JSON.parse(l).type);
     expect(types).toEqual(["modernize.started", "inventory.completed", "estimate.printed"]);
-    rmSync(join(PY_FIXTURE, ".loki"), { recursive: true, force: true });
   });
 
   it("python3 without --dry-run prints the estimate then stops before oracle capture (not built yet)", async () => {
@@ -174,7 +186,6 @@ describe("main", () => {
     expect(code).toBe(2);
     expect(cap.out).toContain("units:"); // the estimate is real work already done, not withheld
     expect(cap.err).toContain("not built yet");
-    rmSync(join(PY_FIXTURE, ".loki"), { recursive: true, force: true });
   });
 
   it("--resume reuses the given modernization id instead of minting a new one", async () => {
@@ -183,7 +194,6 @@ describe("main", () => {
     await main([PY_FIXTURE, "--to", "python3", "--dry-run", "--resume", mid]);
     cap.restore();
     expect(existsSync(modernizeEventsPath(PY_FIXTURE, mid))).toBe(true);
-    rmSync(join(PY_FIXTURE, ".loki"), { recursive: true, force: true });
   });
 
   it("an injected java graph builder is used when present", async () => {
