@@ -94,11 +94,12 @@ else
     expect "[unset no bun] 'fix x' -> bash" "BASH fix x" "$(run_loki "$NO_BUN" -- "fix x")"
 fi
 
-# 5. engine10 appears only in the one cli.ts arm (and the one bin/loki block).
+# 5. engine10 appears only in the one cli.ts arm (and the one bin/loki block):
+#    the case line plus its two lazy imports (cli.ts, and E-32's registry.ts).
 cli="$REPO/loki-ts/src/cli.ts"
 hits="$(grep -n 'engine10' "$cli" | cut -d: -f1 | tr '\n' ' ')"
 arm="$(grep -n 'case "engine10": {' "$cli" | cut -d: -f1)"
-if [ -n "$arm" ] && [ "$hits" = "$arm $((arm + 1)) " ]; then
+if [ -n "$arm" ] && [ "$hits" = "$arm $((arm + 1)) $((arm + 2)) " ]; then
     ok "cli.ts: engine10 only in its arm (lines $hits)"
 else
     bad "cli.ts: engine10 outside the arm (lines '$hits', arm '$arm')"

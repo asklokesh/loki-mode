@@ -142,6 +142,7 @@ async function runProvider(provider: Provider, opts: { modelOverride?: string } 
     runId,
     repoDir: repo,
     env,
+    started: { provider }, // as main() does: preflight checks this provider's stub CLI, not claude
     workerArgv: [process.execPath, "-e", workerDriverCode()],
   });
   const stubEnv = existsSync(stubEnvLog)

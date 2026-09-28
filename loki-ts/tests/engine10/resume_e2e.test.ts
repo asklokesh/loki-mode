@@ -64,7 +64,9 @@ function repo(): string {
 }
 
 function baseEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  return { PATH: process.env.PATH, HOME: process.env.HOME, ...extra };
+  // Preflight (E-36) defaults to the claude CLI when no provider is passed in; point it at an
+  // existing fixture so the suite does not depend on claude being installed (CI has none).
+  return { PATH: process.env.PATH, HOME: process.env.HOME, LOKI_CLAUDE_CLI: SLEEP_PROVIDER, ...extra };
 }
 
 async function waitFor(pred: () => boolean, timeoutMs: number): Promise<void> {
