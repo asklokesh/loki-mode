@@ -57,6 +57,9 @@ export interface StreamMsg {
   // NOT a top-level 'hook_event' message (the bash stream-json parser's probe
   // was for the CLI's older shape; the SDK surfaces hooks this way).
   hook_event?: string;
+  // E-59: system/init reports the provider's actual model ({"type":"system","subtype":"init",...,"model":"opus"});
+  // a result message may also carry it. Never the caller's "sonnet" guess -- writeResultCost records it verbatim.
+  model?: string;
 }
 
 export interface ParserContext {
@@ -144,6 +147,7 @@ export async function consumeSdkStream(
   let streamedText = false; // partial-message deltas already printed this message
   let exitCode = 1; // fail-closed: no result message -> failure (aborted/crashed)
   let sessionId: string | undefined;
+  let sessionModel: string | undefined; // E-59: from system/init, overridden by a result message's own model if present
   let totalCostUsd: number | null | undefined;
   let captured = ""; // load-bearing capture (final assistant text + result.result)
   let rateLimit: { resetSeconds?: number } | undefined;
@@ -262,6 +266,12 @@ export async function consumeSdkStream(
       continue;
     }
 
+    // --- system/init: the provider's own model report (E-59), captured for writeResultCost below.
+    if (msgType === "system" && data.subtype === "init" && typeof data.model === "string" && data.model) {
+      sessionModel = data.model;
+      continue;
+    }
+
     // --- rate_limit event (SDKRateLimitEvent). The SDK emits one on EVERY call
     // as a status heartbeat with rate_limit_info.status === "allowed" -- that is
     // NOT a rate limit and must be IGNORED (verified live: status:"allowed",
@@ -313,7 +323,7 @@ export async function consumeSdkStream(
       // authoritative per-iteration cost (best-effort; never throws to the loop)
       totalCostUsd = data.total_cost_usd ?? null;
       sessionId = data.session_id;
-      writeResultCost(lokiRoot, ctx.iteration, data);
+      writeResultCost(lokiRoot, ctx.iteration, data, data.model ?? sessionModel);
 
       exitCode = data.is_error ? 1 : 0;
       // do not break: a well-formed stream ends after result, but keep draining.
@@ -422,7 +432,10 @@ function appendHookEvent(
   }
 }
 
-function writeResultCost(lokiRoot: string, iteration: string, data: StreamMsg): void {
+// model is the provider-reported model (E-59: from system/init or the result message itself, never
+// the caller's guess); shared with the legacy SDK loop, so this only ADDS the key, never touches an
+// existing one, and omits it entirely (rather than writing null) when no session reported one.
+function writeResultCost(lokiRoot: string, iteration: string, data: StreamMsg, model?: string): void {
   try {
     const cost = data.total_cost_usd;
     if (cost === undefined || cost === null) return; // Python skips when None
@@ -433,6 +446,7 @@ function writeResultCost(lokiRoot: string, iteration: string, data: StreamMsg): 
       output_tokens: u["output_tokens"] ?? 0,
       cache_read_tokens: u["cache_read_input_tokens"] ?? 0,
       cache_creation_tokens: u["cache_creation_input_tokens"] ?? 0,
+      ...(model ? { model } : {}),
     };
     const dir = join(lokiRoot, "metrics");
     mkdirSync(dir, { recursive: true });

@@ -1,14 +1,11 @@
-// Loki 10 supervisor (P0, docs/v10/ENGINE.md sections 5, 6 and 10): writes the eval marker first so a failing run
-// still leaves it, pins remote.origin.url once in memory before any provider runs, spawns the worker with a copy of
-// its env passed through withholdGithubTokens, and is events.jsonl's single writer -- validating stdout, stamping
-// seq, keeping a running sha256, re-hashing after session.ended and before the PR, and refusing the push on tamper.
+// Loki 10 supervisor (P0, docs/v10/ENGINE.md sections 5, 6 and 10): writes the eval marker first so a failing run still leaves it, pins remote.origin.url once in memory before any provider runs, spawns the worker with a copy of its env passed through withholdGithubTokens, and is events.jsonl's single writer -- validating stdout, stamping seq, keeping a running sha256, re-hashing after session.ended and before the PR, and refusing the push on tamper.
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, type Hash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { withholdGithubTokens } from "../runner/github_token.ts";
-import { EventLog, fold, readEvents, tail } from "./events.ts";
+import { EventLog, fold, readEvents, tail, type Folded } from "./events.ts";
 import { fetchIssueToFile } from "./fetch_issue.ts";
 import { formatHeartbeatLine, formatStageLine, formatSummary } from "./output.ts";
 import { preflight } from "./preflight.ts";
@@ -128,9 +125,7 @@ function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
   try { process.kill(-pid, sig); } catch { /* group already gone */ }
 }
 
-// Spawns the worker in its own process group; resolves once it has exited and stdout has closed or DRAIN_MS has
-// passed (a surviving grandchild holding the pipe cannot stall P0); at backstopMs the whole group gets SIGTERM then
-// SIGKILL after 2s; exit is null when the worker could not start or was killed by a signal.
+// Spawns the worker in its own process group; resolves once it has exited and stdout has closed or DRAIN_MS has passed (a surviving grandchild holding the pipe cannot stall P0); at backstopMs the whole group gets SIGTERM then SIGKILL after 2s; exit is null when the worker could not start or was killed by a signal.
 function spawnWorker(
   argv: string[], env: NodeJS.ProcessEnv, cwd: string, backstopMs: number, onLine: (l: string) => void,
 ): Promise<{ code: number | null; killed: boolean }> {
@@ -216,6 +211,10 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   return { verdict, tampered: log.tampered, notProven, prUrl, workerExit };
 }
 const ISSUE_RE = /^(?:[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+\/(?:-\/)?issues\/\d+)$/;
+// E-59: every token field the provider reported, cache included (E-50 found "1k shown for 372k used" when this summed only input+output). The sole place tokens are computed for the Cost line.
+export function summaryTokens(f: Folded, sawCost: boolean): number | null {
+  return sawCost ? f.cost.inputTokens + f.cost.outputTokens + f.cost.cacheReadTokens + f.cost.cacheCreationTokens : null;
+}
 export async function main(args: string[]): Promise<number> { // `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary
   const words: string[] = [];
   let noPr = false, deep = false, provider = process.env.LOKI_PROVIDER || "claude";
@@ -300,7 +299,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   process.stdout.write(formatSummary({
     pr: res.prUrl ? { url: res.prUrl, draft: res.verdict !== "VERIFIED" } : null,
     verdict: res.verdict, notProven: res.notProven, flaky: [],
-    cost: { usd: f.cost.usd, provider, tokens: sawCost ? f.cost.inputTokens + f.cost.outputTokens : null, note: f.cost.usd === null && cli ? "CLI invoker records no cost" : null },
+    cost: { usd: f.cost.usd, provider, tokens: summaryTokens(f, sawCost), note: f.cost.usd === null && cli ? "CLI invoker records no cost" : null },
     wallS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000),
     stages: events.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number")
       .map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })),

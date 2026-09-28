@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSessionRunner } from "../../src/engine10/session.ts";
 import { fold, makeEvent } from "../../src/engine10/events.ts";
+import { summaryTokens } from "../../src/engine10/supervisor.ts";
 import type { SessionRunOptions } from "../../src/engine10/types.ts";
 
 const FIX = join(import.meta.dir, "fixtures", "model-report");
@@ -95,22 +96,15 @@ describe("engine10 model_report (E-50)", () => {
         source: "test",
       }),
     ];
-    const folded = fold(events);
-
-    // Folded.cost only declares usd/inputTokens/outputTokens today; read the
-    // cache fields defensively (never asserting a type the declared shape
-    // does not have) so this stays tsc-clean whether or not they exist yet.
-    const foldedCost = folded.cost as unknown as Record<string, number | undefined>;
-    const cacheRead = foldedCost["cacheReadTokens"] ?? 0;
-    const cacheCreation = foldedCost["cacheCreationTokens"] ?? 0;
-
-    const summaryTokens = folded.cost.inputTokens + folded.cost.outputTokens + cacheRead + cacheCreation;
     const providerTotal =
       RECORDED.input_tokens + RECORDED.output_tokens + RECORDED.cache_read_tokens + RECORDED.cache_creation_tokens;
 
-    // Contract: the token count feeding the 5-line summary's Cost line must
-    // equal every token field the provider reported, cache included -- this
-    // is the exact "1k tokens shown for 372k used" bug E-14 found.
-    expect(summaryTokens).toBe(providerTotal);
+    // Drives the actual production summary path (supervisor.ts's summaryTokens(),
+    // the sole place the Cost line's token count is computed) rather than a
+    // hand-built sum, so a regression in that function fails this test, not just
+    // an assertion re-deriving the same arithmetic.
+    expect(summaryTokens(fold(events), true)).toBe(providerTotal);
+    // No cost event at all -> null, never a fabricated 0 (section 10 contract).
+    expect(summaryTokens(fold([events[0]!]), false)).toBeNull();
   });
 });

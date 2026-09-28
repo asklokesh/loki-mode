@@ -254,6 +254,33 @@ describe("consumeSdkStream (.loki parity with the bash Python parser)", () => {
     });
   });
 
+  test("E-59: system/init's model is written into result-cost, never the caller's guess", async () => {
+    const msgs: StreamMsg[] = [
+      { type: "system", subtype: "init", session_id: "sess-model", model: "claude-opus-4-1-20250805" },
+      { type: "result", subtype: "success", is_error: false, total_cost_usd: 0.01, usage: { input_tokens: 10, output_tokens: 2 } },
+    ];
+    const r = await consumeSdkStream(msgs, ctx("9"), clock);
+    expect(r.exitCode).toBe(0);
+    const cost = readJson(costPath("9"));
+    expect(cost.model).toBe("claude-opus-4-1-20250805");
+  });
+
+  test("E-59: a result message's own model wins over an earlier system/init model", async () => {
+    const msgs: StreamMsg[] = [
+      { type: "system", subtype: "init", session_id: "sess-model", model: "opus" },
+      { type: "result", subtype: "success", is_error: false, total_cost_usd: 0.01, usage: {}, model: "sonnet" } as StreamMsg,
+    ];
+    const r = await consumeSdkStream(msgs, ctx("10"), clock);
+    expect(r.exitCode).toBe(0);
+    expect(readJson(costPath("10")).model).toBe("sonnet");
+  });
+
+  test("E-59: no system/init and no result model -> result-cost has no model key (never fabricated)", async () => {
+    const msgs: StreamMsg[] = [{ type: "result", subtype: "success", is_error: false, total_cost_usd: 0.01, usage: {} }];
+    await consumeSdkStream(msgs, ctx("11"), clock);
+    expect("model" in readJson(costPath("11"))).toBe(false);
+  });
+
   test("result event: is_error -> exit 1 (the load-bearing exit-code contract)", async () => {
     const r = await consumeSdkStream(
       [{ type: "result", subtype: "error_during_execution", is_error: true, total_cost_usd: 0.01, usage: {} }],
