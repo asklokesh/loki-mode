@@ -1,37 +1,15 @@
 // loki-ts/src/engine10/stages/deep.ts
 //
-// E-23: Deep verify (docs/v10/ENGINE.md section 4 "Deep verify", section 16
-// E-23). Runs after Seal + PR (the machine/cli wiring that detaches this
-// stage into an async P5/P6 process pair belongs to machine.ts/cli.ts, not
-// this slice): full suite, an app-boot probe, the council, and the secret
-// scan, then reports through autonomy/lib/engine10-push.sh (comment +
-// addendum + status). A refused or unavailable check is NOT PROVEN, never
-// red; only a real failure (a failing full-suite run or a secret match)
-// turns loki/deep-verify to failure.
-//
-// Rule of Two: this stage asserts (via worker.ts's assertWorkerEnv, already
-// on main) that it is not holding a real GitHub token before doing anything
-// else -- the deep worker (P6) runs repository code and reads untrusted
-// diffs, so it must never hold credentials (ENGINE.md section 6 table).
-//
-// Contract-gap note (report, not fixed -- out of this slice's file set):
-// types.ts pushArgv's "comment" case builds
-// ["comment", runId, prUrl, file] (4 args, a PR URL). The real script usage
-// (autonomy/lib/engine10-push.sh, see its header) is
-// `comment <pr-number> <body-file>` (2 args, a PR NUMBER). This stage never
-// calls pushArgv for comment; commentArgv() below builds the matching argv
-// directly from the PR number extracted out of pr.ts's pr_url output.
-//
-// Contract-gap note (council): dispatchClaudeAgents
-// (loki-ts/src/council/voter_agents.ts:297) takes a CouncilEvaluateContext
-// whose `ctx: RunnerContext` (loki-ts/src/runner/council.ts,
-// loki-ts/src/runner/types.ts -- both legacy, never-edit) is a full harness
-// context this slice does not own the construction of. The seam is the
-// injectable CouncilRunner below; until a slice that owns RunnerContext
-// construction wires a real implementation through it, council is honestly
-// NOT PROVEN, never fabricated as passing.
-import { existsSync } from "node:fs";
-import { mkdirSync, writeFileSync } from "node:fs";
+// E-23: Deep verify (ENGINE.md section 4). Runs after Seal + PR: full suite,
+// app-boot probe, council, secret scan; reports via engine10-push.sh
+// (comment + addendum + status). A refused or unavailable check is NOT
+// PROVEN, never red; only a failing full suite or a secret match is failure.
+// Rule of Two: asserts (assertWorkerEnv) it holds no real GitHub token, since
+// the deep worker runs repo code and reads untrusted diffs.
+// commentArgv() builds `comment <pr-number> <body-file>` directly (types.ts
+// pushArgv's comment shape does not match the script). Council goes through
+// the injectable CouncilRunner; unwired, it is NOT PROVEN, never passing.
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { discoverProjectGraph } from "../../project_graph.ts";
 import { run } from "../../util/shell.ts";

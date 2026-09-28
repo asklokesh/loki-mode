@@ -1,18 +1,8 @@
 // engine10/testmap.ts -- runner detection and the impacted-test map (E-05).
-//
-// Detects runners from real files only (never from a prompt or a guess), per
-// docs/v10/ENGINE.md section 8: pytest, vitest, jest, bun, npm, go, cargo.
-// Maps each changed file to the test files that import or reference it (grep
-// over test file text, per section 8), unioned with a same-stem naming floor
-// so a same-package test with nothing of its own to import (Go) or a
-// deliberately import-free fixture never drops to zero tests: this is
-// fast-verify input, and under-selecting is the unsafe direction there.
-// Pure read; writes nothing.
-//
-// TestMap/TestRef/TestMapProvider are E-01's contract (types.ts). This file
-// never edits types.ts; EngineTestMap below adds the evidence/commands/
-// sourceRefs fields the contract does not carry, disclosed here rather than
-// smuggled into the shared type.
+// Runners come from real files only (ENGINE.md section 8). Each changed file
+// maps to tests that import/reference it, unioned with a same-stem floor so
+// Go or import-free tests never drop to zero (under-selecting is unsafe).
+// Pure read. EngineTestMap extends types.ts TestMap without editing it.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { basename, extname, join, relative, sep } from "node:path";
