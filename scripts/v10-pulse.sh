@@ -958,11 +958,13 @@ STATUS_TOKEN_RE = re.compile(
     r"^(ready|building|review|review-blocked|blocked|approved|merged|released|rejected|parked)"
     r"@(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?Z)$"
 )
-# "M" (Modernize-track slices, M-01..) belongs alongside the other ID
-# prefixes here (E-79): its absence meant every M-row was silently invisible
-# to parse_board -- never counted in "ready", never eligible for
-# REVIEW_STALE/AGENT_OVER_BUDGET, never checked against LOW_READY.
-ID_RE = re.compile(r"^(GF|PF|S|E|EV|M)-\d+$")
+# Any uppercase letter-run prefix, not a hardcoded whitelist (E-91): a fixed
+# (GF|PF|S|E|EV|M) list meant every row using a prefix outside it (G-02,
+# DEP-02..07) was silently invisible to parse_board -- never counted in
+# "ready"/"building", never eligible for REVIEW_STALE/AGENT_OVER_BUDGET,
+# never checked against LOW_READY. The optional trailing lowercase letter
+# covers lettered sub-slices (E-98a..E-98f).
+ID_RE = re.compile(r"^[A-Z]+-\d+[a-z]?$")
 TIER_CELL_RE = re.compile(r"^(LOW|MEDIUM|HIGH)$")
 # LOW_READY (E-79): a "ready" row can still name un-landed dependencies in
 # its Notes cell ("Depends on M-07, E-31 merged or parked."; "Depends on
@@ -974,7 +976,7 @@ TIER_CELL_RE = re.compile(r"^(LOW|MEDIUM|HIGH)$")
 # "depends on ... build then review." narrative prose from an earlier phase
 # writeup, which a case-insensitive match would misread as a live gate.
 DEPENDS_ON_RE = re.compile(r"Depends on ([^.]*)\.")
-DEPENDS_ON_ID_RE = re.compile(r"\b(?:GF|PF|S|E|EV|M)-\d+\b")
+DEPENDS_ON_ID_RE = re.compile(r"\b[A-Z]+-\d+[a-z]?\b")
 
 
 def parse_depends_on(notes):
@@ -2135,11 +2137,17 @@ def check_unevidenced_claims():
                 continue
             added = line[1:]
             # A BOARD slice row's Wall-check cell is a spec ("... passes"), not
-            # a claim; only its status and notes cells (the last two) can claim.
+            # a claim; only its Notes cell can claim (E-91). Notes is always
+            # the last cell regardless of column layout (parse_board's own
+            # docstring: BOARD.md has used at least four), so this reads it
+            # positionally the same way parse_board does, rather than
+            # trusting a fixed column count.
             text = added
-            cells = added.split("|")
-            if re.match(r"\| (?:S|E|EV|M)-\d+ \|", added) and len(cells) >= 9:
-                text = "|".join(cells[-3:-1])
+            stripped = added.strip()
+            if stripped.startswith("|"):
+                row_cells = [c.strip() for c in stripped.strip("|").split("|")]
+                if row_cells and ID_RE.match(row_cells[0]):
+                    text = row_cells[-1]
             if _CLAIM_RE.search(text) and not _EVIDENCE_RE.search(text):
                 if current and added.strip() not in current:
                     continue

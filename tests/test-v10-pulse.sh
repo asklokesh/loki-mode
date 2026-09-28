@@ -268,6 +268,29 @@ VIOLATION: IDLE_BUILDERS: only 1 active builder worktree(s) while 2 ready slice(
 VIOLATION: LOW_READY: only 2 ready slice(s) on BOARD (want at least 8); cut 6 more"
 assert_exact_violations "T1 IDLE_BUILDERS" "$EXPECTED_T1"
 
+echo "T1b -- E-91: ID_RE is not a hardcoded prefix whitelist; G-02 and E-98a rows are counted"
+# Before E-91, ID_RE = (GF|PF|S|E|EV|M)-\d+ made a G- prefix and any lettered
+# sub-slice suffix (E-98a) invisible to parse_board: never counted, never
+# budget-checked. Both rows below are 60 minutes into a 15-minute LOW budget,
+# same as T1's S-03, so a fixed AGENT_OVER_BUDGET violation naming both proves
+# they were parsed and counted, not silently skipped.
+BOARD_NEWPREFIX="$WORK/BOARD-newprefix.md"
+cat > "$BOARD_NEWPREFIX" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| G-02 | a | x | LOW | building@2026-09-27T01:00Z | |
+| E-98a | a | x | LOW | building@2026-09-27T01:00Z | |
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_NEWPREFIX"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: AGENT_OVER_BUDGET:" \
+    && printf '%s\n' "$OUT" | grep -qF "G-02 building LOW (60.0 min, budget 15 min)" \
+    && printf '%s\n' "$OUT" | grep -qF "E-98a building LOW (60.0 min, budget 15 min)"; then
+    ok "a G-02 row and a lettered E-98a row are both parsed and budget-checked"
+else
+    bad "T1b new-prefix case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
 echo "T2 -- merged-but-unreleased slice older than 30 min, CI green"
 BOARD_UNRELEASED="$WORK/BOARD-unreleased.md"
 {
@@ -1738,6 +1761,38 @@ if printf '%s\n' "$OUT" | grep -q "^VIOLATION: UNEVIDENCED_CLAIM:.*M-02" \
     ok "an M row's title/Wall-check 'green' is not flagged; an uncited notes-cell 'verified' is"
 else
     bad "T30g M-row case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T30h -- D26 guard 4: a DEP-03 row's 'green' Wall cell is not a claim; the same word in its Notes cell is"
+CLAIM_REPO_DEP="$WORK/claim-repo-dep"
+mkdir -p "$CLAIM_REPO_DEP/docs/v10"
+(
+    cd "$CLAIM_REPO_DEP" || exit 1
+    git init -q -b main
+    git config user.email "test@example.com"
+    git config user.name "test"
+    printf '# Board\n' > docs/v10/BOARD.md
+    printf '# Progress\n' > docs/v10/PROGRESS.md
+    git add docs/v10/BOARD.md docs/v10/PROGRESS.md
+    GIT_AUTHOR_DATE="2026-09-27T00:00:00Z" GIT_COMMITTER_DATE="2026-09-27T00:00:00Z" git commit -q -m "seed docs"
+    printf '| DEP-03 | dep row | c.sh | LOW | run green build passes | ready@2026-09-27T00:05Z | Source: cut. |\n' >> docs/v10/BOARD.md
+    printf '| DEP-05 | dep row | c.sh | LOW | run build | ready@2026-09-27T00:05Z | Deploy green, no citation. |\n' >> docs/v10/BOARD.md
+    git add docs/v10/BOARD.md
+    GIT_AUTHOR_DATE="2026-09-27T00:05:00Z" GIT_COMMITTER_DATE="2026-09-27T00:05:00Z" git commit -q -m "rows"
+)
+if run_pulse "PULSE_REPO_ROOT=$CLAIM_REPO_DEP" "PULSE_MAIN_REF=main" \
+    "BOARD_MD=$BOARD_CLEAN" "CONTROL_MD=$CONTROL_OK" \
+    "PULSE_NPM_CMD=false" "PULSE_GH_CMD=false" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$CLAIM_REPO_DEP")" \
+    "PULSE_MOAT_RESULT=" \
+    "PULSE_SWARM_START=2026-09-26T23:00Z" "PULSE_NOW=2026-09-27T02:00:00Z"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -q "^VIOLATION: UNEVIDENCED_CLAIM:.*DEP-05" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: UNEVIDENCED_CLAIM:.*DEP-03" \
+    && printf '%s\n' "$OUT" | grep -qF "2 commit(s) scanned touching BOARD.md/PROGRESS.md, 1 flagged line(s)"; then
+    ok "'green' in a Wall cell is not flagged (and a non-whitelisted DEP- prefix is still checked); 'green' in the Notes cell with no citation is flagged"
+else
+    bad "T30h DEP- row case: rc=$rc output follows"
     printf '%s\n' "$OUT"
 fi
 
