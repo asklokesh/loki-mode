@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.1 (2026-09-28)
+
+A local pre-push secret scan that covers every pushed commit and file, so a secret can no longer reach the repository just because it sits outside the eval fixtures.
+
+### Fixed
+- The pre-push hook runs the pinned gitleaks over every pushed commit and path, not only eval fixture changes, matching the CI secret scan (E-110). A change to `.gitleaks.toml` in the pushed range is refused before any skip option applies unless `LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1` is set, and even then the scan uses the previous configuration, so a pushed config cannot switch the scan off. A missing scanner refuses the push unless `LOKI_ALLOW_UNSCANNED_PUSH=1` is set, which never overrides a finding or a scanner error; a scan that times out refuses the push.
+- Test fixtures that exercise secret redaction build their sample secrets at runtime, so the repository itself contains no secret-shaped values (E-110).
+
+### Added
+- `scripts/metrics-usage-append.py` (internal swarm tooling): appends an hourly usage-governor snapshot (5-hour and weekly output tokens, per-engineer burn, output by model and role, max engineers) to docs/v10/METRICS.md.
+
 ## v10.5.0 (2026-09-28)
 
 Loki 10 engine (opt-in: `LOKI_ENGINE=v10`): the verify stage now actually runs a Python project's tests and the receipt can no longer call a run verified when the tests ran against the installed package instead of the repo. Also fixes the published package resolving an older Agent SDK than the engine was built for.
