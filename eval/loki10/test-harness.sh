@@ -641,9 +641,15 @@ got="$(python3 -c 'import json,sys; print(",".join(sorted(json.loads(l)["task"] 
 [ "$got" = "fx-medium" ] && pass "D30: --all --tier medium selects only the medium task" || fail "D30: --tier rows='$got'"
 
 # An invalid tier value must fail loudly under --tier selection, never be
-# silently dropped and shrink the run (E-38 contract).
+# silently dropped and shrink the run (E-38 contract). A valid medium task
+# sits alongside fx-bad so a selection filter that drops fx-bad (tier=None
+# no longer matching) still has fx-good to run on and would exit 0, not 2:
+# without this second task, `not tasks` alone would return 2 and mask a
+# reverted fix (found in EV-11 review).
 mkdir -p "$T/tasks-tier-bad" && cp -R "$TASKS/fx-medium" "$T/tasks-tier-bad/fx-bad"
 python3 -c "import json; p='$T/tasks-tier-bad/fx-bad/task.json'; t=json.load(open(p)); t['id']='fx-bad'; t['tier']='Medium'; json.dump(t, open(p,'w'))"
+cp -R "$TASKS/fx-medium" "$T/tasks-tier-bad/fx-good"
+python3 -c "import json; p='$T/tasks-tier-bad/fx-good/task.json'; t=json.load(open(p)); t['id']='fx-good'; json.dump(t, open(p,'w'))"
 STUB_MODE=noop env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$T/tasks-tier-bad" bash "$HERE/run.sh" \
     --arm raw-claude --all --tier medium --out "$T/out-tier-bad" >/dev/null 2>&1
 rc=$?
