@@ -1,0 +1,32 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_______________________ TestSet.test_namespace_set_tuple _______________________
+
+self = <test_core_tags.TestSet object at 0x107674500>
+env_trim = <jinja2.environment.Environment object at 0x107629a90>
+
+    def test_namespace_set_tuple(self, env_trim):
+>       tmpl = env_trim.from_string(
+            "{% set ns = namespace(a=12, b=36) %}"
+            "{% set ns.a, ns.b = ns.a + 1, ns.b + 1 %}"
+            "{{ ns.a }}|{{ ns.b }}"
+        )
+
+tests/test_core_tags.py:542: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/jinja2/environment.py:1111: in from_string
+    return cls.from_code(self, self.compile(source), gs, None)
+                               ^^^^^^^^^^^^^^^^^^^^
+src/jinja2/environment.py:771: in compile
+    self.handle_exception(source=source_hint)
+src/jinja2/environment.py:942: in handle_exception
+    raise rewrite_traceback_stack(source=source)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+>   ???
+E   jinja2.exceptions.TemplateSyntaxError: expected token 'end of statement block', got ','
+
+<unknown>:1: TemplateSyntaxError
+=========================== short test summary info ============================
+FAILED tests/test_core_tags.py::TestSet::test_namespace_set_tuple - jinja2.ex...
+1 failed, 62 deselected in 0.06s
