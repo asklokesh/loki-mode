@@ -89,11 +89,9 @@ function testEvidence(words: string[], testMap: TestMap): EvidenceHit[] {
 function docEvidence(words: string[], repoDir: string): EvidenceHit[] {
   const hits: EvidenceHit[] = [];
   for (const name of DOC_FILES) {
-    const path = join(repoDir, name);
-    if (!existsSync(path)) continue;
     let text: string;
     try {
-      text = readFileSync(path, "utf8");
+      text = readFileSync(join(repoDir, name), "utf8");
     } catch {
       continue;
     }
@@ -163,14 +161,10 @@ export interface AlreadyDoneResult {
   evidence: string[]; // the model's own citation first, then the deterministic hits behind it
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /** Whole-word substring: unlike `String.includes`, "search.ts" does not match inside
  *  "research.ts" (there is no word boundary between the "e" and the "s" that starts the citation). */
 function citesToken(text: string, token: string): boolean {
-  return new RegExp(`\\b${escapeRegExp(token)}\\b`).test(text);
+  return new RegExp(`\\b${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(text);
 }
 
 /** True when `text` names a hit's path (full or basename -- models often cite one without the
