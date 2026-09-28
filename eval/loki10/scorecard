@@ -131,12 +131,34 @@ def mark(ok):
     return "green" if ok else "red"
 
 
-def score(raw, loki):
-    """D41 marks (section 2): completion green if loki>=raw; cost and p50
-    green if loki<=raw. Either side null (n/a) is always red, never green."""
+HEADLINE_COST_RATIO = 0.5
+
+
+def is_headline_pair(raw_s, loki_s):
+    """D41 (SCORECARD-PLAN.md section 2): the headline pair is loki-sonnet
+    against raw-opus, matched by each side's arm and model (section 3), not
+    by the CLI label text, so `scorecard mine=... theirs=...` still detects
+    it. Every row on a side must agree, else the pair isn't homogeneous."""
+    def side_is(arm_model, arm_name, model_keyword):
+        if not arm_model:
+            return False
+        for am in arm_model:
+            arm, _, model = am.partition("@")
+            if arm != arm_name or model_keyword not in model.lower():
+                return False
+        return True
+    return side_is(raw_s["arm_model"], "raw-claude", "opus") and side_is(loki_s["arm_model"], "v10", "sonnet")
+
+
+def score(raw, loki, headline=False):
+    """D41 marks (section 2): completion green if loki>=raw; p50 green if
+    loki<=raw. Cost green if loki<=raw, except the headline pair
+    (loki-sonnet vs raw-opus) which needs loki<=0.5x raw. Either side null
+    (n/a) is always red, never green."""
     completion_ok = loki["completion"] is not None and raw["completion"] is not None \
         and loki["completion"] >= raw["completion"]
-    cost_ok = loki["cost"] is not None and raw["cost"] is not None and loki["cost"] <= raw["cost"]
+    cost_bar = HEADLINE_COST_RATIO if headline else 1.0
+    cost_ok = loki["cost"] is not None and raw["cost"] is not None and loki["cost"] <= cost_bar * raw["cost"]
     p50_ok = loki["p50"] is not None and raw["p50"] is not None and loki["p50"] <= raw["p50"]
     marks = {"completion": mark(completion_ok), "cost": mark(cost_ok), "p50": mark(p50_ok)}
     verdict = mark(all(v == "green" for v in marks.values()))
@@ -159,12 +181,13 @@ def fmt_share(s):
     return "n/a" if s["partial_share"] is None else "%.1f%%" % (100 * s["partial_share"])
 
 
-def render_pair(tier, raw_label, raw_s, loki_label, loki_s, marks, verdict, date, command):
+def render_pair(tier, raw_label, raw_s, loki_label, loki_s, marks, verdict, date, command, headline=False):
+    cost_row_label = "Cost per completed (headline: <=0.5x raw)" if headline else "Cost per completed"
     return "\n".join([
         "#### tier %s: %s vs %s" % (tier, raw_label, loki_label), "",
         "| Metric | %s | %s | Mark |" % (raw_label, loki_label), "|---|---|---|---|",
         "| Completion | %s | %s | %s |" % (fmt_completion(raw_s), fmt_completion(loki_s), marks["completion"]),
-        "| Cost per completed | %s | %s | %s |" % (fmt_cost(raw_s), fmt_cost(loki_s), marks["cost"]),
+        "| %s | %s | %s | %s |" % (cost_row_label, fmt_cost(raw_s), fmt_cost(loki_s), marks["cost"]),
         "| p50 time to PR | %s | %s | %s |" % (fmt_p50(raw_s), fmt_p50(loki_s), marks["p50"]), "",
         "Verdict: %s. n: %s=%d, %s=%d. Pair: %s vs %s. Partial-stream share: %s=%s, %s=%s. "
         "Harness sha: %s=%s, %s=%s. Date: %s. Command: `%s`" % (
@@ -200,9 +223,11 @@ def build_tables(by_label, date, command):
             err = comparable(raw_rows, loki_rows)
             if err:
                 raise Refused("tier %s: %s vs %s not comparable: %s" % (tier, raw_label, loki_label, err))
-            marks, verdict = score(stats(raw_rows), stats(loki_rows))
-            tables.append(render_pair(tier, raw_label, stats(raw_rows), loki_label, stats(loki_rows),
-                                       marks, verdict, date, command))
+            raw_s, loki_s = stats(raw_rows), stats(loki_rows)
+            headline = is_headline_pair(raw_s, loki_s)
+            marks, verdict = score(raw_s, loki_s, headline)
+            tables.append(render_pair(tier, raw_label, raw_s, loki_label, loki_s,
+                                       marks, verdict, date, command, headline))
     else:
         for tier in tiers:
             per_label = [(label, stats(by_label_tier[label].get(tier, []))) for label in by_label]
