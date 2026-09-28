@@ -1,7 +1,7 @@
 // Loki 10 supervisor (P0, docs/v10/ENGINE.md sections 5, 6, 10): eval marker first, origin pinned once, worker
 // spawned with withheld tokens; single writer of events.jsonl (seq, hash, tamper refusal); --resume reuses the run
 // id; post-PR: detached deep verify, then Slack notify.
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, type Hash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -14,14 +14,14 @@ import { assertPreflight, PreflightError } from "./preflight.ts";
 import { resolveModel } from "./session.ts";
 import type { PrContext } from "./stages/pr.ts";
 import type { EventEnvelope, PushEnv, StageName, Verdict } from "./types.ts";
-import { DEEP_CAP_S, DEFAULT_CAP_S, STAGE_BUDGETS } from "./types.ts";
+import { DEEP_CAP_S, DEFAULT_CAP_S, pushArgv, STAGE_BUDGETS } from "./types.ts";
 
 export const TAMPER_NOT_PROVEN = "event log modified outside the engine";
 const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detected", "pr.opened"]); // types only the supervisor may write; same types from the worker are dropped
 const VERDICTS = new Set<string>(["VERIFIED", "PARTIAL", "ALREADY_SATISFIED", "SPEC_CONFLICT", "FAILED"]);
 const SESSION_EXITS = new Set(["done", "already_done", "spec_conflict", "killed", "error"]);
-export const BACKSTOP_NOT_PROVEN = "worker killed by the supervisor backstop (cap plus grace)";
-export const BACKSTOP_GRACE_S = 60; // seconds past the cap the worker gets to seal and exit before P0 kills its process group
+export const BACKSTOP_NOT_PROVEN = "worker killed by the supervisor backstop (cap minus grace)";
+export const BACKSTOP_GRACE_S = 60; // seconds the backstop fires BEFORE the cap: held back so the supervisor's own post-kill work (draft PR or issue comment) still lands inside the cap
 const DRAIN_MS = 2000; // after the worker exits, how long P0 waits for stdout to drain before closing it
 
 const nonNegNum = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v) && v >= 0;
@@ -41,14 +41,24 @@ export type PrStep = (p: {
   verdict: Verdict;
 }) => Promise<PrOutcome | null>;
 
+/** Backstop fallback for a FAILED run that could not become a PR (no diff, or no remote): on an
+ *  issue run, posts a comment naming the reason instead of the run vanishing silently. */
+export type CommentStep = (p: {
+  env: NodeJS.ProcessEnv;
+  runId: string;
+  issueRef: string;
+  reason: string;
+}) => Promise<{ argv: string[]; ok: boolean } | null>;
+
 export interface SupervisorOptions {
   runId: string;
   repoDir: string;
   workerArgv: string[]; // argv of the worker process, e.g. [bun, cli, "engine10", "worker", ...] (wired by E-12)
   env?: NodeJS.ProcessEnv; // defaults to process.env; never mutated
-  started?: Record<string, unknown>; // extra run.started data (task_source, provider, model, ...)
+  started?: Record<string, unknown>; // extra run.started data (task_source, provider, model, issue_ref, ...)
   pr?: PrStep; deepArgv?: string[]; // pr absent means no PR; deepArgv absent means no detached deep verify after pr.opened
-  capS?: number; // global cap in seconds (default LOKI_E10_CAP_S, else DEFAULT_CAP_S); the backstop fires at cap plus grace
+  comment?: CommentStep; // absent means no issue-comment fallback (a FAILED, no-diff issue run then only prints)
+  capS?: number; // global cap in seconds (default LOKI_E10_CAP_S, else DEFAULT_CAP_S); the backstop fires at cap minus grace
   graceS?: number; // default BACKSTOP_GRACE_S
 }
 export interface SupervisorResult {
@@ -79,6 +89,18 @@ export function readOriginUrl(repoDir: string): string | null {
 export function githubRepoFromUrl(url: string | null): string | null {
   const m = url?.match(/^(?:https:\/\/(?:[^@/]+@)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^/]+\/[^/]+?)(?:\.git)?\/?$/);
   return m?.[1] ?? null;
+}
+/** True when the run branch (checked out in repoDir since intake) differs from baseSha: tracked
+ *  and working-tree changes both count, since a kill before the commit stage leaves them uncommitted.
+ *  A missing baseSha (intake never completed) or an unreadable git state is fail-safe: no diff. */
+function hasPushableDiff(repoDir: string, baseSha: string | null): boolean {
+  if (!baseSha) return false;
+  try {
+    execFileSync("git", ["diff", "--quiet", baseSha, "--", ".", ":(exclude).loki"], { cwd: repoDir, env: process.env, stdio: "ignore" });
+    return false; // exit 0: no diff
+  } catch (err) {
+    return (err as { status?: number }).status === 1; // exit 1: a real diff; anything else is unknown, treated as none
+  }
 }
 export class SupervisorLog { // single writer with a running sha256 of the bytes it appended
   private readonly log: EventLog;
@@ -188,7 +210,11 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   withholdGithubTokens(workerEnv);
   const envCap = Number(env.LOKI_E10_CAP_S);
   const capS = opts.capS ?? (envCap > 0 ? envCap : DEFAULT_CAP_S);
-  const backstopMs = (capS + (opts.graceS ?? BACKSTOP_GRACE_S)) * 1000;
+  // The worker's own cap fires at 14/15 of capS (machine.ts) and normally reaches seal/pr on its
+  // own; this backstop is the hard SIGKILL safety net for a stage that blocks synchronously and
+  // never sees that soft cap. It must fire BEFORE capS, not after: graceS is held back so the
+  // supervisor's own post-kill work (a draft PR or an issue comment) still lands inside the cap.
+  const backstopMs = Math.max(0, capS - (opts.graceS ?? BACKSTOP_GRACE_S)) * 1000;
   let sealed: Record<string, unknown> | null = null;
   const worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, (line) => {
     const e = log.ingest(line);
@@ -204,7 +230,15 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const intact = log.verify(); // unconditional re-check before the PR
   if (!intact) notProven.push(TAMPER_NOT_PROVEN);
   // E-66: already-satisfied (no change needed) opens no PR, whether from the issue-closed check or the evidence-confirmed check.
-  if (opts.pr && intact && origin && verdict !== "FAILED" && verdict !== "ALREADY_SATISFIED") {
+  // E-67: a FAILED verdict (including a backstop kill) no longer blocks the PR outright. intake's
+  // own stage.completed (written before any hang can happen later) is the only source for base_sha
+  // here; a run that never got that far has no diff to show and falls to the comment/print branch.
+  const baseSha = ((): string | null => {
+    const e = fold(readEvents(log.path)).stages["intake"];
+    return e?.type === "stage.completed" && typeof e.data.base_sha === "string" ? (e.data.base_sha as string) : null;
+  })();
+  const hasDiff = hasPushableDiff(opts.repoDir, baseSha);
+  if (opts.pr && intact && origin && verdict !== "ALREADY_SATISFIED" && (verdict !== "FAILED" || hasDiff)) {
     const pushEnv: PushEnv = { _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin };
     const out = await opts.pr({ env, pushEnv, runId: opts.runId, repoDir: opts.repoDir, verdict });
     notProven.push(...(out?.notProven ?? []));
@@ -213,6 +247,19 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
       log.append("pr.opened", "pr", { url: out.url, draft: out.draft, existing: out.existing });
       // E-48: deep verify (stages/deep.ts) runs detached, never keeping the supervisor alive; deep.started records the pid so it is never orphaned untracked.
       if (opts.deepArgv) { const [cmd, ...dArgs] = [...opts.deepArgv, origin], child = cmd ? spawn(cmd, dArgs, { cwd: opts.repoDir, env: workerEnv, stdio: "ignore", detached: true }) : null; child?.on("error", () => {}); if (child?.pid) { child.unref(); log.append("deep.started", "deep", { pid: child.pid }); } else notProven.push("deep verify not spawned"); }
+    }
+  }
+  // E-67: a FAILED run that did not become a PR (no diff, or no remote) must never vanish silently:
+  // an issue run posts an issue comment naming the exact reason; anything else is printed.
+  if (verdict === "FAILED" && prUrl === null) {
+    const reason = notProven.join("; ") || "run failed";
+    const issueRef = opts.started?.["issue_ref"];
+    const isIssueWithRef = opts.started?.["task_source"] === "issue" && typeof issueRef === "string" && issueRef !== "";
+    if (isIssueWithRef && opts.comment) {
+      const out = await opts.comment({ env, runId: opts.runId, issueRef: issueRef as string, reason });
+      log.append("issue.commented", null, { argv: out?.argv ?? [], ok: out?.ok ?? false, reason });
+    } else {
+      process.stderr.write(`engine10: run ${opts.runId} ended FAILED with no PR: ${reason}\n`);
     }
   }
 
@@ -318,6 +365,16 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
       const d = r.data as { pr_url?: string; draft?: boolean; existing?: boolean | null; not_proven?: string[] };
       if (r.status !== "completed") return { url: null, draft: false, existing: null, notProven: [`PR not opened: ${r.reason}`] };
       return { url: d.pr_url ?? null, draft: d.draft === true, existing: d.existing ?? null, notProven: d.not_proven };
+    },
+    // E-67: a FAILED, no-diff issue run has no PR to open; comment on the issue instead of vanishing.
+    comment: noPr ? undefined : async ({ issueRef, reason }) => {
+      const { DEFAULT_PUSH_SH } = await import("./stages/pr.ts"); // supervisor-only, same credentialed script as pr
+      mkdirSync(runDir, { recursive: true });
+      const bodyFile = join(runDir, "backstop-comment.md");
+      writeFileSync(bodyFile, `Loki 10 run ${runId} ended without a PR.\n\nReason: ${reason}\n`);
+      const argv = pushArgv({ cmd: "issue-comment", issueRef, bodyFile });
+      const r = spawnSync("bash", [DEFAULT_PUSH_SH, ...argv], { env, encoding: "utf8" });
+      return { argv, ok: r.status === 0 };
     },
   }).catch((e) => { if (!(e instanceof PreflightError)) throw e; process.stderr.write(`${e.message}\n`); return null; });
   clearInterval(tailTimer);
