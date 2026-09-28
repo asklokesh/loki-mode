@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { consumeSdkStream, type StreamMsg } from "../../src/runner/sdk_stream_parser.ts";
+import { partialUsagePath, recordPartialStreamCost } from "../../src/engine10/cost.ts";
 
 let scratch: string;
 const FIXED = "2026-07-13T00:00:00.000Z";
@@ -524,5 +525,33 @@ describe("consumeSdkStream: T3(a) full-shape SDK message replay (loop-flip gate)
     const r = await consumeSdkStream(msgs, ctx("8"), clock);
     expect(r.sawResult).toBe(true);
     expect(r.exitCode).not.toBe(0); // an error result must never be counted as success
+  });
+
+  // E-98e: a Wall-killed session never gets a `result` message, so
+  // writeResultCost never fires (MEDIUM-ANALYSIS.md section 4: "cost wall
+  // usd=None ... in=0 out=0" on every killed row). This drives the real
+  // consumeSdkStream with a stream that ends after 2 assistant messages --
+  // no result, exactly what a limitS kill produces -- then runs the real
+  // recordPartialStreamCost session.ts calls in that branch.
+  test("E-98e: two streamed messages, then killed (no result) -- usage is still recoverable", async () => {
+    const msgs: StreamMsg[] = [
+      { type: "system", subtype: "init", model: "sonnet" },
+      // First snapshot of message m1: a streamed usage snapshot grows as it fills in.
+      { type: "assistant", message: { id: "m1", usage: { input_tokens: 500_000, output_tokens: 0 }, content: [] } },
+      // Same id, later snapshot: dedupe must keep the max per field, not sum the two.
+      { type: "assistant", message: { id: "m1", usage: { input_tokens: 1_000_000, output_tokens: 0 }, content: [] } },
+      // A second, distinct message.
+      { type: "assistant", message: { id: "m2", usage: { input_tokens: 0, output_tokens: 1_000_000 }, content: [] } },
+    ];
+    const r = await consumeSdkStream(msgs, ctx("9"), clock);
+    expect(r.sawResult).toBe(false); // killed: the stream just ends
+    expect(existsSync(join(scratch, ".loki", "metrics", "result-cost-9.json"))).toBe(false); // the pre-fix null case
+
+    const partial = readJson(partialUsagePath(join(scratch, ".loki"), "9"));
+    expect(partial).toEqual({ input_tokens: 1_000_000, output_tokens: 1_000_000, cache_read_tokens: 0, cache_creation_tokens: 0, model: "sonnet" });
+
+    const c = recordPartialStreamCost(join(scratch, ".loki"), "9", { status: "killed", durationMs: 90_000, model: "sonnet" });
+    expect(c.usd).toBe(18); // 1M input @ $3/M + 1M output @ $15/M (data/model-pricing.json "sonnet")
+    expect(c.source).not.toBe("");
   });
 });

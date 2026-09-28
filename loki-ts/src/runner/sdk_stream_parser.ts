@@ -25,6 +25,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { num, partialUsagePath } from "../engine10/cost.ts";
 
 // A structural subset of the Agent SDK's SDKMessage union -- only the fields the
 // parser reads. Kept local (not imported from the SDK) so the parser is pure and
@@ -35,6 +36,10 @@ export interface StreamMsg {
   // assistant / user carry a nested message with content blocks
   message?: {
     content?: Array<Record<string, unknown>>;
+    // E-98e: per-message usage, present on real assistant turns. A streamed
+    // snapshot can repeat one id with growing usage as it fills in.
+    id?: string;
+    usage?: Record<string, unknown>;
   };
   // stream_event carries a raw streaming event
   event?: {
@@ -152,6 +157,13 @@ export async function consumeSdkStream(
   let captured = ""; // load-bearing capture (final assistant text + result.result)
   let rateLimit: { resetSeconds?: number } | undefined;
   let sawResult = false;
+  // E-98e: per-message usage, keyed by message.id so a repeated streamed
+  // snapshot of the same message is a max, not a double-count. Written to
+  // partialUsagePath after every assistant message, so a session killed
+  // before `result` (no finally runs: src/cli.ts's SIGTERM handler exits
+  // immediately) still leaves its last successful write on disk.
+  const usageById = new Map<string, Record<string, number>>();
+  let anonUsageId = 0;
 
   for await (const data of asAsync(messages)) {
     const msgType = data.type ?? "";
@@ -178,6 +190,18 @@ export async function consumeSdkStream(
       if (err === "rate_limit" || err === "overloaded") {
         rateLimit = rateLimit ?? {};
         captured += `\n[${err}]\n`; // so the file-based rate-limit scanner fires
+      }
+      const u = data.message?.usage;
+      if (u) {
+        const id = data.message?.id ?? `#${anonUsageId++}`;
+        const prev = usageById.get(id) ?? {};
+        usageById.set(id, {
+          input_tokens: Math.max(prev["input_tokens"] ?? 0, num(u["input_tokens"])),
+          output_tokens: Math.max(prev["output_tokens"] ?? 0, num(u["output_tokens"])),
+          cache_read_input_tokens: Math.max(prev["cache_read_input_tokens"] ?? 0, num(u["cache_read_input_tokens"])),
+          cache_creation_input_tokens: Math.max(prev["cache_creation_input_tokens"] ?? 0, num(u["cache_creation_input_tokens"])),
+        });
+        writePartialUsage(lokiRoot, ctx.iteration, usageById, data.model ?? sessionModel ?? null);
       }
       const content = data.message?.content ?? [];
       for (const item of content) {
@@ -456,5 +480,29 @@ function writeResultCost(lokiRoot: string, iteration: string, data: StreamMsg, m
     renameSync(tmp, target); // os.replace equivalent (atomic)
   } catch {
     // best-effort, mirrors the Python try/except pass
+  }
+}
+
+// E-98e: the running SUM across all message ids seen so far, written after
+// every assistant message. Best-effort and atomic, same as writeResultCost;
+// left on disk after a normal completion too (nothing globs the
+// `partial-usage-` prefix, so a stale file is inert, same as an old
+// result-cost file already left behind today).
+function writePartialUsage(lokiRoot: string, iteration: string, usageById: Map<string, Record<string, number>>, model: string | null): void {
+  try {
+    const sum = { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, model };
+    for (const v of usageById.values()) {
+      sum.input_tokens += v["input_tokens"] ?? 0;
+      sum.output_tokens += v["output_tokens"] ?? 0;
+      sum.cache_read_tokens += v["cache_read_input_tokens"] ?? 0;
+      sum.cache_creation_tokens += v["cache_creation_input_tokens"] ?? 0;
+    }
+    const target = partialUsagePath(lokiRoot, iteration);
+    mkdirSync(dirname(target), { recursive: true });
+    const tmp = `${target}.tmp`;
+    writeFileSync(tmp, JSON.stringify(sum));
+    renameSync(tmp, target);
+  } catch {
+    // best-effort, mirrors writeResultCost's try/except pass
   }
 }
