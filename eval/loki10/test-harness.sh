@@ -61,6 +61,12 @@
 #  16. (D30) validate accepts tier:medium, rejects an unknown tier value; a
 #      task with no tier field defaults to small; --all --tier medium selects
 #      only the medium task
+#  17. (E-62/EV-8) v10 defaults to the repo's own bin/loki (never a global
+#      install) and the manifest records the resolved binary path plus the
+#      agent SDK version; v10 and legacy refuse (nonzero exit, no results
+#      row) when loki-ts/node_modules differs from bun.lock -- a stale
+#      installed version and a missing node_modules dir alike; raw-claude is
+#      not gated by loki-ts at all
 #===============================================================================
 set -u
 
@@ -482,6 +488,67 @@ d="$(row "$T/out-mini-dirty/results.jsonl" harness_sha)"
 case "$c" in *-dirty\" | null | "") cok=0 ;; *) cok=1 ;; esac
 case "$d" in *-dirty\") dok=1 ;; *) dok=0 ;; esac
 [ "$cok" = 1 ] && [ "$dok" = 1 ] && pass "Ri: harness_sha clean=$c dirty=$d" || fail "Ri: clean=$c dirty=$d"
+
+# ---- 17. (E-62/EV-8) v10 arm binary default + loki-ts lockfile refusal.
+# Reuses the Ri minirepo M (harness.py resolves REPO as its own two-parents-up,
+# so M is "the repo" for a run through M/eval/loki10/run.sh) with its own
+# bin/loki stub and a minimal loki-ts/{bun.lock,node_modules}, so this never
+# touches the real loki-ts or invokes the real claude/loki.
+mkdir -p "$M/bin"
+ln -s "$STUB" "$M/bin/loki"
+mkdir -p "$M/loki-ts/node_modules/fake-pinned-dep"
+cat > "$M/loki-ts/bun.lock" <<'EOF'
+{
+  "lockfileVersion": 1,
+  "workspaces": { "": { "dependencies": { "fake-pinned-dep": "1.2.3" } } },
+  "packages": { "fake-pinned-dep": ["fake-pinned-dep@1.2.3", "", {}, ""] }
+}
+EOF
+set_dep_version() { echo "{\"name\":\"fake-pinned-dep\",\"version\":\"$1\"}" > "$M/loki-ts/node_modules/fake-pinned-dep/package.json"; }
+set_dep_version 1.2.3
+MRUN_NOBIN() { env -u LOKI_EVAL_LOKI_BIN -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$TASKS" bash "$M/eval/loki10/run.sh" "$@"; }
+
+R="$T/out-mini-v10bin"
+MRUN_NOBIN --arm v10 --task fx-greet --out "$R" >/dev/null 2>&1
+got="$(python3 -c 'import json,sys; print([json.loads(l) for l in open(sys.argv[1])][-1]["arm_binary"])' "$R/manifest.jsonl" 2>/dev/null)"
+[ "$got" = "$M/bin/loki" ] && pass "E-62: v10 arm defaults to the repo's own bin/loki, not a global install" \
+    || fail "E-62: arm_binary=$got"
+has_sdk="$(python3 -c 'import json,sys; print("agent_sdk_version" in [json.loads(l) for l in open(sys.argv[1])][-1])' "$R/manifest.jsonl" 2>/dev/null)"
+[ "$has_sdk" = True ] && pass "E-62: manifest records agent_sdk_version" \
+    || fail "E-62: manifest missing agent_sdk_version: $(cat "$R/manifest.jsonl" 2>/dev/null)"
+
+# A node_modules version that does not match bun.lock's resolved version -> refused.
+set_dep_version 9.9.9
+R="$T/out-mini-lockmismatch"
+out="$(MRUN_NOBIN --arm v10 --task fx-greet --out "$R" 2>&1)"; rc=$?
+[ "$rc" != 0 ] && [ ! -s "$R/results.jsonl" ] && printf '%s' "$out" | grep -q "node_modules differs from bun.lock" \
+    && pass "E-62: v10 refuses when loki-ts/node_modules differs from bun.lock" \
+    || fail "E-62: lockfile mismatch rc=$rc out=$out"
+set_dep_version 1.2.3
+
+# node_modules missing entirely -> also refused, for both loki arms.
+rm -rf "$M/loki-ts/node_modules"
+R="$T/out-mini-nomodules"
+out="$(MRUN_NOBIN --arm v10 --task fx-greet --out "$R" 2>&1)"; rc=$?
+[ "$rc" != 0 ] && [ ! -s "$R/results.jsonl" ] && printf '%s' "$out" | grep -q "node_modules is missing" \
+    && pass "E-62: v10 refuses when loki-ts/node_modules is missing" \
+    || fail "E-62: missing node_modules rc=$rc out=$out"
+R="$T/out-mini-legacy-nomodules"
+out="$(MRUN_NOBIN --arm legacy --task fx-greet --out "$R" 2>&1)"; rc=$?
+[ "$rc" != 0 ] && printf '%s' "$out" | grep -q "node_modules is missing" \
+    && pass "E-62: legacy arm also refuses on a missing loki-ts/node_modules" \
+    || fail "E-62: legacy missing node_modules rc=$rc out=$out"
+mkdir -p "$M/loki-ts/node_modules/fake-pinned-dep"
+set_dep_version 1.2.3
+
+# raw-claude never touches loki-ts, so it is never gated by this check.
+rm -rf "$M/loki-ts/node_modules"
+R="$T/out-mini-rawclaude-lockcheck"
+STUB_MODE=noop MRUN_NOBIN --arm raw-claude --task fx-greet --out "$R" >/dev/null 2>&1
+[ -s "$R/results.jsonl" ] && pass "E-62: raw-claude arm is not gated by the loki-ts lockfile check" \
+    || fail "E-62: raw-claude row missing: $(cat "$R/results.jsonl" 2>/dev/null)"
+mkdir -p "$M/loki-ts/node_modules/fake-pinned-dep"
+set_dep_version 1.2.3
 
 # ---- 9. --all --parallel
 R="$T/out-all"

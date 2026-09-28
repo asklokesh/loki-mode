@@ -430,6 +430,74 @@ def default_model():
     return next(m["id"] for m in claude["models"] if m.get("tier") == "planning"), claude.get("cli_aliases", {})
 
 
+AGENT_SDK_PKG = "@anthropic-ai/claude-agent-sdk"
+
+
+def installed_agent_sdk_version(repo):
+    """Version actually on disk in loki-ts/node_modules, or None. Ground
+    truth for the manifest: package.json/bun.lock only say what SHOULD be
+    installed (E-62/EV-8 incident: package.json had moved to 0.3.283 while
+    node_modules still held 0.3.267)."""
+    try:
+        with open(os.path.join(repo, "loki-ts", "node_modules", *AGENT_SDK_PKG.split("/"),
+                                "package.json"), encoding="utf-8") as f:
+            return json.load(f).get("version")
+    except (OSError, ValueError):
+        return None
+
+
+def lockfile_mismatch(repo):
+    """None if loki-ts/node_modules matches loki-ts/bun.lock's resolved
+    versions, else a human-readable reason. E-62/EV-8: node_modules silently
+    drifted behind bun.lock (a dep bump landed in package.json/bun.lock but
+    `bun install` was never rerun in this checkout), so the v10 arm ran an
+    old SDK build with no signal. Compares the workspace's own direct deps
+    against what bun.lock actually RESOLVED them to (the "packages" table),
+    not package.json's ranges, against what is physically on disk.
+    """
+    ts = os.path.join(repo, "loki-ts")
+    lock_path = os.path.join(ts, "bun.lock")
+    nm = os.path.join(ts, "node_modules")
+    try:
+        with open(lock_path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError as e:
+        return "cannot read %s: %s" % (lock_path, e)
+    try:  # bun.lock is JSONC (trailing commas allowed); strip them to parse.
+        data = json.loads(re.sub(r",(\s*[}\]])", r"\1", text))
+    except ValueError as e:
+        return "cannot parse %s: %s" % (lock_path, e)
+    ws = (data.get("workspaces") or {}).get("", {})
+    deps = {}
+    for k in ("dependencies", "devDependencies", "optionalDependencies"):
+        d = ws.get(k)
+        if isinstance(d, dict):
+            deps.update(d)
+    if not os.path.isdir(nm):
+        return "loki-ts/node_modules is missing; run (cd loki-ts && bun install --frozen-lockfile)"
+    packages = data.get("packages") or {}
+    mismatched = []
+    for name in deps:
+        entry = packages.get(name)
+        if not isinstance(entry, list) or not entry or not isinstance(entry[0], str):
+            continue
+        at = entry[0].rfind("@")  # scoped names have a leading '@'; skip it
+        resolved = entry[0][at + 1:] if at > 0 else None
+        if not resolved:
+            continue
+        try:
+            with open(os.path.join(nm, *name.split("/"), "package.json"), encoding="utf-8") as f:
+                installed = json.load(f).get("version")
+        except (OSError, ValueError):
+            installed = None
+        if installed != resolved:
+            mismatched.append("%s (bun.lock %s, installed %s)" % (name, resolved, installed or "missing"))
+    if mismatched:
+        return ("loki-ts/node_modules differs from bun.lock: %s; "
+                "run (cd loki-ts && bun install --frozen-lockfile)" % "; ".join(mismatched))
+    return None
+
+
 def arm_env(rundir, model, alias, arm=None):
     # Operator and harness state must not steer the arm: inherited LOKI_* knobs
     # (including LOKI_RUN_TMP, the harness's own tmp), nested-Claude-session
@@ -1154,6 +1222,14 @@ def cmd_run(args):
     if bad or not tasks:
         return 2
 
+    # E-62/EV-8: a loki arm (v10, legacy) runs bin/loki against loki-ts's
+    # build; refuse loudly rather than silently measuring a stale SDK.
+    if args.arm in ("v10", "legacy"):
+        why = lockfile_mismatch(REPO)
+        if why:
+            print("error: %s" % why, file=sys.stderr)
+            return 2
+
     model = os.environ.get("LOKI_EVAL_MODEL", "")
     top, aliases = default_model()
     model = model or top
@@ -1175,7 +1251,10 @@ def cmd_run(args):
     cfg = {"tmp": tmp, "out": out, "model": model, "alias": alias,
            "harness_sha": harness_sha,
            "claude_bin": os.environ.get("LOKI_EVAL_CLAUDE_BIN", "claude"),
-           "loki_bin": os.environ.get("LOKI_EVAL_LOKI_BIN", "loki")}
+           # E-62/EV-8 incident: the global `loki` on PATH silently measured
+           # the wrong build (v9.78.0). Default to this repo's own bin/loki,
+           # never a global install, unless the operator explicitly overrides.
+           "loki_bin": os.environ.get("LOKI_EVAL_LOKI_BIN", os.path.join(REPO, "bin", "loki"))}
     binary = cfg["claude_bin"] if args.arm == "raw-claude" else cfg["loki_bin"]
     version = ""
     if shutil.which(binary):
@@ -1186,6 +1265,7 @@ def cmd_run(args):
     with open(os.path.join(out, "manifest.jsonl"), "a") as f:
         f.write(json.dumps({"arm": args.arm, "model": model, "arm_binary": binary,
                             "arm_version": version, "harness_sha": cfg["harness_sha"],
+                            "agent_sdk_version": installed_agent_sdk_version(REPO),
                             "isolation": "fresh CLAUDE_CONFIG_DIR per run", "auth_source": auth_source,
                             "tasks": [t["id"] for t, _ in tasks], "started": iso(time.time())}) + "\n")
 
