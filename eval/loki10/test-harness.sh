@@ -640,5 +640,15 @@ STUB_MODE=noop env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$T/tasks-tier" bash "$HE
 got="$(python3 -c 'import json,sys; print(",".join(sorted(json.loads(l)["task"] for l in open(sys.argv[1]))))' "$R/results.jsonl" 2>/dev/null)"
 [ "$got" = "fx-medium" ] && pass "D30: --all --tier medium selects only the medium task" || fail "D30: --tier rows='$got'"
 
+# An invalid tier value must fail loudly under --tier selection, never be
+# silently dropped and shrink the run (E-38 contract).
+mkdir -p "$T/tasks-tier-bad" && cp -R "$TASKS/fx-medium" "$T/tasks-tier-bad/fx-bad"
+python3 -c "import json; p='$T/tasks-tier-bad/fx-bad/task.json'; t=json.load(open(p)); t['id']='fx-bad'; t['tier']='Medium'; json.dump(t, open(p,'w'))"
+STUB_MODE=noop env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$T/tasks-tier-bad" bash "$HERE/run.sh" \
+    --arm raw-claude --all --tier medium --out "$T/out-tier-bad" >/dev/null 2>&1
+rc=$?
+[ "$rc" = 2 ] && pass "D30: --tier medium exits 2 on a task with an invalid tier value, not a silent drop" \
+    || fail "D30: bad-tier rc=$rc"
+
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

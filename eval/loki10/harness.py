@@ -82,14 +82,16 @@ AUTH_MARGIN_S = 120
 
 def _task_tier(task_dir):
     """Read task.json's tier for --tier filtering only. A missing tier
-    defaults to small; malformed json also reads as small here so a broken
-    task.json doesn't crash selection (validate_task reports the real error
-    for whichever ids --tier lets through)."""
+    defaults to small. Unreadable json or a tier outside TIERS returns None
+    (never guessed as small), so --tier keeps the id instead of silently
+    shrinking the run; validate_task then reports the real error for it."""
     try:
         with open(os.path.join(task_dir, "task.json"), encoding="utf-8") as f:
-            return json.load(f).get("tier", DEFAULT_TIER)
+            t = json.load(f)
+        tier = t.get("tier", DEFAULT_TIER)
+        return tier if tier in TIERS else None
     except (OSError, ValueError, AttributeError):
-        return DEFAULT_TIER
+        return None
 
 
 # ---------------------------------------------------------------- validate
@@ -870,7 +872,11 @@ def cmd_run(args):
     if args.all:
         ids = sorted(d for d in os.listdir(tasks_dir) if os.path.isfile(os.path.join(tasks_dir, d, "task.json")))
         if args.tier:
-            ids = [d for d in ids if _task_tier(os.path.join(tasks_dir, d)) == args.tier]
+            # None (unreadable json / invalid tier value) is kept, not
+            # dropped, so a bad task.json fails loudly in validate_task below
+            # instead of silently shrinking the selected set (E-38 contract).
+            ids = [d for d in ids
+                   if (tier := _task_tier(os.path.join(tasks_dir, d))) == args.tier or tier is None]
     elif args.tasks:
         ids = sorted({t.strip() for t in args.tasks.split(",") if t.strip()})
     else:
