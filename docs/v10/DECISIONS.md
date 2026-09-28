@@ -274,3 +274,11 @@ One entry per decision: context, choice, why, how to reverse. Newest last.
 - Amends D30: legacy coverage leaves the large tier and lives in the modernize eval (M-27). The large tier is 10 feature tasks.
 - EV-14 may decide the default flip on 5 real large tasks, 2 runs per arm: v10 completions, cost per completed task and p50 time all at or better than raw. No large-tier speed claim until 10 tasks; at 10, EV-14 re-runs, and a loss on any axis reverts the default.
 - Ruled by the CTO (opus) on the Chief of Staff's request.
+
+## D35. 2026-09-28: DEP workstream (dependency modernization), founder directive
+
+- Goal: every dependency, runtime, GitHub Action, image, chart, Terraform provider and the Homebrew formula on its latest stable version, nothing broken.
+- Priority: E, EV and M slices always first. DEP uses at most 3 builders, only when the ready queue has spare capacity, never holds a train and never blocks a release.
+- Order: DEP-01 inventory (docs/v10/DEPS.md, deterministic, no upgrades), then small slices: patch and minor grouped per ecosystem (LOW, lockfiles regenerated and committed); every MAJOR its own slice (MEDIUM, release notes and migration guide read first, breaking changes fixed in the slice, notable changes recorded); Actions on the latest major pinned by full commit SHA with the version in a comment; EOL runtimes dropped and current stable Node, Python, Bun added, keeping one previous supported version where users still run it; Agent SDK and Anthropic SDK upgrades re-run the v10 small-tier eval on 5 tasks (completion, cost, time no worse); Docker, Helm, Terraform on latest stable with digests pinned.
+- Safety: every new or changed package passes the hallucinated-dependency guard and npm/pip audit with no new high or critical findings; full Tier B plus the moat suite green per slice, ratchet never regresses; anything unfixable within budget is parked in DEPS.md with the exact error, never force-merged; upgrades ride normal trains and are listed in each train's CHANGELOG.
+- Keep current: a weekly scheduled check (or pulse DEPS_STALE) reports anything more than one minor behind or past EOL and cuts a DEP slice.
