@@ -22,8 +22,7 @@ const VERDICTS = new Set<string>(["VERIFIED", "PARTIAL", "ALREADY_SATISFIED", "S
 const SESSION_EXITS = new Set(["done", "already_done", "spec_conflict", "killed", "error"]);
 export const BACKSTOP_NOT_PROVEN = "worker killed by the supervisor backstop (cap minus grace)";
 export const BACKSTOP_GRACE_S = 30; // default seconds held back from the cap for post-kill work (PR or comment)
-// Grace clamps to min(graceS, capS/30) so softCap (machine.ts, 14/15 of capS) < backstop < capS for
-// any capS > 0 -- a fixed 30s grace hit 0 below capS=30 and killed the worker at spawn (E-67 finding 1).
+// Grace clamps to min(graceS, capS/30): softCap (14/15 of capS, machine.ts) < backstop < capS for any capS > 0.
 export function backstopS(capS: number, graceS: number = BACKSTOP_GRACE_S): number { return capS - Math.min(graceS, capS / 30); }
 const DRAIN_MS = 2000; // after the worker exits, how long P0 waits for stdout to drain before closing it
 
@@ -144,9 +143,9 @@ function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
 }
 
 // Spawns the worker in its own process group, waits for exit plus stdout drain (DRAIN_MS), and backstops at
-// backstopMs with SIGTERM then SIGKILL after 2s; exit is null if it never started or was killed by a signal.
+// backstopMs with SIGTERM then SIGKILL after escalateMs, clamped so a SIGTERM-trapping worker cannot outlive the cap.
 function spawnWorker(
-  argv: string[], env: NodeJS.ProcessEnv, cwd: string, backstopMs: number, onLine: (l: string) => void,
+  argv: string[], env: NodeJS.ProcessEnv, cwd: string, backstopMs: number, escalateMs: number, onLine: (l: string) => void,
 ): Promise<{ code: number | null; killed: boolean }> {
   return new Promise((resolve) => {
     const [cmd, ...args] = argv;
@@ -174,7 +173,7 @@ function spawnWorker(
     timers.push(setTimeout(() => {
       killed = true;
       killGroup(child.pid, "SIGTERM");
-      timers.push(setTimeout(() => killGroup(child.pid, "SIGKILL"), 2000));
+      timers.push(setTimeout(() => killGroup(child.pid, "SIGKILL"), escalateMs));
     }, backstopMs));
     child.on("error", () => finish(null));
     child.on("exit", (code) => {
@@ -205,8 +204,9 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const envCap = Number(env.LOKI_E10_CAP_S);
   const capS = opts.capS ?? (envCap > 0 ? envCap : DEFAULT_CAP_S);
   const backstopMs = backstopS(capS, opts.graceS ?? BACKSTOP_GRACE_S) * 1000; // hard SIGKILL safety net for a stage blocking past the worker's own soft cap
+  const escalateMs = Math.max(0, Math.min(2000, capS * 1000 - backstopMs)); // SIGTERM->SIGKILL clamped so a trapping worker cannot outlive the cap
   let sealed: Record<string, unknown> | null = null;
-  const worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, (line) => {
+  const worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, escalateMs, (line) => {
     const e = log.ingest(line);
     if (e?.type === "receipt.sealed") sealed = e.data;
   });

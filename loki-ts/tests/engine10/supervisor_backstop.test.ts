@@ -30,7 +30,16 @@ function repoWithCommit(): { dir: string; baseSha: string } {
 }
 // Preflight requires a resolvable provider CLI; point it at a no-op so these tests need no real
 // claude CLI on PATH (and still pass with the real one removed from PATH, per the rework rules).
-const ENV: NodeJS.ProcessEnv = { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true" };
+// checkPreflight also shells out to `gh --version` / `gh auth status` whenever opts.pr is set and
+// the origin looks like GitHub (every repoWithCommit() remote does): a stub ahead of the real gh on
+// PATH makes that check independent of the host's gh login AND of another test file (bun runs every
+// file in one process) mutating GH_TOKEN/GITHUB_TOKEN in the shared process.env mid-run. Reproduced:
+// this file alongside tests/runner/github_token_withheld.test.ts fails "gh ... not authenticated"
+// without the stub, on both the pre- and post-r4 backstop formula.
+const ghStubDir = mkdtempSync(join(tmpdir(), "e10-bs-gh-"));
+roots.push(ghStubDir);
+writeFileSync(join(ghStubDir, "gh"), '#!/bin/sh\ncase "$1" in\n  --version) echo "gh stub 0.0.0" ;;\n  auth) exit 0 ;;\n  *) exit 1 ;;\nesac\n', { mode: 0o755 });
+const ENV: NodeJS.ProcessEnv = { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true", PATH: `${ghStubDir}:${process.env.PATH ?? ""}` };
 const worker = (code: string): string[] => [process.execPath, "-e", code];
 const intakeLine = (baseSha: string): string =>
   `console.log(JSON.stringify({ type: "stage.completed", stage: "intake", data: { base_sha: ${JSON.stringify(baseSha)} } }));`;
@@ -216,15 +225,54 @@ describe("E-67 rework: supervisor backstop", () => {
     expect(r.notProven).not.toContain(BACKSTOP_NOT_PROVEN);
   }, 10_000);
 
+  /** Polls until pid is gone (reaped after SIGKILL), returning elapsed ms from t0, or -1 on timeout.
+   *  Measures the worker's actual death, not total supervisor wall time (which also includes
+   *  backstopCommit's git calls and stdout drain, too noisy a bound under load). */
+  async function pollDeathMs(t0: number, pidFile: string, maxMs: number): Promise<number> {
+    const deadline = t0 + maxMs;
+    while (Date.now() < deadline) {
+      await Bun.sleep(30);
+      let pidStr: string;
+      try { pidStr = readFileSync(pidFile, "utf8"); } catch { continue; }
+      try { process.kill(Number(pidStr), 0); } catch { return Date.now() - t0; }
+    }
+    return -1;
+  }
+
   test("small capS, default grace: a hung worker is still killed before the cap elapses", async () => {
     const { dir } = repoWithCommit();
-    const code = `setInterval(() => {}, 1000);`;
+    const pidFile = join(dir, "worker.pid");
+    const code = `require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`;
     const t0 = Date.now();
-    const r = await runSupervisor({ runId: "e10-bs9", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 5 });
-    const wallMs = Date.now() - t0;
-    expect(wallMs).toBeLessThan(5000);
-    expect(wallMs).toBeGreaterThan(backstopS(5) * 1000 - 200); // fires near its computed instant, not at spawn
+    const done = runSupervisor({ runId: "e10-bs9", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 5 });
+    const deathMs = await pollDeathMs(t0, pidFile, 6000);
+    const r = await done;
+    expect(deathMs).toBeGreaterThan(0);
+    expect(deathMs).toBeGreaterThan(backstopS(5) * 1000 - 300); // fires near its computed instant, not at spawn
+    expect(deathMs).toBeLessThan(5200);
     expect(r.verdict).toBe("FAILED");
     expect(r.notProven).toContain(BACKSTOP_NOT_PROVEN);
   }, 10_000);
+
+  // E-67 finding 1 follow-up: the SIGTERM->SIGKILL escalation used to be a fixed 2s regardless of
+  // the cap, so a worker that traps SIGTERM (ignores it, only SIGKILL ends it) at a small capS still
+  // got its full 2s before SIGKILL -- past the cap (capS=5: backstop ~4.83s, old SIGKILL ~6.83s).
+  // Red on the pre-fix fixed 2000ms escalation (death near 6.8s); green once escalateMs clamps to
+  // the time remaining before the cap (capS*1000 - backstopMs).
+  test("small capS, default grace: a SIGTERM-trapping worker still dies at or before the cap", async () => {
+    const { dir } = repoWithCommit();
+    const pidFile = join(dir, "worker.pid");
+    const code = `
+      process.on("SIGTERM", () => {});
+      require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+      setInterval(() => {}, 1000);
+    `;
+    const t0 = Date.now();
+    const done = runSupervisor({ runId: "e10-bs10", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 5 });
+    const deathMs = await pollDeathMs(t0, pidFile, 8000);
+    const r = await done;
+    expect(deathMs).toBeGreaterThan(0);
+    expect(deathMs).toBeLessThan(5300); // must die at/near the 5s cap, never the old fixed-escalation ~6.8s
+    expect(r.verdict).toBe("FAILED");
+  }, 15_000);
 });
