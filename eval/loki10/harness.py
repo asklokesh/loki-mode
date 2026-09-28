@@ -87,14 +87,19 @@ AUTH_ENV = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 # by exact name, never a prefix match. Includes LOKI_E10_PLAN/WALL/WALL_TIER
 # (E-45 wiring, not read yet) and the operator tunables grep finds today
 # (process.env.LOKI_E10_ in loki-ts/src/engine10: CAP_S, INVOKER,
-# DASHBOARD_PORT). Excludes run inputs an operator's leftover value could use
-# to steer or replace the eval task (TASK_TEXT, ISSUE_JSON, REPO_DIR) and
-# per-session plumbing session.ts's childEnv sets itself (BRIEF, TIER,
-# PROVIDER, STAGE). Credentials are never in this list; they stay withheld
-# exactly as SCRUB_ENV/arm_auth already handle them.
+# DASHBOARD_PORT). LOKI_E10_PREFIX (S41-09) is read in loki-ts/src/runner/
+# providers.ts's buildSdkLoopOptions, not src/engine10, so it is outside that
+# grep's scope -- added here so S41-15's rerun-with-every-flag can turn it on,
+# the same gap E-98f hit for LOKI_E10_CASCADE. Excludes run inputs an
+# operator's leftover value could use to steer or replace the eval task
+# (TASK_TEXT, ISSUE_JSON, REPO_DIR) and per-session plumbing session.ts's
+# childEnv sets itself (BRIEF, TIER, PROVIDER, STAGE). Credentials are never
+# in this list; they stay withheld exactly as SCRUB_ENV/arm_auth already
+# handle them.
 V10_ENGINE_ENV_ALLOWLIST = (
     "LOKI_E10_PLAN", "LOKI_E10_WALL", "LOKI_E10_WALL_TIER",
     "LOKI_E10_CAP_S", "LOKI_E10_INVOKER", "LOKI_E10_DASHBOARD_PORT",
+    "LOKI_E10_PREFIX",
 )
 KEYCHAIN_SERVICE = "Claude Code-credentials"
 SECURITY_BIN = "/usr/bin/security"  # absolute: never a PATH lookup
