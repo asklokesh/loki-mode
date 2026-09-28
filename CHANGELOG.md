@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.0 (2026-09-28)
+
+Loki 10 engine (opt-in: `LOKI_ENGINE=v10`): the verify stage now actually runs a Python project's tests and the receipt can no longer call a run verified when the tests ran against the installed package instead of the repo. Also fixes the published package resolving an older Agent SDK than the engine was built for.
+
+### Changed
+- Verify runs Python checks with the project's own interpreter (`.venv`, then `venv`, then an in-repo `$VIRTUAL_ENV`, then `python3`, then `python`) and ruff the same way (E-98a). Before, it called `python`, so on hosts with only `python3` every test check was skipped and no fix round ever ran.
+- A run whose tests ran on the system interpreter is marked NOT PROVEN ("tests ran on the system interpreter") and can no longer seal as VERIFIED, because a system interpreter imports the installed package, not the code under change (E-98a).
+- An implement stage that stops with a spec conflict still goes through verify and the fix loop; the receipt keeps the SPEC_CONFLICT verdict and its reason (E-98b).
+- The implementer may add new test functions to existing test files but may not edit or delete existing ones; when the plan names no relevant files, the tests for the files the task names are used (E-98c).
+- The repo map indexes top-level Python `def`, `async def` and `class` names, so planning finds the relevant files in Python repositories (E-98d).
+
+### Fixed
+- A session stopped at its time limit now records its cost from the usage already streamed (marked `partial-stream`), instead of leaving the run's cost unmeasured (E-98e).
+- The published package pinned `@anthropic-ai/claude-agent-sdk` 0.3.267 (and the Docker image 0.3.208) while the engine was built and evaluated on 0.3.283; all pins now match, with a test that fails on any drift (E-106).
+- Release tooling: a release is refused when its CHANGELOG section is missing, empty or a placeholder, and the GitHub release body is taken from that section (E-88); a version-only bump now changes only the version literal in the bundled engine (E-108).
+
 ## v10.4.1 (2026-09-28)
 
 `loki modernize <repo> --to <target>` now runs on the v10 engine whatever your default engine is, and the release tooling can no longer publish a version without its built files. This release carries v10.4.0, which was not published: its release was blocked by the secret scan (see Fixed).
