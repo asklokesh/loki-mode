@@ -23,6 +23,8 @@ function repo(): string {
   const d = mkdtempSync(join(tmpdir(), "e10-deepwire-"));
   roots.push(d);
   execFileSync("git", ["init", "-q", d]);
+  execFileSync("git", ["-C", d, "config", "user.name", "t"]); // preflight needs an identity; CI hosts have none
+  execFileSync("git", ["-C", d, "config", "user.email", "t@example.com"]);
   execFileSync("git", ["-C", d, "remote", "add", "origin", "https://github.com/acme/widget.git"]);
   return d;
 }

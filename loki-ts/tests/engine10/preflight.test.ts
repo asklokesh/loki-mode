@@ -13,7 +13,8 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkPreflight } from "../../src/engine10/preflight.ts";
+import { checkPreflight, PreflightError } from "../../src/engine10/preflight.ts";
+import { runSupervisor } from "../../src/engine10/supervisor.ts";
 
 const PREFLIGHT_TS = join(import.meta.dir, "..", "..", "src", "engine10", "preflight.ts");
 const MISSING_CLI = "/definitely/not/a/real/loki-preflight-binary-xyz";
@@ -151,21 +152,16 @@ describe("runSupervisor forwards opts.env to preflight", () => {
   // preflight() with no env field, so checkPreflight fell back to process.env
   // and never saw LOKI_HOST_GUARD/LOKI_*_CLI set only in opts.env (the shape
   // every caller, including providers.test.ts, actually uses).
-  test("opts.env distinct from the child's process.env drives the fatal, not process.env", () => {
+  test("opts.env distinct from process.env drives the fatal, which rejects in-process instead of exiting", async () => {
     const { dir, env: repoEnv } = identifiedRepo();
     const optsEnv = { ...repoEnv, LOKI_HOST_GUARD: "1", LOKI_CODEX_CLI: stubCli() };
-    const code = [
-      `const { runSupervisor } = await import(${JSON.stringify(join(import.meta.dir, "..", "..", "src", "engine10", "supervisor.ts"))});`,
-      `await runSupervisor({ runId: "e10-pf-sv-guard", repoDir: ${JSON.stringify(dir)}, workerArgv: ["/bin/false"], started: { provider: "codex" }, env: ${JSON.stringify(optsEnv)} });`,
-      `console.log("UNREACHABLE");`,
-    ].join("\n");
-    // The child's own process.env is deliberately bare and has none of the
-    // above: if runSupervisor read process.env instead of opts.env, the
-    // host-guard check would never fire.
-    const res = spawnSync(process.execPath, ["-e", code], { encoding: "utf8", env: { PATH: process.env.PATH ?? "" } });
-    expect(res.status).toBe(2);
-    expect(res.stderr).toContain("LOKI_HOST_GUARD=1 is set but provider 'codex'");
-    expect(res.stdout).not.toContain("UNREACHABLE");
+    // This test process's own env has no LOKI_HOST_GUARD: if runSupervisor read process.env
+    // instead of opts.env, the host-guard check would never fire. And if preflight still
+    // called process.exit, this whole test file would die here instead of reaching expect.
+    const err = await runSupervisor({ runId: "e10-pf-sv-guard", repoDir: dir, workerArgv: ["/bin/false"], started: { provider: "codex" }, env: optsEnv })
+      .then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(PreflightError);
+    expect((err as Error).message).toContain("LOKI_HOST_GUARD=1 is set but provider 'codex'");
     expect(existsSync(join(dir, ".loki", "runs"))).toBe(false);
   });
 });

@@ -36,7 +36,7 @@
 //     origin pushes anyway. Also tracked as a `test.todo`.
 import { afterAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readEvents } from "../../src/engine10/events.ts";
@@ -59,14 +59,22 @@ function repo(): string {
   const d = mkdtempSync(join(tmpdir(), "e10-resume-"));
   roots.push(d);
   execFileSync("git", ["init", "-q", d]);
+  execFileSync("git", ["-C", d, "config", "user.name", "t"]); // preflight needs an identity; CI hosts have none
+  execFileSync("git", ["-C", d, "config", "user.email", "t@example.com"]);
   execFileSync("git", ["-C", d, "remote", "add", "origin", "https://github.com/acme/widget.git"]);
   return d;
 }
 
+// Preflight (E-36) checks the claude CLI (the default provider) and, for a GitHub origin with a
+// PR step, `gh auth status`; a stub gh and LOKI_CLAUDE_CLI keep the suite independent of the
+// host (CI has neither claude nor gh auth).
+const STUB_BIN = mkdtempSync(join(tmpdir(), "e10-resume-bin-"));
+roots.push(STUB_BIN);
+writeFileSync(join(STUB_BIN, "gh"), "#!/bin/sh\nexit 0\n");
+chmodSync(join(STUB_BIN, "gh"), 0o755);
+
 function baseEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  // Preflight (E-36) defaults to the claude CLI when no provider is passed in; point it at an
-  // existing fixture so the suite does not depend on claude being installed (CI has none).
-  return { PATH: process.env.PATH, HOME: process.env.HOME, LOKI_CLAUDE_CLI: SLEEP_PROVIDER, ...extra };
+  return { PATH: `${STUB_BIN}:${process.env.PATH}`, HOME: process.env.HOME, LOKI_CLAUDE_CLI: SLEEP_PROVIDER, ...extra };
 }
 
 async function waitFor(pred: () => boolean, timeoutMs: number): Promise<void> {

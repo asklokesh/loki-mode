@@ -28,6 +28,12 @@ export async function checkPreflight(o: PreflightOptions): Promise<PreflightResu
   else if (!canImport) warnings.push("receipts will be UNSIGNED (cryptography is not importable under python3 -I)");
   return { fatal: null, warnings };
 }
+export class PreflightError extends Error {}
+/** Library form: warnings to stderr, a fatal check throws PreflightError (never exits, so in-process callers and tests survive). */
+export async function assertPreflight(o: PreflightOptions): Promise<void> {
+  const r = await checkPreflight(o); for (const w of r.warnings) process.stderr.write(`${w}\n`); if (r.fatal) throw new PreflightError(r.fatal);
+}
+/** CLI form: exits 2 with the fatal line. */
 export async function preflight(o: PreflightOptions): Promise<void> {
-  const r = await checkPreflight(o); for (const w of r.warnings) process.stderr.write(`${w}\n`); if (r.fatal) { process.stderr.write(`${r.fatal}\n`); process.exit(2); }
+  try { await assertPreflight(o); } catch (e) { if (!(e instanceof PreflightError)) throw e; process.stderr.write(`${e.message}\n`); process.exit(2); }
 }

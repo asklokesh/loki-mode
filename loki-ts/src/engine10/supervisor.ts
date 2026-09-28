@@ -10,7 +10,7 @@ import { withholdGithubTokens } from "../runner/github_token.ts";
 import { EventLog, fold, readEvents, tail, type Folded } from "./events.ts";
 import { fetchIssueToFile } from "./fetch_issue.ts";
 import { formatHeartbeatLine, formatStageLine, formatSummary } from "./output.ts";
-import { preflight } from "./preflight.ts";
+import { assertPreflight, PreflightError } from "./preflight.ts";
 import { resolveModel } from "./session.ts";
 import type { PrContext } from "./stages/pr.ts";
 import type { EventEnvelope, PushEnv, StageName, Verdict } from "./types.ts";
@@ -175,7 +175,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   if (done) return { verdict: (done.verdict as Verdict) ?? "FAILED", tampered: false, workerExit: 0, prUrl: (done.pr_url as string | null) ?? null, notProven: Array.isArray(done.not_proven) ? (done.not_proven as string[]) : [] };
   const startedProvider = opts.started?.["provider"]; // E-36: provider read off opts.started, not a dedicated field (main(), below, is the only populater)
   const env = opts.env ?? process.env;
-  await preflight({ repoDir: opts.repoDir, provider: typeof startedProvider === "string" ? startedProvider : "claude", pr: opts.pr !== undefined, env });
+  await assertPreflight({ repoDir: opts.repoDir, provider: typeof startedProvider === "string" ? startedProvider : "claude", pr: opts.pr !== undefined, env });
   writeEngineMarker(opts.repoDir, opts.runId); // first: a failing run still leaves it
   const origin = readOriginUrl(opts.repoDir); // pinned once, before any provider runs
   const log = new SupervisorLog(join(opts.repoDir, eventsRelPath(opts.runId)), opts.runId);
@@ -296,8 +296,9 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
       if (r.status !== "completed") return { url: null, draft: false, existing: null, notProven: [`PR not opened: ${r.reason}`] };
       return { url: d.pr_url ?? null, draft: d.draft === true, existing: d.existing ?? null, notProven: d.not_proven };
     },
-  });
+  }).catch((e) => { if (!(e instanceof PreflightError)) throw e; process.stderr.write(`${e.message}\n`); return null; });
   clearInterval(tailTimer);
+  if (!res) { stopTail(); return 2; } // preflight refused: exit 2 with the fatal line, before any run state
   await new Promise((r) => setTimeout(r, 300)); // let the tail flush the last lines
   stopTail();
 
