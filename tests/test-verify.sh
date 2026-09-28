@@ -137,18 +137,30 @@ fi
 
 # -------------------------------------------------------------------------
 # Scenario 3: planted fake secret -> BLOCKED (exit 2)
-# A planted AWS-style access key id, matched by the regex fallback
-# (gitleaks is not assumed installed). The literal is a well-known
-# documentation example value, not a live credential.
+# A planted AWS-style access key id, matched by BOTH scanner paths: the
+# regex fallback (AKIA[0-9A-Z]{16}, autonomy/verify.sh verify_secret_scan_file)
+# and gitleaks's aws-access-token rule (\b(?:A3T|AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16}\b).
+# AWS's documented example key (AKIAIOSFODNN7EXAMPLE) will NOT do: gitleaks
+# 8.30.x allowlists that exact literal, so it comes back clean wherever
+# gitleaks is on PATH and this scenario only passes by accident in CI (no
+# gitleaks). This value is assembled from parts at runtime so the repo
+# itself never contains the literal secret shape (it would otherwise trip
+# these same scanners on the test file). Charset for each part is
+# restricted to [A-Z2-7] to match gitleaks's rule, a subset of the regex
+# fallback's [0-9A-Z].
 # -------------------------------------------------------------------------
 S3="$TMP_ROOT/s3-secret"
 init_repo "$S3"
+_fake_key_prefix="AKIA"
+_fake_key_body1="Q3X7K5M2"
+_fake_key_body2="P4R6T7W2"
+FAKE_AWS_KEY="${_fake_key_prefix}${_fake_key_body1}${_fake_key_body2}"
 ( cd "$S3"
   git checkout -q -b feature
-  cat > config.py <<'EOF'
-# Example configuration (planted test value, not a real credential)
-AWS_ACCESS_KEY_ID = "AKIAIOSFODNN7EXAMPLE"
-EOF
+  {
+      printf '%s\n' "# Example configuration (planted test value, not a real credential)"
+      printf 'AWS_ACCESS_KEY_ID = "%s"\n' "$FAKE_AWS_KEY"
+  } > config.py
   git add config.py
   git commit -qm "add config with planted secret" --no-gpg-sign --no-verify
 )
@@ -217,9 +229,8 @@ init_repo "$S4B"
 ( cd "$S4B"
   # Plant a secret in a file that is part of the base, then create a feature
   # branch with NO new commits: merge-base..HEAD is empty.
-  cat >> README.md <<'EOF'
-AKIAIOSFODNN7EXAMPLE
-EOF
+  # Same runtime-assembled non-example key as scenario 3 (see its comment).
+  printf '%s\n' "$FAKE_AWS_KEY" >> README.md
   git add README.md
   git commit -qm "amend base with planted secret in untouched file" --no-gpg-sign --no-verify
   git checkout -q -b feature
