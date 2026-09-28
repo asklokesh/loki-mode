@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { fold } from "./events.ts";
 import { REGISTRY } from "./registry.ts";
-import { DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS } from "./types.ts";
+import { backstopS, DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS, STAGE_BUDGETS } from "./types.ts";
 import type { EventEnvelope, RunContext, Stage, StageName, StageResult } from "./types.ts";
 type Obj = Record<string, unknown>;
 /** Run order. An array is a parallel group. fix is driven by the verify loop, deep is detached (supervisor). */
@@ -55,6 +55,7 @@ const hasFailures = (d: Obj | undefined): boolean => Array.isArray(d?.failures_g
 const earlyExit = (d: Obj): boolean => d.already_satisfied === true || d.exit === "spec_conflict";
 /** After a cap or limit kill, how long the machine waits for the aborted stage to settle before moving on. */
 const KILL_GRACE_MS = 2000;
+export function softCapS(capS: number): number { const plain = (capS * 14) / 15, budget = backstopS(capS) - ((STAGE_BUDGETS.commit.targetS ?? 0) + (STAGE_BUDGETS.seal.targetS ?? 0) + KILL_GRACE_MS / 1000 + 2); return budget >= 0 ? Math.min(plain, budget) : plain; } // tightens 14/15 of capS so commit+seal's tail (plus a 2s margin: this clock starts after worker boot, the backstop's starts at spawn) fits before the backstop, else the plain point (E-67 finding 1 follow-up 2)
 export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Promise<MachineResult> {
   const load = opts.load ?? defaultLoader(opts.stagesDir ?? join(import.meta.dir, "stages"));
   const prior = opts.prior ?? [];
@@ -66,8 +67,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   if (folded.run.completed) return { outputs, capHit, stopped: null, final: true };
   const startedTs = folded.run.started ? Date.parse(folded.run.started.ts) : NaN;
   const startMs = opts.startedAtMs ?? (Number.isFinite(startedTs) ? startedTs : ctx.clock.now());
-  // The cap fires at 14/15 of capS (14:00 of 15:00) so Seal and the draft PR land inside it.
-  const capAtMs = startMs + (ctx.capS * 1000 * 14) / 15;
+  const capAtMs = startMs + softCapS(ctx.capS) * 1000; // 14/15 of capS for the default/deep caps; see softCapS above
   const capCtl = new AbortController();
   const capTimer = setTimeout(() => capCtl.abort(), Math.max(0, capAtMs - ctx.clock.now()));
   const sctx: MachineRunContext = { ...ctx, outputs: () => ({ ...outputs }), capHit: () => capHit };
@@ -156,7 +156,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (!isTail && capReached()) markCap(todo[0] as StageName);
       if (capHit && !isTail) { jumped = true; continue; }
       const results = await Promise.all(todo.map((n) => runStage(n, !isTail)));
-      if (todo[0] === "intake" && results[0]?.status === "failed") {
+      if (todo[0] === "intake" && results[0]?.status === "failed" && !capHit) {
         return { outputs, capHit, stopped: "intake failed", final: false };
       }
       if (todo.some((n, i) => mustJump(n, results[i] ?? null))) { jumped = true; continue; }

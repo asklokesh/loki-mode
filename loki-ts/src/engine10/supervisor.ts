@@ -1,7 +1,7 @@
 // Loki 10 supervisor (P0, docs/v10/ENGINE.md sections 5, 6, 10): eval marker first, origin pinned once, worker
 // spawned with withheld tokens; single writer of events.jsonl (seq, hash, tamper refusal); --resume reuses the run
 // id; post-PR: detached deep verify, then Slack notify.
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, type Hash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -14,14 +14,14 @@ import { assertPreflight, PreflightError } from "./preflight.ts";
 import { resolveModel } from "./session.ts";
 import type { PrContext } from "./stages/pr.ts";
 import type { EventEnvelope, PushEnv, StageName, Verdict } from "./types.ts";
-import { DEEP_CAP_S, DEFAULT_CAP_S, STAGE_BUDGETS } from "./types.ts";
+import { backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, pushArgv, STAGE_BUDGETS } from "./types.ts";
 
+export { backstopS, BACKSTOP_GRACE_S }; // re-exported: callers import the backstop math from here, its home before r4
 export const TAMPER_NOT_PROVEN = "event log modified outside the engine";
 const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detected", "pr.opened"]); // types only the supervisor may write; same types from the worker are dropped
 const VERDICTS = new Set<string>(["VERIFIED", "PARTIAL", "ALREADY_SATISFIED", "SPEC_CONFLICT", "FAILED"]);
 const SESSION_EXITS = new Set(["done", "already_done", "spec_conflict", "killed", "error"]);
-export const BACKSTOP_NOT_PROVEN = "worker killed by the supervisor backstop (cap plus grace)";
-export const BACKSTOP_GRACE_S = 60; // seconds past the cap the worker gets to seal and exit before P0 kills its process group
+export const BACKSTOP_NOT_PROVEN = "worker killed by the supervisor backstop (cap minus grace)";
 const DRAIN_MS = 2000; // after the worker exits, how long P0 waits for stdout to drain before closing it
 
 const nonNegNum = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v) && v >= 0;
@@ -36,19 +36,21 @@ export interface PrOutcome { url: string | null; draft: boolean; existing: boole
 export type PrStep = (p: {
   env: NodeJS.ProcessEnv; // the supervisor's own credentialed env (read-only by contract)
   pushEnv: PushEnv; // origin pin from memory, never from the log
-  runId: string;
-  repoDir: string;
-  verdict: Verdict;
+  runId: string; repoDir: string; verdict: Verdict;
+  notProven: string[]; // accumulated so far (backstop/tamper included): the only place the PR body learns why when a killed worker never sealed a receipt
 }) => Promise<PrOutcome | null>;
+// Backstop fallback for a FAILED run with no PR (no diff, or no remote): on an issue run, posts a comment naming the reason instead of vanishing.
+export type CommentStep = (p: { env: NodeJS.ProcessEnv; runId: string; issueRef: string; reason: string }) => Promise<{ argv: string[]; ok: boolean } | null>;
 
 export interface SupervisorOptions {
   runId: string;
   repoDir: string;
   workerArgv: string[]; // argv of the worker process, e.g. [bun, cli, "engine10", "worker", ...] (wired by E-12)
   env?: NodeJS.ProcessEnv; // defaults to process.env; never mutated
-  started?: Record<string, unknown>; // extra run.started data (task_source, provider, model, ...)
+  started?: Record<string, unknown>; // extra run.started data (task_source, provider, model, issue_ref, ...)
   pr?: PrStep; deepArgv?: string[]; // pr absent means no PR; deepArgv absent means no detached deep verify after pr.opened
-  capS?: number; // global cap in seconds (default LOKI_E10_CAP_S, else DEFAULT_CAP_S); the backstop fires at cap plus grace
+  comment?: CommentStep; // absent means no issue-comment fallback (a FAILED, no-diff issue run then only prints)
+  capS?: number; // global cap in seconds (default LOKI_E10_CAP_S, else DEFAULT_CAP_S); the backstop fires at cap minus grace
   graceS?: number; // default BACKSTOP_GRACE_S
 }
 export interface SupervisorResult {
@@ -79,6 +81,17 @@ export function readOriginUrl(repoDir: string): string | null {
 export function githubRepoFromUrl(url: string | null): string | null {
   const m = url?.match(/^(?:https:\/\/(?:[^@/]+@)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^/]+\/[^/]+?)(?:\.git)?\/?$/);
   return m?.[1] ?? null;
+}
+/** Commits whatever a killed or crashed worker left uncommitted or untracked (minus .loki), so it
+ *  reaches the pushed branch: `git diff` alone misses untracked files, and nothing pushes a tree
+ *  that was never committed. Withheld-token env, hooks/fsmonitor off (repoDir/.git is agent-writable).
+ *  A clean tree, or add/reset failing, is a no-op: best-effort, never the reason a run fails. */
+function backstopCommit(repoDir: string, workerEnv: NodeJS.ProcessEnv, runId: string): void {
+  const g = (args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], { cwd: repoDir, env: workerEnv, stdio: "ignore" });
+  try { g(["add", "-A", "--", "."]); g(["reset", "-q", "--", ".loki"]); g(["diff", "--cached", "--quiet"]); } catch (err) {
+    if ((err as { status?: number }).status !== 1) return; // add/reset failed, or truly nothing staged
+    try { g(["commit", "-q", "-m", `loki: backstop commit (${runId})`, "-m", `Loki-Run: ${runId}`]); } catch { /* best-effort */ }
+  }
 }
 export class SupervisorLog { // single writer with a running sha256 of the bytes it appended
   private readonly log: EventLog;
@@ -128,9 +141,9 @@ function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
 }
 
 // Spawns the worker in its own process group, waits for exit plus stdout drain (DRAIN_MS), and backstops at
-// backstopMs with SIGTERM then SIGKILL after 2s; exit is null if it never started or was killed by a signal.
+// backstopMs with SIGTERM then SIGKILL after escalateMs, clamped so a SIGTERM-trapping worker cannot outlive the cap.
 function spawnWorker(
-  argv: string[], env: NodeJS.ProcessEnv, cwd: string, backstopMs: number, onLine: (l: string) => void,
+  argv: string[], env: NodeJS.ProcessEnv, cwd: string, backstopMs: number, escalateMs: number, onLine: (l: string) => void,
 ): Promise<{ code: number | null; killed: boolean }> {
   return new Promise((resolve) => {
     const [cmd, ...args] = argv;
@@ -158,7 +171,7 @@ function spawnWorker(
     timers.push(setTimeout(() => {
       killed = true;
       killGroup(child.pid, "SIGTERM");
-      timers.push(setTimeout(() => killGroup(child.pid, "SIGKILL"), 2000));
+      timers.push(setTimeout(() => killGroup(child.pid, "SIGKILL"), escalateMs));
     }, backstopMs));
     child.on("error", () => finish(null));
     child.on("exit", (code) => {
@@ -188,9 +201,10 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   withholdGithubTokens(workerEnv);
   const envCap = Number(env.LOKI_E10_CAP_S);
   const capS = opts.capS ?? (envCap > 0 ? envCap : DEFAULT_CAP_S);
-  const backstopMs = (capS + (opts.graceS ?? BACKSTOP_GRACE_S)) * 1000;
+  const backstopMs = backstopS(capS, opts.graceS ?? BACKSTOP_GRACE_S) * 1000; // hard SIGKILL safety net for a stage blocking past the worker's own soft cap
+  const escalateMs = Math.max(0, Math.min(2000, capS * 1000 - backstopMs)); // SIGTERM->SIGKILL clamped so a trapping worker cannot outlive the cap
   let sealed: Record<string, unknown> | null = null;
-  const worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, (line) => {
+  const worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, escalateMs, (line) => {
     const e = log.ingest(line);
     if (e?.type === "receipt.sealed") sealed = e.data;
   });
@@ -203,10 +217,21 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   let prUrl: string | null = null;
   const intact = log.verify(); // unconditional re-check before the PR
   if (!intact) notProven.push(TAMPER_NOT_PROVEN);
-  // E-66: already-satisfied (no change needed) opens no PR, whether from the issue-closed check or the evidence-confirmed check.
-  if (opts.pr && intact && origin && verdict !== "FAILED" && verdict !== "ALREADY_SATISFIED") {
+  // E-66: already-satisfied opens no PR. E-67: FAILED (including a backstop kill) does not block the
+  // PR outright; backstopCommit lands what the kill left uncommitted so the diff below (against
+  // intake's base_sha) sees it. No diff falls to the comment/print branch below.
+  let hasDiff = false;
+  if (verdict === "FAILED") {
+    backstopCommit(opts.repoDir, workerEnv, opts.runId);
+    const baseE = fold(readEvents(log.path)).stages["intake"], base = baseE?.type === "stage.completed" && typeof baseE.data.base_sha === "string" ? baseE.data.base_sha : null;
+    try {
+      const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: opts.repoDir, env: process.env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      hasDiff = base !== null && head !== base;
+    } catch { /* no HEAD yet (intake never committed a base): no diff */ }
+  }
+  if (opts.pr && intact && origin && verdict !== "ALREADY_SATISFIED" && (verdict !== "FAILED" || hasDiff)) {
     const pushEnv: PushEnv = { _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin };
-    const out = await opts.pr({ env, pushEnv, runId: opts.runId, repoDir: opts.repoDir, verdict });
+    const out = await opts.pr({ env, pushEnv, runId: opts.runId, repoDir: opts.repoDir, verdict, notProven });
     notProven.push(...(out?.notProven ?? []));
     if (out?.url) {
       prUrl = out.url;
@@ -214,6 +239,14 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
       // E-48: deep verify (stages/deep.ts) runs detached, never keeping the supervisor alive; deep.started records the pid so it is never orphaned untracked.
       if (opts.deepArgv) { const [cmd, ...dArgs] = [...opts.deepArgv, origin], child = cmd ? spawn(cmd, dArgs, { cwd: opts.repoDir, env: workerEnv, stdio: "ignore", detached: true }) : null; child?.on("error", () => {}); if (child?.pid) { child.unref(); log.append("deep.started", "deep", { pid: child.pid }); } else notProven.push("deep verify not spawned"); }
     }
+  }
+  if (verdict === "FAILED" && prUrl === null) { // E-67: never vanish silently -- an issue run gets a comment naming the reason, anything else is printed
+    const reason = notProven.join("; ") || "run failed", issueRef = opts.started?.["issue_ref"];
+    const isIssueWithRef = opts.started?.["task_source"] === "issue" && typeof issueRef === "string" && issueRef !== "";
+    if (isIssueWithRef && opts.comment) {
+      const out = await opts.comment({ env, runId: opts.runId, issueRef: issueRef as string, reason });
+      log.append("issue.commented", null, { argv: out?.argv ?? [], ok: out?.ok ?? false, reason });
+    } else process.stderr.write(`engine10: run ${opts.runId} ended FAILED with no PR: ${reason}\n`);
   }
 
   const allEvents = readEvents(log.path), folded = fold(allEvents), costUsd = log.tampered ? null : folded.cost.usd, wallS = (Date.now() - t0) / 1000; // one read, reused for cost and the Slack summary; unknown cost stays null
@@ -305,10 +338,10 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
       task_source: isIssue ? "issue" : "text", issue_ref: isIssue ? task : null, provider, model, deep, cap_s: capS,
       model_override_applied: !!process.env.LOKI_MODEL_OVERRIDE && provider === "claude", branch: `loki/${runId}`,
     },
-    pr: noPr ? undefined : async ({ pushEnv, verdict }) => {
+    pr: noPr ? undefined : async ({ pushEnv, verdict, notProven }) => {
       const { runPr } = await import("./stages/pr.ts"); // supervisor-only: the worker never loads pr.ts
       const events = readEvents(eventsPath);
-      const sealed = events.findLast((e) => e.type === "receipt.sealed")?.data ?? {};
+      const sealed = { ...(events.findLast((e) => e.type === "receipt.sealed")?.data ?? {}), not_proven: notProven }; // notProven (backstop/tamper included): a killed worker never sealed a receipt
       const r = await runPr({
         runId, repoDir, runDir, branch: `loki/${runId}`, pinnedOrigin: pushEnv._LOKI_PINNED_ORIGIN,
         outputs: () => ({ seal: { ...sealed, verdict, receipt_path: sealed.path } }),
@@ -318,6 +351,15 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
       const d = r.data as { pr_url?: string; draft?: boolean; existing?: boolean | null; not_proven?: string[] };
       if (r.status !== "completed") return { url: null, draft: false, existing: null, notProven: [`PR not opened: ${r.reason}`] };
       return { url: d.pr_url ?? null, draft: d.draft === true, existing: d.existing ?? null, notProven: d.not_proven };
+    },
+    comment: noPr ? undefined : async ({ issueRef, reason }) => { // E-67: a FAILED, no-diff issue run has no PR; comment instead of vanishing
+      const { DEFAULT_PUSH_SH } = await import("./stages/pr.ts"); // supervisor-only, same credentialed script as pr
+      mkdirSync(runDir, { recursive: true });
+      const bodyFile = join(runDir, "backstop-comment.md");
+      writeFileSync(bodyFile, `Loki 10 run ${runId} ended without a PR.\n\nReason: ${reason}\n`);
+      const argv = pushArgv({ cmd: "issue-comment", issueRef, bodyFile });
+      const r = spawnSync("bash", [DEFAULT_PUSH_SH, ...argv], { env, encoding: "utf8" });
+      return { argv, ok: r.status === 0 };
     },
   }).catch((e) => { if (!(e instanceof PreflightError)) throw e; process.stderr.write(`${e.message}\n`); return null; });
   clearInterval(tailTimer);
