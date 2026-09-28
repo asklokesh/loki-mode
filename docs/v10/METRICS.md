@@ -124,6 +124,8 @@ out of pending.txt until S-19's stricter pass bar is also in the tree, or
 the merge itself becomes a ratchet regression. S-19 promoted to the
 critical path and reviewed immediately.
 
+## Usage (hourly, from scripts/usage-governor.py)
+
 ## CI: Tests workflow shell-tests sharding (S-81, supersedes S-70)
 
 S-70 resharded shell-tests 4 -> 8 with a plain `idx % n` split and measured
