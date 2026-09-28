@@ -446,6 +446,40 @@ release_restore_debugid_only_dist() {
             log_step "Restored $rel (debugId-only diff)"
         fi
     done
+
+    # E-108: a .js file left alone above (it has a REAL diff, e.g. the
+    # version literal) can still have picked up a fresh "//# debugId="
+    # trailer from the rebuild, even though its .map companion was just
+    # restored to HEAD verbatim by the loop above. Shipping that pair
+    # leaves loki.js and loki.js.map carrying two different debugIds.
+    # Whenever a .map is now byte-identical to HEAD, restore only its
+    # companion .js's trailer line to HEAD's value too (the real diff
+    # elsewhere in the .js stays untouched), so the pair matches again.
+    local map_file js_file head_id tmp_js
+    for map_file in "$dist_dir"/*.js.map; do
+        [ -f "$map_file" ] || continue
+        js_file="${map_file%.map}"
+        [ -f "$js_file" ] || continue
+
+        rel="${map_file#"$ROOT_DIR"/}"
+        head_txt="$(git -C "$ROOT_DIR" show "HEAD:$rel" 2>/dev/null)" || continue
+        work_txt="$(cat "$map_file")"
+        [ "$head_txt" = "$work_txt" ] || continue
+
+        rel="${js_file#"$ROOT_DIR"/}"
+        head_txt="$(git -C "$ROOT_DIR" show "HEAD:$rel" 2>/dev/null)" || continue
+        head_id="$(printf '%s\n' "$head_txt" | grep -E -o '^//# debugId=[0-9A-Fa-f]+$' | tail -n1)"
+        [ -n "$head_id" ] || continue
+        grep -qF "$head_id" "$js_file" && continue
+
+        tmp_js="$(mktemp "${js_file}.XXXXXX")" || continue
+        if sed -E "s|^//# debugId=[0-9A-Fa-f]+\$|${head_id}|" "$js_file" >"$tmp_js"; then
+            mv "$tmp_js" "$js_file"
+            log_step "Restored $rel debugId trailer to match HEAD (paired with restored .map)"
+        else
+            rm -f "$tmp_js"
+        fi
+    done
 }
 
 # E-103: shared by both run_bump_only failure branches below -- restores
