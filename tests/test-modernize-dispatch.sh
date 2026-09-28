@@ -63,11 +63,15 @@ for eng in legacy v9; do
         "$(run_loki "$WITH_BUN" "LOKI_ENGINE=$eng" -- modernize repo --to python3)"
 done
 
-# 3. `loki modernize --help` reaches engine10 and the shim itself exits 0
-#    (the modernize CLI's own --help handling returns 0; see modernize/cli.ts).
-run_loki "$WITH_BUN" -- modernize --help >/dev/null
-expect "[--help] routes to engine10" "BUN $ENTRY engine10 modernize --help" "$(run_loki "$WITH_BUN" -- modernize --help)"
-expect "[--help] shim exit 0" "0" "$(cat "$T/rc")"
+# 3. Bare `loki modernize --help` (no --to) has no unambiguous engine10 signal,
+#    and `modernize` is also the legacy heal/migrate noun (autonomy/loki
+#    cmd_modernize), whose own --help already lists heal/migrate (wiki/
+#    CLI-Reference.md:843). So bare --help falls through to the legacy CLI,
+#    same as heal/migrate below; only the `--to`-bearing form reaches engine10.
+#    Its own exit code (0) is the legacy CLI's, unchanged and untested here
+#    (stubbed as BASH); the modernize/cli.ts USAGE text is out of this arm's
+#    file set.
+expect "[--help] falls through to legacy" "BASH modernize --help" "$(run_loki "$WITH_BUN" -- modernize --help)"
 
 # 4. An unknown flag still reaches engine10 (the modernize CLI itself rejects
 #    it and exits non-zero; the shim's job is only to route, not validate).
@@ -78,6 +82,21 @@ run_loki "$WITH_BUN" -- modernize repo --to python3 --bogus-flag >/dev/null
 expect "[unknown flag] routes to engine10" "BUN $ENTRY engine10 modernize repo --to python3 --bogus-flag" \
     "$(run_loki "$WITH_BUN" -- modernize repo --to python3 --bogus-flag)"
 expect "[unknown flag] non-zero exit" "2" "$(cat "$T/rc")"
+
+# 4b. Legacy modernize subcommands (autonomy/loki cmd_modernize: heal, migrate,
+#     plus its own --help/bogus handling) must still reach the legacy CLI
+#     unchanged, under the default engine AND under LOKI_ENGINE=v10 -- only the
+#     new `<repo> --to <target>` form (identified by a --to flag) goes to
+#     engine10. Regression: an earlier version of this arm caught every
+#     `modernize` invocation, breaking `loki heal`/`loki migrate` forwarding
+#     parity (tests/cli/test-alias-forwarding.sh) and `modernize bogus`'s
+#     error-channel contract.
+for sub in "heal --help" "migrate --help" "bogus"; do
+    expect "[default] modernize $sub -> legacy" "BASH modernize $sub" \
+        "$(run_loki "$WITH_BUN" -- modernize $sub)"
+    expect "[LOKI_ENGINE=v10] modernize $sub -> legacy" "BASH modernize $sub" \
+        "$(run_loki "$WITH_BUN" LOKI_ENGINE=v10 -- modernize $sub)"
+done
 
 # 5. No bun on PATH: exits 1 with a message, never silently falls back to bash.
 if PATH="$NO_BUN" command -v bun >/dev/null 2>&1; then
