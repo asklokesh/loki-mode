@@ -127,6 +127,27 @@
 #                       timestamp>Z" heading is the last-entry time; a
 #                       missing file or no parseable heading reports UNKNOWN,
 #                       never a false clean.
+#   PULSE_TRANSCRIPT_DIR overrides the directory of session transcript files
+#                       scanned for SESSION_STALLED (default:
+#                       ~/.claude/projects/<project-slug>, Claude Code's own
+#                       session JSONL directory; slug = the cwd's realpath
+#                       with every non-alphanumeric character replaced by
+#                       '-', the same rule autonomy/context-tracker.py's
+#                       derive_project_slug uses). The newest *.jsonl mtime
+#                       under this directory is "last assistant turn". A
+#                       missing/unreadable directory, or one with no *.jsonl
+#                       file, reports UNKNOWN, never a false clean.
+#   PULSE_LOOP_MARKER   path to the loop-active marker file for
+#                       SESSION_STALLED (default:
+#                       $PULSE_REPO_ROOT/.loki/state/loop-active). Written
+#                       with a UTC timestamp by whoever runs the /loop,
+#                       refreshed every iteration (only its mtime is read).
+#                       SESSION_STALLED only evaluates while this file's
+#                       mtime is under 24h old, so an abandoned marker from
+#                       an earlier /loop run can never keep this check firing
+#                       after the loop has actually stopped. No marker (or
+#                       one 24h+ old): reports n/a, never a violation and
+#                       never UNKNOWN.
 #
 # Network cache (S-104: this runs as a UserPromptSubmit hook on every prompt,
 # on a machine with ~16 concurrent agents, and a 15s hook timeout was being
@@ -155,6 +176,8 @@ CONTROL_MD="${CONTROL_MD:-$DEFAULT_REPO_ROOT/docs/v10/CONTROL.md}"
 PULSE_PROGRESS_MD="${PULSE_PROGRESS_MD:-$DEFAULT_REPO_ROOT/docs/v10/PROGRESS.md}"
 
 export PULSE_REPO_ROOT BOARD_MD CONTROL_MD PULSE_PROGRESS_MD
+export PULSE_TRANSCRIPT_DIR="${PULSE_TRANSCRIPT_DIR:-}"
+export PULSE_LOOP_MARKER="${PULSE_LOOP_MARKER:-}"
 export PULSE_MAIN_REF="${PULSE_MAIN_REF:-main}"
 export PULSE_NPM_CMD="${PULSE_NPM_CMD:-}"
 export PULSE_GH_CMD="${PULSE_GH_CMD:-}"
@@ -414,7 +437,7 @@ NOW = now_epoch()
 # docs/v10/CONTROL.md's Rule says the first action of every turn addresses
 # the TOP violation -- an accidental ordering-by-discovery would misrank it.
 VIOLATION_PRIORITY = [
-    "CI_RED", "CI_CANCELLED_STREAK", "RELEASE_ON_RED", "HIGH_LOAD",
+    "SESSION_STALLED", "CI_RED", "CI_CANCELLED_STREAK", "RELEASE_ON_RED", "HIGH_LOAD",
     "MOAT_REGRESSION", "UNRELEASED_MERGE", "TRAIN_LATE", "REVIEW_STALE",
     "AGENT_OVER_BUDGET", "STALE_PROGRESS", "UNEVIDENCED_CLAIM", "RELEASED_AHEAD_OF_NPM",
     "ORPHAN_TEST", "ORPHAN_WORKTREE", "STRAY_CONTAINER",
@@ -2304,7 +2327,94 @@ else:
         )
 
 
+# --- 14. SESSION_STALLED: no assistant turn while the /loop is active ------
+# Two independent signals, each overridable for tests (see the bash header):
+#   "loop active"       -- PULSE_LOOP_MARKER (default
+#                           $PULSE_REPO_ROOT/.loki/state/loop-active) exists
+#                           and its mtime is under 24h old. Cheap: a stat
+#                           call, no parsing of the timestamp text it holds.
+#   "last assistant turn" -- the newest *.jsonl mtime under
+#                           PULSE_TRANSCRIPT_DIR (default Claude Code's own
+#                           ~/.claude/projects/<project-slug> session dir).
+# The marker is checked first: with no fresh marker the loop is not
+# considered active and this reports n/a without ever touching the
+# transcript directory, so "no marker" can never itself read as UNKNOWN.
+_SESSION_STALLED_BUDGET_MIN = 20
+_LOOP_MARKER_MAX_AGE_HOURS = 24
+
+
+def loop_marker_epoch():
+    path = os.environ.get("PULSE_LOOP_MARKER") or os.path.join(REPO_ROOT, ".loki", "state", "loop-active")
+    try:
+        return os.stat(path).st_mtime
+    except OSError:
+        return None
+
+
+def _default_transcript_dir():
+    # Same sanitization rule as autonomy/context-tracker.py's
+    # derive_project_slug: every non-alphanumeric character in the cwd's
+    # realpath becomes '-', prefixed with '-' for the leading slash.
+    slug = "-" + re.sub(r"[^a-zA-Z0-9]", "-", os.path.realpath(os.getcwd()).lstrip("/"))
+    return os.path.join(os.path.expanduser("~"), ".claude", "projects", slug)
+
+
+def newest_transcript_epoch(transcript_dir):
+    try:
+        names = os.listdir(transcript_dir)
+    except OSError:
+        return None
+    best = None
+    for name in names:
+        if not name.endswith(".jsonl"):
+            continue
+        try:
+            mt = os.stat(os.path.join(transcript_dir, name)).st_mtime
+        except OSError:
+            continue
+        if best is None or mt > best:
+            best = mt
+    return best
+
+
+def check_session_stalled():
+    marker_epoch = loop_marker_epoch()
+    if marker_epoch is None or (NOW - marker_epoch) / 3600.0 >= _LOOP_MARKER_MAX_AGE_HOURS:
+        return {"applicable": False}
+    transcript_dir = os.environ.get("PULSE_TRANSCRIPT_DIR") or _default_transcript_dir()
+    transcript_epoch = newest_transcript_epoch(transcript_dir)
+    if transcript_epoch is None:
+        return {"applicable": True, "unknown": True, "transcript_dir": transcript_dir}
+    return {"applicable": True, "unknown": False, "stall_min": (NOW - transcript_epoch) / 60.0}
+
+
+session_stalled = safe(check_session_stalled)
+if session_stalled is None:
+    mark_unknown("session_stalled")
+    emit("Session stall (loop active check): UNKNOWN (could not evaluate loop marker/transcript state)")
+elif not session_stalled["applicable"]:
+    emit("Session stall: n/a (no fresh .loki/state/loop-active marker; /loop not active)")
+elif session_stalled["unknown"]:
+    mark_unknown("session_stalled")
+    emit(
+        "Session stall: UNKNOWN (could not read transcript dir %s)" % session_stalled["transcript_dir"]
+    )
+else:
+    _stall_min = session_stalled["stall_min"]
+    emit(
+        "Minutes since last assistant turn: %.1f (loop active, budget %d)"
+        % (_stall_min, _SESSION_STALLED_BUDGET_MIN)
+    )
+    if _stall_min > _SESSION_STALLED_BUDGET_MIN:
+        add_violation(
+            "SESSION_STALLED",
+            "no assistant turn in %.1f minutes while the /loop is active (budget %d)"
+            % (_stall_min, _SESSION_STALLED_BUDGET_MIN),
+        )
+
+
 _NEXT_ACTION_TEXT = {
+    "SESSION_STALLED": "the /loop marker is fresh but no assistant turn has landed in over the budget; check the session is actually alive and resume it",
     "CI_RED": "investigate and fix the red main CI run before anything else",
     "CI_CANCELLED_STREAK": "investigate why Tests keeps getting cancelled on main before anything else",
     "RELEASE_ON_RED": "do not release from this VERSION-bump commit until its Tests run is green (D28 rule 2)",

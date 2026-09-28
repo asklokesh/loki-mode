@@ -3,9 +3,10 @@
 #
 # All external data sources are overridden via env vars (BOARD_MD,
 # CONTROL_MD, PULSE_REPO_ROOT, PULSE_MAIN_REF, PULSE_NPM_CMD, PULSE_GH_CMD,
-# PULSE_WORKTREE_CMD, PULSE_MOAT_RESULT, PULSE_SWARM_START, PULSE_NOW). No
-# test here makes a real npm/gh network call or depends on real wall-clock
-# time or the real docs/v10/BOARD.md.
+# PULSE_WORKTREE_CMD, PULSE_MOAT_RESULT, PULSE_SWARM_START, PULSE_NOW,
+# PULSE_LOOP_MARKER, PULSE_TRANSCRIPT_DIR). No test here makes a real npm/gh
+# network call or depends on real wall-clock time or the real
+# docs/v10/BOARD.md.
 #
 # PULSE_TEST_SHELL selects which shell interprets scripts/v10-pulse.sh
 # ("bash" default, or "sh" for macOS's real bash 3.2.57 in POSIX mode) so
@@ -2078,6 +2079,97 @@ if printf '%s\n' "$OUT" | grep -qF "Merged-but-unreleased age: 60.0 min (1 commi
     ok "tag/npm-latest agreement (v9.54.2 == 9.54.2) keeps the normal confident report"
 else
     bad "T40b tag-vs-npm-match case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+# touch_mtime FILE AGE_MIN NOW_EPOCH -- creates/updates FILE with an mtime
+# AGE_MIN minutes before NOW_EPOCH. Same technique as make_worktree's mtime
+# setting above: never the real wall clock, which is already past every
+# fixed PULSE_NOW this suite uses.
+touch_mtime() {
+    local file="$1" age_min="$2" now_epoch="$3"
+    mkdir -p "$(dirname "$file")"
+    : > "$file"
+    python3 -c "
+import os
+mt = int($now_epoch - $age_min * 60)
+os.utime('$file', (mt, mt))
+"
+}
+
+echo "T41 -- SESSION_STALLED: fires when the loop-active marker is fresh but the newest transcript is older than the 20-minute budget"
+# Same clean baseline as T4 (BOARD_CLEAN, NPM_TIME_JSON, GH_GREEN_JSON,
+# MOAT_RESULT_PASS, WT_CLEAN/WT_CLEAN_STALE), reused rather than rebuilt, so
+# SESSION_STALLED is provably the ONLY thing that can explain the violation.
+MARKER_FRESH="$WORK/loop-active-fresh"
+touch_mtime "$MARKER_FRESH" 1 1790474400
+TRANSCRIPT_DIR_STALE="$WORK/transcripts-stale"
+touch_mtime "$TRANSCRIPT_DIR_STALE/a.jsonl" 25 1790474400
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" \
+    "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
+    "PULSE_MOAT_RESULT=$MOAT_RESULT_PASS" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}" "$WT_CLEAN_STALE")" \
+    "PULSE_LOOP_MARKER=$MARKER_FRESH" "PULSE_TRANSCRIPT_DIR=$TRANSCRIPT_DIR_STALE"; then rc=0; else rc=$?; fi
+EXPECTED_T41="VIOLATION: SESSION_STALLED: no assistant turn in 25.0 minutes while the /loop is active (budget 20)"
+assert_exact_violations "T41 SESSION_STALLED" "$EXPECTED_T41"
+if [ "$rc" = 1 ]; then
+    ok "T41: exit code 1"
+else
+    bad "T41: expected exit 1, got $rc"
+fi
+
+echo "T41b -- SESSION_STALLED does not fire when the newest transcript is under the 20-minute budget (marker fresh)"
+TRANSCRIPT_DIR_FRESH="$WORK/transcripts-fresh"
+touch_mtime "$TRANSCRIPT_DIR_FRESH/a.jsonl" 5 1790474400
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" \
+    "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
+    "PULSE_MOAT_RESULT=$MOAT_RESULT_PASS" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}" "$WT_CLEAN_STALE")" \
+    "PULSE_LOOP_MARKER=$MARKER_FRESH" "PULSE_TRANSCRIPT_DIR=$TRANSCRIPT_DIR_FRESH"; then rc=0; else rc=$?; fi
+if [ "$rc" = 0 ] \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION:" \
+    && printf '%s\n' "$OUT" | grep -qF "Minutes since last assistant turn: 5.0 (loop active, budget 20)"; then
+    ok "T41b: fresh transcript, no SESSION_STALLED violation, exit 0"
+else
+    bad "T41b fresh-transcript case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T41c -- SESSION_STALLED does not fire, and is never UNKNOWN, when no loop-active marker exists (stale transcript, no marker)"
+NO_SUCH_MARKER="$WORK/no-such-loop-active"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" \
+    "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
+    "PULSE_MOAT_RESULT=$MOAT_RESULT_PASS" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}" "$WT_CLEAN_STALE")" \
+    "PULSE_LOOP_MARKER=$NO_SUCH_MARKER" "PULSE_TRANSCRIPT_DIR=$TRANSCRIPT_DIR_STALE"; then rc=0; else rc=$?; fi
+if [ "$rc" = 0 ] \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION:" \
+    && ! printf '%s\n' "$OUT" | grep -q "^UNKNOWN metrics:.*session_stalled" \
+    && printf '%s\n' "$OUT" | grep -qF "Session stall: n/a (no fresh .loki/state/loop-active marker; /loop not active)"; then
+    ok "T41c: no marker, loop not active, n/a, never a violation or UNKNOWN"
+else
+    bad "T41c no-marker case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T41d -- SESSION_STALLED reports UNKNOWN, not clean, when the transcript dir cannot be listed (marker fresh)"
+# Root-safe, deterministic listdir failure (a regular file, never a
+# directory) rather than chmod 000, which is a no-op for root -- CI may run
+# as root (see tests/test-branch-lifecycle.sh's own comment on this).
+NOT_A_DIR="$WORK/transcripts-not-a-dir"
+touch_mtime "$NOT_A_DIR" 5 1790474400
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" \
+    "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
+    "PULSE_MOAT_RESULT=$MOAT_RESULT_PASS" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}" "$WT_CLEAN_STALE")" \
+    "PULSE_LOOP_MARKER=$MARKER_FRESH" "PULSE_TRANSCRIPT_DIR=$NOT_A_DIR"; then rc=0; else rc=$?; fi
+if [ "$rc" = 2 ] \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION:" \
+    && printf '%s\n' "$OUT" | grep -q "^UNKNOWN metrics:.*session_stalled" \
+    && printf '%s\n' "$OUT" | grep -qF "Session stall: UNKNOWN (could not read transcript dir $NOT_A_DIR)"; then
+    ok "T41d: unreadable/non-directory transcript dir is UNKNOWN (exit 2), never a false clean"
+else
+    bad "T41d unreadable-dir case: rc=$rc output follows"
     printf '%s\n' "$OUT"
 fi
 
