@@ -16,9 +16,14 @@ set of tasks and scores each run the same way.
   "repo": {"source": "<git url or absolute local path>", "ref": "<commit sha>"},
   "setup": "<optional shell command run in the checkout before the arm>",
   "hidden": {"files": ["<paths relative to hidden/>"], "run": "<command, see below>"},
-  "timeout_s": 900
+  "timeout_s": 900,
+  "expected_outcome": "no_change_needed"
 }
 ```
+
+`expected_outcome` is optional; the only accepted value today is `no_change_needed`, for
+a task whose requested feature already exists at `repo.ref`. See "Already
+implemented" below.
 
 `eval/loki10/tasks/<id>/hidden/` holds the hidden tests. They exist only in this
 repo and are copied into the graded checkout after the arm has finished.
@@ -38,10 +43,53 @@ How a hidden run passes. The run gets a fresh random nonce in
   fails.
 
 A task is `task_invalid` (for every arm) when either of these holds:
-- its hidden tests already pass at `repo.ref`, or its hidden files cannot be
-  placed there (checked before the arm);
+- its hidden tests already pass at `repo.ref` (or fail at `repo.ref` for an
+  `expected_outcome: no_change_needed` task, see below), or its hidden files
+  cannot be placed there (checked before the arm);
 - its checkout holds `.loki/engine.json` or `.loki/metrics` after `setup` and
   before the arm.
+
+### Already implemented (`expected_outcome: no_change_needed`)
+
+For a task whose requested feature already exists at `repo.ref`, "no change
+needed" is itself the correct outcome, never a pause and never a second,
+duplicate implementation. Such a task sets `expected_outcome:
+"no_change_needed"` and keeps its hidden test as a **regression check**: it
+must PASS at `repo.ref` (a positive control on the "already exists" claim),
+the opposite of the normal task_invalid rule above.
+
+Grading is different for these tasks. A run is `completed` only when **all**
+of these hold:
+- the arm exited 0 (its own textual claim below also matches ordinary error
+  text such as "branch already exists", so a crashed run is never completed
+  just because it never touched the tree);
+- no branch was pushed (a PR, however accurate, is never completed here);
+- the graded tree has no source diff against its own state right after
+  `setup` ran and before the arm started -- committed, staged, unstaged or a
+  new untracked file (`.loki/`, the engine's own run state, is never
+  counted). Compared against that post-setup snapshot, never bare `repo.ref`,
+  because `setup` itself (`npm install`, not `npm ci`, say) can rewrite a
+  tracked file with nothing the arm did;
+- the hidden test (the regression check) still passes;
+- the arm itself gives deterministic evidence that the feature already
+  exists:
+  - **v10**: its own `receipt.json` (`.loki/runs/<run_id>/receipt.json`,
+    sealed every run regardless of outcome) has `"verdict":
+    "ALREADY_SATISFIED"`.
+  - **raw-claude / legacy**: a documented textual rule
+    (`claims_no_change_needed` in `harness.py`) matches its final output --
+    for raw-claude, the `result` field(s) of its JSON output (falling back to
+    the raw text); for legacy, the whole stdout, since it has no structured
+    output contract.
+
+A PR/pushed branch or any source diff is never completed, whatever the arm's
+own output claims. `results.jsonl` rows for these tasks additionally carry
+`expected_outcome`, `no_source_diff` and `no_change_evidence`.
+
+raw-claude and legacy still get the same push instruction appended to the
+prompt as every other task (never suppressed per-task, which would leak the
+expected outcome to the arm): recognizing that nothing needs to be pushed,
+despite being told to push, is exactly what this outcome tests.
 
 Validate tasks with `python3 eval/loki10/harness.py validate eval/loki10/tasks/*`.
 The validator rejects any of these:
@@ -51,6 +99,7 @@ The validator rejects any of these:
 - hidden paths that are absolute or contain `..`
 - hidden files that are missing or are symlinks
 - a missing `hidden.run`
+- an `expected_outcome` other than `no_change_needed`
 
 `run.sh` validates every selected task first.
 
@@ -136,7 +185,9 @@ Each results JSONL row has these fields: `run_id`, `task`, `arm`, `status`,
 arm start, null if none), `pr_opened`, `hidden_pass`, `grade_refused`,
 `completed`, `cost_usd`, `cost_source`, `exit_code`, `capped`,
 `push_time_anomaly`, `invalid_reason`, `unavailable_reason`, `auth_source`,
-`logs`.
+`expected_outcome`, `logs`, and, for `expected_outcome: no_change_needed`
+tasks only, `no_source_diff` and `no_change_evidence` (see "Already
+implemented" above).
 
 - `completed` = `pr_opened` and `hidden_pass` and not `capped` and no
   `push_time_anomaly`. A push logged before the arm started is flagged, not
