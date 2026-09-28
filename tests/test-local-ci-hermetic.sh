@@ -36,6 +36,9 @@
 #      runs, proving the scan compares like-for-like bash versions rather
 #      than false-flagging a version gap (macOS /bin/bash is 3.2) as a
 #      credential dependency.
+#   6. a test that shells out to `node` and `timeout` directly: must pass
+#      both runs, proving the scan's curated bindir covers the toolchain
+#      real in-scope tests actually use, not just bash/bun/python3.
 
 set -uo pipefail
 
@@ -83,14 +86,20 @@ else
   bad "PYTHONUSERBASE preservation not found"
 fi
 
-if grep -q 'command -v bash 2>/dev/null.*ln -sf' "$CI"; then
-  ok "the real bash binary is symlinked into the private bindir (not just /bin's ancient 3.2)"
+if grep -q 'GIT_CONFIG_NOSYSTEM=1' "$CI"; then
+  ok "GIT_CONFIG_NOSYSTEM=1 blocks the macOS system gitconfig's osxkeychain credential helper"
 else
-  bad "bash is not symlinked into the private bindir -- a bash4+ test would false-fail stripped"
+  bad "GIT_CONFIG_NOSYSTEM=1 not found -- a real git op stripped could still authenticate via osxkeychain"
 fi
 
-if grep -q 'holding ONLY symlinks to the real, ambient bash/bun/python3' "$CI"; then
-  ok "the private bin dir holds only bash+bun+python3 (never gh's real parent dir)"
+if grep -q 'for b in bash bun python3 node timeout; do' "$CI"; then
+  ok "bash, bun, python3, node and timeout are all symlinked into the private bindir"
+else
+  bad "the curated bindir tool list is missing or changed shape -- a version/toolchain-gap test would false-fail stripped"
+fi
+
+if grep -q 'holding ONLY symlinks to a short, curated list' "$CI"; then
+  ok "the private bin dir holds only a curated interpreter/runtime list (never gh's real parent dir)"
 else
   bad "private-bindir rationale/comment not found (could regress to a whole real bin/ dir)"
 fi
@@ -136,7 +145,14 @@ fi
 # directories). If some environment's /usr/bin or /bin DOES carry `gh`, the
 # scan's PATH restriction cannot exclude it and scenario 1 would legitimately
 # not prove anything -- so this is checked, not assumed.
-if env -i PATH=/usr/bin:/bin command -v gh >/dev/null 2>&1; then
+# `command` is a shell builtin, not an executable -- `env -i ... command -v
+# gh` would make `env` itself try to exec a program literally named
+# "command" (present as a real binary on macOS, typically ABSENT on Linux,
+# where this would misreport as "gh not found" regardless of the truth). Run
+# the lookup through a real shell (`sh -c`) so `command -v` resolves the
+# same way inside the stripped env as it does inside the scan's own
+# `bash "$f"` dispatch.
+if env -i PATH=/usr/bin:/bin sh -c 'command -v gh' >/dev/null 2>&1; then
   echo "  SKIP: gh resolves under a bare /usr/bin:/bin PATH on this host -- the scan's PATH restriction cannot exclude it here, so gh-exclusion scenarios are not run"
   echo
   echo "=== $PASS passed, $FAIL failed (gh-exclusion live scenarios skipped) ==="
@@ -256,12 +272,43 @@ else
   bad "a bash4+-only test false-failed the scan (out: $out_e) -- /bin/bash 3.2 is leaking in unsymlinked"
 fi
 
+# Scenario 6: a test that shells out to `node` and to `timeout` directly
+# (several real in-scope tests do -- see the comment above the bindir loop
+# in _lci_hermetic_scan) must pass both runs. Neither binary lives under
+# /usr/bin on this class of machine, so without both symlinked into the
+# scan's private bindir, this would false-fail stripped on a missing-
+# toolchain reason, not a credential leak.
+if command -v node >/dev/null 2>&1; then
+  REPO_F="$TMP_ROOT/repo-node-timeout"
+  _new_repo "$REPO_F"
+  cat > "$REPO_F/tests/test-uses-node.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+timeout 5 node -e "console.log(1 + 1)" | grep -q '^2$'
+echo "node + timeout ok"
+EOF
+  chmod +x "$REPO_F/tests/test-uses-node.sh"
+  git -C "$REPO_F" add tests/test-uses-node.sh
+  git -C "$REPO_F" commit -qm "add a test that shells out to node and timeout" --no-gpg-sign --no-verify
+
+  out_f="$(_run_scan "$REPO_F")"; rc_f=$?
+  if [ "$rc_f" -eq 0 ]; then
+    ok "a test shelling out to node/timeout is not false-flagged by a missing-toolchain gap"
+  else
+    bad "a node/timeout-using test false-failed the scan (out: $out_f) -- node or timeout is leaking in unsymlinked"
+  fi
+else
+  echo "  SKIP: node not on PATH -- scenario 6 not run"
+fi
+
 # Scenario 3: the real pre-E-92 regression. The old dep-inventory.py's
 # self-test fell through to a real `gh api` call for one uncached resolver
 # path, so it passed wherever `gh` happened to be authenticated and would
 # have failed on the CI runner. Wire the actual historical file in under a
 # copy of the real test wrapper and confirm the scan catches it exactly the
-# way it caught tests/test-dep-inventory.sh on df7dc134 day. Gated on the old
+# way this scan would have caught it before df7dc134 day -- nothing caught
+# it locally that day; CI was the discovery channel, which is the whole
+# incident. Gated on the old
 # self-test actually passing NORMALLY first: if this environment has no `gh`
 # authenticated at all, the old file already fails normally too, and this
 # scenario would prove nothing.
