@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.3 (2026-09-28)
+
+CI secret scanning can no longer be switched off by a pushed gitleaks configuration, and `loki modernize` gains an equivalence checker that never reports behaviour as proven when it cannot be.
+
+### Security
+- The CI secret scan takes its gitleaks configuration from the last release tag, never from the pushed commits, and fails the job when a push changes `.gitleaks.toml`; with no release tag it uses the scanner's default rules and refuses any `.gitleaks.toml` (E-114). Before, a pushed zero-rule configuration could disable the scan for that same push.
+- The pre-push hook refuses the push when its `.gitleaks.toml` change check cannot run, instead of treating the error as "unchanged" (E-119).
+
+### Added
+- `loki modernize` equivalence checker (M-13, not yet wired into the full modernize run): compares captured behaviour of the original and the converted code under normalizers sealed with the oracle before any conversion exists. A missing capture, malformed value, runner error, too few cases, or any mismatch with the sealed normalizer hash is reported as NOT PROVEN, never as equal.
+
+### Internal
+- Scorecard tool for the D41 balanced scorecard (`eval/loki10/scorecard`): per model tier completion, cost per completed and p50 time with raw alongside (S41-02); per-stage token baseline in docs/v10/METRICS.md (S41-04); the swarm pulse recognises slice ids such as S41-01 (E-121).
+
 ## v10.5.2 (2026-09-28)
 
 A SPEC_CONFLICT receipt now states why the run stopped, safely, and the dashboard, web app and Python services pick up current patch and minor dependency releases, including a fix for two high-severity advisories in the web app's router.
