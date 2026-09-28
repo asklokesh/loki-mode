@@ -166,7 +166,7 @@ else
 fi
 
 # --- 2. The secret scan runs over every reachable commit --------------------
-_secret_expected_custody='{"checkout_uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262", "fetch_depth": 0, "permissions": {"contents": "read"}}'
+_secret_expected_custody='{"checkout_uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "fetch_depth": 0, "permissions": {"contents": "read"}}'
 if printf '%s' "$_SECRET_SCAN_STEP" | grep -qE 'gitleaks git( |$)' \
    && printf '%s' "$_SECRET_SCAN_STEP" | grep -q -- '--log-opts="--all"' \
    && [ "$_SECRET_CUSTODY" = "$_secret_expected_custody" ]; then
