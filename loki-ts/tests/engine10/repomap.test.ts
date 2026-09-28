@@ -54,6 +54,17 @@ test("nested or indented defs are not extracted", () => {
   expect(entry?.symbols).toEqual(["Outer"]);
 });
 
+test("top-level async def is captured, indented async def is not", () => {
+  writeFileSync(
+    join(dir, "app.py"),
+    "async def handler(event):\n    async def inner():\n        pass\n    return inner\n",
+  );
+  commitAll();
+  const map = buildRepoMap(dir);
+  const entry = map.entries.find((e) => e.path === "app.py");
+  expect(entry?.symbols).toEqual(["handler"]);
+});
+
 test("JS export behavior is unchanged", () => {
   writeFileSync(
     join(dir, "widget.ts"),

@@ -21,7 +21,7 @@ const MAX_FILES = 2000;
 const MAX_SCAN_BYTES = 20_000; // per file, for symbol extraction only
 const SOURCE_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|py)$/;
 const SYMBOL_RE = /^export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|interface|type|enum)\s+([A-Za-z0-9_$]+)/gm;
-const PY_SYMBOL_RE = /^(?:def|class)\s+([A-Za-z_][A-Za-z0-9_]*)/gm;
+const PY_SYMBOL_RE = /^(?:(?:async\s+)?def|class)\s+([A-Za-z_][A-Za-z0-9_]*)/gm;
 /** git ls-files, capped. Returns [] (never throws) outside a git repo. */
 export function listRepoFiles(repoDir: string, maxFiles: number = MAX_FILES): { files: string[]; truncated: boolean } {
   let out: string;
