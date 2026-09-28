@@ -448,6 +448,16 @@ release_restore_debugid_only_dist() {
     done
 }
 
+# E-103: shared by both run_bump_only failure branches below -- restores
+# loki-ts/dist from HEAD, logs why, and exits non-zero. A build that exits 0
+# without embedding the new version is the same "don't ship a stale/broken
+# dist" case as a build that fails outright, so both routes through here.
+release_bump_only_fail() {
+    log_error "$1"
+    git -C "$ROOT_DIR" checkout -- loki-ts/dist
+    exit 1
+}
+
 # --bump-only (S-108): version files + loki-ts/dist, no git side effects.
 run_bump_only() {
     local current new dist_file="$ROOT_DIR/loki-ts/dist/loki.js"
@@ -468,16 +478,13 @@ run_bump_only() {
         fi
         log_step "Rebuilding loki-ts/dist..."
         if ! ( cd "$ROOT_DIR/loki-ts" && bun run build ); then
-            log_error "loki-ts build failed -- restoring loki-ts/dist from HEAD"
-            git -C "$ROOT_DIR" checkout -- loki-ts/dist
-            exit 1
+            release_bump_only_fail "loki-ts build failed -- restoring loki-ts/dist from HEAD"
         fi
         if [ -f "$dist_file" ] && grep -q "$new" "$dist_file"; then
             log_success "loki-ts/dist rebuilt with $new"
             release_restore_debugid_only_dist "$ROOT_DIR/loki-ts/dist"
         else
-            log_error "loki-ts/dist rebuild did not embed $new in $dist_file"
-            exit 1
+            release_bump_only_fail "loki-ts/dist rebuild did not embed $new in $dist_file -- restoring loki-ts/dist from HEAD"
         fi
     else
         log_warn "loki-ts/ not found, skipping dist rebuild"
