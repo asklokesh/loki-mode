@@ -22,8 +22,8 @@ accuracy > cost > speed. Never trade a higher one for a lower one.
 
 ## Velocity targets
 
-- Releases: at least 1 every 90 minutes once CI is green; 30-60/day at
-  steady state.
+- Releases (D37): a cut at :00, :20 and :40 whenever main is green and
+  a merged-unreleased slice exists; trains overlap after publish-npm.
 - Ready slices: at least 8 at all times.
 - Active builders: at least 6 while ready slices exist.
 - Review-pending age: fix or escalate past 45 minutes.

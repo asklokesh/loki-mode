@@ -288,3 +288,11 @@ One entry per decision: context, choice, why, how to reverse. Newest last.
 - Every VERSION bump carries a full CHANGELOG section: a one-line summary, `###` sections with a bullet for every user-visible change, and the full sections of any version it carries that never reached npm. The GitHub release body is that section, never the "Release vX.Y.Z" placeholder.
 - Found: release.yml matched `^## v$VERSION$` against dated headings, so v9.80.1, v9.81.0, v10.0.1, v10.1.0, v10.1.1 and v10.2.1 were published with the placeholder while every gate stayed green. All six backfilled on 2026-09-28 with `gh release edit --notes-file`; the v10.1.1 entry was also rewritten in full.
 - Enforcement (E-88): the release fails without a full section, and the pre-push hook refuses a VERSION bump without one. Until E-88 merges the Release Manager checks `gh release view` after every publish.
+
+## D37. 2026-09-28: fixed release cadence, overlapping trains, release blockers are P0 (founder directive)
+
+- The Release Manager cuts a release at :00, :20 and :40 whenever main is green (Tests and Bun Parity at HEAD) and at least 1 merged-unreleased slice exists (a slice commit that is not an ancestor of the latest published tag). Never wait to batch more. Target 3 releases per hour.
+- Trains overlap: the next cut waits only for the previous release's publish-npm job to succeed, not for npm availability, Docker or Homebrew.
+- Anything blocking a release (security finding, gate refusal, dispatch problem) is a P0 with a 10-minute response, and its class gets a guard so it never blocks twice (so far: E-86 gitleaks pre-push, E-87 dispatch path, E-88 release notes).
+- The pulse raises RELEASE_CADENCE when more than 25 minutes pass with a green main and merged-unreleased work (E-89).
+- Found at 16:20Z: the "20 merged slices waiting" were stale BOARD cells, all already in v10.1.0 to v10.2.1 by git ancestry; flipped to released with the tag. E-90 makes the Release Manager flip rows automatically after each publish.
