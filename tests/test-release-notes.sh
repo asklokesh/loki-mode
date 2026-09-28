@@ -386,7 +386,7 @@ echo
 echo "T9l -- body over the 100,000 character cap exits 1 with the cap error"
 {
     printf '## v1.2.3 (2026-01-01)\n\n### Added\n'
-    yes '- padding line to exceed the cap' | head -n 4000
+    for ((_i = 0; _i < 4000; _i++)); do printf '%s\n' '- padding line to exceed the cap'; done
 } > "$WORK/huge.md"
 if [ "$(wc -c < "$WORK/huge.md")" -le 100000 ]; then
     bad "T9l fixture did not actually exceed 100,000 characters, test is not meaningful"
@@ -421,7 +421,7 @@ echo "T9n -- large-but-under-cap body with an early match is not falsely rejecte
 # line of the body so a match happens almost immediately.
 {
     printf '## v1.2.3 (2026-01-01)\n\n### Added\n'
-    yes '- padding line, well under the cap' | head -n 2800
+    for ((_i = 0; _i < 2800; _i++)); do printf '%s\n' '- padding line, well under the cap'; done
 } > "$WORK/under-cap-early-match.md"
 _sz="$(wc -c < "$WORK/under-cap-early-match.md")"
 if [ "$_sz" -ge 100000 ] || [ "$_sz" -lt 65536 ]; then
@@ -448,7 +448,7 @@ echo "T9o -- --include pushing the COMBINED output over the cap exits 1"
 {
     printf '## v9.0.0 (2026-01-06)\n\n### Added\n- small new section\n\n'
     printf '## v8.0.0 (2026-01-05)\n\n### Added\n'
-    yes '- padding line to push the combined output over the cap' | head -n 4000
+    for ((_i = 0; _i < 4000; _i++)); do printf '%s\n' '- padding line to push the combined output over the cap'; done
 } > "$WORK/include-over-cap.md"
 err="$(bash "$SCRIPT" 9.0.0 --file "$WORK/include-over-cap.md" --include 8.0.0 2>&1 >/dev/null)"; rc=$?
 if [ "$rc" -ne 0 ] && printf '%s\n' "$err" | grep -q 'exceeds the 100,000 character cap'; then
