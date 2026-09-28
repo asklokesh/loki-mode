@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { recordSessionCost, resultCostPath } from "./cost.ts";
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
 const KILL_GRACE_MS = 2000; // ENGINE.md section 10: SIGKILL 2s after SIGTERM
+const STDERR_TAIL_BYTES = 64 * 1024; // E-61: kept for stage.failed diagnostics, tail only
 export const HEARTBEAT_MS_DEFAULT = 30_000; // E-68 (augmentiq #52 P0): a provider call emits progress at least every 30s
 export type EmitFn = (type: string, stage: string | null, data: Record<string, unknown>) => void;
 // provider, model and emit are bound per run on this factory config, since SessionRunOptions carries only per-call fields.
@@ -126,10 +127,10 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
 }
 export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
   return {
-    run(opts: SessionRunOptions): Promise<SessionResult> {
+    run(opts: SessionRunOptions): Promise<SessionResult & { stderrTail: string }> {
       const start = Date.now();
       // A signal aborted before run() never fires the listener below, so it never spawns.
-      if (opts.signal.aborted) return Promise.resolve({ exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true });
+      if (opts.signal.aborted) return Promise.resolve({ exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true, stderrTail: "" });
       const env = childEnv(opts, cfg);
       const [cmd, args] = cfg.childCommand ?? [
         process.execPath,
@@ -137,11 +138,18 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
         [import.meta.path.endsWith("session.ts") ? `${import.meta.dir}/../cli.ts` : import.meta.path, "engine10", "session"],
       ];
       const sessionId = opts.iterationId;
-      // stderr ignored: nothing reads markers there, and an unread pipe can stall.
-      const child: ChildProcess = spawn(cmd, args, { cwd: opts.cwd, env, detached: true, stdio: ["ignore", "pipe", "ignore"] });
+      // stderr is piped and kept (tail only, E-61) for stage.failed diagnostics; always drained
+      // via the "data" listener below so a full pipe can never stall the child.
+      const child: ChildProcess = spawn(cmd, args, { cwd: opts.cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
       const pgid = child.pid;
       let stdout = "";
       child.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
+      // ponytail: re-concats on every chunk, fine for a CLI session's stderr volume; switch to a ring buffer if that stops holding.
+      let stderrTail = Buffer.alloc(0);
+      child.stderr?.on("data", (d: Buffer) => {
+        stderrTail = Buffer.concat([stderrTail, d]);
+        if (stderrTail.length > STDERR_TAIL_BYTES) stderrTail = stderrTail.subarray(stderrTail.length - STDERR_TAIL_BYTES);
+      });
       let killed = false;
       // Which kill fired, from the engine's own point of view -- never guessed from the
       // child's exit code. First one wins: the limit timer and an external abort cannot
@@ -160,7 +168,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
         cfg.emit?.("heartbeat", opts.stage, { waiting_on: opts.stage, elapsed_s: (Date.now() - start) / 1000, diff: diffShortstat(opts.cwd) });
       }, cfg.heartbeatMs ?? HEARTBEAT_MS_DEFAULT);
       opts.signal.addEventListener("abort", onAbort, { once: true });
-      return new Promise<SessionResult>((resolve) => {
+      return new Promise<SessionResult & { stderrTail: string }>((resolve) => {
         // "close", not "exit": stdout may still be draining, and the marker is usually last.
         child.on("close", (code) => {
           clearTimeout(limitTimer);
@@ -174,7 +182,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
             session_id: sessionId, exit: exitKind(code, killed, markers), cause: classifyExitCause(code, killed, killCause ?? undefined), duration_s: durationS,
           });
           recordCost(cfg, opts, killed ? "killed" : code === 0 ? "completed" : "failed", durationS);
-          resolve({ exit: code, markers, durationS, killed });
+          resolve({ exit: code, markers, durationS, killed, stderrTail: stderrTail.toString("utf8") });
         });
       });
     },

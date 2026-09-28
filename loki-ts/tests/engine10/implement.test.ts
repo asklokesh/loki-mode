@@ -7,6 +7,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runMachine } from "../../src/engine10/machine.ts";
+import { createSessionRunner } from "../../src/engine10/session.ts";
 import {
   buildImplementBrief,
   implementStage,
@@ -38,11 +40,12 @@ class FakeSessionRunner implements SessionRunner {
 function fakeCtx(
   sessions: SessionRunner,
   outputs: Partial<Record<StageName, Record<string, unknown>>>,
+  runDir = "/tmp/does-not-matter/.loki/runs/e10-test-1",
 ): RunContext {
   return {
     runId: "e10-test-1",
     repoDir: "/tmp/does-not-matter",
-    runDir: "/tmp/does-not-matter/.loki/runs/e10-test-1",
+    runDir,
     baseSha: "deadbeef",
     branch: "loki/e10-test-1",
     provider: "claude",
@@ -178,6 +181,81 @@ describe("engine10 implement stage", () => {
 
     expect(result.data.exit).toBe("killed");
   });
+
+  test("E-61: a non-killed error exit fails the stage and writes the stderr tail under runDir", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-e08-rd-"));
+    const sessions = new FakeSessionRunner({
+      exit: 1,
+      markers: { done: false, alreadyDone: null, specConflict: null },
+      durationS: 1,
+      killed: false,
+      stderrTail: "boom: provider crashed",
+    } as SessionResult);
+    const ctx = fakeCtx(sessions, {}, dir);
+
+    const result = await implementStage.run(ctx, new AbortController().signal);
+
+    expect(result.status).toBe("failed");
+    expect(result.data.exit).toBe("error");
+    expect(typeof result.data.stderr_path).toBe("string");
+    const stderrPath = result.data.stderr_path as string;
+    expect(stderrPath.startsWith(dir)).toBe(true);
+    expect(readFileSync(stderrPath, "utf8")).toBe("boom: provider crashed");
+    expect(result.reason).toBe("exit 1 (general error)");
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("E-61: an error exit is never reported done, even with nothing on stderr (the false-green incident)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-e08-rd2-"));
+    // No stderrTail at all: an error exit must still fail, even with nothing captured.
+    const sessions = new FakeSessionRunner({
+      exit: 1,
+      markers: { done: false, alreadyDone: null, specConflict: null },
+      durationS: 1,
+      killed: false,
+    } as SessionResult);
+    const ctx = fakeCtx(sessions, {}, dir);
+
+    const result = await implementStage.run(ctx, new AbortController().signal);
+
+    expect(result.data.exit).not.toBe("done");
+    expect(result.status).not.toBe("completed");
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("E-61: the real session -> machine path emits stage.failed with a readable stderr_path (the literal card check)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-e08-e2e-"));
+    const events: { type: string; stage: string | null; data: Record<string, unknown> }[] = [];
+    const ctx: RunContext = {
+      runId: "e10-e61", repoDir: dir, runDir: dir, baseSha: "deadbeef", branch: "loki/e10-e61",
+      provider: "claude", model: "claude-test", deep: false, capS: 900,
+      emit: (type, stage, data) => { events.push({ type, stage, data }); },
+      sessions: createSessionRunner({
+        provider: "claude",
+        childCommand: ["bash", ["-c", "echo boom >&2; exit 1"]],
+      }),
+      tests: { async detect() { return { runners: [], tests: [] }; }, impacted: () => [] },
+      cost: { read() { return { usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }; } },
+      clock: { now: () => Date.now() },
+      outputs: () => ({}),
+    };
+
+    const result = await runMachine(ctx, {
+      flow: ["implement"],
+      load: async (name) => (name === "implement" ? implementStage : null),
+    });
+
+    expect(result.outputs.implement).toBeUndefined(); // failed: never lands in outputs (machine.ts)
+    const failed = events.find((e) => e.type === "stage.failed" && e.stage === "implement");
+    expect(failed).toBeDefined();
+    const stderrPath = failed?.data.stderr_path as string;
+    expect(typeof stderrPath).toBe("string");
+    expect(readFileSync(stderrPath, "utf8")).toContain("boom");
+
+    rmSync(dir, { recursive: true, force: true });
+  }, 10_000);
 
   test("E-42: impacted tests come from the intake test map (plan's files) and the Wall's readOnlyFiles", async () => {
     const sessions = new FakeSessionRunner({ exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 1, killed: false });

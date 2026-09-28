@@ -4,7 +4,7 @@
 // machine.ts/session.ts (E-02/E-07) and the repo map (E-04) only through the
 // RunContext/SessionRunner/RepoMap shapes, so every sibling here is a fake.
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -189,6 +189,29 @@ describe("engine10 plan stage", () => {
 
     expect(result.status).toBe("completed");
     expect(result.data.plan).toBe("");
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("E-61: a non-killed error exit fails the plan stage and writes the stderr tail under runDir", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-e16-err-"));
+    const sessions = new FakeSessionRunner({
+      exit: 1,
+      markers: { done: false, alreadyDone: null, specConflict: null },
+      durationS: 1,
+      killed: false,
+      stderrTail: "plan provider crashed",
+    } as SessionResult);
+    const ctx = fakeCtx(dir, sessions, { intake: { task: "fix the bug" } });
+
+    const result = await planStage.run(ctx, new AbortController().signal);
+
+    expect(result.status).toBe("failed");
+    expect(typeof result.data.stderr_path).toBe("string");
+    const stderrPath = result.data.stderr_path as string;
+    expect(stderrPath.startsWith(dir)).toBe(true);
+    expect(readFileSync(stderrPath, "utf8")).toBe("plan provider crashed");
+    expect(result.reason).toBe("exit 1 (general error)");
 
     rmSync(dir, { recursive: true, force: true });
   });
