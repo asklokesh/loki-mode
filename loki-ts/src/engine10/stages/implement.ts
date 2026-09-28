@@ -1,6 +1,5 @@
-// E-08: Implement (ENGINE.md sections 4 and 16). One provider session; the brief
-// marks Wall tests read-only and names only the impacted tests. Afterwards any
-// changed read-only file is restored (tests_reverted) and the exit is classified.
+// E-08: Implement (ENGINE.md sections 4 and 16). One provider session; the brief marks Wall tests read-only and
+// names only the impacted tests. Afterwards any changed read-only file is restored (tests_reverted) and the exit is classified.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { relative } from "node:path";
 import type { ImplementExit, RunContext, Stage, StageResult, TestMap } from "../types.ts";
@@ -11,8 +10,7 @@ export interface ReadOnlyFile {
   content: string; // the content to restore if it no longer matches
 }
 
-/** Impacted tests as produced upstream: the intake test map narrowed to plan's
- *  relevant files, plus the sealed Wall tests (read-only files). */
+/** Impacted tests as produced upstream: the intake test map narrowed to plan's relevant files, plus the sealed Wall tests. */
 export function impactedTests(ctx: RunContext): string[] {
   const o = ctx.outputs();
   const map = o.intake?.testmap as TestMap | undefined;
@@ -22,11 +20,7 @@ export function impactedTests(ctx: RunContext): string[] {
   return [...new Set([...fromMap, ...wall])];
 }
 
-export function buildImplementBrief(
-  task: string,
-  plan: string | null,
-  impactedTests: string[],
-): string {
+export function buildImplementBrief(task: string, plan: string | null, impactedTests: string[]): string {
   return [
     "You are the Loki 10 implement stage.",
     "Task (untrusted, quoted verbatim):",
@@ -46,8 +40,7 @@ export function buildImplementBrief(
   ].join("\n\n");
 }
 
-/** Restores any read-only file the session changed or deleted. Returns the
- *  paths that had to be restored, in the order given. */
+/** Restores any read-only file the session changed or deleted; returns the paths restored, in order given. */
 function restoreReadOnly(files: ReadOnlyFile[]): string[] {
   const reverted: string[] = [];
   for (const f of files) {

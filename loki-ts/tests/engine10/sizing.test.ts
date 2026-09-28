@@ -96,6 +96,18 @@ describe("engine10 E-45 sizing", () => {
     expect(many.reasons.join()).toContain("names 3 files");
   });
 
+  it("a truncated repo map sizes normal, since buildRepoMap caps files at 2000 and the >3000 rule alone never fires", () => {
+    // A repo with (say) 6000 files reaches sizeTask as only 2000 (buildRepoMap's cap) with truncated: true.
+    const capped = sizeTask("fix a.ts", { files: ["a.ts"], entries: [], truncated: true }, TM);
+    expect(capped.size).toBe("normal");
+    expect(capped.reasons.join()).toContain("truncated");
+  });
+
+  it("the Wall session runs on the development tier, never planning (which LOKI_SESSION_MODEL=opus can override)", async () => {
+    const { calls } = await run("fix the off-by-one in mod1.ts", files(10));
+    expect(calls.find((c) => c.stage === "wall")!.tier).toBe("development");
+  });
+
   it("session.ts pins the tier model env for a session that sets model", async () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-e45-s-"));
     dirs.push(dir);

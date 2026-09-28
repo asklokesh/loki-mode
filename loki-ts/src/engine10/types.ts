@@ -1,6 +1,5 @@
-// Loki 10 engine shared contract (docs/v10/ENGINE.md). Every engine module
-// codes against these types; siblings are injected through RunContext so each
-// module can be unit-tested with fakes.
+// Loki 10 engine shared contract (docs/v10/ENGINE.md). Every engine module codes against these types; siblings
+// are injected through RunContext so each module can be unit-tested with fakes.
 import type { SessionTier } from "../runner/types.ts";
 
 export type StageName =
@@ -33,8 +32,7 @@ export const EVENT_TYPES = [
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
-/** One line of events.jsonl. All keys required; stage is null for run-level events.
- *  Readers tolerate unknown `type` values (forward compatibility). */
+/** One line of events.jsonl. All keys required; stage is null for run-level events; readers tolerate unknown `type` values. */
 export interface EventEnvelope<D extends Record<string, unknown> = Record<string, unknown>> {
   v: 1;
   seq: number;
@@ -89,8 +87,7 @@ export interface SessionResult {
   killed: boolean;
 }
 
-/** Implemented by session.ts (E-07). */
-export interface SessionRunner {
+export interface SessionRunner { // implemented by session.ts (E-07)
   run(opts: SessionRunOptions): Promise<SessionResult>;
 }
 
@@ -107,8 +104,7 @@ export interface TestMap {
   tests: TestRef[];
 }
 
-/** Implemented by testmap.ts (E-05). */
-export interface TestMapProvider {
+export interface TestMapProvider { // implemented by testmap.ts (E-05)
   detect(repoDir: string): Promise<TestMap>;
   impacted(map: TestMap, changedFiles: string[]): TestRef[];
 }
@@ -120,14 +116,11 @@ export interface CostTotals {
   cacheReadTokens: number;
 }
 
-/** Implemented by cost.ts (E-06). */
-export interface CostReader {
+export interface CostReader { // implemented by cost.ts (E-06)
   read(repoDir: string, iterationIds: string[]): CostTotals;
 }
 
-export interface Clock {
-  now(): number; // epoch ms
-}
+export interface Clock { now(): number; } // epoch ms
 
 export interface RunContext {
   runId: string;
@@ -144,10 +137,7 @@ export interface RunContext {
   tests: TestMapProvider;
   cost: CostReader;
   clock: Clock;
-  /** Read-only view of earlier stages' stage.completed data plus key artifacts
-   *  (for example wall.sealed files), filled by the machine (E-02) in memory.
-   *  Stages never read events.jsonl: the worker is not its writer, so the file
-   *  can lag behind what the worker has emitted. */
+  // Read-only view of earlier stages' data (e.g. wall.sealed files), filled by the machine in memory; stages never read events.jsonl, which can lag.
   outputs(): Partial<Record<StageName, Record<string, unknown>>>;
 }
 
@@ -188,10 +178,7 @@ export type PushArgs =
   | { cmd: "comment"; runId: string; prUrl: string; file: string }
   | { cmd: "status"; sha: string; state: "pending" | "success" | "failure"; description: string };
 
-export interface PushEnv {
-  _LOKI_ORIGIN_PINNED: "1";
-  _LOKI_PINNED_ORIGIN: string;
-}
+export interface PushEnv { _LOKI_ORIGIN_PINNED: "1"; _LOKI_PINNED_ORIGIN: string; }
 
 export function pushArgv(a: PushArgs): string[] {
   switch (a.cmd) {

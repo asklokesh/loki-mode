@@ -1,11 +1,8 @@
-// E-15: Wall author (ENGINE.md section 4). One provider session whose cwd is a
-// fresh temp dir holding only task.md and repomap.txt, so it never sees the
-// code, writes loki_wall_* acceptance tests. The engine copies them into the
-// repo and a sealed copy under <runDir>/wall/ (sha256 each), emits wall.sealed
-// before Implement can start, and runs them on the base tree: a clean pass
-// short-circuits the run to already_satisfied.
+// E-15: Wall author (ENGINE.md section 4). One provider session, cwd a fresh temp dir holding only task.md and repomap.txt
+// (never sees the code), writes loki_wall_* tests; the engine copies them into the repo and a sealed copy under
+// <runDir>/wall/ (sha256 each), emits wall.sealed before Implement, runs them on the base tree (clean pass short-circuits to already_satisfied).
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { createHash } from "node:crypto";
@@ -21,17 +18,12 @@ export interface WallSealedFile {
   sha256: string;
 }
 
-/** Runs the sealed Wall tests against the current (base) tree. Local to this
- *  slice: types.ts has no shared "execute tests" contract yet (E-09 verify,
- *  which will need the same thing, is not on main). */
+/** Runs the sealed Wall tests on the base tree; local since types.ts has no shared "execute tests" contract yet. */
 export interface BaseTestRunner {
   run(repoDir: string, files: TestRef[]): { pass: number; fail: number };
 }
 
-// ponytail: per-file shell-out, one runner shape from ENGINE.md section 8.
-// npm/go/cargo are coarse (whole-suite) or unhandled here on purpose: a
-// runner this can't select individually must never report a false pass, so
-// it counts as fail below. Add a real shape when Wall needs one of them.
+// ponytail: per-file shell-out, one runner shape (ENGINE.md section 8); npm/go/cargo count as fail (never a false pass), add a real shape when Wall needs one.
 const RUNNER_CMD: Partial<Record<RunnerName, string>> = {
   pytest: "python -m pytest -q <files>",
   vitest: "npx vitest run <files>",
@@ -39,8 +31,7 @@ const RUNNER_CMD: Partial<Record<RunnerName, string>> = {
   bun: "bun test <files>",
 };
 
-/** Real base-tree runner: one shell command per runner, grouping files so a
- *  mixed repo runs each runner once. */
+/** Real base-tree runner: one shell command per runner, grouping files so a mixed repo runs each runner once. */
 export class RealBaseTestRunner implements BaseTestRunner {
   run(repoDir: string, files: TestRef[]): { pass: number; fail: number } {
     const byRunner = new Map<RunnerName, string[]>();
@@ -95,8 +86,7 @@ function sha256(s: string): string {
   return createHash("sha256").update(s).digest("hex");
 }
 
-/** RunContext carries no task text and intake stores only task_sha256, so read it the way
- *  intake.ts does: prior.intake.task, else issue.json title+body, else LOKI_E10_TASK_TEXT. */
+/** RunContext carries no task text; read it as intake.ts does: prior.intake.task, else issue.json title+body, else LOKI_E10_TASK_TEXT. */
 export function loadTaskText(ctx: RunContext, fromPrior: string | undefined): string {
   if (fromPrior) return fromPrior;
   const issueJsonPath = process.env.LOKI_E10_ISSUE_JSON ?? join(ctx.runDir, "issue.json");
@@ -106,7 +96,7 @@ export function loadTaskText(ctx: RunContext, fromPrior: string | undefined): st
       const text = [issue.title, issue.body].filter((s) => typeof s === "string" && s.length > 0).join("\n\n");
       if (text) return text;
     } catch {
-      // Malformed issue.json: fall through to the text-mode env var.
+      /* malformed issue.json: fall through to the text-mode env var */
     }
   }
   return process.env.LOKI_E10_TASK_TEXT ?? "";
@@ -116,16 +106,13 @@ function renderRepoMapText(map: { files?: string[] }): string {
   return (map.files ?? []).slice(0, WALL_MAP_MAX_LINES).join("\n");
 }
 
-/** Alongside an existing detected test file, or a top-level tests/ directory
- *  when the repo has none. */
+/** Alongside an existing detected test file, or a top-level tests/ directory when the repo has none. */
 function wallTargetDir(repoDir: string, existingTests: TestRef[]): string {
   const first = existingTests[0];
   return first ? join(repoDir, dirname(first.path)) : join(repoDir, "tests");
 }
 
-/** Runner a generated Wall file should be executed by: extension decides for
- *  Python/Go, otherwise the JS runner the repo's test map already detected.
- *  Unknown never guesses: it counts as unselectable (see RUNNER_CMD). */
+/** Runner for a generated file: extension decides for Python/Go, else the repo's detected JS runner; unknown never guesses (unselectable, see RUNNER_CMD). */
 function guessRunner(fileName: string, runners: RunnerName[]): RunnerName | null {
   if (fileName.endsWith(".py")) return "pytest";
   if (fileName.endsWith(".go")) return "go";
@@ -151,11 +138,7 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   const cached = tree ? readRepoMapCache(repoCacheDir(repoKey(null, ctx.repoDir)), tree) : null;
   if (cached) repomapText = renderRepoMapText(cached);
   else if (repomapRef) {
-    try {
-      repomapText = renderRepoMapText(JSON.parse(readFileSync(repomapRef, "utf8")));
-    } catch {
-      repomapText = "";
-    }
+    try { repomapText = renderRepoMapText(JSON.parse(readFileSync(repomapRef, "utf8"))); } catch { repomapText = ""; }
   }
 
   const cwd = mkdtempSync(join(tmpdir(), "loki-e15-wall-"));
@@ -177,10 +160,7 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   const generated = readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX));
   const targetDir = wallTargetDir(ctx.repoDir, existingTests);
   const sealedDir = join(ctx.runDir, "wall");
-  if (generated.length > 0) {
-    mkdirSync(targetDir, { recursive: true });
-    mkdirSync(sealedDir, { recursive: true });
-  }
+  if (generated.length > 0) { mkdirSync(targetDir, { recursive: true }); mkdirSync(sealedDir, { recursive: true }); }
 
   const sealedFiles: WallSealedFile[] = [];
   const readOnlyFiles: ReadOnlyFile[] = [];
@@ -202,11 +182,7 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
 
   const baseRunner = opts.baseRunner ?? new RealBaseTestRunner();
   const baseRun = wallTests.length > 0 ? baseRunner.run(ctx.repoDir, wallTests) : { pass: 0, fail: 0 };
-  // guessRunner() can return null (unknown extension, no matching runner
-  // detected): that file is still sealed but never handed to the base
-  // runner. Gate on generated.length, not wallTests.length, so a sealed file
-  // that was never actually run can never be silently missing from the
-  // count that already_satisfied requires.
+  // Gate on generated.length, not wallTests.length: an unselectable (guessRunner() null) file is sealed but never run, and must never be silently missing from the already_satisfied count.
   const unselectable = generated.length - wallTests.length;
   const alreadySatisfied =
     generated.length > 0 && unselectable === 0 && baseRun.fail === 0 && baseRun.pass === generated.length;

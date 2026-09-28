@@ -1,7 +1,5 @@
-// E-07: SessionRunner. Runs one provider session in its own OS process group so
-// the whole tree can be killed together at limitS (ENGINE.md section 10). The
-// child re-invokes this file (--engine10-session-child, sessionChildMain), which
-// makes the real call through runner/providers.ts resolveProvider().
+// E-07: SessionRunner. Runs one provider session in its own OS process group so the whole tree can be killed together
+// at limitS (ENGINE.md section 10). The child re-invokes this file (--engine10-session-child), calling through runner/providers.ts resolveProvider().
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -13,8 +11,7 @@ const HEARTBEAT_MS_DEFAULT = 60_000; // ENGINE.md section 5: heartbeat every 60s
 
 export type EmitFn = (type: string, stage: string | null, data: Record<string, unknown>) => void;
 
-// provider, model and emit are bound per run on this factory config, since
-// SessionRunOptions (types.ts) carries only per-call fields.
+// provider, model and emit are bound per run on this factory config, since SessionRunOptions carries only per-call fields.
 export interface SessionRunnerConfig {
   provider: string; // "claude" is special-cased; anything else is generic
   model?: string;
@@ -39,12 +36,9 @@ function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): NodeJS.Pro
   env["LOKI_E10_BRIEF"] = opts.brief;
   env["LOKI_E10_TIER"] = opts.tier;
   env["LOKI_E10_PROVIDER"] = cfg.provider;
-  // Only ever ADD variables here. Never blank an inherited var for a
-  // non-claude provider: LOKI_HOST_GUARD in particular gates resolveProvider's
-  // fail-closed throw (providers.ts:63), and clearing it would defeat it.
+  // Only ever ADD variables here; never blank an inherited var for a non-claude provider (LOKI_HOST_GUARD gates resolveProvider's fail-closed throw, providers.ts:63).
   if (cfg.provider === "claude") {
-    // LOKI_E10_INVOKER=cli selects the claude CLI invoker (selectClaudeInvokerKind
-    // falls back to "legacy" when LOKI_SDK_LOOP is unset) without LOKI_LEGACY_BASH.
+    // LOKI_E10_INVOKER=cli selects the claude CLI invoker (falls back to "legacy" when LOKI_SDK_LOOP is unset).
     if (process.env["LOKI_E10_INVOKER"] === "cli") delete env["LOKI_SDK_LOOP"];
     else env["LOKI_SDK_LOOP"] = "1";
     env["LOKI_HOST_GUARD"] = "1";
@@ -70,9 +64,7 @@ function diffShortstat(cwd: string | undefined): { files: number; insertions: nu
     const ins = /(\d+) insertions?\(\+\)/.exec(out);
     const del = /(\d+) deletions?\(-\)/.exec(out);
     return { files: files ? Number(files[1]) : 0, insertions: ins ? Number(ins[1]) : 0, deletions: del ? Number(del[1]) : 0 };
-  } catch {
-    return { files: 0, insertions: 0, deletions: 0 };
-  }
+  } catch { return { files: 0, insertions: 0, deletions: 0 }; }
 }
 
 function parseMarkers(stdout: string): SessionMarkers {
@@ -94,8 +86,7 @@ function exitKind(exit: number | null, killed: boolean, markers: SessionMarkers)
   return "error";
 }
 
-// SIGTERM now, SIGKILL after the grace, against the whole group; shared by the
-// limit timeout and an external abort, so a group that traps SIGTERM still dies.
+// SIGTERM now, SIGKILL after the grace, against the whole group; shared by the limit timeout and an external abort.
 function killGroupWithGrace(pgid: number | undefined): void {
   if (!pgid) return;
   const send = (signal: NodeJS.Signals) => { try { process.kill(-pgid, signal); } catch { /* already exited */ } };
@@ -103,9 +94,7 @@ function killGroupWithGrace(pgid: number | undefined): void {
   setTimeout(() => send("SIGKILL"), KILL_GRACE_MS);
 }
 
-/** Efficiency record plus cost event for one session (ENGINE.md section 10). A
- *  session run in another cwd (wall's temp dir) has its result-cost file copied
- *  into lokiRoot first, so seal can price it after that dir is gone. */
+/** Efficiency record plus cost event for one session; a run in another cwd (wall's temp dir) has its result-cost file copied into lokiRoot first, so seal can price it after that dir is gone. */
 function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: string, durationS: number): void {
   if (!cfg.lokiRoot) return;
   const own = resultCostPath(join(opts.cwd ?? process.cwd(), ".loki"), opts.iterationId);
@@ -123,9 +112,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
     run(opts: SessionRunOptions): Promise<SessionResult> {
       const start = Date.now();
       // A signal aborted before run() never fires the listener below, so it never spawns.
-      if (opts.signal.aborted) {
-        return Promise.resolve({ exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true });
-      }
+      if (opts.signal.aborted) return Promise.resolve({ exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true });
       const env = childEnv(opts, cfg);
       const [cmd, args] = cfg.childCommand ?? [process.execPath, [import.meta.path, "--engine10-session-child"]];
       const sessionId = opts.iterationId;

@@ -1,7 +1,5 @@
-// E-16: Plan (ENGINE.md section 4). A fast-tier session sees the task and up to
-// 8 relevant files chosen by keyword overlap with the repo map, and writes at
-// most 10 lines to <runDir>/plan-output.txt; the engine reads and truncates it
-// (missing or unreadable means an empty plan, never a crash).
+// E-16: Plan (ENGINE.md section 4). A fast-tier session sees the task and up to 8 relevant files chosen by keyword
+// overlap with the repo map, and writes at most 10 lines to <runDir>/plan-output.txt; the engine reads and truncates it (missing or unreadable means an empty plan, never a crash).
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RepoMap } from "../repomap.ts";
@@ -13,23 +11,15 @@ const MAX_RELEVANT_FILES = 8;
 const MAX_PLAN_LINES = 10;
 const PLAN_OUTPUT_FILENAME = "plan-output.txt";
 
-function planOutputPath(runDir: string): string {
-  return join(runDir, PLAN_OUTPUT_FILENAME);
-}
+function planOutputPath(runDir: string): string { return join(runDir, PLAN_OUTPUT_FILENAME); }
 
 function keywords(task: string): string[] {
   const words = task.toLowerCase().match(/[a-z0-9_]+/g) ?? [];
   return Array.from(new Set(words.filter((w) => w.length > 2)));
 }
 
-/** Keyword overlap between the task and each repo map entry's path plus
- *  symbols. Files that score zero are dropped rather than padding the list;
- *  ties keep the repo map's original order. */
-export function selectRelevantFiles(
-  task: string,
-  repoMap: RepoMap,
-  max: number = MAX_RELEVANT_FILES,
-): string[] {
+/** Keyword overlap between task and repo map entry (path plus symbols); zero-score files are dropped, ties keep repo map order. */
+export function selectRelevantFiles(task: string, repoMap: RepoMap, max: number = MAX_RELEVANT_FILES): string[] {
   const words = keywords(task);
   if (words.length === 0) return [];
 
@@ -46,9 +36,7 @@ export function selectRelevantFiles(
     .map((s) => s.path);
 }
 
-/** Truncates the planner's output to at most `max` non-empty lines. This is
- *  the engine-side enforcement of "writes at most 10 lines": the brief asks
- *  for it, but nothing stops a session from writing more. */
+/** Truncates the planner's output to at most `max` non-empty lines: engine-side enforcement, since nothing stops a session from writing more. */
 export function truncatePlan(raw: string, max: number = MAX_PLAN_LINES): string {
   const lines = raw.split("\n").filter((l) => l.trim().length > 0);
   return lines.slice(0, max).join("\n");

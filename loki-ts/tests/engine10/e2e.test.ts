@@ -60,6 +60,7 @@ function runEngine(mode: "done" | "already", withPr = false): Run {
     E2E_STUB_LOG: stubLog,
     E2E_STUB_ENV_LOG: stubEnvLog,
     LOKI_NO_BROWSER: "1",
+    LOKI_E10_PLAN: "1", // E-45: this fixture's task sizes "small" by default; force plan so the pipeline shape below still holds.
     GH_TOKEN: CANARY,
   };
   delete env.LOKI_ALLOW_AGENT_GITHUB_TOKEN;
