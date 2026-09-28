@@ -1231,33 +1231,39 @@ check_lg_shortcuts() {
         [ -f "$td/task.json" ] || continue
         tier="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("tier"))' "$td/task.json")"
         [ "$tier" = large ] || continue
+        # The RED-at-ref check is per TASK (criterion 7), so a task with no
+        # shortcuts/ directory is still checked; patches then reuse that checkout.
+        name="$(basename "$td")"
+        source="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["repo"]["source"])' "$td/task.json")"
+        ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["repo"]["ref"])' "$td/task.json")"
+        setup="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("setup") or "")' "$td/task.json")"
+        run="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["hidden"]["run"])' "$td/task.json")"
+        workdir="$T/lgshortcut-$name"
+        rm -rf "$workdir"
+        if ! git clone -q "$source" "$workdir" >/dev/null 2>&1 || ! git -C "$workdir" checkout -q "$ref" >/dev/null 2>&1; then
+            echo "FAIL(shortcut leg): $name: cannot check out repo.ref"; ok=1; continue
+        fi
+        [ -n "$setup" ] && (cd "$workdir" && bash -c "$setup") >/dev/null 2>&1
+        copy_hidden() {  # overlay the trusted hidden files, fresh, same as run_hidden -- a
+                          # shortcut patch touching one of these paths must never leak through
+            while IFS= read -r rel; do
+                [ -n "$rel" ] || continue
+                mkdir -p "$workdir/$(dirname "$rel")"
+                cp "$td/hidden/$rel" "$workdir/$rel"
+            done < <(python3 -c 'import json,sys; [print(p) for p in json.load(open(sys.argv[1]))["hidden"]["files"]]' "$td/task.json")
+        }
+        red_by_assertion() {  # at least one "N failed" and no "N error(s)": collection errors are RED for the wrong reason
+            printf '%s\n' "$1" | grep -qE '[0-9]+ failed' && ! printf '%s\n' "$1" | grep -qE '[0-9]+ errors?([ ,]|$)'
+        }
+        copy_hidden
+        out="$(cd "$workdir" && bash -c "$run" 2>&1)"; rc=$?
+        if ! red_by_assertion "$out"; then
+            echo "FAIL(shortcut leg): $name: baseline at ref is not RED by assertion (rc=$rc): $out"; ok=1; continue
+        fi
         for patch in "$td"/shortcuts/*.patch; do
             [ -f "$patch" ] || continue
             n=$((n + 1))
             name="$(basename "$td")/$(basename "$patch")"
-            source="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["repo"]["source"])' "$td/task.json")"
-            ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["repo"]["ref"])' "$td/task.json")"
-            setup="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("setup") or "")' "$td/task.json")"
-            run="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["hidden"]["run"])' "$td/task.json")"
-            workdir="$T/lgshortcut-$n"
-            rm -rf "$workdir"
-            if ! git clone -q "$source" "$workdir" >/dev/null 2>&1 || ! git -C "$workdir" checkout -q "$ref" >/dev/null 2>&1; then
-                echo "FAIL(shortcut leg): $name: cannot check out repo.ref"; ok=1; continue
-            fi
-            [ -n "$setup" ] && (cd "$workdir" && bash -c "$setup") >/dev/null 2>&1
-            copy_hidden() {  # overlay the trusted hidden files, fresh, same as run_hidden -- a
-                              # shortcut patch touching one of these paths must never leak through
-                while IFS= read -r rel; do
-                    [ -n "$rel" ] || continue
-                    mkdir -p "$workdir/$(dirname "$rel")"
-                    cp "$td/hidden/$rel" "$workdir/$rel"
-                done < <(python3 -c 'import json,sys; [print(p) for p in json.load(open(sys.argv[1]))["hidden"]["files"]]' "$td/task.json")
-            }
-            copy_hidden
-            out="$(cd "$workdir" && bash -c "$run" 2>&1)"; rc=$?
-            if ! printf '%s\n' "$out" | grep -qE '[0-9]+ failed'; then
-                echo "FAIL(shortcut leg): $name: baseline at ref is not RED by assertion (rc=$rc): $out"; ok=1; continue
-            fi
             # Reset tracked files to repo.ref before checking/applying the patch:
             # it was authored against the pristine ref tree, not against whatever
             # copy_hidden just overlaid on top of a hidden.files path that
@@ -1270,8 +1276,9 @@ check_lg_shortcuts() {
             copy_hidden
             out="$(cd "$workdir" && bash -c "$run" 2>&1)"; rc=$?
             if [ "$rc" = 0 ] || ! printf '%s\n' "$out" | grep -qE '[0-9]+ failed'; then
-                echo "FAIL(shortcut leg): $name: shortcut grades completed (hidden run did not stay red)"; ok=1; continue
+                echo "FAIL(shortcut leg): $name: shortcut grades completed (hidden run did not stay red)"; ok=1
             fi
+            git -C "$workdir" apply -R "$patch" >/dev/null 2>&1
         done
     done
     echo "checked $n patches"
@@ -1350,6 +1357,45 @@ dir_d="$(mk_lg_task d "$LGREPO" "$LGREF" "$RED_TEST" "$T/patch-d.diff")"
 check_lg_shortcuts "$dir_d" >"$T/lgshort-d.out" 2>&1; rc=$?
 [ "$rc" = 0 ] && pass "D38 shortcut leg: positive control (shortcut still fails an assertion) passes the leg" \
     || fail "D38 shortcut leg: d-fixture (genuine shortcut) wrongly failed: $(cat "$T/lgshort-d.out")"
+
+# Criterion 7: a collection ERROR (ImportError at ref) is RED for the wrong
+# reason too, not only "no tests ran".
+ERR_TEST='#!/usr/bin/env bash
+echo "ERROR collecting hidden_test.py"; echo "1 error in 0.02s"
+exit 2
+'
+dir_e="$(mk_lg_task e "$LGREPO" "$LGREF" "$ERR_TEST" "$T/patch-d.diff")"
+check_lg_shortcuts "$dir_e" >"$T/lgshort-e.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && pass "D38 shortcut leg: collection-error RED at ref fails the leg" \
+    || fail "D38 shortcut leg: e-fixture (collection error) wrongly cleared: $(cat "$T/lgshort-e.out")"
+
+# A task with NO shortcut patches is still baseline-checked (red on the
+# pre-restructure checker, which only ran RED-at-ref inside the patch loop).
+dir_f="$(mk_lg_task f "$LGREPO" "$LGREF" "$COLLECT_TEST" "$T/patch-d.diff")"
+rm "$T/lgt-f/lg-f/shortcuts/sc-f.patch"
+check_lg_shortcuts "$dir_f" >"$T/lgshort-f.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && pass "D38 shortcut leg: a no-shortcut task with collection-only RED at ref fails the leg" \
+    || fail "D38 shortcut leg: f-fixture (no shortcuts, collection-only) wrongly cleared: $(cat "$T/lgshort-f.out")"
+# A mixed "1 failed, 1 error" summary is a partial collection error, also not clean RED.
+MIXED_TEST='#!/usr/bin/env bash
+echo "1 failed, 1 error in 0.02s"; exit 1
+'
+dir_g="$(mk_lg_task g "$LGREPO" "$LGREF" "$MIXED_TEST" "$T/patch-d.diff")"
+check_lg_shortcuts "$dir_g" >"$T/lgshort-g.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && pass "D38 shortcut leg: '1 failed, 1 error' baseline fails the leg" \
+    || fail "D38 shortcut leg: g-fixture (failed plus error) wrongly cleared: $(cat "$T/lgshort-g.out")"
+
+# Result rows gain hidden_subset (verbatim-provenance hidden files).
+hs_out="$(python3 - "$REPO_ROOT/eval/loki10" <<'PY'
+import importlib.util, sys
+sp = importlib.util.spec_from_file_location("h", sys.argv[1] + "/harness.py")
+h = importlib.util.module_from_spec(sp); sp.loader.exec_module(h)
+a = h.hidden_subset({"hidden": {"provenance": {"a.py": "verbatim", "b.py": "authored"}}})
+print(a["files"], a["pass"], h.hidden_subset({"hidden": {}}))
+PY
+)"
+[ "$hs_out" = "['a.py'] None None" ] && pass "D38: hidden_subset lists verbatim files; None without provenance" \
+    || fail "D38: hidden_subset got: $hs_out"
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

@@ -1281,12 +1281,24 @@ def redact_row(row):
     return scrub({k: v for k, v in row.items() if k != "logs"})
 
 
+def hidden_subset(task):
+    """D38: the verbatim-upstream hidden files (hidden.provenance value
+    "verbatim"), or None when the task declares no provenance. `pass` is set
+    after grading and only when the subset is every hidden file (ponytail: a
+    strict subset is not re-run separately; add when a large task needs it)."""
+    prov = (task.get("hidden") or {}).get("provenance")
+    if not isinstance(prov, dict):
+        return None
+    return {"files": sorted(k for k, v in prov.items() if v == "verbatim"), "pass": None}
+
+
 def new_row(task, arm, cfg, slot, logs):
     return {"run_id": slot, "task": task["id"], "arm": arm, "status": "ok", "model": cfg["model"],
             "repo_ref": task["repo"]["ref"], "harness_sha": cfg["harness_sha"],
             "expected_outcome": task.get("expected_outcome"), "tier": task.get("tier", DEFAULT_TIER),
             "started": None, "ended": None, "wall_s": None, "time_to_pr_s": None,
             "pr_opened": False, "pr_branch": None, "hidden_pass": False, "completed": False,
+            "hidden_subset": hidden_subset(task),
             "cost_usd": None, "cost_source": "not reported", "cost_partial_usd": None, "exit_code": None,
             # Unknown is always None, never 0 (cost.ts convention): a zero
             # here would silently understate a scorecard sum over rows where
@@ -1439,6 +1451,9 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
         row["no_source_diff"] = no_source_diff(presnap, snapshot_tree(grade_dir, rundir, "post", exclude=wall_excl))
     row["hidden_pass"], row["grade_refused"] = run_hidden(
         task, task_dir, grade_dir, env, os.path.join(logdir, "grade_hidden"), cap)
+    hs = row.get("hidden_subset")
+    if hs and hs["files"] and set(hs["files"]) == set(task["hidden"]["files"]):
+        hs["pass"] = row["hidden_pass"]
     if no_change:
         # EV-13: completed only if the arm made no source change, gave its own
         # deterministic evidence the feature already exists, and (still) the
