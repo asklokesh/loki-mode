@@ -1,0 +1,19 @@
+{
+  "id": "pub-werkzeug-3105",
+  "kind": "public",
+  "prompt": "duplicate rule check needs to consider more\n\nThe duplicate rule check added in #3038 isn't exact enough. It doesn't account for methods. It can't check equality `self.methods == other.methods`, it needs to check intersection `self.method & other.methods` since _any_ shared method would result in a duplicate. I don't think that's appropriate for `__eq__` though, as it's not exactly equality and `==` is used elsewhere. Also not sure if `strict_slashes` and `merge_slashes` is being accounted for. @pgjones \n\nWhile looking at `Rule.methods` I noticed that it can be `None` instead of a set of values. Why is this? Checks for that are throughout the code, and I also can't find logic saying the default is `GET` in that case. What's going on with that?",
+  "issue_ref": "pallets/werkzeug#3105",
+  "repo": {
+    "source": "https://github.com/pallets/werkzeug.git",
+    "ref": "bf7529e62685e0b87350481703ddae5b6351072d"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . pytest ephemeral-port-reserve",
+  "hidden": {
+    "files": [
+      "tests/test_routing.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_routing.py -k \"test_no_duplicates or test_no_duplicate_head_options\""
+  },
+  "timeout_s": 900,
+  "tier": "medium"
+}

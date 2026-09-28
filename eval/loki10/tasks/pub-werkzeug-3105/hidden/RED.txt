@@ -1,0 +1,97 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+______________________________ test_no_duplicates ______________________________
+
+    def test_no_duplicates() -> None:
+        """A rule's subdomain part and websocket mode are considered for equality."""
+>       r.Map(
+            [
+                r.Rule("/", endpoint="index"),
+                r.Rule("/", endpoint="websocket", websocket=True),
+                r.Rule("/", endpoint="sub", subdomain="a"),
+                r.Rule("/method", methods=["GET"]),
+                r.Rule("/method", methods=["POST"]),
+            ]
+        )
+
+tests/test_routing.py:9: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/werkzeug/routing/map.py:134: in __init__
+    self.add(rulefactory)
+src/werkzeug/routing/map.py:189: in add
+    self._matcher.add(rule)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <werkzeug.routing.matcher.StateMachineMatcher object at 0x109e30050>
+rule = <Rule '/method' (POST) -> None>
+
+    def add(self, rule: Rule) -> None:
+        state = self._root
+        for part in rule._parts:
+            if part.static:
+                state.static.setdefault(part.content, State())
+                state = state.static[part.content]
+            else:
+                for test_part, new_state in state.dynamic:
+                    if test_part == part:
+                        state = new_state
+                        break
+                else:
+                    new_state = State()
+                    state.dynamic.append((part, new_state))
+                    state = new_state
+    
+        for existing in state.rules:
+            if rule == existing:
+>               raise DuplicateRuleError(existing, rule)
+E               werkzeug.routing.exceptions.DuplicateRuleError: /method → None
+
+src/werkzeug/routing/matcher.py:57: DuplicateRuleError
+________________________ test_no_duplicate_head_options ________________________
+
+    def test_no_duplicate_head_options() -> None:
+        """Rules with overlapping HEAD and OPTIONS methods are not duplicates."""
+>       r.Map(
+            [
+                r.Rule("/", methods=["GET", "OPTIONS"], endpoint="a"),
+                r.Rule("/", methods=["POST", "OPTIONS"], endpoint="b"),
+            ]
+        )
+
+tests/test_routing.py:33: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/werkzeug/routing/map.py:134: in __init__
+    self.add(rulefactory)
+src/werkzeug/routing/map.py:189: in add
+    self._matcher.add(rule)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <werkzeug.routing.matcher.StateMachineMatcher object at 0x109856d50>
+rule = <Rule '/' (OPTIONS, POST) -> b>
+
+    def add(self, rule: Rule) -> None:
+        state = self._root
+        for part in rule._parts:
+            if part.static:
+                state.static.setdefault(part.content, State())
+                state = state.static[part.content]
+            else:
+                for test_part, new_state in state.dynamic:
+                    if test_part == part:
+                        state = new_state
+                        break
+                else:
+                    new_state = State()
+                    state.dynamic.append((part, new_state))
+                    state = new_state
+    
+        for existing in state.rules:
+            if rule == existing:
+>               raise DuplicateRuleError(existing, rule)
+E               werkzeug.routing.exceptions.DuplicateRuleError: / → a
+
+src/werkzeug/routing/matcher.py:57: DuplicateRuleError
+=========================== short test summary info ============================
+FAILED tests/test_routing.py::test_no_duplicates - werkzeug.routing.exception...
+FAILED tests/test_routing.py::test_no_duplicate_head_options - werkzeug.routi...
+2 failed, 2 deselected in 0.05s
