@@ -4,6 +4,7 @@
 // machine.ts/intake.ts/session.ts only through the RunContext/SessionRunner
 // interfaces in types.ts, so every sibling here is a fake.
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   mkdtempSync,
@@ -279,6 +280,67 @@ describe("engine10 wall stage", () => {
     const readOnly = result.data.readOnlyFiles as { path: string; content: string }[];
     expect(readOnly).toHaveLength(1);
     expect(readOnly[0]!.content).toBe(SAMPLE);
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  // A real git repo, .loki ignored, so `git status` reflects only what wall.ts wrote to the tree.
+  function initGitRepo(repoDir: string): (...args: string[]) => string {
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repoDir, encoding: "utf8" });
+    git("init", "-q");
+    git("config", "user.email", "e54@test.local");
+    git("config", "user.name", "e54-test");
+    writeFileSync(join(repoDir, ".gitignore"), ".loki/\n", "utf8");
+    git("add", ".gitignore");
+    git("commit", "-q", "-m", "init");
+    return git;
+  }
+
+  test("E-54: an aborted, killed, or timed-out session never copies its test file into the repo", async () => {
+    const { repoDir, runDir, testmap: tm } = setup({ runners: ["vitest"], tests: [] });
+    const git = initGitRepo(repoDir);
+
+    // The session writes its file before it is killed: a real Wall author can be
+    // mid-write when the group is SIGTERM/SIGKILL'd or the AbortSignal fires.
+    class KilledSessionRunner implements SessionRunner {
+      async run(opts: SessionRunOptions): Promise<SessionResult> {
+        writeFileSync(join(opts.cwd!, "loki_wall_sample.test.ts"), SAMPLE, "utf8");
+        return { exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 1, killed: true };
+      }
+    }
+    const baseRunner = new FakeBaseTestRunner({ pass: 99, fail: 0 });
+    const ctx = fakeCtx(repoDir, runDir, new KilledSessionRunner(), { intake: { task: "add x", testmap: tm, repomap_ref: join(runDir, "repomap.json") } }, []);
+
+    const result = await runWall(ctx, new AbortController().signal, { baseRunner });
+
+    expect(result.status).toBe("failed");
+    expect(result.data.files ?? []).toEqual([]);
+    expect(baseRunner.calls).toHaveLength(0);
+    expect(git("status", "--porcelain").trim()).toBe("");
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  test("E-54: a session killed from outside (exit null, killed false) also never copies its test file", async () => {
+    const { repoDir, runDir, testmap: tm } = setup({ runners: ["vitest"], tests: [] });
+    const git = initGitRepo(repoDir);
+
+    // types.ts documents exit:null as "killed before exiting" independent of the killed flag: an
+    // external SIGKILL (OOM killer, a supervisor outside our own AbortSignal path) reports this
+    // shape without ever setting killed=true.
+    class ExternallyKilledSessionRunner implements SessionRunner {
+      async run(opts: SessionRunOptions): Promise<SessionResult> {
+        writeFileSync(join(opts.cwd!, "loki_wall_sample.test.ts"), SAMPLE, "utf8");
+        return { exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 1, killed: false };
+      }
+    }
+    const baseRunner = new FakeBaseTestRunner({ pass: 99, fail: 0 });
+    const ctx = fakeCtx(repoDir, runDir, new ExternallyKilledSessionRunner(), { intake: { task: "add x", testmap: tm, repomap_ref: join(runDir, "repomap.json") } }, []);
+
+    const result = await runWall(ctx, new AbortController().signal, { baseRunner });
+
+    expect(result.status).toBe("failed");
+    expect(result.data.files ?? []).toEqual([]);
+    expect(baseRunner.calls).toHaveLength(0);
+    expect(git("status", "--porcelain").trim()).toBe("");
     rmSync(repoDir, { recursive: true, force: true });
   });
 });

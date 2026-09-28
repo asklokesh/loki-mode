@@ -1,6 +1,5 @@
 // E-15: Wall author (ENGINE.md section 4). One provider session, cwd a fresh temp dir holding only task.md and repomap.txt
-// (never sees the code), writes loki_wall_* tests; the engine copies them into the repo and a sealed copy under
-// <runDir>/wall/ (sha256 each), emits wall.sealed before Implement, runs them on the base tree (clean pass short-circuits to already_satisfied).
+// (never sees the code), writes loki_wall_* tests, copied into the repo (never on abort/kill/timeout, E-54) and sealed under <runDir>/wall/ (sha256 each); wall.sealed before Implement; clean base-tree pass short-circuits to already_satisfied.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -145,7 +144,7 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   writeFileSync(join(cwd, "task.md"), task, "utf8");
   writeFileSync(join(cwd, "repomap.txt"), repomapText, "utf8");
 
-  await ctx.sessions.run({
+  const session = await ctx.sessions.run({
     stage: "wall",
     brief: buildWallBrief(task, repomapText),
     // E-45: pinned cheaper model; development tier because the planning tier yields to the LOKI_SESSION_MODEL=opus pin.
@@ -156,6 +155,7 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
     signal,
     cwd,
   });
+  if (session.killed || session.exit === null) { rmSync(cwd, { recursive: true, force: true }); return { status: "failed", data: {}, reason: "wall session aborted, killed, or timed out", killed: true }; } // E-54: also covers killed-from-outside (exit:null, "killed before exiting" per types.ts)
 
   const generated = readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX));
   const targetDir = wallTargetDir(ctx.repoDir, existingTests);
