@@ -1,0 +1,7 @@
+{"entry": "classify", "args": [{"t": "int", "v": "5"}, {"t": "text", "v": "bytes"}], "kwargs": {}}
+{"entry": "classify", "args": [{"t": "int", "v": "-3"}, {"t": "text", "v": "bytes"}], "kwargs": {}}
+{"entry": "mixed_dict", "args": [], "kwargs": {}}
+{"entry": "explode", "args": [{"t": "text", "v": "boom"}], "kwargs": {}}
+{"entry": "exotic_values", "args": [], "kwargs": {}}
+{"entry": "unsupported_value", "args": [], "kwargs": {}}
+{"entry": "subclass_values", "args": [], "kwargs": {}}

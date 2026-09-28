@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.1.0 (2026-09-28)
+
+Loki 10 engine improvements (still opt-in: `LOKI_ENGINE=v10`; the default engine is unchanged).
+
+### Added
+- Model cascade and lean small path (E-64): small tasks run one implement session on sonnet with the cached repo map and the impacted tests; fix rounds stay on the cheap model and escalate to the top model only on a real test failure, with the reason in the event log. `LOKI_E10_CASCADE=0` restores the previous behaviour. Not yet re-measured on the full 29-task arm, so the release gate numbers in v10.0.0 still describe the default configuration.
+- Every session exit is classified, including limit kills (125, 143); progress heartbeat every 30s by default (E-68).
+- Eval harness: `no_change_needed` expected outcome, for tasks where the feature already exists (EV-13).
+- `loki modernize` groundwork, not yet wired to the CLI: event types and state paths, inventory, dependency clustering with an iterative SCC that handles 100,000-node chains, up-front estimate (M-01, M-02, M-05, M-06).
+
+### Fixed
+- Cost never shows $0.00 unless the provider priced real usage; unmeasured or partial cost says so in output, receipt, status and dashboard (E-69).
+- `scripts/release.sh --bump-only` no longer rewrites dist bundles whose only change is the debugId (E-72).
+- The engine10 size check now holds the core engine under 5,000 lines and gives `loki modernize` its own 4,000-line cap; core code may not import it (D33, E-76).
+- New guard: no test may hardcode a "future" version that a real release can overtake, the cause of the blocked v10.0.0 publish (E-73).
+
 ## v10.0.1 (2026-09-28)
 
 Republishes v10.0.0, which was tagged but never reached npm: its release commit failed two Tests shards because a test used 9.99.0 as a "far-future" version, which is older than 10.0.0. No product change; the v10.0.0 notes below apply in full.
