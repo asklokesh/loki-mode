@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.4.0 (2026-09-28)
+
+`loki modernize <repo> --to <target>` now runs on the v10 engine whatever your default engine is, and the release tooling can no longer publish a version without its built files.
+
+### Added
+- `loki modernize <repo> --to <target>` reaches the v10 modernize command under every engine setting, including `LOKI_ENGINE=legacy` (M-08). The existing `loki modernize heal` and `loki modernize migrate` commands, and `loki modernize --help`, keep their current behaviour.
+- Usage governor (G-01, internal swarm tooling): `scripts/usage-governor.py` reads Claude Code usage from the local transcripts, counts each streamed message once, and projects the 5-hour and weekly windows to their real reset times (daylight saving aware). At 85% of the window or 90% of the week it recommends zero additional engineers.
+- Eval results are durable (E-101): every eval row is archived, with log paths and secret-shaped strings removed, to `~/loki-ci-logs/eval/<run>/` and `eval/loki10/archive/`. `scripts/prune-worktrees.sh` never removes a worktree that has a live process, a commit in the last 30 minutes, or unarchived eval results.
+
+### Fixed
+- `scripts/release.sh --bump-only` stops before building when `loki-ts/node_modules` is missing, and restores `loki-ts/dist` and exits non-zero when the build fails or does not embed the new version (E-102, E-103). Before, a failed build could leave the tracked dist files deleted.
+
 ## v10.3.1 (2026-09-28)
 
 A user guide for `loki modernize`, and a pre-push secret scan that can no longer be weakened by a pushed commit's own allowlist.
