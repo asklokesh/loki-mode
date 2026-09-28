@@ -20,8 +20,7 @@
 #   all three run before the PRE_PUSH_SKIP check, deliberately:
 #   PRE_PUSH_SKIP=1 is the routine way trains push (see docs/v10/DECISIONS.md),
 #   so a check placed after it would never fire on the pushes it exists to
-#   catch, including exactly the release-train push that landed E-101's
-#   planted secrets (tests/test-eval-archive.sh, commit bbe83c7a).
+#   catch.
 #   LOKI_ALLOW_UNSCANNED_PUSH=1: lets a push through when the pinned
 #   gitleaks binary is missing (E-110). Only covers the full-push scan
 #   below, never the eval-fixture scan, and never a real finding or a
@@ -254,6 +253,20 @@ _full_scan_failures=0
 while read -r _lref _lsha _rref _rsha; do
     [[ -n "${_lsha:-}" ]] || continue
     [[ "$_lsha" == "$_zero_sha" ]] && continue  # ref delete: nothing pushed
+
+    # A ref need not point at a commit (a lightweight tag can point straight
+    # at a tree or a blob). Caught here too, not only by the eval scan's own
+    # copy of this check further down: `git log <tree-oid> --not
+    # --remotes=...` (what --log-opts passes straight through to) does not
+    # error on a non-commit oid, it silently walks ZERO commits and gitleaks
+    # exits 0 -- a real fail-open, reproduced with case 27b (a tree ref
+    # carrying a secret, pushed with PRE_PUSH_SKIP=1 so dir-mode's own
+    # equivalent check, further down, never runs to catch it either).
+    if ! git -C "$_top" cat-file -e "${_lsha}^{commit}" 2>/dev/null; then
+        echo "[pre-push] FAIL: $_lref points at ${_lsha:0:12}, which is not a commit (a tree or blob ref?) -- refusing rather than skipping the full-push scan" >&2
+        _full_scan_failures=$((_full_scan_failures + 1))
+        continue
+    fi
 
     # Same base-resolution fallback as the eval scan below (own copy: this
     # section runs first, before REPO_ROOT/cd, and duplicating ~10 lines here

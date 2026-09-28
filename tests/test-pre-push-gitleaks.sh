@@ -1219,6 +1219,30 @@ else
     ko "a ref pointing at a tree (not a commit) is refused" "refused but wrong message: $(cat "$D/push.out")"
 fi
 
+# --- case 27b (E-110 concern): the same TREE ref, with PRE_PUSH_SKIP=1 set --
+# so dir-mode never runs and the early full-push scan is the ONLY thing that
+# can catch it. Confirms whether `gitleaks git <clone> --log-opts="<tree>
+# --not --remotes=..."` scans zero commits and exits 0 on a non-commit ref
+# (the early block never separately checks `${_lsha}^{commit}`), or fails
+# closed some other way.
+D="$SCRATCH/c27b"; BARE="$SCRATCH/c27b.git"; setup_bare "$BARE"; setup_push_clone "$D" "$BARE"
+mkdir -p "$D/eval/loki10/tasks/fake-task"
+printf '%s\n' "$_task_json_secret" > "$D/eval/loki10/tasks/fake-task/task.json"
+g "$D" add eval/loki10/tasks/fake-task/task.json >/dev/null 2>&1
+g "$D" commit -q -m "secret, never pushed directly" --no-verify >/dev/null 2>&1
+_tree_oid_b="$(g "$D" rev-parse 'HEAD^{tree}')"
+g "$D" reset -q --hard HEAD~1
+g "$D" tag treetagb "$_tree_oid_b" >/dev/null 2>&1
+rc=0
+(cd "$D" && PRE_PUSH_NO_CI_CHECK=1 LOKI_RELEASE_MANAGER=1 PRE_PUSH_SKIP=1 git push origin treetagb) >"$D/push.out" 2>&1 || rc=$?
+if [[ "$rc" == "0" ]]; then
+    ko "case 27b: a tree ref is refused even under PRE_PUSH_SKIP=1 (early block only)" "push succeeded (fail-open); out: $(cat "$D/push.out")"
+elif grep -q "which is not a commit" "$D/push.out"; then
+    ok "case 27b: a tree ref is refused even under PRE_PUSH_SKIP=1 (early block only)"
+else
+    ko "case 27b: a tree ref is refused even under PRE_PUSH_SKIP=1 (early block only)" "refused but wrong message: $(cat "$D/push.out")"
+fi
+
 # --- case 28 (r4 concern): a `git rev-list` failure fails CLOSED, not open ---
 # A corrupt commit object in the pushed range (disk corruption, a bad pack)
 # used to make `git rev-list base..tip` fail silently behind `|| true`,
