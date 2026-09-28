@@ -1,5 +1,9 @@
 # Progress
 
+## 2026-09-28T14:30Z: v10.1.1 shipped
+- Release run 36434253412 success; `npm view loki-mode dist-tags.latest` 10.1.1, gitHead 580540f9 = release commit. Tests and Bun Parity green on 3fb56a4b before the bump; version-only bump produced no dist churn (E-72 working).
+- Wave E21 (wf_39ab3f7d-8f3) in flight: 12 builders, 4 reviews. Ready queue refilled with E-78..E-82.
+
 ## 2026-09-28T14:10Z: resumed after a 9-hour stall -- read first on resume
 - Shipped before the stall: v10.0.1 (npm gitHead 76ec1c24) and v10.1.0 (Release run for b60ca0ef all jobs success; `npm view loki-mode@10.1.0 gitHead` b60ca0ef; dist-tag latest 10.1.0).
 - Stall: every model call from 04:48Z failed with "Your organization has disabled Claude subscription access for Claude Code" (workflow failures in wf_bd919989-941 and wf_1efd6e89-1f3); nothing ran until about 14:00Z. The pulse raised no violation for it; E-77 adds SESSION_STALLED.
