@@ -165,6 +165,19 @@ fi
 # what keeps the clone itself cheap either way. `git -C "$_top"` throughout:
 # REPO_ROOT/cd have not run yet at this point (same reason E-88 uses it).
 GITLEAKS_VERSION="8.30.0"
+
+# A hung gitleaks process (huge object, pathological regex backtrack) should
+# not hang the push forever. `timeout` is GNU coreutils; on a machine without
+# it (or without the `gtimeout` Homebrew alias on macOS) this is simply a
+# no-op prefix -- best-effort, not a security control, so its absence never
+# blocks a push on its own.
+_gitleaks_timeout_prefix=()
+if command -v timeout >/dev/null 2>&1; then
+    _gitleaks_timeout_prefix=(timeout 120)
+elif command -v gtimeout >/dev/null 2>&1; then
+    _gitleaks_timeout_prefix=(gtimeout 120)
+fi
+
 _gitleaks_bin=""
 _gitleaks_bin_checked=0
 _resolve_gitleaks_bin() {
@@ -286,6 +299,34 @@ while read -r _lref _lsha _rref _rsha; do
     _full_log_opts="${_full_base}..${_lsha}"
     [[ "$_full_base_is_empty" == "1" ]] && _full_log_opts="$_lsha --not --remotes=${1:-origin}"
 
+    # --- .gitleaks.toml change gate, moved here from the eval scan (r2) -------
+    # Opus REJECT, reproduced: a push made with PRE_PUSH_SKIP=1 (the routine
+    # way trains push) could add a commit with a zero-rule .gitleaks.toml
+    # ("title = \"x\"", no [[rules]]) plus a commit with a real secret. The
+    # eval scan's own .gitleaks.toml refusal sat AFTER the PRE_PUSH_SKIP exit,
+    # so it never ran; the full-push scan below used the pushed TIP's own
+    # .gitleaks.toml (E-99's tip-trust invariant), which is exactly the
+    # attacker's weakened config -- it found nothing, and the secret landed.
+    # This existence check (word-split $_full_log_opts intentionally: it is
+    # either "base..tip" or "tip --not --remotes=origin", both valid `git
+    # rev-list` range syntax, built internally by this hook, never from
+    # pushed content) runs before PRE_PUSH_SKIP and before the binary check,
+    # same as the eval scan's own gate needs neither. LOKI_ALLOW_GITLEAKS_
+    # CONFIG_CHANGE=1 is still the only override (E-99); the eval scan's own
+    # copy of this gate, further down, still runs too when PRE_PUSH_SKIP is
+    # unset, and still prints the itemized per-commit diff.
+    # shellcheck disable=SC2086
+    _toml_changed_commits="$(git -C "$_top" rev-list $_full_log_opts -- .gitleaks.toml 2>/dev/null || true)"
+    if [[ -n "$_toml_changed_commits" ]]; then
+        if [[ "${LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE:-0}" != "1" ]]; then
+            echo "[pre-push] FAIL: .gitleaks.toml changed in the pushed range ($_lref) -- it can silently weaken or disable secret scanning" >&2
+            echo "[pre-push]   Set LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1 to push this anyway." >&2
+            _full_scan_failures=$((_full_scan_failures + 1))
+        else
+            echo "[pre-push]   LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1 set -- allowing the config change (full-push scan still uses the PRE-change config, not the tip's -- see below)." >&2
+        fi
+    fi
+
     _resolve_gitleaks_bin
     if [[ -z "$_gitleaks_bin" ]]; then
         if [[ "${LOKI_ALLOW_UNSCANNED_PUSH:-0}" == "1" ]]; then
@@ -316,14 +357,33 @@ while read -r _lref _lsha _rref _rsha; do
     fi
     [[ "$_full_scan_clone" != "__failed__" ]] || continue
 
-    # The PUSHED TIP's ($_lsha) .gitleaksignore / .gitleaks.toml, same E-99
-    # invariant as the eval scan: absent on the tip, scan with an empty
-    # ignore file (errs strict, never open).
+    # The PUSHED TIP's ($_lsha) .gitleaksignore, E-99 invariant: absent on the
+    # tip, scan with an empty ignore file (errs strict, never open). The
+    # ignore file is UNCHANGED by this defense-in-depth -- a narrower risk
+    # than the config (it can only suppress fingerprinted findings gitleaks
+    # already found, not disable the rules that find them), and E-99's tip-
+    # trust design for it is deliberate (case 29: CI-parity for a merge
+    # bringing in an old commit).
     _full_ignore_file="$_full_scan_root/full-scan.gitleaksignore"
     git -C "$_top" show "$_lsha:.gitleaksignore" > "$_full_ignore_file" 2>/dev/null || : > "$_full_ignore_file"
     _full_config_file="$_full_scan_root/full-scan.gitleaks.toml"
     _full_config_arg=()
-    if git -C "$_top" show "$_lsha:.gitleaks.toml" > "$_full_config_file" 2>/dev/null; then
+    # Defense in depth (r2): if THIS push changed .gitleaks.toml, scan with
+    # the config from BEFORE the push -- the base commit's, or main's when
+    # there is no usable base (new branch / unfetched remote) -- never the
+    # tip's. This holds even when LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1
+    # overrode the refusal above: the override lets the PUSH through, not
+    # the attacker's config INTO the scan that is supposed to catch the
+    # secret riding along with it.
+    _full_config_source="$_lsha"
+    if [[ -n "$_toml_changed_commits" ]]; then
+        if [[ "$_full_base_is_empty" != "1" ]]; then
+            _full_config_source="$_full_base"
+        else
+            _full_config_source="refs/remotes/${1:-origin}/main"
+        fi
+    fi
+    if git -C "$_top" show "${_full_config_source}:.gitleaks.toml" > "$_full_config_file" 2>/dev/null; then
         _full_config_arg=(--config "$_full_config_file")
     fi
 
@@ -331,7 +391,7 @@ while read -r _lref _lsha _rref _rsha; do
     # bash 3.2 (macOS's /bin/bash): "${arr[@]}" on a genuinely empty array is
     # an unbound-variable error under `set -u`. ${arr[@]+"${arr[@]}"} is the
     # portable guard.
-    if _full_out="$("$_gitleaks_bin" git "$_full_scan_clone" --log-opts="$_full_log_opts" \
+    if _full_out="$(${_gitleaks_timeout_prefix[@]+"${_gitleaks_timeout_prefix[@]}"} "$_gitleaks_bin" git "$_full_scan_clone" --log-opts="$_full_log_opts" \
             ${_full_config_arg[@]+"${_full_config_arg[@]}"} \
             --gitleaks-ignore-path "$_full_ignore_file" --redact --no-banner -v 2>&1)"; then
         _full_gl_rc=0
@@ -708,7 +768,7 @@ while read -r _lref _lsha _rref _rsha; do
         # is an unbound-variable error under `set -u`. ${arr[@]+"${arr[@]}"}
         # is the portable guard -- it expands to nothing when the array is
         # empty instead of dereferencing it.
-        if _out="$(cd "$_ref_root/tree" && "$_gitleaks_bin" dir . ${_config_arg[@]+"${_config_arg[@]}"} \
+        if _out="$(cd "$_ref_root/tree" && ${_gitleaks_timeout_prefix[@]+"${_gitleaks_timeout_prefix[@]}"} "$_gitleaks_bin" dir . ${_config_arg[@]+"${_config_arg[@]}"} \
                 --gitleaks-ignore-path "$_ignore_file" --redact --no-banner -v 2>&1)"; then
             _gl_rc=0
         else

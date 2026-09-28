@@ -1464,6 +1464,60 @@ else
     ko "case 33c: LOKI_ALLOW_UNSCANNED_PUSH=1 never covers the eval scan's own missing-binary refusal" "refused but wrong message (may be the full-push scan's own message, not dir-mode's): $(cat "$D/hook.out")"
 fi
 
+# --- case 34 (r2, opus REJECT reproduced): a zero-rule .gitleaks.toml -------
+# committed alongside a secret, pushed with PRE_PUSH_SKIP=1, must not bypass
+# the scan. Before this fix: the eval scan's own .gitleaks.toml refusal sat
+# after the PRE_PUSH_SKIP exit (never ran), and the full-push scan used the
+# pushed TIP's .gitleaks.toml -- the attacker's own zero-rule config -- so it
+# found nothing either. Reproduced (not asserted here, verified manually
+# against the pre-fix hook): the push succeeded.
+if [[ "$_have_real_gitleaks" == "1" ]]; then
+    D="$SCRATCH/c34a"; BARE="$SCRATCH/c34a.git"; setup_bare "$BARE"; setup_push_clone "$D" "$BARE"
+    cat > "$D/.gitleaks.toml" <<'TOML'
+title = "x"
+TOML
+    g "$D" add .gitleaks.toml >/dev/null 2>&1
+    g "$D" commit -q -m "zero-rule config" --no-verify >/dev/null 2>&1
+    mkdir -p "$D/tests"
+    printf '%s\n' "# fixture: $_akia_secret leaked" > "$D/tests/foo.sh"
+    g "$D" add tests/foo.sh >/dev/null 2>&1
+    g "$D" commit -q -m "add secret" --no-verify >/dev/null 2>&1
+    rc="$(real_push "$D" "PRE_PUSH_SKIP=1")"
+    if [[ "$rc" == "RC=0" ]]; then
+        ko "case 34a: zero-rule .gitleaks.toml + secret, pushed with PRE_PUSH_SKIP=1, is refused" "push succeeded (fail-open); out: $(cat "$D/push.out")"
+    elif grep -q "aws-access-token" "$D/push.out" && grep -q "possible secret" "$D/push.out" && grep -q "tests/foo.sh" "$D/push.out"; then
+        ok "case 34a: zero-rule .gitleaks.toml + secret, pushed with PRE_PUSH_SKIP=1, is refused"
+    else
+        ko "case 34a: zero-rule .gitleaks.toml + secret, pushed with PRE_PUSH_SKIP=1, is refused" "refused but not on the finding: $(cat "$D/push.out")"
+    fi
+
+    # Same attack, with LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1 set: the config
+    # gate no longer refuses on its own, so this proves defense in depth --
+    # the full-push scan must still catch the secret because it scans with
+    # the PRE-change (base) config, never the tip's weakened one.
+    D="$SCRATCH/c34b"; BARE="$SCRATCH/c34b.git"; setup_bare "$BARE"; setup_push_clone "$D" "$BARE"
+    cat > "$D/.gitleaks.toml" <<'TOML'
+title = "x"
+TOML
+    g "$D" add .gitleaks.toml >/dev/null 2>&1
+    g "$D" commit -q -m "zero-rule config" --no-verify >/dev/null 2>&1
+    mkdir -p "$D/tests"
+    printf '%s\n' "# fixture: $_akia_secret leaked" > "$D/tests/foo.sh"
+    g "$D" add tests/foo.sh >/dev/null 2>&1
+    g "$D" commit -q -m "add secret" --no-verify >/dev/null 2>&1
+    rc="$(real_push "$D" "LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE=1")"
+    if [[ "$rc" == "RC=0" ]]; then
+        ko "case 34b: with the config override, the secret is still caught (scans with the pre-change config)" "push succeeded (fail-open); out: $(cat "$D/push.out")"
+    elif grep -q "aws-access-token" "$D/push.out" && grep -q "possible secret" "$D/push.out" && grep -q "tests/foo.sh" "$D/push.out"; then
+        ok "case 34b: with the config override, the secret is still caught (scans with the pre-change config)"
+    else
+        ko "case 34b: with the config override, the secret is still caught (scans with the pre-change config)" "refused but not on the finding: $(cat "$D/push.out")"
+    fi
+else
+    sk "case 34a: zero-rule .gitleaks.toml + secret, pushed with PRE_PUSH_SKIP=1, is refused (no pinned gitleaks v${GITLEAKS_VERSION})"
+    sk "case 34b: with the config override, the secret is still caught (scans with the pre-change config) (no pinned gitleaks v${GITLEAKS_VERSION})"
+fi
+
 # --- timing report: no eval change / one eval file / 10-commit push ----------
 # Not correctness assertions (case 3 already covers "fast"); these three just
 # print the wall-clock numbers requested for the r3 report. 1s resolution,
