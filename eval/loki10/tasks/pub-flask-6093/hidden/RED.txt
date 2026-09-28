@@ -1,0 +1,172 @@
+F.......F                                                                [100%]
+=================================== FAILURES ===================================
+________________________ test_session_transaction_ipv6 _________________________
+
+app = <Flask 'flask_test'>
+
+    def test_session_transaction_ipv6(app):
+        base_url = "http://[::1]:8000/"
+        client = app.test_client()
+    
+        @app.get("/")
+        def index():
+            return str(flask.session.get("value"))
+    
+        with client.session_transaction(base_url=base_url) as sess:
+            sess["value"] = 42
+    
+>       assert client.get("/", base_url=base_url).text == "42"
+E       AssertionError: assert 'None' == '42'
+E         
+E         - 42
+E         + None
+
+tests/test_testing.py:185: AssertionError
+_____________ test_run_from_config[None-None-[::1]:8080-::1-8080] ______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10a851e50>
+host = None, port = None, server_name = '[::1]:8080', expect_host = '::1'
+expect_port = 8080, app = <Flask 'flask_test'>
+
+    @pytest.mark.parametrize(
+        "host,port,server_name,expect_host,expect_port",
+        (
+            (None, None, "pocoo.org:8080", "pocoo.org", 8080),
+            ("localhost", None, "pocoo.org:8080", "localhost", 8080),
+            (None, 80, "pocoo.org:8080", "pocoo.org", 80),
+            ("localhost", 80, "pocoo.org:8080", "localhost", 80),
+            ("localhost", 0, "localhost:8080", "localhost", 0),
+            (None, None, "localhost:8080", "localhost", 8080),
+            (None, None, "localhost:0", "localhost", 0),
+            (None, None, "[::1]:8080", "::1", 8080),
+        ),
+    )
+    def test_run_from_config(
+        monkeypatch, host, port, server_name, expect_host, expect_port, app
+    ):
+        def run_simple_mock(hostname, port, *args, **kwargs):
+            assert hostname == expect_host
+            assert port == expect_port
+    
+        monkeypatch.setattr(werkzeug.serving, "run_simple", run_simple_mock)
+        app.config["SERVER_NAME"] = server_name
+>       app.run(host, port)
+
+tests/test_basic.py:1925: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Flask 'flask_test'>, host = '[', port = None, debug = None
+load_dotenv = True, options = {}
+
+    def run(
+        self,
+        host: str | None = None,
+        port: int | None = None,
+        debug: bool | None = None,
+        load_dotenv: bool = True,
+        **options: t.Any,
+    ) -> None:
+        """Runs the application on a local development server.
+    
+        Do not use ``run()`` in a production setting. It is not intended to
+        meet security and performance requirements for a production server.
+        Instead, see :doc:`/deploying/index` for WSGI server recommendations.
+    
+        If the :attr:`debug` flag is set the server will automatically reload
+        for code changes and show a debugger in case an exception happened.
+    
+        If you want to run the application in debug mode, but disable the
+        code execution on the interactive debugger, you can pass
+        ``use_evalex=False`` as parameter.  This will keep the debugger's
+        traceback screen active, but disable code execution.
+    
+        It is not recommended to use this function for development with
+        automatic reloading as this is badly supported.  Instead you should
+        be using the :command:`flask` command line script's ``run`` support.
+    
+        .. admonition:: Keep in Mind
+    
+           Flask will suppress any server error with a generic error page
+           unless it is in debug mode.  As such to enable just the
+           interactive debugger without the code reloading, you have to
+           invoke :meth:`run` with ``debug=True`` and ``use_reloader=False``.
+           Setting ``use_debugger`` to ``True`` without being in debug mode
+           won't catch any exceptions because there won't be any to
+           catch.
+    
+        :param host: the hostname to listen on. Set this to ``'0.0.0.0'`` to
+            have the server available externally as well. Defaults to
+            ``'127.0.0.1'`` or the host in the ``SERVER_NAME`` config variable
+            if present.
+        :param port: the port of the webserver. Defaults to ``5000`` or the
+            port defined in the ``SERVER_NAME`` config variable if present.
+        :param debug: if given, enable or disable debug mode. See
+            :attr:`debug`.
+        :param load_dotenv: Load the nearest :file:`.env` and :file:`.flaskenv`
+            files to set environment variables. Will also change the working
+            directory to the directory containing the first file found.
+        :param options: the options to be forwarded to the underlying Werkzeug
+            server. See :func:`werkzeug.serving.run_simple` for more
+            information.
+    
+        .. versionchanged:: 1.0
+            If installed, python-dotenv will be used to load environment
+            variables from :file:`.env` and :file:`.flaskenv` files.
+    
+            The :envvar:`FLASK_DEBUG` environment variable will override :attr:`debug`.
+    
+            Threaded mode is enabled by default.
+    
+        .. versionchanged:: 0.10
+            The default port is now picked from the ``SERVER_NAME``
+            variable.
+        """
+        # Ignore this call so that it doesn't start another server if
+        # the 'flask run' command is used.
+        if os.environ.get("FLASK_RUN_FROM_CLI") == "true":
+            if not is_running_from_reloader():
+                click.secho(
+                    " * Ignoring a call to 'app.run()' that would block"
+                    " the current 'flask' CLI command.\n"
+                    "   Only call 'app.run()' in an 'if __name__ =="
+                    ' "__main__"\' guard.',
+                    fg="red",
+                )
+    
+            return
+    
+        if get_load_dotenv(load_dotenv):
+            cli.load_dotenv()
+    
+            # if set, env var overrides existing value
+            if "FLASK_DEBUG" in os.environ:
+                self.debug = get_debug_flag()
+    
+        # debug passed to method overrides all other sources
+        if debug is not None:
+            self.debug = bool(debug)
+    
+        server_name = self.config.get("SERVER_NAME")
+        sn_host = sn_port = None
+    
+        if server_name:
+            sn_host, _, sn_port = server_name.partition(":")
+    
+        if not host:
+            if sn_host:
+                host = sn_host
+            else:
+                host = "127.0.0.1"
+    
+        if port or port == 0:
+            port = int(port)
+        elif sn_port:
+>           port = int(sn_port)
+                   ^^^^^^^^^^^^
+E           ValueError: invalid literal for int() with base 10: ':1]:8080'
+
+src/flask/app.py:735: ValueError
+=========================== short test summary info ============================
+FAILED tests/test_testing.py::test_session_transaction_ipv6 - AssertionError:...
+FAILED tests/test_basic.py::test_run_from_config[None-None-[::1]:8080-::1-8080]
+2 failed, 7 passed, 150 deselected in 0.14s

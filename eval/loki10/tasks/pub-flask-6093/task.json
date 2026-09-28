@@ -1,0 +1,20 @@
+{
+  "id": "pub-flask-6093",
+  "kind": "public",
+  "prompt": "IPv6 addresses parsed incorrectly because of `.partition(\":\")`?\n\nHi, I checked the code and saw that two places use `.partition(\":\")` on addresses, and IPv6 addresses contain \":\".\n\nThis breaks 1. `session_transaction` value setting, and 2. `Flask.run()` if `SERVER_NAME` is set. I've already prepared two tests that fail, you can use them to reproduce:\n\n1. In `test_testing.py`\n```\ndef test_session_transaction_ipv6(app):\n    base_url = \"http://[::1]:8000/\"\n    client = app.test_client()\n\n    @app.get(\"/\")\n    def index():\n        return str(flask.session.get(\"value\"))\n\n    with client.session_transaction(base_url=base_url) as sess:\n        sess[\"value\"] = 42\n\n    assert client.get(\"/\", base_url=base_url).text == \"42\"\n```\n\n2. Add one case to `test_run_from_config`\n```\n(None, None, \"[::1]:8080\", \"::1\", 8080),\n```\n\nIs this known and intended? I could send the patches for these two places.",
+  "issue_ref": "pallets/flask#6093",
+  "repo": {
+    "source": "https://github.com/pallets/flask.git",
+    "ref": "514fc6b3e8402e4c646d5284e97a4f0ab50a7c4b"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . pytest",
+  "hidden": {
+    "files": [
+      "tests/test_testing.py",
+      "tests/test_basic.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_testing.py tests/test_basic.py -k \"test_session_transaction_ipv6 or test_run_from_config\""
+  },
+  "timeout_s": 900,
+  "tier": "medium"
+}
