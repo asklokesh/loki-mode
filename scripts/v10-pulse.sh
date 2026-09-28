@@ -452,7 +452,7 @@ VIOLATION_PRIORITY = [
     "MOAT_REGRESSION", "UNRELEASED_MERGE", "RELEASE_CADENCE", "TRAIN_LATE", "REVIEW_STALE",
     "AGENT_OVER_BUDGET", "STALE_PROGRESS", "UNEVIDENCED_CLAIM", "RELEASED_AHEAD_OF_NPM",
     "ORPHAN_TEST", "ORPHAN_WORKTREE", "STRAY_CONTAINER", "STRAY_WORKTREE",
-    "WORKTREE_COUNT", "IDLE_BUILDERS", "LOW_READY", "NO_RECENT_RELEASE",
+    "WORKTREE_COUNT", "IDLE_BUILDERS", "UNDERSTAFFED", "LOW_READY", "NO_RECENT_RELEASE",
     "LOW_RELEASE_VOLUME", "CONTROL_OVERSIZE",
 ]
 
@@ -1251,6 +1251,31 @@ else:
             )
         add_violation("LOW_READY", _low_ready_text)
 
+    # UNDERSTAFFED (founder 17:22Z, exact wording: "ready of 8 or more with
+    # fewer than 8 building"): plenty of dependency-gated ready work (>= 8,
+    # same floor LOW_READY already enforces) but fewer than 8 BOARD rows
+    # are actually `building` is a dispatch failure distinct from
+    # IDLE_BUILDERS -- IDLE_BUILDERS keys on real worktree activity (a
+    # `building` cell can go stale between edits, per its own comment),
+    # while this reads BOARD's own staffing count directly, so a BOARD
+    # that claims plenty of builders while the ready queue still towers
+    # over 8 is caught even if the worktree signal is itself UNKNOWN.
+    # `review` deliberately does not count: a row under review is not
+    # being built, and counting it as staffing would mask exactly the
+    # ready-queue-vs-builders gap the founder is naming. Reuses
+    # ready_deps_met (LOW_READY's own dependency-filtered ready set)
+    # rather than a raw ready_ids scan, for the same reason IDLE_BUILDERS
+    # does (E-79-81-r2): a dependency-blocked row is not actionable, so it
+    # should never count as "ready work going unstaffed" either.
+    _understaffed_ready = len(ready_deps_met)
+    _understaffed_building = counts.get("building", 0)
+    if _understaffed_ready >= 8 and _understaffed_building < 8:
+        add_violation(
+            "UNDERSTAFFED",
+            "%d ready slice(s) on BOARD but only %d building (want at least 8 staffed)"
+            % (_understaffed_ready, _understaffed_building),
+        )
+
 
 # --- 5. IDLE_BUILDERS: fewer than 6 active builder worktrees while ready ----
 # active_worktrees is computed below (metric 6); this violation is added
@@ -1470,16 +1495,26 @@ else:
 # text, requires CI green -- a red main with old merged commits is not a
 # cadence violation, it is CI_RED's problem (already highest priority).
 #
-# Definition of "merged-unreleased slice commit" is narrower than the
-# `unreleased` dict above: NON-merge commits only (--no-merges; a slice
-# lands via a merge commit, but the merge commit itself is not "a slice"),
-# and docs-only commits (touching only docs/, *.md, .gitleaksignore) never
-# count -- a docs commit sitting on main is not backlog pressure for a
-# release. Reuses `unreleased["tag"]` / `_npm_tag_mismatch` (same "newest
-# v* tag whose version equals npm's latest dist-tag" definition, same npm
-# lookup, no second network call) and `ci_status` (same main-CI result,
-# with its own Tests-run-list fallback already built in) rather than
-# re-deriving either.
+# Definition of "merged-unreleased slice commit": one entry per node on
+# MAIN_REF's own --first-parent chain since the tag (same walk
+# check_unreleased_merge_age above already uses, and for the same reason --
+# without --first-parent this walks INTO a merged branch's own history and
+# picks up a side commit's pre-merge authorship time, not when it actually
+# landed on MAIN_REF; T47 reproduces the false-fire/false-n/a this caused).
+# A slice lands via a merge commit in this repo's trains workflow (D25), so
+# the merge commit itself IS the slice's landing event here, not a wrapper
+# to skip. Docs-only commits (touching only docs/, *.md, .gitleaksignore)
+# never count -- a docs commit sitting on main is not backlog pressure for
+# a release. Changed paths are read via `git diff --name-only <sha>^1
+# <sha>` (first-parent diff) rather than `git show --name-only`: for a
+# merge commit, `git show` prints a combined diff that comes back EMPTY for
+# a clean merge, which would silently misclassify a real (non-docs) slice
+# merge -- see T47b. `^1` diff works identically for an ordinary
+# non-merge commit (its only parent). Reuses `unreleased["tag"]` /
+# `_npm_tag_mismatch` (same "newest v* tag whose version equals npm's
+# latest dist-tag" definition, same npm lookup, no second network call)
+# and `ci_status` (same main-CI result, with its own Tests-run-list
+# fallback already built in) rather than re-deriving either.
 def _docs_only_path(path):
     return path.startswith("docs/") or path.endswith(".md") or path == ".gitleaksignore"
 
@@ -1488,7 +1523,7 @@ def check_release_cadence_d37():
     if unreleased is None or npm_result is None or _npm_tag_mismatch is not None:
         return None
     tag = unreleased["tag"]
-    rc, out, _ = git(["log", "--no-merges", "--format=%H %ct", "%s..%s" % (tag, MAIN_REF)])
+    rc, out, _ = git(["log", "--first-parent", "--format=%H %ct", "%s..%s" % (tag, MAIN_REF)])
     if rc != 0:
         return None
     commits = []
@@ -1498,7 +1533,7 @@ def check_release_cadence_d37():
             commits.append((parts[0], float(parts[1])))
     qualifying = []
     for sha, ct in commits:
-        rc2, files_out, _ = git(["show", "--no-color", "--name-only", "--format=", sha])
+        rc2, files_out, _ = git(["diff", "--name-only", "%s^1" % sha, sha])
         if rc2 != 0:
             return None
         paths = [p for p in files_out.splitlines() if p.strip()]
@@ -2752,6 +2787,7 @@ _NEXT_ACTION_TEXT = {
     "STRAY_WORKTREE": "move the named worktree(s) under .claude/worktrees or remove them (git worktree remove)",
     "WORKTREE_COUNT": "prune stale worktrees under .claude/worktrees (git worktree remove), it is over the 15 max",
     "IDLE_BUILDERS": "dispatch more builders against the named ready slice(s) in docs/v10/BOARD.md",
+    "UNDERSTAFFED": "staff more engineers now, the ready queue is deep and BOARD shows fewer than 8 rows building",
     "LOW_READY": "the Product Owner should cut the named number of additional slices onto the ready queue",
     "NO_RECENT_RELEASE": "cut a release now, none has shipped in over 90 minutes",
     "LOW_RELEASE_VOLUME": "investigate why release throughput is below the 30/day target",

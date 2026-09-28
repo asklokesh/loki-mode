@@ -297,7 +297,8 @@ if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_UNRELEASED" \
     "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
     "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_MANY[@]}")"; then rc=0; else rc=$?; fi
 EXPECTED_T2="VIOLATION: UNRELEASED_MERGE: S-15 1 commit(s) merged but unreleased for 60.0 minutes since v1.0.0 (oldest $UNRELEASED_SHA) while CI is green
-VIOLATION: AGENT_OVER_BUDGET: agent(s) past their role/tier time budget: S-01 building LOW (60.0 min, budget 15 min), S-02 building LOW (60.0 min, budget 15 min), S-03 building LOW (60.0 min, budget 15 min), S-04 building LOW (60.0 min, budget 15 min), S-05 building LOW (60.0 min, budget 15 min), S-06 building LOW (60.0 min, budget 15 min)"
+VIOLATION: AGENT_OVER_BUDGET: agent(s) past their role/tier time budget: S-01 building LOW (60.0 min, budget 15 min), S-02 building LOW (60.0 min, budget 15 min), S-03 building LOW (60.0 min, budget 15 min), S-04 building LOW (60.0 min, budget 15 min), S-05 building LOW (60.0 min, budget 15 min), S-06 building LOW (60.0 min, budget 15 min)
+VIOLATION: UNDERSTAFFED: 8 ready slice(s) on BOARD but only 6 building (want at least 8 staffed)"
 assert_exact_violations "T2 UNRELEASED_MERGE" "$EXPECTED_T2"
 (cd "$FAKE_REPO" || exit 1; git reset -q --hard v1.0.0)
 
@@ -420,6 +421,12 @@ BOARD_CLEAN="$WORK/BOARD-clean.md"
     echo "| ID | Owner | File set | Tier | Status | Notes |"
     echo "|---|---|---|---|---|---|"
     for i in 1 2 3 4 5 6 7 8; do echo "| S-0$i | a | x | LOW | ready@2026-09-27T01:00Z | |"; done
+    # UNDERSTAFFED (E-89): 8 ready rows alone would now fire UNDERSTAFFED
+    # (fewer than 8 building) on every "clean" test below that reuses this
+    # fixture, so it also carries 8 fresh (5 min old, well under the
+    # 30-minute MEDIUM budget) building rows -- a genuinely staffed board,
+    # not just a ready-heavy one.
+    for i in 9 10 11 12 13 14 15 16; do echo "| S-$i | a | x | MEDIUM | building@2026-09-27T01:55:00Z | |"; done
 } > "$BOARD_CLEAN"
 NPM_TIME_JSON="$WORK/npm-time.json"
 # Latest key deliberately "1.0.0", matching FAKE_REPO's v1.0.0 tag exactly
@@ -2578,6 +2585,147 @@ if printf '%s\n' "$OUT" | grep -qF "Release cadence (D37): UNKNOWN (release tag 
     ok "RELEASE_CADENCE reports UNKNOWN, never fires, when the release tag cannot be read"
 else
     bad "T45e RELEASE_CADENCE-unknown-tag case: output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T47 -- RELEASE_CADENCE walks --first-parent, not into a merged branch's own history (same finding-2 class as T15)"
+# A side branch with a commit dated WEEKS before the release tag, merged
+# into main only 22 minutes before NOW. Non-first-parent history would find
+# the side commit's own ancient timestamp reachable via tag..MAIN_REF and
+# report a huge age -- a false RELEASE_CADENCE fire well past the 25-minute
+# threshold. --first-parent must instead report the MERGE commit's own
+# (recent, under-threshold) landing time.
+(
+    cd "$FAKE_REPO" || exit 1
+    git checkout -q -b cadence-side-branch v1.0.0
+    echo "side work" > cadence-side.txt
+    git add cadence-side.txt
+    GIT_AUTHOR_DATE="2026-09-10T00:00:00Z" GIT_COMMITTER_DATE="2026-09-10T00:00:00Z" \
+        git commit -q -m "side branch work, authored weeks before the release"
+    git checkout -q main
+    GIT_AUTHOR_DATE="2026-09-27T01:38:00Z" GIT_COMMITTER_DATE="2026-09-27T01:38:00Z" \
+        git merge -q --no-ff -m "merge: cadence side branch work" cadence-side-branch
+)
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" \
+    "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}" "$WT_CLEAN_STALE")"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "Release cadence (D37): 22.0 min, 1 merged-unreleased slice commit(s) since v1.0.0" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: RELEASE_CADENCE"; then
+    ok "first-parent walk reports the MERGE commit's time (22.0 min, under threshold), not the side branch's weeks-old commit"
+else
+    bad "T47 RELEASE_CADENCE-first-parent case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+(cd "$FAKE_REPO" || exit 1; git branch -D cadence-side-branch >/dev/null; git reset -q --hard v1.0.0)
+
+echo "T47b -- RELEASE_CADENCE classifies a MERGE commit's docs-only changeset correctly (diff against first parent, not 'git show' combined diff)"
+(
+    cd "$FAKE_REPO" || exit 1
+    git checkout -q -b cadence-docs-branch v1.0.0
+    mkdir -p docs
+    echo "docs work" > docs/cadence-notes.md
+    git add docs/cadence-notes.md
+    GIT_AUTHOR_DATE="2026-09-27T01:33:00Z" GIT_COMMITTER_DATE="2026-09-27T01:33:00Z" \
+        git commit -q -m "docs-only side branch work"
+    git checkout -q main
+    GIT_AUTHOR_DATE="2026-09-27T01:34:00Z" GIT_COMMITTER_DATE="2026-09-27T01:34:00Z" \
+        git merge -q --no-ff -m "merge: cadence docs-only branch" cadence-docs-branch
+)
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" \
+    "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}" "$WT_CLEAN_STALE")"; then rc=0; else rc=$?; fi
+if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: RELEASE_CADENCE" \
+    && printf '%s\n' "$OUT" | grep -qF "Release cadence (D37): n/a (no merged-unreleased slice commits since v1.0.0)"; then
+    ok "a docs-only MERGE commit reads n/a, correctly excluded even though it lands 26 minutes ago"
+else
+    bad "T47b RELEASE_CADENCE-docs-only-merge case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+(cd "$FAKE_REPO" || exit 1; git branch -D cadence-docs-branch >/dev/null; git reset -q --hard v1.0.0)
+
+echo "T46 -- UNDERSTAFFED (founder 17:22Z, E-89): fires when the dependency-filtered ready count is 8 or"
+echo "       more and fewer than 8 BOARD rows are building"
+BOARD_UNDERSTAFFED="$WORK/BOARD-understaffed.md"
+{
+    echo "| ID | Owner | File set | Tier | Status | Notes |"
+    echo "|---|---|---|---|---|---|"
+    for i in 1 2 3 4 5 6 7 8; do echo "| S-0$i | a | x | LOW | ready@2026-09-27T01:00Z | |"; done
+} > "$BOARD_UNDERSTAFFED"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_UNDERSTAFFED"; then rc=0; else rc=$?; fi
+if [ "$rc" = 1 ] && printf '%s\n' "$OUT" | grep -qF "VIOLATION: UNDERSTAFFED: 8 ready slice(s) on BOARD but only 0 building (want at least 8 staffed)"; then
+    ok "8 ready, 0 building fires UNDERSTAFFED naming both counts, exit 1"
+else
+    bad "T46 UNDERSTAFFED-fires case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T46b -- UNDERSTAFFED fires on 4 building + 4 review (review does NOT count as staffed, founder's exact wording is 'building'); does not fire once 8 rows are building"
+BOARD_MIXED="$WORK/BOARD-mixed-staffed.md"
+{
+    echo "| ID | Owner | File set | Tier | Status | Notes |"
+    echo "|---|---|---|---|---|---|"
+    for i in 1 2 3 4 5 6 7 8; do echo "| S-0$i | a | x | LOW | ready@2026-09-27T01:00Z | |"; done
+    for i in 9 10 11 12; do echo "| S-$i | a | x | MEDIUM | building@2026-09-27T01:55:00Z | |"; done
+    for i in 13 14 15 16; do echo "| S-$i | a | x | MEDIUM | review@2026-09-27T01:55:00Z | |"; done
+} > "$BOARD_MIXED"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_MIXED"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: UNDERSTAFFED: 8 ready slice(s) on BOARD but only 4 building (want at least 8 staffed)"; then
+    ok "8 ready, 4 building + 4 review still fires UNDERSTAFFED: review is not staffing"
+else
+    bad "T46b UNDERSTAFFED-review-not-staffed case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+BOARD_STAFFED="$WORK/BOARD-staffed.md"
+{
+    echo "| ID | Owner | File set | Tier | Status | Notes |"
+    echo "|---|---|---|---|---|---|"
+    for i in 1 2 3 4 5 6 7 8; do echo "| S-0$i | a | x | LOW | ready@2026-09-27T01:00Z | |"; done
+    for i in 9 10 11 12 13 14 15 16; do echo "| S-$i | a | x | MEDIUM | building@2026-09-27T01:55:00Z | |"; done
+} > "$BOARD_STAFFED"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_STAFFED"; then rc=0; else rc=$?; fi
+if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: UNDERSTAFFED"; then
+    ok "8 ready, 8 building does not fire UNDERSTAFFED"
+else
+    bad "T46b UNDERSTAFFED-staffed case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T46c -- UNDERSTAFFED does not fire below the 8-ready floor, even with 0 staffed"
+BOARD_UNDERSTAFFED_LOW="$WORK/BOARD-understaffed-low.md"
+{
+    echo "| ID | Owner | File set | Tier | Status | Notes |"
+    echo "|---|---|---|---|---|---|"
+    for i in 1 2 3 4 5 6 7; do echo "| S-0$i | a | x | LOW | ready@2026-09-27T01:00Z | |"; done
+} > "$BOARD_UNDERSTAFFED_LOW"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_UNDERSTAFFED_LOW"; then rc=0; else rc=$?; fi
+if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: UNDERSTAFFED"; then
+    ok "only 7 ready, 0 staffed: UNDERSTAFFED does not fire (LOW_READY is the applicable violation instead)"
+else
+    bad "T46c UNDERSTAFFED-below-floor case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T46d -- UNDERSTAFFED reuses the dependency-filtered ready set: 8 raw ready rows but only 7 with deps met stays under the floor"
+BOARD_DEPS8="$WORK/BOARD-deps8.md"
+cat > "$BOARD_DEPS8" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S-01 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-02 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-03 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-04 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-05 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-06 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| M-01 | modernize step | y | LOW | merged@2026-09-27T01:00Z | Depends on none. |
+| M-02 | modernize step | y | LOW | ready@2026-09-27T01:00Z | Depends on M-01. |
+| M-03 | modernize step | y | LOW | ready@2026-09-27T01:00Z | Depends on M-02. |
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_DEPS8"; then rc=0; else rc=$?; fi
+if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: UNDERSTAFFED"; then
+    ok "8 raw ready rows but M-03's dependency on M-02 is unmet: filtered count is 7, under the floor, no false UNDERSTAFFED"
+else
+    bad "T46d UNDERSTAFFED-dependency-filtered case: rc=$rc output follows"
     printf '%s\n' "$OUT"
 fi
 
