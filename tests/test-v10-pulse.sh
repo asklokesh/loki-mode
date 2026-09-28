@@ -195,6 +195,7 @@ COMMON_ARGS=(
     "PULSE_PROGRESS_MD=$PROGRESS_FRESH"
     "PULSE_NPM_CMD=false"
     "PULSE_GH_CMD=false"
+    "PULSE_GH_FALLBACK_CMD=false"
     "PULSE_GH_STREAK_CMD=cat $GH_STREAK_OK_JSON"
     "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO")"
     "PULSE_MOAT_RESULT="
@@ -336,6 +337,30 @@ if printf '%s\n' "$OUT" | grep -q "^Main CI (main @ $head_sha_short): UNKNOWN" \
     ok "cancelled-only CI run: UNKNOWN, no CI_RED violation"
 else
     bad "cancelled-only case: output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T3c -- E-75: primary gh call fails, Tests-only fallback says failure -> CI_RED"
+GH_FALLBACK_RED_JSON="$WORK/gh-fallback-red.json"
+printf '[{"status":"completed","conclusion":"failure","databaseId":4242}]' > "$GH_FALLBACK_RED_JSON"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_ANY" "PULSE_GH_CMD=false" \
+    "PULSE_GH_FALLBACK_CMD=cat $GH_FALLBACK_RED_JSON"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -q "^Main CI (main @ $head_sha_short): RED .*fallback.*run 4242" \
+    && printf '%s\n' "$OUT" | grep -q "^VIOLATION: CI_RED: main CI is RED at $head_sha_short (Tests (fallback))"; then
+    ok "primary gh check failed outright, Tests-only fallback resolved it to CI_RED with the run id"
+else
+    bad "T3c fallback-red case: output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T3d -- E-75: both primary and fallback fail -> still UNKNOWN, never a fabricated verdict"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_ANY" "PULSE_GH_CMD=false" \
+    "PULSE_GH_FALLBACK_CMD=false"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -q "^Main CI (main @ $head_sha_short): UNKNOWN" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: CI_RED"; then
+    ok "primary and fallback both failed: UNKNOWN, no CI_RED violation"
+else
+    bad "T3d both-fail case: output follows"
     printf '%s\n' "$OUT"
 fi
 
@@ -1692,9 +1717,13 @@ recs = {
     "npm": '{"1.0.0":"2026-09-27T01:30:00.000Z"}',
     "gh_ci": '[{"status":"completed","conclusion":"failure","workflowName":"Lint"}]',
     "gh_streak": '[{"status":"completed","conclusion":"success"}]',
+    # gh_ci above already resolves cleanly (RED), so the E-75 fallback is
+    # never consulted -- this entry only exists so a missing cache file for
+    # it does not itself count as a cache miss and force a spurious refresh.
+    "gh_fallback": '[{"status":"completed","conclusion":"success","databaseId":1}]',
 }
 for name, out in recs.items():
-    json.dump({"t": t, "out": out, "sha": sha if name == "gh_ci" else None},
+    json.dump({"t": t, "out": out, "sha": sha if name in ("gh_ci", "gh_fallback") else None},
               open("%s/%s.json" % (d, name), "w"))
 PYEOF
 }
