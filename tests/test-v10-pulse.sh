@@ -3233,6 +3233,65 @@ else
     printf '%s\n' "$OUT"
 fi
 
+echo "T52 -- E-121: ID_RE accepts a digit-bearing prefix (S41-01); a building S41-01 row is"
+echo "      counted and budget-checked, not silently invisible to parse_board"
+BOARD_DIGITPREFIX="$WORK/BOARD-digitprefix.md"
+cat > "$BOARD_DIGITPREFIX" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S41-01 | a | x | LOW | building@2026-09-27T01:00Z | |
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_DIGITPREFIX"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: AGENT_OVER_BUDGET:" \
+    && printf '%s\n' "$OUT" | grep -qF "S41-01 building LOW (60.0 min, budget 15 min)"; then
+    ok "S41-01 (digit-bearing prefix) is parsed and budget-checked"
+else
+    bad "T52 digit-prefix case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T53 -- E-121: 'Depends on S41-06' (digit-bearing prefix) blocks the ready row when S41-06 is unmerged"
+BOARD_DEPS_DIGITPREFIX="$WORK/BOARD-deps-digitprefix.md"
+cat > "$BOARD_DEPS_DIGITPREFIX" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S-01 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-02 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-03 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-04 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-05 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S41-06 | a | x | LOW | ready@2026-09-27T01:00Z | Depends on none. |
+| M-10 | modernize step | y | LOW | ready@2026-09-27T01:00Z | Depends on S41-06. |
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_DEPS_DIGITPREFIX"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: LOW_READY: only 6 ready slice(s) on BOARD (want at least 8); cut 2 more; blocked by dependency: M-10 (needs S41-06)" \
+    && printf '%s\n' "$OUT" | grep -qF "Ready rows blocked by dependency: M-10 (needs S41-06)"; then
+    ok "S41-06 (ready, not merged) blocks M-10; digit-bearing prefix parses in Depends-on clause"
+else
+    bad "T53 digit-prefix dependency case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T54 -- E-121: the digit-prefix fix does not regress plain-letter ids (E-98a, G-02, DEP-03)"
+BOARD_OLDPREFIXES="$WORK/BOARD-oldprefixes.md"
+cat > "$BOARD_OLDPREFIXES" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| E-98a | a | x | LOW | building@2026-09-27T01:00Z | |
+| G-02 | a | x | LOW | building@2026-09-27T01:00Z | |
+| DEP-03 | a | x | LOW | building@2026-09-27T01:00Z | |
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_OLDPREFIXES"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: AGENT_OVER_BUDGET:" \
+    && printf '%s\n' "$OUT" | grep -qF "E-98a building LOW (60.0 min, budget 15 min)" \
+    && printf '%s\n' "$OUT" | grep -qF "G-02 building LOW (60.0 min, budget 15 min)" \
+    && printf '%s\n' "$OUT" | grep -qF "DEP-03 building LOW (60.0 min, budget 15 min)"; then
+    ok "E-98a, G-02 and DEP-03 all still parse and budget-check"
+else
+    bad "T54 existing-prefix regression case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
 echo ""
 echo "=== bash 3.2 syntax + full-suite check (via /bin/sh, real bash 3.2.57 on macOS) ==="
 if command -v /bin/sh >/dev/null 2>&1 && /bin/sh -c 'case "$BASH_VERSION" in 3.2*) exit 0;; *) exit 1;; esac' 2>/dev/null; then
