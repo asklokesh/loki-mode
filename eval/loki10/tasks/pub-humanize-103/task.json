@@ -1,0 +1,19 @@
+{
+  "id": "pub-humanize-103",
+  "kind": "public",
+  "prompt": "Feature: Natural list\n\nI was wondering if we can have a feature that converts a list to a sentence; example - [\"dog\", \"cat\", \"mouse\"] and convert it to \"Dog, Cat and Mouse\".\n\nI can add this feature if you are up for it. Thanks.",
+  "issue_ref": "python-humanize/humanize#103",
+  "repo": {
+    "source": "https://github.com/python-humanize/humanize.git",
+    "ref": "19b43d3b8d80959d75097d8e145690be811465bd"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . freezegun pytest coverage",
+  "hidden": {
+    "files": [
+      "tests/test_lists.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_lists.py"
+  },
+  "timeout_s": 900,
+  "tier": "medium"
+}

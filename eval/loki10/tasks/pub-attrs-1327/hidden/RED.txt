@@ -1,0 +1,231 @@
+FFFFFFF                                                                  [100%]
+=================================== FAILURES ===================================
+_____________________ TestConverter.test_pickle[True-True] _____________________
+
+self = <tests.test_converters.TestConverter object at 0x1095c1310>
+takes_self = True, takes_field = True
+
+    @pytest.mark.parametrize("takes_self", [True, False])
+    @pytest.mark.parametrize("takes_field", [True, False])
+    def test_pickle(self, takes_self, takes_field):
+        """
+        Wrapped converters can be pickled.
+        """
+        c = Converter(int, takes_self=takes_self, takes_field=takes_field)
+    
+        new_c = pickle.loads(pickle.dumps(c))
+    
+        assert c == new_c
+        assert takes_self == new_c.takes_self
+        assert takes_field == new_c.takes_field
+>       assert c.__call__.__name__ == new_c.__call__.__name__
+               ^^^^^^^^^^
+E       AttributeError: 'attr._make.Converter' object has no attribute '__call__'. Did you mean: '__class__'?
+
+tests/test_converters.py:31: AttributeError
+____________________ TestConverter.test_pickle[True-False] _____________________
+
+self = <tests.test_converters.TestConverter object at 0x1095c1950>
+takes_self = False, takes_field = True
+
+    @pytest.mark.parametrize("takes_self", [True, False])
+    @pytest.mark.parametrize("takes_field", [True, False])
+    def test_pickle(self, takes_self, takes_field):
+        """
+        Wrapped converters can be pickled.
+        """
+        c = Converter(int, takes_self=takes_self, takes_field=takes_field)
+    
+        new_c = pickle.loads(pickle.dumps(c))
+    
+        assert c == new_c
+        assert takes_self == new_c.takes_self
+        assert takes_field == new_c.takes_field
+>       assert c.__call__.__name__ == new_c.__call__.__name__
+               ^^^^^^^^^^
+E       AttributeError: 'attr._make.Converter' object has no attribute '__call__'. Did you mean: '__class__'?
+
+tests/test_converters.py:31: AttributeError
+____________________ TestConverter.test_pickle[False-True] _____________________
+
+self = <tests.test_converters.TestConverter object at 0x1095c4fc0>
+takes_self = True, takes_field = False
+
+    @pytest.mark.parametrize("takes_self", [True, False])
+    @pytest.mark.parametrize("takes_field", [True, False])
+    def test_pickle(self, takes_self, takes_field):
+        """
+        Wrapped converters can be pickled.
+        """
+        c = Converter(int, takes_self=takes_self, takes_field=takes_field)
+    
+        new_c = pickle.loads(pickle.dumps(c))
+    
+        assert c == new_c
+        assert takes_self == new_c.takes_self
+        assert takes_field == new_c.takes_field
+>       assert c.__call__.__name__ == new_c.__call__.__name__
+               ^^^^^^^^^^
+E       AttributeError: 'attr._make.Converter' object has no attribute '__call__'. Did you mean: '__class__'?
+
+tests/test_converters.py:31: AttributeError
+____________________ TestConverter.test_pickle[False-False] ____________________
+
+self = <tests.test_converters.TestConverter object at 0x1095c5220>
+takes_self = False, takes_field = False
+
+    @pytest.mark.parametrize("takes_self", [True, False])
+    @pytest.mark.parametrize("takes_field", [True, False])
+    def test_pickle(self, takes_self, takes_field):
+        """
+        Wrapped converters can be pickled.
+        """
+        c = Converter(int, takes_self=takes_self, takes_field=takes_field)
+    
+        new_c = pickle.loads(pickle.dumps(c))
+    
+        assert c == new_c
+        assert takes_self == new_c.takes_self
+        assert takes_field == new_c.takes_field
+>       assert c.__call__.__name__ == new_c.__call__.__name__
+               ^^^^^^^^^^
+E       AttributeError: 'attr._make.Converter' object has no attribute '__call__'. Did you mean: '__class__'?
+
+tests/test_converters.py:31: AttributeError
+_____________________ TestConverter.test_works_as_adapter ______________________
+
+self = <tests.test_converters.TestConverter object at 0x1095d5d50>
+
+    def test_works_as_adapter(self):
+        """
+        Converter instances work as adapters and pass the correct arguments to
+        the wrapped converter callable.
+        """
+        taken = None
+        instance = object()
+        field = object()
+    
+        def save_args(*args):
+            nonlocal taken
+            taken = args
+            return args[0]
+    
+>       Converter(save_args)(42, instance, field)
+E       AttributeError: 'attr._make.Converter' object has no attribute '__call__'
+
+tests/test_converters.py:76: AttributeError
+____________________________ TestSetAttr.test_pipe _____________________________
+
+self = <tests.test_setattr.TestSetAttr object at 0x10953f570>
+
+    def test_pipe(self):
+        """
+        Multiple hooks are possible, in that case the last return value is
+        used. They can be supplied using the pipe functions or by passing a
+        list to on_setattr.
+        """
+        taken = None
+    
+        def takes_all(val, instance, attrib):
+            nonlocal taken
+            taken = val, instance, attrib
+    
+            return val
+    
+        s = [setters.convert, lambda _, __, nv: nv + 1]
+    
+        @attr.s
+>       class Piped:
+
+tests/test_setattr.py:123: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_setattr.py:124: in Piped
+    x1 = attr.ib(
+src/attr/_make.py:186: in attrib
+    converter = pipe(*converter)
+                ^^^^^^^^^^^^^^^^
+src/attr/_make.py:2939: in pipe
+    t = _AnnotationExtractor(converters[0]).get_first_param_type()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/attr/_compat.py:53: in __init__
+    self.sig = inspect.signature(callable)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/inspect.py:3323: in signature
+    return Signature.from_callable(obj, follow_wrapped=follow_wrapped,
+/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/inspect.py:3038: in from_callable
+    return _signature_from_callable(obj, sigcls=cls,
+/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/inspect.py:2610: in _signature_from_callable
+    call = _descriptor_get(call, obj)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+descriptor = <member '__call__' of 'Converter' objects>
+obj = Converter(converter=<function TestSetAttr.test_pipe.<locals>.takes_all at 0x1096e47d0>, takes_self=True, takes_field=True)
+
+    def _descriptor_get(descriptor, obj):
+        if isclass(descriptor):
+            return descriptor
+        get = getattr(type(descriptor), '__get__', _sentinel)
+        if get is _sentinel:
+            return descriptor
+>       return get(descriptor, obj, type(obj))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'attr._make.Converter' object has no attribute '__call__'
+
+/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/inspect.py:2410: AttributeError
+___________________ TestSetAttr.test_setattr_converter_piped ___________________
+
+self = <tests.test_setattr.TestSetAttr object at 0x1096dc3c0>
+
+    def test_setattr_converter_piped(self):
+        """
+        If a converter is used, it is piped through the on_setattr hooks.
+    
+        Regression test for https://github.com/python-attrs/attrs/issues/1327
+        """
+    
+        @attr.define  # converter on setattr is implied in NG
+        class C:
+            x = attr.field(converter=[int])
+    
+        c = C("1")
+>       c.x = "2"
+        ^^^
+
+tests/test_setattr.py:451: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/attr/_make.py:1051: in __setattr__
+    nval = hook(self, a, val)
+           ^^^^^^^^^^^^^^^^^^
+src/attr/setters.py:23: in wrapped_pipe
+    rv = setter(instance, attrib, rv)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+instance = C(x=1)
+attrib = Attribute(name='x', default=NOTHING, validator=None, repr=True, eq=True, eq_key=None, order=True, order_key=None, hash...verter at 0x1096e40f0>, takes_self=True, takes_field=True), kw_only=False, inherited=False, on_setattr=None, alias='x')
+new_value = '2'
+
+    def convert(instance, attrib, new_value):
+        """
+        Run *attrib*'s converter -- if it has one --  on *new_value* and return the
+        result.
+    
+        .. versionadded:: 20.1.0
+        """
+        c = attrib.converter
+        if c:
+>           return c(new_value)
+                   ^^^^^^^^^^^^
+E           AttributeError: 'attr._make.Converter' object has no attribute '__call__'
+
+src/attr/setters.py:66: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_converters.py::TestConverter::test_pickle[True-True] - Attr...
+FAILED tests/test_converters.py::TestConverter::test_pickle[True-False] - Att...
+FAILED tests/test_converters.py::TestConverter::test_pickle[False-True] - Att...
+FAILED tests/test_converters.py::TestConverter::test_pickle[False-False] - At...
+FAILED tests/test_converters.py::TestConverter::test_works_as_adapter - Attri...
+FAILED tests/test_setattr.py::TestSetAttr::test_pipe - AttributeError: 'attr....
+FAILED tests/test_setattr.py::TestSetAttr::test_setattr_converter_piped - Att...
+7 failed, 61 deselected in 0.12s
