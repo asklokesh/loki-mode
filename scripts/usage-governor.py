@@ -251,7 +251,12 @@ def iter_records(root: Path, min_mtime=None, cache_path: Path | None = None):
             prior = best.get(dedup_key)
             if prior is None or out >= prior[0]:
                 best[dedup_key] = (out, path, role, ts, model, usage)
-    if cache_path is not None:
+    # Perf (E-109): only rewrite the cache file when its contents actually
+    # changed. A fully-warm run (every file a cache hit, same in-window file
+    # set) would otherwise re-serialize and rewrite the whole multi-MB cache
+    # every time for zero benefit -- the dict compare is cheap next to the
+    # json.dump + write it would otherwise pay unconditionally.
+    if cache_path is not None and new_cache != cache:
         _save_cache(cache_path, new_cache)
     for _out, path, role, ts, model, usage in best.values():
         yield path, role, ts, model, usage
@@ -300,10 +305,15 @@ def error_text_of(rec):
 
 
 def scan_for_limit_events(root: Path, since: datetime):
-    """Return (last_occurrence_iso_or_None, count) for limit-related text in [since, now]."""
+    """Return (last_occurrence_iso_or_None, count) for limit-related text in [since, now].
+
+    Perf (E-109): skips files whose mtime predates `since` -- an append-only
+    transcript's mtime tracks its last row, so a file untouched before
+    `since` cannot hold a line timestamped at or after it either.
+    """
     last = None
     count = 0
-    for path in iter_jsonl_files(root):
+    for path in iter_jsonl_files(root, min_mtime=since.timestamp()):
         try:
             fh = open(path, "r", encoding="utf-8", errors="replace")
         except OSError:
