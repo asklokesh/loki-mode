@@ -47,5 +47,42 @@ else
 fi
 
 echo
+echo "T5 -- every manifest git ls-files finds (by pattern) appears in DEPS.md"
+# Tech Lead reject B1 on 9a438bdf: a hardcoded deploy/helm/ prefix silently
+# skipped helm/loki-mode/. This checks every manifest CLASS against the
+# generated report -- not just Chart.yaml, and not the generator's own
+# self-test -- with patterns written independently of dep-inventory.py's own
+# discovery regexes, so a future hardcoded-directory regression anywhere is
+# caught here too. ".github/workflows/" is the one directory kept literal on
+# purpose: GitHub Actions requires workflow files to live there.
+t5_total=0
+t5_missing=""
+t5_check() {
+    label="$1"; pattern="$2"
+    count=0
+    while IFS= read -r manifest; do
+        [ -n "$manifest" ] || continue
+        count=$((count + 1))
+        t5_total=$((t5_total + 1))
+        grep -qF "\`$manifest\`" "$DEPS" || t5_missing="$t5_missing [$label]$manifest"
+    done < <(cd "$REPO_ROOT" && git ls-files | grep -E "$pattern")
+    [ "$count" -gt 0 ] || t5_missing="$t5_missing [$label]NO-FILES-MATCHED-$pattern"
+}
+t5_check "package.json"     '(^|/)package\.json$'
+t5_check "requirements.txt" 'requirements[^/]*\.txt$'
+t5_check "pyproject.toml"   '(^|/)pyproject\.toml$'
+t5_check "workflow"         '^\.github/workflows/[^/]+\.ya?ml$'
+t5_check "action.yml"       '(^|/)action\.ya?ml$'
+t5_check "Dockerfile"       '(^|/)Dockerfile[^/]*$'
+t5_check "compose"          '(^|/)(docker-compose[^/]*\.ya?ml|compose\.ya?ml)$'
+t5_check "Chart.yaml"       '(^|/)Chart\.yaml$'
+t5_check "*.tf"             '\.tf$'
+if [ -z "$t5_missing" ]; then
+    ok "all $t5_total manifest file(s) across 9 classes appear in DEPS.md"
+else
+    bad "manifest file(s) missing from DEPS.md or a class had zero matches:$t5_missing"
+fi
+
+echo
 echo "Results: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

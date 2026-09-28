@@ -123,6 +123,65 @@ def _gh_api(path: str, jq: str) -> str:
     return result
 
 
+def _gh_api_json(path: str, paginate: bool = False) -> object:
+    cmd = ["gh", "api", path]
+    if paginate:
+        cmd.append("--paginate")
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip()[:200] or f"gh api {path} failed")
+    return json.loads(proc.stdout)
+
+
+def _dereference_tag_object(owner_repo: str, obj: dict) -> str:
+    """`obj` is the `object` field of a `git/ref/tags/<ref>` response. A
+    lightweight tag points straight at a commit; an annotated tag points at
+    a tag object that itself points at a commit, so it takes one more fetch
+    to resolve. Returns the commit SHA either way."""
+    if obj.get("type") != "tag":
+        return obj["sha"]
+    tag_obj = _gh_api_json(f"repos/{owner_repo}/git/tags/{obj['sha']}")
+    return tag_obj.get("object", {}).get("sha", obj["sha"])
+
+
+def resolve_floating_tag(owner_repo: str, ref: str, latest_tag: str) -> dict:
+    """Resolve a floating major/minor Actions tag (`uses: owner/repo@v0`) to
+    the commit it points at RIGHT NOW, and to the concrete release tag that
+    shares that commit -- the literal ref string ("v0") floats forward as
+    new releases land, so it is never itself a version to compute a bump
+    from. Compares commits, not tag-name strings, against the latest
+    release (also resolved the same way, since it may itself be annotated)."""
+    floating_obj = _gh_api_json(f"repos/{owner_repo}/git/ref/tags/{ref}")["object"]
+    floating_sha = _dereference_tag_object(owner_repo, floating_obj)
+
+    latest_obj = _gh_api_json(f"repos/{owner_repo}/git/ref/tags/{latest_tag}")["object"]
+    latest_sha = _dereference_tag_object(owner_repo, latest_obj)
+
+    tracks_latest = floating_sha == latest_sha
+    resolved_version = latest_tag if tracks_latest else None
+    if resolved_version is None:
+        # Several tag names can share one commit (a repo may also carry a
+        # "latest" alias, itself not a version). Keep only tags that parse
+        # as a full semver and take the highest one by VALUE, not API
+        # order, so an alias tag returned before the real release tag can
+        # never be picked by accident.
+        tags = _gh_api_json(f"repos/{owner_repo}/tags", paginate=True)
+        candidates = [
+            t.get("name") for t in tags
+            if t.get("name") != ref
+            and t.get("commit", {}).get("sha") == floating_sha
+            and re.match(r"^v?\d+\.\d+\.\d+$", t.get("name", ""))
+        ]
+        if candidates:
+            resolved_version = max(candidates, key=version_tuple)
+    return {
+        "floating_sha": floating_sha,
+        "latest_sha": latest_sha,
+        "resolved_version": resolved_version,
+        "tracks_latest": tracks_latest,
+    }
+
+
 def fetch_gh_release_latest(owner_repo: str) -> str:
     try:
         return _gh_api(f"repos/{owner_repo}/releases/latest", ".tag_name")
@@ -433,15 +492,47 @@ def collect_actions(repo_root: Path, files: list[str], cache: Cache) -> list[Row
                         # numerically against a release tag is meaningless.
                         bump = "unknown"
                         note = f"SHA-pinned, no version comment; latest release is {latest}"
+                elif re.match(r"^v?\d+$", ref):
+                    # A bare-major/minor tag ("v0", "v2") floats: the ref
+                    # string itself is never a version, only the commit it
+                    # points at right now is. Resolve it to that commit and
+                    # to the release tag sharing it before computing a bump
+                    # -- a regex on the literal ref cannot tell "v0 == the
+                    # latest release" from "v0 == a stale release" (Tech
+                    # Lead reject B2 on 9a438bdf: anchore/sbom-action@v0
+                    # resolved to v0.24.0 while latest was v0.24.2).
+                    resolve_entry = cache.get(
+                        "floating_tag", f"{owner_repo}@{ref}",
+                        lambda owner_repo=owner_repo, ref=ref, latest=latest: resolve_floating_tag(owner_repo, ref, latest),
+                    )
+                    if resolve_entry["ok"] and resolve_entry["value"]["resolved_version"]:
+                        info = resolve_entry["value"]
+                        resolved_version = info["resolved_version"]
+                        display_current = f"{ref} (resolves to {resolved_version})" + (f"  # {comment}" if comment else "")
+                        bump = bump_class(resolved_version, latest)
+                        if info["tracks_latest"]:
+                            note = (f"tag-pinned (not SHA-pinned); floating tag {ref} resolves to "
+                                    f"{resolved_version}, which IS the latest release -- tracks latest within that major")
+                        else:
+                            note = (f"tag-pinned (not SHA-pinned); floating tag {ref} resolves to "
+                                    f"{resolved_version} (commit {info['floating_sha'][:12]}), behind "
+                                    f"latest release {latest} (commit {info['latest_sha'][:12]})")
+                    else:
+                        # Never fall back to computing a bump from the bare
+                        # ref string ("v0") -- that IS the bug this branch
+                        # exists to fix (Tech Lead reject B2). An
+                        # unresolvable floating tag is an unknown bump with
+                        # an explicit reason, not a silent re-guess.
+                        bump = "unknown"
+                        if resolve_entry["ok"]:
+                            display_current = f"{ref} (commit {resolve_entry['value']['floating_sha'][:12]}, no matching release tag found)" + (f"  # {comment}" if comment else "")
+                            note = (f"tag-pinned (not SHA-pinned); floating tag {ref} resolved to a commit but "
+                                    f"no release tag matches it; latest release is {latest}")
+                        else:
+                            note = f"tag-pinned (not SHA-pinned); could not resolve floating tag {ref}: {resolve_entry['error']}"
                 else:
                     bump = bump_class(ref, latest)
                     note = "tag-pinned (not SHA-pinned)"
-                    if re.match(r"^v?\d+$", ref) and bump in ("minor", "patch"):
-                        # A bare-major tag ("v4") already floats onto the
-                        # newest release within that major; the "behind"
-                        # reading here is minor/patch drift within v-major,
-                        # not a version this repo has to bump by hand.
-                        note += "; floating major tag already tracks the latest release within that major"
             else:
                 latest = None
                 bump = "unknown"
@@ -695,39 +786,62 @@ def collect_docker(repo_root: Path, dockerfiles: list[str], compose_files: list[
 # Helm
 # --------------------------------------------------------------------------
 
-def collect_helm(repo_root: Path, helm_files: list[str], repo_version: str | None) -> list[Row]:
-    rows: list[Row] = []
-    chart_yaml = next((f for f in helm_files if f.endswith("Chart.yaml")), None)
-    if chart_yaml:
-        text = (repo_root / chart_yaml).read_text()
-        m = re.search(r'^appVersion:\s*"?([^"\n]+)"?', text, re.M)
-        app_version = m.group(1).strip() if m else "(none)"
-        if repo_version and app_version != repo_version:
-            rows.append(Row(chart_yaml, "appVersion", app_version, repo_version, "drifted",
-                             note=f"DRIFTED: chart appVersion does not track the product VERSION file ({repo_version})"))
-        else:
-            rows.append(Row(chart_yaml, "appVersion", app_version, repo_version, "n/a",
-                             note="tracks the loki-mode product VERSION file"))
-        if "dependencies:" not in text:
-            rows.append(Row(chart_yaml, "chart dependencies", "(none declared)", None, "n/a"))
-    for f in helm_files:
-        if not f.endswith((".yaml", ".yml")) or f.endswith("Chart.yaml"):
+def discover_helm_charts(files: list[str]) -> dict[str, list[str]]:
+    """Map each chart root (the directory holding a Chart.yaml) to every
+    yaml/yml file under it. Chart roots are found by matching the
+    Chart.yaml basename over `git ls-files` output -- never a hardcoded
+    directory -- so any number of chart trees anywhere in the repo (e.g.
+    both deploy/helm/autonomi/ and helm/loki-mode/) are discovered the same
+    way. Most-specific root wins when charts are nested."""
+    chart_yamls = [f for f in files if Path(f).name == "Chart.yaml"]
+    roots = sorted({str(Path(f).parent) for f in chart_yamls}, key=len, reverse=True)
+    charts: dict[str, list[str]] = {root: [] for root in roots}
+    for f in files:
+        if not f.endswith((".yaml", ".yml")):
             continue
-        text = (repo_root / f).read_text()
-        for line in text.splitlines():
-            m = IMAGE_RE.match(line)
-            if m:
-                image = m.group(1)
-                rows.append(Row(f, image, image, None, "unknown",
-                                 note="floating/arbitrary registry tag, see Docker section for endoflife-mapped images"))
-        rep = re.search(r"^\s*repository:\s*(\S+)", text, re.M)
-        tag = re.search(r"^\s*tag:\s*\"?([^\"\n]*)\"?", text, re.M)
-        if rep:
-            repo_name = rep.group(1)
-            tag_val = tag.group(1) if tag else ""
-            display = f"{repo_name}:{tag_val or '(defaults to appVersion)'}"
-            rows.append(Row(f, "image.repository", display, None, "n/a", note="own product image, tracked via VERSION not a third-party dep"))
-    return fill_missing_files(rows, helm_files, "no image reference or chart metadata found (a template, RBAC, or other non-image manifest)")
+        for root in roots:
+            if f.startswith(f"{root}/"):
+                charts[root].append(f)
+                break
+    return charts
+
+
+def collect_helm(repo_root: Path, chart_roots: dict[str, list[str]], repo_version: str | None) -> list[Row]:
+    rows: list[Row] = []
+    for root in sorted(chart_roots):
+        chart_files = chart_roots[root]
+        chart_yaml = next((f for f in chart_files if f.endswith("Chart.yaml")), None)
+        if chart_yaml:
+            text = (repo_root / chart_yaml).read_text()
+            m = re.search(r'^appVersion:\s*"?([^"\n]+)"?', text, re.M)
+            app_version = m.group(1).strip() if m else "(none)"
+            if repo_version and app_version != repo_version:
+                rows.append(Row(chart_yaml, "appVersion", app_version, repo_version, "drifted",
+                                 note=f"DRIFTED: chart appVersion does not track the product VERSION file ({repo_version})"))
+            else:
+                rows.append(Row(chart_yaml, "appVersion", app_version, repo_version, "n/a",
+                                 note="tracks the loki-mode product VERSION file"))
+            if "dependencies:" not in text:
+                rows.append(Row(chart_yaml, "chart dependencies", "(none declared)", None, "n/a"))
+        for f in chart_files:
+            if not f.endswith((".yaml", ".yml")) or f.endswith("Chart.yaml"):
+                continue
+            text = (repo_root / f).read_text()
+            for line in text.splitlines():
+                m = IMAGE_RE.match(line)
+                if m:
+                    image = m.group(1)
+                    rows.append(Row(f, image, image, None, "unknown",
+                                     note="floating/arbitrary registry tag, see Docker section for endoflife-mapped images"))
+            rep = re.search(r"^\s*repository:\s*(\S+)", text, re.M)
+            tag = re.search(r"^\s*tag:\s*\"?([^\"\n]*)\"?", text, re.M)
+            if rep:
+                repo_name = rep.group(1)
+                tag_val = tag.group(1) if tag else ""
+                display = f"{repo_name}:{tag_val or '(defaults to appVersion)'}"
+                rows.append(Row(f, "image.repository", display, None, "n/a", note="own product image, tracked via VERSION not a third-party dep"))
+    all_helm_files = [f for fs in chart_roots.values() for f in fs]
+    return fill_missing_files(rows, all_helm_files, "no image reference or chart metadata found (a template, RBAC, or other non-image manifest)")
 
 
 # --------------------------------------------------------------------------
@@ -892,7 +1006,7 @@ def build_report(cache: Cache, repo_root: Path, groups: dict) -> str:
     all_rows["docker"] = docker_rows
     out.append(render_table(docker_rows) + "\n")
 
-    out.append("## Helm (`deploy/helm/`)\n")
+    out.append("## Helm (every `Chart.yaml` found via `git ls-files`, any directory)\n")
     helm_rows = groups["helm"]
     all_rows["helm"] = helm_rows
     out.append(render_table(helm_rows) + "\n")
@@ -1164,6 +1278,101 @@ def self_test() -> int:
         check("actions: Bump is measured against the release lookup", arow.bump == "MAJOR")
         check("actions: node20 action.yml is flagged in the note", "declares `using: node20`" in arow.note)
 
+        # ---- resolve_floating_tag itself, stubbing _gh_api_json (not the
+        # resolver's own answer) so the test actually exercises annotated-tag
+        # dereferencing and commit comparison, not a pre-baked verdict.
+        global _gh_api_json
+        _orig_gh_api_json = _gh_api_json
+        stub_responses = {
+            ("repos/anchore/sbom-action/git/ref/tags/v0", False):
+                {"object": {"type": "commit", "sha": "aaaa0000floating"}},
+            ("repos/anchore/sbom-action/git/ref/tags/v0.24.2", False):
+                {"object": {"type": "tag", "sha": "tagobjsha000000"}},
+            ("repos/anchore/sbom-action/git/tags/tagobjsha000000", False):
+                {"object": {"sha": "bbbb1111latest"}},
+            # A decoy "latest" alias shares the floating commit and is
+            # returned BEFORE the real release tag -- the resolver must not
+            # pick it just because it came first in API order.
+            ("repos/anchore/sbom-action/tags", True): [
+                {"name": "latest", "commit": {"sha": "aaaa0000floating"}},
+                {"name": "v0.24.0", "commit": {"sha": "aaaa0000floating"}},
+                {"name": "v0.24.1", "commit": {"sha": "cccc2222other"}},
+            ],
+        }
+        def _stub_gh_api_json(path, paginate=False):
+            key = (path, paginate)
+            if key not in stub_responses:
+                raise AssertionError(f"unstubbed gh api call in resolver self-test: {key}")
+            return stub_responses[key]
+        try:
+            _gh_api_json = _stub_gh_api_json
+            stale = resolve_floating_tag("anchore/sbom-action", "v0", "v0.24.2")
+        finally:
+            _gh_api_json = _orig_gh_api_json
+        check("resolver: annotated latest tag is dereferenced to its commit",
+              stale["latest_sha"] == "bbbb1111latest")
+        check("resolver: a stale floating tag is not marked as tracking latest",
+              stale["tracks_latest"] is False)
+        check("resolver: the decoy 'latest' alias is skipped for the real semver tag",
+              stale["resolved_version"] == "v0.24.0")
+
+        stub_responses[("repos/anchore/sbom-action/git/ref/tags/v2", False)] = \
+            {"object": {"type": "commit", "sha": "same0000sha"}}
+        stub_responses[("repos/anchore/sbom-action/git/ref/tags/v2.5.0", False)] = \
+            {"object": {"type": "commit", "sha": "same0000sha"}}
+        try:
+            _gh_api_json = _stub_gh_api_json
+            current = resolve_floating_tag("anchore/sbom-action", "v2", "v2.5.0")
+        finally:
+            _gh_api_json = _orig_gh_api_json
+        check("resolver: a floating tag ON the latest commit IS marked tracking latest",
+              current["tracks_latest"] is True and current["resolved_version"] == "v2.5.0")
+
+        # ---- Actions: a floating major tag ("v0") resolved to a STALE
+        # commit, not the latest release (Tech Lead reject B2 on 9a438bdf).
+        # anchore/sbom-action@v0 actually points at v0.24.0's commit while
+        # v0.24.2 is latest -- a regex on the literal ref string cannot see
+        # that; only resolving to commits can.
+        cache5 = Cache(tmp / "actions-floating-cache.json")
+        cache5.data["gh_release"] = {"anchore/sbom-action": {"ok": True, "value": "v0.24.2"}}
+        cache5.data["action_runtime"] = {"anchore/sbom-action@v0:": {"ok": True, "value": "composite"}}
+        cache5.data["floating_tag"] = {"anchore/sbom-action@v0": {"ok": True, "value": {
+            "floating_sha": "e22c389904149dbc22b58101806040fa8d37a610",
+            "latest_sha": "3ad7283483fc7af8ff2b4ea19663c2d5ca935e26",
+            "resolved_version": "v0.24.0",
+            "tracks_latest": False,
+        }}}
+        wf_dir2 = tmp / "repo2" / ".github" / "workflows"
+        wf_dir2.mkdir(parents=True)
+        (wf_dir2 / "release.yml").write_text("jobs:\n  a:\n    steps:\n      - uses: anchore/sbom-action@v0\n")
+        arows2 = collect_actions(tmp / "repo2", [".github/workflows/release.yml"], cache5)
+        arow2 = next(r for r in arows2 if r.name == "anchore/sbom-action@v0")
+        check("floating tag: Current shows the resolved version, not the bare ref", "v0.24.0" in arow2.current)
+        check("floating tag: Bump is computed from the resolved version (0.24.0 -> 0.24.2 = patch)",
+              arow2.bump == "patch")
+        check("floating tag: stale floating tag does NOT print the 'tracks latest' note",
+              "IS the latest release" not in arow2.note and "tracks latest" not in arow2.note)
+        check("floating tag: note states what it actually resolves to and that it is behind",
+              "resolves to v0.24.0" in arow2.note and "behind latest release" in arow2.note)
+
+        # ---- Helm: a second chart tree is discovered without a hardcoded
+        # directory (Tech Lead reject B1 on 9a438bdf).
+        helm_root = tmp / "helmrepo"
+        (helm_root / "deploy" / "helm" / "autonomi").mkdir(parents=True)
+        (helm_root / "helm" / "loki-mode").mkdir(parents=True)
+        (helm_root / "deploy" / "helm" / "autonomi" / "Chart.yaml").write_text('appVersion: "7.93.0"\n')
+        (helm_root / "helm" / "loki-mode" / "Chart.yaml").write_text('appVersion: "9.19.1"\n')
+        helm_file_list = ["deploy/helm/autonomi/Chart.yaml", "helm/loki-mode/Chart.yaml"]
+        charts = discover_helm_charts(helm_file_list)
+        check("helm: both chart roots are discovered, not just deploy/helm/",
+              set(charts.keys()) == {"deploy/helm/autonomi", "helm/loki-mode"})
+        helm_rows = collect_helm(helm_root, charts, "10.2.1")
+        helm_row_files = {r.file for r in helm_rows}
+        check("helm: the non-deploy/helm/ chart's appVersion row is present",
+              "helm/loki-mode/Chart.yaml" in helm_row_files)
+        loki_row = next(r for r in helm_rows if r.file == "helm/loki-mode/Chart.yaml" and r.name == "appVersion")
+        check("helm: appVersion drift is reported for the second chart too", loki_row.bump == "drifted")
+
     print()
     if failures:
         print(f"{len(failures)} check(s) FAILED: {failures}")
@@ -1200,11 +1409,17 @@ def main() -> int:
     npm_files = [f for f in files if f.endswith("package.json")]
     req_files = [f for f in files if re.search(r"requirements.*\.txt$", f)]
     pyproject_files = [f for f in files if f.endswith("pyproject.toml")]
+    # .github/workflows/ is the one directory kept literal here: it is where
+    # GitHub Actions requires workflow files to live, not an assumption
+    # about this repo's own layout. A composite action's action.yml can live
+    # anywhere, though (Tech Lead reject B1 on 9a438bdf: the equivalent
+    # deploy/helm/ hardcoding silently skipped a chart outside it), so that
+    # one is a basename pattern with no directory assumption at all.
     workflow_files = [f for f in files if re.match(r"^\.github/workflows/.*\.ya?ml$", f)]
-    action_files = [f for f in files if re.match(r"^\.github/actions/.*/action\.ya?ml$", f)]
+    action_files = [f for f in files if re.search(r"(^|/)action\.ya?ml$", f)]
     dockerfiles = [f for f in files if Path(f).name.startswith("Dockerfile")]
     compose_files = [f for f in files if re.match(r"docker-compose.*\.ya?ml$|compose\.ya?ml$", Path(f).name)]
-    helm_files = [f for f in files if f.startswith("deploy/helm/") and f.endswith((".yaml", ".yml"))]
+    helm_charts = discover_helm_charts(files)
     tf_files = [f for f in files if f.endswith(".tf")]
 
     version_file = repo_root / "VERSION"
@@ -1219,7 +1434,7 @@ def main() -> int:
         "runtimes": runtimes,
         "runtime_rows": build_runtime_rows(cache, runtimes),
         "docker": collect_docker(repo_root, dockerfiles, compose_files, cache),
-        "helm": collect_helm(repo_root, helm_files, repo_version),
+        "helm": collect_helm(repo_root, helm_charts, repo_version),
         "terraform": collect_terraform(repo_root, tf_files, cache),
         "homebrew": collect_homebrew(cache, repo_version),
     }
