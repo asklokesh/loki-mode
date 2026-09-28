@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.2.0 (2026-09-28)
+
+Loki 10 engine (still opt-in: `LOKI_ENGINE=v10`).
+
+### Added
+- "Already implemented" is a first-class outcome: when the requested behaviour already exists, the run cites the code and test evidence, ends as no change needed with a receipt and an issue comment, and opens no PR (E-66).
+- A session that exits with an error fails its stage instead of reporting done, and its stderr tail is kept under the run directory, with the path in the failure event (E-61).
+- `loki modernize` groundwork, not yet wired to the CLI: deterministic codemods first (futurize, OpenRewrite) or a recorded skip (M-16), strangler targets and routes.json (M-19), dashboard view (M-24), Java graph that records every unresolved import (M-04).
+- Eval: medium-tier tasks audited with deletion mutants so a feature deletion never grades as completed (EV-11, first half).
+
+### Fixed
+- The modernize codemod runner passes an explicit environment to child processes (E-83).
+- Internal tooling: the swarm pulse reads main CI from the Tests run list instead of reporting UNKNOWN (E-75) and reports a stalled session (E-77).
+
 ## v10.1.1 (2026-09-28)
 
 ### Added
