@@ -3,7 +3,7 @@
 // with exactly the two positional numbers below (output.ts's EtaEstimator type). "Cached history"
 // is the average actual/target ratio across stages recorded so far; the first estimate uses the
 // raw target, later ones blend in real overrun. loadHistory/saveHistory persist that ratio to a
-// small eta.json in a caller-given dir; no caller wires them in yet (follow-up once machine.ts and
+// small eta.json in a caller-given dir. ponytail: no caller wires them in yet (follow-up once machine.ts and
 // cache.ts land: load at run start, save after pr.opened, per section 13).
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
