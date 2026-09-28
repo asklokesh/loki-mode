@@ -559,6 +559,46 @@ assert_allowed "R6 allowed: git add <file> (staged individually by name)" \
     "git add scripts/v10-guard.sh" "$SCRIPT_DIR"
 
 echo ""
+echo "--- Rule 7: checkout/restore that wipes the shared tree in the main checkout ---"
+# A "main"-shaped fixture repo, plus a nested repo whose path runs through
+# .claude/worktrees/ so it reads as a worktree checkout the same way a real
+# `git worktree add .claude/worktrees/<name>` would.
+REPO7="$LOKI_RUN_TMP/repo-rule7"
+mkdir -p "$REPO7"
+git -C "$REPO7" init -q -b main
+git -C "$REPO7" config user.email test@example.com
+git -C "$REPO7" config user.name "Test"
+echo "hello" > "$REPO7/file.txt"
+git -C "$REPO7" add file.txt
+git -C "$REPO7" commit -q -m "init"
+
+REPO7_WT="$REPO7/.claude/worktrees/wt1"
+mkdir -p "$REPO7_WT"
+git -C "$REPO7_WT" init -q -b slice-x
+git -C "$REPO7_WT" config user.email test@example.com
+git -C "$REPO7_WT" config user.name "Test"
+echo "hello" > "$REPO7_WT/file.txt"
+git -C "$REPO7_WT" add file.txt
+git -C "$REPO7_WT" commit -q -m "init"
+
+assert_blocked "R7 blocked: git checkout <ref> -- . in the main checkout" \
+    "git checkout main -- ." "$REPO7" "RULE7"
+assert_blocked "R7 blocked: git checkout <ref> -- :/ in the main checkout" \
+    "git checkout HEAD -- :/" "$REPO7" "RULE7"
+assert_blocked "R7 blocked: bare git checkout . (no ref, no --) in the main checkout" \
+    "git checkout ." "$REPO7" "RULE7"
+assert_blocked "R7 blocked: git restore --source=<ref> . in the main checkout" \
+    "git restore --source=main ." "$REPO7" "RULE7"
+assert_blocked "R7 blocked: git restore -s <ref> . in the main checkout" \
+    "git restore -s main ." "$REPO7" "RULE7"
+assert_allowed "R7 allowed: git checkout <ref> -- . inside a .claude/worktrees/* worktree" \
+    "git checkout main -- ." "$REPO7_WT"
+assert_allowed "R7 allowed: single-file git checkout -- <file> in the main checkout" \
+    "git checkout -- file.txt" "$REPO7"
+assert_blocked "R7 blocked: git -C <main> checkout x -- . run from elsewhere" \
+    "git -C $REPO7 checkout x -- ." "$LOKI_RUN_TMP" "RULE7"
+
+echo ""
 echo "--- Heredocs: an apostrophe in a heredoc body must not cause a false PARSE block ---"
 assert_allowed "Heredoc allowed: apostrophe in a plain heredoc body" \
     "cat > $LOKI_RUN_TMP/notes.txt <<EOF
