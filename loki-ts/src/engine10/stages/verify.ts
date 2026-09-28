@@ -1,11 +1,8 @@
-// E-09 Fast verify (docs/v10/ENGINE.md section 4 "Fast verify", section 16 E-09). Runs impacted +
-// changed test files + Wall tests, plus lint/typecheck of the changed files, each under one per-check
-// timeout. A missing tool is a NOT PROVEN entry ("not_run"), never a failure. A failing check gets
-// exactly one rerun; fail-then-pass is recorded "flaky", not "fail". An empty diff with the
-// implementer's already_done marker seals ALREADY_SATISFIED with no checks run; an empty diff without
-// that marker is FAILED (ENGINE.md section 2, "Feature already existed" row). testmap.ts (E-05) and
-// machine.ts (E-02) are not on main: this stage talks to them only through RunContext's `tests:
-// TestMapProvider`, injected as a fake in tests, and is never imported here.
+// E-09 Fast verify (ENGINE.md 4 "Fast verify", 16 E-09). Runs impacted + changed test files + Wall tests,
+// plus lint/typecheck of changed files, each under one per-check timeout. A missing tool is NOT PROVEN
+// ("not_run"), never a failure; a failing check gets one rerun, fail-then-pass is "flaky". An empty diff with
+// the already_done marker seals ALREADY_SATISFIED; without it, FAILED (ENGINE.md 2). Reaches testmap.ts/
+// machine.ts only through RunContext's `tests: TestMapProvider`, injected as a fake in tests, never imported here.
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";

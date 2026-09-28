@@ -1,7 +1,6 @@
-// Loki 10 worker (P2, docs/v10/ENGINE.md section 6): the token-withheld process
-// that runs intake..seal. It never writes events.jsonl; each event is one JSON
-// line {type, stage, data} on stdout, and the supervisor validates, stamps seq
-// and appends. Its own diagnostics go to stderr.
+// Loki 10 worker (P2, ENGINE.md 6): the token-withheld process that runs intake..seal. It never writes
+// events.jsonl; each event is one JSON line {type, stage, data} on stdout, and the supervisor validates,
+// stamps seq and appends. Its own diagnostics go to stderr.
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { GITHUB_TOKEN_VARS } from "../runner/github_token.ts";
