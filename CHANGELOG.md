@@ -37,8 +37,14 @@ Loki 10 engine (still opt-in: `LOKI_ENGINE=v10`).
 
 ## v10.1.1 (2026-09-28)
 
+`loki modernize` groundwork. Both modules are internal building blocks of the upcoming `loki modernize` command and are not yet reachable from the CLI; nothing changes for existing `loki` users.
+
 ### Added
-- `loki modernize` groundwork, not yet wired to the CLI: Python import graph that lexes py2 source, including bare relative imports (M-03); py2/3 capture tracer with type-tagged values, where anything it cannot tag faithfully, including subclasses of supported types, is recorded as not proven and never compares equal (M-09).
+- Python import graph for modernize (M-03): `autonomy/lib/modernize/py_imports.py` lexes source with `tokenize`, so it reads Python 2 files (print statements, backticks, old `except X, e` syntax) that `ast` rejects, and `loki-ts/src/engine10/modernize/lang/python.ts` turns the result into the dependency graph the planner clusters. It resolves absolute, relative and bare relative imports (`from . import X`, `from .. import X`), and records imports it cannot resolve instead of dropping them.
+- Behaviour capture tracer for modernize (M-09): `autonomy/lib/modernize/py_capture.py` runs a module's functions under Python 2 or 3 and records inputs, return values and raised exceptions as type-tagged JSON with branch coverage, so a migrated module can later be checked for identical behaviour. Supported values are tagged faithfully, including sets and frozensets (sorted), `Decimal`, the `datetime` family and `bytearray`.
+
+### Safety
+- Anything the tracer cannot tag faithfully, including custom classes and subclasses of supported types such as `namedtuple`, `IntEnum` and `OrderedDict`, is recorded as not proven with its type and call site. It never compares equal, so the equivalence oracle cannot certify behaviour it did not actually capture.
 
 ## v10.1.0 (2026-09-28)
 
