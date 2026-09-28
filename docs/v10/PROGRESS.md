@@ -1448,3 +1448,10 @@ sample.
 - S41-09 done (e5468d2c, flag-gated lean prefix, core unchanged at 4,982); sonnet TL review in flight. PO cutting 6 ready slices for LOW_READY.
 - v10.5.3 Release 36490908332 in progress (required-ci and gate success); watcher re-armed after a network error. Hourly usage snapshot 9522ae5e: governor still uncalibrated.
 - S41-01 at 37 min against a 30 min budget: stop and re-slice at 45 min if it has not committed.
+
+## 2026-09-28T22:27Z (Chief of Staff)
+- Founder directive recorded as D43 (a9f74496): medium tier to 20+ tasks, 3+ reps, 95% CIs, decide only outside them; profile stage wall-clock; auth check per rep plus resume. Cards S41-17 (CIs), S41-18 (resume), S41-19 (stage profile), S41-20a/b/c (15 medium candidates) staffed on sonnet. Auth check per rep already exists (scorecard-run.sh:174 auth_guard per arm and rep).
+- S41-01 (D43 item 1, P0) done at 68d1fc28: test-harness.sh 126/0, red vs main 119/7 (all 7 the S41-01 checks); E-98f repriced: default $1.1328/completed, nowall $0.9148, nocascade n/a (2 killed-session rows with zero usage stay null). Sonnet TL review in flight.
+- S41-05 opus REJECT (3 blocking: key-order mutations M1 to M4 survive 19/0, no early-accept predicate, import fence misses 4 forms); back to its engineer. M-15 done at a6d584fb (246/0), opus review in flight.
+- Worktree drift: removed 4 stale worktrees (E-106, E-98a, old M-14 wf, EV-12F-b) after saving their diffs and untracked files to the session scratchpad (wt-salvage/).
+- UNEVIDENCED_CLAIM on a9f74496 is the S41-17 card text defining marks ("green or red"), a spec, not a claim.
