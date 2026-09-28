@@ -49,6 +49,9 @@
 #  14. (E-52) LOKI_TS_ENTRY and an allowlisted LOKI_E10_* knob reach the v10
 #      arm env; a non-allowlisted LOKI_E10_* knob and a GH_TOKEN canary do
 #      not; the legacy arm gets neither knob
+#  15. (D30) validate accepts tier:medium, rejects an unknown tier value; a
+#      task with no tier field defaults to small; --all --tier medium selects
+#      only the medium task
 #===============================================================================
 set -u
 
@@ -622,6 +625,20 @@ LOKI_TS_ENTRY="/fake/dist/loki.js" LOKI_E10_PLAN="plan-value" GH_TOKEN="$GH_CANA
 got="$(grep -h '^ENV-CHECK3:' "$R"/logs/*/arm_stderr.log)"
 [ "$got" = "ENV-CHECK3: entry=unset plan=unset task_text=unset gh=" ] \
     && pass "E-52: legacy arm gets neither LOKI_TS_ENTRY nor LOKI_E10_PLAN" || fail "E-52: legacy ENV-CHECK3: got '$got'"
+
+# ---- 15. (D30) tier field: validate + --tier selection
+bad_case tier_bogus "t['tier']='bogus'"
+seed_task fx-medium fx-greet "t['tier']='medium'" ":"
+if H validate "$TASKS/fx-medium" >/dev/null 2>&1; then pass "validator accepts tier:medium"; else fail "validator rejected tier:medium"; fi
+if H validate "$TASKS/fx-greet" >/dev/null 2>&1; then pass "validator accepts a task with no tier (defaults small)"; else fail "validator rejected a tierless task"; fi
+
+R="$T/out-tier"
+mkdir -p "$T/tasks-tier"
+cp -R "$TASKS/fx-greet" "$TASKS/fx-medium" "$T/tasks-tier/"
+STUB_MODE=noop env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$T/tasks-tier" bash "$HERE/run.sh" \
+    --arm raw-claude --all --tier medium --out "$R" >/dev/null 2>&1
+got="$(python3 -c 'import json,sys; print(",".join(sorted(json.loads(l)["task"] for l in open(sys.argv[1]))))' "$R/results.jsonl" 2>/dev/null)"
+[ "$got" = "fx-medium" ] && pass "D30: --all --tier medium selects only the medium task" || fail "D30: --tier rows='$got'"
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

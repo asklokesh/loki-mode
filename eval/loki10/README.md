@@ -16,7 +16,8 @@ set of tasks and scores each run the same way.
   "repo": {"source": "<git url or absolute local path>", "ref": "<commit sha>"},
   "setup": "<optional shell command run in the checkout before the arm>",
   "hidden": {"files": ["<paths relative to hidden/>"], "run": "<command, see below>"},
-  "timeout_s": 900
+  "timeout_s": 900,
+  "tier": "small | medium | large (optional, defaults to small)"
 }
 ```
 
@@ -58,6 +59,7 @@ The validator rejects any of these:
 
 ```bash
 eval/loki10/run.sh --arm raw-claude --all --parallel 3 --out eval/loki10/results
+eval/loki10/run.sh --arm raw-claude --all --tier medium --out eval/loki10/results
 eval/loki10/run.sh --arm v10 --task <id>
 eval/loki10/summarize eval/loki10/results/results.jsonl            # plain text
 eval/loki10/summarize eval/loki10/results/results.jsonl --markdown # CHANGELOG block
