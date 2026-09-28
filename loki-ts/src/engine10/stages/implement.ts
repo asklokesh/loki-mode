@@ -9,12 +9,13 @@ import type { ImplementExit, RunContext, Stage, StageResult, TestMap } from "../
 export interface ReadOnlyFile { path: string; content: string; }
 
 /** Impacted tests: the intake test map narrowed to plan's relevant files, falling back to the task's named
- *  files when Plan was skipped (E-64's lean path), plus the sealed Wall tests. */
+ *  files when Plan was skipped or found none (E-64's lean path; E-98c), plus the sealed Wall tests. */
 export function impactedTests(ctx: RunContext): string[] {
   const o = ctx.outputs();
   const map = o.intake?.testmap as TestMap | undefined;
   const task = (o.intake?.task as string | undefined) ?? "";
-  const relevant = (o.plan?.relevant_files as string[] | undefined) ?? namedFiles(task, loadRepoMap(o.intake?.repomap_ref as string | undefined));
+  const relevantFiles = o.plan?.relevant_files as string[] | undefined;
+  const relevant = relevantFiles?.length ? relevantFiles : namedFiles(task, loadRepoMap(o.intake?.repomap_ref as string | undefined));
   const fromMap = map ? ctx.tests.impacted(map, relevant).map((t) => t.path) : [];
   const wall = ((o.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? []).map((f) => relative(ctx.repoDir, f.path));
   return [...new Set([...fromMap, ...wall])];
@@ -30,7 +31,7 @@ export function buildImplementBrief(task: string, plan: string | null, impactedT
     plan ? `Follow this plan:\n${plan}` : "No separate plan was made: plan the change yourself in this session, then implement it.",
     ...(repoMap ? [`Repository paths (repomap.txt):\n${repoMap}`] : []),
     "Rules:",
-    "- The Wall tests and any existing test files are read-only. Do not edit or delete them.",
+    "- The Wall tests are read-only: do not edit or delete them. Existing test files are append-only: you may add new test functions, but never edit or delete an existing one.",
     `- Run only these impacted tests: ${impactedTests.length ? impactedTests.join(", ") : "(none known)"}.`,
     "- Never run the full test suite, an E2E suite, or a long-lived server.",
     "- Never kill processes.",
