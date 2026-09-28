@@ -40,6 +40,9 @@
 #      only the arm (never setup, baseline or grade); the token is in no log;
 #      (E-38) LOKI_ENGINE=legacy on the legacy arm, v10 on the v10 arm
 #  13. (E-38) --tasks a,b runs exactly those ids; an unknown id exits 2
+#  14. (E-52) LOKI_TS_ENTRY and an allowlisted LOKI_E10_* knob reach the v10
+#      arm env; a non-allowlisted LOKI_E10_* knob and a GH_TOKEN canary do
+#      not; the legacy arm gets neither knob
 #===============================================================================
 set -u
 
@@ -514,6 +517,29 @@ STUB_MODE=noop RUN --arm raw-claude --tasks fx-greet,no-such-task --out "$R" >/d
 rc=$?
 [ "$rc" = 2 ] && [ ! -s "$R/results.jsonl" ] && pass "E-38: --tasks with an unknown id exits 2 with no rows" \
     || fail "E-38: bad --tasks rc=$rc rows=$(wc -l < "$R/results.jsonl" 2>/dev/null)"
+
+# ---- 14. (E-52) v10-only engine knob passthrough
+cat > "$T/bin/e52-stub" <<'EOF'
+#!/usr/bin/env bash
+echo "ENV-CHECK3: entry=${LOKI_TS_ENTRY:-unset} plan=${LOKI_E10_PLAN:-unset} task_text=${LOKI_E10_TASK_TEXT:-unset} gh=${GH_TOKEN:+set}" >&2
+EOF
+chmod +x "$T/bin/e52-stub"
+GH_CANARY="e52-gh-canary-$$"
+R="$T/out-e52-v10"
+LOKI_TS_ENTRY="/fake/dist/loki.js" LOKI_E10_PLAN="plan-value" LOKI_E10_TASK_TEXT="should-not-leak" GH_TOKEN="$GH_CANARY" \
+    LOKI_EVAL_LOKI_BIN="$T/bin/e52-stub" RUN --arm v10 --task fx-greet --out "$R" >/dev/null 2>&1
+got="$(grep -h '^ENV-CHECK3:' "$R"/logs/*/arm_stderr.log)"
+[ "$got" = "ENV-CHECK3: entry=/fake/dist/loki.js plan=plan-value task_text=unset gh=" ] \
+    && pass "E-52: v10 arm gets LOKI_TS_ENTRY and allowlisted LOKI_E10_PLAN, not LOKI_E10_TASK_TEXT or GH_TOKEN" \
+    || fail "E-52: v10 ENV-CHECK3: got '$got'"
+grep -rqF "$GH_CANARY" "$R" && fail "E-52: GH_TOKEN canary reached a log" || pass "E-52: GH_TOKEN canary in no log"
+
+R="$T/out-e52-legacy"
+LOKI_TS_ENTRY="/fake/dist/loki.js" LOKI_E10_PLAN="plan-value" GH_TOKEN="$GH_CANARY" \
+    LOKI_EVAL_LOKI_BIN="$T/bin/e52-stub" RUN --arm legacy --task fx-greet --out "$R" >/dev/null 2>&1
+got="$(grep -h '^ENV-CHECK3:' "$R"/logs/*/arm_stderr.log)"
+[ "$got" = "ENV-CHECK3: entry=unset plan=unset task_text=unset gh=" ] \
+    && pass "E-52: legacy arm gets neither LOKI_TS_ENTRY nor LOKI_E10_PLAN" || fail "E-52: legacy ENV-CHECK3: got '$got'"
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

@@ -59,6 +59,19 @@ SCRUB_ENV = ("GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRI
              "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CONFIG_DIR")
 # Operator auth env vars, in precedence order, passed through to the arm as-is.
 AUTH_ENV = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
+# E-52: v10-only engine knobs let back through arm_env's blanket LOKI_* scrub,
+# by exact name, never a prefix match. Includes LOKI_E10_PLAN/WALL/WALL_TIER
+# (E-45 wiring, not read yet) and the operator tunables grep finds today
+# (process.env.LOKI_E10_ in loki-ts/src/engine10: CAP_S, INVOKER,
+# DASHBOARD_PORT). Excludes run inputs an operator's leftover value could use
+# to steer or replace the eval task (TASK_TEXT, ISSUE_JSON, REPO_DIR) and
+# per-session plumbing session.ts's childEnv sets itself (BRIEF, TIER,
+# PROVIDER, STAGE). Credentials are never in this list; they stay withheld
+# exactly as SCRUB_ENV/arm_auth already handle them.
+V10_ENGINE_ENV_ALLOWLIST = (
+    "LOKI_E10_PLAN", "LOKI_E10_WALL", "LOKI_E10_WALL_TIER",
+    "LOKI_E10_CAP_S", "LOKI_E10_INVOKER", "LOKI_E10_DASHBOARD_PORT",
+)
 KEYCHAIN_SERVICE = "Claude Code-credentials"
 SECURITY_BIN = "/usr/bin/security"  # absolute: never a PATH lookup
 AUTH_MARGIN_S = 120
@@ -237,10 +250,11 @@ def default_model():
     return next(m["id"] for m in claude["models"] if m.get("tier") == "planning"), claude.get("cli_aliases", {})
 
 
-def arm_env(rundir, model, alias):
+def arm_env(rundir, model, alias, arm=None):
     # Operator and harness state must not steer the arm: inherited LOKI_* knobs
     # (including LOKI_RUN_TMP, the harness's own tmp), nested-Claude-session
-    # vars, and tokens are all dropped. Only what is set below reaches it.
+    # vars, and tokens are all dropped. Only what is set below, plus (v10 only)
+    # LOKI_TS_ENTRY and V10_ENGINE_ENV_ALLOWLIST by exact name, reaches it.
     env = {k: v for k, v in os.environ.items()
            if k not in SCRUB_ENV and k not in ("CLAUDECODE", "CLAUDE_PROJECT_DIR", "OLDPWD")
            and not k.startswith(("LOKI_", "CLAUDE_CODE_"))}
@@ -262,6 +276,16 @@ def arm_env(rundir, model, alias):
         "LOKI_SESSION_MODEL": alias,
         "LOKI_MODEL_OVERRIDE": model,
     })
+    if arm == "v10":
+        # E-42/ENGINE.md: the gate measures what ships, from the operator's
+        # LOKI_TS_ENTRY (the rebuilt dist bundle). Read by exact name from the
+        # real environment, since the blanket LOKI_* scrub above already
+        # dropped it. Never widened to raw-claude or legacy.
+        if os.environ.get("LOKI_TS_ENTRY"):
+            env["LOKI_TS_ENTRY"] = os.environ["LOKI_TS_ENTRY"]
+        for k in V10_ENGINE_ENV_ALLOWLIST:
+            if k in os.environ:
+                env[k] = os.environ[k]
     return env
 
 
@@ -583,7 +607,7 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
     tid = task["id"]
     cap = task.get("timeout_s", DEFAULT_TIMEOUT_S)
     L = row["logs"]
-    env = apply_git_isolation(arm_env(rundir, cfg["model"], cfg["alias"]))
+    env = apply_git_isolation(arm_env(rundir, cfg["model"], cfg["alias"], arm))
 
     binary = cfg["claude_bin"] if arm == "raw-claude" else cfg["loki_bin"]
     if not shutil.which(binary):
