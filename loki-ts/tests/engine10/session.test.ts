@@ -313,6 +313,28 @@ describe("engine10 session", () => {
     rmSync(dir, { recursive: true, force: true });
   }, 10_000);
 
+  test("E-61: captures only the last 64 KB of stderr, tail-trimmed not truncated-from-start", async () => {
+    const runner = createSessionRunner({
+      provider: "claude",
+      // More than 64 KB before the sentinel, so only the tail survives.
+      childCommand: ["bash", ["-c", "head -c 70000 /dev/zero | tr '\\0' 'x' 1>&2; printf SENTINEL_TAIL 1>&2; exit 1"]],
+    });
+    const result = await runner.run(baseOpts({ limitS: 30 }));
+    const tail = (result as unknown as { stderrTail?: string }).stderrTail;
+    expect(result.exit).toBe(1);
+    expect(result.killed).toBe(false);
+    expect(typeof tail).toBe("string");
+    expect(Buffer.byteLength(tail as string, "utf8")).toBe(65536);
+    expect((tail as string).endsWith("SENTINEL_TAIL")).toBe(true);
+  }, 10_000);
+
+  test("E-61: a session with no stderr output reports an empty tail, never undefined", async () => {
+    const runner = createSessionRunner({ provider: "claude", childCommand: ["bash", [STUB_MARKER]] });
+    const result = await runner.run(baseOpts({ limitS: 30 }));
+    const tail = (result as unknown as { stderrTail?: string }).stderrTail;
+    expect(tail).toBe("");
+  }, 10_000);
+
   test("exports main matching cli.ts's routing contract for `engine10 session`", async () => {
     const { route, runEngine10 } = await import("../../src/engine10/cli.ts");
     expect(route(["session"])).toEqual({ module: "session.ts", fn: "main", args: [] });
