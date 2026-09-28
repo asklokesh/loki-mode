@@ -102,7 +102,7 @@ export const commitStage: Stage = {
 // Stage outputs read by seal. Only keys in the ENGINE.md section 4 table (plus duration_s
 // from section 5) are trusted; any other key seal reads puts a "not recorded" entry on
 // NOT PROVEN when absent, so a producer cannot silently shape the receipt.
-function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean): Verdict {
+function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean): Verdict {
   const exit = o.implement?.exit;
   const base = (o.wall?.base_run ?? {}) as Obj;
   const wallGreenOnBase = typeof base.pass === "number" && base.pass > 0 && base.fail === 0;
@@ -111,7 +111,8 @@ function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], e
   // Section 2: an empty diff without the LOKI_ALREADY_DONE marker is FAILED, never VERIFIED.
   if (emptyDiff) return "FAILED";
   if (checks.some((c) => c.result === "fail")) return "FAILED";
-  if (exit === "killed" || checks.length === 0 || checks.some((c) => c.result !== "pass")) return "PARTIAL";
+  // E-98a B1: verify's own NOT PROVEN (e.g. a system interpreter) downgrades too -- never a silent VERIFIED.
+  if (exit === "killed" || checks.length === 0 || checks.some((c) => c.result !== "pass") || verifyNotProven) return "PARTIAL";
   return "VERIFIED";
 }
 
@@ -165,8 +166,9 @@ export const sealStage: Stage = {
     const diff = await run(["git", "diff-tree", "-r", "-z", "--raw", "--no-renames", "--no-abbrev", "-O/dev/null", ctx.baseSha, head, "--", ".", EXCLUDE_LOKI], { cwd: ctx.repoDir, timeoutMs: 20000 });
     const diffOk = diff.exitCode === 0 && /^[0-9a-f]{40,64}$/.test(head);
     const checks = checksOf(o.verify?.checks);
+    const verifyNotProven = strs(o.verify?.not_proven); // E-98a B1: a section 4 key, trusted like checks/flaky below
     // An uncomputable diff is treated like an empty one: nothing is proven changed.
-    const verdict = verdictOf(o, checks, !diffOk || diff.stdout === "");
+    const verdict = verdictOf(o, checks, !diffOk || diff.stdout === "", verifyNotProven.length > 0);
 
     const notProven = new Set<string>(DEEP_NOT_PROVEN);
     if (!diffOk) notProven.add("diff not computed (git diff-tree failed)");
@@ -177,6 +179,7 @@ export const sealStage: Stage = {
     }
     for (const c of checks) if (c.result === "not_run") notProven.add(`not run: ${c.name}`);
     for (const f of strs(o.verify?.flaky)) notProven.add(`flaky test: ${f}`);
+    for (const n of verifyNotProven) notProven.add(n);
     for (const t of strs(o.implement?.tests_reverted)) notProven.add(`reverted test edit: ${t}`);
     if (ctx.provider !== "claude") notProven.add("kill blocking not enforced");
     // Section 7: model_override_applied lives on run.started, which outputs() never carries.

@@ -4,7 +4,7 @@
 // the already_done marker seals ALREADY_SATISFIED; without it, FAILED (ENGINE.md 2). Reaches testmap.ts/
 // machine.ts only through RunContext's `tests: TestMapProvider`, injected as a fake in tests, never imported here.
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
@@ -19,18 +19,31 @@ interface ImplementOutput {
 interface WallOutput {
   files?: { path: string }[];
 }
+type Interpreter = "project" | "system";
 export interface VerifyCheck {
   name: string;
   cmd: string;
   result: "pass" | "fail" | "not_run" | "flaky"; // ENGINE.md section 5 test.result enum
   duration_s: number;
   reason?: string;
+  interpreter?: Interpreter; // E-98a: which python/ruff this check actually ran on
+}
+// E-98a B2: .venv, then venv, then an in-repo (realpath under repoDir) VIRTUAL_ENV are "project";
+// else <fallback> on PATH, or <lastResort> literal, is "system" -- never proven against repo sources.
+function resolveTool(repoDir: string, bin: string, fallback: string, lastResort = fallback): [string, Interpreter] {
+  const inRepo = (p: string): boolean => { try { const r = relative(realpathSync(repoDir), realpathSync(p)); return r !== "" && !r.startsWith("..") && !isAbsolute(r); } catch { return false; } };
+  const venvEnv = process.env["VIRTUAL_ENV"];
+  const project = [join(repoDir, ".venv", "bin", bin), join(repoDir, "venv", "bin", bin), ...(venvEnv && inRepo(venvEnv) ? [join(venvEnv, "bin", bin)] : [])].find(existsSync);
+  return project ? [project, "project"] : [Bun.which(fallback) ? fallback : lastResort, "system"];
 }
 // Command shapes exactly as ENGINE.md section 8's table names them per runner (npm/cargo are
 // "coarse": no per-file selection; go runs per package dir, also coarse below that grain).
-function runnerCmd(t: TestRef): [string, string[]] {
+export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Interpreter?] {
   switch (t.runner) {
-    case "pytest": return ["python", ["-m", "pytest", "-q", t.path]];
+    case "pytest": {
+      const [cmd, interpreter] = resolveTool(repoDir, "python", "python3", "python");
+      return [cmd, ["-m", "pytest", "-q", t.path], interpreter];
+    }
     case "vitest": return ["npx", ["vitest", "run", t.path]];
     case "jest": return ["npx", ["jest", t.path]];
     case "bun": return ["bun", ["test", t.path]];
@@ -65,6 +78,7 @@ interface RunOpts {
   path?: string; // PATH override, tests only, so "missing tool" never depends on the host
   stdin?: string;
   timeoutMs?: number; // per-attempt timeout override, tests only; defaults to CHECK_TIMEOUT_MS
+  interpreter?: Interpreter; // E-98a: recorded on the resulting VerifyCheck as-is
 }
 /** `cut` means the timeout or the stage's AbortSignal killed the child: never read as "fail" and
  *  never retried (a hung check must not burn 2x its timeout). */
@@ -112,7 +126,7 @@ export async function runCheck(
       result = attempt.ok ? "flaky" : "fail";
     }
   }
-  const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(reason ? { reason } : {}) };
+  const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(reason ? { reason } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
   checks.push(check);
   ctx.emit("test.result", "verify", { ...check });
   return check;
@@ -130,7 +144,10 @@ export async function runLintChecks(
   ctx: RunContext, changed: string[], signal: AbortSignal, checks: VerifyCheck[], opts: RunOpts = {},
 ): Promise<void> {
   const py = changed.filter((f) => f.endsWith(".py"));
-  if (py.length) await runCheck(ctx, "lint:ruff", "ruff", ["check", ...py], signal, checks, opts);
+  if (py.length) {
+    const [ruffCmd, interpreter] = resolveTool(ctx.repoDir, "ruff", "ruff"); // E-98a: same project-first resolution as pytest
+    await runCheck(ctx, "lint:ruff", ruffCmd, ["check", ...py], signal, checks, { ...opts, interpreter });
+  }
   const sh = changed.filter((f) => f.endsWith(".sh"));
   if (sh.length) {
     await runCheck(ctx, "lint:bash-n", "bash", ["-c", 'for f in "$@"; do bash -n "$f" || exit 1; done', "_", ...sh], signal, checks, opts);
@@ -178,8 +195,8 @@ export const verifyStage: Stage = {
     const tests = dedupeTests([...impacted, ...changedTestFiles, ...wallTests]);
     for (const t of tests) {
       if (signal.aborted) break;
-      const [cmd, args] = runnerCmd(t);
-      await runCheck(ctx, `${t.runner}:${t.path}`, cmd, args, signal, checks);
+      const [cmd, args, interpreter] = runnerCmd(t, ctx.repoDir);
+      await runCheck(ctx, `${t.runner}:${t.path}`, cmd, args, signal, checks, interpreter ? { interpreter } : {});
     }
     if (!signal.aborted) {
       // Lint/typecheck of changed files only (ENGINE.md section 4's named tool per language).
@@ -197,7 +214,9 @@ export const verifyStage: Stage = {
     const failuresGrouped = checks
       .filter((c) => c.result === "fail")
       .map((c) => ({ signature: c.name, count: 1, sample: c.cmd }));
-    return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed } };
+    // E-98a: a check that ran (not_run has its own NOT PROVEN entry at seal) on a system interpreter.
+    const notProven = checks.some((c) => c.interpreter === "system" && c.result !== "not_run") ? ["tests ran on the system interpreter"] : [];
+    return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed, not_proven: notProven } };
   },
 };
 export const stage = verifyStage;
