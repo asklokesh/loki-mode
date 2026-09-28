@@ -284,6 +284,83 @@ describe("engine10 seal", () => {
     expect(r.verdict).not.toBe("VERIFIED");
   }, 30000);
 
+  // E-116: real-seal SPEC_CONFLICT coverage, driven through sealStage.run (not a copy of
+  // verdictOf's logic like machine.test.ts's fake seal stage at seal.ts:110). Each case is
+  // built so the diff is non-empty and every other verdictOf branch (already-satisfied,
+  // empty diff, failing/not-run checks) would otherwise resolve to something other than
+  // SPEC_CONFLICT, so a seal.ts that dropped the spec_conflict branch flips these red.
+  test("E-116: implement exits spec_conflict, verify passes: seal still reports SPEC_CONFLICT", async () => {
+    noKey();
+    const { repo, base } = makeRepo("spec-conflict-verify-pass");
+    const { ctx, events } = ctxFor(repo, base, "claude", {
+      implement: { exit: "spec_conflict", spec_conflict_reason: "the task contradicts the Wall tests", tests_reverted: [], duration_s: 2 },
+      verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", duration_s: 1 }], flaky: [], wall_passed: true, duration_s: 1 },
+    });
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    expect(s.data.verdict).toBe("SPEC_CONFLICT");
+    const r = receiptOf(s);
+    expect(r.verdict).toBe("SPEC_CONFLICT");
+    expect(readFileSync(join(ctx.runDir, "receipt.md"), "utf8")).toContain("## Loki receipt: SPEC_CONFLICT");
+    expect(events.find((e) => e.type === "receipt.sealed")?.data.verdict).toBe("SPEC_CONFLICT");
+  }, 30000);
+
+  test("E-116: implement exits spec_conflict, verify fails through fix rounds and is still failing: seal still reports SPEC_CONFLICT", async () => {
+    noKey();
+    const { repo, base } = makeRepo("spec-conflict-verify-fail");
+    // outputs() is keyed by stage name, so a fix round's re-run of verify overwrites the
+    // earlier one; this is that final, still-failing verify state.
+    const { ctx, events } = ctxFor(repo, base, "claude", {
+      implement: { exit: "spec_conflict", spec_conflict_reason: "the task contradicts the Wall tests", tests_reverted: [], duration_s: 2 },
+      verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "fail", duration_s: 1 }], flaky: [], wall_passed: false, duration_s: 1 },
+    });
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    expect(s.data.verdict).toBe("SPEC_CONFLICT");
+    const r = receiptOf(s);
+    expect(r.verdict).toBe("SPEC_CONFLICT");
+    expect(readFileSync(join(ctx.runDir, "receipt.md"), "utf8")).toContain("## Loki receipt: SPEC_CONFLICT");
+    expect(events.find((e) => e.type === "receipt.sealed")?.data.verdict).toBe("SPEC_CONFLICT");
+  }, 30000);
+
+  test("E-116: implement exits spec_conflict, fix rounds bring verify to all-pass: verdict is never upgraded to VERIFIED", async () => {
+    noKey();
+    const { repo, base } = makeRepo("spec-conflict-fix-recovers");
+    // Same shape as the passing case above, but named for the scenario that actually
+    // distinguishes SPEC_CONFLICT from a normal run: fix rounds made verify green, and
+    // without the spec_conflict branch checked first, verdictOf would return VERIFIED.
+    const { ctx } = ctxFor(repo, base, "claude", {
+      implement: { exit: "spec_conflict", spec_conflict_reason: "the task contradicts the Wall tests", tests_reverted: [], duration_s: 2 },
+      verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", duration_s: 1 }], flaky: [], wall_passed: true, duration_s: 1 },
+    });
+    await commitStage.run(ctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    expect(r.verdict).toBe("SPEC_CONFLICT");
+    expect(r.verdict).not.toBe("VERIFIED");
+  }, 30000);
+
+  // E-116 gap (not fixed here; the file set for this slice is the test file only): implement.ts
+  // produces spec_conflict_reason (implement.test.ts:153), but seal.ts never reads
+  // o.implement?.spec_conflict_reason, and Receipt has no field for it. Confirmed here: a
+  // distinctive reason string put on implement's output reaches neither receipt.json nor
+  // receipt.md. This needs a seal.ts change (a receipt field plus a read), tracked as a
+  // follow-up, not asserted as passing behavior here.
+  test("E-116 gap: spec_conflict_reason does not currently reach receipt.json or receipt.md", async () => {
+    noKey();
+    const { repo, base } = makeRepo("spec-conflict-reason-gap");
+    const REASON = "distinctive-reason-e116-marker: the task contradicts the Wall tests";
+    const { ctx } = ctxFor(repo, base, "claude", {
+      implement: { exit: "spec_conflict", spec_conflict_reason: REASON, tests_reverted: [], duration_s: 2 },
+      verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", duration_s: 1 }], flaky: [], wall_passed: true, duration_s: 1 },
+    });
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    const raw = readFileSync(s.data.receipt_path as string, "utf8");
+    const md = readFileSync(join(ctx.runDir, "receipt.md"), "utf8");
+    expect(raw).not.toContain(REASON);
+    expect(md).not.toContain(REASON);
+  }, 30000);
+
   test("E-55: a modified, deleted, or symlink-replaced base_sha test file lands on NOT PROVEN by name; a new test file does not", async () => {
     noKey();
     const { repo, base } = makeRepo("weaken");
