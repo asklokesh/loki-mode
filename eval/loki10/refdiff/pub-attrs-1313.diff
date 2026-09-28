@@ -1,0 +1,209 @@
+diff --git a/src/attr/__init__.py b/src/attr/__init__.py
+index 2e3b7c0..5c6e065 100644
+--- a/src/attr/__init__.py
++++ b/src/attr/__init__.py
+@@ -10,7 +10,7 @@ from typing import Callable, Literal, Protocol
+ from . import converters, exceptions, filters, setters, validators
+ from ._cmp import cmp_using
+ from ._config import get_run_validators, set_run_validators
+-from ._funcs import asdict, assoc, astuple, evolve, has, resolve_types
++from ._funcs import asdict, assoc, astuple, has, resolve_types
+ from ._make import (
+     NOTHING,
+     Attribute,
+@@ -19,6 +19,7 @@ from ._make import (
+     _Nothing,
+     attrib,
+     attrs,
++    evolve,
+     fields,
+     fields_dict,
+     make_class,
+diff --git a/src/attr/_funcs.py b/src/attr/_funcs.py
+index 355cef4..c39fb8a 100644
+--- a/src/attr/_funcs.py
++++ b/src/attr/_funcs.py
+@@ -394,60 +394,6 @@ def assoc(inst, **changes):
+     return new
+ 
+ 
+-def evolve(*args, **changes):
+-    """
+-    Create a new instance, based on the first positional argument with
+-    *changes* applied.
+-
+-    Args:
+-
+-        inst:
+-            Instance of a class with *attrs* attributes. *inst* must be passed
+-            as a positional argument.
+-
+-        changes:
+-            Keyword changes in the new copy.
+-
+-    Returns:
+-        A copy of inst with *changes* incorporated.
+-
+-    Raises:
+-        TypeError:
+-            If *attr_name* couldn't be found in the class ``__init__``.
+-
+-        attrs.exceptions.NotAnAttrsClassError:
+-            If *cls* is not an *attrs* class.
+-
+-    .. versionadded:: 17.1.0
+-    .. deprecated:: 23.1.0
+-       It is now deprecated to pass the instance using the keyword argument
+-       *inst*. It will raise a warning until at least April 2024, after which
+-       it will become an error. Always pass the instance as a positional
+-       argument.
+-    .. versionchanged:: 24.1.0
+-       *inst* can't be passed as a keyword argument anymore.
+-    """
+-    try:
+-        (inst,) = args
+-    except ValueError:
+-        msg = (
+-            f"evolve() takes 1 positional argument, but {len(args)} were given"
+-        )
+-        raise TypeError(msg) from None
+-
+-    cls = inst.__class__
+-    attrs = fields(cls)
+-    for a in attrs:
+-        if not a.init:
+-            continue
+-        attr_name = a.name  # To deal with private attributes.
+-        init_name = a.alias
+-        if init_name not in changes:
+-            changes[init_name] = getattr(inst, attr_name)
+-
+-    return cls(**changes)
+-
+-
+ def resolve_types(
+     cls, globalns=None, localns=None, attribs=None, include_extras=True
+ ):
+diff --git a/src/attr/_make.py b/src/attr/_make.py
+index eac5888..e17e6a2 100644
+--- a/src/attr/_make.py
++++ b/src/attr/_make.py
+@@ -22,6 +22,7 @@ from . import _compat, _config, setters
+ from ._compat import (
+     PY_3_10_PLUS,
+     PY_3_11_PLUS,
++    PY_3_13_PLUS,
+     _AnnotationExtractor,
+     _get_annotations,
+     get_generic_base,
+@@ -565,6 +566,64 @@ def _frozen_delattrs(self, name):
+     raise FrozenInstanceError
+ 
+ 
++def evolve(*args, **changes):
++    """
++    Create a new instance, based on the first positional argument with
++    *changes* applied.
++
++    .. tip::
++
++       On Python 3.13 and later, you can also use `copy.replace` instead.
++
++    Args:
++
++        inst:
++            Instance of a class with *attrs* attributes. *inst* must be passed
++            as a positional argument.
++
++        changes:
++            Keyword changes in the new copy.
++
++    Returns:
++        A copy of inst with *changes* incorporated.
++
++    Raises:
++        TypeError:
++            If *attr_name* couldn't be found in the class ``__init__``.
++
++        attrs.exceptions.NotAnAttrsClassError:
++            If *cls* is not an *attrs* class.
++
++    .. versionadded:: 17.1.0
++    .. deprecated:: 23.1.0
++       It is now deprecated to pass the instance using the keyword argument
++       *inst*. It will raise a warning until at least April 2024, after which
++       it will become an error. Always pass the instance as a positional
++       argument.
++    .. versionchanged:: 24.1.0
++       *inst* can't be passed as a keyword argument anymore.
++    """
++    try:
++        (inst,) = args
++    except ValueError:
++        msg = (
++            f"evolve() takes 1 positional argument, but {len(args)} were given"
++        )
++        raise TypeError(msg) from None
++
++    cls = inst.__class__
++    attrs = fields(cls)
++    for a in attrs:
++        if not a.init:
++            continue
++        attr_name = a.name  # To deal with private attributes.
++        init_name = a.alias
++        if init_name not in changes:
++            changes[init_name] = getattr(inst, attr_name)
++
++    return cls(**changes)
++
++
+ class _ClassBuilder:
+     """
+     Iteratively build *one* class.
+@@ -979,6 +1038,12 @@ class _ClassBuilder:
+ 
+         return self
+ 
++    def add_replace(self):
++        self._cls_dict["__replace__"] = self._add_method_dunders(
++            lambda self, **changes: evolve(self, **changes)
++        )
++        return self
++
+     def add_match_args(self):
+         self._cls_dict["__match_args__"] = tuple(
+             field.name
+@@ -1381,6 +1446,9 @@ def attrs(
+                 msg = "Invalid value for cache_hash.  To use hash caching, init must be True."
+                 raise TypeError(msg)
+ 
++        if PY_3_13_PLUS and not _has_own_attribute(cls, "__replace__"):
++            builder.add_replace()
++
+         if (
+             PY_3_10_PLUS
+             and match_args
+@@ -2394,7 +2462,7 @@ class Attribute:
+         Copy *self* and apply *changes*.
+ 
+         This works similarly to `attrs.evolve` but that function does not work
+-        with {class}`Attribute`.
++        with :class:`attrs.Attribute`.
+ 
+         It is mainly meant to be used for `transform-fields`.
+ 
+diff --git a/src/attr/_next_gen.py b/src/attr/_next_gen.py
+index e36b6d7..9290664 100644
+--- a/src/attr/_next_gen.py
++++ b/src/attr/_next_gen.py
+@@ -316,6 +316,9 @@ def define(
+        If a class has an *inherited* classmethod called
+        ``__attrs_init_subclass__``, it is executed after the class is created.
+     .. deprecated:: 24.1.0 *hash* is deprecated in favor of *unsafe_hash*.
++    .. versionadded:: 24.3.0
++       Unless already present, a ``__replace__`` method is automatically
++       created for `copy.replace` (Python 3.13+ only).
+ 
+     .. note::
+ 

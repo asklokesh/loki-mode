@@ -1,0 +1,34 @@
+diff --git a/src/werkzeug/routing/matcher.py b/src/werkzeug/routing/matcher.py
+index 1fd00efc..1f03c460 100644
+--- a/src/werkzeug/routing/matcher.py
++++ b/src/werkzeug/routing/matcher.py
+@@ -172,7 +172,7 @@ class StateMachineMatcher:
+ 
+         if self.merge_slashes and rv is None:
+             # Try to match again, but with slashes merged
+-            path = re.sub("/{2,}?", "/", path)
++            path = re.sub("/{2,}", "/", path)
+             try:
+                 rv = _match(self._root, [domain, *path.split("/")], [])
+             except SlashRequired:
+diff --git a/src/werkzeug/routing/rules.py b/src/werkzeug/routing/rules.py
+index 9e483a54..79716603 100644
+--- a/src/werkzeug/routing/rules.py
++++ b/src/werkzeug/routing/rules.py
+@@ -81,7 +81,6 @@ _converter_args_re = re.compile(
+     re.VERBOSE,
+ )
+ 
+-
+ _PYTHON_CONSTANTS = {"None": None, "True": True, "False": False}
+ 
+ 
+@@ -722,7 +721,7 @@ class Rule(RuleFactory):
+         self._trace.append((False, "|"))
+         rule = self.rule
+         if self.merge_slashes:
+-            rule = re.sub("/{2,}?", "/", self.rule)
++            rule = re.sub("/{2,}", "/", self.rule)
+         self._parts.extend(self._parse_rule(rule))
+ 
+         self._build: t.Callable[..., tuple[str, str]]
