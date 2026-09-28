@@ -1,17 +1,17 @@
 // loki-ts/src/engine10/stages/seal.ts
 //
-// E-10: commit and Seal (docs/v10/ENGINE.md sections 4 and 9).
-// Seal writes <runDir>/receipt.json and receipt.md, computes the canonical
-// receipt_sha256, and signs it with autonomy/receipt_jwt.py through
-// findIsolatedPython3() run as `python3 -I` (never -S: -S drops site-packages,
-// `cryptography` stops importing and every receipt silently comes out unsigned).
-// An empty token means UNSIGNED; the receipt is never presented as attested.
+// E-10: commit and Seal (docs/v10/ENGINE.md sections 4, 9). Writes receipt.json
+// and receipt.md, computes receipt_sha256, and signs via autonomy/receipt_jwt.py
+// through findIsolatedPython3() as `python3 -I` (never -S, which drops
+// site-packages so cryptography fails to import and receipts go unsigned
+// silently). An empty token means UNSIGNED, never presented as attested.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { REPO_ROOT } from "../../util/paths.ts";
 import { findIsolatedPython3 } from "../../util/python.ts";
 import { run } from "../../util/shell.ts";
+import { isTestFile } from "../testmap.ts";
 import { STAGE_BUDGETS } from "../types.ts";
 import type { Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
 
@@ -25,9 +25,8 @@ const sha256 = (s: string | Buffer): string => createHash("sha256").update(s).di
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x !== "") : []);
 
-/** Python json.dumps(obj, sort_keys=True, separators=(",", ":")) with its default
- *  ensure_ascii=True, the convention of proof-generator.py _canonical, so a
- *  Python verifier recomputes the same bytes. */
+/** Python json.dumps(obj, sort_keys=True, separators=(",", ":")), ensure_ascii=True
+ *  default, the convention of proof-generator.py _canonical, so a Python verifier recomputes the same bytes. */
 export function canonicalJson(x: unknown): string {
   const walk = (v: unknown): string => {
     if (Array.isArray(v)) return `[${v.map(walk).join(",")}]`;
@@ -41,8 +40,7 @@ export function canonicalJson(x: unknown): string {
   return walk(x).replace(/[\u0080-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
 }
 
-/** sha256 over the canonical receipt with `verification` AND `receipt_sha256`
- *  removed (the hash cannot contain itself). */
+/** sha256 over the canonical receipt with `verification` AND `receipt_sha256` removed (the hash cannot contain itself). */
 export function receiptSha256(r: Omit<Receipt, "receipt_sha256" | "verification"> & Partial<Receipt>): string {
   const { verification: _v, receipt_sha256: _h, ...body } = r;
   return sha256(canonicalJson(body));
@@ -57,8 +55,7 @@ const SIGN_PY = [
   "print(json.dumps({'jwt': tok or '', 'kid': kid if tok else ''}))",
 ].join("\n");
 
-/** Signs via receipt_jwt. keyConfigured says whether an env key was set, so a
- *  configured key that yields no token is reported, not silently downgraded. */
+/** Signs via receipt_jwt. keyConfigured says whether an env key was set, so a configured key yielding no token is reported, not silently downgraded. */
 export async function signReceipt(runId: string, hash: string): Promise<{ jwt: string | null; kid: string | null; keyConfigured: boolean }> {
   const keyConfigured = !!(process.env["LOKI_RECEIPT_SIGNING_KEY"]?.trim() || process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]?.trim());
   const none = { jwt: null, kid: null, keyConfigured };
@@ -82,8 +79,7 @@ async function git(ctx: RunContext, args: string[]): Promise<{ out: string; code
   return { out: r.stdout, code: r.exitCode };
 }
 
-/** Section 4 Commit: `git add -A` minus .loki/, commit `loki: <title>` with a
- *  Loki-Run trailer. An empty diff commits nothing (head stays at base). */
+/** Section 4 Commit: `git add -A` minus .loki/, commit `loki: <title>` with a Loki-Run trailer. An empty diff commits nothing (head stays at base). */
 export const commitStage: Stage = {
   name: "commit",
   ...STAGE_BUDGETS.commit,
@@ -103,10 +99,9 @@ export const commitStage: Stage = {
   },
 };
 
-// Stage outputs read by seal. Only keys in the ENGINE.md section 4 table (plus
-// duration_s from section 5) are trusted; any other key seal reads puts a
-// "not recorded" entry on NOT PROVEN when it is absent, so a producer that
-// omits it cannot silently shape the receipt.
+// Stage outputs read by seal. Only keys in the ENGINE.md section 4 table (plus duration_s
+// from section 5) are trusted; any other key seal reads puts a "not recorded" entry on
+// NOT PROVEN when absent, so a producer cannot silently shape the receipt.
 function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean): Verdict {
   const exit = o.implement?.exit;
   const base = (o.wall?.base_run ?? {}) as Obj;
@@ -158,9 +153,9 @@ export const sealStage: Stage = {
     const o = ctx.outputs();
     const head = (await git(ctx, ["rev-parse", "HEAD"])).out.trim();
     const tree = (await git(ctx, ["rev-parse", "HEAD^{tree}"])).out.trim();
-    // Plumbing, so repo/global config (diff.noprefix, color, textconv, ext diff,
-    // quotepath) cannot change the hash. A verifier recomputes it with exactly:
-    //   git diff-tree -r -z --raw --no-renames --no-abbrev -O/dev/null <base> <head> -- . ':(exclude).loki'
+    // Plumbing, so repo/global config (diff.noprefix, color, textconv, ext diff, quotepath) cannot
+    // change the hash. A verifier recomputes it with exactly: git diff-tree -r -z --raw --no-renames
+    // --no-abbrev -O/dev/null <base> <head> -- . ':(exclude).loki'
     const diff = await run(["git", "diff-tree", "-r", "-z", "--raw", "--no-renames", "--no-abbrev", "-O/dev/null", ctx.baseSha, head, "--", ".", EXCLUDE_LOKI], { cwd: ctx.repoDir, timeoutMs: 20000 });
     const diffOk = diff.exitCode === 0 && /^[0-9a-f]{40,64}$/.test(head);
     const checks = checksOf(o.verify?.checks);
@@ -169,6 +164,11 @@ export const sealStage: Stage = {
 
     const notProven = new Set<string>(DEEP_NOT_PROVEN);
     if (!diffOk) notProven.add("diff not computed (git diff-tree failed)");
+    // E-55: any status other than A means the path existed at base_sha (M, D, or T typechange, e.g. a symlink).
+    const rawDiff = diffOk ? diff.stdout.split("\0").filter(Boolean) : [];
+    for (let i = 0; i + 1 < rawDiff.length; i += 2) {
+      if ((rawDiff[i]!.trim().split(" ").pop() ?? "") !== "A" && isTestFile(rawDiff[i + 1]!)) notProven.add(`weakened test: ${rawDiff[i + 1]}`);
+    }
     for (const c of checks) if (c.result === "not_run") notProven.add(`not run: ${c.name}`);
     for (const f of strs(o.verify?.flaky)) notProven.add(`flaky test: ${f}`);
     for (const t of strs(o.implement?.tests_reverted)) notProven.add(`reverted test edit: ${t}`);

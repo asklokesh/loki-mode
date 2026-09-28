@@ -7,7 +7,7 @@
 // pass by agreeing with itself.
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { commitStage, DEEP_NOT_PROVEN, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
@@ -223,6 +223,35 @@ describe("engine10 seal", () => {
     expect(r.verdict).toBe("PARTIAL");
     const noSrc = ctxFor(repo, base, "claude", { intake: { task_sha256: "ab".repeat(32) } });
     expect(receiptOf(await sealStage.run(noSrc.ctx, new AbortController().signal)).not_proven).toContain("task source not recorded by intake");
+  }, 30000);
+
+  test("E-55: a modified, deleted, or symlink-replaced base_sha test file lands on NOT PROVEN by name; a new test file does not", async () => {
+    noKey();
+    const { repo, base } = makeRepo("weaken");
+    // t_old.test.ts existed at base_sha and gets weakened (edited); t_gone.test.ts
+    // existed at base_sha and gets deleted; t_sym.test.ts existed at base_sha and
+    // gets replaced by a symlink (git status T, a typechange); t_new.test.ts is
+    // new, never flagged.
+    writeFileSync(join(repo, "t_old.test.ts"), "old\n");
+    writeFileSync(join(repo, "t_gone.test.ts"), "gone\n");
+    writeFileSync(join(repo, "t_sym.test.ts"), "sym\n");
+    sh(["git", "add", "t_old.test.ts", "t_gone.test.ts", "t_sym.test.ts"], repo);
+    sh(["git", "commit", "-q", "-m", "add tests"], repo);
+    const base2 = sh(["git", "rev-parse", "HEAD"], repo).trim();
+    writeFileSync(join(repo, "t_old.test.ts"), "weakened\n");
+    sh(["git", "rm", "-q", "t_gone.test.ts"], repo);
+    rmSync(join(repo, "t_sym.test.ts"));
+    symlinkSync("/dev/null", join(repo, "t_sym.test.ts"));
+    writeFileSync(join(repo, "t_new.test.ts"), "new\n");
+    const { ctx } = ctxFor(repo, base2);
+    await commitStage.run(ctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    expect(r.not_proven).toContain("weakened test: t_old.test.ts");
+    expect(r.not_proven).toContain("weakened test: t_gone.test.ts");
+    expect(r.not_proven).toContain("weakened test: t_sym.test.ts");
+    expect(r.not_proven.some((n) => n.includes("t_new.test.ts"))).toBe(false);
+    // Editing a.txt, a non-test file, never lands on NOT PROVEN by this check.
+    expect(r.not_proven.some((n) => n.includes("a.txt"))).toBe(false);
   }, 30000);
 
   test("key configured but no token: signed false, SIGNING_UNAVAILABLE on NOT PROVEN", async () => {

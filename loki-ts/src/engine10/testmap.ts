@@ -47,7 +47,7 @@ function pytestPython(root: string): string {
   }
   return "python";
 }
-function isTestFile(rel: string): boolean {
+export function isTestFile(rel: string): boolean {
   const name = basename(rel);
   return JS_TEST_RE.test(name) || PY_TEST_RE.test(name) || GO_TEST_RE.test(name);
 }
