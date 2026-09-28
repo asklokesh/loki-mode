@@ -79,10 +79,12 @@ function rankTuple(a: AttemptCandidate, sNames: Set<string>, wallNames: Set<stri
       continue;
     }
     const inS = sNames.has(c.name);
+    // Single gate for every count below, including wallPasses: an attempt-authored test (not in
+    // S) never counts anywhere, and neither does a `wall` entry that isn't part of S (the caller
+    // invariant is wall subset S; this enforces it defensively instead of trusting the caller).
+    if (!inS) continue;
     const inWall = wallNames.has(c.name);
-    if (!inS && !inWall) continue; // attempt-authored test: not in S, never counts
     if (inWall && c.result === "pass") wallPasses++;
-    if (!inS) continue; // wall-only entries (shouldn't happen: wall subset S) don't feed S counts below
     if (c.result === "pass" && c.interpreter === "project") passesInS++;
     if (c.result === "flaky") flakyInS++;
     if (
@@ -106,11 +108,27 @@ function compareTuples(x: number[], y: number[]): number {
 
 const RANK_LABELS = ["wallPasses", "deterministicFails", "passesInS", "flakyInS", "lintFails", "diffLines", "index"];
 
+/** Section 4 "Early accept": true only when S is non-empty and every check named in S or in
+ *  `wall` has a "pass" entry in this one attempt's checks. The caller (S41-13) uses this to
+ *  decide whether to accept a finished attempt and kill the other session before it even
+ *  finishes. selectAttempt itself does not implement early accept: called with a single,
+ *  all-failing attempt it still returns that attempt's index (nothing better was offered), so the
+ *  caller must check isEarlyAccept before deciding to call selectAttempt with just one attempt. */
+export function isEarlyAccept(attempt: AttemptCandidate, S: TestRef[], wall: TestRef[]): boolean {
+  if (S.length === 0) return false;
+  const required = new Set([...S.map(refName), ...wall.map(refName)]);
+  const passed = new Set(attempt.checks.filter((c) => c.result === "pass").map((c) => c.name));
+  for (const name of required) {
+    if (!passed.has(name)) return false;
+  }
+  return true;
+}
+
 /** Section 4 "Attempt selection (two attempts)". `S` is the shared set (sealed Wall tests plus
  *  impacted(changed_A + changed_B), already filtered to tests existing at baseSha); `wall` is its
- *  sealed-Wall subset, used for rank key 1 and for the early-accept check (call this with a single
- *  finished attempt to get that behavior: the algorithm below already picks it whenever every S and
- *  Wall check passes, with no need to wait on a second attempt). */
+ *  sealed-Wall subset, used for rank key 1. This function only ranks and disqualifies -- it never
+ *  decides early accept (see isEarlyAccept above): given one all-failing attempt it still returns
+ *  that attempt, since nothing better is on offer in this call. */
 export function selectAttempt(attempts: AttemptCandidate[], S: TestRef[], wall: TestRef[]): SelectResult {
   if (attempts.length === 0) throw new Error("selectAttempt: no attempts given");
   const sNames = new Set(S.map(refName));
@@ -118,7 +136,7 @@ export function selectAttempt(attempts: AttemptCandidate[], S: TestRef[], wall: 
   const qualified = attempts.filter((a) => !isDisqualified(a));
   if (qualified.length === 0) {
     const a = [...attempts].sort((x, y) => x.index - y.index)[0]!;
-    return { index: a.index, reason: "fallback: every attempt disqualified, keeping A" };
+    return { index: a.index, reason: `fallback: every attempt disqualified, keeping the lowest-index attempt (index ${a.index})` };
   }
   const scored = qualified.map((a) => ({ a, tuple: rankTuple(a, sNames, wallNames) }));
   scored.sort((x, y) => compareTuples(x.tuple, y.tuple));

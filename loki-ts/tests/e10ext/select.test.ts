@@ -1,7 +1,7 @@
 // S41-05 Wall check (docs/v10/SCORECARD-PLAN.md section 4, docs/v10/DECISIONS.md D42 (1)).
 // One test per rank key, per disqualifier, early accept, and "attempt-authored test ignored".
 import { describe, expect, it } from "bun:test";
-import { selectAttempt, type AttemptCandidate, type AttemptCheck } from "../../src/e10ext/select.ts";
+import { isEarlyAccept, selectAttempt, type AttemptCandidate, type AttemptCheck } from "../../src/e10ext/select.ts";
 import type { TestRef } from "../../src/engine10/types.ts";
 
 const S: TestRef[] = [
@@ -134,6 +134,59 @@ describe("selectAttempt: rank key 4, flaky count", () => {
     ]);
     expect(selectAttempt([a, b], S, WALL).index).toBe(1);
   });
+
+  it("M4: a flaky result is never a deterministic fail, so it costs only key 4, not key 2", () => {
+    // localS has two independent tests so the "real fail" comparison (test_x) is untouched by
+    // the flaky one (test_y). a: test_x not_run (0 det fails), test_y flaky (1 flaky, 0 det
+    // fails if flaky is correctly excluded from the count). b: test_x is a REAL fail (1 det
+    // fail), test_y not_run (0 flaky). Correct: a wins on key 2 (0 det fails < 1). If flaky were
+    // miscounted as a deterministic fail, a's count would rise to 1, tying b's key 2, and key 4
+    // (a has 1 flaky, b has 0) would then hand it to b instead.
+    const localS: TestRef[] = [
+      { runner: "pytest", path: "tests/test_x.py" },
+      { runner: "pytest", path: "tests/test_y.py" },
+    ];
+    const a = attempt(0, [check("pytest:tests/test_x.py", "not_run"), check("pytest:tests/test_y.py", "flaky")]);
+    const b = attempt(1, [check("pytest:tests/test_x.py", "fail"), check("pytest:tests/test_y.py", "not_run")]);
+    expect(selectAttempt([a, b], localS, []).index).toBe(0);
+  });
+});
+
+describe("selectAttempt: rank key adjacency (a swapped key order must flip the winner)", () => {
+  it("M3: keys 1 and 2 are not interchangeable -- more Wall passes wins even with more deterministic fails", () => {
+    // a: 1 Wall pass (via a system-interpreter check, so it can't also feed passesInS) and 1 real
+    // deterministic fail. b: 0 Wall passes, 0 deterministic fails. Key 1 (Wall passes) is primary,
+    // so a wins despite being worse on key 2; swapping keys 1 and 2 would let b's clean key-2
+    // record decide first and flip the winner to b.
+    const a = attempt(0, [
+      check("pytest:tests/test_a.py", "pass", { interpreter: "system" }),
+      check("pytest:tests/test_b.py", "fail"),
+    ]);
+    const b = attempt(1, [check("pytest:tests/test_a.py", "not_run"), check("pytest:tests/test_b.py", "not_run")]);
+    expect(selectAttempt([a, b], S, WALL).index).toBe(0);
+  });
+
+  it("M2: keys 3 and 4 are not interchangeable -- more S passes wins even with more flaky checks", () => {
+    // a: 2 project-interpreter passes and 1 flaky (in a third S test). b: 1 pass, 0 flaky. Key 3
+    // (S passes) is primary over key 4 (flaky count), so a wins despite being worse on key 4;
+    // swapping keys 3 and 4 would let b's zero-flaky record decide first and flip the winner to b.
+    const localS: TestRef[] = [
+      { runner: "pytest", path: "tests/test_a.py" },
+      { runner: "pytest", path: "tests/test_b.py" },
+      { runner: "pytest", path: "tests/test_c.py" },
+    ];
+    const a = attempt(0, [
+      check("pytest:tests/test_a.py", "pass"),
+      check("pytest:tests/test_b.py", "pass"),
+      check("pytest:tests/test_c.py", "flaky"),
+    ]);
+    const b = attempt(1, [
+      check("pytest:tests/test_a.py", "pass"),
+      check("pytest:tests/test_b.py", "not_run"),
+      check("pytest:tests/test_c.py", "not_run"),
+    ]);
+    expect(selectAttempt([a, b], localS, []).index).toBe(0);
+  });
 });
 
 describe("selectAttempt: rank key 5, lint fails", () => {
@@ -206,13 +259,56 @@ describe("selectAttempt: disqualifiers", () => {
     const r = selectAttempt([b, a], S, WALL); // order must not matter: fallback is "keep A" (index 0)
     expect(r.index).toBe(0);
     expect(r.reason).toMatch(/fallback/);
+    expect(r.reason).toContain("index 0");
+  });
+
+  it("N2: when only B is given and it's disqualified, the reason names B's own index, not 'A'", () => {
+    // Only one attempt was passed in at all, and its index is 1 ("B"). The fallback keeps it
+    // (it's the only, hence lowest-index, attempt available) but must not claim "keeping A".
+    const b = attempt(1, [], { killedOrErrored: true });
+    const r = selectAttempt([b], S, WALL);
+    expect(r.index).toBe(1);
+    expect(r.reason).not.toMatch(/keeping A\b/);
+    expect(r.reason).toContain("index 1");
   });
 });
 
 describe("selectAttempt: early accept", () => {
-  it("accepts the one finished attempt when every S and Wall check passes, without waiting on a second", () => {
+  it("selectAttempt still returns the one finished attempt when every S and Wall check passes", () => {
     const a = attempt(0, [check("pytest:tests/test_a.py", "pass"), check("pytest:tests/test_b.py", "pass")]);
     expect(selectAttempt([a], S, WALL).index).toBe(0);
+  });
+
+  it("selectAttempt is NOT early accept: called with one all-failing attempt it still returns it", () => {
+    // This is what the misleading old comment on selectAttempt got wrong: a single finished
+    // attempt does not imply every check passed. The caller must check isEarlyAccept itself.
+    const a = attempt(0, [check("pytest:tests/test_a.py", "fail"), check("pytest:tests/test_b.py", "fail")]);
+    expect(selectAttempt([a], S, WALL).index).toBe(0);
+    expect(isEarlyAccept(a, S, WALL)).toBe(false);
+  });
+});
+
+describe("isEarlyAccept", () => {
+  it("is true only when S is non-empty and every S and Wall check passed", () => {
+    const a = attempt(0, [check("pytest:tests/test_a.py", "pass"), check("pytest:tests/test_b.py", "pass")]);
+    expect(isEarlyAccept(a, S, WALL)).toBe(true);
+  });
+
+  it("is false when S is empty, even if every check present passes", () => {
+    const a = attempt(0, [check("pytest:tests/test_a.py", "pass")]);
+    expect(isEarlyAccept(a, [], [])).toBe(false);
+  });
+
+  it("is false when any S or Wall check is missing a pass (not_run, flaky, or absent)", () => {
+    const notRun = attempt(0, [check("pytest:tests/test_a.py", "pass"), check("pytest:tests/test_b.py", "not_run")]);
+    const missing = attempt(1, [check("pytest:tests/test_a.py", "pass")]);
+    expect(isEarlyAccept(notRun, S, WALL)).toBe(false);
+    expect(isEarlyAccept(missing, S, WALL)).toBe(false);
+  });
+
+  it("is false for an all-fail attempt (must go red against a stub that always returns true)", () => {
+    const allFail = attempt(0, [check("pytest:tests/test_a.py", "fail"), check("pytest:tests/test_b.py", "fail")]);
+    expect(isEarlyAccept(allFail, S, WALL)).toBe(false);
   });
 });
 
@@ -224,6 +320,24 @@ describe("selectAttempt: attempt-authored test ignored", () => {
       check("pytest:tests/test_a.py", "fail"),
       check("pytest:tests/test_b.py", "not_run"),
       check("pytest:tests/test_new_self_authored.py", "pass"),
+    ]);
+    expect(selectAttempt([a, b], S, WALL).index).toBe(0);
+  });
+
+  it("M1: a self-authored pass never counts even when it would otherwise win on every remaining key", () => {
+    // a and b tie exactly on every real S/Wall check (both: 1 Wall pass via a system-interpreter
+    // check, 1 project-interpreter pass), so only the index tie-break should decide and a
+    // (index 0) wins. b additionally has a self-authored passing check (not in S, not in wall).
+    // If that check were ever counted (M1: deleting the attempt-authored guard), it would raise
+    // b's S-pass count above a's and hand key 3 -- and the whole decision -- to b instead.
+    const a = attempt(0, [
+      check("pytest:tests/test_a.py", "pass", { interpreter: "system" }),
+      check("pytest:tests/test_b.py", "pass"),
+    ]);
+    const b = attempt(1, [
+      check("pytest:tests/test_a.py", "pass", { interpreter: "system" }),
+      check("pytest:tests/test_b.py", "pass"),
+      check("pytest:tests/test_self_authored.py", "pass"),
     ]);
     expect(selectAttempt([a, b], S, WALL).index).toBe(0);
   });
