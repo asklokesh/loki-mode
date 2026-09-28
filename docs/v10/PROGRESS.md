@@ -1,5 +1,11 @@
 # Progress
 
+## 2026-09-28T14:50Z: train E22 and drift audit (turn 444)
+- Wave E21 (28 agents, ESTIMATE 3,652,703 subagent tokens) plus E21b: 13 of 16 slices approved. Train E22 (9042e964) merges E-66, E-61, M-24, M-16, M-19, M-04, E-74, E-75, E-77, EV-11a, E-82: `bun test tests/engine10/` 547 pass 0 fail, tsc 0, pulse 107 passed, eval harness 108 passed, shard drift 6 passed. Core engine 4,998 of 5,000 (D33).
+- Held: M-07 (core would read 5,000), EV-11b and E-62 (both conflict with EV-11a in the eval harness; serialized next), E-78 (TL CONCERN).
+- EV-12 blocked for a CTO tier ruling after 4 review rounds (size bar met by deleted docstrings; uncommitted generator; untested counted code; no legacy tasks left).
+- Drift audit: the 6-hour window is mostly the 04:48Z-14:00Z access stall (no work possible). Since 14:00Z: v10.1.1 released, 2 trains, main green on each push checked (Tests on 3fb56a4b, 5f295fba). Deviation: the wave script passed "-B" as the reviewers' branch name (all reviews still cited the right SHAs); fixed in the next script.
+
 ## 2026-09-28T14:30Z: v10.1.1 shipped
 - Release run 36434253412 success; `npm view loki-mode dist-tags.latest` 10.1.1, gitHead 580540f9 = release commit. Tests and Bun Parity green on 3fb56a4b before the bump; version-only bump produced no dist churn (E-72 working).
 - Wave E21 (wf_39ab3f7d-8f3) in flight: 12 builders, 4 reviews. Ready queue refilled with E-78..E-82.
