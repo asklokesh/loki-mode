@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { withholdGithubTokens } from "../runner/github_token.ts";
-import { EventLog, fold, readEvents, tail, type Folded } from "./events.ts";
+import { EventLog, fold, partialCost, readEvents, tail, type Folded } from "./events.ts";
 import { fetchIssueToFile } from "./fetch_issue.ts";
 import { formatHeartbeatLine, formatStageLine, formatSummary } from "./output.ts";
 import { assertPreflight, PreflightError } from "./preflight.ts";
@@ -171,8 +171,12 @@ function spawnWorker(
 
 export async function runSupervisor(opts: SupervisorOptions): Promise<SupervisorResult> {
   const t0 = Date.now();
-  const done = fold(readEvents(join(opts.repoDir, eventsRelPath(opts.runId)))).run.completed?.data; // --resume of a finished run: report it, never re-spawn
-  if (done) return { verdict: (done.verdict as Verdict) ?? "FAILED", tampered: false, workerExit: 0, prUrl: (done.pr_url as string | null) ?? null, notProven: Array.isArray(done.not_proven) ? (done.not_proven as string[]) : [] };
+  const resumeFold = fold(readEvents(join(opts.repoDir, eventsRelPath(opts.runId)))); // --resume of a finished run: report it, never re-spawn
+  const done = resumeFold.run.completed?.data;
+  // E-69: tampered must reflect the log's real state, never a hardcoded false -- a resumed,
+  // completed run whose log holds tamper.detected is exactly as untrustworthy as a freshly
+  // finished one, and callers (partialCost's tamper guard, main()'s CLI print) rely on this flag.
+  if (done) return { verdict: (done.verdict as Verdict) ?? "FAILED", tampered: resumeFold.run.tampered, workerExit: 0, prUrl: (done.pr_url as string | null) ?? null, notProven: Array.isArray(done.not_proven) ? (done.not_proven as string[]) : [] };
   const startedProvider = opts.started?.["provider"]; // E-36: provider read off opts.started, not a dedicated field (main(), below, is the only populater)
   const env = opts.env ?? process.env;
   await assertPreflight({ repoDir: opts.repoDir, provider: typeof startedProvider === "string" ? startedProvider : "claude", pr: opts.pr !== undefined, env });
@@ -224,22 +228,7 @@ const ISSUE_RE = /^(?:[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+\/(?:-\/)?issues\/\d+)$
 export function summaryTokens(f: Folded, sawCost: boolean): number | null {
   return sawCost ? f.cost.inputTokens + f.cost.outputTokens + f.cost.cacheReadTokens + f.cost.cacheCreationTokens : null;
 }
-// E-69: per-session measured/total counts and their dollar sum, straight from the raw cost
-// events -- not folded.cost.usd, which already collapses to null the moment any one session is
-// unpriced. Lets the summary say "partial: $X for N of M sessions" instead of just "not measured".
-// `tampered` mirrors the guard runSupervisor already applies to `usd` (costUsd = log.tampered ?
-// null : folded.cost.usd): a TAMPERED log's cost events are as untrustworthy as everything else
-// in it, so this must report no measured cost too, never a dollar figure sourced from them.
-export function partialCost(events: EventEnvelope[], tampered = false): { measured: number; total: number; usd: number } {
-  if (tampered) return { measured: 0, total: 0, usd: 0 };
-  let measured = 0, total = 0, usd = 0;
-  for (const e of events) {
-    if (e.type !== "cost") continue;
-    total++;
-    if (typeof e.data.usd === "number") { measured++; usd += e.data.usd; }
-  }
-  return { measured, total, usd };
-}
+export { partialCost }; // E-69: defined in events.ts, next to fold(); re-exported so existing callers/tests keep importing it from here
 export async function main(args: string[]): Promise<number> { // `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary
   const words: string[] = [];
   let noPr = false, deep = false, resumeId: string | null = null, provider = process.env.LOKI_PROVIDER || "claude";
@@ -324,11 +313,12 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const sawCost = events.some((e) => e.type === "cost");
   const cli = process.env.LOKI_E10_INVOKER === "cli";
   const pc = partialCost(events, res.tampered);
+  const usd = res.tampered ? null : f.cost.usd; // E-69: same tamper guard as costUsd elsewhere -- a TAMPERED run never prints a trusted dollar figure
   process.stdout.write(formatSummary({
     pr: res.prUrl ? { url: res.prUrl, draft: res.verdict !== "VERIFIED" } : null,
     verdict: res.verdict, notProven: res.notProven, flaky: [],
     cost: {
-      usd: f.cost.usd, provider, tokens: summaryTokens(f, sawCost), note: f.cost.usd === null && cli ? "CLI invoker records no cost" : null,
+      usd, provider, tokens: summaryTokens(f, sawCost), note: !res.tampered && usd === null && cli ? "CLI invoker records no cost" : null,
       partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total,
     },
     wallS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000),

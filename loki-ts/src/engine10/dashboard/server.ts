@@ -3,8 +3,7 @@
 // folded read-only from .loki/runs/*/events.jsonl; the per-run stream is tail()'s replay-then-poll.
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { fold, readEvents, tail } from "../events.ts";
-import { partialCost } from "../supervisor.ts";
+import { fold, partialCost, readEvents, tail } from "../events.ts";
 import type { EventEnvelope, Verdict } from "../types.ts";
 import { renderPage } from "./page.ts";
 export const DEFAULT_PORT = 57375;
