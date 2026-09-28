@@ -1,5 +1,4 @@
-// Loki 10 event log (docs/v10/ENGINE.md "Event log"): append-only JSONL at
-// <repo>/.loki/runs/<run-id>/events.jsonl, written only by the supervisor.
+// Loki 10 event log (docs/v10/ENGINE.md "Event log"): append-only JSONL at <repo>/.loki/runs/<run-id>/events.jsonl, written only by the supervisor.
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 import type { EventEnvelope, EventType, StageName, Verdict } from "./types.ts";
@@ -52,8 +51,7 @@ export function readEvents(path: string): EventEnvelope[] {
 }
 
 /** The single writer. Opens with O_APPEND and writes each line in one write(2).
- *  The constructor may append a "\n" to terminate a torn last line, so a tamper
- *  hash (E-03) must be seeded from the file AFTER construction, not before. */
+ *  The constructor may append a "\n" to terminate a torn last line, so a tamper hash (E-03) must be seeded from the file AFTER construction, not before. */
 export class EventLog {
   private nextSeq: number;
   constructor(readonly path: string, readonly run: string, private readonly now: () => string = () => new Date().toISOString()) {
@@ -100,8 +98,9 @@ export interface Folded {
     tampered: boolean;
     verdict: Verdict | null;
   };
-  /** usd is null if no cost event or any cost event was unmeasured; never a fake 0. */
-  cost: { usd: number | null; inputTokens: number; outputTokens: number };
+  /** usd is null if no cost event or any cost event was unmeasured; never a fake 0.
+   *  cacheReadTokens/cacheCreationTokens (E-50): output.ts's foldCostTokens() sums these independently from raw events, so it never double-counts this field. */
+  cost: { usd: number | null; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number };
   lastSeq: number;
 }
 
@@ -110,7 +109,7 @@ export function fold(events: EventEnvelope[]): Folded {
     stages: {},
     completed: [],
     run: { started: null, completed: null, escalated: null, tampered: false, verdict: null },
-    cost: { usd: null, inputTokens: 0, outputTokens: 0 },
+    cost: { usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
     lastSeq: -1,
   };
   let usd = 0;
@@ -132,14 +131,15 @@ export function fold(events: EventEnvelope[]): Folded {
       else unmeasured = true;
       if (typeof e.data.input_tokens === "number") f.cost.inputTokens += e.data.input_tokens;
       if (typeof e.data.output_tokens === "number") f.cost.outputTokens += e.data.output_tokens;
+      if (typeof e.data.cache_read_tokens === "number") f.cost.cacheReadTokens += e.data.cache_read_tokens;
+      if (typeof e.data.cache_creation_tokens === "number") f.cost.cacheCreationTokens += e.data.cache_creation_tokens;
     }
   }
   f.cost.usd = sawCost && !unmeasured ? usd : null;
   return f;
 }
 
-/** Replays existing events synchronously, then polls for appended ones.
- *  An incomplete trailing line is held until its newline arrives. Returns stop(). */
+/** Replays existing events synchronously, then polls for appended ones. An incomplete trailing line is held until its newline arrives. Returns stop(). */
 export function tail(path: string, onEvent: (e: EventEnvelope) => void, opts: { intervalMs?: number } = {}): () => void {
   let offset = 0;
   let pending: Buffer = Buffer.alloc(0);

@@ -143,7 +143,7 @@ describe("fold", () => {
     expect(f.run.completed).toBeNull();
     expect(f.run.verdict).toBeNull();
     expect(f.lastSeq).toBe(7);
-    expect(f.cost).toEqual({ usd: 0.5, inputTokens: 10, outputTokens: 2 });
+    expect(f.cost).toEqual({ usd: 0.5, inputTokens: 10, outputTokens: 2, cacheReadTokens: 0, cacheCreationTokens: 0 });
   });
 
   it("cost usd stays null if any cost event is unmeasured (never 0)", () => {

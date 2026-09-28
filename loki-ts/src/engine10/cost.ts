@@ -1,20 +1,18 @@
 // loki-ts/src/engine10/cost.ts
 //
-// E-06: harvest result-cost side files into cost-event data.
-// Reads `<lokiRoot>/metrics/result-cost-<iter>.json`, the exact file
-// writeResultCost (src/runner/sdk_stream_parser.ts) writes:
-//   {total_cost_usd, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens}
+// E-06: harvest result-cost side files into cost-event data. Reads
+// `<lokiRoot>/metrics/result-cost-<iter>.json`, the exact file writeResultCost
+// (src/runner/sdk_stream_parser.ts) writes: {total_cost_usd, input_tokens,
+// output_tokens, cache_read_tokens, cache_creation_tokens, model}.
 // writeResultCost skips the file when the provider reported no cost, so an
 // absent or unreadable file means UNKNOWN: usd is null, never 0.
 //
 // E-06b: also write `<lokiRoot>/metrics/efficiency/iteration-<N>.json`, the
-// shape ENGINE.md section 10 and autonomy/lib/cost-summary.py read (that
-// script is the eval harness's only source for `fully_measured` / total
-// cost, and it is not ours to change). Unlike the legacy bash writer
-// (autonomy/run.sh, `cat > iteration-${iteration}.json`), which always
-// writes cost_usd (defaulting to 0 when unknown -- the exact "unmeasured
-// read as free" bug section 10 exists to fix), this omits cost_usd entirely
-// when the session had no dollar figure.
+// shape ENGINE.md section 10 and autonomy/lib/cost-summary.py read (not ours
+// to change; the eval harness's only source for `fully_measured` / total
+// cost). Unlike the legacy bash writer (autonomy/run.sh), which always writes
+// cost_usd (defaulting to 0 when unknown -- the "unmeasured read as free"
+// bug section 10 exists to fix), this omits cost_usd when there is no dollar figure.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -24,6 +22,7 @@ export interface CostResult {
   output_tokens: number;
   cache_read_tokens: number;
   cache_creation_tokens: number;
+  model: string | null; // E-50: provider-reported model from the result-cost file itself, never a guess
   source: string; // comma-joined result-cost file paths that were read
   missing: string[]; // iterations with no dollar figure: either no file at all, or a file with tokens but no total_cost_usd
 }
@@ -39,7 +38,7 @@ export function resultCostPath(lokiRoot: string, iteration: string): string {
 // Sum across sessions. Any missing session makes usd null: a partial sum
 // would understate the run's cost. Tokens still sum what was measured.
 export function sumResultCosts(lokiRoot: string, iterations: string[]): CostResult {
-  const out: CostResult = { usd: null, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, source: "", missing: [] };
+  const out: CostResult = { usd: null, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, model: null, source: "", missing: [] };
   const sources: string[] = [];
   let usd = 0;
   for (const iter of iterations) {
@@ -59,6 +58,7 @@ export function sumResultCosts(lokiRoot: string, iterations: string[]): CostResu
     out.output_tokens += num(rec["output_tokens"]);
     out.cache_read_tokens += num(rec["cache_read_tokens"]);
     out.cache_creation_tokens += num(rec["cache_creation_tokens"]);
+    if (typeof rec["model"] === "string" && rec["model"]) out.model = rec["model"];
     sources.push(path);
     const c = rec["total_cost_usd"];
     if (typeof c !== "number" || !Number.isFinite(c)) {
@@ -118,7 +118,7 @@ export function writeEfficiencyRecord(lokiRoot: string, info: EfficiencySessionI
     iteration: n,
     status: info.status,
     duration_ms: info.durationMs,
-    model: info.model,
+    model: cost.model ?? info.model, // E-50: provider-reported model wins over the caller's guess
   };
   if (cost.usd !== null) {
     rec.cost_usd = cost.usd;
