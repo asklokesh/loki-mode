@@ -1,7 +1,12 @@
 # Progress
 
+## 2026-09-28T19:04Z: drift audit (turn 528)
+- M-08 (modernize arm in bin/loki) first build would have turned test-engine10-dispatch.sh red (it counted exactly 1 engine10 line). Fixed in-slice (7feff1f8): exactly 2 exec lines, one per named arm, red on a stray third; 35/0 and 13/0. Tech Lead review running.
+- M-30 guide: Tech Lead REJECT, the --resume example id failed MID_RE (exit 2 when copied). Rework adds a MID_RE check over every id in the guide.
+- No drift from D40: 5 building, load 2.9, no eval scaling; EV-15/E-98 still the priority.
+
 ## 2026-09-28T19:00Z: 18:40 slot cut; E-99 merged; G-01 r2 rejected; drift audit (turn 522)
-- 18:40 slot: v10.3.0 cut 18:48:32Z (74821b73: E-67, M-07, M-11, E-86, E-94, E-95, E-100, E-89); Release run in progress, publish time and npm gitHead recorded when the watcher reports.
+- 18:40 slot: v10.3.0 cut 18:48:32Z (74821b73: E-67, M-07, M-11, E-86, E-94, E-95, E-100, E-89); Release 36467812081 success, publish-npm 18:57:05Z (cut to publish 8m33s), npm latest 10.3.0 gitHead 74821b73, GitHub body 10 lines (the extractor worked; no backfill needed). E-99 train pushed 19:00Z as 367fe73f, pre-push passed without PRE_PUSH_SKIP.
 - E-99 (pre-push scans every pushed commit with the tip's .gitleaksignore) merged locally 5ee5a630; conflict with E-100 case 20 resolved (binary guard kept, E-99 message taken). tests/test-pre-push-gitleaks.sh 43/0 with gitleaks, 19/0 plus 24 skipped without; test-pre-push-hook.sh 13/0. Held until 10.3.0 publish-npm (a push during a release cancels its Tests).
 - G-01 r2 (de8e1f76, pct 100x fix, reset-aligned window, fail-safe, projection to weekly reset, global max-per-message dedup): opus REJECT. The weekly reset is 1h off across DST, and fixes 2 and 4 have no regression test (reverting either still gives 20/0). r3 dispatched to the same engineer.
 - Drift audit: EV-12 umbrella was building for 127 min against D40 (large tier after medium); parked. E-96 duplicated E-101; parked. Headcount held per D40: 5 building (M-08, M-30 dispatched as low-risk modernize work) while EV-15/E-98 decide the medium fix. Load 3.2.
