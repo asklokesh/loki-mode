@@ -53,17 +53,7 @@ export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Inter
     case "cargo": return ["cargo", ["test"]];
   }
 }
-function dedupeTests(tests: TestRef[]): TestRef[] {
-  const seen = new Set<string>();
-  const out: TestRef[] = [];
-  for (const t of tests) {
-    const key = `${t.runner}:${t.path}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(t);
-  }
-  return out;
-}
+const dedupeTests = (tests: TestRef[]): TestRef[] => [...new Map(tests.map((t) => [`${t.runner}:${t.path}`, t] as const)).values()];
 /** Tracked changes against baseSha, plus untracked new files (commit runs after verify). `.loki/`
  *  is filtered defensively even though intake also excludes it via .git/info/exclude. Throws if
  *  either git command fails: a broken baseSha must never read as "nothing changed" (~ALREADY_SATISFIED). */
@@ -81,13 +71,18 @@ interface RunOpts {
   timeoutMs?: number; // per-attempt timeout override, tests only; defaults to CHECK_TIMEOUT_MS
   interpreter?: Interpreter; // E-98a: recorded on the resulting VerifyCheck as-is
 }
-/** Executed-test count from any runner's summary (node TAP/spec, jest/vitest, pytest, cargo, go), or null when
- *   no summary is recognised. 0 = empty or all skipped: never a pass (A-111). Node counts a testless file as 1 pseudo-test, discounted. */
+/** Executed-test count from the runner's FINAL summary only (node TAP/spec trailer, pytest last line, jest/vitest "Tests"
+ *  line, cargo "test result:", go "[no test"), never test names or captured stdout above it; null = no summary. 0 = empty or
+ *  all skipped, never a pass (A-111). Node counts a testless file as one pseudo-test named after the file: discounted. */
 export function ran(out: string): number | null {
-  if (/no tests? (found|ran|to run)|no test files/i.test(out)) return 0;
-  const t = out.replace(/^\s*Test (Suites|Files).*$/gm, "");
-  if (!/(?:#|\u2139) (?:pass|fail) \d|\d+ (?:passed|failed|skipped)/.test(t)) return null;
-  return Math.max(0, [...t.matchAll(/^(?:#|\u2139) (?:pass|fail) (\d+)|(\d+) (?:passed|failed)/gm)].reduce((s, m) => s + +(m[1] ?? m[2]!), -(t.match(/^\u2714 \S+\.[cm]?[jt]s \(/gm)?.length ?? 0)));
+  const n = (s: string, re: RegExp): number => +(s.match(re)?.[1] ?? 0);
+  const blk = out.trimEnd().match(/(?:^|\n)((?:(?:#|\u2139) \w+ [\d.]+(?:\n|$)){5,})$/)?.[1];
+  if (blk) { const c = n(blk, /(?:#|\u2139) pass (\d+)/) + n(blk, /(?:#|\u2139) fail (\d+)/); return c === 1 && /^(?:ok \d+ - |\u2714 )\S+\.[cm]?[jt]s(?: \(|$)/m.test(out) ? 0 : c; }
+  const cg = out.split("\n").filter((l) => l.startsWith("test result: "));
+  if (cg.length) return cg.reduce((t, l) => t + n(l, /(\d+) passed/) + n(l, /(\d+) failed/), 0);
+  const l = out.split("\n").filter((x) => /^(?:=+ )?(?:\d+ \w+.*|no tests ran) in [\d.]+s|^\s*Tests?:?\s+\d|^No tests found|^(?:ok|\?)\s+\S+\s/.test(x)).pop();
+  if (!l || /^(?:ok|\?)\s/.test(l)) return l && /\[no test/.test(l) ? 0 : null;
+  return /^(?:=+ )?no tests (?:ran|found)|^No tests found|skipped/i.test(l) || /\d+ (?:passed|failed|errors?)/.test(l) ? n(l, /(\d+) passed/) + n(l, /(\d+) failed/) + n(l, /(\d+) errors?/) : null;
 }
 /** `cut` means the timeout or the stage's AbortSignal killed the child: never read as "fail" and
  *  never retried (a hung check must not burn 2x its timeout). `out` is unread when cut (an orphaned grandchild may hold the pipe). */

@@ -30,17 +30,39 @@ const cmdFor = (runner: string, path: string, d: string) => runnerCmd({ runner, 
 const notRun = (c: VerifyCheck, re: RegExp) => { expect(c.result).toBe("not_run"); expect(c.reason).toMatch(re); };
 
 describe("engine10 verify: 0 executed tests is not a pass (A-111)", () => {
-  test("node --test: 0 tests, all skipped, and a real pass", async () => {
+  // LOKI_TEST_NODES: extra node binaries (colon list), e.g. node 20 and 22, whose non-TTY default reporter is TAP
+  for (const bin of ["node", ...(process.env["LOKI_TEST_NODES"] ?? "").split(":").filter(Boolean)]) {
+    test(`node --test (${bin}): empty, all skipped, real pass, name/log lookalikes, real fail`, async () => {
+      const d = mk();
+      const T = "const t=require('node:test').test;";
+      const files: Record<string, string> = {
+        "empty": "// none\n",
+        "emptylog": "console.log('3 passed'); console.log('\\u2139 pass 3'); console.log('# pass 3');\n",
+        "skip": T + "t('x',{skip:true},()=>{});\n",
+        "ok": T + "t('x',()=>{});\n",
+        "named": T + "t('returns [] when there are no test files',()=>{});\n",
+        "logs": T + "t('x',()=>{console.log('no tests found');});\n",
+        "fail": T + "t('returns [] when there are no test files',()=>{throw new Error('boom');});\n",
+      };
+      for (const [k, v] of Object.entries(files)) writeFileSync(join(d, `${k}.test.js`), v);
+      const r = async (k: string) => go(d, bin, ["--test", `./${k}.test.js`]);
+      notRun(await r("empty"), /ran 0 tests/);
+      notRun(await r("emptylog"), /ran 0 tests/);
+      notRun(await r("skip"), /ran 0 tests/);
+      expect((await r("ok")).result).toBe("pass");
+      expect((await r("named")).result).toBe("pass");
+      expect((await r("logs")).result).toBe("pass");
+      expect((await r("fail")).result).toBe("fail");
+    }, 60_000);
+  }
+  test("pytest -s printing 'no tests ran': passing stays pass, failing stays fail", async () => {
     const d = mk();
-    writeFileSync(join(d, "empty.test.js"), "// none\n");
-    writeFileSync(join(d, "skip.test.js"), "require('node:test').test('x',{skip:true},()=>{});\n");
-    writeFileSync(join(d, "ok.test.js"), "require('node:test').test('x',()=>{});\n");
-    let [c, a] = cmdFor("node", "empty.test.js", d);
-    notRun(await go(d, c, a), /ran 0 tests/);
-    [c, a] = cmdFor("node", "skip.test.js", d);
-    notRun(await go(d, c, a), /ran 0 tests/);
-    [c, a] = cmdFor("node", "ok.test.js", d);
-    expect((await go(d, c, a)).result).toBe("pass");
+    writeFileSync(join(d, "test_p.py"), "def test_a():\n    print('no tests ran')\n");
+    writeFileSync(join(d, "test_f.py"), "def test_a():\n    print('no tests ran')\n    assert False\n");
+    let [c, a] = cmdFor("pytest", "test_p.py", d);
+    expect((await go(d, c, [...a, "-s"])).result).toBe("pass");
+    [c, a] = cmdFor("pytest", "test_f.py", d);
+    expect((await go(d, c, [...a, "-s"])).result).toBe("fail");
   }, 30_000);
   test("pytest: collects nothing (exit 5), all-skip, and a real pass", async () => {
     const d = mk();
