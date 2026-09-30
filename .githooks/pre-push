@@ -315,8 +315,20 @@ while read -r _lref _lsha _rref _rsha; do
     # CONFIG_CHANGE=1 is still the only override (E-99); the eval scan's own
     # copy of this gate, further down, still runs too when PRE_PUSH_SKIP is
     # unset, and still prints the itemized per-commit diff.
+    # Fail closed (E-119): `|| true` here used to swallow a genuine `git
+    # rev-list` error (corrupt object, unreadable pack) as "no .gitleaks.toml
+    # change", which falls back to trusting the pushed tip's own config --
+    # exactly the attacker's weakened-config scenario this gate exists to
+    # catch. A check that cannot run is a refusal, not a pass, same as the
+    # per-commit `git rev-list` fail-closed further down.
+    _toml_changed_rc=0
     # shellcheck disable=SC2086
-    _toml_changed_commits="$(git -C "$_top" rev-list $_full_log_opts -- .gitleaks.toml 2>/dev/null || true)"
+    _toml_changed_commits="$(git -C "$_top" rev-list $_full_log_opts -- .gitleaks.toml 2>/dev/null)" || _toml_changed_rc=$?
+    if [[ "$_toml_changed_rc" != "0" ]]; then
+        echo "[pre-push] FAIL: could not check whether .gitleaks.toml changed in the pushed range ($_lref) (git rev-list exited $_toml_changed_rc)" >&2
+        _full_scan_failures=$((_full_scan_failures + 1))
+        continue
+    fi
     if [[ -n "$_toml_changed_commits" ]]; then
         if [[ "${LOKI_ALLOW_GITLEAKS_CONFIG_CHANGE:-0}" != "1" ]]; then
             echo "[pre-push] FAIL: .gitleaks.toml changed in the pushed range ($_lref) -- it can silently weaken or disable secret scanning" >&2

@@ -95,6 +95,9 @@ AUTH_ENV = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 # S41-01: the four operator tunables above plus the knobs items 1/2 add
 # (LOKI_E10_CASCADE, _TOP_MODEL, _ATTEMPTS, _TRIM, _PREFIX, _CONTEXT,
 # _WALL_PARALLEL), allowlisted now so no later S41 card has to touch this file.
+# LOKI_E10_PREFIX (S41-09) is read in loki-ts/src/runner/providers.ts's
+# buildSdkLoopOptions, outside the src/engine10 grep, so S41-15's rerun with
+# every flag on needs it here (the same gap E-98f hit for LOKI_E10_CASCADE).
 V10_ENGINE_ENV_ALLOWLIST = (
     "LOKI_E10_PLAN", "LOKI_E10_WALL", "LOKI_E10_WALL_TIER",
     "LOKI_E10_CAP_S", "LOKI_E10_INVOKER", "LOKI_E10_DASHBOARD_PORT",

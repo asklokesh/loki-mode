@@ -2507,6 +2507,104 @@ else
     printf '%s\n' "$OUT"
 fi
 
+echo "T42e -- E-117: 'Depends on E-98a..c' range shorthand expands to all three ids; an unmerged middle id (E-98b) blocks the row"
+BOARD_DEPS_RANGE_LETTER_UNMET="$WORK/BOARD-deps-range-letter-unmet.md"
+cat > "$BOARD_DEPS_RANGE_LETTER_UNMET" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S-01 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-02 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-03 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-04 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-05 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| E-98a | a | x | LOW | merged@2026-09-27T01:00Z | Depends on none. |
+| E-98b | a | x | LOW | ready@2026-09-27T01:00Z | Depends on none. |
+| E-98c | a | x | LOW | merged@2026-09-27T01:00Z | Depends on none. |
+| M-10 | modernize step | y | LOW | ready@2026-09-27T01:00Z | Depends on E-98a..c. |
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_DEPS_RANGE_LETTER_UNMET"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: LOW_READY: only 6 ready slice(s) on BOARD (want at least 8); cut 2 more; blocked by dependency: M-10 (needs E-98b)" \
+    && printf '%s\n' "$OUT" | grep -qF "Ready rows blocked by dependency: M-10 (needs E-98b)"; then
+    ok "E-98a..c expands to E-98a/E-98b/E-98c; unmerged E-98b blocks M-10 (E-98a and E-98c alone would not have)"
+else
+    bad "T42e letter-range-unmet case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T42f -- E-117: 'Depends on E-98a..c' with all three merged does not block the row"
+BOARD_DEPS_RANGE_LETTER_MET="$WORK/BOARD-deps-range-letter-met.md"
+cat > "$BOARD_DEPS_RANGE_LETTER_MET" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S-01 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-02 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-03 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-04 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-05 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| E-98a | a | x | LOW | merged@2026-09-27T01:00Z | Depends on none. |
+| E-98b | a | x | LOW | merged@2026-09-27T01:00Z | Depends on none. |
+| E-98c | a | x | LOW | merged@2026-09-27T01:00Z | Depends on none. |
+| M-10 | modernize step | y | LOW | ready@2026-09-27T01:00Z | Depends on E-98a..c. |
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_DEPS_RANGE_LETTER_MET"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: LOW_READY: only 6 ready slice(s) on BOARD (want at least 8); cut 2 more" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: LOW_READY:.*blocked by dependency" \
+    && printf '%s\n' "$OUT" | grep -qF "Ready rows blocked by dependency: none"; then
+    ok "E-98a, E-98b, E-98c all merged: M-10 counts as ready, not blocked"
+else
+    bad "T42f letter-range-met case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T42g -- E-117: numeric range 'Depends on M-20..M-23' expands to all four ids; an unmerged middle id (M-22) blocks the row"
+BOARD_DEPS_RANGE_NUMERIC="$WORK/BOARD-deps-range-numeric.md"
+cat > "$BOARD_DEPS_RANGE_NUMERIC" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S-01 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-02 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-03 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-04 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-05 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| M-20 | a | x | LOW | merged@2026-09-27T01:00Z | Depends on none. |
+| M-21 | a | x | LOW | merged@2026-09-27T01:00Z | Depends on none. |
+| M-22 | a | x | LOW | ready@2026-09-27T01:00Z | Depends on none. |
+| M-23 | a | x | LOW | merged@2026-09-27T01:00Z | Depends on none. |
+| M-99 | modernize step | y | LOW | ready@2026-09-27T01:00Z | Depends on M-20..M-23. |
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_DEPS_RANGE_NUMERIC"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: LOW_READY: only 6 ready slice(s) on BOARD (want at least 8); cut 2 more; blocked by dependency: M-99 (needs M-22)" \
+    && printf '%s\n' "$OUT" | grep -qF "Ready rows blocked by dependency: M-99 (needs M-22)"; then
+    ok "M-20..M-23 expands to M-20/M-21/M-22/M-23; unmerged M-22 blocks M-99 (an endpoints-only match would have missed it)"
+else
+    bad "T42g numeric-range case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T42h -- E-117: a numeric range over the 50-id cap ('M-1..M-9999') is left as literal text, not expanded"
+BOARD_DEPS_RANGE_NUMERIC_HUGE="$WORK/BOARD-deps-range-numeric-huge.md"
+cat > "$BOARD_DEPS_RANGE_NUMERIC_HUGE" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S-01 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-02 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-03 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-04 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-05 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| M-1 | a | x | LOW | merged@2026-09-27T01:00Z | Depends on none. |
+| M-9999 | a | x | LOW | merged@2026-09-27T01:00Z | Depends on none. |
+| M-100 | modernize step | y | LOW | ready@2026-09-27T01:00Z | Depends on M-1..M-9999. |
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_DEPS_RANGE_NUMERIC_HUGE"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: LOW_READY: only 6 ready slice(s) on BOARD (want at least 8); cut 2 more" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: LOW_READY:.*blocked by dependency" \
+    && printf '%s\n' "$OUT" | grep -qF "Ready rows blocked by dependency: none"; then
+    ok "M-1..M-9999 (9999 ids, over the 50 cap) is left as literal M-1/M-9999 endpoints, not expanded; both merged so M-100 is not blocked"
+else
+    bad "T42h numeric-range-over-cap case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
 echo "T43 -- E-80: PROGRESS.md age is never negative; a future entry heading reports FUTURE_TIMESTAMP"
 PROGRESS_FUTURE="$WORK/PROGRESS-future.md"
 printf '# Progress\n\n## 2026-09-27T03:30:00Z: future entry\n- clock skew or a mistyped heading\n' > "$PROGRESS_FUTURE"
@@ -3132,6 +3230,65 @@ if printf '%s\n' "$OUT" | grep -q "^UNKNOWN metrics:.*merged_not_released_stale"
     ok "an ID that breaks the git --grep pattern reports UNKNOWN, never a false 'none'"
 else
     bad "T51 MERGED_NOT_RELEASED_STALE-git-failure case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T52 -- E-121: ID_RE accepts a digit-bearing prefix (S41-01); a building S41-01 row is"
+echo "      counted and budget-checked, not silently invisible to parse_board"
+BOARD_DIGITPREFIX="$WORK/BOARD-digitprefix.md"
+cat > "$BOARD_DIGITPREFIX" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S41-01 | a | x | LOW | building@2026-09-27T01:00Z | |
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_DIGITPREFIX"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: AGENT_OVER_BUDGET:" \
+    && printf '%s\n' "$OUT" | grep -qF "S41-01 building LOW (60.0 min, budget 15 min)"; then
+    ok "S41-01 (digit-bearing prefix) is parsed and budget-checked"
+else
+    bad "T52 digit-prefix case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T53 -- E-121: 'Depends on S41-06' (digit-bearing prefix) blocks the ready row when S41-06 is unmerged"
+BOARD_DEPS_DIGITPREFIX="$WORK/BOARD-deps-digitprefix.md"
+cat > "$BOARD_DEPS_DIGITPREFIX" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| S-01 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-02 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-03 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-04 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S-05 | a | x | LOW | ready@2026-09-27T01:00Z | Source: cut. |
+| S41-06 | a | x | LOW | ready@2026-09-27T01:00Z | Depends on none. |
+| M-10 | modernize step | y | LOW | ready@2026-09-27T01:00Z | Depends on S41-06. |
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_DEPS_DIGITPREFIX"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: LOW_READY: only 6 ready slice(s) on BOARD (want at least 8); cut 2 more; blocked by dependency: M-10 (needs S41-06)" \
+    && printf '%s\n' "$OUT" | grep -qF "Ready rows blocked by dependency: M-10 (needs S41-06)"; then
+    ok "S41-06 (ready, not merged) blocks M-10; digit-bearing prefix parses in Depends-on clause"
+else
+    bad "T53 digit-prefix dependency case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T54 -- E-121: the digit-prefix fix does not regress plain-letter ids (E-98a, G-02, DEP-03)"
+BOARD_OLDPREFIXES="$WORK/BOARD-oldprefixes.md"
+cat > "$BOARD_OLDPREFIXES" <<'EOF'
+| ID | Owner | File set | Tier | Status | Notes |
+|---|---|---|---|---|---|
+| E-98a | a | x | LOW | building@2026-09-27T01:00Z | |
+| G-02 | a | x | LOW | building@2026-09-27T01:00Z | |
+| DEP-03 | a | x | LOW | building@2026-09-27T01:00Z | |
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_OLDPREFIXES"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: AGENT_OVER_BUDGET:" \
+    && printf '%s\n' "$OUT" | grep -qF "E-98a building LOW (60.0 min, budget 15 min)" \
+    && printf '%s\n' "$OUT" | grep -qF "G-02 building LOW (60.0 min, budget 15 min)" \
+    && printf '%s\n' "$OUT" | grep -qF "DEP-03 building LOW (60.0 min, budget 15 min)"; then
+    ok "E-98a, G-02 and DEP-03 all still parse and budget-check"
+else
+    bad "T54 existing-prefix regression case: rc=$rc output follows"
     printf '%s\n' "$OUT"
 fi
 

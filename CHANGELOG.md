@@ -10,6 +10,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.5 (2026-09-28)
+
+Ships everything prepared for v10.5.4, which never reached npm because its release gate ran the v10 Wall tests without pytest: the Wall no longer mistakes a test run that never started for a failing test, and a Seal refuses any run with tests that did not run.
+
+### Fixed
+- Release, nightly, test and coverage workflows install pytest before the Bun test suite, which runs the v10 Wall tests against real pytest. The v10.5.4 release gate failed on exactly this and published nothing.
+
+### v10.5.4 (carried): Fixed
+- Wall base run: a missing interpreter, a missing third-party package, a pytest collection error outside the repo, pytest exit 5 (no tests collected) and a timeout are now classified as not run instead of red; red requires the runner to start and at least one test to fail, per D42 (S41-16).
+- Seal refuses to mark a run VERIFIED when any Wall test did not run (not_run must be 0), so a Wall that never executed can no longer reach an already-satisfied or verified verdict (S41-16).
+- `loki modernize`: verifying a pre-sealed Wall now fails when the normalizer hash is missing on either side, and sealing refuses an oracle with no normalizer hash, so two missing values never count as a match (E-124).
+- `loki modernize` re-slicing refuses a re-slice that is not strictly smaller than its parent, so a flaky check cannot turn the depth budget into retries (M-18).
+- The usage governor no longer crashes on a live reading, and says "uncalibrated" when no plan reading is on file instead of reporting a number (E-118).
+
+### v10.5.4 (carried): Added
+- `loki modernize` pre-sealed Wall mode: the oracle and target conformance tests are sealed before any conversion exists and re-verified before use (M-14, not yet wired into the full modernize run).
+- `loki modernize` re-slices a non-equivalent unit to at most depth 2; if any child is still not equivalent the unit is NOT PROVEN, never forced to pass (M-18, not yet wired into the full modernize run).
+- `LOKI_E10_PREFIX=lean` (off by default): v10 engine sessions use a short fixed system prompt in place of the Claude Code preset, for a smaller cached prefix; tools, CLAUDE.md loading and permission hooks are unchanged (S41-09).
+
+### v10.5.4 (carried): Internal
+- Scorecard eval: an arm runner with a keychain auth guard before every rep (S41-03), and the D41 headline pair (loki-sonnet against raw-opus) is green on cost only at 0.5x raw or below (E-122).
+- CI: the security-scan coverage test runs in the Tests shards (E-123); the Bun and coverage jobs install pytest, which the v10 Wall tests run for real.
+
+### v10.5.4 (carried): Known issues
+- A project interpreter that exists but has no pytest installed still reads as red at the Wall base run instead of not run (E-132). The Seal still refuses such a run, because its Wall tests then count as not run, so it cannot produce a false VERIFIED.
+
+## v10.5.4 (2026-09-28)
+
+The v10 Wall no longer mistakes a test run that never started for a failing test, a Seal now refuses any run with tests that did not run, and `loki modernize` gains its pre-sealed Wall and depth-limited re-slicing, each refusing to call behaviour proven without a real, narrowing check.
+
+### Fixed
+- Wall base run: a missing interpreter, a missing third-party package, a pytest collection error outside the repo, pytest exit 5 (no tests collected) and a timeout are now classified as not run instead of red; red requires the runner to start and at least one test to fail, per D42 (S41-16).
+- Seal refuses to mark a run VERIFIED when any Wall test did not run (not_run must be 0), so a Wall that never executed can no longer reach an already-satisfied or verified verdict (S41-16).
+- `loki modernize`: verifying a pre-sealed Wall now fails when the normalizer hash is missing on either side, and sealing refuses an oracle with no normalizer hash, so two missing values never count as a match (E-124).
+- `loki modernize` re-slicing refuses a re-slice that is not strictly smaller than its parent, so a flaky check cannot turn the depth budget into retries (M-18).
+- The usage governor no longer crashes on a live reading, and says "uncalibrated" when no plan reading is on file instead of reporting a number (E-118).
+
+### Added
+- `loki modernize` pre-sealed Wall mode: the oracle and target conformance tests are sealed before any conversion exists and re-verified before use (M-14, not yet wired into the full modernize run).
+- `loki modernize` re-slices a non-equivalent unit to at most depth 2; if any child is still not equivalent the unit is NOT PROVEN, never forced to pass (M-18, not yet wired into the full modernize run).
+- `LOKI_E10_PREFIX=lean` (off by default): v10 engine sessions use a short fixed system prompt in place of the Claude Code preset, for a smaller cached prefix; tools, CLAUDE.md loading and permission hooks are unchanged (S41-09).
+
+### Internal
+- Scorecard eval: an arm runner with a keychain auth guard before every rep (S41-03), and the D41 headline pair (loki-sonnet against raw-opus) is green on cost only at 0.5x raw or below (E-122).
+- CI: the security-scan coverage test runs in the Tests shards (E-123); the Bun and coverage jobs install pytest, which the v10 Wall tests run for real.
+
+### Known issues
+- A project interpreter that exists but has no pytest installed still reads as red at the Wall base run instead of not run (E-132). The Seal still refuses such a run, because its Wall tests then count as not run, so it cannot produce a false VERIFIED.
+
+## v10.5.3 (2026-09-28)
+
+CI secret scanning can no longer be switched off by a pushed gitleaks configuration, and `loki modernize` gains an equivalence checker that never reports behaviour as proven when it cannot be.
+
+### Security
+- The CI secret scan takes its gitleaks configuration from the last release tag, never from the pushed commits, and fails the job when a push changes `.gitleaks.toml`; with no release tag it uses the scanner's default rules and refuses any `.gitleaks.toml` (E-114). Before, a pushed zero-rule configuration could disable the scan for that same push.
+- The pre-push hook refuses the push when its `.gitleaks.toml` change check cannot run, instead of treating the error as "unchanged" (E-119).
+
+### Added
+- `loki modernize` equivalence checker (M-13, not yet wired into the full modernize run): compares captured behaviour of the original and the converted code under normalizers sealed with the oracle before any conversion exists. A missing capture, malformed value, runner error, too few cases, or any mismatch with the sealed normalizer hash is reported as NOT PROVEN, never as equal.
+
+### Internal
+- Scorecard tool for the D41 balanced scorecard (`eval/loki10/scorecard`): per model tier completion, cost per completed and p50 time with raw alongside (S41-02); per-stage token baseline in docs/v10/METRICS.md (S41-04); the swarm pulse recognises slice ids such as S41-01 (E-121).
+
+## v10.5.2 (2026-09-28)
+
+A SPEC_CONFLICT receipt now states why the run stopped, safely, and the dashboard, web app and Python services pick up current patch and minor dependency releases, including a fix for two high-severity advisories in the web app's router.
+
+### Changed
+- Loki 10 engine (`LOKI_ENGINE=v10`): when implement stops with a specification conflict, the receipt carries the reason in receipt.json and shows it on one line in receipt.md. The text is flattened to a single line, length-capped and rendered as inline code, so a model-written reason cannot add headings or a fake verdict to the receipt; receipts without a conflict are unchanged (E-120).
+
+### Security
+- web-app: react-router-dom 7.13 to 7.18, clearing two high-severity advisories reported by `npm audit` (DEP-05).
+- All remaining tag-pinned GitHub Actions are pinned to full commit SHAs with the tag noted beside each (DEP-07).
+
+### Dependencies
+- web-app: react and react-dom 19.3, react-resizable-panels 4.14, @playwright/test 1.63, typescript-eslint 8.70, autoprefixer 10.6, postcss 8.5.28 (DEP-05).
+- dashboard-ui: @playwright/test 1.63 (DEP-05).
+- Python (dashboard, mcp, web-app, sdk): sqlalchemy 2.1.1, pydantic 2.13.5, alembic 1.20, chromadb 1.5.9, python-jose 3.5, pexpect 4.9, pyyaml 6.0.3 (DEP-06).
+
+### Internal
+- Swarm tooling: `scripts/board-mark-released.sh` marks BOARD rows released once their merge is in a published tag (E-90); the pulse expands dependency ranges such as `E-98a..e` (capped at 50 ids) (E-117); real Seal tests for the SPEC_CONFLICT verdict (E-116).
+
 ## v10.5.1 (2026-09-28)
 
 A local pre-push secret scan that covers every pushed commit and file, so a secret can no longer reach the repository just because it sits outside the eval fixtures.

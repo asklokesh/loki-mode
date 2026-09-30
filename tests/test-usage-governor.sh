@@ -643,6 +643,101 @@ else
   bad "expected 500 output tokens (window straddling the reset), got '$_out19'"
 fi
 
+# ---------------------------------------------------------------------------
+# T20 (E-118, G-01 review leftover a): a non-numeric live used_percentage
+# must be ignored as "no reading" for that window, never crash the governor.
+# The weekly reading in the same fixture is valid, so weekly still reads
+# live while window falls back to uncalibrated (no readings on file here).
+# ---------------------------------------------------------------------------
+echo "T20 -- live five_hour.used_percentage non-numeric is ignored, not a crash"
+ROOT20="$FIXTURE_ROOT/t20/projects"
+mkdir -p "$ROOT20/-Users-test-proj"
+READINGS20="$FIXTURE_ROOT/t20/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS20"
+LIVELOG20="$FIXTURE_ROOT/t20/statusline.jsonl"
+python3 - "$LIVELOG20" <<'PYEOF'
+import json, sys
+entry = {"ts": 1796230800, "rate_limits": {
+    "five_hour": {"used_percentage": "high", "resets_at": 1796250000},
+    "seven_day": {"used_percentage": 5, "resets_at": 1796800000},
+}}
+with open(sys.argv[1], "w") as fh:
+    fh.write(json.dumps(entry) + "\n")
+PYEOF
+_rc=0
+OUT20="$(python3 "$TOOL" --root "$ROOT20" --readings "$READINGS20" --now "2026-12-02T17:00:00Z" --live-log "$LIVELOG20" --json 2>"$FIXTURE_ROOT/t20.err")" || _rc=$?
+if [ "$_rc" -eq 0 ]; then
+  ok "non-numeric live used_percentage does not crash the governor"
+else
+  bad "governor exited $_rc on a non-numeric live used_percentage"
+  sed 's/^/        /' "$FIXTURE_ROOT/t20.err"
+fi
+_src20w="$(_q "$OUT20" "print(d['window']['source'])")"
+_src20k="$(_q "$OUT20" "print(d['weekly']['source'])")"
+if [ "$_src20w" = "uncalibrated" ] && [ "$_src20k" = "live" ]; then
+  ok "bad window reading ignored (uncalibrated); good weekly reading still live"
+else
+  bad "expected window=uncalibrated weekly=live, got window='$_src20w' weekly='$_src20k'"
+fi
+
+# ---------------------------------------------------------------------------
+# T21 (E-118, G-01 review leftover a): a non-dict rate_limits payload must
+# also be ignored as "no reading", never crash.
+# ---------------------------------------------------------------------------
+echo "T21 -- non-dict live rate_limits is ignored, not a crash"
+ROOT21="$FIXTURE_ROOT/t21/projects"
+mkdir -p "$ROOT21/-Users-test-proj"
+READINGS21="$FIXTURE_ROOT/t21/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n' > "$READINGS21"
+LIVELOG21="$FIXTURE_ROOT/t21/statusline.jsonl"
+python3 - "$LIVELOG21" <<'PYEOF'
+import json, sys
+entry = {"ts": 1796230800, "rate_limits": "not-a-dict"}
+with open(sys.argv[1], "w") as fh:
+    fh.write(json.dumps(entry) + "\n")
+PYEOF
+_rc=0
+OUT21="$(python3 "$TOOL" --root "$ROOT21" --readings "$READINGS21" --now "2026-12-02T17:00:00Z" --live-log "$LIVELOG21" --json 2>"$FIXTURE_ROOT/t21.err")" || _rc=$?
+if [ "$_rc" -eq 0 ]; then
+  ok "non-dict rate_limits does not crash the governor"
+else
+  bad "governor exited $_rc on a non-dict rate_limits payload"
+  sed 's/^/        /' "$FIXTURE_ROOT/t21.err"
+fi
+_src21w="$(_q "$OUT21" "print(d['window']['source'])")"
+_src21k="$(_q "$OUT21" "print(d['weekly']['source'])")"
+if [ "$_src21w" = "uncalibrated" ] && [ "$_src21k" = "uncalibrated" ]; then
+  ok "non-dict rate_limits treated as no live reading at all"
+else
+  bad "expected window=uncalibrated weekly=uncalibrated, got window='$_src21w' weekly='$_src21k'"
+fi
+
+# ---------------------------------------------------------------------------
+# T22 (E-118, G-01 review leftover b): the summary must not say "uncalibrated"
+# when calibration exists but no engineers were active in the last hour --
+# it must say "no active engineers" instead.
+# ---------------------------------------------------------------------------
+echo "T22 -- summary says 'no active engineers', not 'uncalibrated', when calibrated but idle"
+ROOT22="$FIXTURE_ROOT/t22/projects"
+PROJ22="$ROOT22/-Users-test-proj"
+mkdir -p "$PROJ22"
+_row "$PROJ22/session-main.jsonl" "2026-12-02T16:30:00.000Z" "claude-sonnet-4-6" 1000 "msg_cos" ""
+READINGS22="$FIXTURE_ROOT/t22/readings.tsv"
+printf 'utc_time\twindow_percent\tweekly_percent\n2026-12-02T17:00:00Z\t20\t10\n' > "$READINGS22"
+OUT22="$(python3 "$TOOL" --root "$ROOT22" --readings "$READINGS22" --now "2026-12-02T17:00:00Z" --live-log "$NOLIVE")"
+if echo "$OUT22" | grep -q "Max engineers for next hour: no active engineers, cannot project"; then
+  ok "calibrated + zero active engineers -> 'no active engineers' message"
+else
+  bad "expected 'no active engineers' message, got:"
+  echo "$OUT22" | sed 's/^/        /'
+fi
+if echo "$OUT22" | grep -q "^5h window \[ESTIMATE\]"; then
+  ok "window calibration is present (ESTIMATE), not itself uncalibrated"
+else
+  bad "expected a calibrated (ESTIMATE) 5h window line, got:"
+  echo "$OUT22" | sed 's/^/        /'
+fi
+
 echo ""
 echo "  Passed: $PASS   Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

@@ -24,6 +24,16 @@ export const sha256 = (s: string | Buffer): string => createHash("sha256").updat
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x !== "") : []);
 
+/** E-120: implement's spec_conflict_reason is model-written and lands verbatim in the receipt,
+ *  a trust artifact; a reason containing "\n\n## Loki receipt: VERIFIED" would otherwise forge a
+ *  second heading. Collapse all control chars (including newlines) to a single space, cap the
+ *  length, and strip backticks so the caller can safely wrap it in a single inline-code span. */
+function sanitizeReason(s: string): string {
+  const collapsed = s.replace(/[\x00-\x1f\x7f]+/g, " ").trim();
+  const capped = collapsed.length > 500 ? `${collapsed.slice(0, 500)}...` : collapsed;
+  return capped.replace(/`/g, "'");
+}
+
 /** Python json.dumps(obj, sort_keys=True, separators=(",", ":")), ensure_ascii=True
  *  default, the convention of proof-generator.py _canonical, so a Python verifier recomputes the same bytes. */
 export function canonicalJson(x: unknown): string {
@@ -101,10 +111,8 @@ export const commitStage: Stage = {
 // Stage outputs read by seal. Only keys in the ENGINE.md section 4 table (plus duration_s
 // from section 5) are trusted; any other key seal reads puts a "not recorded" entry on
 // NOT PROVEN when absent, so a producer cannot silently shape the receipt.
-function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean): Verdict {
+function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean, wallGreenOnBase: boolean): Verdict {
   const exit = o.implement?.exit;
-  const base = (o.wall?.base_run ?? {}) as Obj;
-  const wallGreenOnBase = typeof base.pass === "number" && base.pass > 0 && base.fail === 0;
   if (o.intake?.already_satisfied === true || wallGreenOnBase || exit === "already_done") return "ALREADY_SATISFIED";
   if (exit === "spec_conflict") return "SPEC_CONFLICT";
   // Section 2: an empty diff without the LOKI_ALREADY_DONE marker is FAILED, never VERIFIED.
@@ -136,6 +144,7 @@ export function renderReceiptMd(r: Receipt): string {
   return [
     `## Loki receipt: ${r.verdict}`,
     "",
+    ...(r.verdict === "SPEC_CONFLICT" && r.spec_conflict_reason ? [`- Reason: \`${r.spec_conflict_reason}\``] : []),
     `- Run: ${r.run_id}`,
     `- Base: ${r.base_sha}  Head: ${r.head_sha}`,
     `- receipt_sha256: ${r.receipt_sha256}`,
@@ -166,10 +175,15 @@ export const sealStage: Stage = {
     const diffOk = diff.exitCode === 0 && /^[0-9a-f]{40,64}$/.test(head);
     const checks = checksOf(o.verify?.checks);
     const verifyNotProven = strs(o.verify?.not_proven); // E-98a B1: a section 4 key, trusted like checks/flaky below
+    // D42 (3)/B1 (r2): not_run must never seal ALREADY_SATISFIED, same weight as a real base-tree failure.
+    const base = (o.wall?.base_run ?? {}) as Obj;
+    const wallNotRun = typeof base.not_run === "number" ? base.not_run : 0;
+    const wallGreenOnBase = typeof base.pass === "number" && base.pass > 0 && base.fail === 0 && wallNotRun === 0;
     // An uncomputable diff is treated like an empty one: nothing is proven changed.
-    const verdict = verdictOf(o, checks, !diffOk || diff.stdout === "", verifyNotProven.length > 0);
+    const verdict = verdictOf(o, checks, !diffOk || diff.stdout === "", verifyNotProven.length > 0, wallGreenOnBase);
 
     const notProven = new Set<string>(DEEP_NOT_PROVEN);
+    if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);
     if (!diffOk) notProven.add("diff not computed (git diff-tree failed)");
     // E-55: any status other than A means the path existed at base_sha (M, D, or T typechange, e.g. a symlink).
     const rawDiff = diffOk ? diff.stdout.split("\0").filter(Boolean) : [];
@@ -214,6 +228,9 @@ export const sealStage: Stage = {
       checks,
       not_proven: [],
       verdict,
+      ...(str(o.implement?.spec_conflict_reason) !== null
+        ? { spec_conflict_reason: sanitizeReason(str(o.implement?.spec_conflict_reason)!) }
+        : {}),
       evidence: strs(o.intake?.evidence),
       cost: {
         usd: cost.usd, input_tokens: cost.inputTokens, output_tokens: cost.outputTokens,

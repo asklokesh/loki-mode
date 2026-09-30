@@ -126,6 +126,14 @@ critical path and reviewed immediately.
 
 ## Usage (hourly, from scripts/usage-governor.py)
 
+### 2026-09-28T22:19Z
+- 5h window: uncalibrated, 5,229,182 output tokens since 2026-09-28T17:19Z (uncalibrated)
+- Weekly: uncalibrated, 48,901,928 output tokens, 42.7h to reset (uncalibrated)
+- Last hour: 1,436,250 output tokens; 45 active engineers; 29,189 per engineer; Chief of Staff 124,829
+- Max engineers next hour: uncalibrated (no plan reading on file)
+- Output tokens by model (all scanned transcripts): claude-sonnet-5 31,903,763 (43.0%), claude-opus-5-5 16,991,251 (22.9%), claude-opus-4-8 14,720,953 (19.8%), claude-opus-4-7 4,678,300 (6.3%), claude-opus-5 4,489,139 (6.0%), claude-fable-5 1,254,167 (1.7%), claude-opus-4-6 203,492 (0.3%), claude-haiku-4-5-20251001 6,565 (0.0%)
+- Output tokens by role (all scanned transcripts): workflow-agent 44,503,521, chief-of-staff 29,712,444, subagent 31,665
+
 ### 2026-09-28T21:15Z
 - 5h window: uncalibrated, 5,183,443 output tokens since 2026-09-28T16:15Z (uncalibrated)
 - Weekly: uncalibrated, 47,364,676 output tokens, 43.7h to reset (uncalibrated)
@@ -376,3 +384,43 @@ above EV-14's 85.7% and cost at or below EV-15's $0.5085 per completed. No
 E-98f arm reaches 85.7% (nowall highest at 76.2%), and no arm's cost per
 completed is a clean number (`n/a` in all three, see the null-cost note in
 MEDIUM-ANALYSIS.md). No arm meets the rule; `sizing.ts` is unchanged.
+
+## S41-04 Per-stage token table (before-measurement)
+
+Reference for S41-09/S41-10/S41-11 to be judged against. Source: every
+`result-cost-*.json` in `~/loki-ci-logs/eval/e98f-engine/{default,nocascade,nowall}-r{1,2,3}/*/.loki/metrics/`
+(all 9 preserved E-98f run copies, no new eval spend). One row per task
+instance (result-cost files with the same stage suffix inside one task's
+`.loki` dir are summed first, e.g. two `fix1` rounds); mean/p50 taken across
+those task instances. `verify` and `seal` are deterministic (no SDK call,
+no result-cost file) so they have no token row.
+
+| stage | n (task instances) | mean input | p50 input | mean cache_read | p50 cache_read | mean cache_write | p50 cache_write | mean output | p50 output |
+|---|---|---|---|---|---|---|---|---|---|
+| intake (`already-done`) | 18 | 6 | 4 | 46,305 | 29,937 | 8,742 | 8,399 | 590 | 495 |
+| plan | 36 | 10 | 10 | 44,547 | 44,290 | 8,784 | 8,896 | 2,038 | 2,044 |
+| wall | 16 | 7 | 6 | 67,611 | 55,318 | 14,512 | 15,098 | 5,530 | 5,735 |
+| implement | 58 | 51 | 42 | 982,144 | 654,959 | 33,750 | 28,301 | 10,893 | 8,354 |
+| fix (round 1) | 10 | 13 | 10 | 116,340 | 69,232 | 10,765 | 10,668 | 2,256 | 2,004 |
+| fix (round 2) | 4 | 10 | 7 | 78,512 | 47,776 | 6,691 | 5,748 | 2,463 | 2,196 |
+| verify | n/a | - | - | - | - | - | - | - | - |
+| seal | n/a | - | - | - | - | - | - | - | - |
+
+Cache-read share of every token summed across all rows above: 94.5%
+(61,960,744 of 65,568,766 total tokens). This is a raw token-count share,
+not the dollar-weighted "76% of spend" in D41 item 2 (`docs/v10/DECISIONS.md:326`);
+cache reads price far below input/output tokens, so a lower spend share at a
+higher token share is expected, not a contradiction.
+
+First-turn prefix size (`first_turn_prompt_tokens`, added by S41-04's
+`consumeSdkStream` change): **not measurable from these preserved runs** --
+the field did not exist when E-98f ran, and only the final aggregated
+`result-cost-*.json` and cumulative `partial-usage-*.json` files were kept
+(no raw per-message stream-json), so it cannot be backfilled. It will start
+populating in the next run made with this slice merged (e.g. S41-06's
+baseline eval); no new eval was run here per the standing E-98f-only
+instruction for this slice.
+
+Command: `python3` one-off aggregation of the `result-cost-*.json` files
+under `~/loki-ci-logs/eval/e98f-engine/*/*/.loki/metrics/`, grouped by the
+stage suffix after `result-cost-e10-<ts>-<hash>-`.

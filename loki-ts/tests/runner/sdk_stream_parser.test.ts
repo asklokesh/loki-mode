@@ -255,6 +255,28 @@ describe("consumeSdkStream (.loki parity with the bash Python parser)", () => {
     });
   });
 
+  test("S41-04: first_turn_prompt_tokens is the FIRST assistant message's sum, not the total", async () => {
+    const msgs: StreamMsg[] = [
+      // Turn 1 (the first-turn prefix): a streamed snapshot that grows, same id.
+      { type: "assistant", message: { id: "m1", usage: { input_tokens: 10, cache_read_input_tokens: 900, cache_creation_input_tokens: 50 }, content: [] } },
+      { type: "assistant", message: { id: "m1", usage: { input_tokens: 10, cache_read_input_tokens: 1000, cache_creation_input_tokens: 50 }, content: [] } },
+      // Turn 2: a different message id -- must NOT be folded into the first-turn sum.
+      { type: "assistant", message: { id: "m2", usage: { input_tokens: 5, cache_read_input_tokens: 2000, cache_creation_input_tokens: 0 }, content: [] } },
+      { type: "result", subtype: "success", is_error: false, total_cost_usd: 0.05, usage: { input_tokens: 15, output_tokens: 20, cache_read_input_tokens: 3000, cache_creation_input_tokens: 50 } },
+    ];
+    await consumeSdkStream(msgs, ctx("12"), clock);
+    const cost = readJson(costPath("12"));
+    // Turn 1's final snapshot: 10 + 1000 + 50 = 1060. The naive total across
+    // all messages (1060 + 2005, or the result's own 3065) must NOT appear.
+    expect(cost.first_turn_prompt_tokens).toBe(1060);
+  });
+
+  test("S41-04: no assistant message before result -> no first_turn_prompt_tokens key (never fabricated)", async () => {
+    const msgs: StreamMsg[] = [{ type: "result", subtype: "success", is_error: false, total_cost_usd: 0.01, usage: {} }];
+    await consumeSdkStream(msgs, ctx("13"), clock);
+    expect("first_turn_prompt_tokens" in readJson(costPath("13"))).toBe(false);
+  });
+
   test("E-59: system/init's model is written into result-cost, never the caller's guess", async () => {
     const msgs: StreamMsg[] = [
       { type: "system", subtype: "init", session_id: "sess-model", model: "claude-opus-4-1-20250805" },

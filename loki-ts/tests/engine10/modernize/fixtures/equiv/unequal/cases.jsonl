@@ -1,0 +1,2 @@
+{"format":1,"case":"c1","entry":"add","args":[{"t":"int","v":"1"},{"t":"int","v":"2"}],"kwargs":{},"return":{"t":"int","v":"3"},"exc":null,"stdout":{"t":"text","v":""},"files":[],"not_proven":[]}
+{"format":1,"case":"c2","entry":"add","args":[{"t":"int","v":"0"},{"t":"int","v":"0"}],"kwargs":{},"return":{"t":"int","v":"0"},"exc":null,"stdout":{"t":"text","v":""},"files":[],"not_proven":[]}
