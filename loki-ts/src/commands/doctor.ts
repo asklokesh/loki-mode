@@ -1316,13 +1316,13 @@ async function runText(): Promise<number> {
   const modelRun = spawnSync(
     "bash",
     ["-c", 'source "$1" >/dev/null 2>&1; printf %s "${PROVIDER_MODEL_DEVELOPMENT:-}"', "_", resolve(REPO_ROOT, "providers", `${id}.sh`)],
-    { encoding: "utf8" },
+    { env: { ...process.env }, encoding: "utf8" },
   );
   const model = (modelRun.stdout ?? "").trim() || "default";
   const keyRun = spawnSync(
     "python3",
     ["-E", "-c", READY_KEY_PY, resolve(REPO_ROOT, "autonomy")],
-    { encoding: "utf8" },
+    { env: { ...process.env }, encoding: "utf8" },
   );
   const key = (keyRun.stdout ?? "").trim();
   const keyState = key.startsWith("kid ")
