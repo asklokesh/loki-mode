@@ -13,7 +13,7 @@
       "tests/test_testing.py",
       "tests/test_basic.py"
     ],
-    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_testing.py tests/test_basic.py -k \"test_session_transaction_ipv6 or test_run_from_config\""
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_testing.py tests/test_basic.py -k \"session_transaction or test_run_from_config\""
   },
   "timeout_s": 900,
   "tier": "medium"

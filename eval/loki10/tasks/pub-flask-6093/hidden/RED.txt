@@ -1,4 +1,4 @@
-F.......F                                                                [100%]
+.F..........F                                                            [100%]
 =================================== FAILURES ===================================
 ________________________ test_session_transaction_ipv6 _________________________
 
@@ -24,7 +24,7 @@ E         + None
 tests/test_testing.py:185: AssertionError
 _____________ test_run_from_config[None-None-[::1]:8080-::1-8080] ______________
 
-monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10a851e50>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10954e5d0>
 host = None, port = None, server_name = '[::1]:8080', expect_host = '::1'
 expect_port = 8080, app = <Flask 'flask_test'>
 
@@ -169,4 +169,4 @@ src/flask/app.py:735: ValueError
 =========================== short test summary info ============================
 FAILED tests/test_testing.py::test_session_transaction_ipv6 - AssertionError:...
 FAILED tests/test_basic.py::test_run_from_config[None-None-[::1]:8080-::1-8080]
-2 failed, 7 passed, 150 deselected in 0.14s
+2 failed, 11 passed, 146 deselected in 0.16s
