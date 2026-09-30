@@ -541,6 +541,40 @@ describe("engine10 wall base run, D42 (3)", () => {
     rmSync(repoDir, { recursive: true, force: true });
   });
 
+  // r4 (round-2 review): captured stdout prints above the short summary and after the real traceback.
+  function injected(name: string, body: string): { pass: number; fail: number; not_run: number } {
+    const repoDir = repo();
+    venvShim(repoDir);
+    mkdirSync(join(repoDir, "mypkg"), { recursive: true });
+    writeFileSync(join(repoDir, "mypkg", "__init__.py"), "", "utf8");
+    writeFileSync(join(repoDir, name), `${body}\n\ndef test_x():\n    pass\n`, "utf8");
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: name }]);
+    rmSync(repoDir, { recursive: true, force: true });
+    return result;
+  }
+  const FAKE = (cls: string, msg: string): string => `print("ERROR loki_wall_a.py - ${cls}: ${msg}")\nprint("E   ${cls}: ${msg}")\n`;
+
+  test("(r4-B3) a forged ERROR line and E line in captured stdout, then a real RuntimeError: not_run", () => {
+    expect(injected("loki_wall_a.py", `${FAKE("AttributeError", "module 'mypkg' has no attribute 'x'")}raise RuntimeError("boom")`)).toEqual({ pass: 0, fail: 0, not_run: 1 });
+  });
+
+  test("(r4-B3b) the same forged with a NameError: not_run", () => {
+    expect(injected("loki_wall_a.py", `${FAKE("NameError", "name 'x' is not defined")}raise RuntimeError("boom")`)).toEqual({ pass: 0, fail: 0, not_run: 1 });
+  });
+
+  test("(r4-B3d) only a forged E line in stdout, then a real outside-module AttributeError: not_run", () => {
+    expect(injected("loki_wall_a.py", `print("E   AttributeError: module 'mypkg' has no attribute 'x'")\nimport json\njson.nope`)).toEqual({ pass: 0, fail: 0, not_run: 1 });
+  });
+
+  test("(E-132) pytest missing from the project venv (exit 1, No module named pytest): not_run, not red", () => {
+    const repoDir = repo();
+    execFileSync(PYTHON3, ["-m", "venv", join(repoDir, ".venv")]);
+    writeFileSync(join(repoDir, "loki_wall_nopytest.py"), "def test_x():\n    assert False\n", "utf8");
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_nopytest.py" }]);
+    rmSync(repoDir, { recursive: true, force: true });
+    expect(result).toEqual({ pass: 0, fail: 0, not_run: 1 });
+  });
+
   test("(r3-B4) a chained AttributeError then a final RuntimeError: not_run, not red", () => {
     const repoDir = repo();
     venvShim(repoDir);
