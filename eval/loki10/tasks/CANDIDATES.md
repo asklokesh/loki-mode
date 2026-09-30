@@ -1,5 +1,7 @@
 # Medium-tier candidates (S41-20h mining pass)
 
+S41-20i outcome: both shortlisted candidates below were built and then DROPPED by a reproduced one-file fix (see the "S41-20i verification" notes under each). No task directory was kept.
+
 Result: 2 shortlisted of 12 allowed (target was 8; the pass stopped at the time box). 4 candidates tried and rejected by a reproduced one-file fix. Nothing here is a task directory; no hidden/ files were built.
 
 Method: PRs listed with `gh pr list --state merged --json files,closingIssuesReferences` over attrs, click, werkzeug (first 150 only), jinja, flask, itsdangerous, arrow, pendulum, isort, black, pyflakes, pycodestyle, packaging, platformdirs, tomli, tomlkit, boltons, astroid, jedi; filter: closes an issue, 2-4 non-test .py files, test .py files changed. Each tried candidate was cloned at merge^1 (blobless) into a run-owned temp dir, Python 3.12 venv via uv, upstream test files checked out from the merge sha. "Upstream half" below means checking out ONE of the two source files from the merge sha (a proxy for the best one-file fix); "own fix" means I wrote the change by hand.
@@ -19,6 +21,7 @@ Method: PRs listed with `gh pr list --state merged --json files,closingIssuesRef
   - Upstream `unix.py` only: rc=2, collection ImportError (`_xdg_dir` missing). Not a fair fix, so also tried:
   - Own `unix.py` only: made `_get_user_dirs_folder` ignore a relative XDG_CONFIG_HOME inline with `os.path.isabs`. rc=1, 72 failed (all `test_macos.py` relative-XDG tests plus the `_xdg`-driven `test_unix.py` tests), 737 passed. MacOS inherits XDGMixin and never imports unix.py, so no unix.py-only fix can pass the macOS tests.
 - Residual risk: a `_xdg.py`-only change could in theory reach the one unix.py test by temporarily rewriting `os.environ` around `super()`. That is a hack I did not try; a reviewer should be told the unix.py test is the single discriminator for file two.
+- S41-20i verification: DROPPED. Own `_xdg.py`-only change (upstream `_xdg.py` hunks, plus `XDGMixin.user_documents_dir` temporarily deleting a relative XDG_CONFIG_HOME from os.environ around `super().user_documents_dir`, unix.py left at ref): `pytest tests/test_api.py tests/test_macos.py tests/test_unix.py -q -p no:cacheprovider` rc=0, 809 passed. The unix.py-dependent test does not require unix.py. Issue #539 states the general rule in its first sentence, so no trim would help.
 - Issue text vs tests: partly. Issue #539 names only XDG_STATE_HOME and says relative values should fall back to the platform default. Tests also assert the same for every other XDG_*_HOME variable, XDG_RUNTIME_DIR, site dir lists (relative entries filtered), and the user-dirs.dirs lookup. The XDG spec link in the issue states the general rule, but the task prompt should say "all XDG base-dir variables".
 
 ### 2. flask#5729 -> PR #5736 (template_filter/test/global usable without parentheses)
@@ -33,6 +36,7 @@ Method: PRs listed with `gh pr list --state merged --json files,closingIssuesRef
   - Upstream `sansio/app.py` only: rc=1, 3 failed (all in `test_blueprints.py`), 89 passed.
   - Upstream `sansio/blueprints.py` only: rc=1, 3 failed (all in `test_templating.py`), 89 passed.
   - Own one-file fix: not separately written; the two decorators share no code, so each file's fix is exactly its half above. A cross-file hack (app.py patching Blueprint at import) is the only route and was not attempted.
+- S41-20i verification: DROPPED. Reproduced RED rc=1 (6 failed, 86 passed). Own `sansio/app.py`-only fix (`if callable(name): self.add_template_X(name); return name` in template_filter/test/global): 3 failed (all test_blueprints.py), 89 passed. Own `sansio/app.py`-only cross-file hack (a module-level `_patch_blueprint()` wrapping Blueprint.app_template_filter/test/global so a callable first argument calls add_app_template_X): rc=0, 92 passed. Blueprint decorators do not route through app.py at call time (they only do so at registration via record_once), so the hack is the only one-file route, but the tests cannot reject it, and issue #5729 names only app.template_filter, so the Blueprint and template_test/global assertions are unstated behavior. Trimming to the stated behavior makes it a one-file task.
 - Caveat: the shape is two parallel implementations rather than a signature change plus caller. It survives the one-file test because each test module calls its own class directly, but a reviewer may judge it as "same change twice".
 - Issue text vs tests: issue #5729 shows only `@app.template_filter` without parens. Tests also assert the same for template_test and template_global and for the Blueprint variants. The prompt must say "template_filter, template_test and template_global, on Flask and on Blueprint".
 
