@@ -46,8 +46,9 @@ function tmp(prefix: string): string {
 // unitClassesFromGraph: real M-04 (buildJavaGraph) integration, no stubs needed -- it is a
 // pure read of the same fixture files java_graph.test.ts already uses.
 // --------------------------------------------------------------------------------------------
-// buildJavaGraph spawns real javac + jdeps: 0.25s locally (5 runs, also under 3 busy loops), but
-// 5169ms on loaded CI (E-149, run 36764748814) vs bun's 5000ms default. 20s = ~3x the CI worst.
+// Real-JVM tests (buildJavaGraph's javac + jdeps, and the three java_capture.sh tests that compile
+// and run real java): graph tests 0.25s locally, capture tests ~1.7s, but a graph test hit 5169ms
+// on loaded CI (E-149, run 36764748814) vs bun's 5000ms default. 20s = ~3x the CI worst.
 const JAVAC_JDEPS_TIMEOUT_MS = 20_000;
 describe("unitClassesFromGraph (M-04 integration)", () => {
   it("derives fully-qualified class names from the merged M-04 graph's nodes", () => {
@@ -195,7 +196,7 @@ describe("java_capture.sh (real subprocess)", () => {
     expect(valueCase).toBeDefined();
     expect(valueCase.return).toEqual({ t: "int", v: "42" });
     expect(valueCase.exc).toBeNull();
-  });
+  }, JAVAC_JDEPS_TIMEOUT_MS);
 
   it("keeps status.json valid JSON for the real three-line JDK 8 `java -version` output", () => {
     const out = tmp("e10-javacap-out-");
@@ -266,7 +267,7 @@ describe("java_capture.sh (real subprocess)", () => {
     expect(new Set(methods).size).toBe(methods.length); // no two overloads collided into one key
     expect(methods).toContain("com.example.Over#add(int,int)");
     expect(methods).toContain("com.example.Over#add(String,String)");
-  });
+  }, JAVAC_JDEPS_TIMEOUT_MS);
 
   it("passes each Randoop --testclass as its own argv entry, not one concatenated string", () => {
     const out = tmp("e10-javacap-out-");
@@ -307,7 +308,7 @@ describe("java_capture.sh (real subprocess)", () => {
     expect(argv).toContain("--testclass=com.example.util.Helper");
     // the pre-fix bug collapsed both classes into one argument -- guard against that regression
     expect(argv.some((a) => a.includes("--testclass=com.example.util.Standalone --testclass="))).toBe(false);
-  });
+  }, JAVAC_JDEPS_TIMEOUT_MS);
 });
 
 // --------------------------------------------------------------------------------------------
