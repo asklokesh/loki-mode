@@ -1488,3 +1488,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 2. S41-01: rebase slice-S41-01 onto main, keep one LOKI_E10_PREFIX and one LOKI_E10_TRIM in V10_ENGINE_ENV_ALLOWLIST, rerun bash eval/loki10/test-harness.sh to 0 failures, send it to an opus reviewer, and merge on APPROVE. No scorecard counts until this is merged (D43 item 1).
 3. Then merge the eval prerequisites (S41-17 CIs, S41-18 resume) and bring the medium tier to 20 tasks (review S41-20a/b/c, run their no-op baselines, append their INDEX lines, and cut 7 more).
 4. Then run the medium-tier eval per D43: raw sonnet, raw opus and loki on sonnet, at least 3 reps each, back to back, with auth checked before every rep and resume on interrupt; decide only on differences whose 95% interval excludes 0.
+
+## 2026-09-30T16:58Z RESUME (Chief of Staff / Release Manager)
+- v10.5.5 verified (after the 2026-09-28 hand-off): Release 21b7becd all jobs success; npm latest 10.5.5, gitHead 21b7becd; body 24 lines; Post-Release Smoke green on rerun of run 36497082408 (the first attempt timed out waiting on PyPI, now E-135). 9 rows flipped released.
+- Nightly red since 2026-09-29 is E-134 (fsmonitor test control breaks on Bun 1.4.2; product calls still do not leak).
+- Usage governor: still uncalibrated, no founder reading on file after the reset; staffing at the operating-model floor of 8 until a reading arrives.
+- Order per hand-off: S41-01 (rebase, opus), then S41-17/S41-18, S41-20a/b/c toward 20 medium tasks, then the D43 medium eval. Rework in parallel: M-15, E-125, S41-05, S41-12; fixes E-134, E-135.
