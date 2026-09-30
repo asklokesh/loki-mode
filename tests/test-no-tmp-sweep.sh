@@ -62,10 +62,16 @@ scan() {
     grep -nE '(^|[;&|({[:space:]])rm[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*(--[[:space:]]+)?[^;&|]*((TMPDIR|/tmp|/private/tmp)[^[:space:];&|]*/(loki-\*|loki-run[^[:space:]]*\*|test-\*|\*)|loki-run\.?\*)' "$@" 2>/dev/null \
         | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#'
 }
+# find <tmp root> ... -name <loki-*|loki-run.*|test-*> ... (-delete | -exec rm)
+scan_find() {
+    grep -nE '(^|[;&|({[:space:]])find[[:space:]]+[^;&|]*(TMPDIR|/tmp|/private/tmp)[^;&|]*-i?name[[:space:]]+["'"'"']?(loki-|loki-run\.|test-)[^;&|]*(-delete|-exec[[:space:]]+rm)' "$@" 2>/dev/null \
+        | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#'
+}
+scan_all() { scan "$@"; scan_find "$@"; }
 cd "$REPO_ROOT" || exit 1
 FILES=()
 while IFS= read -r f; do FILES+=("$f"); done < <(find tests scripts eval loki-ts/tests -type f \( -name '*.sh' -o -name '*.bash' \) -not -path '*/node_modules/*' 2>/dev/null)
-HITS="$(scan "${FILES[@]}" | grep -vE "$ALLOW" || true)"
+HITS="$(scan_all "${FILES[@]}" | grep -vE "$ALLOW" || true)"
 if [ -z "$HITS" ]; then ok "no rm of a TMPDIR or loki-run glob in scripts/tests"
 else bad "rm of a TMPDIR or loki-run glob found:"; printf '%s\n' "$HITS"; fi
 
@@ -75,9 +81,11 @@ cat >"$CTRL" <<'CTL'
 rm -rf "${TMPDIR:-/tmp}"/loki-*
 rm -rf /tmp/loki-run.*
 rm -rf "$TMPDIR"/*
+find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'loki-*' -delete
+find /tmp -maxdepth 1 -name "loki-run.*" -exec rm -rf {} +
 CTL
-n="$(scan "$CTRL" | wc -l | tr -d ' ')"
-if [ "$n" -eq 3 ]; then ok "static scan flags all 3 known-bad shapes"; else bad "static scan positive control caught $n of 3"; fi
+n="$(scan_all "$CTRL" | wc -l | tr -d ' ')"
+if [ "$n" -eq 5 ]; then ok "static scan flags all 5 known-bad shapes"; else bad "static scan positive control caught $n of 5"; fi
 
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]

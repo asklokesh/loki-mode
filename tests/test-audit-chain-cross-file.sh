@@ -26,6 +26,13 @@ skip() { SKIP=$((SKIP+1)); echo "SKIP: $1"; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
+# Run-owned temp dir (E-143): all fixtures live under LOKI_RUN_TMP.
+# shellcheck disable=SC1091
+. "$REPO_ROOT/eval/loki10/lib-tmp.sh"
+_OWN_TMP=0
+if [ -z "${LOKI_RUN_TMP:-}" ]; then loki_run_tmp_create || exit 1; _OWN_TMP=1; fi
+_tmp_done() { [ "$_OWN_TMP" = 1 ] && loki_run_tmp_cleanup; return 0; }
+trap _tmp_done EXIT
 
 # Test 1: new verify_all_logs() returns valid=True on real production audit dir.
 # Gracefully skips when no real audit data exists (e.g. CI runners, fresh
@@ -67,7 +74,7 @@ import sys, os, tempfile, json, shutil
 sys.path.insert(0, '.')
 
 # Redirect audit dir to a temp scratch
-scratch = tempfile.mkdtemp(prefix="loki-audit-test-v7715-")
+scratch = tempfile.mkdtemp(prefix="audit-", dir=os.environ["LOKI_RUN_TMP"])
 os.environ.pop("LOKI_AUDIT_DISABLED", None)
 
 from dashboard import audit
@@ -122,7 +129,7 @@ $PY <<'PYEOF' 2>&1 | tail -1 | grep -q "TAMPER_DETECTED_OK" && \
   bad "tampering not detected"
 import sys, os, tempfile, json, shutil
 sys.path.insert(0, '.')
-scratch = tempfile.mkdtemp(prefix="loki-audit-test-v7715-")
+scratch = tempfile.mkdtemp(prefix="audit-", dir=os.environ["LOKI_RUN_TMP"])
 from dashboard import audit
 audit.AUDIT_DIR = __import__('pathlib').Path(scratch)
 audit._last_hash = "0" * 64
@@ -165,7 +172,7 @@ $PY <<'PYEOF' 2>&1 | tail -1 | grep -q "BWCOMPAT_OK" && \
   bad "single-file backward-compat broken"
 import sys, os, tempfile, json, shutil
 sys.path.insert(0, '.')
-scratch = tempfile.mkdtemp(prefix="loki-audit-test-v7715-")
+scratch = tempfile.mkdtemp(prefix="audit-", dir=os.environ["LOKI_RUN_TMP"])
 from dashboard import audit
 audit.AUDIT_DIR = __import__('pathlib').Path(scratch)
 audit._last_hash = "0" * 64
@@ -199,7 +206,7 @@ $PY <<'PYEOF' 2>&1 | tail -1 | grep -q "ROTATED_OK" && \
   bad "rotated files break chain (Opus 2 issue not fixed)"
 import sys, os, json, time, tempfile, shutil
 sys.path.insert(0, '.')
-scratch = tempfile.mkdtemp(prefix="loki-audit-test-v7715-")
+scratch = tempfile.mkdtemp(prefix="audit-", dir=os.environ["LOKI_RUN_TMP"])
 from dashboard import audit
 audit.AUDIT_DIR = __import__('pathlib').Path(scratch)
 audit._last_hash = "0" * 64
@@ -247,9 +254,6 @@ else:
     print(f"ROTATED_FAIL: {r}")
 shutil.rmtree(scratch, ignore_errors=True)
 PYEOF
-
-# Cleanup
-rm -rf /tmp/loki-audit-test-v7715-*
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed, $SKIP skipped"

@@ -599,6 +599,17 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
             ("Security Audit", "completed", "success", "workflow_dispatch", "2026-01-01T00:05:00Z")]))
         self.assertEqual(rc, 0, out)
 
+    def _tie(self, *order):
+        rc, out = self._run(self._audit_fixture([
+            ("Security Audit", "completed", c, "push", "2026-01-01T00:00:00Z") for c in order]))
+        self.assertEqual(rc, 1, out)
+
+    def test_e143_created_at_tie_success_then_failure_is_failure(self):
+        self._tie("success", "failure")
+
+    def test_e143_created_at_tie_failure_then_success_is_failure(self):
+        self._tie("failure", "success")
+
     def test_e87_pull_request_security_audit_does_not_count(self):
         rc, out = self._run(self._audit_fixture(
             [("Security Audit", "completed", "success", "pull_request")]))

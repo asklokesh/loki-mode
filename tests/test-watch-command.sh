@@ -67,9 +67,17 @@ if [ ! -x "$LOKI" ]; then
 fi
 
 # Create a temp dir for isolated testing
-TMPDIR_BASE=$(mktemp -d /tmp/loki-test-watch-XXXXXX)
+# Run-owned temp dir (E-143): all fixtures live under LOKI_RUN_TMP.
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/../eval/loki10/lib-tmp.sh"
+_OWN_TMP=0
+if [ -z "${LOKI_RUN_TMP:-}" ]; then loki_run_tmp_create || exit 1; _OWN_TMP=1; fi
+_tmp_done() { [ "$_OWN_TMP" = 1 ] && loki_run_tmp_cleanup; return 0; }
+# Not exported: loki children clean up an inherited LOKI_RUN_TMP themselves.
+export -n LOKI_RUN_TMP
+TMPDIR_BASE=$(mktemp -d "$LOKI_RUN_TMP/watch.XXXXXX")
 ORIG_DIR="$(pwd)"
-trap 'cd "$ORIG_DIR"; rm -rf "$TMPDIR_BASE"' EXIT
+trap 'cd "$ORIG_DIR"; rm -rf "$TMPDIR_BASE"; _tmp_done' EXIT
 
 # -------------------------------------------
 # Test 1: Help flag works
@@ -184,7 +192,7 @@ cd "$TMPDIR_BASE" || exit 1
 mkdir -p test-signal && cd test-signal || exit 1
 echo "# Signal test PRD" > prd.md
 # Start watch in background with --no-auto-start, send SIGTERM after 2s
-"$LOKI" watch --no-auto-start > /tmp/loki-test-watch-signal.out 2>&1 &
+"$LOKI" watch --no-auto-start > "$TMPDIR_BASE/watch-signal.out" 2>&1 &
 watch_pid=$!
 sleep 2
 if kill -0 "$watch_pid" 2>/dev/null; then
@@ -205,7 +213,7 @@ else
     # Process already exited (which is fine if it errored out quickly)
     log_pass "loki watch exits gracefully on SIGTERM"
 fi
-rm -f /tmp/loki-test-watch-signal.out
+rm -f "$TMPDIR_BASE/watch-signal.out"
 cd "$TMPDIR_BASE" || exit 1
 
 # -------------------------------------------
