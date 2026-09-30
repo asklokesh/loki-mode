@@ -34,6 +34,16 @@ import pytest
 # Tests always run headless: loki never opens a browser under this (S-103).
 os.environ.setdefault("LOKI_NO_BROWSER", "1")
 
+# The proof generator auto-creates a signing key (A-120). Keep it out of the
+# real ~/.loki/keys: default to a throwaway key file for the whole session.
+# Tests of the default-key path set HOME / the variable explicitly.
+import tempfile  # noqa: E402
+
+os.environ.setdefault(
+    "LOKI_RECEIPT_SIGNING_KEY_FILE",
+    os.path.join(tempfile.mkdtemp(prefix="loki-test-key-"), "receipt-ed25519.pem"),
+)
+
 # Every variable through which git can redirect a subprocess at a different
 # repository, index, object store, or worktree.
 _GIT_ENV_LEAKS = (

@@ -81,7 +81,7 @@ export interface SessionResult {
 export interface SessionRunner { // implemented by session.ts (E-07)
   run(opts: SessionRunOptions): Promise<SessionResult>;
 }
-export type RunnerName = "pytest" | "vitest" | "jest" | "npm" | "bun" | "go" | "cargo";
+export type RunnerName = "pytest" | "vitest" | "jest" | "npm" | "bun" | "node" | "go" | "cargo";
 /** A test file and the runner that executes it (mixed repos run each runner separately). */
 export interface TestRef {
   runner: RunnerName;

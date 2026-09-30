@@ -495,6 +495,48 @@ else
 fi
 
 # ===========================================================================
+# 10b. A receipt signed by a key this gate does not hold is UNCHECKED, never
+#      TAMPERED (the hash is fine; we just cannot vouch for the signer), and a
+#      key listed in LOKI_RECEIPT_RETIRED_PUBKEYS verifies.
+# ===========================================================================
+echo "10b. foreign-key receipt: UNCHECKED, and VERIFIED once its public key is retired"
+if [ "${D8S_EXECUTED:-0}" = "1" ]; then
+    D14_BASE="$(make_fixture d14)"; D14="$WORKROOT/d14"
+    ( cd "$D14" && _LOKI_RUN_START_SHA="$D14_BASE" \
+        LOKI_RECEIPT_SIGNING_KEY_FILE="$WORKROOT/foreign.pem" \
+        python3 "$GENERATOR" --loki-dir "$D14/.loki" >/dev/null 2>&1 )
+    python3 - "$WORKROOT/foreign.pem" "$WORKROOT/foreign.pub" <<'PYEOF'
+import sys
+from cryptography.hazmat.primitives import serialization as s
+k = s.load_pem_private_key(open(sys.argv[1], "rb").read(), None)
+open(sys.argv[2], "wb").write(k.public_key().public_bytes(
+    s.Encoding.PEM, s.PublicFormat.SubjectPublicKeyInfo))
+PYEOF
+    reset_sentinels
+    OUT14="$( cd "$D14" && PATH="$FAKE_BIN:$PATH" LOKI_DIR="$D14/.loki" \
+        bash "$LOKI_BIN" deploy --dir "$D14" --no-clip --execute 2>&1 )"
+    if [ "$(any_sentinel)" -eq 0 ] && printf '%s' "$OUT14" | grep -q "UNCHECKED" \
+       && ! printf '%s' "$OUT14" | grep -q "TAMPERED"; then
+        ok "a receipt signed by an unknown key refuses as UNCHECKED, not TAMPERED"
+    else
+        bad "a foreign-key receipt was not reported UNCHECKED" \
+            "sentinels=$(any_sentinel); $(printf '%s' "$OUT14" | grep -i ' - ' | head -3)"
+    fi
+    reset_sentinels
+    OUT14R="$( cd "$D14" && PATH="$FAKE_BIN:$PATH" LOKI_DIR="$D14/.loki" \
+        LOKI_RECEIPT_RETIRED_PUBKEYS="$WORKROOT/foreign.pub" \
+        bash "$LOKI_BIN" deploy --dir "$D14" --no-clip --execute 2>&1 )"
+    if [ "$(any_sentinel)" -ge 1 ] && printf '%s' "$OUT14R" | grep -qi "gate PASSED"; then
+        ok "a retired public key verifies its receipts (rotation keeps old receipts VERIFIED)"
+    else
+        bad "a receipt signed by a retired key did not verify" \
+            "sentinels=$(any_sentinel); $(printf '%s' "$OUT14R" | grep -i ' - ' | head -3)"
+    fi
+else
+    echo "  SKIPPED: needs test 8's signed fixture (not a pass)"
+fi
+
+# ===========================================================================
 # 11-13. THE ANCHOR OVERRIDE.
 #
 # WHY IT EXISTS: measured on this repository, 8 of 9 receipts record no

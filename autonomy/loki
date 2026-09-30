@@ -9299,19 +9299,29 @@ _deploy_receipt_verdict() {
     hash_ok="$(printf '%s' "$out" | python3 -c 'import json,sys;print(str(json.load(sys.stdin).get("hash_ok",False)).lower())' 2>/dev/null || printf 'false')"
     if [ "$hash_ok" != "true" ]; then printf '%s' "TAMPERED"; return 0; fi
 
-    # Provenance is the Ed25519 attestation, checked against the PUBLIC half of
-    # the local signing key (LOKI_RECEIPT_SIGNING_KEY*, else the default key
-    # file). A legacy gpg_signature is ignored: old receipts read UNSIGNED here.
+    # Provenance is the Ed25519 attestation, checked against the PUBLIC keys we
+    # hold: the local signing key plus LOKI_RECEIPT_RETIRED_PUBKEYS. A legacy
+    # gpg_signature is ignored: old receipts read UNSIGNED here. A token whose
+    # kid is not in that set (another machine, a rotated-away key) cannot be
+    # evaluated, so no key set is written and the verdict is UNCHECKED, never
+    # TAMPERED: the hash is fine, we just cannot vouch for who signed it. A
+    # local key only proves "a holder of this key", not an independent build.
     local jwks att
     jwks="$(mktemp "${TMPDIR:-/tmp}/loki-jwks.XXXXXX")" || { printf '%s' "UNCHECKED"; return 0; }
-    python3 -E - "${_LOKI_SCRIPT_DIR}" >"$jwks" 2>/dev/null <<'PY' || true
+    python3 -E - "${_LOKI_SCRIPT_DIR}" "$pj" >"$jwks" 2>/dev/null <<'PY' || true
 import sys, json
 sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 sys.path.insert(0, sys.argv[1])
-from receipt_jwt import load_signing_key, build_jwks
+from receipt_jwt import load_signing_key, load_retired_public_keys, build_jwks, _b64url_decode
 k, _ = load_signing_key(auto_generate=False)
-if k is not None:
-    print(json.dumps(build_jwks(k)))
+jwks = build_jwks(k, load_retired_public_keys())
+try:
+    tok = json.load(open(sys.argv[2]))["verification"]["attestation"]
+    kid = json.loads(_b64url_decode(tok.split(".")[0])).get("kid", "")
+except Exception:
+    kid = ""          # malformed or absent: let the checker decide (none / bad)
+if not kid or kid in [j.get("kid") for j in jwks["keys"]]:
+    print(json.dumps(jwks))
 PY
     att="$(loki_proof_attestation_check "$pj" "$jwks")"
     rm -f "$jwks"
@@ -9785,7 +9795,7 @@ cmd_deploy() {
                 echo "     file alone can opt in."
                 echo ""
                 echo "It FAILS CLOSED: if a check cannot be evaluated at all (no receipt,"
-                echo "gpg unavailable, anchor unresolvable, not a git repo), that is a"
+                echo "signing key or keys unavailable, anchor unresolvable, not a git repo), that is a"
                 echo "REFUSAL, not a pass. A refusal still prints the advisory command."
                 echo ""
                 echo "Hard limits, with or without --execute:"
@@ -37105,8 +37115,8 @@ print(json.dumps(json.load(open(os.environ['LOKI_PROOF_JSON'])), indent=2))
                         # verified. Exiting 0 here let a stripped signature pass
                         # any CI step that asked for provenance.
                         echo -e "${YELLOW}attestation: ABSENT -- this receipt carries no attestation.${NC}" >&2
-                        echo "  Nothing was checked against ${_pv_jwks}. The receipt may still be" >&2
-                        echo "  gpg-signed; this says only that it has no JWKS attestation." >&2
+                        echo "  Nothing was checked against ${_pv_jwks}. This says only that the" >&2
+                        echo "  receipt has no JWKS attestation." >&2
                         echo "  Not verified: a key set was supplied, but the receipt is unsigned (exit 1)." >&2
                         _pv_rc=1
                         _pv_attestation_field="ABSENT"

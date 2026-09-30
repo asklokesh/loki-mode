@@ -30,6 +30,15 @@ running; the receipt is signed with the default key. Old receipts that carry a
 `verification.gpg_signature` still verify for integrity, and the deploy gate reads them as UNSIGNED for
 provenance.
 
+## What the deploy gate trusts
+
+`loki deploy --execute` verifies a receipt against the local signing key plus
+`LOKI_RECEIPT_RETIRED_PUBKEYS`. That proves only "a holder of this key signed
+it", not an independent build. A receipt signed by a key the gate does not hold
+(another machine, a rotated-away key, a key set only at generate time) reads
+UNCHECKED and refuses; it is never reported as TAMPERED. Keep retired public
+keys listed after a rotation so old receipts stay VERIFIED.
+
 ## Honest limits
 
 - A signature proves **provenance and integrity**, not correctness. The
