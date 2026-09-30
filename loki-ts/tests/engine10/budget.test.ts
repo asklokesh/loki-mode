@@ -13,10 +13,6 @@ function count(list: string[], root: string = ROOT): number {
   return list.reduce((n, f) => n + readFileSync(join(root, f), "utf8").split("\n").length, 0);
 }
 
-function e10extFiles(): string[] {
-  return (readdirSync(E10EXT_ROOT, { recursive: true }) as string[]).filter((f) => f.endsWith(".ts"));
-}
-
 function splitFiles(): { core: string[]; mod: string[] } {
   const files = (readdirSync(ROOT, { recursive: true }) as string[]).filter((f) => f.endsWith(".ts"));
   expect(files).toContain("machine.ts");
