@@ -341,3 +341,13 @@ Raw claude -p swung 85.7% to 71.4% between two runs on the same 7 medium tasks, 
 2. The medium tier holds at least 20 tasks and every arm runs at least 3 reps. The scorecard reports 95% intervals; a mark is green or red only when the interval of the Loki minus raw difference excludes 0, otherwise it is inconclusive, and inconclusive never flips a default (S41-17, S41-20a to c).
 3. Speed is v10's worst medium axis (p50 138 to 214s against raw 56 to 70s): profile stage wall-clock per run and cut the slowest stage first (S41-19, then a cut slice named by its result).
 4. Auth is checked before every rep (S41-03 auth_guard) and an interrupted eval resumes from its out files, never re-runs from scratch (S41-18).
+
+## D44 (founder, 2026-09-30T17:51Z): green main by construction, releases on a 10-minute clock
+
+Main went red four times on 2026-09-30 from structural checks CI caught after a push. From now on:
+1. Trains. The Release Manager merges approved slices onto train/N and pushes it; Tier B (Tests, Bun Parity, Coverage) runs there. Main is fast-forwarded only to a train commit whose Tier B is green (scripts/train-promote.sh refuses otherwise). Unverified merges are never pushed to main. A red train drops or fixes the failing slice and re-runs; main stays releasable.
+2. Release clock at :00/:10/:20/:30/:40/:50: if main has a green commit newer than the last release, bump VERSION (verdict reuse through version-bump-only) and publish. Trains overlap. Target 3 or more releases per hour, stretch 6.
+3. Structural checks (shard-durations rows, hardcoded path scans, test registration, doc-drift, line budgets) run in Tier A and as a pre-merge check, each under 10 seconds. A slice is not approved while one fails.
+4. Staff 8 or more builders; clear waiting reviews with sonnet for LOW/MEDIUM; opus stays under 30 percent.
+5. Pulse gains RELEASE_CADENCE (a green unreleased commit on main older than 20 minutes) and MAIN_RED_BY_MERGE (a push to main failing Tier B). Releases per hour are reported in METRICS.md hourly.
+Bootstrap: train/1 is verified through a pull request to main (pull_request already triggers Tier B) and carries the train/** push triggers so later trains verify on push.
