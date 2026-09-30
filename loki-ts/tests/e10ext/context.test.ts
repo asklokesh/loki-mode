@@ -52,4 +52,28 @@ describe("briefContext", () => {
     const ctx = { repoDir: tmp, outputs: () => ({}), tests: { impacted: () => [] } } as unknown as RunContext;
     expect(briefContext(ctx, deps)).toBe("");
   });
+
+  test("no keyword match: falls back to the head of the map, never empty", () => {
+    const ctx = fixture(30);
+    const c2 = { ...ctx, outputs: () => ({ intake: { ...ctx.outputs().intake, task: "make it better" } }) } as RunContext;
+    const text = briefContext(c2, deps);
+    expect(text).toContain("pkg/mod_0/module_0.py");
+    expect(text).toContain("pkg/mod_19/module_19.py");
+    expect(text).not.toContain("module_20.py");
+  });
+
+  test("plan paths that are absolute or contain .. are dropped", () => {
+    const ctx = fixture(5);
+    const c2 = { ...ctx, outputs: () => ({ ...ctx.outputs(), plan: { relevant_files: ["/etc/passwd", "../x.py", "a/../b.py", "ok/file.py"] } }) } as RunContext;
+    const text = briefContext(c2, deps);
+    expect(text).toContain("ok/file.py");
+    expect(text).not.toMatch(/passwd|\.\.\/x|a\/\.\./);
+  });
+
+  test("a test path with whitespace or metacharacters is single-quoted in the command", () => {
+    const ctx = fixture(5);
+    const bad: TestRef[] = [{ runner: "pytest", path: "tests/my test;rm.py" }];
+    const c2 = { ...ctx, tests: { impacted: () => bad } } as unknown as RunContext;
+    expect(briefContext(c2, deps)).toContain("-q 'tests/my test;rm.py'");
+  });
 });
