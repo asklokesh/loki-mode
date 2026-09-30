@@ -1,0 +1,209 @@
+..............FFF.F.F................................................... [ 56%]
+........................................................                 [100%]
+=================================== FAILURES ===================================
+________________ test_set_key[-a-b\\c-expected13-a='b\\\\c'\n] _________________
+
+dotenv_path = PosixPath('<tmp>/pytest-71/test_set_key__a_b__c_expected10/.env')
+before = '', key = 'a', value = 'b\\c', expected = (True, 'a', 'b\\c')
+after = "a='b\\\\c'\n"
+
+    @pytest.mark.parametrize(
+        "before,key,value,expected,after",
+        [
+            ("", "a", "", (True, "a", ""), "a=''\n"),
+            ("", "a", "b", (True, "a", "b"), "a='b'\n"),
+            ("", "a", "'b'", (True, "a", "'b'"), "a='\\'b\\''\n"),
+            ("", "a", '"b"', (True, "a", '"b"'), "a='\"b\"'\n"),
+            ("", "a", "b'c", (True, "a", "b'c"), "a='b\\'c'\n"),
+            ("", "a", 'b"c', (True, "a", 'b"c'), "a='b\"c'\n"),
+            ("a=b", "a", "c", (True, "a", "c"), "a='c'\n"),
+            ("a=b\n", "a", "c", (True, "a", "c"), "a='c'\n"),
+            ("a=b\n\n", "a", "c", (True, "a", "c"), "a='c'\n\n"),
+            ("a=b\nc=d", "a", "e", (True, "a", "e"), "a='e'\nc=d"),
+            ("a=b\nc=d\ne=f", "c", "g", (True, "c", "g"), "a=b\nc='g'\ne=f"),
+            ("a=b\n", "c", "d", (True, "c", "d"), "a=b\nc='d'\n"),
+            ("a=b", "c", "d", (True, "c", "d"), "a=b\nc='d'\n"),
+            ("", "a", "b\\c", (True, "a", "b\\c"), "a='b\\\\c'\n"),
+            ("", "a", "b\\", (True, "a", "b\\"), "a='b\\\\'\n"),
+            ("", "a", "b\\'c", (True, "a", "b\\'c"), "a='b\\\\\\'c'\n"),
+        ],
+    )
+    def test_set_key(dotenv_path, before, key, value, expected, after):
+        logger = logging.getLogger("dotenv.main")
+        dotenv_path.write_text(before)
+    
+        with mock.patch.object(logger, "warning") as mock_warning:
+            result = dotenv.set_key(dotenv_path, key, value)
+    
+        assert result == expected
+>       assert dotenv_path.read_text() == after
+E       assert "a='b\\c'\n" == "a='b\\\\c'\n"
+E         
+E         - a='b\\c'
+E         ?      -
+E         + a='b\c'
+
+tests/test_main.py:56: AssertionError
+_________________ test_set_key[-a-b\\-expected14-a='b\\\\'\n] __________________
+
+dotenv_path = PosixPath('<tmp>/pytest-71/test_set_key__a_b___expected140/.env')
+before = '', key = 'a', value = 'b\\', expected = (True, 'a', 'b\\')
+after = "a='b\\\\'\n"
+
+    @pytest.mark.parametrize(
+        "before,key,value,expected,after",
+        [
+            ("", "a", "", (True, "a", ""), "a=''\n"),
+            ("", "a", "b", (True, "a", "b"), "a='b'\n"),
+            ("", "a", "'b'", (True, "a", "'b'"), "a='\\'b\\''\n"),
+            ("", "a", '"b"', (True, "a", '"b"'), "a='\"b\"'\n"),
+            ("", "a", "b'c", (True, "a", "b'c"), "a='b\\'c'\n"),
+            ("", "a", 'b"c', (True, "a", 'b"c'), "a='b\"c'\n"),
+            ("a=b", "a", "c", (True, "a", "c"), "a='c'\n"),
+            ("a=b\n", "a", "c", (True, "a", "c"), "a='c'\n"),
+            ("a=b\n\n", "a", "c", (True, "a", "c"), "a='c'\n\n"),
+            ("a=b\nc=d", "a", "e", (True, "a", "e"), "a='e'\nc=d"),
+            ("a=b\nc=d\ne=f", "c", "g", (True, "c", "g"), "a=b\nc='g'\ne=f"),
+            ("a=b\n", "c", "d", (True, "c", "d"), "a=b\nc='d'\n"),
+            ("a=b", "c", "d", (True, "c", "d"), "a=b\nc='d'\n"),
+            ("", "a", "b\\c", (True, "a", "b\\c"), "a='b\\\\c'\n"),
+            ("", "a", "b\\", (True, "a", "b\\"), "a='b\\\\'\n"),
+            ("", "a", "b\\'c", (True, "a", "b\\'c"), "a='b\\\\\\'c'\n"),
+        ],
+    )
+    def test_set_key(dotenv_path, before, key, value, expected, after):
+        logger = logging.getLogger("dotenv.main")
+        dotenv_path.write_text(before)
+    
+        with mock.patch.object(logger, "warning") as mock_warning:
+            result = dotenv.set_key(dotenv_path, key, value)
+    
+        assert result == expected
+>       assert dotenv_path.read_text() == after
+E       assert "a='b\\'\n" == "a='b\\\\'\n"
+E         
+E         - a='b\\'
+E         ?      -
+E         + a='b\'
+
+tests/test_main.py:56: AssertionError
+______________ test_set_key[-a-b\\'c-expected15-a='b\\\\\\'c'\n] _______________
+
+dotenv_path = PosixPath('<tmp>/pytest-71/test_set_key__a_b___c_expected0/.env')
+before = '', key = 'a', value = "b\\'c", expected = (True, 'a', "b\\'c")
+after = "a='b\\\\\\'c'\n"
+
+    @pytest.mark.parametrize(
+        "before,key,value,expected,after",
+        [
+            ("", "a", "", (True, "a", ""), "a=''\n"),
+            ("", "a", "b", (True, "a", "b"), "a='b'\n"),
+            ("", "a", "'b'", (True, "a", "'b'"), "a='\\'b\\''\n"),
+            ("", "a", '"b"', (True, "a", '"b"'), "a='\"b\"'\n"),
+            ("", "a", "b'c", (True, "a", "b'c"), "a='b\\'c'\n"),
+            ("", "a", 'b"c', (True, "a", 'b"c'), "a='b\"c'\n"),
+            ("a=b", "a", "c", (True, "a", "c"), "a='c'\n"),
+            ("a=b\n", "a", "c", (True, "a", "c"), "a='c'\n"),
+            ("a=b\n\n", "a", "c", (True, "a", "c"), "a='c'\n\n"),
+            ("a=b\nc=d", "a", "e", (True, "a", "e"), "a='e'\nc=d"),
+            ("a=b\nc=d\ne=f", "c", "g", (True, "c", "g"), "a=b\nc='g'\ne=f"),
+            ("a=b\n", "c", "d", (True, "c", "d"), "a=b\nc='d'\n"),
+            ("a=b", "c", "d", (True, "c", "d"), "a=b\nc='d'\n"),
+            ("", "a", "b\\c", (True, "a", "b\\c"), "a='b\\\\c'\n"),
+            ("", "a", "b\\", (True, "a", "b\\"), "a='b\\\\'\n"),
+            ("", "a", "b\\'c", (True, "a", "b\\'c"), "a='b\\\\\\'c'\n"),
+        ],
+    )
+    def test_set_key(dotenv_path, before, key, value, expected, after):
+        logger = logging.getLogger("dotenv.main")
+        dotenv_path.write_text(before)
+    
+        with mock.patch.object(logger, "warning") as mock_warning:
+            result = dotenv.set_key(dotenv_path, key, value)
+    
+        assert result == expected
+>       assert dotenv_path.read_text() == after
+E       assert "a='b\\\\'c'\n" == "a='b\\\\\\'c'\n"
+E         
+E         - a='b\\\'c'
+E         ?       -
+E         + a='b\\'c'
+
+tests/test_main.py:56: AssertionError
+____________________ test_set_key_round_trips[C:\\Users\\] _____________________
+
+dotenv_path = PosixPath('<tmp>/pytest-71/test_set_key_round_trips_C___U1/.env')
+value = 'C:\\Users\\'
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "C:\\Users",
+            "C:\\Users\\",
+            "\\d+",
+            "back\\",
+            "a\\'b",
+            "it's",
+            'say "hi"',
+            "a\\nb",
+            "plain",
+            "",
+        ],
+    )
+    def test_set_key_round_trips(dotenv_path, value):
+        dotenv_path.write_text("")
+    
+        dotenv.set_key(dotenv_path, "a", value)
+        dotenv.set_key(dotenv_path, "b", "sentinel")
+    
+>       assert dotenv.get_key(dotenv_path, "a") == value
+E       AssertionError: assert None == 'C:\\Users\\'
+E        +  where None = <function get_key at 0x10b4b9d20>(PosixPath('<tmp>/pytest-71/test_set_key_round_trips_C___U1/.env'), 'a')
+E        +    where <function get_key at 0x10b4b9d20> = dotenv.get_key
+
+tests/test_main.py:81: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  dotenv.main:main.py:35 python-dotenv could not parse statement starting at line 1
+WARNING  dotenv.main:main.py:120 Key a not found in <tmp>/pytest-71/test_set_key_round_trips_C___U1/.env.
+_______________________ test_set_key_round_trips[back\\] _______________________
+
+dotenv_path = PosixPath('<tmp>/pytest-71/test_set_key_round_trips_back_0/.env')
+value = 'back\\'
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "C:\\Users",
+            "C:\\Users\\",
+            "\\d+",
+            "back\\",
+            "a\\'b",
+            "it's",
+            'say "hi"',
+            "a\\nb",
+            "plain",
+            "",
+        ],
+    )
+    def test_set_key_round_trips(dotenv_path, value):
+        dotenv_path.write_text("")
+    
+        dotenv.set_key(dotenv_path, "a", value)
+        dotenv.set_key(dotenv_path, "b", "sentinel")
+    
+>       assert dotenv.get_key(dotenv_path, "a") == value
+E       AssertionError: assert None == 'back\\'
+E        +  where None = <function get_key at 0x10b4b9d20>(PosixPath('<tmp>/pytest-71/test_set_key_round_trips_back_0/.env'), 'a')
+E        +    where <function get_key at 0x10b4b9d20> = dotenv.get_key
+
+tests/test_main.py:81: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  dotenv.main:main.py:35 python-dotenv could not parse statement starting at line 1
+WARNING  dotenv.main:main.py:120 Key a not found in <tmp>/pytest-71/test_set_key_round_trips_back_0/.env.
+=========================== short test summary info ============================
+FAILED tests/test_main.py::test_set_key[-a-b\\c-expected13-a='b\\\\c'\n] - as...
+FAILED tests/test_main.py::test_set_key[-a-b\\-expected14-a='b\\\\'\n] - asse...
+FAILED tests/test_main.py::test_set_key[-a-b\\'c-expected15-a='b\\\\\\'c'\n]
+FAILED tests/test_main.py::test_set_key_round_trips[C:\\Users\\] - AssertionE...
+FAILED tests/test_main.py::test_set_key_round_trips[back\\] - AssertionError:...
+5 failed, 123 passed in 0.25s

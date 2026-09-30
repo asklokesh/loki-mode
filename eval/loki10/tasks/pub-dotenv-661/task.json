@@ -1,0 +1,19 @@
+{
+  "id": "pub-dotenv-661",
+  "kind": "public",
+  "prompt": "set_key corrupts values containing backslashes (Windows paths, regexes) on round-trip\n\n## Summary\n\n`set_key` (and the `dotenv set` CLI) writes single-quoted values but only escapes single quotes, not backslashes. Since the single-quoted-value parser treats backslash as an escape character, any value containing a backslash is corrupted when read back.\n\n## Reproduction\n\n```python\nimport dotenv\n\ndotenv.set_key(\".env\", \"PATH\", r\"C:\\Users\")\nprint(dotenv.get_key(\".env\", \"PATH\"))   # -> \"C:Users\"  (backslash lost)\n\ndotenv.set_key(\".env\", \"RE\", r\"\\d+\")\nprint(dotenv.get_key(\".env\", \"RE\"))      # -> \"d+\"\n```\n\nThe file ends up containing `PATH='C:\\Users'`. On read, the single-quote parser decodes `\\U` as an escape, so the backslash disappears. Doubling the backslash (`C:\\\\Users`) collapses to a single one. This affects Windows paths and regular expressions in particular.\n\n## Root cause\n\nIn `src/dotenv/main.py`, `set_key` builds the quoted output with:\n\n```python\nvalue_out = \"'{}'\".format(value_to_set.replace(\"'\", \"\\\\'\"))\n```\n\nThe backslash itself is never escaped, but `parser.py` decodes `\\\\` -> `\\` and `\\'` -> `'` inside single-quoted values, so the written value does not round-trip.\n\n## Fix\n\nEscape backslashes before escaping single quotes so the value round-trips through the parser. A PR follows.\n",
+  "issue_ref": "theskumar/python-dotenv#661",
+  "repo": {
+    "source": "https://github.com/theskumar/python-dotenv.git",
+    "ref": "751f8c148222e58aa173c83c4e5e6cfccb2cc124"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . 'pytest<9' click",
+  "hidden": {
+    "files": [
+      "tests/test_main.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider tests/test_main.py"
+  },
+  "timeout_s": 900,
+  "tier": "medium"
+}
