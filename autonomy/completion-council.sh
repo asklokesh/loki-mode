@@ -1865,6 +1865,29 @@ _loki_test_provenance() {
 # actually ran and was red); every inconclusive case passes through so a
 # legitimate completion is never falsely stopped. Default-on; opt out with
 # LOKI_EVIDENCE_GATE=0 (byte-identical to prior behavior, no read/write).
+# A-133: true (rc 0) when the changed-file union (arg 2, newline list, .loki/ already
+# excluded) is a trivial diff: at most 2 files and 20 changed lines, and none of
+# them a test, CI config, auth/security or route/entrypoint file. A path in any of
+# those classes is never trivial, whatever its size. Opt out: LOKI_EVIDENCE_TRIVIAL_SKIP=0.
+_council_trivial_diff() {
+    local base="$1" files="$2" n added deleted f total=0
+    [ "${LOKI_EVIDENCE_TRIVIAL_SKIP:-1}" = "0" ] && return 1
+    n=$(printf '%s\n' "$files" | wc -l | tr -d ' ')
+    [ "$n" -le 2 ] || return 1
+    printf '%s\n' "$files" | grep -qiE '(^|/)(tests?|__tests__|specs?|e2e|cypress|playwright)(/|$)|\.(test|spec)\.[^/]+$|(^|/)test_[^/]+$|_test\.[^/]+$|conftest\.py$|^\.github/|^\.gitlab-ci|^\.circleci/|Jenkinsfile|azure-pipelines|^\.buildkite/|^\.travis|auth|login|logout|session|passw|secret|credential|token|jwt|oauth|saml|sso|security|permission|rbac|acl|crypt|\.env|\.pem$|\.key$|middleware|policy|tenant|rls|route|router|controller|endpoint|(^|/)api/|(^|/)pages/|(^|/)handlers?/|(^|/)(server|app|main|index)\.[a-z]+$' && return 1
+    # Tracked changes vs the run base (committed, staged and unstaged), then untracked files.
+    while read -r added deleted f; do
+        [ -n "$f" ] || continue
+        case "$added$deleted" in *[!0-9]*) return 1 ;; esac  # binary: not trivial
+        total=$((total + added + deleted))
+    done < <(git diff --numstat "$base" -- . ':!.loki' 2>/dev/null || echo "x x x")
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        total=$((total + $(wc -l < "$f" 2>/dev/null || echo 99)))
+    done < <(git ls-files --others --exclude-standard -- . ':!.loki' 2>/dev/null)
+    [ "$total" -le 20 ]
+}
+
 council_evidence_gate() {
     # P2 (S-116): when the caller sets _LOKI_EVIDENCE_REQUIRE_TESTS=1, inconclusive
     # test evidence blocks instead of passing through. council_evaluate sets it as
@@ -1908,6 +1931,7 @@ council_evidence_gate() {
     # diff_inconclusive stays "false" on the conclusive branch below.
     local diff_inconclusive="false"
     local diff_inconclusive_reason=""
+    local _trivial_diff="false"
     if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         # No git repo => cannot prove fabrication => inconclusive => pass-through.
         diff_inconclusive="true"
@@ -1954,6 +1978,7 @@ council_evidence_gate() {
         local union_files
         union_files=$(printf '%s\n%s\n%s\n%s\n' "$committed_files" "$unstaged_files" "$staged_files" "$untracked_files" | grep -v '^$' | grep -vE '^\.loki/' | sort -u)
         if [ -n "$union_files" ]; then
+            _council_trivial_diff "$base_sha" "$union_files" && _trivial_diff="true"
             diff_files=$(printf '%s\n' "$union_files" | wc -l | tr -d ' ')
         else
             diff_files=0
@@ -2249,6 +2274,11 @@ INCONCLUSIVE_EOF
         "inconclusive": $test_inconclusive,
         "inconclusive_reason": "$test_inconclusive_reason"
     },
+    "boot": {
+        "ok": $([ "${boot_fails:-false}" = "true" ] && echo false || echo true),
+        "inconclusive": ${boot_inconclusive:-false},
+        "reason": "${boot_inconclusive_reason:-}"
+    },
     "nomock": {
         "ok": $_nomock_ok,
         "inconclusive": ${nomock_inconclusive:-false},
@@ -2291,6 +2321,10 @@ DETAILS_EOF
     if [ "${LOKI_EVIDENCE_BOOT_GATE:-1}" = "0" ]; then
         boot_inconclusive="true"
         boot_inconclusive_reason="boot_gate_disabled"
+    elif [ "$_trivial_diff" = "true" ]; then
+        # A-133: skipped, recorded as not proven (never a pass).
+        boot_inconclusive="true"
+        boot_inconclusive_reason="trivial_diff"
     elif [ ! -f "$_health_file" ] && [ ! -f "$_state_file" ]; then
         # No app-runner artifacts at all -> no serveable app was ever launched
         # (CLI/library project, or the runner never ran). Inconclusive, not a block.
@@ -2458,6 +2492,8 @@ PYEOF
 
     if [ "$_proof_persist_disabled" = "true" ]; then
         persist_inconclusive="true"; persist_inconclusive_reason="persist_gate_disabled"
+    elif [ "$_trivial_diff" = "true" ]; then
+        persist_inconclusive="true"; persist_inconclusive_reason="trivial_diff"
     elif [ "$_proof_serveable" != "true" ]; then
         persist_inconclusive="true"; persist_inconclusive_reason="not_serveable"
     elif command -v python3 >/dev/null 2>&1; then
@@ -2522,6 +2558,8 @@ PYEOF
 
     if [ "$_proof_auth_disabled" = "true" ]; then
         auth_inconclusive="true"; auth_inconclusive_reason="auth_gate_disabled"
+    elif [ "$_trivial_diff" = "true" ]; then
+        auth_inconclusive="true"; auth_inconclusive_reason="trivial_diff"
     elif [ "$_proof_serveable" != "true" ]; then
         auth_inconclusive="true"; auth_inconclusive_reason="not_serveable"
     elif command -v python3 >/dev/null 2>&1; then
@@ -2601,6 +2639,8 @@ PYEOF
     # isolation blocks.
     if [ "$_proof_authz_disabled" = "true" ]; then
         authz_inconclusive="true"; authz_inconclusive_reason="authz_gate_disabled"
+    elif [ "$_trivial_diff" = "true" ]; then
+        authz_inconclusive="true"; authz_inconclusive_reason="trivial_diff"
     elif [ "$_proof_serveable" != "true" ]; then
         authz_inconclusive="true"; authz_inconclusive_reason="not_serveable"
     elif command -v python3 >/dev/null 2>&1; then
@@ -2732,7 +2772,7 @@ PYEOF
         # Same honesty for the runtime-boot axis: a pass that could not confirm the
         # app boots (CLI/library, probe never ran, gate disabled) says so out loud
         # rather than implying the app was verified to run.
-        if [ "$boot_inconclusive" = "true" ]; then
+        if [ "$boot_inconclusive" = "true" ] && [ "$_trivial_diff" != "true" ]; then
             log_warn "[Council] Evidence gate: app-boot not confirmed (${boot_inconclusive_reason}). Pass-through; set LOKI_EVIDENCE_BOOT_GATE=0 to silence, or run the app so its health probe records a verdict."
         fi
         # Proof-of-Function honesty: a pass-through that could not PROVE a
@@ -2740,13 +2780,13 @@ PYEOF
         if [ "$nomock_inconclusive" = "true" ] && [ "$nomock_inconclusive_reason" != "nomock_gate_disabled" ]; then
             log_warn "[Council] Evidence gate: no-mock not confirmed (${nomock_inconclusive_reason}). Pass-through; set LOKI_PROOF_NOMOCK=0 to silence."
         fi
-        if [ "$persist_inconclusive" = "true" ] && [ "$persist_inconclusive_reason" != "persist_gate_disabled" ]; then
+        if [ "$persist_inconclusive" = "true" ] && [ "$persist_inconclusive_reason" != "persist_gate_disabled" ] && [ "$_trivial_diff" != "true" ]; then
             log_warn "[Council] Evidence gate: persistence not proven (${persist_inconclusive_reason}). Pass-through; set LOKI_PROOF_PERSIST=0 to silence, or expose a create form the driver can exercise (LOKI_PROOF_CREATE_SELECTOR)."
         fi
-        if [ "$auth_inconclusive" = "true" ] && [ "$auth_inconclusive_reason" != "auth_gate_disabled" ]; then
+        if [ "$auth_inconclusive" = "true" ] && [ "$auth_inconclusive_reason" != "auth_gate_disabled" ] && [ "$_trivial_diff" != "true" ]; then
             log_warn "[Council] Evidence gate: auth enforcement not proven (${auth_inconclusive_reason}). Pass-through; set LOKI_PROOF_AUTH=0 to silence, or set LOKI_PROOF_PROTECTED_PATH so the driver can test a logged-out request."
         fi
-        if [ "$authz_inconclusive" = "true" ] && [ "$authz_inconclusive_reason" != "authz_gate_disabled" ]; then
+        if [ "$authz_inconclusive" = "true" ] && [ "$authz_inconclusive_reason" != "authz_gate_disabled" ] && [ "$_trivial_diff" != "true" ]; then
             log_warn "[Council] Evidence gate: tenant isolation not proven (${authz_inconclusive_reason}). Pass-through; set LOKI_PROOF_AUTHZ=0 to silence, or configure LOKI_PROOF_AUTHZ_* selectors so the driver can drive two distinct sessions."
         fi
         _write_evidence_details "pass"
