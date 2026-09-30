@@ -1514,3 +1514,12 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Builders (8): D44-A (promote script and pre-push), D44-C (structural checks), E-137 (orphan leak), S41-20d, S41-20e (medium tasks), plus reworks. D44-B done, TL review in flight (flag: its gh lookup is branch-scoped to main, which misses train runs).
 - Reviews: opus on E-125 r2, E-134, S41-12 r3; S41-17 r5 narrow re-check; opus share 28 percent.
 - Governor: docs/v10/usage-readings.tsv holds only its header; no calibration reading exists, so staffing stays at the operating-model floor of 8.
+
+## 2026-09-30T18:40Z (Chief of Staff and Release Manager)
+- train/3 (b984d18f) green on Tests, Bun Parity and Coverage (baseline) push runs at 18:29Z; main fast-forwarded 97faf361..b984d18f; v10.5.7 released at 5a00409f (VERSION-only bump on the green parent). Watcher armed for the Release run, npm latest and gitHead, and the release body.
+- train/3 was blocked locally first by `tests/run-shellcheck.sh` rc=1 (SC2046 in eval/loki10/test-scorecard.sh:430-431); fixed with a scoped directive, rerun rc=0 before the push.
+- train/4 staging on local main: E-137, D44-C (15c2a870), S41-20a (flask-6093), E-140 (no TMPDIR glob sweeps), E-87 (dispatch Security Audit accepted by required-ci), S41-20e (pendulum-768, isort-2646). Local gate: shellcheck rc=0, structural-checks all passed, test-structural-checks 5/5, harness 130/0, scorecard 67/0, required-ci pytest 37 passed.
+- Medium tier: 10 on local main. Rejected with reproduced one-file fixes: attrs-1327, httpx-2536, pyjwt-1147, isort-1913; S41-20b-r2 (faker-2206 fixed, packaging-1162 borderline) and S41-20d in review; S41-20f and S41-20g building 4 each with a mandatory self-written one-file-fix probe.
+- Opus reviews (share 22.6 percent at dispatch): D44-A r2, E-125 r4 (absorbs E-132), M-15 r3. E-138 held for opus capacity.
+- Sonnet: reviews of S41-20d, S41-20b-r2, E-115 plus E-142, S41-10; builders EV-12E, S41-20f, S41-20g, E-143.
+- Founder: a reviewer's failed cd left an empty pip-only venv at the repo-root .venv (gitignored); v10-guard RULE4 blocks its removal from a session. Remove with `rm -rf .venv` when convenient.
