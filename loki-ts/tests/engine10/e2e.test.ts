@@ -67,7 +67,8 @@ function runEngine(mode: "done" | "already", withPr = false): Run {
   delete env.LOKI_MODEL_OVERRIDE;
   delete env.LOKI_LEGACY_BASH; // bin/loki would skip the engine10 block
   delete env.LOKI_RECEIPT_SIGNING_KEY;
-  delete env.LOKI_RECEIPT_SIGNING_KEY_FILE;
+  const keyDir = mkdtempSync(join(tmpdir(), "e10-e2e-key-")); temps.push(keyDir);
+  env.LOKI_RECEIPT_SIGNING_KEY_FILE = join(keyDir, "k.pem"); // throwaway auto-generated key, never the real ~/.loki
   const t0 = Date.now();
   const r = Bun.spawnSync(["bash", BIN_LOKI, TASK, ...(withPr ? [] : ["--no-pr"])], { cwd: repo, env, timeout: 60_000 });
   const wallMs = Date.now() - t0;

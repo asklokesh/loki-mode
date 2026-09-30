@@ -82,7 +82,7 @@ function runEngine(ref: string, issueNumber: number): Run {
   delete env.LOKI_MODEL_OVERRIDE;
   delete env.LOKI_LEGACY_BASH; // bin/loki would skip the engine10 block
   delete env.LOKI_RECEIPT_SIGNING_KEY;
-  delete env.LOKI_RECEIPT_SIGNING_KEY_FILE;
+  env.LOKI_RECEIPT_SIGNING_KEY_FILE = join(tmp, "k.pem"); // throwaway auto-generated key, never the real ~/.loki
   const r = Bun.spawnSync(["bash", BIN_LOKI, ref, "--no-pr"], { cwd: repo, env, timeout: 60_000 });
   const out = r.stdout.toString() + r.stderr.toString();
   const marker = join(repo, ".loki", "engine.json");

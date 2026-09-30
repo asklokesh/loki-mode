@@ -128,22 +128,11 @@ describe("checkPreflight", () => {
     expect(r.fatal).toBe("gh (GitHub CLI) is missing or not authenticated; run gh auth login, or pass --no-pr");
   });
 
-  test("no signing key env still warns UNSIGNED until A-121 makes seal.ts sign by default", async () => {
+  test("no UNSIGNED warning: seal.ts signs natively with the auto-generated local key (A-121)", async () => {
     const { dir, env } = identifiedRepo();
-    const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: { ...env, LOKI_CLAUDE_CLI: stubCli() }, findPython: async () => "python3" });
+    const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: { ...env, LOKI_CLAUDE_CLI: stubCli() } });
     expect(r.fatal).toBeNull();
-    expect(r.warnings.some((w) => w.includes("UNSIGNED") && w.includes("no signing key"))).toBe(true);
-  });
-
-  test("no importable cryptography warns UNSIGNED, not fatal", async () => {
-    const { dir, env } = identifiedRepo();
-    const r = await checkPreflight({
-      repoDir: dir, provider: "claude", pr: false,
-      env: { ...env, LOKI_CLAUDE_CLI: stubCli(), LOKI_RECEIPT_SIGNING_KEY: "fake-key" },
-      findPython: async () => null, // stands in for "cryptography not importable", independent of the host's python
-    });
-    expect(r.fatal).toBeNull();
-    expect(r.warnings.some((w) => w.includes("UNSIGNED") && w.includes("cryptography"))).toBe(true);
+    expect(r.warnings.some((w) => w.includes("UNSIGNED"))).toBe(false);
   });
 });
 

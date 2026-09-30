@@ -5,11 +5,12 @@
 // verified in Python against the PUBLIC key only, and receipt_sha256 is
 // recomputed in Python from receipt.json, so a TS canonicalizer bug cannot
 // pass by agreeing with itself.
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 import { commitStage, DEEP_NOT_PROVEN, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
@@ -18,6 +19,7 @@ import { REPO_ROOT } from "../../src/util/paths.ts";
 const AUTONOMY = resolve(REPO_ROOT, "autonomy");
 let root = "";
 let cryptoPy = "";
+const REAL_HOME = process.env["HOME"];
 
 function sh(argv: string[], cwd: string, env: Record<string, string> = {}): string {
   const p = Bun.spawnSync({ cmd: argv, cwd, env: { ...process.env, ...env }, stdout: "pipe", stderr: "pipe" });
@@ -66,15 +68,8 @@ function ctxFor(repo: string, base: string, provider = "claude", over: Partial<R
   return { ctx, events };
 }
 
-const noKey = () => { process.env["LOKI_RECEIPT_SIGNING_KEY"] = ""; process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = ""; };
+const noKey = () => { process.env["LOKI_RECEIPT_SIGNING_KEY"] = ""; process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(root, "nokey", "k.pem"); }; // a throwaway auto-generated key, never the real ~/.loki
 const receiptOf = (s: { data: Record<string, unknown> }) => JSON.parse(readFileSync(s.data.receipt_path as string, "utf8")) as Receipt;
-const PY_HASH = `
-import sys, json, hashlib
-r = json.load(open(sys.argv[1]))
-body = {k: v for k, v in r.items() if k not in ("verification", "receipt_sha256")}
-print(hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest())
-`;
-
 // Python recompute of receipt_sha256 plus JWT verification against the public JWK.
 const VERIFY_PY = `
 import sys, json, hashlib
@@ -99,9 +94,11 @@ beforeAll(() => {
     if (p.exitCode === 0) { cryptoPy = c; break; }
   }
 });
+beforeEach(() => noKey()); // default to a throwaway key for every test; tests override as needed
 afterAll(() => { if (root) rmSync(root, { recursive: true, force: true }); });
 afterEach(() => {
   _setIsolatedPythonFixedForTests(null);
+  process.env["HOME"] = REAL_HOME;
   delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"];
   delete process.env["LOKI_RECEIPT_SIGNING_KEY"];
 });
@@ -162,23 +159,124 @@ describe("engine10 seal", () => {
     expect(r.cost.partial_usd).toBe(0.125);
   }, 30000);
 
-  test("no key: signed false, summary UNSIGNED, deep checks in NOT PROVEN", async () => {
-    process.env["LOKI_RECEIPT_SIGNING_KEY"] = "";
-    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = "";
-    const { repo, base } = makeRepo("unsigned");
+  test("A-121 G5: clean HOME, no key env: seal auto-generates a 0600 key, signs, verify reports VERIFIED, one flipped byte is TAMPERED", async () => {
+    const home = join(root, "clean-home");
+    mkdirSync(home);
+    process.env["HOME"] = home; // throwaway: the real ~/.loki is never touched
+    delete process.env["LOKI_RECEIPT_SIGNING_KEY"];
+    delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"];
+    const { repo, base } = makeRepo("clean-home-repo");
     const { ctx, events } = ctxFor(repo, base, "codex");
     await commitStage.run(ctx, new AbortController().signal);
     const s = await sealStage.run(ctx, new AbortController().signal);
-    expect(s.data.signed).toBe(false);
-    expect(String(s.data.summary)).toContain("UNSIGNED");
-    const r = JSON.parse(readFileSync(s.data.receipt_path as string, "utf8")) as Receipt;
-    expect(r.verification).toEqual({ jwt: null, kid: null });
-    for (const d of DEEP_NOT_PROVEN) expect(r.not_proven).toContain(d);
-    expect(r.not_proven).toContain("kill blocking not enforced");
-    expect(r.cost.usd).toBeNull();
-    const md = readFileSync(join(ctx.runDir, "receipt.md"), "utf8");
-    expect(md).toContain("UNSIGNED");
-    expect(events.find((e) => e.type === "receipt.sealed")?.data.signed).toBe(false);
+    expect(s.data.signed).toBe(true);
+    expect(String(s.data.summary)).toContain("SIGNED");
+    const keyFile = join(home, ".loki", "keys", "receipt-ed25519.pem");
+    expect(statSync(keyFile).mode & 0o777).toBe(0o600);
+    expect(statSync(dirname(keyFile)).mode & 0o777).toBe(0o700);
+    const path = s.data.receipt_path as string;
+    const r = JSON.parse(readFileSync(path, "utf8")) as Receipt;
+    expect(r.not_proven).not.toContain(SIGNING_UNAVAILABLE);
+    // The private key never appears in the receipt, receipt.md, the events, or the verify output.
+    const secret = readFileSync(keyFile, "utf8").split("\n").filter((l) => l && !l.startsWith("-----"))[0]!;
+    const out: string[] = [];
+    const w = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((c: string) => { out.push(String(c)); return true; }) as typeof process.stdout.write;
+    try { expect(await verifyMain(["r1"], { runsRoot: dirname(ctx.runDir) })).toBe(0); } finally { process.stdout.write = w; }
+    expect(out.join("")).toContain("attestation: VERIFIED");
+    for (const text of [readFileSync(path, "utf8"), readFileSync(join(ctx.runDir, "receipt.md"), "utf8"), JSON.stringify(events), out.join("")]) expect(text).not.toContain(secret);
+    expect((await verifyReceipt(path)).verdict).toBe("VERIFIED");
+    // A second seal reuses the same key (same kid).
+    const s2 = await sealStage.run(ctx, new AbortController().signal);
+    expect(receiptOf(s2).verification.kid).toBe(r.verification.kid);
+    // Flip one byte of a signed field: not verified.
+    writeFileSync(path, readFileSync(path, "utf8").replace(`"provider": "codex"`, `"provider": "codey"`));
+    expect((await verifyReceipt(path)).verdict).toBe("TAMPERED");
+  }, 30000);
+
+  test("A-121: a retired public key still verifies, an unknown kid is UNCHECKED, never TAMPERED", async () => {
+    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+    const keyFile = join(root, "rot", "k.pem");
+    mkdirSync(dirname(keyFile));
+    writeFileSync(keyFile, privateKey.export({ type: "pkcs8", format: "pem" }) as string, { mode: 0o600 });
+    const retired = join(root, "rot", "old.pub.pem");
+    writeFileSync(retired, publicKey.export({ type: "spki", format: "pem" }) as string);
+    process.env["LOKI_RECEIPT_SIGNING_KEY"] = "";
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = keyFile;
+    const { repo, base } = makeRepo("rotation");
+    const { ctx } = ctxFor(repo, base);
+    await commitStage.run(ctx, new AbortController().signal);
+    const path = (await sealStage.run(ctx, new AbortController().signal)).data.receipt_path as string;
+    // Rotate: a new active key, the old one retired.
+    const rotated = join(root, "rot", "new.pem");
+    writeFileSync(rotated, generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }) as string, { mode: 0o600 });
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = rotated;
+    const other = await verifyReceipt(path); // sealed with A, verified with only B
+    expect(other.verdict).toBe("UNCHECKED");
+    expect(other.reasons.join(" ")).toContain((JSON.parse(readFileSync(path, "utf8")) as Receipt).verification.kid!);
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(root, "rot", "missing", "k.pem"); // no key at all
+    expect((await verifyReceipt(path)).verdict).toBe("UNCHECKED");
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = rotated;
+    // A known kid with a flipped signature byte stays TAMPERED; a non-string jwt is UNCHECKED, not a crash.
+    const good = JSON.parse(readFileSync(path, "utf8")) as Receipt;
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = keyFile;
+    const badSig = join(root, "rot", "badsig.json");
+    const jwt = good.verification.jwt!;
+    writeFileSync(badSig, JSON.stringify({ ...good, verification: { ...good.verification, jwt: jwt.slice(0, -2) + (jwt.endsWith("AA") ? "BB" : "AA") } }));
+    expect((await verifyReceipt(badSig)).verdict).toBe("TAMPERED");
+    const numJwt = join(root, "rot", "num.json");
+    writeFileSync(numJwt, JSON.stringify({ ...good, verification: { jwt: 123, kid: null } }));
+    expect((await verifyReceipt(numJwt)).verdict).toBe("UNCHECKED");
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = rotated;
+    process.env["LOKI_RECEIPT_RETIRED_PUBKEYS"] = retired;
+    try { expect((await verifyReceipt(path)).verdict).toBe("VERIFIED"); } finally { delete process.env["LOKI_RECEIPT_RETIRED_PUBKEYS"]; }
+  }, 30000);
+
+  test("A-121 interop: a Python-generated key signs in TS and receipt_jwt.py verifies it, and TS reads the same kid", async () => {
+    if (!cryptoPy) { console.log("SKIP: no python3 with cryptography: Python interop not measured here"); return; }
+    const keyFile = join(root, "py", "k.pem");
+    const pyOut = JSON.parse(sh([cryptoPy, "-I", "-c", `
+import sys, json
+sys.path.insert(0, sys.argv[1])
+import os
+os.environ["LOKI_RECEIPT_SIGNING_KEY_FILE"] = sys.argv[2]
+from receipt_jwt import load_signing_key, public_jwk
+k, kid = load_signing_key()
+print(json.dumps({"kid": kid, "jwk": public_jwk(k.public_key())}))`, AUTONOMY, keyFile], root));
+    expect(statSync(keyFile).mode & 0o777).toBe(0o600);
+    process.env["LOKI_RECEIPT_SIGNING_KEY"] = "";
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = keyFile;
+    const { repo, base } = makeRepo("interop");
+    const { ctx } = ctxFor(repo, base);
+    await commitStage.run(ctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    expect(r.verification.kid).toBe(pyOut.kid);
+    const v = JSON.parse(sh([cryptoPy, "-I", "-c", `
+import sys, json
+sys.path.insert(0, sys.argv[1])
+from receipt_jwt import verify_attestation
+ok, c = verify_attestation(sys.argv[2], {"keys": [json.loads(sys.argv[3])]})
+print(json.dumps({"ok": ok, "c": c}))`, AUTONOMY, r.verification.jwt!, JSON.stringify(pyOut.jwk)], root));
+    expect(v.ok).toBe(true);
+    expect(v.c.receipt_sha256).toBe(r.receipt_sha256);
+  }, 30000);
+
+  test("TS-generated key file loads in receipt_jwt.py with the same kid (same PEM format)", async () => {
+    if (!cryptoPy) { console.log("SKIP: no python3 with cryptography: Python interop not measured here"); return; }
+    const keyFile = join(root, "ts-gen", "k.pem");
+    process.env["LOKI_RECEIPT_SIGNING_KEY"] = "";
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = keyFile;
+    const { repo, base } = makeRepo("tsgen");
+    const { ctx } = ctxFor(repo, base);
+    await commitStage.run(ctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    const kid = sh([cryptoPy, "-I", "-c", `
+import sys, os
+sys.path.insert(0, sys.argv[1])
+os.environ["LOKI_RECEIPT_SIGNING_KEY_FILE"] = sys.argv[2]
+from receipt_jwt import load_signing_key
+print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim();
+    expect(kid).toBe(r.verification.kid!);
   }, 30000);
 
   test("empty diff without the already-done marker seals FAILED, never VERIFIED", async () => {
@@ -453,14 +551,9 @@ describe("engine10 seal", () => {
     expect(r.not_proven.some((n) => n.includes("a.txt"))).toBe(false);
   }, 30000);
 
-  test("key configured but no token: signed false, SIGNING_UNAVAILABLE on NOT PROVEN", async () => {
-    // A python3 that passes the isolation probe but cannot sign (like /usr/bin/python3 without cryptography).
-    const stub = join(root, "py-nocrypto");
-    writeFileSync(stub, "#!/bin/sh\nexit 0\n");
-    chmodSync(stub, 0o755);
-    _setIsolatedPythonFixedForTests([stub]);
+  test("an unusable key: signed false, SIGNING_UNAVAILABLE on NOT PROVEN, hash still recomputes", async () => {
     const keyFile = join(root, "k2.pem");
-    writeFileSync(keyFile, generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }) as string, { mode: 0o600 });
+    writeFileSync(keyFile, "not a pem\n", { mode: 0o600 });
     process.env["LOKI_RECEIPT_SIGNING_KEY"] = "";
     process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = keyFile;
     const { repo, base } = makeRepo("nosign");
@@ -474,8 +567,8 @@ describe("engine10 seal", () => {
     expect(r.not_proven).toContain(SIGNING_UNAVAILABLE);
     expect(readFileSync(join(ctx.runDir, "receipt.md"), "utf8")).toContain("UNSIGNED");
     expect(events.find((e) => e.type === "receipt.sealed")?.data.signed).toBe(false);
-    const py = cryptoPy || "python3";
-    expect(sh([py, "-I", "-c", PY_HASH, s.data.receipt_path as string], root).trim()).toBe(r.receipt_sha256);
+    expect((await verifyReceipt(s.data.receipt_path as string)).verdict).toBe("UNSIGNED");
+    expect(readFileSync(keyFile, "utf8")).toBe("not a pem\n"); // an invalid key is never overwritten
   }, 30000);
 });
 

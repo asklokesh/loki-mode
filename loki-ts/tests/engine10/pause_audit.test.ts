@@ -60,7 +60,7 @@ describe("engine10 never waits on a human (E-67)", () => {
     process.env["LOKI_E10_CAP_S"] = "30"; // same test-only knob as cap.test.ts
     process.env["ASK_STUB_STDIN_RESULT"] = stdinResultFile;
     process.env["LOKI_RECEIPT_SIGNING_KEY"] = "";
-    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = "";
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(workDir, "k.pem"); // throwaway auto-generated key, never the real ~/.loki
 
     try {
       git(["init", "-q"], repoDir);
