@@ -72,6 +72,12 @@
 #      added lines (below both the 4-file and 150-line bars), a tiered task
 #      whose refdiff was removed (in a temp copy, real tasks untouched), and
 #      --online against an unreachable source
+#  19. (S41-01) provider_cost accepts a partial-stream record (E-98e) and
+#      records cost_partial_usd; LOKI_E10_CASCADE is allowlisted into arm_env
+#      while an unlisted LOKI_E10_* knob stays scrubbed; new row fields
+#      (tier, tokens, tokens_by_stage, first_turn_prompt_tokens, escalations,
+#      attempts) default correctly and raw-claude tokens are read from
+#      arm_stdout usage
 #===============================================================================
 set -u
 
@@ -178,6 +184,11 @@ H() { python3 "$HERE/harness.py" "$@"; }
 # through env, never argv (argv is visible to the arm in ps).
 RUN() { env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$TASKS" bash "$HERE/run.sh" "$@"; }
 row() { python3 -c 'import json,sys; r=[json.loads(l) for l in open(sys.argv[1])][-1]; print(json.dumps(r.get(sys.argv[2])))' "$1" "$2"; }
+# True only when the key is actually present in the row (row() prints "null"
+# both for an absent key and for a present key holding null -- a field this
+# slice adds must be checked with haskey, not row() alone, or a run against
+# an older harness.py that lacks the key entirely reads as a false pass).
+haskey() { python3 -c 'import json,sys; r=[json.loads(l) for l in open(sys.argv[1])][-1]; sys.exit(0 if sys.argv[2] in r else 1)' "$1" "$2"; }
 
 # ---- 1. validator
 if H validate "$TASKS/fx-greet" "$TASKS/fx-cap" >/dev/null 2>&1; then pass "validator accepts fixtures"; else fail "validator rejected fixtures"; fi
@@ -916,6 +927,154 @@ rc=$?
 [ "$rc" = 1 ] && grep -q "online fetch failed" "$T/ms-unreachable.out" \
     && pass "D34: --online against an unreachable source -> rc=1" \
     || fail "D34: unreachable-source rc=$rc: $(cat "$T/ms-unreachable.out")"
+
+# ---- 19. (S41-01) partial-stream cost, the allowlist grant, and the new row fields
+# A minimal inline arm: no push (cost_usd is set unconditionally right after
+# the arm exits, whether or not it ever opens a PR -- same as R2's estimate
+# stub above), just an efficiency record with cost_source partial-stream
+# (E-98e's killed-session shape).
+cat > "$T/bin/s41-partial-stub" <<'EOF'
+#!/usr/bin/env bash
+mkdir -p .loki/metrics/efficiency
+printf '{"iteration": 1, "cost_source": "partial-stream", "cost_usd": 0.5, "input_tokens": 10}\n' \
+    > .loki/metrics/efficiency/iteration-1.json
+echo '{"type":"result"}'
+EOF
+chmod +x "$T/bin/s41-partial-stub"
+R="$T/out-s41-partial"
+LOKI_EVAL_LOKI_BIN="$T/bin/s41-partial-stub" RUN --arm legacy --task fx-greet --out "$R" >/dev/null 2>&1
+J="$R/results.jsonl"
+[ "$(row "$J" cost_usd)" = 0.5 ] && [ "$(row "$J" cost_partial_usd)" = 0.5 ] \
+    && [ "$(row "$J" cost_source)" = '"loki efficiency records (cost_source=partial-stream)"' ] \
+    && pass "S41-01: partial-stream record priced, not null; cost_partial_usd recorded" \
+    || fail "S41-01: partial row: $(tail -1 "$J")"
+
+cat > "$T/bin/e52b-stub" <<'EOF'
+#!/usr/bin/env bash
+echo "ENV-CHECK4: cascade=${LOKI_E10_CASCADE:-unset} notallowed=${LOKI_E10_NOTALLOWED:-unset}" >&2
+EOF
+chmod +x "$T/bin/e52b-stub"
+R="$T/out-s41-cascade"
+LOKI_E10_CASCADE=0 LOKI_E10_NOTALLOWED=leak LOKI_EVAL_LOKI_BIN="$T/bin/e52b-stub" \
+    RUN --arm v10 --task fx-greet --out "$R" >/dev/null 2>&1
+got="$(grep -h '^ENV-CHECK4:' "$R"/logs/*/arm_stderr.log)"
+[ "$got" = "ENV-CHECK4: cascade=0 notallowed=unset" ] \
+    && pass "S41-01: LOKI_E10_CASCADE allowlisted, LOKI_E10_NOTALLOWED still scrubbed" \
+    || fail "S41-01: cascade env: got '$got'"
+
+# tier default, and the new fields' null defaults (never 0/{}) on a v10 pass
+# with no cost events at all
+R="$T/out-s41-rowfields"
+STUB_MODE=pass STUB_V10_MARKER=1 RUN --arm v10 --task fx-greet --out "$R" >/dev/null 2>&1
+J="$R/results.jsonl"
+haskey "$J" tier && [ "$(row "$J" tier)" = '"small"' ] && pass "S41-01: tier defaults to small" \
+    || fail "S41-01: tier=$(row "$J" tier) present=$(haskey "$J" tier; echo $?)"
+haskey "$J" tokens && haskey "$J" tokens_by_stage && haskey "$J" first_turn_prompt_tokens \
+    && [ "$(row "$J" tokens)" = null ] && [ "$(row "$J" tokens_by_stage)" = null ] \
+    && [ "$(row "$J" first_turn_prompt_tokens)" = null ] \
+    && [ "$(row "$J" escalations)" = 0 ] && [ "$(row "$J" attempts)" = 0 ] \
+    && pass "S41-01: tokens/tokens_by_stage/first_turn_prompt_tokens default null (never 0, and present), escalations/attempts default 0" \
+    || fail "S41-01: defaults: tokens=$(row "$J" tokens) by_stage=$(row "$J" tokens_by_stage) fft=$(row "$J" first_turn_prompt_tokens) esc=$(row "$J" escalations) att=$(row "$J" attempts)"
+
+# raw-claude tokens harvested from the same JSON the cost stub already emits;
+# null (not zero) when the JSON carries no usage object at all -- but the
+# key must still be PRESENT, since row() prints "null" for a missing key too
+# (a harness that never sets row["tokens"] at all must not read as a pass)
+cat > "$T/bin/s41-usage-stub" <<'EOF'
+#!/usr/bin/env bash
+echo '{"type":"result","total_cost_usd":0.25,"usage":{"input_tokens":11,"output_tokens":22,"cache_read_input_tokens":33,"cache_creation_input_tokens":44}}'
+EOF
+chmod +x "$T/bin/s41-usage-stub"
+R="$T/out-s41-rawtokens"
+LOKI_EVAL_CLAUDE_BIN="$T/bin/s41-usage-stub" RUN --arm raw-claude --task fx-greet --out "$R" >/dev/null 2>&1
+J="$R/results.jsonl"
+[ "$(row "$J" tokens)" = '{"input": 11, "output": 22, "cache_read": 33, "cache_write": 44}' ] \
+    && pass "S41-01: raw-claude tokens read from arm_stdout usage" || fail "S41-01: raw tokens=$(row "$J" tokens)"
+R="$T/out-s41-rawtokens-none"
+STUB_MODE=pass RUN --arm raw-claude --task fx-greet --out "$R" >/dev/null 2>&1
+J="$R/results.jsonl"
+haskey "$J" tokens && [ "$(row "$J" tokens)" = null ] && pass "S41-01: raw-claude tokens null (and present) with no usage object" \
+    || fail "S41-01: raw tokens (no usage)=$(row "$J" tokens) present=$(haskey "$J" tokens; echo $?)"
+
+# escalations/attempts/tokens_by_stage/first_turn_prompt_tokens through the
+# real pipeline: an inline v10 arm writes a fresh, valid engine marker plus
+# events.jsonl (never backdated -- v10_marker_problem would reject a stale
+# one) with two implement sessions (attempts is scoped to the implement
+# stage, not every session.started), one escalated fix.round, and two cost
+# events on different stages (by_stage split). The two result-cost files ARE
+# backdated relative to each other, so first_turn_prompt_tokens is proven to
+# come from mtime order, not name order (impl sorts before plan by name).
+cat > "$T/bin/s41-events-stub" <<'EOF'
+#!/usr/bin/env bash
+mkdir -p .loki/runs/fx
+cat > .loki/engine.json <<JSON
+{"engine": "v10", "run_id": "fx", "events": ".loki/runs/fx/events.jsonl"}
+JSON
+cat > .loki/runs/fx/events.jsonl <<JSONL
+{"v":1,"seq":0,"ts":"2026-01-01T00:00:00Z","run":"fx","type":"session.started","stage":"plan","data":{}}
+{"v":1,"seq":1,"ts":"2026-01-01T00:00:01Z","run":"fx","type":"cost","stage":"plan","data":{"input_tokens":1,"output_tokens":2,"cache_read_tokens":3,"cache_creation_tokens":4}}
+{"v":1,"seq":2,"ts":"2026-01-01T00:00:02Z","run":"fx","type":"session.started","stage":"implement","data":{}}
+{"v":1,"seq":3,"ts":"2026-01-01T00:00:03Z","run":"fx","type":"cost","stage":"implement","data":{"input_tokens":10,"output_tokens":20,"cache_read_tokens":30,"cache_creation_tokens":40}}
+{"v":1,"seq":4,"ts":"2026-01-01T00:00:04Z","run":"fx","type":"fix.round","stage":"fix","data":{"escalated":true}}
+{"v":1,"seq":5,"ts":"2026-01-01T00:00:05Z","run":"fx","type":"session.started","stage":"implement","data":{}}
+JSONL
+mkdir -p .loki/metrics
+printf '{"first_turn_prompt_tokens": 999}\n' > .loki/metrics/result-cost-fx-plan.json
+touch -t 202601010000 .loki/metrics/result-cost-fx-plan.json
+printf '{"first_turn_prompt_tokens": 111}\n' > .loki/metrics/result-cost-fx-impl.json
+touch -t 202601010001 .loki/metrics/result-cost-fx-impl.json
+echo '{"type":"result"}'
+EOF
+chmod +x "$T/bin/s41-events-stub"
+R="$T/out-s41-events"
+LOKI_EVAL_LOKI_BIN="$T/bin/s41-events-stub" RUN --arm v10 --task fx-greet --out "$R" >/dev/null 2>&1
+J="$R/results.jsonl"
+[ "$(row "$J" tokens)" = '{"input": 11, "output": 22, "cache_read": 33, "cache_write": 44}' ] \
+    && [ "$(row "$J" tokens_by_stage)" = '{"plan": {"input": 1, "output": 2, "cache_read": 3, "cache_write": 4}, "implement": {"input": 10, "output": 20, "cache_read": 30, "cache_write": 40}}' ] \
+    && [ "$(row "$J" first_turn_prompt_tokens)" = 999 ] \
+    && [ "$(row "$J" escalations)" = 1 ] && [ "$(row "$J" attempts)" = 2 ] \
+    && pass "S41-01: real v10 run: tokens/by_stage/first_turn_prompt_tokens(mtime order)/escalations/attempts(implement-scoped)" \
+    || fail "S41-01: events row: tokens=$(row "$J" tokens) by_stage=$(row "$J" tokens_by_stage) fft=$(row "$J" first_turn_prompt_tokens) esc=$(row "$J" escalations) att=$(row "$J" attempts)"
+
+# S41-01 review fix: a v10 run whose worker was killed mid-session must not
+# report the surviving records' lower sum as measured. Stub: 3 sessions start
+# and S41_COSTS (default 3) cost events exist; S41_RECORDS (default 3)
+# efficiency records are written, so 2 models the deleted last record.
+cat > "$T/bin/s41-killed-stub" <<'EOF'
+#!/usr/bin/env bash
+mkdir -p .loki/runs/fx .loki/metrics/efficiency
+printf '{"engine": "v10", "run_id": "fx", "events": ".loki/runs/fx/events.jsonl"}\n' > .loki/engine.json
+: > .loki/runs/fx/events.jsonl
+for i in 1 2 3; do
+  echo '{"v":1,"type":"session.started","stage":"implement","data":{"session_id":"s'$i'"}}' >> .loki/runs/fx/events.jsonl
+  [ "$i" -le "${S41_COSTS:-3}" ] && echo '{"v":1,"type":"cost","stage":"implement","data":{"session_id":"s'$i'","input_tokens":1}}' >> .loki/runs/fx/events.jsonl
+done
+costs=(0.1 0.2 0.07101)
+for i in $(seq 1 "${S41_RECORDS:-3}"); do
+  printf '{"iteration": %s, "cost_source": "provider", "cost_usd": %s}\n' "$i" "${costs[$((i-1))]}" > .loki/metrics/efficiency/iteration-$i.json
+done
+echo '{"type":"result"}'
+EOF
+chmod +x "$T/bin/s41-killed-stub"
+R="$T/out-s41-complete"
+LOKI_EVAL_LOKI_BIN="$T/bin/s41-killed-stub" RUN --arm v10 --task fx-greet --out "$R" >/dev/null 2>&1
+J="$R/results.jsonl"
+[ "$(row "$J" cost_usd)" = 0.37101 ] && [ "$(row "$J" tokens)" != null ] \
+    && pass "S41-01: complete v10 run keeps cost_usd 0.37101 and tokens (positive control)" \
+    || fail "S41-01: complete run: $(tail -1 "$J")"
+R="$T/out-s41-killed"
+S41_RECORDS=2 LOKI_EVAL_LOKI_BIN="$T/bin/s41-killed-stub" RUN --arm v10 --task fx-greet --out "$R" >/dev/null 2>&1
+J="$R/results.jsonl"
+[ "$(row "$J" cost_usd)" = null ] && [ "$(row "$J" cost_source)" = '"not reported (3 sessions started, 2 recorded)"' ] \
+    && pass "S41-01: 3 sessions started, 2 records -> cost_usd null with reason" \
+    || fail "S41-01: killed run: $(tail -1 "$J")"
+R="$T/out-s41-killed-tok"
+S41_COSTS=2 LOKI_EVAL_LOKI_BIN="$T/bin/s41-killed-stub" RUN --arm v10 --task fx-greet --out "$R" >/dev/null 2>&1
+J="$R/results.jsonl"
+[ "$(row "$J" tokens)" = null ] \
+    && pass "S41-01: a started session without a cost event -> tokens null" \
+    || fail "S41-01: tokens=$(row "$J" tokens)"
+
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
