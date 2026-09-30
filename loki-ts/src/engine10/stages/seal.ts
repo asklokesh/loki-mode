@@ -1,15 +1,13 @@
 // loki-ts/src/engine10/stages/seal.ts
 //
 // E-10: commit and Seal (docs/v10/ENGINE.md sections 4, 9). Writes receipt.json
-// and receipt.md, computes receipt_sha256, and signs via autonomy/receipt_jwt.py
-// through findIsolatedPython3() as `python3 -I` (never -S, which drops
-// site-packages so cryptography fails to import and receipts go unsigned
-// silently). An empty token means UNSIGNED, never presented as attested.
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { REPO_ROOT } from "../../util/paths.ts";
-import { findIsolatedPython3 } from "../../util/python.ts";
+// and receipt.md, computes receipt_sha256, and signs natively with node:crypto Ed25519
+// (A-121; no python, no `cryptography`). The key is the A-120 local key, created on first
+// use. An empty token means UNSIGNED, never presented as attested.
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
+import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { run } from "../../util/shell.ts";
 import { isTestFile } from "../testmap.ts";
 import { STAGE_BUDGETS } from "../types.ts";
@@ -17,7 +15,7 @@ import type { Obj, Receipt, ReceiptCheck, RunContext, Stage, StageName, StageRes
 
 /** Deferred to deep verify, so always NOT PROVEN at seal time. */
 export const DEEP_NOT_PROVEN = ["full suite", "app boot", "council", "security scan"] as const;
-export const SIGNING_UNAVAILABLE = "receipt signing unavailable (key configured but no token: cryptography missing or key invalid)";
+export const SIGNING_UNAVAILABLE = "receipt signing unavailable (no usable signing key: invalid key or unwritable ~/.loki/keys)";
 
 const EXCLUDE_LOKI = ":(exclude).loki";
 export const sha256 = (s: string | Buffer): string => createHash("sha256").update(s).digest("hex");
@@ -55,32 +53,46 @@ export function receiptSha256(r: Omit<Receipt, "receipt_sha256" | "verification"
   return sha256(canonicalJson(body));
 }
 
-const SIGN_PY = [
-  "import sys, json",
-  "sys.path.insert(0, sys.argv[1])",
-  "from receipt_jwt import load_signing_key, sign_attestation",
-  "key, kid = load_signing_key()",
-  "tok = sign_attestation(key, kid, job_id=sys.argv[2], run_id=sys.argv[2], receipt_hash=sys.argv[3]) if key is not None else ''",
-  "print(json.dumps({'jwt': tok or '', 'kid': kid if tok else ''}))",
-].join("\n");
+const b64u = (b: Buffer | string): string => Buffer.from(b).toString("base64url");
+/** RFC 7638 thumbprint, the same kid receipt_jwt.compute_kid derives. */
+export const kidOf = (pub: KeyObject): string => b64u(createHash("sha256").update(`{"crv":"Ed25519","kty":"OKP","x":"${pub.export({ format: "jwk" }).x}"}`).digest());
 
-/** Signs via receipt_jwt. keyConfigured says whether an env key was set, so a configured key yielding no token is reported, not silently downgraded. */
-export async function signReceipt(runId: string, hash: string): Promise<{ jwt: string | null; kid: string | null; keyConfigured: boolean }> {
-  const keyConfigured = !!(process.env["LOKI_RECEIPT_SIGNING_KEY"]?.trim() || process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]?.trim());
-  const none = { jwt: null, kid: null, keyConfigured };
-  if (!keyConfigured) return none;
-  const py = await findIsolatedPython3();
-  if (!py) return none;
-  const r = await run([py, "-I", "-c", SIGN_PY, resolve(REPO_ROOT, "autonomy"), runId, hash], { timeoutMs: 20000 });
-  if (r.exitCode !== 0) return none;
+/** Same precedence and file rules as receipt_jwt.load_signing_key: inline PEM, then KEY_FILE, then ~/.loki/keys/receipt-ed25519.pem
+ *  (0600 key, 0700 dir, O_EXCL temp then link, so a concurrent first run reads the winner). Never logs or returns key bytes. */
+export function loadSigningKey(generate = true): KeyObject | null {
   try {
-    const out = JSON.parse(r.stdout.trim().split("\n").pop() ?? "") as Obj;
-    const jwt = str(out.jwt);
-    const kid = str(out.kid);
-    return jwt && kid ? { jwt, kid, keyConfigured } : none;
+    const inline = process.env["LOKI_RECEIPT_SIGNING_KEY"]?.trim();
+    let pem: string | Buffer = inline ?? "";
+    if (!inline) {
+      const given = process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]?.trim();
+      const file = given || join(process.env["HOME"] || homedir(), ".loki", "keys", "receipt-ed25519.pem");
+      try {
+        pem = readFileSync(file);
+        if (!given) for (const [f, m] of [[file, 0o600], [dirname(file), 0o700]] as const) if (statSync(f).mode & 0o077) chmodSync(f, m);
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT" || !generate) return null;
+        mkdirSync(dirname(dirname(file)), { recursive: true, mode: 0o700 });
+        mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+        const tmp = `${file}.${process.pid}.tmp`;
+        writeFileSync(tmp, generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }), { flag: "wx", mode: 0o600 });
+        try { linkSync(tmp, file); } catch (l) { if ((l as NodeJS.ErrnoException).code !== "EEXIST") throw l; } finally { unlinkSync(tmp); }
+        pem = readFileSync(file);
+      }
+    }
+    const k = createPrivateKey(pem);
+    return k.asymmetricKeyType === "ed25519" ? k : null;
   } catch {
-    return none;
+    return null;
   }
+}
+
+/** Signs a compact EdDSA JWT with node:crypto, byte-compatible with receipt_jwt.sign_attestation. Null jwt means UNSIGNED. */
+export function signReceipt(runId: string, hash: string): { jwt: string | null; kid: string | null } {
+  const key = loadSigningKey();
+  if (!key) return { jwt: null, kid: null };
+  const kid = kidOf(createPublicKey(key));
+  const input = `${b64u(canonicalJson({ alg: "EdDSA", typ: "JWT", kid }))}.${b64u(canonicalJson({ job_id: runId, run_id: runId, receipt_sha256: hash, iat: Math.floor(Date.now() / 1000) }))}`;
+  return { jwt: `${input}.${b64u(sign(null, Buffer.from(input), key))}`, kid };
 }
 
 async function git(ctx: RunContext, args: string[]): Promise<{ out: string; code: number }> {
@@ -243,14 +255,13 @@ export const sealStage: Stage = {
       events_sha256: sha256(existsSync(eventsPath) ? readFileSync(eventsPath) : ""),
     };
 
-    // Probe signing first (hash-independent) so a configured-but-failed key lands in NOT PROVEN before hashing.
+    // Sign first so a failed key lands in NOT PROVEN before hashing.
     body.not_proven = [...notProven];
     let hash = receiptSha256(body);
-    let sig = await signReceipt(ctx.runId, hash);
-    if (!sig.jwt && sig.keyConfigured) {
+    const sig = signReceipt(ctx.runId, hash);
+    if (!sig.jwt) {
       body.not_proven = [...notProven, SIGNING_UNAVAILABLE];
       hash = receiptSha256(body);
-      sig = { jwt: null, kid: null, keyConfigured: true };
     }
     const receipt: Receipt = { ...body, receipt_sha256: hash, verification: { jwt: sig.jwt, kid: sig.kid } };
 

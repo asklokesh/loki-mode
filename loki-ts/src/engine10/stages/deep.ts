@@ -254,7 +254,7 @@ export async function runDeep(ctx: DeepContext, signal: AbortSignal, opts: DeepO
     status_state: statusState,
   };
   const addendumSha256 = sha256(canonicalJson(addendumBody));
-  const sig = await signReceipt(`${ctx.runId}-deep`, addendumSha256);
+  const sig = signReceipt(`${ctx.runId}-deep`, addendumSha256);
   const addendum = { ...addendumBody, addendum_sha256: addendumSha256, verification: { jwt: sig.jwt, kid: sig.kid } };
   mkdirSync(ctx.runDir, { recursive: true });
   writeFileSync(join(ctx.runDir, "receipt-addendum-1.json"), JSON.stringify(addendum, null, 2) + "\n");

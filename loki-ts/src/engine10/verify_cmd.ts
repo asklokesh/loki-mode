@@ -1,16 +1,12 @@
 // loki-ts/src/engine10/verify_cmd.ts -- E-22 `loki verify [run-id]` (ENGINE.md section 11/9).
 // Reads receipt.json straight off disk, no RunContext. Three checks, cheapest first: TAMPER
-// (recompute receipt_sha256 with `verification`+itself removed), SIGNATURE (verify_attestation
-// against the active + retired JWKS), UNSIGNED (jwt null). Python runs via findIsolatedPython3()
-// with -I ONLY, never -S: -S drops site-packages so `cryptography` never imports and every
-// receipt would misreport UNCHECKED regardless of whether it was actually signed.
+// (recompute receipt_sha256 with `verification`+itself removed), SIGNATURE (native Ed25519
+// against the active + retired keys), UNSIGNED (jwt null). Node crypto only, no python (A-121).
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { lokiDir, REPO_ROOT } from "../util/paths.ts";
-import { findIsolatedPython3 } from "../util/python.ts";
-import { run } from "../util/shell.ts";
-import { receiptSha256 } from "./stages/seal.ts";
-import type { ShellResult } from "../util/shell.ts";
+import { join } from "node:path";
+import { createPublicKey, verify } from "node:crypto";
+import { lokiDir } from "../util/paths.ts";
+import { kidOf, loadSigningKey, receiptSha256 } from "./stages/seal.ts";
 export type Verdict = "VERIFIED" | "UNSIGNED" | "TAMPERED" | "UNCHECKED";
 export interface VerifyResult {
   verdict: Verdict;
@@ -19,66 +15,34 @@ export interface VerifyResult {
 }
 /** The hash seal writes into receipt.json; receiptSha256 strips `verification` and `receipt_sha256` itself. */
 export const computeReceiptHash = (receipt: Record<string, unknown>): string => receiptSha256(receipt as never);
-type PyRunner = (argv: readonly string[], opts?: { timeoutMs?: number }) => Promise<ShellResult>;
 export interface VerifyDeps {
   runsRoot?: string; // overrides lokiDir()/runs, for tests
-  findPython?: () => Promise<string | null>;
-  runPython?: PyRunner;
 }
 interface AttestationOutcome {
-  status: "verified" | "tampered" | "unchecked";
+  status: "verified" | "tampered";
   reason: string | null;
 }
-async function checkAttestation(
-  jwt: string,
-  expectedHash: string,
-  findPython: () => Promise<string | null>,
-  runPython: PyRunner,
-): Promise<AttestationOutcome> {
-  const py = await findPython();
-  if (!py) return { status: "unchecked", reason: "no isolated python3 passed the -I probe" };
-  const autonomyDir = resolve(REPO_ROOT, "autonomy");
-  // sys.argv[1] carries the token: argv, never string interpolation, so a
-  // JWT containing quote-like bytes cannot break out of the script.
-  const code = `
-import json, sys
-sys.path.insert(0, ${JSON.stringify(autonomyDir)})
-from receipt_jwt import load_signing_key, load_retired_public_keys, build_jwks, verify_attestation
-priv, _kid = load_signing_key()
-jwks = build_jwks(private_key=priv, retired_public_keys=load_retired_public_keys())
-ok, payload = verify_attestation(sys.argv[1], jwks)
-print(json.dumps({"ok": ok, "payload": payload if ok else None, "reason": None if ok else str(payload)}))
-`;
-  let r: ShellResult;
+/** Native EdDSA check against the local key's public half plus LOKI_RECEIPT_RETIRED_PUBKEYS (colon-separated PEM paths). Selection is by kid; an unknown kid is refused, never tried against every key. */
+function checkAttestation(jwt: string, expectedHash: string): AttestationOutcome {
+  const bad = (reason: string): AttestationOutcome => ({ status: "tampered", reason });
+  const [h, p, s, ...rest] = jwt.split(".");
+  if (!h || !p || !s || rest.length > 0) return bad("malformed token");
+  let header: { alg?: unknown; kid?: unknown }, payload: { receipt_sha256?: unknown };
   try {
-    r = await runPython([py, "-I", "-c", code, jwt], { timeoutMs: 10000 });
-  } catch (e) {
-    return { status: "unchecked", reason: `could not run the verifier: ${String((e as Error).message ?? e)}` };
-  }
-  if (r.exitCode > 128) {
-    return { status: "unchecked", reason: `verifier was killed (exit ${r.exitCode})` };
-  }
-  if (r.exitCode !== 0) {
-    return { status: "unchecked", reason: r.stderr.trim() || `verifier exited ${r.exitCode}` };
-  }
-  let parsed: { ok: boolean; payload: { receipt_sha256?: string } | null; reason: string | null };
-  try {
-    parsed = JSON.parse(r.stdout.trim());
+    header = JSON.parse(Buffer.from(h, "base64url").toString());
+    payload = JSON.parse(Buffer.from(p, "base64url").toString());
   } catch {
-    return { status: "unchecked", reason: "verifier produced no parseable output" };
+    return bad("malformed token");
   }
-  // Not installed is "could not check", never "tampered" (the honesty rule
-  // this codebase already applies in autonomy/lib/proof-verify.py).
-  if (parsed.reason === "cryptography is not installed") {
-    return { status: "unchecked", reason: parsed.reason };
-  }
-  if (!parsed.ok) {
-    return { status: "tampered", reason: parsed.reason ?? "signature does not verify" };
-  }
-  if (parsed.payload?.receipt_sha256 !== expectedHash) {
-    return { status: "tampered", reason: "attestation binds a different receipt hash" };
-  }
-  return { status: "verified", reason: null };
+  if (header?.alg !== "EdDSA") return bad(`unexpected alg: ${String(header?.alg)}`);
+  const active = loadSigningKey(false);
+  const pubs = (process.env["LOKI_RECEIPT_RETIRED_PUBKEYS"] ?? "").split(":").map((f) => f.trim()).filter(Boolean).flatMap((f) => {
+    try { return [createPublicKey(readFileSync(f))]; } catch { return []; }
+  });
+  const pub = [...(active ? [createPublicKey(active)] : []), ...pubs].find((k) => kidOf(k) === header.kid);
+  if (!pub) return bad(`no published key with kid ${String(header.kid)}`);
+  if (!verify(null, Buffer.from(`${h}.${p}`), pub, Buffer.from(s, "base64url"))) return bad("signature does not verify");
+  return payload?.receipt_sha256 === expectedHash ? { status: "verified", reason: null } : bad("attestation binds a different receipt hash");
 }
 export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}): Promise<VerifyResult> {
   if (!existsSync(receiptPath)) {
@@ -103,13 +67,7 @@ export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}):
   if (!jwt) {
     return { verdict: "UNSIGNED", reasons: [], receiptSha256: computed };
   }
-  const outcome = await checkAttestation(
-    jwt,
-    computed,
-    deps.findPython ?? findIsolatedPython3,
-    deps.runPython ?? run,
-  );
-  if (outcome.status === "unchecked") return { verdict: "UNCHECKED", reasons: [outcome.reason ?? "attestation not checked"] };
+  const outcome = checkAttestation(jwt, computed);
   if (outcome.status === "tampered") return { verdict: "TAMPERED", reasons: [outcome.reason ?? "attestation invalid"] };
   return { verdict: "VERIFIED", reasons: [], receiptSha256: computed };
 }
@@ -151,7 +109,7 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   if (result.receiptSha256) process.stdout.write(`receipt_sha256: ${result.receiptSha256}\n`);
   for (const reason of result.reasons) process.stdout.write(`  ${reason}\n`);
   if (result.verdict === "UNSIGNED") {
-    process.stdout.write("attestation: UNSIGNED (no signing key was configured when this receipt was sealed)\n");
+    process.stdout.write("attestation: UNSIGNED (this receipt carries no signature)\n");
   } else if (result.verdict === "VERIFIED") {
     process.stdout.write("attestation: VERIFIED against the local JWKS\n");
   }

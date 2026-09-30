@@ -130,6 +130,7 @@ async function runProvider(provider: Provider, opts: { modelOverride?: string } 
   const env: NodeJS.ProcessEnv = {
     PATH: process.env.PATH,
     HOME: process.env.HOME,
+    LOKI_RECEIPT_SIGNING_KEY_FILE: join(repo, "..", "k.pem"), // throwaway auto-generated key, never the real ~/.loki
     E37_RUN_ID: runId,
     E37_REPO: repo,
     E37_BASE: base,

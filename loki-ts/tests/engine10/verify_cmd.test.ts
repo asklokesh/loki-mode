@@ -195,7 +195,7 @@ describe("verifyReceipt: signed (E-22 green: verifies against the JWKS)", () => 
       // exactly the way seal.ts (E-10) is specified to at sign time -- this
       // is the local JWKS the receipt is checked against.
       process.env["LOKI_RECEIPT_SIGNING_KEY"] = pem;
-      const result = await verifyReceipt(path, { findPython: async () => CRYPTO_PY });
+      const result = await verifyReceipt(path);
       expect(result.verdict).toBe("VERIFIED");
       expect(result.reasons).toEqual([]);
     } finally {
@@ -230,7 +230,7 @@ describe("verifyReceipt: signed (E-22 green: verifies against the JWKS)", () => 
       writeFileSync(path, JSON.stringify(receipt, null, 2));
 
       process.env["LOKI_RECEIPT_SIGNING_KEY"] = pem;
-      const result = await verifyReceipt(path, { findPython: async () => CRYPTO_PY });
+      const result = await verifyReceipt(path);
       expect(result.verdict).toBe("TAMPERED");
       expect(result.reasons[0]).toContain("different receipt hash");
     } finally {
@@ -263,7 +263,7 @@ describe("verifyReceipt: signed (E-22 green: verifies against the JWKS)", () => 
       // kid is absent from the JWKS it builds.
       const other = signWithFreshKey("unused", "other");
       process.env["LOKI_RECEIPT_SIGNING_KEY"] = other.pem;
-      const result = await verifyReceipt(path, { findPython: async () => CRYPTO_PY });
+      const result = await verifyReceipt(path);
       expect(result.verdict).toBe("TAMPERED");
     } finally {
       if (savedKey === undefined) delete process.env["LOKI_RECEIPT_SIGNING_KEY"];

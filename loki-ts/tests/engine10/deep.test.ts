@@ -59,7 +59,7 @@ function commitChange(dir: string, path: string, content: string): void {
 const cleanupDirs: string[] = [];
 beforeEach(() => {
   process.env["LOKI_RECEIPT_SIGNING_KEY"] = "";
-  process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = "";
+  process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(mkdtempSync(join(tmpdir(), "e10-deep-key-")), "k.pem"); // throwaway auto-generated key, never the real ~/.loki
 });
 afterEach(() => {
   for (const d of cleanupDirs.splice(0)) rmSync(d, { recursive: true, force: true });
@@ -269,7 +269,7 @@ describe("engine10 deep: push (Rule of Two and the comment argv contract-gap fix
 });
 
 describe("engine10 deep: receipt addendum", () => {
-  test("writes a signed-or-UNSIGNED addendum referencing the base receipt hash", async () => {
+  test("writes a natively signed addendum referencing the base receipt hash", async () => {
     const { dir, base } = mkRepo();
     commitChange(dir, "a.txt", "hi\n");
     const { ctx } = fakeCtx({ repoDir: dir, baseSha: base, pinnedOrigin: null, outputs: { seal: { receipt_sha256: "ab".repeat(32) } } });
@@ -277,7 +277,8 @@ describe("engine10 deep: receipt addendum", () => {
     const addendum = JSON.parse(readFileSync(join(ctx.runDir, "receipt-addendum-1.json"), "utf8"));
     expect(addendum.base_receipt_sha256).toBe("ab".repeat(32));
     expect(addendum.addendum_sha256).toBe(result.data.addendum_sha256);
-    expect(addendum.verification).toEqual({ jwt: null, kid: null });
+    expect(typeof addendum.verification.jwt).toBe("string");
+    expect(addendum.verification.kid).toBeTruthy();
   });
 });
 
