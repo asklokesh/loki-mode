@@ -427,7 +427,10 @@ gap_completion="$(row_of "$T/out.log" 'Completion')"
 
 # ---- c: determinism -- identical input, two separate runs, byte-identical
 # stdout (fixed bootstrap seed and resample count)
+# reps prints one path per file; the split into separate args is intended.
+# shellcheck disable=SC2046
 "$SCRIPT" $(reps gap 3) >"$T/det1.log" 2>"$T/det1.err"
+# shellcheck disable=SC2046
 "$SCRIPT" $(reps gap 3) >"$T/det2.log" 2>"$T/det2.err"
 if diff -q "$T/det1.log" "$T/det2.log" >/dev/null; then
     pass "determinism: two runs on identical input are byte-identical"
