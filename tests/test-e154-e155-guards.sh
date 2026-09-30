@@ -46,6 +46,7 @@ mkdir -p "$HOME/.loki/keys"; : >"$HOME/.loki/keys/receipt-ed25519.pem"
 EOF
 cat >"$T/repo/tests/t-printkey.sh" <<'EOF'
 echo "KEYFILE=$LOKI_RECEIPT_SIGNING_KEY_FILE"
+echo "CHILD_RUN_TMP=[${LOKI_RUN_TMP-unset}]"
 EOF
 
 run_runner() { (cd "$T/repo" && HOME="$T/home" env -u LOKI_RECEIPT_SIGNING_KEY_FILE -u LOKI_RUN_TMP "$@" bash tests/run-all-tests.sh 2>&1); }
@@ -81,6 +82,8 @@ case "$kf" in
     "$T"/loki-run.*/receipt-ed25519.pem) ok "E-154: default key file is under a run-owned temp dir" ;;
     *) bad "E-154: unexpected default key file '$kf'" ;;
 esac
+# A child suite must not inherit LOKI_RUN_TMP, or its own loki_run_tmp_create refuses.
+printf '%s\n' "$out" | grep -qx 'CHILD_RUN_TMP=\[unset\]' && ok "E-154: child suite sees LOKI_RUN_TMP unset" || bad "E-154: LOKI_RUN_TMP leaked to child suite"
 [ ! -e "$(dirname -- "${kf:-/nonexistent/x}")" ] && ok "E-154: run-owned dir removed at exit" || bad "E-154: run-owned dir leaked"
 out="$(cd "$T/repo" && env -u LOKI_RUN_TMP HOME="$T/home" TMPDIR="$T" LOKI_RECEIPT_SIGNING_KEY_FILE=/caller/key.pem bash tests/run-all-tests.sh 2>&1)"
 printf '%s' "$out" | grep -q "KEYFILE=/caller/key.pem" && ok "E-154: caller-set key file is kept" || bad "E-154: caller key file overridden"

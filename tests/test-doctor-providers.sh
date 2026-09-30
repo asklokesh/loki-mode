@@ -377,11 +377,11 @@ done
 a123_run() {
     local route="$1" stub="$2" prov="$3" out="$4" rc=0
     if [ "$route" = bash ]; then
-        env HOME="$A123_H" PATH="$stub:/opt/homebrew/bin:/usr/bin:/bin" LOKI_LEGACY_BASH=1 \
+        env HOME="$A123_H" PATH="$stub:$(dirname "$(command -v node)"):/opt/homebrew/bin:/usr/bin:/bin" LOKI_LEGACY_BASH=1 \
             ANTHROPIC_API_KEY=doctor-fixture-not-a-key LOKI_PROVIDER="$prov" LOKI_NO_BROWSER=1 \
             bash "$REPO_ROOT/autonomy/loki" doctor >"$out" 2>/dev/null || rc=$?
     else
-        env HOME="$A123_H" PATH="$stub:$(dirname "$(command -v bun)"):/opt/homebrew/bin:/usr/bin:/bin" \
+        env HOME="$A123_H" PATH="$stub:$(dirname "$(command -v bun)"):$(dirname "$(command -v node)"):/opt/homebrew/bin:/usr/bin:/bin" \
             ANTHROPIC_API_KEY=doctor-fixture-not-a-key LOKI_PROVIDER="$prov" LOKI_NO_BROWSER=1 \
             bun "$REPO_ROOT/loki-ts/src/cli.ts" doctor >"$out" 2>/dev/null || rc=$?
     fi

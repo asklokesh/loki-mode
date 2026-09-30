@@ -13646,7 +13646,7 @@ cmd_doctor() {
         if ! command -v "$cmd" &> /dev/null; then
             if [ "$required" = "required" ]; then
                 echo -e "  ${RED}FAIL${NC}  $name - not found"
-                _doctor_block "$name is not installed"
+                _doctor_block "${name%% (*} is not installed"
                 fail_count=$((fail_count + 1))
             elif [ "$required" = "recommended" ]; then
                 echo -e "  ${YELLOW}WARN${NC}  $name - not found (recommended)"
@@ -13715,7 +13715,7 @@ cmd_doctor() {
                { [ "$cur_major" -eq "$min_major" ] 2>/dev/null && [ "$cur_minor" -lt "$min_minor" ] 2>/dev/null; }; then
                 if [ "$required" = "required" ]; then
                     echo -e "  ${RED}FAIL${NC}  $name$version_display - requires >= $min_version"
-                    _doctor_block "$name must be >= $min_version"
+                    _doctor_block "${name%% (*} must be >= $min_version"
                     fail_count=$((fail_count + 1))
                 else
                     echo -e "  ${YELLOW}WARN${NC}  $name$version_display - recommended >= $min_version"
