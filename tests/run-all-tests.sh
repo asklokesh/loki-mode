@@ -1558,6 +1558,15 @@ run_test "Dependency inventory Latest/Bump self-consistency (DEP-01)" "$SCRIPT_D
 run_test "Usage governor calibration and dedup (G-01)" "$SCRIPT_DIR/test-usage-governor.sh"
 run_test "Usage governor statusLine logger (G-01)" "$SCRIPT_DIR/test-usage-statusline-logger.sh"
 run_test "CI security scanners wired, fail-closed (E-123)" "$SCRIPT_DIR/test-security-scan-coverage.sh"
+run_test "Heredoc dollar-digit footgun checker (D44)" "$SCRIPT_DIR/test-check-heredoc-dollar-digit.sh"
+run_test "CI cache scope (D44)" "$SCRIPT_DIR/test-ci-cache-scope.sh"
+run_test "Engine10 push GitLab (D44)" "$SCRIPT_DIR/test-engine10-push-gitlab.sh"
+run_test "gh withhold nested (D44)" "$SCRIPT_DIR/test-gh-withhold-nested.sh"
+run_test "SettingsPage has no Gemini (D44)" "$SCRIPT_DIR/test-settingspage-no-gemini.sh"
+run_test "Trusted push agent config (D44)" "$SCRIPT_DIR/test-trusted-push-agent-config.sh"
+run_test "v10 guard rules (D44)" "$SCRIPT_DIR/test-v10-guard.sh"
+run_test "Every test suite is registered in a runner (D44)" "$SCRIPT_DIR/test-registration-coverage.sh"
+run_test "Structural checks catch planted defects (D44-C)" "$SCRIPT_DIR/test-structural-checks.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 
 # Summary
