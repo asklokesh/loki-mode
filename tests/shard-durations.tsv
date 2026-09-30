@@ -669,3 +669,4 @@ security-audit.yml gitleaks config isolation (refuse config change, base-config 
 CI security scanners wired, fail-closed (E-123)	1
 Worktree install cache keyed on lockfile hash (E-130)	1
 WhatsNew CURRENT_VERSION matches VERSION (E-129)	1
+No script or test removes run-owned temp dirs by glob (E-140)	2
