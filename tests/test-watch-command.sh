@@ -84,7 +84,30 @@ ORIG_DIR="$(pwd)"
 set -m
 CHILD_PGIDS=()
 # Optional side file listing every recorded PGID (for external verification).
-_record_pgid() { CHILD_PGIDS+=("$1"); [ -n "${WATCH_TEST_PGID_FILE:-}" ] && echo "$1" >> "$WATCH_TEST_PGID_FILE"; return 0; }
+_record_pgid() {
+    local g="$1" mine parent
+    mine=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
+    parent=$(ps -o pgid= -p "$PPID" 2>/dev/null | tr -d ' ')
+    case "$g" in ''|*[!0-9]*|0|1) return 0 ;; esac
+    [ "$g" = "$mine" ] || [ "$g" = "$parent" ] && return 0
+    CHILD_PGIDS+=("$g")
+    [ "${2:-}" = "anc" ] && ANC_PGIDS+=("$g")
+    [ -n "${WATCH_TEST_PGID_FILE:-}" ] && echo "$g" >> "$WATCH_TEST_PGID_FILE"
+    return 0
+}
+ANC_PGIDS=()
+# PID-reuse guard: a pid-derived group is killed only while some member descends from this suite.
+_group_has_suite_member() {
+    local m a n
+    for m in $(ps -axo pid=,pgid= | awk -v g="$1" '$2 == g { print $1 }'); do
+        a=$m; n=0
+        while [ -n "$a" ] && [ "$a" -gt 1 ] && [ "$n" -lt 50 ]; do
+            [ "$a" = "$$" ] && return 0
+            a=$(ps -o ppid= -p "$a" 2>/dev/null | tr -d ' '); n=$((n + 1))
+        done
+    done
+    return 1
+}
 _stop_children() {
     local g f
     # loki start detaches run.sh into its own session (setsid), so it is not in
@@ -96,6 +119,12 @@ _stop_children() {
         case "$g" in ''|*[!0-9]*|0|1) continue ;; esac
         _record_pgid "$g"
     done
+    local keep=()
+    for g in ${CHILD_PGIDS[@]+"${CHILD_PGIDS[@]}"}; do
+        case " ${ANC_PGIDS[*]:-} " in *" $g "*) _group_has_suite_member "$g" || continue ;; esac
+        keep+=("$g")
+    done
+    CHILD_PGIDS=(${keep[@]+"${keep[@]}"})
     # Snapshot members of the recorded groups plus their descendants first: a
     # child that made its own group (timeout, setsid) is only reachable by
     # walking parent links before its parent dies.
@@ -160,7 +189,7 @@ echo "# Test PRD for once mode" > prd.md
 # but should exit (not hang) -- we timeout after 5s to verify it doesn't hang
 timeout -k 10 10 "$LOKI" watch --once > "$TMPDIR_BASE/watch-once.out" 2>&1 &
 once_pid=$!
-_record_pgid "$once_pid"
+_record_pgid "$once_pid" anc
 wait "$once_pid" || actual_exit=$?
 actual_exit=${actual_exit:-0}
 output=$(cat "$TMPDIR_BASE/watch-once.out")
@@ -241,7 +270,7 @@ echo "# Signal test PRD" > prd.md
 # Start watch in background with --no-auto-start, send SIGTERM after 2s
 "$LOKI" watch --no-auto-start > "$TMPDIR_BASE/watch-signal.out" 2>&1 &
 watch_pid=$!
-_record_pgid "$watch_pid"
+_record_pgid "$watch_pid" anc
 sleep 2
 if kill -0 "$watch_pid" 2>/dev/null; then
     kill -TERM "$watch_pid" 2>/dev/null
