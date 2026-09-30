@@ -601,6 +601,9 @@ describe("engine10 wall base run, D42 (3)", () => {
   test("(r5-B2b) pytest.exit('x\\n1 failed', returncode=1): not_run", () => {
     expect(run1("loki_wall_x.py", "import pytest\ndef test_a():\n    pytest.exit('x\\n1 failed', returncode=1)\n")).toEqual({ pass: 0, fail: 0, not_run: 1 });
   });
+  test("(r5-B2d) pytest.exit('x\\n1 failed in 0.01s', returncode=1) forges a footer-shaped line: not_run (Exit-banner check)", () => {
+    expect(run1("loki_wall_x.py", "import pytest\ndef test_a():\n    pytest.exit('x\\n1 failed in 0.01s', returncode=1)\n")).toEqual({ pass: 0, fail: 0, not_run: 1 });
+  });
   test("(r5-B2c) pytest.exit('x\\nFAILED a.py::t - boom', returncode=1) under -ra addopts: not_run", () => {
     expect(run1("loki_wall_x.py", "import pytest\ndef test_a():\n    pytest.exit('x\\nFAILED a.py::t - boom', returncode=1)\n", { "pytest.ini": "[pytest]\naddopts = -ra -q\n" })).toEqual({ pass: 0, fail: 0, not_run: 1 });
   });

@@ -10,7 +10,6 @@ import type { RunContext, RunnerName, Stage, StageResult, TestMap, TestRef } fro
 import { taskBlock } from "../types.ts";
 import type { ReadOnlyFile } from "./implement.ts";
 import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallModel } from "../sizing.ts";
-import { pytestExit1IsRed } from "../../e10ext/pytest_red.ts";
 import { sha256 } from "./seal.ts";
 import { runnerCmd } from "./verify.ts";
 
@@ -41,6 +40,13 @@ function pytestCollectionIsRed(output: string, repoDir: string): boolean {
   return !!last && under(last[1]!) && !/^\s*(import\s|from\s\S+\s+import\b)/.test(last[2] ?? "");
 }
 function moduleUnderRepo(repoDir: string, name: string): boolean { const rel = name.replace(/\./g, "/"); return existsSync(join(repoDir, `${rel}.py`)) || existsSync(join(repoDir, rel, "__init__.py")); }
+// E-125 r5: exit-1 output is red only from the real final summary, never captured text. The runner appends -rfE, so a repo's `-q` addopts (stacked to -qq, no footer) still lists FAILED lines.
+function pytestExit1IsRed(output: string): boolean {
+  if (/^!+ _pytest\.outcomes\.Exit\b/m.test(output)) return false; // pytest.exit(...) can print any text, incl. "1 failed"
+  if (/^=*\s*(\d+ \w+(, )?)*\d+ failed\b.* in [\d.]+s/.test(output.trimEnd().split("\n").pop() ?? "")) return true;
+  const hdr = [...output.matchAll(/^=+ short test summary info =+$/gm)].pop();
+  return !!hdr && /^FAILED \S+/m.test(output.slice(hdr.index));
+}
 // B2 (r2): jest/vitest/bun red requires a parsed failed-test count above 0; unparseable output stays 0 (not_run).
 function parsedFailCount(runner: RunnerName, output: string): number {
   const m = runner === "bun" ? /^\s*(\d+)\s+fail\s*$/m.exec(output)
