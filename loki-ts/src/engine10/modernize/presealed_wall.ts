@@ -242,6 +242,18 @@ export function sealPreSealedWall(
       reason: `oracle seal invalid: oracle is ${oracleSealed.verdict} (${oracleSealed.not_proven ?? "no reason recorded"}); presealed wall refused`,
     };
   }
+  // A pre-D42(4) oracle seal carries no normalizers_sha256 at all (verifySeal still accepts it
+  // as tamper-clean -- see its own file header). Sealing a presealed wall against one would bind
+  // this run to nothing checkable later, so it is refused here the same way a NOT_PROVEN oracle
+  // is, rather than silently omitting the field (see verifyPreSealedWall's typeof-gated compare).
+  if (typeof oracleSealed.normalizers_sha256 !== "string") {
+    return {
+      unit,
+      classification: "not_run",
+      sealed: false,
+      reason: "oracle seal invalid: oracle has no normalizers_sha256 (pre-D42 (4) seal); presealed wall refused",
+    };
+  }
 
   const outcome = runConformance(unit, repoDir);
   const classification = classifyBaseRun(outcome, repoDir);
@@ -332,9 +344,17 @@ export function verifyPreSealedWall(repoDir: string, mid: string, unit: string):
   }
   const oracleSealed = JSON.parse(readFileSync(join(oracleDir(repoDir, mid, unit), "sealed.json"), "utf8")) as SealedOracle;
   const carried = JSON.parse(sealedRaw) as PreSealedWallSeal;
+  // typeof-gated on both sides (opus reject on 1facbf99): `!==` alone treats two absent hashes
+  // as a match, because undefined !== undefined is false. A pre-D42(4) oracle seal has no
+  // normalizers_sha256 at all, and verifySeal above still accepts such a seal as tamper-clean --
+  // so an equally hash-less carried record must never be read as "matches", only as "cannot be
+  // checked, so it fails".
   if (
     carried.oracle_cases_sha256 !== oracleSealed.cases_sha256 ||
-    carried.oracle_coverage_sha256 !== oracleSealed.coverage_sha256
+    carried.oracle_coverage_sha256 !== oracleSealed.coverage_sha256 ||
+    typeof carried.oracle_normalizers_sha256 !== "string" ||
+    typeof oracleSealed.normalizers_sha256 !== "string" ||
+    carried.oracle_normalizers_sha256 !== oracleSealed.normalizers_sha256
   ) {
     return { ok: false, reason: "carried oracle hashes do not match the current oracle seal" };
   }

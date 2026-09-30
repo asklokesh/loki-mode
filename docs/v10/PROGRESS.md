@@ -1441,3 +1441,76 @@ sample.
 - P0 augmentiq #52 rework: E-68, E-69, EV-13 APPROVE; E-66 CONCERN; E-67 REJECT. E-64 (lean small path plus opus on failure) APPROVE on rework.
 - Part 2: 0 slices merged. M-01, M-02, M-05, M-06 built (CONCERN: recursive SCC); M-09 built (REJECT: unsupported types recorded as equal).
 - Top blocker: the 2 red Tests shards on 898fa081 block the v10.0.0 release.
+
+## 2026-09-28T22:21Z (Chief of Staff)
+- E-124 merged (8a99554c): opus r3 APPROVE at 2a3f992b; a missing normalizer hash on either side now fails verify, and a pre-D42 oracle is refused at seal (presealed_wall.ts:249, 355-356). modernize 229/0; dist loki.js unchanged (cockpit.js debugId-only noise discarded).
+- Staffed M-18 and E-125 (sonnet, worktrees); S41-05 and S41-12 corrected to building (29529670). Pruned 3 finished, merged, clean worktrees by agent state (lsof positive control read 0 on a live worktree, so lsof is not a liveness signal here).
+- S41-09 done (e5468d2c, flag-gated lean prefix, core unchanged at 4,982); sonnet TL review in flight. PO cutting 6 ready slices for LOW_READY.
+- v10.5.3 Release 36490908332 in progress (required-ci and gate success); watcher re-armed after a network error. Hourly usage snapshot 9522ae5e: governor still uncalibrated.
+- S41-01 at 37 min against a 30 min budget: stop and re-slice at 45 min if it has not committed.
+
+## 2026-09-28T22:27Z (Chief of Staff)
+- Founder directive recorded as D43 (a9f74496): medium tier to 20+ tasks, 3+ reps, 95% CIs, decide only outside them; profile stage wall-clock; auth check per rep plus resume. Cards S41-17 (CIs), S41-18 (resume), S41-19 (stage profile), S41-20a/b/c (15 medium candidates) staffed on sonnet. Auth check per rep already exists (scorecard-run.sh:174 auth_guard per arm and rep).
+- S41-01 (D43 item 1, P0) done at 68d1fc28: test-harness.sh 126/0, red vs main 119/7 (all 7 the S41-01 checks); E-98f repriced: default $1.1328/completed, nowall $0.9148, nocascade n/a (2 killed-session rows with zero usage stay null). Sonnet TL review in flight.
+- S41-05 opus REJECT (3 blocking: key-order mutations M1 to M4 survive 19/0, no early-accept predicate, import fence misses 4 forms); back to its engineer. M-15 done at a6d584fb (246/0), opus review in flight.
+- Worktree drift: removed 4 stale worktrees (E-106, E-98a, old M-14 wf, EV-12F-b) after saving their diffs and untracked files to the session scratchpad (wt-salvage/).
+- UNEVIDENCED_CLAIM on a9f74496 is the S41-17 card text defining marks ("green or red"), a spec, not a claim.
+
+## 2026-09-28T22:33Z (Chief of Staff / Release Manager)
+- v10.5.3 verified: Release 36490908332 all jobs success; npm latest 10.5.3, gitHead 2e13fca3; body 12 lines. npm 404'd the version for about 7 min after publish-npm logged "+ loki-mode@10.5.3" (22:19:55Z); propagation, not a failed publish. 6 rows flipped released.
+- Train pushed 2e13fca3..04d3ac9c (41 commits: S41-16, M-14, E-118, E-122, E-123, E-124, S41-09, dist); Tests and Bun Parity watcher armed; 10.5.4 cut on green.
+- S41-09 merged (ebb16a62, TL APPROVE, 26/0). M-15 opus REJECT (B1 missing third-party package classified red; B2 PROVEN without conformance re-run or no-op ablation), back to engineer. M-18 done (a01c6fdb, 206/0 modernize), TL review. PO cut E-126 to E-131; staffing waits on worktree slots (15/15).
+
+## 2026-09-28T22:55Z HAND-OFF: PAUSED UNTIL WEDNESDAY 2026-09-30 13:00 ET (founder: weekly usage at 77%)
+
+The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the cadence, usage-snapshot and loop-resume crons are deleted. Nothing is building or in review. Do not restart before the weekly reset.
+
+### Shipped today (tail)
+- v10.5.3 (2e13fca3): npm latest 10.5.3, gitHead 2e13fca3, body 12 lines. Carried E-114, E-119, M-13, S41-02, S41-04, E-121.
+- v10.5.4 (8ee273f6): Wall classifies a runner that never started as not_run and Seal refuses not_run above 0 (S41-16); pre-sealed Wall in modernize (M-14) with the normalizer-hash check (E-124); strict-narrowing re-slice to depth 2 (M-18); LOKI_E10_PREFIX=lean flag (S41-09); governor fix (E-118); headline cost rule (E-122); arm runner and auth guard (S41-03); CI registration (E-123). npm and body verification recorded in the next entry.
+- Red main fixed forward twice: dc392119 (S41-09 moved the SDK systemPrompt, a source-reading test followed it; 948/0) and 32c66596 (the Bun and coverage CI jobs had no pytest; reproduced locally with a pytest-less venv, 18/2 then 20/0). CI green at 7f341027 (Tests, Bun Parity, Coverage).
+- Release note: release.sh in a worktree with a node_modules symlink writes absolute /Users paths into the dist maps (133 in loki.js.map, plus cockpit.js.map). For 10.5.4 they were rewritten to ../node_modules/ and cockpit maps restored from HEAD before commit. Guard slice needed (see E-102/E-103 history).
+
+### Ready, with work on a branch (each BOARD row carries where it stopped)
+- S41-01 cost capture, 68d1fc28: TL APPROVE on content; needs rebase (harness.py allowlist conflict with S41-09 and S41-11) and an opus review (card is HIGH).
+- S41-17 scorecard 95% CIs, f3f1d985: 43/43, red-first proven; needs opus review.
+- S41-18 scorecard resume, 66cc1882: 11/11; 4 gaps listed in the row; needs TL review.
+- S41-19 stage profile, e06fa612: implement is 72 to 86% of medium wall-clock; the Wall is 23 to 29% and times out at 90s in 9 to 11 of 21 runs, clearing D42's 15% bar to reopen S41-14; needs TL review.
+- S41-11 trim flag, 8aafe341: 35/0; needs TL review and a rebase.
+- S41-20a/b/c medium tasks: 6 built (flask-6093, click-3449, attrs-1327, packaging-1162, humanize-103, httpx-2536), none reviewed; the no-op baseline is missing on the 4 from b and c. Medium tier would be 13 of the 20 D43 requires.
+- E-126 to E-131 (PO cut, unstaffed), E-132 (missing pytest reads red at Wall, found fixing red main).
+
+### In rework (fix committed, needs a re-review)
+- M-15 03b35a69 (opus r2), E-125 845c9231 (opus r2, core 4,998 of 4,999; run full engine10 first), S41-05 34c44c99 (4 key-swap mutation proofs left, then opus r3), S41-12 7a3fbe53 (opus REJECT, 5 data-loss findings, not yet reworked).
+
+### Wednesday, exact next step
+1. Remove .loki/V10-STOP, run scripts/v10-pulse.sh, and confirm main CI is green.
+2. S41-01: rebase slice-S41-01 onto main, keep one LOKI_E10_PREFIX and one LOKI_E10_TRIM in V10_ENGINE_ENV_ALLOWLIST, rerun bash eval/loki10/test-harness.sh to 0 failures, send it to an opus reviewer, and merge on APPROVE. No scorecard counts until this is merged (D43 item 1).
+3. Then merge the eval prerequisites (S41-17 CIs, S41-18 resume) and bring the medium tier to 20 tasks (review S41-20a/b/c, run their no-op baselines, append their INDEX lines, and cut 7 more).
+4. Then run the medium-tier eval per D43: raw sonnet, raw opus and loki on sonnet, at least 3 reps each, back to back, with auth checked before every rep and resume on interrupt; decide only on differences whose 95% interval excludes 0.
+
+## 2026-09-30T16:58Z RESUME (Chief of Staff / Release Manager)
+- v10.5.5 verified (after the 2026-09-28 hand-off): Release 21b7becd all jobs success; npm latest 10.5.5, gitHead 21b7becd; body 24 lines; Post-Release Smoke green on rerun of run 36497082408 (the first attempt timed out waiting on PyPI, now E-135). 9 rows flipped released.
+- Nightly red since 2026-09-29 is E-134 (fsmonitor test control breaks on Bun 1.4.2; product calls still do not leak).
+- Usage governor: still uncalibrated, no founder reading on file after the reset; staffing at the operating-model floor of 8 until a reading arrives.
+- Order per hand-off: S41-01 (rebase, opus), then S41-17/S41-18, S41-20a/b/c toward 20 medium tasks, then the D43 medium eval. Rework in parallel: M-15, E-125, S41-05, S41-12; fixes E-134, E-135.
+
+## 2026-09-30T17:08Z (Chief of Staff)
+- Merged and pushed (53918a30): E-135 (smoke PyPI window 21 min, TL APPROVE), S41-19 (stage profile, TL APPROVE; implement 72 to 86 percent, Wall 23 to 29 percent with 90s timeouts in 9 to 11 of 21 runs), S41-11 (trim flag, TL r2 APPROVE, 37/0), E-133 (release map path guard, TL APPROVE, 9/0, reproduced the 10.5.4 incident as a refusal). CI watcher armed; 10.5.6 on green.
+- Rejected and in rework: S41-18 (identity keys untested), E-130 (cache copied into every worktree; publish race), M-15 r2 (no ablation; conformance forgeable via conftest; classifier diverges from wall.ts, now told to reuse it), S41-17 (green from noise below the D43 floor; fixed at 3a1077c0, awaiting opus r2), S41-12 r2 (4 rollback data-loss findings; fixed at d72ac106, awaiting opus r3), S41-05 r3 (fixed at 5aae1384, awaiting opus r4).
+- Opus share 34 to 41 percent against the D13 30 percent cap: HIGH reviews queued (S41-05, S41-12, S41-17, E-134, E-125) and released two at a time as running opus reviews finish. S41-01 (P0) opus review launched despite the cap.
+- Two reviewer temp dirs without an ownership marker remain (/private/tmp/loki-run.ztK3ctuo, /private/tmp/claude-501/loki-run.42ODTAwP); the cleanup helper refused both (rc 64) and they are left in place.
+
+## 2026-09-30T17:29Z (Chief of Staff)
+- Merged: E-130 (worktree install cache, TL r2 APPROVE, 15/0; .loki copy 2.32s to 0.04s with a 71 MB cache) and S41-18 (resume, TL r3 APPROVE, 17/0). Pushed cad4615f with two red-main fix-forwards: 7f1dff57 (E-133 shard-durations row missing) and 010797b3 (E-133 fixture tripped test-no-hardcoded-paths, the real cause of Tests red on 53918a30). Local fast tier: 96 PASS, 0 FAIL before the 10 min cap. CI watcher armed; 10.5.6 on green.
+- S41-01 opus r1 REJECT (a killed session's cost silently dropped, understating loki); fixed at 5c539ee5 (129/0, 0 of 77 preserved rows change), opus r2 in flight. S41-17 opus r2 REJECT (floor counted rows not evaluated reps); fixed at 37fc78d2 (63/0), opus r3 in flight. S41-05 opus r4 REJECT (template-literal dynamic import bypasses the fence); engineer switching to Bun scanImports.
+- Medium tier: S41-20a flask-6093 reworked (click-3449 dropped); 20b/20c self-check kept attrs-1327, packaging-1162, faker-2206 (added an anti-alias test), httpx-2536 and dropped humanize-103, marshmallow-2170, pluggy-442. Medium would be 12 of the 20 D43 needs. The INDEX.md edits on the three branches will conflict at merge.
+
+## 2026-09-30T18:06Z (Chief of Staff / Release Manager, D44 in force)
+- D44 recorded (25c61932). Tier B now runs on train/** pushes (test.yml, bun-parity.yml, coverage.yml). Release clock cron b33e6870 every 10 min releases only a main commit with green Tier B at that exact SHA.
+- v10.5.6 cut from 005f7617 (Tests, Bun Parity, Coverage green) as 97faf361; Release run in progress. Carries S41-01, S41-05, S41-11, S41-18, S41-19, E-129, E-130, E-133, E-135 and the four red-main fixes.
+- Red main count today: 4 (53918a30 hardcoded path, cad4615f ShellCheck, 9e815035 duplicate TS function, plus the earlier drift row). Each was a structural check only CI ran; D44-C moves them into Tier A and pre-merge. Memory feedback-run-the-exact-gate-locally updated with the exact pre-push commands.
+- train/2 pushed at 2e22fde8 (v10.5.6 plus E-136, D44 triggers, E-126, E-128/E-131); Tier B running; main fast-forwards to it only when green, then the clock cuts 10.5.7. Local main has E-127 queued for train/3.
+- Builders (8): D44-A (promote script and pre-push), D44-C (structural checks), E-137 (orphan leak), S41-20d, S41-20e (medium tasks), plus reworks. D44-B done, TL review in flight (flag: its gh lookup is branch-scoped to main, which misses train runs).
+- Reviews: opus on E-125 r2, E-134, S41-12 r3; S41-17 r5 narrow re-check; opus share 28 percent.
+- Governor: docs/v10/usage-readings.tsv holds only its header; no calibration reading exists, so staffing stays at the operating-model floor of 8.

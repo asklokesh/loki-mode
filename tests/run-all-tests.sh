@@ -591,6 +591,8 @@ run_test "Healing Friction Gate Tests" "$SCRIPT_DIR/test-healing-friction-gate.s
 
 # Parallel worktree Claude auto-flags (effort/budget/fallback/mcp parity)
 run_test "Worktree Auto-Flags Tests" "$SCRIPT_DIR/test-worktree-auto-flags.sh"
+run_test "Worktree install cache keyed on lockfile hash (E-130)" "$SCRIPT_DIR/test-worktree-install-cache.sh"
+run_test "WhatsNew CURRENT_VERSION matches VERSION (E-129)" "$SCRIPT_DIR/test-whatsnew-version-sync.sh"
 run_test "Merge-queue log-once + nested-agent parallel guard (client parallel-issue fix)" "$SCRIPT_DIR/test-merge-queue-log-once.sh"
 
 # v8: raw-SDK judge/text bridges (fail-closed, opt-in, binary-free ordering)
@@ -1464,6 +1466,7 @@ run_test "v10-pulse anti-drift status/violation reporter" "$SCRIPT_DIR/test-v10-
 run_test "board-mark-released flips a slice's merged row once its tag ships (E-90)" "$SCRIPT_DIR/test-board-mark-released.sh"
 run_test "release.sh --bump-only restores debugId-only dist churn (E-72)" "$SCRIPT_DIR/test-release-bump-only.sh"
 run_test "release.sh --bump-only never leaves dist deleted on build failure (E-102)" "$SCRIPT_DIR/test-release-bump-dist.sh"
+run_test "release.sh --bump-only refuses dist maps with absolute or repo-escaping sources (E-133)" "$SCRIPT_DIR/test-release-dist-guard.sh"
 run_test "release-notes.sh extraction/validation + pre-push VERSION-bump gate (E-88)" "$SCRIPT_DIR/test-release-notes.sh"
 run_test "no hardcoded far-future latest a release can overtake (E-73)" "$SCRIPT_DIR/test-no-stale-future-version.sh"
 run_test "timeout launches of run.sh/autonomy/loki escalate with -k (E-00)" "$SCRIPT_DIR/test-timeout-escalates.sh"

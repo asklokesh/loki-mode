@@ -13,7 +13,8 @@ name: Bun Parity
 
 on:
   push:
-    branches: [main]
+    # D44: train/N branches run Tier B before main is fast-forwarded to them.
+    branches: [main, "train/**"]
   pull_request:
     branches: [main]
 
