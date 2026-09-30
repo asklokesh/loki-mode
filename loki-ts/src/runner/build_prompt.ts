@@ -1514,7 +1514,20 @@ async function resolveDynamicSections(
 // Main entry point.
 // ---------------------------------------------------------------------------
 
+// A-132: mirror of run.sh _loki_is_quick_prd. Only `loki quick` writes
+// .loki/quick-prd-<pid>.md; such a run does not ask for USAGE.md. Bash blanks
+// the instruction in place (empty line / double space), so blanking it in the
+// rendered prompt keeps byte parity on every layout.
+function isQuickPrd(prd: string | null): boolean {
+  return prd !== null && /(^|\/)quick-prd-.*\.md$/s.test(prd);
+}
+
 export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
+  const out = await buildPromptRaw(opts);
+  return isQuickPrd(opts.prd) ? out.replaceAll(USAGE_DOC_INSTRUCTION, "") : out;
+}
+
+async function buildPromptRaw(opts: BuildPromptOpts): Promise<string> {
   const { retry, prd, iteration, ctx } = opts;
   const env = ctx.env;
 
