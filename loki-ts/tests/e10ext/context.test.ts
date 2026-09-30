@@ -87,6 +87,16 @@ describe("S41-10b static-first brief", () => {
     expect(b.startsWith(FIXED_RULES)).toBe(true);
     for (const v of ["foo", "bar", "plan A", "plan B", "src/a.ts", "lib/b.py", "tests/"]) expect(FIXED_RULES).not.toContain(v);
   });
+  test("E-150: brief ends with the finish line; empty impacted list says none known", () => {
+    const finish = FIXED_RULES.split("\n").pop() as string;
+    expect(finish.startsWith("Finish with exactly one line: LOKI_DONE")).toBe(true);
+    expect(a.endsWith(finish)).toBe(true);
+    expect(b.endsWith(finish)).toBe(true);
+    const none = buildImplementBrief("t", null, []);
+    expect(none.endsWith(finish)).toBe(true);
+    expect(none).toContain("Impacted tests: none known; run the project's full test command.");
+    expect(none).not.toContain("(none known)");
+  });
   test("plan paths with drive letters, ~ and backslash traversal are dropped", () => {
     const ctx = fixture(5);
     const bad = ["C:\\x\\y.py", "C:/x/y.py", "d:/z.py", "~/secret", "~root/x", "/abs.py", "..\\up.py", "ok/file.py"];

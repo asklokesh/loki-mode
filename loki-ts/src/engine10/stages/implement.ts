@@ -1,7 +1,7 @@
 // E-08: Implement (ENGINE.md 4, 16). One session; the brief marks Wall tests read-only, names only the impacted tests. Afterwards any changed read-only file is restored (tests_reverted) and the exit is classified.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { FIXED_RULES, briefContext } from "../../e10ext/context.ts";
+import { FINISH_LINE, FIXED_RULES, briefContext } from "../../e10ext/context.ts";
 import { cascadeEnabled, cascadeImplementModel, loadRepoMap, namedFiles } from "../sizing.ts";
 import { selectRelevantFiles } from "./plan.ts"; import { runnerCmd } from "./verify.ts";
 import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
@@ -26,13 +26,13 @@ export function impactedTests(ctx: RunContext): string[] {
 
 export const briefCtx = (ctx: RunContext): string => briefContext(ctx, { select: selectRelevantFiles, cmd: runnerCmd });
 export function buildImplementBrief(task: string, plan: string | null, impactedTests: string[], repoMap = ""): string {
-  // S41-10b: FIXED_RULES leads (byte-identical for every task and run); everything per-task follows it.
-  return [
+  return [ // FIXED_RULES leads and FINISH_LINE closes, both byte-identical per task
     FIXED_RULES,
     ...taskBlock(task),
     plan ? `Follow this plan:\n${plan}` : "No separate plan was made: plan the change yourself in this session, then implement it.",
     ...(repoMap ? [repoMap] : []),
-    `Impacted tests to run: ${impactedTests.length ? impactedTests.join(", ") : "(none known)"}.`,
+    impactedTests.length ? `Impacted tests to run: ${impactedTests.join(", ")}.` : "Impacted tests: none known; run the project's full test command.",
+    FINISH_LINE,
   ].join("\n\n");
 }
 
