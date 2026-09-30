@@ -1,0 +1,19 @@
+{
+  "id": "pub-packaging-1162",
+  "kind": "public",
+  "prompt": "Version objects pickled before 26.1 fail to unpickle (ModuleNotFoundError: packaging._structures)\n\n## Description\n\n`Version` objects that were pickled with `packaging` versions prior to 26.1 fail to unpickle with 26.1+, raising:\n\n```\nModuleNotFoundError: No module named 'packaging._structures'\n```\n\nThis is because PR #1116 removed the `_structures.py` module (which defined `InfinityType` / `NegativeInfinityType`). Those class references are embedded in the `_key_cache` slot of pickled `Version` objects. When `pickle.loads()` attempts to resolve them, it fails because the module no longer exists.\n\nAdditionally, `Version` objects pickled with 26.0 (which introduced `__slots__` but still had `_structures.py`) use a different state layout than 26.1+ (which added the `_hash_cache` slot), so even if the module issue were resolved, `__setstate__` handling is needed for the slot mismatch.\n\n## Reproduction\n\n```python\nimport pickle\nfrom packaging.version import Version\n\nv = Version(\"1.2.3\")\ndata = pickle.dumps(v)\n\n# Upgrade packaging to 26.1+, then:\npickle.loads(data)  # ModuleNotFoundError: No module named 'packaging._structures'\n```\n\nIn real-world use cases, these pickles live in databases, caches, shelve files, and other persistent stores that may not be re-created when upgrading `packaging`.\n\n## Proposed Solution\n\nA two-part fix:\n\n1. **Forward-fix**: Add `__reduce__`/`__getstate__` to `Version` so that *new* pickles serialize compactly and never persist internal caches or private types.\n2. **Backward-fix**: Restore a minimal `_structures.py` shim that defines `InfinityType` and `NegativeInfinityType` (just enough to be unpicklable), and add `__setstate__` to `Version` to discard the stale cache and let it recompute from the core fields, handling the old dict format, the 26.0 slots format, and the new tuple format.",
+  "issue_ref": "pypa/packaging#1162",
+  "repo": {
+    "source": "https://github.com/pypa/packaging.git",
+    "ref": "9ac29c01860f5732de260326f272da2346c50003"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . 'pytest<9' pretend hypothesis tomli_w pip",
+  "hidden": {
+    "files": [
+      "tests/test_version.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_version.py -k \"test_pickle\""
+  },
+  "timeout_s": 900,
+  "tier": "medium"
+}

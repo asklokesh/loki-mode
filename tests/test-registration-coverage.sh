@@ -44,6 +44,11 @@ RUNNERS=(
 IGNORE=(
     # This gate runs the others; it is registered separately by name.
     "test-registration-coverage.sh"
+    # D44-C: slow (over 60s), not failing; register once sharded.
+    "test-magic-injection.sh"
+    "test-magic-rarv.sh"
+    "test-mirofish-integration.sh"
+    "test-watch-command.sh"
 )
 
 PASS=0

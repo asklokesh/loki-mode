@@ -10,6 +10,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.7 (2026-09-30)
+
+Main now moves only to a release train whose full test tier already passed, the eval scorecard reports 95% confidence intervals and refuses undersized samples, and the building blocks for issue intake, repo memory and parallel attempts land behind the v10 engine (not yet wired into a run).
+
+### Changed
+- Eval task sizing counts only files whose change alters executable code, so a docstring or blank-line hunk no longer makes a one-file fix look like a two-file task (E-136).
+- The eval scorecard reports seeded bootstrap 95% confidence intervals and marks a difference only when it falls outside them; red outranks inconclusive; the D43 floor requires every task at 3 evaluated reps on both arms, and one run_id appearing in two rep files under a label is refused (S41-17).
+
+### Fixed
+- The v10 tree-swap helper passes an explicit environment to every git call it spawns, so a caller's scrubbed environment is what git sees (E-141).
+
+### Internal
+- D44 release trains: Tests, Bun Parity and Coverage (baseline) run on pushes to train/N branches, and main is fast-forwarded only to a train commit whose three workflows passed (D44). The pulse reports RELEASE_CADENCE, MAIN_RED_BY_MERGE and releases per hour, and finds Tier B runs on train branches (D44-B).
+- v10 extension data layers, not yet wired into a run: a tree-swap helper that scores an attempt in the primary tree and always restores it, with a lock, exclusive undo files and a refusal on tracked changes (S41-12); repo memory recording the verified test command, flaky tests and failure causes per repo (E-126); and issue listing by label or milestone as pure data, with dash-leading and dot-dot values refused (E-127).
+- Moat P7 scanner catches fabricator calls wrapped in useMemo and bracket-indexed sinks (E-128, E-131).
+- Tests: the fsmonitor environment guard is meaningful on Bun 1.3 and 1.4, and its driver runs under process.execPath (E-134, E-139). A ShellCheck warning in the scorecard test is fixed.
+
+## v10.5.6 (2026-09-30)
+
+Parallel worktrees stop reinstalling npm dependencies from scratch, v10 sessions can trim oversized tool output behind a flag, and the eval harness now refuses to report a cost it did not fully measure.
+
+### Added
+- `LOKI_E10_TRIM=1` (off by default): v10 engine sessions shorten oversized tool results as they arrive. Bash output over 200 lines keeps its first 40 and last 120 lines, Read keeps 400 lines and Grep keeps 100 matches, and the head and thresholds halve from tool call 25 on. A Bash result always keeps its last 120 lines so a failing command's tail is never cut, because the SDK exposes no exit code to the hook (S41-11).
+
+### Changed
+- Parallel-mode worktrees reuse a cached `node_modules` keyed on the lockfile, `package.json`, Node version and platform, stored under `.loki/cache/install` and capped at the 3 newest entries. The install cache is no longer copied into each worktree's `.loki`, which removed a 2.3 second copy per worktree with a 71 MB cache (E-130).
+- The WhatsNew dialog shows the current release version and is stamped by the release script, instead of a hardcoded 9.55.0 (E-129).
+
+### Fixed
+- `scripts/release.sh --bump-only` refuses to continue when a dist source map records an absolute path or one that climbs out of the repository, which a symlinked `node_modules` produced at v10.5.4 (E-133).
+
+### Internal
+- Eval harness: v10 cost and token totals are null unless every started session recorded its cost, so a killed session can no longer understate a run's cost while still reading as measured; the engine knob allowlist gains LOKI_E10_CASCADE, TOP_MODEL, ATTEMPTS, CONTEXT and WALL_PARALLEL (S41-01).
+- Scorecard eval: an interrupted run resumes by passing the harness only tasks with no completed row, keyed on model, harness version and arm (S41-18); a per-stage wall-clock profile of the E-98f runs is in docs/v10/METRICS.md (S41-19).
+- v10 attempt selection for parallel attempts (not yet wired into a run), with an import fence that uses Bun's own import scanner (S41-05).
+- Post-release smoke waits about 21 minutes for PyPI and npm to publish instead of 10.5 (E-135).
+- CI fixes: a shard-durations row, a portable test fixture path, two ShellCheck warnings and a duplicate test helper that failed the typecheck.
+
 ## v10.5.5 (2026-09-28)
 
 Ships everything prepared for v10.5.4, which never reached npm because its release gate ran the v10 Wall tests without pytest: the Wall no longer mistakes a test run that never started for a failing test, and a Seal refuses any run with tests that did not run.

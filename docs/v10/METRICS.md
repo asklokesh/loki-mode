@@ -424,3 +424,113 @@ instruction for this slice.
 Command: `python3` one-off aggregation of the `result-cost-*.json` files
 under `~/loki-ci-logs/eval/e98f-engine/*/*/.loki/metrics/`, grouped by the
 stage suffix after `result-cost-e10-<ts>-<hash>-`.
+
+## Stage wall-clock profile (S41-19)
+
+Source: `docs/v10/DECISIONS.md` D43 item 3. `eval/loki10/stage-profile.py`
+run over all 9 preserved E-98f engine copies
+(`~/loki-ci-logs/eval/e98f-engine/{default,nocascade,nowall}-r{1,2,3}/*/.loki/
+runs/*/events.jsonl`), 21 runs per arm, all 63 preserved runs counted (no
+filter for completed/graded, unlike the pooled table above), no new eval
+spend. Per-run total is `time_to_pr_s` from the matching harness row (the
+`results.jsonl` next to each source `e98f-<arm>-r<n>` dir, deduped one row
+per task with the rule in `docs/v10/MEDIUM-ANALYSIS.md` "After (E-98f)");
+one nowall row has a null `time_to_pr_s` and falls back to the journal's own
+run.completed-minus-run.started span. Per-stage seconds are self-time
+(top-of-stack) attribution over each run's `stage.started`/`.completed`/
+`.failed`/`.skipped` events, which nests correctly through cascade's plan/
+wall overlap (wall opens before plan closes) and repeated fix/verify
+rounds; mechanism, a worked synthetic example, and the same regression
+covered by `--self-test` are in the script's module docstring and tests.
+
+Journals have what the profile needs: every run has a run.started/
+run.completed pair, every stage transition is covered by a start plus a
+completed/failed/skipped event, and unattributed time (a run's own launch/
+push-confirm overhead plus untracked gaps such as the post-seal
+pr.opened/deep.started handoff) is only 0.2-1.0s p50 (0.1-0.5% of total) in
+every arm. No missing event field is needed.
+
+Share is aggregate: sum of a stage's seconds over sum of every run's total,
+across the arm's 21 runs (`stage-profile.py`'s own column). It sums to
+100% by construction, unlike a p50-over-p50 ratio (p50s of different
+stages do not fall on the same run, so those ratios can tie or overshoot
+100%; an earlier draft of this section used that ratio and wrongly read
+wall and implement as tied in nocascade at p50 90.0s/88.2s -- the aggregate
+share below, 29.0%/62.9%, does not tie).
+
+| stage | default p50/p90 (s) | default share | nocascade p50/p90 (s) | nocascade share | nowall p50/p90 (s) | nowall share |
+|---|---|---|---|---|---|---|
+| intake | 0.1 / 11.2 | 1.3% | 0.1 / 9.8 | 1.4% | 0.1 / 6.7 | 1.2% |
+| plan | 0.0 / 0.0 | 0.2% | 0.0 / 0.0 | 0.1% | 18.7 / 35.6 | 7.1% |
+| wall | 73.6 / 90.0 | 23.0% | 90.0 / 90.0 | 29.0% | 0.0 / 0.0 | 0.0% |
+| implement | 139.8 / 424.1 | 72.5% | 88.2 / 253.1 | 62.9% | 158.1 / 352.9 | 85.7% |
+| verify | 1.7 / 5.3 | 0.8% | 1.5 / 4.3 | 0.9% | 1.7 / 5.4 | 1.1% |
+| fix | 0.0 / 18.9 | 1.9% | 0.0 / 0.0 | 5.3% | 0.0 / 35.7 | 4.4% |
+| seal + commit | 0.1 / 0.1 | 0.1% | 0.1 / 0.1 | 0.1% | 0.1 / 0.1 | 0.1% |
+| unattributed | 1.0 / 1.7 | 0.4% | 0.9 / 1.6 | 0.4% | 0.8 / 1.7 | 0.4% |
+| **total** | **209 / 483** | **100%** | **166 / 565** | **100%** | **199 / 357** | **100%** |
+
+"plan" reads near-zero in the two wall-on arms (default, nocascade) not
+because planning is free, but because "wall" opens before "plan" closes
+(seen directly in the journals: e.g. pub-werkzeug-3271/default-r1, plan
+starts and wall starts within 4ms of each other, plan closes 24.96s later
+while wall is still running) and self-time attribution charges the overlap
+to whichever stage is innermost on the stack (wall). This overlap happens
+in both wall-on arms regardless of the cascade knob; it is wall racing
+plan, not cascade. nowall's runs, with no wall racing it, show plan's real
+cost (18.7s p50). "fix" is 0 at p50 in every arm (most runs need no fix
+round) but reaches 18.9-35.7s at p90 when one or two rounds fire.
+
+Slowest stage by aggregate share: **implement** in every arm (72.5%,
+62.9%, 85.7%), and per the S41-04 token table above, the stage with by far
+the largest token volume (mean cache_read 982K tokens, p50 654K, the most
+of any stage).
+
+**Wall meets D42 item 2's own revival bar.** That decision deferred S41-14
+(skip implement straight past Wall) with an explicit condition: "It may be
+revived only on new evidence that Wall is 15% or more of p50 wall-clock."
+This profile is that evidence: wall's aggregate share is 23.0% (default)
+and 29.0% (nocascade), both above 15%. Two more facts from the same
+journals, not yet in any prior METRICS.md entry: (1) of the 21 wall-opened
+runs per arm, wall hits its own timeout (`stage.failed` with
+`data.reason=="limit"`, `limit_s`=90) in 9/21 default runs and 11/21
+nocascade runs -- wall burns its full 90s budget with nothing to show for
+it in roughly half of runs; (2) implement starts within 1ms of wall's
+close in every run that has both (p50 and p90 gap 0.0-0.001s across 18
+measured pairs per arm) -- wall is not waited-on after the fact, it is
+directly on the critical path in front of implement. Whether to actually
+revive S41-14 is a HIGH-tier call under D42 item 2's own invariant (Wall
+files must stay sealed and proven red on the base tree before implement
+exists), not decided here; this section only supplies the measurement that
+triggers reconsidering it.
+
+nowall's total p50 (199s) is 10s below default's (209s), the opposite
+direction from the completed-only table above (214s vs 209s, nowall
+higher); both are inside the noise D43 describes (raw swung 85.7% to
+71.4% between two runs on the same 7 tasks), so neither ordering should be
+read as a verdict on nowall by itself -- the wall evidence above is the
+finding, not the nowall-vs-default total.
+
+Largest unattributed chunk: the internal-gap component (untracked time
+between a stage.completed for seal and the next tracked event, chiefly the
+post-seal pr.opened/deep.started handoff) at about 0.75s p50 in every arm,
+ahead of pre-launch (about 0.1s) and post-push (0.0-0.2s) overhead.
+nocascade's post-push reads slightly negative (-0.02s p50): `harness.py`
+truncates `time_to_pr_s` to whole seconds (`pushed_at - int(started)`, line
+1177), so pre/post carry up to about 1s of rounding residue; only the
+internal-gap component has millisecond precision. All three are small
+relative to the named stages and do not change where the time goes.
+
+Recommended cut: **wall**, on the strength of meeting D42 item 2's own
+15%-of-p50 revival bar with direct evidence (23-29% aggregate share, half
+of runs hitting its full timeout, zero wait-gap into implement) -- reopen
+S41-14 for a HIGH-tier call rather than starting a new knob. Implement
+remains the largest absolute-time consumer in every arm regardless of
+wall's fate (72.5-85.7% aggregate share) and stays a second, independent
+candidate: the S41-04 token-table evidence points at trimming per-turn
+context / cache_read volume during implement, or reducing its turn count;
+profiling implement's own internal turn-by-turn timing (not available from
+`result-cost-*.json` alone) would be that slice's first step.
+
+Command: `python3 eval/loki10/stage-profile.py
+~/loki-ci-logs/eval/e98f-engine/{default,nocascade,nowall}-r{1,2,3}`

@@ -87,7 +87,7 @@ jobs:
   npm-smoke:
     needs: resolve
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       # The doctor assertion lives in .github/scripts/, so this job needs the
       # repo on disk. Pinned to the SAME commit the release came from (as the
@@ -109,14 +109,14 @@ jobs:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           set -uo pipefail
-          for attempt in 1 2 3 4 5 6; do
+          for attempt in 1 2 3 4 5 6 7 8; do
             echo "npm install attempt ${attempt} for loki-mode@${VERSION}"
             if npm install -g "loki-mode@${VERSION}"; then
               echo "npm install succeeded"
               exit 0
             fi
             echo "npm not ready yet (propagation lag); backing off..."
-            sleep $((attempt * 30))
+            sleep $((attempt * 35))
           done
           echo "FATAL: loki-mode@${VERSION} not installable from npm after retries"
           exit 1
@@ -263,7 +263,7 @@ jobs:
   sdk-smoke:
     needs: resolve
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -281,15 +281,15 @@ jobs:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           set -uo pipefail
-          for attempt in 1 2 3 4 5 6; do
+          for attempt in 1 2 3 4 5 6 7 8; do
             echo "pip install attempt ${attempt} for loki-mode-sdk==${VERSION}"
-            if pip install "loki-mode-sdk==${VERSION}"; then
+            if pip install --no-cache-dir "loki-mode-sdk==${VERSION}"; then
               python3 -c "import importlib.metadata as m; v=m.version('loki-mode-sdk'); print('python sdk version', v); assert v == '${VERSION}', 'version mismatch: '+v"
               echo "python sdk smoke passed"
               exit 0
             fi
             echo "PyPI not ready yet (propagation lag); backing off..."
-            sleep $((attempt * 30))
+            sleep $((attempt * 35))
           done
           echo "FATAL: loki-mode-sdk==${VERSION} not installable from PyPI after retries"
           exit 1
@@ -299,7 +299,7 @@ jobs:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           set -uo pipefail
-          for attempt in 1 2 3 4 5 6; do
+          for attempt in 1 2 3 4 5 6 7 8; do
             echo "npm view attempt ${attempt} for loki-mode-sdk@${VERSION}"
             FOUND="$(npm view "loki-mode-sdk@${VERSION}" version 2>/dev/null || echo '')"
             if [ "$FOUND" = "${VERSION}" ]; then
@@ -307,7 +307,7 @@ jobs:
               exit 0
             fi
             echo "ts sdk not ready yet (propagation lag); backing off..."
-            sleep $((attempt * 30))
+            sleep $((attempt * 35))
           done
           echo "FATAL: loki-mode-sdk@${VERSION} not found on npm after retries"
           exit 1

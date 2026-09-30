@@ -37,7 +37,10 @@ chmod 600 "$LOKI_RUN_TMP/.loki-run-owned"
 
 # shellcheck disable=SC2329  # invoked indirectly via trap
 cleanup() {
-    rm -rf "$LOKI_RUN_TMP"
+    # E-140: remove only the dir this script created (marker must match exactly).
+    if [ "$(cat "$LOKI_RUN_TMP/.loki-run-owned" 2>/dev/null)" = "$LOKI_RUN_TMP" ]; then
+        rm -rf -- "$LOKI_RUN_TMP"
+    fi
 }
 trap cleanup EXIT
 

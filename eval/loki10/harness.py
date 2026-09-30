@@ -87,19 +87,22 @@ AUTH_ENV = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 # by exact name, never a prefix match. Includes LOKI_E10_PLAN/WALL/WALL_TIER
 # (E-45 wiring, not read yet) and the operator tunables grep finds today
 # (process.env.LOKI_E10_ in loki-ts/src/engine10: CAP_S, INVOKER,
-# DASHBOARD_PORT). LOKI_E10_PREFIX (S41-09) is read in loki-ts/src/runner/
-# providers.ts's buildSdkLoopOptions, not src/engine10, so it is outside that
-# grep's scope -- added here so S41-15's rerun-with-every-flag can turn it on,
-# the same gap E-98f hit for LOKI_E10_CASCADE. Excludes run inputs an
-# operator's leftover value could use to steer or replace the eval task
-# (TASK_TEXT, ISSUE_JSON, REPO_DIR) and per-session plumbing session.ts's
-# childEnv sets itself (BRIEF, TIER, PROVIDER, STAGE). Credentials are never
-# in this list; they stay withheld exactly as SCRUB_ENV/arm_auth already
-# handle them.
+# DASHBOARD_PORT). Excludes run inputs an operator's leftover value could use
+# to steer or replace the eval task (TASK_TEXT, ISSUE_JSON, REPO_DIR) and
+# per-session plumbing session.ts's childEnv sets itself (BRIEF, TIER,
+# PROVIDER, STAGE). Credentials are never in this list; they stay withheld
+# exactly as SCRUB_ENV/arm_auth already handle them.
+# S41-01: the four operator tunables above plus the knobs items 1/2 add
+# (LOKI_E10_CASCADE, _TOP_MODEL, _ATTEMPTS, _TRIM, _PREFIX, _CONTEXT,
+# _WALL_PARALLEL), allowlisted now so no later S41 card has to touch this file.
+# LOKI_E10_PREFIX (S41-09) is read in loki-ts/src/runner/providers.ts's
+# buildSdkLoopOptions, outside the src/engine10 grep, so S41-15's rerun with
+# every flag on needs it here (the same gap E-98f hit for LOKI_E10_CASCADE).
 V10_ENGINE_ENV_ALLOWLIST = (
     "LOKI_E10_PLAN", "LOKI_E10_WALL", "LOKI_E10_WALL_TIER",
     "LOKI_E10_CAP_S", "LOKI_E10_INVOKER", "LOKI_E10_DASHBOARD_PORT",
-    "LOKI_E10_PREFIX",
+    "LOKI_E10_CASCADE", "LOKI_E10_TOP_MODEL", "LOKI_E10_ATTEMPTS",
+    "LOKI_E10_TRIM", "LOKI_E10_PREFIX", "LOKI_E10_CONTEXT", "LOKI_E10_WALL_PARALLEL",
 )
 KEYCHAIN_SERVICE = "Claude Code-credentials"
 SECURITY_BIN = "/usr/bin/security"  # absolute: never a PATH lookup
@@ -658,14 +661,28 @@ def find_pr(remote, base_sha):
     return None
 
 
-def provider_cost(arm, stdout_path, work):
-    """Provider-reported cost only. Returns (usd_or_None, source)."""
+def _started_ids(events):
+    """session_ids of every session.started event (emitted only after spawn)."""
+    return {(e.get("data") or {}).get("session_id") for e in events
+            if e.get("type") == "session.started" and isinstance(e.get("data"), dict)}
+
+
+def provider_cost(arm, stdout_path, work, events=()):
+    """Provider-reported cost only. Returns (usd_or_None, source, partial_usd_or_None).
+
+    partial_usd is the slice of usd that came from a "partial-stream" record
+    (E-98e: a session killed at its stage cap, priced from streamed usage
+    rather than a provider-reported total). It is meaningful only once usd is
+    known, so it is None whenever usd is None (matching cost.ts: unknown is
+    null, never 0) -- it can genuinely be 0.0 when usd is known and every
+    record priced was "provider"-sourced.
+    """
     if arm == "raw-claude":
         try:
             with open(stdout_path, encoding="utf-8", errors="replace") as f:
                 text = f.read().strip()
         except OSError:
-            return None, "not reported"
+            return None, "not reported", None
         # Decode a JSON document starting at every line that opens one, so a
         # single-line object, a pretty-printed message array, and stray
         # output before either all parse. The last document wins.
@@ -680,33 +697,47 @@ def provider_cost(arm, stdout_path, work):
             for it in reversed(items):
                 v = it.get("total_cost_usd") if isinstance(it, dict) else None
                 if isinstance(v, (int, float)) and not isinstance(v, bool):
-                    return float(v), "claude total_cost_usd"
-        return None, "not reported"
+                    return float(v), "claude total_cost_usd", 0.0
+        return None, "not reported", None
     # Loki arms: read the per-iteration efficiency records directly. Every
-    # record must carry cost_source "provider" and a positive cost_usd; one
-    # estimate (for example a context-tracker price-table fallback) or one
-    # unpriced record makes the whole figure unknown. cost-summary.py cannot
-    # make this call: it sums whatever cost_usd a record holds.
+    # record must carry cost_source "provider" or "partial-stream" (E-98e:
+    # a session the harness killed at its stage cap, priced from streamed
+    # usage since no provider total ever arrived) and a positive cost_usd;
+    # one estimate (for example a context-tracker price-table fallback) or
+    # one unpriced record makes the whole figure unknown. cost-summary.py
+    # cannot make this call: it sums whatever cost_usd a record holds.
     d = os.path.join(work, EFFICIENCY_DIR)
     try:
         names = sorted(n for n in os.listdir(d) if re.fullmatch(r"iter(ation)?-\d+\.json", n))
     except OSError:
-        return None, "not reported"
+        return None, "not reported", None
     total = 0.0
+    partial = 0.0
+    sources = set()
     for n in names:
         try:
             with open(os.path.join(d, n), encoding="utf-8") as f:
                 rec = json.load(f)
         except (OSError, ValueError):
-            return None, "not reported (unreadable record %s)" % n
+            return None, "not reported (unreadable record %s)" % n, None
         v = rec.get("cost_usd") if isinstance(rec, dict) else None
-        if not isinstance(rec, dict) or rec.get("cost_source") != "provider" or isinstance(v, bool) \
+        src = rec.get("cost_source") if isinstance(rec, dict) else None
+        if not isinstance(rec, dict) or src not in ("provider", "partial-stream") or isinstance(v, bool) \
                 or not isinstance(v, (int, float)) or v <= 0:
-            return None, "not reported (%s lacks a provider-sourced cost)" % n
+            return None, "not reported (%s lacks a provider-sourced cost)" % n, None
         total += float(v)
+        sources.add(src)
+        if src == "partial-stream":
+            partial += float(v)
     if not names:
-        return None, "not reported"
-    return round(total, 6), "loki efficiency records (cost_source=provider)"
+        return None, "not reported", None
+    # A worker killed mid-session never writes that session's record; a sum over
+    # the survivors would be a lower, still-"measured" figure. v10 only (events).
+    started = _started_ids(events)
+    if len(names) < len(started):
+        return None, "not reported (%d sessions started, %d recorded)" % (len(started), len(names)), None
+    label = "loki efficiency records (cost_source=%s)" % "+".join(sorted(sources))
+    return round(total, 6), label, round(partial, 6)
 
 
 # ---------------------------------------------------------------- one run
@@ -1038,6 +1069,137 @@ def wall_paths(work):
     return out
 
 
+def _v10_events(work):
+    """This run's own parsed events.jsonl entries (loki-ts/src/engine10/events.ts),
+    or [] when there is no valid marker, no file, or it is a symlink. A torn
+    or corrupt line is skipped, matching events.ts's own reader."""
+    rid = _v10_run_id(work)
+    if rid is None:
+        return []
+    path = os.path.join(work, ".loki", "runs", rid, "events.jsonl")
+    if os.path.islink(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(e, dict):
+            out.append(e)
+    return out
+
+
+_TOKEN_KEYS = ("input", "output", "cache_read", "cache_write")
+
+
+def _v10_tokens(events):
+    costed = {e["data"].get("session_id") for e in events
+              if e.get("type") == "cost" and isinstance(e.get("data"), dict)}
+    if _started_ids(events) - costed:
+        return None, None
+    started = _started_ids(events)
+    costed = {(e.get("data") or {}).get("session_id") for e in events
+              if e.get("type") == "cost" and isinstance(e.get("data"), dict)}
+    if started - costed:
+        return None, None
+    """(totals_or_None, by_stage_or_None) over this run's own "cost" events
+    (session.ts emits one per session: input_tokens, output_tokens,
+    cache_read_tokens, cache_creation_tokens -> input/output/cache_read/
+    cache_write). None/None when no cost event exists at all -- unknown is
+    never a zero dict (cost.ts convention)."""
+    total = {k: 0 for k in _TOKEN_KEYS}
+    by_stage = {}
+    src_keys = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
+    seen = False
+    for e in events:
+        if e.get("type") != "cost":
+            continue
+        seen = True
+        d = e.get("data") if isinstance(e.get("data"), dict) else {}
+        vals = {}
+        for tk, sk in zip(_TOKEN_KEYS, src_keys):
+            v = d.get(sk)
+            vals[tk] = v if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
+        for tk in _TOKEN_KEYS:
+            total[tk] += vals[tk]
+        stage = e.get("stage")
+        if isinstance(stage, str) and stage:
+            slot = by_stage.setdefault(stage, {k: 0 for k in _TOKEN_KEYS})
+            for tk in _TOKEN_KEYS:
+                slot[tk] += vals[tk]
+    if not seen:
+        return None, None
+    return total, (by_stage or None)
+
+
+def _raw_claude_tokens(stdout_path):
+    """{input, output, cache_read, cache_write} from the same last-document-wins
+    JSON walk provider_cost/claims_no_change_needed use, read from the first
+    dict (scanning newest document first) that carries a "usage" object, or
+    None when no document has one -- unknown is never a zero dict."""
+    try:
+        with open(stdout_path, encoding="utf-8", errors="replace") as f:
+            text = f.read().strip()
+    except OSError:
+        return None
+    dec, docs = json.JSONDecoder(), []
+    for m in re.finditer(r"(?m)^[\[{]", text):
+        try:
+            docs.append(dec.raw_decode(text, m.start())[0])
+        except ValueError:
+            continue
+    for d in reversed(docs):
+        items = d if isinstance(d, list) else [d]
+        for it in reversed(items):
+            u = it.get("usage") if isinstance(it, dict) else None
+            if not isinstance(u, dict):
+                continue
+            out = {}
+            for tk, sk in zip(_TOKEN_KEYS,
+                               ("input_tokens", "output_tokens", "cache_read_input_tokens",
+                                "cache_creation_input_tokens")):
+                v = u.get(sk)
+                out[tk] = v if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
+            return out
+    return None
+
+
+def _first_turn_prompt_tokens(work):
+    """The run's earliest stage's `first_turn_prompt_tokens` (S41-04) from
+    this run's own result-cost-*.json side files (loki-ts/src/engine10/cost.ts),
+    or None when the field is absent (an engine build predating S41-04) or
+    there are no such files. Ordered by mtime, not name: iteration ids end in
+    a stage suffix (...-plan, -impl, -wall, -fix1), which does not sort in
+    run order, so only creation time reflects which stage finished first."""
+    d = os.path.join(work, ".loki", "metrics")
+    try:
+        names = [n for n in os.listdir(d) if re.fullmatch(r"result-cost-.+\.json", n)]
+    except OSError:
+        return None
+    try:
+        names.sort(key=lambda n: os.path.getmtime(os.path.join(d, n)))
+    except OSError:
+        return None
+    for n in names:
+        try:
+            with open(os.path.join(d, n), encoding="utf-8") as f:
+                rec = json.load(f)
+        except (OSError, ValueError):
+            continue
+        v = rec.get("first_turn_prompt_tokens") if isinstance(rec, dict) else None
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return v
+    return None
+
+
 # E-101: results.jsonl lives under eval/loki10/results/ (gitignored) inside a
 # worktree, so a worktree removal loses it -- the EV-14 incident. Every row
 # also gets archived outside the worktree's gitignored tree. Archived rows
@@ -1072,10 +1234,15 @@ def redact_row(row):
 def new_row(task, arm, cfg, slot, logs):
     return {"run_id": slot, "task": task["id"], "arm": arm, "status": "ok", "model": cfg["model"],
             "repo_ref": task["repo"]["ref"], "harness_sha": cfg["harness_sha"],
-            "expected_outcome": task.get("expected_outcome"),
+            "expected_outcome": task.get("expected_outcome"), "tier": task.get("tier", DEFAULT_TIER),
             "started": None, "ended": None, "wall_s": None, "time_to_pr_s": None,
             "pr_opened": False, "pr_branch": None, "hidden_pass": False, "completed": False,
-            "cost_usd": None, "cost_source": "not reported", "exit_code": None,
+            "cost_usd": None, "cost_source": "not reported", "cost_partial_usd": None, "exit_code": None,
+            # Unknown is always None, never 0 (cost.ts convention): a zero
+            # here would silently understate a scorecard sum over rows where
+            # nothing was actually measured.
+            "tokens": None, "tokens_by_stage": None, "first_turn_prompt_tokens": None,
+            "escalations": 0, "attempts": 0,
             "capped": False, "logs": logs}
 
 
@@ -1160,7 +1327,23 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
     started = time.time()
     rc, wall, capped = capped_run(argv, work, dict(env, **auth), cap, L["arm_stderr"], L["arm_stdout"])
     row.update(started=iso(started), ended=iso(time.time()), wall_s=wall, exit_code=rc, capped=capped)
-    row["cost_usd"], row["cost_source"] = provider_cost(arm, L["arm_stdout"], work)
+    events = _v10_events(work) if arm == "v10" else []
+    row["cost_usd"], row["cost_source"], row["cost_partial_usd"] = provider_cost(arm, L["arm_stdout"], work, events)
+    if arm == "raw-claude":
+        row["tokens"] = _raw_claude_tokens(L["arm_stdout"])
+    elif arm == "v10":
+        row["tokens"], row["tokens_by_stage"] = _v10_tokens(events)
+        row["first_turn_prompt_tokens"] = _first_turn_prompt_tokens(work)
+        # fix.round's own "escalated" field is the only real escalation
+        # signal today (the "escalated" event type in EVENT_TYPES is not
+        # emitted by anything yet -- events.ts only folds it if it existed).
+        row["escalations"] = sum(
+            1 for e in events if e.get("type") == "fix.round"
+            and isinstance(e.get("data"), dict) and e["data"].get("escalated") is True)
+        # Implement-stage sessions only (S41-05's two-attempt selection):
+        # counting every session.started would also count intake/plan/wall/
+        # fix, which is not "attempts" in section 4's sense.
+        row["attempts"] = sum(1 for e in events if e.get("type") == "session.started" and e.get("stage") == "implement")
 
     if arm == "v10":
         why = v10_marker_problem(work, started)
