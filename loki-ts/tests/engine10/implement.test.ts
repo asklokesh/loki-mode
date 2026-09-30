@@ -270,7 +270,7 @@ describe("engine10 implement stage", () => {
     expect(asked).toEqual(["calc.ts"]);
     expect(r.data.impacted_tests).toEqual(["calc.test.ts"]);
     expect(r.data.iteration_ids).toEqual(["e10-test-1-impl"]);
-    expect(sessions.lastOpts?.brief).toContain("Run only these impacted tests: calc.test.ts.");
+    expect(sessions.lastOpts?.brief).toContain("Impacted tests to run: calc.test.ts.");
   });
 
   test("E-98c: an empty relevant_files (not missing) still falls back to the task's named files", async () => {
