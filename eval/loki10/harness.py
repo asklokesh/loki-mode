@@ -229,7 +229,11 @@ def validate_task(task_dir):
                     errs.append("hidden file missing or a symlink: hidden/%s" % rel)
         if not isinstance(hidden.get("run"), str) or not hidden["run"].strip():
             errs.append("hidden.run must be a non-empty command")
-        if t.get("tier") == "large":
+        # The lg- name is the trust anchor: tier is self-declared, so it cannot switch D38 off.
+        is_lg = os.path.basename(os.path.normpath(task_dir)).startswith("lg-")
+        if is_lg and t.get("tier") != "large":
+            errs.append('lg- tasks must declare "tier": "large" (D38)')
+        if is_lg or t.get("tier") == "large":
             errs.extend(_validate_large_hidden(task_dir, hidden, files if isinstance(files, list) else []))
     ts = t.get("timeout_s", DEFAULT_TIMEOUT_S)
     if isinstance(ts, bool) or not isinstance(ts, int) or ts <= 0:

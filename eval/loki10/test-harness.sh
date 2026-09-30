@@ -1197,6 +1197,9 @@ lg_bad_case lg-wrong-sha "t['hidden']['sha256']['test_x.py']='0'*64" "sha256 mis
 lg_bad_case lg-missing-provenance "del t['hidden']['provenance']" "hidden.provenance is required"
 lg_bad_case lg-empty-requirement-tests "t['hidden']['requirements'][0]['tests']=[]" "names no hidden test id"
 lg_bad_case lg-no-requirements "t['hidden']['requirements']=[]" "hidden.requirements is required"
+lg_bad_case lg-no-tier "t.pop('tier')" "must declare"
+lg_bad_case lg-tier-small "t['tier']='small'" "must declare"
+lg_bad_case lg-no-tier-bare "t.pop('tier'); [t['hidden'].pop(k) for k in ('provenance','sha256','requirements')]" "hidden.provenance is required"
 
 # EV-12G's real tasks use singular hidden.requirements[].test (a plain
 # string) instead of EV-12F-a/b's plural .tests (a list) -- a positive case,
@@ -1226,11 +1229,10 @@ fi
 # lg-* tasks land via EV-12F/EV-12G, not this slice -- eval/loki10/tasks has
 # none today).
 check_lg_shortcuts() {
-    local tasks_dir="$1" n=0 ok=0 td tier patch name source ref setup run out rc workdir rel
+    local tasks_dir="$1" n=0 ok=0 td patch name source ref setup run out rc workdir rel
     for td in "$tasks_dir"/lg-*; do
         [ -f "$td/task.json" ] || continue
-        tier="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("tier"))' "$td/task.json")"
-        [ "$tier" = large ] || continue
+        # No tier gate: tier is self-declared, every lg-* dir runs the leg.
         # The RED-at-ref check is per TASK (criterion 7), so a task with no
         # shortcuts/ directory is still checked; patches then reuse that checkout.
         name="$(basename "$td")"
@@ -1368,6 +1370,15 @@ dir_e="$(mk_lg_task e "$LGREPO" "$LGREF" "$ERR_TEST" "$T/patch-d.diff")"
 check_lg_shortcuts "$dir_e" >"$T/lgshort-e.out" 2>&1; rc=$?
 [ "$rc" != 0 ] && pass "D38 shortcut leg: collection-error RED at ref fails the leg" \
     || fail "D38 shortcut leg: e-fixture (collection error) wrongly cleared: $(cat "$T/lgshort-e.out")"
+
+# An lg- task with its tier field removed must still run the leg (full-pass shortcut fails it).
+dir_h="$(mk_lg_task h "$LGREPO" "$LGREF" "$RED_TEST" "$T/patch-a.diff")"
+python3 -c "
+import json,sys
+p=sys.argv[1]; t=json.load(open(p)); t.pop('tier'); json.dump(t, open(p,'w'))" "$T/lgt-h/lg-h/task.json"
+check_lg_shortcuts "$dir_h" >"$T/lgshort-h.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && pass "D38 shortcut leg: an lg- task with no tier still runs the leg" \
+    || fail "D38 shortcut leg: h-fixture (no tier) skipped the leg: $(cat "$T/lgshort-h.out")"
 
 # A task with NO shortcut patches is still baseline-checked (red on the
 # pre-restructure checker, which only ran RED-at-ref inside the patch loop).
