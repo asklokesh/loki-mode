@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.12 (2026-09-30)
+
+A `next` release. `loki quick` on an existing repository now commits only the fix, receipts get a local signing key by default, the Wall detects `node:test` repositories, and the new `packages/loki-seal` Claude Code plugin blocks "done" on red or weakened tests.
+
+### Added
+- `packages/loki-seal`: a Claude Code plugin whose Stop hook blocks the agent from finishing while tests are red or were weakened (fewer tests than the session baseline, a crashed or empty run). It subtracts tests that were already red at session start, releases after repeated hook errors so a broken hook never traps a session, and ships an advisory skill and a demo. It is installed from a clone of this repository (A-04).
+- Receipt signing key: on first use Loki generates one local Ed25519 key (`~/.loki/keys/receipt-ed25519.pem`, file mode 0600) so receipts are signed by default. A failed permission change never silently downgrades a receipt to unsigned; the server path never auto-generates a key (A-120).
+
+### Changed
+- README: a short README with the delivery-contract positioning; the previous long README moved to `docs/README-FULL.md`, with retracted claims removed (A-09, D45). The package description is the same category line.
+- Legacy `loki quick` on an existing repository: HANDOFF.md is written under `.loki/`, the USAGE.md instruction and regeneration are skipped, and a lockfile that did not exist at base is not committed when no manifest changed. New-project builds are unchanged (A-132).
+- The legacy Completion Council skips its costly evidence probes on a trivial diff, and never skips the boot check (A-133).
+
+### Fixed
+- v10 Wall: a repository whose test script is a bare `node --test` is detected as `node:test`, so the Wall no longer writes Jest-style tests into it (A-102).
+
+### Internal
+- README-content tests (reviewer pool, MCP tool count, Loki 10 opt-in marker and guide link) pass against the short README.
+
 ## v10.5.11 (2026-09-30)
 
 The first release on the npm `next` tag. `loki verify` no longer calls a freshly sealed receipt tampered, v10 commits only the fix, and the Wall no longer mistakes a broken test run for a failing test.
