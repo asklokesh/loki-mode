@@ -15,6 +15,7 @@ afterAll(() => { for (const t of temps) rmSync(t, { recursive: true, force: true
 const STUB = `#!/bin/sh
 case "$*" in *--help*) echo "--settings"; exit 0;; esac
 [ -n "$STUB_ERR" ] && echo "$STUB_ERR" >&2
+[ -n "$STUB_PLANT" ] && echo "$STUB_PLANT" > ".loki/iteration-$LOKI_ITERATION.log.stderr"
 [ -n "$STUB_OUT" ] && echo "$STUB_OUT"
 exit \${STUB_EXIT:-0}
 `;
@@ -65,6 +66,9 @@ describe("A-113b fatal classification through the CLI invoker", () => {
       expect(run({ STUB_OUT: text, STUB_EXIT: "1" }).json.stop ?? "").not.toMatch(/^fatal/);
     }, 120_000);
   }
+  test("a .stderr file the agent plants is overwritten, never classified (forgery guard)", () => {
+    expect(run({ STUB_PLANT: "Your credit balance is too low", STUB_EXIT: "1" }).json.stop ?? "").not.toMatch(/^fatal/);
+  }, 120_000);
 });
 
 describe("A-113b crashed verify is not a stall repeat", () => {

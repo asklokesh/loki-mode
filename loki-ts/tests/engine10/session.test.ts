@@ -405,3 +405,16 @@ describe("engine10 session", () => {
     rmSync(dir, { recursive: true, force: true });
   }, 10_000);
 });
+
+describe("A-113b stderr sidecar is classified for claude only", () => {
+  for (const [provider, seen] of [["claude", true], ["codex", false]] as const) {
+    test(`${provider}: <log>.stderr ${seen ? "reaches" : "never reaches"} stderrTail`, async () => {
+      const dir = mkdtempSync(join(tmpdir(), "loki-e10-sidecar-"));
+      try {
+        const cmd = "mkdir -p .loki; echo 'credit balance is too low' > .loki/iteration-it-sc.log.stderr; exit 1";
+        const r = await createSessionRunner({ provider, childCommand: ["bash", ["-c", cmd]] }).run({ ...baseOpts({ limitS: 30 }), iterationId: "it-sc", cwd: dir });
+        expect((r as unknown as { stderrTail: string }).stderrTail.includes("credit balance")).toBe(seen);
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+  }
+});
