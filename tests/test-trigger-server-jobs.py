@@ -949,6 +949,13 @@ class TestJobProofEndpoint(_JobsTestBase):
             headers={"Authorization": "Bearer " + API_TOKEN})
         self.assertEqual(status, 200)
         got = json.loads(body)
+        # The endpoint attests a receipt when a signing key is loadable, and
+        # since A-120 a key file may already exist in this session (another test
+        # auto-generated the conftest key), so attestation is order-dependent.
+        # It is added under `verification` only, so strip exactly those two
+        # fields and require everything else to be the proof verbatim.
+        got["verification"].pop("attestation", None)
+        got["verification"].pop("attestation_kid", None)
         self.assertEqual(got, proof)
         self.assertEqual(got["verification"]["hash"], "abc")
 
