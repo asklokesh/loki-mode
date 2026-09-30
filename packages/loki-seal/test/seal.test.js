@@ -272,24 +272,24 @@ test('fail closed: dangling symlink named *.test.js never exits 1', () => {
 test('fail closed: unreadable directory blocks with NOT VERIFIED, never exit 1', { skip: isRoot && 'root ignores modes' }, () => {
   const d = repo(nodeRepo(ADD_OK, T2));
   seal('start', d);
-  fs.mkdirSync(path.join(d, 'locked'));
-  fs.chmodSync(path.join(d, 'locked'), 0o000);
+  fs.mkdirSync(path.join(d, 'test', 'locked'));
+  fs.chmodSync(path.join(d, 'test', 'locked'), 0o000);
   try {
     const r = seal('stop', d);
     assert.strictEqual(r.status, 2, r.raw);
     assert.match(r.out.reason, /NOT VERIFIED \(hook error: /);
-  } finally { fs.chmodSync(path.join(d, 'locked'), 0o755); }
+  } finally { fs.chmodSync(path.join(d, 'test', 'locked'), 0o755); }
 });
 
 test('start survives an internal error and reports baseline unavailable', { skip: isRoot && 'root ignores modes' }, () => {
   const d = repo(nodeRepo(ADD_OK, T2));
-  fs.mkdirSync(path.join(d, 'locked'));
-  fs.chmodSync(path.join(d, 'locked'), 0o000);
+  fs.mkdirSync(path.join(d, 'test', 'locked'));
+  fs.chmodSync(path.join(d, 'test', 'locked'), 0o000);
   try {
     const r = sealEnv(d, {}, 'start');
     assert.strictEqual(r.status, 0, r.stderr);
     assert.match(r.stdout, /baseline unavailable/);
-  } finally { fs.chmodSync(path.join(d, 'locked'), 0o755); }
+  } finally { fs.chmodSync(path.join(d, 'test', 'locked'), 0o755); }
 });
 
 test('state dir that is a symlink is refused, stop fails closed', () => {
@@ -324,4 +324,41 @@ test('a hung suite is killed at the internal timeout and blocks', () => {
 test('skill frontmatter declares no hooks (plugin is the enforcing install)', () => {
   const k = fs.readFileSync(path.join(__dirname, '..', 'skills', 'loki-seal', 'SKILL.md'), 'utf8');
   assert.ok(!/^hooks:/m.test(k));
+});
+
+test('an unreadable non-test directory does not block a clean session', { skip: isRoot && 'root ignores modes' }, () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  fs.mkdirSync(path.join(d, 'docker-volume'));
+  fs.chmodSync(path.join(d, 'docker-volume'), 0o000);
+  try {
+    seal('start', d);
+    const r = seal('stop', d);
+    assert.strictEqual(r.status, 0, r.raw);
+    assert.match(r.out.systemMessage, /1 unreadable dir\(s\) skipped/);
+  } finally { fs.chmodSync(path.join(d, 'docker-volume'), 0o755); }
+});
+
+test('a failing state dir releases after LOKI_SEAL_MAX_BLOCKS hook errors', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  const real = path.join(root, 'realstate2'); fs.mkdirSync(real);
+  const link = path.join(root, 'linkstate2'); fs.symlinkSync(real, link);
+  const tmp = path.join(root, 'errtmp'); fs.mkdirSync(tmp);
+  const env = { LOKI_SEAL_STATE_DIR: link, LOKI_SEAL_MAX_BLOCKS: '3', TMPDIR: tmp };
+  const codes = [];
+  let last;
+  for (let i = 0; i < 5; i++) { last = sealEnv(d, env); codes.push(last.status); }
+  assert.deepStrictEqual(codes.slice(0, 3), [2, 2, 2]);
+  assert.strictEqual(codes[3], 0, codes.join(','));
+  assert.match(last.stdout, /NOT VERIFIED \(released after 3 blocks: hook error\)/);
+});
+
+test('a FIFO named *.test.js does not hang Stop', () => {
+  // the fixture suite runs one explicit file so the runner itself never opens the FIFO
+  const d = repo({ ...nodeRepo(ADD_OK, T2), 'package.json': JSON.stringify({ scripts: { test: 'node test/a.test.js' } }) });
+  const mk = spawnSync('mkfifo', [path.join(d, 'test', 'pipe.test.js')]);
+  if (mk.status !== 0) return;
+  const r0 = spawnSync('node', [SEAL, 'start'], { input: JSON.stringify({ session_id: 's-' + path.basename(d), cwd: d }), env: { ...process.env, LOKI_SEAL_STATE_DIR: path.join(root, 'state') }, encoding: 'utf8', timeout: 30000 });
+  assert.strictEqual(r0.status, 0, 'start hung or failed');
+  const r = spawnSync('node', [SEAL, 'stop'], { input: JSON.stringify({ session_id: 's-' + path.basename(d), cwd: d }), env: { ...process.env, LOKI_SEAL_STATE_DIR: path.join(root, 'state') }, encoding: 'utf8', timeout: 30000 });
+  assert.ok(r.status === 0 || r.status === 2, `status ${r.status} ${r.error}`);
 });

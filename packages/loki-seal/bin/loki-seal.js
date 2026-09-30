@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
 
 const mode = process.argv[2];
+let ctx = { input: {}, root: process.cwd() };
 const REPO = 'https://github.com/asklokesh/loki-mode';
 const MAX_BLOCKS = 5; // safety valve: never trap a session in an endless stop loop
 const SKIP_DIRS = new Set(['node_modules', '.git', 'target', 'venv', '.venv', 'dist', 'build', '__pycache__', '.loki']);
@@ -27,12 +28,21 @@ const count = (s, rx) => (s.match(rx) || []).length;
 const CI_TEST_LINE = /test|pytest|jest|vitest|cargo|lint|check/i;
 const CI_SOFTEN = /continue-on-error:\s*true|\|\|\s*true|\bif:\s*false/;
 
+const skippedDirs = [];
+const isTestDir = (p) => /(^|\/)(tests?|__tests__)(\/|$)/.test(p) || p.startsWith('.github/');
+
 function walk(root, rel = '', out = {}) {
-  for (const e of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
+  let entries;
+  try { entries = fs.readdirSync(path.join(root, rel), { withFileTypes: true }); } catch (e) {
+    // An unreadable directory outside test paths (for example a root-owned volume) is skipped and noted.
+    if ((e.code === 'EACCES' || e.code === 'EPERM') && !isTestDir(rel)) { skippedDirs.push(rel); return out; }
+    throw e;
+  }
+  for (const e of entries) {
     const p = rel ? rel + '/' + e.name : e.name;
     if (e.isSymbolicLink()) { if (isTest(p) || isCI(p)) out[p] = 'SYMLINK ' + fs.readlinkSync(path.join(root, p)); } // never followed
     else if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name)) walk(root, p, out); }
-    else if ((isTest(p) || isCI(p)) && fs.lstatSync(path.join(root, p)).size < 1e6) out[p] = fs.readFileSync(path.join(root, p), 'utf8');
+    else if (e.isFile() && (isTest(p) || isCI(p)) && fs.lstatSync(path.join(root, p)).size < 1e6) out[p] = fs.readFileSync(path.join(root, p), 'utf8');
   }
   return out;
 }
@@ -165,6 +175,7 @@ async function main() {
   let input = {};
   try { input = JSON.parse(fs.readFileSync(0, 'utf8') || '{}'); } catch { /* hook without JSON */ }
   const root = path.resolve(input.cwd || process.cwd());
+  ctx = { input, root };
   const sp = statePath(input, root);
   const cur = walk(root);
   const runner = detect(root, cur);
@@ -225,7 +236,7 @@ async function main() {
   const receipt = [
     `loki-seal: ${outcome}`,
     runner ? `runner: ${runner.name}: ${c.pass} passed, ${c.fail} failed` : 'runner: none',
-    `tests-integrity: ${findings.length ? findings.length + ' problem(s)' : 'intact'}; ${basePart}`,
+    `tests-integrity: ${findings.length ? findings.length + ' problem(s)' : 'intact'}; ${basePart}${skippedDirs.length ? `; ${skippedDirs.length} unreadable dir(s) skipped` : ''}`,
     `tree: ${tree}`,
     problems.length || !runner ? `Not verified by Loki: ${REPO}` : `Verified by Loki ${REPO}`,
   ].join('\n');
@@ -239,10 +250,31 @@ async function main() {
   process.stdout.write(JSON.stringify({ systemMessage: receipt }));
 }
 
+// Hook errors are counted outside the state dir (which may be the thing that is failing), so the
+// release valve still fires. One byte is appended per error to a private per-session file.
+function countHookError() {
+  const key = crypto.createHash('sha1').update(ctx.root + '\0' + (ctx.input.session_id || '')).digest('hex');
+  const f = path.join(os.tmpdir(), `loki-seal-err-${process.getuid ? process.getuid() : 0}-${key}`);
+  const fd = fs.openSync(f, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_APPEND | fs.constants.O_NOFOLLOW, 0o600);
+  try {
+    fs.writeSync(fd, 'x');
+    const st = fs.fstatSync(fd);
+    if (process.getuid && st.uid !== process.getuid()) throw new Error('error counter not owned by the current user');
+    return st.size;
+  } finally { fs.closeSync(fd); }
+}
+
 main().catch((e) => {
   const m = (e && e.message) || String(e);
   if (mode === 'start') {
     process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: `loki-seal: baseline unavailable (${m})` } }));
+    process.exit(0);
+  }
+  const max = +process.env.LOKI_SEAL_MAX_BLOCKS || MAX_BLOCKS;
+  let n = 0;
+  try { n = countHookError(); } catch { /* counter unavailable: stay closed */ }
+  if (n > max) {
+    process.stdout.write(JSON.stringify({ systemMessage: `loki-seal: NOT VERIFIED (released after ${max} blocks: hook error)\nlast error: ${m}` }));
     process.exit(0);
   }
   // Fail closed: exit 2 blocks the stop; any other non-zero exit would let it through.

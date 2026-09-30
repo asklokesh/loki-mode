@@ -34,14 +34,14 @@ Verified by Loki https://github.com/asklokesh/loki-mode
 
 ## Limits
 
-- Known limits of a text-scanning design: replacing real assertions with `assert.ok(true)` is not caught (the assertion count does not drop), and a model with shell access can forge the baseline state file under `$TMPDIR/loki-seal-state` or edit the hook itself. The receipt's tree hash and your own diff review are the audit trail.
+- Known limits of a text-scanning design: replacing real assertions with `assert.ok(true)` is not caught (the assertion count does not drop), and a model with shell access can forge the baseline state file under `${CLAUDE_PLUGIN_DATA}/state` (or `~/.loki-seal/state`) or edit the hook itself. The receipt's tree hash and your own diff review are the audit trail.
 - A total test count below the session-start count blocks (catches an early `process.exit(0)` or a test script changed to run nothing); a non-zero exit with zero tests run blocks as a crash.
 - On pass the receipt is printed as JSON `systemMessage`, because the hooks docs say plain Stop stdout goes only to the debug log.
 
 - Failing tests are matched by name where the runner prints names (node:test, pytest -rf, go, cargo), otherwise by failing count.
 - Test-count heuristics are line based; a test rewritten to be weaker without dropping assertions is not caught.
 - Rust inline `#[test]` in src files is counted only under tests/.
-- Blocking is exit code 2 with the reason on stderr. The check re-runs on every stop attempt, including when `stop_hook_active` is true. After 5 consecutive blocks (`LOKI_SEAL_MAX_BLOCKS`) it releases with "NOT VERIFIED (released after 5 blocks)" so a session is never trapped.
+- Blocking is exit code 2 with the reason on stderr. The check re-runs on every stop attempt, including when `stop_hook_active` is true. After 5 consecutive blocks (`LOKI_SEAL_MAX_BLOCKS`) it releases with "NOT VERIFIED (released after 5 blocks)" so a session is never trapped. Hook errors count toward the same valve through a separate per-session counter file in the temp dir, and unreadable directories outside test paths are skipped and noted on the receipt instead of erroring.
 - Env: `LOKI_SEAL_TIMEOUT_MS` (default 270000, below the 300s hook timeout; the suite's process group is killed on timeout), `LOKI_SEAL_START_TIMEOUT_MS` (default 120000), `LOKI_SEAL_STATE_DIR`. State lives in `${CLAUDE_PLUGIN_DATA}/state` when set, else `~/.loki-seal/state` (mode 0700, must be owned by you and not a symlink; files older than 7 days are pruned).
 - Fail closed: any internal error at Stop exits 2 with "loki-seal: NOT VERIFIED (hook error: ...)". Symlinked test files are recorded by target and never followed.
 
