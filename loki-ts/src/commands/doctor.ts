@@ -1083,7 +1083,7 @@ async function runText(): Promise<number> {
     );
     tally.warn++;
   }
-  if (spawnSync("python3", ["-c", "import cryptography"], { stdio: "ignore" }).status !== 0) {
+  if (spawnSync("python3", ["-c", "import cryptography"], { env: { ...process.env }, stdio: "ignore" }).status !== 0) {
     process.stdout.write(
       `  ${badge("warn")}  Receipt signing: python3 'cryptography' package missing, receipts will be UNSIGNED (pip install cryptography)\n`,
     );
