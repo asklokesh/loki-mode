@@ -14,6 +14,13 @@
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Run-owned temp dir (E-143): all fixtures live under LOKI_RUN_TMP.
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/../eval/loki10/lib-tmp.sh"
+_OWN_TMP=0
+if [ -z "${LOKI_RUN_TMP:-}" ]; then loki_run_tmp_create || exit 1; _OWN_TMP=1; fi
+_tmp_done() { [ "$_OWN_TMP" = 1 ] && loki_run_tmp_cleanup; return 0; }
+trap _tmp_done EXIT
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SRC="$REPO_ROOT/autonomy/issue-providers.sh"
 
@@ -178,19 +185,19 @@ fi
 # normalizer must never leak a Python traceback or partial JSON on refusal.
 ISSUE_NUMBER='088'
 _GH_FIXTURE='{"number":88,"title":"Bound issue","body":"Body","labels":[],"author":{"login":"alice"},"createdAt":"2026-01-01T00:00:00Z","url":"https://github.com/octo/repo/issues/88"}'
-if gh_stdout="$(fetch_github_issue 2>"${TMPDIR:-/tmp}/loki-gh-leading-zero.err")" \
-    && [ -z "$(cat "${TMPDIR:-/tmp}/loki-gh-leading-zero.err")" ] \
+if gh_stdout="$(fetch_github_issue 2>"$LOKI_RUN_TMP/loki-gh-leading-zero.err")" \
+    && [ -z "$(cat "$LOKI_RUN_TMP/loki-gh-leading-zero.err")" ] \
     && printf '%s' "$gh_stdout" | python3 -c "import json,sys; assert json.load(sys.stdin)['number'] == 88"; then
     ok "github normalize preserves leading-zero reference compatibility"
 else
-    bad "github leading-zero compatibility" "stdout=$gh_stdout stderr=$(cat "${TMPDIR:-/tmp}/loki-gh-leading-zero.err")"
+    bad "github leading-zero compatibility" "stdout=$gh_stdout stderr=$(cat "$LOKI_RUN_TMP/loki-gh-leading-zero.err")"
 fi
-rm -f "${TMPDIR:-/tmp}/loki-gh-leading-zero.err"
+rm -f "$LOKI_RUN_TMP/loki-gh-leading-zero.err"
 ISSUE_NUMBER='88'
 
 assert_github_controlled_refusal() {
     local name="$1" expected="$2" stderr_file stdout_value status
-    stderr_file="$(mktemp "${TMPDIR:-/tmp}/loki-gh-refusal.XXXXXX")"
+    stderr_file="$(mktemp "$LOKI_RUN_TMP/loki-gh-refusal.XXXXXX")"
     stdout_value="$(fetch_github_issue 2>"$stderr_file")"
     status=$?
     if [ "$status" -ne 0 ] && [ -z "$stdout_value" ] \
@@ -227,7 +234,7 @@ done
 
 # End-to-end custody: a substituted response must stop the real run command
 # before either journey artifact is written.
-E2E_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/loki-issue-mismatch.XXXXXX")"
+E2E_ROOT="$(mktemp -d "$LOKI_RUN_TMP/loki-issue-mismatch.XXXXXX")"
 E2E_BIN="$E2E_ROOT/bin"
 mkdir -p "$E2E_BIN" "$E2E_ROOT/repo"
 cat >"$E2E_BIN/gh" <<'GH_SHIM'

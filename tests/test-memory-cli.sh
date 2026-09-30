@@ -10,7 +10,13 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 LOKI_CLI="${PROJECT_ROOT}/autonomy/loki"
-TEST_DIR=$(mktemp -d)
+# Run-owned temp dir (E-143): all fixtures live under LOKI_RUN_TMP.
+# shellcheck disable=SC1091
+. "$PROJECT_ROOT/eval/loki10/lib-tmp.sh"
+_OWN_TMP=0
+if [ -z "${LOKI_RUN_TMP:-}" ]; then loki_run_tmp_create || exit 1; _OWN_TMP=1; fi
+_tmp_done() { [ "$_OWN_TMP" = 1 ] && loki_run_tmp_cleanup; return 0; }
+TEST_DIR=$(mktemp -d "$LOKI_RUN_TMP/memory.XXXXXX")
 TESTS_PASSED=0
 TESTS_FAILED=0
 
@@ -45,7 +51,7 @@ strip_ansi() {
 
 cleanup() {
     rm -rf "$TEST_DIR"
-    rm -f /tmp/loki-memory-test-*.json 2>/dev/null || true
+    _tmp_done
     # Clean up any test processes
 }
 trap cleanup EXIT
@@ -140,7 +146,7 @@ fi
 
 # Test 8: Memory Export
 log_test "memory export command"
-export_file="/tmp/loki-memory-test-export-$$.json"
+export_file="$LOKI_RUN_TMP/memory-export-$$.json"
 output=$("$LOKI_CLI" memory export "$export_file" 2>&1 || true)
 if [ -f "$export_file" ]; then
     # Check it's valid JSON with expected structure

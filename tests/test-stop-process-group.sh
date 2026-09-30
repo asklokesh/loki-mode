@@ -25,6 +25,12 @@ cd "$REPO_ROOT" || exit 1
 # "pkill -f loki-pgtest" would then SIGKILL that other run's fixtures
 # (D14/D15/D16 class).
 PGTEST_TAG="pgtest-$$-${RANDOM}-$(date +%s 2>/dev/null || echo 0)"
+# Run-owned temp dir (E-143): all fixtures live under LOKI_RUN_TMP.
+# shellcheck disable=SC1091
+. "$REPO_ROOT/eval/loki10/lib-tmp.sh"
+_OWN_TMP=0
+if [ -z "${LOKI_RUN_TMP:-}" ]; then loki_run_tmp_create || exit 1; _OWN_TMP=1; fi
+_tmp_done() { [ "$_OWN_TMP" = 1 ] && loki_run_tmp_cleanup; return 0; }
 
 # session-leader launcher available? (setsid binary, else perl, else python3)
 SESS=""
@@ -79,13 +85,13 @@ $PY -c "import ast; ast.parse(open('$REPO_ROOT/dashboard/server.py').read())" \
   && ok "dashboard/server.py parses" || bad "server.py syntax error"
 
 # --- A: group-kill reaps a SIGTERM-ignoring child ----------------------------
-WORK=$(mktemp -d "${TMPDIR:-/tmp}/loki-${PGTEST_TAG}-XXXXXX")
+WORK=$(mktemp -d "$LOKI_RUN_TMP/loki-${PGTEST_TAG}-XXXXXX")
 # Make the terminal cleanup (pkill + temp-dir removal) unconditional: if the
 # script is interrupted before reaching the end, the EXIT/INT/TERM trap still
 # prunes every loki-${PGTEST_TAG}-* sandbox so none leak onto disk.
 pgtest_cleanup() {
-    pkill -f "loki-${PGTEST_TAG}" 2>/dev/null || true
-    rm -rf "${TMPDIR:-/tmp}"/loki-${PGTEST_TAG}-* 2>/dev/null || true
+    [ -n "${PGTEST_TAG:-}" ] && pkill -f "loki-${PGTEST_TAG}" 2>/dev/null
+    _tmp_done
 }
 trap 'pgtest_cleanup' EXIT INT TERM
 cat > "$WORK/orch.sh" <<'EOF'
@@ -142,8 +148,8 @@ rm -rf "$WORK"; pkill -f "loki-${PGTEST_TAG}" 2>/dev/null || true
 # process-group churn under load that can race-kill the deliberately-isolated
 # other-project fake. The product is correct (verified: the python logic run
 # directly never touches the other project); only the bash wrapper was flaky.
-_EP_PY=$(mktemp "${TMPDIR:-/tmp}/loki-${PGTEST_TAG}-ep-XXXXXX.py")
-_EP_OUT=$(mktemp "${TMPDIR:-/tmp}/loki-${PGTEST_TAG}-ep-XXXXXX.out")
+_EP_PY=$(mktemp "$LOKI_RUN_TMP/loki-${PGTEST_TAG}-ep-XXXXXX.py")
+_EP_OUT=$(mktemp "$LOKI_RUN_TMP/loki-${PGTEST_TAG}-ep-XXXXXX.out")
 cat > "$_EP_PY" <<'PYEOF'
 import sys, os, tempfile, subprocess, time, shutil, signal
 sys.path.insert(0, '.')
@@ -258,7 +264,7 @@ PYEOF
 # (sourced from run.sh) against a real SIGTERM-ignoring in-group survivor, the
 # orchestrator itself, and a FOREIGN run (separate .loki, separate group).
 if command -v perl >/dev/null 2>&1; then
-    FWORK=$(mktemp -d "${TMPDIR:-/tmp}/loki-${PGTEST_TAG}-reap-XXXXXX")
+    FWORK=$(mktemp -d "$LOKI_RUN_TMP/loki-${PGTEST_TAG}-reap-XXXXXX")
     mkdir -p "$FWORK/.loki/pids"
     cat > "$FWORK/leader.sh" <<LEADEOF
 #!/usr/bin/env bash
@@ -322,8 +328,8 @@ else
     ok "no em dashes in changed files"
 fi
 
-pkill -f "loki-${PGTEST_TAG}" 2>/dev/null || true
-rm -rf "${TMPDIR:-/tmp}"/loki-${PGTEST_TAG}-* 2>/dev/null || true
+[ -n "${PGTEST_TAG:-}" ] && pkill -f "loki-${PGTEST_TAG}" 2>/dev/null
+_tmp_done
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
