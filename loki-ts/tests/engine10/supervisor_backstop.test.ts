@@ -56,9 +56,9 @@ function prSpy(): { step: PrStep; calls: { verdict: string }[] } {
   const calls: { verdict: string }[] = [];
   return { calls, step: async ({ verdict }) => { calls.push({ verdict }); return { url: "https://github.com/acme/widget/pull/1", draft: true, existing: null }; } };
 }
-function commentSpy(): { step: CommentStep; calls: { issueRef: string; reason: string }[] } {
-  const calls: { issueRef: string; reason: string }[] = [];
-  return { calls, step: async ({ issueRef, reason }) => { calls.push({ issueRef, reason }); return { argv: ["issue-comment", issueRef, "body.md"], ok: true }; } };
+function commentSpy(): { step: CommentStep; calls: { issueRef: string; reason: string; prUrl?: string | null }[] } {
+  const calls: { issueRef: string; reason: string; prUrl?: string | null }[] = [];
+  return { calls, step: async ({ issueRef, reason, prUrl }) => { calls.push(prUrl ? { issueRef, reason, prUrl } : { issueRef, reason }); return { argv: ["issue-comment", issueRef, "body.md"], ok: true }; } };
 }
 /** Same shape pause_audit.test.ts's writePushStub uses: never the real, credentialed engine10-push.sh. */
 function writePushStub(dir: string, logPath: string): string {
@@ -334,12 +334,20 @@ describe("A-110 exit ladder", () => {
     expect(exit).toBe(4);
     expect(comment.calls).toEqual([{ issueRef: "acme/widget#7", reason: "spec conflict: spec says A and B" }]);
   });
-  test("the same failure signature on 3 verifies exits 5 as STALLED; a changing one stays FAILED", async () => {
-    const same = await ladder(() => `${verifyRed("s1")}${verifyRed("s1")}${verifyRed("s1")}${sealedAs("PARTIAL")}`);
-    expect(same.r.stop).toBe("stalled");
-    expect(same.exit).toBe(5);
-    const moving = await ladder(() => `${verifyRed("s1")}${verifyRed("s2")}${verifyRed("s1")}${sealedAs("PARTIAL")}`);
-    expect(moving.r.stop).toBeNull();
-    expect(moving.exit).toBe(1);
+  test("the worker's escalated stop reason drives the outcome: stalled exits 5, fatal keeps its string, none stays FAILED", async () => {
+    const stalled = await ladder(() => `${ev("escalated", null, { stop: "stalled" })}${sealedAs("PARTIAL")}`);
+    expect(stalled.r.stop).toBe("stalled");
+    expect(stalled.exit).toBe(5);
+    const fatal = await ladder(() => `${ev("escalated", null, { stop: "fatal:quota_exhausted" })}${sealedAs("FAILED")}`);
+    expect(fatal.r.stop).toBe("fatal:quota_exhausted");
+    expect(fatal.exit).toBe(1);
+    expect((await ladder(() => sealedAs("PARTIAL"))).r.stop).toBeNull();
+  });
+  test("a BLOCKED run that opened a draft PR names the PR in the comment instead of claiming none", async () => {
+    const comment = commentSpy();
+    const { r } = await ladder(() => `${COMMIT_A_CHANGE}${ev("stage.completed", "implement", { spec_conflict_reason: "A or B?" })}${sealedAs("SPEC_CONFLICT")}`,
+      { started: { task_source: "issue", issue_ref: "acme/widget#7" }, pr: prSpy().step, comment: comment.step });
+    expect(r.prUrl).toBe("https://github.com/acme/widget/pull/1");
+    expect(comment.calls[0]!.prUrl).toBe(r.prUrl);
   });
 });

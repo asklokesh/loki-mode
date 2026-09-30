@@ -40,7 +40,7 @@ export type PrStep = (p: {
   notProven: string[]; // accumulated so far (backstop/tamper included): the only place the PR body learns why when a killed worker never sealed a receipt
 }) => Promise<PrOutcome | null>;
 // Backstop fallback for a FAILED run with no PR (no diff, or no remote): on an issue run, posts a comment naming the reason instead of vanishing.
-export type CommentStep = (p: { env: NodeJS.ProcessEnv; runId: string; issueRef: string; reason: string }) => Promise<{ argv: string[]; ok: boolean } | null>;
+export type CommentStep = (p: { env: NodeJS.ProcessEnv; runId: string; issueRef: string; reason: string; prUrl?: string | null }) => Promise<{ argv: string[]; ok: boolean } | null>;
 
 export interface SupervisorOptions {
   runId: string;
@@ -236,22 +236,21 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
     }
   }
   const allEvents = readEvents(log.path), folded = fold(allEvents), costUsd = log.tampered ? null : folded.cost.usd, wallS = (Date.now() - t0) / 1000; // one read, reused for cost and the Slack summary; unknown cost stays null
-  const sigs = allEvents.filter((e) => e.type === "stage.completed" && e.stage === "verify").map((e) => JSON.stringify(((e.data.failures_grouped ?? []) as { signature?: string }[]).map((g) => g.signature).sort())); // machine.ts's stall rule replayed from events: the worker never reports its stop reason
-  const stop = sigs.length >= 3 && sigs.at(-1) !== "[]" && sigs.slice(-3).every((x) => x === sigs.at(-1)) ? "stalled" : null;
+  const stopRaw = folded.run.escalated?.data.stop, stop = typeof stopRaw === "string" ? stopRaw : null;
   const outcome = outcomeOf(verdict, allEvents.some((e) => e.type === "cap.hit"), stop), blocked = outcome === "BLOCKED";
   if (blocked || (verdict === "FAILED" && prUrl === null)) { // E-67: never vanish silently -- an issue run gets a comment naming the reason, anything else is printed. A-110: BLOCKED always posts its one question
     const why = allEvents.find((e) => e.type === "stage.completed" && e.stage === "implement")?.data.spec_conflict_reason;
     const reason = blocked ? `spec conflict: ${String(why ?? "see the receipt").replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 500)}` : notProven.join("; ") || "run failed", issueRef = opts.started?.["issue_ref"];
     const isIssueWithRef = opts.started?.["task_source"] === "issue" && typeof issueRef === "string" && issueRef !== "";
     if (isIssueWithRef && opts.comment) {
-      const out = await opts.comment({ env, runId: opts.runId, issueRef: issueRef as string, reason });
+      const out = await opts.comment({ env, runId: opts.runId, issueRef: issueRef as string, reason, prUrl });
       log.append("issue.commented", null, { argv: out?.argv ?? [], ok: out?.ok ?? false, reason });
     } else if (!blocked) process.stderr.write(`engine10: run ${opts.runId} ended FAILED with no PR: ${reason}\n`);
   }
   log.append("run.completed", null, { verdict, pr_url: prUrl, not_proven: notProven, cost_usd: costUsd, wall_s: wallS });
   const stages = allEvents.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number").map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })), // E-48 notify: Slack when configured, no-op otherwise
     pc = partialCost(allEvents, log.tampered),
-    summary = { pr: prUrl ? { url: prUrl, draft: verdict !== "VERIFIED" } : null, verdict, notProven, flaky: [] as string[], wallS, stages, cost: { usd: costUsd, provider: String(opts.started?.provider ?? ""), tokens: allEvents.some((e) => e.type === "cost") ? folded.cost.inputTokens + folded.cost.outputTokens : null, partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total } };
+    summary = { pr: prUrl ? { url: prUrl, draft: verdict !== "VERIFIED" } : null, verdict, outcome, notProven, flaky: [] as string[], wallS, stages, cost: { usd: costUsd, provider: String(opts.started?.provider ?? ""), tokens: allEvents.some((e) => e.type === "cost") ? folded.cost.inputTokens + folded.cost.outputTokens : null, partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total } };
   try { const { createSlackAdapter } = await import("./adapters/slack.ts"); await Promise.race([createSlackAdapter(env.LOKI_SLACK_WEBHOOK_URL).notify?.(summary) ?? Promise.resolve(), new Promise<void>((r) => setTimeout(r, Number(env.LOKI_E10_NOTIFY_TIMEOUT_MS) || 5000).unref())]); } catch { /* best-effort: a Slack failure or hang must never affect the verdict */ }
   return { verdict, outcome, stop, receiptSha: typeof sealedData?.receipt_sha256 === "string" ? sealedData.receipt_sha256 : null, tampered: log.tampered, notProven, prUrl, workerExit };
 }
@@ -350,11 +349,11 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
       if (r.status !== "completed") return { url: null, draft: false, existing: null, notProven: [`PR not opened: ${r.reason}`] };
       return { url: d.pr_url ?? null, draft: d.draft === true, existing: d.existing ?? null, notProven: d.not_proven };
     },
-    comment: noPr ? undefined : async ({ issueRef, reason }) => { // E-67: a FAILED, no-diff issue run has no PR; comment instead of vanishing
+    comment: noPr ? undefined : async ({ issueRef, reason, prUrl }) => { // E-67: a FAILED, no-diff issue run has no PR; comment instead of vanishing
       const { DEFAULT_PUSH_SH } = await import("./stages/pr.ts"); // supervisor-only, same credentialed script as pr
       mkdirSync(runDir, { recursive: true });
       const bodyFile = join(runDir, "backstop-comment.md");
-      writeFileSync(bodyFile, `Loki 10 run ${runId} ended without a PR.\n\nReason: ${reason}\n`);
+      writeFileSync(bodyFile, `Loki 10 run ${runId} ${prUrl ? `opened draft PR ${prUrl}` : "ended without a PR"}.\n\n${prUrl ? "One question" : "Reason"}: ${reason}\n`);
       const argv = pushArgv({ cmd: "issue-comment", issueRef, bodyFile });
       const r = spawnSync("bash", [DEFAULT_PUSH_SH, ...argv], { env, encoding: "utf8" });
       return { argv, ok: r.status === 0 };
