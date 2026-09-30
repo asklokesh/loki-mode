@@ -8,6 +8,7 @@ import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { failIds } from "../failures.ts";
+import { loadRepoMap, namedFiles } from "../sizing.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
@@ -27,7 +28,7 @@ export interface VerifyCheck {
   cmd: string;
   result: "pass" | "fail" | "not_run" | "flaky"; // ENGINE.md section 5 test.result enum
   duration_s: number;
-  reason?: string; ids?: string[]; first_error?: string; // A-112: failing test ids; A-113: first failing output line, normalized; feeds the stall signature
+  reason?: string; n?: number; ids?: string[]; first_error?: string; // A-112: failing test ids; A-113: first failing output line, normalized; feeds the stall signature
   interpreter?: Interpreter; // E-98a: which python/ruff this check actually ran on
 }
 // E-98a B2: .venv, then venv, then an in-repo (realpath under repoDir) VIRTUAL_ENV are "project";
@@ -130,28 +131,28 @@ export async function runCheck(
     reason = skip(attempt);
     result = reason ? "not_run" : attempt.ok ? "flaky" : "fail";
   }
-  const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out), ids: failIds(attempt.out) } : {}), ...(reason ? { reason } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
+  const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out), ids: failIds(attempt.out) } : result === "pass" ? { n: ran(attempt.out) ?? 0 } : {}), ...(reason ? { reason } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
   checks.push(check);
   ctx.emit("test.result", "verify", { ...check });
   return check;
 }
-/** A-112: a test check red on head, in a file the diff did not touch, whose every failing id is also red on a pristine detached
- *  base worktree (never a reset of the implement tree, D42 (2)) is pre_red: its ids go to NOT PROVEN and seal skips it in the
- *  verdict. The check itself stays "fail" (a receipt never records a failing command as pass) and stays in the fix loop unless
- *  something proves progress: a base-red id that is green on head, or a passing Wall test. Base reruns get no node_modules or .venv,
- *  so a check failing on base only for missing dependencies yields no ids (failIds needs the runner's count covered) and is never "red on base".
+/** A-112: a test check red on head, in a file the diff did not touch, whose every failing id is also red on a pristine detached base
+ *  worktree (never a reset of the implement tree, D42 (2)) is pre_red: ids go to NOT PROVEN, seal skips it in the verdict, the check stays
+ *  "fail" and in the fix loop unless the TARGET progressed: a passing Wall test, or a relevant test (`rel`: impacted tests of the task-named
+ *  files, the lean-path Wall stand-in) that failed on base, now passes and ran no fewer tests (absent or skipped is not green). Relevant checks
+ *  are never pre_red. Base reruns get no node_modules or .venv: a dependency-only failure yields no ids (failIds needs the count covered).
  *  ponytail: bun/go/cargo/npm yield no ids, so they are never subtracted. */
-async function subtractBase(ctx: RunContext, checks: VerifyCheck[], tests: TestRef[], changed: string[], wall: Set<string>, signal: AbortSignal): Promise<{ ids: string[]; names: string[] }> {
+async function subtractBase(ctx: RunContext, checks: VerifyCheck[], tests: TestRef[], changed: string[], wall: Set<string>, rel: Set<string>, signal: AbortSignal): Promise<{ ids: string[]; names: string[] }> {
   const none = { ids: [], names: [] }, un = checks.flatMap((c) => { const t = tests.find((x) => `${x.runner}:${x.path}` === c.name); return t && !changed.includes(t.path) ? [{ c, t }] : []; });
   if (!un.some(({ c }) => c.result === "fail" && c.ids?.length) || signal.aborted) return none;
   const dir = mkdtempSync(join(tmpdir(), "e10-base-")), out = { ids: [] as string[], names: [] as string[] };
   const git = (args: string[]): void => { execFileSync("git", args, { cwd: ctx.repoDir, stdio: "ignore", env: process.env }); };
   try {
     git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", dir, ctx.baseSha]);
-    const red = new Map<VerifyCheck, string[]>();
-    for (const { c, t } of un) { const [cmd, args] = runnerCmd(t, dir), b = await runOnce(cmd, args, dir, signal, {}); red.set(c, !b.ok && !b.cut ? failIds(b.out) : []); }
-    const progress = checks.some((c) => wall.has(c.name) && c.result === "pass") || un.some(({ c }) => red.get(c)!.some((i) => !(c.ids ?? []).includes(i)));
-    if (progress) for (const { c } of un) if (c.result === "fail" && c.ids?.length && c.ids.every((i) => red.get(c)!.includes(i))) { out.names.push(c.name); out.ids.push(...c.ids); }
+    const red = new Map<VerifyCheck, string[]>(), nb = new Map<VerifyCheck, number>();
+    for (const { c, t } of un) { const [cmd, args] = runnerCmd(t, dir), b = await runOnce(cmd, args, dir, signal, {}); red.set(c, !b.ok && !b.cut ? failIds(b.out) : []); nb.set(c, ran(b.out) ?? 0); }
+    const progress = checks.some((c) => wall.has(c.name) && c.result === "pass") || un.some(({ c }) => rel.has(c.name) && c.result === "pass" && red.get(c)!.length > 0 && (c.n ?? 0) >= nb.get(c)!);
+    if (progress) for (const { c } of un) if (!rel.has(c.name) && c.result === "fail" && c.ids?.length && c.ids.every((i) => red.get(c)!.includes(i))) { out.names.push(c.name); out.ids.push(...c.ids); }
   } catch { /* base unavailable: checks stay failing */ } finally {
     try { git(["worktree", "remove", "--force", dir]); } catch { /* pruned below */ }
     rmSync(dir, { recursive: true, force: true });
@@ -221,13 +222,15 @@ export const verifyStage: Stage = {
       (wall.files ?? []).map((f) => (isAbsolute(f.path) ? relative(ctx.repoDir, f.path) : f.path)),
     );
     const wallTests = map.tests.filter((t) => wallPaths.has(t.path));
-    const tests = dedupeTests([...impacted, ...changedTestFiles, ...wallTests]);
+    // A-114: the relevant tests of the task-named files are always selected, whatever the diff touches.
+    const intake = ctx.outputs().intake as { task?: string; repomap_ref?: string } | undefined, relevant = ctx.tests.impacted(map, namedFiles(intake?.task ?? "", loadRepoMap(intake?.repomap_ref)));
+    const tests = dedupeTests([...impacted, ...changedTestFiles, ...wallTests, ...relevant]);
     for (const t of tests) {
       if (signal.aborted) break;
       const [cmd, args, interpreter] = runnerCmd(t, ctx.repoDir);
       await runCheck(ctx, `${t.runner}:${t.path}`, cmd, args, signal, checks, interpreter ? { interpreter } : {});
     }
-    const preRed = await subtractBase(ctx, checks, tests, changed, new Set(wallTests.map((t) => `${t.runner}:${t.path}`)), signal);
+    const preRed = await subtractBase(ctx, checks, tests, changed, new Set(wallTests.map((t) => `${t.runner}:${t.path}`)), new Set(relevant.map((t) => `${t.runner}:${t.path}`)), signal);
     if (!signal.aborted) {
       // Lint/typecheck of changed files only (ENGINE.md section 4's named tool per language).
       await runLintChecks(ctx, changed, signal, checks);

@@ -1,7 +1,7 @@
 // A-112: baseline subtract (pre_red never blocks VERIFIED, but only on proof of progress) and A-111b (bare-filename test names).
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RunContext, TestRef } from "../../src/engine10/types.ts";
@@ -20,7 +20,7 @@ const git = (d: string, a: string[]): string => execFileSync("git", a, { cwd: d,
 const node = (path: string): TestRef => ({ runner: "node", path }) as TestRef;
 
 /** A repo committed with `base`, then `work` written on top (the implement stage's edit); `impacted` are the selected test files. */
-function repoWith(base: Record<string, string>, work: Record<string, string>, impacted: TestRef[], wall: string[] = []): { ctx: RunContext; dir: string } {
+function repoWith(base: Record<string, string>, work: Record<string, string>, impacted: TestRef[], wall: string[] = [], o: { task?: string; sel?: (files: string[]) => TestRef[] } = {}): { ctx: RunContext; dir: string } {
   const dir = mkdtempSync(join(tmpdir(), "e10-prered-"));
   dirs.push(dir);
   git(dir, ["init", "-q"]); git(dir, ["config", "user.email", "t@t.test"]); git(dir, ["config", "user.name", "t"]);
@@ -28,10 +28,12 @@ function repoWith(base: Record<string, string>, work: Record<string, string>, im
   git(dir, ["add", "-A"]); git(dir, ["commit", "-q", "-m", "base"]);
   const baseSha = git(dir, ["rev-parse", "HEAD"]);
   for (const [f, c] of Object.entries(work)) writeFileSync(join(dir, f), c);
+  mkdirSync(join(dir, ".loki"), { recursive: true });
+  writeFileSync(join(dir, ".loki", "repomap.json"), JSON.stringify({ files: Object.keys(base) }));
   const ctx = {
     repoDir: dir, runDir: join(dir, ".loki"), baseSha, emit: () => {},
-    tests: { detect: async () => ({ runners: [], tests: impacted }), impacted: () => impacted.filter((t) => !wall.includes(t.path)) },
-    outputs: () => ({ wall: { files: wall.map((path) => ({ path })) } }),
+    tests: { detect: async () => ({ runners: [], tests: impacted }), impacted: (_m: unknown, files: string[]) => (o.sel ?? ((f: string[]) => (f.length ? impacted.filter((t) => !wall.includes(t.path)) : [])))(files) },
+    outputs: () => ({ intake: { task: o.task ?? "", repomap_ref: join(dir, ".loki", "repomap.json") }, wall: { files: wall.map((path) => ({ path })) } }),
   } as unknown as RunContext;
   return { ctx, dir };
 }
@@ -61,11 +63,49 @@ describe("engine10 verify: baseline subtract (A-112)", () => {
     expect(d.pre_red).toEqual([]);
     expect(d.failures_grouped.length).toBe(2);
   }, 60_000);
-  test("unchanged-file fix without a Wall test (red to green) does subtract the unrelated red test", async () => {
-    const { ctx } = repoWith({ "sum.js": SUM_BUG, "sum.test.js": SUM_TEST, "other.test.js": OTHER }, { "sum.js": SUM_OK }, [node("sum.test.js"), node("other.test.js")]);
+  const TASK = "fix sum.js, covered by sum.test.js";
+  // the named-files call carries sum.test.js and gets the relevant set; a diff-derived call gets everything selected from the diff
+  const selBoth = (files: string[]): TestRef[] => (files.includes("sum.test.js") ? [node("sum.test.js")] : files.length ? [node("sum.test.js"), node("other.test.js")] : []);
+  test("lean path (no Wall): the relevant test goes red to green, the unrelated red test is subtracted", async () => {
+    const { ctx } = repoWith({ "sum.js": SUM_BUG, "sum.test.js": SUM_TEST, "other.test.js": OTHER }, { "sum.js": SUM_OK }, [node("sum.test.js"), node("other.test.js")], [], { task: TASK, sel: selBoth });
     const d = (await run(ctx)).data as unknown as Out;
     expect(d.pre_red).toEqual(["unrelated"]);
     expect(d.failures_grouped).toEqual([]);
+  }, 60_000);
+  test("e7: lean path, the agent fixes only other.js (its test goes green); the relevant target stays red: nothing subtracted", async () => {
+    const OX = T + "const {x}=require('./other.js');t('unrelated',()=>{assert.strictEqual(x,2);});\n";
+    const { ctx } = repoWith({ "sum.js": SUM_BUG, "sum.test.js": SUM_TEST, "other.js": "exports.x=1;\n", "other.test.js": OX }, { "other.js": "exports.x=2;\n" }, [node("sum.test.js"), node("other.test.js")], [], { task: TASK, sel: selBoth });
+    const d = (await run(ctx)).data as unknown as Out;
+    expect(d.checks.map((c) => `${c.name}=${c.result}`).sort()).toEqual(["node:other.test.js=pass", "node:sum.test.js=fail"]);
+    expect(d.pre_red).toEqual([]);
+    expect(d.failures_grouped.length).toBe(1);
+  }, 60_000);
+  test("m6 (A-114): the diff selects only other.test.js; the relevant target test still runs and its red is seen", async () => {
+    const { ctx } = repoWith({ "sum.js": SUM_BUG, "sum.test.js": SUM_TEST, "other.js": "exports.x=1;\n", "other.test.js": OTHER }, { "other.js": "exports.x=2;\n" }, [node("sum.test.js"), node("other.test.js")], [],
+      { task: TASK, sel: (files) => (files.includes("sum.test.js") ? [node("sum.test.js")] : files.includes("other.js") ? [node("other.test.js")] : []) });
+    const d = (await run(ctx)).data as unknown as Out;
+    expect(d.checks.find((c) => c.name === "node:sum.test.js")?.result).toBe("fail");
+    expect(d.failures_grouped.length).toBe(2);
+  }, 60_000);
+  test("e5: only the unrelated code is fixed; the relevant target stays red, never pre_red", async () => {
+    const OLD = "def test_old():\n    from old import f\n    assert f() == 1\n", TGT = "from impl import double\ndef test_double():\n    assert double(2) == 4\n";
+    const { ctx } = repoWith({ "impl.py": "def double(x):\n    return x + 1\n", "old.py": "def f():\n    return 0\n", "test_old.py": OLD, "test_target.py": TGT }, { "old.py": "def f():\n    return 1\n" },
+      [{ runner: "pytest", path: "test_target.py" } as TestRef, { runner: "pytest", path: "test_old.py" } as TestRef], [],
+      { task: "fix impl.py, see test_target.py", sel: (files) => (files.includes("test_target.py") ? [{ runner: "pytest", path: "test_target.py" } as TestRef] : files.length ? [{ runner: "pytest", path: "test_target.py" } as TestRef, { runner: "pytest", path: "test_old.py" } as TestRef] : []) });
+    const d = (await run(ctx)).data as unknown as Out;
+    expect(d.checks.find((c) => c.name === "pytest:test_target.py")?.result).toBe("fail");
+    expect(d.pre_red).toEqual([]);
+    expect(d.failures_grouped.length).toBe(1);
+  }, 60_000);
+  test("e4: conftest skips the unrelated red test; the relevant target stays red, never pre_red", async () => {
+    const OLD = "def test_old():\n    assert False\n", TGT = "from impl import double\ndef test_double():\n    assert double(2) == 4\n";
+    const { ctx } = repoWith({ "impl.py": "def double(x):\n    return x + 1\n", "test_old.py": OLD, "test_target.py": TGT }, { "conftest.py": "import pytest\ndef pytest_collection_modifyitems(items):\n    for i in items:\n        if 'test_old' in i.nodeid:\n            i.add_marker(pytest.mark.skip)\n" },
+      [{ runner: "pytest", path: "test_target.py" } as TestRef, { runner: "pytest", path: "test_old.py" } as TestRef], [],
+      { task: "fix impl.py, see test_target.py", sel: (files) => (files.includes("test_target.py") ? [{ runner: "pytest", path: "test_target.py" } as TestRef] : files.length ? [{ runner: "pytest", path: "test_target.py" } as TestRef, { runner: "pytest", path: "test_old.py" } as TestRef] : []) });
+    const d = (await run(ctx)).data as unknown as Out;
+    expect(d.checks.find((c) => c.name === "pytest:test_target.py")?.result).toBe("fail");
+    expect(d.pre_red).toEqual([]);
+    expect(d.failures_grouped.length).toBe(1);
   }, 60_000);
   test("B2: pytest base red test_old and test_double; head fixes double but test_make ERRORs: nothing subtracted", async () => {
     const PY = "import pytest\nfrom impl import double, make\n@pytest.fixture\ndef made():\n    return make()\ndef test_old():\n    assert False\ndef test_double():\n    assert double(2) == 4\ndef test_make(made):\n    pass\n";
