@@ -1036,6 +1036,45 @@ J="$R/results.jsonl"
     && pass "S41-01: real v10 run: tokens/by_stage/first_turn_prompt_tokens(mtime order)/escalations/attempts(implement-scoped)" \
     || fail "S41-01: events row: tokens=$(row "$J" tokens) by_stage=$(row "$J" tokens_by_stage) fft=$(row "$J" first_turn_prompt_tokens) esc=$(row "$J" escalations) att=$(row "$J" attempts)"
 
+# S41-01 review fix: a v10 run whose worker was killed mid-session must not
+# report the surviving records' lower sum as measured. Stub: 3 sessions start
+# and S41_COSTS (default 3) cost events exist; S41_RECORDS (default 3)
+# efficiency records are written, so 2 models the deleted last record.
+cat > "$T/bin/s41-killed-stub" <<'EOF'
+#!/usr/bin/env bash
+mkdir -p .loki/runs/fx .loki/metrics/efficiency
+printf '{"engine": "v10", "run_id": "fx", "events": ".loki/runs/fx/events.jsonl"}\n' > .loki/engine.json
+: > .loki/runs/fx/events.jsonl
+for i in 1 2 3; do
+  echo '{"v":1,"type":"session.started","stage":"implement","data":{"session_id":"s'$i'"}}' >> .loki/runs/fx/events.jsonl
+  [ "$i" -le "${S41_COSTS:-3}" ] && echo '{"v":1,"type":"cost","stage":"implement","data":{"session_id":"s'$i'","input_tokens":1}}' >> .loki/runs/fx/events.jsonl
+done
+costs=(0.1 0.2 0.07101)
+for i in $(seq 1 "${S41_RECORDS:-3}"); do
+  printf '{"iteration": %s, "cost_source": "provider", "cost_usd": %s}\n' "$i" "${costs[$((i-1))]}" > .loki/metrics/efficiency/iteration-$i.json
+done
+echo '{"type":"result"}'
+EOF
+chmod +x "$T/bin/s41-killed-stub"
+R="$T/out-s41-complete"
+LOKI_EVAL_LOKI_BIN="$T/bin/s41-killed-stub" RUN --arm v10 --task fx-greet --out "$R" >/dev/null 2>&1
+J="$R/results.jsonl"
+[ "$(row "$J" cost_usd)" = 0.37101 ] && [ "$(row "$J" tokens)" != null ] \
+    && pass "S41-01: complete v10 run keeps cost_usd 0.37101 and tokens (positive control)" \
+    || fail "S41-01: complete run: $(tail -1 "$J")"
+R="$T/out-s41-killed"
+S41_RECORDS=2 LOKI_EVAL_LOKI_BIN="$T/bin/s41-killed-stub" RUN --arm v10 --task fx-greet --out "$R" >/dev/null 2>&1
+J="$R/results.jsonl"
+[ "$(row "$J" cost_usd)" = null ] && [ "$(row "$J" cost_source)" = '"not reported (3 sessions started, 2 recorded)"' ] \
+    && pass "S41-01: 3 sessions started, 2 records -> cost_usd null with reason" \
+    || fail "S41-01: killed run: $(tail -1 "$J")"
+R="$T/out-s41-killed-tok"
+S41_COSTS=2 LOKI_EVAL_LOKI_BIN="$T/bin/s41-killed-stub" RUN --arm v10 --task fx-greet --out "$R" >/dev/null 2>&1
+J="$R/results.jsonl"
+[ "$(row "$J" tokens)" = null ] \
+    && pass "S41-01: a started session without a cost event -> tokens null" \
+    || fail "S41-01: tokens=$(row "$J" tokens)"
+
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

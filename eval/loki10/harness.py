@@ -661,7 +661,13 @@ def find_pr(remote, base_sha):
     return None
 
 
-def provider_cost(arm, stdout_path, work):
+def _started_ids(events):
+    """session_ids of every session.started event (emitted only after spawn)."""
+    return {(e.get("data") or {}).get("session_id") for e in events
+            if e.get("type") == "session.started" and isinstance(e.get("data"), dict)}
+
+
+def provider_cost(arm, stdout_path, work, events=()):
     """Provider-reported cost only. Returns (usd_or_None, source, partial_usd_or_None).
 
     partial_usd is the slice of usd that came from a "partial-stream" record
@@ -725,6 +731,11 @@ def provider_cost(arm, stdout_path, work):
             partial += float(v)
     if not names:
         return None, "not reported", None
+    # A worker killed mid-session never writes that session's record; a sum over
+    # the survivors would be a lower, still-"measured" figure. v10 only (events).
+    started = _started_ids(events)
+    if len(names) < len(started):
+        return None, "not reported (%d sessions started, %d recorded)" % (len(started), len(names)), None
     label = "loki efficiency records (cost_source=%s)" % "+".join(sorted(sources))
     return round(total, 6), label, round(partial, 6)
 
@@ -1090,6 +1101,15 @@ _TOKEN_KEYS = ("input", "output", "cache_read", "cache_write")
 
 
 def _v10_tokens(events):
+    costed = {e["data"].get("session_id") for e in events
+              if e.get("type") == "cost" and isinstance(e.get("data"), dict)}
+    if _started_ids(events) - costed:
+        return None, None
+    started = _started_ids(events)
+    costed = {(e.get("data") or {}).get("session_id") for e in events
+              if e.get("type") == "cost" and isinstance(e.get("data"), dict)}
+    if started - costed:
+        return None, None
     """(totals_or_None, by_stage_or_None) over this run's own "cost" events
     (session.ts emits one per session: input_tokens, output_tokens,
     cache_read_tokens, cache_creation_tokens -> input/output/cache_read/
@@ -1307,11 +1327,11 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
     started = time.time()
     rc, wall, capped = capped_run(argv, work, dict(env, **auth), cap, L["arm_stderr"], L["arm_stdout"])
     row.update(started=iso(started), ended=iso(time.time()), wall_s=wall, exit_code=rc, capped=capped)
-    row["cost_usd"], row["cost_source"], row["cost_partial_usd"] = provider_cost(arm, L["arm_stdout"], work)
+    events = _v10_events(work) if arm == "v10" else []
+    row["cost_usd"], row["cost_source"], row["cost_partial_usd"] = provider_cost(arm, L["arm_stdout"], work, events)
     if arm == "raw-claude":
         row["tokens"] = _raw_claude_tokens(L["arm_stdout"])
     elif arm == "v10":
-        events = _v10_events(work)
         row["tokens"], row["tokens_by_stage"] = _v10_tokens(events)
         row["first_turn_prompt_tokens"] = _first_turn_prompt_tokens(work)
         # fix.round's own "escalated" field is the only real escalation
