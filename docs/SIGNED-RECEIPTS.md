@@ -182,12 +182,13 @@ mount) on the `receiver` service. Never commit that key file.
 
 | Variable | Effect |
 |---|---|
-| `LOKI_RECEIPT_SIGNING_KEY_FILE` | PEM path to the Ed25519 private key (normal Kubernetes mounted-secret path). |
+| `LOKI_RECEIPT_SIGNING_KEY_FILE` | PEM path to the Ed25519 private key (normal Kubernetes mounted-secret path). Default: `~/.loki/keys/receipt-ed25519.pem`, generated on first use (PKCS8, mode 0600, created atomically so concurrent first runs share one key). The private key is never printed, logged, or written to a receipt. Never commit it. |
 | `LOKI_RECEIPT_SIGNING_KEY` | The PEM inline, for non-Kubernetes deployments. |
 | `LOKI_RECEIPT_RETIRED_PUBKEYS` | Colon-separated PEM paths for retired public keys. |
 
-Unset means unsigned: no attestation is attached and the receipt keeps its
-existing verdict.
+With neither variable set, the default key file above is used (and created if
+missing). If the key cannot be created or read, no attestation is attached and
+the receipt keeps its existing verdict.
 
 The same two variables also work for a **local** build. Set
 `LOKI_RECEIPT_SIGNING_KEY_FILE` before `loki start` and the generator attests
