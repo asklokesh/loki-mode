@@ -194,7 +194,7 @@ describe("engine10 seal", () => {
     expect((await verifyReceipt(path)).verdict).toBe("TAMPERED");
   }, 30000);
 
-  test("A-121: a retired public key still verifies, an unknown kid does not", async () => {
+  test("A-121: a retired public key still verifies, an unknown kid is UNCHECKED, never TAMPERED", async () => {
     const { privateKey, publicKey } = generateKeyPairSync("ed25519");
     const keyFile = join(root, "rot", "k.pem");
     mkdirSync(dirname(keyFile));
@@ -211,7 +211,23 @@ describe("engine10 seal", () => {
     const rotated = join(root, "rot", "new.pem");
     writeFileSync(rotated, generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }) as string, { mode: 0o600 });
     process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = rotated;
-    expect((await verifyReceipt(path)).verdict).toBe("TAMPERED");
+    const other = await verifyReceipt(path); // sealed with A, verified with only B
+    expect(other.verdict).toBe("UNCHECKED");
+    expect(other.reasons.join(" ")).toContain((JSON.parse(readFileSync(path, "utf8")) as Receipt).verification.kid!);
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(root, "rot", "missing", "k.pem"); // no key at all
+    expect((await verifyReceipt(path)).verdict).toBe("UNCHECKED");
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = rotated;
+    // A known kid with a flipped signature byte stays TAMPERED; a non-string jwt is UNCHECKED, not a crash.
+    const good = JSON.parse(readFileSync(path, "utf8")) as Receipt;
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = keyFile;
+    const badSig = join(root, "rot", "badsig.json");
+    const jwt = good.verification.jwt!;
+    writeFileSync(badSig, JSON.stringify({ ...good, verification: { ...good.verification, jwt: jwt.slice(0, -2) + (jwt.endsWith("AA") ? "BB" : "AA") } }));
+    expect((await verifyReceipt(badSig)).verdict).toBe("TAMPERED");
+    const numJwt = join(root, "rot", "num.json");
+    writeFileSync(numJwt, JSON.stringify({ ...good, verification: { jwt: 123, kid: null } }));
+    expect((await verifyReceipt(numJwt)).verdict).toBe("UNCHECKED");
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = rotated;
     process.env["LOKI_RECEIPT_RETIRED_PUBKEYS"] = retired;
     try { expect((await verifyReceipt(path)).verdict).toBe("VERIFIED"); } finally { delete process.env["LOKI_RECEIPT_RETIRED_PUBKEYS"]; }
   }, 30000);

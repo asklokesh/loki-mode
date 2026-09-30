@@ -59,7 +59,8 @@ function commitChange(dir: string, path: string, content: string): void {
 const cleanupDirs: string[] = [];
 beforeEach(() => {
   process.env["LOKI_RECEIPT_SIGNING_KEY"] = "";
-  process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(mkdtempSync(join(tmpdir(), "e10-deep-key-")), "k.pem"); // throwaway auto-generated key, never the real ~/.loki
+  const keyDir = mkdtempSync(join(tmpdir(), "e10-deep-key-")); cleanupDirs.push(keyDir);
+  process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(keyDir, "k.pem"); // throwaway auto-generated key, never the real ~/.loki
 });
 afterEach(() => {
   for (const d of cleanupDirs.splice(0)) rmSync(d, { recursive: true, force: true });

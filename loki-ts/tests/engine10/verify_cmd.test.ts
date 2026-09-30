@@ -240,7 +240,7 @@ describe("verifyReceipt: signed (E-22 green: verifies against the JWKS)", () => 
     }
   });
 
-  test("a token signed by an unpublished key is TAMPERED, not VERIFIED", async () => {
+  test("a token signed by an unpublished key is UNCHECKED, not VERIFIED", async () => {
     if (!CRYPTO_PY) {
       console.log("SKIP: no python3 has cryptography importable under -I -- attestation not measured here");
       return;
@@ -264,7 +264,7 @@ describe("verifyReceipt: signed (E-22 green: verifies against the JWKS)", () => 
       const other = signWithFreshKey("unused", "other");
       process.env["LOKI_RECEIPT_SIGNING_KEY"] = other.pem;
       const result = await verifyReceipt(path);
-      expect(result.verdict).toBe("TAMPERED");
+      expect(result.verdict).toBe("UNCHECKED");
     } finally {
       if (savedKey === undefined) delete process.env["LOKI_RECEIPT_SIGNING_KEY"];
       else process.env["LOKI_RECEIPT_SIGNING_KEY"] = savedKey;

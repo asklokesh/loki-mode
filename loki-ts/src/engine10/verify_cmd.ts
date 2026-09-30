@@ -19,7 +19,7 @@ export interface VerifyDeps {
   runsRoot?: string; // overrides lokiDir()/runs, for tests
 }
 interface AttestationOutcome {
-  status: "verified" | "tampered";
+  status: "verified" | "tampered" | "unchecked";
   reason: string | null;
 }
 /** Native EdDSA check against the local key's public half plus LOKI_RECEIPT_RETIRED_PUBKEYS (colon-separated PEM paths). Selection is by kid; an unknown kid is refused, never tried against every key. */
@@ -40,7 +40,8 @@ function checkAttestation(jwt: string, expectedHash: string): AttestationOutcome
     try { return [createPublicKey(readFileSync(f))]; } catch { return []; }
   });
   const pub = [...(active ? [createPublicKey(active)] : []), ...pubs].find((k) => kidOf(k) === header.kid);
-  if (!pub) return bad(`no published key with kid ${String(header.kid)}`);
+  // An unknown kid (other machine, CI, after a rotation) cannot be checked here; that is not evidence of tampering.
+  if (!pub) return { status: "unchecked", reason: `no key for kid ${String(header.kid)} on this machine (set LOKI_RECEIPT_SIGNING_KEY_FILE or LOKI_RECEIPT_RETIRED_PUBKEYS)` };
   if (!verify(null, Buffer.from(`${h}.${p}`), pub, Buffer.from(s, "base64url"))) return bad("signature does not verify");
   return payload?.receipt_sha256 === expectedHash ? { status: "verified", reason: null } : bad("attestation binds a different receipt hash");
 }
@@ -64,10 +65,12 @@ export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}):
   }
   const verification = (receipt["verification"] ?? {}) as { jwt?: string | null };
   const jwt = verification.jwt ?? null;
+  if (jwt !== null && typeof jwt !== "string") return { verdict: "UNCHECKED", reasons: ["verification.jwt is not a string"] };
   if (!jwt) {
     return { verdict: "UNSIGNED", reasons: [], receiptSha256: computed };
   }
   const outcome = checkAttestation(jwt, computed);
+  if (outcome.status === "unchecked") return { verdict: "UNCHECKED", reasons: [outcome.reason ?? "attestation not checked"] };
   if (outcome.status === "tampered") return { verdict: "TAMPERED", reasons: [outcome.reason ?? "attestation invalid"] };
   return { verdict: "VERIFIED", reasons: [], receiptSha256: computed };
 }

@@ -4,7 +4,7 @@
 // and receipt.md, computes receipt_sha256, and signs natively with node:crypto Ed25519
 // (A-121; no python, no `cryptography`). The key is the A-120 local key, created on first
 // use. An empty token means UNSIGNED, never presented as attested.
-import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
+import { createHash, randomBytes, createPrivateKey, createPublicKey, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -73,7 +73,7 @@ export function loadSigningKey(generate = true): KeyObject | null {
         if ((e as NodeJS.ErrnoException).code !== "ENOENT" || !generate) return null;
         mkdirSync(dirname(dirname(file)), { recursive: true, mode: 0o700 });
         mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-        const tmp = `${file}.${process.pid}.tmp`;
+        const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`; // random, so a stale temp never blocks creation
         writeFileSync(tmp, generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }), { flag: "wx", mode: 0o600 });
         try { linkSync(tmp, file); } catch (l) { if ((l as NodeJS.ErrnoException).code !== "EEXIST") throw l; } finally { unlinkSync(tmp); }
         pem = readFileSync(file);
