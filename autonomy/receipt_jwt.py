@@ -114,13 +114,14 @@ def _load_private_key(pem_bytes: bytes):
     return key
 
 
-def load_signing_key():
+def load_signing_key(auto_generate=True):
     """Return (private_key, kid) from env or a mounted file, or (None, "").
 
-    Mirrors load_api_token's precedence deliberately: LOKI_RECEIPT_SIGNING_KEY
-    then LOKI_RECEIPT_SIGNING_KEY_FILE, the normal Kubernetes mounted-secret
-    path. Absence is NOT an error -- it is the default, and it means receipts
-    stay UNSIGNED exactly as they were before this module existed.
+    Precedence: LOKI_RECEIPT_SIGNING_KEY (inline PEM), then
+    LOKI_RECEIPT_SIGNING_KEY_FILE, then ~/.loki/keys/receipt-ed25519.pem. A
+    missing key FILE is generated (PKCS8, 0600, O_EXCL) so a first run signs
+    without setup unless auto_generate=False (the server path: an ephemeral
+    container key would orphan old receipts). The private key is never logged or printed.
     """
     if not _CRYPTO_AVAILABLE:
         return None, ""
@@ -129,19 +130,63 @@ def load_signing_key():
         key = _load_private_key(pem.encode("utf-8"))
     else:
         key_file = os.environ.get("LOKI_RECEIPT_SIGNING_KEY_FILE", "").strip()
-        if not key_file:
-            return None, ""
+        is_default = not key_file
+        if is_default:
+            key_file = str(Path.home() / ".loki" / "keys" / "receipt-ed25519.pem")
         try:
-            key = _load_private_key(Path(key_file).read_bytes())
+            try:
+                data = Path(key_file).read_bytes()
+                if is_default:  # never chmod an operator's key: it may be a :ro mount
+                    _tighten(key_file)
+            except FileNotFoundError:
+                if not auto_generate:
+                    return None, ""
+                data = _create_key_file(key_file)
+                logging.info("receipt signing: auto-generated local key at %s", key_file)
+            key = _load_private_key(data)
         except OSError as e:
-            logging.error(
-                "receipt signing: cannot read LOKI_RECEIPT_SIGNING_KEY_FILE %s: %s",
-                key_file, e,
-            )
+            logging.error("receipt signing: cannot use key file %s: %s", key_file, e)
             return None, ""
     if key is None:
         return None, ""
     return key, compute_kid(key.public_key())
+
+
+def _tighten(path: str) -> None:
+    """Drop group/other access on an existing key file and its directory."""
+    # best effort: a failed chmod must never downgrade signing
+    try:
+        if os.stat(path).st_mode & 0o077:
+            os.chmod(path, 0o600)
+        d = os.path.dirname(path)
+        if os.stat(d).st_mode & 0o077:
+            os.chmod(d, 0o700)
+    except OSError as e:
+        logging.warning("receipt signing: could not tighten %s: %s", path, e)
+
+
+def _create_key_file(path: str) -> bytes:
+    """Create the key 0600, published atomically via link(); a concurrent first run reads the winner's file."""
+    pem = Ed25519PrivateKey.generate().private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    d = os.path.dirname(path) or "."
+    if d.endswith(os.path.join(".loki", "keys")):
+        os.makedirs(os.path.dirname(d), mode=0o700, exist_ok=True)
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(pem)
+        os.link(tmp, path)  # atomic and fails if a concurrent run won
+    except FileExistsError:
+        return Path(path).read_bytes()
+    finally:
+        os.unlink(tmp)
+    return pem
 
 
 def load_retired_public_keys():
