@@ -3051,7 +3051,7 @@ PYEOF
 # A-134: when this tree holds a legacy Evidence Receipt, report its integrity digest
 # (proof-verify.py's own canonical re-hash, no second canonicalizer). Silent otherwise.
 _verify_receipt_digest() {
-    local rid pj lib
+    local rid pj lib rc=0
     rid="$(cat .loki/state/last-proof-id.txt 2>/dev/null || true)"
     case "$rid" in '' | *[!A-Za-z0-9._-]*) return 0 ;; esac
     pj=".loki/proofs/$rid/proof.json"
@@ -3065,7 +3065,9 @@ m = importlib.util.module_from_spec(sp); sp.loader.exec_module(m)
 p = json.load(open(sys.argv[2]))
 ok = m.verify_integrity(p)['hash_ok']
 h = (p.get('verification') or {}).get('hash') or ''
-print('receipt_sha256: ' + h if ok else 'receipt: TAMPERED (integrity hash does not match proof.json)')" "$lib" "$pj" 2>/dev/null || true
+print('receipt_sha256: ' + h if ok else 'receipt: TAMPERED (integrity hash does not match proof.json)' if h else 'receipt: NOT CHECKABLE (no hash recorded)')
+sys.exit(0 if ok else 3)" "$lib" "$pj" 2>/dev/null || rc=$?
+    [ "$rc" -ne 3 ]
 }
 
 verify_main() {
@@ -3306,6 +3308,8 @@ verify_main() {
     # terminal still sees the verdict, and `| jq` still parses.
     _v_banner_fd=1
     [ "${VERIFY_JSON:-0}" = "1" ] && _v_banner_fd=2
+    # A-134: a receipt whose integrity hash fails turns the verdict BLOCKED.
+    _verify_receipt_digest >&$_v_banner_fd || { VERIFY_VERDICT=BLOCKED; VERIFY_EXIT=$VERIFY_EXIT_BLOCKED; }
     printf 'VERDICT: %s\n' "$VERIFY_VERDICT" >&$_v_banner_fd
     printf 'Evidence: %s/evidence.json\n' "$out_dir" >&$_v_banner_fd
     printf 'Report:   %s/report.md\n' "$out_dir" >&$_v_banner_fd
@@ -3313,7 +3317,6 @@ verify_main() {
     # is visible without parsing JSON. Printed solely when a fold succeeded;
     # the default path never sets VERIFY_HOSTED_SUMMARY, so it stays byte-identical.
     [ -n "${VERIFY_HOSTED_SUMMARY:-}" ] && printf '%s\n' "$VERIFY_HOSTED_SUMMARY"
-    _verify_receipt_digest >&$_v_banner_fd
 
     return "$VERIFY_EXIT"
 }

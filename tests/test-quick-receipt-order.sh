@@ -38,10 +38,10 @@ mk_fix() { # mk_fix <dir>
     git -C "$d" add package.json sum.js sum.test.js
     git -C "$d" commit -q -m init
 }
-run_quick() { # run_quick <dir> <stdout-file> [extra env assignment]
+run_quick() { # run_quick <dir> <stdout-file> [extra env assignment] [loki quick flag]
     ( cd "$1" || exit 2
       env ${3:+"$3"} HOME="$T/home" PATH="$T/bin:$PATH" LOKI_NO_BROWSER=1 LOKI_SKIP_AUTH_PREFLIGHT=1 \
-          "$REPO_ROOT/bin/loki" quick "fix the bug that makes the failing test in sum.test.js fail" \
+          "$REPO_ROOT/bin/loki" quick ${4:+"$4"} "fix the bug that makes the failing test in sum.test.js fail" \
           < /dev/null > "$2" 2> "$2.err" )
 }
 
@@ -79,6 +79,26 @@ mk_fix "$VFIX"
 run_quick "$VFIX" "$T/vout.log" LOKI_VERBOSE=1
 VLINES="$(wc -l < "$T/vout.log" | tr -d ' ')"
 if grep -q '\[INFO\]' "$T/vout.log" && [ "$VLINES" -gt 15 ]; then ok "LOKI_VERBOSE=1 restores the chatter ($VLINES lines)"; else bad "LOKI_VERBOSE=1 did not restore the chatter" "lines=$VLINES"; fi
+
+# B3: the quiet headline line carries the unsigned and not-proven facts.
+SIGNED="$(python3 -c "import json,sys; v=json.load(open(sys.argv[1])).get('verification') or {}; print('yes' if v.get('gpg_signature') or v.get('attestation') else 'no')" "$PJ" 2>/dev/null)"
+if [ "$SIGNED" = no ]; then
+    printf '%s\n' "$OUT" | grep -E '^Evidence Receipt: .*unsigned' >/dev/null \
+        && ok "quiet headline says unsigned" || bad "quiet headline does not say unsigned"
+else
+    printf '%s\n' "$OUT" | grep -E '^Evidence Receipt: .*unsigned' >/dev/null \
+        && bad "signed receipt reported as unsigned" || ok "signed receipt is not labelled unsigned"
+fi
+printf '%s\n' "$OUT" | grep -E '^Evidence Receipt: .*[0-9]+ not proven' >/dev/null \
+    && ok "quiet headline carries the not-proven count" || bad "quiet headline has no not-proven count"
+
+# B1: --verbose is a flag, not task text, and restores the chatter.
+GFIX="$T/flag"
+mk_fix "$GFIX"
+run_quick "$GFIX" "$T/gout.log" "" --verbose
+grep -q '\[INFO\]' "$T/gout.log" && ok "--verbose restores the [INFO] lines" || bad "--verbose stayed quiet"
+grep -q 'Task:.*--verbose' "$T/gout.log" && bad "--verbose leaked into the task text" || ok "task text has no --verbose"
+grep -rq -- '--verbose' "$GFIX/.loki"/quick-prd-*.md && bad "--verbose leaked into the quick PRD" || ok "quick PRD has no --verbose"
 
 # Ordering: the verbose run prints the markdown receipt table; its Head sha must be the
 # commit Loki made, not the pre-commit base (the A-134 defect).

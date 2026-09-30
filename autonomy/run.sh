@@ -243,13 +243,22 @@ PROJECT_DIR="${LOKI_ORIGINAL_PROJECT_DIR:-$PROJECT_DIR}"
 # a warning count. Errors go to stderr.
 if [ -z "${LOKI_QUICK_INNER:-}" ] && [ "${LOKI_VERBOSE:-0}" != "1" ] && [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     case "${1:-}" in */quick-prd-*.md | quick-prd-*.md)
-        mkdir -p .loki && rm -f .loki/quick-receipt.txt
-        LOKI_QUICK_OUTER_PID=$$ LOKI_QUICK_INNER=1 "$BASH" "$0" "$@" >.loki/quick-run.log
-        _qrc=$?
-        _qw=$(grep -cF '[WARN]' .loki/quick-run.log 2>/dev/null); _qw="${_qw:-0}"
-        { [ "$_qrc" -ne 0 ] || [ ! -s .loki/quick-receipt.txt ]; } && tail -n 5 .loki/quick-run.log 2>/dev/null
-        [ "$_qw" -gt 0 ] && echo "Warnings: $_qw (see .loki/quick-run.log)"
-        cat .loki/quick-receipt.txt 2>/dev/null
+        _qd="$(cd "$(dirname "$1")" && pwd -P)"; rm -f "$_qd/quick-receipt.txt"
+        # Async with default INT/QUIT (a bare `&` child ignores them), signals forwarded.
+        ( trap - INT QUIT; LOKI_QUICK_DIR="$_qd" LOKI_QUICK_OUTER_PID=$$ LOKI_QUICK_INNER=1 exec "$BASH" "$0" "$@" >"$_qd/quick-run.log" ) &
+        _qpid=$!
+        trap 'kill -INT "$_qpid" 2>/dev/null' INT
+        trap 'kill -TERM "$_qpid" 2>/dev/null' TERM HUP
+        wait "$_qpid"; _qrc=$?
+        kill -0 "$_qpid" 2>/dev/null && { wait "$_qpid"; _qrc=$?; }
+        trap - INT TERM HUP
+        _qw=$(grep -cF '[WARN]' "$_qd/quick-run.log" 2>/dev/null); _qw="${_qw:-0}"
+        if [ "$_qrc" -ne 0 ] || [ ! -s "$_qd/quick-receipt.txt" ]; then
+            _qr=$(grep -E '\[(ERROR|WARN)\]|[Ss]topped|[Ff]ailed' "$_qd/quick-run.log" 2>/dev/null | tail -n 3)
+            echo "${_qr:-$(tail -n 3 "$_qd/quick-run.log" 2>/dev/null)}"
+        fi
+        [ "$_qw" -gt 0 ] && echo "Warnings: $_qw (see $_qd/quick-run.log)"
+        cat "$_qd/quick-receipt.txt" 2>/dev/null
         exit "$_qrc" ;;
     esac
 fi
@@ -7732,68 +7741,6 @@ EOF
 # Track last known phase to detect changes
 LAST_KNOWN_PHASE=""
 
-# Set the current phase and emit event if changed
-# v7.5.12: append a log entry to the iteration-N task in in-progress.json.
-# Args: iteration, phase, level, message. All silent on failure -- this
-# must NEVER kill the run.
-append_iteration_task_log() {
-    local iteration="${1:-0}"
-    local phase="${2:-}"
-    local level="${3:-info}"
-    local message="${4:-}"
-    local in_progress_file=".loki/queue/in-progress.json"
-
-    [ -z "$iteration" ] && return 0
-    [ "$iteration" = "0" ] && return 0
-    [ ! -f "$in_progress_file" ] && return 0
-
-    local timestamp
-    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-    ITER="$iteration" PHASE="$phase" LEVEL="$level" \
-    MESSAGE="$message" TIMESTAMP="$timestamp" \
-    python3 - "$in_progress_file" <<'PY' 2>/dev/null || true
-import json, os, sys, tempfile
-path = sys.argv[1]
-target_id = f"iteration-{os.environ['ITER']}"
-entry = {
-    "timestamp": os.environ["TIMESTAMP"],
-    "iteration": int(os.environ["ITER"]),
-    "level": os.environ.get("LEVEL", "info"),
-    "phase": os.environ.get("PHASE", ""),
-    "message": os.environ.get("MESSAGE", ""),
-}
-try:
-    with open(path) as f:
-        data = json.load(f)
-except Exception:
-    sys.exit(0)
-# Support both [...] and {tasks: [...]} shapes (matches load_queue_tasks).
-tasks = data["tasks"] if isinstance(data, dict) and isinstance(data.get("tasks"), list) else (data if isinstance(data, list) else None)
-if tasks is None:
-    sys.exit(0)
-mutated = False
-for t in tasks:
-    if not isinstance(t, dict):
-        continue
-    if t.get("id") == target_id:
-        logs = t.get("logs")
-        if not isinstance(logs, list):
-            logs = []
-        logs.append(entry)
-        t["logs"] = logs
-        mutated = True
-        break
-if not mutated:
-    sys.exit(0)
-out_dir = os.path.dirname(path) or "."
-fd, tmp = tempfile.mkstemp(dir=out_dir, suffix=".json")
-with os.fdopen(fd, "w") as f:
-    json.dump(data, f, indent=2)
-os.replace(tmp, path)
-PY
-}
-
 #===============================================================================
 # Dashboard State Writer (Real-time sync with web dashboard)
 #===============================================================================
@@ -11280,19 +11227,25 @@ _loki_proof_json_for_pr() {
 
 # A-134: compact quiet-mode receipt for the outer shell (see top of file) to print.
 _loki_quick_receipt_write() {
-    local rid pj
-    rid="$(cat .loki/state/last-proof-id.txt 2>/dev/null || true)"
+    local ld="${TARGET_DIR:-.}/.loki" rid pj
+    rid="$(cat "$ld/state/last-proof-id.txt" 2>/dev/null || true)"
     case "$rid" in '' | *[!A-Za-z0-9._-]*) return 0 ;; esac
-    pj=".loki/proofs/$rid/proof.json"
+    pj="$ld/proofs/$rid/proof.json"
     [ -f "$pj" ] || return 0
     python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json
 d = json.load(open(sys.argv[1]))
 g = (d.get('facts') or {}).get('git') or {}
-print('Evidence Receipt: ' + str((d.get('honesty') or {}).get('headline') or 'unavailable'))
-print('receipt_sha256: ' + str((d.get('verification') or {}).get('hash') or ''))
+v = d.get('verification') or {}
+if sys.argv[3] and g.get('head_sha') != sys.argv[3]:
+    print('Evidence Receipt: unavailable (final proof generation failed; newest proof predates the session commit)')
+    sys.exit(0)
+deg = [str(x.get('item') or '').split(':')[-1] for x in ((d.get('honesty') or {}).get('degraded') or []) if isinstance(x, dict)]
+notes = ([] if (v.get('gpg_signature') or v.get('attestation')) else ['unsigned']) + (['%d not proven: %s' % (len(deg), ', '.join(deg))] if deg else [])
+print('Evidence Receipt: ' + str((d.get('honesty') or {}).get('headline') or 'unavailable') + (' (' + '; '.join(notes) + ')' if notes else ''))
+print('receipt_sha256: ' + str(v.get('hash') or ''))
 print('Head sha: ' + str(g.get('head_sha') or '') + '  Diff sha256: ' + str(g.get('diff_sha256') or ''))
-print('Check it: loki verify  (or loki proof verify ' + sys.argv[2] + ')')" "$pj" "$rid" > .loki/quick-receipt.txt 2>/dev/null || rm -f .loki/quick-receipt.txt
+print('Check it: loki verify  (or loki proof verify ' + sys.argv[2] + ')')" "$pj" "$rid" "$(git -C "${TARGET_DIR:-.}" rev-parse HEAD 2>/dev/null || true)" > "$LOKI_QUICK_DIR/quick-receipt.txt" 2>/dev/null || rm -f "$LOKI_QUICK_DIR/quick-receipt.txt"
 }
 
 create_session_pr() {
@@ -11360,8 +11313,9 @@ create_session_pr() {
         # Proven PR (Loop 6): print the Evidence Receipt block AFTER the push/PR
         # advice so a user opening a manual PR can paste it into the body. This is
         # the print-PR-body fallback. Default-on; LOKI_PROVEN_PR=0 -> not invoked
-        # (advisory output byte-identical to before). Callers pass an empty
-        # expected_head_sha; the anti-stale guarantee is the run_id pointer (R-DET-1).
+        # (advisory output byte-identical to before). The final proof now precedes this
+        # call, so its head is the branch head; expected_head_sha stays empty and the
+        # anti-stale guarantee is the run_id pointer (R-DET-1).
         if [ "${LOKI_PROVEN_PR:-1}" != "0" ] && declare -f render_evidence_receipt_md >/dev/null 2>&1; then
             local _pr_proof=""
             _pr_proof="$(_loki_proof_json_for_pr 2>/dev/null || true)"
@@ -29416,8 +29370,9 @@ except Exception:
         build_completion_summary "$_completion_outcome" || true
     fi
 
-    # Final proof AFTER HANDOFF.md and commit_session_changes (A-134), so Head and
-    # diff sha256 describe the tree the runner returns; every receipt print follows.
+    # Final source-tree binding, AFTER HANDOFF.md and commit_session_changes (A-134),
+    # so Head and diff sha256 describe the tree the runner returns. Every receipt
+    # print follows; create_session_pr never changes HEAD or the tree.
     if [ "${LOKI_PROOF:-1}" != "0" ]; then
         generate_proof_of_run "$result" || true
     fi
