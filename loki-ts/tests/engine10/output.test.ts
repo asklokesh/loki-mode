@@ -12,6 +12,7 @@ import {
   formatTokens,
   EXIT,
   outcomeOf,
+  reasonOf,
 } from "../../src/engine10/output.ts";
 
 describe("formatClock", () => {
@@ -260,5 +261,30 @@ describe("outcomeOf and the exit ladder (A-110)", () => {
     const base = { pr: null, verdict: "PARTIAL", notProven: [], flaky: [], cost: { usd: 1, provider: "claude", tokens: 1 }, wallS: 1, stages: [] } as never;
     expect(formatSummary({ ...(base as object), outcome: "FAILED" } as never)).toContain("Outcome:    FAILED\n");
     expect(formatSummary(base)).toContain("Outcome:    PARTIAL\n");
+  });
+});
+
+describe("reasonOf (A-130 round 4)", () => {
+  const ev = (type: string, stage: string | null, data: Record<string, unknown> = {}) => ({ v: 1, seq: 0, ts: "t", run: "r", type, stage, data }) as never;
+  const vfy = (checks: unknown[]) => ev("stage.completed", "verify", { checks });
+  test("success has no reason", () => expect(reasonOf([], false, null, "VERIFIED")).toBeUndefined());
+  test("tamper wins over everything", () => expect(reasonOf([ev("stage.failed", "verify", { reason: "x" })], true, "stalled", "FAILED")).toBe("event log modified outside the engine"));
+  test("fatal stops are named", () => {
+    expect(reasonOf([ev("stage.failed", "implement", { reason: "exit 1 (general error)" })], false, "fatal:quota_exhausted", "FAILED")).toBe("provider credit exhausted");
+    expect(reasonOf([], false, "fatal:auth", "FAILED")).toBe("provider authentication failed");
+  });
+  test("BLOCKED prints the conflict, not the empty diff", () => {
+    const e = [ev("stage.completed", "implement", { spec_conflict_reason: "spec says A and B" }), ev("stage.failed", "verify", { reason: "empty diff without an already_done marker" })];
+    expect(reasonOf(e, false, null, "BLOCKED")).toBe("spec conflict: spec says A and B");
+  });
+  test("stalled", () => expect(reasonOf([vfy([{ name: "t", result: "fail" }])], false, "stalled", "STALLED")).toBe("stalled: same failure 3 times"));
+  test("a red suite names the failing check and first_error", () => expect(reasonOf([vfy([{ name: "bun:calc.test.ts", result: "fail", first_error: "expected 6 got 5" }])], false, null, "FAILED")).toBe("bun:calc.test.ts failed: expected 6 got 5"));
+  test("first stage.failed reason", () => expect(reasonOf([ev("stage.failed", "verify", { reason: "empty diff" })], false, null, "FAILED")).toBe("empty diff"));
+  test("cap hit before any stage", () => expect(reasonOf([ev("cap.hit", null)], false, null, "BUDGET_STOP")).toBe("cost/time cap reached"));
+  test("no tests to run", () => expect(reasonOf([vfy([])], false, null, "FAILED")).toBe("no tests to run"));
+  test("control characters are stripped and the length capped", () => {
+    const r = reasonOf([ev("stage.failed", "verify", { reason: `a\x1b[31m\nb${"x".repeat(300)}` })], false, null, "FAILED")!;
+    expect(r).not.toMatch(/[\x00-\x1f\x7f]/);
+    expect(r.length).toBe(200);
   });
 });
