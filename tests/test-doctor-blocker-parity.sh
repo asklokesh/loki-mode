@@ -171,5 +171,49 @@ for route in bash bun; do
     fi
 done
 
+
+#------------------------------------------------------------------------------
+# A-123: one Ready line; only the selected provider blocks. Throwaway HOME under
+# a loki-run temp dir; the real ~/.loki is never touched (doctor never creates a
+# key, asserted below).
+#------------------------------------------------------------------------------
+A123_T="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.XXXXXXXX")"
+A123_H="$A123_T/home"
+mkdir -p "$A123_H/.claude/skills/loki-mode" "$A123_H/.cline/skills" "$A123_T/with-claude" "$A123_T/no-claude"
+printf '# SKILL\n' > "$A123_H/.claude/skills/loki-mode/SKILL.md"
+ln -s "$A123_T/gone" "$A123_H/.cline/skills/loki-mode"
+for _b in with-claude/claude no-claude/codex; do
+    printf '#!/bin/sh\nexit 0\n' > "$A123_T/$_b"; chmod +x "$A123_T/$_b"
+done
+# $1 route (bash|bun), $2 stub dir, $3 provider, $4 out file; prints the exit code.
+a123_run() {
+    local route="$1" stub="$2" prov="$3" out="$4" rc=0
+    if [ "$route" = bash ]; then
+        env HOME="$A123_H" PATH="$stub:/opt/homebrew/bin:/usr/bin:/bin" LOKI_LEGACY_BASH=1 \
+            ANTHROPIC_API_KEY=doctor-fixture-not-a-key LOKI_PROVIDER="$prov" LOKI_NO_BROWSER=1 \
+            bash "$REPO_ROOT/autonomy/loki" doctor >"$out" 2>/dev/null || rc=$?
+    else
+        env HOME="$A123_H" PATH="$stub:$(dirname "$(command -v bun)"):/opt/homebrew/bin:/usr/bin:/bin" \
+            ANTHROPIC_API_KEY=doctor-fixture-not-a-key LOKI_PROVIDER="$prov" LOKI_NO_BROWSER=1 \
+            bun "$REPO_ROOT/loki-ts/src/cli.ts" doctor >"$out" 2>/dev/null || rc=$?
+    fi
+    echo "$rc"
+}
+
+if command -v bun >/dev/null 2>&1; then
+    for scen in "with-claude claude" "no-claude claude" "no-claude codex"; do
+        set -- $scen
+        rc_a="$(a123_run bash "$A123_T/$1" "$2" "$A123_T/pb.txt")"
+        rc_b="$(a123_run bun "$A123_T/$1" "$2" "$A123_T/pt.txt")"
+        if [ "$rc_a" = "$rc_b" ] && [ "$(tail -1 "$A123_T/pb.txt")" = "$(tail -1 "$A123_T/pt.txt")" ] && [ -n "$(tail -1 "$A123_T/pb.txt")" ]; then
+            ok "A-123 parity ($1 $2): same exit code and identical last line"
+        else
+            bad "A-123 parity ($1 $2): bash rc=$rc_a '$(tail -1 "$A123_T/pb.txt")' vs bun rc=$rc_b '$(tail -1 "$A123_T/pt.txt")'"
+        fi
+    done
+fi
+
+rm -rf "$A123_T"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
