@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.9 (2026-09-30)
+
+v10 implement and fix briefs now name the files and impacted tests that matter instead of a raw list of repository paths, verify reports a system ruff lint separately from the system test interpreter, and the medium eval tier grows by three tasks.
+
+### Changed
+- v10 implement and fix briefs carry up to 20 relevant files (the plan's files, else a keyword selection over the cached repository map, else the first 20 mapped files) plus up to 10 impacted tests, each with one exact command on the project interpreter, instead of the first 200 repository paths. Plan paths that are absolute or climb out of the repository are dropped, and test paths with shell metacharacters are single-quoted (S41-10).
+- Verify: a passing lint on the system ruff now adds its own not-proven line ("lint ran on the system ruff") instead of reusing the system-interpreter test line, and tool lookup uses the live PATH that the spawned check also receives (E-115).
+
+### Internal
+- Structural checks scan committed changes against the merge base (not only the working tree), warn when no base ref resolves, catch added lines that start with a plus sign, print SKIP when typecheck cannot run, and exempt byte-exact vendored bytes in eval refdiffs and loki-ts/dist from the emoji and dash scan (E-142, E-146).
+- test-v10-ops sweeps a snapshot of the board instead of a hardcoded home path, so a concurrent board edit cannot fail it, and it is now registered in the runner (E-142, E-144).
+- Eval: the medium tier adds pub-faker-2206, pub-packaging-1162 and pub-markdown-1390; each was checked by an independent reviewer who tried to pass the hidden tests with a one-file fix. A one-file route that works only by patching or injecting another module at import time is treated as contrived. Mining notes for the screened and dropped candidates are in eval/loki10/tasks/CANDIDATES.md (S41-20b, S41-20g, S41-20h, S41-20i).
+
 ## v10.5.8 (2026-09-30)
 
 Releases now come only from trains that pass structural checks in the fast tier, a release can publish after a dispatched security audit fix, test cleanup can no longer delete another run's temporary directory, and the medium eval tier grows by three tasks.
