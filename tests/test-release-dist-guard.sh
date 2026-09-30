@@ -50,7 +50,7 @@ guard_rc "$D"; [ $? -eq 1 ] && ok "source climbing above the repo refused" || ba
 D=$(mkfix inside '["../src/a.ts","../node_modules/pkg/index.js"]' '["",""]')
 guard_rc "$D" && ok "relative in-repo sources accepted" || bad "in-repo sources refused"
 
-D=$(mkfix comment '["../src/a.ts"]' '["// see /Users/lokesh/.claude/plans/x.md and ../../../../etc"]')
+D=$(mkfix comment '["../src/a.ts"]' '["// see ~/.claude/plans/x.md and ../../../../etc"]')
 guard_rc "$D" && ok "path text inside sourcesContent ignored" || bad "sourcesContent comment tripped the guard"
 
 if guard_rc "$REPO_ROOT"; then ok "committed maps in the working tree pass"; else bad "committed maps refused"; cat "$RUN_TMP/err"; fi
