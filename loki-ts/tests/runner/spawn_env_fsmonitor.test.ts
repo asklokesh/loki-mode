@@ -14,7 +14,11 @@
 //    env values on any Bun, so the product assertions can fail.
 //  - bare control: no `env`; only DETECTS the inheritance mode. Bun 1.3.x
 //    leaks the start env (the bug class exists, product assertions are the
-//    guard); Bun >= 1.4 inherits the current, scrubbed env (bug class absent).
+//    guard); Bun >= 1.4 fixes this only for node:child_process. Bun.spawn and
+//    Bun.spawnSync with no env STILL inherit the START env on 1.4.2, so the
+//    bug class remains. tests/runner/spawn_env_guard.test.ts is the guard that
+//    requires an explicit env on every Bun.spawn, Bun.spawnSync and
+//    child_process call under src; do not remove it.
 
 import { afterEach, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -91,7 +95,7 @@ try { execFileSync("git", ["-c", "core.fsmonitor=" + ${JSON.stringify(controlHoo
   env["TARGET_DIR"] = repo;
   env["LOKI_DIR"] = resolve(repo, ".loki");
   delete env["LOKI_ALLOW_AGENT_GITHUB_TOKEN"];
-  const r = spawnSync("bun", [driver], { cwd: repo, env, encoding: "utf8" });
+  const r = spawnSync(process.execPath, [driver], { cwd: repo, env, encoding: "utf8" });
   expect(r.status).toBe(0);
 
   const lines = readFileSync(rec, "utf8").trim().split("\n").filter(Boolean);
@@ -106,11 +110,13 @@ try { execFileSync("git", ["-c", "core.fsmonitor=" + ${JSON.stringify(controlHoo
   // above can fail on any Bun.
   expect(readFileSync(explicit, "utf8")).toContain(`${CANARY_TOKEN}|${CANARY_SOCK}`);
   // Inheritance-mode detector (not an assertion): a bare call leaking the
-  // start env means the BACKLOG 149 bug class exists on this Bun.
+  // start env means the BACKLOG 149 bug class exists on this Bun. This probes
+  // Bun.spawn/spawnSync only (node:child_process is fixed on Bun >= 1.4); the
+  // guard in spawn_env_guard.test.ts must stay, since 1.4.2 still leaks.
   const ctl = readFileSync(control, "utf8");
   console.log(
     ctl.includes(CANARY_TOKEN)
       ? `bun ${Bun.version}: bare spawn inherits START env (bug class present; product assertions are the guard)`
-      : `bun ${Bun.version}: bare spawn inherits CURRENT env (start-env bug class absent on this Bun)`,
+      : `bun ${Bun.version}: bare spawn inherits CURRENT env (start-env bug class not observed on this Bun)`,
   );
 });
