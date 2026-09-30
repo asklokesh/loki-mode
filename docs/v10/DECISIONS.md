@@ -351,3 +351,14 @@ Main went red four times on 2026-09-30 from structural checks CI caught after a 
 4. Staff 8 or more builders; clear waiting reviews with sonnet for LOW/MEDIUM; opus stays under 30 percent.
 5. Pulse gains RELEASE_CADENCE (a green unreleased commit on main older than 20 minutes) and MAIN_RED_BY_MERGE (a push to main failing Tier B). Releases per hour are reported in METRICS.md hourly.
 Bootstrap: train/1 is verified through a pull request to main (pull_request already triggers Tier B) and carries the train/** push triggers so later trains verify on push.
+
+## D45 (founder, 2026-09-30, relayed by the autonomi-dev-dc steering session): the product runs against a delivery contract
+
+Loki's definition: "autonomous software factory that runs with the knowledge of what it's supposed to deliver". Binding for Tier 0 and loki-seal:
+- Every run starts from an explicit delivery contract: the acceptance criteria derived from the issue, spec or task (intake plus the Wall).
+- A run is judged only against that contract. Done means the contract's checks ran and passed.
+- The receipt states the contract, what was proven against it, and what was not.
+- If the contract cannot be derived, the run ends BLOCKED with one question; it never guesses and calls it done.
+- loki-seal follows the same rule: it reads what the user asked for (the task or issue) and refuses "done" until the checks tied to that request pass, not only "the suite is green".
+- Wording: README line 1 stays "Your agent says done. Loki proves it." (founder queue row 10, veto pending). Line 2 is the category line "An autonomous software factory that knows what it is supposed to deliver, and proves it did.", used verbatim in package.json description and SKILL.md. The GitHub About text stays in the founder queue.
+- Competitive intel: the steering session scans rivals twice daily (list at ~/git/autonomi-dev/research/2026-09-30-adoption/COMPETITOR-WATCHLIST.md) and proposes at most 3 backlog rows per scan, each naming the metric it moves. Until the first-run gate passes on a `next` version, only threats to the moat (for example a rival shipping portable verifiable receipts) jump the queue; everything else, including enterprise asks (SSO, audit, policy), queues behind Tier 0 and never carries certification claims.
