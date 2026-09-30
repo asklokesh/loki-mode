@@ -1,0 +1,3 @@
+Fixture 62: loki quick run, prompt PRD repointed (A-132b)
+- Invocation: build_prompt(0, "./.loki/generated-prd.md", 1) with PRD_PATH=./.loki/quick-prd-4242.md
+- Expected: no USAGE_DOC_REQUIRED instruction

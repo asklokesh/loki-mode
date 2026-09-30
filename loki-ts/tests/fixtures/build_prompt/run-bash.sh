@@ -116,6 +116,8 @@ FIXTURE_ABS="$(cd "$FIXTURE_DIR" && pwd)"
     {
         printf 'RETRY=%s\n' "${RETRY}"
         printf 'PRD=%s\n' "${PRD}"
+        # A-132: original user PRD path; only rendered when a fixture sets it.
+        if [ -n "${PRD_PATH:-}" ]; then printf 'PRD_PATH=%s\n' "${PRD_PATH}"; fi
         printf 'ITERATION=%s\n' "${ITERATION}"
         printf 'MAX_PARALLEL_AGENTS=%s\n' "${MAX_PARALLEL_AGENTS}"
         printf 'MAX_ITERATIONS=%s\n' "${MAX_ITERATIONS}"

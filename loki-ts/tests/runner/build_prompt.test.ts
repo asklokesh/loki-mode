@@ -179,3 +179,28 @@ describe("buildGateFailureContext -- invariant-findings injection (P1-4 parity)"
     expect(out).not.toContain("[LOW] inv20.ts:20 violation 20");
   });
 });
+
+// A-132b: the quick-PRD gate keys on the ORIGINAL path (bash PRD_PATH, TS
+// ctx.statePrdPath), not the repointed prompt path .loki/generated-prd.md.
+describe("quick-PRD USAGE_DOC gate via buildPromptForRunner", () => {
+  const run = async (statePrdPath: string): Promise<string> => {
+    const { buildPromptForRunner, _internals: bp } = await import(
+      "../../src/runner/build_prompt.ts"
+    );
+    const ctx = {
+      cwd: workDir,
+      retryCount: 0,
+      iterationCount: 1,
+      prdPath: ".loki/generated-prd.md",
+      statePrdPath,
+    } as unknown as Parameters<typeof buildPromptForRunner>[0];
+    const out = await buildPromptForRunner(ctx);
+    return out.includes(bp.USAGE_DOC_INSTRUCTION) ? "has-usage" : "no-usage";
+  };
+  it("blanks the instruction when statePrdPath is a quick-prd", async () => {
+    expect(await run(".loki/quick-prd-4242.md")).toBe("no-usage");
+  });
+  it("keeps the instruction for a normal PRD", async () => {
+    expect(await run("prd.md")).toBe("has-usage");
+  });
+});
