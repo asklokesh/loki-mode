@@ -238,6 +238,31 @@ fi
 SCRIPT_DIR="${LOKI_ORIGINAL_SCRIPT_DIR:-$SCRIPT_DIR}"
 PROJECT_DIR="${LOKI_ORIGINAL_PROJECT_DIR:-$PROJECT_DIR}"
 
+# A-134: `loki quick` is quiet unless LOKI_VERBOSE=1. The run re-executes itself with
+# stdout in .loki/quick-run.log; this shell prints the inner run's compact receipt and
+# a warning count. Errors go to stderr.
+if [ -z "${LOKI_QUICK_INNER:-}" ] && [ "${LOKI_VERBOSE:-0}" != "1" ] && [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    case "${1:-}" in */quick-prd-*.md | quick-prd-*.md)
+        _qd="$(cd "$(dirname "$1")" && pwd -P)"; rm -f "$_qd/quick-receipt.txt"
+        # Async with default INT/QUIT (a bare `&` child ignores them), signals forwarded.
+        ( trap - INT QUIT; LOKI_QUICK_DIR="$_qd" LOKI_QUICK_OUTER_PID=$$ LOKI_QUICK_INNER=1 exec "$BASH" "$0" "$@" >"$_qd/quick-run.log" ) &
+        _qpid=$!
+        trap 'kill -INT "$_qpid" 2>/dev/null' INT
+        trap 'kill -TERM "$_qpid" 2>/dev/null' TERM HUP
+        wait "$_qpid"; _qrc=$?
+        kill -0 "$_qpid" 2>/dev/null && { wait "$_qpid"; _qrc=$?; }
+        trap - INT TERM HUP
+        _qw=$(grep -cF '[WARN]' "$_qd/quick-run.log" 2>/dev/null); _qw="${_qw:-0}"
+        if [ "$_qrc" -ne 0 ] || [ ! -s "$_qd/quick-receipt.txt" ]; then
+            _qr=$(grep -E '\[(ERROR|WARN)\]|[Ss]topped|[Ff]ailed' "$_qd/quick-run.log" 2>/dev/null | tail -n 3)
+            echo "${_qr:-$(tail -n 3 "$_qd/quick-run.log" 2>/dev/null)}"
+        fi
+        [ "$_qw" -gt 0 ] && echo "Warnings: $_qw (see $_qd/quick-run.log)"
+        cat "$_qd/quick-receipt.txt" 2>/dev/null
+        exit "$_qrc" ;;
+    esac
+fi
+
 # Clean up ONLY the recorded temp copy, and ONLY if it is a real temp file.
 # Deleting BASH_SOURCE[0] here was the bug: an inherited LOKI_RUNNING_FROM_TEMP
 # made BASH_SOURCE[0] the canonical source, so run.sh deleted itself on spawned
@@ -1722,7 +1747,7 @@ if [ -f "$PROVIDERS_DIR/loader.sh" ]; then
         _detected="$(auto_detect_provider 2>/dev/null || true)"
         if [ -n "$_detected" ]; then
             LOKI_PROVIDER="$_detected"
-            echo "[loki] provider: $LOKI_PROVIDER (auto-detected)" >&2
+            [ -n "${LOKI_QUICK_INNER:-}" ] || echo "[loki] provider: $LOKI_PROVIDER (auto-detected)" >&2
         else
             # Nothing installed. Keep the historical default so the existing
             # "not installed" error path reports claude, which is the actionable
@@ -1833,7 +1858,7 @@ _loki_log_enabled() { [ "$1" -ge "$(_loki_log_threshold)" ]; }
 log_info() { _loki_log_enabled 1 && echo -e "${GREEN}[INFO]${NC} $*" || true; }
 log_warn() { _loki_log_enabled 2 && echo -e "${YELLOW}[WARN]${NC} $*" || true; }
 log_warning() { log_warn "$@"; }  # Alias for backwards compatibility
-log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
+log_error() { local _fd=1; [ -z "${LOKI_QUICK_INNER:-}" ] || _fd=2; echo -e "${RED}[ERROR]${NC} $*" >&"$_fd"; }
 log_step() { _loki_log_enabled 1 && echo -e "${CYAN}[STEP]${NC} $*" || true; }
 log_debug() { [[ "${LOKI_DEBUG:-}" == "true" ]] && echo -e "${CYAN}[DEBUG]${NC} $*" >&2 || true; }
 
@@ -7716,68 +7741,6 @@ EOF
 # Track last known phase to detect changes
 LAST_KNOWN_PHASE=""
 
-# Set the current phase and emit event if changed
-# v7.5.12: append a log entry to the iteration-N task in in-progress.json.
-# Args: iteration, phase, level, message. All silent on failure -- this
-# must NEVER kill the run.
-append_iteration_task_log() {
-    local iteration="${1:-0}"
-    local phase="${2:-}"
-    local level="${3:-info}"
-    local message="${4:-}"
-    local in_progress_file=".loki/queue/in-progress.json"
-
-    [ -z "$iteration" ] && return 0
-    [ "$iteration" = "0" ] && return 0
-    [ ! -f "$in_progress_file" ] && return 0
-
-    local timestamp
-    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-    ITER="$iteration" PHASE="$phase" LEVEL="$level" \
-    MESSAGE="$message" TIMESTAMP="$timestamp" \
-    python3 - "$in_progress_file" <<'PY' 2>/dev/null || true
-import json, os, sys, tempfile
-path = sys.argv[1]
-target_id = f"iteration-{os.environ['ITER']}"
-entry = {
-    "timestamp": os.environ["TIMESTAMP"],
-    "iteration": int(os.environ["ITER"]),
-    "level": os.environ.get("LEVEL", "info"),
-    "phase": os.environ.get("PHASE", ""),
-    "message": os.environ.get("MESSAGE", ""),
-}
-try:
-    with open(path) as f:
-        data = json.load(f)
-except Exception:
-    sys.exit(0)
-# Support both [...] and {tasks: [...]} shapes (matches load_queue_tasks).
-tasks = data["tasks"] if isinstance(data, dict) and isinstance(data.get("tasks"), list) else (data if isinstance(data, list) else None)
-if tasks is None:
-    sys.exit(0)
-mutated = False
-for t in tasks:
-    if not isinstance(t, dict):
-        continue
-    if t.get("id") == target_id:
-        logs = t.get("logs")
-        if not isinstance(logs, list):
-            logs = []
-        logs.append(entry)
-        t["logs"] = logs
-        mutated = True
-        break
-if not mutated:
-    sys.exit(0)
-out_dir = os.path.dirname(path) or "."
-fd, tmp = tempfile.mkstemp(dir=out_dir, suffix=".json")
-with os.fdopen(fd, "w") as f:
-    json.dump(data, f, indent=2)
-os.replace(tmp, path)
-PY
-}
-
 #===============================================================================
 # Dashboard State Writer (Real-time sync with web dashboard)
 #===============================================================================
@@ -11262,6 +11225,29 @@ _loki_proof_json_for_pr() {
     return 0
 }
 
+# A-134: compact quiet-mode receipt for the outer shell (see top of file) to print.
+_loki_quick_receipt_write() {
+    local ld="${TARGET_DIR:-.}/.loki" rid pj
+    rid="$(cat "$ld/state/last-proof-id.txt" 2>/dev/null || true)"
+    case "$rid" in '' | *[!A-Za-z0-9._-]*) return 0 ;; esac
+    pj="$ld/proofs/$rid/proof.json"
+    [ -f "$pj" ] || return 0
+    python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
+import json
+d = json.load(open(sys.argv[1]))
+g = (d.get('facts') or {}).get('git') or {}
+v = d.get('verification') or {}
+if sys.argv[3] and g.get('head_sha') != sys.argv[3]:
+    print('Evidence Receipt: unavailable (final proof generation failed; newest proof predates the session commit)')
+    sys.exit(0)
+deg = [str(x.get('item') or '').split(':')[-1] for x in ((d.get('honesty') or {}).get('degraded') or []) if isinstance(x, dict)]
+notes = ([] if (v.get('gpg_signature') or v.get('attestation')) else ['unsigned']) + (['%d not proven: %s' % (len(deg), ', '.join(deg))] if deg else [])
+print('Evidence Receipt: ' + str((d.get('honesty') or {}).get('headline') or 'unavailable') + (' (' + '; '.join(notes) + ')' if notes else ''))
+print('receipt_sha256: ' + str(v.get('hash') or ''))
+print('Head sha: ' + str(g.get('head_sha') or '') + '  Diff sha256: ' + str(g.get('diff_sha256') or ''))
+print('Check it: loki verify  (or loki proof verify ' + sys.argv[2] + ')')" "$pj" "$rid" "$(git -C "${TARGET_DIR:-.}" rev-parse HEAD 2>/dev/null || true)" > "$LOKI_QUICK_DIR/quick-receipt.txt" 2>/dev/null || rm -f "$LOKI_QUICK_DIR/quick-receipt.txt"
+}
+
 create_session_pr() {
     # Advise the user how to open a PR for the agent branch. PRINT-ONLY by
     # default (no push, no PR). LOKI_AUTO_PR=1 restores the legacy auto behavior.
@@ -11327,11 +11313,9 @@ create_session_pr() {
         # Proven PR (Loop 6): print the Evidence Receipt block AFTER the push/PR
         # advice so a user opening a manual PR can paste it into the body. This is
         # the print-PR-body fallback. Default-on; LOKI_PROVEN_PR=0 -> not invoked
-        # (advisory output byte-identical to before). Production callers pass an
-        # empty expected_head_sha: the session commit lands between proof-gen and
-        # this point, so the branch head is structurally offset from the proof's
-        # head and feeding it would false-degrade every legitimate receipt; the
-        # anti-stale guarantee is the run_id pointer (R-DET-1), not a head match.
+        # (advisory output byte-identical to before). The final proof now precedes this
+        # call, so its head is the branch head; expected_head_sha stays empty and the
+        # anti-stale guarantee is the run_id pointer (R-DET-1).
         if [ "${LOKI_PROVEN_PR:-1}" != "0" ] && declare -f render_evidence_receipt_md >/dev/null 2>&1; then
             local _pr_proof=""
             _pr_proof="$(_loki_proof_json_for_pr 2>/dev/null || true)"
@@ -24009,7 +23993,8 @@ else:
 with open(pending_path, "w") as f:
     json.dump(output, f, indent=2)
 
-print(f"Extracted {added} tasks from PRD ({len(features)} features found)", file=sys.stderr)
+if not os.environ.get("LOKI_QUICK_INNER"):
+    print(f"Extracted {added} tasks from PRD ({len(features)} features found)", file=sys.stderr)
 PRD_PARSE_EOF
 
     if [[ $? -ne 0 ]]; then
@@ -27763,7 +27748,7 @@ reap_own_process_group() {
     # Collect protected pids (dashboard, app-runner, registered children) so the
     # reap never takes down the shared dashboard if it happens to share our
     # group. Mirrors the `loki stop` / dashboard reaper protection set.
-    local _protected=" $$ "
+    local _protected=" $$ ${LOKI_QUICK_OUTER_PID:-} "  # A-134: the quiet-mode outer shell shares our group
     local _pf _p
     if [ -d "$loki_dir/pids" ]; then
         for _pf in "$loki_dir/pids"/*.json; do
@@ -29210,27 +29195,13 @@ main() {
         # learnings writers, proof generation, metrics aggregation -- runs here
         # and was never timed. Opened immediately so nothing below is missed.
         _teardown_t0=$(date +%s 2>/dev/null)
-        # PRE-EDIT SNAPSHOT: freeze the agent's raw diff HERE, the first
-        # instruction after the loop returns, because everything below this line
-        # can change the tree -- commit_session_changes commits the work (after
-        # which `git diff HEAD` is empty), and HANDOFF.md/learnings writers touch
-        # files before that. The snapshot is write-once, so capturing it late
-        # would permanently record someone else's edits as the agent's. Runs in
-        # the FOREGROUND on purpose: the entire value of this position is that
-        # the capture COMPLETES before any mutation, and backgrounding it would
-        # reintroduce exactly the race the placement exists to remove (the
-        # module bounds each git call at 60s, so the cost is bounded).
+        # PRE-EDIT SNAPSHOT: freeze the agent's raw diff HERE, the first instruction
+        # after the loop: commit, HANDOFF and learnings writers below all change the
+        # tree, and the snapshot is write-once. Foreground on purpose (each git call
+        # is bounded at 60s) so the capture completes before any mutation.
         capture_preedit_snapshot || true
-        # ZOMBIE-RECEIPT GUARD: proof generation + the COMPLETED marker live in the
-        # teardown far below. If the process is killed (Docker restart, OOM, worker
-        # reap) between here and there, a genuinely finished build (real code, exit
-        # 0) leaves NO proof.json and STATUS stuck "BUILDING" -- the build "worked"
-        # but produced no Evidence Receipt (observed on run-20260716194328). Emit
-        # the proof HERE too, right after the loop returns, so the receipt survives
-        # a late teardown death. Idempotent + fire-and-forget: the teardown's own
-        # generate_proof_of_run re-runs harmlessly (same run_id -> same proof dir),
-        # and LOKI_PROOF=0 still opts out. This closes the "nothing gets verified"
-        # gap at its highest-value point without touching run_autonomous itself.
+        # ZOMBIE-RECEIPT GUARD: emit the proof here too, so a teardown killed below
+        # (Docker restart, OOM) still leaves a receipt. Idempotent; LOKI_PROOF=0 opts out.
         if [ "${LOKI_PROOF:-1}" != "0" ] && type generate_proof_of_run &>/dev/null; then
             generate_proof_of_run "$result" || true
         fi
@@ -29382,13 +29353,6 @@ main() {
     # then advise the user how to open a PR. Both are no-ops when no agent branch
     # was set up (LOKI_BRANCH_PROTECTION=false) or nothing changed.
     commit_session_changes
-    # Trusted post-session step. NOT wrapped in _loki_with_github_tokens as a
-    # whole (round 5): that ran every git call inside it (rev-list, merge-base,
-    # push) with the real credentials AND the agent's repo config loaded. Its
-    # push (_loki_trusted_push) and gh calls (gh wrapper) each re-grant the
-    # credentials themselves, outside the agent's repo.
-    create_session_pr
-    audit_agent_action "session_stop" "Session ended" "result=$result,iterations=$ITERATION_COUNT"
 
     # The first terminal summary is written before session changes are committed.
     # Refresh its durable files against the final HEAD without notifying twice.
@@ -29406,35 +29370,23 @@ except Exception:
         build_completion_summary "$_completion_outcome" || true
     fi
 
-    # Final source-tree binding for server-owned terminal state. HANDOFF.md and
-    # commit_session_changes can change the worktree after the earlier receipt.
-    # Regenerate idempotently only after those writers finish, before cleanup,
-    # so proof.tree_sha256 describes the exact tree the runner returns.
+    # Final source-tree binding, AFTER HANDOFF.md and commit_session_changes (A-134),
+    # so Head and diff sha256 describe the tree the runner returns. Every receipt
+    # print follows; create_session_pr never changes HEAD or the tree.
     if [ "${LOKI_PROOF:-1}" != "0" ]; then
         generate_proof_of_run "$result" || true
     fi
+    [ -z "${LOKI_QUICK_INNER:-}" ] || _loki_quick_receipt_write
+    # Trusted post-session step. NOT wrapped in _loki_with_github_tokens as a
+    # whole (round 5): its push (_loki_trusted_push) and gh calls each re-grant
+    # the credentials themselves, outside the agent's repo.
+    create_session_pr
+    audit_agent_action "session_stop" "Session ended" "result=$result,iterations=$ITERATION_COUNT"
 
-    # Evidence Receipt (#209): tell the user, on screen, that a checkable
-    # receipt exists and how to re-check it.
-    #
-    # POSITION IS LOAD-BEARING. This sits immediately after the FINAL
-    # generate_proof_of_run, which is the only point where the receipt for THIS
-    # run is guaranteed written and .loki/state/last-proof-id.txt is guaranteed
-    # to point at it. Every earlier surface is either too early (the completion
-    # card renders from inside run_autonomous, long before any proof exists) or
-    # unreachable to a foreground user (COMPLETION.txt self-heals here, but only
-    # a --bg launch is ever told to read it). Before #211 the pointer was never
-    # cleared at run start, so announcing from an earlier site printed the
-    # PREVIOUS run's receipt and verdict on a second run in the same directory.
-    # Run init now clears it (search "Same reasoning for the proof pointer"), so
-    # a stale pointer no longer survives into a new run; the position still
-    # matters because an earlier site is simply too early for THIS run's proof.
-    #
-    # TTY-gated the same way print_ttfv_next_steps is above: machine output and
-    # --bg stay byte-identical, and those readers already get the same facts
-    # from COMPLETION.txt. Fail-silent and best-effort: prints nothing at all
-    # when no receipt was written (LOKI_PROOF=0, or generation failed), and
-    # never fails the run.
+    # Evidence Receipt (#209): tell the user a checkable receipt exists. POSITION IS
+    # LOAD-BEARING: only after the final proof above does last-proof-id.txt point at
+    # THIS run's receipt (earlier sites print the previous run's). TTY-only and
+    # fail-silent; --bg and machine output read the same facts from COMPLETION.txt.
     if [ -t 1 ] && [ "${BACKGROUND_MODE:-false}" != "true" ]; then
         _rcpt="$(_loki_receipt_facts "${TARGET_DIR:-.}/.loki" 2>/dev/null || true)"
         if [ -n "${_rcpt:-}" ]; then

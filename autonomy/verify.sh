@@ -3048,6 +3048,36 @@ PYEOF
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+# A-134: when this tree holds a legacy Evidence Receipt, report its integrity digest
+# (proof-verify.py's own canonical re-hash, no second canonicalizer). Silent otherwise.
+_verify_receipt_digest() {
+    local rid pj lib rc=0
+    rid="$(cat .loki/state/last-proof-id.txt 2>/dev/null || true)"
+    case "$rid" in '' | *[!A-Za-z0-9._-]*) return 0 ;; esac
+    pj=".loki/proofs/$rid/proof.json"
+    [ -f "$pj" ] || return 0
+    lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+    python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
+import importlib.util, json
+sys.path.insert(0, sys.argv[1])
+sp = importlib.util.spec_from_file_location('pv', sys.argv[1] + '/proof-verify.py')
+m = importlib.util.module_from_spec(sp); sp.loader.exec_module(m)
+p = json.load(open(sys.argv[2]))
+ok = m.verify_integrity(p)['hash_ok']
+h = (p.get('verification') or {}).get('hash') or ''
+print('receipt_sha256: ' + h if ok else 'receipt: TAMPERED (integrity hash does not match proof.json)' if h else 'receipt: NOT CHECKABLE (no hash recorded)')
+sys.exit(0 if ok else 3)" "$lib" "$pj" 2>/dev/null || rc=$?
+    [ "$rc" -ne 3 ] || return 1
+    # Provenance: the deploy gate's own verdict (Ed25519 attestation against the local
+    # key plus LOKI_RECEIPT_RETIRED_PUBKEYS; unknown kid or no key is UNCHECKED).
+    # Defined in autonomy/loki, so it is absent when verify.sh runs standalone.
+    declare -f _deploy_receipt_verdict >/dev/null 2>&1 || return 0
+    local att
+    att="$(_deploy_receipt_verdict "$pj")"
+    printf 'attestation: %s\n' "$att"
+    [ "$att" != "TAMPERED" ]
+}
+
 verify_main() {
     local base_ref=""
     local out_dir=".loki/verify"
@@ -3247,6 +3277,13 @@ verify_main() {
 
     verify_compute_verdict "$block_on"
 
+    # A-134: a tampered receipt turns the verdict BLOCKED BEFORE evidence.json is
+    # written, so no artifact ever records VERIFIED for it. Under --json the human
+    # lines go to stderr.
+    _v_banner_fd=1
+    [ "${VERIFY_JSON:-0}" = "1" ] && _v_banner_fd=2
+    _verify_receipt_digest >&$_v_banner_fd || { VERIFY_VERDICT=BLOCKED; VERIFY_EXIT=$VERIFY_EXIT_BLOCKED; }
+
     completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
     # stdout is discarded (the emitter's own chatter is not wanted on the human
@@ -3284,8 +3321,6 @@ verify_main() {
     # Under --json stdout carries the evidence document alone, so the human
     # banner is redirected to stderr rather than dropped: an operator watching a
     # terminal still sees the verdict, and `| jq` still parses.
-    _v_banner_fd=1
-    [ "${VERIFY_JSON:-0}" = "1" ] && _v_banner_fd=2
     printf 'VERDICT: %s\n' "$VERIFY_VERDICT" >&$_v_banner_fd
     printf 'Evidence: %s/evidence.json\n' "$out_dir" >&$_v_banner_fd
     printf 'Report:   %s/report.md\n' "$out_dir" >&$_v_banner_fd
