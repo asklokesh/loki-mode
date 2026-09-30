@@ -1015,7 +1015,8 @@ _install_node_deps() {
     local dir="$1"
     if [ -f "$dir/package.json" ] && [ ! -d "$dir/node_modules" ]; then
         log_step "App Runner: installing node dependencies..."
-        (cd "$dir" && npm install >> "$_APP_RUNNER_DIR/app.log" 2>&1) || \
+        # shellcheck disable=SC2046  # A-132: no lockfile the repo did not have
+        (cd "$dir" && npm install $([ -f "$dir/package-lock.json" ] || echo --no-package-lock) >> "$_APP_RUNNER_DIR/app.log" 2>&1) || \
             log_warn "App Runner: npm install failed, app may not start"
     fi
 }

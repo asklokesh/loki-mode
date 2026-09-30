@@ -60,6 +60,7 @@ const FULL_SUITE_CMD: Record<RunnerName, { cmd: string; args: string[] }> = {
   vitest: { cmd: "npx", args: ["vitest", "run"] },
   jest: { cmd: "npx", args: ["jest"] },
   bun: { cmd: "bun", args: ["test"] },
+  node: { cmd: "node", args: ["--test"] },
   npm: { cmd: "npm", args: ["test", "--silent"] },
   go: { cmd: "go", args: ["test", "./..."] },
   cargo: { cmd: "cargo", args: ["test"] },
