@@ -18,8 +18,11 @@
 # "|") instead of anchoring a fixed-width line end.
 #
 # Legs:
-#   1. tier small: every mark green (a small, low-n fixture -- exercised
-#      again, more pointedly, by leg (e) below)
+#   D43 item 2 floor: a tier under 20 tasks or 3 reps per task reads
+#   inconclusive on every mark (legs e-i); a red null-cost mark outranks
+#   inconclusive in the verdict (leg 2b). All fixtures run AT the floor
+#   (20 tasks x 3 reps) unless a leg is testing below it.
+#   1. tier small at the floor: clear gap, every mark green
 #   2. tier medium: every mark red, including a null-cost row on loki's side
 #      that must show n/a and red even though its non-null rows alone would
 #      average cheaper than raw (null-anywhere kills the average, not just
@@ -30,12 +33,14 @@
 #   6. --append writes the tables to the given path; the real docs/v10/METRICS.md
 #      is untouched by this whole test
 #   7-9. D41 headline pair (loki-sonnet vs raw-opus): ratio CI vs 0.5x
-#   a. two arms with the same expected rate but a complementary per-task
-#      split (noise only) give an inconclusive completion mark and verdict
+#   a. 20 tasks x 3 reps, arms share true rates but independent draws:
+#      every mark and the verdict read inconclusive
 #   b. a clear gap (loki 20/20, raw 8/20, 3 reps) gives green completion
 #   c. determinism: identical input gives byte-identical output across runs
 #   d. a null cost row still gives red under the new CI columns
-#   e. a single rep (n=1 per task, 2 tasks) still works and shows a wide CI
+#   e. a single rep (n=1 per task, 2 tasks) works, shows a wide CI, and is
+#      inconclusive with the floor reason
+#   f-i. 1 task x 3 reps (the audit repro), 19 tasks, 2 reps, overrides
 #===============================================================================
 set -u
 
@@ -82,27 +87,26 @@ def row(task, arm, harness_sha, completed, t2pr, cost, rep=1, cost_source="provi
             "completed": completed, "time_to_pr_s": t2pr, "cost_usd": cost,
             "cost_source": cost_source, "pr_opened": True, "hidden_pass": completed, "capped": False}
 
-# ---- tier small: qs-dashboard, qs-blog-platform, 3 reps each (one file per
-# rep, per section 2's "one row per (arm label, rep file, task)"). Clustering
-# is by task, so a wider CI needs a real per-task signal, not just more rep
-# files: on EVERY task, raw completes exactly 1 of its 3 reps and loki
-# completes all 3. Because every task contributes the same 1-of-3 vs 3-of-3
-# ratio, the bootstrap's resampled completion rate is exactly 1/3 (raw) vs
-# 1 (loki) for ANY resample -- a tight, strictly-green CI (D43: excludes 0
-# on the good side), not a boundary tie. Cost and p50 favor loki on every
-# row, so all three marks land strictly green.
-#
+TASKS = [
+    "aiq-52-searchbar", "pub-click-2877", "pub-click-3059", "pub-click-3487", "pub-click-3572",
+    "pub-humanize-152", "pub-humanize-174", "pub-humanize-333", "pub-jsonschema-1389", "pub-markupsafe-417",
+    "pub-more-itertools-1192", "pub-more-itertools-1250", "pub-more-itertools-1252", "pub-more-itertools-1277",
+    "pub-packaging-1315", "qs-api-only", "qs-blog-platform", "qs-cli-tool", "qs-dashboard",
+    "qs-data-pipeline", "qs-e-commerce", "qs-game", "qs-microservice", "qs-npm-library", "qs-rest-api",
+    "qs-rest-api-auth", "qs-simple-todo-app", "qs-static-landing-page", "qs-web-scraper",
+]
+FLOOR_TASKS = TASKS[:20]   # exactly the D43 floor: 20 tasks
+TASKS = FLOOR_TASKS
+
 # ---- tier medium: pub-werkzeug-3105, pub-attrs-1313, pub-faker-1817, 3
-# reps each, mirroring tier small in the other direction: raw completes
-# every rep, loki completes exactly 1 of 3 (same reasoning -> a tight,
-# strictly-red completion and p50 CI). loki's cost_usd is null on exactly
-# one row (pub-faker-1817's one completed rep), so cost must read n/a/red
-# regardless of what its other priced rows would average to.
+# reps each (one file per rep, per section 2): raw completes every rep, loki
+# completes exactly 1 of 3 (a tight, strictly-red completion and p50 CI).
+# loki's cost_usd is null on exactly one row (pub-faker-1817's one completed
+# rep), so cost must read n/a/red regardless of what its other priced rows
+# would average to. Only 3 medium tasks exist, so this fixture is run with
+# --min-tasks 3 (the test-only override) and again without it.
 for rep in (1, 2, 3):
     raw_rows, loki_rows = [], []
-    for task in ("qs-dashboard", "qs-blog-platform"):
-        raw_rows.append(row(task, "raw-claude", "sha-small", rep == 1, 100, 0.20, rep=rep))
-        loki_rows.append(row(task, "v10", "sha-small", True, 50, 0.10, rep=rep))
     for task in ("pub-werkzeug-3105", "pub-attrs-1313", "pub-faker-1817"):
         raw_rows.append(row(task, "raw-claude", "sha-medium", True, 50, 0.20, rep=rep))
         completed = rep == 1
@@ -112,6 +116,13 @@ for rep in (1, 2, 3):
         f.write("\n".join(json.dumps(r) for r in raw_rows) + "\n")
     with open(T + "/loki-r%d.jsonl" % rep, "w") as f:
         f.write("\n".join(json.dumps(r) for r in loki_rows) + "\n")
+
+def write_reps(prefix, reps, mk_raw, mk_loki):
+    """One rep file per rep per arm: prefix-raw-rN.jsonl / prefix-loki-rN.jsonl."""
+    for rep in range(1, reps + 1):
+        for arm, mk in (("raw", mk_raw), ("loki", mk_loki)):
+            with open(T + "/%s-%s-r%d.jsonl" % (prefix, arm, rep), "w") as f:
+                f.write("\n".join(json.dumps(mk(i, t, rep)) for i, t in enumerate(TASKS)) + "\n")
 
 # ---- (e): the ORIGINAL 2-task/1-rep tier-small fixture -- single rep,
 # wide CI that straddles 0 (not enough evidence to call it), so it must
@@ -143,104 +154,83 @@ with open(T + "/loki-sha-b.jsonl", "w") as f:
 open(T + "/empty.jsonl", "w").close()
 
 # ---- D41 headline pair: loki-sonnet vs raw-opus, matched by arm+model
-# (section 3). Cost mark now comes from the ratio CI against 0.5 (E-122).
-# A single-task fixture makes the bootstrap degenerate (every resample
-# draws the same one task), so the ratio CI collapses to a point at the
-# true ratio -- an exact boundary test.
-headline_raw = [row("qs-dashboard", "raw-claude", "sha-headline", True, 100, 1.00, model="claude-opus-5-5")]
-with open(T + "/headline-raw.jsonl", "w") as f:
-    f.write("\n".join(json.dumps(r) for r in headline_raw) + "\n")
-with open(T + "/headline-loki-0.6x.jsonl", "w") as f:
-    f.write(json.dumps(row("qs-dashboard", "v10", "sha-headline", True, 100, 0.60,
-                            model="claude-sonnet-5")) + "\n")
-with open(T + "/headline-loki-0.5x.jsonl", "w") as f:
-    f.write(json.dumps(row("qs-dashboard", "v10", "sha-headline", True, 100, 0.50,
-                            model="claude-sonnet-5")) + "\n")
+# (section 3), at the D43 floor (20 tasks x 3 reps). Every task has the same
+# cost ratio, so the ratio CI collapses to a point at the true ratio: an
+# exact boundary test (0.6 is red, 0.5 is green).
+OPUS, SONNET = "claude-opus-5-5", "claude-sonnet-5"
+write_reps("h6", 3, lambda i, t, r: row(t, "raw-claude", "sha-h", True, 100, 1.00, rep=r, model=OPUS),
+           lambda i, t, r: row(t, "v10", "sha-h", True, 100, 0.60, rep=r, model=SONNET))
+write_reps("h5", 3, lambda i, t, r: row(t, "raw-claude", "sha-h", True, 100, 1.00, rep=r, model=OPUS),
+           lambda i, t, r: row(t, "v10", "sha-h", True, 100, 0.50, rep=r, model=SONNET))
+write_reps("nh", 3, lambda i, t, r: row(t, "raw-claude", "sha-nh", True, 100, 1.00, rep=r, model=OPUS),
+           lambda i, t, r: row(t, "v10", "sha-nh", True, 100, 0.60, rep=r, model=OPUS))
 
-with open(T + "/nonheadline-raw.jsonl", "w") as f:
-    f.write(json.dumps(row("qs-blog-platform", "raw-claude", "sha-nonheadline", True, 100, 1.00,
-                            model="claude-opus-5-5")) + "\n")
-with open(T + "/nonheadline-loki-0.6x.jsonl", "w") as f:
-    f.write(json.dumps(row("qs-blog-platform", "v10", "sha-nonheadline", True, 100, 0.60,
-                            model="claude-opus-5-5")) + "\n")
+# ---- (a) noise at the floor: 20 tasks x 3 reps where both arms share the
+# same true rates (completion 0.5, time ~60s, cost ~$0.10) but every draw is
+# independent, so the arms differ row by row. No arm-vs-arm signal, so no
+# mark may go green or red.
+import random
+rng = random.Random(1234)
+def noisy(arm, sha):
+    def mk(i, t, r):
+        return row(t, arm, sha, rng.random() < 0.5, 50 + rng.randint(0, 20), round(0.05 + rng.random() * 0.10, 4), rep=r)
+    return mk
+write_reps("noise", 3, noisy("raw-claude", "sha-noise"), noisy("v10", "sha-noise"))
 
-# ---- (a) same per-task outcomes: loki has the EXACT SAME completion, time
-# and cost as raw on every one of 10 tasks (5 completed, 5 not, so there is
-# real inter-task variance to resample -- but no arm-vs-arm signal at all).
-# Every bootstrap replicate's difference is therefore exactly 0 (both arms
-# draw identical rows for identical resampled tasks), which does not
-# EXCLUDE 0 -> inconclusive, never green.
-small29 = [
-    "aiq-52-searchbar", "pub-click-2877", "pub-click-3059", "pub-click-3487", "pub-click-3572",
-    "pub-humanize-152", "pub-humanize-174", "pub-humanize-333", "pub-jsonschema-1389", "pub-markupsafe-417",
-    "pub-more-itertools-1192", "pub-more-itertools-1250", "pub-more-itertools-1252", "pub-more-itertools-1277",
-    "pub-packaging-1315", "qs-api-only", "qs-blog-platform", "qs-cli-tool", "qs-dashboard",
-    "qs-data-pipeline", "qs-e-commerce", "qs-game", "qs-microservice", "qs-npm-library", "qs-rest-api",
-    "qs-rest-api-auth", "qs-simple-todo-app", "qs-static-landing-page", "qs-web-scraper",
-]
-noise_tasks = small29[:10]
-noise_raw = [row(t, "raw-claude", "sha-noise", i < 5, 60, 0.10) for i, t in enumerate(noise_tasks)]
-noise_loki = [row(t, "v10", "sha-noise", i < 5, 60, 0.10) for i, t in enumerate(noise_tasks)]
-with open(T + "/noise-raw.jsonl", "w") as f:
-    f.write("\n".join(json.dumps(r) for r in noise_raw) + "\n")
-with open(T + "/noise-loki.jsonl", "w") as f:
-    f.write("\n".join(json.dumps(r) for r in noise_loki) + "\n")
+# ---- (b) clear gap at the floor: 20 tasks x 3 reps. loki completes 20/20 on
+# every rep; raw completes a fixed 8/20 on every rep. Cost and time favor loki.
+write_reps("gap", 3, lambda i, t, r: row(t, "raw-claude", "sha-gap", i < 8, 200, 0.20, rep=r),
+           lambda i, t, r: row(t, "v10", "sha-gap", True, 100, 0.05, rep=r))
 
-# ---- (b) clear gap: 20 tasks, 3 reps (one rep file per rep, per section
-# 2's "one row per (arm label, rep file, task)"). loki completes 20/20 on
-# every rep; raw completes a fixed 8/20 on every rep.
-gap_tasks = small29[:20]
-for rep in (1, 2, 3):
-    gap_raw = [row(t, "raw-claude", "sha-gap", i < 8, 200, 0.20) for i, t in enumerate(gap_tasks)]
-    gap_loki = [row(t, "v10", "sha-gap", True, 100, 0.05) for t in gap_tasks]
-    with open(T + "/gap-raw-r%d.jsonl" % rep, "w") as f:
-        f.write("\n".join(json.dumps(r) for r in gap_raw) + "\n")
-    with open(T + "/gap-loki-r%d.jsonl" % rep, "w") as f:
-        f.write("\n".join(json.dumps(r) for r in gap_loki) + "\n")
+# ---- (d) null cost at the floor: the gap pattern, with one of loki's cost
+# rows nulled, so the verdict's only red comes from that null cost.
+write_reps("nullcost", 3, lambda i, t, r: row(t, "raw-claude", "sha-nc", i < 8, 200, 0.20, rep=r),
+           lambda i, t, r: row(t, "v10", "sha-nc", True, 100, None if (i == 0 and r == 1) else 0.05, rep=r))
 
-# ---- (d) a dedicated null-cost fixture (leg 2 above also covers this at
-# tier medium): reuse leg 1's strictly-green 1-of-3-vs-3-of-3 pattern (one
-# file per rep, so dedupe never collapses reps into one row) and null
-# exactly one of loki's cost rows, so the verdict's only red comes from
-# that null cost.
-for rep in (1, 2, 3):
-    nc_raw_rows, nc_loki_rows = [], []
-    for task in ("qs-dashboard", "qs-blog-platform"):
-        nc_raw_rows.append(row(task, "raw-claude", "sha-nc", rep == 1, 100, 0.20, rep=rep))
-        cost = None if (task == "qs-dashboard" and rep == 1) else 0.05
-        nc_loki_rows.append(row(task, "v10", "sha-nc", True, 50, cost, rep=rep))
-    with open(T + "/nullcost-raw-r%d.jsonl" % rep, "w") as f:
-        f.write("\n".join(json.dumps(r) for r in nc_raw_rows) + "\n")
-    with open(T + "/nullcost-loki-r%d.jsonl" % rep, "w") as f:
-        f.write("\n".join(json.dumps(r) for r in nc_loki_rows) + "\n")
+# ---- below the floor (D43 item 2). The audit repro: ONE task, 3 reps.
+# raw completes 2 of 3 at 100s/$1.00, loki 3 of 3 at 90s/$0.90; Fisher
+# exact p = 1.0, so nothing may mark green.
+TASKS = ["qs-dashboard"]
+write_reps("one", 3, lambda i, t, r: row(t, "raw-claude", "sha-one", r != 3, 100, 1.00, rep=r),
+           lambda i, t, r: row(t, "v10", "sha-one", True, 90, 0.90, rep=r))
+# 19 tasks x 3 reps: one task short of the floor, with a clear gap.
+TASKS = FLOOR_TASKS[:19]
+write_reps("t19", 3, lambda i, t, r: row(t, "raw-claude", "sha-t19", i < 8, 200, 0.20, rep=r),
+           lambda i, t, r: row(t, "v10", "sha-t19", True, 100, 0.05, rep=r))
+# 20 tasks x 2 reps: one rep short of the floor, with a clear gap.
+TASKS = FLOOR_TASKS
+write_reps("r2", 2, lambda i, t, r: row(t, "raw-claude", "sha-r2", i < 8, 200, 0.20, rep=r),
+           lambda i, t, r: row(t, "v10", "sha-r2", True, 100, 0.05, rep=r))
 PYEOF
+
+# reps PREFIX N: the raw=/loki= argument list for N rep files.
+reps() { local n; for n in $(seq 1 "$2"); do printf 'raw=%s/%s-raw-r%s.jsonl loki=%s/%s-loki-r%s.jsonl ' "$T" "$1" "$n" "$T" "$1" "$n"; done; }
+# only_mark LOG: the three mark columns joined, e.g. "inconclusive inconclusive inconclusive".
+marks() { local c; for c in 'Completion' 'Cost per completed' 'p50 time to PR'; do col "$(row_of "$1" "$c")" 8; done | paste -sd' ' -; }
 
 run() { "$SCRIPT" "$@" >"$T/out.log" 2>"$T/err.log"; }
 
-# ---- 1 & 2: marks
+# ---- 1: a clear gap at the floor (20 tasks x 3 reps): every mark green.
+# Fisher p on the completion counts (24/60 vs 60/60) is far below 0.05, so
+# green is earned, not noise.
 rc=0
-run raw="$T/raw-r1.jsonl" raw="$T/raw-r2.jsonl" raw="$T/raw-r3.jsonl" \
-    loki="$T/loki-r1.jsonl" loki="$T/loki-r2.jsonl" loki="$T/loki-r3.jsonl" || rc=$?
+run $(reps gap 3) || rc=$?
 [ "$rc" = 0 ] && pass "well-formed raw/loki pair exits 0" || fail "well-formed pair rc=$rc: $(cat "$T/err.log")"
-
 grep -qE '^#### tier small: raw vs loki$' "$T/out.log" && pass "tier small table present" \
     || fail "tier small table missing: $(cat "$T/out.log")"
-# Tiers print sorted by name ("medium" < "small"), so the small block runs
-# from its heading to end of file.
-awk '/^#### tier small/,0' "$T/out.log" > "$T/small.log"
+[ "$(marks "$T/out.log")" = "green green green" ] && pass "small: all three marks green at the floor" \
+    || fail "small: marks not all green: $(marks "$T/out.log")"
+grep -qE '^Verdict: green\.' "$T/out.log" && pass "small: verdict green" || fail "small: verdict not green"
 
-small_completion="$(row_of "$T/small.log" 'Completion')"
-[ "$(col "$small_completion" 8)" = "green" ] && pass "small: completion mark green" \
-    || fail "small: completion mark not green: $small_completion"
-small_cost="$(row_of "$T/small.log" 'Cost per completed')"
-[ "$(col "$small_cost" 8)" = "green" ] && pass "small: cost mark green" \
-    || fail "small: cost mark not green: $small_cost"
-small_p50="$(row_of "$T/small.log" 'p50 time to PR')"
-[ "$(col "$small_p50" 8)" = "green" ] && pass "small: p50 mark green" \
-    || fail "small: p50 mark not green: $small_p50"
-grep -qE '^Verdict: green\.' "$T/small.log" && pass "small: verdict green" || fail "small: verdict not green"
-
-awk '/^#### tier medium/,/^#### tier small/' "$T/out.log" > "$T/medium.log"
+# ---- 2: tier medium (3 tasks, run with the test-only --min-tasks 3): every
+# mark red, including a null-cost row on loki's side that must show n/a and
+# red even though its non-null rows alone would average cheaper than raw
+# (null-anywhere kills the average, not just the missing row)
+rc=0
+run raw="$T/raw-r1.jsonl" raw="$T/raw-r2.jsonl" raw="$T/raw-r3.jsonl" \
+    loki="$T/loki-r1.jsonl" loki="$T/loki-r2.jsonl" loki="$T/loki-r3.jsonl" --min-tasks 3 || rc=$?
+[ "$rc" = 0 ] && pass "medium pair (--min-tasks 3) exits 0" || fail "medium pair rc=$rc: $(cat "$T/err.log")"
+cp "$T/out.log" "$T/medium.log"
 medium_completion="$(row_of "$T/medium.log" 'Completion')"
 [ "$(col "$medium_completion" 8)" = "red" ] && pass "medium: completion mark red" \
     || fail "medium: completion mark not red: $medium_completion"
@@ -252,6 +242,22 @@ medium_cost="$(row_of "$T/medium.log" 'Cost per completed')"
 medium_p50="$(row_of "$T/medium.log" 'p50 time to PR')"
 [ "$(col "$medium_p50" 8)" = "red" ] && pass "medium: p50 mark red" || fail "medium: p50 mark not red: $medium_p50"
 grep -qE '^Verdict: red\.' "$T/medium.log" && pass "medium: verdict red" || fail "medium: verdict not red"
+
+# ---- 2b: the same medium fixture WITHOUT the override is below the floor
+# (3 tasks, need 20): completion and p50 read inconclusive with the reason,
+# the null cost stays red (D43 item 1), and red outranks inconclusive in the
+# verdict.
+rc=0
+run raw="$T/raw-r1.jsonl" raw="$T/raw-r2.jsonl" raw="$T/raw-r3.jsonl" \
+    loki="$T/loki-r1.jsonl" loki="$T/loki-r2.jsonl" loki="$T/loki-r3.jsonl" || rc=$?
+[ "$rc" = 0 ] && pass "medium pair below the floor exits 0" || fail "medium below floor rc=$rc"
+[ "$(marks "$T/out.log")" = "inconclusive red inconclusive" ] \
+    && pass "below floor: null cost stays red, other marks inconclusive" \
+    || fail "below floor: marks wrong: $(marks "$T/out.log")"
+grep -qF 'below D43 floor: 3 tasks, need 20' "$T/out.log" \
+    && pass "below floor: reason names the task count and the floor" || fail "below floor: reason missing"
+grep -qE '^Verdict: red\.' "$T/out.log" && pass "red (null cost) outranks inconclusive in the verdict" \
+    || fail "verdict: red did not outrank inconclusive: $(grep '^Verdict:' "$T/out.log")"
 
 # ---- 3: refusal, mismatched task sets
 rc=0; run raw="$T/raw-mismatch-tasks.jsonl" loki="$T/loki-mismatch-tasks.jsonl" || rc=$?
@@ -278,9 +284,7 @@ grep -qi "no result rows" "$T/err.log" && pass "empty result file: clear stderr 
 
 # ---- 6: --append
 rc=0
-run raw="$T/raw-r1.jsonl" raw="$T/raw-r2.jsonl" raw="$T/raw-r3.jsonl" \
-    loki="$T/loki-r1.jsonl" loki="$T/loki-r2.jsonl" loki="$T/loki-r3.jsonl" \
-    --append "$T/METRICS.md" || rc=$?
+run $(reps gap 3) --append "$T/METRICS.md" || rc=$?
 [ "$rc" = 0 ] && [ -f "$T/METRICS.md" ] && grep -qE '^#### tier small: raw vs loki$' "$T/METRICS.md" \
     && pass "--append writes the tables to the given path" \
     || fail "--append did not write the expected tables (rc=$rc)"
@@ -290,7 +294,7 @@ real_metrics_after="$(sha "$REAL_METRICS" 2>/dev/null || echo none)"
     || fail "real docs/v10/METRICS.md CHANGED during this test"
 
 # ---- 7: D41 headline pair (loki-sonnet vs raw-opus), 0.6x raw cost is red
-rc=0; run raw="$T/headline-raw.jsonl" loki="$T/headline-loki-0.6x.jsonl" || rc=$?
+rc=0; run $(reps h6 3) || rc=$?
 [ "$rc" = 0 ] && pass "headline pair at 0.6x exits 0" || fail "headline pair at 0.6x rc=$rc: $(cat "$T/err.log")"
 h6_cost="$(row_of "$T/out.log" 'Cost per completed \(headline')"
 [ -n "$h6_cost" ] && pass "headline pair: row is labeled headline" || fail "headline pair: row not labeled headline: $(cat "$T/out.log")"
@@ -299,7 +303,7 @@ h6_cost="$(row_of "$T/out.log" 'Cost per completed \(headline')"
 
 # ---- 8: D41 headline pair, exactly 0.5x raw cost is green (ratio CI
 # boundary: hi<=0.5 is inclusive, matching D41's original <=)
-rc=0; run raw="$T/headline-raw.jsonl" loki="$T/headline-loki-0.5x.jsonl" || rc=$?
+rc=0; run $(reps h5 3) || rc=$?
 [ "$rc" = 0 ] && pass "headline pair at 0.5x exits 0" || fail "headline pair at 0.5x rc=$rc: $(cat "$T/err.log")"
 h5_cost="$(row_of "$T/out.log" 'Cost per completed \(headline')"
 [ -n "$h5_cost" ] && pass "0.5x pair: row is labeled headline" || fail "0.5x pair: row not labeled headline: $(cat "$T/out.log")"
@@ -308,7 +312,7 @@ h5_cost="$(row_of "$T/out.log" 'Cost per completed \(headline')"
 
 # ---- 9: non-headline pair (raw-opus vs loki-opus) at 0.6x raw cost stays
 # green under the plain diff-CI-vs-0 rule (no 0.5x ratio bar).
-rc=0; run raw="$T/nonheadline-raw.jsonl" loki="$T/nonheadline-loki-0.6x.jsonl" || rc=$?
+rc=0; run $(reps nh 3) || rc=$?
 [ "$rc" = 0 ] && pass "non-headline pair at 0.6x exits 0" || fail "non-headline pair at 0.6x rc=$rc: $(cat "$T/err.log")"
 nh_cost="$(row_of "$T/out.log" 'Cost per completed \|')"
 [ -n "$nh_cost" ] && pass "non-headline pair: row is the plain (non-headline) label" \
@@ -316,21 +320,18 @@ nh_cost="$(row_of "$T/out.log" 'Cost per completed \|')"
 [ "$(col "$nh_cost" 8)" = "green" ] && pass "non-headline pair: 0.6x raw cost stays green" \
     || fail "non-headline pair: 0.6x raw cost mark wrong: $nh_cost"
 
-# ---- a: noise only (same 50% rate, complementary per-task split) ->
-# inconclusive completion mark, and an inconclusive verdict (never flips a
-# default to green or red on ambiguous evidence)
-rc=0; run raw="$T/noise-raw.jsonl" loki="$T/noise-loki.jsonl" || rc=$?
+# ---- a: noise at the floor (20 tasks x 3 reps, same true rates, different
+# draws): no mark may go green or red, and the verdict is inconclusive.
+rc=0; run $(reps noise 3) || rc=$?
 [ "$rc" = 0 ] && pass "noise fixture exits 0" || fail "noise fixture rc=$rc: $(cat "$T/err.log")"
-noise_completion="$(row_of "$T/out.log" 'Completion')"
-[ "$(col "$noise_completion" 8)" = "inconclusive" ] && pass "noise: completion mark inconclusive" \
-    || fail "noise: completion mark not inconclusive: $noise_completion"
+[ "$(marks "$T/out.log")" = "inconclusive inconclusive inconclusive" ] \
+    && pass "noise: every mark inconclusive" || fail "noise: marks not all inconclusive: $(marks "$T/out.log")"
 grep -qE '^Verdict: inconclusive\.' "$T/out.log" && pass "noise: verdict inconclusive" \
     || fail "noise: verdict not inconclusive: $(grep '^Verdict:' "$T/out.log")"
 
 # ---- b: clear gap (loki 20/20, raw 8/20, 3 reps) -> green completion
 rc=0
-run raw="$T/gap-raw-r1.jsonl" raw="$T/gap-raw-r2.jsonl" raw="$T/gap-raw-r3.jsonl" \
-    loki="$T/gap-loki-r1.jsonl" loki="$T/gap-loki-r2.jsonl" loki="$T/gap-loki-r3.jsonl" || rc=$?
+run $(reps gap 3) || rc=$?
 [ "$rc" = 0 ] && pass "gap fixture exits 0" || fail "gap fixture rc=$rc: $(cat "$T/err.log")"
 gap_completion="$(row_of "$T/out.log" 'Completion')"
 [ "$(col "$gap_completion" 3)" = "24/60 (40.0%)" ] && [ "$(col "$gap_completion" 5)" = "60/60 (100.0%)" ] \
@@ -340,12 +341,8 @@ gap_completion="$(row_of "$T/out.log" 'Completion')"
 
 # ---- c: determinism -- identical input, two separate runs, byte-identical
 # stdout (fixed bootstrap seed and resample count)
-"$SCRIPT" raw="$T/gap-raw-r1.jsonl" raw="$T/gap-raw-r2.jsonl" raw="$T/gap-raw-r3.jsonl" \
-    loki="$T/gap-loki-r1.jsonl" loki="$T/gap-loki-r2.jsonl" loki="$T/gap-loki-r3.jsonl" \
-    >"$T/det1.log" 2>"$T/det1.err"
-"$SCRIPT" raw="$T/gap-raw-r1.jsonl" raw="$T/gap-raw-r2.jsonl" raw="$T/gap-raw-r3.jsonl" \
-    loki="$T/gap-loki-r1.jsonl" loki="$T/gap-loki-r2.jsonl" loki="$T/gap-loki-r3.jsonl" \
-    >"$T/det2.log" 2>"$T/det2.err"
+"$SCRIPT" $(reps gap 3) >"$T/det1.log" 2>"$T/det1.err"
+"$SCRIPT" $(reps gap 3) >"$T/det2.log" 2>"$T/det2.err"
 if diff -q "$T/det1.log" "$T/det2.log" >/dev/null; then
     pass "determinism: two runs on identical input are byte-identical"
 else
@@ -354,8 +351,7 @@ fi
 
 # ---- d: a null cost row still gives red under the new CI columns
 rc=0
-run raw="$T/nullcost-raw-r1.jsonl" raw="$T/nullcost-raw-r2.jsonl" raw="$T/nullcost-raw-r3.jsonl" \
-    loki="$T/nullcost-loki-r1.jsonl" loki="$T/nullcost-loki-r2.jsonl" loki="$T/nullcost-loki-r3.jsonl" || rc=$?
+run $(reps nullcost 3) || rc=$?
 [ "$rc" = 0 ] && pass "nullcost fixture exits 0" || fail "nullcost fixture rc=$rc: $(cat "$T/err.log")"
 nullcost_row="$(row_of "$T/out.log" 'Cost per completed')"
 [ "$(col "$nullcost_row" 5)" = "n/a" ] && [ "$(col "$nullcost_row" 6)" = "n/a" ] \
@@ -385,6 +381,40 @@ onerep_completion_ci="$(col "$onerep_completion" 7)"
 [ "$(col "$onerep_completion" 8)" = "inconclusive" ] \
     && pass "single rep: wide CI (straddles 0) marks inconclusive, not green" \
     || fail "single rep: mark should be inconclusive: $onerep_completion"
+grep -qF 'below D43 floor: 2 tasks, need 20' "$T/out.log" \
+    && pass "single rep: reason names the D43 floor" || fail "single rep: floor reason missing"
+
+# ---- f: the audit repro. 1 task, 3 reps; raw 2/3 vs loki 3/3 (Fisher p =
+# 1.0). Before the floor this read "Verdict: green" off a single-point CI.
+rc=0; run $(reps one 3) || rc=$?
+[ "$rc" = 0 ] && pass "1 task x 3 reps exits 0" || fail "1 task x 3 reps rc=$rc: $(cat "$T/err.log")"
+[ "$(marks "$T/out.log")" = "inconclusive inconclusive inconclusive" ] \
+    && pass "1 task x 3 reps: every mark inconclusive (not green from noise)" \
+    || fail "1 task x 3 reps: marks: $(marks "$T/out.log")"
+grep -qE '^Verdict: inconclusive\.' "$T/out.log" && pass "1 task x 3 reps: verdict inconclusive" \
+    || fail "1 task x 3 reps: verdict: $(grep '^Verdict:' "$T/out.log")"
+grep -qF 'below D43 floor: 1 tasks, need 20' "$T/out.log" \
+    && pass "1 task x 3 reps: reason says tasks below floor" || fail "1 task x 3 reps: reason missing"
+
+# ---- g: 19 tasks x 3 reps with a clear gap: one task under the floor, so
+# inconclusive; the same gap at 20 tasks (leg 1) is green.
+rc=0; run $(reps t19 3) || rc=$?
+[ "$(marks "$T/out.log")" = "inconclusive inconclusive inconclusive" ] \
+    && pass "19 tasks: clear gap still inconclusive below the task floor" || fail "19 tasks: marks: $(marks "$T/out.log")"
+grep -qF 'below D43 floor: 19 tasks, need 20' "$T/out.log" && pass "19 tasks: reason" || fail "19 tasks: reason missing"
+
+# ---- h: 20 tasks x 2 reps with a clear gap: under the rep floor.
+rc=0; run $(reps r2 2) || rc=$?
+[ "$(marks "$T/out.log")" = "inconclusive inconclusive inconclusive" ] \
+    && pass "2 reps: clear gap still inconclusive below the rep floor" || fail "2 reps: marks: $(marks "$T/out.log")"
+grep -qF 'below D43 floor: 2 reps per task, need 3' "$T/out.log" && pass "2 reps: reason" || fail "2 reps: reason missing"
+
+# ---- i: the overrides are accepted and validated (tests only).
+rc=0; run $(reps one 3) --min-tasks 1 --min-reps 3 || rc=$?
+[ "$rc" = 0 ] && ! grep -q 'below D43 floor' "$T/out.log" && pass "--min-tasks/--min-reps lower the floor" \
+    || fail "--min-tasks/--min-reps not honored (rc=$rc)"
+rc=0; run $(reps one 3) --min-tasks abc || rc=$?
+[ "$rc" = 2 ] && pass "--min-tasks rejects a non-integer (rc=2)" || fail "--min-tasks abc rc=$rc (want 2)"
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -23,8 +23,11 @@ in a given replicate, so the difference is a paired comparison). A column is
 green when its difference CI (ratio CI vs 0.5 for the D41/E-122 headline
 cost pair) lies entirely on the good side, red when entirely on the bad
 side, else inconclusive. The tier verdict is green only if all three
-columns are green; any inconclusive column makes the verdict inconclusive
-(never flips to green or red on ambiguous evidence). A tier is marked only
+columns are green; any red column makes it red (a null cost row outranks
+inconclusive, D43 item 1), else any inconclusive column makes it
+inconclusive. D43 item 2 floor: a tier with fewer than 20 tasks, or any
+task with fewer than 3 reps per arm, reads inconclusive on every mark
+(--min-tasks/--min-reps override, for tests only). A tier is marked only
 when the task sets, n per task and harness_sha all match between the two
 labels; any mismatch refuses the whole run (exit 2), nothing is printed.
 With any other label count (e.g. replaying one arm/variant alone) each tier
@@ -51,6 +54,11 @@ BOOTSTRAP_N = 10000
 BOOTSTRAP_SEED = 41
 CI_LO, CI_HI = 2.5, 97.5
 HEADLINE_COST_RATIO = 0.5
+# D43 item 2 floor: below this many tasks in a tier, or this many reps per
+# task per arm, the bootstrap has no real spread to resample and every mark
+# reads inconclusive. --min-tasks/--min-reps override these for tests only.
+MIN_TASKS = 20
+MIN_REPS = 3
 
 
 class Refused(Exception):
@@ -61,6 +69,7 @@ class Refused(Exception):
 def parse_args(argv):
     labels = collections.OrderedDict()
     append = None
+    global MIN_TASKS, MIN_REPS
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -69,6 +78,14 @@ def parse_args(argv):
             if i >= len(argv):
                 raise Refused("--append needs a path")
             append = argv[i]
+        elif a in ("--min-tasks", "--min-reps"):
+            i += 1
+            if i >= len(argv) or not argv[i].isdigit():
+                raise Refused("%s needs a non-negative integer" % a)
+            if a == "--min-tasks":
+                MIN_TASKS = int(argv[i])
+            else:
+                MIN_REPS = int(argv[i])
         elif "=" in a and not a.startswith("-"):
             label, path = a.split("=", 1)
             if not label or not path:
@@ -278,6 +295,18 @@ def _guard_undefined(mark, reason, replicates):
     return mark, reason
 
 
+def floor_reason(raw_rows, loki_rows):
+    """D43 item 2: None when the tier meets the sample floor, else the reason.
+    comparable() already proved both arms have the same n per task."""
+    per_task = collections.Counter(r["task"] for r in raw_rows)
+    if len(per_task) < MIN_TASKS:
+        return "below D43 floor: %d tasks, need %d" % (len(per_task), MIN_TASKS)
+    low = min(per_task.values())
+    if low < MIN_REPS:
+        return "below D43 floor: %d reps per task, need %d" % (low, MIN_REPS)
+    return None
+
+
 def score(raw, loki, raw_rows, loki_rows, headline=False):
     """D43/S41-17 marks: completion and p50 use the loki-minus-raw
     difference CI against 0. Cost per completed uses the same difference CI
@@ -285,8 +314,11 @@ def score(raw, loki, raw_rows, loki_rows, headline=False):
     uses the ratio CI against 0.5 (E-122). An n/a cost point estimate
     (a null evaluated row on either side) is always red, per section 2,
     regardless of what the bootstrap alone would say. The tier verdict is
-    green only if all three columns are green; any inconclusive column
-    makes the verdict inconclusive."""
+    green only if all three columns are green; any red column makes
+    the verdict red (a null cost row outranks inconclusive), else any
+    inconclusive column makes it inconclusive. Below the D43 floor
+    (MIN_TASKS tasks, MIN_REPS reps per task) every mark but a null cost
+    reads inconclusive."""
     rep = _bootstrap(raw_rows, loki_rows)
 
     completion_raw_ci = _ci(rep["completion_raw"])
@@ -318,12 +350,19 @@ def score(raw, loki, raw_rows, loki_rows, headline=False):
 
     marks = {"completion": completion_mark, "cost": cost_mark, "p50": p50_mark}
     reasons = {"completion": completion_reason, "cost": cost_reason, "p50": p50_reason}
-    if "inconclusive" in marks.values():
-        verdict = "inconclusive"
-    elif all(v == "green" for v in marks.values()):
-        verdict = "green"
-    else:
+    floor = floor_reason(raw_rows, loki_rows)
+    if floor:
+        # A null cost row stays red: D43 item 1, the card does not count at all.
+        for k in marks:
+            if not (k == "cost" and not cost_pt_ok):
+                marks[k], reasons[k] = "inconclusive", floor
+    # A red mark (incl. n/a) outranks inconclusive.
+    if "red" in marks.values():
         verdict = "red"
+    elif "inconclusive" in marks.values():
+        verdict = "inconclusive"
+    else:
+        verdict = "green"
     cis = {
         "completion_raw": completion_raw_ci, "completion_loki": completion_loki_ci,
         "completion_diff": completion_diff_ci,
