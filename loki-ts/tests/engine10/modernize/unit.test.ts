@@ -16,12 +16,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ModernizeLog, readModernizeEvents } from "../../../src/engine10/modernize/log.ts";
 import { oracleDir } from "../../../src/engine10/modernize/types.ts";
-import { DEFAULT_NORMALIZERS } from "../../../src/engine10/modernize/oracle/seal.ts";
-import { classifyBaseRun } from "../../../src/engine10/modernize/presealed_wall.ts";
+import { DEFAULT_NORMALIZERS, sealOracle } from "../../../src/engine10/modernize/oracle/seal.ts";
+import { classifyBaseRun, sealPreSealedWall } from "../../../src/engine10/modernize/presealed_wall.ts";
 import type { BaseConformanceRunner, BaseRunOutcome } from "../../../src/engine10/modernize/presealed_wall.ts";
 import type { CaseRecord, NewCaseOutcome } from "../../../src/engine10/modernize/equiv.ts";
-import { parsePytestOutput, runUnit } from "../../../src/engine10/modernize/unit.ts";
+import { makePytestBaseRunner, parsePytestOutput, runUnit } from "../../../src/engine10/modernize/unit.ts";
 import type { UnitCard } from "../../../src/engine10/modernize/unit.ts";
+import type { ModernizeLog as Log } from "../../../src/engine10/modernize/log.ts";
 
 const mid = "mod-20260928T010203Z-ab12cd";
 
@@ -43,18 +44,18 @@ function writeRepoModule(dir: string, dotted: string) {
   writeFileSync(join(fileDir, `${last}.py`), "# fixture\n");
 }
 
-function caseRecord(id: string): CaseRecord {
+function caseRecord(id: string, ret: CaseRecord["return"] = { t: "int", v: "2" }): CaseRecord {
   return {
     format: 1, case: id, entry: "f", args: [{ t: "int", v: "1" }], kwargs: {},
-    return: { t: "int", v: "2" }, exc: null, stdout: { t: "text", v: "" }, files: [], not_proven: [],
+    return: ret, exc: null, stdout: { t: "text", v: "" }, files: [], not_proven: [],
   };
 }
 const TEN_IDS = Array.from({ length: 10 }, (_, i) => `case-${i}`);
 
-function sealOracleFixture(unit: string) {
+function sealOracleFixture(unit: string, ret?: CaseRecord["return"]) {
   const dir = oracleDir(repoDir, mid, unit);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "cases.jsonl"), TEN_IDS.map((id) => JSON.stringify(caseRecord(id))).join("\n") + "\n");
+  writeFileSync(join(dir, "cases.jsonl"), TEN_IDS.map((id) => JSON.stringify(caseRecord(id, ret))).join("\n") + "\n");
   writeFileSync(join(dir, "coverage.json"), JSON.stringify({
     unit, entries: ["f"], cases: TEN_IDS.length, branches_total: 20, branches_taken: 18, branch_pct: 90,
   }));
@@ -80,6 +81,18 @@ function redThenGreen(): BaseConformanceRunner {
   return () => (calls++ === 0 ? redBase : greenBase);
 }
 
+/** An ablation stub that never matches the oracle's {int 2} return: the unit replaced by stubs goes red. */
+const failingStub = (): NewCaseOutcome => ({
+  return: { t: "none" }, exc: null, stdout: { t: "text", v: "" }, files: [],
+});
+/** runUnit with a stub runner that correctly makes the oracle fail (the normal, healthy ablation). */
+function runUnitAb(
+  card: UnitCard, l: Log, conf: BaseConformanceRunner, impl: (c: UnitCard) => void,
+  runNew: (u: string, d: string, r: CaseRecord) => NewCaseOutcome,
+) {
+  return runUnit(card, l, conf, impl, runNew, failingStub);
+}
+
 // ---------------------------------------------------------------------------------------------
 // (1) sealOracle before any implementation, ordering tested.
 // ---------------------------------------------------------------------------------------------
@@ -93,7 +106,7 @@ describe("runUnit ordering (1): sealOracle runs before implement", () => {
         (e) => e.type === "oracle.captured" || e.type === "oracle.flagged",
       );
     };
-    runUnit(baseCard(unit), log, () => redBase, implement, () => passingNewCase());
+    runUnitAb(baseCard(unit), log, () => redBase, implement, () => passingNewCase());
     expect(sealedBeforeImplement).toBe(true);
   });
 
@@ -101,7 +114,7 @@ describe("runUnit ordering (1): sealOracle runs before implement", () => {
     const unit = "ord_unit_nofix";
     // No sealOracleFixture: cases.jsonl/coverage.json are missing, so sealOracle throws.
     let implementCalled = false;
-    const result = runUnit(baseCard(unit), log, () => redBase, () => { implementCalled = true; }, () => passingNewCase());
+    const result = runUnitAb(baseCard(unit), log, () => redBase, () => { implementCalled = true; }, () => passingNewCase());
     expect(implementCalled).toBe(false);
     expect(result.verdict).toBe("NOT_PROVEN");
   });
@@ -119,10 +132,10 @@ describe("runUnit trust (2): verifySeal and verifyPreSealedWall gate every downs
     // sealOracle succeed on the (now-mismatched) file, then verifySeal must catch the drift.
     // Simulate this precisely: seal once via a throwaway run, then hand-edit cases.jsonl.
     const card = baseCard(unit);
-    const first = runUnit(card, log, redThenGreen(), () => {}, () => passingNewCase());
+    const first = runUnitAb(card, log, redThenGreen(), () => {}, () => passingNewCase());
     expect(first.verdict).toBe("PROVEN");
     writeFileSync(join(oracleDir(repoDir, mid, unit), "cases.jsonl"), "tampered\n");
-    const second = runUnit(card, log, () => redBase, () => { implementCalled = true; }, () => passingNewCase());
+    const second = runUnitAb(card, log, () => redBase, () => { implementCalled = true; }, () => passingNewCase());
     expect(implementCalled).toBe(false);
     expect(second.verdict).toBe("NOT_PROVEN");
     expect(second.not_proven[0]).toMatch(/oracle seal invalid/);
@@ -132,7 +145,7 @@ describe("runUnit trust (2): verifySeal and verifyPreSealedWall gate every downs
     const unit = "trust_wall_green";
     sealOracleFixture(unit);
     let implementCalled = false;
-    const result = runUnit(
+    const result = runUnitAb(
       baseCard(unit), log,
       () => ({ runner: "pytest", exitCode: 0, timedOut: false }),
       () => { implementCalled = true; },
@@ -147,7 +160,7 @@ describe("runUnit trust (2): verifySeal and verifyPreSealedWall gate every downs
     const unit = "trust_wall_notrun";
     sealOracleFixture(unit);
     let implementCalled = false;
-    const result = runUnit(
+    const result = runUnitAb(
       baseCard(unit), log,
       () => ({ runner: "pytest", exitCode: 127, timedOut: false }),
       () => { implementCalled = true; },
@@ -161,11 +174,11 @@ describe("runUnit trust (2): verifySeal and verifyPreSealedWall gate every downs
     const unit = "trust_wall_tampered";
     sealOracleFixture(unit);
     const card = baseCard(unit);
-    const first = runUnit(card, log, redThenGreen(), () => {}, () => passingNewCase());
+    const first = runUnitAb(card, log, redThenGreen(), () => {}, () => passingNewCase());
     expect(first.verdict).toBe("PROVEN");
     writeFileSync(join(oracleDir(repoDir, mid, unit), "presealed_wall.json"), "{}");
     let implementCalled = false;
-    const second = runUnit(card, log, redThenGreen(), () => { implementCalled = true; }, () => passingNewCase());
+    const second = runUnitAb(card, log, redThenGreen(), () => { implementCalled = true; }, () => passingNewCase());
     expect(implementCalled).toBe(false);
     expect(second.verdict).toBe("NOT_PROVEN");
     expect(second.not_proven[0]).toMatch(/presealed wall invalid/);
@@ -174,7 +187,7 @@ describe("runUnit trust (2): verifySeal and verifyPreSealedWall gate every downs
   it("proves a unit whose oracle, Wall and equivalence all check out", () => {
     const unit = "trust_happy";
     sealOracleFixture(unit);
-    const result = runUnit(baseCard(unit), log, redThenGreen(), () => {}, () => passingNewCase());
+    const result = runUnitAb(baseCard(unit), log, redThenGreen(), () => {}, () => passingNewCase());
     expect(result.verdict).toBe("PROVEN");
     expect(result.oracle?.verdict).toBe("PROVEN_ORACLE");
     expect(result.wall?.sealed).toBe(true);
@@ -187,7 +200,7 @@ describe("runUnit trust (2): verifySeal and verifyPreSealedWall gate every downs
     sealOracleFixture(unit);
     // Constant red: the base run seals (must be red), but the SAME conformance check re-run
     // after implement is still red too -- case-level equivalence alone must never be enough.
-    const result = runUnit(baseCard(unit), log, () => redBase, () => {}, () => passingNewCase());
+    const result = runUnitAb(baseCard(unit), log, () => redBase, () => {}, () => passingNewCase());
     expect(result.verdict).toBe("NOT_PROVEN");
     expect(result.not_proven[0]).toMatch(/target conformance did not pass/);
   });
@@ -237,146 +250,149 @@ describe("parsePytestOutput (3): runner/exitCode/failedCount from real pytest ou
   });
 });
 
+
 // ---------------------------------------------------------------------------------------------
-// (4) failing module derived from the traceback's own frame paths, never the bare name.
+// Round 3 (opus reject on 03b35a69): real pytest, real files on disk.
 // ---------------------------------------------------------------------------------------------
-describe("parsePytestOutput (4): module derived from the exception's own message, never a coincidentally-resolvable frame", () => {
-  it("a 'No module named' ImportError names the module the message names; classifyBaseRun reports not_run for a real third party", () => {
-    // No repo file named "six" exists anywhere. collectionError still carries the bare name --
-    // presealed_wall.ts's own contract is that this field is "exactly as reported ... nothing
-    // else in this field is trusted" -- and it is classifyBaseRun's resolvesInsideRepo, not this
-    // parser, that must turn an unresolvable name into not_run.
-    const stdout = [
-      "________ ERROR collecting tests/test_foo.py ________",
-      "ImportError while importing test module 'tests/test_foo.py'.",
-      "Traceback:",
-      "tests/test_foo.py:3: in <module>",
-      "    import six",
-      "E   ModuleNotFoundError: No module named 'six'",
-    ].join("\n");
-    const outcome = parsePytestOutput(repoDir, stdout, 2, false);
-    expect(outcome.collectionError).toEqual({ kind: "ImportError", name: "six" });
-    expect(classifyBaseRun(outcome, repoDir)).toBe("not_run");
+function pytest(dir: string, env: Record<string, string> = {}) {
+  const res = spawnSync("python3", ["-m", "pytest"], { cwd: dir, encoding: "utf8", env: { ...process.env, ...env } });
+  expect(res.status).toBe(2);
+  return parsePytestOutput(dir, `${res.stdout ?? ""}\n${res.stderr ?? ""}`, res.status, false);
+}
+
+describe("collection errors are classified by the Wall's rule (findings 3 and 4), real pytest", () => {
+  it("a missing third-party package is not_run", () => {
+    writeFileSync(join(repoDir, "test_conf.py"), "import definitely_not_installed_pkg_xyz\n");
+    expect(classifyBaseRun(pytest(repoDir), repoDir)).toBe("not_run");
   });
 
-  it("the message wins over a traceback frame that merely happens to resolve inside the repo (the r1 bug's exact shape)", () => {
-    // pkg/unit_under_test.py exists and IS a traceback frame here -- the old (buggy) frame-first
-    // logic would have picked it. The message names "pkg.new_feature", which does not exist on
-    // disk, so this must resolve to that name and classify not_run, never red on the
-    // coincidentally-real frame file.
-    writeRepoModule(repoDir, "pkg.unit_under_test");
-    const stdout = [
-      "________ ERROR collecting tests/test_foo.py ________",
-      "ImportError while importing test module 'tests/test_foo.py'.",
-      "Traceback:",
-      "tests/test_foo.py:3: in <module>",
-      "    import pkg.unit_under_test",
-      "pkg/unit_under_test.py:1: in <module>",
-      "    from pkg.new_feature import helper",
-      "E   ModuleNotFoundError: No module named 'pkg.new_feature'",
-    ].join("\n");
-    const outcome = parsePytestOutput(repoDir, stdout, 2, false);
-    expect(outcome.collectionError).toEqual({ kind: "ImportError", name: "pkg.new_feature" });
-    expect(classifyBaseRun(outcome, repoDir)).toBe("not_run");
+  it("finding 3: a site-packages module shadowing a repo module name is not_run", () => {
+    const site = mkdtempSync(join(tmpdir(), "e10-mod-site-"));
+    try {
+      writeFileSync(join(site, "mymod.py"), "X = 1\n"); // the shadow: no NEW
+      mkdirSync(join(repoDir, "src"));
+      writeFileSync(join(repoDir, "src", "mymod.py"), "NEW = 1\n"); // the repo's own mymod has it
+      writeFileSync(join(repoDir, "test_conf.py"), "from mymod import NEW\n");
+      expect(classifyBaseRun(pytest(repoDir, { PYTHONPATH: site }), repoDir)).toBe("not_run");
+    } finally {
+      rmSync(site, { recursive: true, force: true });
+    }
   });
 
-  it("an AttributeError's own message names its module directly", () => {
-    writeRepoModule(repoDir, "pkg.mod");
-    const stdout = [
-      "________ ERROR collecting tests/test_foo.py ________",
-      "Traceback:",
-      "tests/test_foo.py:3: in <module>",
-      "    import pkg.mod",
-      "pkg/mod.py:5: in <module>",
-      "    from pkg.mod import NEW_FLAG",
-      "E   AttributeError: module 'pkg.mod' has no attribute 'NEW_FLAG'",
-    ].join("\n");
-    const outcome = parsePytestOutput(repoDir, stdout, 2, false);
-    expect(outcome.collectionError).toEqual({ kind: "AttributeError", name: "pkg.mod" });
-    expect(classifyBaseRun(outcome, repoDir)).toBe("red");
+  it("finding 4: a src/ layout that is not on sys.path (No module named) is not_run", () => {
+    mkdirSync(join(repoDir, "src"));
+    writeFileSync(join(repoDir, "src", "mymod.py"), "NEW = 1\n");
+    writeFileSync(join(repoDir, "test_conf.py"), "import mymod\n");
+    expect(classifyBaseRun(pytest(repoDir), repoDir)).toBe("not_run");
   });
 
-  it("a NameError (whose message never names a module) falls back to the raise-site frame", () => {
-    writeRepoModule(repoDir, "pkg.names");
-    const stdout = [
-      "pkg/names.py:2: in <module>",
-      "    print(NOT_DEFINED)",
-      "E   NameError: name 'NOT_DEFINED' is not defined",
-    ].join("\n");
-    const outcome = parsePytestOutput(repoDir, stdout, 2, false);
-    expect(outcome.collectionError).toEqual({ kind: "NameError", name: "pkg.names" });
+  it("a missing repo symbol (AttributeError on an in-repo module) is red", () => {
+    mkdirSync(join(repoDir, "pkg"), { recursive: true });
+    writeFileSync(join(repoDir, "pkg", "__init__.py"), "");
+    writeFileSync(join(repoDir, "pkg", "mod.py"), "# new_thing is not added yet\n");
+    writeFileSync(join(repoDir, "test_conf.py"), "import pkg.mod\npkg.mod.new_thing()\n");
+    expect(classifyBaseRun(pytest(repoDir), repoDir)).toBe("red");
   });
 
-  it("the frame fallback skips a stdlib frame and keeps walking to the nearest in-repo frame", () => {
-    writeRepoModule(repoDir, "pkg.entry");
-    const stdout = [
-      "pkg/entry.py:1: in <module>",
-      "    import pkg.entry",
-      "/usr/lib/python3.11/importlib/__init__.py:126: in import_module",
-      "    return _bootstrap._gcd_import(name[level:], package, level)",
-      "E   ImportError: some runner-internal state, no module named in this message",
-    ].join("\n");
-    const outcome = parsePytestOutput(repoDir, stdout, 2, false);
-    expect(outcome.collectionError).toEqual({ kind: "ImportError", name: "pkg.entry" });
+  it("an AttributeError on a non-repo module (os.path) is not_run", () => {
+    writeFileSync(join(repoDir, "test_conf.py"), "import os\nos.path.nonexistent_fn()\n");
+    expect(classifyBaseRun(pytest(repoDir), repoDir)).toBe("not_run");
   });
 
-  it("the frame fallback never trusts the collecting test file itself (the r1 bug for a message-less error)", () => {
-    // Only one frame, and it IS the file pytest is collecting -- a NameError raised directly in
-    // the test file, with nothing else to fall back to. r1's bug (always trusting the nearest
-    // resolvable frame) would call this red; it must be not_run instead.
-    writeRepoModule(repoDir, "test_conf");
-    const stdout = [
-      "________________________ ERROR collecting test_conf.py _________________________",
-      "test_conf.py:1: in <module>",
-      "    print(NOT_DEFINED_ANYWHERE)",
-      "E   NameError: name 'NOT_DEFINED_ANYWHERE' is not defined",
-    ].join("\n");
-    const outcome = parsePytestOutput(repoDir, stdout, 2, false);
-    expect(outcome.collectionError).toBeUndefined();
-  });
-
-  it("fails closed (undefined) when the traceback is truncated to nothing before the error line", () => {
-    const stdout = "E   ImportError: something went wrong\n";
-    const outcome = parsePytestOutput(repoDir, stdout, 2, false);
-    expect(outcome.collectionError).toBeUndefined();
-  });
-
-  it("fails closed for an unsupported exception kind even with a resolvable in-repo frame", () => {
-    writeRepoModule(repoDir, "pkg.other");
-    const stdout = [
-      "pkg/other.py:1: in <module>",
-      "    raise SyntaxError('bad')",
-      "E   SyntaxError: bad",
-    ].join("\n");
-    const outcome = parsePytestOutput(repoDir, stdout, 2, false);
-    expect(outcome.collectionError).toBeUndefined();
+  it("a NameError raised in the repo's own test file is red, as the Wall (E-125) classifies it", () => {
+    writeFileSync(join(repoDir, "test_conf.py"), "print(NOT_DEFINED)\n");
+    expect(classifyBaseRun(pytest(repoDir), repoDir)).toBe("red");
   });
 });
 
-// ---------------------------------------------------------------------------------------------
-// B1 regression (opus reproduced): real pytest output, real files on disk -- the exact repro
-// from the review (pytest 9.0.2, `import definitely_not_installed_pkg_xyz` in a real test_conf.py
-// that genuinely exists on disk, unlike a hand-typed fixture where the "collecting file" frame
-// was itself synthetic and never actually resolvable).
-// ---------------------------------------------------------------------------------------------
-describe("B1 regression: real pytest, real files on disk", () => {
-  it("a missing third-party package gives not_run, never red", () => {
-    writeFileSync(join(repoDir, "test_conf.py"), "import definitely_not_installed_pkg_xyz\n");
-    const res = spawnSync("python3", ["-m", "pytest"], { cwd: repoDir, encoding: "utf8" });
-    expect(res.status).toBe(2);
-    const outcome = parsePytestOutput(repoDir, res.stdout ?? "", res.status, false);
-    expect(classifyBaseRun(outcome, repoDir)).toBe("not_run");
+describe("finding 1: no-op ablation", () => {
+  const none = { t: "none" } as CaseRecord["return"];
+  const noneOutcome = (): NewCaseOutcome => ({ return: { t: "none" }, exc: null, stdout: { t: "text", v: "" }, files: [] });
+
+  it("an oracle of ten {none} returns that a pass-stub also satisfies is NOT_PROVEN, oracle does not constrain unit", () => {
+    const unit = "ablate_none";
+    sealOracleFixture(unit, none);
+    // `def f(*a, **k): pass` returns None: the stub matches the oracle just as well as the new unit.
+    const result = runUnit(baseCard(unit), log, redThenGreen(), () => {}, noneOutcome, noneOutcome);
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven).toEqual(["oracle does not constrain unit"]);
   });
 
-  it("a missing repo symbol (AttributeError on a real in-repo module) gives red", () => {
-    mkdirSync(join(repoDir, "pkg"), { recursive: true });
-    writeFileSync(join(repoDir, "pkg", "__init__.py"), "");
-    writeFileSync(join(repoDir, "pkg", "mod.py"), "# new_thing has not been added by modernization yet\n");
-    writeFileSync(join(repoDir, "test_conf.py"), "import pkg.mod\npkg.mod.new_thing()\n");
-    const res = spawnSync("python3", ["-m", "pytest"], { cwd: repoDir, encoding: "utf8" });
-    expect(res.status).toBe(2);
-    const outcome = parsePytestOutput(repoDir, res.stdout ?? "", res.status, false);
-    expect(outcome.collectionError).toEqual({ kind: "AttributeError", name: "pkg.mod" });
-    expect(classifyBaseRun(outcome, repoDir)).toBe("red");
+  it("no stub runner given is NOT_PROVEN, ablation not run", () => {
+    const unit = "ablate_missing";
+    sealOracleFixture(unit);
+    const result = runUnit(baseCard(unit), log, redThenGreen(), () => {}, () => passingNewCase());
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven).toEqual(["ablation not run"]);
+  });
+
+  it("the ablation probe does not add a second unit.equivalence event to the receipt", () => {
+    const unit = "ablate_receipt";
+    sealOracleFixture(unit);
+    expect(runUnitAb(baseCard(unit), log, redThenGreen(), () => {}, () => passingNewCase()).verdict).toBe("PROVEN");
+    const eq = readModernizeEvents(repoDir, mid).filter((e) => e.type === "unit.equivalence" && e.data.unit === unit);
+    expect(eq.length).toBe(1);
+    expect(eq[0]?.data.verdict).toBe("PROVEN");
+  });
+});
+
+describe("finding 2: conformance files are bound to the sealed Wall, real pytest", () => {
+  const setup = (unit: string) => {
+    sealOracleFixture(unit);
+    writeFileSync(join(repoDir, "u.py"), "# not modernized yet\n");
+    writeFileSync(join(repoDir, "test_conf.py"), "import u\n\ndef test_ready():\n    assert getattr(u, 'PY3_READY', False)\n");
+  };
+  const real = () => makePytestBaseRunner("python3", 60_000);
+  const modernize = () => writeFileSync(join(repoDir, "u.py"), "PY3_READY = True\n");
+
+  it("control: a genuine modernization (u.PY3_READY set) is PROVEN", () => {
+    setup("conf_ok");
+    const result = runUnitAb(baseCard("conf_ok"), log, real(), modernize, () => passingNewCase());
+    expect(result.not_proven).toEqual([]);
+    expect(result.verdict).toBe("PROVEN");
+  });
+
+  it("an implement that writes a conftest.py skipping every test is refused, not PROVEN", () => {
+    setup("conf_skip");
+    const forge = () => writeFileSync(join(repoDir, "conftest.py"),
+      "import pytest\ndef pytest_collection_modifyitems(items):\n    for i in items:\n        i.add_marker(pytest.mark.skip)\n");
+    const result = runUnitAb(baseCard("conf_skip"), log, real(), forge, () => passingNewCase());
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven[0]).toMatch(/conftest\.py added/);
+  });
+
+  it("an implement that edits the sealed test file is refused", () => {
+    setup("conf_edit");
+    const edit = () => writeFileSync(join(repoDir, "test_conf.py"), "def test_ready():\n    assert True\n");
+    const result = runUnitAb(baseCard("conf_edit"), log, real(), edit, () => passingNewCase());
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven[0]).toMatch(/test_conf\.py changed/);
+  });
+
+  it("an implement that adds a pytest config (addopts deselect) is refused", () => {
+    setup("conf_cfg");
+    const cfg = () => writeFileSync(join(repoDir, "pytest.ini"), "[pytest]\naddopts = --deselect test_conf.py::test_ready\n");
+    const result = runUnitAb(baseCard("conf_cfg"), log, real(), cfg, () => passingNewCase());
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven[0]).toMatch(/pytest\.ini added/);
+  });
+
+  it("a root pytest.py shim is refused too", () => {
+    setup("conf_shim");
+    const shim = () => { modernize(); writeFileSync(join(repoDir, "pytest.py"), "raise SystemExit(0)\n"); };
+    const result = runUnitAb(baseCard("conf_shim"), log, real(), shim, () => passingNewCase());
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven[0]).toMatch(/pytest\.py added/);
+  });
+
+  it("a resumed run with no seal-time record refuses rather than re-hashing a modified tree", () => {
+    const unit = "conf_resume";
+    setup(unit);
+    // A crashed first run: Wall sealed, but the conformance record was never written.
+    sealOracle(repoDir, mid, unit, log, DEFAULT_NORMALIZERS);
+    expect(sealPreSealedWall(repoDir, mid, unit, "python3", real(), log).sealed).toBe(true);
+    const result = runUnitAb(baseCard(unit), log, real(), modernize, () => passingNewCase());
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven[0]).toMatch(/not bound to the seal/);
   });
 });

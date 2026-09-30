@@ -19,27 +19,22 @@
 //     runner's job (M-15)"). parsePytestOutput below parses real pytest stdout into a
 //     presealed_wall.ts BaseRunOutcome, failing closed (no summary line, no parsed integer) on
 //     garbled or truncated output rather than guessing.
-// (4) The failing module for a pytest collection error (exit 2) is derived from the exception's
-//     OWN message ("No module named 'x'", "cannot import name 'y' from 'pkg.mod'") -- never from
-//     "the nearest traceback frame that happens to resolve inside the repo", which r1 (opus
-//     reproduced) showed is always the COLLECTING TEST FILE itself for a real ImportError (the
-//     frame that contains the `import x` statement, not the module that failed to exist): a
-//     missing third-party package (`import definitely_not_installed_pkg_xyz` in test_conf.py,
-//     real pytest 9.0.2) resolved test_conf.py -- which trivially exists in-repo -- and reported
-//     red for a package that is not in the repo at all. The message-derived name is what
-//     classifyBaseRun's own resolvesInsideRepo then checks; this file never re-implements that
-//     check, it only supplies the correct candidate. A raise-site traceback frame is still used as
-//     a fallback (AttributeError/NameError messages do not always name a module), but only when
-//     that frame is NOT the collecting test file itself -- the file r1 showed is always reachable
-//     and always a false positive on its own.
+// (4) A pytest collection error (exit 2) is classified by presealed_wall.ts's classifyBaseRun from
+//     the raw output, using the Wall's own rule (mirrored from stages/wall.ts, see there): no
+//     second classifier lives in this file.
+// (5) MODERNIZE.md:153/262 no-op ablation: an injected stub runner replaces the new unit with stubs;
+//     the oracle cases must then FAIL equivalence, else NOT_PROVEN "oracle does not constrain unit".
+// (6) Conformance files (tests, conftest.py, pytest config) are hashed at Wall-seal time and must be
+//     unchanged on the new tree before the post-implement conformance run is trusted.
 import { spawnSync } from "node:child_process";
-import { readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, join, sep } from "node:path";
+import { createHash } from "node:crypto";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import type { ModernizeLog } from "./log.ts";
 import { readModernizeEvents } from "./log.ts";
 import type { EquivNormalizers, SealedOracle } from "./oracle/seal.ts";
 import { sealOracle, verifySeal } from "./oracle/seal.ts";
-import type { BaseConformanceRunner, BaseRunOutcome, CollectionError, PreSealedWallResult } from "./presealed_wall.ts";
+import type { BaseConformanceRunner, BaseRunOutcome, PreSealedWallResult } from "./presealed_wall.ts";
 import { classifyBaseRun, sealPreSealedWall, verifyPreSealedWall } from "./presealed_wall.ts";
 import type { EquivResult, NewCaseRunner } from "./equiv.ts";
 import { checkEquivalence } from "./equiv.ts";
@@ -70,137 +65,6 @@ function parseFailedCount(stdout: string): number | undefined {
   return undefined; // no footer found at all: truncated output, never guessed at
 }
 
-/** Maps a raised exception's own type name to presealed_wall.ts's CollectionError.kind.
- *  ModuleNotFoundError is ImportError's own subclass in Python 3 and reports the same way
- *  (presealed_wall.ts file header). Anything else is "other", which classifyBaseRun always
- *  treats as not_run. */
-function classifyExceptionKind(typeName: string): CollectionError["kind"] {
-  if (typeName === "ImportError" || typeName === "ModuleNotFoundError") return "ImportError";
-  if (typeName === "AttributeError") return "AttributeError";
-  if (typeName === "NameError") return "NameError";
-  return "other";
-}
-
-/** Last "E   <ExceptionType>: ..." line pytest prints for the actual raised error, with its line
- *  index -- there may be several "E   " continuation lines for a multi-line message, so this
- *  takes the LAST that names a bare exception type at line start, closest to the traceback's end. */
-function findLastErrorLine(lines: string[]): { type: string; index: number } | null {
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const m = /^E\s+([A-Za-z_][A-Za-z0-9_.]*)\b/.exec(lines[i] ?? "");
-    if (m) return { type: m[1] as string, index: i };
-  }
-  return null;
-}
-
-/** pytest's own traceback frame line: "<path>:<lineno>: in <scope>". Collects every frame path
- *  appearing before the error line, closest to the error first, so parseCollectionError can walk
- *  from the raise site outward until it finds one that actually resolves inside the repo. */
-function frameCandidatesBeforeError(lines: string[], errorIndex: number): string[] {
-  const out: string[] = [];
-  for (let i = errorIndex - 1; i >= 0; i--) {
-    const m = /^(\S.*\.py):(\d+): in /.exec(lines[i] ?? "");
-    if (m) out.push(m[1] as string);
-  }
-  return out;
-}
-
-/** Inverse of presealed_wall.ts's resolvesInsideRepo: given a traceback frame's own file path
- *  (relative to repoDir, or absolute), resolves it against repoDir's realpath (a "src/" layout
- *  included) and returns the dotted module name -- or null when the path does not exist, is not
- *  a .py file, or resolves outside repoDir (a symlink escape, or a site-packages frame). Fails
- *  closed on anything realpathSync itself cannot resolve, which is exactly what a truncated or
- *  rewritten path in garbled output produces. */
-function moduleFromPath(repoDir: string, framePath: string): string | null {
-  let repoReal: string;
-  try {
-    repoReal = realpathSync(repoDir);
-  } catch {
-    return null;
-  }
-  const abs = isAbsolute(framePath) ? framePath : join(repoDir, framePath);
-  let real: string;
-  try {
-    real = realpathSync(abs);
-  } catch {
-    return null;
-  }
-  if (real === repoReal || !real.startsWith(repoReal + sep)) return null; // outside repo, never inside by default
-  let rel = real.slice(repoReal.length + 1);
-  if (rel.startsWith(`src${sep}`)) rel = rel.slice(4); // "src/" layout is transparent, same as resolvesInsideRepo's candidates
-  if (!rel.endsWith(".py")) return null;
-  rel = rel.slice(0, -3);
-  const parts = rel.split(sep).filter((p) => p !== "");
-  if (parts.length > 0 && parts[parts.length - 1] === "__init__") parts.pop();
-  return parts.length > 0 ? parts.join(".") : null;
-}
-
-/** pytest's own collection-error header, e.g. "________ ERROR collecting test_conf.py ________"
- *  -- always present for an exit-2 collection error, and names the file being imported when the
- *  error happened (r1's false positive: a traceback frame for THIS exact file, since it contains
- *  the `import x` statement, is not evidence that `x` exists -- it is evidence that this file
- *  tried to import something). Used only to EXCLUDE that file from the frame fallback below,
- *  never to derive a module name from it. */
-function findCollectingFile(lines: string[]): string | null {
-  for (const line of lines) {
-    const m = /^_+\s*ERROR collecting (\S+)\s*_+$/.exec(line.trim());
-    if (m) return m[1] as string;
-  }
-  return null;
-}
-
-/** (4): the module name straight from the exception's own message -- the primary source, per r1's
- *  fix. "No module named 'x'" (ImportError/ModuleNotFoundError) and "cannot import name 'y' from
- *  'pkg.mod'" (ImportError) both name the module Python actually tried and failed to resolve;
- *  "module 'pkg.mod' has no attribute 'y'" (AttributeError) names the module directly too. Never
- *  a guess: returns null when the message does not match one of these exact Python-generated
- *  forms (a NameError's message never names a module at all). */
-function extractModuleFromMessage(kind: CollectionError["kind"], message: string): string | null {
-  if (kind === "ImportError") {
-    const noModule = /No module named '([^']+)'/.exec(message);
-    if (noModule) return noModule[1] as string;
-    const cannotImport = /cannot import name '[^']*' from '([^']+)'/.exec(message);
-    if (cannotImport) return cannotImport[1] as string;
-  }
-  if (kind === "AttributeError") {
-    const m = /module '([^']+)' has no attribute '[^']*'/.exec(message);
-    if (m) return m[1] as string;
-  }
-  return null;
-}
-
-/** (4): builds a CollectionError from a pytest exit-2 collection error. Primary source is the
- *  exception's own message (extractModuleFromMessage): that is what Python itself resolved the
- *  failing name to, so it is trusted first, before this file's own weaker frame-walking ever
- *  runs, and classifyBaseRun's resolvesInsideRepo is what actually decides red vs not_run from
- *  it -- this function only supplies the candidate, never validates it itself. When the message
- *  names nothing (AttributeError on a non-module object, or NameError, which never names a
- *  module), falls back to the nearest traceback frame that is NOT the collecting test file
- *  itself (r1: that file is always reachable and always a false positive on its own -- it is
- *  where the reference sits, not evidence that the referenced name exists anywhere). Returns
- *  undefined (never a guess) when no error line is found, the kind is unsupported, or neither
- *  source yields a candidate -- classifyBaseRun then reports not_run, never red. */
-function parseCollectionError(repoDir: string, stdout: string): CollectionError | undefined {
-  const lines = stdout.split("\n");
-  const err = findLastErrorLine(lines);
-  if (!err) return undefined;
-  const kind = classifyExceptionKind(err.type);
-  if (kind === "other") return undefined;
-
-  const message = (lines[err.index] ?? "").replace(/^E\s+/, "");
-  const fromMessage = extractModuleFromMessage(kind, message);
-  if (fromMessage !== null) return { kind, name: fromMessage };
-
-  const collecting = findCollectingFile(lines);
-  const collectingReal = collecting ? moduleFromPath(repoDir, collecting) : null;
-  for (const framePath of frameCandidatesBeforeError(lines, err.index)) {
-    const mod = moduleFromPath(repoDir, framePath);
-    if (mod === null) continue;
-    if (collectingReal !== null && mod === collectingReal) continue; // r1: never trust the collecting file alone
-    return { kind, name: mod };
-  }
-  return undefined; // no message name, no usable in-repo frame: garbled, or nothing to report
-}
-
 /** Parses one pytest run's raw stdout into presealed_wall.ts's BaseRunOutcome. Pure and
  *  hermetic -- the actual `spawnSync` call lives in makePytestBaseRunner below, so this is
  *  directly testable against captured real pytest output (unit.test.ts). Fails closed by
@@ -215,10 +79,8 @@ export function parsePytestOutput(
 ): BaseRunOutcome {
   const outcome: BaseRunOutcome = { runner: "pytest", exitCode, timedOut };
   if (timedOut || exitCode === null) return outcome;
-  if (exitCode === 2) {
-    const collectionError = parseCollectionError(repoDir, stdout);
-    return collectionError ? { ...outcome, collectionError } : outcome;
-  }
+  // exit 2: hand the raw output to classifyBaseRun, which reuses the Wall's own red/not_run rule.
+  if (exitCode === 2) return { ...outcome, output: stdout };
   if (exitCode === 1) {
     const failedCount = parseFailedCount(stdout);
     return failedCount !== undefined ? { ...outcome, failedCount } : outcome;
@@ -239,8 +101,56 @@ export function makePytestBaseRunner(pythonBin = "python3", timeoutMs = 300_000)
     // pytest's own report (the footer, the collection-error traceback) goes to stdout; stderr is
     // never appended ahead of it -- an unrelated stderr line (a warning, a plugin's own output)
     // must never shadow or precede the real footer this file's parser searches for.
-    return parsePytestOutput(repoDir, res.stdout ?? "", res.status, timedOut);
+    return parsePytestOutput(repoDir, `${res.stdout ?? ""}\n${res.stderr ?? ""}`, res.status, timedOut);
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// (6): conformance-file binding.
+// ---------------------------------------------------------------------------------------------
+const CONF_EVENT = "unit.conformance_sealed";
+const SKIP_DIRS = new Set([".git", ".loki", "node_modules", "__pycache__", ".venv", "venv", ".pytest_cache", ".tox"]);
+const TEST_FILE = /(^|\/)(test_[^/]*|[^/]*_test)\.py$/;
+const SECTIONED = /(^|\/)(pyproject\.toml|setup\.cfg|tox\.ini)$/; // only their pytest sections count
+// Anything that can change what `python -m pytest` runs or reports; a NEW one is refused, not just a changed one.
+const PYTEST_CFG = /(^|\/)(conftest\.py|pytest\.ini|pytest\.py|pyproject\.toml|setup\.cfg|tox\.ini)$|(^|\/)pytest\//;
+
+function pytestSections(text: string): string {
+  let on = false;
+  const out: string[] = [];
+  for (const line of text.split("\n")) {
+    const h = /^\s*\[([^\]]*)\]/.exec(line);
+    if (h) on = /pytest/i.test(h[1] ?? "");
+    if (on) out.push(line);
+  }
+  return out.join("\n");
+}
+
+/** sha256 of every test file, conftest.py, pytest config (pytest sections only for pyproject.toml,
+ *  setup.cfg, tox.ini) and a root pytest.py/pytest/ shim under dir, keyed by relative path. */
+export function conformanceHashes(dir: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const rel of readdirSync(dir, { recursive: true }) as string[]) {
+    if (rel.split("/").some((p) => SKIP_DIRS.has(p))) continue;
+    if (!TEST_FILE.test(rel) && !PYTEST_CFG.test(rel)) continue;
+    let text: string;
+    try {
+      if (!statSync(join(dir, rel)).isFile()) continue;
+      text = readFileSync(join(dir, rel), "utf8");
+    } catch { continue; }
+    if (SECTIONED.test(rel)) text = pytestSections(text);
+    if (SECTIONED.test(rel) && text === "") continue;
+    out[rel] = createHash("sha256").update(text).digest("hex");
+  }
+  return out;
+}
+
+/** First way `now` departs from the sealed `base` set, or null: a sealed file changed or removed, or a
+ *  config-class file (conftest.py, pytest config, pytest shim) that the base never had. */
+function conformanceDrift(base: Record<string, string>, now: Record<string, string>): string | null {
+  for (const [p, h] of Object.entries(base)) if (now[p] !== h) return `${p} ${p in now ? "changed" : "removed"}`;
+  for (const p of Object.keys(now)) if (!(p in base) && PYTEST_CFG.test(p)) return `${p} added`;
+  return null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -312,6 +222,8 @@ export function runUnit(
   runConformance: BaseConformanceRunner,
   implement: Implementer,
   runNew: NewCaseRunner,
+  /** Runs an oracle case against the unit REPLACED BY STUBS (the no-op ablation). Required for PROVEN. */
+  runStub?: NewCaseRunner,
 ): UnitRunResult {
   const { repoDir, mid, unit } = card;
   const newTreeDir = card.newTreeDir ?? repoDir;
@@ -335,11 +247,13 @@ export function runUnit(
 
   // Pre-sealed Wall: runs the conformance check on the base (unmodernized) tree, still before
   // `implement` -- a green or not_run base refuses the seal outright (section 7, D42 (3)).
+  let freshSeal = false;
   try {
     const attempt = sealPreSealedWall(repoDir, mid, unit, card.target, runConformance, log, card.baseSha ?? null);
     if (!attempt.sealed) {
       return notProvenUnitResult(unit, attempt.reason ?? "presealed wall not sealed", oracle, attempt);
     }
+    freshSeal = true;
   } catch (e) {
     // Write-once throw: already sealed from a prior/resumed run. verifyPreSealedWall below is the
     // real trust check regardless of why this call produced no fresh seal.
@@ -366,6 +280,16 @@ export function runUnit(
     sealed: true,
   };
 
+  // (6) Bind the conformance files to the seal: hashed from the pristine base tree, persisted as an
+  // event so a resumed run never re-hashes an already modified tree. No record, no PROVEN.
+  const bound = readModernizeEvents(repoDir, mid).find((e) => e.type === CONF_EVENT && e.data.unit === unit);
+  let sealedHashes = bound?.data.files as Record<string, string> | undefined;
+  if (!sealedHashes) {
+    if (!freshSeal) return notProvenUnitResult(unit, "conformance files not bound to the seal (no record from seal time)", oracle, wall);
+    sealedHashes = conformanceHashes(repoDir);
+    log.append(CONF_EVENT, { unit, files: sealedHashes });
+  }
+
   // Only now: the actual code change.
   implement(card);
 
@@ -374,19 +298,20 @@ export function runUnit(
     return { unit, verdict: equiv.verdict, oracle, wall, equiv, not_proven: equiv.not_proven };
   }
 
-  // B2 (opus reproduced on the r1 build): case-level equivalence alone is not "proven"
-  // (MODERNIZE.md section 7's contract: rate 100%, held-out 100%, branch_pct >= 80% -- all
-  // already forced by equiv.ts's own PROVEN verdict -- PLUS the no-op ablation and target
-  // conformance passing). Neither is equiv.ts's job (its own file header, lines 21-22: "It does
-  // not implement the no-op ablation or target conformance ... and takes no input for them");
-  // both are this file's.
-  //
-  // No-op ablation: the base tree's sealed Wall run really was red, read from the log above
-  // rather than assumed -- a unit can never be PROVEN off a Wall that (somehow) never proved the
-  // old code fails. Never PROVEN when this cannot be established.
-  if (wall.classification !== "red") {
-    return notProvenUnitResult(unit, "ablation not run: base conformance was not proven red", oracle, wall);
+  // No-op ablation (MODERNIZE.md:153, :262): the oracle cases run against the unit replaced by
+  // stubs must FAIL equivalence. A logger that discards keeps this probe out of the unit's receipt.
+  if (!runStub) return notProvenUnitResult(unit, "ablation not run", oracle, wall);
+  const discard = { append: () => ({}) } as unknown as ModernizeLog;
+  const ablation = checkEquivalence(repoDir, mid, unit, newTreeDir, card.normalizers, runStub, discard);
+  if (ablation.verdict === "PROVEN") {
+    return notProvenUnitResult(unit, "oracle does not constrain unit", oracle, wall);
   }
+  if (ablation.verdict !== "NOT_EQUAL") {
+    return notProvenUnitResult(unit, `ablation inconclusive: ${ablation.not_proven.join("; ")}`, oracle, wall);
+  }
+  // Conformance files must be byte-identical to the sealed base (tests, conftest.py, pytest config).
+  const drift = conformanceDrift(sealedHashes, conformanceHashes(newTreeDir));
+  if (drift) return notProvenUnitResult(unit, `conformance files changed since the Wall sealed: ${drift}`, oracle, wall);
   // Target conformance: the same check, re-run against the MODERNIZED tree, must now pass (exit
   // 0 / green) -- a unit whose cases match the oracle but whose target-runtime conformance still
   // fails (or cannot even run) has not actually been modernized.
