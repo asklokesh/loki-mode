@@ -79,7 +79,7 @@ function runEngine(): Run {
   delete env.LOKI_MODEL_OVERRIDE;
   delete env.LOKI_LEGACY_BASH; // bin/loki would skip the engine10 block
   delete env.LOKI_RECEIPT_SIGNING_KEY;
-  delete env.LOKI_RECEIPT_SIGNING_KEY_FILE;
+  env.LOKI_RECEIPT_SIGNING_KEY_FILE = join(tmp, "k.pem"); // throwaway auto-generated key, never the real ~/.loki
 
   // No --no-pr: this is the eval harness's real path (E-38's v10 arm).
   const r = Bun.spawnSync(["bash", BIN_LOKI, TASK], { cwd: repo, env, timeout: 60_000 });
