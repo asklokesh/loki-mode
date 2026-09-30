@@ -28,8 +28,10 @@
 2. Upstream parser.py diff only, main.py at ref: 6 failed, 122 passed, rc=1 (the serializer still writes
    `'C:\Users'`, so the three exact rows and three round trips fail).
 3. Own main.py-only variant (.replace("\\", "\\\\") before the quote replace, same as attempt 1): 2 failed, 126 passed, rc=1.
-4. Own parser.py-only variant: not separately run; attempt 2 is the parser half and the serializer output rows
-   are untestable by a parser change.
+4. Parser half with main.py at ref (run by the independent reviewer, upstream parser.py diff only): 6 failed,
+   122 passed, rc=1. This is the same result as attempt 2; the serializer output rows cannot be met by a parser change.
+   Reviewer's main.py-only hack probe (double-quote only values that end in a backslash, double backslashes
+   otherwise, parser.py at ref): 1 failed, 127 passed, rc=1; the exact `b\` row in test_set_key stops it.
 5. Serializer-only workaround for the trailing backslash (write the value so the old parser copes, e.g. unquoted):
    contradicts the exact-output rows in test_set_key, so it fails that test; not a valid fix.
 No single-file fix passes; main.py-only misses exactly the trailing-backslash round trips.
