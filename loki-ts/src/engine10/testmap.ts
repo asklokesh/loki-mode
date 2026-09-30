@@ -26,7 +26,6 @@ const SKIP_DIRS = new Set([
   ".venv", "venv", "__pycache__", ".tox", ".pytest_cache", ".loki", ".next",
 ]);
 const NPM_DEFAULT_TEST = /no test specified/;
-const NODE_TEST_CMD = /\bnode\s(?:\S+\s)*?--test\b/;
 const JS_TEST_RE = /\.(test|spec)\.[cm]?[jt]sx?$/;
 const PY_TEST_RE = /^(test_.+|.+_test)\.py$/;
 const GO_TEST_RE = /_test\.go$/;
@@ -106,10 +105,7 @@ function detectFromPackageJson(text: string, rel: string, mark: (r: RunnerName, 
   if (inScripts(/\bbun\s+test\b/)) mark("bun", rel);
   // ponytail: repo_profile.ts also reads scripts.test, but buildProfile persists a profile file as a side effect, so the one check is inlined here.
   const testScript = pkg.scripts?.test;
-  if (typeof testScript === "string" && NODE_TEST_CMD.test(testScript)) mark("node", rel);
-  else if (typeof testScript === "string" && testScript.trim() !== "" && !NPM_DEFAULT_TEST.test(testScript)) {
-    mark("npm", rel);
-  }
+  if (typeof testScript === "string" && testScript.trim() !== "" && !NPM_DEFAULT_TEST.test(testScript)) mark(/\bnode\s(?:\S+\s)*?--test\b/.test(testScript) ? "node" : "npm", rel);
 }
 // Import/reference specifiers a test file's text can carry, per language. JS: `from "./search"`
 // / `require("./search")`. Python: `from app.ranker import x` / `import app.ranker`. Matched
@@ -159,10 +155,8 @@ function coveredStem(testPath: string): string {
 /** Synchronous core: scans `root`, returns the full detected map. `detect()` on TestMapProviderImpl just wraps this in a Promise per the interface. */
 export function buildTestMap(root: string): EngineTestMap {
   const files = walk(root);
-  const found = new Set<RunnerName>();
   const evidence: Partial<Record<RunnerName, string>> = {};
   const mark = (r: RunnerName, file: string): void => {
-    found.add(r);
     if (!(r in evidence)) evidence[r] = file;
   };
   for (const rel of files) {
@@ -184,13 +178,13 @@ export function buildTestMap(root: string): EngineTestMap {
   // Per-file test entries exist only for narrowly-selectable runners: npm
   // and cargo run the whole suite (coarse), so no individual file earns a
   // TestRef for them.
-  const jsRunner: RunnerName | null = found.has("vitest") ? "vitest" : found.has("jest") ? "jest" : found.has("bun") ? "bun" : found.has("node") ? "node" : null;
+  const jsRunner: RunnerName | null = evidence["vitest"] ? "vitest" : evidence["jest"] ? "jest" : evidence["bun"] ? "bun" : evidence["node"] ? "node" : null;
   const tests: TestRef[] = [];
   for (const rel of files) {
     const name = basename(rel);
     if (JS_TEST_RE.test(name) && jsRunner) tests.push({ runner: jsRunner, path: rel });
-    else if (PY_TEST_RE.test(name) && found.has("pytest")) tests.push({ runner: "pytest", path: rel });
-    else if (GO_TEST_RE.test(name) && found.has("go")) tests.push({ runner: "go", path: rel });
+    else if (PY_TEST_RE.test(name) && evidence["pytest"]) tests.push({ runner: "pytest", path: rel });
+    else if (GO_TEST_RE.test(name) && evidence["go"]) tests.push({ runner: "go", path: rel });
   }
   // Object.create(null): keys come from grep'd file content, so a source
   // named e.g. "constructor" must not collide with Object.prototype.
@@ -202,10 +196,9 @@ export function buildTestMap(root: string): EngineTestMap {
       (sourceRefs[n] ??= []).push(t.path);
     }
   }
-  const runners = RUNNER_ORDER.filter((r) => found.has(r));
+  const runners = RUNNER_ORDER.filter((r) => r in evidence);
   const commands: Partial<Record<RunnerName, CommandSpec>> = {};
-  for (const r of runners) commands[r] = COMMANDS[r];
-  if (commands.pytest) commands.pytest = { ...commands.pytest, cmd: `${pytestPython(root)} -m pytest -q <files>` };
+  for (const r of runners) commands[r] = r === "pytest" ? { ...COMMANDS.pytest, cmd: `${pytestPython(root)} -m pytest -q <files>` } : COMMANDS[r];
   return { runners, tests, evidence, commands, sourceRefs };
 }
 /** Test refs impacted by `changedFiles`: a changed test maps to itself; a changed source maps
