@@ -58,7 +58,7 @@ INPUT CONTRACT. Blockers are DERIVED, not read: `doctor --json` emits no
 blocker list (that string is built only in the text path, autonomy/loki:11367).
 Anything with status "fail" is a blocker, and failable things live in three
 places -- `checks[]`, plus the siblings `ai_provider` and `disk`. The advisory
-siblings (`sentrux`, `receipt_signing`, `memory`, `model_catalog`) are never
+siblings (`sentrux`, `memory`, `model_catalog`) are never
 "fail" by construction and are not scanned.
 
 KNOWN LIMITATION, stated rather than papered over: the text path reports two

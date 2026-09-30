@@ -103,15 +103,15 @@ class AMissingComponentIsNeverHealthy(unittest.TestCase):
             history=[{"usd": 0.30, "measured": True, "run": 1},
                      {"usd": 0.20, "measured": True, "run": 2}])
         self.addCleanup(shutil.rmtree, self.ws, True)
-        self._saved = gs.SIGNING_STATUS
-        gs.SIGNING_STATUS = os.path.join(
-            os.path.dirname(self._saved), "no-such-signing-tool.py")
+        self._saved = gs.BASELINE_PIN
+        gs.BASELINE_PIN = os.path.join(
+            os.path.dirname(self._saved), "no-such-baseline-tool.py")
 
     def tearDown(self):
-        gs.SIGNING_STATUS = self._saved
+        gs.BASELINE_PIN = self._saved
 
     def test_a_missing_tool_reads_unknown_not_ok(self):
-        line = gs.check_signing()
+        line = gs.check_baseline(os.path.join(self.ws, ".loki", "baseline.json"))
         self.assertEqual(
             line["state"], gs.UNKNOWN,
             "a component tool that is not on disk was reported as %r; that "
@@ -144,9 +144,9 @@ class AMissingComponentIsNeverHealthy(unittest.TestCase):
     def test_the_missing_line_is_still_present_on_the_screen(self):
         """A dropped row is how the verdict silently gets easier."""
         result = gs.evaluate(self.ws)
-        self.assertEqual(_state_of(result, "signing"), gs.UNKNOWN)
+        self.assertEqual(_state_of(result, "baseline"), gs.UNKNOWN)
         self.assertEqual(
-            len(result["components"]), 5,
+            len(result["components"]), 4,
             "a component line vanished instead of reporting UNKNOWN")
 
     def test_the_exit_code_matches_the_unknown_verdict(self):
@@ -266,7 +266,7 @@ class ItComposesRatherThanReimplements(unittest.TestCase):
 
     def test_every_component_is_invoked_as_a_subprocess(self):
         source = _TOOL.read_text(encoding="utf-8")
-        for tool in ("policy-load.py", "baseline-pin.py", "signing-status.py",
+        for tool in ("policy-load.py", "baseline-pin.py",
                      "cost-history.py"):
             with self.subTest(tool=tool):
                 self.assertIn(

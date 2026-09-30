@@ -246,28 +246,6 @@ $ python3 tools/receipt-find.py /tmp/ws
 
 Filters: `--min-usd`, `--max-usd`, `--failed-only`, `--since YYYY-MM-DD`.
 
-### `signing-status.py`
-
-**Answers:** can this machine produce SIGNED receipts? It proves the answer by
-attempting a sign-and-verify round trip rather than assuming from config.
-
-```
-$ python3 tools/signing-status.py
-Receipt signing: UNSIGNED  receipts prove integrity but NOT origin
-
-  gpg installed:      /opt/homebrew/bin/gpg
-  LOKI_PROOF_GPG_KEY: not set
-  sign+verify proof:  not proven
-
-  Why: LOKI_PROOF_GPG_KEY is not set
-
-  Nothing is broken. Signing is opt-in and off. Turn it on to prove
-  a receipt came from you and not merely that its bytes are intact.
-
-  Next: gpg --list-secret-keys --keyid-format=long   # then: export LOKI_PROOF_GPG_KEY=<key-id>
-```
-Exit 2 here: signing is off, so the question could not be answered affirmatively.
-
 ---
 
 ## Set up a merge gate
@@ -288,7 +266,6 @@ Merge gate status for /tmp/ws
 COMPONENT      STATE     DETAIL
 policy         OK        /tmp/ws/.loki-policy.json is valid and enforces: --require-receipt
 baseline       PROBLEM   NO BASELINE: no baseline pinned. Pin one with: tools/baseline-pin.py set <workspace>
-signing        UNKNOWN   signing is opt-in and off (LOKI_PROOF_GPG_KEY unset)
 cost_history   UNKNOWN   no measured cost history; record a run first.
 would_run      OK        yes: ci-gate would enforce the loaded policy on the next run
 
