@@ -22,6 +22,7 @@ import { runMachine } from "../../src/engine10/machine.ts";
 import { createSessionRunner } from "../../src/engine10/session.ts";
 import { runPr, type PrContext } from "../../src/engine10/stages/pr.ts";
 import type { Stage, StageName } from "../../src/engine10/types.ts";
+const PRE_KEY_FILE = process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"];
 
 const ASK_STUB = join(import.meta.dir, "fixtures", "session", "ask_stub.sh");
 
@@ -154,7 +155,7 @@ describe("engine10 never waits on a human (E-67)", () => {
       delete process.env["LOKI_E10_CAP_S"];
       delete process.env["ASK_STUB_STDIN_RESULT"];
       delete process.env["LOKI_RECEIPT_SIGNING_KEY"];
-      delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"];
+      if (PRE_KEY_FILE === undefined) delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]; else process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = PRE_KEY_FILE; // restore the preload default (E-154b)
       rmSync(repoDir, { recursive: true, force: true });
       rmSync(workDir, { recursive: true, force: true });
     }
