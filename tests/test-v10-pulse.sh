@@ -2303,7 +2303,7 @@ print(json.dumps({
 if run_pulse "${COMMON_ARGS[@]}" "PULSE_REPO_ROOT=$TAG_MISMATCH_REPO" "PULSE_MAIN_REF=main" \
     "BOARD_MD=$BOARD_CLEAN" "PULSE_NPM_CMD=cat $NPM_MISMATCH_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
     "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$TAG_MISMATCH_REPO" "${WT_CLEAN[@]}")"; then rc=0; else rc=$?; fi
-if printf '%s\n' "$OUT" | grep -qF "Merged-but-unreleased age: UNKNOWN (local tag v9.54.2 disagrees with npm's latest published version 9.55.0)" \
+if printf '%s\n' "$OUT" | grep -qF "Merged-but-unreleased age: UNKNOWN (local tag v9.54.2 disagrees with npm next 9.55.0)" \
     && printf '%s\n' "$OUT" | grep -q "^UNKNOWN metrics:.*unreleased_merge_age" \
     && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: UNRELEASED_MERGE" \
     && ! printf '%s\n' "$OUT" | grep -q "commit(s) since v9.54.2"; then
@@ -2331,6 +2331,27 @@ if printf '%s\n' "$OUT" | grep -qF "Merged-but-unreleased age: 60.0 min (1 commi
     ok "tag/npm-latest agreement (v9.54.2 == 9.54.2) keeps the normal confident report"
 else
     bad "T40b tag-vs-npm-match case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+echo "T40c -- A-01: tag compared to npm next (not latest); 'latest promoted' line from dist-tags"
+NPM_NEXT_JSON="$WORK/npm-next.json"
+python3 -c "
+import json
+print(json.dumps({
+    'time': {'created': '2020-01-01T00:00:00.000Z', '9.50.0': '2026-09-26T01:50:00.000Z', '9.54.2': '2026-09-27T01:50:00.000Z'},
+    'dist-tags': {'latest': '9.50.0', 'next': '9.54.2'},
+}))
+" > "$NPM_NEXT_JSON"
+if run_pulse "${COMMON_ARGS[@]}" "PULSE_REPO_ROOT=$TAG_MISMATCH_REPO" "PULSE_MAIN_REF=main" \
+    "BOARD_MD=$BOARD_CLEAN" "PULSE_NPM_CMD=cat $NPM_NEXT_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
+    "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$TAG_MISMATCH_REPO" "${WT_CLEAN[@]}")"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "latest promoted: 9.50.0" \
+    && printf '%s\n' "$OUT" | grep -qF "commit(s) since v9.54.2" \
+    && ! printf '%s\n' "$OUT" | grep -qF "disagrees with npm"; then
+    ok "tag agrees with next while latest lags; promoted version reported"
+else
+    bad "T40c next-vs-latest case: rc=$rc output follows"
     printf '%s\n' "$OUT"
 fi
 

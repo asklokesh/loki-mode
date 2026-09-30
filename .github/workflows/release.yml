@@ -750,8 +750,8 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           # v7.32.1: build the brew source asset HERE and attach it at release
           # creation. Releases in this repo are immutable, so a later job
-          # cannot upload assets (v7.32.0 update-homebrew failed with HTTP 422
-          # trying). update-homebrew downloads the published asset and hashes
+          # cannot upload assets (v7.32.0 the homebrew bump failed with HTTP 422
+          # trying). promote.yml (update-homebrew) downloads the published asset and hashes
           # those exact bytes for the formula.
           REF="v${VERSION}"
           git rev-parse -q --verify "refs/tags/${REF}" >/dev/null || REF="HEAD"
@@ -963,7 +963,7 @@ jobs:
           rm -rf package "$tgz"
 
       - name: Publish to npm
-        run: npm publish --access public
+        run: npm publish --access public --tag next
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -1029,7 +1029,7 @@ jobs:
 
       - name: Publish to npm
         working-directory: sdk/typescript
-        run: npm publish --access public
+        run: npm publish --access public --tag next
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -1166,7 +1166,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Every tag the single-runner QEMU build used to push, unchanged.
+      # Version tags only. `:latest` moves in promote.yml after the first-run gate.
       - name: Create and push multi-arch manifest
         id: build
         working-directory: /tmp/digests
@@ -1175,7 +1175,6 @@ jobs:
           tags=(
             "asklokesh/loki-mode:v${{ needs.release.outputs.version }}"
             "asklokesh/loki-mode:${{ needs.release.outputs.version }}"
-            "asklokesh/loki-mode:latest"
           )
           tag_args=()
           for t in "${tags[@]}"; do tag_args+=(-t "$t"); done
@@ -1275,92 +1274,3 @@ jobs:
   # receives no further updates. The vscode-extension/ source remains in the
   # repo for users who want to build locally. See vscode-extension/README.md
   # for details.
-
-  update-homebrew:
-    needs: [release]
-    if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read  # gh release download of the published brew asset
-    steps:
-      # v7.32.0: brew installs come from a GitHub Release ASSET instead of
-      # the auto-generated tag tarball. Release-asset downloads are counted by
-      # GitHub (the tag tarball is not), making brew the last install channel
-      # with visible adoption numbers.
-      # v7.32.1: the asset is attached at release CREATION (releases here are
-      # immutable; post-publish uploads fail HTTP 422). This job downloads the
-      # published asset and hashes the exact bytes brew users will get.
-      - name: Checkout tag
-        uses: actions/checkout@v4
-        with:
-          ref: v${{ needs.release.outputs.version }}
-
-      - name: Download and hash the published brew source asset
-        id: sha
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${{ needs.release.outputs.version }}"
-          ASSET="loki-mode-${VERSION}.tar.gz"
-          gh release download "v${VERSION}" --pattern "${ASSET}" --dir /tmp --clobber
-          # Sanity: a real gzip tarball, not an error artifact
-          if ! file "/tmp/${ASSET}" | grep -q 'gzip compressed'; then
-            echo "ERROR: downloaded asset is not a valid gzip tarball"
-            exit 1
-          fi
-          SHA=$(sha256sum "/tmp/${ASSET}" | cut -d' ' -f1)
-          rm -f "/tmp/${ASSET}"
-          echo "sha256=${SHA}" >> $GITHUB_OUTPUT
-
-      - name: Update Homebrew formula via API
-        env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: |
-          VERSION="${{ needs.release.outputs.version }}"
-          SHA256="${{ steps.sha.outputs.sha256 }}"
-
-          # Create formula content
-          FORMULA=$(cat << 'FORMULA_EOF'
-          class LokiMode < Formula
-            desc "Autonomous coding agent platform CLI for Claude Code, Codex CLI, Cline, and Aider"
-            homepage "https://github.com/asklokesh/loki-mode"
-            url "https://github.com/asklokesh/loki-mode/releases/download/vVERSION_PLACEHOLDER/loki-mode-VERSION_PLACEHOLDER.tar.gz"
-            sha256 "SHA256_PLACEHOLDER"
-            license "BUSL-1.1"
-
-            depends_on "node"
-            depends_on "oven-sh/bun/bun"
-
-            def install
-              libexec.install Dir["*"]
-              # v7.4.2 fix (BUG-4): bin/loki is the Bun-aware shim that routes
-              # ported commands to Bun and falls through to autonomy/loki for
-              # everything else. Linking bin/loki (NOT autonomy/loki) is
-              # required for brew users to get the Phase 2/3+ Bun route.
-              bin.install_symlink libexec/"bin/loki" => "loki"
-            end
-
-            test do
-              system "#{bin}/loki", "--version"
-            end
-          end
-          FORMULA_EOF
-          )
-
-          # Replace placeholders
-          FORMULA=$(echo "$FORMULA" | sed "s/VERSION_PLACEHOLDER/${VERSION}/g" | sed "s/SHA256_PLACEHOLDER/${SHA256}/g")
-
-          # Get current file SHA
-          CURRENT_SHA=$(gh api repos/asklokesh/homebrew-tap/contents/Formula/loki-mode.rb --jq '.sha')
-
-          # Encode content as base64
-          CONTENT=$(echo "$FORMULA" | base64 | tr -d '\n')
-
-          # Update file via API
-          gh api repos/asklokesh/homebrew-tap/contents/Formula/loki-mode.rb \
-            -X PUT \
-            -f message="Update to v${VERSION}" \
-            -f content="$CONTENT" \
-            -f sha="$CURRENT_SHA"
-
-          echo "Homebrew formula updated to v${VERSION}"
