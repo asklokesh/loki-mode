@@ -22,11 +22,10 @@
 //   - NO numeric exit code is exposed to PostToolUse hooks in this SDK
 //     version: confirmed absent from BashOutput and from every hook-input
 //     type in sdk.d.ts/sdk-tools.d.ts. "Exits nonzero" below is therefore
-//     inferred fail-safe (never under-keeps a failing tail) from interrupted,
-//     a non-empty stderr, or a populated returnCodeInterpretation -- a false
-//     positive just keeps the full 120-line tail instead of the halved one,
-//     a false negative would cut a failing command's tail, which the risk
-//     section (SCORECARD-PLAN.md S41-11 wall check) forbids.
+//     a failing command cannot be detected reliably (pytest and npm test
+//     print failures to stdout with an empty stderr), so the Bash tail is
+//     never halved: it stays 120 lines in both regimes. Only the head and the
+//     threshold halve, which keeps a failing command's tail intact.
 //     ponytail: upgrade to a real field the day BashOutput/PostToolUseHookInput
 //     grows one.
 //
@@ -70,28 +69,23 @@ function limitsForCall(callNumber: number): Limits {
   return {
     bashThreshold: BASE_LIMITS.bashThreshold / 2,
     bashHead: BASE_LIMITS.bashHead / 2,
-    bashTail: BASE_LIMITS.bashTail / 2,
+    bashTail: BASE_LIMITS.bashTail, // never halves, see the exit-code note above
     readKeep: BASE_LIMITS.readKeep / 2,
     grepKeep: BASE_LIMITS.grepKeep / 2,
   };
 }
 
-function bashExitedNonzero(r: Record<string, unknown>): boolean {
-  if (r["interrupted"] === true) return true;
-  if (typeof r["stderr"] === "string" && r["stderr"].length > 0) return true;
-  if (typeof r["returnCodeInterpretation"] === "string" && r["returnCodeInterpretation"].length > 0) return true;
-  return false;
+// One trailing newline ends the last line, it does not start another.
+function splitLines(text: string): string[] {
+  return (text.endsWith("\n") ? text.slice(0, -1) : text).split("\n");
 }
 
 function trimBash(resp: Record<string, unknown>, limits: Limits): Record<string, unknown> | undefined {
   const stdout = resp["stdout"];
   if (typeof stdout !== "string") return undefined;
-  const lines = stdout.split("\n");
+  const lines = splitLines(stdout);
   if (lines.length <= limits.bashThreshold) return undefined;
-  // The nonzero-exit guarantee always keeps the full 120-line tail, even in
-  // the halved (call 25+) regime -- only the head follows the halved limit.
-  const tail = bashExitedNonzero(resp) ? BASE_LIMITS.bashTail : limits.bashTail;
-  const head = limits.bashHead;
+  const { bashHead: head, bashTail: tail } = limits;
   const kept = lines.length - head - tail;
   if (kept <= 0) return undefined;
   return {
@@ -109,7 +103,7 @@ function trimRead(resp: Record<string, unknown>, limits: Limits): Record<string,
   const f = file as Record<string, unknown>;
   const content = f["content"];
   if (typeof content !== "string") return undefined;
-  const lines = content.split("\n");
+  const lines = splitLines(content);
   if (lines.length <= limits.readKeep) return undefined;
   return { ...resp, file: { ...f, content: lines.slice(0, limits.readKeep).join("\n"), numLines: limits.readKeep } };
 }

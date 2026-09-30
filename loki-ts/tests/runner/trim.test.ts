@@ -57,7 +57,7 @@ describe("trimToolOutput", () => {
     expect(trimToolOutput(input, 1)).toEqual({});
   });
 
-  it("from call 25 on, the limits halve: Bash keeps first 20 + last 60", () => {
+  it("from call 25 on, the limits halve: Bash keeps first 20 + last 120 (tail never halves)", () => {
     const out24 = trimToolOutput(bash(lines(250)), 24);
     const stdout24 = (out24.hookSpecificOutput?.updatedToolOutput as { stdout: string }).stdout.split("\n");
     expect(stdout24.slice(0, 40).length).toBe(40); // call 24: still base limits
@@ -65,7 +65,7 @@ describe("trimToolOutput", () => {
     const out25 = trimToolOutput(bash(lines(250)), 25);
     const stdout25 = (out25.hookSpecificOutput?.updatedToolOutput as { stdout: string }).stdout.split("\n");
     expect(stdout25.slice(0, 20)).toEqual(Array.from({ length: 20 }, (_, i) => `l${i}`));
-    expect(stdout25.slice(-60)).toEqual(Array.from({ length: 60 }, (_, i) => `l${190 + i}`));
+    expect(stdout25.slice(-120)).toEqual(Array.from({ length: 120 }, (_, i) => `l${130 + i}`));
   });
 
   it("from call 25 on, Read halves to 200 and Grep halves to 50", () => {
@@ -91,6 +91,23 @@ describe("trimToolOutput", () => {
     // head still halves (20), tail stays the full 120 regardless of call number.
     expect(stdout.slice(0, 20).length).toBe(20);
     expect(stdout.slice(-120)).toEqual(Array.from({ length: 120 }, (_, i) => `l${130 + i}`));
+  });
+
+  it("a failing command with EMPTY stderr (pytest, npm test) keeps the full 120-line tail at call 25", () => {
+    const out = trimToolOutput(bash(lines(300)), 25);
+    const got = (out.hookSpecificOutput?.updatedToolOutput as { stdout: string }).stdout.split("\n");
+    expect(got.slice(0, 20)).toEqual(Array.from({ length: 20 }, (_, i) => `l${i}`));
+    expect(got.slice(-120)).toEqual(Array.from({ length: 120 }, (_, i) => `l${180 + i}`));
+    expect(got.length).toBe(20 + 1 + 120);
+  });
+
+  it("stdout of exactly 200 lines ending in a newline passes through untrimmed; same for Read at 400", () => {
+    expect(trimToolOutput(bash(lines(200) + "\n"), 1)).toEqual({});
+    const read = {
+      tool_name: "Read",
+      tool_response: { type: "text", file: { filePath: "/x", content: lines(400) + "\n", numLines: 400, startLine: 1, totalLines: 400 } },
+    };
+    expect(trimToolOutput(read, 1)).toEqual({});
   });
 
   it("a tool this hook does not know about passes through unchanged", () => {
