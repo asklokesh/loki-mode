@@ -12,6 +12,8 @@ name: Tier A (fast feedback)
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: ["train/**"]
 
 permissions:
   contents: read
@@ -30,6 +32,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # D44 item 3: structural checks first (shard rows, home paths, test
+      # registration, doc drift, line budgets); each under 10s, fails fast.
+      - name: Structural checks
+        run: bash scripts/structural-checks.sh
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -65,7 +72,7 @@ jobs:
 
       - name: Select suites for this diff
         run: |
-          bash scripts/select-tests.sh --base "origin/${{ github.base_ref }}"
+          bash scripts/select-tests.sh --base "origin/${{ github.base_ref || 'main' }}"
 
       # R0 (broad-blast-radius or unrecognized-path diff) runs the full,
       # unsharded, serial tests/run-all-tests.sh suite here instead of the
@@ -76,4 +83,4 @@ jobs:
       # sized generously for this path (see the file header comment).
       - name: Run selected suites
         run: |
-          bash scripts/select-tests.sh --base "origin/${{ github.base_ref }}" --run
+          bash scripts/select-tests.sh --base "origin/${{ github.base_ref || 'main' }}" --run

@@ -117,6 +117,8 @@ class TheRequiredListCoversTheRealGates(unittest.TestCase):
 # real git repo (git show / git diff --raw against actual commits), which is
 # always available in CI and locally.
 # ---------------------------------------------------------------------------
+import json
+import shutil
 import subprocess
 import tempfile
 
@@ -424,24 +426,32 @@ def _required_ci_full_script():
 
 
 def _make_stub_bin(tmp_dir, fixtures):
-    """fixtures: {sha: [(name, status, conclusion), ...]}. The stub `gh`
-    ignores the real --jq filter and just prints the pre-filtered TSV rows
-    fetch_runs() expects (round 3 already covers the real jq event filter);
-    the stub `sleep` exits 99 immediately instead of actually sleeping."""
+    """fixtures: {sha: [(name, status, conclusion[, event[, created_at]]), ...]}.
+    The stub `gh` serves those runs as the real API JSON and applies the
+    script's REAL --jq filter with jq, so the event filter is exercised for
+    real (event defaults to push; created_at defaults to a fixed stamp, with
+    the row order as the tiebreak being irrelevant to the script). The stub
+    `sleep` exits 99 immediately instead of actually sleeping."""
     binp = pathlib.Path(tmp_dir, "bin")
     binp.mkdir()
     fixdir = pathlib.Path(tmp_dir, "fixtures")
     fixdir.mkdir()
     for sha, runs in fixtures.items():
-        rows = "\n".join(f"{n}\t{s}\t{c}" for n, s, c in runs)
-        (fixdir / f"{sha}.tsv").write_text(rows + ("\n" if rows else ""))
+        wr = []
+        for row in runs:
+            n, s, c = row[:3]
+            ev = row[3] if len(row) > 3 else "push"
+            ts = row[4] if len(row) > 4 else "2026-01-01T00:00:00Z"
+            wr.append({"name": n, "status": s, "conclusion": None if c == "null" else c,
+                       "event": ev, "created_at": ts})
+        (fixdir / f"{sha}.json").write_text(json.dumps({"workflow_runs": wr}))
     gh = binp / "gh"
     gh.write_text(
         "#!/bin/bash\n"
-        'url="$2"\n'
+        'url="$2"; filter="$4"\n'
         'sha="${url#*head_sha=}"; sha="${sha%%&*}"\n'
-        f'f="{fixdir}/$sha.tsv"\n'
-        '[ -f "$f" ] && cat "$f" || true\n'
+        f'f="{fixdir}/$sha.json"\n'
+        '[ -f "$f" ] && jq -r "$filter" "$f" || true\n'
     )
     gh.chmod(0o755)
     sleep = binp / "sleep"
@@ -450,8 +460,8 @@ def _make_stub_bin(tmp_dir, fixtures):
     return str(binp)
 
 
-@unittest.skipIf(subprocess.run(["bash", "--version"], capture_output=True).returncode != 0,
-                  "bash not available")
+@unittest.skipIf(subprocess.run(["bash", "--version"], capture_output=True).returncode != 0
+                  or shutil.which("jq") is None, "bash or jq not available")
 class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
     """Runs the ACTUAL required-ci script (STEP 1 + STEP 2 together), not a
     reimplementation and not has_conclusion() in isolation."""
@@ -538,6 +548,61 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
                        ("Security Audit", "completed", "success")],
         })
         self.assertEqual(rc, 0, out)
+
+    def _audit_fixture(self, audit_rows):
+        return {self.parent: [],
+                self.sha: [("Tests", "completed", "success"), ("Bun Parity", "completed", "success")] + audit_rows}
+
+    def test_e87_dispatch_security_audit_success_is_accepted(self):
+        rc, out = self._run(self._audit_fixture(
+            [("Security Audit", "completed", "success", "workflow_dispatch")]))
+        self.assertEqual(rc, 0, out)
+
+    def test_e87_dispatch_tests_success_is_not_accepted(self):
+        rc, out = self._run({self.parent: [], self.sha: [
+            ("Tests", "completed", "success", "workflow_dispatch"),
+            ("Bun Parity", "completed", "success"),
+            ("Security Audit", "completed", "success")]})
+        self.assertEqual(rc, 99, out)
+
+    def test_e87_dispatch_bun_parity_success_is_not_accepted(self):
+        rc, out = self._run({self.parent: [], self.sha: [
+            ("Tests", "completed", "success"),
+            ("Bun Parity", "completed", "success", "workflow_dispatch"),
+            ("Security Audit", "completed", "success")]})
+        self.assertEqual(rc, 99, out)
+
+    def test_e87_dispatch_security_audit_failure_is_rejected(self):
+        rc, out = self._run(self._audit_fixture(
+            [("Security Audit", "completed", "failure", "workflow_dispatch")]))
+        self.assertEqual(rc, 1, out)
+
+    def test_e87_dispatch_security_audit_cancelled_does_not_count(self):
+        rc, out = self._run(self._audit_fixture(
+            [("Security Audit", "completed", "cancelled", "workflow_dispatch")]))
+        self.assertEqual(rc, 99, out)
+
+    def test_e87_dispatch_security_audit_in_progress_does_not_count(self):
+        rc, out = self._run(self._audit_fixture(
+            [("Security Audit", "in_progress", "null", "workflow_dispatch")]))
+        self.assertEqual(rc, 99, out)
+
+    def test_e87_newer_failure_beats_older_success(self):
+        rc, out = self._run(self._audit_fixture([
+            ("Security Audit", "completed", "success", "push", "2026-01-01T00:00:00Z"),
+            ("Security Audit", "completed", "failure", "workflow_dispatch", "2026-01-01T00:05:00Z")]))
+        self.assertEqual(rc, 1, out)
+
+    def test_e87_newer_success_beats_older_failure(self):
+        rc, out = self._run(self._audit_fixture([
+            ("Security Audit", "completed", "failure", "push", "2026-01-01T00:00:00Z"),
+            ("Security Audit", "completed", "success", "workflow_dispatch", "2026-01-01T00:05:00Z")]))
+        self.assertEqual(rc, 0, out)
+
+    def test_e87_pull_request_security_audit_does_not_count(self):
+        rc, out = self._run(self._audit_fixture(
+            [("Security Audit", "completed", "success", "pull_request")]))
+        self.assertEqual(rc, 99, out)
 
 
 class OneEachOfTheRemainingRound3Checks(unittest.TestCase):

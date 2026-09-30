@@ -1494,3 +1494,32 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Nightly red since 2026-09-29 is E-134 (fsmonitor test control breaks on Bun 1.4.2; product calls still do not leak).
 - Usage governor: still uncalibrated, no founder reading on file after the reset; staffing at the operating-model floor of 8 until a reading arrives.
 - Order per hand-off: S41-01 (rebase, opus), then S41-17/S41-18, S41-20a/b/c toward 20 medium tasks, then the D43 medium eval. Rework in parallel: M-15, E-125, S41-05, S41-12; fixes E-134, E-135.
+
+## 2026-09-30T17:08Z (Chief of Staff)
+- Merged and pushed (53918a30): E-135 (smoke PyPI window 21 min, TL APPROVE), S41-19 (stage profile, TL APPROVE; implement 72 to 86 percent, Wall 23 to 29 percent with 90s timeouts in 9 to 11 of 21 runs), S41-11 (trim flag, TL r2 APPROVE, 37/0), E-133 (release map path guard, TL APPROVE, 9/0, reproduced the 10.5.4 incident as a refusal). CI watcher armed; 10.5.6 on green.
+- Rejected and in rework: S41-18 (identity keys untested), E-130 (cache copied into every worktree; publish race), M-15 r2 (no ablation; conformance forgeable via conftest; classifier diverges from wall.ts, now told to reuse it), S41-17 (green from noise below the D43 floor; fixed at 3a1077c0, awaiting opus r2), S41-12 r2 (4 rollback data-loss findings; fixed at d72ac106, awaiting opus r3), S41-05 r3 (fixed at 5aae1384, awaiting opus r4).
+- Opus share 34 to 41 percent against the D13 30 percent cap: HIGH reviews queued (S41-05, S41-12, S41-17, E-134, E-125) and released two at a time as running opus reviews finish. S41-01 (P0) opus review launched despite the cap.
+- Two reviewer temp dirs without an ownership marker remain (/private/tmp/loki-run.ztK3ctuo, /private/tmp/claude-501/loki-run.42ODTAwP); the cleanup helper refused both (rc 64) and they are left in place.
+
+## 2026-09-30T17:29Z (Chief of Staff)
+- Merged: E-130 (worktree install cache, TL r2 APPROVE, 15/0; .loki copy 2.32s to 0.04s with a 71 MB cache) and S41-18 (resume, TL r3 APPROVE, 17/0). Pushed cad4615f with two red-main fix-forwards: 7f1dff57 (E-133 shard-durations row missing) and 010797b3 (E-133 fixture tripped test-no-hardcoded-paths, the real cause of Tests red on 53918a30). Local fast tier: 96 PASS, 0 FAIL before the 10 min cap. CI watcher armed; 10.5.6 on green.
+- S41-01 opus r1 REJECT (a killed session's cost silently dropped, understating loki); fixed at 5c539ee5 (129/0, 0 of 77 preserved rows change), opus r2 in flight. S41-17 opus r2 REJECT (floor counted rows not evaluated reps); fixed at 37fc78d2 (63/0), opus r3 in flight. S41-05 opus r4 REJECT (template-literal dynamic import bypasses the fence); engineer switching to Bun scanImports.
+- Medium tier: S41-20a flask-6093 reworked (click-3449 dropped); 20b/20c self-check kept attrs-1327, packaging-1162, faker-2206 (added an anti-alias test), httpx-2536 and dropped humanize-103, marshmallow-2170, pluggy-442. Medium would be 12 of the 20 D43 needs. The INDEX.md edits on the three branches will conflict at merge.
+
+## 2026-09-30T18:06Z (Chief of Staff / Release Manager, D44 in force)
+- D44 recorded (25c61932). Tier B now runs on train/** pushes (test.yml, bun-parity.yml, coverage.yml). Release clock cron b33e6870 every 10 min releases only a main commit with green Tier B at that exact SHA.
+- v10.5.6 cut from 005f7617 (Tests, Bun Parity, Coverage green) as 97faf361; Release run in progress. Carries S41-01, S41-05, S41-11, S41-18, S41-19, E-129, E-130, E-133, E-135 and the four red-main fixes.
+- Red main count today: 4 (53918a30 hardcoded path, cad4615f ShellCheck, 9e815035 duplicate TS function, plus the earlier drift row). Each was a structural check only CI ran; D44-C moves them into Tier A and pre-merge. Memory feedback-run-the-exact-gate-locally updated with the exact pre-push commands.
+- train/2 pushed at 2e22fde8 (v10.5.6 plus E-136, D44 triggers, E-126, E-128/E-131); Tier B running; main fast-forwards to it only when green, then the clock cuts 10.5.7. Local main has E-127 queued for train/3.
+- Builders (8): D44-A (promote script and pre-push), D44-C (structural checks), E-137 (orphan leak), S41-20d, S41-20e (medium tasks), plus reworks. D44-B done, TL review in flight (flag: its gh lookup is branch-scoped to main, which misses train runs).
+- Reviews: opus on E-125 r2, E-134, S41-12 r3; S41-17 r5 narrow re-check; opus share 28 percent.
+- Governor: docs/v10/usage-readings.tsv holds only its header; no calibration reading exists, so staffing stays at the operating-model floor of 8.
+
+## 2026-09-30T18:40Z (Chief of Staff and Release Manager)
+- train/3 (b984d18f) green on Tests, Bun Parity and Coverage (baseline) push runs at 18:29Z; main fast-forwarded 97faf361..b984d18f; v10.5.7 released at 5a00409f (VERSION-only bump on the green parent). Watcher armed for the Release run, npm latest and gitHead, and the release body.
+- train/3 was blocked locally first by `tests/run-shellcheck.sh` rc=1 (SC2046 in eval/loki10/test-scorecard.sh:430-431); fixed with a scoped directive, rerun rc=0 before the push.
+- train/4 staging on local main: E-137, D44-C (15c2a870), S41-20a (flask-6093), E-140 (no TMPDIR glob sweeps), E-87 (dispatch Security Audit accepted by required-ci), S41-20e (pendulum-768, isort-2646). Local gate: shellcheck rc=0, structural-checks all passed, test-structural-checks 5/5, harness 130/0, scorecard 67/0, required-ci pytest 37 passed.
+- Medium tier: 10 on local main. Rejected with reproduced one-file fixes: attrs-1327, httpx-2536, pyjwt-1147, isort-1913; S41-20b-r2 (faker-2206 fixed, packaging-1162 borderline) and S41-20d in review; S41-20f and S41-20g building 4 each with a mandatory self-written one-file-fix probe.
+- Opus reviews (share 22.6 percent at dispatch): D44-A r2, E-125 r4 (absorbs E-132), M-15 r3. E-138 held for opus capacity.
+- Sonnet: reviews of S41-20d, S41-20b-r2, E-115 plus E-142, S41-10; builders EV-12E, S41-20f, S41-20g, E-143.
+- Founder: a reviewer's failed cd left an empty pip-only venv at the repo-root .venv (gitignored); v10-guard RULE4 blocks its removal from a session. Remove with `rm -rf .venv` when convenient.
