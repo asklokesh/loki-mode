@@ -9,6 +9,7 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import type { RunContext, RunnerName, Stage, StageResult, TestMap, TestRef } from "../types.ts";
 import { taskBlock } from "../types.ts";
 import type { ReadOnlyFile } from "./implement.ts";
+import { RUNNER_HINT } from "../../e10ext/wall_hints.ts";
 import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallModel } from "../sizing.ts";
 import { sha256 } from "./seal.ts";
 import { runnerCmd } from "./verify.ts";
@@ -51,7 +52,7 @@ function pytestExit1IsRed(output: string): boolean {
 function parsedFailCount(runner: RunnerName, output: string): number {
   const m = runner === "bun" ? /^\s*(\d+)\s+fail\s*$/m.exec(output)
     : runner === "jest" ? /Tests:\s*(\d+)\s+failed/i.exec(output)
-    : runner === "vitest" ? /Tests\s+(\d+)\s+failed/i.exec(output) : null;
+    : runner === "vitest" ? /Tests\s+(\d+)\s+failed/i.exec(output) : runner === "node" && !/ReferenceError|SyntaxError|MODULE_NOT_FOUND|Cannot find module/.test(output) ? /^(?:#|ℹ) fail (\d+)/m.exec(output) : null; // node: a launch/import/wrong-globals error is not a red
   return m ? Number(m[1]) : 0;
 }
 // D42 (3) exit classification. B4 (r2): any "system"-interpreter result is not_run, same as verify (E-98a).
@@ -60,7 +61,7 @@ export function classify(f: TestRef, status: number | null, output: string, repo
   if (interpreter === "system") return "not_run";
   if (status === null || status === 126 || status === 127) return "not_run"; if (status === 0) return "pass";
   if (f.runner === "pytest") return status === 1 ? (pytestExit1IsRed(output) ? "fail" : "not_run") : status === 2 ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "not_run";
-  if (f.runner === "jest" || f.runner === "vitest" || f.runner === "bun") return parsedFailCount(f.runner, output) > 0 ? "fail" : "not_run";
+  if (f.runner === "jest" || f.runner === "vitest" || f.runner === "bun" || f.runner === "node") return parsedFailCount(f.runner, output) > 0 ? "fail" : "not_run";
   return "not_run"; // npm/go/cargo: coarse (B2), never a per-file red
 }
 // One process per file, through verify's own interpreter resolution (E-98a) so a missing `python` is never
@@ -83,14 +84,14 @@ export interface WallOptions { baseRunner?: BaseTestRunner; }
 /** E-45: the Wall repo map is paths only, capped, so the (sonnet) brief stays short. */
 export const WALL_MAP_MAX_LINES = 200;
 
-export function buildWallBrief(task: string, repomapText = ""): string {
+export function buildWallBrief(task: string, repomapText = "", runners: RunnerName[] = []): string {
   return [
     "You are the Loki 10 Wall author.",
     "You cannot see the repository. This directory holds only task.md and repomap.txt.",
     ...(repomapText ? [`Repository paths (repomap.txt):\n${repomapText}`] : []),
     ...taskBlock(task),
-    "Write behavioral acceptance tests that prove the task is done, in the test",
-    "framework named in repomap.txt.",
+    "Write behavioral acceptance tests that prove the task is done. A test that errors on import, uses another framework's globals, or fails for a reason unrelated to the task is discarded.",
+    `Test runner: ${runners.map((r) => RUNNER_HINT[r]).find(Boolean) ?? "the framework named in repomap.txt"}`,
     `Name every file you write starting with "${WALL_PREFIX}". Write nothing else.`,
   ].join("\n\n");
 }
@@ -118,10 +119,7 @@ function wallTargetDir(repoDir: string, existingTests: TestRef[]): string {
 function guessRunner(fileName: string, runners: RunnerName[]): RunnerName | null {
   if (fileName.endsWith(".py")) return "pytest";
   if (fileName.endsWith(".go")) return "go";
-  for (const r of ["vitest", "jest", "bun"] as const) {
-    if (runners.includes(r)) return r;
-  }
-  return null;
+  return (["vitest", "jest", "bun", "node"] as const).find((r) => runners.includes(r)) ?? null;
 }
 
 export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOptions = {}): Promise<StageResult> {
@@ -153,7 +151,7 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
 
   const session = await ctx.sessions.run({
     stage: "wall",
-    brief: buildWallBrief(task, repomapText),
+    brief: buildWallBrief(task, repomapText, runners),
     // E-45: pinned cheaper model; development tier because the planning tier yields to the LOKI_SESSION_MODEL=opus pin.
     tier: "development",
     model: wallModel(),
@@ -184,11 +182,13 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
     if (runner) wallTests.push({ runner, path: relative(ctx.repoDir, dest) });
   }
   rmSync(cwd, { recursive: true, force: true });
-
   ctx.emit("wall.sealed", "wall", { files: sealedFiles });
-
   const baseRunner = opts.baseRunner ?? new RealBaseTestRunner();
-  const baseRun = wallTests.length > 0 ? baseRunner.run(ctx.repoDir, wallTests) : { pass: 0, fail: 0, not_run: 0 };
+  const baseRun = { pass: 0, fail: 0, not_run: 0 }; // A-103: one file at a time; a file with no real result (not_run) proves nothing, so it leaves the tree and Implement's read-only set. Its sealed copy stays under runDir/wall; base_run.not_run lets Seal list it.
+  for (const t of wallTests) {
+    const r = baseRunner.run(ctx.repoDir, [t]), abs = join(ctx.repoDir, t.path); baseRun.pass += r.pass; baseRun.fail += r.fail; baseRun.not_run += r.not_run ?? 0;
+    if (r.pass + r.fail === 0) { rmSync(abs, { force: true }); for (const l of [sealedFiles, readOnlyFiles] as { path: string }[][]) l.splice(0, l.length, ...l.filter((f) => f.path !== abs)); }
+  }
   // Gate on generated.length, not wallTests.length: an unselectable (guessRunner() null) file is sealed but never run, and must never be silently missing from the already_satisfied count.
   const unselectable = generated.length - wallTests.length;
   // D42 (3): not_run refuses the seal too -- never short-circuit on a base run that never proved anything.
