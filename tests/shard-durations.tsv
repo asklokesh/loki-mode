@@ -683,3 +683,5 @@ v10 ops (E-142)	70
 first-run gate assertion logic (A-02)	12
 release publishes to npm next; promote.yml gates latest on the first-run gate (A-01)	3
 loki-seal Stop hook (A-04)	20
+Quick-fix artifacts (A-132)	60
+Council trivial-diff probe skip (A-133)	10

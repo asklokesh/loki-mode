@@ -43,7 +43,7 @@ gate_boot() {
         echo "base" > f.txt; git add -A; git commit -qm init
         # non-empty diff vs run-start SHA (satisfies the diff axis)
         _LOKI_RUN_START_SHA="$(git rev-parse HEAD)"
-        echo "changed" >> f.txt; git add -A
+        seq 1 25 >> f.txt; git add -A  # A-133: >20 lines so the probes run
         mkdir -p .loki/quality .loki/app-runner .loki/council
         # green test results (satisfies the test axis affirmatively)
         printf '%s\n' '{"runner":"vitest","pass":true,"status":"passed","passed_count":1,"failed_count":0}' > .loki/quality/test-results.json
@@ -87,7 +87,7 @@ BR="$(
     git init -q; git config user.email t@t; git config user.name t; git config commit.gpgsign false
     echo "base" > f.txt; git add -A; git commit -qm init
     _LOKI_RUN_START_SHA="$(git rev-parse HEAD)"
-    echo "changed" >> f.txt; git add -A
+    seq 1 25 >> f.txt; git add -A  # A-133: >20 lines so the probes run
     mkdir -p .loki/quality .loki/app-runner .loki/council
     printf '%s\n' '{"runner":"vitest","pass":true,"status":"passed","passed_count":1,"failed_count":0}' > .loki/quality/test-results.json
     printf '%s\n' "$SERVEABLE_UNHEALTHY_STATE" > .loki/app-runner/state.json
