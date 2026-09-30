@@ -13,6 +13,20 @@ export interface ContextDeps {
   cmd: (t: TestRef, repoDir: string) => [string, string[], unknown?];
 }
 
+// S41-10b: the implement/fix brief's leading block. A plain constant, no task text or interpolation, so
+// every brief starts with the same bytes (cache-stable prefix). Per-task context is appended after it.
+export const FIXED_RULES = [
+  "You are the Loki 10 implement stage.",
+  "Rules:",
+  "- The Wall tests are read-only: do not edit or delete them. Existing test files are append-only: you may add new test functions, but never edit or delete an existing one.",
+  "- Run only the impacted tests named below.",
+  "- Never run the full test suite, an E2E suite, or a long-lived server.",
+  "- Never kill processes.",
+  "- Write no documentation unless the task explicitly asks for it.",
+  "- Do not commit or push.",
+  "Finish with exactly one line: LOKI_DONE, or LOKI_ALREADY_DONE: <file:line evidence>, or LOKI_SPEC_CONFLICT: <reason>.",
+].join("\n");
+
 const MAX_FILES = 20;
 const MAX_TESTS = 10;
 
@@ -24,7 +38,7 @@ export function briefContext(ctx: RunContext, d: ContextDeps): string {
   const task = (o.intake?.task as string | undefined) ?? "";
   const map = (tree ? readRepoMapCache(repoCacheDir(repoKey(null, ctx.repoDir)), tree) : null) ?? loadRepoMap(o.intake?.repomap_ref as string | undefined);
   const planned = o.plan?.relevant_files as string[] | undefined;
-  const safe = (planned ?? []).filter((f) => !f.startsWith("/") && !f.split("/").includes(".."));
+  const safe = (planned ?? []).filter((f) => !/^([/~]|[A-Za-z]:[\\/])/.test(f) && !f.split(/[\\/]/).includes(".."));
   let files = safe.length ? safe : map ? d.select(task, map, MAX_FILES) : [];
   if (!files.length && map) files = map.files.slice(0, MAX_FILES); // no plan and no keyword match: head of the map, same 20 cap
   files = files.slice(0, MAX_FILES);

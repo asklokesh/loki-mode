@@ -3,7 +3,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { briefContext } from "../../src/e10ext/context.ts";
+import { FIXED_RULES, briefContext } from "../../src/e10ext/context.ts";
 import { selectRelevantFiles } from "../../src/engine10/stages/plan.ts";
 import { runnerCmd } from "../../src/engine10/stages/verify.ts";
 import { buildImplementBrief } from "../../src/engine10/stages/implement.ts";
@@ -75,5 +75,24 @@ describe("briefContext", () => {
     const bad: TestRef[] = [{ runner: "pytest", path: "tests/my test;rm.py" }];
     const c2 = { ...ctx, tests: { impacted: () => bad } } as unknown as RunContext;
     expect(briefContext(c2, deps)).toContain("-q 'tests/my test;rm.py'");
+  });
+});
+
+describe("S41-10b static-first brief", () => {
+  const a = buildImplementBrief("add foo to src/a.ts", "plan A text", ["tests/a.test.ts"], "Relevant files:\nsrc/a.ts");
+  const b = buildImplementBrief("rename bar in lib/b.py", "plan B text", ["tests/b.py"], "Relevant files:\nlib/b.py");
+  test("leading fixed block is byte-identical and free of task text", () => {
+    expect(FIXED_RULES.length).toBeGreaterThan(200);
+    expect(a.startsWith(FIXED_RULES)).toBe(true);
+    expect(b.startsWith(FIXED_RULES)).toBe(true);
+    for (const v of ["foo", "bar", "plan A", "plan B", "src/a.ts", "lib/b.py", "tests/"]) expect(FIXED_RULES).not.toContain(v);
+  });
+  test("plan paths with drive letters, ~ and backslash traversal are dropped", () => {
+    const ctx = fixture(5);
+    const bad = ["C:\\x\\y.py", "C:/x/y.py", "d:/z.py", "~/secret", "~root/x", "/abs.py", "..\\up.py", "ok/file.py"];
+    const c2 = { ...ctx, outputs: () => ({ ...ctx.outputs(), plan: { relevant_files: bad } }) } as RunContext;
+    const text = briefContext(c2, deps);
+    expect(text).toContain("ok/file.py");
+    for (const f of bad.slice(0, -1)) expect(text).not.toContain(f);
   });
 });

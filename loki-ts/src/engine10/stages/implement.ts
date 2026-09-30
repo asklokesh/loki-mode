@@ -1,7 +1,7 @@
 // E-08: Implement (ENGINE.md 4, 16). One session; the brief marks Wall tests read-only, names only the impacted tests. Afterwards any changed read-only file is restored (tests_reverted) and the exit is classified.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { briefContext } from "../../e10ext/context.ts";
+import { FIXED_RULES, briefContext } from "../../e10ext/context.ts";
 import { cascadeEnabled, cascadeImplementModel, loadRepoMap, namedFiles } from "../sizing.ts";
 import { selectRelevantFiles } from "./plan.ts"; import { runnerCmd } from "./verify.ts";
 import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
@@ -26,20 +26,13 @@ export function impactedTests(ctx: RunContext): string[] {
 
 export const briefCtx = (ctx: RunContext): string => briefContext(ctx, { select: selectRelevantFiles, cmd: runnerCmd });
 export function buildImplementBrief(task: string, plan: string | null, impactedTests: string[], repoMap = ""): string {
+  // S41-10b: FIXED_RULES leads (byte-identical for every task and run); everything per-task follows it.
   return [
-    "You are the Loki 10 implement stage.",
+    FIXED_RULES,
     ...taskBlock(task),
     plan ? `Follow this plan:\n${plan}` : "No separate plan was made: plan the change yourself in this session, then implement it.",
     ...(repoMap ? [repoMap] : []),
-    "Rules:",
-    "- The Wall tests are read-only: do not edit or delete them. Existing test files are append-only: you may add new test functions, but never edit or delete an existing one.",
-    `- Run only these impacted tests: ${impactedTests.length ? impactedTests.join(", ") : "(none known)"}.`,
-    "- Never run the full test suite, an E2E suite, or a long-lived server.",
-    "- Never kill processes.",
-    "- Write no documentation unless the task explicitly asks for it.",
-    "- Do not commit or push.",
-    "Finish with exactly one line: LOKI_DONE, or LOKI_ALREADY_DONE: <file:line evidence>, " +
-      "or LOKI_SPEC_CONFLICT: <reason>.",
+    `Impacted tests to run: ${impactedTests.length ? impactedTests.join(", ") : "(none known)"}.`,
   ].join("\n\n");
 }
 
