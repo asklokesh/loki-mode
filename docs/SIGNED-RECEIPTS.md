@@ -159,7 +159,7 @@ receives it, and that asymmetry is enforced by the chart rather than left to
 convention: a worker runs model-directed code, so a key there would let a build
 sign its own receipt.
 
-Left unset, the receiver serves receipts unsigned and `/.well-known/jwks.json`
+Left unset, the receiver never auto-generates a key (a container-layer key would be lost on `docker compose down/up`, orphaning old receipts). It serves receipts unsigned and `/.well-known/jwks.json`
 returns an empty key set -- honest, but a `--remote` submitter then has no way
 to prove who produced their receipt without an out-of-band key import.
 
@@ -182,7 +182,7 @@ mount) on the `receiver` service. Never commit that key file.
 
 | Variable | Effect |
 |---|---|
-| `LOKI_RECEIPT_SIGNING_KEY_FILE` | PEM path to the Ed25519 private key (normal Kubernetes mounted-secret path). Default: `~/.loki/keys/receipt-ed25519.pem`, generated on first use (PKCS8, mode 0600, created atomically so concurrent first runs share one key). The private key is never printed, logged, or written to a receipt. Never commit it. |
+| `LOKI_RECEIPT_SIGNING_KEY_FILE` | PEM path to the Ed25519 private key (normal Kubernetes mounted-secret path). Default for local runs only: `~/.loki/keys/receipt-ed25519.pem`, a machine-local key generated on first use (a signature proves this machine signed the receipt) (PKCS8, mode 0600, created atomically so concurrent first runs share one key). The private key is never printed, logged, or written to a receipt. Never commit it. |
 | `LOKI_RECEIPT_SIGNING_KEY` | The PEM inline, for non-Kubernetes deployments. |
 | `LOKI_RECEIPT_RETIRED_PUBKEYS` | Colon-separated PEM paths for retired public keys. |
 

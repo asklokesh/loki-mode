@@ -114,13 +114,14 @@ def _load_private_key(pem_bytes: bytes):
     return key
 
 
-def load_signing_key():
+def load_signing_key(auto_generate=True):
     """Return (private_key, kid) from env or a mounted file, or (None, "").
 
     Precedence: LOKI_RECEIPT_SIGNING_KEY (inline PEM), then
     LOKI_RECEIPT_SIGNING_KEY_FILE, then ~/.loki/keys/receipt-ed25519.pem. A
     missing key FILE is generated (PKCS8, 0600, O_EXCL) so a first run signs
-    without setup. The private key is never logged or printed.
+    without setup unless auto_generate=False (the server path: an ephemeral
+    container key would orphan old receipts). The private key is never logged or printed.
     """
     if not _CRYPTO_AVAILABLE:
         return None, ""
@@ -133,8 +134,12 @@ def load_signing_key():
         try:
             try:
                 data = Path(key_file).read_bytes()
+                _tighten(key_file)
             except FileNotFoundError:
+                if not auto_generate:
+                    return None, ""
                 data = _create_key_file(key_file)
+                logging.info("receipt signing: auto-generated local key at %s", key_file)
             key = _load_private_key(data)
         except OSError as e:
             logging.error("receipt signing: cannot use key file %s: %s", key_file, e)
@@ -144,6 +149,15 @@ def load_signing_key():
     return key, compute_kid(key.public_key())
 
 
+def _tighten(path: str) -> None:
+    """Drop group/other access on an existing key file and its directory."""
+    if os.stat(path).st_mode & 0o077:
+        os.chmod(path, 0o600)
+    d = os.path.dirname(path)
+    if d and os.stat(d).st_mode & 0o077 and os.path.basename(d) == "keys":
+        os.chmod(d, 0o700)
+
+
 def _create_key_file(path: str) -> bytes:
     """Create the key 0600, published atomically via link(); a concurrent first run reads the winner's file."""
     pem = Ed25519PrivateKey.generate().private_bytes(
@@ -151,7 +165,10 @@ def _create_key_file(path: str) -> bytes:
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
     )
-    os.makedirs(os.path.dirname(path) or ".", mode=0o700, exist_ok=True)
+    d = os.path.dirname(path) or "."
+    if d.endswith(os.path.join(".loki", "keys")):
+        os.makedirs(os.path.dirname(d), mode=0o700, exist_ok=True)
+    os.makedirs(d, mode=0o700, exist_ok=True)
     tmp = "%s.%d.tmp" % (path, os.getpid())
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:

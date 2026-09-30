@@ -128,11 +128,11 @@ describe("checkPreflight", () => {
     expect(r.fatal).toBe("gh (GitHub CLI) is missing or not authenticated; run gh auth login, or pass --no-pr");
   });
 
-  test("no signing key env is not a warning: a key is auto-generated", async () => {
+  test("no signing key env still warns UNSIGNED until A-121 makes seal.ts sign by default", async () => {
     const { dir, env } = identifiedRepo();
     const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: { ...env, LOKI_CLAUDE_CLI: stubCli() }, findPython: async () => "python3" });
     expect(r.fatal).toBeNull();
-    expect(r.warnings.some((w) => w.includes("no signing key"))).toBe(false);
+    expect(r.warnings.some((w) => w.includes("UNSIGNED") && w.includes("no signing key"))).toBe(true);
   });
 
   test("no importable cryptography warns UNSIGNED, not fatal", async () => {
