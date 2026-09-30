@@ -46,6 +46,9 @@ function tmp(prefix: string): string {
 // unitClassesFromGraph: real M-04 (buildJavaGraph) integration, no stubs needed -- it is a
 // pure read of the same fixture files java_graph.test.ts already uses.
 // --------------------------------------------------------------------------------------------
+// buildJavaGraph spawns real javac + jdeps: 0.25s locally (5 runs, also under 3 busy loops), but
+// 5169ms on loaded CI (E-149, run 36764748814) vs bun's 5000ms default. 20s = ~3x the CI worst.
+const JAVAC_JDEPS_TIMEOUT_MS = 20_000;
 describe("unitClassesFromGraph (M-04 integration)", () => {
   it("derives fully-qualified class names from the merged M-04 graph's nodes", () => {
     const classes = unitClassesFromGraph(FIX, FILES);
@@ -56,12 +59,12 @@ describe("unitClassesFromGraph (M-04 integration)", () => {
       "com.example.util.Helper",
       "com.example.util.Standalone",
     ]);
-  });
+  }, JAVAC_JDEPS_TIMEOUT_MS);
 
   it("drops a non-.java entry the same way buildJavaGraph does", () => {
     const classes = unitClassesFromGraph(FIX, [...FILES, "README.md"]);
     expect(classes).toHaveLength(5);
-  });
+  }, JAVAC_JDEPS_TIMEOUT_MS);
 });
 
 // --------------------------------------------------------------------------------------------
