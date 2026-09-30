@@ -26,7 +26,7 @@ side, else inconclusive. The tier verdict is green only if all three
 columns are green; any red column makes it red (a null cost row outranks
 inconclusive, D43 item 1), else any inconclusive column makes it
 inconclusive. D43 item 2 floor: a tier with fewer than 20 tasks, or any
-task with fewer than 3 reps per arm, reads inconclusive on every mark
+task with fewer than 3 evaluated reps on either arm, reads inconclusive on every mark
 (--min-tasks/--min-reps override, for tests only). A tier is marked only
 when the task sets, n per task and harness_sha all match between the two
 labels; any mismatch refuses the whole run (exit 2), nothing is printed.
@@ -50,7 +50,7 @@ TASKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tasks")
 
 # D43/S41-17: fixed seed and resample count so the report is byte-identical
 # across runs on the same inputs.
-BOOTSTRAP_N = 10000  # --resamples overrides (tests only)
+DEFAULT_BOOTSTRAP_N = BOOTSTRAP_N = 10000  # --resamples overrides (tests only)
 DEFAULT_MIN_TASKS, DEFAULT_MIN_REPS = 20, 3
 BOOTSTRAP_SEED = 41
 CI_LO, CI_HI = 2.5, 97.5
@@ -301,19 +301,20 @@ def _guard_undefined(mark, reason, replicates):
 
 def floor_reason(raw_rows, loki_rows):
     """D43 item 2: None when the tier meets the sample floor, else the reason.
-    Counts EVALUATED reps (harness.is_evaluated), not rows: a task counts
-    only when BOTH arms have MIN_REPS evaluated reps."""
+    Counts EVALUATED reps (harness.is_evaluated), not rows: EVERY
+    task must have MIN_REPS evaluated reps on BOTH arms; none is dropped."""
     def evaluated(rows):
         c = collections.Counter({r["task"]: 0 for r in rows})
         c.update(r["task"] for r in rows if is_evaluated(r))
         return c
     e_raw, e_loki = evaluated(raw_rows), evaluated(loki_rows)
-    if len(e_raw) < MIN_TASKS:
-        return "below D43 floor: %d tasks, need %d" % (len(e_raw), MIN_TASKS)
-    ok = sum(1 for t in e_raw if min(e_raw[t], e_loki[t]) >= MIN_REPS)
-    if ok < MIN_TASKS:
-        return "below D43 floor: %d tasks with %d evaluated reps on both arms, need %d" % (
-            ok, MIN_REPS, MIN_TASKS)
+    tasks = set(e_raw) | set(e_loki)
+    if len(tasks) < MIN_TASKS:
+        return "below D43 floor: %d tasks, need %d" % (len(tasks), MIN_TASKS)
+    short = sum(1 for t in tasks if min(e_raw[t], e_loki[t]) < MIN_REPS)
+    if short:
+        return "below D43 floor: %d of %d tasks below %d evaluated reps on both arms" % (
+            short, len(tasks), MIN_REPS)
     return None
 
 
@@ -453,12 +454,12 @@ def render_pair(tier, raw_label, raw_s, loki_label, loki_s, cis, marks, reasons,
             fmt_s_diff_ci(cis["p50_diff"]), marks["p50"], reasons["p50"]),
         "",
         "Verdict: %s. n: %s=%d, %s=%d. Pair: %s vs %s. Partial-stream share: %s=%s, %s=%s. "
-        "Harness sha: %s=%s, %s=%s. Bootstrap: N=%d, seed=%d, clustered by task. %sDate: %s. Command: `%s`" % (
+        "Harness sha: %s=%s, %s=%s. Bootstrap: N=%d%s, seed=%d, clustered by task. %sDate: %s. Command: `%s`" % (
             verdict, raw_label, raw_s["n"], loki_label, loki_s["n"],
             ", ".join(raw_s["arm_model"]) or "none", ", ".join(loki_s["arm_model"]) or "none",
             raw_label, fmt_share(raw_s), loki_label, fmt_share(loki_s),
             raw_label, ", ".join(raw_s["harness_sha"]), loki_label, ", ".join(loki_s["harness_sha"]),
-            BOOTSTRAP_N, BOOTSTRAP_SEED, floor_note, date, command),
+            BOOTSTRAP_N, " (non-default)" if BOOTSTRAP_N != DEFAULT_BOOTSTRAP_N else "", BOOTSTRAP_SEED, floor_note, date, command),
     ])
 
 

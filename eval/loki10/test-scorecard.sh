@@ -96,6 +96,7 @@ TASKS = [
     "qs-rest-api-auth", "qs-simple-todo-app", "qs-static-landing-page", "qs-web-scraper",
 ]
 FLOOR_TASKS = TASKS[:20]   # exactly the D43 floor: 20 tasks
+EXTRA_TASKS = TASKS[20:25]   # real small-tier ids beyond the floor
 TASKS = FLOOR_TASKS
 
 # ---- tier medium: pub-werkzeug-3105, pub-attrs-1313, pub-faker-1817, 3
@@ -192,6 +193,19 @@ write_reps("evz", 3, lambda i, t, r: gap_raw(i, t, r) if i >= 5 else bad(gap_raw
 # F2: loki completes nothing (cost captured on every evaluated row): zero
 # completions, not a missing cost capture.
 write_reps("zc", 3, gap_raw, lambda i, t, r: row(t, "v10", "sha-ev", False, None, 0.05, rep=r))
+# F1b: 20 equal core tasks (2/3 complete each) plus 5 extra tasks where loki
+# is auth_unavailable on every rep and raw evaluates but completes none.
+ALL25 = FLOOR_TASKS + EXTRA_TASKS
+def core_ok(t, arm, rep): return row(t, arm, "sha-ev", rep <= 2, 100, 0.10, rep=rep)
+for rep in (1, 2, 3):
+    for arm, mk in (("raw", lambda t: core_ok(t, "raw-claude", rep)),
+                    ("loki", lambda t: core_ok(t, "v10", rep))):
+        rows = [mk(t) for t in FLOOR_TASKS]
+        for t in ALL25[20:]:
+            rows.append(row(t, "raw-claude", "sha-ev", False, None, 0.10, rep=rep) if arm == "raw"
+                        else bad(row(t, "v10", "sha-ev", True, 100, 0.10, rep=rep), "auth_unavailable"))
+        with open(T + "/f1b-%s-r%d.jsonl" % (arm, rep), "w") as f:
+            f.write("\n".join(json.dumps(r) for r in rows) + "\n")
 
 # ---- (b) clear gap at the floor: 20 tasks x 3 reps. loki completes 20/20 on
 # every rep; raw completes a fixed 8/20 on every rep. Cost and time favor loki.
@@ -357,15 +371,24 @@ for spec in "evl:loki 1 ok + 2 auth_unavailable" "evr:raw-side mirror" "evi:inte
     rc=0; run $(reps "$p" 3) || rc=$?
     [ "$rc" = 0 ] && [ "$(marks "$T/out.log")" = "inconclusive inconclusive inconclusive" ] \
         && grep -qE '^Verdict: inconclusive\.' "$T/out.log" \
-        && grep -qF 'below D43 floor: 0 tasks with 3 evaluated reps on both arms, need 20' "$T/out.log" \
+        && grep -qF 'below D43 floor: 20 of 20 tasks below 3 evaluated reps on both arms' "$T/out.log" \
         && pass "evaluated floor ($d): inconclusive with shortfall reason" \
         || fail "evaluated floor ($d): rc=$rc marks=$(marks "$T/out.log")"
 done
 rc=0; run $(reps evz 3) || rc=$?
 [ "$rc" = 0 ] && [ "$(marks "$T/out.log")" = "inconclusive inconclusive inconclusive" ] \
-    && grep -qF 'below D43 floor: 15 tasks with 3 evaluated reps on both arms, need 20' "$T/out.log" \
+    && grep -qF 'below D43 floor: 5 of 20 tasks below 3 evaluated reps on both arms' "$T/out.log" \
     && pass "evaluated floor: 5 of 20 tasks with no evaluated rows is inconclusive (15 of 20)" \
     || fail "evaluated floor (5 dead tasks): rc=$rc marks=$(marks "$T/out.log")"
+
+# ---- j2: F1b, tasks below the bar are not silently dropped.
+rc=0; run $(reps f1b 3) --resamples 400 || rc=$?
+[ "$rc" = 0 ] && [ "$(marks "$T/out.log")" = "inconclusive inconclusive inconclusive" ] \
+    && grep -qF 'below D43 floor: 5 of 25 tasks below 3 evaluated reps on both arms' "$T/out.log" \
+    && pass "F1b: 5 of 25 tasks below the evaluated-rep bar is inconclusive" \
+    || fail "F1b: rc=$rc marks=$(marks "$T/out.log")"
+grep -E '^Verdict:' "$T/out.log" | grep -qF 'N=400 (non-default)' \
+    && pass "non-default N printed" || fail "non-default N not printed"
 
 # ---- k: F2 zero completions is not a missing cost capture.
 rc=0; run $(reps zc 3) --resamples 400 || rc=$?
@@ -459,7 +482,7 @@ grep -qF 'below D43 floor: 19 tasks, need 20' "$T/out.log" && pass "19 tasks: re
 rc=0; run $(reps r2 2) || rc=$?
 [ "$(marks "$T/out.log")" = "inconclusive inconclusive inconclusive" ] \
     && pass "2 reps: clear gap still inconclusive below the rep floor" || fail "2 reps: marks: $(marks "$T/out.log")"
-grep -qF 'below D43 floor: 0 tasks with 3 evaluated reps on both arms, need 20' "$T/out.log" && pass "2 reps: reason" || fail "2 reps: reason missing"
+grep -qF 'below D43 floor: 20 of 20 tasks below 3 evaluated reps on both arms' "$T/out.log" && pass "2 reps: reason" || fail "2 reps: reason missing"
 
 # ---- i: the overrides are accepted and validated (tests only).
 rc=0; run $(reps one 3) --min-tasks 1 --min-reps 3 || rc=$?
