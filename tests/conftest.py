@@ -39,10 +39,13 @@ os.environ.setdefault("LOKI_NO_BROWSER", "1")
 # Tests of the default-key path set HOME / the variable explicitly.
 import tempfile  # noqa: E402
 
-os.environ.setdefault(
-    "LOKI_RECEIPT_SIGNING_KEY_FILE",
-    os.path.join(tempfile.mkdtemp(prefix="loki-test-key-"), "receipt-ed25519.pem"),
-)
+if "LOKI_RECEIPT_SIGNING_KEY_FILE" not in os.environ:
+    import atexit  # noqa: E402
+    import shutil  # noqa: E402
+
+    _key_dir = tempfile.mkdtemp(prefix="loki-test-key-")
+    atexit.register(shutil.rmtree, _key_dir, True)
+    os.environ["LOKI_RECEIPT_SIGNING_KEY_FILE"] = os.path.join(_key_dir, "receipt-ed25519.pem")
 
 # Every variable through which git can redirect a subprocess at a different
 # repository, index, object store, or worktree.
