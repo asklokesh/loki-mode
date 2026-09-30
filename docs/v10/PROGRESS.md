@@ -1494,3 +1494,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Nightly red since 2026-09-29 is E-134 (fsmonitor test control breaks on Bun 1.4.2; product calls still do not leak).
 - Usage governor: still uncalibrated, no founder reading on file after the reset; staffing at the operating-model floor of 8 until a reading arrives.
 - Order per hand-off: S41-01 (rebase, opus), then S41-17/S41-18, S41-20a/b/c toward 20 medium tasks, then the D43 medium eval. Rework in parallel: M-15, E-125, S41-05, S41-12; fixes E-134, E-135.
+
+## 2026-09-30T17:08Z (Chief of Staff)
+- Merged and pushed (53918a30): E-135 (smoke PyPI window 21 min, TL APPROVE), S41-19 (stage profile, TL APPROVE; implement 72 to 86 percent, Wall 23 to 29 percent with 90s timeouts in 9 to 11 of 21 runs), S41-11 (trim flag, TL r2 APPROVE, 37/0), E-133 (release map path guard, TL APPROVE, 9/0, reproduced the 10.5.4 incident as a refusal). CI watcher armed; 10.5.6 on green.
+- Rejected and in rework: S41-18 (identity keys untested), E-130 (cache copied into every worktree; publish race), M-15 r2 (no ablation; conformance forgeable via conftest; classifier diverges from wall.ts, now told to reuse it), S41-17 (green from noise below the D43 floor; fixed at 3a1077c0, awaiting opus r2), S41-12 r2 (4 rollback data-loss findings; fixed at d72ac106, awaiting opus r3), S41-05 r3 (fixed at 5aae1384, awaiting opus r4).
+- Opus share 34 to 41 percent against the D13 30 percent cap: HIGH reviews queued (S41-05, S41-12, S41-17, E-134, E-125) and released two at a time as running opus reviews finish. S41-01 (P0) opus review launched despite the cap.
+- Two reviewer temp dirs without an ownership marker remain (/private/tmp/loki-run.ztK3ctuo, /private/tmp/claude-501/loki-run.42ODTAwP); the cleanup helper refused both (rc 64) and they are left in place.
