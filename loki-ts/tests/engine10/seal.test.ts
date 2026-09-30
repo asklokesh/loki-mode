@@ -381,11 +381,12 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
   test("A-112: verify pre_red ids list as `pre red: <id>` and do not downgrade VERIFIED", async () => {
     noKey();
     const { repo, base } = makeRepo("prered");
-    const { ctx } = ctxFor(repo, base, "claude", { verify: { checks: [{ name: "node:a.test.js", cmd: "node --test", result: "pass", duration_s: 1 }], flaky: [], wall_passed: true, pre_red: ["unrelated"] } });
+    const { ctx } = ctxFor(repo, base, "claude", { verify: { checks: [{ name: "node:a.test.js", cmd: "node --test", result: "pass", duration_s: 1 }, { name: "node:o.test.js", cmd: "node --test", result: "fail", duration_s: 1 }], flaky: [], wall_passed: true, pre_red: ["unrelated"], pre_red_checks: ["node:o.test.js"] } });
     await commitStage.run(ctx, new AbortController().signal);
     const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
     expect(r.not_proven).toContain("pre red: unrelated");
     expect(r.verdict).toBe("VERIFIED");
+    expect(r.checks.find((c) => c.name === "node:o.test.js")?.result).toBe("fail"); // never recorded as pass
   }, 30000);
 
   // E-98a B1: verify passing every check must not seal VERIFIED when verify itself flagged a

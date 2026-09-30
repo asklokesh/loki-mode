@@ -121,7 +121,7 @@ export async function runCheck(
   const skip = (a: Awaited<ReturnType<typeof runOnce>>): string | undefined =>
     a.missing ? `${cmd} not found on PATH`
     : a.cut ? (signal.aborted ? "aborted" : `timed out after ${(opts.timeoutMs ?? CHECK_TIMEOUT_MS) / 1000}s`)
-    : ran(a.out, args[args.length - 1]) === 0 ? "ran 0 tests (empty or all skipped)" : undefined;
+    : ran(a.out, /\.[cm]?[jt]s$/.test(args[args.length - 1] ?? "") ? args[args.length - 1] : undefined) === 0 ? "ran 0 tests (empty or all skipped)" : undefined;
   let attempt = await runOnce(cmd, args, ctx.repoDir, signal, opts);
   let reason = skip(attempt);
   let result: VerifyCheck["result"] = reason ? "not_run" : "pass";
@@ -135,22 +135,23 @@ export async function runCheck(
   ctx.emit("test.result", "verify", { ...check });
   return check;
 }
-/** A-112: a test check red on head, in a file the diff did not touch, whose every failing id is also red on a pristine
- *  detached base worktree (never a reset of the implement tree, D42 (2)) is pre_red: flipped to pass, ids returned for NOT PROVEN.
- *  ponytail: bun/go/cargo/npm yield no ids, so they are never subtracted; a missing base build (deps) just leaves the check failing. */
-async function subtractBase(ctx: RunContext, checks: VerifyCheck[], tests: TestRef[], changed: string[], signal: AbortSignal): Promise<string[]> {
-  const cand = checks.filter((c) => c.result === "fail" && c.ids?.length && !changed.some((f) => c.name.endsWith(`:${f}`)));
-  if (!cand.length || signal.aborted) return [];
-  const dir = mkdtempSync(join(tmpdir(), "e10-base-")), out: string[] = [];
-  const git = (args: string[]): void => { execFileSync("git", args, { cwd: ctx.repoDir, stdio: "ignore" }); };
+/** A-112: a test check red on head, in a file the diff did not touch, whose every failing id is also red on a pristine detached
+ *  base worktree (never a reset of the implement tree, D42 (2)) is pre_red: its ids go to NOT PROVEN and seal skips it in the
+ *  verdict. The check itself stays "fail" (a receipt never records a failing command as pass) and stays in the fix loop unless
+ *  something proves progress: a base-red id that is green on head, or a passing Wall test. Base reruns get no node_modules or .venv,
+ *  so a check failing on base only for missing dependencies yields no ids (failIds needs the runner's count covered) and is never "red on base".
+ *  ponytail: bun/go/cargo/npm yield no ids, so they are never subtracted. */
+async function subtractBase(ctx: RunContext, checks: VerifyCheck[], tests: TestRef[], changed: string[], wall: Set<string>, signal: AbortSignal): Promise<{ ids: string[]; names: string[] }> {
+  const none = { ids: [], names: [] }, un = checks.flatMap((c) => { const t = tests.find((x) => `${x.runner}:${x.path}` === c.name); return t && !changed.includes(t.path) ? [{ c, t }] : []; });
+  if (!un.some(({ c }) => c.result === "fail" && c.ids?.length) || signal.aborted) return none;
+  const dir = mkdtempSync(join(tmpdir(), "e10-base-")), out = { ids: [] as string[], names: [] as string[] };
+  const git = (args: string[]): void => { execFileSync("git", args, { cwd: ctx.repoDir, stdio: "ignore", env: process.env }); };
   try {
-    git(["worktree", "add", "--detach", dir, ctx.baseSha]);
-    for (const c of cand) {
-      const t = tests.find((x) => `${x.runner}:${x.path}` === c.name);
-      if (!t) continue;
-      const [cmd, args] = runnerCmd(t, dir), b = await runOnce(cmd, args, dir, signal, {}), red = new Set(failIds(b.out));
-      if (!b.ok && !b.cut && c.ids!.every((i) => red.has(i))) { c.result = "pass"; out.push(...c.ids!); }
-    }
+    git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", dir, ctx.baseSha]);
+    const red = new Map<VerifyCheck, string[]>();
+    for (const { c, t } of un) { const [cmd, args] = runnerCmd(t, dir), b = await runOnce(cmd, args, dir, signal, {}); red.set(c, !b.ok && !b.cut ? failIds(b.out) : []); }
+    const progress = checks.some((c) => wall.has(c.name) && c.result === "pass") || un.some(({ c }) => red.get(c)!.some((i) => !(c.ids ?? []).includes(i)));
+    if (progress) for (const { c } of un) if (c.result === "fail" && c.ids?.length && c.ids.every((i) => red.get(c)!.includes(i))) { out.names.push(c.name); out.ids.push(...c.ids); }
   } catch { /* base unavailable: checks stay failing */ } finally {
     try { git(["worktree", "remove", "--force", dir]); } catch { /* pruned below */ }
     rmSync(dir, { recursive: true, force: true });
@@ -226,7 +227,7 @@ export const verifyStage: Stage = {
       const [cmd, args, interpreter] = runnerCmd(t, ctx.repoDir);
       await runCheck(ctx, `${t.runner}:${t.path}`, cmd, args, signal, checks, interpreter ? { interpreter } : {});
     }
-    const preRed = await subtractBase(ctx, checks, tests, changed, signal);
+    const preRed = await subtractBase(ctx, checks, tests, changed, new Set(wallTests.map((t) => `${t.runner}:${t.path}`)), signal);
     if (!signal.aborted) {
       // Lint/typecheck of changed files only (ENGINE.md section 4's named tool per language).
       await runLintChecks(ctx, changed, signal, checks);
@@ -241,11 +242,11 @@ export const verifyStage: Stage = {
     // ponytail: real clustering is failures.ts, which depends on this stage; a naive 1:1
     // placeholder keeps the section-4 output key populated until that slice lands.
     const failuresGrouped = checks
-      .filter((c) => c.result === "fail")
+      .filter((c) => c.result === "fail" && !preRed.names.includes(c.name))
       .map((c) => ({ signature: c.first_error ? `${c.name} ${c.first_error}` : c.name, count: 1, sample: c.cmd }));
     // E-98a/E-115: a check that ran (not_run has its own NOT PROVEN entry at seal) on a system interpreter/ruff.
     const notProven = [...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
-    return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed, not_proven: notProven, pre_red: preRed } };
+    return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed, not_proven: notProven, pre_red: preRed.ids, pre_red_checks: preRed.names } };
   },
 };
 export const stage = verifyStage;

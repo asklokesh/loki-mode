@@ -192,7 +192,8 @@ export const sealStage: Stage = {
     const wallNotRun = typeof base.not_run === "number" ? base.not_run : 0;
     const wallGreenOnBase = typeof base.pass === "number" && base.pass > 0 && base.fail === 0 && wallNotRun === 0;
     // An uncomputable diff is treated like an empty one: nothing is proven changed.
-    const verdict = verdictOf(o, checks, !diffOk || diff.stdout === "", verifyNotProven.length > 0, wallGreenOnBase);
+    const preRedChecks = strs(o.verify?.pre_red_checks); // A-112: recorded as fail, skipped by the verdict
+    const verdict = verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0, wallGreenOnBase);
 
     const notProven = new Set<string>(DEEP_NOT_PROVEN);
     if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);
