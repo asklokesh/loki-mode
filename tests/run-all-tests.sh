@@ -1571,6 +1571,7 @@ run_test "first-run gate assertion logic (A-02)" "$SCRIPT_DIR/test-first-run-gat
 run_test "Every test suite is registered in a runner (D44)" "$SCRIPT_DIR/test-registration-coverage.sh"
 run_test "Structural checks catch planted defects (D44-C)" "$SCRIPT_DIR/test-structural-checks.sh"
 run_test "v10 ops (E-142)" "$SCRIPT_DIR/test-v10-ops.sh"
+run_test "loki-seal Stop hook (A-04)" "$SCRIPT_DIR/../packages/loki-seal/test/run.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 
 # Summary
