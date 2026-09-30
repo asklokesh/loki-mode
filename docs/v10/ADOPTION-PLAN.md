@@ -222,7 +222,7 @@ Architect: opus. Source: the founder directive (2026-09-30, from building to pro
   - CTO decision: old proofs with `gpg_signature` still verify for integrity, and read as UNSIGNED for provenance.
 - Files: autonomy/lib/proof-generator.py, autonomy/lib/proof-template.html, autonomy/loki (signing lines 1283, 9683, 14101-14110, 14532, 36680-36683), tools/signing-status.py (delete), tests/test_signing_status.py (delete), tools/gate-status.py, tools/receipt-attest.py, tests/test-receipt-signing-discoverability.sh, tests/test-deploy-receipt-gate.sh, loki-ts/src/commands/doctor.ts (signing block 484-496 and 1113-1127), README.md (2 lines), docs/TOOLS.md, docs/VERIFICATION-COST.md, docs/SIGNED-RECEIPTS.md.
 - Wall check:
-  - `git grep -c LOKI_PROOF_GPG_KEY` over non-CHANGELOG files is 0 (a guard test).
+  - `LOKI_PROOF_GPG_KEY` appears only in migration messages, docs/v10, tests and dist (a guard test).
   - With a fresh HOME and no env, a legacy proof carries a JWT and `loki proof verify` exits 0 (G5, legacy route).
 - Commands: `bash tests/test-receipt-signing-discoverability.sh && bash tests/test-deploy-receipt-gate.sh && python3 -m pytest tests/test_receipt_attest.py -q`
 - Tier: HIGH. Budget: large negative outside core.

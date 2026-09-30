@@ -121,16 +121,19 @@ else
   bad "a signing failure destroyed the receipt -- strictly worse than not signing"
 fi
 
-# --- 5. DEFAULT OFF: unconfigured receipts are unchanged -------------------
-# The whole feature must be invisible to a user who did not opt in.
-python3 "$GEN" --out-dir "$W/plain" >/dev/null 2>&1
+# --- 5. DEFAULT ON (A-122): no env, fresh HOME -> signed with a generated key --
+# Replaces the old default-off assertion: the early exit was deleted, so an
+# unconfigured build auto-generates ~/.loki/keys/receipt-ed25519.pem and signs.
+mkdir -p "$W/home5"
+env -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_RECEIPT_SIGNING_KEY_FILE HOME="$W/home5" \
+  python3 "$GEN" --out-dir "$W/plain" >/dev/null 2>&1
 N="$(_find "$W/plain")"
-if [ -n "$N" ] && python3 -c "
+if [ -n "$N" ] && [ -f "$W/home5/.loki/keys/receipt-ed25519.pem" ] && python3 -c "
 import json,sys; v=json.load(open('$N')).get('verification',{})
-sys.exit(0 if 'attestation' not in v and 'attestation_kid' not in v else 1)" 2>/dev/null; then
-  ok "an unconfigured build emits no attestation fields (default off)"
+sys.exit(0 if v.get('attestation') and v.get('attestation_kid') else 1)" 2>/dev/null; then
+  ok "an unconfigured build signs with an auto-generated default key"
 else
-  bad "an attestation appeared without the user opting in"
+  bad "an unconfigured build did not attest with the default key"
 fi
 
 # --- 6. The verify surface accepts it ---------------------------------------

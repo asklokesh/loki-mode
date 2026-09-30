@@ -13,6 +13,8 @@
 # match.
 
 set -uo pipefail
+# A-120: the generator auto-creates a signing key; never let a test write the real ~/.loki/keys.
+export LOKI_RECEIPT_SIGNING_KEY_FILE="${LOKI_RECEIPT_SIGNING_KEY_FILE:-/dev/null/loki-test-no-key}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

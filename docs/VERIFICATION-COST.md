@@ -49,7 +49,7 @@ every gate and still be wrong.
 and the headline into a mutually consistent lie and recomputes the hash will
 pass verification. That is defense in depth, not non-forgeability. Neutral
 non-forgeability requires the signed path
-(`LOKI_PROOF_GPG_KEY`, see [SIGNED-RECEIPTS.md](SIGNED-RECEIPTS.md)). We removed
+(the Ed25519 attestation, see [SIGNED-RECEIPTS.md](SIGNED-RECEIPTS.md)). We removed
 our own "non-forgeable" claim in v7.111.0 after finding it false on that path.
 
 **The tests gate depends on correctly identifying YOUR test runner, and it has
@@ -145,7 +145,7 @@ which is wrong in exactly that way: a drifted-but-intact receipt also exits 1.
 **What this does NOT establish.** Integrity is not provenance. On the unsigned
 path a party who rewrites the facts AND recomputes the digest passes this check
 -- see the forgeability limit above. Provenance requires the signed path
-(`LOKI_PROOF_GPG_KEY`, [SIGNED-RECEIPTS.md](SIGNED-RECEIPTS.md)), and the remote
+(the Ed25519 attestation, [SIGNED-RECEIPTS.md](SIGNED-RECEIPTS.md)), and the remote
 client reports the two separately for that reason: VERIFIED, UNSIGNED,
 UNCHECKED and TAMPERED are four distinct verdicts, never collapsed.
 

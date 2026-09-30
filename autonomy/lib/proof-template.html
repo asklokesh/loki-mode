@@ -1255,19 +1255,15 @@
     if (hash) {
       kv += '<div class="k">Integrity hash</div><div class="v">' + esc(algo) + ":" + esc(hash) + "</div>";
     }
-    // Signing state, named explicitly. The hash-note below already says the
-    // hash does not prove provenance; without this row a reader is told what
-    // the receipt CANNOT do but never which state this particular receipt is
-    // in, nor how to change it. Signing is gated on LOKI_PROOF_GPG_KEY in
-    // proof-generator.py and is OFF by default -- deliberately, because a
-    // self-minted key would flip proof-verify.py's generator_trusted to false
-    // while the key came from the very process under audit.
-    var signed = !!g(p, "verification.gpg_signature", "");
+    // Signing state, named explicitly: a reader must be told which state this
+    // receipt is in, not just what the hash cannot prove. Signing is an Ed25519
+    // attestation (verification.attestation), auto-generated on first run.
+    var signed = !!g(p, "verification.attestation", "");
     kv += '<div class="k">Signature</div><div class="v">' +
-          (signed ? "SIGNED (detached GPG)" : "UNSIGNED") + "</div>";
+          (signed ? "SIGNED (Ed25519 attestation)" : "UNSIGNED") + "</div>";
     var signNote = signed
-      ? '<p class="hash-note">This receipt carries a detached GPG signature over the same canonical bytes that were hashed. A verifier holding the signer public key can confirm its provenance offline with <code>loki proof verify</code>.</p>'
-      : '<p class="hash-note">This receipt is UNSIGNED, so it trusts the generator that produced it (<code>loki proof verify</code> reports <code>generator_trusted: true</code>). To sign future receipts, set <code>LOKI_PROOF_GPG_KEY</code> to a GPG key id before the run.</p>';
+      ? '<p class="hash-note">This receipt carries an Ed25519 attestation over the integrity hash. <code>loki proof verify</code> checks it offline against the signer public key.</p>'
+      : '<p class="hash-note">This receipt is UNSIGNED, so it trusts the generator that produced it (<code>loki proof verify</code> reports <code>generator_trusted: true</code>). Install the <code>cryptography</code> package so the next run signs automatically (docs/SIGNED-RECEIPTS.md).</p>';
     // Model provenance from the append-only decision trail
     // (.loki/decisions/decisions.jsonl, written once per dispatch).
     //

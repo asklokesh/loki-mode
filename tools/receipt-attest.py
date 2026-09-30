@@ -108,7 +108,7 @@ def _signature_axis(proof, gpg_ok):
     WHY UNSIGNED DOES NOT SINK THE VERDICT. "No signature exists" is not "a
     check I could not run" -- there is nothing to verify, so scoring it as
     UNVERIFIABLE would make VERIFIED unreachable for every receipt produced
-    without LOKI_PROOF_GPG_KEY, which is the default. verify() already made
+    with a signature, which older receipts lack. verify() already made
     this call upstream: its rollup is `gpg_ok in (True, "n/a")`, and it
     surfaces the caveat as generator_trusted rather than as a failure. This
     projects that decision instead of inventing a stricter one.

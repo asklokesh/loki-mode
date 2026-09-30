@@ -298,9 +298,9 @@ suite (`tests/test-proof-forgery-defense.sh`), and in v7.111.0 we removed our
 own earlier "non-forgeable" claim once we found it was false on that path. An
 honest boundary you can verify beats a marketing claim you cannot.
 
-To close that gap, sign your receipts: `export LOKI_PROOF_GPG_KEY=<key-id>` and
-every receipt carries a detached GPG signature that any third party with your
-public key can verify offline. See [docs/SIGNED-RECEIPTS.md](../docs/SIGNED-RECEIPTS.md).
+To close that gap, receipts are signed automatically with an Ed25519 key
+generated on first run (or your own via `LOKI_RECEIPT_SIGNING_KEY_FILE`), and any
+third party with the public key set can verify them offline. See [docs/SIGNED-RECEIPTS.md](../docs/SIGNED-RECEIPTS.md).
 
 ## Why Loki Mode?
 
@@ -401,9 +401,9 @@ SHA), the verifier reports it as unverifiable rather than passing it silently.
 
 You can share a receipt as a self-contained HTML page (`loki proof open <id>`),
 or publish it as a GitHub Gist with `loki proof share <id>` (opt-in; the page is
-redacted before it leaves your machine). An optional, off-by-default GPG detached
-signature (`LOKI_PROOF_GPG_KEY`) lets a third party confirm the receipt came from
-you.
+redacted before it leaves your machine). Receipts carry an Ed25519
+attestation (`LOKI_RECEIPT_SIGNING_KEY_FILE` to use your own key) that lets a
+third party confirm the receipt came from you.
 
 ### Proven PR
 

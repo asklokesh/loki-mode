@@ -1280,7 +1280,7 @@ loki_remote_verify_receipt() {
     echo "    Proven: the receipt is internally consistent with its own hash."
     echo "    NOT proven: who produced it. An unsigned receipt is forgeable -- whoever"
     echo "    controls the builder can rewrite the facts and recompute the hash."
-    echo "    For provenance, the build must set LOKI_PROOF_GPG_KEY (docs/SIGNED-RECEIPTS.md)."
+    echo "    For provenance, sign the build (docs/SIGNED-RECEIPTS.md)."
     return 0
 }
 
@@ -9282,14 +9282,14 @@ _deploy_receipt_verdict() {
         printf '%s' "UNCHECKED"; return 0
     fi
 
-    local out hash_ok gpg_ok signed=0
+    local out hash_ok
     out="$(python3 -E "$verifier" "$pj" "${TARGET_DIR:-.}" 2>/dev/null || true)"
 
     # "The verifier did not RUN" and "the verifier says the hash is bad" are
     # different facts and must not collapse. If they do, a broken python3
     # produces the verdict TAMPERED -- an accusation of forgery for a check that
     # never executed. That is the same error the signed path is careful to avoid
-    # with NO_PUBKEY (see loki:852): it sends a user hunting a forgery that never
+    # with a missing key: it sends a user hunting a forgery that never
     # happened, and trains them to shrug at a real TAMPERED. Unparseable output
     # is UNCHECKED, which still REFUSES -- fail-closed, honestly labelled.
     if [ -z "$out" ] || ! printf '%s' "$out" | python3 -c 'import json,sys;json.load(sys.stdin)' >/dev/null 2>&1; then
@@ -9297,28 +9297,39 @@ _deploy_receipt_verdict() {
     fi
 
     hash_ok="$(printf '%s' "$out" | python3 -c 'import json,sys;print(str(json.load(sys.stdin).get("hash_ok",False)).lower())' 2>/dev/null || printf 'false')"
-    gpg_ok="$(printf '%s' "$out" | python3 -c 'import json,sys;print(str(json.load(sys.stdin).get("gpg_ok","n/a")).lower())' 2>/dev/null || printf 'n/a')"
-
-    # Whether the receipt CARRIES a signature is read from the receipt, never
-    # inferred from gpg_ok -- gpg_ok is "n/a" both for "no signature" and for
-    # "gpg missing here", and conflating those mislabels a signed receipt.
-    if python3 -c 'import json,sys;sys.exit(0 if (json.load(open(sys.argv[1])).get("verification") or {}).get("gpg_signature") else 1)' "$pj" 2>/dev/null; then
-        signed=1
-    fi
-
     if [ "$hash_ok" != "true" ]; then printf '%s' "TAMPERED"; return 0; fi
-    if [ "$signed" -eq 0 ]; then printf '%s' "UNSIGNED"; return 0; fi
-    case "$gpg_ok" in
-        true)  printf '%s' "VERIFIED" ;;
-        # Signed but the signature does not verify: contents or signature were
-        # altered. A missing PUBLIC KEY is a different fact (uncheckable, not an
-        # accusation), so it reports UNCHECKED -- which refuses here anyway.
-        false) if command -v gpg >/dev/null 2>&1 && [ "$(loki_remote_gpg_status "$pj")" = "nopubkey" ]; then
-                   printf '%s' "UNCHECKED"
-               else
-                   printf '%s' "TAMPERED"
-               fi ;;
-        *)     printf '%s' "UNCHECKED" ;;
+
+    # Provenance is the Ed25519 attestation, checked against the PUBLIC keys we
+    # hold: the local signing key plus LOKI_RECEIPT_RETIRED_PUBKEYS. A legacy
+    # gpg_signature is ignored: old receipts read UNSIGNED here. A token whose
+    # kid is not in that set (another machine, a rotated-away key) cannot be
+    # evaluated, so no key set is written and the verdict is UNCHECKED, never
+    # TAMPERED: the hash is fine, we just cannot vouch for who signed it. A
+    # local key only proves "a holder of this key", not an independent build.
+    local jwks att
+    jwks="$(mktemp "${TMPDIR:-/tmp}/loki-jwks.XXXXXX")" || { printf '%s' "UNCHECKED"; return 0; }
+    python3 -E - "${_LOKI_SCRIPT_DIR}" "$pj" >"$jwks" 2>/dev/null <<'PY' || true
+import sys, json
+sys.path[:] = [p for p in sys.path if p not in ("", ".")]
+sys.path.insert(0, sys.argv[1])
+from receipt_jwt import load_signing_key, load_retired_public_keys, build_jwks, _b64url_decode
+k, _ = load_signing_key(auto_generate=False)
+jwks = build_jwks(k, load_retired_public_keys())
+try:
+    tok = json.load(open(sys.argv[2]))["verification"]["attestation"]
+    kid = json.loads(_b64url_decode(tok.split(".")[0])).get("kid", "")
+except Exception:
+    kid = ""          # malformed or absent: let the checker decide (none / bad)
+if not kid or kid in [j.get("kid") for j in jwks["keys"]]:
+    print(json.dumps(jwks))
+PY
+    att="$(loki_proof_attestation_check "$pj" "$jwks")"
+    rm -f "$jwks"
+    case "$att" in
+        ok)   printf '%s' "VERIFIED" ;;
+        none) printf '%s' "UNSIGNED" ;;
+        bad)  printf '%s' "TAMPERED" ;;
+        *)    printf '%s' "UNCHECKED" ;;
     esac
     return 0
 }
@@ -9680,7 +9691,7 @@ _deploy_gate() {
         verdict="$(_deploy_receipt_verdict "$pj")"
         case "$verdict" in
             VERIFIED) : ;;
-            UNSIGNED)  reasons="${reasons}receipt is UNSIGNED: integrity holds but provenance is unproven (set LOKI_PROOF_GPG_KEY; docs/SIGNED-RECEIPTS.md)
+            UNSIGNED)  reasons="${reasons}receipt is UNSIGNED: integrity holds but provenance is unproven (docs/SIGNED-RECEIPTS.md)
 " ;;
             UNCHECKED) reasons="${reasons}receipt is UNCHECKED: its signature could not be evaluated here, so nothing was proven
 " ;;
@@ -9784,7 +9795,7 @@ cmd_deploy() {
                 echo "     file alone can opt in."
                 echo ""
                 echo "It FAILS CLOSED: if a check cannot be evaluated at all (no receipt,"
-                echo "gpg unavailable, anchor unresolvable, not a git repo), that is a"
+                echo "signing key or keys unavailable, anchor unresolvable, not a git repo), that is a"
                 echo "REFUSAL, not a pass. A refusal still prints the advisory command."
                 echo ""
                 echo "Hard limits, with or without --execute:"
@@ -14092,22 +14103,14 @@ except Exception:
         echo -e "  ${YELLOW}WARN${NC}  sentrux - not installed (optional, brew install sentrux/tap/sentrux)"
         warn_count=$((warn_count + 1))
     fi
-    # Evidence Receipt signing state (optional). Unsigned receipts are the
-    # default and are still checkable (hash + diff re-derivation); what they
-    # cannot prove is PROVENANCE, so proof-verify.py reports
-    # generator_trusted: true. Surface the state here because it is otherwise
-    # invisible until someone reads a receipt. WARN (never FAIL): unsigned is
-    # a supported, documented mode, not a broken install.
+    # Receipt signing: Ed25519, auto-generated on first run. WARN only, and
+    # only when something needs attention. Byte-mirrored in doctor.ts.
     if [ -n "${LOKI_PROOF_GPG_KEY:-}" ]; then
-        if command -v gpg &>/dev/null; then
-            echo -e "  ${GREEN}PASS${NC}  Receipt signing: LOKI_PROOF_GPG_KEY set and gpg available"
-            pass_count=$((pass_count + 1))
-        else
-            echo -e "  ${YELLOW}WARN${NC}  Receipt signing: LOKI_PROOF_GPG_KEY set but gpg NOT on PATH - receipts will be UNSIGNED"
-            warn_count=$((warn_count + 1))
-        fi
-    else
-        echo -e "  ${YELLOW}WARN${NC}  Receipt signing: UNSIGNED (set LOKI_PROOF_GPG_KEY to a gpg key id; see docs/SIGNED-RECEIPTS.md)"
+        echo -e "  ${YELLOW}WARN${NC}  Receipt signing: LOKI_PROOF_GPG_KEY is no longer supported and is ignored; use LOKI_RECEIPT_SIGNING_KEY or LOKI_RECEIPT_SIGNING_KEY_FILE (docs/SIGNED-RECEIPTS.md)"
+        warn_count=$((warn_count + 1))
+    fi
+    if ! python3 -c 'import cryptography' >/dev/null 2>&1; then
+        echo -e "  ${YELLOW}WARN${NC}  Receipt signing: python3 'cryptography' package missing, receipts will be UNSIGNED (pip install cryptography)"
         warn_count=$((warn_count + 1))
     fi
     echo ""
@@ -14523,23 +14526,6 @@ sentrux = {
     'required': 'optional'
 }
 
-# Evidence Receipt signing state. Unsigned is the DEFAULT and is a supported
-# mode, so this is never 'fail'. Exposed because signing state is otherwise
-# invisible until someone reads a receipt, and it is exactly what decides
-# whether proof-verify.py reports generator_trusted: true. Sibling of
-# checks/disk/sentrux -- deliberately NOT counted in the summary tally so
-# existing consumers see unchanged numbers.
-signing_key_set = bool(os.environ.get('LOKI_PROOF_GPG_KEY', '').strip())
-signing_gpg_available = shutil.which('gpg') is not None
-signing_enabled = signing_key_set and signing_gpg_available
-receipt_signing = {
-    'enabled': signing_enabled,
-    'key_configured': signing_key_set,
-    'gpg_available': signing_gpg_available,
-    'status': 'pass' if signing_enabled else 'warn',
-    'required': 'optional'
-}
-
 # v7.7.17: memory subsystem health surface. Reports the latest entries
 # from .loki/memory/.errors.log (rotated by memory/error_log.py) so
 # developers see regressions in the previously-silent-fail call sites
@@ -14731,7 +14717,6 @@ result = {
     'ai_provider': ai_provider,
     'skills': skills,
     'sentrux': sentrux,
-    'receipt_signing': receipt_signing,
     'memory': memory,
     'model_catalog': model_catalog,
     'summary': {
@@ -36677,10 +36662,9 @@ cmd_proof() {
             echo ""
             echo "Proofs are generated automatically at run completion (LOKI_PROOF=0 to opt out)."
             echo ""
-            echo "Signing (off by default): receipts are UNSIGNED unless LOKI_PROOF_GPG_KEY is"
-            echo "set to a gpg key id. Unsigned, the integrity hash proves the bytes were not"
-            echo "edited after hashing but NOT who produced them, so verify reports"
-            echo "generator_trusted: true. Export LOKI_PROOF_GPG_KEY to close that gap."
+            echo "Signing: receipts are Ed25519-signed automatically (key auto-generated at"
+            echo "~/.loki/keys/receipt-ed25519.pem). To use your own key set"
+            echo "LOKI_RECEIPT_SIGNING_KEY or LOKI_RECEIPT_SIGNING_KEY_FILE."
             echo "See docs/SIGNED-RECEIPTS.md."
             [ "$sub" = "" ] && exit 1
             exit 0
@@ -37131,8 +37115,8 @@ print(json.dumps(json.load(open(os.environ['LOKI_PROOF_JSON'])), indent=2))
                         # verified. Exiting 0 here let a stripped signature pass
                         # any CI step that asked for provenance.
                         echo -e "${YELLOW}attestation: ABSENT -- this receipt carries no attestation.${NC}" >&2
-                        echo "  Nothing was checked against ${_pv_jwks}. The receipt may still be" >&2
-                        echo "  gpg-signed; this says only that it has no JWKS attestation." >&2
+                        echo "  Nothing was checked against ${_pv_jwks}. This says only that the" >&2
+                        echo "  receipt has no JWKS attestation." >&2
                         echo "  Not verified: a key set was supplied, but the receipt is unsigned (exit 1)." >&2
                         _pv_rc=1
                         _pv_attestation_field="ABSENT"

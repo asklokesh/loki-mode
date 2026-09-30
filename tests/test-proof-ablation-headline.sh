@@ -15,6 +15,8 @@
 # end to end through the real generator CLI on a copy of each fixture.
 
 set -uo pipefail
+# A-120: the generator auto-creates a signing key; never let a test write the real ~/.loki/keys.
+export LOKI_RECEIPT_SIGNING_KEY_FILE="${LOKI_RECEIPT_SIGNING_KEY_FILE:-/dev/null/loki-test-no-key}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GEN="$REPO_ROOT/autonomy/lib/proof-generator.py"
 FIX="$REPO_ROOT/tests/fixtures/proof-ablation"
