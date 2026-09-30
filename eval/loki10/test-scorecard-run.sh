@@ -327,23 +327,63 @@ row = {"run_id": sys.argv[2] + "-seed", "task": sys.argv[2], "arm": "raw-claude"
 open(sys.argv[1], "a").write(json.dumps(row) + "\n")' "$1" "$2" "$3" "$HSHA"
 }
 
-# --- Leg a: killed mid-rep, then rerun, gives exactly one ok row per task ---
+# --- Leg a: a REAL SIGTERM mid-rep, then rerun, gives exactly one ok row per task ---
+# seq-arm.sh: the first arm invocation (rt1) passes, the second (rt2) hangs
+# in the stub's sleep mode, so the batch is interrupted with rt1 done and rt2
+# in flight. Only the recorded process group of the scorecard-run.sh this leg
+# started is signalled, never a name or pattern.
 OUTA="$T/outA"
-STUB_MODE=pass LOKI_EVAL_MODEL=claude-sonnet-5 run_real --arm raw-claude --task rt1 --out "$OUTA/rep1/raw-sonnet" >"$T/a-seed.log" 2>&1
-if [ "$(ok_rows_for "$OUTA/rep1/raw-sonnet/results.jsonl" rt1)" != 1 ]; then
-    fail "legA setup: seeding rt1's ok row failed: $(cat "$T/a-seed.log")"
+SEQ_ARM="$T/bin/seq-arm.sh"
+cat >"$SEQ_ARM" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then exec "$STUB" "\$@"; fi
+if [ ! -f "$T/a-first-done" ]; then
+    : >"$T/a-first-done"
+    STUB_MODE=pass exec "$STUB" "\$@"
+fi
+: >"$T/a-rt2-started"
+STUB_MODE=sleep STUB_PID_FILE="$T/a-sleep.pids" exec "$STUB" "\$@"
+EOF
+chmod +x "$SEQ_ARM"
+j="$OUTA/rep1/raw-sonnet/results.jsonl"
+set -m
+env -u LOKI_RUN_TMP LOKI_EVAL_CLAUDE_BIN="$SEQ_ARM" "$HERE/scorecard-run.sh" --tier small --n 1 --arms raw-sonnet --parallel 1 --out "$OUTA" --tasks-dir "$RSTASKS" >"$T/a-kill.log" 2>&1 &
+a_pid=$!
+set +m
+for _ in $(seq 1 600); do
+    [ -f "$T/a-rt2-started" ] && break
+    kill -0 "$a_pid" 2>/dev/null || break
+    sleep 0.1
+done
+if [ ! -f "$T/a-rt2-started" ]; then
+    fail "legA setup: rt2 never started mid-rep: $(cat "$T/a-kill.log")"
+    kill -TERM -- "-$a_pid" 2>/dev/null
 else
-    out="$(env -u LOKI_RUN_TMP STUB_MODE=pass "$HERE/scorecard-run.sh" --tier small --n 1 --arms raw-sonnet --out "$OUTA" --tasks-dir "$RSTASKS" 2>&1)"
-    rc=$?
-    j="$OUTA/rep1/raw-sonnet/results.jsonl"
-    if [ "$rc" -ne 0 ]; then
-        fail "legA: resume run failed, rc=$rc: $out"
-    elif [ "$(ok_rows_for "$j" rt1)" != 1 ]; then
-        fail "legA: rt1 (already done) must not be rerun: $(cat "$j")"
-    elif [ "$(ok_rows_for "$j" rt2)" != 1 ]; then
-        fail "legA: rt2 (missing) must end up with exactly one ok row: $(cat "$j")"
+    sleep 1   # let the stub settle into its sleep
+    kill -TERM -- "-$a_pid" 2>/dev/null   # a_pid led its own group (set -m)
+    wait "$a_pid" 2>/dev/null
+    a_killed_rc=$?
+    # Reap only PIDs the stub itself recorded, if any survived.
+    if [ -f "$T/a-sleep.pids" ]; then
+        while read -r p; do
+            case "$p" in ''|*[!0-9]*) continue ;; esac
+            kill -0 "$p" 2>/dev/null && kill -TERM "$p" 2>/dev/null
+        done <"$T/a-sleep.pids"
+    fi
+    if [ "$(ok_rows_for "$j" rt1)" != 1 ] || [ "$(ok_rows_for "$j" rt2)" != 0 ]; then
+        fail "legA setup: expected rt1 done and rt2 not ok after the kill (rc=$a_killed_rc): $(cat "$j" 2>/dev/null)"
     else
-        pass "legA: a run killed mid-rep resumes with exactly one ok row per task"
+        out="$(env -u LOKI_RUN_TMP STUB_MODE=pass "$HERE/scorecard-run.sh" --tier small --n 1 --arms raw-sonnet --parallel 1 --out "$OUTA" --tasks-dir "$RSTASKS" 2>&1)"
+        rc=$?
+        if [ "$rc" -ne 0 ]; then
+            fail "legA: resume run failed, rc=$rc: $out"
+        elif [ "$(ok_rows_for "$j" rt1)" != 1 ]; then
+            fail "legA: rt1 (done before the kill) must not be rerun: $(cat "$j")"
+        elif [ "$(ok_rows_for "$j" rt2)" != 1 ]; then
+            fail "legA: rt2 (killed mid-rep) must end up with exactly one ok row: $(cat "$j")"
+        else
+            pass "legA: a real SIGTERM mid-rep resumes with exactly one ok row per task"
+        fi
     fi
 fi
 
@@ -435,6 +475,75 @@ elif ! grep -q -- '--tasks ct1' "$RUNSH_LOG" || grep -q -- '--tasks ct1,ct2\|--t
     fail "legD: a non-ok row (ct1) must be retried, an ok row (ct2) must not: $(cat "$RUNSH_LOG")"
 else
     pass "legD: an existing non-ok row (error or timeout) is retried, an ok row is not"
+fi
+
+# --- Leg e: a capped (timeout) row keeps status ok in harness.py, so it is never retried ---
+OUTE="$T/outE"
+write_ok_row "$OUTE/rep1/raw-sonnet/results.jsonl" ct1 ok
+python3 - "$OUTE/rep1/raw-sonnet/results.jsonl" <<'PY'
+import json, sys
+p = sys.argv[1]
+rows = [json.loads(l) for l in open(p) if l.strip()]
+for r in rows:
+    r.update(capped=True, exit_code=124)   # what a timed-out rep writes; status stays ok
+open(p, "w").write("".join(json.dumps(r) + "\n" for r in rows))
+PY
+write_ok_row "$OUTE/rep1/raw-sonnet/results.jsonl" ct2 ok
+: >"$RUNSH_LOG"
+out="$( (
+    export ANTHROPIC_API_KEY=fake-key-lege
+    run_scorecard --tier small --n 1 --arms raw-sonnet --out "$OUTE" --tasks-dir "$CTASKS"
+) 2>&1)"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+    fail "legE: expected success, rc=$rc: $out"
+elif [ -s "$RUNSH_LOG" ]; then
+    fail "legE: a capped row (status ok) must never be retried: $(cat "$RUNSH_LOG")"
+else
+    pass "legE: a capped row that keeps status ok is never retried"
+fi
+
+# --- Leg f: an invalid tier value fails loudly, the way harness.py _task_tier does ---
+FTASKS="$T/ftasks"
+mkdir -p "$FTASKS/fbad"
+echo '{"id": "fbad", "tier": "Medium"}' >"$FTASKS/fbad/task.json"
+: >"$RUNSH_LOG"
+out="$(run_scorecard --tier medium --n 1 --arms raw-sonnet --out "$T/outF" --tasks-dir "$FTASKS" --dry-run 2>&1)"
+rc=$?
+if [ "$rc" -ne 0 ] || ! grep -q -- '--tasks fbad' <<<"$out"; then
+    fail "legF: a task with tier Medium must be kept (not silently dropped) so the harness reports it: rc=$rc out=$out"
+else
+    # end to end with the real harness: it must reject the bad tier, nonzero
+    mkdir -p "$T/ftasks2"
+    cp -R "$RSTASKS/rt1" "$T/ftasks2/fbad2"
+    python3 - "$T/ftasks2/fbad2/task.json" <<'PY'
+import json, sys
+t = json.load(open(sys.argv[1])); t["id"] = "fbad2"; t["tier"] = "Medium"
+json.dump(t, open(sys.argv[1], "w"))
+PY
+    out="$(env -u LOKI_RUN_TMP STUB_MODE=pass "$HERE/scorecard-run.sh" --tier medium --n 1 --arms raw-sonnet --out "$T/outF2" --tasks-dir "$T/ftasks2" 2>&1)"
+    rc=$?
+    if [ "$rc" -eq 0 ] || ! grep -q 'INVALID' <<<"$out"; then
+        fail "legF: the real harness must reject the invalid tier with INVALID and a nonzero exit, rc=$rc: $out"
+    else
+        pass "legF: an invalid tier value fails loudly, like harness.py"
+    fi
+fi
+
+# --- Leg g: a tier with zero tasks (or an unknown tier) exits nonzero ---
+: >"$RUNSH_LOG"
+out="$(run_scorecard --tier large --n 1 --arms raw-sonnet --out "$T/outG" --tasks-dir "$T/tasks" 2>&1)"
+rc=$?
+out2="$(run_scorecard --tier huge --n 1 --arms raw-sonnet --out "$T/outG2" --tasks-dir "$T/tasks" 2>&1)"
+rc2=$?
+if [ "$rc" -eq 0 ] || ! grep -qi 'no tasks' <<<"$out"; then
+    fail "legG: an empty tier must exit nonzero with an error, rc=$rc: $out"
+elif [ "$rc2" -eq 0 ]; then
+    fail "legG: an unknown tier must exit nonzero, rc=$rc2: $out2"
+elif [ -s "$RUNSH_LOG" ]; then
+    fail "legG: run.sh must never run for an empty tier"
+else
+    pass "legG: a tier with zero tasks, or an unknown tier, exits nonzero with an error"
 fi
 
 echo "----"

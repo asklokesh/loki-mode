@@ -83,25 +83,28 @@ case "$N" in ''|*[!0-9]*|0) printf 'error: --n must be a positive integer\n' >&2
 
 TASKS_DIR_EFF="${TASKS_DIR:-$HERE/tasks}"
 
-# Count of tier tasks feeds only the auth-guard time estimate below.
-count_tier_tasks() {
+# Task ids in this tier, one per line, mirroring harness.py _task_tier: a
+# missing tier means small; an unreadable task.json or a tier outside
+# TIERS (for example "Medium") is KEPT, never guessed, so the harness's
+# validate_task reports the real error loudly instead of the run shrinking.
+tier_task_ids() {
     python3 - "$TASKS_DIR_EFF" "$TIER" <<'PY'
 import json, os, sys
 tasks_dir, tier = sys.argv[1], sys.argv[2]
-n = 0
+TIERS = ("small", "medium", "large")
 if os.path.isdir(tasks_dir):
-    for d in os.listdir(tasks_dir):
+    for d in sorted(os.listdir(tasks_dir)):
         p = os.path.join(tasks_dir, d, "task.json")
         if not os.path.isfile(p):
             continue
         try:
             with open(p, encoding="utf-8") as f:
-                t = (json.load(f).get("tier") or "small")
-        except (OSError, ValueError):
+                t = json.load(f).get("tier", "small")
+            t = t if t in TIERS else None
+        except (OSError, ValueError, AttributeError):
             t = None
         if t == tier or t is None:
-            n += 1
-print(max(n, 1))
+            print(d)
 PY
 }
 
@@ -183,23 +186,10 @@ current_harness_sha() {
 # tuple harness.py's dedupe() keys on, minus status. A row from a different
 # model, a different code checkout, or a different arm never counts as done.
 # Comma-joined for harness.py's --tasks; empty when the rep is fully done.
-missing_tasks() {  # $1=results_file $2=model $3=harness_sha $4=arm_flag
-    python3 - "$TASKS_DIR_EFF" "$TIER" "$1" "$2" "$3" "$4" <<'PY'
-import json, os, sys
-tasks_dir, tier, results_file, model, harness_sha, arm = sys.argv[1:7]
-ids = []
-if os.path.isdir(tasks_dir):
-    for d in sorted(os.listdir(tasks_dir)):
-        p = os.path.join(tasks_dir, d, "task.json")
-        if not os.path.isfile(p):
-            continue
-        try:
-            with open(p, encoding="utf-8") as f:
-                t = (json.load(f).get("tier") or "small")
-        except (OSError, ValueError):
-            t = None
-        if t == tier or t is None:
-            ids.append(d)
+missing_tasks() {  # $1=results_file $2=model $3=harness_sha $4=arm_flag $5=ids (newline-joined)
+    python3 - "$1" "$2" "$3" "$4" "$5" <<'PY'
+import json, sys
+results_file, model, harness_sha, arm, ids = sys.argv[1:6]
 done = set()
 try:
     with open(results_file, encoding="utf-8") as f:
@@ -216,7 +206,7 @@ try:
                 done.add(r.get("task"))
 except OSError:
     pass
-print(",".join(i for i in ids if i not in done))
+print(",".join(i for i in ids.split("\n") if i and i not in done))
 PY
 }
 
@@ -225,7 +215,13 @@ for a in "${ARM_LIST[@]}"; do
     arm_model "$a" >/dev/null || { printf 'error: unknown arm %s (want raw-sonnet, raw-opus, loki-sonnet or loki-opus)\n' "$a" >&2; exit 2; }
 done
 
-tasks_n="$(count_tier_tasks)"
+case "$TIER" in small|medium|large) ;; *) printf 'error: --tier must be small, medium or large\n' >&2; exit 2 ;; esac
+tier_ids="$(tier_task_ids)"
+if [ -z "$tier_ids" ]; then
+    printf 'error: no tasks in tier %s under %s\n' "$TIER" "$TASKS_DIR_EFF" >&2
+    exit 2
+fi
+tasks_n="$(printf '%s\n' "$tier_ids" | wc -l | tr -d ' ')"
 harness_sha="$(current_harness_sha)"
 rc=0
 for rep in $(seq 1 "$N"); do
@@ -233,7 +229,7 @@ for rep in $(seq 1 "$N"); do
         model="$(arm_model "$a")"
         flag="$(arm_flag "$a")"
         rep_out="$OUT/rep$rep/$a"
-        missing="$(missing_tasks "$rep_out/results.jsonl" "$model" "$harness_sha" "$flag")"
+        missing="$(missing_tasks "$rep_out/results.jsonl" "$model" "$harness_sha" "$flag" "$tier_ids")"
         [ -n "$missing" ] || continue   # every task already has a status ok row: skip the rep
         cmd=(env "LOKI_EVAL_MODEL=$model" "$HERE/run.sh" --arm "$flag" --tasks "$missing" --tier "$TIER" --parallel "$PARALLEL" --out "$rep_out")
         [ -n "$TASKS_DIR" ] && cmd+=(--tasks-dir "$TASKS_DIR")
