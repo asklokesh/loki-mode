@@ -11062,6 +11062,12 @@ _loki_untrack_agent_committed_user_files() {
     return 0
 }
 
+# A-132: true for a `loki quick` run. Only cmd_quick writes .loki/quick-prd-<pid>.md.
+_loki_is_quick_prd() {
+    case "${1:-}" in */quick-prd-*.md | quick-prd-*.md) return 0 ;; esac
+    return 1
+}
+
 commit_session_changes() {
     # Squash the session's work into one honest session-end commit on the agent
     # branch (LOCK A3/A4/A8). Commit-always (incl. failed runs) so the user is
@@ -11161,6 +11167,22 @@ commit_session_changes() {
         ':!.env' ':!.env.*' ':!*.env' \
         ':!*.key' ':!*.pem' ':!*.p12' ':!*.keystore' \
         ':!id_rsa*' ':!*.token' ':!credentials*' 2>/dev/null || true
+
+    # A-132: a quick fix commits the fix only. HANDOFF.md, USAGE.md and a lockfile
+    # that was not tracked before the run stay out unless a manifest changed.
+    if _loki_is_quick_prd "${PRD_PATH:-}"; then
+        local _qf _qmanifest=0
+        git diff --cached --name-only 2>/dev/null | grep -qE '(^|/)(package\.json|pyproject\.toml|Cargo\.toml|go\.mod|Gemfile|composer\.json|requirements\.txt)$' && _qmanifest=1
+        while IFS= read -r _qf; do
+            case "$_qf" in
+                HANDOFF.md | USAGE.md) ;;
+                package-lock.json | */package-lock.json | yarn.lock | */yarn.lock | pnpm-lock.yaml | */pnpm-lock.yaml | Cargo.lock | */Cargo.lock | poetry.lock | */poetry.lock | go.sum | */go.sum | Gemfile.lock | */Gemfile.lock | composer.lock | */composer.lock)
+                    [ "$_qmanifest" = 1 ] && continue ;;
+                *) continue ;;
+            esac
+            git cat-file -e "HEAD:$_qf" 2>/dev/null || git reset -q -- "$_qf" >/dev/null 2>&1 || true
+        done < <(git diff --cached --name-only 2>/dev/null)
+    fi
 
     # Unstage exactly the paths recorded as untracked or gitignored when the
     # session started (setup_agent_branch; a "dir/" entry covers its subtree):
@@ -20989,6 +21011,7 @@ PYEOF
 _intelligent_usage_regen() {
     local target_dir="${TARGET_DIR:-.}"
     local usage_path="$target_dir/USAGE.md"
+    _loki_is_quick_prd "${PRD_PATH:-}" && return 0  # A-132: no USAGE regen on a quick fix
     # Only the provider the operator chose may see a prompt (V10 P5): on any
     # other provider keep the agent-written USAGE.md. Policy (and the
     # LOKI_ALLOW_CLAUDE_SIDECALLS=1 opt-in) lives in providers/loader.sh,
@@ -22426,6 +22449,9 @@ build_prompt() {
     # and to the dashboard/Purple Lab UI.
     local usage_doc_instruction="USAGE_DOC_REQUIRED: Before invoking loki_complete_task (or touching .loki/signals/COMPLETION_REQUESTED), write USAGE.md at the project root. Detect the stack from package.json/requirements.txt/Cargo.toml/go.mod/etc. and include these sections: (1) Prerequisites (runtimes, ports, env vars), (2) Install (exact command, e.g. 'npm install' or 'pip install -r requirements.txt'), (3) Start (exact command, e.g. 'npm start' or 'python server.py'), (4) Verify -- 2 to 3 copy-paste commands the user can run to confirm it works (curl examples for APIs with expected output, browser URL for web UIs, command invocation for CLIs), (5) Stop (Ctrl+C or 'lsof -ti:PORT | xargs kill -9' for backgrounded servers). Keep it under 100 lines, plain Markdown, no emojis. If USAGE.md already exists and is accurate, leave it; otherwise create or update it."
 
+    # A-132: a quick fix does not ask for USAGE.md (mirrored in build_prompt.ts).
+    _loki_is_quick_prd "$prd" && usage_doc_instruction=""
+
     # DOC_SCOPE instruction (F52): scale generated documentation to the detected
     # project complexity. A trivial one-file app does not warrant a nine-file
     # architecture suite (ARCHITECTURE/COMPONENTS/DECISIONS/API/SETUP/TESTING) --
@@ -23625,7 +23651,7 @@ populate_prd_queue() {
     # Prefer the original project PRD over generated quick-prd.md
     # quick-prd.md contains boilerplate that produces garbage tasks
     local effective_prd="$prd_file"
-    if [[ "$prd_file" == *"quick-prd.md" ]] || [[ "$prd_file" == *"chat-prd.md" ]]; then
+    if [[ "$prd_file" == *"quick-prd.md" ]] || _loki_is_quick_prd "$prd_file" || [[ "$prd_file" == *"chat-prd.md" ]]; then
         # Look for the real PRD in the project root
         for candidate in "PRD.md" "prd.md" "requirements.md" "REQUIREMENTS.md" "spec.md" "SPEC.md"; do
             if [[ -f "$candidate" ]]; then
@@ -29344,6 +29370,11 @@ main() {
             # move, so a partial write never leaves a truncated HANDOFF.md.
             local _handoff_dir _handoff_md _handoff_tmp
             _handoff_dir="${TARGET_DIR:-.}"
+            # A-132: a quick fix keeps HANDOFF.md under .loki/, out of the repo root.
+            if _loki_is_quick_prd "${PRD_PATH:-}"; then
+                _handoff_dir="${LOKI_DIR:-${TARGET_DIR:-.}/.loki}"
+                mkdir -p "$_handoff_dir" 2>/dev/null || true
+            fi
             _handoff_md="$_handoff_dir/HANDOFF.md"
             _handoff_tmp="$_handoff_dir/.HANDOFF.md.tmp"
             if python3 "$_own_render" --loki-dir "${LOKI_DIR:-${TARGET_DIR:-.}/.loki}" --md > "$_handoff_tmp" 2>/dev/null; then
