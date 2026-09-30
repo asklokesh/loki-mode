@@ -68,25 +68,31 @@ skill_version() {
 # origin/main, else main) plus the working tree, so committed slices and CI
 # checkouts are scanned too. No resolvable base falls back to HEAD.
 # perl, not grep -P: BSD/macOS grep has no -P and the scan silently matched nothing.
+BASE=""
+for ref in "${STRUCTURAL_BASE:-}" origin/main main; do
+    [ -n "$ref" ] || continue
+    BASE=$(git merge-base "$ref" HEAD 2>/dev/null) && break
+    BASE=""
+done
+if [ -z "$BASE" ]; then
+    echo "structural-checks: no base ref, scanning the working tree only" >&2
+    BASE=HEAD
+fi
 has_match() { perl -CSD -ne 'BEGIN{$p=shift} $f=1 if /$p/; END{exit !$f}' "$1" 2>/dev/null; }
 changed_chars() {
-    local f rc=0 files base="" ref
-    for ref in "${STRUCTURAL_BASE:-}" origin/main main; do
-        [ -n "$ref" ] || continue
-        base=$(git merge-base "$ref" HEAD 2>/dev/null) && break
-        base=""
-    done
-    base="${base:-HEAD}"
+    local f rc=0 files base="$BASE"
+    # Vendored bytes: upstream refdiffs must stay byte-exact; dist maps embed third-party sources.
+    local excl=(. ":(exclude)loki-ts/dist/**" ":(exclude)eval/loki10/refdiff/**")
     # Emoji and dash scans see added lines only, so pre-existing text in a
     # touched file never blocks a slice; untracked files are scanned whole.
     local emoji='[\x{1F300}-\x{1FAFF}\x{2600}-\x{27BF}]' dash='[\x{2013}\x{2014}]'
-    if git diff "$base" -U0 2>/dev/null | has_match "^\\+[^+].*$emoji"; then
+    if git diff "$base" -U0 -- "${excl[@]}" 2>/dev/null | has_match "^\\+(?!\\+\\+ ).*$emoji"; then
         echo "emoji in added lines (diff vs $base)"; rc=1
     fi
-    if git diff "$base" -U0 2>/dev/null | has_match "^\\+[^+].*$dash"; then
+    if git diff "$base" -U0 -- "${excl[@]}" 2>/dev/null | has_match "^\\+(?!\\+\\+ ).*$dash"; then
         echo "em/en dash in added lines (diff vs $base)"; rc=1
     fi
-    files=$(git ls-files -o --exclude-standard 2>/dev/null)
+    files=$(git ls-files -o --exclude-standard -- "${excl[@]}" 2>/dev/null)
     for f in $files; do
         [ -f "$f" ] || continue
         if has_match "$emoji|$dash" < "$f"; then echo "emoji/dash in untracked: $f"; rc=1; fi
