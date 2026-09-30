@@ -80,6 +80,11 @@ describe("A-103 wall discards tests that are not red for the right reason", () =
     expect(r.result.data.base_run).toEqual({ pass: 0, fail: 1, not_run: 0 });
     expect((r.result.data.files as unknown[]).length).toBe(1);
   });
+  test("an ESM import of an export the task has not created yet is red and kept", async () => {
+    const r = await wallWith({ "loki_wall_esmexport.test.mjs": "import test from 'node:test';\nimport assert from 'node:assert';\nimport { mean } from '../sum.mjs';\ntest('mean', () => { assert.strictEqual(mean([2, 4]), 3); });\n" }, { "sum.mjs": "export const sum = 1;\n" });
+    expect(r.result.data.base_run).toEqual({ pass: 0, fail: 1, not_run: 0 });
+    expect((r.result.data.files as unknown[]).length).toBe(1);
+  });
   test("a missing bare package is not_run and discarded", async () => {
     const r = await wallWith({ "loki_wall_bare.test.js": "const test = require('node:test');\nconst x = require('lodash-nope');\ntest('t', () => {});\n" });
     expect(r.result.data.base_run).toEqual({ pass: 0, fail: 0, not_run: 1 });
