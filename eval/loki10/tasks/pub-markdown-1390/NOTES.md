@@ -1,0 +1,49 @@
+# pub-markdown-1390 provenance (not given to arms)
+
+- issue: Python-Markdown/markdown#1390
+- fix_pr: Python-Markdown/markdown#1414 (squash merge)
+- merge_sha: 3d8afc6f89e169522f44c1bbec15f66dc359eccb
+- repo.ref (red) = merge^1: 9edba85fc14f034b7109534220702bf60178ff15
+- git diff --stat ref merge:
+  .spell-dict | 1 +; docs/changelog.md | 4 +-;
+  markdown/extensions/attr_list.py | 86 +++++---; markdown/extensions/fenced_code.py | 15 +++--;
+  tests/test_syntax/extensions/test_attr_list.py | 45 ++++--;
+  tests/test_syntax/extensions/test_fenced_code.py | 42 +++;
+  6 files changed, 153 insertions(+), 40 deletions(-).
+  Source-only diff (2 .py files under markdown/) is eval/loki10/refdiff/pub-markdown-1390.diff.
+- hidden files: upstream tests at merge_sha, verbatim, both taken whole (no -k).
+  Issue-stated behavior: braces inside a quoted attr value parse in a fenced-code
+  attr list and in a heading attr list (test_curly_in_double_quote,
+  test_curly_in_single_quote, testFencedCodeCurlyInAttrs). The other upstream
+  tests in these files (stray closing brace, historic ignore rules, mismatched
+  braces) already pass at ref; they pin existing behavior as regression guards
+  against over-broad fixes and assert no new API.
+- RED at ref (exact hidden.run, fresh venv): 3 failed, 26 passed, 19 skipped, rc=1
+  (real assertion failures, no collection/import errors):
+  test_attr_list::test_curly_in_double_quote, ::test_curly_in_single_quote,
+  test_fenced_code::testFencedCodeCurlyInAttrs. The 19 skips are pygments-gated
+  tests, skipped identically at ref and at merge.
+- GREEN at merge_sha: 29 passed, 19 skipped, rc=0.
+- Selected tests use no clock, randomness or network (network only at setup).
+
+## One-file fix attempts (all at merge^1 with the hidden tests, exact command)
+Behavior lives in two independent files: attr_list.py (heading/inline attr
+parsing) and fenced_code.py (fence-opener regex). The tests exercise each separately.
+1. Upstream attr_list.py diff only, fenced_code.py untouched: 1 failed, 28 passed, rc=1
+   (testFencedCodeCurlyInAttrs: fence with braces in a value renders as a paragraph).
+2. fenced_code.py only (upstream diff, with the get_attrs_and_remainder dependency
+   inlined back to the existing get_attrs so it runs standalone, regex widened to
+   [^\n]*): 3 failed, 26 passed, rc=1 (both attr_list curly-in-quote tests, plus
+   testFencedCodeMismatchedCurlyInAttrs).
+3. Inlining helper into caller: fenced_code.py already gets everything from
+   attr_list; there is no helper module to fold. Attempt 2 is that inlining.
+All three need edits to both files, so no single-file fix passes.
+
+## Wrong fix (plausible, rejected)
+Widen only the two regexes ([^\}\n] to [^\n] in attr_list BASE_RE and in the fence
+attrs group) with no remainder handling: 3 failed, 26 passed, rc=1
+(test_curly_after_block, test_curly_after_inline, testFencedCodeMismatchedCurlyInAttrs).
+
+## No-op baseline
+STUB_MODE=noop through eval/loki10/run.sh (raw-claude arm, stub-arm.sh):
+hidden_pass=false, completed=False.
