@@ -1137,6 +1137,7 @@ run_test "Marketplace action Cleanup step scoped to this job's own loki run" "$S
 run_test "Dashboard fresh-repo/evidence harnesses kill only their own recorded PID" "$SCRIPT_DIR/test-dashboard-harness-port-scoping.sh"
 run_test "Dashboard API smoke cleanup kills only its own recorded PID" "$SCRIPT_DIR/test-dashboard-api-smoke-scoping.sh"
 run_test "cleanup-test-processes.sh scoped to LISTEN + this uid, --aggressive gated" "$SCRIPT_DIR/test-cleanup-script-scoping.sh"
+run_test "No script or test removes run-owned temp dirs by glob (E-140)" "$SCRIPT_DIR/test-no-tmp-sweep.sh"
 run_test "Runtime Gate port reclaims scoped to LISTEN + cwd ownership" "$SCRIPT_DIR/test-runtime-gate-port-scoping.sh"
 run_test "Bun Parity disk.available_gb tolerance (BACKLOG 26)" "$SCRIPT_DIR/test-bun-parity-disk-tolerance.sh"
 run_test "council_augment_from_managed_memory never falls back to cwd for PROJECT_DIR (BACKLOG 63)" "$SCRIPT_DIR/test-council-augment-managed-memory-project-dir.sh"
