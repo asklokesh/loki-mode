@@ -98,7 +98,7 @@ function detect(root, files) {
 
 function counts(out) {
   const sum = (rx, one) => [...out.matchAll(rx)].reduce((a, m) => a + (one ? 1 : +m[1]), 0);
-  if (/^\s*[ℹ#]\s*pass\s+\d+/m.test(out)) return { pass: sum(/^\s*[ℹ#]\s*pass\s+(\d+)/gm), fail: sum(/^\s*[ℹ#]\s*fail\s+(\d+)/gm) };
+  if (/^\s*[\u2139#]\s*pass\s+\d+/m.test(out)) return { pass: sum(/^\s*[\u2139#]\s*pass\s+(\d+)/gm), fail: sum(/^\s*[\u2139#]\s*fail\s+(\d+)/gm) };
   if (/^\s*--- (PASS|FAIL)/m.test(out)) return { pass: sum(/^\s*--- (PASS)/gm, 1), fail: sum(/^\s*--- (FAIL)/gm, 1) };
   return { pass: sum(/(\d+) passed/g), fail: sum(/(\d+) failed/g) };
 }
@@ -109,6 +109,23 @@ function statePath(input, root) {
   return path.join(dir, crypto.createHash('sha1').update(root + '\0' + (input.session_id || '')).digest('hex') + '.json');
 }
 
+function failing(out) {
+  const ids = new Set();
+  for (const m of out.matchAll(/^\s*(?:not ok \d+ - |\u2716 )(.+?)(?: \(\d[\d.]*ms\))?\s*$/gm)) if (!/^failing tests:?$/.test(m[1]) && !/^\d+$/.test(m[1])) ids.add(m[1]);
+  for (const m of out.matchAll(/^FAILED (\S+?)(?: - .*)?$/gm)) ids.add(m[1]);
+  for (const m of out.matchAll(/^\s*--- FAIL: (\S+)/gm)) ids.add(m[1]);
+  for (const m of out.matchAll(/^test (\S+) \.\.\. FAILED/gm)) ids.add(m[1]);
+  return [...ids];
+}
+
+function runSuite(root, runner, timeout) {
+  const env = { ...process.env, CI: '1', NO_COLOR: '1', FORCE_COLOR: '0', PYTHONDONTWRITEBYTECODE: '1' };
+  delete env.NODE_TEST_CONTEXT; // set when we are launched inside another node --test run
+  const res = spawnSync(runner.cmd[0], runner.cmd.slice(1), { cwd: root, encoding: 'utf8', maxBuffer: 1 << 28, timeout, env });
+  const out = (res.stdout || '') + (res.stderr || '');
+  return { error: res.error, status: res.status, ids: failing(out), ...counts(out), tail: out.trim().split('\n').slice(-15).join('\n') };
+}
+
 function main() {
   const mode = process.argv[2];
   let input = {};
@@ -116,62 +133,70 @@ function main() {
   const root = path.resolve(input.cwd || process.cwd());
   const sp = statePath(input, root);
   const cur = walk(root);
+  const runner = detect(root, cur);
 
   if (mode === 'start') {
-    if (!fs.existsSync(sp)) fs.writeFileSync(sp, JSON.stringify({ files: cur, blocks: 0 }));
+    if (fs.existsSync(sp)) return; // resume or compact: keep the original baseline
+    const b = runner ? runSuite(root, runner, +process.env.LOKI_SEAL_START_TIMEOUT_MS || 120000) : null;
+    const suite = b && !b.error ? { status: b.status, ids: b.ids, pass: b.pass, fail: b.fail } : null;
+    fs.writeFileSync(sp, JSON.stringify({ files: cur, blocks: 0, suite }));
+    const msg = suite ? `loki-seal: baseline recorded, ${suite.pass + suite.fail} tests, ${Math.max(suite.ids.length, suite.fail)} failing`
+      : 'loki-seal: baseline recorded (suite not run at start), file snapshot only';
+    process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: msg } }));
     return;
   }
   if (mode !== 'stop') { process.stderr.write('usage: loki-seal start|stop\n'); process.exit(64); }
 
   let st = null;
   try { st = JSON.parse(fs.readFileSync(sp, 'utf8')); } catch { /* no SessionStart baseline */ }
-  const baseKind = st ? 'session start' : gitHead(root) ? 'git HEAD' : 'none';
-  const base = st ? st.files : gitHead(root) || cur;
+  const head = st ? null : gitHead(root);
+  const base = st ? st.files : head || cur;
+  const suite0 = st && st.suite; // failing set at session start, if the suite could run then
+  const baseKind = !st ? (head ? 'git HEAD' : 'none') : suite0 ? 'session start' : 'session start files only, suite not run at start';
   const findings = scan(base, cur);
   const tree = treeHash(cur);
 
-  const runner = detect(root, cur);
-  let res = null, c = { pass: 0, fail: 0 }, tail = '';
-  if (runner) {
-    const env = { ...process.env, CI: '1', NO_COLOR: '1', FORCE_COLOR: '0', PYTHONDONTWRITEBYTECODE: '1' };
-    delete env.NODE_TEST_CONTEXT; // set when we are launched inside another node --test run
-    res = spawnSync(runner.cmd[0], runner.cmd.slice(1), {
-      cwd: root, encoding: 'utf8', maxBuffer: 1 << 28, timeout: +process.env.LOKI_SEAL_TIMEOUT_MS || 600000,
-      env,
-    });
-    const out = (res.stdout || '') + (res.stderr || '');
-    c = counts(out);
-    tail = out.trim().split('\n').slice(-15).join('\n');
-  }
+  const r = runner ? runSuite(root, runner, +process.env.LOKI_SEAL_TIMEOUT_MS || 300000) : null;
+  const c = r || { pass: 0, fail: 0 };
 
   const problems = [...findings];
+  let already = 0;
   if (runner) {
-    if (res.error) problems.push(`test run did not complete: ${res.error.code || res.error.message}`);
-    else if (res.status !== 0) problems.push(`tests are red (exit ${res.status})`);
-    else if (c.pass + c.fail === 0) problems.push('no tests ran (zero is NOT VERIFIED)');
+    if (r.error) problems.push(`test run did not complete: ${r.error.code || r.error.message}`);
+    else if (r.status !== 0) {
+      if (!suite0) problems.push(`tests are red (exit ${r.status})`);
+      else {
+        already = Math.max(suite0.ids.length, suite0.fail);
+        const fresh = r.ids.length || suite0.ids.length ? r.ids.filter((i) => !suite0.ids.includes(i)) : null;
+        const isNew = fresh ? fresh.length > 0 : r.fail > suite0.fail || suite0.status === 0;
+        if (isNew) problems.push(`new failing tests since session start${fresh && fresh.length ? ': ' + fresh.join(', ') : ''} (exit ${r.status})`);
+      }
+    } else if (c.pass + c.fail === 0) problems.push('no tests ran (zero is NOT VERIFIED)');
   }
 
+  const max = +process.env.LOKI_SEAL_MAX_BLOCKS || MAX_BLOCKS;
   const blocks = (st ? st.blocks : 0) + (problems.length ? 1 : 0);
   if (st) { st.blocks = problems.length ? blocks : 0; fs.writeFileSync(sp, JSON.stringify(st)); }
-  const released = problems.length && blocks > MAX_BLOCKS;
+  const released = problems.length > 0 && blocks > max;
 
   const outcome = !runner ? 'NOT VERIFIED (no test runner detected)'
-    : released ? 'NOT VERIFIED (block limit reached, released)'
+    : released ? `NOT VERIFIED (released after ${max} blocks)`
     : problems.length ? 'BLOCKED' : 'PASS';
+  const basePart = already ? `baseline: ${already} already failing (not caused by this session)` : `baseline: ${baseKind}`;
   const receipt = [
     `loki-seal: ${outcome}`,
     runner ? `runner: ${runner.name}: ${c.pass} passed, ${c.fail} failed` : 'runner: none',
-    `tests-integrity: ${findings.length ? findings.length + ' problem(s)' : 'intact'} (baseline: ${baseKind})`,
+    `tests-integrity: ${findings.length ? findings.length + ' problem(s)' : 'intact'}; ${basePart}`,
     `tree: ${tree}`,
     problems.length || !runner ? `Not verified by Loki: ${REPO}` : `Verified by Loki ${REPO}`,
   ].join('\n');
 
   if (problems.length && !released) {
-    const reason = `${receipt}\n\nDo not finish yet. Fix the code, not the tests:\n- ${problems.join('\n- ')}` + (tail ? `\n\nLast test output:\n${tail}` : '');
-    process.stdout.write(JSON.stringify({ decision: 'block', reason }));
-  } else {
-    process.stdout.write(JSON.stringify({ systemMessage: receipt }));
+    // Exit 2: stderr is fed back to the model and the stop is blocked.
+    process.stderr.write(`${receipt}\n\nDo not finish yet. Fix the code, not the tests:\n- ${problems.join('\n- ')}` + (r && r.tail ? `\n\nLast test output:\n${r.tail}` : '') + '\n');
+    process.exit(2);
   }
+  process.stdout.write(receipt + '\n');
 }
 
 main();

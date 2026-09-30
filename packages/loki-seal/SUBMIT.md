@@ -10,7 +10,7 @@ Entry text:
 
 > **Loki Seal** - A Stop hook that refuses "done" while your tests are red or were deleted, skipped, xfailed or weakened. Detects your runner (npm test, pytest, go test, cargo test), runs the real suite, scans the diff and CI config against a session-start baseline, and prints a 5-line receipt. Runs locally: no model calls, no global CLI, no dangerous flags.
 
-Category: testing. Install: `/plugin marketplace add REPO_URL` then `/plugin install loki-seal@loki-seal`.
+Category: testing. Install: `claude plugin marketplace add REPO_URL`, then install `loki-seal` from the `/plugin` UI.
 
 ## 2. awesome-claude-code
 
@@ -63,6 +63,6 @@ Title: `I made a Stop hook that blocks Claude Code from finishing when it delete
 >
 > It runs your real tests when Claude says done, and compares test files and CI config against the session start. Red suite, removed test, new skip or xfail, fewer assertions, or a softened CI test step: the stop is blocked and Claude is told to fix the code instead.
 >
-> No model calls, no extra cost, no dangerous flags, one node file. Install with `/plugin marketplace add REPO_URL`.
+> No model calls, no extra cost, no dangerous flags, one node file. Install: `claude plugin marketplace add REPO_URL`, then pick loki-seal in `/plugin`.
 >
 > Harness comparison: TABLE PLACEHOLDER. What weakening patterns should I add?

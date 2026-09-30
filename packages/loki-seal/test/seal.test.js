@@ -24,15 +24,14 @@ function put(dir, files) {
     fs.writeFileSync(path.join(dir, f), c);
   }
 }
-function seal(cmd, dir) {
+function seal(cmd, dir, extra = {}) {
   const r = spawnSync('node', [SEAL, cmd], {
-    input: JSON.stringify({ session_id: 's-' + path.basename(dir), cwd: dir }),
+    input: JSON.stringify({ session_id: 's-' + path.basename(dir), cwd: dir, ...extra }),
     env: { ...process.env, LOKI_SEAL_STATE_DIR: path.join(root, 'state') },
     encoding: 'utf8',
   });
-  let out = {};
-  try { out = JSON.parse(r.stdout); } catch { /* empty on no-op */ }
-  return { status: r.status, out, raw: r.stdout + r.stderr };
+  // Contract: block = exit 2 + reason on stderr; pass = exit 0 + receipt on stdout.
+  return { status: r.status, out: { decision: r.status === 2 ? 'block' : undefined, reason: r.stderr, systemMessage: r.stdout }, raw: r.stdout + r.stderr };
 }
 const blocked = (r) => r.out.decision === 'block';
 
@@ -60,8 +59,9 @@ test('unchanged green passes with a 5-line receipt', () => {
 });
 
 test('red tests block', () => {
-  const d = repo(nodeRepo(ADD_BAD, T2));
+  const d = repo(nodeRepo(ADD_OK, T2));
   seal('start', d);
+  put(d, { 'lib.js': ADD_BAD });
   const r = seal('stop', d);
   assert.ok(blocked(r), r.raw);
   assert.match(r.out.reason, /red|fail/i);
@@ -137,8 +137,9 @@ const PYFIX = (body) => ({
 const havePytest = spawnSync('python3', ['-m', 'pytest', '--version']).status === 0;
 
 test('pytest: red blocks, real fix passes', { skip: !havePytest && 'pytest missing' }, () => {
-  const d = repo(PYFIX('def add(a, b):\n    return a - b\n'));
+  const d = repo(PYFIX('def add(a, b):\n    return a + b\n'));
   seal('start', d);
+  put(d, { 'calc.py': 'def add(a, b):\n    return a - b\n' });
   assert.ok(blocked(seal('stop', d)));
   put(d, { 'calc.py': 'def add(a, b):\n    return a + b\n' });
   const r = seal('stop', d);
@@ -162,4 +163,58 @@ test('no runner detected is not a block', () => {
   const r = seal('stop', d);
   assert.ok(!blocked(r));
   assert.match(r.out.systemMessage, /NOT VERIFIED/);
+});
+
+test('exit code is 2 on block and 0 on pass', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  seal('start', d);
+  put(d, { 'lib.js': ADD_BAD });
+  assert.strictEqual(seal('stop', d).status, 2);
+  put(d, { 'lib.js': ADD_OK });
+  assert.strictEqual(seal('stop', d).status, 0);
+});
+
+test('stop_hook_active=true with still-red tests blocks again', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  seal('start', d);
+  put(d, { 'lib.js': ADD_BAD });
+  assert.strictEqual(seal('stop', d).status, 2);
+  assert.strictEqual(seal('stop', d, { stop_hook_active: true }).status, 2);
+});
+
+test('pre-existing red test at session start does not block', () => {
+  const d = repo(nodeRepo(ADD_BAD, T2));
+  seal('start', d);
+  put(d, { 'README.md': 'unrelated change' });
+  const r = seal('stop', d);
+  assert.strictEqual(r.status, 0, r.raw);
+  assert.match(r.out.systemMessage, /baseline: \d+ already failing \(not caused by this session\)/);
+});
+
+test('a new failure on top of a pre-existing one blocks', () => {
+  const d = repo(nodeRepo(ADD_BAD, T2));
+  seal('start', d);
+  put(d, { 'test/b.test.js': "const test = require('node:test'); const assert = require('node:assert');\ntest('new thing', () => { assert.strictEqual(1, 2); });\n" });
+  const r = seal('stop', d);
+  assert.strictEqual(r.status, 2, r.raw);
+  assert.match(r.out.reason, /new failing|new failure/i);
+});
+
+test('block valve releases after LOKI_SEAL_MAX_BLOCKS with an explicit receipt', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  seal('start', d);
+  put(d, { 'test/a.test.js': T2.replace("test('adds',", "test.skip('adds',") });
+  const env = { LOKI_SEAL_MAX_BLOCKS: '2' };
+  const run = () => spawnSync('node', [SEAL, 'stop'], { input: JSON.stringify({ session_id: 's-' + path.basename(d), cwd: d }), env: { ...process.env, LOKI_SEAL_STATE_DIR: path.join(root, 'state'), ...env }, encoding: 'utf8' });
+  assert.strictEqual(run().status, 2);
+  assert.strictEqual(run().status, 2);
+  const r = run();
+  assert.strictEqual(r.status, 0);
+  assert.match(r.stdout, /NOT VERIFIED \(released after 2 blocks\)/);
+});
+
+test('start emits additionalContext', () => {
+  const d = repo(nodeRepo(ADD_BAD, T2));
+  const r = seal('start', d);
+  assert.match(JSON.parse(r.out.systemMessage).hookSpecificOutput.additionalContext, /baseline recorded, \d+ tests, 1 failing/);
 });
