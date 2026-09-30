@@ -895,6 +895,29 @@ rc=$?
     && pass "D34: tiered task with no refdiff -> rc=1" \
     || fail "D34: no-refdiff rc=$rc: $(cat "$T/ms-norefdiff.out")"
 
+# E-136: a second file whose change is docstring/annotation/comment only must
+# not count; a real behavioral second file must.
+python3 - "$MS" >"$T/ms-e136.out" 2>&1 <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("ms", sys.argv[1])
+ms = importlib.util.module_from_spec(spec); spec.loader.exec_module(ms)
+def blk(p, old, new):
+    return ("diff --git a/%s b/%s\n--- a/%s\n+++ b/%s\n@@ -1,3 +1,3 @@\n" % (p, p, p, p)
+            + "".join("-%s\n" % l for l in old) + "".join("+%s\n" % l for l in new))
+main = blk("pkg/a.py", ["def f():", "    return 1"], ["def f():", "    return 2"])
+doc = blk("pkg/b.py", ['def g():', '    """old doc"""', '    return 1'], ['def g():', '    """new doc"""', '    return 1'])
+ann = blk("pkg/c.py", ["def h(x):", "    y = x", "    return y"], ["def h(x: int) -> int:", "    y: int = x", "    return y"])
+beh = blk("pkg/d.py", ["def k(x):", "    return x"], ["def k(x):", "    return x + 1"])
+bad = blk("pkg/e.py", ["    return ("], ["    return (1,"])
+assert ms.measure(main + doc)[0] == 1, "docstring-only second file counted"
+assert ms.measure(main + ann)[0] == 1, "annotation-only second file counted"
+assert ms.measure(main + beh)[0] == 2, "behavioral second file not counted"
+assert ms.measure(main + bad)[0] == 2, "unparseable file must count (fail safe)"
+PY
+rc=$?
+[ "$rc" = 0 ] && pass "E-136: docstring/annotation-only files do not count; behavioral and unparseable files do" \
+    || fail "E-136: rc=$rc: $(cat "$T/ms-e136.out")"
+
 # Negative control C: --online against an unreachable source -> rc=1. A
 # nonexistent local path (never DNS) so this is hermetic and fast rather
 # than at the mercy of a resolver; measure-size.py's own GIT_TIMEOUT_S
