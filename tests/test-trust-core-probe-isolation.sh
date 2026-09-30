@@ -61,10 +61,15 @@ elif [[ $rc -eq 124 ]]; then
     # The inner suite prints results only when it finishes, so name every
     # case (first 8 in file order) that has no PASS line yet.
     pending=""
+    names=0
     while IFS= read -r name; do
+        names=$((names + 1))
         printf '%s\n' "$out" | grep -qF "  PASS: $name" || pending="$pending [$name]"
     done < <(grep -o '^probe_case "[^"]*"' "$src/$SUITE" | head -8 | sed 's/^probe_case "//; s/"$//')
-    if [[ -z "$pending" ]]; then
+    if [[ $cases -eq 0 || $names -eq 0 ]]; then
+        ko "the limited run passed all 8 cases plus the restore check" \
+           "timed out after ${INNER_BUDGET}s with no PASS output (possible hang before the first case); pass-lines=$cases case-names=$names"
+    elif [[ -z "$pending" ]]; then
         ko "the limited run passed all 8 cases plus the restore check" \
            "timed out after all cases passed (${INNER_BUDGET}s budget; a hang after success is still a hang); pass-lines=$cases"
     else
