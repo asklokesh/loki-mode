@@ -92,3 +92,22 @@ Method: `gh pr list --state merged --limit 400 --json number,title,files,closing
 - Backend-pair fixes (asyncio/trio) look like two required files, but check for a shared caller in abc/ or _core/ that can dispatch; here one existed.
 - Serializer plus parser round trips (python-dotenv) are a good shape: exact-output rows pin the writer, trailing-delimiter round trips pin the reader.
 
+
+## S41-20m screening (2026-09-30): application-scale Python tools, 0 kept, 1 built and dropped
+
+Method: `gh pr list --state merged --limit 300 --json number,title,files,closingIssuesReferences` over httpie/cli, pipx, tox, cookiecutter, pre-commit, mkdocs, twine, coveragepy, black, isort, pylint; filter: closes an issue, 2-3 non-test .py files, test .py changed, at most 8 files. About 75 PRs passed the filter; about 10 were read in diff.
+
+### Built and dropped
+- tox#3127 -> PR #3736 (merge 69c0b42654cc, ref 3c734ce7; one commit). TOX_OVERRIDE `+=` with an alias key (passenv vs pass_env). Hidden test: tests/config/test_main.py (whole file). RED rc=1 (2 failed, 21 passed; py3.12 venv via uv, `pip install -e .` with SETUPTOOLS_SCM_PRETEND_VERSION plus pytest pytest-mock pytest-timeout devpi-process flaky time-machine re-assert psutil). Upstream splits the fix across config/loader/api.py (Loader.load all_keys) and config/of_type.py. A one-file change to of_type.py alone (merge alias overrides across self.keys per loader, and try keys present in a loader first) gives `pytest tests/config/test_main.py -q` rc=0, 23 passed. Natural enough (8 lines, public attributes only), so DROPPED.
+
+### Dropped after reading the diff (not built)
+- httpie#1163/#1133 (tests import the new names load_json_preserve_order_and_dupe_keys and JsonDictPreservingDuplicateKeys: over-specified). httpie#1094 (internal refactor of response.raw access, no user-visible bug). httpie#929 (27 commits, feature-sized).
+- pipx#1937/#540 (issue is a Windows-only duplicate-app uninstall crash; the PR is a copy-mode/force rework, so hidden tests would pin behavior the issue never states). Most other pipx PRs are new commands or need network pip installs at test time.
+- black#5129 (NO_COLOR: click `ctx.color = False` in __init__.py alone would likely strip ANSI everywhere; not run), black#5386 (Windows different-drive case, platform specific), black#5411 (stdout.buffer; one path).
+- coveragepy#1849 (lcov rewrite plus a new config option lcov_line_checksums: feature).
+- pylint#11476/#11217 (helper added to checkers/utils.py; the checker can inline the logic). tox#3724, #3799, #3787, #3759 (single config layer). pre-commit#2746 (deprecation feature). cookiecutter#1669 and extension PRs (features).
+- Not examined further: mkdocs and twine yielded no new filter hits beyond mkdocs#3022 (already dropped); isort hits are on the prior drop list or single-module parse/output fixes.
+
+### Lessons
+- Application-scale PRs that pass the two-file filter are mostly features, internal refactors, or a single layer with a helper; command-layer plus core-layer bug fixes with both sides tested did not appear in the 300 most recent merged PRs of these repos.
+- Alias/override fixes split across a loader and its caller (tox) can still be closed from the caller by reordering keys and merging shared state.
