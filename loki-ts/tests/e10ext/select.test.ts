@@ -479,3 +479,46 @@ describe("selectAttempt: all attempts failing", () => {
     expect(r.index).toBe(0); // a has fewer lint fails once every test key ties at 2 deterministic fails
   });
 });
+
+describe("selectAttempt: diff size counting (key 6)", () => {
+  const checks = [check("pytest:tests/test_a.py", "pass", { interpreter: "system" })];
+  const hunk = (body: string) => `diff --git a/x b/x\n--- a/x\n+++ b/x\n${body}`;
+
+  it("a deleted line starting with `--` inside a hunk (SQL comment) counts as a change", () => {
+    // a deletes one SQL-comment line (`--- x` on the wire) plus one code line: 2 changes.
+    // b adds 1 line. Skipping `---` inside hunks would give a 1 and tie, a winning on index.
+    const a = attempt(0, checks, { diff: hunk("@@ -1,3 +1,1 @@\n--- drop me\n-old\n keep\n keep2\n") });
+    const b = attempt(1, checks, { diff: hunk("@@ -1,1 +1,2 @@\n keep\n+new\n") });
+    expect(selectAttempt([a, b], S, WALL).index).toBe(1);
+  });
+
+  it("file headers outside a hunk are not counted", () => {
+    // a: 1 real change behind headers. b: 1 real change, no headers. Tie, so index 0 wins.
+    const a = attempt(0, checks, { diff: hunk("@@ -1,1 +1,2 @@\n keep\n+new\n") });
+    const b = attempt(1, checks, { diff: "+new\n" });
+    const r = selectAttempt([a, b], S, WALL);
+    expect(r.index).toBe(0);
+    expect(r.reason).toBe("rank: index");
+  });
+
+  it("blank added and deleted lines are not counted", () => {
+    const a = attempt(0, checks, { diff: "+\n+  \n-\n+x\n+y\n" });
+    const b = attempt(1, checks, { diff: "+x\n+y\n+z\n" });
+    // a counts 2 (x, y), b counts 3
+    expect(selectAttempt([a, b], S, WALL).index).toBe(0);
+  });
+});
+
+describe("selectAttempt: pytest collection exits 3, 4 and 5 are not deterministic fails", () => {
+  for (const code of [3, 4, 5]) {
+    it(`exit ${code} does not count as a deterministic fail`, () => {
+      const a = attempt(0, [check("pytest:tests/test_a.py", "fail", { exit_code: code })]);
+      const b = attempt(1, [check("pytest:tests/test_a.py", "fail", { exit_code: 1 })]);
+      // a has 0 deterministic fails, b has 1: a wins on key 2 (index alone would also pick a, so
+      // put the collection exit on the higher index).
+      const r = selectAttempt([b, { ...a, index: 2 }], S, WALL);
+      expect(r.index).toBe(2);
+      expect(r.reason).toBe("rank: deterministicFails");
+    });
+  }
+});

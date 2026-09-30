@@ -62,8 +62,21 @@ const RE_IMPORT_FROM = /^[ \t]*import\s+(type\s+(?!from\b))?[^;]*?\bfrom\s+["'](
 const RE_EXPORT_FROM = /^[ \t]*export\s+(?:type\s+)?[^;]*?\bfrom\s+["']([^"']+)["'];?/gm;
 const RE_DYNAMIC = /\b(?:import|require)\s*\(\s*["']([^"']+)["']\s*\)/g;
 
+// Third regex gap of the same class (template-literal and comment-inside-call dynamic imports), so
+// the regexes are no longer the only fence: Bun's own scanner sees every real specifier. It drops
+// type-only imports (the correct D42 meaning) but hides `import { type X }`, which the regexes
+// above still flag as a whole-statement violation. A dynamic import() whose argument is not a
+// single string/template literal (for example "a/" + "stages/fix.ts") cannot be resolved
+// statically, so it fails closed: e10ext has no legitimate need for one.
+const RE_NONLITERAL_DYNAMIC = /\bimport\s*\(\s*(?!\s*(?:\/\*[\s\S]*?\*\/\s*)*(?:"[^"\\\n]*"|'[^'\\\n]*'|`[^`$\\]*`)\s*\))/g;
+
+function scanImportPaths(src: string): string[] {
+  return new Bun.Transpiler({ loader: "ts" }).scanImports(src).map((i) => i.path);
+}
+
 function findImports(src: string): ImportRef[] {
   const refs: ImportRef[] = [];
+  for (const path of scanImportPaths(src)) refs.push({ path, typeOnly: false });
   for (const re of [RE_SIDE_EFFECT, RE_EXPORT_FROM, RE_DYNAMIC]) {
     re.lastIndex = 0;
     let m: RegExpExecArray | null;
@@ -93,7 +106,9 @@ function importViolations(file: string, src: string): string[] {
       violations.push(`${file} imports verify_cmd.ts without a whole-statement 'import type'`);
     }
   }
-  return violations;
+  RE_NONLITERAL_DYNAMIC.lastIndex = 0;
+  if (RE_NONLITERAL_DYNAMIC.test(src)) violations.push(`${file} has a non-literal dynamic import(), which cannot be fenced`);
+  return [...new Set(violations)];
 }
 
 function e10extFiles(): string[] {
@@ -180,5 +195,24 @@ describe("e10ext import fence: findImports catches every import form (D42 (1) B3
   it("dynamic `require(\"x\")` is caught and never exempted as type-only", () => {
     const src = `const m = require("${BANNED}");\n`;
     expect(importViolations("f.ts", src)).toEqual([`f.ts imports ${BANNED} without a whole-statement 'import type'`]);
+  });
+
+  it("B1r4: a template-literal dynamic import is caught", () => {
+    const src = "const m = await import(`../engine10/stages/fix.ts`);\n";
+    expect(importViolations("f.ts", src)).toEqual(["f.ts imports banned stages/ module: ../engine10/stages/fix.ts"]);
+  });
+
+  it("B1r4: a comment inside the import() call is caught", () => {
+    const src = `const m = await import(/* x */ "../engine10/stages/fix.ts");\n`;
+    expect(importViolations("f.ts", src)).toEqual(["f.ts imports banned stages/ module: ../engine10/stages/fix.ts"]);
+  });
+
+  it("B1r4: a concatenated dynamic import cannot be resolved statically and fails closed", () => {
+    const src = `const m = await import("../engine10/" + "stages/fix.ts");\n`;
+    expect(importViolations("f.ts", src)).toEqual(["f.ts has a non-literal dynamic import(), which cannot be fenced"]);
+  });
+
+  it("B1r4: a plain literal dynamic import of an allowed path is not a non-literal violation", () => {
+    expect(importViolations("f.ts", `const m = await import("./other.ts");\n`)).toEqual([]);
   });
 });

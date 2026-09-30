@@ -42,14 +42,32 @@ function refName(t: TestRef): string {
   return `${t.runner}:${t.path}`;
 }
 
-/** Added + deleted non-blank lines of a unified diff, skipping the `+++`/`---` file headers. */
+/** Added + deleted non-blank lines of a unified diff. The `+++`/`---` file headers are skipped
+ *  only outside a hunk: inside one, a deleted `-- sql comment` line is a real `---` line. Hunk
+ *  extents come from the `@@ -a,b +c,d @@` counts. */
 function diffChangedLines(diff: string): number {
   let n = 0;
+  let oldLeft = 0;
+  let newLeft = 0;
   for (const line of diff.split("\n")) {
-    if (line.startsWith("+++") || line.startsWith("---")) continue;
-    if (line[0] === "+" || line[0] === "-") {
-      if (line.slice(1).trim() !== "") n++;
+    const inHunk = oldLeft > 0 || newLeft > 0;
+    if (!inHunk) {
+      const h = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line);
+      if (h) {
+        oldLeft = h[1] === undefined ? 1 : Number(h[1]);
+        newLeft = h[2] === undefined ? 1 : Number(h[2]);
+        continue;
+      }
+      if (line.startsWith("+++") || line.startsWith("---")) continue;
     }
+    const c = line[0];
+    if (c === "+") newLeft--;
+    else if (c === "-") oldLeft--;
+    else if (c === " ") {
+      oldLeft--;
+      newLeft--;
+    }
+    if ((c === "+" || c === "-") && line.slice(1).trim() !== "") n++;
   }
   return n;
 }
