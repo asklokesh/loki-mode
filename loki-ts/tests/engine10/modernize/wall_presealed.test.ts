@@ -87,7 +87,7 @@ describe("classifyBaseRun (D42 (3))", () => {
 
   it("classifies pytest exit 2 by the Wall's rule over the raw output: red only for a repo-owned symbol", () => {
     writeRepoModule(repoDir, "unit_under_test");
-    const attr = "ERROR test_conf.py - AttributeError: module 'unit_under_test' has no attribute 'f'\nE   AttributeError: module 'unit_under_test' has no attribute 'f'\n";
+    const attr = "____ ERROR collecting test_conf.py ____\nE   AttributeError: module 'unit_under_test' has no attribute 'f'\n=== short test summary info ===\nERROR test_conf.py - AttributeError: module 'unit_under_test' has no attribute 'f'\n";
     expect(classifyBaseRun({ runner: "pytest", exitCode: 2, timedOut: false, output: attr }, repoDir)).toBe("red");
   });
 

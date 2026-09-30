@@ -113,7 +113,7 @@ const SKIP_DIRS = new Set([".git", ".loki", "node_modules", "__pycache__", ".ven
 const TEST_FILE = /(^|\/)(test_[^/]*|[^/]*_test)\.py$/;
 const SECTIONED = /(^|\/)(pyproject\.toml|setup\.cfg|tox\.ini)$/; // only their pytest sections count
 // Anything that can change what `python -m pytest` runs or reports; a NEW one is refused, not just a changed one.
-const PYTEST_CFG = /(^|\/)(conftest\.py|pytest\.ini|pytest\.py|pyproject\.toml|setup\.cfg|tox\.ini)$|(^|\/)pytest\//;
+const PYTEST_CFG = /(^|\/)(conftest\.py|\.?pytest\.(ini|toml)|pytest\.py|pyproject\.toml|setup\.cfg|tox\.ini|sitecustomize\.py|usercustomize\.py)$|\.pth$|(^|\/)pytest\//;
 
 function pytestSections(text: string): string {
   let on = false;
@@ -149,7 +149,7 @@ export function conformanceHashes(dir: string): Record<string, string> {
  *  config-class file (conftest.py, pytest config, pytest shim) that the base never had. */
 function conformanceDrift(base: Record<string, string>, now: Record<string, string>): string | null {
   for (const [p, h] of Object.entries(base)) if (now[p] !== h) return `${p} ${p in now ? "changed" : "removed"}`;
-  for (const p of Object.keys(now)) if (!(p in base) && PYTEST_CFG.test(p)) return `${p} added`;
+  for (const p of Object.keys(now)) if (!(p in base) && (PYTEST_CFG.test(p) || TEST_FILE.test(p))) return `${p} added`;
   return null;
 }
 

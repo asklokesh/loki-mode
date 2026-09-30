@@ -61,8 +61,8 @@ const RUNNER_FAILURE_EXIT: Record<ConformanceRunnerName, number> = {
 };
 
 /** Collection-error red rule for pytest exit 2, MIRRORED VERBATIM from the Wall's own classifier
- *  (stages/wall.ts pytestCollectionIsRed as of slice-E-125@407c508e; main's copy lacks E-125's
- *  AttributeError/NameError message rules and core is frozen for this slice). Swap this for a
+ *  (stages/wall.ts pytestCollectionIsRed as of slice-E-125@6fc6e950 (r4); main's copy lacks E-125's
+ *  short-summary-only rule and core is frozen for this slice). Swap this for a
  *  core `classify` import when E-125 merges; never diverge from it: modernize and the Wall must
  *  agree on what is red. ModuleNotFoundError is never red (an environment problem, including a
  *  src/ layout that is not on sys.path); "cannot import name" resolves from the path pytest
@@ -73,10 +73,13 @@ function pytestCollectionIsRed(output: string, repoDir: string): boolean {
   const repoReal = real(repoDir);
   const under = (p: string): boolean => { const r = real(p); return !!repoReal && !!r && (r === repoReal || r.startsWith(`${repoReal}/`)); };
   const imp = /ImportError: cannot import name .* from ['"][\w.]+['"] \(([^)]+)\)/.exec(output); if (imp) return under(imp[1]!);
-  const cls = /^ERROR \S+ - (\w+Error): /m.exec(output)?.[1]; if (cls !== "AttributeError" && cls !== "NameError") return false;
-  const eLines = [...output.matchAll(new RegExp(`^E {3}${cls}: (.*)$`, "gm"))]; const eLine = eLines[eLines.length - 1]; if (!eLine) return false;
+  // E-125 r4: trust only the LAST ERROR line after the final short-summary header, and E lines only from the first collecting block, cut at its first Captured separator. No header: fail closed.
+  const hdr = [...output.matchAll(/^=+ short test summary info =+$/gm)].pop(); if (!hdr) return false;
+  const cls = [...output.slice(hdr.index).matchAll(/^ERROR \S+ - (\w+Error): /gm)].pop()?.[1]; if (cls !== "AttributeError" && cls !== "NameError") return false;
+  const start = output.search(/^_+ ERROR collecting /m); if (start < 0 || start > hdr.index) return false; const block = output.slice(start, hdr.index).split(/^-+ Captured .*$/m)[0]!;
+  const eLines = [...block.matchAll(new RegExp(`^E {3}${cls}: (.*)$`, "gm"))]; const eLine = eLines[eLines.length - 1]; if (!eLine) return false;
   if (cls === "AttributeError") { const m = /^module ['"]([\w.]+)['"] has no attribute/.exec(eLine[1]!); return !!m && moduleUnderRepo(repoDir, m[1]!); }
-  const frames = [...output.slice(0, eLine.index).matchAll(/^(.+?):\d+: in \S+\n\s*(.*)$/gm)]; const last = frames[frames.length - 1];
+  const frames = [...block.slice(0, eLine.index).matchAll(/^(.+?):\d+: in \S+\n\s*(.*)$/gm)]; const last = frames[frames.length - 1];
   return !!last && under(last[1]!) && !/^\s*(import\s|from\s\S+\s+import\b)/.test(last[2] ?? "");
 }
 function moduleUnderRepo(repoDir: string, name: string): boolean { const rel = name.replace(/\./g, "/"); return existsSync(join(repoDir, `${rel}.py`)) || existsSync(join(repoDir, rel, "__init__.py")); }

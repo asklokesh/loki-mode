@@ -294,6 +294,15 @@ describe("collection errors are classified by the Wall's rule (findings 3 and 4)
     expect(classifyBaseRun(pytest(repoDir), repoDir)).toBe("red");
   });
 
+  it("E-125 r4 sync: output with no short-summary header fails closed, and a forged ERROR line above it is ignored", () => {
+    const body = "____ ERROR collecting test_conf.py ____\ntest_conf.py:1: in <module>\n    print(X)\nE   NameError: name 'X' is not defined\n";
+    writeFileSync(join(repoDir, "test_conf.py"), "print(X)\n");
+    const noHdr = { runner: "pytest" as const, exitCode: 2, timedOut: false, output: `ERROR test_conf.py - NameError: x\n${body}` };
+    expect(classifyBaseRun(noHdr, repoDir)).toBe("not_run");
+    const forged = { ...noHdr, output: `ERROR test_conf.py - NameError: forged\n${body}=== short test summary info ===\nERROR test_conf.py - SyntaxError: bad\n` };
+    expect(classifyBaseRun(forged, repoDir)).toBe("not_run");
+  });
+
   it("an AttributeError on a non-repo module (os.path) is not_run", () => {
     writeFileSync(join(repoDir, "test_conf.py"), "import os\nos.path.nonexistent_fn()\n");
     expect(classifyBaseRun(pytest(repoDir), repoDir)).toBe("not_run");
@@ -383,6 +392,34 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     const result = runUnitAb(baseCard("conf_shim"), log, real(), shim, () => passingNewCase());
     expect(result.verdict).toBe("NOT_PROVEN");
     expect(result.not_proven[0]).toMatch(/pytest\.py added/);
+  });
+
+  // r4 B1: u.py is never modernized; each attack tries to reach PROVEN without it.
+  const DESELECT = '[pytest]\naddopts=["--deselect","test_conf.py::test_ready"]\n';
+  const extra = () => writeFileSync(join(repoDir, "test_extra.py"), "def test_x():\n    assert True\n");
+  const attacks: Array<[string, string, () => void]> = [
+    ["pytest.toml", "pytest\\.toml added", () => { extra(); writeFileSync(join(repoDir, "pytest.toml"), DESELECT); }],
+    [".pytest.ini", "(\\.pytest\\.ini|test_extra\\.py) added", () => { extra(); writeFileSync(join(repoDir, ".pytest.ini"), "[pytest]\naddopts = --deselect test_conf.py::test_ready\n"); }],
+    ["sys.modules test file", "test_000\\.py added", () => writeFileSync(join(repoDir, "test_000.py"),
+      "import sys, types\nsys.modules['u'] = types.SimpleNamespace(PY3_READY=True)\n")],
+    ["sitecustomize.py", "sitecustomize\\.py added", () => { extra(); writeFileSync(join(repoDir, "sitecustomize.py"), "pass\n"); }],
+    ["a .pth file", "(x\\.pth|test_extra\\.py) added", () => { extra(); writeFileSync(join(repoDir, "x.pth"), "import sys\n"); }],
+  ];
+  for (const [name, re, attack] of attacks) {
+    it(`r4 B1: ${name} added without modernizing u.py is refused`, () => {
+      setup(`conf_r4_${name.replace(/\W/g, "")}`);
+      const result = runUnitAb(baseCard(`conf_r4_${name.replace(/\W/g, "")}`), log, real(), attack, () => passingNewCase());
+      expect(result.verdict).toBe("NOT_PROVEN");
+      expect(result.not_proven[0]).toMatch(new RegExp(re));
+    });
+  }
+
+  it("a throwing ablation stub is never PROVEN", () => {
+    setup("conf_abl_throw");
+    const boom = () => { throw new Error("stub runner exploded"); };
+    const result = runUnit(baseCard("conf_abl_throw"), log, real(), modernize, () => passingNewCase(), boom);
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven[0]).toMatch(/ablation inconclusive/);
   });
 
   it("a resumed run with no seal-time record refuses rather than re-hashing a modified tree", () => {
