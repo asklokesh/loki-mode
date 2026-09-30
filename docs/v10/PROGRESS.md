@@ -1602,3 +1602,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Head-to-head: not run.
 - Incidents: 21:58Z a shell test batch run in the main checkout switched HEAD to a stale loki/session branch for 33s (main ref intact; E-155). 22:00Z pre-push gitleaks flagged the key file NAME `receipt-ed25519.pem` (false positive, fingerprinted; durable allowlist E-156 needs CTO approval). 17:14Z signing tests wrote keys to the real ~/.loki/keys (E-154). Filed: A-103c, A-111b (folded into A-112), A-121b (receipt downgrade to UNSIGNED exits 0), A-132b (uncommitted fixture-61).
 - Opus share this hour about 40 to 46% (over the 30% D13 budget) from HIGH-tier reviews; builders are sonnet.
+
+## 2026-09-30T22:20Z steer 22:17Z applied: train split
+- train/12 = train/10 (77d58f1a) plus the README fix cherry-picked (3e34837b). Contents: A-132/133, A-09, A-102, A-120, loki-seal (A-04), D45, A-01b; NO A-121/A-122 signing code, no A-103/A-111/A-113. train/10's only reds were the 4 README tests; locally 3e34837b passes all 4 plus structural and stale-version checks. Pushed 22:18Z; Tier B watcher armed; ships to `next` when green.
+- Signing and engine slices stay on the next train (local main 8d309d55: A-103, A-111, A-113, A-121, A-122, A-123, spawn-env fix) until train/11's failures are fixed at the source: P0-t11a (A-103 Linux node output, stale --resume docs, gitleaks baseline shape) building; P0-t11b (moat P1 control used the real HOME where a key now auto-generates; trigger-server test-order flake) built, in opus review. Nothing was added to tests/moat/pending.txt; the other 3 moat fails are existing pending cases with matching reasons.
+- The `ModuleNotFoundError: sqlalchemy` lines in the shard logs are printed inside passing tests, not the failures.
+- A-114 (false VERIFIED when the diff avoids the target test, reproduced on main) is Tier 0, folded into A-112 round 3 (same verify.ts, same target-test notion).
