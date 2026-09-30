@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "loki-seal",
+  "displayName": "Loki Seal",
+  "version": "0.1.0",
+  "description": "Stop hook that refuses 'done' while the repo's real tests are red or were deleted, skipped, xfailed or weakened. Runs locally, no model calls, prints a 5-line receipt.",
+  "author": { "name": "Autonomi", "url": "https://www.autonomi.dev/" },
+  "homepage": "https://github.com/asklokesh/loki-mode",
+  "repository": "https://github.com/asklokesh/loki-mode",
+  "keywords": ["verification", "tests", "hooks", "stop-hook", "guardrails", "loki"]
+}

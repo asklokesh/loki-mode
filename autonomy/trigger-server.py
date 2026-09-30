@@ -71,7 +71,7 @@ except ImportError:  # pragma: no cover - only on a stripped install
     def build_jwks(private_key=None, retired_public_keys=None):
         return {"keys": []}
 
-    def load_signing_key():
+    def load_signing_key(auto_generate=True):
         return None, ""
 
     def load_retired_public_keys():
@@ -1360,7 +1360,7 @@ def main():
     WebhookHandler.api_token = api_token
     WebhookHandler.dispatcher = dispatcher
 
-    signing_key, signing_kid = load_signing_key()
+    signing_key, signing_kid = load_signing_key(auto_generate=False)
     WebhookHandler.signing_key = signing_key
     WebhookHandler.signing_kid = signing_kid
     WebhookHandler.retired_pubkeys = tuple(load_retired_public_keys())
