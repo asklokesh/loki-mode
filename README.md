@@ -8,8 +8,9 @@ An autonomous software factory that knows what it is supposed to deliver, and pr
 ## Install
 
 ```bash
-claude plugin marketplace add ./packages/loki-seal   # then /plugin in Claude Code, install loki-seal
-npx loki-mode tour                                   # zero-key replay of a real Evidence Receipt
+git clone https://github.com/asklokesh/loki-mode
+claude plugin marketplace add ./loki-mode/packages/loki-seal   # then /plugin in Claude Code, install loki-seal
+npx loki-mode tour                                             # zero-key replay of a real Evidence Receipt
 ```
 
 loki-seal is a Claude Code Stop hook: when your agent tries to finish, it runs your repo's real test suite and refuses "done" if tests newly fail or if tests or CI config were deleted, skipped or weakened. Details: [packages/loki-seal/README.md](packages/loki-seal/README.md).

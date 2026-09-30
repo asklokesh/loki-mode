@@ -178,7 +178,7 @@ check it matches -- you are not asked to trust the agent's self-report.
 
 ---
 
-> **How it works:** Drop a spec -- a PRD, GitHub issue, OpenAPI/JSON/YAML, or one-line brief. Loki Mode classifies complexity (`run.sh:detect_complexity()`), selects reviewers from a specialist pool (`agents/types.json` ships 41 role definitions; 10 are keyword-scored by the review selector at `run.sh:FOCUS_KEYWORDS`, alongside the mandatory reviewers, and the rest are role descriptions in `references/agents.md` that the orchestrator adopts per phase rather than separate processes), with parallel review (blind council) and optional worktree streams on Claude Code, sequential on other providers - and runs autonomous RARV cycles (Reason - Act - Reflect - Verify, see `run.sh:run_autonomous()`) with 8 quality gates (see `skills/quality-gates.md`). Code is not "done" until it passes automated verification. Output is a Git repo with source, tests, configs, and audit logs.
+> **How it works:** Drop a spec -- a PRD, GitHub issue, OpenAPI/JSON/YAML, or one-line brief. Loki Mode classifies complexity (`run.sh:detect_complexity()`), selects reviewers from a specialist pool (`agents/types.json` ships the role definitions; 10 are keyword-scored by the review selector at `run.sh:FOCUS_KEYWORDS`, alongside the mandatory reviewers, and the rest are role descriptions in `references/agents.md` that the orchestrator adopts per phase rather than separate processes), with parallel review (blind council) and optional worktree streams on Claude Code, sequential on other providers - and runs autonomous RARV cycles (Reason - Act - Reflect - Verify, see `run.sh:run_autonomous()`) with 8 quality gates (see `skills/quality-gates.md`). Code is not "done" until it passes automated verification. Output is a Git repo with source, tests, configs, and audit logs.
 
 ---
 
@@ -692,7 +692,7 @@ Every iteration: **Reason** (read state) - **Act** (execute, commit) - **Reflect
 </td>
 <td width="33%" valign="top">
 
-### 41 Agent Roles
+### Agent Roles
 8 domains: engineering, operations, business, data, product, growth, review, orchestration. These are prompt-defined role specifications the orchestrator adopts per phase, auto-composed by PRD complexity; parallelism comes from the blind review council, the adversarial reviewer, and optional git-worktree streams on Claude Code, sequential on other providers.
 
 [Agent Types](../references/agent-types.md)
@@ -885,25 +885,11 @@ loki enterprise status
 </details>
 
 <details>
-<summary><strong>Benchmarks</strong></summary>
-
-Self-reported results from the included test harness. Verification scripts included for reproduction.
-
-| Benchmark | Result | Notes |
-|-----------|--------|-------|
-| HumanEval | 162/164 (98.78%) | Self-reported; harness + results JSON in `benchmarks/results/humaneval-loki-results.json`. Max 3 retries, RARV self-verification. |
-| SWE-bench | Not yet measured | Harness exists and generates patches, but the official SWE-bench evaluator has not been run, so there is no pass-rate to report. Run it yourself: `./benchmarks/run-benchmarks.sh swebench --execute` |
-
-See [benchmarks/](../benchmarks/) for methodology.
-
-</details>
-
-<details>
 <summary><strong>Presentation</strong></summary>
 
 ![Loki Mode Presentation](../docs/loki-mode-presentation.gif)
 
-*11 slides: Problem, Solution, 41 Agents, RARV Cycle, 8 Quality Gates (HumanEval 98.78%), Multi-Provider, Enterprise Hardening (Live App Preview), Full Lifecycle*
+*11 slides: Problem, Solution, Agent Roles, RARV Cycle, 8 Quality Gates, Multi-Provider, Enterprise Hardening (Live App Preview), Full Lifecycle*
 
 **[Download PPTX](../docs/loki-mode-presentation.pptx)**
 
