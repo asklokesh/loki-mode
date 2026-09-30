@@ -41,7 +41,53 @@ fail() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 loki_run_tmp_create || { echo "FAIL: cannot create run tmp"; exit 1; }
 T="$LOKI_RUN_TMP"
 echo "test tmp: $T"
-trap 'loki_run_tmp_cleanup || echo "WARN: test tmp cleanup refused: $T"' EXIT
+
+# E-137: stop everything this test started, on every exit path. Targets are
+# only (a) members of a process group this test recorded in STARTED_PGIDS and
+# (b) descendants of this shell, snapshotted by PID. Never a name or pattern.
+STARTED_PGIDS=""
+snapshot_started() {  # prints PIDs: descendants of $$ plus recorded-group members
+    ps -axo pid=,ppid=,pgid= | awk -v me="$$" -v groups="$STARTED_PGIDS" '
+        { par[$1] = $2; grp[$1] = $3; all[NR] = $1 }
+        END {
+            n = split(groups, g, " "); for (i = 1; i <= n; i++) want[g[i]] = 1
+            for (k = 1; k <= NR; k++) {
+                p = all[k]; q = p; hit = 0
+                while ((q in par) && q > 1) { if (q == me) { hit = 1; break } q = par[q] }
+                if ((hit && p != me) || (grp[p] in want)) print p
+            }
+        }'
+}
+STOP_DONE=0
+stop_started() {
+    local pids p g alive
+    [ "$STOP_DONE" = 1 ] && return 0
+    STOP_DONE=1
+    pids="$(snapshot_started)"
+    for g in $STARTED_PGIDS; do kill -TERM -- "-$g" 2>/dev/null; done
+    for p in $pids; do kill -TERM "$p" 2>/dev/null; done
+    for _ in $(seq 1 30); do
+        alive=0
+        for p in $pids; do kill -0 "$p" 2>/dev/null && alive=1; done
+        [ "$alive" = 0 ] && break
+        sleep 0.1
+    done
+    # KILL survivors by recorded PID only, and only while still ours (run dir in argv).
+    for p in $pids; do
+        if ps -o command= -p "$p" 2>/dev/null | grep -qF -- "$T"; then kill -KILL "$p" 2>/dev/null; fi
+    done
+    return 0
+}
+leftover_procs() {  # argv lines containing this run's unique dir; T rides in ENVIRON so awk's own argv stays clean
+    ps -axo pid=,command= | T="$T" awk 'index($0, ENVIRON["T"])'
+}
+on_exit() {
+    stop_started
+    loki_run_tmp_cleanup || echo "WARN: test tmp cleanup refused: $T"
+}
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
 
 mkdir -p "$T/bin" "$T/tasks/t1" "$T/tasks/t2"
 cat >"$T/tasks/t1/task.json" <<'JSON'
@@ -350,6 +396,7 @@ set -m
 env -u LOKI_RUN_TMP LOKI_EVAL_CLAUDE_BIN="$SEQ_ARM" "$HERE/scorecard-run.sh" --tier small --n 1 --arms raw-sonnet --parallel 1 --out "$OUTA" --tasks-dir "$RSTASKS" >"$T/a-kill.log" 2>&1 &
 a_pid=$!
 set +m
+STARTED_PGIDS="$STARTED_PGIDS $a_pid"
 for _ in $(seq 1 600); do
     [ -f "$T/a-rt2-started" ] && break
     kill -0 "$a_pid" 2>/dev/null || break
@@ -570,6 +617,16 @@ elif [ -s "$RUNSH_LOG" ]; then
     fail "legG: run.sh must never run for an empty tier"
 else
     pass "legG: a tier with zero tasks, or an unknown tier, exits nonzero with an error"
+fi
+
+# E-137: nothing this suite started may outlive it. Stop, then assert by the
+# unique run dir (never a generic pattern).
+stop_started
+left="$(leftover_procs)"
+if [ -n "$left" ]; then
+    fail "leak: processes referencing $T survive the suite: $left"
+else
+    pass "leak: no process referencing this run's dir survives the suite"
 fi
 
 echo "----"
