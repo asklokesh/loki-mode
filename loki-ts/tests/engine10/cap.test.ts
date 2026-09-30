@@ -25,6 +25,7 @@ import { createSessionRunner } from "../../src/engine10/session.ts";
 import { commitStage, sealStage } from "../../src/engine10/stages/seal.ts";
 import { runPr, type PrContext } from "../../src/engine10/stages/pr.ts";
 import type { RunContext, Stage, StageName } from "../../src/engine10/types.ts";
+const PRE_KEY_FILE = process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"];
 
 // Reused from session.ts's own fixture (E-07): sleeps 30s, forks a grandchild
 // whose pid it records, so group-kill (not just direct-child kill) is provable.
@@ -206,7 +207,7 @@ describe("engine10 hard cap -> DRAFT PR body (E-19)", () => {
       delete process.env["LOKI_E10_CAP_S"];
       delete process.env["SESSION_TEST_GRANDCHILD_PID_FILE"];
       delete process.env["LOKI_RECEIPT_SIGNING_KEY"];
-      delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"];
+      if (PRE_KEY_FILE === undefined) delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]; else process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = PRE_KEY_FILE; // restore the preload default (E-154b)
       rmSync(repoDir, { recursive: true, force: true });
       rmSync(workDir, { recursive: true, force: true });
     }

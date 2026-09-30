@@ -15,6 +15,7 @@ import { commitStage, DEEP_NOT_PROVEN, renderReceiptMd, SIGNING_UNAVAILABLE, sea
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
 import { REPO_ROOT } from "../../src/util/paths.ts";
+const PRE_KEY_FILE = process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"];
 
 const AUTONOMY = resolve(REPO_ROOT, "autonomy");
 let root = "";
@@ -99,7 +100,7 @@ afterAll(() => { if (root) rmSync(root, { recursive: true, force: true }); });
 afterEach(() => {
   _setIsolatedPythonFixedForTests(null);
   process.env["HOME"] = REAL_HOME;
-  delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"];
+  if (PRE_KEY_FILE === undefined) delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]; else process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = PRE_KEY_FILE; // restore the preload default (E-154b)
   delete process.env["LOKI_RECEIPT_SIGNING_KEY"];
 });
 
@@ -164,7 +165,7 @@ describe("engine10 seal", () => {
     mkdirSync(home);
     process.env["HOME"] = home; // throwaway: the real ~/.loki is never touched
     delete process.env["LOKI_RECEIPT_SIGNING_KEY"];
-    delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"];
+    delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]; // exercises the default ~/.loki path; afterEach restores the preload default
     const { repo, base } = makeRepo("clean-home-repo");
     const { ctx, events } = ctxFor(repo, base, "codex");
     await commitStage.run(ctx, new AbortController().signal);
