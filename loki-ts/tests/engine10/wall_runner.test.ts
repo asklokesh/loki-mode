@@ -99,6 +99,16 @@ describe("A-103 wall discards tests that are not red for the right reason", () =
     const r = await wallWith({ "loki_wall_log.test.js": H + "test('t', () => { console.log(\"Error: Cannot find module 'lodash'\"); assert.strictEqual(1, 2); });\n" });
     expect(r.result.data.base_run).toEqual({ pass: 0, fail: 1, not_run: 0 });
   });
+  test("a child node crashing on a missing bare package (inherited stdio) does not discard a real TypeError red", async () => {
+    const r = await wallWith({ "loki_wall_child.test.js": H + "const { run } = require('../child');\ntest('mean', () => { run(); ({}).mean(); });\n" }, { "child.js": "module.exports = { run: () => require('node:child_process').spawnSync(process.execPath, ['-e', \"require('lodash-nope')\"], { stdio: 'inherit' }) };\n" });
+    expect(r.result.data.base_run).toEqual({ pass: 0, fail: 1, not_run: 0 });
+    expect((r.result.data.files as unknown[]).length).toBe(1);
+  });
+  test("a printed fake missing-module footer before a real TypeError is red and kept", async () => {
+    const r = await wallWith({ "loki_wall_fake.test.js": H + "test('mean', () => { console.log(\"Error: Cannot find module 'lodash'\\n\\nNode.js v26.5.0\"); ({}).mean(); });\n" });
+    expect(r.result.data.base_run).toEqual({ pass: 0, fail: 1, not_run: 0 });
+    expect((r.result.data.files as unknown[]).length).toBe(1);
+  });
   test("classify node:assertion failure is red; ReferenceError or missing module is not_run", () => {
     const f = { runner: "node" as const, path: "t.test.js" };
     expect(classify(f, 1, "# tests 1\n# pass 0\n# fail 1\n", "/x")).toBe("fail");
