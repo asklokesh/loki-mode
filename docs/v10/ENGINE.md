@@ -140,7 +140,7 @@ Every claim below comes from reading main at 84c22568. I edited no files.
 - **Files:** `README.md` (new quickstart section), `docs/v10/GUIDE.md` (new), `tests/test-engine10-docs.sh` (new).
 - **Tier:** LOW.
 - **Contents:**
-  - **Quickstart:** `LOKI_ENGINE=v10 loki "<task>"`, issue refs, and `--no-pr`, `--deep`, `--provider`, `--resume`.
+  - **Quickstart:** `LOKI_ENGINE=v10 loki "<task>"`, issue refs, and `--no-pr`, `--deep`, and `--provider`.
   - **The 5-line summary,** explained line by line.
   - **NOT PROVEN:** what it means, including the deep checks that are always listed and "not measured" cost.
   - **Receipts:** `receipt.json` and `receipt.md`, `loki verify`, and UNSIGNED.
@@ -223,14 +223,14 @@ Every claim below comes from reading main at 84c22568. I edited no files.
 - **Green:** the leg asserts `LOKI_ENGINE=legacy` on the legacy arm and `v10` on the v10 arm, and the 29-row v10 results file exists.
 - **Deps:** EV-1, E-32, E-36.
 
-### E-39: Interrupt and resume end to end
+### E-39: Interrupt end to end (resume removed in A-113)
 - **Files:** `loki-ts/tests/engine10/resume_e2e.test.ts` (new), `loki-ts/tests/engine10/fixtures/resume/` (new).
 - **Tier:** MEDIUM.
 - **Wall:** `cd loki-ts && bun test tests/engine10/resume_e2e.test.ts`.
 - **Red:** the file is missing.
 - **Green:**
   - SIGINT during a sleeping implement stub exits 130. The session process group is gone and there is no `run.completed`.
-  - `loki --resume <id>` finishes through seal on the same run id.
+  - (Removed in A-113: `--resume` no longer exists; `loki --resume` exits 2 with "start a new run".)
   - `seq` keeps increasing, and there is no second `stage.started` for intake.
   - `.loki/engine.json` still names the same run.
   - Changing the origin between runs refuses the push.
@@ -247,7 +247,7 @@ Every claim below comes from reading main at 84c22568. I edited no files.
   - `gh pr view --json isDraft` agreeing with the verdict;
   - the `loki/deep-verify` status context through `gh api`;
   - `loki verify <run>` exiting 0, or UNSIGNED stated;
-  - a second `--resume` reporting `existing: true` with the same URL.
+  - a second run of the same task reporting `existing: true` with the same URL.
 - **Red:** the file is missing.
 - **Green:** all five assertions hold against the sandbox repo.
 - **Deps:** E-23, E-32, E-36.

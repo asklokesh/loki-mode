@@ -281,6 +281,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     if (a === "--no-pr") noPr = true;
     else if (a === "--deep") deep = true;
     else if (a === "--provider") provider = args[++i] ?? provider;
+    else if (a === "--resume") { process.stderr.write("engine10: --resume was removed; start a new run\n"); return 2; }
     else words.push(a);
   }
   const task = words.join(" ").trim();

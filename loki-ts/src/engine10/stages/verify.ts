@@ -26,6 +26,7 @@ export interface VerifyCheck {
   result: "pass" | "fail" | "not_run" | "flaky"; // ENGINE.md section 5 test.result enum
   duration_s: number;
   reason?: string;
+  first_error?: string; // A-113: first failing output line, normalized; feeds the stall signature
   interpreter?: Interpreter; // E-98a: which python/ruff this check actually ran on
 }
 // E-98a B2: .venv, then venv, then an in-repo (realpath under repoDir) VIRTUAL_ENV are "project";
@@ -83,20 +84,24 @@ interface RunOpts {
 }
 /** `cut` means the timeout or the stage's AbortSignal killed the child: never read as "fail" and
  *  never retried (a hung check must not burn 2x its timeout). */
-async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSignal, opts: RunOpts): Promise<{ ok: boolean; missing: boolean; cut: boolean }> {
-  if (!Bun.which(cmd, { PATH: opts.path ?? process.env["PATH"] ?? "" })) return { ok: false, missing: true, cut: false };
+async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSignal, opts: RunOpts): Promise<{ ok: boolean; missing: boolean; cut: boolean; out: string }> {
+  if (!Bun.which(cmd, { PATH: opts.path ?? process.env["PATH"] ?? "" })) return { ok: false, missing: true, cut: false, out: "" };
   const timeout = AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS);
   const proc = Bun.spawn([cmd, ...args], {
     cwd,
     stdin: opts.stdin !== undefined ? Buffer.from(opts.stdin) : "ignore",
-    stdout: "ignore",
-    stderr: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
     signal: AbortSignal.any([signal, timeout]),
     env: opts.path ? { ...process.env, PATH: opts.path } : process.env,
   });
-  const exitCode = await proc.exited;
+  const [out, err, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
   const cut = timeout.aborted || signal.aborted;
-  return { ok: exitCode === 0 && !cut, missing: false, cut };
+  return { ok: exitCode === 0 && !cut, missing: false, cut, out: out + "\n" + err };
+}
+export function firstError(out: string): string { // first failing line minus what varies between identical failures (A-113 stall signature)
+  const lines = out.split("\n").map((l) => l.trim()).filter(Boolean);
+  return (lines.find((x) => /fail|error|not ok|assert/i.test(x)) ?? lines[0] ?? "").replace(/\d{4}-\d\d-\d\dT[\d:.]+Z?/g, "").replace(/(?:\/[\w.@-]+)+/g, "<path>").replace(/:\d+(?::\d+)?/g, "").replace(/\[?\d+(?:\.\d+)?m?s\]?/g, "").replace(/\s+/g, " ").slice(0, 160);
 }
 /** Runs one check with a single retry: fail-then-pass is "flaky", not "fail". A missing tool, or a
  *  timed-out/aborted run, is recorded once and never retried. */
@@ -127,7 +132,7 @@ export async function runCheck(
       result = attempt.ok ? "flaky" : "fail";
     }
   }
-  const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(reason ? { reason } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
+  const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out) } : {}), ...(reason ? { reason } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
   checks.push(check);
   ctx.emit("test.result", "verify", { ...check });
   return check;
@@ -214,7 +219,7 @@ export const verifyStage: Stage = {
     // placeholder keeps the section-4 output key populated until that slice lands.
     const failuresGrouped = checks
       .filter((c) => c.result === "fail")
-      .map((c) => ({ signature: c.name, count: 1, sample: c.cmd }));
+      .map((c) => ({ signature: c.first_error ? `${c.name} ${c.first_error}` : c.name, count: 1, sample: c.cmd }));
     // E-98a/E-115: a check that ran (not_run has its own NOT PROVEN entry at seal) on a system interpreter/ruff.
     const notProven = [...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
     return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed, not_proven: notProven } };

@@ -61,7 +61,6 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   const capAtMs = startMs + softCapS(ctx.capS) * 1000; // 14/15 of capS for the default/deep caps; see softCapS above
   const capCtl = new AbortController();
   const capTimer = setTimeout(() => capCtl.abort(), Math.max(0, capAtMs - ctx.clock.now()));
-  // A failed session whose stderr names a billing, quota or key error is permanent: retrying only burns money (A-113).
   const sessions = { run: async (o: Parameters<typeof ctx.sessions.run>[0]) => {
     const r = await ctx.sessions.run(o);
     const c = r.exit === 0 ? null : classifyFailure((r as { stderrTail?: string }).stderrTail ?? "");

@@ -1,9 +1,11 @@
 // E-02 wall check: state machine skeleton (docs/v10/ENGINE.md section 4).
 // Siblings are fakes injected through RunContext; stages come from an injected loader.
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createSessionRunner } from "../../src/engine10/session.ts";
+import { firstError } from "../../src/engine10/stages/verify.ts";
 import { FLOW, optional, runMachine, type MachineRunContext } from "../../src/engine10/machine.ts";
 import type { RunContext, Stage, StageName, StageResult } from "../../src/engine10/types.ts";
 
@@ -101,7 +103,7 @@ describe("engine10 machine", () => {
     const { ctx } = fakeCtx();
     let verifies = 0;
     const r = await runMachine(ctx, { load: loaderOf(all({
-      verify: stage("verify", async () => { verifies++; return { status: "completed", data: { failures_grouped: [{ signature: "expected # to be #" }] } }; }),
+      verify: stage("verify", async () => { verifies++; return { status: "completed", data: { failures_grouped: [{ signature: "node:tests/sum.test.js AssertionError: expected 1 to equal 2" }] } }; }),
     })) });
     expect(verifies).toBe(3);
     expect(r.stopped).toBe("stalled");
@@ -141,6 +143,53 @@ describe("engine10 machine", () => {
     const r = await runMachine(ctx, { load: loaderOf(all({ implement: sessionStage("", { n: 0 }) })) });
     expect(r.stopped).toBeNull();
   });
+
+  it("firstError keeps the test name and message, drops paths, line numbers, timings", () => {
+    const a = firstError("ok 1\nnot ok 2 - sum adds [3.2ms] at /tmp/x1/sum.js:10:5");
+    expect(a).toBe("not ok 2 - sum adds at <path>");
+    expect(firstError("not ok 3 - sum negative")).not.toBe(firstError("not ok 2 - sum adds"));
+  });
+
+  // Real session runner + fake `claude` on PATH: provider errors reach the iteration log, not the child's stderr.
+  async function realSession(msg: string, runs: { n: number }) {
+    const dir = mkdtempSync(join(tmpdir(), "loki-e10-fatal-"));
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "claude"), `#!/bin/sh\ncase "$*" in *--help*) echo "--settings"; exit 0;; esac\necho '${msg}'\nexit 1\n`, { mode: 0o755 });
+    const saved = { PATH: process.env.PATH, inv: process.env.LOKI_E10_INVOKER };
+    process.env.PATH = `${bin}:${process.env.PATH}`;
+    process.env.LOKI_E10_INVOKER = "cli";
+    try {
+      const { ctx } = fakeCtx();
+      const real = createSessionRunner({ provider: "claude" });
+      ctx.sessions = { run: (o) => { runs.n++; return real.run({ ...o, cwd: dir, limitS: 60 }); } };
+      const fail = (n: StageName) => stage(n, async (c, signal) => {
+        await c.sessions.run({ stage: n as never, brief: "b", tier: "development", iterationId: `it-${n}`, limitS: 60, signal });
+        return { status: "completed", data: {} } as StageResult;
+      });
+      return await runMachine(ctx, { load: loaderOf(all({ implement: fail("implement"), fix: fail("fix"), verify: stage("verify", async () => ({ status: "completed", data: { failures_grouped: [{ signature: "x" }] } })) })) });
+    } finally {
+      process.env.PATH = saved.PATH;
+      if (saved.inv === undefined) delete process.env.LOKI_E10_INVOKER; else process.env.LOKI_E10_INVOKER = saved.inv;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  for (const [msg, klass] of [["invalid x-api-key", "auth"], ["Your credit balance is too low to access the API", "quota_exhausted"]] as const) {
+    it(`real session runner: a fake claude printing "${msg}" stops fatal after ONE session`, async () => {
+      const runs = { n: 0 };
+      const r = await realSession(msg, runs);
+      expect(runs.n).toBe(1);
+      expect(r.stopped).toBe(`fatal:${klass}`);
+    }, 60_000);
+  }
+
+  it("real session runner: a 429 is retried (the fix round still runs its session), never fatal", async () => {
+    const runs = { n: 0 };
+    const r = await realSession("429 rate limit exceeded, please try again", runs);
+    expect(runs.n).toBeGreaterThan(1);
+    expect(r.stopped).not.toMatch(/^fatal/);
+  }, 60_000);
 
   it("the global cap aborts the running stage and jumps to commit and seal", async () => {
     // capS=25 is just above the ~24.83s threshold below which softCapS's
