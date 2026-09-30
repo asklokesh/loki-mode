@@ -162,16 +162,20 @@ function main() {
   const problems = [...findings];
   let already = 0;
   if (runner) {
+    const total = c.pass + c.fail;
+    const baseTotal = suite0 ? suite0.pass + suite0.fail : 0;
     if (r.error) problems.push(`test run did not complete: ${r.error.code || r.error.message}`);
+    else if (r.status !== 0 && total === 0) problems.push(`test run crashed or ran nothing (exit ${r.status}, 0 tests)`);
     else if (r.status !== 0) {
       if (!suite0) problems.push(`tests are red (exit ${r.status})`);
       else {
         already = Math.max(suite0.ids.length, suite0.fail);
-        const fresh = r.ids.length || suite0.ids.length ? r.ids.filter((i) => !suite0.ids.includes(i)) : null;
-        const isNew = fresh ? fresh.length > 0 : r.fail > suite0.fail || suite0.status === 0;
+        const fresh = r.ids.length ? r.ids.filter((i) => !suite0.ids.includes(i)) : null;
+        const isNew = fresh ? fresh.length > 0 : r.fail > suite0.fail || suite0.status === 0 || r.fail === 0;
         if (isNew) problems.push(`new failing tests since session start${fresh && fresh.length ? ': ' + fresh.join(', ') : ''} (exit ${r.status})`);
       }
-    } else if (c.pass + c.fail === 0) problems.push('no tests ran (zero is NOT VERIFIED)');
+    } else if (total === 0) problems.push('no tests ran (zero is NOT VERIFIED)');
+    if (suite0 && !r.error && total > 0 && total < baseTotal) problems.push(`test count dropped from ${baseTotal} to ${total}`);
   }
 
   const max = +process.env.LOKI_SEAL_MAX_BLOCKS || MAX_BLOCKS;
@@ -181,7 +185,7 @@ function main() {
 
   const outcome = !runner ? 'NOT VERIFIED (no test runner detected)'
     : released ? `NOT VERIFIED (released after ${max} blocks)`
-    : problems.length ? 'BLOCKED' : 'PASS';
+    : problems.length ? 'BLOCKED' : already ? `PASS (no new failures; ${already} already failing)` : 'PASS';
   const basePart = already ? `baseline: ${already} already failing (not caused by this session)` : `baseline: ${baseKind}`;
   const receipt = [
     `loki-seal: ${outcome}`,
@@ -196,7 +200,8 @@ function main() {
     process.stderr.write(`${receipt}\n\nDo not finish yet. Fix the code, not the tests:\n- ${problems.join('\n- ')}` + (r && r.tail ? `\n\nLast test output:\n${r.tail}` : '') + '\n');
     process.exit(2);
   }
-  process.stdout.write(receipt + '\n');
+  // Plain Stop stdout goes only to the debug log; systemMessage is what the docs show to the user.
+  process.stdout.write(JSON.stringify({ systemMessage: receipt }));
 }
 
 main();

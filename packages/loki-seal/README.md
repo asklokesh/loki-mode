@@ -34,6 +34,10 @@ Verified by Loki https://github.com/asklokesh/loki-mode
 
 ## Limits
 
+- Known limits of a text-scanning design: replacing real assertions with `assert.ok(true)` is not caught (the assertion count does not drop), and a model with shell access can forge the baseline state file under `$TMPDIR/loki-seal-state` or edit the hook itself. The receipt's tree hash and your own diff review are the audit trail.
+- A total test count below the session-start count blocks (catches an early `process.exit(0)` or a test script changed to run nothing); a non-zero exit with zero tests run blocks as a crash.
+- On pass the receipt is printed as JSON `systemMessage`, because the hooks docs say plain Stop stdout goes only to the debug log.
+
 - Failing tests are matched by name where the runner prints names (node:test, pytest -rf, go, cargo), otherwise by failing count.
 - Test-count heuristics are line based; a test rewritten to be weaker without dropping assertions is not caught.
 - Rust inline `#[test]` in src files is counted only under tests/.

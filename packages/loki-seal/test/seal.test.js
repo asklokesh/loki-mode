@@ -24,6 +24,8 @@ function put(dir, files) {
     fs.writeFileSync(path.join(dir, f), c);
   }
 }
+// On pass the receipt is JSON {"systemMessage"} (documented way to show a Stop hook message to the user).
+function msg(out) { try { return JSON.parse(out).systemMessage || out; } catch { return out; } }
 function seal(cmd, dir, extra = {}) {
   const r = spawnSync('node', [SEAL, cmd], {
     input: JSON.stringify({ session_id: 's-' + path.basename(dir), cwd: dir, ...extra }),
@@ -31,7 +33,7 @@ function seal(cmd, dir, extra = {}) {
     encoding: 'utf8',
   });
   // Contract: block = exit 2 + reason on stderr; pass = exit 0 + receipt on stdout.
-  return { status: r.status, out: { decision: r.status === 2 ? 'block' : undefined, reason: r.stderr, systemMessage: r.stdout }, raw: r.stdout + r.stderr };
+  return { status: r.status, out: { decision: r.status === 2 ? 'block' : undefined, reason: r.stderr, systemMessage: msg(r.stdout) }, raw: r.stdout + r.stderr };
 }
 const blocked = (r) => r.out.decision === 'block';
 
@@ -217,4 +219,38 @@ test('start emits additionalContext', () => {
   const d = repo(nodeRepo(ADD_BAD, T2));
   const r = seal('start', d);
   assert.match(JSON.parse(r.out.systemMessage).hookSpecificOutput.additionalContext, /baseline recorded, \d+ tests, 1 failing/);
+});
+
+test('c2: with a red baseline, changing the test script to run nothing is blocked', () => {
+  const d = repo(nodeRepo(ADD_BAD, T2));
+  seal('start', d);
+  put(d, { 'package.json': JSON.stringify({ name: 'fx', scripts: { test: 'node --test nothing' } }) });
+  const r = seal('stop', d);
+  assert.strictEqual(r.status, 2, r.raw);
+  assert.match(r.out.reason, /crashed or ran nothing|test count dropped/);
+});
+
+test('e: process.exit(0) prepended to a test file is blocked by the total-count drop', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  seal('start', d);
+  put(d, { 'test/a.test.js': 'process.exit(0);\n' + T2 });
+  const r = seal('stop', d);
+  assert.strictEqual(r.status, 2, r.raw);
+  assert.match(r.out.reason, /test count dropped/);
+});
+
+test('PASS with a red baseline says so on line 1', () => {
+  const d = repo(nodeRepo(ADD_BAD, T2));
+  seal('start', d);
+  const r = seal('stop', d);
+  assert.strictEqual(r.status, 0, r.raw);
+  assert.match(r.out.systemMessage.split('\n')[0], /^loki-seal: PASS \(no new failures; 1 already failing\)$/);
+});
+
+test('pass output is JSON with systemMessage', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  seal('start', d);
+  const r = spawnSync('node', [SEAL, 'stop'], { input: JSON.stringify({ session_id: 's-' + path.basename(d), cwd: d }), env: { ...process.env, LOKI_SEAL_STATE_DIR: path.join(root, 'state') }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 0);
+  assert.match(JSON.parse(r.stdout).systemMessage, /^loki-seal: PASS/);
 });
