@@ -4,7 +4,7 @@
 // machine.ts/intake.ts/session.ts only through the RunContext/SessionRunner
 // interfaces in types.ts, so every sibling here is a fake.
 import { describe, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   mkdtempSync,
@@ -359,7 +359,10 @@ describe("engine10 wall base run, D42 (3)", () => {
   }
 
   /** repoDir/.venv/bin/python execs the host's real python3, found via .venv (E-98a), never PATH. */
+  // E-132/r5: CI installs pytest (test.yml, coverage.yml, release.yml); without it fail loudly, never misread.
+  const HAS_PYTEST = spawnSync(PYTHON3, ["-m", "pytest", "--version"]).status === 0;
   function venvShim(repoDir: string): void {
+    if (!HAS_PYTEST) throw new Error(`pytest required for this test: ${PYTHON3} -m pytest is unavailable`);
     mkdirSync(join(repoDir, ".venv", "bin"), { recursive: true });
     writeFileSync(join(repoDir, ".venv", "bin", "python"), `#!/bin/sh\nexec ${PYTHON3} "$@"\n`, { mode: 0o755 });
   }
@@ -573,6 +576,33 @@ describe("engine10 wall base run, D42 (3)", () => {
     const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_nopytest.py" }]);
     rmSync(repoDir, { recursive: true, force: true });
     expect(result).toEqual({ pass: 0, fail: 0, not_run: 1 });
+  });
+
+  // r5 (opus r4): real-pytest fixtures for the verbosity and forgery blockers.
+  function run1(name: string, body: string, extra: Record<string, string> = {}): { pass: number; fail: number; not_run: number } {
+    const repoDir = repo();
+    venvShim(repoDir);
+    for (const [k, v] of Object.entries(extra)) writeFileSync(join(repoDir, k), v, "utf8");
+    writeFileSync(join(repoDir, name), body, "utf8");
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: name }]);
+    rmSync(repoDir, { recursive: true, force: true });
+    return result;
+  }
+  const FAILING = "def test_a():\n    assert 0\n";
+  test("(r5-B1) addopts `-ra -q` (stacks to -qq, no footer) plus a real failure: red", () => {
+    expect(run1("loki_wall_x.py", FAILING, { "pyproject.toml": '[tool.pytest.ini_options]\naddopts = "-ra -q"\n' })).toEqual({ pass: 0, fail: 1, not_run: 0 });
+  });
+  test("(r5-B1b) pytest.ini `-q` plus a real failure: red", () => {
+    expect(run1("loki_wall_x.py", FAILING, { "pytest.ini": "[pytest]\naddopts = -q\n" })).toEqual({ pass: 0, fail: 1, not_run: 0 });
+  });
+  test("(r5-B2) pytest.exit('1 failed', returncode=1): not_run", () => {
+    expect(run1("loki_wall_x.py", "import pytest\ndef test_a():\n    pytest.exit('1 failed', returncode=1)\n")).toEqual({ pass: 0, fail: 0, not_run: 1 });
+  });
+  test("(r5-B2b) pytest.exit('x\\n1 failed', returncode=1): not_run", () => {
+    expect(run1("loki_wall_x.py", "import pytest\ndef test_a():\n    pytest.exit('x\\n1 failed', returncode=1)\n")).toEqual({ pass: 0, fail: 0, not_run: 1 });
+  });
+  test("(r5-B2c) pytest.exit('x\\nFAILED a.py::t - boom', returncode=1) under -ra addopts: not_run", () => {
+    expect(run1("loki_wall_x.py", "import pytest\ndef test_a():\n    pytest.exit('x\\nFAILED a.py::t - boom', returncode=1)\n", { "pytest.ini": "[pytest]\naddopts = -ra -q\n" })).toEqual({ pass: 0, fail: 0, not_run: 1 });
   });
 
   test("(r3-B4) a chained AttributeError then a final RuntimeError: not_run, not red", () => {

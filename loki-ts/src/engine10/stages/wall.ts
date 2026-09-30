@@ -10,6 +10,7 @@ import type { RunContext, RunnerName, Stage, StageResult, TestMap, TestRef } fro
 import { taskBlock } from "../types.ts";
 import type { ReadOnlyFile } from "./implement.ts";
 import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallModel } from "../sizing.ts";
+import { pytestExit1IsRed } from "../../e10ext/pytest_red.ts";
 import { sha256 } from "./seal.ts";
 import { runnerCmd } from "./verify.ts";
 
@@ -52,7 +53,7 @@ function parsedFailCount(runner: RunnerName, output: string): number {
 export function classify(f: TestRef, status: number | null, output: string, repoDir: string, interpreter?: "project" | "system"): "pass" | "fail" | "not_run" {
   if (interpreter === "system") return "not_run";
   if (status === null || status === 126 || status === 127) return "not_run"; if (status === 0) return "pass";
-  if (f.runner === "pytest") return status === 1 ? (/^=*\s*\d+ failed\b/m.test(output) ? "fail" : "not_run") : status === 2 ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "not_run";
+  if (f.runner === "pytest") return status === 1 ? (pytestExit1IsRed(output) ? "fail" : "not_run") : status === 2 ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "not_run";
   if (f.runner === "jest" || f.runner === "vitest" || f.runner === "bun") return parsedFailCount(f.runner, output) > 0 ? "fail" : "not_run";
   return "not_run"; // npm/go/cargo: coarse (B2), never a per-file red
 }
@@ -63,7 +64,7 @@ export class RealBaseTestRunner implements BaseTestRunner {
   run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run: number } {
     let pass = 0, fail = 0, not_run = 0; for (const f of files) {
       const [cmd, args, interpreter] = runnerCmd(f, repoDir);
-      const r = spawnSync(cmd, args, { cwd: repoDir, encoding: "utf8", timeout: BASE_RUN_TIMEOUT_MS, env: process.env });
+      const r = spawnSync(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd: repoDir, encoding: "utf8", timeout: BASE_RUN_TIMEOUT_MS, env: process.env });
       const status = r.error ? null : r.status;
       const result = classify(f, status, `${r.stdout ?? ""}\n${r.stderr ?? ""}`, repoDir, interpreter);
       if (result === "pass") pass++; else if (result === "fail") fail++; else not_run++;
