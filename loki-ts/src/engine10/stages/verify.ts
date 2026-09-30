@@ -81,51 +81,51 @@ interface RunOpts {
   timeoutMs?: number; // per-attempt timeout override, tests only; defaults to CHECK_TIMEOUT_MS
   interpreter?: Interpreter; // E-98a: recorded on the resulting VerifyCheck as-is
 }
+/** Executed-test count from any runner's summary (node TAP/spec, jest/vitest, pytest, cargo, go), or null when
+ *   no summary is recognised. 0 = empty or all skipped: never a pass (A-111). Node counts a testless file as 1 pseudo-test, discounted. */
+export function ran(out: string): number | null {
+  if (/no tests? (found|ran|to run)|no test files/i.test(out)) return 0;
+  const t = out.replace(/^\s*Test (Suites|Files).*$/gm, "");
+  if (!/(?:#|\u2139) (?:pass|fail) \d|\d+ (?:passed|failed|skipped)/.test(t)) return null;
+  return Math.max(0, [...t.matchAll(/^(?:#|\u2139) (?:pass|fail) (\d+)|(\d+) (?:passed|failed)/gm)].reduce((s, m) => s + +(m[1] ?? m[2]!), -(t.match(/^\u2714 \S+\.[cm]?[jt]s \(/gm)?.length ?? 0)));
+}
 /** `cut` means the timeout or the stage's AbortSignal killed the child: never read as "fail" and
- *  never retried (a hung check must not burn 2x its timeout). */
-async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSignal, opts: RunOpts): Promise<{ ok: boolean; missing: boolean; cut: boolean }> {
-  if (!Bun.which(cmd, { PATH: opts.path ?? process.env["PATH"] ?? "" })) return { ok: false, missing: true, cut: false };
+ *  never retried (a hung check must not burn 2x its timeout). `out` is unread when cut (an orphaned grandchild may hold the pipe). */
+async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSignal, opts: RunOpts): Promise<{ ok: boolean; missing: boolean; cut: boolean; out: string }> {
+  if (!Bun.which(cmd, { PATH: opts.path ?? process.env["PATH"] ?? "" })) return { ok: false, missing: true, cut: false, out: "" };
   const timeout = AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS);
   const proc = Bun.spawn([cmd, ...args], {
     cwd,
     stdin: opts.stdin !== undefined ? Buffer.from(opts.stdin) : "ignore",
-    stdout: "ignore",
-    stderr: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
     signal: AbortSignal.any([signal, timeout]),
     env: opts.path ? { ...process.env, PATH: opts.path } : process.env,
   });
+  const text = Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
   const exitCode = await proc.exited;
   const cut = timeout.aborted || signal.aborted;
-  return { ok: exitCode === 0 && !cut, missing: false, cut };
+  return { ok: exitCode === 0 && !cut, missing: false, cut, out: cut ? "" : (await text).join("\n") };
 }
-/** Runs one check with a single retry: fail-then-pass is "flaky", not "fail". A missing tool, or a
- *  timed-out/aborted run, is recorded once and never retried. */
+/** Runs one check with a single retry: fail-then-pass is "flaky", not "fail". A missing tool, a
+ *  timed-out/aborted run, or a run that executed 0 tests is recorded once as not_run and never retried. */
 export async function runCheck(
   ctx: RunContext, name: string, cmd: string, args: string[], signal: AbortSignal,
   checks: VerifyCheck[], opts: RunOpts = {},
 ): Promise<VerifyCheck> {
   const started = Date.now();
   const cmdStr = [cmd, ...args].join(" ");
-  const cutReason = () => (signal.aborted ? "aborted" : `timed out after ${(opts.timeoutMs ?? CHECK_TIMEOUT_MS) / 1000}s`);
+  const skip = (a: Awaited<ReturnType<typeof runOnce>>): string | undefined =>
+    a.missing ? `${cmd} not found on PATH`
+    : a.cut ? (signal.aborted ? "aborted" : `timed out after ${(opts.timeoutMs ?? CHECK_TIMEOUT_MS) / 1000}s`)
+    : ran(a.out) === 0 ? "ran 0 tests (empty or all skipped)" : undefined;
   let attempt = await runOnce(cmd, args, ctx.repoDir, signal, opts);
-  let result: VerifyCheck["result"];
-  let reason: string | undefined;
-  if (attempt.missing) {
-    result = "not_run";
-    reason = `${cmd} not found on PATH`;
-  } else if (attempt.cut) {
-    result = "not_run";
-    reason = cutReason();
-  } else if (attempt.ok) {
-    result = "pass";
-  } else {
+  let reason = skip(attempt);
+  let result: VerifyCheck["result"] = reason ? "not_run" : "pass";
+  if (!reason && !attempt.ok) {
     attempt = await runOnce(cmd, args, ctx.repoDir, signal, opts);
-    if (attempt.cut) {
-      result = "not_run";
-      reason = cutReason();
-    } else {
-      result = attempt.ok ? "flaky" : "fail";
-    }
+    reason = skip(attempt);
+    result = reason ? "not_run" : attempt.ok ? "flaky" : "fail";
   }
   const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(reason ? { reason } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
   checks.push(check);
