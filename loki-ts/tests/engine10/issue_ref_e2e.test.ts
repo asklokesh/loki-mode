@@ -165,6 +165,6 @@ describe("engine10 issue-ref e2e (stub gh, stub claude)", () => {
     expect(receipt.verdict).toBe("ALREADY_SATISFIED");
     expect(receipt.head_sha).toBe(receipt.base_sha);
     expect(readFileSync(join(r.repo, "calc.ts"), "utf8")).not.toContain("subtract");
-    expect(r.out).toContain("Verdict:    ALREADY_SATISFIED");
+    expect(r.out).toContain("Outcome:    ALREADY_SATISFIED");
   }, 90_000);
 });
