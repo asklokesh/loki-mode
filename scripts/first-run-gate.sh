@@ -43,6 +43,10 @@ mk_bugrepo() {
         && git add package.json sum.js sum.test.js && git commit -q -m init )
 }
 mk_bugrepo "$T/repo"
+BASE=$(git -C "$T/repo" rev-parse HEAD)
+
+# Throwaway HOME first: npm must not read ~/.npmrc or ~/.npm.
+export HOME="$T/home" LOKI_NO_BROWSER=1 npm_config_cache="$T/npm-cache" npm_config_userconfig="$T/home/.npmrc"
 
 # --- which loki ---------------------------------------------------------------
 LOKI="${FRG_LOKI:-$REPO_ROOT/bin/loki}"
@@ -53,7 +57,6 @@ if [ -n "$SPEC" ]; then
 fi
 
 # --- provider -----------------------------------------------------------------
-export HOME="$T/home" LOKI_NO_BROWSER=1
 unset LOKI_PROVIDER LOKI_ENGINE
 if [ "$MODE" = stub ]; then
     cat > "$T/bin/claude" <<'STUB'
@@ -83,49 +86,47 @@ res() { # res PASS|FAIL name detail
 }
 cd "$T/repo" || exit 2
 
-npm test --silent >"$T/npm-test.log" 2>&1; TEST_RC=$?
+npm test --silent >"$T/npm-test.log" 2>&1; NPM_RC=$?
+# Run the fixture's tests ourselves: expect exactly 2 tests and 0 failures.
+node --test --test-reporter=tap >"$T/node-test.log" 2>&1
+NT=$(sed -n 's/^# tests \([0-9]*\)$/\1/p' "$T/node-test.log" | tail -1)
+NF=$(sed -n 's/^# fail \([0-9]*\)$/\1/p' "$T/node-test.log" | tail -1)
+GREEN=0; [ "${NT:-x}" = 2 ] && [ "${NF:-x}" = 0 ] && [ "$NPM_RC" -eq 0 ] && GREEN=1
 
-# 1. exit 0 only if npm test is fully green
-if [ "$RC" -eq 0 ] && [ "$TEST_RC" -ne 0 ]; then
-    res FAIL exit-honest "run exited 0 but npm test is red (rc=$TEST_RC)"
+# 1. exit 0 if and only if the repo ends fully green
+if { [ "$RC" -eq 0 ] && [ "$GREEN" -eq 1 ]; } || { [ "$RC" -ne 0 ] && [ "$GREEN" -eq 0 ]; }; then
+    res PASS exit-honest "run rc=$RC, green=$GREEN"
 else
-    res PASS exit-honest "run rc=$RC, npm test rc=$TEST_RC"
+    res FAIL exit-honest "run rc=$RC but green=$GREEN (tests=${NT:-none} fail=${NF:-none} npm rc=$NPM_RC)"
 fi
-# 2. the fix actually lands
-[ "$TEST_RC" -eq 0 ] && res PASS tests-green "npm test green after the run" \
-    || res FAIL tests-green "npm test red after the run"
+# 2. the fix actually lands: 2 tests, 0 failures
+[ "$GREEN" -eq 1 ] && res PASS tests-green "node --test: 2 tests, 0 failures; npm test rc=0" \
+    || res FAIL tests-green "node --test tests=${NT:-none} fail=${NF:-none}; npm test rc=$NPM_RC"
 
-# 3. no new files outside the fix, except under .loki/
-STRAY=$( { git ls-files; git ls-files -o; } | grep -v '^\.loki/' | sort -u \
-    | grep -v -x -e package.json -e sum.js -e sum.test.js || true)
-if [ -z "$STRAY" ]; then res PASS no-stray-files "only the fix and .loki/"
-else res FAIL no-stray-files "new files: $(echo "$STRAY" | tr '\n' ' ')"; fi
+# 3. diff against the base commit: only sum.js may change; nothing new outside .loki/
+BAD=$( { git diff --name-status "$BASE" -- . ':!.loki' | grep -v -E '^M[[:space:]]+sum\.js$'
+         git ls-files -o | grep -v '^\.loki/' | sed 's/^/?\t/'; } || true)
+if [ -z "$BAD" ]; then res PASS no-stray-files "only sum.js modified vs base; nothing new outside .loki/"
+else res FAIL no-stray-files "unexpected changes: $(echo "$BAD" | tr '\t\n' '  ')"; fi
 
-# 4. printed receipt digest equals what verify checks
-PRINTED=$(sed 's/\x1b\[[0-9;]*m//g' "$T/out.log" \
-    | grep -Eio 'diff sha256[^0-9a-f]*[0-9a-f]{64}|receipt [0-9a-f]{12}' | head -1 | grep -Eo '[0-9a-f]{64}|[0-9a-f]{12}$' | head -1)
+# 4. printed receipt digest: FULL 64-hex, equal to the receipt_sha256 loki verify reports
 VOUT="$T/verify.log"
 "$LOKI" verify < /dev/null > "$VOUT" 2>&1; VRC=$?
-"$LOKI" proof verify < /dev/null >> "$VOUT" 2>&1 || true
-if [ -z "$PRINTED" ]; then
-    res FAIL digest-matches "no receipt digest printed"
-else
-    if grep -rqs "$PRINTED" "$VOUT" .loki/runs .loki/proofs; then
-        res PASS digest-matches "printed ${PRINTED:0:12}... found in the verified receipt"
-    else
-        res FAIL digest-matches "printed ${PRINTED:0:12}... is not what verify checks"
-    fi
-fi
+PRINTED=$(sed 's/\x1b\[[0-9;]*m//g' "$T/out.log" | grep -Eio '(receipt_sha256|sha256|receipt)[^0-9a-f]*[0-9a-f]{64}' \
+    | head -1 | grep -Eo '[0-9a-f]{64}$')
+VERIFIED_D=$(sed -n 's/^.*receipt_sha256[^0-9a-f]*\([0-9a-f]\{64\}\).*$/\1/p' "$VOUT" | head -1)
+if [ -z "$PRINTED" ]; then res FAIL digest-matches "no full 64-hex receipt digest printed"
+elif [ -z "$VERIFIED_D" ]; then res FAIL digest-matches "loki verify reports no receipt_sha256"
+elif [ "$PRINTED" = "$VERIFIED_D" ]; then res PASS digest-matches "printed digest equals verify's receipt_sha256 (${PRINTED:0:12}...)"
+else res FAIL digest-matches "printed ${PRINTED:0:12}... but verify reports ${VERIFIED_D:0:12}..."; fi
 
 # 5. loki verify OK, exit 0
 if [ "$VRC" -eq 0 ] && grep -Eqi 'verdict: *verified' "$VOUT"; then res PASS verify-ok "loki verify VERIFIED rc=0"
 else res FAIL verify-ok "loki verify rc=$VRC: $(grep -Ei 'verdict' "$VOUT" | head -1)"; fi
 
-# 6. receipt signed
-if ! grep -qi 'unsigned' "$T/out.log" \
-    && grep -rEqs --include='*.json' '"(jwt|attestation|gpg_signature)": *"[^"]+"' .loki/runs .loki/proofs; then
-    res PASS receipt-signed "signature present"
-else res FAIL receipt-signed "receipt is unsigned (no signing key configured)"; fi
+# 6. receipt signed: loki verify itself must report a valid signature
+if grep -Eqi '^attestation: *verified' "$VOUT"; then res PASS receipt-signed "loki verify reports a valid signature"
+else res FAIL receipt-signed "loki verify reports no valid signature: $(grep -Ei 'attestation|signature' "$VOUT" | head -1)"; fi
 
 # 7. terminal output 15 lines or fewer without --verbose
 LINES=$(wc -l < "$T/out.log" | tr -d ' ')

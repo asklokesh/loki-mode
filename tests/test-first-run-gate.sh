@@ -19,16 +19,20 @@ quick)
     [ "$FAKE_MODE" = red0 ] || sed -i.bak 's/i = 1/i = 0/' sum.js
     rm -f sum.js.bak
     [ "$FAKE_MODE" = stray ] && echo x > NOTES.md
-    mkdir -p .loki/runs/r .loki/proofs/p
-    J='"jwt": "tok"'; [ "$FAKE_MODE" = unsigned ] && J='"jwt": null'
-    echo "{\"verification\": {$J}}" > .loki/runs/r/receipt.json
-    if [ "$FAKE_MODE" = baddigest ]; then echo '{"d":"bbbb"}' > .loki/proofs/p/proof.json
-    else echo "{\"d\":\"$D\"}" > .loki/proofs/p/proof.json; fi
-    echo "Diff sha256 \`$D\`"
+    [ "$FAKE_MODE" = delfile ] && rm sum.test.js
+    [ "$FAKE_MODE" = truetest ] && sed -i.bak 's/node --test/true/' package.json && rm -f package.json.bak
+    [ "$FAKE_MODE" = modpkg ] && sed -i.bak 's/1.0.0/1.0.1/' package.json && rm -f package.json.bak
+    mkdir -p .loki/runs/r
+    echo '{}' > .loki/runs/r/receipt.json
+    if [ "$FAKE_MODE" = prefix ]; then echo "receipt ${D:0:12}"; else echo "receipt_sha256: $D"; fi
     [ "$FAKE_MODE" = long ] && seq 1 30
-    [ "$FAKE_MODE" = unsigned ] && echo "receipts will be UNSIGNED"
+    [ "$FAKE_MODE" = exit1 ] && exit 1
     exit 0 ;;
-verify) echo "VERDICT: VERIFIED"; exit 0 ;;
+verify)
+    echo "VERDICT: VERIFIED"
+    if [ "$FAKE_MODE" = baddigest ]; then echo "receipt_sha256: $(printf 'b%.0s' $(seq 64))"; else echo "receipt_sha256: $D"; fi
+    if [ "$FAKE_MODE" = unsigned ]; then echo "attestation: UNSIGNED (no key)"; else echo "attestation: VERIFIED against the local JWKS"; fi
+    exit 0 ;;
 *) exit 0 ;;
 esac
 FAKE
@@ -55,6 +59,11 @@ run_gate stray;      expect stray no-stray-files FAIL;       [ "$RC" -ne 0 ] && 
 run_gate red0;       expect red0 exit-honest FAIL;           expect red0 tests-green FAIL; [ "$RC" -ne 0 ] && ok "red0: exits non-zero" || bad "red0: exit 0"
 run_gate long;       expect long output-lines FAIL;          [ "$RC" -ne 0 ] && ok "long: exits non-zero" || bad "long: exit 0"
 run_gate unsigned;   expect unsigned receipt-signed FAIL;    [ "$RC" -ne 0 ] && ok "unsigned: exits non-zero" || bad "unsigned: exit 0"
+run_gate delfile;    expect delfile no-stray-files FAIL;     expect delfile tests-green FAIL
+run_gate truetest;   expect truetest no-stray-files FAIL;    [ "$RC" -ne 0 ] && ok "truetest: exits non-zero" || bad "truetest: exit 0"
+run_gate modpkg;     expect modpkg no-stray-files FAIL
+run_gate exit1;      expect exit1 exit-honest FAIL;          [ "$RC" -ne 0 ] && ok "exit1: exits non-zero" || bad "exit1: exit 0"
+run_gate prefix;     expect prefix digest-matches FAIL
 run_gate baddigest;  expect baddigest digest-matches FAIL;   [ "$RC" -ne 0 ] && ok "baddigest: exits non-zero" || bad "baddigest: exit 0"
 
 echo "first-run-gate tests: $PASS passed, $FAIL failed"
