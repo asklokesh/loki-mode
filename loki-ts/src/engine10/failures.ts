@@ -98,3 +98,10 @@ export function groupFailures(raw: RawFailure[]): FailureGroup[] {
     .sort((a, b) => b.count - a.count)
     .slice(0, MAX_GROUPS);
 }
+
+const ID_LINE = /^(?:FAILED\s+(\S+)(?:\s.*)?|\u25cf\s+(.+\u203a.+)|not ok \d+ - (.+?)(?:\s+#.*)?|\u2716\s+(?!failing tests:)(.+?)(?:\s+\([\d.]+ms\))?|(?:FAIL|\u00d7)\s+(.+))$/;
+/** A-112: failing test ids from any runner's raw output: pytest `FAILED path::name`, jest bullet `Suite > name`,
+ *  node TAP `not ok N - name` (or its spec cross line), vitest `FAIL name`. Same marker family as verify.ts firstError. */
+export function failIds(output: string): string[] {
+  return [...new Set(output.split("\n").map((l) => ID_LINE.exec(l.trim())).flatMap((m) => (m ? [(m.slice(1).find(Boolean) ?? "").trim()] : [])).filter(Boolean))];
+}

@@ -378,6 +378,16 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(receiptOf(await sealStage.run(noSrc.ctx, new AbortController().signal)).not_proven).toContain("task source not recorded by intake");
   }, 30000);
 
+  test("A-112: verify pre_red ids list as `pre red: <id>` and do not downgrade VERIFIED", async () => {
+    noKey();
+    const { repo, base } = makeRepo("prered");
+    const { ctx } = ctxFor(repo, base, "claude", { verify: { checks: [{ name: "node:a.test.js", cmd: "node --test", result: "pass", duration_s: 1 }], flaky: [], wall_passed: true, pre_red: ["unrelated"] } });
+    await commitStage.run(ctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    expect(r.not_proven).toContain("pre red: unrelated");
+    expect(r.verdict).toBe("VERIFIED");
+  }, 30000);
+
   // E-98a B1: verify passing every check must not seal VERIFIED when verify itself flagged a
   // system-interpreter run. Red on pre-B1 code: verdictOf never looked at o.verify.not_proven,
   // so this sealed VERIFIED with no "tests ran on the system interpreter" line in the receipt.

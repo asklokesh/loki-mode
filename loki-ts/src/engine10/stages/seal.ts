@@ -205,6 +205,7 @@ export const sealStage: Stage = {
     for (const c of checks) if (c.result === "not_run") notProven.add(`not run: ${c.name}`);
     for (const f of strs(o.verify?.flaky)) notProven.add(`flaky test: ${f}`);
     for (const n of verifyNotProven) notProven.add(n);
+    for (const id of strs(o.verify?.pre_red)) notProven.add(`pre red: ${id}`); // A-112: listed, never downgrades (not via verifyNotProven)
     for (const t of strs(o.implement?.tests_reverted)) notProven.add(`reverted test edit: ${t}`);
     if (ctx.provider !== "claude") notProven.add("kill blocking not enforced");
     // Section 7: model_override_applied lives on run.started, which outputs() never carries.
