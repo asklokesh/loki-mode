@@ -143,7 +143,10 @@ case "$(cat "$DOC")" in
     *) bad "the doc does not state that errors survive every log level" ;;
 esac
 
-if grep -q 'log_error() { echo' "$REPO_ROOT/autonomy/run.sh"; then
+# A-134: log_error may pick stderr (quiet `loki quick`) but must still always print,
+# i.e. its definition line emits [ERROR] and carries no level gate.
+_le_line="$(grep -m1 '^log_error()' "$REPO_ROOT/autonomy/run.sh")"
+if printf '%s' "$_le_line" | grep -q '\[ERROR\]' && ! printf '%s' "$_le_line" | grep -Eq '_loki_log_enabled|LOKI_LOG|LOKI_QUIET|\|\| *true|return'; then
     ok "log_error is genuinely ungated in run.sh (the floor is real)"
 else
     bad "log_error appears gated -- the documented error floor may not hold"

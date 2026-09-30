@@ -18,6 +18,9 @@ if [ -z "${LOKI_TEST_LIST:-}" ] && [ -z "${LOKI_RECEIPT_SIGNING_KEY_FILE:-}" ]; 
     . "$REPO_ROOT/eval/loki10/lib-tmp.sh"
     if loki_run_tmp_create; then
         export LOKI_RECEIPT_SIGNING_KEY_FILE="$LOKI_RUN_TMP/receipt-ed25519.pem"
+        # Keep LOKI_RUN_TMP as a runner-private shell variable only: exported, it
+        # makes every child suite's own loki_run_tmp_create refuse ("already set").
+        export -n LOKI_RUN_TMP
         trap 'loki_run_tmp_cleanup || true' EXIT
     fi
 fi
