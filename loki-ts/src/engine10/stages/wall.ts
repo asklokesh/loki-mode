@@ -57,9 +57,9 @@ function parsedFailCount(runner: RunnerName, output: string): number {
 }
 // A-103 node:test red, mirroring pytest: a missing module inside the repo or an error thrown by code under test is red; a missing bare package, or an error thrown from the Wall file itself (Jest globals), is not. Only node's own lines count (col-0 crash text, or a failing-tests block's error line and first frame), never an assertion diff.
 function nodeIsRed(f: TestRef, o: string): boolean {
-  const mod = /^Error(?: \[\w+\])?: Cannot find (?:module|package) '([^']+)'/m.exec(o), top = /^(\S+):\d+\n.*\n.*\n\n(?:ReferenceError|SyntaxError)\b/m.exec(o);
-  const fr = /^ {2}(?:ReferenceError|SyntaxError): .*\n\s+at (?:.*\()?([^\s()]+?):\d+:\d+/m.exec(o.split("failing tests:")[1] ?? "");
-  return /^(?:#|ℹ) fail [1-9]/m.test(o) && (mod ? /^[./]/.test(mod[1]!) : top ? !top[1]!.endsWith(f.path) : fr ? !fr[1]!.startsWith("node:") && !fr[1]!.endsWith(f.path) : true);
+  const mod = /^Error(?: \[\w+\])?: Cannot find (?:module|package) '([^']+)'(?:(?!\u2716)[\s\S])*?\nNode\.js v/m.exec(o), top = /^(\S+):\d+\n.*\n.*\n\n(?:ReferenceError|SyntaxError)\b/m.exec(o);
+  const blk = o.split("failing tests:")[1] ?? "", fr = /^ {2}(?:ReferenceError|SyntaxError): .*\n\s+at (?:.*\()?([^\s()]+?):\d+:\d+/m.exec(blk);
+  return /^(?:#|\u2139) fail [1-9]/m.test(o) && (/^ {2}AssertionError\b/m.test(blk) || (mod ? /^[./]/.test(mod[1]!) : top ? !top[1]!.endsWith(f.path) : fr ? !fr[1]!.startsWith("node:") && !fr[1]!.endsWith(f.path) : true));
 }
 // D42 (3) exit classification. B4 (r2): any "system"-interpreter result is not_run, same as verify (E-98a).
 // Red: pytest exit 1/resolved 2; jest/vitest/bun a parsed failed count>0. npm/go/cargo (B2, coarse): never fail.

@@ -90,11 +90,20 @@ describe("A-103 wall discards tests that are not red for the right reason", () =
     expect(r.result.data.base_run).toEqual({ pass: 0, fail: 1, not_run: 0 });
   });
 
-  test("classify node: assertion failure is red; ReferenceError or missing module is not_run", () => {
+  test("a caught 'Cannot find module' logged by code under test, then a real assertion failure, is red and kept", async () => {
+    const r = await wallWith({ "loki_wall_opt.test.js": H + "const { sum } = require('../opt');\ntest('t', () => { assert.strictEqual(sum(1, 1), 2); });\n" }, { "opt.js": "try { require('fsevents'); } catch (e) { console.error(e); }\nmodule.exports = { sum: (a, b) => a + b + 1 };\n" });
+    expect(r.result.data.base_run).toEqual({ pass: 0, fail: 1, not_run: 0 });
+    expect((r.result.data.files as unknown[]).length).toBe(1);
+  });
+  test("a test body that logs 'Error: Cannot find module' before a real assertion failure is red and kept", async () => {
+    const r = await wallWith({ "loki_wall_log.test.js": H + "test('t', () => { console.log(\"Error: Cannot find module 'lodash'\"); assert.strictEqual(1, 2); });\n" });
+    expect(r.result.data.base_run).toEqual({ pass: 0, fail: 1, not_run: 0 });
+  });
+  test("classify node:assertion failure is red; ReferenceError or missing module is not_run", () => {
     const f = { runner: "node" as const, path: "t.test.js" };
     expect(classify(f, 1, "# tests 1\n# pass 0\n# fail 1\n", "/x")).toBe("fail");
-    expect(classify(f, 1, "ℹ tests 1\nℹ pass 0\nℹ fail 1\n", "/x")).toBe("fail"); // node 20+ spec reporter off a TTY
+    expect(classify(f, 1, "\u2139 tests 1\n\u2139 pass 0\n\u2139 fail 1\n", "/x")).toBe("fail"); // node 20+ spec reporter off a TTY
     expect(classify(f, 1, "/r/t.test.js:1\ndescribe('x', () => {});\n^\n\nReferenceError: describe is not defined\n# fail 1\n", "/x")).toBe("not_run");
-    expect(classify(f, 1, "Error: Cannot find module 'lodash'\n# fail 1\n", "/x")).toBe("not_run");
+    expect(classify(f, 1, "Error: Cannot find module 'lodash'\n    at require (node:internal/x:1:1)\n  code: 'MODULE_NOT_FOUND'\n}\n\nNode.js v26.5.0\n# fail 1\n", "/x")).toBe("not_run");
   });
 });
