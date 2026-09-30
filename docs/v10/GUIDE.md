@@ -41,13 +41,9 @@ Flags, from the engine's own `--help`:
   from 480s to 1800s (`loki-ts/src/engine10/types.ts`).
 - `--provider <name>`: pick the coding provider for this run. See the
   provider table below.
-- `--resume <run-id>`: continue a run that was interrupted.
 
 `--no-pr`, `--deep` and `--provider` are parsed by the supervisor
 (`loki-ts/src/engine10/supervisor.ts`) and take effect on a real run.
-`--resume` is not wired yet: passing it prints `engine10: --resume is not
-wired yet` and exits 2. Its shape is documented here because it is already
-fixed in `--help`.
 
 `loki status`, `loki verify` and `loki dashboard` are all built on main
 (status.ts, verify_cmd.ts, dashboard/server.ts) and route through cli.ts's

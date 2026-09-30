@@ -378,6 +378,9 @@ fi
 # aws-access-token:88 -- synthetic E-101 fixtures) without updating this
 # expectation, so it was red on main (14 -> 17 historical, 50 -> 53 total)
 # from that commit onward; not related to E-114.
+# 56 56 36 20 0: commit 363c20ea added 3 more commit-qualified historical
+# fingerprints (generic-api-key false positives on the key FILE NAME
+# receipt-ed25519.pem, no key material), 17 -> 20 historical, 53 -> 56 total.
 _ignore="${LOKI_GITLEAKS_IGNORE:-$REPO_ROOT/.gitleaksignore}"
 _ignore_shape="$(python3 - "$_ignore" <<'PY'
 import re, sys
@@ -391,10 +394,10 @@ print(len(entries), len(set(entries)),
       sum(not current.fullmatch(e) and not historical.fullmatch(e) for e in entries))
 PY
 )"
-if [ "$_ignore_shape" = "53 53 36 17 0" ]; then
-  ok "gitleaks baseline contains 36 current and 17 commit-qualified historical fingerprints"
+if [ "$_ignore_shape" = "56 56 36 20 0" ]; then
+  ok "gitleaks baseline contains 36 current and 20 commit-qualified historical fingerprints"
 else
-  bad "gitleaks baseline shape drifted ($_ignore_shape; expected 53 53 36 17 0)"
+  bad "gitleaks baseline shape drifted ($_ignore_shape; expected 56 56 36 20 0)"
 fi
 
 # Optional live mutation proof. Exact-SHA acceptance supplies the same pinned
