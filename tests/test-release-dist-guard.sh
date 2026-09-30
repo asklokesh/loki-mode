@@ -108,5 +108,17 @@ ROOT_DIR="$C" release_commit_clean 2>"$RUN_TMP/err"; rc=$?
 git -C "$C" add loki-ts/dist/loki.js.map; git -C "$C" commit -q --amend --no-edit
 ROOT_DIR="$C" release_commit_clean 2>/dev/null && ok "check-clean passes once both files are committed" || bad "check-clean failed on a clean tree"
 
+# E-152: the "stage these files" list prints `git add -f` for paths under an ignored dir.
+S="$RUN_TMP/stage"; mkdir -p "$S/dist" "$S/src"
+git -C "$S" init -q; git -C "$S" config user.name t; git -C "$S" config user.email t@example.com
+echo 'dist/' >"$S/.gitignore"; echo a >"$S/src/a.txt"; echo b >"$S/dist/b.js"
+git -C "$S" add .gitignore src/a.txt; git -C "$S" add -f dist/b.js; git -C "$S" commit -q -m init
+echo a2 >"$S/src/a.txt"; echo b2 >"$S/dist/b.js"
+if declare -F release_stage_lines >/dev/null; then
+    OUT=$(ROOT_DIR="$S" release_stage_lines)
+else OUT=""; fi
+printf '%s\n' "$OUT" | grep -qx '  git add -f dist/b.js' && ok "ignored-dir path gets git add -f" || bad "no git add -f for ignored path: $OUT"
+printf '%s\n' "$OUT" | grep -qx '  git add src/a.txt' && ok "normal path gets plain git add" || bad "plain path line missing: $OUT"
+
 echo "Passed: $PASS Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

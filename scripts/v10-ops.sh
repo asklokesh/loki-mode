@@ -455,9 +455,9 @@ cmd_version_check() {
     echo "VERSION file: $v"
     if command -v npm >/dev/null 2>&1; then
         local npm_v
-        npm_v="$(npm view loki-mode version 2>/dev/null)"
+        npm_v="$(npm view loki-mode dist-tags.next 2>/dev/null)"
         if [ -n "$npm_v" ]; then
-            echo "npm published: $npm_v"
+            echo "npm published (next): $npm_v; latest promoted: $(npm view loki-mode dist-tags.latest 2>/dev/null)"
         else
             echo "npm published: unavailable (no network or npm error)"
         fi

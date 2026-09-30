@@ -30,7 +30,7 @@
 #                       so this script gives an honest answer about the swarm's
 #                       main line even when run from a builder worktree whose
 #                       own HEAD is a feature branch.
-#   PULSE_NPM_CMD       npm command to run (default: npm view loki-mode time --json)
+#   PULSE_NPM_CMD       npm command to run (default: npm view loki-mode time dist-tags --json)
 #   PULSE_GH_CMD        gh command to run (default: gh run list --branch main
 #                       --commit <main-sha> --json status,conclusion,workflowName --limit 20)
 #   PULSE_GH_STREAK_CMD gh command for the CI_CANCELLED_STREAK check (default:
@@ -523,7 +523,7 @@ def resolve_main_sha():
 main_sha = safe(resolve_main_sha)
 
 _npm_argv = shlex.split(os.environ["PULSE_NPM_CMD"]) if os.environ.get("PULSE_NPM_CMD") else [
-    "npm", "view", "loki-mode", "time", "--json",
+    "npm", "view", "loki-mode", "time", "dist-tags", "--json",
 ]
 _gh_argv = None
 if main_sha is not None:
@@ -793,6 +793,12 @@ def parse_npm_releases(rc, out):
         return None
     if not isinstance(data, dict):
         return None
+    # A-01: `npm view <pkg> time dist-tags --json` nests both; a bare time
+    # map (older fixtures, cached output) has no "time" key.
+    dist_tags = {}
+    if isinstance(data.get("time"), dict):
+        dist_tags = data.get("dist-tags") if isinstance(data.get("dist-tags"), dict) else {}
+        data = data["time"]
     # 'created' and 'modified' are metadata, not releases; excluding them
     # matters because 'modified' updates on every publish including the
     # current one and would otherwise always read as "just released".
@@ -834,6 +840,10 @@ def parse_npm_releases(rc, out):
         "count_24h": count_24h,
         "count_1h": count_1h,
         "latest_version": latest_version,
+        # A-01: releases land on `next`; the newest publish is next unless
+        # the registry says otherwise. `latest` moves only via promote.yml.
+        "next_version": dist_tags.get("next") or latest_version,
+        "promoted_version": dist_tags.get("latest"),
     }
 
 
@@ -850,6 +860,7 @@ else:
     emit("Releases (last hour): %d%s" % (npm_result["count_1h"], _npm_note))
     emit("Releases (24h): %d%s" % (npm_result["count_24h"], _npm_note))
     emit("Minutes since last release: %.1f%s" % (mins_since, _npm_note))
+    emit("latest promoted: %s%s" % (npm_result.get("promoted_version") or "UNKNOWN", _npm_note))
 
 
 # --- 2. main CI status for PULSE_MAIN_REF's head SHA -----------------------
@@ -1555,7 +1566,7 @@ unreleased = safe(check_unreleased_merge_age)
 _npm_tag_mismatch = None
 if unreleased is not None and npm_result is not None:
     _local_tag_version = unreleased["tag"][1:] if unreleased["tag"].startswith("v") else unreleased["tag"]
-    _npm_latest_version = npm_result.get("latest_version")
+    _npm_latest_version = npm_result.get("next_version")
     if _npm_latest_version is not None and _local_tag_version != _npm_latest_version:
         _npm_tag_mismatch = (unreleased["tag"], _npm_latest_version)
 
@@ -1565,7 +1576,7 @@ if unreleased is None:
 elif _npm_tag_mismatch is not None:
     mark_unknown("unreleased_merge_age")
     emit(
-        "Merged-but-unreleased age: UNKNOWN (local tag %s disagrees with npm's latest published version %s)"
+        "Merged-but-unreleased age: UNKNOWN (local tag %s disagrees with npm next %s)"
         % _npm_tag_mismatch
     )
 else:
@@ -1731,7 +1742,7 @@ else:
 # merge -- see T47b. `^1` diff works identically for an ordinary
 # non-merge commit (its only parent). Reuses `unreleased["tag"]` /
 # `_npm_tag_mismatch` (same "newest v* tag whose version equals npm's
-# latest dist-tag" definition, same npm lookup, no second network call)
+# next dist-tag" definition, same npm lookup, no second network call)
 # and `ci_status` (same main-CI result, with its own Tests-run-list
 # fallback already built in) rather than re-deriving either.
 def _docs_only_path(path):

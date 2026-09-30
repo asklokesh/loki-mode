@@ -7,7 +7,7 @@ name: Post-Release Smoke
 # reports the expected version.
 #
 # Trigger: runs after the Release workflow finishes successfully. The Release
-# workflow already gates publish-npm/publish-docker/update-homebrew on its own
+# workflow already gates publish-npm/publish-docker on its own
 # success, so a successful Release run means the artifacts were pushed. A manual
 # workflow_dispatch with a version override is also supported for re-runs (for
 # example, re-validating after a propagation lag or a fixed publish job).
@@ -19,7 +19,7 @@ name: Post-Release Smoke
 #     the same source the Release workflow uses to determine the version, so
 #     the two always agree.
 #
-# Each smoke job retries on propagation lag (npm/Docker/Homebrew can take a few
+# Each smoke job retries on propagation lag (npm/Docker can take a few
 # minutes to serve a freshly published artifact) with a bounded backoff, then
 # fails loudly. On any failure the notify job posts to the SAME Slack webhook
 # the Release workflow uses (secrets.SLACK_WEBHOOK_URL), naming the channel and
@@ -120,6 +120,22 @@ jobs:
           done
           echo "FATAL: loki-mode@${VERSION} not installable from npm after retries"
           exit 1
+
+      # A-01: releases publish under `next`; `latest` moves only via promote.yml.
+      # Verify the exact version; log the next tag (a newer release may have
+      # moved it on already, so a differing next is reported, not fatal).
+      - name: Assert exact version is published and tagged next
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -uo pipefail
+          FOUND="$(npm view "loki-mode@${VERSION}" version 2>/dev/null || echo '')"
+          if [ "$FOUND" != "$VERSION" ]; then
+            echo "FATAL: loki-mode@${VERSION} not found on npm by exact version"
+            exit 1
+          fi
+          NEXT="$(npm view loki-mode dist-tags.next 2>/dev/null || echo '')"
+          echo "npm next tag: ${NEXT:-<unset>} (this release: ${VERSION})"
 
       - name: Assert loki version
         env:
@@ -230,36 +246,6 @@ jobs:
           fi
           python3 -c "import json,sys; json.load(open('/tmp/docker-status.json')); print('docker status --json is valid JSON')"
 
-  homebrew-smoke:
-    needs: resolve
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Verify Homebrew formula references the version + sha256 (retry on lag)
-        env:
-          VERSION: ${{ needs.resolve.outputs.version }}
-        run: |
-          set -uo pipefail
-          # The tap update is the last channel in the Release pipeline, so it
-          # can lag the most. Fetch the live formula and assert it pins this
-          # version and carries a sha256.
-          FORMULA_URL="https://raw.githubusercontent.com/asklokesh/homebrew-tap/master/Formula/loki-mode.rb"
-          for attempt in 1 2 3 4 5 6; do
-            echo "formula fetch attempt ${attempt} for ${VERSION}"
-            FORMULA="$(curl -fsSL "$FORMULA_URL" 2>/dev/null || echo '')"
-            if echo "$FORMULA" | grep -q "loki-mode-${VERSION}.tar.gz" \
-               && echo "$FORMULA" | grep -Eq 'sha256 "[0-9a-f]{64}"'; then
-              echo "Homebrew formula references v${VERSION} with a sha256"
-              exit 0
-            fi
-            echo "formula not updated to ${VERSION} yet (propagation lag); backing off..."
-            sleep $((attempt * 30))
-          done
-          echo "FATAL: Homebrew formula not updated to v${VERSION} after retries"
-          echo "----- last fetched formula -----"
-          echo "$FORMULA"
-          exit 1
-
   sdk-smoke:
     needs: resolve
     runs-on: ubuntu-latest
@@ -315,7 +301,7 @@ jobs:
   notify:
     # Run after all smoke jobs regardless of outcome so a single failed channel
     # is reported. Uses the same Slack webhook the Release workflow uses.
-    needs: [resolve, npm-smoke, docker-smoke, homebrew-smoke, sdk-smoke]
+    needs: [resolve, npm-smoke, docker-smoke, sdk-smoke]
     if: always() && needs.resolve.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -327,7 +313,6 @@ jobs:
           CHANNELS=""
           [ "${{ needs.npm-smoke.result }}" = "failure" ] && CHANNELS="${CHANNELS} npm"
           [ "${{ needs.docker-smoke.result }}" = "failure" ] && CHANNELS="${CHANNELS} docker"
-          [ "${{ needs.homebrew-smoke.result }}" = "failure" ] && CHANNELS="${CHANNELS} brew"
           [ "${{ needs.sdk-smoke.result }}" = "failure" ] && CHANNELS="${CHANNELS} sdk"
           CHANNELS="$(echo "$CHANNELS" | sed 's/^ *//')"
           if [ -n "$CHANNELS" ]; then

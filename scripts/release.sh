@@ -575,7 +575,20 @@ run_bump_only() {
     echo ""
     log_success "Bump-only complete: v$new"
     echo "stage these files:"
-    git -C "$ROOT_DIR" status --porcelain --untracked-files=no | sed 's/^...//; s/^/  /'
+    release_stage_lines
+}
+
+# E-152: one `git add` line per modified tracked file; `-f` when the path sits
+# under an ignored directory (a tracked-but-ignored dist needs it).
+release_stage_lines() {
+    local f
+    git -C "$ROOT_DIR" status --porcelain --untracked-files=no | sed 's/^...//' | while IFS= read -r f; do
+        if git -C "$ROOT_DIR" check-ignore --no-index -q -- "$f"; then
+            echo "  git add -f $f"
+        else
+            echo "  git add $f"
+        fi
+    done
 }
 
 # Check for uncommitted changes
