@@ -384,6 +384,8 @@ fi
 # 59 59 36 23 0: commit 3ce73a36 added 3 more exact fingerprints for the same
 # false positive (the key FILE NAME receipt-ed25519.pem in tests/conftest.py:48
 # and the rebuilt dist), 20 -> 23 historical, 56 -> 59 total.
+# 60 60 36 24 0: commit d4dc9b8a added 1 more exact fingerprint for the same
+# file-name false positive in the train/14 dist rebuild, 23 -> 24, 59 -> 60.
 _ignore="${LOKI_GITLEAKS_IGNORE:-$REPO_ROOT/.gitleaksignore}"
 _ignore_shape="$(python3 - "$_ignore" <<'PY'
 import re, sys
@@ -397,10 +399,10 @@ print(len(entries), len(set(entries)),
       sum(not current.fullmatch(e) and not historical.fullmatch(e) for e in entries))
 PY
 )"
-if [ "$_ignore_shape" = "59 59 36 23 0" ]; then
+if [ "$_ignore_shape" = "60 60 36 24 0" ]; then
   ok "gitleaks baseline contains 36 current and 23 commit-qualified historical fingerprints"
 else
-  bad "gitleaks baseline shape drifted ($_ignore_shape; expected 59 59 36 23 0)"
+  bad "gitleaks baseline shape drifted ($_ignore_shape; expected 60 60 36 24 0)"
 fi
 
 # Optional live mutation proof. Exact-SHA acceptance supplies the same pinned
