@@ -510,3 +510,43 @@ describe("engine10 receipt cost line (E-69)", () => {
     expect(md).not.toContain("$0.00");
   });
 });
+
+describe("A-104 commit only the fix (G2)", () => {
+  const committed = (repo: string, base: string) => sh(["git", "-C", repo, "diff", "--name-only", base, "HEAD"], repo).trim().split("\n").filter(Boolean);
+  const dirty = (repo: string) => {
+    sh(["mkdir", "-p", join(repo, "tests")], repo);
+    writeFileSync(join(repo, "tests/loki_wall_café.js"), "// wall\n");
+    writeFileSync(join(repo, "loki_wall_top.js"), "// wall\n");
+    writeFileSync(join(repo, "package-lock.json"), "{}\n");
+  };
+
+  test("Wall files and a new lockfile are left out when no manifest changed", async () => {
+    const { repo, base } = makeRepo("a104-lock");
+    dirty(repo);
+    const { ctx } = ctxFor(repo, base);
+    expect((await commitStage.run(ctx, new AbortController().signal)).status).toBe("completed");
+    expect(committed(repo, base)).toEqual(["a.txt"]);
+    expect(existsSync(join(repo, "tests/loki_wall_café.js"))).toBe(true);
+  });
+
+  test("a lockfile that changed with its manifest is committed", async () => {
+    const { repo, base } = makeRepo("a104-manifest");
+    dirty(repo);
+    writeFileSync(join(repo, "package.json"), "{}\n");
+    const { ctx } = ctxFor(repo, base);
+    await commitStage.run(ctx, new AbortController().signal);
+    expect(committed(repo, base)).toEqual(["a.txt", "package-lock.json", "package.json"]);
+  });
+
+  test("a lockfile already at base and modified is committed", async () => {
+    const { repo } = makeRepo("a104-tracked");
+    writeFileSync(join(repo, "go.sum"), "x\n");
+    sh(["git", "-C", repo, "add", "go.sum"], repo);
+    sh(["git", "-C", repo, "commit", "-q", "-m", "lock"], repo);
+    const base = sh(["git", "-C", repo, "rev-parse", "HEAD"], repo).trim();
+    writeFileSync(join(repo, "go.sum"), "y\n");
+    const { ctx } = ctxFor(repo, base);
+    await commitStage.run(ctx, new AbortController().signal);
+    expect(committed(repo, base)).toEqual(["a.txt", "go.sum"]);
+  });
+});
