@@ -22,10 +22,9 @@ export async function checkPreflight(o: PreflightOptions): Promise<PreflightResu
     const v = await sh(["gh", "--version"], { env, timeoutMs: 5000 }); const a = v.exitCode === 0 ? await sh(["gh", "auth", "status"], { env, timeoutMs: 10000 }) : v;
     if (v.exitCode !== 0 || a.exitCode !== 0) return { fatal: `gh (GitHub CLI) is missing or not authenticated; run gh auth login, or pass --no-pr`, warnings };
   }
-  const keyConfigured = !!(env["LOKI_RECEIPT_SIGNING_KEY"]?.trim() || env["LOKI_RECEIPT_SIGNING_KEY_FILE"]?.trim()); const py = keyConfigured ? await (o.findPython ?? findIsolatedPython3)() : null;
-  const canImport = py !== null && (await sh([py, "-I", "-c", "import cryptography"], { env, timeoutMs: 10000 })).exitCode === 0;
-  if (!keyConfigured) warnings.push("receipts will be UNSIGNED (no signing key configured; set LOKI_RECEIPT_SIGNING_KEY or LOKI_RECEIPT_SIGNING_KEY_FILE)");
-  else if (!canImport) warnings.push("receipts will be UNSIGNED (cryptography is not importable under python3 -I)");
+  const keyConfigured = !!(env["LOKI_RECEIPT_SIGNING_KEY"]?.trim() || env["LOKI_RECEIPT_SIGNING_KEY_FILE"]?.trim()); const py = keyConfigured ? await (o.findPython ?? findIsolatedPython3)() : null; // ponytail: seal.ts still signs only with a key env; drop this warning when A-121 lands
+  if (!keyConfigured) warnings.push("receipts will be UNSIGNED (no signing key configured; set LOKI_RECEIPT_SIGNING_KEY or LOKI_RECEIPT_SIGNING_KEY_FILE; native auto-signing lands with A-121)");
+  else if (py === null || (await sh([py, "-I", "-c", "import cryptography"], { env, timeoutMs: 10000 })).exitCode !== 0) warnings.push("receipts will be UNSIGNED (cryptography is not importable under python3 -I)");
   return { fatal: null, warnings };
 }
 export class PreflightError extends Error {}
