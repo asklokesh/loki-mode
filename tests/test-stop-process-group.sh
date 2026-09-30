@@ -19,11 +19,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 # ponytail: per-run token ($PGTEST_TAG) folded into every "loki-<tag>" prefix
-# below and into the pkill/rm patterns that sweep them. A bare "loki-pgtest"
-# prefix would match a concurrent run of this SAME suite in another
-# worktree/CI shard (this repo runs exactly that topology), and
-# "pkill -f loki-pgtest" would then SIGKILL that other run's fixtures
-# (D14/D15/D16 class).
+# below so concurrent runs of this SAME suite (another worktree/CI shard) never
+# share fixture names. Cleanup stops only recorded PIDs/PGIDs (E-148), never a
+# name pattern (D14/D15/D16 class).
 PGTEST_TAG="pgtest-$$-${RANDOM}-$(date +%s 2>/dev/null || echo 0)"
 # Run-owned temp dir (E-143): all fixtures live under LOKI_RUN_TMP.
 # shellcheck disable=SC1091
@@ -86,11 +84,26 @@ $PY -c "import ast; ast.parse(open('$REPO_ROOT/dashboard/server.py').read())" \
 
 # --- A: group-kill reaps a SIGTERM-ignoring child ----------------------------
 WORK=$(mktemp -d "$LOKI_RUN_TMP/loki-${PGTEST_TAG}-XXXXXX")
-# Make the terminal cleanup (pkill + temp-dir removal) unconditional: if the
+# Make the terminal cleanup (recorded-PID stop + temp-dir removal) unconditional: if the
 # script is interrupted before reaching the end, the EXIT/INT/TERM trap still
 # prunes every loki-${PGTEST_TAG}-* sandbox so none leak onto disk.
+# E-148: stop exactly the PIDs/PGIDs this run recorded (never by pattern).
+_PG_PIDS=""
+_PG_PGIDS=""
+_pg_record() { _PG_PIDS="$_PG_PIDS $*"; }
+_pg_record_group() { # refuse empty/0/1 and our own group (suicide guard)
+    case "${1:-}" in ''|*[!0-9]*|0|1) return 0 ;; esac
+    [ "$1" = "$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')" ] && return 0
+    _PG_PGIDS="$_PG_PGIDS $1"
+}
+_pg_stop_recorded() {
+    local x
+    for x in $_PG_PGIDS; do kill -KILL -- "-$x" 2>/dev/null || true; done
+    for x in $_PG_PIDS; do kill -KILL "$x" 2>/dev/null || true; done
+    _PG_PIDS=""; _PG_PGIDS=""
+}
 pgtest_cleanup() {
-    [ -n "${PGTEST_TAG:-}" ] && pkill -f "loki-${PGTEST_TAG}" 2>/dev/null
+    _pg_stop_recorded
     _tmp_done
 }
 trap 'pgtest_cleanup' EXIT INT TERM
@@ -99,6 +112,7 @@ cat > "$WORK/orch.sh" <<'EOF'
 # child ignores SIGTERM (worst case), stays in leader's group
 ( trap "" TERM; exec sleep 300 ) &
 echo $! > "$1/child.pid"
+echo $$ > "$1/leader.pid"
 sleep 300
 EOF
 chmod +x "$WORK/orch.sh"
@@ -108,7 +122,7 @@ launch_session_leader bash "$WORK/orch.sh" "$WORK"
 LEADER=""
 _t=0
 while [ "$_t" -lt 80 ]; do   # up to ~8s
-    LEADER=$(pgrep -f "$WORK/orch.sh" | head -1)
+    LEADER=$(cat "$WORK/leader.pid" 2>/dev/null)
     [ -n "$LEADER" ] && [ -f "$WORK/child.pid" ] && break
     sleep 0.1; _t=$((_t+1))
 done
@@ -116,6 +130,7 @@ MY_PGID=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
 if [ -n "$LEADER" ]; then
     PGID=$(ps -o pgid= -p "$LEADER" 2>/dev/null | tr -d ' ')
     CHILD=$(cat "$WORK/child.pid" 2>/dev/null)
+    _pg_record "$LEADER" "$CHILD"; _pg_record_group "$PGID"
     cpg=$(ps -o pgid= -p "$CHILD" 2>/dev/null | tr -d ' ')
     [ "$cpg" = "$PGID" ] && ok "agent child shares the orchestrator process group" \
       || bad "child pgid ($cpg) != leader pgid ($PGID)"
@@ -140,7 +155,8 @@ if [ -n "$LEADER" ]; then
 else
     bad "could not launch session-leader orchestrator (SESS=$SESS)"
 fi
-rm -rf "$WORK"; pkill -f "loki-${PGTEST_TAG}" 2>/dev/null || true
+_pg_stop_recorded
+rm -rf "$WORK"
 
 # --- B+C: dashboard endpoint group-kill + sentinel sweep, project-scoped -----
 # Run the Python E2E via a temp FILE executed directly (no `$(... | tail)`
@@ -288,11 +304,14 @@ LEADEOF
     # FOREIGN run: separate .loki, its OWN session/group, TERM-ignoring claude.
     perl -e '$0="claude --dangerously-skip-permissions [LOKI-AUTONOMY-AGENT] foreign"; $SIG{TERM}="IGNORE"; sleep 120;' &
     FREIGN_PID=$!
+    _pg_record "$FREIGN_PID"
     disown 2>/dev/null || true
     launch_session_leader bash "$FWORK/leader.sh"
     _t=0; while [ "$_t" -lt 120 ] && [ ! -f "$FWORK/.loki/reap.done" ]; do sleep 0.1; _t=$((_t+1)); done
     F_AGENT=$(cat "$FWORK/.loki/agent.pid" 2>/dev/null)
     F_LEADER=$(cat "$FWORK/.loki/leader.pid" 2>/dev/null)
+    _pg_record "$F_AGENT" "$F_LEADER"
+    _pg_record_group "$(ps -o pgid= -p "$F_LEADER" 2>/dev/null | tr -d ' ')"
     sleep 1
     if [ -f "$FWORK/.loki/reap.done" ] && [ -n "$F_AGENT" ] && ! pid_alive_non_zombie "$F_AGENT"; then
         ok "completion reap kills the in-group SIGTERM-ignoring agent (no orphan)"
@@ -328,7 +347,7 @@ else
     ok "no em dashes in changed files"
 fi
 
-[ -n "${PGTEST_TAG:-}" ] && pkill -f "loki-${PGTEST_TAG}" 2>/dev/null
+_pg_stop_recorded
 _tmp_done
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

@@ -34,35 +34,33 @@ if [ -z "${LOKI_RUN_TMP:-}" ]; then loki_run_tmp_create || exit 1; _OWN_TMP=1; f
 _tmp_done() { [ "$_OWN_TMP" = 1 ] && loki_run_tmp_cleanup; return 0; }
 trap _tmp_done EXIT
 
-# Test 1: new verify_all_logs() returns valid=True on real production audit dir.
-# Gracefully skips when no real audit data exists (e.g. CI runners, fresh
-# install). The value of this test is "shipped code works on real data on
-# this dev machine"; CI exercises the synthetic tests below.
-RESULT=$($PY <<'PYEOF' 2>&1 | tail -1
+# Test 1: verify_all_logs() returns valid=True on a default-location audit dir.
+# Hermetic (E-148): HOME points at a fixture under LOKI_RUN_TMP, so the module's
+# default AUDIT_DIR (~/.loki/dashboard/audit) is the fixture, never the real one
+# (which fails on hosts holding old tampered data). Events go through the real
+# log_event() write path, then the verifier reads them back.
+T1_HOME="$LOKI_RUN_TMP/t1-home"
+mkdir -p "$T1_HOME"
+RESULT=$(HOME="$T1_HOME" LOKI_AUDIT_DISABLED='' $PY <<'PYEOF' 2>&1 | tail -1
 import sys, os
 sys.path.insert(0, '.')
 from dashboard import audit
 home = os.path.expanduser('~')
-real_dir = os.path.join(home, '.loki', 'dashboard', 'audit')
-if not os.path.isdir(real_dir):
+assert str(audit.AUDIT_DIR).startswith(home), audit.AUDIT_DIR
+for i in range(5):
+    audit.log_event("test.cross_file", "fixture", resource_id=str(i))
+r = audit.verify_all_logs()
+if r['valid'] and r['entries_checked'] > 0:
+    print(f"VERIFY_ALL_OK: {r['entries_checked']} entries across {r['files_checked']} files")
+elif r['valid']:
     print("VERIFY_ALL_NO_DATA")
 else:
-    import glob
-    if not glob.glob(os.path.join(real_dir, 'audit-*.jsonl')):
-        print("VERIFY_ALL_NO_DATA")
-    else:
-        r = audit.verify_all_logs()
-        if r['valid'] and r['entries_checked'] > 0:
-            print(f"VERIFY_ALL_OK: {r['entries_checked']} entries across {r['files_checked']} files")
-        elif r['valid'] and r['entries_checked'] == 0:
-            print("VERIFY_ALL_NO_DATA")
-        else:
-            print(f"VERIFY_ALL_FAIL: {r}")
+    print(f"VERIFY_ALL_FAIL: {r}")
 PYEOF
 )
 case "$RESULT" in
-    VERIFY_ALL_OK*) ok "verify_all_logs returns valid=True on production audit dir ($RESULT)" ;;
-    VERIFY_ALL_NO_DATA) skip "verify_all_logs production-dir test (no real audit data on this host; CI runners have none)" ;;
+    VERIFY_ALL_OK*) ok "verify_all_logs returns valid=True on a fixture audit dir ($RESULT)" ;;
+    VERIFY_ALL_NO_DATA) skip "verify_all_logs fixture-dir test (log_event wrote no entries; audit disabled?)" ;;
     *) bad "verify_all_logs unexpected result: $RESULT" ;;
 esac
 
