@@ -126,8 +126,8 @@ describe("formatSummary (golden, ENGINE.md section 11)", () => {
       ],
     });
     expect(out).toBe(
-      "PR:         https://github.com/o/r/pull/12 (draft: fix rounds exhausted)\n" +
       "Outcome:    PARTIAL\n" +
+      "PR:         https://github.com/o/r/pull/12 (draft: fix rounds exhausted)\n" +
       "NOT PROVEN: full suite, app boot, council, security scan (deep verify running); flaky tests/test_x.py::t\n" +
       "Cost:       $0.84 (claude, 212k tokens)\n" +
       "Time:       4m12s (intake 11s, plan+wall 38s, implement 2m41s, verify 29s, seal+pr 13s)",
@@ -156,8 +156,8 @@ describe("formatSummary (golden, ENGINE.md section 11)", () => {
       ],
     });
     expect(out).toBe(
-      "PR:         https://github.com/o/r/pull/34\n" +
       "Outcome:    VERIFIED\n" +
+      "PR:         https://github.com/o/r/pull/34\n" +
       "NOT PROVEN: full suite (deep verify running), app boot (deep verify running), council (deep verify running), security scan (deep verify running)\n" +
       "Cost:       $0.42 (claude, 98k tokens)\n" +
       "Time:       5m00s (intake 10s, plan+wall 40s, implement 3m20s, verify 35s, seal+pr 15s)",
@@ -178,6 +178,11 @@ describe("formatSummary (golden, ENGINE.md section 11)", () => {
     expect(out).not.toContain("$0.00");
     expect(out).not.toContain("$0");
     expect(out).toContain("PR:         none");
+    const base = { pr: null, verdict: "VERIFIED", notProven: [], flaky: [], cost: { usd: null, provider: "claude", tokens: null }, wallS: 1, stages: [] } as never;
+    const sha = "a".repeat(64);
+    expect(formatSummary({ ...(base as object), receipt: { sha, signed: false } } as never)).toContain(`Receipt:    sha256:${sha} (UNSIGNED)`);
+    expect(formatSummary({ ...(base as object), receipt: { sha: null, signed: null } } as never)).toContain("Receipt:    none (UNCHECKED)");
+    expect(formatSummary({ ...(base as object), receipt: { sha, signed: true } } as never)).toContain(`Receipt:    sha256:${sha}\n`);
   });
 
   // E-69: the three cost states a run's Cost line can be in.

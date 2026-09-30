@@ -76,6 +76,7 @@ export interface SummaryInput {
   verdict: Verdict;
   /** A-110: the one name printed on the Outcome line; absent falls back to the receipt verdict. */
   outcome?: Outcome;
+  receipt?: { sha: string | null; signed: boolean | null }; // A-130: UNSIGNED/UNCHECKED always shown
   /** Deferred/missing checks (section 9); rendered comma-joined. */
   notProven: string[];
   /** Flaky tests (section 9); rendered as a separate "; flaky ..." clause. */
@@ -99,12 +100,14 @@ export interface SummaryInput {
 function labelCol(text: string): string {
   return `${text}:`.padEnd(LABEL_WIDTH);
 }
-/** The 5-line final summary, section 11. Joined by "\n", no trailing newline. */
+/** The final summary (Outcome first, A-130), section 11. Joined by "\n", no trailing newline. */
 export function formatSummary(input: SummaryInput): string {
   const prLine = input.pr
     ? `${labelCol("PR")}${input.pr.url}${input.pr.draft ? ` (draft: ${input.pr.draftReason ?? "draft"})` : ""}`
     : `${labelCol("PR")}none`;
   const verdictLine = `${labelCol("Outcome")}${input.outcome ?? input.verdict}`;
+  const r = input.receipt;
+  const receiptLine = r ? [`${labelCol("Receipt")}${r.sha ? `sha256:${r.sha}${r.signed === false ? " (UNSIGNED)" : r.signed === null ? " (UNCHECKED)" : ""}` : "none (UNCHECKED)"}`] : [];
   let notProvenLine = `${labelCol("NOT PROVEN")}${input.notProven.join(", ")}`;
   if (input.flaky.length > 0) notProvenLine += `; flaky ${input.flaky.join(", ")}`;
   const costLine =
@@ -115,7 +118,7 @@ export function formatSummary(input: SummaryInput): string {
         : `${labelCol("Cost")}not measured${input.cost.note ? ` (${input.cost.note})` : ""}`;
   const stagesStr = input.stages.map((s) => `${s.label} ${formatDuration(s.seconds)}`).join(", ");
   const timeLine = `${labelCol("Time")}${formatDuration(input.wallS)} (${stagesStr})`;
-  return [prLine, verdictLine, notProvenLine, costLine, timeLine].join("\n");
+  return [verdictLine, prLine, ...receiptLine, notProvenLine, costLine, timeLine].join("\n");
 }
 /** Section 3: an optional module loaded only if present, never a hard dependency.
  *  eta.ts (E-20, wave 2) is not part of this slice; when absent, ETAs are omitted. */
