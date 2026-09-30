@@ -34,6 +34,15 @@ jobs:
         with:
           bun-version: 1.3.13
 
+      # engine10 wall.test.ts runs real pytest through a .venv shim (S41-16, D42 (3)).
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pytest
+        run: python3 -m pip install pytest
+
       - name: Install loki-ts dependencies
         working-directory: loki-ts
         run: bun install

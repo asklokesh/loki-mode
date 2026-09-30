@@ -37,6 +37,20 @@ import {
   FIRST_PASS_EXCELLENCE_TEXT,
 } from "../../src/providers/claude_flags.ts";
 
+// The SDK route's systemPrompt source: sdkQueryProvider must delegate to
+// resolveSystemPrompt (S41-09), and that function carries the preset+append.
+// Returns both bodies so the assertions below still bind to the real call path.
+function sdkRouteSource(src: string): string {
+  const sdkStart = src.indexOf("export function sdkQueryProvider()");
+  expect(sdkStart).toBeGreaterThan(-1);
+  const sdkBody = src.slice(sdkStart);
+  expect(sdkBody).toMatch(/systemPrompt:\s*resolveSystemPrompt\(extra\)/);
+  const resolveStart = src.indexOf("export function resolveSystemPrompt(");
+  expect(resolveStart).toBeGreaterThan(-1);
+  const resolveBody = src.slice(resolveStart, src.indexOf("\n}\n", resolveStart) + 2);
+  return `${sdkBody}\n${resolveBody}`;
+}
+
 const SAVED: Record<string, string | undefined> = {};
 const KEYS = ["ITERATION_COUNT", "LOKI_FIRST_PASS_EXCELLENCE", "LOKI_AUTONOMY_OVERRIDE"];
 
@@ -110,9 +124,7 @@ describe("first-pass excellence reaches the SDK route", () => {
       resolve(import.meta.dir, "../../src/runner/providers.ts"),
       "utf-8",
     );
-    const sdkStart = src.indexOf("export function sdkQueryProvider()");
-    expect(sdkStart).toBeGreaterThan(-1);
-    const sdkBody = src.slice(sdkStart);
+    const sdkBody = sdkRouteSource(src);
 
     expect(sdkBody).toContain("autonomyAppendText()");
     expect(sdkBody).toContain("autonomyAppendEnabled()");
@@ -133,7 +145,7 @@ describe("first-pass excellence reaches the SDK route", () => {
       resolve(import.meta.dir, "../../src/runner/providers.ts"),
       "utf-8",
     );
-    const region = src.slice(src.indexOf("export function sdkQueryProvider()"));
+    const region = sdkRouteSource(src);
     expect(region).toMatch(/type:\s*"preset"/);
     expect(region).toMatch(/preset:\s*"claude_code"/);
     expect(region).toMatch(/append:\s*autonomyAppendText\(\)/);

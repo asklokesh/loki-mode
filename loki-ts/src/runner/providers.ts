@@ -40,7 +40,9 @@ import {
   tierRouteModel,
 } from "../providers/claude_flags.ts";
 import { mcpConfigPath } from "../providers/mcp_config.ts";
+import { LEAN_PREFIX } from "../e10ext/lean_prefix.ts";
 import { consumeSdkStream, type StreamMsg } from "./sdk_stream_parser.ts";
+import { createTrimHook } from "./trim.ts";
 import type {
   ProviderInvocation,
   ProviderInvoker,
@@ -484,6 +486,7 @@ export interface SdkLoopExtraOptions {
   fallbackModel?: string;
   tools?: string[];
   noAppend?: boolean;
+  systemPrompt?: string;
 }
 // E-65: engine10 sessions (LOKI_E10_STAGE is set only by engine10/session.ts) run lean. Measured "OK" prefix on
 // sonnet: 20,413 tokens with the full preset tool set + loki append vs 7,136 with these 6 tools, paid on every turn.
@@ -503,6 +506,10 @@ export function buildSdkLoopOptions(args: {
     out.tools = ENGINE10_TOOLS;
     out.noAppend = true;
     out.strictMcpConfig = true; // no MCP servers at all, ambient .mcp.json included
+    // S41-09: LOKI_E10_PREFIX=lean, default off. A fixed string replaces the
+    // claude_code preset so every stage/task shares a byte-identical leading
+    // block (cache-stable prefix, D41 item 2). Flag off: unchanged preset below.
+    if (process.env["LOKI_E10_PREFIX"] === "lean") out.systemPrompt = LEAN_PREFIX;
   }
 
   // MCP tools: reuse the exact bundle the shell route writes (loki-mode server +
@@ -549,6 +556,21 @@ export function buildSdkLoopOptions(args: {
     // omit
   }
   return out;
+}
+
+// S41-09: extra.systemPrompt (LOKI_E10_PREFIX=lean) is a plain string and wins
+// outright -- it REPLACES the preset, it is not appended to it, so the leading
+// block stays exactly LEAN_PREFIX (cache-stable, D41 item 2). Off (default) or
+// non-engine10, this is byte-identical to the pre-S41-09 preset expression.
+// Pulled out as a pure function so the flag's two shapes are unit-testable
+// without loading the Agent SDK.
+export function resolveSystemPrompt(
+  extra: SdkLoopExtraOptions,
+): string | { type: "preset"; preset: "claude_code"; append?: string } {
+  if (extra.systemPrompt) return extra.systemPrompt;
+  return autonomyAppendEnabled() && !extra.noAppend
+    ? { type: "preset", preset: "claude_code", append: autonomyAppendText() }
+    : { type: "preset", preset: "claude_code" };
 }
 
 function hostGuardDecision(reason: string) {
@@ -653,13 +675,25 @@ export function sdkQueryProvider(): ProviderInvoker {
             allowDangerouslySkipPermissions: true,
             includePartialMessages: true, // live delta streaming
             includeHookEvents: true, // hooks arrive as system messages (parser)
-            ...(hostGuardRequired(call.cwd)
+            // S41-11: LOKI_E10_TRIM=1, default off. Read directly from
+            // process.env (not the spread-and-stripped `env` object below,
+            // which deliberately drops LOKI_E10_* for the CHILD session) --
+            // this hook runs in the parent process, so the flag applies to
+            // THIS session regardless of what the child inherits.
+            ...(hostGuardRequired(call.cwd) || process.env["LOKI_E10_TRIM"] === "1"
               ? {
                   hooks: {
-                    PreToolUse: [{
-                      matcher: "Bash",
-                      hooks: [(input: unknown) => runSdkHostGuard(input, call.cwd)],
-                    }],
+                    ...(hostGuardRequired(call.cwd)
+                      ? {
+                          PreToolUse: [{
+                            matcher: "Bash",
+                            hooks: [(input: unknown) => runSdkHostGuard(input, call.cwd)],
+                          }],
+                        }
+                      : {}),
+                    ...(process.env["LOKI_E10_TRIM"] === "1"
+                      ? { PostToolUse: [{ hooks: [createTrimHook()] }] }
+                      : {}),
                   },
                 }
               : {}),
@@ -671,13 +705,7 @@ export function sdkQueryProvider(): ProviderInvoker {
             // EXCELLENCE directive was silently dropped -- losing a measured
             // 2.8x iterations-to-done reduction on the very route v8 promotes.
             // Same text, same iteration-1 gate, same opt-out, no binary probe.
-            systemPrompt: autonomyAppendEnabled() && !extra.noAppend
-              ? {
-                  type: "preset",
-                  preset: "claude_code",
-                  append: autonomyAppendText(),
-                }
-              : { type: "preset", preset: "claude_code" },
+            systemPrompt: resolveSystemPrompt(extra),
             env,
             // T3(b) parity: MCP tools + effort + USD budget + fallback model.
             ...(extra.tools ? { tools: extra.tools } : {}),

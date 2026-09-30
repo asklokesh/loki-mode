@@ -111,10 +111,8 @@ export const commitStage: Stage = {
 // Stage outputs read by seal. Only keys in the ENGINE.md section 4 table (plus duration_s
 // from section 5) are trusted; any other key seal reads puts a "not recorded" entry on
 // NOT PROVEN when absent, so a producer cannot silently shape the receipt.
-function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean): Verdict {
+function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean, wallGreenOnBase: boolean): Verdict {
   const exit = o.implement?.exit;
-  const base = (o.wall?.base_run ?? {}) as Obj;
-  const wallGreenOnBase = typeof base.pass === "number" && base.pass > 0 && base.fail === 0;
   if (o.intake?.already_satisfied === true || wallGreenOnBase || exit === "already_done") return "ALREADY_SATISFIED";
   if (exit === "spec_conflict") return "SPEC_CONFLICT";
   // Section 2: an empty diff without the LOKI_ALREADY_DONE marker is FAILED, never VERIFIED.
@@ -177,10 +175,15 @@ export const sealStage: Stage = {
     const diffOk = diff.exitCode === 0 && /^[0-9a-f]{40,64}$/.test(head);
     const checks = checksOf(o.verify?.checks);
     const verifyNotProven = strs(o.verify?.not_proven); // E-98a B1: a section 4 key, trusted like checks/flaky below
+    // D42 (3)/B1 (r2): not_run must never seal ALREADY_SATISFIED, same weight as a real base-tree failure.
+    const base = (o.wall?.base_run ?? {}) as Obj;
+    const wallNotRun = typeof base.not_run === "number" ? base.not_run : 0;
+    const wallGreenOnBase = typeof base.pass === "number" && base.pass > 0 && base.fail === 0 && wallNotRun === 0;
     // An uncomputable diff is treated like an empty one: nothing is proven changed.
-    const verdict = verdictOf(o, checks, !diffOk || diff.stdout === "", verifyNotProven.length > 0);
+    const verdict = verdictOf(o, checks, !diffOk || diff.stdout === "", verifyNotProven.length > 0, wallGreenOnBase);
 
     const notProven = new Set<string>(DEEP_NOT_PROVEN);
+    if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);
     if (!diffOk) notProven.add("diff not computed (git diff-tree failed)");
     // E-55: any status other than A means the path existed at base_sha (M, D, or T typechange, e.g. a symlink).
     const rawDiff = diffOk ? diff.stdout.split("\0").filter(Boolean) : [];
