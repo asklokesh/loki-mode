@@ -42,6 +42,7 @@ import {
 import { mcpConfigPath } from "../providers/mcp_config.ts";
 import { LEAN_PREFIX } from "../e10ext/lean_prefix.ts";
 import { consumeSdkStream, type StreamMsg } from "./sdk_stream_parser.ts";
+import { createTrimHook } from "./trim.ts";
 import type {
   ProviderInvocation,
   ProviderInvoker,
@@ -674,13 +675,25 @@ export function sdkQueryProvider(): ProviderInvoker {
             allowDangerouslySkipPermissions: true,
             includePartialMessages: true, // live delta streaming
             includeHookEvents: true, // hooks arrive as system messages (parser)
-            ...(hostGuardRequired(call.cwd)
+            // S41-11: LOKI_E10_TRIM=1, default off. Read directly from
+            // process.env (not the spread-and-stripped `env` object below,
+            // which deliberately drops LOKI_E10_* for the CHILD session) --
+            // this hook runs in the parent process, so the flag applies to
+            // THIS session regardless of what the child inherits.
+            ...(hostGuardRequired(call.cwd) || process.env["LOKI_E10_TRIM"] === "1"
               ? {
                   hooks: {
-                    PreToolUse: [{
-                      matcher: "Bash",
-                      hooks: [(input: unknown) => runSdkHostGuard(input, call.cwd)],
-                    }],
+                    ...(hostGuardRequired(call.cwd)
+                      ? {
+                          PreToolUse: [{
+                            matcher: "Bash",
+                            hooks: [(input: unknown) => runSdkHostGuard(input, call.cwd)],
+                          }],
+                        }
+                      : {}),
+                    ...(process.env["LOKI_E10_TRIM"] === "1"
+                      ? { PostToolUse: [{ hooks: [createTrimHook()] }] }
+                      : {}),
                   },
                 }
               : {}),

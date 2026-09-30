@@ -227,6 +227,64 @@ describe("sdkQueryProvider (hermetic, stubbed query)", () => {
     expect(verdict.hookSpecificOutput?.permissionDecision).toBe("deny");
   });
 
+  // S41-11: LOKI_E10_TRIM=1, default off (D41 item 2, D42).
+  it("LOKI_E10_TRIM unset (default off), no host guard: options carry no hooks key at all, byte-identical to main", async () => {
+    const prev = process.env["LOKI_E10_TRIM"];
+    delete process.env["LOKI_E10_TRIM"];
+    try {
+      stubQuery([{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {} }]);
+      const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
+      await sdkQueryProvider().invoke(call());
+      const opts = lastQueryArgs?.options ?? {};
+      expect("hooks" in opts).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env["LOKI_E10_TRIM"];
+      else process.env["LOKI_E10_TRIM"] = prev;
+    }
+  });
+
+  it("LOKI_E10_TRIM=1: query() gets a PostToolUse hook that trims an oversized Bash result", async () => {
+    const prev = process.env["LOKI_E10_TRIM"];
+    process.env["LOKI_E10_TRIM"] = "1";
+    try {
+      stubQuery([{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {} }]);
+      const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
+      await sdkQueryProvider().invoke(call());
+      const hooks = lastQueryArgs?.options?.["hooks"] as {
+        PostToolUse: Array<{ hooks: Array<(input: unknown) => Promise<unknown>> }>;
+      };
+      const callback = hooks.PostToolUse[0]?.hooks[0];
+      expect(callback).toBeTruthy();
+      const bigStdout = Array.from({ length: 250 }, (_, i) => `l${i}`).join("\n");
+      const verdict = (await callback!({
+        tool_name: "Bash",
+        tool_response: { stdout: bigStdout, stderr: "", interrupted: false },
+      })) as { hookSpecificOutput?: { updatedToolOutput?: { stdout?: string } } };
+      const trimmedStdout = verdict.hookSpecificOutput?.updatedToolOutput?.stdout ?? "";
+      expect(trimmedStdout).toContain("[loki trimmed 90 lines]");
+    } finally {
+      if (prev === undefined) delete process.env["LOKI_E10_TRIM"];
+      else process.env["LOKI_E10_TRIM"] = prev;
+    }
+  });
+
+  it("LOKI_E10_TRIM=1 together with the host guard: PreToolUse and PostToolUse both wire, neither drops the other", async () => {
+    const prevTrim = process.env["LOKI_E10_TRIM"];
+    process.env["LOKI_E10_TRIM"] = "1";
+    process.env["LOKI_HOST_GUARD"] = "1";
+    try {
+      stubQuery([{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {} }]);
+      const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
+      await sdkQueryProvider().invoke(call());
+      const hooks = lastQueryArgs?.options?.["hooks"] as Record<string, unknown[]>;
+      expect(hooks["PreToolUse"]?.length).toBeGreaterThan(0);
+      expect(hooks["PostToolUse"]?.length).toBeGreaterThan(0);
+    } finally {
+      if (prevTrim === undefined) delete process.env["LOKI_E10_TRIM"];
+      else process.env["LOKI_E10_TRIM"] = prevTrim;
+    }
+  });
+
   it("mainLoop:false delegates to the CLI path (query is NOT called)", async () => {
     stubQuery([{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {} }]);
     const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
