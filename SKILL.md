@@ -1,6 +1,6 @@
 ---
 name: loki-mode
-description: An autonomous software factory that knows what it is supposed to deliver, and proves it did.
+description: An autonomous software factory that knows what it is supposed to deliver, and proves it did. Use when the user says Loki Mode or asks to build, fix or verify software autonomously.
 ---
 
 # Loki Mode v10.5.10
