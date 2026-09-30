@@ -104,7 +104,8 @@ for e in $RACE_ENTRIES; do mkdir -p "$e/node_modules/pkg" && : >"$e/.complete"; 
 EOF2
 chmod +x "$T/racebin/npm"
 rm -rf "$CACHE"; mkwt r1 lockR
-export RACE_ENTRY="$CACHE/$(keyof "$T/r1")"
+RACE_ENTRY="$CACHE/$(keyof "$T/r1")"
+export RACE_ENTRY
 # also publish under the key formula without node/uname so the test is key-agnostic
 OLDKEY="$(cat "$T/r1/package-lock.json" "$T/r1/package.json" | { shasum -a 256 2>/dev/null || sha256sum; } | cut -d' ' -f1)"
 export RACE_ENTRIES="$RACE_ENTRY $CACHE/$OLDKEY"

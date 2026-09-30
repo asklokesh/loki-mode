@@ -6296,7 +6296,7 @@ _loki_npm_install_cached() {
                 rm -rf "$tmp"
             else
                 mv "$tmp" "$entry" 2>/dev/null
-                rm -rf "$entry/${tmp##*/}" "$tmp" 2>/dev/null
+                rm -rf "${entry:?}/${tmp##*/}" "$tmp" 2>/dev/null
             fi
             # ponytail: keep the 3 newest entries by mtime; no LRU touch on hit
             for old in $(ls -t "$cache_root" 2>/dev/null | tail -n +4); do
