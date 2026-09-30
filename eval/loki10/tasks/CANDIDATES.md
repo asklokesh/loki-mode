@@ -92,3 +92,17 @@ Method: `gh pr list --state merged --limit 400 --json number,title,files,closing
 - Backend-pair fixes (asyncio/trio) look like two required files, but check for a shared caller in abc/ or _core/ that can dispatch; here one existed.
 - Serializer plus parser round trips (python-dotenv) are a good shape: exact-output rows pin the writer, trailing-delimiter round trips pin the reader.
 
+## S41-20l screening (2026-09-30): 0 kept, layered-library pass 2
+
+Method: same `gh pr list` dump as S41-20k, now over marshmallow, tomlkit, iniconfig, python-json-logger, email-validator, python-dateutil (new) plus the already dumped pyyaml, python-multipart, wsproto, h2, hpack, cachecontrol, requests-toolbelt; filter run twice (closes an issue; and 2-4 source files with tests but no closing keyword, to catch "Fixes #N" in prose). ruamel.yaml is not on GitHub and was skipped.
+
+- h2 PR #1314 (merge b08b9d7ceb2d, one commit): 0-byte DATA frame with a negative flow-control window. NEAR MISS, not built. It is a real two-file shape: connection.py send_data (size check plus assert) and stream.py send_data (assert) each block the test, so neither single-file fix passes by reasoning (connection-only hits the stream assert; stream-only hits the connection FlowControlError). But there is no linked issue (only a PR body quoting RFC 9113), and the test sets private state (`_get_stream_by_id`). Not run.
+- h2 PR #1318 (issue #316 cited in prose): a connection.py-only inline check of ENABLE_PUSH in the received SETTINGS frame passes the only test (test_invalid_frame_sequences); settings.py is not directly tested. One-file route.
+- h2 PR #1165: tests import the new private class SizeLimitDict. Not stated by the issue.
+- marshmallow#2123/#2118 (absolute=False): tests name a new `absolute` parameter, the repr and a ValueError message; the issue only asks for relative-only URL validation. Over-specified.
+- marshmallow PR #2792 (data_key in validator errors): behavior lives in schema.py only; decorators.py and types.py are typing.
+- tomlkit#168/#165 (tomlkit.value rejects bool-like): every test enters through tomlkit.value, api.py-only fix likely; #155 one file (items.py); #234 and #379: container.py fix, items.py/__init__ half is a one-token change; #409 already dropped.
+- dateutil#581/#259 (tzstr invalid strings): 9-commit PR, rewrites the whole _TzStrParser token bookkeeping in _parser.py; py3.12 baseline of the old suite unverified. Not run.
+- iniconfig#70 (inline comments): adds IniConfig.parse(), a new API. python-json-logger#33/#52/#53: renames and import shims. wsproto, hpack, cachecontrol, requests-toolbelt, pyyaml: only feature PRs, typing or refactors in the 2-4 file range.
+- Lesson: in these protocol libraries most bug fixes are one source file; the two-file fixes are refactors or new APIs whose tests name the new symbol.
+
