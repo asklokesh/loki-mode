@@ -38,10 +38,6 @@ export interface SelectResult {
 
 const PYTEST_COLLECTION_EXITS = new Set([2, 3, 4, 5]);
 
-function isTestCheck(name: string): boolean {
-  return !name.startsWith("lint:") && name !== "select-tests";
-}
-
 function refName(t: TestRef): string {
   return `${t.runner}:${t.path}`;
 }
@@ -74,10 +70,7 @@ function rankTuple(a: AttemptCandidate, sNames: Set<string>, wallNames: Set<stri
   let flakyInS = 0;
   let lintFails = 0;
   for (const c of a.checks) {
-    if (c.name.startsWith("lint:")) {
-      if (c.result === "fail") lintFails++;
-      continue;
-    }
+    if (c.name.startsWith("lint:") && c.result === "fail") lintFails++;
     // wallPasses (key 1) reads `wall` directly, independent of S: a sealed Wall file is written
     // after baseSha and left uncommitted (wall.ts), so S's "exists at baseSha" filter can drop a
     // Wall test out of S while it still must count at key 1 -- an attempt that fails the Wall
@@ -93,7 +86,6 @@ function rankTuple(a: AttemptCandidate, sNames: Set<string>, wallNames: Set<stri
     if (c.result === "flaky") flakyInS++;
     if (
       c.result === "fail" &&
-      isTestCheck(c.name) &&
       c.interpreter !== "system" &&
       (c.exit_code === undefined || !PYTEST_COLLECTION_EXITS.has(c.exit_code))
     ) {

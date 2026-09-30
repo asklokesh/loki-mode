@@ -55,11 +55,11 @@ interface ImportRef {
 // `import "x"` (side effect, never type-only), `import <bindings> from "x"` (default, named,
 // namespace, mixed, or `import type ... from`), `export {..} from "x"` / `export type {..} from
 // "x"` (a re-export is never treated as the exempted `import type`), and dynamic `import("x")`.
-const RE_SIDE_EFFECT = /^import\s+["']([^"']+)["'];?/gm;
+const RE_SIDE_EFFECT = /^[ \t]*import\s+["']([^"']+)["'];?/gm;
 // [^;] (not [^;\n]) so a multi-line binding list (`import {\n  x,\n} from "x";`) is still matched:
 // a newline inside the braces must not let the specifier escape the fence.
-const RE_IMPORT_FROM = /^import\s+(type\s+)?[^;]*?\bfrom\s+["']([^"']+)["'];?/gm;
-const RE_EXPORT_FROM = /^export\s+(?:type\s+)?[^;]*?\bfrom\s+["']([^"']+)["'];?/gm;
+const RE_IMPORT_FROM = /^[ \t]*import\s+(type\s+(?!from\b))?[^;]*?\bfrom\s+["']([^"']+)["'];?/gm;
+const RE_EXPORT_FROM = /^[ \t]*export\s+(?:type\s+)?[^;]*?\bfrom\s+["']([^"']+)["'];?/gm;
 const RE_DYNAMIC = /\b(?:import|require)\s*\(\s*["']([^"']+)["']\s*\)/g;
 
 function findImports(src: string): ImportRef[] {
@@ -75,16 +75,21 @@ function findImports(src: string): ImportRef[] {
   return refs;
 }
 
+// Bun resolves "x", "x.js" and "x.ts" to the same file, so compare the basename minus extension.
+function stem(path: string): string {
+  return path.split("/").pop()!.replace(/\.(ts|js)$/, "");
+}
+
 function importViolations(file: string, src: string): string[] {
   const violations: string[] = [];
   for (const { path, typeOnly } of findImports(src)) {
     if (path.includes("/stages/")) {
-      const base = path.split("/").pop();
-      const allowed = base === "seal.ts" || base === "verify.ts" || base === "wall.ts";
+      const base = stem(path);
+      const allowed = base === "seal" || base === "verify" || base === "wall";
       if (!allowed) violations.push(`${file} imports banned stages/ module: ${path}`);
       else if (!typeOnly) violations.push(`${file} imports ${path} without a whole-statement 'import type'`);
     }
-    if (path.endsWith("verify_cmd.ts") && !typeOnly) {
+    if (stem(path) === "verify_cmd" && !typeOnly) {
       violations.push(`${file} imports verify_cmd.ts without a whole-statement 'import type'`);
     }
   }
@@ -152,6 +157,24 @@ describe("e10ext import fence: findImports catches every import form (D42 (1) B3
   it("R3: a multi-line `export { .. } from \"x\"` does not escape the fence", () => {
     const src = `export {\n  VerifyCheck,\n} from "${BANNED}";\n`;
     expect(importViolations("f.ts", src)).toEqual([`f.ts imports ${BANNED} without a whole-statement 'import type'`]);
+  });
+
+  it("B1: a runtime import of verify_cmd with no extension, .js, or .ts is caught", () => {
+    for (const ext of ["", ".js", ".ts"]) {
+      const src = `import { computeReceiptHash } from "../engine10/verify_cmd${ext}";\n`;
+      expect(importViolations("f.ts", src)).toEqual(["f.ts imports verify_cmd.ts without a whole-statement 'import type'"]);
+    }
+  });
+
+  it("B1: an extensionless or .js stages/ banned import is caught; allowed ones need import type", () => {
+    expect(importViolations("f.ts", `import { x } from "../engine10/stages/fix";\n`)).toEqual(["f.ts imports banned stages/ module: ../engine10/stages/fix"]);
+    expect(importViolations("f.ts", `import { x } from "../engine10/stages/seal.js";\n`)).toEqual(["f.ts imports ../engine10/stages/seal.js without a whole-statement 'import type'"]);
+    expect(importViolations("f.ts", `import type { x } from "../engine10/stages/seal";\n`)).toEqual([]);
+  });
+
+  it("an indented import is caught, and `import type from \"x\"` is a runtime default import", () => {
+    expect(importViolations("f.ts", `  import { x } from "../engine10/verify_cmd";\n`)).toHaveLength(1);
+    expect(importViolations("f.ts", `import type from "../engine10/verify_cmd";\n`)).toHaveLength(1);
   });
 
   it("dynamic `require(\"x\")` is caught and never exempted as type-only", () => {

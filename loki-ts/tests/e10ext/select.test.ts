@@ -411,9 +411,28 @@ describe("isEarlyAccept", () => {
     expect(isEarlyAccept(allFail, S, WALL)).toBe(false);
   });
 
+  it("B2: is false when a Wall check outside S fails, even though every S check passes", () => {
+    const wallOnly: TestRef[] = [{ runner: "pytest", path: "tests/test_wall.py" }];
+    const a = attempt(0, [check("pytest:tests/test_b.py", "pass"), check("pytest:tests/test_wall.py", "fail")]);
+    expect(isEarlyAccept(a, [S[1]!], wallOnly)).toBe(false);
+  });
+
   it("E3: is false when any S or Wall check is flaky, even though every other check passes", () => {
     const flakyOne = attempt(0, [check("pytest:tests/test_a.py", "pass"), check("pytest:tests/test_b.py", "flaky")]);
     expect(isEarlyAccept(flakyOne, S, WALL)).toBe(false);
+  });
+});
+
+describe("selectAttempt: rank key 3 counts only project-interpreter passes (B3)", () => {
+  it("a system-interpreter pass in S, outside the Wall, is not counted", () => {
+    // Everything ties except b's system-interpreter pass of test_b (in S, not Wall). If it were
+    // counted, b would win at key 3; uncounted, every key ties and index 0 wins.
+    const a = attempt(0, [check("pytest:tests/test_a.py", "pass", { interpreter: "system" }), check("pytest:tests/test_b.py", "not_run")]);
+    const b = attempt(1, [
+      check("pytest:tests/test_a.py", "pass", { interpreter: "system" }),
+      check("pytest:tests/test_b.py", "pass", { interpreter: "system" }),
+    ]);
+    expect(selectAttempt([a, b], S, WALL).index).toBe(0);
   });
 });
 
