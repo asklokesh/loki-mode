@@ -38,8 +38,10 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout
+      - name: Checkout (full history for the gitHead ancestry check)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -47,16 +49,28 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Check the version is published on npm under next
+      # POLICY: promoting an older next build is allowed only if its gitHead
+      # (the commit npm recorded at publish) is an ancestor of, or equal to,
+      # origin/main. A build from a branch or a force-pushed-away commit can
+      # never become latest. A next tag that points elsewhere is informational.
+      - name: Verify published version and its gitHead is on main
+        id: npm
         env:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           FOUND="$(npm view "loki-mode@${VERSION}" version)"
           test "$FOUND" = "$VERSION" || { echo "FATAL: loki-mode@${VERSION} not found on npm"; exit 1; }
+          GITHEAD="$(npm view "loki-mode@${VERSION}" gitHead)"
+          test -n "$GITHEAD" || { echo "FATAL: loki-mode@${VERSION} has no gitHead on npm"; exit 1; }
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHEAD" origin/main; then
+            echo "FATAL: gitHead ${GITHEAD} of loki-mode@${VERSION} is not an ancestor of origin/main"
+            exit 1
+          fi
           NEXT="$(npm view loki-mode dist-tags.next)"
-          echo "npm next tag: ${NEXT}"
-          test "$NEXT" = "$VERSION" || echo "NOTE: next points at ${NEXT}; promoting ${VERSION} explicitly"
+          echo "npm next tag: ${NEXT}; promoting ${VERSION} (gitHead ${GITHEAD} is on main)"
+          echo "githead=${GITHEAD}" >> "$GITHUB_OUTPUT"
 
       # FAIL CLOSED: a missing gate script is a failed promote, never a skip.
       - name: First-run gate on the exact installed version
@@ -72,54 +86,33 @@ jobs:
           bash scripts/first-run-gate.sh --installed "loki-mode@${VERSION}"
           echo "result=PASS" >> "$GITHUB_OUTPUT"
 
-      - name: Move npm latest (loki-mode and loki-mode-sdk)
-        env:
-          VERSION: ${{ inputs.version }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-          npm dist-tag add "loki-mode@${VERSION}" latest
-          npm dist-tag add "loki-mode-sdk@${VERSION}" latest
-
+      # PREFLIGHT for every channel BEFORE any latest moves, so a Docker or
+      # Homebrew precondition failure leaves all channels on the old latest.
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Move Docker latest
+      - name: Preflight Docker (version tag exists)
         env:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          docker buildx imagetools create -t asklokesh/loki-mode:latest "asklokesh/loki-mode:v${VERSION}"
+          docker manifest inspect "asklokesh/loki-mode:v${VERSION}" > /dev/null
 
-      - name: Homebrew - download and hash the published brew source asset
-        id: sha
+      - name: Preflight Homebrew (hash asset, render formula, read tap)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${{ inputs.version }}"
-          ASSET="loki-mode-${VERSION}.tar.gz"
-          gh release download "v${VERSION}" --repo asklokesh/loki-mode --pattern "${ASSET}" --dir /tmp --clobber
-          # Sanity: a real gzip tarball, not an error artifact
-          if ! file "/tmp/${ASSET}" | grep -q 'gzip compressed'; then
-            echo "ERROR: downloaded asset is not a valid gzip tarball"
-            exit 1
-          fi
-          SHA=$(sha256sum "/tmp/${ASSET}" | cut -d' ' -f1)
-          rm -f "/tmp/${ASSET}"
-          echo "sha256=${SHA}" >> $GITHUB_OUTPUT
-
-      - name: Update Homebrew formula via API
-        env:
+          VERSION: ${{ inputs.version }}
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          VERSION="${{ inputs.version }}"
-          SHA256="${{ steps.sha.outputs.sha256 }}"
-
-          # Create formula content
-          FORMULA=$(cat << 'FORMULA_EOF'
+          set -euo pipefail
+          ASSET="loki-mode-${VERSION}.tar.gz"
+          gh release download "v${VERSION}" --repo asklokesh/loki-mode --pattern "${ASSET}" --dir "$RUNNER_TEMP" --clobber
+          file "${RUNNER_TEMP}/${ASSET}" | grep -q 'gzip compressed' || { echo "ERROR: asset is not a gzip tarball"; exit 1; }
+          SHA256=$(sha256sum "${RUNNER_TEMP}/${ASSET}" | cut -d' ' -f1)
+          rm -f "${RUNNER_TEMP}/${ASSET}"
+          cat > "${RUNNER_TEMP}/loki-mode.rb.tpl" << 'FORMULA_EOF'
           class LokiMode < Formula
             desc "Autonomous coding agent platform CLI for Claude Code, Codex CLI, Cline, and Aider"
             homepage "https://github.com/asklokesh/loki-mode"
@@ -132,10 +125,7 @@ jobs:
 
             def install
               libexec.install Dir["*"]
-              # v7.4.2 fix (BUG-4): bin/loki is the Bun-aware shim that routes
-              # ported commands to Bun and falls through to autonomy/loki for
-              # everything else. Linking bin/loki (NOT autonomy/loki) is
-              # required for brew users to get the Phase 2/3+ Bun route.
+              # bin/loki is the Bun-aware shim (v7.4.2 BUG-4); link it, not autonomy/loki.
               bin.install_symlink libexec/"bin/loki" => "loki"
             end
 
@@ -144,29 +134,49 @@ jobs:
             end
           end
           FORMULA_EOF
-          )
+          sed "s/VERSION_PLACEHOLDER/${VERSION}/g; s/SHA256_PLACEHOLDER/${SHA256}/g" "${RUNNER_TEMP}/loki-mode.rb.tpl" > "${RUNNER_TEMP}/loki-mode.rb"
+          grep -q "sha256 \"${SHA256}\"" "${RUNNER_TEMP}/loki-mode.rb" || { echo "FATAL: formula render failed"; exit 1; }
+          gh api repos/asklokesh/homebrew-tap/contents/Formula/loki-mode.rb --jq '.sha' > /dev/null
 
-          # Replace placeholders
-          FORMULA=$(echo "$FORMULA" | sed "s/VERSION_PLACEHOLDER/${VERSION}/g" | sed "s/SHA256_PLACEHOLDER/${SHA256}/g")
+      - name: Move npm latest (loki-mode and loki-mode-sdk)
+        env:
+          VERSION: ${{ inputs.version }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          npm dist-tag add "loki-mode@${VERSION}" latest
+          npm dist-tag add "loki-mode-sdk@${VERSION}" latest
 
-          # Get current file SHA
+      - name: Move Docker latest
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create -t asklokesh/loki-mode:latest "asklokesh/loki-mode:v${VERSION}"
+
+      - name: Update Homebrew formula via API
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
           CURRENT_SHA=$(gh api repos/asklokesh/homebrew-tap/contents/Formula/loki-mode.rb --jq '.sha')
-
-          # Encode content as base64
-          CONTENT=$(echo "$FORMULA" | base64 | tr -d '\n')
-
-          # Update file via API
+          CONTENT=$(base64 < "${RUNNER_TEMP}/loki-mode.rb" | tr -d '\n')
           gh api repos/asklokesh/homebrew-tap/contents/Formula/loki-mode.rb \
             -X PUT \
             -f message="Update to v${VERSION}" \
             -f content="$CONTENT" \
             -f sha="$CURRENT_SHA"
-
           echo "Homebrew formula updated to v${VERSION}"
 
+      # Workflows must not commit to main: the Release Manager copies this
+      # line from the job summary into PROGRESS.md.
       - name: Record promotion
         env:
           VERSION: ${{ inputs.version }}
           GATE: ${{ steps.gate.outputs.result }}
+          GITHEAD: ${{ steps.npm.outputs.githead }}
         run: |
-          echo "PROMOTED ${VERSION} gate=${GATE} at $(date -u +%Y-%m-%dT%H:%MZ)"
+          LINE="PROMOTED ${VERSION} gate=${GATE} gitHead=${GITHEAD}"
+          echo "$LINE"
+          echo "$LINE" >> "$GITHUB_STEP_SUMMARY"

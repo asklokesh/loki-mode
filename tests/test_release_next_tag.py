@@ -79,6 +79,36 @@ class PromoteWorkflow(unittest.TestCase):
         self.assertIn("npm view", joined)
         self.assertLess(joined.index("npm view"), joined.index("dist-tag add"))
 
+    def _flat(self):
+        return [s.get("run", "") for j in self.doc["jobs"].values() for s in j.get("steps", [])]
+
+    def test_githead_ancestry_checked_before_gate(self):
+        flat = self._flat()
+        head = [i for i, r in enumerate(flat) if "gitHead" in r and "merge-base --is-ancestor" in r and "origin/main" in r]
+        gate = [i for i, r in enumerate(flat) if "first-run-gate.sh" in r]
+        self.assertTrue(head, "gitHead ancestry step missing")
+        self.assertLess(head[0], gate[0])
+        checkout = [s for j in self.doc["jobs"].values() for s in j["steps"] if str(s.get("uses", "")).startswith("actions/checkout")]
+        self.assertEqual(checkout[0]["with"]["fetch-depth"], 0)
+
+    def test_no_inline_expressions_in_run_blocks(self):
+        for r in self._flat():
+            self.assertNotIn("${{", r)
+
+    def test_channel_preflights_run_before_npm_latest_moves(self):
+        flat = self._flat()
+        idx = lambda needle: next(i for i, r in enumerate(flat) if needle in r)
+        move = idx("dist-tag add")
+        self.assertLess(idx("docker manifest inspect"), move)
+        self.assertLess(idx("s/VERSION_PLACEHOLDER"), move)
+        self.assertLess(move, idx("imagetools create"))
+        self.assertLess(idx("imagetools create"), idx("-X PUT"))
+
+    def test_promoted_line_in_step_summary(self):
+        joined = "\n".join(self._flat())
+        self.assertIn("gitHead=${GITHEAD}", joined)
+        self.assertIn("GITHUB_STEP_SUMMARY", joined)
+
     def test_promote_moves_latest_everywhere(self):
         joined = "\n".join(self.runs)
         self.assertIn("loki-mode@", joined)
