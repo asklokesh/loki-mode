@@ -104,8 +104,8 @@ function detectFromPackageJson(text: string, rel: string, mark: (r: RunnerName, 
   if ("jest" in deps || inScripts(/\bjest\b/)) mark("jest", rel);
   if (inScripts(/\bbun\s+test\b/)) mark("bun", rel);
   // ponytail: repo_profile.ts also reads scripts.test, but buildProfile persists a profile file as a side effect, so the one check is inlined here.
-  const testScript = pkg.scripts?.test;
-  if (typeof testScript === "string" && testScript.trim() !== "" && !NPM_DEFAULT_TEST.test(testScript)) mark(/\bnode\s(?:\S+\s)*?--test\b/.test(testScript) ? "node" : "npm", rel);
+  const testScript = pkg.scripts?.test; // node only for a bare `node --test [paths]`: anything else (flags, &&) must run whole via npm
+  if (typeof testScript === "string" && testScript.trim() !== "" && !NPM_DEFAULT_TEST.test(testScript)) mark(/^\s*node\s+--test(?:\s+[^\s\-&;|<>$`()][^\s&;|<>$`()]*)*\s*$/.test(testScript) ? "node" : "npm", rel);
 }
 // Import/reference specifiers a test file's text can carry, per language. JS: `from "./search"`
 // / `require("./search")`. Python: `from app.ranker import x` / `import app.ranker`. Matched
@@ -163,7 +163,7 @@ export function buildTestMap(root: string): EngineTestMap {
     const name = basename(rel);
     const full = join(root, rel);
     if (name === "package.json") detectFromPackageJson(readText(full), rel, mark);
-    else if (JS_TEST_RE.test(name) && /['"]node:test['"]/.test(readText(full))) mark("node", rel);
+    else if (JS_TEST_RE.test(name) && /(?:from|require\()\s*['"]node:test['"]/.test(readText(full))) mark("node", rel);
     else if (name === "bunfig.toml") mark("bun", rel);
     else if (name === "pytest.ini" || name === "conftest.py") mark("pytest", rel);
     else if (name === "pyproject.toml" && /\[tool\.pytest/.test(readText(full))) mark("pytest", rel);

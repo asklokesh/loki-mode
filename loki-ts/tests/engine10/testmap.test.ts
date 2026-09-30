@@ -180,3 +180,21 @@ describe("one fixture per runner (A-102)", () => {
     expect(buildTestMap(repo({ "package.json": '{"scripts":{"test":"mocha"}}' })).runners).toEqual(["npm"]);
   });
 });
+
+describe("node detection is conservative (A-102 r2)", () => {
+  for (const script of ["node -e 1 && node --test", "npm run build && node --test", "eslint . && node --test", "node --test --experimental-test-coverage", "node scripts/run-mocha.js --test"]) {
+    test(`compound script stays npm: ${script}`, () => {
+      expect(buildTestMap(repo({ "package.json": JSON.stringify({ scripts: { test: script } }) })).runners).toEqual(["npm"]);
+    });
+  }
+  test("bare node --test with paths is node", () => {
+    expect(buildTestMap(repo({ "package.json": '{"scripts":{"test":"node --test test/"}}' })).runners).toEqual(["node"]);
+  });
+  test("a node:test comment in a jest file does not add node", () => {
+    const map = buildTestMap(repo({ "package.json": '{"devDependencies":{"jest":"1"}}', "a.test.js": "// not node:test, see 'node:test' docs\n" }));
+    expect(map.runners).toEqual(["jest"]);
+  });
+  test("a real node:test import adds node", () => {
+    expect(buildTestMap(repo({ "a.test.js": "import t from 'node:test';" })).runners).toEqual(["node"]);
+  });
+});
