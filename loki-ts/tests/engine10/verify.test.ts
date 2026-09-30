@@ -406,6 +406,25 @@ describe("engine10 verify: pytest interpreter resolution (E-98a)", () => {
     expect(ruffCheck?.interpreter).toBe("project");
     expect(ruffCheck?.result).toBe("pass");
   });
+
+  test("E-115: a passing system ruff adds the lint line, not the tests line", async () => {
+    const repoDir = mkRepo();
+    writeFileSync(join(repoDir, "changed.py"), "x = 1\n");
+    const shimDir = mkdtempSync(join(tmpdir(), "e10-verify-ruff-"));
+    cleanupDirs.push(shimDir);
+    writeFileSync(join(shimDir, "ruff"), "#!/usr/bin/env bash\nexit 0\n");
+    chmodSync(join(shimDir, "ruff"), 0o755);
+    const { ctx } = fakeCtx({ repoDir, baseSha: baseSha(repoDir) });
+    const savedPath = process.env["PATH"];
+    process.env["PATH"] = `${shimDir}:${savedPath ?? ""}`;
+    try {
+      const result = await verifyStage.run(ctx, sig());
+      expect((result.data.checks as VerifyCheck[]).find((c) => c.name === "lint:ruff")?.interpreter).toBe("system");
+      expect(result.data.not_proven).toEqual(["lint ran on the system ruff"]);
+    } finally {
+      if (savedPath === undefined) delete process.env["PATH"]; else process.env["PATH"] = savedPath;
+    }
+  });
 });
 
 describe("engine10 verify: changedFiles", () => {

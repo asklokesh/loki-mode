@@ -1,0 +1,48 @@
+........FFFF                                                             [100%]
+=================================== FAILURES ===================================
+_________________________ test_pickle_old_format_loads _________________________
+
+    def test_pickle_old_format_loads() -> None:
+        # Verify that pickles created with packaging <= 25.x can be loaded
+        # and produce correct Version objects.
+>       v = pickle.loads(_PACKAGING_25_0_PICKLE_V1_2_3)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       ModuleNotFoundError: No module named 'packaging._structures'
+
+tests/test_version.py:1310: ModuleNotFoundError
+__________________ test_pickle_old_format_re_pickled_is_clean __________________
+
+    def test_pickle_old_format_re_pickled_is_clean() -> None:
+        # Verify that loading an old pickle and re-pickling it produces
+        # a clean payload that no longer references packaging._structures.
+>       v = pickle.loads(_PACKAGING_25_0_PICKLE_V1_2_3)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       ModuleNotFoundError: No module named 'packaging._structures'
+
+tests/test_version.py:1327: ModuleNotFoundError
+_____________________ test_pickle_26_0_slots_format_loads ______________________
+
+    def test_pickle_26_0_slots_format_loads() -> None:
+        # Verify that pickles created with packaging 26.0 (__slots__, no __reduce__)
+        # can be loaded and produce correct Version objects.
+>       v = pickle.loads(_PACKAGING_26_0_PICKLE_V1_2_3)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       ModuleNotFoundError: No module named 'packaging._structures'
+
+tests/test_version.py:1353: ModuleNotFoundError
+____________________ test_pickle_26_2_tuple_getstate_loads _____________________
+
+    def test_pickle_26_2_tuple_getstate_loads() -> None:
+        # Verify that pickles created with packaging 26.2+ (6-tuple __getstate__)
+        # can be loaded and produce correct Version objects.
+>       v = pickle.loads(_PACKAGING_26_2_TUPLE_PICKLE_V1E2_3_4A5_POST6_DEV7_ZZZ)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       _pickle.UnpicklingError: state is not a dictionary
+
+tests/test_version.py:1374: UnpicklingError
+=========================== short test summary info ============================
+FAILED tests/test_version.py::test_pickle_old_format_loads - ModuleNotFoundEr...
+FAILED tests/test_version.py::test_pickle_old_format_re_pickled_is_clean - Mo...
+FAILED tests/test_version.py::test_pickle_26_0_slots_format_loads - ModuleNot...
+FAILED tests/test_version.py::test_pickle_26_2_tuple_getstate_loads - _pickle...
+4 failed, 8 passed, 51500 deselected in 1.42s

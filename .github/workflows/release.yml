@@ -403,11 +403,24 @@ jobs:
           REQUIRED=$(printf '%s\n' "Tests" "Bun Parity" "Security Audit")
 
           fetch_runs() {
-            # name<TAB>status<TAB>conclusion, one push-triggered run per line.
-            # A pull_request run at the same head_sha tested a different merge
-            # ref and must never satisfy this.
+            # name<TAB>status<TAB>conclusion<TAB>created_at, one run per line.
+            # Push runs only, EXCEPT Security Audit, which also accepts a
+            # workflow_dispatch run (E-87: lets a tree whose VERSION is already
+            # bumped publish after an audit fix, since a VERSION push cannot be
+            # re-created). Tests and Bun Parity stay push-only. A pull_request
+            # run at the same head_sha tested a different merge ref and must
+            # never satisfy this.
             gh api "repos/$REPO/actions/runs?head_sha=$1&per_page=100" \
-              --jq '.workflow_runs[] | select(.event=="push") | "\(.name)\t\(.status)\t\(.conclusion)"' 2>/dev/null || true
+              --jq '.workflow_runs[] | select(.event=="push" or (.event=="workflow_dispatch" and .name=="Security Audit")) | "\(.name)\t\(.status)\t\(.conclusion)\t\(.created_at)"' 2>/dev/null || true
+          }
+
+          audit_verdict() {
+            # $1 = runs blob. Prints the conclusion (success|failure) of the
+            # NEWEST decisive Security Audit run, so an older success can never
+            # mask a newer failure; prints nothing when none is decisive. A
+            # created_at tie resolves to failure (fail closed).
+            printf '%s\n' "$1" | awk -F'\t' \
+              '$1=="Security Audit" && $2=="completed" && ($3=="success"||$3=="failure"){ if ($4>t || ($4==t && $3=="failure")) {t=$4; c=$3} } END{print c}'
           }
 
           has_conclusion() {
@@ -447,7 +460,14 @@ jobs:
               #       otherwise-green bump whenever a later push's
               #       cancel-in-progress concurrency group cancels the
               #       release SHA's own in-flight run.
-              if has_conclusion "$want" "$runs_release" success; then
+              if [ "$want" = "Security Audit" ]; then
+                case "$(audit_verdict "$runs_release")" in
+                  success) result="success" ;;
+                  failure) result="failed" ;;
+                  *) result="pending" ;;
+                esac
+                label="$SHA"
+              elif has_conclusion "$want" "$runs_release" success; then
                 result="success"; label="$SHA"
               elif has_conclusion "$want" "$runs_release" failure; then
                 result="failed"; label="$SHA"
