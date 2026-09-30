@@ -63,6 +63,7 @@ jobs:
           test "$FOUND" = "$VERSION" || { echo "FATAL: loki-mode@${VERSION} not found on npm"; exit 1; }
           GITHEAD="$(npm view "loki-mode@${VERSION}" gitHead)"
           test -n "$GITHEAD" || { echo "FATAL: loki-mode@${VERSION} has no gitHead on npm"; exit 1; }
+          printf '%s' "$GITHEAD" | grep -Eq '^[0-9a-f]{40}$' || { echo "gitHead is not a 40-hex SHA: $GITHEAD"; exit 1; }
           git fetch origin main
           if ! git merge-base --is-ancestor "$GITHEAD" origin/main; then
             echo "FATAL: gitHead ${GITHEAD} of loki-mode@${VERSION} is not an ancestor of origin/main"

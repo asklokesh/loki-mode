@@ -91,6 +91,11 @@ class PromoteWorkflow(unittest.TestCase):
         checkout = [s for j in self.doc["jobs"].values() for s in j["steps"] if str(s.get("uses", "")).startswith("actions/checkout")]
         self.assertEqual(checkout[0]["with"]["fetch-depth"], 0)
 
+    def test_githead_is_validated_as_40_hex_before_merge_base(self):
+        r = next(r for r in self._flat() if "merge-base --is-ancestor" in r)
+        self.assertIn("[0-9a-f]{40}", r)
+        self.assertLess(r.index("[0-9a-f]{40}"), r.index("merge-base --is-ancestor"))
+
     def test_no_inline_expressions_in_run_blocks(self):
         for r in self._flat():
             self.assertNotIn("${{", r)
