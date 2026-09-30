@@ -96,6 +96,23 @@ else
 fi
 rm -f "$S/tests/test-planted-unregistered.sh"
 
+echo "T6 -- a committed en dash is caught (diff vs merge-base)"
+G="$LOKI_RUN_TMP/git"
+cp -R "$S" "$G"
+git -C "$G" init -q -b main
+git -C "$G" add -A
+git -C "$G" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t commit -q -m base
+git -C "$G" checkout -q -b slice
+printf 'a \342\200\223 b\n' > "$G/planted-dash.txt"
+git -C "$G" add planted-dash.txt
+git -C "$G" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t commit -q -m plant
+out="$(STRUCTURAL_ROOT="$G" bash "$G/scripts/structural-checks.sh" 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ] && line_of "$out" "FAIL" | grep -q "emoji/dash"; then
+    ok "committed en dash FAILs the emoji/dash check"
+else
+    bad "committed en dash not caught (rc=$rc)"
+fi
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
