@@ -6,7 +6,6 @@
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
-SC="$REPO/scripts/structural-checks.sh"
 
 PASS=0; FAIL=0
 ok()  { echo "  [PASS] $1"; PASS=$((PASS+1)); }
@@ -112,6 +111,53 @@ if [ "$rc" -ne 0 ] && line_of "$out" "FAIL" | grep -q "emoji/dash"; then
 else
     bad "committed en dash not caught (rc=$rc)"
 fi
+
+echo "T7 -- an added line starting with + is still scanned"
+git -C "$G" reset -q --hard main
+printf '++\342\200\224 x\n' > "$G/planted-plus.txt"
+git -C "$G" add planted-plus.txt
+git -C "$G" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t commit -q -m plus
+out="$(STRUCTURAL_ROOT="$G" bash "$G/scripts/structural-checks.sh" 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ] && line_of "$out" "FAIL" | grep -q "emoji/dash"; then
+    ok "added line '++<em dash>' FAILs the emoji/dash check"
+else
+    bad "added line starting with + not scanned (rc=$rc)"
+fi
+
+echo "T8 -- no resolvable base ref warns on stderr"
+N="$LOKI_RUN_TMP/nobase"
+cp -R "$S" "$N"
+git -C "$N" init -q -b trunk
+git -C "$N" add -A
+git -C "$N" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t commit -q -m base
+out="$(STRUCTURAL_ROOT="$N" bash "$N/scripts/structural-checks.sh" 2>&1 >/dev/null)"
+if printf '%s' "$out" | grep -q "structural-checks: no base ref, scanning the working tree only"; then
+    ok "warns when no base ref resolves"
+else
+    bad "no warning without a base ref"
+fi
+
+echo "T9 -- vendored refdiff/dist dashes are exempt; a task NOTES.md dash is not"
+git -C "$G" reset -q --hard main
+mkdir -p "$G/eval/loki10/refdiff" "$G/eval/loki10/tasks/x" "$G/loki-ts/dist"
+printf '+a \342\200\224 b\n' > "$G/eval/loki10/refdiff/pub-x.diff"
+printf 'a \342\200\224 b\n' > "$G/loki-ts/dist/loki.js.map"
+git -C "$G" add eval/loki10/refdiff/pub-x.diff loki-ts/dist/loki.js.map
+git -C "$G" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t commit -q -m vendored
+out="$(STRUCTURAL_ROOT="$G" bash "$G/scripts/structural-checks.sh" 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ]; then ok "committed refdiff/dist dash passes"; else bad "refdiff/dist dash flagged (rc=$rc)"; fi
+printf 'a \342\200\224 b\n' > "$G/eval/loki10/tasks/x/NOTES.md"
+git -C "$G" add eval/loki10/tasks/x/NOTES.md
+git -C "$G" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t commit -q -m notes
+out="$(STRUCTURAL_ROOT="$G" bash "$G/scripts/structural-checks.sh" 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ] && line_of "$out" "FAIL" | grep -q "emoji/dash"; then
+    ok "committed task NOTES.md dash still FAILs"
+else
+    bad "task NOTES.md dash not caught (rc=$rc)"
+fi
+printf 'a \342\200\224 b\n' > "$G/eval/loki10/refdiff/untracked.diff"
+out="$(STRUCTURAL_ROOT="$G" bash "$G/scripts/structural-checks.sh" 2>&1)"
+if ! printf '%s' "$out" | grep -q "untracked: eval/loki10/refdiff"; then ok "untracked refdiff dash exempt"; else bad "untracked refdiff flagged"; fi
 
 echo
 echo "Results: $PASS passed, $FAIL failed"

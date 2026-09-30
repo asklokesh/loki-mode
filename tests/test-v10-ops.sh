@@ -586,7 +586,10 @@ fi
 # clean flip for every other row.
 
 echo "== board-row-status: sweeps every slice row in the canonical real BOARD.md =="
-REAL_BOARD="/Users/lokesh/git/lokimode-anthropic/docs/v10/BOARD.md"
+# Snapshot of this repo's board in the run-owned WORK dir: a concurrent edit of
+# the live board cannot change the file under test mid-run.
+REAL_BOARD="$WORK/BOARD-snapshot.md"
+cp "$REPO_ROOT/docs/v10/BOARD.md" "$REAL_BOARD" || { echo "cannot snapshot BOARD.md"; exit 1; }
 REAL_BOARD_HASH_BEFORE=$(md5sum "$REAL_BOARD" 2>/dev/null | awk '{print $1}')
 [ -n "$REAL_BOARD_HASH_BEFORE" ] || REAL_BOARD_HASH_BEFORE=$(md5 -q "$REAL_BOARD")
 BOARD_SWEEP="$WORK/BOARD-sweep.md"

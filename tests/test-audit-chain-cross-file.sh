@@ -26,36 +26,41 @@ skip() { SKIP=$((SKIP+1)); echo "SKIP: $1"; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
+# Run-owned temp dir (E-143): all fixtures live under LOKI_RUN_TMP.
+# shellcheck disable=SC1091
+. "$REPO_ROOT/eval/loki10/lib-tmp.sh"
+_OWN_TMP=0
+if [ -z "${LOKI_RUN_TMP:-}" ]; then loki_run_tmp_create || exit 1; _OWN_TMP=1; fi
+_tmp_done() { [ "$_OWN_TMP" = 1 ] && loki_run_tmp_cleanup; return 0; }
+trap _tmp_done EXIT
 
-# Test 1: new verify_all_logs() returns valid=True on real production audit dir.
-# Gracefully skips when no real audit data exists (e.g. CI runners, fresh
-# install). The value of this test is "shipped code works on real data on
-# this dev machine"; CI exercises the synthetic tests below.
-RESULT=$($PY <<'PYEOF' 2>&1 | tail -1
+# Test 1: verify_all_logs() returns valid=True on a default-location audit dir.
+# Hermetic (E-148): HOME points at a fixture under LOKI_RUN_TMP, so the module's
+# default AUDIT_DIR (~/.loki/dashboard/audit) is the fixture, never the real one
+# (which fails on hosts holding old tampered data). Events go through the real
+# log_event() write path, then the verifier reads them back.
+T1_HOME="$LOKI_RUN_TMP/t1-home"
+mkdir -p "$T1_HOME"
+RESULT=$(HOME="$T1_HOME" LOKI_AUDIT_DISABLED='' $PY <<'PYEOF' 2>&1 | tail -1
 import sys, os
 sys.path.insert(0, '.')
 from dashboard import audit
 home = os.path.expanduser('~')
-real_dir = os.path.join(home, '.loki', 'dashboard', 'audit')
-if not os.path.isdir(real_dir):
+assert str(audit.AUDIT_DIR).startswith(home), audit.AUDIT_DIR
+for i in range(5):
+    audit.log_event("test.cross_file", "fixture", resource_id=str(i))
+r = audit.verify_all_logs()
+if r['valid'] and r['entries_checked'] > 0:
+    print(f"VERIFY_ALL_OK: {r['entries_checked']} entries across {r['files_checked']} files")
+elif r['valid']:
     print("VERIFY_ALL_NO_DATA")
 else:
-    import glob
-    if not glob.glob(os.path.join(real_dir, 'audit-*.jsonl')):
-        print("VERIFY_ALL_NO_DATA")
-    else:
-        r = audit.verify_all_logs()
-        if r['valid'] and r['entries_checked'] > 0:
-            print(f"VERIFY_ALL_OK: {r['entries_checked']} entries across {r['files_checked']} files")
-        elif r['valid'] and r['entries_checked'] == 0:
-            print("VERIFY_ALL_NO_DATA")
-        else:
-            print(f"VERIFY_ALL_FAIL: {r}")
+    print(f"VERIFY_ALL_FAIL: {r}")
 PYEOF
 )
 case "$RESULT" in
-    VERIFY_ALL_OK*) ok "verify_all_logs returns valid=True on production audit dir ($RESULT)" ;;
-    VERIFY_ALL_NO_DATA) skip "verify_all_logs production-dir test (no real audit data on this host; CI runners have none)" ;;
+    VERIFY_ALL_OK*) ok "verify_all_logs returns valid=True on a fixture audit dir ($RESULT)" ;;
+    VERIFY_ALL_NO_DATA) skip "verify_all_logs fixture-dir test (log_event wrote no entries; audit disabled?)" ;;
     *) bad "verify_all_logs unexpected result: $RESULT" ;;
 esac
 
@@ -67,7 +72,7 @@ import sys, os, tempfile, json, shutil
 sys.path.insert(0, '.')
 
 # Redirect audit dir to a temp scratch
-scratch = tempfile.mkdtemp(prefix="loki-audit-test-v7715-")
+scratch = tempfile.mkdtemp(prefix="audit-", dir=os.environ["LOKI_RUN_TMP"])
 os.environ.pop("LOKI_AUDIT_DISABLED", None)
 
 from dashboard import audit
@@ -122,7 +127,7 @@ $PY <<'PYEOF' 2>&1 | tail -1 | grep -q "TAMPER_DETECTED_OK" && \
   bad "tampering not detected"
 import sys, os, tempfile, json, shutil
 sys.path.insert(0, '.')
-scratch = tempfile.mkdtemp(prefix="loki-audit-test-v7715-")
+scratch = tempfile.mkdtemp(prefix="audit-", dir=os.environ["LOKI_RUN_TMP"])
 from dashboard import audit
 audit.AUDIT_DIR = __import__('pathlib').Path(scratch)
 audit._last_hash = "0" * 64
@@ -165,7 +170,7 @@ $PY <<'PYEOF' 2>&1 | tail -1 | grep -q "BWCOMPAT_OK" && \
   bad "single-file backward-compat broken"
 import sys, os, tempfile, json, shutil
 sys.path.insert(0, '.')
-scratch = tempfile.mkdtemp(prefix="loki-audit-test-v7715-")
+scratch = tempfile.mkdtemp(prefix="audit-", dir=os.environ["LOKI_RUN_TMP"])
 from dashboard import audit
 audit.AUDIT_DIR = __import__('pathlib').Path(scratch)
 audit._last_hash = "0" * 64
@@ -199,7 +204,7 @@ $PY <<'PYEOF' 2>&1 | tail -1 | grep -q "ROTATED_OK" && \
   bad "rotated files break chain (Opus 2 issue not fixed)"
 import sys, os, json, time, tempfile, shutil
 sys.path.insert(0, '.')
-scratch = tempfile.mkdtemp(prefix="loki-audit-test-v7715-")
+scratch = tempfile.mkdtemp(prefix="audit-", dir=os.environ["LOKI_RUN_TMP"])
 from dashboard import audit
 audit.AUDIT_DIR = __import__('pathlib').Path(scratch)
 audit._last_hash = "0" * 64
@@ -247,9 +252,6 @@ else:
     print(f"ROTATED_FAIL: {r}")
 shutil.rmtree(scratch, ignore_errors=True)
 PYEOF
-
-# Cleanup
-rm -rf /tmp/loki-audit-test-v7715-*
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed, $SKIP skipped"

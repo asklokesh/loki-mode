@@ -1,0 +1,35 @@
+diff --git a/src/dotenv/main.py b/src/dotenv/main.py
+index 3c4608d..3123690 100644
+--- a/src/dotenv/main.py
++++ b/src/dotenv/main.py
+@@ -216,7 +216,12 @@ def set_key(
+     )
+ 
+     if quote:
+-        value_out = "'{}'".format(value_to_set.replace("'", "\\'"))
++        # The single-quoted-value parser decodes `\\` and `\'`, so both have to
++        # be escaped here for the value to survive a write/read round-trip.
++        # Backslashes first, otherwise the backslash added by the quote
++        # escaping would be escaped in turn.
++        escaped = value_to_set.replace("\\", "\\\\").replace("'", "\\'")
++        value_out = f"'{escaped}'"
+     else:
+         value_out = value_to_set
+     if export:
+diff --git a/src/dotenv/parser.py b/src/dotenv/parser.py
+index 6677360..02648ab 100644
+--- a/src/dotenv/parser.py
++++ b/src/dotenv/parser.py
+@@ -22,8 +22,10 @@ _export = make_regex(r"(?:export[^\S\r\n]+)?")
+ _single_quoted_key = make_regex(r"'([^']+)'")
+ _unquoted_key = make_regex(r"([^=\#\s]+)")
+ _equal_sign = make_regex(r"(=[^\S\r\n]*)")
+-_single_quoted_value = make_regex(r"'((?:\\'|[^'])*)'")
+-_double_quoted_value = make_regex(r'"((?:\\"|[^"])*)"')
++# A backslash always escapes the character after it, so that an escaped
++# backslash (`\\`) is not mistaken for the start of an escaped quote.
++_single_quoted_value = make_regex(r"'((?:\\.|[^'\\])*)'", extra_flags=re.DOTALL)
++_double_quoted_value = make_regex(r'"((?:\\.|[^"\\])*)"', extra_flags=re.DOTALL)
+ _unquoted_value = make_regex(r"([^\r\n]*)")
+ _comment = make_regex(r"(?:[^\S\r\n]*#[^\r\n]*)?")
+ _end_of_line = make_regex(r"[^\S\r\n]*(?:\r\n|\n|\r|$)")

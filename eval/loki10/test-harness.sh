@@ -78,6 +78,26 @@
 #      (tier, tokens, tokens_by_stage, first_turn_prompt_tokens, escalations,
 #      attempts) default correctly and raw-claude tokens are read from
 #      arm_stdout usage
+#  19. (D38/EV-12E) measure-size.py excludes typing-examples/ and examples/
+#      from the file count: an attrs-602-shaped fixture (3 product files
+#      plus 2 typing-examples files) measures at exactly 3 files / 180
+#      lines -- pinned columns, since a self-referential max_medium_lines
+#      keeps this alone-in-its-set fixture's tier verdict "medium" either
+#      way and cannot itself expose the regression
+#  20. (D38/EV-12E) validate requires hidden.provenance, hidden.sha256 (every
+#      hidden file re-hashed and compared, not just present) and a non-empty
+#      hidden.requirements[] naming a hidden test id, on tier=large tasks
+#      only; checked against a hand-built fixture (not a real task, so this
+#      leg needs no sibling branch) and 4 negative controls, each asserted
+#      by its rejection message, not just a nonzero exit (a traceback also
+#      exits nonzero). check_lg_shortcuts walks tasks/lg-*/shortcuts/*.patch
+#      (0 on this branch today): baseline at repo.ref must be RED by
+#      assertion, never collection-only; the patch must apply; the trusted
+#      hidden files are re-overlaid after the patch (never left to whatever
+#      the patch itself touched) and the hidden run must still not complete.
+#      4 hermetic local-git fixtures prove the checker itself: a full-pass
+#      shortcut, a collection-only "RED", a patch that will not apply, and a
+#      genuine shortcut left red
 #===============================================================================
 set -u
 
@@ -1098,6 +1118,295 @@ J="$R/results.jsonl"
     && pass "S41-01: a started session without a cost event -> tokens null" \
     || fail "S41-01: tokens=$(row "$J" tokens)"
 
+# ---- 19. (D38/EV-12E) measure-size.py: typing-examples/ and examples/ are
+# excluded from the file count. This fixture is alone in its own tasks-dir,
+# so max_medium_lines is self-referential (equals its own line count either
+# way) and its tier verdict alone ("medium") cannot expose the regression --
+# the assertion instead pins the exact (files, lines) columns: 5/220 before
+# the fix (2 typing-examples files and their lines still counted), 3/180
+# after.
+mkdir -p "$T/ms-attrs602/tasks/attrs-602-shaped" "$T/ms-attrs602/refdiff"
+cat > "$T/ms-attrs602/tasks/attrs-602-shaped/task.json" <<'JSON'
+{"id": "attrs-602-shaped", "tier": "medium", "repo": {"source": "https://example.invalid/nope.git", "ref": "deadbeef"}}
+JSON
+fake_diff_paths() {  # fake_diff_paths OUT (PATH LINES)...
+    local out="$1"; shift
+    python3 - "$out" "$@" <<'PY'
+import sys
+def block(p, n):
+    o = ["diff --git a/%s b/%s\n" % (p, p), "--- a/%s\n" % p, "+++ b/%s\n" % p,
+         "@@ -1,1 +1,%d @@\n" % (n + 1), " a\n"]
+    o += ["+x%d\n" % i for i in range(n)]
+    return "".join(o)
+out_path, args = sys.argv[1], sys.argv[2:]
+with open(out_path, "w") as f:
+    for i in range(0, len(args), 2):
+        f.write(block(args[i], int(args[i + 1])))
+PY
+}
+fake_diff_paths "$T/ms-attrs602/refdiff/attrs-602-shaped.diff" \
+    "src/attrs/_make.py" 80 "src/attrs/_funcs.py" 60 "src/attrs/converters.py" 40 \
+    "typing-examples/example.py" 20 "typing-examples/example2.py" 20
+python3 "$MS" --tasks-dir "$T/ms-attrs602/tasks" --refdiff-dir "$T/ms-attrs602/refdiff" >"$T/ms-attrs602.out" 2>&1
+rc=$?
+[ "$rc" = 0 ] && grep -E -q '^attrs-602-shaped[[:space:]]+medium[[:space:]]+3[[:space:]]+180[[:space:]]+OK' "$T/ms-attrs602.out" \
+    && pass "D38: attrs-602-shaped fixture (3 product files + typing-examples) reads medium: 3 files, 180 lines" \
+    || fail "D38: attrs-602-shaped exclusion rc=$rc: $(cat "$T/ms-attrs602.out")"
+
+# ---- 20a. (D38/EV-12E) validate: tier=large requires hidden.provenance,
+# hidden.sha256 (re-hashed, not just present) and hidden.requirements[]
+# naming a test id. A hand-built fixture, not a dependency on any sibling
+# retrofit branch, so this leg stays hermetic after EV-12F/EV-12G merge.
+mkdir -p "$T/lg-schema/hidden"
+printf 'def test_x():\n    assert True\n' > "$T/lg-schema/hidden/test_x.py"
+SHA_X="$(python3 -c "import hashlib; print(hashlib.sha256(open('$T/lg-schema/hidden/test_x.py','rb').read()).hexdigest())")"
+python3 -c "
+import json
+json.dump({
+    'id': 'lg-schema', 'kind': 'public', 'prompt': 'x',
+    'repo': {'source': 'https://example.invalid/nope.git', 'ref': 'deadbeefcafe'},
+    'hidden': {
+        'files': ['test_x.py'], 'run': 'pytest -q test_x.py',
+        'provenance': {'test_x.py': 'authored'},
+        'sha256': {'test_x.py': '$SHA_X'},
+        'requirements': [{'id': 'R1', 'tests': ['test_x']}],
+    },
+    'tier': 'large',
+}, open('$T/lg-schema/task.json', 'w'))
+"
+if H validate "$T/lg-schema" >/dev/null 2>&1
+then pass "D38: a well-formed tier=large task (provenance+sha256+requirements) validates"
+else fail "D38: well-formed tier=large task was rejected"
+fi
+lg_bad_case() {  # lg_bad_case NAME PY_MUTATION_OF_t WANT_MSG: rejected, and by
+                  # the right message -- a nonzero exit alone also matches an
+                  # unrelated crash/traceback (this repo's exit-code false-green trap)
+    local name="$1" expr="$2" want="$3" d="$T/lg-bad/$1"
+    mkdir -p "$d/hidden"
+    cp "$T/lg-schema/hidden/test_x.py" "$d/hidden/test_x.py"
+    python3 -c "import json,sys; t=json.load(open(sys.argv[1])); t['id']=sys.argv[3]; $expr; json.dump(t, open(sys.argv[2],'w'))" \
+        "$T/lg-schema/task.json" "$d/task.json" "$name"
+    out="$(H validate "$d" 2>&1)"; rc=$?
+    if [ "$rc" != 0 ] && printf '%s\n' "$out" | grep -qF "$want"; then
+        pass "D38: validator rejects $name ($want)"
+    else
+        fail "D38: validator on $name: rc=$rc, expected a '$want' rejection: $out"
+    fi
+}
+lg_bad_case lg-wrong-sha "t['hidden']['sha256']['test_x.py']='0'*64" "sha256 mismatch"
+lg_bad_case lg-missing-provenance "del t['hidden']['provenance']" "hidden.provenance is required"
+lg_bad_case lg-empty-requirement-tests "t['hidden']['requirements'][0]['tests']=[]" "names no hidden test id"
+lg_bad_case lg-no-requirements "t['hidden']['requirements']=[]" "hidden.requirements is required"
+lg_bad_case lg-no-tier "t.pop('tier')" "must declare"
+lg_bad_case lg-tier-small "t['tier']='small'" "must declare"
+lg_bad_case lg-no-tier-bare "t.pop('tier'); [t['hidden'].pop(k) for k in ('provenance','sha256','requirements')]" "hidden.provenance is required"
+
+# EV-12G's real tasks use singular hidden.requirements[].test (a plain
+# string) instead of EV-12F-a/b's plural .tests (a list) -- a positive case,
+# not just the 4 rejections above, so reverting validator support for this
+# shape (the only thing keeping EV-12G's 3 real tasks mergeable, since
+# validate is not wired into CI) would still be caught here.
+mkdir -p "$T/lg-singular-test/hidden"
+cp "$T/lg-schema/hidden/test_x.py" "$T/lg-singular-test/hidden/test_x.py"
+python3 -c "
+import json
+t = json.load(open('$T/lg-schema/task.json'))
+t['id'] = 'lg-singular-test'
+t['hidden']['requirements'] = [{'id': 'R1', 'test': 'test_x'}]
+json.dump(t, open('$T/lg-singular-test/task.json', 'w'))
+"
+if H validate "$T/lg-singular-test" >/dev/null 2>&1
+then pass "D38: requirements[].test (singular, EV-12G's shape) validates"
+else fail "D38: requirements[].test (singular, EV-12G's shape) was rejected"
+fi
+
+# ---- 20. (D38/EV-12E) tasks/lg-*/shortcuts/*.patch: applying a committed
+# shortcut at repo.ref must never let the hidden run complete, and the
+# baseline hidden run at repo.ref must be RED by assertion (an "N failed"
+# summary), never collection-only (0 collected / no tests ran), which would
+# make a hidden test read RED for the wrong reason. check_lg_shortcuts walks
+# tasks/lg-*/shortcuts/*.patch under a tasks dir; 0 patches is a pass (real
+# lg-* tasks land via EV-12F/EV-12G, not this slice -- eval/loki10/tasks has
+# none today).
+check_lg_shortcuts() {
+    local tasks_dir="$1" n=0 ok=0 td patch name source ref setup run out rc workdir rel
+    for td in "$tasks_dir"/lg-*; do
+        [ -f "$td/task.json" ] || continue
+        # No tier gate: tier is self-declared, every lg-* dir runs the leg.
+        # The RED-at-ref check is per TASK (criterion 7), so a task with no
+        # shortcuts/ directory is still checked; patches then reuse that checkout.
+        name="$(basename "$td")"
+        source="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["repo"]["source"])' "$td/task.json")"
+        ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["repo"]["ref"])' "$td/task.json")"
+        setup="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("setup") or "")' "$td/task.json")"
+        run="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["hidden"]["run"])' "$td/task.json")"
+        workdir="$T/lgshortcut-$name"
+        rm -rf "$workdir"
+        if ! git clone -q "$source" "$workdir" >/dev/null 2>&1 || ! git -C "$workdir" checkout -q "$ref" >/dev/null 2>&1; then
+            echo "FAIL(shortcut leg): $name: cannot check out repo.ref"; ok=1; continue
+        fi
+        [ -n "$setup" ] && (cd "$workdir" && bash -c "$setup") >/dev/null 2>&1
+        copy_hidden() {  # overlay the trusted hidden files, fresh, same as run_hidden -- a
+                          # shortcut patch touching one of these paths must never leak through
+            while IFS= read -r rel; do
+                [ -n "$rel" ] || continue
+                mkdir -p "$workdir/$(dirname "$rel")"
+                cp "$td/hidden/$rel" "$workdir/$rel"
+            done < <(python3 -c 'import json,sys; [print(p) for p in json.load(open(sys.argv[1]))["hidden"]["files"]]' "$td/task.json")
+        }
+        red_by_assertion() {  # at least one "N failed" and no "N error(s)": collection errors are RED for the wrong reason
+            printf '%s\n' "$1" | grep -qE '[0-9]+ failed' && ! printf '%s\n' "$1" | grep -qE '[0-9]+ errors?([ ,]|$)'
+        }
+        copy_hidden
+        out="$(cd "$workdir" && bash -c "$run" 2>&1)"; rc=$?
+        if ! red_by_assertion "$out"; then
+            echo "FAIL(shortcut leg): $name: baseline at ref is not RED by assertion (rc=$rc): $out"; ok=1; continue
+        fi
+        for patch in "$td"/shortcuts/*.patch; do
+            [ -f "$patch" ] || continue
+            n=$((n + 1))
+            name="$(basename "$td")/$(basename "$patch")"
+            # Reset tracked files to repo.ref before checking/applying the patch:
+            # it was authored against the pristine ref tree, not against whatever
+            # copy_hidden just overlaid on top of a hidden.files path that
+            # happens to be tracked (a real werkzeug/httpx test file, say).
+            git -C "$workdir" checkout -q -- .
+            if ! git -C "$workdir" apply --check "$patch" >/dev/null 2>&1; then
+                echo "FAIL(shortcut leg): $name: shortcut patch does not apply at repo.ref"; ok=1; continue
+            fi
+            git -C "$workdir" apply "$patch"
+            copy_hidden
+            out="$(cd "$workdir" && bash -c "$run" 2>&1)"; rc=$?
+            if [ "$rc" = 0 ] || ! printf '%s\n' "$out" | grep -qE '[0-9]+ failed'; then
+                echo "FAIL(shortcut leg): $name: shortcut grades completed (hidden run did not stay red)"; ok=1
+            fi
+            git -C "$workdir" apply -R "$patch" >/dev/null 2>&1
+        done
+    done
+    echo "checked $n patches"
+    return $ok
+}
+
+check_lg_shortcuts "$REPO_ROOT/eval/loki10/tasks" >"$T/lgshort-real.out" 2>&1
+rc=$?
+[ "$rc" = 0 ] && pass "D38: real tasks/lg-*/shortcuts/*.patch all still fail the hidden run at repo.ref ($(tail -1 "$T/lgshort-real.out"))" \
+    || fail "D38: real lg-* shortcut leg rc=$rc: $(cat "$T/lgshort-real.out")"
+
+# Hermetic self-test of check_lg_shortcuts itself on 4 local git fixtures,
+# so the checker's own red/green logic is proven before real lg-* tasks land.
+mk_lg_repo() {  # writes+commits src/x.py in $1, prints its sha
+    mkdir -p "$1/src"; printf 'a\n' > "$1/src/x.py"
+    git -C "$1" init -q; git -C "$1" add -A
+    git -C "$1" -c user.name=t -c user.email=t@localhost commit -q -m seed
+    git -C "$1" rev-parse HEAD
+}
+mk_lg_patch() {  # mk_lg_patch REPO EDIT_CMD OUT: a real `git diff` patch
+    local repo="$1" edit="$2" out="$3" scratch="$T/lg-patch-scratch-$RANDOM"
+    git clone -q "$repo" "$scratch" >/dev/null 2>&1
+    (cd "$scratch" && bash -c "$edit")
+    git -C "$scratch" diff > "$out"
+    rm -rf "$scratch"
+}
+mk_lg_task() {  # mk_lg_task NAME REPO REF TEST_BODY PATCH_FILE; prints its own tasks-dir root
+    local name="$1" repo="$2" ref="$3" test_body="$4" patch_file="$5" td="$T/lgt-$1/lg-$1"
+    mkdir -p "$td/hidden" "$td/shortcuts"
+    printf '%s' "$test_body" > "$td/hidden/hidden_test.sh"
+    python3 -c "
+import json
+json.dump({'id': 'lg-$name', 'repo': {'source': '$repo', 'ref': '$ref'},
+           'hidden': {'files': ['hidden_test.sh'], 'run': 'bash hidden_test.sh'},
+           'tier': 'large'}, open('$td/task.json', 'w'))
+"
+    cp "$patch_file" "$td/shortcuts/sc-$name.patch"
+    printf '%s' "$T/lgt-$name"
+}
+LGREPO="$T/lg-fixture-repo"
+LGREF="$(mk_lg_repo "$LGREPO")"
+RED_TEST='#!/usr/bin/env bash
+if grep -q FIXED src/x.py; then echo "1 passed in 0.01s"; exit 0; else echo "1 failed in 0.01s"; exit 1; fi
+'
+COLLECT_TEST='#!/usr/bin/env bash
+echo "no tests ran in 0.01s"
+exit 5
+'
+mk_lg_patch "$LGREPO" 'echo "# FIXED" >> src/x.py' "$T/patch-a.diff"
+mk_lg_patch "$LGREPO" 'echo "# not the fix" >> src/x.py' "$T/patch-d.diff"
+cat > "$T/patch-c.diff" <<'PATCH'
+diff --git a/does-not-exist.py b/does-not-exist.py
+--- a/does-not-exist.py
++++ b/does-not-exist.py
+@@ -1,1 +1,2 @@
+ a
++FIXED
+PATCH
+
+dir_a="$(mk_lg_task a "$LGREPO" "$LGREF" "$RED_TEST" "$T/patch-a.diff")"
+check_lg_shortcuts "$dir_a" >"$T/lgshort-a.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && pass "D38 shortcut leg: a shortcut that fully passes fails the leg" \
+    || fail "D38 shortcut leg: a-fixture (full-pass shortcut) wrongly cleared: $(cat "$T/lgshort-a.out")"
+
+dir_b="$(mk_lg_task b "$LGREPO" "$LGREF" "$COLLECT_TEST" "$T/patch-a.diff")"
+check_lg_shortcuts "$dir_b" >"$T/lgshort-b.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && pass "D38 shortcut leg: collection-only RED at ref fails the leg" \
+    || fail "D38 shortcut leg: b-fixture (collection-only RED) wrongly cleared: $(cat "$T/lgshort-b.out")"
+
+dir_c="$(mk_lg_task c "$LGREPO" "$LGREF" "$RED_TEST" "$T/patch-c.diff")"
+check_lg_shortcuts "$dir_c" >"$T/lgshort-c.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && pass "D38 shortcut leg: a patch that does not apply fails the leg" \
+    || fail "D38 shortcut leg: c-fixture (non-applying patch) wrongly cleared: $(cat "$T/lgshort-c.out")"
+
+dir_d="$(mk_lg_task d "$LGREPO" "$LGREF" "$RED_TEST" "$T/patch-d.diff")"
+check_lg_shortcuts "$dir_d" >"$T/lgshort-d.out" 2>&1; rc=$?
+[ "$rc" = 0 ] && pass "D38 shortcut leg: positive control (shortcut still fails an assertion) passes the leg" \
+    || fail "D38 shortcut leg: d-fixture (genuine shortcut) wrongly failed: $(cat "$T/lgshort-d.out")"
+
+# Criterion 7: a collection ERROR (ImportError at ref) is RED for the wrong
+# reason too, not only "no tests ran".
+ERR_TEST='#!/usr/bin/env bash
+echo "ERROR collecting hidden_test.py"; echo "1 error in 0.02s"
+exit 2
+'
+dir_e="$(mk_lg_task e "$LGREPO" "$LGREF" "$ERR_TEST" "$T/patch-d.diff")"
+check_lg_shortcuts "$dir_e" >"$T/lgshort-e.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && pass "D38 shortcut leg: collection-error RED at ref fails the leg" \
+    || fail "D38 shortcut leg: e-fixture (collection error) wrongly cleared: $(cat "$T/lgshort-e.out")"
+
+# An lg- task with its tier field removed must still run the leg (full-pass shortcut fails it).
+dir_h="$(mk_lg_task h "$LGREPO" "$LGREF" "$RED_TEST" "$T/patch-a.diff")"
+python3 -c "
+import json,sys
+p=sys.argv[1]; t=json.load(open(p)); t.pop('tier'); json.dump(t, open(p,'w'))" "$T/lgt-h/lg-h/task.json"
+check_lg_shortcuts "$dir_h" >"$T/lgshort-h.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && pass "D38 shortcut leg: an lg- task with no tier still runs the leg" \
+    || fail "D38 shortcut leg: h-fixture (no tier) skipped the leg: $(cat "$T/lgshort-h.out")"
+
+# A task with NO shortcut patches is still baseline-checked (red on the
+# pre-restructure checker, which only ran RED-at-ref inside the patch loop).
+dir_f="$(mk_lg_task f "$LGREPO" "$LGREF" "$COLLECT_TEST" "$T/patch-d.diff")"
+rm "$T/lgt-f/lg-f/shortcuts/sc-f.patch"
+check_lg_shortcuts "$dir_f" >"$T/lgshort-f.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && pass "D38 shortcut leg: a no-shortcut task with collection-only RED at ref fails the leg" \
+    || fail "D38 shortcut leg: f-fixture (no shortcuts, collection-only) wrongly cleared: $(cat "$T/lgshort-f.out")"
+# A mixed "1 failed, 1 error" summary is a partial collection error, also not clean RED.
+MIXED_TEST='#!/usr/bin/env bash
+echo "1 failed, 1 error in 0.02s"; exit 1
+'
+dir_g="$(mk_lg_task g "$LGREPO" "$LGREF" "$MIXED_TEST" "$T/patch-d.diff")"
+check_lg_shortcuts "$dir_g" >"$T/lgshort-g.out" 2>&1; rc=$?
+[ "$rc" != 0 ] && pass "D38 shortcut leg: '1 failed, 1 error' baseline fails the leg" \
+    || fail "D38 shortcut leg: g-fixture (failed plus error) wrongly cleared: $(cat "$T/lgshort-g.out")"
+
+# Result rows gain hidden_subset (verbatim-provenance hidden files).
+hs_out="$(python3 - "$REPO_ROOT/eval/loki10" <<'PY'
+import importlib.util, sys
+sp = importlib.util.spec_from_file_location("h", sys.argv[1] + "/harness.py")
+h = importlib.util.module_from_spec(sp); sp.loader.exec_module(h)
+a = h.hidden_subset({"hidden": {"provenance": {"a.py": "verbatim", "b.py": "authored"}}})
+print(a["files"], a["pass"], h.hidden_subset({"hidden": {}}))
+PY
+)"
+[ "$hs_out" = "['a.py'] None None" ] && pass "D38: hidden_subset lists verbatim files; None without provenance" \
+    || fail "D38: hidden_subset got: $hs_out"
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

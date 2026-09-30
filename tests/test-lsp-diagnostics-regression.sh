@@ -8,6 +8,14 @@
 # routing still works under concurrent notifications.
 set -u
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Run-owned temp dir (E-143): all fixtures live under LOKI_RUN_TMP.
+# shellcheck disable=SC1091
+. "$REPO_ROOT/eval/loki10/lib-tmp.sh"
+_OWN_TMP=0
+if [ -z "${LOKI_RUN_TMP:-}" ]; then loki_run_tmp_create || exit 1; _OWN_TMP=1; fi
+_tmp_done() { [ "$_OWN_TMP" = 1 ] && loki_run_tmp_cleanup; return 0; }
+trap _tmp_done EXIT
 PASS=0
 FAIL=0
 ok()  { PASS=$((PASS+1)); echo "PASS: $1"; }
@@ -84,7 +92,7 @@ while True:
     if 'id' in m and m.get('method') != 'shutdown':
         write({'jsonrpc':'2.0','id':m['id'],'result':None})
 """
-tmpdir = '/tmp/loki-lsp-test-v7714'
+tmpdir = os.path.join(os.environ['LOKI_RUN_TMP'], 'lsp-test')
 os.makedirs(tmpdir, exist_ok=True)
 fake_path = os.path.join(tmpdir, 'fake_lsp.py')
 open(fake_path, 'w').write(FAKE_SERVER)
@@ -148,7 +156,7 @@ while True:
     if 'id' in m:
         write({'jsonrpc':'2.0','id':m['id'],'result':{'echoed':m['method']}})
 """
-tmpdir = '/tmp/loki-lsp-test-v7714'
+tmpdir = os.path.join(os.environ['LOKI_RUN_TMP'], 'lsp-test')
 os.makedirs(tmpdir, exist_ok=True)
 fake_path = os.path.join(tmpdir, 'fake_lsp2.py')
 open(fake_path, 'w').write(FAKE_SERVER)
@@ -194,7 +202,7 @@ read()  # initialized
 # Then hang forever - never respond to further requests
 while True: time.sleep(60)
 """
-tmpdir = '/tmp/loki-lsp-test-v7714'
+tmpdir = os.path.join(os.environ['LOKI_RUN_TMP'], 'lsp-test')
 os.makedirs(tmpdir, exist_ok=True)
 hang_path = os.path.join(tmpdir, 'hang_lsp.py')
 open(hang_path, 'w').write(HANG_SERVER)
@@ -253,7 +261,7 @@ read()
 import time
 while True: time.sleep(1)
 """
-tmpdir = '/tmp/loki-lsp-test-v7714'
+tmpdir = os.path.join(os.environ['LOKI_RUN_TMP'], 'lsp-test')
 os.makedirs(tmpdir, exist_ok=True)
 srv = os.path.join(tmpdir, 'srv.py')
 open(srv, 'w').write(SERVER)
@@ -287,9 +295,6 @@ if [ "$RESULT" -eq 0 ]; then
 else
     bad "thread-leak test exited non-zero"
 fi
-
-# Cleanup
-rm -rf /tmp/loki-lsp-test-v7714
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

@@ -1,0 +1,105 @@
+.FF...................sssssssssssssssssss..FF....                        [100%]
+=================================== FAILURES ===================================
+__________________ TestFencedCode.testFencedCodeCurlyInAttrs ___________________
+
+self = <tests.test_syntax.extensions.test_fenced_code.TestFencedCode testMethod=testFencedCodeCurlyInAttrs>
+
+    def testFencedCodeCurlyInAttrs(self):
+>       self.assertMarkdownRenders(
+            self.dedent(
+                '''
+                ``` { data-test="{}" }
+                # Some python code
+                ```
+                '''
+            ),
+            self.dedent(
+                '''
+                <pre><code data-test="{}"># Some python code
+                </code></pre>
+                '''
+            ),
+            extensions=['fenced_code', 'attr_list']
+        )
+
+tests/test_syntax/extensions/test_fenced_code.py:398: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+markdown/test_tools.py:77: in assertMarkdownRenders
+    self.assertMultiLineEqual(output, expected)
+E   AssertionError: '<p>``` { data-test="{}" }</p>\n<h1>Some python code</h1>\n<p>```</p>' != '<pre><code data-test="{}"># Some python code\n</code></pre>'
+E   + <pre><code data-test="{}"># Some python code
+E   + </code></pre>
+E   - <p>``` { data-test="{}" }</p>
+E   - <h1>Some python code</h1>
+E   - <p>```</p>
+______ TestFencedCode.testFencedCodeCurlyInQuotedAttrValueWithoutAttrList ______
+
+self = <tests.test_syntax.extensions.test_fenced_code.TestFencedCode testMethod=testFencedCodeCurlyInQuotedAttrValueWithoutAttrList>
+
+    def testFencedCodeCurlyInQuotedAttrValueWithoutAttrList(self):
+>       self.assertMarkdownRenders(
+            self.dedent(
+                '''
+                ``` { .c data-copy="int main() { return 0; }" }
+                Try copying me for some C code
+                ```
+                '''
+            ),
+            self.dedent(
+                '''
+                <pre><code class="language-c">Try copying me for some C code
+                </code></pre>
+                '''
+            ),
+            extensions=['fenced_code']
+        )
+
+tests/test_syntax/extensions/test_fenced_code.py:444: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+markdown/test_tools.py:77: in assertMarkdownRenders
+    self.assertMultiLineEqual(output, expected)
+E   AssertionError: '<p><code>{ .c data-copy="int main() { retur[48 chars]</p>' != '<pre><code class="language-c">Try copying m[28 chars]pre>'
+E   - <p><code>{ .c data-copy="int main() { return 0; }" }
+E   - Try copying me for some C code</code></p>
+E   + <pre><code class="language-c">Try copying me for some C code
+E   + </code></pre>
+___________________ TestAttrList.test_curly_in_double_quote ____________________
+
+self = <tests.test_syntax.extensions.test_attr_list.TestAttrList testMethod=test_curly_in_double_quote>
+
+    def test_curly_in_double_quote(self):
+>       self.assertMarkdownRenders(
+            '# Heading {data-test="{}"}',
+            '<h1 data-test="{}">Heading</h1>'
+        )
+
+tests/test_syntax/extensions/test_attr_list.py:63: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+markdown/test_tools.py:77: in assertMarkdownRenders
+    self.assertMultiLineEqual(output, expected)
+E   AssertionError: '<h1>Heading {data-test="{}"}</h1>' != '<h1 data-test="{}">Heading</h1>'
+E   - <h1>Heading {data-test="{}"}</h1>
+E   + <h1 data-test="{}">Heading</h1>
+___________________ TestAttrList.test_curly_in_single_quote ____________________
+
+self = <tests.test_syntax.extensions.test_attr_list.TestAttrList testMethod=test_curly_in_single_quote>
+
+    def test_curly_in_single_quote(self):
+>       self.assertMarkdownRenders(
+            "# Heading {data-test='{}'}",
+            '<h1 data-test="{}">Heading</h1>'
+        )
+
+tests/test_syntax/extensions/test_attr_list.py:57: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+markdown/test_tools.py:77: in assertMarkdownRenders
+    self.assertMultiLineEqual(output, expected)
+E   AssertionError: "<h1>Heading {data-test='{}'}</h1>" != '<h1 data-test="{}">Heading</h1>'
+E   - <h1>Heading {data-test='{}'}</h1>
+E   + <h1 data-test="{}">Heading</h1>
+=========================== short test summary info ============================
+FAILED tests/test_syntax/extensions/test_fenced_code.py::TestFencedCode::testFencedCodeCurlyInAttrs
+FAILED tests/test_syntax/extensions/test_fenced_code.py::TestFencedCode::testFencedCodeCurlyInQuotedAttrValueWithoutAttrList
+FAILED tests/test_syntax/extensions/test_attr_list.py::TestAttrList::test_curly_in_double_quote
+FAILED tests/test_syntax/extensions/test_attr_list.py::TestAttrList::test_curly_in_single_quote
+4 failed, 26 passed, 19 skipped in 0.06s

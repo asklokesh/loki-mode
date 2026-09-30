@@ -128,6 +128,8 @@ releasing. GitHub Actions then creates the tag, the GitHub Release, publishes
 npm, builds/pushes Docker, and updates the Homebrew tap. Do not manually
 create tags.
 
+Before pushing the release commit, run `bash scripts/release.sh --check-clean` (E-151): it exits 1 naming any tracked file (for example a stamped `loki-ts/dist/loki.js.map`) the commit left modified; `--bump-only` prints the "stage these files:" list.
+
 ### 5. Verify ALL Distribution Channels
 
 ```bash

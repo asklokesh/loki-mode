@@ -67,9 +67,88 @@ if [ ! -x "$LOKI" ]; then
 fi
 
 # Create a temp dir for isolated testing
-TMPDIR_BASE=$(mktemp -d /tmp/loki-test-watch-XXXXXX)
+# Run-owned temp dir (E-143): all fixtures live under LOKI_RUN_TMP.
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/../eval/loki10/lib-tmp.sh"
+_OWN_TMP=0
+if [ -z "${LOKI_RUN_TMP:-}" ]; then loki_run_tmp_create || exit 1; _OWN_TMP=1; fi
+_tmp_done() { [ "$_OWN_TMP" = 1 ] && loki_run_tmp_cleanup; return 0; }
+# Not exported: loki children clean up an inherited LOKI_RUN_TMP themselves.
+export -n LOKI_RUN_TMP
+TMPDIR_BASE=$(mktemp -d "$LOKI_RUN_TMP/watch.XXXXXX")
 ORIG_DIR="$(pwd)"
-trap 'cd "$ORIG_DIR"; rm -rf "$TMPDIR_BASE"' EXIT
+
+# E-145: every child runs as its own process-group leader (set -m) and its PGID
+# is recorded, so an EXIT/INT/TERM trap can stop exactly those groups (the loki
+# watch run.sh and its sleep loop) and nothing else. Never by name or pattern.
+set -m
+CHILD_PGIDS=()
+# Optional side file listing every recorded PGID (for external verification).
+_record_pgid() {
+    local g="$1" mine parent
+    mine=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
+    parent=$(ps -o pgid= -p "$PPID" 2>/dev/null | tr -d ' ')
+    case "$g" in ''|*[!0-9]*|0|1) return 0 ;; esac
+    [ "$g" = "$mine" ] || [ "$g" = "$parent" ] && return 0
+    CHILD_PGIDS+=("$g")
+    [ "${2:-}" = "anc" ] && ANC_PGIDS+=("$g")
+    [ -n "${WATCH_TEST_PGID_FILE:-}" ] && echo "$g" >> "$WATCH_TEST_PGID_FILE"
+    return 0
+}
+ANC_PGIDS=()
+# PID-reuse guard: a pid-derived group is killed only while some member descends from this suite.
+_group_has_suite_member() {
+    local m a n
+    for m in $(ps -axo pid=,pgid= | awk -v g="$1" '$2 == g { print $1 }'); do
+        a=$m; n=0
+        while [ -n "$a" ] && [ "$a" -gt 1 ] && [ "$n" -lt 50 ]; do
+            [ "$a" = "$$" ] && return 0
+            a=$(ps -o ppid= -p "$a" 2>/dev/null | tr -d ' '); n=$((n + 1))
+        done
+    done
+    return 1
+}
+_stop_children() {
+    local g f
+    # loki start detaches run.sh into its own session (setsid), so it is not in
+    # the PGID recorded above. The product writes that PGID to .loki/loki.pgid
+    # inside the fixture dir this suite created: record it from there.
+    for f in "$TMPDIR_BASE"/*/.loki/loki.pgid; do
+        [ -f "$f" ] || continue
+        g=$(sed -n 's/^pgid=\([0-9]*\).*/\1/p' "$f" 2>/dev/null | head -1)
+        case "$g" in ''|*[!0-9]*|0|1) continue ;; esac
+        _record_pgid "$g"
+    done
+    local keep=()
+    for g in ${CHILD_PGIDS[@]+"${CHILD_PGIDS[@]}"}; do
+        case " ${ANC_PGIDS[*]:-} " in *" $g "*) _group_has_suite_member "$g" || continue ;; esac
+        keep+=("$g")
+    done
+    CHILD_PGIDS=(${keep[@]+"${keep[@]}"})
+    # Snapshot members of the recorded groups plus their descendants first: a
+    # child that made its own group (timeout, setsid) is only reachable by
+    # walking parent links before its parent dies.
+    local victims="" p next frontier
+    for g in ${CHILD_PGIDS[@]+"${CHILD_PGIDS[@]}"}; do
+        victims="$victims $(ps -axo pid=,pgid= | awk -v g="$g" '$2 == g { print $1 }')"
+    done
+    frontier="$victims"
+    while [ -n "${frontier// /}" ]; do
+        next=""
+        for p in $frontier; do next="$next $(pgrep -P "$p" 2>/dev/null)"; done
+        victims="$victims $next"; frontier="$next"
+    done
+    for g in ${CHILD_PGIDS[@]+"${CHILD_PGIDS[@]}"}; do kill -TERM -- "-$g" 2>/dev/null || true; done
+    for p in $victims; do kill -TERM "$p" 2>/dev/null || true; done
+    sleep 0.3
+    for g in ${CHILD_PGIDS[@]+"${CHILD_PGIDS[@]}"}; do kill -KILL -- "-$g" 2>/dev/null || true; done
+    for p in $victims; do kill -KILL "$p" 2>/dev/null || true; done
+    CHILD_PGIDS=()
+}
+_cleanup() { trap - EXIT; _stop_children; cd "$ORIG_DIR" || true; rm -rf "$TMPDIR_BASE"; _tmp_done; }
+trap _cleanup EXIT
+trap '_cleanup; exit 130' INT
+trap '_cleanup; exit 143' TERM
 
 # -------------------------------------------
 # Test 1: Help flag works
@@ -108,8 +187,13 @@ mkdir -p test-once && cd test-once || exit 1
 echo "# Test PRD for once mode" > prd.md
 # --once should attempt to run loki start, which will fail quickly (no session)
 # but should exit (not hang) -- we timeout after 5s to verify it doesn't hang
-output=$(timeout -k 10 10 "$LOKI" watch --once 2>&1) || actual_exit=$?
+timeout -k 10 10 "$LOKI" watch --once > "$TMPDIR_BASE/watch-once.out" 2>&1 &
+once_pid=$!
+_record_pgid "$once_pid" anc
+wait "$once_pid" || actual_exit=$?
 actual_exit=${actual_exit:-0}
+output=$(cat "$TMPDIR_BASE/watch-once.out")
+_stop_children
 # It should mention running loki start or the prd filename
 if echo "$output" | grep -qi "once\|start\|prd.md"; then
     log_pass "loki watch --once runs and exits (does not hang)"
@@ -184,8 +268,9 @@ cd "$TMPDIR_BASE" || exit 1
 mkdir -p test-signal && cd test-signal || exit 1
 echo "# Signal test PRD" > prd.md
 # Start watch in background with --no-auto-start, send SIGTERM after 2s
-"$LOKI" watch --no-auto-start > /tmp/loki-test-watch-signal.out 2>&1 &
+"$LOKI" watch --no-auto-start > "$TMPDIR_BASE/watch-signal.out" 2>&1 &
 watch_pid=$!
+_record_pgid "$watch_pid" anc
 sleep 2
 if kill -0 "$watch_pid" 2>/dev/null; then
     kill -TERM "$watch_pid" 2>/dev/null
@@ -205,7 +290,7 @@ else
     # Process already exited (which is fine if it errored out quickly)
     log_pass "loki watch exits gracefully on SIGTERM"
 fi
-rm -f /tmp/loki-test-watch-signal.out
+rm -f "$TMPDIR_BASE/watch-signal.out"
 cd "$TMPDIR_BASE" || exit 1
 
 # -------------------------------------------

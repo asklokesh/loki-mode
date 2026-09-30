@@ -10,6 +10,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.10 (2026-09-30)
+
+v10 briefs now open with a byte-identical rules block so the cacheable prefix is shared across tasks, large eval tasks must carry frozen, upstream-first hidden tests, and a set of test-reliability fixes stops tests from leaking processes, reading the host's real data or timing out under CI load.
+
+### Changed
+- v10 implement and fix briefs start with a fixed rules block that is byte-identical for every task, followed by the task-specific context; plan paths with a drive letter or a leading `~` are dropped like absolute ones (S41-10b).
+
+### Internal
+- Eval: large-tier (`lg-*`) tasks must declare tier large and carry per-file provenance, sha256-frozen hidden tests and a requirements map naming each requirement's tests; the harness applies every saved shortcut patch and requires it to still fail, and requires RED at the reference commit to be a real assertion failure (EV-12E). Medium tier adds pub-dotenv-661.
+- The watch-command test stops every process group it started when it exits or is interrupted, instead of leaving an orphaned run loop behind (E-145).
+- test-stop-process-group uses recorded PIDs instead of a pattern kill; the audit-chain test runs against a fixture home instead of the real `~/.loki`; the probe-isolation test sizes its inner timeout from a CI measurement and names the case that was running when it fires (E-147, E-148).
+- The five real-JVM modernize capture tests get an explicit 20 second timeout after one hit bun's 5 second default on a loaded CI runner (E-149).
+- The required-ci audit tie rule and the temp-sweep scan gain tests, and seven tests move their fixtures from hardcoded `/tmp` paths into a run-owned directory (E-143).
+
+## v10.5.9 (2026-09-30)
+
+v10 implement and fix briefs now name the files and impacted tests that matter instead of a raw list of repository paths, verify reports a system ruff lint separately from the system test interpreter, and the medium eval tier grows by three tasks.
+
+### Changed
+- v10 implement and fix briefs carry up to 20 relevant files (the plan's files, else a keyword selection over the cached repository map, else the first 20 mapped files) plus up to 10 impacted tests, each with one exact command on the project interpreter, instead of the first 200 repository paths. Plan paths that are absolute or climb out of the repository are dropped, and test paths with shell metacharacters are single-quoted (S41-10).
+- Verify: a passing lint on the system ruff now adds its own not-proven line ("lint ran on the system ruff") instead of reusing the system-interpreter test line, and tool lookup uses the live PATH that the spawned check also receives (E-115).
+
+### Internal
+- Structural checks scan committed changes against the merge base (not only the working tree), warn when no base ref resolves, catch added lines that start with a plus sign, print SKIP when typecheck cannot run, and exempt byte-exact vendored bytes in eval refdiffs and loki-ts/dist from the emoji and dash scan (E-142, E-146).
+- test-v10-ops sweeps a snapshot of the board instead of a hardcoded home path, so a concurrent board edit cannot fail it, and it is now registered in the runner (E-142, E-144).
+- Eval: the medium tier adds pub-faker-2206, pub-packaging-1162 and pub-markdown-1390; each was checked by an independent reviewer who tried to pass the hidden tests with a one-file fix. A one-file route that works only by patching or injecting another module at import time is treated as contrived. Mining notes for the screened and dropped candidates are in eval/loki10/tasks/CANDIDATES.md (S41-20b, S41-20g, S41-20h, S41-20i).
+
+## v10.5.8 (2026-09-30)
+
+Releases now come only from trains that pass structural checks in the fast tier, a release can publish after a dispatched security audit fix, test cleanup can no longer delete another run's temporary directory, and the medium eval tier grows by three tasks.
+
+### Fixed
+- Release gate: required-ci also accepts a completed, dispatched Security Audit run at the exact release commit (Tests and Bun Parity stay push-only), and the newest completed audit result wins, so an older success can no longer mask a newer failure (E-87).
+- `scripts/cleanup-test-processes.sh` no longer removes `loki-*`, `test-*`, `package` or `*.tgz` entries under `/tmp` or `$TMPDIR` by glob; it reports them and removes only its own run-owned directory, and only with `--aggressive`. A glob sweep had been deleting other agents' live run directories (E-140).
+
+### Internal
+- D44 structural checks (shard-durations rows, hardcoded path scan, test registration, SKILL.md version sync, line budgets, stale README version, emoji and dash scan, loki-ts typecheck) run in Tier A, on train pushes and in the local-ci fast tier, each under 10 seconds (D44-C).
+- The scorecard-run test stops every process it started on exit, interrupt or termination and asserts no survivor by run directory (E-137).
+- Guard test `tests/test-no-tmp-sweep.sh` bans glob removal of temp-root entries across scripts and tests (E-140).
+- Eval: medium tier adds pub-flask-6093, pub-pendulum-768 and pub-isort-2646, each checked by an independent reviewer who tried to pass the hidden tests with a one-file fix; pub-click-3449, pub-pyjwt-1147 and pub-isort-1913 were dropped for that reason (S41-20a, S41-20e).
+
 ## v10.5.7 (2026-09-30)
 
 Main now moves only to a release train whose full test tier already passed, the eval scorecard reports 95% confidence intervals and refuses undersized samples, and the building blocks for issue intake, repo memory and parallel attempts land behind the v10 engine (not yet wired into a run).

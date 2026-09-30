@@ -96,5 +96,29 @@ RC=$?
 [ "$RC" -ne 0 ] && ok "run_bump_only exits nonzero on a bad map" || bad "run_bump_only exited 0 on a bad map"
 git -C "$W" diff --quiet -- loki-ts/dist && ok "bad-map dist restored from HEAD" || bad "bad-map dist left in tree"
 
+# E-151: release_commit_clean refuses a release commit that left the stamped map modified.
+C="$RUN_TMP/clean"; mkdir -p "$C/loki-ts/dist"
+echo 'let $="10.5.9";' >"$C/loki-ts/dist/loki.js"; echo '{"m":"AAAA"}' >"$C/loki-ts/dist/loki.js.map"
+git -C "$C" init -q; git -C "$C" config user.name t; git -C "$C" config user.email t@example.com
+git -C "$C" add loki-ts/dist; git -C "$C" commit -q -m init
+echo 'let $="10.5.10";' >"$C/loki-ts/dist/loki.js"; echo '{"m":"AAAAA"}' >"$C/loki-ts/dist/loki.js.map"
+git -C "$C" add loki-ts/dist/loki.js; git -C "$C" commit -q -m "release: v10.5.10"
+ROOT_DIR="$C" release_commit_clean 2>"$RUN_TMP/err"; rc=$?
+{ [ "$rc" -eq 1 ] && grep -q "loki.js.map" "$RUN_TMP/err"; } && ok "check-clean fails naming the stale map" || bad "check-clean missed a stale map (rc=$rc)"
+git -C "$C" add loki-ts/dist/loki.js.map; git -C "$C" commit -q --amend --no-edit
+ROOT_DIR="$C" release_commit_clean 2>/dev/null && ok "check-clean passes once both files are committed" || bad "check-clean failed on a clean tree"
+
+# E-152: the "stage these files" list prints `git add -f` for paths under an ignored dir.
+S="$RUN_TMP/stage"; mkdir -p "$S/dist" "$S/src"
+git -C "$S" init -q; git -C "$S" config user.name t; git -C "$S" config user.email t@example.com
+echo 'dist/' >"$S/.gitignore"; echo a >"$S/src/a.txt"; echo b >"$S/dist/b.js"
+git -C "$S" add .gitignore src/a.txt; git -C "$S" add -f dist/b.js; git -C "$S" commit -q -m init
+echo a2 >"$S/src/a.txt"; echo b2 >"$S/dist/b.js"
+if declare -F release_stage_lines >/dev/null; then
+    OUT=$(ROOT_DIR="$S" release_stage_lines)
+else OUT=""; fi
+printf '%s\n' "$OUT" | grep -qx '  git add -f dist/b.js' && ok "ignored-dir path gets git add -f" || bad "no git add -f for ignored path: $OUT"
+printf '%s\n' "$OUT" | grep -qx '  git add src/a.txt' && ok "normal path gets plain git add" || bad "plain path line missing: $OUT"
+
 echo "Passed: $PASS Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

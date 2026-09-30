@@ -59,6 +59,7 @@ log_step() { echo -e "${CYAN}[STEP]${NC} $*"; }
 
 DRY_RUN="false"
 BUMP_ONLY="false"
+CHECK_CLEAN="false"
 BUMP_TYPE=""
 
 # Parse arguments. Sets the globals DRY_RUN and BUMP_TYPE directly instead of
@@ -77,6 +78,9 @@ parse_args() {
             --bump-only)
                 BUMP_ONLY="true"
                 ;;
+            --check-clean)
+                CHECK_CLEAN="true"
+                ;;
             -h|--help)
                 usage
                 exit 0
@@ -90,7 +94,7 @@ parse_args() {
         shift
     done
 
-    if [[ -z "$BUMP_TYPE" ]]; then
+    if [[ -z "$BUMP_TYPE" && "$CHECK_CLEAN" != "true" ]]; then
         log_error "Bump type required: patch, minor, or major"
         usage
         exit 1
@@ -109,6 +113,8 @@ Arguments:
 Options:
   --dry-run    Show what would be done without making changes
   --bump-only  Bump version files + loki-ts/dist, then exit. No commit, no push.
+  --check-clean  Run after the release commit: exit 1 naming any tracked file
+               still modified (E-151: a stamped dist map left out of the commit).
   -h, --help   Show this help message
 
 Examples:
@@ -520,6 +526,17 @@ sys.exit(1 if bad else 0)
 PY
 }
 
+# E-151: after the release commit no tracked file may still differ from HEAD.
+# dist is tracked, so a plain `git add <file>` suffices for a leftover map.
+release_commit_clean() {
+    local dirty
+    dirty=$(git -C "${ROOT_DIR}" status --porcelain --untracked-files=no | sed 's/^...//')
+    [ -z "$dirty" ] && return 0
+    echo "release commit left tracked files modified (stage and amend):" >&2
+    echo "$dirty" | sed 's/^/  /' >&2
+    return 1
+}
+
 # --bump-only (S-108): version files + loki-ts/dist, no git side effects.
 run_bump_only() {
     local current new dist_file="$ROOT_DIR/loki-ts/dist/loki.js"
@@ -557,13 +574,21 @@ run_bump_only() {
 
     echo ""
     log_success "Bump-only complete: v$new"
-    echo "Files changed:"
+    echo "stage these files:"
+    release_stage_lines
+}
+
+# E-152: one `git add` line per modified tracked file; `-f` when the path sits
+# under an ignored directory (a tracked-but-ignored dist needs it).
+release_stage_lines() {
     local f
-    for f in $RELEASE_COMMIT_FILES; do
-        [ "$f" = "CHANGELOG.md" ] && continue
-        echo "  $f"
+    git -C "$ROOT_DIR" status --porcelain --untracked-files=no | sed 's/^...//' | while IFS= read -r f; do
+        if git -C "$ROOT_DIR" check-ignore --no-index -q -- "$f"; then
+            echo "  git add -f $f"
+        else
+            echo "  git add $f"
+        fi
     done
-    [ -d "$ROOT_DIR/loki-ts" ] && echo "  loki-ts/dist/loki.js"
 }
 
 # Check for uncommitted changes
@@ -586,6 +611,11 @@ main() {
     cd "$ROOT_DIR"
 
     parse_args "$@"
+
+    if [ "$CHECK_CLEAN" = "true" ]; then
+        release_commit_clean
+        return
+    fi
 
     # Release gate runs before ANY bump, --bump-only included. Skipped on
     # --dry-run: it makes no changes, so it never needs to pass the "that
