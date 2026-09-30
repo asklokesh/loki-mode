@@ -6255,6 +6255,43 @@ check_parallel_support() {
     return 0
 }
 
+# E-130: npm install cache keyed on sha256(package-lock.json + package.json),
+# stored under the project's .loki/cache/install/. Hit: copy cached node_modules.
+# Miss or unusable entry: real install, then publish the entry atomically
+# (temp dir + rename) so concurrent worktrees never see a partial entry.
+# ponytail: npm only; pip installs into the active interpreter, so there is no
+# per-worktree venv to cache. No lockfile means no cache (always install).
+_loki_npm_install_cached() {
+    local cache_root="$1" wt="$2" key entry tmp
+    if [ ! -f "$wt/package-lock.json" ]; then
+        (cd "$wt" && npm install --silent 2>/dev/null) || true
+        return 0
+    fi
+    key="$(cat "$wt/package-lock.json" "$wt/package.json" 2>/dev/null | { shasum -a 256 2>/dev/null || sha256sum; } | cut -d' ' -f1)"
+    if [ -n "$key" ]; then
+        entry="$cache_root/$key"
+        if [ -f "$entry/.complete" ] && [ -d "$entry/node_modules" ]; then
+            rm -rf "$wt/node_modules"
+            if cp -R "$entry/node_modules" "$wt/node_modules" 2>/dev/null; then
+                return 0
+            fi
+            rm -rf "$wt/node_modules"
+        fi
+        rm -rf "$entry" 2>/dev/null || true
+    fi
+    (cd "$wt" && npm install --silent 2>/dev/null) || true
+    if [ -n "$key" ] && [ -d "$wt/node_modules" ]; then
+        mkdir -p "$cache_root" 2>/dev/null || return 0
+        tmp="$(mktemp -d "$cache_root/.tmp.XXXXXX" 2>/dev/null)" || return 0
+        if cp -R "$wt/node_modules" "$tmp/node_modules" 2>/dev/null && : >"$tmp/.complete"; then
+            mv "$tmp" "$entry" 2>/dev/null || rm -rf "$tmp"
+        else
+            rm -rf "$tmp"
+        fi
+    fi
+    return 0
+}
+
 # Create a worktree for a specific stream
 create_worktree() {
     local stream_name="$1"
@@ -6293,13 +6330,15 @@ create_worktree() {
         # Copy .loki state to worktree
         if [ -d "$TARGET_DIR/.loki" ]; then
             cp -r "$TARGET_DIR/.loki" "$worktree_path/" 2>/dev/null || true
+            # E-130: never copy the install cache into the worktree
+            rm -rf "$worktree_path/.loki/cache/install" 2>/dev/null || true
         fi
 
         # Initialize environment (detect and run appropriate install)
         (
             cd "$worktree_path" || exit 1
             if [ -f "package.json" ]; then
-                npm install --silent 2>/dev/null || true
+                _loki_npm_install_cached "${TARGET_DIR}/.loki/cache/install" "$worktree_path"
             elif [ -f "requirements.txt" ]; then
                 pip install -r requirements.txt -q 2>/dev/null || true
             elif [ -f "Cargo.toml" ]; then
