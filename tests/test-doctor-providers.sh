@@ -359,6 +359,52 @@ else
     log_fail "JSON selected is '$SHIM_JSON_SELECTED', text section says cline"
 fi
 
+
+#------------------------------------------------------------------------------
+# A-123: one Ready line; only the selected provider blocks. Throwaway HOME under
+# a loki-run temp dir; the real ~/.loki is never touched (doctor never creates a
+# key, asserted below).
+#------------------------------------------------------------------------------
+A123_T="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.XXXXXXXX")"
+A123_H="$A123_T/home"
+mkdir -p "$A123_H/.claude/skills/loki-mode" "$A123_H/.cline/skills" "$A123_T/with-claude" "$A123_T/no-claude"
+printf '# SKILL\n' > "$A123_H/.claude/skills/loki-mode/SKILL.md"
+ln -s "$A123_T/gone" "$A123_H/.cline/skills/loki-mode"
+for _b in with-claude/claude no-claude/codex; do
+    printf '#!/bin/sh\nexit 0\n' > "$A123_T/$_b"; chmod +x "$A123_T/$_b"
+done
+# $1 route (bash|bun), $2 stub dir, $3 provider, $4 out file; prints the exit code.
+a123_run() {
+    local route="$1" stub="$2" prov="$3" out="$4" rc=0
+    if [ "$route" = bash ]; then
+        env HOME="$A123_H" PATH="$stub:/opt/homebrew/bin:/usr/bin:/bin" LOKI_LEGACY_BASH=1 \
+            ANTHROPIC_API_KEY=doctor-fixture-not-a-key LOKI_PROVIDER="$prov" LOKI_NO_BROWSER=1 \
+            bash "$REPO_ROOT/autonomy/loki" doctor >"$out" 2>/dev/null || rc=$?
+    else
+        env HOME="$A123_H" PATH="$stub:$(dirname "$(command -v bun)"):/opt/homebrew/bin:/usr/bin:/bin" \
+            ANTHROPIC_API_KEY=doctor-fixture-not-a-key LOKI_PROVIDER="$prov" LOKI_NO_BROWSER=1 \
+            bun "$REPO_ROOT/loki-ts/src/cli.ts" doctor >"$out" 2>/dev/null || rc=$?
+    fi
+    echo "$rc"
+}
+
+o="$A123_T/missing.txt"
+rc="$(a123_run bash "$A123_T/no-claude" claude "$o")"
+if [ "$rc" != 0 ] && tail -1 "$o" | grep -q '^Selected provider claude CLI not found'; then
+    log_pass "A-123: LOKI_PROVIDER=claude without claude exits $rc and the last line is the blocker"
+else
+    log_fail "A-123: missing selected provider not blocking (rc=$rc, last: $(tail -1 "$o"))"
+fi
+o="$A123_T/codex-ok.txt"
+rc="$(a123_run bash "$A123_T/no-claude" codex "$o")"
+if [ "$rc" = 0 ] && tail -1 "$o" | grep -q '^Ready: codex ('; then
+    log_pass "A-123: selecting the installed provider (codex) is Ready without claude"
+else
+    log_fail "A-123: codex selection not ready (rc=$rc, last: $(tail -1 "$o"))"
+fi
+
+rm -rf "$A123_T"
+
 echo ""
 echo "========================================"
 echo "Passed: $PASSED  Failed: $FAILED"

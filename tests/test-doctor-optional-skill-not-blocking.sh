@@ -341,6 +341,66 @@ case "$sel_verdict" in
     *)   fail "doctor --json no longer fails on the selected provider's broken link ($sel_verdict)" ;;
 esac
 
+
+#------------------------------------------------------------------------------
+# A-123: one Ready line; only the selected provider blocks. Throwaway HOME under
+# a loki-run temp dir; the real ~/.loki is never touched (doctor never creates a
+# key, asserted below).
+#------------------------------------------------------------------------------
+A123_T="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.XXXXXXXX")"
+A123_H="$A123_T/home"
+mkdir -p "$A123_H/.claude/skills/loki-mode" "$A123_H/.cline/skills" "$A123_T/with-claude" "$A123_T/no-claude"
+printf '# SKILL\n' > "$A123_H/.claude/skills/loki-mode/SKILL.md"
+ln -s "$A123_T/gone" "$A123_H/.cline/skills/loki-mode"
+for _b in with-claude/claude no-claude/codex; do
+    printf '#!/bin/sh\nexit 0\n' > "$A123_T/$_b"; chmod +x "$A123_T/$_b"
+done
+# $1 route (bash|bun), $2 stub dir, $3 provider, $4 out file; prints the exit code.
+a123_run() {
+    local route="$1" stub="$2" prov="$3" out="$4" rc=0
+    if [ "$route" = bash ]; then
+        env HOME="$A123_H" PATH="$stub:/opt/homebrew/bin:/usr/bin:/bin" LOKI_LEGACY_BASH=1 \
+            ANTHROPIC_API_KEY=doctor-fixture-not-a-key LOKI_PROVIDER="$prov" LOKI_NO_BROWSER=1 \
+            bash "$REPO_ROOT/autonomy/loki" doctor >"$out" 2>/dev/null || rc=$?
+    else
+        env HOME="$A123_H" PATH="$stub:$(dirname "$(command -v bun)"):/opt/homebrew/bin:/usr/bin:/bin" \
+            ANTHROPIC_API_KEY=doctor-fixture-not-a-key LOKI_PROVIDER="$prov" LOKI_NO_BROWSER=1 \
+            bun "$REPO_ROOT/loki-ts/src/cli.ts" doctor >"$out" 2>/dev/null || rc=$?
+    fi
+    echo "$rc"
+}
+
+for route in bash bun; do
+    [ "$route" = bun ] && ! command -v bun >/dev/null 2>&1 && continue
+    o="$A123_T/ready-$route.txt"
+    rc="$(a123_run "$route" "$A123_T/with-claude" claude "$o")"
+    if [ "$rc" = 0 ]; then pass "A-123 $route: broken ~/.cline link + LOKI_PROVIDER=claude exits 0"; else fail "A-123 $route: exited $rc"; fi
+    n="$(grep -c '^Ready: ' "$o")"
+    if [ "$n" = 1 ] && tail -1 "$o" | grep -q '^Ready: claude (.*), receipts will be signed on first run$'; then
+        pass "A-123 $route: exactly one Ready line, last, honest about the missing key"
+    else
+        fail "A-123 $route: Ready line wrong (count $n, last: $(tail -1 "$o"))"
+    fi
+    if [ -e "$A123_H/.loki/keys" ]; then fail "A-123 $route: doctor created a key"; else pass "A-123 $route: doctor created no key"; fi
+done
+# With a key present the Ready line carries its 8-char kid.
+mkdir -p "$A123_H/.loki/keys"
+python3 - "$A123_H/.loki/keys/receipt-ed25519.pem" <<'PYK'
+import sys
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives import serialization as s
+open(sys.argv[1], "wb").write(Ed25519PrivateKey.generate().private_bytes(s.Encoding.PEM, s.PrivateFormat.PKCS8, s.NoEncryption()))
+PYK
+o="$A123_T/ready-key.txt"
+a123_run bash "$A123_T/with-claude" claude "$o" >/dev/null
+if tail -1 "$o" | grep -Eq '^Ready: claude \(.*\), receipts signed \(kid [A-Za-z0-9_-]{8}\)$'; then
+    pass "A-123: Ready line carries the 8-char kid when a key exists"
+else
+    fail "A-123: kid Ready line wrong: $(tail -1 "$o")"
+fi
+
+rm -rf "$A123_T"
+
 echo ""
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

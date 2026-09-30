@@ -13817,6 +13817,19 @@ cmd_doctor() {
     fi
     echo ""
 
+    # A-123: an EXPLICIT LOKI_PROVIDER names the CLI a build will launch, so that
+    # CLI is required even when another provider is installed. Auto-detection
+    # never reaches here: it only picks an installed provider. Bundled-SDK
+    # claude stays allowed. Mirrored in loki-ts/src/commands/doctor.ts.
+    if [ -n "${LOKI_PROVIDER:-}" ] && [ "$fail_count" -eq 0 ] \
+        && ! command -v "$LOKI_PROVIDER" >/dev/null 2>&1 \
+        && ! { [ "$LOKI_PROVIDER" = "claude" ] && [ "$_doctor_sdk_only" = "1" ]; }; then
+        _sel_install=$(doctor_provider_install_cmd "$LOKI_PROVIDER")
+        echo -e "  ${RED}FAIL${NC}  Selected provider '${LOKI_PROVIDER}' CLI not found"
+        _doctor_block "Selected provider ${LOKI_PROVIDER} CLI not found. Fix: ${_sel_install:-install ${LOKI_PROVIDER}, or unset LOKI_PROVIDER}"
+        fail_count=$((fail_count + 1))
+    fi
+
     # Provider Availability. Which provider a build would ACTUALLY pick, which
     # is decided by providers/loader.sh auto_detect_provider, not by PATH order
     # and not by the section above. Rendered by the shared helper in
@@ -14397,6 +14410,8 @@ else:
             esac
             ( loki_emit_first_run_blocked "$_blk_key" >/dev/null 2>&1 </dev/null & ) 2>/dev/null || true
         fi
+        # A-123: the LAST line is the one blocking reason, exactly.
+        printf '%b' "$_doctor_blockers" | awk '/^  - /{sub(/^  - /,""); print; exit}'
         return 1
     elif [ "$warn_count" -gt 0 ]; then
         echo -e "${YELLOW}All required checks passed with some warnings.${NC}"
@@ -14419,6 +14434,39 @@ else:
         echo "Next: loki quickstart (guided first build from your idea, no PRD needed)"
         echo "      or loki demo (builds a sample todo app end to end) or loki start ./prd.md"
     fi
+    # A-123: the last stdout line. Provider and model come from the selected
+    # provider; the key state is read WITHOUT creating a key (auto_generate=False).
+    # Byte-mirrored in loki-ts/src/commands/doctor.ts.
+    local _rd_id _rd_model _rd_key _rd_state
+    _rd_id="${LOKI_PROVIDER:-}"
+    [ -n "$_rd_id" ] || _rd_id="$(effective_provider_id 2>/dev/null || true)"
+    [ -n "$_rd_id" ] || _rd_id="claude"
+    _rd_model="$(bash -c 'source "$1" >/dev/null 2>&1; printf %s "${PROVIDER_MODEL_DEVELOPMENT:-}"' _ "${_LOKI_SCRIPT_DIR}/../providers/${_rd_id}.sh" 2>/dev/null || true)"
+    [ -n "$_rd_model" ] || _rd_model="default"
+    _rd_key="$(python3 -E - "${_LOKI_SCRIPT_DIR}" 2>/dev/null <<'PY' || true
+import os, sys
+sys.path[:] = [p for p in sys.path if p not in ("", ".")]
+sys.path.insert(0, sys.argv[1])
+from receipt_jwt import load_signing_key, _CRYPTO_AVAILABLE
+if not _CRYPTO_AVAILABLE:
+    print("nocrypto")
+else:
+    k, kid = load_signing_key(auto_generate=False)
+    if kid:
+        print("kid " + kid[:8])
+    elif os.environ.get("LOKI_RECEIPT_SIGNING_KEY", "").strip() or os.environ.get("LOKI_RECEIPT_SIGNING_KEY_FILE", "").strip() or os.path.exists(os.path.expanduser("~/.loki/keys/receipt-ed25519.pem")):
+        print("bad")
+    else:
+        print("none")
+PY
+)"
+    case "$_rd_key" in
+        "kid "*) _rd_state="receipts signed (${_rd_key})" ;;
+        none)    _rd_state="receipts will be signed on first run" ;;
+        bad)     _rd_state="receipts unsigned: signing key could not be loaded" ;;
+        *)       _rd_state="receipts unsigned: python3 cryptography package missing" ;;
+    esac
+    echo "Ready: ${_rd_id} (${_rd_model}), ${_rd_state}"
     # Best-effort stale-install nudge (stderr only; never blocks; off on
     # non-TTY/CI). Reached only on the human-readable path (--json returns above).
     maybe_print_update_hint
