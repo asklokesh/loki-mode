@@ -15,7 +15,7 @@ describe("fetchIssues", () => {
     const r = fetchIssues({ repo: "o/r", label: "bug", milestone: "M1", limit: 5 }, s.execer);
     expect(s.calls[0]).toEqual({
       cmd: "gh",
-      args: ["issue", "list", "--repo", "o/r", "--label", "bug", "--milestone", "M1", "--state", "open",
+      args: ["issue", "list", "--repo", "o/r", "--label=bug", "--milestone=M1", "--state", "open",
         "--limit", "5", "--json", "number,title,body,labels,url"],
     });
     expect(r).toEqual([{ ref: "o/r#7", number: 7, title: "t", body: "b", labels: ["bug", "p1"], url: "u" }]);
@@ -62,6 +62,21 @@ describe("fetchIssues", () => {
     const evil = 'x"; touch /tmp/pwned #$(id)`';
     fetchIssues({ repo: "o/r", label: evil, limit: 1 }, s.execer);
     expect(s.calls[0]!.cmd).toBe("gh");
-    expect(s.calls[0]!.args).toContain(evil);
+    expect(s.calls[0]!.args).toContain(`--label=${evil}`);
+  });
+
+  it("rejects a dash-leading label or milestone so no option-like token reaches gh", () => {
+    const s = stub("[]");
+    expect(() => fetchIssues({ repo: "o/r", label: "--repo=evil", limit: 1 }, s.execer)).toThrow(/invalid label/);
+    expect(() => fetchIssues({ repo: "o/r", milestone: "-x", limit: 1 }, s.execer)).toThrow(/invalid milestone/);
+    expect(s.calls).toEqual([]);
+  });
+
+  it("rejects a dash-leading repo and any .. segment", () => {
+    const s = stub("[]");
+    expect(() => fetchIssues({ repo: "-x/y", limit: 1 }, s.execer)).toThrow(/invalid repo/);
+    expect(() => fetchIssues({ repo: "a/..", limit: 1 }, s.execer)).toThrow(/invalid repo/);
+    expect(() => fetchIssues({ repo: "../b", limit: 1 }, s.execer)).toThrow(/invalid repo/);
+    expect(s.calls).toEqual([]);
   });
 });

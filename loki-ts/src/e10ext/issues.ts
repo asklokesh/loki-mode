@@ -23,12 +23,15 @@ export interface IssueQuery {
 
 /** Lists open issues. Throws on a bad query or malformed gh output; never returns partial data. */
 export function fetchIssues(q: IssueQuery, execer: Execer = defaultExec): IssueSummary[] {
-  if (!/^[\w.-]+\/[\w.-]+$/.test(q.repo)) throw new Error(`fetchIssues: invalid repo "${q.repo}"`);
+  if (!/^[\w][\w.-]*\/[\w][\w.-]*$/.test(q.repo) || q.repo.split("/").some((s) => s.includes(".."))) throw new Error(`fetchIssues: invalid repo "${q.repo}"`);
   if (!Number.isInteger(q.limit) || q.limit < 1) throw new Error(`fetchIssues: invalid limit ${q.limit}`);
   const limit = Math.min(q.limit, MAX_ISSUES);
+  for (const [k, v] of [["label", q.label], ["milestone", q.milestone]]) {
+    if (v && v.startsWith("-")) throw new Error(`fetchIssues: invalid ${k} "${v}"`);
+  }
   const args = ["issue", "list", "--repo", q.repo];
-  if (q.label) args.push("--label", q.label);
-  if (q.milestone) args.push("--milestone", q.milestone);
+  if (q.label) args.push(`--label=${q.label}`);
+  if (q.milestone) args.push(`--milestone=${q.milestone}`);
   args.push("--state", "open", "--limit", String(limit), "--json", "number,title,body,labels,url");
 
   let raw: unknown;
