@@ -7,6 +7,21 @@ set -euo pipefail
 export LOKI_NO_BROWSER=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# E-154 begin: no test run may write the real ~/.loki/keys. Default the signing
+# key file to a run-owned temp dir unless the caller already chose one.
+_e154_real_keys="${HOME:-/nonexistent}/.loki/keys"
+_e154_keys_before="$(ls -A "$_e154_real_keys" 2>/dev/null || true)"
+if [ -z "${LOKI_TEST_LIST:-}" ] && [ -z "${LOKI_RECEIPT_SIGNING_KEY_FILE:-}" ]; then
+    # shellcheck source=../eval/loki10/lib-tmp.sh
+    . "$REPO_ROOT/eval/loki10/lib-tmp.sh"
+    if loki_run_tmp_create; then
+        export LOKI_RECEIPT_SIGNING_KEY_FILE="$LOKI_RUN_TMP/receipt-ed25519.pem"
+        trap 'loki_run_tmp_cleanup || true' EXIT
+    fi
+fi
+# E-154 end
 TOTAL_PASSED=0
 TOTAL_FAILED=0
 TESTS_RUN=0
@@ -444,6 +459,11 @@ run_test() {
     # Deliberately NOT `bash -c "$test_file"` for everything: -c execve's the
     # file, which requires the exec bit, and 46 shell suites here are committed
     # mode 100644. That swap turns every one of them into rc 126.
+    # E-155: a suite must never move the parent checkout's HEAD or branch.
+    local _e155_ref_before _e155_sha_before
+    _e155_ref_before="$(git -C "$REPO_ROOT" symbolic-ref -q HEAD 2>/dev/null || true)"
+    _e155_sha_before="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || true)"
+
     local _rc=0
     local _elapsed
     if [ -n "$_timeout_bin" ] && [ "$_suite_timeout" -gt 0 ]; then
@@ -498,6 +518,20 @@ run_test() {
             bash -c "$test_file" || _rc=$?
         fi
         _elapsed=$((SECONDS - _t0))
+    fi
+
+    local _e155_ref_after _e155_sha_after _e154_keys_after
+    _e155_ref_after="$(git -C "$REPO_ROOT" symbolic-ref -q HEAD 2>/dev/null || true)"
+    _e155_sha_after="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || true)"
+    if [ "$_e155_ref_before" != "$_e155_ref_after" ] || [ "$_e155_sha_before" != "$_e155_sha_after" ]; then
+        echo -e "${RED}$(printf '\342\234\227') ${test_name} FAILED: it changed the parent checkout HEAD (E-155): ${_e155_ref_before:-detached}@${_e155_sha_before:0:8} -> ${_e155_ref_after:-detached}@${_e155_sha_after:0:8}${NC}"
+        TOTAL_FAILED=$((TOTAL_FAILED + 1))
+    fi
+    _e154_keys_after="$(ls -A "$_e154_real_keys" 2>/dev/null || true)"
+    if [ "$_e154_keys_after" != "$_e154_keys_before" ]; then
+        echo -e "${RED}$(printf '\342\234\227') ${test_name} FAILED: it changed the real ${_e154_real_keys} (E-154)${NC}"
+        TOTAL_FAILED=$((TOTAL_FAILED + 1))
+        _e154_keys_before="$_e154_keys_after"
     fi
 
     # GNU timeout exits 124 on its own SIGTERM kill, 137 if -k's SIGKILL
@@ -652,6 +686,7 @@ run_test "PAUSED.md states the pause reason" "$SCRIPT_DIR/test-paused-md-reason.
 run_test "per-outcome next-step guidance" "$SCRIPT_DIR/test-outcome-guidance.sh"
 run_test "Evidence Receipt run-level baseline (signed diff stat)" "$SCRIPT_DIR/test-receipt-run-baseline.sh"
 run_test "no hardcoded home-directory paths in tests" "$SCRIPT_DIR/test-no-hardcoded-paths.sh"
+run_test "run-all-tests guards: real key dir + parent HEAD (E-154, E-155)" "$SCRIPT_DIR/test-e154-e155-guards.sh"
 run_test "no ambient gitconfig writes without top-level isolation" "$SCRIPT_DIR/test-no-ambient-gitconfig-writes.sh"
 run_test "loki why honest reporting (gate named, diff re-derived)" "$SCRIPT_DIR/test-why-honest-report.sh"
 run_test "status surfaces agree (STATUS.txt vs COMPLETION.txt, --json staleness)" "$SCRIPT_DIR/test-status-surface-agrees.sh"
