@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, Gift, ExternalLink, Sparkles, Palette, Zap, Shield, Keyboard } from 'lucide-react';
 
 const LS_KEY = 'pl_whats_new_version';
-const CURRENT_VERSION = '10.5.6';
+const CURRENT_VERSION = '10.5.7';
 
 interface Feature {
   icon: React.ComponentType<{ size?: number; className?: string }>;

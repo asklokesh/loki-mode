@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.7 (2026-09-30)
+
+Main now moves only to a release train whose full test tier already passed, the eval scorecard reports 95% confidence intervals and refuses undersized samples, and the building blocks for issue intake, repo memory and parallel attempts land behind the v10 engine (not yet wired into a run).
+
+### Changed
+- Eval task sizing counts only files whose change alters executable code, so a docstring or blank-line hunk no longer makes a one-file fix look like a two-file task (E-136).
+- The eval scorecard reports seeded bootstrap 95% confidence intervals and marks a difference only when it falls outside them; red outranks inconclusive; the D43 floor requires every task at 3 evaluated reps on both arms, and one run_id appearing in two rep files under a label is refused (S41-17).
+
+### Fixed
+- The v10 tree-swap helper passes an explicit environment to every git call it spawns, so a caller's scrubbed environment is what git sees (E-141).
+
+### Internal
+- D44 release trains: Tests, Bun Parity and Coverage (baseline) run on pushes to train/N branches, and main is fast-forwarded only to a train commit whose three workflows passed (D44). The pulse reports RELEASE_CADENCE, MAIN_RED_BY_MERGE and releases per hour, and finds Tier B runs on train branches (D44-B).
+- v10 extension data layers, not yet wired into a run: a tree-swap helper that scores an attempt in the primary tree and always restores it, with a lock, exclusive undo files and a refusal on tracked changes (S41-12); repo memory recording the verified test command, flaky tests and failure causes per repo (E-126); and issue listing by label or milestone as pure data, with dash-leading and dot-dot values refused (E-127).
+- Moat P7 scanner catches fabricator calls wrapped in useMemo and bracket-indexed sinks (E-128, E-131).
+- Tests: the fsmonitor environment guard is meaningful on Bun 1.3 and 1.4, and its driver runs under process.execPath (E-134, E-139). A ShellCheck warning in the scorecard test is fixed.
+
 ## v10.5.6 (2026-09-30)
 
 Parallel worktrees stop reinstalling npm dependencies from scratch, v10 sessions can trim oversized tool output behind a flag, and the eval harness now refuses to report a cost it did not fully measure.
