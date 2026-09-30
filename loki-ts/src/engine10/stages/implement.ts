@@ -1,7 +1,9 @@
 // E-08: Implement (ENGINE.md 4, 16). One session; the brief marks Wall tests read-only, names only the impacted tests. Afterwards any changed read-only file is restored (tests_reverted) and the exit is classified.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { cascadeEnabled, cascadeImplementModel, loadRepoMap, namedFiles, repoMapText } from "../sizing.ts";
+import { briefContext } from "../../e10ext/context.ts";
+import { cascadeEnabled, cascadeImplementModel, loadRepoMap, namedFiles } from "../sizing.ts";
+import { selectRelevantFiles } from "./plan.ts"; import { runnerCmd } from "./verify.ts";
 import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
 import type { ImplementExit, RunContext, Stage, StageResult, TestMap } from "../types.ts";
 import { taskBlock } from "../types.ts";
@@ -22,12 +24,13 @@ export function impactedTests(ctx: RunContext): string[] {
   return [...new Set([...fromMap, ...wall])];
 }
 
+export const briefCtx = (ctx: RunContext): string => briefContext(ctx, { select: selectRelevantFiles, cmd: runnerCmd });
 export function buildImplementBrief(task: string, plan: string | null, impactedTests: string[], repoMap = ""): string {
   return [
     "You are the Loki 10 implement stage.",
     ...taskBlock(task),
     plan ? `Follow this plan:\n${plan}` : "No separate plan was made: plan the change yourself in this session, then implement it.",
-    ...(repoMap ? [`Repository paths (repomap.txt):\n${repoMap}`] : []),
+    ...(repoMap ? [repoMap] : []),
     "Rules:",
     "- The Wall tests are read-only: do not edit or delete them. Existing test files are append-only: you may add new test functions, but never edit or delete an existing one.",
     `- Run only these impacted tests: ${impactedTests.length ? impactedTests.join(", ") : "(none known)"}.`,
@@ -65,7 +68,7 @@ export const implementStage: Stage = {
     const impacted = impactedTests(ctx);
     const readOnly = (prior.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [];
     const cascade = cascadeEnabled(); // E-64: pins this attempt to sonnet (the Wall's E-45 alias); =0 leaves the configured model
-    const repoMap = repoMapText(ctx.repoDir, prior.intake?.tree as string | undefined, prior.intake?.repomap_ref as string | undefined); // E-64: cached repo map, same source as Wall's brief
+    const repoMap = briefCtx(ctx); // S41-10: up to 20 relevant files + impacted test commands, not the first 200 paths
 
     const session = await ctx.sessions.run({
       stage: "implement",
@@ -80,10 +83,7 @@ export const implementStage: Stage = {
 
     const testsReverted = restoreReadOnly(readOnly);
     const iterationId = `${ctx.runId}-impl`;
-
-    // E-68 already classifies exit codes; this only adds the missing branch: a session that
-    // neither was killed nor left a marker but exited non-zero is an error, never "done"
-    // (incident: implement reported done after exit "error" in 1s with 0 tokens).
+    // E-68 classifies exit codes; a non-killed, marker-less non-zero exit is an error, never "done".
     let exit: ImplementExit | "error";
     if (session.killed) {
       exit = "killed";

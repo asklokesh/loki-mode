@@ -2,8 +2,8 @@
 // implement, plus grouped verify failures, plan and diff stat. The machine loops [Fix -> Fast verify],
 // calling this stage again after each failure; MAX_FIX_ROUNDS caps rounds itself (a 3rd call is a no-op
 // stage.skipped, moving to Seal/PARTIAL). Depends on session.ts/verify.ts only through types.ts shapes.
-import { buildImplementBrief, impactedTests } from "./implement.ts";
-import { cascadeEnabled, cascadeImplementModel, repoMapText, resolveModelAlias } from "../sizing.ts";
+import { briefCtx, buildImplementBrief, impactedTests } from "./implement.ts";
+import { cascadeEnabled, cascadeImplementModel, resolveModelAlias } from "../sizing.ts";
 import { MAX_FIX_ROUNDS } from "../types.ts";
 import type { RunContext, Stage, StageResult } from "../types.ts";
 import type { FailureGroup } from "../failures.ts";
@@ -51,7 +51,7 @@ export const fixStage: Stage = {
     const plan = (prior.plan?.plan as string | undefined) ?? null;
     const groups = (prior.verify?.failures_grouped as FailureGroup[] | undefined) ?? [];
     const diffStat = (prior.implement?.diff_stat as string | undefined) ?? null;
-    const repoMap = repoMapText(ctx.repoDir, prior.intake?.tree as string | undefined, prior.intake?.repomap_ref as string | undefined);
+    const repoMap = briefCtx(ctx);
     // E-64/D31: escalate to the top model only on a genuine test failure, and only when the run has a
     // configured top model to escalate to (never a phantom "sonnet escalates to sonnet"). A round that does
     // NOT escalate must still run on the cheap model, not silently inherit the run's configured model (which
