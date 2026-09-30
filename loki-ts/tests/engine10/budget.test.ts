@@ -67,8 +67,8 @@ const RE_DYNAMIC = /\b(?:import|require)\s*\(\s*["']([^"']+)["']\s*\)/g;
 // type-only imports (the correct D42 meaning) but hides `import { type X }`, which the regexes
 // above still flag as a whole-statement violation. A dynamic import() whose argument is not a
 // single string/template literal (for example "a/" + "stages/fix.ts") cannot be resolved
-// statically, so it fails closed: e10ext has no legitimate need for one.
-const RE_NONLITERAL_DYNAMIC = /\bimport\s*\(\s*(?!\s*(?:\/\*[\s\S]*?\*\/\s*)*(?:"[^"\\\n]*"|'[^'\\\n]*'|`[^`$\\]*`)\s*\))/g;
+// statically (same for require(), and createRequire is banned outright), so it fails closed: e10ext has no legitimate need for one.
+const RE_NONLITERAL_DYNAMIC = /\b(?:import|require)\s*\(\s*(?!\s*(?:\/\*[\s\S]*?\*\/\s*)*(?:"[^"\\\n]*"|'[^'\\\n]*'|`[^`$\\]*`)\s*\))/g;
 
 function scanImportPaths(src: string): string[] {
   return new Bun.Transpiler({ loader: "ts" }).scanImports(src).map((i) => i.path);
@@ -108,6 +108,7 @@ function importViolations(file: string, src: string): string[] {
   }
   RE_NONLITERAL_DYNAMIC.lastIndex = 0;
   if (RE_NONLITERAL_DYNAMIC.test(src)) violations.push(`${file} has a non-literal dynamic import(), which cannot be fenced`);
+  if (/\bcreateRequire\b/.test(src)) violations.push(`${file} uses createRequire, which cannot be fenced`);
   return [...new Set(violations)];
 }
 
@@ -210,6 +211,21 @@ describe("e10ext import fence: findImports catches every import form (D42 (1) B3
   it("B1r4: a concatenated dynamic import cannot be resolved statically and fails closed", () => {
     const src = `const m = await import("../engine10/" + "stages/fix.ts");\n`;
     expect(importViolations("f.ts", src)).toEqual(["f.ts has a non-literal dynamic import(), which cannot be fenced"]);
+  });
+
+  it("B1r5: a concatenated require() is caught", () => {
+    const src = `const m = require("../engine10/" + "stages/fix.ts");\n`;
+    expect(importViolations("f.ts", src)).toEqual(["f.ts has a non-literal dynamic import(), which cannot be fenced"]);
+  });
+
+  it("B1r5: a variable require() is caught", () => {
+    const src = `const p = "../engine10/stages/fix.ts";\nconst m = require(p);\n`;
+    expect(importViolations("f.ts", src)).toEqual(["f.ts has a non-literal dynamic import(), which cannot be fenced"]);
+  });
+
+  it("B1r5: createRequire is banned outright", () => {
+    const src = `import { createRequire } from "node:module";\nconst r = createRequire(import.meta.url);\n`;
+    expect(importViolations("f.ts", src)).toEqual(["f.ts uses createRequire, which cannot be fenced"]);
   });
 
   it("B1r4: a plain literal dynamic import of an allowed path is not a non-literal violation", () => {
