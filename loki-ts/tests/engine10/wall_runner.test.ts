@@ -90,6 +90,16 @@ describe("A-103 wall discards tests that are not red for the right reason", () =
     expect(r.result.data.base_run).toEqual({ pass: 0, fail: 0, not_run: 1 });
     expect(r.result.data.files).toEqual([]);
   });
+  test("nested Jest-globals subtests (TAP yaml at any indent) are not_run and discarded", async () => {
+    const cjs = await wallWith({ "loki_wall_nest.test.js": "const test = require('node:test');\ntest('outer', async (t) => { await t.test('inner', () => { expect(1).toBe(1); }); });\n" });
+    expect(cjs.result.data.base_run).toEqual({ pass: 0, fail: 0, not_run: 1 });
+    expect(cjs.result.data.files).toEqual([]);
+  });
+  test("nested Jest-globals subtests in an ESM file are not_run and discarded", async () => {
+    const esm = await wallWith({ "loki_wall_nest.test.mjs": "import test from 'node:test';\ntest('outer', async (t) => { await t.test('inner', () => { expect(1).toBe(1); }); });\n" });
+    expect(esm.result.data.base_run).toEqual({ pass: 0, fail: 0, not_run: 1 });
+    expect(esm.result.data.files).toEqual([]);
+  });
   test("an assertion diff that mentions ReferenceError is red and kept", async () => {
     const r = await wallWith({ "loki_wall_msg.test.js": H + "test('t', () => { assert.deepStrictEqual({ a: 'ReferenceError' }, { a: 'x' }); });\n" });
     expect(r.result.data.base_run).toEqual({ pass: 0, fail: 1, not_run: 0 });
