@@ -31,7 +31,7 @@ const USAGE = `Usage (LOKI_ENGINE=v10):
   loki verify [run-id]            check receipt hashes and signature
   loki dashboard                  serve the local dashboard
   loki modernize <repo> --to <target>  convert a codebase (loki modernize --help)
-Flags: --deep, --provider <name>, --resume <run-id>, --no-pr
+Flags: --deep, --provider <name>, --no-pr
 `;
 // Returns null for an empty or help invocation.
 export function route(args: string[]): Route | null {
