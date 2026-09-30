@@ -223,3 +223,60 @@ describe("cleanupAttempt", () => {
     expect(existsSync(join(outside, "keep.txt"))).toBe(true);
   });
 });
+
+describe("S41-12 review findings B1-B5", () => {
+  test("B1: untracked primary files survive a successful swap", () => {
+    const { primary, base, attempt } = makeFixture();
+    write(primary, "notes.txt", "user-notes");
+    write(attempt, "a.txt", "winner-a");
+    swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base });
+    expect(readFileSync(join(primary, "notes.txt"), "utf8")).toBe("user-notes");
+    expect(readFileSync(join(primary, "a.txt"), "utf8")).toBe("winner-a");
+  });
+
+  test("B2: a symlinked attempts dir never lets cleanup delete the primary tree", () => {
+    const { primary, runDir } = makeFixture();
+    const attemptsDir = join(runDir, "attempts");
+    rmSync(attemptsDir, { recursive: true, force: true });
+    symlinkSync(primary, attemptsDir);
+    expect(() => cleanupAttempt(primary, runDir, join(attemptsDir, "b"))).toThrow(TreeSwapUnsafePathError);
+    expect(readFileSync(join(primary, "b", "c.txt"), "utf8")).toBe("orig-c");
+    expect(readFileSync(join(primary, "a.txt"), "utf8")).toBe("orig-a");
+  });
+
+  test("B3: a type-changed path (file to symlink) is reset and leaves the tree clean", () => {
+    const { primary, base } = makeFixture();
+    rmSync(join(primary, "a.txt"));
+    symlinkSync("b/c.txt", join(primary, "a.txt"));
+    expect(git(primary, ["status", "--porcelain", "--", "a.txt"])).toContain("T");
+    resetToBase(primary, base);
+    expect(lstatSync(join(primary, "a.txt")).isFile()).toBe(true);
+    expect(readFileSync(join(primary, "a.txt"), "utf8")).toBe("orig-a");
+    expect(git(primary, ["status", "--porcelain", "--", "a.txt"]).trim()).toBe("");
+  });
+
+  test("B4: excludes are top-level only; a nested src/venv/cfg.py is kept", () => {
+    const { primary, base, attempt } = makeFixture();
+    write(attempt, "src/venv/cfg.py", "cfg");
+    expect(snapshotDiff(attempt, base).some((e) => e.path === "src/venv/cfg.py")).toBe(true);
+    swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base });
+    expect(readFileSync(join(primary, "src", "venv", "cfg.py"), "utf8")).toBe("cfg");
+  });
+
+  test("B5: a file ignored only by the modified .gitignore is not deleted by reset", () => {
+    const { primary, base } = makeFixture();
+    write(primary, ".gitignore", "ignored.txt\n.env\n");
+    write(primary, ".env", "SECRET=1");
+    resetToBase(primary, base);
+    expect(readFileSync(join(primary, ".env"), "utf8")).toBe("SECRET=1");
+  });
+
+  test("N2/N3: undo snapshot persisted under runDir; symlink into .git refused", () => {
+    const { primary, base, attempt, runDir } = makeFixture();
+    write(primary, "notes.txt", "user-notes");
+    swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir });
+    expect(readFileSync(join(runDir, "treeswap-undo.json"), "utf8")).toContain("notes.txt");
+    symlinkSync(".git/config", join(attempt, "sneaky"));
+    expect(() => snapshotDiff(attempt, base)).toThrow(TreeSwapUnsafePathError);
+  });
+});

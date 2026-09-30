@@ -18,9 +18,12 @@
 
 import { execFileSync } from "node:child_process";
 import {
-  chmodSync,
+  closeSync,
+  constants as fsc,
+  fchmodSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readlinkSync,
   realpathSync,
@@ -29,7 +32,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export const DEFAULT_EXCLUDES = [".loki", ".venv", "venv", "attempts"];
 
@@ -53,6 +56,7 @@ export interface SwapOptions {
   attemptRoot: string; // the chosen attempt's worktree, under <runDir>/attempts/
   base: string; // git SHA both trees started from
   excludes?: string[];
+  runDir?: string; // when set, the undo snapshot is persisted to <runDir>/treeswap-undo.json
 }
 
 // ---- git plumbing --------------------------------------------------------
@@ -66,7 +70,7 @@ function pathspecs(excludes: string[]): string[] {
 }
 
 interface StatusEntry {
-  status: "A" | "M" | "D";
+  status: "A" | "M" | "D" | "T";
   path: string;
 }
 
@@ -107,9 +111,11 @@ function untrackedFiles(root: string, excludes: string[]): string[] {
 // not a filesystem path to open.
 
 function isExcluded(relPath: string, excludes: string[]): boolean {
+  // Excludes are top-level names only, matching the git pathspecs above;
+  // a nested src/venv/ is ordinary content. .git is excluded at any depth.
   const segments = relPath.split("/");
   if (segments.includes(".git")) return true;
-  return segments.some((s) => excludes.includes(s));
+  return segments[0] !== undefined && excludes.includes(segments[0]);
 }
 
 function safeJoin(root: string, relPath: string): string {
@@ -141,6 +147,8 @@ function safeJoin(root: string, relPath: string): string {
 // A symlink's target must resolve to somewhere inside `root` once read
 // relative to its own containing directory. Absolute targets are always
 // refused: they carry no tree-relative meaning and cannot be validated.
+const PROTECTED_TARGETS = [".git", ".loki", "attempts"];
+
 function assertSymlinkWithinRoot(root: string, relPath: string, target: string): void {
   if (isAbsolute(target)) {
     throw new TreeSwapUnsafePathError(`symlink ${relPath} has an absolute target`);
@@ -149,6 +157,10 @@ function assertSymlinkWithinRoot(root: string, relPath: string, target: string):
   const rel = relative(resolve(root), resolvedTarget);
   if (rel === ".." || rel.startsWith(`..${"/"}`) || isAbsolute(rel)) {
     throw new TreeSwapUnsafePathError(`symlink ${relPath} escapes tree root`);
+  }
+  const top = rel.split(sep)[0];
+  if (top !== undefined && PROTECTED_TARGETS.includes(top)) {
+    throw new TreeSwapUnsafePathError(`symlink ${relPath} targets protected path ${top}`);
   }
 }
 
@@ -166,7 +178,12 @@ function readEntry(root: string, relPath: string): Entry {
     assertSymlinkWithinRoot(root, relPath, target);
     return { mode: st.mode & 0o777, symlinkTarget: target };
   }
-  return { content: readFileSync(abs), mode: st.mode & 0o777 };
+  const fd = openSync(abs, fsc.O_RDONLY | fsc.O_NOFOLLOW);
+  try {
+    return { content: readFileSync(fd), mode: st.mode & 0o777 };
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function removeEntry(root: string, relPath: string): void {
@@ -188,9 +205,12 @@ function writeEntry(root: string, relPath: string, entry: Entry): void {
   if (entry.symlinkTarget !== undefined) {
     symlinkSync(entry.symlinkTarget, abs);
   } else {
-    writeFileSync(abs, entry.content ?? Buffer.alloc(0));
-    if (entry.mode !== undefined) {
-      chmodSync(abs, entry.mode); // writeFileSync's mode option is masked by umask
+    const fd = openSync(abs, fsc.O_WRONLY | fsc.O_CREAT | fsc.O_EXCL | fsc.O_NOFOLLOW, 0o600);
+    try {
+      writeFileSync(fd, entry.content ?? Buffer.alloc(0));
+      fchmodSync(fd, entry.mode); // the open mode is masked by umask
+    } finally {
+      closeSync(fd);
     }
   }
 }
@@ -220,12 +240,21 @@ export function snapshotDiff(root: string, base: string, excludes: string[] = DE
   return diff;
 }
 
-// Restores `root`'s tracked and untracked files (outside `excludes`) to
-// exactly `base`. `.loki/`, `.venv/`, `venv/` and the attempts dir are never
-// touched. After this, `git status` scoped to the same pathspecs is clean.
-export function resetToBase(root: string, base: string, excludes: string[] = DEFAULT_EXCLUDES): void {
+// Restores `root`'s tracked files (outside `excludes`) to exactly `base`,
+// and, unless keepUntracked, removes untracked files. The untracked listing
+// is taken BEFORE any checkout so the pre-reset .gitignore decides what is
+// ignored: a file the current tree ignores is never deleted. `.loki/`,
+// `.venv/`, `venv/` and the attempts dir are never touched.
+export function resetToBase(
+  root: string,
+  base: string,
+  excludes: string[] = DEFAULT_EXCLUDES,
+  opts: { keepUntracked?: boolean } = {},
+): void {
+  const untracked = opts.keepUntracked ? [] : untrackedFiles(root, excludes).filter((p) => !isExcluded(p, excludes));
   const changed = diffAgainstBase(root, base, excludes).filter(({ path }) => !isExcluded(path, excludes));
-  const toRestore = changed.filter((c) => c.status === "M" || c.status === "D").map((c) => c.path);
+  // M, D and T (type change, e.g. file <-> symlink) are all restored from base.
+  const toRestore = changed.filter((c) => c.status !== "A").map((c) => c.path);
   const toDrop = changed.filter((c) => c.status === "A").map((c) => c.path);
 
   if (toRestore.length > 0) git(root, ["checkout", base, "--", ...toRestore]);
@@ -237,14 +266,11 @@ export function resetToBase(root: string, base: string, excludes: string[] = DEF
     }
     removeEntry(root, path);
   }
-  for (const path of untrackedFiles(root, excludes)) {
-    if (isExcluded(path, excludes)) continue;
-    removeEntry(root, path);
-  }
+  for (const path of untracked) removeEntry(root, path);
 }
 
 // Applies a captured diff onto `root`. Deletes run first, deepest path
-// first, before any write — so a diff can never delete through a symlink a
+// first, before any write - so a diff can never delete through a symlink a
 // later entry in the same diff creates. Every entry is re-validated against
 // `root` (not just the tree the diff was captured from): a hand-built diff
 // gets the same guarantees as one from snapshotDiff.
@@ -276,18 +302,40 @@ export function swapAttemptIntoWorkingTree(opts: SwapOptions): void {
   const excludes = opts.excludes ?? DEFAULT_EXCLUDES;
   const winner = snapshotDiff(opts.attemptRoot, opts.base, excludes);
   const undo = snapshotDiff(opts.primaryRoot, opts.base, excludes);
+  if (opts.runDir !== undefined) {
+    mkdirSync(opts.runDir, { recursive: true });
+    const json = undo.map((e) => ({ ...e, content: e.content?.toString("base64") }));
+    writeFileSync(join(opts.runDir, "treeswap-undo.json"), JSON.stringify({ base: opts.base, entries: json }));
+  }
 
   try {
-    resetToBase(opts.primaryRoot, opts.base, excludes);
+    // Untracked files survive: the winner's diff overwrites any path it owns.
+    resetToBase(opts.primaryRoot, opts.base, excludes, { keepUntracked: true });
     applyDiff(opts.primaryRoot, winner, excludes);
   } catch (err) {
     try {
-      resetToBase(opts.primaryRoot, opts.base, excludes);
+      resetToBase(opts.primaryRoot, opts.base, excludes, { keepUntracked: true });
+      // keepUntracked left any winner-written new file behind: drop those.
+      const undone = new Set(undo.map((e) => e.path));
+      for (const e of winner) {
+        if (e.kind === "file" && !undone.has(e.path) && !inBase(opts.primaryRoot, opts.base, e.path)) {
+          removeEntry(opts.primaryRoot, e.path);
+        }
+      }
       applyDiff(opts.primaryRoot, undo, excludes);
     } catch (rollbackErr) {
       throw new AggregateError([err, rollbackErr], "treeswap: swap failed and rollback also failed");
     }
     throw err;
+  }
+}
+
+function inBase(root: string, base: string, path: string): boolean {
+  try {
+    git(root, ["cat-file", "-e", `${base}:${path}`]);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -298,16 +346,39 @@ export function swapAttemptIntoWorkingTree(opts: SwapOptions): void {
 // its registration under primaryRoot's .git/worktrees/ does not leak;
 // otherwise it is a plain recursive delete.
 export function cleanupAttempt(primaryRoot: string, runDir: string, attemptDir: string): void {
-  const attemptsRoot = realpathSync(resolve(runDir, "attempts"));
+  // realpath only the run dir; the attempts dir and the attempt itself are
+  // lstat'ed UNRESOLVED, since lstat on a realpath can never see a symlink.
+  const attemptsRoot = join(realpathSync(resolve(runDir)), "attempts");
+  let attemptsLst;
+  try {
+    attemptsLst = lstatSync(attemptsRoot);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw err;
+  }
+  if (attemptsLst.isSymbolicLink() || !attemptsLst.isDirectory()) {
+    throw new TreeSwapUnsafePathError(`refusing a symlinked or non-directory attempts dir: ${attemptsRoot}`);
+  }
+  const realPrimary = realpathSync(resolve(primaryRoot));
+  const isPrimaryOrAncestor = (p: string) => p === realPrimary || realPrimary.startsWith(p + sep);
+  if (isPrimaryOrAncestor(realpathSync(attemptsRoot))) {
+    throw new TreeSwapUnsafePathError(`attempts dir ${attemptsRoot} resolves to the primary tree`);
+  }
+  const lexical = resolve(attemptDir);
+  const parent = dirname(lexical);
   let real: string;
   try {
-    real = realpathSync(resolve(attemptDir));
+    real = join(realpathSync(parent), lexical.slice(parent.length + 1));
+    lstatSync(real);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return; // already gone
     throw err;
   }
   if (dirname(real) !== attemptsRoot) {
     throw new TreeSwapUnsafePathError(`${attemptDir} is not a direct child of ${attemptsRoot}`);
+  }
+  if (isPrimaryOrAncestor(real)) {
+    throw new TreeSwapUnsafePathError(`${attemptDir} is or contains the primary tree`);
   }
   const lst = lstatSync(real);
   if (lst.isSymbolicLink()) {
