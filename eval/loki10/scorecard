@@ -50,7 +50,8 @@ TASKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tasks")
 
 # D43/S41-17: fixed seed and resample count so the report is byte-identical
 # across runs on the same inputs.
-BOOTSTRAP_N = 10000
+BOOTSTRAP_N = 10000  # --resamples overrides (tests only)
+DEFAULT_MIN_TASKS, DEFAULT_MIN_REPS = 20, 3
 BOOTSTRAP_SEED = 41
 CI_LO, CI_HI = 2.5, 97.5
 HEADLINE_COST_RATIO = 0.5
@@ -69,7 +70,7 @@ class Refused(Exception):
 def parse_args(argv):
     labels = collections.OrderedDict()
     append = None
-    global MIN_TASKS, MIN_REPS
+    global MIN_TASKS, MIN_REPS, BOOTSTRAP_N
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -78,11 +79,13 @@ def parse_args(argv):
             if i >= len(argv):
                 raise Refused("--append needs a path")
             append = argv[i]
-        elif a in ("--min-tasks", "--min-reps"):
+        elif a in ("--min-tasks", "--min-reps", "--resamples"):
             i += 1
             if i >= len(argv) or not argv[i].isdigit():
                 raise Refused("%s needs a non-negative integer" % a)
-            if a == "--min-tasks":
+            if a == "--resamples":
+                BOOTSTRAP_N = max(1, int(argv[i]))
+            elif a == "--min-tasks":
                 MIN_TASKS = int(argv[i])
             else:
                 MIN_REPS = int(argv[i])
@@ -132,15 +135,16 @@ def stats(rows):
     done = [r for r in evaluated if r.get("completed")]
     n, completed = len(evaluated), len(done)
     costed = [r for r in evaluated if r.get("cost_usd") is not None]
+    cost_missing = len(costed) != len(evaluated)
     cost = None
-    if completed and len(costed) == len(evaluated):
+    if completed and not cost_missing:
         cost = sum(r["cost_usd"] for r in costed) / completed
     ttp = [r["time_to_pr_s"] for r in done if r.get("time_to_pr_s") is not None]
     partial = [r for r in costed if r.get("cost_source") == "partial-stream"]
     return {
         "n": n, "completed": completed,
         "completion": (completed / n) if n else None,
-        "cost": cost, "p50": nearest_rank(ttp, 50),
+        "cost": cost, "cost_missing": cost_missing, "p50": nearest_rank(ttp, 50),
         "partial_share": (len(partial) / len(costed)) if costed else None,
         "harness_sha": sorted({r.get("harness_sha") or "unknown" for r in rows}),
         "arm_model": sorted({"%s@%s" % (r.get("arm"), r.get("model")) for r in rows}),
@@ -297,13 +301,19 @@ def _guard_undefined(mark, reason, replicates):
 
 def floor_reason(raw_rows, loki_rows):
     """D43 item 2: None when the tier meets the sample floor, else the reason.
-    comparable() already proved both arms have the same n per task."""
-    per_task = collections.Counter(r["task"] for r in raw_rows)
-    if len(per_task) < MIN_TASKS:
-        return "below D43 floor: %d tasks, need %d" % (len(per_task), MIN_TASKS)
-    low = min(per_task.values())
-    if low < MIN_REPS:
-        return "below D43 floor: %d reps per task, need %d" % (low, MIN_REPS)
+    Counts EVALUATED reps (harness.is_evaluated), not rows: a task counts
+    only when BOTH arms have MIN_REPS evaluated reps."""
+    def evaluated(rows):
+        c = collections.Counter({r["task"]: 0 for r in rows})
+        c.update(r["task"] for r in rows if is_evaluated(r))
+        return c
+    e_raw, e_loki = evaluated(raw_rows), evaluated(loki_rows)
+    if len(e_raw) < MIN_TASKS:
+        return "below D43 floor: %d tasks, need %d" % (len(e_raw), MIN_TASKS)
+    ok = sum(1 for t in e_raw if min(e_raw[t], e_loki[t]) >= MIN_REPS)
+    if ok < MIN_TASKS:
+        return "below D43 floor: %d tasks with %d evaluated reps on both arms, need %d" % (
+            ok, MIN_REPS, MIN_TASKS)
     return None
 
 
@@ -328,9 +338,11 @@ def score(raw, loki, raw_rows, loki_rows, headline=False):
     completion_mark, completion_reason = _guard_undefined(
         completion_mark, completion_reason, rep["completion_diff"])
 
-    cost_pt_ok = raw["cost"] is not None and loki["cost"] is not None
-    cost_raw_ci = _ci(rep["cost_raw"]) if raw["cost"] is not None else None
-    cost_loki_ci = _ci(rep["cost_loki"]) if loki["cost"] is not None else None
+    # A missing cost capture stays red. Zero completions is not a missing
+    # capture: cost is undefined there and follows the floor/interval rules.
+    cost_pt_ok = not (raw["cost_missing"] or loki["cost_missing"])
+    cost_raw_ci = _ci(rep["cost_raw"]) if not raw["cost_missing"] else None
+    cost_loki_ci = _ci(rep["cost_loki"]) if not loki["cost_missing"] else None
     if not cost_pt_ok:
         cost_diff_ci, cost_mark, cost_reason = None, "red", "n/a: null cost row"
     elif headline:
@@ -418,6 +430,8 @@ def fmt_s_diff_ci(b):
 
 def render_pair(tier, raw_label, raw_s, loki_label, loki_s, cis, marks, reasons,
                  verdict, date, command, headline=False):
+    floor_note = "" if (MIN_TASKS, MIN_REPS) == (DEFAULT_MIN_TASKS, DEFAULT_MIN_REPS) else (
+        "Floor: %d tasks, %d evaluated reps (non-default). " % (MIN_TASKS, MIN_REPS))
     cost_row_label = "Cost per completed (headline: ratio CI vs 0.5x)" if headline else "Cost per completed"
     cost_diff_cell = fmt_ratio_ci(cis["cost_diff"]) if headline else fmt_usd_diff_ci(cis["cost_diff"])
     return "\n".join([
@@ -439,12 +453,12 @@ def render_pair(tier, raw_label, raw_s, loki_label, loki_s, cis, marks, reasons,
             fmt_s_diff_ci(cis["p50_diff"]), marks["p50"], reasons["p50"]),
         "",
         "Verdict: %s. n: %s=%d, %s=%d. Pair: %s vs %s. Partial-stream share: %s=%s, %s=%s. "
-        "Harness sha: %s=%s, %s=%s. Bootstrap: N=%d, seed=%d, clustered by task. Date: %s. Command: `%s`" % (
+        "Harness sha: %s=%s, %s=%s. Bootstrap: N=%d, seed=%d, clustered by task. %sDate: %s. Command: `%s`" % (
             verdict, raw_label, raw_s["n"], loki_label, loki_s["n"],
             ", ".join(raw_s["arm_model"]) or "none", ", ".join(loki_s["arm_model"]) or "none",
             raw_label, fmt_share(raw_s), loki_label, fmt_share(loki_s),
             raw_label, ", ".join(raw_s["harness_sha"]), loki_label, ", ".join(loki_s["harness_sha"]),
-            BOOTSTRAP_N, BOOTSTRAP_SEED, date, command),
+            BOOTSTRAP_N, BOOTSTRAP_SEED, floor_note, date, command),
     ])
 
 

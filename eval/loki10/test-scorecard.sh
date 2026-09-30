@@ -170,12 +170,28 @@ write_reps("nh", 3, lambda i, t, r: row(t, "raw-claude", "sha-nh", True, 100, 1.
 # independent, so the arms differ row by row. No arm-vs-arm signal, so no
 # mark may go green or red.
 import random
-rng = random.Random(1234)
-def noisy(arm, sha):
+def noisy(rng, arm, sha):
     def mk(i, t, r):
         return row(t, arm, sha, rng.random() < 0.5, 50 + rng.randint(0, 20), round(0.05 + rng.random() * 0.10, 4), rep=r)
     return mk
-write_reps("noise", 3, noisy("raw-claude", "sha-noise"), noisy("v10", "sha-noise"))
+for seed in range(20):
+    rng = random.Random(seed)
+    write_reps("noise%d" % seed, 3, noisy(rng, "raw-claude", "sha-noise"), noisy(rng, "v10", "sha-noise"))
+
+# ---- D43 floor counts EVALUATED reps (harness.is_evaluated), not rows.
+# Base pattern is the clear gap; `bad` turns a row into a non-evaluated one.
+def bad(r, status):
+    return dict(r, status=status, completed=False, time_to_pr_s=None, cost_usd=None, pr_opened=False, hidden_pass=False)
+def gap_raw(i, t, r): return row(t, "raw-claude", "sha-ev", i < 8, 200, 0.20, rep=r)
+def gap_loki(i, t, r): return row(t, "v10", "sha-ev", True, 100, 0.05, rep=r)
+write_reps("evl", 3, gap_raw, lambda i, t, r: gap_loki(i, t, r) if r == 1 else bad(gap_loki(i, t, r), "auth_unavailable"))
+write_reps("evr", 3, lambda i, t, r: gap_raw(i, t, r) if r == 1 else bad(gap_raw(i, t, r), "auth_unavailable"), gap_loki)
+write_reps("evi", 3, gap_raw, lambda i, t, r: gap_loki(i, t, r) if r == 1 else bad(gap_loki(i, t, r), "interrupted" if r == 2 else "arm_unavailable"))
+write_reps("evz", 3, lambda i, t, r: gap_raw(i, t, r) if i >= 5 else bad(gap_raw(i, t, r), "auth_unavailable"),
+           lambda i, t, r: gap_loki(i, t, r) if i >= 5 else bad(gap_loki(i, t, r), "auth_unavailable"))
+# F2: loki completes nothing (cost captured on every evaluated row): zero
+# completions, not a missing cost capture.
+write_reps("zc", 3, gap_raw, lambda i, t, r: row(t, "v10", "sha-ev", False, None, 0.05, rep=r))
 
 # ---- (b) clear gap at the floor: 20 tasks x 3 reps. loki completes 20/20 on
 # every rep; raw completes a fixed 8/20 on every rep. Cost and time favor loki.
@@ -320,14 +336,50 @@ nh_cost="$(row_of "$T/out.log" 'Cost per completed \|')"
 [ "$(col "$nh_cost" 8)" = "green" ] && pass "non-headline pair: 0.6x raw cost stays green" \
     || fail "non-headline pair: 0.6x raw cost mark wrong: $nh_cost"
 
-# ---- a: noise at the floor (20 tasks x 3 reps, same true rates, different
-# draws): no mark may go green or red, and the verdict is inconclusive.
-rc=0; run $(reps noise 3) || rc=$?
-[ "$rc" = 0 ] && pass "noise fixture exits 0" || fail "noise fixture rc=$rc: $(cat "$T/err.log")"
-[ "$(marks "$T/out.log")" = "inconclusive inconclusive inconclusive" ] \
-    && pass "noise: every mark inconclusive" || fail "noise: marks not all inconclusive: $(marks "$T/out.log")"
-grep -qE '^Verdict: inconclusive\.' "$T/out.log" && pass "noise: verdict inconclusive" \
-    || fail "noise: verdict not inconclusive: $(grep '^Verdict:' "$T/out.log")"
+# ---- a: noise at the floor, 20 seeds (same true rates, different draws).
+# Rate bound, not one lucky seed: at most 15 percent of the 60 marks outside
+# inconclusive, and no whole-tier green. --resamples keeps this leg fast.
+outside=0; greens=0; bad_rc=0
+for seed in $(seq 0 19); do
+    rc=0; run $(reps "noise$seed" 3) --resamples 400 || rc=$?
+    [ "$rc" = 0 ] || bad_rc=$((bad_rc + 1))
+    for m in $(marks "$T/out.log"); do [ "$m" = inconclusive ] || outside=$((outside + 1)); done
+    if grep -qE '^Verdict: green\.' "$T/out.log"; then greens=$((greens + 1)); fi
+done
+[ "$bad_rc" = 0 ] && [ "$outside" -le 9 ] && pass "noise x20 seeds: $outside/60 marks outside inconclusive (<=9)" \
+    || fail "noise x20 seeds: outside=$outside bad_rc=$bad_rc (want <=9, 0)"
+[ "$greens" = 0 ] && pass "noise x20 seeds: zero green verdicts" || fail "noise x20 seeds: $greens green verdicts"
+
+# ---- j: D43 floor counts evaluated reps, not rows. Every variant must read
+# inconclusive on every mark and name the shortfall.
+for spec in "evl:loki 1 ok + 2 auth_unavailable" "evr:raw-side mirror" "evi:interrupted/arm_unavailable"; do
+    p="${spec%%:*}"; d="${spec#*:}"
+    rc=0; run $(reps "$p" 3) || rc=$?
+    [ "$rc" = 0 ] && [ "$(marks "$T/out.log")" = "inconclusive inconclusive inconclusive" ] \
+        && grep -qE '^Verdict: inconclusive\.' "$T/out.log" \
+        && grep -qF 'below D43 floor: 0 tasks with 3 evaluated reps on both arms, need 20' "$T/out.log" \
+        && pass "evaluated floor ($d): inconclusive with shortfall reason" \
+        || fail "evaluated floor ($d): rc=$rc marks=$(marks "$T/out.log")"
+done
+rc=0; run $(reps evz 3) || rc=$?
+[ "$rc" = 0 ] && [ "$(marks "$T/out.log")" = "inconclusive inconclusive inconclusive" ] \
+    && grep -qF 'below D43 floor: 15 tasks with 3 evaluated reps on both arms, need 20' "$T/out.log" \
+    && pass "evaluated floor: 5 of 20 tasks with no evaluated rows is inconclusive (15 of 20)" \
+    || fail "evaluated floor (5 dead tasks): rc=$rc marks=$(marks "$T/out.log")"
+
+# ---- k: F2 zero completions is not a missing cost capture.
+rc=0; run $(reps zc 3) --resamples 400 || rc=$?
+zc_cost="$(row_of "$T/out.log" 'Cost per completed')"
+[ "$rc" = 0 ] && [ "$(col "$zc_cost" 8)" = "inconclusive" ] && ! grep -qF 'null cost row' <<<"$zc_cost" \
+    && pass "zero completions: cost inconclusive, not 'n/a: null cost row'" \
+    || fail "zero completions: cost row wrong: $zc_cost"
+
+# ---- l: a non-default floor is printed on the verdict line.
+rc=0; run $(reps one 3) --min-tasks 1 --resamples 200 || rc=$?
+grep -E '^Verdict:' "$T/out.log" | grep -qF 'Floor: 1 tasks, 3 evaluated reps (non-default)' \
+    && pass "non-default floor printed on the verdict line" || fail "non-default floor not on verdict line"
+rc=0; run $(reps gap 3) --resamples 200 || rc=$?
+if grep -qF 'Floor:' "$T/out.log"; then fail "default floor leaked onto the verdict line"; else pass "default floor not printed"; fi
 
 # ---- b: clear gap (loki 20/20, raw 8/20, 3 reps) -> green completion
 rc=0
@@ -407,7 +459,7 @@ grep -qF 'below D43 floor: 19 tasks, need 20' "$T/out.log" && pass "19 tasks: re
 rc=0; run $(reps r2 2) || rc=$?
 [ "$(marks "$T/out.log")" = "inconclusive inconclusive inconclusive" ] \
     && pass "2 reps: clear gap still inconclusive below the rep floor" || fail "2 reps: marks: $(marks "$T/out.log")"
-grep -qF 'below D43 floor: 2 reps per task, need 3' "$T/out.log" && pass "2 reps: reason" || fail "2 reps: reason missing"
+grep -qF 'below D43 floor: 0 tasks with 3 evaluated reps on both arms, need 20' "$T/out.log" && pass "2 reps: reason" || fail "2 reps: reason missing"
 
 # ---- i: the overrides are accepted and validated (tests only).
 rc=0; run $(reps one 3) --min-tasks 1 --min-reps 3 || rc=$?
