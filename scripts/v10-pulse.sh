@@ -531,7 +531,9 @@ if main_sha is not None:
         _gh_argv = shlex.split(os.environ["PULSE_GH_CMD"])
     else:
         _gh_argv = [
-            "gh", "run", "list", "--branch", MAIN_REF, "--commit", main_sha,
+            # No --branch: under D44 a promoted commit's Tier B ran on train/N
+            # (headBranch train/N), so a main-only filter would hide it.
+            "gh", "run", "list", "--commit", main_sha, "--event", "push",
             "--json", "status,conclusion,workflowName,event,updatedAt", "--limit", "20",
         ]
 
@@ -1854,7 +1856,7 @@ else:
         if _d44_age > _D44_GREEN_MIN:
             add_violation(
                 "RELEASE_CADENCE",
-                "main %s has had green Tier B for %.1f minutes (by run completion time) and is newer than %s (D44 threshold %d)"
+                "D44: green unreleased main commit %s has had green Tier B for %.1f minutes (by run completion time) and is newer than %s (D44 threshold %d)"
                 % (main_sha[:8], _d44_age, unreleased["tag"], _D44_GREEN_MIN),
             )
 
@@ -3197,7 +3199,7 @@ _NEXT_ACTION_TEXT = {
     "OPUS_SHARE": "re-pin the named engineer(s) to sonnet, opus is over its D13 30% share of last-hour engineer output tokens",
     "MOAT_REGRESSION": "identify which moat property regressed and revert or fix it before any further merge",
     "UNRELEASED_MERGE": "cut a release now, main has been unreleased past the 30-minute budget",
-    "RELEASE_CADENCE": "cut a release now (D37 cadence)",
+    "RELEASE_CADENCE": "cut a release now (D37 cadence, or D44 green unreleased main commit)",
     "MAIN_RED_BY_MERGE": "main's latest push failed Tier B: fix forward or revert the named SHA before any further merge (D44)",
     "TRAIN_LATE": "push a release train now, merged-unreleased commits exist and cadence has slipped past the 25-minute budget",
     "REVIEW_STALE": "escalate or finish review for the named slice(s), they have exceeded the 45-minute budget",
