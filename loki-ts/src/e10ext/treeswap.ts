@@ -63,7 +63,7 @@ export interface SwapOptions {
 // ---- git plumbing --------------------------------------------------------
 
 function git(root: string, args: string[]): string {
-  return execFileSync("git", ["-C", root, ...args], { encoding: "utf8" });
+  return execFileSync("git", ["-C", root, ...args], { encoding: "utf8", env: { ...process.env } });
 }
 
 function pathspecs(excludes: string[]): string[] {
@@ -81,7 +81,7 @@ function diffAgainstBase(root: string, base: string, excludes: string[]): Status
   const raw = execFileSync(
     "git",
     ["-C", root, "diff", "--name-status", "--no-renames", "-z", base, "--", ...pathspecs(excludes)],
-    { encoding: "utf8" },
+    { encoding: "utf8", env: { ...process.env } },
   );
   const parts = raw.split("\0").filter((p) => p.length > 0);
   const out: StatusEntry[] = [];
@@ -98,7 +98,7 @@ function untrackedFiles(root: string, excludes: string[]): string[] {
   const raw = execFileSync(
     "git",
     ["-C", root, "ls-files", "-z", "--others", "--exclude-standard", "--", ...pathspecs(excludes)],
-    { encoding: "utf8" },
+    { encoding: "utf8", env: { ...process.env } },
   );
   return raw.split("\0").filter((p) => p.length > 0);
 }
