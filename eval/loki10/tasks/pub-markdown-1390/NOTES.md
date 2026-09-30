@@ -11,22 +11,22 @@
   tests/test_syntax/extensions/test_fenced_code.py | 42 +++;
   6 files changed, 153 insertions(+), 40 deletions(-).
   Source-only diff (2 .py files under markdown/) is eval/loki10/refdiff/pub-markdown-1390.diff.
-- hidden files: upstream tests at merge_sha, verbatim, both taken whole (no -k).
+- hidden files: upstream tests at merge_sha, both taken whole (no -k), plus ONE AUTHORED test (not upstream) appended to test_fenced_code.py::TestFencedCode: testFencedCodeCurlyInQuotedAttrValueWithoutAttrList. It renders the issue's own example ('``` { .c data-copy="int main() { return 0; }" }') with extensions=['fenced_code'] only and expects the fence to be recognized (class language-c). It encodes only what the issue states.
   Issue-stated behavior: braces inside a quoted attr value parse in a fenced-code
   attr list and in a heading attr list (test_curly_in_double_quote,
   test_curly_in_single_quote, testFencedCodeCurlyInAttrs). The other upstream
   tests in these files (stray closing brace, historic ignore rules, mismatched
   braces) already pass at ref; they pin existing behavior as regression guards
   against over-broad fixes and assert no new API.
-- RED at ref (exact hidden.run, fresh venv): 3 failed, 26 passed, 19 skipped, rc=1
+- RED at ref (exact hidden.run, fresh venv): 4 failed, 26 passed, 19 skipped, rc=1
   (real assertion failures, no collection/import errors):
   test_attr_list::test_curly_in_double_quote, ::test_curly_in_single_quote,
-  test_fenced_code::testFencedCodeCurlyInAttrs. The 19 skips are pygments-gated
+  test_fenced_code::testFencedCodeCurlyInAttrs and the authored test. The 19 skips are pygments-gated
   tests, skipped identically at ref and at merge.
-- GREEN at merge_sha: 29 passed, 19 skipped, rc=0.
+- GREEN at merge_sha: 30 passed, 19 skipped, rc=0.
 - Selected tests use no clock, randomness or network (network only at setup).
 
-## One-file fix attempts (all at merge^1 with the hidden tests, exact command)
+## One-file fix attempts (round 1 counts, taken before the authored test was added, so one fewer test)
 Behavior lives in two independent files: attr_list.py (heading/inline attr
 parsing) and fenced_code.py (fence-opener regex). The tests exercise each separately.
 1. Upstream attr_list.py diff only, fenced_code.py untouched: 1 failed, 28 passed, rc=1
@@ -47,3 +47,21 @@ attrs group) with no remainder handling: 3 failed, 26 passed, rc=1
 ## No-op baseline
 STUB_MODE=noop through eval/loki10/run.sh (raw-claude arm, stub-arm.sh):
 hidden_pass=false, completed=False.
+
+## Review round 2 (reviewer's monkeypatch fix)
+Reviewer fix: upstream attr_list.py diff plus a `_patch_fenced()` that rewrites
+FencedBlockPreprocessor.FENCED_BLOCK_RE at import time. hidden.run now lists
+test_fenced_code.py BEFORE test_attr_list.py. Results (same command, file order
+in parentheses, all at ref with the hidden tests):
+- monkeypatch, order attr_list then fenced: 30 passed, rc=0 (still passes; the
+  authored test does not stop it, because fenced_code.py itself imports attr_list.py,
+  so attr_list is always loaded whichever extensions the test names).
+- monkeypatch, order fenced then attr_list (the committed order): 22 failed,
+  8 passed, rc=1. The import-time patch does `from .fenced_code import ...` while
+  fenced_code is still mid-import (circular), so extension loading fails.
+- fenced_code.py-only fix (committed order): 3 failed, 27 passed, rc=1
+  (test_curly_in_double_quote, test_curly_in_single_quote, testFencedCodeMismatchedCurlyInAttrs).
+- upstream diff, committed order: RED rc=1 (4 failed), GREEN rc=0 (30 passed).
+Caveat: the monkeypatch is rejected only by import order, not by behavior; a
+lazily applied patch could still pass. No behavior test can tell them apart, as
+the patch and upstream produce identical output.

@@ -13,7 +13,7 @@
       "tests/test_syntax/extensions/test_attr_list.py",
       "tests/test_syntax/extensions/test_fenced_code.py"
     ],
-    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_syntax/extensions/test_attr_list.py tests/test_syntax/extensions/test_fenced_code.py"
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_syntax/extensions/test_fenced_code.py tests/test_syntax/extensions/test_attr_list.py"
   },
   "timeout_s": 900,
   "tier": "medium"

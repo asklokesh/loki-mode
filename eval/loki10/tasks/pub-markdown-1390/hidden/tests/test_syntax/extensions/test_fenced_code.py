@@ -436,6 +436,28 @@ class TestFencedCode(TestCase):
             extensions=['fenced_code', 'attr_list']
         )
 
+    # AUTHORED (not upstream): the issue's own example, rendered with fenced_code
+    # only (attr_list not loaded). Encodes only what issue #1390 states: braces
+    # inside a double-quoted attribute value must not end the attribute list, so the
+    # fence is still recognized (language class c) without attr_list.
+    def testFencedCodeCurlyInQuotedAttrValueWithoutAttrList(self):
+        self.assertMarkdownRenders(
+            self.dedent(
+                '''
+                ``` { .c data-copy="int main() { return 0; }" }
+                Try copying me for some C code
+                ```
+                '''
+            ),
+            self.dedent(
+                '''
+                <pre><code class="language-c">Try copying me for some C code
+                </code></pre>
+                '''
+            ),
+            extensions=['fenced_code']
+        )
+
 
 class TestFencedCodeWithCodehilite(TestCase):
 
