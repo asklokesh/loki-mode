@@ -31,12 +31,14 @@ committed refdiff. Exits 1 on a fetch failure or a mismatch. Needs network
 and git.
 """
 import argparse
+import ast
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import textwrap
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_TASKS_DIR = os.path.join(HERE, "tasks")
@@ -100,13 +102,82 @@ def filter_diff_text(text):
     return "".join(block for path, block in split_diff_blocks(text) if is_counted_source(path))
 
 
+class _Strip(ast.NodeTransformer):
+    """Drop docstrings, annotations and TYPE_CHECKING blocks (E-136)."""
+
+    def _body(self, node):
+        b = node.body
+        if b and isinstance(b[0], ast.Expr) and isinstance(b[0].value, ast.Constant) \
+                and isinstance(b[0].value.value, str):
+            node.body = b[1:] or [ast.Pass()]
+        return self.generic_visit(node)
+
+    visit_Module = visit_ClassDef = _body
+
+    def _func(self, node):
+        node.returns = None
+        return self._body(node)
+
+    visit_FunctionDef = visit_AsyncFunctionDef = _func
+
+    def visit_arg(self, node):
+        node.annotation = None
+        return node
+
+    def visit_AnnAssign(self, node):
+        if node.value is None:
+            return ast.Pass()
+        return self.visit(ast.Assign(targets=[node.target], value=node.value, lineno=0))
+
+    def visit_If(self, node):
+        t = node.test
+        if (isinstance(t, ast.Name) and t.id == "TYPE_CHECKING") or \
+                (isinstance(t, ast.Attribute) and t.attr == "TYPE_CHECKING"):
+            return ast.Pass()
+        return self.generic_visit(node)
+
+
+def _norm(src):
+    """ast.dump of src with docstrings/annotations stripped; raises SyntaxError."""
+    src = textwrap.dedent(src)
+    return ast.dump(_Strip().visit(ast.parse(src)))
+
+
+def changes_code(block):
+    """False only when every hunk of a file's diff block provably changes just
+    comments, docstrings or annotations. A refdiff carries hunks, not whole
+    files, so each hunk's before/after fragment is compared; a fragment that
+    does not parse (cut mid-statement) counts the file, with a warning:
+    never shrink a task silently."""
+    hunks = []
+    for line in block.splitlines():
+        if line.startswith("@@"):
+            hunks.append(([], []))
+        elif hunks and line[:1] in (" ", "-", "+", ""):
+            tag, body = line[:1], line[1:]
+            if tag != "+":
+                hunks[-1][0].append(body)
+            if tag != "-":
+                hunks[-1][1].append(body)
+    if not hunks:
+        return True
+    try:
+        for old, new in hunks:
+            if _norm("\n".join(old) + "\n") != _norm("\n".join(new) + "\n"):
+                return True
+    except (SyntaxError, ValueError) as e:
+        print("warning: ast compare failed (%s); counting file" % e, file=sys.stderr)
+        return True
+    return False
+
+
 def measure(text):
     """(files, lines) for a diff already restricted to counted sources (or
     not -- this re-applies the filter itself, so a raw full diff works too)."""
     files = 0
     lines = 0
     for path, block in split_diff_blocks(text):
-        if not is_counted_source(path):
+        if not is_counted_source(path) or not changes_code(block):
             continue
         files += 1
         for bline in block.splitlines():
