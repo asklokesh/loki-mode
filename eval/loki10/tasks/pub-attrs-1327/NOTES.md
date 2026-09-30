@@ -29,8 +29,5 @@
   positional arguments: 'instance' and 'field'`). Mutant reverted
   (`git checkout -- src/attr/_make.py`); GREEN re-confirmed (`7 passed, 61
   deselected in 0.03s`, rc=0).
-- D30 no-op baseline: not run through run.sh directly in this pass (network/
-  worktree sandbox); the RED/GREEN/mutant runs above used the exact
-  hidden.run command by hand at each commit, matching the methodology of the
-  other medium tasks' initial verification.
+- D30 no-op baseline (run 2026-09-30 through run.sh): `STUB_MODE=noop LOKI_EVAL_CLAUDE_BIN=<abs path>/eval/loki10/fixtures/stub-arm.sh bash eval/loki10/run.sh --arm raw-claude --task pub-attrs-1327` gave status=ok, hidden_pass=false, completed=false, exit_code=0, pr_opened=false. The stub path must be absolute: a relative path gives exit_code 127 (stub not found), which is not a valid baseline.
 - Requires no special host setup; verified on this host's Python 3.14.6.

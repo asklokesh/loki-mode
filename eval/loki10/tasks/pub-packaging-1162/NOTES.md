@@ -55,6 +55,4 @@
   mostly `AttributeError` since the recomputed fields are never set). Mutant
   reverted (`git checkout -- src/packaging/version.py`); GREEN re-confirmed
   (`13 passed, 51500 deselected in 1.35s`, rc=0).
-- D30 no-op baseline: not run through run.sh directly in this pass; RED/GREEN/
-  mutant above were verified by hand at each commit with the exact hidden.run
-  command, matching the other medium tasks' initial verification.
+- D30 no-op baseline (run 2026-09-30 through run.sh): `STUB_MODE=noop LOKI_EVAL_CLAUDE_BIN=<abs path>/eval/loki10/fixtures/stub-arm.sh bash eval/loki10/run.sh --arm raw-claude --task pub-packaging-1162` gave status=ok, hidden_pass=false, completed=false, exit_code=0, pr_opened=false. The stub path must be absolute: a relative path gives exit_code 127 (stub not found), which is not a valid baseline.
