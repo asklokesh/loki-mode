@@ -3,7 +3,7 @@
 // S41-12 wall check (docs/v10/SCORECARD-PLAN.md, docs/v10/DECISIONS.md D42(1)).
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, statSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -79,7 +79,7 @@ afterEach(() => {
 
 describe("treeswap round trip (S41-12 wall check)", () => {
   test("resetToBase leaves git status clean; applyDiff restores byte for byte", () => {
-    const { primary, base, attempt } = makeFixture();
+    const { primary, base, attempt, runDir } = makeFixture();
 
     // Attempt mutates a.txt (modify), adds new.txt (untracked), deletes b/c.txt.
     write(attempt, "a.txt", "attempt-a");
@@ -107,7 +107,7 @@ describe("treeswap round trip (S41-12 wall check)", () => {
   });
 
   test("a mutation that skips untracked files goes red", () => {
-    const { primary, base, attempt } = makeFixture();
+    const { primary, base, attempt, runDir } = makeFixture();
     write(attempt, "new.txt", "attempt-new");
     const diff = snapshotDiff(attempt, base);
     expect(diff.some((e) => e.path === "new.txt")).toBe(true);
@@ -119,12 +119,12 @@ describe("treeswap round trip (S41-12 wall check)", () => {
 
 describe("swapAttemptIntoWorkingTree", () => {
   test("a successful swap leaves the working tree byte-identical to the chosen attempt", () => {
-    const { primary, base, attempt } = makeFixture();
+    const { primary, base, attempt, runDir } = makeFixture();
     write(attempt, "a.txt", "winner-a");
     write(attempt, "b/c.txt", "winner-c");
     write(attempt, "new.txt", "winner-new");
 
-    swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base });
+    swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir });
 
     for (const rel of ["a.txt", "b/c.txt", "new.txt"]) {
       expect(readFileSync(join(primary, rel))).toEqual(readFileSync(join(attempt, rel)));
@@ -133,7 +133,7 @@ describe("swapAttemptIntoWorkingTree", () => {
   });
 
   test("a failure mid-swap leaves the original tree intact", () => {
-    const { primary, base, attempt } = makeFixture();
+    const { primary, base, attempt, runDir } = makeFixture();
     write(attempt, "a.txt", "winner-a");
     write(attempt, "b/c.txt", "winner-c");
 
@@ -147,7 +147,7 @@ describe("swapAttemptIntoWorkingTree", () => {
     // already been written: a genuine partial-write, not a pre-check reject.
     chmodSync(join(primary, "b"), 0o555);
     try {
-      expect(() => swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base })).toThrow();
+      expect(() => swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir })).toThrow();
     } finally {
       chmodSync(join(primary, "b"), 0o755);
     }
@@ -158,10 +158,10 @@ describe("swapAttemptIntoWorkingTree", () => {
   });
 
   test("a symlink escaping the tree root is refused", () => {
-    const { primary, base, attempt } = makeFixture();
+    const { primary, base, attempt, runDir } = makeFixture();
     symlinkSync("../../../etc/evil", join(attempt, "escape"));
 
-    expect(() => swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base })).toThrow(
+    expect(() => swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir })).toThrow(
       TreeSwapUnsafePathError,
     );
     expect(existsSync(join(primary, "escape"))).toBe(false);
@@ -169,7 +169,7 @@ describe("swapAttemptIntoWorkingTree", () => {
   });
 
   test("write-then-delete-through-a-new-symlink is refused, not just the read side", () => {
-    const { primary, base, attempt } = makeFixture();
+    const { primary, base, attempt, runDir } = makeFixture();
     // Replace tracked dir b/ with a symlink that escapes, and (in the same
     // diff) delete a path under the old b/ - if writes ran before deletes,
     // or the write-side check were skipped, the delete would follow the
@@ -226,10 +226,10 @@ describe("cleanupAttempt", () => {
 
 describe("S41-12 review findings B1-B5", () => {
   test("B1: untracked primary files survive a successful swap", () => {
-    const { primary, base, attempt } = makeFixture();
+    const { primary, base, attempt, runDir } = makeFixture();
     write(primary, "notes.txt", "user-notes");
     write(attempt, "a.txt", "winner-a");
-    swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base });
+    swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir });
     expect(readFileSync(join(primary, "notes.txt"), "utf8")).toBe("user-notes");
     expect(readFileSync(join(primary, "a.txt"), "utf8")).toBe("winner-a");
   });
@@ -256,10 +256,10 @@ describe("S41-12 review findings B1-B5", () => {
   });
 
   test("B4: excludes are top-level only; a nested src/venv/cfg.py is kept", () => {
-    const { primary, base, attempt } = makeFixture();
+    const { primary, base, attempt, runDir } = makeFixture();
     write(attempt, "src/venv/cfg.py", "cfg");
     expect(snapshotDiff(attempt, base).some((e) => e.path === "src/venv/cfg.py")).toBe(true);
-    swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base });
+    swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir });
     expect(readFileSync(join(primary, "src", "venv", "cfg.py"), "utf8")).toBe("cfg");
   });
 
@@ -278,5 +278,64 @@ describe("S41-12 review findings B1-B5", () => {
     expect(readFileSync(join(runDir, "treeswap-undo.json"), "utf8")).toContain("notes.txt");
     symlinkSync(".git/config", join(attempt, "sneaky"));
     expect(() => snapshotDiff(attempt, base)).toThrow(TreeSwapUnsafePathError);
+  });
+});
+
+describe("S41-12 round-2 review findings", () => {
+  test("R2-1: a failed rollback still restores the user's uncommitted edit", () => {
+    const { primary, base, attempt, runDir } = makeFixture();
+    write(primary, "a.txt", "USER-EDIT");
+    write(primary, "y", "user-file");
+    write(attempt, "y/z.txt", "winner");
+    expect(() => swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir })).toThrow();
+    expect(readFileSync(join(primary, "a.txt"), "utf8")).toBe("USER-EDIT");
+    expect(readFileSync(join(primary, "y"), "utf8")).toBe("user-file");
+  });
+
+  test("R2-2: a staged new file and staged edit survive a successful swap", () => {
+    const { primary, base, attempt, runDir } = makeFixture();
+    write(primary, "staged.txt", "user-staged");
+    write(primary, "b/c.txt", "user-staged-edit");
+    git(primary, ["add", "staged.txt", "b/c.txt"]);
+    write(attempt, "a.txt", "winner-a");
+    swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir });
+    expect(readFileSync(join(primary, "staged.txt"), "utf8")).toBe("user-staged");
+    expect(readFileSync(join(primary, "b/c.txt"), "utf8")).toBe("user-staged-edit");
+    expect(readFileSync(join(primary, "a.txt"), "utf8")).toBe("winner-a");
+    expect(git(primary, ["diff", "--cached", "--name-only"]).split("\n")).toContain("staged.txt");
+  });
+
+  test("R2-3: an ignored user file the winner force-adds is restored on rollback", () => {
+    const { primary, base, attempt, runDir } = makeFixture();
+    write(primary, ".gitignore", "ignored.txt\nbuild/\n");
+    git(primary, ["commit", "-q", "-am", "ignore build"]);
+    const base2 = git(primary, ["rev-parse", "HEAD"]).trim();
+    git(attempt, ["checkout", "-q", "--detach", base2]);
+    write(primary, "build/out.txt", "USER-IGNORED");
+    write(attempt, "build/out.txt", "winner-out");
+    git(attempt, ["add", "-f", "build/out.txt"]);
+    write(attempt, "b/c.txt", "winner-c");
+    chmodSync(join(primary, "b"), 0o555); // a later write fails
+    try {
+      expect(() => swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base: base2, runDir })).toThrow();
+    } finally {
+      chmodSync(join(primary, "b"), 0o755);
+    }
+    expect(readFileSync(join(primary, "build/out.txt"), "utf8")).toBe("USER-IGNORED");
+  });
+
+  test("R2-4: the undo file is 0600 and a planted symlink is not followed", () => {
+    const { primary, base, attempt, runDir } = makeFixture();
+    write(primary, "secret.txt", "s3cret");
+    write(attempt, "a.txt", "winner-a");
+    swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir });
+    expect(statSync(join(runDir, "treeswap-undo.json")).mode & 0o777).toBe(0o600);
+
+    const victim = join(tmp("victim"), "victim.txt");
+    writeFileSync(victim, "VICTIM");
+    rmSync(join(runDir, "treeswap-undo.json"));
+    symlinkSync(victim, join(runDir, "treeswap-undo.json"));
+    expect(() => swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir })).toThrow();
+    expect(readFileSync(victim, "utf8")).toBe("VICTIM");
   });
 });

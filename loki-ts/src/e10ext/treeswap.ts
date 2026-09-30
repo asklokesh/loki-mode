@@ -34,6 +34,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
+const UNDO_FILE = "treeswap-undo.json";
 export const DEFAULT_EXCLUDES = [".loki", ".venv", "venv", "attempts"];
 
 export interface DiffEntry {
@@ -56,7 +57,7 @@ export interface SwapOptions {
   attemptRoot: string; // the chosen attempt's worktree, under <runDir>/attempts/
   base: string; // git SHA both trees started from
   excludes?: string[];
-  runDir?: string; // when set, the undo snapshot is persisted to <runDir>/treeswap-undo.json
+  runDir: string; // the undo record is persisted to <runDir>/treeswap-undo.json
 }
 
 // ---- git plumbing --------------------------------------------------------
@@ -292,37 +293,65 @@ export function applyDiff(root: string, diff: DiffEntry[], excludes: string[] = 
 }
 
 // Merges attemptRoot's departure from `base` into primaryRoot. Reads happen
-// first (snapshotDiff of both trees): any failure there throws before
-// primaryRoot is touched. If the write phase fails partway, primaryRoot is
-// rolled back to the state it was in before this call, via the same two
-// primitives run in reverse (a compensating action, not filesystem
-// atomicity: primaryRoot sits inside a nested runDir, so a stage-and-rename
-// swap is not available here).
+// first: any failure there throws before primaryRoot is touched. Before any
+// write, an undo record is persisted (0600, no symlink follow) to
+// <runDir>/treeswap-undo.json holding: the primary's departure from base
+// (tracked edits, staged adds, untracked), the primary's current content at
+// EVERY path the winner will write (ignored or not), and the staged paths.
+// If the write phase fails partway, restoreFromUndo rolls primaryRoot back
+// from that record (a compensating action, not filesystem atomicity).
+// User content the winner does not own (untracked, staged) survives a
+// successful swap too.
 export function swapAttemptIntoWorkingTree(opts: SwapOptions): void {
   const excludes = opts.excludes ?? DEFAULT_EXCLUDES;
   const winner = snapshotDiff(opts.attemptRoot, opts.base, excludes);
   const undo = snapshotDiff(opts.primaryRoot, opts.base, excludes);
-  if (opts.runDir !== undefined) {
-    mkdirSync(opts.runDir, { recursive: true });
-    const json = undo.map((e) => ({ ...e, content: e.content?.toString("base64") }));
-    writeFileSync(join(opts.runDir, "treeswap-undo.json"), JSON.stringify({ base: opts.base, entries: json }));
+  const owned = new Set(winner.map((e) => e.path));
+
+  const pre: DiffEntry[] = [];
+  const absent: string[] = [];
+  for (const path of owned) {
+    const abs = safeJoin(opts.primaryRoot, path);
+    let st;
+    try {
+      st = lstatSync(abs);
+    } catch {
+      absent.push(path);
+      continue;
+    }
+    if (st.isDirectory()) continue;
+    const e = readEntry(opts.primaryRoot, path);
+    pre.push({ path, kind: "file", content: e.content, mode: e.mode, symlinkTarget: e.symlinkTarget });
+  }
+  const staged = git(opts.primaryRoot, ["diff", "--cached", "--name-only", "--no-renames", "-z", opts.base, "--", ...pathspecs(excludes)])
+    .split("\0")
+    .filter((p) => p.length > 0 && !isExcluded(p, excludes));
+
+  mkdirSync(opts.runDir, { recursive: true });
+  const enc = (l: DiffEntry[]) => l.map((e) => ({ ...e, content: e.content?.toString("base64") }));
+  const fd = openSync(
+    join(opts.runDir, UNDO_FILE),
+    fsc.O_WRONLY | fsc.O_CREAT | fsc.O_TRUNC | fsc.O_NOFOLLOW,
+    0o600,
+  );
+  try {
+    fchmodSync(fd, 0o600);
+    writeFileSync(fd, JSON.stringify({ base: opts.base, entries: enc(undo), pre: enc(pre), absent, staged }));
+  } finally {
+    closeSync(fd);
   }
 
   try {
     // Untracked files survive: the winner's diff overwrites any path it owns.
     resetToBase(opts.primaryRoot, opts.base, excludes, { keepUntracked: true });
     applyDiff(opts.primaryRoot, winner, excludes);
+    // Staged content the winner does not touch survives the reset.
+    const keep = new Set(staged.filter((p) => !owned.has(p)));
+    applyDiff(opts.primaryRoot, undo.filter((e) => keep.has(e.path)), excludes);
+    restage(opts.primaryRoot, undo, [...keep]);
   } catch (err) {
     try {
-      resetToBase(opts.primaryRoot, opts.base, excludes, { keepUntracked: true });
-      // keepUntracked left any winner-written new file behind: drop those.
-      const undone = new Set(undo.map((e) => e.path));
-      for (const e of winner) {
-        if (e.kind === "file" && !undone.has(e.path) && !inBase(opts.primaryRoot, opts.base, e.path)) {
-          removeEntry(opts.primaryRoot, e.path);
-        }
-      }
-      applyDiff(opts.primaryRoot, undo, excludes);
+      restoreFromUndo(opts.primaryRoot, opts.runDir, excludes);
     } catch (rollbackErr) {
       throw new AggregateError([err, rollbackErr], "treeswap: swap failed and rollback also failed");
     }
@@ -330,13 +359,51 @@ export function swapAttemptIntoWorkingTree(opts: SwapOptions): void {
   }
 }
 
-function inBase(root: string, base: string, path: string): boolean {
-  try {
-    git(root, ["cat-file", "-e", `${base}:${path}`]);
-    return true;
-  } catch {
-    return false;
+function restage(root: string, undo: DiffEntry[], paths: string[]): void {
+  const kinds = new Map(undo.map((e) => [e.path, e.kind]));
+  for (const p of paths) {
+    if (kinds.get(p) === "delete") git(root, ["rm", "-q", "--cached", "--ignore-unmatch", "--", p]);
+    else git(root, ["add", "-f", "--", p]);
   }
+}
+
+function removeLenient(root: string, relPath: string): void {
+  try {
+    removeEntry(root, relPath);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "ENOTDIR" && code !== "EISDIR") throw err;
+  }
+}
+
+// Rolls primaryRoot back to the state recorded in <runDir>/treeswap-undo.json.
+// Every step runs even if an earlier one fails (the user's snapshot is applied
+// last and must never be skipped); errors are collected and thrown together.
+export function restoreFromUndo(primaryRoot: string, runDir: string, excludes: string[] = DEFAULT_EXCLUDES): void {
+  const rec = JSON.parse(readFileSync(join(runDir, UNDO_FILE), "utf8")) as {
+    base: string;
+    entries: (Omit<DiffEntry, "content"> & { content?: string })[];
+    pre: (Omit<DiffEntry, "content"> & { content?: string })[];
+    absent: string[];
+    staged: string[];
+  };
+  const dec = (l: typeof rec.entries): DiffEntry[] =>
+    l.map((e) => ({ ...e, content: e.content === undefined ? undefined : Buffer.from(e.content, "base64") }));
+  const entries = dec(rec.entries);
+  const errors: unknown[] = [];
+  const step = (fn: () => void) => {
+    try {
+      fn();
+    } catch (e) {
+      errors.push(e);
+    }
+  };
+  step(() => resetToBase(primaryRoot, rec.base, excludes, { keepUntracked: true }));
+  for (const p of rec.absent) step(() => removeLenient(primaryRoot, p));
+  step(() => applyDiff(primaryRoot, dec(rec.pre), excludes));
+  step(() => applyDiff(primaryRoot, entries, excludes));
+  step(() => restage(primaryRoot, entries, rec.staged));
+  if (errors.length > 0) throw new AggregateError(errors, "treeswap: rollback incomplete");
 }
 
 // Removes a losing attempt's tree by exact path only (no glob). Refuses
