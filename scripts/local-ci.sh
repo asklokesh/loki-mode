@@ -437,6 +437,7 @@ declare -a _FAST_KEEP=(
   # nothing else in CI can see this class. Measured 0.1s (one node graph walk).
   "tests/test-web-app-no-orphan-components.sh"
   "tests/test-release-sbom-attached.sh"       # 0.2s
+  "tests/test-release-dist-guard.sh"          # E-133, release.sh dist-map path guard
   # Guards two shipped behaviors no other suite covers: a pause must not wait
   # on a keypress that cannot arrive off a TTY (it either spun forever or was
   # falsely resumed by stray stdin bytes), and a finished run must state the
@@ -1665,6 +1666,9 @@ run_check "tests/test-web-app-no-orphan-components.sh (no unreachable web-app mo
 # badge. Static check of the workflow definition; measured 0.2s.
 run_check "tests/test-release-sbom-attached.sh (npm SBOM ships as a release asset)" \
   "bash tests/test-release-sbom-attached.sh 2>&1 | tail -3"
+
+run_check "tests/test-release-dist-guard.sh (release.sh refuses absolute or escaping dist map sources, E-133)" \
+  "bash tests/test-release-dist-guard.sh 2>&1 | tail -3"
 
 # The guard above is only a gate if it REJECTS. This mutates a copy of the tree
 # and proves it fails on a same-count rename, a deletion, absent npm and absent
