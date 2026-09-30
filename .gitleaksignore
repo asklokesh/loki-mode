@@ -88,3 +88,6 @@ eval/loki10/tasks/pub-werkzeug-3271/task.json:sourcegraph-access-token:8
 bbe83c7ad70132cfd77635eb019fd68db244ff13:tests/test-eval-archive.sh:generic-api-key:35
 bbe83c7ad70132cfd77635eb019fd68db244ff13:tests/test-eval-archive.sh:aws-access-token:75
 bbe83c7ad70132cfd77635eb019fd68db244ff13:tests/test-eval-archive.sh:aws-access-token:88
+fa26bfc091e477c020a4f07cb31b3c6636bf27ca:loki-ts/src/engine10/stages/seal.ts:generic-api-key:68
+fa26bfc091e477c020a4f07cb31b3c6636bf27ca:loki-ts/tests/engine10/seal.test.ts:generic-api-key:174
+a5ae6373adc952e9a8efd3999640769d5b18019c:loki-ts/dist/loki.js:generic-api-key:1244
