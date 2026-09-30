@@ -105,6 +105,7 @@ def parse_args(argv):
 def load_label_rows(paths):
     """Section 2: dedupe each rep file on its own, then concatenate."""
     rows = []
+    seen = {}  # run_id -> first file; a genuine rep never shares one
     for p in paths:
         try:
             with open(p, encoding="utf-8") as f:
@@ -113,7 +114,13 @@ def load_label_rows(paths):
             raise Refused("cannot read %s: %s" % (p, e))
         if not file_rows:
             raise Refused("%s has no result rows" % p)
-        rows.extend(dedupe(file_rows))
+        file_rows = dedupe(file_rows)
+        for r in file_rows:
+            rid = r.get("run_id")
+            if rid in seen:
+                raise Refused("run_id %s appears in both %s and %s: one rep counted twice" % (rid, seen[rid], p))
+            seen[rid] = p
+        rows.extend(file_rows)
     return rows
 
 

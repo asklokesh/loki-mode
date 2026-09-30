@@ -378,8 +378,19 @@ done
 rc=0; run $(reps evz 3) || rc=$?
 [ "$rc" = 0 ] && [ "$(marks "$T/out.log")" = "inconclusive inconclusive inconclusive" ] \
     && grep -qF 'below D43 floor: 5 of 20 tasks below 3 evaluated reps on both arms' "$T/out.log" \
-    && pass "evaluated floor: 5 of 20 tasks with no evaluated rows is inconclusive (15 of 20)" \
+    && pass "evaluated floor: 5 of 20 tasks with no evaluated rows is inconclusive (5 of 20)" \
     || fail "evaluated floor (5 dead tasks): rc=$rc marks=$(marks "$T/out.log")"
+
+# ---- j1: F3, one rep counted as three is refused (same file x3, and copies).
+same_r="$T/evz-raw-r1.jsonl"; same_l="$T/evz-loki-r1.jsonl"
+rc=0; run raw="$same_r" raw="$same_r" raw="$same_r" loki="$same_l" loki="$same_l" loki="$same_l" || rc=$?
+[ "$rc" = 2 ] && grep -qF 'counted twice' "$T/err.log" && [ ! -s "$T/out.log" ] \
+    && pass "F3: same file passed 3 times refused (rc=2)" || fail "F3 same file: rc=$rc $(cat "$T/err.log")"
+for n in 1 2 3; do cp "$same_r" "$T/cp$n-raw.jsonl"; cp "$same_l" "$T/cp$n-loki.jsonl"; done
+rc=0; run raw="$T/cp1-raw.jsonl" raw="$T/cp2-raw.jsonl" raw="$T/cp3-raw.jsonl" \
+    loki="$T/cp1-loki.jsonl" loki="$T/cp2-loki.jsonl" loki="$T/cp3-loki.jsonl" || rc=$?
+[ "$rc" = 2 ] && grep -qF 'counted twice' "$T/err.log" && [ ! -s "$T/out.log" ] \
+    && pass "F3: identical rows in 3 named files refused (rc=2)" || fail "F3 copies: rc=$rc $(cat "$T/err.log")"
 
 # ---- j2: F1b, tasks below the bar are not silently dropped.
 rc=0; run $(reps f1b 3) --resamples 400 || rc=$?
