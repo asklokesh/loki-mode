@@ -16313,10 +16313,12 @@ cmd_quick() {
             echo "  loki quick \"write unit tests for the API endpoints\""
             echo ""
             echo "Options:"
-            echo "  --help, -h    Show this help and exit"
+            echo "  --help, -h       Show this help and exit"
+            echo "  --verbose, -v    Show setup and progress output (same as LOKI_VERBOSE=1)"
             echo ""
             echo "Environment:"
             echo "  LOKI_MAX_ITERATIONS    Override the default 3-iteration cap"
+            echo "  LOKI_VERBOSE=1         Show setup and progress output (default is quiet)"
             echo ""
             echo "See also: loki start (full RARV cycle), loki run (alias for start)"
             return 0
@@ -16349,19 +16351,27 @@ cmd_quick() {
     # `--config f.env` would be swept into task_desc (cmd_quick has no arg loop).
     local _quick_args=()
     local _skip_next=false
-    local _qa
+    local _qa _quick_task_seen=false
     for _qa in "$@"; do
         if [ "$_skip_next" = "true" ]; then
             _skip_next=false
             continue
         fi
         case "$_qa" in
+            # A-134: --verbose/-v before the task text is a flag, never task text.
+            --verbose|-v) if [ "$_quick_task_seen" = "false" ]; then export LOKI_VERBOSE=1; continue; fi ;;
             --config|--vars|--env-file)        _skip_next=true; continue ;;
             --config=*|--vars=*|--env-file=*)   continue ;;
         esac
+        _quick_task_seen=true
         _quick_args+=("$_qa")
     done
     set -- "${_quick_args[@]+"${_quick_args[@]}"}"
+    if [ $# -eq 0 ]; then
+        echo -e "${RED}Error: No task description provided${NC}"
+        echo "Usage: loki quick [--verbose] \"description of what to do\""
+        exit 2
+    fi
 
     local task_desc="$*"
     local version=$(get_version)

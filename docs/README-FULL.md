@@ -911,8 +911,8 @@ LOKI_ENGINE=v10 loki "fix the login redirect loop" --no-pr
 The router (bin/loki), the CLI surface (`--help`), and the run itself
 (intake, plan, wall, implement, verify, seal, PR) are on main, so the
 command above executes a real build end to end. `status`, `verify` and
-`dashboard` are also built. The guide says exactly what is still wired up
-(`--resume`, Slack) and what already runs.
+`dashboard` are also built. The guide says exactly what is still not wired
+(Slack) and what already runs.
 
 ---
 

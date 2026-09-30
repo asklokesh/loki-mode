@@ -6,7 +6,7 @@ of `build_prompt()`.
 
 ## Overview
 
-60 fixture scenarios exercise `build_prompt()` (autonomy/run.sh:8912) across
+62 fixture scenarios exercise `build_prompt()` (autonomy/run.sh:8912) across
 the major code paths. Fixtures 1-30 cover the original baseline scenarios.
 Fixtures 31-60 extend coverage to edge cases (empty PRD, unicode, > 50 gate
 failures, BMAD/OpenSpec/MiroFish contexts, > 20 magic specs, multi-line human
@@ -76,6 +76,8 @@ opacity checks):
 | 58 | sessionModel=haiku (env opaque) |
 | 59 | PROVIDER_NAME=codex with degraded |
 | 60 | PROVIDER_NAME=codex with degraded (v7.5.18: was gemini) |
+| 61 | loki quick run (A-132): quick-prd path suppresses USAGE_DOC_REQUIRED |
+| 62 | loki quick run with the prompt PRD repointed to generated-prd.md (A-132b) |
 
 ## Fixture Layout
 

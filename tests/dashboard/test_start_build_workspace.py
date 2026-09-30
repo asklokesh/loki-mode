@@ -561,9 +561,11 @@ class ProofRunIdEqualityTests(unittest.TestCase):
         cleanup_pos = source.rfind("    # Cleanup\n")
         self.assertGreater(final_binding_pos, handoff_pos)
         self.assertGreater(final_binding_pos, commit_pos)
-        self.assertGreater(final_binding_pos, pr_pos)
+        # A-134: the final proof now precedes create_session_pr on purpose, so the
+        # printed receipt carries the session commit's Head. create_session_pr never
+        # changes HEAD or the tree, so the tree binding is unaffected.
+        self.assertLess(final_binding_pos, pr_pos)
         self.assertGreater(completion_refresh_pos, commit_pos)
-        self.assertGreater(completion_refresh_pos, pr_pos)
         self.assertGreater(final_binding_pos, completion_refresh_pos)
         self.assertNotIn(
             "emit_completion_summary", source[completion_refresh_pos:final_binding_pos]

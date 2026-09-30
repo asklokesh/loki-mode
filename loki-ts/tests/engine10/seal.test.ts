@@ -15,6 +15,7 @@ import { commitStage, DEEP_NOT_PROVEN, renderReceiptMd, SIGNING_UNAVAILABLE, sea
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
 import { REPO_ROOT } from "../../src/util/paths.ts";
+const PRE_KEY_FILE = process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"];
 
 const AUTONOMY = resolve(REPO_ROOT, "autonomy");
 let root = "";
@@ -99,7 +100,7 @@ afterAll(() => { if (root) rmSync(root, { recursive: true, force: true }); });
 afterEach(() => {
   _setIsolatedPythonFixedForTests(null);
   process.env["HOME"] = REAL_HOME;
-  delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"];
+  if (PRE_KEY_FILE === undefined) delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]; else process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = PRE_KEY_FILE; // restore the preload default (E-154b)
   delete process.env["LOKI_RECEIPT_SIGNING_KEY"];
 });
 
@@ -164,7 +165,7 @@ describe("engine10 seal", () => {
     mkdirSync(home);
     process.env["HOME"] = home; // throwaway: the real ~/.loki is never touched
     delete process.env["LOKI_RECEIPT_SIGNING_KEY"];
-    delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"];
+    delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]; // exercises the default ~/.loki path; afterEach restores the preload default
     const { repo, base } = makeRepo("clean-home-repo");
     const { ctx, events } = ctxFor(repo, base, "codex");
     await commitStage.run(ctx, new AbortController().signal);
@@ -376,6 +377,17 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(r.verdict).toBe("PARTIAL");
     const noSrc = ctxFor(repo, base, "claude", { intake: { task_sha256: "ab".repeat(32) } });
     expect(receiptOf(await sealStage.run(noSrc.ctx, new AbortController().signal)).not_proven).toContain("task source not recorded by intake");
+  }, 30000);
+
+  test("A-112: verify pre_red ids list as `pre red: <id>` and do not downgrade VERIFIED", async () => {
+    noKey();
+    const { repo, base } = makeRepo("prered");
+    const { ctx } = ctxFor(repo, base, "claude", { verify: { checks: [{ name: "node:a.test.js", cmd: "node --test", result: "pass", duration_s: 1 }, { name: "node:o.test.js", cmd: "node --test", result: "fail", duration_s: 1 }], flaky: [], wall_passed: true, pre_red: ["unrelated"], pre_red_checks: ["node:o.test.js"] } });
+    await commitStage.run(ctx, new AbortController().signal);
+    const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    expect(r.not_proven).toContain("pre red: unrelated");
+    expect(r.verdict).toBe("VERIFIED");
+    expect(r.checks.find((c) => c.name === "node:o.test.js")?.result).toBe("fail"); // never recorded as pass
   }, 30000);
 
   // E-98a B1: verify passing every check must not seal VERIFIED when verify itself flagged a

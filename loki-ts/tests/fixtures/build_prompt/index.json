@@ -2,7 +2,7 @@
   "schema_version": "1.0.0",
   "generator": "loki-ts/tests/fixtures/build_prompt/run-bash.sh",
   "source": "autonomy/run.sh:8912 build_prompt()",
-  "count": 60,
+  "count": 62,
   "fixtures": [
     {
       "id": 1,
@@ -1923,6 +1923,72 @@
       "sha256": "244cd5181e3c4966846393b23dd9921054bccae5204ab72181f28ee16e540dfc",
       "line_count": 11,
       "byte_count": 4258
+    },
+    {
+      "id": 61,
+      "name": "loki quick run (A-132)",
+      "dir": "fixture-61",
+      "env": {
+        "RETRY": "0",
+        "PRD": "./.loki/quick-prd-4242.md",
+        "PRD_PATH": "./.loki/quick-prd-4242.md",
+        "ITERATION": "1",
+        "MAX_PARALLEL_AGENTS": "10",
+        "MAX_ITERATIONS": "1000",
+        "AUTONOMY_MODE": "",
+        "PERPETUAL_MODE": "false",
+        "PROVIDER_DEGRADED": "false",
+        "LOKI_LEGACY_PROMPT_ORDERING": "false",
+        "COMPLETION_PROMISE": "",
+        "LOKI_HUMAN_INPUT": "",
+        "PHASE_UNIT_TESTS": "false",
+        "PHASE_API_TESTS": "false",
+        "PHASE_E2E_TESTS": "false",
+        "PHASE_SECURITY": "false",
+        "PHASE_INTEGRATION": "false",
+        "PHASE_CODE_REVIEW": "false",
+        "PHASE_WEB_RESEARCH": "false",
+        "PHASE_PERFORMANCE": "false",
+        "PHASE_ACCESSIBILITY": "false",
+        "PHASE_REGRESSION": "false",
+        "PHASE_UAT": "false"
+      },
+      "sha256": "bbace864c304ae50e5ec700d613cb4397a3c890d5416c2047eac553698e6d781",
+      "line_count": 17,
+      "byte_count": 6285
+    },
+    {
+      "id": 62,
+      "name": "loki quick run, prompt PRD repointed (A-132b)",
+      "dir": "fixture-62",
+      "env": {
+        "RETRY": "0",
+        "PRD": "./.loki/generated-prd.md",
+        "PRD_PATH": "./.loki/quick-prd-4242.md",
+        "ITERATION": "1",
+        "MAX_PARALLEL_AGENTS": "10",
+        "MAX_ITERATIONS": "1000",
+        "AUTONOMY_MODE": "",
+        "PERPETUAL_MODE": "false",
+        "PROVIDER_DEGRADED": "false",
+        "LOKI_LEGACY_PROMPT_ORDERING": "false",
+        "COMPLETION_PROMISE": "",
+        "LOKI_HUMAN_INPUT": "",
+        "PHASE_UNIT_TESTS": "false",
+        "PHASE_API_TESTS": "false",
+        "PHASE_E2E_TESTS": "false",
+        "PHASE_SECURITY": "false",
+        "PHASE_INTEGRATION": "false",
+        "PHASE_CODE_REVIEW": "false",
+        "PHASE_WEB_RESEARCH": "false",
+        "PHASE_PERFORMANCE": "false",
+        "PHASE_ACCESSIBILITY": "false",
+        "PHASE_REGRESSION": "false",
+        "PHASE_UAT": "false"
+      },
+      "sha256": "c1b3500dcc0548913b9d669086f9c289114bb694582dad83257675bca625bf36",
+      "line_count": 17,
+      "byte_count": 6284
     }
   ]
 }
