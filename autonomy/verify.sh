@@ -3048,6 +3048,26 @@ PYEOF
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+# A-134: when this tree holds a legacy Evidence Receipt, report its integrity digest
+# (proof-verify.py's own canonical re-hash, no second canonicalizer). Silent otherwise.
+_verify_receipt_digest() {
+    local rid pj lib
+    rid="$(cat .loki/state/last-proof-id.txt 2>/dev/null || true)"
+    case "$rid" in '' | *[!A-Za-z0-9._-]*) return 0 ;; esac
+    pj=".loki/proofs/$rid/proof.json"
+    [ -f "$pj" ] || return 0
+    lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+    python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
+import importlib.util, json
+sys.path.insert(0, sys.argv[1])
+sp = importlib.util.spec_from_file_location('pv', sys.argv[1] + '/proof-verify.py')
+m = importlib.util.module_from_spec(sp); sp.loader.exec_module(m)
+p = json.load(open(sys.argv[2]))
+ok = m.verify_integrity(p)['hash_ok']
+h = (p.get('verification') or {}).get('hash') or ''
+print('receipt_sha256: ' + h if ok else 'receipt: TAMPERED (integrity hash does not match proof.json)')" "$lib" "$pj" 2>/dev/null || true
+}
+
 verify_main() {
     local base_ref=""
     local out_dir=".loki/verify"
@@ -3293,6 +3313,7 @@ verify_main() {
     # is visible without parsing JSON. Printed solely when a fold succeeded;
     # the default path never sets VERIFY_HOSTED_SUMMARY, so it stays byte-identical.
     [ -n "${VERIFY_HOSTED_SUMMARY:-}" ] && printf '%s\n' "$VERIFY_HOSTED_SUMMARY"
+    _verify_receipt_digest >&$_v_banner_fd
 
     return "$VERIFY_EXIT"
 }

@@ -685,3 +685,4 @@ release publishes to npm next; promote.yml gates latest on the first-run gate (A
 loki-seal Stop hook (A-04)	20
 Quick-fix artifacts (A-132)	60
 Council trivial-diff probe skip (A-133)	10
+Quick receipt order and quiet output (A-134)	90
