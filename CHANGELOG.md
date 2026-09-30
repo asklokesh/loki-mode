@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.10 (2026-09-30)
+
+v10 briefs now open with a byte-identical rules block so the cacheable prefix is shared across tasks, large eval tasks must carry frozen, upstream-first hidden tests, and a set of test-reliability fixes stops tests from leaking processes, reading the host's real data or timing out under CI load.
+
+### Changed
+- v10 implement and fix briefs start with a fixed rules block that is byte-identical for every task, followed by the task-specific context; plan paths with a drive letter or a leading `~` are dropped like absolute ones (S41-10b).
+
+### Internal
+- Eval: large-tier (`lg-*`) tasks must declare tier large and carry per-file provenance, sha256-frozen hidden tests and a requirements map naming each requirement's tests; the harness applies every saved shortcut patch and requires it to still fail, and requires RED at the reference commit to be a real assertion failure (EV-12E). Medium tier adds pub-dotenv-661.
+- The watch-command test stops every process group it started when it exits or is interrupted, instead of leaving an orphaned run loop behind (E-145).
+- test-stop-process-group uses recorded PIDs instead of a pattern kill; the audit-chain test runs against a fixture home instead of the real `~/.loki`; the probe-isolation test sizes its inner timeout from a CI measurement and names the case that was running when it fires (E-147, E-148).
+- The five real-JVM modernize capture tests get an explicit 20 second timeout after one hit bun's 5 second default on a loaded CI runner (E-149).
+- The required-ci audit tie rule and the temp-sweep scan gain tests, and seven tests move their fixtures from hardcoded `/tmp` paths into a run-owned directory (E-143).
+
 ## v10.5.9 (2026-09-30)
 
 v10 implement and fix briefs now name the files and impacted tests that matter instead of a raw list of repository paths, verify reports a system ruff lint separately from the system test interpreter, and the medium eval tier grows by three tasks.
