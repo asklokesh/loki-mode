@@ -1,0 +1,40 @@
+...............................F.                                        [100%]
+=================================== FAILURES ===================================
+___________________ test_add_duration_across_transition_days ___________________
+
+    def test_add_duration_across_transition_days():
+        dt = pendulum.datetime(2017, 3, 11, 10, 45, tz="America/Los_Angeles")
+        new = dt + pendulum.duration(days=1)
+    
+>       assert_datetime(new, 2017, 3, 12, 10, 45)
+
+tests/datetime/test_add.py:266: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+d = DateTime(2017, 3, 12, 11, 45, 0, tzinfo=Timezone('America/Los_Angeles'))
+year = 2017, month = 3, day = 12, hour = 10, minute = 45, second = None
+microsecond = None
+
+    def assert_datetime(
+        d: pendulum.DateTime,
+        year: int,
+        month: int,
+        day: int,
+        hour: int | None = None,
+        minute: int | None = None,
+        second: int | None = None,
+        microsecond: int | None = None,
+    ) -> None:
+        assert year == d.year
+        assert month == d.month
+        assert day == d.day
+    
+        if hour is not None:
+>           assert hour == d.hour
+E           AssertionError: assert 10 == 11
+E            +  where 11 = DateTime(2017, 3, 12, 11, 45, 0, tzinfo=Timezone('America/Los_Angeles')).hour
+
+tests/conftest.py:41: AssertionError
+=========================== short test summary info ============================
+FAILED tests/datetime/test_add.py::test_add_duration_across_transition_days
+1 failed, 32 passed in 0.05s

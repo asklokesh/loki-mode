@@ -1,0 +1,19 @@
+{
+  "id": "pub-pendulum-768",
+  "kind": "public",
+  "prompt": "Increase DateTime by 1 day across daylight saving change point fails\n\nPendulum version: 2.1.2\n\n```python\n>>> import pendulum; pendulum.datetime(2023,11,5,0,0,tz='America/Chicago') + pendulum.duration(days=1)\nDateTime(2023, 11, 5, 23, 0, 0, tzinfo=Timezone('America/Chicago'))\n```\nThe result should be `DateTime(2023, 11, 6, 0, 0, 0, tzinfo=Timezone('America/Chicago'))`. A workaround is using the traditional datetime library as the base datetime:\n```python\n>>> start = pendulum.datetime(2023,11,5,0,0,tz='America/Chicago')\n>>> import datetime\n>>> pendulum.instance(datetime.datetime.fromtimestamp(start.timestamp(), tz=start.tzinfo) + pendulum.duration(days=1))\nDateTime(2023, 11, 6, 0, 0, 0, tzinfo=Timezone('America/Chicago'))\n```\n\nThis bug made my customized Airflow time schedule failed yesterday.",
+  "issue_ref": "python-pendulum/pendulum#768",
+  "repo": {
+    "source": "https://github.com/python-pendulum/pendulum.git",
+    "ref": "0a884dd36f1920a632681528a0251a9d6281aff1"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q python-dateutil tzdata time-machine pytest",
+  "hidden": {
+    "files": [
+      "tests/datetime/test_add.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" -o pythonpath=src tests/datetime/test_add.py"
+  },
+  "timeout_s": 900,
+  "tier": "medium"
+}
