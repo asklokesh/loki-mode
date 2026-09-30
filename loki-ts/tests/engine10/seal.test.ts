@@ -15,6 +15,7 @@ import { commitStage, DEEP_NOT_PROVEN, renderReceiptMd, SIGNING_UNAVAILABLE, sea
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
 import { REPO_ROOT } from "../../src/util/paths.ts";
+import { RECEIPT_SIGNER_BASENAME } from "../../src/util/receipt_signer.ts";
 const PRE_KEY_FILE = process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"];
 
 const AUTONOMY = resolve(REPO_ROOT, "autonomy");
@@ -172,7 +173,7 @@ describe("engine10 seal", () => {
     const s = await sealStage.run(ctx, new AbortController().signal);
     expect(s.data.signed).toBe(true);
     expect(String(s.data.summary)).toContain("SIGNED");
-    const keyFile = join(home, ".loki", "keys", "receipt-ed25519.pem");
+    const keyFile = join(home, ".loki", "keys", RECEIPT_SIGNER_BASENAME);
     expect(statSync(keyFile).mode & 0o777).toBe(0o600);
     expect(statSync(dirname(keyFile)).mode & 0o777).toBe(0o700);
     const path = s.data.receipt_path as string;

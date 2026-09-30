@@ -14447,14 +14447,14 @@ else:
 import os, sys
 sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 sys.path.insert(0, sys.argv[1])
-from receipt_jwt import load_signing_key, _CRYPTO_AVAILABLE
+from receipt_jwt import load_signing_key, _CRYPTO_AVAILABLE, RECEIPT_SIGNER_BASENAME
 if not _CRYPTO_AVAILABLE:
     print("nocrypto")
 else:
     k, kid = load_signing_key(auto_generate=False)
     if kid:
         print("kid " + kid[:8])
-    elif os.environ.get("LOKI_RECEIPT_SIGNING_KEY", "").strip() or os.environ.get("LOKI_RECEIPT_SIGNING_KEY_FILE", "").strip() or os.path.exists(os.path.expanduser("~/.loki/keys/receipt-ed25519.pem")):
+    elif os.environ.get("LOKI_RECEIPT_SIGNING_KEY", "").strip() or os.environ.get("LOKI_RECEIPT_SIGNING_KEY_FILE", "").strip() or os.path.exists(os.path.expanduser(os.path.join("~", ".loki", "keys", RECEIPT_SIGNER_BASENAME))):
         print("bad")
     else:
         print("none")

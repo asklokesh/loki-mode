@@ -6,10 +6,11 @@ import { afterAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { RECEIPT_SIGNER_BASENAME } from "../src/util/receipt_signer.ts";
 
 if (!process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]) {
   const dir = mkdtempSync(join(tmpdir(), "loki-test-key-"));
-  process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(dir, "receipt-ed25519.pem");
+  process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(dir, RECEIPT_SIGNER_BASENAME);
   afterAll(() => {
     rmSync(dir, { recursive: true, force: true });
   });
