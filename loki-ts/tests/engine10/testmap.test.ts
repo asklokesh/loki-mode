@@ -154,3 +154,47 @@ describe("runner detection from real files", () => {
     expect(map.tests).toEqual([]);
   });
 });
+
+describe("one fixture per runner (A-102)", () => {
+  const cases: Array<[string, Record<string, string>, string]> = [
+    ["node", { "package.json": '{"scripts":{"test":"node --test"}}', "sum.js": "", "sum.test.js": "const test = require('node:test');\nrequire('./sum');" }, "node --test <files>"],
+    ["node", { "package.json": "{}", "a.js": "", "a.test.mjs": "import test from 'node:test';\nimport './a.js';" }, "node --test <files>"],
+    ["jest", { "package.json": '{"devDependencies":{"jest":"1"}}', "a.test.js": "" }, "npx jest <files>"],
+    ["vitest", { "package.json": '{"devDependencies":{"vitest":"1"}}', "a.test.ts": "" }, "npx vitest run <files>"],
+    ["pytest", { "pytest.ini": "", "test_a.py": "" }, "python -m pytest -q <files>"],
+    ["go", { "go.mod": "module x", "a_test.go": "" }, "go test ./<pkg dirs>"],
+    ["cargo", { "Cargo.toml": "" }, "cargo test"],
+  ];
+  for (const [runner, files, cmd] of cases) {
+    test(`${runner}: ${Object.keys(files)[0]}`, () => {
+      const map = buildTestMap(repo(files));
+      expect(map.runners).toEqual([runner as never]);
+      expect(map.commands[runner as "node"]?.cmd).toBe(cmd);
+    });
+  }
+  test("node: sum.js impacts sum.test.js", () => {
+    const map = buildTestMap(repo({ "package.json": '{"scripts":{"test":"node --test"}}', "sum.js": "", "sum.test.js": "require('./sum')" }));
+    expect(impactedRefs(map, ["sum.js"])).toEqual([{ runner: "node", path: "sum.test.js" }]);
+  });
+  test("a custom npm test script stays npm", () => {
+    expect(buildTestMap(repo({ "package.json": '{"scripts":{"test":"mocha"}}' })).runners).toEqual(["npm"]);
+  });
+});
+
+describe("node detection is conservative (A-102 r2)", () => {
+  for (const script of ["node -e 1 && node --test", "npm run build && node --test", "eslint . && node --test", "node --test --experimental-test-coverage", "node scripts/run-mocha.js --test"]) {
+    test(`compound script stays npm: ${script}`, () => {
+      expect(buildTestMap(repo({ "package.json": JSON.stringify({ scripts: { test: script } }) })).runners).toEqual(["npm"]);
+    });
+  }
+  test("bare node --test with paths is node", () => {
+    expect(buildTestMap(repo({ "package.json": '{"scripts":{"test":"node --test test/"}}' })).runners).toEqual(["node"]);
+  });
+  test("a node:test comment in a jest file does not add node", () => {
+    const map = buildTestMap(repo({ "package.json": '{"devDependencies":{"jest":"1"}}', "a.test.js": "// not node:test, see 'node:test' docs\n" }));
+    expect(map.runners).toEqual(["jest"]);
+  });
+  test("a real node:test import adds node", () => {
+    expect(buildTestMap(repo({ "a.test.js": "import t from 'node:test';" })).runners).toEqual(["node"]);
+  });
+});
