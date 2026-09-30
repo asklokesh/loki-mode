@@ -55,11 +55,13 @@ function parsedFailCount(runner: RunnerName, output: string): number {
     : runner === "vitest" ? /Tests\s+(\d+)\s+failed/i.exec(output) : null;
   return m ? Number(m[1]) : 0;
 }
-// A-103 node:test red, mirroring pytest: a missing module inside the repo or an error thrown by code under test is red; a missing bare package, or an error thrown from the Wall file itself (Jest globals), is not. A missing-module crash is not_run only when the file itself failed (no named subtest in the failing block), so a child process crash or printed footer cannot hide a real red. Only node's own lines count (col-0 crash text, or a failing-tests block's error line and first frame), never an assertion diff.
-function nodeIsRed(f: TestRef, o: string): boolean {
-  const mod = /^Error(?: \[\w+\])?: Cannot find (?:module|package) '([^']+)'(?:(?!\u2716)[\s\S])*?\nNode\.js v/m.exec(o), top = /^(\S+):\d+\n.*\n.*\n\n(?:ReferenceError|SyntaxError)\b/m.exec(o);
-  const blk = o.split("failing tests:")[1] ?? "", named = [...blk.matchAll(/^\u2716 (.+?) \(/gm)].some((m) => !f.path.endsWith(m[1]!)), fr = /^ {2}(?:ReferenceError|SyntaxError): .*\n\s+at (?:.*\()?([^\s()]+?):\d+:\d+/m.exec(blk);
-  return /^(?:#|\u2139) fail [1-9]/m.test(o) && (/^ {2}AssertionError\b/m.test(blk) || (mod && !named ? /^[./]/.test(mod[1]!) : top ? !top[1]!.endsWith(f.path) : fr ? !fr[1]!.startsWith("node:") && !fr[1]!.endsWith(f.path) : true));
+// A-103 node:test red, mirroring pytest: a missing module inside the repo or an error thrown by code under test is red; a missing bare package, or an error thrown from the Wall file itself (Jest globals), is not. A missing-module crash is not_run only when the file itself failed (no named subtest failed, spec or TAP), so a child process crash or printed footer cannot hide a real red. Only node's own lines count (col-0 crash text, or a failing-tests block's error line and first frame), never an assertion diff.
+function nodeIsRed(f: TestRef, raw: string): boolean {
+  // node 20/22 off a TTY print TAP: crash text is "# "-prefixed and a failure is a yaml block (name: 'X', stack: |-). Strip the prefix from non-counter lines so the spec-shape regexes apply.
+  const o = raw.replace(/^# (?!(?:tests|suites|pass|fail|cancelled|skipped|todo|duration_ms|Subtest)\b)/gm, "");
+  const mod = /^Error(?: \[\w+\])?: Cannot find (?:module|package) '([^']+)'(?:(?!\u2716)[\s\S])*?\nNode\.js v/m.exec(o), top = /^(\S+):\d+\n.*\n.*\n\n?(?:ReferenceError|SyntaxError)\b/m.exec(o);
+  const named = [...o.matchAll(/^(?:\u2716|\s*not ok \d+ -) (?!failing tests:)(.+?)(?: \(|$)/gm)].some((m) => !f.path.endsWith(m[1]!) && !m[1]!.endsWith(f.path)), blk = o.split("failing tests:")[1] ?? "", fr = /^ {2}(?:ReferenceError|SyntaxError): .*\n\s+at (?:.*\()?([^\s()]+?):\d+:\d+/m.exec(blk) ?? /^ {2}name: '(?:ReferenceError|SyntaxError)'\n(?:.*\n)*? {2}stack: \|-\n\s+(?:.*\()?([^\s()]+?):\d+:\d+/m.exec(o);
+  return /^(?:#|\u2139) fail [1-9]/m.test(raw) && (/^ {2}AssertionError\b/m.test(blk) || /^ {2}name: 'AssertionError'/m.test(o) || (mod && !named ? /^[./]/.test(mod[1]!) : top ? !top[1]!.endsWith(f.path) : fr ? !fr[1]!.startsWith("node:") && !fr[1]!.endsWith(f.path) : true));
 }
 // D42 (3) exit classification. B4 (r2): any "system"-interpreter result is not_run, same as verify (E-98a).
 // Red: pytest exit 1/resolved 2; jest/vitest/bun a parsed failed count>0. npm/go/cargo (B2, coarse): never fail.
