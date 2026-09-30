@@ -1584,3 +1584,21 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - loki-seal: merged on local main (train/10) after a live Claude Code 2.1.286 contract check and opus approval in round 5; follow-ups A-04b and contract-aware A-04c queued.
 - README: A-09 merged on local main: 49 lines, line 1 "Your agent says done. Loki proves it." (veto pending), line 2 the D45 category line; full content moved to docs/README-FULL.md with retracted claims removed. Deviation from "same sentence in SKILL.md": the SKILL.md description is line 2 verbatim followed by one trigger sentence ("Use when the user says Loki Mode or asks to build, fix or verify software autonomously."), because dropping the trigger wording would weaken skill auto-invocation; package.json description is line 2 verbatim.
 - Head-to-head: not run.
+
+## 2026-09-30T22:05Z hourly report (adoption directive)
+- `next` releases shipped this hour: 1, v10.5.11 (9e93ce48). Verified: npm gitHead 9e93ce48, dist-tags next=10.5.11, latest=10.5.10 unchanged, release body 17 lines. No release since: train/10 (77d58f1a) Tier B red; train/11 (363c20ea) pushed 22:01Z, Tier B running.
+- latest promoted: no (10.5.10).
+- train/10 red: Tests failed on shell shards 2, 3, 5 and 6. All 4 tests assert README.md content that A-09 moved to docs/README-FULL.md (test-agent-types-loaded, test-mcp-tool-surface-packaged, test-mcp-tool-surface-guard-rejects, test-engine10-docs). Fixed forward on train/11 (79f2cfdb): README regains the reviewer-pool, 36 MCP tools and Loki 10 marker lines (57 lines). The local gate had not run the tests that name a changed file.
+- train/11 contents: README fix, A-103, A-111, A-113, A-121, A-122, spawn-env fix for A-122's doctor probe (af50a9b0), gitleaks fingerprints. Local: gate4 green, full bun test 2643/1 then 0 fail after af50a9b0, typecheck 0.
+- Gate status per defect (stub mode; A-134 branch measured 7 of 8 PASS, only receipt-signed FAIL, before A-121/A-122 merged):
+  - (a) Wall Jest globals: A-102 and A-103 merged on train/11.
+  - (b) red suite exits 0: A-111 merged (empty or skipped checks not_run); A-110 (exit ladder, PARTIAL exits 1) built, in opus review; A-112 (baseline subtract) r2 in opus review after r1 was REJECTED for a no-fix run sealing VERIFIED.
+  - (c) verify TAMPERED: fixed in 10.5.11 (A-101).
+  - (d) noise and stray files: A-132/133 merged; A-134 r2 in rework (3 opus blockers: missing --verbose, a CI test anchor deleted, NOT PROVEN/UNSIGNED hidden in quiet mode).
+  - (e) printed digest mismatch: A-134 branch PASS digest-matches; lands with A-134.
+  - (f) unsigned: A-121 (native v10 signing) and A-122 (GPG layer deleted) merged on train/11; unknown key reads UNCHECKED, not TAMPERED.
+  - (g) doctor: machine artifact; A-123 (one Ready line, selected provider only) in sonnet review.
+- loki-seal: merged on local main before train/10; not in 10.5.11; ships with the train/11 release.
+- Head-to-head: not run.
+- Incidents: 21:58Z a shell test batch run in the main checkout switched HEAD to a stale loki/session branch for 33s (main ref intact; E-155). 22:00Z pre-push gitleaks flagged the key file NAME `receipt-ed25519.pem` (false positive, fingerprinted; durable allowlist E-156 needs CTO approval). 17:14Z signing tests wrote keys to the real ~/.loki/keys (E-154). Filed: A-103c, A-111b (folded into A-112), A-121b (receipt downgrade to UNSIGNED exits 0), A-132b (uncommitted fixture-61).
+- Opus share this hour about 40 to 46% (over the 30% D13 budget) from HIGH-tier reviews; builders are sonnet.

@@ -400,7 +400,7 @@ Start a session with: loki start <prd>`}}let J=er(X);return{exitCode:0,stdout:Z?
 `),$.warn++;if(await D9("sentrux")){let A="unknown";try{let E=(await F0(["sentrux","--version"],{timeoutMs:2000})).stdout.split(/\s+/).filter(Boolean).pop();if(E)A=E.replace(/^v/,"")}catch{}process.stdout.write(`  ${y0("pass")}  sentrux ${A} (architectural drift gate: loki sentrux help)
 `),$.pass++}else process.stdout.write(`  ${y0("warn")}  sentrux - not installed (optional, brew install sentrux/tap/sentrux)
 `),$.warn++;if((process.env.LOKI_PROOF_GPG_KEY??"").trim()!=="")process.stdout.write(`  ${y0("warn")}  Receipt signing: LOKI_PROOF_GPG_KEY is no longer supported and is ignored; use LOKI_RECEIPT_SIGNING_KEY or LOKI_RECEIPT_SIGNING_KEY_FILE (docs/SIGNED-RECEIPTS.md)
-`),$.warn++;if(_7("python3",["-c","import cryptography"],{stdio:"ignore"}).status!==0)process.stdout.write(`  ${y0("warn")}  Receipt signing: python3 'cryptography' package missing, receipts will be UNSIGNED (pip install cryptography)
+`),$.warn++;if(_7("python3",["-c","import cryptography"],{env:{...process.env},stdio:"ignore"}).status!==0)process.stdout.write(`  ${y0("warn")}  Receipt signing: python3 'cryptography' package missing, receipts will be UNSIGNED (pip install cryptography)
 `),$.warn++;process.stdout.write(`
 `),process.stdout.write(`${J8}System:${p}
 `);let O=Q.get("bash");process.stdout.write(AK(O)+`
@@ -1521,4 +1521,4 @@ Set LOKI_LEGACY_BASH=1 to force the bash CLI for every command.
 `),2}case"start":{let{runStart:X}=await Promise.resolve().then(() => (ci(),di));return X(Q)}case"engine10":{let{runEngine10:X}=await Promise.resolve().then(() => (ai(),ii)),{registryLoader:J}=await Promise.resolve().then(() => (aq(),js));return X(Q,J)}default:return process.stderr.write(`Unknown command: ${Z}
 `),process.stderr.write(Ls),2}}aT();process.on("SIGINT",()=>process.exit(130));process.on("SIGTERM",()=>process.exit(143));var d18=await p18(Bun.argv.slice(2));process.exit(d18);
 
-//# debugId=E6C76B366F472B12EE658EFCA0F2F50F
+//# debugId=94CD6E0FE7C0D6A1B1C705CA3AA463C1
