@@ -1,6 +1,6 @@
 // A-103: real `node --test` runs on a bugrepo (off-by-one sum) through RealBaseTestRunner.
 // A Wall test that is not red for the right reason is discarded, never left in the tree.
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,11 +21,16 @@ class Sessions implements SessionRunner {
   }
 }
 
-async function wallWith(files: Record<string, string>) {
+const repos: string[] = [];
+afterEach(() => { for (const r of repos.splice(0)) rmSync(r, { recursive: true, force: true }); });
+
+async function wallWith(files: Record<string, string>, repoFiles: Record<string, string> = {}) {
   const repoDir = mkdtempSync(join(tmpdir(), "loki-a103-repo-"));
   const runDir = join(repoDir, ".loki", "runs", "r1");
+  repos.push(repoDir);
   mkdirSync(runDir, { recursive: true });
   writeFileSync(join(repoDir, "sum.js"), SUM, "utf8");
+  for (const [n, c] of Object.entries(repoFiles)) writeFileSync(join(repoDir, n), c, "utf8");
   writeFileSync(join(runDir, "repomap.json"), JSON.stringify({ files: ["sum.js"], entries: [], truncated: false }), "utf8");
   const sessions = new Sessions(files);
   const ctx = {
@@ -42,10 +47,9 @@ async function wallWith(files: Record<string, string>) {
 
 describe("A-103 wall discards tests that are not red for the right reason", () => {
   test("brief names node:test, a runnable example, and the test command", async () => {
-    const { repoDir, sessions } = await wallWith({});
+    const { sessions } = await wallWith({});
     expect(sessions.lastOpts!.brief).toContain("require('node:test')");
     expect(sessions.lastOpts!.brief).toContain("node --test");
-    rmSync(repoDir, { recursive: true, force: true });
   });
 
   test("a Jest-globals test in a node:test repo is deleted from the tree, sealed copy kept, never read-only", async () => {
@@ -56,7 +60,6 @@ describe("A-103 wall discards tests that are not red for the right reason", () =
     expect(result.data.readOnlyFiles).toEqual([]);
     expect(result.data.base_run).toEqual({ pass: 0, fail: 0, not_run: 1 });
     expect(result.data.already_satisfied).toBe(false);
-    rmSync(repoDir, { recursive: true, force: true });
   });
 
   test("a correct node:test Wall test that fails on the off-by-one is kept and red", async () => {
@@ -64,14 +67,34 @@ describe("A-103 wall discards tests that are not red for the right reason", () =
     expect(readdirSync(join(repoDir, "tests")).sort()).toEqual(["loki_wall_sum.test.js"]);
     expect((result.data.files as { path: string }[]).map((f) => f.path)).toEqual([join(repoDir, "tests", "loki_wall_sum.test.js")]);
     expect(result.data.base_run).toEqual({ pass: 0, fail: 1, not_run: 1 });
-    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  const H = "const test = require('node:test');\nconst assert = require('node:assert');\n";
+  test("a test for a module the task creates (relative require, file absent) is red and kept", async () => {
+    const r = await wallWith({ "loki_wall_mean.test.js": H + "const { mean } = require('../mean');\ntest('mean', () => { assert.strictEqual(mean([2, 4]), 3); });\n" });
+    expect(r.result.data.base_run).toEqual({ pass: 0, fail: 1, not_run: 0 });
+    expect((r.result.data.files as unknown[]).length).toBe(1);
+  });
+  test("a ReferenceError thrown from the code under test is red and kept", async () => {
+    const r = await wallWith({ "loki_wall_ref.test.js": H + "const { bad } = require('../bad');\ntest('bad', () => { assert.strictEqual(bad(), 3); });\n" }, { "bad.js": "module.exports = { bad: () => totl + 1 };\n" });
+    expect(r.result.data.base_run).toEqual({ pass: 0, fail: 1, not_run: 0 });
+    expect((r.result.data.files as unknown[]).length).toBe(1);
+  });
+  test("a missing bare package is not_run and discarded", async () => {
+    const r = await wallWith({ "loki_wall_bare.test.js": "const test = require('node:test');\nconst x = require('lodash-nope');\ntest('t', () => {});\n" });
+    expect(r.result.data.base_run).toEqual({ pass: 0, fail: 0, not_run: 1 });
+    expect(r.result.data.files).toEqual([]);
+  });
+  test("an assertion diff that mentions ReferenceError is red and kept", async () => {
+    const r = await wallWith({ "loki_wall_msg.test.js": H + "test('t', () => { assert.deepStrictEqual({ a: 'ReferenceError' }, { a: 'x' }); });\n" });
+    expect(r.result.data.base_run).toEqual({ pass: 0, fail: 1, not_run: 0 });
   });
 
   test("classify node: assertion failure is red; ReferenceError or missing module is not_run", () => {
     const f = { runner: "node" as const, path: "t.test.js" };
     expect(classify(f, 1, "# tests 1\n# pass 0\n# fail 1\n", "/x")).toBe("fail");
     expect(classify(f, 1, "ℹ tests 1\nℹ pass 0\nℹ fail 1\n", "/x")).toBe("fail"); // node 20+ spec reporter off a TTY
-    expect(classify(f, 1, "ReferenceError: describe is not defined\n# fail 1\n", "/x")).toBe("not_run");
-    expect(classify(f, 1, "Error: Cannot find module './nope'\n# fail 1\n", "/x")).toBe("not_run");
+    expect(classify(f, 1, "/r/t.test.js:1\ndescribe('x', () => {});\n^\n\nReferenceError: describe is not defined\n# fail 1\n", "/x")).toBe("not_run");
+    expect(classify(f, 1, "Error: Cannot find module 'lodash'\n# fail 1\n", "/x")).toBe("not_run");
   });
 });

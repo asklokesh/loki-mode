@@ -52,8 +52,14 @@ function pytestExit1IsRed(output: string): boolean {
 function parsedFailCount(runner: RunnerName, output: string): number {
   const m = runner === "bun" ? /^\s*(\d+)\s+fail\s*$/m.exec(output)
     : runner === "jest" ? /Tests:\s*(\d+)\s+failed/i.exec(output)
-    : runner === "vitest" ? /Tests\s+(\d+)\s+failed/i.exec(output) : runner === "node" && !/ReferenceError|SyntaxError|MODULE_NOT_FOUND|Cannot find module/.test(output) ? /^(?:#|ℹ) fail (\d+)/m.exec(output) : null; // node: a launch/import/wrong-globals error is not a red
+    : runner === "vitest" ? /Tests\s+(\d+)\s+failed/i.exec(output) : null;
   return m ? Number(m[1]) : 0;
+}
+// A-103 node:test red, mirroring pytest: a missing module inside the repo or an error thrown by code under test is red; a missing bare package, or an error thrown from the Wall file itself (Jest globals), is not. Only node's own lines count (col-0 crash text, or a failing-tests block's error line and first frame), never an assertion diff.
+function nodeIsRed(f: TestRef, o: string): boolean {
+  const mod = /^Error(?: \[\w+\])?: Cannot find (?:module|package) '([^']+)'/m.exec(o), top = /^(\S+):\d+\n.*\n.*\n\n(?:ReferenceError|SyntaxError)\b/m.exec(o);
+  const fr = /^ {2}(?:ReferenceError|SyntaxError): .*\n\s+at (?:.*\()?([^\s()]+?):\d+:\d+/m.exec(o.split("failing tests:")[1] ?? "");
+  return /^(?:#|ℹ) fail [1-9]/m.test(o) && (mod ? /^[./]/.test(mod[1]!) : top ? !top[1]!.endsWith(f.path) : fr ? !fr[1]!.startsWith("node:") && !fr[1]!.endsWith(f.path) : true);
 }
 // D42 (3) exit classification. B4 (r2): any "system"-interpreter result is not_run, same as verify (E-98a).
 // Red: pytest exit 1/resolved 2; jest/vitest/bun a parsed failed count>0. npm/go/cargo (B2, coarse): never fail.
@@ -61,8 +67,8 @@ export function classify(f: TestRef, status: number | null, output: string, repo
   if (interpreter === "system") return "not_run";
   if (status === null || status === 126 || status === 127) return "not_run"; if (status === 0) return "pass";
   if (f.runner === "pytest") return status === 1 ? (pytestExit1IsRed(output) ? "fail" : "not_run") : status === 2 ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "not_run";
-  if (f.runner === "jest" || f.runner === "vitest" || f.runner === "bun" || f.runner === "node") return parsedFailCount(f.runner, output) > 0 ? "fail" : "not_run";
-  return "not_run"; // npm/go/cargo: coarse (B2), never a per-file red
+  if (f.runner === "jest" || f.runner === "vitest" || f.runner === "bun") return parsedFailCount(f.runner, output) > 0 ? "fail" : "not_run";
+  return f.runner === "node" && nodeIsRed(f, output) ? "fail" : "not_run"; // npm/go/cargo: coarse (B2), never a per-file red
 }
 // One process per file, through verify's own interpreter resolution (E-98a) so a missing `python` is never
 // misread as a failing test. env is explicit, matching verify.ts's runOnce (its default PATH lookup can
@@ -172,22 +178,16 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   const wallTests: TestRef[] = [];
 
   for (const name of generated) {
-    const content = readFileSync(join(cwd, name), "utf8");
-    const dest = join(targetDir, name);
-    writeFileSync(dest, content, "utf8");
-    writeFileSync(join(sealedDir, name), content, "utf8");
-    sealedFiles.push({ path: dest, sha256: sha256(content) });
-    readOnlyFiles.push({ path: dest, content });
-    const runner = guessRunner(name, runners);
+    const content = readFileSync(join(cwd, name), "utf8"), dest = join(targetDir, name), runner = guessRunner(name, runners);
+    writeFileSync(dest, content, "utf8"); writeFileSync(join(sealedDir, name), content, "utf8");
+    sealedFiles.push({ path: dest, sha256: sha256(content) }); readOnlyFiles.push({ path: dest, content });
     if (runner) wallTests.push({ runner, path: relative(ctx.repoDir, dest) });
   }
   rmSync(cwd, { recursive: true, force: true });
   ctx.emit("wall.sealed", "wall", { files: sealedFiles });
-  const baseRunner = opts.baseRunner ?? new RealBaseTestRunner();
-  const baseRun = { pass: 0, fail: 0, not_run: 0 }; // A-103: one file at a time; a file with no real result (not_run) proves nothing, so it leaves the tree and Implement's read-only set. Its sealed copy stays under runDir/wall; base_run.not_run lets Seal list it.
+  const baseRunner = opts.baseRunner ?? new RealBaseTestRunner(), baseRun = { pass: 0, fail: 0, not_run: 0 }; // A-103: one file at a time; a file with no real result (not_run) proves nothing, so it leaves the tree and Implement's read-only set. Its sealed copy stays under runDir/wall; base_run.not_run lets Seal list it.
   for (const t of wallTests) {
-    const r = baseRunner.run(ctx.repoDir, [t]), abs = join(ctx.repoDir, t.path); baseRun.pass += r.pass; baseRun.fail += r.fail; baseRun.not_run += r.not_run ?? 0;
-    if (r.pass + r.fail === 0) { rmSync(abs, { force: true }); for (const l of [sealedFiles, readOnlyFiles] as { path: string }[][]) l.splice(0, l.length, ...l.filter((f) => f.path !== abs)); }
+    const r = baseRunner.run(ctx.repoDir, [t]), abs = join(ctx.repoDir, t.path); baseRun.pass += r.pass; baseRun.fail += r.fail; baseRun.not_run += r.not_run ?? 0; if (r.pass + r.fail === 0) { rmSync(abs, { force: true }); for (const l of [sealedFiles, readOnlyFiles] as { path: string }[][]) l.splice(0, l.length, ...l.filter((f) => f.path !== abs)); }
   }
   // Gate on generated.length, not wallTests.length: an unselectable (guessRunner() null) file is sealed but never run, and must never be silently missing from the already_satisfied count.
   const unselectable = generated.length - wallTests.length;
