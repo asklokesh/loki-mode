@@ -6262,12 +6262,13 @@ check_parallel_support() {
 # ponytail: npm only; pip installs into the active interpreter, so there is no
 # per-worktree venv to cache. No lockfile means no cache (always install).
 _loki_npm_install_cached() {
-    local cache_root="$1" wt="$2" key entry tmp
+    local cache_root="$1" wt="$2" key entry tmp aside old
     if [ ! -f "$wt/package-lock.json" ]; then
         (cd "$wt" && npm install --silent 2>/dev/null) || true
         return 0
     fi
-    key="$(cat "$wt/package-lock.json" "$wt/package.json" 2>/dev/null | { shasum -a 256 2>/dev/null || sha256sum; } | cut -d' ' -f1)"
+    # node version + platform in the key: native addons are ABI specific
+    key="$({ cat "$wt/package-lock.json" "$wt/package.json" 2>/dev/null; node -v 2>/dev/null; uname -sm; } | { shasum -a 256 2>/dev/null || sha256sum; } | cut -d' ' -f1)"
     if [ -n "$key" ]; then
         entry="$cache_root/$key"
         if [ -f "$entry/.complete" ] && [ -d "$entry/node_modules" ]; then
@@ -6277,18 +6278,57 @@ _loki_npm_install_cached() {
             fi
             rm -rf "$wt/node_modules"
         fi
-        rm -rf "$entry" 2>/dev/null || true
+        # Evict only an unusable entry (never a complete one another creator
+        # just published), renamed aside first so the removal is not racy.
+        if [ -d "$entry" ] && { [ ! -f "$entry/.complete" ] || [ ! -d "$entry/node_modules" ]; }; then
+            aside="$cache_root/.evict.$key.$$.$RANDOM"
+            mv "$entry" "$aside" 2>/dev/null && rm -rf "$aside" 2>/dev/null
+        fi
     fi
     (cd "$wt" && npm install --silent 2>/dev/null) || true
     if [ -n "$key" ] && [ -d "$wt/node_modules" ]; then
         mkdir -p "$cache_root" 2>/dev/null || return 0
         tmp="$(mktemp -d "$cache_root/.tmp.XXXXXX" 2>/dev/null)" || return 0
         if cp -R "$wt/node_modules" "$tmp/node_modules" 2>/dev/null && : >"$tmp/.complete"; then
-            mv "$tmp" "$entry" 2>/dev/null || rm -rf "$tmp"
+            # mv onto an existing directory would nest tmp inside it, so
+            # publish only when absent, then clean any nesting from a lost race.
+            if [ -e "$entry" ]; then
+                rm -rf "$tmp"
+            else
+                mv "$tmp" "$entry" 2>/dev/null
+                rm -rf "$entry/${tmp##*/}" "$tmp" 2>/dev/null
+            fi
+            # ponytail: keep the 3 newest entries by mtime; no LRU touch on hit
+            for old in $(ls -t "$cache_root" 2>/dev/null | tail -n +4); do
+                aside="$cache_root/.tmp.evict.$old.$$"
+                mv "$cache_root/$old" "$aside" 2>/dev/null && rm -rf "$aside"
+            done
         else
             rm -rf "$tmp"
         fi
     fi
+    return 0
+}
+
+# E-130: copy .loki into a worktree without the install cache (the cache is
+# often hundreds of MB; copy-then-delete would cost more than it saves).
+# Children are copied one by one, so no tar/rsync flavour issues (bash 3.2 safe).
+_loki_copy_state_no_install_cache() {
+    local src="$1" dst="$2" e c
+    mkdir -p "$dst" || return 1
+    for e in "$src"/* "$src"/.[!.]*; do
+        [ -e "$e" ] || [ -L "$e" ] || continue
+        if [ "${e##*/}" = "cache" ] && [ -d "$e" ] && [ ! -L "$e" ]; then
+            mkdir -p "$dst/cache"
+            for c in "$e"/* "$e"/.[!.]*; do
+                [ -e "$c" ] || [ -L "$c" ] || continue
+                [ "${c##*/}" = "install" ] && continue
+                cp -R "$c" "$dst/cache/" 2>/dev/null || true
+            done
+        else
+            cp -R "$e" "$dst/" 2>/dev/null || true
+        fi
+    done
     return 0
 }
 
@@ -6329,9 +6369,8 @@ create_worktree() {
 
         # Copy .loki state to worktree
         if [ -d "$TARGET_DIR/.loki" ]; then
-            cp -r "$TARGET_DIR/.loki" "$worktree_path/" 2>/dev/null || true
             # E-130: never copy the install cache into the worktree
-            rm -rf "$worktree_path/.loki/cache/install" 2>/dev/null || true
+            _loki_copy_state_no_install_cache "$TARGET_DIR/.loki" "$worktree_path/.loki"
         fi
 
         # Initialize environment (detect and run appropriate install)
