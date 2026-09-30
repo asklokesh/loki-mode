@@ -33,7 +33,7 @@ trap cleanup EXIT
 # Every file bump_all_version_files() touches (the checklist minus
 # CHANGELOG.md, which update-changelog.sh handles separately, and
 # vscode-extension/package.json, which is deliberately skipped as DEPRECATED).
-FILES="VERSION package.json SKILL.md Dockerfile Dockerfile.sandbox plugins/loki-mode/.claude-plugin/plugin.json server.json CLAUDE.md dashboard/__init__.py mcp/__init__.py docs/INSTALLATION.md wiki/Home.md wiki/_Sidebar.md wiki/API-Reference.md web-app/src/components/Footer.tsx"
+FILES="VERSION package.json SKILL.md Dockerfile Dockerfile.sandbox plugins/loki-mode/.claude-plugin/plugin.json server.json CLAUDE.md dashboard/__init__.py mcp/__init__.py docs/INSTALLATION.md wiki/Home.md wiki/_Sidebar.md wiki/API-Reference.md web-app/src/components/Footer.tsx web-app/src/components/WhatsNew.tsx"
 
 mkdir -p "$WORK/scripts"
 cp "$REPO_ROOT/scripts/release.sh" "$WORK/scripts/release.sh"
