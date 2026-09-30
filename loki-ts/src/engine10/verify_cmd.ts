@@ -9,30 +9,16 @@ import { join, resolve } from "node:path";
 import { lokiDir, REPO_ROOT } from "../util/paths.ts";
 import { findIsolatedPython3 } from "../util/python.ts";
 import { run } from "../util/shell.ts";
-import { sha256 } from "./stages/seal.ts";
+import { receiptSha256 } from "./stages/seal.ts";
 import type { ShellResult } from "../util/shell.ts";
 export type Verdict = "VERIFIED" | "UNSIGNED" | "TAMPERED" | "UNCHECKED";
 export interface VerifyResult {
   verdict: Verdict;
   reasons: string[];
+  receiptSha256?: string;
 }
-// --- canonical JSON (mirrors Python's json.dumps(sort_keys=True, separators=(",", ":"))) ---
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    const keys = Object.keys(obj).sort();
-    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJson(obj[k])}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-/** The hash seal.ts (E-10) is specified to write into receipt.json:
- *  canonical JSON with `verification` removed. `receipt_sha256` itself is
- *  also removed: a field cannot record its own hash's input. */
-export function computeReceiptHash(receipt: Record<string, unknown>): string {
-  const { verification: _verification, receipt_sha256: _hash, ...rest } = receipt;
-  return sha256(canonicalJson(rest));
-}
+/** The hash seal writes into receipt.json; receiptSha256 strips `verification` and `receipt_sha256` itself. */
+export const computeReceiptHash = (receipt: Record<string, unknown>): string => receiptSha256(receipt as never);
 type PyRunner = (argv: readonly string[], opts?: { timeoutMs?: number }) => Promise<ShellResult>;
 export interface VerifyDeps {
   runsRoot?: string; // overrides lokiDir()/runs, for tests
@@ -115,7 +101,7 @@ export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}):
   const verification = (receipt["verification"] ?? {}) as { jwt?: string | null };
   const jwt = verification.jwt ?? null;
   if (!jwt) {
-    return { verdict: "UNSIGNED", reasons: [] };
+    return { verdict: "UNSIGNED", reasons: [], receiptSha256: computed };
   }
   const outcome = await checkAttestation(
     jwt,
@@ -125,7 +111,7 @@ export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}):
   );
   if (outcome.status === "unchecked") return { verdict: "UNCHECKED", reasons: [outcome.reason ?? "attestation not checked"] };
   if (outcome.status === "tampered") return { verdict: "TAMPERED", reasons: [outcome.reason ?? "attestation invalid"] };
-  return { verdict: "VERIFIED", reasons: [] };
+  return { verdict: "VERIFIED", reasons: [], receiptSha256: computed };
 }
 function latestRunId(runsRoot: string): string | null {
   if (!existsSync(runsRoot)) return null;
@@ -149,6 +135,10 @@ const EXIT_BY_VERDICT: Record<Verdict, number> = {
   UNCHECKED: 2,
 };
 export async function main(args: readonly string[], deps: VerifyDeps = {}): Promise<number> {
+  if (args[0] === "--help" || args[0] === "-h") {
+    process.stdout.write("Usage: loki verify [run-id]\nVerify .loki/runs/<run-id>/receipt.json (default: latest run).\nExit: 0 verified/unsigned, 1 tampered, 2 unchecked, 66 no runs.\n");
+    return 0;
+  }
   const runsRoot = deps.runsRoot ?? join(lokiDir(), "runs");
   const runId = args[0] ?? latestRunId(runsRoot) ?? undefined;
   if (!runId) {
@@ -158,6 +148,7 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   const receiptPath = join(runsRoot, runId, "receipt.json");
   const result = await verifyReceipt(receiptPath, deps);
   process.stdout.write(`run: ${runId}\nverdict: ${result.verdict}\n`);
+  if (result.receiptSha256) process.stdout.write(`receipt_sha256: ${result.receiptSha256}\n`);
   for (const reason of result.reasons) process.stdout.write(`  ${reason}\n`);
   if (result.verdict === "UNSIGNED") {
     process.stdout.write("attestation: UNSIGNED (no signing key was configured when this receipt was sealed)\n");

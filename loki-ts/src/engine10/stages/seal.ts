@@ -88,16 +88,16 @@ async function git(ctx: RunContext, args: string[]): Promise<{ out: string; code
   return { out: r.stdout, code: r.exitCode };
 }
 
-/** Section 4 Commit: `git add -A` minus .loki/, commit `loki: <title>` with a Loki-Run trailer. An empty diff commits nothing (head stays at base). */
+/** Section 4 Commit: `git add -A` minus .loki/, Wall files and stray lockfiles, commit `loki: <title>` with a Loki-Run trailer. An empty diff commits nothing (head stays at base). */
 export const commitStage: Stage = {
   name: "commit",
   ...STAGE_BUDGETS.commit,
   async run(ctx: RunContext): Promise<StageResult> {
-    // A ':(exclude).loki' pathspec makes git add exit 1 once .loki/ is in
-    // .git/info/exclude (intake puts it there), so add plainly, then unstage .loki.
-    const add = await git(ctx, ["add", "-A", "--", "."]);
-    if (add.code !== 0) return { status: "failed", data: {}, reason: "git add failed" };
-    if ((await git(ctx, ["diff", "--cached", "--name-only", "--", ".loki"])).out.trim() !== "") await git(ctx, ["reset", "-q", "--", ".loki"]);
+    // A-104/G2: stage all, unstage .loki/, Wall files (sealed under runDir/wall) and a NEW lockfile with no manifest change.
+    if ((await git(ctx, ["add", "-A", "--", "."])).code !== 0) return { status: "failed", data: {}, reason: "git add failed" };
+    const staged = (await git(ctx, ["diff", "--cached", "--name-status", "--no-renames", "-z"])).out.split("\0").reduce<{ st: string; f: string }[]>((a, t, i, all) => (i % 2 === 0 && t ? [...a, { st: t, f: all[i + 1]! }] : a), []);
+    const drop = staged.filter(({ st, f }) => f.startsWith(".loki/") || /(^|\/)loki_wall_[^/]*$/.test(f) || (st === "A" && !staged.some(({ f: m }) => /(^|\/)(package\.json|pyproject\.toml|requirements\.txt|Cargo\.toml|go\.mod)$/.test(m)) && /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Cargo\.lock|go\.sum)$/.test(f)));
+    if (drop.length > 0) await git(ctx, ["reset", "-q", "--", ...drop.map(({ f }) => f)]);
     if ((await git(ctx, ["diff", "--cached", "--quiet"])).code === 0) {
       return { status: "completed", data: { committed: false } };
     }

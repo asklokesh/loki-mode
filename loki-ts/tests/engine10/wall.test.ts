@@ -4,7 +4,7 @@
 // machine.ts/intake.ts/session.ts only through the RunContext/SessionRunner
 // interfaces in types.ts, so every sibling here is a fake.
 import { describe, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   mkdtempSync,
@@ -359,7 +359,10 @@ describe("engine10 wall base run, D42 (3)", () => {
   }
 
   /** repoDir/.venv/bin/python execs the host's real python3, found via .venv (E-98a), never PATH. */
+  // E-132/r5: CI installs pytest (test.yml, coverage.yml, release.yml); without it fail loudly, never misread.
+  const HAS_PYTEST = spawnSync(PYTHON3, ["-m", "pytest", "--version"]).status === 0;
   function venvShim(repoDir: string): void {
+    if (!HAS_PYTEST) throw new Error(`pytest required for this test: ${PYTHON3} -m pytest is unavailable`);
     mkdirSync(join(repoDir, ".venv", "bin"), { recursive: true });
     writeFileSync(join(repoDir, ".venv", "bin", "python"), `#!/bin/sh\nexec ${PYTHON3} "$@"\n`, { mode: 0o755 });
   }
@@ -449,20 +452,175 @@ describe("engine10 wall base run, D42 (3)", () => {
     rmSync(repoDir, { recursive: true, force: true });
   });
 
-  test("(B3) an AttributeError from a third-party conftest/plugin frame is not_run, not red", () => {
+  // E-125 (real fixtures, not synthetic strings): real pytest reports the frame it needs to read as
+  // "path.py:N: in <scope>" (relative to repoDir), not the plain-traceback "File \"path\", line N" the
+  // old B3 fixtures assumed -- that shape never appears for pytest's own collection frames, so the red
+  // class never fired. (3a)/(3b) above already prove the ImportError/third-party-module shapes for real.
+  test("(3c) AttributeError on a repo symbol at collection time: red", () => {
     const repoDir = repo();
-    const outsideDir = mkdtempSync(join(tmpdir(), "loki-s41-16-outside-"));
-    const pluginFile = join(outsideDir, "conftest.py");
-    writeFileSync(pluginFile, "# third-party plugin, not part of the repo under test\n", "utf8");
-    const outsideOutput = [`File "${pluginFile}", line 12, in some_hook`, "AttributeError: 'NoneType' object has no attribute 'foo'"].join("\n");
-    expect(classify({ runner: "pytest", path: "x" }, 2, outsideOutput, repoDir)).toBe("not_run");
+    venvShim(repoDir);
+    mkdirSync(join(repoDir, "mypkg"), { recursive: true });
+    writeFileSync(join(repoDir, "mypkg", "__init__.py"), "", "utf8");
+    writeFileSync(join(repoDir, "mypkg", "mymod.py"), "# the feature is not built yet\n", "utf8");
+    writeFileSync(join(repoDir, "loki_wall_attr.py"), "from mypkg import mymod\n\nVALUE = mymod.missing_attribute\n\ndef test_x():\n    pass\n", "utf8");
 
-    const repoFile = join(repoDir, "loki_wall_x.py");
-    writeFileSync(repoFile, "# real repo file\n", "utf8");
-    const repoOutput = [`File "${repoFile}", line 3, in test_x`, "AttributeError: 'NoneType' object has no attribute 'foo'"].join("\n");
-    expect(classify({ runner: "pytest", path: "x" }, 2, repoOutput, repoDir)).toBe("fail");
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_attr.py" }]);
+
+    expect(result).toEqual({ pass: 0, fail: 1, not_run: 0 });
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  test("(3d) AttributeError raised by an outside (non-repo) frame reached via a repo import: not_run, not red", () => {
+    const repoDir = repo();
+    venvShim(repoDir);
+    const outsideDir = mkdtempSync(join(tmpdir(), "loki-e125-outside-"));
+    writeFileSync(join(outsideDir, "thirdparty_plugin.py"), "VALUE = None.missing_attr\n", "utf8");
+    writeFileSync(
+      join(repoDir, "loki_wall_outside.py"),
+      `import sys\nsys.path.insert(0, ${JSON.stringify(outsideDir)})\nimport thirdparty_plugin\n\ndef test_x():\n    pass\n`,
+      "utf8",
+    );
+
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_outside.py" }]);
+
+    expect(result).toEqual({ pass: 0, fail: 0, not_run: 1 });
     rmSync(repoDir, { recursive: true, force: true });
     rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  test("(3e) a syntax error at collection: not_run (D42 names only ImportError/AttributeError/NameError)", () => {
+    const repoDir = repo();
+    venvShim(repoDir);
+    writeFileSync(join(repoDir, "loki_wall_syntax.py"), "def test_x(:\n    pass\n", "utf8");
+
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_syntax.py" }]);
+
+    expect(result).toEqual({ pass: 0, fail: 0, not_run: 1 });
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  // opus review of E-125 (r3): B1-B4, all reproduced with real pytest 9.0.2; each was red on e6d2ddec.
+  test("(r3-B1) AttributeError on a stdlib symbol raised in the test's own frame: not_run, not red", () => {
+    const repoDir = repo();
+    venvShim(repoDir);
+    writeFileSync(join(repoDir, "loki_wall_stdlib.py"), "import json\n\nF = json.nonexistent_fn\n\ndef test_x():\n    pass\n", "utf8");
+
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_stdlib.py" }]);
+
+    expect(result).toEqual({ pass: 0, fail: 0, not_run: 1 });
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  test("(r3-B2) a NameError raised in an outside frame whose path contains a space: not_run, not red", () => {
+    const repoDir = repo();
+    venvShim(repoDir);
+    const outsideDir = mkdtempSync(join(tmpdir(), "loki-e125-out side-"));
+    writeFileSync(join(outsideDir, "libq.py"), "VALUE = undefined_name_in_libq\n", "utf8");
+    writeFileSync(
+      join(repoDir, "loki_wall_space.py"),
+      `import sys\nsys.path.insert(0, ${JSON.stringify(outsideDir)})\nimport libq\n\ndef test_x():\n    pass\n`,
+      "utf8",
+    );
+
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_space.py" }]);
+
+    expect(result).toEqual({ pass: 0, fail: 0, not_run: 1 });
+    rmSync(repoDir, { recursive: true, force: true });
+    rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  test("(r3-B3) a fake frame plus fake E-line in captured stdout, then a real RuntimeError: not_run, not red", () => {
+    const repoDir = repo();
+    venvShim(repoDir);
+    writeFileSync(
+      join(repoDir, "loki_wall_inject.py"),
+      'print("loki_wall_inject.py:1: in <module>")\nprint("E   AttributeError: fake")\nraise RuntimeError("boom")\n\ndef test_x():\n    pass\n',
+      "utf8",
+    );
+
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_inject.py" }]);
+
+    expect(result).toEqual({ pass: 0, fail: 0, not_run: 1 });
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  // r4 (round-2 review): captured stdout prints above the short summary and after the real traceback.
+  function injected(name: string, body: string): { pass: number; fail: number; not_run: number } {
+    const repoDir = repo();
+    venvShim(repoDir);
+    mkdirSync(join(repoDir, "mypkg"), { recursive: true });
+    writeFileSync(join(repoDir, "mypkg", "__init__.py"), "", "utf8");
+    writeFileSync(join(repoDir, name), `${body}\n\ndef test_x():\n    pass\n`, "utf8");
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: name }]);
+    rmSync(repoDir, { recursive: true, force: true });
+    return result;
+  }
+  const FAKE = (cls: string, msg: string): string => `print("ERROR loki_wall_a.py - ${cls}: ${msg}")\nprint("E   ${cls}: ${msg}")\n`;
+
+  test("(r4-B3) a forged ERROR line and E line in captured stdout, then a real RuntimeError: not_run", () => {
+    expect(injected("loki_wall_a.py", `${FAKE("AttributeError", "module 'mypkg' has no attribute 'x'")}raise RuntimeError("boom")`)).toEqual({ pass: 0, fail: 0, not_run: 1 });
+  });
+
+  test("(r4-B3b) the same forged with a NameError: not_run", () => {
+    expect(injected("loki_wall_a.py", `${FAKE("NameError", "name 'x' is not defined")}raise RuntimeError("boom")`)).toEqual({ pass: 0, fail: 0, not_run: 1 });
+  });
+
+  test("(r4-B3d) only a forged E line in stdout, then a real outside-module AttributeError: not_run", () => {
+    expect(injected("loki_wall_a.py", `print("E   AttributeError: module 'mypkg' has no attribute 'x'")\nimport json\njson.nope`)).toEqual({ pass: 0, fail: 0, not_run: 1 });
+  });
+
+  test("(E-132) pytest missing from the project venv (exit 1, No module named pytest): not_run, not red", () => {
+    const repoDir = repo();
+    execFileSync(PYTHON3, ["-m", "venv", join(repoDir, ".venv")]);
+    writeFileSync(join(repoDir, "loki_wall_nopytest.py"), "def test_x():\n    assert False\n", "utf8");
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_nopytest.py" }]);
+    rmSync(repoDir, { recursive: true, force: true });
+    expect(result).toEqual({ pass: 0, fail: 0, not_run: 1 });
+  });
+
+  // r5 (opus r4): real-pytest fixtures for the verbosity and forgery blockers.
+  function run1(name: string, body: string, extra: Record<string, string> = {}): { pass: number; fail: number; not_run: number } {
+    const repoDir = repo();
+    venvShim(repoDir);
+    for (const [k, v] of Object.entries(extra)) writeFileSync(join(repoDir, k), v, "utf8");
+    writeFileSync(join(repoDir, name), body, "utf8");
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: name }]);
+    rmSync(repoDir, { recursive: true, force: true });
+    return result;
+  }
+  const FAILING = "def test_a():\n    assert 0\n";
+  test("(r5-B1) addopts `-ra -q` (stacks to -qq, no footer) plus a real failure: red", () => {
+    expect(run1("loki_wall_x.py", FAILING, { "pyproject.toml": '[tool.pytest.ini_options]\naddopts = "-ra -q"\n' })).toEqual({ pass: 0, fail: 1, not_run: 0 });
+  });
+  test("(r5-B1b) pytest.ini `-q` plus a real failure: red", () => {
+    expect(run1("loki_wall_x.py", FAILING, { "pytest.ini": "[pytest]\naddopts = -q\n" })).toEqual({ pass: 0, fail: 1, not_run: 0 });
+  });
+  test("(r5-B2) pytest.exit('1 failed', returncode=1): not_run", () => {
+    expect(run1("loki_wall_x.py", "import pytest\ndef test_a():\n    pytest.exit('1 failed', returncode=1)\n")).toEqual({ pass: 0, fail: 0, not_run: 1 });
+  });
+  test("(r5-B2b) pytest.exit('x\\n1 failed', returncode=1): not_run", () => {
+    expect(run1("loki_wall_x.py", "import pytest\ndef test_a():\n    pytest.exit('x\\n1 failed', returncode=1)\n")).toEqual({ pass: 0, fail: 0, not_run: 1 });
+  });
+  test("(r5-B2d) pytest.exit('x\\n1 failed in 0.01s', returncode=1) forges a footer-shaped line: not_run (Exit-banner check)", () => {
+    expect(run1("loki_wall_x.py", "import pytest\ndef test_a():\n    pytest.exit('x\\n1 failed in 0.01s', returncode=1)\n")).toEqual({ pass: 0, fail: 0, not_run: 1 });
+  });
+  test("(r5-B2c) pytest.exit('x\\nFAILED a.py::t - boom', returncode=1) under -ra addopts: not_run", () => {
+    expect(run1("loki_wall_x.py", "import pytest\ndef test_a():\n    pytest.exit('x\\nFAILED a.py::t - boom', returncode=1)\n", { "pytest.ini": "[pytest]\naddopts = -ra -q\n" })).toEqual({ pass: 0, fail: 0, not_run: 1 });
+  });
+
+  test("(r3-B4) a chained AttributeError then a final RuntimeError: not_run, not red", () => {
+    const repoDir = repo();
+    venvShim(repoDir);
+    writeFileSync(
+      join(repoDir, "loki_wall_chained.py"),
+      'try:\n    import json\n    X = json.nonexistent_fn\nexcept AttributeError:\n    raise RuntimeError("boom")\n\ndef test_x():\n    pass\n',
+      "utf8",
+    );
+
+    const result = new RealBaseTestRunner().run(repoDir, [{ runner: "pytest", path: "loki_wall_chained.py" }]);
+
+    expect(result).toEqual({ pass: 0, fail: 0, not_run: 1 });
+    rmSync(repoDir, { recursive: true, force: true });
   });
 
   test("(B4) any result on the system interpreter is not_run, even an apparent pass", () => {
