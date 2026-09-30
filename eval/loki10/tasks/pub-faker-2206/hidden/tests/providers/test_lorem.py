@@ -219,3 +219,13 @@ class TestEsMx:
         for _ in range(num_samples):
             words = faker.words(num_words)
             assert all(isinstance(word, str) and word in _provider("es_ES").word_list for word in words)
+
+
+def test_spanish_word_lists_are_not_latin():
+    # Added by the task author (not upstream): issue #2206 is that es_* text()
+    # came out as Latin lorem ipsum, and the upstream membership tests alone
+    # pass for a provider that just aliases the Latin list.
+    latin = {word.lower() for word in _provider("la").word_list}
+    for locale in ("es_ES", "es_AR", "es_MX"):
+        words = {word.lower() for word in _provider(locale).word_list}
+        assert len(words & latin) / len(words) < 0.05

@@ -16,13 +16,23 @@
   Everything else (upstream's unrelated reformatting of older tests, other
   locales' classes) is dropped. The tests' content and assertions are unchanged.
 - RED verified: worktree at repo.ref, overlaid the trimmed file, `pip install -e .`,
-  hidden.run (no -k): `24 failed in 0.59s`, rc=1, all `ModuleNotFoundError`.
-- GREEN verified: worktree at merge_sha, same overlay: `24 passed in 2.08s`, rc=0.
+  hidden.run (no -k): `25 failed`, rc=1 (incl. the author-added test), 24 of them `ModuleNotFoundError`.
+- GREEN verified: worktree at merge_sha, same overlay: `25 passed`, rc=0.
 - Deletion mutant: at merge_sha, es_AR and es_MX providers replaced by an en_US
-  subclass. `4 failed, 20 passed`, rc=1 (the word-membership checks). Reverted;
+  subclass. `4 failed, 21 passed` (re-run with the 25-test file), rc=1 (the word-membership checks). Reverted;
   GREEN re-confirmed (`24 passed`).
 - D30 no-op baseline (run 2026-09-30 through run.sh): `STUB_MODE=noop
   LOKI_EVAL_CLAUDE_BIN=<abs path>/eval/loki10/fixtures/stub-arm.sh bash eval/loki10/run.sh
   --arm raw-claude --task pub-faker-2206` gave status=ok, hidden_pass=false,
   completed=false, exit_code=0, pr_opened=false.
 - Verified on this host's Python 3.14; setup needs no special host state.
+
+- S41-20 pre-check (2026-09-30), `git diff --stat 399672d438c6 6d11923b5a67` verbatim (source files are the .py files under src/ or the package dir; changelog, docs and tests are not counted):
+     faker/providers/lorem/es_AR/__init__.py |    7 +
+     faker/providers/lorem/es_ES/__init__.py | 1016 +++++++++++++++++++++++++++++++
+     faker/providers/lorem/es_MX/__init__.py |    9 +
+     tests/providers/test_lorem.py           |  240 +++++++-
+     4 files changed, 1268 insertions(+), 4 deletions(-)
+- Criterion 1 (D30): each source file restricted with `git apply --include=<file>` onto repo.ref plus the hidden files; no single file makes hidden.run pass. Wrong-fix probe (found a hole, fixed): es_ES aliased to the Latin `la` provider (es_AR/es_MX subclassing es_ES) passed all 24 upstream-derived tests because they only check words against the provider's own word_list, so a Latin-text fix graded as complete. Author-added test `test_spanish_word_lists_are_not_latin` (appended to the hidden file, NOT upstream; requires <5% overlap of each es_* word list with the Latin list; real lists overlap 3/999 words) now rejects it: `1 failed, 24 passed`. hidden.run still runs the whole file (no -k): RED at repo.ref `25 failed`, GREEN at merge_sha `25 passed` (RED.txt/GREEN.txt regenerated; earlier text in this file saying 24 is superseded). Per-file: each of the 3 files alone -> 16 failed + 8 passed/errors. Reproducer: `Faker('es_ES').text()` at repo.ref returns Latin ('Dolor unde corrupti maiores...').
+- refdiff: eval/loki10/refdiff/pub-faker-2206.diff is the measure-size.py source-only filter of that diff; `python3 eval/loki10/measure-size.py` exits 0 and classifies the task medium.
+- No-op baseline re-run 2026-09-30 after the hidden file changed (STUB_MODE=noop, absolute LOKI_EVAL_CLAUDE_BIN, run.sh --arm raw-claude --task pub-faker-2206): status=ok, hidden_pass=false, completed=false, exit_code=0, pr_opened=false.

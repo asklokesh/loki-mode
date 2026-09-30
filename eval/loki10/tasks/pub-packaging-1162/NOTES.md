@@ -56,3 +56,12 @@
   reverted (`git checkout -- src/packaging/version.py`); GREEN re-confirmed
   (`13 passed, 51500 deselected in 1.35s`, rc=0).
 - D30 no-op baseline (run 2026-09-30 through run.sh): `STUB_MODE=noop LOKI_EVAL_CLAUDE_BIN=<abs path>/eval/loki10/fixtures/stub-arm.sh bash eval/loki10/run.sh --arm raw-claude --task pub-packaging-1162` gave status=ok, hidden_pass=false, completed=false, exit_code=0, pr_opened=false. The stub path must be absolute: a relative path gives exit_code 127 (stub not found), which is not a valid baseline.
+
+- S41-20 pre-check (2026-09-30), `git diff --stat 9ac29c01860f b82413d6a1e5` verbatim (source files are the .py files under src/ or the package dir; changelog, docs and tests are not counted):
+     CHANGELOG.rst                |   6 +-
+     src/packaging/_structures.py |  33 ++++++++++
+     src/packaging/version.py     |  67 ++++++++++++++++++++
+     tests/test_version.py        | 148 +++++++++++++++++++++++++++++++++++++++++++
+     4 files changed, 253 insertions(+), 1 deletion(-)
+- Criterion 1 (D30): each source file restricted with `git apply --include=<file>` onto repo.ref plus the hidden files; no single file makes hidden.run pass. Wrong-fix probes: _structures.py shim alone -> 5 failed (no __setstate__/__getstate__); version.py alone -> 3 failed (old pickles still need packaging._structures). A __setstate__ that handles only the old dict format is caught by test_pickle_26_0_slots_format_loads / test_pickle_26_2_tuple_getstate_loads, all of which match -k test_pickle (6 of the PR's 7 new tests; test_structures_shim_repr is the excluded one, see above). Reproducer: at repo.ref packaging/_structures.py does not exist, so unpickling any pre-26.1 Version raises ModuleNotFoundError (RED run shows it).
+- refdiff: eval/loki10/refdiff/pub-packaging-1162.diff is the measure-size.py source-only filter of that diff; `python3 eval/loki10/measure-size.py` exits 0 and classifies the task medium.
