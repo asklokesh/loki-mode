@@ -106,8 +106,15 @@ g() { git -C "$R" -c user.email=moat@example.invalid -c user.name=moat \
     >"$W/out/gen.log" 2>&1
 PJ="$R/.loki/proofs/p1/proof.json"
 [ -f "$PJ" ] || fail_all "fixture setup failed: generator wrote no proof.json"
-# Control for the presence probe: the same generator with no key configured.
-(cd "$R" && env -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_RECEIPT_SIGNING_KEY_FILE \
+# Control for the presence probe: the same generator with signing UNAVAILABLE.
+# "No key configured" no longer means unsigned (A-120/A-122: the generator
+# auto-creates ~/.loki/keys/receipt-ed25519.pem), so the control must make the
+# key impossible to read or create: a throwaway HOME (never the real one) and a
+# key file path beneath a regular file, which fails with an OSError and leaves
+# load_signing_key() returning no key. Still the same generator, same inputs.
+: >"$W/home/not-a-dir"
+(cd "$R" && env -u LOKI_RECEIPT_SIGNING_KEY HOME="$W/home" \
+    LOKI_RECEIPT_SIGNING_KEY_FILE="$W/home/not-a-dir/key.pem" \
     _LOKI_RUN_START_SHA="$BASE" \
     python3 "$GEN" --loki-dir "$R/.loki" --out-dir "$W/control/p0" --run-id p0 --quiet) \
     >"$W/out/gen-control.log" 2>&1
@@ -263,7 +270,7 @@ PY
 # An explicit sentinel, not empty output: a killed or crashed checker must
 # never read as a pass.
 if [ "$_att" = "ATTESTATION_PRESENT" ]; then
-    report P1.signed-proof-carries-attestation PASS "generator with a signing key writes verification.attestation (kid matches the key); unkeyed control writes none"
+    report P1.signed-proof-carries-attestation PASS "generator with a signing key writes verification.attestation (kid matches the key); control with signing unavailable writes none"
 else
     report P1.signed-proof-carries-attestation FAIL "generator did not attest the proof: $_att"
 fi
