@@ -198,6 +198,20 @@ describe("engine10 seal", () => {
     expect((await sealStage.run(done.ctx, new AbortController().signal)).data.verdict).toBe("ALREADY_SATISFIED");
   }, 30000);
 
+  // D42 (3)/B1 (r2): wall.ts's own not_run can never seal ALREADY_SATISFIED, and it must show up on
+  // NOT PROVEN -- {pass:1, fail:0, not_run:1} is a base run that never proved the task was already done.
+  test("wall base_run.not_run refuses ALREADY_SATISFIED and lands on NOT PROVEN", async () => {
+    noKey();
+    const { repo, base } = makeRepo("wall-not-run");
+    const { ctx } = ctxFor(repo, base, "claude", {
+      wall: { files: [{ path: "tests/loki_wall_x.py", sha256: "ab".repeat(32) }], base_run: { pass: 1, fail: 0, not_run: 1 } },
+    });
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    expect(s.data.verdict).not.toBe("ALREADY_SATISFIED");
+    expect(receiptOf(s).not_proven).toContain("wall base run not_run: 1");
+  }, 30000);
+
   // E-66 review finding 4: an ALREADY_SATISFIED (no-change) verdict must carry the evidence that
   // justified it in the receipt itself, not just in intake's own stage output -- the receipt is
   // what a reviewer or Seal check actually reads.

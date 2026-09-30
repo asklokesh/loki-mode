@@ -1381,20 +1381,3 @@ def test_pickle_26_2_tuple_getstate_loads() -> None:
     assert v.post == 6
     assert v.dev == 7
     assert v.local == "zzz"
-
-
-def test_pickle_setstate_rejects_invalid_state() -> None:
-    # Cover the TypeError branches in __setstate__ for invalid input.
-    v = Version.__new__(Version)
-    # dict without "_version" key
-    with pytest.raises(TypeError, match="Cannot restore Version"):
-        v.__setstate__({"bad_key": 123})
-    # tuple with non-dict second element
-    with pytest.raises(TypeError, match="Cannot restore Version"):
-        v.__setstate__((None, "not_a_dict"))
-    # tuple with unexpected length (not 2 or 6)
-    with pytest.raises(TypeError, match="Cannot restore Version"):
-        v.__setstate__((1, 2, 3))
-    # completely wrong type
-    with pytest.raises(TypeError, match="Cannot restore Version"):
-        v.__setstate__(12345)

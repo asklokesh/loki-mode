@@ -656,6 +656,7 @@ Loki 10 gate publish script (EV-6)	2
 Loki 10 user docs match USAGE and the default marker (E-34)	1
 release.sh --bump-only restores debugId-only dist churn (E-72)	1
 release.sh --bump-only never leaves dist deleted on build failure (E-102)	1
+release.sh --bump-only refuses dist maps with absolute or repo-escaping sources (E-133)	1
 release-notes.sh extraction/validation + pre-push VERSION-bump gate (E-88)	9
 no hardcoded far-future latest a release can overtake (E-73)	1
 Loki modernize py2/3 capture tracer (M-09)	2
@@ -665,3 +666,15 @@ Dependency inventory Latest/Bump self-consistency (DEP-01)	1
 Usage governor calibration and dedup (G-01)	2
 Usage governor statusLine logger (G-01)	1
 security-audit.yml gitleaks config isolation (refuse config change, base-config scan, gitleaksignore warning)	1
+CI security scanners wired, fail-closed (E-123)	1
+Worktree install cache keyed on lockfile hash (E-130)	1
+WhatsNew CURRENT_VERSION matches VERSION (E-129)	1
+Heredoc dollar-digit footgun checker (D44)	2
+CI cache scope (D44)	2
+Engine10 push GitLab (D44)	5
+gh withhold nested (D44)	2
+SettingsPage has no Gemini (D44)	2
+Trusted push agent config (D44)	15
+v10 guard rules (D44)	34
+Every test suite is registered in a runner (D44)	8
+Structural checks catch planted defects (D44-C)	45

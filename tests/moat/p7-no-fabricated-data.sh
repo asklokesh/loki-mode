@@ -768,7 +768,12 @@ def is_exempting_sibling(v):
             pass
     return True
 line_of = lambda s, i: s.count('\n', 0, i) + 1
-SETTER = re.compile(r'\b(set[A-Z]\w*|useState)\s*(?=[(<])')
+# E-131 (BACKLOG 146): BRACKET_SINK also treats a computed/bracket-indexed call
+# on a global-ish receiver (`window[sinkName](rows)`, `this[key](rows)`) as a
+# sink. Receiver-restricted (window/globalThis/self/this) so an ordinary
+# `handlers[kind](x)` or `items[i](x)` call is not swept in.
+BRACKET_SINK = r'(?:window|globalThis|self|this)\s*\[[^\]\n]+\]'
+SETTER = re.compile(r'\b(set[A-Z]\w*|useState|' + BRACKET_SINK + r')\s*(?=[(<])')
 CATCH = re.compile(r'\bcatch\s*(?:\([^()]*\))?\s*\{|\.catch\s*\(')
 ARRAY_CTX = re.compile(r'(?:[=(,:?\[|&]|\breturn)\s*$')
 def expr_end(s):
@@ -1059,7 +1064,7 @@ def is_block_open(s, i):
     while j >= 0 and s[j].isspace():
         j -= 1
     return j >= 0 and s[j] in ')>'
-FLOWS_TO_STATE_TMPL = (r'\b(?:set[A-Z]\w*|useState)\s*(?:<[^()]*?>)?\s*\(\s*(?:\(\s*\)\s*=>\s*)?'
+FLOWS_TO_STATE_TMPL = (r'\b(?:set[A-Z]\w*|useState|' + BRACKET_SINK + r')\s*(?:<[^()]*?>)?\s*\(\s*(?:\(\s*\)\s*=>\s*)?'
                        r'{name}\s*[,)]|\bthis\.\w+\s*=\s*{name}\b')
 # Rule 6, function-return extension (BACKLOG 125 B-7): `function getRows(d){
 # if(!d) return [{...}]; return d; } setRows(getRows(d))` has no literal array
@@ -1164,7 +1169,7 @@ NESTED_FN_HEAD = re.compile(r'\bfunction\b[^{}();]*\([^()]*\)\s*\{'
 # exclude a spread's three dots (`[...getRows(...)]`): `(?:(?<![\w$.])|
 # (?<=\.\.\.))` reads as "not preceded by a word char or a single dot, UNLESS
 # the three characters immediately before are exactly '...'".
-HELPER_CALL_SINK_HEAD = re.compile(r'\b(?:set[A-Z]\w*|useState)\s*(?:<[^()]*?>)?\s*\(')
+HELPER_CALL_SINK_HEAD = re.compile(r'\b(?:set[A-Z]\w*|useState|' + BRACKET_SINK + r')\s*(?:<[^()]*?>)?\s*\(')
 HELPER_CALL_IN_SPAN_TMPL = r'{pre}{name}\s*\('
 # useState's lazy-initializer form passes the bare function reference, never
 # calling it at the sink at all (`useState(getRows)`, React calls it once on
@@ -1179,7 +1184,12 @@ HELPER_BARE_REF_IN_SPAN_TMPL = r'{pre}{name}\s*[,)]'
 # shape DECL_ARR itself already can't need (DECL_ARR's own literal sits right
 # at the local's declaration). `(?:await\s+)?` covers `const rows = await
 # getRows();`.
-HELPER_LOCAL_DECL_TMPL = r'\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;{{}}]*)?=(?![=>])\s*(?:await\s+)?{pre}{name}\s*\('
+# E-128 (BACKLOG 147): the optional USEMEMO_CALL_PRE also accepts a useMemo
+# factory whose body is just a call to the fabricator (`useMemo(() => name(d),
+# deps)` concise, or `useMemo(() => { return name(d); }, deps)` block), so the
+# memo-bound local is credited exactly like a directly-called one.
+USEMEMO_CALL_PRE = r'(?:(?:React\.)?useMemo\s*(?:<[^()]*?>)?\s*\(\s*\(\s*\)\s*=>\s*(?:\{{\s*return\s+)?)?'
+HELPER_LOCAL_DECL_TMPL = r'\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;{{}}]*)?=(?![=>])\s*(?:await\s+)?' + USEMEMO_CALL_PRE + r'{pre}{name}\s*\('
 # useMemo extension (BACKLOG 125 B-7 rework, mainstream React idiom): `const
 # rows = useMemo(() => [...fabricated rows...], deps); setRows(rows);` is
 # caught by NO rule without this arm. It is NOT the HELPER_HEAD shape: `rows`
@@ -3181,6 +3191,95 @@ export function UMD({ data, deps }) {
   return null;
 }
 TSX
+    # E-128 (BACKLOG 147): a useMemo factory that CALLS an already-registered
+    # fabricator instead of returning a literal itself. DECL_USEMEMO cannot see
+    # it (no literal in the factory body) and the memo-bound name is a value,
+    # never called, so HELPER_HEAD's call-site machinery cannot either.
+    cat > "$d/src/components/UseMemoCallsFabricator.tsx" <<'TSX'
+export function UMF({ d, deps }) {
+  function getRows(d) {
+    if (!d) return [{ id: 1, action: 'Deployed', user: 'Admin', timestamp: 'now' }];
+    return d;
+  }
+  const rows = useMemo(() => getRows(d), [deps]);
+  setRows(rows);
+  return null;
+}
+TSX
+    cat > "$d/src/components/UseMemoBlockCallsFabricator.tsx" <<'TSX'
+export function UMBF({ d, deps }) {
+  const getRows = (d) => {
+    if (!d) return [{ id: 1, action: 'Deployed', user: 'Admin', timestamp: 'now' }];
+    return d;
+  };
+  const rows = React.useMemo(() => {
+    return getRows(d);
+  }, [deps]);
+  setRows(rows);
+  return null;
+}
+TSX
+    # Honest look-alikes: a useMemo calling a helper that returns REAL data; and
+    # a useMemo calling a fabricating helper whose memoized value only renders
+    # (never reaches a sink), so the sink gate stays load-bearing.
+    cat > "$d/src/components/UseMemoCallsHonestHelper.tsx" <<'TSX'
+export function UMH({ d, deps }) {
+  function loadRows(d) {
+    if (!d) return [];
+    return d.rows;
+  }
+  const rows = useMemo(() => loadRows(d), [deps]);
+  setRows(rows);
+  return null;
+}
+TSX
+    cat > "$d/src/components/UseMemoCallsFabricatorRenderOnly.tsx" <<'TSX'
+export function UMR({ d, deps }) {
+  function getRows(d) {
+    if (!d) return [{ id: 1, action: 'Deployed', user: 'Admin', timestamp: 'now' }];
+    return d;
+  }
+  const rows = useMemo(() => getRows(d), [deps]);
+  return rows.map((r) => r.id);
+}
+TSX
+    # E-131 (BACKLOG 146): a computed / bracket-indexed sink, which the literal
+    # set[A-Z]/useState sink regex never matched.
+    cat > "$d/src/components/BracketSinkFabricated.tsx" <<'TSX'
+export function BSF({ sinkName }) {
+  window[sinkName]([{ id: 1, name: 'Sample User', action: 'Deployed' }]);
+  return null;
+}
+TSX
+    cat > "$d/src/components/BracketSinkLocalFabricated.tsx" <<'TSX'
+export function BSL({ sinkName }) {
+  const rows = [{ id: 1, name: 'Sample User', action: 'Deployed' }];
+  this[sinkName](rows);
+  return null;
+}
+TSX
+    cat > "$d/src/components/BracketSinkHelperFabricated.tsx" <<'TSX'
+export function BSH({ sinkName, d }) {
+  function getRows(d) {
+    if (!d) return [{ id: 1, action: 'Deployed', user: 'Admin', timestamp: 'now' }];
+    return d;
+  }
+  globalThis[sinkName](getRows(d));
+  return null;
+}
+TSX
+    # Honest look-alikes: a computed sink fed real data, an empty array, and a
+    # bare (non-call) bracket read next to a literal.
+    cat > "$d/src/components/BracketSinkHonest.tsx" <<'TSX'
+export function BSN({ sinkName, data }) {
+  window[sinkName](data.rows);
+  window[sinkName]([]);
+  const rows = data.items;
+  this[sinkName](rows);
+  const first = window[sinkName] ? 1 : 0;
+  return first;
+}
+TSX
     # Honest look-alikes for the same arm: an empty-array fallback (a genuine
     # "nothing yet" default), a real config/enum object return, a helper whose
     # fabricated return never reaches a sink (render-only .map() - this is
@@ -3880,6 +3979,10 @@ EOF
         HelperReturnBareParamArrow.tsx:1 HelperReturnLetVar.tsx:1 HelperReturnUseCallback.tsx:1 \
         HelperReturnUseCallbackBareParam.tsx:1 HelperReturnReactUseCallback.tsx:1 \
         UseMemoConciseFabricated.tsx:1 UseMemoBlockFabricated.tsx:1 UseMemoDerivedHonest.tsx:0 \
+        UseMemoCallsFabricator.tsx:1 UseMemoBlockCallsFabricator.tsx:1 UseMemoCallsHonestHelper.tsx:0 \
+        UseMemoCallsFabricatorRenderOnly.tsx:0 \
+        BracketSinkFabricated.tsx:1 BracketSinkLocalFabricated.tsx:1 BracketSinkHelperFabricated.tsx:1 \
+        BracketSinkHonest.tsx:0 \
         HelperReturnEmptyHonest.tsx:0 HelperReturnRenderOnlyHonest.tsx:0 HelperReturnNestedCallbackHonest.tsx:0 \
         HelperReturnSinkSpreadHonest.tsx:0 HelperReturnSinkNestedCallHonest.tsx:0 \
         HelperReturnSinkTrailingCallHonest.tsx:0 HelperReturnUseCallbackHonest.tsx:0 \

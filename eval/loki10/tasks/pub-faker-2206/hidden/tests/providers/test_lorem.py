@@ -1,6 +1,8 @@
 import importlib
 import re
 
+from pathlib import Path
+
 
 def _provider(locale):
     # Lazy import so the module not existing at the base commit fails each
@@ -221,11 +223,16 @@ class TestEsMx:
             assert all(isinstance(word, str) and word in _provider("es_ES").word_list for word in words)
 
 
-def test_spanish_word_lists_are_not_latin():
+def test_spanish_word_lists_are_not_other_locales():
     # Added by the task author (not upstream): issue #2206 is that es_* text()
-    # came out as Latin lorem ipsum, and the upstream membership tests alone
-    # pass for a provider that just aliases the Latin list.
-    latin = {word.lower() for word in _provider("la").word_list}
+    # came out as Latin lorem ipsum. Upstream membership tests alone pass for a
+    # provider that just aliases another locale's list. Real Spanish lists
+    # overlap any other lorem locale by under 10%; an alias overlaps 100%.
+    lorem_dir = Path(importlib.import_module("faker.providers.lorem").__file__).parent
+    others = sorted(d.name for d in lorem_dir.iterdir() if (d / "__init__.py").is_file() and not d.name.startswith("es_"))
+    assert others
     for locale in ("es_ES", "es_AR", "es_MX"):
         words = {word.lower() for word in _provider(locale).word_list}
-        assert len(words & latin) / len(words) < 0.05
+        for other in others:
+            other_words = {word.lower() for word in _provider(other).word_list}
+            assert len(words & other_words) / len(words) < 0.5, (locale, other)

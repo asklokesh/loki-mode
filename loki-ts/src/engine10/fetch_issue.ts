@@ -22,7 +22,7 @@ export interface NormalizedIssue {
 }
 export type Execer = (cmd: string, args: string[]) => string;
 const ISSUE_PROVIDERS_SH = join(REPO_ROOT, "autonomy/issue-providers.sh");
-function defaultExec(cmd: string, args: string[]): string {
+export function defaultExec(cmd: string, args: string[]): string {
   return execFileSync(cmd, args, { encoding: "utf8", env: process.env });
 }
 interface GithubExtra {

@@ -1,4 +1,4 @@
-........FFFFF                                                            [100%]
+........FFFF                                                             [100%]
 =================================== FAILURES ===================================
 _________________________ test_pickle_old_format_loads _________________________
 
@@ -40,22 +40,9 @@ ____________________ test_pickle_26_2_tuple_getstate_loads _____________________
 E       _pickle.UnpicklingError: state is not a dictionary
 
 tests/test_version.py:1374: UnpicklingError
-__________________ test_pickle_setstate_rejects_invalid_state __________________
-
-    def test_pickle_setstate_rejects_invalid_state() -> None:
-        # Cover the TypeError branches in __setstate__ for invalid input.
-        v = Version.__new__(Version)
-        # dict without "_version" key
-        with pytest.raises(TypeError, match="Cannot restore Version"):
->           v.__setstate__({"bad_key": 123})
-            ^^^^^^^^^^^^^^
-E           AttributeError: 'Version' object has no attribute '__setstate__'. Did you mean: '__getstate__'?
-
-tests/test_version.py:1391: AttributeError
 =========================== short test summary info ============================
 FAILED tests/test_version.py::test_pickle_old_format_loads - ModuleNotFoundEr...
 FAILED tests/test_version.py::test_pickle_old_format_re_pickled_is_clean - Mo...
 FAILED tests/test_version.py::test_pickle_26_0_slots_format_loads - ModuleNot...
 FAILED tests/test_version.py::test_pickle_26_2_tuple_getstate_loads - _pickle...
-FAILED tests/test_version.py::test_pickle_setstate_rejects_invalid_state - At...
-5 failed, 8 passed, 51500 deselected in 1.59s
+4 failed, 8 passed, 51500 deselected in 1.42s

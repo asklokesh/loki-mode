@@ -2,8 +2,8 @@ FFFFFFFFFFFFFFFFFFFFFFFFF                                                [100%]
 =================================== FAILURES ===================================
 ___________________________ TestEsEs.test_paragraph ____________________________
 
-self = <tests.providers.test_lorem.TestEsEs object at 0x1092ce0d0>
-faker = <faker.proxy.Faker object at 0x1092cec10>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsEs object at 0x1095160d0>
+faker = <faker.proxy.Faker object at 0x109516c10>, num_samples = 100
 
     def test_paragraph(self, faker, num_samples):
         num_sentences = 10
@@ -14,12 +14,12 @@ faker = <faker.proxy.Faker object at 0x1092cec10>, num_samples = 100
 >           assert all(word.lower() in self.word_list for word in words)
                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:24: 
+tests/providers/test_lorem.py:26: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:24: in <genexpr>
+tests/providers/test_lorem.py:26: in <genexpr>
     assert all(word.lower() in self.word_list for word in words)
                                ^^^^^^^^^^^^^^
-tests/providers/test_lorem.py:16: in word_list
+tests/providers/test_lorem.py:18: in word_list
     return [word.lower() for word in _provider("es_ES").word_list]
                                      ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -33,11 +33,11 @@ locale = 'es_ES'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 ___________________________ TestEsEs.test_paragraphs ___________________________
 
-self = <tests.providers.test_lorem.TestEsEs object at 0x1092cefd0>
-faker = <faker.proxy.Faker object at 0x1092cec10>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsEs object at 0x109516fd0>
+faker = <faker.proxy.Faker object at 0x109516c10>, num_samples = 100
 
     def test_paragraphs(self, faker, num_samples):
         num_paragraphs = 5
@@ -49,12 +49,12 @@ faker = <faker.proxy.Faker object at 0x1092cec10>, num_samples = 100
 >               assert all(word.lower() in self.word_list for word in words)
                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:33: 
+tests/providers/test_lorem.py:35: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:33: in <genexpr>
+tests/providers/test_lorem.py:35: in <genexpr>
     assert all(word.lower() in self.word_list for word in words)
                                ^^^^^^^^^^^^^^
-tests/providers/test_lorem.py:16: in word_list
+tests/providers/test_lorem.py:18: in word_list
     return [word.lower() for word in _provider("es_ES").word_list]
                                      ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -68,11 +68,11 @@ locale = 'es_ES'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 ____________________________ TestEsEs.test_sentence ____________________________
 
-self = <tests.providers.test_lorem.TestEsEs object at 0x1099dcc30>
-faker = <faker.proxy.Faker object at 0x1092cec10>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsEs object at 0x109c2cc30>
+faker = <faker.proxy.Faker object at 0x109516c10>, num_samples = 100
 
     def test_sentence(self, faker, num_samples):
         num_words = 10
@@ -83,12 +83,12 @@ faker = <faker.proxy.Faker object at 0x1092cec10>, num_samples = 100
 >           assert all(word.lower() in self.word_list for word in words)
                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:41: 
+tests/providers/test_lorem.py:43: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:41: in <genexpr>
+tests/providers/test_lorem.py:43: in <genexpr>
     assert all(word.lower() in self.word_list for word in words)
                                ^^^^^^^^^^^^^^
-tests/providers/test_lorem.py:16: in word_list
+tests/providers/test_lorem.py:18: in word_list
     return [word.lower() for word in _provider("es_ES").word_list]
                                      ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -102,11 +102,11 @@ locale = 'es_ES'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 ___________________________ TestEsEs.test_sentences ____________________________
 
-self = <tests.providers.test_lorem.TestEsEs object at 0x1099dcd60>
-faker = <faker.proxy.Faker object at 0x1092cec10>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsEs object at 0x109c2cd60>
+faker = <faker.proxy.Faker object at 0x109516c10>, num_samples = 100
 
     def test_sentences(self, faker, num_samples):
         num_sentences = 5
@@ -118,12 +118,12 @@ faker = <faker.proxy.Faker object at 0x1092cec10>, num_samples = 100
 >               assert all(word.lower() in self.word_list for word in words)
                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:50: 
+tests/providers/test_lorem.py:52: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:50: in <genexpr>
+tests/providers/test_lorem.py:52: in <genexpr>
     assert all(word.lower() in self.word_list for word in words)
                                ^^^^^^^^^^^^^^
-tests/providers/test_lorem.py:16: in word_list
+tests/providers/test_lorem.py:18: in word_list
     return [word.lower() for word in _provider("es_ES").word_list]
                                      ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -137,11 +137,11 @@ locale = 'es_ES'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 ______________________________ TestEsEs.test_text ______________________________
 
-self = <tests.providers.test_lorem.TestEsEs object at 0x109864170>
-faker = <faker.proxy.Faker object at 0x1092cec10>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsEs object at 0x109a90170>
+faker = <faker.proxy.Faker object at 0x109516c10>, num_samples = 100
 
     def test_text(self, faker, num_samples):
         num_chars = 25
@@ -152,12 +152,12 @@ faker = <faker.proxy.Faker object at 0x1092cec10>, num_samples = 100
 >           assert all(word.lower() in self.word_list for word in words)
                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:58: 
+tests/providers/test_lorem.py:60: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:58: in <genexpr>
+tests/providers/test_lorem.py:60: in <genexpr>
     assert all(word.lower() in self.word_list for word in words)
                                ^^^^^^^^^^^^^^
-tests/providers/test_lorem.py:16: in word_list
+tests/providers/test_lorem.py:18: in word_list
     return [word.lower() for word in _provider("es_ES").word_list]
                                      ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -171,11 +171,11 @@ locale = 'es_ES'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 _____________________________ TestEsEs.test_texts ______________________________
 
-self = <tests.providers.test_lorem.TestEsEs object at 0x1097b5040>
-faker = <faker.proxy.Faker object at 0x1092cec10>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsEs object at 0x1099f5040>
+faker = <faker.proxy.Faker object at 0x109516c10>, num_samples = 100
 
     def test_texts(self, faker, num_samples):
         num_texts = 5
@@ -188,12 +188,12 @@ faker = <faker.proxy.Faker object at 0x1092cec10>, num_samples = 100
 >               assert all(word.lower() in self.word_list for word in words)
                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:68: 
+tests/providers/test_lorem.py:70: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:68: in <genexpr>
+tests/providers/test_lorem.py:70: in <genexpr>
     assert all(word.lower() in self.word_list for word in words)
                                ^^^^^^^^^^^^^^
-tests/providers/test_lorem.py:16: in word_list
+tests/providers/test_lorem.py:18: in word_list
     return [word.lower() for word in _provider("es_ES").word_list]
                                      ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -207,11 +207,11 @@ locale = 'es_ES'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 ______________________________ TestEsEs.test_word ______________________________
 
-self = <tests.providers.test_lorem.TestEsEs object at 0x1097b5150>
-faker = <faker.proxy.Faker object at 0x1092cec10>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsEs object at 0x1099f5150>
+faker = <faker.proxy.Faker object at 0x109516c10>, num_samples = 100
 
     def test_word(self, faker, num_samples):
         for _ in range(num_samples):
@@ -219,7 +219,7 @@ faker = <faker.proxy.Faker object at 0x1092cec10>, num_samples = 100
 >           assert isinstance(word, str) and word in _provider("es_ES").word_list
                                                      ^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:73: 
+tests/providers/test_lorem.py:75: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
 locale = 'es_ES'
@@ -231,11 +231,11 @@ locale = 'es_ES'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 _____________________________ TestEsEs.test_words ______________________________
 
-self = <tests.providers.test_lorem.TestEsEs object at 0x109854250>
-faker = <faker.proxy.Faker object at 0x1092cec10>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsEs object at 0x109aac250>
+faker = <faker.proxy.Faker object at 0x109516c10>, num_samples = 100
 
     def test_words(self, faker, num_samples):
         num_words = 5
@@ -244,9 +244,9 @@ faker = <faker.proxy.Faker object at 0x1092cec10>, num_samples = 100
 >           assert all(isinstance(word, str) and word in _provider("es_ES").word_list for word in words)
                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:79: 
+tests/providers/test_lorem.py:81: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:79: in <genexpr>
+tests/providers/test_lorem.py:81: in <genexpr>
     assert all(isinstance(word, str) and word in _provider("es_ES").word_list for word in words)
                                                  ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -260,11 +260,11 @@ locale = 'es_ES'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 ___________________________ TestEsAr.test_paragraph ____________________________
 
-self = <tests.providers.test_lorem.TestEsAr object at 0x1092cf4d0>
-faker = <faker.proxy.Faker object at 0x1092cee90>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsAr object at 0x1095174d0>
+faker = <faker.proxy.Faker object at 0x109516e90>, num_samples = 100
 
     def test_paragraph(self, faker, num_samples):
         num_sentences = 10
@@ -275,12 +275,12 @@ faker = <faker.proxy.Faker object at 0x1092cee90>, num_samples = 100
 >           assert all(word.lower() in self.word_list for word in words)
                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:95: 
+tests/providers/test_lorem.py:97: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:95: in <genexpr>
+tests/providers/test_lorem.py:97: in <genexpr>
     assert all(word.lower() in self.word_list for word in words)
                                ^^^^^^^^^^^^^^
-tests/providers/test_lorem.py:87: in word_list
+tests/providers/test_lorem.py:89: in word_list
     return [word.lower() for word in _provider("es_AR").word_list]
                                      ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -294,11 +294,11 @@ locale = 'es_AR'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_AR' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 ___________________________ TestEsAr.test_paragraphs ___________________________
 
-self = <tests.providers.test_lorem.TestEsAr object at 0x1092cf610>
-faker = <faker.proxy.Faker object at 0x1092cee90>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsAr object at 0x109517610>
+faker = <faker.proxy.Faker object at 0x109516e90>, num_samples = 100
 
     def test_paragraphs(self, faker, num_samples):
         num_paragraphs = 5
@@ -310,12 +310,12 @@ faker = <faker.proxy.Faker object at 0x1092cee90>, num_samples = 100
 >               assert all(word.lower() in self.word_list for word in words)
                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:104: 
+tests/providers/test_lorem.py:106: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:104: in <genexpr>
+tests/providers/test_lorem.py:106: in <genexpr>
     assert all(word.lower() in self.word_list for word in words)
                                ^^^^^^^^^^^^^^
-tests/providers/test_lorem.py:87: in word_list
+tests/providers/test_lorem.py:89: in word_list
     return [word.lower() for word in _provider("es_AR").word_list]
                                      ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -329,11 +329,11 @@ locale = 'es_AR'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_AR' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 ____________________________ TestEsAr.test_sentence ____________________________
 
-self = <tests.providers.test_lorem.TestEsAr object at 0x1099dd220>
-faker = <faker.proxy.Faker object at 0x1092cee90>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsAr object at 0x109c2d220>
+faker = <faker.proxy.Faker object at 0x109516e90>, num_samples = 100
 
     def test_sentence(self, faker, num_samples):
         num_words = 10
@@ -344,12 +344,12 @@ faker = <faker.proxy.Faker object at 0x1092cee90>, num_samples = 100
 >           assert all(word.lower() in self.word_list for word in words)
                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:112: 
+tests/providers/test_lorem.py:114: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:112: in <genexpr>
+tests/providers/test_lorem.py:114: in <genexpr>
     assert all(word.lower() in self.word_list for word in words)
                                ^^^^^^^^^^^^^^
-tests/providers/test_lorem.py:87: in word_list
+tests/providers/test_lorem.py:89: in word_list
     return [word.lower() for word in _provider("es_AR").word_list]
                                      ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -363,11 +363,11 @@ locale = 'es_AR'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_AR' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 ___________________________ TestEsAr.test_sentences ____________________________
 
-self = <tests.providers.test_lorem.TestEsAr object at 0x1099dd350>
-faker = <faker.proxy.Faker object at 0x1092cee90>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsAr object at 0x109c2d350>
+faker = <faker.proxy.Faker object at 0x109516e90>, num_samples = 100
 
     def test_sentences(self, faker, num_samples):
         num_sentences = 5
@@ -379,12 +379,12 @@ faker = <faker.proxy.Faker object at 0x1092cee90>, num_samples = 100
 >               assert all(word.lower() in self.word_list for word in words)
                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:121: 
+tests/providers/test_lorem.py:123: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:121: in <genexpr>
+tests/providers/test_lorem.py:123: in <genexpr>
     assert all(word.lower() in self.word_list for word in words)
                                ^^^^^^^^^^^^^^
-tests/providers/test_lorem.py:87: in word_list
+tests/providers/test_lorem.py:89: in word_list
     return [word.lower() for word in _provider("es_AR").word_list]
                                      ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -398,11 +398,11 @@ locale = 'es_AR'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_AR' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 ______________________________ TestEsAr.test_text ______________________________
 
-self = <tests.providers.test_lorem.TestEsAr object at 0x109864710>
-faker = <faker.proxy.Faker object at 0x1092cee90>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsAr object at 0x109a90710>
+faker = <faker.proxy.Faker object at 0x109516e90>, num_samples = 100
 
     def test_text(self, faker, num_samples):
         num_chars = 25
@@ -413,12 +413,12 @@ faker = <faker.proxy.Faker object at 0x1092cee90>, num_samples = 100
 >           assert all(word.lower() in self.word_list for word in words)
                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:129: 
+tests/providers/test_lorem.py:131: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:129: in <genexpr>
+tests/providers/test_lorem.py:131: in <genexpr>
     assert all(word.lower() in self.word_list for word in words)
                                ^^^^^^^^^^^^^^
-tests/providers/test_lorem.py:87: in word_list
+tests/providers/test_lorem.py:89: in word_list
     return [word.lower() for word in _provider("es_AR").word_list]
                                      ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -432,11 +432,11 @@ locale = 'es_AR'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_AR' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 _____________________________ TestEsAr.test_texts ______________________________
 
-self = <tests.providers.test_lorem.TestEsAr object at 0x1097b5370>
-faker = <faker.proxy.Faker object at 0x1092cee90>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsAr object at 0x1099f5370>
+faker = <faker.proxy.Faker object at 0x109516e90>, num_samples = 100
 
     def test_texts(self, faker, num_samples):
         num_texts = 5
@@ -449,12 +449,12 @@ faker = <faker.proxy.Faker object at 0x1092cee90>, num_samples = 100
 >               assert all(word.lower() in self.word_list for word in words)
                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:139: 
+tests/providers/test_lorem.py:141: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:139: in <genexpr>
+tests/providers/test_lorem.py:141: in <genexpr>
     assert all(word.lower() in self.word_list for word in words)
                                ^^^^^^^^^^^^^^
-tests/providers/test_lorem.py:87: in word_list
+tests/providers/test_lorem.py:89: in word_list
     return [word.lower() for word in _provider("es_AR").word_list]
                                      ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -468,11 +468,11 @@ locale = 'es_AR'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_AR' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 ______________________________ TestEsAr.test_word ______________________________
 
-self = <tests.providers.test_lorem.TestEsAr object at 0x1097b5480>
-faker = <faker.proxy.Faker object at 0x1092cee90>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsAr object at 0x1099f5480>
+faker = <faker.proxy.Faker object at 0x109516e90>, num_samples = 100
 
     def test_word(self, faker, num_samples):
         for _ in range(num_samples):
@@ -480,7 +480,7 @@ faker = <faker.proxy.Faker object at 0x1092cee90>, num_samples = 100
 >           assert isinstance(word, str) and word in _provider("es_ES").word_list
                                                      ^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:144: 
+tests/providers/test_lorem.py:146: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
 locale = 'es_ES'
@@ -492,11 +492,11 @@ locale = 'es_ES'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 _____________________________ TestEsAr.test_words ______________________________
 
-self = <tests.providers.test_lorem.TestEsAr object at 0x109854750>
-faker = <faker.proxy.Faker object at 0x1092cee90>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsAr object at 0x109aac750>
+faker = <faker.proxy.Faker object at 0x109516e90>, num_samples = 100
 
     def test_words(self, faker, num_samples):
         num_words = 5
@@ -505,9 +505,9 @@ faker = <faker.proxy.Faker object at 0x1092cee90>, num_samples = 100
 >           assert all(isinstance(word, str) and word in _provider("es_ES").word_list for word in words)
                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:150: 
+tests/providers/test_lorem.py:152: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:150: in <genexpr>
+tests/providers/test_lorem.py:152: in <genexpr>
     assert all(isinstance(word, str) and word in _provider("es_ES").word_list for word in words)
                                                  ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -521,11 +521,11 @@ locale = 'es_ES'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 ___________________________ TestEsMx.test_paragraph ____________________________
 
-self = <tests.providers.test_lorem.TestEsMx object at 0x1092cf750>
-faker = <faker.proxy.Faker object at 0x109a28d60>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsMx object at 0x109517750>
+faker = <faker.proxy.Faker object at 0x109c70d60>, num_samples = 100
 
     def test_paragraph(self, faker, num_samples):
         num_sentences = 10
@@ -536,12 +536,12 @@ faker = <faker.proxy.Faker object at 0x109a28d60>, num_samples = 100
 >           assert all(word.lower() in self.word_list for word in words)
                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:166: 
+tests/providers/test_lorem.py:168: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:166: in <genexpr>
+tests/providers/test_lorem.py:168: in <genexpr>
     assert all(word.lower() in self.word_list for word in words)
                                ^^^^^^^^^^^^^^
-tests/providers/test_lorem.py:158: in word_list
+tests/providers/test_lorem.py:160: in word_list
     return [word.lower() for word in _provider("es_MX").word_list]
                                      ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -555,11 +555,11 @@ locale = 'es_MX'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_MX' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 ___________________________ TestEsMx.test_paragraphs ___________________________
 
-self = <tests.providers.test_lorem.TestEsMx object at 0x1092cf890>
-faker = <faker.proxy.Faker object at 0x109a28d60>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsMx object at 0x109517890>
+faker = <faker.proxy.Faker object at 0x109c70d60>, num_samples = 100
 
     def test_paragraphs(self, faker, num_samples):
         num_paragraphs = 5
@@ -571,12 +571,12 @@ faker = <faker.proxy.Faker object at 0x109a28d60>, num_samples = 100
 >               assert all(word.lower() in self.word_list for word in words)
                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:175: 
+tests/providers/test_lorem.py:177: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:175: in <genexpr>
+tests/providers/test_lorem.py:177: in <genexpr>
     assert all(word.lower() in self.word_list for word in words)
                                ^^^^^^^^^^^^^^
-tests/providers/test_lorem.py:158: in word_list
+tests/providers/test_lorem.py:160: in word_list
     return [word.lower() for word in _provider("es_MX").word_list]
                                      ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -590,11 +590,11 @@ locale = 'es_MX'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_MX' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 ____________________________ TestEsMx.test_sentence ____________________________
 
-self = <tests.providers.test_lorem.TestEsMx object at 0x1099dd5b0>
-faker = <faker.proxy.Faker object at 0x109a28d60>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsMx object at 0x109c2d5b0>
+faker = <faker.proxy.Faker object at 0x109c70d60>, num_samples = 100
 
     def test_sentence(self, faker, num_samples):
         num_words = 10
@@ -605,12 +605,12 @@ faker = <faker.proxy.Faker object at 0x109a28d60>, num_samples = 100
 >           assert all(word.lower() in self.word_list for word in words)
                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:183: 
+tests/providers/test_lorem.py:185: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:183: in <genexpr>
+tests/providers/test_lorem.py:185: in <genexpr>
     assert all(word.lower() in self.word_list for word in words)
                                ^^^^^^^^^^^^^^
-tests/providers/test_lorem.py:158: in word_list
+tests/providers/test_lorem.py:160: in word_list
     return [word.lower() for word in _provider("es_MX").word_list]
                                      ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -624,11 +624,11 @@ locale = 'es_MX'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_MX' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 ___________________________ TestEsMx.test_sentences ____________________________
 
-self = <tests.providers.test_lorem.TestEsMx object at 0x1099dd480>
-faker = <faker.proxy.Faker object at 0x109a28d60>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsMx object at 0x109c2d480>
+faker = <faker.proxy.Faker object at 0x109c70d60>, num_samples = 100
 
     def test_sentences(self, faker, num_samples):
         num_sentences = 5
@@ -640,12 +640,12 @@ faker = <faker.proxy.Faker object at 0x109a28d60>, num_samples = 100
 >               assert all(word.lower() in self.word_list for word in words)
                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:192: 
+tests/providers/test_lorem.py:194: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:192: in <genexpr>
+tests/providers/test_lorem.py:194: in <genexpr>
     assert all(word.lower() in self.word_list for word in words)
                                ^^^^^^^^^^^^^^
-tests/providers/test_lorem.py:158: in word_list
+tests/providers/test_lorem.py:160: in word_list
     return [word.lower() for word in _provider("es_MX").word_list]
                                      ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -659,11 +659,11 @@ locale = 'es_MX'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_MX' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 ______________________________ TestEsMx.test_text ______________________________
 
-self = <tests.providers.test_lorem.TestEsMx object at 0x109864950>
-faker = <faker.proxy.Faker object at 0x109a28d60>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsMx object at 0x109a90950>
+faker = <faker.proxy.Faker object at 0x109c70d60>, num_samples = 100
 
     def test_text(self, faker, num_samples):
         num_chars = 25
@@ -674,12 +674,12 @@ faker = <faker.proxy.Faker object at 0x109a28d60>, num_samples = 100
 >           assert all(word.lower() in self.word_list for word in words)
                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:200: 
+tests/providers/test_lorem.py:202: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:200: in <genexpr>
+tests/providers/test_lorem.py:202: in <genexpr>
     assert all(word.lower() in self.word_list for word in words)
                                ^^^^^^^^^^^^^^
-tests/providers/test_lorem.py:158: in word_list
+tests/providers/test_lorem.py:160: in word_list
     return [word.lower() for word in _provider("es_MX").word_list]
                                      ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -693,11 +693,11 @@ locale = 'es_MX'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_MX' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 _____________________________ TestEsMx.test_texts ______________________________
 
-self = <tests.providers.test_lorem.TestEsMx object at 0x1097b56a0>
-faker = <faker.proxy.Faker object at 0x109a28d60>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsMx object at 0x1099f56a0>
+faker = <faker.proxy.Faker object at 0x109c70d60>, num_samples = 100
 
     def test_texts(self, faker, num_samples):
         num_texts = 5
@@ -710,12 +710,12 @@ faker = <faker.proxy.Faker object at 0x109a28d60>, num_samples = 100
 >               assert all(word.lower() in self.word_list for word in words)
                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:210: 
+tests/providers/test_lorem.py:212: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:210: in <genexpr>
+tests/providers/test_lorem.py:212: in <genexpr>
     assert all(word.lower() in self.word_list for word in words)
                                ^^^^^^^^^^^^^^
-tests/providers/test_lorem.py:158: in word_list
+tests/providers/test_lorem.py:160: in word_list
     return [word.lower() for word in _provider("es_MX").word_list]
                                      ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -729,11 +729,11 @@ locale = 'es_MX'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_MX' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 ______________________________ TestEsMx.test_word ______________________________
 
-self = <tests.providers.test_lorem.TestEsMx object at 0x1097b57b0>
-faker = <faker.proxy.Faker object at 0x109a28d60>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsMx object at 0x1099f57b0>
+faker = <faker.proxy.Faker object at 0x109c70d60>, num_samples = 100
 
     def test_word(self, faker, num_samples):
         for _ in range(num_samples):
@@ -741,7 +741,7 @@ faker = <faker.proxy.Faker object at 0x109a28d60>, num_samples = 100
 >           assert isinstance(word, str) and word in _provider("es_ES").word_list
                                                      ^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:215: 
+tests/providers/test_lorem.py:217: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
 locale = 'es_ES'
@@ -753,11 +753,11 @@ locale = 'es_ES'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 _____________________________ TestEsMx.test_words ______________________________
 
-self = <tests.providers.test_lorem.TestEsMx object at 0x109855050>
-faker = <faker.proxy.Faker object at 0x109a28d60>, num_samples = 100
+self = <tests.providers.test_lorem.TestEsMx object at 0x109aad050>
+faker = <faker.proxy.Faker object at 0x109c70d60>, num_samples = 100
 
     def test_words(self, faker, num_samples):
         num_words = 5
@@ -766,9 +766,9 @@ faker = <faker.proxy.Faker object at 0x109a28d60>, num_samples = 100
 >           assert all(isinstance(word, str) and word in _provider("es_ES").word_list for word in words)
                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:221: 
+tests/providers/test_lorem.py:223: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/providers/test_lorem.py:221: in <genexpr>
+tests/providers/test_lorem.py:223: in <genexpr>
     assert all(isinstance(word, str) and word in _provider("es_ES").word_list for word in words)
                                                  ^^^^^^^^^^^^^^^^^^
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
@@ -782,19 +782,22 @@ locale = 'es_ES'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
-____________________ test_spanish_word_lists_are_not_latin _____________________
+tests/providers/test_lorem.py:10: AttributeError
+________________ test_spanish_word_lists_are_not_other_locales _________________
 
-    def test_spanish_word_lists_are_not_latin():
+    def test_spanish_word_lists_are_not_other_locales():
         # Added by the task author (not upstream): issue #2206 is that es_* text()
-        # came out as Latin lorem ipsum, and the upstream membership tests alone
-        # pass for a provider that just aliases the Latin list.
-        latin = {word.lower() for word in _provider("la").word_list}
+        # came out as Latin lorem ipsum. Upstream membership tests alone pass for a
+        # provider that just aliases another locale's list. Real Spanish lists
+        # overlap any other lorem locale by under 10%; an alias overlaps 100%.
+        lorem_dir = Path(importlib.import_module("faker.providers.lorem").__file__).parent
+        others = sorted(d.name for d in lorem_dir.iterdir() if (d / "__init__.py").is_file() and not d.name.startswith("es_"))
+        assert others
         for locale in ("es_ES", "es_AR", "es_MX"):
 >           words = {word.lower() for word in _provider(locale).word_list}
                                               ^^^^^^^^^^^^^^^^^
 
-tests/providers/test_lorem.py:230: 
+tests/providers/test_lorem.py:235: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
 locale = 'es_ES'
@@ -806,7 +809,7 @@ locale = 'es_ES'
                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
 
-tests/providers/test_lorem.py:8: AttributeError
+tests/providers/test_lorem.py:10: AttributeError
 =========================== short test summary info ============================
 FAILED tests/providers/test_lorem.py::TestEsEs::test_paragraph - AttributeErr...
 FAILED tests/providers/test_lorem.py::TestEsEs::test_paragraphs - AttributeEr...
@@ -832,5 +835,5 @@ FAILED tests/providers/test_lorem.py::TestEsMx::test_text - AttributeError: m...
 FAILED tests/providers/test_lorem.py::TestEsMx::test_texts - AttributeError: ...
 FAILED tests/providers/test_lorem.py::TestEsMx::test_word - AttributeError: m...
 FAILED tests/providers/test_lorem.py::TestEsMx::test_words - AttributeError: ...
-FAILED tests/providers/test_lorem.py::test_spanish_word_lists_are_not_latin
-25 failed in 0.31s
+FAILED tests/providers/test_lorem.py::test_spanish_word_lists_are_not_other_locales
+25 failed in 0.37s

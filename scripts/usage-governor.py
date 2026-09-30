@@ -450,6 +450,8 @@ def read_live_rate_limits(now: datetime, live_log_path: Path):
         entry = json.loads(lines[-1])
     except (json.JSONDecodeError, ValueError):
         return None
+    if not isinstance(entry, dict):
+        return None
     ts = entry.get("ts")
     if not isinstance(ts, (int, float)):
         return None
@@ -457,6 +459,23 @@ def read_live_rate_limits(now: datetime, live_log_path: Path):
     if age < 0 or age > LIVE_FRESHNESS_SECONDS:
         return None
     return entry.get("rate_limits")
+
+
+def _valid_live_window(value):
+    """Return value if it's a dict with a numeric used_percentage, else None.
+
+    A live five_hour/seven_day reading that isn't a dict, or whose
+    used_percentage isn't numeric, is unusable as ground truth for the
+    downstream percent comparisons (>= WINDOW_PCT_CEILING etc.) -- ignored
+    as "no reading" (falls back to the calibration/uncalibrated path)
+    instead of crashing (G-01 / E-118).
+    """
+    if not isinstance(value, dict):
+        return None
+    pct = value.get("used_percentage")
+    if not isinstance(pct, (int, float)) or isinstance(pct, bool):
+        return None
+    return value
 
 
 def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: Path, cache_path: Path | None = None):
@@ -558,8 +577,9 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
     ])
 
     live = read_live_rate_limits(now, live_log_path)
-    live_five_hour = live.get("five_hour") if live else None
-    live_seven_day = live.get("seven_day") if live else None
+    live = live if isinstance(live, dict) else None
+    live_five_hour = _valid_live_window(live.get("five_hour")) if live else None
+    live_seven_day = _valid_live_window(live.get("seven_day")) if live else None
 
     # rate here is already tokens-PER-PERCENT (calibrated as tokens/pct), so
     # recovering a percent from a token count is a plain division -- no *100.
@@ -626,11 +646,22 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
     # burn rate or rate-eff is even available to run the projection loop
     # below (e.g. no active engineers yet this hour).
     max_engineers_next_hour = None
+    # Why max_engineers_next_hour stayed None, for human_summary (E-118):
+    # "uncalibrated" only when there is genuinely no rate to project with;
+    # calibration/live rates can be present while burn_per_engineer_out is
+    # still None because active_engineers == 0 (no engineer ran last hour),
+    # which is a different, more specific reason to report.
+    max_engineers_reason = None
     over_window = current_window_pct is not None and current_window_pct >= WINDOW_PCT_CEILING
     over_weekly = current_weekly_pct is not None and current_weekly_pct >= WEEKLY_PCT_CEILING
     if over_window or over_weekly:
         max_engineers_next_hour = 0
-    elif window_rate_eff and weekly_rate_eff and burn_per_engineer_out:
+        max_engineers_reason = "over_ceiling"
+    elif not (window_rate_eff and weekly_rate_eff):
+        max_engineers_reason = "uncalibrated"
+    elif not burn_per_engineer_out:
+        max_engineers_reason = "no_active_engineers"
+    else:
         n = 0
         best = 0
         while n <= 500:
@@ -655,6 +686,7 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
             else:
                 break
         max_engineers_next_hour = best
+        max_engineers_reason = "ok"
 
     limit_since = now - timedelta(hours=1)
     last_limit_event, limit_event_count = scan_for_limit_events(root, limit_since)
@@ -686,7 +718,7 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
             "current_tokens_output": report_window_out,
             "current_tokens_opus_weighted": report_window_opus,
             "current_pct": current_window_pct,
-            "resets_at": live.get("five_hour", {}).get("resets_at") if live else None,
+            "resets_at": live_five_hour.get("resets_at") if live_five_hour else None,
         },
         "weekly": {
             "source": weekly_source,
@@ -694,7 +726,7 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
             "current_tokens_output": weekly_out,
             "current_tokens_opus_weighted": weekly_opus,
             "current_pct": current_weekly_pct,
-            "resets_at": live.get("seven_day", {}).get("resets_at") if live else None,
+            "resets_at": live_seven_day.get("resets_at") if live_seven_day else None,
         },
         "governor": {
             "active_engineers_last_hour": active_engineers,
@@ -704,6 +736,7 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
             "last_hour_output_tokens": last_hour_out,
             "hours_to_weekly_reset": hours_to_weekly_reset,
             "max_engineers_next_hour": max_engineers_next_hour,
+            "max_engineers_reason": max_engineers_reason,
         },
         "limit_events": {
             "last_occurrence": last_limit_event,
@@ -746,6 +779,8 @@ def human_summary(report):
         lines.append(f"Burn per engineer (last hour, output tokens): {g['burn_per_engineer_output_last_hour']:,.0f}")
     if g["max_engineers_next_hour"] is not None:
         lines.append(f"Max engineers for next hour: {g['max_engineers_next_hour']}")
+    elif g.get("max_engineers_reason") == "no_active_engineers":
+        lines.append("Max engineers for next hour: no active engineers, cannot project")
     else:
         lines.append("Max engineers for next hour: uncalibrated, cannot project")
 
