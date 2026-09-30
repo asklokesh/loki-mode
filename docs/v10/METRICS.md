@@ -126,6 +126,14 @@ critical path and reviewed immediately.
 
 ## Usage (hourly, from scripts/usage-governor.py)
 
+### 2026-09-28T22:19Z
+- 5h window: uncalibrated, 5,229,182 output tokens since 2026-09-28T17:19Z (uncalibrated)
+- Weekly: uncalibrated, 48,901,928 output tokens, 42.7h to reset (uncalibrated)
+- Last hour: 1,436,250 output tokens; 45 active engineers; 29,189 per engineer; Chief of Staff 124,829
+- Max engineers next hour: uncalibrated (no plan reading on file)
+- Output tokens by model (all scanned transcripts): claude-sonnet-5 31,903,763 (43.0%), claude-opus-5-5 16,991,251 (22.9%), claude-opus-4-8 14,720,953 (19.8%), claude-opus-4-7 4,678,300 (6.3%), claude-opus-5 4,489,139 (6.0%), claude-fable-5 1,254,167 (1.7%), claude-opus-4-6 203,492 (0.3%), claude-haiku-4-5-20251001 6,565 (0.0%)
+- Output tokens by role (all scanned transcripts): workflow-agent 44,503,521, chief-of-staff 29,712,444, subagent 31,665
+
 ### 2026-09-28T21:15Z
 - 5h window: uncalibrated, 5,183,443 output tokens since 2026-09-28T16:15Z (uncalibrated)
 - Weekly: uncalibrated, 47,364,676 output tokens, 43.7h to reset (uncalibrated)

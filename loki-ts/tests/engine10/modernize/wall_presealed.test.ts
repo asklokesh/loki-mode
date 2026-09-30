@@ -2,18 +2,19 @@
 // DECISIONS.md D42 (3)). r2: reworked after an opus REJECT on r1 (867cffab) with four blockers,
 // B1-B4 below, plus the D42 (2) base-sha advisory.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ModernizeLog, readModernizeEvents } from "../../../src/engine10/modernize/log.ts";
-import { sealOracle } from "../../../src/engine10/modernize/oracle/seal.ts";
+import { sealOracle, verifySeal } from "../../../src/engine10/modernize/oracle/seal.ts";
 import {
   classifyBaseRun,
   sealPreSealedWall,
   verifyPreSealedWall,
 } from "../../../src/engine10/modernize/presealed_wall.ts";
 import type { BaseConformanceRunner, BaseRunOutcome } from "../../../src/engine10/modernize/presealed_wall.ts";
-import { oracleDir } from "../../../src/engine10/modernize/types.ts";
+import { modernizeEventsPath, oracleDir } from "../../../src/engine10/modernize/types.ts";
 
 const mid = "mod-20260928T010203Z-ab12cd";
 
@@ -347,5 +348,134 @@ describe("verifyPreSealedWall (B3: tamper evidence)", () => {
     const verified = verifyPreSealedWall(repoDir, mid, "pyunit_h");
     expect(verified.ok).toBe(false);
     expect(verified.reason).toMatch(/does not match the sealing event's hash/);
+  });
+
+  // A carried oracle_normalizers_sha256 that no longer matches the current oracle seal must
+  // fail verify too, the same as a cases/coverage hash mismatch does -- D42 (4) binds
+  // normalizers to the oracle seal, and a presealed wall that stays silent about a normalizers
+  // change would let a run bound to one comparison policy pass under a different one. Patches
+  // only presealed_wall.json's oracle_normalizers_sha256 field (re-hashing the file and its
+  // sealing event's sealed_sha256 to match, so the pre-existing tamper check above does not
+  // fire first) and leaves the oracle's own sealed.json/log untouched, so this isolates the new
+  // check from the ones that already exist.
+  it("catches a carried oracle_normalizers_sha256 that no longer matches the current oracle seal", () => {
+    sealValidOracle("pyunit_i");
+    sealPreSealedWall(
+      repoDir, mid, "pyunit_i", "python3",
+      runnerReturning({ runner: "pytest", exitCode: 1, timedOut: false, failedCount: 1 }),
+      log,
+    );
+    const sealedPath = join(oracleDir(repoDir, mid, "pyunit_i"), "presealed_wall.json");
+    const sealed = JSON.parse(readFileSync(sealedPath, "utf8"));
+    expect(typeof sealed.oracle_normalizers_sha256).toBe("string");
+    sealed.oracle_normalizers_sha256 = "f".repeat(64); // any hash that differs from the real one
+    const newRaw = JSON.stringify(sealed, null, 2);
+    writeFileSync(sealedPath, newRaw);
+    const newSha256 = createHash("sha256").update(newRaw).digest("hex");
+
+    // Re-anchor the sealing event to the patched file's hash so the existing "does not match
+    // the sealing event's hash" check (above) does not mask the one this test targets.
+    const eventsPath = modernizeEventsPath(repoDir, mid);
+    const patchedLines = readFileSync(eventsPath, "utf8").split("\n").map((line) => {
+      if (line.trim() === "") return line;
+      const event = JSON.parse(line);
+      if (event.type === "wall.presealed.sealed" && event.data.unit === "pyunit_i") {
+        event.data.sealed_sha256 = newSha256;
+      }
+      return JSON.stringify(event);
+    });
+    writeFileSync(eventsPath, patchedLines.join("\n"));
+
+    const verified = verifyPreSealedWall(repoDir, mid, "pyunit_i");
+    expect(verified.ok).toBe(false);
+    expect(verified.reason).toMatch(/carried oracle hashes do not match the current oracle seal/);
+  });
+
+  // Opus reject on 1facbf99: `!==` alone reads two ABSENT hashes as a match (undefined !==
+  // undefined is false). A pre-D42(4) oracle seal has no normalizers_sha256 at all, and
+  // verifySeal still accepts such a seal as tamper-clean -- so this constructs exactly that
+  // legacy state on both sides (oracle AND the carried presealed wall) the way B3 above
+  // constructs a tampered file: seal normally, then strip normalizers_sha256 from the oracle's
+  // sealed.json/log event and from presealed_wall.json/its own log event (re-anchoring
+  // sealed_sha256 so the pre-existing tamper check does not mask this one). Must still fail.
+  it("fails when neither the carried nor the current oracle seal has a normalizers hash at all", () => {
+    sealValidOracle("pyunit_j");
+    sealPreSealedWall(
+      repoDir, mid, "pyunit_j", "python3",
+      runnerReturning({ runner: "pytest", exitCode: 1, timedOut: false, failedCount: 1 }),
+      log,
+    );
+
+    const oracleSealedPath = join(oracleDir(repoDir, mid, "pyunit_j"), "sealed.json");
+    const oracleOnDisk = JSON.parse(readFileSync(oracleSealedPath, "utf8"));
+    delete oracleOnDisk.normalizers_sha256;
+    writeFileSync(oracleSealedPath, JSON.stringify(oracleOnDisk, null, 2));
+
+    const eventsPath = modernizeEventsPath(repoDir, mid);
+    let lines = readFileSync(eventsPath, "utf8").split("\n").map((line) => {
+      if (line.trim() === "") return line;
+      const event = JSON.parse(line);
+      if ((event.type === "oracle.captured" || event.type === "oracle.flagged") && event.data.unit === "pyunit_j") {
+        delete event.data.normalizers_sha256;
+      }
+      return JSON.stringify(event);
+    });
+    writeFileSync(eventsPath, lines.join("\n"));
+
+    const sealedPath = join(oracleDir(repoDir, mid, "pyunit_j"), "presealed_wall.json");
+    const sealed = JSON.parse(readFileSync(sealedPath, "utf8"));
+    delete sealed.oracle_normalizers_sha256;
+    const newRaw = JSON.stringify(sealed, null, 2);
+    writeFileSync(sealedPath, newRaw);
+    const newSha256 = createHash("sha256").update(newRaw).digest("hex");
+
+    lines = readFileSync(eventsPath, "utf8").split("\n").map((line) => {
+      if (line.trim() === "") return line;
+      const event = JSON.parse(line);
+      if (event.type === "wall.presealed.sealed" && event.data.unit === "pyunit_j") {
+        event.data.sealed_sha256 = newSha256;
+      }
+      return JSON.stringify(event);
+    });
+    writeFileSync(eventsPath, lines.join("\n"));
+
+    // Sanity: the legacy oracle (no normalizers_sha256 anywhere) still tamper-verifies clean on
+    // its own, same as the reviewer's repro says -- the gap is specifically in the compare below.
+    const oracleCheck = verifySeal(repoDir, mid, "pyunit_j");
+    expect(oracleCheck.ok).toBe(true);
+
+    const verified = verifyPreSealedWall(repoDir, mid, "pyunit_j");
+    expect(verified.ok).toBe(false);
+    expect(verified.reason).toMatch(/carried oracle hashes do not match the current oracle seal/);
+  });
+});
+
+describe("sealPreSealedWall refuses an oracle with no normalizers hash (D42 (4))", () => {
+  it("refuses to seal when the oracle seal has no normalizers_sha256 (pre-D42(4) seal)", () => {
+    sealValidOracle("pyunit_k");
+    const oracleSealedPath = join(oracleDir(repoDir, mid, "pyunit_k"), "sealed.json");
+    const oracleOnDisk = JSON.parse(readFileSync(oracleSealedPath, "utf8"));
+    delete oracleOnDisk.normalizers_sha256;
+    writeFileSync(oracleSealedPath, JSON.stringify(oracleOnDisk, null, 2));
+
+    const eventsPath = modernizeEventsPath(repoDir, mid);
+    const lines = readFileSync(eventsPath, "utf8").split("\n").map((line) => {
+      if (line.trim() === "") return line;
+      const event = JSON.parse(line);
+      if ((event.type === "oracle.captured" || event.type === "oracle.flagged") && event.data.unit === "pyunit_k") {
+        delete event.data.normalizers_sha256;
+      }
+      return JSON.stringify(event);
+    });
+    writeFileSync(eventsPath, lines.join("\n"));
+
+    const result = sealPreSealedWall(
+      repoDir, mid, "pyunit_k", "python3",
+      runnerReturning({ runner: "pytest", exitCode: 1, timedOut: false, failedCount: 1 }),
+      log,
+    );
+    expect(result.sealed).toBe(false);
+    expect(result.reason).toMatch(/oracle has no normalizers_sha256/);
+    expect(existsSync(join(oracleDir(repoDir, mid, "pyunit_k"), "presealed_wall.json"))).toBe(false);
   });
 });
