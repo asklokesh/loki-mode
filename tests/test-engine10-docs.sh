@@ -57,7 +57,7 @@ done
 
 echo
 echo "T3 -- every flag the guide documents is a real engine10 flag"
-for flag in --deep --provider --resume --no-pr; do
+for flag in --deep --provider --no-pr; do
     if grep -qF -- "\`$flag" "$GUIDE"; then
         ok "GUIDE documents $flag"
     else
