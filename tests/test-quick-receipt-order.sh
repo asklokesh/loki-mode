@@ -70,6 +70,22 @@ VERIFIED_DIGEST="$(printf '%s\n' "$VOUT" | sed -n 's/^receipt_sha256: \([0-9a-f]
     && ok "loki verify reports the printed receipt_sha256" || bad "digest mismatch" "printed=${PRINTED_DIGEST:-none} verify=${VERIFIED_DIGEST:-none}"
 
 # Count stdout plus stderr, the way scripts/first-run-gate.sh does (2>&1).
+SIGNED="$(python3 -c "import json,sys; v=json.load(open(sys.argv[1])).get('verification') or {}; print('yes' if v.get('gpg_signature') or v.get('attestation') else 'no')" "$PJ" 2>/dev/null)"
+if [ "$SIGNED" = yes ]; then
+    printf '%s\n' "$VOUT" | grep -q '^attestation: VERIFIED$' \
+        && ok "loki verify reports attestation: VERIFIED" || bad "no attestation: VERIFIED line" "$(printf '%s\n' "$VOUT" | grep attestation)"
+fi
+
+# Tamper: edit proof.json, verify must exit non-zero, say BLOCKED and TAMPERED, and
+# evidence.json must not record VERIFIED.
+python3 -c "import json,sys; p=sys.argv[1]; d=json.load(open(p)); d['iterations']=999; json.dump(d, open(p,'w'))" "$PJ"
+TOUT="$( cd "$FIX" && HOME="$T/home" "$REPO_ROOT/bin/loki" verify < /dev/null 2>&1 )"
+TRC=$?
+EVV="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['verdict'])" "$FIX/.loki/verify/evidence.json" 2>/dev/null)"
+{ [ "$TRC" -ne 0 ] && printf '%s\n' "$TOUT" | grep -q '^VERDICT: BLOCKED' && printf '%s\n' "$TOUT" | grep -q 'TAMPERED' && [ "$EVV" = BLOCKED ]; } \
+    && ok "tampered receipt: non-zero exit, BLOCKED/TAMPERED, evidence.json BLOCKED" \
+    || bad "tampered receipt not blocked everywhere" "rc=$TRC evidence=${EVV:-none}"
+
 LINES="$(cat "$T/out.log" "$T/out.log.err" | wc -l | tr -d ' ')"
 [ "$LINES" -le 15 ] && ok "default output is $LINES lines (max 15)" || bad "default output is $LINES lines (max 15)"
 printf '%s\n' "$OUT" | grep -q '^\[INFO\]' && bad "log_info chatter printed by default" || ok "no [INFO] chatter by default"
@@ -81,7 +97,6 @@ VLINES="$(wc -l < "$T/vout.log" | tr -d ' ')"
 if grep -q '\[INFO\]' "$T/vout.log" && [ "$VLINES" -gt 15 ]; then ok "LOKI_VERBOSE=1 restores the chatter ($VLINES lines)"; else bad "LOKI_VERBOSE=1 did not restore the chatter" "lines=$VLINES"; fi
 
 # B3: the quiet headline line carries the unsigned and not-proven facts.
-SIGNED="$(python3 -c "import json,sys; v=json.load(open(sys.argv[1])).get('verification') or {}; print('yes' if v.get('gpg_signature') or v.get('attestation') else 'no')" "$PJ" 2>/dev/null)"
 if [ "$SIGNED" = no ]; then
     printf '%s\n' "$OUT" | grep -E '^Evidence Receipt: .*unsigned' >/dev/null \
         && ok "quiet headline says unsigned" || bad "quiet headline does not say unsigned"
