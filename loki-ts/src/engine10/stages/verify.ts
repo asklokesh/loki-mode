@@ -28,7 +28,7 @@ export interface VerifyCheck {
   cmd: string;
   result: "pass" | "fail" | "not_run" | "flaky"; // ENGINE.md section 5 test.result enum
   duration_s: number;
-  reason?: string; n?: number; ids?: string[]; first_error?: string; // A-112: failing test ids; A-113: first failing output line, normalized; feeds the stall signature
+  reason?: string; n?: number; sk?: number; ids?: string[]; first_error?: string; // A-112: failing test ids; A-113: first failing output line, normalized; feeds the stall signature
   interpreter?: Interpreter; // E-98a: which python/ruff this check actually ran on
 }
 // E-98a B2: .venv, then venv, then an in-repo (realpath under repoDir) VIRTUAL_ENV are "project";
@@ -87,6 +87,22 @@ export function ran(out: string, path?: string): number | null {
   if (!l || /^(?:ok|\?)\s/.test(l)) return l && /\[no test/.test(l) ? 0 : null;
   return /^(?:=+ )?no tests (?:ran|found)|^No tests found|skipped/i.test(l) || /\d+ (?:passed|failed|errors?)/.test(l) ? n(l, /(\d+) passed/) + n(l, /(\d+) failed/) + n(l, /(\d+) errors?/) : null;
 }
+/** Skipped or deselected tests from the runner's FINAL summary lines only: pytest "N skipped|deselected", jest/vitest "Tests: N skipped",
+ *  node "# skipped N". Test names and captured output above the summary never count (A-115). */
+export function skipped(out: string): number {
+  return out.split("\n").filter((l) => /^(?:=+ )?\d+ \w+.* in [\d.]+s|^\s*Tests?:?\s+\d|^(?:#|ℹ) skipped \d/.test(l.trim()))
+    .reduce((t, l) => t + [...l.matchAll(/(\d+) (?:skipped|deselected)|skipped (\d+)/g)].reduce((u, m) => u + +(m[1] ?? m[2]!), 0), 0);
+}
+const CFG_ALWAYS = /(^|\/)(conftest\.py|pytest\.ini|tox\.ini|jest\.config\.[\w.]+|vitest\.config\.[\w.]+|\.mocharc[\w.]*)$/;
+const CFG_SHARED = /(^|\/)(setup\.cfg|pyproject\.toml|package\.json)$/;
+const CFG_LINE = /^[+-].*(pytest|jest|mocha|vitest|"test"\s*:|addopts|testpaths)/im;
+/** A-115: changed files that configure the test runner. Files that also hold dependencies and metadata (setup.cfg, pyproject.toml,
+ *  package.json) count only when a changed line names a runner or the test script, or the file is new (no diff against base).
+ *  ponytail: a hit needs a human look, never a verdict; a runner key renamed without one of those words slips through. */
+export function testConfigChanged(repoDir: string, baseSha: string, changed: string[]): string[] {
+  const diff = (f: string): string => execFileSync("git", ["diff", "-U0", baseSha, "--", f], { cwd: repoDir, encoding: "utf8", env: process.env });
+  return changed.filter((f) => CFG_ALWAYS.test(f) || (CFG_SHARED.test(f) && (() => { const d = diff(f); return !d || CFG_LINE.test(d); })()));
+}
 /** `cut` means the timeout or the stage's AbortSignal killed the child: never read as "fail" and
  *  never retried (a hung check must not burn 2x its timeout). `out` is a 64 KB tail, unread when cut. The result comes from exit + timeout, never pipe EOF (an orphaned grandchild may hold the pipes). */
 async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSignal, opts: RunOpts): Promise<{ ok: boolean; missing: boolean; cut: boolean; out: string }> {
@@ -131,7 +147,7 @@ export async function runCheck(
     reason = skip(attempt);
     result = reason ? "not_run" : attempt.ok ? "flaky" : "fail";
   }
-  const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out), ids: failIds(attempt.out) } : result === "pass" ? { n: ran(attempt.out) ?? 0 } : {}), ...(reason ? { reason } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
+  const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out), ids: failIds(attempt.out) } : result === "pass" ? { n: ran(attempt.out) ?? 0, sk: skipped(attempt.out) } : {}), ...(reason ? { reason } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
   checks.push(check);
   ctx.emit("test.result", "verify", { ...check });
   return check;
@@ -141,18 +157,36 @@ export async function runCheck(
  *  "fail" and in the fix loop unless the TARGET progressed: a passing Wall test, or a relevant test (`rel`: impacted tests of the task-named
  *  files, the lean-path Wall stand-in) that failed on base, now passes and ran no fewer tests (absent or skipped is not green). Relevant checks
  *  are never pre_red. Base reruns get no node_modules or .venv: a dependency-only failure yields no ids (failIds needs the count covered).
- *  ponytail: bun/go/cargo/npm yield no ids, so they are never subtracted. */
-async function subtractBase(ctx: RunContext, checks: VerifyCheck[], tests: TestRef[], changed: string[], wall: Set<string>, rel: Set<string>, signal: AbortSignal): Promise<{ ids: string[]; names: string[] }> {
-  const none = { ids: [], names: [] }, un = checks.flatMap((c) => { const t = tests.find((x) => `${x.runner}:${x.path}` === c.name); return t && !changed.includes(t.path) ? [{ c, t }] : []; });
-  if (!un.some(({ c }) => c.result === "fail" && c.ids?.length) || signal.aborted) return none;
-  const dir = mkdtempSync(join(tmpdir(), "e10-base-")), out = { ids: [] as string[], names: [] as string[] };
+ *  A-115: a relevant check that passes with more skipped or deselected tests than base is `weak`: no progress, and the caller lists it in
+ *  NOT PROVEN (a skipped target is not a fixed target). Only relevant passes that skip anything trigger the extra base run.
+ *  ponytail: bun/go/cargo/npm yield no ids and no skip count, so they are never subtracted or judged weak. */
+async function subtractBase(ctx: RunContext, checks: VerifyCheck[], tests: TestRef[], changed: string[], wall: Set<string>, rel: Set<string>, signal: AbortSignal): Promise<{ ids: string[]; names: string[]; weak: string[] }> {
+  const out = { ids: [] as string[], names: [] as string[], weak: [] as string[] };
+  const pairs = checks.flatMap((c) => {
+    const t = tests.find((x) => `${x.runner}:${x.path}` === c.name);
+    return t ? [{ c, t }] : [];
+  });
+  const un = pairs.filter(({ t }) => !changed.includes(t.path));
+  const sus = pairs.filter(({ c }) => rel.has(c.name) && c.result === "pass" && (c.sk ?? 0) > 0);
+  if (!(un.some(({ c }) => c.result === "fail" && c.ids?.length) || sus.length) || signal.aborted) return out;
+  const dir = mkdtempSync(join(tmpdir(), "e10-base-"));
   const git = (args: string[]): void => { execFileSync("git", args, { cwd: ctx.repoDir, stdio: "ignore", env: process.env }); };
   try {
     git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", dir, ctx.baseSha]);
-    const red = new Map<VerifyCheck, string[]>(), nb = new Map<VerifyCheck, number>();
-    for (const { c, t } of un) { const [cmd, args] = runnerCmd(t, dir), b = await runOnce(cmd, args, dir, signal, {}); red.set(c, !b.ok && !b.cut ? failIds(b.out) : []); nb.set(c, ran(b.out) ?? 0); }
-    const progress = checks.some((c) => wall.has(c.name) && c.result === "pass") || un.some(({ c }) => rel.has(c.name) && c.result === "pass" && red.get(c)!.length > 0 && (c.n ?? 0) >= nb.get(c)!);
-    if (progress) for (const { c } of un) if (!rel.has(c.name) && c.result === "fail" && c.ids?.length && c.ids.every((i) => red.get(c)!.includes(i))) { out.names.push(c.name); out.ids.push(...c.ids); }
+    const base = new Map<VerifyCheck, { red: string[]; n: number; sk: number }>();
+    for (const { c, t } of new Set([...un, ...sus])) {
+      const [cmd, args] = runnerCmd(t, dir);
+      const b = await runOnce(cmd, args, dir, signal, {});
+      base.set(c, { red: !b.ok && !b.cut ? failIds(b.out) : [], n: ran(b.out) ?? 0, sk: skipped(b.out) });
+    }
+    out.weak = sus.filter(({ c }) => (c.sk ?? 0) > base.get(c)!.sk).map(({ c }) => c.name);
+    const progress = checks.some((c) => wall.has(c.name) && c.result === "pass")
+      || un.some(({ c }) => rel.has(c.name) && c.result === "pass" && !out.weak.includes(c.name) && base.get(c)!.red.length > 0 && (c.n ?? 0) >= base.get(c)!.n);
+    if (progress) {
+      for (const { c } of un) {
+        if (!rel.has(c.name) && c.result === "fail" && c.ids?.length && c.ids.every((i) => base.get(c)!.red.includes(i))) { out.names.push(c.name); out.ids.push(...c.ids); }
+      }
+    }
   } catch { /* base unavailable: checks stay failing */ } finally {
     try { git(["worktree", "remove", "--force", dir]); } catch { /* pruned below */ }
     rmSync(dir, { recursive: true, force: true });
@@ -248,7 +282,9 @@ export const verifyStage: Stage = {
       .filter((c) => c.result === "fail" && !preRed.names.includes(c.name))
       .map((c) => ({ signature: c.first_error ? `${c.name} ${c.first_error}` : c.name, count: 1, sample: c.cmd }));
     // E-98a/E-115: a check that ran (not_run has its own NOT PROVEN entry at seal) on a system interpreter/ruff.
-    const notProven = [...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
+    // A-115: test configuration edits and relevant checks with more skips than base are listed, which makes the verdict PARTIAL at seal.
+    const weakened = [...testConfigChanged(ctx.repoDir, ctx.baseSha, changed).map((f) => `test configuration changed: ${f}`), ...preRed.weak.map((n) => `skipped tests increased: ${n}`)];
+    const notProven = [...weakened, ...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
     return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed, not_proven: notProven, pre_red: preRed.ids, pre_red_checks: preRed.names } };
   },
 };

@@ -62,7 +62,11 @@ if [ "$MODE" = stub ]; then
     cat > "$T/bin/claude" <<'STUB'
 #!/usr/bin/env bash
 case " $* " in *" --help "*|*" --version "*) echo "claude stub 2.1.285 --settings --session-id --resume --model --dangerously-skip-permissions"; exit 0;; esac
-[ -f sum.js ] && sed -i.bak 's/i = 1/i = 0/' sum.js && rm -f sum.js.bak
+if [ -n "${FRG_SKIP:-}" ]; then # G8: skip the target test instead of fixing it (the node equivalent of a conftest skip; this repo has no pytest)
+    sed -i.bak "s/'sums all numbers', /'sums all numbers', { skip: true }, /" sum.test.js && rm -f sum.test.js.bak
+else
+    [ -f sum.js ] && sed -i.bak 's/i = 1/i = 0/' sum.js && rm -f sum.js.bak
+fi
 mkdir -p .loki/signals; echo "fixed sum loop" > .loki/signals/COMPLETION_REQUESTED
 echo "stub claude done"
 STUB
@@ -134,6 +138,16 @@ LINES=$(wc -l < "$T/out.log" | tr -d ' ')
 
 # 8. wall time recorded
 echo "$WALL" | grep -Eq '^[0-9]+$' && res PASS wall-time "recorded ${WALL}s" || res FAIL wall-time "not recorded"
+
+# 9. G8 (stub only): an agent that skips the target test (node { skip: true } on the target) must not end VERIFIED. Runs the v10 engine,
+#    whose verify stage judges skips and test configuration (A-115); the default `loki quick` path is the legacy engine.
+if [ "$MODE" = stub ]; then
+    mkdir -p "$T/skip" && mk_bugrepo "$T/skip"
+    ( cd "$T/skip" && FRG_SKIP=1 LOKI_ENGINE=v10 LOKI_E10_INVOKER=cli "$LOKI" "$TASK" --no-pr ) < /dev/null > "$T/skip.log" 2>&1; SRC=$?
+    if [ "$SRC" -ne 0 ] && ! grep -Eqi '^Outcome: *VERIFIED|verdict: *verified' "$T/skip.log"; then
+        res PASS skip-not-verified "skipped target: rc=$SRC, $(grep -Ei '^Outcome:' "$T/skip.log" | head -1)"
+    else res FAIL skip-not-verified "skipped target sealed: rc=$SRC, $(grep -Ei '^Outcome:' "$T/skip.log" | head -1)"; fi
+fi
 
 # --- real mode: raw claude -p comparison, appended to METRICS.md --------------
 if [ "$MODE" = real ]; then
