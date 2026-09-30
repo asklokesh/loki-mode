@@ -319,12 +319,12 @@ current_harness_sha() {
     printf '%s' "$sha"
 }
 HSHA="$(current_harness_sha)"
-write_ok_row() {  # FILE TASK STATUS
+write_ok_row() {  # FILE TASK STATUS; ROW_MODEL/ROW_SHA/ROW_ARM override the identity keys
     mkdir -p "$(dirname "$1")"
     python3 -c 'import json,sys
-row = {"run_id": sys.argv[2] + "-seed", "task": sys.argv[2], "arm": "raw-claude",
-       "model": "claude-sonnet-5", "harness_sha": sys.argv[4], "status": sys.argv[3]}
-open(sys.argv[1], "a").write(json.dumps(row) + "\n")' "$1" "$2" "$3" "$HSHA"
+row = {"run_id": sys.argv[2] + "-seed", "task": sys.argv[2], "arm": sys.argv[6],
+       "model": sys.argv[5], "harness_sha": sys.argv[4], "status": sys.argv[3]}
+open(sys.argv[1], "a").write(json.dumps(row) + "\n")' "$1" "$2" "$3" "${ROW_SHA:-$HSHA}" "${ROW_MODEL:-claude-sonnet-5}" "${ROW_ARM:-raw-claude}"
 }
 
 # --- Leg a: a REAL SIGTERM mid-rep, then rerun, gives exactly one ok row per task ---
@@ -502,6 +502,32 @@ elif [ -s "$RUNSH_LOG" ]; then
 else
     pass "legE: a capped row that keeps status ok is never retried"
 fi
+
+# --- Legs h/i/j: an ok row whose model, harness_sha or arm differs is NOT done ---
+# Each seeds ct1 with an ok row differing from the current identity in exactly
+# one key (ct2 matches fully and stays done); ct1 must be retried.
+for key in model sha arm; do
+    OUTK="$T/outK-$key"
+    case "$key" in
+        model) ROW_MODEL=claude-other-model write_ok_row "$OUTK/rep1/raw-sonnet/results.jsonl" ct1 ok ;;
+        sha)   ROW_SHA=0000000foreign-sha write_ok_row "$OUTK/rep1/raw-sonnet/results.jsonl" ct1 ok ;;
+        arm)   ROW_ARM=foreign-arm write_ok_row "$OUTK/rep1/raw-sonnet/results.jsonl" ct1 ok ;;
+    esac
+    write_ok_row "$OUTK/rep1/raw-sonnet/results.jsonl" ct2 ok
+    : >"$RUNSH_LOG"
+    out="$( (
+        export ANTHROPIC_API_KEY=fake-key-legk
+        run_scorecard --tier small --n 1 --arms raw-sonnet --out "$OUTK" --tasks-dir "$CTASKS"
+    ) 2>&1)"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        fail "leg-$key: expected success, rc=$rc: $out"
+    elif [ "$(manifest_lines "$RUNSH_LOG")" != 1 ] || ! grep -q -- '--tasks ct1 ' "$RUNSH_LOG"; then
+        fail "leg-$key: an ok row with a different $key must be retried (only ct1): $(cat "$RUNSH_LOG")"
+    else
+        pass "leg-$key: an ok row with a different $key is retried, a matching one is not"
+    fi
+done
 
 # --- Leg f: an invalid tier value fails loudly, the way harness.py _task_tier does ---
 FTASKS="$T/ftasks"
