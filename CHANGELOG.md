@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.8 (2026-09-30)
+
+Releases now come only from trains that pass structural checks in the fast tier, a release can publish after a dispatched security audit fix, test cleanup can no longer delete another run's temporary directory, and the medium eval tier grows by three tasks.
+
+### Fixed
+- Release gate: required-ci also accepts a completed, dispatched Security Audit run at the exact release commit (Tests and Bun Parity stay push-only), and the newest completed audit result wins, so an older success can no longer mask a newer failure (E-87).
+- `scripts/cleanup-test-processes.sh` no longer removes `loki-*`, `test-*`, `package` or `*.tgz` entries under `/tmp` or `$TMPDIR` by glob; it reports them and removes only its own run-owned directory, and only with `--aggressive`. A glob sweep had been deleting other agents' live run directories (E-140).
+
+### Internal
+- D44 structural checks (shard-durations rows, hardcoded path scan, test registration, SKILL.md version sync, line budgets, stale README version, emoji and dash scan, loki-ts typecheck) run in Tier A, on train pushes and in the local-ci fast tier, each under 10 seconds (D44-C).
+- The scorecard-run test stops every process it started on exit, interrupt or termination and asserts no survivor by run directory (E-137).
+- Guard test `tests/test-no-tmp-sweep.sh` bans glob removal of temp-root entries across scripts and tests (E-140).
+- Eval: medium tier adds pub-flask-6093, pub-pendulum-768 and pub-isort-2646, each checked by an independent reviewer who tried to pass the hidden tests with a one-file fix; pub-click-3449, pub-pyjwt-1147 and pub-isort-1913 were dropped for that reason (S41-20a, S41-20e).
+
 ## v10.5.7 (2026-09-30)
 
 Main now moves only to a release train whose full test tier already passed, the eval scorecard reports 95% confidence intervals and refuses undersized samples, and the building blocks for issue intake, repo memory and parallel attempts land behind the v10 engine (not yet wired into a run).
