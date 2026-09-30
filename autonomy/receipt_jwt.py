@@ -129,12 +129,15 @@ def load_signing_key(auto_generate=True):
     if pem:
         key = _load_private_key(pem.encode("utf-8"))
     else:
-        key_file = os.environ.get("LOKI_RECEIPT_SIGNING_KEY_FILE", "").strip() or str(
-            Path.home() / ".loki" / "keys" / "receipt-ed25519.pem")
+        key_file = os.environ.get("LOKI_RECEIPT_SIGNING_KEY_FILE", "").strip()
+        is_default = not key_file
+        if is_default:
+            key_file = str(Path.home() / ".loki" / "keys" / "receipt-ed25519.pem")
         try:
             try:
                 data = Path(key_file).read_bytes()
-                _tighten(key_file)
+                if is_default:  # never chmod an operator's key: it may be a :ro mount
+                    _tighten(key_file)
             except FileNotFoundError:
                 if not auto_generate:
                     return None, ""
@@ -151,11 +154,15 @@ def load_signing_key(auto_generate=True):
 
 def _tighten(path: str) -> None:
     """Drop group/other access on an existing key file and its directory."""
-    if os.stat(path).st_mode & 0o077:
-        os.chmod(path, 0o600)
-    d = os.path.dirname(path)
-    if d and os.stat(d).st_mode & 0o077 and os.path.basename(d) == "keys":
-        os.chmod(d, 0o700)
+    # best effort: a failed chmod must never downgrade signing
+    try:
+        if os.stat(path).st_mode & 0o077:
+            os.chmod(path, 0o600)
+        d = os.path.dirname(path)
+        if os.stat(d).st_mode & 0o077:
+            os.chmod(d, 0o700)
+    except OSError as e:
+        logging.warning("receipt signing: could not tighten %s: %s", path, e)
 
 
 def _create_key_file(path: str) -> bytes:
