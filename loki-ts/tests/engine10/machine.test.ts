@@ -144,30 +144,35 @@ describe("engine10 machine", () => {
     expect(r.stopped).toBeNull();
   });
 
-  it("firstError keeps the test name and message, drops paths, line numbers, timings", () => {
-    const a = firstError("ok 1\nnot ok 2 - sum adds [3.2ms] at /tmp/x1/sum.js:10:5");
-    expect(a).toBe("not ok 2 - sum adds at <path>");
-    expect(firstError("not ok 3 - sum negative")).not.toBe(firstError("not ok 2 - sum adds"));
+  it("firstError separates two failures in one file for pytest, jest and node (real runner formats)", () => {
+    const py = (t: string, r: string) => `=== FAILURES ===\n___ ${t} ___\n\ntests/test_a.py:12: ${r}\n=== short test summary info ===\nFAILED tests/test_a.py::${t} - ${r}\n`;
+    expect(firstError(py("test_login", "assert 1 == 2"))).not.toBe(firstError(py("test_logout", "KeyError: 'u'")));
+    expect(firstError(py("test_login", "assert 1 == 2"))).toContain("test_login");
+    const jest = (t: string) => `FAIL src/a.test.js\n  \u2713 handles error case (3 ms)\n  \u25cf Math \u203a ${t}\n\n    expect(received).toBe(expected)\n`;
+    expect(firstError(jest("adds"))).not.toBe(firstError(jest("subtracts")));
+    expect(firstError(jest("adds"))).toContain("adds");
+    expect(firstError("ok 1 - a\nnot ok 2 - sum adds [3.2ms] at /tmp/x1/sum.js:10:5")).toBe("not ok 2 - sum adds at <path>");
   });
 
-  // Real session runner + fake `claude` on PATH: provider errors reach the iteration log, not the child's stderr.
-  async function realSession(msg: string, runs: { n: number }) {
+  // Real session runner. `child` replaces the self-respawned session child; `claude` is a fake binary for the CLI invoker.
+  async function realSession(runs: { n: number }, o: { child?: string; claude?: string }) {
     const dir = mkdtempSync(join(tmpdir(), "loki-e10-fatal-"));
     const bin = join(dir, "bin");
     mkdirSync(bin);
-    writeFileSync(join(bin, "claude"), `#!/bin/sh\ncase "$*" in *--help*) echo "--settings"; exit 0;; esac\necho '${msg}'\nexit 1\n`, { mode: 0o755 });
+    writeFileSync(join(bin, "claude"), `#!/bin/sh\ncase "$*" in *--help*) echo "--settings"; exit 0;; esac\necho '${o.claude ?? ""}'\nexit 1\n`, { mode: 0o755 });
     const saved = { PATH: process.env.PATH, inv: process.env.LOKI_E10_INVOKER };
     process.env.PATH = `${bin}:${process.env.PATH}`;
     process.env.LOKI_E10_INVOKER = "cli";
     try {
       const { ctx } = fakeCtx();
-      const real = createSessionRunner({ provider: "claude" });
-      ctx.sessions = { run: (o) => { runs.n++; return real.run({ ...o, cwd: dir, limitS: 60 }); } };
-      const fail = (n: StageName) => stage(n, async (c, signal) => {
+      const real = createSessionRunner({ provider: "claude", ...(o.child ? { childCommand: ["bash", ["-c", o.child]] as [string, string[]] } : {}) });
+      ctx.sessions = { run: (x) => { runs.n++; return real.run({ ...x, cwd: dir, limitS: 60 }); } };
+      const ses = (n: StageName) => stage(n, async (c, signal) => {
         await c.sessions.run({ stage: n as never, brief: "b", tier: "development", iterationId: `it-${n}`, limitS: 60, signal });
         return { status: "completed", data: {} } as StageResult;
       });
-      return await runMachine(ctx, { load: loaderOf(all({ implement: fail("implement"), fix: fail("fix"), verify: stage("verify", async () => ({ status: "completed", data: { failures_grouped: [{ signature: "x" }] } })) })) });
+      const verify = stage("verify", async () => ({ status: "completed", data: { failures_grouped: [{ signature: "x" }] } }));
+      return await runMachine(ctx, { load: loaderOf(all({ implement: ses("implement"), fix: ses("fix"), verify })) });
     } finally {
       process.env.PATH = saved.PATH;
       if (saved.inv === undefined) delete process.env.LOKI_E10_INVOKER; else process.env.LOKI_E10_INVOKER = saved.inv;
@@ -175,18 +180,28 @@ describe("engine10 machine", () => {
     }
   }
 
-  for (const [msg, klass] of [["invalid x-api-key", "auth"], ["Your credit balance is too low to access the API", "quota_exhausted"]] as const) {
-    it(`real session runner: a fake claude printing "${msg}" stops fatal after ONE session`, async () => {
+  for (const [label, child, klass] of [
+    ["the session child's own stderr", "echo 'invalid x-api-key' >&2; exit 1", "auth"],
+    ["the SDK error line in the iteration log", "mkdir -p .loki; echo '[sdk-loop error: Your credit balance is too low to access the API]' > .loki/iteration-it-implement.log; exit 1", "quota_exhausted"],
+  ] as const) {
+    it(`real session runner: ${label} stops fatal:${klass} after ONE session`, async () => {
       const runs = { n: 0 };
-      const r = await realSession(msg, runs);
+      const r = await realSession(runs, { child });
       expect(runs.n).toBe(1);
       expect(r.stopped).toBe(`fatal:${klass}`);
     }, 60_000);
   }
 
+  it("real session runner: agent transcript that merely mentions an auth error is NOT fatal (fix round still runs)", async () => {
+    const runs = { n: 0 };
+    const r = await realSession(runs, { claude: "FAILED tests/test_login.py::test_bad_password - AuthenticationError: authentication failed for user bob ... Reached max turns." });
+    expect(runs.n).toBeGreaterThan(1);
+    expect(r.stopped).not.toMatch(/^fatal/);
+  }, 60_000);
+
   it("real session runner: a 429 is retried (the fix round still runs its session), never fatal", async () => {
     const runs = { n: 0 };
-    const r = await realSession("429 rate limit exceeded, please try again", runs);
+    const r = await realSession(runs, { child: "echo '429 rate limit exceeded, please try again' >&2; exit 1" });
     expect(runs.n).toBeGreaterThan(1);
     expect(r.stopped).not.toMatch(/^fatal/);
   }, 60_000);

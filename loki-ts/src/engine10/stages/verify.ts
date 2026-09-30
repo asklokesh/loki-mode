@@ -99,9 +99,10 @@ async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSi
   const cut = timeout.aborted || signal.aborted;
   return { ok: exitCode === 0 && !cut, missing: false, cut, out: out + "\n" + err };
 }
-export function firstError(out: string): string { // first failing line minus what varies between identical failures (A-113 stall signature)
-  const lines = out.split("\n").map((l) => l.trim()).filter(Boolean);
-  return (lines.find((x) => /fail|error|not ok|assert/i.test(x)) ?? lines[0] ?? "").replace(/\d{4}-\d\d-\d\dT[\d:.]+Z?/g, "").replace(/(?:\/[\w.@-]+)+/g, "<path>").replace(/:\d+(?::\d+)?/g, "").replace(/\[?\d+(?:\.\d+)?m?s\]?/g, "").replace(/\s+/g, " ").slice(0, 160);
+export function firstError(out: string): string { // the line naming the failing test, minus what varies between identical failures (A-113 stall signature)
+  const lines = out.slice(-65536).split("\n").map((l) => l.trim()).filter(Boolean);
+  const l = lines.find((x) => /^(FAILED\s|\u25cf\s.*\u203a|not ok\s|_{3,}\s.+\s_{3,}$)/.test(x)) ?? lines.find((x) => /fail|error/i.test(x) && !/^(=|\u2713|ok\b|PASS)/.test(x)) ?? "";
+  return l.replace(/\d{4}-\d\d-\d\dT[\d:.]+Z?/g, "").replace(/(^|\s)\/(?:[\w.@-]+\/)*[\w.@-]+/g, "$1<path>").replace(/:\d+(?::\d+)?/g, "").replace(/\[?\d+(?:\.\d+)?m?s\]?/g, "").replace(/\s+/g, " ").slice(0, 160);
 }
 /** Runs one check with a single retry: fail-then-pass is "flaky", not "fail". A missing tool, or a
  *  timed-out/aborted run, is recorded once and never retried. */
