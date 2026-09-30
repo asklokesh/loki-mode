@@ -115,13 +115,13 @@ Architect: opus. Source: the founder directive (2026-09-30, from building to pro
   - The fix loop stops with `stop: "stalled"` when verify reports the same failures.ts signature 3 times. MAX_FIX_ROUNDS=2 gives exactly 3 verifies, so this can fire.
   - A session whose stderr tail classifies as `auth` or `quota_exhausted` through the existing loki-ts/src/runner/retry_class.ts `classifyFailure` stops the run immediately: no fix round, no further session, and `stop: "fatal:<class>"`.
   - A rate limit stays retryable, as retry_class already treats it.
-- Files: loki-ts/src/engine10/machine.ts, loki-ts/src/engine10/session.ts, loki-ts/tests/engine10/machine.test.ts, loki-ts/tests/engine10/session.test.ts, loki-ts/tests/engine10/resume_e2e.test.ts (deleted with the resume path). types.ts is read-only for this card: `stop` travels on outputs.
+- Files: loki-ts/src/engine10/machine.ts, loki-ts/src/engine10/session.ts, loki-ts/src/engine10/supervisor.ts (the `--resume` flag and its refusal only, lines 284-300), loki-ts/tests/engine10/machine.test.ts, loki-ts/tests/engine10/session.test.ts. It deletes loki-ts/tests/engine10/resume_e2e.test.ts and resume_cli.test.ts. types.ts is read-only for this card: `stop` travels on outputs.
 - Wall check:
   - A fake provider that prints "credit balance is too low" runs exactly one session and stops fatal.
   - A fake verify that repeats one signature stops "stalled" after 3 verifies.
   - A 429 is retried.
 - Commands: `cd loki-ts && bun test tests/engine10/machine.test.ts tests/engine10/session.test.ts tests/engine10/cap.test.ts tests/engine10/budget.test.ts`
-- Tier: HIGH. Budget: net 0 or less. Offset: delete machine.ts's resume path (`opts.prior` replay). It is wired and tested (E-39/E-42), but intake always records `resumed: false`, so resumed receipts misreport. See section 4.
+- Tier: HIGH. Budget: net 0 or less. Offset: delete the engine resume path whole, in one slice so main never carries a dead flag: machine.ts `opts.prior` replay, the supervisor.ts flag, and both resume tests. It is wired and tested (E-39/E-42), but intake always records `resumed: false`, so resumed receipts misreport. harness.py never passes `--resume` (grep), and eval resume S41-18 is file-based and stays. See section 4.
 - Depends: A-102 (types.ts). Wave 2.
 
 ### A-110 One named outcome, a fixed exit ladder, `--json` (items 1 and 5)
@@ -143,7 +143,7 @@ Architect: opus. Source: the founder directive (2026-09-30, from building to pro
   - The "Verdict:" line becomes "Outcome:", so there is one name.
   - `--json` prints one object `{ok, outcome, stop, run_id, receipt_sha256}`, where `ok` means exit 0.
   - harness.py's rc handling is checked, and edited by this card only if a code change breaks it.
-- Files: loki-ts/src/engine10/supervisor.ts, loki-ts/src/engine10/output.ts, loki-ts/tests/engine10/output.test.ts, loki-ts/tests/engine10/supervisor_backstop.test.ts, loki-ts/tests/engine10/resume_cli.test.ts (deleted with the flag).
+- Files: loki-ts/src/engine10/supervisor.ts, loki-ts/src/engine10/output.ts, loki-ts/tests/engine10/output.test.ts, loki-ts/tests/engine10/supervisor_backstop.test.ts.
 - Wall check:
   - A fixture where the red suite ends PARTIAL exits 1 (red on main because of R-b).
   - A SPEC_CONFLICT exits 4.
@@ -151,8 +151,8 @@ Architect: opus. Source: the founder directive (2026-09-30, from building to pro
   - `--json` parses.
   - Gate: G1.
 - Commands: `cd loki-ts && bun test tests/engine10/output.test.ts tests/engine10/supervisor_backstop.test.ts tests/engine10/e2e.test.ts tests/engine10/budget.test.ts`
-- Tier: HIGH. Budget: net 0 or less. Offset: delete supervisor.ts `--resume` parsing and refusal (lines 284-300). eval resume S41-18 is separate and stays.
-- Depends: A-113 (`stop`). Wave 3.
+- Tier: HIGH. Budget: net 0 or less. Offset: the exit ternary becomes a ladder lookup, and output.ts's Verdict label code is replaced by the Outcome line. If that is not flat, re-slice.
+- Depends: A-113 (`stop` and supervisor.ts). Wave 3.
 
 ### A-111 Empty, skipped or hung checks are NOT VERIFIED (item 5)
 - Goal: verify.ts parses the executed-test count per runner:
@@ -186,13 +186,14 @@ Architect: opus. Source: the founder directive (2026-09-30, from building to pro
 - Goal:
   - `receipt_jwt.load_signing_key()` uses `LOKI_RECEIPT_SIGNING_KEY_FILE`, defaulting to `~/.loki/keys/receipt-ed25519.pem`.
   - If the key is missing, it creates it: PKCS8 PEM, mode 0600, `O_EXCL`, so a concurrent first run cannot overwrite it.
-  - Delete the inline `LOKI_RECEIPT_SIGNING_KEY` variable, leaving one env var. Helm and compose already use `_FILE`.
+  - The inline `LOKI_RECEIPT_SIGNING_KEY` stays for now. After A-122 there is one signing family for both engines, which is what the directive requires. Deleting the inline variable touches about 10 engine10 tests plus tests/moat/p1-portable-proof.sh and is not carded.
   - preflight.ts warns only when signing is really unavailable.
+  - The seal.ts `signReceipt` early exit when no env is set belongs to A-121. The proof-generator.py `if att_key:` early exit (about line 2183) belongs to A-122.
 - Files: autonomy/receipt_jwt.py, loki-ts/src/engine10/preflight.ts, tests/test_receipt_attest.py, tests/test-local-receipt-attestation.sh, loki-ts/tests/engine10/preflight.test.ts, docs/SIGNED-RECEIPTS.md (the variable section only).
 - Wall check:
-  - With a fresh HOME and no env: the first seal creates the key (0600) and the receipt is signed.
-  - The second run reuses the same kid.
-  - Gate: G5.
+  - With a fresh HOME and no env, `load_signing_key()` creates the file at 0600.
+  - A second call returns the same kid.
+  - End-to-end G5 is checked in A-121 (v10) and A-122 (legacy).
 - Commands: `python3 -m pytest tests/test_receipt_attest.py -q && bash tests/test-local-receipt-attestation.sh && cd loki-ts && bun test tests/engine10/preflight.test.ts`
 - Tier: HIGH. Budget: core flat or smaller (one preflight line removed).
 - Depends: none. Wave 1.
@@ -208,6 +209,8 @@ Architect: opus. Source: the founder directive (2026-09-30, from building to pro
   - With PATH stripped of python3, the receipt is SIGNED and `loki verify` reports VERIFIED.
   - receipt_jwt.py verifies the TS token against the public JWK.
   - Flipping one receipt byte gives TAMPERED.
+  - A receipt signed by a key listed in `LOKI_RECEIPT_RETIRED_PUBKEYS` still verifies, so rotation is kept.
+  - With a fresh HOME and no env, the first v10 seal is SIGNED (G5).
 - Commands: `cd loki-ts && bun test tests/engine10/seal.test.ts tests/engine10/verify_cmd.test.ts tests/engine10/deep.test.ts tests/engine10/budget.test.ts`
 - Tier: HIGH. Budget: core about -25 (the embedded Python and the spawn plumbing are removed).
 - Depends: A-101 (verify_cmd.ts), A-104 (seal.ts), A-120 (key path). Wave 2.
@@ -215,12 +218,12 @@ Architect: opus. Source: the founder directive (2026-09-30, from building to pro
 ### A-122 Delete the GPG signing layer (item 3, deletion)
 - Goal:
   - Delete `LOKI_PROOF_GPG_KEY` and GPG signing: proof-generator.py `_gpg_detached_sign` and its block, the GPG status tool, and the doctor and verify messages that name it.
-  - The legacy route signs only through A-120's key. Where `cryptography` is missing, doctor says so on one line.
+  - The legacy route signs only through A-120's key. Delete the proof-generator.py `if att_key:` early exit so the default key is reached. Where `cryptography` is missing, doctor says so on one line.
   - CTO decision: old proofs with `gpg_signature` still verify for integrity, and read as UNSIGNED for provenance.
 - Files: autonomy/lib/proof-generator.py, autonomy/lib/proof-template.html, autonomy/loki (signing lines 1283, 9683, 14101-14110, 14532, 36680-36683), tools/signing-status.py (delete), tests/test_signing_status.py (delete), tools/gate-status.py, tools/receipt-attest.py, tests/test-receipt-signing-discoverability.sh, tests/test-deploy-receipt-gate.sh, loki-ts/src/commands/doctor.ts (signing block 484-496 and 1113-1127), README.md (2 lines), docs/TOOLS.md, docs/VERIFICATION-COST.md, docs/SIGNED-RECEIPTS.md.
 - Wall check:
   - `git grep -c LOKI_PROOF_GPG_KEY` over non-CHANGELOG files is 0 (a guard test).
-  - A legacy proof with the A-120 key carries a JWT and `loki proof verify` exits 0.
+  - With a fresh HOME and no env, a legacy proof carries a JWT and `loki proof verify` exits 0 (G5, legacy route).
 - Commands: `bash tests/test-receipt-signing-discoverability.sh && bash tests/test-deploy-receipt-gate.sh && python3 -m pytest tests/test_receipt_attest.py -q`
 - Tier: HIGH. Budget: large negative outside core.
 - Depends: A-120. Wave 2. autonomy/loki order: A-122, then A-123, then A-134.
@@ -257,7 +260,7 @@ Architect: opus. Source: the founder directive (2026-09-30, from building to pro
   - `USAGE_DOC_REQUIRED` and the USAGE regen (a haiku call) are skipped.
   - `commit_session_changes` excludes a lockfile that did not exist at base when no manifest changed.
   - New-project (PRD) builds keep today's behaviour.
-- The prompt gate keys on a signal only the quick or existing-repo path sets, so the 60 build_prompt fixtures stay byte-identical. One new fixture covers the gated case.
+- The prompt gate keys on the PRD path `.loki/quick-prd-<pid>.md`, which only cmd_quick writes (autonomy/loki:16351). So autonomy/loki is not in this card, and the 60 build_prompt fixtures stay byte-identical. One new fixture covers the gated case. Also fix run.sh:23628, which still matches the old `quick-prd.md` name.
 - Files: autonomy/run.sh (HANDOFF target, USAGE instruction gate, regen skip, commit exclude), loki-ts/src/runner/build_prompt.ts (mirror of the gate), loki-ts/tests/fixtures/build_prompt/fixture-61/ (new), tests/test-quick-artifacts.sh (new).
 - Wall check:
   - A stub-provider `loki quick` on the bugrepo: `git show --stat HEAD` lists sum.js only.
@@ -326,7 +329,7 @@ Partially built. Recommend deleting:
   - supervisor.ts:284-300 accepts `--resume`, and machine.ts replays prior events (lines 26, 76, 164). Both are tested by resume_cli.test.ts and resume_e2e.test.ts.
   - stages/intake.ts:95 still hardcodes `resumed: false` with a stale comment claiming resume is refused, so a resumed receipt says it was not resumed.
   - seal.ts:205 adds a "resume state not recorded" not_proven entry.
-  - Delete through A-110 (supervisor) and A-113 (machine). The receipt field `resumed` stays constant false, so there is no schema change.
+  - Delete it whole in A-113. The receipt field `resumed` stays constant false, so there is no schema change.
   - eval resume (S41-18, D43 item 4) is a different thing and stays.
 - New dashboards: loki-ts/src/engine10/dashboard/page.ts (95 lines) and server.ts (313), plus the cli.ts TABLE row and the registry.ts entry.
   - This is about 410 core lines, the only large core offset.
@@ -362,7 +365,10 @@ Not cuts (listed so nobody deletes them by mistake):
   | verify.ts | A-102, A-111, A-112 |
   | seal.ts | A-104, A-121, A-112 |
   | verify_cmd.ts | A-101, A-121 |
-  | supervisor.ts, output.ts | A-110, A-130 |
+  | supervisor.ts | A-113, A-110, A-130 |
+  | output.ts | A-110, A-130 |
+  | docs/SIGNED-RECEIPTS.md | A-120, A-122 |
+  | README.md | A-122, A-140 |
   | run.sh | A-132, A-134 |
   | autonomy/loki | A-122, A-123, A-134 |
   | doctor.ts | A-122, A-123 |
