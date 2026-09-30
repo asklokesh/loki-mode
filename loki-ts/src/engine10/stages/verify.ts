@@ -25,8 +25,7 @@ export interface VerifyCheck {
   cmd: string;
   result: "pass" | "fail" | "not_run" | "flaky"; // ENGINE.md section 5 test.result enum
   duration_s: number;
-  reason?: string;
-  first_error?: string; // A-113: first failing output line, normalized; feeds the stall signature
+  reason?: string; first_error?: string; // A-113: first failing output line, normalized; feeds the stall signature
   interpreter?: Interpreter; // E-98a: which python/ruff this check actually ran on
 }
 // E-98a B2: .venv, then venv, then an in-repo (realpath under repoDir) VIRTUAL_ENV are "project";
@@ -54,17 +53,7 @@ export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Inter
     case "cargo": return ["cargo", ["test"]];
   }
 }
-function dedupeTests(tests: TestRef[]): TestRef[] {
-  const seen = new Set<string>();
-  const out: TestRef[] = [];
-  for (const t of tests) {
-    const key = `${t.runner}:${t.path}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(t);
-  }
-  return out;
-}
+const dedupeTests = (tests: TestRef[]): TestRef[] => [...new Map(tests.map((t) => [`${t.runner}:${t.path}`, t] as const)).values()];
 /** Tracked changes against baseSha, plus untracked new files (commit runs after verify). `.loki/`
  *  is filtered defensively even though intake also excludes it via .git/info/exclude. Throws if
  *  either git command fails: a broken baseSha must never read as "nothing changed" (~ALREADY_SATISFIED). */
@@ -82,8 +71,21 @@ interface RunOpts {
   timeoutMs?: number; // per-attempt timeout override, tests only; defaults to CHECK_TIMEOUT_MS
   interpreter?: Interpreter; // E-98a: recorded on the resulting VerifyCheck as-is
 }
+/** Executed-test count from the runner's FINAL summary only (node TAP/spec trailer, pytest last line, jest/vitest "Tests"
+ *  line, cargo "test result:", go "[no test"), never test names or captured stdout above it; null = no summary. 0 = empty or
+ *  all skipped, never a pass (A-111). Node counts a testless file as one pseudo-test named after the file: discounted. */
+export function ran(out: string): number | null {
+  const n = (s: string, re: RegExp): number => +(s.match(re)?.[1] ?? 0);
+  const blk = out.trimEnd().match(/(?:^|\n)((?:(?:#|\u2139) \w+ [\d.]+(?:\n|$)){5,})$/)?.[1];
+  if (blk) { const c = n(blk, /(?:#|\u2139) pass (\d+)/) + n(blk, /(?:#|\u2139) fail (\d+)/); return c === 1 && /^(?:ok \d+ - |\u2714 )\S+\.[cm]?[jt]s(?: \(|$)/m.test(out) ? 0 : c; }
+  const cg = out.split("\n").filter((l) => l.startsWith("test result: "));
+  if (cg.length) return cg.reduce((t, l) => t + n(l, /(\d+) passed/) + n(l, /(\d+) failed/), 0);
+  const l = out.split("\n").filter((x) => /^(?:=+ )?(?:\d+ \w+.*|no tests ran) in [\d.]+s|^\s*Tests?:?\s+\d|^No tests found|^(?:ok|\?)\s+\S+\s/.test(x)).pop();
+  if (!l || /^(?:ok|\?)\s/.test(l)) return l && /\[no test/.test(l) ? 0 : null;
+  return /^(?:=+ )?no tests (?:ran|found)|^No tests found|skipped/i.test(l) || /\d+ (?:passed|failed|errors?)/.test(l) ? n(l, /(\d+) passed/) + n(l, /(\d+) failed/) + n(l, /(\d+) errors?/) : null;
+}
 /** `cut` means the timeout or the stage's AbortSignal killed the child: never read as "fail" and
- *  never retried (a hung check must not burn 2x its timeout). */
+ *  never retried (a hung check must not burn 2x its timeout). `out` is a 64 KB tail, unread when cut. The result comes from exit + timeout, never pipe EOF (an orphaned grandchild may hold the pipes). */
 async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSignal, opts: RunOpts): Promise<{ ok: boolean; missing: boolean; cut: boolean; out: string }> {
   if (!Bun.which(cmd, { PATH: opts.path ?? process.env["PATH"] ?? "" })) return { ok: false, missing: true, cut: false, out: "" };
   const timeout = AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS);
@@ -95,43 +97,36 @@ async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSi
     signal: AbortSignal.any([signal, timeout]),
     env: opts.path ? { ...process.env, PATH: opts.path } : process.env,
   });
-  const [out, err, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  let tail = ""; const rs = [proc.stdout, proc.stderr].map((s) => s.getReader());
+  const pumps = rs.map(async (r) => { const d = new TextDecoder(); for (;;) { const c = await r.read().catch(() => ({ done: true, value: undefined })); if (c.done) return; tail = (tail + d.decode(c.value, { stream: true })).slice(-65536); } });
+  const exitCode = await proc.exited;
+  await Promise.race([Promise.all(pumps), new Promise((r) => setTimeout(r, 300))]); rs.forEach((r) => r.cancel().catch(() => {}));
   const cut = timeout.aborted || signal.aborted;
-  return { ok: exitCode === 0 && !cut, missing: false, cut, out: out + "\n" + err };
+  return { ok: exitCode === 0 && !cut, missing: false, cut, out: cut ? "" : tail };
 }
 export function firstError(out: string): string { // the line naming the failing test, minus what varies between identical failures (A-113 stall signature)
-  const lines = out.slice(-65536).split("\n").map((l) => l.trim()).filter(Boolean);
-  const l = lines.find((x) => /^(FAILED\s|\u25cf\s.*\u203a|not ok\s|_{3,}\s.+\s_{3,}$)/.test(x)) ?? lines.find((x) => /fail|error/i.test(x) && !/^(=|\u2713|ok\b|PASS)/.test(x)) ?? "";
+  const lines = out.slice(-65536).split("\n").map((l) => l.trim()).filter(Boolean), l = lines.find((x) => /^(FAILED\s|\u25cf\s.*\u203a|not ok\s|_{3,}\s.+\s_{3,}$)/.test(x)) ?? lines.find((x) => /fail|error/i.test(x) && !/^(=|\u2713|ok\b|PASS)/.test(x)) ?? "";
   return l.replace(/\d{4}-\d\d-\d\dT[\d:.]+Z?/g, "").replace(/(^|\s)\/(?:[\w.@-]+\/)*[\w.@-]+/g, "$1<path>").replace(/:\d+(?::\d+)?/g, "").replace(/\[?\d+(?:\.\d+)?m?s\]?/g, "").replace(/\s+/g, " ").slice(0, 160);
 }
-/** Runs one check with a single retry: fail-then-pass is "flaky", not "fail". A missing tool, or a
- *  timed-out/aborted run, is recorded once and never retried. */
+/** Runs one check with a single retry: fail-then-pass is "flaky", not "fail". A missing tool, a
+ *  timed-out/aborted run, or a run that executed 0 tests is recorded once as not_run and never retried. */
 export async function runCheck(
   ctx: RunContext, name: string, cmd: string, args: string[], signal: AbortSignal,
   checks: VerifyCheck[], opts: RunOpts = {},
 ): Promise<VerifyCheck> {
   const started = Date.now();
   const cmdStr = [cmd, ...args].join(" ");
-  const cutReason = () => (signal.aborted ? "aborted" : `timed out after ${(opts.timeoutMs ?? CHECK_TIMEOUT_MS) / 1000}s`);
+  const skip = (a: Awaited<ReturnType<typeof runOnce>>): string | undefined =>
+    a.missing ? `${cmd} not found on PATH`
+    : a.cut ? (signal.aborted ? "aborted" : `timed out after ${(opts.timeoutMs ?? CHECK_TIMEOUT_MS) / 1000}s`)
+    : ran(a.out) === 0 ? "ran 0 tests (empty or all skipped)" : undefined;
   let attempt = await runOnce(cmd, args, ctx.repoDir, signal, opts);
-  let result: VerifyCheck["result"];
-  let reason: string | undefined;
-  if (attempt.missing) {
-    result = "not_run";
-    reason = `${cmd} not found on PATH`;
-  } else if (attempt.cut) {
-    result = "not_run";
-    reason = cutReason();
-  } else if (attempt.ok) {
-    result = "pass";
-  } else {
+  let reason = skip(attempt);
+  let result: VerifyCheck["result"] = reason ? "not_run" : "pass";
+  if (!reason && !attempt.ok) {
     attempt = await runOnce(cmd, args, ctx.repoDir, signal, opts);
-    if (attempt.cut) {
-      result = "not_run";
-      reason = cutReason();
-    } else {
-      result = attempt.ok ? "flaky" : "fail";
-    }
+    reason = skip(attempt);
+    result = reason ? "not_run" : attempt.ok ? "flaky" : "fail";
   }
   const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out) } : {}), ...(reason ? { reason } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
   checks.push(check);

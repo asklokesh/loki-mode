@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSessionRunner } from "../../src/engine10/session.ts";
-import { firstError } from "../../src/engine10/stages/verify.ts";
+import { firstError, runCheck } from "../../src/engine10/stages/verify.ts";
 import { FLOW, optional, runMachine, type MachineRunContext } from "../../src/engine10/machine.ts";
 import type { RunContext, Stage, StageName, StageResult } from "../../src/engine10/types.ts";
 
@@ -182,6 +182,7 @@ describe("engine10 machine", () => {
 
   for (const [label, child, klass] of [
     ["the session child's own stderr", "echo 'invalid x-api-key' >&2; exit 1", "auth"],
+    ["the real SDK auth line in the iteration log", "mkdir -p .loki; echo '[sdk-loop error: Claude Code returned an error result: Failed to authenticate. API Error: 401 API key is invalid.]' > .loki/iteration-it-implement.log; exit 1", "auth"],
     ["the SDK error line in the iteration log", "mkdir -p .loki; echo '[sdk-loop error: Your credit balance is too low to access the API]' > .loki/iteration-it-implement.log; exit 1", "quota_exhausted"],
   ] as const) {
     it(`real session runner: ${label} stops fatal:${klass} after ONE session`, async () => {
@@ -205,6 +206,17 @@ describe("engine10 machine", () => {
     expect(runs.n).toBeGreaterThan(1);
     expect(r.stopped).not.toMatch(/^fatal/);
   }, 60_000);
+
+  it("runCheck: a failing check that leaves a background child holding the pipes is fail, fast, never not_run", async () => {
+    const { ctx } = fakeCtx();
+    ctx.repoDir = tmpdir();
+    const checks: never[] = [];
+    const t0 = Date.now();
+    const c = await runCheck(ctx, "x", "sh", ["-c", "sleep 25 & echo FAILED x; exit 1"], new AbortController().signal, checks, { timeoutMs: 5000 });
+    expect(c.result).toBe("fail");
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(c.first_error).toBe("FAILED x");
+  }, 10_000);
 
   it("the global cap aborts the running stage and jumps to commit and seal", async () => {
     // capS=25 is just above the ~24.83s threshold below which softCapS's

@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.11 (2026-09-30)
+
+The first release on the npm `next` tag. `loki verify` no longer calls a freshly sealed receipt tampered, v10 commits only the fix, and the Wall no longer mistakes a broken test run for a failing test.
+
+### Changed
+- Releases now publish to the npm `next` dist-tag. `latest`, the Docker `:latest` image and the Homebrew formula move only through a separate promote step, and only after the first-run gate passes on that exact version and its published gitHead is on main (A-01).
+- v10 commits only the fix: Wall test files, a newly added lockfile when no manifest changed, and `.loki/` are left out of the commit (A-104).
+
+### Fixed
+- `loki verify` uses the same receipt canonicalizer as the sealer, so a receipt containing non-ASCII text no longer verifies as TAMPERED; `loki verify --help` prints usage; the full 64-character receipt digest is printed (A-101).
+- Wall red classification (pytest): a failure hidden by a repository's `-q` addopts is still seen, a `pytest.exit` banner reads as not run, and a missing pytest reads as not run instead of red; the classifier lives in the audited core (E-125, E-132).
+- The implement brief ends with the finish instruction, and says "Impacted tests: none known; run the project's full test command." when no impacted tests are known (E-150).
+
+### Internal
+- `scripts/first-run-gate.sh`: a first-run gate on a throwaway HOME that checks the default entry point on a one-line bug repo (tests fully green, only the fix changed, printed digest equals the verified one, signed receipt, at most 15 lines of output, wall time). It runs as a non-required CI job and gates promotion (A-02).
+- `scripts/release.sh --check-clean` refuses a release commit that leaves a stamped file modified, and the stage list prints `git add -f` for ignored paths (E-151, E-152).
+- The watch-command test guards its recorded process groups against its own group and PID reuse (E-150).
+- Eval: mining notes for screened medium-tier candidates; the pub-dotenv-661 notes record the reviewer's one-file probes.
+
 ## v10.5.10 (2026-09-30)
 
 v10 briefs now open with a byte-identical rules block so the cacheable prefix is shared across tasks, large eval tasks must carry frozen, upstream-first hidden tests, and a set of test-reliability fixes stops tests from leaking processes, reading the host's real data or timing out under CI load.
