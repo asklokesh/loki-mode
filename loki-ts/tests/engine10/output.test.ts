@@ -4,13 +4,14 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import {
   estimateEtaS,
-  foldCostTokens,
   formatClock,
   formatDuration,
   formatHeartbeatLine,
   formatStageLine,
   formatSummary,
   formatTokens,
+  EXIT,
+  outcomeOf,
 } from "../../src/engine10/output.ts";
 
 describe("formatClock", () => {
@@ -126,7 +127,7 @@ describe("formatSummary (golden, ENGINE.md section 11)", () => {
     });
     expect(out).toBe(
       "PR:         https://github.com/o/r/pull/12 (draft: fix rounds exhausted)\n" +
-      "Verdict:    PARTIAL\n" +
+      "Outcome:    PARTIAL\n" +
       "NOT PROVEN: full suite, app boot, council, security scan (deep verify running); flaky tests/test_x.py::t\n" +
       "Cost:       $0.84 (claude, 212k tokens)\n" +
       "Time:       4m12s (intake 11s, plan+wall 38s, implement 2m41s, verify 29s, seal+pr 13s)",
@@ -156,7 +157,7 @@ describe("formatSummary (golden, ENGINE.md section 11)", () => {
     });
     expect(out).toBe(
       "PR:         https://github.com/o/r/pull/34\n" +
-      "Verdict:    VERIFIED\n" +
+      "Outcome:    VERIFIED\n" +
       "NOT PROVEN: full suite (deep verify running), app boot (deep verify running), council (deep verify running), security scan (deep verify running)\n" +
       "Cost:       $0.42 (claude, 98k tokens)\n" +
       "Time:       5m00s (intake 10s, plan+wall 40s, implement 3m20s, verify 35s, seal+pr 15s)",
@@ -213,38 +214,6 @@ describe("formatSummary (golden, ENGINE.md section 11)", () => {
   });
 });
 
-// E-44 (found by E-14): the summary's token count must fold cache read and
-// cache creation tokens from cost events, not just input/output.
-describe("foldCostTokens", () => {
-  test("sums input, output, cache read and cache creation tokens", () => {
-    const events = [
-      { type: "cost", data: { input_tokens: 1000, output_tokens: 500, cache_read_tokens: 200, cache_creation_tokens: 50 } },
-    ];
-    expect(foldCostTokens(events)).toBe(1750);
-  });
-
-  test("sums across multiple cost events", () => {
-    const events = [
-      { type: "cost", data: { input_tokens: 100, cache_read_tokens: 10 } },
-      { type: "cost", data: { output_tokens: 200, cache_creation_tokens: 20 } },
-    ];
-    expect(foldCostTokens(events)).toBe(330);
-  });
-
-  test("ignores non-cost events", () => {
-    const events = [
-      { type: "run.started", data: { input_tokens: 999 } },
-      { type: "cost", data: { input_tokens: 5 } },
-    ];
-    expect(foldCostTokens(events)).toBe(5);
-  });
-
-  test("returns null, never 0, when no cost event carries a token field", () => {
-    expect(foldCostTokens([])).toBeNull();
-    expect(foldCostTokens([{ type: "cost", data: { usd: 0.5 } }])).toBeNull();
-  });
-});
-
 describe("estimateEtaS (optional module via dynamic import, section 3)", () => {
   test("returns null when the eta module is not present", async () => {
     expect(await estimateEtaS(180, 60, "./fixtures/output/no-such-eta-module.ts")).toBeNull();
@@ -265,5 +234,23 @@ describe("estimateEtaS import errors", () => {
   test("an eta module that throws on import is surfaced, not swallowed", async () => {
     const p = join(import.meta.dir, "fixtures", "output", "throwing-eta.ts");
     await expect(estimateEtaS(180, 60, p)).rejects.toThrow("eta boom");
+  });
+});
+
+describe("outcomeOf and the exit ladder (A-110)", () => {
+  test("every verdict maps to one outcome and exit", () => {
+    const row = (v: Parameters<typeof outcomeOf>[0], cap: boolean, stop: string | null) => { const o = outcomeOf(v, cap, stop); return [o, EXIT[o]]; };
+    expect(row("VERIFIED", false, null)).toEqual(["VERIFIED", 0]);
+    expect(row("ALREADY_SATISFIED", false, null)).toEqual(["ALREADY_SATISFIED", 0]);
+    expect(row("PARTIAL", false, null)).toEqual(["FAILED", 1]);
+    expect(row("FAILED", false, "fatal:auth")).toEqual(["FAILED", 1]);
+    expect(row("PARTIAL", true, null)).toEqual(["BUDGET_STOP", 3]);
+    expect(row("SPEC_CONFLICT", false, null)).toEqual(["BLOCKED", 4]);
+    expect(row("PARTIAL", false, "stalled")).toEqual(["STALLED", 5]);
+  });
+  test("the Outcome line carries the outcome name, falling back to the verdict", () => {
+    const base = { pr: null, verdict: "PARTIAL", notProven: [], flaky: [], cost: { usd: 1, provider: "claude", tokens: 1 }, wallS: 1, stages: [] } as never;
+    expect(formatSummary({ ...(base as object), outcome: "FAILED" } as never)).toContain("Outcome:    FAILED\n");
+    expect(formatSummary(base)).toContain("Outcome:    PARTIAL\n");
   });
 });

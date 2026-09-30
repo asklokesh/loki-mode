@@ -64,28 +64,18 @@ export function formatHeartbeatLine(h: HeartbeatLine): string {
   if (h.diff) bits.push(`(${h.diff.files} files, +${h.diff.insertions} -${h.diff.deletions})`);
   return `[${formatClock(h.clockS)}] ${h.stage.padEnd(NAME_WIDTH)}${bits.join("  ")}`;
 }
-/** E-44 (found by E-14): sum every `cost` event's token fields, including
- *  cache read and cache creation tokens (cost.ts already tracks these;
- *  events.ts's fold() summed only input/output). Feeds SummaryInput.cost.tokens.
- *  Null, never 0, when no cost event carried any token field. */
-export function foldCostTokens(events: { type: string; data: Record<string, unknown> }[]): number | null {
-  let total = 0;
-  let saw = false;
-  for (const e of events) {
-    if (e.type !== "cost") continue;
-    for (const key of ["input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"]) {
-      const v = e.data[key];
-      if (typeof v === "number" && Number.isFinite(v)) {
-        total += v;
-        saw = true;
-      }
-    }
-  }
-  return saw ? total : null;
+// A-110: one outcome name and a fixed exit ladder, mapped at the edge (the receipt keeps its verdict strings). 2 is usage/preflight, returned by main().
+export type Outcome = "VERIFIED" | "ALREADY_SATISFIED" | "BUDGET_STOP" | "BLOCKED" | "STALLED" | "FAILED";
+export const EXIT: Record<Outcome, number> = { VERIFIED: 0, ALREADY_SATISFIED: 0, FAILED: 1, BUDGET_STOP: 3, BLOCKED: 4, STALLED: 5 };
+export function outcomeOf(verdict: Verdict, capHit: boolean, stop: string | null): Outcome {
+  if (verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED") return verdict;
+  return capHit ? "BUDGET_STOP" : verdict === "SPEC_CONFLICT" ? "BLOCKED" : stop === "stalled" ? "STALLED" : "FAILED";
 }
 export interface SummaryInput {
   pr: { url: string; draft: boolean; draftReason?: string | null } | null;
   verdict: Verdict;
+  /** A-110: the one name printed on the Outcome line; absent falls back to the receipt verdict. */
+  outcome?: Outcome;
   /** Deferred/missing checks (section 9); rendered comma-joined. */
   notProven: string[];
   /** Flaky tests (section 9); rendered as a separate "; flaky ..." clause. */
@@ -114,7 +104,7 @@ export function formatSummary(input: SummaryInput): string {
   const prLine = input.pr
     ? `${labelCol("PR")}${input.pr.url}${input.pr.draft ? ` (draft: ${input.pr.draftReason ?? "draft"})` : ""}`
     : `${labelCol("PR")}none`;
-  const verdictLine = `${labelCol("Verdict")}${input.verdict}`;
+  const verdictLine = `${labelCol("Outcome")}${input.outcome ?? input.verdict}`;
   let notProvenLine = `${labelCol("NOT PROVEN")}${input.notProven.join(", ")}`;
   if (input.flaky.length > 0) notProvenLine += `; flaky ${input.flaky.join(", ")}`;
   const costLine =

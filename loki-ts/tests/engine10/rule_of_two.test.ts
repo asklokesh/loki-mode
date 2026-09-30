@@ -294,7 +294,7 @@ console.log(JSON.stringify({ type: "cost", stage: "implement", data: { session_i
     const events = [ev({ source: "text", already_satisfied: true, comment: "Loki 10: no change needed.\n\nEvidence:\n- a.ts: foo" })];
     const out = renderMainOutput(events, SUMMARY, "e10-t11", "sonnet");
     expect(out.startsWith("\nLoki 10: no change needed.\n\nEvidence:\n- a.ts: foo\n")).toBe(true);
-    expect(out).toContain("Verdict:    ALREADY_SATISFIED");
+    expect(out).toContain("Outcome:    ALREADY_SATISFIED");
     expect(out).toContain("Run:        e10-t11");
   });
 

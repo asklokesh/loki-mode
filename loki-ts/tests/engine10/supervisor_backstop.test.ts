@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { EXIT } from "../../src/engine10/output.ts";
 import { softCapS } from "../../src/engine10/machine.ts";
 import { runPr, type PrContext } from "../../src/engine10/stages/pr.ts";
 import { backstopS, BACKSTOP_NOT_PROVEN, runSupervisor, type CommentStep, type PrStep } from "../../src/engine10/supervisor.ts";
@@ -55,9 +56,9 @@ function prSpy(): { step: PrStep; calls: { verdict: string }[] } {
   const calls: { verdict: string }[] = [];
   return { calls, step: async ({ verdict }) => { calls.push({ verdict }); return { url: "https://github.com/acme/widget/pull/1", draft: true, existing: null }; } };
 }
-function commentSpy(): { step: CommentStep; calls: { issueRef: string; reason: string }[] } {
-  const calls: { issueRef: string; reason: string }[] = [];
-  return { calls, step: async ({ issueRef, reason }) => { calls.push({ issueRef, reason }); return { argv: ["issue-comment", issueRef, "body.md"], ok: true }; } };
+function commentSpy(): { step: CommentStep; calls: { issueRef: string; reason: string; prUrl?: string | null }[] } {
+  const calls: { issueRef: string; reason: string; prUrl?: string | null }[] = [];
+  return { calls, step: async ({ issueRef, reason, prUrl }) => { calls.push(prUrl ? { issueRef, reason, prUrl } : { issueRef, reason }); return { argv: ["issue-comment", issueRef, "body.md"], ok: true }; } };
 }
 /** Same shape pause_audit.test.ts's writePushStub uses: never the real, credentialed engine10-push.sh. */
 function writePushStub(dir: string, logPath: string): string {
@@ -297,4 +298,56 @@ describe("E-67 rework: supervisor backstop", () => {
       expect(r.notProven).not.toContain(BACKSTOP_NOT_PROVEN);
     }, 30_000);
   }
+});
+
+// A-110: the exit ladder. A worker that seals a verdict and exits 0 must still map to the named outcome's exit code.
+const ev = (type: string, stage: string | null, data: Record<string, unknown>): string => `console.log(JSON.stringify({ type: ${JSON.stringify(type)}, stage: ${JSON.stringify(stage)}, data: ${JSON.stringify(data)} }));`;
+const sealedAs = (verdict: string): string => ev("receipt.sealed", "seal", { verdict, receipt_sha256: "ab".repeat(32), not_proven: [] });
+const verifyRed = (sig: string): string => ev("stage.completed", "verify", { failures_grouped: [{ signature: sig }] });
+async function ladder(code: () => string, extra: Partial<Parameters<typeof runSupervisor>[0]> = {}): Promise<{ r: Awaited<ReturnType<typeof runSupervisor>>; exit: number }> {
+  const { dir, baseSha } = repoWithCommit();
+  const r = await runSupervisor({ runId: "e10-ladder", repoDir: dir, env: ENV, workerArgv: worker(`${intakeLine(baseSha)}${code()}`), capS: 30, ...extra });
+  return { r, exit: EXIT[r.outcome] };
+}
+describe("A-110 exit ladder", () => {
+  test("a red suite that ends PARTIAL exits 1 (was 0: only FAILED exited non-zero)", async () => {
+    const { r, exit } = await ladder(() => `${verifyRed("t::a")}${sealedAs("PARTIAL")}`);
+    expect(r.verdict).toBe("PARTIAL");
+    expect(r.outcome).toBe("FAILED");
+    expect(exit).toBe(1);
+    expect(r.receiptSha).toBe("ab".repeat(32));
+  });
+  test("VERIFIED and ALREADY_SATISFIED exit 0", async () => {
+    expect((await ladder(() => sealedAs("VERIFIED"))).exit).toBe(0);
+    expect((await ladder(() => sealedAs("ALREADY_SATISFIED"))).exit).toBe(0);
+  });
+  test("a cap.hit run exits 3 as BUDGET_STOP", async () => {
+    const { r, exit } = await ladder(() => `${ev("cap.hit", "implement", {})}${sealedAs("PARTIAL")}`);
+    expect(r.outcome).toBe("BUDGET_STOP");
+    expect(exit).toBe(3);
+  });
+  test("SPEC_CONFLICT exits 4 as BLOCKED and posts its one question on the issue", async () => {
+    const comment = commentSpy();
+    const { r, exit } = await ladder(() => `${ev("stage.completed", "implement", { spec_conflict_reason: "spec says A\nand B" })}${sealedAs("SPEC_CONFLICT")}`,
+      { started: { task_source: "issue", issue_ref: "acme/widget#7" }, comment: comment.step });
+    expect(r.outcome).toBe("BLOCKED");
+    expect(exit).toBe(4);
+    expect(comment.calls).toEqual([{ issueRef: "acme/widget#7", reason: "spec conflict: spec says A and B" }]);
+  });
+  test("the worker's escalated stop reason drives the outcome: stalled exits 5, fatal keeps its string, none stays FAILED", async () => {
+    const stalled = await ladder(() => `${ev("escalated", null, { stop: "stalled" })}${sealedAs("PARTIAL")}`);
+    expect(stalled.r.stop).toBe("stalled");
+    expect(stalled.exit).toBe(5);
+    const fatal = await ladder(() => `${ev("escalated", null, { stop: "fatal:quota_exhausted" })}${sealedAs("FAILED")}`);
+    expect(fatal.r.stop).toBe("fatal:quota_exhausted");
+    expect(fatal.exit).toBe(1);
+    expect((await ladder(() => sealedAs("PARTIAL"))).r.stop).toBeNull();
+  });
+  test("a BLOCKED run that opened a draft PR names the PR in the comment instead of claiming none", async () => {
+    const comment = commentSpy();
+    const { r } = await ladder(() => `${COMMIT_A_CHANGE}${ev("stage.completed", "implement", { spec_conflict_reason: "A or B?" })}${sealedAs("SPEC_CONFLICT")}`,
+      { started: { task_source: "issue", issue_ref: "acme/widget#7" }, pr: prSpy().step, comment: comment.step });
+    expect(r.prUrl).toBe("https://github.com/acme/widget/pull/1");
+    expect(comment.calls[0]!.prUrl).toBe(r.prUrl);
+  });
 });
