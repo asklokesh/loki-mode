@@ -3292,6 +3292,70 @@ else
     printf '%s\n' "$OUT"
 fi
 
+echo "T55 -- D44 item 5: RELEASE_CADENCE (green-age) and MAIN_RED_BY_MERGE from push-event Tier B runs"
+# PULSE_NOW = 02:00Z. Runs carry event + updatedAt; green age = latest run completion.
+t55_runs() {  # $1=file $2=event $3=Tests conclusion $4=completion time
+    python3 - "$@" <<'PY'
+import json, sys
+f, ev, tests, t = sys.argv[1:5]
+json.dump([{"status": "completed", "conclusion": c, "workflowName": w, "event": ev, "updatedAt": t}
+           for w, c in (("Tests", tests), ("Bun Parity", "success"), ("Coverage", "success"))], open(f, "w"))
+PY
+}
+t55_run() {
+    run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" \
+        "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=cat $1" \
+        "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}" "$WT_CLEAN_STALE")" || true
+}
+(
+    cd "$FAKE_REPO" || exit 1
+    echo "d44" > d44-file.txt
+    git add d44-file.txt
+    GIT_AUTHOR_DATE="2026-09-27T01:00:00Z" GIT_COMMITTER_DATE="2026-09-27T01:00:00Z" \
+        git commit -q -m "d44 change"
+)
+T55_SHA="$(cd "$FAKE_REPO" && git rev-parse --short=8 HEAD)"
+T55_F="$WORK/t55.json"
+
+t55_runs "$T55_F" push success "2026-09-27T01:30:00Z"; t55_run "$T55_F"
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: RELEASE_CADENCE: main $T55_SHA has had green Tier B for 30.0 minutes" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: MAIN_RED_BY_MERGE"; then
+    ok "T55a RELEASE_CADENCE fires: green Tier B 30 min, newer than the tag"
+else bad "T55a output follows"; printf '%s\n' "$OUT"; fi
+
+t55_runs "$T55_F" push success "2026-09-27T01:45:00Z"; t55_run "$T55_F"
+if ! printf '%s\n' "$OUT" | grep -qF "Tier B for" && printf '%s\n' "$OUT" | grep -qF "green for 15.0 min since v1.0.0"; then
+    ok "T55b RELEASE_CADENCE (D44) does not fire at 15 min green"
+else bad "T55b output follows"; printf '%s\n' "$OUT"; fi
+
+t55_runs "$T55_F" pull_request success "2026-09-27T01:00:00Z"; t55_run "$T55_F"
+if ! printf '%s\n' "$OUT" | grep -qF "Tier B for" && printf '%s\n' "$OUT" | grep -qF "D44 main push checks: n/a"; then
+    ok "T55c non-push runs are ignored (n/a)"
+else bad "T55c output follows"; printf '%s\n' "$OUT"; fi
+
+t55_runs "$T55_F" push failure "2026-09-27T01:30:00Z"; t55_run "$T55_F"
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: MAIN_RED_BY_MERGE: push to main $T55_SHA failed Tier B: Tests" \
+    && ! printf '%s\n' "$OUT" | grep -qF "Tier B for"; then
+    ok "T55d MAIN_RED_BY_MERGE fires, names SHA and Tests, and no green cadence fire"
+else bad "T55d output follows"; printf '%s\n' "$OUT"; fi
+
+t55_runs "$T55_F" pull_request failure "2026-09-27T01:30:00Z"; t55_run "$T55_F"
+if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: MAIN_RED_BY_MERGE"; then
+    ok "T55e MAIN_RED_BY_MERGE does not fire for a failed non-push run"
+else bad "T55e output follows"; printf '%s\n' "$OUT"; fi
+
+t55_runs "$T55_F" push success "2026-09-27T01:30:00Z"; t55_run "$T55_F"
+if printf '%s\n' "$OUT" | grep -q "^Releases (last hour): [0-9]"; then
+    ok "T55f Releases (last hour) metric line present"
+else bad "T55f output follows"; printf '%s\n' "$OUT"; fi
+(cd "$FAKE_REPO" || exit 1; git reset -q --hard v1.0.0)
+
+
+echo "T56 -- scripts/metrics-releases-append.py self-test (header creation, newest first, never truncates)"
+if OUT="$(python3 "$REPO_ROOT/scripts/metrics-releases-append.py" --self-test 2>&1)" && printf '%s\n' "$OUT" | grep -q "PASS"; then
+    ok "T56 metrics-releases-append self-test"
+else bad "T56 output follows"; printf '%s\n' "$OUT"; fi
+
 echo ""
 echo "=== bash 3.2 syntax + full-suite check (via /bin/sh, real bash 3.2.57 on macOS) ==="
 if command -v /bin/sh >/dev/null 2>&1 && /bin/sh -c 'case "$BASH_VERSION" in 3.2*) exit 0;; *) exit 1;; esac' 2>/dev/null; then
