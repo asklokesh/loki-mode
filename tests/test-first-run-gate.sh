@@ -16,6 +16,8 @@ cat > "$T/fake-loki" <<'FAKE'
 D=$(printf 'a%.0s' $(seq 64))
 case "$1" in
 quick)
+    if [ -n "${FRG_SKIP:-}" ]; then # the gate's legacy G8 leg: exits 0 either way, like real legacy
+        [ "$FAKE_MODE" = skipver ] && echo "Evidence Receipt: VERIFIED" || echo "Evidence Receipt: NOT VERIFIED"; exit 0; fi
     [ "$FAKE_MODE" = red0 ] || sed -i.bak 's/i = 1/i = 0/' sum.js
     rm -f sum.js.bak
     [ "$FAKE_MODE" = stray ] && echo x > NOTES.md
@@ -53,7 +55,7 @@ expect() { # expect <mode> <assertion> <PASS|FAIL>
 }
 
 run_gate clean
-for a in exit-honest tests-green no-stray-files digest-matches verify-ok receipt-signed output-lines wall-time skip-not-verified; do expect clean $a PASS; done
+for a in exit-honest tests-green no-stray-files digest-matches verify-ok receipt-signed output-lines wall-time skip-not-verified skip-not-verified-legacy; do expect clean $a PASS; done
 [ "$RC" -eq 0 ] && ok "clean: gate exits 0" || bad "clean: gate exit $RC"
 [ -s "$T/report-clean.txt" ] && ok "clean: report written" || bad "clean: no report"
 
@@ -67,7 +69,7 @@ run_gate modpkg;     expect modpkg no-stray-files FAIL
 run_gate exit1;      expect exit1 exit-honest FAIL;          [ "$RC" -ne 0 ] && ok "exit1: exits non-zero" || bad "exit1: exit 0"
 run_gate prefix;     expect prefix digest-matches FAIL
 run_gate baddigest;  expect baddigest digest-matches FAIL;   [ "$RC" -ne 0 ] && ok "baddigest: exits non-zero" || bad "baddigest: exit 0"
-run_gate skipver;    expect skipver skip-not-verified FAIL;  [ "$RC" -ne 0 ] && ok "skipver: exits non-zero" || bad "skipver: exit 0"
+run_gate skipver;    expect skipver skip-not-verified FAIL;  expect skipver skip-not-verified-legacy FAIL;  [ "$RC" -ne 0 ] && ok "skipver: exits non-zero" || bad "skipver: exit 0"
 
 echo "first-run-gate tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

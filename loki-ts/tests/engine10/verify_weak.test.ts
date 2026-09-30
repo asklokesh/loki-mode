@@ -52,12 +52,12 @@ describe("engine10 verify: weakened checks (A-115)", () => {
   const weak = (d: V): string[] => d.not_proven.filter((n) => /skipped|configuration/.test(n));
   test("c10: conftest skips the target and the unrelated red test in the relevant file: config note and skip note (main: no note, VERIFIED inputs)", async () => {
     const d = await verify({ ...IMPL, "test_target.py": ONE, "test_other.py": "def test_x():\n    assert True\n" }, { "conftest.py": skipConftest() }, TASK, py("test_target.py"), py("test_other.py"));
-    expect(weak(d)).toEqual(["test configuration changed: conftest.py", "skipped tests increased: pytest:test_target.py"]);
+    expect(weak(d)).toEqual(["test configuration changed: conftest.py", "skipped or fewer tests than base: pytest:test_target.py"]);
   }, 60_000);
   test("e9: conftest skips the target and runs another test twice: same pass count, no progress, unrelated red not subtracted", async () => {
     const d = await verify(TWO, { "conftest.py": skipConftest("    if 'test_target' in items[0].nodeid:\n        items.append(items[-1])\n", ["test_double"]) }, TASK, py("test_target.py"), py("test_old.py"));
     expect(d.pre_red).toEqual([]);
-    expect(weak(d)).toContain("skipped tests increased: pytest:test_target.py");
+    expect(weak(d)).toContain("skipped or fewer tests than base: pytest:test_target.py");
   }, 60_000);
   test("node: { skip: true } added to the target in its own test file: no progress, skip note", async () => {
     const sum = "const {sum}=require('./sum.js');";
@@ -66,8 +66,32 @@ describe("engine10 verify: weakened checks (A-115)", () => {
       { "sum.test.js": T + sum + "t('sums all',{skip:true},()=>{assert.strictEqual(sum([1,2,3]),6);});t('ok',()=>{});\n" },
       "fix sum.js, covered by sum.test.js", node("sum.test.js"), node("other.test.js"));
     expect(d.pre_red).toEqual([]);
-    expect(d.not_proven).toContain("skipped tests increased: node:sum.test.js");
+    expect(d.not_proven).toContain("skipped or fewer tests than base: node:sum.test.js");
   }, 60_000);
+  test("xfail: the target path calls pytest.xfail: 1 passed, 1 xfailed is weak", async () => {
+    const d = await verify(TWO, { "impl.py": "import pytest\ndef double(x):\n    pytest.xfail('later')\n" }, TASK, py("test_target.py"), py("test_old.py"));
+    expect(d.pre_red).toEqual([]);
+    expect(weak(d)).toContain("skipped or fewer tests than base: pytest:test_target.py");
+  }, 60_000);
+  test("exit: the target path calls pytest.exit(returncode=0) after one test: fewer tests than base is weak", async () => {
+    const T2 = "from impl import double\ndef test_ok():\n    assert True\ndef test_double():\n    assert double(2) == 4\n";
+    const d = await verify({ ...TWO, "test_target.py": T2 }, { "impl.py": "import pytest\ndef double(x):\n    pytest.exit('done', returncode=0)\n" }, TASK, py("test_target.py"), py("test_old.py"));
+    expect(d.pre_red).toEqual([]);
+    expect(weak(d)).toContain("skipped or fewer tests than base: pytest:test_target.py");
+  }, 60_000);
+  test("delete: the target test is deleted from the relevant node test file: weak, and the edited relevant test file is NOT PROVEN", async () => {
+    const sum = "const {sum}=require('./sum.js');";
+    const d = await verify(
+      { "sum.js": "exports.sum=(a)=>a.slice(1).reduce((x,y)=>x+y,0);\n", "sum.test.js": T + sum + "t('sums all',()=>{assert.strictEqual(sum([1,2,3]),6);});t('ok',()=>{});\n", "other.test.js": T + "t('unrelated',()=>{assert.strictEqual(1,2);});\n" },
+      { "sum.test.js": T + sum + "t('ok',()=>{});\n" },
+      "fix sum.js, covered by sum.test.js", node("sum.test.js"), node("other.test.js"));
+    expect(d.pre_red).toEqual([]);
+    expect(d.not_proven).toContain("skipped or fewer tests than base: node:sum.test.js");
+    expect(d.not_proven).toContain("weakened test: sum.test.js");
+  }, 60_000);
+  test("pytest.toml and .pytest.ini are test configuration", () => {
+    expect(testConfigChanged(".", "HEAD", ["pytest.toml", "sub/.pytest.ini"])).toEqual(["pytest.toml", "sub/.pytest.ini"]);
+  });
   test("honest fix: target really fixed, unrelated red before and after: pre_red listed, no weakened-check note", async () => {
     const d = await verify(TWO, { "impl.py": "def double(x):\n    return x * 2\n" }, TASK, py("test_target.py"), py("test_old.py"));
     expect(d.pre_red).toEqual(["test_old.py::test_old"]);

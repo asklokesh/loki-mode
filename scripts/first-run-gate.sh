@@ -147,6 +147,15 @@ if [ "$MODE" = stub ]; then
     if [ "$SRC" -ne 0 ] && ! grep -Eqi '^Outcome: *VERIFIED|verdict: *verified' "$T/skip.log"; then
         res PASS skip-not-verified "skipped target: rc=$SRC, $(grep -Ei '^Outcome:' "$T/skip.log" | head -1)"
     else res FAIL skip-not-verified "skipped target sealed: rc=$SRC, $(grep -Ei '^Outcome:' "$T/skip.log" | head -1)"; fi
+    # 9b. the same skip under the default entry (legacy `loki quick`): the headline must not be a verified verdict. Its rc is reported, not
+    #     asserted: legacy prints NOT VERIFIED but can exit 0 (exit-honest policy, G1's domain).
+    mkdir -p "$T/skipl" && mk_bugrepo "$T/skipl"
+    ( cd "$T/skipl" && FRG_SKIP=1 "$LOKI" quick "$TASK" ) < /dev/null > "$T/skipl.log" 2>&1; LRC=$?
+    HH=$(sed 's/\x1b\[[0-9;]*m//g' "$T/out.log" | grep -Ei 'Evidence Receipt' | head -1)
+    LH=$(sed 's/\x1b\[[0-9;]*m//g' "$T/skipl.log" | grep -Ei 'Evidence Receipt' | head -1)
+    if grep -Eqi 'NOT VERIFIED' <<<"$LH" && ! sed 's/\x1b\[[0-9;]*m//g' "$T/skipl.log" | grep -Eqi 'verdict: *verified|Evidence Receipt:? *VERIFIED'; then
+        res PASS skip-not-verified-legacy "legacy skipped target: rc=$LRC (not asserted), headline: ${LH:-none} (honest run: ${HH:-none})"
+    else res FAIL skip-not-verified-legacy "legacy skipped target: rc=$LRC, headline: ${LH:-none}"; fi
 fi
 
 # --- real mode: raw claude -p comparison, appended to METRICS.md --------------

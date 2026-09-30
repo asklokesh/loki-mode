@@ -91,9 +91,9 @@ export function ran(out: string, path?: string): number | null {
  *  node "# skipped N". Test names and captured output above the summary never count (A-115). */
 export function skipped(out: string): number {
   return out.split("\n").filter((l) => /^(?:=+ )?\d+ \w+.* in [\d.]+s|^\s*Tests?:?\s+\d|^(?:#|ℹ) skipped \d/.test(l.trim()))
-    .reduce((t, l) => t + [...l.matchAll(/(\d+) (?:skipped|deselected)|skipped (\d+)/g)].reduce((u, m) => u + +(m[1] ?? m[2]!), 0), 0);
+    .reduce((t, l) => t + [...l.matchAll(/(\d+) (?:skipped|deselected|xfailed)|skipped (\d+)/g)].reduce((u, m) => u + +(m[1] ?? m[2]!), 0), 0);
 }
-const CFG_ALWAYS = /(^|\/)(conftest\.py|pytest\.ini|tox\.ini|jest\.config\.[\w.]+|vitest\.config\.[\w.]+|\.mocharc[\w.]*)$/;
+const CFG_ALWAYS = /(^|\/)(conftest\.py|\.?pytest\.(?:ini|toml)|tox\.ini|jest\.config\.[\w.]+|vitest\.config\.[\w.]+|\.mocharc[\w.]*)$/;
 const CFG_SHARED = /(^|\/)(setup\.cfg|pyproject\.toml|package\.json)$/;
 const CFG_LINE = /^[+-].*(pytest|jest|mocha|vitest|"test"\s*:|addopts|testpaths)/im;
 /** A-115: changed files that configure the test runner. Files that also hold dependencies and metadata (setup.cfg, pyproject.toml,
@@ -158,7 +158,8 @@ export async function runCheck(
  *  files, the lean-path Wall stand-in) that failed on base, now passes and ran no fewer tests (absent or skipped is not green). Relevant checks
  *  are never pre_red. Base reruns get no node_modules or .venv: a dependency-only failure yields no ids (failIds needs the count covered).
  *  A-115: a relevant check that passes with more skipped or deselected tests than base is `weak`: no progress, and the caller lists it in
- *  NOT PROVEN (a skipped target is not a fixed target). Only relevant passes that skip anything trigger the extra base run.
+ *  NOT PROVEN (a skipped target is not a fixed target). Weak also means it ran FEWER tests than base (pytest.exit, xfail, a deleted test):
+ *  every relevant pass is compared with its base run, and xfailed counts as skipped, never passed.
  *  ponytail: bun/go/cargo/npm yield no ids and no skip count, so they are never subtracted or judged weak. */
 async function subtractBase(ctx: RunContext, checks: VerifyCheck[], tests: TestRef[], changed: string[], wall: Set<string>, rel: Set<string>, signal: AbortSignal): Promise<{ ids: string[]; names: string[]; weak: string[] }> {
   const out = { ids: [] as string[], names: [] as string[], weak: [] as string[] };
@@ -167,7 +168,7 @@ async function subtractBase(ctx: RunContext, checks: VerifyCheck[], tests: TestR
     return t ? [{ c, t }] : [];
   });
   const un = pairs.filter(({ t }) => !changed.includes(t.path));
-  const sus = pairs.filter(({ c }) => rel.has(c.name) && c.result === "pass" && (c.sk ?? 0) > 0);
+  const sus = pairs.filter(({ c }) => rel.has(c.name) && c.result === "pass");
   if (!(un.some(({ c }) => c.result === "fail" && c.ids?.length) || sus.length) || signal.aborted) return out;
   const dir = mkdtempSync(join(tmpdir(), "e10-base-"));
   const git = (args: string[]): void => { execFileSync("git", args, { cwd: ctx.repoDir, stdio: "ignore", env: process.env }); };
@@ -177,9 +178,9 @@ async function subtractBase(ctx: RunContext, checks: VerifyCheck[], tests: TestR
     for (const { c, t } of new Set([...un, ...sus])) {
       const [cmd, args] = runnerCmd(t, dir);
       const b = await runOnce(cmd, args, dir, signal, {});
-      base.set(c, { red: !b.ok && !b.cut ? failIds(b.out) : [], n: ran(b.out) ?? 0, sk: skipped(b.out) });
+      base.set(c, { red: !b.ok && !b.cut ? failIds(b.out) : [], n: ran(b.out) ?? [...b.out.matchAll(/^(?:#|\u2139) (?:pass|fail) (\d+)$/gm)].reduce((t, m) => t + +m[1]!, 0) /* node spec prints its failing-tests section after the summary block */, sk: skipped(b.out) });
     }
-    out.weak = sus.filter(({ c }) => (c.sk ?? 0) > base.get(c)!.sk).map(({ c }) => c.name);
+    out.weak = sus.filter(({ c }) => (c.sk ?? 0) > base.get(c)!.sk || (c.n ?? 0) < base.get(c)!.n).map(({ c }) => c.name);
     const progress = checks.some((c) => wall.has(c.name) && c.result === "pass")
       || un.some(({ c }) => rel.has(c.name) && c.result === "pass" && !out.weak.includes(c.name) && base.get(c)!.red.length > 0 && (c.n ?? 0) >= base.get(c)!.n);
     if (progress) {
@@ -283,7 +284,9 @@ export const verifyStage: Stage = {
       .map((c) => ({ signature: c.first_error ? `${c.name} ${c.first_error}` : c.name, count: 1, sample: c.cmd }));
     // E-98a/E-115: a check that ran (not_run has its own NOT PROVEN entry at seal) on a system interpreter/ruff.
     // A-115: test configuration edits and relevant checks with more skips than base are listed, which makes the verdict PARTIAL at seal.
-    const weakened = [...testConfigChanged(ctx.repoDir, ctx.baseSha, changed).map((f) => `test configuration changed: ${f}`), ...preRed.weak.map((n) => `skipped tests increased: ${n}`)];
+    const inBase = (f: string): boolean => { try { execFileSync("git", ["cat-file", "-e", `${ctx.baseSha}:${f}`], { cwd: ctx.repoDir, stdio: "ignore", env: process.env }); return true; } catch { return false; } };
+    const modifiedRel = relevant.filter((t) => changed.includes(t.path) && inBase(t.path)).map((t) => `weakened test: ${t.path}`); // a relevant test file edited: NOT VERIFIED (seal lists the same line)
+    const weakened = [...modifiedRel, ...testConfigChanged(ctx.repoDir, ctx.baseSha, changed).map((f) => `test configuration changed: ${f}`), ...preRed.weak.map((n) => `skipped or fewer tests than base: ${n}`)];
     const notProven = [...weakened, ...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
     return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed, not_proven: notProven, pre_red: preRed.ids, pre_red_checks: preRed.names } };
   },
