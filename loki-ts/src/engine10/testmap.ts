@@ -20,12 +20,13 @@ export interface EngineTestMap extends TestMap {
   /** source basename -> repo-relative test paths that import/reference it. */
   readonly sourceRefs: Record<string, string[]>;
 }
-const RUNNER_ORDER: readonly RunnerName[] = ["pytest", "vitest", "jest", "bun", "npm", "go", "cargo"];
+const RUNNER_ORDER: readonly RunnerName[] = ["pytest", "vitest", "jest", "bun", "node", "npm", "go", "cargo"];
 const SKIP_DIRS = new Set([
   ".git", "node_modules", "dist", "build", "target", "coverage",
   ".venv", "venv", "__pycache__", ".tox", ".pytest_cache", ".loki", ".next",
 ]);
 const NPM_DEFAULT_TEST = /no test specified/;
+const NODE_TEST_CMD = /\bnode\s(?:\S+\s)*?--test\b/;
 const JS_TEST_RE = /\.(test|spec)\.[cm]?[jt]sx?$/;
 const PY_TEST_RE = /^(test_.+|.+_test)\.py$/;
 const GO_TEST_RE = /_test\.go$/;
@@ -34,6 +35,7 @@ const COMMANDS: Record<RunnerName, CommandSpec> = {
   vitest: { cmd: "npx vitest run <files>", coarse: false },
   jest: { cmd: "npx jest <files>", coarse: false },
   bun: { cmd: "bun test <files>", coarse: false },
+  node: { cmd: "node --test <files>", coarse: false },
   npm: { cmd: "npm test --silent", coarse: true },
   go: { cmd: "go test ./<pkg dirs>", coarse: false },
   cargo: { cmd: "cargo test", coarse: true },
@@ -104,7 +106,8 @@ function detectFromPackageJson(text: string, rel: string, mark: (r: RunnerName, 
   if (inScripts(/\bbun\s+test\b/)) mark("bun", rel);
   // ponytail: repo_profile.ts also reads scripts.test, but buildProfile persists a profile file as a side effect, so the one check is inlined here.
   const testScript = pkg.scripts?.test;
-  if (typeof testScript === "string" && testScript.trim() !== "" && !NPM_DEFAULT_TEST.test(testScript)) {
+  if (typeof testScript === "string" && NODE_TEST_CMD.test(testScript)) mark("node", rel);
+  else if (typeof testScript === "string" && testScript.trim() !== "" && !NPM_DEFAULT_TEST.test(testScript)) {
     mark("npm", rel);
   }
 }
@@ -166,6 +169,7 @@ export function buildTestMap(root: string): EngineTestMap {
     const name = basename(rel);
     const full = join(root, rel);
     if (name === "package.json") detectFromPackageJson(readText(full), rel, mark);
+    else if (JS_TEST_RE.test(name) && /['"]node:test['"]/.test(readText(full))) mark("node", rel);
     else if (name === "bunfig.toml") mark("bun", rel);
     else if (name === "pytest.ini" || name === "conftest.py") mark("pytest", rel);
     else if (name === "pyproject.toml" && /\[tool\.pytest/.test(readText(full))) mark("pytest", rel);
@@ -180,7 +184,7 @@ export function buildTestMap(root: string): EngineTestMap {
   // Per-file test entries exist only for narrowly-selectable runners: npm
   // and cargo run the whole suite (coarse), so no individual file earns a
   // TestRef for them.
-  const jsRunner: RunnerName | null = found.has("vitest") ? "vitest" : found.has("jest") ? "jest" : found.has("bun") ? "bun" : null;
+  const jsRunner: RunnerName | null = found.has("vitest") ? "vitest" : found.has("jest") ? "jest" : found.has("bun") ? "bun" : found.has("node") ? "node" : null;
   const tests: TestRef[] = [];
   for (const rel of files) {
     const name = basename(rel);
