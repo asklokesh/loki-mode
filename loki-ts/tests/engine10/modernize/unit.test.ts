@@ -414,6 +414,47 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     });
   }
 
+  // r4b: u.py is never modernized; non-test modules are hashed too.
+  const EXIT0 = "import os\nos._exit(0)\n";
+  const shadows: Array<[string, () => void]> = [
+    ["argparse.py", () => writeFileSync(join(repoDir, "argparse.py"), EXIT0)],
+    ["inspect.py", () => writeFileSync(join(repoDir, "inspect.py"), EXIT0)],
+    ["pluggy.py", () => writeFileSync(join(repoDir, "pluggy.py"), EXIT0)],
+    ["_pytest/__init__.py", () => { mkdirSync(join(repoDir, "_pytest")); writeFileSync(join(repoDir, "_pytest", "__init__.py"), EXIT0); }],
+  ];
+  for (const [name, attack] of shadows) {
+    for (const listed of [true, false]) {
+      it(`r4b: added shadow ${name} is refused (${listed ? "card lists files" : "no file list, stdlib/site-packages fallback"})`, () => {
+        const unit = `conf_sh_${name.replace(/\W/g, "")}${listed}`;
+        setup(unit);
+        const card = listed ? { ...baseCard(unit), files: ["u.py"] } : baseCard(unit);
+        const result = runUnitAb(card, log, real(), attack, () => passingNewCase());
+        expect(result.verdict).toBe("NOT_PROVEN");
+        expect(result.not_proven[0]).toMatch(/added/);
+      });
+    }
+  }
+
+  it("r4b: a modified non-test module the sealed conftest imports (helpers.py) is refused", () => {
+    const unit = "conf_helpers";
+    setup(unit);
+    writeFileSync(join(repoDir, "helpers.py"), "X = 1\n");
+    writeFileSync(join(repoDir, "conftest.py"), "import helpers\n");
+    const hack = () => writeFileSync(join(repoDir, "helpers.py"), "import u\nu.PY3_READY = True\n");
+    const result = runUnitAb({ ...baseCard(unit), files: ["u.py"] }, log, real(), hack, () => passingNewCase());
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven[0]).toMatch(/helpers\.py changed/);
+  });
+
+  it("r4b control: a listed new module next to u.py is allowed", () => {
+    const unit = "conf_listed_new";
+    setup(unit);
+    const split = () => { modernize(); mkdirSync(join(repoDir, "newpkg")); writeFileSync(join(repoDir, "newpkg", "m.py"), "A = 1\n"); };
+    const result = runUnitAb({ ...baseCard(unit), files: ["u.py", "newpkg"] }, log, real(), split, () => passingNewCase());
+    expect(result.not_proven).toEqual([]);
+    expect(result.verdict).toBe("PROVEN");
+  });
+
   it("a throwing ablation stub is never PROVEN", () => {
     setup("conf_abl_throw");
     const boom = () => { throw new Error("stub runner exploded"); };

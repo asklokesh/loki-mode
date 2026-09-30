@@ -24,11 +24,12 @@
 //     second classifier lives in this file.
 // (5) MODERNIZE.md:153/262 no-op ablation: an injected stub runner replaces the new unit with stubs;
 //     the oracle cases must then FAIL equivalence, else NOT_PROVEN "oracle does not constrain unit".
-// (6) Conformance files (tests, conftest.py, pytest config) are hashed at Wall-seal time and must be
+// (6) Conformance files (tests, conftest.py, pytest config) and every .py are hashed at Wall-seal time and must be
 //     unchanged on the new tree before the post-implement conformance run is trusted.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ModernizeLog } from "./log.ts";
 import { readModernizeEvents } from "./log.ts";
@@ -132,7 +133,7 @@ export function conformanceHashes(dir: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const rel of readdirSync(dir, { recursive: true }) as string[]) {
     if (rel.split("/").some((p) => SKIP_DIRS.has(p))) continue;
-    if (!TEST_FILE.test(rel) && !PYTEST_CFG.test(rel)) continue;
+    if (!/\.py$/.test(rel) && !PYTEST_CFG.test(rel)) continue;
     let text: string;
     try {
       if (!statSync(join(dir, rel)).isFile()) continue;
@@ -145,12 +146,35 @@ export function conformanceHashes(dir: string): Record<string, string> {
   return out;
 }
 
-/** First way `now` departs from the sealed `base` set, or null: a sealed file changed or removed, or a
- *  config-class file (conftest.py, pytest config, pytest shim) that the base never had. */
-function conformanceDrift(base: Record<string, string>, now: Record<string, string>): string | null {
-  for (const [p, h] of Object.entries(base)) if (now[p] !== h) return `${p} ${p in now ? "changed" : "removed"}`;
-  for (const p of Object.keys(now)) if (!(p in base) && (PYTEST_CFG.test(p) || TEST_FILE.test(p))) return `${p} added`;
-  return null;
+/** Top-level module/package names under `names` that Python resolves OUTSIDE the repo (stdlib or the
+ *  target runtime's site-packages). Run from a neutral cwd in isolated mode so the repo cannot answer. */
+function importableOutsideRepo(target: string, names: string[]): Set<string> {
+  if (names.length === 0) return new Set();
+  const code = "import sys,importlib.util as u\nfor n in sys.argv[1:]:\n    try:\n        if n in sys.stdlib_module_names or u.find_spec(n): print(n)\n    except Exception: print(n)\n";
+  const r = spawnSync(target, ["-I", "-c", code, ...names], { cwd: tmpdir(), encoding: "utf8", timeout: 30_000 });
+  // fail closed: if the probe cannot run, every name counts as shadowing
+  return r.status === 0 ? new Set(r.stdout.split("\n").filter(Boolean)) : new Set(names);
+}
+
+/** First way `now` departs from the sealed `base` set, or null: a sealed test/config file changed or
+ *  removed; a test file or config-class file (conftest.py, pytest config, pytest shim, sitecustomize/
+ *  usercustomize, .pth) the base never had; or a .py outside the card's `files` changed, removed or added.
+ *  Without `files`, only the importable-outside-repo fallback applies to added modules (a changed
+ *  existing module cannot be told apart from the unit's own code). */
+function conformanceDrift(base: Record<string, string>, now: Record<string, string>, files: string[] | undefined, target: string): string | null {
+  const sealed = (p: string): boolean => TEST_FILE.test(p) || PYTEST_CFG.test(p);
+  const listed = (p: string): boolean => !!files?.some((f) => p === f || p.startsWith(f.replace(/\/?$/, "/")));
+  for (const [p, h] of Object.entries(base)) {
+    if (now[p] === h) continue;
+    if (sealed(p) || (files && !listed(p))) return `${p} ${p in now ? "changed" : "removed"}`;
+  }
+  const added = Object.keys(now).filter((p) => !(p in base));
+  for (const p of added) if (sealed(p)) return `${p} added`;
+  if (files) return added.find((p) => !listed(p)) ? `${added.find((p) => !listed(p))} added` : null;
+  const tops = [...new Set(added.map((p) => p.split("/")[0]!.replace(/\.py$/, "")))];
+  const bad = importableOutsideRepo(target, tops);
+  const hit = added.find((p) => bad.has(p.split("/")[0]!.replace(/\.py$/, "")));
+  return hit ? `${hit} added (shadows a module importable outside the repo)` : null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -166,6 +190,8 @@ export interface UnitCard {
   mid: string;
   target: ModernizeTarget;
   normalizers: EquivNormalizers;
+  /** The unit's own files (paths or directories, relative to the tree); implement may add or change .py only under these. */
+  files?: string[];
   newTreeDir?: string;
   baseSha?: string | null;
 }
@@ -310,7 +336,7 @@ export function runUnit(
     return notProvenUnitResult(unit, `ablation inconclusive: ${ablation.not_proven.join("; ")}`, oracle, wall);
   }
   // Conformance files must be byte-identical to the sealed base (tests, conftest.py, pytest config).
-  const drift = conformanceDrift(sealedHashes, conformanceHashes(newTreeDir));
+  const drift = conformanceDrift(sealedHashes, conformanceHashes(newTreeDir), card.files, card.target);
   if (drift) return notProvenUnitResult(unit, `conformance files changed since the Wall sealed: ${drift}`, oracle, wall);
   // Target conformance: the same check, re-run against the MODERNIZED tree, must now pass (exit
   // 0 / green) -- a unit whose cases match the oracle but whose target-runtime conformance still
