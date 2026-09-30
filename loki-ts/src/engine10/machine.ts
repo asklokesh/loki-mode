@@ -1,12 +1,12 @@
 // Loki 10 state machine (ENGINE.md section 4): stage table, Plan || Wall, optional() loader,
-// stage limits, global cap, resume from the last completed stage. Siblings arrive only through
+// stage limits, global cap, stop reasons (stalled, fatal). Siblings arrive only through
 // RunContext; stages come from ./stages/<name>.ts.
 import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import { fold } from "./events.ts";
+import { classifyFailure } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
 import { backstopS, DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS, STAGE_BUDGETS } from "./types.ts";
-import type { EventEnvelope, Obj, RunContext, Stage, StageName, StageResult } from "./types.ts";
+import type { Obj, RunContext, Stage, StageName, StageResult } from "./types.ts";
 /** Run order. An array is a parallel group. fix is driven by the verify loop, deep is detached (supervisor). */
 export const FLOW: readonly (StageName | readonly StageName[])[] = [
   "intake", ["plan", "wall"], "implement", "verify", "commit", "seal", "pr",
@@ -23,18 +23,14 @@ export interface MachineOptions {
   stagesDir?: string;
   /** Run order override; the worker passes FLOW without "pr" (Rule of Two: pr runs in the supervisor). */
   flow?: typeof FLOW;
-  /** Events of an earlier attempt of this run (resume). */
-  prior?: EventEnvelope[];
-  /** Run start in epoch ms; the cap counts from here. Defaults to run.started ts of prior, else now. */
+  /** Run start in epoch ms; the cap counts from here. Defaults to now. */
   startedAtMs?: number;
 }
 export interface MachineResult {
   outputs: Partial<Record<StageName, Obj>>;
   capHit: boolean;
-  /** Set when the run ended before seal (intake failure). */
+  /** Why the run ended early: "intake failed", "stalled" (same failures 3 verifies running), "fatal:<auth|quota_exhausted>". */
   stopped: string | null;
-  /** True when prior already held run.completed: nothing ran. */
-  final: boolean;
 }
 /** Dynamically imports an optional module. Absent file: null. A present file that fails to load throws. */
 export async function optional<T = Record<string, unknown>>(path: string): Promise<T | null> {
@@ -59,21 +55,22 @@ const KILL_GRACE_MS = 2000;
 export function softCapS(capS: number): number { const plain = (capS * 14) / 15, budget = backstopS(capS) - ((STAGE_BUDGETS.commit.targetS ?? 0) + (STAGE_BUDGETS.seal.targetS ?? 0) + KILL_GRACE_MS / 1000 + 2); return Math.max(0, Math.min(plain, budget)); } // tightens 14/15 of capS so commit+seal's tail (plus a 2s margin: this clock starts after worker boot, the backstop's starts at spawn) fits before the backstop; when the tail can never fit at all (budget < 0), 0 still maximizes the gap to the backstop instead of the old plain-point fallback, which left as little as 0.17s to seal (E-67 round 5 REJECT finding 1)
 export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Promise<MachineResult> {
   const load = opts.load ?? defaultLoader(opts.stagesDir ?? join(import.meta.dir, "stages"));
-  const prior = opts.prior ?? [];
-  const folded = fold(prior);
   const outputs: Partial<Record<StageName, Obj>> = {};
-  for (const e of prior) if (e.type === "stage.completed" && e.stage) outputs[e.stage as StageName] = e.data;
-  const done = new Set(folded.completed);
-  let capHit = false;
-  if (folded.run.completed) return { outputs, capHit, stopped: null, final: true };
-  const startedTs = folded.run.started ? Date.parse(folded.run.started.ts) : NaN;
-  const startMs = opts.startedAtMs ?? (Number.isFinite(startedTs) ? startedTs : ctx.clock.now());
+  let capHit = false, fatal: string | null = null;
+  const startMs = opts.startedAtMs ?? ctx.clock.now();
   const capAtMs = startMs + softCapS(ctx.capS) * 1000; // 14/15 of capS for the default/deep caps; see softCapS above
   const capCtl = new AbortController();
   const capTimer = setTimeout(() => capCtl.abort(), Math.max(0, capAtMs - ctx.clock.now()));
-  const sctx: MachineRunContext = { ...ctx, outputs: () => ({ ...outputs }), capHit: () => capHit };
+  // A failed session whose stderr names a billing, quota or key error is permanent: retrying only burns money (A-113).
+  const sessions = { run: async (o: Parameters<typeof ctx.sessions.run>[0]) => {
+    const r = await ctx.sessions.run(o);
+    const c = r.exit === 0 ? null : classifyFailure((r as { stderrTail?: string }).stderrTail ?? "");
+    if (c && (c.reason === "auth" || c.reason === "quota_exhausted")) fatal ??= `fatal:${c.reason}`;
+    return r;
+  } };
+  const sctx: MachineRunContext = { ...ctx, sessions, outputs: () => ({ ...outputs }), capHit: () => capHit };
   const elapsedS = (): number => (ctx.clock.now() - startMs) / 1000;
-  // The timer alone misses a cap already past on resume (it fires a tick later), so check the clock too.
+  // The timer alone can miss a cap that has just passed (it fires a tick later), so check the clock too.
   const capReached = (): boolean => capCtl.signal.aborted || ctx.clock.now() >= capAtMs;
   /** Marks the cap; emits cap.hit once per run even when a parallel group is killed. */
   const markCap = (name: StageName): void => {
@@ -147,33 +144,38 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     return r.status === "completed" && earlyExit(r.data);
   };
   try {
-    let jumped = false;
+    let jumped = false, stopped: string | null = null;
+    const sigs: string[] = [];
+    const sigOf = (d: Obj | undefined): string => JSON.stringify(((d?.failures_grouped ?? []) as { signature?: string }[]).map((g) => g.signature).sort());
     for (const step of opts.flow ?? FLOW) {
       const group = (typeof step === "string" ? [step] : [...step]) as StageName[];
-      const todo = group.filter((n) => !done.has(n));
-      if (todo.length === 0) continue;
+      const todo = group;
       const isTail = todo.every((n) => TAIL.includes(n));
       if (jumped && !isTail) continue;
       if (!isTail && capReached()) markCap(todo[0] as StageName);
       if (capHit && !isTail) { jumped = true; continue; }
       const results = await Promise.all(todo.map((n) => runStage(n, !isTail)));
       if (todo[0] === "intake" && results[0]?.status === "failed" && !capHit) {
-        return { outputs, capHit, stopped: "intake failed", final: false };
+        return { outputs, capHit, stopped: "intake failed" };
       }
+      if (fatal) { stopped = fatal; jumped = true; continue; }
       if (todo.some((n, i) => mustJump(n, results[i] ?? null))) { jumped = true; continue; }
-      // ponytail: on resume a completed verify skips the fix loop; resume mid-fix if it matters
       if (todo[0] === "verify") {
+        sigs.push(sigOf(outputs.verify));
         for (let round = 1; round <= MAX_FIX_ROUNDS && hasFailures(outputs.verify); round++) {
           const fx = await runStage("fix", true);
-          if (!fx || mustJump("fix", fx)) break;
+          if (!fx || mustJump("fix", fx) || fatal) break;
           const v = await runStage("verify", true);
+          sigs.push(sigOf(outputs.verify));
           if (mustJump("verify", v)) break;
+          if (hasFailures(outputs.verify) && sigs.length >= 3 && sigs.slice(-3).every((x) => x === sigs[sigs.length - 1])) { stopped = "stalled"; break; }
         }
+        if (fatal) { stopped = fatal; jumped = true; }
         if (capHit) jumped = true;
       }
     }
+    return { outputs, capHit, stopped };
   } finally {
     clearTimeout(capTimer);
   }
-  return { outputs, capHit, stopped: null, final: false };
 }

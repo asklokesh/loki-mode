@@ -4,9 +4,8 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeEvent } from "../../src/engine10/events.ts";
 import { FLOW, optional, runMachine, type MachineRunContext } from "../../src/engine10/machine.ts";
-import type { EventEnvelope, RunContext, Stage, StageName, StageResult } from "../../src/engine10/types.ts";
+import type { RunContext, Stage, StageName, StageResult } from "../../src/engine10/types.ts";
 
 type Ev = { type: string; stage: StageName | null; data: Record<string, unknown> };
 
@@ -98,44 +97,49 @@ describe("engine10 machine", () => {
     expect(seen).toEqual({ base_sha: "b1" });
   });
 
-  it("resume skips completed stages and restores their outputs", async () => {
-    const { ctx, events } = fakeCtx();
-    const prior: EventEnvelope[] = [
-      makeEvent("e10-test", 0, "run.started", null, {}, "2026-09-27T22:00:00.000Z"),
-      makeEvent("e10-test", 1, "stage.completed", "intake", { duration_s: 1, base_sha: "b0" }),
-      makeEvent("e10-test", 2, "stage.completed", "plan", { duration_s: 1, plan: "p" }),
-      makeEvent("e10-test", 3, "stage.completed", "wall", { duration_s: 1 }),
-      makeEvent("e10-test", 4, "stage.started", "implement", { target_s: 180, limit_s: 480 }),
-    ];
-    const ran: StageName[] = [];
-    let intakeSeen: unknown;
-    const rec = (n: StageName) => stage(n, async (c) => {
-      ran.push(n);
-      if (n === "implement") intakeSeen = c.outputs().intake;
-      return { status: "completed", data: {} };
-    });
-    const s: Partial<Record<StageName, Stage>> = {};
-    for (const n of ["intake", "plan", "wall", "implement", "verify", "commit", "seal", "pr"] as StageName[]) s[n] = rec(n);
-    await runMachine(ctx, { load: loaderOf(s), prior, startedAtMs: Date.now() });
-    expect(ran).toEqual(["implement", "verify", "commit", "seal", "pr"]);
-    expect(intakeSeen).toEqual({ duration_s: 1, base_sha: "b0" });
-    expect(of(events, "stage.started")).not.toContain("intake");
+  it("the same failure signature 3 verifies running ends STALLED", async () => {
+    const { ctx } = fakeCtx();
+    let verifies = 0;
+    const r = await runMachine(ctx, { load: loaderOf(all({
+      verify: stage("verify", async () => { verifies++; return { status: "completed", data: { failures_grouped: [{ signature: "expected # to be #" }] } }; }),
+    })) });
+    expect(verifies).toBe(3);
+    expect(r.stopped).toBe("stalled");
   });
 
-  it("resume after seal runs only the PR step; a completed run runs nothing", async () => {
-    const names: StageName[] = ["intake", "plan", "wall", "implement", "verify", "commit", "seal"];
-    const prior = names.map((n, i) => makeEvent("e10-test", i, "stage.completed", n, { duration_s: 1 }));
-    const ran: StageName[] = [];
-    const s: Partial<Record<StageName, Stage>> = {};
-    for (const n of [...names, "pr"] as StageName[]) s[n] = stage(n, async () => { ran.push(n); return { status: "completed", data: {} }; });
-    await runMachine(fakeCtx().ctx, { load: loaderOf(s), prior });
-    expect(ran).toEqual(["pr"]);
+  it("changing signatures are not stalled", async () => {
+    const { ctx } = fakeCtx();
+    let n = 0;
+    const r = await runMachine(ctx, { load: loaderOf(all({
+      verify: stage("verify", async () => ({ status: "completed", data: { failures_grouped: [{ signature: `sig${n++}` }] } })),
+    })) });
+    expect(r.stopped).toBeNull();
+  });
 
-    ran.length = 0;
-    const final = [...prior, makeEvent("e10-test", 99, "run.completed", null, { verdict: "VERIFIED" })];
-    const r = await runMachine(fakeCtx().ctx, { load: loaderOf(s), prior: final });
-    expect(ran).toEqual([]);
-    expect(r.final).toBe(true);
+  const sessionStage = (tail: string, runs: { n: number }): Stage => stage("implement", async (c, signal) => {
+    runs.n++;
+    await c.sessions.run({ stage: "implement", brief: "", tier: "development", iterationId: "i", limitS: 1, signal, cwd: "/" });
+    return { status: "failed", data: {}, reason: "exit 1" };
+  });
+  const failing = (tail: string) => ({ exit: 1, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: false, stderrTail: tail });
+
+  for (const [tail, klass] of [["Your credit balance is too low", "quota_exhausted"], ["invalid x-api-key", "auth"], ["billing_hard_limit_reached ... insufficient_quota", "quota_exhausted"]] as const) {
+    it(`a ${klass} error aborts on the first occurrence: no fix round, no further session`, async () => {
+      const { ctx, events } = fakeCtx();
+      let sessions = 0;
+      ctx.sessions = { run: async () => { sessions++; return failing(tail); } };
+      const r = await runMachine(ctx, { load: loaderOf(all({ implement: sessionStage(tail, { n: 0 }), verify: stage("verify", async () => ({ status: "completed", data: { failures_grouped: [{ signature: "x" }] } })) })) });
+      expect(sessions).toBe(1);
+      expect(r.stopped).toBe(`fatal:${klass}`);
+      expect(of(events, "stage.started")).not.toContain("fix");
+    });
+  }
+
+  it("a 429 is transient: the run is not stopped fatal", async () => {
+    const { ctx } = fakeCtx();
+    ctx.sessions = { run: async () => failing("429 rate limit exceeded, please try again") };
+    const r = await runMachine(ctx, { load: loaderOf(all({ implement: sessionStage("", { n: 0 }) })) });
+    expect(r.stopped).toBeNull();
   });
 
   it("the global cap aborts the running stage and jumps to commit and seal", async () => {
@@ -250,25 +254,6 @@ describe("engine10 machine", () => {
     expect(of(events, "stage.started")).toEqual([
       "intake", "plan", "wall", "implement", "verify", "fix", "verify", "fix", "verify", "commit", "seal", "pr",
     ]);
-  });
-
-  it("a resume after the cap has passed starts no non-tail stage", async () => {
-    const { ctx, events } = fakeCtx();
-    const prior: EventEnvelope[] = [
-      makeEvent("e10-test", 0, "run.started", null, {}, new Date(Date.now() - 20 * 60_000).toISOString()),
-      makeEvent("e10-test", 1, "stage.completed", "intake", { duration_s: 1 }),
-      makeEvent("e10-test", 2, "stage.completed", "plan", { duration_s: 1 }),
-      makeEvent("e10-test", 3, "stage.completed", "wall", { duration_s: 1 }),
-    ];
-    let implRan = false;
-    const r = await runMachine(ctx, {
-      load: loaderOf(all({ implement: stage("implement", async () => { implRan = true; return { status: "completed", data: {} }; }) })),
-      prior,
-    });
-    expect(implRan).toBe(false);
-    expect(r.capHit).toBe(true);
-    expect(of(events, "cap.hit")).toEqual(["implement"]);
-    expect(of(events, "stage.started")).toEqual(["commit", "seal", "pr"]);
   });
 
   it("the fix loop checks the clock before starting a stage past the cap", async () => {

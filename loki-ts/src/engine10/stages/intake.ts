@@ -92,7 +92,7 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
     return { status: "failed", data: {}, reason: "no task text and no issue.json: nothing to intake" };
   }
   const origin = readOriginUrl(ctx.repoDir);
-  // resumed is false: the supervisor refuses --resume until resume is wired.
+  // resumed is constant false: the engine has no resume.
   const common = { task, title: task.split("\n")[0]!.slice(0, 72), repo: githubRepoFromUrl(origin) ?? origin, resumed: false };
   if (alreadySatisfied) {
     // Deterministic exit: no repo/test map needed, and never a session/LLM call.
