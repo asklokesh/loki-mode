@@ -1,0 +1,19 @@
+{
+  "id": "pub-faker-2206",
+  "kind": "public",
+  "prompt": "Wanted a text generated in spanish, generates the text in latin\n\nEnvironment: Windows 11 64 bits\nPython used: Python 3.13.2\nFaker version used: \nFaker                     37.1.0\n\nWhen using faker, if you want a text in English (or Italian, for example) it generates the text in English (or Italian) but if you want it in Spanish (es_ES, es_AR, es_MX), it generates the text in latin.\n\nHere an example:\n\n> python\nPython 3.13.2 (tags/v3.13.2:4f8bb39, Feb  4 2025, 15:23:48) [MSC v.1942 64 bit (AMD64)] on win32\nType \"help\", \"copyright\", \"credits\" or \"license\" for more information.\n>>> from faker import Faker\n>>> faker_en = Faker(\"en_US\")\n>>> print(faker_en.text())\nBox market fish still development bar. Recently attention actually marriage top.\n\n>>> faker_it = Faker(\"it_IT\")\n>>> print(faker_it.text())\nSegreto valle in segnare. Vestire palazzo signorina dottore. Possibilit\u00e0 notte costringere fame quarto personaggio.\nPericoloso spirito intendere.\n\n>>> faker_es = Faker(\"es_ES\")\n>>> print(faker_es.text())\nNecessitatibus consectetur nostrum ducimus vero ut eius placeat. Accusamus iure veritatis autem. Autem nobis itaque adipisci.\n\n>>> faker_es_MX = Faker(\"es_MX\")\n>>> print(faker_es_MX.text())\nFacilis recusandae eos.\nCorrupti quidem pariatur vel earum iste autem. Est tempore ad ut.\nMagni eaque culpa voluptates. Corrupti delectus officia praesentium veritatis cum cumque facilis.",
+  "issue_ref": "joke2k/faker#2206",
+  "repo": {
+    "source": "https://github.com/joke2k/faker.git",
+    "ref": "399672d438c63af370ff3b38756b63d9a466caf9"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . pytest freezegun",
+  "hidden": {
+    "files": [
+      "tests/providers/test_lorem.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/providers/test_lorem.py"
+  },
+  "timeout_s": 900,
+  "tier": "medium"
+}
