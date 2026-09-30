@@ -33,8 +33,13 @@ fi
 
 touch "$tmp/stamp"
 sleep 1
+# Budget: the inner suite took ~32s on the CI runner that passed (run 36760063079,
+# shard 3/8) and hit the old 50s cap on a loaded one (run 36760845105). 120s is
+# 3.75x the measurement; the outer run_test budget (450s) stays well above it.
+INNER_BUDGET="${TCPI_TIMEOUT:-120}"
+SUITE="${TCPI_SUITE:-tests/test-trust-core-tests-detect.sh}"
 out="$(cd "$src" && TRUST_CORE_PROBE_LIMIT=8 TRUST_CORE_PROBE_JOBS=3 LOKI_NO_BROWSER=1 \
-    timeout 50 bash tests/test-trust-core-tests-detect.sh 2>&1)"
+    timeout "$INNER_BUDGET" bash "$SUITE" 2>&1)"
 rc=$?
 
 written="$(find "$src/autonomy" "$src/dashboard" "$src/providers" "$src/loki-ts/src" \
@@ -52,6 +57,20 @@ fi
 cases="$(printf '%s\n' "$out" | grep -c '^  PASS: ')"
 if [[ $rc -eq 0 && $cases -eq 9 ]]; then
     ok "the limited run passed all 8 cases plus the restore check"
+elif [[ $rc -eq 124 ]]; then
+    # The inner suite prints results only when it finishes, so name every
+    # case (first 8 in file order) that has no PASS line yet.
+    pending=""
+    while IFS= read -r name; do
+        printf '%s\n' "$out" | grep -qF "  PASS: $name" || pending="$pending [$name]"
+    done < <(grep -o '^probe_case "[^"]*"' "$src/$SUITE" | head -8 | sed 's/^probe_case "//; s/"$//')
+    if [[ -z "$pending" ]]; then
+        ko "the limited run passed all 8 cases plus the restore check" \
+           "timed out after all cases passed (${INNER_BUDGET}s budget; a hang after success is still a hang); pass-lines=$cases"
+    else
+        ko "the limited run passed all 8 cases plus the restore check" \
+           "timed out after ${INNER_BUDGET}s; cases with no PASS line yet:$pending; pass-lines=$cases; last output: $(printf '%s\n' "$out" | tail -2 | tr '\n' ' ')"
+    fi
 else
     ko "the limited run passed all 8 cases plus the restore check" \
        "rc=$rc pass-lines=$cases; tail: $(printf '%s\n' "$out" | tail -4 | tr '\n' ' ')"
