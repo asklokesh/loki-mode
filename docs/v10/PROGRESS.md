@@ -1523,3 +1523,10 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Opus reviews (share 22.6 percent at dispatch): D44-A r2, E-125 r4 (absorbs E-132), M-15 r3. E-138 held for opus capacity.
 - Sonnet: reviews of S41-20d, S41-20b-r2, E-115 plus E-142, S41-10; builders EV-12E, S41-20f, S41-20g, E-143.
 - Founder: a reviewer's failed cd left an empty pip-only venv at the repo-root .venv (gitignored); v10-guard RULE4 blocks its removal from a session. Remove with `rm -rf .venv` when convenient.
+
+## 2026-09-30T19:05Z (Chief of Staff and Release Manager)
+- v10.5.7 verified: Release run success; npm latest 10.5.7 with gitHead 5a00409f (watcher bbf3odg5x, 18:50:53Z); body written; board-mark-released flipped 17 rows.
+- train/4 (2b0d2e4d) green on its train push (Tests, Bun Parity, Coverage all success); main fast-forwarded 5a00409f..2b0d2e4d at 18:45Z. main's own Tests push run at that SHA then failed: shard 3/8 "trust-core probes never mutate the shared tree", rc=124 after 9/9 pass lines (inner `timeout 50`). Failed job rerun in flight (run 36760845105); v10.5.8 held until main is green. Guard slice E-147 staffed.
+- train/5 staging (S41-20b-r2, E-115, E-142, S41-10, dist rebuild): local bun test 2581 pass 0 fail; blocked only by an E-142 false positive (dash/emoji scan flagged a byte-exact upstream refdiff and dist sourcesContent); exclusion fix 2e541b6a in TL review.
+- Rejections this hour, each with a reproduced attack: M-15 r3 and r4 (conformance bypass via pytest.toml, then via stdlib-shadowing modules), E-125 r4 (-ra -q addopts false not_run; forgeable exit via pytest.exit), D44-A r2 (hook refused a replay of the real v10.5.7 bump; flaky fixture), EV-12E (lg- task could omit tier), S41-10 r1 (empty brief). Reworks committed: M-15 8097d44a, E-125 018a6e06, D44-A d956294f; opus re-reviews held while opus share is 38 percent (D13 cap 30).
+- Medium tier: 12 on local main. S41-20d 0/4 and S41-20f 0 kept; S41-20g markdown-1390 needs one authored test; S41-20h mining shortlisted 2 (platformdirs#540, flask#5736), being built as S41-20i.
