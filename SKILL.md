@@ -1,6 +1,6 @@
 ---
 name: loki-mode
-description: Autonomous spec-driven build system with a built-in trust layer. It does not call work done until it is verified (RARV-C closure loop, 8 quality gates, completion council, verified-completion evidence gate). Triggers on "Loki Mode". Takes a spec (PRD, GitHub issue, OpenAPI doc, etc.) to deployed product with minimal human intervention. Provider-agnostic. Requires --dangerously-skip-permissions flag.
+description: An autonomous software factory that knows what it is supposed to deliver, and proves it did.
 ---
 
 # Loki Mode v10.5.10
