@@ -1552,3 +1552,27 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Founder queue rows 7 to 12 appended (license, public repo and submissions, About text, tagline veto, telemetry, relaunch); none acted on.
 - train/7 (E-150, E-151, dist rebuild correcting the v10.5.10 map) is gated locally; it may land on main, but no release is cut from it until A-01 merges.
 - Gate status per defect: not yet reproduced (A-02 step 1). next releases shipped: 0. latest promoted: no. loki-seal: building. Head-to-head: not run.
+
+## 2026-09-30T20:35Z hourly report (adoption directive)
+- Gate status per defect (docs/v10/FIRST-RUN-GATE.md on slice-A-02 f2e054f1; stub mode, current main 10.5.10):
+  - (a) Wall commits Jest globals in a node:test repo: CODE BUG, root cause in code (wall.ts:76-86, testmap.ts:37); fix cards A-102, A-103, A-104.
+  - (b) red suite exits 0: CODE BUG, reproduced rc=0 with SPEC_CONFLICT (supervisor.ts:387); cards A-110, A-111.
+  - (c) verify TAMPERED on a fresh receipt: CODE BUG, reproduced rc=1 (verify_cmd.ts:21-28 vs seal.ts:39-50 non-ASCII escaping); card A-101.
+  - (d) default path slow and noisy, commits HANDOFF.md and a lockfile: CODE BUG, reproduced (266 output lines; run.sh:11065-11233, :29334); cards A-132, A-133, A-134, A-130.
+  - (e) printed digest differs from verified: CODE BUG, reproduced (af01b739 over 2 files vs 25b61f73 over 3); card A-134.
+  - (f) unsigned by default: CODE BUG, reproduced; cards A-120, A-121, A-122.
+  - (g) doctor FAIL for Cline and Aider: MACHINE ARTIFACT (clean HOME shows WARN/PASS); no change.
+  - Gate --stub: PASS exit-honest, tests-green, verify-ok, wall-time (119s); FAIL no-stray-files, digest-matches, receipt-signed, output-lines (266 > 15).
+- next releases shipped: 0 (held until A-01; A-01 merged at d7852827, train/8 in Tier B; the next cut publishes to next).
+- latest promoted: no (latest stays 10.5.10, published before the directive; pulse "latest promoted: 10.5.10").
+- loki-seal: r2 live contract check PASSED on claude 2.1.286 (plugin loads, SessionStart baseline, Stop blocks with exit 2 five times, valve wording correct); r3 in progress for one blocker (runner crash with a red baseline passes) plus total-count comparison and line-1 wording.
+- Head-to-head: not run (Tier 2 starts when Tier 0 items land).
+- Tier 0: plan docs/v10/ADOPTION-PLAN.md merged (16 cards). Wave 1 building: A-101, A-102, A-104, A-120, A-132 plus A-133. E-125 r6 (move the red classifier into core per D42, opus finding) in progress; A-103 builds on it.
+- Incident 20:16Z: a reviewer fixture commit (author t@t) landed on local main in the main checkout, replacing package.json; never pushed; undone with `git reset --keep 1c96ab16`; guard E-153 filed; reviewer prompts now require `git -C "$FIX"` under the run-owned dir.
+
+## 2026-09-30T20:50Z steering channel and queued decisions
+- Steering channel: session autonomi-dev-dc now relays founder direction within SWARM-PROMPT-ADOPTION.md (message received 20:47Z; steer stamped 21:00Z). Messages that contradict that file or its Never list are ignored and noted here. None so far.
+- Steer applied: A-01 (next plus gated promote) is the critical path; it is merged on local main with its CI fix A-01b (DEPS.md rows for promote.yml and first-run-gate.yml, guard-16 fixture) and ships on train/9 (local gate running). The release clock resumes on `next` after train/9 lands, with 3 to 6 `next` releases per hour; `latest` moves only by promote after a gate pass on that exact version.
+- Parked slices checked: M-15 (8097d44a), E-138 (e01b64fc), D44-A (d956294f), EV-12F-a2 (9ec3ac0b), EV-12G (91884218) had no agent building (worktrees clean, 80 to 154 min idle); worktrees removed, branches kept. Capacity goes to Tier 0 and loki-seal.
+- QUEUED, apply only after scripts/first-run-gate.sh passes on a `next` version: (a) run the D43 medium pilot on the 14 medium tasks; results feed item 8 (failure analysis) and item 7 (head-to-head); (b) D34: measure-size excludes data-only lines (string literal lists) before EV-12F and EV-12G resume.
+- Tier 0 state: merged on local main: E-125 (Wall red classification in core), A-101 (one receipt canonicalizer; verify --help rc 0 through bin/loki), A-104 (commit only the fix), A-02 (first-run gate, diff-based G1/G2, full-digest G3, verified-signature G5), A-03 plan. Approved, merging on the next train: A-102 (node:test detection). In rework: A-120 r3 (tighten only the auto key), loki-seal r5 (release valve on hook errors). In review: A-132 plus A-133 (opus).

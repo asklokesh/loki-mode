@@ -2339,14 +2339,14 @@ NPM_NEXT_JSON="$WORK/npm-next.json"
 python3 -c "
 import json
 print(json.dumps({
-    'time': {'created': '2020-01-01T00:00:00.000Z', '9.50.0': '2026-09-26T01:50:00.000Z', '9.54.2': '2026-09-27T01:50:00.000Z'},
-    'dist-tags': {'latest': '9.50.0', 'next': '9.54.2'},
+    'time': {'created': '2020-01-01T00:00:00.000Z', '90.50.0': '2026-09-26T01:50:00.000Z', '9.54.2': '2026-09-27T01:50:00.000Z'},
+    'dist-tags': {'latest': '90.50.0', 'next': '9.54.2'},
 }))
 " > "$NPM_NEXT_JSON"
 if run_pulse "${COMMON_ARGS[@]}" "PULSE_REPO_ROOT=$TAG_MISMATCH_REPO" "PULSE_MAIN_REF=main" \
     "BOARD_MD=$BOARD_CLEAN" "PULSE_NPM_CMD=cat $NPM_NEXT_JSON" "PULSE_GH_CMD=cat $GH_GREEN_JSON" \
     "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$TAG_MISMATCH_REPO" "${WT_CLEAN[@]}")"; then rc=0; else rc=$?; fi
-if printf '%s\n' "$OUT" | grep -qF "latest promoted: 9.50.0" \
+if printf '%s\n' "$OUT" | grep -qF "latest promoted: 90.50.0" \
     && printf '%s\n' "$OUT" | grep -qF "commit(s) since v9.54.2" \
     && ! printf '%s\n' "$OUT" | grep -qF "disagrees with npm"; then
     ok "tag agrees with next while latest lags; promoted version reported"

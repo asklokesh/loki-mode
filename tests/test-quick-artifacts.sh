@@ -15,7 +15,7 @@ FIX="$T/repo"
 mkdir -p "$T/home" "$T/bin" "$FIX"
 PASS=0 FAIL=0
 ok() { PASS=$((PASS + 1)); echo "PASS: $1"; }
-bad() { FAIL=$((FAIL + 1)); echo "FAIL: $1"; }
+bad() { FAIL=$((FAIL + 1)); echo "FAIL: $1${2:+ ($2)}"; }
 
 printf '{"name":"bugrepo","version":"1.0.0","scripts":{"test":"node --test"}}\n' > "$FIX/package.json"
 printf 'function sum(arr) {\n  let total = 0;\n  for (let i = 1; i < arr.length; i++) total += arr[i];\n  return total;\n}\nmodule.exports = { sum };\n' > "$FIX/sum.js"
@@ -32,8 +32,8 @@ cat > "$T/bin/claude" <<'STUB'
 #!/usr/bin/env bash
 case " $* " in *" --help "*|*" --version "*) echo "claude stub 2.1.285 --settings --session-id --resume --model --dangerously-skip-permissions"; exit 0;; esac
 [ -f sum.js ] && sed -i.bak 's/i = 1/i = 0/' sum.js && rm -f sum.js.bak
+printf '%s\n' "$*" >> "$STUB_PROMPTS"
 case "$*" in *USAGE_DOC_REQUIRED*) echo "# Usage" > USAGE.md;; esac
-[ -f package-lock.json ] || echo '{"lockfileVersion":3}' > package-lock.json
 mkdir -p .loki/signals; echo "fixed sum loop" > .loki/signals/COMPLETION_REQUESTED
 echo "stub claude done"
 STUB
@@ -41,7 +41,7 @@ chmod +x "$T/bin/claude"
 
 (
     cd "$FIX" || exit 2
-    HOME="$T/home" PATH="$T/bin:$PATH" LOKI_NO_BROWSER=1 LOKI_SKIP_AUTH_PREFLIGHT=1 \
+    STUB_PROMPTS="$T/prompts.log" HOME="$T/home" PATH="$T/bin:$PATH" LOKI_NO_BROWSER=1 LOKI_SKIP_AUTH_PREFLIGHT=1 \
         "$REPO_ROOT/bin/loki" quick "fix the bug that makes the failing test in sum.test.js fail" < /dev/null > "$T/out.log" 2>&1
 )
 echo "loki quick rc=$?"
@@ -54,6 +54,9 @@ echo "$FILES" | grep -qx 'sum.js' && [ "$(git -C "$FIX" rev-list --count HEAD)" 
 for f in HANDOFF.md USAGE.md package-lock.json; do
     if echo "$FILES" | grep -qx "$f"; then bad "$f is tracked after quick"; else ok "$f not committed"; fi
 done
+if grep -q USAGE_DOC_REQUIRED "$T/prompts.log" 2>/dev/null; then bad "prompt still requests USAGE.md" "real quick path"; else ok "prompt does not request USAGE.md"; fi
+STRAY="$(git -C "$FIX" ls-files -o | grep -v '^\.loki/' || true)"
+[ -z "$STRAY" ] && ok "no untracked files outside .loki/" || bad "untracked files outside .loki/" "$(echo "$STRAY" | tr '\n' ' ')"
 [ -f "$FIX/HANDOFF.md" ] && bad "HANDOFF.md written at the repo root" || ok "no HANDOFF.md at the repo root"
 [ -f "$FIX/.loki/HANDOFF.md" ] && ok ".loki/HANDOFF.md exists" || bad ".loki/HANDOFF.md missing"
 

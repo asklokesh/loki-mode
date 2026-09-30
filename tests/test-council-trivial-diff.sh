@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A-133: council_evidence_gate skips the app-boot, persistence, auth and tenant
+# A-133: council_evidence_gate skips the persistence, auth and tenant
 # probes on a trivial diff (at most 2 files, at most 20 changed lines, no test,
 # CI, auth, security or route file) and records the skip as not proven, never as
 # a pass. Drives the REAL gate over fixtures under the run-owned temp dir; an
@@ -37,7 +37,9 @@ mk() {
     mkdir -p "$FIX/.loki/quality" "$FIX/.loki/app-runner" "$FIX/.loki/council"
     printf '%s\n' '{"runner":"vitest","pass":true,"status":"passed","passed_count":1,"failed_count":0}' > "$FIX/.loki/quality/test-results.json"
     printf '%s\n' '{"status":"running","primary_service":"web","url":"http://localhost:3000"}' > "$FIX/.loki/app-runner/state.json"
-    printf '%s\n' '{"ok": false, "checked_at": "t"}' > "$FIX/.loki/app-runner/health.json"
+    printf '%s\n' '{"ok": true, "checked_at": "t"}' > "$FIX/.loki/app-runner/health.json"
+    mkdir -p "$FIX/.loki/verification"
+    printf '%s\n' '{"persistence":{"attempted":true,"proven":false,"reason":"sentinel_gone_after_reload"},"auth":{"attempted":false,"proven":false,"reason":"no_auth"}}' > "$FIX/.loki/verification/functional-proof.json"
     "$1" "$FIX"
     echo "$FIX"
 }
@@ -74,17 +76,26 @@ r="$(gate "$d")"
 [ "$r" = PASS ] && ok "1-file 1-line diff: probes skipped, gate passes" || bad "trivial diff" "got $r, want PASS"
 grep -q 'app-boot\|persistence not proven\|auth enforcement\|tenant isolation' "$d.warn" 2>/dev/null \
     && bad "trivial diff prints probe lines" "$(cat "$d.warn")" || ok "no probe lines printed on a trivial diff"
-[ "$(detail "$d" "d['boot']['inconclusive'], d['boot']['reason']")" = "True trivial_diff" ] \
-    && ok "boot recorded as not proven: trivial_diff" || bad "boot record" "$(detail "$d" "d['boot']")"
+[ "$(detail "$d" "d['boot']['inconclusive']")" = "False" ] \
+    && ok "boot axis is never skipped (it only reads health.json)" || bad "boot skipped" "$(detail "$d" "d['boot']")"
 for axis in persistence auth authorization; do
     [ "$(detail "$d" "d['$axis']['inconclusive'], d['$axis']['reason']")" = "True trivial_diff" ] \
         && ok "$axis recorded as not proven: trivial_diff" || bad "$axis record" "$(detail "$d" "d['$axis']")"
 done
 
-for c in many_lines three_files touch_test touch_auth new_route touch_ci; do
+health_bad() { one_line "$1"; printf '%s\n' '{"ok": false, "checked_at": "t"}' > "$1/.loki/app-runner/health.json"; }
+touch_pkg() { printf '{"scripts":{"start":"node x.js"}}\n' > "$1/package.json"; }
+touch_docker() { printf 'FROM node:20\n' > "$1/Dockerfile"; }
+touch_sql() { mkdir -p "$1/migrations"; printf 'alter table t add c int;\n' > "$1/migrations/001.sql"; }
+
+d="$(mk health_bad)"
+r="$(gate "$d")"
+[ "$r" = BLOCK ] && ok "trivial diff + health.json ok:false still BLOCKs" || bad "boot block on trivial diff" "got $r, want BLOCK"
+
+for c in many_lines three_files touch_test touch_auth new_route touch_ci touch_pkg touch_docker touch_sql; do
     d="$(mk "$c")"
     r="$(gate "$d")"
-    [ "$r" = BLOCK ] && ok "$c: probes still run (BLOCK on unhealthy app)" || bad "$c" "got $r, want BLOCK"
+    [ "$r" = BLOCK ] && ok "$c: probes still run (BLOCK on disproven persistence)" || bad "$c" "got $r, want BLOCK"
 done
 
 d="$(mk one_line)"

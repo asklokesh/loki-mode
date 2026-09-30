@@ -359,12 +359,6 @@ const MEMORY_INSTRUCTION =
 const USAGE_DOC_INSTRUCTION =
   `USAGE_DOC_REQUIRED: Before invoking loki_complete_task (or touching .loki/signals/COMPLETION_REQUESTED), write USAGE.md at the project root. Detect the stack from package.json/requirements.txt/Cargo.toml/go.mod/etc. and include these sections: (1) Prerequisites (runtimes, ports, env vars), (2) Install (exact command, e.g. 'npm install' or 'pip install -r requirements.txt'), (3) Start (exact command, e.g. 'npm start' or 'python server.py'), (4) Verify -- 2 to 3 copy-paste commands the user can run to confirm it works (curl examples for APIs with expected output, browser URL for web UIs, command invocation for CLIs), (5) Stop (Ctrl+C or 'lsof -ti:PORT | xargs kill -9' for backgrounded servers). Keep it under 100 lines, plain Markdown, no emojis. If USAGE.md already exists and is accurate, leave it; otherwise create or update it.`;
 
-// A-132: a `loki quick` run (PRD .loki/quick-prd-<pid>.md, written only by
-// cmd_quick) does not ask for USAGE.md. Parity with bash _loki_is_quick_prd.
-function usageDoc(prd: string | null): string {
-  return prd !== null && /(^|\/)quick-prd-.*\.md$/.test(prd) ? "" : USAGE_DOC_INSTRUCTION;
-}
-
 // Compose-first instruction (v7.26.0): unconditional string with conditional
 // phrasing (the agent decides whether the app warrants compose, not a static
 // grep). Parity with bash: run.sh build_prompt() $compose_instruction. MUST
@@ -1626,7 +1620,7 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
   lines.push(sdlcText);
   lines.push(autonomyText);
   lines.push(MEMORY_INSTRUCTION);
-  lines.push(usageDoc(prd));
+  lines.push(USAGE_DOC_INSTRUCTION);
   lines.push(docScope);
   lines.push(COMPOSE_INSTRUCTION);
   lines.push(LSP_GROUNDING_INSTRUCTION);
@@ -1744,7 +1738,7 @@ function buildStaticFirstDegraded(
       "You are a coding assistant. Analyze this codebase and suggest improvements. Write working code and commit changes.",
     );
   }
-  lines.push(usageDoc(prd));
+  lines.push(USAGE_DOC_INSTRUCTION);
   lines.push(docScope);
   lines.push(COMPOSE_INSTRUCTION);
   lines.push(LSP_GROUNDING_INSTRUCTION);
@@ -1799,14 +1793,14 @@ function buildLegacyFull(opts: BuildPromptOpts, p: LegacyFullParts): string {
 
   if (retry === 0) {
     if (prd !== null && prd.length > 0) {
-      return `Loki Mode with PRD at ${prd}. ${tail} ${p.rarvText} ${p.memory} ${usageDoc(prd)} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+      return `Loki Mode with PRD at ${prd}. ${tail} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
     }
-    return `Loki Mode. ${tail} ${p.analysis} ${p.rarvText} ${p.memory} ${usageDoc(prd)} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+    return `Loki Mode. ${tail} ${p.analysis} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
   }
   if (prd !== null && prd.length > 0) {
-    return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). PRD: ${prd}. ${tail} ${p.rarvText} ${p.memory} ${usageDoc(prd)} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+    return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). PRD: ${prd}. ${tail} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
   }
-  return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). ${tail} Use .loki/generated-prd.md if exists. ${p.rarvText} ${p.memory} ${usageDoc(prd)} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+  return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). ${tail} Use .loki/generated-prd.md if exists. ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
 }
 
 function buildLegacyDegraded(

@@ -1867,14 +1867,15 @@ _loki_test_provenance() {
 # LOKI_EVIDENCE_GATE=0 (byte-identical to prior behavior, no read/write).
 # A-133: true (rc 0) when the changed-file union (arg 2, newline list, .loki/ already
 # excluded) is a trivial diff: at most 2 files and 20 changed lines, and none of
-# them a test, CI config, auth/security or route/entrypoint file. A path in any of
-# those classes is never trivial, whatever its size. Opt out: LOKI_EVIDENCE_TRIVIAL_SKIP=0.
+# them a test, CI, auth/security, route/entrypoint, manifest, Docker or SQL file. Only the
+# costly persistence, auth and tenant probes are skipped; the free boot read never is.
+# Opt out: LOKI_EVIDENCE_TRIVIAL_SKIP=0.
 _council_trivial_diff() {
     local base="$1" files="$2" n added deleted f total=0
     [ "${LOKI_EVIDENCE_TRIVIAL_SKIP:-1}" = "0" ] && return 1
     n=$(printf '%s\n' "$files" | wc -l | tr -d ' ')
     [ "$n" -le 2 ] || return 1
-    printf '%s\n' "$files" | grep -qiE '(^|/)(tests?|__tests__|specs?|e2e|cypress|playwright)(/|$)|\.(test|spec)\.[^/]+$|(^|/)test_[^/]+$|_test\.[^/]+$|conftest\.py$|^\.github/|^\.gitlab-ci|^\.circleci/|Jenkinsfile|azure-pipelines|^\.buildkite/|^\.travis|auth|login|logout|session|passw|secret|credential|token|jwt|oauth|saml|sso|security|permission|rbac|acl|crypt|\.env|\.pem$|\.key$|middleware|policy|tenant|rls|route|router|controller|endpoint|(^|/)api/|(^|/)pages/|(^|/)handlers?/|(^|/)(server|app|main|index)\.[a-z]+$' && return 1
+    printf '%s\n' "$files" | grep -qiE '(^|/)(tests?|__tests__|specs?|e2e|cypress|playwright)(/|$)|\.(test|spec)\.[^/]+$|(^|/)test_[^/]+$|_test\.[^/]+$|conftest\.py$|^\.github/|^\.gitlab-ci|^\.circleci/|Jenkinsfile|azure-pipelines|^\.buildkite/|^\.travis|auth|login|logout|session|passw|secret|credential|token|jwt|oauth|saml|sso|security|permission|rbac|acl|crypt|\.env|\.pem$|\.key$|middleware|policy|tenant|rls|route|router|controller|endpoint|(^|/)api/|(^|/)pages/|(^|/)handlers?/|(^|/)(server|app|main|index)\.[a-z]+$|package\.json|Dockerfile|docker-compose|\.sql$|migrations?/' && return 1
     # Tracked changes vs the run base (committed, staged and unstaged), then untracked files.
     while read -r added deleted f; do
         [ -n "$f" ] || continue
@@ -2321,10 +2322,6 @@ DETAILS_EOF
     if [ "${LOKI_EVIDENCE_BOOT_GATE:-1}" = "0" ]; then
         boot_inconclusive="true"
         boot_inconclusive_reason="boot_gate_disabled"
-    elif [ "$_trivial_diff" = "true" ]; then
-        # A-133: skipped, recorded as not proven (never a pass).
-        boot_inconclusive="true"
-        boot_inconclusive_reason="trivial_diff"
     elif [ ! -f "$_health_file" ] && [ ! -f "$_state_file" ]; then
         # No app-runner artifacts at all -> no serveable app was ever launched
         # (CLI/library project, or the runner never ran). Inconclusive, not a block.
@@ -2772,7 +2769,7 @@ PYEOF
         # Same honesty for the runtime-boot axis: a pass that could not confirm the
         # app boots (CLI/library, probe never ran, gate disabled) says so out loud
         # rather than implying the app was verified to run.
-        if [ "$boot_inconclusive" = "true" ] && [ "$_trivial_diff" != "true" ]; then
+        if [ "$boot_inconclusive" = "true" ]; then
             log_warn "[Council] Evidence gate: app-boot not confirmed (${boot_inconclusive_reason}). Pass-through; set LOKI_EVIDENCE_BOOT_GATE=0 to silence, or run the app so its health probe records a verdict."
         fi
         # Proof-of-Function honesty: a pass-through that could not PROVE a

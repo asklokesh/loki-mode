@@ -11168,22 +11168,6 @@ commit_session_changes() {
         ':!*.key' ':!*.pem' ':!*.p12' ':!*.keystore' \
         ':!id_rsa*' ':!*.token' ':!credentials*' 2>/dev/null || true
 
-    # A-132: a quick fix commits the fix only. HANDOFF.md, USAGE.md and a lockfile
-    # that was not tracked before the run stay out unless a manifest changed.
-    if _loki_is_quick_prd "${PRD_PATH:-}"; then
-        local _qf _qmanifest=0
-        git diff --cached --name-only 2>/dev/null | grep -qE '(^|/)(package\.json|pyproject\.toml|Cargo\.toml|go\.mod|Gemfile|composer\.json|requirements\.txt)$' && _qmanifest=1
-        while IFS= read -r _qf; do
-            case "$_qf" in
-                HANDOFF.md | USAGE.md) ;;
-                package-lock.json | */package-lock.json | yarn.lock | */yarn.lock | pnpm-lock.yaml | */pnpm-lock.yaml | Cargo.lock | */Cargo.lock | poetry.lock | */poetry.lock | go.sum | */go.sum | Gemfile.lock | */Gemfile.lock | composer.lock | */composer.lock)
-                    [ "$_qmanifest" = 1 ] && continue ;;
-                *) continue ;;
-            esac
-            git cat-file -e "HEAD:$_qf" 2>/dev/null || git reset -q -- "$_qf" >/dev/null 2>&1 || true
-        done < <(git diff --cached --name-only 2>/dev/null)
-    fi
-
     # Unstage exactly the paths recorded as untracked or gitignored when the
     # session started (setup_agent_branch; a "dir/" entry covers its subtree):
     # they are the user's, not this session's work, and committing them here
@@ -22449,8 +22433,8 @@ build_prompt() {
     # and to the dashboard/Purple Lab UI.
     local usage_doc_instruction="USAGE_DOC_REQUIRED: Before invoking loki_complete_task (or touching .loki/signals/COMPLETION_REQUESTED), write USAGE.md at the project root. Detect the stack from package.json/requirements.txt/Cargo.toml/go.mod/etc. and include these sections: (1) Prerequisites (runtimes, ports, env vars), (2) Install (exact command, e.g. 'npm install' or 'pip install -r requirements.txt'), (3) Start (exact command, e.g. 'npm start' or 'python server.py'), (4) Verify -- 2 to 3 copy-paste commands the user can run to confirm it works (curl examples for APIs with expected output, browser URL for web UIs, command invocation for CLIs), (5) Stop (Ctrl+C or 'lsof -ti:PORT | xargs kill -9' for backgrounded servers). Keep it under 100 lines, plain Markdown, no emojis. If USAGE.md already exists and is accurate, leave it; otherwise create or update it."
 
-    # A-132: a quick fix does not ask for USAGE.md (mirrored in build_prompt.ts).
-    _loki_is_quick_prd "$prd" && usage_doc_instruction=""
+    # A-132: a quick fix does not ask for USAGE.md (persist_user_prd repoints $prd, so key on PRD_PATH).
+    _loki_is_quick_prd "${PRD_PATH:-}" && usage_doc_instruction=""
 
     # DOC_SCOPE instruction (F52): scale generated documentation to the detected
     # project complexity. A trivial one-file app does not warrant a nine-file
