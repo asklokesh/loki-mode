@@ -67,7 +67,8 @@ export function formatHeartbeatLine(h: HeartbeatLine): string {
 // A-110: one outcome name and a fixed exit ladder, mapped at the edge (the receipt keeps its verdict strings). 2 is usage/preflight, returned by main().
 export type Outcome = "VERIFIED" | "ALREADY_SATISFIED" | "BUDGET_STOP" | "BLOCKED" | "STALLED" | "FAILED";
 export const EXIT: Record<Outcome, number> = { VERIFIED: 0, ALREADY_SATISFIED: 0, FAILED: 1, BUDGET_STOP: 3, BLOCKED: 4, STALLED: 5 };
-export function outcomeOf(verdict: Verdict, capHit: boolean, stop: string | null): Outcome {
+export function outcomeOf(verdict: Verdict, capHit: boolean, stop: string | null, tampered = false): Outcome {
+  if (tampered) return "FAILED"; // a run whose event log was modified is never VERIFIED, whatever the receipt says
   if (verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED") return verdict;
   return capHit ? "BUDGET_STOP" : verdict === "SPEC_CONFLICT" ? "BLOCKED" : stop === "stalled" ? "STALLED" : "FAILED";
 }
@@ -76,7 +77,7 @@ export interface SummaryInput {
   verdict: Verdict;
   /** A-110: the one name printed on the Outcome line; absent falls back to the receipt verdict. */
   outcome?: Outcome;
-  receipt?: { sha: string | null; signed: boolean | null }; // A-130: UNSIGNED/UNCHECKED always shown
+  receipt?: { sha: string | null; signed: boolean | null; tampered?: boolean }; // A-130: UNSIGNED/UNCHECKED always shown
   /** Deferred/missing checks (section 9); rendered comma-joined. */
   notProven: string[];
   /** Flaky tests (section 9); rendered as a separate "; flaky ..." clause. */
@@ -107,7 +108,7 @@ export function formatSummary(input: SummaryInput): string {
     : `${labelCol("PR")}none`;
   const verdictLine = `${labelCol("Outcome")}${input.outcome ?? input.verdict}`;
   const r = input.receipt;
-  const receiptLine = r ? [`${labelCol("Receipt")}${r.sha ? `sha256:${r.sha}${r.signed === false ? " (UNSIGNED)" : r.signed === null ? " (UNCHECKED)" : ""}` : "none (UNCHECKED)"}`] : [];
+  const receiptLine = r ? [`${labelCol("Receipt")}${r.tampered ? "TAMPERED (event log modified; receipt not trustworthy)" : r.sha ? `sha256:${r.sha}${r.signed === false ? " (UNSIGNED)" : r.signed === null ? " (UNCHECKED)" : ""}` : "none (UNCHECKED)"}`] : [];
   let notProvenLine = `${labelCol("NOT PROVEN")}${input.notProven.join(", ")}`;
   if (input.flaky.length > 0) notProvenLine += `; flaky ${input.flaky.join(", ")}`;
   const costLine =

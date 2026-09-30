@@ -182,6 +182,8 @@ describe("formatSummary (golden, ENGINE.md section 11)", () => {
     const sha = "a".repeat(64);
     expect(formatSummary({ ...(base as object), receipt: { sha, signed: false } } as never)).toContain(`Receipt:    sha256:${sha} (UNSIGNED)`);
     expect(formatSummary({ ...(base as object), receipt: { sha: null, signed: null } } as never)).toContain("Receipt:    none (UNCHECKED)");
+    expect(formatSummary({ ...(base as object), receipt: { sha: null, signed: null, tampered: true } } as never)).toContain("Receipt:    TAMPERED (event log modified; receipt not trustworthy)");
+    expect(outcomeOf("VERIFIED", false, null, true)).toBe("FAILED");
     expect(formatSummary({ ...(base as object), receipt: { sha, signed: true } } as never)).toContain(`Receipt:    sha256:${sha}\n`);
   });
 

@@ -26,6 +26,7 @@ if [ "$stage" = "implement" ]; then
   if [ "${E2E_STUB_MODE:-done}" = "already" ]; then
     echo "LOKI_ALREADY_DONE: calc.ts:1 add already exists"
   else
+    if [ "${E2E_STUB_MODE:-}" = "tamper" ]; then for f in "$(git rev-parse --show-toplevel)"/.loki/runs/*/events.jsonl; do echo '{"v":1,"type":"forged"}' >> "$f"; done; fi
     printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> calc.ts
     echo "LOKI_DONE"
   fi

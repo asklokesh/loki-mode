@@ -30,7 +30,7 @@ interface Run {
   runDir: string; stubCalls: string[]; stubEnv: string; origin: string;
 }
 
-function runEngine(mode: "done" | "already", withPr = false, extra: string[] = []): Run {
+function runEngine(mode: "done" | "already" | "tamper", withPr = false, extra: string[] = []): Run {
   if (!existsSync(ENTRY)) throw new Error(`engine entry missing: ${ENTRY}`); // never fall through to the legacy bash route
   const tmp = mkdtempSync(join(tmpdir(), "loki-e2e-"));
   temps.push(tmp);
@@ -85,6 +85,17 @@ function runEngine(mode: "done" | "already", withPr = false, extra: string[] = [
 }
 
 describe("engine10 e2e (stub claude)", () => {
+  test("A-130 round 2: a tampered event log is TAMPERED on the receipt line, never VERIFIED, never exit 0", () => {
+    const t = runEngine("tamper", false, ["--json"]);
+    const j = JSON.parse(t.out.trim().split("\n").find((l) => l.startsWith("{"))!);
+    expect(j.ok).toBe(false);
+    expect(j.outcome).not.toBe("VERIFIED");
+    expect(t.code).not.toBe(0);
+    const d = runEngine("tamper");
+    expect(d.out).toMatch(/^Receipt:\s+TAMPERED/m);
+    expect(d.out).not.toContain("Outcome:    VERIFIED");
+    expect(d.code).not.toBe(0);
+  });
   test("A-130 quiet by default: at most 15 lines (G6), stage lines only with --verbose", () => {
     const q = runEngine("done");
     const lines = q.out.trim().split("\n");
