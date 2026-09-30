@@ -10,7 +10,8 @@
 # bash tests/test-shard-coverage.sh (measured 13-20s,
 # over the 10s budget), and bash scripts/local-ci.sh.
 #
-# Env: STRUCTURAL_ROOT overrides the tree to check (used by the tests).
+# Env: STRUCTURAL_ROOT overrides the tree to check (used by the tests);
+# STRUCTURAL_BASE overrides the base ref for the emoji/dash scan.
 
 set -uo pipefail
 case "${1:-}" in -h|--help) sed -n "2,13p" "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
@@ -28,7 +29,9 @@ check() {
     t0=$(now)
     out="$("$@" 2>&1)"; rc=$?
     t1=$(now)
-    if [ "$rc" -eq 0 ]; then
+    if [ "$rc" -eq 0 ] && [ "$out" = "SKIP" ]; then
+        printf 'SKIP %6dms  %s\n' $((t1 - t0)) "$label"
+    elif [ "$rc" -eq 0 ]; then
         printf 'PASS %6dms  %s\n' $((t1 - t0)) "$label"
     else
         printf 'FAIL %6dms  %s\n' $((t1 - t0)) "$label"
@@ -60,25 +63,41 @@ skill_version() {
     tail -n 3 SKILL.md | grep -q "\*\*v$v |" || { echo "SKILL.md footer != VERSION $v"; return 1; }
 }
 
-# Emoji scan on changed/untracked files (pattern from local-ci.sh); dash scan
-# on added lines only, so pre-existing text never blocks a slice.
+# Emoji/dash scan (emoji pattern from local-ci.sh). "Changed" is
+# everything since the merge-base with the base ref (STRUCTURAL_BASE, else
+# origin/main, else main) plus the working tree, so committed slices and CI
+# checkouts are scanned too. No resolvable base falls back to HEAD.
+# perl, not grep -P: BSD/macOS grep has no -P and the scan silently matched nothing.
+has_match() { perl -CSD -ne 'BEGIN{$p=shift} $f=1 if /$p/; END{exit !$f}' "$1" 2>/dev/null; }
 changed_chars() {
-    local f rc=0 files
-    files=$( { git diff HEAD --name-only --diff-filter=AM; git ls-files -o --exclude-standard; } 2>/dev/null | sort -u)
+    local f rc=0 files base="" ref
+    for ref in "${STRUCTURAL_BASE:-}" origin/main main; do
+        [ -n "$ref" ] || continue
+        base=$(git merge-base "$ref" HEAD 2>/dev/null) && break
+        base=""
+    done
+    base="${base:-HEAD}"
+    # Emoji and dash scans see added lines only, so pre-existing text in a
+    # touched file never blocks a slice; untracked files are scanned whole.
+    local emoji='[\x{1F300}-\x{1FAFF}\x{2600}-\x{27BF}]' dash='[\x{2013}\x{2014}]'
+    if git diff "$base" -U0 2>/dev/null | has_match "^\\+[^+].*$emoji"; then
+        echo "emoji in added lines (diff vs $base)"; rc=1
+    fi
+    if git diff "$base" -U0 2>/dev/null | has_match "^\\+[^+].*$dash"; then
+        echo "em/en dash in added lines (diff vs $base)"; rc=1
+    fi
+    files=$(git ls-files -o --exclude-standard 2>/dev/null)
     for f in $files; do
         [ -f "$f" ] || continue
-        if grep -qP '[\x{1F300}-\x{1FAFF}\x{2600}-\x{27BF}]' "$f" 2>/dev/null; then echo "emoji: $f"; rc=1; fi
+        if has_match "$emoji|$dash" < "$f"; then echo "emoji/dash in untracked: $f"; rc=1; fi
     done
-    if git diff HEAD -U0 2>/dev/null | grep -qP '^\+[^+].*[\x{2013}\x{2014}]'; then
-        echo "em/en dash in added lines (git diff HEAD)"; rc=1
-    fi
     return $rc
 }
 
 # Typecheck is ~2s with deps installed; skipped (not failed) when loki-ts has no
 # node_modules, e.g. CI before its bun install (Tier A R4 typechecks later).
 typecheck() {
-    [ -d loki-ts/node_modules ] || { echo "SKIP: loki-ts/node_modules missing"; return 0; }
+    [ -d loki-ts/node_modules ] || { echo SKIP; return 0; }
     (cd loki-ts && bun run typecheck)
 }
 

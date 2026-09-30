@@ -1,0 +1,117 @@
+diff --git a/src/packaging/_structures.py b/src/packaging/_structures.py
+new file mode 100644
+index 0000000..4306784
+--- /dev/null
++++ b/src/packaging/_structures.py
+@@ -0,0 +1,33 @@
++# This file is dual licensed under the terms of the Apache License, Version
++# 2.0, and the BSD License. See the LICENSE file in the root of this repository
++# for complete details.
++
++"""Backward-compatibility shim for unpickling Version objects serialized before
++packaging 26.1.
++
++Old pickles reference ``packaging._structures.InfinityType`` and
++``packaging._structures.NegativeInfinityType``.  This module provides minimal
++stand-in classes so that ``pickle.loads()`` can resolve those references.
++The deserialized objects are not used for comparisons — ``Version.__setstate__``
++discards the stale ``_key`` cache and recomputes it from the core version fields.
++"""
++
++from __future__ import annotations
++
++
++class InfinityType:
++    """Stand-in for the removed ``InfinityType`` used in old comparison keys."""
++
++    def __repr__(self) -> str:
++        return "Infinity"
++
++
++class NegativeInfinityType:
++    """Stand-in for the removed ``NegativeInfinityType`` used in old comparison keys."""
++
++    def __repr__(self) -> str:
++        return "-Infinity"
++
++
++Infinity = InfinityType()
++NegativeInfinity = NegativeInfinityType()
+diff --git a/src/packaging/version.py b/src/packaging/version.py
+index f872b85..16187e2 100644
+--- a/src/packaging/version.py
++++ b/src/packaging/version.py
+@@ -741,6 +741,73 @@ class Version(_BaseVersion):
+ 
+         return super().__ne__(other)
+ 
++    def __getstate__(
++        self,
++    ) -> tuple[
++        int,
++        tuple[int, ...],
++        tuple[str, int] | None,
++        tuple[str, int] | None,
++        tuple[str, int] | None,
++        LocalType | None,
++    ]:
++        # Return state as a 6-item tuple for compactness:
++        #   (epoch, release, pre, post, dev, local)
++        # Cache members are excluded and will be recomputed on demand
++        return (
++            self._epoch,
++            self._release,
++            self._pre,
++            self._post,
++            self._dev,
++            self._local,
++        )
++
++    def __setstate__(self, state: object) -> None:
++        # Always discard cached values — they may contain stale references
++        # (e.g. packaging._structures.InfinityType from pre-26.1 pickles)
++        # and will be recomputed on demand from the core fields above.
++        self._key_cache = None
++        self._hash_cache = None
++
++        if isinstance(state, tuple):
++            if len(state) == 6:
++                # New format (26.2+): (epoch, release, pre, post, dev, local)
++                (
++                    self._epoch,
++                    self._release,
++                    self._pre,
++                    self._post,
++                    self._dev,
++                    self._local,
++                ) = state
++                return
++            if len(state) == 2:
++                # Format (packaging 26.0-26.1): (None, {slot: value}).
++                _, slot_dict = state
++                if isinstance(slot_dict, dict):
++                    self._epoch = slot_dict["_epoch"]
++                    self._release = slot_dict["_release"]
++                    self._pre = slot_dict.get("_pre")
++                    self._post = slot_dict.get("_post")
++                    self._dev = slot_dict.get("_dev")
++                    self._local = slot_dict.get("_local")
++                    return
++        if isinstance(state, dict):
++            # Old format (packaging <= 25.x, no __slots__): state is a plain
++            # dict with "_version" (_Version NamedTuple) and "_key" entries.
++            version_nt = state.get("_version")
++            if version_nt is not None:
++                self._epoch = version_nt.epoch
++                self._release = version_nt.release
++                self._pre = version_nt.pre
++                self._post = version_nt.post
++                self._dev = version_nt.dev
++                self._local = version_nt.local
++                return
++
++        raise TypeError(f"Cannot restore Version from {state!r}")
++
+     @property
+     @_deprecated("Version._version is private and will be removed soon")
+     def _version(self) -> _Version:

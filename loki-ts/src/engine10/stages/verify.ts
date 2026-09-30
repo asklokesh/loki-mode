@@ -83,7 +83,7 @@ interface RunOpts {
 /** `cut` means the timeout or the stage's AbortSignal killed the child: never read as "fail" and
  *  never retried (a hung check must not burn 2x its timeout). */
 async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSignal, opts: RunOpts): Promise<{ ok: boolean; missing: boolean; cut: boolean }> {
-  if (!Bun.which(cmd, opts.path ? { PATH: opts.path } : undefined)) return { ok: false, missing: true, cut: false };
+  if (!Bun.which(cmd, { PATH: opts.path ?? process.env["PATH"] ?? "" })) return { ok: false, missing: true, cut: false };
   const timeout = AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS);
   const proc = Bun.spawn([cmd, ...args], {
     cwd,
@@ -214,8 +214,8 @@ export const verifyStage: Stage = {
     const failuresGrouped = checks
       .filter((c) => c.result === "fail")
       .map((c) => ({ signature: c.name, count: 1, sample: c.cmd }));
-    // E-98a: a check that ran (not_run has its own NOT PROVEN entry at seal) on a system interpreter.
-    const notProven = checks.some((c) => c.interpreter === "system" && c.result !== "not_run") ? ["tests ran on the system interpreter"] : [];
+    // E-98a/E-115: a check that ran (not_run has its own NOT PROVEN entry at seal) on a system interpreter/ruff.
+    const notProven = [...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
     return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed, not_proven: notProven } };
   },
 };

@@ -1,0 +1,839 @@
+FFFFFFFFFFFFFFFFFFFFFFFFF                                                [100%]
+=================================== FAILURES ===================================
+___________________________ TestEsEs.test_paragraph ____________________________
+
+self = <tests.providers.test_lorem.TestEsEs object at 0x1095160d0>
+faker = <faker.proxy.Faker object at 0x109516c10>, num_samples = 100
+
+    def test_paragraph(self, faker, num_samples):
+        num_sentences = 10
+        for _ in range(num_samples):
+            paragraph = faker.paragraph(nb_sentences=num_sentences)
+            assert isinstance(paragraph, str)
+            words = paragraph.replace(".", "").split()
+>           assert all(word.lower() in self.word_list for word in words)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:26: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:26: in <genexpr>
+    assert all(word.lower() in self.word_list for word in words)
+                               ^^^^^^^^^^^^^^
+tests/providers/test_lorem.py:18: in word_list
+    return [word.lower() for word in _provider("es_ES").word_list]
+                                     ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_ES'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+___________________________ TestEsEs.test_paragraphs ___________________________
+
+self = <tests.providers.test_lorem.TestEsEs object at 0x109516fd0>
+faker = <faker.proxy.Faker object at 0x109516c10>, num_samples = 100
+
+    def test_paragraphs(self, faker, num_samples):
+        num_paragraphs = 5
+        for _ in range(num_samples):
+            paragraphs = faker.paragraphs(nb=num_paragraphs)
+            for paragraph in paragraphs:
+                assert isinstance(paragraph, str)
+                words = paragraph.replace(".", "").split()
+>               assert all(word.lower() in self.word_list for word in words)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:35: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:35: in <genexpr>
+    assert all(word.lower() in self.word_list for word in words)
+                               ^^^^^^^^^^^^^^
+tests/providers/test_lorem.py:18: in word_list
+    return [word.lower() for word in _provider("es_ES").word_list]
+                                     ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_ES'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+____________________________ TestEsEs.test_sentence ____________________________
+
+self = <tests.providers.test_lorem.TestEsEs object at 0x109c2cc30>
+faker = <faker.proxy.Faker object at 0x109516c10>, num_samples = 100
+
+    def test_sentence(self, faker, num_samples):
+        num_words = 10
+        for _ in range(num_samples):
+            sentence = faker.sentence(nb_words=num_words)
+            assert isinstance(sentence, str)
+            words = sentence.replace(".", "").split()
+>           assert all(word.lower() in self.word_list for word in words)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:43: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:43: in <genexpr>
+    assert all(word.lower() in self.word_list for word in words)
+                               ^^^^^^^^^^^^^^
+tests/providers/test_lorem.py:18: in word_list
+    return [word.lower() for word in _provider("es_ES").word_list]
+                                     ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_ES'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+___________________________ TestEsEs.test_sentences ____________________________
+
+self = <tests.providers.test_lorem.TestEsEs object at 0x109c2cd60>
+faker = <faker.proxy.Faker object at 0x109516c10>, num_samples = 100
+
+    def test_sentences(self, faker, num_samples):
+        num_sentences = 5
+        for _ in range(num_samples):
+            sentences = faker.sentences(nb=num_sentences)
+            for sentence in sentences:
+                assert isinstance(sentence, str)
+                words = sentence.replace(".", "").split()
+>               assert all(word.lower() in self.word_list for word in words)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:52: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:52: in <genexpr>
+    assert all(word.lower() in self.word_list for word in words)
+                               ^^^^^^^^^^^^^^
+tests/providers/test_lorem.py:18: in word_list
+    return [word.lower() for word in _provider("es_ES").word_list]
+                                     ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_ES'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+______________________________ TestEsEs.test_text ______________________________
+
+self = <tests.providers.test_lorem.TestEsEs object at 0x109a90170>
+faker = <faker.proxy.Faker object at 0x109516c10>, num_samples = 100
+
+    def test_text(self, faker, num_samples):
+        num_chars = 25
+        for _ in range(num_samples):
+            text = faker.text(max_nb_chars=num_chars)
+            assert isinstance(text, str)
+            words = re.sub(r"[.\n]+", " ", text).split()
+>           assert all(word.lower() in self.word_list for word in words)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:60: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:60: in <genexpr>
+    assert all(word.lower() in self.word_list for word in words)
+                               ^^^^^^^^^^^^^^
+tests/providers/test_lorem.py:18: in word_list
+    return [word.lower() for word in _provider("es_ES").word_list]
+                                     ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_ES'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+_____________________________ TestEsEs.test_texts ______________________________
+
+self = <tests.providers.test_lorem.TestEsEs object at 0x1099f5040>
+faker = <faker.proxy.Faker object at 0x109516c10>, num_samples = 100
+
+    def test_texts(self, faker, num_samples):
+        num_texts = 5
+        num_chars = 25
+        for _ in range(num_samples):
+            texts = faker.texts(max_nb_chars=num_chars, nb_texts=num_texts)
+            for text in texts:
+                assert isinstance(text, str)
+                words = re.sub(r"[.\n]+", " ", text).split()
+>               assert all(word.lower() in self.word_list for word in words)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:70: in <genexpr>
+    assert all(word.lower() in self.word_list for word in words)
+                               ^^^^^^^^^^^^^^
+tests/providers/test_lorem.py:18: in word_list
+    return [word.lower() for word in _provider("es_ES").word_list]
+                                     ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_ES'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+______________________________ TestEsEs.test_word ______________________________
+
+self = <tests.providers.test_lorem.TestEsEs object at 0x1099f5150>
+faker = <faker.proxy.Faker object at 0x109516c10>, num_samples = 100
+
+    def test_word(self, faker, num_samples):
+        for _ in range(num_samples):
+            word = faker.word()
+>           assert isinstance(word, str) and word in _provider("es_ES").word_list
+                                                     ^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:75: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_ES'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+_____________________________ TestEsEs.test_words ______________________________
+
+self = <tests.providers.test_lorem.TestEsEs object at 0x109aac250>
+faker = <faker.proxy.Faker object at 0x109516c10>, num_samples = 100
+
+    def test_words(self, faker, num_samples):
+        num_words = 5
+        for _ in range(num_samples):
+            words = faker.words(num_words)
+>           assert all(isinstance(word, str) and word in _provider("es_ES").word_list for word in words)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:81: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:81: in <genexpr>
+    assert all(isinstance(word, str) and word in _provider("es_ES").word_list for word in words)
+                                                 ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_ES'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+___________________________ TestEsAr.test_paragraph ____________________________
+
+self = <tests.providers.test_lorem.TestEsAr object at 0x1095174d0>
+faker = <faker.proxy.Faker object at 0x109516e90>, num_samples = 100
+
+    def test_paragraph(self, faker, num_samples):
+        num_sentences = 10
+        for _ in range(num_samples):
+            paragraph = faker.paragraph(nb_sentences=num_sentences)
+            assert isinstance(paragraph, str)
+            words = paragraph.replace(".", "").split()
+>           assert all(word.lower() in self.word_list for word in words)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:97: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:97: in <genexpr>
+    assert all(word.lower() in self.word_list for word in words)
+                               ^^^^^^^^^^^^^^
+tests/providers/test_lorem.py:89: in word_list
+    return [word.lower() for word in _provider("es_AR").word_list]
+                                     ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_AR'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_AR' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+___________________________ TestEsAr.test_paragraphs ___________________________
+
+self = <tests.providers.test_lorem.TestEsAr object at 0x109517610>
+faker = <faker.proxy.Faker object at 0x109516e90>, num_samples = 100
+
+    def test_paragraphs(self, faker, num_samples):
+        num_paragraphs = 5
+        for _ in range(num_samples):
+            paragraphs = faker.paragraphs(nb=num_paragraphs)
+            for paragraph in paragraphs:
+                assert isinstance(paragraph, str)
+                words = paragraph.replace(".", "").split()
+>               assert all(word.lower() in self.word_list for word in words)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:106: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:106: in <genexpr>
+    assert all(word.lower() in self.word_list for word in words)
+                               ^^^^^^^^^^^^^^
+tests/providers/test_lorem.py:89: in word_list
+    return [word.lower() for word in _provider("es_AR").word_list]
+                                     ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_AR'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_AR' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+____________________________ TestEsAr.test_sentence ____________________________
+
+self = <tests.providers.test_lorem.TestEsAr object at 0x109c2d220>
+faker = <faker.proxy.Faker object at 0x109516e90>, num_samples = 100
+
+    def test_sentence(self, faker, num_samples):
+        num_words = 10
+        for _ in range(num_samples):
+            sentence = faker.sentence(nb_words=num_words)
+            assert isinstance(sentence, str)
+            words = sentence.replace(".", "").split()
+>           assert all(word.lower() in self.word_list for word in words)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:114: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:114: in <genexpr>
+    assert all(word.lower() in self.word_list for word in words)
+                               ^^^^^^^^^^^^^^
+tests/providers/test_lorem.py:89: in word_list
+    return [word.lower() for word in _provider("es_AR").word_list]
+                                     ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_AR'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_AR' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+___________________________ TestEsAr.test_sentences ____________________________
+
+self = <tests.providers.test_lorem.TestEsAr object at 0x109c2d350>
+faker = <faker.proxy.Faker object at 0x109516e90>, num_samples = 100
+
+    def test_sentences(self, faker, num_samples):
+        num_sentences = 5
+        for _ in range(num_samples):
+            sentences = faker.sentences(nb=num_sentences)
+            for sentence in sentences:
+                assert isinstance(sentence, str)
+                words = sentence.replace(".", "").split()
+>               assert all(word.lower() in self.word_list for word in words)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:123: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:123: in <genexpr>
+    assert all(word.lower() in self.word_list for word in words)
+                               ^^^^^^^^^^^^^^
+tests/providers/test_lorem.py:89: in word_list
+    return [word.lower() for word in _provider("es_AR").word_list]
+                                     ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_AR'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_AR' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+______________________________ TestEsAr.test_text ______________________________
+
+self = <tests.providers.test_lorem.TestEsAr object at 0x109a90710>
+faker = <faker.proxy.Faker object at 0x109516e90>, num_samples = 100
+
+    def test_text(self, faker, num_samples):
+        num_chars = 25
+        for _ in range(num_samples):
+            text = faker.text(max_nb_chars=num_chars)
+            assert isinstance(text, str)
+            words = re.sub(r"[.\n]+", " ", text).split()
+>           assert all(word.lower() in self.word_list for word in words)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:131: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:131: in <genexpr>
+    assert all(word.lower() in self.word_list for word in words)
+                               ^^^^^^^^^^^^^^
+tests/providers/test_lorem.py:89: in word_list
+    return [word.lower() for word in _provider("es_AR").word_list]
+                                     ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_AR'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_AR' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+_____________________________ TestEsAr.test_texts ______________________________
+
+self = <tests.providers.test_lorem.TestEsAr object at 0x1099f5370>
+faker = <faker.proxy.Faker object at 0x109516e90>, num_samples = 100
+
+    def test_texts(self, faker, num_samples):
+        num_texts = 5
+        num_chars = 25
+        for _ in range(num_samples):
+            texts = faker.texts(max_nb_chars=num_chars, nb_texts=num_texts)
+            for text in texts:
+                assert isinstance(text, str)
+                words = re.sub(r"[.\n]+", " ", text).split()
+>               assert all(word.lower() in self.word_list for word in words)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:141: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:141: in <genexpr>
+    assert all(word.lower() in self.word_list for word in words)
+                               ^^^^^^^^^^^^^^
+tests/providers/test_lorem.py:89: in word_list
+    return [word.lower() for word in _provider("es_AR").word_list]
+                                     ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_AR'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_AR' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+______________________________ TestEsAr.test_word ______________________________
+
+self = <tests.providers.test_lorem.TestEsAr object at 0x1099f5480>
+faker = <faker.proxy.Faker object at 0x109516e90>, num_samples = 100
+
+    def test_word(self, faker, num_samples):
+        for _ in range(num_samples):
+            word = faker.word()
+>           assert isinstance(word, str) and word in _provider("es_ES").word_list
+                                                     ^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:146: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_ES'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+_____________________________ TestEsAr.test_words ______________________________
+
+self = <tests.providers.test_lorem.TestEsAr object at 0x109aac750>
+faker = <faker.proxy.Faker object at 0x109516e90>, num_samples = 100
+
+    def test_words(self, faker, num_samples):
+        num_words = 5
+        for _ in range(num_samples):
+            words = faker.words(num_words)
+>           assert all(isinstance(word, str) and word in _provider("es_ES").word_list for word in words)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:152: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:152: in <genexpr>
+    assert all(isinstance(word, str) and word in _provider("es_ES").word_list for word in words)
+                                                 ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_ES'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+___________________________ TestEsMx.test_paragraph ____________________________
+
+self = <tests.providers.test_lorem.TestEsMx object at 0x109517750>
+faker = <faker.proxy.Faker object at 0x109c70d60>, num_samples = 100
+
+    def test_paragraph(self, faker, num_samples):
+        num_sentences = 10
+        for _ in range(num_samples):
+            paragraph = faker.paragraph(nb_sentences=num_sentences)
+            assert isinstance(paragraph, str)
+            words = paragraph.replace(".", "").split()
+>           assert all(word.lower() in self.word_list for word in words)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:168: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:168: in <genexpr>
+    assert all(word.lower() in self.word_list for word in words)
+                               ^^^^^^^^^^^^^^
+tests/providers/test_lorem.py:160: in word_list
+    return [word.lower() for word in _provider("es_MX").word_list]
+                                     ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_MX'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_MX' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+___________________________ TestEsMx.test_paragraphs ___________________________
+
+self = <tests.providers.test_lorem.TestEsMx object at 0x109517890>
+faker = <faker.proxy.Faker object at 0x109c70d60>, num_samples = 100
+
+    def test_paragraphs(self, faker, num_samples):
+        num_paragraphs = 5
+        for _ in range(num_samples):
+            paragraphs = faker.paragraphs(nb=num_paragraphs)
+            for paragraph in paragraphs:
+                assert isinstance(paragraph, str)
+                words = paragraph.replace(".", "").split()
+>               assert all(word.lower() in self.word_list for word in words)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:177: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:177: in <genexpr>
+    assert all(word.lower() in self.word_list for word in words)
+                               ^^^^^^^^^^^^^^
+tests/providers/test_lorem.py:160: in word_list
+    return [word.lower() for word in _provider("es_MX").word_list]
+                                     ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_MX'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_MX' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+____________________________ TestEsMx.test_sentence ____________________________
+
+self = <tests.providers.test_lorem.TestEsMx object at 0x109c2d5b0>
+faker = <faker.proxy.Faker object at 0x109c70d60>, num_samples = 100
+
+    def test_sentence(self, faker, num_samples):
+        num_words = 10
+        for _ in range(num_samples):
+            sentence = faker.sentence(nb_words=num_words)
+            assert isinstance(sentence, str)
+            words = sentence.replace(".", "").split()
+>           assert all(word.lower() in self.word_list for word in words)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:185: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:185: in <genexpr>
+    assert all(word.lower() in self.word_list for word in words)
+                               ^^^^^^^^^^^^^^
+tests/providers/test_lorem.py:160: in word_list
+    return [word.lower() for word in _provider("es_MX").word_list]
+                                     ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_MX'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_MX' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+___________________________ TestEsMx.test_sentences ____________________________
+
+self = <tests.providers.test_lorem.TestEsMx object at 0x109c2d480>
+faker = <faker.proxy.Faker object at 0x109c70d60>, num_samples = 100
+
+    def test_sentences(self, faker, num_samples):
+        num_sentences = 5
+        for _ in range(num_samples):
+            sentences = faker.sentences(nb=num_sentences)
+            for sentence in sentences:
+                assert isinstance(sentence, str)
+                words = sentence.replace(".", "").split()
+>               assert all(word.lower() in self.word_list for word in words)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:194: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:194: in <genexpr>
+    assert all(word.lower() in self.word_list for word in words)
+                               ^^^^^^^^^^^^^^
+tests/providers/test_lorem.py:160: in word_list
+    return [word.lower() for word in _provider("es_MX").word_list]
+                                     ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_MX'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_MX' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+______________________________ TestEsMx.test_text ______________________________
+
+self = <tests.providers.test_lorem.TestEsMx object at 0x109a90950>
+faker = <faker.proxy.Faker object at 0x109c70d60>, num_samples = 100
+
+    def test_text(self, faker, num_samples):
+        num_chars = 25
+        for _ in range(num_samples):
+            text = faker.text(max_nb_chars=num_chars)
+            assert isinstance(text, str)
+            words = re.sub(r"[.\n]+", " ", text).split()
+>           assert all(word.lower() in self.word_list for word in words)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:202: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:202: in <genexpr>
+    assert all(word.lower() in self.word_list for word in words)
+                               ^^^^^^^^^^^^^^
+tests/providers/test_lorem.py:160: in word_list
+    return [word.lower() for word in _provider("es_MX").word_list]
+                                     ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_MX'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_MX' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+_____________________________ TestEsMx.test_texts ______________________________
+
+self = <tests.providers.test_lorem.TestEsMx object at 0x1099f56a0>
+faker = <faker.proxy.Faker object at 0x109c70d60>, num_samples = 100
+
+    def test_texts(self, faker, num_samples):
+        num_texts = 5
+        num_chars = 25
+        for _ in range(num_samples):
+            texts = faker.texts(max_nb_chars=num_chars, nb_texts=num_texts)
+            for text in texts:
+                assert isinstance(text, str)
+                words = re.sub(r"[.\n]+", " ", text).split()
+>               assert all(word.lower() in self.word_list for word in words)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:212: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:212: in <genexpr>
+    assert all(word.lower() in self.word_list for word in words)
+                               ^^^^^^^^^^^^^^
+tests/providers/test_lorem.py:160: in word_list
+    return [word.lower() for word in _provider("es_MX").word_list]
+                                     ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_MX'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_MX' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+______________________________ TestEsMx.test_word ______________________________
+
+self = <tests.providers.test_lorem.TestEsMx object at 0x1099f57b0>
+faker = <faker.proxy.Faker object at 0x109c70d60>, num_samples = 100
+
+    def test_word(self, faker, num_samples):
+        for _ in range(num_samples):
+            word = faker.word()
+>           assert isinstance(word, str) and word in _provider("es_ES").word_list
+                                                     ^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:217: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_ES'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+_____________________________ TestEsMx.test_words ______________________________
+
+self = <tests.providers.test_lorem.TestEsMx object at 0x109aad050>
+faker = <faker.proxy.Faker object at 0x109c70d60>, num_samples = 100
+
+    def test_words(self, faker, num_samples):
+        num_words = 5
+        for _ in range(num_samples):
+            words = faker.words(num_words)
+>           assert all(isinstance(word, str) and word in _provider("es_ES").word_list for word in words)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:223: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/providers/test_lorem.py:223: in <genexpr>
+    assert all(isinstance(word, str) and word in _provider("es_ES").word_list for word in words)
+                                                 ^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_ES'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+________________ test_spanish_word_lists_are_not_other_locales _________________
+
+    def test_spanish_word_lists_are_not_other_locales():
+        # Added by the task author (not upstream): issue #2206 is that es_* text()
+        # came out as Latin lorem ipsum. Upstream membership tests alone pass for a
+        # provider that just aliases another locale's list. Real Spanish lists
+        # overlap any other lorem locale by under 10%; an alias overlaps 100%.
+        lorem_dir = Path(importlib.import_module("faker.providers.lorem").__file__).parent
+        others = sorted(d.name for d in lorem_dir.iterdir() if (d / "__init__.py").is_file() and not d.name.startswith("es_"))
+        assert others
+        for locale in ("es_ES", "es_AR", "es_MX"):
+>           words = {word.lower() for word in _provider(locale).word_list}
+                                              ^^^^^^^^^^^^^^^^^
+
+tests/providers/test_lorem.py:235: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+locale = 'es_ES'
+
+    def _provider(locale):
+        # Lazy import so the module not existing at the base commit fails each
+        # test instead of the whole file at collection (see NOTES.md, trim).
+>       return importlib.import_module(f"faker.providers.lorem.{locale}").Provider
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'faker.providers.lorem.es_ES' has no attribute 'Provider'
+
+tests/providers/test_lorem.py:10: AttributeError
+=========================== short test summary info ============================
+FAILED tests/providers/test_lorem.py::TestEsEs::test_paragraph - AttributeErr...
+FAILED tests/providers/test_lorem.py::TestEsEs::test_paragraphs - AttributeEr...
+FAILED tests/providers/test_lorem.py::TestEsEs::test_sentence - AttributeErro...
+FAILED tests/providers/test_lorem.py::TestEsEs::test_sentences - AttributeErr...
+FAILED tests/providers/test_lorem.py::TestEsEs::test_text - AttributeError: m...
+FAILED tests/providers/test_lorem.py::TestEsEs::test_texts - AttributeError: ...
+FAILED tests/providers/test_lorem.py::TestEsEs::test_word - AttributeError: m...
+FAILED tests/providers/test_lorem.py::TestEsEs::test_words - AttributeError: ...
+FAILED tests/providers/test_lorem.py::TestEsAr::test_paragraph - AttributeErr...
+FAILED tests/providers/test_lorem.py::TestEsAr::test_paragraphs - AttributeEr...
+FAILED tests/providers/test_lorem.py::TestEsAr::test_sentence - AttributeErro...
+FAILED tests/providers/test_lorem.py::TestEsAr::test_sentences - AttributeErr...
+FAILED tests/providers/test_lorem.py::TestEsAr::test_text - AttributeError: m...
+FAILED tests/providers/test_lorem.py::TestEsAr::test_texts - AttributeError: ...
+FAILED tests/providers/test_lorem.py::TestEsAr::test_word - AttributeError: m...
+FAILED tests/providers/test_lorem.py::TestEsAr::test_words - AttributeError: ...
+FAILED tests/providers/test_lorem.py::TestEsMx::test_paragraph - AttributeErr...
+FAILED tests/providers/test_lorem.py::TestEsMx::test_paragraphs - AttributeEr...
+FAILED tests/providers/test_lorem.py::TestEsMx::test_sentence - AttributeErro...
+FAILED tests/providers/test_lorem.py::TestEsMx::test_sentences - AttributeErr...
+FAILED tests/providers/test_lorem.py::TestEsMx::test_text - AttributeError: m...
+FAILED tests/providers/test_lorem.py::TestEsMx::test_texts - AttributeError: ...
+FAILED tests/providers/test_lorem.py::TestEsMx::test_word - AttributeError: m...
+FAILED tests/providers/test_lorem.py::TestEsMx::test_words - AttributeError: ...
+FAILED tests/providers/test_lorem.py::test_spanish_word_lists_are_not_other_locales
+25 failed in 0.37s
