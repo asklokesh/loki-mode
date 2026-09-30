@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "loki-seal",
+  "owner": { "name": "Autonomi" },
+  "description": "Loki Seal: a Stop hook that blocks 'done' on red or weakened tests.",
+  "plugins": [
+    {
+      "name": "loki-seal",
+      "source": "./",
+      "description": "Stop hook that refuses 'done' while tests are red or were deleted, skipped, xfailed or weakened. No model calls.",
+      "homepage": "https://github.com/asklokesh/loki-mode",
+      "category": "testing",
+      "keywords": ["verification", "tests", "hooks"]
+    }
+  ]
+}
