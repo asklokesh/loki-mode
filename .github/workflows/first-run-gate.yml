@@ -1,0 +1,45 @@
+name: First-run gate
+
+# NON-required: informational until A-01 promote consumes it. Stub provider, no keys.
+# Expected to fail while the first-run defects (docs/v10/FIRST-RUN-GATE.md) are open.
+
+on:
+  push:
+    branches: [main, "train/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  first-run-gate:
+    name: first-run gate (stub)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.13
+          no-cache: true
+
+      - name: Run the gate
+        env:
+          FRG_REPORT: ${{ runner.temp }}/first-run-gate-report.txt
+        run: bash scripts/first-run-gate.sh --stub
+
+      - name: Upload per-assertion report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: first-run-gate-report
+          path: ${{ runner.temp }}/first-run-gate-report.txt
+          if-no-files-found: warn
