@@ -77,6 +77,7 @@ export interface SummaryInput {
   verdict: Verdict;
   /** A-110: the one name printed on the Outcome line; absent falls back to the receipt verdict. */
   outcome?: Outcome;
+  reason?: string; // A-130: why a non-success run ended; one line
   receipt?: { sha: string | null; signed: boolean | null; tampered?: boolean }; // A-130: UNSIGNED/UNCHECKED always shown
   /** Deferred/missing checks (section 9); rendered comma-joined. */
   notProven: string[];
@@ -119,7 +120,7 @@ export function formatSummary(input: SummaryInput): string {
         : `${labelCol("Cost")}not measured${input.cost.note ? ` (${input.cost.note})` : ""}`;
   const stagesStr = input.stages.map((s) => `${s.label} ${formatDuration(s.seconds)}`).join(", ");
   const timeLine = `${labelCol("Time")}${formatDuration(input.wallS)} (${stagesStr})`;
-  return [verdictLine, prLine, ...receiptLine, notProvenLine, costLine, timeLine].join("\n");
+  return [verdictLine, ...(input.reason ? [`${labelCol("Reason")}${input.reason}`] : []), prLine, ...receiptLine, notProvenLine, costLine, timeLine].join("\n");
 }
 /** Section 3: an optional module loaded only if present, never a hard dependency.
  *  eta.ts (E-20, wave 2) is not part of this slice; when absent, ETAs are omitted. */

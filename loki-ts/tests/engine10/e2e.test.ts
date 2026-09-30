@@ -30,7 +30,7 @@ interface Run {
   runDir: string; stubCalls: string[]; stubEnv: string; origin: string;
 }
 
-function runEngine(mode: "done" | "already" | "tamper", withPr = false, extra: string[] = []): Run {
+function runEngine(mode: "done" | "already" | "tamper" | "nochange", withPr = false, extra: string[] = []): Run {
   if (!existsSync(ENTRY)) throw new Error(`engine entry missing: ${ENTRY}`); // never fall through to the legacy bash route
   const tmp = mkdtempSync(join(tmpdir(), "loki-e2e-"));
   temps.push(tmp);
@@ -93,8 +93,15 @@ describe("engine10 e2e (stub claude)", () => {
     expect(t.code).not.toBe(0);
     const d = runEngine("tamper");
     expect(d.out).toMatch(/^Receipt:\s+TAMPERED/m);
+    expect(d.out).toMatch(/^Reason:\s+event log modified/m);
     expect(d.out).not.toContain("Outcome:    VERIFIED");
     expect(d.code).not.toBe(0);
+  });
+  test("A-130 round 3: an empty-diff failure names its cause in one Reason line", () => {
+    const r = runEngine("nochange");
+    expect(r.code).not.toBe(0);
+    expect(r.out).toMatch(/^Reason:\s+.*empty diff/m);
+    expect(r.out.trim().split("\n").filter((l) => !l.includes("ended FAILED")).length).toBeLessThanOrEqual(8); // stdout only: the E-67 stderr line stays
   });
   test("A-130 quiet by default: at most 15 lines (G6), stage lines only with --verbose", () => {
     const q = runEngine("done");

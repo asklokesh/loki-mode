@@ -360,15 +360,13 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   await new Promise((r) => setTimeout(r, 300)); // let the tail flush the last lines
   stopTail();
 
-  const events = readEvents(eventsPath);
-  const f = fold(events);
-  const sawCost = events.some((e) => e.type === "cost");
-  const cli = process.env.LOKI_E10_INVOKER === "cli";
+  const events = readEvents(eventsPath), f = fold(events);
+  const sawCost = events.some((e) => e.type === "cost"), cli = process.env.LOKI_E10_INVOKER === "cli";
   const pc = partialCost(events, res.tampered);
   const usd = res.tampered ? null : f.cost.usd; // E-69: same tamper guard as costUsd elsewhere -- a TAMPERED run never prints a trusted dollar figure
   const out = json ? `${JSON.stringify({ ok: EXIT[res.outcome] === 0, outcome: res.outcome, stop: res.stop, run_id: runId, receipt_sha256: res.receiptSha })}\n` : renderMainOutput(events, {
     pr: res.prUrl ? { url: res.prUrl, draft: res.verdict !== "VERIFIED" } : null,
-    verdict: res.verdict, outcome: res.outcome, receipt: { sha: res.tampered ? null : res.receiptSha, tampered: res.tampered, signed: res.tampered ? null : (events.findLast((e) => e.type === "receipt.sealed")?.data.signed as boolean | undefined) ?? null }, notProven: res.notProven, flaky: [],
+    verdict: res.verdict, outcome: res.outcome, reason: EXIT[res.outcome] === 0 ? undefined : (res.tampered ? "event log modified outside the engine" : String(events.find((e) => e.type === "stage.failed")?.data.reason ?? res.stop ?? "")).replace(/\s+/g, " ").slice(0, 200) || undefined, receipt: { sha: res.tampered ? null : res.receiptSha, tampered: res.tampered, signed: res.tampered ? null : (events.findLast((e) => e.type === "receipt.sealed")?.data.signed as boolean | undefined) ?? null }, notProven: res.notProven, flaky: [],
     cost: {
       usd, provider, tokens: summaryTokens(f, sawCost), note: !res.tampered && usd === null && cli ? "CLI invoker records no cost" : null,
       partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total,

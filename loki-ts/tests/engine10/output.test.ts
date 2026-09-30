@@ -179,6 +179,7 @@ describe("formatSummary (golden, ENGINE.md section 11)", () => {
     expect(out).not.toContain("$0");
     expect(out).toContain("PR:         none");
     const base = { pr: null, verdict: "VERIFIED", notProven: [], flaky: [], cost: { usd: null, provider: "claude", tokens: null }, wallS: 1, stages: [] } as never;
+    expect(formatSummary({ ...(base as object), reason: "empty diff" } as never)).toContain("Outcome:    VERIFIED\nReason:     empty diff\n");
     const sha = "a".repeat(64);
     expect(formatSummary({ ...(base as object), receipt: { sha, signed: false } } as never)).toContain(`Receipt:    sha256:${sha} (UNSIGNED)`);
     expect(formatSummary({ ...(base as object), receipt: { sha: null, signed: null } } as never)).toContain("Receipt:    none (UNCHECKED)");
