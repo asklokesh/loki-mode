@@ -72,9 +72,9 @@ describe("engine10 hard cap -> DRAFT PR body (E-19)", () => {
     const gcPidFile = join(workDir, "grandchild.pid");
     process.env["LOKI_E10_CAP_S"] = "30";
     process.env["SESSION_TEST_GRANDCHILD_PID_FILE"] = gcPidFile;
-    // seal.ts signs only when a key is configured; force the unsigned path (same convention as seal.test.ts).
+    // seal.ts auto-generates a key when none is set; point it at the throwaway work dir, never the real ~/.loki.
     process.env["LOKI_RECEIPT_SIGNING_KEY"] = "";
-    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = "";
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(workDir, "k.pem");
 
     try {
       git(["init", "-q"], repoDir);

@@ -168,7 +168,7 @@ class AMissingPathIsNeverSuccess(unittest.TestCase):
         for tool in _participants():
             name = tool.name
             if name in ("tool-index.py", "policy-load.py", "gate-report.py",
-                        "signing-status.py", "gate-init.py"):
+                        "gate-init.py"):
                 continue  # take no workspace positional
             with self.subTest(tool=name):
                 r = _run(tool, missing)

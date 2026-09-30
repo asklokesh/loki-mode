@@ -264,10 +264,9 @@ fixed at the same time.
   already states signature status explicitly in both directions
   (`proof-generator.py:1808-1820`): SIGNED, or UNSIGNED with the honest line that
   the integrity hash "does NOT prove who produced them, so this receipt trusts
-  its generator." That is the shippable version. Do **not** flip
-  `LOKI_PROOF_GPG_KEY` to default-on: with no key present it would either fail
-  the run or silently emit no signature, and the second is the false-green this
-  project exists to prevent. Key distribution is a founder decision.
+  its generator." That is the shippable version. Signing is now default-on through an
+  auto-generated local Ed25519 key (A-120); the old gpg switch was deleted.
+  Key distribution remains a founder decision.
 - **OTEL to a customer-owned collector.** Already implemented -- `otel_endpoint`
   is persisted and read (`autonomy/loki:26755`, `:26828-26837`).
 - **A headless exec contract with documented exit codes.** Already exists via

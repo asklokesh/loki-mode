@@ -1056,9 +1056,8 @@ def _git_diffstat(target_dir, include_diffs):
     into _diff_sha256, the receipt's integrity hash, which is written on EVERY
     run. A verifier recomputing it therefore attests to the understated stat,
     and the receipt is exactly the artifact users are told to trust. (Detached
-    GPG signing is a separate opt-in layer gated on LOKI_PROOF_GPG_KEY and
-    default OFF; when enabled it signs these same bytes, but the integrity hash
-    is the always-on path.)
+    Ed25519 signing attests to the same digest; the integrity hash is the
+    always-on path.)
 
     Order of preference:
       1. _LOKI_RUN_START_SHA -- the run's own baseline (run.sh exports it).
@@ -1301,26 +1300,6 @@ def _wall_clock_sec(started_at, generated_at):
 
 def _canonical(obj):
     return json.dumps(obj, sort_keys=True, separators=(",", ":"))
-
-
-def _gpg_detached_sign(data, key_id):
-    """Produce an ASCII-armored gpg detached signature over `data`.
-
-    Returns the armored signature string, or None on any failure (gpg missing,
-    key not found, timeout). Best-effort: signing is an optional add-on and
-    never blocks proof emission. Local-only: invokes the on-PATH gpg, no network.
-    """
-    try:
-        proc = subprocess.run(
-            ["gpg", "--batch", "--yes", "--armor", "--detach-sign",
-             "--local-user", key_id, "--output", "-"],
-            input=data, capture_output=True, timeout=30,
-        )
-        if proc.returncode != 0 or not proc.stdout:
-            return None
-        return proc.stdout.decode("utf-8", errors="replace")
-    except Exception:
-        return None
 
 
 def _build_proof(args, loki_dir, target_dir, repo_root):
@@ -1965,16 +1944,16 @@ def _render_fallback_html(proof):
     # Signing state, stated plainly. Mirrors renderProvenance in
     # proof-template.html (the primary renderer); this fallback path must not
     # be quieter about provenance than the page it stands in for.
-    if ver.get("gpg_signature"):
-        rows.append("<p>Signature: SIGNED (detached GPG over the canonical "
-                    "bytes). A verifier holding the signer public key can "
-                    "confirm provenance offline: loki proof verify &lt;id&gt;</p>")
+    if ver.get("attestation"):
+        rows.append("<p>Signature: SIGNED (Ed25519 attestation over the "
+                    "integrity hash). Confirm provenance offline: "
+                    "loki proof verify &lt;id&gt;</p>")
     else:
         rows.append("<p>Signature: UNSIGNED. The integrity hash proves the "
                     "bytes were not edited after hashing; it does NOT prove "
                     "who produced them, so this receipt trusts its generator. "
-                    "To sign future receipts, set LOKI_PROOF_GPG_KEY to a gpg "
-                    "key id (see docs/SIGNED-RECEIPTS.md).</p>")
+                    "To sign future receipts, install the cryptography "
+                    "package (see docs/SIGNED-RECEIPTS.md).</p>")
 
     # Model provenance, mirrored here for the same reason the signature row is:
     # this fallback "must not be quieter about provenance than the page it
@@ -2150,61 +2129,38 @@ def generate(args):
         "scope": "integrity",
     }
 
-    # Optional, env-gated gpg detached signature over the SAME canonical bytes
-    # that were hashed (the pre-verification form a verifier reconstructs).
-    # Default OFF: absent LOKI_PROOF_GPG_KEY -> no signature field, bytes
-    # byte-identical to the unsigned proof. Never an external service, never
-    # required, best-effort (a gpg failure is swallowed: the proof still emits).
-    gpg_key = os.environ.get("LOKI_PROOF_GPG_KEY", "").strip()
-    if gpg_key:
-        sig = _gpg_detached_sign(canonical_bytes, gpg_key)
-        if sig:
-            verification["gpg_signature"] = sig
+    if os.environ.get("LOKI_PROOF_GPG_KEY", "").strip():
+        sys.stderr.write(
+            "warn: LOKI_PROOF_GPG_KEY is no longer supported and is ignored. "
+            "Receipts are signed with Ed25519 automatically; to use your own "
+            "key set LOKI_RECEIPT_SIGNING_KEY or LOKI_RECEIPT_SIGNING_KEY_FILE "
+            "(docs/SIGNED-RECEIPTS.md).\n")
 
-    # Optional Ed25519 attestation over the SAME digest, for the case gpg
-    # cannot serve: a receipt checked by someone who does not hold the signing
-    # key. gpg proves provenance only to a verifier who already imported the
-    # public key, which a customer, auditor or CI system handed a proof.json
-    # generally has not. An attestation is checkable against a published JWKS
-    # (or a jwks.json file, offline) with no key exchange at all.
-    #
-    # Binds the DIGEST, not the body, so it attests to exactly the bytes a
-    # verifier independently recomputes. Written INSIDE `verification`, which
-    # the hash excludes -- anywhere else would change the hashed bytes and make
-    # every honest receipt read as tampered the moment it was signed.
-    #
-    # Same default-OFF discipline as gpg above: absent the key, no field, and
-    # the bytes stay identical to an unattested proof. Best-effort for the same
-    # reason -- a signing failure must not cost the user their receipt.
-    # This env check is an EARLY EXIT, not the control that enforces default-off.
-    # Mutation testing showed that removing it changes nothing observable:
-    # load_signing_key() returns (None, "") when neither variable is set, so the
-    # block below cannot attest anyway. It is kept because it skips an import
-    # and a try/except on the overwhelmingly common unconfigured path -- stated
-    # here rather than left to imply a guarantee it does not provide.
-    att_key = (os.environ.get("LOKI_RECEIPT_SIGNING_KEY_FILE", "").strip()
-               or os.environ.get("LOKI_RECEIPT_SIGNING_KEY", "").strip())
-    if att_key:
-        try:
-            sys.path.insert(0, os.path.dirname(os.path.dirname(
-                os.path.abspath(__file__))))
-            from receipt_jwt import load_signing_key, sign_attestation
-            _priv, _kid = load_signing_key()
-            if _priv is not None:
-                _tok = sign_attestation(
-                    _priv, _kid,
-                    job_id=str(redacted.get("run_id") or ""),
-                    run_id=str(redacted.get("run_id") or ""),
-                    receipt_hash=digest,
-                )
-                if _tok:
-                    verification["attestation"] = _tok
-                    verification["attestation_kid"] = _kid
-        except Exception:
-            # Swallowed deliberately, matching the gpg path: an unattested
-            # receipt is a valid state with an existing verdict. Losing the
-            # receipt entirely because signing failed would be strictly worse.
-            pass
+    # Ed25519 attestation over the SAME digest, checkable against a published
+    # JWKS (or a jwks.json file, offline) with no key exchange. Binds the
+    # DIGEST, not the body, and is written INSIDE `verification`, which the hash
+    # excludes: anywhere else would change the hashed bytes and make every
+    # honest receipt read as tampered. load_signing_key() auto-generates the
+    # default local key, so a first run signs. Best-effort: a signing failure
+    # must not cost the user their receipt (an unattested receipt has its own
+    # verdict). Missing `cryptography` yields no attestation.
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))))
+        from receipt_jwt import load_signing_key, sign_attestation
+        _priv, _kid = load_signing_key()
+        if _priv is not None:
+            _tok = sign_attestation(
+                _priv, _kid,
+                job_id=str(redacted.get("run_id") or ""),
+                run_id=str(redacted.get("run_id") or ""),
+                receipt_hash=digest,
+            )
+            if _tok:
+                verification["attestation"] = _tok
+                verification["attestation_kid"] = _kid
+    except Exception:
+        pass
 
     redacted["verification"] = verification
 

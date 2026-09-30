@@ -12574,8 +12574,8 @@ async def proofs_summary():
     But on the UNSIGNED path the generator is TRUSTED -- a forger who rewrites
     both the facts and the headline to a mutually consistent lie and recomputes
     the hash still buckets as verified here. Neutral, adversarial non-forgeability
-    (the generator is not trusted) requires the SIGNED record (a gpg signature
-    proof-verify.py checks). This endpoint reports what the generator recorded;
+    (the generator is not trusted) requires the SIGNED record (an Ed25519
+    attestation checked against a key set). This endpoint reports what the generator recorded;
     it does not itself re-verify. Buckets:
 
       verified      -> honesty.headline == "VERIFIED"

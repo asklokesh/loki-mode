@@ -58,18 +58,6 @@ type SentruxCheck = {
   required: "optional";
 };
 
-// Evidence Receipt signing state. Mirrors the bash cmd_doctor_json
-// receipt_signing block. Unsigned is the DEFAULT and a supported mode, so
-// status is never "fail". Sibling of checks/disk/sentrux -- NOT counted in
-// the summary tally, preserving backwards-compatible summary numbers.
-export type ReceiptSigningCheck = {
-  enabled: boolean;
-  key_configured: boolean;
-  gpg_available: boolean;
-  status: Status;
-  required: "optional";
-};
-
 // Provider availability: install state of every provider in
 // providers/loader.sh SUPPORTED_PROVIDERS, plus the one auto_detect_provider
 // would choose. Produced by autonomy/provider-offer.sh (providers-json), the
@@ -108,7 +96,6 @@ export type DoctorJson = {
   // Skill-link integrity, counted in the summary tally. See buildDoctorJson.
   skills: SkillJson[];
   sentrux: SentruxCheck;
-  receipt_signing: ReceiptSigningCheck;
   memory: MemoryHealth;
   model_catalog: CatalogFreshness;
   summary: {
@@ -479,24 +466,6 @@ async function checkSentrux(): Promise<SentruxCheck> {
   return { found, version, status, required: "optional" };
 }
 
-// Evidence Receipt signing state for doctor --json. Mirrors the bash
-// cmd_doctor_json receipt_signing block: signing is enabled only when BOTH
-// LOKI_PROOF_GPG_KEY is set AND gpg is on PATH (proof-generator.py shells out
-// to gpg, so a key with no gpg still yields an UNSIGNED receipt). The env var
-// is checked for presence only -- the value is never read into the output.
-async function checkReceiptSigning(): Promise<ReceiptSigningCheck> {
-  const keyConfigured = (process.env["LOKI_PROOF_GPG_KEY"] ?? "").trim() !== "";
-  const gpgAvailable = (await commandExists("gpg")) !== null;
-  const enabled = keyConfigured && gpgAvailable;
-  return {
-    enabled,
-    key_configured: keyConfigured,
-    gpg_available: gpgAvailable,
-    status: enabled ? "pass" : "warn",
-    required: "optional",
-  };
-}
-
 // v7.7.17: read the memory subsystem error log surface for doctor --json.
 // Resolves the log path via LOKI_DIR env (set by loki invocations) with a
 // cwd-relative `.loki/memory/.errors.log` fallback. Never throws; returns
@@ -600,7 +569,6 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
   const checks: ToolCheck[] = rows.map(({ displayName: _displayName, ...rest }) => rest);
   const disk = checkDisk();
   const sentrux = await checkSentrux();
-  const receiptSigning = await checkReceiptSigning();
   const memory = await checkMemoryHealth();
 
   let passed = 0;
@@ -656,7 +624,6 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
     ai_provider: aiProvider,
     skills,
     sentrux,
-    receipt_signing: receiptSigning,
     memory,
     // Advisory only: deliberately excluded from the passed/failed/warnings
     // tally and from `ok`, so a stale catalog can never flip the exit code.
@@ -1107,24 +1074,18 @@ async function runText(): Promise<number> {
     );
     tally.warn++;
   }
-  // Evidence Receipt signing state. Byte-mirrors the bash-route lines at
-  // autonomy/loki:cmd_doctor so the bun-parity matrix diff stays empty.
-  // WARN (never FAIL): unsigned is a supported, documented default.
+  // Receipt signing: Ed25519, auto-generated on first run. Byte-mirrors the
+  // bash-route lines in cmd_doctor. WARN only, and only when something needs
+  // the user's attention.
   if ((process.env["LOKI_PROOF_GPG_KEY"] ?? "").trim() !== "") {
-    if ((await commandExists("gpg")) !== null) {
-      process.stdout.write(
-        `  ${badge("pass")}  Receipt signing: LOKI_PROOF_GPG_KEY set and gpg available\n`,
-      );
-      tally.pass++;
-    } else {
-      process.stdout.write(
-        `  ${badge("warn")}  Receipt signing: LOKI_PROOF_GPG_KEY set but gpg NOT on PATH - receipts will be UNSIGNED\n`,
-      );
-      tally.warn++;
-    }
-  } else {
     process.stdout.write(
-      `  ${badge("warn")}  Receipt signing: UNSIGNED (set LOKI_PROOF_GPG_KEY to a gpg key id; see docs/SIGNED-RECEIPTS.md)\n`,
+      `  ${badge("warn")}  Receipt signing: LOKI_PROOF_GPG_KEY is no longer supported and is ignored; use LOKI_RECEIPT_SIGNING_KEY or LOKI_RECEIPT_SIGNING_KEY_FILE (docs/SIGNED-RECEIPTS.md)\n`,
+    );
+    tally.warn++;
+  }
+  if (spawnSync("python3", ["-c", "import cryptography"], { env: { ...process.env }, stdio: "ignore" }).status !== 0) {
+    process.stdout.write(
+      `  ${badge("warn")}  Receipt signing: python3 'cryptography' package missing, receipts will be UNSIGNED (pip install cryptography)\n`,
     );
     tally.warn++;
   }

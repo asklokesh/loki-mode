@@ -49,6 +49,10 @@ command -v python3 >/dev/null 2>&1 || { echo "  SKIPPED: python3 not installed (
 command -v git     >/dev/null 2>&1 || { echo "  SKIPPED: git not installed (not a pass)"; exit 0; }
 
 WORKROOT="$(mktemp -d "${TMPDIR:-/tmp}/loki-deploygate.XXXXXX")"
+# Isolated HOME: the generator auto-generates its Ed25519 key under ~/.loki/keys
+# and the deploy gate verifies against the same key, so both must see one home.
+export HOME="$WORKROOT/home"; mkdir -p "$HOME"
+unset LOKI_RECEIPT_SIGNING_KEY LOKI_RECEIPT_SIGNING_KEY_FILE
 cleanup() { rm -rf "$WORKROOT" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
 
@@ -120,6 +124,16 @@ gen_receipt() {
     local d="$1" base="$2"
     ( cd "$d" && _LOKI_RUN_START_SHA="$base" \
         python3 "$GENERATOR" --loki-dir "$d/.loki" >/dev/null 2>&1 )
+    # An UNSIGNED fixture: drop the attestation. The integrity hash excludes
+    # `verification`, so hash_ok stays true and only provenance is absent.
+    python3 - "$d" <<'PYEOF'
+import glob, json, sys
+for f in glob.glob(sys.argv[1] + "/.loki/proofs/*/proof.json"):
+    p = json.load(open(f))
+    p.get("verification", {}).pop("attestation", None)
+    p.get("verification", {}).pop("attestation_kid", None)
+    json.dump(p, open(f, "w"), indent=2)
+PYEOF
     ls -d "$d"/.loki/proofs/*/ 2>/dev/null | head -1
 }
 
@@ -327,13 +341,13 @@ fi
 #    Without this the gate could score a perfect 7/7 above by refusing
 #    everything, which is a broken feature that looks fully tested.
 #
-#    Signing needs gpg + a key. Rather than depend on the host keyring, the
+#    Signing needs python3 cryptography (key auto-generated). The
 #    VERIFIED verdict is produced by driving _deploy_receipt_verdict's inputs:
 #    we assert the gate's OTHER three checks (receipt present, anchored, clean)
 #    all pass on a genuine receipt, and that the ONLY thing standing between
 #    this tree and execution is the signature. That is asserted by observing
 #    UNSIGNED as the SOLE refusal reason -- proving anchor + cleanliness passed.
-#    Then, with gpg available, the full signed path is exercised end to end.
+#    Then, with cryptography available, the full signed path is exercised end to end.
 # ===========================================================================
 echo "8. POSITIVE CONTROL: a good receipt on a clean matching tree executes"
 D8_BASE="$(make_fixture d8)"; D8="$WORKROOT/d8"
@@ -349,51 +363,35 @@ else
         "$(printf '%s' "$OUT8" | grep -i ' - ' | head -4)"
 fi
 
-# The full execute path, with a real signature.
-if command -v gpg >/dev/null 2>&1; then
-    GNUPGHOME="$WORKROOT/gnupg"; export GNUPGHOME
-    mkdir -p "$GNUPGHOME"; chmod 700 "$GNUPGHOME"
-    cat > "$WORKROOT/keyparams" <<'KEY'
-%no-protection
-Key-Type: eddsa
-Key-Curve: ed25519
-Name-Real: Loki Deploy Gate Test
-Name-Email: deploy-gate@example.invalid
-Expire-Date: 0
-%commit
-KEY
-    if gpg --batch --gen-key "$WORKROOT/keyparams" >/dev/null 2>&1; then
-        KEYID="$(gpg --list-secret-keys --with-colons 2>/dev/null | awk -F: '/^sec:/{print $5; exit}')"
-        D9_BASE="$(make_fixture d8signed)"; D8S="$WORKROOT/d8signed"
-        ( cd "$D8S" && _LOKI_RUN_START_SHA="$D9_BASE" \
-            LOKI_PROOF_GPG_KEY="$KEYID" GNUPGHOME="$GNUPGHOME" \
-            python3 "$GENERATOR" --loki-dir "$D8S/.loki" >/dev/null 2>&1 )
-        reset_sentinels
-        OUT8S="$( cd "$D8S" && PATH="$FAKE_BIN:$PATH" LOKI_DIR="$D8S/.loki" GNUPGHOME="$GNUPGHOME" \
-            bash "$LOKI_BIN" deploy --dir "$D8S" --no-clip --execute 2>&1 )"
-        if [ "$(any_sentinel)" -ge 1 ] && printf '%s' "$OUT8S" | grep -qi "gate PASSED"; then
-            # Records that a deploy REALLY executed, so test 9 can tell a genuine
-            # skip (no signed path available) from a missing record (a defect).
-            D8S_EXECUTED=1
-            ok "a VERIFIED receipt on a clean matching tree DOES execute the deploy"
-            # The printed prose must not contradict what happens next. The
-            # advisory's closing line is "Loki does not deploy for you", which is
-            # true on the print-only path and FALSE printed immediately above a
-            # deploy that then runs.
-            if printf '%s' "$OUT8S" | grep -qi "Loki does not deploy for you"; then
-                bad "printed 'Loki does not deploy for you' and then deployed"
-            else
-                ok "the executing run does not print the print-only claim"
-            fi
+# The full execute path, with a real signature (the auto-generated Ed25519 key).
+if python3 -c "import cryptography" >/dev/null 2>&1; then
+    KEYID="local-default-key"
+    D9_BASE="$(make_fixture d8signed)"; D8S="$WORKROOT/d8signed"
+    ( cd "$D8S" && _LOKI_RUN_START_SHA="$D9_BASE" \
+        python3 "$GENERATOR" --loki-dir "$D8S/.loki" >/dev/null 2>&1 )
+    reset_sentinels
+    OUT8S="$( cd "$D8S" && PATH="$FAKE_BIN:$PATH" LOKI_DIR="$D8S/.loki" \
+        bash "$LOKI_BIN" deploy --dir "$D8S" --no-clip --execute 2>&1 )"
+    if [ "$(any_sentinel)" -ge 1 ] && printf '%s' "$OUT8S" | grep -qi "gate PASSED"; then
+        # Records that a deploy REALLY executed, so test 9 can tell a genuine
+        # skip (no signed path available) from a missing record (a defect).
+        D8S_EXECUTED=1
+        ok "a VERIFIED receipt on a clean matching tree DOES execute the deploy"
+        # The printed prose must not contradict what happens next. The
+        # advisory's closing line is "Loki does not deploy for you", which is
+        # true on the print-only path and FALSE printed immediately above a
+        # deploy that then runs.
+        if printf '%s' "$OUT8S" | grep -qi "Loki does not deploy for you"; then
+            bad "printed 'Loki does not deploy for you' and then deployed"
         else
-            bad "a fully verified receipt did NOT execute" \
-                "sentinels=$(any_sentinel); $(printf '%s' "$OUT8S" | grep -i ' - ' | head -3)"
+            ok "the executing run does not print the print-only claim"
         fi
     else
-        echo "  SKIPPED: gpg key generation failed (signed path unproven, not a pass)"
+        bad "a fully verified receipt did NOT execute" \
+            "sentinels=$(any_sentinel); $(printf '%s' "$OUT8S" | grep -i ' - ' | head -3)"
     fi
 else
-    echo "  SKIPPED: gpg not installed (signed execute path unproven, not a pass)"
+    echo "  SKIPPED: python3 cryptography not installed (signed execute path unproven, not a pass)"
 fi
 
 # The positive control is the ONE case that cannot pass by refusing, so a run
@@ -404,7 +402,7 @@ fi
 # fixed inside test 9, one level up.
 if [ "${D8S_EXECUTED:-0}" != "1" ]; then
     bad "POSITIVE CONTROL DID NOT RUN: no deploy was ever executed, so nothing here proves the gate can say yes" \
-        "install gpg to prove the signed execute path; a suite of refusals alone is not a passing gate"
+        "install python3 cryptography to prove the signed execute path; a suite of refusals alone is not a passing gate"
 fi
 
 # ===========================================================================
@@ -484,13 +482,55 @@ fi
 echo "10. the default path does not deploy even a VERIFIED tree"
 if [ -n "${D8S:-}" ] && [ "${D8S_EXECUTED:-0}" = "1" ]; then
     reset_sentinels
-    OUT10="$( cd "$D8S" && PATH="$FAKE_BIN:$PATH" LOKI_DIR="$D8S/.loki" GNUPGHOME="${GNUPGHOME:-}" \
+    OUT10="$( cd "$D8S" && PATH="$FAKE_BIN:$PATH" LOKI_DIR="$D8S/.loki" \
         bash "$LOKI_BIN" deploy --dir "$D8S" --no-clip 2>&1 )"
     if [ "$(any_sentinel)" -eq 0 ] && ! printf '%s' "$OUT10" | grep -qi "gate PASSED"; then
         ok "opt-in is per-invocation: no --execute, no deploy, even when authorized"
     else
         bad "the default path deployed -- --execute is not gating anything" \
             "sentinels=$(any_sentinel)"
+    fi
+else
+    echo "  SKIPPED: needs test 8's signed fixture (not a pass)"
+fi
+
+# ===========================================================================
+# 10b. A receipt signed by a key this gate does not hold is UNCHECKED, never
+#      TAMPERED (the hash is fine; we just cannot vouch for the signer), and a
+#      key listed in LOKI_RECEIPT_RETIRED_PUBKEYS verifies.
+# ===========================================================================
+echo "10b. foreign-key receipt: UNCHECKED, and VERIFIED once its public key is retired"
+if [ "${D8S_EXECUTED:-0}" = "1" ]; then
+    D14_BASE="$(make_fixture d14)"; D14="$WORKROOT/d14"
+    ( cd "$D14" && _LOKI_RUN_START_SHA="$D14_BASE" \
+        LOKI_RECEIPT_SIGNING_KEY_FILE="$WORKROOT/foreign.pem" \
+        python3 "$GENERATOR" --loki-dir "$D14/.loki" >/dev/null 2>&1 )
+    python3 - "$WORKROOT/foreign.pem" "$WORKROOT/foreign.pub" <<'PYEOF'
+import sys
+from cryptography.hazmat.primitives import serialization as s
+k = s.load_pem_private_key(open(sys.argv[1], "rb").read(), None)
+open(sys.argv[2], "wb").write(k.public_key().public_bytes(
+    s.Encoding.PEM, s.PublicFormat.SubjectPublicKeyInfo))
+PYEOF
+    reset_sentinels
+    OUT14="$( cd "$D14" && PATH="$FAKE_BIN:$PATH" LOKI_DIR="$D14/.loki" \
+        bash "$LOKI_BIN" deploy --dir "$D14" --no-clip --execute 2>&1 )"
+    if [ "$(any_sentinel)" -eq 0 ] && printf '%s' "$OUT14" | grep -q "UNCHECKED" \
+       && ! printf '%s' "$OUT14" | grep -q "TAMPERED"; then
+        ok "a receipt signed by an unknown key refuses as UNCHECKED, not TAMPERED"
+    else
+        bad "a foreign-key receipt was not reported UNCHECKED" \
+            "sentinels=$(any_sentinel); $(printf '%s' "$OUT14" | grep -i ' - ' | head -3)"
+    fi
+    reset_sentinels
+    OUT14R="$( cd "$D14" && PATH="$FAKE_BIN:$PATH" LOKI_DIR="$D14/.loki" \
+        LOKI_RECEIPT_RETIRED_PUBKEYS="$WORKROOT/foreign.pub" \
+        bash "$LOKI_BIN" deploy --dir "$D14" --no-clip --execute 2>&1 )"
+    if [ "$(any_sentinel)" -ge 1 ] && printf '%s' "$OUT14R" | grep -qi "gate PASSED"; then
+        ok "a retired public key verifies its receipts (rotation keeps old receipts VERIFIED)"
+    else
+        bad "a receipt signed by a retired key did not verify" \
+            "sentinels=$(any_sentinel); $(printf '%s' "$OUT14R" | grep -i ' - ' | head -3)"
     fi
 else
     echo "  SKIPPED: needs test 8's signed fixture (not a pass)"
@@ -529,12 +569,11 @@ if [ -n "${KEYID:-}" ] && [ "${D8S_EXECUTED:-0}" = "1" ]; then
         local bd="$WORKROOT/$n"
         make_fixture "$n" >/dev/null
         ( cd "$bd" && _LOKI_RUN_START_SHA="$b" \
-            LOKI_PROOF_GPG_KEY="$KEYID" GNUPGHOME="$GNUPGHOME" \
             python3 "$GENERATOR" --loki-dir "$bd/.loki" >/dev/null 2>&1 )
     }
     run_signed() {  # <dir> [flags...]
         local d="$1"; shift
-        ( cd "$d" && PATH="$FAKE_BIN:$PATH" LOKI_DIR="$d/.loki" GNUPGHOME="$GNUPGHOME" \
+        ( cd "$d" && PATH="$FAKE_BIN:$PATH" LOKI_DIR="$d/.loki" \
             bash "$LOKI_BIN" deploy --dir "$d" --no-clip "$@" 2>&1 )
     }
 
@@ -616,10 +655,9 @@ sys.exit(0 if d.get('anchor_state')=='anchored'
     # TWO real reasons alongside the marker, so the joined-vs-separate
     # distinction is observable: a dirty tree AND an untracked second file are
     # both counted by _deploy_tree_clean, so instead we take the dirty tree plus
-    # an UNSIGNED receipt (generated without the key) -- two distinct lines.
+    # an UNSIGNED receipt (attestation stripped) -- two distinct lines.
     make_fixture d12c >/dev/null; D12C="$WORKROOT/d12c"
-    ( cd "$D12C" && _LOKI_RUN_START_SHA="" \
-        python3 "$GENERATOR" --loki-dir "$D12C/.loki" >/dev/null 2>&1 )
+    gen_receipt "$D12C" "" >/dev/null   # strips the attestation: UNSIGNED
     printf 'dirty\n' >> "$D12C/package.json"    # dirty + unsigned + unanchored
     reset_sentinels
     OUT12C="$(run_signed "$D12C" --execute --allow-unanchored)"
@@ -650,7 +688,7 @@ sys.exit(0 if d.get('anchor_state')=='anchored'
     # for every deploy in that shell. cmd_deploy declares it `local`; this is
     # what proves that declaration is load-bearing.
     reset_sentinels
-    OUT12B="$( cd "$D11" && PATH="$FAKE_BIN:$PATH" LOKI_DIR="$D11/.loki" GNUPGHOME="$GNUPGHOME" \
+    OUT12B="$( cd "$D11" && PATH="$FAKE_BIN:$PATH" LOKI_DIR="$D11/.loki" \
         LOKI_DEPLOY_ALLOW_UNANCHORED=true \
         bash "$LOKI_BIN" deploy --dir "$D11" --no-clip --execute 2>&1 )"
     if [ "$(any_sentinel)" -eq 0 ] && printf '%s' "$OUT12B" | grep -qi "REFUSED"; then
@@ -667,7 +705,6 @@ sys.exit(0 if d.get('anchor_state')=='anchored'
     # is what refuses. That branch must stay unreachable from the override.
     D13_BASE="$(make_fixture d13)"; D13="$WORKROOT/d13"
     ( cd "$D13" && _LOKI_RUN_START_SHA="$D13_BASE" \
-        LOKI_PROOF_GPG_KEY="$KEYID" GNUPGHOME="$GNUPGHOME" \
         python3 "$GENERATOR" --loki-dir "$D13/.loki" >/dev/null 2>&1 )
     echo "// advanced past the receipt" >> "$D13/package.json"
     git -C "$D13" add package.json
@@ -689,7 +726,7 @@ sys.exit(0 if d.get('anchor_state')=='anchored'
             "$(printf '%s' "$OUT13" | grep -i ' - ' | head -3)"
     fi
 else
-    echo "  SKIPPED: needs gpg and test 8's signed fixture (not a pass)"
+    echo "  SKIPPED: needs cryptography and test 8's signed fixture (not a pass)"
 fi
 
 echo ""

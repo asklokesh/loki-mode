@@ -3,8 +3,7 @@
 
 WHY THIS EXISTS. The gate line ships as eight separate tools, each honest on
 its own axis: policy-load.py validates the policy file, baseline-pin.py holds
-the cost reference, signing-status.py proves the keyring can sign,
-cost-history.py holds the measured trend, ci-gate.py enforces the lot. Every
+the cost reference, cost-history.py holds the measured trend, ci-gate.py enforces the lot. Every
 one of them answers a question an operator did not ask. The question they
 actually ask, at the moment they need it -- before a release, after inheriting
 a repo, when a green check stops being believable -- is one question:
@@ -36,7 +35,7 @@ screen is exactly where the second silently becomes the first -- a dash, a
 blank cell, a skipped row. Absent is not zero, and unmeasured is not OK.
 
 A MISSING COMPOSED TOOL READS "unavailable" AND POISONS THE VERDICT. If
-signing-status.py is not on disk, this cannot report on signing, so it says so
+baseline-pin.py is not on disk, this cannot report on the baseline, so it says so
 and the overall verdict is not OK. A status screen that drops a line it could
 not produce and still says "healthy" is reporting on a smaller repo than the
 one it was pointed at. That is the tarball-assertion defect again: a check
@@ -50,8 +49,7 @@ named thing, re-runs, sees green, and is still blind on the dead axis.
 
 READ-ONLY, AND IT SAYS SO. Every composed tool is invoked in a reporting mode
 that starts no run, spends nothing, and contacts no provider: policy-load
-reads a file, baseline-pin `show` reads a pin, signing-status round-trips
-against the local keyring only, cost-history `report` reads recorded history,
+reads a file, baseline-pin `show` reads a pin, cost-history `report` reads recorded history,
 and ci-gate is NOT executed at all -- the "would the gate run" line is answered
 from whether a policy implies flags, because running the real gate would be the
 one composed call that is not free.
@@ -83,7 +81,6 @@ _VERDICT_EXIT = {OK: EXIT_OK, PROBLEM: EXIT_PROBLEM, UNKNOWN: EXIT_UNKNOWN}
 # missing component reads unavailable AND drags the verdict off OK.
 POLICY_LOAD = os.path.join(_HERE, "policy-load.py")
 BASELINE_PIN = os.path.join(_HERE, "baseline-pin.py")
-SIGNING_STATUS = os.path.join(_HERE, "signing-status.py")
 COST_HISTORY = os.path.join(_HERE, "cost-history.py")
 
 
@@ -171,45 +168,6 @@ def check_baseline(pin_file):
                  % (rc, _first_line(err, out)))
 
 
-def check_signing():
-    """Can this machine sign receipts? signing-status.py owns the rule, and it
-    already refuses to collapse its four states into a boolean. Its
-    not_configured (2) and gpg_absent (3) are NOT problems -- signing is opt-in
-    and nothing is broken -- but neither are they proof of origin, so they read
-    UNKNOWN here rather than OK. Only a completed sign+verify round trip is OK."""
-    got = _invoke(SIGNING_STATUS, ["--json"])
-    if got is None:
-        return _unavailable("signing", SIGNING_STATUS)
-    rc, out, err = got
-    if rc is None:
-        return _line("signing", UNKNOWN,
-                     "could not run signing-status.py: %s" % err)
-    try:
-        detail = json.loads(out)
-    except ValueError:
-        detail = None
-    status = detail.get("status") if isinstance(detail, dict) else None
-    reason = (detail or {}).get("reason") if isinstance(detail, dict) else None
-
-    if rc == 0 and status == "ok":
-        return _line("signing", OK,
-                     "sign+verify round trip completed: receipts carry origin")
-    if rc == 1 and status == "broken":
-        return _line("signing", PROBLEM,
-                     "a key is configured but cannot sign, so receipts emit "
-                     "UNSIGNED silently: %s" % (reason or "no reason reported"))
-    if rc == 2 and status == "not_configured":
-        return _line("signing", UNKNOWN,
-                     "signing is opt-in and off (LOKI_PROOF_GPG_KEY unset): "
-                     "receipts prove integrity but NOT origin")
-    if rc == 3 and status == "gpg_absent":
-        return _line("signing", UNKNOWN,
-                     "no gpg on PATH, so origin cannot be proven here")
-    return _line("signing", UNKNOWN,
-                 "signing-status.py exited %d with status %r, which is not a "
-                 "verdict: %s" % (rc, status, _first_line(err, out)))
-
-
 def check_cost_history(history_file):
     """Is there measured cost history? cost-history.py owns the rule, including
     what counts as measured (it imports record_is_measured; this file does not
@@ -288,7 +246,6 @@ def evaluate(workspace=".", policy_file=None, history_file=None):
     policy = check_policy(policy_file)
     lines = [policy,
              check_baseline(pin_file),
-             check_signing(),
              check_cost_history(history_file),
              check_would_run(policy)]
 

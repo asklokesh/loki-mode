@@ -30,6 +30,14 @@ loki start owner/repo#123     # build from an issue
 
 Works with Claude Code (full support), Cline, OpenAI Codex CLI, Aider and opencode.
 
+Before a build counts as done, a review council selects reviewers from a specialist pool (`agents/types.json`, scored by `run.sh:FOCUS_KEYWORDS`). The bundled MCP server exposes 36 tools over stdio (`mcp/server.py`).
+
+## Loki 10 engine (preview)
+
+Opt-in: set LOKI_ENGINE=v10 <!-- loki10-default -->
+
+Guide, provider table and summary format: [docs/v10/GUIDE.md](docs/v10/GUIDE.md).
+
 ## Full reference
 
 The previous long README moved, unchanged apart from link paths, to [docs/README-FULL.md](docs/README-FULL.md). It holds:

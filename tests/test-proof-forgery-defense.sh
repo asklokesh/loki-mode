@@ -46,6 +46,7 @@ command -v python3 >/dev/null 2>&1 || _skip "python3 not available"
 [ -f "$VERIFIER" ] || _skip "proof-verify.py not found"
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/loki-proof-forgery-XXXXXX")"
+export HOME="$TMP/home"; mkdir -p "$HOME"  # generator auto-creates a signing key under HOME
 cleanup() { rm -rf "$TMP" 2>/dev/null || true; }
 trap cleanup EXIT
 

@@ -1,12 +1,13 @@
 // E-02 wall check: state machine skeleton (docs/v10/ENGINE.md section 4).
 // Siblings are fakes injected through RunContext; stages come from an injected loader.
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeEvent } from "../../src/engine10/events.ts";
+import { createSessionRunner } from "../../src/engine10/session.ts";
+import { firstError, runCheck } from "../../src/engine10/stages/verify.ts";
 import { FLOW, optional, runMachine, type MachineRunContext } from "../../src/engine10/machine.ts";
-import type { EventEnvelope, RunContext, Stage, StageName, StageResult } from "../../src/engine10/types.ts";
+import type { RunContext, Stage, StageName, StageResult } from "../../src/engine10/types.ts";
 
 type Ev = { type: string; stage: StageName | null; data: Record<string, unknown> };
 
@@ -98,45 +99,124 @@ describe("engine10 machine", () => {
     expect(seen).toEqual({ base_sha: "b1" });
   });
 
-  it("resume skips completed stages and restores their outputs", async () => {
-    const { ctx, events } = fakeCtx();
-    const prior: EventEnvelope[] = [
-      makeEvent("e10-test", 0, "run.started", null, {}, "2026-09-27T22:00:00.000Z"),
-      makeEvent("e10-test", 1, "stage.completed", "intake", { duration_s: 1, base_sha: "b0" }),
-      makeEvent("e10-test", 2, "stage.completed", "plan", { duration_s: 1, plan: "p" }),
-      makeEvent("e10-test", 3, "stage.completed", "wall", { duration_s: 1 }),
-      makeEvent("e10-test", 4, "stage.started", "implement", { target_s: 180, limit_s: 480 }),
-    ];
-    const ran: StageName[] = [];
-    let intakeSeen: unknown;
-    const rec = (n: StageName) => stage(n, async (c) => {
-      ran.push(n);
-      if (n === "implement") intakeSeen = c.outputs().intake;
-      return { status: "completed", data: {} };
+  it("the same failure signature 3 verifies running ends STALLED", async () => {
+    const { ctx } = fakeCtx();
+    let verifies = 0;
+    const r = await runMachine(ctx, { load: loaderOf(all({
+      verify: stage("verify", async () => { verifies++; return { status: "completed", data: { failures_grouped: [{ signature: "node:tests/sum.test.js AssertionError: expected 1 to equal 2" }] } }; }),
+    })) });
+    expect(verifies).toBe(3);
+    expect(r.stopped).toBe("stalled");
+  });
+
+  it("changing signatures are not stalled", async () => {
+    const { ctx } = fakeCtx();
+    let n = 0;
+    const r = await runMachine(ctx, { load: loaderOf(all({
+      verify: stage("verify", async () => ({ status: "completed", data: { failures_grouped: [{ signature: `sig${n++}` }] } })),
+    })) });
+    expect(r.stopped).toBeNull();
+  });
+
+  const sessionStage = (tail: string, runs: { n: number }): Stage => stage("implement", async (c, signal) => {
+    runs.n++;
+    await c.sessions.run({ stage: "implement", brief: "", tier: "development", iterationId: "i", limitS: 1, signal, cwd: "/" });
+    return { status: "failed", data: {}, reason: "exit 1" };
+  });
+  const failing = (tail: string) => ({ exit: 1, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: false, stderrTail: tail });
+
+  for (const [tail, klass] of [["Your credit balance is too low", "quota_exhausted"], ["invalid x-api-key", "auth"], ["billing_hard_limit_reached ... insufficient_quota", "quota_exhausted"]] as const) {
+    it(`a ${klass} error aborts on the first occurrence: no fix round, no further session`, async () => {
+      const { ctx, events } = fakeCtx();
+      let sessions = 0;
+      ctx.sessions = { run: async () => { sessions++; return failing(tail); } };
+      const r = await runMachine(ctx, { load: loaderOf(all({ implement: sessionStage(tail, { n: 0 }), verify: stage("verify", async () => ({ status: "completed", data: { failures_grouped: [{ signature: "x" }] } })) })) });
+      expect(sessions).toBe(1);
+      expect(r.stopped).toBe(`fatal:${klass}`);
+      expect(of(events, "stage.started")).not.toContain("fix");
     });
-    const s: Partial<Record<StageName, Stage>> = {};
-    for (const n of ["intake", "plan", "wall", "implement", "verify", "commit", "seal", "pr"] as StageName[]) s[n] = rec(n);
-    await runMachine(ctx, { load: loaderOf(s), prior, startedAtMs: Date.now() });
-    expect(ran).toEqual(["implement", "verify", "commit", "seal", "pr"]);
-    expect(intakeSeen).toEqual({ duration_s: 1, base_sha: "b0" });
-    expect(of(events, "stage.started")).not.toContain("intake");
+  }
+
+  it("a 429 is transient: the run is not stopped fatal", async () => {
+    const { ctx } = fakeCtx();
+    ctx.sessions = { run: async () => failing("429 rate limit exceeded, please try again") };
+    const r = await runMachine(ctx, { load: loaderOf(all({ implement: sessionStage("", { n: 0 }) })) });
+    expect(r.stopped).toBeNull();
   });
 
-  it("resume after seal runs only the PR step; a completed run runs nothing", async () => {
-    const names: StageName[] = ["intake", "plan", "wall", "implement", "verify", "commit", "seal"];
-    const prior = names.map((n, i) => makeEvent("e10-test", i, "stage.completed", n, { duration_s: 1 }));
-    const ran: StageName[] = [];
-    const s: Partial<Record<StageName, Stage>> = {};
-    for (const n of [...names, "pr"] as StageName[]) s[n] = stage(n, async () => { ran.push(n); return { status: "completed", data: {} }; });
-    await runMachine(fakeCtx().ctx, { load: loaderOf(s), prior });
-    expect(ran).toEqual(["pr"]);
-
-    ran.length = 0;
-    const final = [...prior, makeEvent("e10-test", 99, "run.completed", null, { verdict: "VERIFIED" })];
-    const r = await runMachine(fakeCtx().ctx, { load: loaderOf(s), prior: final });
-    expect(ran).toEqual([]);
-    expect(r.final).toBe(true);
+  it("firstError separates two failures in one file for pytest, jest and node (real runner formats)", () => {
+    const py = (t: string, r: string) => `=== FAILURES ===\n___ ${t} ___\n\ntests/test_a.py:12: ${r}\n=== short test summary info ===\nFAILED tests/test_a.py::${t} - ${r}\n`;
+    expect(firstError(py("test_login", "assert 1 == 2"))).not.toBe(firstError(py("test_logout", "KeyError: 'u'")));
+    expect(firstError(py("test_login", "assert 1 == 2"))).toContain("test_login");
+    const jest = (t: string) => `FAIL src/a.test.js\n  \u2713 handles error case (3 ms)\n  \u25cf Math \u203a ${t}\n\n    expect(received).toBe(expected)\n`;
+    expect(firstError(jest("adds"))).not.toBe(firstError(jest("subtracts")));
+    expect(firstError(jest("adds"))).toContain("adds");
+    expect(firstError("ok 1 - a\nnot ok 2 - sum adds [3.2ms] at /tmp/x1/sum.js:10:5")).toBe("not ok 2 - sum adds at <path>");
   });
+
+  // Real session runner. `child` replaces the self-respawned session child; `claude` is a fake binary for the CLI invoker.
+  async function realSession(runs: { n: number }, o: { child?: string; claude?: string }) {
+    const dir = mkdtempSync(join(tmpdir(), "loki-e10-fatal-"));
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "claude"), `#!/bin/sh\ncase "$*" in *--help*) echo "--settings"; exit 0;; esac\necho '${o.claude ?? ""}'\nexit 1\n`, { mode: 0o755 });
+    const saved = { PATH: process.env.PATH, inv: process.env.LOKI_E10_INVOKER };
+    process.env.PATH = `${bin}:${process.env.PATH}`;
+    process.env.LOKI_E10_INVOKER = "cli";
+    try {
+      const { ctx } = fakeCtx();
+      const real = createSessionRunner({ provider: "claude", ...(o.child ? { childCommand: ["bash", ["-c", o.child]] as [string, string[]] } : {}) });
+      ctx.sessions = { run: (x) => { runs.n++; return real.run({ ...x, cwd: dir, limitS: 60 }); } };
+      const ses = (n: StageName) => stage(n, async (c, signal) => {
+        await c.sessions.run({ stage: n as never, brief: "b", tier: "development", iterationId: `it-${n}`, limitS: 60, signal });
+        return { status: "completed", data: {} } as StageResult;
+      });
+      const verify = stage("verify", async () => ({ status: "completed", data: { failures_grouped: [{ signature: "x" }] } }));
+      return await runMachine(ctx, { load: loaderOf(all({ implement: ses("implement"), fix: ses("fix"), verify })) });
+    } finally {
+      process.env.PATH = saved.PATH;
+      if (saved.inv === undefined) delete process.env.LOKI_E10_INVOKER; else process.env.LOKI_E10_INVOKER = saved.inv;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  for (const [label, child, klass] of [
+    ["the session child's own stderr", "echo 'invalid x-api-key' >&2; exit 1", "auth"],
+    ["the real SDK auth line in the iteration log", "mkdir -p .loki; echo '[sdk-loop error: Claude Code returned an error result: Failed to authenticate. API Error: 401 API key is invalid.]' > .loki/iteration-it-implement.log; exit 1", "auth"],
+    ["the SDK error line in the iteration log", "mkdir -p .loki; echo '[sdk-loop error: Your credit balance is too low to access the API]' > .loki/iteration-it-implement.log; exit 1", "quota_exhausted"],
+  ] as const) {
+    it(`real session runner: ${label} stops fatal:${klass} after ONE session`, async () => {
+      const runs = { n: 0 };
+      const r = await realSession(runs, { child });
+      expect(runs.n).toBe(1);
+      expect(r.stopped).toBe(`fatal:${klass}`);
+    }, 60_000);
+  }
+
+  it("real session runner: agent transcript that merely mentions an auth error is NOT fatal (fix round still runs)", async () => {
+    const runs = { n: 0 };
+    const r = await realSession(runs, { claude: "FAILED tests/test_login.py::test_bad_password - AuthenticationError: authentication failed for user bob ... Reached max turns." });
+    expect(runs.n).toBeGreaterThan(1);
+    expect(r.stopped).not.toMatch(/^fatal/);
+  }, 60_000);
+
+  it("real session runner: a 429 is retried (the fix round still runs its session), never fatal", async () => {
+    const runs = { n: 0 };
+    const r = await realSession(runs, { child: "echo '429 rate limit exceeded, please try again' >&2; exit 1" });
+    expect(runs.n).toBeGreaterThan(1);
+    expect(r.stopped).not.toMatch(/^fatal/);
+  }, 60_000);
+
+  it("runCheck: a failing check that leaves a background child holding the pipes is fail, fast, never not_run", async () => {
+    const { ctx } = fakeCtx();
+    ctx.repoDir = tmpdir();
+    const checks: never[] = [];
+    const t0 = Date.now();
+    const c = await runCheck(ctx, "x", "sh", ["-c", "sleep 25 & echo FAILED x; exit 1"], new AbortController().signal, checks, { timeoutMs: 5000 });
+    expect(c.result).toBe("fail");
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(c.first_error).toBe("FAILED x");
+  }, 10_000);
 
   it("the global cap aborts the running stage and jumps to commit and seal", async () => {
     // capS=25 is just above the ~24.83s threshold below which softCapS's
@@ -250,25 +330,6 @@ describe("engine10 machine", () => {
     expect(of(events, "stage.started")).toEqual([
       "intake", "plan", "wall", "implement", "verify", "fix", "verify", "fix", "verify", "commit", "seal", "pr",
     ]);
-  });
-
-  it("a resume after the cap has passed starts no non-tail stage", async () => {
-    const { ctx, events } = fakeCtx();
-    const prior: EventEnvelope[] = [
-      makeEvent("e10-test", 0, "run.started", null, {}, new Date(Date.now() - 20 * 60_000).toISOString()),
-      makeEvent("e10-test", 1, "stage.completed", "intake", { duration_s: 1 }),
-      makeEvent("e10-test", 2, "stage.completed", "plan", { duration_s: 1 }),
-      makeEvent("e10-test", 3, "stage.completed", "wall", { duration_s: 1 }),
-    ];
-    let implRan = false;
-    const r = await runMachine(ctx, {
-      load: loaderOf(all({ implement: stage("implement", async () => { implRan = true; return { status: "completed", data: {} }; }) })),
-      prior,
-    });
-    expect(implRan).toBe(false);
-    expect(r.capHit).toBe(true);
-    expect(of(events, "cap.hit")).toEqual(["implement"]);
-    expect(of(events, "stage.started")).toEqual(["commit", "seal", "pr"]);
   });
 
   it("the fix loop checks the clock before starting a stage past the cap", async () => {

@@ -1,8 +1,8 @@
 """Per-job receipt attestation: a signed JWT plus a public JWKS.
 
-WHY THIS EXISTS, given receipts are ALREADY gpg-signable.
+WHY THIS EXISTS, given old receipts could carry a gpg signature.
 
-`LOKI_PROOF_GPG_KEY` proves a receipt was produced by a holder of that gpg key,
+A gpg signature proves a receipt was produced by a holder of that gpg key,
 and for a LOCAL build that is the whole story: the operator already has the
 keyring. It does not survive the remote path. A submitter who ran
 `loki start --remote https://loki.corp` never had local access to the cluster,

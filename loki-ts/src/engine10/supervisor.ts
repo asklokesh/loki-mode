@@ -1,5 +1,5 @@
 // Loki 10 supervisor (P0, docs/v10/ENGINE.md sections 5, 6, 10): eval marker first, origin pinned once, worker
-// spawned with withheld tokens; single writer of events.jsonl (seq, hash, tamper refusal); --resume reuses the run
+// spawned with withheld tokens; single writer of events.jsonl (seq, hash, tamper refusal)
 // id; post-PR: detached deep verify, then Slack notify.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, type Hash } from "node:crypto";
@@ -184,12 +184,6 @@ function spawnWorker(
 
 export async function runSupervisor(opts: SupervisorOptions): Promise<SupervisorResult> {
   const t0 = Date.now();
-  const resumeFold = fold(readEvents(join(opts.repoDir, eventsRelPath(opts.runId)))); // --resume of a finished run: report it, never re-spawn
-  const done = resumeFold.run.completed?.data;
-  // E-69: tampered must reflect the log's real state, never a hardcoded false -- a resumed,
-  // completed run whose log holds tamper.detected is exactly as untrustworthy as a freshly
-  // finished one, and callers (partialCost's tamper guard, main()'s CLI print) rely on this flag.
-  if (done) return { verdict: (done.verdict as Verdict) ?? "FAILED", tampered: resumeFold.run.tampered, workerExit: 0, prUrl: (done.pr_url as string | null) ?? null, notProven: Array.isArray(done.not_proven) ? (done.not_proven as string[]) : [] };
   const startedProvider = opts.started?.["provider"]; // E-36: provider read off opts.started, not a dedicated field (main(), below, is the only populater)
   const env = opts.env ?? process.env;
   await assertPreflight({ repoDir: opts.repoDir, provider: typeof startedProvider === "string" ? startedProvider : "claude", pr: opts.pr !== undefined, env });
@@ -281,28 +275,27 @@ export function summaryTokens(f: Folded, sawCost: boolean): number | null {
 export { partialCost }; // E-69: defined in events.ts, next to fold(); re-exported so existing callers/tests keep importing it from here
 export async function main(args: string[]): Promise<number> { // `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary
   const words: string[] = [];
-  let noPr = false, deep = false, resumeId: string | null = null, provider = process.env.LOKI_PROVIDER || "claude";
+  let noPr = false, deep = false, provider = process.env.LOKI_PROVIDER || "claude";
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--no-pr") noPr = true;
     else if (a === "--deep") deep = true;
     else if (a === "--provider") provider = args[++i] ?? provider;
-    else if (a === "--resume") resumeId = args[++i] ?? "";
+    else if (a === "--resume") { process.stderr.write("engine10: --resume was removed; start a new run\n"); return 2; }
     else words.push(a);
   }
   const task = words.join(" ").trim();
-  if (!resumeId && !task) { process.stderr.write("engine10: no task given\n"); return 2; }
+  if (!task) { process.stderr.write("engine10: no task given\n"); return 2; }
   let repoDir: string;
   try {
     repoDir = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", env: process.env, stdio: ["ignore", "pipe", "ignore"] }).trim();
   } catch { process.stderr.write("engine10: not inside a git repository\n"); return 2; }
-  if (resumeId && !existsSync(join(repoDir, eventsRelPath(resumeId)))) { process.stderr.write(`engine10: no run to resume: ${resumeId}\n`); return 2; }
-  const runId = resumeId || `e10-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}-${Math.random().toString(16).slice(2, 6)}`;
+  const runId = `e10-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}-${Math.random().toString(16).slice(2, 6)}`;
   const runDir = join(repoDir, ".loki", "runs", runId);
   const isIssue = ISSUE_RE.test(task);
   const model = resolveModel(provider);
   const env: NodeJS.ProcessEnv = { ...process.env };
-  if (task && !isIssue) env.LOKI_E10_TASK_TEXT = task; // resume with no fresh task: intake falls back to runDir's issue.json, else its own "no task text" reason
+  if (!isIssue) env.LOKI_E10_TASK_TEXT = task;
   else if (isIssue) {
     mkdirSync(runDir, { recursive: true }); // runDir must exist before the fetch child writes issue.json
     try { fetchIssueToFile(task, join(runDir, "issue.json")); } catch (err) { // P1: deterministic, before any LLM

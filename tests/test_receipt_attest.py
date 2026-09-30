@@ -338,7 +338,7 @@ class SignatureIsThreeStates(unittest.TestCase):
             # "No signature exists" is not "a check I could not run", so it is
             # reported and NOT scored -- matching verify()'s own rollup
             # (gpg_ok in (True, "n/a")). Scoring it would make VERIFIED
-            # unreachable for every receipt built without LOKI_PROOF_GPG_KEY,
+            # unreachable for every receipt built without a gpg signature,
             # which is the default.
             self.assertFalse(unsigned_rec["signature"]["scored"])
             self.assertNotEqual(unsigned_rec["signature"]["state"], "VERIFIED")
