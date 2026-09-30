@@ -2,7 +2,7 @@
 
 Format: id | kind | repo @ ref | issue | why chosen | red/green evidence
 
-Counts: augmentiq 1, public 21 (14 small + 7 medium), quickstart 14 (total 36)
+Counts: augmentiq 1, public 25 (14 small + 11 medium), quickstart 14 (total 40)
 
 Notes:
 - task.json holds only contract keys. Provenance (fix PR, merge sha, template, ref deviations, test edits) lives in each task's NOTES.md, outside hidden/, and must not be shown to arms.
@@ -44,6 +44,10 @@ Notes:
 - pub-werkzeug-3121 | public, medium | pallets/werkzeug @ b913d68db589 | pallets/werkzeug#3121 | merged fix pallets/werkzeug#3136 touches src/werkzeug/routing/matcher.py + rules.py; issue shows non-greedy merge-slashes regex only collapsing to 2 slashes; hidden test trimmed to the one discriminating test (emoji-trim, see NOTES.md) | hidden/RED.txt + hidden/GREEN.txt
 - pub-werkzeug-3271 | public, medium | pallets/werkzeug @ a33190bffb7f | pallets/werkzeug#3271 | merged fix pallets/werkzeug#3273 touches src/werkzeug/sansio/request.py + user_agent.py; issue asks to deprecate UserAgent parsing; hidden test trimmed (emoji-trim, see NOTES.md) | hidden/RED.txt + hidden/GREEN.txt
 - pub-werkzeug-3105 | public, medium | pallets/werkzeug @ bf7529e62685 | pallets/werkzeug#3105 | merged fix pallets/werkzeug#3109 touches src/werkzeug/routing/exceptions.py + matcher.py + rules.py; issue says duplicate-rule check ignores HTTP methods; hidden test trimmed to PR's changed tests, all 4 run (no -k, see NOTES.md r2 note) | hidden/RED.txt + hidden/GREEN.txt
+- pub-pyjwt-1147 | public, medium | jpadilla/pyjwt @ 051ea341b557 | jpadilla/pyjwt#1147 | merged fix jpadilla/pyjwt#1148 touches jwt/api_jws.py + api_jwt.py; issue says encode with a PyJWK ignores the key's algorithm; neither file alone passes (NOTES.md) | hidden/RED.txt + hidden/GREEN.txt
+- pub-pendulum-768 | public, medium | python-pendulum/pendulum @ 0a884dd36f19 | python-pendulum/pendulum#768 | merged fix python-pendulum/pendulum#775 touches src/pendulum/datetime.py + duration.py; issue shows DateTime + duration(days=1) landing at 23:00 across a DST change; pure-Python run via -o pythonpath=src | hidden/RED.txt + hidden/GREEN.txt
+- pub-isort-2646 | public, medium | PyCQA/isort @ 03f1ce055c4f | PyCQA/isort#2646 | merged fix PyCQA/isort#2647 touches isort/core.py + literal.py; issue says sorting a literal drops a trailing comment and raises on `=` in it; two env-broken tests deselected (NOTES.md) | hidden/RED.txt + hidden/GREEN.txt
+- pub-isort-1913 | public, medium | PyCQA/isort @ 23f100de865a | PyCQA/isort#1913 | merged fix PyCQA/isort#2488 touches isort/comments.py + output.py + parse.py; issue says a bare `#` inline comment is stripped; two env-broken tests deselected (NOTES.md) | hidden/RED.txt + hidden/GREEN.txt
 - qs-api-only | quickstart | fixtures/empty-repo/empty-repo.bundle @ a49d132f67fd | none | quickstart brief from templates/api-only.md; interface pinned in the prompt; stdlib behavioral test | hidden/RED.txt + hidden/GREEN.txt
 - qs-blog-platform | quickstart | fixtures/empty-repo/empty-repo.bundle @ a49d132f67fd | none | quickstart brief from templates/blog-platform.md; interface pinned in the prompt; stdlib behavioral test | hidden/RED.txt + hidden/GREEN.txt
 - qs-cli-tool | quickstart | fixtures/empty-repo/empty-repo.bundle @ a49d132f67fd | none | quickstart brief from templates/cli-tool.md; interface pinned in the prompt; stdlib behavioral test | hidden/RED.txt + hidden/GREEN.txt
@@ -58,3 +62,5 @@ Notes:
 - qs-simple-todo-app | quickstart | fixtures/empty-repo/empty-repo.bundle @ a49d132f67fd | none | quickstart brief from templates/simple-todo-app.md; interface pinned in the prompt; stdlib behavioral test | hidden/RED.txt + hidden/GREEN.txt
 - qs-static-landing-page | quickstart | fixtures/empty-repo/empty-repo.bundle @ a49d132f67fd | none | quickstart brief from templates/static-landing-page.md; interface pinned in the prompt; stdlib behavioral test | hidden/RED.txt + hidden/GREEN.txt
 - qs-web-scraper | quickstart | fixtures/empty-repo/empty-repo.bundle @ a49d132f67fd | none | quickstart brief from templates/web-scraper.md; interface pinned in the prompt; stdlib behavioral test | hidden/RED.txt + hidden/GREEN.txt
+
+- S41-20e (2026-09-30): grew the medium tier by 4 (pyjwt, pendulum, isort x2; the repos are new to the tier). Rejected candidates: babel#1120/#1078 (CLDR data must be downloaded at setup, network; the hidden test already errors without it), pendulum#774/#438 (only date.py changes behavior, the __init__.py hunk is a blank line), loguru#1236/#988 (only _colorizer.py is behavior, _logger.py is docstring), tenacity#479/#478 (test_issue_478 sync test passes with __init__.py alone, and the async test errors on asyncio.get_event_loop under Python 3.14 at both ref and merge), pyjwt#1208/#914 (tests assert many behaviors the issue never states: non-object members, component types, cache put validation), isort#2599/#2562 (test asserts an exact output that contradicts the issue's 'must not be altered' and is not stated there), tabulate#419/#173 and arrow#1201/#1138 (already on the dropped list above).

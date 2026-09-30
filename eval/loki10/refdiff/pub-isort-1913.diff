@@ -1,0 +1,152 @@
+diff --git a/isort/comments.py b/isort/comments.py
+index 0fdab29d..50d28a62 100644
+--- a/isort/comments.py
++++ b/isort/comments.py
+@@ -1,12 +1,15 @@
+-def parse(line: str) -> tuple[str, str]:
++def parse(line: str) -> tuple[str, str | None]:
+     """Parses import lines for comments and returns back the
+     import statement and the associated comment.
++
++    Returns ``None`` as the comment when no ``#`` is present in the line,
++    and an empty string when a bare ``#`` with no text is present.
+     """
+     comment_start = line.find("#")
+     if comment_start != -1:
+         return (line[:comment_start], line[comment_start + 1 :].strip())
+ 
+-    return (line, "")
++    return (line, None)
+ 
+ 
+ def add_to_line(
+@@ -26,4 +29,7 @@ def add_to_line(
+     for comment in comments:
+         if comment not in unique_comments:
+             unique_comments.append(comment)
+-    return f"{parse(original_string)[0]}{comment_prefix} {'; '.join(unique_comments)}"
++    comment_text = "; ".join(unique_comments)
++    if comment_text:
++        return f"{parse(original_string)[0]}{comment_prefix} {comment_text}"
++    return f"{parse(original_string)[0]}{comment_prefix}"
+diff --git a/isort/output.py b/isort/output.py
+index 6b0a1e77..12937dbb 100644
+--- a/isort/output.py
++++ b/isort/output.py
+@@ -340,9 +340,10 @@ def _with_from_imports(
+                     comment = (
+                         parsed.categorized_comments["nested"].get(module, {}).pop(from_import, None)
+                     )
+-                    if comment:
++                    if comment is not None:
++                        comment_text = f" {comment}" if comment else ""
+                         single_import_line += (
+-                            f"{(comments and ';') or config.comment_prefix} {comment}"
++                            f"{(comments and ';') or config.comment_prefix}{comment_text}"
+                         )
+                     if from_import in as_imports:
+                         if (
+@@ -410,7 +411,7 @@ def _with_from_imports(
+                             .get(module, {})
+                             .pop(from_import, None)
+                         )
+-                        if specific_comment:
++                        if specific_comment is not None:
+                             from_comments.append(specific_comment)
+                         output.append(
+                             wrap.line(
+@@ -432,7 +433,7 @@ def _with_from_imports(
+                             .get(module, {})
+                             .pop(as_import, None)
+                         )
+-                        if specific_comment:
++                        if specific_comment is not None:
+                             from_comments.append(specific_comment)
+ 
+                         output.append(
+@@ -465,7 +466,7 @@ def _with_from_imports(
+                     comment = (
+                         parsed.categorized_comments["nested"].get(module, {}).pop(from_import, None)
+                     )
+-                    if comment:
++                    if comment is not None:
+                         # If the comment is a noqa and hanging indent wrapping is used,
+                         # keep the name in the main list and hoist the comment to the statement.
+                         if (
+@@ -488,8 +489,9 @@ def _with_from_imports(
+                             removed=config.ignore_comments,
+                             comment_prefix=config.comment_prefix,
+                         )
++                        comment_text = f" {comment}" if comment else ""
+                         single_import_line += (
+-                            f"{(use_comments and ';') or config.comment_prefix} {comment}"
++                            f"{(use_comments and ';') or config.comment_prefix}{comment_text}"
+                         )
+                         output.append(wrap.line(single_import_line, parsed.line_separator, config))
+ 
+@@ -610,17 +612,17 @@ def _with_straight_imports(
+                 inline_comments.extend(parsed.categorized_comments["straight"][module])
+ 
+         combined_straight_imports = ", ".join(straight_modules)
+-        if inline_comments:
+-            combined_inline_comments = " ".join(inline_comments)
+-        else:
+-            combined_inline_comments = ""
+ 
+         output.extend(above_comments)
+ 
+-        if combined_inline_comments:
+-            output.append(
+-                f"{import_type} {combined_straight_imports}  # {combined_inline_comments}"
+-            )
++        if inline_comments:
++            combined_inline_comments = " ".join(c for c in inline_comments if c)
++            if combined_inline_comments:
++                output.append(
++                    f"{import_type} {combined_straight_imports}  # {combined_inline_comments}"
++                )
++            else:
++                output.append(f"{import_type} {combined_straight_imports}  #")
+         else:
+             output.append(f"{import_type} {combined_straight_imports}")
+ 
+diff --git a/isort/parse.py b/isort/parse.py
+index c7287543..5928b392 100644
+--- a/isort/parse.py
++++ b/isort/parse.py
+@@ -189,7 +189,7 @@ def file_contents(contents: str, config: Config = DEFAULT_CONFIG) -> ParsedConte
+                 import_index = index - 1
+             nested_comments = {}
+             import_string, comment = parse_comments(line)
+-            comments = [comment] if comment else []
++            comments = [comment] if comment is not None else []
+             line_parts = [part for part in strip_syntax(import_string).strip().split(" ") if part]
+             if type_of_import == "from" and len(line_parts) == 2 and comments:
+                 nested_comments[line_parts[-1]] = comments[0]
+@@ -208,7 +208,7 @@ def file_contents(contents: str, config: Config = DEFAULT_CONFIG) -> ParsedConte
+             for extra_line in extra_lines:
+                 raw_lines.append(extra_line.line)
+                 # If during parsing of the continuation lines we encounter a comment, we record it.
+-                if extra_line.comment:
++                if extra_line.comment is not None:
+                     comments.append(extra_line.comment)
+                     stripped_line = strip_syntax(extra_line.line).strip()
+                     if (
+@@ -253,7 +253,7 @@ def file_contents(contents: str, config: Config = DEFAULT_CONFIG) -> ParsedConte
+ 
+                         full_name = f"{nested_module} as {as_name}"
+                         associated_comment = nested_comments.get(full_name)
+-                        if associated_comment:
++                        if associated_comment is not None:
+                             categorized_comments["nested"].setdefault(top_level_module, {})[
+                                 full_name
+                             ] = associated_comment
+@@ -308,7 +308,7 @@ def file_contents(contents: str, config: Config = DEFAULT_CONFIG) -> ParsedConte
+                 root = imports[placed_module][type_of_import]
+                 for import_name in just_imports:
+                     associated_comment = nested_comments.get(import_name)
+-                    if associated_comment:
++                    if associated_comment is not None:
+                         categorized_comments["nested"].setdefault(import_from, {})[import_name] = (
+                             associated_comment
+                         )

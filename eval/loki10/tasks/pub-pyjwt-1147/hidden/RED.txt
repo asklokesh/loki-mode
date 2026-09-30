@@ -1,0 +1,90 @@
+.....................F..................s............................... [ 43%]
+.............F.......................................................... [ 87%]
+....................                                                     [100%]
+=================================== FAILURES ===================================
+_______________ TestJWS.test_encode_with_jwk_uses_key_algorithm ________________
+
+self = <tests.test_api_jws.TestJWS object at 0x107cac2d0>
+jws = <jwt.api_jws.PyJWS object at 0x107d82820>, payload = b'hello world'
+
+    def test_encode_with_jwk_uses_key_algorithm(
+        self, jws: PyJWS, payload: bytes
+    ) -> None:
+        """Test that encoding with a PyJWK key uses the key's algorithm
+        when no algorithm is explicitly specified. Regression test for #1147."""
+        jwk = PyJWK(
+            {
+                "kty": "oct",
+                "alg": "HS384",
+                "k": "c2VjcmV0",  # "secret"
+            }
+        )
+        # Should use HS384 from the key, not default to HS256
+        msg = jws.encode(payload, key=jwk)
+        header = jws.get_unverified_header(msg)
+>       assert header["alg"] == "HS384"
+E       AssertionError: assert 'HS256' == 'HS384'
+E         
+E         - HS384
+E         + HS256
+
+tests/test_api_jws.py:279: AssertionError
+_______________ TestJWT.test_encode_with_jwk_uses_key_algorithm ________________
+
+self = <tests.test_api_jwt.TestJWT object at 0x107928f50>
+jwt = <jwt.api_jwt.PyJWT object at 0x107836fd0>
+
+    def test_encode_with_jwk_uses_key_algorithm(self, jwt: PyJWT) -> None:
+        """Test that encoding with a PyJWK key uses the key's algorithm
+        when no algorithm is explicitly specified. Regression test for #1147."""
+        jwk = PyJWK(
+            {
+                "kty": "oct",
+                "alg": "HS384",
+                "k": "c2VjcmV0",  # "secret"
+            }
+        )
+        payload = {"hello": "world"}
+        # Should use HS384 from the key, not default to HS256
+        token = jwt.encode(payload, jwk)
+>       header = jwt.decode_complete(token, jwk, algorithms=["HS384"])["header"]
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_api_jwt.py:62: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+jwt/api_jwt.py:262: in decode_complete
+    decoded = self._jws.decode_complete(
+jwt/api_jws.py:246: in decode_complete
+    self._verify_signature(signing_input, header, signature, key, algorithms)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <jwt.api_jws.PyJWS object at 0x107a13dd0>
+signing_input = b'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJoZWxsbyI6IndvcmxkIn0'
+header = {'alg': 'HS256', 'typ': 'JWT'}
+signature = b'\x96y\xde5\xaa\x1e\x9b\xdf1`Q\x12\xdeh\xb6\x08\x92c\x9c\xc3\x8d\xb9`.\xf8T\xd6\x07u\xc97^'
+key = <jwt.api_jwk.PyJWK object at 0x106c28830>, algorithms = ['HS384']
+
+    def _verify_signature(
+        self,
+        signing_input: bytes,
+        header: dict[str, Any],
+        signature: bytes,
+        key: AllowedPublicKeys | PyJWK | str | bytes = "",
+        algorithms: Sequence[str] | None = None,
+    ) -> None:
+        if algorithms is None and isinstance(key, PyJWK):
+            algorithms = [key.algorithm_name]
+        try:
+            alg = header["alg"]
+        except KeyError:
+            raise InvalidAlgorithmError("Algorithm not specified") from None
+    
+        if not alg or (algorithms is not None and alg not in algorithms):
+>           raise InvalidAlgorithmError("The specified alg value is not allowed")
+E           jwt.exceptions.InvalidAlgorithmError: The specified alg value is not allowed
+
+jwt/api_jws.py:341: InvalidAlgorithmError
+=========================== short test summary info ============================
+FAILED tests/test_api_jws.py::TestJWS::test_encode_with_jwk_uses_key_algorithm
+FAILED tests/test_api_jwt.py::TestJWT::test_encode_with_jwk_uses_key_algorithm
+2 failed, 161 passed, 1 skipped in 0.28s
