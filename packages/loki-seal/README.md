@@ -2,13 +2,13 @@
 
 Your agent says done. Loki proves it.
 
-loki-seal is a Claude Code Stop hook. When the agent tries to finish, it runs your repo's real test suite and refuses "done" if tests are red or if tests or CI config were deleted, skipped, xfailed or weakened. It runs inside your existing session: no model calls, no global CLI, no dangerous flags, no dependencies beyond node.
+loki-seal is a Claude Code Stop hook. When the agent tries to finish, it runs your repo's real test suite and refuses "done" if tests newly fail or if tests or CI config were deleted, skipped, xfailed or weakened. It runs inside your existing session: no model calls, no global CLI, no dangerous flags, no dependencies beyond node.
 
 ## Install
 
 From a terminal: `claude plugin marketplace add <owner/repo or local path>`, then open `/plugin` in Claude Code and install `loki-seal` from that marketplace (the `/plugin` UI is the documented install path). A local checkout of `packages/loki-seal` works as the path until anything is published.
 
-The plugin is the enforcing install: its `hooks/hooks.json` registers SessionStart and Stop. The skill (`skills/loki-seal/SKILL.md`) also declares the same hooks in its frontmatter, resolved relative to the skill directory (`${CLAUDE_SKILL_DIR}/../../bin/loki-seal.js`). That only works when the skill stays inside this package layout; a skill copied on its own (for example by a skills registry) has no script beside it, so treat that path as advisory. Do not enable both at once, or the suite runs twice per stop.
+The plugin is the enforcing install: its `hooks/hooks.json` registers SessionStart and Stop. The skill (`skills/loki-seal/SKILL.md`) is advisory guidance only and registers no hooks, so a skill-only install does not enforce anything.
 
 ## What it checks
 
@@ -42,7 +42,8 @@ Verified by Loki https://github.com/asklokesh/loki-mode
 - Test-count heuristics are line based; a test rewritten to be weaker without dropping assertions is not caught.
 - Rust inline `#[test]` in src files is counted only under tests/.
 - Blocking is exit code 2 with the reason on stderr. The check re-runs on every stop attempt, including when `stop_hook_active` is true. After 5 consecutive blocks (`LOKI_SEAL_MAX_BLOCKS`) it releases with "NOT VERIFIED (released after 5 blocks)" so a session is never trapped.
-- Env: `LOKI_SEAL_TIMEOUT_MS` (default 300000), `LOKI_SEAL_START_TIMEOUT_MS` (default 120000), `LOKI_SEAL_STATE_DIR`.
+- Env: `LOKI_SEAL_TIMEOUT_MS` (default 270000, below the 300s hook timeout; the suite's process group is killed on timeout), `LOKI_SEAL_START_TIMEOUT_MS` (default 120000), `LOKI_SEAL_STATE_DIR`. State lives in `${CLAUDE_PLUGIN_DATA}/state` when set, else `~/.loki-seal/state` (mode 0700, must be owned by you and not a symlink; files older than 7 days are pruned).
+- Fail closed: any internal error at Stop exits 2 with "loki-seal: NOT VERIFIED (hook error: ...)". Symlinked test files are recorded by target and never followed.
 
 ## Develop
 

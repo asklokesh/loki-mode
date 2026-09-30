@@ -6,8 +6,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
+const mode = process.argv[2];
 const REPO = 'https://github.com/asklokesh/loki-mode';
 const MAX_BLOCKS = 5; // safety valve: never trap a session in an endless stop loop
 const SKIP_DIRS = new Set(['node_modules', '.git', 'target', 'venv', '.venv', 'dist', 'build', '__pycache__', '.loki']);
@@ -29,8 +30,9 @@ const CI_SOFTEN = /continue-on-error:\s*true|\|\|\s*true|\bif:\s*false/;
 function walk(root, rel = '', out = {}) {
   for (const e of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
     const p = rel ? rel + '/' + e.name : e.name;
-    if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name)) walk(root, p, out); }
-    else if ((isTest(p) || isCI(p)) && fs.statSync(path.join(root, p)).size < 1e6) out[p] = fs.readFileSync(path.join(root, p), 'utf8');
+    if (e.isSymbolicLink()) { if (isTest(p) || isCI(p)) out[p] = 'SYMLINK ' + fs.readlinkSync(path.join(root, p)); } // never followed
+    else if (e.isDirectory()) { if (!SKIP_DIRS.has(e.name)) walk(root, p, out); }
+    else if ((isTest(p) || isCI(p)) && fs.lstatSync(path.join(root, p)).size < 1e6) out[p] = fs.readFileSync(path.join(root, p), 'utf8');
   }
   return out;
 }
@@ -103,10 +105,31 @@ function counts(out) {
   return { pass: sum(/(\d+) passed/g), fail: sum(/(\d+) failed/g) };
 }
 
+function stateDir() {
+  const dir = process.env.LOKI_SEAL_STATE_DIR || (process.env.CLAUDE_PLUGIN_DATA && path.join(process.env.CLAUDE_PLUGIN_DATA, 'state')) || path.join(os.homedir(), '.loki-seal', 'state');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const st = fs.lstatSync(dir);
+  if (st.isSymbolicLink() || !st.isDirectory()) throw new Error(`state dir is a symlink or not a directory: ${dir}`);
+  if (process.getuid && st.uid !== process.getuid()) throw new Error(`state dir not owned by the current user: ${dir}`);
+  if (st.mode & 0o077) fs.chmodSync(dir, 0o700);
+  return dir;
+}
+
 function statePath(input, root) {
-  const dir = process.env.LOKI_SEAL_STATE_DIR || path.join(os.tmpdir(), 'loki-seal-state');
-  fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, crypto.createHash('sha1').update(root + '\0' + (input.session_id || '')).digest('hex') + '.json');
+  return path.join(stateDir(), crypto.createHash('sha1').update(root + '\0' + (input.session_id || '')).digest('hex') + '.json');
+}
+
+function writeState(sp, obj) { // exclusive create of a temp name, then atomic rename
+  const tmp = `${sp}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(obj), { flag: 'wx', mode: 0o600 });
+  fs.renameSync(tmp, sp);
+}
+
+function prune(dir) {
+  for (const f of fs.readdirSync(dir)) {
+    const fp = path.join(dir, f);
+    try { const st = fs.lstatSync(fp); if (st.isFile() && Date.now() - st.mtimeMs > 7 * 864e5) fs.unlinkSync(fp); } catch { /* best effort */ }
+  }
 }
 
 function failing(out) {
@@ -121,13 +144,24 @@ function failing(out) {
 function runSuite(root, runner, timeout) {
   const env = { ...process.env, CI: '1', NO_COLOR: '1', FORCE_COLOR: '0', PYTHONDONTWRITEBYTECODE: '1' };
   delete env.NODE_TEST_CONTEXT; // set when we are launched inside another node --test run
-  const res = spawnSync(runner.cmd[0], runner.cmd.slice(1), { cwd: root, encoding: 'utf8', maxBuffer: 1 << 28, timeout, env });
-  const out = (res.stdout || '') + (res.stderr || '');
-  return { error: res.error, status: res.status, ids: failing(out), ...counts(out), tail: out.trim().split('\n').slice(-15).join('\n') };
+  return new Promise((resolve) => {
+    let out = '', timedOut = false, done = false;
+    const child = spawn(runner.cmd[0], runner.cmd.slice(1), { cwd: root, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const timer = setTimeout(() => { timedOut = true; try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ } }, timeout);
+    const add = (d) => { if (out.length < 1 << 26) out += d; };
+    child.stdout.on('data', add);
+    child.stderr.on('data', add);
+    const finish = (status, error) => {
+      if (done) return;
+      done = true; clearTimeout(timer);
+      resolve({ error: timedOut ? { code: 'ETIMEDOUT' } : error, status, ids: failing(out), ...counts(out), tail: out.trim().split('\n').slice(-15).join('\n') });
+    };
+    child.on('error', (e) => finish(null, e));
+    child.on('close', (code) => finish(code));
+  });
 }
 
-function main() {
-  const mode = process.argv[2];
+async function main() {
   let input = {};
   try { input = JSON.parse(fs.readFileSync(0, 'utf8') || '{}'); } catch { /* hook without JSON */ }
   const root = path.resolve(input.cwd || process.cwd());
@@ -137,9 +171,10 @@ function main() {
 
   if (mode === 'start') {
     if (fs.existsSync(sp)) return; // resume or compact: keep the original baseline
-    const b = runner ? runSuite(root, runner, +process.env.LOKI_SEAL_START_TIMEOUT_MS || 120000) : null;
+    const b = runner ? await runSuite(root, runner, +process.env.LOKI_SEAL_START_TIMEOUT_MS || 120000) : null;
     const suite = b && !b.error ? { status: b.status, ids: b.ids, pass: b.pass, fail: b.fail } : null;
-    fs.writeFileSync(sp, JSON.stringify({ files: cur, blocks: 0, suite }));
+    writeState(sp, { files: cur, blocks: 0, suite });
+    prune(path.dirname(sp));
     const msg = suite ? `loki-seal: baseline recorded, ${suite.pass + suite.fail} tests, ${Math.max(suite.ids.length, suite.fail)} failing`
       : 'loki-seal: baseline recorded (suite not run at start), file snapshot only';
     process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: msg } }));
@@ -156,7 +191,7 @@ function main() {
   const findings = scan(base, cur);
   const tree = treeHash(cur);
 
-  const r = runner ? runSuite(root, runner, +process.env.LOKI_SEAL_TIMEOUT_MS || 300000) : null;
+  const r = runner ? await runSuite(root, runner, +process.env.LOKI_SEAL_TIMEOUT_MS || 270000) : null;
   const c = r || { pass: 0, fail: 0 };
 
   const problems = [...findings];
@@ -180,7 +215,7 @@ function main() {
 
   const max = +process.env.LOKI_SEAL_MAX_BLOCKS || MAX_BLOCKS;
   const blocks = (st ? st.blocks : 0) + (problems.length ? 1 : 0);
-  if (st) { st.blocks = problems.length ? blocks : 0; fs.writeFileSync(sp, JSON.stringify(st)); }
+  if (st) { st.blocks = problems.length ? blocks : 0; writeState(sp, st); }
   const released = problems.length > 0 && blocks > max;
 
   const outcome = !runner ? 'NOT VERIFIED (no test runner detected)'
@@ -204,4 +239,13 @@ function main() {
   process.stdout.write(JSON.stringify({ systemMessage: receipt }));
 }
 
-main();
+main().catch((e) => {
+  const m = (e && e.message) || String(e);
+  if (mode === 'start') {
+    process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: `loki-seal: baseline unavailable (${m})` } }));
+    process.exit(0);
+  }
+  // Fail closed: exit 2 blocks the stop; any other non-zero exit would let it through.
+  process.stderr.write(`loki-seal: NOT VERIFIED (hook error: ${m})\n`);
+  process.exit(2);
+});

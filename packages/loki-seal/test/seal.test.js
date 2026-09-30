@@ -254,3 +254,74 @@ test('pass output is JSON with systemMessage', () => {
   assert.strictEqual(r.status, 0);
   assert.match(JSON.parse(r.stdout).systemMessage, /^loki-seal: PASS/);
 });
+
+const sealEnv = (d, env, cmd = 'stop') => spawnSync('node', [SEAL, cmd], {
+  input: JSON.stringify({ session_id: 's-' + path.basename(d), cwd: d }),
+  env: { ...process.env, LOKI_SEAL_STATE_DIR: path.join(root, 'state'), ...env }, encoding: 'utf8',
+});
+const isRoot = process.getuid && process.getuid() === 0;
+
+test('fail closed: dangling symlink named *.test.js never exits 1', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  seal('start', d);
+  fs.symlinkSync(path.join(d, 'does-not-exist'), path.join(d, 'test', 'ghost.test.js'));
+  const r = seal('stop', d);
+  assert.ok(r.status === 0 || r.status === 2, r.raw);
+});
+
+test('fail closed: unreadable directory blocks with NOT VERIFIED, never exit 1', { skip: isRoot && 'root ignores modes' }, () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  seal('start', d);
+  fs.mkdirSync(path.join(d, 'locked'));
+  fs.chmodSync(path.join(d, 'locked'), 0o000);
+  try {
+    const r = seal('stop', d);
+    assert.strictEqual(r.status, 2, r.raw);
+    assert.match(r.out.reason, /NOT VERIFIED \(hook error: /);
+  } finally { fs.chmodSync(path.join(d, 'locked'), 0o755); }
+});
+
+test('start survives an internal error and reports baseline unavailable', { skip: isRoot && 'root ignores modes' }, () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  fs.mkdirSync(path.join(d, 'locked'));
+  fs.chmodSync(path.join(d, 'locked'), 0o000);
+  try {
+    const r = sealEnv(d, {}, 'start');
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.match(r.stdout, /baseline unavailable/);
+  } finally { fs.chmodSync(path.join(d, 'locked'), 0o755); }
+});
+
+test('state dir that is a symlink is refused, stop fails closed', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  const real = path.join(root, 'realstate'); fs.mkdirSync(real);
+  const link = path.join(root, 'linkstate'); fs.symlinkSync(real, link);
+  const r = sealEnv(d, { LOKI_SEAL_STATE_DIR: link });
+  assert.strictEqual(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /NOT VERIFIED \(hook error: .*state/);
+});
+
+test('state dir is 0700 and state files older than 7 days are pruned', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  const sd = path.join(root, 'fresh-state');
+  fs.mkdirSync(sd, { mode: 0o755 });
+  const old = path.join(sd, 'old.json'); fs.writeFileSync(old, '{}');
+  const t = Date.now() / 1000 - 8 * 86400; fs.utimesSync(old, t, t);
+  sealEnv(d, { LOKI_SEAL_STATE_DIR: sd }, 'start');
+  assert.ok(!fs.existsSync(old));
+  assert.strictEqual(fs.statSync(sd).mode & 0o777, 0o700);
+});
+
+test('a hung suite is killed at the internal timeout and blocks', () => {
+  const d = repo({ 'package.json': JSON.stringify({ scripts: { test: 'sleep 30' } }), 'test/a.test.js': T2 });
+  seal('start', d);
+  const t0 = Date.now();
+  const r = sealEnv(d, { LOKI_SEAL_TIMEOUT_MS: '1500' });
+  assert.strictEqual(r.status, 2, r.stdout + r.stderr);
+  assert.ok(Date.now() - t0 < 15000);
+});
+
+test('skill frontmatter declares no hooks (plugin is the enforcing install)', () => {
+  const k = fs.readFileSync(path.join(__dirname, '..', 'skills', 'loki-seal', 'SKILL.md'), 'utf8');
+  assert.ok(!/^hooks:/m.test(k));
+});
