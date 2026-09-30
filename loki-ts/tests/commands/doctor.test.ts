@@ -144,6 +144,33 @@ describe("doctor.checkDisk", () => {
 // ---- checkSkills -------------------------------------------------------------
 
 describe("doctor.checkSkills", () => {
+  // A-123: severity follows the SELECTED provider. Only its dangling link is a
+  // blocking "fail"; every other provider's stale link is a "warn".
+  it("grades only the selected provider's broken link as fail", async () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), "loki-doctor-a123-"));
+    try {
+      for (const p of [".claude", ".cline"]) {
+        const full = join(tmpHome, p, "skills/loki-mode");
+        mkdirSync(join(full, ".."), { recursive: true });
+        symlinkSync(join(tmpHome, "gone"), full);
+      }
+      mock.module("node:os", () => {
+        const real = require("node:os");
+        return { ...real, homedir: () => tmpHome };
+      });
+      const byName = (sel: string | null) =>
+        Object.fromEntries(checkSkills(sel).map((x) => [x.name, x.status]));
+      expect(byName("claude")["Claude Code"]).toBe("fail");
+      expect(byName("claude")["Cline CLI"]).toBe("warn");
+      expect(byName("cline")["Cline CLI"]).toBe("fail");
+      expect(byName("cline")["Claude Code"]).toBe("warn");
+      expect(byName(null)["Claude Code"]).toBe("warn");
+    } finally {
+      mock.module("node:os", () => require("node:os"));
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
   it("returns one entry per provider", () => {
     const skills = checkSkills();
     expect(skills.length).toBe(4);
