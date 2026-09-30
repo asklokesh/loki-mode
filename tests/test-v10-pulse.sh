@@ -875,7 +875,7 @@ VIOLATION: LOW_RELEASE_VOLUME: only 0 release(s) in the last 24h (want at least 
 assert_exact_violations "T11 all-except-CI_RED" "$EXPECTED_ALL"
 EXPECTED_NEXT_ALL="NEXT ACTION: MOAT_REGRESSION: identify which moat property regressed and revert or fix it before any further merge -- measured moat suite reports FAIL (1 rule failure(s)) -- a live suite failure is always a regression regardless of the proven count (see $MOAT_RESULT_FAIL)
 NEXT ACTION: UNRELEASED_MERGE: cut a release now, main has been unreleased past the 30-minute budget -- 1 commit(s) merged but unreleased for 60.0 minutes since v1.0.0 (oldest $UNRELEASED_ALL_SHA) while CI is green
-NEXT ACTION: RELEASE_CADENCE: cut a release now (D37 cadence) -- 1 merged-unreleased slice commit(s) since v1.0.0, 60.0 minutes since the later of the oldest commit and the release tag while main CI is green (D37 threshold 25)
+NEXT ACTION: RELEASE_CADENCE: cut a release now (D37 cadence, or D44 green unreleased main commit) -- 1 merged-unreleased slice commit(s) since v1.0.0, 60.0 minutes since the later of the oldest commit and the release tag while main CI is green (D37 threshold 25)
 NEXT ACTION: REVIEW_STALE: escalate or finish review for the named slice(s), they have exceeded the 45-minute budget -- review-pending past 45 minutes: S-01 (60.0 min)
 NEXT ACTION: AGENT_OVER_BUDGET: check in on the named agent(s), they have exceeded their role/tier time budget -- agent(s) past their role/tier time budget: S-01 review LOW (60.0 min, budget 30 min)
 NEXT ACTION: IDLE_BUILDERS: dispatch more builders against the named ready slice(s) in docs/v10/BOARD.md -- only 0 active builder worktree(s) while 1 ready slice(s) exist on BOARD (S-02)
@@ -2703,7 +2703,7 @@ if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" \
     "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}" "$WT_CLEAN_STALE")"; then rc=0; else rc=$?; fi
 if printf '%s\n' "$OUT" | grep -qF "Release cadence (D37): 26.0 min, 1 merged-unreleased slice commit(s) since v1.0.0" \
     && printf '%s\n' "$OUT" | grep -q "^VIOLATION: RELEASE_CADENCE: 1 merged-unreleased slice commit(s) since v1.0.0, 26.0 minutes" \
-    && printf '%s\n' "$OUT" | grep -qF "NEXT ACTION: RELEASE_CADENCE: cut a release now (D37 cadence) --"; then
+    && printf '%s\n' "$OUT" | grep -qF "NEXT ACTION: RELEASE_CADENCE: cut a release now (D37 cadence, or D44 green unreleased main commit) --"; then
     ok "RELEASE_CADENCE fires at 26 minutes with main CI green"
 else
     bad "T45a RELEASE_CADENCE-fires case: rc=$rc output follows"
@@ -3291,6 +3291,105 @@ else
     bad "T54 existing-prefix regression case: rc=$rc output follows"
     printf '%s\n' "$OUT"
 fi
+
+echo "T55 -- D44 item 5: RELEASE_CADENCE (green-age) and MAIN_RED_BY_MERGE from push-event Tier B runs"
+# PULSE_NOW = 02:00Z. Runs carry event + updatedAt; green age = latest run completion.
+t55_runs() {  # $1=file $2=event $3=Tests conclusion $4=completion time
+    python3 - "$@" <<'PY'
+import json, sys
+f, ev, tests, t = sys.argv[1:5]
+json.dump([{"status": "completed", "conclusion": c, "workflowName": w, "event": ev, "updatedAt": t}
+           for w, c in (("Tests", tests), ("Bun Parity", "success"), ("Coverage", "success"))], open(f, "w"))
+PY
+}
+t55_run() {
+    run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" \
+        "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=cat $1" \
+        "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}" "$WT_CLEAN_STALE")" || true
+}
+(
+    cd "$FAKE_REPO" || exit 1
+    echo "d44" > d44-file.txt
+    git add d44-file.txt
+    GIT_AUTHOR_DATE="2026-09-27T01:00:00Z" GIT_COMMITTER_DATE="2026-09-27T01:00:00Z" \
+        git commit -q -m "d44 change"
+)
+T55_SHA="$(cd "$FAKE_REPO" && git rev-parse --short=8 HEAD)"
+T55_F="$WORK/t55.json"
+
+t55_runs "$T55_F" push success "2026-09-27T01:30:00Z"; t55_run "$T55_F"
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: RELEASE_CADENCE: D44: green unreleased main commit $T55_SHA has had green Tier B for 30.0 minutes" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: MAIN_RED_BY_MERGE"; then
+    ok "T55a RELEASE_CADENCE fires: green Tier B 30 min, newer than the tag"
+else bad "T55a output follows"; printf '%s\n' "$OUT"; fi
+
+t55_runs "$T55_F" push success "2026-09-27T01:45:00Z"; t55_run "$T55_F"
+if ! printf '%s\n' "$OUT" | grep -qF "Tier B for" && printf '%s\n' "$OUT" | grep -qF "green for 15.0 min since v1.0.0"; then
+    ok "T55b RELEASE_CADENCE (D44) does not fire at 15 min green"
+else bad "T55b output follows"; printf '%s\n' "$OUT"; fi
+
+t55_runs "$T55_F" pull_request success "2026-09-27T01:00:00Z"; t55_run "$T55_F"
+if ! printf '%s\n' "$OUT" | grep -qF "Tier B for" && printf '%s\n' "$OUT" | grep -qF "D44 main push checks: n/a"; then
+    ok "T55c non-push runs are ignored (n/a)"
+else bad "T55c output follows"; printf '%s\n' "$OUT"; fi
+
+t55_runs "$T55_F" push failure "2026-09-27T01:30:00Z"; t55_run "$T55_F"
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: MAIN_RED_BY_MERGE: push to main $T55_SHA failed Tier B: Tests" \
+    && ! printf '%s\n' "$OUT" | grep -qF "Tier B for"; then
+    ok "T55d MAIN_RED_BY_MERGE fires, names SHA and Tests, and no green cadence fire"
+else bad "T55d output follows"; printf '%s\n' "$OUT"; fi
+
+t55_runs "$T55_F" pull_request failure "2026-09-27T01:30:00Z"; t55_run "$T55_F"
+if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: MAIN_RED_BY_MERGE"; then
+    ok "T55e MAIN_RED_BY_MERGE does not fire for a failed non-push run"
+else bad "T55e output follows"; printf '%s\n' "$OUT"; fi
+
+t55_runs "$T55_F" push success "2026-09-27T01:30:00Z"; t55_run "$T55_F"
+if printf '%s\n' "$OUT" | grep -q "^Releases (last hour): [0-9]"; then
+    ok "T55f Releases (last hour) metric line present"
+else bad "T55f output follows"; printf '%s\n' "$OUT"; fi
+
+# T55g/h: runs whose headBranch is train/1 (D44 promoted commit). The stub gh
+# honors --branch like the real one, so a --branch main lookup sees nothing.
+T55_STUB="$WORK/t55-stub"; mkdir -p "$T55_STUB"
+cat > "$T55_STUB/gh" <<'STUB'
+#!/bin/sh
+br=""
+while [ $# -gt 0 ]; do [ "$1" = "--branch" ] && br="$2"; shift; done
+python3 - "$T55_RUNS" "$br" <<'PY'
+import json, sys
+f, br = sys.argv[1:3]
+print(json.dumps([r for r in json.load(open(f)) if not br or r.get("headBranch") == br]))
+PY
+STUB
+chmod +x "$T55_STUB/gh"
+t55_train() {  # $1=Tests conclusion
+    t55_runs "$T55_F" push "$1" "2026-09-27T01:30:00Z"
+    python3 - "$T55_F" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for r in d: r["headBranch"] = "train/1"
+json.dump(d, open(sys.argv[1], "w"))
+PY
+    run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PATH=$T55_STUB:$PATH" "T55_RUNS=$T55_F" \
+        "PULSE_NPM_CMD=cat $NPM_TIME_JSON" "PULSE_GH_CMD=" "PULSE_CACHE_DIR=$WORK/t55-cache" \
+        "PULSE_WORKTREE_CMD=$(worktree_cmd_for "$FAKE_REPO" "${WT_CLEAN[@]}" "$WT_CLEAN_STALE")" || true
+}
+t55_train success
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: RELEASE_CADENCE: D44: green unreleased main commit $T55_SHA has had green Tier B for 30.0 minutes"; then
+    ok "T55g RELEASE_CADENCE fires for Tier B runs on headBranch train/1"
+else bad "T55g output follows"; printf '%s\n' "$OUT"; fi
+t55_train failure
+if printf '%s\n' "$OUT" | grep -qF "VIOLATION: MAIN_RED_BY_MERGE: push to main $T55_SHA failed Tier B: Tests"; then
+    ok "T55h MAIN_RED_BY_MERGE fires for failed Tier B runs on headBranch train/1"
+else bad "T55h output follows"; printf '%s\n' "$OUT"; fi
+(cd "$FAKE_REPO" || exit 1; git reset -q --hard v1.0.0)
+
+
+echo "T56 -- scripts/metrics-releases-append.py self-test (header creation, newest first, never truncates)"
+if OUT="$(python3 "$REPO_ROOT/scripts/metrics-releases-append.py" --self-test 2>&1)" && printf '%s\n' "$OUT" | grep -q "PASS"; then
+    ok "T56 metrics-releases-append self-test"
+else bad "T56 output follows"; printf '%s\n' "$OUT"; fi
 
 echo ""
 echo "=== bash 3.2 syntax + full-suite check (via /bin/sh, real bash 3.2.57 on macOS) ==="

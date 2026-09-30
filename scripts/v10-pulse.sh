@@ -472,7 +472,7 @@ NOW = now_epoch()
 VIOLATION_PRIORITY = [
     "SESSION_STALLED", "CI_RED", "CI_CANCELLED_STREAK", "RELEASE_ON_RED", "HIGH_LOAD",
     "BUDGET_BURN", "OPUS_SHARE",
-    "MOAT_REGRESSION", "UNRELEASED_MERGE", "RELEASE_CADENCE", "TRAIN_LATE", "REVIEW_STALE",
+    "MOAT_REGRESSION", "MAIN_RED_BY_MERGE", "UNRELEASED_MERGE", "RELEASE_CADENCE", "TRAIN_LATE", "REVIEW_STALE",
     "AGENT_OVER_BUDGET", "STALE_PROGRESS", "UNEVIDENCED_CLAIM", "RELEASED_AHEAD_OF_NPM",
     "ORPHAN_TEST", "ORPHAN_WORKTREE", "STRAY_CONTAINER", "STRAY_WORKTREE",
     "WORKTREE_COUNT", "IDLE_BUILDERS", "UNDERSTAFFED", "LOW_READY", "NO_RECENT_RELEASE",
@@ -531,8 +531,10 @@ if main_sha is not None:
         _gh_argv = shlex.split(os.environ["PULSE_GH_CMD"])
     else:
         _gh_argv = [
-            "gh", "run", "list", "--branch", MAIN_REF, "--commit", main_sha,
-            "--json", "status,conclusion,workflowName", "--limit", "20",
+            # No --branch: under D44 a promoted commit's Tier B ran on train/N
+            # (headBranch train/N), so a main-only filter would hide it.
+            "gh", "run", "list", "--commit", main_sha, "--event", "push",
+            "--json", "status,conclusion,workflowName,event,updatedAt", "--limit", "20",
         ]
 
 _gh_streak_argv = shlex.split(os.environ["PULSE_GH_STREAK_CMD"]) if os.environ.get("PULSE_GH_STREAK_CMD") else [
@@ -818,6 +820,7 @@ def parse_npm_releases(rc, out):
     stamps.sort()
     last = stamps[-1]
     count_24h = sum(1 for t in stamps if NOW - t <= 24 * 3600)
+    count_1h = sum(1 for t in stamps if NOW - t <= 3600)
     # latest_version: the version key with the newest publish stamp (S-139 /
     # BACKLOG 136) -- read from this SAME `npm view ... time --json` result,
     # never a second `npm view ... dist-tags`/`version` call, to stay inside
@@ -829,6 +832,7 @@ def parse_npm_releases(rc, out):
     return {
         "last_release_epoch": last,
         "count_24h": count_24h,
+        "count_1h": count_1h,
         "latest_version": latest_version,
     }
 
@@ -837,11 +841,13 @@ npm_result = safe(parse_npm_releases, _npm_rc, _npm_out)
 if npm_result is None:
     mark_unknown("releases_24h")
     mark_unknown("minutes_since_release")
+    emit("Releases (last hour): UNKNOWN (npm check failed or timed out)%s" % cache_note("npm"))
     emit("Releases (24h): UNKNOWN (npm check failed or timed out)%s" % cache_note("npm"))
     emit("Minutes since last release: UNKNOWN")
 else:
     mins_since = (NOW - npm_result["last_release_epoch"]) / 60.0
     _npm_note = cache_note("npm", "releases")
+    emit("Releases (last hour): %d%s" % (npm_result["count_1h"], _npm_note))
     emit("Releases (24h): %d%s" % (npm_result["count_24h"], _npm_note))
     emit("Minutes since last release: %.1f%s" % (mins_since, _npm_note))
 
@@ -1786,6 +1792,73 @@ else:
             "commit and the release tag while main CI is green (D37 threshold %d)"
             % (_rc_count, release_cadence["tag"], _rc_age, _RELEASE_CADENCE_THRESHOLD_MIN),
         )
+
+
+# --- 4d2. D44 item 5: RELEASE_CADENCE (green-age) and MAIN_RED_BY_MERGE -------
+# Both read the SAME cached gh_ci lookup (_gh_out) as CI_RED; no new gh call.
+# Tier B = Tests, Bun Parity, Coverage, `push` event only. Time basis for
+# "green for N minutes" is the RUN COMPLETION time (gh updatedAt, latest of
+# the three runs), not the commit time: a commit can sit unbuilt for a while
+# before it turns green, and the 20-minute clock is about how long a green,
+# releasable commit has been waiting. Only the main HEAD is judged (the one
+# commit this lookup covers); a fixture/run lacking `event`/`updatedAt` reads
+# n/a, never fires. ponytail: head-only, a green non-head unreleased commit
+# is not seen; add a per-commit gh lookup if trains stop fast-forwarding.
+_TIER_B = ("Tests", "Bun Parity", "Coverage")
+_D44_GREEN_MIN = 20
+
+
+def _tier_b_push_runs():
+    try:
+        runs = json.loads(_gh_out) if _gh_rc == 0 and _gh_out.strip() else []
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(runs, list):
+        return None
+    return [r for r in runs if isinstance(r, dict) and r.get("event") == "push"
+            and r.get("workflowName") in _TIER_B]
+
+
+def _head_version_only():
+    rc, out, _ = git(["diff", "--name-only", "%s^1" % main_sha, main_sha])
+    return rc == 0 and out.split() == ["VERSION"]
+
+
+def check_d44():
+    if main_sha is None or unreleased is None:
+        return None
+    runs = _tier_b_push_runs()
+    if runs is None:
+        return None
+    return {"runs": runs, "version_only": _head_version_only()}
+
+
+_d44 = safe(check_d44)
+if _d44 is None or not _d44["runs"]:
+    emit("D44 main push checks: n/a (no Tier B push runs for %s)" % (main_sha or MAIN_REF)[:8])
+else:
+    _d44_runs = _d44["runs"]
+    _d44_failed = sorted(set(r["workflowName"] for r in _d44_runs if r.get("conclusion") in _CI_FAILURE_CONCLUSIONS))
+    if _d44_failed and not _d44["version_only"]:
+        add_violation(
+            "MAIN_RED_BY_MERGE",
+            "push to main %s failed Tier B: %s" % (main_sha[:8], ", ".join(_d44_failed)),
+        )
+    _d44_green = (
+        {r["workflowName"] for r in _d44_runs if r.get("status") == "completed" and r.get("conclusion") in _CI_OK_CONCLUSIONS}
+        >= set(_TIER_B)
+    )
+    _d44_done = [parse_time_value(r.get("updatedAt") or "") for r in _d44_runs]
+    _rc2, _tag_sha, _ = git(["rev-parse", "%s^{commit}" % unreleased["tag"]])
+    if _d44_green and None not in _d44_done and _rc2 == 0 and _tag_sha.strip() != main_sha:
+        _d44_age = (NOW - max(_d44_done)) / 60.0
+        emit("Green unreleased main %s: green for %.1f min since %s" % (main_sha[:8], _d44_age, unreleased["tag"]))
+        if _d44_age > _D44_GREEN_MIN:
+            add_violation(
+                "RELEASE_CADENCE",
+                "D44: green unreleased main commit %s has had green Tier B for %.1f minutes (by run completion time) and is newer than %s (D44 threshold %d)"
+                % (main_sha[:8], _d44_age, unreleased["tag"], _D44_GREEN_MIN),
+            )
 
 
 # --- 4e. MERGED_NOT_RELEASED_STALE: a `merged` row already shipped (E-90) --
@@ -3126,7 +3199,8 @@ _NEXT_ACTION_TEXT = {
     "OPUS_SHARE": "re-pin the named engineer(s) to sonnet, opus is over its D13 30% share of last-hour engineer output tokens",
     "MOAT_REGRESSION": "identify which moat property regressed and revert or fix it before any further merge",
     "UNRELEASED_MERGE": "cut a release now, main has been unreleased past the 30-minute budget",
-    "RELEASE_CADENCE": "cut a release now (D37 cadence)",
+    "RELEASE_CADENCE": "cut a release now (D37 cadence, or D44 green unreleased main commit)",
+    "MAIN_RED_BY_MERGE": "main's latest push failed Tier B: fix forward or revert the named SHA before any further merge (D44)",
     "TRAIN_LATE": "push a release train now, merged-unreleased commits exist and cadence has slipped past the 25-minute budget",
     "REVIEW_STALE": "escalate or finish review for the named slice(s), they have exceeded the 45-minute budget",
     "AGENT_OVER_BUDGET": "check in on the named agent(s), they have exceeded their role/tier time budget",

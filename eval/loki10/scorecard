@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""S41-02: eval/loki10/scorecard <label=results.jsonl>... [--append METRICS_PATH]
+"""S41-02/S41-17: eval/loki10/scorecard <label=results.jsonl>... [--append METRICS_PATH]
 
 Prints one table per task tier (small, medium, large): completion, cost per
 completed and p50 time, with two labels (conventionally raw= and loki=) side
-by side and a green/red mark per column under D41
-(docs/v10/SCORECARD-PLAN.md section 2). Reuses harness.dedupe,
-harness.nearest_rank, harness.is_evaluated and harness._task_tier; does not
-reimplement row parsing (eval/loki10/summarize wraps the same harness.py).
+by side. Reuses harness.dedupe, harness.nearest_rank, harness.is_evaluated
+and harness._task_tier; does not reimplement row parsing (eval/loki10/
+summarize wraps the same harness.py).
 
 Repeat a label for more rep files, e.g.:
     scorecard raw=r1.jsonl raw=r2.jsonl loki=r1.jsonl loki=r2.jsonl
@@ -15,10 +14,24 @@ Per section 2, each rep file is deduped on its own before concatenation: a
 dedupe over the concatenation would merge separate reps that share
 (model, harness_sha, task, arm).
 
-With exactly two labels, a tier is marked only when the task sets, n per
-task and harness_sha all match between them; any mismatch refuses the whole
-run (exit 2), nothing is printed. With any other label count (e.g. replaying
-one arm/variant alone) each tier prints per-label stats with no marks.
+With exactly two labels: D43/S41-17, the scorecard decides only outside its
+noise. Each metric (completion, cost per completed, p50) and the loki-minus-
+raw difference get a seeded percentile bootstrap 95% CI, clustered by task
+(resample tasks with replacement, keep every one of a resampled task's rows
+-- its reps -- together; the same resampled task list is used for both arms
+in a given replicate, so the difference is a paired comparison). A column is
+green when its difference CI (ratio CI vs 0.5 for the D41/E-122 headline
+cost pair) lies entirely on the good side, red when entirely on the bad
+side, else inconclusive. The tier verdict is green only if all three
+columns are green; any red column makes it red (a null cost row outranks
+inconclusive, D43 item 1), else any inconclusive column makes it
+inconclusive. D43 item 2 floor: a tier with fewer than 20 tasks, or any
+task with fewer than 3 evaluated reps on either arm, reads inconclusive on every mark
+(--min-tasks/--min-reps override, for tests only). A tier is marked only
+when the task sets, n per task and harness_sha all match between the two
+labels; any mismatch refuses the whole run (exit 2), nothing is printed.
+With any other label count (e.g. replaying one arm/variant alone) each tier
+prints per-label stats with no marks.
 
 Exit 2 on a comparability refusal, a missing/empty input file, or no rows.
 """
@@ -26,6 +39,7 @@ import collections
 import datetime
 import json
 import os
+import random
 import sys
 
 sys.dont_write_bytecode = True  # no __pycache__ next to the harness
@@ -33,6 +47,19 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from harness import dedupe, is_evaluated, nearest_rank, _task_tier  # noqa: E402
 
 TASKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tasks")
+
+# D43/S41-17: fixed seed and resample count so the report is byte-identical
+# across runs on the same inputs.
+DEFAULT_BOOTSTRAP_N = BOOTSTRAP_N = 10000  # --resamples overrides (tests only)
+DEFAULT_MIN_TASKS, DEFAULT_MIN_REPS = 20, 3
+BOOTSTRAP_SEED = 41
+CI_LO, CI_HI = 2.5, 97.5
+HEADLINE_COST_RATIO = 0.5
+# D43 item 2 floor: below this many tasks in a tier, or this many reps per
+# task per arm, the bootstrap has no real spread to resample and every mark
+# reads inconclusive. --min-tasks/--min-reps override these for tests only.
+MIN_TASKS = 20
+MIN_REPS = 3
 
 
 class Refused(Exception):
@@ -43,6 +70,7 @@ class Refused(Exception):
 def parse_args(argv):
     labels = collections.OrderedDict()
     append = None
+    global MIN_TASKS, MIN_REPS, BOOTSTRAP_N
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -51,6 +79,16 @@ def parse_args(argv):
             if i >= len(argv):
                 raise Refused("--append needs a path")
             append = argv[i]
+        elif a in ("--min-tasks", "--min-reps", "--resamples"):
+            i += 1
+            if i >= len(argv) or not argv[i].isdigit():
+                raise Refused("%s needs a non-negative integer" % a)
+            if a == "--resamples":
+                BOOTSTRAP_N = max(1, int(argv[i]))
+            elif a == "--min-tasks":
+                MIN_TASKS = int(argv[i])
+            else:
+                MIN_REPS = int(argv[i])
         elif "=" in a and not a.startswith("-"):
             label, path = a.split("=", 1)
             if not label or not path:
@@ -67,6 +105,7 @@ def parse_args(argv):
 def load_label_rows(paths):
     """Section 2: dedupe each rep file on its own, then concatenate."""
     rows = []
+    seen = {}  # run_id -> first file; a genuine rep never shares one
     for p in paths:
         try:
             with open(p, encoding="utf-8") as f:
@@ -75,7 +114,13 @@ def load_label_rows(paths):
             raise Refused("cannot read %s: %s" % (p, e))
         if not file_rows:
             raise Refused("%s has no result rows" % p)
-        rows.extend(dedupe(file_rows))
+        file_rows = dedupe(file_rows)
+        for r in file_rows:
+            rid = r.get("run_id")
+            if rid in seen:
+                raise Refused("run_id %s appears in both %s and %s: one rep counted twice" % (rid, seen[rid], p))
+            seen[rid] = p
+        rows.extend(file_rows)
     return rows
 
 
@@ -97,15 +142,16 @@ def stats(rows):
     done = [r for r in evaluated if r.get("completed")]
     n, completed = len(evaluated), len(done)
     costed = [r for r in evaluated if r.get("cost_usd") is not None]
+    cost_missing = len(costed) != len(evaluated)
     cost = None
-    if completed and len(costed) == len(evaluated):
+    if completed and not cost_missing:
         cost = sum(r["cost_usd"] for r in costed) / completed
     ttp = [r["time_to_pr_s"] for r in done if r.get("time_to_pr_s") is not None]
     partial = [r for r in costed if r.get("cost_source") == "partial-stream"]
     return {
         "n": n, "completed": completed,
         "completion": (completed / n) if n else None,
-        "cost": cost, "p50": nearest_rank(ttp, 50),
+        "cost": cost, "cost_missing": cost_missing, "p50": nearest_rank(ttp, 50),
         "partial_share": (len(partial) / len(costed)) if costed else None,
         "harness_sha": sorted({r.get("harness_sha") or "unknown" for r in rows}),
         "arm_model": sorted({"%s@%s" % (r.get("arm"), r.get("model")) for r in rows}),
@@ -127,13 +173,6 @@ def comparable(raw_rows, loki_rows):
     return None
 
 
-def mark(ok):
-    return "green" if ok else "red"
-
-
-HEADLINE_COST_RATIO = 0.5
-
-
 def is_headline_pair(raw_s, loki_s):
     """D41 (SCORECARD-PLAN.md section 2): the headline pair is loki-sonnet
     against raw-opus, matched by each side's arm and model (section 3), not
@@ -150,19 +189,207 @@ def is_headline_pair(raw_s, loki_s):
     return side_is(raw_s["arm_model"], "raw-claude", "opus") and side_is(loki_s["arm_model"], "v10", "sonnet")
 
 
-def score(raw, loki, headline=False):
-    """D41 marks (section 2): completion green if loki>=raw; p50 green if
-    loki<=raw. Cost green if loki<=raw, except the headline pair
-    (loki-sonnet vs raw-opus) which needs loki<=0.5x raw. Either side null
-    (n/a) is always red, never green."""
-    completion_ok = loki["completion"] is not None and raw["completion"] is not None \
-        and loki["completion"] >= raw["completion"]
-    cost_bar = HEADLINE_COST_RATIO if headline else 1.0
-    cost_ok = loki["cost"] is not None and raw["cost"] is not None and loki["cost"] <= cost_bar * raw["cost"]
-    p50_ok = loki["p50"] is not None and raw["p50"] is not None and loki["p50"] <= raw["p50"]
-    marks = {"completion": mark(completion_ok), "cost": mark(cost_ok), "p50": mark(p50_ok)}
-    verdict = mark(all(v == "green" for v in marks.values()))
-    return marks, verdict
+# ------------------------------------------------------------- bootstrap CI
+
+def _by_task(rows):
+    out = collections.defaultdict(list)
+    for r in rows:
+        out[r["task"]].append(r)
+    return out
+
+
+def _percentile(sorted_vals, pct):
+    """Linear-interpolated percentile of an already-sorted list. None if empty."""
+    if not sorted_vals:
+        return None
+    if len(sorted_vals) == 1:
+        return sorted_vals[0]
+    idx = pct / 100.0 * (len(sorted_vals) - 1)
+    lo = int(idx)
+    hi = min(lo + 1, len(sorted_vals) - 1)
+    frac = idx - lo
+    return sorted_vals[lo] + frac * (sorted_vals[hi] - sorted_vals[lo])
+
+
+def _ci(replicates):
+    """95% percentile-bootstrap CI over the non-None replicate values. None
+    if every replicate was undefined (e.g. every resample had a null cost
+    row, or zero evaluated rows)."""
+    vals = sorted(v for v in replicates if v is not None)
+    if not vals:
+        return None
+    return (_percentile(vals, CI_LO), _percentile(vals, CI_HI))
+
+
+def _bootstrap(raw_rows, loki_rows):
+    """D43/S41-17: seeded percentile bootstrap (BOOTSTRAP_N resamples, fixed
+    BOOTSTRAP_SEED -> deterministic output), clustered by task: each
+    resample draws tasks with replacement and keeps every one of that
+    task's rows (its reps) together. The same resampled task list is used
+    for both arms in a given replicate, so the loki-minus-raw difference is
+    a paired comparison over the same synthetic task mix."""
+    raw_by_task, loki_by_task = _by_task(raw_rows), _by_task(loki_rows)
+    tasks = sorted(raw_by_task)  # comparable() already proved this == sorted(loki_by_task)
+    rng = random.Random(BOOTSTRAP_SEED)
+    rep = {k: [] for k in (
+        "completion_raw", "completion_loki", "completion_diff",
+        "cost_raw", "cost_loki", "cost_diff", "cost_ratio",
+        "p50_raw", "p50_loki", "p50_diff")}
+    for _ in range(BOOTSTRAP_N):
+        sample = [rng.choice(tasks) for _ in tasks]
+        r = stats([row for t in sample for row in raw_by_task[t]])
+        l = stats([row for t in sample for row in loki_by_task[t]])
+        rep["completion_raw"].append(r["completion"])
+        rep["completion_loki"].append(l["completion"])
+        rep["completion_diff"].append(
+            None if r["completion"] is None or l["completion"] is None
+            else l["completion"] - r["completion"])
+        rep["cost_raw"].append(r["cost"])
+        rep["cost_loki"].append(l["cost"])
+        rep["cost_diff"].append(
+            None if r["cost"] is None or l["cost"] is None else l["cost"] - r["cost"])
+        rep["cost_ratio"].append(
+            None if r["cost"] in (None, 0) or l["cost"] is None else l["cost"] / r["cost"])
+        rep["p50_raw"].append(r["p50"])
+        rep["p50_loki"].append(l["p50"])
+        rep["p50_diff"].append(
+            None if r["p50"] is None or l["p50"] is None else l["p50"] - r["p50"])
+    return rep
+
+
+UNDEFINED_MAX_FRAC = 0.025
+
+
+def _ci_mark(bounds, higher_is_better, threshold, noun, inclusive=False):
+    """green when `bounds` lies entirely on the good side of `threshold`,
+    red when entirely on the bad side, else inconclusive. D43/the BOARD row
+    require the CI to *exclude* threshold, so the 0-vs-completion/cost/p50
+    check is strict (`inclusive=False`). The one exception is the D41/E-122
+    headline cost rule ("loki <= 0.5x raw"), which is inclusive at its 0.5
+    threshold so an exact 0.5x ratio marks green (leg 8). `bounds` is None
+    (no defined replicate at all) -> red, same as an n/a point estimate:
+    missing evidence never marks green."""
+    if bounds is None:
+        return "red", "n/a"
+    lo, hi = bounds
+    thr = "%g" % threshold
+    if higher_is_better:
+        good, good_op = ((lo >= threshold), ">=") if inclusive else ((lo > threshold), ">")
+        bad, bad_op = ((hi <= threshold), "<=") if inclusive else ((hi < threshold), "<")
+    else:
+        good, good_op = ((hi <= threshold), "<=") if inclusive else ((hi < threshold), "<")
+        bad, bad_op = ((lo >= threshold), ">=") if inclusive else ((lo > threshold), ">")
+    if good:
+        return "green", "%s %s %s" % (noun, good_op, thr)
+    if bad:
+        return "red", "%s %s %s" % (noun, bad_op, thr)
+    return "inconclusive", "%s includes %s" % (noun, thr)
+
+
+def _undefined_frac(replicates):
+    n = len(replicates)
+    return (sum(1 for v in replicates if v is None) / n) if n else 1.0
+
+
+def _guard_undefined(mark, reason, replicates):
+    """A resample is undefined (None) when an arm had zero evaluated or zero
+    completed rows in it. Dropping those silently (as `_ci` does to compute
+    a CI at all) can flatter whichever arm completes least, since its own
+    undefined resamples never enter the distribution. If more than
+    UNDEFINED_MAX_FRAC of a difference's replicates are undefined, the
+    bootstrap does not have enough real evidence to call it: downgrade to
+    inconclusive regardless of what the (thin) defined slice said."""
+    frac = _undefined_frac(replicates)
+    if frac > UNDEFINED_MAX_FRAC:
+        return "inconclusive", "%.1f%% of resamples undefined (an arm had no evaluated/completed rows)" % (
+            100 * frac)
+    return mark, reason
+
+
+def floor_reason(raw_rows, loki_rows):
+    """D43 item 2: None when the tier meets the sample floor, else the reason.
+    Counts EVALUATED reps (harness.is_evaluated), not rows: EVERY
+    task must have MIN_REPS evaluated reps on BOTH arms; none is dropped."""
+    def evaluated(rows):
+        c = collections.Counter({r["task"]: 0 for r in rows})
+        c.update(r["task"] for r in rows if is_evaluated(r))
+        return c
+    e_raw, e_loki = evaluated(raw_rows), evaluated(loki_rows)
+    tasks = set(e_raw) | set(e_loki)
+    if len(tasks) < MIN_TASKS:
+        return "below D43 floor: %d tasks, need %d" % (len(tasks), MIN_TASKS)
+    short = sum(1 for t in tasks if min(e_raw[t], e_loki[t]) < MIN_REPS)
+    if short:
+        return "below D43 floor: %d of %d tasks below %d evaluated reps on both arms" % (
+            short, len(tasks), MIN_REPS)
+    return None
+
+
+def score(raw, loki, raw_rows, loki_rows, headline=False):
+    """D43/S41-17 marks: completion and p50 use the loki-minus-raw
+    difference CI against 0. Cost per completed uses the same difference CI
+    against 0, except the headline pair (loki-sonnet vs raw-opus) which
+    uses the ratio CI against 0.5 (E-122). An n/a cost point estimate
+    (a null evaluated row on either side) is always red, per section 2,
+    regardless of what the bootstrap alone would say. The tier verdict is
+    green only if all three columns are green; any red column makes
+    the verdict red (a null cost row outranks inconclusive), else any
+    inconclusive column makes it inconclusive. Below the D43 floor
+    (MIN_TASKS tasks, MIN_REPS reps per task) every mark but a null cost
+    reads inconclusive."""
+    rep = _bootstrap(raw_rows, loki_rows)
+
+    completion_raw_ci = _ci(rep["completion_raw"])
+    completion_loki_ci = _ci(rep["completion_loki"])
+    completion_diff_ci = _ci(rep["completion_diff"])
+    completion_mark, completion_reason = _ci_mark(completion_diff_ci, True, 0.0, "CI")
+    completion_mark, completion_reason = _guard_undefined(
+        completion_mark, completion_reason, rep["completion_diff"])
+
+    # A missing cost capture stays red. Zero completions is not a missing
+    # capture: cost is undefined there and follows the floor/interval rules.
+    cost_pt_ok = not (raw["cost_missing"] or loki["cost_missing"])
+    cost_raw_ci = _ci(rep["cost_raw"]) if not raw["cost_missing"] else None
+    cost_loki_ci = _ci(rep["cost_loki"]) if not loki["cost_missing"] else None
+    if not cost_pt_ok:
+        cost_diff_ci, cost_mark, cost_reason = None, "red", "n/a: null cost row"
+    elif headline:
+        cost_diff_ci = _ci(rep["cost_ratio"])
+        cost_mark, cost_reason = _ci_mark(cost_diff_ci, False, HEADLINE_COST_RATIO, "ratio CI", inclusive=True)
+        cost_mark, cost_reason = _guard_undefined(cost_mark, cost_reason, rep["cost_ratio"])
+    else:
+        cost_diff_ci = _ci(rep["cost_diff"])
+        cost_mark, cost_reason = _ci_mark(cost_diff_ci, False, 0.0, "CI")
+        cost_mark, cost_reason = _guard_undefined(cost_mark, cost_reason, rep["cost_diff"])
+
+    p50_raw_ci = _ci(rep["p50_raw"])
+    p50_loki_ci = _ci(rep["p50_loki"])
+    p50_diff_ci = _ci(rep["p50_diff"])
+    p50_mark, p50_reason = _ci_mark(p50_diff_ci, False, 0.0, "CI")
+    p50_mark, p50_reason = _guard_undefined(p50_mark, p50_reason, rep["p50_diff"])
+
+    marks = {"completion": completion_mark, "cost": cost_mark, "p50": p50_mark}
+    reasons = {"completion": completion_reason, "cost": cost_reason, "p50": p50_reason}
+    floor = floor_reason(raw_rows, loki_rows)
+    if floor:
+        # A null cost row stays red: D43 item 1, the card does not count at all.
+        for k in marks:
+            if not (k == "cost" and not cost_pt_ok):
+                marks[k], reasons[k] = "inconclusive", floor
+    # A red mark (incl. n/a) outranks inconclusive.
+    if "red" in marks.values():
+        verdict = "red"
+    elif "inconclusive" in marks.values():
+        verdict = "inconclusive"
+    else:
+        verdict = "green"
+    cis = {
+        "completion_raw": completion_raw_ci, "completion_loki": completion_loki_ci,
+        "completion_diff": completion_diff_ci,
+        "cost_raw": cost_raw_ci, "cost_loki": cost_loki_ci, "cost_diff": cost_diff_ci,
+        "p50_raw": p50_raw_ci, "p50_loki": p50_loki_ci, "p50_diff": p50_diff_ci,
+    }
+    return marks, reasons, verdict, cis
 
 
 def fmt_completion(s):
@@ -181,21 +408,65 @@ def fmt_share(s):
     return "n/a" if s["partial_share"] is None else "%.1f%%" % (100 * s["partial_share"])
 
 
-def render_pair(tier, raw_label, raw_s, loki_label, loki_s, marks, verdict, date, command, headline=False):
-    cost_row_label = "Cost per completed (headline: <=0.5x raw)" if headline else "Cost per completed"
+def fmt_pct_ci(b):
+    return "n/a" if b is None else "[%.1f%%, %.1f%%]" % (100 * b[0], 100 * b[1])
+
+
+def fmt_pp_ci(b):
+    return "n/a" if b is None else "[%+.1fpp, %+.1fpp]" % (100 * b[0], 100 * b[1])
+
+
+def fmt_usd_ci(b):
+    return "n/a" if b is None else "[$%.4f, $%.4f]" % b
+
+
+def fmt_usd_diff_ci(b):
+    return "n/a" if b is None else "[%+.4f, %+.4f]" % b
+
+
+def fmt_ratio_ci(b):
+    return "n/a" if b is None else "[%.2fx, %.2fx]" % b
+
+
+def fmt_s_ci(b):
+    return "n/a" if b is None else "[%.1fs, %.1fs]" % b
+
+
+def fmt_s_diff_ci(b):
+    return "n/a" if b is None else "[%+.1fs, %+.1fs]" % b
+
+
+def render_pair(tier, raw_label, raw_s, loki_label, loki_s, cis, marks, reasons,
+                 verdict, date, command, headline=False):
+    floor_note = "" if (MIN_TASKS, MIN_REPS) == (DEFAULT_MIN_TASKS, DEFAULT_MIN_REPS) else (
+        "Floor: %d tasks, %d evaluated reps (non-default). " % (MIN_TASKS, MIN_REPS))
+    cost_row_label = "Cost per completed (headline: ratio CI vs 0.5x)" if headline else "Cost per completed"
+    cost_diff_cell = fmt_ratio_ci(cis["cost_diff"]) if headline else fmt_usd_diff_ci(cis["cost_diff"])
     return "\n".join([
         "#### tier %s: %s vs %s" % (tier, raw_label, loki_label), "",
-        "| Metric | %s | %s | Mark |" % (raw_label, loki_label), "|---|---|---|---|",
-        "| Completion | %s | %s | %s |" % (fmt_completion(raw_s), fmt_completion(loki_s), marks["completion"]),
-        "| %s | %s | %s | %s |" % (cost_row_label, fmt_cost(raw_s), fmt_cost(loki_s), marks["cost"]),
-        "| p50 time to PR | %s | %s | %s |" % (fmt_p50(raw_s), fmt_p50(loki_s), marks["p50"]), "",
+        "| Metric | %s | %s 95%% CI | %s | %s 95%% CI | Diff/Ratio 95%% CI | Mark | Reason |" % (
+            raw_label, raw_label, loki_label, loki_label),
+        "|---|---|---|---|---|---|---|---|",
+        "| Completion | %s | %s | %s | %s | %s | %s | %s |" % (
+            fmt_completion(raw_s), fmt_pct_ci(cis["completion_raw"]),
+            fmt_completion(loki_s), fmt_pct_ci(cis["completion_loki"]),
+            fmt_pp_ci(cis["completion_diff"]), marks["completion"], reasons["completion"]),
+        "| %s | %s | %s | %s | %s | %s | %s | %s |" % (
+            cost_row_label, fmt_cost(raw_s), fmt_usd_ci(cis["cost_raw"]),
+            fmt_cost(loki_s), fmt_usd_ci(cis["cost_loki"]),
+            cost_diff_cell, marks["cost"], reasons["cost"]),
+        "| p50 time to PR | %s | %s | %s | %s | %s | %s | %s |" % (
+            fmt_p50(raw_s), fmt_s_ci(cis["p50_raw"]),
+            fmt_p50(loki_s), fmt_s_ci(cis["p50_loki"]),
+            fmt_s_diff_ci(cis["p50_diff"]), marks["p50"], reasons["p50"]),
+        "",
         "Verdict: %s. n: %s=%d, %s=%d. Pair: %s vs %s. Partial-stream share: %s=%s, %s=%s. "
-        "Harness sha: %s=%s, %s=%s. Date: %s. Command: `%s`" % (
+        "Harness sha: %s=%s, %s=%s. Bootstrap: N=%d%s, seed=%d, clustered by task. %sDate: %s. Command: `%s`" % (
             verdict, raw_label, raw_s["n"], loki_label, loki_s["n"],
             ", ".join(raw_s["arm_model"]) or "none", ", ".join(loki_s["arm_model"]) or "none",
             raw_label, fmt_share(raw_s), loki_label, fmt_share(loki_s),
             raw_label, ", ".join(raw_s["harness_sha"]), loki_label, ", ".join(loki_s["harness_sha"]),
-            date, command),
+            BOOTSTRAP_N, " (non-default)" if BOOTSTRAP_N != DEFAULT_BOOTSTRAP_N else "", BOOTSTRAP_SEED, floor_note, date, command),
     ])
 
 
@@ -204,7 +475,7 @@ def render_solo(tier, per_label, date, command):
              "| Label | Completion | Cost per completed | p50 time to PR | n |", "|---|---|---|---|---|"]
     for label, s in per_label:
         lines.append("| %s | %s | %s | %s | %d |" % (label, fmt_completion(s), fmt_cost(s), fmt_p50(s), s["n"]))
-    lines += ["", "No mark: exactly two labels are required to compare under D41. "
+    lines += ["", "No mark: exactly two labels are required to compare under D41/D43. "
               "Date: %s. Command: `%s`" % (date, command)]
     return "\n".join(lines)
 
@@ -225,9 +496,9 @@ def build_tables(by_label, date, command):
                 raise Refused("tier %s: %s vs %s not comparable: %s" % (tier, raw_label, loki_label, err))
             raw_s, loki_s = stats(raw_rows), stats(loki_rows)
             headline = is_headline_pair(raw_s, loki_s)
-            marks, verdict = score(raw_s, loki_s, headline)
-            tables.append(render_pair(tier, raw_label, raw_s, loki_label, loki_s,
-                                       marks, verdict, date, command, headline))
+            marks, reasons, verdict, cis = score(raw_s, loki_s, raw_rows, loki_rows, headline)
+            tables.append(render_pair(tier, raw_label, raw_s, loki_label, loki_s, cis, marks, reasons,
+                                       verdict, date, command, headline))
     else:
         for tier in tiers:
             per_label = [(label, stats(by_label_tier[label].get(tier, []))) for label in by_label]

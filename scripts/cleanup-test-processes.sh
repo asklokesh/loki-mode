@@ -123,13 +123,25 @@ fi
 
 echo ""
 echo "== temp files =="
+# E-140: never remove temp entries by glob. A pattern sweep of loki-* under TMPDIR
+# deleted another agent's live run-owned loki-run.* dir (2026-09-30). Foreign
+# entries are only reported; the sole removal is this session's own validated
+# LOKI_RUN_TMP, and only with --aggressive.
 for d in /tmp "${TMPDIR:-/tmp}"; do
     for pat in "$d"/loki-* "$d"/mutprobe-* "$d"/test-* "$d"/package "$d"/*.tgz; do
         [ -e "$pat" ] || continue
-        if [ "$MODE" = "dry" ]; then echo "  WOULD REMOVE: $pat"
-        else rm -rf "$pat" 2>/dev/null && echo "  removed: $pat"; fi
+        echo "  found (not removed, may belong to another run): $pat"
     done
 done
+if [ -n "${LOKI_RUN_TMP:-}" ]; then
+    if [ "$MODE" = "aggressive" ]; then
+        # shellcheck disable=SC1091
+        . "$(dirname "$0")/../eval/loki10/lib-tmp.sh"
+        loki_run_tmp_cleanup && echo "  removed own run tmp" || echo "  own run tmp cleanup refused"
+    else
+        echo "  own run tmp: $LOKI_RUN_TMP (removed only with --aggressive)"
+    fi
+fi
 
 echo ""
 echo "== verify =="
