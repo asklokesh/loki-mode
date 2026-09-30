@@ -63,6 +63,8 @@ export interface RunnerContext {
 export interface BuildPromptOpts {
   readonly retry: number;
   readonly prd: string | null;
+  // Original user PRD path (bash PRD_PATH); differs from `prd` once repointed.
+  readonly prdPath?: string | null;
   readonly iteration: number;
   readonly ctx: RunnerContext;
 }
@@ -1514,6 +1516,17 @@ async function resolveDynamicSections(
 // Main entry point.
 // ---------------------------------------------------------------------------
 
+// A-132: mirror of run.sh _loki_is_quick_prd. Only `loki quick` writes
+// .loki/quick-prd-<pid>.md; such a run does not ask for USAGE.md. Bash keys on
+// the global PRD_PATH (the ORIGINAL path) because persist_user_prd repoints the
+// prompt's $prd to .loki/generated-prd.md. The TS runner carries the original
+// on ctx.statePrdPath (threaded as opts.prdPath); env.PRD_PATH is the fallback.
+// Bash blanks the instruction in place, so returning "" keeps byte parity.
+function usageDocFor(opts: BuildPromptOpts): string {
+  const orig = opts.prdPath ?? opts.ctx.env["PRD_PATH"] ?? "";
+  return /(^|\/)quick-prd-.*\.md$/s.test(orig) ? "" : USAGE_DOC_INSTRUCTION;
+}
+
 export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
   const { retry, prd, iteration, ctx } = opts;
   const env = ctx.env;
@@ -1620,7 +1633,7 @@ export async function buildPrompt(opts: BuildPromptOpts): Promise<string> {
   lines.push(sdlcText);
   lines.push(autonomyText);
   lines.push(MEMORY_INSTRUCTION);
-  lines.push(USAGE_DOC_INSTRUCTION);
+  lines.push(usageDocFor(opts));
   lines.push(docScope);
   lines.push(COMPOSE_INSTRUCTION);
   lines.push(LSP_GROUNDING_INSTRUCTION);
@@ -1738,7 +1751,7 @@ function buildStaticFirstDegraded(
       "You are a coding assistant. Analyze this codebase and suggest improvements. Write working code and commit changes.",
     );
   }
-  lines.push(USAGE_DOC_INSTRUCTION);
+  lines.push(usageDocFor(opts));
   lines.push(docScope);
   lines.push(COMPOSE_INSTRUCTION);
   lines.push(LSP_GROUNDING_INSTRUCTION);
@@ -1793,14 +1806,14 @@ function buildLegacyFull(opts: BuildPromptOpts, p: LegacyFullParts): string {
 
   if (retry === 0) {
     if (prd !== null && prd.length > 0) {
-      return `Loki Mode with PRD at ${prd}. ${tail} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+      return `Loki Mode with PRD at ${prd}. ${tail} ${p.rarvText} ${p.memory} ${usageDocFor(opts)} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
     }
-    return `Loki Mode. ${tail} ${p.analysis} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+    return `Loki Mode. ${tail} ${p.analysis} ${p.rarvText} ${p.memory} ${usageDocFor(opts)} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
   }
   if (prd !== null && prd.length > 0) {
-    return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). PRD: ${prd}. ${tail} ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+    return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). PRD: ${prd}. ${tail} ${p.rarvText} ${p.memory} ${usageDocFor(opts)} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
   }
-  return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). ${tail} Use .loki/generated-prd.md if exists. ${p.rarvText} ${p.memory} ${USAGE_DOC_INSTRUCTION} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
+  return `Loki Mode - Resume iteration #${iteration} (retry #${retry}). ${tail} Use .loki/generated-prd.md if exists. ${p.rarvText} ${p.memory} ${usageDocFor(opts)} ${p.docScope} ${COMPOSE_INSTRUCTION} ${LSP_GROUNDING_INSTRUCTION} ${AGENTS_MD_INSTRUCTION} ${p.completionText} ${p.sdlcText} ${p.autonomyText}\n`;
 }
 
 function buildLegacyDegraded(
@@ -1904,6 +1917,7 @@ export async function buildPromptForRunner(ctx: LoopRunnerContext): Promise<stri
     retry: ctx.retryCount,
     iteration: ctx.iterationCount,
     prd: ctx.prdPath ?? null,
+    prdPath: (ctx as LoopRunnerContext & { statePrdPath?: string }).statePrdPath ?? null,
     ctx: {
       cwd: ctx.cwd,
       projectDir: ctx.cwd,

@@ -1,0 +1,3 @@
+Fixture 61: loki quick run (A-132)
+- Invocation: build_prompt(0, "./.loki/quick-prd-4242.md", 1)
+- Expected: no USAGE_DOC_REQUIRED instruction
