@@ -96,5 +96,17 @@ RC=$?
 [ "$RC" -ne 0 ] && ok "run_bump_only exits nonzero on a bad map" || bad "run_bump_only exited 0 on a bad map"
 git -C "$W" diff --quiet -- loki-ts/dist && ok "bad-map dist restored from HEAD" || bad "bad-map dist left in tree"
 
+# E-151: release_commit_clean refuses a release commit that left the stamped map modified.
+C="$RUN_TMP/clean"; mkdir -p "$C/loki-ts/dist"
+echo 'let $="10.5.9";' >"$C/loki-ts/dist/loki.js"; echo '{"m":"AAAA"}' >"$C/loki-ts/dist/loki.js.map"
+git -C "$C" init -q; git -C "$C" config user.name t; git -C "$C" config user.email t@example.com
+git -C "$C" add loki-ts/dist; git -C "$C" commit -q -m init
+echo 'let $="10.5.10";' >"$C/loki-ts/dist/loki.js"; echo '{"m":"AAAAA"}' >"$C/loki-ts/dist/loki.js.map"
+git -C "$C" add loki-ts/dist/loki.js; git -C "$C" commit -q -m "release: v10.5.10"
+ROOT_DIR="$C" release_commit_clean 2>"$RUN_TMP/err"; rc=$?
+{ [ "$rc" -eq 1 ] && grep -q "loki.js.map" "$RUN_TMP/err"; } && ok "check-clean fails naming the stale map" || bad "check-clean missed a stale map (rc=$rc)"
+git -C "$C" add loki-ts/dist/loki.js.map; git -C "$C" commit -q --amend --no-edit
+ROOT_DIR="$C" release_commit_clean 2>/dev/null && ok "check-clean passes once both files are committed" || bad "check-clean failed on a clean tree"
+
 echo "Passed: $PASS Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
