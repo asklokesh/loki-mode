@@ -492,6 +492,29 @@ release_bump_only_fail() {
     exit 1
 }
 
+# E-133: refuse a dist whose source maps carry a machine-local path. A
+# node_modules symlink to another checkout made the v10.5.4 build write 133
+# absolute /Users/... "sources" entries. Reads the maps as JSON so comment
+# text inside sourcesContent cannot trip it. Relative entries resolve against
+# loki-ts/dist; one that lands outside the repo root counts as climbing out.
+release_dist_maps_clean() {
+    python3 - "$ROOT_DIR" "$ROOT_DIR/loki-ts/dist" <<'PY'
+import glob, json, os, sys
+root, dist = os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2])
+bad = []
+for m in sorted(glob.glob(os.path.join(dist, "*.map"))):
+    for s in json.load(open(m)).get("sources") or []:
+        r = os.path.normpath(os.path.join(dist, s))
+        if os.path.isabs(s) or os.path.commonpath([root, r]) != root:
+            bad.append((os.path.basename(m), s))
+for f, s in bad[:5]:
+    print("  %s: %s" % (f, s), file=sys.stderr)
+if bad:
+    print("  %d bad source entries in total" % len(bad), file=sys.stderr)
+sys.exit(1 if bad else 0)
+PY
+}
+
 # --bump-only (S-108): version files + loki-ts/dist, no git side effects.
 run_bump_only() {
     local current new dist_file="$ROOT_DIR/loki-ts/dist/loki.js"
@@ -515,6 +538,9 @@ run_bump_only() {
             release_bump_only_fail "loki-ts build failed -- restoring loki-ts/dist from HEAD"
         fi
         if [ -f "$dist_file" ] && grep -q "$new" "$dist_file"; then
+            if ! release_dist_maps_clean; then
+                release_bump_only_fail "loki-ts/dist source maps contain absolute or repo-escaping paths (is loki-ts/node_modules a symlink to another checkout?) -- restoring loki-ts/dist from HEAD"
+            fi
             log_success "loki-ts/dist rebuilt with $new"
             release_restore_debugid_only_dist "$ROOT_DIR/loki-ts/dist"
         else
