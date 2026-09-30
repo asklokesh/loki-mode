@@ -292,18 +292,65 @@ export function applyDiff(root: string, diff: DiffEntry[], excludes: string[] = 
   }
 }
 
-// Merges attemptRoot's departure from `base` into primaryRoot. Reads happen
-// first: any failure there throws before primaryRoot is touched. Before any
-// write, an undo record is persisted (0600, no symlink follow) to
-// <runDir>/treeswap-undo.json holding: the primary's departure from base
-// (tracked edits, staged adds, untracked), the primary's current content at
-// EVERY path the winner will write (ignored or not), and the staged paths.
-// If the write phase fails partway, restoreFromUndo rolls primaryRoot back
-// from that record (a compensating action, not filesystem atomicity).
-// User content the winner does not own (untracked, staged) survives a
-// successful swap too.
+// Tracked-file changes (staged, unstaged or unmerged) in the primary, as
+// `git status --porcelain=v1 -z` sees them. Untracked (??) and ignored (!!)
+// entries are not tracked changes and stay protected by the undo record.
+function trackedChanges(root: string, excludes: string[]): string[] {
+  const parts = git(root, ["status", "--porcelain=v1", "-z", "--", ...pathspecs(excludes)])
+    .split("\0")
+    .filter((p) => p.length > 0);
+  const out: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const rec = parts[i] as string;
+    const xy = rec.slice(0, 2);
+    if (xy === "??" || xy === "!!") continue;
+    out.push(rec.slice(3));
+    if (xy.includes("R") || xy.includes("C")) i++; // skip the origin path record
+  }
+  return out;
+}
+
+function gitPath(root: string, name: string): string {
+  return resolve(root, git(root, ["rev-parse", "--git-path", name]).trim());
+}
+
+// Merges attemptRoot's departure from `base` into primaryRoot. The primary
+// must have no staged, unstaged or unmerged change to a tracked file
+// (refused otherwise, so the index and tracked edits never need restoring).
+// An exclusive lock file under the git dir serialises swaps into one
+// primary. Reads happen first: any failure there throws before primaryRoot
+// is touched. Before any write, an undo record is created (O_EXCL, 0600) at
+// <runDir>/treeswap-undo.json holding the primary's untracked files and its
+// current content at EVERY path the winner will write (ignored or not). If
+// the write phase fails, restoreFromUndo rolls primaryRoot back from that
+// record (a compensating action, not filesystem atomicity); the record is
+// deleted after a success or a clean rollback, and kept if rollback fails.
 export function swapAttemptIntoWorkingTree(opts: SwapOptions): void {
   const excludes = opts.excludes ?? DEFAULT_EXCLUDES;
+  const lockPath = gitPath(opts.primaryRoot, "loki-treeswap.lock");
+  let lockFd: number;
+  try {
+    lockFd = openSync(lockPath, fsc.O_WRONLY | fsc.O_CREAT | fsc.O_EXCL | fsc.O_NOFOLLOW, 0o600);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error(`treeswap: another swap holds ${lockPath}; remove it if no swap is running`);
+    }
+    throw err;
+  }
+  try {
+    writeFileSync(lockFd, String(process.pid));
+    swapLocked(opts, excludes);
+  } finally {
+    closeSync(lockFd);
+    rmSync(lockPath, { force: true });
+  }
+}
+
+function swapLocked(opts: SwapOptions, excludes: string[]): void {
+  const dirty = trackedChanges(opts.primaryRoot, excludes);
+  if (dirty.length > 0) {
+    throw new Error(`treeswap: primary has uncommitted tracked changes; commit or stash them first: ${dirty.join(", ")}`);
+  }
   const winner = snapshotDiff(opts.attemptRoot, opts.base, excludes);
   const undo = snapshotDiff(opts.primaryRoot, opts.base, excludes);
   const owned = new Set(winner.map((e) => e.path));
@@ -323,20 +370,22 @@ export function swapAttemptIntoWorkingTree(opts: SwapOptions): void {
     const e = readEntry(opts.primaryRoot, path);
     pre.push({ path, kind: "file", content: e.content, mode: e.mode, symlinkTarget: e.symlinkTarget });
   }
-  const staged = git(opts.primaryRoot, ["diff", "--cached", "--name-only", "--no-renames", "-z", opts.base, "--", ...pathspecs(excludes)])
-    .split("\0")
-    .filter((p) => p.length > 0 && !isExcluded(p, excludes));
 
   mkdirSync(opts.runDir, { recursive: true });
+  const undoPath = join(opts.runDir, UNDO_FILE);
   const enc = (l: DiffEntry[]) => l.map((e) => ({ ...e, content: e.content?.toString("base64") }));
-  const fd = openSync(
-    join(opts.runDir, UNDO_FILE),
-    fsc.O_WRONLY | fsc.O_CREAT | fsc.O_TRUNC | fsc.O_NOFOLLOW,
-    0o600,
-  );
+  let fd: number;
+  try {
+    fd = openSync(undoPath, fsc.O_WRONLY | fsc.O_CREAT | fsc.O_EXCL | fsc.O_NOFOLLOW, 0o600);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error(`treeswap: stale undo record ${undoPath}; restore from it or remove it first`);
+    }
+    throw err;
+  }
   try {
     fchmodSync(fd, 0o600);
-    writeFileSync(fd, JSON.stringify({ base: opts.base, entries: enc(undo), pre: enc(pre), absent, staged }));
+    writeFileSync(fd, JSON.stringify({ base: opts.base, entries: enc(undo), pre: enc(pre), absent }));
   } finally {
     closeSync(fd);
   }
@@ -345,26 +394,16 @@ export function swapAttemptIntoWorkingTree(opts: SwapOptions): void {
     // Untracked files survive: the winner's diff overwrites any path it owns.
     resetToBase(opts.primaryRoot, opts.base, excludes, { keepUntracked: true });
     applyDiff(opts.primaryRoot, winner, excludes);
-    // Staged content the winner does not touch survives the reset.
-    const keep = new Set(staged.filter((p) => !owned.has(p)));
-    applyDiff(opts.primaryRoot, undo.filter((e) => keep.has(e.path)), excludes);
-    restage(opts.primaryRoot, undo, [...keep]);
   } catch (err) {
     try {
       restoreFromUndo(opts.primaryRoot, opts.runDir, excludes);
     } catch (rollbackErr) {
       throw new AggregateError([err, rollbackErr], "treeswap: swap failed and rollback also failed");
     }
+    rmSync(undoPath, { force: true });
     throw err;
   }
-}
-
-function restage(root: string, undo: DiffEntry[], paths: string[]): void {
-  const kinds = new Map(undo.map((e) => [e.path, e.kind]));
-  for (const p of paths) {
-    if (kinds.get(p) === "delete") git(root, ["rm", "-q", "--cached", "--ignore-unmatch", "--", p]);
-    else git(root, ["add", "-f", "--", p]);
-  }
+  rmSync(undoPath, { force: true });
 }
 
 function removeLenient(root: string, relPath: string): void {
@@ -385,7 +424,6 @@ export function restoreFromUndo(primaryRoot: string, runDir: string, excludes: s
     entries: (Omit<DiffEntry, "content"> & { content?: string })[];
     pre: (Omit<DiffEntry, "content"> & { content?: string })[];
     absent: string[];
-    staged: string[];
   };
   const dec = (l: typeof rec.entries): DiffEntry[] =>
     l.map((e) => ({ ...e, content: e.content === undefined ? undefined : Buffer.from(e.content, "base64") }));
@@ -402,7 +440,6 @@ export function restoreFromUndo(primaryRoot: string, runDir: string, excludes: s
   for (const p of rec.absent) step(() => removeLenient(primaryRoot, p));
   step(() => applyDiff(primaryRoot, dec(rec.pre), excludes));
   step(() => applyDiff(primaryRoot, entries, excludes));
-  step(() => restage(primaryRoot, entries, rec.staged));
   if (errors.length > 0) throw new AggregateError(errors, "treeswap: rollback incomplete");
 }
 

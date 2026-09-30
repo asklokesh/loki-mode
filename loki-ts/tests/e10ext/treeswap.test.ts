@@ -3,7 +3,7 @@
 // S41-12 wall check (docs/v10/SCORECARD-PLAN.md, docs/v10/DECISIONS.md D42(1)).
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, statSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -275,34 +275,64 @@ describe("S41-12 review findings B1-B5", () => {
     const { primary, base, attempt, runDir } = makeFixture();
     write(primary, "notes.txt", "user-notes");
     swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir });
-    expect(readFileSync(join(runDir, "treeswap-undo.json"), "utf8")).toContain("notes.txt");
+    expect(existsSync(join(runDir, "treeswap-undo.json"))).toBe(false);
     symlinkSync(".git/config", join(attempt, "sneaky"));
     expect(() => snapshotDiff(attempt, base)).toThrow(TreeSwapUnsafePathError);
   });
 });
 
 describe("S41-12 round-2 review findings", () => {
-  test("R2-1: a failed rollback still restores the user's uncommitted edit", () => {
+  test("R2-1: a failed rollback still restores the user's untracked file", () => {
     const { primary, base, attempt, runDir } = makeFixture();
-    write(primary, "a.txt", "USER-EDIT");
     write(primary, "y", "user-file");
     write(attempt, "y/z.txt", "winner");
     expect(() => swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir })).toThrow();
-    expect(readFileSync(join(primary, "a.txt"), "utf8")).toBe("USER-EDIT");
     expect(readFileSync(join(primary, "y"), "utf8")).toBe("user-file");
   });
 
-  test("R2-2: a staged new file and staged edit survive a successful swap", () => {
+  test("R2-2: a partially staged file is refused and the index is untouched", () => {
     const { primary, base, attempt, runDir } = makeFixture();
-    write(primary, "staged.txt", "user-staged");
-    write(primary, "b/c.txt", "user-staged-edit");
-    git(primary, ["add", "staged.txt", "b/c.txt"]);
+    write(primary, "a.txt", "v1");
+    git(primary, ["add", "a.txt"]);
+    write(primary, "a.txt", "v2");
+    write(attempt, "b/c.txt", "winner-c");
+    const idx = git(primary, ["ls-files", "-s", "a.txt"]);
+    expect(() => swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir })).toThrow(/uncommitted tracked changes.*a\.txt/);
+    expect(git(primary, ["ls-files", "-s", "a.txt"])).toBe(idx);
+    expect(readFileSync(join(primary, "a.txt"), "utf8")).toBe("v2");
+    expect(readFileSync(join(primary, "b/c.txt"), "utf8")).toBe("orig-c");
+  });
+
+  test("R3-1: an unstaged edit to a tracked file the winner ignores is refused", () => {
+    const { primary, base, attempt, runDir } = makeFixture();
+    write(primary, "a.txt", "USER-EDIT");
+    write(attempt, "b/c.txt", "winner-c");
+    expect(() => swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir })).toThrow(/uncommitted tracked changes/);
+    expect(readFileSync(join(primary, "a.txt"), "utf8")).toBe("USER-EDIT");
+  });
+
+  test("R3-2: a held lock refuses a concurrent swap and is released after", () => {
+    const { primary, base, attempt, runDir } = makeFixture();
     write(attempt, "a.txt", "winner-a");
+    const lock = join(primary, git(primary, ["rev-parse", "--git-path", "loki-treeswap.lock"]).trim());
+    writeFileSync(lock, "999999");
+    expect(() => swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir })).toThrow(/another swap/);
+    expect(readFileSync(join(primary, "a.txt"), "utf8")).toBe("orig-a");
+    rmSync(lock);
     swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir });
-    expect(readFileSync(join(primary, "staged.txt"), "utf8")).toBe("user-staged");
-    expect(readFileSync(join(primary, "b/c.txt"), "utf8")).toBe("user-staged-edit");
-    expect(readFileSync(join(primary, "a.txt"), "utf8")).toBe("winner-a");
-    expect(git(primary, ["diff", "--cached", "--name-only"]).split("\n")).toContain("staged.txt");
+    expect(existsSync(lock)).toBe(false);
+  });
+
+  test("R3-3: a stale undo file is refused; the undo file is removed after success", () => {
+    const { primary, base, attempt, runDir } = makeFixture();
+    write(attempt, "a.txt", "winner-a");
+    writeFileSync(join(runDir, "treeswap-undo.json"), "stale");
+    expect(() => swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir })).toThrow(/stale undo/);
+    expect(readFileSync(join(runDir, "treeswap-undo.json"), "utf8")).toBe("stale");
+    expect(readFileSync(join(primary, "a.txt"), "utf8")).toBe("orig-a");
+    rmSync(join(runDir, "treeswap-undo.json"));
+    swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir });
+    expect(existsSync(join(runDir, "treeswap-undo.json"))).toBe(false);
   });
 
   test("R2-3: an ignored user file the winner force-adds is restored on rollback", () => {
@@ -324,16 +354,11 @@ describe("S41-12 round-2 review findings", () => {
     expect(readFileSync(join(primary, "build/out.txt"), "utf8")).toBe("USER-IGNORED");
   });
 
-  test("R2-4: the undo file is 0600 and a planted symlink is not followed", () => {
+  test("R2-4: a planted undo symlink is not followed", () => {
     const { primary, base, attempt, runDir } = makeFixture();
-    write(primary, "secret.txt", "s3cret");
     write(attempt, "a.txt", "winner-a");
-    swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir });
-    expect(statSync(join(runDir, "treeswap-undo.json")).mode & 0o777).toBe(0o600);
-
     const victim = join(tmp("victim"), "victim.txt");
     writeFileSync(victim, "VICTIM");
-    rmSync(join(runDir, "treeswap-undo.json"));
     symlinkSync(victim, join(runDir, "treeswap-undo.json"));
     expect(() => swapAttemptIntoWorkingTree({ primaryRoot: primary, attemptRoot: attempt, base, runDir })).toThrow();
     expect(readFileSync(victim, "utf8")).toBe("VICTIM");
