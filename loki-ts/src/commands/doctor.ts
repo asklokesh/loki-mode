@@ -1349,10 +1349,17 @@ else:
     k, kid = load_signing_key(auto_generate=False)
     if kid:
         print("kid " + kid[:8])
-    elif os.environ.get("LOKI_RECEIPT_SIGNING_KEY", "").strip() or os.environ.get("LOKI_RECEIPT_SIGNING_KEY_FILE", "").strip() or os.path.exists(os.path.expanduser("~/.loki/keys/receipt-ed25519.pem")):
+    elif os.environ.get("LOKI_RECEIPT_SIGNING_KEY", "").strip():
         print("bad")
     else:
-        print("none")
+        # A-122: a missing key FILE is auto-generated on first use when its nearest
+        # existing ancestor directory is writable; an existing file that did not
+        # load (corrupt/unreadable) or an unwritable location is unusable.
+        f = os.environ.get("LOKI_RECEIPT_SIGNING_KEY_FILE", "").strip() or os.path.expanduser("~/.loki/keys/receipt-ed25519.pem")
+        d = os.path.dirname(os.path.abspath(f))
+        while not os.path.isdir(d) and os.path.dirname(d) != d:
+            d = os.path.dirname(d)
+        print("bad" if os.path.lexists(f) or not os.access(d, os.W_OK | os.X_OK) else "none")
 `;
 
 // ---------- Public entry point -----------------------------------------------
