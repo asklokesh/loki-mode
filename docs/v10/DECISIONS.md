@@ -362,3 +362,16 @@ Loki's definition: "autonomous software factory that runs with the knowledge of 
 - loki-seal follows the same rule: it reads what the user asked for (the task or issue) and refuses "done" until the checks tied to that request pass, not only "the suite is green".
 - Wording: README line 1 stays "Your agent says done. Loki proves it." (founder queue row 10, veto pending). Line 2 is the category line "An autonomous software factory that knows what it is supposed to deliver, and proves it did.", used verbatim in package.json description and SKILL.md. The GitHub About text stays in the founder queue.
 - Competitive intel: the steering session scans rivals twice daily (list at ~/git/autonomi-dev/research/2026-09-30-adoption/COMPETITOR-WATCHLIST.md) and proposes at most 3 backlog rows per scan, each naming the metric it moves. Until the first-run gate passes on a `next` version, only threats to the moat (for example a rival shipping portable verifiable receipts) jump the queue; everything else, including enterprise asks (SSO, audit, policy), queues behind Tier 0 and never carries certification claims.
+
+## D46 Release SLO: 3 to 6 `next` releases per rolling hour (2026-10-01, founder directive relayed by the steering session at 00:20Z)
+- Founder's words, as relayed: "I WANT 3-6 releases every hour, no excuses, no push back, no compromise."
+- SLO: at least 3 `next` releases in every rolling 60 minutes, target 6. Speed comes from the pipeline, never from weaker checks: no skipped or quarantined moat tests, nothing added to tests/moat/pending.txt to get green, `latest` only via the first-run gate, every Never-list item stands.
+- Pipeline, effective immediately:
+  1. Green slices only: a slice merges into main only after its own branch passed full Tier B Tests (slice branches are pushed so CI runs in parallel). Trains only collect already-green slices.
+  2. Drop, don't fix forward: a red train is re-cut within 5 minutes without the offending slice (identified per slice or by the failing suite's owner) and shipped; the slice returns to its engineer. Fix forward only for failures that live in main.
+  3. Stacked trains every 15 minutes from the green slices merged so far, with 2 to 3 in flight; ship whichever goes green, newest first.
+  4. Release reuses the train's verdict for the identical tree (D28). E-156 removes the gitleaks key-file false positive at the source.
+  5. Roles: one Release Captain (sonnet) cuts and ships trains; one CI-health engineer (sonnet) owns red shards, environment problems and flake history; the Chief of Staff checks the SLO every 20 minutes.
+  6. A v10-pulse RELEASE_SLO alarm fires below 3 `next` releases in the trailing 60 minutes; on it, the Chief of Staff ships the newest green train or the last green tree first, then fixes the cause.
+  7. Slices stay small enough to build and pass in under 30 minutes; bigger work is split.
+- NOT applied without direct founder approval: moving the release-blocking full-history gitleaks scan (`--all`) out of the Release path (item 4 of the relay). It weakens a security gate on a relayed instruction; queued as FOUNDER-QUEUE row 14.
