@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.22 (2026-10-01)
+
+A `next` release. v10.5.21 was never published: its Release run failed because a test still expected the engine-default note under Unreleased after the release moved it. This release ships everything listed under v10.5.21 (the Loki 10 engine is now the default for `loki "<task>"`, issue mode and `loki quick`, and a bare `loki verify` after a Loki 10 run uses the v10 verifier with exit 4 for a non-VERIFIED outcome), and adds third-party receipt verification.
+
+### Added
+- `loki keys export` prints the public receipt-signing key as an Ed25519 JWK (kty, crv, x, kid, alg, use). It never prints the private key (D48).
+- `loki verify --pubkey FILE <receipt.json|run-id>` (v10) checks a receipt's signature against the supplied public key (a JWK from `loki keys export`, or PEM) and never the local key set, so someone without your machine can check your receipt. Exits 0 VERIFIED, 1 TAMPERED, 2 UNCHECKED (the key's kid does not match, or the key file is unusable), 3 UNSIGNED, 4 run outcome not verified. A receipt with no signature is refused with 3 even with `--allow-unsigned`, because the caller asked for a signature check; the sealed event log is checked against the supplied key too (D48).
+- `keys export` is listed in `loki help` and in shell completions.
+
+### Changed
+- CI: the Tier A shard-coverage check runs after the Python test dependencies are installed, so the two pytest-gated suites are counted and the check passes again (E-162 follow-up).
+- The E-35 test checks that the engine-default note is recorded anywhere in CHANGELOG instead of only under Unreleased, so a release moving the note no longer fails it.
+
 ## v10.5.21 (2026-10-01)
 
 A `next` release. The Loki 10 engine is now the default for `loki "<task>"`, issue mode and `loki quick`, and a bare `loki verify` after a Loki 10 run checks its receipt with the v10 verifier, exiting 4 when the run's outcome was not VERIFIED.
