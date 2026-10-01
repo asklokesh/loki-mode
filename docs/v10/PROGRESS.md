@@ -1788,3 +1788,10 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Architect (opus): option B (bun@1.4.2 optionalDependency, resolver to node_modules/@oven/bun-*/bin/bun with a --version probe) over A (node build: about 14 files, 300-450 lines, breaks the engine10 budget). Install size 26.6MB to about 90-110MB: FOUNDER-QUEUE 17.
 - Building: E-167 (two-leg promote gate), P0-nobun-S2 (resolver plus plain cannot-run start line; no dependency added).
 - train/46 bb82c599 (E-165 r3, E-168 r2) in CI; train/45 was green.
+
+## 2026-10-01T07:52Z v10.5.23 on next (latest held at 10.5.20); P0-nobun and E-167 on train/48
+- v10.5.23 0b27f4a1: Release success, dist-tags next=10.5.23 latest=10.5.20, release body 10 lines. Promote did not run (workflow disabled 07:33Z).
+- Merged on main: E-167 r2 (two-leg promote gate: v10 leg with bun; legacy leg installs --omit=optional, filters bun off PATH, fails closed if bun is present, 15-line legacy budget; CTO APPROVE c494d7d2), P0-nobun S1 r2 (bun 1.4.2 optionalDependency plus regenerated lockfile; npm ci --dry-run rc 0; license audit PASS, MIT), P0-nobun S2 (_loki_bun resolver: PATH, node_modules/bun/bin/bun.exe, @oven/bun-*/bin/bun with a 2s --version probe; plain cannot-run start line; review: about 10ms per routed command, stdout clean).
+- Measured: bun adds about 62MB on macOS arm64 (published 79.5MB linux-x64, 86.1MB windows-x64); baseline builds are no smaller, so option (i).
+- train/46 red on ShellCheck (SC1083 in the new E-168 test); fixed e9121a89, on train/47. train/48 c7ef4b66 = everything; local: 14 checks rc=0 incl. run-shellcheck, npm ci --dry-run, gate --stub.
+- Next: on a green train cut 10.5.24, then re-enable promote.yml so 10.5.24 goes through both gate legs.
