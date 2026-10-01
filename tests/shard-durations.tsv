@@ -692,3 +692,4 @@ run-all-tests guards: real key dir + parent HEAD (E-154, E-155)	3
 Quick receipt order and quiet output (A-134)	90
 Quick config safety (P0-t15)	35
 Loki Seal marketplace (D48 r10)	2
+Quick integrity exit code (A-118)	5

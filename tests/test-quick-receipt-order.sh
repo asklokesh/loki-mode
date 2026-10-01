@@ -21,6 +21,7 @@ cat > "$T/bin/claude" <<'STUB'
 #!/usr/bin/env bash
 case " $* " in *" --help "*|*" --version "*) echo "claude stub 2.1.285 --settings --session-id --resume --model --dangerously-skip-permissions"; exit 0;; esac
 [ -f sum.js ] && sed -i.bak 's/i = 1/i = 0/' sum.js && rm -f sum.js.bak
+[ -z "${STUB_SKIP:-}" ] || { [ "$STUB_SKIP" = reason ] && _sk="'flaky'" || _sk=true; sed -i.bak "s/'sums', /'sums', { skip: $_sk }, /" sum.test.js && rm -f sum.test.js.bak; }
 mkdir -p .loki/signals; echo "fixed sum loop" > .loki/signals/COMPLETION_REQUESTED
 echo "stub claude done"
 STUB
@@ -48,7 +49,10 @@ run_quick() { # run_quick <dir> <stdout-file> [extra env assignment] [loki quick
 FIX="$T/quiet"
 mk_fix "$FIX"
 run_quick "$FIX" "$T/out.log"
-echo "loki quick rc=$?"
+QRC=$?
+echo "loki quick rc=$QRC"
+# A-118 backward compat: an honest run (3 unproven gates, unsigned) keeps rc 0.
+[ "$QRC" -eq 0 ] && ok "honest quiet run with unproven gates keeps rc 0" || bad "honest quiet run rc=$QRC (want 0)"
 OUT="$(sed 's/\x1b\[[0-9;]*m//g' "$T/out.log")"
 
 HEAD_SHA="$(git -C "$FIX" rev-parse HEAD)"
@@ -135,6 +139,8 @@ printf '%s\n' "$OUT" | grep -q '^\[INFO\]' && bad "log_info chatter printed by d
 VFIX="$T/verbose"
 mk_fix "$VFIX"
 run_quick "$VFIX" "$T/vout.log" LOKI_VERBOSE=1
+VRC=$?
+[ "$VRC" -eq 0 ] && ok "honest verbose run keeps rc 0" || bad "honest verbose run rc=$VRC (want 0)"
 VLINES="$(wc -l < "$T/vout.log" | tr -d ' ')"
 if grep -q '\[INFO\]' "$T/vout.log" && [ "$VLINES" -gt 15 ]; then ok "LOKI_VERBOSE=1 restores the chatter ($VLINES lines)"; else bad "LOKI_VERBOSE=1 did not restore the chatter" "lines=$VLINES"; fi
 
@@ -182,6 +188,17 @@ for shadow in base64 json; do
     [ "$src" -ne 0 ] && ok "shape check refuses junk with a committed $shadow.py (rc=$src)" \
         || bad "committed $shadow.py shadows the shape check" "rc=$src"
 done
+# A-118 / D47: a stub that skips the target test exits 3 in quiet and verbose mode, and the
+# quick headline names what was weakened.
+SFIX="$T/skipq"; mk_fix "$SFIX"
+STUB_SKIP=1 run_quick "$SFIX" "$T/sout.log"; SRC=$?
+[ "$SRC" -eq 3 ] && ok "quiet run that adds a skip exits 3" || bad "quiet skip run rc=$SRC (want 3)"
+sed 's/\x1b\[[0-9;]*m//g' "$T/sout.log" | grep -qE '^Evidence Receipt: NOT VERIFIED \(tests weakened: skip added in sum\.test\.js' \
+    && ok "quiet headline names the weakening" || bad "quiet headline does not name the weakening" "$(grep 'Evidence Receipt' "$T/sout.log")"
+SVFIX="$T/skipv"; mk_fix "$SVFIX"
+STUB_SKIP=reason run_quick "$SVFIX" "$T/svout.log" LOKI_VERBOSE=1
+SVRC=$?
+[ "$SVRC" -eq 3 ] && ok "verbose run that adds a skip exits 3" || bad "verbose skip run rc=$SVRC (want 3)"
 
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
