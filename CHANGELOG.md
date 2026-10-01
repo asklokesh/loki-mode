@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.32 (2026-10-01)
+
+A `next` release. Stopping a Loki 10 run with Ctrl-C or SIGTERM now returns your checkout to the branch you started on.
+
+### Fixed
+- When a Loki 10 run is stopped with SIGINT (Ctrl-C) or SIGTERM, the supervisor stops the worker and its session processes, then switches the checkout back to the branch that was checked out when the run started. Before this, the checkout was left on the run's `loki/e10-...` branch and a session process could keep running after the supervisor exited. The run branch and its commits are kept. If the run left uncommitted edits to tracked files, the checkout stays on the run branch, so those edits are never carried onto your branch, and one line names the run branch and the `git checkout` command to return. Nothing is reset or discarded (D50-F1c).
+
+### Changed
+- Repo tooling: the Loki 10 eval harness ignores its `eval/loki10/archive/` output directory and its test checks that the directory is created when absent; a test harness for the planned workspaces feature (D51 Phase B, behind `LOKI_WORKSPACES`) is registered with the test runner. No user-facing behaviour changes.
+
 ## v10.5.31 (2026-10-01)
 
 A `next` release. A Loki 10 run that refuses to start in a checkout with uncommitted changes no longer commits anything to the user's branch.
