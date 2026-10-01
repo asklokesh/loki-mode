@@ -1801,3 +1801,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - train/48 red (shard 4/8, test-modernize-dispatch.sh: stub bun exited 2 on every call, so the new _loki_bun --version probe rejected it); fix f88dd9f8 (stub answers --version); all 11 tests that stub bun rc=0. train/50 f88dd9f8 green on Tests, Bun Parity, Coverage, Security Audit, Tier A; main fast-forwarded.
 - v10.5.25 6fe04649 pushed (--check-clean rc=0, npm ci --dry-run rc=0, parent == origin/main). Ships bun 1.4.2 optionalDependency (measured 62MB macOS arm64), the _loki_bun resolver with the plain cannot-run line, and the E-167 two-leg promote gate.
 - promote.yml re-enabled at 2026-10-01T08:19Z (gh workflow list: active); origin/main promote.yml contains the --engine legacy leg. 10.5.25's own promote runs both legs. Watcher bz9g1y2jr.
+
+## 2026-10-01T08:43Z v10.5.25 on next; first two-leg promote held latest (gate text drift)
+- v10.5.25 6fe04649: npm gitHead 6fe046496abc matches; next=10.5.25, latest=10.5.20; release body 9 lines; Post-Release Smoke success.
+- promote run 36837313500 (08:35Z) failed and held latest. Leg 1 (bun): all checks PASS on the installed 10.5.25 (Loki 10 start line, 7 lines, signed receipt, skip-bare-verify rc=4). Leg 2 (no bun): every legacy check PASS (verify ok, signed, digest, 13/15 lines, skipped target rc=3 NOT VERIFIED) except legacy-fallback-line: the gate matched the pre-S2 message text. Product behaviour on both machines is correct; the gate pattern was stale.
+- Fix 4b290f31: both fallback patterns match bin/loki's current line; the gate test asserts gate and bin/loki carry the same literal (mutation red). test-first-run-gate 78/0, gate --stub rc=0. train/52 in CI with E-161b and E-169; on green cut 10.5.26, whose promote runs the fixed gate.
+- E-170 measured (slim 30,280 KB vs full 407,656 KB); slim-path docs held for the plain-line evidence.
