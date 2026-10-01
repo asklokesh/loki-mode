@@ -1,26 +1,22 @@
 # Progress
 
-## OPEN ITEMS (completion ledger, founder 14:10Z; updated each train; done needs evidence)
-| Item | Status | Evidence or gap | Next slice |
-|---|---|---|---|
-| D48 row 1 gaming matrix | not started (test built de71397d, unmerged) | pre-red case needs a CTO call | CTO ruling, then merge |
-| D48 row 2 portable receipt | done | keys export and verify --pubkey shipped, tamper test | none |
-| D48 row 3 quiet and fast | partial | v10 output 7 lines (gate checks 8 or fewer); time ratio vs raw not measured | measure ratio |
-| D48 row 4 commits only the fix | partial | lockfile and Wall exclusion (10.5.28), backstop exclusions D50-F4 (train/61) | node, pytest, go first-run matrix |
-| D48 row 5 exit ladder plus --json schema | partial | exit 4 shipped; why and status JSON Schemas (10.5.30); quick and verify have no --json | decide quick/verify --json |
-| D48 row 6 doctor --fix under 2s | not started | dropped from train/26 | rework slice |
-| D48 rows 7-9 v10 default, non-null cost | done | on latest; gate leg 1 checks start line and cost | none |
-| D48 row 10 loki-seal marketplace | done | released | none |
-| D50 lift (north star) | partial, not citable | aiq-52 v10 0/3 vs raw 2/3; humanize-174 v10 0/3 vs raw 2/3 | merge F5 (r4), D53 gate F2r (merged local), S3, then rerun small tier haiku and sonnet x3 |
-| D51 Phase A | partial | first-run UI, backlog, headless, Slack shipped; no recorded end-to-end demo | e2e proof plus recorded demo |
-| D51 Phase B | started | design merged (D51-PHASE-B.md), B01 merged | B02, B03, B07 |
-| D51 Phase C | not started | none | after B |
-| DOC-01 long README for v10 | not started | none | haiku doc slices |
-| INTEL-1 in-toto receipts | not started | row ready | after D50 |
-| INTEL-2 visible cost cap | not started | row ready | after D50 |
-| INTEL-3 reviewer-first PR body | not started | row ready | haiku pieces |
-| D46 6 releases per hour | not met (1 to 2 per hour today) | release captain manual | RC-AUTO train-cycle.sh building |
-| Founder queue rows 11-16 | open | see FOUNDER-QUEUE.md | founder |
+## OPEN ITEMS (completion ledger; ranked by D54 v1 scope, docs/PRODUCT.md; updated each train; done needs evidence)
+| Rank | Item | Status | Evidence or gap | Next slice |
+|---|---|---|---|---|
+| 1 | P0 dashboard frontend not found on `loki start` | building | root cause: test suites leaked dashboards into the real HOME, reuse check trusted them, CLOSE_WAIT read as in use | P0-DASH-STATIC (sonnet) |
+| 2 | v1.1 first run end to end with recorded demo (D51 Phase A) | partial | first-run UI, backlog, headless, Slack shipped; no recorded end-to-end demo | e2e proof plus demo |
+| 3 | v1.3 reviewer-first PR body (INTEL-3) | not started | row ready | haiku pieces |
+| 4 | v1.4 visible cost cap (INTEL-2) | not started | row ready | check existing BUDGET_STOP first |
+| 5 | D54 no pricing anywhere (README, docs, help, UI) | not started | D54 amendment 15:05Z | haiku doc sweep |
+| 6 | v1 metrics in METRICS.md | not started | D54 list | haiku |
+| 7 | D50 lift (only where it raises completion or merge rate) | partial, not citable | aiq-52 v10 0/3 vs raw 2/3; F4 released 10.5.33, F5 on train/63; F2r dropped on tsc, re-landing | rerun small tier after F5 ships |
+| 8 | v1.5 workspaces (D51 Phase B) | started | design merged, B01 merged | B02, B03, B07 |
+| 9 | v1.5 container, Helm, ECS (D51 Phase C) | not started | none | after B |
+| 10 | D46 6 releases per hour | not met (1 to 2 per hour) | train-cycle.sh merged on train/63, not yet live | run it every 10 min after one dry-run cycle |
+| 11 | DOC-01 long README for v10 | not started | must follow D54 (free, no editions) | haiku |
+| 12 | D48 rows 3, 4, 5, 6 | partial | rows 2, 7-10 done; 3 time ratio, 4 matrix, 5 quick/verify --json, 6 doctor --fix open | only where they serve v1 |
+| frozen | D48 row 1 gaming matrix, INTEL-1 in-toto receipts, loki modernize | frozen by D54 | verification is bug-fix only | none |
+| open | Founder queue rows 11-16 | open | FOUNDER-QUEUE.md | founder |
 
 ## 2026-09-28T21:44Z: v10.5.1 published; E-98f says no flip; D41 plan and D42 rulings
 - v10.5.1: cut 21:27:45Z (d697ea4c: E-110 pre-push scans every path, METRICS usage snapshot), Release 36486250082 success, publish-npm 21:36:44Z, npm latest 10.5.1 gitHead d697ea4c, body 9 lines from release-notes.sh (no backfill).

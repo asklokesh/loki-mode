@@ -443,3 +443,9 @@ Loki's definition: "autonomous software factory that runs with the knowledge of 
 2. D53(c) tightened: at least one Wall check must cover the same behaviour; a Wall written from the requirement asserts the correct value, so an edit to the buggy value fails it.
 3. If intake cannot classify the literal as expected versus observed, the run stays PARTIAL.
 4. Red test required: an issue saying "returns 5, should return 7" with a test edit to 5 is never VERIFIED.
+
+## D54 (founder, relayed 14:30Z; amended 15:05Z): a well-scoped product, free
+1. Product statement and v1 scope are in docs/PRODUCT.md: issue backlog to merge-ready pull requests, tested, evidence attached, on your infrastructure, any model. v1 builds only: first run, backlog to PRs, the reviewer-first PR body, cost and control, scale (workspaces, container, Helm, ECS, audit log, team budgets), and the loki-seal wedge.
+2. Out of scope for v1 (frozen unless a bug blocks v1): loki modernize, new verification features, the gaming matrix, extra dashboards, extra providers, certifications, new engines. Verification is bug-fix only.
+3. Amendment 15:05Z, the founder's words: "I want sellable product but I don't need to sell right now, don't price anything, everything is still free to use". There is no paid edition and no pricing anywhere; remove "paid", "Team edition", "commercial editions" and "pricing TBD" from docs, README, CLI help and UI. No feature gating, license keys or upgrade prompts in code. LICENSE is untouched (FOUNDER-QUEUE row 7).
+4. Order: P0 first-run bugs, first run end to end with a recorded demo, PR body and cost cap, D51 Phase B, D51 Phase C. D50 continues only where it raises completion or merge rate. Every release note leads with the user-visible v1 change.
