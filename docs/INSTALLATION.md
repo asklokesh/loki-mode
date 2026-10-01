@@ -4,7 +4,7 @@ The flagship product of [Autonomi](https://www.autonomi.dev/). Loki Mode is a sp
 
 **Version:** v10.6.6
 
-**Migration Note:** Legacy engine removed in 10.6.0. Use `loki "<task>"`, `loki owner/repo#N`, or `loki backlog` instead.
+**Engine note:** `loki "<task>"`, `loki owner/repo#N` and `loki quick` run the Loki 10 engine. `loki start` still routes to the legacy engine, which is being removed (planned work resumes 2026-10-07); prefer `loki owner/repo#N`. See [docs/v10/GUIDE.md](v10/GUIDE.md).
 
 ---
 

@@ -8,7 +8,7 @@ Complete installation guide for Loki Mode.
 
 Before installing Loki Mode, ensure you have:
 
-- **Node.js 16+** (for npm installation)
+- **Node.js 20+** (for npm installation)
 - **Git** (for version control and worktrees)
 - **Claude Code CLI** (or alternative provider CLI)
 

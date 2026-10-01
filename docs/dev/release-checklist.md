@@ -157,6 +157,5 @@ gh release view vX.Y.Z
 ## Testing
 
 ```bash
-./benchmarks/run-benchmarks.sh humaneval --execute --loki
-./benchmarks/run-benchmarks.sh swebench --execute --loki
+npm test
 ```

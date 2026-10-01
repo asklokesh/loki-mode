@@ -474,8 +474,8 @@ enterprise:
 ## Compliance Reporting
 
 **Loki does not generate framework-specific compliance reports.** An earlier
-version of this page showed `loki enterprise audit export --format soc2|hipaa|pci`
-and `loki compliance report --framework <name>`. Neither exists:
+version of this page showed framework-specific export and report commands.
+They do not exist:
 `loki enterprise audit` has only `summary` and `tail`, and `loki compliance`
 has only `snapshot`.
 

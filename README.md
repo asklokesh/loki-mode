@@ -42,12 +42,14 @@ loki doctor                       # checks your setup, names any blocker
 
 Upgrade with `loki self-update`. Long form: [Installation Guide](docs/INSTALLATION.md). `npm install -g loki-mode` installs the `latest` dist-tag; see [Release channels](#release-channels-next-and-latest) for `next`.
 
-**Loki needs a model to drive.** An `ANTHROPIC_API_KEY` alone is enough (the Claude Agent SDK ships inside Loki; on the default engine this path needs Bun and `LOKI_SDK_MODE=full`, see Setup details below), or point it at Claude Code, Cline, Codex, Aider or opencode. `loki doctor` tells you exactly what is missing.
+**Loki needs a model to drive.** An `ANTHROPIC_API_KEY` alone is enough (the Claude Agent SDK ships inside Loki; on the legacy engine this path needs Bun and `LOKI_SDK_MODE=full`, see Setup details below), or point it at Claude Code, Cline, Codex, Aider or opencode. `loki doctor` tells you exactly what is missing.
 
 ```bash
 export ANTHROPIC_API_KEY=sk-...
 loki doctor
-loki quick "fix the login bug"   # one small task on the Loki 10 engine
+loki quick "fix the login bug"   # one small task on the Loki 10 engine, no PR
+loki "fix the login redirect loop" --no-pr   # any task, Loki 10 engine
+loki owner/repo#123              # one GitHub, GitLab or Jira issue to a pull request, Loki 10 engine
 ```
 
 <details>
@@ -71,7 +73,7 @@ loki-seal is a Claude Code Stop hook that runs your repo's real test suite when 
 
 ## Loki 10 engine
 
-Loki Mode now runs the v10 engine for all commands. <!-- loki10-default -->
+Loki 10 is the default engine for `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"`. <!-- loki10-default -->
 
 Guide, provider table and summary format: [docs/v10/GUIDE.md](docs/v10/GUIDE.md).
 
@@ -85,7 +87,7 @@ loki owner/repo#123
 
 The v10 engine accepts a quoted multi-word task, a GitHub, GitLab or Jira issue reference, `status`, `verify`, `dashboard`, and other subcommands. Flags (`loki-ts/src/engine10/cli.ts` USAGE): `--no-pr` builds and verifies without opening a pull request, `--deep` requests the deep verify pass and a longer implement budget, `--provider <name>` picks the coding provider (`--json` and `--verbose` are also parsed by the supervisor, see [Quiet output](#quiet-output)). The engine needs Bun; without it the command exits 1 with a message and installation instructions.
 
-Migration note: Legacy engine removed in 10.6.0; use `loki "<task>"`, `loki owner/repo#N`, or `loki backlog` instead.
+**Legacy engine (being removed).** The previous engine still ships in 10.6.6 and is reachable with `LOKI_ENGINE=legacy` or `loki legacy <args>`. `loki start owner/repo#N` still routes to it, not to Loki 10. Use `loki owner/repo#N` (one issue) or `loki backlog owner/repo --all|--label X|--issues N,N` (many issues, N in parallel, each on a `loki/backlog-N` worktree branch) instead. Legacy removal is planned and resumes on 2026-10-07; see [docs/v10/LEGACY-REMOVAL.md](docs/v10/LEGACY-REMOVAL.md). Sections below marked "legacy" describe features that run only on that engine.
 
 ### The state machine
 
@@ -122,7 +124,7 @@ The run cap is 900s (2700s with `--deep`, `DEFAULT_CAP_S` and `DEEP_CAP_S` in `t
 
 A finished run prints a short summary (see [Quiet output](#quiet-output), which also shows an example) whose `NOT PROVEN` line is never empty by omission: deep checks deferred to the deep-verify pass are always listed there.
 
-`loki status [run-id]`, `loki verify [run-id]` and `loki dashboard` are built on the v10 path. Slack notifications are not part of the v10 engine surface yet.
+`loki status [run-id]` and `loki verify [run-id]` are built on the v10 path (bare `loki verify` follows the newest run, v10 or legacy). `loki dashboard` and `loki status` reach the v10 commands with `LOKI_ENGINE=v10`. Slack notifications are not part of the v10 engine surface yet.
 
 ## Outcomes and exit codes
 
@@ -189,17 +191,6 @@ The first-run gate runs the README's default entry point for a new user on a thr
 
 Policy (D49): every green release is promoted to `latest` after the automated first-run gate. The promote workflow runs automatically after Post-Release Smoke succeeds; a failed smoke or gate leaves the version on `next`. `workflow_dispatch` remains for manual runs of an exact version.
 
-```mermaid
-flowchart LR
-    S[Slice: one engineer, own tests] --> M[Merge when green]
-    M --> T[Train: batch pushed once]
-    T --> CI[Full CI on the exact SHA]
-    CI --> N[npm next]
-    N --> G[Automated first-run gate on the installed version]
-    G -- pass --> L[npm latest, Docker latest, Homebrew]
-    G -- fail --> X[Stays on next, fix-forward slice]
-```
-
 ## loki doctor
 
 ```bash
@@ -213,6 +204,18 @@ Exit 0 when every required check passes; optional warnings (an absent provider C
 ## Modernization: status of loki modernize
 
 Migration: `loki modernize heal <repo> --assess` was a legacy command for read-only analysis. The v10 path `loki modernize <repo> --to <target>` is not yet finished: only `--dry-run` works (inventory, dependency graph, unit clustering, cost, time and risk estimate). A real run stops after the estimate and prints `modernize: oracle capture and execution are not built yet; use --dry-run`. Targets `python3` and `java21` exist; the Java dependency graph is not wired in yet. Design: [docs/v10/MODERNIZE.md](docs/v10/MODERNIZE.md), user summary: [docs/v10/GUIDE-MODERNIZE.md](docs/v10/GUIDE-MODERNIZE.md).
+
+## Control Plane v0 (preview)
+
+A local control plane and UI for many runs, off by default. Enable it with `LOKI_CONTROL=1`:
+
+```bash
+LOKI_CONTROL=1 loki control serve        # 127.0.0.1, default port 47821 (--port N, --db PATH)
+LOKI_CONTROL=1 loki control backfill .   # ship ./.loki/runs to the control plane
+LOKI_CONTROL=1 loki control status       # reachable? how many runs held?
+```
+
+The URL comes from `LOKI_CONTROL_URL`, else `http://127.0.0.1:${LOKI_CONTROL_PORT:-47821}`. Set `LOKI_CONTROL_URL` on a run to ship it live. See [docs/v10/CONTROL-PLANE.md](docs/v10/CONTROL-PLANE.md).
 
 ## Providers
 
@@ -284,13 +287,13 @@ completion claim is backed by deterministic evidence and is independently
 re-checkable; it does not claim the generated code is bug-free.
 
 <details>
-<summary><b>Setup details: providers, other models, what loki doctor checks</b></summary>
+<summary><b>Setup details: providers, other models, what loki doctor checks (examples use the legacy `loki start`)</b></summary>
 
-Other spec sources work the same way:
+The `loki start` examples below run on the legacy engine (being removed). For a Loki 10 run, replace them with `loki "<task>"` or `loki owner/repo#N`; the provider and model variables apply to both engines. Other spec sources on the legacy engine:
 
 ```bash
 loki init my-app --template simple-todo-app    # scaffold a starter PRD
-loki start owner/repo#123                      # a GitHub issue
+loki start owner/repo#123                      # a GitHub issue (legacy route; prefer: loki owner/repo#123)
 loki start ./openapi.yaml                      # an OpenAPI/YAML spec
 loki demo --offline                            # replay a sample receipt, no key, no spend
 ```
@@ -381,7 +384,7 @@ Required:
 
 - An agent provider CLI: [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`, Tier 1, recommended and E2E-verified - the provider Loki Mode is built for). Cline, Codex, Aider, and opencode are supported as experimental providers (wiring in place; not yet E2E-verified by us). Loki cannot run a build without one of these installed and authenticated.
 - Python 3.8+ (`python3`) for the dashboard, memory system, and orchestration helpers.
-- Node.js 18+ (`node`) for the npm install path and the bundled runtime.
+- Node.js 20+ (`node`) for the npm install path and the bundled runtime.
 - `jq` for the JSON that the shell flows and the quality gates parse.
 - Git 2.x (`git`) for checkpoints and worktrees.
 - `curl` for installation and network calls.
@@ -414,9 +417,9 @@ See the [Installation Guide](docs/INSTALLATION.md) for the long form.
 ---
 
 <details>
-<summary><strong>Runtime architecture: dual Bash/Bun runtime and the rollback flag</strong></summary>
+<summary><strong>Runtime architecture: dual Bash/Bun runtime</strong></summary>
 
-Loki Mode v10 runs on the Bun runtime by default, which hosts the autonomous build engine. Bash is used for system integration where needed.
+The Loki 10 engine runs on the Bun runtime. The legacy engine is Bash (`autonomy/loki`) and is being removed.
 
 - Commands that require Bun: `version`, `--version`, `-v`, `status`, `stats`, `doctor`, `provider`, `memory`, `rollback`, `kpis`, `trust`, `wiki`, `crash`, `internal`, and `report kpis`.
 - If `bun` is not on `PATH`, commands exit 1 with installation instructions.
@@ -427,9 +430,9 @@ See [UPGRADING.md](UPGRADING.md) and [ADR-001: Runtime Migration](docs/architect
 </details>
 
 <details>
-<summary><strong>Supported spec formats</strong></summary>
+<summary><strong>Supported spec formats (legacy engine, being removed)</strong></summary>
 
-A "spec" is whatever you hand `loki start`. Loki auto-detects the format and normalises it before the RARV loop. A Markdown PRD is one form of spec; the table below lists every input the CLI accepts.
+Loki 10 takes a quoted task or an issue reference (GitHub, GitLab or Jira). The table below describes the legacy `loki start`, which accepts files too. A "spec" is whatever you hand `loki start`. Loki auto-detects the format and normalises it before the RARV loop. A Markdown PRD is one form of spec; the table below lists every input the CLI accepts.
 
 | Format | Example | Notes |
 |--------|---------|-------|
@@ -460,30 +463,33 @@ For how Loki compares with other tools, see [docs/COMPARISON.md](docs/COMPARISON
 <details>
 <summary><strong>All commands</strong></summary>
 
+Loki 10 engine:
+
 | Command | Description |
 |---------|-------------|
-| `loki start [PRD]` | Start with optional PRD file (also accepts an issue ref; replaces deprecated `loki run`). Auto-opens the dashboard in the browser for interactive runs and passes native `--effort`/`--max-budget-usd`/`--fallback-model` for resilience (v7.25.0) |
-| `loki stop` | Stop execution |
-| `loki modernize heal <path>` | Legacy system healing (archaeology, stabilize, isolate, modernize, validate -- v6.67.0; was: `loki heal`) |
-| `loki pause` / `resume` | Pause/resume after current session |
-| `loki steer "<note>"` | Nudge a running build with a directive (writes `.loki/HUMAN_INPUT.md`; the loop reads it when `LOKI_PROMPT_INJECTION=1`) (v8.0.0) |
-| `loki status` | Show current status |
-| `loki why` | Explain the last outcome; on a stalled run names the real stall reason (proactive stuck-detector + convergence signal) and suggests `loki steer` (v8.0.0) |
-| `loki cockpit` | Live multi-repo status as an inline terminal image (Kitty/iTerm2/WezTerm/Ghostty); text + dashboard fallback elsewhere (v7.126.0) |
-| `loki dashboard` | Open web dashboard |
-| `loki preview` | Print running app URL and open in browser (Live App Preview, v7.24.0; was: `loki open`) |
-| `loki web` | Launch Purple Lab web UI [DEPRECATED in v7.44.0 -- use `loki start` which auto-opens the dashboard at http://localhost:57374] |
-| `loki doctor` | Check environment and dependencies |
-| `loki plan [PRD]` | Pre-execution analysis: complexity, cost, iterations |
-| `loki review [--staged\|--diff]` | AI-powered code review with severity filtering |
-| `loki test [--file\|--dir\|--changed]` | AI test generation |
-| `loki analyze onboard [path]` | Project analysis and CLAUDE.md generation (was: `loki onboard`) |
-| `loki import` | Import GitHub issues as tasks |
-| `loki ci` | CI/CD quality gate integration |
-| `loki failover` | Cross-provider auto-failover management |
-| `loki memory <cmd>` | Memory system: index, timeline, search, consolidate |
-| `loki enterprise` | Enterprise feature management |
+| `loki "<task>" [--no-pr] [--deep] [--provider NAME]` | Build a task, verify it, seal a signed receipt, open a PR |
+| `loki owner/repo#N` | Same, from a GitHub, GitLab or Jira issue |
+| `loki quick "<task>"` | Small task, lean path, no PR |
+| `loki backlog owner/repo --all\|--label X\|--issues N,N` | Run every matching open issue, N in parallel (`--concurrency N`, `--dry-run`) |
+| `loki status [--json]` | Current status |
+| `loki verify [run-id]` | Re-check a sealed receipt (exit codes above) |
+| `loki doctor [--json] [--airgap]` | Check environment and providers |
+| `LOKI_CONTROL=1 loki control serve\|backfill\|status` | Control Plane v0 preview |
+| `loki modernize <repo> --to <target> --dry-run` | Estimate only |
+| `loki plan [PRD]` | Dry-run analysis: complexity, cost, execution plan |
 | `loki version` | Show version |
+
+Legacy engine, being removed (these run on the previous engine; `loki --help` still lists them):
+
+| Command | Description |
+|---------|-------------|
+| `loki start [PRD\|ISSUE-REF]` | Legacy build from a PRD file or issue ref; prefer `loki owner/repo#N` |
+| `loki stop`, `pause`, `resume` | Control a legacy run |
+| `loki steer "<note>"` | Nudge a legacy run (needs `LOKI_PROMPT_INJECTION=1`) |
+| `loki why`, `loki next` | Explain or continue a legacy run |
+| `loki dashboard` | Operations UI server (`start\|stop\|status\|url\|open`) |
+| `loki review`, `loki test`, `loki analyze`, `loki memory`, `loki failover`, `loki enterprise`, `loki import`, `loki ci` | Review, test generation, codebase analysis, memory, failover, enterprise, issue import, CI gate |
+| `loki modernize heal <path>` | Legacy system healing |
 
 </details>
 
@@ -495,7 +501,7 @@ Pass a config file to `loki start` with `--config <path>` (aliases `--env-file`,
 ---
 
 <details>
-<summary><strong>Configuration env vars (intelligent defaults, opt-out knobs)</strong></summary>
+<summary><strong>Configuration env vars (legacy engine knobs, opt-out)</strong></summary>
 
 Loki Mode's accuracy and autonomy behaviors are default-on. Each is an opt-out escape hatch, not a setting you have to discover. The most relevant knobs from the v7.41.x accuracy/autonomy hardening:
 
@@ -516,7 +522,7 @@ This is a subset. See the [wiki](wiki/Home.md) for the full env-var reference an
 </details>
 
 <details>
-<summary><strong>BMAD Method Integration</strong></summary>
+<summary><strong>BMAD Method Integration (legacy engine, being removed)</strong></summary>
 
 Loki Mode integrates with the [BMAD Method](https://github.com/bmad-code-org/BMAD-METHOD), a structured AI-driven agile methodology. If your project uses BMAD for requirements elicitation, Loki Mode can consume those artifacts directly:
 
@@ -533,7 +539,7 @@ See [BMAD Integration Validation](docs/architecture/bmad-integration-validation.
 <details>
 <summary><strong>Enterprise Features</strong></summary>
 
-Enterprise features are included but require env var activation.
+Enterprise features are free, included, and need no license key. They are activated with env vars. (Legacy engine surface, being removed with it.)
 
 ```bash
 export LOKI_ENTERPRISE_AUTH=true                 # token auth (dashboard/auth.py)
@@ -561,7 +567,7 @@ loki enterprise status
 | **Testing** | 8 automated quality gates | Test quality depends on AI assertions |
 | **Providers** | Claude, Cline, Codex, Aider and opencode | Non-Claude providers are experimental and mostly sequential |
 | **Dashboard** | Real-time single-machine monitoring | No multi-node clustering |
-| **Loki 10** | The v10 run, `status`, `verify`, `dashboard` | Not the default yet; `loki modernize <repo> --to` runs `--dry-run` only; Slack is not wired in |
+| **Loki 10** | The v10 run (`loki "<task>"`, `loki owner/repo#N`, `loki quick`), `status`, `verify`, `backlog` | `loki start` still runs the legacy engine; `loki modernize <repo> --to` runs `--dry-run` only; Slack is not wired in; Control Plane v0 is a preview |
 
 > **What "autonomous" means:** the system runs RARV cycles without prompting. It does NOT access your cloud accounts, payment systems or external services unless you provide credentials. Human oversight is expected for deployment, API keys and critical decisions.
 
@@ -603,7 +609,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
-[Business Source License 1.1](LICENSE) -- Free for personal, internal, academic, and non-commercial use. Converts to Apache 2.0 on March 19, 2030. Contact founder@autonomi.dev for commercial licensing.
+[Business Source License 1.1](LICENSE) -- Free for personal, internal, academic, and non-commercial use. Converts to Apache 2.0 on March 19, 2030. Contact founder@autonomi.dev for other licensing arrangements.
 
 ---
 

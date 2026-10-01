@@ -72,7 +72,7 @@ autonomy/                   # Runtime and autonomous execution
   context-tracker.py        # Context window usage tracking
   notification-checker.py   # Notification trigger evaluation
 templates/                  # 21 PRD templates (saas, cli, discord-bot, etc.)
-benchmarks/                 # SWE-bench and HumanEval benchmarks
+benchmarks/                 # benchmark harnesses
 ```
 
 ## Codebase Knowledge Graph (Quick Reference)
