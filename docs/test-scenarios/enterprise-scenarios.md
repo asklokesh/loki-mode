@@ -52,7 +52,7 @@ Source: `.github/workflows/loki-ci-example.yml:41-44`
 ### TW-04: Handoff Between Human and AI Coding
 
 ```
-GIVEN a loki autonomous session is running (iteration 5 of 20)
+GIVEN a Loki autonomous session is running (iteration 5 of 20)
   AND the human developer notices a design issue
 WHEN the developer creates .loki/PAUSE signal file
 THEN the session pauses after the current RARV iteration completes
@@ -66,7 +66,7 @@ Source: `autonomy/run.sh:7897` (check_human_intervention)
 ### TW-05: Project Template Sharing Across Team
 
 ```
-GIVEN the team uses loki templates (13 types: saas, cli, discord-bot, etc.)
+GIVEN the team uses Loki PRD templates (saas, cli, discord-bot, etc.)
   AND the team lead wants to standardize on a custom template
 WHEN the lead creates a PRD template at templates/custom-team.md
   AND commits it to the shared repository
@@ -195,7 +195,7 @@ Source: `skills/parallel-workflows.md`
 ### GI-02: Meaningful AI Commit Messages
 
 ```
-GIVEN a loki session has completed a RARV iteration
+GIVEN a Loki session has completed a RARV iteration
   AND the iteration modified 4 files
 WHEN the autonomous system commits changes
 THEN the commit message follows the format: "<type>: <description>"
@@ -437,7 +437,7 @@ Source: `.github/workflows/release.yml:238-496`
 
 ```
 GIVEN the dashboard WebSocket endpoint is available at /ws
-  AND a CI pipeline is running a loki session
+  AND a CI pipeline is running a Loki session
 WHEN the WebSocket client connects
 THEN real-time events are streamed including:
      - iteration_start / iteration_complete

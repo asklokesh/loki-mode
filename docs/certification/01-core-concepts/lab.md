@@ -8,7 +8,7 @@ Install Loki Mode, verify the installation, create a simple PRD, run it, and exa
 
 - Node.js 18+ installed
 - npm available on your PATH
-- A supported AI provider CLI installed (Claude Code, Codex CLI, or Gemini CLI)
+- A supported AI provider CLI installed (Claude Code, Cline, Codex CLI, Aider, or opencode)
 - An active API key for your chosen provider
 
 ## Step 1: Install Loki Mode
@@ -23,7 +23,7 @@ Verify the installation:
 loki version
 ```
 
-You should see output like `5.51.0` (or the current version).
+You should see the installed version number.
 
 ## Step 2: Run the Doctor Check
 
@@ -87,7 +87,7 @@ Alternatively, if using a specific provider:
 ```bash
 loki start --provider claude ./simple-prd.md    # Claude Code (default)
 loki start --provider codex ./simple-prd.md     # OpenAI Codex CLI
-loki start --provider gemini ./simple-prd.md    # Google Gemini CLI
+loki start --provider cline ./simple-prd.md     # Cline
 ```
 
 You can also force the simple complexity tier to limit the number of phases:

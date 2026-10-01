@@ -43,8 +43,6 @@ Review the available audit environment variables:
 # LOKI_AUDIT_SYSLOG_HOST       -- Enable syslog forwarding
 # LOKI_AUDIT_SYSLOG_PORT       -- Syslog port (default: 514)
 # LOKI_AUDIT_SYSLOG_PROTO      -- Syslog protocol: udp or tcp
-# LOKI_AUDIT_LEVEL             -- Minimum severity to log
-# LOKI_AUDIT_EXCLUDE_EVENTS    -- Comma-separated events to skip
 ```
 
 To temporarily disable audit logging (not recommended for production):

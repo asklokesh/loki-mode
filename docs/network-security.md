@@ -6,19 +6,9 @@ Network egress control and isolation for Loki Mode deployments.
 
 This guide covers network-level security controls for restricting outbound network access from Loki Mode containers and pods to only the AI API endpoints required for operation.
 
-## Environment Variables
-
-**None of the variables below are implemented. Do not rely on them.** They are
-reserved names for a planned application-level enforcement layer, and no
-runtime code reads any of them today. Network security is enforced entirely at
-the infrastructure level, using the Docker network and Kubernetes NetworkPolicy
-recipes in the rest of this guide.
-
-| Variable | Default | Description | Status |
-|----------|---------|-------------|--------|
-| `LOKI_NETWORK_EGRESS_POLICY` | `unrestricted` | `unrestricted` (default), `ai-only` (restrict to AI APIs), `none` (block all outbound) | Planned, target TBD |
-| `LOKI_ALLOWED_HOSTS` | (empty) | Comma-separated list of additional hostnames to allow when egress policy is `ai-only` | Planned, target TBD |
-| `LOKI_BLOCK_METADATA_ENDPOINT` | `false` | Block cloud metadata endpoint (169.254.169.254) from within the application | Planned, target TBD |
+Loki Mode has no application-level egress setting: no runtime code restricts
+outbound hosts. Network security is enforced entirely at the infrastructure
+level, using the Docker network and Kubernetes NetworkPolicy recipes below.
 
 ## Docker Network Isolation
 

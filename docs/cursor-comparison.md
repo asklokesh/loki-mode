@@ -164,7 +164,7 @@ For critical changes:
 - "Trillions of tokens" deployed
 - Hundreds of concurrent agents
 
-**Loki Mode:** Benchmarks only (SWE-bench, HumanEval). No 1M+ LoC projects demonstrated.
+**Loki Mode:** No 1M+ LoC projects demonstrated.
 
 ### 2. Empirical Iteration
 Cursor learned through failure:
@@ -177,7 +177,7 @@ Cursor learned through failure:
 ### 3. Simplicity Principle
 > "A surprising amount of the system's behavior comes down to how we prompt the agents. The harness and models matter, but the prompts matter more."
 
-**Loki Mode:** More elaborate infrastructure (8 gates, 41 agent types, memory systems). May be over-engineered for some use cases.
+**Loki Mode:** More elaborate infrastructure (8 gates, agent role prompts, memory systems). May be over-engineered for some use cases.
 
 ---
 

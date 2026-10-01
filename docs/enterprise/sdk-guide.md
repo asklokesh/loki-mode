@@ -1,4 +1,4 @@
-# Loki Mode v5.51.0 -- SDK Guide
+# Loki Mode SDK Guide
 
 Official Python and TypeScript SDKs for the Autonomi Control Plane API. Both SDKs have zero external dependencies -- they use only standard library features.
 

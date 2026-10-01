@@ -121,8 +121,8 @@ carry scopes directly.
 # Generate token with scopes
 loki enterprise token generate dev-1 --scopes control,read,write --expires 30
 loki enterprise token generate viewer-1 --scopes read --expires 90
-loki enterprise token generate auditor-1 --role auditor --expires 180
-loki enterprise token generate admin-1 --role admin --expires 365
+loki enterprise token generate auditor-1 --scopes read,audit --expires 180
+loki enterprise token generate admin-1 --scopes '*' --expires 365
 ```
 
 ### Configuration File
@@ -200,37 +200,6 @@ Scopes are additive:
 | `POST /api/enterprise/tokens` | `*` | Admin only |
 | `DELETE /api/enterprise/tokens/:id` | `*` | Admin only |
 | `POST /api/config` | `*` | Admin only |
-
-## Custom Roles
-
-Define custom roles for specific use cases:
-
-```yaml
-# .loki/config.yaml
-enterprise:
-  rbac:
-    custom_roles:
-      # Read-only with metrics access
-      metrics_viewer:
-        scopes: ["read"]
-        description: "View metrics and dashboard only"
-
-      # Task management only
-      task_manager:
-        scopes: ["read", "write"]
-        description: "Create and update tasks, no session control"
-
-      # Security analyst
-      security_analyst:
-        scopes: ["read", "audit"]
-        description: "View audit logs and security events"
-```
-
-Generate token with custom role:
-
-```bash
-loki enterprise token generate metrics-bot --role metrics_viewer
-```
 
 ## Permission Checks
 
@@ -327,19 +296,19 @@ enterprise:
 ```bash
 # CI/CD pipeline token
 loki enterprise token generate github-actions \
-  --role operator \
+  --scopes control,read,write \
   --scopes "control,read,write" \
   --expires 365
 
 # Monitoring system token
 loki enterprise token generate datadog \
-  --role viewer \
+  --scopes read \
   --scopes "read" \
   --expires 9999
 
 # Security scanner token
 loki enterprise token generate security-scanner \
-  --role auditor \
+  --scopes read,audit \
   --scopes "read,audit" \
   --expires 180
 ```
@@ -350,9 +319,8 @@ loki enterprise token generate security-scanner \
 
 1. Start with minimal permissions (viewer role)
 2. Grant additional scopes only as needed
-3. Use custom roles for specific use cases
-4. Review and audit role assignments quarterly
-5. Remove unused tokens immediately
+3. Review and audit role assignments quarterly
+4. Remove unused tokens immediately
 
 ### Role Assignment
 
@@ -382,12 +350,12 @@ loki enterprise token list
 # Read the route's required scope from dashboard/server.py, then compare
 # against the scopes on your token from the listing above
 
-# Check audit log for denial reason
-loki enterprise audit tail --event permission.denied
+# Check recent audit entries for the denial
+loki enterprise audit tail
 
 # Generate new token with correct role
 loki enterprise token revoke <old-token>
-loki enterprise token generate <name> --role operator
+loki enterprise token generate <name> --scopes control,read,write
 ```
 
 ### OIDC Role Mapping Not Working
@@ -397,13 +365,13 @@ loki enterprise token generate <name> --role operator
 # Check identity provider configuration
 
 # Test with explicit token role first
-loki enterprise token generate test-admin --role admin
+loki enterprise token generate test-admin --scopes '*'
 
-# Check RBAC configuration
-cat .loki/config.yaml | grep -A 10 rbac
+# Check which claim carries the roles
+echo "$LOKI_OIDC_ROLES_CLAIM"
 
-# View OIDC claims in audit log
-loki enterprise audit tail --event auth.oidc.success
+# View recent audit entries
+loki enterprise audit tail
 ```
 
 ### Scope Confusion

@@ -1,10 +1,10 @@
 # Audit Logging
 
-Compliance-ready audit trails for Loki Mode operations.
+Audit trails for Loki Mode operations.
 
 ## Overview
 
-Audit logging captures all significant events for compliance requirements (SOC2, HIPAA), security monitoring, debugging, and usage analytics. Audit logging is **enabled by default** as of v5.37.0.
+Audit logging captures significant events for security monitoring, debugging, and usage analytics. Audit logging is **enabled by default** as of v5.37.0.
 
 ## Configuration
 
@@ -189,17 +189,8 @@ Events by Actor:
 ### Tail Recent Entries
 
 ```bash
-# Last 20 entries
+# Last 20 entries of the newest log file (takes no flags)
 loki enterprise audit tail
-
-# Follow new entries in real-time
-loki enterprise audit tail --follow
-
-# Filter by event type
-loki enterprise audit tail --event session.start
-
-# Filter by level
-loki enterprise audit tail --level error
 ```
 
 ### Search and export logs
@@ -210,19 +201,20 @@ documented both, with filter flags that do not exist). The log is newline
 -delimited JSON on disk, so query and export it with ordinary tools:
 
 ```bash
-AUDIT=~/.loki/dashboard/audit/audit.jsonl
+# One file per day: ~/.loki/dashboard/audit/audit-YYYY-MM-DD.jsonl
+AUDIT=~/.loki/dashboard/audit
 
-# Search by event type
-jq -c 'select(.event == "auth.fail")' "$AUDIT"
+# Search by action
+cat "$AUDIT"/audit-*.jsonl | jq -c 'select(.action == "delete")'
 
 # Search by date range
-jq -c 'select(.timestamp >= "2026-02-01" and .timestamp <= "2026-02-15")' "$AUDIT"
+cat "$AUDIT"/audit-*.jsonl | jq -c 'select(.timestamp >= "2026-02-01" and .timestamp <= "2026-02-15")'
 
-# Search by actor
-jq -c 'select(.actor == "ci-bot")' "$AUDIT"
+# Search by user
+cat "$AUDIT"/audit-*.jsonl | jq -c 'select(.user_id == "ci-bot")'
 
-# Export a filtered slice
-jq -s 'map(select(.event == "task.fail"))' "$AUDIT" > errors.json
+# Export failed actions
+cat "$AUDIT"/audit-*.jsonl | jq -s 'map(select(.success == false))' > errors.json
 ```
 
 The built-in views:
@@ -442,68 +434,6 @@ loki audit scan --preset default
 this page showed `--action git_commit`, which is not implemented. Filter with
 `grep` or `jq` over `.loki/audit.jsonl` instead.
 
-## Compliance
-
-### SOC2
-
-Audit logging supports SOC2 requirements:
-
-- **CC6.1** - Logical access security (auth events)
-- **CC7.2** - System monitoring (session and task events)
-- **CC7.3** - Incident response (error events)
-
-Configuration:
-
-```yaml
-enterprise:
-  audit:
-    enabled: true
-    retention_days: 365  # 1 year minimum for SOC2
-    integrity_check: true
-    syslog_enabled: true
-```
-
-### HIPAA
-
-For healthcare applications:
-
-- Enable all authentication events
-- Set retention to minimum 6 years
-- Enable log encryption
-- Forward to SIEM for monitoring
-
-Configuration:
-
-```yaml
-enterprise:
-  audit:
-    enabled: true
-    retention_days: 2190  # 6 years
-    encrypt: true
-    integrity_check: true
-    syslog_enabled: true
-```
-
-### GDPR
-
-For European deployments:
-
-- Log access to personal data
-- Provide data export capability
-- Support right to deletion
-- Enable audit trail for data access
-
-Configuration:
-
-```yaml
-enterprise:
-  audit:
-    enabled: true
-    retention_days: 365
-    gdpr_compliance: true
-    log_data_access: true
-```
-
 ## Troubleshooting
 
 ### Logs Not Being Created
@@ -566,9 +496,6 @@ nc -zv syslog.example.com 514
 echo $LOKI_AUDIT_SYSLOG_HOST
 echo $LOKI_AUDIT_SYSLOG_PORT
 
-# View syslog errors in audit log
-loki enterprise audit tail --event syslog.error
-
 # Test manual syslog send
 logger -n syslog.example.com -P 514 "Test from Loki Mode"
 ```
@@ -591,7 +518,6 @@ logger -n syslog.example.com -P 514 "Test from Loki Mode"
 2. Rotate logs daily
 3. Compress rotated logs
 4. Set reasonable retention period
-5. Exclude high-volume low-value events (e.g., api.request)
 
 ### Compliance
 

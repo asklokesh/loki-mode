@@ -1,7 +1,7 @@
 # Loki Mode Edge Case Test Scenarios
 
 Agent 12 - Scenario Writing: Edge Cases, Error Paths, Concurrent Usage
-Version: v6.71.1 | Date: 2026-03-24
+Date: 2026-03-24
 
 ---
 
@@ -55,7 +55,7 @@ Version: v6.71.1 | Date: 2026-03-24
 **Given** an autonomous session is running at iteration 15 of 1000
 **When** the network connection drops (DNS resolution fails, API timeout)
 **Then** the system should:
-- The provider CLI (claude/codex/gemini) exits with a non-zero exit code
+- The provider CLI (claude/codex/cline/aider/opencode) exits with a non-zero exit code
 - `run_autonomous()` captures the exit code in `$exit_code` (run.sh:9406)
 - Rate limit detection runs via `is_rate_limited()` (checks for common rate limit strings)
 - If failover is enabled (`LOKI_FAILOVER=true`), attempt `attempt_provider_failover()`

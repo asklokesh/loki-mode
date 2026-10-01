@@ -21,7 +21,7 @@ match the code, the code is the bug; please open an issue.
   CONTINUOUS_INTEGRATION), an enterprise/air-gapped marker
   (LOKI_ENTERPRISE=true / LOKI_AIRGAP=true), or a non-interactive session (no
   TTY: scripts, pipes, cron, detached/container runs). In those contexts an
-  untouched install sends us nothing. GDPR / FedRAMP deployments stay clean.
+  untouched install sends us nothing.
 - Disclosure is never covert: the first-run welcome screen states (once) that
   anonymous diagnostics are on and how to turn them off, and this document is the
   canonical reference.

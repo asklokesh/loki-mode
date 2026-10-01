@@ -27,7 +27,7 @@ The Autonomi Certified Developer certification validates your knowledge of Loki 
 - Familiarity with command-line tools (bash, git, npm)
 - Basic understanding of AI/LLM concepts (prompts, models, tokens)
 - Node.js 18+ installed
-- A supported AI provider CLI installed (Claude Code, Codex CLI, or Gemini CLI)
+- A supported AI provider CLI installed (Claude Code, Cline, Codex CLI, Aider, or opencode)
 
 ## How to Use This Program
 

@@ -35,7 +35,7 @@ The dashboard automatically syncs with Loki Mode when it's running, polling `das
 The sidebar provides navigation and system status at a glance.
 
 #### Logo & Version
-- Loki Mode branding with current version (v5.40.0)
+- Loki Mode branding with the running version
 - Version updates automatically from server state
 
 #### Theme Toggle
@@ -465,6 +465,6 @@ Useful for:
 ## Related Documentation
 
 - [Core Workflow](../references/core-workflow.md) - RARV cycle details
-- [Agent Types](../references/agent-types.md) - 41 agent definitions
+- [Agent Types](../references/agent-types.md) - Agent role definitions
 - [Quality Control](../references/quality-control.md) - Quality gates system
 - [Memory System](../references/memory-system.md) - Memory architecture

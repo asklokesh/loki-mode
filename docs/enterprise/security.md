@@ -1,4 +1,4 @@
-# Loki Mode v5.51.0 -- Enterprise Security
+# Loki Mode Enterprise Security
 
 ## Overview
 
@@ -167,27 +167,18 @@ When both variables are set, the dashboard server binds on HTTPS only. Self-sign
 
 ### Rate Limiting
 
-The API enforces rate limits per token/IP:
-
-| Endpoint Group | Default Limit |
-|----------------|---------------|
-| Read operations | 100 req/min |
-| Write operations | 30 req/min |
-| Auth operations | 10 req/min |
-
-Rate limit headers are included in every response:
-```
-X-RateLimit-Limit: 100
-X-RateLimit-Remaining: 95
-X-RateLimit-Reset: 1708520460
-```
+The dashboard API applies in-process rate limits (`_RateLimiter` in
+`dashboard/server.py`): 10 requests/min on control endpoints and 60
+requests/min on rate-limited read endpoints. Exceeding them returns HTTP 429.
+The limits are not configurable by environment variable, and no
+`X-RateLimit-*` headers are sent.
 
 ### CORS
 
 CORS is configured via environment variables:
 
 ```bash
-export LOKI_CORS_ORIGINS="https://dashboard.company.com,https://admin.company.com"
+export LOKI_DASHBOARD_CORS="https://dashboard.company.com,https://admin.company.com"
 ```
 
 Default behavior: `localhost` origins are allowed for development. In production, explicitly set allowed origins.
@@ -228,7 +219,7 @@ This is a deliberate fail-closed design. Invalid or missing signatures always re
 
 ## Audit Logging
 
-### Hash-Chained Tamper-Evident Logs
+### Hash-Chained Audit Logs
 
 Audit logs use SHA-256 hash chains for tamper evidence. Each entry's hash depends on the previous entry's hash, creating an immutable chain from the genesis record.
 

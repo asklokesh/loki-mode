@@ -132,19 +132,6 @@
 
 ---
 
-## Benchmarks (SWE-bench Verified)
-
-| Agent | Score | Notes |
-|-------|-------|-------|
-| **Google Antigravity** | 76.2% | With Gemini 3 Pro |
-| **Claude Code** | ~75%+ | Claude Sonnet 4.5 |
-| **OpenAI Codex** | ~70%+ | GPT-5.2-Codex |
-| **Devin 2.0** | 67% | PR merge rate doubled |
-| **Amazon Q Developer** | 66% | State-of-the-art claim |
-| **Loki Mode** | Inherits Claude | Framework, not model |
-
----
-
 ## Zencoder/Zenflow Comparison (v2.36.7)
 
 **Comprehensive analysis of Zencoder.ai enterprise AI coding platform, including Zenflow (autonomous workflows), Zen Agents (specialized agents), and Zentester (QA automation).**
@@ -210,7 +197,7 @@
 |---------|--------------|---------|-----------------|------------|-----------------|---------------------|----------------|
 | **Stars** | 594 | 11,903 | 35K+ | 26K+ | 13.7K | N/A | N/A |
 | **npm/wk** | 6.1K | 21.4K | N/A | N/A | N/A | N/A | N/A |
-| **Agents** | 41 roles in 8 domains | 11 agents | Fresh per task | 108 agents | Swarm-based | 32 agents | N/A |
+| **Agents** | Role prompts per domain | 11 agents | Fresh per task | 108 agents | Swarm-based | 32 agents | N/A |
 | **Skills** | Progressive disclosure | 6 slash commands | N/A | 129 skills | N/A | 35 skills | Memory focus |
 | **Multi-Provider** | Yes (Claude/Cline/Codex/Aider/opencode) | 3 CLIs (separate) | No | No | No | No | No |
 | **Memory System** | 3-tier (episodic/semantic/procedural) | None | N/A | N/A | Hybrid | N/A | SQLite+FTS5 |
@@ -265,7 +252,7 @@ Plugin marketplace architecture with unprecedented scale:
 | Pattern | Description | Loki Mode Status |
 |---------|-------------|------------------|
 | **72 Plugins** | Modular, focused plugins instead of monolith | Different approach (progressive disclosure) |
-| **108 Agents** | Specialized agents for specific domains | 41 agent roles in Loki Mode |
+| **108 Agents** | Specialized agents for specific domains | Specialized agent roles in Loki Mode |
 | **129 Skills** | Skills as first-class objects | 10 skills in skills/ |
 | **Four-Tier Model Strategy** | Explicit tier selection with constraints | Similar to Loki Mode tiers |
 
@@ -286,7 +273,7 @@ Tiered agent architecture with explicit escalation:
 
 | Pattern | Description | Loki Mode Status |
 |---------|-------------|------------------|
-| **32 Agents** | Smaller but well-organized agent set | 41 in Loki Mode |
+| **32 Agents** | Smaller but well-organized agent set | Specialized roles in Loki Mode |
 | **35 Skills** | Domain-specific skills | 10 skills in Loki Mode |
 | **Tiered Architecture** | LOW/MEDIUM/HIGH with explicit triggers | **IMPLEMENTED** (model-selection.md lines 180-363) |
 | **Delegation Enforcer** | Middleware auto-injects correct model | Evaluating |
@@ -349,13 +336,13 @@ Tiered agent architecture with explicit escalation:
 
 | Agent | Killer Feature |
 |-------|---------------|
-| **Loki Mode** | Minimal-human-intervention full SDLC from any spec (PRD, GitHub issue, or YAML), 41 agent roles in 8 domains, Constitutional AI, anti-sycophancy, cross-project learning, code transformation, property-based testing |
+| **Loki Mode** | Minimal-human-intervention full SDLC from any spec (PRD, GitHub issue, or YAML), specialized agent roles, Constitutional AI, anti-sycophancy, cross-project learning, code transformation, property-based testing |
 | **Devin** | Full software engineer persona, Slack integration, 67% PR merge rate |
 | **OpenAI Codex** | Skills marketplace, $skill-creator, GPT-5.2-Codex, secure sandbox |
 | **Cursor** | 8 parallel agents, BugBot, Memories, $10B valuation, Composer model (250 tok/s) |
 | **Kiro** | Spec-driven development (requirements.md/design.md/tasks.md), Property-based testing, Hooks |
-| **Antigravity** | Manager Surface, Artifacts system (video), browser subagents, Gemini 3 (76.2% SWE-bench) |
-| **Amazon Q** | Code transformation (/transform), 66% SWE-bench, deep AWS integration, MCP support |
+| **Antigravity** | Manager Surface, Artifacts system (video), browser subagents, Gemini 3 |
+| **Amazon Q** | Code transformation (/transform), deep AWS integration, MCP support |
 | **OpenCode** | 70.9k stars, multi-provider, LSP integration (25+ languages), plugin system |
 
 ---
