@@ -1124,12 +1124,13 @@ _TI_CFG_SHARED = re.compile(r"(^|/)(setup\.cfg|pyproject\.toml|package\.json)$")
 _TI_TEST_FILE = re.compile(
     r"(^|/)(tests?|__tests__|spec|specs)/|\.(test|spec)\.[\w]+$|(^|/)test_[^/]*\.py$|_test\.(py|go|rs)$|(^|/)conftest\.py$")
 _TI_SKIP_JS = re.compile(
-    r"\b(test|it|describe|suite|context|specify)\s*\([^\n]*?,\s*\{[^}]*\b(skip|todo)\s*:\s*(?!(?:false|0|null|undefined)\b)\S"
+    # options object only as the 2nd argument: title (string or identifier), then `, {`
+    r"\b(test|it|describe|suite|context|specify)\s*\(\s*(?:'[^'\n]*'|\"[^\"\n]*\"|`[^`\n]*`|[\w.$]+)\s*,\s*\{[^}]*\b(skip|todo)\s*:\s*(?!(?:false|0|null|undefined)\b)\S"
     r"|\b(it|test|describe|suite|context|specify)\s*\.\s*(skip|only|todo)\b"
     r"|\bx(it|test|describe)\s*\(|\bf(it|describe)\s*\("
     r"|\b(t|ctx)\s*\.\s*(skip|todo)\s*\(")
 _TI_SKIP_PY = re.compile(
-    r"@pytest\.mark\.(skip|skipif|xfail)\b|\bpytest\.(skip|xfail|importorskip)\s*\("
+    r"\b(?:pytest\.)?mark\.(skip|skipif|xfail)\b|\bpytest\.(skip|xfail|importorskip)\s*\("
     r"|@(?:unittest\.)?(skip|skipIf|skipUnless|expectedFailure)\b|\bSkipTest\b|\bskipTest\s*\(")
 _TI_SKIP_GO = re.compile(r"\b[tb]\.Skip(f|Now)?\s*\(")
 _TI_SKIP_RS = re.compile(r"#\[ignore")
@@ -1209,6 +1210,31 @@ def _ti_pytest_view(text, path):
     return out
 
 
+_TI_SELECT_PY = re.compile(r"\bcollect_ignore(?:_glob)?\b|\bpytest_collection_modifyitems\b")
+_TI_PYTEST_NAMED = re.compile(r"(^|/)(conftest\.py|\.?pytest\.ini|tox\.ini)$")
+
+
+def _ti_base_has_pytest_config(target_dir, base):
+    names = _ti_run(target_dir, "ls-tree", "-r", "--name-only", "-z", base) or ""
+    for n in names.split("\0"):
+        if _TI_PYTEST_NAMED.search(n):
+            return True
+        if n.endswith(("pyproject.toml", "setup.cfg")) and \
+                _ti_pytest_view(_ti_run(target_dir, "show", "%s:./%s" % (base, n)) or "", n):
+            return True
+    return False
+
+
+def _ti_added_config_selects(path, text):
+    """True when a newly added pytest config changes test selection (unparseable counts)."""
+    if path.endswith(".py"):
+        return bool(_TI_SELECT_PY.search(text))
+    if path.endswith((".ini", ".toml", ".cfg")):
+        v = _ti_pytest_view(text, path)
+        return v is None or bool(v)
+    return False
+
+
 def _collect_tests_integrity(target_dir, base):
     """Return {"weakened": [...], "assertions_edited": [...], "disclosed": [...]} or None.
 
@@ -1244,8 +1270,16 @@ def _collect_tests_integrity(target_dir, base):
             is_always = bool(_TI_CFG_ALWAYS.search(path))
             if not (is_always or _TI_CFG_SHARED.search(path)):
                 continue
-            if st == "A":  # no base version: nothing was narrowed, disclose only
-                disclosed.append("new test runner config: " + path)
+            if st == "A":  # no base version: disclose, unless it re-selects tests over a base pytest config
+                try:
+                    with open(os.path.join(target_dir, new), encoding="utf-8", errors="replace") as h:
+                        text = h.read()
+                except OSError:
+                    text = ""
+                if _ti_added_config_selects(path, text) and _ti_base_has_pytest_config(target_dir, base):
+                    weakened.append("test runner config changed: " + path)
+                else:
+                    disclosed.append("new test runner config: " + path)
             elif is_always:
                 weakened.append("test runner config changed: " + path)
             else:

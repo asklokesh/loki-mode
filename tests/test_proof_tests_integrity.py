@@ -249,6 +249,48 @@ class TestsIntegrity(unittest.TestCase):
                 self.assertNotIn("tests_integrity", items)
                 self.assertEqual(items["tests_integrity:config_added"]["status"], "inconclusive")
 
+    def test_module_level_pytestmark_skip_is_failed(self):
+        for body in ('import pytest\npytestmark = pytest.mark.skip(reason="x")\n\ndef test_a():\n    pass\n',
+                     'import pytest\npytestmark = [pytest.mark.skip(reason="x")]\n\ndef test_a():\n    pass\n',
+                     'import pytest\npytestmark = [\n    pytest.mark.xfail,\n]\n'):
+            with self.subTest(body=body):
+                self.tearDown()
+                self.setUp()
+                self.write("test_calc.py", "def test_a():\n    pass\n")
+                self.rebase_base()
+                self.write("test_calc.py", body)
+                _, items = self.gen()
+                self.assertEqual(items["tests_integrity"]["status"], "failed")
+
+    def test_added_selection_config_with_base_config_is_failed(self):
+        for name, text in (("pytest.ini", "[pytest]\ntestpaths = tests/unit\n"),
+                           ("tox.ini", "[pytest]\naddopts = -k not_sum\n"),
+                           ("conftest.py", "collect_ignore = ['test_calc.py']\n"),
+                           ("conftest.py", "def pytest_collection_modifyitems(items):\n    items.clear()\n")):
+            with self.subTest(name=name, text=text):
+                self.tearDown()
+                self.setUp()
+                self.rebase_base(**{"setup.cfg": "[tool:pytest]\ntestpaths = tests\n"})
+                self.write(name, text)
+                _, items = self.gen()
+                self.assertEqual(items["tests_integrity"]["status"], "failed")
+
+    def test_added_non_selection_config_with_base_config_is_disclosed(self):
+        self.rebase_base(**{"setup.cfg": "[tool:pytest]\ntestpaths = tests\n"})
+        self.write("pytest.ini", "[pytest]\nmarkers =\n    slow: slow\n")
+        self.write("conftest.py", "import pytest\n")
+        _, items = self.gen()
+        self.assertNotIn("tests_integrity", items)
+        self.assertEqual(items["tests_integrity:config_added"]["status"], "inconclusive")
+
+    def test_skip_option_after_callback_is_not_a_skip(self):
+        for line in ('test("x", () => { expect(paginate(items, { skip: 2, take: 2 })).toEqual([3,4]); });',
+                     "it('x', async () => { await db.find({ skip: 1 }); });"):
+            with self.subTest(line=line):
+                self.tearDown()
+                self.setUp()
+                self.assertNotEqual(self.failed_with(line, commit=False, fname="new.test.js"), "failed")
+
     def test_honest_diff_has_no_item(self):
         self.write("sum.js", "module.exports=(a,b)=>b+a\n")
         self.write("other.test.js", HONEST)
