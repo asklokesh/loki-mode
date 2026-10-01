@@ -74,7 +74,7 @@ export function outcomeOf(verdict: Verdict, capHit: boolean, stop: string | null
 }
 export function reasonOf(ev: EventEnvelope[], tampered: boolean, stop: string | null, outcome: Outcome): string | undefined { // A-130: one-line cause, first match wins
   const done = (s: string) => ev.findLast((e) => e.type === "stage.completed" && e.stage === s)?.data, v = done("verify"), checks = (v?.checks ?? []) as { name: string; result: string; first_error?: string }[], bad = checks.find((c) => c.result === "fail");
-  const r = EXIT[outcome] === 0 ? "" : tampered ? "event log modified outside the engine" : stop?.startsWith("fatal:") ? ({ "fatal:quota_exhausted": "provider credit exhausted", "fatal:auth": "provider authentication failed" } as Record<string, string>)[stop] ?? stop : outcome === "BLOCKED" ? `spec conflict: ${done("implement")?.spec_conflict_reason ?? "see the receipt"}` : stop === "stalled" ? "stalled: same failure 3 times" : bad ? `${bad.name} failed${bad.first_error ? `: ${bad.first_error}` : ""}` : ev.find((e) => e.type === "stage.failed")?.data.reason ?? (ev.some((e) => e.type === "cap.hit") ? "cost/time cap reached" : v && !checks.length ? "no tests to run" : stop);
+  const r = EXIT[outcome] === 0 ? "" : tampered ? "event log modified outside the engine" : stop?.startsWith("fatal:") ? ({ "fatal:quota_exhausted": "provider credit exhausted", "fatal:auth": "provider authentication failed" } as Record<string, string>)[stop] ?? stop : outcome === "BLOCKED" ? `spec conflict: ${done("implement")?.spec_conflict_reason ?? "see the receipt"}` : stop === "stalled" ? "stalled: same failure 3 times" : bad ? `${bad.name} failed${bad.first_error ? `: ${bad.first_error}` : ""}` : ev.find((e) => e.type === "stage.failed")?.data.reason ?? (ev.some((e) => e.type === "cap.hit") ? "cost/time cap reached" : v && !checks.length ? "no tests to run" : stop ?? (ev.some((e) => e.type === "receipt.sealed") ? "" : "engine ended before sealing a receipt"));
   return String(r ?? "").replace(/[\x00-\x1f\x7f]+/g, " ").trim().slice(0, 200) || undefined;
 }
 export interface SummaryInput {
@@ -114,7 +114,7 @@ export function formatSummary(input: SummaryInput): string {
   const verdictLine = `${labelCol("Outcome")}${input.outcome ?? input.verdict}`;
   const r = input.receipt;
   const receiptLine = r ? [`${labelCol("Receipt")}${r.tampered ? "TAMPERED (event log modified; receipt not trustworthy)" : r.sha ? `sha256:${r.sha}${r.signed === false ? " (UNSIGNED)" : r.signed === null ? " (UNCHECKED)" : ""}` : "none (UNCHECKED)"}`] : [];
-  let notProvenLine = `${labelCol("NOT PROVEN")}${input.notProven.join(", ")}`;
+  let notProvenLine = `${labelCol("NOT PROVEN")}${input.notProven.join(", ") || (input.receipt && !input.receipt.sha ? "everything (no receipt sealed)" : "")}`;
   if (input.flaky.length > 0) notProvenLine += `; flaky ${input.flaky.join(", ")}`;
   const costLine =
     input.cost.usd != null

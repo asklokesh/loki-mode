@@ -281,6 +281,11 @@ describe("reasonOf (A-130 round 4)", () => {
   test("a red suite names the failing check and first_error", () => expect(reasonOf([vfy([{ name: "bun:calc.test.ts", result: "fail", first_error: "expected 6 got 5" }])], false, null, "FAILED")).toBe("bun:calc.test.ts failed: expected 6 got 5"));
   test("first stage.failed reason", () => expect(reasonOf([ev("stage.failed", "verify", { reason: "empty diff" })], false, null, "FAILED")).toBe("empty diff"));
   test("cap hit before any stage", () => expect(reasonOf([ev("cap.hit", null)], false, null, "BUDGET_STOP")).toBe("cost/time cap reached"));
+  test("a crashed worker (no receipt.sealed) still gets a reason", () => expect(reasonOf([], false, null, "FAILED")).toBe("engine ended before sealing a receipt"));
+  test("an unsealed run never prints an empty NOT PROVEN", () => {
+    const base = { pr: null, verdict: "FAILED", notProven: [], flaky: [], cost: { usd: null, provider: "claude", tokens: null }, wallS: 1, stages: [] };
+    expect(formatSummary({ ...base, receipt: { sha: null, signed: null } } as never)).toContain("NOT PROVEN: everything (no receipt sealed)");
+  });
   test("no tests to run", () => expect(reasonOf([vfy([])], false, null, "FAILED")).toBe("no tests to run"));
   test("control characters are stripped and the length capped", () => {
     const r = reasonOf([ev("stage.failed", "verify", { reason: `a\x1b[31m\nb${"x".repeat(300)}` })], false, null, "FAILED")!;
