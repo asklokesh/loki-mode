@@ -94,6 +94,13 @@ otherwise unverified run), 66 no runs. The outcome check runs before the UNSIGNE
 branch, so the flag never changes exit 4, TAMPERED or UNCHECKED,
 and verify never creates a signing key.
 
+`loki verify --pubkey FILE <receipt.json|run-id>` (v10 only) checks the signature
+against the supplied Ed25519 public key (JWK from `loki keys export`, or PEM) and
+never the local JWKS. Exits: 0 VERIFIED, 1 TAMPERED, 2 UNCHECKED (kid does not
+match the key, or the key file is unusable), 3 UNSIGNED (a receipt with no
+signature is refused even with `--allow-unsigned`, because the caller asked for a
+signature check), 4 run outcome not verified (checked before UNSIGNED).
+
 An early draft spec listed `1=BLOCKED, 2=CONCERNS`. That ordering was rejected:
 it is not used anywhere, it has no consumers, and it inverts the
 severity-rises-with-the-code rule that every other command follows.
