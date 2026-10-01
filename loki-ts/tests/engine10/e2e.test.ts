@@ -30,7 +30,7 @@ interface Run {
   runDir: string; stubCalls: string[]; stubEnv: string; origin: string;
 }
 
-function runEngine(mode: "done" | "already", withPr = false): Run {
+function runEngine(mode: "done" | "already" | "tamper" | "nochange", withPr = false, extra: string[] = []): Run {
   if (!existsSync(ENTRY)) throw new Error(`engine entry missing: ${ENTRY}`); // never fall through to the legacy bash route
   const tmp = mkdtempSync(join(tmpdir(), "loki-e2e-"));
   temps.push(tmp);
@@ -70,7 +70,7 @@ function runEngine(mode: "done" | "already", withPr = false): Run {
   const keyDir = mkdtempSync(join(tmpdir(), "e10-e2e-key-")); temps.push(keyDir);
   env.LOKI_RECEIPT_SIGNING_KEY_FILE = join(keyDir, "k.pem"); // throwaway auto-generated key, never the real ~/.loki
   const t0 = Date.now();
-  const r = Bun.spawnSync(["bash", BIN_LOKI, TASK, ...(withPr ? [] : ["--no-pr"])], { cwd: repo, env, timeout: 60_000 });
+  const r = Bun.spawnSync(["bash", BIN_LOKI, TASK, ...(withPr ? [] : ["--no-pr"]), ...extra], { cwd: repo, env, timeout: 60_000 });
   const wallMs = Date.now() - t0;
   const out = r.stdout.toString() + r.stderr.toString();
   const marker = join(repo, ".loki", "engine.json");
@@ -85,6 +85,35 @@ function runEngine(mode: "done" | "already", withPr = false): Run {
 }
 
 describe("engine10 e2e (stub claude)", () => {
+  test("A-130 round 2: a tampered event log is TAMPERED on the receipt line, never VERIFIED, never exit 0", () => {
+    const t = runEngine("tamper", false, ["--json"]);
+    const j = JSON.parse(t.out.trim().split("\n").find((l) => l.startsWith("{"))!);
+    expect(j.ok).toBe(false);
+    expect(j.outcome).not.toBe("VERIFIED");
+    expect(t.code).not.toBe(0);
+    const d = runEngine("tamper");
+    expect(d.out).toMatch(/^Receipt:\s+TAMPERED/m);
+    expect(d.out).toMatch(/^Reason:\s+event log modified/m);
+    expect(d.out).not.toContain("Outcome:    VERIFIED");
+    expect(d.code).not.toBe(0);
+  });
+  test("A-130 round 3: an empty-diff failure names its cause in one Reason line", () => {
+    const r = runEngine("nochange");
+    expect(r.code).not.toBe(0);
+    expect(r.out).toMatch(/^Reason:\s+.*empty diff/m);
+    expect(r.out.trim().split("\n").filter((l) => !l.includes("ended FAILED")).length).toBeLessThanOrEqual(8); // stdout only: the E-67 stderr line stays
+  });
+  test("A-130 quiet by default: at most 15 lines (G6), stage lines only with --verbose", () => {
+    const q = runEngine("done");
+    const lines = q.out.trim().split("\n");
+    expect(lines.length).toBeLessThanOrEqual(15);
+    expect(lines[0]).toContain("engine10");
+    expect(q.out).not.toMatch(/^\[\d\d:\d\d\]/m);
+    expect(q.out).toMatch(/^Receipt:\s+sha256:[0-9a-f]{64}/m);
+    expect(q.out).toContain("NOT PROVEN:");
+    const v = runEngine("done", false, ["--verbose"]);
+    expect(v.out).toMatch(/^\[\d\d:\d\d\] intake/m);
+  });
   test("done run: intake through seal, receipt, marker, efficiency record, under 60s", () => {
     const r = runEngine("done");
     if (r.code !== 0) console.error(r.out);

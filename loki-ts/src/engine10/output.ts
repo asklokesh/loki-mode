@@ -3,7 +3,7 @@
 // module never reads events.jsonl itself. Null is never rendered as 0 (section 5, section 10): a
 // missing cost reads "not measured", a partially-priced run reads "partial: $X for N of M
 // sessions" (E-69), and a priced-but-zero-usage session is never shown as a real $0.00.
-import type { Verdict } from "./types.ts";
+import type { EventEnvelope, Verdict } from "./types.ts";
 import { registryLoader } from "./registry.ts";
 const NAME_WIDTH = 12; // fits "implement" + padding to align the next column
 // E-44 (found by E-14): 7 ("skipped") left no separating space, ran duration straight into it
@@ -67,15 +67,22 @@ export function formatHeartbeatLine(h: HeartbeatLine): string {
 // A-110: one outcome name and a fixed exit ladder, mapped at the edge (the receipt keeps its verdict strings). 2 is usage/preflight, returned by main().
 export type Outcome = "VERIFIED" | "ALREADY_SATISFIED" | "BUDGET_STOP" | "BLOCKED" | "STALLED" | "FAILED";
 export const EXIT: Record<Outcome, number> = { VERIFIED: 0, ALREADY_SATISFIED: 0, FAILED: 1, BUDGET_STOP: 3, BLOCKED: 4, STALLED: 5 };
-export function outcomeOf(verdict: Verdict, capHit: boolean, stop: string | null): Outcome {
+export function outcomeOf(verdict: Verdict, capHit: boolean, stop: string | null, tampered = false): Outcome {
+  if (tampered) return "FAILED"; // a run whose event log was modified is never VERIFIED, whatever the receipt says
   if (verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED") return verdict;
   return capHit ? "BUDGET_STOP" : verdict === "SPEC_CONFLICT" ? "BLOCKED" : stop === "stalled" ? "STALLED" : "FAILED";
+}
+export function reasonOf(ev: EventEnvelope[], tampered: boolean, stop: string | null, outcome: Outcome): string | undefined { // A-130: one-line cause, first match wins
+  const done = (s: string) => ev.findLast((e) => e.type === "stage.completed" && e.stage === s)?.data, v = done("verify"), checks = (v?.checks ?? []) as { name: string; result: string; first_error?: string }[], bad = checks.find((c) => c.result === "fail");
+  const r = EXIT[outcome] === 0 ? "" : tampered ? "event log modified outside the engine" : stop?.startsWith("fatal:") ? ({ "fatal:quota_exhausted": "provider credit exhausted", "fatal:auth": "provider authentication failed" } as Record<string, string>)[stop] ?? stop : outcome === "BLOCKED" ? `spec conflict: ${done("implement")?.spec_conflict_reason ?? "see the receipt"}` : stop === "stalled" ? "stalled: same failure 3 times" : bad ? `${bad.name} failed${bad.first_error ? `: ${bad.first_error}` : ""}` : ev.find((e) => e.type === "stage.failed")?.data.reason ?? (ev.some((e) => e.type === "cap.hit") ? "cost/time cap reached" : v && !checks.length ? "no tests to run" : stop ?? (ev.some((e) => e.type === "receipt.sealed") ? "" : "engine ended before sealing a receipt"));
+  return String(r ?? "").replace(/[\x00-\x1f\x7f]+/g, " ").trim().slice(0, 200) || undefined;
 }
 export interface SummaryInput {
   pr: { url: string; draft: boolean; draftReason?: string | null } | null;
   verdict: Verdict;
   /** A-110: the one name printed on the Outcome line; absent falls back to the receipt verdict. */
   outcome?: Outcome;
+  reason?: string; receipt?: { sha: string | null; signed: boolean | null; tampered?: boolean }; // A-130: UNSIGNED/UNCHECKED always shown
   /** Deferred/missing checks (section 9); rendered comma-joined. */
   notProven: string[];
   /** Flaky tests (section 9); rendered as a separate "; flaky ..." clause. */
@@ -99,13 +106,15 @@ export interface SummaryInput {
 function labelCol(text: string): string {
   return `${text}:`.padEnd(LABEL_WIDTH);
 }
-/** The 5-line final summary, section 11. Joined by "\n", no trailing newline. */
+/** The final summary (Outcome first, A-130), section 11. Joined by "\n", no trailing newline. */
 export function formatSummary(input: SummaryInput): string {
   const prLine = input.pr
     ? `${labelCol("PR")}${input.pr.url}${input.pr.draft ? ` (draft: ${input.pr.draftReason ?? "draft"})` : ""}`
     : `${labelCol("PR")}none`;
   const verdictLine = `${labelCol("Outcome")}${input.outcome ?? input.verdict}`;
-  let notProvenLine = `${labelCol("NOT PROVEN")}${input.notProven.join(", ")}`;
+  const r = input.receipt;
+  const receiptLine = r ? [`${labelCol("Receipt")}${r.tampered ? "TAMPERED (event log modified; receipt not trustworthy)" : r.sha ? `sha256:${r.sha}${r.signed === false ? " (UNSIGNED)" : r.signed === null ? " (UNCHECKED)" : ""}` : "none (UNCHECKED)"}`] : [];
+  let notProvenLine = `${labelCol("NOT PROVEN")}${input.notProven.join(", ") || (input.receipt && !input.receipt.sha ? "everything (no receipt sealed)" : "")}`;
   if (input.flaky.length > 0) notProvenLine += `; flaky ${input.flaky.join(", ")}`;
   const costLine =
     input.cost.usd != null
@@ -115,7 +124,7 @@ export function formatSummary(input: SummaryInput): string {
         : `${labelCol("Cost")}not measured${input.cost.note ? ` (${input.cost.note})` : ""}`;
   const stagesStr = input.stages.map((s) => `${s.label} ${formatDuration(s.seconds)}`).join(", ");
   const timeLine = `${labelCol("Time")}${formatDuration(input.wallS)} (${stagesStr})`;
-  return [prLine, verdictLine, notProvenLine, costLine, timeLine].join("\n");
+  return [verdictLine, ...(input.reason ? [`${labelCol("Reason")}${input.reason}`] : []), prLine, ...receiptLine, notProvenLine, costLine, timeLine].join("\n");
 }
 /** Section 3: an optional module loaded only if present, never a hard dependency.
  *  eta.ts (E-20, wave 2) is not part of this slice; when absent, ETAs are omitted. */

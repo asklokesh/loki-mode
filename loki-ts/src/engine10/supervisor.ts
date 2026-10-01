@@ -9,7 +9,7 @@ import { createInterface } from "node:readline";
 import { withholdGithubTokens } from "../runner/github_token.ts";
 import { EventLog, fold, partialCost, readEvents, tail, type Folded } from "./events.ts";
 import { fetchIssueToFile } from "./fetch_issue.ts";
-import { formatHeartbeatLine, formatStageLine, formatSummary, EXIT, outcomeOf, type Outcome, type SummaryInput } from "./output.ts";
+import { formatHeartbeatLine, formatStageLine, formatSummary, EXIT, outcomeOf, reasonOf, type Outcome, type SummaryInput } from "./output.ts";
 import { assertPreflight, PreflightError } from "./preflight.ts";
 import { resolveModel } from "./session.ts";
 import type { PrContext } from "./stages/pr.ts";
@@ -237,7 +237,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   }
   const allEvents = readEvents(log.path), folded = fold(allEvents), costUsd = log.tampered ? null : folded.cost.usd, wallS = (Date.now() - t0) / 1000; // one read, reused for cost and the Slack summary; unknown cost stays null
   const stopRaw = folded.run.escalated?.data.stop, stop = typeof stopRaw === "string" ? stopRaw : null;
-  const outcome = outcomeOf(verdict, allEvents.some((e) => e.type === "cap.hit"), stop), blocked = outcome === "BLOCKED";
+  const outcome = outcomeOf(verdict, allEvents.some((e) => e.type === "cap.hit"), stop, log.tampered), blocked = outcome === "BLOCKED";
   if (blocked || (verdict === "FAILED" && prUrl === null)) { // E-67: never vanish silently -- an issue run gets a comment naming the reason, anything else is printed. A-110: BLOCKED always posts its one question
     const why = allEvents.find((e) => e.type === "stage.completed" && e.stage === "implement")?.data.spec_conflict_reason;
     const reason = blocked ? `spec conflict: ${String(why ?? "see the receipt").replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 500)}` : notProven.join("; ") || "run failed", issueRef = opts.started?.["issue_ref"];
@@ -254,21 +254,16 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   try { const { createSlackAdapter } = await import("./adapters/slack.ts"); await Promise.race([createSlackAdapter(env.LOKI_SLACK_WEBHOOK_URL).notify?.(summary) ?? Promise.resolve(), new Promise<void>((r) => setTimeout(r, Number(env.LOKI_E10_NOTIFY_TIMEOUT_MS) || 5000).unref())]); } catch { /* best-effort: a Slack failure or hang must never affect the verdict */ }
   return { verdict, outcome, stop, receiptSha: typeof sealedData?.receipt_sha256 === "string" ? sealedData.receipt_sha256 : null, tampered: log.tampered, notProven, prUrl, workerExit };
 }
-/** E-66: a text run confirmed already-done has no issue to comment on, so there is no
- *  comment_argv (that only exists for an issue run: intake.ts, buildAlreadyDoneCommentArgv).
- *  main() prints intake's comment body instead, so the evidence-based no-change decision is not
- *  silently swallowed just because this run happened not to be linked to an issue. */
+/** E-66: a text run confirmed already-done has no issue to comment on (no comment_argv, intake.ts);
+ *  main() prints intake's comment body instead so the no-change decision is not swallowed. */
 export function alreadyDoneTextComment(events: EventEnvelope[]): string | null {
   const d = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data;
   return d?.source === "text" && d?.already_satisfied === true && typeof d.comment === "string" ? d.comment : null;
 }
-/** The exact block main() writes to stdout once a run finishes. Pulled out as a pure function
- *  because main() cannot be driven end to end from a test process (it re-spawns process.argv[1] as
- *  the worker, which under a test runner is not cli.ts) -- this is what is tested instead. */
-export function renderMainOutput(events: EventEnvelope[], summary: SummaryInput, runId: string, model: string): string {
-  const textComment = alreadyDoneTextComment(events);
-  const prefix = textComment ? `\n${textComment}\n` : "";
-  return `${prefix}${formatSummary(summary)}\nRun:        ${runId} (${eventsRelPath(runId)})\nModel:      ${model}\n`;
+/** The block main() writes to stdout once a run finishes; pure because main() re-spawns process.argv[1] as the worker, so tests cannot drive it. */
+export function renderMainOutput(events: EventEnvelope[], summary: SummaryInput): string {
+  const c = alreadyDoneTextComment(events);
+  return `${c ? `\n${c}\n` : ""}${formatSummary(summary)}\n`;
 }
 const ISSUE_RE = /^(?:[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+\/(?:-\/)?issues\/\d+)$/;
 // E-59: every token field the provider reported, cache included (E-50 found "1k shown for 372k used" when this summed only input+output). The sole place tokens are computed for the Cost line.
@@ -278,12 +273,13 @@ export function summaryTokens(f: Folded, sawCost: boolean): number | null {
 export { partialCost }; // E-69: defined in events.ts, next to fold(); re-exported so existing callers/tests keep importing it from here
 export async function main(args: string[]): Promise<number> { // `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary
   const words: string[] = [];
-  let noPr = false, deep = false, json = false, provider = process.env.LOKI_PROVIDER || "claude";
+  let noPr = false, deep = false, json = false, verbose = false, provider = process.env.LOKI_PROVIDER || "claude";
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--no-pr") noPr = true;
     else if (a === "--deep") deep = true;
     else if (a === "--json") json = true;
+    else if (a === "--verbose") verbose = true;
     else if (a === "--provider") provider = args[++i] ?? provider;
     else if (a === "--resume") { process.stderr.write("engine10: --resume was removed; start a new run\n"); return 2; }
     else words.push(a);
@@ -296,9 +292,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   } catch { process.stderr.write("engine10: not inside a git repository\n"); return 2; }
   const runId = `e10-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}-${Math.random().toString(16).slice(2, 6)}`;
   const runDir = join(repoDir, ".loki", "runs", runId);
-  const isIssue = ISSUE_RE.test(task);
-  const model = resolveModel(provider);
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  const isIssue = ISSUE_RE.test(task), model = resolveModel(provider), env: NodeJS.ProcessEnv = { ...process.env };
   if (!isIssue) env.LOKI_E10_TASK_TEXT = task;
   else if (isIssue) {
     mkdirSync(runDir, { recursive: true }); // runDir must exist before the fetch child writes issue.json
@@ -308,6 +302,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     }
   }
 
+  if (!json) process.stdout.write(`engine10: ${provider} ${model} run ${runId}\n`);
   const t0 = Date.now();
   const eventsPath = join(repoDir, eventsRelPath(runId));
   const live = (e: EventEnvelope): void => {
@@ -315,8 +310,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     const d = e.data;
     if (e.type.startsWith("stage.") && e.type !== "stage.started") {
       const status = e.type === "stage.completed" ? "done" : e.type === "stage.failed" ? "failed" : "skipped";
-      const detail = String(d.reason ?? d.summary ?? "");
-      process.stdout.write(formatStageLine({ clockS, name: String(e.stage), status, durationS: Number(d.duration_s ?? 0), detail }) + "\n");
+      process.stdout.write(formatStageLine({ clockS, name: String(e.stage), status, durationS: Number(d.duration_s ?? 0), detail: String(d.reason ?? d.summary ?? "") }) + "\n");
     } else if (e.type === "heartbeat") {
       const diff = d.diff as { files: number; insertions: number; deletions: number } | null;
       process.stdout.write(formatHeartbeatLine({ clockS, stage: String(e.stage), waitingOn: `${provider} session`, elapsedS: Number(d.elapsed_s ?? 0), diff }) + "\n");
@@ -324,7 +318,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   };
   let stopTail = (): void => {};
   const tailTimer = setInterval(() => {
-    if (!json && existsSync(eventsPath)) { clearInterval(tailTimer); stopTail = tail(eventsPath, live, { intervalMs: 250 }); }
+    if (verbose && !json && existsSync(eventsPath)) { clearInterval(tailTimer); stopTail = tail(eventsPath, live, { intervalMs: 250 }); }
   }, 100);
 
   const capS = deep ? DEEP_CAP_S : Number(env.LOKI_E10_CAP_S) || DEFAULT_CAP_S;
@@ -364,15 +358,12 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   await new Promise((r) => setTimeout(r, 300)); // let the tail flush the last lines
   stopTail();
 
-  const events = readEvents(eventsPath);
-  const f = fold(events);
-  const sawCost = events.some((e) => e.type === "cost");
-  const cli = process.env.LOKI_E10_INVOKER === "cli";
-  const pc = partialCost(events, res.tampered);
-  const usd = res.tampered ? null : f.cost.usd; // E-69: same tamper guard as costUsd elsewhere -- a TAMPERED run never prints a trusted dollar figure
+  const events = readEvents(eventsPath), f = fold(events);
+  const sawCost = events.some((e) => e.type === "cost"), cli = process.env.LOKI_E10_INVOKER === "cli";
+  const pc = partialCost(events, res.tampered), usd = res.tampered ? null : f.cost.usd; // E-69: same tamper guard as costUsd elsewhere -- a TAMPERED run never prints a trusted dollar figure
   const out = json ? `${JSON.stringify({ ok: EXIT[res.outcome] === 0, outcome: res.outcome, stop: res.stop, run_id: runId, receipt_sha256: res.receiptSha })}\n` : renderMainOutput(events, {
     pr: res.prUrl ? { url: res.prUrl, draft: res.verdict !== "VERIFIED" } : null,
-    verdict: res.verdict, outcome: res.outcome, notProven: res.notProven, flaky: [],
+    verdict: res.verdict, outcome: res.outcome, reason: reasonOf(events, res.tampered, res.stop, res.outcome), receipt: { sha: res.tampered ? null : res.receiptSha, tampered: res.tampered, signed: res.tampered ? null : (events.findLast((e) => e.type === "receipt.sealed")?.data.signed as boolean | undefined) ?? null }, notProven: res.notProven, flaky: [],
     cost: {
       usd, provider, tokens: summaryTokens(f, sawCost), note: !res.tampered && usd === null && cli ? "CLI invoker records no cost" : null,
       partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total,
@@ -380,7 +371,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     wallS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000),
     stages: events.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number")
       .map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })),
-  }, runId, model);
+  });
   process.stdout.write(out);
   return EXIT[res.outcome];
 }

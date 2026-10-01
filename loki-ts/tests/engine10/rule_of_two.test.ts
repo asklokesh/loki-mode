@@ -292,18 +292,17 @@ console.log(JSON.stringify({ type: "cost", stage: "implement", data: { session_i
   test("renderMainOutput: a confirmed text run prints the comment ahead of the summary", () => {
     const ev = (data: Record<string, unknown>): EventEnvelope => ({ v: 1, seq: 0, ts: "2026-01-01T00:00:00Z", run: "r1", type: "stage.completed", stage: "intake", data });
     const events = [ev({ source: "text", already_satisfied: true, comment: "Loki 10: no change needed.\n\nEvidence:\n- a.ts: foo" })];
-    const out = renderMainOutput(events, SUMMARY, "e10-t11", "sonnet");
+    const out = renderMainOutput(events, SUMMARY);
     expect(out.startsWith("\nLoki 10: no change needed.\n\nEvidence:\n- a.ts: foo\n")).toBe(true);
     expect(out).toContain("Outcome:    ALREADY_SATISFIED");
-    expect(out).toContain("Run:        e10-t11");
   });
 
   test("renderMainOutput: an issue run (or any run with no text comment) prints only the summary", () => {
     const ev = (data: Record<string, unknown>): EventEnvelope => ({ v: 1, seq: 0, ts: "2026-01-01T00:00:00Z", run: "r1", type: "stage.completed", stage: "intake", data });
     const events = [ev({ source: "issue", already_satisfied: true, comment: "would post to the issue", comment_argv: ["comment"] })];
-    const out = renderMainOutput(events, SUMMARY, "e10-t12", "sonnet");
+    const out = renderMainOutput(events, SUMMARY);
     expect(out).not.toContain("would post to the issue");
-    expect(out.startsWith("PR:")).toBe(true);
+    expect(out.startsWith("Outcome:")).toBe(true);
   });
 
   test("worker refuses a real token and emits JSON lines", async () => {
