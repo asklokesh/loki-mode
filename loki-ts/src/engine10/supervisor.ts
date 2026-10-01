@@ -227,8 +227,9 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   // intake's base_sha) sees it. No diff falls to the comment/print branch below.
   let hasDiff = false;
   if (verdict === "FAILED") {
-    backstopCommit(opts.repoDir, workerEnv, opts.runId);
-    const baseE = fold(readEvents(log.path)).stages["intake"], base = baseE?.type === "stage.completed" && typeof baseE.data.base_sha === "string" ? baseE.data.base_sha : null;
+    const stages = fold(readEvents(log.path)).stages; // A-104c: a failed commit stage already chose what to exclude (Wall files, lockfiles, pre-run dirt); a blanket `add -A` would undo it
+    if (stages["commit"]?.type !== "stage.failed") backstopCommit(opts.repoDir, workerEnv, opts.runId);
+    const baseE = stages["intake"], base = baseE?.type === "stage.completed" && typeof baseE.data.base_sha === "string" ? baseE.data.base_sha : null;
     try {
       const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: opts.repoDir, env: process.env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
       hasDiff = base !== null && head !== base;

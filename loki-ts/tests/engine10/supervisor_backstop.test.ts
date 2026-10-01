@@ -350,4 +350,26 @@ describe("A-110 exit ladder", () => {
     expect(r.prUrl).toBe("https://github.com/acme/widget/pull/1");
     expect(comment.calls[0]!.prUrl).toBe(r.prUrl);
   });
+
+  // A-104c: a run whose commit stage FAILED must not have backstopCommit sweep up what the commit
+  // stage deliberately excluded (Wall file, stray lockfile, pre-run dirty file) and push it as a PR.
+  test("commit stage failed: no backstop commit, no PR", async () => {
+    const { dir, baseSha } = repoWithCommit();
+    writeFileSync(join(dir, "a.txt"), "dirty before the run\n"); // pre-run dirty tracked file
+    const code = `
+      ${intakeLine(baseSha)}
+      const fs = require("node:fs");
+      fs.writeFileSync("loki_wall_x.py", "wall\\n");
+      fs.writeFileSync("package-lock.json", "{}\\n");
+      console.log(JSON.stringify({ type: "stage.failed", stage: "commit", data: { reason: "commit failed" } }));
+      process.exit(1);
+    `;
+    const pr = prSpy();
+    const r = await runSupervisor({ runId: "e10-bs-a104c", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 20, graceS: 5, pr: pr.step });
+    const head = execFileSync("git", ["-C", dir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    expect(r.verdict).toBe("FAILED");
+    expect(head).toBe(baseSha);
+    expect(pr.calls.length).toBe(0);
+    expect(r.prUrl).toBeNull();
+  }, 10_000);
 });
