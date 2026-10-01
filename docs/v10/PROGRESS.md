@@ -1747,3 +1747,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Merged on local main: D48-flip r3 (opus APPROVE: FAILED receipt exits 4 with or without --allow-unsigned; dispatch 56/0; gate --stub 0 failed), A-134b r4 (sonnet APPROVE; registration rc=0, shard rc=0, own test 6/0), E-162 (opus APPROVE as CTO call).
 - train/33 63db8710 pushed. Guards: registration rc=0, shard-coverage rc=0 (E2e Features row 19 -> 20 to keep the five heaviest suites in distinct shards), v10-ops rc=0, run-shellcheck rc=0, docs-cli-drift rc=0, release-dist-guard rc=0, budget.test 24 pass.
 - REJECTED, fix rounds building: E-163 (live /usage timeout has no process-group kill), D48-r2 (unsigned receipt exits 0 under --pubkey; merge conflicts with the exit-4 change).
+
+## 2026-10-01T05:34Z v10.5.19 published and auto-promoted; train/33 red, flip dropped
+- v10.5.19: Release run 47050d65 completed success; npm view loki-mode@10.5.19 gitHead 47050d6533d7 matches; dist-tags latest=10.5.19 next=10.5.19 (D49 auto-promote). Unblocks the CodeQL P0 (10.5.18 never published).
+- train/33 63db8710 RED: Tests shard 7/8, suite "first-run gate assertion logic (A-02)" (tests/test-first-run-gate.sh): "FAIL clean: gate exit 1". Reproduced locally on 63db8710, not on aad61f9a. Cause: D48-flip r3 added gate checks (engine-start-line, cost-non-null, output-lines 8, bare verify rc 4) that the test's clean fixture does not emit.
+- D46 drop: reverted c2c43fd10 on main (5d25b205; reverted paths identical to aad61f9a; local test-first-run-gate rc=0, 0 FAIL). train/34 5d25b205 pushed with E-163 r3 (haiku fix; env parse probes abc/-5/nan/inf/0 -> 20, 46/0), A-134b r4, E-162.
+- D48-flip r4 (fixture fix) building; D48-r2b (pubkey, null-jwt exits 3 under --pubkey) built, in opus re-review; it needs the flip re-landed first.
