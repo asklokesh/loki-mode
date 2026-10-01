@@ -1310,13 +1310,6 @@ def write_pid_file():
 
 
 def main():
-    # ponytail: SIGPIPE handler for piped output. When stdout is a pipe and the
-    # reader closes early (e.g., `| head`), Python tries to write to a closed
-    # pipe, raising BrokenPipeError. The default handler raises; SIG_DFL
-    # silently closes. Guarded with hasattr for portability (Windows has no SIGPIPE).
-    if hasattr(signal, "SIGPIPE"):
-        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
-
     parser = argparse.ArgumentParser(
         description="loki-mode GitHub webhook trigger server"
     )
@@ -1427,18 +1420,26 @@ def main():
         pid_path = get_loki_dir() / "server.pid"
         pid_path.unlink(missing_ok=True)
 
+
+if __name__ == "__main__":
+    # ponytail: SIGPIPE handler for piped output. When stdout is a pipe and the
+    # reader closes early (e.g., `| head`), Python tries to write to a closed
+    # pipe, raising BrokenPipeError. The default handler raises; SIG_DFL
+    # silently closes. Guarded with hasattr for portability (Windows has no SIGPIPE).
+    if hasattr(signal, "SIGPIPE"):
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+
+    main()
+
     # ponytail: flush stdout/stderr inside try/except BrokenPipeError before
     # exit, then call os._exit() to avoid daemon thread cleanup during
     # interpreter shutdown. This prevents the "could not acquire lock for
     # <stdout> at interpreter shutdown" error when stdout is a closed pipe
     # (e.g., piped to `head`, a hook timeout, or a killed parent).
+    # Only in __main__, never inside main(), so tests/callers can import main().
     try:
         sys.stdout.flush()
         sys.stderr.flush()
     except BrokenPipeError:
         pass
     os._exit(0)
-
-
-if __name__ == "__main__":
-    main()
