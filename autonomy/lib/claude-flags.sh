@@ -784,6 +784,16 @@ loki_caveman_suppress_env() {
 # files, lockfiles, or compiled Python cache entries from polluting the user's
 # feature branch and proof diff. caveman's installer is already auto-
 # non-interactive without a TTY, but we belt-and-suspenders it.
+# Caveman bootstrap notices. In quiet `loki quick` (inner run, not verbose) they
+# go to a run log next to quick-run.log, not the user's terminal; otherwise stderr.
+_loki_caveman_say() {
+    if [ -n "${LOKI_QUICK_INNER:-}" ] && [ "${LOKI_VERBOSE:-0}" != "1" ] && [ -d "${LOKI_QUICK_DIR:-}" ]; then
+        printf '%s\n' "$1" >>"$LOKI_QUICK_DIR/quick-run.notices.log" 2>/dev/null || true
+    else
+        printf '%s\n' "$1" >&2
+    fi
+}
+
 loki_caveman_bootstrap() {
     [ "${LOKI_CAVEMAN:-1}" = "0" ] && return 1
     [ "${LOKI_CAVEMAN_AUTO_BOOTSTRAP:-1}" = "0" ] && return 1
@@ -801,11 +811,11 @@ loki_caveman_bootstrap() {
         _loki_caveman_installed && return 0 || return 1
     fi
     if ! command -v node >/dev/null 2>&1 || ! command -v npx >/dev/null 2>&1; then
-        printf '%s\n' "[caveman] node>=18 + npx required to bootstrap; skipping (run proceeds uncompressed). Install Node or set LOKI_CAVEMAN=0 to silence." >&2
+        _loki_caveman_say "[caveman] node>=18 + npx required to bootstrap; skipping (run proceeds uncompressed). Install Node or set LOKI_CAVEMAN=0 to silence."
         mkdir -p "$marker_dir" 2>/dev/null && : > "$marker" 2>/dev/null || true
         return 1
     fi
-    printf '%s\n' "[caveman] bootstrapping output-token compressor v${ver} (one-time, pinned). NOTE: caveman installs GLOBALLY (a Claude Code SessionStart hook in ~/.claude affecting every Claude Code session). Loki applies it only to free-form generation, NEVER to trust-gate subcalls. Opt out: LOKI_CAVEMAN=0." >&2
+    _loki_caveman_say "[caveman] bootstrapping output-token compressor v${ver} (one-time, pinned). NOTE: caveman installs GLOBALLY (a Claude Code SessionStart hook in ~/.claude affecting every Claude Code session). Loki applies it only to free-form generation, NEVER to trust-gate subcalls. Opt out: LOKI_CAVEMAN=0."
     # Pin via the git tag (v-prefixed) on the npx ref AND CAVEMAN_REF so the
     # downloaded hooks match the pinned release. Default install (no --all) wires
     # the Claude Code hook for the detected `claude` CLI. A timeout backstops a
@@ -816,7 +826,7 @@ loki_caveman_bootstrap() {
     fi
     local bootstrap_tmp=""
     bootstrap_tmp="$(mktemp -d "${TMPDIR:-/tmp}/loki-caveman-bootstrap.XXXXXX")" || {
-        printf '%s\n' "[caveman] could not allocate an isolated bootstrap directory; run proceeds uncompressed." >&2
+        _loki_caveman_say "[caveman] could not allocate an isolated bootstrap directory; run proceeds uncompressed."
         mkdir -p "$marker_dir" 2>/dev/null && : > "$marker" 2>/dev/null || true
         return 1
     }
@@ -829,11 +839,11 @@ loki_caveman_bootstrap() {
     if [ "$bootstrap_rc" -eq 0 ]; then
         mkdir -p "$marker_dir" 2>/dev/null && : > "$marker" 2>/dev/null || true
         if _loki_caveman_installed; then
-            printf '%s\n' "[caveman] installed v${ver}." >&2
+            _loki_caveman_say "[caveman] installed v${ver}."
             return 0
         fi
     fi
-    printf '%s\n' "[caveman] bootstrap unavailable (upstream unreachable, timed out, or install failed); run proceeds uncompressed." >&2
+    _loki_caveman_say "[caveman] bootstrap unavailable (upstream unreachable, timed out, or install failed); run proceeds uncompressed."
     mkdir -p "$marker_dir" 2>/dev/null && : > "$marker" 2>/dev/null || true
     return 1
 }
