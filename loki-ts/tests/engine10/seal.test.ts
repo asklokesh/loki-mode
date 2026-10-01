@@ -681,4 +681,35 @@ describe("A-104 commit only the fix (G2)", () => {
     await commitStage.run(ctx, new AbortController().signal);
     expect(committed(repo, base)).toEqual(["a.txt", "go.sum"]);
   });
+
+  test("A-104b: a path starting with :(top) is unstaged literally, never read as a pathspec", async () => {
+    const { repo, base } = makeRepo("a104b-top");
+    sh(["mkdir", "-p", join(repo, ":(top)x")], repo);
+    writeFileSync(join(repo, ":(top)x/loki_wall_a.js"), "// wall\n");
+    const { ctx } = ctxFor(repo, base);
+    expect((await commitStage.run(ctx, new AbortController().signal)).status).toBe("completed");
+    expect(committed(repo, base)).toEqual(["a.txt"]);
+  });
+
+  test("A-104b: a stray lockfile in packages/b is not explained by a packages/a manifest change", async () => {
+    const { repo, base } = makeRepo("a104b-mono");
+    sh(["mkdir", "-p", join(repo, "packages/a"), join(repo, "packages/b")], repo);
+    writeFileSync(join(repo, "packages/a/package.json"), "{}\n");
+    writeFileSync(join(repo, "packages/a/package-lock.json"), "{}\n");
+    writeFileSync(join(repo, "packages/b/package-lock.json"), "{}\n");
+    const { ctx } = ctxFor(repo, base);
+    await commitStage.run(ctx, new AbortController().signal);
+    expect(committed(repo, base)).toEqual(["a.txt", "packages/a/package-lock.json", "packages/a/package.json"]);
+  });
+
+  test("A-104b: a lockfile and Wall file the agent committed during implement are judged against the run base", async () => {
+    const { repo, base } = makeRepo("a104b-base");
+    dirty(repo);
+    sh(["git", "-C", repo, "add", "package-lock.json", "loki_wall_top.js"], repo);
+    sh(["git", "-C", repo, "commit", "-q", "-m", "agent wip"], repo);
+    const { ctx } = ctxFor(repo, base);
+    await commitStage.run(ctx, new AbortController().signal);
+    expect(committed(repo, base)).toEqual(["a.txt"]);
+    expect(existsSync(join(repo, "package-lock.json"))).toBe(true);
+  });
 });

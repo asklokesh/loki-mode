@@ -132,7 +132,7 @@ describe("engine10 intake", () => {
     expect(result.status).toBe("completed");
     expect(Object.keys(result.data.preexisting_dirty as object)).toEqual(["package-lock.json"]);
     writeFileSync(join(repoDir, "README.md"), "run change\n");
-    const c = await commitStage.run({ ...ctx, outputs: () => ({ intake: result.data }) } as RunContext, new AbortController().signal);
+    const c = await commitStage.run({ ...ctx, baseSha: String(result.data.base_sha), outputs: () => ({ intake: result.data }) } as RunContext, new AbortController().signal);
     expect(c.status).toBe("completed");
     expect(gitOut(repoDir, ["show", "--name-only", "--format=", "HEAD"]).trim()).toBe("README.md");
     expect(gitOut(repoDir, ["status", "--porcelain", "--untracked-files=no"]).trim()).toBe("M package-lock.json");

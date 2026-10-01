@@ -106,11 +106,12 @@ export const commitStage: Stage = {
   name: "commit",
   ...STAGE_BUDGETS.commit,
   async run(ctx: RunContext): Promise<StageResult> {
-    // A-104/G2: stage all, unstage .loki/, Wall files (sealed under runDir/wall) and a NEW lockfile with no manifest change.
+    // A-104/G2: stage all, unstage .loki/, Wall files (sealed under runDir/wall) and a NEW lockfile with no manifest change in its own directory (judged against baseSha).
     if ((await git(ctx, ["add", "-A", "--", "."])).code !== 0) return { status: "failed", data: {}, reason: "git add failed" };
-    const staged = (await git(ctx, ["diff", "--cached", "--name-status", "--no-renames", "-z"])).out.split("\0").reduce<{ st: string; f: string }[]>((a, t, i, all) => (i % 2 === 0 && t ? [...a, { st: t, f: all[i + 1]! }] : a), []);
-    const drop = staged.concat(untouchedSinceIntake(ctx.repoDir, ctx.outputs().intake?.preexisting_dirty).map((f) => ({ st: "L", f }))).filter(({ st, f }) => f.startsWith(".loki/") || st === "L" || /(^|\/)loki_wall_[^/]*$/.test(f) || (st === "A" && !staged.some(({ f: m }) => /(^|\/)(package\.json|pyproject\.toml|requirements\.txt|Cargo\.toml|go\.mod)$/.test(m)) && /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Cargo\.lock|go\.sum)$/.test(f)));
-    if (drop.length > 0) await git(ctx, ["reset", "-q", "--", ...drop.map(({ f }) => f)]);
+    const staged = (await git(ctx, ["diff", "--cached", "--name-status", "--no-renames", "-z", ctx.baseSha])).out.split("\0").reduce<{ st: string; f: string }[]>((a, t, i, all) => (i % 2 === 0 && t ? [...a, { st: t, f: all[i + 1]! }] : a), []);
+    const drop = staged.concat(untouchedSinceIntake(ctx.repoDir, ctx.outputs().intake?.preexisting_dirty).map((f) => ({ st: "L", f }))).filter(({ st, f }) => f.startsWith(".loki/") || st === "L" || /(^|\/)loki_wall_[^/]*$/.test(f) || (st === "A" && !staged.some(({ f: m }) => /(^|\/)(package\.json|pyproject\.toml|requirements\.txt|Cargo\.toml|go\.mod)$/.test(m) && dirname(m) === dirname(f)) && /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Cargo\.lock|go\.sum)$/.test(f)));
+    // A-104b: reset to the run base (not HEAD) so a path the agent committed in implement leaves the final diff too; literal, so ":(top)x" is a filename.
+    if (drop.length > 0 && (await git(ctx, ["--literal-pathspecs", "reset", "-q", ctx.baseSha, "--", ...drop.map(({ f }) => f)])).code !== 0) return { status: "failed", data: {}, reason: "git reset failed" };
     if ((await git(ctx, ["diff", "--cached", "--quiet"])).code === 0) {
       return { status: "completed", data: { committed: false } };
     }
