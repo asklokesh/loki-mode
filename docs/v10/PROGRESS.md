@@ -1829,3 +1829,6 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
   - pub-humanize-333: PR opened and hidden tests failed; verify did not catch the wrong fix. Raw sonnet completed it.
   - pub-click-3059: raw sonnet failed it too, so it is not a Loki-specific loss.
 - Rerun (b) started 2026-10-01T09:32Z: the 4 Loki-specific tasks x 3 reps, arms v10 and raw-claude, model claude-sonnet-5, at main 575ddebcf; out ~/loki-ci-logs/d50-rerun-*. No lift number is cited until it finishes. Then fix the top cause first and record a per-model stage profile with a lift row.
+
+## 2026-10-01T10:14Z LOKI MORNING TEST
+- See docs/v10/MORNING-BRIEF.md, section "LOKI MORNING TEST" (latest 10.5.27, both gate legs passed).
