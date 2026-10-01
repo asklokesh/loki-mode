@@ -23,11 +23,12 @@ name: Security Audit
 on:
   pull_request:
     branches: [main]
-  # A VERSION push is a release. release.yml's required-ci job will not let a
-  # release publish until this workflow reports success AT THAT EXACT SHA, and
-  # it can only report if it actually runs there -- on pull_request and a
-  # weekly cron alone, a release commit has no Security Audit run at all, and
-  # requiring one would deadlock every release instead of gating it.
+  # A release commit (the VERSION bump) is pushed to main. release.yml's
+  # required-ci job will not publish until this workflow reports success AT
+  # THAT EXACT SHA, or reuses the parent's success after a clean PARENT..SHA
+  # scan; it can only report if it actually runs there, so main pushes must
+  # trigger it (requiring a workflow that never fires would deadlock every
+  # release).
   #
   # E-157: train/** and slice-* tips run the full audit on every push, so a
   # train is audited BEFORE main is fast-forwarded to it and the VERSION bump

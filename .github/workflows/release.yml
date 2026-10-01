@@ -117,7 +117,9 @@ jobs:
   # Tests/Bun Parity/Security Audit, reuse the parent's verdict if this push is eligible
   # (see below) and the parent shows a success; (d) else wait for the release
   # SHA's own result. Security Audit reuses the parent's newest decisive verdict under the SAME
-  # eligibility rule (E-157), and only when that verdict is success.
+  # eligibility rule (E-157), only when that verdict is success AND a pinned
+  # gitleaks scan of PARENT..SHA (second-parent commits included) is clean,
+  # because the allowlist admits bytes the parent's audit never scanned.
   # Eligibility (the "(c)" gate) requires every file this push changed to be
   # on the allowlist below, present as the same regular-file mode on both
   # sides (round 3: `git diff --raw`, not `--name-only` -- a rename, add,
@@ -209,11 +211,16 @@ jobs:
       actions: read
       contents: read
     steps:
-      - name: Checkout (immediate parent + release commit, for the reuse-eligibility diff)
+      - name: Checkout (full history for the reuse-eligibility diff and the PARENT..SHA secret scan)
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Install gitleaks (pinned, checksum-verified)
+        # E-157: reusing the parent's Security Audit verdict needs a fresh scan of
+        # PARENT..SHA first (see the poll loop). Same pinned binary as the audit.
+        run: bash scripts/install-gitleaks.sh
 
       - name: Require Tests / Bun Parity / Security Audit green, at the release SHA or an eligible parent
         env:
@@ -363,8 +370,12 @@ jobs:
                       fail(f"loki.js.map is not valid JSON: {e}")
                   if not isinstance(old_j, dict) or not isinstance(new_j, dict):
                       fail("loki.js.map is not a JSON object")
-                  old_j.pop("debugId", None)
-                  new_j.pop("debugId", None)
+                  # E-157: the dropped debugId must be the same hex/dash shape as the
+                  # JS trailer, never free-form bytes the parent audit did not scan.
+                  for j in (old_j, new_j):
+                      d = j.pop("debugId", None)
+                      if d is not None and not (isinstance(d, str) and re.fullmatch(r"[0-9A-Fa-f-]+", d)):
+                          fail("loki.js.map debugId is not hex/dash shaped")
                   old_canon = json.dumps(old_j, sort_keys=True, separators=(",", ":")).encode()
                   new_canon = json.dumps(new_j, sort_keys=True, separators=(",", ":")).encode()
                   if not version_only(old_canon, new_canon):
@@ -393,8 +404,8 @@ jobs:
           # partial-match entry would never match and the loop would stall
           # until the deadline.
           #
-          # "Security Audit" is required here, and security-audit.yml carries a
-          # matching `push: paths: [VERSION]` trigger so it actually RUNS at a
+          # "Security Audit" is required here, and security-audit.yml runs on
+          # every push to main, train/** and slice-* (E-157), so it actually RUNS at a
           # release commit. Requiring a workflow that never fires at this SHA
           # would deadlock every release rather than gate it, so the trigger
           # and this list must be changed together.
@@ -431,6 +442,30 @@ jobs:
             # has_conclusion(..., failure) come back true).
             printf '%s\n' "$2" | awk -F'\t' -v w="$1" -v c="$3" \
               '$1==w && $2=="completed" && $3==c{f=1} END{exit !f}'
+          }
+
+          # E-157: the eligibility allowlist accepts bytes the parent's audit never
+          # scanned (the CHANGELOG block, a merge release's second-parent history).
+          # So the parent's Security Audit verdict is reused ONLY when a pinned
+          # gitleaks scan of PARENT..SHA finds nothing. Reuses
+          # scripts/security-audit-gitleaks.sh for config trust: the BASE release
+          # tag's .gitleaks.toml (or defaults), never the tip's, refusing a changed
+          # one. The scan runs at most once; any failure means "do not reuse".
+          RANGE_SCAN=""
+          range_scan_clean() {
+            if [ -z "$RANGE_SCAN" ]; then
+              RANGE_SCAN=dirty
+              if GITLEAKS_BIN="${GITLEAKS_BIN:-$HOME/.local/share/loki/bin/gitleaks-8.30.0}" \
+                 GITLEAKS_BEFORE="$PARENT" GITLEAKS_TIP="$SHA" \
+                 GITLEAKS_RANGE="${PARENT}..${SHA}" \
+                 GITLEAKS_REPORT="$(mktemp "${TMPDIR:-/tmp}/loki-range-scan.XXXXXX")" \
+                 bash "${GITHUB_WORKSPACE:-.}/scripts/security-audit-gitleaks.sh" >&2; then
+                RANGE_SCAN=clean
+              else
+                echo "  Security Audit: PARENT..SHA scan did not come back clean; not reusing the parent's verdict" >&2
+              fi
+            fi
+            [ "$RANGE_SCAN" = "clean" ]
           }
 
           deadline=$(( $(date +%s) + 2400 ))
@@ -471,7 +506,8 @@ jobs:
                   failure) result="failed" ;;
                   *)
                     if [ "$ELIGIBLE" = "1" ] \
-                       && [ "$(audit_verdict "$runs_parent")" = "success" ]; then
+                       && [ "$(audit_verdict "$runs_parent")" = "success" ] \
+                       && range_scan_clean; then
                       result="success"; label="$PARENT (reused)"
                     else
                       result="pending"

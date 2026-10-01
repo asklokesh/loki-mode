@@ -31,6 +31,13 @@ GITLEAKS_BIN="${GITLEAKS_BIN:-/tmp/gitleaks}"
 GITLEAKS_BEFORE="${GITLEAKS_BEFORE:-}"
 GITLEAKS_TIP="${GITLEAKS_TIP:-HEAD}"
 GITLEAKS_REPORT="${GITLEAKS_REPORT:-/tmp/gitleaks-report.json}"
+# E-157: release.yml required-ci scans only PARENT..SHA (all commits reachable from
+# SHA and not from PARENT, second parents of a merge included) before reusing the
+# parent's audit verdict. Default stays the full-history scan.
+# Set GITLEAKS_RANGE (e.g. PARENT..SHA) to scan only that range; empty = all history.
+GITLEAKS_RANGE="${GITLEAKS_RANGE:-}"
+_log_opts_arg=(--log-opts="--all")
+[ -z "$GITLEAKS_RANGE" ] || _log_opts_arg=(--log-opts="$GITLEAKS_RANGE")
 
 # FAIL CLOSED: an absent binary is not "no secrets found".
 if [ ! -x "$GITLEAKS_BIN" ]; then
@@ -167,7 +174,7 @@ fi
 _scan_rc=0
 "$GITLEAKS_BIN" git . \
   "${_config_arg[@]+"${_config_arg[@]}"}" \
-  --log-opts="--all" \
+  "${_log_opts_arg[@]}" \
   --gitleaks-ignore-path .gitleaksignore \
   --report-format json \
   --report-path "$GITLEAKS_REPORT" \

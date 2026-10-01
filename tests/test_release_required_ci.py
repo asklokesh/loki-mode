@@ -190,6 +190,7 @@ class ContentCompareCannotBeHiddenByALineSeparatorSwap(unittest.TestCase):
 
     def setUp(self):
         self.repo = tempfile.mkdtemp(prefix="s84-elig-")
+        self.addCleanup(shutil.rmtree, self.repo, ignore_errors=True)
         _git(self.repo, "init", "-q", "-b", "main", ".")
 
     def _base_commit(self):
@@ -290,6 +291,7 @@ class ChangelogIsCheckedAsInsertOnly(unittest.TestCase):
 
     def setUp(self):
         self.repo = tempfile.mkdtemp(prefix="s84-changelog-")
+        self.addCleanup(shutil.rmtree, self.repo, ignore_errors=True)
         _git(self.repo, "init", "-q", "-b", "main", ".")
         _write(self.repo, "VERSION", "9.55.0\n")
         _write(self.repo, "CHANGELOG.md", self.HEADER + self.OLD_ENTRY)
@@ -468,6 +470,7 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="s84-poll-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.repo = str(pathlib.Path(self.tmp, "repo"))
         pathlib.Path(self.repo).mkdir()
         _git(self.repo, "init", "-q", "-b", "main", ".")
@@ -490,6 +493,8 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
         bindir = _make_stub_bin(self.tmp, fixtures)
         env = dict(os.environ)
         env.update({"SHA": self.sha, "REPO": "o/r", "EVENT_NAME": "push", "GH_TOKEN": "x",
+                    "GITHUB_WORKSPACE": str(_ROOT),
+                    "GITLEAKS_BIN": shutil.which("gitleaks") or "/nonexistent-gitleaks",
                     "PATH": bindir + ":" + env.get("PATH", "/usr/bin:/bin")})
         r = subprocess.run(["bash", "-c", script], cwd=self.repo, env=env,
                             capture_output=True, text=True, timeout=timeout)
@@ -604,6 +609,94 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
         self.assertEqual(rc, 99, out)
         self.assertNotIn("(reused)", out)
 
+    # E-157 round 2: the allowlist admits bytes the parent's audit never scanned,
+    # so reuse also needs a clean gitleaks scan of PARENT..SHA.
+    TOKEN = "ghp_" + "aB3dE9fGh1JkLm4NoPqR7sTuV2wXyZ5aBcDe"
+
+    def _commit_all(self, msg):
+        _git(self.repo, "add", "-A")
+        _git(self.repo, "commit", "-q", "-m", msg)
+        return subprocess.run(["git", "-C", self.repo, "rev-parse", "HEAD"],
+                              capture_output=True, text=True).stdout.strip()
+
+    def _audited_parent_fixture(self, new_sha):
+        """The parent (self.sha before the next bump) has every verdict green."""
+        ok = [("Tests", "completed", "success"), ("Bun Parity", "completed", "success"),
+              ("Security Audit", "completed", "success")]
+        return {self.sha: ok, new_sha: ok[:2]}
+
+    def _bump(self, extra=None):
+        _write(self.repo, "VERSION", "9.57.0\n")
+        _write(self.repo, "package.json", '{"version": "9.57.0"}\n')
+        for k, v in (extra or {}).items():
+            _write(self.repo, k, v)
+        return self._commit_all("release 9.57.0")
+
+    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks not installed")
+    def test_e157_clean_range_still_reuses(self):
+        new_sha = self._bump()
+        fx = self._audited_parent_fixture(new_sha)
+        self.sha = new_sha
+        rc, out = self._run(fx)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("(reused)", out)
+
+    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks not installed")
+    def test_e157_secret_in_allowlisted_changelog_block_is_not_reused(self):
+        header, old = "# Changelog\n\n", "## v9.56.0\n\nold.\n"
+        _write(self.repo, "CHANGELOG.md", header + old)
+        self.sha = self._commit_all("add changelog")
+        block = "## v9.57.0\n\n- rotate: token = %s\n\n" % self.TOKEN
+        new_sha = self._bump({"CHANGELOG.md": header + block + old})
+        fx = self._audited_parent_fixture(new_sha)
+        parent = self.sha
+        self.sha = new_sha
+        rc, out = self._run(fx)
+        self.assertEqual(rc, 99, out)
+        self.assertNotIn("Security Audit @ %s (reused)" % parent, out)
+
+    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks not installed")
+    def test_e157_merge_release_hiding_a_leak_in_second_parent_is_not_reused(self):
+        _git(self.repo, "checkout", "-q", "-b", "side")
+        _write(self.repo, "leak.txt", "token = %s\n" % self.TOKEN)
+        self._commit_all("leak")
+        _git(self.repo, "rm", "-q", "leak.txt")
+        self._commit_all("remove leak")
+        _git(self.repo, "checkout", "-q", "main")
+        _git(self.repo, "merge", "-q", "--no-ff", "--no-commit", "-s", "ours", "side")
+        _write(self.repo, "VERSION", "9.57.0\n")
+        _write(self.repo, "package.json", '{"version": "9.57.0"}\n')
+        new_sha = self._commit_all("merge release 9.57.0")
+        parent = self.sha
+        fx = self._audited_parent_fixture(new_sha)
+        self.sha = new_sha
+        rc, out = self._run(fx)
+        self.assertEqual(rc, 99, out)
+        self.assertNotIn("Security Audit @ %s (reused)" % parent, out)
+
+    def _map(self, ver, debug_id):
+        return json.dumps({"version": 3, "note": ver, "debugId": debug_id})
+
+    def _map_release(self, debug_id):
+        _write(self.repo, "loki-ts/dist/loki.js.map", self._map("9.56.0", "abc-123"))
+        self.sha = self._commit_all("add map")
+        new_sha = self._bump({"loki-ts/dist/loki.js.map": self._map("9.57.0", debug_id)})
+        fx = self._audited_parent_fixture(new_sha)
+        self.sha = new_sha
+        return self._run(fx)
+
+    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks not installed")
+    def test_e157_hex_debugid_is_still_eligible(self):
+        rc, out = self._map_release("0123abcd-4567-89ef")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("(reused)", out)
+
+    def test_e157_non_hex_debugid_makes_the_bump_ineligible(self):
+        rc, out = self._map_release(self.TOKEN)
+        self.assertEqual(rc, 99, out)
+        self.assertIn("debugId is not hex/dash shaped", out)
+        self.assertNotIn("(reused)", out)
+
     def _audit_fixture(self, audit_rows):
         return {self.parent: [],
                 self.sha: [("Tests", "completed", "success"), ("Bun Parity", "completed", "success")] + audit_rows}
@@ -679,6 +772,7 @@ class OneEachOfTheRemainingRound3Checks(unittest.TestCase):
 
     def setUp(self):
         self.repo = tempfile.mkdtemp(prefix="s84-checks-")
+        self.addCleanup(shutil.rmtree, self.repo, ignore_errors=True)
         _git(self.repo, "init", "-q", "-b", "main", ".")
 
     def _base(self, extra=None):
