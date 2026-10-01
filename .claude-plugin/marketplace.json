@@ -23,6 +23,18 @@
         "mcp",
         "loki"
       ]
+    },
+    {
+      "name": "loki-seal",
+      "source": "./packages/loki-seal",
+      "description": "Stop hook that refuses 'done' while tests are red or were deleted, skipped, xfailed or weakened. Runs locally, no model calls.",
+      "homepage": "https://github.com/asklokesh/loki-mode",
+      "category": "testing",
+      "keywords": [
+        "verification",
+        "tests",
+        "hooks"
+      ]
     }
   ]
 }

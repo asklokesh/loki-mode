@@ -1615,6 +1615,7 @@ run_test "Quick-fix artifacts (A-132)" "$SCRIPT_DIR/test-quick-artifacts.sh"
 run_test "Council trivial-diff probe skip (A-133)" "$SCRIPT_DIR/test-council-trivial-diff.sh"
 run_test "Quick receipt order and quiet output (A-134)" "$SCRIPT_DIR/test-quick-receipt-order.sh"
 run_test "Quick config safety (P0-t15)" "$SCRIPT_DIR/test-quick-config-safety.sh"
+run_test "Loki Seal marketplace (D48 r10)" "$SCRIPT_DIR/test-loki-seal-marketplace.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 
 # Summary

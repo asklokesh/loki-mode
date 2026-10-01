@@ -1,6 +1,8 @@
 Your agent says done. Loki proves it.
 
 An autonomous software factory that knows what it is supposed to deliver, and proves it did.
+Install: `/plugin marketplace add asklokesh/loki-mode` then `/plugin install loki-seal@loki-mode`
+
 
 <!-- 20-second loki-seal GIF: placeholder until recorded. Script: packages/loki-seal/demo/demo.tape -->
 [loki-seal demo script](packages/loki-seal/demo/demo.tape)
