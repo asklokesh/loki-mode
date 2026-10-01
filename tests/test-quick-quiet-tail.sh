@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # A-134b: the quiet `loki quick` failure tail never dumps a long prompt line that merely
-# contains "failed"; the quiet inner run inherits the parent's stdin instead of
-# /dev/null; standalone autonomy/verify.sh prints an attestation line (UNCHECKED).
+# contains "failed"; a non-TTY stdin that never closes does not hang the quiet run
+# (TTY keypress resume is verified by inspection only); standalone
+# autonomy/verify.sh prints an attestation line (UNCHECKED).
 set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -19,8 +20,8 @@ bad() { FAIL=$((FAIL + 1)); echo "FAIL: $1${2:+ ($2)}"; }
 # containing "failed", then fails.
 cat > "$T/bin/claude" <<STUB
 #!/usr/bin/env bash
-case " \$* " in *" --help "*|*" --version "*) IFS= read -t 1 -r _l; echo "\$_l" >> "$T/stdin-seen"; echo "claude stub 2.1.285 --settings --session-id --resume --model --dangerously-skip-permissions"; exit 0;; esac
-IFS= read -t 1 -r _l; echo "\$_l" >> "$T/stdin-seen"
+case " \$* " in *" --help "*|*" --version "*) cat > /dev/null; echo "claude stub 2.1.285 --settings --session-id --resume --model --dangerously-skip-permissions"; exit 0;; esac
+cat > /dev/null
 printf 'RALPH prompt: %s failed\n' "\$(printf 'x%.0s' \$(seq 1 1500))"
 exit 1
 STUB
@@ -36,9 +37,15 @@ git -C "$FIX" add a.txt
 git -C "$FIX" commit -q -m init
 echo "fix it" > "$FIX/.loki/quick-prd-1.md"
 
-( cd "$FIX" && printf 'KEYPRESS\n' | env HOME="$T/home" PATH="$T/bin:$PATH" LOKI_NO_BROWSER=1 \
-    LOKI_SKIP_AUTH_PREFLIGHT=1 LOKI_MAX_RETRIES=1 LOKI_MAX_ITERATIONS=1 LOKI_BASE_WAIT=1 LOKI_MAX_WAIT=1 timeout 120 bash "$REPO_ROOT/autonomy/run.sh" "$FIX/.loki/quick-prd-1.md" \
-    > "$T/out" 2> "$T/err" )
+# Never-closing, non-TTY stdin: the stub provider does `cat`, so any leaked pipe hangs.
+mkfifo "$T/fifo"
+sleep 600 > "$T/fifo" &
+SLEEP_PID=$!
+exec 4< "$T/fifo"
+trap 'kill "$SLEEP_PID" 2>/dev/null; loki_run_tmp_cleanup' EXIT
+( cd "$FIX" && env HOME="$T/home" PATH="$T/bin:$PATH" LOKI_NO_BROWSER=1 \
+    LOKI_SKIP_AUTH_PREFLIGHT=1 LOKI_MAX_RETRIES=1 LOKI_MAX_ITERATIONS=1 LOKI_BASE_WAIT=1 LOKI_MAX_WAIT=1 timeout 60 bash "$REPO_ROOT/autonomy/run.sh" "$FIX/.loki/quick-prd-1.md" \
+    <&4 > "$T/out" 2> "$T/err" )
 RC=$?
 echo "run.sh rc=$RC"
 [ "$RC" -ne 124 ] || bad "run timed out (failure tail never printed)"
@@ -50,11 +57,6 @@ else
 fi
 if grep -q 'RALPH prompt' "$T/out" "$T/err"; then bad "failure tail printed the long prompt line"; else ok "failure tail omits the long prompt line"; fi
 [ "$LONGEST" -le 400 ] && ok "no printed line over 400 chars (longest $LONGEST)" || bad "printed line of $LONGEST chars"
-if grep -q KEYPRESS "$T/stdin-seen" 2>/dev/null; then
-    ok "quiet inner run inherits the parent's stdin"
-else
-    bad "inner run stdin was not the parent's" "$(cat "$T/stdin-seen" 2>/dev/null)"
-fi
 
 # Deterministic note 2: run the wrapper's real tail lines (extracted from run.sh) against
 # a log where the long prompt line is among the last matches (the live run above is
