@@ -8,7 +8,7 @@ import { createHash, randomBytes, createPrivateKey, createPublicKey, generateKey
 import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { untouchedSinceIntake } from "../../e10ext/preexisting_dirty.ts"; import { RECEIPT_SIGNER_BASENAME } from "../../util/receipt_signer.ts";
+import { RECEIPT_SIGNER_BASENAME } from "../../util/receipt_signer.ts";
 import { run } from "../../util/shell.ts";
 import { isTestFile } from "../testmap.ts";
 import { STAGE_BUDGETS } from "../types.ts";
@@ -109,7 +109,7 @@ export const commitStage: Stage = {
     // A-104/G2: stage all, unstage .loki/, Wall files (sealed under runDir/wall) and a NEW lockfile with no manifest change.
     if ((await git(ctx, ["add", "-A", "--", "."])).code !== 0) return { status: "failed", data: {}, reason: "git add failed" };
     const staged = (await git(ctx, ["diff", "--cached", "--name-status", "--no-renames", "-z"])).out.split("\0").reduce<{ st: string; f: string }[]>((a, t, i, all) => (i % 2 === 0 && t ? [...a, { st: t, f: all[i + 1]! }] : a), []);
-    const drop = staged.concat(untouchedSinceIntake(ctx.repoDir, ctx.outputs().intake?.preexisting_dirty).map((f) => ({ st: "L", f }))).filter(({ st, f }) => f.startsWith(".loki/") || st === "L" || /(^|\/)loki_wall_[^/]*$/.test(f) || (st === "A" && !staged.some(({ f: m }) => /(^|\/)(package\.json|pyproject\.toml|requirements\.txt|Cargo\.toml|go\.mod)$/.test(m)) && /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Cargo\.lock|go\.sum)$/.test(f)));
+    const drop = staged.filter(({ st, f }) => f.startsWith(".loki/") || /(^|\/)loki_wall_[^/]*$/.test(f) || (st === "A" && !staged.some(({ f: m }) => /(^|\/)(package\.json|pyproject\.toml|requirements\.txt|Cargo\.toml|go\.mod)$/.test(m)) && /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Cargo\.lock|go\.sum)$/.test(f)));
     if (drop.length > 0) await git(ctx, ["reset", "-q", "--", ...drop.map(({ f }) => f)]);
     if ((await git(ctx, ["diff", "--cached", "--quiet"])).code === 0) {
       return { status: "completed", data: { committed: false } };
@@ -247,7 +247,7 @@ export const sealStage: Stage = {
       ...(str(o.implement?.spec_conflict_reason) !== null
         ? { spec_conflict_reason: sanitizeReason(str(o.implement?.spec_conflict_reason)!) }
         : {}),
-      evidence: strs(o.intake?.evidence), ...(o.intake?.preexisting_dirty ? { pre_existing_dirty: Object.keys(o.intake.preexisting_dirty as object) } : {}),
+      evidence: strs(o.intake?.evidence),
       cost: {
         usd: cost.usd, input_tokens: cost.inputTokens, output_tokens: cost.outputTokens,
         measured_sessions: cost.measuredCount ?? 0, total_sessions: cost.totalCount ?? 0, partial_usd: cost.partialUsd ?? 0,

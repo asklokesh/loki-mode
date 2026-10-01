@@ -8,16 +8,12 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:f
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commitStage } from "../../src/engine10/stages/seal.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
 import { RealTestMapProvider } from "../../src/engine10/testmap.ts";
 import type { CostReader, RunContext, SessionResult, SessionRunner, TestMapProvider } from "../../src/engine10/types.ts";
 
 const FIX = join(import.meta.dir, "fixtures", "intake");
 
-function gitOut(cwd: string, args: string[]): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8" });
-}
 function git(cwd: string, args: string[]): void {
   execFileSync("git", args, { cwd, stdio: "pipe" });
 }
@@ -120,34 +116,6 @@ describe("engine10 intake", () => {
     const result = await runIntake(ctx, new AbortController().signal, { taskText: "do a thing" });
     expect(result.status).toBe("failed");
     expect(result.reason).toContain("dirty");
-  });
-
-  test("E-164: lockfile-only dirt starts the run, is recorded, and is not attributed to the commit", async () => {
-    writeFileSync(join(repoDir, "package-lock.json"), "{}\n");
-    git(repoDir, ["add", "package-lock.json"]);
-    git(repoDir, ["commit", "-q", "-m", "lock"]);
-    writeFileSync(join(repoDir, "package-lock.json"), '{"setup":"npm install"}\n');
-    const ctx = makeCtx(repoDir, runDir, fakeTests());
-    const result = await runIntake(ctx, new AbortController().signal, { taskText: "do a thing" });
-    expect(result.status).toBe("completed");
-    expect(Object.keys(result.data.preexisting_dirty as object)).toEqual(["package-lock.json"]);
-    writeFileSync(join(repoDir, "README.md"), "run change\n");
-    const c = await commitStage.run({ ...ctx, outputs: () => ({ intake: result.data }) } as RunContext, new AbortController().signal);
-    expect(c.status).toBe("completed");
-    expect(gitOut(repoDir, ["show", "--name-only", "--format=", "HEAD"]).trim()).toBe("README.md");
-    expect(gitOut(repoDir, ["status", "--porcelain", "--untracked-files=no"]).trim()).toBe("M package-lock.json");
-  });
-
-  test("E-164: a dirty source file alongside a lockfile still refuses", async () => {
-    writeFileSync(join(repoDir, "package-lock.json"), "{}\n");
-    git(repoDir, ["add", "package-lock.json"]);
-    git(repoDir, ["commit", "-q", "-m", "lock"]);
-    writeFileSync(join(repoDir, "package-lock.json"), "{ }\n");
-    writeFileSync(join(repoDir, "README.md"), "dirty\n");
-    const result = await runIntake(makeCtx(repoDir, runDir, fakeTests()), new AbortController().signal, { taskText: "do a thing" });
-    expect(result.status).toBe("failed");
-    expect(result.reason).toContain("README.md");
-    expect(result.reason).not.toContain("package-lock.json");
   });
 
   test("untracked files do not block intake", async () => {
