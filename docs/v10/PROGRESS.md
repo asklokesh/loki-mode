@@ -1664,3 +1664,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - v10.5.15 a7945d67: Release run queued at 01:48Z.
 - Reviews: E-157 r3 APPROVE (merged), A-130b APPROVE (merged), E-159 REJECT (rework), A-117 r2 REJECT (back-compat for old receipts; key-env tests), A-118/A-119b/A-134b r2 in review.
 - D46 tally this hour: next releases 1 confirmed (10.5.14) + 1 pending (10.5.15); trains cut 18/19/20/21, red 19 and 20 (one lint line), dropped 0. OPUS_SHARE 36% (HIGH reviews only); load about 25 of 28, no new seats.
+
+## 2026-10-01T02:01Z v10.5.15 published; train/21 dropped E-157; train/22 cut
+- v10.5.15: Release run success; npm 10.5.15 gitHead a7945d67 (matches); dist-tags next=10.5.15, latest=10.5.10 (unchanged); release body carries the full CHANGELOG section.
+- train/21 2ebfa3a1 red: Shell tests shard 1, tests/test-version-bump-only.sh 28/1 (S-132 normalizer parity). Cause E-157 (release.yml STEP 1 heredoc re-indented 10 to 12 spaces). D46 drop: E-157 merge reverted on local main 7d1a0f15 (test then 29/0), back to CI-health for r4.
+- train/22 dd9842c6 = train/20 + main (SC2088 fix, A-130b, E-157 revert); release.yml identical to train/20; test-version-bump-only 29/0 and shellcheck clean locally. Tier B watcher armed.
+- D46 tally (rolling hour): next releases 2 (10.5.14 01:19Z, 10.5.15 01:54Z); trains cut 5 (18-22), red 3 (19, 20 lint; 21 E-157), dropped 1 (E-157).
