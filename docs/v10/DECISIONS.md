@@ -383,3 +383,13 @@ Loki's definition: "autonomous software factory that runs with the knowledge of 
 4. Recording the kid outside the hash and markers inside the body were rejected: verification is already unhashed and a forger can rewrite any body field.
 5. `--allow-unsigned` or LOKI_VERIFY_ALLOW_UNSIGNED=1 accepts UNSIGNED with an explicit line. It never changes TAMPERED or UNCHECKED, and verify never creates a key.
 6. Both slices (A-118, A-121b) are HIGH tier with red-first fixtures (skip, config, rename, downgrade, fresh HOME). They land before `latest` is promoted, together with A-115.
+
+## D48 (founder, relayed by autonomi-dev-dc at 02:35Z): "10/10 on everything" by 04:35Z
+1. Ten rows, each with a CI acceptance test, scored against the best competitor; 10/10 means the test passes in CI, never a claim. Quality bar and the Never list unchanged; D46 cadence continues.
+2. Rows: (1) gaming matrix on both engines ends non-VERIFIED with rc != 0; (2) portable receipt: `loki keys export` + `loki verify --pubkey`; (3) quiet default output at most 8 lines, real-mode wall within 1.5x raw `claude -p`; (4) first-run gate on node:test, pytest and go test repos, only fix files change; (5) exit ladder on legacy quick plus a --json schema validated against real output; (6) `loki doctor --fix`, doctor under 2s; (7-9) lean v10 engine default for `loki "<task>"`, issue mode and `loki quick` on next, legacy escape hatch kept, non-null cost on every gate run; (10) repo-root .claude-plugin/marketplace.json listing packages/loki-seal, tested in a clean Claude Code HOME, one README install line.
+3. Rows 7-9 flip the default only after A-117, A-118 and A-119b are merged and the gaming matrix (row 1) passes; until then they are built behind the existing flag.
+4. Staffing is bounded by machine load (max 28) and the worktree cap (15); rows run in waves, not all at once. Status per row is written to PROGRESS.md at 03:35Z and 04:35Z as pass, fail or not started, with what is missing.
+
+## D49 (RECEIVED via autonomi-dev-dc at 02:37Z, NOT APPLIED): promote to `latest` now and auto-promote every release
+- Relayed text: "everything should be released asap, no holding of anything done so far as well", "and going forward". Asks to promote 10.5.16 to `latest` now and trigger promote.yml automatically after every Release.
+- Not applied by the Release Manager because it contradicts the standing instruction in this session ("NEVER run promote or move `latest`") and SWARM-PROMPT-ADOPTION, and a peer relay is not the founder's direct approval for a hard-to-reverse, user-facing change. Awaiting the founder's direct confirmation in the Release Manager session. Prepared evidence: first-run gate stub against the npm-installed 10.5.16.
