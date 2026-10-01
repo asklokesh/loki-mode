@@ -654,6 +654,7 @@ Loki 10 legacy route contract golden rows (E-30)	1
 Loki 10 live PR smoke on a sandbox repo (E-40)	1
 run-owned temp cleanup works when sourced under zsh	1
 Loki 10 legacy deprecation notice (E-35)	1
+bin/loki bun resolver and no-bun notice (P0-nobun-S2)	3
 Loki 10 gate publish script (EV-6)	2
 Loki 10 user docs match USAGE and the default marker (E-34)	1
 release.sh --bump-only restores debugId-only dist churn (E-72)	1

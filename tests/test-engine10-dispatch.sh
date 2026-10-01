@@ -141,7 +141,7 @@ fi
 #    stray third exec line anywhere else in the file. Anchored on the arms'
 #    own text, not line numbers, so edits elsewhere in the file don't rot it.
 BIN="$REPO/bin/loki"
-EXEC_PAT='exec bun "$BUN_CLI" engine10'
+EXEC_PAT='exec "$_lb" "$BUN_CLI" engine10'
 # find_fi <start-line>: the depth-aware matching "fi" for the "if" at start-line.
 find_fi() {
     awk -v s="$1" '
