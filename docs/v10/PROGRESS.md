@@ -1670,3 +1670,7 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - train/21 2ebfa3a1 red: Shell tests shard 1, tests/test-version-bump-only.sh 28/1 (S-132 normalizer parity). Cause E-157 (release.yml STEP 1 heredoc re-indented 10 to 12 spaces). D46 drop: E-157 merge reverted on local main 7d1a0f15 (test then 29/0), back to CI-health for r4.
 - train/22 dd9842c6 = train/20 + main (SC2088 fix, A-130b, E-157 revert); release.yml identical to train/20; test-version-bump-only 29/0 and shellcheck clean locally. Tier B watcher armed.
 - D46 tally (rolling hour): next releases 2 (10.5.14 01:19Z, 10.5.15 01:54Z); trains cut 5 (18-22), red 3 (19, 20 lint; 21 E-157), dropped 1 (E-157).
+
+## 2026-10-01T02:08Z train/22 green, v10.5.16 cut
+- train/22 dd9842c6: Tests, Bun Parity, Coverage (baseline) all success (02:07:32Z). origin/main fast-forwarded a7945d67..dd9842c6 (the v10.5.15 Release run had completed success).
+- v10.5.16 release commit f522c12f (parent dd9842c6 == origin/main; --check-clean rc=0), pushed by SHA. Contents: P0-t15 (quiet quick stderr noise, sentinel-only config fold, guarded SIGPIPE re-exec), A-130b (Reason line redaction). E-157 net zero (reverted). Watcher armed; latest must stay 10.5.10.
