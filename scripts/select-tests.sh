@@ -298,9 +298,14 @@ mark_seen() { SEEN="${SEEN}|$1|"; }
 # (tests/**/*.py mixes both), node_test for a .js/.mjs match (dashboard-ui's
 # collector mixes those in too) -- never invoked with `bash`.
 match_kind() {
-    local kind="$1" match="$2"
+    local kind="$1" match="$2" basename
+    basename="$(basename "$match")"
     case "$match" in
-        *.py) [ "$kind" = "shell_test" ] && kind="py_test" ;;
+        *.py)
+            case "$basename" in
+                test_*.py | *_test.py) [ "$kind" = "shell_test" ] && kind="py_test" ;;
+            esac
+            ;;
         *.js | *.mjs) [ "$kind" = "shell_test" ] && kind="node_test" ;;
     esac
     printf '%s\n' "$kind"
