@@ -114,11 +114,10 @@ jobs:
   # run at the release SHA with conclusion exactly "failure" fails the whole
   # job, even if another run of the same workflow is still in flight (a
   # completed failure is never hidden behind a hopeful retry); (c) else, for
-  # Tests/Bun Parity only, reuse the parent's verdict if this push is eligible
+  # Tests/Bun Parity/Security Audit, reuse the parent's verdict if this push is eligible
   # (see below) and the parent shows a success; (d) else wait for the release
-  # SHA's own result. Security Audit never reaches (c) -- it is NEVER reused,
-  # so it always resolves via (a), (b), or (d) at the release SHA, which costs
-  # about 4 min on every release regardless of what the push touched.
+  # SHA's own result. Security Audit reuses the parent's newest decisive verdict under the SAME
+  # eligibility rule (E-157), and only when that verdict is success.
   # Eligibility (the "(c)" gate) requires every file this push changed to be
   # on the allowlist below, present as the same regular-file mode on both
   # sides (round 3: `git diff --raw`, not `--name-only` -- a rename, add,
@@ -383,7 +382,7 @@ jobs:
           fi
 
           if [ "$ELIGIBLE" = "1" ]; then
-            echo "Version-bump-only diff against parent $PARENT (every changed file is allowlisted, same-mode, and byte-identical modulo the version string). Tests and Bun Parity may reuse that commit's verdict if it already succeeded there; Security Audit is always required fresh at $SHA (it triggers only on a VERSION-path push or a PR, and this commit is itself a VERSION push, so it always runs here anyway)."
+            echo "Version-bump-only diff against parent $PARENT (every changed file is allowlisted, same-mode, and byte-identical modulo the version string). Tests and Bun Parity may reuse that commit's verdict if it already succeeded there; Security Audit follows the same rule (E-157): a decisive run at $SHA wins, else the parent's newest decisive audit verdict is reused only if it is success."
           else
             echo "Not eligible for parent reuse (see 'normalizer:' diagnostic above if the eligibility check ran, or: empty diff, no resolvable parent, or a non-push event). All required workflows must succeed at $SHA unless already decided by a completed run there."
           fi
@@ -450,8 +449,8 @@ jobs:
               #       exactly "failure" fails the job -- checked BEFORE any
               #       wait, so a still-running retry can never hide it;
               #   (c) else reuse the parent's success if this bump is
-              #       eligible (never for Security Audit, which is never
-              #       reused);
+              #       eligible (Security Audit too, E-157, via its newest
+              #       decisive parent verdict);
               #   (d) else wait for the release SHA's own result. Cancelled,
               #       timed_out, and skipped deliberately fall through to (c)
               #       or (d) rather than failing here: they are not evidence
@@ -461,17 +460,29 @@ jobs:
               #       cancel-in-progress concurrency group cancels the
               #       release SHA's own in-flight run.
               if [ "$want" = "Security Audit" ]; then
+                # E-157: same rule as Tests/Bun Parity. A decisive verdict at
+                # the release SHA always wins; only when none exists does an
+                # eligible bump reuse the parent's NEWEST decisive verdict,
+                # and only if that verdict is success (a newer parent failure
+                # masks an older parent success, so it never reuses).
+                label="$SHA"
                 case "$(audit_verdict "$runs_release")" in
                   success) result="success" ;;
                   failure) result="failed" ;;
-                  *) result="pending" ;;
+                  *)
+                    if [ "$ELIGIBLE" = "1" ] \
+                       && [ "$(audit_verdict "$runs_parent")" = "success" ]; then
+                      result="success"; label="$PARENT (reused)"
+                    else
+                      result="pending"
+                    fi
+                    ;;
                 esac
-                label="$SHA"
               elif has_conclusion "$want" "$runs_release" success; then
                 result="success"; label="$SHA"
               elif has_conclusion "$want" "$runs_release" failure; then
                 result="failed"; label="$SHA"
-              elif [ "$want" != "Security Audit" ] && [ "$ELIGIBLE" = "1" ] \
+              elif [ "$ELIGIBLE" = "1" ] \
                    && has_conclusion "$want" "$runs_parent" success; then
                 result="success"; label="$PARENT (reused)"
               else

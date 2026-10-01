@@ -521,7 +521,7 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
         self.assertIn("(reused)", out, "Tests did not reuse the parent's verdict")
 
     def test_cancelled_security_audit_stays_pending(self):
-        """Security Audit is never reused, so a cancelled run there with no
+        """A cancelled run there with no
         success or failure yet must poll (PENDING), not pass or fail."""
         rc, out = self._run({
             self.parent: [],
@@ -548,6 +548,61 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
                        ("Security Audit", "completed", "success")],
         })
         self.assertEqual(rc, 0, out)
+
+    # E-157: Security Audit reuses the parent's verdict under the SAME
+    # eligibility rule as Tests/Bun Parity.
+    def _reuse_fixture(self, parent_audit, sha_audit=()):
+        return {self.parent: [("Tests", "completed", "success"), ("Bun Parity", "completed", "success")]
+                + list(parent_audit),
+                self.sha: [("Tests", "completed", "success"), ("Bun Parity", "completed", "success")]
+                + list(sha_audit)}
+
+    def test_e157_eligible_bump_reuses_parent_security_audit_success(self):
+        rc, out = self._run(self._reuse_fixture([("Security Audit", "completed", "success")]))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Security Audit @ %s (reused)" % self.parent, out)
+
+    def test_e157_parent_audit_failure_is_not_reused(self):
+        rc, out = self._run(self._reuse_fixture([("Security Audit", "completed", "failure")]))
+        self.assertEqual(rc, 99, out)
+
+    def test_e157_missing_parent_audit_is_not_reused(self):
+        rc, out = self._run(self._reuse_fixture([]))
+        self.assertEqual(rc, 99, out)
+
+    def test_e157_parent_in_progress_audit_is_not_reused(self):
+        rc, out = self._run(self._reuse_fixture([("Security Audit", "in_progress", "null")]))
+        self.assertEqual(rc, 99, out)
+
+    def test_e157_parent_cancelled_audit_is_not_reused(self):
+        rc, out = self._run(self._reuse_fixture([("Security Audit", "completed", "cancelled")]))
+        self.assertEqual(rc, 99, out)
+
+    def test_e157_newer_parent_failure_masks_older_parent_success(self):
+        rc, out = self._run(self._reuse_fixture([
+            ("Security Audit", "completed", "success", "push", "2026-01-01T00:00:00Z"),
+            ("Security Audit", "completed", "failure", "workflow_dispatch", "2026-01-01T00:05:00Z")]))
+        self.assertEqual(rc, 99, out)
+
+    def test_e157_release_sha_failure_beats_parent_success(self):
+        rc, out = self._run(self._reuse_fixture(
+            [("Security Audit", "completed", "success")],
+            [("Security Audit", "completed", "failure")]))
+        self.assertEqual(rc, 1, out)
+
+    def test_e157_non_version_only_bump_still_requires_fresh_security_audit(self):
+        _write(self.repo, "src.txt", "real code change\n")
+        _git(self.repo, "add", "-A")
+        _git(self.repo, "commit", "-q", "-m", "release plus code")
+        new_sha = subprocess.run(["git", "-C", self.repo, "rev-parse", "HEAD"],
+                                  capture_output=True, text=True).stdout.strip()
+        fx = {self.sha: [("Tests", "completed", "success"), ("Bun Parity", "completed", "success"),
+                         ("Security Audit", "completed", "success")],
+              new_sha: [("Tests", "completed", "success"), ("Bun Parity", "completed", "success")]}
+        self.sha = new_sha
+        rc, out = self._run(fx)
+        self.assertEqual(rc, 99, out)
+        self.assertNotIn("(reused)", out)
 
     def _audit_fixture(self, audit_rows):
         return {self.parent: [],
