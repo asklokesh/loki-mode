@@ -1524,6 +1524,8 @@ run_test "Add-dir reaches provider" "$SCRIPT_DIR/test-add-dir-reaches-provider.s
 run_test "Auto-PR default on" "$SCRIPT_DIR/test-auto-pr-default-on.sh"
 run_test "Delegate PR refuses the repo default branch" "$SCRIPT_DIR/test-delegate-default-branch.sh"
 run_test "Dashboard port ownership" "$SCRIPT_DIR/test-dashboard-port-ownership.sh"
+run_test "Dashboard static fallback and reuse" "$SCRIPT_DIR/test-dashboard-static-fallback.sh"
+run_test "No dashboard leak from suites" "$SCRIPT_DIR/test-no-dashboard-leak.sh"
 run_test "Doctor --json skills section" "$SCRIPT_DIR/test-doctor-json-skills.sh"
 run_test "Emit hang forensics" "$SCRIPT_DIR/test-emit-hang-forensics.sh"
 run_test "Issue PRD honesty" "$SCRIPT_DIR/test-issue-prd-is-honest.sh"

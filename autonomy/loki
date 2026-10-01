@@ -7493,11 +7493,12 @@ cmd_dashboard_start() {
 
     # Check if port is already in use
     if command -v lsof &> /dev/null; then
-        if lsof -i ":$port" &> /dev/null; then
+        # LISTEN only: leftover client sockets (browser CLOSE_WAIT) do not hold the port
+        if lsof -nP -iTCP:"$port" -sTCP:LISTEN &> /dev/null; then
             echo -e "${RED}Error: Port $port is already in use${NC}"
             echo ""
             echo "Check what's using the port:"
-            echo "  lsof -i :$port"
+            echo "  lsof -nP -iTCP:$port -sTCP:LISTEN"
             echo ""
             echo "Or use a different port:"
             echo "  loki dashboard start --port 8080"
@@ -15314,7 +15315,7 @@ cmd_api() {
             fi
 
             # Refuse a busy port instead of writing a bogus PID.
-            if command -v lsof &> /dev/null && lsof -i ":$port" &> /dev/null; then
+            if command -v lsof &> /dev/null && lsof -nP -iTCP:"$port" -sTCP:LISTEN &> /dev/null; then
                 echo -e "${RED}Error: Port $port is already in use${NC}"
                 echo "Stop the other server or set LOKI_DASHBOARD_PORT / --port to a free port."
                 exit 1
@@ -18153,7 +18154,7 @@ print(json.dumps({'id': manifest.id, 'dir': str(pipeline.migration_dir)}))
         if "$python_cmd" -c "import fastapi" 2>/dev/null; then
             # Find available port (increment until a free port is found)
             local port_attempts=0
-            while lsof -i :"$dashboard_port" &>/dev/null && [ $port_attempts -lt 10 ]; do
+            while lsof -nP -iTCP:"$dashboard_port" -sTCP:LISTEN &>/dev/null && [ $port_attempts -lt 10 ]; do
                 dashboard_port=$((dashboard_port + 1))
                 port_attempts=$((port_attempts + 1))
             done

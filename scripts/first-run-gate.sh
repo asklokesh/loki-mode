@@ -49,6 +49,7 @@ mk_bugrepo "$T/repo"
 BASE=$(git -C "$T/repo" rev-parse HEAD)
 
 # Throwaway HOME first: npm must not read ~/.npmrc or ~/.npm.
+ORIG_HOME="$HOME"
 export HOME="$T/home" LOKI_NO_BROWSER=1 npm_config_cache="$T/npm-cache" npm_config_userconfig="$T/home/.npmrc"
 
 # --- which loki ---------------------------------------------------------------
@@ -221,6 +222,40 @@ if [ "$MODE" = stub ]; then
     if [ "$LRC" -eq 3 ] && grep -Eqi 'NOT VERIFIED' <<<"$LH" && ! sed 's/\x1b\[[0-9;]*m//g' "$T/skipl.log" | grep -Eqi 'verdict: *verified|Evidence Receipt:? *VERIFIED'; then
         res PASS skip-not-verified-legacy "legacy skipped target: rc=3, headline: ${LH:-none} (honest run: ${HH:-none})"
     else res FAIL skip-not-verified-legacy "legacy skipped target: rc=$LRC, headline: ${LH:-none}"; fi
+fi
+
+# 10. P0-DASH-STATIC: the dashboard of the package under test serves the real UI at GET /: 200 text/html carrying the
+#     app element (<loki-overview>), not the "frontend not found" page. Runs in both legs (the package is the installed
+#     one with --installed). Needs fastapi+uvicorn from the caller's HOME venv or python3; otherwise SKIP (not a FAIL).
+PKG="$REPO_ROOT"; [ -n "$SPEC" ] && PKG="$T/prefix/node_modules/loki-mode"
+PKG="${FRG_DASH_PKG:-$PKG}" # test hook: point at a package copy whose frontend is missing
+DPY=""
+for p in "$ORIG_HOME/.loki/dashboard-venv/bin/python" python3; do
+    if command -v "$p" >/dev/null 2>&1 && "$p" -c 'import fastapi, uvicorn' >/dev/null 2>&1; then DPY="$p"; break; fi
+done
+if [ -z "$DPY" ] || [ ! -f "$PKG/dashboard/server.py" ]; then
+    echo "SKIP dashboard-root: no python with fastapi+uvicorn (or no dashboard in $PKG)"
+else
+    DPORT=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
+    ( cd "$T" && LOKI_DIR="$T/dash-state" LOKI_SKILL_DIR="$PKG" PYTHONPATH="$PKG" LOKI_DASHBOARD_HOST=127.0.0.1 \
+        LOKI_DASHBOARD_PORT="$DPORT" exec "$DPY" -m dashboard.server ) < /dev/null > "$T/dashboard.log" 2>&1 &
+    DPID=$!
+    DUP=0
+    for _ in $(seq 1 40); do
+        curl -sf --max-time 2 "http://127.0.0.1:$DPORT/health" >/dev/null 2>&1 && { DUP=1; break; }
+        kill -0 "$DPID" 2>/dev/null || break
+        sleep 0.5
+    done
+    if [ "$DUP" -ne 1 ]; then
+        res FAIL dashboard-root "dashboard did not start: $(tail -2 "$T/dashboard.log" | tr '\n' ' ')"
+    else
+        DCODE=$(curl -s -o "$T/dash-index.html" -w '%{http_code} %{content_type}' --max-time 5 "http://127.0.0.1:$DPORT/")
+        if [[ "$DCODE" == "200 text/html"* ]] && python3 -c 'import sys;sys.exit(0 if "<loki-overview" in open(sys.argv[1]).read() else 1)' "$T/dash-index.html"; then
+            res PASS dashboard-root "GET / = $DCODE with the app element"
+        else res FAIL dashboard-root "GET / = $DCODE (expected 200 text/html with <loki-overview>)"; fi
+    fi
+    kill "$DPID" 2>/dev/null
+    wait "$DPID" 2>/dev/null
 fi
 
 # --- real mode: raw claude -p comparison, appended to METRICS.md --------------

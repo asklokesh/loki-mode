@@ -33,9 +33,29 @@ echo "TEST: an exposed dashboard bind is refused without auth"
 
 # Counts the refusal, never starts a server: every invocation below either
 # refuses (and exits) or is stopped by the timeout before binding.
+# Sandboxed: a throwaway HOME (so the PID/port registry never touches the real
+# ~/.loki/dashboard) and a free port; any server a case did start is reaped by
+# its RECORDED PID (the registry file), never by name. The real dashboard venv
+# is linked in read-only so no pip install runs.
+SBX="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.XXXXXXXX")"
+mkdir -p "$SBX/home/.loki"
+[ -d "$HOME/.loki/dashboard-venv" ] && ln -s "$HOME/.loki/dashboard-venv" "$SBX/home/.loki/dashboard-venv"
+_PORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')"
+_reap() {
+    local f="$SBX/home/.loki/dashboard/dashboard.pid" p
+    [ -f "$f" ] || return 0
+    p="$(cat "$f" 2>/dev/null)"
+    case "$p" in ''|*[!0-9]*) return 0 ;; esac
+    printf '%s\n' "$p" >>"${LOKI_TEST_PID_LOG:-/dev/null}"  # lets test-no-dashboard-leak verify the PID died
+    kill "$p" 2>/dev/null || true
+}
+trap '_reap; rm -rf -- "$SBX"' EXIT
 _refused() {
-    timeout -k 10 25 env "$@" bash "$LOKI_BIN" dashboard start --host "$_HOST" 2>&1 \
-        | grep -c "Refusing to start" | tr -d ' '
+    local n
+    n="$(timeout -k 10 25 env HOME="$SBX/home" "$@" bash "$LOKI_BIN" dashboard start --host "$_HOST" --port "$_PORT" 2>&1 \
+        | grep -c "Refusing to start" | tr -d ' ')"
+    _reap
+    printf '%s\n' "$n"
 }
 
 # --- 1. POSITIVE CONTROL: loopback still starts without auth ---------------
