@@ -1,5 +1,27 @@
 # Progress
 
+## OPEN ITEMS (completion ledger, founder 14:10Z; updated each train; done needs evidence)
+| Item | Status | Evidence or gap | Next slice |
+|---|---|---|---|
+| D48 row 1 gaming matrix | not started (test built de71397d, unmerged) | pre-red case needs a CTO call | CTO ruling, then merge |
+| D48 row 2 portable receipt | done | keys export and verify --pubkey shipped, tamper test | none |
+| D48 row 3 quiet and fast | partial | v10 output 7 lines (gate checks 8 or fewer); time ratio vs raw not measured | measure ratio |
+| D48 row 4 commits only the fix | partial | lockfile and Wall exclusion (10.5.28), backstop exclusions D50-F4 (train/61) | node, pytest, go first-run matrix |
+| D48 row 5 exit ladder plus --json schema | partial | exit 4 shipped; why and status JSON Schemas (10.5.30); quick and verify have no --json | decide quick/verify --json |
+| D48 row 6 doctor --fix under 2s | not started | dropped from train/26 | rework slice |
+| D48 rows 7-9 v10 default, non-null cost | done | on latest; gate leg 1 checks start line and cost | none |
+| D48 row 10 loki-seal marketplace | done | released | none |
+| D50 lift (north star) | partial, not citable | aiq-52 v10 0/3 vs raw 2/3; humanize-174 v10 0/3 vs raw 2/3 | merge F5 (r4), D53 gate F2r (merged local), S3, then rerun small tier haiku and sonnet x3 |
+| D51 Phase A | partial | first-run UI, backlog, headless, Slack shipped; no recorded end-to-end demo | e2e proof plus recorded demo |
+| D51 Phase B | started | design merged (D51-PHASE-B.md), B01 merged | B02, B03, B07 |
+| D51 Phase C | not started | none | after B |
+| DOC-01 long README for v10 | not started | none | haiku doc slices |
+| INTEL-1 in-toto receipts | not started | row ready | after D50 |
+| INTEL-2 visible cost cap | not started | row ready | after D50 |
+| INTEL-3 reviewer-first PR body | not started | row ready | haiku pieces |
+| D46 6 releases per hour | not met (1 to 2 per hour today) | release captain manual | RC-AUTO train-cycle.sh building |
+| Founder queue rows 11-16 | open | see FOUNDER-QUEUE.md | founder |
+
 ## 2026-09-28T21:44Z: v10.5.1 published; E-98f says no flip; D41 plan and D42 rulings
 - v10.5.1: cut 21:27:45Z (d697ea4c: E-110 pre-push scans every path, METRICS usage snapshot), Release 36486250082 success, publish-npm 21:36:44Z, npm latest 10.5.1 gitHead d697ea4c, body 9 lines from release-notes.sh (no backfill).
 - E-98f (merged eca3e8ef): n=3 x 21 medium task-runs per arm. default 15/21 (71.4%) p50 209s; WALL=0 16/21 (76.2%) p50 214s; CASCADE=0 15/21 p50 138s; raw 12/14 (EV-14) and 10/14 (EV-15) at p50 56s. No arm has a clean cost (null rows 10/2/11, harness rejects partial-stream cost). E-98 fixes hold: pytest not_run 0/80, spec_conflict reaches verify, jinja-1413 9/9. No flip.

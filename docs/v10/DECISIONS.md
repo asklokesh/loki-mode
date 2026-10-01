@@ -426,3 +426,9 @@ Loki's definition: "autonomous software factory that runs with the knowledge of 
 3. Scoring: PARTIAL never counts as completed in the harness or eval scoring. Lift comes from honest VERIFIED outcomes only.
 4. The append-only test rule (loki-ts/src/e10ext/context.ts:23) is relaxed only for case 1, using the same check; everything else stays append-only. It ships with red tests for: a loosened tolerance, if True changed to if False, a deleted assertion, and a literal not present in the issue.
 5. Rationale: no model opinion produces a pass, and the checks really ran, so the moat holds. It matches what users expect when an issue says "should return X instead of Y". Raw agents edit tests freely; Loki allows only the edit the spec literally demands. Implementation is HIGH tier (opus review), built after D50-F2r merges (D50-F2-S3).
+
+## D46 amendment (founder, relayed 14:12Z): "6 releases an hour, strictly and no compromise"
+1. Target: 6 `next` releases every hour (one every 10 minutes), inside D52 pacing; the throughput comes from automation and cheap slices, not more opus.
+2. The release captain is automated: scripts/train-cycle.sh (slice RC-AUTO) runs every 10 minutes and cuts trains, promotes green trains to main and cuts the patch release with no model calls. Red trains drop slices per D46 rule 2.
+3. Slice supply: a standing queue of small user-visible haiku slices (15 min or less) keeps at least one merged-green slice per 10-minute window; sonnet builders feed the larger D50, D48 and D51 items into the same queue.
+4. The quality bar is unchanged: green slices only, the two-leg gate before `latest`, no weakened checks. Releases per hour are reported in every PROGRESS entry.
