@@ -1641,3 +1641,8 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - train/17 935b2766 Tests run 36799190925: shard 4 only, 49/50 passed. The one failure is tests/test-quick-receipt-order.sh "default output is 16 lines (max 15)". The 16 lines are stderr noise (mkdir .loki/config exists, 2 caveman bootstrap lines, echo broken pipe), the same main-resident failure as train/15. A-115b is not implicated, so nothing is dropped. Fix forward is slice-P0-t15, in rework (2 reviewer blockers). train/18 = train/17 + P0-t15 once approved. Bun Parity and Coverage: success.
 - v10.5.14 (2f4462b7) Release run still in progress at 01:10Z; next=10.5.13, latest=10.5.10 (npm view dist-tags).
 - Staffed 01:12Z: A-119 opus review, A-130b and A-134b builders, CTO call on A-118/A-121b.
+
+## 2026-10-01T01:20Z v10.5.14 published
+- Release run success; `npm view loki-mode@10.5.14 version gitHead` = 10.5.14 / 2f4462b7; dist-tags next=10.5.14, latest=10.5.10 (unchanged); release body 17 lines.
+- D46 tally this hour: next releases 1 (10.5.14) vs target 3-6; trains cut 1 (train/17), red 1, dropped 0. Shortfall cause: the main-resident quiet-output flake (P0-t15 in rework).
+- OPUS_SHARE 33.7% vs 30%: no new opus seats until it drops; the open opus work is the A-117 r2 builder (resumed) only.
