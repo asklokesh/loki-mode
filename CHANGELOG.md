@@ -10,18 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
-## v10.6.3 (2026-10-01)
+## v10.6.4 (2026-10-01)
 
-A `next` release. It ships the changes prepared for v10.6.1, which was never published.
+A `next` release. It ships the changes prepared for v10.6.1 and v10.6.3, neither of which was published.
 
 ### Scope control
 - v10 runs stay inside the task. After a run, any edit to an existing file outside the plan's scope is restored before commit and listed in the receipt under NOT PROVEN as `unrelated edit reverted: <file>`. Test files, new files and files you had already modified are kept. When the planner produced no scope (small tasks), nothing is reverted and the receipt says so.
 
 ### Loki Control Plane v0
 - First cut of the Control Plane that replaces the dashboards: a live run view fed by the engine when `LOKI_CONTROL_URL` is set, plus `loki control`. Off unless configured.
-
-### Dashboard
-- The dashboard publishes the URL it actually bound to (`.loki/dashboard/url`); the banner and browser opener use it instead of a guessed port. `loki ui` and `dashboard start` reuse a running dashboard only when it belongs to this project. Test runs no longer leave dashboards on ports 57374-57399.
 
 ### Release tooling
 - The release captain waits for a train's running checks before cutting a newer one, and no longer waits forever on a check that never started.
@@ -30,7 +27,12 @@ A `next` release. It ships the changes prepared for v10.6.1, which was never pub
 - Docs updated for the v10-only direction; README keeps its Loki 10 default marker.
 
 ### Not in this release
+- Dashboard bound-URL and test port-leak fix: withdrawn after it failed the bare `loki` UI test (v10.6.3); planned for next week.
 - `loki start` routed to v10 and removal of the legacy commands: withdrawn after it failed the test suite (v10.6.2); planned for next week.
+
+## v10.6.3 (2026-10-01, not published)
+
+Not published. The dashboard port fix failed the bare `loki` UI test and was withdrawn; everything else shipped in v10.6.4.
 
 ## v10.6.2 (2026-10-01, not published)
 
