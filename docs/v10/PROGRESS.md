@@ -1711,3 +1711,19 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - A-121b r3 merged 8714c988f (one-line write keeps core 4999; verify_cmd/log_seal/budget/roundtrip 55/0, quick-receipt-order 26/0). train/27 8714c988 pushed (guards: shellcheck 0, v10-ops 67/0, shard-coverage 19/0).
 - D50 baseline merged 871ff5dc7 (METRICS.md): raw haiku 4/10, Loki+haiku 7/10 (cost/completed -14%, 1.19x time), raw sonnet 9/10, Loki+sonnet 5/10 (LOSS). Defect E-164 (lockfile dirtied by setup blocks v10 start) building.
 - Rework: A-118 r4 (3 narrow cases), D51-A12 r3 (health exempt, deploy hosts, 27 tests). DOC-01 a13ca60be done, unreviewed.
+
+## 2026-10-01T04:29Z D48 report (deadline 04:35Z) and release state
+- Releases: v10.5.17 published (Release success; npm 10.5.17 gitHead 78d8713b) and AUTO-PROMOTED by promote.yml (event workflow_run, success): dist-tags latest=10.5.17, next=10.5.17. First D49 auto-promotion.
+- train/28 red (D51-A12 host check 403 in non-dashboard tests; E-164 spawn without env): both dropped, fixed (D51-A12 r4 af58ceead, E-164 r2 be5b70070) and re-landed on main. train/29 red on Python 3.10 only (A-118 treats any pyproject edit as config when tomllib is missing): A-118 dropped (bb9658a15), r5 in progress. train/30 bb9658a1 (D51-A12 UI, E-164, DOC-02 doc sweep) in CI.
+- D48 rows (acceptance test status, honest):
+  1 gaming matrix: NOT DONE. Test built (D48-r1 de71397dd) but not merged; 20 expected-fail cases remain (A-117 shipped; A-118 r5 and A-119c still open; pre-red case needs a CTO call).
+  2 portable receipt: PARTIAL. A-117 (tamper detection incl. tail truncation) shipped in 10.5.17; `loki keys export` + `loki verify --pubkey` built (b073d50a), not yet reviewed or merged.
+  3 quiet and fast (<=8 lines, <=1.5x raw time): NOT DONE (not measured; D50 baseline shows Loki+haiku 1.19x raw haiku time).
+  4 commits only the fix on node/pytest/go repos: NOT STARTED.
+  5 exit ladder + --json schema: NOT DONE (A-118 r5 in progress; schema not started).
+  6 doctor --fix and <2s: NOT DONE (built, dropped from train/26 on CI: unsuppressed claude subcall, spawn env, test failing on CI).
+  7-9 v10 default engine + non-null cost: NOT DONE (flip slice built? builder has not reported).
+  10 loki-seal installable from the repo marketplace: PASS (shipped in 10.5.17, on latest; clean-HOME install verified).
+- D51 Phase A on latest (10.5.17): `loki backlog` + loki.yaml + Slack (v10 path). Pending on train/30: bare `loki` opens the UI with PAT onboarding and backlog complete-all.
+- D50: baseline in METRICS.md (Loki+haiku 7/10 vs raw haiku 4/10; Loki+sonnet 5/10 vs raw sonnet 9/10, a LOSS). E-164 (setup-dirtied lockfile) fixed.
+- Pacing: from 04:35Z the governor paces to about 0.48%/h of the week (about 7 engineers).
