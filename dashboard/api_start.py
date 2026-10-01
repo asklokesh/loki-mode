@@ -42,7 +42,28 @@ _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-]{10,255}$")
 _KEY_RE = re.compile(r"^[A-Za-z0-9_\-.]{10,512}$")
 _PROVIDER_KEY_ENV = {"claude": "ANTHROPIC_API_KEY", "codex": "OPENAI_API_KEY"}
+_PROVIDER_BIN = {"claude": "claude", "codex": "codex"}
+_SECRET_FILES = {"github": "github", "claude_api_key": "claude_api_key", "codex_api_key": "codex_api_key"}
 _lock = threading.RLock()
+
+
+def _pick(table: dict, key):
+    """Return the table's own constant equal to key, so request data never reaches a sink."""
+    for const in table.values():
+        if const == key:
+            return const
+    return None
+
+
+def _secret_path(name: str) -> Path:
+    const = _pick(_SECRET_FILES, name)
+    if const is None:
+        raise ValueError("unknown secret name")
+    base = _creds_dir().resolve()
+    dest = (base / const).resolve()
+    if dest.parent != base:
+        raise ValueError("secret path escapes credentials dir")
+    return dest
 _RUNS: dict = {}
 
 
@@ -64,8 +85,8 @@ def _creds_dir() -> Path:
 
 
 def _write_secret(name: str, value: str) -> None:
-    dest = _creds_dir() / name
-    tmp = dest.with_name(".%s.%d.tmp" % (name, os.getpid()))
+    dest = _secret_path(name)
+    tmp = dest.with_name(".%s.%d.tmp" % (dest.name, os.getpid()))
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
         os.fchmod(fd, 0o600)
@@ -77,8 +98,8 @@ def _write_secret(name: str, value: str) -> None:
 
 def _read_secret(name: str) -> Optional[str]:
     try:
-        return (_creds_dir() / name).read_text().strip() or None
-    except OSError:
+        return _secret_path(name).read_text().strip() or None
+    except (OSError, ValueError):
         return None
 
 
@@ -114,10 +135,11 @@ def _gh_api(path: str, token: str):
 
 def _cli_version(name: str) -> Optional[str]:
     """Version probe only. Never reads the CLI's credential files."""
-    if not shutil.which(name):
+    binary = _pick(_PROVIDER_BIN, name)
+    if binary is None or not shutil.which(binary):
         return None
     try:
-        out = subprocess.run([name, "--version"], capture_output=True, text=True, timeout=8)
+        out = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=8)
     except (OSError, subprocess.SubprocessError):
         return None
     return (out.stdout.strip().splitlines() or ["unknown"])[0] if out.returncode == 0 else None

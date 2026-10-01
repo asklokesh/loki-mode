@@ -270,3 +270,16 @@ def test_repo_leading_dash_rejected(env):
     client, _, _, _ = env
     client.post("/api/onboarding/github", json={"token": PAT})
     assert client.post("/api/onboarding/repo", json={"repo": "--x/y"}).status_code == 400
+
+
+def test_unknown_provider_400_and_no_file(env, tmp_path, monkeypatch):
+    client = env[0] if isinstance(env, tuple) else env
+    assert client.post('/api/onboarding/provider', json={'provider': '../evil', 'api_key': 'k' * 20}).status_code == 400
+    from dashboard import api_start as m
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert m._cli_version("../evil") is None
+    with __import__("pytest").raises(ValueError):
+        m._write_secret("../evil", "x" * 20)
+    assert m._read_secret("../evil") is None
+    assert not (tmp_path / ".loki" / "evil").exists()
+    assert not [p for p in (tmp_path / ".loki" / "credentials").glob("*")]
