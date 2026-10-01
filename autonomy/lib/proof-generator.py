@@ -1182,13 +1182,21 @@ _TI_PYTEST_KEYS = ("addopts", "testpaths", "python_files", "python_functions",
 def _ti_pytest_view(text, path):
     """The test-selection keys of a pytest config, or None when unparseable.
     Parsed (tomllib / configparser), so a multi-line addopts edit is seen.
-    ponytail: without tomllib (python < 3.11) a pyproject.toml is not parsed and
-    any edit to it counts as changed; upgrade path is the tomli backport."""
+    ponytail: without tomllib (python < 3.11) try tomli, else compare only the
+    whitespace-normalized [tool.pytest.ini_options] section text."""
     if not text.strip():
         return {}
     if path.endswith(".toml"):
         try:
-            import tomllib
+            try:
+                import tomllib
+            except ImportError:
+                import tomli as tomllib
+        except ImportError:
+            m = re.search(r"^\[tool\.pytest\.ini_options\][ \t]*(?:#.*)?$(.*?)(?=^\[[^\[\]\n]+\][ \t]*(?:#.*)?$|\Z)",
+                          text, re.M | re.S)
+            return {"ini_options": " ".join(m.group(1).split())} if m else {}
+        try:
             d = tomllib.loads(text)
         except Exception:
             return None
