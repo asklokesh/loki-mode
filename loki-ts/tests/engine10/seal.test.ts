@@ -749,3 +749,48 @@ describe("A-104 commit only the fix (G2)", () => {
     });
   }
 });
+
+describe("D50-F1 already-satisfied discards run changes", () => {
+  const sig = new AbortController().signal;
+  test("already_done with implement edits: no diff vs base, no commit, .loki kept", async () => {
+    const { repo, base } = makeRepo("sat-discard");
+    writeFileSync(join(repo, "new.txt"), "stray\n");
+    const { ctx } = ctxFor(repo, base, "claude", { implement: { exit: "already_done", tests_reverted: [], duration_s: 3 } });
+    const c = await commitStage.run(ctx, sig);
+    expect(c.status).toBe("completed");
+    expect(sh(["git", "rev-parse", "HEAD"], repo).trim()).toBe(base);
+    expect(sh(["git", "status", "--porcelain", "--", ".", ":(exclude).loki"], repo)).toBe("");
+    expect(sh(["git", "diff", base], repo)).toBe("");
+    expect(existsSync(join(repo, ".loki/runs/r1/events.jsonl"))).toBe(true);
+    const r = receiptOf(await sealStage.run(ctx, sig));
+    expect(r.verdict).toBe("ALREADY_SATISFIED");
+    expect(r.head_sha).toBe(base);
+  }, 30000);
+
+  test("a normal done run keeps its changes", async () => {
+    const { repo, base } = makeRepo("sat-keep");
+    const { ctx } = ctxFor(repo, base);
+    await commitStage.run(ctx, sig);
+    expect(sh(["git", "rev-parse", "HEAD"], repo).trim()).not.toBe(base);
+    expect(sh(["git", "show", "HEAD:a.txt"], repo)).toBe("two\n");
+  }, 30000);
+
+  test("a failing discard fails the stage and the verdict is FAILED, never ALREADY_SATISFIED", async () => {
+    const { repo } = makeRepo("sat-fail");
+    sh(["git", "checkout", "-q", "--", "a.txt"], repo);
+    sh(["mkdir", "-p", "d"], repo);
+    writeFileSync(join(repo, "d/b.txt"), "x\n");
+    sh(["git", "add", "d/b.txt"], repo);
+    sh(["git", "commit", "-q", "-m", "b"], repo);
+    const base = sh(["git", "rev-parse", "HEAD"], repo).trim();
+    writeFileSync(join(repo, "d/b.txt"), "y\n");
+    sh(["chmod", "555", join(repo, "d")], repo);
+    try {
+      const { ctx } = ctxFor(repo, base, "claude", { implement: { exit: "already_done", tests_reverted: [], duration_s: 3 } });
+      const c = await commitStage.run(ctx, sig);
+      expect(c.status).toBe("failed");
+      const { ctx: c2 } = ctxFor(repo, base, "claude", { implement: { exit: "already_done", tests_reverted: [], duration_s: 3 }, commit: { failed: true } });
+      expect(receiptOf(await sealStage.run(c2, sig)).verdict).toBe("FAILED");
+    } finally { sh(["chmod", "755", join(repo, "d")], repo); }
+  }, 30000);
+});
