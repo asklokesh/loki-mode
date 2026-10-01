@@ -209,7 +209,7 @@ fi
 # --- 2. The secret scan runs over every reachable commit --------------------
 _secret_expected_custody='{"checkout_uses": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262", "fetch_depth": 0, "permissions": {"contents": "read"}}'
 if printf '%s' "$_SECRET_SCAN_STEP" | grep -qE 'gitleaks git( |$)|"\$GITLEAKS_BIN" git( |$)' \
-   && printf '%s' "$_SECRET_SCAN_STEP" | grep -q -- '--log-opts="--all"' \
+   && printf '%s' "$_SECRET_SCAN_STEP" | grep -q -- '--log-opts="--all --diff-merges=first-parent"' \
    && [ "$_SECRET_CUSTODY" = "$_secret_expected_custody" ]; then
   ok "gitleaks scans all reachable history from a full, read-only pinned checkout"
 else
@@ -388,6 +388,9 @@ fi
 # file-name false positive in the train/14 dist rebuild, 23 -> 24, 59 -> 60.
 # 61 61 36 25 0: commit eb4e2155 (a dist rebuild before E-156 removed the
 # literal at the source), 24 -> 25, 60 -> 61. E-156 ends this churn.
+# 73 73 36 37 0: E-159 added `--diff-merges=first-parent` to the scan, which re-reports
+# already-baselined content under the MERGE commit SHA; 12 exact merge-SHA fingerprints
+# (v10.5.13..v10.5.14 history), 25 -> 37, 61 -> 73. Measured: 12 findings, all merges.
 _ignore="${LOKI_GITLEAKS_IGNORE:-$REPO_ROOT/.gitleaksignore}"
 _ignore_shape="$(python3 - "$_ignore" <<'PY'
 import re, sys
@@ -401,10 +404,10 @@ print(len(entries), len(set(entries)),
       sum(not current.fullmatch(e) and not historical.fullmatch(e) for e in entries))
 PY
 )"
-if [ "$_ignore_shape" = "61 61 36 25 0" ]; then
-  ok "gitleaks baseline contains 36 current and 23 commit-qualified historical fingerprints"
+if [ "$_ignore_shape" = "73 73 36 37 0" ]; then
+  ok "gitleaks baseline contains 36 current and 37 commit-qualified historical fingerprints"
 else
-  bad "gitleaks baseline shape drifted ($_ignore_shape; expected 61 61 36 25 0)"
+  bad "gitleaks baseline shape drifted ($_ignore_shape; expected 73 73 36 37 0)"
 fi
 
 # Optional live mutation proof. Exact-SHA acceptance supplies the same pinned
@@ -414,14 +417,14 @@ fi
 _run_live_gitleaks_history() {
   local scan_root="$1" report="$2" ignore="$3"
   (cd "$scan_root" && "$LOKI_GITLEAKS_BIN" git . \
-    --log-opts="--all" \
+    --log-opts="--all --diff-merges=first-parent" \
     --gitleaks-ignore-path "$ignore" --report-format json \
     --report-path "$report" --redact --no-banner >/dev/null 2>&1)
 }
 
 _live_history_helper="$(declare -f _run_live_gitleaks_history)"
 if printf '%s' "$_live_history_helper" | grep -qE 'GITLEAKS_BIN.* git \.' \
-   && printf '%s' "$_live_history_helper" | grep -q -- '--log-opts="--all"'; then
+   && printf '%s' "$_live_history_helper" | grep -q -- '--log-opts="--all --diff-merges=first-parent"'; then
   ok "live gitleaks oracle is bound to git mode over all reachable history"
 else
   bad "live gitleaks oracle regressed from git mode or omitted --all"

@@ -33,7 +33,16 @@ echo "=== security-audit.yml gitleaks config isolation (E-114) ==="
 [ -f "$SCRIPT" ] || { echo "  FAIL: $SCRIPT missing"; exit 1; }
 [ -x "$SCRIPT" ] || { echo "  FAIL: $SCRIPT is not executable"; exit 1; }
 
-GITLEAKS_BIN="$(command -v gitleaks 2>/dev/null || true)"
+# Prefer the pinned binary scripts/install-gitleaks.sh puts on disk, then PATH.
+GITLEAKS_BIN=""
+_pinned="$HOME/.local/share/loki/bin/gitleaks-8.30.0"
+if [ -x "$_pinned" ]; then GITLEAKS_BIN="$_pinned"; else GITLEAKS_BIN="$(command -v gitleaks 2>/dev/null || true)"; fi
+if [ -z "$GITLEAKS_BIN" ] && [ -n "${CI:-}" ]; then
+  echo "  FAIL: no gitleaks binary under CI -- the Wall checks would not run (install scripts/install-gitleaks.sh first)"
+  echo
+  echo "=== $PASS passed, 1 failed ==="
+  exit 1
+fi
 if [ -z "$GITLEAKS_BIN" ]; then
   echo "  SKIP: no gitleaks binary on PATH -- live scenarios not run (not a pass)"
   echo
@@ -301,6 +310,75 @@ if [ "$_rc_f" -ne 0 ]; then
   ok "r3 repro: an untagged repo with no release tag is refused, not fell back to origin/main~1"
 else
   bad "r3 repro: no release tag fell back to an unaudited commit and passed -- fails open (same bug class as r1/r2)"
+fi
+
+# --- Scenario G (E-159 a): an evil merge's OWN content ----------------------
+# `merge -s ours --no-commit` then a token added in the merge commit itself: the
+# per-commit git scan never sees it. The --cc merge scan must.
+_run_script() { # _run_script <repo> <report> [extra env assignment]
+  (cd "$1" && env ${3:+"$3"} GITLEAKS_BIN="$GITLEAKS_BIN" GITLEAKS_BEFORE="" \
+    GITLEAKS_TIP="$(git -C "$1" rev-parse HEAD)" GITLEAKS_REPORT="$2" "$SCRIPT" >"$2.out" 2>&1)
+}
+REPO_G="$TMP_ROOT/repo-evil-merge"
+_new_repo "$REPO_G"
+git -C "$REPO_G" checkout -q -b side
+printf 'side\n' > "$REPO_G/side.txt"
+git -C "$REPO_G" add side.txt
+git -C "$REPO_G" commit -qm "side" --no-gpg-sign --no-verify
+git -C "$REPO_G" checkout -q main
+git -C "$REPO_G" merge -q --no-ff --no-commit -s ours side >/dev/null 2>&1
+printf '%s\n' "const key = \"${_akia_prefix}${_akia_rest}\";" > "$REPO_G/CHANGELOG.md"
+git -C "$REPO_G" add CHANGELOG.md
+git -C "$REPO_G" commit -qm "evil merge" --no-gpg-sign --no-verify
+_g_old_rc=0
+(cd "$REPO_G" && "$GITLEAKS_BIN" git . --log-opts="--all" --no-banner --redact >/dev/null 2>&1) || _g_old_rc=$?
+[ "$_g_old_rc" -eq 0 ] && ok "RED EVIDENCE: the per-commit git scan alone misses an evil merge's own content" \
+  || bad "fixture does not reproduce the evil-merge blind spot"
+if _run_script "$REPO_G" "$TMP_ROOT/report-g.json"; then
+  bad "E-159a: the script passed an evil merge carrying a secret in the merge commit itself"
+else
+  ok "E-159a: the script fails an evil merge carrying a secret in the merge commit itself"
+fi
+
+# A clean ordinary merge must still pass (no false positive from --cc).
+REPO_G2="$TMP_ROOT/repo-clean-merge"
+_new_repo "$REPO_G2"
+git -C "$REPO_G2" checkout -q -b side
+printf 'side\n' > "$REPO_G2/side.txt"
+git -C "$REPO_G2" add side.txt
+git -C "$REPO_G2" commit -qm "side" --no-gpg-sign --no-verify
+git -C "$REPO_G2" checkout -q main
+printf 'main\n' > "$REPO_G2/main.txt"
+git -C "$REPO_G2" add main.txt
+git -C "$REPO_G2" commit -qm "main side" --no-gpg-sign --no-verify
+git -C "$REPO_G2" merge -q --no-ff -m "clean merge" side >/dev/null 2>&1
+if _run_script "$REPO_G2" "$TMP_ROOT/report-g2.json"; then
+  ok "E-159a: an ordinary clean merge still passes"
+else
+  bad "E-159a: an ordinary clean merge was failed"; cat "$TMP_ROOT/report-g2.json.out"
+fi
+
+# --- Scenario H (E-159 b): gitleaks exits 0 when its internal git log fails --
+REPO_H="$TMP_ROOT/repo-bad-range"
+_new_repo "$REPO_H"
+_h_raw_rc=0
+(cd "$REPO_H" && "$GITLEAKS_BIN" git . --log-opts="HEAD~50..HEAD" --no-banner >/dev/null 2>&1) || _h_raw_rc=$?
+[ "$_h_raw_rc" -eq 0 ] && ok "RED EVIDENCE: gitleaks itself exits 0 on an invalid range (fail-open)" \
+  || bad "this gitleaks no longer exits 0 on an invalid range; fail-open control is stale"
+if _run_script "$REPO_H" "$TMP_ROOT/report-h.json" "GITLEAKS_RANGE=HEAD~50..HEAD"; then
+  bad "E-159b: the script reported a clean scan for an invalid range"
+else
+  ok "E-159b: the script refuses an invalid range instead of passing"
+fi
+if _run_script "$REPO_H" "$TMP_ROOT/report-h3.json" "GITLEAKS_RANGE=HEAD..HEAD"; then
+  bad "E-159: an empty range (zero commits walked) was reported as a clean scan"
+else
+  ok "E-159: an empty range (zero commits walked) is refused"
+fi
+if _run_script "$REPO_H" "$TMP_ROOT/report-h2.json"; then
+  ok "E-159b: a valid default (--all) scan of a clean repo still passes"
+else
+  bad "E-159b: a clean --all scan failed"; cat "$TMP_ROOT/report-h2.json.out"
 fi
 
 echo

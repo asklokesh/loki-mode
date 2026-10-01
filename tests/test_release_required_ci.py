@@ -580,6 +580,7 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
                 + list(sha_audit)}
 
     def test_e157_eligible_bump_reuses_parent_security_audit_success(self):
+        _require_gitleaks(self)
         rc, out = self._run(self._reuse_fixture([("Security Audit", "completed", "success")]))
         self.assertEqual(rc, 0, out)
         self.assertIn("Security Audit @ %s (reused)" % self.parent, out)
@@ -650,6 +651,7 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
         return self._commit_all("release 9.57.0")
 
     def test_e157_clean_range_still_reuses(self):
+        _require_gitleaks(self)
         new_sha = self._bump()
         fx = self._audited_parent_fixture(new_sha)
         self.sha = new_sha
@@ -658,6 +660,7 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
         self.assertIn("(reused)", out)
 
     def test_e157_secret_in_allowlisted_changelog_block_is_not_reused(self):
+        _require_gitleaks(self)
         header, old = "# Changelog\n\n", "## v9.56.0\n\nold.\n"
         _write(self.repo, "CHANGELOG.md", header + old)
         self.sha = self._commit_all("add changelog")
@@ -668,9 +671,12 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
         self.sha = new_sha
         rc, out = self._run(fx)
         self.assertEqual(rc, 99, out)
+        self.assertIn("PARENT..SHA scan did not come back clean", out)
+        self.assertIn("leaks found", out)
         self.assertNotIn("Security Audit @ %s (reused)" % parent, out)
 
     def test_e157_merge_release_hiding_a_leak_in_second_parent_is_not_reused(self):
+        _require_gitleaks(self)
         _git(self.repo, "checkout", "-q", "-b", "side")
         _write(self.repo, "leak.txt", "token = %s\n" % self.TOKEN)
         self._commit_all("leak")
@@ -686,6 +692,8 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
         self.sha = new_sha
         rc, out = self._run(fx)
         self.assertEqual(rc, 99, out)
+        self.assertIn("PARENT..SHA scan did not come back clean", out)
+        self.assertIn("leaks found", out)
         self.assertNotIn("Security Audit @ %s (reused)" % parent, out)
 
     def _map(self, ver, debug_id):
@@ -700,6 +708,7 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
         return self._run(fx)
 
     def test_e157_hex_debugid_is_still_eligible(self):
+        _require_gitleaks(self)
         rc, out = self._map_release("0123abcd-4567-89ef")
         self.assertEqual(rc, 0, out)
         self.assertIn("(reused)", out)

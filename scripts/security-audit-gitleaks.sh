@@ -36,8 +36,13 @@ GITLEAKS_REPORT="${GITLEAKS_REPORT:-/tmp/gitleaks-report.json}"
 # parent's audit verdict. Default stays the full-history scan.
 # Set GITLEAKS_RANGE (e.g. PARENT..SHA) to scan only that range; empty = all history.
 GITLEAKS_RANGE="${GITLEAKS_RANGE:-}"
-_log_opts_arg=(--log-opts="--all")
-[ -z "$GITLEAKS_RANGE" ] || _log_opts_arg=(--log-opts="$GITLEAKS_RANGE")
+# E-159 (a), evil merge: `--diff-merges=first-parent` makes the per-commit scan diff each
+# merge against its first parent, so content a merge commit adds ITSELF (e.g.
+# `merge -s ours --no-commit` plus a token in the merge) is scanned, and fingerprints
+# stay commit-qualified so the .gitleaksignore baseline still applies. A stdin/--cc scan
+# was rejected: it cannot apply commit-qualified fingerprints.
+_log_opts_arg=(--log-opts="--all --diff-merges=first-parent")
+[ -z "$GITLEAKS_RANGE" ] || _log_opts_arg=(--log-opts="$GITLEAKS_RANGE --diff-merges=first-parent")
 
 # FAIL CLOSED: an absent binary is not "no secrets found".
 if [ ! -x "$GITLEAKS_BIN" ]; then
@@ -172,14 +177,37 @@ else
 fi
 
 _scan_rc=0
-"$GITLEAKS_BIN" git . \
-  "${_config_arg[@]+"${_config_arg[@]}"}" \
-  "${_log_opts_arg[@]}" \
-  --gitleaks-ignore-path .gitleaksignore \
-  --report-format json \
-  --report-path "$GITLEAKS_REPORT" \
-  --redact \
-  --no-banner || _scan_rc=$?
+_revs="${GITLEAKS_RANGE:---all}"
+
+# E-159 (b), FAIL OPEN closed: gitleaks 8.30.0 exits 0 when its own internal
+# `git log` fails (an invalid range, HEAD~5 on a short repo) and scans nothing.
+# Refuse unless git itself can walk the revisions first AND the walk is non-empty,
+# and below also treat a "[git] fatal" line in the scanner's output as a failure.
+# shellcheck disable=SC2086
+if ! _walked="$(git rev-list --count $_revs 2>/dev/null)"; then
+  echo "FAIL: 'git rev-list ${_revs}' failed -- nothing would be scanned, refusing to report a clean scan" >&2
+  _scan_rc=1
+elif [ "${_walked:-0}" -eq 0 ]; then
+  echo "FAIL: 'git rev-list ${_revs}' walked zero commits -- nothing would be scanned, refusing to report a clean scan" >&2
+  _scan_rc=1
+else
+  _err_log="$(mktemp "${TMPDIR:-/tmp}/loki-gitleaks-stderr.XXXXXX")"
+  "$GITLEAKS_BIN" git . \
+    "${_config_arg[@]+"${_config_arg[@]}"}" \
+    "${_log_opts_arg[@]}" \
+    --gitleaks-ignore-path .gitleaksignore \
+    --report-format json \
+    --report-path "$GITLEAKS_REPORT" \
+    --redact \
+    --no-banner 2> >(tee "$_err_log" >&2) || _scan_rc=$?
+  wait
+  if [ "$_scan_rc" -eq 0 ] && grep -q '\[git\] fatal' "$_err_log" 2>/dev/null; then
+    echo "FAIL: gitleaks reported a git fatal error yet exited 0 -- the scan did not cover the requested history" >&2
+    _scan_rc=1
+  fi
+
+  rm -f -- "$_err_log"
+fi
 
 [ -z "$_config_tmp" ] || rm -f -- "$_config_tmp"
 if [ -n "$_tip_config_backup" ]; then

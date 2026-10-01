@@ -96,3 +96,20 @@ afeeb2172324f96c3da2b98708fa7a1e0648fadb:tests/conftest.py:generic-api-key:48
 d20a8a3eb9952094b29a107df69e348dab43d951:loki-ts/dist/loki.js:generic-api-key:1264
 14c603a99ccc386b07d074b7e682c706eb667c59:loki-ts/dist/loki.js:generic-api-key:1264
 eb4e215561782f6bfbf5fd24e0458d21ab4c694a:loki-ts/dist/loki.js:generic-api-key:1270
+
+# E-159: `--diff-merges=first-parent` re-reports content a train merge merely carried in
+# from a branch, under the MERGE commit SHA. Each entry below is the exact merge-SHA
+# fingerprint of an already-baselined finding in the v10.5.13..v10.5.14 history (the
+# key FILE NAME receipt-ed25519.pem, synthetic fixture tokens); none is new content.
+61c4ceb216bd35dd053070bc9d4d799260facf56:tests/conftest.py:generic-api-key:48
+a83c6789885685f15424d0a93de7e09c2dec0ac4:loki-ts/dist/loki.js:generic-api-key:1271
+ff2f4719c34fa391ad1dd664c217d7337d6e5fac:loki-ts/dist/loki.js:generic-api-key:1264
+9e540e1e7ab8c3b75e2a1d703999ecb3ba2af607:loki-ts/src/engine10/stages/seal.ts:generic-api-key:68
+9e540e1e7ab8c3b75e2a1d703999ecb3ba2af607:loki-ts/tests/engine10/seal.test.ts:generic-api-key:174
+7eb91ad95a6d86772843574fd52228f46020c26b:loki-ts/dist/loki.js:generic-api-key:1263
+08b312714a001408ff8d95525a668c9df5b879a4:loki-ts/src/engine10/stages/seal.ts:generic-api-key:68
+08b312714a001408ff8d95525a668c9df5b879a4:loki-ts/tests/engine10/seal.test.ts:generic-api-key:174
+9e540e1e7ab8c3b75e2a1d703999ecb3ba2af607:loki-ts/dist/loki.js:generic-api-key:1244
+21df7d4a26b6bceff654c6686cd1beca47e3927f:tests/test-eval-archive.sh:generic-api-key:35
+21df7d4a26b6bceff654c6686cd1beca47e3927f:tests/test-eval-archive.sh:aws-access-token:75
+21df7d4a26b6bceff654c6686cd1beca47e3927f:tests/test-eval-archive.sh:aws-access-token:88
