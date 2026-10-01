@@ -11,12 +11,7 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** D48: marker on a result-cost file and the cost event/receipt for a CLI-invoker session (LOKI_E10_INVOKER=cli, e.g. the
- *  stub provider) that has no provider-reported dollars. Recorded as 0, never null, and always disclosed in NOT PROVEN. */
-export const UNMETERED = "cli-invoker-unmetered";
-
 export interface CostResult {
-  unmetered?: boolean; // some session in this sum carried the UNMETERED marker
   usd: number | null;
   // E-69: dollars actually reported by the measured sessions even when usd above is null (some OTHER
   // session in this call wasn't priced). Lets a caller render "partial: $X for N of M" instead of "not measured".
@@ -74,9 +69,7 @@ export function sumResultCosts(lokiRoot: string, iterations: string[]): CostResu
     const c = rec["total_cost_usd"];
     // E-69 (EV-8 failure mode "Cost: $0.00 (claude, 0 tokens)"): a dollar figure with all-zero usage
     // is a session that never really ran, so it's unmeasured like a missing file, never a real $0.00.
-    const unmetered = rec["source"] === UNMETERED; // D48: an explicit marker, so the zero is disclosed, not a fake provider figure
-    if (unmetered) out.unmetered = true;
-    const noUsage = !unmetered && inTok === 0 && outTok === 0 && cacheR === 0 && cacheC === 0;
+    const noUsage = inTok === 0 && outTok === 0 && cacheR === 0 && cacheC === 0;
     if (typeof c !== "number" || !Number.isFinite(c) || noUsage) {
       out.missing.push(iter); // dollars unknown for this session: the usd sum stays unknown too
       continue;
@@ -152,6 +145,6 @@ export function writeEfficiencyRecord(lokiRoot: string, info: EfficiencySessionI
 // in the same step. Returns the CostResult so the caller can also emit the `cost` event (section 5) from the same numbers.
 export function recordSessionCost(lokiRoot: string, iterationId: string, info: EfficiencySessionInfo): CostResult {
   const cost = readResultCost(lokiRoot, iterationId);
-  writeEfficiencyRecord(lokiRoot, info, cost, cost.unmetered ? UNMETERED : "provider");
+  writeEfficiencyRecord(lokiRoot, info, cost);
   return cost;
 }

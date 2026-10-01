@@ -89,9 +89,7 @@ not rank above UNCHECKED.
 | Legacy shell (`autonomy/verify.sh`) | BLOCKED (non-zero) | the receipt line passes with the same accepted line |
 
 Engine10 `loki verify [run-id]` exits: 0 verified, 1 tampered, 2 unchecked,
-3 unsigned (refused), 4 run outcome not verified (a sealed receipt of a FAILED or
-otherwise unverified run), 66 no runs. The outcome check runs before the UNSIGNED
-branch, so the flag never changes exit 4, TAMPERED or UNCHECKED,
+3 unsigned (refused), 66 no runs. The flag never changes TAMPERED or UNCHECKED,
 and verify never creates a signing key.
 
 An early draft spec listed `1=BLOCKED, 2=CONCERNS`. That ordering was rejected:

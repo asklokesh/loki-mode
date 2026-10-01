@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# D48: runs under LOKI_ENGINE=legacy (the legacy quick receipt order); the default `loki quick` is the Loki 10 engine.
 # A-134: `loki quick` prints its Evidence Receipt only after the session commit, so
 # the printed Head equals git HEAD and the printed diff sha equals proof.json; the
 # printed receipt_sha256 equals what `loki verify` reports; default stdout is at most
@@ -42,7 +41,7 @@ mk_fix() { # mk_fix <dir>
 }
 run_quick() { # run_quick <dir> <stdout-file> [extra env assignment] [loki quick flag]
     ( cd "$1" || exit 2
-      env ${3:+"$3"} HOME="$T/home" PATH="$T/bin:$PATH" LOKI_NO_BROWSER=1 LOKI_SKIP_AUTH_PREFLIGHT=1 LOKI_ENGINE=legacy \
+      env ${3:+"$3"} HOME="$T/home" PATH="$T/bin:$PATH" LOKI_NO_BROWSER=1 LOKI_SKIP_AUTH_PREFLIGHT=1 \
           "$REPO_ROOT/bin/loki" quick ${4:+"$4"} "fix the bug that makes the failing test in sum.test.js fail" \
           < /dev/null > "$2" 2> "$2.err" )
 }

@@ -225,7 +225,6 @@ export const sealStage: Stage = {
     const iterIds = Object.values(o).flatMap((d) => [...strs(d?.iteration_ids), ...strs([d?.iteration_id])]);
     if (iterIds.length === 0) notProven.add("cost not measured (no iteration ids recorded)");
     const cost = ctx.cost.read(ctx.repoDir, iterIds);
-    if (cost.unmetered) notProven.add("cost unmetered (CLI invoker; recorded as 0)");
     // ponytail: events.jsonl is supervisor-written and may lag the worker; the supervisor re-hashes at receipt.sealed if exactness matters
     const eventsPath = join(ctx.runDir, "events.jsonl");
     const wallFiles = Array.isArray(o.wall?.files) ? (o.wall.files as { path: string; sha256: string }[]) : [];
@@ -252,7 +251,6 @@ export const sealStage: Stage = {
       cost: {
         usd: cost.usd, input_tokens: cost.inputTokens, output_tokens: cost.outputTokens,
         measured_sessions: cost.measuredCount ?? 0, total_sessions: cost.totalCount ?? 0, partial_usd: cost.partialUsd ?? 0,
-        ...(cost.unmetered ? { source: "cli-invoker-unmetered" } : {}),
       },
       time: { wall_s: Object.values(stages).reduce((a, b) => a + (b ?? 0), 0), stages },
       provider: ctx.provider,

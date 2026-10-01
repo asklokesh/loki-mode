@@ -1,4 +1,4 @@
-# E-30 golden routes: the previous engine's bin/loki routing (LOKI_ENGINE=legacy)
+# E-30 golden routes: today's bin/loki routing with LOKI_ENGINE unset
 # (ENGINE.md section 11). Format: route|arg1|arg2|...
 # route is "bash" (autonomy/loki) or "bun" (the LOKI_TS_ENTRY Bun entry).
 # Read by tests/test-engine10-legacy-contract.sh; exactly 20 rows.

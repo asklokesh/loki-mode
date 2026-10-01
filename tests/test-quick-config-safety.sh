@@ -39,7 +39,7 @@ mk_fix() { # mk_fix <dir>
 }
 run_quick() { # run_quick <dir> <home> <pathprefix> <out>
     ( cd "$1" || exit 2
-      env HOME="$2" PATH="$3:$T/bin:$PATH" LOKI_NO_BROWSER=1 LOKI_SKIP_AUTH_PREFLIGHT=1 LOKI_ENGINE=legacy \
+      env HOME="$2" PATH="$3:$T/bin:$PATH" LOKI_NO_BROWSER=1 LOKI_SKIP_AUTH_PREFLIGHT=1 \
           "$REPO_ROOT/bin/loki" quick "fix the bug that makes the failing test in sum.test.js fail" \
           < /dev/null > "$4" 2> "$4.err" )
 }

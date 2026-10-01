@@ -105,7 +105,6 @@ export interface CostTotals {
   measuredCount?: number;
   totalCount?: number;
   partialUsd?: number;
-  unmetered?: boolean; // D48: usd is a recorded 0 for a CLI-invoker session with no provider figure
 }
 export interface CostReader { // implemented by cost.ts (E-06)
   read(repoDir: string, iterationIds: string[]): CostTotals;
@@ -168,7 +167,6 @@ export interface Receipt {
     measured_sessions: number;
     total_sessions: number;
     partial_usd: number;
-    source?: string; // D48: "cli-invoker-unmetered" when usd is a recorded 0, absent otherwise
   };
   time: { wall_s: number; stages: Partial<Record<StageName, number>> };
   provider: string;

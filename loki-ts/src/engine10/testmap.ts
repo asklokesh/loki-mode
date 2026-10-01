@@ -139,8 +139,13 @@ function referencedBasenames(text: string): Set<string> {
   }
   return out;
 }
-// Source stem a test covers by naming alone: search.test.ts -> search, test_ranker.py -> ranker, handler_test.go -> handler. The floor under the
-// import/reference grep, never a replacement: import-free tests (same-package Go, test_ranker.py) would otherwise map to zero tests (unsafe for E-09).
+// Source stem a test file covers by naming alone: search.test.ts -> search, test_ranker.py ->
+// ranker, handler_test.go -> handler. This is the floor the import/reference grep adds on top
+// of, never a replacement for it: a same-package Go test that imports nothing of its own
+// (handler_test.go for handler.go), or a fixture kept import-free on purpose (test_ranker.py, so
+// no collector hits an ImportError), would otherwise map to zero tests -- the unsafe direction
+// for E-09 fast verify. `from pkg import mod` also resolves to `pkg`, not `mod`, with grep alone;
+// the naming floor covers the common `test_mod.py` case regardless of exactly what the file imports.
 function coveredStem(testPath: string): string {
   const name = basename(testPath);
   if (JS_TEST_RE.test(name)) return name.replace(JS_TEST_RE, "");

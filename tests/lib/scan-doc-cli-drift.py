@@ -63,8 +63,6 @@ def commands():
         if m:
             cmds.update(m.group(1).split("|"))
     cmds |= set(re.findall(r'case "([a-z0-9-]+)":', read("loki-ts/src/cli.ts")))
-    # bin/loki handles `loki legacy` (D48) before either dispatcher sees it.
-    cmds |= set(re.findall(r"^    ([a-z0-9-]+)\)\n        shift\n", read("bin/loki"), re.M))
     return cmds
 
 

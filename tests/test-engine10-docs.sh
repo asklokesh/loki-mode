@@ -91,9 +91,6 @@ while IFS= read -r line; do
     cmdline="${line#LOKI_ENGINE=v10 }"
     second="$(printf '%s\n' "$cmdline" | awk '{print $2}')"
     case "$second" in
-        quick)
-            ok "example '$line' is the quick entry (routed by bin/loki to the v10 supervisor)"
-            ;;
         status | verify | dashboard)
             if printf '%s\n' "$USAGE_TXT" | grep -qE "loki $second\b"; then
                 ok "example '$line' uses a USAGE-listed command"
