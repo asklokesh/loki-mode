@@ -136,7 +136,7 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   const allowUnsigned = args.includes("--allow-unsigned") || process.env["LOKI_VERIFY_ALLOW_UNSIGNED"] === "1";
   args = args.filter((a) => a !== "--allow-unsigned");
   if (args[0] === "--help" || args[0] === "-h") {
-    process.stdout.write("Usage: loki verify [run-id]\nVerify .loki/runs/<run-id>/receipt.json (default: latest run).\nExit: 0 verified, 1 tampered, 2 unchecked, 3 unsigned (refused), 66 no runs.\nOptions: --allow-unsigned (or LOKI_VERIFY_ALLOW_UNSIGNED=1) accepts an UNSIGNED receipt; never changes tampered/unchecked.\n");
+    process.stdout.write("Usage: loki verify [run-id]\nVerify .loki/runs/<run-id>/receipt.json (default: latest run).\nExit: 0 verified, 1 tampered, 2 unchecked, 3 unsigned (refused), 4 run outcome not verified, 66 no runs.\nOptions: --allow-unsigned (or LOKI_VERIFY_ALLOW_UNSIGNED=1) accepts an UNSIGNED receipt; never changes tampered/unchecked.\n");
     return 0;
   }
   const runsRoot = deps.runsRoot ?? join(lokiDir(), "runs");
@@ -147,6 +147,11 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   }
   const receiptPath = join(runsRoot, runId, "receipt.json");
   const result = await verifyReceipt(receiptPath, deps);
+  // An intact (VERIFIED or UNSIGNED) receipt of a run that did not verify is never exit 0 and no flag changes that; unreadable fails closed.
+  if (result.verdict === "VERIFIED" || result.verdict === "UNSIGNED") {
+    const outcome = (() => { try { return String(JSON.parse(readFileSync(receiptPath, "utf8")).verdict); } catch { return "UNREADABLE"; } })();
+    if (outcome !== "VERIFIED" && outcome !== "ALREADY_SATISFIED") { process.stdout.write(`run: ${runId}\nverdict: NOT VERIFIED (run outcome ${outcome}; receipt integrity ${result.verdict === "UNSIGNED" ? "unattested" : "intact"})\n`); return 4; }
+  }
   process.stdout.write(`run: ${runId}\nverdict: ${result.verdict}\n`);
   if (result.receiptSha256) process.stdout.write(`receipt_sha256: ${result.receiptSha256}\n`);
   for (const reason of result.reasons) process.stdout.write(`  ${reason}\n`);

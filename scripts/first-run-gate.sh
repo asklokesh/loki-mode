@@ -72,6 +72,8 @@ echo "stub claude done"
 STUB
     chmod +x "$T/bin/claude"
     export PATH="$T/bin:$PATH" LOKI_SKIP_AUTH_PREFLIGHT=1
+    # D48: `loki quick` is the Loki 10 engine now; the stub is a CLI, so select the CLI invoker (no SDK, no keys).
+    export LOKI_E10_INVOKER=cli
 fi
 
 # --- run the default entry point ---------------------------------------------
@@ -117,7 +119,8 @@ else res FAIL no-stray-files "unexpected changes: $(echo "$BAD" | tr '\t\n' '  '
 
 # 4. printed receipt digest: FULL 64-hex, equal to the receipt_sha256 loki verify reports
 VOUT="$T/verify.log"
-"$LOKI" verify < /dev/null > "$VOUT" 2>&1; VRC=$?
+# D48: bare `loki verify` stays the legacy deterministic verify; the receipt a v10 run seals is checked by the v10 verify.
+LOKI_ENGINE=v10 "$LOKI" verify < /dev/null > "$VOUT" 2>&1; VRC=$?
 PRINTED=$(sed 's/\x1b\[[0-9;]*m//g' "$T/out.log" | grep -Eio '(receipt_sha256|sha256|receipt)[^0-9a-f]*[0-9a-f]{64}' \
     | head -1 | grep -Eo '[0-9a-f]{64}$')
 VERIFIED_D=$(sed -n 's/^.*receipt_sha256[^0-9a-f]*\([0-9a-f]\{64\}\).*$/\1/p' "$VOUT" | head -1)
@@ -134,26 +137,51 @@ else res FAIL verify-ok "loki verify rc=$VRC: $(grep -Ei 'verdict' "$VOUT" | hea
 if grep -Eqi '^attestation: *verified' "$VOUT"; then res PASS receipt-signed "loki verify reports a valid signature"
 else res FAIL receipt-signed "loki verify reports no valid signature: $(grep -Ei 'attestation|signature' "$VOUT" | head -1)"; fi
 
-# 7. terminal output 15 lines or fewer without --verbose
+# 7. terminal output 8 lines or fewer without --verbose (D48: the v10 quiet budget; was 15 on the legacy engine)
 LINES=$(wc -l < "$T/out.log" | tr -d ' ')
-[ "$LINES" -le 15 ] && res PASS output-lines "$LINES lines (max 15)" || res FAIL output-lines "$LINES lines (max 15)"
+[ "$LINES" -le 8 ] && res PASS output-lines "$LINES lines (max 8)" || res FAIL output-lines "$LINES lines (max 8)"
 
 # 8. wall time recorded
 echo "$WALL" | grep -Eq '^[0-9]+$' && res PASS wall-time "recorded ${WALL}s" || res FAIL wall-time "not recorded"
 
+# 7b. D48: the default entry is the Loki 10 engine: one start line naming it, then Outcome, PR, Receipt, NOT PROVEN, Cost, Time
+OUTC=$(sed 's/\x1b\[[0-9;]*m//g' "$T/out.log")
+MISSL=""; for l in Outcome PR Receipt 'NOT PROVEN' Cost Time; do grep -q "^$l:" <<<"$OUTC" || MISSL="$MISSL $l"; done
+if head -1 <<<"$OUTC" | grep -q '^Loki 10 engine (set LOKI_ENGINE=legacy' && [ -z "$MISSL" ]; then
+    res PASS engine-start-line "start line names Loki 10; Outcome/PR/Receipt/NOT PROVEN/Cost/Time present"
+else res FAIL engine-start-line "missing start line or summary label(s):${MISSL:- none}: $(head -2 <<<"$OUTC" | tr '\n' '|')"; fi
+
+# 7c. D48: every run records a non-null cost, in the cost events and in the receipt (0 with a source marker when the CLI invoker is unmetered)
+CJ=$(python3 - "$T/repo" <<'PY'
+import glob, json, sys
+d = glob.glob(sys.argv[1] + "/.loki/runs/*/")[0]
+ev = [json.loads(l) for l in open(d + "events.jsonl") if l.strip()]
+cost = [e["data"] for e in ev if e["type"] == "cost"]
+rc = json.load(open(d + "receipt.json"))["cost"]["usd"]
+ok = bool(cost) and all(isinstance(c.get("usd"), (int, float)) for c in cost) and isinstance(rc, (int, float))
+print(("ok" if ok else "null") + " events=" + ",".join(str(c.get("usd")) + ":" + str(c.get("source")) for c in cost) + " receipt=" + str(rc))
+PY
+)
+case "$CJ" in ok*) res PASS cost-non-null "$CJ" ;; *) res FAIL cost-non-null "$CJ" ;; esac
+
 # 9. G8 (stub only): an agent that skips the target test (node { skip: true } on the target) must not end VERIFIED. Runs the v10 engine,
-#    whose verify stage judges skips and test configuration (A-115); the default `loki quick` path is the legacy engine.
+#    whose verify stage judges skips and test configuration (A-115); since D48 this IS the default engine, so no LOKI_ENGINE is set.
 if [ "$MODE" = stub ]; then
     mkdir -p "$T/skip" && mk_bugrepo "$T/skip"
-    ( cd "$T/skip" && FRG_SKIP=1 LOKI_ENGINE=v10 LOKI_E10_INVOKER=cli "$LOKI" "$TASK" --no-pr ) < /dev/null > "$T/skip.log" 2>&1; SRC=$?
+    ( cd "$T/skip" && FRG_SKIP=1 "$LOKI" "$TASK" --no-pr ) < /dev/null > "$T/skip.log" 2>&1; SRC=$?
     if [ "$SRC" -ne 0 ] && ! grep -Eqi '^Outcome: *VERIFIED|verdict: *verified' "$T/skip.log"; then
         res PASS skip-not-verified "skipped target: rc=$SRC, $(grep -Ei '^Outcome:' "$T/skip.log" | head -1)"
     else res FAIL skip-not-verified "skipped target sealed: rc=$SRC, $(grep -Ei '^Outcome:' "$T/skip.log" | head -1)"; fi
-    # 9b. the same skip under the default entry (legacy `loki quick`): the headline must not be a verified verdict and the rc must be 3
-    #     (D47: legacy quick exits 3 when the diff weakens tests).
+    # 9a. bare `loki verify` after the skipped default run must follow the v10 run: exit 4 and never VERIFIED (D48 review blocker)
+    ( cd "$T/skip" && "$LOKI" verify ) < /dev/null > "$T/skipv.log" 2>&1; VRC=$?
+    if [ "$VRC" -eq 4 ] && ! sed 's/\x1b\[[0-9;]*m//g' "$T/skipv.log" | grep -Eqi 'VERDICT:? *VERIFIED|^VERIFIED'; then
+        res PASS skip-bare-verify "bare verify after a failed default run: rc=$VRC, $(head -1 "$T/skipv.log")"
+    else res FAIL skip-bare-verify "bare verify after a failed default run: rc=$VRC, $(head -1 "$T/skipv.log")"; fi
+    # 9b. the same skip under the escape hatch (LOKI_ENGINE=legacy `loki quick`, D48): the headline must not be a verified verdict. Its rc is reported, not
+    #     asserted: legacy prints NOT VERIFIED but can exit 0 (exit-honest policy, G1's domain).
     mkdir -p "$T/skipl" && mk_bugrepo "$T/skipl"
-    ( cd "$T/skipl" && FRG_SKIP=1 "$LOKI" quick "$TASK" ) < /dev/null > "$T/skipl.log" 2>&1; LRC=$?
-    HH=$(sed 's/\x1b\[[0-9;]*m//g' "$T/out.log" | grep -Ei 'Evidence Receipt' | head -1)
+    ( cd "$T/skipl" && FRG_SKIP=1 LOKI_ENGINE=legacy "$LOKI" quick "$TASK" ) < /dev/null > "$T/skipl.log" 2>&1; LRC=$?
+    HH=$(sed 's/\x1b\[[0-9;]*m//g' "$T/out.log" | grep -Ei '^Outcome:' | head -1)
     LH=$(sed 's/\x1b\[[0-9;]*m//g' "$T/skipl.log" | grep -Ei 'Evidence Receipt' | head -1)
     if [ "$LRC" -eq 3 ] && grep -Eqi 'NOT VERIFIED' <<<"$LH" && ! sed 's/\x1b\[[0-9;]*m//g' "$T/skipl.log" | grep -Eqi 'verdict: *verified|Evidence Receipt:? *VERIFIED'; then
         res PASS skip-not-verified-legacy "legacy skipped target: rc=3, headline: ${LH:-none} (honest run: ${HH:-none})"

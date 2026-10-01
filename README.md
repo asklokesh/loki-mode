@@ -48,6 +48,7 @@ Upgrade with `loki self-update`. Long form: [Installation Guide](docs/INSTALLATI
 ```bash
 export ANTHROPIC_API_KEY=sk-...
 loki doctor
+loki quick "fix the login bug"   # one small task on the Loki 10 engine
 ```
 
 <details>
@@ -71,9 +72,9 @@ loki-seal is a Claude Code Stop hook that runs your repo's real test suite when 
 
 ## Loki 10 engine
 
-Opt-in: set LOKI_ENGINE=v10 <!-- loki10-default -->
+Default: Loki 10 engine for `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"`. Set LOKI_ENGINE=legacy or run `loki legacy <args>` for the previous engine. <!-- loki10-default -->
 
-Loki 10 is the rewritten engine. It is not the default yet: with `LOKI_ENGINE` unset, `loki` runs the [legacy engine](#legacy-engine-reference) exactly as before. A default flip is in flight; this section describes what `main` does today (`bin/loki` routes to the v10 engine only when `LOKI_ENGINE=v10` is set). Guide, provider table and summary format: [docs/v10/GUIDE.md](docs/v10/GUIDE.md).
+Loki 10 is the rewritten engine and the default for tasks, issue mode and `quick`; `status`, `verify` and `dashboard` use it when `LOKI_ENGINE=v10` is set. Guide, provider table and summary format: [docs/v10/GUIDE.md](docs/v10/GUIDE.md).
 
 ```
 LOKI_ENGINE=v10 loki "fix the login redirect loop" --no-pr
