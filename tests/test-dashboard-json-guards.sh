@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps default allowlist strict
 # Regression test for v7.110.0 non-dict-top-level JSON guards in dashboard/server.py
 #
 # Class of bug: an endpoint calls .get() on json.loads()/_safe_json_read() output

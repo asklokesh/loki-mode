@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps default allowlist strict
 # v7.7.32 regression test: /api/tasks must pass through task enrichment fields
 # (description, acceptance_criteria, notes, logs, provider, startedAt) from the
 # dashboard-state.json path, where run.sh writes them at the TOP LEVEL of the

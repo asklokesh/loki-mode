@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps default allowlist strict
 # v7.7.26 test: the dashboard surfaces live Claude hook events ("Live Tool
 # Activity"). The server already supported the type_prefix filter; v7.7.26
 # wires the council-transcripts UI component to fetch + render it.

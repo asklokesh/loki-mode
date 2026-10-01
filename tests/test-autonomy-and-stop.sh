@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps default allowlist strict
 # v7.7.31 regression tests:
 #   - inter-iteration countdown is STOP-aware (1s ticks, checks STOP/PAUSE)
 #   - the claude argv array in run.sh is never empty-expanded (bash 3.2 + set -u)

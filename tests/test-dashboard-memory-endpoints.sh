@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps default allowlist strict
 # v7.7.25 test: /api/memory/consolidate and /api/memory/retrieve must run the
 # REAL memory engine, not return hardcoded empty/zero stubs. Also asserts the
 # bench tools are present in the npm tarball (tools/ packaging fix).

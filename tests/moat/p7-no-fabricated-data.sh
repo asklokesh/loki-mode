@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps default allowlist strict
 # Case functions are dispatched by name through run_case (SC2329), and the
 # embedded sed/python/node programs carry literal dollar signs (SC2016).
 # shellcheck disable=SC2329,SC2016

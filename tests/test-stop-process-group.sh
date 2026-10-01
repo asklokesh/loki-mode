@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps default allowlist strict
 # v7.7.34 regression test: Stop must kill the AGENT, not just the orchestrator.
 # Root cause of the recurring "dashboard says stopped but it keeps running" bug:
 # the claude/codex/aider agent is a child of the orchestrator; killing only the

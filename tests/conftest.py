@@ -76,3 +76,12 @@ def _strip_inherited_git_env():
         yield
     finally:
         os.environ.update(saved)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _dashboard_testclient_host():
+    """Starlette TestClient sends Host "testserver"; the dashboard Host
+    allowlist refuses it unless listed. Default local mode stays strict."""
+    os.environ["LOKI_DASHBOARD_ALLOWED_HOSTS"] = "testserver,test"
+    yield
+    os.environ.pop("LOKI_DASHBOARD_ALLOWED_HOSTS", None)
