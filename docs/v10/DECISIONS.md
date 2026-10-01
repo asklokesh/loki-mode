@@ -415,3 +415,7 @@ Loki's definition: "autonomous software factory that runs with the knowledge of 
 3. Priority inside the paced budget: release flow, then D50 harness and lift eval, then D51 Phase A, then docs, then the remaining D48 polish.
 4. Builders run as cloud sessions first (the 250 USD cloud credit is used before plan usage).
 5. If the 5h window passes 80%, pause new work until it resets; never let a run die mid-release.
+
+## D52 (founder, relayed 03:25Z) and overnight mandate (03:40Z): least tokens, fastest release
+1. Target about 10x less plan usage per merged slice and per release, measured from `claude -p "/usage"`. Haiku for mechanical work, sonnet to build, opus only for moat or latest-moving reviews; `model:` set explicitly on every agent; small briefs with file paths; read line ranges, not whole files; agent returns of 10 lines or fewer; fresh agent per slice; the lead session hands off at about 120k context.
+2. Overnight until about 11:00Z: sprint to 04:35Z, then pace (D39 amendment). Priority: release flow, D48 rows plus the 04:35Z report, D51 Phase A ready to test (LOKI MORNING TEST in PROGRESS), D50 lift baseline then harness slices, docs, then D51 Phase B/C as budget allows. docs/v10/MORNING-BRIEF.md (60 lines or fewer) at 10:30Z, honest about what is not done.
