@@ -578,6 +578,13 @@ describe("engine10 wall base run, D42 (3)", () => {
     expect(result).toEqual({ pass: 0, fail: 0, not_run: 1 });
   });
 
+  test("(E-132) classify pytest exit 1 from summary text only: missing runner and collection error are not_run, a real failed summary is red", () => {
+    const f = { runner: "pytest" as const, path: "t.py" };
+    expect(classify(f, 1, "/usr/bin/python: No module named pytest\n", "/x")).toBe("not_run");
+    expect(classify(f, 1, "ERROR collecting t.py\nE   SyntaxError: bad\n=== short test summary info ===\nERROR t.py\n!!! Interrupted: 1 error during collection !!!\n=== 1 error in 0.10s ===\n", "/x")).toBe("not_run");
+    expect(classify(f, 1, "=== short test summary info ===\nFAILED t.py::test_a - assert 0\n=== 1 failed in 0.10s ===\n", "/x")).toBe("fail");
+  });
+
   // r5 (opus r4): real-pytest fixtures for the verbosity and forgery blockers.
   function run1(name: string, body: string, extra: Record<string, string> = {}): { pass: number; fail: number; not_run: number } {
     const repoDir = repo();
