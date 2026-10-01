@@ -497,6 +497,7 @@ print(json.dumps({
     'created': '2020-01-01T00:00:00.000Z',
     'modified': '2026-09-27T01:55:00.000Z',
     '0.9.0': '2026-09-27T01:00:00.000Z',
+    '0.9.5': '2026-09-27T01:20:00.000Z',
     '1.0.0': '2026-09-27T01:50:00.000Z',
 }))
 " > "$NPM_TIME_JSON"
@@ -871,7 +872,8 @@ VIOLATION: AGENT_OVER_BUDGET: agent(s) past their role/tier time budget: S-01 re
 VIOLATION: IDLE_BUILDERS: only 0 active builder worktree(s) while 1 ready slice(s) exist on BOARD (S-02)
 VIOLATION: LOW_READY: only 1 ready slice(s) on BOARD (want at least 8); cut 7 more
 VIOLATION: NO_RECENT_RELEASE: no release in the last 90 minutes (3000.0 minutes since last release)
-VIOLATION: LOW_RELEASE_VOLUME: only 0 release(s) in the last 24h (want at least 30) after 626.0 hours of swarm operation"
+VIOLATION: LOW_RELEASE_VOLUME: only 0 release(s) in the last 24h (want at least 30) after 626.0 hours of swarm operation
+VIOLATION: RELEASE_SLO: 0 next releases in the trailing 60 minutes (target 3-6, D46)"
 assert_exact_violations "T11 all-except-CI_RED" "$EXPECTED_ALL"
 EXPECTED_NEXT_ALL="NEXT ACTION: MOAT_REGRESSION: identify which moat property regressed and revert or fix it before any further merge -- measured moat suite reports FAIL (1 rule failure(s)) -- a live suite failure is always a regression regardless of the proven count (see $MOAT_RESULT_FAIL)
 NEXT ACTION: UNRELEASED_MERGE: cut a release now, main has been unreleased past the 30-minute budget -- 1 commit(s) merged but unreleased for 60.0 minutes since v1.0.0 (oldest $UNRELEASED_ALL_SHA) while CI is green
@@ -881,7 +883,8 @@ NEXT ACTION: AGENT_OVER_BUDGET: check in on the named agent(s), they have exceed
 NEXT ACTION: IDLE_BUILDERS: dispatch more builders against the named ready slice(s) in docs/v10/BOARD.md -- only 0 active builder worktree(s) while 1 ready slice(s) exist on BOARD (S-02)
 NEXT ACTION: LOW_READY: the Product Owner should cut the named number of additional slices onto the ready queue -- only 1 ready slice(s) on BOARD (want at least 8); cut 7 more
 NEXT ACTION: NO_RECENT_RELEASE: cut a release now, none has shipped in over 90 minutes -- no release in the last 90 minutes (3000.0 minutes since last release)
-NEXT ACTION: LOW_RELEASE_VOLUME: investigate why release throughput is below the 30/day target -- only 0 release(s) in the last 24h (want at least 30) after 626.0 hours of swarm operation"
+NEXT ACTION: LOW_RELEASE_VOLUME: investigate why release throughput is below the 30/day target -- only 0 release(s) in the last 24h (want at least 30) after 626.0 hours of swarm operation
+NEXT ACTION: RELEASE_SLO: cut releases now, fewer than 3 next releases shipped in the trailing 60 minutes (D46) -- 0 next releases in the trailing 60 minutes (target 3-6, D46)"
 actual_next_all="$(printf '%s\n' "$OUT" | grep '^NEXT ACTION:' || true)"
 if [ "$actual_next_all" = "$EXPECTED_NEXT_ALL" ]; then
     ok "T11 NEXT ACTIONS: exact block matches (deleting the whole section would go red here)"
@@ -3444,6 +3447,49 @@ else
 fi
 
 echo ""
+echo "T-SLO -- D46 RELEASE_SLO: N<3 next releases in the trailing 60 minutes fires; N>=3 and UNKNOWN do not"
+slo_json() { # $1 = out file, rest = minutes-ago of each release (NOW is 02:00Z)
+    local f="$1"; shift
+    python3 -c "
+import json, sys, datetime
+now = datetime.datetime(2026, 9, 27, 2, 0, tzinfo=datetime.timezone.utc)
+d = {'created': '2020-01-01T00:00:00.000Z', 'modified': '2026-09-27T01:55:00.000Z', '0.0.1': '2026-09-26T00:00:00.000Z'}
+for i, m in enumerate(sys.argv[1:]):
+    d['1.0.%d' % (i + 1)] = (now - datetime.timedelta(minutes=int(m))).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+print(json.dumps(d))
+" "$@" > "$f"
+}
+for spec in "0:" "2:10 30" "3:10 30 50" "6:5 10 20 30 40 50"; do
+    n="${spec%%:*}"; mins="${spec#*:}"
+    f="$WORK/npm-slo-$n.json"
+    # shellcheck disable=SC2086
+    slo_json "$f" $mins
+    if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" \
+        "PULSE_NPM_CMD=cat $f" "PULSE_GH_CMD=cat $GH_GREEN_JSON"; then rc=0; else rc=$?; fi
+    if [ "$n" -lt 3 ]; then
+        if printf '%s\n' "$OUT" | grep -qxF "VIOLATION: RELEASE_SLO: $n next releases in the trailing 60 minutes (target 3-6, D46)"; then
+            ok "RELEASE_SLO fires with N=$n"
+        else
+            bad "RELEASE_SLO missing for N=$n"; printf '%s\n' "$OUT"
+        fi
+    else
+        if ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: RELEASE_SLO"; then
+            ok "RELEASE_SLO absent with N=$n"
+        else
+            bad "RELEASE_SLO fired with N=$n"; printf '%s\n' "$OUT"
+        fi
+    fi
+done
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" \
+    "PULSE_NPM_CMD=false" "PULSE_GH_CMD=cat $GH_GREEN_JSON"; then rc=0; else rc=$?; fi
+if [ "$rc" != 0 ] \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: RELEASE_SLO" \
+    && printf '%s\n' "$OUT" | grep -qF "Releases (last hour): UNKNOWN"; then
+    ok "npm UNKNOWN: no RELEASE_SLO claim either way, exit nonzero (never a false pass)"
+else
+    bad "npm UNKNOWN case wrong (rc=$rc)"; printf '%s\n' "$OUT"
+fi
+
 TOTAL=$((PASS + FAIL))
 echo "Results: $PASS passed, $FAIL failed, $TOTAL total"
 [ "$FAIL" -eq 0 ]
