@@ -13646,7 +13646,7 @@ cmd_doctor() {
         if ! command -v "$cmd" &> /dev/null; then
             if [ "$required" = "required" ]; then
                 echo -e "  ${RED}FAIL${NC}  $name - not found"
-                _doctor_block "$name is not installed"
+                _doctor_block "${name%% (*} is not installed"
                 fail_count=$((fail_count + 1))
             elif [ "$required" = "recommended" ]; then
                 echo -e "  ${YELLOW}WARN${NC}  $name - not found (recommended)"
@@ -13715,7 +13715,7 @@ cmd_doctor() {
                { [ "$cur_major" -eq "$min_major" ] 2>/dev/null && [ "$cur_minor" -lt "$min_minor" ] 2>/dev/null; }; then
                 if [ "$required" = "required" ]; then
                     echo -e "  ${RED}FAIL${NC}  $name$version_display - requires >= $min_version"
-                    _doctor_block "$name must be >= $min_version"
+                    _doctor_block "${name%% (*} must be >= $min_version"
                     fail_count=$((fail_count + 1))
                 else
                     echo -e "  ${YELLOW}WARN${NC}  $name$version_display - recommended >= $min_version"
@@ -14454,10 +14454,17 @@ else:
     k, kid = load_signing_key(auto_generate=False)
     if kid:
         print("kid " + kid[:8])
-    elif os.environ.get("LOKI_RECEIPT_SIGNING_KEY", "").strip() or os.environ.get("LOKI_RECEIPT_SIGNING_KEY_FILE", "").strip() or os.path.exists(os.path.expanduser("~/.loki/keys/receipt-ed25519.pem")):
+    elif os.environ.get("LOKI_RECEIPT_SIGNING_KEY", "").strip():
         print("bad")
     else:
-        print("none")
+        # A-122: a missing key FILE is auto-generated on first use when its nearest
+        # existing ancestor directory is writable; an existing file that did not
+        # load (corrupt/unreadable) or an unwritable location is unusable.
+        f = os.environ.get("LOKI_RECEIPT_SIGNING_KEY_FILE", "").strip() or os.path.expanduser("~/.loki/keys/receipt-ed25519.pem")
+        d = os.path.dirname(os.path.abspath(f))
+        while not os.path.isdir(d) and os.path.dirname(d) != d:
+            d = os.path.dirname(d)
+        print("bad" if os.path.lexists(f) or not os.access(d, os.W_OK | os.X_OK) else "none")
 PY
 )"
     case "$_rd_key" in
