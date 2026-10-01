@@ -560,6 +560,27 @@ except ValueError:
     raise SystemExit(0)
 
 segs0, seps0 = segments_with_seps(all_tokens)
+
+
+def subshell_preops(tokens):
+    """Per segment (same order as segments_with_seps): the '(' / ')' tokens seen
+    since the previous segment, so the evaluator can scope `cd` to a subshell."""
+    out, pending, cur = [], [], False
+    for tok in tokens:
+        if tok in SEPARATORS:
+            if cur:
+                out.append(pending)
+                pending, cur = [], False
+            if tok in ("(", ")"):
+                pending.append(tok)
+        else:
+            cur = True
+    if cur:
+        out.append(pending)
+    return out
+
+
+preops = subshell_preops(all_tokens)
 segs, seps = expand_shell_payloads(segs0, seps0)
 
 command_has_pid_source_tool = False
@@ -1248,9 +1269,33 @@ def rule8_primary_checkout(words, name, git_info, effective_cwd, unchecked_cd):
 effective_cwd = cwd
 unchecked_cd = False
 board_removal_pending_repos = set()
+shell_vars = {}
+subshell_stack = []
+ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+VAR_RE = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
+
+
+def expand_known_vars(value):
+    """Substitute variables assigned earlier in this command; any leftover
+    '$' or backtick means unresolvable (caller fails closed)."""
+    value = VAR_RE.sub(lambda m: shell_vars.get(m.group(1), m.group(0)), value)
+    return value
+
 
 for i, words in enumerate(segs):
+    for op in (preops[i] if i < len(preops) else []):
+        if op == "(":
+            subshell_stack.append((effective_cwd, dict(shell_vars)))
+        elif subshell_stack:
+            effective_cwd, shell_vars = subshell_stack.pop()
+
     if not words:
+        continue
+
+    if all(ASSIGN_RE.match(w) for w in words):
+        for w in words:
+            k, v = w.split("=", 1)
+            shell_vars[k] = expand_known_vars(v)
         continue
 
     name, idx = skip_wrappers(words)
@@ -1258,12 +1303,18 @@ for i, words in enumerate(segs):
         continue
 
     if name == "cd" and idx + 1 < len(words):
-        target = words[idx + 1]
-        candidate = target if target.startswith("/") else os.path.join(effective_cwd, target)
-        candidate = os.path.normpath(candidate)
-        if os.path.isdir(candidate):
-            effective_cwd = candidate
-        if i + 1 < len(seps) and seps[i + 1] not in ("&&", "||"):
+        target = expand_known_vars(words[idx + 1])
+        nxt = segs[i + 1] if i + 1 < len(segs) else []
+        checked = i + 1 < len(seps) and (
+            seps[i + 1] == "&&" or (seps[i + 1] == "||" and nxt[:1] in (["exit"], ["return"])))
+        if "$" in target or "`" in target:
+            effective_cwd = cwd  # unresolvable: judge by the hook cwd (fail closed)
+        else:
+            candidate = target if target.startswith("/") else os.path.join(effective_cwd, target)
+            candidate = os.path.normpath(candidate)
+            if os.path.isdir(candidate):
+                effective_cwd = candidate
+        if not checked:
             unchecked_cd = True
         continue
 
