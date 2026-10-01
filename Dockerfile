@@ -53,7 +53,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
 # Install Bun runtime (pinned) for the TypeScript CLI shipped under loki-ts/.
 # bin/loki shim routes ported commands to `bun loki-ts/dist/loki.js`; unported
 # commands fall through to autonomy/loki (bash). See ADR-001.
-ARG BUN_VERSION=1.3.13
+ARG BUN_VERSION=1.4.2
 RUN apt-get update && apt-get install -y --no-install-recommends unzip \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" \
