@@ -114,8 +114,7 @@ export const commitStage: Stage = {
     const drop = dropSet(ctx.repoDir, staged, ctx.outputs().intake?.preexisting_dirty);
     const sat = await discardIfSatisfied((a) => git(ctx, a), ctx.baseSha, ctx.outputs(), staged, new Set(drop.filter(({ st }) => st === "L").map(({ f }) => f)), ctx.repoDir); if (sat) return sat; // D50-F1
     if (drop.length > 0 && (await git(ctx, ["--literal-pathspecs", "reset", "-q", ctx.baseSha, "--", ...drop.map(({ f }) => f)])).code !== 0) return { status: "failed", data: {}, reason: "git reset failed" }; // A-104b: reset to the run base (not HEAD) so a path committed in implement leaves the diff too; literal, so ":(top)x" is a filename
-    const dropped = new Set(drop.map(({ f }) => f)), notes = await revertUnrelated((a) => git(ctx, a), ctx.baseSha, ctx.outputs(), staged.filter(({ f }) => !dropped.has(f)));
-    if (!notes) return { status: "failed", data: {}, reason: "git restore of unrelated edits failed" };
+    const dropped = new Set(drop.map(({ f }) => f)), notes = await revertUnrelated((a) => git(ctx, a), ctx.baseSha, ctx.outputs(), staged.filter(({ f }) => !dropped.has(f))); if (!notes) return { status: "failed", data: {}, reason: "git restore of unrelated edits failed" };
     if ((await git(ctx, ["diff", "--cached", "--quiet"])).code === 0) return { status: "completed", data: { committed: false, scope_notes: notes } };
     const title = (str(ctx.outputs().intake?.title) ?? `run ${ctx.runId}`).split("\n")[0]!.slice(0, 72);
     const c = await git(ctx, ["commit", "-q", "-m", `loki: ${title}`, "-m", `Loki-Run: ${ctx.runId}`]);
