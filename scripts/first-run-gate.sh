@@ -162,7 +162,7 @@ echo "$WALL" | grep -Eq '^[0-9]+$' && res PASS wall-time "recorded ${WALL}s" || 
 OUTC=$(sed 's/\x1b\[[0-9;]*m//g' "$T/out.log")
 if [ "$ENGINE" = legacy ]; then
     # no-bun leg: the fallback must be announced and name the reason, never silent
-    if grep -q 'loki: using the legacy engine (the Loki 10 engine needs bun' <<<"$OUTC"; then
+    if grep -q 'loki: the Loki 10 engine cannot run on this machine: no working bun' <<<"$OUTC"; then
         res PASS legacy-fallback-line "fallback line printed and names bun"
     else res FAIL legacy-fallback-line "no legacy-engine fallback line naming bun (is bun still on PATH?)"; fi
 else
@@ -173,7 +173,7 @@ if head -1 <<<"$OUTC" | grep -q '^Loki 10 engine (set LOKI_ENGINE=legacy' && [ -
 else res FAIL engine-start-line "missing start line or summary label(s):${MISSL:- none}: $(head -2 <<<"$OUTC" | tr '\n' '|')"; fi
 
 # 7a. fail closed on engine fallback: a runner without bun silently runs the legacy engine, which fails 7 checks for one cause
-FB=$(sed 's/\x1b\[[0-9;]*m//g' "$T/out.log" | grep -m1 'using the legacy engine' || true)
+FB=$(sed 's/\x1b\[[0-9;]*m//g' "$T/out.log" | grep -m1 -E 'using the legacy engine|Running the legacy engine instead' || true)
 if [ -n "$FB" ]; then res FAIL engine-fallback "engine fell back to legacy: $FB"
 else res PASS engine-fallback "no legacy-engine fallback"; fi
 

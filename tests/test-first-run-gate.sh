@@ -31,11 +31,11 @@ quick)
     [ "$FAKE_MODE" = truetest ] && sed -i.bak 's/node --test/true/' package.json && rm -f package.json.bak
     [ "$FAKE_MODE" = modpkg ] && sed -i.bak 's/1.0.0/1.0.1/' package.json && rm -f package.json.bak
     if [ "$FAKE_MODE" = fallback ]; then
-        echo "loki: using the legacy engine (the Loki 10 engine needs bun and LOKI_PROVIDER of claude, codex, cline or aider)." >&2
+        echo "loki: the Loki 10 engine cannot run on this machine: no working bun (none on PATH, and the bundled bun for linux-x64 is missing). Running the legacy engine instead. To fix: install bun from https://bun.sh, or reinstall loki-mode without --omit=optional." >&2
         echo "Outcome:    VERIFIED"; exit 0
     fi
     if [ -n "${FAKE_LEGACY:-}" ]; then # no-bun leg: legacy engine output, no v10 run dir
-        [ "$FAKE_MODE" = nofb ] || echo "loki: using the legacy engine (the Loki 10 engine needs bun and LOKI_PROVIDER of claude, codex, cline or aider)." >&2
+        [ "$FAKE_MODE" = nofb ] || echo "loki: the Loki 10 engine cannot run on this machine: no working bun (none on PATH, and the bundled bun for linux-x64 is missing). Running the legacy engine instead. To fix: install bun from https://bun.sh, or reinstall loki-mode without --omit=optional." >&2
         echo "Outcome:    VERIFIED"; echo "Receipt:    receipt_sha256: $D"
         [ "$FAKE_MODE" = legacylong ] && seq 1 14
         exit 0
@@ -144,6 +144,14 @@ rm -f "$T/npm-args"; run_inst nobun
 grep -q -- '--omit=optional' "$T/npm-args" && ok "installed legacy: omits optional deps" || bad "installed legacy: no --omit=optional"
 run_inst withbun withbun
 [ "$RC" -ne 0 ] && printf '%s\n' "$OUT" | grep -q 'FAIL legacy-no-bun: bun is installed at' && ok "installed legacy: bun in install dir fails closed" || bad "installed legacy: bun not rejected"
+
+# The gate matches bin/loki's fallback text literally; the two must not drift
+# (promote of 10.5.25 failed when the message changed and the gate did not).
+BINLOKI="$SCRIPT_DIR/../bin/loki"
+for pat in 'the Loki 10 engine cannot run on this machine: no working bun' 'Running the legacy engine instead'; do
+    if grep -qF -- "$pat" "$GATE" && grep -qF -- "$pat" "$BINLOKI"; then ok "gate and bin/loki agree on: $pat"
+    else bad "gate and bin/loki disagree on fallback text: $pat"; fi
+done
 
 echo "first-run-gate tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
