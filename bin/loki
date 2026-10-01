@@ -263,7 +263,7 @@ _loki_bun() {
     local c
     c=$(command -v bun 2>/dev/null || true)
     if [ -n "$c" ] && _loki_bun_probe "$c"; then printf '%s\n' "$c"; return 0; fi
-    for c in "$REPO_ROOT"/node_modules/@oven/bun-*/bin/bun "$REPO_ROOT/node_modules/bun/bin/bun.exe"; do
+    for c in "$REPO_ROOT"/node_modules/@oven/bun-*/bin/bun "$REPO_ROOT"/node_modules/@oven/bun-*/bin/bun.exe "$REPO_ROOT/node_modules/bun/bin/bun.exe"; do
         [ -x "$c" ] && _loki_bun_probe "$c" && { printf '%s\n' "$c"; return 0; }
     done
     return 0
@@ -271,7 +271,7 @@ _loki_bun() {
 # Reason text for the fallback notice: missing, or failed to start, exit N.
 _loki_bun_why() {
     local c rc
-    for c in "$REPO_ROOT"/node_modules/@oven/bun-*/bin/bun "$REPO_ROOT/node_modules/bun/bin/bun.exe"; do
+    for c in "$REPO_ROOT"/node_modules/@oven/bun-*/bin/bun "$REPO_ROOT"/node_modules/@oven/bun-*/bin/bun.exe "$REPO_ROOT/node_modules/bun/bin/bun.exe"; do
         [ -x "$c" ] || continue
         _loki_bun_probe "$c"; rc=$?
         echo "failed to start, exit $rc"; return 0

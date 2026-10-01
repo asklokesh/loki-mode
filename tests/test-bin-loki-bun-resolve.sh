@@ -78,5 +78,11 @@ run
 case "$out" in "BASH "*) ok "(f) stub rejected, legacy route" ;; *) bad "(f) got '$out'" ;; esac
 head -1 "$T/stderr" | grep -qF "is failed to start, exit 1)." && ok "(f) plain line names exit 1" || bad "(f) stderr: $(cat "$T/stderr")"
 
+# (g) Windows per-platform package ships bin/bun.exe
+rm -rf "$T/root/node_modules"
+mkbun "$T/root/node_modules/@oven/bun-windows-x64/bin/bun.exe" WINEXE 0
+run
+case "$out" in "WINEXE $T/entry.ts engine10 "*) ok "(g) @oven/bun-windows-x64 bun.exe routes to engine10" ;; *) bad "(g) got '$out'" ;; esac
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
