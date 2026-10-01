@@ -151,10 +151,19 @@ if head -1 <<<"$OUTC" | grep -q '^Loki 10 engine (set LOKI_ENGINE=legacy' && [ -
     res PASS engine-start-line "start line names Loki 10; Outcome/PR/Receipt/NOT PROVEN/Cost/Time present"
 else res FAIL engine-start-line "missing start line or summary label(s):${MISSL:- none}: $(head -2 <<<"$OUTC" | tr '\n' '|')"; fi
 
+# 7a. fail closed on engine fallback: a runner without bun silently runs the legacy engine, which fails 7 checks for one cause
+FB=$(sed 's/\x1b\[[0-9;]*m//g' "$T/out.log" | grep -m1 'using the legacy engine' || true)
+if [ -n "$FB" ]; then res FAIL engine-fallback "engine fell back to legacy: $FB"
+else res PASS engine-fallback "no legacy-engine fallback"; fi
+
 # 7c. D48: every run records a non-null cost, in the cost events and in the receipt (0 with a source marker when the CLI invoker is unmetered)
 CJ=$(python3 - "$T/repo" <<'PY'
 import glob, json, sys
-d = glob.glob(sys.argv[1] + "/.loki/runs/*/")[0]
+g = glob.glob(sys.argv[1] + "/.loki/runs/*/")
+if not g:
+    print("null no v10 run dir")
+    sys.exit(0)
+d = g[0]
 ev = [json.loads(l) for l in open(d + "events.jsonl") if l.strip()]
 cost = [e["data"] for e in ev if e["type"] == "cost"]
 rc = json.load(open(d + "receipt.json"))["cost"]["usd"]

@@ -30,6 +30,10 @@ quick)
     [ "$FAKE_MODE" = delfile ] && rm sum.test.js
     [ "$FAKE_MODE" = truetest ] && sed -i.bak 's/node --test/true/' package.json && rm -f package.json.bak
     [ "$FAKE_MODE" = modpkg ] && sed -i.bak 's/1.0.0/1.0.1/' package.json && rm -f package.json.bak
+    if [ "$FAKE_MODE" = fallback ]; then
+        echo "loki: using the legacy engine (the Loki 10 engine needs bun and LOKI_PROVIDER of claude, codex, cline or aider)." >&2
+        echo "Outcome:    VERIFIED"; exit 0
+    fi
     mkdir -p .loki/runs/r
     # a real v10 run: receipt carries cost.usd, the event log carries a cost event (0 + source marker when unmetered)
     echo '{"cost":{"usd":0}}' > .loki/runs/r/receipt.json
@@ -74,7 +78,7 @@ expect() { # expect <mode> <assertion> <PASS|FAIL>
 }
 
 run_gate clean
-for a in exit-honest tests-green no-stray-files digest-matches verify-ok receipt-signed output-lines wall-time engine-start-line cost-non-null skip-not-verified skip-bare-verify skip-not-verified-legacy; do expect clean $a PASS; done
+for a in exit-honest tests-green no-stray-files digest-matches verify-ok receipt-signed output-lines wall-time engine-start-line cost-non-null engine-fallback skip-not-verified skip-bare-verify skip-not-verified-legacy; do expect clean $a PASS; done
 [ "$RC" -eq 0 ] && ok "clean: gate exits 0" || bad "clean: gate exit $RC"
 [ -s "$T/report-clean.txt" ] && ok "clean: report written" || bad "clean: no report"
 
@@ -91,6 +95,11 @@ run_gate baddigest;  expect baddigest digest-matches FAIL;   [ "$RC" -ne 0 ] && 
 run_gate skipmain;   expect skipmain exit-honest FAIL;       expect skipmain tests-green FAIL;  [ "$RC" -ne 0 ] && ok "skipmain: exits non-zero" || bad "skipmain: exit 0"
 run_gate nostart;    expect nostart engine-start-line FAIL;  [ "$RC" -ne 0 ] && ok "nostart: exits non-zero" || bad "nostart: exit 0"
 run_gate nolabel;    expect nolabel engine-start-line FAIL
+run_gate fallback;   expect fallback engine-fallback FAIL;  expect fallback cost-non-null FAIL
+[ "$RC" -ne 0 ] && ok "fallback: exits non-zero" || bad "fallback: exit 0"
+printf '%s\n' "$OUT" | grep -q 'engine fell back to legacy' && ok "fallback: names the fallback" || bad "fallback: not named"
+printf '%s\n' "$OUT" | grep -q 'no v10 run dir' && ok "fallback: cost reports no run dir" || bad "fallback: no run-dir message"
+printf '%s\n' "$OUT" | grep -q 'IndexError' && bad "fallback: IndexError crash" || ok "fallback: no IndexError"
 run_gate nocost;     expect nocost cost-non-null FAIL;       [ "$RC" -ne 0 ] && ok "nocost: exits non-zero" || bad "nocost: exit 0"
 run_gate skipbare;   expect skipbare skip-bare-verify FAIL;  [ "$RC" -ne 0 ] && ok "skipbare: exits non-zero" || bad "skipbare: exit 0"
 run_gate skiprc0;    expect skiprc0 skip-not-verified-legacy FAIL;  [ "$RC" -ne 0 ] && ok "skiprc0: 9b needs rc 3" || bad "skiprc0: exit 0"
