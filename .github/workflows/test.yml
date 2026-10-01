@@ -115,6 +115,12 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-test.txt
 
+      # E-157: tests/test_release_required_ci.py drives release.yml's PARENT..SHA
+      # secret scan with the real pinned gitleaks and FAILS (never skips) when CI
+      # lacks it.
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: bash scripts/install-gitleaks.sh
+
       - name: Install dependencies
         run: |
           python3 -m pip install --upgrade pip
