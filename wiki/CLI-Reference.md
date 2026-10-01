@@ -979,6 +979,19 @@ loki sandbox stop
 
 ## Notification Commands
 
+### `loki backlog`
+
+Run a v10 issue-mode run for every matching open issue, several in parallel, each in its own git worktree and branch (`loki/backlog-N`). Run it from a checkout of the repo.
+
+```bash
+loki backlog owner/repo --all | --label X | --issues 1,2,3 [--concurrency N] [--dry-run]
+```
+
+- Prints one line per issue as it changes (`queued`, `running`, `PR <url>`, `VERIFIED`, `BLOCKED: <question>`, `FAILED: <reason>`, `BUDGET_STOP: ...`), then a summary table.
+- Exit 0 only if every issue ended VERIFIED or with a PR. Exit 3 if the only failures are budget stops, 1 for other failures, 2 for usage or config errors.
+- Stops launching new runs once `budgets.per_day_usd` is spent (tracked in `~/.loki/backlog-spend.json`).
+- Configured by `loki.yaml` (repo root, then `~/.loki/loki.yaml`); see `docs/loki.yaml.example` and `schemas/loki-yaml.schema.json`. Check it with `loki config validate`.
+
 ### `loki notify`
 
 Send notifications via Slack, Discord, or webhooks.

@@ -205,6 +205,7 @@ function _loki_commands {
         'crash:Crash report management'
         'otel:OpenTelemetry management'
         'wiki:Wiki commands'
+        'backlog:Run every matching open issue, N in parallel'
         'explain:Explain Loki concepts'
         'optimize:Optimization commands'
         'review:Code review commands'

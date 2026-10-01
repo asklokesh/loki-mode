@@ -1,0 +1,39 @@
+# loki.yaml - one config file for the Loki UI and the headless CLI (D51).
+#
+# Lookup: ./loki.yaml in the repo root, then ~/.loki/loki.yaml. The first file
+# found wins; files are not merged.
+# Precedence: CLI flag > environment variable > loki.yaml > default.
+# Validate: loki config validate [path]      Schema: schemas/loki-yaml.schema.json
+#
+# Secrets never live here. Every credential key holds the NAME of an
+# environment variable (UPPER_CASE); the value is read from your environment.
+
+# claude | codex | cline | aider | opencode          (env: LOKI_PROVIDER)
+provider: claude
+
+models:
+  default: sonnet          # development model       (env: LOKI_MODEL_DEVELOPMENT)
+  cheap: haiku             # fast/cheap model        (env: LOKI_MODEL_FAST)
+
+git:
+  # NAME of the env var holding a GitHub PAT, e.g. export LOKI_GITHUB_PAT=ghp_...
+  token_env: LOKI_GITHUB_PAT                          # (env: LOKI_GIT_TOKEN_ENV)
+
+repos:                     # owner/repo
+  - acme/widgets
+  - acme/api
+
+concurrency: 2             # parallel backlog runs     (env: LOKI_BACKLOG_CONCURRENCY)
+
+budgets:                   # USD
+  per_run_usd: 5           # forwarded to each run    (env: LOKI_BUDGET_PER_RUN_USD)
+  per_day_usd: 50          # backlog stops launching new runs at this daily spend
+                           #                          (env: LOKI_BUDGET_PER_DAY_USD)
+
+knowledge_sources:         # local paths; validated now, consumed by a later release
+  - ./docs
+  - ~/notes/architecture
+
+notifications:
+  # NAME of the env var holding the Slack webhook URL  (env: LOKI_SLACK_WEBHOOK_ENV)
+  slack_webhook_env: LOKI_SLACK_WEBHOOK

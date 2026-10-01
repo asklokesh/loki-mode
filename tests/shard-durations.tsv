@@ -282,6 +282,7 @@ App Runner Wave5 W5	2
 Apprunner Dockerfile Exec Wave8	0
 Assumption Gate Brief Mode	0
 Auto Wiki	1
+Backlog (loki backlog + loki.yaml)	40
 Backend Floor	2
 Backend Floor port scoping (kill by recorded PID, never by port)	3
 cmd_web_stop/start use a real process identity check (D14/D15 class)	8

@@ -1627,6 +1627,7 @@ show_help() {
     echo "Build:"
     echo "  start [SPEC]     Start a build (PRD file, GitHub/GitLab/Jira/Azure issue, or no arg)"
     echo "  plan <PRD-file>  Dry-run analysis: complexity, cost, execution plan"
+    echo "  backlog <owner/repo> --all|--label X|--issues N,N   Run every matching open issue, N in parallel"
     echo "  quickstart [idea]  Guided first build: setup, idea, template, plan, go"
     echo ""
     echo "Session:"
@@ -1765,7 +1766,7 @@ show_help() {
     # missing from this list, so a new command cannot ship invisible.
     echo ""
     echo "All commands:"
-    echo "  agent analyze api assets audit bench checkpoint (cp) ci cleanup"
+    echo "  agent analyze api assets audit backlog bench checkpoint (cp) ci cleanup"
     echo "  cluster cockpit code compliance completions compound config context (ctx)"
     echo "  cost council crash dashboard demo deploy docker docs doctor dogfood"
     echo "  enterprise estimate explain export failover github grill heal help"
@@ -12593,7 +12594,7 @@ cmd_config() {
             echo "  get KEY         Get a configuration value"
             echo "  example         Print an annotated config template (for --config)"
             echo "  schema          Print the key -> env-var mapping table"
-            echo "  validate FILE   Validate a config file (--config) without applying it"
+            echo "  validate [FILE] Validate loki.yaml (no FILE: repo root, then ~/.loki) or a --config file"
             echo ""
             echo "Settable keys (v6.0.0):"
             echo "  maxTier              Cost ceiling: opus, sonnet, haiku (default: opus)"
@@ -12797,14 +12798,43 @@ cmd_config_schema() {
     loki_config_generate_schema
 }
 
+# D51: headless backlog runner. One v10 issue-mode run per open issue, each in
+# its own worktree and branch, at most N in parallel (loki.yaml concurrency).
+cmd_backlog() {
+    case "${1:-}" in
+        ""|--help|-h|help)
+            echo -e "${BOLD}loki backlog${NC} - run a v10 issue-mode run for every matching open issue"
+            echo ""
+            echo "Usage: loki backlog owner/repo (--all | --label X | --issues 1,2,3) [--concurrency N] [--dry-run]"
+            echo ""
+            echo "  --all             Every open issue"
+            echo "  --label X         Open issues with label X"
+            echo "  --issues 1,2,3    Exactly these issue numbers"
+            echo "  --concurrency N   Max runs in parallel (default: loki.yaml concurrency, else 2)"
+            echo "  --dry-run         List what would run; launch nothing"
+            echo ""
+            echo "Run from a checkout of owner/repo. Each issue runs in its own worktree on loki/backlog-N."
+            echo "Config: loki.yaml (repo root, then ~/.loki/loki.yaml); see docs/loki.yaml.example."
+            echo "Exit: 0 every issue ended VERIFIED or with a PR; 3 only budget stops; 1 otherwise; 2 usage."
+            return 0
+            ;;
+    esac
+    command -v python3 >/dev/null 2>&1 || { echo -e "${RED}loki backlog: python3 is required${NC}" >&2; return 2; }
+    python3 "$_LOKI_SCRIPT_DIR/lib/backlog.py" "$@"
+}
+
 # #691: validate a config file (--config) WITHOUT applying it. Reports
 # unresolved ${VAR} refs, raw-secret literals (error), and per-value validation
 # failures. Non-zero exit on any failure.
 cmd_config_validate() {
-    local file="${1:-}"
-    if [ -z "$file" ]; then
-        echo -e "${RED}Usage: loki config validate <file>${NC}" >&2
-        return 2
+    local file="${1:-}" _loki_yaml
+    # D51: loki.yaml (UI + headless config) has its own schema; no argument
+    # validates the discovered loki.yaml (repo root, then ~/.loki/loki.yaml).
+    case "$(basename -- "$file")" in "" | loki.yaml | loki.yml | loki.yaml.example) _loki_yaml=1 ;; *) _loki_yaml=0 ;; esac
+    if [ "$_loki_yaml" = 1 ]; then
+        command -v python3 >/dev/null 2>&1 || { echo -e "${RED}config validate: python3 is required${NC}" >&2; return 2; }
+        python3 "$_LOKI_SCRIPT_DIR/lib/loki_yaml.py" validate ${file:+"$file"}
+        return $?
     fi
     if ! declare -f loki_config_validate_file >/dev/null 2>&1; then
         echo -e "${RED}config validate: config-map.sh helper not loaded${NC}" >&2
@@ -21766,6 +21796,9 @@ main() {
             ;;
         assets)
             cmd_assets "$@"
+            ;;
+        backlog)
+            cmd_backlog "$@"
             ;;
         config)
             cmd_config "$@"

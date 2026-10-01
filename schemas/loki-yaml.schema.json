@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autonomi.dev/schemas/loki-yaml.schema.json",
+  "title": "loki.yaml",
+  "description": "One config file for the Loki UI and the headless CLI (D51). Looked up in the repo root, then ~/.loki/loki.yaml (first found wins, no merging). Precedence: CLI flag > environment > loki.yaml > default. Secrets are never stored here: every credential key holds the NAME of an environment variable.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "provider": {
+      "description": "Default provider. Env override: LOKI_PROVIDER.",
+      "type": "string",
+      "enum": ["claude", "codex", "cline", "aider", "opencode"]
+    },
+    "models": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "description": "Default (development) model. Env override: LOKI_MODEL_DEVELOPMENT.",
+          "type": "string",
+          "minLength": 1
+        },
+        "cheap": {
+          "description": "Cheap/fast model. Env override: LOKI_MODEL_FAST.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "token_env": {
+          "description": "NAME of the env var holding a GitHub PAT (never the token). Env override: LOKI_GIT_TOKEN_ENV.",
+          "type": "string",
+          "pattern": "^[A-Z_][A-Z0-9_]*$",
+          "x-secret-ref": true
+        }
+      }
+    },
+    "repos": {
+      "description": "owner/repo list the UI offers and headless runs may target.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+      }
+    },
+    "concurrency": {
+      "description": "Max backlog runs in parallel (default 2). Env override: LOKI_BACKLOG_CONCURRENCY.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32,
+      "default": 2
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "per_run_usd": {
+          "description": "USD cap forwarded to each run as LOKI_BUDGET_LIMIT. Env override: LOKI_BUDGET_PER_RUN_USD.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "per_day_usd": {
+          "description": "USD per calendar day; backlog stops launching new runs once reached (BUDGET_STOP). Env override: LOKI_BUDGET_PER_DAY_USD.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "knowledge_sources": {
+      "description": "Local paths of knowledge to give runs. Parsed and validated only; consumed by a later slice.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "notifications": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "slack_webhook_env": {
+          "description": "NAME of the env var holding the Slack webhook URL (never the URL). Env override: LOKI_SLACK_WEBHOOK_ENV.",
+          "type": "string",
+          "pattern": "^[A-Z_][A-Z0-9_]*$",
+          "x-secret-ref": true
+        }
+      }
+    }
+  }
+}

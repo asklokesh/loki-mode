@@ -310,6 +310,7 @@ declare -a _FAST_KEEP=(
   "tests/dashboard/test_tenant_isolation.py"
   "tests/dashboard/test_oidc_rbac_mapping.py"
   "tests/cli/test-proof-command.sh"
+  "tests/test-backlog.sh"
   "tests/test-evidence-gate"
   "tests/test-evidence-boot-axis.sh"
   "tests/test-evidence-secret-axis.sh"
@@ -1581,6 +1582,7 @@ run_check "tests/test-prd-reuse-stub.sh (reuse hit = zero re-analysis provider c
 # a fixture proofs dir. Faked gh/open on PATH -> no network, no browser launch.
 # Asserts share does NOT publish without confirm and DOES with --yes.
 run_check "tests/cli/test-proof-command.sh (proof list/show/open/share)" "bash tests/cli/test-proof-command.sh 2>&1 | tail -3"
+run_check "tests/test-backlog.sh (loki backlog + loki.yaml)" "bash tests/test-backlog.sh 2>&1 | tail -3"
 
 # task 562: `loki mcp` launcher (autonomy/mcp-launch.sh) + server.py SDK
 # detection. Stub-based, ZERO real installs / ZERO real server launches: a stub
