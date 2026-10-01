@@ -4,6 +4,8 @@
 // identical once every literal is normalised to its Python type, and the run and skip counts
 // must be exactly equal to base. Never keyed on collected test ids (parametrize ids move).
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { basename } from "node:path";
 
 export interface AssertDeltaInput {
@@ -103,5 +105,20 @@ export function classifyAssertDelta(inp: AssertDeltaInput): AssertDeltaResult {
     return r.verdict === "value-change" && r.changes.length > 0 ? r : WEAKENED;
   } catch {
     return WEAKENED;
+  }
+}
+
+type Counts = { run: number; skipped: number };
+/** Receipt lines for an edited pre-existing test: `assertion changed per spec: file:line old -> new` per entry on a value-change, else null
+ *  (the caller keeps `weakened test`). headRef null reads the worktree. Missing counts or any failure is null (fail closed). */
+export function assertDeltaNotes(repoDir: string, baseSha: string, headRef: string | null, path: string, task: string, baseCounts?: Counts, headCounts?: Counts): string[] | null {
+  if (!baseCounts || !headCounts) return null;
+  try {
+    const show = (ref: string): string => execFileSync("git", ["show", `${ref}:${path}`], { cwd: repoDir, encoding: "utf8", env: process.env, stdio: ["ignore", "pipe", "ignore"] });
+    const head = headRef ? show(headRef) : readFileSync(join(repoDir, path), "utf8");
+    const r = classifyAssertDelta({ path, base: show(baseSha), head, names: [...new Set(task.match(/[A-Za-z_]\w*/g) ?? [])], baseCounts, headCounts });
+    return r.verdict === "value-change" ? r.changes.map((c) => `assertion changed per spec: ${c}`) : null;
+  } catch {
+    return null;
   }
 }

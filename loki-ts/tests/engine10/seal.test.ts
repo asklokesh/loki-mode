@@ -570,6 +570,33 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(r.not_proven.some((n) => n.includes("a.txt"))).toBe(false);
   }, 30000);
 
+  test("D50-F2-S2: a literal value swap is worded assertion changed per spec and a deleted assert stays weakened test; both seal PARTIAL", async () => {
+    noKey();
+    const BASE = 'import pytest\nfrom impl import naturaldelta\n\n\n@pytest.mark.parametrize("s, e", [\n    (59, "59 seconds"),\n    (119, "a minute"),\n])\ndef test_nd(s, e):\n    assert naturaldelta(s) == e\n';
+    const line = "assertion changed per spec: test_time.py:7 'a minute' -> '2 minutes'";
+    const seal = async (tag: string, head: string, verifyNp: string[]): Promise<{ verdict: string; not_proven: string[] }> => {
+      const { repo } = makeRepo("delta" + tag);
+      writeFileSync(join(repo, "test_time.py"), BASE);
+      sh(["git", "add", "test_time.py"], repo);
+      sh(["git", "commit", "-q", "-m", "add test"], repo);
+      const b = sh(["git", "rev-parse", "HEAD"], repo).trim();
+      writeFileSync(join(repo, "test_time.py"), head);
+      const { ctx } = ctxFor(repo, b, "claude", { intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "t", task: "fix naturaldelta", resumed: false }, verify: { checks: [{ name: "pytest:test_time.py", cmd: "pytest", result: "pass", duration_s: 1 }], flaky: [], not_proven: verifyNp, duration_s: 2 } });
+      await commitStage.run(ctx, new AbortController().signal);
+      return receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    };
+    const swapped = await seal("s", BASE.replace('"a minute"', '"2 minutes"'), [line]);
+    expect(swapped.not_proven).toContain(line);
+    expect(swapped.not_proven).not.toContain("weakened test: test_time.py");
+    expect(swapped.verdict).toBe("PARTIAL");
+    const gone = await seal("g", BASE.replace("    assert naturaldelta(s) == e\n", "    pass\n"), ["weakened test: test_time.py"]);
+    expect(gone.not_proven).toContain("weakened test: test_time.py");
+    expect(gone.verdict).toBe("PARTIAL");
+    const unconfirmed = await seal("u", BASE.replace('"a minute"', '"2 minutes"'), []);
+    expect(unconfirmed.not_proven).toContain("weakened test: test_time.py");
+    expect(unconfirmed.verdict).toBe("PARTIAL");
+  }, 30000);
+
   test("A-119: a renamed test file (with or without a content change) is NOT VERIFIED; an honest source-only fix stays VERIFIED", async () => {
     noKey();
     const seal = async (tag: string, edit: (repo: string) => void): Promise<{ verdict: string; not_proven: string[] }> => {

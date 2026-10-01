@@ -119,4 +119,17 @@ describe("engine10 verify: weakened checks (A-115)", () => {
     writeFileSync(join(dir, "package.json"), pkg("true", ""));
     expect(testConfigChanged(dir, base, ["package.json", "jest.config.js", "src/a.ts"])).toEqual(["package.json", "jest.config.js"]);
   });
+  // D50-F2-S2: humanize-174 shape. A literal swap in a parametrize row of a test calling the named symbol is worded as a spec change; never a verdict change.
+  const HBASE = 'import pytest\nfrom impl import naturaldelta\n\n\n@pytest.mark.parametrize("s, e", [\n    (59, "59 seconds"),\n    (119, "a minute"),\n])\ndef test_nd(s, e):\n    assert naturaldelta(s) == e\n\n\ndef test_ok():\n    assert True\n';
+  const HIMPL = (r: string): Record<string, string> => ({ "impl.py": `def naturaldelta(s):\n    return "59 seconds" if s < 60 else "${r}"\n` });
+  const HTASK = "fix naturaldelta in impl.py, see test_time.py";
+  test("D50-F2-S2: literal value swap in a test calling the named symbol: assertion changed per spec, not weakened test", async () => {
+    const d = await verify({ ...HIMPL("a minute"), "test_time.py": HBASE, "test_o.py": "def test_x():\n    assert True\n" }, { ...HIMPL("2 minutes"), "test_time.py": HBASE.replace('(119, "a minute")', '(119, "2 minutes")') }, HTASK, py("test_time.py"), py("test_o.py"));
+    expect(d.not_proven).toEqual(["assertion changed per spec: test_time.py:7 'a minute' -> '2 minutes'"]);
+  }, 60_000);
+  test("D50-F2-S2: the same fixture with the assert deleted stays weakened test", async () => {
+    const d = await verify({ ...HIMPL("a minute"), "test_time.py": HBASE, "test_o.py": "def test_x():\n    assert True\n" }, { ...HIMPL("2 minutes"), "test_time.py": HBASE.replace("    assert naturaldelta(s) == e\n", "    pass\n") }, HTASK, py("test_time.py"), py("test_o.py"));
+    expect(d.not_proven).toContain("weakened test: test_time.py");
+    expect(d.not_proven.some((n) => n.startsWith("assertion changed"))).toBe(false);
+  }, 60_000);
 });

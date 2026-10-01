@@ -8,7 +8,7 @@ import { createHash, randomBytes, createPrivateKey, createPublicKey, generateKey
 import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { untouchedSinceIntake } from "../../e10ext/preexisting_dirty.ts"; import { RECEIPT_SIGNER_BASENAME } from "../../util/receipt_signer.ts";
+import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { untouchedSinceIntake } from "../../e10ext/preexisting_dirty.ts"; import { RECEIPT_SIGNER_BASENAME } from "../../util/receipt_signer.ts";
 import { run } from "../../util/shell.ts";
 import { isTestFile } from "../testmap.ts";
 import { STAGE_BUDGETS } from "../types.ts";
@@ -206,7 +206,7 @@ export const sealStage: Stage = {
     if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);
     if (!diffOk) notProven.add("diff not computed (git diff-tree failed)");
     // E-55: any status other than A means the path existed at base_sha (M, D, or T typechange, e.g. a symlink).
-    for (const t of weakTests) notProven.add(`weakened test: ${t}`);
+    for (const t of weakTests) { const h = { run: 0, skipped: 0 }; /* counts were compared by verify (a mismatch lists "weakened test"); seal only re-confirms the literal-only diff */ for (const n of (verifyNotProven.some((v) => v.startsWith(`assertion changed per spec: ${t}:`)) ? assertDeltaNotes(ctx.repoDir, ctx.baseSha, head, t, str(o.intake?.task) ?? "", h, h) : null) ?? [`weakened test: ${t}`]) notProven.add(n); }
     for (const c of checks) if (c.result === "not_run") notProven.add(`not run: ${c.name}`);
     for (const f of strs(o.verify?.flaky)) notProven.add(`flaky test: ${f}`);
     for (const n of verifyNotProven) notProven.add(n);
