@@ -1,8 +1,8 @@
 # Handoff to next week (D59, written 2026-10-01; resume Wednesday 2026-10-07)
 
 ## On npm now
-- latest: 10.6.0 (moved by the D49 auto-promote after post-release smoke passed; the D58 real-repo gate is not wired into promote yet).
-- next: 10.6.6 (Release run succeeded 20:12Z; npm can lag about 30 minutes, check `npm view loki-mode dist-tags`). latest stays 10.6.0 until a promote.
+- latest: 10.6.6 (moved by the D49 auto-promote after post-release smoke passed, seen 20:28Z; the D58 real-repo gate is not wired into promote yet).
+- next: 10.6.6 (Release run succeeded 20:12Z; npm can lag about 30 minutes, check `npm view loki-mode dist-tags`). 
 
 ## Releases this window and their CI
 - 10.6.0 (9f9569c35, tree d922ef170): Tests, Bun Parity, Coverage, Security Audit all green on train/72 and on main. Published.
