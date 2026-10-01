@@ -10,25 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
-## v10.6.2 (2026-10-01)
+## v10.6.3 (2026-10-01)
 
-A `next` release. It also carries everything listed under v10.6.1, which was tagged in VERSION but never published (its Release run stopped on a failed docs test).
+A `next` release. It ships the changes prepared for v10.6.1, which was never published.
 
-### `loki start` runs v10, legacy routes removed
-- `loki start`, `loki run` and `loki quick` now go to the v10 engine for an issue ref, a task in quotes, or a spec file (`.md`, `.txt`, `.yaml`, `.yml`). A spec file given as the only argument is read as the task text. Examples: `loki start owner/repo#1 --no-pr`, `loki ./task.md`.
-- Supported start flags: `--no-pr`, `--deep`, `--json`, `--verbose`, `--provider`.
-- Removed with one plain message and exit 2: `loki legacy`, `LOKI_ENGINE`, `quickstart`, `council`, `voice`, `grill`, `heal`, `migrate`, `swarm`, `gates`, `agent`, `modernize heal|migrate`, and the old start flags such as `--parallel`, `--bg`, `--yes`, `--openspec`. `loki` with no arguments opens the UI.
-- The promote gate's no-bun leg checks the exact one-line message and that the repo is left untouched.
+### Scope control
+- v10 runs stay inside the task. After a run, any edit to an existing file outside the plan's scope is restored before commit and listed in the receipt under NOT PROVEN as `unrelated edit reverted: <file>`. Test files, new files and files you had already modified are kept. When the planner produced no scope (small tasks), nothing is reverted and the receipt says so.
+
+### Loki Control Plane v0
+- First cut of the Control Plane that replaces the dashboards: a live run view fed by the engine when `LOKI_CONTROL_URL` is set, plus `loki control`. Off unless configured.
+
+### Dashboard
+- The dashboard publishes the URL it actually bound to (`.loki/dashboard/url`); the banner and browser opener use it instead of a guessed port. `loki ui` and `dashboard start` reuse a running dashboard only when it belongs to this project. Test runs no longer leave dashboards on ports 57374-57399.
+
+### Release tooling
+- The release captain waits for a train's running checks before cutting a newer one, and no longer waits forever on a check that never started.
 
 ### Docs
-- README keeps its single Loki 10 default marker after the legacy docs cleanup.
+- Docs updated for the v10-only direction; README keeps its Loki 10 default marker.
 
-### Known gaps (next week)
-- Some docs still mention removed commands; a cleanup is in progress.
-- The `why --json` schema test and two eval-harness cost checks were removed with the legacy path and need v10 replacements.
+### Not in this release
+- `loki start` routed to v10 and removal of the legacy commands: withdrawn after it failed the test suite (v10.6.2); planned for next week.
 
-### Release note
-- Released under the founder's D59 window. The handoff records the CI result for this commit.
+## v10.6.2 (2026-10-01, not published)
+
+Not published. Its `loki start` routing change failed the test suite, including three moat properties, and was withdrawn; it returns in a later release.
 
 ## v10.6.1 (2026-10-01, not published)
 
