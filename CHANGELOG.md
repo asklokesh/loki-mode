@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.29 (2026-10-01)
+
+A `next` release. A Loki 10 run whose commit stage fails no longer lands a backstop commit or opens a pull request.
+
+### Fixed
+- When the commit stage fails, the supervisor skips its backstop commit (`git add -A` with hooks off), so files that were already modified before the run, Wall files and stray lockfiles are not committed, and no pull request is opened for that run. A worker that is killed before reaching the commit stage still gets its work backstop-committed and a draft PR, as before (A-104c).
+
 ## v10.5.28 (2026-10-01)
 
 A `next` release that closes a false-VERIFIED path in the Loki 10 engine's Seal: a run whose commit stage fails now ends FAILED and is never sealed VERIFIED.
