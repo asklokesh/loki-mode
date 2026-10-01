@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.31 (2026-10-01)
+
+A `next` release. A Loki 10 run that refuses to start in a checkout with uncommitted changes no longer commits anything to the user's branch.
+
+### Fixed
+- When intake refused a run because tracked files had uncommitted changes, the supervisor still ran its backstop commit (`git add -A` and a "loki: backstop commit") in the repository. No run branch had been created yet, so the user's modified and untracked files were committed onto the branch they were on, usually `main`. The backstop now runs only after intake has completed and the run's own branch exists. A worker killed after intake still gets its work backstop-committed, as before (P0-backstop-refused).
+
 ## v10.5.30 (2026-10-01)
 
 A `next` release. A Loki 10 run that finds the task already satisfied now leaves the repository as it found it, and `loki why --json` and `loki status --json` have published JSON Schemas.
