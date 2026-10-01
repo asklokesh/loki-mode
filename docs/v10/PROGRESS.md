@@ -1832,3 +1832,8 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 
 ## 2026-10-01T10:14Z LOKI MORNING TEST
 - See docs/v10/MORNING-BRIEF.md, section "LOKI MORNING TEST" (latest 10.5.27, both gate legs passed).
+
+## 2026-10-01T10:25Z D50 rerun complete (3 reps x 4 tasks x 2 arms, claude-sonnet-5, main 575ddebcf)
+- click-2877: v10 3/3, raw 3/3 (baseline false ALREADY_SATISFIED did not recur: noise). humanize-333: v10 1/3, raw 1/3 (parity, hard task).
+- humanize-174: v10 0/3, raw 2/3 (real). aiq-52-searchbar (expected no_change_needed): v10 0/3 (1 opened a PR, 2 no PR but not scored completed), raw 2/3 (real).
+- Data: ~/loki-ci-logs/d50-rerun-20261001T0932/*/results.jsonl. Root-cause analyst running on the two real losses; the top cause gets the first fix and a per-model profile row. Internal; not published.

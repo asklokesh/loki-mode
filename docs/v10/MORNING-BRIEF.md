@@ -27,7 +27,7 @@
 ## Lift (D50): not citable yet
 - The baseline had Loki+sonnet 5/10 against raw sonnet 9/10. Of the 5 losses, 1 was also a raw loss (click-3059) and 1 predates the E-164 fix (aiq-52).
 - The 3 real defects: a false "already satisfied" (click-2877), an empty diff (humanize-174), and a wrong fix that verify passed (humanize-333).
-- A 3-rep rerun of the 4 Loki-specific tasks on both arms is running (~/loki-ci-logs/d50-rerun-20261001T0932). Results go here when complete; no number is published before then.
+- 3-rep rerun (sonnet, current main) of the 4 Loki-specific tasks: click-2877 3/3 both arms and humanize-333 1/3 both arms (baseline losses were noise); humanize-174 Loki 0/3 vs raw 2/3 and aiq-52 (no_change_needed) Loki 0/3 vs raw 2/3 are real. Root-cause analysis running; fix the top cause next. Internal only, not for publication.
 
 ## LOKI MORNING TEST
 ```

@@ -570,3 +570,12 @@ Findings: (1) the v10 dirty-tree refusal is a harness-vs-engine defect that cost
 Reproduce (per arm; a run-owned temp is created by run.sh; needs `cd loki-ts && bun install --frozen-lockfile` for the v10 arm):
 `LOKI_NO_BROWSER=1 LOKI_EVAL_MAX_LOAD=80 LOKI_EVAL_MODEL=<claude-haiku-4-5|claude-sonnet-5> eval/loki10/run.sh --arm <raw-claude|v10> --tasks aiq-52-searchbar,pub-click-2877,pub-click-3059,pub-click-3487,pub-click-3572,pub-humanize-152,pub-humanize-174,pub-humanize-333,pub-jsonschema-1389,pub-markupsafe-417 --parallel 1 --out ~/loki-ci-logs/d50-<arm>-<model>`
 Raw rows: ~/loki-ci-logs/d50-{raw-haiku,raw-sonnet,v10-haiku,v10-sonnet}/results.jsonl.
+
+### D50 rerun, 2026-10-01T10:25Z (3 reps, sonnet, 4 Loki-specific baseline losses)
+| Task | Loki+sonnet | raw sonnet |
+|---|---|---|
+| pub-click-2877 | 3/3 | 3/3 |
+| pub-humanize-333 | 1/3 | 1/3 |
+| pub-humanize-174 | 0/3 | 2/3 |
+| aiq-52-searchbar (no_change_needed) | 0/3 | 2/3 |
+Two of the four baseline losses were noise; two are real. Internal measurement, not for publication until the fixes are re-measured.
