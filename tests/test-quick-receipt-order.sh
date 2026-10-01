@@ -88,6 +88,7 @@ EVV="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['verdict'
 
 LINES="$(cat "$T/out.log" "$T/out.log.err" | wc -l | tr -d ' ')"
 [ "$LINES" -le 15 ] && ok "default output is $LINES lines (max 15)" || bad "default output is $LINES lines (max 15)"
+if [ "$LINES" -gt 15 ]; then echo "--- stdout ($T/out.log)"; cat "$T/out.log"; echo "--- stderr ($T/out.log.err)"; cat "$T/out.log.err"; echo "--- end"; fi
 printf '%s\n' "$OUT" | grep -q '^\[INFO\]' && bad "log_info chatter printed by default" || ok "no [INFO] chatter by default"
 
 VFIX="$T/verbose"

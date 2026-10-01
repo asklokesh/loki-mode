@@ -49,7 +49,7 @@ echo "KEYFILE=$LOKI_RECEIPT_SIGNING_KEY_FILE"
 echo "CHILD_RUN_TMP=[${LOKI_RUN_TMP-unset}]"
 EOF
 
-run_runner() { (cd "$T/repo" && HOME="$T/home" env -u LOKI_TEST_LIST -u LOKI_RECEIPT_SIGNING_KEY_FILE -u LOKI_RUN_TMP "$@" bash tests/run-all-tests.sh 2>&1); }
+run_runner() { (cd "$T/repo" && HOME="$T/home" env -u LOKI_TEST_LIST -u LOKI_TEST_SHARD -u LOKI_RECEIPT_SIGNING_KEY_FILE -u LOKI_RUN_TMP "$@" bash tests/run-all-tests.sh 2>&1); }
 
 # E-155: a suite that switches the parent branch is named and fails the run.
 mk_runner <<'EOF'
@@ -85,7 +85,7 @@ esac
 # A child suite must not inherit LOKI_RUN_TMP, or its own loki_run_tmp_create refuses.
 printf '%s\n' "$out" | grep -qx 'CHILD_RUN_TMP=\[unset\]' && ok "E-154: child suite sees LOKI_RUN_TMP unset" || bad "E-154: LOKI_RUN_TMP leaked to child suite"
 [ ! -e "$(dirname -- "${kf:-/nonexistent/x}")" ] && ok "E-154: run-owned dir removed at exit" || bad "E-154: run-owned dir leaked"
-out="$(cd "$T/repo" && env -u LOKI_TEST_LIST -u LOKI_RUN_TMP HOME="$T/home" TMPDIR="$T" LOKI_RECEIPT_SIGNING_KEY_FILE=/caller/key.pem bash tests/run-all-tests.sh 2>&1)"
+out="$(cd "$T/repo" && env -u LOKI_TEST_LIST -u LOKI_TEST_SHARD -u LOKI_RUN_TMP HOME="$T/home" TMPDIR="$T" LOKI_RECEIPT_SIGNING_KEY_FILE=/caller/key.pem bash tests/run-all-tests.sh 2>&1)"
 printf '%s' "$out" | grep -q "KEYFILE=/caller/key.pem" && ok "E-154: caller-set key file is kept" || bad "E-154: caller key file overridden"
 
 echo "Passed: $PASS Failed: $FAIL"
