@@ -346,7 +346,7 @@ Design System	10
 Docker Helpers W4	1
 Docker Run	0
 Doctor Ux	0
-E2e Features	19
+E2e Features	20
 Embeddings	1
 Emit Jsonl	0
 Empty Args No Prd	0
@@ -693,3 +693,4 @@ Quick receipt order and quiet output (A-134)	90
 Quick config safety (P0-t15)	35
 Loki Seal marketplace (D48 r10)	2
 Quick integrity exit code (A-118)	5
+Quick quiet failure tail and stdin (A-134b)	40
