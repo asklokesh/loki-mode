@@ -432,3 +432,14 @@ Loki's definition: "autonomous software factory that runs with the knowledge of 
 2. The release captain is automated: scripts/train-cycle.sh (slice RC-AUTO) runs every 10 minutes and cuts trains, promotes green trains to main and cuts the patch release with no model calls. Red trains drop slices per D46 rule 2.
 3. Slice supply: a standing queue of small user-visible haiku slices (15 min or less) keeps at least one merged-green slice per 10-minute window; sonnet builders feed the larger D50, D48 and D51 items into the same queue.
 4. The quality bar is unchanged: green slices only, the two-leg gate before `latest`, no weakened checks. Releases per hour are reported in every PROGRESS entry.
+
+## D50-W1 ruling (founder delegation, ruled by autonomi-dev-dc, relayed 14:20Z; reversible): the Wall sees the test surface, never implementation
+1. The Wall session may see: the detected test runner and its config, the test directory layout, one or two existing test files as style examples (imports, fixtures, naming), and the public signatures and exports of the modules the task names (names, parameters, docstrings, type signatures).
+2. It never sees function bodies or the run's diff. This keeps the Wall's from-spec independence while fixing blind tests (a Jest test written into a node:test repo, a test for a symbol that does not exist).
+3. Ships with a lift row on the affected tasks.
+
+## D53 amendment, D53-Q1 ruling (same delegation, relayed 14:20Z; reversible): the licensing literal must be the expected value
+1. D53(a) tightened: the new literal must appear as the EXPECTED value in the delivery contract's acceptance criteria, which intake extracts with the quoted source span; appearing anywhere in the issue text is not enough. A literal that appears only as an observed or actual value ("returns 5", "currently 5", "got 5") never licenses an edit.
+2. D53(c) tightened: at least one Wall check must cover the same behaviour; a Wall written from the requirement asserts the correct value, so an edit to the buggy value fails it.
+3. If intake cannot classify the literal as expected versus observed, the run stays PARTIAL.
+4. Red test required: an issue saying "returns 5, should return 7" with a test edit to 5 is never VERIFIED.
