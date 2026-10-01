@@ -1627,3 +1627,12 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Moat bugs found and fixed today (all false-VERIFIED class): A-112/A-114 (pre-red subtract, avoided target), A-115 (skip, xfail, pytest.exit, deleted target), A-130 (tampered event log sealed VERIFIED exit 0 on main). Open: A-117 (loki verify still VERIFIED on a tampered event log), A-118 (legacy quick exits 0 on NOT VERIFIED skipped target; CTO call). `latest` stays unpromoted until A-117/A-118 and a real-provider gate pass.
 - Merged on local main for train/15: A-130. In review: A-113b r3 (provider stderr in memory), E-156 (key file name constant: removes the gitleaks trigger at the source).
 - loki-seal: merged, ships with 10.5.13. Head-to-head: not run.
+
+## 2026-10-01T00:55Z first-run gate on the PUBLISHED next build (10.5.13)
+- 10.5.13 published to npm `next`: `npm view loki-mode@10.5.13 version gitHead` = 10.5.13 / 08f46297 (watcher 00:52:36Z); dist-tags next=10.5.13, latest=10.5.10 (unchanged); release body 25 lines. Registry lag about 8 minutes (no hold).
+- `bash scripts/first-run-gate.sh --stub --installed loki-mode@10.5.13` (npm-installed package, throwaway HOME, stub provider), GATE: 0 assertion(s) failed, wall 26s:
+  - PASS exit-honest (rc=0, green=1); PASS tests-green (node --test 2/0, npm test rc=0); PASS no-stray-files (only sum.js); PASS digest-matches; PASS verify-ok (rc=0); PASS receipt-signed; PASS output-lines (15 of 15); PASS wall-time (26s).
+  - G8: PASS skip-not-verified (v10: skipped target rc=1, Outcome FAILED); PASS skip-not-verified-legacy (legacy headline NOT VERIFIED; rc=0, not asserted: that is A-118).
+- REAL-provider mode: NOT RUN. The swarm has no provider credential in its environment and does not read stored secrets; FOUNDER-QUEUE row 15 has the exact command. Cost/wall vs raw `claude -p`: pending that run.
+- `latest` NOT promoted: needs the real-provider pass plus A-117 (loki verify on a tampered log, building) and A-118 (legacy quick exits 0 on NOT VERIFIED, CTO call).
+- Trains: train/16 (bba2e5ec) in Tier B. 1 `next` release in the trailing hour vs the D46 target of 3-6.
