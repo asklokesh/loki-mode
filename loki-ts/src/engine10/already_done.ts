@@ -7,6 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { wallModel } from "./sizing.ts";
 import type { RepoMap } from "./repomap.ts";
+import { linkedHits } from "../e10ext/compound_match.ts";
 import { pushArgv, taskBlock } from "./types.ts";
 import type { RunContext, TestMap } from "./types.ts";
 
@@ -118,12 +119,11 @@ function wordSpansCategories(word: string, repoMap: RepoMap, testMap: TestMap, r
 export function findEvidence(task: string, repoMap: RepoMap, testMap: TestMap, repoDir: string): EvidenceHit[] {
   const words = keywords(task);
   if (words.length === 0) return [];
-  if (!words.some((w) => wordSpansCategories(w, repoMap, testMap, repoDir))) return [];
-  return [
-    ...codeEvidence(words, repoMap).slice(0, PER_SOURCE_CAP),
-    ...testEvidence(words, testMap).slice(0, PER_SOURCE_CAP),
-    ...docEvidence(words, repoDir).slice(0, PER_SOURCE_CAP),
-  ];
+  const linked = words.flatMap((w) => linkedHits(w, repoMap, testMap, repoDir));
+  if (linked.length === 0 && !words.some((w) => wordSpansCategories(w, repoMap, testMap, repoDir))) return [];
+  const all = [...codeEvidence(words, repoMap), ...testEvidence(words, testMap), ...docEvidence(words, repoDir), ...linked];
+  const uniq = [...new Map(all.map((h) => [`${h.source}|${h.path}|${h.line}`, h])).values()];
+  return (["code", "test", "changelog"] as const).flatMap((s) => uniq.filter((h) => h.source === s).slice(0, PER_SOURCE_CAP));
 }
 
 export function evidenceLines(hits: EvidenceHit[]): string[] {
