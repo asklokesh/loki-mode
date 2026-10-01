@@ -150,6 +150,7 @@ cat > "$T/fakebin/npm" <<'NPM'
 echo "$*" >> "$FAKE_NPM_ARGS"
 while [ $# -gt 0 ]; do [ "$1" = --prefix ] && P="$2"; shift; done
 mkdir -p "$P/node_modules/.bin"; cp "$FAKE_LOKI_SRC" "$P/node_modules/.bin/loki"
+[ -n "${FAKE_NPM_WARN:-}" ] && echo "npm warn allow-scripts 1 package has install scripts not yet covered by allowScripts: bun@1.4.2 (postinstall: node install.js)"
 [ -n "${FAKE_NPM_BUN:-}" ] && mkdir -p "$P/node_modules/bun"
 exit 0
 NPM
@@ -162,6 +163,12 @@ rm -f "$T/npm-args"; run_inst nobun
 grep -q -- '--omit=optional' "$T/npm-args" && ok "installed legacy: omits optional deps" || bad "installed legacy: no --omit=optional"
 run_inst withbun withbun
 [ "$RC" -ne 0 ] && printf '%s\n' "$OUT" | grep -q 'FAIL legacy-no-bun: bun is installed at' && ok "installed legacy: bun in install dir fails closed" || bad "installed legacy: bun not rejected"
+
+# an allow-scripts/postinstall warning in the install output fails the installed legs
+OUT=$(env -u LOKI_RUN_TMP PATH="$T/fakebin:$PATH" FAKE_NPM_ARGS="$T/npm-args" FAKE_LOKI_SRC="$T/fake-loki" FAKE_LEGACY=1 FAKE_MODE=clean \
+    FAKE_NPM_WARN=1 FRG_REPORT="$T/report-inst.txt" bash "$GATE" --stub --engine legacy --installed loki-mode@x 2>&1); RC=$?
+[ "$RC" -ne 0 ] && printf '%s\n' "$OUT" | grep -q 'FAIL install-clean' && ok "installed: allow-scripts warning fails the gate" || bad "installed: allow-scripts warning not rejected"
+run_inst nobun; [ "$RC" -eq 0 ] && ok "installed: clean install output passes" || bad "installed: clean install rc=$RC"
 
 # The gate matches bin/loki's fallback text literally; the two must not drift
 # (promote of 10.5.25 failed when the message changed and the gate did not).

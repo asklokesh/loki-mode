@@ -58,8 +58,12 @@ if [ -n "$SPEC" ]; then
     # The legacy leg is a user with no bun at all: omit optional deps so loki-mode's optional bun is not installed beside it.
     OMIT=""; [ "$ENGINE" = legacy ] && OMIT="--omit=optional"
     # shellcheck disable=SC2086
-    npm install --silent --no-audit --no-fund $OMIT --prefix "$T/prefix" "$SPEC" >"$T/install.log" 2>&1 \
+    npm install --loglevel=warn --no-audit --no-fund $OMIT --prefix "$T/prefix" "$SPEC" >"$T/install.log" 2>&1 \
         || { echo "FAIL install: npm install $SPEC failed (see $T/install.log)"; exit 1; }
+    # npm 11 allow-scripts: a dependency with an install script prints a warning that makes a first install look broken.
+    if grep -Eqi 'allow-scripts|postinstall' "$T/install.log"; then
+        echo "FAIL install-clean: npm install $SPEC printed an allow-scripts/postinstall warning:"; grep -Ei 'allow-scripts|postinstall' "$T/install.log" | head -3; exit 1
+    fi
     if [ "$ENGINE" = legacy ]; then
         for d in "$T/prefix/node_modules" "$T/prefix/node_modules/loki-mode/node_modules" "$T/prefix/lib/node_modules/loki-mode/node_modules"; do
             for b in "$d/bun" "$d"/@oven/bun-*; do
