@@ -372,4 +372,18 @@ describe("A-110 exit ladder", () => {
     expect(pr.calls.length).toBe(0);
     expect(r.prUrl).toBeNull();
   }, 10_000);
+
+  test("intake refused (dirty tree): no backstop commit lands the user's files on their branch", async () => {
+    const { dir } = repoWithCommit();
+    writeFileSync(join(dir, "a.txt"), "user edit\n"); // dirty tracked file
+    writeFileSync(join(dir, "notes.txt"), "mine\n"); // untracked
+    const code = `console.log(JSON.stringify({ type: "stage.failed", stage: "intake", data: { reason: "dirty tracked tree" } })); process.exit(1);`;
+    const r = await runSupervisor({ runId: "e10-bs-refused", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 5, graceS: 1 });
+    const git = (...a: string[]): string => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8" });
+    expect(r.verdict).toBe("FAILED");
+    expect(git("rev-list", "--count", "--all").trim()).toBe("1");
+    expect(git("log", "--all", "--format=%s")).not.toContain("backstop");
+    expect(readFileSync(join(dir, "a.txt"), "utf8")).toBe("user edit\n");
+    expect(git("status", "--porcelain", "--", "a.txt", "notes.txt")).toBe(" M a.txt\n?? notes.txt\n");
+  }, 10_000);
 });
