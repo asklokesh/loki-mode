@@ -209,6 +209,28 @@ class TestsIntegrity(unittest.TestCase):
         _, items = self.gen()
         self.assertNotIn("tests_integrity", items)
 
+    def _no_tomllib_env(self):
+        d = os.path.join(self.tmp, "blocktoml")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "sitecustomize.py"), "w") as h:
+            h.write("import sys\nsys.modules['tomllib'] = None\nsys.modules['tomli'] = None\n")
+        return d
+
+    def test_no_tomllib_dependency_edit_is_not_failed_and_addopts_is(self):
+        # python < 3.11 path, forced on any interpreter
+        old = os.environ.get("PYTHONPATH")
+        os.environ["PYTHONPATH"] = self._no_tomllib_env()
+        try:
+            self.test_pyproject_dependency_edit_is_not_failed()
+            self.tearDown()
+            self.setUp()
+            self.test_multiline_addopts_filter_is_failed()
+        finally:
+            if old is None:
+                os.environ.pop("PYTHONPATH", None)
+            else:
+                os.environ["PYTHONPATH"] = old
+
     def test_ini_testpaths_change_is_failed(self):
         self.rebase_base(**{"pytest.ini": "[pytest]\ntestpaths = tests\n"})
         self.write("pytest.ini", "[pytest]\ntestpaths = tests/unit\n")
