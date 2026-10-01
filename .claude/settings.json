@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash autonomy/hooks/session-init.sh"
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/autonomy/hooks/session-init.sh\""
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash autonomy/hooks/validate-bash.sh"
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/autonomy/hooks/validate-bash.sh\""
           }
         ]
       }
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash autonomy/hooks/track-metrics.sh"
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/autonomy/hooks/track-metrics.sh\""
           }
         ]
       }
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash autonomy/hooks/store-episode.sh"
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/autonomy/hooks/store-episode.sh\""
           }
         ]
       }
