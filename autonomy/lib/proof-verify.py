@@ -331,6 +331,7 @@ def _compute_headline(facts, degraded):
                if _is_exogenous(g))
         or sec_high
         or fn_failed
+        or bool((facts.get("tests_integrity") or {}).get("weakened"))
     )
     if any_failed:
         return "NOT VERIFIED"
