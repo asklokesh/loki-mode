@@ -1795,3 +1795,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Measured: bun adds about 62MB on macOS arm64 (published 79.5MB linux-x64, 86.1MB windows-x64); baseline builds are no smaller, so option (i).
 - train/46 red on ShellCheck (SC1083 in the new E-168 test); fixed e9121a89, on train/47. train/48 c7ef4b66 = everything; local: 14 checks rc=0 incl. run-shellcheck, npm ci --dry-run, gate --stub.
 - Next: on a green train cut 10.5.24, then re-enable promote.yml so 10.5.24 goes through both gate legs.
+
+## 2026-10-01T08:19Z v10.5.24 published; v10.5.25 (bundled bun, two-leg gate) pushed; promote RE-ENABLED
+- v10.5.24 e3b1aa6d: npm gitHead e3b1aa6dff13 matches; next=10.5.24, latest=10.5.20 (promote disabled). Contents E-165, E-168.
+- train/48 red (shard 4/8, test-modernize-dispatch.sh: stub bun exited 2 on every call, so the new _loki_bun --version probe rejected it); fix f88dd9f8 (stub answers --version); all 11 tests that stub bun rc=0. train/50 f88dd9f8 green on Tests, Bun Parity, Coverage, Security Audit, Tier A; main fast-forwarded.
+- v10.5.25 6fe04649 pushed (--check-clean rc=0, npm ci --dry-run rc=0, parent == origin/main). Ships bun 1.4.2 optionalDependency (measured 62MB macOS arm64), the _loki_bun resolver with the plain cannot-run line, and the E-167 two-leg promote gate.
+- promote.yml re-enabled at 2026-10-01T08:19Z (gh workflow list: active); origin/main promote.yml contains the --engine legacy leg. 10.5.25's own promote runs both legs. Watcher bz9g1y2jr.
