@@ -1652,3 +1652,15 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - P0-t15 round 2 at 54da8960 in sonnet re-review; train/19 = train/18 + P0-t15 when approved.
 - In review: A-130b (be50510f), A-134b (3bbec935). Building: A-117 r2, A-118, A-121b, A-119b (7edf4ae0 awaiting one clean full run).
 - Seats capped by worktrees 15/15 and load about 15-25; no new seats this tick.
+
+## 2026-10-01T01:41Z train/18 green, v10.5.15 cut, train/20 cut
+- train/18 37267ebd: Tests, Bun Parity, Coverage (baseline) all success (watcher b3l054ag3, 01:38:25Z). origin/main fast-forwarded 2f4462b7..37267ebd.
+- v10.5.15 release commit a7945d67 (parent 37267ebd == origin/main; `release.sh --check-clean` rc=0), pushed by SHA. Contents: A-119, A-115b. Watcher armed for Release run, npm version/gitHead, next == 10.5.15, latest unchanged (10.5.10).
+- train/19 89bf645b (P0-t15) is superseded for main because it lacks the release commit; train/20 c57eb914 = train/19 + main (release merge c908a37f), pushed 01:43Z, Tier B watcher armed.
+- D46 tally: trains cut 3 this hour (18, 19, 20), red 0 of the finished ones.
+
+## 2026-10-01T01:51Z trains 19/20 red on one lint line; train/21 carries the fix
+- train/19 89bf645b and train/20 c57eb914: Tests failed only in "ShellCheck Linting" (SC2088, a quoted "~/.loki/config" in tests/test-quick-config-safety.sh line 71, from P0-t15). The quiet-output 16-line failure did not recur (failparse on job 110179389806 lists only ShellCheck). Fixed forward on main 1be4bbe9 (run-shellcheck.sh rc=0); train/21 2ebfa3a1 = train/20 + fix + E-157, in Tier B.
+- v10.5.15 a7945d67: Release run queued at 01:48Z.
+- Reviews: E-157 r3 APPROVE (merged), A-130b APPROVE (merged), E-159 REJECT (rework), A-117 r2 REJECT (back-compat for old receipts; key-env tests), A-118/A-119b/A-134b r2 in review.
+- D46 tally this hour: next releases 1 confirmed (10.5.14) + 1 pending (10.5.15); trains cut 18/19/20/21, red 19 and 20 (one lint line), dropped 0. OPUS_SHARE 36% (HIGH reviews only); load about 25 of 28, no new seats.

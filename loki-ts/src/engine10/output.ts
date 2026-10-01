@@ -5,6 +5,7 @@
 // sessions" (E-69), and a priced-but-zero-usage session is never shown as a real $0.00.
 import type { EventEnvelope, Verdict } from "./types.ts";
 import { registryLoader } from "./registry.ts";
+import { redactSecrets } from "../util/redact.ts";
 const NAME_WIDTH = 12; // fits "implement" + padding to align the next column
 // E-44 (found by E-14): 7 ("skipped") left no separating space, ran duration straight into it
 // ("skipped0s"); +1 guarantees at least one space after the longest status word.
@@ -75,7 +76,7 @@ export function outcomeOf(verdict: Verdict, capHit: boolean, stop: string | null
 export function reasonOf(ev: EventEnvelope[], tampered: boolean, stop: string | null, outcome: Outcome): string | undefined { // A-130: one-line cause, first match wins
   const done = (s: string) => ev.findLast((e) => e.type === "stage.completed" && e.stage === s)?.data, v = done("verify"), checks = (v?.checks ?? []) as { name: string; result: string; first_error?: string }[], bad = checks.find((c) => c.result === "fail");
   const r = EXIT[outcome] === 0 ? "" : tampered ? "event log modified outside the engine" : stop?.startsWith("fatal:") ? ({ "fatal:quota_exhausted": "provider credit exhausted", "fatal:auth": "provider authentication failed" } as Record<string, string>)[stop] ?? stop : outcome === "BLOCKED" ? `spec conflict: ${done("implement")?.spec_conflict_reason ?? "see the receipt"}` : stop === "stalled" ? "stalled: same failure 3 times" : bad ? `${bad.name} failed${bad.first_error ? `: ${bad.first_error}` : ""}` : ev.find((e) => e.type === "stage.failed")?.data.reason ?? (ev.some((e) => e.type === "cap.hit") ? "cost/time cap reached" : v && !checks.length ? "no tests to run" : stop ?? (ev.some((e) => e.type === "receipt.sealed") ? "" : "engine ended before sealing a receipt"));
-  return String(r ?? "").replace(/[\x00-\x1f\x7f]+/g, " ").trim().slice(0, 200) || undefined;
+  return redactSecrets(String(r ?? "").replace(/[\x00-\x1f\x7f]+/g, " ").trim()).slice(0, 200) || undefined;
 }
 export interface SummaryInput {
   pr: { url: string; draft: boolean; draftReason?: string | null } | null;

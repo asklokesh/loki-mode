@@ -279,6 +279,14 @@ describe("reasonOf (A-130 round 4)", () => {
   });
   test("stalled", () => expect(reasonOf([vfy([{ name: "t", result: "fail" }])], false, "stalled", "STALLED")).toBe("stalled: same failure 3 times"));
   test("a red suite names the failing check and first_error", () => expect(reasonOf([vfy([{ name: "bun:calc.test.ts", result: "fail", first_error: "expected 6 got 5" }])], false, null, "FAILED")).toBe("bun:calc.test.ts failed: expected 6 got 5"));
+  test("secrets in first_error are redacted before printing", () => {
+    const t = "ghp_" + "a".repeat(36), k = "sk-" + "b".repeat(30);
+    const r = reasonOf([vfy([{ name: "t", result: "fail", first_error: `auth ${t} and ${k} bad` }])], false, null, "FAILED") ?? "";
+    expect(r).not.toContain(t);
+    expect(r).not.toContain(k);
+    expect(r).toContain("[REDACTED:GITHUB_TOKEN]");
+    expect(r).toContain("[REDACTED:OPENAI_KEY]");
+  });
   test("first stage.failed reason", () => expect(reasonOf([ev("stage.failed", "verify", { reason: "empty diff" })], false, null, "FAILED")).toBe("empty diff"));
   test("cap hit before any stage", () => expect(reasonOf([ev("cap.hit", null)], false, null, "BUDGET_STOP")).toBe("cost/time cap reached"));
   test("a crashed worker (no receipt.sealed) still gets a reason", () => expect(reasonOf([], false, null, "FAILED")).toBe("engine ended before sealing a receipt"));
