@@ -9,8 +9,8 @@ export type Staged = { st: string; f: string };
 export const parseStaged = (out: string): Staged[] => out.split("\0").reduce<Staged[]>((a, t, i, all) => (i % 2 === 0 && t ? [...a, { st: t, f: all[i + 1]! }] : a), []);
 
 /** .loki/, intake-time dirt the run left untouched ("L"), Wall files, and a NEW lockfile with no manifest change in its own directory. */
-export function dropSet(repoDir: string, staged: Staged[], preexistingDirty: unknown): Staged[] {
-  return staged.concat(untouchedSinceIntake(repoDir, preexistingDirty).map((f) => ({ st: "L", f }))).filter(({ st, f }) => f.startsWith(".loki/") || st === "L" || /(^|\/)loki_wall_[^/]*$/.test(f) || (st === "A" && !staged.some(({ f: m }) => /(^|\/)(package\.json|pyproject\.toml|requirements\.txt|Cargo\.toml|go\.mod)$/.test(m) && dirname(m) === dirname(f)) && /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Cargo\.lock|go\.sum)$/.test(f)));
+export function dropSet(repoDir: string, staged: Staged[], preexistingDirty: unknown, env: NodeJS.ProcessEnv = process.env): Staged[] {
+  return staged.concat(untouchedSinceIntake(repoDir, preexistingDirty, env).map((f) => ({ st: "L", f }))).filter(({ st, f }) => f.startsWith(".loki/") || st === "L" || /(^|\/)loki_wall_[^/]*$/.test(f) || (st === "A" && !staged.some(({ f: m }) => /(^|\/)(package\.json|pyproject\.toml|requirements\.txt|Cargo\.toml|go\.mod)$/.test(m) && dirname(m) === dirname(f)) && /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|poetry\.lock|Cargo\.lock|go\.sum)$/.test(f)));
 }
 
 /** Commits whatever a killed or crashed worker left uncommitted or untracked (minus .loki), so it
@@ -24,7 +24,7 @@ export function backstopCommit(repoDir: string, workerEnv: NodeJS.ProcessEnv, ru
     g(["add", "-A", "--", "."]);
     // same exclusions as the commit stage (A-104c): pre-run dirt, Wall files, stray lockfiles, .loki
     const staged = parseStaged(execFileSync("git", gArgs(["diff", "--cached", "--name-status", "--no-renames", "-z", base]), { cwd: repoDir, env: workerEnv, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }));
-    const drop = dropSet(repoDir, staged, preexistingDirty);
+    const drop = dropSet(repoDir, staged, preexistingDirty, workerEnv);
     if (drop.length > 0) g(["--literal-pathspecs", "reset", "-q", base, "--", ...drop.map(({ f }) => f)]);
     g(["diff", "--cached", "--quiet"]);
   } catch (err) {

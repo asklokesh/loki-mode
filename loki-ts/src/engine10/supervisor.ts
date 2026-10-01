@@ -220,10 +220,9 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
     const stages = fold(readEvents(log.path)).stages; // A-104c: a failed commit stage already chose what to exclude (Wall files, lockfiles, pre-run dirt); a blanket `add -A` would undo it
     const baseE = stages["intake"], base = baseE?.type === "stage.completed" && typeof baseE.data.base_sha === "string" ? baseE.data.base_sha : null;
     if (base !== null && stages["commit"]?.type !== "stage.failed") backstopCommit(opts.repoDir, workerEnv, opts.runId, base, baseE?.type === "stage.completed" ? baseE.data.preexisting_dirty : undefined); // no completed intake = no run branch: repoDir is still the user's own branch, never `add -A` there
-    try {
-      const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: opts.repoDir, env: process.env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-      hasDiff = base !== null && head !== base;
-    } catch { /* no HEAD yet (intake never committed a base): no diff */ }
+    try { // net diff against base (a revert commit can leave HEAD past base with nothing to publish); any failure counts as a diff
+      execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "diff", "--quiet", "--no-ext-diff", "--no-textconv", String(base), "HEAD", "--", ".", ":(exclude).loki"], { cwd: opts.repoDir, env: workerEnv, stdio: "ignore" });
+    } catch { hasDiff = base !== null; }
   }
   if (opts.pr && intact && origin && verdict !== "ALREADY_SATISFIED" && (verdict !== "FAILED" || hasDiff)) {
     const pushEnv: PushEnv = { _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin };
