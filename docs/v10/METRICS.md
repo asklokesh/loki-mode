@@ -534,3 +534,39 @@ profiling implement's own internal turn-by-turn timing (not available from
 
 Command: `python3 eval/loki10/stage-profile.py
 ~/loki-ci-logs/eval/e98f-engine/{default,nocascade,nowall}-r{1,2,3}`
+
+## D50 model-lift baseline (small tier)
+
+Measured 2026-09-30 on main c5eaddb0 (harness_sha c5eaddb0, clean; loki-ts deps via `bun install --frozen-lockfile`), claude 2.1.286, 1 rep, 900s cap, EV-3 isolation, provider-reported cost only, hidden tests decide completion. Models from providers/model_catalog.json: claude-haiku-4-5 and claude-sonnet-5. Opus arms not run. The Loki arm is `v10` at default knobs (LOKI_ENGINE=v10, same model pinned via LOKI_EVAL_MODEL).
+
+Subset: the small tier has 29 tasks; 4 arms x 29 would be 116 runs, over the 40-run budget, so the first 10 small-tier tasks by id are used (40 runs total): aiq-52-searchbar, pub-click-2877, pub-click-3059, pub-click-3487, pub-click-3572, pub-humanize-152, pub-humanize-174, pub-humanize-333, pub-jsonschema-1389, pub-markupsafe-417. aiq-52-searchbar is an `expected_outcome: no_change_needed` task. n=10 per arm, 1 rep: every rate has a wide interval (one task is 10 points); this is a baseline, not a gate. Machine load average was 24-37 during the run (more than 2 concurrent arms never ran); wall times are inflated and noisy.
+
+| arm | attempted | completed | rate | median wall, all runs | median wall, completed | total cost | cost per completed | timed out |
+|---|---|---|---|---|---|---|---|---|
+| raw haiku-4-5 | 10 | 4 | 40% | 103.2s | 100.5s | $2.3124 | $0.5781 | 0 |
+| Loki+haiku (v10) | 10 | 7 | 70% | 123.0s | 127.7s | $3.4649 (1 run unmeasured) | $0.4950 | 0 |
+| raw sonnet-5 | 10 | 9 | 90% | 111.6s | 118.0s | $4.9239 | $0.5471 | 0 |
+| Loki+sonnet (v10) | 10 | 5 | 50% | 92.9s | 128.8s | $3.7278 (1 run unmeasured) | $0.7456 | 0 |
+
+Cost per completed = total spend of all 10 runs (failures included) / completed. The 2 unmeasured v10 runs are the aiq-52-searchbar runs that exited in about 1s before any model call (no spend, no provider cost record).
+
+Model lift (D50 targets):
+
+| comparison | completion | cost per completed | time (median, all runs) | verdict |
+|---|---|---|---|---|
+| Loki+haiku vs raw haiku | 70% vs 40% (+30 points, 3 tasks) | $0.4950 vs $0.5781 (-14%) | 123.0s vs 103.2s (1.19x) | lift, within 1.2x |
+| Loki+sonnet vs raw sonnet | 50% vs 90% (-40 points, 4 tasks) | $0.7456 vs $0.5471 (+36%) | 92.9s vs 111.6s (0.83x) | LOSS: below raw X |
+| Loki+haiku vs raw sonnet (cross) | 70% vs 90% (-20 points) | $0.4950 vs $0.5471 (-10%); total $3.46 vs $4.92 (-30%) | 123.0s vs 111.6s | target (>= raw sonnet) NOT met |
+| Loki+sonnet vs raw opus | not run | | | |
+
+Failures by category (every failed or non-completed cell listed; no run timed out or was capped; all rows status ok):
+- raw haiku (6): hidden tests failed with a PR pushed: pub-click-2877, pub-click-3059, pub-humanize-174, pub-humanize-333, pub-jsonschema-1389. aiq-52-searchbar: hidden regression test passed but it pushed a PR on a no-change task (wrong outcome).
+- raw sonnet (1): hidden tests failed with a PR: pub-click-3059.
+- Loki+haiku (3): aiq-52-searchbar: engine refused to start in 1.3s, "dirty tracked tree: M frontend/package-lock.json" (task `setup` npm install rewrote a tracked file; no model call). pub-humanize-174: outcome BLOCKED (spec conflict claimed against existing tests), no PR. pub-humanize-333: PR opened, hidden tests failed.
+- Loki+sonnet (5): aiq-52-searchbar: same dirty-tree refusal in 0.7s. pub-click-2877: outcome ALREADY_SATISFIED claimed, no PR, hidden tests fail (false already-done). pub-humanize-174: FAILED "empty diff without an already_done marker", no PR. pub-click-3059 and pub-humanize-333: PR opened, hidden tests failed.
+
+Findings: (1) the v10 dirty-tree refusal is a harness-vs-engine defect that costs both Loki arms the aiq task (the `no_change_needed` outcome is unreachable when `setup` dirties a tracked file); not fixed in this slice. (2) Loki+sonnet loses to raw sonnet mainly through no-PR outcomes (ALREADY_SATISFIED false positive, empty diff) and BLOCKED, not through slow runs. (3) Per D50 a slice that lowers lift is dropped; this baseline is the bar.
+
+Reproduce (per arm; a run-owned temp is created by run.sh; needs `cd loki-ts && bun install --frozen-lockfile` for the v10 arm):
+`LOKI_NO_BROWSER=1 LOKI_EVAL_MAX_LOAD=80 LOKI_EVAL_MODEL=<claude-haiku-4-5|claude-sonnet-5> eval/loki10/run.sh --arm <raw-claude|v10> --tasks aiq-52-searchbar,pub-click-2877,pub-click-3059,pub-click-3487,pub-click-3572,pub-humanize-152,pub-humanize-174,pub-humanize-333,pub-jsonschema-1389,pub-markupsafe-417 --parallel 1 --out ~/loki-ci-logs/d50-<arm>-<model>`
+Raw rows: ~/loki-ci-logs/d50-{raw-haiku,raw-sonnet,v10-haiku,v10-sonnet}/results.jsonl.
