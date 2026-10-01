@@ -118,8 +118,11 @@ jobs:
           echo "npm next tag: ${NEXT}; promoting ${VERSION} (gitHead ${GITHEAD} is on main)"
           echo "githead=${GITHEAD}" >> "$GITHUB_OUTPUT"
 
-      # FAIL CLOSED: a missing gate script is a failed promote, never a skip.
-      - name: First-run gate on the exact installed version
+      # FAIL CLOSED, both machines a user can have. Leg 1 (bun installed) runs the
+      # v10 engine; leg 2 (a plain `npm i -g` user, no bun) runs the legacy engine
+      # with bun removed from PATH. Either failure fails this step, so the dist-tag
+      # step never runs. Both legs install the same exact version.
+      - name: First-run gate on the exact installed version (both legs)
         id: gate
         env:
           VERSION: ${{ steps.ver.outputs.version }}
@@ -129,7 +132,18 @@ jobs:
             echo "FATAL: scripts/first-run-gate.sh is missing; refusing to promote without a gate pass"
             exit 1
           fi
+          command -v bun >/dev/null || { echo "FATAL: leg 1 needs bun on PATH"; exit 1; }
+          echo "== leg 1: with bun (v10 engine) =="
           bash scripts/first-run-gate.sh --installed "loki-mode@${VERSION}"
+          echo "== leg 2: without bun (legacy engine) =="
+          # Filter every PATH entry that holds a bun binary; node and npm stay.
+          NEWPATH=""
+          IFS=: read -ra DIRS <<< "$PATH"
+          for d in "${DIRS[@]}"; do
+            [ -e "$d/bun" ] || NEWPATH="${NEWPATH:+$NEWPATH:}$d"
+          done
+          PATH="$NEWPATH" bash -c '! command -v bun >/dev/null' || { echo "FATAL: bun still on PATH for leg 2"; exit 1; }
+          PATH="$NEWPATH" bash scripts/first-run-gate.sh --installed "loki-mode@${VERSION}" --engine legacy
           echo "result=PASS" >> "$GITHUB_OUTPUT"
 
       # PREFLIGHT for every channel BEFORE any latest moves, so a Docker or

@@ -34,6 +34,12 @@ quick)
         echo "loki: using the legacy engine (the Loki 10 engine needs bun and LOKI_PROVIDER of claude, codex, cline or aider)." >&2
         echo "Outcome:    VERIFIED"; exit 0
     fi
+    if [ -n "${FAKE_LEGACY:-}" ]; then # no-bun leg: legacy engine output, no v10 run dir
+        [ "$FAKE_MODE" = nofb ] || echo "loki: using the legacy engine (the Loki 10 engine needs bun and LOKI_PROVIDER of claude, codex, cline or aider)." >&2
+        echo "Outcome:    VERIFIED"; echo "Receipt:    receipt_sha256: $D"
+        [ "$FAKE_MODE" = legacylong ] && seq 1 14
+        exit 0
+    fi
     mkdir -p .loki/runs/r
     # a real v10 run: receipt carries cost.usd, the event log carries a cost event (0 + source marker when unmetered)
     echo '{"cost":{"usd":0}}' > .loki/runs/r/receipt.json
@@ -73,6 +79,9 @@ bad() { FAIL=$((FAIL + 1)); echo "FAIL $1"; }
 run_gate() {
     OUT=$(env -u LOKI_RUN_TMP FAKE_MODE="$1" FRG_LOKI="$T/fake-loki" FRG_REPORT="$T/report-$1.txt" bash "$GATE" --stub 2>&1); RC=$?
 }
+run_legacy() { # run_legacy <mode>: the --engine legacy leg
+    OUT=$(env -u LOKI_RUN_TMP FAKE_LEGACY=1 FAKE_MODE="$1" FRG_LOKI="$T/fake-loki" FRG_REPORT="$T/report-L$1.txt" bash "$GATE" --stub --engine legacy 2>&1); RC=$?
+}
 expect() { # expect <mode> <assertion> <PASS|FAIL>
     if printf '%s\n' "$OUT" | grep -q "^$3 $2:"; then ok "$1: $2 $3"; else bad "$1: $2 expected $3"; printf '%s\n' "$OUT" | sed 's/^/     /'; fi
 }
@@ -104,6 +113,17 @@ run_gate nocost;     expect nocost cost-non-null FAIL;       [ "$RC" -ne 0 ] && 
 run_gate skipbare;   expect skipbare skip-bare-verify FAIL;  [ "$RC" -ne 0 ] && ok "skipbare: exits non-zero" || bad "skipbare: exit 0"
 run_gate skiprc0;    expect skiprc0 skip-not-verified-legacy FAIL;  [ "$RC" -ne 0 ] && ok "skiprc0: 9b needs rc 3" || bad "skiprc0: exit 0"
 run_gate skipver;    expect skipver skip-not-verified FAIL;  expect skipver skip-not-verified-legacy FAIL;  [ "$RC" -ne 0 ] && ok "skipver: exits non-zero" || bad "skipver: exit 0"
+
+# legacy (no-bun) leg
+run_legacy clean
+for a in exit-honest tests-green no-stray-files digest-matches verify-ok receipt-signed output-lines legacy-fallback-line skip-not-verified-legacy; do expect legacy-clean $a PASS; done
+[ "$RC" -eq 0 ] && ok "legacy-clean: gate exits 0" || bad "legacy-clean: gate exit $RC"
+printf '%s\n' "$OUT" | grep -Eq 'engine-start-line|cost-non-null|skip-not-verified:|skip-bare-verify' && bad "legacy-clean: v10-only check ran" || ok "legacy-clean: v10-only checks skipped"
+run_legacy skipver;    expect legacy-skip skip-not-verified-legacy FAIL; [ "$RC" -ne 0 ] && ok "legacy-skip: exits non-zero" || bad "legacy-skip: exit 0"
+run_legacy nofb;       expect legacy-nofb legacy-fallback-line FAIL;     [ "$RC" -ne 0 ] && ok "legacy-nofb: exits non-zero" || bad "legacy-nofb: exit 0"
+run_legacy legacylong; expect legacy-long output-lines FAIL;             [ "$RC" -ne 0 ] && ok "legacy-long: exits non-zero" || bad "legacy-long: exit 0"
+# the v10 leg still rejects the legacy fallback and still enforces 8 lines
+run_gate clean; printf '%s\n' "$OUT" | grep -q 'legacy-fallback-line' && bad "v10 leg ran the legacy check" || ok "v10 leg unchanged: no legacy check"
 
 echo "first-run-gate tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
