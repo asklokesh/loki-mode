@@ -90,7 +90,7 @@ With an adapter that also feeds architecture.md into the analyzer, score would b
 
 ## 3. Agent Overlap Analysis
 
-### BMAD Agents (8) vs Loki Agent Types (41)
+### BMAD Agents vs Loki Agent Types
 
 | BMAD Agent | Role | Loki Equivalent(s) | Relationship |
 |---|---|---|---|
@@ -98,7 +98,7 @@ With an adapter that also feeds architecture.md into the analyzer, score would b
 | John (PM) | PRD creation, validation | `prod-pm`, `orch-planner` | Overlapping -- Loki PM focuses on execution planning |
 | Winston (Architect) | Architecture design | `eng-infra`, `orch-planner` | Complementary -- BMAD architect is pre-code |
 | Sally (UX Designer) | UX specification | `prod-design` | Complementary -- BMAD UX is spec, Loki is implementation |
-| Amelia (Developer) | Code implementation | `eng-*` (8 agents) | Superseded -- Loki has specialized dev agents |
+| Amelia (Developer) | Code implementation | `eng-*` | Superseded -- Loki has specialized dev agents |
 | Bob (Scrum Master) | Sprint planning | `orch-coordinator` | Overlapping -- different abstraction level |
 | Quinn (QA) | E2E test generation | `eng-qa` | Overlapping -- both generate tests |
 | Barry (Quick Flow) | Solo rapid dev | No equivalent | Unique to BMAD |

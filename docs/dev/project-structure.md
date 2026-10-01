@@ -33,7 +33,7 @@ skills/                     # On-demand skill modules (v3.0 architecture)
   testing.md                # Playwright, E2E, property-based testing
   production.md             # HN patterns, CI/CD, context management
   troubleshooting.md        # Common issues, red flags, fallbacks
-  agents.md                 # 41 agent types, structured prompting
+  agents.md                 # Agent types, structured prompting
   artifacts.md              # Generation, code transformation
   patterns-advanced.md      # OptiMind, k8s-valkey, Constitutional AI
   parallel-workflows.md     # Git worktrees, parallel streams, auto-merge

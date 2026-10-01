@@ -282,7 +282,7 @@ Developers who value open-source tooling, speed, and terminal-native workflows. 
 | **Primary Focus** | Web automation | Mobile apps | Coding assistant | Coding assistant | PRD-to-deploy |
 | **Open Source / Source model** | Partial (Agent-E only) | No | Source-available | Yes (Apache-2.0) | Source-available (BUSL-1.1) |
 | **Multi-Provider** | Yes (OpenAI, Azure, Ollama) | Yes (Gemini, Claude) | Partial (Claude models via Bedrock/Vertex/Foundry) | No (GPT only) | Yes (5 providers, 3+ model families) |
-| **Multi-Agent** | Yes (2-agent model) | No | Yes (coordinated teams) | Yes (experimental) | Yes (41 agent types) |
+| **Multi-Agent** | Yes (2-agent model) | No | Yes (coordinated teams) | Yes (experimental) | Yes (agent types) |
 | **Autonomous Iteration** | No (task-level) | No | Partial (/loop, /schedule) | No (requires prompting) | Yes (RARV loop + completion council) |
 | **SDLC Pipeline** | No | No | No | No | Yes (9 phases) |
 | **Code Review** | No | No | Yes (single-pass) | Yes (single-pass) | Yes (3-reviewer blind) |
@@ -457,7 +457,7 @@ This positioning highlights three unique capabilities no competitor offers toget
 | Source model | Open source (Apache-2.0) | Source-available (BUSL-1.1) |
 | Speed | 240+ tokens/sec | Depends on provider |
 | Providers | OpenAI only | 5 providers |
-| Multi-agent | Experimental (isolated) | 41 agent types, 8 domains |
+| Multi-agent | Experimental (isolated) | Agent types across domains |
 | Quality | Single-pass review | 8-gate system |
 | **Loki Mode advantage:** | Autonomous pipeline, multi-provider, mature multi-agent |
 
@@ -542,7 +542,7 @@ Emergence AI charges enterprise contract rates for VPC deployment. Loki Mode is 
 |--------|----------|----------|------------|
 | Claude Code Agent SDK enables custom SDLC pipelines | HIGH | 3-6 months | Deepen multi-provider advantage (Agent SDK is Claude-only); publish PRD-to-Deploy benchmarks that prove the integrated pipeline |
 | Claude Code adds autonomous mode natively | HIGH | 6-12 months | Quality gates, memory system, and multi-provider flexibility are structural advantages that cannot be replicated by adding a single feature |
-| Codex CLI adds orchestration layer | MEDIUM | 6-12 months | Codex is OpenAI-only; emphasize 41 agent types, cross-project memory, healing |
+| Codex CLI adds orchestration layer | MEDIUM | 6-12 months | Codex is OpenAI-only; emphasize agent types, cross-project memory, healing |
 | New entrant builds "Rork for full-stack" | MEDIUM | 6-12 months | Add mobile PRD template; Loki Mode's quality gates differentiate from naive generation |
 | Open-source Auto-Claude gains traction | LOW | Ongoing | Already adopted key patterns (v3.4.0); maintain feature lead |
 | Enterprise CI/CD platforms (GitHub, GitLab) add native AI SDLC | HIGH | 12-18 months | Self-hosted, provider-agnostic positioning; these will be vendor-locked |

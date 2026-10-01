@@ -11,16 +11,10 @@ Interactive HTML walkthroughs demonstrating Loki Mode's capabilities. Each file 
 | `comparison.html` | **Feature Comparison** -- Side-by-side comparison of Loki Mode vs alternative AI build tools with interactive feature matrix | 26 KB |
 | `gallery.html` | **Project Gallery** -- Showcase of 24 example projects built with Loki Mode across SaaS, CLI, mobile, and enterprise categories | 37 KB |
 | `video-placeholder.html` | **Build Process Animation** -- CSS-animated walkthrough of the build process with terminal replay and phase transitions | 25 KB |
-| `build-demo.html` | **Full Build Video Demo** -- Replay of a complete SaaS dashboard build showing all 12 iterations with timeline and progress tracking | 18 KB |
-| `ide-demo.html` | **Purple Lab IDE Demo** -- Interactive mockup of the browser-based Purple Lab IDE with file explorer, editor, and Loki Mode status panel | 17 KB |
-| `enterprise-demo.html` | **Enterprise Features Demo** -- Audit logging, RBAC, security architecture, compliance, and governance capabilities for organizations | 13 KB |
-| `provider-race-demo.html` | **Multi-Provider Race Demo** -- Animated race comparing Claude, Codex, and Gemini building the same app simultaneously | 17 KB |
-| `memory-demo.html` | **Memory System Demo** -- Interactive exploration of episodic, semantic, and procedural memory layers with progressive disclosure | 19 KB |
-| `dashboard-demo.html` | **Dashboard Monitoring Demo** -- Real-time monitoring dashboard mockup with build log, agent status, task queue, and KPI tracking | 17 KB |
 
 ## Hub Page
 
-Open `hub.html` for a landing page that links to all walkthroughs with descriptions and categories.
+Open `hub.html` for a landing page that links to the walkthroughs with descriptions and categories.
 
 ## How to View
 

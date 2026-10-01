@@ -2,13 +2,13 @@
 
 ## Title
 
-Show HN: Loki Mode - PRD in, tested code out (41 agent roles, 8 quality gates, RARV self-verification)
+Show HN: Loki Mode - PRD in, tested code out (8 quality gates, RARV self-verification)
 
 ## Body
 
 I built Loki Mode because I got tired of the copy-paste loop between AI coding assistants and my terminal. I wanted to hand over a PRD and get back a working, tested codebase -- not perfect, but a solid starting point.
 
-**What it does:** You give it a Product Requirements Document. It breaks the work into tasks across 41 specialized agent roles organized into 8 domains (engineering, operations, business, data, product, growth, review, orchestration) -- prompt-defined specifications the orchestrator adopts per phase, with parallel review (blind council) and optional worktree streams on Claude Code, sequential on other providers -- and runs every iteration through a self-verification loop called RARV: Reason, Act, Reflect, Verify. The idea is that the system catches its own mistakes before you have to.
+**What it does:** You give it a Product Requirements Document. It breaks the work into tasks across specialized agent roles (engineering, operations, business, data, product, growth, review, orchestration) -- prompt-defined specifications the orchestrator adopts per phase, with parallel review (blind council) and optional worktree streams on Claude Code, sequential on other providers -- and runs every iteration through a self-verification loop called RARV: Reason, Act, Reflect, Verify. The idea is that the system catches its own mistakes before you have to.
 
 **Quality gates:** 8 automated gates including 3-reviewer blind review (agents review each other's work without seeing prior reviews), anti-sycophancy checks (a devil's advocate pass on unanimous approvals), and mock/mutation detection. These are not foolproof, but they catch a surprising number of issues that single-pass generation misses.
 
@@ -20,9 +20,8 @@ I built Loki Mode because I got tired of the copy-paste loop between AI coding a
 
 **Research foundation:** The architecture draws from Anthropic's Constitutional AI (principles-based self-critique), DeepMind's Scalable Oversight via Debate, and OpenAI's Agents SDK patterns (guardrails, tripwires, handoffs). References to specific papers are in the repo.
 
-**What it does NOT do:** It does not deploy anything. It generates deployment configs (Helm, Docker Compose, Terraform), but a human deploys. Complex domain logic will need human review. The system can and does make mistakes, especially on novel problems. Token costs scale with project complexity. Our SWE-bench numbers (299/300 patches generated) measure output, not resolution -- the official evaluator has not been run, so the actual fix rate is unknown and likely significantly lower than the generation rate. The HumanEval score is self-reported with max 3 retries per problem.
+**What it does NOT do:** It does not deploy anything. It generates deployment configs (Helm, Docker Compose, Terraform), but a human deploys. Complex domain logic will need human review. The system can and does make mistakes, especially on novel problems. Token costs scale with project complexity. There is no published benchmark score.
 
-**Test suite:** 683 npm tests, 631 pytest tests, 16 shell tests. Self-reported HumanEval score of 162/164 (98.78%).
 
 Built solo. BUSL-1.1 source-available.
 

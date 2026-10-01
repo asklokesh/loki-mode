@@ -84,21 +84,6 @@ Loki Mode is built on peer-reviewed research:
 
 **Verdict: Loki Mode wins** - Academically grounded.
 
-### 2. Specialized Agent Types
-Loki Mode has 41 specialized agent roles across 8 domains - prompt-defined specifications the orchestrator adopts per phase, with parallel review (blind council) and optional worktree streams on Claude Code, sequential on other providers:
-- Engineering (8): frontend, backend, database, mobile, API, QA, perf, infra
-- Operations (8): DevOps, SRE, security, monitoring, incident, release, cost, compliance
-- Business (8): marketing, sales, finance, legal, support, HR, investor, partnerships
-- Data (3): ML, engineering, analytics
-- Product (3): PM, design, tech writer
-- Growth (4): hacker, community, success, lifecycle
-- Review (3): code, business, security
-- Orchestration (4): planner, sub-planner, judge, coordinator
-
-**Auto-Claude:** 4 agent types: planner, coder, memory_manager, QA
-
-**Verdict: Loki Mode wins** - 10x more specialized coverage.
-
 ### 3. Full SDLC Coverage
 Loki Mode covers:
 - Engineering (code, tests, deployment)
@@ -143,24 +128,9 @@ Beyond the gates, the SDLC pipeline covers these phases:
 
 **Verdict: Loki Mode wins** - Comprehensive quality vs single loop.
 
-### 6. Published Benchmarks
-Loki Mode:
-- HumanEval: 98.78% Pass@1 (162/164, reproducible harness)
-- SWE-bench: not measured. A patch-generation harness exists (299/300 diffs
-  produced), but the official evaluator was never run, so there is no resolve
-  rate. Patch generation is not a success metric and is not comparable to
-  other tools' resolution scores.
-
-**Auto-Claude:** No published benchmarks.
-
-**Verdict: Loki Mode wins on HumanEval transparency** - one real, reproducible
-number versus none. No SWE-bench performance claim is made.
-
 ### 7. Licensing
-- Loki Mode: MIT (free, no restrictions)
+- Loki Mode: BUSL-1.1 (source-available)
 - Auto-Claude: AGPL-3.0 (copyleft, requires open-sourcing modifications)
-
-**Verdict: Loki Mode wins** - More permissive for commercial use.
 
 ### 8. API Access
 - Loki Mode: Works with Claude API (any tier)
@@ -235,10 +205,8 @@ Loki Mode now incorporates proven patterns from Cursor's large-scale agent deplo
 ## What Auto-Claude Could Learn from Loki Mode
 
 1. **Research Foundation** - Document the science behind decisions
-2. **Specialized Agents** - More than 4 generic agent types
 3. **Anti-Sycophancy** - Blind review prevents false positives
 4. **Full SDLC** - Business, marketing, growth automation
-5. **Published Benchmarks** - Verify claims with reproducible tests
 6. **Source-available (BUSL-1.1)** - Inspect and self-host the full code
 
 ---

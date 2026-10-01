@@ -450,10 +450,10 @@ footer {
         <text x="165" y="300" font-family="JetBrains Mono, monospace" font-size="7" fill="#10B981" opacity="0.8">Tier 3</text>
       </g>
 
-      <!-- Gemini Provider -->
-      <g class="arch-node" data-tooltip="gemini">
+      <!-- opencode Provider -->
+      <g class="arch-node" data-tooltip="opencode">
         <rect x="55" y="355" width="110" height="40" rx="8" fill="url(#blueGrad)" stroke="#3B82F6" stroke-width="1"/>
-        <text x="110" y="379" text-anchor="middle" font-family="Inter, sans-serif" font-size="10" font-weight="600" fill="white">Gemini</text>
+        <text x="110" y="379" text-anchor="middle" font-family="Inter, sans-serif" font-size="10" font-weight="600" fill="white">opencode</text>
         <text x="165" y="365" font-family="JetBrains Mono, monospace" font-size="7" fill="#3B82F6" opacity="0.8">Tier 3</text>
       </g>
 
@@ -654,11 +654,13 @@ footer {
       </div>
       <h3>Multi-Provider Support</h3>
     </div>
-    <p>Run with Claude Code (full features), OpenAI Codex CLI, or Google Gemini CLI. Providers degrade gracefully with feature detection.</p>
+    <p>Run with Claude Code (full features), Cline, OpenAI Codex CLI, Aider, or opencode. Providers degrade gracefully with feature detection.</p>
     <div class="tech-tags">
       <span class="tech-tag">Claude (Tier 1)</span>
       <span class="tech-tag">Codex (Tier 3)</span>
-      <span class="tech-tag">Gemini (Tier 3)</span>
+      <span class="tech-tag">Cline (Tier 2)</span>
+      <span class="tech-tag">Aider (Tier 3)</span>
+      <span class="tech-tag">opencode</span>
     </div>
   </div>
 </div>
@@ -718,10 +720,10 @@ const tooltipData = {
     description: 'Degraded mode: sequential execution only, no Task tool or subagents. Uses --full-auto flag for autonomous operation.',
     tags: ['--full-auto', 'gpt-5.3-codex', 'sequential']
   },
-  gemini: {
-    title: 'Google Gemini CLI (Tier 3)',
-    description: 'Degraded mode: sequential execution only, no Task tool. Uses --approval-mode=yolo for autonomous operation.',
-    tags: ['--approval-mode=yolo', 'positional prompt', 'sequential']
+  opencode: {
+    title: 'opencode',
+    description: 'Model-agnostic provider: sequential execution, MCP support, one model per tier unless overridden.',
+    tags: ['providers/opencode.sh', 'MCP', 'sequential']
   },
   rarv: {
     title: 'RARV Iteration Cycle',

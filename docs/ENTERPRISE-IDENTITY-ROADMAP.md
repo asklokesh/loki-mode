@@ -155,7 +155,7 @@ effort estimate, and the IdP or test infrastructure required.
 ### SOC2
 
 - Scope: SOC2 is a compliance PROGRAM, not a code feature. It spans durable,
-  tamper-evident audit logging with retention and SIEM export, access reviews,
+  integrity-protected audit logging with retention and SIEM export, access reviews,
   change-management process, vendor management, security policies, and a Type
   II observation window (commonly 6 to 12 months of evidence collected under
   an auditor).
