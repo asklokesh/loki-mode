@@ -1850,6 +1850,48 @@ show_help_aliases() {
     echo "See internal/CLI-CONSOLIDATION-DESIGN.md for the full migration plan."
 }
 
+# D51: bare `loki`. Reuse a running dashboard, else start one on a free
+# loopback port, then open /start (or just print the URL when headless).
+loki_ui_free_port() {
+    python3 - "$1" <<'PY'
+import socket, sys
+for p in range(int(sys.argv[1]), int(sys.argv[1]) + 100):
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", p))
+    except OSError:
+        continue
+    finally:
+        s.close()
+    print(p)
+    break
+PY
+}
+
+cmd_ui() {
+    local port="" pid=""
+    if [ -f "$DASHBOARD_PID_FILE" ]; then
+        pid=$(cat "$DASHBOARD_PID_FILE" 2>/dev/null)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            port=$(cat "${DASHBOARD_PID_DIR}/port" 2>/dev/null)
+        fi
+    fi
+    if [ -z "$port" ]; then
+        port=$(loki_ui_free_port "${LOKI_DASHBOARD_PORT:-$DASHBOARD_DEFAULT_PORT}")
+        [ -n "$port" ] || { echo "loki: no free local port found" >&2; return 1; }
+        # The WS-origin allowlist must name the chosen port on both loopback names.
+        LOKI_PROJECT_DIR="$PWD" \
+            LOKI_DASHBOARD_CORS="http://localhost:$port,http://127.0.0.1:$port" \
+            cmd_dashboard_start --host 127.0.0.1 --port "$port" >&2 || return 1
+    fi
+    local url="http://127.0.0.1:${port}/start"
+    if [ "${LOKI_HEADLESS:-0}" = "1" ] || [ "${1:-}" = "--no-open" ]; then
+        echo "$url"
+    else
+        loki_open_url "$url" || echo "$url"
+    fi
+}
+
 # Tight newcomer landing for the bare `loki` invocation (no args).
 # v7.28.x UX: the full 70-command table lives in `loki help`; a no-args run
 # now shows only a calm ~12-line orientation so the "what do I do first"
@@ -21586,11 +21628,15 @@ main() {
         exit 1
     fi
 
-    if [ $# -eq 0 ]; then
-        # v7.28.x UX: bare `loki` shows a tight newcomer landing, not the full
-        # command wall. `loki help`/`--help` still print show_help unchanged.
-        show_landing
-        exit 0
+    if [ $# -eq 0 ] || { [ $# -eq 1 ] && [ "$1" = "--no-open" ]; }; then
+        # D51: bare `loki` starts the local UI. LOKI_LANDING=1 keeps the v7.28
+        # newcomer landing (tests and scripts that parse it set it).
+        if [ "${LOKI_LANDING:-0}" = "1" ]; then
+            show_landing
+            exit 0
+        fi
+        cmd_ui "$@"
+        exit $?
     fi
 
     local command="$1"
