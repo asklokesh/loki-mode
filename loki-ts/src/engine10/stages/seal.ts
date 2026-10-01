@@ -127,8 +127,8 @@ export const commitStage: Stage = {
 // NOT PROVEN when absent, so a producer cannot silently shape the receipt.
 function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean, wallGreenOnBase: boolean): Verdict {
   const exit = o.implement?.exit;
-  if (o.commit?.failed !== true && (o.intake?.already_satisfied === true || wallGreenOnBase || exit === "already_done")) return "ALREADY_SATISFIED";
-  if (exit === "spec_conflict") return "SPEC_CONFLICT"; if (o.commit?.failed === true) return "FAILED"; // A-104b r2: a failed commit never seals VERIFIED
+  if (o.commit?.failed !== true && strs(o.commit?.not_proven).length === 0 && (o.intake?.already_satisfied === true || wallGreenOnBase || exit === "already_done")) return "ALREADY_SATISFIED";
+  if (exit === "spec_conflict") return "SPEC_CONFLICT"; if (o.commit?.failed === true || strs(o.commit?.not_proven).length > 0) return "FAILED"; // r3: an unrestored user file is never a clean verdict; A-104b r2: a failed commit never seals VERIFIED
   // Section 2: an empty diff without the LOKI_ALREADY_DONE marker is FAILED, never VERIFIED.
   if (emptyDiff) return "FAILED";
   if (checks.some((c) => c.result === "fail")) return "FAILED";
@@ -209,6 +209,7 @@ export const sealStage: Stage = {
     for (const c of checks) if (c.result === "not_run") notProven.add(`not run: ${c.name}`);
     for (const f of strs(o.verify?.flaky)) notProven.add(`flaky test: ${f}`);
     for (const n of verifyNotProven) notProven.add(n);
+    for (const n of strs(o.commit?.not_proven)) notProven.add(n);
     for (const id of strs(o.verify?.pre_red)) notProven.add(`pre red: ${id}`); // A-112: listed, never downgrades (not via verifyNotProven)
     for (const t of strs(o.implement?.tests_reverted)) notProven.add(`reverted test edit: ${t}`);
     if (ctx.provider !== "claude") notProven.add("kill blocking not enforced");

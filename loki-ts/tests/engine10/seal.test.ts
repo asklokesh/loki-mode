@@ -6,7 +6,7 @@
 // recomputed in Python from receipt.json, so a TS canonicalizer bug cannot
 // pass by agreeing with itself.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { splitDirty, untrackedAtIntake } from "../../src/e10ext/preexisting_dirty.ts";
+import { snapshotUntracked, splitDirty, untrackedAtIntake } from "../../src/e10ext/preexisting_dirty.ts";
 import { generateKeyPairSync } from "node:crypto";
 import { sealedLog } from "./log_fixture.ts";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -828,4 +828,43 @@ describe("D50-F1 already-satisfied discards run changes", () => {
     expect(sh(["git", "rev-parse", "HEAD"], repo).trim()).toBe(b2);
     expect(base).toBeTruthy();
   }, 30000);
+
+  describe("r3: intake untracked content is snapshotted and restored", () => {
+    const mk = (name: string) => {
+      const { repo, base } = makeRepo(name);
+      writeFileSync(join(repo, "notes.md"), "USER\n"); writeFileSync(join(repo, "keep.md"), "KEEP\n");
+      const snap = snapshotUntracked(repo);
+      const intake = { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "t", resumed: false, preexisting_untracked: Object.keys(snap), preexisting_untracked_blobs: snap };
+      return { repo, base, intake, mkctx: (extra: Record<string, unknown> = {}) => ctxFor(repo, base, "claude", { intake, implement: { exit: "already_done", tests_reverted: [], duration_s: 3 }, ...extra }) };
+    };
+    test("edited file restored, deleted file recreated, new file removed", async () => {
+      const { repo, mkctx } = mk("r3-a");
+      writeFileSync(join(repo, "notes.md"), "USER\nAGENT\n"); rmSync(join(repo, "keep.md")); writeFileSync(join(repo, "new.txt"), "x\n");
+      expect((await commitStage.run(mkctx().ctx, sig)).status).toBe("completed");
+      expect(readFileSync(join(repo, "notes.md"), "utf8")).toBe("USER\n");
+      expect(readFileSync(join(repo, "keep.md"), "utf8")).toBe("KEEP\n");
+      expect(existsSync(join(repo, "new.txt"))).toBe(false);
+      expect(sh(["git", "diff", "--cached", "--name-only"], repo)).toBe("");
+    }, 30000);
+    test("edit committed during implement is restored and base..HEAD is empty", async () => {
+      const { repo, base, mkctx } = mk("r3-b");
+      writeFileSync(join(repo, "notes.md"), "USER\nAGENT\n");
+      sh(["git", "add", "notes.md"], repo); sh(["git", "commit", "-q", "-m", "agent"], repo);
+      expect((await commitStage.run(mkctx().ctx, sig)).status).toBe("completed");
+      expect(readFileSync(join(repo, "notes.md"), "utf8")).toBe("USER\n");
+      expect(sh(["git", "rev-parse", "HEAD"], repo).trim()).toBe(base);
+      expect(sh(["git", "diff", `${base}..HEAD`, "--name-only"], repo)).toBe("");
+    }, 30000);
+    test("unreadable blob: path on NOT PROVEN, outcome is not ALREADY_SATISFIED", async () => {
+      const { repo, intake, mkctx } = mk("r3-c");
+      const sha = intake.preexisting_untracked_blobs["notes.md"]!.split(" ")[0]!;
+      rmSync(join(repo, ".git/objects", sha.slice(0, 2), sha.slice(2)), { force: true });
+      writeFileSync(join(repo, "notes.md"), "USER\nAGENT\n");
+      const c = await commitStage.run(mkctx().ctx, sig);
+      expect(c.status).toBe("completed");
+      const r = receiptOf(await sealStage.run(mkctx({ commit: c.data }).ctx, sig));
+      expect(r.not_proven).toContain("pre-existing file not restored: notes.md");
+      expect(r.verdict).not.toBe("ALREADY_SATISFIED");
+    }, 30000);
+  });
 });
