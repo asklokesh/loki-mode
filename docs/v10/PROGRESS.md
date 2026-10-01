@@ -1674,3 +1674,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 ## 2026-10-01T02:08Z train/22 green, v10.5.16 cut
 - train/22 dd9842c6: Tests, Bun Parity, Coverage (baseline) all success (02:07:32Z). origin/main fast-forwarded a7945d67..dd9842c6 (the v10.5.15 Release run had completed success).
 - v10.5.16 release commit f522c12f (parent dd9842c6 == origin/main; --check-clean rc=0), pushed by SHA. Contents: P0-t15 (quiet quick stderr noise, sentinel-only config fold, guarded SIGPIPE re-exec), A-130b (Reason line redaction). E-157 net zero (reverted). Watcher armed; latest must stay 10.5.10.
+
+## 2026-10-01T02:25Z train/23 red, A-134b dropped
+- train/23 de366303 (A-134b): Tests red in 3 shards, all from A-134b's new tests/test-quick-quiet-tail.sh: registered in no runner (D44 guard, shard 1; D44-C structural, shard 6), and an unescalated `timeout 150` at line 53 (E-00 guard, shard 7). Bun Parity and Coverage success.
+- D46 drop: A-134b merge reverted on local main 3924bc3f; local main now has no code diff from origin/main (`git diff --stat origin/main main -- . ':!docs'` empty), so no replacement train. A-134b back to its builder (register plus shard row, timeout -k).
+- Process miss (mine): I merged A-134b on the reviewer's conditional approval without the repo-wide test-file guards. New rule in memory: any slice adding tests/*.sh runs the registration, E-00 and shellcheck guards before merge.
+- v10.5.16 Release run still in progress at 02:23Z. D46 hour 02:00Z: 0 confirmed so far (10.5.16 pending), trains cut 22 and 23, red 1 (23), dropped A-134b.
