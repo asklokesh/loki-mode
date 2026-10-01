@@ -50,7 +50,7 @@ cleanup() {
 }
 trap cleanup EXIT
 ( cd "$FIX" && env HOME="$T/home" PATH="$T/bin:$PATH" LOKI_NO_BROWSER=1 \
-    LOKI_SKIP_AUTH_PREFLIGHT=1 LOKI_MAX_RETRIES=1 LOKI_MAX_ITERATIONS=1 LOKI_BASE_WAIT=1 LOKI_MAX_WAIT=1 timeout 150 bash "$REPO_ROOT/autonomy/run.sh" "$FIX/.loki/quick-prd-1.md" \
+    LOKI_SKIP_AUTH_PREFLIGHT=1 LOKI_MAX_RETRIES=1 LOKI_MAX_ITERATIONS=1 LOKI_BASE_WAIT=1 LOKI_MAX_WAIT=1 timeout -k 10 150 bash "$REPO_ROOT/autonomy/run.sh" "$FIX/.loki/quick-prd-1.md" \
     <&4 > "$T/out" 2> "$T/err" )
 RC=$?
 echo "run.sh rc=$RC"
