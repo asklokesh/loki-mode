@@ -52,11 +52,18 @@ snap() { for x in port host scheme dashboard.pid; do
              if [ -f "$REG/$x" ]; then printf '%s=%s\n' "$x" "$(cat "$REG/$x")"; else printf '%s=ABSENT\n' "$x"; fi
          done; }
 BEFORE="$(snap)"
+# Ports are machine-global (P0-DASH-LEAK2): record who LISTENs on the real default
+# range 57374-57399 so only a listener this suite ADDED fails the check.
+listeners() { command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:57374-57399 -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $2":"$9}' | sort -u; }
+LBEFORE="$(listeners)"
 LOKI_TEST_PID_LOG="$WORK/pids" timeout -k 5 280 bash "$ROOT/tests/test-dashboard-bind-auth-guard.sh" >"$WORK/suite.log" 2>&1
 SRC=$?
 [ "$SRC" -eq 0 ] && ok "dashboard-starting suite passed (rc 0)" || bad "dashboard-starting suite rc=$SRC: $(tail -3 "$WORK/suite.log" | tr '\n' ' ')"
 [ "$(snap)" = "$BEFORE" ] && ok "real ~/.loki/dashboard registry unchanged by the suite" || bad "suite modified the REAL ~/.loki/dashboard registry"
 sleep 2
+LNEW="$(comm -13 <(printf '%s\n' "$LBEFORE") <(listeners))"
+[ -z "$LNEW" ] && ok "suite bound nothing in the real default range 57374-57399" \
+    || bad "suite left a listener on the real default port range: $(printf '%s' "$LNEW" | tr '\n' ' ')"
 LEAK=""
 if [ -s "$WORK/pids" ]; then
     while read -r p; do
