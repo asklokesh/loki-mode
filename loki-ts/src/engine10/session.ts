@@ -1,7 +1,7 @@
 // E-07: SessionRunner. Runs one provider session in its own OS process group so the whole tree can be
 // killed together at limitS (ENGINE.md 10). E-32: the child re-enters via cli.ts's `engine10 session` route.
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { recordSessionCost, resultCostPath } from "./cost.ts";
 import { partialUsagePath, recordPartialStreamCost } from "../runner/budget.ts";
@@ -187,7 +187,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
             session_id: sessionId, exit: exitKind(code, killed, markers), cause: classifyExitCause(code, killed, killCause ?? undefined), duration_s: durationS,
           });
           recordCost(cfg, opts, killed ? "killed" : code === 0 ? "completed" : "failed", durationS);
-          resolve({ exit: code, markers, durationS, killed, stderrTail: stderrTail.toString("utf8") + (logText.match(/^\[sdk-loop error: .*\]$/gm) ?? []).join("\n") }); // only provider-written text is classified: child stderr and the SDK error line, never the agent transcript (A-113)
+          resolve({ exit: code, markers, durationS, killed, stderrTail: stderrTail.toString("utf8") + (logText.match(/^\[sdk-loop error: .*\]$/gm) ?? []).join("\n") }); // only provider-written text is classified: child stderr and the SDK error line, never the agent transcript (A-113). The child echoes the provider's in-memory stderr (A-113b); only the claude CLI invoker returns one, since codex/cline/aider may print session activity on stderr (unmeasured)
         });
       });
     },
@@ -206,7 +206,7 @@ export async function sessionChildMain(): Promise<never> {
     iterationOutputPath: `.loki/iteration-${process.env["LOKI_ITERATION"] ?? "0"}.log`,
     mainLoop: true,
   });
-  process.exit(result.exitCode);
+  if (result.stderr) writeSync(2, result.stderr); process.exit(result.exitCode); // the CLI invoker's own in-memory stderr, never a file the agent can write
 }
 // cli.ts routes `engine10 session` here (section 11); it exits the process itself.
 export const main = sessionChildMain;

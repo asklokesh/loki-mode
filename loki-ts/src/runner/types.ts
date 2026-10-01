@@ -128,6 +128,8 @@ export type ProviderResult = {
   // Path to the per-iteration captured output (used for completion-promise
   // detection and rate-limit detection -- see run.sh BUG-RUN-001/002).
   capturedOutputPath: string;
+  // The provider's own stderr, in memory (never a file the agent can write); only the claude CLI invoker sets it (A-113b).
+  stderr?: string;
   // Optional structured signal -- providers that detect a rate-limit cap
   // can pre-populate this so the loop skips re-parsing the log.
   rateLimitWaitSeconds?: number;

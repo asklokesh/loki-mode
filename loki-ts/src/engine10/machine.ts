@@ -145,7 +145,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   try {
     let jumped = false, stopped: string | null = null;
     const sigs: string[] = [];
-    const sigOf = (d: Obj | undefined): string => JSON.stringify(((d?.failures_grouped ?? []) as { signature?: string }[]).map((g) => g.signature).sort());
+    const sigOf = (d: Obj | undefined, r?: StageResult | null): string => r && r.status !== "completed" ? `verify-crashed-${sigs.length}` : JSON.stringify(((d?.failures_grouped ?? []) as { signature?: string }[]).map((g) => g.signature).sort()); // a crashed or timed-out verify leaves outputs.verify stale: record a marker that never matches (A-113b)
     for (const step of opts.flow ?? FLOW) {
       const group = (typeof step === "string" ? [step] : [...step]) as StageName[];
       const todo = group;
@@ -160,12 +160,12 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (fatal) { stopped = fatal; jumped = true; continue; }
       if (todo.some((n, i) => mustJump(n, results[i] ?? null))) { jumped = true; continue; }
       if (todo[0] === "verify") {
-        sigs.push(sigOf(outputs.verify));
+        sigs.push(sigOf(outputs.verify, results[0]));
         for (let round = 1; round <= MAX_FIX_ROUNDS && hasFailures(outputs.verify); round++) {
           const fx = await runStage("fix", true);
           if (!fx || mustJump("fix", fx) || fatal) break;
           const v = await runStage("verify", true);
-          sigs.push(sigOf(outputs.verify));
+          sigs.push(sigOf(outputs.verify, v));
           if (mustJump("verify", v)) break;
           if (hasFailures(outputs.verify) && sigs.length >= 3 && sigs.slice(-3).every((x) => x === sigs[sigs.length - 1])) { stopped = "stalled"; break; }
         }

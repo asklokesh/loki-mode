@@ -427,6 +427,7 @@ export function claudeProvider(): ProviderInvoker {
       return {
         exitCode: r.exitCode,
         capturedOutputPath: call.iterationOutputPath,
+        stderr: r.stderr,
       };
     },
   };
