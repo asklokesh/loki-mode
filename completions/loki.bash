@@ -5,8 +5,8 @@ _loki_completion() {
     _init_completion || return
 
     # Main subcommands (must match autonomy/loki main case statement)
-    local main_commands="start backlog quick monitor demo tour welcome init stop pause resume steer status next ship dashboard web serve api sandbox notify import github issue config provider reset memory compound checkpoint dogfood projects enterprise secrets cockpit secure own handoff doctor watchdog audit metrics syslog onboard share proof receipt outcomes explain plan report cost estimate kpis stats test ci watch telemetry context ctx code run export review optimize modernize cluster worktree wt trigger failover remote deploy docker mcp magic assets analyze compliance crash control open otel preview rc rollback self-update sentrux setup-skill spec state template trust trust-metrics ultracode update verify why wiki bench cleanup logs docs cp version completions help keys"
-    local main_commands="start backlog quick monitor demo tour welcome init stop pause resume steer status next ship dashboard web serve api sandbox notify import github issue intent config provider reset memory compound checkpoint dogfood projects enterprise secrets cockpit secure own handoff doctor watchdog audit metrics syslog onboard share proof receipt explain plan report cost estimate kpis stats test ci watch telemetry context ctx code run export review optimize modernize cluster worktree wt trigger failover remote deploy docker mcp magic assets analyze compliance crash control open otel preview rc rollback self-update sentrux setup-skill spec state template trust trust-metrics ultracode update verify why wiki bench cleanup logs docs cp version completions help keys"
+    local main_commands="start backlog quick monitor demo tour welcome init stop pause resume steer status next ship dashboard web serve api sandbox notify import github issue config provider reset memory compound checkpoint council dogfood projects enterprise secrets cockpit secure own handoff doctor watchdog audit metrics syslog onboard share proof receipt outcomes explain plan report cost estimate kpis stats test ci watch telemetry agent context ctx code run export review optimize heal modernize migrate cluster worktree wt trigger failover remote deploy docker mcp magic assets analyze compliance crash control open otel preview quickstart rc rollback self-update sentrux setup-skill spec state template trust trust-metrics ultracode update verify voice why wiki bench cleanup logs grill docs cp version completions help keys"
+    local main_commands="start backlog quick monitor demo tour welcome init stop pause resume steer status next ship dashboard web serve api sandbox notify import github issue intent config provider reset memory compound checkpoint council dogfood projects enterprise secrets cockpit secure own handoff doctor watchdog audit metrics syslog onboard share proof receipt explain plan report cost estimate kpis stats test ci watch telemetry agent context ctx code run export review optimize heal modernize migrate cluster worktree wt trigger failover remote deploy docker mcp magic assets analyze compliance crash control open otel preview quickstart rc rollback self-update sentrux setup-skill spec state template trust trust-metrics ultracode update verify voice why wiki bench cleanup logs grill docs cp version completions help keys"
 
     # 1. If we are on the first argument (subcommand)
     if [[ $cword -eq 1 ]]; then
@@ -50,6 +50,11 @@ _loki_completion() {
             else
                 COMPREPLY=( $(compgen -f -- "$cur") )
             fi
+            ;;
+
+        council)
+            local council_cmds="status verdicts convergence force-review report config help"
+            COMPREPLY=( $(compgen -W "${council_cmds}" -- "$cur") )
             ;;
 
         memory)
@@ -100,6 +105,11 @@ _loki_completion() {
         telemetry)
             local telemetry_cmds="status enable disable stop start help"
             COMPREPLY=( $(compgen -W "${telemetry_cmds}" -- "$cur") )
+            ;;
+
+        agent)
+            local agent_cmds="list info run start help"
+            COMPREPLY=( $(compgen -W "${agent_cmds}" -- "$cur") )
             ;;
 
         syslog)

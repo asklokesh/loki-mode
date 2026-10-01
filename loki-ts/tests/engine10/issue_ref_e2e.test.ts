@@ -1,5 +1,5 @@
 // E-47: issue-ref end to end (docs/v10/ENGINE.md sections 4 and 6). Runs the
-// real engine from the real entry (bin/loki,
+// real engine from the real entry (bin/loki, LOKI_ENGINE=v10,
 // LOKI_TS_ENTRY=src/cli.ts, stub claude via LOKI_E10_INVOKER=cli) on a task
 // that is an issue reference, in both accepted forms (owner/repo#N and a
 // GitHub issue URL). A stub gh serves fixture issue JSON, so the run needs no
@@ -49,7 +49,7 @@ interface Run {
 }
 
 /** Runs one issue-ref task (`ref`) against the fixture issue for `issueNumber`. */
-function runEngine(ref: string, issueNumber: number, lead: string[] = []): Run {
+function runEngine(ref: string, issueNumber: number): Run {
   if (!existsSync(ENTRY)) throw new Error(`engine entry missing: ${ENTRY}`); // never fall through to the legacy bash route
   const tmp = mkdtempSync(join(tmpdir(), "loki-issue-ref-"));
   temps.push(tmp);
@@ -66,6 +66,7 @@ function runEngine(ref: string, issueNumber: number, lead: string[] = []): Run {
   const ghLog = join(tmp, "gh.log");
   const env: Record<string, string | undefined> = {
     ...process.env,
+    LOKI_ENGINE: "v10",
     LOKI_TS_ENTRY: ENTRY,
     LOKI_E10_INVOKER: "cli",
     LOKI_CLAUDE_CLI: join(STUB_DIR, "claude"),
@@ -82,7 +83,7 @@ function runEngine(ref: string, issueNumber: number, lead: string[] = []): Run {
   delete env.LOKI_LEGACY_BASH; // bin/loki would skip the engine10 block
   delete env.LOKI_RECEIPT_SIGNING_KEY;
   env.LOKI_RECEIPT_SIGNING_KEY_FILE = join(tmp, "k.pem"); // throwaway auto-generated key, never the real ~/.loki
-  const r = Bun.spawnSync(["bash", BIN_LOKI, ...lead, ref, "--no-pr"], { cwd: repo, env, timeout: 60_000 });
+  const r = Bun.spawnSync(["bash", BIN_LOKI, ref, "--no-pr"], { cwd: repo, env, timeout: 60_000 });
   const out = r.stdout.toString() + r.stderr.toString();
   const marker = join(repo, ".loki", "engine.json");
   const m = existsSync(marker) ? (JSON.parse(readFileSync(marker, "utf8")) as { run_id: string; events: string }) : null;
@@ -165,20 +166,5 @@ describe("engine10 issue-ref e2e (stub gh, stub claude)", () => {
     expect(receipt.head_sha).toBe(receipt.base_sha);
     expect(readFileSync(join(r.repo, "calc.ts"), "utf8")).not.toContain("subtract");
     expect(r.out).toContain("Outcome:    ALREADY_SATISFIED");
-  }, 90_000);
-
-  test("loki start owner/repo#N runs the v10 engine, the same run as loki owner/repo#N (D57)", () => {
-    const r = runEngine("acme/widgets#101", 101, ["start"]);
-    if (r.code !== 0) console.error(r.out);
-    expect(r.code).toBe(0);
-    expect(r.out.split("\n")[0]).toBe("Loki 10 engine");
-    const intake = r.events.find((e) => e.type === "stage.completed" && e.stage === "intake");
-    expect(intake!.data.source).toBe("issue");
-    expect(intake!.data.title).toBe("Add subtract function to calc.ts");
-    expect(existsSync(join(r.repo, ".loki", "loki.pid"))).toBe(false); // no legacy session
-    expect(r.events.some((e) => e.type === "pr.opened")).toBe(false); // --no-pr: no PR is opened
-    expect(r.ghLog).not.toContain("pr create");
-    const receipt = JSON.parse(readFileSync(join(r.runDir, "receipt.json"), "utf8"));
-    expect(receipt.verdict).toBe("VERIFIED");
   }, 90_000);
 });

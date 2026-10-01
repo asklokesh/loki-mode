@@ -282,6 +282,42 @@ else
     fail "types.json" "file missing"
 fi
 
+echo "Test 5.2: loki agent list shows all swarms"
+output=$(bash "$CLI" agent list 2>&1)
+for swarm in ENGINEERING OPERATIONS BUSINESS DATA PRODUCT GROWTH ORCHESTRATION REVIEW; do
+    if echo "$output" | grep -qi "$swarm"; then
+        pass "agent list has $swarm swarm"
+    else
+        fail "agent list" "missing $swarm swarm"
+    fi
+done
+
+echo "Test 5.3: loki agent list --swarm engineering"
+output=$(bash "$CLI" agent list --swarm engineering 2>&1)
+if echo "$output" | grep -q "eng-frontend" && echo "$output" | grep -q "eng-backend"; then
+    pass "agent list --swarm filter works"
+else
+    fail "agent list --swarm" "filter did not work"
+fi
+
+echo "Test 5.4: loki agent info for each swarm"
+for agent_type in eng-frontend ops-security biz-finance data-ml prod-pm; do
+    output=$(bash "$CLI" agent info "$agent_type" 2>&1)
+    if echo "$output" | grep -q "Type:" && echo "$output" | grep -q "Persona:"; then
+        pass "agent info $agent_type"
+    else
+        fail "agent info $agent_type" "missing fields"
+    fi
+done
+
+echo "Test 5.5: loki agent info unknown type"
+output=$(bash "$CLI" agent info nonexistent-type 2>&1)
+if echo "$output" | grep -qi "not found"; then
+    pass "agent info handles unknown type"
+else
+    fail "agent info unknown" "no error for unknown type"
+fi
+
 echo "Test 5.6: types.json wired into run_code_review"
 if grep -q "LOKI_AGENTS_TYPES_FILE" "$PROJECT_DIR/autonomy/run.sh"; then
     pass "code review loads agents/types.json"

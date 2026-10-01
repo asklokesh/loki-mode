@@ -122,8 +122,8 @@ else
 fi
 
 # --- 3. POSITIVE CONTROL: a real provider still gets the normal advice -------
-if printf '%s' "$_cli_out" | grep -qF 'loki "<task>"'; then
-  ok "with a provider CLI present, the normal recommendation is printed"
+if printf '%s' "$_cli_out" | grep -q 'loki quickstart'; then
+  ok "with a provider CLI present, the normal quickstart recommendation is printed"
 else
   bad "the provider-present path lost its recommendation -- over-broad fix"
 fi

@@ -14,6 +14,9 @@ function _loki {
                 start|quick)
                     _loki_start
                     ;;
+                council)
+                    _loki_council
+                    ;;
                 compound)
                     _loki_compound
                     ;;
@@ -43,6 +46,9 @@ function _loki {
                     ;;
                 telemetry)
                     _loki_telemetry
+                    ;;
+                agent)
+                    _loki_agent
                     ;;
                 status)
                     _arguments \
@@ -116,6 +122,7 @@ function _loki_commands {
     commands=(
         'start:Start Loki Mode'
         'quick:Quick single-task mode'
+        'quickstart:Guided first build from your idea'
         'monitor:Monitor Docker Compose services with auto-fix'
         'demo:Interactive 60-second demo'
         'tour:Offline sample receipt replay (no key, no spend)'
@@ -147,6 +154,7 @@ function _loki_commands {
         'compound:Knowledge compounding commands'
         'checkpoint:Snapshot and restore session state'
         'cp:Snapshot and restore session state (alias of checkpoint)'
+        'council:Completion council commands'
         'dogfood:Self-development statistics'
         'projects:Project registry commands'
         'enterprise:Enterprise feature commands'
@@ -155,6 +163,7 @@ function _loki_commands {
         'secure:Secure-by-default gate (findings and waivers)'
         'own:Finish-and-own ownership handoff'
         'telemetry:OpenTelemetry management'
+        'agent:Agent type dispatch'
         'doctor:Check system prerequisites'
         'watchdog:Watchdog process supervision'
         'docs:Documentation commands'
@@ -185,9 +194,13 @@ function _loki_commands {
         'intent:Does the spec still say what was actually wanted'
         'verify:Deterministic PR verification'
         'keys:Export the receipt-signing public key'
+        'grill:Interrogate a spec before building'
         'trust:Visible trust trajectory'
         'trust-metrics:Trust metrics report'
         'why:Explain the last build outcome'
+        'heal:Legacy system healing'
+        'modernize:Modernize a legacy system'
+        'migrate:Migration commands'
         'analyze:Analyze a codebase'
         'compliance:Compliance reporting'
         'crash:Crash report management'
@@ -197,7 +210,6 @@ function _loki_commands {
         'backlog:Run every matching open issue, N in parallel'
         'explain:Explain Loki concepts'
         'optimize:Optimization commands'
-        'modernize:Modernize a codebase to a new target'
         'review:Code review commands'
         'export:Export session data'
         'test:Run tests'
@@ -216,10 +228,12 @@ function _loki_commands {
         'update:Update Loki Mode'
         'self-update:Update Loki Mode'
         'setup-skill:Set up the Claude Code skill'
+        'quickstart:Quickstart guide'
         'sentrux:Sentrux integration'
         'state:Inspect run state'
         'template:PRD template commands'
         'ultracode:Ultra code review'
+        'voice:Voice commands'
         'bench:Run benchmarks'
         'open:Open a project resource'
         'rc:Release candidate commands'
@@ -257,6 +271,20 @@ function _loki_spec_files {
     _alternative \
         'specs:spec file:_files -g "*.(md|json|txt|yaml|yml)"' \
         'dirs:directory:_files -/'
+}
+
+function _loki_council {
+    local -a council_cmds
+    council_cmds=(
+        'status:Council status'
+        'verdicts:Show verdicts'
+        'convergence:Check convergence'
+        'force-review:Force a manual review'
+        'report:Generate report'
+        'config:Council configuration'
+        'help:Council help'
+    )
+    _describe -t council_cmds 'council subcommand' council_cmds
 }
 
 function _loki_compound {
@@ -398,6 +426,18 @@ function _loki_telemetry {
         'help:Telemetry help'
     )
     _describe -t cmds 'telemetry subcommand' cmds
+}
+
+function _loki_agent {
+    local -a cmds
+    cmds=(
+        'list:List agent types'
+        'info:Show agent type details'
+        'run:Run agent with prompt'
+        'start:Start agent in background'
+        'help:Agent help'
+    )
+    _describe -t cmds 'agent subcommand' cmds
 }
 
 function _loki_reset {

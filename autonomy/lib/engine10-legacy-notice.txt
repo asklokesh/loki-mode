@@ -1,0 +1,3 @@
+Legacy engine: deprecated in v10.0.0, still fully supported.
+No removal this release. Set LOKI_ENGINE=legacy to pin it.
+Guide: docs/v10/GUIDE.md

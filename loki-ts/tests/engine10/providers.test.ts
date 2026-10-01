@@ -202,10 +202,10 @@ describe("E-37 opencode refusal (depends on E-36 + E-42)", () => {
     const r = Bun.spawnSync({
       cmd: ["bash", BIN_LOKI, "add a thing", "--provider", "opencode", "--no-pr"],
       cwd: repo,
-      env: { ...process.env, LOKI_TS_ENTRY: CLI_ENTRY, LOKI_NO_BROWSER: "1" },
+      env: { ...process.env, LOKI_ENGINE: "v10", LOKI_TS_ENTRY: CLI_ENTRY, LOKI_NO_BROWSER: "1" },
     });
     const out = r.stdout.toString() + r.stderr.toString();
     expect(r.exitCode).toBe(2);
-    expect(out).toContain("the v10 engine has no opencode invoker yet; use claude, codex, cline or aider");
+    expect(out).toContain("the v10 engine has no opencode invoker yet; use LOKI_ENGINE=legacy loki start --provider opencode");
   }, 20_000);
 });

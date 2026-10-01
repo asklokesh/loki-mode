@@ -16,13 +16,11 @@ cat > "$T/fake-loki" <<'FAKE'
 D=$(printf 'a%.0s' $(seq 64))
 case "$1" in
 quick)
-    if [ -n "${FAKE_NOBUN:-}" ]; then # no-bun leg: the plain error line, exit 1, nothing touched
+    if [ -n "${FRG_SKIP:-}" ]; then # the gate's legacy G8 leg: D47 says rc 3 when tests are weakened
         case "$FAKE_MODE" in
-            nofb) exit 1 ;;
-            wrongrc) echo "loki: the Loki 10 engine cannot run on this machine: no working bun (none on PATH, and the bundled bun for linux-x64 is missing). To fix: reinstall with npm install -g loki-mode (it includes bun), or install bun from https://bun.sh." >&2; exit 0 ;;
-            extraline) echo "loki: the Loki 10 engine cannot run on this machine: no working bun (none on PATH, and the bundled bun for linux-x64 is missing). To fix: reinstall with npm install -g loki-mode (it includes bun), or install bun from https://bun.sh." >&2; echo "Running something else" >&2; exit 1 ;;
-            touched) echo x > NOTES.md; echo "loki: the Loki 10 engine cannot run on this machine: no working bun (none on PATH, and the bundled bun for linux-x64 is missing). To fix: reinstall with npm install -g loki-mode (it includes bun), or install bun from https://bun.sh." >&2; exit 1 ;;
-            *) echo "loki: the Loki 10 engine cannot run on this machine: no working bun (none on PATH, and the bundled bun for linux-x64 is missing). To fix: reinstall with npm install -g loki-mode (it includes bun), or install bun from https://bun.sh." >&2; exit 1 ;;
+            skipver) echo "Evidence Receipt: VERIFIED"; exit 0 ;;
+            skiprc0) echo "Evidence Receipt: NOT VERIFIED"; exit 0 ;;
+            *) echo "Evidence Receipt: NOT VERIFIED (tests weakened: skip added in sum.test.js)"; exit 3 ;;
         esac
     fi
     [ "$FAKE_MODE" = skipmain ] && sed -i.bak "s/'sums all numbers', /'sums all numbers', { skip: true }, /" sum.test.js && rm -f sum.test.js.bak
@@ -33,8 +31,14 @@ quick)
     [ "$FAKE_MODE" = truetest ] && sed -i.bak 's/node --test/true/' package.json && rm -f package.json.bak
     [ "$FAKE_MODE" = modpkg ] && sed -i.bak 's/1.0.0/1.0.1/' package.json && rm -f package.json.bak
     if [ "$FAKE_MODE" = fallback ]; then
-        echo "loki: the Loki 10 engine cannot run on this machine: no working bun (none on PATH, and the bundled bun for linux-x64 is missing). To fix: reinstall with npm install -g loki-mode (it includes bun), or install bun from https://bun.sh." >&2
-        exit 1
+        echo "loki: the Loki 10 engine cannot run on this machine: no working bun (none on PATH, and the bundled bun for linux-x64 is missing). Running the legacy engine instead. To fix: install bun from https://bun.sh, or reinstall loki-mode without --omit=optional." >&2
+        echo "Outcome:    VERIFIED"; exit 0
+    fi
+    if [ -n "${FAKE_LEGACY:-}" ]; then # no-bun leg: legacy engine output, no v10 run dir
+        [ "$FAKE_MODE" = nofb ] || echo "loki: the Loki 10 engine cannot run on this machine: no working bun (none on PATH, and the bundled bun for linux-x64 is missing). Running the legacy engine instead. To fix: install bun from https://bun.sh, or reinstall loki-mode without --omit=optional." >&2
+        echo "Outcome:    VERIFIED"; echo "Receipt:    receipt_sha256: $D"
+        [ "$FAKE_MODE" = legacylong ] && seq 1 14
+        exit 0
     fi
     mkdir -p .loki/runs/r
     # a real v10 run: receipt carries cost.usd, the event log carries a cost event (0 + source marker when unmetered)
@@ -43,7 +47,7 @@ quick)
         echo '{"cost":{"usd":null}}' > .loki/runs/r/receipt.json; echo '{"type":"cost","data":{"usd":null}}' > .loki/runs/r/events.jsonl
     else echo '{"type":"cost","data":{"usd":0,"source":"cli-unmetered"}}' > .loki/runs/r/events.jsonl; fi
     # the v10 quiet summary: start line then Outcome, PR, Receipt, NOT PROVEN, Cost, Time (7 lines)
-    if [ "$FAKE_MODE" = nostart ]; then echo "Loki engine starting"; else echo "Loki 10 engine"; fi
+    if [ "$FAKE_MODE" = nostart ]; then echo "Loki engine starting"; else echo "Loki 10 engine (set LOKI_ENGINE=legacy to use the old engine)"; fi
     echo "Outcome:    VERIFIED"
     echo "PR:         none (local)"
     if [ "$FAKE_MODE" = prefix ]; then echo "Receipt:    receipt ${D:0:12}"; else echo "Receipt:    receipt_sha256: $D"; fi
@@ -75,15 +79,15 @@ bad() { FAIL=$((FAIL + 1)); echo "FAIL $1"; }
 run_gate() {
     OUT=$(env -u LOKI_RUN_TMP FAKE_MODE="$1" FRG_LOKI="$T/fake-loki" FRG_REPORT="$T/report-$1.txt" bash "$GATE" --stub 2>&1); RC=$?
 }
-run_nobun() { # run_nobun <mode>: the --engine nobun leg
-    OUT=$(env -u LOKI_RUN_TMP FAKE_NOBUN=1 FAKE_MODE="$1" FRG_LOKI="$T/fake-loki" FRG_REPORT="$T/report-L$1.txt" bash "$GATE" --stub --engine nobun 2>&1); RC=$?
+run_legacy() { # run_legacy <mode>: the --engine legacy leg
+    OUT=$(env -u LOKI_RUN_TMP FAKE_LEGACY=1 FAKE_MODE="$1" FRG_LOKI="$T/fake-loki" FRG_REPORT="$T/report-L$1.txt" bash "$GATE" --stub --engine legacy 2>&1); RC=$?
 }
 expect() { # expect <mode> <assertion> <PASS|FAIL>
     if printf '%s\n' "$OUT" | grep -q "^$3 $2:"; then ok "$1: $2 $3"; else bad "$1: $2 expected $3"; printf '%s\n' "$OUT" | sed 's/^/     /'; fi
 }
 
 run_gate clean
-for a in exit-honest tests-green no-stray-files digest-matches verify-ok receipt-signed output-lines wall-time engine-start-line cost-non-null engine-no-bun skip-not-verified skip-bare-verify; do expect clean $a PASS; done
+for a in exit-honest tests-green no-stray-files digest-matches verify-ok receipt-signed output-lines wall-time engine-start-line cost-non-null engine-fallback skip-not-verified skip-bare-verify skip-not-verified-legacy; do expect clean $a PASS; done
 [ "$RC" -eq 0 ] && ok "clean: gate exits 0" || bad "clean: gate exit $RC"
 [ -s "$T/report-clean.txt" ] && ok "clean: report written" || bad "clean: no report"
 
@@ -100,14 +104,15 @@ run_gate baddigest;  expect baddigest digest-matches FAIL;   [ "$RC" -ne 0 ] && 
 run_gate skipmain;   expect skipmain exit-honest FAIL;       expect skipmain tests-green FAIL;  [ "$RC" -ne 0 ] && ok "skipmain: exits non-zero" || bad "skipmain: exit 0"
 run_gate nostart;    expect nostart engine-start-line FAIL;  [ "$RC" -ne 0 ] && ok "nostart: exits non-zero" || bad "nostart: exit 0"
 run_gate nolabel;    expect nolabel engine-start-line FAIL
-run_gate fallback;   expect fallback engine-no-bun FAIL;  expect fallback cost-non-null FAIL
+run_gate fallback;   expect fallback engine-fallback FAIL;  expect fallback cost-non-null FAIL
 [ "$RC" -ne 0 ] && ok "fallback: exits non-zero" || bad "fallback: exit 0"
-printf '%s\n' "$OUT" | grep -q 'the engine could not start' && ok "fallback: names the failure" || bad "fallback: not named"
+printf '%s\n' "$OUT" | grep -q 'engine fell back to legacy' && ok "fallback: names the fallback" || bad "fallback: not named"
 printf '%s\n' "$OUT" | grep -q 'no v10 run dir' && ok "fallback: cost reports no run dir" || bad "fallback: no run-dir message"
 printf '%s\n' "$OUT" | grep -q 'IndexError' && bad "fallback: IndexError crash" || ok "fallback: no IndexError"
 run_gate nocost;     expect nocost cost-non-null FAIL;       [ "$RC" -ne 0 ] && ok "nocost: exits non-zero" || bad "nocost: exit 0"
 run_gate skipbare;   expect skipbare skip-bare-verify FAIL;  [ "$RC" -ne 0 ] && ok "skipbare: exits non-zero" || bad "skipbare: exit 0"
-run_gate skipver;    expect skipver skip-not-verified FAIL;  [ "$RC" -ne 0 ] && ok "skipver: exits non-zero" || bad "skipver: exit 0"
+run_gate skiprc0;    expect skiprc0 skip-not-verified-legacy FAIL;  [ "$RC" -ne 0 ] && ok "skiprc0: 9b needs rc 3" || bad "skiprc0: exit 0"
+run_gate skipver;    expect skipver skip-not-verified FAIL;  expect skipver skip-not-verified-legacy FAIL;  [ "$RC" -ne 0 ] && ok "skipver: exits non-zero" || bad "skipver: exit 0"
 
 # P0-DASH-STATIC: dashboard-root assertion (needs fastapi+uvicorn; otherwise the gate prints SKIP, never FAIL)
 DPY=""
@@ -127,19 +132,18 @@ else
     printf '%s\n' "$OUT" | grep -q '^SKIP dashboard-root' && ok "dashboard-root: skipped without fastapi" || bad "dashboard-root: neither ran nor skipped"
 fi
 
-# no-bun leg: the plain error line, exit 1, nothing touched
-run_nobun clean
-for a in nobun-exit nobun-line nobun-untouched; do expect nobun-clean $a PASS; done
-[ "$RC" -eq 0 ] && ok "nobun-clean: gate exits 0" || bad "nobun-clean: gate exit $RC"
-printf '%s\n' "$OUT" | grep -Eq 'engine-start-line|cost-non-null|skip-not-verified:|skip-bare-verify|verify-ok' && bad "nobun-clean: a v10-only check ran" || ok "nobun-clean: v10-only checks skipped"
-run_nobun nofb;      expect nobun-nofb nobun-line FAIL;       [ "$RC" -ne 0 ] && ok "nobun-nofb: exits non-zero" || bad "nobun-nofb: exit 0"
-run_nobun wrongrc;   expect nobun-wrongrc nobun-exit FAIL;    [ "$RC" -ne 0 ] && ok "nobun-wrongrc: exits non-zero" || bad "nobun-wrongrc: exit 0"
-run_nobun extraline; expect nobun-extraline nobun-line FAIL;  [ "$RC" -ne 0 ] && ok "nobun-extraline: exits non-zero" || bad "nobun-extraline: exit 0"
-run_nobun touched;   expect nobun-touched nobun-untouched FAIL; [ "$RC" -ne 0 ] && ok "nobun-touched: exits non-zero" || bad "nobun-touched: exit 0"
-# the v10 leg does not run the no-bun checks
-run_gate clean; printf '%s\n' "$OUT" | grep -q 'nobun-' && bad "v10 leg ran a no-bun check" || ok "v10 leg unchanged: no no-bun check"
+# legacy (no-bun) leg
+run_legacy clean
+for a in exit-honest tests-green no-stray-files digest-matches verify-ok receipt-signed output-lines legacy-fallback-line skip-not-verified-legacy; do expect legacy-clean $a PASS; done
+[ "$RC" -eq 0 ] && ok "legacy-clean: gate exits 0" || bad "legacy-clean: gate exit $RC"
+printf '%s\n' "$OUT" | grep -Eq 'engine-start-line|cost-non-null|skip-not-verified:|skip-bare-verify' && bad "legacy-clean: v10-only check ran" || ok "legacy-clean: v10-only checks skipped"
+run_legacy skipver;    expect legacy-skip skip-not-verified-legacy FAIL; [ "$RC" -ne 0 ] && ok "legacy-skip: exits non-zero" || bad "legacy-skip: exit 0"
+run_legacy nofb;       expect legacy-nofb legacy-fallback-line FAIL;     [ "$RC" -ne 0 ] && ok "legacy-nofb: exits non-zero" || bad "legacy-nofb: exit 0"
+run_legacy legacylong; expect legacy-long output-lines FAIL;             [ "$RC" -ne 0 ] && ok "legacy-long: exits non-zero" || bad "legacy-long: exit 0"
+# the v10 leg still rejects the legacy fallback and still enforces 8 lines
+run_gate clean; printf '%s\n' "$OUT" | grep -q 'legacy-fallback-line' && bad "v10 leg ran the legacy check" || ok "v10 leg unchanged: no legacy check"
 
-# --installed nobun leg: optional deps omitted, and a bun left in the install dir fails closed
+# --installed legacy leg: optional deps omitted, and a bun left in the install dir fails closed
 mkdir -p "$T/fakebin"
 cat > "$T/fakebin/npm" <<'NPM'
 #!/usr/bin/env bash
@@ -152,24 +156,24 @@ exit 0
 NPM
 chmod +x "$T/fakebin/npm"
 run_inst() { # run_inst <withbun|nobun>
-    OUT=$(env -u LOKI_RUN_TMP PATH="$T/fakebin:$PATH" FAKE_NPM_ARGS="$T/npm-args" FAKE_LOKI_SRC="$T/fake-loki" FAKE_NOBUN=1 FAKE_MODE=clean \
-        ${2:+FAKE_NPM_BUN=1} FRG_REPORT="$T/report-inst.txt" bash "$GATE" --stub --engine nobun --installed loki-mode@x 2>&1); RC=$?
+    OUT=$(env -u LOKI_RUN_TMP PATH="$T/fakebin:$PATH" FAKE_NPM_ARGS="$T/npm-args" FAKE_LOKI_SRC="$T/fake-loki" FAKE_LEGACY=1 FAKE_MODE=clean \
+        ${2:+FAKE_NPM_BUN=1} FRG_REPORT="$T/report-inst.txt" bash "$GATE" --stub --engine legacy --installed loki-mode@x 2>&1); RC=$?
 }
 rm -f "$T/npm-args"; run_inst nobun
-grep -q -- '--omit=optional' "$T/npm-args" && ok "installed nobun: omits optional deps" || bad "installed nobun: no --omit=optional"
+grep -q -- '--omit=optional' "$T/npm-args" && ok "installed legacy: omits optional deps" || bad "installed legacy: no --omit=optional"
 run_inst withbun withbun
-[ "$RC" -ne 0 ] && printf '%s\n' "$OUT" | grep -q 'FAIL nobun-no-bun: bun is installed at' && ok "installed nobun: bun in install dir fails closed" || bad "installed nobun: bun not rejected"
+[ "$RC" -ne 0 ] && printf '%s\n' "$OUT" | grep -q 'FAIL legacy-no-bun: bun is installed at' && ok "installed legacy: bun in install dir fails closed" || bad "installed legacy: bun not rejected"
 
 # an allow-scripts/postinstall warning in the install output fails the installed legs
-OUT=$(env -u LOKI_RUN_TMP PATH="$T/fakebin:$PATH" FAKE_NPM_ARGS="$T/npm-args" FAKE_LOKI_SRC="$T/fake-loki" FAKE_NOBUN=1 FAKE_MODE=clean \
-    FAKE_NPM_WARN=1 FRG_REPORT="$T/report-inst.txt" bash "$GATE" --stub --engine nobun --installed loki-mode@x 2>&1); RC=$?
+OUT=$(env -u LOKI_RUN_TMP PATH="$T/fakebin:$PATH" FAKE_NPM_ARGS="$T/npm-args" FAKE_LOKI_SRC="$T/fake-loki" FAKE_LEGACY=1 FAKE_MODE=clean \
+    FAKE_NPM_WARN=1 FRG_REPORT="$T/report-inst.txt" bash "$GATE" --stub --engine legacy --installed loki-mode@x 2>&1); RC=$?
 [ "$RC" -ne 0 ] && printf '%s\n' "$OUT" | grep -q 'FAIL install-clean' && ok "installed: allow-scripts warning fails the gate" || bad "installed: allow-scripts warning not rejected"
 run_inst nobun; [ "$RC" -eq 0 ] && ok "installed: clean install output passes" || bad "installed: clean install rc=$RC"
 
 # The gate matches bin/loki's fallback text literally; the two must not drift
 # (promote of 10.5.25 failed when the message changed and the gate did not).
 BINLOKI="$SCRIPT_DIR/../bin/loki"
-for pat in 'the Loki 10 engine cannot run on this machine: no working bun' 'To fix: reinstall with npm install -g loki-mode'; do
+for pat in 'the Loki 10 engine cannot run on this machine: no working bun' 'Running the legacy engine instead'; do
     if grep -qF -- "$pat" "$GATE" && grep -qF -- "$pat" "$BINLOKI"; then ok "gate and bin/loki agree on: $pat"
     else bad "gate and bin/loki disagree on fallback text: $pat"; fi
 done

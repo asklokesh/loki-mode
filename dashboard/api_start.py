@@ -2,7 +2,7 @@
 
 Three onboarding steps (provider, GitHub PAT, repo) and a backlog that queues
 v10 issue-mode runs through the existing launcher: `bin/loki owner/repo#N
---json`, one git worktree per issue, so each run gets its
+--json` with LOKI_ENGINE=v10, one git worktree per issue, so each run gets its
 own branch and PR from the engine.
 
 Secrets: the PAT and any provider API key live in ~/.loki/credentials/ (dir
@@ -360,7 +360,7 @@ def _concurrency() -> int:
 
 
 def _child_env(token: str) -> dict:
-    e = dict(os.environ, GH_TOKEN=token, GITHUB_TOKEN=token, LOKI_NO_BROWSER="1")
+    e = dict(os.environ, GH_TOKEN=token, GITHUB_TOKEN=token, LOKI_ENGINE="v10", LOKI_NO_BROWSER="1")
     prov = _cfg().get("provider")
     if prov:
         e["LOKI_PROVIDER"] = prov

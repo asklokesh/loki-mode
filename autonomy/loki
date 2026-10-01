@@ -1604,9 +1604,11 @@ show_help() {
     echo "New here? Try these in order:"
     echo "  loki welcome              Friendly first-run opener (what Loki is, next steps)"
     echo "  loki doctor               Check your setup is ready (a few seconds)"
-    echo "  loki start ./prd.md       Run the Loki 10 engine on a spec file, a task, or an issue"
-    echo "  quick = one small task (Loki 10 engine, no PR)."
+    echo "  loki quickstart           Guided first build from your idea (no PRD needed)"
+    echo "  loki start ./prd.md       Build from a spec (PRD file, GitHub/GitLab/Jira/Azure issue, or no arg)"
+    echo "  quickstart = guided first build; quick = one small task (Loki 10 engine, no PR)."
     echo "  loki \"<task>\", loki owner/repo#N and loki quick run on the Loki 10 engine by default."
+    echo "  Previous engine: set LOKI_ENGINE=legacy or run 'loki legacy <args>'."
     echo "  Docs: https://github.com/asklokesh/loki-mode  |  Report a problem: loki crash"
     echo ""
     # CLI consolidation (Phase A): the front page presents ~17 canonical
@@ -1625,9 +1627,10 @@ show_help() {
     echo "Commands:"
     echo ""
     echo "Build:"
-    echo "  start <SPEC>     Run the Loki 10 engine on a spec file (.md, .txt, .yaml), a task, or an issue"
+    echo "  start [SPEC]     Start a build (PRD file, GitHub/GitLab/Jira/Azure issue, or no arg)"
     echo "  plan <PRD-file>  Dry-run analysis: complexity, cost, execution plan"
     echo "  backlog <owner/repo> --all|--label X|--issues N,N   Run every matching open issue, N in parallel"
+    echo "  quickstart [idea]  Guided first build: setup, idea, template, plan, go"
     echo ""
     echo "Session:"
     echo "  status [--json]  Show current status (--json for machine-readable)"
@@ -1656,7 +1659,7 @@ show_help() {
     echo "  memory [cmd]     Cross-project learnings (list|show|search|stats|compound)"
     echo ""
     echo "Modernize:"
-    echo "  (loki modernize <repo> --to <target> converts a codebase with the Loki 10 engine)"
+    echo "  modernize [cmd]  Legacy modernization: heal|migrate"
     echo ""
     echo "Config:"
     echo "  config [cmd]     Manage configuration (show|init|edit|path|set|get)"
@@ -1705,7 +1708,7 @@ show_help() {
     echo "  loki start PROJ-456           # Jira issue"
     echo "  loki start --bg ./prd.md      # Start in background"
     echo "  loki start --parallel ./prd.md   # Parallel mode (git worktrees)"
-    echo "  loki quick \"add dark mode\"  # Single-task mode (Loki 10 engine, no PR)"
+    echo "  loki quick \"add dark mode\"  # Single-task mode (Loki 10 engine; LOKI_ENGINE=legacy for 3 iters max)"
     echo "  loki tour                     # See a real sample result (no provider, no key, no spend)"
     echo "  loki demo                     # Build a sample todo app end to end"
     echo "  loki init -t saas-starter     # Scaffold from template"
@@ -1766,18 +1769,18 @@ show_help() {
     # missing from this list, so a new command cannot ship invisible.
     echo ""
     echo "All commands:"
-    echo "  analyze api assets audit backlog bench checkpoint (cp) ci cleanup"
+    echo "  agent analyze api assets audit backlog bench checkpoint (cp) ci cleanup"
     echo "  cluster cockpit code compliance completions compound config context (ctx)"
-    echo "  cost crash dashboard demo deploy docker docs doctor dogfood"
-    echo "  enterprise estimate explain export failover github help"
+    echo "  cost council crash dashboard demo deploy docker docs doctor dogfood"
+    echo "  enterprise estimate explain export failover github grill heal help"
     echo "  import init intent"
-    echo "  issue kpis logs magic mcp memory metrics modernize monitor"
+    echo "  issue kpis logs magic mcp memory metrics migrate modernize monitor"
     echo "  next notify onboard open optimize otel outcomes own (handoff) pause plan preview"
-    echo "  projects proof (receipt) provider quick rc remote report reset"
+    echo "  projects proof (receipt) provider quick quickstart rc remote report reset"
     echo "  resume review rollback run sandbox secrets secure self-update sentrux"
     echo "  serve setup-skill share ship spec start state stats status steer stop"
     echo "  syslog telemetry template test tour trigger trust trust-metrics"
-    echo "  ultracode update verify version watch watchdog web welcome why"
+    echo "  ultracode update verify version voice watch watchdog web welcome why"
     echo "  wiki worktree (wt)"
     echo "  control (preview, needs LOKI_CONTROL=1)"
     echo ""
@@ -1844,6 +1847,8 @@ show_help_aliases() {
     echo "  code               analyze code"
     echo "  context            analyze context"
     echo "  ctx                analyze context"
+    echo "  heal               modernize heal"
+    echo "  migrate            modernize migrate"
     echo ""
     echo "More groupings (ui, new, admin) land in later Phase B slices."
     echo "See internal/CLI-CONSOLIDATION-DESIGN.md for the full migration plan."
@@ -1940,8 +1945,9 @@ show_landing() {
     echo "Get started (in order):"
     echo -e "  ${CYAN}loki tour${NC}             See a real result now (no provider, no key, no spend)"
     echo -e "  ${CYAN}loki doctor${NC}           Check your setup is ready (a few seconds)"
-    echo -e "  ${CYAN}loki start ./prd.md${NC}   Run the Loki 10 engine on a spec file, a task, or an issue"
-    echo "  quick = one small task (Loki 10 engine, no PR)."
+    echo -e "  ${CYAN}loki quickstart${NC}       Guided first build from your idea (no PRD needed)"
+    echo -e "  ${CYAN}loki start ./prd.md${NC}   Build from a spec (PRD file, GitHub/GitLab/Jira/Azure issue, or no arg)"
+    echo "  quickstart = guided first build; quick = one small task (Loki 10 engine, no PR)."
     echo ""
     echo -e "Need help? ${CYAN}loki help${NC} lists every command."
     echo "Tip: preview cost and scope before building: loki plan <your-prd.md>"
@@ -2270,9 +2276,6 @@ _loki_start_handoff() {
 
 # Start Loki Mode
 cmd_start() {
-    # D57: the previous engine is gone; bin/loki routes start to the Loki 10 engine.
-    echo "loki: start was removed in 10.6.0; use loki \"<task>\"." >&2
-    exit 2
     # First-run welcome (once): open the branded welcome page on the very
     # first start. Writes ~/.loki/.welcomed and never repeats; non-blocking,
     # and never auto-opens a browser in CI or non-interactive shells.
@@ -3807,7 +3810,7 @@ cmd_start() {
     # variable" under bash 3.2 (macOS default) + `set -u` when args is empty.
     # User report: `loki start` with no PRD on /Users/lokesh/git/anonima
     # crashed at this line. Safe expansion guards against empty arrays.
-    :
+    _loki_new_session_exec "$RUN_SH" ${args[@]+"${args[@]}"}
 }
 
 # Check if session is running
@@ -7917,7 +7920,7 @@ cmd_welcome_terminal() {
     echo -e "  ${CYAN}Provider-agnostic${NC}        Claude, Codex, Cline, or Aider. Your keys, your infra."
     echo ""
     echo -e "  Try it now:   ${BOLD}loki tour${NC} (a real sample result, no provider, no key, no spend)"
-    echo -e "  Quick start:  ${BOLD}loki \"<task>\"${NC} (one task) or ${BOLD}loki start ./prd.md${NC} (from a spec)"
+    echo -e "  Quick start:  ${BOLD}loki quickstart${NC} (from your idea) or ${BOLD}loki start ./prd.md${NC} (from a spec)"
     echo -e "  Docs:         ${BOLD}https://www.autonomi.dev/docs${NC}"
     echo ""
     # One-time honest disclosure (this welcome screen shows once, via the
@@ -10503,9 +10506,6 @@ cmd_issue_view() {
 #===============================================================================
 
 cmd_run() {
-    # D57: the previous engine is gone; bin/loki routes run to the Loki 10 engine.
-    echo "loki: run was removed in 10.6.0; use loki \"<task>\"." >&2
-    exit 2
     # Wall-clock anchor for the issue journey. Captured before argument parsing,
     # auth, or issue fetch so the first-result measurement includes the wait the
     # user actually experiences. Exported only through the explicit writer call
@@ -13933,7 +13933,7 @@ cmd_doctor() {
             # outcome we have: a green doctor ending in "Next: loki quickstart",
             # followed by quickstart, demo, quick and start-on-bash all exiting 2.
             echo -e "  ${GREEN}PASS${NC}  Bundled Claude Agent SDK is usable -- 'loki start' needs no separate CLI"
-            echo -e "         ${YELLOW}Note: loki quick still needs a provider CLI on PATH${NC}"
+            echo -e "         ${YELLOW}Note: loki demo/quick/quickstart still need a provider CLI on PATH${NC}"
             echo -e "         ${YELLOW}      Install: npm install -g @anthropic-ai/claude-code${NC}"
             # The note above was only half the fix. The final "Next:" line at the
             # bottom of this function recommended quickstart unconditionally, so a
@@ -14570,10 +14570,10 @@ else:
         # an exit 2. Recommend only what actually runs, plus the one command that
         # unlocks the rest.
         echo "Next: loki start ./prd.md (runs on the bundled SDK, no CLI install needed)"
-        echo "      For loki \"<task>\": npm install -g @anthropic-ai/claude-code"
+        echo "      For loki quickstart/demo: npm install -g @anthropic-ai/claude-code"
     else
-        echo "Next: loki \"<task>\" (the Loki 10 engine on one task), or loki ./prd.md (from a spec file)"
-        echo "      or loki start ./prd.md"
+        echo "Next: loki quickstart (guided first build from your idea, no PRD needed)"
+        echo "      or loki demo (builds a sample todo app end to end) or loki start ./prd.md"
     fi
     # A-123: the last stdout line. Provider and model come from the selected
     # provider; the key state is read WITHOUT creating a key (auto_generate=False).
@@ -16099,7 +16099,8 @@ cmd_demo() {
         echo ""
         echo -e "${DIM}---------------------------------------${NC}"
         echo -e "${BOLD}That was a sample. Build your own:${NC}"
-        echo -e "  ${CYAN}loki \"<task>\"${NC}                  # your first real build"
+        echo -e "  ${CYAN}loki quickstart${NC}                  # one guided command, your first real build"
+        echo -e "  ${CYAN}loki demo${NC}                        # build a bundled sample app for real"
         return 0
     fi
 
@@ -16442,9 +16443,6 @@ REPOEOF
 
 # Quick mode - lightweight single-task execution
 cmd_quick() {
-    # D57: the previous engine is gone; bin/loki routes quick to the Loki 10 engine.
-    echo "loki: quick was removed in 10.6.0; use loki \"<task>\"." >&2
-    exit 2
     # v7.6.3 B-11 fix: --help previously fell through to provider invocation
     # (task_desc="--help") which hung the CLI for 10+ seconds. Explicit guard.
     case "${1:-}" in
@@ -16453,7 +16451,10 @@ cmd_quick() {
             echo ""
             echo "Usage: loki quick \"description of what to do\""
             echo ""
-            echo "Runs the Loki 10 engine on one small task (no PR is opened)."
+            echo "Runs the Loki 10 engine on one small task (no PR is opened). Set"
+            echo "LOKI_ENGINE=legacy or run 'loki legacy quick ...' for the previous engine:"
+            echo "a lightweight profile, 3 iterations max, no quality council, no completion"
+            echo "gate. Best for tiny tasks. The options below apply to the previous engine."
             echo ""
             echo "Examples:"
             echo "  loki quick \"add dark mode to this React app\""
@@ -16601,7 +16602,7 @@ QPRDEOF
 
     # Run the orchestrator with quick settings (session leader -- see
     # _loki_new_session_exec; enables atomic group-kill on stop).
-    :
+    _loki_new_session_exec "$RUN_SH" "$quick_prd"
 }
 
 # Docker Compose monitoring with auto-fix (v6.67.0)
@@ -18694,7 +18695,7 @@ cmd_verify() {
     # D48: --pubkey verifies a receipt against a given public key (v10 engine, no ~/.loki needed).
     local _pk_arg
     for _pk_arg in "$@"; do
-        [ "$_pk_arg" = "--pubkey" ] && exec "$_LOKI_SCRIPT_DIR/../bin/loki" engine10 verify "$@"
+        [ "$_pk_arg" = "--pubkey" ] && LOKI_ENGINE=v10 exec "$_LOKI_SCRIPT_DIR/../bin/loki" verify "$@"
     done
     # --fast: deterministic checks only, in milliseconds. Measured on this repo
     # (1,932 tracked files): 298 ms cold, 87 ms warm, 19 ms diff-scoped, against
@@ -18875,16 +18876,19 @@ cmd_heal_help() {
 cmd_modernize() {
     local subcommand="${1:-help}"
     case "$subcommand" in
-        heal|migrate)
-            echo "loki: modernize $subcommand was removed in 10.6.0; use loki \"<task>\"." >&2
-            exit 2
-            ;;
+        heal)     shift; cmd_heal "$@";    return $? ;;
+        migrate)  shift; cmd_migrate "$@"; return $? ;;
         --help|-h|help)
             echo -e "${BOLD}loki modernize${NC} - Legacy system modernization"
             echo ""
-            echo "Usage: loki modernize <repo> --to <target>"
+            echo "Usage: loki modernize <subcommand> [args]"
             echo ""
-            echo "Converts a codebase with the Loki 10 engine. heal and migrate were removed in 10.6.0."
+            echo "Subcommands (grouped modernization surface):"
+            echo "  heal <path>      Legacy system healing in phases (was: loki heal)"
+            echo "  migrate <path>   Codebase migration in phases (was: loki migrate)"
+            echo ""
+            echo "Run 'loki modernize <subcommand> --help' for each. The old"
+            echo "top-level names still work; see 'loki help aliases'."
             return 0
             ;;
         *)
@@ -21759,15 +21763,6 @@ main() {
             ;;
     esac
 
-    # D57: removed in 10.6.0, no v10 equivalent. (A loop, not a case arm, so the
-    # help-discoverability probe does not count these as live commands.)
-    for _removed_cmd in quickstart council voice grill heal migrate swarm gates agent; do
-        if [ "$command" = "$_removed_cmd" ]; then
-            echo "loki: $command was removed in 10.6.0; use loki \"<task>\"$([ "$command" = quickstart ] && echo ' (or loki to open the UI)')." >&2
-            exit 2
-        fi
-    done
-
     case "$command" in
         run)
             cmd_run "$@"
@@ -21794,6 +21789,9 @@ main() {
             else
                 cmd_demo --offline "$@"
             fi
+            ;;
+        quickstart)
+            cmd_quickstart "$@"
             ;;
         welcome)
             cmd_welcome "$@"
@@ -21949,6 +21947,9 @@ main() {
         rollback)
             cmd_rollback "$@"
             ;;
+        council)
+            cmd_council "$@"
+            ;;
         dogfood)
             # CLI consolidation (Phase A): 'dogfood' -> 'report dogfood'.
             _deprecated_alias dogfood "report dogfood" "$@"
@@ -21959,6 +21960,10 @@ main() {
             ;;
         enterprise)
             cmd_enterprise "$@"
+            ;;
+        voice)
+            echo "Voice mode is planned for a future release. Track progress at github.com/asklokesh/loki-mode/issues/85"
+            exit 0
             ;;
         secrets)
             cmd_secrets "$@"
@@ -21996,12 +22001,17 @@ main() {
         modernize)
             cmd_modernize "$@"
             ;;
+        heal)
+            # CLI consolidation (Phase B): 'heal' -> 'modernize heal'.
+            _deprecated_alias heal "modernize heal" "$@"
+            cmd_modernize heal "$@"
+            ;;
         verify)
             cmd_verify "$@"
             ;;
         keys)
             # D48: public-key export lives in the Bun v10 engine; re-enter the shim on that route.
-            exec "$_LOKI_SCRIPT_DIR/../bin/loki" engine10 keys "$@"
+            LOKI_ENGINE=v10 exec "$_LOKI_SCRIPT_DIR/../bin/loki" keys "$@"
             ;;
         spec)
             cmd_spec "$@"
@@ -22011,8 +22021,16 @@ main() {
             # whether it still matches the intent it was affirmed against.
             cmd_intent "$@"
             ;;
+        grill)
+            cmd_grill "$@"
+            ;;
         mcp)
             cmd_mcp "$@"
+            ;;
+        migrate)
+            # CLI consolidation (Phase B): 'migrate' -> 'modernize migrate'.
+            _deprecated_alias migrate "modernize migrate" "$@"
+            cmd_modernize migrate "$@"
             ;;
         cluster)
             cmd_cluster "$@"
@@ -22021,6 +22039,9 @@ main() {
             # CLI consolidation (Phase A): 'wt' is a deprecated alias of 'worktree'.
             [ "$command" = "wt" ] && _deprecated_alias wt worktree "$@"
             cmd_worktree "$@"
+            ;;
+        agent)
+            cmd_agent "$@"
             ;;
         template)
             cmd_template "$@"

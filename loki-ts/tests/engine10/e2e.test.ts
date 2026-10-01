@@ -1,5 +1,5 @@
 // E-14/E-42: thin-path end to end (docs/v10/ENGINE.md section 16). Runs the real
-// engine from the real entry (bin/loki, LOKI_TS_ENTRY=src/cli.ts,
+// engine from the real entry (bin/loki, LOKI_ENGINE=v10, LOKI_TS_ENTRY=src/cli.ts,
 // stub claude CLI via LOKI_E10_INVOKER=cli) on a fresh copy of a tiny bun repo:
 // with --no-pr, and with a local bare origin plus a canary GH_TOKEN (Rule of Two).
 import { afterAll, describe, expect, test } from "bun:test";
@@ -52,6 +52,7 @@ function runEngine(mode: "done" | "already" | "tamper" | "nochange", withPr = fa
   const stubEnvLog = join(tmp, "stub-env.log");
   const env: Record<string, string | undefined> = {
     ...process.env,
+    LOKI_ENGINE: "v10",
     LOKI_TS_ENTRY: ENTRY,
     LOKI_E10_INVOKER: "cli",
     LOKI_CLAUDE_CLI: join(STUB_DIR, "claude"),
@@ -127,7 +128,7 @@ describe("engine10 e2e (stub claude)", () => {
     const q = runEngine("done");
     const lines = q.out.trim().split("\n");
     expect(lines.length).toBeLessThanOrEqual(8);
-    expect(lines[0]).toBe("Loki 10 engine");
+    expect(lines[0]).toBe("Loki 10 engine (set LOKI_ENGINE=legacy or run 'loki legacy' for the previous engine)");
     expect(q.out).not.toMatch(/^\[\d\d:\d\d\]/m);
     expect(q.out).toMatch(/^Receipt:\s+sha256:[0-9a-f]{64}/m);
     expect(q.out).toContain("NOT PROVEN:");

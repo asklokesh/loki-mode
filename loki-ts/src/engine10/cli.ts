@@ -1,6 +1,6 @@
 // Loki 10 engine subcommand router (ENGINE.md section 11, slice E-12).
 // Reached only through `loki-ts/src/cli.ts` case "engine10", which bin/loki
-// selects for every run. Every target module is loaded lazily, and no
+// selects when LOKI_ENGINE=v10. Every target module is loaded lazily, and no
 // sibling module (types.ts included) is imported statically, so this file
 // works before its siblings exist: a missing module prints
 // "engine10: <module> not built yet" and exits 2.
@@ -25,7 +25,7 @@ const TABLE: Record<string, { module: string; fn: string }> = {
   "deep-supervise": { module: "stages/deep.ts", fn: "deepSupervise" },
   "deep-worker": { module: "stages/deep.ts", fn: "deepWorker" },
 };
-const USAGE = `Usage:
+const USAGE = `Usage (LOKI_ENGINE=v10):
   loki "<task>"                   run the engine on a free-text task
   loki <issue-url|owner/repo#N>   run on an issue
   loki status [run-id]            latest run by default

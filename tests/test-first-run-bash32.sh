@@ -52,7 +52,7 @@ fi
 
 # The ordered next-steps list is the entire funnel. If it renders empty or
 # errors, a new user has no idea what to do next.
-for step in "loki tour" "loki doctor"; do
+for step in "loki tour" "loki doctor" "loki quickstart"; do
     if printf '%s' "$out" | grep -q "$step"; then
         ok "welcome offers '$step'"
     else

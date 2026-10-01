@@ -63,7 +63,7 @@ oauth="unset"; [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && oauth="set"
 api_key="unset"; [ -n "${ANTHROPIC_API_KEY:-}" ] && api_key="set"
 # One line even when the prompt has newlines (%q escapes them).
 { printf 'ARGV:'; printf ' %q' "$@"; echo; } >&2
-echo "ENV-CHECK2: config=$cfg claude_md=$cmd oauth=$oauth api_key=$api_key" >&2
+echo "ENV-CHECK2: config=$cfg claude_md=$cmd oauth=$oauth api_key=$api_key engine=${LOKI_ENGINE:-unset}" >&2
 
 case "${STUB_V10_MARKER:-0}" in
     1 | noevents | stale | oldpath | badfield)

@@ -119,7 +119,12 @@ else
 fi
 
 echo
-echo "T5 -- the default marker line no longer reads the pre-flip opt-in wording"
+echo "T5 -- the opt-in marker line matches bin/loki's current default"
+if grep -q '_loki_engine_default="v10"' "$BIN_LOKI" 2>/dev/null; then
+    flipped=1
+else
+    flipped=0
+fi
 for f in "$README" "$GUIDE"; do
     n="$(grep -c '<!-- loki10-default -->' "$f")"
     if [ "$n" -eq 1 ]; then
@@ -129,10 +134,18 @@ for f in "$README" "$GUIDE"; do
         continue
     fi
     marked_line="$(grep -- '<!-- loki10-default -->' "$f" | sed -e 's/<!-- loki10-default -->//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-    if [ "$marked_line" != "Opt-in: set LOKI_ENGINE=v10" ]; then
-        ok "$(basename "$f")'s marked line was updated for the flip"
+    if [ "$flipped" -eq 1 ]; then
+        if [ "$marked_line" != "Opt-in: set LOKI_ENGINE=v10" ]; then
+            ok "$(basename "$f")'s marked line was updated for the flip"
+        else
+            bad "$(basename "$f") still reads the pre-flip opt-in line, but bin/loki now defaults to v10"
+        fi
     else
-        bad "$(basename "$f") still reads the pre-flip opt-in line, but Loki 10 is the only engine"
+        if [ "$marked_line" = "Opt-in: set LOKI_ENGINE=v10" ]; then
+            ok "$(basename "$f")'s marked line reads the pre-flip opt-in wording"
+        else
+            bad "$(basename "$f")'s marked line reads '$marked_line', want 'Opt-in: set LOKI_ENGINE=v10'"
+        fi
     fi
 done
 

@@ -3,7 +3,7 @@
 
 Subcommands (run.sh and summarize are thin wrappers around these):
   validate <task_dir>...
-  run --arm <v10|raw-claude> (--task ID | --tasks A,B | --all) [--tier small|medium|large] [--parallel N] [--out DIR] [--tasks-dir DIR]
+  run --arm <v10|raw-claude|legacy> (--task ID | --tasks A,B | --all) [--tier small|medium|large] [--parallel N] [--out DIR] [--tasks-dir DIR]
   summarize <results.jsonl> [--markdown]
 
 Honesty rules (the v10.0.0 release gate depends on them):
@@ -48,7 +48,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-ARMS = ("v10", "raw-claude")  # the legacy arm was removed in 10.6.0 (D57)
+ARMS = ("v10", "raw-claude", "legacy")
 KINDS = ("augmentiq", "public", "quickstart")
 TIERS = ("small", "medium", "large")
 DEFAULT_TIER = "small"
@@ -1374,7 +1374,15 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
         argv = [binary, "-p", prompt + PUSH_INSTRUCTION, "--output-format", "json",
                 "--dangerously-skip-permissions", "--model", cfg["model"]]
     elif arm == "v10":
+        env["LOKI_ENGINE"] = "v10"
         argv = [binary, prompt]
+    else:
+        # Pinned so the v10 default flip (E-31) cannot change what EV-5 measures.
+        env["LOKI_ENGINE"] = "legacy"
+        pfile = os.path.join(rundir, "prompt.md")
+        with open(pfile, "w", encoding="utf-8") as f:
+            f.write(prompt + PUSH_INSTRUCTION + "\n")
+        argv = [binary, "start", pfile]
 
     # Resolved per run: a keychain access token must outlive this run's cap.
     try:
@@ -1502,9 +1510,9 @@ def cmd_run(args):
     if bad or not tasks:
         return 2
 
-    # E-62/EV-8: the v10 arm runs bin/loki against loki-ts's
+    # E-62/EV-8: a loki arm (v10, legacy) runs bin/loki against loki-ts's
     # build; refuse loudly rather than silently measuring a stale SDK.
-    if args.arm == "v10":
+    if args.arm in ("v10", "legacy"):
         why = lockfile_mismatch(REPO)
         if why:
             print("error: %s" % why, file=sys.stderr)

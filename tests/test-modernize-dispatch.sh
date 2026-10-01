@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # M-08 (docs/v10/MODERNIZE.md section 2): `loki modernize` must always reach
-# the engine10 modernize CLI (LOKI_ENGINE is ignored). Runs
+# the engine10 modernize CLI, whatever LOKI_ENGINE is set to (or unset). Runs
 # bin/loki inside a throwaway repo root whose autonomy/loki and `bun` are
 # stubs that record argv, so routing is observed without running either CLI.
 # Headless: LOKI_NO_BROWSER=1, no network, no real bun/bash invocation.
@@ -50,13 +50,14 @@ expect() { # expect <label> <want> <got>
     if [ "$3" = "$2" ]; then ok "$1"; else bad "$1 (want '$2', got '$3')"; fi
 }
 
-# 1. modernize reaches engine10.
+# 1. Default engine (LOKI_ENGINE unset): modernize still reaches engine10.
 expect "[default] modernize repo --to python3 -> engine10" "BUN $ENTRY engine10 modernize repo --to python3" \
     "$(run_loki "$WITH_BUN" -- modernize repo --to python3)"
 
-# 2. A stale LOKI_ENGINE value changes nothing: modernize reaches engine10, and so does a task.
+# 2. LOKI_ENGINE=legacy and LOKI_ENGINE=v9: modernize still reaches engine10
+#    even though those values keep every other command on the legacy CLI.
 for eng in legacy v9; do
-    expect "[LOKI_ENGINE=$eng] task -> engine10" "BUN $ENTRY engine10 fix x" \
+    expect "[LOKI_ENGINE=$eng] other command stays legacy" "BASH fix x" \
         "$(run_loki "$WITH_BUN" "LOKI_ENGINE=$eng" -- "fix x")"
     expect "[LOKI_ENGINE=$eng] modernize -> engine10" "BUN $ENTRY engine10 modernize repo --to python3" \
         "$(run_loki "$WITH_BUN" "LOKI_ENGINE=$eng" -- modernize repo --to python3)"
@@ -85,7 +86,7 @@ expect "[unknown flag] non-zero exit" "2" "$(cat "$T/rc")"
 
 # 4b. Legacy modernize subcommands (autonomy/loki cmd_modernize: heal, migrate,
 #     plus its own --help/bogus handling) must still reach the legacy CLI
-#     unchanged, -- only the
+#     unchanged, under the default engine AND under LOKI_ENGINE=v10 -- only the
 #     new `<repo> --to <target>` form (identified by a --to flag) goes to
 #     engine10. Regression: an earlier version of this arm caught every
 #     `modernize` invocation, breaking `loki heal`/`loki migrate` forwarding
@@ -94,6 +95,8 @@ expect "[unknown flag] non-zero exit" "2" "$(cat "$T/rc")"
 for sub in "heal --help" "migrate --help" "bogus"; do
     expect "[default] modernize $sub -> legacy" "BASH modernize $sub" \
         "$(run_loki "$WITH_BUN" -- modernize $sub)"
+    expect "[LOKI_ENGINE=v10] modernize $sub -> legacy" "BASH modernize $sub" \
+        "$(run_loki "$WITH_BUN" LOKI_ENGINE=v10 -- modernize $sub)"
 done
 
 # 5. No bun on PATH: exits 1 with a message, never silently falls back to bash.

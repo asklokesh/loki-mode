@@ -1,7 +1,7 @@
 // E-49: loki dashboard reachable through the real entry (docs/v10/ENGINE.md
 // section 12). E-24 already unit-tests startServer()/summarizeRun() directly
 // (dashboard.test.ts); this proves the CLI route actually reaches them: `bin/
-// loki dashboard` (bin/loki's engine10 case, cli.ts's
+// loki dashboard` under LOKI_ENGINE=v10 (bin/loki's engine10 case, cli.ts's
 // "engine10" dispatch, cli.ts's TABLE["dashboard"] route) starts the real
 // Bun.serve and serves a run folded from a fixture events.jsonl written
 // straight to disk, with no engine run behind it. Test only, per the BOARD row.
@@ -67,6 +67,7 @@ describe("engine10 dashboard entry e2e (real bin/loki, real Bun.serve)", () => {
     const url = `http://127.0.0.1:${port}/`;
     const env: Record<string, string | undefined> = {
       ...process.env,
+      LOKI_ENGINE: "v10",
       LOKI_TS_ENTRY: ENTRY,
       LOKI_E10_DASHBOARD_PORT: String(port),
       LOKI_NO_BROWSER: "1",
@@ -74,7 +75,7 @@ describe("engine10 dashboard entry e2e (real bin/loki, real Bun.serve)", () => {
     delete env.LOKI_LEGACY_BASH; // would skip the engine10 route entirely
 
     const proc = Bun.spawn({
-      cmd: ["bash", BIN_LOKI, "engine10", "dashboard"],
+      cmd: ["bash", BIN_LOKI, "dashboard"],
       cwd: repoDir,
       env,
       stdout: "ignore",

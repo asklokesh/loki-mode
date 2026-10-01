@@ -818,7 +818,7 @@ async function runText(): Promise<number> {
         `  ${badge("pass")}  Bundled Claude Agent SDK is usable -- 'loki start' needs no separate CLI\n`,
       );
       process.stdout.write(
-        `         ${YELLOW}Note: loki quick still needs a provider CLI on PATH${NC}\n`,
+        `         ${YELLOW}Note: loki demo/quick/quickstart still need a provider CLI on PATH${NC}\n`,
       );
       process.stdout.write(
         `         ${YELLOW}      Install: npm install -g @anthropic-ai/claude-code${NC}\n`,
@@ -1305,10 +1305,10 @@ async function runText(): Promise<number> {
   // fail branch returns above, so a failing setup is never told to build.
   process.stdout.write(`\n`);
   process.stdout.write(
-    `Next: loki "<task>" (the Loki 10 engine on one task), or loki ./prd.md (from a spec file)\n`,
+    `Next: loki quickstart (guided first build from your idea, no PRD needed)\n`,
   );
   process.stdout.write(
-    `      or loki start ./prd.md\n`,
+    `      or loki demo (builds a sample todo app end to end) or loki start ./prd.md\n`,
   );
   // A-123: the last stdout line. Byte-mirrors cmd_doctor. The key state is read
   // WITHOUT creating a key (auto_generate=False).

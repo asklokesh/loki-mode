@@ -221,12 +221,72 @@ mkdir -p "$_SPEC_TMP"
 rm -rf "$_SPEC_TMP"
 
 # -------------------------------------------
-# Test: commands removed in 10.6.0 (D57) print one line and exit 2.
+# Test: loki grill --help
 # -------------------------------------------
-for _removed in grill quickstart council voice heal migrate agent; do
-    test_cmd "loki $_removed was removed in 10.6.0 (exit 2)" \
-        2 "was removed in 10.6.0" "$_removed"
-done
+test_cmd "loki grill --help exits 0 and shows the interrogation usage" \
+    0 "interrogate a spec" grill --help
+
+# -------------------------------------------
+# Test: loki grill with no spec present -> usage error exit 2.
+# -------------------------------------------
+_GRILL_TMP=$(mktemp -d 2>/dev/null || echo "/tmp/loki-grill-test-$$")
+mkdir -p "$_GRILL_TMP"
+( cd "$_GRILL_TMP" && "$LOKI" grill >/dev/null 2>&1; [ "$?" -eq 2 ] ) \
+    && { echo -e "${GREEN}[PASS]${NC} loki grill with no spec exits 2 (usage)"; ((PASS++)); } \
+    || { echo -e "${RED}[FAIL]${NC} loki grill with no spec -- expected exit 2"; ((FAIL++)); }
+((TOTAL++))
+
+# -------------------------------------------
+# Test: loki grill with an unavailable provider -> clean error exit 3.
+# Uses a bogus LOKI_PROVIDER so the failure is deterministic regardless of
+# whether the claude CLI is installed on the runner. Honest no-provider path:
+# never a silent success, never fabricated questions.
+# -------------------------------------------
+printf '# Spec\n## Feature\nDo a thing.\n' > "$_GRILL_TMP/prd.md"
+( cd "$_GRILL_TMP" && LOKI_PROVIDER=bogus "$LOKI" grill prd.md >/dev/null 2>&1; [ "$?" -eq 3 ] ) \
+    && { echo -e "${GREEN}[PASS]${NC} loki grill with an unavailable provider exits 3 (clean error)"; ((PASS++)); } \
+    || { echo -e "${RED}[FAIL]${NC} loki grill unavailable provider -- expected exit 3"; ((FAIL++)); }
+((TOTAL++))
+
+# -------------------------------------------
+# Test: loki grill SUCCESS path with a stubbed provider.
+# Regression guard for the printf leading-dash bug (council R2, v7.28.0):
+# bash's printf builtin parsed '- Spec: %s\n' as an option flag and silently
+# dropped the report metadata header lines. Stub a fake `claude` on PATH so
+# the success path runs deterministically with no cost, then assert the
+# report file carries the '- Spec:' and '- Provider:' header lines and the
+# stubbed body, with zero printf errors on stderr.
+# -------------------------------------------
+_GRILL_STUB=$(mktemp -d 2>/dev/null || echo "/tmp/loki-grillstub-test-$$")
+mkdir -p "$_GRILL_STUB/bin"
+printf '#!/usr/bin/env bash\necho "Q1: What happens when the thing fails?"\n' > "$_GRILL_STUB/bin/claude"
+chmod +x "$_GRILL_STUB/bin/claude"
+_GRILL_ERR="$_GRILL_STUB/stderr.txt"
+( cd "$_GRILL_TMP" \
+    && PATH="$_GRILL_STUB/bin:$PATH" "$LOKI" grill prd.md >/dev/null 2>"$_GRILL_ERR"; [ "$?" -eq 0 ] ) \
+    && grep -q -- "- Spec:" "$_GRILL_TMP/.loki/grill/report.md" 2>/dev/null \
+    && grep -q -- "- Provider:" "$_GRILL_TMP/.loki/grill/report.md" 2>/dev/null \
+    && grep -q "What happens when the thing fails" "$_GRILL_TMP/.loki/grill/report.md" 2>/dev/null \
+    && ! grep -q "invalid option" "$_GRILL_ERR" 2>/dev/null \
+    && { echo -e "${GREEN}[PASS]${NC} loki grill success path writes full report header (stubbed provider)"; ((PASS++)); } \
+    || { echo -e "${RED}[FAIL]${NC} loki grill success path -- report header missing or printf error"; sed 's/^/    /' "$_GRILL_ERR" 2>/dev/null | head -4; ((FAIL++)); }
+((TOTAL++))
+rm -rf "$_GRILL_STUB" "$_GRILL_TMP"
+
+# -------------------------------------------
+# Test: loki quickstart --help (v7.29.0). Falls through to bash on both routes
+# (not in the bin/loki Bun allowlist), so behaves identically Bun and bash.
+# -------------------------------------------
+test_cmd "loki quickstart --help exits 0 and shows the guided-build usage" \
+    0 "guided first build" quickstart --help
+
+# -------------------------------------------
+# Test: loki quickstart with no TTY -> interactive-only refusal, exit 2.
+# test_cmd captures via $(...), so stdin/stdout are not a TTY: the gate must
+# fire and exit 2 with the automation hint, never hanging on a read.
+# -------------------------------------------
+test_cmd "loki quickstart non-TTY exits 2 with the automation hint" \
+    2 "needs a terminal" quickstart
 
 # -------------------------------------------
 # Test: loki open alias --help routes to preview

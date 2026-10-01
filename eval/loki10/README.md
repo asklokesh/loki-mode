@@ -134,7 +134,7 @@ Each run, per task and arm:
 4. **Arm.** The arm runs under `timeout -k 10 <timeout_s>`. When it exits,
    anything left in its process group is killed.
    - raw-claude: `claude -p "<prompt + push instruction>" --output-format json --dangerously-skip-permissions --model $LOKI_EVAL_MODEL`
-   - v10: `loki "<prompt>"`
+   - v10: `LOKI_ENGINE=v10 loki "<prompt>"`
    - legacy: `loki start <prompt file>`. The prompt file includes the push instruction.
 5. **Grading.** If a non-`main` branch was pushed, the runner writes a PR record
    (`pr.json`). It then clones that branch fresh, runs `setup` again, copies the
@@ -308,8 +308,8 @@ CLAUDE.md in it or any parent, env built by `harness.arm_env` + `arm_auth`):
     are present.
 - Harness env per arm (redacted): `CLAUDE_CONFIG_DIR=<rundir>/claude-config`
   (empty), `CLAUDE_CODE_OAUTH_TOKEN=<redacted len=108>`, `ANTHROPIC_API_KEY`,
-  `GH_TOKEN` and `GH_CONFIG_DIR` handled as above.
-  `HOME` is unchanged.
+  `GH_TOKEN` and `GH_CONFIG_DIR` handled as above, and `LOKI_ENGINE=v10` only on
+  the v10 arm. `HOME` is unchanged.
 - The raw arm's exact flags under the isolation
   (`--dangerously-skip-permissions --model claude-opus-5-5`) gave
   `{'result': 'OK', 'is_error': False, 'total_cost_usd': 0.0451086}` with

@@ -76,6 +76,38 @@ else
     bad "loki plan FAILED with no egress -- evaluation now requires connectivity"
 fi
 
+# 3. `heal --assess` is the brownfield entry point and the strongest
+#    air-gapped differentiator: assess a legacy codebase with nothing leaving.
+command -v git >/dev/null 2>&1 || { printf 'SKIP: git unavailable for the assess check\n'; }
+if command -v git >/dev/null 2>&1; then
+    repo="$WORK/legacy"; mkdir -p "$repo"
+    ( cd "$repo" && git init -q . && git config user.email t@example.com \
+      && git config user.name t && git config commit.gpgsign false ) >/dev/null 2>&1
+    printf '{"name":"old","dependencies":{"express":"^4.16.0"}}\n' > "$repo/package.json"
+    ( cd "$repo" && git add -A && git commit -qm x ) >/dev/null 2>&1
+
+    assess_out="$( cd "$repo" && blocked "$LOKI" heal . --assess --json 2>/dev/null )"
+    verdict="$(printf '%s' "$assess_out" | python3 -c '
+import json, sys
+raw = sys.stdin.read()
+try:
+    d = json.loads(raw[raw.index("{"):raw.rindex("}") + 1])
+except Exception:
+    print("UNPARSEABLE"); raise SystemExit
+mr = d.get("maintenance_risk", {})
+print("OK:" + str(mr.get("dependency_staleness")))
+' 2>/dev/null)"
+
+    case "$verdict" in
+        OK:unknown)
+            ok "heal --assess works offline AND keeps staleness 'unknown' (never guessed)" ;;
+        OK:*)
+            bad "staleness became '${verdict#OK:}' with no network -- a fabricated value" ;;
+        *)
+            bad "heal --assess did not produce parseable JSON with egress severed" ;;
+    esac
+fi
+
 # 4. The egress inventory must exist and must NAME the required point. A page
 #    claiming air-gapped support without disclosing what still needs the network
 #    is the overclaim that loses a procurement conversation.

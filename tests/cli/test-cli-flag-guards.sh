@@ -25,6 +25,12 @@ bad(){ echo "  [FAIL] $1"; failed=$((failed+1)); }
 # ---------------------------------------------------------------------------
 # BUG 1: --budget 0 and --budget=0.00 rejected; positive value not rejected.
 # ---------------------------------------------------------------------------
+T1=$(mktemp -d)
+printf '# Tiny\n## Overview\nx\n' > "$T1/prd.md"
+out=$( (cd "$T1" && bash "$LOKI" start --budget 0 ./prd.md) 2>&1 ); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qi 'must be greater than 0'; then ok "BUG1: --budget 0 rejected"; else bad "BUG1: --budget 0 (rc=$rc)"; fi
+out=$( (cd "$T1" && bash "$LOKI" start --budget=0.00 ./prd.md) 2>&1 ); rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -qi 'must be greater than 0'; then ok "BUG1: --budget=0.00 rejected"; else bad "BUG1: --budget=0.00 (rc=$rc)"; fi
 # A positive budget must NOT trip the new guard. Verify the guard logic in
 # isolation (the awk positivity test the CLI uses) rather than launching a real
 # build: 5.00 passes, 0 and 0.00 fail.
@@ -33,6 +39,7 @@ if awk -v b=5.00 'BEGIN{exit !(b+0 > 0)}' && ! awk -v b=0 'BEGIN{exit !(b+0 > 0)
 else
   bad "BUG1: positivity guard logic"
 fi
+rm -rf "$T1"
 
 # ---------------------------------------------------------------------------
 # BUG 4: loki memory retrieve reads _source/_score/pattern, not the legacy

@@ -50,6 +50,7 @@ v8 SDK judge bridge (done-recognition + council-v2)	0
 v8 SDK text bridge (grill + prd-enrich)	0
 v8 SDK council VOTE (member + contrarian, trust core)	0
 v8 SDK voter-agents council (Epic C, finding schema)	0
+v8 SDK-loop start routing (LOKI_SDK_LOOP gate, default-off)	0
 SDK version sync (root package.json/lockfile/Dockerfile vs loki-ts, E-106)	0
 v8 Structured Review Self-Copy Asset Resolution	2
 Review deadline, requirements, and speculative assurance tail	116
@@ -67,6 +68,7 @@ Verify setup-recipe writer (rank 7, env NAMES not values)	0
 node --test detection (run.sh + verify.sh, task #79 false-negative)	6
 LOKI_DIR double-.loki path guard (#80 COMPLETED marker)	0
 zero-test-file inconclusive (run.sh + verify.sh + council, #82 fake-green)	8
+Heal Assess Readiness Triage Tests (rank 13)	0
 Process Supervisor Tests	5
 Supervised Signal Finalization and Honest Proof	1
 Orphan Wrapper Reaper (#92 liveness predicate)	6
@@ -117,6 +119,7 @@ Evidence Receipt splits exogenous vs advisory verification	1
 Evidence Receipt reports model provenance (decision trail)	0
 project-graph bash/bun parity (members discovery default)	0
 opencode provider (model-agnostic route, 75+ providers)	0
+opencode start routing and main-loop dispatch	0
 fast_verify: millisecond deterministic verification	1
 provider_invoke_argv timeout seam (judges keep their timeout)	2
 Test Mutation Detector (Gate #9)	1
@@ -304,6 +307,7 @@ Checkpoint Prune Sort	0
 Checkpoint Ref Prune Wave9	1
 Claude Flags	0
 Claude Login State	0
+Cli Allow Haiku Flag	0
 Cli Provider Flag	0
 Cluster Id Injection Wave10	0
 Cockpit Cmd	1
@@ -437,11 +441,14 @@ enterprise smoke script contract (offline)	0
 image provenance: signing and SBOM in the publish job	0
 doctor is CI-gateable (nonzero on missing required dep)	3
 completion coverage (every real command in both shells)	30
+dry-run paths work and are discoverable from start --help	0
 exit codes documented and matching the source	0
+Exit-code contract is discoverable from --help	0
 log verbosity (--quiet / LOKI_LOG_LEVEL, errors never hidden)	0
 verify --json emits pipeable evidence on stdout	1
 documented env vars exist in the source	0
 generic tiers (small|medium|high) resolve for every provider	2
+wall-clock cap (LOKI_MAX_DURATION) fires and is terminal	0
 startup preflight blocks a doomed build, stays advisory where optional	0
 magic debate gate (Gate 12) can actually block	1
 review council cap trims the tail, never the mandate	0
@@ -456,6 +463,7 @@ MCP contract guard rejects rename/deletion/missing prereqs	23
 npm SBOM is attached to the GitHub Release	1
 release.sh version-bump preserves file mode (BACKLOG 22)	1
 loki why maps each error class to an action	2
+loki start surfaces a stale install	1
 loki help does not recurse into itself	0
 no test uses a platform-divergent construct	5
 doctor detects an incomplete install	1
@@ -482,6 +490,7 @@ proof verify --human explains a failure	1
 the verification demo runs the real tools	2
 cost and estimate are reachable from the CLI	1
 quickstart names the provider that will run	0
+explicit provider preflight	1
 doctor shows provider availability	3
 interrupted runs surface how to resume	1
 install integrity is checked on both doctor routes	2
@@ -493,6 +502,7 @@ first_run_blocked signal (opt-out silent, enum-clamped)	3
 a green doctor never recommends a command that exits 2	0
 analytics opt-in has a writer (the funnel can fire)	0
 help discoverability (every command reachable)	29
+assess runtime detection (declared, never guessed)	0
 provider model scoping (global tier var must not leak)	0
 model catalog is a single source of truth	2
 MiniMax model catalog and compatible endpoints	1
@@ -643,8 +653,10 @@ Loki 10 gate report generator (E-33)	1
 Loki 10 engine trusted push and PR (E-11)	2
 Loki 10 engine dispatch hook (E-12)	2
 Loki 10 engine runs from dist and the npm package (E-32)	5
+Loki 10 legacy route contract golden rows (E-30)	1
 Loki 10 live PR smoke on a sandbox repo (E-40)	1
 run-owned temp cleanup works when sourced under zsh	1
+Loki 10 legacy deprecation notice (E-35)	1
 bin/loki bun resolver and no-bun notice (P0-nobun-S2)	3
 Loki 10 gate publish script (EV-6)	2
 Loki 10 user docs match USAGE and the default marker (E-34)	1
@@ -679,8 +691,11 @@ v10 ops (E-142)	70
 first-run gate assertion logic (A-02)	12
 release publishes to npm next; promote.yml gates latest on the first-run gate (A-01)	3
 loki-seal Stop hook (A-04)	20
+Quick-fix artifacts (A-132)	60
 Council trivial-diff probe skip (A-133)	10
 run-all-tests guards: real key dir + parent HEAD (E-154, E-155)	3
+Quick receipt order and quiet output (A-134)	90
+Quick config safety (P0-t15)	35
 Loki Seal marketplace (D48 r10)	2
 Quick integrity exit code (A-118)	5
 Quick quiet failure tail and stdin (A-134b)	40
@@ -688,10 +703,9 @@ Pre-commit author email guard (E-153)	10
 Docker Bun	0
 Provider stdin closed under verbose (A-134c)	10
 D51 Phase B workspaces (B01)	1
+json schemas validate real why and status output (D48 r5)	60
 train-cycle.sh release captain: train, promote, release, locks, dry-run (RC-AUTO)	30
 train verdict reuse on main push (E-160, D55)	10
 real-repo acceptance gate logic (D58-GATE)	6
 Dashboard leak2: fail-closed reuse and bound-port URL	5
 Loki control plane wiring: serve, backfill, UI (CP-04)	60
-No route to the previous engine (D57)	60
-status --json schema, empty state (D57)	5
