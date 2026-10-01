@@ -51,7 +51,7 @@ describe("seal then verify round-trip", () => {
 
   test("main prints the full receipt_sha256", async () => {
     seal({ verdict: "VERIFIED", reason: "\u2192" }, join(root, "runs", "e10-1"));
-    const { rc, out } = await capture(["e10-1"], join(root, "runs"));
+    const { rc, out } = await capture(["e10-1", "--allow-unsigned"], join(root, "runs"));
     expect(rc).toBe(0);
     expect(out).toMatch(/receipt_sha256: [0-9a-f]{64}/);
   });

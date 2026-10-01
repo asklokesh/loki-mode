@@ -5,8 +5,8 @@
 // deps.runsRoot -- never a checked-in fixture and never an assertion that
 // some sibling path is absent, so this test says nothing about any other
 // slice's files.
-import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { computeReceiptHash, main, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
@@ -299,7 +299,7 @@ describe("main() CLI wiring", () => {
     const dir = tmpDir();
     try {
       writeUnsignedReceipt(dir, "e10-cli-1");
-      const code = await main(["e10-cli-1"], { runsRoot: join(dir, "runs") });
+      const code = await main(["e10-cli-1", "--allow-unsigned"], { runsRoot: join(dir, "runs") });
       expect(code).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -311,7 +311,7 @@ describe("main() CLI wiring", () => {
     try {
       writeUnsignedReceipt(dir, "e10-20260101T000000Z-a");
       writeUnsignedReceipt(dir, "e10-20260927T000000Z-b");
-      const code = await main([], { runsRoot: join(dir, "runs") });
+      const code = await main(["--allow-unsigned"], { runsRoot: join(dir, "runs") });
       expect(code).toBe(0);
       const receipt = JSON.parse(readFileSync(join(dir, "runs", "e10-20260927T000000Z-b", "receipt.json"), "utf8"));
       expect(receipt.run_id).toBe("e10-20260927T000000Z-b");
@@ -341,5 +341,140 @@ describe("main() CLI wiring", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// A-121b / D47: UNSIGNED is never a pass. Output is captured so the explicit line is asserted.
+async function runMain(args: string[], runsRoot: string): Promise<{ code: number; out: string }> {
+  const out: string[] = [];
+  const w = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((c: string) => { out.push(String(c)); return true; }) as typeof process.stdout.write;
+  try {
+    return { code: await main(args, { runsRoot }), out: out.join("") };
+  } finally {
+    process.stdout.write = w;
+  }
+}
+
+describe("main() UNSIGNED policy (D47)", () => {
+  const withEnv = async (env: Record<string, string | undefined>, fn: () => Promise<void>) => {
+    const saved: Record<string, string | undefined> = {};
+    for (const k of Object.keys(env)) { saved[k] = process.env[k]; if (env[k] === undefined) delete process.env[k]; else process.env[k] = env[k]; }
+    try { await fn(); } finally { for (const k of Object.keys(saved)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } }
+  };
+  let savedAllow: string | undefined;
+  beforeEach(() => { savedAllow = process.env["LOKI_VERIFY_ALLOW_UNSIGNED"]; delete process.env["LOKI_VERIFY_ALLOW_UNSIGNED"]; });
+  afterEach(() => { if (savedAllow === undefined) delete process.env["LOKI_VERIFY_ALLOW_UNSIGNED"]; else process.env["LOKI_VERIFY_ALLOW_UNSIGNED"] = savedAllow; });
+  const REFUSE = "attestation: UNSIGNED, integrity not attested; refusing (pass --allow-unsigned to accept)";
+  const ACCEPT = "attestation: UNSIGNED (accepted by --allow-unsigned; integrity not attested)";
+
+  test("downgrade fixture (body edited, rehashed, jwt and kid nulled) exits 3 with the refusal line", async () => {
+    const dir = tmpDir();
+    try {
+      writeUnsignedReceipt(dir, "dg1", (r) => {
+        r["provider"] = "codex";
+        const { receipt_sha256: _a, verification: _b, ...rest } = r;
+        r["receipt_sha256"] = computeReceiptHash(rest);
+      });
+      const { code, out } = await runMain(["dg1"], join(dir, "runs"));
+      expect(code).toBe(3);
+      expect(out).toContain(REFUSE);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test("signed under a local key (verifies rc 0), then downgraded (body edit, rehash, jwt and kid nulled) exits 3", async () => {
+    if (!CRYPTO_PY) { console.log("SKIP: no python3 with cryptography"); return; }
+    const dir = tmpDir();
+    const home = tmpDir();
+    try {
+      const fields = baseReceiptFields();
+      fields["run_id"] = "sg1";
+      const hash = computeReceiptHash(fields);
+      const { pem, jwt, kid } = signWithFreshKey(hash, "sg1");
+      const runDir = join(dir, "runs", "sg1");
+      mkdirSync(runDir, { recursive: true });
+      const rp = join(runDir, "receipt.json");
+      writeFileSync(rp, JSON.stringify({ ...fields, receipt_sha256: hash, verification: { jwt, kid } }));
+      await withEnv({ HOME: home, LOKI_RECEIPT_SIGNING_KEY: pem, LOKI_RECEIPT_SIGNING_KEY_FILE: undefined }, async () => {
+        expect((await runMain(["sg1"], join(dir, "runs"))).code).toBe(0);
+        const edited = { ...fields, provider: "codex" };
+        writeFileSync(rp, JSON.stringify({ ...edited, receipt_sha256: computeReceiptHash(edited), verification: { jwt: null, kid: null } }));
+        const r = await runMain(["sg1"], join(dir, "runs"));
+        expect(r.code).toBe(3);
+        expect(r.out).toContain(REFUSE);
+      });
+    } finally { rmSync(dir, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
+  });
+
+  test("a foreign kid stays 2 with or without --allow-unsigned, and verify creates no keys dir", async () => {
+    if (!CRYPTO_PY) { console.log("SKIP: no python3 with cryptography"); return; }
+    const dir = tmpDir();
+    const home = tmpDir();
+    try {
+      const fields = baseReceiptFields();
+      fields["run_id"] = "fk1";
+      const hash = computeReceiptHash(fields);
+      const { jwt, kid } = signWithFreshKey(hash, "fk1");
+      const runDir = join(dir, "runs", "fk1");
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(join(runDir, "receipt.json"), JSON.stringify({ ...fields, receipt_sha256: hash, verification: { jwt, kid } }));
+      await withEnv({ HOME: home, LOKI_RECEIPT_SIGNING_KEY: undefined, LOKI_RECEIPT_SIGNING_KEY_FILE: undefined }, async () => {
+        expect((await runMain(["fk1"], join(dir, "runs"))).code).toBe(2);
+        expect((await runMain(["fk1", "--allow-unsigned"], join(dir, "runs"))).code).toBe(2);
+      });
+      expect(existsSync(join(home, ".loki", "keys"))).toBe(false);
+    } finally { rmSync(dir, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
+  });
+
+  test("same with SIGNING_UNAVAILABLE in not_proven exits 3", async () => {
+    const dir = tmpDir();
+    try {
+      writeUnsignedReceipt(dir, "dg2", (r) => {
+        r["not_proven"] = [...(r["not_proven"] as string[]), "receipt signing unavailable (no usable signing key: invalid key or unwritable ~/.loki/keys)"];
+        const { receipt_sha256: _a, verification: _b, ...rest } = r;
+        r["receipt_sha256"] = computeReceiptHash(rest);
+      });
+      expect((await runMain(["dg2"], join(dir, "runs"))).code).toBe(3);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test("fresh run-owned HOME with no key exits 3 and creates no keys dir", async () => {
+    const dir = tmpDir();
+    const home = tmpDir();
+    try {
+      writeUnsignedReceipt(dir, "dg3");
+      await withEnv({ HOME: home, LOKI_RECEIPT_SIGNING_KEY: undefined, LOKI_RECEIPT_SIGNING_KEY_FILE: undefined }, async () => {
+        expect((await runMain(["dg3"], join(dir, "runs"))).code).toBe(3);
+      });
+      expect(existsSync(join(home, ".loki", "keys"))).toBe(false);
+    } finally { rmSync(dir, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
+  });
+
+  test("--allow-unsigned and LOKI_VERIFY_ALLOW_UNSIGNED=1 exit 0 with the explicit line", async () => {
+    const dir = tmpDir();
+    try {
+      writeUnsignedReceipt(dir, "ok1");
+      const a = await runMain(["ok1", "--allow-unsigned"], join(dir, "runs"));
+      expect(a.code).toBe(0);
+      expect(a.out).toContain(ACCEPT);
+      await withEnv({ LOKI_VERIFY_ALLOW_UNSIGNED: "1" }, async () => {
+        const b = await runMain(["ok1"], join(dir, "runs"));
+        expect(b.code).toBe(0);
+        expect(b.out).toContain(ACCEPT);
+      });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test("the flag never changes TAMPERED (1) or UNCHECKED (2)", async () => {
+    const dir = tmpDir();
+    try {
+      writeUnsignedReceipt(dir, "t1", (r) => { r["provider"] = "codex"; });
+      expect((await runMain(["t1"], join(dir, "runs"))).code).toBe(1);
+      expect((await runMain(["t1", "--allow-unsigned"], join(dir, "runs"))).code).toBe(1);
+      const bad = join(dir, "runs", "u1");
+      mkdirSync(bad, { recursive: true });
+      writeFileSync(join(bad, "receipt.json"), "not json");
+      expect((await runMain(["u1", "--allow-unsigned"], join(dir, "runs"))).code).toBe(2);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

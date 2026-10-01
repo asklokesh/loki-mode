@@ -63,6 +63,21 @@ Code 3 matters more than it looks. A verifier that cannot run is not a pass,
 so `[ $rc -eq 0 ]` is the only safe test for "verified" -- `[ $rc -ne 2 ]`
 would treat a broken verifier as acceptable.
 
+### UNSIGNED receipts (D47)
+
+An UNSIGNED receipt (no attestation, so its integrity is not attested) is never
+a pass, on either engine, with or without a local key. A stripped receipt must
+not rank above UNCHECKED.
+
+| Engine | UNSIGNED without the flag | With `--allow-unsigned` or `LOKI_VERIFY_ALLOW_UNSIGNED=1` |
+|---|---|---|
+| Engine10 (`loki-ts`, `verify_cmd.ts`) | exit 3, `attestation: UNSIGNED, integrity not attested; refusing (pass --allow-unsigned to accept)` | exit 0, `attestation: UNSIGNED (accepted by --allow-unsigned; integrity not attested)` |
+| Legacy shell (`autonomy/verify.sh`) | BLOCKED (non-zero) | the receipt line passes with the same accepted line |
+
+Engine10 `loki verify [run-id]` exits: 0 verified, 1 tampered, 2 unchecked,
+3 unsigned (refused), 66 no runs. The flag never changes TAMPERED or UNCHECKED,
+and verify never creates a signing key.
+
 An early draft spec listed `1=BLOCKED, 2=CONCERNS`. That ordering was rejected:
 it is not used anywhere, it has no consumers, and it inverts the
 severity-rises-with-the-code rule that every other command follows.
