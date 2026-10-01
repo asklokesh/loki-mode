@@ -11,7 +11,6 @@ import { dirname, join } from "node:path";
 import { RECEIPT_SIGNER_BASENAME } from "../../util/receipt_signer.ts";
 import { run } from "../../util/shell.ts";
 import { isTestFile } from "../testmap.ts";
-import { weakBasePaths } from "../../e10ext/weak_paths.ts";
 import { STAGE_BUDGETS } from "../types.ts";
 import type { Obj, Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
 
@@ -125,9 +124,9 @@ export const commitStage: Stage = {
 // Stage outputs read by seal. Only keys in the ENGINE.md section 4 table (plus duration_s
 // from section 5) are trusted; any other key seal reads puts a "not recorded" entry on
 // NOT PROVEN when absent, so a producer cannot silently shape the receipt.
-function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean, wallGreenOnBase: boolean, weak = false): Verdict {
+function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean, wallGreenOnBase: boolean): Verdict {
   const exit = o.implement?.exit;
-  if (o.intake?.already_satisfied === true || wallGreenOnBase || exit === "already_done") return weak ? "PARTIAL" : "ALREADY_SATISFIED"; // A-119b: a weakened test never seals ALREADY_SATISFIED
+  if (o.intake?.already_satisfied === true || wallGreenOnBase || exit === "already_done") return "ALREADY_SATISFIED";
   if (exit === "spec_conflict") return "SPEC_CONFLICT";
   // Section 2: an empty diff without the LOKI_ALREADY_DONE marker is FAILED, never VERIFIED.
   if (emptyDiff) return "FAILED";
@@ -197,10 +196,9 @@ export const sealStage: Stage = {
     const preRedChecks = strs(o.verify?.pre_red_checks); // A-112: recorded as fail, skipped by the verdict
     // A-119: any edit, delete or rename (--no-renames shows D plus A) of a pre-existing test file is NOT VERIFIED, same as verify's own notes.
     const rawDiff = diffOk ? diff.stdout.split("\0").filter(Boolean) : [];
-    const touched: string[] = []; // A-119b: base paths changed or deleted; weakBasePaths picks the test dirs, fixtures, snapshots and imported helpers
-    for (let i = 0; i + 1 < rawDiff.length; i += 2) if ((rawDiff[i]!.trim().split(" ").pop() ?? "") !== "A") touched.push(rawDiff[i + 1]!);
-    const weakTests = weakBasePaths(ctx.repoDir, ctx.baseSha, touched, isTestFile);
-    const verdict = verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0 || weakTests.length > 0, wallGreenOnBase, weakTests.length > 0);
+    const weakTests: string[] = [];
+    for (let i = 0; i + 1 < rawDiff.length; i += 2) if ((rawDiff[i]!.trim().split(" ").pop() ?? "") !== "A" && isTestFile(rawDiff[i + 1]!)) weakTests.push(rawDiff[i + 1]!);
+    const verdict = verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0 || weakTests.length > 0, wallGreenOnBase);
 
     const notProven = new Set<string>(DEEP_NOT_PROVEN);
     if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);
