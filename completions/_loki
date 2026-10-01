@@ -193,7 +193,6 @@ function _loki_commands {
         'spec:Living spec drift detection'
         'intent:Does the spec still say what was actually wanted'
         'verify:Deterministic PR verification'
-        'keys:Export the receipt-signing public key'
         'grill:Interrogate a spec before building'
         'trust:Visible trust trajectory'
         'trust-metrics:Trust metrics report'
